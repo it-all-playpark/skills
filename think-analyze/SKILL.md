@@ -14,7 +14,7 @@ Multi-domain code analysis for quality, security, performance, and architecture.
 ## Usage
 
 ```
-/sc:analyze [target] [--focus DOMAIN] [--scope file|module|project] [--report]
+/think-analyze [target] [--focus DOMAIN] [--scope file|module|project] [--report]
 ```
 
 | Arg | Description |
@@ -81,16 +81,16 @@ See `~/.claude/skills/_lib/analysis-domains.md` for detailed criteria per domain
 ## Examples
 
 ```
-/sc:analyze src/auth/ --focus security
+/think-analyze src/auth/ --focus security
 → Security-focused analysis of authentication code
 
-/sc:analyze . --scope project --report
+/think-analyze . --scope project --report
 → Full project analysis with report saved to claudedocs/
 
-/sc:analyze lib/utils.ts --focus quality
+/think-analyze lib/utils.ts --focus quality
 → Quality analysis of single file
 
-/sc:analyze --focus performance --scope module
+/think-analyze --focus performance --scope module
 → Performance analysis of current module
 ```
 

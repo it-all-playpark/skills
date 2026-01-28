@@ -14,7 +14,7 @@ Focused documentation generation.
 ## Usage
 
 ```
-/sc:document [target] [--type inline|external|api|guide] [--style brief|detailed]
+/doc-generate [target] [--type inline|external|api|guide] [--style brief|detailed]
 ```
 
 | Arg | Description |
@@ -75,7 +75,7 @@ For --type inline:
 ## Examples
 
 ```bash
-/sc:document src/api/ --type api --style detailed
-/sc:document lib/utils.ts --type inline
-/sc:document --type guide --style brief
+/doc-generate src/api/ --type api --style detailed
+/doc-generate lib/utils.ts --type inline
+/doc-generate --type guide --style brief
 ```

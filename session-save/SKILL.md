@@ -14,7 +14,7 @@ Save session context and learnings.
 ## Usage
 
 ```
-/sc:save [--type session|learnings|checkpoint] [--summarize]
+/session-save [--type session|learnings|checkpoint] [--summarize]
 ```
 
 | Arg | Description |
@@ -59,17 +59,17 @@ Save session context and learnings.
 [Brief session summary]
 
 ### Recovery
-To resume: `/sc:load --type checkpoint`
+To resume: `/session-load --type checkpoint`
 ```
 
 ## Examples
 
 ```bash
-/sc:save
-/sc:save --type checkpoint
-/sc:save --type learnings --summarize
+/session-save
+/session-save --type checkpoint
+/session-save --type learnings --summarize
 ```
 
 ## Integration
 
-Pairs with `/sc:load` for session lifecycle.
+Pairs with `/session-load` for session lifecycle.

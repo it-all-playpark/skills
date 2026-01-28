@@ -14,7 +14,7 @@ Multi-level structured analysis for complex problem solving.
 ## Usage
 
 ```
-/sc:think [topic] [--level think|think-hard|ultrathink] [--focus DOMAIN]
+/think-deep [topic] [--level think|think-hard|ultrathink] [--focus DOMAIN]
 ```
 
 | Arg | Description |
@@ -102,13 +102,13 @@ Use these markers in analysis output:
 ## Examples
 
 ```
-/sc:think "why is this API slow?"
+/think-deep "why is this API slow?"
 → Standard analysis of performance bottlenecks
 
-/sc:think "authentication redesign" --level think-hard
+/think-deep "authentication redesign" --level think-hard
 → Deep analysis with documentation reference
 
-/sc:think "legacy system migration" --level ultrathink --focus architecture
+/think-deep "legacy system migration" --level ultrathink --focus architecture
 → Maximum depth architectural analysis
 ```
 

@@ -14,7 +14,7 @@ Load project context and session state.
 ## Usage
 
 ```
-/sc:load [--type project|checkpoint] [--refresh] [--analyze]
+/session-load [--type project|checkpoint] [--refresh] [--analyze]
 ```
 
 | Arg | Description |
@@ -66,11 +66,11 @@ Load project context and session state.
 ## Examples
 
 ```bash
-/sc:load
-/sc:load --type checkpoint
-/sc:load --refresh --analyze
+/session-load
+/session-load --type checkpoint
+/session-load --refresh --analyze
 ```
 
 ## Integration
 
-Pairs with `/sc:save` for session lifecycle.
+Pairs with `/session-save` for session lifecycle.

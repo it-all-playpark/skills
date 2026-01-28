@@ -14,7 +14,7 @@ Project documentation and knowledge base generation.
 ## Usage
 
 ```
-/sc:index [target] [--type docs|api|structure|readme] [--format md|json]
+/doc-index [target] [--type docs|api|structure|readme] [--format md|json]
 ```
 
 | Arg | Description |
@@ -67,7 +67,7 @@ Generated docs go to `claudedocs/` by default.
 ## Examples
 
 ```bash
-/sc:index . --type structure
-/sc:index src/api/ --type api --format md
-/sc:index --type readme
+/doc-index . --type structure
+/doc-index src/api/ --type api --format md
+/doc-index --type readme
 ```

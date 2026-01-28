@@ -14,7 +14,7 @@ Systematic code cleanup and dead code removal.
 ## Usage
 
 ```
-/sc:cleanup [target] [--type code|imports|files|all] [--safe] [--aggressive]
+/dev-cleanup [target] [--type code|imports|files|all] [--safe] [--aggressive]
 ```
 
 | Arg | Description |
@@ -69,7 +69,7 @@ Systematic code cleanup and dead code removal.
 ## Examples
 
 ```bash
-/sc:cleanup src/ --type imports
-/sc:cleanup --type all --safe
-/sc:cleanup lib/ --aggressive
+/dev-cleanup src/ --type imports
+/dev-cleanup --type all --safe
+/dev-cleanup lib/ --aggressive
 ```

@@ -14,7 +14,7 @@ Implementation workflow generation.
 ## Usage
 
 ```
-/sc:workflow [source] [--strategy systematic|agile] [--depth shallow|normal|deep]
+/plan-workflow [source] [--strategy systematic|agile] [--depth shallow|normal|deep]
 ```
 
 | Arg | Description |
@@ -72,7 +72,7 @@ Implementation workflow generation.
 ## Examples
 
 ```bash
-/sc:workflow docs/prd.md --strategy systematic
-/sc:workflow "user authentication feature" --depth deep
-/sc:workflow requirements.md --strategy agile
+/plan-workflow docs/prd.md --strategy systematic
+/plan-workflow "user authentication feature" --depth deep
+/plan-workflow requirements.md --strategy agile
 ```

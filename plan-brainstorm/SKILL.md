@@ -14,7 +14,7 @@ Collaborative discovery for transforming vague ideas into concrete specification
 ## Usage
 
 ```
-/sc:brainstorm [topic] [--depth shallow|normal|deep] [--parallel]
+/plan-brainstorm [topic] [--depth shallow|normal|deep] [--parallel]
 ```
 
 | Arg | Description |
@@ -78,13 +78,13 @@ Collaborative discovery for transforming vague ideas into concrete specification
 ## Examples
 
 ```
-/sc:brainstorm "AI-powered todo app"
+/plan-brainstorm "AI-powered todo app"
 → Asks about target users, AI features, existing solutions
 
-/sc:brainstorm "improve authentication" --depth deep
+/plan-brainstorm "improve authentication" --depth deep
 → Deep dive into security requirements, UX, compliance
 
-/sc:brainstorm "new feature ideas" --parallel
+/plan-brainstorm "new feature ideas" --parallel
 → Multi-perspective exploration with different user personas
 ```
 
