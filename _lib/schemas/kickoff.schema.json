@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Kickoff State",
+  "description": "State persistence for dev-kickoff workflow",
+  "type": "object",
+  "required": ["version", "issue", "branch", "worktree", "phases", "started_at"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version"
+    },
+    "issue": {
+      "type": "integer",
+      "description": "GitHub issue number"
+    },
+    "branch": {
+      "type": "string",
+      "description": "Feature branch name"
+    },
+    "worktree": {
+      "type": "string",
+      "description": "Absolute path to worktree directory"
+    },
+    "base_branch": {
+      "type": "string",
+      "default": "main",
+      "description": "Base branch for PR"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when kickoff started"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "phases": {
+      "type": "object",
+      "description": "Phase execution states",
+      "properties": {
+        "1_prepare": { "$ref": "#/$defs/phase" },
+        "2_analyze": { "$ref": "#/$defs/phase" },
+        "3_implement": { "$ref": "#/$defs/phase" },
+        "4_validate": { "$ref": "#/$defs/phase" },
+        "5_commit": { "$ref": "#/$defs/phase" },
+        "6_pr": { "$ref": "#/$defs/phase" }
+      },
+      "additionalProperties": false
+    },
+    "current_phase": {
+      "type": "string",
+      "enum": ["1_prepare", "2_analyze", "3_implement", "4_validate", "5_commit", "6_pr", "completed"],
+      "description": "Currently active phase"
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Pending actions to continue"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        },
+        "required": ["question", "answer"]
+      },
+      "description": "User decisions during implementation"
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "strategy": { "type": "string", "enum": ["tdd", "bdd", "ddd"] },
+        "depth": { "type": "string", "enum": ["minimal", "standard", "comprehensive"] },
+        "lang": { "type": "string", "enum": ["ja", "en"] },
+        "env_mode": { "type": "string", "enum": ["hardlink", "symlink", "copy", "none"] },
+        "skip_pr": { "type": "boolean" }
+      },
+      "description": "Kickoff configuration options"
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "done", "failed", "skipped"],
+          "default": "pending"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "result": {
+          "type": "string",
+          "description": "Summary of phase result"
+        },
+        "error": {
+          "type": "string",
+          "description": "Error message if failed"
+        },
+        "subagent_results": {
+          "type": "object",
+          "description": "Results from delegated subagents"
+        }
+      },
+      "required": ["status"]
+    }
+  }
+}

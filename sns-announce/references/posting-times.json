@@ -1,0 +1,37 @@
+{
+  "description": "SNS別最適投稿時間帯（日本時間）",
+  "platforms": {
+    "x": {
+      "weekday": ["07:30", "12:00", "19:00"],
+      "weekend": ["12:00", "14:00", "16:00"],
+      "notes": "初動30分の反応が重要"
+    },
+    "linkedin": {
+      "weekday": ["08:30", "12:00"],
+      "best_days": ["tue", "wed", "thu"],
+      "weekend": null,
+      "notes": "ビジネス層向け、週末は避ける"
+    },
+    "google": {
+      "weekday": ["10:00", "12:00", "14:00"],
+      "weekend": null,
+      "notes": "営業時間内"
+    },
+    "facebook": {
+      "weekday": ["09:00", "13:00"],
+      "best_days": ["mon", "fri"],
+      "weekend": null,
+      "notes": "30代以上ターゲット、月金午前が特に有効"
+    },
+    "bluesky": {
+      "weekday": ["07:30", "19:00"],
+      "weekend": ["12:00", "14:00", "16:00"],
+      "notes": "X類似ユーザー層"
+    },
+    "threads": {
+      "weekday": ["07:30", "18:30"],
+      "weekend": ["10:00", "12:00", "14:00"],
+      "notes": "若年層、Instagram連携"
+    }
+  }
+}

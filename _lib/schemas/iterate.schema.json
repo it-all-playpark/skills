@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Iterate State",
+  "description": "State persistence for pr-iterate workflow",
+  "type": "object",
+  "required": ["version", "pr_number", "iterations", "current_iteration", "status", "started_at"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version"
+    },
+    "pr_number": {
+      "type": "integer",
+      "description": "GitHub PR number"
+    },
+    "pr_url": {
+      "type": "string",
+      "description": "Full GitHub PR URL"
+    },
+    "branch": {
+      "type": "string",
+      "description": "PR branch name"
+    },
+    "base_branch": {
+      "type": "string",
+      "default": "main",
+      "description": "PR base branch"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when iteration started"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "current_iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Current iteration number"
+    },
+    "max_iterations": {
+      "type": "integer",
+      "default": 10,
+      "description": "Maximum iterations before stopping"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["in_progress", "lgtm", "failed", "max_reached"],
+      "description": "Overall iterate status"
+    },
+    "iterations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer",
+            "description": "Iteration number"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "review": {
+            "type": "object",
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": ["approved", "request-changes", "comment", "pending"]
+              },
+              "issues": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "summary": {
+                "type": "string"
+              }
+            }
+          },
+          "ci_status": {
+            "type": "string",
+            "enum": ["passed", "failed", "pending", "unknown"]
+          },
+          "fixes_applied": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["number"]
+      },
+      "description": "History of iteration attempts"
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Pending actions to continue"
+    }
+  }
+}

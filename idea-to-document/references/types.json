@@ -1,0 +1,30 @@
+{
+  "types": {
+    "case-study": {
+      "name": "Case Study",
+      "description": "Business outcomes, client stories",
+      "keywords": ["課題", "効果", "削減", "Before", "After", "導入", "ROI", "成果", "metrics", "改善"]
+    },
+    "tech-tip": {
+      "name": "Tech Tip",
+      "description": "Code patterns, configurations",
+      "keywords": ["実装", "コード", "ライブラリ", "設定", "Tips", "snippet", "API", "関数", "モジュール"],
+      "code_blocks_threshold": 3
+    },
+    "howto": {
+      "name": "How-To",
+      "description": "Step-by-step instructions",
+      "keywords": ["方法", "手順", "ステップ", "するには", "guide", "setup", "設定方法", "やり方"]
+    },
+    "tutorial": {
+      "name": "Tutorial",
+      "description": "Learning-focused content for beginners",
+      "keywords": ["入門", "基礎", "初めての", "getting started", "beginner", "初心者", "はじめて"]
+    }
+  },
+  "extraction": {
+    "repo-export": ["project_name", "description", "features", "tech_stack", "installation"],
+    "memo": ["problem", "solution", "insights", "context"],
+    "code": ["technologies", "patterns", "integrations"]
+  }
+}
