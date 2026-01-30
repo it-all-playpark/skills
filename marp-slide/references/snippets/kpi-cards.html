@@ -1,0 +1,44 @@
+<!-- KPI Cards Component -->
+<!-- Use for: 定量的成果、数値指標の表示 -->
+<!-- Requires: .kpi-container, .kpi-card styles from theme CSS -->
+
+<!-- 3 Metrics Layout (Standard) -->
+<div class="kpi-container">
+  <div class="kpi-card">
+    <div class="number">96%</div>
+    <div class="label">作業時間削減</div>
+    <div class="change">↑ 大幅改善</div>
+  </div>
+  <div class="kpi-card">
+    <div class="number">¥500万</div>
+    <div class="label">年間コスト削減</div>
+    <div class="change">ROI 300%</div>
+  </div>
+  <div class="kpi-card">
+    <div class="number">2週間</div>
+    <div class="label">導入期間</div>
+    <div class="change">スピード導入</div>
+  </div>
+</div>
+
+<!-- 
+Variations:
+
+2 Metrics:
+- Remove one .kpi-card
+- Adjust grid-template-columns in CSS if needed
+
+4 Metrics:
+- Add one .kpi-card  
+- Change grid-template-columns: repeat(4, 1fr)
+
+Negative Change:
+<div class="change negative">↓ 30%減</div>
+
+Number formats:
+- Percentage: 96%
+- Currency: ¥500万, $1.2M
+- Time: 2週間, 即時
+- Count: 0件, 1,234件
+- Multiplier: 3x, 10倍
+-->
