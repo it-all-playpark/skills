@@ -221,13 +221,25 @@ section.cover p {
   z-index: 1;
 }
 
-/* Emphasis on dark backgrounds (cover/lead) */
+/* Emphasis on dark backgrounds (cover/lead/closing) */
 section.cover strong,
 section.cover em,
 section.lead strong,
-section.lead em {
+section.lead em,
+section.closing strong,
+section.closing em {
   color: var(--color-accent);
   font-style: normal;
+}
+
+/* Company name styling for closing slides */
+section.closing .company {
+  display: block;
+  font-size: 1.1em;
+  font-weight: 500;
+  color: white;
+  margin: 0.8em 0 0.3em;
+  letter-spacing: 0.05em;
 }
 
 /* Two Column */

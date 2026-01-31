@@ -33,6 +33,28 @@
 | Testimonial | 30-45秒 | 1引用 + 出典 |
 | Closing | 15-20秒 | Thank you + 連絡先 |
 
+## Closing Slide Template
+
+```markdown
+---
+<!-- _class: closing -->
+
+# Thank You
+
+お気軽にご相談ください
+
+*playpark LLC*
+
+https://www.playpark.co.jp/contact
+
+---
+```
+
+**Notes:**
+- 会社名は `*playpark LLC*` (emphasis) で記述 → アクセントカラーで目立つ
+- または `<span class="company">playpark LLC</span>` で明示的にスタイル適用
+- URL はそのまま記述（自動リンク化）
+
 ## Layout Classes Reference
 
 | Class | Use Case |

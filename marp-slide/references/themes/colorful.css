@@ -517,3 +517,26 @@ section.closing p {
 section.closing a {
   color: white;
 }
+
+/* Emphasis on dark backgrounds (cover/lead/closing) */
+section.cover strong,
+section.cover em,
+section.lead strong,
+section.lead em,
+section.closing strong,
+section.closing em {
+  color: var(--color-yellow);
+  background: none;
+  -webkit-text-fill-color: var(--color-yellow);
+  font-style: normal;
+}
+
+/* Company name styling for closing slides */
+section.closing .company {
+  display: block;
+  font-size: 1.1em;
+  font-weight: 500;
+  color: white;
+  margin: 0.8em 0 0.3em;
+  letter-spacing: 0.05em;
+}
