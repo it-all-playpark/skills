@@ -221,6 +221,15 @@ section.cover p {
   z-index: 1;
 }
 
+/* Emphasis on dark backgrounds (cover/lead) */
+section.cover strong,
+section.cover em,
+section.lead strong,
+section.lead em {
+  color: var(--color-accent);
+  font-style: normal;
+}
+
 /* Two Column */
 section.two-col {
   display: grid;

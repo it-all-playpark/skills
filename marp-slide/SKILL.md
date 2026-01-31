@@ -83,11 +83,13 @@ user-invocable: true
     - **Tables must be HTML** (see snippets/table.html)
     - Add speaker notes with timing
 
-[6] Logo Injection (if theme uses logo)
+[6] Validate → Run: scripts/validate.sh <output.md>
+
+[7] Logo Injection (if theme uses logo)
     - Run: scripts/inject-logo.sh <output.md>
     - Replaces {{LOGO_BASE64}} with Base64-encoded logo
 
-[7] Export (if format != md)
+[8] Export (if format != md)
     - Run: scripts/export.sh <output.md> --format <format>
 ```
 
@@ -156,5 +158,6 @@ marp --preview slides.md
 - `references/structures/{type}.md` - スライド構造パターン
 - `references/themes/{theme}.css` - CSSテーマ（埋め込み用）
 - `references/snippets/*.html` - HTMLコンポーネント
+- `scripts/validate.sh` - 生成結果検証
 - `scripts/inject-logo.sh` - ロゴBase64注入
 - `scripts/export.sh` - PDF/HTML/PPTX変換
