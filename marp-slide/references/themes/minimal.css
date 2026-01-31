@@ -1,3 +1,4 @@
+/* @theme minimal */
 /* ===== MINIMAL THEME (Pro-Optimized) ===== */
 /* Clean, Apple-inspired design with generous whitespace */
 /* Best for: 技術発表、ドキュメント共有、シンプルで洗練された印象 */
@@ -140,6 +141,7 @@ section.cover {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   color: white;
   padding: 80px 120px;
+  position: relative;
 }
 
 section.cover h1 {

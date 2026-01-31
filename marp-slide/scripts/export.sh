@@ -88,7 +88,7 @@ trap cleanup EXIT
 
 # Detect theme from frontmatter and resolve custom CSS
 THEME_OPTS=""
-THEME_NAME=$(grep -m1 '^theme:' "$INPUT" 2>/dev/null | sed 's/^theme:[[:space:]]*//' | tr -d '\r')
+THEME_NAME=$(grep -m1 '^[[:space:]]*theme:' "$INPUT" 2>/dev/null | sed 's/^[[:space:]]*theme:[[:space:]]*//' | tr -d '\r')
 
 if [[ -n "$THEME_NAME" ]]; then
   CUSTOM_THEME="$SCRIPT_DIR/../references/themes/${THEME_NAME}.css"
@@ -102,9 +102,9 @@ fi
 echo "Exporting: $INPUT -> $OUTPUT ($FORMAT)"
 
 if command -v marp &> /dev/null; then
-  marp "$PROCESS_INPUT" --"$FORMAT" -o "$OUTPUT" $THEME_OPTS
+  marp --no-stdin "$PROCESS_INPUT" --"$FORMAT" -o "$OUTPUT" $THEME_OPTS
 else
-  npx @marp-team/marp-cli "$PROCESS_INPUT" --"$FORMAT" -o "$OUTPUT" $THEME_OPTS
+  npx @marp-team/marp-cli --no-stdin "$PROCESS_INPUT" --"$FORMAT" -o "$OUTPUT" $THEME_OPTS
 fi
 
 echo "Done: $OUTPUT"

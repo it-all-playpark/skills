@@ -72,10 +72,12 @@ user-invocable: true
 [4] Load references (conditional)
     - Always: design-guidelines.md
     - Based on --type: structures/{type}.md
-    - Based on --theme: themes/{theme}.css
+    - Based on --theme: themes/{theme}.css (for embedding)
     - As needed: snippets/*.html
 
-[5] Generate slides
+[5] Generate slides with EMBEDDED CSS
+    - Read themes/{theme}.css content (include logo CSS with {{LOGO_BASE64}} placeholder)
+    - Embed FULL CSS in <style> tag after frontmatter
     - Apply structure pattern from structures/{type}.md
     - Use layout classes (cover, lead, agenda, two-col, comparison, kpi-cards, testimonial, flow, closing)
     - **Tables must be HTML** (see snippets/table.html)
@@ -83,10 +85,35 @@ user-invocable: true
 
 [6] Logo Injection (if theme uses logo)
     - Run: scripts/inject-logo.sh <output.md>
+    - Replaces {{LOGO_BASE64}} with Base64-encoded logo
 
 [7] Export (if format != md)
     - Run: scripts/export.sh <output.md> --format <format>
 ```
+
+## Output Format
+
+生成されるスライドは以下の形式（CSS埋め込み）:
+
+```markdown
+---
+marp: true
+paginate: true
+---
+
+<style>
+/* Theme CSS embedded here */
+:root { ... }
+section { ... }
+/* All layout classes included */
+</style>
+
+<!-- _class: cover -->
+# Title
+...
+```
+
+**メリット**: ファイル単体で完結。`marp --preview slides.md` で直接プレビュー可能。
 
 ## Reference Loading Strategy
 
@@ -95,7 +122,7 @@ references/
 ├── design-guidelines.md   # Always load (デザインルール・検出ルール)
 ├── tones.md               # Load when tone customization needed
 ├── structures/            # Load ONE based on --type
-├── themes/                # Load ONE based on --theme
+├── themes/                # Load ONE based on --theme → embed as <style>
 └── snippets/              # Load as needed during generation
 ```
 
@@ -107,16 +134,6 @@ references/
 - `<colgroup>` + CSS classes (w-20〜w-80) で幅指定
 - Reference: `snippets/table.html`
 
-## Logo Customization
-
-```bash
-# 自社ロゴに差し替え
-cp /path/to/my-logo.png assets/logo.png
-
-# カスタムロゴ指定
-scripts/inject-logo.sh slides.md --logo assets/logo-white.png
-```
-
 ## Examples
 
 ```bash
@@ -125,11 +142,19 @@ scripts/inject-logo.sh slides.md --logo assets/logo-white.png
 /marp-slide ./slides.md --format pdf -o ./out.pdf   # PDF出力
 ```
 
+## Preview
+
+生成後は標準のmarpコマンドでプレビュー可能:
+
+```bash
+marp --preview slides.md
+```
+
 ## References
 
 - `references/design-guidelines.md` - デザインルール、レイアウトクラス、検出ルール
 - `references/structures/{type}.md` - スライド構造パターン
-- `references/themes/{theme}.css` - CSSテーマ
+- `references/themes/{theme}.css` - CSSテーマ（埋め込み用）
 - `references/snippets/*.html` - HTMLコンポーネント
-- `scripts/inject-logo.sh` - ロゴ注入
+- `scripts/inject-logo.sh` - ロゴBase64注入
 - `scripts/export.sh` - PDF/HTML/PPTX変換

@@ -1,3 +1,4 @@
+/* @theme corporate */
 /* ===== CORPORATE THEME (playpark Brand) ===== */
 /* Professional business presentation with playpark brand identity */
 /* Based on https://www.playpark.co.jp design system */
@@ -174,6 +175,7 @@ section.cover {
   background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   color: white;
   padding: 80px 120px;
+  position: relative;
 }
 
 section.cover::before {
