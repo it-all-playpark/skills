@@ -4,50 +4,29 @@
 
 ## Structure
 
-```
-1. Cover (cover)
-   - インパクトのあるタイトル
-   - サブタイトルで成果を示唆
-   - 会社名/発表者名
+| # | Slide | Layout Class | Components |
+|---|-------|--------------|------------|
+| 1 | Cover | `cover` | - |
+| 2 | Agenda | `agenda` | - |
+| 3 | Problem Overview | `gradient-bg` | `lab-card` x 3 |
+| 4-5 | Problem Details | `gradient-bg` or `two-col` | `lab-card` |
+| 6 | Solution Overview | `gradient-bg` | `flow-container` |
+| 7-8 | Solution Details | `gradient-bg` | `lab-card`, `lab-card accent` |
+| 9 | Results - KPI | `gradient-bg` | `kpi-container`, `kpi-card` |
+| 10 | Results - Comparison | `comparison` | `before`, `after` |
+| 11 | Qualitative Results | `gradient-bg` | `lab-card` x 3 |
+| 12 | Testimonial | `testimonial` | - |
+| 13 | Summary | `lead` | - |
+| 14 | Closing | `closing` | - |
 
-2. Agenda (agenda)
-   - 4-5項目の目次
+## Alternative: Feature Grid with Sticky Notes
 
-3. Problem Overview
-   - 課題の概要を1スライドで
-   - 3点以内に絞る
+Slide 7-8 (Solution Details) で特徴を視覚的に見せたい場合:
 
-4-5. Problem Details (通常 or two-col)
-   - 各課題の詳細
-   - 数値で痛みを表現
+| Layout Class | Components |
+|--------------|------------|
+| `gradient-bg` | `sticky-grid` + `sticky-note` (blue/yellow/pink/green) |
 
-6. Solution Overview (flow)
-   - システム構成図
-   - フローダイアグラム
+---
 
-7-8. Solution Details (two-col)
-   - 主要機能の説明
-   - スクリーンショット活用
-
-9. Results - KPI (kpi-cards)
-   - 定量的成果を大きく表示
-   - Before/After比較
-
-10. Results - Comparison (comparison)
-    - ビジュアルなBefore/After
-
-11. Qualitative Results
-    - 定性的な成果
-    - 箇条書き3点
-
-12. Testimonial (testimonial)
-    - お客様の声
-    - 引用形式
-
-13. Summary (lead)
-    - 3点以内の要約
-
-14. Closing (closing)
-    - Thank you
-    - 連絡先・CTA
-```
+**→ Class & Component Examples: [design-guidelines.md](../design-guidelines.md#-examples-reference)**

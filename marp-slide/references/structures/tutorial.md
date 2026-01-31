@@ -4,42 +4,38 @@
 
 ## Structure
 
+| # | Slide | Layout Class | Components |
+|---|-------|--------------|------------|
+| 1 | Cover | `cover` | - |
+| 2 | Goal | `gradient-bg` | `lab-card accent` |
+| 3 | Prerequisites | `gradient-bg` | `lab-card` |
+| 4 | Overview | `gradient-bg` | `flow-container` |
+| 5-6 | Concept Introduction | `gradient-bg` or `two-col` | - |
+| 7-12 | Step-by-Step | `gradient-bg` | `lab-card` (各ステップ) |
+| 13-14 | Common Mistakes | `gradient-bg` | `lab-card accent` (警告) |
+| 15-16 | Practice Exercise | `accent-gradient` | `lab-card` |
+| 17 | Recap | `lead` | - |
+| 18 | Next Steps | `gradient-bg` | - |
+| 19-20 | Closing | `closing` | - |
+
+## Step Slide Pattern
+
+各ステップスライドは統一フォーマット:
+
 ```
-1. Cover (cover)
-   - 何を学べるか明示
+# Step N: タイトル
 
-2. Goal
-   - 完了時に何ができるようになるか
+<div class="lab-card">
 
-3. Prerequisites
-   - 前提知識
-   - 必要な環境
+**手順の説明**
 
-4. Overview (flow)
-   - 全体の流れを図示
+コードブロックや具体的な操作
 
-5-6. Concept Introduction (two-col)
-   - 基本概念の説明
-   - 図解・例え話
+</div>
 
-7-12. Step-by-Step
-   - 1ステップ1スライド
-   - コード + 説明
-   - 各ステップの目的を明記
-
-13-14. Common Mistakes
-   - よくある間違い
-   - トラブルシューティング
-
-15-16. Practice Exercise
-   - 手を動かす課題
-   - 期待される結果
-
-17. Recap (lead)
-   - 学んだことの復習
-
-18. Next Steps
-   - 発展的な学習リソース
-
-19-20. Q&A / Closing (closing)
+ポイント: 補足説明
 ```
+
+---
+
+**→ Class & Component Examples: [design-guidelines.md](../design-guidelines.md#-examples-reference)**

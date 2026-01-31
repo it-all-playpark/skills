@@ -4,35 +4,29 @@
 
 ## Structure
 
+| # | Slide | Layout Class | Components |
+|---|-------|--------------|------------|
+| 1 | Cover | `cover` | - |
+| 2 | What is X? | `gradient-bg` | - |
+| 3 | Key Features | `gradient-bg` | `sticky-grid` + `sticky-note` (推奨) or `lab-card` x 3 |
+| 4-6 | Feature Deep Dive | `gradient-bg` or `two-col` | `lab-card accent` |
+| 7 | Use Cases | `gradient-bg` | `lab-card` x 3 |
+| 8 | Getting Started | `gradient-bg` | `flow-container` |
+| 9 | Comparison (optional) | `comparison` | `before`, `after` |
+| 10 | Pricing / Availability | `gradient-bg` | - |
+| 11 | Try It Now | `closing` | - |
+
+## Recommended: Sticky Notes for Features
+
+Slide 3 (Key Features) は `sticky-note` が視覚的に効果的:
+
 ```
-1. Cover (cover)
-   - プロダクト名 + キャッチコピー
-
-2. What is X?
-   - 一言で説明
-   - カテゴリ・ポジショニング
-
-3. Key Features (flow or kpi-cards)
-   - 3-5個の特徴
-   - アイコン/図で視覚的に
-
-4-6. Feature Deep Dive (two-col)
-   - 主要機能の詳細
-   - スクリーンショット/デモ
-
-7. Use Cases
-   - 具体的な活用シーン
-   - ターゲットユーザー
-
-8. Getting Started
-   - 始め方（3ステップ以内）
-
-9. Comparison (comparison)
-   - 類似ツールとの違い（optional）
-
-10. Pricing / Availability
-
-11. Try It Now (closing)
-    - CTA
-    - リンク・QRコード
+sticky-grid three-col
+├── sticky-note blue   → 主要機能
+├── sticky-note yellow → 注目ポイント
+└── sticky-note pink   → 差別化要素
 ```
+
+---
+
+**→ Class & Component Examples: [design-guidelines.md](../design-guidelines.md#-examples-reference)**

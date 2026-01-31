@@ -84,7 +84,7 @@ echo ""
 
 error() {
   echo -e "${RED}✗ ERROR: $1${NC}"
-  ((ERRORS++))
+  (( ERRORS++ )) || true
   if [[ "$FIX_HINT" == true && -n "$2" ]]; then
     echo -e "  ${CYAN}→ Fix: $2${NC}"
   fi
@@ -92,7 +92,7 @@ error() {
 
 warn() {
   echo -e "${YELLOW}⚠ WARN:  $1${NC}"
-  ((WARNINGS++))
+  (( WARNINGS++ )) || true
   if [[ "$FIX_HINT" == true && -n "$2" ]]; then
     echo -e "  ${CYAN}→ Fix: $2${NC}"
   fi
@@ -109,7 +109,7 @@ info() {
 # ==========================================
 # 1. Frontmatter Checks
 # ==========================================
-echo -e "\n${CYAN}[1/7] Frontmatter${NC}"
+echo -e "\n${CYAN}[1/8] Frontmatter${NC}"
 
 if grep -q "^marp: true" "$INPUT" || grep -q "^marp:true" "$INPUT"; then
   pass "marp: true found"
@@ -126,7 +126,7 @@ fi
 # ==========================================
 # 2. Embedded CSS Check
 # ==========================================
-echo -e "\n${CYAN}[2/7] Embedded CSS${NC}"
+echo -e "\n${CYAN}[2/8] Embedded CSS${NC}"
 
 if grep -q "<style>" "$INPUT"; then
   pass "<style> tag found"
@@ -136,7 +136,7 @@ if grep -q "<style>" "$INPUT"; then
   FOUND_CLASSES=0
   for class in "${LAYOUT_CLASSES[@]}"; do
     if grep -q "section\.$class\|\.${class}[[:space:]{]" "$INPUT"; then
-      ((FOUND_CLASSES++))
+      (( FOUND_CLASSES++ )) || true
     fi
   done
 
@@ -152,7 +152,7 @@ fi
 # ==========================================
 # 3. Required Slides Check
 # ==========================================
-echo -e "\n${CYAN}[3/7] Required Slides${NC}"
+echo -e "\n${CYAN}[3/8] Required Slides${NC}"
 
 if grep -q "<!-- _class: cover -->" "$INPUT" || grep -q "<!-- _class:cover -->" "$INPUT"; then
   pass "Cover slide found"
@@ -173,17 +173,19 @@ info "Total slides: $SLIDE_COUNT"
 # ==========================================
 # 4. 6x6 Rule Check
 # ==========================================
-echo -e "\n${CYAN}[4/7] 6x6 Rule (Information Density)${NC}"
+echo -e "\n${CYAN}[4/8] 6x6 Rule (Information Density)${NC}"
 
 # Split into slides and check bullet points
 DENSE_SLIDES=0
 SLIDE_NUM=0
-while IFS= read -r -d '---' slide; do
-  ((SLIDE_NUM++))
+while IFS= read -r -d '---' slide || [[ -n "$slide" ]]; do
+  (( SLIDE_NUM++ )) || true
   # Count bullet points (lines starting with - or *)
-  BULLETS=$(echo "$slide" | grep -c "^[[:space:]]*[-*] " || echo "0")
+  BULLETS=$(echo "$slide" | grep -c "^[[:space:]]*[-*] " 2>/dev/null || true)
+  BULLETS=${BULLETS:-0}
+  BULLETS=${BULLETS//[^0-9]/}
   if [[ $BULLETS -gt 6 ]]; then
-    ((DENSE_SLIDES++))
+    (( DENSE_SLIDES++ )) || true
     if [[ $DENSE_SLIDES -le 3 ]]; then
       info "Slide $SLIDE_NUM has $BULLETS bullet points (max 6 recommended)"
     fi
@@ -201,11 +203,15 @@ fi
 # ==========================================
 # 5. Table Format Check
 # ==========================================
-echo -e "\n${CYAN}[5/7] Table Format${NC}"
+echo -e "\n${CYAN}[5/8] Table Format${NC}"
 
 # Check for Markdown tables (| at start of line, followed by content and |)
-MD_TABLES=$(grep -c "^|.*|.*|$" "$INPUT" || echo "0")
-HTML_TABLES=$(grep -c "<table" "$INPUT" || echo "0")
+MD_TABLES=$(grep -c "^|.*|.*|$" "$INPUT" 2>/dev/null || true)
+MD_TABLES=${MD_TABLES:-0}
+MD_TABLES=${MD_TABLES//[^0-9]/}
+HTML_TABLES=$(grep -c "<table" "$INPUT" 2>/dev/null || true)
+HTML_TABLES=${HTML_TABLES:-0}
+HTML_TABLES=${HTML_TABLES//[^0-9]/}
 
 if [[ $MD_TABLES -gt 0 ]]; then
   warn "$MD_TABLES Markdown table row(s) found" "Convert to HTML tables for column width control (see snippets/table.html)"
@@ -218,7 +224,7 @@ fi
 # ==========================================
 # 6. Logo Placeholder Check
 # ==========================================
-echo -e "\n${CYAN}[6/7] Logo Placeholder${NC}"
+echo -e "\n${CYAN}[6/8] Logo Placeholder${NC}"
 
 if grep -q "{{LOGO_BASE64}}" "$INPUT"; then
   warn "{{LOGO_BASE64}} placeholder not replaced" "Run: scripts/inject-logo.sh $INPUT"
@@ -234,7 +240,7 @@ fi
 # ==========================================
 # 7. Speaker Notes Check
 # ==========================================
-echo -e "\n${CYAN}[7/7] Speaker Notes${NC}"
+echo -e "\n${CYAN}[7/8] Speaker Notes${NC}"
 
 NOTES_COUNT=$(grep -c "^<!--$" "$INPUT" || echo "0")
 # More accurate: count multi-line HTML comments that aren't class directives
@@ -244,6 +250,41 @@ if [[ $NOTES_APPROX -ge 3 ]]; then
   pass "Speaker notes present (~$NOTES_APPROX sections)"
 else
   warn "Few or no speaker notes detected" "Add speaker notes: <!-- Notes here -->"
+fi
+
+# ==========================================
+# 8. Component Classes Check (new)
+# ==========================================
+echo -e "\n${CYAN}[8/8] Component Classes${NC}"
+
+# Check for recommended component usage
+COMPONENT_CLASSES=("lab-card" "sticky-note" "sticky-grid" "gradient-bg" "accent-gradient" "kpi-card" "flow-step")
+FOUND_COMPONENTS=0
+COMPONENT_LIST=""
+
+for class in "${COMPONENT_CLASSES[@]}"; do
+  if grep -q "class=\"[^\"]*${class}[^\"]*\"\|class: ${class}\|_class:.*${class}" "$INPUT"; then
+    (( FOUND_COMPONENTS++ )) || true
+    COMPONENT_LIST="${COMPONENT_LIST}${class}, "
+  fi
+done
+
+if [[ $FOUND_COMPONENTS -ge 2 ]]; then
+  COMPONENT_LIST=${COMPONENT_LIST%, }
+  pass "Component classes used ($FOUND_COMPONENTS: ${COMPONENT_LIST})"
+elif [[ $FOUND_COMPONENTS -eq 1 ]]; then
+  COMPONENT_LIST=${COMPONENT_LIST%, }
+  info "1 component class used: ${COMPONENT_LIST}"
+else
+  info "No component classes (lab-card, sticky-note, etc.) - plain slides"
+fi
+
+# Check gradient-bg usage for content slides
+CONTENT_SLIDES=$(grep -c "^---$" "$INPUT" || echo "0")
+GRADIENT_SLIDES=$(grep -c "gradient-bg\|accent-gradient" "$INPUT" || echo "0")
+
+if [[ $CONTENT_SLIDES -gt 4 && $GRADIENT_SLIDES -eq 0 ]]; then
+  info "Consider using 'gradient-bg' class for visual variety"
 fi
 
 # ==========================================
