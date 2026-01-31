@@ -28,7 +28,7 @@ user-invocable: true
 | --format | md, pdf, html, pptx (default: md) |
 | --notes | Generate speaker notes (default: true) |
 | --skip-selection | Skip interactive selection, use defaults |
-| -o | Output path (default: ./slides.md) |
+| -o | Output path (default: ./slides.md in working directory) |
 
 ## Selection Flow
 
