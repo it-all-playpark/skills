@@ -32,7 +32,7 @@ if [[ ! -f "$BODY_FILE" ]]; then
     die_json "Body file not found: $BODY_FILE"
 fi
 
-require_cmd "gh" "GitHub CLI (gh) not installed. Install: brew install gh"
+require_gh_auth
 
 BODY=$(cat "$BODY_FILE")
 
