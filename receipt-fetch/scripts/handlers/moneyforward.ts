@@ -38,8 +38,11 @@ export class MoneyForwardHandler extends BaseHandler {
       }
     } catch {
       this.log("Fixed selector login failed, trying AI fallback for login");
+      // Note: AI fallback fills the form fields; credentials are passed separately via page.fill
+      await page.fill('input[type="email"], input[name="email"], #email', credentials.username);
+      await page.fill('input[type="password"], input[name="password"], #password', credentials.password);
       await aiAction(
-        `MoneyForwardにログインしてください。メールアドレスは${credentials.username}、パスワードは${credentials.password}です。`
+        `ログインフォームが入力済みです。ログインボタンをクリックしてログインを完了してください。`
       );
     }
 

@@ -47,8 +47,11 @@ export class AmazonHandler extends BaseHandler {
       }
     } catch {
       this.log("Fixed selector login failed, trying AI");
+      // Note: AI fallback fills the form fields; credentials are passed separately via page.fill
+      await page.fill('input[type="email"], input[name="email"], #ap_email', credentials.username);
+      await page.fill('input[type="password"], input[name="password"], #ap_password', credentials.password);
       await aiAction(
-        `Amazonにログインしてください。メールアドレスは${credentials.username}、パスワードは${credentials.password}です。`
+        `ログインフォームが入力済みです。ログインボタンをクリックしてログインを完了してください。`
       );
     }
 

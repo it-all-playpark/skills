@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 export interface Credentials {
   username: string;
@@ -8,7 +8,7 @@ export interface Credentials {
 
 function runOp(args: string[]): string {
   try {
-    const result = execSync(`op ${args.join(" ")}`, {
+    const result = execFileSync("op", args, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -26,7 +26,7 @@ export function getCredentials(
   const username = runOp([
     "item",
     "get",
-    `"${itemName}"`,
+    itemName,
     "--fields",
     "username",
   ]);
@@ -34,7 +34,7 @@ export function getCredentials(
   const password = runOp([
     "item",
     "get",
-    `"${itemName}"`,
+    itemName,
     "--fields",
     "password",
   ]);
@@ -42,7 +42,7 @@ export function getCredentials(
   let totp: string | undefined;
   if (needsTotp) {
     try {
-      totp = runOp(["item", "get", `"${itemName}"`, "--otp"]);
+      totp = runOp(["item", "get", itemName, "--otp"]);
     } catch {
       console.warn(`TOTP not available for ${itemName}`);
     }

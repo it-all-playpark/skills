@@ -31,8 +31,11 @@ export class JREastHandler extends BaseHandler {
       await page.waitForLoadState("networkidle");
     } catch {
       this.log("Fixed selector login failed, trying AI");
+      // Note: AI fallback fills the form fields; credentials are passed separately via page.fill
+      await page.fill('input[name="userId"], #txtUserID, #userId', credentials.username);
+      await page.fill('input[name="password"], #txtPassword, #password', credentials.password);
       await aiAction(
-        `えきねっとにログインしてください。ユーザーIDは${credentials.username}、パスワードは${credentials.password}です。`
+        `ログインフォームが入力済みです。ログインボタンをクリックしてログインを完了してください。`
       );
     }
 
