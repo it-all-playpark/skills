@@ -8,6 +8,16 @@ import {
   waitForSelector,
 } from "../lib/browser.js";
 
+export function interpolateCredentials(
+  value: string,
+  credentials: { username: string; password: string; totp?: string }
+): string {
+  return value
+    .replace(/\{\{username\}\}/g, credentials.username)
+    .replace(/\{\{password\}\}/g, credentials.password)
+    .replace(/\{\{totp\}\}/g, credentials.totp ?? "");
+}
+
 export interface FetchResult {
   service: string;
   success: boolean;
@@ -123,11 +133,7 @@ export abstract class BaseHandler {
   }
 
   protected interpolate(value: string): string {
-    const { credentials } = this.ctx;
-    return value
-      .replace(/\{\{username\}\}/g, credentials.username)
-      .replace(/\{\{password\}\}/g, credentials.password)
-      .replace(/\{\{totp\}\}/g, credentials.totp ?? "");
+    return interpolateCredentials(value, this.ctx.credentials);
   }
 
   protected log(message: string, level: "info" | "error" = "info"): void {

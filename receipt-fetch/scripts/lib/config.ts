@@ -12,7 +12,7 @@ const StepSchema = z.object({
   timeout: z.number().optional(),
 });
 
-const ServiceConfigSchema = z.object({
+export const ServiceConfigSchema = z.object({
   enabled: z.boolean().default(true),
   op_item: z.string().describe("1Password item name for credentials"),
   totp: z.boolean().default(false),
@@ -24,7 +24,7 @@ const ServiceConfigSchema = z.object({
     .optional(),
 });
 
-const ConfigSchema = z.object({
+export const ConfigSchema = z.object({
   output_dir: z.string().default("~/Documents/receipts"),
   services: z.record(z.string(), ServiceConfigSchema),
 });
@@ -33,7 +33,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 export type ServiceConfig = z.infer<typeof ServiceConfigSchema>;
 export type Step = z.infer<typeof StepSchema>;
 
-function expandPath(path: string): string {
+export function expandPath(path: string): string {
   if (path.startsWith("~")) {
     return resolve(homedir(), path.slice(2));
   }
