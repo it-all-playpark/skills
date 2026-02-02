@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "issue": 4,
+  "branch": "feature/issue-4-m",
+  "worktree": "/Users/naramotoyuuji/ghq/github.com/it-all-playpark/skills-worktrees/feature-issue-4-m",
+  "base_branch": "main",
+  "started_at": "2026-02-02T02:51:21Z",
+  "updated_at": "2026-02-02T03:00:54Z",
+  "current_phase": "5_commit",
+  "phases": {
+    "1_prepare": {
+      "status": "done",
+      "started_at": "2026-02-02T02:51:21Z",
+      "completed_at": "2026-02-02T02:51:31Z",
+      "result": "Worktree created at /Users/naramotoyuuji/ghq/github.com/it-all-playpark/skills-worktrees/feature-issue-4-m"
+    },
+    "2_analyze": {
+      "status": "done",
+      "started_at": "2026-02-02T02:51:36Z",
+      "completed_at": "2026-02-02T02:51:59Z",
+      "result": "Issue analyzed: receipt-fetch skill with Stagehand + 1Password CLI, MVP for MoneyForward/JR East/Amazon"
+    },
+    "3_implement": {
+      "status": "done",
+      "started_at": "2026-02-02T02:56:16Z",
+      "completed_at": "2026-02-02T03:00:23Z",
+      "result": "Implemented receipt-fetch skill with Stagehand, 1Password CLI, handlers for MoneyForward/JR-East/Amazon"
+    },
+    "4_validate": {
+      "status": "done",
+      "started_at": "2026-02-02T03:00:28Z",
+      "completed_at": "2026-02-02T03:00:49Z",
+      "result": "TypeScript typecheck passed, all files created"
+    },
+    "5_commit": {
+      "status": "in_progress",
+      "started_at": "2026-02-02T03:00:54Z"
+    },
+    "6_pr": {
+      "status": "pending"
+    }
+  },
+  "next_actions": [
+    "Run dev-issue-analyze"
+  ],
+  "decisions": [],
+  "config": {
+    "strategy": "tdd",
+    "depth": "standard",
+    "lang": "ja",
+    "env_mode": "hardlink"
+  }
+}

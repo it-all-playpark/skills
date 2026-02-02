@@ -1,0 +1,23 @@
+{
+  "name": "receipt-fetch",
+  "version": "1.0.0",
+  "description": "Automated receipt/invoice fetching from web services",
+  "type": "module",
+  "scripts": {
+    "fetch": "npx tsx scripts/fetch.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@browserbasehq/stagehand": "^1.13.0",
+    "commander": "^12.1.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
