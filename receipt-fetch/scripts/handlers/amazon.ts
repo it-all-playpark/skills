@@ -7,8 +7,8 @@ import {
 } from "../lib/browser.js";
 import { z } from "zod";
 
-const LOGIN_URL = "https://www.amazon.co.jp/ap/signin";
-const ORDERS_URL = "https://www.amazon.co.jp/gp/css/order-history";
+const LOGIN_URL = "https://www.amazon.co.jp/-/en/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fwww.amazon.co.jp%2F%3Fref_%3Dnav_signin&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=jpflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0";
+const ORDERS_URL = "https://www.amazon.co.jp/gp/your-account/order-history";
 
 export class AmazonHandler extends BaseHandler {
   constructor(ctx: HandlerContext) {
