@@ -38,25 +38,24 @@ Using [review-sections.md](references/review-sections.md) checklist, determine:
 - **Decision**: `approve` (LGTM) or `request-changes` (issues found)
 - **Review body**: Markdown formatted review
 
-### Step 3: Submit Directly
+### Step 3: Submit Review
 
-**Important**: Use a single Bash call with fallback to prevent duplicate submissions.
+1. Write review body to a temporary file
+2. Call submit script with decision
 
 ```bash
-# Single command with fallback (DO NOT run separate commands)
-gh pr review <pr-number> --approve --body "$(cat <<'EOF'
+# Write review to temp file
+cat > /tmp/pr-review-body.md <<'EOF'
 <review-content>
 EOF
-)" 2>&1 || gh pr review <pr-number> --comment --body "$(cat <<'EOF'
-<review-content>
-EOF
-)"
+
+# Submit review (handles own-PR fallback automatically)
+~/.claude/skills/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-review-body.md
 ```
 
-⚠️ **Do NOT execute additional review commands after the fallback succeeds.**
-
-Options:
-- `--approve` for LGTM (auto-falls back to `--comment` for own PRs)
-- `--request-changes` for issues found
+**Decision options**:
+- `approve` - LGTM (auto-falls back to comment for own PRs)
+- `request-changes` - Issues found
+- `comment` - Neutral feedback
 
 Report PR URL when complete.
