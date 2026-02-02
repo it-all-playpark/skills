@@ -7,16 +7,20 @@ import {
 } from "../lib/browser.js";
 import { z } from "zod";
 
-const LOGIN_URL = "https://www.eki-net.com/Personal/member/Login.aspx";
+const LOGIN_URL = "https://id.jreast.co.jp/idcs/contents/login?AUTHENTICATED=http%3A%2F%2Ffo-alb.pri.nsc-idcs.net%2Fsso%2FInternalAuthoriEndpoint%3FtranVerifyCode%3DzLf1L96Q6N87stCn%26acr_values%3D2%26redirect_uri%3Dhttps%253A%252F%252Fwww.eki-net.com%252FPersonal%252Fmember%252Fwb%252FJreid%252FJreidInfomationLink%253FSeq%253D501%26state%3DtMU%26client_name%3D%25E3%2581%2588%25E3%2581%258D%25E3%2581%25AD%25E3%2581%25A3%25E3%2581%25A8%26client_id%3DRelyingParty1002&SITE_ID=co&AUTH_TYPE=AUTH_THREEKEY&MESSAGE_AUTH=OFhPEXKf5%2B%2BYfKijCDut7A%3D%3D";
 const HISTORY_URL =
-  "https://www.eki-net.com/Personal/member/wb/PurchaseHistory/Index";
+  "https://www.eki-net.com/Personal/reserve/wb/ApplicationHistoryList/Index";
 
 export class JREastHandler extends BaseHandler {
   constructor(ctx: HandlerContext) {
     super("jr-east", ctx);
   }
 
-  async login(): Promise<void> {
+  getLoginPageIndicator(): string {
+    return "login";
+  }
+
+  async tryAutoLogin(): Promise<boolean> {
     const { page, credentials } = this.ctx;
 
     await page.goto(LOGIN_URL);
@@ -31,7 +35,6 @@ export class JREastHandler extends BaseHandler {
       await page.waitForLoadState("networkidle");
     } catch {
       this.log("Fixed selector login failed, trying AI");
-      // Note: AI fallback fills the form fields; credentials are passed separately via page.fill
       await page.fill('input[name="userId"], #txtUserID, #userId', credentials.username);
       await page.fill('input[name="password"], #txtPassword, #password', credentials.password);
       await aiAction(
@@ -41,9 +44,7 @@ export class JREastHandler extends BaseHandler {
 
     await page.waitForTimeout(2000);
     const currentUrl = page.url();
-    if (currentUrl.includes("Login")) {
-      throw new Error("Login appears to have failed");
-    }
+    return !currentUrl.toLowerCase().includes("login");
   }
 
   async fetchReceipts(): Promise<string[]> {

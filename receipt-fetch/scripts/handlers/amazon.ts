@@ -15,7 +15,11 @@ export class AmazonHandler extends BaseHandler {
     super("amazon", ctx);
   }
 
-  async login(): Promise<void> {
+  getLoginPageIndicator(): string {
+    return "signin";
+  }
+
+  async tryAutoLogin(): Promise<boolean> {
     const { page, credentials, config } = this.ctx;
 
     await page.goto(LOGIN_URL);
@@ -47,7 +51,6 @@ export class AmazonHandler extends BaseHandler {
       }
     } catch {
       this.log("Fixed selector login failed, trying AI");
-      // Note: AI fallback fills the form fields; credentials are passed separately via page.fill
       await page.fill('input[type="email"], input[name="email"], #ap_email', credentials.username);
       await page.fill('input[type="password"], input[name="password"], #ap_password', credentials.password);
       await aiAction(
@@ -56,9 +59,7 @@ export class AmazonHandler extends BaseHandler {
     }
 
     const currentUrl = page.url();
-    if (currentUrl.includes("signin") || currentUrl.includes("ap/")) {
-      throw new Error("Login appears to have failed");
-    }
+    return !currentUrl.includes("signin") && !currentUrl.includes("/ap/");
   }
 
   async fetchReceipts(): Promise<string[]> {

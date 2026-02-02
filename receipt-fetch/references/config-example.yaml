@@ -9,7 +9,7 @@ services:
   # MoneyForward - 会計/経費精算
   moneyforward:
     enabled: true
-    op_item: "MoneyForward Login"  # 1Password item name
+    op_item: "MoneyForward Login" # 1Password item name
     totp: true
     fallback:
       ai_prompt: "経費精算の請求書一覧ページに移動し、当月の請求書PDFをすべてダウンロード"
@@ -17,7 +17,7 @@ services:
   # JR East - えきねっと
   jr-east:
     enabled: true
-    op_item: "えきねっと Login"
+    op_item: "Jreast"
     totp: false
     fallback:
       ai_prompt: "購入履歴ページで当月の領収書をダウンロード"

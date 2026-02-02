@@ -33,7 +33,11 @@ export interface HandlerContext {
   month: string;
   dryRun: boolean;
   verbose: boolean;
+  headed: boolean;
 }
+
+/** Default timeout for manual login (2 minutes) */
+const DEFAULT_LOGIN_TIMEOUT = 120000;
 
 export abstract class BaseHandler {
   protected serviceName: string;
@@ -44,8 +48,68 @@ export abstract class BaseHandler {
     this.ctx = ctx;
   }
 
-  abstract login(): Promise<void>;
+  /** URL pattern that indicates user is NOT logged in (e.g., "sign_in", "login") */
+  abstract getLoginPageIndicator(): string;
+
+  /** Attempt automatic login with stored credentials */
+  abstract tryAutoLogin(): Promise<boolean>;
+
   abstract fetchReceipts(): Promise<string[]>;
+
+  /**
+   * Main login flow:
+   * 1. Try auto login
+   * 2. If failed and --headed, wait for manual login
+   * 3. If failed and headless, throw error
+   */
+  async login(): Promise<void> {
+    this.log("Attempting auto login...");
+    const autoLoginSuccess = await this.tryAutoLogin();
+
+    if (autoLoginSuccess) {
+      this.log("Auto login successful");
+      return;
+    }
+
+    if (this.ctx.headed) {
+      this.log("Auto login failed. Waiting for manual login...");
+      console.log(`\n>>> Please login to ${this.serviceName} manually in the browser window.`);
+      console.log(`>>> Waiting for login completion...`);
+      await this.waitForManualLogin();
+      this.log("Manual login completed");
+      return;
+    }
+
+    throw new Error(
+      `Auto login failed for ${this.serviceName}. Run with --headed for manual login.`
+    );
+  }
+
+  /**
+   * Wait for user to complete manual login in headed mode
+   */
+  protected async waitForManualLogin(timeout = DEFAULT_LOGIN_TIMEOUT): Promise<void> {
+    const startTime = Date.now();
+    const pollInterval = 1000;
+
+    while (Date.now() - startTime < timeout) {
+      if (await this.isLoggedIn()) {
+        return;
+      }
+      await this.ctx.page.waitForTimeout(pollInterval);
+    }
+
+    throw new Error(`Manual login timeout after ${timeout / 1000} seconds`);
+  }
+
+  /**
+   * Check if currently logged in by examining URL
+   */
+  protected async isLoggedIn(): Promise<boolean> {
+    const indicator = this.getLoginPageIndicator();
+    const currentUrl = this.ctx.page.url();
+    return !currentUrl.includes(indicator);
+  }
 
   async execute(): Promise<FetchResult> {
     const result: FetchResult = {

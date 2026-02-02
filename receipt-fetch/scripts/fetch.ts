@@ -144,6 +144,7 @@ async function main() {
         month: options.month,
         dryRun: options.dryRun,
         verbose: options.verbose,
+        headed: options.headed,
       });
 
       const result = await handler.execute();

@@ -8,14 +8,18 @@ import {
 import { z } from "zod";
 
 const LOGIN_URL = "https://id.moneyforward.com/sign_in";
-const EXPENSE_URL = "https://expense.moneyforward.com";
+const EXPENSE_URL = "https://erp.moneyforward.com/office_usage_detail_statements";
 
 export class MoneyForwardHandler extends BaseHandler {
   constructor(ctx: HandlerContext) {
     super("moneyforward", ctx);
   }
 
-  async login(): Promise<void> {
+  getLoginPageIndicator(): string {
+    return "sign_in";
+  }
+
+  async tryAutoLogin(): Promise<boolean> {
     const { page, credentials, config } = this.ctx;
 
     await page.goto(LOGIN_URL);
@@ -38,7 +42,6 @@ export class MoneyForwardHandler extends BaseHandler {
       }
     } catch {
       this.log("Fixed selector login failed, trying AI fallback for login");
-      // Note: AI fallback fills the form fields; credentials are passed separately via page.fill
       await page.fill('input[type="email"], input[name="email"], #email', credentials.username);
       await page.fill('input[type="password"], input[name="password"], #password', credentials.password);
       await aiAction(
@@ -47,11 +50,7 @@ export class MoneyForwardHandler extends BaseHandler {
     }
 
     const currentUrl = page.url();
-    if (currentUrl.includes("sign_in")) {
-      throw new Error("Login appears to have failed - still on login page");
-    }
-
-    this.log("Login successful");
+    return !currentUrl.includes("sign_in");
   }
 
   async fetchReceipts(): Promise<string[]> {
