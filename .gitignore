@@ -1,0 +1,19 @@
+# Claude Code / Serena
+.claude/
+.serena/
+
+# Credentials & secrets
+client_secret.json
+**/client_secret*.json
+**/service-account*.json
+
+# Generated reports
+ga_report.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Packaged skills
+*.skill
