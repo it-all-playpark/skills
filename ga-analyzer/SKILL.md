@@ -5,7 +5,7 @@ description: |
   Use when: (1) GA分析、アクセス解析、サイト改善の相談,
   (2) keywords: GA4, Google Analytics, アクセス解析, PV, セッション, 直帰率, CV改善,
   (3) ユーザーがGA4のデータを分析してほしい、サイト改善のアドバイスがほしい場合。
-  Accepts args: [--property-id ID] [--oauth-client PATH] [--period 7d|30d|90d] [--focus traffic|conversion|content|all]
+  Accepts args: [--property-id ID] [--oauth-client PATH] [--start-date DATE] [--end-date DATE] [--report-type full|traffic|conversion|content]
 ---
 
 # GA4 Analyzer
