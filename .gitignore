@@ -1,0 +1,27 @@
+# Claude Code / Serena
+.claude/
+.serena/
+
+# Credentials & secrets
+client_secret.json
+**/client_secret*.json
+**/service-account*.json
+
+# Generated reports
+ga_report.json
+trends_report.json
+content_plan.json
+
+# OAuth tokens (if stored locally)
+**/ga_tokens*.json
+
+# Trends cache
+.trends_cache/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Packaged skills
+*.skill
