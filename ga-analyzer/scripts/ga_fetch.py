@@ -22,6 +22,7 @@ Options:
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -76,8 +77,9 @@ def create_oauth_client(
     if token_path.exists():
         try:
             creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: Could not load existing token ({e}), will re-authenticate")
+            creds = None
 
     # Refresh or obtain new credentials
     if creds and creds.expired and creds.refresh_token:
@@ -96,8 +98,9 @@ def create_oauth_client(
         flow = InstalledAppFlow.from_client_secrets_file(client_secrets_path, SCOPES)
         creds = flow.run_local_server(port=0)
 
-        # Save token for future use
+        # Save token for future use (owner-only permissions)
         token_path.write_text(creds.to_json())
+        os.chmod(token_path, 0o600)
         print(f"Token saved to: {token_path}")
 
     return BetaAnalyticsDataClient(credentials=creds)
