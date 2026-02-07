@@ -351,11 +351,11 @@ def main():
     parser = argparse.ArgumentParser(description="Fetch GA4 analytics data")
     parser.add_argument("--property-id", required=True, help="GA4 Property ID")
 
-    # Authentication options
+    # Authentication options (mutually exclusive; oauth-client defaults if neither specified)
     auth_group = parser.add_mutually_exclusive_group()
     auth_group.add_argument(
         "--oauth-client",
-        default=str(DEFAULT_OAUTH_CLIENT_PATH),
+        default=None,
         help="Path to OAuth client secrets JSON (default: ~/.config/ga4/client_secret.json)",
     )
     auth_group.add_argument(
@@ -381,16 +381,20 @@ def main():
 
     args = parser.parse_args()
 
+    # Apply default oauth-client path when neither auth option is specified
+    if args.oauth_client is None and args.credentials is None:
+        args.oauth_client = str(DEFAULT_OAUTH_CLIENT_PATH)
+
     # Create client based on auth method
-    if args.oauth_client:
-        print("Using OAuth 2.0 authentication...")
-        client = create_oauth_client(args.oauth_client, args.token_path)
-    else:
+    if args.credentials:
         print("Using service account authentication...")
         if not Path(args.credentials).exists():
             print(f"Error: Credentials file not found: {args.credentials}")
             sys.exit(1)
         client = create_service_account_client(args.credentials)
+    else:
+        print("Using OAuth 2.0 authentication...")
+        client = create_oauth_client(args.oauth_client, args.token_path)
 
     print(f"Connecting to GA4 property: {args.property_id}")
     print(f"Fetching {args.report_type} report...")
