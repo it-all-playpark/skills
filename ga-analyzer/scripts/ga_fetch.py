@@ -9,7 +9,7 @@ Required:
     --property-id       GA4 Property ID (e.g., 123456789)
 
 Authentication (choose one):
-    --oauth-client      Path to OAuth client secrets JSON (recommended)
+    --oauth-client      Path to OAuth client secrets JSON (default: ~/.config/ga4/client_secret.json)
     --credentials       Path to service account JSON key file (if allowed)
 
 Options:
@@ -59,6 +59,7 @@ except ImportError:
 
 SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"]
 DEFAULT_TOKEN_PATH = Path.home() / ".ga_tokens.json"
+DEFAULT_OAUTH_CLIENT_PATH = Path.home() / ".config" / "ga4" / "client_secret.json"
 
 
 def create_oauth_client(
@@ -351,10 +352,11 @@ def main():
     parser.add_argument("--property-id", required=True, help="GA4 Property ID")
 
     # Authentication options
-    auth_group = parser.add_mutually_exclusive_group(required=True)
+    auth_group = parser.add_mutually_exclusive_group()
     auth_group.add_argument(
         "--oauth-client",
-        help="Path to OAuth client secrets JSON (recommended)",
+        default=str(DEFAULT_OAUTH_CLIENT_PATH),
+        help="Path to OAuth client secrets JSON (default: ~/.config/ga4/client_secret.json)",
     )
     auth_group.add_argument(
         "--credentials",
