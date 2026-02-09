@@ -100,14 +100,7 @@ ls $WORKTREE/.env || echo "ERROR: .env not linked"
 
 ## Parallel Subtask Mode
 
-When `--task-id` is specified, dev-kickoff runs in parallel subtask mode:
-
-- **Phase 1 (git-prepare)**: SKIP -- worktree already created by dev-decompose
-- **Phase 2 (issue-analyze)**: SKIP -- scope defined in flow.json subtask definition
-- **Phase 3 (implement)**: Execute -- uses flow.json subtask scope/files/checklist
-- **Phase 4 (validate)**: Execute -- normal validation
-- **Phase 5 (commit)**: Execute -- also records `actual_files_changed` to kickoff.json
-- **Phase 6 (PR creation)**: SKIP -- PR created after integration
+When `--task-id` is specified, dev-kickoff runs in parallel subtask mode (see Phase table "Parallel Mode" column).
 
 ### Reading Subtask Scope
 

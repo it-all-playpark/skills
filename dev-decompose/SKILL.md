@@ -40,31 +40,13 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 10. Validate decomposition (validate-decomposition.sh)
 ```
 
-### Step 1-2: Analysis Intake
+### Step 1-4: Analysis & File Grouping
 
-Read the output from `dev-issue-analyze` (comprehensive depth recommended). Extract:
-- Affected files list
-- Components and modules involved
-- Acceptance criteria
-- Breaking change indicators
-
-Build a file dependency graph: which files import/reference which other files.
-
-### Step 3-4: File Grouping
-
-Partition affected files into subtasks such that:
-- Each file belongs to exactly one subtask
-- Test files go with their implementation subtask
-- Files that are tightly coupled (mutual imports) stay together
-- Each subtask has at least 1 checklist item derived from acceptance criteria
+Analyze issue, build file dependency graph, partition into subtasks. See [Decomposition Guide](references/decomposition-guide.md) for strategy and edge cases.
 
 ### Step 5-7: Contract Generation
 
-If subtasks share types or interfaces:
-1. Extract shared types into contract files (e.g., `src/types/contract.ts`)
-2. Create `feature/issue-{N}-contract` branch from base
-3. Commit contract files to the contract branch
-4. All task worktrees branch from this contract branch
+Generate contract per [Decomposition Guide](references/decomposition-guide.md). Branch: `feature/issue-{N}-contract`.
 
 ### Step 8: Worktree Creation
 
@@ -94,14 +76,11 @@ Then populate subtask entries with file assignments, checklists, and dependency 
 ~/.claude/skills/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
 ```
 
+Additionally verify manually: contract branch exists and has commits, all worktree paths exist on disk.
+
 ## Decomposition Rules
 
-1. **File exclusivity** -- Each file belongs to exactly one subtask. No file appears in two subtasks.
-2. **Test co-location** -- Test files go with their implementation subtask (e.g., `foo.test.ts` goes with `foo.ts`).
-3. **Contract isolation** -- Shared types and interfaces go to the contract branch, not to individual subtasks.
-4. **Parallel eligibility** -- Subtasks with no `depends_on` entries can run in parallel.
-5. **Minimum granularity** -- Every subtask must have at least 1 checklist item.
-6. **Tightly coupled files** -- Files with mutual imports must remain in the same subtask.
+See [Decomposition Guide](references/decomposition-guide.md) for rules (file exclusivity, test co-location, contract isolation, coupling), edge cases, and examples.
 
 ## Contract Branch Pattern
 
@@ -113,26 +92,9 @@ main --> feature/issue-{N}-contract (dev-decompose commits shared types)
   +-- feature/issue-{N}-merge (integration target)
 ```
 
-The contract branch holds shared interfaces and types that all subtasks depend on. Each task branch is created from the contract branch so that every subtask sees the shared definitions.
-
-## Validation
-
-Auto-validate the decomposition after generating flow.json:
-
-```bash
-~/.claude/skills/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
-```
-
-Validation checks:
-- No file appears in more than one subtask
-- Every subtask has at least 1 checklist item
-- All `depends_on` references point to existing subtask IDs
-- Contract branch exists and has commits
-- All worktree paths exist on disk
-
 ## Fallback
 
-If decomposition results in only 1 subtask, the issue is not worth splitting. Return a single-mode fallback signal so the caller can route to a standard (non-parallel) dev-kickoff instead.
+If decomposition yields 1 subtask, return fallback (see [Decomposition Guide](references/decomposition-guide.md) for criteria):
 
 ```json
 {"status": "single_fallback", "subtask_count": 1, "reason": "All files are tightly coupled"}
@@ -153,54 +115,9 @@ When `--flow-state` is `auto`, the path defaults to `$WORKTREE_BASE/.claude/flow
 
 flow.json is created at `$WORKTREE_BASE/.claude/flow.json`.
 
-```json
-{
-  "version": "1.0.0",
-  "issue": 42,
-  "status": "implementing",
-  "subtasks": [
-    {
-      "id": "task1",
-      "scope": "User model",
-      "files": ["src/models/user.ts", "src/models/user.test.ts"],
-      "checklist": [
-        {"item": "Define User entity with required fields", "done": false},
-        {"item": "Add validation logic", "done": false}
-      ],
-      "depends_on": [],
-      "worktree": "/path/to/worktrees/feature-issue-42-task1",
-      "branch": "feature/issue-42-task1",
-      "status": "pending"
-    },
-    {
-      "id": "task2",
-      "scope": "User API endpoints",
-      "files": ["src/routes/user.ts", "src/routes/user.test.ts"],
-      "checklist": [
-        {"item": "Create GET /users endpoint", "done": false},
-        {"item": "Create POST /users endpoint", "done": false}
-      ],
-      "depends_on": ["task1"],
-      "worktree": "/path/to/worktrees/feature-issue-42-task2",
-      "branch": "feature/issue-42-task2",
-      "status": "pending"
-    }
-  ],
-  "contract": {
-    "files": ["src/types/user.ts"],
-    "branch": "feature/issue-42-contract"
-  },
-  "config": {
-    "base_branch": "main",
-    "strategy": "tdd",
-    "depth": "standard",
-    "lang": "ja",
-    "env_mode": "hardlink"
-  },
-  "created_at": "2026-02-09T10:00:00Z",
-  "updated_at": "2026-02-09T10:00:00Z"
-}
-```
+Structure: `{ version, issue, status, subtasks[], contract, config, created_at, updated_at }`
+
+See [flow.schema.json](../_lib/schemas/flow.schema.json) for full schema.
 
 Return value:
 ```json

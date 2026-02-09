@@ -110,54 +110,19 @@ Skill: dev-validate --worktree $MERGE_WORKTREE
   integration --field validation --value "passed"
 ```
 
-## Merge Order Algorithm
+## Merge Order
 
-```
-Given subtasks with depends_on:
-  task1: depends_on []
-  task2: depends_on [task1]
-  task3: depends_on []
-
-Merge order: task1, task3, task2 (independent first, then dependents)
-```
-
-The algorithm performs a topological sort on the dependency graph. Subtasks with no
-dependencies (leaves) are merged first. Subtasks that depend on others are merged
-after all their dependencies have been merged. This ensures that dependent changes
-are applied on top of their prerequisites.
-
-## Planned vs Actual File Change Detection
-
-```bash
-# For each subtask, compare:
-#   planned: flow.json .subtasks[].files
-#   actual:  flow.json .subtasks[].actual_files_changed
-# Warn on differences (unexpected files changed)
-```
-
-This drift detection serves as an early warning system. Unexpected file changes may
-indicate scope creep or unintended side effects. Missing planned changes may indicate
-incomplete implementation.
-
-## Type Check Detection
-
-```bash
-# Detect project type:
-if [ -f "tsconfig.json" ]; then npx tsc --noEmit
-elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then mypy .
-elif [ -f "go.mod" ]; then go vet ./...
-fi
-```
+Topological sort: independent subtasks first, then dependents. See [Integration Guide](references/integration-guide.md) for details.
 
 ## Error Handling
 
 | Scenario | Action |
 |----------|--------|
-| Subtask not completed | Abort, report which subtasks pending |
-| Merge conflict (auto-resolvable) | Resolve, continue, record in flow.json |
-| Merge conflict (unresolvable) | Stop, request user intervention |
-| Type check fails | Report errors, attempt fix |
-| Integration test fails | Report, retry with --fix |
+| Subtask not completed | Abort, report pending subtasks |
+| Unresolvable merge conflict | **Stop, request user intervention** |
+| Type check / test fails | Report, attempt fix with --fix |
+
+See [Integration Guide](references/integration-guide.md) for conflict resolution patterns and recovery procedures.
 
 ## Args
 

@@ -72,37 +72,9 @@ For large issues requiring decomposition. Activated with `--parallel` flag.
 | 7 | `Skill: git-pr` | PR URL available |
 | 8 | `Skill: pr-iterate` | LGTM or max iterations |
 
-### Parallel Mode Checklist
-
-```
-[ ] Step 1: Skill: dev-issue-analyze $ISSUE --depth comprehensive
-[ ] Step 2: Skill: dev-decompose $ISSUE --base $BASE --env-mode $ENV_MODE
-[ ] Step 3: Check: subtask_count > 1? (if 1 → fallback to single mode)
-[ ] Step 4: Launch dev-kickoff x N in parallel (batch by depends_on)
-[ ] Step 5: Aggregate kickoff.json results into flow.json
-[ ] Step 6: Skill: dev-integrate --flow-state $FLOW_STATE
-[ ] Step 7: Skill: git-pr $ISSUE --base $BASE --worktree $MERGE_WORKTREE
-[ ] Step 8: Skill: pr-iterate $PR_URL --max-iterations $MAX
-```
-
 ### Batch Scheduling (Step 4)
 
-Launch subtasks in dependency-ordered batches using Task tool:
-
-```
-Given subtasks with depends_on:
-  task1: depends_on []     ─┐
-  task3: depends_on []     ─┤ Batch 1 (parallel)
-  task2: depends_on [task1] ─  Batch 2 (after batch 1)
-
-Schedule:
-  Batch 1: Task(dev-kickoff task1), Task(dev-kickoff task3) — parallel
-  Wait for batch 1 completion
-  Batch 2: Task(dev-kickoff task2)
-  Wait for batch 2 completion
-```
-
-Each dev-kickoff invocation in parallel mode:
+Launch subtasks in dependency-ordered batches (independent first, then dependents). Each invocation:
 
 ```bash
 Skill: dev-kickoff $ISSUE --worktree $SUBTASK_WORKTREE --task-id $TASK_ID --flow-state $FLOW_STATE --strategy $STRATEGY
@@ -110,14 +82,10 @@ Skill: dev-kickoff $ISSUE --worktree $SUBTASK_WORKTREE --task-id $TASK_ID --flow
 
 ### Result Aggregation (Step 5)
 
-After each batch completes, read each subtask's kickoff.json and update flow.json:
+For each completed subtask, read kickoff.json and update flow.json:
 
 ```bash
-# For each completed subtask:
-# 1. Read actual_files_changed from kickoff.json
 CHANGED=$(jq -r '.actual_files_changed // [] | join(",")' $SUBTASK_WORKTREE/.claude/kickoff.json)
-
-# 2. Update flow.json
 ~/.claude/skills/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   subtask $TASK_ID --status completed --files-changed "$CHANGED"
 ```
@@ -153,19 +121,7 @@ CHANGED=$(jq -r '.actual_files_changed // [] | join(",")' $SUBTASK_WORKTREE/.cla
 
 **This workflow does NOT merge the PR.** After achieving LGTM, the user should manually merge using `gh pr merge` or the GitHub UI.
 
-## State Management
-
-### Single Mode
-State in `$WORKTREE/.claude/kickoff.json` (same as before).
-
-### Parallel Mode
-Two-layer state:
-- `$WORKTREE_BASE/.claude/flow.json` — overall flow state (dev-flow writes)
-- `$SUBTASK_WORKTREE/.claude/kickoff.json` — per-subtask phase state (each dev-kickoff writes)
-
-Single-writer principle: only dev-flow writes to flow.json. Subagents are read-only.
-
-### State Recovery
+## State Recovery
 
 After auto-compact, check state:
 
@@ -179,13 +135,7 @@ After auto-compact, check state:
 
 ## Error Handling
 
-| Scenario | Action |
-|----------|--------|
-| Subtask fails | Report which task failed, do not proceed to integration |
-| Merge conflict (auto-resolvable) | dev-integrate resolves automatically |
-| Merge conflict (unresolvable) | Stop, request user intervention |
-| Type check fails after merge | Report errors, attempt fix |
-| Integration tests fail | Retry with --fix |
+See [Workflow Details](references/workflow-detail.md) for error handling matrix.
 
 ## Worktree Cleanup
 
