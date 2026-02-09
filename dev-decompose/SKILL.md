@@ -157,14 +157,16 @@ flow.json is created at `$WORKTREE_BASE/.claude/flow.json`.
 {
   "version": "1.0.0",
   "issue": 42,
-  "status": "decomposed",
-  "contract_branch": "feature/issue-42-contract",
+  "status": "implementing",
   "subtasks": [
     {
       "id": "task1",
-      "title": "Implement user model",
+      "scope": "User model",
       "files": ["src/models/user.ts", "src/models/user.test.ts"],
-      "checklist": ["Define User entity with required fields", "Add validation logic"],
+      "checklist": [
+        {"item": "Define User entity with required fields", "done": false},
+        {"item": "Add validation logic", "done": false}
+      ],
       "depends_on": [],
       "worktree": "/path/to/worktrees/feature-issue-42-task1",
       "branch": "feature/issue-42-task1",
@@ -172,9 +174,12 @@ flow.json is created at `$WORKTREE_BASE/.claude/flow.json`.
     },
     {
       "id": "task2",
-      "title": "Implement user API endpoints",
+      "scope": "User API endpoints",
       "files": ["src/routes/user.ts", "src/routes/user.test.ts"],
-      "checklist": ["Create GET /users endpoint", "Create POST /users endpoint"],
+      "checklist": [
+        {"item": "Create GET /users endpoint", "done": false},
+        {"item": "Create POST /users endpoint", "done": false}
+      ],
       "depends_on": ["task1"],
       "worktree": "/path/to/worktrees/feature-issue-42-task2",
       "branch": "feature/issue-42-task2",
@@ -186,7 +191,10 @@ flow.json is created at `$WORKTREE_BASE/.claude/flow.json`.
     "branch": "feature/issue-42-contract"
   },
   "config": {
-    "base": "main",
+    "base_branch": "main",
+    "strategy": "tdd",
+    "depth": "standard",
+    "lang": "ja",
     "env_mode": "hardlink"
   },
   "created_at": "2026-02-09T10:00:00Z",

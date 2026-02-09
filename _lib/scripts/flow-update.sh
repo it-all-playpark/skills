@@ -19,6 +19,9 @@ require_cmd jq
 FLOW_STATE=""
 ACTION=""
 ACTION_ARG=""
+TMP_FILES=()
+cleanup_tmp() { for f in "${TMP_FILES[@]}"; do rm -f "$f" 2>/dev/null; done; }
+trap cleanup_tmp EXIT
 
 # Parse leading options
 ARGS=()
@@ -33,7 +36,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-set -- "${ARGS[@]}"
+if [[ ${#ARGS[@]} -gt 0 ]]; then
+    set -- "${ARGS[@]}"
+else
+    set --
+fi
 
 [[ -n "$FLOW_STATE" ]] || die_json "flow.json path required (--flow-state)" 1
 [[ -f "$FLOW_STATE" ]] || die_json "flow.json not found at: $FLOW_STATE" 1
@@ -47,7 +54,7 @@ case "$ACTION" in
     status)
         NEW_STATUS="${1:-}"
         [[ -n "$NEW_STATUS" ]] || die_json "Status value required" 1
-        TMP=$(mktemp)
+        TMP=$(mktemp); TMP_FILES+=("$TMP")
         jq --arg s "$NEW_STATUS" --arg now "$NOW" \
             '.status = $s | .updated_at = $now' "$FLOW_STATE" > "$TMP" && mv "$TMP" "$FLOW_STATE"
         echo "{\"status\":\"updated\",\"field\":\"status\",\"value\":\"$NEW_STATUS\"}"
@@ -68,7 +75,7 @@ case "$ACTION" in
             esac
         done
 
-        TMP=$(mktemp)
+        TMP=$(mktemp); TMP_FILES+=("$TMP")
         if [[ -n "$SUB_STATUS" ]]; then
             jq --arg id "$TASK_ID" --arg s "$SUB_STATUS" --arg now "$NOW" \
                 '(.subtasks[] | select(.id == $id)).status = $s | .updated_at = $now' \
@@ -79,7 +86,7 @@ case "$ACTION" in
         if [[ -n "$FILES_CHANGED" ]]; then
             # Convert comma-separated to JSON array
             FILES_JSON=$(echo "$FILES_CHANGED" | tr ',' '\n' | jq -R . | jq -s '.')
-            TMP=$(mktemp)
+            TMP=$(mktemp); TMP_FILES+=("$TMP")
             jq --arg id "$TASK_ID" --argjson files "$FILES_JSON" --arg now "$NOW" \
                 '(.subtasks[] | select(.id == $id)).actual_files_changed = $files | .updated_at = $now' \
                 "$FLOW_STATE" > "$TMP" && mv "$TMP" "$FLOW_STATE"
@@ -100,7 +107,7 @@ case "$ACTION" in
         [[ -n "$FIELD" ]] || die_json "Integration field required (--field)" 1
         [[ -n "$VALUE" ]] || die_json "Integration value required (--value)" 1
 
-        TMP=$(mktemp)
+        TMP=$(mktemp); TMP_FILES+=("$TMP")
         jq --arg f "$FIELD" --arg v "$VALUE" --arg now "$NOW" \
             '.integration[$f] = $v | .updated_at = $now' "$FLOW_STATE" > "$TMP" && mv "$TMP" "$FLOW_STATE"
         echo "{\"status\":\"updated\",\"field\":\"integration.$FIELD\",\"value\":\"$VALUE\"}"
@@ -119,7 +126,7 @@ case "$ACTION" in
         [[ -n "$PR_NUMBER" ]] || die_json "PR number required (--number)" 1
         [[ -n "$PR_URL" ]] || die_json "PR URL required (--url)" 1
 
-        TMP=$(mktemp)
+        TMP=$(mktemp); TMP_FILES+=("$TMP")
         jq --argjson num "$PR_NUMBER" --arg url "$PR_URL" --arg now "$NOW" \
             '.pr = {number: $num, url: $url, created_at: $now} | .updated_at = $now' \
             "$FLOW_STATE" > "$TMP" && mv "$TMP" "$FLOW_STATE"

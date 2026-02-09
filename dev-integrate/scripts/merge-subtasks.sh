@@ -41,8 +41,8 @@ fi
 
 INCOMPLETE=$(jq -r '.subtasks[] | select(.status != "completed") | .id' "$FLOW_STATE")
 if [[ -n "$INCOMPLETE" ]]; then
-    INCOMPLETE_JSON=$(echo "$INCOMPLETE" | json_array)
-    die_json "Subtasks not completed: $INCOMPLETE_JSON" 1
+    INCOMPLETE_LIST=$(echo "$INCOMPLETE" | tr '\n' ',' | sed 's/,$//')
+    die_json "Subtasks not completed: $INCOMPLETE_LIST" 1
 fi
 
 # ============================================================================

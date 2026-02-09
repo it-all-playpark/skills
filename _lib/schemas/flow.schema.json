@@ -3,7 +3,7 @@
   "title": "Flow State",
   "description": "State persistence for dev-flow parallel subtask orchestration",
   "type": "object",
-  "required": ["version", "issue", "status", "subtasks", "config", "started_at"],
+  "required": ["version", "issue", "status", "subtasks", "config"],
   "properties": {
     "version": {
       "type": "string",
@@ -19,10 +19,10 @@
       "enum": ["analyzing", "decomposing", "implementing", "integrating", "pr", "iterating", "completed", "failed"],
       "description": "Overall flow status"
     },
-    "started_at": {
+    "created_at": {
       "type": "string",
       "format": "date-time",
-      "description": "ISO 8601 timestamp when flow started"
+      "description": "ISO 8601 timestamp when flow was created"
     },
     "updated_at": {
       "type": "string",
@@ -52,7 +52,7 @@
           "type": "string",
           "description": "Contract branch name (e.g. feature/issue-42-contract)"
         },
-        "interfaces": {
+        "files": {
           "type": "array",
           "items": { "type": "string" },
           "description": "Files containing shared interface/type definitions"
@@ -88,7 +88,7 @@
       "properties": {
         "strategy": {
           "type": "string",
-          "enum": ["tdd", "bdd", "ddd"],
+          "enum": ["tdd", "bdd", "ddd", "none"],
           "default": "tdd"
         },
         "depth": {

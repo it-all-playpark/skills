@@ -73,31 +73,30 @@ if [[ -n "$AFFECTED" ]]; then
     fi
 fi
 
-# 5. Check for circular dependencies (topological sort via DFS)
+# 5. Check for circular dependencies (Kahn's algorithm: if not all nodes processed, cycle exists)
 CIRCULAR=$(jq -r '
-  def has_cycle:
-    . as $tasks |
-    ($tasks | map({(.id): .depends_on}) | add // {}) as $deps |
-    ($tasks | map(.id)) as $all_ids |
-    # Check each node for cycles via path tracking
-    reduce $all_ids[] as $start (
-      {has_cycle: false, cycle_path: []};
-      if .has_cycle then .
-      else
-        # BFS-style cycle detection
-        {visited: [], stack: [$start], has_cycle: false, cycle_path: []} |
-        until(.stack | length == 0 or .has_cycle;
-          .stack[-1] as $current |
-          if (.visited | index($current)) != null then
-            .has_cycle = true | .cycle_path = .visited + [$current]
-          else
-            .visited += [$current] |
-            .stack = .stack[:-1] + ($deps[$current] // [])
-          end
-        )
-      end
-    ) | .has_cycle;
-  .subtasks | has_cycle
+  .subtasks as $tasks |
+  ($tasks | length) as $total |
+  # Build in-degree map
+  (reduce $tasks[] as $t (
+    {};
+    .[$t.id] = (.[$t.id] // 0) + ($t.depends_on | length)
+    | reduce $t.depends_on[] as $dep (.; .[$dep] = (.[$dep] // 0))
+  )) as $in_degree |
+  # Kahn: process zero in-degree nodes iteratively
+  {processed: 0, in_degree: $in_degree, queue: [$tasks[] | select($in_degree[.id] == 0) | .id]} |
+  until(.queue | length == 0;
+    .queue[0] as $current |
+    .processed += 1 |
+    .queue = .queue[1:] |
+    # Reduce in-degree for nodes that depend on $current
+    reduce ($tasks[] | select(.depends_on | index($current))) as $dep (
+      .;
+      .in_degree[$dep.id] = (.in_degree[$dep.id] - 1) |
+      if .in_degree[$dep.id] == 0 then .queue += [$dep.id] else . end
+    )
+  ) |
+  .processed < $total
 ' "$FLOW_STATE" 2>/dev/null || echo "false")
 
 if [[ "$CIRCULAR" == "true" ]]; then

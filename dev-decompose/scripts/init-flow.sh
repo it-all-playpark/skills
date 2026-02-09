@@ -130,7 +130,7 @@ jq -n \
     --argjson issue "$ISSUE" \
     --arg status "decomposing" \
     --arg contract_branch "feature/issue-${ISSUE}-contract" \
-    --arg base "$BASE_BRANCH" \
+    --arg base_branch "$BASE_BRANCH" \
     --arg strategy "$STRATEGY" \
     --arg depth "$DEPTH" \
     --arg lang "$LANG" \
@@ -140,14 +140,13 @@ jq -n \
         version: $version,
         issue: $issue,
         status: $status,
-        contract_branch: $contract_branch,
         subtasks: [],
         contract: {
             files: [],
             branch: $contract_branch
         },
         config: {
-            base: $base,
+            base_branch: $base_branch,
             strategy: $strategy,
             depth: $depth,
             lang: $lang,
