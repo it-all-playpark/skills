@@ -51,17 +51,17 @@ The scripts automatically detect the worktree path using this priority:
 ### Record Results
 
 ```bash
-# Record review decision
+# Record review decision (--summary, --issues は日本語で記述)
 ~/.claude/skills/pr-iterate/scripts/record-iteration.sh review \
   --decision <approved|request-changes|comment> \
-  [--issues "issue1,issue2"] \
-  [--summary "Review summary"]
+  [--issues "型安全性の問題,未使用のimport"] \
+  [--summary "コード品質に問題なし"]
 
 # Record CI status
 ~/.claude/skills/pr-iterate/scripts/record-iteration.sh ci --status <passed|failed|pending>
 
-# Record fixes applied
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh fix --applied "fix1,fix2"
+# Record fixes applied (--applied は日本語で記述)
+~/.claude/skills/pr-iterate/scripts/record-iteration.sh fix --applied "型アノテーションを追加,未使用importを削除"
 
 # Start next iteration
 ~/.claude/skills/pr-iterate/scripts/record-iteration.sh next
@@ -87,10 +87,12 @@ The scripts automatically detect the worktree path using this priority:
 1. Initialize: `init-iterate.sh $PR`
 2. Loop (max N iterations):
    - Skill: `pr-review $PR`
-   - Record: `record-iteration.sh review --decision ... --issues ...`
+   - Record: `record-iteration.sh review --decision ... --issues ... --summary ...`
+     - **⚠️ `--summary`, `--issues` の値は日本語で記述すること**
    - If LGTM → `record-iteration.sh complete --status lgtm` → exit (自動でサマリー投稿)
    - Skill: `pr-fix $PR`
    - Record: `record-iteration.sh fix --applied ...`
+     - **⚠️ `--applied` の値は日本語で記述すること**
    - Record: `record-iteration.sh next`
 
 ## LGTM時のサマリー投稿

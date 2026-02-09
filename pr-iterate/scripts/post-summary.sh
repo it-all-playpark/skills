@@ -87,12 +87,12 @@ for ((i=0; i<ITERATIONS_COUNT; i++)); do
 
     # Review decision
     case "$DECISION" in
-        approved) DECISION_EMOJI="✅" ;;
-        request-changes) DECISION_EMOJI="🔧" ;;
-        comment) DECISION_EMOJI="💬" ;;
-        *) DECISION_EMOJI="⏳" ;;
+        approved) DECISION_EMOJI="✅"; DECISION_JA="承認" ;;
+        request-changes) DECISION_EMOJI="🔧"; DECISION_JA="変更要求" ;;
+        comment) DECISION_EMOJI="💬"; DECISION_JA="コメント" ;;
+        *) DECISION_EMOJI="⏳"; DECISION_JA="$DECISION" ;;
     esac
-    ITERATION_HISTORY+="- **レビュー結果**: ${DECISION_EMOJI} ${DECISION}
+    ITERATION_HISTORY+="- **レビュー結果**: ${DECISION_EMOJI} ${DECISION_JA}
 "
 
     # Summary if exists
@@ -125,11 +125,12 @@ for ((i=0; i<ITERATIONS_COUNT; i++)); do
 
     # CI status
     case "$CI_STATUS" in
-        passed) CI_EMOJI="✅" ;;
-        failed) CI_EMOJI="❌" ;;
-        *) CI_EMOJI="⏳" ;;
+        passed) CI_EMOJI="✅"; CI_STATUS_JA="成功" ;;
+        failed) CI_EMOJI="❌"; CI_STATUS_JA="失敗" ;;
+        pending) CI_EMOJI="⏳"; CI_STATUS_JA="保留" ;;
+        *) CI_EMOJI="⏳"; CI_STATUS_JA="$CI_STATUS" ;;
     esac
-    ITERATION_HISTORY+="- **CI**: ${CI_EMOJI} ${CI_STATUS}
+    ITERATION_HISTORY+="- **CI**: ${CI_EMOJI} ${CI_STATUS_JA}
 
 "
 done
