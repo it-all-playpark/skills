@@ -7,7 +7,7 @@
   "properties": {
     "version": {
       "type": "string",
-      "const": "1.0",
+      "const": "1.0.0",
       "description": "Schema version"
     },
     "issue": {
@@ -76,7 +76,7 @@
     "config": {
       "type": "object",
       "properties": {
-        "strategy": { "type": "string", "enum": ["tdd", "bdd", "ddd"] },
+        "strategy": { "type": "string", "enum": ["tdd", "bdd", "ddd", "none"] },
         "depth": { "type": "string", "enum": ["minimal", "standard", "comprehensive"] },
         "lang": { "type": "string", "enum": ["ja", "en"] },
         "env_mode": { "type": "string", "enum": ["hardlink", "symlink", "copy", "none"] },

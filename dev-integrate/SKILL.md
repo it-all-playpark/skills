@@ -10,7 +10,7 @@ allowed-tools:
   - Task
 ---
 
-# Integrate
+# Dev Integrate
 
 Merge parallel subtask branches, resolve conflicts, run type checks and integration tests.
 

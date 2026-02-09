@@ -102,7 +102,7 @@ if [[ -n "$FLOW_STATE" && -f "$FLOW_STATE" ]]; then
         --arg mode "parallel" \
         --arg status "$STATUS" \
         --arg flow_step "$FLOW_STEP" \
-        --argjson issue "$ISSUE" \
+        --arg issue "$ISSUE" \
         --argjson subtask_count "$SUBTASK_COUNT" \
         --argjson completed "$COMPLETED_COUNT" \
         --argjson failed "$FAILED_COUNT" \
@@ -114,7 +114,7 @@ if [[ -n "$FLOW_STATE" && -f "$FLOW_STATE" ]]; then
             mode: $mode,
             status: $status,
             flow_step: $flow_step,
-            issue: $issue,
+            issue: ($issue | tonumber? // $issue),
             subtasks: {total: $subtask_count, completed: $completed, failed: $failed},
             flow_state: $flow_state,
             pr: (if $pr_number != "" then { number: ($pr_number | tonumber), url: $pr_url } else null end),
@@ -215,7 +215,7 @@ jq -n \
     --arg status "$STATUS" \
     --arg flow_step "$FLOW_STEP" \
     --arg current_phase "$CURRENT_PHASE" \
-    --argjson issue "$ISSUE" \
+    --arg issue "$ISSUE" \
     --arg worktree "$WORKTREE" \
     --arg pr_number "${PR_NUMBER:-null}" \
     --arg pr_url "${PR_URL:-null}" \
@@ -225,7 +225,7 @@ jq -n \
         status: $status,
         flow_step: $flow_step,
         kickoff_phase: $current_phase,
-        issue: $issue,
+        issue: ($issue | tonumber? // $issue),
         worktree: $worktree,
         pr: (if $pr_number != "null" and $pr_number != "" then { number: ($pr_number | tonumber), url: $pr_url } else null end),
         next_action: $next_cmd

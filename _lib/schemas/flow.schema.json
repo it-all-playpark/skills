@@ -184,6 +184,11 @@
     "integration": {
       "type": "object",
       "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "merging", "integrated", "failed"],
+          "description": "Integration phase status"
+        },
         "worktree": {
           "type": "string",
           "description": "Absolute path to merge worktree"
@@ -198,14 +203,28 @@
             "type": "object",
             "properties": {
               "task_id": { "type": "string" },
-              "status": { "type": "string", "enum": ["merged", "conflict", "failed"] },
+              "status": { "type": "string", "enum": ["merged", "merged_auto_resolved", "conflict", "error", "failed"] },
               "conflicts": {
                 "type": "array",
                 "items": { "type": "string" }
+              },
+              "conflict_files": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Files with conflicts for this merge"
+              },
+              "error": {
+                "type": "string",
+                "description": "Error message if merge failed"
               }
             }
           },
           "description": "Results of merging each subtask branch"
+        },
+        "merge_order": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Order in which subtasks were merged"
         },
         "conflicts": {
           "type": "array",
@@ -221,6 +240,19 @@
           "type": ["string", "null"],
           "enum": ["passed", "failed", null],
           "description": "Integration test result"
+        },
+        "merged_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When integration merge was completed"
+        },
+        "failed_at_task": {
+          "type": "string",
+          "description": "Task ID where integration failed"
+        },
+        "error": {
+          "type": "string",
+          "description": "Error message if integration failed"
         }
       },
       "description": "Integration phase tracking"

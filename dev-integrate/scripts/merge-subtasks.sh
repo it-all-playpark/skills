@@ -49,43 +49,8 @@ fi
 # Topological sort: compute merge order from depends_on
 # ============================================================================
 
-# Extract subtask IDs and their dependencies as JSON
-SUBTASKS_JSON=$(jq -c '[.subtasks[] | {id: .id, branch: .branch, scope: .scope, depends_on: (.depends_on // [])}]' "$FLOW_STATE")
-
-# Perform topological sort using jq
-# Output: ordered list of subtask objects (leaves first)
-MERGE_ORDER=$(echo "$SUBTASKS_JSON" | jq -c '
-  # Kahn algorithm for topological sort
-  def topo_sort:
-    . as $tasks |
-    # Build in-degree map
-    reduce .[] as $t (
-      {};
-      . as $deg | reduce $t.depends_on[] as $dep ($deg; .[$dep] = (.[$dep] // 0))
-      | .[$t.id] = (.[$t.id] // 0) + ($t.depends_on | length)
-    ) as $in_degree |
-    # Adjust: set in-degree for tasks with no dependencies entry
-    (reduce $tasks[] as $t ($in_degree; .[$t.id] = (.[$t.id] // 0))) as $in_degree |
-    # Find initial zero in-degree nodes
-    [$tasks[] | select($in_degree[.id] == 0)] as $queue |
-    # Process
-    {result: [], queue: $queue, in_degree: $in_degree, tasks: $tasks} |
-    until(.queue | length == 0;
-      .queue[0] as $current |
-      .result += [$current] |
-      .queue = .queue[1:] |
-      # Reduce in-degree of dependents
-      (reduce ($tasks[] | select(.depends_on | index($current.id))) as $dep (
-        {in_degree: .in_degree, new_queue: []};
-        .in_degree[$dep.id] = (.in_degree[$dep.id] - 1) |
-        if .in_degree[$dep.id] == 0 then .new_queue += [$dep] else . end
-      )) as $update |
-      .in_degree = $update.in_degree |
-      .queue += $update.new_queue
-    ) |
-    .result;
-  topo_sort
-')
+LIB_DIR="$(cd "$SCRIPT_DIR/../../_lib/scripts" && pwd)"
+MERGE_ORDER=$("$LIB_DIR/topo-sort.sh" --flow-state "$FLOW_STATE")
 
 TASK_COUNT=$(echo "$MERGE_ORDER" | jq 'length')
 if [[ "$TASK_COUNT" -eq 0 ]]; then

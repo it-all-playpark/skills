@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# flow-update.sh - Update flow.json state (single-writer: dev-flow only)
+# flow-update.sh - Update flow.json state
+# IMPORTANT: Single-writer design. Must only be called sequentially from the
+# dev-flow orchestrator, never from parallel subtask processes directly.
 # Usage: flow-update.sh --flow-state PATH <action> [options]
 #
 # Actions:
@@ -18,7 +20,6 @@ require_cmd jq
 
 FLOW_STATE=""
 ACTION=""
-ACTION_ARG=""
 TMP_FILES=()
 cleanup_tmp() { for f in "${TMP_FILES[@]}"; do rm -f "$f" 2>/dev/null; done; }
 trap cleanup_tmp EXIT
@@ -54,6 +55,10 @@ case "$ACTION" in
     status)
         NEW_STATUS="${1:-}"
         [[ -n "$NEW_STATUS" ]] || die_json "Status value required" 1
+        VALID_STATUSES="analyzing decomposing implementing integrating pr iterating completed failed"
+        if ! echo "$VALID_STATUSES" | grep -qw "$NEW_STATUS"; then
+            die_json "Invalid status: $NEW_STATUS. Valid: $VALID_STATUSES" 1
+        fi
         TMP=$(mktemp); TMP_FILES+=("$TMP")
         jq --arg s "$NEW_STATUS" --arg now "$NOW" \
             '.status = $s | .updated_at = $now' "$FLOW_STATE" > "$TMP" && mv "$TMP" "$FLOW_STATE"
@@ -74,6 +79,13 @@ case "$ACTION" in
                 *) die_json "Unknown subtask option: $1" 1 ;;
             esac
         done
+
+        if [[ -n "$SUB_STATUS" ]]; then
+            VALID_SUB_STATUSES="pending in_progress completed failed"
+            if ! echo "$VALID_SUB_STATUSES" | grep -qw "$SUB_STATUS"; then
+                die_json "Invalid subtask status: $SUB_STATUS. Valid: $VALID_SUB_STATUSES" 1
+            fi
+        fi
 
         TMP=$(mktemp); TMP_FILES+=("$TMP")
         if [[ -n "$SUB_STATUS" ]]; then

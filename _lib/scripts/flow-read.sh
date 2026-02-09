@@ -2,6 +2,8 @@
 # flow-read.sh - Read and query flow.json state
 # Usage: flow-read.sh [--field JQPATH] [--subtask ID] [--flow-state PATH]
 #
+# SECURITY: --field accepts arbitrary jq expressions. Do NOT invoke with untrusted input.
+#
 # Examples:
 #   flow-read.sh --flow-state /path/to/flow.json
 #   flow-read.sh --flow-state /path/to/flow.json --field .status

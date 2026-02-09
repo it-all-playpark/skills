@@ -73,33 +73,8 @@ if [[ -n "$AFFECTED" ]]; then
     fi
 fi
 
-# 5. Check for circular dependencies (Kahn's algorithm: if not all nodes processed, cycle exists)
-CIRCULAR=$(jq -r '
-  .subtasks as $tasks |
-  ($tasks | length) as $total |
-  # Build in-degree map
-  (reduce $tasks[] as $t (
-    {};
-    .[$t.id] = (.[$t.id] // 0) + ($t.depends_on | length)
-    | reduce $t.depends_on[] as $dep (.; .[$dep] = (.[$dep] // 0))
-  )) as $in_degree |
-  # Kahn: process zero in-degree nodes iteratively
-  {processed: 0, in_degree: $in_degree, queue: [$tasks[] | select($in_degree[.id] == 0) | .id]} |
-  until(.queue | length == 0;
-    .queue[0] as $current |
-    .processed += 1 |
-    .queue = .queue[1:] |
-    # Reduce in-degree for nodes that depend on $current
-    reduce ($tasks[] | select(.depends_on | index($current))) as $dep (
-      .;
-      .in_degree[$dep.id] = (.in_degree[$dep.id] - 1) |
-      if .in_degree[$dep.id] == 0 then .queue += [$dep.id] else . end
-    )
-  ) |
-  .processed < $total
-' "$FLOW_STATE" 2>/dev/null || echo "false")
-
-if [[ "$CIRCULAR" == "true" ]]; then
+# 5. Check for circular dependencies (using shared topo-sort)
+if ! "$SCRIPT_DIR/topo-sort.sh" --flow-state "$FLOW_STATE" >/dev/null 2>&1; then
     ERRORS+=("Circular dependency detected in subtask depends_on")
 fi
 
@@ -131,31 +106,31 @@ else
     EXIT_CODE=1
 fi
 
-# Output JSON
-{
-    echo "{"
-    echo "  \"valid\": $VALID,"
-    echo "  \"subtask_count\": $SUBTASK_COUNT,"
-    echo "  \"error_count\": $ERROR_COUNT,"
-    echo "  \"warning_count\": $WARNING_COUNT,"
+# Output JSON using jq
+ERRORS_JSON="[]"
+for err in "${ERRORS[@]}"; do
+    ERRORS_JSON=$(echo "$ERRORS_JSON" | jq --arg e "$err" '. += [$e]')
+done
 
-    # Errors array
-    echo -n "  \"errors\": ["
-    for i in "${!ERRORS[@]}"; do
-        [[ $i -gt 0 ]] && echo -n ","
-        printf '%s' "$(json_escape "${ERRORS[$i]}")"
-    done
-    echo "],"
+WARNINGS_JSON="[]"
+for warn in "${WARNINGS[@]}"; do
+    WARNINGS_JSON=$(echo "$WARNINGS_JSON" | jq --arg w "$warn" '. += [$w]')
+done
 
-    # Warnings array
-    echo -n "  \"warnings\": ["
-    for i in "${!WARNINGS[@]}"; do
-        [[ $i -gt 0 ]] && echo -n ","
-        printf '%s' "$(json_escape "${WARNINGS[$i]}")"
-    done
-    echo "]"
-
-    echo "}"
-}
+jq -n \
+    --argjson valid "$VALID" \
+    --argjson subtask_count "$SUBTASK_COUNT" \
+    --argjson error_count "$ERROR_COUNT" \
+    --argjson warning_count "$WARNING_COUNT" \
+    --argjson errors "$ERRORS_JSON" \
+    --argjson warnings "$WARNINGS_JSON" \
+    '{
+        valid: $valid,
+        subtask_count: $subtask_count,
+        error_count: $error_count,
+        warning_count: $warning_count,
+        errors: $errors,
+        warnings: $warnings
+    }'
 
 exit $EXIT_CODE

@@ -36,7 +36,7 @@ DRIFT_RESULTS=$(jq -c '
     scope: (.scope // ""),
     planned: (.files // []),
     actual: (.actual_files_changed // []),
-    has_actual: ((.actual_files_changed // null) != null)
+    has_actual: ((.actual_files_changed // null) != null and ((.actual_files_changed // []) | length) > 0)
   } | . + {
     # Files in actual but not in planned (unexpected changes)
     additions: ([.actual[] | select(. as $f | (.planned | index($f)) == null)] // []),
