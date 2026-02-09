@@ -215,7 +215,7 @@ After Phase 6 completes:
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.0.0",
   "issue": 123,
   "branch": "feature/issue-123-m",
   "worktree": "/path/to/worktree",

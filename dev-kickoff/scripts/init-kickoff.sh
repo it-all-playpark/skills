@@ -97,7 +97,7 @@ jq -n \
     --arg lang "$LANG" \
     --arg env_mode "$ENV_MODE" \
     '{
-        version: "1.0",
+        version: "1.0.0",
         issue: $issue,
         branch: $branch,
         worktree: $worktree,
