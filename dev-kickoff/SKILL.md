@@ -3,7 +3,7 @@ name: dev-kickoff
 description: |
   End-to-end feature development orchestrator using git worktree. Coordinates git-prepare, issue-analyze, implement, validate, commit, and create-pr skills.
   Use when: starting new feature development from GitHub issue, full development cycle automation with isolated worktree.
-  Accepts args: <issue-number> [--strategy tdd|bdd|ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none]
+  Accepts args: <issue-number> [--strategy tdd|bdd|ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none] [--worktree <path>] [--task-id <id>] [--flow-state <path>]
 allowed-tools:
   - Bash
   - TodoWrite
@@ -13,30 +13,30 @@ allowed-tools:
 
 Orchestrate complete feature development cycle from issue to PR.
 
-## ⚠️ CRITICAL: Complete All 6 Phases
+## CRITICAL: Complete All 6 Phases
 
 **DO NOT EXIT until Phase 6 (PR creation) completes and pr-iterate is called.**
 
-| Phase | Action | Complete When |
-|-------|--------|---------------|
-| 1 | Worktree creation | Path exists, .env verified |
-| 2 | Issue analysis | Requirements understood |
-| 3 | Implementation | Code written |
-| 4 | Validation | Tests pass |
-| 5 | Commit | Changes committed |
-| 6 | PR creation | PR URL available |
+| Phase | Action | Complete When | Parallel Mode |
+|-------|--------|---------------|---------------|
+| 1 | Worktree creation | Path exists, .env verified | SKIP |
+| 2 | Issue analysis | Requirements understood | SKIP |
+| 3 | Implementation | Code written | Execute |
+| 4 | Validation | Tests pass | Execute |
+| 5 | Commit | Changes committed | Execute (enhanced) |
+| 6 | PR creation | PR URL available | SKIP |
 
 After Phase 6: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
 
 ## Phase Checklist
 
 ```
-[ ] Phase 1: git-prepare.sh → init-kickoff.sh
-[ ] Phase 2: Skill: dev-issue-analyze
+[ ] Phase 1: git-prepare.sh → init-kickoff.sh          (skip if --task-id)
+[ ] Phase 2: Skill: dev-issue-analyze                   (skip if --task-id)
 [ ] Phase 3: Skill: dev-implement
 [ ] Phase 4: Skill: dev-validate --fix
 [ ] Phase 5: Skill: git-commit --all
-[ ] Phase 6: Skill: git-pr → pr-iterate
+[ ] Phase 6: Skill: git-pr → pr-iterate                 (skip if --task-id)
 ```
 
 ## State Management
@@ -66,17 +66,17 @@ State persisted in `$WORKTREE/.claude/kickoff.json` for recovery.
 
 ## Phase Execution
 
-| Phase | Command | Subagent |
-|-------|---------|----------|
-| 1 | `~/.claude/skills/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - |
-| 1b | `~/.claude/skills/dev-kickoff/scripts/init-kickoff.sh ...` | - |
-| 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) |
-| 3 | `Skill: dev-implement --strategy $STRATEGY --worktree $PATH` | - |
-| 4 | `Skill: dev-validate --fix --worktree $PATH` | Task(quality-engineer) |
-| 5 | `Skill: git-commit --all --worktree $PATH` | - |
-| 6 | `Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH` | - |
+| Phase | Command | Subagent | Parallel Mode |
+|-------|---------|----------|---------------|
+| 1 | `~/.claude/skills/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - | SKIP |
+| 1b | `~/.claude/skills/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
+| 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
+| 3 | `Skill: dev-implement --strategy $STRATEGY --worktree $PATH` | - | Execute |
+| 4 | `Skill: dev-validate --fix --worktree $PATH` | Task(quality-engineer) | Execute |
+| 5 | `Skill: git-commit --all --worktree $PATH` | - | Execute (enhanced) |
+| 6 | `Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH` | - | SKIP |
 
-⚠️ **Phase 1: 必ずスクリプト実行。`git worktree add` 直接実行禁止。**
+Phase 1: Must execute script. Direct `git worktree add` is prohibited.
 
 ## Phase 1 Verification
 
@@ -94,6 +94,46 @@ ls $WORKTREE/.env || echo "ERROR: .env not linked"
 | `--base` | `main` | PR base branch |
 | `--lang` | `ja` | PR language |
 | `--env-mode` | `hardlink` | Env file handling |
+| `--worktree` | - | Pre-created worktree path (skips Phase 1) |
+| `--task-id` | - | Subtask ID from flow.json (enables parallel mode) |
+| `--flow-state` | - | Path to flow.json (read-only reference) |
+
+## Parallel Subtask Mode
+
+When `--task-id` is specified, dev-kickoff runs in parallel subtask mode:
+
+- **Phase 1 (git-prepare)**: SKIP -- worktree already created by dev-decompose
+- **Phase 2 (issue-analyze)**: SKIP -- scope defined in flow.json subtask definition
+- **Phase 3 (implement)**: Execute -- uses flow.json subtask scope/files/checklist
+- **Phase 4 (validate)**: Execute -- normal validation
+- **Phase 5 (commit)**: Execute -- also records `actual_files_changed` to kickoff.json
+- **Phase 6 (PR creation)**: SKIP -- PR created after integration
+
+### Reading Subtask Scope
+
+The subtask scope is read from flow.json:
+
+```bash
+~/.claude/skills/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE --subtask $TASK_ID
+```
+
+### Phase 5 Enhancement
+
+After commit, record changed files:
+
+```bash
+git diff --name-only $BASE_BRANCH...HEAD
+```
+
+Result stored in kickoff.json under `actual_files_changed` field.
+
+### Return Value
+
+Return value in `--task-id` mode is minimal:
+
+```json
+{"task_id": "task1", "status": "completed|failed"}
+```
 
 ## Error Handling
 

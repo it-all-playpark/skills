@@ -1,0 +1,229 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Flow State",
+  "description": "State persistence for dev-flow parallel subtask orchestration",
+  "type": "object",
+  "required": ["version", "issue", "status", "subtasks", "config", "started_at"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Schema version"
+    },
+    "issue": {
+      "type": "integer",
+      "description": "GitHub issue number"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["analyzing", "decomposing", "implementing", "integrating", "pr", "iterating", "completed", "failed"],
+      "description": "Overall flow status"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when flow started"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "requirements": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Extracted requirements from issue"
+        },
+        "affected_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files identified as needing changes"
+        }
+      },
+      "description": "Issue analysis results"
+    },
+    "contract": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string",
+          "description": "Contract branch name (e.g. feature/issue-42-contract)"
+        },
+        "interfaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files containing shared interface/type definitions"
+        },
+        "committed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When contract was committed"
+        }
+      },
+      "description": "Shared contract (interfaces/types) committed before subtask execution"
+    },
+    "subtasks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/subtask" },
+      "description": "Decomposed subtask definitions"
+    },
+    "integration": {
+      "$ref": "#/$defs/integration",
+      "description": "Integration phase state"
+    },
+    "pr": {
+      "type": ["object", "null"],
+      "properties": {
+        "number": { "type": "integer" },
+        "url": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "description": "PR information after creation"
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["tdd", "bdd", "ddd"],
+          "default": "tdd"
+        },
+        "depth": {
+          "type": "string",
+          "enum": ["minimal", "standard", "comprehensive"],
+          "default": "standard"
+        },
+        "lang": {
+          "type": "string",
+          "enum": ["ja", "en"],
+          "default": "ja"
+        },
+        "base_branch": {
+          "type": "string",
+          "default": "main"
+        },
+        "env_mode": {
+          "type": "string",
+          "enum": ["hardlink", "symlink", "copy", "none"],
+          "default": "hardlink"
+        }
+      },
+      "description": "Flow configuration options"
+    }
+  },
+  "$defs": {
+    "subtask": {
+      "type": "object",
+      "required": ["id", "scope", "files", "status", "checklist"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^task[0-9]+$",
+          "description": "Unique subtask identifier (e.g. task1, task2)"
+        },
+        "scope": {
+          "type": "string",
+          "description": "Human-readable scope description"
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files assigned to this subtask (no overlap with other subtasks)"
+        },
+        "worktree": {
+          "type": "string",
+          "description": "Absolute path to subtask worktree"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch name for this subtask"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "IDs of subtasks this one depends on"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "completed", "failed"],
+          "default": "pending",
+          "description": "Subtask execution status"
+        },
+        "actual_files_changed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Files actually changed (populated by dev-flow from kickoff.json)"
+        },
+        "checklist": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item", "done"],
+            "properties": {
+              "item": {
+                "type": "string",
+                "description": "Checklist item description"
+              },
+              "done": {
+                "type": "boolean",
+                "default": false,
+                "description": "Whether item is completed"
+              }
+            }
+          },
+          "minItems": 1,
+          "description": "Completion checklist for this subtask"
+        }
+      }
+    },
+    "integration": {
+      "type": "object",
+      "properties": {
+        "worktree": {
+          "type": "string",
+          "description": "Absolute path to merge worktree"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Integration branch name"
+        },
+        "merge_results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task_id": { "type": "string" },
+              "status": { "type": "string", "enum": ["merged", "conflict", "failed"] },
+              "conflicts": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "description": "Results of merging each subtask branch"
+        },
+        "conflicts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Unresolved conflict files"
+        },
+        "type_check": {
+          "type": ["string", "null"],
+          "enum": ["passed", "failed", null],
+          "description": "Type checking result (tsc/mypy)"
+        },
+        "validation": {
+          "type": ["string", "null"],
+          "enum": ["passed", "failed", null],
+          "description": "Integration test result"
+        }
+      },
+      "description": "Integration phase tracking"
+    }
+  }
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # flow-status.sh - Check dev-flow state and determine next action
-# Usage: flow-status.sh [--worktree PATH]
+# Supports both single mode (kickoff.json) and parallel mode (flow.json)
+# Usage: flow-status.sh [--worktree PATH] [--flow-state PATH]
 
 set -euo pipefail
 
@@ -10,11 +11,13 @@ source "$SCRIPT_DIR/../../_lib/common.sh"
 require_cmd jq
 
 WORKTREE=""
+FLOW_STATE=""
 
 # Parse args
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --worktree) WORKTREE="$2"; shift 2 ;;
+        --flow-state) FLOW_STATE="$2"; shift 2 ;;
         -*)
             die_json "Unknown option: $1" 1
             ;;
@@ -26,6 +29,103 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# ============================================================================
+# Parallel mode: flow.json takes precedence
+# ============================================================================
+if [[ -n "$FLOW_STATE" && -f "$FLOW_STATE" ]]; then
+    STATUS=$(jq -r '.status // "unknown"' "$FLOW_STATE")
+    ISSUE=$(jq -r '.issue // "unknown"' "$FLOW_STATE")
+    SUBTASK_COUNT=$(jq '.subtasks | length' "$FLOW_STATE")
+    COMPLETED_COUNT=$(jq '[.subtasks[] | select(.status == "completed")] | length' "$FLOW_STATE")
+    FAILED_COUNT=$(jq '[.subtasks[] | select(.status == "failed")] | length' "$FLOW_STATE")
+    PR_NUMBER=$(jq -r '.pr.number // ""' "$FLOW_STATE")
+    PR_URL=$(jq -r '.pr.url // ""' "$FLOW_STATE")
+    BASE_BRANCH=$(jq -r '.config.base_branch // "main"' "$FLOW_STATE")
+    STRATEGY=$(jq -r '.config.strategy // "tdd"' "$FLOW_STATE")
+    MERGE_WORKTREE=$(jq -r '.integration.worktree // ""' "$FLOW_STATE")
+
+    # Determine next action based on status
+    case "$STATUS" in
+        analyzing)
+            NEXT_CMD="Skill: dev-issue-analyze $ISSUE --depth comprehensive"
+            FLOW_STEP="step_1_analyze"
+            ;;
+        decomposing)
+            NEXT_CMD="Skill: dev-decompose $ISSUE --base $BASE_BRANCH"
+            FLOW_STEP="step_2_decompose"
+            ;;
+        implementing)
+            if [[ "$FAILED_COUNT" -gt 0 ]]; then
+                NEXT_CMD="Check failed subtasks in flow.json"
+                FLOW_STEP="step_4_subtask_failed"
+            elif [[ "$COMPLETED_COUNT" -lt "$SUBTASK_COUNT" ]]; then
+                NEXT_CMD="Continue launching remaining subtask batches"
+                FLOW_STEP="step_4_implementing"
+            else
+                NEXT_CMD="Skill: dev-integrate --flow-state $FLOW_STATE"
+                FLOW_STEP="step_5_aggregate"
+            fi
+            ;;
+        integrating)
+            NEXT_CMD="Skill: dev-integrate --flow-state $FLOW_STATE"
+            FLOW_STEP="step_6_integrate"
+            ;;
+        pr)
+            if [[ -n "$PR_NUMBER" ]]; then
+                NEXT_CMD="Skill: pr-iterate ${PR_URL:-$PR_NUMBER}"
+                FLOW_STEP="step_8_iterate"
+            else
+                NEXT_CMD="Skill: git-pr $ISSUE --base $BASE_BRANCH --worktree $MERGE_WORKTREE"
+                FLOW_STEP="step_7_pr"
+            fi
+            ;;
+        iterating)
+            NEXT_CMD="Skill: pr-iterate ${PR_URL:-$PR_NUMBER}"
+            FLOW_STEP="step_8_iterate"
+            ;;
+        completed)
+            NEXT_CMD=""
+            FLOW_STEP="completed"
+            ;;
+        failed)
+            NEXT_CMD="Check flow.json for failure details"
+            FLOW_STEP="failed"
+            ;;
+        *)
+            NEXT_CMD=""
+            FLOW_STEP="unknown"
+            ;;
+    esac
+
+    jq -n \
+        --arg mode "parallel" \
+        --arg status "$STATUS" \
+        --arg flow_step "$FLOW_STEP" \
+        --argjson issue "$ISSUE" \
+        --argjson subtask_count "$SUBTASK_COUNT" \
+        --argjson completed "$COMPLETED_COUNT" \
+        --argjson failed "$FAILED_COUNT" \
+        --arg flow_state "$FLOW_STATE" \
+        --arg pr_number "${PR_NUMBER:-}" \
+        --arg pr_url "${PR_URL:-}" \
+        --arg next_cmd "$NEXT_CMD" \
+        '{
+            mode: $mode,
+            status: $status,
+            flow_step: $flow_step,
+            issue: $issue,
+            subtasks: {total: $subtask_count, completed: $completed, failed: $failed},
+            flow_state: $flow_state,
+            pr: (if $pr_number != "" then { number: ($pr_number | tonumber), url: $pr_url } else null end),
+            next_action: $next_cmd
+        }'
+    exit 0
+fi
+
+# ============================================================================
+# Single mode: kickoff.json
+# ============================================================================
 
 # Find state file
 if [[ -n "$WORKTREE" ]]; then
@@ -39,7 +139,7 @@ else
         STATE_FILE="$GIT_ROOT/.claude/kickoff.json"
         WORKTREE="$GIT_ROOT"
     else
-        die_json "State file not found. Use --worktree or run from worktree directory." 1
+        die_json "State file not found. Use --worktree or --flow-state." 1
     fi
 fi
 
@@ -111,6 +211,7 @@ esac
 
 # Output JSON
 jq -n \
+    --arg mode "single" \
     --arg status "$STATUS" \
     --arg flow_step "$FLOW_STEP" \
     --arg current_phase "$CURRENT_PHASE" \
@@ -120,6 +221,7 @@ jq -n \
     --arg pr_url "${PR_URL:-null}" \
     --arg next_cmd "$NEXT_CMD" \
     '{
+        mode: $mode,
         status: $status,
         flow_step: $flow_step,
         kickoff_phase: $current_phase,
