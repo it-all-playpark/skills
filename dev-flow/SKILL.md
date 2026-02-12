@@ -149,6 +149,22 @@ git worktree list | grep "issue-$ISSUE"
 git worktree remove $SUBTASK_WORKTREE --force
 ```
 
+## Journal Logging
+
+On workflow completion, log execution to skill-retrospective journal:
+
+```bash
+# On success (LGTM achieved)
+~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-flow success \
+  --issue $ISSUE --duration-turns $TURNS
+
+# On failure (any step fails)
+~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-flow failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>"
+```
+
+Note: dev-kickoff and pr-iterate also log independently. dev-flow logging captures the overall flow outcome.
+
 ## References
 
 - [Workflow Details](references/workflow-detail.md) - Full phase descriptions

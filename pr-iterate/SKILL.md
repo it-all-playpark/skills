@@ -147,6 +147,25 @@ $WORKTREE/
 
 `summary_posted_at` はLGTM完了時にサマリー投稿後に追加されます（重複投稿防止用）。
 
+## Journal Logging
+
+On workflow completion, log execution to skill-retrospective journal:
+
+```bash
+# On LGTM
+~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate success \
+  --issue $ISSUE --duration-turns $TURNS
+
+# On max iterations reached
+~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate partial \
+  --issue $ISSUE --error-category config --error-msg "max iterations reached ($N)" \
+  --recovery "manual intervention needed" --recovery-turns 0
+
+# On failure
+~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>"
+```
+
 ## Error Handling
 
 | Scenario | Action |
