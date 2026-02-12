@@ -32,10 +32,13 @@ iso_now() {
 }
 
 # Generate entry ID from timestamp and skill name
+# Format: YYYYMMDDTHHMMSS-skillname
 entry_id() {
     local ts="$1" skill="$2"
-    echo "${ts//:/-}" | sed 's/Z$//' | tr -d '-' | head -c 15
-    echo "-${skill}"
+    local compact="${ts//:/-}"
+    compact="${compact%Z}"
+    compact="${compact//-/}"
+    printf '%s-%s' "${compact:0:15}" "$skill"
 }
 
 # Parse relative date (7d, 2w, 1m) to ISO date
@@ -210,40 +213,37 @@ cmd_query() {
         since_iso=$(parse_since "$since")
     fi
 
-    # Collect and filter entries
-    local entries="[]"
+    # Collect all JSON files - handle empty directory
+    local files=()
     for f in "$JOURNAL_DIR"/*.json; do
-        [[ -f "$f" ]] || continue
-        local entry
-        entry=$(cat "$f")
-
-        # Filter by skill
-        if [[ -n "$skill" ]]; then
-            local entry_skill
-            entry_skill=$(echo "$entry" | jq -r '.skill')
-            [[ "$entry_skill" == "$skill" ]] || continue
-        fi
-
-        # Filter by outcome
-        if [[ -n "$outcome" ]]; then
-            local entry_outcome
-            entry_outcome=$(echo "$entry" | jq -r '.outcome')
-            [[ "$entry_outcome" == "$outcome" ]] || continue
-        fi
-
-        # Filter by since date
-        if [[ -n "$since_iso" ]]; then
-            local entry_ts
-            entry_ts=$(echo "$entry" | jq -r '.timestamp')
-            [[ "$entry_ts" > "$since_iso" || "$entry_ts" == "$since_iso" ]] || continue
-        fi
-
-        entries=$(echo "$entries" | jq --argjson e "$entry" '. + [$e]')
+        [[ -f "$f" ]] && files+=("$f")
     done
 
-    # Sort by timestamp descending and limit
-    echo "$entries" | jq --argjson lim "$limit" \
-        'sort_by(.timestamp) | reverse | .[:$lim]'
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "[]"
+        return 0
+    fi
+
+    # Build jq filter for all conditions in one pass
+    local jq_filter='.'
+    if [[ -n "$skill" ]]; then
+        jq_filter="$jq_filter | select(.skill == \$skill)"
+    fi
+    if [[ -n "$outcome" ]]; then
+        jq_filter="$jq_filter | select(.outcome == \$outcome)"
+    fi
+    if [[ -n "$since_iso" ]]; then
+        jq_filter="$jq_filter | select(.timestamp >= \$since_iso)"
+    fi
+
+    # Slurp all files and filter/sort in a single jq call
+    jq -s \
+        --arg skill "$skill" \
+        --arg outcome "$outcome" \
+        --arg since_iso "$since_iso" \
+        --argjson lim "$limit" \
+        "[.[] | $jq_filter] | sort_by(.timestamp) | reverse | .[:(\$lim)]" \
+        "${files[@]}"
 }
 
 # ============================================================================

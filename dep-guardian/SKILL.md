@@ -106,7 +106,7 @@ git checkout -
 ```markdown
 ## Dependency Update Report
 
-**Date**: 2026-02-12
+**Date**: {YYYY-MM-DD}
 **PRs analyzed**: 12
 **Safe to merge**: 8
 **Needs attention**: 4

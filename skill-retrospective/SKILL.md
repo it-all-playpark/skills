@@ -6,6 +6,9 @@ description: |
   Use when: (1) session end to review failures, (2) explicit retrospective request,
   (3) keywords: retrospective, 振り返り, learn, 改善, skill improvement, failure analysis
   Accepts args: [--since <date>] [--skill <name>] [--apply] [--dry-run]
+allowed-tools:
+  - Bash
+  - Skill
 ---
 
 # skill-retrospective

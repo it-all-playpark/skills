@@ -81,6 +81,28 @@ detect_other_pm() {
 }
 
 # ============================================================================
+# Install Helpers
+# ============================================================================
+
+# Run install command without eval - splits cmd string into args safely
+# Redirects command output to stderr to keep stdout clean for JSON
+run_install_cmd() {
+    local cmd_str="$1"
+    # shellcheck disable=SC2086
+    (cd "$TARGET_PATH" && $cmd_str) >&2 2>&1
+}
+
+# Resolve the actual binary name for command -v check
+resolve_bin() {
+    local pm="$1"
+    case "$pm" in
+        npm-no-lock|pip-pyproject) echo "${pm%%-*}" ;;
+        bundler) echo "bundle" ;;
+        *) echo "$pm" ;;
+    esac
+}
+
+# ============================================================================
 # Install Functions
 # ============================================================================
 
@@ -95,21 +117,11 @@ install_node() {
     fi
 
     case "$pm" in
-        pnpm)
-            cmd="pnpm install --frozen-lockfile"
-            ;;
-        yarn)
-            cmd="yarn install --frozen-lockfile"
-            ;;
-        bun)
-            cmd="bun install --frozen-lockfile"
-            ;;
-        npm)
-            cmd="npm ci"
-            ;;
-        npm-no-lock)
-            cmd="npm install"
-            ;;
+        pnpm)   cmd="pnpm install --frozen-lockfile" ;;
+        yarn)   cmd="yarn install --frozen-lockfile" ;;
+        bun)    cmd="bun install --frozen-lockfile" ;;
+        npm)    cmd="npm ci" ;;
+        npm-no-lock) cmd="npm install" ;;
     esac
 
     if [[ "$already_installed" == true ]]; then
@@ -117,7 +129,9 @@ install_node() {
         return 0
     fi
 
-    if ! command -v "${pm%%-*}" &>/dev/null; then
+    local bin
+    bin=$(resolve_bin "$pm")
+    if ! command -v "$bin" &>/dev/null; then
         echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"pm_not_found\",\"command\":\"$cmd\"}"
         return 0
     fi
@@ -127,7 +141,7 @@ install_node() {
         return 0
     fi
 
-    if (cd "$TARGET_PATH" && eval "$cmd" 2>&1); then
+    if run_install_cmd "$cmd"; then
         echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"installed\",\"command\":\"$cmd\"}"
     else
         echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"failed\",\"command\":\"$cmd\"}"
@@ -140,24 +154,16 @@ install_python() {
     local cmd=""
 
     case "$pm" in
-        pip)
-            cmd="pip install -r requirements.txt"
-            ;;
-        pipenv)
-            cmd="pipenv install"
-            ;;
-        poetry)
-            cmd="poetry install"
-            ;;
-        uv)
-            cmd="uv sync"
-            ;;
-        pip-pyproject)
-            cmd="pip install -e ."
-            ;;
+        pip)          cmd="pip install -r requirements.txt" ;;
+        pipenv)       cmd="pipenv install" ;;
+        poetry)       cmd="poetry install" ;;
+        uv)           cmd="uv sync" ;;
+        pip-pyproject) cmd="pip install -e ." ;;
     esac
 
-    if ! command -v "${pm}" &>/dev/null 2>&1; then
+    local bin
+    bin=$(resolve_bin "$pm")
+    if ! command -v "$bin" &>/dev/null; then
         echo "{\"ecosystem\":\"python\",\"pm\":\"$pm\",\"status\":\"pm_not_found\",\"command\":\"$cmd\"}"
         return 0
     fi
@@ -167,7 +173,7 @@ install_python() {
         return 0
     fi
 
-    if (cd "$TARGET_PATH" && eval "$cmd" 2>&1); then
+    if run_install_cmd "$cmd"; then
         echo "{\"ecosystem\":\"python\",\"pm\":\"$pm\",\"status\":\"installed\",\"command\":\"$cmd\"}"
     else
         echo "{\"ecosystem\":\"python\",\"pm\":\"$pm\",\"status\":\"failed\",\"command\":\"$cmd\"}"
@@ -180,13 +186,15 @@ install_other() {
     local cmd=""
 
     case "$pm" in
-        go) cmd="go mod download" ;;
-        bundler) cmd="bundle install" ;;
-        cargo) cmd="cargo fetch" ;;
+        go)       cmd="go mod download" ;;
+        bundler)  cmd="bundle install" ;;
+        cargo)    cmd="cargo fetch" ;;
         composer) cmd="composer install" ;;
     esac
 
-    if ! command -v "${pm}" &>/dev/null 2>&1; then
+    local bin
+    bin=$(resolve_bin "$pm")
+    if ! command -v "$bin" &>/dev/null; then
         echo "{\"ecosystem\":\"$pm\",\"pm\":\"$pm\",\"status\":\"pm_not_found\",\"command\":\"$cmd\"}"
         return 0
     fi
@@ -196,7 +204,7 @@ install_other() {
         return 0
     fi
 
-    if (cd "$TARGET_PATH" && eval "$cmd" 2>&1); then
+    if run_install_cmd "$cmd"; then
         echo "{\"ecosystem\":\"$pm\",\"pm\":\"$pm\",\"status\":\"installed\",\"command\":\"$cmd\"}"
     else
         echo "{\"ecosystem\":\"$pm\",\"pm\":\"$pm\",\"status\":\"failed\",\"command\":\"$cmd\"}"
@@ -226,7 +234,7 @@ run_custom_setup() {
         return 0
     fi
 
-    if (cd "$TARGET_PATH" && bash "$setup_script" 2>&1); then
+    if (cd "$TARGET_PATH" && bash "$setup_script") >&2 2>&1; then
         echo "{\"custom_setup\":\"executed\",\"script\":\"$setup_script\"}"
     else
         warn "Custom setup script failed (non-blocking): $setup_script"

@@ -5,6 +5,8 @@ description: |
   Use when: (1) dev-flow issues or underperformance, (2) parallel mode not triggering,
   (3) wanting to optimize dev workflow, (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断
   Accepts args: [--scope full|journal|worktrees|config] [--fix]
+allowed-tools:
+  - Bash
 ---
 
 # dev-flow-doctor
