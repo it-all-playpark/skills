@@ -137,6 +137,26 @@ Return value in `--task-id` mode is minimal:
 | 4 | Retry with --fix |
 | 5-6 | Report command, save state |
 
+## Journal Logging
+
+On workflow completion or failure, log execution to skill-retrospective journal:
+
+```bash
+# On success (after Phase 6)
+~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-kickoff success \
+  --issue $ISSUE --duration-turns $TURNS --worktree $WORKTREE
+
+# On failure (at any phase)
+~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-kickoff failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>" \
+  --error-phase <phase> --worktree $WORKTREE
+
+# On partial (completed with manual intervention)
+~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-kickoff partial \
+  --issue $ISSUE --error-category <category> --error-msg "<message>" \
+  --recovery "<what was done>" --recovery-turns $N --worktree $WORKTREE
+```
+
 ## References
 
 - [Phase Details](references/phase-detail.md) - Detailed phase documentation

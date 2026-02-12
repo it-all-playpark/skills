@@ -45,6 +45,22 @@ Save session context and learnings.
 - Code changes summary
 - Learnings and insights
 
+## Retrospective Check
+
+Before saving, check for unanalyzed skill failures in the journal:
+
+```bash
+# Count failure entries since last retrospective
+~/.claude/skills/skill-retrospective/scripts/journal.sh query --outcome failure --limit 100 2>/dev/null | jq 'length'
+```
+
+| Result | Action |
+|--------|--------|
+| 0 entries | Skip (no failures to analyze) |
+| 1+ entries | Notify: "N件の新規失敗エントリあり。`/skill-retrospective` で分析できます" |
+
+This is a lightweight check only. Full analysis is performed by `/skill-retrospective`.
+
 ## Output
 
 ```markdown
