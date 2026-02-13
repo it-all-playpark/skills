@@ -3,6 +3,9 @@
 .serena/
 .system/
 
+# External agent skills
+.agents/
+
 # Credentials & secrets
 client_secret.json
 **/client_secret*.json
@@ -26,3 +29,7 @@ __pycache__/
 
 # Packaged skills
 *.skill
+
+# --- external skills (auto-managed) ---
+find-skills
+# --- end external skills ---
