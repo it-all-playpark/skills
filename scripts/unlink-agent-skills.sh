@@ -31,23 +31,26 @@ remove_managed_section() {
     '$0 == begin { skip=1; next } $0 == end { skip=0; next } !skip { print }' \
     "$GITIGNORE" > "$GITIGNORE.tmp"
   mv "$GITIGNORE.tmp" "$GITIGNORE"
-  # 末尾の空行を除去
-  while [[ -s "$GITIGNORE" ]] && [[ "$(tail -1 "$GITIGNORE")" == "" ]]; do
-    sed -i '' '$ d' "$GITIGNORE"
-  done
+  # 末尾の空行を除去（sed -i のOS差異を回避するポータブル実装）
+  if [[ -s "$GITIGNORE" ]]; then
+    local content
+    content="$(cat "$GITIGNORE")"
+    printf '%s\n' "$content" > "$GITIGNORE"
+  fi
 }
 
 # --- main ---
 
 removed=0
-for entry in $(get_managed_entries); do
+while IFS= read -r entry; do
+  [[ -z "$entry" ]] && continue
   link="$REPO_ROOT/$entry"
   if [[ -L "$link" ]]; then
     rm "$link"
     echo "removed: $link"
     removed=$((removed + 1))
   fi
-done
+done < <(get_managed_entries)
 
 remove_managed_section
 

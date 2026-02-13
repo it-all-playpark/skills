@@ -38,10 +38,12 @@ write_managed_section() {
       '$0 == begin { skip=1; next } $0 == end { skip=0; next } !skip { print }' \
       "$GITIGNORE" > "$GITIGNORE.tmp"
     mv "$GITIGNORE.tmp" "$GITIGNORE"
-    # 末尾の空行を除去
-    while [[ -s "$GITIGNORE" ]] && [[ "$(tail -1 "$GITIGNORE")" == "" ]]; do
-      sed -i '' '$ d' "$GITIGNORE"
-    done
+    # 末尾の空行を除去（sed -i のOS差異を回避するポータブル実装）
+    if [[ -s "$GITIGNORE" ]]; then
+      local content
+      content="$(cat "$GITIGNORE")"
+      printf '%s\n' "$content" > "$GITIGNORE"
+    fi
   fi
 
   # エントリがなければセクション自体を書かない
@@ -109,7 +111,8 @@ done
 
 # 3. stale symlink のクリーンアップ
 #    以前の managed entries のうち、desired に含まれないものを削除
-for entry in $(get_managed_entries); do
+while IFS= read -r entry; do
+  [[ -z "$entry" ]] && continue
   link="$REPO_ROOT/$entry"
   if [[ -L "$link" ]]; then
     # desired に含まれるか確認
@@ -125,7 +128,7 @@ for entry in $(get_managed_entries); do
       echo "removed stale: $link"
     fi
   fi
-done
+done < <(get_managed_entries)
 
 # 4. .gitignore の managed セクションを更新
 write_managed_section "${created[@]}"
