@@ -199,7 +199,7 @@ Same as single mode.
 
 1. **Check State**
    ```bash
-   ~/.claude/skills/dev-flow/scripts/flow-status.sh --worktree $PATH
+   $SKILLS_DIR/dev-flow/scripts/flow-status.sh --worktree $PATH
    ```
 2. Follow `next_action` from output
 
@@ -207,7 +207,7 @@ Same as single mode.
 
 1. **Check flow.json**
    ```bash
-   ~/.claude/skills/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
+   $SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
    ```
 2. Check `status` field for current stage
 3. Check `subtasks[].status` for per-task progress

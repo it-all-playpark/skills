@@ -52,7 +52,7 @@ Generate contract per [Decomposition Guide](references/decomposition-guide.md). 
 
 For each subtask, call git-prepare:
 ```bash
-~/.claude/skills/git-prepare/scripts/git-prepare.sh $ISSUE \
+$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
   --suffix task${INDEX} \
   --base feature/issue-${ISSUE}-contract \
   --env-mode $ENV_MODE
@@ -62,7 +62,7 @@ For each subtask, call git-prepare:
 
 Initialize flow.json:
 ```bash
-~/.claude/skills/dev-decompose/scripts/init-flow.sh $ISSUE \
+$SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
   --flow-state $FLOW_STATE \
   --base $BASE \
   --env-mode $ENV_MODE
@@ -73,7 +73,7 @@ Then populate subtask entries with file assignments, checklists, and dependency 
 ### Step 10: Validation
 
 ```bash
-~/.claude/skills/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
+$SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
 ```
 
 Additionally verify manually: contract branch exists and has commits, all worktree paths exist on disk.

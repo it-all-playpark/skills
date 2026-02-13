@@ -46,7 +46,7 @@ State persisted in `$WORKTREE/.claude/kickoff.json` for recovery.
 ### Initialize (After Phase 1)
 
 ```bash
-~/.claude/skills/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
+$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
   --base $BASE --strategy $STRATEGY --depth $DEPTH --lang $LANG --env-mode $ENV_MODE
 ```
 
@@ -54,13 +54,13 @@ State persisted in `$WORKTREE/.claude/kickoff.json` for recovery.
 
 ```bash
 # Start phase
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh <phase> in_progress --worktree $PATH
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh <phase> in_progress --worktree $PATH
 
 # Complete phase
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh <phase> done --result "Summary" --worktree $PATH
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh <phase> done --result "Summary" --worktree $PATH
 
 # After PR creation (Phase 6)
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh 6_pr done \
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_pr done \
   --result "PR created" --pr-number 123 --pr-url "URL" --worktree $PATH
 ```
 
@@ -68,8 +68,8 @@ State persisted in `$WORKTREE/.claude/kickoff.json` for recovery.
 
 | Phase | Command | Subagent | Parallel Mode |
 |-------|---------|----------|---------------|
-| 1 | `~/.claude/skills/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - | SKIP |
-| 1b | `~/.claude/skills/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
+| 1 | `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - | SKIP |
+| 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
 | 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
 | 3 | `Skill: dev-implement --strategy $STRATEGY --worktree $PATH` | - | Execute |
 | 4 | `Skill: dev-validate --fix --worktree $PATH` | Task(quality-engineer) | Execute |
@@ -107,7 +107,7 @@ When `--task-id` is specified, dev-kickoff runs in parallel subtask mode (see Ph
 The subtask scope is read from flow.json:
 
 ```bash
-~/.claude/skills/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE --subtask $TASK_ID
+$SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE --subtask $TASK_ID
 ```
 
 ### Phase 5 Enhancement
@@ -143,16 +143,16 @@ On workflow completion or failure, log execution to skill-retrospective journal:
 
 ```bash
 # On success (after Phase 6)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-kickoff success \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-kickoff success \
   --issue $ISSUE --duration-turns $TURNS --worktree $WORKTREE
 
 # On failure (at any phase)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-kickoff failure \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-kickoff failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>" \
   --error-phase <phase> --worktree $WORKTREE
 
 # On partial (completed with manual intervention)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-kickoff partial \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-kickoff partial \
   --issue $ISSUE --error-category <category> --error-msg "<message>" \
   --recovery "<what was done>" --recovery-turns $N --worktree $WORKTREE
 ```

@@ -46,7 +46,7 @@ Export GitHub Issue information to a Markdown file.
 Run the export script:
 
 ```bash
-python3 ~/.claude/skills/repo-issue/scripts/export_issue.py <url> [options]
+python3 $SKILLS_DIR/repo-issue/scripts/export_issue.py <url> [options]
 ```
 
 ## Output Format

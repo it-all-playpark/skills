@@ -36,7 +36,7 @@ git push -u origin "$BRANCH_NAME"
 ### Step 3: Create PR
 
 ```bash
-~/.claude/skills/create-pr/scripts/create-pr.sh <issue-number> [options]
+$SKILLS_DIR/create-pr/scripts/create-pr.sh <issue-number> [options]
 ```
 
 **Output**: JSON with `pr_url`, `title`, `branch`, `base`, `worktree`

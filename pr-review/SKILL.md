@@ -50,7 +50,7 @@ cat > /tmp/pr-review-body.md <<'EOF'
 EOF
 
 # Submit review (handles own-PR fallback automatically)
-~/.claude/skills/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-review-body.md
+$SKILLS_DIR/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-review-body.md
 ```
 
 **Decision options**:

@@ -13,7 +13,7 @@ Run E2E tests with Playwright or Cypress.
 ## Execution
 
 ```bash
-~/.claude/skills/test-e2e/scripts/test-e2e.sh [target] [--headed] [--browser BROWSER]
+$SKILLS_DIR/test-e2e/scripts/test-e2e.sh [target] [--headed] [--browser BROWSER]
 ```
 
 ## Options

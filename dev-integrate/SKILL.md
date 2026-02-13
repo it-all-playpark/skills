@@ -46,7 +46,7 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 ### Step 1: Verify Subtask Completion
 
 ```bash
-~/.claude/skills/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE \
+$SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE \
   --field '.subtasks[] | select(.status != "completed") | .id'
 ```
 
@@ -55,7 +55,7 @@ If any subtask is not completed, abort and report which subtasks are pending.
 ### Step 2: Detect File Change Drift
 
 ```bash
-~/.claude/skills/dev-integrate/scripts/check-drift.sh --flow-state $FLOW_STATE
+$SKILLS_DIR/dev-integrate/scripts/check-drift.sh --flow-state $FLOW_STATE
 ```
 
 Warn on differences between planned and actual files changed. Do not abort on drift --
@@ -69,13 +69,13 @@ are merged first, followed by subtasks that depend on them.
 ### Step 4: Create Merge Worktree
 
 ```bash
-~/.claude/skills/git-prepare/scripts/git-prepare.sh $ISSUE --suffix merge --base $BASE
+$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --suffix merge --base $BASE
 ```
 
 ### Step 5: Merge Subtask Branches
 
 ```bash
-~/.claude/skills/dev-integrate/scripts/merge-subtasks.sh \
+$SKILLS_DIR/dev-integrate/scripts/merge-subtasks.sh \
   --flow-state $FLOW_STATE --worktree $MERGE_WORKTREE
 ```
 
@@ -100,13 +100,13 @@ Skill: dev-validate --worktree $MERGE_WORKTREE
 ### Step 8: Update Flow State
 
 ```bash
-~/.claude/skills/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   integration --field status --value "integrated"
-~/.claude/skills/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   integration --field merge_worktree --value "$MERGE_WORKTREE"
-~/.claude/skills/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   integration --field type_check --value "passed"
-~/.claude/skills/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   integration --field validation --value "passed"
 ```
 

@@ -104,14 +104,14 @@ When not set: stdout (traditional behavior)
 
 ### Dedupe Pre-Query Flow
 
-Uses \`~/.claude/skills/sns-dedupe/scripts/check-scheduled.ts\`:
+Uses \`$SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts\`:
 
 \`\`\`bash
 # Step 1: Extract date from article metadata
 DATE="2026-01-20"  # from frontmatter
 
 # Step 2: Query Late API for scheduled platforms
-npx tsx ~/.claude/skills/sns-dedupe/scripts/check-scheduled.ts --date $DATE --platforms x,linkedin,googlebusiness,facebook,bluesky,threads
+npx tsx $SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date $DATE --platforms x,linkedin,googlebusiness,facebook,bluesky,threads
 
 # Output: { "date": "2026-01-20", "needed": ["x", "facebook"], "scheduled": ["linkedin", "googlebusiness", "bluesky", "threads"] }
 
@@ -119,22 +119,22 @@ npx tsx ~/.claude/skills/sns-dedupe/scripts/check-scheduled.ts --date $DATE --pl
 # (Skip linkedin, googlebusiness, bluesky, threads - already scheduled)
 \`\`\`
 
-Requires \`LATE_API_KEY\` in \`~/.claude/skills/sns-schedule-post/.env\`
+Requires \`LATE_API_KEY\` in \`$SKILLS_DIR/sns-schedule-post/.env\`
 
 ## Scripts
 
 \`\`\`bash
 # Load config
-~/.claude/skills/sns-announce/scripts/load-config.sh [project-root]
+$SKILLS_DIR/sns-announce/scripts/load-config.sh [project-root]
 
 # Extract metadata (for file input)
-~/.claude/skills/sns-announce/scripts/extract-metadata.sh <file> --base-url URL
+$SKILLS_DIR/sns-announce/scripts/extract-metadata.sh <file> --base-url URL
 
 # Get optimal posting time
-~/.claude/skills/sns-announce/scripts/get-posting-time.sh <platform> [--date YYYY-MM-DD]
+$SKILLS_DIR/sns-announce/scripts/get-posting-time.sh <platform> [--date YYYY-MM-DD]
 
 # Check scheduled platforms (for --dedupe optimization)
-~/.claude/skills/sns-dedupe/scripts/check-scheduled.ts --date YYYY-MM-DD --platforms LIST
+$SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date YYYY-MM-DD --platforms LIST
 \`\`\`
 
 ## Platform Guidelines

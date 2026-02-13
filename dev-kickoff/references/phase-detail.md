@@ -26,7 +26,7 @@ Handoff: pr-iterate
 
 **Command:**
 ```bash
-~/.claude/skills/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE
+$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE
 ```
 
 **Purpose:** Create isolated git worktree for feature development.
@@ -50,7 +50,7 @@ ls $WORKTREE/.env || echo "ERROR: .env not found"
 
 **Command:**
 ```bash
-~/.claude/skills/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
+$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
   --base $BASE --strategy $STRATEGY --depth $DEPTH --lang $LANG --env-mode $ENV_MODE
 ```
 
@@ -79,7 +79,7 @@ Skill: dev-issue-analyze $ISSUE --depth $DEPTH
 
 **State Update:**
 ```bash
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh 2_analyze done \
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 2_analyze done \
   --result "Identified N files to modify" \
   --worktree $PATH
 ```
@@ -105,7 +105,7 @@ Skill: dev-implement --strategy $STRATEGY --worktree $PATH
 
 **State Update:**
 ```bash
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh 3_implement done \
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3_implement done \
   --result "Implemented feature X" \
   --worktree $PATH
 ```
@@ -139,7 +139,7 @@ Skill: dev-validate --fix --worktree $PATH
 
 **State Update:**
 ```bash
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh 4_validate done \
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 4_validate done \
   --result "All tests pass" \
   --worktree $PATH
 ```
@@ -165,7 +165,7 @@ Skill: git-commit --all --worktree $PATH
 
 **State Update:**
 ```bash
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh 5_commit done \
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 5_commit done \
   --result "Committed: <commit message>" \
   --worktree $PATH
 ```
@@ -185,7 +185,7 @@ Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH
 
 **State Update (with PR info):**
 ```bash
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh 6_pr done \
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_pr done \
   --result "PR created" \
   --pr-number 123 \
   --pr-url "https://github.com/org/repo/pull/123" \
@@ -283,7 +283,7 @@ Other phases run directly without subagent delegation.
 ### Phase 1-2 Failures
 
 ```bash
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh $PHASE failed \
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh $PHASE failed \
   --error "Error message" \
   --worktree $PATH
 ```
@@ -317,7 +317,7 @@ gh pr create --title "..." --body "..."
 
 Check current state:
 ```bash
-~/.claude/skills/dev-kickoff/scripts/next-action.sh --worktree $PATH
+$SKILLS_DIR/dev-kickoff/scripts/next-action.sh --worktree $PATH
 ```
 
 Resume from current phase:

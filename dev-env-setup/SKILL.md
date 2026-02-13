@@ -28,7 +28,7 @@ Auto-detect project type and install dependencies for development environment.
 ## Execution
 
 ```bash
-~/.claude/skills/dev-env-setup/scripts/detect-and-install.sh [--path <dir>] [--dry-run] [--skip-custom]
+$SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh [--path <dir>] [--dry-run] [--skip-custom]
 ```
 
 **Output**: JSON with detected package manager, install status, and custom setup status.
@@ -79,7 +79,7 @@ After `git-prepare` creates a worktree, run dev-env-setup:
 
 ```bash
 # In dev-kickoff Phase 1, after git-prepare completes:
-~/.claude/skills/dev-env-setup/scripts/detect-and-install.sh --path $WORKTREE
+$SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path $WORKTREE
 ```
 
 ## Error Handling

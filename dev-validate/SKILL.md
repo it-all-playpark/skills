@@ -13,7 +13,7 @@ Run tests and quality checks with auto-detection.
 ## Execution
 
 ```bash
-~/.claude/skills/dev-validate/scripts/validate.sh [--fix] [--strict] [--worktree <path>]
+$SKILLS_DIR/dev-validate/scripts/validate.sh [--fix] [--strict] [--worktree <path>]
 ```
 
 ## Options

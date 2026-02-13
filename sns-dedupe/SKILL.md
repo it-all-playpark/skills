@@ -77,7 +77,7 @@ A post is considered duplicate if:
 ## Setup
 
 Uses the same `.env` as sns-schedule-post:
-- `~/.claude/skills/sns-schedule-post/.env`
+- `$SKILLS_DIR/sns-schedule-post/.env`
 - Requires `LATE_API_KEY`
 
 ## Workflow
@@ -97,7 +97,7 @@ Uses the same `.env` as sns-schedule-post:
 For optimized workflow in sns-announce, use this script BEFORE generating posts:
 
 ```bash
-npx tsx ~/.claude/skills/sns-dedupe/scripts/check-scheduled.ts --date 2026-01-20 --platforms x,linkedin,facebook
+npx tsx $SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date 2026-01-20 --platforms x,linkedin,facebook
 ```
 
 ### Output

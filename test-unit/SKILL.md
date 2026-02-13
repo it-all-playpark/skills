@@ -17,7 +17,7 @@ Run unit tests with auto-detected framework.
 Shared framework detection (used by all test-* skills).
 
 ```bash
-~/.claude/skills/test-unit/scripts/detect-test.sh [directory]
+$SKILLS_DIR/test-unit/scripts/detect-test.sh [directory]
 ```
 
 Output:
@@ -33,7 +33,7 @@ Output:
 ### test-unit.sh
 
 ```bash
-~/.claude/skills/test-unit/scripts/test-unit.sh [target] [--filter PATTERN] [--verbose]
+$SKILLS_DIR/test-unit/scripts/test-unit.sh [target] [--filter PATTERN] [--verbose]
 ```
 
 Output:

@@ -45,7 +45,7 @@ Export GitHub Pull Request information to a Markdown file.
 Run the export script:
 
 ```bash
-python3 ~/.claude/skills/repo-pr/scripts/export_pr.py <url> [options]
+python3 $SKILLS_DIR/repo-pr/scripts/export_pr.py <url> [options]
 ```
 
 ## Output Format

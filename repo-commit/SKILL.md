@@ -47,7 +47,7 @@ Export GitHub Commit history to a Markdown file.
 Run the export script:
 
 ```bash
-python3 ~/.claude/skills/repo-commit/scripts/export_commit.py <url> [options]
+python3 $SKILLS_DIR/repo-commit/scripts/export_commit.py <url> [options]
 ```
 
 ## Output Format

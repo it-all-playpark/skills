@@ -13,7 +13,7 @@ Generate coverage reports.
 ## Execution
 
 ```bash
-~/.claude/skills/test-coverage/scripts/test-coverage.sh [--threshold PERCENT] [--report FORMAT]
+$SKILLS_DIR/test-coverage/scripts/test-coverage.sh [--threshold PERCENT] [--report FORMAT]
 ```
 
 ## Options

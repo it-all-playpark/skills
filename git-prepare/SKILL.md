@@ -22,7 +22,7 @@ Prepare git worktree for isolated feature development.
 ## Execution
 
 ```bash
-~/.claude/skills/git-prepare/scripts/git-prepare.sh <issue-number> [options]
+$SKILLS_DIR/git-prepare/scripts/git-prepare.sh <issue-number> [options]
 ```
 
 **Output**: JSON with `worktree_path`, `branch`, `base`, `env_mode`, `env_files`

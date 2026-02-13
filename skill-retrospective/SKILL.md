@@ -50,7 +50,7 @@ Journal entries are stored at `~/.claude/journal/`:
 ls ~/.claude/journal/*.json | wc -l
 
 # Read entries since date
-~/.claude/skills/skill-retrospective/scripts/journal.sh query \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh query \
   --since "2026-02-01" --skill dev-kickoff
 ```
 
@@ -92,7 +92,7 @@ For each detected pattern:
 
 ```bash
 # Read the affected skill's SKILL.md
-SKILL_PATH=~/.claude/skills/${SKILL_NAME}/SKILL.md
+SKILL_PATH=$SKILLS_DIR/${SKILL_NAME}/SKILL.md
 
 # Check if the skill already handles this case
 grep -c "${ERROR_PATTERN}" "$SKILL_PATH"
@@ -166,17 +166,17 @@ Skills log via helper script:
 
 ```bash
 # Log success
-~/.claude/skills/skill-retrospective/scripts/journal.sh log <skill> success \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log <skill> success \
   [--issue N] [--duration-turns N] [--context "key=value"]
 
 # Log failure
-~/.claude/skills/skill-retrospective/scripts/journal.sh log <skill> failure \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log <skill> failure \
   --error-category <cat> --error-msg "message" \
   [--error-phase "phase_name"] \
   [--recovery "what was done"] [--recovery-turns N]
 
 # Log partial (completed with issues)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log <skill> partial \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log <skill> partial \
   --error-category <cat> --error-msg "message" \
   --recovery "workaround applied" --recovery-turns N
 ```
@@ -202,10 +202,10 @@ Add journal logging to skill completion points (1-line addition):
 
 ```bash
 # At end of dev-kickoff (after Phase 6 or on failure)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-kickoff $OUTCOME ...
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-kickoff $OUTCOME ...
 
 # At end of pr-iterate (after LGTM or max iterations)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate $OUTCOME ...
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-iterate $OUTCOME ...
 ```
 
 ## Examples

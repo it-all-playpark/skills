@@ -34,7 +34,7 @@ Multi-domain code analysis for quality, security, performance, and architecture.
 | architecture | Structure, dependencies, patterns |
 | all | Comprehensive across all domains |
 
-See `~/.claude/skills/_lib/analysis-domains.md` for detailed criteria per domain.
+See `$SKILLS_DIR/_lib/analysis-domains.md` for detailed criteria per domain.
 
 ## Workflow
 

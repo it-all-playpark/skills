@@ -26,7 +26,7 @@ blog-cross-post出力をQiitaに**限定共有**として投稿。
 ## Init
 
 ```bash
-bash ~/.claude/skills/qiita-publish/scripts/publish.sh <file-path> [--public]
+bash $SKILLS_DIR/qiita-publish/scripts/publish.sh <file-path> [--public]
 ```
 
 ## References

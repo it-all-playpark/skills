@@ -1,12 +1,16 @@
-# Claude Code Skills Collection
+# Agent Skills Collection
 
-Claude Codeの機能を拡張するスキルコレクションです。
+AIコーディングエージェントの機能を拡張するスキルコレクションです。
 
 ## インストール
 
 ```bash
-# クローン
-git clone https://github.com/it-all-playpark/skills.git ~/.claude/skills
+# クローン（任意のパスに配置可能）
+git clone https://github.com/it-all-playpark/skills.git ~/skills
+
+# 各ツールからシンボリックリンクで参照
+# SKILLS_DIR は実体リポジトリのパスを指定
+ln -sf ~/skills ~/.<tool>/skills   # <tool>: claude, codex など
 ```
 
 ## スキル一覧

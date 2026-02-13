@@ -70,7 +70,7 @@ determine_next_action() {
                 echo "Skill: dev-issue-analyze $ISSUE --depth $DEPTH"
             else
                 echo "1_prepare"
-                echo "~/.claude/skills/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE_BRANCH"
+                echo "$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE_BRANCH"
             fi
             ;;
         2_analyze)
