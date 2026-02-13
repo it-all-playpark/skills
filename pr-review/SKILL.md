@@ -7,7 +7,7 @@ argument-hint: [pr-number] [--depth]
 context: fork
 agent: Plan
 allowed-tools:
-  - Bash($SKILLS_DIR/*)
+  - Bash(~/.claude/skills/*)
   - Bash(gh:*)
   - Bash(npm:*)
   - Read
@@ -20,7 +20,7 @@ allowed-tools:
 
 ## Context
 
-!`$SKILLS_DIR/pr-review/scripts/collect-context.sh $ARGUMENTS`
+!`~/.claude/skills/pr-review/scripts/collect-context.sh $ARGUMENTS`
 
 ## Task
 
