@@ -32,4 +32,5 @@ __pycache__/
 
 # --- external skills (auto-managed) ---
 find-skills
+vercel-react-best-practices
 # --- end external skills ---

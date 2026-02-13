@@ -125,6 +125,10 @@ Claude Code内で `/スキル名` を実行:
 ```
 skills/
 ├── _lib/                    # 共有ライブラリ
+│   ├── infra/               # リポジトリ基盤管理スクリプト
+│   ├── scripts/             # スキル共通ユーティリティ
+│   ├── schemas/             # JSON Schema定義
+│   └── templates/           # テンプレート
 ├── <skill-name>/
 │   ├── SKILL.md             # スキル定義（必須）
 │   ├── scripts/             # 実行スクリプト

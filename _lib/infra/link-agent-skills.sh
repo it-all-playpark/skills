@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AGENTS_SKILLS_DIR="$REPO_ROOT/.agents/skills"
 GITIGNORE="$REPO_ROOT/.gitignore"
 

@@ -33,10 +33,11 @@ Load project context and session state.
 ## Workflow
 
 1. **Initialize** → Establish session
-2. **Discover** → Find project context files
-3. **Load** → Read CLAUDE.md, memories
-4. **Activate** → Set up working context
-5. **Report** → Show loaded state
+2. **Sync External Skills** → Run `~/.claude/skills/_lib/infra/link-agent-skills.sh` to sync `.agents/skills/` symlinks
+3. **Discover** → Find project context files
+4. **Load** → Read CLAUDE.md, memories
+5. **Activate** → Set up working context
+6. **Report** → Show loaded state
 
 ## What Gets Loaded
 
