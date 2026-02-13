@@ -1,6 +1,7 @@
-# Claude Code / Serena
+# Claude Code / Serena / Codex
 .claude/
 .serena/
+.system/
 
 # Credentials & secrets
 client_secret.json
