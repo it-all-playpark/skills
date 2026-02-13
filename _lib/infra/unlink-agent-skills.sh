@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GITIGNORE="$REPO_ROOT/.gitignore"
 
 MARKER_BEGIN="# --- external skills (auto-managed) ---"
