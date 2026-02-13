@@ -41,7 +41,7 @@ Schedule or post to multiple SNS platforms via Late API (getlate.dev).
 
 ### 2. Environment Variables
 
-Create `~/.claude/skills/sns-schedule-post/.env`:
+Create `$SKILLS_DIR/sns-schedule-post/.env`:
 
 ```
 LATE_API_KEY=your_api_key
@@ -102,7 +102,7 @@ JSON format:
 Execute the script at `scripts/post.ts`:
 
 ```bash
-npx tsx ~/.claude/skills/sns-schedule-post/scripts/post.ts --json <file>
+npx tsx $SKILLS_DIR/sns-schedule-post/scripts/post.ts --json <file>
 ```
 
 DO NOT manually call the Late API. Always use the provided script.

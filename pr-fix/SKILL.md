@@ -23,6 +23,6 @@ allowed-tools:
 
 ## Workflow
 
-1. Run: `~/.claude/skills/pr-fix/scripts/pr-setup.sh $PR`
+1. Run: `$SKILLS_DIR/pr-fix/scripts/pr-setup.sh $PR`
 2. Implement fixes based on review output
-3. Run: `~/.claude/skills/pr-fix/scripts/pr-finish.sh [--no-push]`
+3. Run: `$SKILLS_DIR/pr-fix/scripts/pr-finish.sh [--no-push]`

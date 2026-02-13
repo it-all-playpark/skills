@@ -13,7 +13,7 @@ Run tests in watch mode.
 ## Execution
 
 ```bash
-~/.claude/skills/test-watch/scripts/test-watch.sh [target] [--filter PATTERN]
+$SKILLS_DIR/test-watch/scripts/test-watch.sh [target] [--filter PATTERN]
 ```
 
 ## Options

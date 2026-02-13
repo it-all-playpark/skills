@@ -13,7 +13,7 @@ Run integration tests with optional setup/teardown.
 ## Execution
 
 ```bash
-~/.claude/skills/test-integration/scripts/test-integration.sh [target] [--setup] [--teardown]
+$SKILLS_DIR/test-integration/scripts/test-integration.sh [target] [--setup] [--teardown]
 ```
 
 ## Options

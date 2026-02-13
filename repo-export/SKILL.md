@@ -49,7 +49,7 @@ Export GitHub repository contents to a single Markdown file.
 Run the export script:
 
 ```bash
-python3 ~/.claude/skills/repo-export/scripts/export_repo.py <url> [options]
+python3 $SKILLS_DIR/repo-export/scripts/export_repo.py <url> [options]
 ```
 
 ## Output Format

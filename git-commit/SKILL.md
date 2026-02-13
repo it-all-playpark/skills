@@ -30,7 +30,7 @@ Analyze staged changes and create Conventional Commits with adaptive model selec
 ## Step 2: Analyze Changes
 
 ```bash
-~/.claude/skills/commit/scripts/analyze-changes.sh [--worktree <path>]
+$SKILLS_DIR/commit/scripts/analyze-changes.sh [--worktree <path>]
 ```
 
 **Output**: JSON with metrics, score (0-8), recommended model, suggested scope

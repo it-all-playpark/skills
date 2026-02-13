@@ -17,11 +17,14 @@
 
 import { readFileSync, existsSync } from "fs";
 import { parseArgs } from "util";
-import { join } from "path";
-import { homedir } from "os";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
-// Load .env from sns-schedule-post skill directory
-const envPath = join(homedir(), ".claude/skills/sns-schedule-post/.env");
+// Resolve skills repository root (via SKILLS_DIR env or relative to this script)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const skillsDir = process.env.SKILLS_DIR || join(__dirname, "../..");
+const envPath = join(skillsDir, "sns-schedule-post/.env");
 
 function loadEnv(path: string) {
   if (!existsSync(path)) return;

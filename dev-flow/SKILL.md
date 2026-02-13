@@ -86,7 +86,7 @@ For each completed subtask, read kickoff.json and update flow.json:
 
 ```bash
 CHANGED=$(jq -r '.actual_files_changed // [] | join(",")' $SUBTASK_WORKTREE/.claude/kickoff.json)
-~/.claude/skills/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   subtask $TASK_ID --status completed --files-changed "$CHANGED"
 ```
 
@@ -127,10 +127,10 @@ After auto-compact, check state:
 
 ```bash
 # Single mode
-~/.claude/skills/dev-flow/scripts/flow-status.sh --worktree $WORKTREE
+$SKILLS_DIR/dev-flow/scripts/flow-status.sh --worktree $WORKTREE
 
 # Parallel mode
-~/.claude/skills/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
+$SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
 ```
 
 ## Error Handling
@@ -155,11 +155,11 @@ On workflow completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success (LGTM achieved)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-flow success \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow success \
   --issue $ISSUE --duration-turns $TURNS
 
 # On failure (any step fails)
-~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-flow failure \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```
 

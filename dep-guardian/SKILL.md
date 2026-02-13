@@ -79,7 +79,7 @@ For each PR (in risk order):
 gh pr checkout $PR_NUMBER
 
 # Install dependencies
-~/.claude/skills/dev-env-setup/scripts/detect-and-install.sh --path .
+$SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path .
 
 # Build
 npm run build 2>&1 || echo "BUILD_FAILED"
@@ -155,7 +155,7 @@ Safety checks before merge:
 On completion, log to skill-retrospective:
 
 ```bash
-~/.claude/skills/skill-retrospective/scripts/journal.sh log dep-guardian success \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dep-guardian success \
   --context "analyzed=$TOTAL,merged=$MERGED,skipped=$SKIPPED"
 ```
 

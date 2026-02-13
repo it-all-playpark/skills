@@ -83,8 +83,8 @@ cat .claude/kickoff.json | jq '{current_phase, next_actions, phases: (.phases | 
 cat .claude/iterate.json | jq '{pr_number, current_iteration, status, next_actions}'
 
 # Update kickoff phase
-~/.claude/skills/dev-kickoff/scripts/update-phase.sh <phase> <status> --result "..."
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh <phase> <status> --result "..."
 
 # Record iteration
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh <action> [options]
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh <action> [options]
 ```

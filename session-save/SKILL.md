@@ -51,7 +51,7 @@ Before saving, check for unanalyzed skill failures in the journal:
 
 ```bash
 # Count failure entries since last retrospective
-~/.claude/skills/skill-retrospective/scripts/journal.sh query --outcome failure --limit 100 2>/dev/null | jq 'length'
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --outcome failure --limit 100 2>/dev/null | jq 'length'
 ```
 
 | Result | Action |

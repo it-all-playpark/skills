@@ -7,7 +7,7 @@ argument-hint: [pr-number] [--depth]
 context: fork
 agent: Plan
 allowed-tools:
-  - Bash(~/.claude/skills/*)
+  - Bash($SKILLS_DIR/*)
   - Bash(gh:*)
   - Bash(npm:*)
   - Read
@@ -20,7 +20,7 @@ allowed-tools:
 
 ## Context
 
-!`~/.claude/skills/pr-review/scripts/collect-context.sh $ARGUMENTS`
+!`$SKILLS_DIR/pr-review/scripts/collect-context.sh $ARGUMENTS`
 
 ## Task
 
@@ -50,7 +50,7 @@ cat > /tmp/pr-review-body.md <<'EOF'
 EOF
 
 # Submit review (handles own-PR fallback automatically)
-~/.claude/skills/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-review-body.md
+$SKILLS_DIR/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-review-body.md
 ```
 
 **Decision options**:

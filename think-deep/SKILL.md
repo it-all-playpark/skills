@@ -87,7 +87,7 @@ Multi-level structured analysis for complex problem solving.
 | accessibility | WCAG, user experience |
 | testing | Coverage, edge cases |
 
-See `~/.claude/skills/_lib/analysis-domains.md` for detailed criteria.
+See `$SKILLS_DIR/_lib/analysis-domains.md` for detailed criteria.
 
 ## Transparency Markers
 

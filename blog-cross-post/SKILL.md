@@ -81,7 +81,7 @@ playpark blog記事をZenn/Qiita向け**コア版**に変換。
 ## Init
 
 ```bash
-bash ~/.claude/skills/blog-cross-post/scripts/resolve-source.sh <slug-or-path>
+bash $SKILLS_DIR/blog-cross-post/scripts/resolve-source.sh <slug-or-path>
 ```
 
 ## Workflow

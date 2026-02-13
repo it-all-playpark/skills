@@ -49,7 +49,7 @@ Diagnose dev-flow pipeline health and generate actionable improvement recommenda
 
 ```bash
 # Check if --parallel has ever been used
-~/.claude/skills/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 100 | \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 100 | \
   jq '[.[] | select(.args != null and (.args | contains("parallel")))] | length'
 ```
 
@@ -64,7 +64,7 @@ Diagnose dev-flow pipeline health and generate actionable improvement recommenda
 Analyze journal entries to identify which dev-kickoff phases fail most:
 
 ```bash
-~/.claude/skills/skill-retrospective/scripts/journal.sh query --skill dev-kickoff --outcome failure --limit 100 | \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-kickoff --outcome failure --limit 100 | \
   jq 'group_by(.error.phase) | map({phase: .[0].error.phase, count: length}) | sort_by(-.count)'
 ```
 
@@ -77,7 +77,7 @@ Analyze journal entries to identify which dev-kickoff phases fail most:
 ### Check 3: Error Category Distribution
 
 ```bash
-~/.claude/skills/skill-retrospective/scripts/journal.sh stats | jq '.by_category'
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.by_category'
 ```
 
 | Category Dominance | Recommendation |
@@ -103,7 +103,7 @@ git worktree list --porcelain
 ### Check 5: Average Recovery Turns
 
 ```bash
-~/.claude/skills/skill-retrospective/scripts/journal.sh stats | jq '.avg_recovery_turns'
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.avg_recovery_turns'
 ```
 
 | Value | Health | Recommendation |
@@ -118,9 +118,9 @@ Compare recent success rate (last 7 days) vs overall:
 
 ```bash
 # Recent
-~/.claude/skills/skill-retrospective/scripts/journal.sh stats --since 7d
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats --since 7d
 # Overall
-~/.claude/skills/skill-retrospective/scripts/journal.sh stats
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats
 ```
 
 | Trend | Meaning |

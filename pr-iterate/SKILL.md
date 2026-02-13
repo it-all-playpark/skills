@@ -42,38 +42,38 @@ The scripts automatically detect the worktree path using this priority:
 
 ```bash
 # Explicit worktree
-~/.claude/skills/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N] --worktree $PATH
+$SKILLS_DIR/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N] --worktree $PATH
 
 # Auto-detect from kickoff.json (when running from worktree or main repo with kickoff.json)
-~/.claude/skills/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N]
+$SKILLS_DIR/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N]
 ```
 
 ### Record Results
 
 ```bash
 # Record review decision (--summary, --issues は日本語で記述)
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh review \
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh review \
   --decision <approved|request-changes|comment> \
   [--issues "型安全性の問題,未使用のimport"] \
   [--summary "コード品質に問題なし"]
 
 # Record CI status
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh ci --status <passed|failed|pending>
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh ci --status <passed|failed|pending>
 
 # Record fixes applied (--applied は日本語で記述)
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh fix --applied "型アノテーションを追加,未使用importを削除"
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh fix --applied "型アノテーションを追加,未使用importを削除"
 
 # Start next iteration
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh next
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh next
 
 # Complete iteration loop (LGTM時は自動でサマリーをPRコメントに投稿)
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh complete --status <lgtm|failed|max_reached>
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh complete --status <lgtm|failed|max_reached>
 
 # サマリー投稿をスキップする場合
-~/.claude/skills/pr-iterate/scripts/record-iteration.sh complete --status lgtm --no-summary
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh complete --status lgtm --no-summary
 
 # 手動でサマリーを投稿する場合
-~/.claude/skills/pr-iterate/scripts/post-summary.sh [--worktree PATH] [--dry-run]
+$SKILLS_DIR/pr-iterate/scripts/post-summary.sh [--worktree PATH] [--dry-run]
 ```
 
 ### Resume After Compact
@@ -153,16 +153,16 @@ On workflow completion, log execution to skill-retrospective journal:
 
 ```bash
 # On LGTM
-~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate success \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-iterate success \
   --issue $ISSUE --duration-turns $TURNS
 
 # On max iterations reached
-~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate partial \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-iterate partial \
   --issue $ISSUE --error-category config --error-msg "max iterations reached ($N)" \
   --recovery "manual intervention needed" --recovery-turns 0
 
 # On failure
-~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate failure \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-iterate failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```
 

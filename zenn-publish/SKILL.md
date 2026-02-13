@@ -28,5 +28,5 @@ blog-cross-post出力をクリップボードにコピーし、Zennエディタ�
 ## Init
 
 ```bash
-bash ~/.claude/skills/zenn-publish/scripts/publish.sh <file-path>
+bash $SKILLS_DIR/zenn-publish/scripts/publish.sh <file-path>
 ```

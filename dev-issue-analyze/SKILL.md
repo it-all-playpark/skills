@@ -13,7 +13,7 @@ Fetch and parse GitHub issue for implementation planning.
 ## Execution
 
 ```bash
-~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth LEVEL]
+$SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth LEVEL]
 ```
 
 ## Options

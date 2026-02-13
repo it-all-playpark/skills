@@ -18,7 +18,7 @@ Build projects with auto-detection and optimization.
 Detect build system and available commands.
 
 ```bash
-~/.claude/skills/dev-build/scripts/detect-build.sh [directory]
+$SKILLS_DIR/dev-build/scripts/detect-build.sh [directory]
 ```
 
 Output:
@@ -41,7 +41,7 @@ Output:
 Execute build with options.
 
 ```bash
-~/.claude/skills/dev-build/scripts/build.sh [--type dev|prod|test] [--clean] [--optimize]
+$SKILLS_DIR/dev-build/scripts/build.sh [--type dev|prod|test] [--clean] [--optimize]
 ```
 
 Output:
