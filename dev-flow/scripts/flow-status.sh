@@ -188,14 +188,14 @@ FLOW_STEP=$(determine_flow_step)
 # Determine next action command
 case "$FLOW_STEP" in
     step_1_kickoff)
-        NEXT_CMD="Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE_BRANCH"
+        NEXT_CMD="Task subagent: Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE_BRANCH"
         STATUS="kickoff_in_progress"
         ;;
     step_3_iterate)
         if [[ -n "$PR_URL" ]]; then
-            NEXT_CMD="Skill: pr-iterate $PR_URL"
+            NEXT_CMD="Task subagent: Skill: pr-iterate $PR_URL"
         else
-            NEXT_CMD="Skill: pr-iterate $PR_NUMBER"
+            NEXT_CMD="Task subagent: Skill: pr-iterate $PR_NUMBER"
         fi
         STATUS="ready_for_iterate"
         ;;
