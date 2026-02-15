@@ -18,14 +18,14 @@ dev-flow (main context - lightweight)
     │       ├─→ Phase 3: dev-implement (coding)
     │       ├─→ Phase 4: dev-validate (testing)
     │       ├─→ Phase 5: git-commit (commit)
-    │       └─→ Phase 6: git-pr (PR creation)
+    │       ├─→ Phase 6: git-pr (PR creation)
     │       └── Returns: {status, worktree, pr_url, pr_number}
     │
     ├─→ Step 2: Get PR URL (main context)
     │       └─→ gh pr view --json url --jq .url
     │
     └─→ Step 3: Task subagent → pr-iterate (independent context)
-            └─→ Review → Fix → Push → Repeat
+            ├─→ Review → Fix → Push → Repeat
             └── Returns: {status, iterations}
 ```
 
