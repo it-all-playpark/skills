@@ -28,7 +28,9 @@ dev-flow operates in two modes based on issue complexity:
 ```
 dev-flow (mode branch)
 ├── Single mode (default / small issues)
-│   └── dev-kickoff 1 instance → git-pr → pr-iterate
+│   ├── Task: dev-kickoff 1 instance → git-pr (subagent, independent context)
+│   ├── gh pr view (main context)
+│   └── Task: pr-iterate (subagent, independent context)
 │
 └── Parallel mode (--parallel / large issues)
     ├── dev-issue-analyze
@@ -43,19 +45,76 @@ dev-flow (mode branch)
 
 For small issues or when `--parallel` is not specified.
 
+dev-kickoff and pr-iterate run as Task subagents with independent contexts to keep the main dev-flow context lightweight.
+
 | Step | Action | Complete When |
 |------|--------|---------------|
-| 1 | `Skill: dev-kickoff` | PR URL available |
+| 1 | `Task: dev-kickoff` (subagent) | PR URL available |
 | 2 | `gh pr view --json url` | URL captured |
-| 3 | `Skill: pr-iterate` | LGTM achieved or max iterations |
+| 3 | `Task: pr-iterate` (subagent) | LGTM achieved or max iterations |
 
 ### Single Mode Checklist
 
 ```
-[ ] Step 1: Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE
-[ ] Step 2: PR_URL=$(gh pr view --json url --jq .url)
-[ ] Step 3: Skill: pr-iterate $PR_URL --max-iterations $MAX
+[ ] Step 1: Task subagent → dev-kickoff (see prompt below)
+[ ] Step 2: PR_URL=$(gh pr view --json url --jq .url)  (run in worktree)
+[ ] Step 3: Task subagent → pr-iterate (see prompt below)
 ```
+
+### Step 1: dev-kickoff Subagent
+
+Launch dev-kickoff as a Task subagent. The subagent runs in its own context and returns only the result.
+
+**Task prompt:**
+
+```
+Execute the dev-kickoff skill for issue #$ISSUE.
+Run: Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE
+
+After completion, return ONLY a JSON result:
+- On success: {"status": "completed", "worktree": "<path>", "pr_url": "<url>", "pr_number": <number>}
+- On failure: {"status": "failed", "error": "<message>", "phase": "<failed_phase>"}
+```
+
+**Result handling:**
+
+| Result | Action |
+|--------|--------|
+| `status: "completed"` | Extract `worktree`, `pr_url` → proceed to Step 2 |
+| `status: "failed"` | Log failure via journal.sh → abort dev-flow |
+| Task tool error | Log error → abort dev-flow |
+
+### Step 2: Get PR URL
+
+```bash
+# Run from worktree returned by Step 1
+cd $WORKTREE && gh pr view --json url --jq .url
+```
+
+### Step 3: pr-iterate Subagent
+
+Launch pr-iterate as a Task subagent.
+
+**Task prompt:**
+
+```
+Execute the pr-iterate skill for PR $PR_URL.
+Run: Skill: pr-iterate $PR_URL --max-iterations $MAX
+
+After completion, return ONLY a JSON result:
+- On LGTM: {"status": "lgtm", "iterations": <count>}
+- On max reached: {"status": "max_reached", "iterations": <count>}
+- On failure: {"status": "failed", "error": "<message>"}
+```
+
+**Result handling:**
+
+| Result | Action |
+|--------|--------|
+| `status: "lgtm"` | Workflow complete (merge manually) |
+| `status: "max_reached"` | Report status, user decides |
+| `status: "failed"` | Log failure via journal.sh → report error |
+| Task tool error | Log error → report error |
 
 ## Parallel Mode
 

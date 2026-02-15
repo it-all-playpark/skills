@@ -6,22 +6,27 @@ Detailed documentation for the dev-flow skill workflow.
 
 ### Single Mode (Default)
 
+dev-kickoff and pr-iterate run as Task subagents with independent contexts.
+The main dev-flow context stays lightweight (instruction + result only).
+
 ```
-dev-flow (wrapper)
+dev-flow (main context - lightweight)
     │
-    ├─→ Step 1: dev-kickoff (orchestrator)
+    ├─→ Step 1: Task subagent → dev-kickoff (independent context)
     │       ├─→ Phase 1: git-prepare.sh (worktree)
     │       ├─→ Phase 2: dev-issue-analyze (exploration)
     │       ├─→ Phase 3: dev-implement (coding)
     │       ├─→ Phase 4: dev-validate (testing)
     │       ├─→ Phase 5: git-commit (commit)
-    │       └─→ Phase 6: git-pr (PR creation)
+    │       ├─→ Phase 6: git-pr (PR creation)
+    │       └── Returns: {status, worktree, pr_url, pr_number}
     │
-    ├─→ Step 2: Get PR URL
+    ├─→ Step 2: Get PR URL (main context)
     │       └─→ gh pr view --json url --jq .url
     │
-    └─→ Step 3: pr-iterate (review loop)
-            └─→ Review → Fix → Push → Repeat
+    └─→ Step 3: Task subagent → pr-iterate (independent context)
+            ├─→ Review → Fix → Push → Repeat
+            └── Returns: {status, iterations}
 ```
 
 ### Parallel Mode (--parallel)
@@ -89,9 +94,15 @@ analyzing → decomposing → implementing → integrating → pr → iterating 
 
 ## Single Mode Details
 
-### Step 1: dev-kickoff
+### Step 1: dev-kickoff (Task Subagent)
+
+dev-kickoff runs as a Task subagent with its own independent context. The main dev-flow context only holds the Task invocation prompt and the returned result JSON. This prevents dev-kickoff's internal turns (up to 50) from accumulating in the main context.
 
 The orchestrator handles 6 phases internally. See [dev-kickoff/SKILL.md](../../dev-kickoff/SKILL.md).
+
+#### Task Invocation
+
+The Task tool is used to spawn a subagent that executes `Skill: dev-kickoff`. The subagent returns a structured JSON result containing the worktree path and PR information.
 
 #### Completion Signal
 
@@ -101,15 +112,34 @@ When Phase 6 (PR creation) completes, kickoff.json is updated with:
 - `next_action`: "pr-iterate"
 - `current_phase`: "completed"
 
+The subagent returns: `{"status": "completed", "worktree": "<path>", "pr_url": "<url>", "pr_number": <number>}`
+
+#### Error Signal
+
+On failure, the subagent returns: `{"status": "failed", "error": "<message>", "phase": "<failed_phase>"}`
+
 ### Step 2: Get PR URL
 
 ```bash
-gh pr view --json url --jq .url
+# Run from worktree returned by Step 1 subagent
+cd $WORKTREE && gh pr view --json url --jq .url
 ```
 
-### Step 3: pr-iterate
+### Step 3: pr-iterate (Task Subagent)
+
+pr-iterate runs as a Task subagent with its own independent context. This prevents the review-fix loop iterations from accumulating in the main dev-flow context.
 
 Handles the review-fix-push loop. See [pr-iterate/SKILL.md](../../pr-iterate/SKILL.md).
+
+#### Task Invocation
+
+The Task tool is used to spawn a subagent that executes `Skill: pr-iterate`. The subagent returns a structured JSON result containing the final status and iteration count.
+
+#### Result Signal
+
+- LGTM: `{"status": "lgtm", "iterations": <count>}`
+- Max reached: `{"status": "max_reached", "iterations": <count>}`
+- Failure: `{"status": "failed", "error": "<message>"}`
 
 ## Parallel Mode Details
 
@@ -253,9 +283,10 @@ cat $SUBTASK_WT/.claude/kickoff.json | jq '.current_phase'
 ## Integration Points
 
 ### With dev-kickoff
-- Single mode: dev-flow calls dev-kickoff as first step
+- Single mode: dev-flow launches dev-kickoff as Task subagent (independent context)
 - Parallel mode: dev-flow launches multiple dev-kickoff instances via Task tool
 - kickoff.json is the per-task handoff point
+- In single mode, the Task subagent returns `{status, worktree, pr_url, pr_number}` to dev-flow
 
 ### With dev-decompose
 - dev-flow calls dev-decompose after issue analysis
@@ -267,9 +298,10 @@ cat $SUBTASK_WT/.claude/kickoff.json | jq '.current_phase'
 - Merge worktree is the output
 
 ### With pr-iterate
-- dev-flow extracts PR URL from kickoff (single) or flow.json (parallel)
-- Passes URL to pr-iterate
+- Single mode: dev-flow launches pr-iterate as Task subagent (independent context)
+- Parallel mode: dev-flow extracts PR URL from flow.json, passes to pr-iterate (Skill call)
 - pr-iterate creates its own iterate.json
+- In single mode, the Task subagent returns `{status, iterations}` to dev-flow
 
 ### With GitHub CLI
 - `gh pr view` for PR status
