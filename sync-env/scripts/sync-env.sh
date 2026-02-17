@@ -86,7 +86,7 @@ for env_file in "${ENV_FILES[@]}"; do
         if [[ "$FORCE" == true ]]; then
             rm -f "$target_path"
         else
-            FILES_SKIPPED+=("\"existing:$relative_path\"")
+            FILES_SKIPPED+=("existing:$relative_path")
             continue
         fi
     fi
@@ -96,39 +96,42 @@ for env_file in "${ENV_FILES[@]}"; do
     case "$MODE" in
         hardlink)
             if ln "$env_file" "$target_path" 2>/dev/null; then
-                FILES_SYNCED+=("\"hardlink:$relative_path\"")
+                FILES_SYNCED+=("hardlink:$relative_path")
             elif cp "$env_file" "$target_path"; then
-                FILES_SYNCED+=("\"copy:$relative_path\"")
+                FILES_SYNCED+=("copy:$relative_path")
             else
-                ERRORS+=("\"failed:$relative_path\"")
+                ERRORS+=("failed:$relative_path")
             fi
             ;;
         symlink)
             if ln -sf "$env_file" "$target_path"; then
-                FILES_SYNCED+=("\"symlink:$relative_path\"")
+                FILES_SYNCED+=("symlink:$relative_path")
             else
-                ERRORS+=("\"failed:$relative_path\"")
+                ERRORS+=("failed:$relative_path")
             fi
             ;;
         copy)
             if cp "$env_file" "$target_path"; then
-                FILES_SYNCED+=("\"copy:$relative_path\"")
+                FILES_SYNCED+=("copy:$relative_path")
             else
-                ERRORS+=("\"failed:$relative_path\"")
+                ERRORS+=("failed:$relative_path")
             fi
             ;;
     esac
 done
 
-# Build JSON arrays
-join_array() {
-    local IFS=","
-    echo "$*"
+# Build JSON arrays using jq for proper escaping
+to_json_array() {
+    if [[ $# -eq 0 ]]; then
+        echo '[]'
+        return
+    fi
+    printf '%s\n' "$@" | jq -R . | jq -sc .
 }
 
-SYNCED_JSON=$(join_array "${FILES_SYNCED[@]+"${FILES_SYNCED[@]}"}")
-SKIPPED_JSON=$(join_array "${FILES_SKIPPED[@]+"${FILES_SKIPPED[@]}"}")
-ERRORS_JSON=$(join_array "${ERRORS[@]+"${ERRORS[@]}"}")
+SYNCED_JSON=$(to_json_array "${FILES_SYNCED[@]+"${FILES_SYNCED[@]}"}")
+SKIPPED_JSON=$(to_json_array "${FILES_SKIPPED[@]+"${FILES_SKIPPED[@]}"}")
+ERRORS_JSON=$(to_json_array "${ERRORS[@]+"${ERRORS[@]}"}")
 
 # Determine status
 STATUS="synced"
@@ -139,18 +142,24 @@ if [[ ${#FILES_SYNCED[@]} -eq 0 && ${#ERRORS[@]} -eq 0 ]]; then
     STATUS="no_changes"
 fi
 
-# Output JSON
-cat <<EOF
-{
-  "status": "$STATUS",
-  "source": "$SOURCE",
-  "worktree": "$WORKTREE",
-  "mode": "$MODE",
-  "files_synced": [${SYNCED_JSON}],
-  "files_skipped": [${SKIPPED_JSON}],
-  "errors": [${ERRORS_JSON}],
-  "total_synced": ${#FILES_SYNCED[@]},
-  "total_skipped": ${#FILES_SKIPPED[@]},
-  "total_errors": ${#ERRORS[@]}
-}
-EOF
+# Output JSON using jq for proper construction
+jq -n \
+    --arg status "$STATUS" \
+    --arg source "$SOURCE" \
+    --arg worktree "$WORKTREE" \
+    --arg mode "$MODE" \
+    --argjson files_synced "$SYNCED_JSON" \
+    --argjson files_skipped "$SKIPPED_JSON" \
+    --argjson errors "$ERRORS_JSON" \
+    '{
+        status: $status,
+        source: $source,
+        worktree: $worktree,
+        mode: $mode,
+        files_synced: $files_synced,
+        files_skipped: $files_skipped,
+        errors: $errors,
+        total_synced: ($files_synced | length),
+        total_skipped: ($files_skipped | length),
+        total_errors: ($errors | length)
+    }'

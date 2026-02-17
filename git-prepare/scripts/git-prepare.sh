@@ -78,7 +78,8 @@ if [[ -d "$WORKTREE_PATH" ]]; then
     else
         ENV_RESULT='{"status":"skipped","mode":"none","files_synced":[],"total_synced":0}'
     fi
-    echo "{\"status\":\"exists\",\"worktree_path\":\"$WORKTREE_PATH\",\"branch\":\"$BRANCH_NAME\",\"env_mode\":\"$ENV_MODE\"}"
+    ENV_SYNC_JSON=$(echo "$ENV_RESULT" | jq -c '{status: .status, files_synced: .files_synced, total_synced: .total_synced}' 2>/dev/null || echo '{"status":"unknown"}')
+    echo "{\"status\":\"exists\",\"worktree_path\":\"$WORKTREE_PATH\",\"branch\":\"$BRANCH_NAME\",\"env_mode\":\"$ENV_MODE\",\"env_sync\":$ENV_SYNC_JSON}"
     exit 0
 fi
 
@@ -98,8 +99,8 @@ else
     ENV_RESULT='{"status":"skipped","mode":"none","files_synced":[],"total_synced":0}'
 fi
 
-# Extract env_files array from sync-env result
-ENV_FILES_JSON=$(echo "$ENV_RESULT" | grep -o '"files_synced":\[[^]]*\]' | sed 's/"files_synced"://' || echo '[]')
+# Extract env_files array from sync-env result using jq
+ENV_FILES_JSON=$(echo "$ENV_RESULT" | jq -c '.files_synced' 2>/dev/null || echo '[]')
 
 # Output JSON result
 cat <<EOF
