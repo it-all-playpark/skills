@@ -60,6 +60,10 @@ BRANCH_NAME="feature/issue-${ISSUE_NUMBER}-${SUFFIX}"
 WORKTREE_BASE="${REPO_ROOT}/../${REPO_NAME}-worktrees"
 WORKTREE_PATH="${WORKTREE_BASE}/feature-issue-${ISSUE_NUMBER}-${SUFFIX}"
 
+# Sync env helper path
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SYNC_ENV="$SCRIPT_DIR/../../sync-env/scripts/sync-env.sh"
+
 # Create worktrees directory
 mkdir -p "$WORKTREE_BASE"
 
@@ -68,7 +72,13 @@ git fetch origin "$BASE_BRANCH" 2>/dev/null || true
 
 # Check if worktree already exists
 if [[ -d "$WORKTREE_PATH" ]]; then
-    echo "{\"status\":\"exists\",\"worktree_path\":\"$WORKTREE_PATH\",\"branch\":\"$BRANCH_NAME\"}"
+    # Sync .env files even for existing worktrees (without --force to skip existing)
+    if [[ "$ENV_MODE" != "none" ]]; then
+        ENV_RESULT=$("$SYNC_ENV" --worktree "$WORKTREE_PATH" --source "$REPO_ROOT" --mode "$ENV_MODE")
+    else
+        ENV_RESULT='{"status":"skipped","mode":"none","files_synced":[],"total_synced":0}'
+    fi
+    echo "{\"status\":\"exists\",\"worktree_path\":\"$WORKTREE_PATH\",\"branch\":\"$BRANCH_NAME\",\"env_mode\":\"$ENV_MODE\"}"
     exit 0
 fi
 
@@ -81,54 +91,15 @@ else
     git worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "origin/$BASE_BRANCH"
 fi
 
-# Setup environment files
-setup_env_files() {
-    local mode="$1"
-    local env_files=()
+# Sync environment files via sync-env skill (--force for new worktrees)
+if [[ "$ENV_MODE" != "none" ]]; then
+    ENV_RESULT=$("$SYNC_ENV" --worktree "$WORKTREE_PATH" --source "$REPO_ROOT" --mode "$ENV_MODE" --force)
+else
+    ENV_RESULT='{"status":"skipped","mode":"none","files_synced":[],"total_synced":0}'
+fi
 
-    if [[ "$mode" == "none" ]]; then
-        return
-    fi
-
-    # Find all .env* files, excluding node_modules, .git, and worktrees
-    while IFS= read -r -d '' env_file; do
-        env_files+=("$env_file")
-    done < <(find "$REPO_ROOT" -name ".env*" -type f \
-        -not -path "*/node_modules/*" \
-        -not -path "*/.git/*" \
-        -not -path "*-worktrees/*" \
-        -print0 2>/dev/null)
-
-    for env_file in "${env_files[@]}"; do
-        relative_path="${env_file#$REPO_ROOT/}"
-        target_path="$WORKTREE_PATH/$relative_path"
-        target_dir=$(dirname "$target_path")
-
-        mkdir -p "$target_dir"
-
-        case "$mode" in
-            hardlink)
-                if ln "$env_file" "$target_path" 2>/dev/null; then
-                    echo "hardlink:$relative_path"
-                else
-                    cp "$env_file" "$target_path"
-                    echo "copy:$relative_path"
-                fi
-                ;;
-            symlink)
-                ln -sf "$env_file" "$target_path"
-                echo "symlink:$relative_path"
-                ;;
-            copy)
-                cp "$env_file" "$target_path"
-                echo "copy:$relative_path"
-                ;;
-        esac
-    done
-}
-
-# Capture env setup output
-ENV_RESULTS=$(setup_env_files "$ENV_MODE")
+# Extract env_files array from sync-env result
+ENV_FILES_JSON=$(echo "$ENV_RESULT" | grep -o '"files_synced":\[[^]]*\]' | sed 's/"files_synced"://' || echo '[]')
 
 # Output JSON result
 cat <<EOF
@@ -138,6 +109,6 @@ cat <<EOF
   "branch": "$BRANCH_NAME",
   "base": "origin/$BASE_BRANCH",
   "env_mode": "$ENV_MODE",
-  "env_files": [$(echo "$ENV_RESULTS" | sed 's/^/"/;s/$/"/' | paste -sd, - 2>/dev/null || echo "")]
+  "env_files": ${ENV_FILES_JSON}
 }
 EOF

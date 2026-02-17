@@ -32,6 +32,7 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 2. Warn if actual_files_changed differs from planned files
 3. Determine merge order from depends_on (topological sort, leaves first)
 4. Create merge worktree via git-prepare --suffix merge --base $CONTRACT_BRANCH
+4b. Sync .env files to merge worktree via sync-env
 5. For each subtask in order:
    a. git merge --no-ff $TASK_BRANCH
    b. If conflict: attempt auto-resolution, record in flow.json
@@ -70,6 +71,12 @@ are merged first, followed by subtasks that depend on them.
 
 ```bash
 $SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --suffix merge --base $BASE
+```
+
+### Step 4b: Sync .env Files
+
+```bash
+$SKILLS_DIR/sync-env/scripts/sync-env.sh --worktree $MERGE_WORKTREE --mode $ENV_MODE --force
 ```
 
 ### Step 5: Merge Subtask Branches
