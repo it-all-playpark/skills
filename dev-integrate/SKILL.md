@@ -73,7 +73,10 @@ are merged first, followed by subtasks that depend on them.
 $SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --suffix merge --base $BASE
 ```
 
-### Step 4b: Sync .env Files
+### Step 4b: Sync .env Files (git-prepareが自動実行しない場合のみ)
+
+> **Note**: git-prepare.sh は内部で sync-env を自動呼び出しする。
+> `--env-mode none` で Step 4 を実行した場合や、手動で再同期が必要な場合のみ以下を実行する。
 
 ```bash
 $SKILLS_DIR/sync-env/scripts/sync-env.sh --worktree $MERGE_WORKTREE --mode $ENV_MODE --force

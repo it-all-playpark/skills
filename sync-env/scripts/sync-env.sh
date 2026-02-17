@@ -46,6 +46,12 @@ if [[ ! "$MODE" =~ ^(hardlink|symlink|copy)$ ]]; then
     exit 1
 fi
 
+# Check jq dependency
+if ! command -v jq &>/dev/null; then
+    echo "Error: jq is required but not installed" >&2
+    exit 1
+fi
+
 # Auto-detect source from worktree's git common dir
 if [[ -z "$SOURCE" ]]; then
     SOURCE=$(cd "$WORKTREE" && git rev-parse --path-format=absolute --git-common-dir | sed 's|/\.git$||')

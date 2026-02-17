@@ -59,6 +59,10 @@ scripts/sync-env.sh --worktree /path/to/worktree --source /path/to/repo
 }
 ```
 
+## Requirements
+
+- `jq` - JSON output の構築に使用
+
 ## Notes
 
 - Follows symlinks (`find -L`) for monorepo workspace support

@@ -6,6 +6,8 @@ description: |
   (2) keywords like "サビ", "chorus", "切り出し", "音声抽出", "YouTube audio",
   (3) user provides YouTube URL and start timestamp.
   Accepts args: <youtube-url> --start <MM:SS> [--duration <seconds>] [--fade <seconds>] [--bitrate <kbps>] [-o <output>]
+allowed-tools:
+  - Bash
 ---
 
 # yt-chorus-extract

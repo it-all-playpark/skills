@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Extract chorus clip from YouTube video as .opus with fade-out.
 # Requires: yt-dlp, ffmpeg
@@ -93,6 +93,15 @@ for cmd in yt-dlp ffmpeg; do
     fi
 done
 
+# Validate numeric arguments
+for var_name in DURATION FADE BITRATE; do
+    eval "val=\$$var_name"
+    if [[ ! "$val" =~ ^[0-9]+$ ]]; then
+        echo "Error: --$(echo "$var_name" | tr '[:upper:]' '[:lower:]') must be a positive integer, got: $val" >&2
+        exit 1
+    fi
+done
+
 if (( FADE >= DURATION )); then
     echo "Error: Fade duration ($FADE) must be less than clip duration ($DURATION)" >&2
     exit 1
@@ -125,7 +134,7 @@ if [[ -z "$TITLE" ]]; then
 fi
 
 # Sanitize title for filename
-SAFE_TITLE=$(echo "$TITLE" | sed 's/[/:*?"<>|\\]/ /g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+SAFE_TITLE=$(echo "$TITLE" | tr -d '\n' | sed "s/[/:*?\"<>|\\\\']/ /g" | sed 's/  */ /g; s/^ *//; s/ *$//' | sed 's/^-//')
 
 if [[ -z "$OUTPUT" ]]; then
     OUTPUT="${SAFE_TITLE} (chorus).opus"

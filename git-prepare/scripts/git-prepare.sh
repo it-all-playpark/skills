@@ -70,16 +70,32 @@ mkdir -p "$WORKTREE_BASE"
 # Fetch latest
 git fetch origin "$BASE_BRANCH" 2>/dev/null || true
 
+# Helper: run sync-env if available, otherwise skip with warning
+run_sync_env() {
+    local worktree="$1" source="$2" mode="$3" force_flag="${4:-}"
+    if [[ "$mode" == "none" ]]; then
+        echo '{"status":"skipped","mode":"none","files_synced":[],"total_synced":0}'
+        return
+    fi
+    if [[ -x "$SYNC_ENV" ]]; then
+        "$SYNC_ENV" --worktree "$worktree" --source "$source" --mode "$mode" $force_flag
+    else
+        echo "Warning: sync-env.sh not found, skipping env sync" >&2
+        echo '{"status":"skipped","mode":"'"$mode"'","files_synced":[],"total_synced":0}'
+    fi
+}
+
 # Check if worktree already exists
 if [[ -d "$WORKTREE_PATH" ]]; then
     # Sync .env files even for existing worktrees (without --force to skip existing)
-    if [[ "$ENV_MODE" != "none" ]]; then
-        ENV_RESULT=$("$SYNC_ENV" --worktree "$WORKTREE_PATH" --source "$REPO_ROOT" --mode "$ENV_MODE")
-    else
-        ENV_RESULT='{"status":"skipped","mode":"none","files_synced":[],"total_synced":0}'
-    fi
+    ENV_RESULT=$(run_sync_env "$WORKTREE_PATH" "$REPO_ROOT" "$ENV_MODE")
     ENV_SYNC_JSON=$(echo "$ENV_RESULT" | jq -c '{status: .status, files_synced: .files_synced, total_synced: .total_synced}' 2>/dev/null || echo '{"status":"unknown"}')
-    echo "{\"status\":\"exists\",\"worktree_path\":\"$WORKTREE_PATH\",\"branch\":\"$BRANCH_NAME\",\"env_mode\":\"$ENV_MODE\",\"env_sync\":$ENV_SYNC_JSON}"
+    jq -n \
+        --arg worktree_path "$WORKTREE_PATH" \
+        --arg branch "$BRANCH_NAME" \
+        --arg env_mode "$ENV_MODE" \
+        --argjson env_sync "$ENV_SYNC_JSON" \
+        '{status: "exists", worktree_path: $worktree_path, branch: $branch, env_mode: $env_mode, env_sync: $env_sync}'
     exit 0
 fi
 
@@ -93,23 +109,16 @@ else
 fi
 
 # Sync environment files via sync-env skill (--force for new worktrees)
-if [[ "$ENV_MODE" != "none" ]]; then
-    ENV_RESULT=$("$SYNC_ENV" --worktree "$WORKTREE_PATH" --source "$REPO_ROOT" --mode "$ENV_MODE" --force)
-else
-    ENV_RESULT='{"status":"skipped","mode":"none","files_synced":[],"total_synced":0}'
-fi
+ENV_RESULT=$(run_sync_env "$WORKTREE_PATH" "$REPO_ROOT" "$ENV_MODE" "--force")
 
 # Extract env_files array from sync-env result using jq
 ENV_FILES_JSON=$(echo "$ENV_RESULT" | jq -c '.files_synced' 2>/dev/null || echo '[]')
 
 # Output JSON result
-cat <<EOF
-{
-  "status": "created",
-  "worktree_path": "$WORKTREE_PATH",
-  "branch": "$BRANCH_NAME",
-  "base": "origin/$BASE_BRANCH",
-  "env_mode": "$ENV_MODE",
-  "env_files": ${ENV_FILES_JSON}
-}
-EOF
+jq -n \
+    --arg worktree_path "$WORKTREE_PATH" \
+    --arg branch "$BRANCH_NAME" \
+    --arg base "origin/$BASE_BRANCH" \
+    --arg env_mode "$ENV_MODE" \
+    --argjson env_files "$ENV_FILES_JSON" \
+    '{status: "created", worktree_path: $worktree_path, branch: $branch, base: $base, env_mode: $env_mode, env_files: $env_files}'

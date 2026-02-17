@@ -6,6 +6,8 @@ description: |
   (2) user asks to turn discussion notes into an issue with frontend/backend/infra viewpoints,
   (3) user wants a devil's-advocate pass before posting issue.
   Accepts args: [discussion-source] [--repo owner/repo] [--title "TITLE"] [--labels a,b] [--assignees a,b] [--milestone name] [--max-review-rounds N] [--lang ja|en] [--dry-run]
+allowed-tools:
+  - Bash
 ---
 
 # GitHub Issue Orchestrator

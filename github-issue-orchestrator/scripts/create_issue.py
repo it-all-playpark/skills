@@ -120,7 +120,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    sys.exit(run(args))
+    try:
+        sys.exit(run(args))
+    except (FileNotFoundError, ValueError, RuntimeError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
