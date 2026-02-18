@@ -120,7 +120,7 @@ audit-state.sh add-finding \
   --title "<title>" \
   --description "<description from cross-domain investigation>" \
   --evidence "<evidence>" \
-  --cross-domain true
+  --cross-domain
 
 # Link to the original finding
 audit-state.sh add-cross-ref --finding <new-finding-id> --ref <original-finding-id>

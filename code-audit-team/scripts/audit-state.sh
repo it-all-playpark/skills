@@ -96,13 +96,14 @@ cmd_add_finding() {
     count=$(jq '.findings | length' "$STATE_FILE")
     local finding_id="f$((count + 1))"
 
-    # Severity to numeric score
-    local severity_score=1
+    # Severity to numeric score (validate input)
+    local severity_score
     case "$severity" in
         critical) severity_score=4 ;;
         high) severity_score=3 ;;
         medium) severity_score=2 ;;
         low) severity_score=1 ;;
+        *) die_json "Invalid severity: $severity. Must be one of: critical, high, medium, low" ;;
     esac
 
     # Add finding to state
