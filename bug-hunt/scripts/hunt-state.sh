@@ -6,6 +6,7 @@
 #   init              Initialize bug-hunt-state.json
 #   add-hypothesis    Add a new hypothesis
 #   update-hypothesis Update hypothesis status
+#   increment-turn    Increment turns_used counter
 #   check-budget      Check remaining turn budget
 #   read              Read current state
 
@@ -34,13 +35,16 @@ HYP_ASSIGNED=""
 HYP_REASON=""
 HYP_EVIDENCE=""
 
+# Valid enum values
+VALID_CATEGORIES="logic state external environment"
+
 # ============================================================================
 # Parse arguments
 # ============================================================================
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            init|add-hypothesis|update-hypothesis|check-budget|read)
+            init|add-hypothesis|update-hypothesis|increment-turn|check-budget|read)
                 COMMAND="$1"; shift ;;
             --target) TARGET="$2"; shift 2 ;;
             --max-hypotheses) MAX_HYPOTHESES="$2"; shift 2 ;;
@@ -58,7 +62,7 @@ parse_args() {
         esac
     done
 
-    [[ -n "$COMMAND" ]] || die_json "Command required: init|add-hypothesis|update-hypothesis|check-budget|read" 1
+    [[ -n "$COMMAND" ]] || die_json "Command required: init|add-hypothesis|update-hypothesis|increment-turn|check-budget|read" 1
 }
 
 usage() {
@@ -69,6 +73,7 @@ Commands:
   init                Initialize state file
   add-hypothesis      Add a hypothesis
   update-hypothesis   Update hypothesis status
+  increment-turn      Increment turns_used counter
   check-budget        Check turn budget
   read                Read current state
 
@@ -110,6 +115,14 @@ ensure_state_exists() {
 cmd_init() {
     [[ -n "$TARGET" ]] || die_json "--target required for init" 1
 
+    # Validate numeric arguments
+    if ! [[ "$MAX_HYPOTHESES" =~ ^[0-9]+$ ]]; then
+        die_json "Max hypotheses must be a positive integer" 1
+    fi
+    if ! [[ "$MAX_TURNS" =~ ^[0-9]+$ ]]; then
+        die_json "Max turns must be a positive integer" 1
+    fi
+
     local state_file
     state_file=$(resolve_state_file)
     local state_dir
@@ -138,7 +151,6 @@ cmd_init() {
             },
             turns_used: $turns_used,
             hypotheses: [],
-            findings: [],
             root_cause: null,
             fix_proposal: null,
             created_at: $created_at,
@@ -175,10 +187,17 @@ cmd_add_hypothesis() {
         die_json "Hypothesis with id '$HYP_ID' already exists" 1
     fi
 
+    # Validate category if provided
+    if [[ -n "$HYP_CATEGORY" ]]; then
+        if ! echo "$VALID_CATEGORIES" | grep -qw "$HYP_CATEGORY"; then
+            die_json "Invalid category: $HYP_CATEGORY. Must be one of: $VALID_CATEGORIES" 1
+        fi
+    fi
+
     local tmp
     tmp=$(mktemp)
 
-    jq --arg id "$HYP_ID" \
+    if jq --arg id "$HYP_ID" \
        --arg desc "$HYP_DESC" \
        --arg cat "${HYP_CATEGORY:-unknown}" \
        --arg status "${HYP_STATUS:-pending}" \
@@ -193,9 +212,13 @@ cmd_add_hypothesis() {
             evidence: [],
             rejected_reason: null,
             created_at: $now
-        }] | .updated_at = $now' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
-
-    echo "{\"status\":\"added\",\"hypothesis_id\":\"$HYP_ID\"}"
+        }] | .updated_at = $now' "$state_file" > "$tmp"; then
+        mv "$tmp" "$state_file"
+        echo "{\"status\":\"added\",\"hypothesis_id\":\"$HYP_ID\"}"
+    else
+        rm -f "$tmp"
+        die_json "Failed to add hypothesis" 1
+    fi
 }
 
 cmd_update_hypothesis() {
@@ -260,6 +283,28 @@ cmd_update_hypothesis() {
     fi
 }
 
+cmd_increment_turn() {
+    local state_file
+    state_file=$(ensure_state_exists)
+
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local tmp
+    tmp=$(mktemp)
+
+    if jq --arg now "$now" \
+       '.turns_used += 1 | .updated_at = $now' "$state_file" > "$tmp"; then
+        mv "$tmp" "$state_file"
+        local turns_used
+        turns_used=$(jq '.turns_used' "$state_file")
+        echo "{\"status\":\"incremented\",\"turns_used\":$turns_used}"
+    else
+        rm -f "$tmp"
+        die_json "Failed to increment turn" 1
+    fi
+}
+
 cmd_check_budget() {
     local state_file
     state_file=$(ensure_state_exists)
@@ -312,6 +357,7 @@ case "$COMMAND" in
     init) cmd_init ;;
     add-hypothesis) cmd_add_hypothesis ;;
     update-hypothesis) cmd_update_hypothesis ;;
+    increment-turn) cmd_increment_turn ;;
     check-budget) cmd_check_budget ;;
     read) cmd_read ;;
     *) die_json "Unknown command: $COMMAND" 1 ;;

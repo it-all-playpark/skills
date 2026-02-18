@@ -24,6 +24,10 @@ Collaborative multi-agent bug investigation with dynamic hypothesis management.
 /bug-hunt <issue-or-description> [--max-hypotheses N] [--max-turns N] [--repo-path <path>]
 ```
 
+## Prerequisites
+
+- `jq` - Required for state file management (`brew install jq`)
+
 ## Args
 
 | Arg | Default | Description |
@@ -112,6 +116,14 @@ $SKILLS_DIR/bug-hunt/scripts/hunt-state.sh add-hypothesis \
 $SKILLS_DIR/bug-hunt/scripts/hunt-state.sh update-hypothesis \
   --id "h1" --status "rejected" \
   --reason "Session store uses Redis, no memory leak"
+```
+
+### Turn Tracking
+
+Increment turns_used after each investigator message:
+
+```bash
+$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh increment-turn --repo-path <path>
 ```
 
 ### Convergence Conditions
