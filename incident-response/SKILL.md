@@ -57,9 +57,9 @@ incident-lead executes:
 | Role | Name | Agent Type | Line |
 |------|------|-----------|------|
 | Leader | `incident-lead` | general-purpose | Triage, integration, decisions, user reporting |
-| Code | `code-analyst` | root-cause-analyst | Code changes, deploy diffs, git blame |
-| Log | `log-analyst` | root-cause-analyst | Log files, error patterns, metrics |
-| Config | `config-analyst` | root-cause-analyst | Config files, env vars, infra changes |
+| Code | `code-analyst` | general-purpose | Code changes, deploy diffs, git blame |
+| Log | `log-analyst` | general-purpose | Log files, error patterns, metrics |
+| Config | `config-analyst` | general-purpose | Config files, env vars, infra changes |
 
 Create team with TeamCreate, spawn analysts via Task tool. See [Team Lifecycle](references/team-lifecycle.md) for patterns.
 
@@ -95,6 +95,10 @@ config-analyst → incident-lead:
 - config-analyst reports "no changes" -> send shutdown_request (cost saving)
 - Strong lead found -> narrow remaining analysts' scope
 
+### State Write Ownership
+
+**Only incident-lead writes to state file.** Analysts report findings via SendMessage to incident-lead, who consolidates and writes state. This prevents concurrent write conflicts when multiple analysts run in parallel.
+
 ### Cost Control
 
 - `--max-turns` limits total team turns
@@ -122,7 +126,7 @@ See [Resolution Patterns](references/resolution-patterns.md) for templates.
 
 ## State Management
 
-State persisted in `$CWD/.claude/incident-state.json`.
+State persisted in `$CWD/.claude/incident-state.json`. When `--repo-path` is specified, run all scripts from that directory so `$CWD` resolves correctly.
 
 ```bash
 # Initialize
@@ -133,6 +137,9 @@ scripts/incident-state.sh add-timeline "<time>" "<event>" "<source>" "<severity>
 
 # Update investigation line status
 scripts/incident-state.sh update-line <line> <status>
+
+# Increment turn counter
+scripts/incident-state.sh increment-turns [count]
 
 # Check turn budget
 scripts/incident-state.sh check-budget

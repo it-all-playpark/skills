@@ -48,10 +48,10 @@ Deploy ref: {deploy_ref}
 Your scope:
 - Analyze code changes around the incident timeframe
 - Run: git diff, git log --since, git blame
-- Report findings to incident-lead via SendMessage
+- Report ALL findings to incident-lead via SendMessage (do NOT write state file directly)
 - When other analysts share findings, narrow your investigation accordingly
 
-State file: {repo_path}/.claude/incident-state.json
+State file: {repo_path}/.claude/incident-state.json (read-only for analysts)
 ```
 
 **log-analyst**:
@@ -64,9 +64,9 @@ Your scope:
 - Find and analyze relevant log files
 - Identify error patterns and anomalies in the timeframe
 - Perform time-series analysis of error rates/response times
-- Report findings to incident-lead via SendMessage
+- Report ALL findings to incident-lead via SendMessage (do NOT write state file directly)
 
-State file: {repo_path}/.claude/incident-state.json
+State file: {repo_path}/.claude/incident-state.json (read-only for analysts)
 ```
 
 **config-analyst**:
@@ -79,10 +79,10 @@ Your scope:
 - Check config file changes (git diff on config paths)
 - Verify environment variables
 - Check infra config (Docker, K8s manifests, Terraform)
-- Report findings to incident-lead via SendMessage
+- Report ALL findings to incident-lead via SendMessage (do NOT write state file directly)
 - If no changes found, report early and expect shutdown
 
-State file: {repo_path}/.claude/incident-state.json
+State file: {repo_path}/.claude/incident-state.json (read-only for analysts)
 ```
 
 ## Communication Patterns
