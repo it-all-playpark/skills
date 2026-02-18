@@ -17,26 +17,29 @@ Orchestrate complete feature development cycle from issue to PR.
 
 **DO NOT EXIT until Phase 6 (PR creation) completes and pr-iterate is called.**
 
-| Phase | Action | Complete When | Parallel Mode |
-|-------|--------|---------------|---------------|
-| 1 | Worktree creation | Path exists, .env verified | SKIP |
-| 2 | Issue analysis | Requirements understood | SKIP |
-| 3 | Implementation | Code written | Execute |
-| 4 | Validation | Tests pass | Execute |
-| 5 | Commit | Changes committed | Execute (enhanced) |
-| 6 | PR creation | PR URL available | SKIP |
+**CRITICAL: Phase 1 (Worktree) is MANDATORY unless `--task-id` is specified.**
+When `--task-id` is NOT set (= single mode), Phase 1 MUST be executed FIRST. Implementation in the main repository directory is NEVER allowed.
+
+| Phase | Action | Complete When | Single Mode | Parallel Mode (--task-id) |
+|-------|--------|---------------|-------------|---------------------------|
+| 1 | Worktree creation | Path exists, .env verified | **REQUIRED** | SKIP |
+| 2 | Issue analysis | Requirements understood | **REQUIRED** | SKIP |
+| 3 | Implementation | Code written | Execute | Execute |
+| 4 | Validation | Tests pass | Execute | Execute |
+| 5 | Commit | Changes committed | Execute | Execute (enhanced) |
+| 6 | PR creation | PR URL available | Execute | SKIP |
 
 After Phase 6: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
 
 ## Phase Checklist
 
 ```
-[ ] Phase 1: git-prepare.sh → init-kickoff.sh          (skip if --task-id)
-[ ] Phase 2: Skill: dev-issue-analyze                   (skip if --task-id)
+[ ] Phase 1: git-prepare.sh → init-kickoff.sh          (REQUIRED unless --task-id)
+[ ] Phase 2: Skill: dev-issue-analyze                   (REQUIRED unless --task-id)
 [ ] Phase 3: Skill: dev-implement
 [ ] Phase 4: Skill: dev-validate --fix
 [ ] Phase 5: Skill: git-commit --all
-[ ] Phase 6: Skill: git-pr → pr-iterate                 (skip if --task-id)
+[ ] Phase 6: Skill: git-pr → pr-iterate                 (REQUIRED unless --task-id)
 ```
 
 ## State Management

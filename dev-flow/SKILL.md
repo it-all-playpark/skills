@@ -65,11 +65,18 @@ dev-kickoff and pr-iterate run as Task subagents with independent contexts to ke
 
 Launch dev-kickoff as a Task subagent. The subagent runs in its own context and returns only the result.
 
+**CRITICAL: Worktree is MANDATORY in single mode.** The subagent MUST create a worktree via Phase 1 (git-prepare.sh) before any implementation. Implementation in the main repository directory is NEVER allowed.
+
 **Task prompt:**
 
 ```
 Execute the dev-kickoff skill for issue #$ISSUE.
 Run: Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE
+
+CRITICAL REQUIREMENT: You MUST execute Phase 1 (worktree creation via git-prepare.sh) FIRST.
+- Phase 1 creates an isolated worktree. ALL implementation MUST happen inside this worktree.
+- Do NOT skip Phase 1. Do NOT implement in the current directory.
+- The --task-id flag is NOT set, so this is single mode — Phase 1 is REQUIRED.
 
 After completion, return ONLY a JSON result:
 - On success: {"status": "completed", "worktree": "<path>", "pr_url": "<url>", "pr_number": <number>}
@@ -80,7 +87,8 @@ After completion, return ONLY a JSON result:
 
 | Result | Action |
 |--------|--------|
-| `status: "completed"` | Extract `worktree`, `pr_url` → proceed to Step 2 |
+| `status: "completed"` | Verify `worktree` path exists and is not the main repo → proceed to Step 2 |
+| `status: "completed"` but no `worktree` or worktree is main repo | **ABORT** — worktree was not created |
 | `status: "failed"` | Log failure via journal.sh → abort dev-flow |
 | Task tool error | Log error → abort dev-flow |
 
