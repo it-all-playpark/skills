@@ -31,6 +31,12 @@ __pycache__/
 *.skill
 
 # --- external skills (auto-managed) ---
+agent-browser
+api-contract-testing
+fastify-best-practices
 find-skills
+pricing-strategy
+prisma-cli
+strategy-and-competitive-analysis
 vercel-react-best-practices
 # --- end external skills ---
