@@ -106,8 +106,35 @@ Launch pr-iterate as a Task subagent.
 **Task prompt:**
 
 ```
-Execute the pr-iterate skill for PR $PR_URL.
-Run: Skill: pr-iterate $PR_URL --max-iterations $MAX
+Execute the pr-iterate skill for PR $PR_URL in worktree $WORKTREE.
+The skills directory is at: $SKILLS_DIR
+
+CRITICAL REQUIREMENT: You MUST follow the COMPLETE pr-iterate workflow below.
+Do NOT skip steps. Do NOT check PR status via gh CLI and return early.
+You MUST perform the self-review using the Skill tool.
+
+## Step-by-step workflow (MANDATORY):
+
+### 1. Initialize state
+$SKILLS_DIR/pr-iterate/scripts/init-iterate.sh $PR_NUMBER --max-iterations $MAX --worktree $WORKTREE
+
+### 2. Run self-review via Skill tool
+Use the Skill tool to invoke: pr-review $PR_URL
+This performs a code review and may post review comments. You MUST use the Skill tool.
+
+### 3. Record review result
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh review \
+  --decision <approved|request-changes|comment> \
+  --issues "指摘事項（日本語）" \
+  --summary "レビュー概要（日本語）"
+
+### 4a. If approved (LGTM)
+$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh complete --status lgtm
+(This auto-posts a summary comment to the PR)
+
+### 4b. If changes requested → fix → next iteration
+Use Skill tool: pr-fix $PR_URL
+Record fixes, then record-iteration.sh next, then go back to Step 2.
 
 After completion, return ONLY a JSON result:
 - On LGTM: {"status": "lgtm", "iterations": <count>}
