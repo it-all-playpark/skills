@@ -34,6 +34,12 @@ cmd_init() {
 
     [[ -z "$target" ]] && die_json "Missing required --target"
 
+    # Validate scope
+    case "$scope" in
+        file|module|project) ;;
+        *) die_json "Invalid scope: $scope. Must be one of: file, module, project" ;;
+    esac
+
     mkdir -p "$STATE_DIR"
 
     # Build auditors object based on focus
@@ -88,6 +94,12 @@ cmd_add_finding() {
     [[ -z "$severity" ]] && die_json "Missing required --severity"
     [[ -z "$location" ]] && die_json "Missing required --location"
     [[ -z "$title" ]] && die_json "Missing required --title"
+
+    # Validate domain
+    case "$domain" in
+        security|performance|architecture) ;;
+        *) die_json "Invalid domain: $domain. Must be one of: security, performance, architecture" ;;
+    esac
 
     [[ ! -f "$STATE_FILE" ]] && die_json "State not initialized. Run: audit-state.sh init first"
 
