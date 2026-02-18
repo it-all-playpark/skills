@@ -5,7 +5,9 @@ description: |
   Generates hypotheses, investigates in parallel, dynamically redirects based on findings.
   Use when: (1) complex bugs with unclear root cause, (2) intermittent/hard-to-reproduce issues,
   (3) multi-component bugs crossing module boundaries,
-  (4) keywords: bug hunt, root cause, investigate, debug, intermittent failure, flaky test
+  (4) keywords: bug hunt, root cause, investigate, debug, intermittent failure, flaky test,
+  原因調査, なぜ落ちる, 再現しない, 時々失敗
+  Accepts args: <issue-or-description> [--max-hypotheses N] [--max-turns N] [--repo-path <path>]
 allowed-tools:
   - Task
   - Bash
@@ -121,7 +123,7 @@ $SKILLS_DIR/bug-hunt/scripts/hunt-state.sh update-hypothesis \
 ### Budget Check
 
 ```bash
-$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh check-budget
+$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh check-budget --repo-path <path>
 ```
 
 ## Phase 3: Converge
