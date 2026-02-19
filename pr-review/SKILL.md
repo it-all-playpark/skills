@@ -18,6 +18,13 @@ allowed-tools:
 
 # PR Review: $ARGUMENTS
 
+## 言語ルール
+
+**レビューコメントは必ず日本語で記述すること。**
+- レビュー本文（body）、指摘事項、改善提案はすべて日本語
+- コード識別子・ファイルパス・技術用語はそのまま
+- `review-sections.md` のOutput Formatに従い日本語で出力
+
 ## Context
 
 !`~/.claude/skills/pr-review/scripts/collect-context.sh $ARGUMENTS`

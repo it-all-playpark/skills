@@ -7,11 +7,19 @@ description: |
 allowed-tools:
   - Bash
   - TodoWrite
+  - Skill
+  - Task
 ---
 
 # Kickoff
 
 Orchestrate complete feature development cycle from issue to PR.
+
+## 言語ルール
+
+**`--lang ja`（デフォルト）の場合、PR本文・GitHubコメントは必ず日本語で記述すること。**
+- Phase 6（git-pr）で作成するPR body は日本語
+- 技術用語・コード識別子・ファイルパスはそのまま
 
 ## CRITICAL: Complete All 6 Phases
 

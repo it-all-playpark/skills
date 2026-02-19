@@ -8,6 +8,7 @@ description: |
 allowed-tools:
   - Bash
   - Task
+  - Skill
 ---
 
 # Dev Integrate

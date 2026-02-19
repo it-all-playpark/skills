@@ -17,6 +17,12 @@ allowed-tools:
 
 End-to-end development automation from issue to LGTM (merge manually).
 
+## 言語ルール
+
+**PR本文・レビューコメント・PRコメントは必ず日本語で記述すること。**
+- サブエージェントへのプロンプトでも日本語出力を明示指定する
+- 技術用語・コード識別子・ファイルパスはそのまま
+
 ## CRITICAL: Complete All Steps
 
 **DO NOT EXIT until pr-iterate completes.**
@@ -71,12 +77,15 @@ Launch dev-kickoff as a Task subagent. The subagent runs in its own context and 
 
 ```
 Execute the dev-kickoff skill for issue #$ISSUE.
-Run: Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE
+Run: Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE --lang ja
 
 CRITICAL REQUIREMENT: You MUST execute Phase 1 (worktree creation via git-prepare.sh) FIRST.
 - Phase 1 creates an isolated worktree. ALL implementation MUST happen inside this worktree.
 - Do NOT skip Phase 1. Do NOT implement in the current directory.
 - The --task-id flag is NOT set, so this is single mode — Phase 1 is REQUIRED.
+
+LANGUAGE REQUIREMENT: All PR body content, commit messages descriptions, and GitHub comments MUST be written in Japanese (日本語).
+Technical terms, code identifiers, and file paths remain in their original form.
 
 After completion, return ONLY a JSON result:
 - On success: {"status": "completed", "worktree": "<path>", "pr_url": "<url>", "pr_number": <number>}
@@ -108,6 +117,9 @@ Launch pr-iterate as a Task subagent.
 ```
 Execute the pr-iterate skill for PR $PR_URL in worktree $WORKTREE.
 The skills directory is at: $SKILLS_DIR
+
+LANGUAGE REQUIREMENT: All review comments, PR comments, and summaries MUST be written in Japanese (日本語).
+Technical terms, code identifiers, and file paths remain in their original form.
 
 CRITICAL REQUIREMENT: You MUST follow the COMPLETE pr-iterate workflow below.
 Do NOT skip steps. Do NOT check PR status via gh CLI and return early.

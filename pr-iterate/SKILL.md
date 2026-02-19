@@ -8,6 +8,7 @@ description: |
 allowed-tools:
   - Skill
   - Bash
+  - Task
 ---
 
 # PR Iterate
