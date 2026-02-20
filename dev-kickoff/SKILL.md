@@ -102,7 +102,7 @@ ls $WORKTREE/.env || echo "ERROR: .env not linked"
 | `<issue-number>` | required | GitHub issue number |
 | `--strategy` | `tdd` | Implementation strategy |
 | `--depth` | `standard` | Analysis depth |
-| `--base` | `main` | PR base branch |
+| `--base` | `dev` | PR base branch |
 | `--lang` | `ja` | PR language |
 | `--env-mode` | `hardlink` | Env file handling |
 | `--worktree` | - | Pre-created worktree path (skips Phase 1) |

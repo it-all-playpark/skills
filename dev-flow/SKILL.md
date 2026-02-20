@@ -199,7 +199,7 @@ $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
 ## Usage
 
 ```
-/dev-flow <issue> [--strategy tdd] [--depth comprehensive] [--base main] [--max-iterations 10] [--parallel]
+/dev-flow <issue> [--strategy tdd] [--depth comprehensive] [--base dev] [--max-iterations 10] [--parallel]
 ```
 
 ## Args
@@ -209,7 +209,7 @@ $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
 | `<issue-number>` | required | GitHub issue number |
 | `--strategy` | `tdd` | Implementation strategy |
 | `--depth` | `standard` | Analysis depth |
-| `--base` | `main` | PR base branch |
+| `--base` | `dev` | PR base branch |
 | `--max-iterations` | `10` | Max pr-iterate iterations |
 | `--parallel` | - | Enable parallel subtask decomposition |
 
