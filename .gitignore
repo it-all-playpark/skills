@@ -11,6 +11,9 @@ client_secret.json
 **/client_secret*.json
 **/service-account*.json
 
+# Environment variables (user-specific config)
+.env
+
 # Generated reports
 ga_report.json
 trends_report.json
@@ -42,4 +45,5 @@ remotion-best-practices
 strategy-and-competitive-analysis
 ui-ux-pro-max
 vercel-react-best-practices
+youtube-channels
 # --- end external skills ---
