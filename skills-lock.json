@@ -55,6 +55,11 @@
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",
       "computedHash": "4365be772fd3b41994a72ad478472c6d680678e7f3859860ab010e9c46e48ee0"
+    },
+    "youtube-channels": {
+      "source": "zeropointrepo/youtube-skills",
+      "sourceType": "github",
+      "computedHash": "88f2f6514312a3f43d1c48140a75674023f5a97d04c8c7695e514e4b9d85c026"
     }
   }
 }
