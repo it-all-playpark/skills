@@ -257,17 +257,20 @@ git worktree remove $SUBTASK_WORKTREE --force
 
 ## Journal Logging
 
-On workflow completion, log execution to skill-retrospective journal:
+On workflow completion, log execution to skill-retrospective journal.
+**CRITICAL: Always pass `--args` with the original invocation arguments** (e.g. `--parallel`, `--strategy tdd`) so that usage patterns are tracked.
 
 ```bash
 # On success (LGTM achieved)
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow success \
-  --issue $ISSUE --duration-turns $TURNS
+  --issue $ISSUE --duration-turns $TURNS --args "$ORIGINAL_ARGS"
 
 # On failure (any step fails)
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow failure \
-  --issue $ISSUE --error-category <category> --error-msg "<message>"
+  --issue $ISSUE --error-category <category> --error-msg "<message>" --args "$ORIGINAL_ARGS"
 ```
+
+Where `$ORIGINAL_ARGS` is the full argument string passed to dev-flow (e.g. `"42 --parallel --strategy tdd"`).
 
 Note: dev-kickoff and pr-iterate also log independently. dev-flow logging captures the overall flow outcome.
 
