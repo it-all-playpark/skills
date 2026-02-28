@@ -21,6 +21,11 @@
       "sourceType": "github",
       "computedHash": "6412eb4eb3b91595ebab937f0c69501240e7ba761b3d82510b5cf506ec5c7adc"
     },
+    "gsc": {
+      "source": "jdrhyne/agent-skills",
+      "sourceType": "github",
+      "computedHash": "c3712b0f39d3221f56ea2741d04c12ec1df578d5a302859326437145ac4cbf4b"
+    },
     "neon-postgres": {
       "source": "neondatabase/agent-skills",
       "sourceType": "github",
