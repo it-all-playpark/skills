@@ -13,9 +13,9 @@ git clone https://github.com/it-all-playpark/skills.git ~/skills
 ln -sf ~/skills ~/.<tool>/skills   # <tool>: claude, codex など
 ```
 
-### 外部スキルの取り込み（skill.sh 由来）
+### 外部スキルの取り込み（skills.sh 由来）
 
-[skill.sh](https://skill.sh) 等で取得した外部スキルは `.agents/skills/` に配置し、シンボリックリンクで統合します。
+[skills.sh](https://skill.sh) 等で取得した外部スキルは `.agents/skills/` に配置し、シンボリックリンクで統合します。
 
 ```bash
 # 外部スキルの配置
@@ -27,6 +27,7 @@ _lib/infra/unlink-agent-skills.sh  # リンク解除
 ```
 
 `link-agent-skills.sh` を実行すると:
+
 1. `.agents/skills/` 配下の全スキルを repo root にシンボリックリンク
 2. `.gitignore` に自動追記（git status を汚さない）
 3. 不要になった stale symlink を自動クリーンアップ
@@ -44,6 +45,7 @@ _lib/infra/unlink-agent-skills.sh  # リンク解除
 ```
 
 **設定の読み込み優先順位:**
+
 1. `.claude/skill-config.json` の該当スキルセクション
 2. `.claude/<skill-name>.json`（旧形式、フォールバック）
 3. スキル内蔵のデフォルト値
@@ -330,7 +332,7 @@ config = load_skill_config("ga-analyzer")
 | `suica-to-csv` | モバイルSuica明細PDFをマネーフォワード経費CSVに変換 |
 | `agent-browser` | ブラウザ自動操作（ページ操作/スクレイピング/テスト） 🔗 |
 
-> 🔗 = skill.sh 由来の外部スキル（`.agents/skills/` からシンボリックリンク）
+> 🔗 = skills.sh 由来の外部スキル（`.agents/skills/` からシンボリックリンク）
 
 ## 使い方
 
@@ -356,7 +358,7 @@ skills/
 │   ├── common.sh            # Bash共通関数（設定読み込み等）
 │   └── config.py            # Python共通設定ローダー
 ├── .agents/                 # 外部スキル実体（gitignored）
-│   └── skills/              # skill.sh 等で取得したスキル
+│   └── skills/              # skills.sh 等で取得したスキル
 ├── <skill-name>/            # 各スキル（自作）
 │   ├── SKILL.md             # スキル定義（必須）
 │   ├── scripts/             # 実行スクリプト
