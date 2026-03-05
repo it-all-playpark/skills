@@ -1,12 +1,14 @@
 #!/usr/bin/env npx tsx
 /**
- * Instagram scheduled post using Late API (getlate.dev)
+ * Social media scheduled post using Late API (getlate.dev)
+ *
+ * Supports: Instagram, YouTube, TikTok
  *
  * Usage:
  *   # From JSON (ig-announce output)
  *   npx tsx post.ts --json posts.json
  *
- *   # Direct post
+ *   # Direct post (Instagram)
  *   npx tsx post.ts --media video.mp4 --caption "Caption text" --type reel --schedule "2026-03-12 19:00"
  *
  *   # Carousel
@@ -17,6 +19,23 @@
  *     "content": "Caption #hashtag",
  *     "mediaItems": [{"type": "video", "path": "/path/to/video.mp4"}],
  *     "platforms": [{"platform": "instagram", "platformSpecificData": {"contentType": "reels"}}],
+ *     "schedule": "2026-03-12 19:00"
+ *   }
+ *
+ * YouTube JSON:
+ *   {
+ *     "content": "Description text",
+ *     "mediaItems": [{"type": "video", "path": "/path/to/video.mp4", "thumbnail": {"url": "path/to/thumb.jpg"}}],
+ *     "platforms": [{"platform": "youtube", "platformSpecificData": {"title": "...", "visibility": "public", "categoryId": "28"}}],
+ *     "schedule": "2026-03-12 19:00"
+ *   }
+ *
+ * TikTok JSON:
+ *   {
+ *     "content": "Caption with #hashtags",
+ *     "mediaItems": [{"type": "video", "path": "/path/to/video.mp4"}],
+ *     "platforms": [{"platform": "tiktok"}],
+ *     "tiktokSettings": {"privacy_level": "PUBLIC_TO_EVERYONE", "allow_comment": true, ...},
  *     "schedule": "2026-03-12 19:00"
  *   }
  *
@@ -65,11 +84,13 @@ loadEnv(fallbackEnvPath);
 // --- Types ---
 
 type ContentType = "feed" | "reels" | "story" | "carousel";
+type TargetPlatform = "instagram" | "youtube" | "tiktok";
 
 interface MediaItem {
   type: "image" | "video";
   path?: string;
   url?: string;
+  thumbnail?: { url: string };
 }
 
 interface PlatformSpecificData {
@@ -86,6 +107,24 @@ interface PlatformSpecificData {
   thumbOffset?: number;
   instagramThumbnail?: string;
   audioName?: string;
+  // YouTube-specific
+  title?: string;
+  visibility?: string;
+  categoryId?: string;
+  madeForKids?: boolean;
+  containsSyntheticMedia?: boolean;
+  thumbnail?: string;
+}
+
+interface TikTokSettings {
+  privacy_level: string;
+  allow_comment: boolean;
+  allow_duet: boolean;
+  allow_stitch: boolean;
+  content_preview_confirmed: boolean;
+  express_consent_given: boolean;
+  video_cover_timestamp_ms?: number;
+  video_made_with_ai?: boolean;
 }
 
 interface PostInput {
@@ -95,6 +134,8 @@ interface PostInput {
     platform: string;
     platformSpecificData?: PlatformSpecificData;
   }>;
+  tiktokSettings?: TikTokSettings;
+  firstComment?: string;
   schedule?: string;
 }
 
@@ -158,6 +199,40 @@ async function resolveThumbnail(
   platformData.instagramThumbnail = await uploadFile(apiKey, thumb);
 }
 
+async function resolveYouTubeThumbnail(
+  apiKey: string,
+  mediaItems: MediaItem[],
+  platformData: PlatformSpecificData | undefined,
+  dryRun: boolean
+): Promise<void> {
+  // Find thumbnail from mediaItems[].thumbnail.url (ig-announce output format)
+  const thumbItem = mediaItems.find((item) => item.thumbnail?.url);
+  if (!thumbItem?.thumbnail?.url) return;
+
+  const thumbSource = thumbItem.thumbnail.url;
+  // Remove thumbnail from mediaItems (Late API doesn't accept it on mediaItems for YT)
+  delete thumbItem.thumbnail;
+
+  if (!platformData) return;
+
+  if (isUrl(thumbSource)) {
+    // Already a URL — set directly on platformSpecificData
+    platformData.thumbnail = thumbSource;
+    return;
+  }
+
+  // Local file path — upload it
+  if (dryRun) {
+    const exists = existsSync(thumbSource);
+    const sizeMB = exists ? (statSync(thumbSource).size / 1024 / 1024).toFixed(1) : "?";
+    console.log(`  [dry-run] Would upload YT thumbnail: ${basename(thumbSource)} (${sizeMB} MB)${exists ? "" : " [FILE NOT FOUND]"}`);
+    platformData.thumbnail = `<local:${thumbSource}>`;
+    return;
+  }
+
+  platformData.thumbnail = await uploadFile(apiKey, thumbSource);
+}
+
 function getEnvOrExit(key: string): string {
   const value = process.env[key];
   if (!value) {
@@ -205,8 +280,6 @@ function detectContentType(
 
   if (mediaItems.length > 1) return "carousel";
   if (mediaItems.length === 1 && mediaItems[0].type === "video") {
-    // Could be reel based on aspect ratio, but we default to feed
-    // and let the user override with --type reel
     return "feed";
   }
   return "feed";
@@ -232,6 +305,10 @@ function parseSchedule(scheduleStr: string): Date {
   process.exit(1);
 }
 
+function findAccountByPlatform(accounts: Account[], platform: string): Account | null {
+  return accounts.find((a) => a.platform === platform) || null;
+}
+
 // --- API calls ---
 
 let cachedAccounts: Account[] | null = null;
@@ -252,10 +329,6 @@ async function fetchAccounts(apiKey: string): Promise<Account[]> {
   const data = (await response.json()) as { accounts: Account[] };
   cachedAccounts = data.accounts;
   return cachedAccounts;
-}
-
-function findInstagramAccount(accounts: Account[]): Account | null {
-  return accounts.find((a) => a.platform === "instagram") || null;
 }
 
 async function getPresignedUrl(
@@ -310,10 +383,12 @@ async function uploadMedia(
 async function uploadMediaItem(
   apiKey: string,
   item: MediaItem
-): Promise<{ type: string; url: string }> {
+): Promise<{ type: string; url: string; thumbnail?: { url: string } }> {
   // If URL already provided (already uploaded or external URL)
   if (item.url && !item.path) {
-    return { type: item.type, url: item.url };
+    const result: { type: string; url: string; thumbnail?: { url: string } } = { type: item.type, url: item.url };
+    if (item.thumbnail) result.thumbnail = item.thumbnail;
+    return result;
   }
 
   const filePath = item.path!;
@@ -338,26 +413,39 @@ async function uploadMediaItem(
   await uploadMedia(uploadUrl, filePath, mimeType);
   console.log(`  Uploaded: ${publicUrl}`);
 
-  return { type: item.type, url: publicUrl };
+  const result: { type: string; url: string; thumbnail?: { url: string } } = { type: item.type, url: publicUrl };
+  if (item.thumbnail) result.thumbnail = item.thumbnail;
+  return result;
 }
 
 async function createPost(
   apiKey: string,
   accountId: string,
+  targetPlatform: TargetPlatform,
   content: string,
-  mediaUrls: Array<{ type: string; url: string }>,
+  mediaUrls: Array<{ type: string; url: string; thumbnail?: { url: string } }>,
   contentType: ContentType,
   platformData: PlatformSpecificData | undefined,
+  tiktokSettings: TikTokSettings | undefined,
+  firstComment: string | undefined,
   schedule: Date | null,
   dryRun: boolean
 ): Promise<boolean> {
   if (dryRun) {
     console.log("=== DRY RUN ===");
+    console.log(`Platform: ${targetPlatform}`);
     console.log(`Caption (${content.length} chars): ${content.slice(0, 80)}...`);
     console.log(`Type: ${contentType}`);
     console.log(`Media: ${mediaUrls.map((m) => `${m.type}:${m.url}`).join(", ")}`);
-    if (platformData?.firstComment) {
-      console.log(`First comment: ${platformData.firstComment.slice(0, 60)}...`);
+    if (targetPlatform === "youtube" && platformData?.title) {
+      console.log(`YT Title (${platformData.title.length}/100): ${platformData.title}`);
+    }
+    if (platformData?.firstComment || firstComment) {
+      const fc = platformData?.firstComment || firstComment;
+      console.log(`First comment: ${fc!.slice(0, 60)}...`);
+    }
+    if (tiktokSettings) {
+      console.log(`TikTok settings: privacy=${tiktokSettings.privacy_level}, cover=${tiktokSettings.video_cover_timestamp_ms}ms`);
     }
     if (schedule) {
       console.log(
@@ -370,37 +458,64 @@ async function createPost(
     return true;
   }
 
-  const platformSpecificData: PlatformSpecificData = {
-    ...platformData,
-  };
+  // Build platform-specific data
+  const cleanPlatformData: Record<string, unknown> = { ...platformData };
 
-  // Set contentType for reels/stories (omit for feed)
-  if (contentType === "reels" || contentType === "story") {
-    platformSpecificData.contentType = contentType;
+  // Instagram: handle thumbnail on mediaItems
+  let finalMediaItems = [...mediaUrls];
+  if (targetPlatform === "instagram") {
+    // Set contentType for reels/stories (omit for feed)
+    if (contentType === "reels" || contentType === "story") {
+      cleanPlatformData.contentType = contentType;
+    }
+    // Attach instagramThumbnail to the video mediaItem
+    if (cleanPlatformData.instagramThumbnail) {
+      finalMediaItems = finalMediaItems.map((m) => {
+        if (m.type === "video") {
+          return { ...m, instagramThumbnail: cleanPlatformData.instagramThumbnail as string };
+        }
+        return m;
+      });
+      delete cleanPlatformData.instagramThumbnail;
+    }
   }
 
-  // Attach instagramThumbnail to the video mediaItem (Late expects it there, not in platformSpecificData)
-  const finalMediaItems = mediaUrls.map((m) => {
-    if (m.type === "video" && platformSpecificData.instagramThumbnail) {
-      return { ...m, instagramThumbnail: platformSpecificData.instagramThumbnail };
-    }
-    return m;
-  });
-  // Remove from platformSpecificData to avoid duplication
-  const { instagramThumbnail: _thumb, ...cleanPlatformData } = platformSpecificData;
+  // YouTube: thumbnail is on mediaItems[].thumbnail.url (already set from JSON)
+  // No additional processing needed — thumbnails are resolved before createPost
+
+  // Remove internal-only fields from platformSpecificData
+  delete cleanPlatformData.thumbOffset;
 
   const body: Record<string, unknown> = {
     content,
     mediaItems: finalMediaItems,
     platforms: [
       {
-        platform: "instagram",
+        platform: targetPlatform,
         accountId,
         platformSpecificData: cleanPlatformData,
       },
     ],
     timezone: "Asia/Tokyo",
   };
+
+  // TikTok: tiktokSettings at top-level body
+  if (targetPlatform === "tiktok" && tiktokSettings) {
+    body.tiktokSettings = {
+      ...tiktokSettings,
+      content_preview_confirmed: true,
+      express_consent_given: true,
+    };
+  }
+
+  // First comment: YouTube uses platformSpecificData.firstComment, others use body top-level
+  if (firstComment) {
+    if (targetPlatform === "youtube") {
+      cleanPlatformData.firstComment = firstComment;
+    } else {
+      body.firstComment = firstComment;
+    }
+  }
 
   if (schedule) {
     body.scheduledFor = schedule.toISOString();
@@ -448,9 +563,11 @@ async function createPost(
 
 // --- Dry-run helpers ---
 
-function dryRunMediaItem(item: MediaItem): { type: string; url: string } {
+function dryRunMediaItem(item: MediaItem): { type: string; url: string; thumbnail?: { url: string } } {
   if (item.url && !item.path) {
-    return { type: item.type, url: item.url };
+    const result: { type: string; url: string; thumbnail?: { url: string } } = { type: item.type, url: item.url };
+    if (item.thumbnail) result.thumbnail = item.thumbnail;
+    return result;
   }
   const filePath = item.path!;
   const fileName = basename(filePath);
@@ -462,7 +579,12 @@ function dryRunMediaItem(item: MediaItem): { type: string; url: string } {
   console.log(
     `  [dry-run] Would upload: ${fileName} (${sizeMB} MB, ${mimeType})${exists ? "" : " [FILE NOT FOUND]"}`
   );
-  return { type: item.type, url: `<local:${filePath}>` };
+  const result: { type: string; url: string; thumbnail?: { url: string } } = { type: item.type, url: `<local:${filePath}>` };
+  if (item.thumbnail) {
+    console.log(`  [dry-run] Would upload YT thumbnail: ${basename(item.thumbnail.url)}`);
+    result.thumbnail = { url: `<local:${item.thumbnail.url}>` };
+  }
+  return result;
 }
 
 // --- JSON mode ---
@@ -483,61 +605,75 @@ async function processJsonPost(jsonPath: string, dryRun: boolean): Promise<void>
   }
 
   if (!input.mediaItems || input.mediaItems.length === 0) {
-    console.error("Error: Instagram requires at least one media item");
+    console.error("Error: At least one media item is required");
     process.exit(1);
   }
 
-  // Determine content type
-  const igPlatform = input.platforms?.find((p) => p.platform === "instagram");
-  const platformData = igPlatform?.platformSpecificData;
+  // Determine target platform from JSON
+  const targetPlatform = (input.platforms?.[0]?.platform || "instagram") as TargetPlatform;
+  const platformEntry = input.platforms?.find((p) => p.platform === targetPlatform);
+  const platformData = platformEntry?.platformSpecificData;
   const contentType = detectContentType(
     input.mediaItems,
     platformData?.contentType
   );
   const schedule = input.schedule ? parseSchedule(input.schedule) : null;
 
+  console.log(`Target platform: ${targetPlatform}`);
+
   if (dryRun) {
     console.log("Resolving media...");
     const mediaUrls = input.mediaItems.map((item) => dryRunMediaItem(item));
-    await resolveThumbnail("", platformData, true);
+    if (targetPlatform === "instagram") {
+      await resolveThumbnail("", platformData, true);
+    } else if (targetPlatform === "youtube") {
+      await resolveYouTubeThumbnail("", mediaUrls, platformData, true);
+    }
     console.log("");
-    await createPost("", "dry-run", input.content, mediaUrls, contentType, platformData, schedule, true);
+    await createPost(
+      "", "dry-run", targetPlatform, input.content, mediaUrls,
+      contentType, platformData, input.tiktokSettings, input.firstComment,
+      schedule, true
+    );
     return;
   }
 
   const apiKey = getEnvOrExit("LATE_API_KEY");
   const accounts = await fetchAccounts(apiKey);
-  const igAccount = findInstagramAccount(accounts);
+  const account = findAccountByPlatform(accounts, targetPlatform);
 
-  if (!igAccount) {
-    console.error("Error: No Instagram account connected");
+  if (!account) {
+    console.error(`Error: No ${targetPlatform} account connected`);
     console.error(
-      `Available platforms: ${accounts.map((a) => a.platform).join(", ")}`
+      `Available platforms: ${accounts.map((a) => `${a.platform}(${a.username || a.name})`).join(", ")}`
     );
     process.exit(1);
   }
 
-  console.log(`Instagram account: ${igAccount.username || igAccount.name || igAccount._id}\n`);
+  console.log(`${targetPlatform} account: ${account.username || account.name || account._id}\n`);
 
   // Upload media
   console.log("Uploading media...");
-  const mediaUrls: Array<{ type: string; url: string }> = [];
+  let mediaUrls: Array<{ type: string; url: string; thumbnail?: { url: string } }> = [];
   for (const item of input.mediaItems) {
     const uploaded = await uploadMediaItem(apiKey, item);
     mediaUrls.push(uploaded);
   }
-  await resolveThumbnail(apiKey, platformData, false);
+
+  // Handle thumbnails per platform
+  if (targetPlatform === "instagram") {
+    await resolveThumbnail(apiKey, platformData, false);
+  } else if (targetPlatform === "youtube") {
+    await resolveYouTubeThumbnail(apiKey, mediaUrls, platformData, false);
+  }
+  // TikTok: no thumbnail upload needed (uses video_cover_timestamp_ms)
+
   console.log("");
 
   const ok = await createPost(
-    apiKey,
-    igAccount._id,
-    input.content,
-    mediaUrls,
-    contentType,
-    platformData,
-    schedule,
-    false
+    apiKey, account._id, targetPlatform, input.content, mediaUrls,
+    contentType, platformData, input.tiktokSettings, input.firstComment,
+    schedule, false
   );
 
   if (!ok) process.exit(1);
@@ -567,20 +703,27 @@ async function processCliPost(
   if (thumbnail) platformData.instagramThumbnail = thumbnail;
   const schedule = scheduleStr ? parseSchedule(scheduleStr) : null;
 
+  // CLI mode defaults to Instagram (backward compatible)
+  const targetPlatform: TargetPlatform = "instagram";
+
   if (dryRun) {
     console.log("Resolving media...");
     const mediaUrls = mediaItems.map((item) => dryRunMediaItem(item));
     await resolveThumbnail("", platformData, true);
     console.log("");
-    await createPost("", "dry-run", caption, mediaUrls, contentType, platformData, schedule, true);
+    await createPost(
+      "", "dry-run", targetPlatform, caption, mediaUrls,
+      contentType, platformData, undefined, firstComment,
+      schedule, true
+    );
     return;
   }
 
   const apiKey = getEnvOrExit("LATE_API_KEY");
   const accounts = await fetchAccounts(apiKey);
-  const igAccount = findInstagramAccount(accounts);
+  const account = findAccountByPlatform(accounts, targetPlatform);
 
-  if (!igAccount) {
+  if (!account) {
     console.error("Error: No Instagram account connected");
     console.error(
       `Available platforms: ${accounts.map((a) => a.platform).join(", ")}`
@@ -588,11 +731,11 @@ async function processCliPost(
     process.exit(1);
   }
 
-  console.log(`Instagram account: ${igAccount.username || igAccount.name || igAccount._id}\n`);
+  console.log(`Instagram account: ${account.username || account.name || account._id}\n`);
 
   // Upload media
   console.log("Uploading media...");
-  const mediaUrls: Array<{ type: string; url: string }> = [];
+  const mediaUrls: Array<{ type: string; url: string; thumbnail?: { url: string } }> = [];
   for (const item of mediaItems) {
     const uploaded = await uploadMediaItem(apiKey, item);
     mediaUrls.push(uploaded);
@@ -601,14 +744,9 @@ async function processCliPost(
   console.log("");
 
   const ok = await createPost(
-    apiKey,
-    igAccount._id,
-    caption,
-    mediaUrls,
-    contentType,
-    platformData,
-    schedule,
-    false
+    apiKey, account._id, targetPlatform, caption, mediaUrls,
+    contentType, platformData, undefined, firstComment,
+    schedule, false
   );
 
   if (!ok) process.exit(1);

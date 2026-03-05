@@ -1,0 +1,68 @@
+{
+  "timezone": "Asia/Tokyo",
+  "platforms": {
+    "instagram": {
+      "weekday": {
+        "best": ["07:00", "12:00", "19:00"],
+        "good": ["18:00", "20:00", "21:00"],
+        "notes": "通勤・昼休み・帰宅後"
+      },
+      "weekend": {
+        "best": ["10:00", "11:00", "15:00"],
+        "good": ["12:00", "14:00", "16:00"],
+        "notes": "午前遅め〜午後"
+      },
+      "bestDays": ["Tuesday", "Wednesday", "Thursday"],
+      "contentType": {
+        "reels": {
+          "best": ["12:00", "19:00", "21:00"],
+          "notes": "リールは夕方〜夜がエンゲージメント高め"
+        }
+      }
+    },
+    "youtube": {
+      "weekday": {
+        "best": ["12:00", "17:00", "19:00"],
+        "good": ["15:00", "18:00", "20:00"],
+        "notes": "昼休み・退勤後"
+      },
+      "weekend": {
+        "best": ["10:00", "11:00", "16:00"],
+        "good": ["12:00", "15:00", "18:00"],
+        "notes": "午前遅め・午後"
+      },
+      "bestDays": ["Friday", "Saturday", "Sunday"],
+      "contentType": {
+        "shorts": {
+          "best": ["12:00", "18:00", "21:00"],
+          "notes": "Shortsは通勤・帰宅時間帯が効果的"
+        }
+      }
+    },
+    "tiktok": {
+      "weekday": {
+        "best": ["07:00", "12:00", "19:00"],
+        "good": ["20:00", "21:00", "22:00"],
+        "notes": "朝・昼・夜のスクロールタイム"
+      },
+      "weekend": {
+        "best": ["10:00", "19:00", "21:00"],
+        "good": ["11:00", "12:00", "22:00", "23:00"],
+        "notes": "午前遅め・夜が特に強い"
+      },
+      "bestDays": ["Tuesday", "Thursday", "Friday"],
+      "contentType": {
+        "shorts": {
+          "best": ["19:00", "21:00", "22:00"],
+          "notes": "夜のゴールデンタイムが最も効果的"
+        }
+      }
+    }
+  },
+  "crossPlatformStrategy": {
+    "staggerMinutes": 30,
+    "notes": "同一コンテンツを複数プラットフォームに投稿する場合、30分以上ずらす",
+    "suggestedOrder": ["tiktok", "instagram", "youtube"],
+    "orderReason": "TikTok→IG→YTの順で、各プラットフォームのピーク時間に合わせて投稿"
+  }
+}
