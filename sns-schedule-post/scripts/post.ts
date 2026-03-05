@@ -31,24 +31,72 @@ import { execSync } from "child_process";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envPath = join(__dirname, "..", ".env");
 
+function deepMerge(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>
+): Record<string, unknown> {
+  const result = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    if (
+      key in result &&
+      typeof result[key] === "object" &&
+      result[key] !== null &&
+      !Array.isArray(result[key]) &&
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value)
+    ) {
+      result[key] = deepMerge(
+        result[key] as Record<string, unknown>,
+        value as Record<string, unknown>
+      );
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function loadSkillConfig(skillName: string): Record<string, unknown> {
+  // Layer 1: Global (~/.claude/skill-config.json)
+  let globalCfg: Record<string, unknown> = {};
+  const homedir = process.env.HOME || process.env.USERPROFILE || "";
+  if (homedir) {
+    const globalPath = join(homedir, ".claude", "skill-config.json");
+    if (existsSync(globalPath)) {
+      try {
+        const data = JSON.parse(readFileSync(globalPath, "utf-8"));
+        const section = data[skillName];
+        if (section && typeof section === "object") globalCfg = section as Record<string, unknown>;
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }
+
+  // Layer 2: Project (.claude/skill-config.json)
+  let projectCfg: Record<string, unknown> = {};
   let gitRoot: string;
   try {
     gitRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
   } catch {
-    return {};
+    return globalCfg;
   }
   const configPath = join(gitRoot, ".claude", "skill-config.json");
   if (existsSync(configPath)) {
     try {
       const data = JSON.parse(readFileSync(configPath, "utf-8"));
       const section = data[skillName];
-      if (section && typeof section === "object") return section as Record<string, unknown>;
+      if (section && typeof section === "object") projectCfg = section as Record<string, unknown>;
     } catch {
       // ignore parse errors
     }
   }
-  return {};
+
+  // Merge: global + project (project wins)
+  if (Object.keys(globalCfg).length === 0) return projectCfg;
+  if (Object.keys(projectCfg).length === 0) return globalCfg;
+  return deepMerge(globalCfg, projectCfg);
 }
 
 const skillConfig = loadSkillConfig("sns-schedule-post");
