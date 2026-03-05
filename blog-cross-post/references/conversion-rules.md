@@ -40,7 +40,7 @@ title: "記事タイトル"
 emoji: "🚀"
 type: "tech"
 topics: ["nextjs", "react", "typescript"]
-published: true
+published: false
 ---
 ```
 
@@ -50,7 +50,9 @@ published: true
 | emoji | category | カテゴリから自動選択 |
 | type | category | tech-tips/lab-reports → tech, その他 → idea |
 | topics | tags | 小文字化、最大5個 |
-| published | - | true |
+| published | - | false（下書きとして投稿、確認後に手動でtrueに変更） |
+
+> **Note**: Zenn は `canonical_url` を frontmatter でサポートしていない（[Issue #78](https://github.com/zenn-dev/zenn-community/issues/78) 未実装）。テキストリンクによる帰属表示が唯一の手段。
 
 ### Qiita Format
 
@@ -244,6 +246,8 @@ Markdown表はそのまま使用可能。
 
 ### Zenn
 
+**テキストリンクのみ**（`canonical_url` は [Issue #78](https://github.com/zenn-dev/zenn-community/issues/78) で要望あるが未実装）
+
 記事末尾に追加:
 
 ```markdown
@@ -253,6 +257,8 @@ Markdown表はそのまま使用可能。
 ```
 
 ### Qiita
+
+**テキストリンクのみ**（APIに canonical_url フィールドなし）
 
 記事冒頭に追加:
 

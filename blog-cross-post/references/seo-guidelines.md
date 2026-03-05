@@ -6,10 +6,16 @@ Zenn/Qiitaクロスポスト時のSEO最適化ガイドライン。
 
 ### Canonical URL
 
+**両プラットフォームともテキストリンクが唯一の手段:**
+
+| Platform | canonical対応 | 代替手段 |
+|----------|-------------|---------|
+| **Zenn** | 未サポート（[Issue #78](https://github.com/zenn-dev/zenn-community/issues/78) 未実装） | テキストリンク |
+| **Qiita** | APIにフィールドなし | テキストリンク |
+
 元記事を正規URLとして明示:
 
 ```markdown
-<!-- 記事冒頭または末尾 -->
 この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}) からの転載です。
 ```
 
@@ -18,6 +24,7 @@ Zenn/Qiitaクロスポスト時のSEO最適化ガイドライン。
 1. **元記事を先に公開**（最低24-48時間前）
 2. Googleがインデックス完了を確認
 3. その後Zenn/Qiitaに投稿
+4. **Zennは `published: false` で下書き投稿** → 確認後に公開
 
 ## タイトル最適化
 
@@ -136,7 +143,9 @@ seed/ディレクトリがある場合、以下を抽出してキーワード強
 
 ### 転載後確認
 
-- [ ] canonical URL 明記済み
+- [ ] Zenn: 記事末尾に転載元テキストリンク明記済み
+- [ ] Zenn: `published: false` で下書き投稿、表示確認後に公開
+- [ ] Qiita: 記事冒頭に転載元テキストリンク明記済み
 - [ ] 元記事への導線あり
 - [ ] プラットフォーム固有フォーマット適用済み
 - [ ] タグ/トピックス適切に設定
