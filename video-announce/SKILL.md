@@ -86,6 +86,16 @@ Project config: `.claude/video-announce.json`
 }
 ```
 
+### output.pattern variables
+
+| Variable | Description |
+|----------|-------------|
+| `{platform}` | Target platform: `instagram`, `youtube`, `tiktok` |
+| `{date}` | **Schedule date** (投稿日, YYYY-MM-DD). `--schedule` 指定時はその日付、省略時は当日 |
+| `{slug}` | Source filename or topic slug |
+
+**重要**: `{date}` はファイル生成日ではなく、投稿予定日（schedule日）を使用する。sns-announceと同じ規約。
+
 ### platformDefaults.thumbOffset
 
 動画メディアのサムネイル用フレーム切り出し位置（ミリ秒）。設定すると:
@@ -110,6 +120,7 @@ Project config: `.claude/video-announce.json`
    a. Generate platform-specific caption (see Caption Structure below)
    b. Generate platform-specific hashtags (see references/)
    c. Write output JSON to: {output.dir}/{platform}/{date}-{slug}.json
+      ({date} = schedule date, not generation date)
 7. Thumbnail generation (if platformDefaults.thumbOffset is set and media is video):
    - Extract frame at thumbOffset ms using ffmpeg:
      ffmpeg -y -ss <seconds> -i <video> -frames:v 1 -q:v 2 -update 1 <output>.jpg
