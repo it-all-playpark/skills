@@ -27,6 +27,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Add _lib to path for config loader
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+from config import merge_config
+
 # Check required packages
 try:
     from google.analytics.data_v1beta import BetaAnalyticsDataClient
@@ -348,8 +352,11 @@ def fetch_full_report(
 
 
 def main():
+    # Load project config
+    config = merge_config({"property_id": None}, "ga-analyzer")
+
     parser = argparse.ArgumentParser(description="Fetch GA4 analytics data")
-    parser.add_argument("--property-id", required=True, help="GA4 Property ID")
+    parser.add_argument("--property-id", required=False, default=None, help="GA4 Property ID")
 
     # Authentication options (mutually exclusive; oauth-client defaults if neither specified)
     auth_group = parser.add_mutually_exclusive_group()
@@ -380,6 +387,13 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Resolve property_id: CLI arg > config
+    property_id = args.property_id or config.get("property_id")
+    if not property_id:
+        print("Error: --property-id is required (or set in .claude/skill-config.json)", file=sys.stderr)
+        sys.exit(1)
+    args.property_id = property_id
 
     # Apply default oauth-client path when neither auth option is specified
     if args.oauth_client is None and args.credentials is None:

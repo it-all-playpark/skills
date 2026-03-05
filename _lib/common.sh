@@ -123,3 +123,52 @@ git_is_clean() {
 
 now_sec() { date +%s; }
 duration_since() { echo $(($(now_sec) - $1)); }
+
+# ============================================================================
+# Config Loading
+# ============================================================================
+
+# Load skill config section from .claude/skill-config.json (with legacy fallback)
+load_skill_config() {
+  local skill_name="$1"
+  local git_root
+  git_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "{}"; return; }
+
+  # 1. skill-config.json の skill セクション
+  local config_path="${git_root}/.claude/skill-config.json"
+  if [[ -f "$config_path" ]]; then
+    local section
+    section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$config_path")
+    if [[ -n "$section" ]]; then
+      echo "$section"
+      return
+    fi
+  fi
+
+  # 2. フォールバック: 旧形式の個別ファイル
+  local legacy_path="${git_root}/.claude/${skill_name}.json"
+  if [[ -f "$legacy_path" ]]; then
+    cat "$legacy_path"
+    return
+  fi
+
+  # 3. seo-strategy の特殊ケース: seo-config.json
+  if [[ "$skill_name" == "seo-strategy" ]]; then
+    local seo_legacy="${git_root}/.claude/seo-config.json"
+    if [[ -f "$seo_legacy" ]]; then
+      cat "$seo_legacy"
+      return
+    fi
+  fi
+
+  echo "{}"
+}
+
+# Deep merge: defaults → skill-config.json[skill] (CLI args handled by caller)
+merge_config() {
+  local defaults="$1"
+  local skill_name="$2"
+  local skill_cfg
+  skill_cfg="$(load_skill_config "$skill_name")"
+  echo "$defaults" | jq --argjson user "$skill_cfg" '. * $user'
+}

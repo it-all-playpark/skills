@@ -15,6 +15,10 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+# Add _lib to path for config loader
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+from config import load_skill_config
+
 # --- Issue auto-detection thresholds ---
 THRESHOLDS = {
     "low_ctr_high_imp": {"min_impressions": 100, "max_ctr": 3.0},
@@ -66,12 +70,20 @@ def load_json(path: str | None) -> dict | None:
 
 
 def load_config(path: str | None) -> dict:
-    """Load config JSON and merge with defaults."""
+    """Load config JSON and merge with defaults.
+
+    Priority: --config path > skill-config.json["seo-strategy"] > defaults
+    """
     config = dict(DEFAULT_CONFIG)
     if path:
         user_config = load_json(path)
         if user_config:
             config.update(user_config)
+    else:
+        # Fallback: load from .claude/skill-config.json (with legacy support)
+        skill_cfg = load_skill_config("seo-strategy")
+        if skill_cfg:
+            config.update(skill_cfg)
     return config
 
 

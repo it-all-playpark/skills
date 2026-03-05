@@ -29,6 +29,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Add _lib to path for config loader
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+from config import merge_config
+
 try:
     from pytrends.request import TrendReq
 except ImportError:
@@ -37,16 +41,26 @@ except ImportError:
     sys.exit(1)
 
 
+# --- Config ---
+
+_DEFAULTS = {
+    "geo": "JP",
+    "timeframe": "today 3-m",
+    "top_n": 10,
+    "title_strip_patterns": [],
+}
+
 # --- Keyword Extraction from GA Report ---
 
-# ページタイトルから除去するパターン
-STRIP_PATTERNS = [
-    r"\s*[|｜]\s*合同会社playpark.*$",
-    r"\s*[-–—]\s*合同会社playpark.*$",
+# 汎用 strip パターン（常に適用）
+_GENERIC_STRIP_PATTERNS = [
     r"^【(.+?)】",  # 【】の中身は残してブラケット除去
     r"^\d+:\s*",
     r"^404:.*$",
 ]
+
+# プロジェクト固有パターンは config から読み込み、汎用パターンと結合
+STRIP_PATTERNS = _GENERIC_STRIP_PATTERNS[:]
 
 # 一般的すぎるタイトル（除外）
 IGNORE_TITLES = {
@@ -380,23 +394,32 @@ def compute_trend_scores(trends_data: dict, keywords: list[str]) -> list[dict]:
 
 
 def main():
+    global STRIP_PATTERNS
+
+    # Load project config and merge with defaults
+    config = merge_config(_DEFAULTS, "trends-analyzer")
+
     parser = argparse.ArgumentParser(description="Google Trends Fetcher")
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--ga-report", help="ga-analyzer の出力JSONパス")
     input_group.add_argument("--keywords", help="カンマ区切りのキーワードリスト")
 
     parser.add_argument("--output", default="trends_report.json", help="出力ファイルパス")
-    parser.add_argument("--geo", default="JP", help="リージョン (default: JP)")
+    parser.add_argument("--geo", default=config["geo"], help="リージョン (default: JP)")
     parser.add_argument(
-        "--timeframe", default="today 3-m", help="期間 (default: today 3-m)"
+        "--timeframe", default=config["timeframe"], help="期間 (default: today 3-m)"
     )
     parser.add_argument(
-        "--top-n", type=int, default=10, help="GA レポートから抽出するキーワード上位数"
+        "--top-n", type=int, default=config["top_n"], help="GA レポートから抽出するキーワード上位数"
     )
     parser.add_argument("--cache-dir", default=".trends_cache", help="キャッシュディレクトリ")
     parser.add_argument("--no-cache", action="store_true", help="キャッシュを無効化")
 
     args = parser.parse_args()
+
+    # Build STRIP_PATTERNS: config patterns (project-specific) + generic patterns
+    project_patterns = config.get("title_strip_patterns", [])
+    STRIP_PATTERNS = project_patterns + _GENERIC_STRIP_PATTERNS
 
     # キーワード取得
     if args.ga_report:

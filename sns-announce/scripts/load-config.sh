@@ -7,12 +7,13 @@
 
 set -euo pipefail
 
+# Load shared config utilities
+source "$(dirname "$0")/../../_lib/common.sh"
+
 PROJECT_ROOT="${1:-.}"
 
 # Resolve to absolute path
 PROJECT_ROOT=$(cd "$PROJECT_ROOT" 2>/dev/null && pwd || echo "$PROJECT_ROOT")
-
-CONFIG_PATH="$PROJECT_ROOT/.claude/sns-announce.json"
 
 # Default configuration
 DEFAULT_CONFIG='{
@@ -27,20 +28,20 @@ DEFAULT_CONFIG='{
   "templates_dir": null
 }'
 
-if [[ -f "$CONFIG_PATH" ]]; then
-    # Merge user config with defaults (user values override defaults)
-    USER_CONFIG=$(cat "$CONFIG_PATH")
-    
-    # Use jq to merge if available, otherwise just return user config
+# Load config: skill-config.json > legacy sns-announce.json > defaults
+SKILL_CONFIG=$(load_skill_config "sns-announce")
+
+if [[ "$SKILL_CONFIG" != "{}" ]]; then
+    # Merge defaults with skill config
     if command -v jq &> /dev/null; then
-        echo "$DEFAULT_CONFIG" | jq --argjson user "$USER_CONFIG" '. * $user + {_config_path: "'"$CONFIG_PATH"'", _found: true}'
+        echo "$DEFAULT_CONFIG" | jq --argjson user "$SKILL_CONFIG" '. * $user + {_config_source: "skill-config.json", _found: true}'
     else
-        echo "$USER_CONFIG"
+        echo "$SKILL_CONFIG"
     fi
 else
     # Return defaults with metadata
     if command -v jq &> /dev/null; then
-        echo "$DEFAULT_CONFIG" | jq '. + {_config_path: null, _found: false}'
+        echo "$DEFAULT_CONFIG" | jq '. + {_config_source: null, _found: false}'
     else
         echo "$DEFAULT_CONFIG"
     fi

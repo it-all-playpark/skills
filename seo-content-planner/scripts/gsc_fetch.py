@@ -30,6 +30,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+# Add _lib to path for config loader
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+from config import merge_config
+
 try:
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
@@ -261,12 +265,16 @@ def _print_summary(response: dict) -> None:
 def main() -> None:
     global _oauth_client, _token_path
 
+    # Load project config
+    config = merge_config({"site": None}, "seo-content-planner")
+
     parser = argparse.ArgumentParser(
         description="Fetch GSC Search Analytics data and save as JSON.",
     )
     parser.add_argument(
         "--site",
-        required=True,
+        required=False,
+        default=None,
         help='Site URL registered in GSC (e.g. "sc-domain:playpark.co.jp")',
     )
     parser.add_argument(
@@ -310,6 +318,13 @@ def main() -> None:
     # Apply auth overrides before any API call
     _oauth_client = args.oauth_client
     _token_path = args.token_path
+
+    # Resolve site: CLI arg > config
+    site = args.site or config.get("site")
+    if not site:
+        print("Error: --site is required (or set in .claude/skill-config.json)", file=sys.stderr)
+        sys.exit(1)
+    args.site = site
 
     print(
         f"Fetching GSC data for {args.site} "

@@ -25,10 +25,33 @@ import { readFileSync, existsSync } from "fs";
 import { parseArgs } from "util";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 
 // Load .env from skill directory
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envPath = join(__dirname, "..", ".env");
+
+function loadSkillConfig(skillName: string): Record<string, unknown> {
+  let gitRoot: string;
+  try {
+    gitRoot = execSync("git rev-parse --show-toplevel", { encoding: "utf-8" }).trim();
+  } catch {
+    return {};
+  }
+  const configPath = join(gitRoot, ".claude", "skill-config.json");
+  if (existsSync(configPath)) {
+    try {
+      const data = JSON.parse(readFileSync(configPath, "utf-8"));
+      const section = data[skillName];
+      if (section && typeof section === "object") return section as Record<string, unknown>;
+    } catch {
+      // ignore parse errors
+    }
+  }
+  return {};
+}
+
+const skillConfig = loadSkillConfig("sns-schedule-post");
 
 function loadEnv(path: string) {
   if (!existsSync(path)) return;
@@ -249,10 +272,11 @@ async function createSinglePost(
     return true;
   }
 
+  const timezone = (skillConfig.timezone as string) || "Asia/Tokyo";
   const body: PostRequest = {
     content,
     platforms: platformTargets,
-    timezone: "Asia/Tokyo",
+    timezone,
   };
 
   if (schedule) {

@@ -6,9 +6,16 @@
 
 set -euo pipefail
 
+# Load shared config utilities
+source "$(dirname "$0")/../../_lib/common.sh"
+
 INPUT="${1:-}"
-CONTENT_DIR="${2:-content/blog}"
-BASE_URL="https://www.playpark.co.jp"
+
+# Config: defaults → skill-config.json → CLI args
+DEFAULTS='{"base_url":"","content_dir":"content/blog","blog_path_prefix":"/blog/"}'
+CONFIG=$(merge_config "$DEFAULTS" "blog-cross-post")
+BASE_URL=$(echo "$CONFIG" | jq -r '.base_url')
+CONTENT_DIR="${2:-$(echo "$CONFIG" | jq -r '.content_dir')}"
 
 if [[ -z "$INPUT" ]]; then
   echo '{"error": "No input provided"}' | jq .
@@ -60,7 +67,8 @@ if [[ -d "seed" ]]; then
 fi
 
 # Build original URL
-ORIGINAL_URL="${BASE_URL}/blog/${SLUG}"
+BLOG_PATH_PREFIX=$(echo "$CONFIG" | jq -r '.blog_path_prefix')
+ORIGINAL_URL="${BASE_URL}${BLOG_PATH_PREFIX}${SLUG}"
 
 # Output JSON
 jq -n \
