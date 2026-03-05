@@ -61,7 +61,7 @@ Project config: `.claude/video-announce.json`
   "default_lang": "ja",
   "output": {
     "dir": "post",
-    "pattern": "{platform}/{date}-{slug}.json",
+    "pattern": "{date}-{slug}.json",
     "format": "json"
   },
   "platforms": {
@@ -90,7 +90,6 @@ Project config: `.claude/video-announce.json`
 
 | Variable | Description |
 |----------|-------------|
-| `{platform}` | Target platform: `instagram`, `youtube`, `tiktok` |
 | `{date}` | **Schedule date** (投稿日, YYYY-MM-DD). `--schedule` 指定時はその日付、省略時は当日 |
 | `{slug}` | Source filename or topic slug |
 
@@ -99,7 +98,7 @@ Project config: `.claude/video-announce.json`
 ### platformDefaults.thumbOffset
 
 動画メディアのサムネイル用フレーム切り出し位置（ミリ秒）。設定すると:
-1. JSON出力時、ffmpegで動画の指定位置からJPEGフレームを `{output.dir}/{platform}/thumbnails/{slug}.jpg` に自動生成
+1. JSON出力時、ffmpegで動画の指定位置からJPEGフレームを `{output.dir}/thumbnails/{platform}/{slug}.jpg` に自動生成
 2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `video-schedule-post` がアップロード
 3. **YouTube**: `mediaItems[].thumbnail.url` にサムネパスを設定 → 投稿スクリプトがアップロードし `platformSpecificData.thumbnail` としてAPIに送信
 4. **TikTok**: `tiktokSettings.video_cover_timestamp_ms` にミリ秒を設定（フレーム指定のみ、サムネアップロード不要）
@@ -119,11 +118,13 @@ Project config: `.claude/video-announce.json`
 6. For each target platform:
    a. Generate platform-specific caption (see Caption Structure below)
    b. Generate platform-specific hashtags (see references/)
-   c. Write output JSON to: {output.dir}/{platform}/{date}-{slug}.json
-      ({date} = schedule date, not generation date)
-7. Thumbnail generation (if platformDefaults.thumbOffset is set and media is video):
+   c. Build platform entry object (content, mediaItems, platforms, schedule, etc.)
+7. Write all platform entries as a single JSON array to: {output.dir}/{date}-{slug}.json
+   ({date} = schedule date, not generation date)
+8. Thumbnail generation (if platformDefaults.thumbOffset is set and media is video):
    - Extract frame at thumbOffset ms using ffmpeg:
      ffmpeg -y -ss <seconds> -i <video> -frames:v 1 -q:v 2 -update 1 <output>.jpg
+   - Output to: {output.dir}/thumbnails/{platform}/{slug}.jpg
    - Instagram: set `platformSpecificData.instagramThumbnail`
    - YouTube: set `mediaItems[].thumbnail.url` to local path (post script uploads → platformSpecificData.thumbnail)
    - TikTok: set `tiktokSettings.video_cover_timestamp_ms` (no thumbnail file needed)
@@ -220,101 +221,86 @@ Description:
 
 ## Output Format
 
-### JSON (Late API format) - Per Platform
+### JSON (Late API format) - Array
 
-Each platform outputs a separate JSON file to `{output.dir}/{platform}/{date}-{slug}.json`.
+All platforms are output as a single JSON array to `{output.dir}/{date}-{slug}.json`.
 
-#### Instagram JSON: `post/instagram/{date}-{slug}.json`
-
-```json
-{
-  "content": "キャプション本文",
-  "mediaItems": [
-    {"type": "video", "path": "/path/to/video.mp4"}
-  ],
-  "platforms": [
-    {
-      "platform": "instagram",
-      "platformSpecificData": {
-        "contentType": "reels",
-        "instagramThumbnail": "post/instagram/thumbnails/{slug}.jpg",
-        "firstComment": "#追加ハッシュタグ群"
-      }
-    }
-  ],
-  "schedule": "2026-03-12 19:00"
-}
-```
-
-#### YouTube JSON: `post/youtube/{date}-{slug}.json`
+#### Example: `post/2026-03-12-promo-video.json`
 
 ```json
-{
-  "content": "動画の説明文（Description）\n\nチャンネル登録お願いします！\n\n#シフト管理 #業務効率化 #Shorts",
-  "mediaItems": [
-    {
-      "type": "video",
-      "path": "/path/to/video.mp4",
-      "thumbnail": {
-        "url": "post/youtube/thumbnails/{slug}.jpg"
+[
+  {
+    "content": "キャプション本文",
+    "mediaItems": [
+      {"type": "video", "path": "/path/to/video.mp4"}
+    ],
+    "platforms": [
+      {
+        "platform": "instagram",
+        "platformSpecificData": {
+          "contentType": "reels",
+          "instagramThumbnail": "post/thumbnails/instagram/{slug}.jpg",
+          "firstComment": "#追加ハッシュタグ群"
+        }
       }
-    }
-  ],
-  "platforms": [
-    {
-      "platform": "youtube",
-      "platformSpecificData": {
-        "title": "シフト管理が劇的に変わる！AIが自動で最適配置",
-        "visibility": "public",
-        "categoryId": "28",
-        "madeForKids": false,
-        "containsSyntheticMedia": false
-      }
-    }
-  ],
-  "firstComment": "ピン留めコメント（任意）",
-  "schedule": "2026-03-12 19:30"
-}
-```
-
-**YouTube JSON Notes**:
-- `content` = 動画の説明文（Description）
-- `platformSpecificData.title` = 動画タイトル（max 100字）
-- `mediaItems[].thumbnail.url` = サムネイル画像パス（JSON入力形式。投稿スクリプトがアップロードし `platformSpecificData.thumbnail` としてLate APIに送信）
-- `firstComment` = ピン留めコメント（任意）
-
-#### TikTok JSON: `post/tiktok/{date}-{slug}.json`
-
-```json
-{
-  "content": "シフト管理、まだ手作業でやってない？\n\nAIが自動で最適なシフトを作成！\n店長の負担が劇的に減ります\n\nプロフィールのリンクから無料で試せるよ\n\n#シフト管理 #飲食店 #業務効率化 #ShiftBud",
-  "mediaItems": [
-    {"type": "video", "path": "/path/to/video.mp4"}
-  ],
-  "platforms": [
-    {
-      "platform": "tiktok"
-    }
-  ],
-  "tiktokSettings": {
-    "privacy_level": "PUBLIC_TO_EVERYONE",
-    "allow_comment": true,
-    "allow_duet": true,
-    "allow_stitch": true,
-    "content_preview_confirmed": true,
-    "express_consent_given": true,
-    "video_cover_timestamp_ms": 2000,
-    "video_made_with_ai": false
+    ],
+    "schedule": "2026-03-12 19:00"
   },
-  "schedule": "2026-03-12 20:00"
-}
+  {
+    "content": "動画の説明文（Description）\n\nチャンネル登録お願いします！\n\n#シフト管理 #業務効率化 #Shorts",
+    "mediaItems": [
+      {
+        "type": "video",
+        "path": "/path/to/video.mp4",
+        "thumbnail": {
+          "url": "post/thumbnails/youtube/{slug}.jpg"
+        }
+      }
+    ],
+    "platforms": [
+      {
+        "platform": "youtube",
+        "platformSpecificData": {
+          "title": "シフト管理が劇的に変わる！AIが自動で最適配置",
+          "visibility": "public",
+          "categoryId": "28",
+          "madeForKids": false,
+          "containsSyntheticMedia": false
+        }
+      }
+    ],
+    "firstComment": "ピン留めコメント（任意）",
+    "schedule": "2026-03-12 19:30"
+  },
+  {
+    "content": "シフト管理、まだ手作業でやってない？\n\nAIが自動で最適なシフトを作成！\n店長の負担が劇的に減ります\n\nプロフィールのリンクから無料で試せるよ\n\n#シフト管理 #飲食店 #業務効率化 #ShiftBud",
+    "mediaItems": [
+      {"type": "video", "path": "/path/to/video.mp4"}
+    ],
+    "platforms": [
+      {
+        "platform": "tiktok"
+      }
+    ],
+    "tiktokSettings": {
+      "privacy_level": "PUBLIC_TO_EVERYONE",
+      "allow_comment": true,
+      "allow_duet": true,
+      "allow_stitch": true,
+      "content_preview_confirmed": true,
+      "express_consent_given": true,
+      "video_cover_timestamp_ms": 2000,
+      "video_made_with_ai": false
+    },
+    "schedule": "2026-03-12 20:00"
+  }
+]
 ```
 
-**TikTok JSON Notes**:
-- `content` = キャプション本文（ハッシュタグ込み）
-- `tiktokSettings` = トップレベルに配置（`platformSpecificData`内ではない）
-- `content_preview_confirmed` / `express_consent_given` は常に `true`（必須）
-- `video_cover_timestamp_ms` = カバー画像のフレーム位置（ミリ秒）
+**Platform-specific Notes**:
+- **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定
+- **YouTube**: `content` = 説明文、`platformSpecificData.title` = タイトル（max 100字）、`mediaItems[].thumbnail.url` = サムネパス
+- **TikTok**: `tiktokSettings` はトップレベルに配置、`content_preview_confirmed` / `express_consent_given` は常に `true`
 
 ### Markdown (default)
 
@@ -389,12 +375,8 @@ Each platform outputs a separate JSON file to `{output.dir}/{platform}/{date}-{s
 # JSON出力 + スケジュール（全プラットフォーム）
 /video-announce packages/video/out/guide-setup.mp4 --format json --schedule "2026-03-12 19:00"
 
-# 投稿パイプライン
+# 投稿パイプライン（1ファイルで全プラットフォーム）
 /video-announce video.mp4 --format json
-# → post/instagram/{date}-{slug}.json
-# → post/youtube/{date}-{slug}.json
-# → post/tiktok/{date}-{slug}.json
-npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/instagram/{date}-{slug}.json
-npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/youtube/{date}-{slug}.json
-npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/tiktok/{date}-{slug}.json
+# → post/{date}-{slug}.json (配列: [instagram, youtube, tiktok])
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/{date}-{slug}.json
 ```

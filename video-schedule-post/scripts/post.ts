@@ -14,13 +14,17 @@
  *   # Carousel
  *   npx tsx post.ts --media img1.jpg,img2.jpg,img3.jpg --caption "Carousel" --type carousel
  *
- * JSON format (video-announce output):
- *   {
- *     "content": "Caption #hashtag",
- *     "mediaItems": [{"type": "video", "path": "/path/to/video.mp4"}],
- *     "platforms": [{"platform": "instagram", "platformSpecificData": {"contentType": "reels"}}],
- *     "schedule": "2026-03-12 19:00"
- *   }
+ * JSON format (video-announce output - array or single object):
+ *   [
+ *     {
+ *       "content": "Caption #hashtag",
+ *       "mediaItems": [{"type": "video", "path": "/path/to/video.mp4"}],
+ *       "platforms": [{"platform": "instagram", "platformSpecificData": {"contentType": "reels"}}],
+ *       "schedule": "2026-03-12 19:00"
+ *     },
+ *     { ... youtube entry ... },
+ *     { ... tiktok entry ... }
+ *   ]
  *
  * YouTube JSON:
  *   {
@@ -162,8 +166,7 @@ async function uploadFile(
   filePath: string
 ): Promise<string> {
   if (!existsSync(filePath)) {
-    console.error(`Error: File not found: ${filePath}`);
-    process.exit(1);
+    throw new Error(`File not found: ${filePath}`);
   }
   const fileName = basename(filePath);
   const mimeType = getMimeType(filePath);
@@ -300,9 +303,7 @@ function parseSchedule(scheduleStr: string): Date {
     if (!isNaN(jstDate.getTime())) return jstDate;
   }
 
-  console.error(`Error: Invalid schedule format: ${scheduleStr}`);
-  console.error('Expected: "YYYY-MM-DD HH:MM" (JST) or ISO 8601');
-  process.exit(1);
+  throw new Error(`Invalid schedule format: ${scheduleStr}. Expected: "YYYY-MM-DD HH:MM" (JST) or ISO 8601`);
 }
 
 function findAccountByPlatform(accounts: Account[], platform: string): Account | null {
@@ -353,8 +354,7 @@ async function getPresignedUrl(
     } catch {
       errorMsg = text.slice(0, 200);
     }
-    console.error("Error getting presigned URL:", errorMsg);
-    process.exit(1);
+    throw new Error(`Error getting presigned URL: ${errorMsg}`);
   }
 
   return (await response.json()) as PresignedUrlResponse;
@@ -373,10 +373,8 @@ async function uploadMedia(
   });
 
   if (!response.ok) {
-    console.error(`Error uploading media: ${response.status} ${response.statusText}`);
     const text = await response.text();
-    if (text) console.error(text);
-    process.exit(1);
+    throw new Error(`Error uploading media: ${response.status} ${response.statusText}${text ? ` - ${text}` : ""}`);
   }
 }
 
@@ -393,8 +391,7 @@ async function uploadMediaItem(
 
   const filePath = item.path!;
   if (!existsSync(filePath)) {
-    console.error(`Error: Media file not found: ${filePath}`);
-    process.exit(1);
+    throw new Error(`Media file not found: ${filePath}`);
   }
 
   const fileName = basename(filePath);
@@ -589,24 +586,17 @@ function dryRunMediaItem(item: MediaItem): { type: string; url: string; thumbnai
 
 // --- JSON mode ---
 
-async function processJsonPost(jsonPath: string, dryRun: boolean): Promise<void> {
-  if (!existsSync(jsonPath)) {
-    console.error(`Error: JSON file not found: ${jsonPath}`);
-    process.exit(1);
-  }
-
-  let input: PostInput;
-  try {
-    const content = readFileSync(jsonPath, "utf-8");
-    input = JSON.parse(content);
-  } catch {
-    console.error(`Error: Invalid JSON file: ${jsonPath}`);
-    process.exit(1);
-  }
+async function processSingleEntry(
+  input: PostInput,
+  apiKey: string,
+  accounts: Account[] | null,
+  dryRun: boolean,
+  index?: number
+): Promise<boolean> {
+  const prefix = index !== undefined ? `[${index + 1}] ` : "";
 
   if (!input.mediaItems || input.mediaItems.length === 0) {
-    console.error("Error: At least one media item is required");
-    process.exit(1);
+    throw new Error("At least one media item is required");
   }
 
   // Determine target platform from JSON
@@ -619,10 +609,10 @@ async function processJsonPost(jsonPath: string, dryRun: boolean): Promise<void>
   );
   const schedule = input.schedule ? parseSchedule(input.schedule) : null;
 
-  console.log(`Target platform: ${targetPlatform}`);
+  console.log(`${prefix}Target platform: ${targetPlatform}`);
 
   if (dryRun) {
-    console.log("Resolving media...");
+    console.log(`${prefix}Resolving media...`);
     const mediaUrls = input.mediaItems.map((item) => dryRunMediaItem(item));
     if (targetPlatform === "instagram") {
       await resolveThumbnail("", platformData, true);
@@ -635,25 +625,21 @@ async function processJsonPost(jsonPath: string, dryRun: boolean): Promise<void>
       contentType, platformData, input.tiktokSettings, input.firstComment,
       schedule, true
     );
-    return;
+    return true;
   }
 
-  const apiKey = getEnvOrExit("LATE_API_KEY");
-  const accounts = await fetchAccounts(apiKey);
-  const account = findAccountByPlatform(accounts, targetPlatform);
+  const account = findAccountByPlatform(accounts!, targetPlatform);
 
   if (!account) {
-    console.error(`Error: No ${targetPlatform} account connected`);
-    console.error(
-      `Available platforms: ${accounts.map((a) => `${a.platform}(${a.username || a.name})`).join(", ")}`
+    throw new Error(
+      `No ${targetPlatform} account connected. Available: ${accounts!.map((a) => `${a.platform}(${a.username || a.name})`).join(", ")}`
     );
-    process.exit(1);
   }
 
-  console.log(`${targetPlatform} account: ${account.username || account.name || account._id}\n`);
+  console.log(`${prefix}${targetPlatform} account: ${account.username || account.name || account._id}\n`);
 
   // Upload media
-  console.log("Uploading media...");
+  console.log(`${prefix}Uploading media...`);
   let mediaUrls: Array<{ type: string; url: string; thumbnail?: { url: string } }> = [];
   for (const item of input.mediaItems) {
     const uploaded = await uploadMediaItem(apiKey, item);
@@ -670,13 +656,67 @@ async function processJsonPost(jsonPath: string, dryRun: boolean): Promise<void>
 
   console.log("");
 
-  const ok = await createPost(
+  return await createPost(
     apiKey, account._id, targetPlatform, input.content, mediaUrls,
     contentType, platformData, input.tiktokSettings, input.firstComment,
     schedule, false
   );
+}
 
-  if (!ok) process.exit(1);
+async function processBatchPosts(jsonPath: string, dryRun: boolean): Promise<void> {
+  if (!existsSync(jsonPath)) {
+    console.error(`Error: JSON file not found: ${jsonPath}`);
+    process.exit(1);
+  }
+
+  let parsed: unknown;
+  try {
+    const content = readFileSync(jsonPath, "utf-8");
+    parsed = JSON.parse(content);
+  } catch {
+    console.error(`Error: Invalid JSON file: ${jsonPath}`);
+    process.exit(1);
+  }
+
+  // Support both array and single object (backward compatible)
+  const entries: PostInput[] = Array.isArray(parsed) ? parsed : [parsed as PostInput];
+
+  console.log(`Processing ${entries.length} post(s)...\n`);
+
+  const apiKey = dryRun ? "" : getEnvOrExit("LATE_API_KEY");
+  const accounts = dryRun ? null : await fetchAccounts(apiKey);
+
+  let success = 0;
+  let failed = 0;
+
+  for (let i = 0; i < entries.length; i++) {
+    try {
+      const ok = await processSingleEntry(
+        entries[i],
+        apiKey,
+        accounts,
+        dryRun,
+        entries.length > 1 ? i : undefined
+      );
+      if (ok) {
+        success++;
+      } else {
+        failed++;
+      }
+    } catch (err) {
+      const prefix = entries.length > 1 ? `[${i + 1}] ` : "";
+      console.error(`${prefix}Error: ${err instanceof Error ? err.message : err}`);
+      failed++;
+    }
+  }
+
+  if (entries.length > 1) {
+    console.log(`\n=== Summary ===`);
+    console.log(`Success: ${success}`);
+    console.log(`Failed: ${failed}`);
+  }
+
+  if (failed > 0 && success === 0) process.exit(1);
 }
 
 // --- CLI mode ---
@@ -771,7 +811,7 @@ async function main() {
   const dryRun = values["dry-run"] ?? false;
 
   if (values.json) {
-    await processJsonPost(values.json, dryRun);
+    await processBatchPosts(values.json, dryRun);
     return;
   }
 
