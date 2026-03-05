@@ -15,7 +15,7 @@ ln -sf ~/skills ~/.<tool>/skills   # <tool>: claude, codex など
 
 ### 外部スキルの取り込み（skills.sh 由来）
 
-[skills.sh](https://skill.sh) 等で取得した外部スキルは `.agents/skills/` に配置し、シンボリックリンクで統合します。
+[skills.sh](https://skills.sh) 等で取得した外部スキルは `.agents/skills/` に配置し、シンボリックリンクで統合します。
 
 ```bash
 # 外部スキルの配置
