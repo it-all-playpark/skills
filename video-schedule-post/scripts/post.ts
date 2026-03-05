@@ -5,7 +5,7 @@
  * Supports: Instagram, YouTube, TikTok
  *
  * Usage:
- *   # From JSON (ig-announce output)
+ *   # From JSON (video-announce output)
  *   npx tsx post.ts --json posts.json
  *
  *   # Direct post (Instagram)
@@ -14,7 +14,7 @@
  *   # Carousel
  *   npx tsx post.ts --media img1.jpg,img2.jpg,img3.jpg --caption "Carousel" --type carousel
  *
- * JSON format (ig-announce output):
+ * JSON format (video-announce output):
  *   {
  *     "content": "Caption #hashtag",
  *     "mediaItems": [{"type": "video", "path": "/path/to/video.mp4"}],
@@ -205,7 +205,7 @@ async function resolveYouTubeThumbnail(
   platformData: PlatformSpecificData | undefined,
   dryRun: boolean
 ): Promise<void> {
-  // Find thumbnail from mediaItems[].thumbnail.url (ig-announce output format)
+  // Find thumbnail from mediaItems[].thumbnail.url (video-announce output format)
   const thumbItem = mediaItems.find((item) => item.thumbnail?.url);
   if (!thumbItem?.thumbnail?.url) return;
 

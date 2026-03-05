@@ -1,22 +1,22 @@
 ---
-name: ig-announce
+name: video-announce
 description: |
   Generate video/image post captions with SEO-optimized hashtags for Instagram, YouTube Shorts, and TikTok.
   Use when: (1) user wants to create social media post content for video platforms,
   (2) needs captions and hashtags for Instagram feed/reel, YouTube Shorts, or TikTok,
-  (3) keywords like "Instagram投稿文", "IG投稿", "キャプション作成", "Instagram caption", "ig announce", "YouTube Shorts", "TikTok投稿",
+  (3) keywords like "Instagram投稿文", "IG投稿", "キャプション作成", "Instagram caption", "ig announce", "video announce", "YouTube Shorts", "TikTok投稿",
   (4) input: video/image files, MDX/Markdown articles, URLs, or topic text.
   Accepts args: SOURCE [--type feed|reel|story|carousel] [--platforms instagram,youtube,tiktok|all-video] [--output FILE] [--format md|json] [--schedule "YYYY-MM-DD HH:MM"] [--lang ja|en]
 ---
 
-# IG Announce
+# Video Announce
 
 Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Shorts, and TikTok from media files, articles, or topics.
 
 ## Usage
 
 ```
-/ig-announce <source> [options]
+/video-announce <source> [options]
 ```
 
 ### Source Types
@@ -54,7 +54,7 @@ Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Sh
 
 ## Configuration
 
-Project config: `.claude/ig-announce.json`
+Project config: `.claude/video-announce.json`
 
 ```json
 {
@@ -90,14 +90,14 @@ Project config: `.claude/ig-announce.json`
 
 動画メディアのサムネイル用フレーム切り出し位置（ミリ秒）。設定すると:
 1. JSON出力時、ffmpegで動画の指定位置からJPEGフレームを `{output.dir}/{platform}/thumbnails/{slug}.jpg` に自動生成
-2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `ig-schedule-post` がアップロード
+2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `video-schedule-post` がアップロード
 3. **YouTube**: `mediaItems[].thumbnail.url` にサムネパスを設定 → 投稿スクリプトがアップロードし `platformSpecificData.thumbnail` としてAPIに送信
 4. **TikTok**: `tiktokSettings.video_cover_timestamp_ms` にミリ秒を設定（フレーム指定のみ、サムネアップロード不要）
 
 ## Workflow
 
 ```
-1. Load config (.claude/ig-announce.json)
+1. Load config (.claude/video-announce.json)
 2. Determine target platforms (--platforms or config)
 3. Identify source type (media/article/topic)
 4. Extract context:
@@ -358,32 +358,32 @@ Each platform outputs a separate JSON file to `{output.dir}/{platform}/{date}-{s
 
 ```bash
 # リール動画から全プラットフォーム投稿文を生成（デフォルト: all-video）
-/ig-announce packages/video/out/promo-video.mp4
+/video-announce packages/video/out/promo-video.mp4
 
 # Instagram単体（従来互換）
-/ig-announce packages/video/out/promo-video.mp4 --platforms instagram
+/video-announce packages/video/out/promo-video.mp4 --platforms instagram
 
 # YouTube Shorts + TikTok のみ
-/ig-announce packages/video/out/promo-video.mp4 --platforms youtube,tiktok
+/video-announce packages/video/out/promo-video.mp4 --platforms youtube,tiktok
 
 # ブログ記事からフィード投稿文を生成
-/ig-announce content/blog/2026-01-15-shift-management.mdx --type feed
+/video-announce content/blog/2026-01-15-shift-management.mdx --type feed
 
 # トピックから投稿文を生成
-/ig-announce "AIを活用したシフト管理の未来" --type feed
+/video-announce "AIを活用したシフト管理の未来" --type feed
 
 # カルーセル（Instagram + YouTube のみ）
-/ig-announce "シフト管理Tips5選" --type carousel --media img1.jpg,img2.jpg,img3.jpg --platforms instagram
+/video-announce "シフト管理Tips5選" --type carousel --media img1.jpg,img2.jpg,img3.jpg --platforms instagram
 
 # JSON出力 + スケジュール（全プラットフォーム）
-/ig-announce packages/video/out/guide-setup.mp4 --format json --schedule "2026-03-12 19:00"
+/video-announce packages/video/out/guide-setup.mp4 --format json --schedule "2026-03-12 19:00"
 
 # 投稿パイプライン
-/ig-announce video.mp4 --format json
+/video-announce video.mp4 --format json
 # → post/instagram/{date}-{slug}.json
 # → post/youtube/{date}-{slug}.json
 # → post/tiktok/{date}-{slug}.json
-npx tsx $SKILLS_DIR/ig-schedule-post/scripts/post.ts --json post/instagram/{date}-{slug}.json
-npx tsx $SKILLS_DIR/ig-schedule-post/scripts/post.ts --json post/youtube/{date}-{slug}.json
-npx tsx $SKILLS_DIR/ig-schedule-post/scripts/post.ts --json post/tiktok/{date}-{slug}.json
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/instagram/{date}-{slug}.json
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/youtube/{date}-{slug}.json
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/tiktok/{date}-{slug}.json
 ```

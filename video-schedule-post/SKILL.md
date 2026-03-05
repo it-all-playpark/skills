@@ -1,31 +1,31 @@
 ---
-name: ig-schedule-post
+name: video-schedule-post
 description: |
   Schedule or post to Instagram (feed, reel, story, carousel), YouTube Shorts, or TikTok with media upload via Late API.
   Use when: (1) user wants to schedule posts with images or videos to Instagram/YouTube/TikTok,
-  (2) after /ig-announce to publish generated content,
-  (3) keywords like "Instagram投稿", "IG予約投稿", "Instagram schedule", "ig post", "ig schedule", "YouTube投稿", "TikTok投稿",
+  (2) after /video-announce to publish generated content,
+  (3) keywords like "Instagram投稿", "IG予約投稿", "Instagram schedule", "ig post", "ig schedule", "video post", "video schedule", "YouTube投稿", "TikTok投稿",
   (4) needs to upload media and create posts via Late API.
   Accepts args: --json FILE | --media FILE --caption TEXT [--type feed|reel|story|carousel] [--schedule "YYYY-MM-DD HH:MM"] [--first-comment TEXT] [--dry-run]
 ---
 
-# IG Schedule Post
+# Video Schedule Post
 
 Schedule or post to Instagram, YouTube, or TikTok via Late API with media upload support.
 
 ## Usage
 
 ```
-# From JSON (ig-announce output)
-/ig-schedule-post --json posts.json [--dry-run]
+# From JSON (video-announce output)
+/video-schedule-post --json posts.json [--dry-run]
 
 # Direct post (Instagram, backward compatible)
-/ig-schedule-post --media FILE --caption TEXT [--type TYPE] [--schedule DATETIME] [--dry-run]
+/video-schedule-post --media FILE --caption TEXT [--type TYPE] [--schedule DATETIME] [--dry-run]
 ```
 
 | Argument | Description |
 |----------|-------------|
-| `--json, -j` | JSON file with post data (ig-announce output format) |
+| `--json, -j` | JSON file with post data (video-announce output format) |
 | `--media, -m` | Media file path(s), comma-separated for carousel |
 | `--caption, -c` | Caption text or file path |
 | `--type, -t` | Content type: feed, reel, story, carousel (auto-detect) |
@@ -44,13 +44,13 @@ Schedule or post to Instagram, YouTube, or TikTok via Late API with media upload
 
 ### 2. Environment Variables
 
-Create `$SKILLS_DIR/ig-schedule-post/.env`:
+Create `$SKILLS_DIR/video-schedule-post/.env`:
 
 ```
 LATE_API_KEY=your_api_key
 ```
 
-Shares API key with `sns-schedule-post` skill. If `$SKILLS_DIR/ig-schedule-post/.env` does not exist, falls back to `$SKILLS_DIR/sns-schedule-post/.env`.
+Shares API key with `sns-schedule-post` skill. If `$SKILLS_DIR/video-schedule-post/.env` does not exist, falls back to `$SKILLS_DIR/sns-schedule-post/.env`.
 
 ## JSON Input Format
 
@@ -63,7 +63,7 @@ The script reads `platforms[0].platform` from the JSON to determine the target p
 
 ### Instagram JSON
 
-Compatible with ig-announce `--format json` output:
+Compatible with video-announce `--format json` output:
 
 ```json
 {
@@ -172,16 +172,16 @@ Execute the script at `scripts/post.ts`:
 
 ```bash
 # Instagram
-npx tsx $SKILLS_DIR/ig-schedule-post/scripts/post.ts --json post/instagram/2026-03-12-slug.json
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/instagram/2026-03-12-slug.json
 
 # YouTube
-npx tsx $SKILLS_DIR/ig-schedule-post/scripts/post.ts --json post/youtube/2026-03-12-slug.json
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/youtube/2026-03-12-slug.json
 
 # TikTok
-npx tsx $SKILLS_DIR/ig-schedule-post/scripts/post.ts --json post/tiktok/2026-03-12-slug.json
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/tiktok/2026-03-12-slug.json
 
 # Direct post (Instagram only, backward compatible)
-npx tsx $SKILLS_DIR/ig-schedule-post/scripts/post.ts --media video.mp4 --caption "text" [--type reel]
+npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --media video.mp4 --caption "text" [--type reel]
 ```
 
 DO NOT manually call the Late API. Always use the provided script.
@@ -245,30 +245,30 @@ DO NOT manually call the Late API. Always use the provided script.
 ## Examples
 
 ```bash
-# ig-announce連携（推奨フロー）
-/ig-announce packages/video/out/promo-video.mp4 --format json
+# video-announce連携（推奨フロー）
+/video-announce packages/video/out/promo-video.mp4 --format json
 # → post/instagram/2026-03-12-promo-video.json
 # → post/youtube/2026-03-12-promo-video.json
 # → post/tiktok/2026-03-12-promo-video.json
 
 # 各プラットフォームに投稿
-/ig-schedule-post --json post/instagram/2026-03-12-promo-video.json
-/ig-schedule-post --json post/youtube/2026-03-12-promo-video.json
-/ig-schedule-post --json post/tiktok/2026-03-12-promo-video.json
+/video-schedule-post --json post/instagram/2026-03-12-promo-video.json
+/video-schedule-post --json post/youtube/2026-03-12-promo-video.json
+/video-schedule-post --json post/tiktok/2026-03-12-promo-video.json
 
 # ドライラン（全プラットフォーム）
-/ig-schedule-post --json post/instagram/2026-03-12-promo-video.json --dry-run
-/ig-schedule-post --json post/youtube/2026-03-12-promo-video.json --dry-run
-/ig-schedule-post --json post/tiktok/2026-03-12-promo-video.json --dry-run
+/video-schedule-post --json post/instagram/2026-03-12-promo-video.json --dry-run
+/video-schedule-post --json post/youtube/2026-03-12-promo-video.json --dry-run
+/video-schedule-post --json post/tiktok/2026-03-12-promo-video.json --dry-run
 
 # 動画リール投稿（Instagram直接、後方互換）
-/ig-schedule-post --media packages/video/out/promo-video.mp4 --caption "シフト管理を変える" --type reel --schedule "2026-03-12 19:00"
+/video-schedule-post --media packages/video/out/promo-video.mp4 --caption "シフト管理を変える" --type reel --schedule "2026-03-12 19:00"
 
 # 画像フィード投稿
-/ig-schedule-post --media photo.jpg --caption "新機能リリース！" --first-comment "#ShiftBud #DX #シフト管理"
+/video-schedule-post --media photo.jpg --caption "新機能リリース！" --first-comment "#ShiftBud #DX #シフト管理"
 
 # カルーセル
-/ig-schedule-post --media img1.jpg,img2.jpg,img3.jpg --caption "Tips5選" --type carousel
+/video-schedule-post --media img1.jpg,img2.jpg,img3.jpg --caption "Tips5選" --type carousel
 ```
 
 ## Notes
