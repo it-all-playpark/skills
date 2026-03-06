@@ -13,7 +13,6 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - mcp__sequential-thinking__sequentialthinking
 ---
 
 # PR Review: $ARGUMENTS
@@ -31,19 +30,24 @@ allowed-tools:
 
 ## Task
 
-### Step 1: Deep Analysis (Required)
+### Step 1: Tech Stack Detection & Best Practice Loading
 
-Use `mcp__sequential-thinking__sequentialthinking` to systematically analyze:
-- Security implications of each file change
-- Architectural impact and SOLID violations
-- Edge cases, error handling, data validation
-- Test coverage gaps
+1. Run `$SKILLS_DIR/_lib/scripts/detect-stack.sh` on the PR's repository root to detect frameworks
+2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md to load framework-specific rules
+3. Combine with [analysis-domains.md](~/.claude/skills/_lib/analysis-domains.md) domain criteria for comprehensive review
 
 ### Step 2: Generate Review
 
 Using [review-sections.md](references/review-sections.md) checklist, determine:
 - **Decision**: `approve` (LGTM) or `request-changes` (issues found)
 - **Review body**: Markdown formatted review
+
+Analyze systematically:
+- Security implications of each file change
+- Architectural impact and SOLID violations
+- Edge cases, error handling, data validation
+- Test coverage gaps
+- **Best practice violations** — if frameworks were detected in Step 1, check changes against the loaded best-practice rules and include a dedicated section for framework-specific findings
 
 ### Step 3: Submit Review
 

@@ -30,15 +30,19 @@ Execute feature implementation with configurable strategy and context.
 ## Workflow
 
 ```
-1. Context Detection → 2. Plan → 3. Implement → 4. Validate → 5. Review
+1. Context & Stack Detection → 2. Plan → 3. Implement → 4. Validate → 5. Review
 ```
 
-### Step 1: Context Detection
+### Step 1: Context & Stack Detection
 
 Detect from codebase or args:
 - Framework/tech stack
 - Existing patterns
 - Project conventions (CLAUDE.md)
+
+1. Run `$SKILLS_DIR/_lib/scripts/detect-stack.sh` to detect frameworks
+2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md to load framework-specific implementation guidelines
+3. Use detected best practices as reference throughout implementation
 
 If `--worktree` provided, all operations within that path.
 
@@ -60,10 +64,22 @@ Create TodoWrite items for tracking (>3 steps).
 
 | Type | Primary Tools |
 |------|--------------|
-| component | Magic MCP (UI), Write, Edit |
-| api | Write, Edit, MultiEdit |
-| service | Write, MultiEdit, morphllm |
+| component | Read (best-practice rules), Write, Edit |
+| api | Read (best-practice rules), Write, Edit, MultiEdit |
+| service | Write, MultiEdit, Grep |
 | feature | Task delegation for complex |
+
+**Best Practice Integration:**
+
+Apply rules from detected framework skills during implementation:
+
+| Framework | Skill | Usage |
+|-----------|-------|-------|
+| React/Next.js | vercel-react-best-practices | Component design, performance optimization |
+| Fastify | fastify-best-practices | Plugin design, routing, schema validation |
+| Remotion | remotion-best-practices | Composition, animation patterns |
+| Prisma | prisma-cli | Migration, schema design |
+| Neon Postgres | neon-postgres | Connection setup, branching |
 
 **Quality Gates:**
 - Follow project conventions
@@ -108,15 +124,6 @@ If `--safe`:
 2. Define aggregates
 3. Implement domain → infrastructure
 ```
-
-## MCP Integration
-
-| MCP | When Used |
-|-----|-----------|
-| Context7 | Framework patterns, official docs |
-| Magic | UI components (--type component) |
-| morphllm | Bulk edits, pattern application |
-| Sequential | Complex multi-step planning |
 
 ## Examples
 

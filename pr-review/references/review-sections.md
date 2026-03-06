@@ -8,6 +8,7 @@
 4. **Testing** - coverage, missing cases, edge cases
 5. **Performance** - N+1, unnecessary computations, memory leaks
 6. **Documentation** - comments, API docs, README
+7. **Best Practices** - framework-specific rules compliance (if applicable)
 
 ## Decision Criteria
 
