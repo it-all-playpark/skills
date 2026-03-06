@@ -1,1 +1,0 @@
-/Users/naramotoyuuji/.claude/skills/test-unit/scripts/detect-test.sh

@@ -273,11 +273,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `test-unit` | ユニットテスト実行 |
-| `test-integration` | 統合テスト実行 |
-| `test-e2e` | E2Eテスト実行 |
-| `test-watch` | ウォッチモードでのテスト |
-| `test-coverage` | カバレッジレポート生成 |
 | `api-contract-testing` | APIコントラクトテスト（Pact等） 🔗 |
 
 ### ドキュメント
@@ -293,10 +288,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `think-deep` | 深い分析・アーキテクチャ決定 |
-| `think-analyze` | コード品質・セキュリティ・パフォーマンス分析 |
-| `plan-brainstorm` | 要件探索・ブレインストーミング |
-| `plan-workflow` | PRD・要件から実装ワークフロー生成 |
 | `simplify` | 変更コードの品質・効率レビュー＆修正 |
 | `code-audit-team` | マルチエージェントコード監査（セキュリティ/パフォーマンス/アーキテクチャ） |
 | `bug-hunt` | マルチエージェント協調バグ調査 |
@@ -387,7 +378,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `zip` | ディレクトリのzip圧縮 |
 | `seed-context` | プロジェクトコンテキスト抽出・保存 |
 | `skill-creator` | 新規スキル作成ガイド |
 | `skill-retrospective` | スキル実行失敗からの自己改善 |
@@ -405,7 +395,7 @@ Claude Code内で `/スキル名` を実行:
 ```
 /git-commit --all
 /dev-kickoff 123
-/think-deep --level ultrathink
+/sns-announce
 ```
 
 ## 構造

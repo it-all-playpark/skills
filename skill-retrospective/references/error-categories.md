@@ -7,7 +7,7 @@ Classification taxonomy for skill execution failures.
 | Category | Description | Typical Errors | Affected Skills |
 |----------|-------------|----------------|-----------------|
 | `lint` | Code style / static analysis | ESLint, Prettier, Biome violations | dev-validate |
-| `test` | Test execution failures | Jest, Vitest, Pytest assertion errors | dev-validate, test-unit |
+| `test` | Test execution failures | Jest, Vitest, Pytest assertion errors | dev-validate |
 | `build` | Compilation / bundle errors | TypeScript tsc, webpack, esbuild failures | dev-validate, dev-build |
 | `runtime` | Runtime execution errors | Node.js crashes, Python exceptions | dev-implement |
 | `config` | Configuration issues | Missing config files, invalid settings | dev-kickoff |
