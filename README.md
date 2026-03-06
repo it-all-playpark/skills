@@ -60,7 +60,7 @@ _lib/infra/unlink-agent-skills.sh  # リンク解除
 
 ### グローバル設定の例
 
-ユーザー共通のプリファレンス（timezone、言語、デフォルトプラットフォーム等）を記述します。テンプレートは `_lib/templates/skill-config.global.example.jsonc` を参照してください。
+ユーザー共通のプリファレンス（timezone、言語、デフォルトプラットフォーム等）を記述します。リポジトリの `.claude/skill-config.json` をコピーして使えます: `cp .claude/skill-config.json ~/.claude/skill-config.json`
 
 ```jsonc
 // ~/.claude/skill-config.json
