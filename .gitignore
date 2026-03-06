@@ -1,5 +1,6 @@
 # Claude Code / Serena / Codex
-.claude/
+.claude/*
+!.claude/skill-config.json
 .serena/
 .system/
 
