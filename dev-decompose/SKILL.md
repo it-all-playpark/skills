@@ -5,7 +5,7 @@ description: |
   Creates contract branch, worktrees, and flow.json for parallel dev-kickoff execution.
   Use when: (1) large issues need parallel implementation, (2) file-boundary decomposition,
   (3) keywords: decompose, split, parallel, subtasks
-  Accepts args: <issue-number> [--base <branch>] [--env-mode hardlink|symlink|copy|none] [--flow-state <path>]
+  Accepts args: <issue-number> [--base <branch>] [--env-mode hardlink|symlink|copy|none] [--flow-state <path>] [--dry-run]
 allowed-tools:
   - Bash
   - Task
@@ -27,6 +27,8 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 
 ## Workflow
 
+### Full Execution (default)
+
 ```
 1. Read issue analysis (from dev-issue-analyze output or issue body)
 2. Identify affected files and dependencies
@@ -38,6 +40,35 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 8. Create worktrees for each subtask (git-prepare --base contract-branch --suffix taskN)
 9. Generate flow.json
 10. Validate decomposition (validate-decomposition.sh)
+```
+
+### Dry-Run Mode (`--dry-run`)
+
+Lightweight mode that executes only Steps 1-4 (analysis and file grouping) without creating branches, worktrees, or flow.json. Used by dev-flow for auto-detect mode selection.
+
+```
+1. Read issue analysis (from dev-issue-analyze output or issue body)
+2. Identify affected files and dependencies
+3. Group files into subtasks (no file overlap)
+4. Apply fallback criteria (see Decomposition Guide)
+→ Return assessment JSON (no side effects)
+```
+
+Dry-run output:
+```json
+// single_fallback
+{"status": "single_fallback", "reason": "Fewer than 4 affected files", "file_count": 2}
+
+// ready for parallel
+{"status": "ready", "subtask_count": 3, "file_groups": [
+  {"id": "task1", "files": ["src/models/user.ts", "src/models/user.test.ts"]},
+  {"id": "task2", "files": ["src/routes/auth.ts", "src/middleware/jwt.ts"]}
+]}
+```
+
+To continue from dry-run to full execution, pass the dry-run result path:
+```bash
+Skill: dev-decompose $ISSUE --resume /path/to/dry-run-result.json --base $BASE
 ```
 
 ### Step 1-4: Analysis & File Grouping
@@ -108,10 +139,14 @@ If decomposition yields 1 subtask, return fallback (see [Decomposition Guide](re
 | `--base` | `main` | Base branch for contract |
 | `--env-mode` | `hardlink` | Env file handling for worktrees |
 | `--flow-state` | auto | Path to flow.json output location |
+| `--dry-run` | false | Run Steps 1-4 only (analysis + grouping), no side effects |
+| `--resume` | - | Path to dry-run result JSON, skip Steps 1-4 and continue from Step 5 |
 
 When `--flow-state` is `auto`, the path defaults to `$WORKTREE_BASE/.claude/flow.json` where `$WORKTREE_BASE` is the parent worktrees directory for the issue.
 
 ## Output
+
+### Full Execution
 
 flow.json is created at `$WORKTREE_BASE/.claude/flow.json`.
 
@@ -122,6 +157,17 @@ See [flow.schema.json](../_lib/schemas/flow.schema.json) for full schema.
 Return value:
 ```json
 {"status": "decomposed|single_fallback", "subtask_count": N, "flow_state": "/path/to/flow.json"}
+```
+
+### Dry-Run
+
+No files created on disk. Return value only:
+```json
+// Ready for parallel
+{"status": "ready", "subtask_count": N, "file_groups": [{"id": "taskN", "files": [...]}]}
+
+// Fallback to single
+{"status": "single_fallback", "reason": "<criteria from Decomposition Guide>", "file_count": N}
 ```
 
 ## Error Handling

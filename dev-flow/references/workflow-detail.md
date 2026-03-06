@@ -4,69 +4,69 @@ Detailed documentation for the dev-flow skill workflow.
 
 ## Architecture
 
-### Single Mode (Default)
-
-dev-kickoff and pr-iterate run as Task subagents with independent contexts.
-The main dev-flow context stays lightweight (instruction + result only).
+### Auto-Detect Flow
 
 ```
 dev-flow (main context - lightweight)
     │
-    ├─→ Step 1: Task subagent → dev-kickoff (independent context)
-    │       ├─→ Phase 1: git-prepare.sh (worktree)
-    │       ├─→ Phase 2: dev-issue-analyze (exploration)
-    │       ├─→ Phase 3: dev-implement (coding)
-    │       ├─→ Phase 4: dev-validate (testing)
-    │       ├─→ Phase 5: git-commit (commit)
-    │       ├─→ Phase 6: git-pr (PR creation)
-    │       └── Returns: {status, worktree, pr_url, pr_number}
+    ├─→ Step 0: dev-issue-analyze --depth standard (always)
     │
-    ├─→ Step 2: Get PR URL (main context)
-    │       └─→ gh pr view --json url --jq .url
+    ├─→ Step 1: Mode Decision
+    │       ├── --force-single  → Single Mode (skip dry-run)
+    │       ├── --force-parallel → Parallel Mode (skip dry-run)
+    │       └── auto → dev-decompose --dry-run
+    │           ├── single_fallback → Single Mode
+    │           └── ready → Parallel Mode
     │
-    └─→ Step 3: Task subagent → pr-iterate (independent context)
-            ├─→ Review → Fix → Push → Repeat
-            └── Returns: {status, iterations}
-```
-
-### Parallel Mode (--parallel)
-
-```
-dev-flow (orchestrator)
+    ├─→ [Single Mode]
+    │   ├─→ Step 2a: Task subagent → dev-kickoff (independent context)
+    │   │       ├─→ Phase 1: git-prepare.sh (worktree)
+    │   │       ├─→ Phase 2: dev-issue-analyze (exploration)
+    │   │       ├─→ Phase 3: dev-implement (coding)
+    │   │       ├─→ Phase 4: dev-validate (testing)
+    │   │       ├─→ Phase 5: git-commit (commit)
+    │   │       ├─→ Phase 6: git-pr (PR creation)
+    │   │       └── Returns: {status, worktree, pr_url, pr_number}
+    │   │
+    │   ├─→ Step 3a: Get PR URL (main context)
+    │   │       └─→ gh pr view --json url --jq .url
+    │   │
+    │   └─→ Step 4a: Task subagent → pr-iterate (independent context)
+    │           ├─→ Review → Fix → Push → Repeat
+    │           └── Returns: {status, iterations}
     │
-    ├─→ Step 1: dev-issue-analyze (comprehensive)
-    │
-    ├─→ Step 2: dev-decompose
-    │       ├─→ Identify affected files
-    │       ├─→ Build dependency graph
-    │       ├─→ Split into subtasks (file boundary)
-    │       ├─→ Generate shared contract (interfaces/types)
-    │       ├─→ Create contract branch + commit
-    │       ├─→ Create N worktrees (git-prepare x N)
-    │       └─→ Generate flow.json
-    │
-    ├─→ Step 3: Check decomposition
-    │       └─→ subtask_count == 1 → fallback to single mode
-    │
-    ├─→ Step 4: Batch scheduling (depends_on graph)
-    │       ├─→ Batch 1: [task1, task3] (independent) ── parallel
-    │       │       ├─→ dev-kickoff --task-id task1 (Phase 3-5 only)
-    │       │       └─→ dev-kickoff --task-id task3 (Phase 3-5 only)
-    │       └─→ Batch 2: [task2] (depends on task1) ── after batch 1
-    │               └─→ dev-kickoff --task-id task2 (Phase 3-5 only)
-    │
-    ├─→ Step 5: Aggregate results
-    │       └─→ Read kickoff.json → update flow.json (actual_files_changed)
-    │
-    ├─→ Step 6: dev-integrate
-    │       ├─→ Check drift (planned vs actual files)
-    │       ├─→ Merge subtask branches (topological order)
-    │       ├─→ Type check (tsc/mypy/go vet)
-    │       └─→ dev-validate (integration tests)
-    │
-    ├─→ Step 7: git-pr (from merge worktree)
-    │
-    └─→ Step 8: pr-iterate (review loop)
+    └─→ [Parallel Mode]
+        ├─→ Step 2b: dev-decompose (full, --resume if dry-run ran)
+        │       ├─→ Identify affected files
+        │       ├─→ Build dependency graph
+        │       ├─→ Split into subtasks (file boundary)
+        │       ├─→ Generate shared contract (interfaces/types)
+        │       ├─→ Create contract branch + commit
+        │       ├─→ Create N worktrees (git-prepare x N)
+        │       └─→ Generate flow.json
+        │
+        ├─→ Step 3b: Check decomposition
+        │       └─→ subtask_count verified > 1
+        │
+        ├─→ Step 4b: Batch scheduling (depends_on graph)
+        │       ├─→ Batch 1: [task1, task3] (independent) ── parallel
+        │       │       ├─→ dev-kickoff --task-id task1 (Phase 3-5 only)
+        │       │       └─→ dev-kickoff --task-id task3 (Phase 3-5 only)
+        │       └─→ Batch 2: [task2] (depends on task1) ── after batch 1
+        │               └─→ dev-kickoff --task-id task2 (Phase 3-5 only)
+        │
+        ├─→ Step 5b: Aggregate results
+        │       └─→ Read kickoff.json → update flow.json (actual_files_changed)
+        │
+        ├─→ Step 6b: dev-integrate
+        │       ├─→ Check drift (planned vs actual files)
+        │       ├─→ Merge subtask branches (topological order)
+        │       ├─→ Type check (tsc/mypy/go vet)
+        │       └─→ dev-validate (integration tests)
+        │
+        ├─→ Step 7b: git-pr (from merge worktree)
+        │
+        └─→ Step 8b: pr-iterate (review loop)
 ```
 
 ## State Flow
@@ -94,7 +94,7 @@ analyzing → decomposing → implementing → integrating → pr → iterating 
 
 ## Single Mode Details
 
-### Step 1: dev-kickoff (Task Subagent)
+### Step 2a: dev-kickoff (Task Subagent)
 
 dev-kickoff runs as a Task subagent with its own independent context. The main dev-flow context only holds the Task invocation prompt and the returned result JSON. This prevents dev-kickoff's internal turns (up to 50) from accumulating in the main context.
 
@@ -118,14 +118,14 @@ The subagent returns: `{"status": "completed", "worktree": "<path>", "pr_url": "
 
 On failure, the subagent returns: `{"status": "failed", "error": "<message>", "phase": "<failed_phase>"}`
 
-### Step 2: Get PR URL
+### Step 3a: Get PR URL
 
 ```bash
-# Run from worktree returned by Step 1 subagent
+# Run from worktree returned by Step 2a subagent
 cd $WORKTREE && gh pr view --json url --jq .url
 ```
 
-### Step 3: pr-iterate (Task Subagent)
+### Step 4a: pr-iterate (Task Subagent)
 
 pr-iterate runs as a Task subagent with its own independent context. This prevents the review-fix loop iterations from accumulating in the main dev-flow context.
 
@@ -143,16 +143,25 @@ The Task tool is used to spawn a subagent that executes `Skill: pr-iterate`. The
 
 ## Parallel Mode Details
 
-### Step 1: Issue Analysis
+### Step 0: Issue Analysis (Always)
 
 ```
-Skill: dev-issue-analyze $ISSUE --depth comprehensive
+Skill: dev-issue-analyze $ISSUE --depth standard
 ```
 
-Produces comprehensive analysis including affected files list, used as input for decomposition.
+Provides context for dry-run decomposition assessment and for both modes.
 
-### Step 2: Decomposition
+### Step 1: Mode Decision
 
+Auto-detect uses `dev-decompose --dry-run` to assess complexity based on actual codebase file dependencies. See [Decomposition Guide](../../dev-decompose/references/decomposition-guide.md#when-to-fall-back-to-single-mode) for criteria.
+
+### Step 2b: Decomposition
+
+```
+Skill: dev-decompose $ISSUE --resume $DRY_RUN_RESULT --base $BASE --env-mode $ENV_MODE
+```
+
+If `--force-parallel` (no dry-run), run full:
 ```
 Skill: dev-decompose $ISSUE --base $BASE --env-mode $ENV_MODE
 ```
@@ -162,14 +171,7 @@ Creates:
 - Subtask worktrees: `feature-issue-{N}-task1`, `feature-issue-{N}-task2`, ...
 - flow.json with subtask definitions
 
-### Step 3: Fallback Check
-
-If `subtask_count == 1`:
-- Switch to single mode
-- Use the single subtask worktree
-- Run dev-kickoff normally
-
-### Step 4: Parallel Execution
+### Step 4b: Parallel Execution
 
 Launch subtasks via Task tool in dependency-ordered batches:
 
@@ -192,14 +194,14 @@ In `--task-id` mode, dev-kickoff only executes:
 - Phase 4: validate
 - Phase 5: commit (+ records actual_files_changed)
 
-### Step 5: Result Aggregation
+### Step 5b: Result Aggregation
 
 For each completed subtask:
 1. Read `actual_files_changed` from subtask's kickoff.json
 2. Update flow.json via `flow-update.sh`
 3. Check for failures (any subtask status == "failed" → abort)
 
-### Step 6: Integration
+### Step 6b: Integration
 
 ```
 Skill: dev-integrate --flow-state $FLOW_STATE
@@ -207,7 +209,7 @@ Skill: dev-integrate --flow-state $FLOW_STATE
 
 See [dev-integrate/SKILL.md](../../dev-integrate/SKILL.md).
 
-### Step 7: PR Creation
+### Step 7b: PR Creation
 
 ```
 Skill: git-pr $ISSUE --base $BASE --worktree $MERGE_WORKTREE
@@ -215,7 +217,7 @@ Skill: git-pr $ISSUE --base $BASE --worktree $MERGE_WORKTREE
 
 PR is created from the merge worktree containing all integrated changes.
 
-### Step 8: PR Iteration
+### Step 8b: PR Iteration
 
 ```
 Skill: pr-iterate $PR_URL --max-iterations $MAX
@@ -247,6 +249,7 @@ Same as single mode.
 
 | Scenario | Action |
 |----------|--------|
+| Dry-run fails | Fall back to single mode (safe default) |
 | Phase fails in kickoff | kickoff.json records error, stops |
 | Subtask fails in parallel | flow.json records, abort remaining |
 | PR creation fails | Manual `gh pr create`, then update state |
@@ -289,7 +292,8 @@ cat $SUBTASK_WT/.claude/kickoff.json | jq '.current_phase'
 - In single mode, the Task subagent returns `{status, worktree, pr_url, pr_number}` to dev-flow
 
 ### With dev-decompose
-- dev-flow calls dev-decompose after issue analysis
+- Auto-detect: dev-flow calls `dev-decompose --dry-run` for mode assessment
+- Parallel mode: dev-flow calls `dev-decompose --resume` (or full) for actual decomposition
 - flow.json is the handoff point (contains subtask definitions)
 
 ### With dev-integrate

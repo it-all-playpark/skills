@@ -48,16 +48,17 @@ Diagnose dev-flow pipeline health and generate actionable improvement recommenda
 ### Check 1: Parallel Mode Usage
 
 ```bash
-# Check if --parallel has ever been used
+# Check if parallel mode has ever been used (auto-detect or force-parallel)
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 100 | \
-  jq '[.[] | select(.args != null and (.args | contains("parallel")))] | length'
+  jq '[.[] | select(.args != null and (.args | test("parallel|force-parallel")))] | length'
 ```
 
 | Finding | Recommendation |
 |---------|----------------|
-| Never used | Consider using `--parallel` for issues touching 3+ files |
-| Used but failed | Investigate decomposition failures |
-| Used successfully | No action needed |
+| Never triggered | Auto-detect may be too conservative, review dry-run criteria |
+| Triggered but failed | Investigate decomposition failures |
+| Triggered successfully | No action needed |
+| Override frequently used | Review auto-detect accuracy, consider criteria adjustment |
 
 ### Check 2: Phase Failure Distribution
 
@@ -136,7 +137,7 @@ score = 100
 score -= (failure_rate * 30)        # Max -30 for high failure rate
 score -= (avg_recovery_turns * 5)    # Max -25 for slow recovery
 score -= (stale_worktrees * 2)       # Max -10 for cleanup debt
-score -= (parallel_unused * 10)      # -10 if parallel never used
+score -= (auto_detect_override * 5)   # -5 per frequent override (auto-detect inaccuracy)
 score -= (env_errors_pct * 15)       # Max -15 for env issues
 score = max(0, score)
 ```
@@ -159,8 +160,8 @@ score = max(0, score)
 
 ### Findings
 
-1. **[WARN]** Parallel mode never used
-   → 3+ file issues could benefit from `--parallel`
+1. **[WARN]** Auto-detect override frequently used
+   → Investigate dry-run accuracy, consider criteria adjustment
 
 2. **[WARN]** Phase 4 (validate) fails 35% of the time
    → Most failures are lint errors (auto-fixable)
@@ -169,7 +170,7 @@ score = max(0, score)
    → Run cleanup commands below
 
 ### Recommended Actions
-- [ ] Try `--parallel` on next large issue
+- [ ] Review auto-detect dry-run criteria if overrides are frequent
 - [ ] Add `--fix` to dev-validate default behavior
 - [ ] Clean stale worktrees: `git worktree remove ...`
 

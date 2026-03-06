@@ -99,13 +99,22 @@ if [[ -d "$WORKTREE_PATH" ]]; then
     exit 0
 fi
 
-# Check if branch exists
+# Check if branch exists locally
 if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME" 2>/dev/null; then
     # Branch exists, use it
     git worktree add "$WORKTREE_PATH" "$BRANCH_NAME"
 else
-    # Create new branch from base
-    git worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "origin/$BASE_BRANCH"
+    # Try creating linked branch via gh issue develop (links to issue's Development sidebar)
+    if gh issue develop "$ISSUE_NUMBER" --name "$BRANCH_NAME" --base "$BASE_BRANCH" 2>/dev/null; then
+        git fetch origin "$BRANCH_NAME" 2>/dev/null || true
+    fi
+
+    # Create worktree (auto-tracks remote branch if exists, otherwise creates from base)
+    if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH_NAME" 2>/dev/null; then
+        git worktree add "$WORKTREE_PATH" "$BRANCH_NAME"
+    else
+        git worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "origin/$BASE_BRANCH"
+    fi
 fi
 
 # Sync environment files via sync-env skill (--force for new worktrees)
