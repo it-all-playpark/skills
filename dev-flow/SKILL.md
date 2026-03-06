@@ -3,10 +3,10 @@ name: dev-flow
 description: |
   End-to-end development flow automation - from issue to LGTM.
   Note: Merge is performed manually by the user after review approval.
-  Supports parallel subtask decomposition for large issues.
+  Auto-detects parallel vs single mode based on issue complexity.
   Use when: (1) complete development cycle needed, (2) issue to PR automation,
   (3) keywords: full flow, development cycle, issue to PR
-  Accepts args: <issue-number> [--strategy tdd|bdd|ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--max-iterations N] [--parallel]
+  Accepts args: <issue-number> [--strategy tdd|bdd|ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--max-iterations N] [--force-single] [--force-parallel]
 allowed-tools:
   - Skill
   - Bash
@@ -27,47 +27,81 @@ End-to-end development automation from issue to LGTM (merge manually).
 
 **DO NOT EXIT until pr-iterate completes.**
 
-## Mode Selection
+## Mode Selection (Auto-Detect)
 
-dev-flow operates in two modes based on issue complexity:
+dev-flow automatically selects single or parallel mode using `dev-decompose --dry-run`.
+Override with `--force-single` or `--force-parallel` when needed.
 
 ```
-dev-flow (mode branch)
-├── Single mode (default / small issues)
-│   ├── Task: dev-kickoff 1 instance → git-pr (subagent, independent context)
-│   ├── gh pr view (main context)
-│   └── Task: pr-iterate (subagent, independent context)
+dev-flow <issue>
 │
-└── Parallel mode (--parallel / large issues)
-    ├── dev-issue-analyze
-    ├── dev-decompose → flow.json + N worktrees
-    ├── dev-kickoff × N (parallel via Task tool)
-    ├── dev-integrate (merge + type check + test)
-    ├── git-pr
-    └── pr-iterate
+├─→ Step 0: dev-issue-analyze --depth standard
+│
+├─→ Step 1: Mode Decision
+│   ├── --force-single  → Single Mode (skip dry-run)
+│   ├── --force-parallel → Parallel Mode (skip dry-run)
+│   └── auto (default)  → dev-decompose --dry-run
+│       ├── single_fallback → Single Mode
+│       └── ready          → Parallel Mode
+│
+├─→ [Single]   Steps 2a-4a (see below)
+└─→ [Parallel] Steps 2b-9b (see below)
 ```
 
-## Single Mode (Default)
+## Step 0: Issue Analysis (Always)
 
-For small issues or when `--parallel` is not specified.
+```bash
+Skill: dev-issue-analyze $ISSUE --depth standard
+```
+
+Provides context for both modes and for dry-run decomposition assessment.
+
+## Step 1: Mode Decision
+
+### Auto-Detect (default)
+
+```bash
+Skill: dev-decompose $ISSUE --dry-run
+```
+
+Assess issue complexity using actual codebase file dependencies (not issue text parsing).
+Criteria defined in [Decomposition Guide](../dev-decompose/references/decomposition-guide.md#when-to-fall-back-to-single-mode):
+
+- `single_fallback`: < 4 affected files, single component, all files tightly coupled, or 1 subtask after grouping
+- `ready`: Multiple independent subtask groups identified
+
+### Force Overrides
+
+| Flag | Behavior |
+|------|----------|
+| `--force-single` | Skip dry-run, go directly to Single Mode |
+| `--force-parallel` | Skip dry-run, go directly to Parallel Mode (full dev-decompose) |
+| `--parallel` | **Deprecated alias** for `--force-parallel`. Shows deprecation notice |
+| Both specified | **Error**: "Cannot specify both --force-single and --force-parallel" |
+
+## Single Mode
+
+For small issues or when auto-detect returns `single_fallback`.
 
 dev-kickoff and pr-iterate run as Task subagents with independent contexts to keep the main dev-flow context lightweight.
 
 | Step | Action | Complete When |
 |------|--------|---------------|
-| 1 | `Task: dev-kickoff` (subagent) | PR URL available |
-| 2 | `gh pr view --json url` | URL captured |
-| 3 | `Task: pr-iterate` (subagent) | LGTM achieved or max iterations |
+| 2a | `Task: dev-kickoff` (subagent) | PR URL available |
+| 3a | `gh pr view --json url` | URL captured |
+| 4a | `Task: pr-iterate` (subagent) | LGTM achieved or max iterations |
 
 ### Single Mode Checklist
 
 ```
-[ ] Step 1: Task subagent → dev-kickoff (see prompt below)
-[ ] Step 2: PR_URL=$(gh pr view --json url --jq .url)  (run in worktree)
-[ ] Step 3: Task subagent → pr-iterate (see prompt below)
+[ ] Step 0: Skill: dev-issue-analyze (see above)
+[ ] Step 1: Mode decision → single
+[ ] Step 2a: Task subagent → dev-kickoff (see prompt below)
+[ ] Step 3a: PR_URL=$(gh pr view --json url --jq .url)  (run in worktree)
+[ ] Step 4a: Task subagent → pr-iterate (see prompt below)
 ```
 
-### Step 1: dev-kickoff Subagent
+### Step 2a: dev-kickoff Subagent
 
 Launch dev-kickoff as a Task subagent. The subagent runs in its own context and returns only the result.
 
@@ -96,19 +130,19 @@ After completion, return ONLY a JSON result:
 
 | Result | Action |
 |--------|--------|
-| `status: "completed"` | Verify `worktree` path exists and is not the main repo → proceed to Step 2 |
+| `status: "completed"` | Verify `worktree` path exists and is not the main repo → proceed to Step 3a |
 | `status: "completed"` but no `worktree` or worktree is main repo | **ABORT** — worktree was not created |
 | `status: "failed"` | Log failure via journal.sh → abort dev-flow |
 | Task tool error | Log error → abort dev-flow |
 
-### Step 2: Get PR URL
+### Step 3a: Get PR URL
 
 ```bash
-# Run from worktree returned by Step 1
+# Run from worktree returned by Step 2a
 cd $WORKTREE && gh pr view --json url --jq .url
 ```
 
-### Step 3: pr-iterate Subagent
+### Step 4a: pr-iterate Subagent
 
 Launch pr-iterate as a Task subagent.
 
@@ -165,20 +199,31 @@ After completion, return ONLY a JSON result:
 
 ## Parallel Mode
 
-For large issues requiring decomposition. Activated with `--parallel` flag.
+For large issues. Activated automatically when dry-run returns `ready`, or with `--force-parallel`.
 
 | Step | Action | Complete When |
 |------|--------|---------------|
-| 1 | `Skill: dev-issue-analyze` | Requirements understood |
-| 2 | `Skill: dev-decompose` | flow.json + worktrees created |
-| 3 | Check decomposition result | Single fallback or proceed |
-| 4 | `dev-kickoff x N` (parallel) | All subtasks completed |
-| 5 | Aggregate results | flow.json updated |
-| 6 | `Skill: dev-integrate` | Merge + tests pass |
-| 7 | `Skill: git-pr` | PR URL available |
-| 8 | `Skill: pr-iterate` | LGTM or max iterations |
+| 2b | `Skill: dev-decompose` (full, with `--resume` if dry-run ran) | flow.json + worktrees created |
+| 3b | Check decomposition result | Verify subtask count > 1 |
+| 4b | `dev-kickoff x N` (parallel) | All subtasks completed |
+| 5b | Aggregate results | flow.json updated |
+| 6b | `Skill: dev-integrate` | Merge + tests pass |
+| 7b | `Skill: git-pr` | PR URL available |
+| 8b | `Skill: pr-iterate` | LGTM or max iterations |
 
-### Batch Scheduling (Step 4)
+### Step 2b: Full Decomposition
+
+If dry-run already ran (auto-detect path), pass its result to avoid re-analysis:
+```bash
+Skill: dev-decompose $ISSUE --resume $DRY_RUN_RESULT --base $BASE --env-mode $ENV_MODE
+```
+
+If `--force-parallel` (no dry-run), run full decomposition:
+```bash
+Skill: dev-decompose $ISSUE --base $BASE --env-mode $ENV_MODE
+```
+
+### Batch Scheduling (Step 4b)
 
 Launch subtasks in dependency-ordered batches (independent first, then dependents). Each invocation:
 
@@ -186,7 +231,7 @@ Launch subtasks in dependency-ordered batches (independent first, then dependent
 Skill: dev-kickoff $ISSUE --worktree $SUBTASK_WORKTREE --task-id $TASK_ID --flow-state $FLOW_STATE --strategy $STRATEGY
 ```
 
-### Result Aggregation (Step 5)
+### Result Aggregation (Step 5b)
 
 For each completed subtask, read kickoff.json and update flow.json:
 
@@ -199,7 +244,7 @@ $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
 ## Usage
 
 ```
-/dev-flow <issue> [--strategy tdd] [--depth comprehensive] [--base dev] [--max-iterations 10] [--parallel]
+/dev-flow <issue> [--strategy tdd] [--depth comprehensive] [--base dev] [--max-iterations 10] [--force-single] [--force-parallel]
 ```
 
 ## Args
@@ -211,7 +256,9 @@ $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
 | `--depth` | `standard` | Analysis depth |
 | `--base` | `dev` | PR base branch |
 | `--max-iterations` | `10` | Max pr-iterate iterations |
-| `--parallel` | - | Enable parallel subtask decomposition |
+| `--force-single` | - | Skip auto-detect, force single mode |
+| `--force-parallel` | - | Skip auto-detect, force parallel mode |
+| `--parallel` | - | **Deprecated**: alias for `--force-parallel` |
 
 ## Completion Conditions
 
@@ -221,7 +268,7 @@ $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
 | LGTM achieved | Workflow complete (merge manually) |
 | Max iterations reached | Report status, user decides |
 | Any step fails | Report error, do not proceed |
-| Decomposition yields 1 subtask | Fallback to single mode |
+| Dry-run returns single_fallback | Use single mode |
 
 ## No Auto-Merge
 
@@ -258,7 +305,7 @@ git worktree remove $SUBTASK_WORKTREE --force
 ## Journal Logging
 
 On workflow completion, log execution to skill-retrospective journal.
-**CRITICAL: Always pass `--args` with the original invocation arguments** (e.g. `--parallel`, `--strategy tdd`) so that usage patterns are tracked.
+**CRITICAL: Always pass `--args` with the original invocation arguments** so that usage patterns are tracked.
 
 ```bash
 # On success (LGTM achieved)
@@ -270,7 +317,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>" --args "$ORIGINAL_ARGS"
 ```
 
-Where `$ORIGINAL_ARGS` is the full argument string passed to dev-flow (e.g. `"42 --parallel --strategy tdd"`).
+Where `$ORIGINAL_ARGS` is the full argument string passed to dev-flow (e.g. `"42 --force-parallel --strategy tdd"`).
 
 Note: dev-kickoff and pr-iterate also log independently. dev-flow logging captures the overall flow outcome.
 
