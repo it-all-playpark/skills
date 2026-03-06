@@ -1,32 +1,21 @@
 {
   "sns-announce": {
-    "base_url": null,
-    "url_pattern": null,
     "default_lang": "ja",
     "platforms": {
       "x": { "enabled": true, "char_limit": 280 },
       "linkedin": { "enabled": true, "char_limit": 1300 },
       "google": { "enabled": true, "char_limit": 1500 }
-    },
-    "templates_dir": null
+    }
   },
   "sns-schedule-post": {
     "timezone": "Asia/Tokyo",
     "default_platforms": ["x", "linkedin"]
   },
   "blog-cross-post": {
-    "base_url": null,
     "content_dir": "content/blog",
     "blog_path_prefix": "/blog/"
   },
-  "ga-analyzer": {
-    "property_id": null
-  },
-  "seo-content-planner": {
-    "site": null
-  },
   "seo-strategy": {
-    "site": null,
     "content_path_prefix": "/blog/",
     "content_dir": "content/blog",
     "cluster_keywords": {},

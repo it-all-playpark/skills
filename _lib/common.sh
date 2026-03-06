@@ -158,7 +158,7 @@ load_skill_config() {
     local config_path="${git_root}/.claude/skill-config.json"
     if [[ -f "$config_path" ]]; then
       local section
-      section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$config_path")
+      section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$config_path" 2>/dev/null)
       [[ -n "$section" ]] && project_cfg="$section"
     fi
     # 2b. Legacy fallback
