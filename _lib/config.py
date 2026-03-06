@@ -1,6 +1,6 @@
 """Project config loader for Python-based skills.
 
-Loads skill configuration from .claude/skill-config.json with legacy fallback.
+Loads skill configuration with global → project merge (legacy fallback supported).
 """
 
 import json
@@ -87,29 +87,6 @@ def load_skill_config(skill_name: str) -> dict:
     result = global_cfg.copy()
     _deep_merge(result, project_cfg)
     return result
-
-    root_path = Path(root)
-
-    # 1. skill-config.json の skill セクション
-    project_path = root_path / ".claude" / "skill-config.json"
-    if project_path.exists():
-        data = json.loads(project_path.read_text())
-        section = data.get(skill_name)
-        if section is not None:
-            return section
-
-    # 2. フォールバック: 旧形式
-    legacy_path = root_path / ".claude" / f"{skill_name}.json"
-    if legacy_path.exists():
-        return json.loads(legacy_path.read_text())
-
-    # 3. seo-strategy 特殊ケース
-    if skill_name == "seo-strategy":
-        seo_legacy = root_path / ".claude" / "seo-config.json"
-        if seo_legacy.exists():
-            return json.loads(seo_legacy.read_text())
-
-    return {}
 
 
 def merge_config(defaults: dict, skill_name: str) -> dict:
