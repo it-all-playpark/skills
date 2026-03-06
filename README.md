@@ -33,22 +33,85 @@ _lib/infra/unlink-agent-skills.sh  # リンク解除
 3. 不要になった stale symlink を自動クリーンアップ
 4. 冪等: 何度実行しても同じ結果
 
-## プロジェクト設定（skill-config.json）
+## 設定（skill-config.json）
 
-各プロジェクトの `.claude/skill-config.json` にスキル固有の設定を記述できます。スキルはこのファイルから自動的に設定を読み込みます。
+スキルの設定は **グローバル**（ユーザー共通）と **プロジェクト** の2階層で管理できます。プロジェクト設定がグローバル設定を deep merge で上書きします。
 
-```jsonc
-// <project-root>/.claude/skill-config.json
-{
-  "skill-name": { /* 各スキルの設定 */ }
-}
+### 設定ファイルの配置
+
+```
+~/.claude/skill-config.json              # グローバル設定（全プロジェクト共通）
+<project-root>/.claude/skill-config.json  # プロジェクト設定（最優先）
+```
+
+### マージ順序（後勝ち）
+
+```
+スキル内蔵デフォルト ← ~/.claude/skill-config.json[skill] ← <project>/.claude/skill-config.json[skill]
+                        (グローバル)                         (プロジェクト: 最優先)
 ```
 
 **設定の読み込み優先順位:**
 
-1. `.claude/skill-config.json` の該当スキルセクション
-2. `.claude/<skill-name>.json`（旧形式、フォールバック）
-3. スキル内蔵のデフォルト値
+1. `<project>/.claude/skill-config.json` の該当スキルセクション（最優先）
+2. `~/.claude/skill-config.json` の該当スキルセクション（グローバル）
+3. `.claude/<skill-name>.json`（旧形式、フォールバック）
+4. スキル内蔵のデフォルト値
+
+### グローバル設定の例
+
+ユーザー共通のプリファレンス（timezone、言語、デフォルトプラットフォーム等）を記述します。リポジトリの `.claude/skill-config.json` をコピーして使えます: `cp .claude/skill-config.json ~/.claude/skill-config.json`
+
+```jsonc
+// ~/.claude/skill-config.json
+{
+  "sns-announce": {
+    "default_lang": "ja",
+    "platforms": {
+      "x": { "enabled": true },
+      "linkedin": { "enabled": true }
+    }
+  },
+  "sns-schedule-post": {
+    "timezone": "Asia/Tokyo"
+  },
+  "trends-analyzer": {
+    "geo": "JP"
+  }
+}
+```
+
+### マージ動作例
+
+```jsonc
+// ~/.claude/skill-config.json (グローバル)
+{
+  "sns-announce": {
+    "default_lang": "ja",
+    "platforms": { "x": { "enabled": true }, "linkedin": { "enabled": true } }
+  }
+}
+
+// <project>/.claude/skill-config.json (プロジェクト)
+{
+  "sns-announce": {
+    "base_url": "https://example.com",
+    "platforms": { "linkedin": { "enabled": false } }
+  }
+}
+
+// → マージ結果
+{
+  "sns-announce": {
+    "default_lang": "ja",                   // グローバルから継承
+    "base_url": "https://example.com",      // プロジェクトで追加
+    "platforms": {
+      "x": { "enabled": true },             // グローバルから継承
+      "linkedin": { "enabled": false }      // プロジェクトで上書き
+    }
+  }
+}
+```
 
 ### 対応スキルと設定項目
 
@@ -161,6 +224,7 @@ _lib/infra/unlink-agent-skills.sh  # リンク解除
 
 ```bash
 # Bash: _lib/common.sh の load_skill_config を使用
+# → global + project の merged config が返る
 source "$SKILLS_DIR/_lib/common.sh"
 config=$(load_skill_config "ga-analyzer")
 

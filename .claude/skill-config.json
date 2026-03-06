@@ -1,0 +1,32 @@
+{
+  "sns-announce": {
+    "default_lang": "ja",
+    "platforms": {
+      "x": { "enabled": true, "char_limit": 280 },
+      "linkedin": { "enabled": true, "char_limit": 1300 },
+      "google": { "enabled": true, "char_limit": 1500 }
+    }
+  },
+  "sns-schedule-post": {
+    "timezone": "Asia/Tokyo",
+    "default_platforms": ["x", "linkedin"]
+  },
+  "blog-cross-post": {
+    "content_dir": "content/blog",
+    "blog_path_prefix": "/blog/"
+  },
+  "seo-strategy": {
+    "content_path_prefix": "/blog/",
+    "content_dir": "content/blog",
+    "cluster_keywords": {},
+    "unclustered_min_impressions": 20,
+    "cluster_suggestion_min_impressions": 50,
+    "cluster_suggestion_top_n": 5
+  },
+  "trends-analyzer": {
+    "geo": "JP",
+    "timeframe": "today 3-m",
+    "top_n": 10,
+    "title_strip_patterns": []
+  }
+}

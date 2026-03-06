@@ -128,40 +128,59 @@ duration_since() { echo $(($(now_sec) - $1)); }
 # Config Loading
 # ============================================================================
 
-# Load skill config section from .claude/skill-config.json (with legacy fallback)
+# Load skill section from global ~/.claude/skill-config.json
+_load_global_skill_config() {
+  local skill_name="$1"
+  local global_path="${HOME}/.claude/skill-config.json"
+  if [[ -f "$global_path" ]]; then
+    local section
+    section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$global_path" 2>/dev/null)
+    [[ -n "$section" ]] && { echo "$section"; return; }
+  fi
+  echo "{}"
+}
+
+# Load skill config: global → project merge (with legacy fallback)
 load_skill_config() {
   local skill_name="$1"
+
+  # Layer 1: Global
+  local global_cfg
+  global_cfg="$(_load_global_skill_config "$skill_name")"
+
+  # Layer 2: Project (+ legacy fallback)
+  local project_cfg="{}"
   local git_root
-  git_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "{}"; return; }
+  git_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 
-  # 1. skill-config.json の skill セクション
-  local config_path="${git_root}/.claude/skill-config.json"
-  if [[ -f "$config_path" ]]; then
-    local section
-    section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$config_path")
-    if [[ -n "$section" ]]; then
-      echo "$section"
-      return
+  if [[ -n "$git_root" ]]; then
+    # 2a. skill-config.json
+    local config_path="${git_root}/.claude/skill-config.json"
+    if [[ -f "$config_path" ]]; then
+      local section
+      section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$config_path" 2>/dev/null)
+      [[ -n "$section" ]] && project_cfg="$section"
+    fi
+    # 2b. Legacy fallback
+    if [[ "$project_cfg" == "{}" ]]; then
+      local legacy_path="${git_root}/.claude/${skill_name}.json"
+      if [[ -f "$legacy_path" ]]; then
+        project_cfg="$(cat "$legacy_path")"
+      elif [[ "$skill_name" == "seo-strategy" ]]; then
+        local seo_legacy="${git_root}/.claude/seo-config.json"
+        [[ -f "$seo_legacy" ]] && project_cfg="$(cat "$seo_legacy")"
+      fi
     fi
   fi
 
-  # 2. フォールバック: 旧形式の個別ファイル
-  local legacy_path="${git_root}/.claude/${skill_name}.json"
-  if [[ -f "$legacy_path" ]]; then
-    cat "$legacy_path"
-    return
+  # Merge: global * project (project wins)
+  if [[ "$global_cfg" == "{}" ]]; then
+    echo "$project_cfg"
+  elif [[ "$project_cfg" == "{}" ]]; then
+    echo "$global_cfg"
+  else
+    echo "$global_cfg" | jq --argjson proj "$project_cfg" '. * $proj'
   fi
-
-  # 3. seo-strategy の特殊ケース: seo-config.json
-  if [[ "$skill_name" == "seo-strategy" ]]; then
-    local seo_legacy="${git_root}/.claude/seo-config.json"
-    if [[ -f "$seo_legacy" ]]; then
-      cat "$seo_legacy"
-      return
-    fi
-  fi
-
-  echo "{}"
 }
 
 # Deep merge: defaults → skill-config.json[skill] (CLI args handled by caller)
