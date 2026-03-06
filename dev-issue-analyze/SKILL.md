@@ -57,6 +57,16 @@ $SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth L
 | doc | docs |
 | (default) | feat |
 
+## Tech Stack & Best Practice Context
+
+After issue analysis, detect the project's tech stack and load relevant best practices
+into context. This ensures implementation planning is informed by framework guidelines.
+
+1. Run `$SKILLS_DIR/_lib/scripts/detect-stack.sh` to detect frameworks
+2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md
+3. Keep loaded — downstream skills (dev-implement, dev-decompose) benefit from
+   the best-practice context already present in the conversation
+
 ## Examples
 
 ```bash

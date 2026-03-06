@@ -40,9 +40,13 @@ Detect from codebase or args:
 - Existing patterns
 - Project conventions (CLAUDE.md)
 
+**Best practice loading**:
+If invoked from dev-kickoff workflow (dev-issue-analyze already loaded best practices
+into context), skip detect-stack.sh — the context already contains framework guidelines.
+
+If invoked standalone (no prior dev-issue-analyze):
 1. Run `$SKILLS_DIR/_lib/scripts/detect-stack.sh` to detect frameworks
-2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md to load framework-specific implementation guidelines
-3. Use detected best practices as reference throughout implementation
+2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md
 
 If `--worktree` provided, all operations within that path.
 
@@ -64,22 +68,10 @@ Create TodoWrite items for tracking (>3 steps).
 
 | Type | Primary Tools |
 |------|--------------|
-| component | Read (best-practice rules), Write, Edit |
-| api | Read (best-practice rules), Write, Edit, MultiEdit |
+| component | Read, Write, Edit |
+| api | Read, Write, Edit, MultiEdit |
 | service | Write, MultiEdit, Grep |
 | feature | Task delegation for complex |
-
-**Best Practice Integration:**
-
-Apply rules from detected framework skills during implementation:
-
-| Framework | Skill | Usage |
-|-----------|-------|-------|
-| React/Next.js | vercel-react-best-practices | Component design, performance optimization |
-| Fastify | fastify-best-practices | Plugin design, routing, schema validation |
-| Remotion | remotion-best-practices | Composition, animation patterns |
-| Prisma | prisma-cli | Migration, schema design |
-| Neon Postgres | neon-postgres | Connection setup, branching |
 
 **Quality Gates:**
 - Follow project conventions
