@@ -29,6 +29,9 @@ content_plan.json
 # Late API upload cache
 .late-upload-cache.json
 
+# Node
+node_modules/
+
 # Python
 __pycache__/
 *.pyc
