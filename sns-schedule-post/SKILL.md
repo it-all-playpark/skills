@@ -1,12 +1,8 @@
 ---
 name: sns-schedule-post
 description: |
-  Schedule or post to multiple SNS platforms (X, LinkedIn, Facebook, Google Business, Threads, Bluesky) using Late API.
-  Use when: (1) user wants to schedule posts to social media,
-  (2) user wants to post to multiple platforms at once,
-  (3) after /sns-announce to schedule generated posts,
-  (4) keywords like "SNS投稿", "予約投稿", "schedule post", "post to SNS".
-  Accepts args: TEXT or FILE [--schedule "YYYY-MM-DD HH:MM"] [--platforms x,linkedin,facebook,googlebusiness,threads,bluesky] [--dry-run]
+  DEPRECATED: Use /late-schedule-post instead.
+  This skill forwards all arguments to late-schedule-post.
 ---
 
 # SNS Schedule Post

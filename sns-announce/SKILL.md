@@ -119,7 +119,7 @@ npx tsx $SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date $DATE --platfor
 # (Skip linkedin, googlebusiness, bluesky, threads - already scheduled)
 \`\`\`
 
-Requires \`LATE_API_KEY\` in \`$SKILLS_DIR/sns-schedule-post/.env\`
+Requires \`LATE_API_KEY\` in \`$SKILLS_DIR/late-schedule-post/.env\` (or \`$SKILLS_DIR/sns-schedule-post/.env\`)
 
 ## Scripts
 

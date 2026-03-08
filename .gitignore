@@ -26,6 +26,9 @@ content_plan.json
 # Trends cache
 .trends_cache/
 
+# Late API upload cache
+.late-upload-cache.json
+
 # Python
 __pycache__/
 *.pyc

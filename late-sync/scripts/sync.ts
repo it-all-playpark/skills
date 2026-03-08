@@ -2,6 +2,8 @@
 /**
  * Late Sync - Synchronize Late API scheduled posts with local post/blog/*.json
  *
+ * Supports both text and media posts.
+ *
  * Usage:
  *   npx tsx sync.ts [OPTIONS]
  *
@@ -13,7 +15,6 @@
  *
  * Environment variables:
  *   LATE_API_KEY - Late API key from https://getlate.dev
- *   (Uses sns-schedule-post/.env relative to skills repo root)
  */
 
 import { readFileSync, existsSync, readdirSync } from "fs";
@@ -22,6 +23,27 @@ import { join, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 
+import {
+  loadEnv,
+  getEnvOrExit,
+  loadSkillConfig,
+  parseSchedule,
+  isoToJstDatetime,
+  fetchAccounts,
+  rateLimitedRequest,
+  uploadMediaItemCached,
+  resolveLatePlatformName,
+  isMediaPost,
+  normalizeContent,
+  normalizeContentWithMedia,
+  sleep,
+  BASE_URL,
+  type Account,
+  type MediaItem,
+  type PlatformTarget,
+  type TikTokSettings,
+} from "../../_shared/scripts/late-api.ts";
+
 // ── Paths ──
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,122 +51,16 @@ const __dirname = dirname(__filename);
 const skillsDir = process.env.SKILLS_DIR || join(__dirname, "../..");
 const envPath = join(skillsDir, "sns-schedule-post/.env");
 
-// ── Env loading (shared pattern) ──
-
-function loadEnv(path: string) {
-  if (!existsSync(path)) return;
-  const content = readFileSync(path, "utf-8");
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIndex = trimmed.indexOf("=");
-    if (eqIndex === -1) continue;
-    const key = trimmed.slice(0, eqIndex).trim();
-    let value = trimmed.slice(eqIndex + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (!process.env[key]) {
-      process.env[key] = value;
-    }
-  }
-}
 loadEnv(envPath);
 
-// ── Config loading (shared pattern) ──
-
-function deepMerge(
-  base: Record<string, unknown>,
-  override: Record<string, unknown>
-): Record<string, unknown> {
-  const result = { ...base };
-  for (const [key, value] of Object.entries(override)) {
-    if (
-      key in result &&
-      typeof result[key] === "object" &&
-      result[key] !== null &&
-      !Array.isArray(result[key]) &&
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value)
-    ) {
-      result[key] = deepMerge(
-        result[key] as Record<string, unknown>,
-        value as Record<string, unknown>
-      );
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-function loadSkillConfig(skillName: string): Record<string, unknown> {
-  let globalCfg: Record<string, unknown> = {};
-  const homedir = process.env.HOME || process.env.USERPROFILE || "";
-  if (homedir) {
-    const globalPath = join(homedir, ".claude", "skill-config.json");
-    if (existsSync(globalPath)) {
-      try {
-        const data = JSON.parse(readFileSync(globalPath, "utf-8"));
-        const section = data[skillName];
-        if (section && typeof section === "object")
-          globalCfg = section as Record<string, unknown>;
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  let projectCfg: Record<string, unknown> = {};
-  let gitRoot: string;
-  try {
-    gitRoot = execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-    }).trim();
-  } catch {
-    return globalCfg;
-  }
-  const configPath = join(gitRoot, ".claude", "skill-config.json");
-  if (existsSync(configPath)) {
-    try {
-      const data = JSON.parse(readFileSync(configPath, "utf-8"));
-      const section = data[skillName];
-      if (section && typeof section === "object")
-        projectCfg = section as Record<string, unknown>;
-    } catch {
-      // ignore
-    }
-  }
-
-  if (Object.keys(globalCfg).length === 0) return projectCfg;
-  if (Object.keys(projectCfg).length === 0) return globalCfg;
-  return deepMerge(globalCfg, projectCfg);
-}
+// ── Config ──
 
 const skillConfig = loadSkillConfig("late-sync");
 const TIMEZONE = (skillConfig.timezone as string) || "Asia/Tokyo";
 const POST_DIR = (skillConfig.post_dir as string) || "post/blog";
 const PROFILE_ID = (skillConfig.profile_id as string) || "";
 
-// ── Platform mapping (shared pattern) ──
-
-const PLATFORM_TO_LATE: Record<string, string> = {
-  x: "twitter",
-  twitter: "twitter",
-  linkedin: "linkedin",
-  facebook: "facebook",
-  fb: "facebook",
-  googlebusiness: "googlebusiness",
-  google: "googlebusiness",
-  gbp: "googlebusiness",
-  threads: "threads",
-  bluesky: "bluesky",
-  bsky: "bluesky",
-};
+// ── Platform display mapping ──
 
 const LATE_TO_DISPLAY: Record<string, string> = {
   twitter: "twitter",
@@ -153,6 +69,9 @@ const LATE_TO_DISPLAY: Record<string, string> = {
   googlebusiness: "googlebusiness",
   threads: "threads",
   bluesky: "bluesky",
+  instagram: "instagram",
+  youtube: "youtube",
+  tiktok: "tiktok",
 };
 
 // ── Types ──
@@ -164,6 +83,7 @@ interface LatePost {
     platform: string;
     status: string;
   }>;
+  mediaItems?: Array<{ type: string; url: string }>;
   scheduledFor: string;
   status: string;
 }
@@ -178,21 +98,19 @@ interface LateResponse {
   };
 }
 
-interface Account {
-  _id: string;
-  platform: string;
-  name?: string;
-  username?: string;
-}
-
-interface AccountsResponse {
-  accounts: Account[];
-}
-
 interface LocalPost {
   content: string;
   schedule: string;
-  platforms: string[];
+  platforms:
+    | string[]
+    | Array<{
+        platform: string;
+        platformSpecificData?: Record<string, unknown>;
+      }>;
+  // Media (optional)
+  mediaItems?: MediaItem[];
+  tiktokSettings?: TikTokSettings;
+  firstComment?: string;
 }
 
 interface MatchKey {
@@ -245,75 +163,6 @@ interface SyncResult {
 
 // ── Helpers ──
 
-function getEnvOrExit(key: string): string {
-  const value = process.env[key];
-  if (!value) {
-    console.error(`Error: Missing environment variable: ${key}`);
-    console.error(`Set it in ${envPath}`);
-    process.exit(1);
-  }
-  return value;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Convert ISO string to JST "YYYY-MM-DD HH:MM" format
- */
-function isoToJstDatetime(isoString: string): string {
-  const dt = new Date(isoString);
-  if (isNaN(dt.getTime())) return "";
-  const jst = new Date(dt.getTime() + 9 * 60 * 60 * 1000);
-  const y = jst.getUTCFullYear();
-  const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(jst.getUTCDate()).padStart(2, "0");
-  const h = String(jst.getUTCHours()).padStart(2, "0");
-  const min = String(jst.getUTCMinutes()).padStart(2, "0");
-  return `${y}-${m}-${d} ${h}:${min}`;
-}
-
-/**
- * Parse "YYYY-MM-DD HH:MM" (JST) to Date object
- */
-function parseSchedule(scheduleStr: string): Date {
-  const match = scheduleStr.match(
-    /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/
-  );
-  if (match) {
-    const [, year, month, day, hour, minute] = match;
-    return new Date(`${year}-${month}-${day}T${hour}:${minute}:00+09:00`);
-  }
-  const dt = new Date(scheduleStr);
-  if (!isNaN(dt.getTime())) return dt;
-  throw new Error(`Invalid schedule format: ${scheduleStr}`);
-}
-
-/**
- * Generate matching key: "YYYY-MM-DDTHH:MM|platform"
- */
-function makeMatchKey(datetime: string, latePlatform: string): MatchKey {
-  // datetime is "YYYY-MM-DD HH:MM"
-  const normalized = datetime.replace(" ", "T");
-  return {
-    key: `${normalized}|${latePlatform}`,
-    datetime,
-    platform: latePlatform,
-  };
-}
-
-/**
- * Normalize content for comparison: first 50 chars, collapse whitespace
- */
-function normalizeContent(content: string): string {
-  return content
-    .replace(/\n/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 50);
-}
-
 /**
  * Get tomorrow's date in YYYY-MM-DD (JST)
  */
@@ -327,21 +176,31 @@ function getTomorrowJST(): string {
   return `${y}-${m}-${d}`;
 }
 
-// ── API ──
-
-async function rateLimitedRequest(
-  fn: () => Promise<Response>
-): Promise<Response> {
-  const res = await fn();
-  if (res.status === 429) {
-    const retryAfter =
-      parseInt(res.headers.get("retry-after") || "2") * 1000;
-    console.error(`Rate limited, waiting ${retryAfter}ms...`);
-    await sleep(retryAfter);
-    return fn();
-  }
-  return res;
+/**
+ * Generate matching key: "YYYY-MM-DDTHH:MM|platform"
+ */
+function makeMatchKey(datetime: string, latePlatform: string): MatchKey {
+  const normalized = datetime.replace(" ", "T");
+  return {
+    key: `${normalized}|${latePlatform}`,
+    datetime,
+    platform: latePlatform,
+  };
 }
+
+/**
+ * Extract platforms from mixed format
+ */
+function extractPlatforms(
+  platforms: string[] | Array<{ platform: string }>
+): string[] {
+  if (!Array.isArray(platforms)) return [];
+  if (platforms.length === 0) return [];
+  if (typeof platforms[0] === "string") return platforms as string[];
+  return (platforms as Array<{ platform: string }>).map((p) => p.platform);
+}
+
+// ── API ──
 
 async function fetchScheduledPosts(
   apiKey: string,
@@ -353,7 +212,7 @@ async function fetchScheduledPosts(
   const limit = 100;
 
   while (true) {
-    let url = `https://getlate.dev/api/v1/posts?status=scheduled&dateFrom=${fromDate}&sortBy=scheduled-asc&limit=${limit}&page=${page}`;
+    let url = `${BASE_URL}/posts?status=scheduled&dateFrom=${fromDate}&sortBy=scheduled-asc&limit=${limit}&page=${page}`;
     if (profileId) {
       url += `&profileId=${profileId}`;
     }
@@ -383,39 +242,17 @@ async function fetchScheduledPosts(
     page++;
   }
 
-  // Client-side double-filter: ensure scheduledFor >= fromDate (in case dateFrom filters by createdAt)
+  // Client-side double-filter: ensure scheduledFor >= fromDate
   return allPosts.filter((post) => {
     const jstDatetime = isoToJstDatetime(post.scheduledFor);
     return jstDatetime >= fromDate;
   });
 }
 
-let cachedAccounts: Account[] | null = null;
-
-async function fetchAccounts(apiKey: string): Promise<Account[]> {
-  if (cachedAccounts) return cachedAccounts;
-
-  const response = await rateLimitedRequest(() =>
-    fetch("https://getlate.dev/api/v1/accounts", {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
-  );
-
-  if (!response.ok) {
-    const error = await response.json();
-    console.error("Error fetching accounts:", JSON.stringify(error, null, 2));
-    process.exit(1);
-  }
-
-  const data = (await response.json()) as AccountsResponse;
-  cachedAccounts = data.accounts;
-  return cachedAccounts;
-}
-
 async function deletePost(apiKey: string, postId: string): Promise<boolean> {
   await sleep(500);
   const response = await rateLimitedRequest(() =>
-    fetch(`https://getlate.dev/api/v1/posts/${postId}`, {
+    fetch(`${BASE_URL}/posts/${postId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${apiKey}` },
     })
@@ -423,7 +260,7 @@ async function deletePost(apiKey: string, postId: string): Promise<boolean> {
 
   if (response.status === 404) {
     console.error(`  Warning: Post ${postId} already deleted (404)`);
-    return true; // treat as success
+    return true;
   }
 
   if (!response.ok) {
@@ -442,7 +279,8 @@ async function createPost(
 ): Promise<boolean> {
   await sleep(500);
 
-  const latePlatform = PLATFORM_TO_LATE[post.platforms[0]] || post.platforms[0];
+  const platformList = extractPlatforms(post.platforms);
+  const latePlatform = resolveLatePlatformName(platformList[0]);
   const account = accounts.find((a) => a.platform === latePlatform);
   if (!account) {
     console.error(`  Error: No account for platform ${latePlatform}`);
@@ -451,20 +289,68 @@ async function createPost(
 
   const scheduledFor = parseSchedule(post.schedule).toISOString();
 
-  const body = {
+  // Build platform target
+  const platformTarget: PlatformTarget = {
+    platform: latePlatform,
+    accountId: account._id,
+  };
+
+  // Attach platformSpecificData if present
+  if (
+    Array.isArray(post.platforms) &&
+    post.platforms.length > 0 &&
+    typeof post.platforms[0] === "object"
+  ) {
+    const entry = (
+      post.platforms as Array<{
+        platform: string;
+        platformSpecificData?: Record<string, unknown>;
+      }>
+    )[0];
+    if (entry.platformSpecificData) {
+      platformTarget.platformSpecificData = entry.platformSpecificData;
+    }
+  }
+
+  const body: Record<string, unknown> = {
     content: post.content,
-    platforms: [
-      {
-        platform: latePlatform,
-        accountId: account._id,
-      },
-    ],
+    platforms: [platformTarget],
     scheduledFor,
     timezone: TIMEZONE,
   };
 
+  // Media items: upload with cache [C1]
+  if (post.mediaItems && post.mediaItems.length > 0) {
+    const uploadedMedia = [];
+    for (const item of post.mediaItems) {
+      const uploaded = await uploadMediaItemCached(apiKey, item);
+      uploadedMedia.push(uploaded);
+    }
+    body.mediaItems = uploadedMedia;
+  }
+
+  // TikTok settings
+  if (post.tiktokSettings) {
+    body.tiktokSettings = {
+      ...post.tiktokSettings,
+      content_preview_confirmed: true,
+      express_consent_given: true,
+    };
+  }
+
+  // First comment
+  if (post.firstComment) {
+    if (latePlatform === "youtube") {
+      (
+        (platformTarget.platformSpecificData ??= {}) as Record<string, unknown>
+      ).firstComment = post.firstComment;
+    } else {
+      body.firstComment = post.firstComment;
+    }
+  }
+
   const response = await rateLimitedRequest(() =>
-    fetch("https://getlate.dev/api/v1/posts", {
+    fetch(`${BASE_URL}/posts`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -523,14 +409,21 @@ function loadLocalPosts(
       const postDate = dateMatch[1];
       if (postDate < fromDate) continue;
 
-      for (const platform of post.platforms) {
-        const latePlatform = PLATFORM_TO_LATE[platform] || platform;
+      const platformList = extractPlatforms(post.platforms);
+
+      for (const platform of platformList) {
+        const latePlatform = resolveLatePlatformName(platform);
         const matchKey = makeMatchKey(post.schedule, latePlatform);
+        // [C2] Use media-aware normalization
+        const contentNorm = normalizeContentWithMedia(
+          post.content,
+          post.mediaItems
+        );
         entries.push({
           matchKey,
           post,
           filename: file,
-          contentNorm: normalizeContent(post.content),
+          contentNorm,
         });
       }
     }
@@ -551,10 +444,16 @@ function buildLateEntries(latePosts: LatePost[]): LateEntry[] {
     for (const platform of post.platforms) {
       if (platform.status === "failed") continue;
       const matchKey = makeMatchKey(jstDatetime, platform.platform);
+      // [C2] Use media-aware normalization for Late entries too
+      const mediaItems = post.mediaItems?.map((m) => ({
+        type: m.type as "image" | "video",
+        url: m.url,
+      }));
+      const contentNorm = normalizeContentWithMedia(post.content, mediaItems);
       entries.push({
         matchKey,
         post,
-        contentNorm: normalizeContent(post.content),
+        contentNorm,
       });
     }
   }
@@ -568,7 +467,12 @@ function computeDiff(
   localEntries: LocalEntry[],
   lateEntries: LateEntry[],
   verbose: boolean
-): { orphaned: DiffItem[]; missing: DiffItem[]; changed: DiffItem[]; matched: DiffItem[] } {
+): {
+  orphaned: DiffItem[];
+  missing: DiffItem[];
+  changed: DiffItem[];
+  matched: DiffItem[];
+} {
   const localByKey = new Map<string, LocalEntry>();
   for (const entry of localEntries) {
     localByKey.set(entry.matchKey.key, entry);
@@ -576,7 +480,6 @@ function computeDiff(
 
   const lateByKey = new Map<string, LateEntry>();
   for (const entry of lateEntries) {
-    // If duplicate keys in Late (shouldn't happen), keep first
     if (!lateByKey.has(entry.matchKey.key)) {
       lateByKey.set(entry.matchKey.key, entry);
     }
@@ -605,7 +508,6 @@ function computeDiff(
         lateId: lateEntry.post._id,
       });
     } else {
-      // Content comparison
       if (localEntry.contentNorm !== lateEntry.contentNorm) {
         if (verbose) {
           console.error(
@@ -648,7 +550,7 @@ function computeDiff(
     if (!lateByKey.has(key)) {
       if (verbose) {
         console.error(
-          `  [MISSING] ${localEntry.matchKey.datetime} [${LATE_TO_DISPLAY[localEntry.matchKey.platform] || localEntry.matchKey.platform}] ← ${localEntry.filename}`
+          `  [MISSING] ${localEntry.matchKey.datetime} [${LATE_TO_DISPLAY[localEntry.matchKey.platform] || localEntry.matchKey.platform}] <- ${localEntry.filename}`
         );
       }
       missing.push({
@@ -680,14 +582,16 @@ function printSummary(result: SyncResult) {
   console.log(`=== Late Sync ===`);
   console.log(`From: ${result.fromDate}`);
   console.log(
-    `Local: ${result.localFileCount} files → ${result.localPostCount} posts (${result.fromDate}~)`
+    `Local: ${result.localFileCount} files -> ${result.localPostCount} posts (${result.fromDate}~)`
   );
-  console.log(`Late:  ${result.latePostCount} scheduled (${result.fromDate}~)`);
+  console.log(
+    `Late:  ${result.latePostCount} scheduled (${result.fromDate}~)`
+  );
   console.log("");
 
   if (result.orphaned.length > 0) {
     console.log(
-      `🗑  Orphaned (DELETE from Late): ${result.orphaned.length}`
+      `Orphaned (DELETE from Late): ${result.orphaned.length}`
     );
     for (const item of result.orphaned) {
       console.log(
@@ -699,11 +603,11 @@ function printSummary(result: SyncResult) {
 
   if (result.missing.length > 0) {
     console.log(
-      `📝 Missing (CREATE to Late): ${result.missing.length}`
+      `Missing (CREATE to Late): ${result.missing.length}`
     );
     for (const item of result.missing) {
       console.log(
-        `  ${item.datetime} [${item.platform}] ← ${item.filename}`
+        `  ${item.datetime} [${item.platform}] <- ${item.filename}`
       );
     }
     console.log("");
@@ -711,26 +615,30 @@ function printSummary(result: SyncResult) {
 
   if (result.changed.length > 0) {
     console.log(
-      `🔄 Changed (DELETE + CREATE): ${result.changed.length}`
+      `Changed (DELETE + CREATE): ${result.changed.length}`
     );
     for (const item of result.changed) {
       console.log(
-        `  ${item.datetime} [${item.platform}] ID:${item.lateId} ← ${item.filename}`
+        `  ${item.datetime} [${item.platform}] ID:${item.lateId} <- ${item.filename}`
       );
     }
     console.log("");
   }
 
-  console.log(`✅ Matched: ${result.matched.length}`);
+  console.log(`Matched: ${result.matched.length}`);
   console.log("");
 
   if (result.executed && result.execResults) {
     const r = result.execResults;
     console.log(`=== Execution Results ===`);
-    console.log(`DELETE: ${r.deleteSuccess} success, ${r.deleteFailed} failed`);
-    console.log(`CREATE: ${r.createSuccess} success, ${r.createFailed} failed`);
+    console.log(
+      `DELETE: ${r.deleteSuccess} success, ${r.deleteFailed} failed`
+    );
+    console.log(
+      `CREATE: ${r.createSuccess} success, ${r.createFailed} failed`
+    );
     if (r.deleteFailed > 0 || r.createFailed > 0) {
-      console.log(`⚠️  Some operations failed. Run again to retry.`);
+      console.log(`Some operations failed. Run again to retry.`);
     }
   } else {
     console.log(`Mode: DRY RUN (pass --execute to apply)`);
@@ -760,7 +668,7 @@ async function main() {
     process.exit(1);
   }
 
-  const apiKey = getEnvOrExit("LATE_API_KEY");
+  const apiKey = getEnvOrExit("LATE_API_KEY", envPath);
 
   // Resolve post directory relative to git root
   let gitRoot: string;
@@ -784,7 +692,9 @@ async function main() {
 
   if (!jsonOutput) {
     const profileInfo = PROFILE_ID ? ` (profile: ${PROFILE_ID})` : "";
-    console.error(`Fetching scheduled posts from Late API (from ${fromDate})${profileInfo}...`);
+    console.error(
+      `Fetching scheduled posts from Late API (from ${fromDate})${profileInfo}...`
+    );
   }
 
   // Parallel: fetch Late posts + load local posts
@@ -836,13 +746,15 @@ async function main() {
     // Fetch accounts for CREATE operations
     const accounts =
       diff.missing.length > 0 || diff.changed.length > 0
-        ? await fetchAccounts(apiKey)
+        ? await fetchAccounts(apiKey, PROFILE_ID || undefined)
         : [];
 
     // DELETE orphaned
     for (const item of diff.orphaned) {
       if (!jsonOutput) {
-        console.error(`  Deleting ${item.lateId} (${item.datetime} [${item.platform}])...`);
+        console.error(
+          `  Deleting ${item.lateId} (${item.datetime} [${item.platform}])...`
+        );
       }
       const ok = await deletePost(apiKey, item.lateId!);
       if (ok) execResults.deleteSuccess++;
@@ -884,7 +796,6 @@ async function main() {
 
   // Output
   if (jsonOutput) {
-    // Strip localPost from JSON output (too verbose)
     const jsonResult = {
       ...result,
       orphaned: result.orphaned.map(({ localPost, ...rest }) => rest),

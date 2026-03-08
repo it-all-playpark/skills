@@ -99,7 +99,7 @@ Project config: `.claude/video-announce.json`
 
 動画メディアのサムネイル用フレーム切り出し位置（ミリ秒）。設定すると:
 1. JSON出力時、ffmpegで動画の指定位置からJPEGフレームを `{output.dir}/thumbnails/{platform}/{slug}.jpg` に自動生成
-2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `video-schedule-post` がアップロード
+2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `late-schedule-post` がアップロード
 3. **YouTube**: `mediaItems[].thumbnail.url` にサムネパスを設定 → 投稿スクリプトがアップロードし `platformSpecificData.thumbnail` としてAPIに送信
 4. **TikTok**: `tiktokSettings.video_cover_timestamp_ms` にミリ秒を設定（フレーム指定のみ、サムネアップロード不要）
 
@@ -378,5 +378,5 @@ All platforms are output as a single JSON array to `{output.dir}/{date}-{slug}.j
 # 投稿パイプライン（1ファイルで全プラットフォーム）
 /video-announce video.mp4 --format json
 # → post/{date}-{slug}.json (配列: [instagram, youtube, tiktok])
-npx tsx $SKILLS_DIR/video-schedule-post/scripts/post.ts --json post/{date}-{slug}.json
+npx tsx $SKILLS_DIR/late-schedule-post/scripts/post.ts --json post/{date}-{slug}.json
 ```

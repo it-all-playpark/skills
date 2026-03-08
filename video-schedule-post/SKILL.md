@@ -1,12 +1,8 @@
 ---
 name: video-schedule-post
 description: |
-  Schedule or post to Instagram (feed, reel, story, carousel), YouTube Shorts, or TikTok with media upload via Late API.
-  Use when: (1) user wants to schedule posts with images or videos to Instagram/YouTube/TikTok,
-  (2) after /video-announce to publish generated content,
-  (3) keywords like "Instagram投稿", "IG予約投稿", "Instagram schedule", "ig post", "ig schedule", "video post", "video schedule", "YouTube投稿", "TikTok投稿",
-  (4) needs to upload media and create posts via Late API.
-  Accepts args: --json FILE | --media FILE --caption TEXT [--type feed|reel|story|carousel] [--schedule "YYYY-MM-DD HH:MM"] [--first-comment TEXT] [--dry-run]
+  DEPRECATED: Use /late-schedule-post instead.
+  This skill forwards all arguments to late-schedule-post.
 ---
 
 # Video Schedule Post
