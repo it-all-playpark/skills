@@ -100,6 +100,7 @@ function loadSkillConfig(skillName: string): Record<string, unknown> {
 }
 
 const skillConfig = loadSkillConfig("sns-schedule-post");
+const PROFILE_ID = (skillConfig.profile_id as string) || "";
 
 function loadEnv(path: string) {
   if (!existsSync(path)) return;
@@ -251,7 +252,12 @@ let cachedAccounts: Account[] | null = null;
 async function fetchAccounts(apiKey: string): Promise<Account[]> {
   if (cachedAccounts) return cachedAccounts;
 
-  const response = await fetch("https://getlate.dev/api/v1/accounts", {
+  let url = "https://getlate.dev/api/v1/accounts";
+  if (PROFILE_ID) {
+    url += `?profileId=${PROFILE_ID}`;
+  }
+
+  const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
