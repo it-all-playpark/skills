@@ -41,6 +41,7 @@ import {
   type Account,
   type MediaItem,
   type PlatformTarget,
+  type PlatformSpecificData,
   type TikTokSettings,
 } from "../../_shared/scripts/late-api.ts";
 
@@ -321,12 +322,70 @@ async function createPost(
 
   // Media items: upload with cache [C1]
   if (post.mediaItems && post.mediaItems.length > 0) {
-    const uploadedMedia = [];
+    const uploadedMedia: Array<{
+      type: string;
+      url: string;
+      thumbnail?: { url: string };
+      instagramThumbnail?: string;
+    }> = [];
     for (const item of post.mediaItems) {
       const uploaded = await uploadMediaItemCached(apiKey, item);
       uploadedMedia.push(uploaded);
     }
+
+    // Resolve thumbnails per platform (mirrors late-schedule-post logic)
+    if (latePlatform === "youtube") {
+      // YouTube: mediaItems[].thumbnail.url (local path) -> upload -> platformSpecificData.thumbnail
+      const thumbItem = uploadedMedia.find((m) => m.thumbnail?.url);
+      if (thumbItem?.thumbnail?.url) {
+        const thumbSource = thumbItem.thumbnail.url;
+        delete thumbItem.thumbnail;
+        if (platformTarget.platformSpecificData) {
+          if (thumbSource.startsWith("http://") || thumbSource.startsWith("https://")) {
+            (platformTarget.platformSpecificData as Record<string, unknown>).thumbnail = thumbSource;
+          } else {
+            const thumbUploaded = await uploadMediaItemCached(apiKey, {
+              type: "image",
+              path: thumbSource,
+            });
+            (platformTarget.platformSpecificData as Record<string, unknown>).thumbnail = thumbUploaded.url;
+          }
+        }
+      }
+    } else if (latePlatform === "instagram") {
+      // Instagram: platformSpecificData.instagramThumbnail (local path) -> upload -> mediaItems[].instagramThumbnail
+      const psd = platformTarget.platformSpecificData as
+        | Record<string, unknown>
+        | undefined;
+      if (psd?.instagramThumbnail) {
+        const thumbPath = psd.instagramThumbnail as string;
+        let thumbUrl: string;
+        if (thumbPath.startsWith("http://") || thumbPath.startsWith("https://")) {
+          thumbUrl = thumbPath;
+        } else {
+          const thumbUploaded = await uploadMediaItemCached(apiKey, {
+            type: "image",
+            path: thumbPath,
+          });
+          thumbUrl = thumbUploaded.url;
+        }
+        // Move to mediaItems (Late API expects it on video items)
+        for (const m of uploadedMedia) {
+          if (m.type === "video") {
+            m.instagramThumbnail = thumbUrl;
+          }
+        }
+        delete psd.instagramThumbnail;
+      }
+    }
+
     body.mediaItems = uploadedMedia;
+  }
+
+  // Clean up thumbOffset from platformSpecificData (not an API field)
+  if (platformTarget.platformSpecificData) {
+    delete (platformTarget.platformSpecificData as Record<string, unknown>)
+      .thumbOffset;
   }
 
   // TikTok settings
