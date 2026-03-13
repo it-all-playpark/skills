@@ -64,7 +64,7 @@ cmd_log() {
     local error_category="" error_msg="" error_phase=""
     local recovery="" recovery_turns=""
     local issue="" duration_turns="" context_extra=""
-    local project="" worktree=""
+    local project="" worktree="" mode=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -93,6 +93,7 @@ cmd_log() {
             --project) project="$2"; shift 2 ;;
             --worktree) worktree="$2"; shift 2 ;;
             --context) context_extra="$2"; shift 2 ;;
+            --mode) mode="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -152,6 +153,14 @@ cmd_log() {
     fi
     if [[ -n "$worktree" ]]; then
         context=$(echo "$context" | jq --arg v "$worktree" '. + {worktree: $v}')
+        has_context=true
+    fi
+    if [[ -n "$mode" ]]; then
+        context=$(echo "$context" | jq --arg v "$mode" '. + {mode: $v}')
+        has_context=true
+    fi
+    if [[ -n "$context_extra" ]]; then
+        context=$(echo "$context" | jq --argjson v "$context_extra" '. * $v')
         has_context=true
     fi
     if [[ "$has_context" == true ]]; then

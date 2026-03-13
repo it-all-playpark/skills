@@ -308,16 +308,24 @@ On workflow completion, log execution to skill-retrospective journal.
 **CRITICAL: Always pass `--args` with the original invocation arguments** so that usage patterns are tracked.
 
 ```bash
+# MODE is the resolved mode: "single", "parallel", "force-single", or "force-parallel"
+# Set MODE based on the actual decision:
+#   --force-single  → "force-single"
+#   --force-parallel → "force-parallel"
+#   auto-detect → single_fallback → "single"
+#   auto-detect → ready → "parallel"
+
 # On success (LGTM achieved)
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow success \
-  --issue $ISSUE --duration-turns $TURNS --args "$ORIGINAL_ARGS"
+  --issue $ISSUE --duration-turns $TURNS --args "$ORIGINAL_ARGS" --mode "$MODE"
 
 # On failure (any step fails)
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow failure \
-  --issue $ISSUE --error-category <category> --error-msg "<message>" --args "$ORIGINAL_ARGS"
+  --issue $ISSUE --error-category <category> --error-msg "<message>" --args "$ORIGINAL_ARGS" --mode "$MODE"
 ```
 
 Where `$ORIGINAL_ARGS` is the full argument string passed to dev-flow (e.g. `"42 --force-parallel --strategy tdd"`).
+Where `$MODE` is the resolved execution mode (`single`, `parallel`, `force-single`, `force-parallel`).
 
 Note: dev-kickoff and pr-iterate also log independently. dev-flow logging captures the overall flow outcome.
 
