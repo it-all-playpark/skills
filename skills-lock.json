@@ -26,6 +26,21 @@
       "sourceType": "github",
       "computedHash": "c3712b0f39d3221f56ea2741d04c12ec1df578d5a302859326437145ac4cbf4b"
     },
+    "gws-calendar": {
+      "source": "googleworkspace/cli",
+      "sourceType": "github",
+      "computedHash": "abf4b5c72c8e3d7ed284dd0a2208ea468dbb4ddbfbe5e13edb802721c92eee65"
+    },
+    "gws-calendar-agenda": {
+      "source": "googleworkspace/cli",
+      "sourceType": "github",
+      "computedHash": "ecf1523d44de0ea11544daeca6a8e85e91110a3d4bfe6421df798c28e1a4a6d2"
+    },
+    "gws-calendar-insert": {
+      "source": "googleworkspace/cli",
+      "sourceType": "github",
+      "computedHash": "d07a2c5f533a792f2451c963b06a098b9c97b6529eab0257fcf72a5908652a44"
+    },
     "neon-postgres": {
       "source": "neondatabase/agent-skills",
       "sourceType": "github",
@@ -45,6 +60,11 @@
       "source": "remotion-dev/skills",
       "sourceType": "github",
       "computedHash": "a2ebe92433006ce81bbdcfe24984663678bbbb20991a3686e34814de1097c44c"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "computedHash": "fd336f2f772eb46ddf8658de5f9dd8faa1f35615b316665307fc82eeb4b2e658"
     },
     "skill-creator": {
       "source": "anthropics/skills",

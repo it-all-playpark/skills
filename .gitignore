@@ -15,6 +15,9 @@ client_secret.json
 # Environment variables (user-specific config)
 .env
 
+# Workspace config with token references (use *.example.json as template)
+**/workspaces.json
+
 # Generated reports
 ga_report.json
 trends_report.json
@@ -46,10 +49,14 @@ api-contract-testing
 fastify-best-practices
 find-skills
 gsc
+gws-calendar-agenda
+gws-calendar-insert
+gws-calendar
 neon-postgres
 pricing-strategy
 prisma-cli
 remotion-best-practices
+rust-best-practices
 skill-creator
 strategy-and-competitive-analysis
 ui-ux-pro-max
