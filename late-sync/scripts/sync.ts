@@ -252,25 +252,39 @@ async function fetchScheduledPosts(
 
 async function deletePost(apiKey: string, postId: string): Promise<boolean> {
   await sleep(500);
-  const response = await rateLimitedRequest(() =>
-    fetch(`${BASE_URL}/posts/${postId}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
-  );
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      const response = await rateLimitedRequest(() =>
+        fetch(`${BASE_URL}/posts/${postId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: controller.signal,
+        })
+      );
+      clearTimeout(timeout);
 
-  if (response.status === 404) {
-    console.error(`  Warning: Post ${postId} already deleted (404)`);
-    return true;
+      if (response.status === 404) {
+        console.error(`  Warning: Post ${postId} already deleted (404)`);
+        return true;
+      }
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        console.error(`  Error deleting ${postId}:`, JSON.stringify(error));
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      if (attempt === 3) throw err;
+      const wait = attempt * 3000;
+      console.log(`  Retry ${attempt}/3 (delete) after ${wait}ms...`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    console.error(`  Error deleting ${postId}:`, JSON.stringify(error));
-    return false;
-  }
-
-  return true;
+  return false;
 }
 
 async function createPost(
@@ -408,24 +422,38 @@ async function createPost(
     }
   }
 
-  const response = await rateLimitedRequest(() =>
-    fetch(`${BASE_URL}/posts`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    })
-  );
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60_000); // 60s
+      const response = await rateLimitedRequest(() =>
+        fetch(`${BASE_URL}/posts`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        })
+      );
+      clearTimeout(timeout);
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    console.error(`  Error creating post:`, JSON.stringify(error));
-    return false;
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        console.error(`  Error creating post:`, JSON.stringify(error));
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      if (attempt === 3) throw err;
+      const wait = attempt * 3000;
+      console.log(`  Retry ${attempt}/3 (create post) after ${wait}ms...`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
-
-  return true;
+  return false;
 }
 
 // ── Local file loading ──

@@ -71,7 +71,7 @@ Project config: `.claude/video-announce.json`
     },
     "youtube": {
       "enabled": true,
-      "hashtag": { "max_count": 5, "always_include": ["Shorts"], "strategy": "description" },
+      "hashtag": { "max_count": 5, "always_include": ["Shorts (縦長のみ)"], "strategy": "description" },
       "defaults": { "visibility": "public", "categoryId": "28", "madeForKids": false }
     },
     "tiktok": {
@@ -114,14 +114,20 @@ Project config: `.claude/video-announce.json`
    - Article → extract title, description, key points from frontmatter/body
    - URL → fetch and parse article content
    - Topic → use as-is
-5. Detect content type (feed/reel/story/carousel)
-6. For each target platform:
+5. Detect aspect ratio (video only):
+   - Run ffprobe to get width/height
+   - 9:16 (height > width) → vertical (reel/shorts向き)
+   - 16:9 (width > height) → horizontal (feed/通常動画向き)
+6. Detect content type per platform (see Auto-Detect Content Type table):
+   - --type 指定時はそちらを優先
+   - 未指定時はアスペクト比 + 尺で自動判定
+7. For each target platform:
    a. Generate platform-specific caption (see Caption Structure below)
    b. Generate platform-specific hashtags (see references/)
    c. Build platform entry object (content, mediaItems, platforms, schedule, etc.)
-7. Write all platform entries as a single JSON array to: {output.dir}/{date}-{slug}.json
+8. Write all platform entries as a single JSON array to: {output.dir}/{date}-{slug}.json
    ({date} = schedule date, not generation date)
-8. Thumbnail generation (if platformDefaults.thumbOffset is set and media is video):
+9. Thumbnail generation (if platformDefaults.thumbOffset is set and media is video):
    - Extract frame at thumbOffset ms using ffmpeg:
      ffmpeg -y -ss <seconds> -i <video> -frames:v 1 -q:v 2 -update 1 <output>.jpg
    - Output to: {output.dir}/thumbnails/{platform}/{slug}.jpg
@@ -140,13 +146,22 @@ Project config: `.claude/video-announce.json`
 
 ### Auto-Detect Content Type
 
-| Condition | Detected Type |
-|-----------|---------------|
-| Video, 9:16 aspect, <= 90s | reel |
-| Video, other aspect or > 90s | feed (video) |
-| Single image | feed (image) |
-| Multiple images/videos (--media) | carousel |
-| No media (topic/article only) | feed (placeholder) |
+動画ソースの場合、`ffprobe` でアスペクト比を自動検出し、プラットフォーム別に最適な設定を適用する。
+
+```bash
+ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 <video>
+```
+
+| Condition | Instagram | YouTube | TikTok |
+|-----------|-----------|---------|--------|
+| Video, 9:16 (縦長), <= 90s | `contentType: "reels"` | Shorts（`#Shorts` 付き） | 通常投稿 |
+| Video, 16:9 (横長) or other | `contentType: "feed"` | 通常動画（`#Shorts` なし） | 通常投稿（黒帯あり） |
+| Video, > 90s | `contentType: "feed"` | 通常動画 | 通常投稿 |
+| Single image | `contentType: "feed"` | — | — |
+| Multiple images/videos (--media) | `contentType: "carousel"` | — | — |
+| No media (topic/article only) | `contentType: "feed"` | — | — |
+
+**重要**: `--type` で明示指定された場合はそちらを優先する。
 
 ## Caption Structure
 
@@ -182,7 +197,7 @@ Project config: `.claude/video-announce.json`
 
 Caption not displayed on Stories. Generate hashtag sticker suggestions (5-10 tags) only.
 
-### YouTube Shorts
+### YouTube Shorts (縦長 9:16)
 
 ```
 Title (max 100字): {インパクトのあるタイトル - 主要キーワードを前方に}
@@ -194,6 +209,22 @@ Description:
 
 {ハッシュタグ 3-5個} #Shorts
 ```
+
+### YouTube 通常動画 (横長 16:9)
+
+```
+Title (max 100字): {インパクトのあるタイトル - 主要キーワードを前方に}
+
+Description:
+{動画の説明 2-3行}
+
+{CTA - チャンネル登録促進}
+{関連リンク}
+
+{ハッシュタグ 3-5個}
+```
+
+**注意**: 横長動画では `#Shorts` を付けない。Shorts棚に載らないため。
 
 **YouTube Title Rules**:
 - Max 100 characters
@@ -238,7 +269,7 @@ All platforms are output as a single JSON array to `{output.dir}/{date}-{slug}.j
       {
         "platform": "instagram",
         "platformSpecificData": {
-          "contentType": "reels",
+          "contentType": "reels or feed (アスペクト比で自動判定)",
           "instagramThumbnail": "post/thumbnails/instagram/{slug}.jpg",
           "firstComment": "#追加ハッシュタグ群"
         }
@@ -247,7 +278,7 @@ All platforms are output as a single JSON array to `{output.dir}/{date}-{slug}.j
     "schedule": "2026-03-12 19:00"
   },
   {
-    "content": "動画の説明文（Description）\n\nチャンネル登録お願いします！\n\n#シフト管理 #業務効率化 #Shorts",
+    "content": "動画の説明文（Description）\n\nチャンネル登録お願いします！\n\n#シフト管理 #業務効率化 (縦長なら #Shorts 追加)",
     "mediaItems": [
       {
         "type": "video",

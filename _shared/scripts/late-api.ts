@@ -449,6 +449,8 @@ export async function getPresignedUrl(
   fileName: string,
   contentType: string
 ): Promise<PresignedUrlResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000); // 30s
   const response = await rateLimitedRequest(() =>
     fetch(`${BASE_URL}/media/presign`, {
       method: "POST",
@@ -457,8 +459,10 @@ export async function getPresignedUrl(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ filename: fileName, contentType }),
+      signal: controller.signal,
     })
   );
+  clearTimeout(timeout);
 
   if (!response.ok) {
     const text = await response.text();
@@ -477,20 +481,35 @@ export async function getPresignedUrl(
 export async function uploadMedia(
   uploadUrl: string,
   filePath: string,
-  contentType: string
+  contentType: string,
+  maxRetries = 3
 ): Promise<void> {
   const fileBuffer = readFileSync(filePath);
-  const response = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": contentType },
-    body: fileBuffer,
-  });
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000); // 2min
+      const response = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": contentType },
+        body: fileBuffer,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `Error uploading media: ${response.status} ${response.statusText}${text ? ` - ${text}` : ""}`
-    );
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(
+          `Error uploading media: ${response.status} ${response.statusText}${text ? ` - ${text}` : ""}`
+        );
+      }
+      return;
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      const wait = attempt * 3000;
+      console.log(`  Retry ${attempt}/${maxRetries} after ${wait}ms...`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
 }
 
