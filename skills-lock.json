@@ -41,6 +41,16 @@
       "sourceType": "github",
       "computedHash": "d07a2c5f533a792f2451c963b06a098b9c97b6529eab0257fcf72a5908652a44"
     },
+    "gws-docs": {
+      "source": "googleworkspace/cli",
+      "sourceType": "github",
+      "computedHash": "b0f05a45866431fcc80d56e22e0711b724f707dc12ede096216603753f1d2d93"
+    },
+    "gws-docs-write": {
+      "source": "googleworkspace/cli",
+      "sourceType": "github",
+      "computedHash": "abe965216bbaec06178d07256bfb9c46ea43fad4770928750a3e8168699ec859"
+    },
     "neon-postgres": {
       "source": "neondatabase/agent-skills",
       "sourceType": "github",
