@@ -54,95 +54,17 @@ Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Sh
 
 ## Configuration
 
-Project config: `.claude/video-announce.json`
-
-```json
-{
-  "default_lang": "ja",
-  "output": {
-    "dir": "post",
-    "pattern": "{date}-{slug}.json",
-    "format": "json"
-  },
-  "platforms": {
-    "instagram": {
-      "enabled": true,
-      "hashtag": { "max_count": 30, "target_count": 20, "strategy": "first_comment" }
-    },
-    "youtube": {
-      "enabled": true,
-      "hashtag": { "max_count": 5, "always_include": ["Shorts (縦長のみ)"], "strategy": "description" },
-      "defaults": { "visibility": "public", "categoryId": "28", "madeForKids": false }
-    },
-    "tiktok": {
-      "enabled": true,
-      "hashtag": { "max_count": 5, "strategy": "caption" },
-      "defaults": { "privacy_level": "PUBLIC_TO_EVERYONE", "allow_comment": true, "allow_duet": true, "allow_stitch": true, "video_cover_timestamp_ms": 2000 }
-    }
-  },
-  "brand": { "always_tags": ["ShiftBud", "playpark"] },
-  "platformDefaults": { "thumbOffset": 2000 },
-  "schedule": { "enabled": true, "mode": "auto" }
-}
-```
-
-### output.pattern variables
-
-| Variable | Description |
-|----------|-------------|
-| `{date}` | **Schedule date** (投稿日, YYYY-MM-DD). `--schedule` 指定時はその日付、省略時は当日 |
-| `{slug}` | Source filename or topic slug |
-
-**重要**: `{date}` はファイル生成日ではなく、投稿予定日（schedule日）を使用する。sns-announceと同じ規約。
-
-### platformDefaults.thumbOffset
-
-動画メディアのサムネイル用フレーム切り出し位置（ミリ秒）。設定すると:
-1. JSON出力時、ffmpegで動画の指定位置からJPEGフレームを `{output.dir}/thumbnails/{platform}/{slug}.jpg` に自動生成
-2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `late-schedule-post` がアップロード
-3. **YouTube**: `mediaItems[].thumbnail.url` にサムネパスを設定 → 投稿スクリプトがアップロードし `platformSpecificData.thumbnail` としてAPIに送信
-4. **TikTok**: `tiktokSettings.video_cover_timestamp_ms` にミリ秒を設定（フレーム指定のみ、サムネアップロード不要）
+Project config: `.claude/video-announce.json` — See [Config Guide](references/config-guide.md) for full example and details.
 
 ## Workflow
 
-```
-1. Load config (.claude/video-announce.json)
-2. Determine target platforms (--platforms or config)
-3. Identify source type (media/article/topic)
-4. Extract context:
-   - Media → infer content from filename, path, video metadata
-   - Article → extract title, description, key points from frontmatter/body
-   - URL → fetch and parse article content
-   - Topic → use as-is
-5. Detect aspect ratio (video only):
-   - Run ffprobe to get width/height
-   - 9:16 (height > width) → vertical (reel/shorts向き)
-   - 16:9 (width > height) → horizontal (feed/通常動画向き)
-6. Detect content type per platform (see Auto-Detect Content Type table):
-   - --type 指定時はそちらを優先
-   - 未指定時はアスペクト比 + 尺で自動判定
-7. For each target platform:
-   a. Generate platform-specific caption (see Caption Structure below)
-   b. Generate platform-specific hashtags (see references/)
-   c. Build platform entry object (content, mediaItems, platforms, schedule, etc.)
-8. Write all platform entries as a single JSON array to: {output.dir}/{date}-{slug}.json
-   ({date} = schedule date, not generation date)
-9. Thumbnail generation (if platformDefaults.thumbOffset is set and media is video):
-   - Extract frame at thumbOffset ms using ffmpeg:
-     ffmpeg -y -ss <seconds> -i <video> -frames:v 1 -q:v 2 -update 1 <output>.jpg
-   - Output to: {output.dir}/thumbnails/{platform}/{slug}.jpg
-   - Instagram: set `platformSpecificData.instagramThumbnail`
-   - YouTube: set `mediaItems[].thumbnail.url` to local path (post script uploads → platformSpecificData.thumbnail)
-   - TikTok: set `tiktokSettings.video_cover_timestamp_ms` (no thumbnail file needed)
-```
-
-### Reference Files
-
-- **Instagram guide**: [references/instagram-guide.md](references/instagram-guide.md)
-- **YouTube Shorts guide**: [references/youtube-shorts-guide.md](references/youtube-shorts-guide.md)
-- **TikTok guide**: [references/tiktok-guide.md](references/tiktok-guide.md)
-- **Hashtag strategy (cross-platform)**: [references/short-video-hashtags.md](references/short-video-hashtags.md)
-- **Posting times**: [references/posting-times.json](references/posting-times.json)
+1. Load config (`.claude/video-announce.json`)
+2. Determine target platforms (`--platforms` or config)
+3. Identify source type and extract context (media metadata / article frontmatter / URL / topic)
+4. Detect aspect ratio for video via `ffprobe` (see Auto-Detect table below)
+5. For each platform: generate caption ([Caption Structures](references/caption-structures.md)) + hashtags ([Hashtag Strategy](references/short-video-hashtags.md))
+6. Write output as JSON array or Markdown ([Output Format](references/output-format.md))
+7. Generate thumbnails if `platformDefaults.thumbOffset` is set (see [Config Guide](references/config-guide.md#platformdefaultsthumboffset))
 
 ### Auto-Detect Content Type
 
@@ -163,232 +85,24 @@ ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p
 
 **重要**: `--type` で明示指定された場合はそちらを優先する。
 
-## Caption Structure
+## References
 
-### Instagram: Feed/Carousel (Japanese)
-
-```
-{フック文（最初の125文字が重要 - "もっと見る"前に表示される部分）}
-
-{本文 - 価値提供・ストーリー・解説}
-
-{CTA（行動喚起）}
-
-・
-・
-・
-
-{ハッシュタグ群（15-30個）}
-```
-
-### Instagram: Reel (Japanese)
-
-```
-{フック文 - 短く強いインパクト}
-
-{内容の要約（2-3行）}
-
-{CTA}
-
-{ハッシュタグ群（15-20個）}
-```
-
-### Instagram: Story
-
-Caption not displayed on Stories. Generate hashtag sticker suggestions (5-10 tags) only.
-
-### YouTube Shorts (縦長 9:16)
-
-```
-Title (max 100字): {インパクトのあるタイトル - 主要キーワードを前方に}
-
-Description:
-{動画の説明 2-3行}
-
-{CTA - チャンネル登録促進}
-
-{ハッシュタグ 3-5個} #Shorts
-```
-
-### YouTube 通常動画 (横長 16:9)
-
-```
-Title (max 100字): {インパクトのあるタイトル - 主要キーワードを前方に}
-
-Description:
-{動画の説明 2-3行}
-
-{CTA - チャンネル登録促進}
-{関連リンク}
-
-{ハッシュタグ 3-5個}
-```
-
-**注意**: 横長動画では `#Shorts` を付けない。Shorts棚に載らないため。
-
-**YouTube Title Rules**:
-- Max 100 characters
-- Front-load primary keyword
-- No hashtags in title
-- Numbers attract clicks ("3 Tips", "5 Ways")
-
-### TikTok
-
-```
-{フック文 - 最初の1行で注意を引く}
-
-{内容の要約 1-2行}
-
-{CTA}
-
-{ハッシュタグ 3-5個 インライン}
-```
-
-**TikTok Caption Rules**:
-- Max 2,200 characters (hashtags included)
-- Hook in first line
-- 3-5 hashtags max (fewer = better reach)
-- Inline hashtags (not separated)
-
-## Output Format
-
-### JSON (Late API format) - Array
-
-All platforms are output as a single JSON array to `{output.dir}/{date}-{slug}.json`.
-
-#### Example: `post/2026-03-12-promo-video.json`
-
-```json
-[
-  {
-    "content": "キャプション本文",
-    "mediaItems": [
-      {"type": "video", "path": "/path/to/video.mp4"}
-    ],
-    "platforms": [
-      {
-        "platform": "instagram",
-        "platformSpecificData": {
-          "contentType": "reels or feed (アスペクト比で自動判定)",
-          "instagramThumbnail": "post/thumbnails/instagram/{slug}.jpg",
-          "firstComment": "#追加ハッシュタグ群"
-        }
-      }
-    ],
-    "schedule": "2026-03-12 19:00"
-  },
-  {
-    "content": "動画の説明文（Description）\n\nチャンネル登録お願いします！\n\n#シフト管理 #業務効率化 (縦長なら #Shorts 追加)",
-    "mediaItems": [
-      {
-        "type": "video",
-        "path": "/path/to/video.mp4",
-        "thumbnail": {
-          "url": "post/thumbnails/youtube/{slug}.jpg"
-        }
-      }
-    ],
-    "platforms": [
-      {
-        "platform": "youtube",
-        "platformSpecificData": {
-          "title": "シフト管理が劇的に変わる！AIが自動で最適配置",
-          "visibility": "public",
-          "categoryId": "28",
-          "madeForKids": false,
-          "containsSyntheticMedia": false
-        }
-      }
-    ],
-    "firstComment": "ピン留めコメント（任意）",
-    "schedule": "2026-03-12 19:30"
-  },
-  {
-    "content": "シフト管理、まだ手作業でやってない？\n\nAIが自動で最適なシフトを作成！\n店長の負担が劇的に減ります\n\nプロフィールのリンクから無料で試せるよ\n\n#シフト管理 #飲食店 #業務効率化 #ShiftBud",
-    "mediaItems": [
-      {"type": "video", "path": "/path/to/video.mp4"}
-    ],
-    "platforms": [
-      {
-        "platform": "tiktok"
-      }
-    ],
-    "tiktokSettings": {
-      "privacy_level": "PUBLIC_TO_EVERYONE",
-      "allow_comment": true,
-      "allow_duet": true,
-      "allow_stitch": true,
-      "content_preview_confirmed": true,
-      "express_consent_given": true,
-      "video_cover_timestamp_ms": 2000,
-      "video_made_with_ai": false
-    },
-    "schedule": "2026-03-12 20:00"
-  }
-]
-```
-
-**Platform-specific Notes**:
-- **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定
-- **YouTube**: `content` = 説明文、`platformSpecificData.title` = タイトル（max 100字）、`mediaItems[].thumbnail.url` = サムネパス
-- **TikTok**: `tiktokSettings` はトップレベルに配置、`content_preview_confirmed` / `express_consent_given` は常に `true`
-
-### Markdown (default)
-
-```
-## 投稿テンプレート
-
-**プラットフォーム**: instagram, youtube, tiktok
-**タイプ**: reel
-**メディア**: /path/to/media.mp4
-
----
-
-### Instagram
-
-#### キャプション
-{caption}
-
-#### ハッシュタグ（{count}個）
-{hashtags}
-
-#### ファーストコメント（推奨）
-{first_comment_hashtags}
-
----
-
-### YouTube Shorts
-
-#### タイトル（{length}/100字）
-{title}
-
-#### 説明
-{description}
-
-{hashtags} #Shorts
-
----
-
-### TikTok
-
-#### キャプション
-{caption with inline hashtags}
-```
-
-## Backward Compatibility
-
-- `--platforms` 省略時 → `all-video`（IG + YT + TikTok 全部生成）
-- `--platforms instagram` → Instagram単体（従来の動作を明示指定で再現）
-- config に `platforms` キーなし → 全プラットフォームにフォールバック
-- 旧形式の config（`hashtag` がトップレベル）→ Instagram設定として解釈
+- [Instagram guide](references/instagram-guide.md)
+- [YouTube Shorts guide](references/youtube-shorts-guide.md)
+- [TikTok guide](references/tiktok-guide.md)
+- [Hashtag strategy (cross-platform)](references/short-video-hashtags.md)
+- [Posting times](references/posting-times.json)
+- [Caption Structures](references/caption-structures.md)
+- [Output Format](references/output-format.md)
+- [Config Guide](references/config-guide.md)
 
 ## Examples
 
 ```bash
-# リール動画から全プラットフォーム投稿文を生成（デフォルト: all-video）
+# 全プラットフォーム投稿文を生成（デフォルト: all-video）
 /video-announce packages/video/out/promo-video.mp4
 
-# Instagram単体（従来互換）
+# Instagram単体
 /video-announce packages/video/out/promo-video.mp4 --platforms instagram
 
 # YouTube Shorts + TikTok のみ
@@ -397,13 +111,7 @@ All platforms are output as a single JSON array to `{output.dir}/{date}-{slug}.j
 # ブログ記事からフィード投稿文を生成
 /video-announce content/blog/2026-01-15-shift-management.mdx --type feed
 
-# トピックから投稿文を生成
-/video-announce "AIを活用したシフト管理の未来" --type feed
-
-# カルーセル（Instagram + YouTube のみ）
-/video-announce "シフト管理Tips5選" --type carousel --media img1.jpg,img2.jpg,img3.jpg --platforms instagram
-
-# JSON出力 + スケジュール（全プラットフォーム）
+# JSON出力 + スケジュール
 /video-announce packages/video/out/guide-setup.mp4 --format json --schedule "2026-03-12 19:00"
 
 # 投稿パイプライン（1ファイルで全プラットフォーム）
@@ -411,3 +119,10 @@ All platforms are output as a single JSON array to `{output.dir}/{date}-{slug}.j
 # → post/{date}-{slug}.json (配列: [instagram, youtube, tiktok])
 npx tsx $SKILLS_DIR/late-schedule-post/scripts/post.ts --json post/{date}-{slug}.json
 ```
+
+## Backward Compatibility
+
+- `--platforms` 省略時 → `all-video`（全プラットフォーム生成）
+- `--platforms instagram` → Instagram単体（従来の動作）
+- config に `platforms` キーなし → 全プラットフォームにフォールバック
+- 旧形式の config（`hashtag` がトップレベル）→ Instagram設定として解釈
