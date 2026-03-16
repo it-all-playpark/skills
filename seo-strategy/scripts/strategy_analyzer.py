@@ -26,6 +26,7 @@ THRESHOLDS = {
     "low_engagement": {"max_engagement_rate": 35.0},
     "position_opportunity": {"min_position": 8, "max_position": 20},
     "zero_click": {"min_impressions": 50, "max_clicks": 0},
+    "zero_impressions": {"min_days_since_publish": 30},
 }
 
 # --- Default config ---
@@ -472,7 +473,7 @@ def build_cluster_suggestions(
     return final
 
 
-def detect_issues(ga_metrics: dict, gsc_metrics: dict) -> list[str]:
+def detect_issues(ga_metrics: dict, gsc_metrics: dict, article_date: str = "") -> list[str]:
     """Auto-detect issues for an article based on thresholds."""
     issues = []
     imp = gsc_metrics.get("impressions", 0)
@@ -493,6 +494,17 @@ def detect_issues(ga_metrics: dict, gsc_metrics: dict) -> list[str]:
         issues.append("position_opportunity")
     if imp >= t["zero_click"]["min_impressions"] and clicks <= t["zero_click"]["max_clicks"]:
         issues.append("zero_click")
+
+    # 公開30日以上経過 & imp 0 → KW不適合の可能性
+    if article_date and imp == 0:
+        from datetime import date
+        try:
+            pub = date.fromisoformat(article_date)
+            days = (date.today() - pub).days
+            if days >= t["zero_impressions"]["min_days_since_publish"]:
+                issues.append("zero_impressions")
+        except ValueError:
+            pass
 
     return issues
 
@@ -540,13 +552,65 @@ def build_article_metrics(
                 "engagement_rate": ga.get("engagement_rate", 0),
                 "avg_duration": ga.get("avg_duration", 0),
             },
-            "issues": detect_issues(ga, gsc),
+            "issues": detect_issues(ga, gsc, article.get("date", "")),
         }
         results.append(entry)
 
     # Sort by total impressions + pageviews (combined visibility)
     results.sort(key=lambda x: x["gsc"]["impressions"] + x["ga4"]["pageviews"], reverse=True)
     return results
+
+
+def build_category_performance(article_metrics: list[dict]) -> dict:
+    """Aggregate performance by blog category to detect domain authority gaps."""
+    by_cat: dict[str, dict] = defaultdict(lambda: {
+        "count": 0, "total_imp": 0, "total_clicks": 0,
+        "total_pv": 0, "zero_imp_count": 0, "slugs": []
+    })
+    for a in article_metrics:
+        cat = a.get("category", "") or "unknown"
+        by_cat[cat]["count"] += 1
+        by_cat[cat]["total_imp"] += a["gsc"]["impressions"]
+        by_cat[cat]["total_clicks"] += a["gsc"]["clicks"]
+        by_cat[cat]["total_pv"] += a["ga4"]["pageviews"]
+        if a["gsc"]["impressions"] == 0:
+            by_cat[cat]["zero_imp_count"] += 1
+        by_cat[cat]["slugs"].append(a["slug"])
+
+    result = {}
+    for cat, data in by_cat.items():
+        n = data["count"]
+        result[cat] = {
+            "article_count": n,
+            "total_impressions": data["total_imp"],
+            "total_clicks": data["total_clicks"],
+            "avg_impressions": round(data["total_imp"] / n) if n else 0,
+            "total_pageviews": data["total_pv"],
+            "zero_impression_count": data["zero_imp_count"],
+            "zero_impression_rate": round(data["zero_imp_count"] / n * 100, 1) if n else 0,
+        }
+    return result
+
+
+def build_domain_authority_map(query_clusters: list[dict]) -> list[dict]:
+    """Identify which keyword areas the domain has authority in."""
+    authority = []
+    for cluster in query_clusters:
+        if cluster["cluster"] == "その他":
+            continue
+        imp = cluster["total_impressions"]
+        clicks = cluster["total_clicks"]
+        ctr = round(clicks / imp * 100, 1) if imp > 0 else 0
+        authority.append({
+            "area": cluster["cluster"],
+            "impressions": imp,
+            "clicks": clicks,
+            "ctr": ctr,
+            "strength": "strong" if ctr >= 5 and clicks >= 20 else
+                        "moderate" if imp >= 100 else "weak",
+        })
+    authority.sort(key=lambda x: x["impressions"], reverse=True)
+    return authority
 
 
 def build_device_gap(ga_data: dict) -> dict:
@@ -618,6 +682,13 @@ def build_output(
         clusters, unclustered = build_query_clusters(gsc_data, blog_articles, config)
         output["query_clusters"] = clusters
         output["cluster_suggestions"] = build_cluster_suggestions(unclustered, config)
+
+    # Category performance
+    output["category_performance"] = build_category_performance(article_metrics)
+
+    # Domain authority map (requires query_clusters)
+    if "query_clusters" in output:
+        output["domain_authority_map"] = build_domain_authority_map(output["query_clusters"])
 
     # Device gap (GA4)
     if ga_data:

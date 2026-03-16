@@ -40,13 +40,13 @@
 
 {existing_article_optimizations を priority 順に記述}
 
-### {priority}: {slug}
+### {priority}: {slug} `{status}`
 
 - **現状**: imp {metrics.impressions} / CTR {metrics.ctr}% / 直帰率 {metrics.bounce_rate}%
 - **課題**: {actions[].rationale の要約}
 - **アクション**:
-  - [ ] {action.type}: {action.suggestion}
-  - [ ] ...
+  - {action.status == "done" ? "[x]" : "[ ]"} {action.type}: {action.suggestion}
+  - ...
 - **期待効果**: {expected_impact}
 
 ---
@@ -96,9 +96,9 @@
 
 {channel_strategy を priority 順に記述}
 
-| チャネル | 優先度 | 課題 | セッション数 | 直帰率 | アクション |
-| -------- | ------ | ---- | ------------ | ------ | ---------- |
-| {channel} | {priority} | {issue} | {metrics.sessions} | {metrics.bounce_rate}% | {actions のカンマ区切り} |
+| チャネル | 優先度 | Status | 課題 | セッション数 | 直帰率 | アクション |
+| -------- | ------ | ------ | ---- | ------------ | ------ | ---------- |
+| {channel} | {priority} | {status} | {issue} | {metrics.sessions} | {metrics.bounce_rate}% | {actions のカンマ区切り} |
 
 ---
 
@@ -127,7 +127,33 @@
 
 ---
 
-## 8. ロードマップ
+## 8. ドメイン権威性分析
+
+{category_performance と domain_authority_map から生成}
+
+### カテゴリ別パフォーマンス
+
+| カテゴリ | 記事数 | 総imp | 平均imp | imp0率 |
+| -------- | ------ | ----- | ------- | ------ |
+| {category} | {article_count} | {total_impressions} | {avg_impressions} | {zero_impression_rate}% |
+
+### 強み領域 / 弱み領域
+
+{domain_authority_map を strength 順に記述}
+
+| KW領域 | 強度 | imp | CTR | 示唆 |
+| ------ | ---- | --- | --- | ---- |
+| {area} | {strength} | {impressions} | {ctr}% | {LLMが strength に応じた示唆を記述} |
+
+### KW戦略への示唆
+
+- {LLMが category_performance + domain_authority_map から導出した戦略的示唆}
+- imp0率が高いカテゴリは KW 領域の見直しを検討
+- strong 領域の深堀り、weak 領域の撤退/リターゲットを判断
+
+---
+
+## 9. ロードマップ
 
 {roadmap.phases を記述}
 
@@ -145,6 +171,13 @@ _次回更新: {generated_at + 30日}_
 ```
 
 ## セクション別記述ガイドライン
+
+### 8. ドメイン権威性分析
+
+- `category_performance` からカテゴリ間の imp 格差を可視化
+- `domain_authority_map` から強み/弱み領域を分類
+- `zero_impression_rate` が高いカテゴリは KW 戦略の問題を指摘
+- 数値は JSON から直接引用し、LLM は戦略的示唆のみを付加する
 
 ### 1. エグゼクティブサマリー
 
@@ -209,7 +242,8 @@ _次回更新: {generated_at + 30日}_
 | チャネル戦略 | 5. チャネル戦略 | `channel_strategy` |
 | 新規記事方向性 | 6. 新規記事方向性 | `new_article_directions` |
 | クラスタ提案 | 7. クラスタ提案 | `cluster_suggestions` |
-| ロードマップ | 8. ロードマップ | `roadmap` |
+| ドメイン権威性分析 | 8. ドメイン権威性分析 | `category_performance` + `domain_authority_map` |
+| ロードマップ | 9. ロードマップ | `roadmap` |
 
 ## 注意事項
 

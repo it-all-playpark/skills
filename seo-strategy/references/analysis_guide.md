@@ -11,6 +11,7 @@ strategy_analyzer.py が使用する分析手法・閾値・判断基準。
 | `low_engagement` | engagement_rate ≤ 35% | エンゲージ低い → コンテンツ品質/導線問題 |
 | `position_opportunity` | 8 ≤ position ≤ 20 | 2ページ目圏内 → 改善で1ページ目に |
 | `zero_click` | imp ≥ 50 & clicks = 0 | 表示あるが CTR ゼロ → 深刻な不一致 |
+| `zero_impressions` | 公開30日+ & imp = 0 | KW不適合 or ドメイン権威性不足 |
 
 ## 優先度判定ガイドライン（LLM 用）
 
@@ -75,6 +76,34 @@ strategy_analyzer.py の keyword-based clustering は `seo-config.json` の `clu
 7. **出力**: 上位 `cluster_suggestion_top_n`（デフォルト 5）件
 
 LLM はこの提案を確認し、有用なものを `seo-config.json` の `cluster_keywords` に手動追加する。
+
+## Category Performance 分析（LLM用）
+
+### zero_impressions issue の意味
+
+公開から30日以上経過しているにもかかわらず GSC impressions が 0 の記事。KW が検索需要に合っていない、またはドメイン権威性が不足している可能性がある。
+
+### zero_impression_rate による診断
+
+| zero_impression_rate | 診断 | 推奨アクション |
+|---------------------|------|-------------|
+| 0-20% | 正常 | 個別記事の改善で対応 |
+| 20-50% | KW戦略に問題あり | KWリターゲットを推奨 |
+| 50%+ | ドメイン権威性が不足 | KW領域自体の見直しが必要 |
+
+### カテゴリ間格差の検知
+
+tech-tips/lab-reports の avg_impressions と solutions/case-studies の avg_impressions を比較:
+- 10倍以上の差 → ビジネスKW領域でのドメイン権威性不足を指摘
+- 報告時に domain_authority_map と合わせて「勝てている領域」「勝てていない領域」を明示
+
+### KW競合性の推定（domain_authority_map ベース）
+
+| strength | 意味 | 新記事への示唆 |
+|---------|------|-------------|
+| strong | CTR 5%+ & clicks 20+ | この領域の新記事は有望 |
+| moderate | imp 100+ だが clicks 少 | title/meta 改善で伸びる余地 |
+| weak | imp 少 or CTR 低 | この領域のKWは競合が強い可能性。新記事は慎重に |
 
 ## Device Gap 判定
 

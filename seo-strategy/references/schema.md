@@ -56,13 +56,15 @@
   "slug": "article-slug",
   "url": "/blog/article-slug",
   "priority": "high|medium|low",
+  "status": "pending|done|skipped",
   "actions": [
     {
       "type": "title_meta|content_refresh|schema_markup|internal_link",
       "field": "title|description (title_meta のみ)",
       "current": "現在の値 (あれば)",
       "suggestion": "改善提案",
-      "rationale": "根拠（メトリクス付き）"
+      "rationale": "根拠（メトリクス付き）",
+      "status": "pending|done|skipped"
     }
   ],
   "metrics": {
@@ -92,6 +94,7 @@
     {
       "type": "series_linking|pillar_page|cross_category",
       "priority": "high|medium|low",
+      "status": "pending|done|skipped",
       "description": "施策説明",
       "articles": ["slug1", "slug2"],
       "rationale": "根拠",
@@ -102,6 +105,7 @@
     {
       "type": "blog_to_service|blog_to_contact|in_article",
       "priority": "high|medium|low",
+      "status": "pending|done|skipped",
       "description": "施策説明",
       "target_page": "/path",
       "rationale": "根拠",
@@ -117,17 +121,20 @@
 {
   "mobile": {
     "priority": "high|medium|low",
+    "status": "pending|done|skipped",
     "issues": [
       {
         "metric": "metric_name",
         "current": float,
         "target": float,
-        "actions": ["action1", "action2"]
+        "actions": ["action1", "action2"],
+        "status": "pending|done|skipped"
       }
     ]
   },
   "conversion_tracking": {
     "priority": "critical|high|medium",
+    "status": "pending|done|skipped",
     "configured": bool,
     "required_events": [
       { "event": "event_name", "description": "説明" }
@@ -143,6 +150,7 @@
 {
   "channel": "linkedin|facebook|qiita|twitter|organic",
   "priority": "high|medium|low",
+  "status": "pending|done|skipped",
   "issue": "課題の要約",
   "actions": ["action1", "action2"],
   "metrics": { "sessions": int, "bounce_rate": float }
@@ -157,6 +165,7 @@
   "evidence": "根拠データの要約",
   "suggested_angles": ["切り口1", "切り口2"],
   "priority": "high|medium|low",
+  "status": "pending|done|skipped",
   "funnel": "認知|興味|検討|導入"
 }
 ```
@@ -176,6 +185,89 @@
 ```
 
 LLM はこの提案を確認し、有用なものを `seo-config.json` の `cluster_keywords` に追加する判断を行う。
+
+## category_performance
+
+strategy_analyzer.py が出力するカテゴリ別集計。ドメイン権威性ギャップの検知に使用。
+
+```json
+{
+  "tech-tips": {
+    "article_count": 20,
+    "total_impressions": 12000,
+    "total_clicks": 800,
+    "avg_impressions": 600,
+    "total_pageviews": 3000,
+    "zero_impression_count": 1,
+    "zero_impression_rate": 5.0
+  },
+  "solutions": {
+    "article_count": 10,
+    "total_impressions": 440,
+    "total_clicks": 30,
+    "avg_impressions": 44,
+    "total_pageviews": 200,
+    "zero_impression_count": 8,
+    "zero_impression_rate": 80.0
+  }
+}
+```
+
+## domain_authority_map[]
+
+KW領域別の権威性評価。query_clusters から算出。
+
+```json
+{
+  "area": "Claude Code",
+  "impressions": 5000,
+  "clicks": 400,
+  "ctr": 8.0,
+  "strength": "strong"
+}
+```
+
+strength の判定ロジック:
+- `strong`: CTR ≥ 5% かつ clicks ≥ 20
+- `moderate`: impressions ≥ 100
+- `weak`: それ以外
+
+## status フィールド共通仕様
+
+アクション可能な要素には `status` フィールドを持たせ、進捗を追跡する。
+
+| 値 | 意味 |
+| --- | ---- |
+| `pending` | 未着手（デフォルト） |
+| `done` | 対応完了 |
+| `skipped` | 意図的にスキップ |
+
+### 対象要素
+
+| セクション | レベル |
+| ---------- | ------ |
+| `existing_article_optimizations[]` | 記事単位 + `actions[]` 個別 |
+| `site_structure.internal_linking[]` | 施策単位 |
+| `site_structure.cta_strategy[]` | 施策単位 |
+| `technical_seo.mobile` | カテゴリ単位 + `issues[]` 個別 |
+| `technical_seo.conversion_tracking` | カテゴリ単位 |
+| `channel_strategy[]` | チャネル単位 |
+| `new_article_directions[]` | 方向性単位 |
+
+### 記事レベル status の導出
+
+`existing_article_optimizations[].status` は全 `actions[].status` から導出:
+- 全 action が `done` or `skipped` → 記事 status = `done`
+- 1つ以上 `done` or `skipped` で残り `pending` → 記事 status = `pending`（部分対応中）
+- 全 action が `pending` → 記事 status = `pending`
+
+### リフレッシュ時のステータス保持
+
+`--refresh` で戦略を再生成する際、既存 `seo-strategy.json` の `status` 値を引き継ぐ:
+1. 既存 JSON を読み込み、slug/type/channel 等をキーに status をマッピング
+2. 新規生成された要素のうち、既存と一致するものは status を引き継ぐ
+3. 新規要素は `"pending"` で初期化
+4. 既存にあったが新規に含まれない `done` 要素は出力から除外
 
 ## kpi_targets
 
