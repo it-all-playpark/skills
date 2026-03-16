@@ -63,9 +63,11 @@ else
   else
     TARGET_FILE="${GIT_ROOT}/.claude/memory/project.mv2"
     if [[ ! -f "$TARGET_FILE" ]]; then
-      warn "Project memory file not found at ${TARGET_FILE}, falling back to global"
-      TARGET_FILE="$GLOBAL_MV2"
-      TARGET="global"
+      mkdir -p "$(dirname "$TARGET_FILE")"
+      if ! memvid create "$TARGET_FILE" 2>/dev/null; then
+        die_json "Failed to create project memory at ${TARGET_FILE}" 1
+      fi
+      warn "Created project memory at ${TARGET_FILE}"
     fi
   fi
 fi
@@ -129,15 +131,11 @@ if [[ -n "$URI" ]]; then
 fi
 
 # ============================================================================
-# Execute: put → commit (CRITICAL: commit must always follow put)
+# Execute: put (memvid V2 persists directly, no separate commit needed)
 # ============================================================================
 
 if ! memvid "${PUT_ARGS[@]}" 2>/dev/null; then
   die_json "memvid put failed for ${TARGET_FILE}" 1
-fi
-
-if ! memvid commit "$TARGET_FILE" 2>/dev/null; then
-  die_json "memvid commit failed for ${TARGET_FILE} — data may be in WAL only" 1
 fi
 
 # ============================================================================
@@ -150,8 +148,7 @@ if has_jq; then
     --arg target "$TARGET_FILE" \
     --arg title "$TITLE" \
     --arg type "$TYPE" \
-    --argjson committed true \
-    '{status: $status, target: $target, title: $title, type: $type, committed: $committed}'
+    '{status: $status, target: $target, title: $title, type: $type}'
 else
-  echo "{\"status\":\"saved\",\"target\":$(json_str "$TARGET_FILE"),\"title\":$(json_str "$TITLE"),\"type\":$(json_str "$TYPE"),\"committed\":true}"
+  echo "{\"status\":\"saved\",\"target\":$(json_str "$TARGET_FILE"),\"title\":$(json_str "$TITLE"),\"type\":$(json_str "$TYPE")}"
 fi

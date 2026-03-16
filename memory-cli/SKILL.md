@@ -103,22 +103,22 @@ basename $(git rev-parse --show-toplevel) → --tag project=<dirname>
 
 #### `scripts/memvid-save.sh`
 
-Deterministic put-then-commit wrapper. Ensures the critical `commit` step is never missed.
+Deterministic put wrapper. Handles target resolution, auto-creation of project.mv2, and tag injection.
 
 ```bash
 # Save to global memory
 ./scripts/memvid-save.sh --target global --title "Title" --content "Content" --type feedback --tags "team=frontend" --uri "feedback/2026-03-16/slug"
 
-# Save to project memory (falls back to global if project.mv2 missing)
+# Save to project memory (auto-creates project.mv2 if missing)
 ./scripts/memvid-save.sh --target project --title "Title" --content "Content" --type project
 ```
 
-Output: `{"status": "saved", "target": "<path>", "title": "<title>", "type": "<type>", "committed": true}`
+Output: `{"status": "saved", "target": "<path>", "title": "<title>", "type": "<type>"}`
 
-The LLM decides WHAT to save (content generation); this script handles the deterministic save-and-commit flow.
+The LLM decides WHAT to save (content generation); this script handles the deterministic save flow.
 
 ### Critical Rules
 
-1. **`put` 後は必ず `commit` する:** 未commitフレームはWAL（Write-Ahead Log）にのみ存在し、永続化されない。`memvid commit <FILE.mv2>` を `put` の後に必ず実行すること。
+1. **`put` は直接永続化する:** memvid V2 では `put` がデータを直接永続化する。別途 `commit` コマンドは不要（存在しない）。
 2. **`create` は新規ファイルのみ:** `memvid create` は既存 `.mv2` ファイルを**上書き**する。既存ファイルへの追記は `put` を使う。
 3. **`enrich` で検索品質向上:** 定期的に `memvid enrich <FILE.mv2> --engine rules` を実行すると、エンティティが抽出され `state`/`facts` コマンドでの O(1) ルックアップが有効になる。
