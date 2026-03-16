@@ -143,26 +143,31 @@ For approved proposals:
 
 ## Phase 8: Persist
 
-Save retrospective summary to memory file at `~/.claude/projects/<project>/memory/`:
+Save retrospective summary to memvid via `memory-cli`:
 
-```markdown
----
-name: retrospective-{YYYY-MM-DD}
-description: Skill retrospective results from {date range}
-type: project
----
+```bash
+TMPFILE=$(mktemp /tmp/retro-XXXXXX.md)
+cat > "$TMPFILE" << EOF
+## Skill Retrospective: {YYYY-MM-DD}
 
-- Date range analyzed
-- Patterns detected (count)
-- Proposals generated / accepted / rejected
-- Skills modified
-- Last analyzed journal entry timestamp
+- **Date range**: {start} ~ {end}
+- **Patterns detected**: {count}
+- **Proposals**: {generated} generated / {accepted} accepted / {rejected} rejected
+- **Skills modified**: {skill_list}
+- **Last analyzed entry**: {timestamp}
+EOF
+
+memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
+  --embedding \
+  --title "Retrospective: {summary} {YYYY-MM}" \
+  --tag type=retrospective \
+  --uri "retrospective/{YYYY-MM-DD}/{slug}"
+
+rip "$TMPFILE"
 ```
 
-Update `MEMORY.md` index with the new memory file pointer.
-
 This memory enables:
-- Next retrospective knows where to start (`--since`)
+- Next retrospective knows where to start (`--since`) via `memvid find --query "retrospective 最新"`)
 - Historical trend tracking
 - Duplicate pattern suppression
 

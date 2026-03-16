@@ -34,7 +34,7 @@ Save session context and learnings.
 
 1. **Gather** → Collect session state
 2. **Summarize** → Extract key information
-3. **Persist** → Save to memory/file
+3. **Persist** → Save to memvid via `memory-cli`
 4. **Verify** → Confirm save success
 5. **Report** → Show what was saved
 
@@ -44,6 +44,41 @@ Save session context and learnings.
 - Decisions made
 - Code changes summary
 - Learnings and insights
+
+## memvid Integration
+
+セッション終了時にサマリーを memvid に永続化する。
+
+```bash
+TMPFILE=$(mktemp /tmp/session-XXXXXX.md)
+cat > "$TMPFILE" << 'EOF'
+## Session Summary
+
+- **Project**: <PROJECT_NAME>
+- **Tasks completed**: <TASK_LIST>
+- **Decisions**: <KEY_DECISIONS>
+- **Learnings**: <INSIGHTS>
+EOF
+
+memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
+  --embedding \
+  --title "Session: <PROJECT_NAME> <BRIEF_DESCRIPTION>" \
+  --tag type=session \
+  --tag project=<PROJECT_NAME> \
+  --uri "session/<DATE>/<SLUG>"
+
+rip "$TMPFILE"
+```
+
+プロジェクト固有の判断・パターンは `.claude/memory/project.mv2` に保存:
+
+```bash
+memvid put .claude/memory/project.mv2 --input "$TMPFILE" \
+  --embedding \
+  --title "Project: <TOPIC>" \
+  --tag type=project \
+  --uri "project/<DATE>/<SLUG>"
+```
 
 ## Retrospective Check
 

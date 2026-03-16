@@ -36,15 +36,36 @@ Load project context and session state.
 2. **Sync External Skills** → Run `$SKILLS_DIR/_lib/infra/link-agent-skills.sh` to sync `.agents/skills/` symlinks
 3. **Discover** → Find project context files
 4. **Load** → Read CLAUDE.md, memories
-5. **Activate** → Set up working context
-6. **Report** → Show loaded state
+5. **Recall memvid** → Search memvid for related session/project memories
+6. **Activate** → Set up working context
+7. **Report** → Show loaded state
 
 ## What Gets Loaded
 
 - Project CLAUDE.md
-- Previous session memories (from `~/.claude/projects/` memory files)
+- Previous session memories (from memvid via `memory-cli`)
 - Checkpoints (if any)
 - Environment context
+
+## memvid Integration
+
+セッション開始時に memvid から関連メモリを検索してコンテキストを復元する。
+
+```bash
+# プロジェクトメモリがあれば両方検索
+if [ -f .claude/memory/project.mv2 ]; then
+  memvid find .claude/memory/project.mv2 \
+    --query "<PROJECT_NAME> 最近のセッション" \
+    --mode sem --top-k 3 --json 2>/dev/null
+fi
+
+# グローバルメモリ
+memvid find ~/.claude/memory/global.mv2 \
+  --query "<PROJECT_NAME> 最近のセッション" \
+  --mode sem --top-k 3 --json
+```
+
+検索結果がある場合、セッションコンテキストに含めて報告する。
 
 ## Output
 
