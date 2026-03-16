@@ -152,6 +152,6 @@ bash $SKILLS_DIR/blog-cross-post/scripts/resolve-source.sh <slug-or-path>
 
 ## References
 
-- `references/backlink-templates.md` - 記事テンプレート・深掘り導線
-- `references/conversion-rules.md` - 変換ルール
-- `references/seo-guidelines.md` - SEO詳細
+- `references/cross-post-strategy.md` - 差別化方針・コア版設計原則・共通変換ルール
+- `$SKILLS_DIR/zenn-publish/references/content-guide.md` - Zennテンプレート・変換ルール・SEO
+- `$SKILLS_DIR/qiita-publish/references/content-guide.md` - Qiitaテンプレート・変換ルール・SEO
