@@ -43,43 +43,54 @@ skill-config.json の `blog-schedule-overview` セクションから設定を読
 | seo_strategy_path | "" | seo-strategy.json パス |
 | output_dir | "" | レポート保存先（空=表示のみ） |
 
+## Scripts
+
+以下の deterministic スクリプトでデータ収集を行い、LLM はフォーマット・戦略チェック・判断に専念する。
+
+### `scripts/collect-schedule.sh`
+
+全 MDX 記事の公開日・ステータスを収集。
+
+```bash
+scripts/collect-schedule.sh [--content-dir DIR] [--seed-dir DIR] [--sns-dir DIR]
+# Output: JSON array
+# [{"slug": "...", "date": "YYYY-MM-DD", "status": "published|scheduled|draft|seed", "sns": "scheduled|posted|none", "path": "..."}]
+```
+
+- frontmatter から `date` / `draft` のみ抽出（simple grep, not full YAML parsing）
+- seed_dir の未生成記事を "seed" として追加
+- sns_post_dir の JSON 照合で SNS ステータスを付与
+
+### `scripts/find-empty-slots.sh`
+
+スケジュールの空きスロットを検出。
+
+```bash
+scripts/find-empty-slots.sh --schedule-json <path> [--days N] [--publish-days "monday,thursday"]
+# Output: JSON array
+# [{"date": "YYYY-MM-DD", "day": "monday"}]
+```
+
+- collect-schedule.sh の出力 JSON を入力として使用
+- 指定曜日で未来 N 日間の空き日を列挙
+
 ## Workflow
 
 ```
-1. Config読込 → 2. MDX日付抽出 → 3. Seed検出 → 4. SNS照合 → 5. 戦略整合性チェック → 6. 表示/保存
+1. Script: collect-schedule.sh → 2. Script: find-empty-slots.sh → 3. LLM: 戦略整合性チェック → 4. LLM: 表示/保存
 ```
 
-### Step 1: Config読込
+### Step 1-2: データ収集（Script）
 
-skill-config.json から設定を取得。`--days` 引数で `lookahead_days` をオーバーライド可能。
+`collect-schedule.sh` で記事データを収集し、`find-empty-slots.sh` で空きスロットを検出。
 
-### Step 2: MDX日付抽出
-
-`content_dir` の全 MDX ファイルを Glob で列挙し、各ファイルの frontmatter `date` を Read で抽出。
-
-**重要**: bash スクリプトによる YAML パースは行わない。Claude が直接 Read して frontmatter を解析する。
-（理由: `date:` の本文中出現で誤検出、マルチラインフロントマターの扱い等を回避）
-
-各記事の状態を判定:
-- **公開済み**: `date` が today 以前、かつ `draft: true` でない
-- **予定**: `date` が today より後
-- **ドラフト**: `draft: true` が設定されている
-
-### Step 3: Seed検出
-
-`seed_dir` を確認し、まだ `content_dir` に MDX が生成されていない記事を「作成中」として列挙。
-
-### Step 4: SNS照合
-
-`sns_post_dir` の JSON ファイルを確認し、各記事の SNS 投稿スケジュール状況を照合。
-
-### Step 5: 戦略整合性チェック
+### Step 3: 戦略整合性チェック（LLM）
 
 `content_strategy_path` / `seo_strategy_path` が存在する場合:
 - 未スケジュールの記事がないか確認
 - クラスタカバレッジの確認
 
-### Step 6: 表示/保存
+### Step 4: 表示/保存（LLM）
 
 #### Calendar形式（デフォルト）
 ```

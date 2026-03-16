@@ -189,6 +189,23 @@ slack --token "$TOKEN" get-user-profile --user-id <USER_ID> [-o table]
 2. `slack --token "$TOKEN" get-users -o table` to find user ID
 3. `slack --token "$TOKEN" get-user-profile --user-id <ID>` for details
 
+## Scripts
+
+### `scripts/resolve-workspace.sh`
+
+Deterministic workspace token resolution. Run before any Slack CLI command.
+
+```bash
+# Resolve default workspace
+./scripts/resolve-workspace.sh
+# Resolve specific workspace
+./scripts/resolve-workspace.sh --workspace my-company
+```
+
+Output: `{"workspace": "name", "token_env": "ENV_VAR_NAME", "team_id": "T01ABC123"|null, "token_set": true|false}`
+
+The LLM handles all actual Slack operations; this script only resolves which token env var to use.
+
 ## Important Notes
 
 - Channel IDs look like `C0XXXXXXXXX`, User IDs like `U0XXXXXXXXX`

@@ -99,6 +99,24 @@ basename $(git rev-parse --show-toplevel) → --tag project=<dirname>
 
 保存はバックグラウンドで実行し、作業フローを中断しない。
 
+### Scripts
+
+#### `scripts/memvid-save.sh`
+
+Deterministic put-then-commit wrapper. Ensures the critical `commit` step is never missed.
+
+```bash
+# Save to global memory
+./scripts/memvid-save.sh --target global --title "Title" --content "Content" --type feedback --tags "team=frontend" --uri "feedback/2026-03-16/slug"
+
+# Save to project memory (falls back to global if project.mv2 missing)
+./scripts/memvid-save.sh --target project --title "Title" --content "Content" --type project
+```
+
+Output: `{"status": "saved", "target": "<path>", "title": "<title>", "type": "<type>", "committed": true}`
+
+The LLM decides WHAT to save (content generation); this script handles the deterministic save-and-commit flow.
+
 ### Critical Rules
 
 1. **`put` 後は必ず `commit` する:** 未commitフレームはWAL（Write-Ahead Log）にのみ存在し、永続化されない。`memvid commit <FILE.mv2>` を `put` の後に必ず実行すること。

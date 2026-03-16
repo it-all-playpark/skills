@@ -42,37 +42,59 @@ skill-config.json の `blog-internal-links` セクションから設定を読み
 | prevent_future_links | true | 未公開記事へのリンク防止 |
 | output_dir | claudedocs | レポート出力先 |
 
+## Scripts
+
+以下の deterministic スクリプトでリンクデータ収集を行い、LLM はクラスタ分析・リンク挿入・判断に専念する。
+
+### `scripts/extract-links.sh`
+
+全 MDX 記事から内部リンクを抽出しリンクマトリクスを構築。
+
+```bash
+scripts/extract-links.sh [--content-dir DIR] [--blog-prefix PREFIX]
+# Output: JSON
+# {"links": {"slug-a": ["slug-b", "slug-c"]}, "counts": {"slug-a": 2}}
+```
+
+- Markdown リンク: `[text](/blog/slug)`
+- JSX/MDX href: `<Link href="/blog/slug">`, `<a href="/blog/slug">`
+- slug ごとにリンク先を deduplicate
+
+### `scripts/check-future-links.sh`
+
+未公開記事へのリンク違反を検出。
+
+```bash
+scripts/check-future-links.sh --links-json <path> [--content-dir DIR]
+# Output: JSON array
+# [{"from": "slug-a", "to": "slug-b", "reason": "future_date|draft|seed_only|not_found", "target_date": "..."}]
+```
+
+- extract-links.sh の出力 JSON を入力として使用
+- 各リンク先の公開状態を frontmatter から判定
+
 ## Workflow
 
 ```
-1. Config読込 → 2. クラスタ構成取得 → 3. リンク解析 → 4. 問題検出 → 5. 修正/レポート
+1. Script: extract-links.sh → 2. Script: check-future-links.sh → 3. LLM: クラスタ構成取得 → 4. LLM: 問題検出・修正/レポート
 ```
 
-### Step 1: Config読込
+### Step 1-2: データ収集（Script）
 
-skill-config.json から設定を取得。
+`extract-links.sh` でリンクマトリクスを構築し、`check-future-links.sh` で未公開リンク違反を検出。
 
-### Step 2: クラスタ構成取得
+### Step 3: クラスタ構成取得（LLM）
 
 `seo-strategy.json` の `cluster_keywords` からクラスタ構成を取得。
-各クラスタに所属する記事を特定。
+各クラスタに所属する記事を特定し、スクリプト出力のリンクデータとクラスタを突合。
 
-### Step 3: リンク解析
-
-各 MDX 記事を Read し、内部リンクを抽出:
-- Markdown リンク: `[text](/blog/slug)`
-- MDX コンポーネント: `<Link href="/blog/slug">`
-- インラインリンク: `<a href="/blog/slug">`
-
-クラスタ内の記事間リンクマトリクスを構築。
-
-### Step 4: 問題検出
+### Step 4: 問題検出・修正/レポート（LLM）
 
 #### リンク不足検出
 - クラスタ内リンク数 < `min_links_per_article` の記事を検出
 - ハブページ（`hub_dir`）へのリンクがない記事を検出
 
-#### 未公開記事リンク検出
+#### 未公開記事リンク検出（check-future-links.sh の結果を使用）
 
 以下のいずれかに該当する記事へのリンクを「未公開リンク」として検出:
 

@@ -75,6 +75,23 @@ Diagnose dev-flow pipeline health and generate actionable improvement recommenda
 - Remove orphaned worktree directories
 ```
 
+## Scripts
+
+### `scripts/run-diagnostics.sh`
+
+Deterministic diagnostic data collection and health score calculation.
+
+```bash
+# Full diagnostics
+./scripts/run-diagnostics.sh
+# Specific scope
+./scripts/run-diagnostics.sh --scope journal
+./scripts/run-diagnostics.sh --scope worktrees
+./scripts/run-diagnostics.sh --scope config
+```
+
+Output: JSON with `score`, `rating`, `checks`, and `issues` fields. The LLM uses this structured data to generate the human-readable report with recommendations and prose.
+
 ## References
 
 - [Diagnostic Checks](references/diagnostic-checks.md) -- Check 1-7: mode distribution, failure analysis, error categories, worktree health, recovery turns, success trend, duration outliers

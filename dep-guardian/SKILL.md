@@ -30,21 +30,29 @@ Triage, test, and batch-merge dependency update PRs.
 ## Workflow
 
 ```
-1. DISCOVER  → List dependency update PRs via gh CLI
-2. CLASSIFY  → Categorize by risk (patch/minor/major/breaking)
-3. SORT      → Order by risk (safest first)
-4. TEST      → Checkout, build, test each PR
-5. REPORT    → Generate summary with pass/fail status
-6. MERGE     → Batch merge passed PRs (if --auto-merge)
+1. DISCOVER  → scripts/discover-prs.sh
+2. CLASSIFY  → scripts/classify-pr.sh (per PR)
+3. SORT      → LLM sorts by risk (safest first)
+4. TEST      → scripts/test-pr.sh (per PR, in risk order)
+5. REPORT    → LLM generates summary table
+6. MERGE     → scripts/merge-prs.sh (if --auto-merge)
 ```
 
 ## Phase 1: Discover
 
 ```bash
-gh pr list --label "$LABEL" --state open --json number,title,headRefName,labels,body --limit 50
+$SKILLS_DIR/dep-guardian/scripts/discover-prs.sh [--label LABEL]
+# Output: {"status":"ok","label":"dependencies","count":N,"prs":[...]}
 ```
 
 ## Phase 2: Classify
+
+For each PR from Phase 1:
+
+```bash
+$SKILLS_DIR/dep-guardian/scripts/classify-pr.sh --title "PR_TITLE" --body "PR_BODY" [--is-dev-dep]
+# Output: {"risk":"patch|minor|major|breaking","package":"name","from":"x.y.z","to":"a.b.c","is_dev_dep":bool}
+```
 
 ### Risk Classification
 
@@ -55,43 +63,19 @@ gh pr list --label "$LABEL" --state open --json number,title,headRefName,labels,
 | `major` | X.y.z bump, potential breaking | 1.2.3 → 2.0.0 |
 | `breaking` | Known breaking change (from PR body/changelog) | Major with migration guide |
 
-### Detection Logic
-
-1. Parse version bump from PR title (renovate/dependabot format)
-2. Check PR body for "breaking change" keywords
-3. Check if package is in devDependencies (lower risk) vs dependencies
-4. Cross-reference with [risk matrix](references/risk-matrix.md)
-
 ## Phase 3: Sort
 
-Process order: `patch` → `minor` → `major` → `breaking`
+LLM sorts classified PRs: `patch` → `minor` → `major` → `breaking`
 
-Within same risk level, sort by:
-1. devDependencies first (lower blast radius)
-2. Alphabetical by package name
+Within same risk level: devDependencies first, then alphabetical.
 
 ## Phase 4: Test
 
 For each PR (in risk order):
 
 ```bash
-# Checkout PR branch
-gh pr checkout $PR_NUMBER
-
-# Install dependencies
-$SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path .
-
-# Build
-npm run build 2>&1 || echo "BUILD_FAILED"
-
-# Test
-npm test 2>&1 || echo "TEST_FAILED"
-
-# Type check (if TypeScript)
-npx tsc --noEmit 2>&1 || echo "TYPE_CHECK_FAILED"
-
-# Return to original branch
-git checkout -
+$SKILLS_DIR/dep-guardian/scripts/test-pr.sh <pr-number>
+# Output: {"pr":N,"build":"pass|fail|skipped","test":"pass|fail|skipped","typecheck":"pass|fail|skipped","overall":"pass|fail","errors":[...]}
 ```
 
 | Result | Action |
@@ -102,6 +86,8 @@ git checkout -
 | Type check fails | Mark as needs-attention, record errors |
 
 ## Phase 5: Report
+
+LLM generates a markdown summary table:
 
 ```markdown
 ## Dependency Update Report
@@ -116,30 +102,25 @@ git checkout -
 | # | PR | Package | Risk | Build | Test | Types |
 |---|-----|---------|------|-------|------|-------|
 | 1 | #101 | lodash 4.17.21→4.17.22 | patch | pass | pass | pass |
-| 2 | #102 | typescript 5.3.2→5.3.3 | patch | pass | pass | pass |
-| 3 | #105 | next 14.1.0→14.2.0 | minor | pass | pass | pass |
 
 ### Needs Attention
 
 | # | PR | Package | Risk | Issue |
 |---|-----|---------|------|-------|
 | 4 | #103 | react 18→19 | major | 3 type errors |
-| 5 | #104 | eslint 8→9 | major | Config migration needed |
 ```
 
 ## Phase 6: Merge (if --auto-merge)
 
 ```bash
-# Only merge PRs within risk threshold
-for pr in $SAFE_PRS; do
-    gh pr merge $pr --squash --auto
-done
+$SKILLS_DIR/dep-guardian/scripts/merge-prs.sh <pr-numbers-comma-separated> [--dry-run]
+# Output: {"merged":[...],"skipped":[...],"errors":[...],"dry_run":bool}
 ```
 
-Safety checks before merge:
+Safety checks (enforced by script):
 - PR CI status must be passing
-- Risk level must be ≤ risk-threshold
 - PR must not have "do not merge" label
+- LLM enforces: risk level must be ≤ risk-threshold
 
 ## Error Handling
 

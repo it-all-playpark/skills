@@ -22,84 +22,41 @@ Save session context and learnings.
 | --type | What to save |
 | --summarize | Generate summary |
 
-## Save Types
+## Scripts
 
-| Type | Content |
-|------|---------|
-| session | Full session state |
-| learnings | Key insights only |
-| checkpoint | Recovery point |
+| Script | Purpose |
+|--------|---------|
+| `scripts/save-session.sh --title "TITLE" --content "CONTENT" [--target global\|project] [--type session\|project\|feedback] [--tags "k=v,..."]` | Save content to memvid with auto-tagging |
+| `scripts/check-failures.sh` | Check for unanalyzed journal failures (returns `{"failure_count": N}`) |
 
 ## Workflow
 
-1. **Gather** → Collect session state
-2. **Summarize** → Extract key information
-3. **Persist** → Save to memvid via `memory-cli`
-4. **Verify** → Confirm save success
-5. **Report** → Show what was saved
+1. **Check failures** → Run `scripts/check-failures.sh`; notify if count > 0
+2. **Gather** → Collect session state (tasks, decisions, learnings)
+3. **Compose** → Build title and content for memvid entry
+4. **Save** → Run `scripts/save-session.sh` with appropriate `--target` and `--type`
+5. **Verify** → Parse JSON result for success
+6. **Report** → Show what was saved
 
-## What Gets Saved
+## Save Types
 
-- Task progress
-- Decisions made
-- Code changes summary
-- Learnings and insights
+| Type | Content | Target |
+|------|---------|--------|
+| session | Full session state | global |
+| learnings | Key insights only | global or project |
+| checkpoint | Recovery point | project |
 
-## memvid Integration
-
-セッション終了時にサマリーを memvid に永続化する。
-
-```bash
-TMPFILE=$(mktemp /tmp/session-XXXXXX.md)
-cat > "$TMPFILE" << 'EOF'
-## Session Summary
-
-- **Project**: <PROJECT_NAME>
-- **Tasks completed**: <TASK_LIST>
-- **Decisions**: <KEY_DECISIONS>
-- **Learnings**: <INSIGHTS>
-EOF
-
-memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
-  --embedding \
-  --title "Session: <PROJECT_NAME> <BRIEF_DESCRIPTION>" \
-  --tag type=session \
-  --tag project=<PROJECT_NAME> \
-  --uri "session/<DATE>/<SLUG>"
-
-rip "$TMPFILE"
-```
-
-プロジェクト固有の判断・パターンは `.claude/memory/project.mv2` に保存:
-
-```bash
-memvid put .claude/memory/project.mv2 --input "$TMPFILE" \
-  --embedding \
-  --title "Project: <TOPIC>" \
-  --tag type=project \
-  --uri "project/<DATE>/<SLUG>"
-```
-
-## Retrospective Check
-
-Before saving, check for unanalyzed skill failures in the journal:
-
-```bash
-# Count failure entries since last retrospective
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --outcome failure --limit 100 2>/dev/null | jq 'length'
-```
+## Failure Check
 
 | Result | Action |
 |--------|--------|
 | 0 entries | Skip (no failures to analyze) |
 | 1+ entries | Notify: "N件の新規失敗エントリあり。`/skill-retrospective` で分析できます" |
 
-This is a lightweight check only. Full analysis is performed by `/skill-retrospective`.
-
 ## Output
 
 ```markdown
-## 💾 Save: [type]
+## Save: [type]
 
 ### Saved
 - Session ID: [id]

@@ -23,22 +23,29 @@ Load project context and session state.
 | --refresh | Force reload even if cached |
 | --analyze | Deep analysis after load |
 
-## Load Types
+## Scripts
 
-| Type | Action |
-|------|--------|
-| project | Load project context, CLAUDE.md |
-| checkpoint | Resume from saved checkpoint |
+| Script | Purpose |
+|--------|---------|
+| `scripts/load-context.sh [--refresh]` | Gather deterministic context: sync skills, detect project, search memvid |
+
+### Output (JSON)
+
+```json
+{
+  "project": "<name>",
+  "memories": {"project": [...], "global": [...]},
+  "synced_skills": true
+}
+```
 
 ## Workflow
 
-1. **Initialize** → Establish session
-2. **Sync External Skills** → Run `$SKILLS_DIR/_lib/infra/link-agent-skills.sh` to sync `.agents/skills/` symlinks
-3. **Discover** → Find project context files
-4. **Load** → Read CLAUDE.md, memories
-5. **Recall memvid** → Search memvid for related session/project memories
-6. **Activate** → Set up working context
-7. **Report** → Show loaded state
+1. **Run script** → `scripts/load-context.sh` to gather context
+2. **Read** → Parse JSON result for project name and memories
+3. **Discover** → Find and read project CLAUDE.md
+4. **Activate** → Set up working context from memories
+5. **Report** → Show loaded state to user
 
 ## What Gets Loaded
 
@@ -47,30 +54,10 @@ Load project context and session state.
 - Checkpoints (if any)
 - Environment context
 
-## memvid Integration
-
-セッション開始時に memvid から関連メモリを検索してコンテキストを復元する。
-
-```bash
-# プロジェクトメモリがあれば両方検索
-if [ -f .claude/memory/project.mv2 ]; then
-  memvid find .claude/memory/project.mv2 \
-    --query "<PROJECT_NAME> 最近のセッション" \
-    --mode sem --top-k 3 --json 2>/dev/null
-fi
-
-# グローバルメモリ
-memvid find ~/.claude/memory/global.mv2 \
-  --query "<PROJECT_NAME> 最近のセッション" \
-  --mode sem --top-k 3 --json
-```
-
-検索結果がある場合、セッションコンテキストに含めて報告する。
-
 ## Output
 
 ```markdown
-## 📂 Load: Session Initialized
+## Load: Session Initialized
 
 ### Project
 - Name: [project name]

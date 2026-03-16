@@ -56,34 +56,42 @@ Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Sh
 
 Project config: `.claude/video-announce.json` — See [Config Guide](references/config-guide.md) for full example and details.
 
+Load merged config (defaults + project overrides):
+
+```bash
+$SKILLS_DIR/video-announce/scripts/load-config.sh
+```
+
 ## Workflow
 
-1. Load config (`.claude/video-announce.json`)
+1. Load config via `scripts/load-config.sh`
 2. Determine target platforms (`--platforms` or config)
 3. Identify source type and extract context (media metadata / article frontmatter / URL / topic)
-4. Detect aspect ratio for video via `ffprobe` (see Auto-Detect table below)
+4. Detect media metadata and content type via `scripts/detect-media.sh <media-path> [--type TYPE]`
 5. For each platform: generate caption ([Caption Structures](references/caption-structures.md)) + hashtags ([Hashtag Strategy](references/short-video-hashtags.md))
 6. Write output as JSON array or Markdown ([Output Format](references/output-format.md))
-7. Generate thumbnails if `platformDefaults.thumbOffset` is set (see [Config Guide](references/config-guide.md#platformdefaultsthumboffset))
+7. Generate thumbnails if `platformDefaults.thumbOffset` is set via `scripts/extract-thumbnail.sh`
+
+### Scripts
+
+| Script | Purpose | Output |
+|--------|---------|--------|
+| `scripts/load-config.sh` | Load config with defaults | Merged config JSON |
+| `scripts/detect-media.sh <path> [--type T]` | Detect media metadata + content type per platform | `{width, height, duration, aspect, content_types}` |
+| `scripts/extract-thumbnail.sh <path> --offset-ms N --output P` | Extract video frame as thumbnail | `{thumbnail, offset_ms}` |
 
 ### Auto-Detect Content Type
 
-動画ソースの場合、`ffprobe` でアスペクト比を自動検出し、プラットフォーム別に最適な設定を適用する。
-
-```bash
-ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 <video>
-```
+`detect-media.sh` applies these rules automatically:
 
 | Condition | Instagram | YouTube | TikTok |
 |-----------|-----------|---------|--------|
-| Video, 9:16 (縦長), <= 90s | `contentType: "reels"` | Shorts（`#Shorts` 付き） | 通常投稿 |
-| Video, 16:9 (横長) or other | `contentType: "feed"` | 通常動画（`#Shorts` なし） | 通常投稿（黒帯あり） |
-| Video, > 90s | `contentType: "feed"` | 通常動画 | 通常投稿 |
-| Single image | `contentType: "feed"` | — | — |
-| Multiple images/videos (--media) | `contentType: "carousel"` | — | — |
-| No media (topic/article only) | `contentType: "feed"` | — | — |
+| Video, 9:16 (縦長), <= 90s | `reels` | `shorts` | `standard` |
+| Video, 16:9 (横長) or other | `feed` | `standard` | `standard` |
+| Video, > 90s | `feed` | `standard` | `standard` |
+| Single image | `feed` | — | — |
 
-**重要**: `--type` で明示指定された場合はそちらを優先する。
+`--type` で明示指定された場合はそちらを優先する。
 
 ## References
 
