@@ -47,7 +47,7 @@ Generated docs go to `claudedocs/` by default.
 ## Output
 
 ```markdown
-## 📖 Index: [target]
+## Index: [target]
 
 ### Project Structure
 [Directory tree]

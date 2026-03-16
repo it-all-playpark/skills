@@ -16,18 +16,23 @@ Refresh `seed/**` caches in batch.
 python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N]
 ```
 
-## Rules
+## Args
 
-1. Read each `seed/*/manifest.json`.
-2. Resolve source repository from `source` or `url`.
-3. Compare `manifest.json.exportedAt` with latest commit time on `--branch` (default: `main`).
-4. Re-fetch only when repository has newer commits, unless `--force` is set.
-5. Re-fetch all of:
-   - `exported.md`
-   - `commits.md`
-   - `issues.md`
-   - `pr-summary.md`
-6. After successful re-fetch, update `manifest.json.exportedAt` to current UTC timestamp.
+| Arg | Default | Description |
+|-----|---------|-------------|
+| `--seed` | `seed/` | 対象ディレクトリ |
+| `--branch` | `main` | 比較対象ブランチ |
+| `--force` | false | コミット日時に関係なく強制更新 |
+| `--dry-run` | false | プレビューのみ |
+| `--limit` | all | 処理件数制限 |
+
+## Workflow
+
+```
+manifest.json 読込 → exportedAt 比較 → 更新あり → 4ファイル再取得 → exportedAt 更新
+```
+
+Details: [Algorithm Detail](references/algorithm-detail.md)
 
 ## Examples
 
@@ -35,22 +40,9 @@ python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py [--seed DIR]
 # default: seed/*, branch=main
 python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py
 
-# dry-run only (no file updates)
+# dry-run only
 python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py --dry-run
 
-# only one seed directory
-python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py --seed seed/playpark-llc-corporate-site
-
-# force refresh regardless of commit date
+# force refresh
 python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py --force
 ```
-
-## Dependencies
-
-- `gh` authenticated (`gh auth status`)
-- `python3`
-- Existing global skills:
-  - `~/.claude/skills/repo-export/scripts/export_repo.py`
-  - `~/.claude/skills/repo-commit/scripts/export_commit.py`
-  - `~/.claude/skills/repo-issue/scripts/export_issue.py`
-  - `~/.claude/skills/repo-pr/scripts/export_pr.py`
