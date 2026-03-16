@@ -42,7 +42,7 @@ Load project context and session state.
 ## What Gets Loaded
 
 - Project CLAUDE.md
-- Previous session memories (if Serena MCP available)
+- Previous session memories (from `~/.claude/projects/` memory files)
 - Checkpoints (if any)
 - Environment context
 

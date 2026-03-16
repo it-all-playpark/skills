@@ -38,7 +38,7 @@ Analyze skill execution history, detect failure patterns, and generate self-impr
 5. PROPOSE  → Generate concrete modification proposals
 6. PRESENT  → Show proposals to user for approval
 7. APPLY    → Edit skill files, commit changes (if approved)
-8. PERSIST  → Save retrospective summary to Serena memory
+8. PERSIST  → Save retrospective summary to memory file
 ```
 
 ## Phase 1: Collect Journal Entries
@@ -143,17 +143,23 @@ For approved proposals:
 
 ## Phase 8: Persist
 
-Save retrospective summary to Serena memory:
+Save retrospective summary to memory file at `~/.claude/projects/<project>/memory/`:
 
+```markdown
+---
+name: retrospective-{YYYY-MM-DD}
+description: Skill retrospective results from {date range}
+type: project
+---
+
+- Date range analyzed
+- Patterns detected (count)
+- Proposals generated / accepted / rejected
+- Skills modified
+- Last analyzed journal entry timestamp
 ```
-Memory name: retrospective-{YYYY-MM-DD}
-Content:
-  - Date range analyzed
-  - Patterns detected (count)
-  - Proposals generated / accepted / rejected
-  - Skills modified
-  - Last analyzed journal entry timestamp
-```
+
+Update `MEMORY.md` index with the new memory file pointer.
 
 This memory enables:
 - Next retrospective knows where to start (`--since`)

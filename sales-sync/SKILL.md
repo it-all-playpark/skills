@@ -1,7 +1,7 @@
 ---
 name: sales-sync
 version: 1.0.0
-description: "Gmailを確認して営業パイプラインの変更を検知し、スプレッドシートを自動更新するオーケストレーションスキル。Gmail MCP + gws CLI + /sales-tracker を連携させ、メールの送受信履歴・Google Meet議事メモ・アイドマ週次レポートから営業活動の変化を検知→差分分析→sales-tracker log/update で一括反映する。
+description: "Gmailを確認して営業パイプラインの変更を検知し、スプレッドシートを自動更新するオーケストレーションスキル。gws CLI（gmail/docs/sheets）+ /sales-tracker を連携させ、メールの送受信履歴・Google Meet議事メモ・アイドマ週次レポートから営業活動の変化を検知→差分分析→sales-tracker log/update で一括反映する。
 Use when: (1) Gmailから営業状況の変化を検知してスプレッドシートを更新したい,
 (2) keywords: gmail確認, メール確認, 状況確認, sync, 同期, パイプライン同期, gmail sync, 営業メール確認, spreadsheet更新, メールから更新,
 (3) 定期的な営業パイプラインの棚卸し・同期。
@@ -15,7 +15,7 @@ Gmailを確認して営業パイプラインの変更を検知し、`/sales-trac
 ## 概要
 
 ```
-Gmail MCP (検索・読取)
+gws gmail CLI (検索・読取)
         ↓
    差分分析エンジン
         ↓
@@ -25,10 +25,9 @@ Gmail MCP (検索・読取)
 
 ## 前提
 
-- Gmail MCP ツールが利用可能であること（`gmail_search_messages`, `gmail_read_message`, `gmail_read_thread`）
+- `gws` CLI が利用可能であること（gmail, docs, sheets サブコマンドを使用）
 - `/sales-tracker` スキルが利用可能であること
 - `skill-config.json` の `sales-tracker` セクションに `spreadsheet.id` が設定済みであること
-- Google Docs へのアクセスが必要な場合は `gws docs` CLI が利用可能であること
 
 ## 実行フロー
 
@@ -48,38 +47,48 @@ gws sheets +read --spreadsheet "<ID>" --range "活動履歴!A:H"
 **検索対象:**
 
 1. **送信済みフォローメール**: 顧客企業名・担当者名を含む送信メール
-   ```
-   gmail_search_messages: "from:playpark (subject:お礼 OR subject:打ち合わせ OR subject:ご提案 OR subject:ヒアリング OR subject:確認) after:YYYY/M/D"
+   ```bash
+   gws gmail users messages list --params "$(python3 -c "import json; print(json.dumps({'userId': 'me', 'q': 'from:playpark (subject:お礼 OR subject:打ち合わせ OR subject:ご提案 OR subject:ヒアリング OR subject:確認) after:YYYY/M/D'}))")"
    ```
 
 2. **顧客からの返信**: パイプライン内企業のドメインや担当者名で検索
-   ```
-   gmail_search_messages: "(to:playpark) (subject:Re: OR subject:RE:) after:YYYY/M/D"
+   ```bash
+   gws gmail users messages list --params "$(python3 -c "import json; print(json.dumps({'userId': 'me', 'q': '(to:playpark) (subject:Re: OR subject:RE:) after:YYYY/M/D'}))")"
    ```
 
 3. **Google Meet 議事メモ（Gemini）**: 打ち合わせのAI議事録
-   ```
-   gmail_search_messages: "from:gemini-notes@google.com subject:メモ after:YYYY/M/D"
+   ```bash
+   gws gmail users messages list --params "$(python3 -c "import json; print(json.dumps({'userId': 'me', 'q': 'from:gemini-notes@google.com subject:メモ after:YYYY/M/D'}))")"
    ```
 
 4. **アイドマ週次レポート**: Sales Crowd のアプローチ結果
-   ```
-   gmail_search_messages: "from:info@member-s.com subject:週次レポート after:YYYY/M/D"
+   ```bash
+   gws gmail users messages list --params "$(python3 -c "import json; print(json.dumps({'userId': 'me', 'q': 'from:info@member-s.com subject:週次レポート after:YYYY/M/D'}))")"
    ```
 
 5. **キーパーソンズ通知**: 新規リード・メッセージ通知
-   ```
-   gmail_search_messages: "from:keypersons@aidma-hd.jp after:YYYY/M/D"
+   ```bash
+   gws gmail users messages list --params "$(python3 -c "import json; print(json.dumps({'userId': 'me', 'q': 'from:keypersons@aidma-hd.jp after:YYYY/M/D'}))")"
    ```
 
 6. **確認用メール（Sales Crowd自動送信）**: 実際の顧客送信を示す
-   ```
-   gmail_search_messages: "from:sales@playpark.co.jp subject:確認用 after:YYYY/M/D"
+   ```bash
+   gws gmail users messages list --params "$(python3 -c "import json; print(json.dumps({'userId': 'me', 'q': 'from:sales@playpark.co.jp subject:確認用 after:YYYY/M/D'}))")"
    ```
 
 ### Step 3: メール内容の分析と差分検出
 
-取得した各メールを `gmail_read_message` / `gmail_read_thread` で読み取り、以下を抽出する:
+取得した各メールを `gws gmail` CLI で読み取り、以下を抽出する:
+
+```bash
+# メッセージ読取
+gws gmail users messages get --params '{"userId": "me", "id": "<MESSAGE_ID>", "format": "full"}'
+
+# スレッド読取
+gws gmail users threads get --params '{"userId": "me", "id": "<THREAD_ID>", "format": "full"}'
+```
+
+抽出する情報:
 
 - **企業名**: 件名・本文から特定（パイプライン内企業との照合）
 - **接触日**: メール送信日
