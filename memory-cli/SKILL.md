@@ -98,3 +98,9 @@ basename $(git rev-parse --show-toplevel) → --tag project=<dirname>
 | フィードバック受領 | ユーザーの修正・指摘（type=feedback） |
 
 保存はバックグラウンドで実行し、作業フローを中断しない。
+
+### Critical Rules
+
+1. **`put` 後は必ず `commit` する:** 未commitフレームはWAL（Write-Ahead Log）にのみ存在し、永続化されない。`memvid commit <FILE.mv2>` を `put` の後に必ず実行すること。
+2. **`create` は新規ファイルのみ:** `memvid create` は既存 `.mv2` ファイルを**上書き**する。既存ファイルへの追記は `put` を使う。
+3. **`enrich` で検索品質向上:** 定期的に `memvid enrich <FILE.mv2> --engine rules` を実行すると、エンティティが抽出され `state`/`facts` コマンドでの O(1) ルックアップが有効になる。

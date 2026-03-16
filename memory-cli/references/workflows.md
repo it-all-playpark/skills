@@ -17,6 +17,7 @@ memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
   --tag project=shift-bud \
   --uri "session/2026-03-16/shift-bud-auth-refactor"
 
+memvid commit ~/.claude/memory/global.mv2
 rip "$TMPFILE"
 ```
 
@@ -40,6 +41,8 @@ memvid put ~/.claude/memory/global.mv2 --input retrospective.md \
   --title "Retrospective: dev-kickoff failures 2026-03" \
   --tag type=retrospective \
   --uri "retrospective/2026-03-16/dev-kickoff"
+
+memvid commit ~/.claude/memory/global.mv2
 ```
 
 ## ユーザーフィードバックの保存
@@ -61,5 +64,6 @@ memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
   --tag type=feedback \
   --uri "feedback/2026-03-16/no-mock-db"
 
+memvid commit ~/.claude/memory/global.mv2
 rip "$TMPFILE"
 ```

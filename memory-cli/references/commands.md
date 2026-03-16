@@ -4,6 +4,7 @@
 
 ```bash
 memvid put <FILE.mv2> --input <PATH> --embedding --tag type=<TYPE> --tag project=<PROJECT>
+memvid commit <FILE.mv2>
 ```
 
 テキストを直接保存する場合は一時ファイル経由:
@@ -21,8 +22,11 @@ memvid put ~/.claude/memory/global.mv2 --input "$TMPFILE" \
   --tag project=shift-bud \
   --uri "feedback/2026-03-16/no-mock-db"
 
+memvid commit ~/.claude/memory/global.mv2
 rip "$TMPFILE"
 ```
+
+**⚠️ `commit` は必須:** 未commitフレームはWAL（Write-Ahead Log）にしか存在しない。`commit` を呼ばないとデータロスのリスクがある。`put` の後は必ず `commit` すること。
 
 **必須フラグ:**
 - `--embedding`: セマンティック検索を有効にするため常に付ける
@@ -107,6 +111,8 @@ memvid state <FILE.mv2> --entity "shift-bud"
 memvid create <PROJECT>/.claude/memory/project.mv2
 ```
 
+**⚠️ `create` は既存ファイルを上書きする。** 既存の `.mv2` ファイルに対して実行すると全データが消失する。新規作成時のみ使用すること。既存ファイルへの追記は `put` を使う。
+
 ## 8. correct — 訂正の保存（検索優先度ブースト付き）
 
 ```bash
@@ -114,6 +120,28 @@ memvid correct <FILE.mv2> --input <PATH> --embedding --title "訂正: ..."
 ```
 
 `correct` は通常の `put` より検索時に優先表示される。過去のメモリが間違っていた場合に使う。
+
+## 9. enrich — エンティティ自動抽出
+
+```bash
+memvid enrich <FILE.mv2> --engine rules
+```
+
+保存済みフレームからエンティティ（人名、プロジェクト名、技術スタック等）を自動抽出する。
+抽出後は `state` / `facts` / `memories` コマンドで O(1) ルックアップが可能になる。
+
+定期的に実行することで、`memvid state <FILE> --entity "project-name"` のような高速クエリが使えるようになる。
+
+## 10. ask — LLM連携Q&A
+
+```bash
+export OPENAI_API_KEY=sk-...
+memvid ask <FILE.mv2> --question "このプロジェクトの認証方式は？" --use-model openai --top-k 5
+```
+
+メモリを検索した上でLLMが回答を生成する。複数フレームの情報を統合した回答が得られる。
+
+**注意:** OpenAI APIキーが必要。`--use-model` で使用モデルを指定。
 
 ## Notes
 
@@ -123,3 +151,5 @@ memvid correct <FILE.mv2> --input <PATH> --embedding --title "訂正: ..."
 - Free tierは50MB制限。通常のテキストメモリなら数千件は余裕
 - `--json` フラグで機械処理可能な出力を得る
 - 一時ファイルの削除には必ず `rip` を使う（`rm` 禁止）
+- `put` 後は必ず `commit` を実行する（未commitデータはWALのみに存在しロスリスクあり）
+- `create` は既存ファイルを上書きするため、新規作成時のみ使用すること
