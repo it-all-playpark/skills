@@ -46,8 +46,11 @@ __pycache__/
 # --- external skills (auto-managed) ---
 agent-browser
 api-contract-testing
+building-sales-team
+enterprise-sales
 fastify-best-practices
 find-skills
+founder-sales
 gsc
 gws-calendar-agenda
 gws-calendar-insert
@@ -59,6 +62,7 @@ pricing-strategy
 prisma-cli
 remotion-best-practices
 rust-best-practices
+sales-enablement
 skill-creator
 strategy-and-competitive-analysis
 ui-ux-pro-max

@@ -11,6 +11,16 @@
       "sourceType": "github",
       "computedHash": "8be0344d35cfbd832a16cd830054ae80a0ab7b7d2a3861403e5c19ffdd55f7f4"
     },
+    "building-sales-team": {
+      "source": "refoundai/lenny-skills",
+      "sourceType": "github",
+      "computedHash": "7282628e30447efd7eeeecd8209880c27fd6fcee793967a5172bbb75c6a722eb"
+    },
+    "enterprise-sales": {
+      "source": "refoundai/lenny-skills",
+      "sourceType": "github",
+      "computedHash": "ce1132a63addb0187c9cbe3b99bd3dae75eadd77816842c598796952467ce16c"
+    },
     "fastify-best-practices": {
       "source": "mcollina/skills",
       "sourceType": "github",
@@ -20,6 +30,11 @@
       "source": "vercel-labs/skills",
       "sourceType": "github",
       "computedHash": "6412eb4eb3b91595ebab937f0c69501240e7ba761b3d82510b5cf506ec5c7adc"
+    },
+    "founder-sales": {
+      "source": "refoundai/lenny-skills",
+      "sourceType": "github",
+      "computedHash": "896220542e1db3e30638569a7d92d589d6c823b93a8d4e01f498ff090a852289"
     },
     "gsc": {
       "source": "jdrhyne/agent-skills",
@@ -75,6 +90,11 @@
       "source": "apollographql/skills",
       "sourceType": "github",
       "computedHash": "fd336f2f772eb46ddf8658de5f9dd8faa1f35615b316665307fc82eeb4b2e658"
+    },
+    "sales-enablement": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "computedHash": "aaba13bea7b98c41225a1893d90778ef53044642c3099e42876434f8f3712622"
     },
     "skill-creator": {
       "source": "anthropics/skills",
