@@ -88,7 +88,7 @@ WEBP_PATH="$OUTPUT_ABS/${BASENAME}.webp"
 
 # Step 1: Generate thumbnail via TypeScript
 echo "🎨 Generating thumbnail..."
-npx tsx "$SCRIPT_DIR/generate_thumbnail.ts" "$MDX_PATH"
+NODE_PATH="$PROJECT_ROOT/node_modules" npx tsx "$SCRIPT_DIR/generate_thumbnail.ts" "$MDX_PATH"
 
 # Step 2: Optimize if requested
 if [[ "$OPTIMIZE" == true ]]; then
@@ -96,7 +96,7 @@ if [[ "$OPTIMIZE" == true ]]; then
     vips webpsave "$PNG_PATH" "$WEBP_PATH" --Q 85
 
     echo "🗑️  Deleting original PNG..."
-    rm "$PNG_PATH"
+    rip "$PNG_PATH"
 
     echo ""
     echo "✅ Thumbnail Generated & Optimized"
