@@ -337,18 +337,56 @@ config = load_skill_config("ga-analyzer")
 | `yt-chorus-extract` | YouTube動画からサビ音声クリップ抽出 |
 | `youtube-channels` | YouTubeチャンネル情報・動画一覧取得 |
 
-### ブログ・SNS
+### ブログ運用
 
 | スキル | 説明 |
 |--------|------|
 | `blog-cross-post` | ブログ記事をZenn/Qiita形式に変換 |
+| `cross-post-publish` | Zenn/Qiitaクロスポスト一括投稿オーケストレーション |
 | `zenn-publish` | Zennへの公開 |
 | `qiita-publish` | Qiitaへの公開 |
-| `sns-announce` | SNS告知文生成 |
-| `sns-schedule-post` | SNS投稿スケジュール（Late API） |
-| `sns-dedupe` | SNS投稿重複除去 |
+| `generate-thumbnail` | Gemini APIによるブログサムネイル生成 |
+| `get-publish-date` | スケジュール設定に基づく次回公開日算出 |
+| `blog-mv-date` | 記事の公開日変更（MDX/画像/seed/SNS予約を一括更新） |
+| `blog-swap-dates` | 2記事間の公開日入れ替え（MDX/画像/seed/SNS予約を一括更新） |
+| `blog-schedule-overview` | 全記事の公開スケジュールカレンダー表示・空きスロット検出 |
+| `blog-fact-check` | 記事内の統計データ・バージョン・料金のファクトチェック |
+| `blog-internal-links` | クラスタ内記事間の内部リンク分析・挿入 |
+| `blog-seo-improve` | GSC/GAデータに基づく既存記事のSEO改善 |
+| `seed-refresh` | seedキャッシュファイルの一括更新 |
+
+### SNS・投稿スケジュール
+
+| スキル | 説明 |
+|--------|------|
+| `sns-announce` | SNS告知文生成（X/LinkedIn/Facebook/Bluesky/Threads等） |
 | `video-announce` | 動画/画像投稿キャプション生成（IG/YouTube Shorts/TikTok） |
-| `video-schedule-post` | 動画プラットフォーム投稿スケジュール（Late API） |
+| `late-schedule-post` | Late APIによる全SNSプラットフォーム投稿スケジュール |
+| `late-sync` | Late APIスケジュール済み投稿とローカルJSONの同期 |
+| `sns-schedule-post` | ~~非推奨~~ → `late-schedule-post` を使用 |
+| `video-schedule-post` | ~~非推奨~~ → `late-schedule-post` を使用 |
+
+### 営業・セールス
+
+| スキル | 説明 |
+|--------|------|
+| `meeting-followup` | カレンダーアポ情報→議事録生成→お礼メール下書き作成 |
+| `sales-tracker` | Google Spreadsheetで営業パイプライン管理（3シート構成） |
+| `sales-sync` | Gmail確認→営業パイプライン変更検知→スプレッドシート自動更新 |
+| `founder-sales` | 創業者向け初期顧客獲得・再現可能な営業プロセス構築 🔗 |
+| `enterprise-sales` | エンタープライズセールス・大型案件クロージング 🔗 |
+| `building-sales-team` | 営業組織構築・スケーリング 🔗 |
+| `sales-enablement` | 営業資料作成（ピッチデッキ/提案書/デモスクリプト等） 🔗 |
+
+### Google Workspace
+
+| スキル | 説明 |
+|--------|------|
+| `gws-calendar` | Google Calendar管理（イベント操作） 🔗 |
+| `gws-calendar-agenda` | Google Calendar全カレンダーの予定一覧表示 🔗 |
+| `gws-calendar-insert` | Google Calendarイベント作成 🔗 |
+| `gws-docs` | Google Docsの読み書き 🔗 |
+| `gws-docs-write` | Google Docsへのテキスト追記 🔗 |
 
 ### ビジネス・戦略
 
@@ -373,13 +411,20 @@ config = load_skill_config("ga-analyzer")
 | `fastify-best-practices` | Fastify開発ベストプラクティス 🔗 |
 | `prisma-cli` | Prisma CLIコマンドリファレンス 🔗 |
 | `neon-postgres` | Neon Serverless Postgresガイド 🔗 |
+| `rust-best-practices` | Rust開発ベストプラクティス（Apollo GraphQL準拠） 🔗 |
+
+### コミュニケーション
+
+| スキル | 説明 |
+|--------|------|
+| `slack-cli` | Slack操作CLI（チャンネル/メッセージ/スレッド/リアクション） |
 
 ### ユーティリティ
 
 | スキル | 説明 |
 |--------|------|
 | `seed-context` | プロジェクトコンテキスト抽出・保存 |
-| `skill-creator` | 新規スキル作成ガイド |
+| `skill-creator` | 新規スキル作成ガイド 🔗 |
 | `skill-retrospective` | スキル実行失敗からの自己改善 |
 | `find-skills` | スキル検索・インストール支援 🔗 |
 | `claude-zombie-kill` | ゾンビClaude Codeセッション検出・終了 |
