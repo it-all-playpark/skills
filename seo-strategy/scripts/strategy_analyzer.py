@@ -821,11 +821,22 @@ def scan_robots_config(project_dir: str) -> dict:
     }
 
 
+def _load_hub_slugs(blog_dir: str) -> set[str]:
+    """Read hub slugs from lib/blog-hubs.ts so /blog/hub/* links are valid."""
+    hub_file = Path(blog_dir).resolve().parent / "lib" / "blog-hubs.ts"
+    if not hub_file.exists():
+        return set()
+    content = _read_text(str(hub_file))
+    # Match keys like  'salon-dx-shift-management': {
+    return set(re.findall(r"'([a-z0-9-]+)':\s*\{", content))
+
+
 def scan_internal_links(blog_dir: str) -> dict:
     """Build internal link graph from MDX content."""
     link_pattern = re.compile(r"\[([^\]]*)\]\((/blog/[^)#\s]+)")
     articles = scan_blog_articles(blog_dir)
     known_slugs = {a["slug"] for a in articles}
+    hub_slugs = _load_hub_slugs(blog_dir)
 
     outgoing: dict[str, list[str]] = defaultdict(list)
     incoming: dict[str, list[str]] = defaultdict(list)
@@ -838,6 +849,11 @@ def scan_internal_links(blog_dir: str) -> dict:
 
         content = _read_text(mdx_path)
         for _text, href in link_pattern.findall(content):
+            # Recognize /blog/hub/* as valid link targets
+            if href.startswith("/blog/hub/"):
+                hub_slug = href.strip("/").split("/")[-1]
+                if hub_slug in hub_slugs:
+                    continue  # valid hub page link, skip
             target_slug = href.strip("/").split("/")[-1]
             if target_slug in known_slugs:
                 if target_slug not in outgoing[src_slug]:
