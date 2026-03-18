@@ -47,7 +47,15 @@ fi
 
 # Generate slug from filename if not provided
 if [ -z "$SLUG" ]; then
-  SLUG=$(basename "$FILE_PATH" .md | head -c 50)
+  # If file is inside cross-post directory (e.g., post/cross-post/<slug>/zenn.md),
+  # use the parent directory name as slug
+  PARENT_DIR=$(basename "$(dirname "$FILE_PATH")")
+  BASE_NAME=$(basename "$FILE_PATH" .md)
+  if [ "$BASE_NAME" = "zenn" ] && [ "$PARENT_DIR" != "." ] && [ "$PARENT_DIR" != "/" ]; then
+    SLUG="$PARENT_DIR"
+  else
+    SLUG=$(echo "$BASE_NAME" | head -c 50)
+  fi
 fi
 
 # Ensure published: false in frontmatter
