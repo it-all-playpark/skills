@@ -14,13 +14,15 @@ ISSUE=""
 BRANCH=""
 WORKTREE=""
 BASE_BRANCH="main"
-STRATEGY="tdd"
+TESTING="tdd"
+DESIGN=""
 DEPTH="standard"
 LANG="ja"
 ENV_MODE="hardlink"
 
 # Valid enum values
-VALID_STRATEGIES="tdd bdd ddd none"
+VALID_TESTING="tdd bdd none"
+VALID_DESIGN="ddd"
 VALID_DEPTHS="minimal standard comprehensive"
 VALID_LANGS="ja en"
 VALID_ENV_MODES="hardlink symlink copy none"
@@ -29,7 +31,8 @@ VALID_ENV_MODES="hardlink symlink copy none"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --base) BASE_BRANCH="$2"; shift 2 ;;
-        --strategy) STRATEGY="$2"; shift 2 ;;
+        --testing) TESTING="$2"; shift 2 ;;
+        --design) DESIGN="$2"; shift 2 ;;
         --depth) DEPTH="$2"; shift 2 ;;
         --lang) LANG="$2"; shift 2 ;;
         --env-mode) ENV_MODE="$2"; shift 2 ;;
@@ -59,8 +62,12 @@ if ! [[ "$ISSUE" =~ ^[0-9]+$ ]]; then
 fi
 
 # Validate enum values
-if ! echo "$VALID_STRATEGIES" | grep -qw "$STRATEGY"; then
-    die_json "Invalid strategy: $STRATEGY. Must be one of: $VALID_STRATEGIES" 1
+if ! echo "$VALID_TESTING" | grep -qw "$TESTING"; then
+    die_json "Invalid testing: $TESTING. Must be one of: $VALID_TESTING" 1
+fi
+
+if [[ -n "$DESIGN" ]] && ! echo "$VALID_DESIGN" | grep -qw "$DESIGN"; then
+    die_json "Invalid design: $DESIGN. Must be one of: $VALID_DESIGN" 1
 fi
 
 if ! echo "$VALID_DEPTHS" | grep -qw "$DEPTH"; then
@@ -92,12 +99,13 @@ jq -n \
     --arg worktree "$WORKTREE" \
     --arg base_branch "$BASE_BRANCH" \
     --arg now "$NOW" \
-    --arg strategy "$STRATEGY" \
+    --arg testing "$TESTING" \
+    --arg design "$DESIGN" \
     --arg depth "$DEPTH" \
     --arg lang "$LANG" \
     --arg env_mode "$ENV_MODE" \
     '{
-        version: "1.0.0",
+        version: "2.0.0",
         issue: $issue,
         branch: $branch,
         worktree: $worktree,
@@ -116,7 +124,8 @@ jq -n \
         next_actions: ["Run dev-issue-analyze"],
         decisions: [],
         config: {
-            strategy: $strategy,
+            testing: $testing,
+            design: (if $design == "" then null else $design end),
             depth: $depth,
             lang: $lang,
             env_mode: $env_mode

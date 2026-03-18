@@ -48,7 +48,8 @@ fi
 CURRENT_PHASE=$(jq -r '.current_phase // "unknown"' "$STATE_FILE")
 ISSUE=$(jq -r '.issue // "unknown"' "$STATE_FILE")
 BASE_BRANCH=$(jq -r '.base_branch // "main"' "$STATE_FILE")
-STRATEGY=$(jq -r '.config.strategy // "tdd"' "$STATE_FILE")
+TESTING=$(jq -r '.config.testing // "tdd"' "$STATE_FILE")
+DESIGN=$(jq -r '.config.design // null | select(. != null)' "$STATE_FILE")
 DEPTH=$(jq -r '.config.depth // "standard"' "$STATE_FILE")
 LANG=$(jq -r '.config.lang // "ja"' "$STATE_FILE")
 PR_NUMBER=$(jq -r '.pr.number // ""' "$STATE_FILE")
@@ -77,7 +78,7 @@ determine_next_action() {
             local status=$(get_phase_status "2_analyze")
             if [[ "$status" == "done" ]]; then
                 echo "3_implement"
-                echo "Skill: dev-implement --strategy $STRATEGY --worktree $WORKTREE"
+                echo "Skill: dev-implement --testing $TESTING${DESIGN:+ --design $DESIGN} --worktree $WORKTREE"
             else
                 echo "2_analyze"
                 echo "Skill: dev-issue-analyze $ISSUE --depth $DEPTH"
@@ -90,7 +91,7 @@ determine_next_action() {
                 echo "Skill: dev-validate --fix --worktree $WORKTREE"
             else
                 echo "3_implement"
-                echo "Skill: dev-implement --strategy $STRATEGY --worktree $WORKTREE"
+                echo "Skill: dev-implement --testing $TESTING${DESIGN:+ --design $DESIGN} --worktree $WORKTREE"
             fi
             ;;
         4_validate)

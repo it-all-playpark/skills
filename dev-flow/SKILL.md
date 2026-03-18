@@ -6,7 +6,7 @@ description: |
   Auto-detects parallel vs single mode based on issue complexity.
   Use when: (1) complete development cycle needed, (2) issue to PR automation,
   (3) keywords: full flow, development cycle, issue to PR
-  Accepts args: <issue-number> [--strategy tdd|bdd|ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--max-iterations N] [--force-single] [--force-parallel]
+  Accepts args: <issue-number> [--testing tdd|bdd] [--design ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--max-iterations N] [--force-single] [--force-parallel]
 allowed-tools:
   - Skill
   - Bash
@@ -95,7 +95,7 @@ Details: [Parallel Mode](references/parallel-mode.md) -- decomposition, batch sc
 ## Usage
 
 ```
-/dev-flow <issue> [--strategy tdd] [--depth comprehensive] [--base dev] [--max-iterations 10] [--force-single] [--force-parallel]
+/dev-flow <issue> [--testing tdd] [--design ddd] [--depth comprehensive] [--base dev] [--max-iterations 10] [--force-single] [--force-parallel]
 ```
 
 ## Args
@@ -103,7 +103,9 @@ Details: [Parallel Mode](references/parallel-mode.md) -- decomposition, batch sc
 | Arg | Default | Description |
 |-----|---------|-------------|
 | `<issue-number>` | required | GitHub issue number |
-| `--strategy` | `tdd` | Implementation strategy |
+| `--testing` | `tdd` | Implementation approach: tdd (test-first), bdd (behavior-first) |
+| `--design` | - | Design approach: ddd (domain modeling) |
+
 | `--depth` | `standard` | Analysis depth |
 | `--base` | `dev` | PR base branch |
 | `--max-iterations` | `10` | Max pr-iterate iterations |

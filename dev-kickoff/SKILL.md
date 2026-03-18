@@ -3,7 +3,7 @@ name: dev-kickoff
 description: |
   End-to-end feature development orchestrator using git worktree. Coordinates git-prepare, issue-analyze, implement, validate, commit, and create-pr skills.
   Use when: starting new feature development from GitHub issue, full development cycle automation with isolated worktree.
-  Accepts args: <issue-number> [--strategy tdd|bdd|ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none] [--worktree <path>] [--task-id <id>] [--flow-state <path>]
+  Accepts args: <issue-number> [--testing tdd|bdd] [--design ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none] [--worktree <path>] [--task-id <id>] [--flow-state <path>]
 allowed-tools:
   - Bash
   - TodoWrite
@@ -58,7 +58,7 @@ State persisted in `$WORKTREE/.claude/kickoff.json` for recovery.
 
 ```bash
 $SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
-  --base $BASE --strategy $STRATEGY --depth $DEPTH --lang $LANG --env-mode $ENV_MODE
+  --base $BASE --testing $TESTING --design $DESIGN --depth $DEPTH --lang $LANG --env-mode $ENV_MODE
 ```
 
 ### Update Phase Status
@@ -82,7 +82,7 @@ $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_pr done \
 | 1 | `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - | SKIP |
 | 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
 | 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
-| 3 | `Skill: dev-implement --strategy $STRATEGY --worktree $PATH` | - | Execute |
+| 3 | `Skill: dev-implement --testing $TESTING [--design $DESIGN] --worktree $PATH` | - | Execute |
 | 4 | `Skill: dev-validate --fix --worktree $PATH` | Task(quality-engineer) | Execute |
 | 5 | `Skill: git-commit --all --worktree $PATH` | - | Execute (enhanced) |
 | 6 | `Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH` | - | SKIP |
@@ -100,7 +100,9 @@ ls $WORKTREE/.env || echo "ERROR: .env not linked"
 | Arg | Default | Description |
 |-----|---------|-------------|
 | `<issue-number>` | required | GitHub issue number |
-| `--strategy` | `tdd` | Implementation strategy |
+| `--testing` | `tdd` | Implementation approach: tdd (test-first), bdd (behavior-first) |
+| `--design` | - | Design approach: ddd (domain modeling) |
+
 | `--depth` | `standard` | Analysis depth |
 | `--base` | `dev` | PR base branch |
 | `--lang` | `ja` | PR language |
