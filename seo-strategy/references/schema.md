@@ -269,6 +269,115 @@ strength の判定ロジック:
 3. 新規要素は `"pending"` で初期化
 4. 既存にあったが新規に含まれない `done` 要素は出力から除外
 
+## codebase_audit
+
+`strategy_analyzer.py` が `--project-dir` で指定されたプロジェクトルートをスキャンし、技術SEO課題をソースコードから検出する。
+
+```json
+{
+  "jsonld": {
+    "available_types": ["OrganizationJsonLd", "ArticleJsonLd", "..."],
+    "global_schemas": ["OrganizationJsonLd", "LocalBusinessJsonLd"],
+    "page_usage": {
+      "app/blog/[slug]/page.tsx": ["ArticleJsonLd", "BreadcrumbJsonLd"]
+    },
+    "pages_without_jsonld": ["app/about/page.tsx"],
+    "issues": [{ "type": "no_jsonld", "page": "...", "severity": "low", "description": "..." }]
+  },
+  "metadata": {
+    "pages": [
+      {
+        "path": "app/blog/[slug]/page.tsx",
+        "metadata_type": "generateMetadata|static|none",
+        "has_title": true,
+        "has_description": true,
+        "has_openGraph": true,
+        "has_twitter": true,
+        "has_canonical": false,
+        "issues": ["missing_canonical"]
+      }
+    ],
+    "summary": {
+      "total_pages": int,
+      "with_metadata": int,
+      "with_openGraph": int,
+      "with_canonical": int
+    }
+  },
+  "sitemap": {
+    "file": "app/sitemap.ts",
+    "revalidate": 3600,
+    "content_types": ["static", "blog", "blog_category", "blog_hub", "news"],
+    "priority_values": [1.0, 0.9, 0.85, 0.8, 0.75],
+    "issues": []
+  },
+  "robots": {
+    "file": "app/robots.ts",
+    "disallow_paths": ["/api/", "/contact/thanks"],
+    "sitemap_url": "https://...",
+    "issues": []
+  },
+  "internal_links": {
+    "total_articles": int,
+    "articles_with_outgoing": int,
+    "articles_with_incoming": int,
+    "orphan_articles": ["slug1", "slug2"],
+    "orphan_rate": float,
+    "broken_links": [{ "source": "slug", "target": "/blog/..." }],
+    "link_graph_sample": {
+      "slug": { "outgoing": ["slug2"], "incoming": ["slug3"] }
+    },
+    "issues": [
+      { "type": "high_orphan_rate", "severity": "high", "rate": float, "description": "..." },
+      { "type": "broken_internal_link", "severity": "medium", "source": "...", "target": "...", "description": "..." }
+    ]
+  },
+  "image_optimization": {
+    "next_config_formats": ["avif", "webp"],
+    "files_using_next_image": int,
+    "files_using_raw_img": int,
+    "blog_images": { "total": int, "webp": int, "non_webp": int, "no_image": int },
+    "issues": [
+      { "type": "raw_img_tag", "severity": "medium", "count": int, "description": "..." },
+      { "type": "non_webp_blog_images", "severity": "low", "slugs": ["..."], "description": "..." }
+    ]
+  },
+  "noindex_canonical": {
+    "noindex_pages": [],
+    "pages_with_canonical": ["app/solutions/page.tsx"],
+    "pages_without_canonical": ["app/blog/[slug]/page.tsx"],
+    "issues": [
+      { "type": "missing_canonical", "page": "...", "severity": "medium", "description": "..." }
+    ]
+  },
+  "summary": {
+    "total_issues": int,
+    "critical": int,
+    "high": int,
+    "medium": int,
+    "low": int
+  }
+}
+```
+
+### issue.severity 一覧
+
+| severity | 意味 | 例 |
+| -------- | ---- | --- |
+| `critical` | SEO をブロックする問題 | 重要ページの意図しない noindex |
+| `high` | 大きな改善余地 | 記事の 90%+ が孤立（内部リンクなし） |
+| `medium` | 改善推奨 | ブログ記事に canonical 未設定、raw `<img>` 使用 |
+| `low` | あれば望ましい | 一部ページに JSON-LD なし、非 WebP 画像 |
+
+### LLM による活用指針
+
+- `codebase_audit.internal_links` → `site_structure.internal_linking` の施策に反映
+- `codebase_audit.jsonld.pages_without_jsonld` → `technical_seo` で構造化データ追加を提案
+- `codebase_audit.metadata` → `existing_article_optimizations` の action.type に `meta_fix` を追加
+- `codebase_audit.image_optimization` → `technical_seo.mobile` の改善提案に反映
+- `codebase_audit.noindex_canonical` → `technical_seo` でcanonical設定の優先度判断
+- `codebase_audit.summary` → `roadmap` のフェーズ優先度に severity を加味
+
 ## kpi_targets
 
 ```json

@@ -67,7 +67,7 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
    python ~/.claude/skills/seo-strategy/scripts/strategy_analyzer.py \
      --ga-report <GA_PATH> --gsc-report <GSC_PATH> --trends-report <TRENDS_PATH> \
      --config .claude/seo-config.json --blog-dir content/blog \
-     --output claudedocs/seo-strategy-analysis.json
+     --project-dir . --output claudedocs/seo-strategy-analysis.json
    ```
 4. **ステータス引き継ぎ**: 既存 `seo-strategy.json` がある場合、各要素の `status` を slug/type/channel をキーにマッピングし、新しい戦略に引き継ぐ。新規要素は `"pending"` で初期化。
 5. **戦略生成**: 分析結果を読み込み、LLM が以下を判断・生成:
@@ -75,13 +75,13 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
 | セクション | 内容 | 判断基準 |
 | ---------- | ---- | -------- |
 | `existing_article_optimizations` | タイトル/メタ改善、リライト対象 | issues: low_ctr_high_imp, high_bounce |
-| `site_structure` | 内部リンク戦略、CTA設計 | pages_per_session, 記事間関連性 |
-| `technical_seo` | モバイル最適化、CV設定 | device_gap, conversion_tracking |
+| `site_structure` | 内部リンク戦略、CTA設計 | pages_per_session, 記事間関連性, codebase_audit.internal_links |
+| `technical_seo` | モバイル最適化、CV設定、構造化データ・画像最適化 | device_gap, conversion_tracking, codebase_audit.jsonld/metadata/image_optimization |
 | `channel_strategy` | チャネル別改善アクション | channel_metrics の bounce_rate |
 | `new_article_directions` | 高ポテンシャル KW 領域 | query_clusters × trends_summary |
 | `keyword_competitiveness` | KW 競合性評価・ドメイン権威性分析 | category_performance, domain_authority_map |
 | `kpi_targets` | 3ヶ月目標値 | kpi_snapshot からの改善見込み |
-| `roadmap` | フェーズ別実行計画 | 優先度×インパクト |
+| `roadmap` | フェーズ別実行計画 | 優先度×インパクト（codebase_audit の issues severity を考慮） |
 
 6. **出力生成**:
    - `claudedocs/seo-strategy.json` — 構造化戦略（schema は `references/schema.md`）
@@ -110,6 +110,7 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
 - `category_performance` — カテゴリ別パフォーマンス（ドメイン権威性ギャップ検知）
 - `domain_authority_map` — KW領域別の権威性評価
 - `cluster_suggestions` — 未分類クエリからの新クラスタ提案
+- `codebase_audit` — コードベース技術SEO監査（JSON-LD、メタデータ、sitemap、内部リンク、画像最適化）
 - `kpi_targets` — 目標KPI
 - `roadmap` — フェーズ別計画
 

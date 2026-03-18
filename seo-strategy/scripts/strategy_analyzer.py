@@ -631,6 +631,407 @@ def build_device_gap(ga_data: dict) -> dict:
     }
 
 
+
+# =============================================================================
+# Codebase Audit — static analysis of Next.js project for technical SEO issues
+# =============================================================================
+
+
+def _glob_tsx(base: str, pattern: str = "**/*.tsx") -> list[str]:
+    """Recursively find .tsx files under *base*."""
+    return sorted(glob.glob(f"{base}/{pattern}", recursive=True))
+
+
+def _read_text(path: str) -> str:
+    """Read file as text, return empty string on failure."""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def scan_jsonld_usage(project_dir: str) -> dict:
+    """Detect JSON-LD schema types and which pages use them."""
+    structured_data_file = f"{project_dir}/lib/structured-data.tsx"
+    content = _read_text(structured_data_file)
+
+    # Extract exported component names (e.g. OrganizationJsonLd)
+    available = re.findall(r"export\s+function\s+(\w+JsonLd)", content)
+
+    # Scan app/ pages for JSON-LD usage
+    global_schemas: list[str] = []
+    page_usage: dict[str, list[str]] = {}
+    pages_without: list[str] = []
+
+    layout_file = f"{project_dir}/app/layout.tsx"
+    layout_content = _read_text(layout_file)
+    for comp in available:
+        if f"<{comp}" in layout_content or f"{comp}(" in layout_content:
+            global_schemas.append(comp)
+
+    for page_path in _glob_tsx(f"{project_dir}/app", "**/page.tsx"):
+        rel = str(Path(page_path).relative_to(project_dir))
+        page_content = _read_text(page_path)
+        used = [c for c in available if f"<{c}" in page_content or f"{c}(" in page_content]
+        if used:
+            page_usage[rel] = used
+        else:
+            pages_without.append(rel)
+
+    # Issue detection
+    issues: list[dict] = []
+    for page in pages_without:
+        # Skip special pages
+        if any(skip in page for skip in ["not-found", "error", "loading", "opengraph", "twitter"]):
+            continue
+        issues.append({
+            "type": "no_jsonld",
+            "page": page,
+            "severity": "low",
+            "description": f"{page} に JSON-LD 構造化データがない",
+        })
+
+    return {
+        "available_types": available,
+        "global_schemas": global_schemas,
+        "page_usage": page_usage,
+        "pages_without_jsonld": pages_without,
+        "issues": issues,
+    }
+
+
+def scan_metadata_completeness(project_dir: str) -> dict:
+    """Check metadata/OGP coverage across page templates."""
+    pages: list[dict] = []
+    fields_to_check = {
+        "title": [r"\btitle\s*:", r"\btitle\s*="],
+        "description": [r"\bdescription\s*:"],
+        "openGraph": [r"\bopenGraph\s*:", r"\bOpenGraph"],
+        "twitter": [r"\btwitter\s*:"],
+        "canonical": [r"\bcanonical\s*:", r"\balternates\s*:"],
+    }
+
+    for page_path in _glob_tsx(f"{project_dir}/app", "**/page.tsx"):
+        rel = str(Path(page_path).relative_to(project_dir))
+        content = _read_text(page_path)
+
+        has_metadata = bool(
+            re.search(r"export\s+(async\s+)?function\s+generateMetadata", content)
+            or re.search(r"export\s+const\s+metadata", content)
+        )
+        if not has_metadata:
+            pages.append({"path": rel, "metadata_type": "none", "issues": ["no_metadata"]})
+            continue
+
+        metadata_type = "generateMetadata" if "generateMetadata" in content else "static"
+        entry: dict = {"path": rel, "metadata_type": metadata_type, "issues": []}
+
+        for field, patterns in fields_to_check.items():
+            found = any(re.search(p, content) for p in patterns)
+            entry[f"has_{field}"] = found
+            if not found and field in ("title", "description"):
+                entry["issues"].append(f"missing_{field}")
+
+        pages.append(entry)
+
+    # Summary
+    total = len(pages)
+    with_meta = sum(1 for p in pages if p["metadata_type"] != "none")
+    with_og = sum(1 for p in pages if p.get("has_openGraph"))
+    with_canonical = sum(1 for p in pages if p.get("has_canonical"))
+
+    return {
+        "pages": pages,
+        "summary": {
+            "total_pages": total,
+            "with_metadata": with_meta,
+            "with_openGraph": with_og,
+            "with_canonical": with_canonical,
+        },
+    }
+
+
+def scan_sitemap_config(project_dir: str) -> dict:
+    """Analyse sitemap.ts for coverage and configuration."""
+    sitemap_path = f"{project_dir}/app/sitemap.ts"
+    content = _read_text(sitemap_path)
+
+    if not content:
+        return {"file": None, "issues": [{"type": "no_sitemap", "severity": "critical"}]}
+
+    # Detect revalidation
+    revalidate_match = re.search(r"revalidate\s*=\s*(\d+)", content)
+    revalidate = int(revalidate_match.group(1)) if revalidate_match else None
+
+    # Detect content types by scanning function calls and URL patterns
+    content_types: list[str] = []
+    type_patterns = {
+        "static": r"url:\s*['\"`]https?://[^'\"]+/(about|contact|service|solutions)",
+        "blog": r"getAllBlogPosts|/blog/\$",
+        "blog_category": r"/blog/category/",
+        "blog_hub": r"/blog/hub/",
+        "news": r"getAllNewsPosts|/news/",
+    }
+    for ctype, pattern in type_patterns.items():
+        if re.search(pattern, content):
+            content_types.append(ctype)
+
+    # Extract priority values
+    priorities: dict[str, float] = {}
+    for m in re.finditer(r"priority:\s*([\d.]+)", content):
+        priorities[f"priority_{len(priorities)}"] = float(m.group(1))
+
+    issues: list[dict] = []
+    if "blog_hub" not in content_types:
+        issues.append({"type": "missing_hub_pages", "severity": "medium",
+                        "description": "ハブページが sitemap に含まれていない"})
+
+    return {
+        "file": "app/sitemap.ts",
+        "revalidate": revalidate,
+        "content_types": content_types,
+        "priority_values": sorted(set(priorities.values()), reverse=True),
+        "issues": issues,
+    }
+
+
+def scan_robots_config(project_dir: str) -> dict:
+    """Parse robots.ts for allow/disallow rules."""
+    robots_path = f"{project_dir}/app/robots.ts"
+    content = _read_text(robots_path)
+
+    if not content:
+        return {"file": None, "issues": [{"type": "no_robots", "severity": "high"}]}
+
+    # Extract disallow paths
+    disallow = re.findall(r"disallow:\s*\[([^\]]*)\]", content, re.DOTALL)
+    disallow_paths: list[str] = []
+    if disallow:
+        disallow_paths = re.findall(r"['\"]([^'\"]+)['\"]", disallow[0])
+
+    # Extract sitemap URL
+    sitemap_match = re.search(r"sitemap:\s*['\"]([^'\"]+)['\"]", content)
+    sitemap_url = sitemap_match.group(1) if sitemap_match else None
+
+    return {
+        "file": "app/robots.ts",
+        "disallow_paths": disallow_paths,
+        "sitemap_url": sitemap_url,
+        "issues": [],
+    }
+
+
+def scan_internal_links(blog_dir: str) -> dict:
+    """Build internal link graph from MDX content."""
+    link_pattern = re.compile(r"\[([^\]]*)\]\((/blog/[^)#\s]+)")
+    articles = scan_blog_articles(blog_dir)
+    known_slugs = {a["slug"] for a in articles}
+
+    outgoing: dict[str, list[str]] = defaultdict(list)
+    incoming: dict[str, list[str]] = defaultdict(list)
+    broken: list[dict] = []
+
+    for mdx_path in sorted(glob.glob(f"{blog_dir}/*.mdx")):
+        src_slug = Path(mdx_path).stem
+        if re.match(r"\d{4}-\d{2}-\d{2}-", src_slug):
+            src_slug = src_slug[11:]
+
+        content = _read_text(mdx_path)
+        for _text, href in link_pattern.findall(content):
+            target_slug = href.strip("/").split("/")[-1]
+            if target_slug in known_slugs:
+                if target_slug not in outgoing[src_slug]:
+                    outgoing[src_slug].append(target_slug)
+                if src_slug not in incoming[target_slug]:
+                    incoming[target_slug].append(src_slug)
+            else:
+                broken.append({"source": src_slug, "target": href})
+
+    # Orphan detection: articles with no incoming AND no outgoing links
+    orphans = [s for s in known_slugs if s not in outgoing and s not in incoming]
+    orphan_rate = round(len(orphans) / len(known_slugs) * 100, 1) if known_slugs else 0
+
+    issues: list[dict] = []
+    if orphan_rate > 50:
+        issues.append({
+            "type": "high_orphan_rate",
+            "severity": "high",
+            "rate": orphan_rate,
+            "description": f"記事の {orphan_rate}% に内部リンクがない（孤立記事）",
+        })
+    for bl in broken:
+        issues.append({
+            "type": "broken_internal_link",
+            "severity": "medium",
+            "source": bl["source"],
+            "target": bl["target"],
+            "description": f"{bl['source']} → {bl['target']} はリンク切れ",
+        })
+
+    return {
+        "total_articles": len(known_slugs),
+        "articles_with_outgoing": len(outgoing),
+        "articles_with_incoming": len(incoming),
+        "orphan_articles": sorted(orphans),
+        "orphan_rate": orphan_rate,
+        "broken_links": broken,
+        "link_graph_sample": {
+            slug: {"outgoing": out, "incoming": list(incoming.get(slug, []))}
+            for slug, out in sorted(outgoing.items())[:20]
+        },
+        "issues": issues,
+    }
+
+
+def scan_image_optimization(project_dir: str, blog_dir: str) -> dict:
+    """Check image optimization config and usage patterns."""
+    # next.config.ts
+    config_content = _read_text(f"{project_dir}/next.config.ts")
+    if not config_content:
+        config_content = _read_text(f"{project_dir}/next.config.mjs")
+    if not config_content:
+        config_content = _read_text(f"{project_dir}/next.config.js")
+
+    formats: list[str] = re.findall(r"image/(avif|webp)", config_content)
+
+    # Count next/image vs raw <img> in components
+    next_image_count = 0
+    raw_img_count = 0
+    for tsx_path in _glob_tsx(f"{project_dir}/app") + _glob_tsx(f"{project_dir}/components"):
+        content = _read_text(tsx_path)
+        if "next/image" in content or "from 'next/image'" in content or 'from "next/image"' in content:
+            next_image_count += 1
+        if re.search(r"<img\s", content):
+            raw_img_count += 1
+
+    # Blog frontmatter images
+    articles = scan_blog_articles(blog_dir)
+    webp_count = 0
+    non_webp: list[str] = []
+    no_image: list[str] = []
+    for mdx_path in sorted(glob.glob(f"{blog_dir}/*.mdx")):
+        fm = parse_frontmatter(mdx_path)
+        if not fm:
+            continue
+        img = fm.get("image", "")
+        slug = Path(mdx_path).stem
+        if re.match(r"\d{4}-\d{2}-\d{2}-", slug):
+            slug = slug[11:]
+        if not img:
+            no_image.append(slug)
+        elif img.endswith(".webp"):
+            webp_count += 1
+        else:
+            non_webp.append(slug)
+
+    issues: list[dict] = []
+    if raw_img_count > 0:
+        issues.append({
+            "type": "raw_img_tag",
+            "severity": "medium",
+            "count": raw_img_count,
+            "description": f"{raw_img_count} ファイルで next/image ではなく <img> を使用",
+        })
+    if non_webp:
+        issues.append({
+            "type": "non_webp_blog_images",
+            "severity": "low",
+            "slugs": non_webp,
+            "description": f"{len(non_webp)} 記事で WebP 以外の画像を使用",
+        })
+
+    return {
+        "next_config_formats": sorted(set(formats)),
+        "files_using_next_image": next_image_count,
+        "files_using_raw_img": raw_img_count,
+        "blog_images": {
+            "total": len(articles),
+            "webp": webp_count,
+            "non_webp": len(non_webp),
+            "no_image": len(no_image),
+        },
+        "issues": issues,
+    }
+
+
+def scan_noindex_canonical(project_dir: str) -> dict:
+    """Detect noindex directives and canonical URL coverage."""
+    noindex_pages: list[str] = []
+    pages_with_canonical: list[str] = []
+    pages_without_canonical: list[str] = []
+
+    for page_path in _glob_tsx(f"{project_dir}/app", "**/page.tsx"):
+        rel = str(Path(page_path).relative_to(project_dir))
+        content = _read_text(page_path)
+
+        # Skip non-content pages
+        if any(skip in rel for skip in ["not-found", "error", "loading"]):
+            continue
+
+        if re.search(r"noindex\s*:\s*true", content):
+            noindex_pages.append(rel)
+
+        if re.search(r"canonical\s*:|alternates\s*:", content):
+            pages_with_canonical.append(rel)
+        else:
+            pages_without_canonical.append(rel)
+
+    issues: list[dict] = []
+    # Blog article pages without canonical is a notable gap
+    for page in pages_without_canonical:
+        if "[slug]" in page and "blog" in page:
+            issues.append({
+                "type": "missing_canonical",
+                "page": page,
+                "severity": "medium",
+                "description": "ブログ記事ページに canonical URL が未設定",
+            })
+
+    return {
+        "noindex_pages": noindex_pages,
+        "pages_with_canonical": pages_with_canonical,
+        "pages_without_canonical": pages_without_canonical,
+        "issues": issues,
+    }
+
+
+def build_codebase_audit(project_dir: str, blog_dir: str) -> dict:
+    """Run all codebase audit scans and return consolidated results."""
+    jsonld = scan_jsonld_usage(project_dir)
+    metadata = scan_metadata_completeness(project_dir)
+    sitemap = scan_sitemap_config(project_dir)
+    robots = scan_robots_config(project_dir)
+    internal_links = scan_internal_links(blog_dir)
+    images = scan_image_optimization(project_dir, blog_dir)
+    noindex_canonical = scan_noindex_canonical(project_dir)
+
+    # Aggregate issues
+    all_issues: list[dict] = []
+    for section in [jsonld, metadata, sitemap, robots, internal_links, images, noindex_canonical]:
+        all_issues.extend(section.get("issues", []))
+
+    severity_counts = defaultdict(int)
+    for issue in all_issues:
+        severity_counts[issue.get("severity", "low")] += 1
+
+    return {
+        "jsonld": jsonld,
+        "metadata": metadata,
+        "sitemap": sitemap,
+        "robots": robots,
+        "internal_links": internal_links,
+        "image_optimization": images,
+        "noindex_canonical": noindex_canonical,
+        "summary": {
+            "total_issues": len(all_issues),
+            "critical": severity_counts.get("critical", 0),
+            "high": severity_counts.get("high", 0),
+            "medium": severity_counts.get("medium", 0),
+            "low": severity_counts.get("low", 0),
+        },
+    }
+
+
 def build_output(
     ga_data: dict | None,
     gsc_data: dict | None,
@@ -719,6 +1120,10 @@ def build_output(
         for a in blog_articles
     ]
 
+    # Codebase audit (technical SEO from source code)
+    project_dir = getattr(args, "project_dir", None) or "."
+    output["codebase_audit"] = build_codebase_audit(project_dir, blog_dir)
+
     return output
 
 
@@ -729,6 +1134,7 @@ def main():
     parser.add_argument("--trends-report", help="Path to Trends report JSON")
     parser.add_argument("--config", help="Path to seo-config.json")
     parser.add_argument("--blog-dir", help="Blog directory path (overrides config)")
+    parser.add_argument("--project-dir", default=".", help="Project root directory for codebase audit")
     parser.add_argument("--output", default="claudedocs/seo-strategy-analysis.json", help="Output path")
     args = parser.parse_args()
 
@@ -761,7 +1167,9 @@ def main():
     n_issues = sum(len(a["issues"]) for a in output.get("article_metrics", []))
     n_clusters = len(output.get("query_clusters", []))
     n_suggestions = len(output.get("cluster_suggestions", []))
-    print(f"Analysis complete: {n_articles} articles, {n_issues} issues detected, {n_clusters} query clusters, {n_suggestions} cluster suggestions")
+    audit_summary = output.get("codebase_audit", {}).get("summary", {})
+    n_audit_issues = audit_summary.get("total_issues", 0)
+    print(f"Analysis complete: {n_articles} articles, {n_issues} issues detected, {n_clusters} query clusters, {n_suggestions} cluster suggestions, {n_audit_issues} codebase audit issues")
     print(f"Output: {args.output}")
 
 
