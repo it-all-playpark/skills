@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Late Sync - Synchronize Late API scheduled posts with local post/blog/*.json
+ * Zernio Sync (formerly Late) - Synchronize Zernio API scheduled posts with local post/blog/*.json
  *
  * Supports both text and media posts.
  *
@@ -14,7 +14,7 @@
  *   --verbose, -v        Detailed matching info
  *
  * Environment variables:
- *   LATE_API_KEY - Late API key from https://getlate.dev
+ *   LATE_API_KEY - Zernio API key from https://zernio.com (formerly Late/getlate.dev)
  */
 
 import { readFileSync, existsSync, readdirSync } from "fs";

@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Late Schedule Post - Unified SNS posting (text + media)
+ * Zernio Schedule Post (formerly Late) - Unified SNS posting (text + media)
  *
  * Usage:
  *   # Text post

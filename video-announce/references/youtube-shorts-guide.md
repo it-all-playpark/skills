@@ -95,7 +95,7 @@
 | Weekend | 10:00-12:00, 15:00-18:00 | Late morning, afternoon |
 | Best days | Fri, Sat, Sun | Higher engagement |
 
-## Late API Fields
+## Zernio API Fields
 
 ```json
 {

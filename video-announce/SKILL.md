@@ -37,7 +37,7 @@ Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Sh
 | `--platforms, -p PLATFORMS` | Target platforms: `instagram`, `youtube`, `tiktok`, `all-video` (comma-separated) | `all-video` |
 | `--output, -o FILE` | Output to file | config or stdout |
 | `--format FORMAT` | md, json | config or md |
-| `--schedule DATETIME` | Schedule time (enables Late API format) | none |
+| `--schedule DATETIME` | Schedule time (enables Zernio API format) | none |
 | `--lang LANG` | ja, en | config or ja |
 | `--media PATHS` | Additional media file paths (comma-separated) | none |
 

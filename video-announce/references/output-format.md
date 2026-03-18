@@ -1,6 +1,6 @@
 # Output Format
 
-## JSON (Late API format) - Array
+## JSON (Zernio API format) - Array
 
 全プラットフォームの投稿データを単一のJSON配列として `{output.dir}/{date}-{slug}.json` に出力する。
 

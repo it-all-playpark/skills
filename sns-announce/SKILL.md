@@ -25,8 +25,8 @@ Generate platform-optimized social media posts from articles or URLs.
 |--------|-------------|---------|
 | \`--output, -o FILE\` | Output to file | config or stdout |
 | \`--format FORMAT\` | md, json, yaml | config or md |
-| \`--schedule DATETIME\` | Schedule time (enables Late API format) | config or none |
-| \`--dedupe\` | Pre-check Late API and skip already scheduled platforms | false |
+| \`--schedule DATETIME\` | Schedule time (enables Zernio API format) | config or none |
+| \`--dedupe\` | Pre-check Zernio API and skip already scheduled platforms | false |
 | \`--x\` | X only | all enabled |
 | \`--linkedin\` | LinkedIn only | all enabled |
 | \`--google\` | Google Business only | all enabled |
@@ -71,11 +71,11 @@ Project config: \`.claude/sns-announce.json\`
 
 | Key | Value | Description |
 |-----|-------|-------------|
-| \`enabled\` | true/false | Enable Late API format output |
+| \`enabled\` | true/false | Enable Zernio API format output |
 | \`mode\` | "auto" | Auto-calculate optimal posting times per platform based on article date |
 
 When \`schedule.enabled: true\`:
-- Output format becomes Late API array format
+- Output format becomes Zernio API array format
 - Each platform gets optimal posting time from \`references/posting-times.json\`
 - Schedule date defaults to article's publish date
 
@@ -97,10 +97,10 @@ When not set: stdout (traditional behavior)
 
 ### Optimized (with --dedupe) ⚡
 \`\`\`
-1. Load config → 2. Extract metadata (get date) → 3. Query Late API → 4. Generate posts (needed only) → 5. Write output
+1. Load config → 2. Extract metadata (get date) → 3. Query Zernio API → 4. Generate posts (needed only) → 5. Write output
 \`\`\`
 
-**Key optimization**: When \`--dedupe\` is specified, query Late API BEFORE generation to identify which platforms need posts. This avoids wasting AI tokens generating content for already-scheduled platforms.
+**Key optimization**: When \`--dedupe\` is specified, query Zernio API BEFORE generation to identify which platforms need posts. This avoids wasting AI tokens generating content for already-scheduled platforms.
 
 ### Dedupe Pre-Query Flow
 
@@ -110,7 +110,7 @@ Uses \`$SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts\`:
 # Step 1: Extract date from article metadata
 DATE="2026-01-20"  # from frontmatter
 
-# Step 2: Query Late API for scheduled platforms
+# Step 2: Query Zernio API for scheduled platforms
 npx tsx $SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date $DATE --platforms x,linkedin,googlebusiness,facebook,bluesky,threads
 
 # Output: { "date": "2026-01-20", "needed": ["x", "facebook"], "scheduled": ["linkedin", "googlebusiness", "bluesky", "threads"] }
@@ -167,7 +167,7 @@ LinkedIn用
 {"source": "...", "generated_at": "ISO8601", "posts": {"x": "...", "linkedin": "..."}}
 \`\`\`
 
-#### Late API format (when schedule.enabled: true or --schedule specified)
+#### Zernio API format (when schedule.enabled: true or --schedule specified)
 \`\`\`json
 [
   {"content": "X用の投稿文 #hashtag", "schedule": "2026-03-12 12:00", "platforms": ["x"]},
@@ -197,6 +197,6 @@ LinkedIn用
 # Specific platform
 /sns-announce article.mdx --x --lang en
 
-# Late API format with schedule
+# Zernio API format with schedule
 /sns-announce article.mdx --format json --schedule "2026-03-12 09:00"
 \`\`\`

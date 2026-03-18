@@ -53,12 +53,12 @@ bash $SKILLS_DIR/blog-swap-dates/scripts/swap-dates.sh <path1> <path2>
 npm run build
 ```
 
-### Step 5: Late API手順表示
+### Step 5: Zernio API（旧Late）手順表示
 
-Late APIに既存スケジュールがある場合、手動変更手順を提示：
+Zernio API（旧Late）に既存スケジュールがある場合、手動変更手順を提示：
 
 ```markdown
-## Late API 手動変更手順
+## Zernio API（旧Late） 手動変更手順
 
 ### 1. [Article1のタイトル]
 

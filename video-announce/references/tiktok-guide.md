@@ -102,7 +102,7 @@ TikTok API requires explicit consent fields:
 | `video_cover_timestamp_ms` | number | No | Timestamp for cover image (ms) |
 | `video_made_with_ai` | boolean | No | Whether AI was used to create the video |
 
-## Late API Fields
+## Zernio API Fields
 
 ```json
 {
@@ -119,7 +119,7 @@ TikTok API requires explicit consent fields:
 }
 ```
 
-**Note**: `tiktokSettings` is a top-level field in the Late API request body (not inside `platformSpecificData`).
+**Note**: `tiktokSettings` is a top-level field in the Zernio API request body (not inside `platformSpecificData`).
 
 ### Cover Image
 TikTok uses `video_cover_timestamp_ms` instead of a separate thumbnail upload:

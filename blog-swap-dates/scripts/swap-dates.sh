@@ -335,7 +335,7 @@ Article 2: $SLUG2
 
 Next steps:
   1. npm run build (verify build)
-  2. Update Late API schedules if needed
+  2. Update Zernio API schedules if needed
 EOF
 
 if [[ "$DRY_RUN" == "true" ]]; then

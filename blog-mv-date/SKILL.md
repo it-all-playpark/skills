@@ -58,12 +58,12 @@ bash $SKILLS_DIR/blog-mv-date/scripts/move-date.sh <path> <dest-date>
 npm run build
 ```
 
-### Step 6: Late API手順表示
+### Step 6: Zernio API（旧Late）手順表示
 
-Late APIに既存スケジュールがある場合、手動変更手順を提示：
+Zernio API（旧Late）に既存スケジュールがある場合、手動変更手順を提示：
 
 ```markdown
-## Late API 手動変更手順
+## Zernio API（旧Late） 手動変更手順
 
 ### [記事のタイトル]
 

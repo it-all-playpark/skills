@@ -1,17 +1,17 @@
 ---
 name: late-sync
 description: |
-  Synchronize Late API scheduled posts with local post/blog/*.json files.
+  Synchronize Zernio（旧Late）API scheduled posts with local post/blog/*.json files.
   Use when: (1) blog dates rearranged and Late posts are stale,
-  (2) keywords like "Late同期", "sync Late", "SNS同期", "予約 同期".
+  (2) keywords like "Zernio同期", "sync Zernio", "Late同期", "sync Late", "SNS同期", "予約 同期".
   Accepts args: [--from YYYY-MM-DD] [--execute] [--json]
 user-invocable: true
 argument-hint: [--from YYYY-MM-DD] [--execute]
 ---
 
-# Late Sync
+# Zernio Sync（旧Late）
 
-Synchronize Late API scheduled posts with local `post/blog/*.json` files.
+Synchronize Zernio API scheduled posts with local `post/blog/*.json` files.
 One-way sync: **Local JSON → Late API** (local is source of truth).
 
 ## Usage
@@ -56,7 +56,7 @@ One-way sync: **Local JSON → Late API** (local is source of truth).
 
 ## Sync Algorithm
 
-1. **Fetch** scheduled posts from Late API (`dateFrom` filter)
+1. **Fetch** scheduled posts from Zernio API (`dateFrom` filter)
 2. **Load** local `post/blog/*.json` files (matching `--from` date)
 3. **Generate matching keys**: `"YYYY-MM-DDTHH:MM|{platform}"`
 4. **Diff**:
@@ -94,7 +94,7 @@ Mode: DRY RUN (pass --execute to apply)
 ## Safety
 
 - **Dry-run by default** — no changes without `--execute`
-- Only affects `scheduled` posts (published posts are immutable in Late API)
+- Only affects `scheduled` posts (published posts are immutable in Zernio API)
 - DELETE 404 is treated as warning (already deleted externally)
 - Rate limited: 500ms between API calls + 429 retry
 
@@ -102,7 +102,7 @@ Mode: DRY RUN (pass --execute to apply)
 
 Uses the same `.env` as sns-schedule-post:
 - `$SKILLS_DIR/sns-schedule-post/.env`
-- Requires `LATE_API_KEY`
+- Requires Zernio API key (env var: `LATE_API_KEY`)
 
 ## Config
 
@@ -123,7 +123,7 @@ Project-level `.claude/skill-config.json`:
 `profile_id` is **strongly recommended** to avoid affecting other projects' posts.
 Without it, all Late profiles are synced and orphaned posts from other projects may be deleted.
 
-Get your profile ID via Late API: `GET /v1/profiles`
+Get your profile ID via Zernio API: `GET /v1/profiles`
 
 ## Execution
 

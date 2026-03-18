@@ -361,8 +361,8 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `sns-announce` | SNS告知文生成（X/LinkedIn/Facebook/Bluesky/Threads等） |
 | `video-announce` | 動画/画像投稿キャプション生成（IG/YouTube Shorts/TikTok） |
-| `late-schedule-post` | Late APIによる全SNSプラットフォーム投稿スケジュール |
-| `late-sync` | Late APIスケジュール済み投稿とローカルJSONの同期 |
+| `late-schedule-post` | Zernio（旧Late）APIによる全SNSプラットフォーム投稿スケジュール |
+| `late-sync` | Zernio APIスケジュール済み投稿とローカルJSONの同期 |
 | `sns-schedule-post` | ~~非推奨~~ → `late-schedule-post` を使用 |
 | `video-schedule-post` | ~~非推奨~~ → `late-schedule-post` を使用 |
 

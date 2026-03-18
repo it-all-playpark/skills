@@ -1,7 +1,7 @@
 ---
 name: late-schedule-post
 description: |
-  Schedule or post to all supported SNS platforms (X, LinkedIn, Facebook, Google Business, Threads, Bluesky, Instagram, YouTube, TikTok) via Late API.
+  Schedule or post to all supported SNS platforms (X, LinkedIn, Facebook, Google Business, Threads, Bluesky, Instagram, YouTube, TikTok) via Zernio API（旧Late）.
   Use when: (1) user wants to schedule SNS posts (text or media),
   (2) after /sns-announce or /video-announce to schedule generated posts,
   (3) keywords like "SNS投稿", "予約投稿", "schedule post", "Instagram投稿", "YouTube投稿", "TikTok投稿".
@@ -10,9 +10,9 @@ user-invocable: true
 argument-hint: --json FILE [--dry-run] | TEXT [--schedule "YYYY-MM-DD HH:MM"] [--platforms PLATFORMS]
 ---
 
-# Late Schedule Post
+# Zernio Schedule Post（旧Late）
 
-Schedule or post to all supported SNS platforms via Late API (getlate.dev).
+Schedule or post to all supported SNS platforms via Zernio API (zernio.com, formerly Late/getlate.dev).
 Unified skill replacing `sns-schedule-post` (text) and `video-schedule-post` (media).
 
 ## Usage
@@ -49,9 +49,9 @@ Unified skill replacing `sns-schedule-post` (text) and `video-schedule-post` (me
 
 ## Setup
 
-### 1. Late Account
+### 1. Zernio Account
 
-1. Sign up at https://getlate.dev
+1. Sign up at https://zernio.com
 2. **Connect ALL accounts (X, LinkedIn, Facebook, Google Business, Threads, Bluesky, Instagram, YouTube, TikTok) to the same profile**
 3. Get API key from dashboard
 4. Get profile ID: `GET /v1/profiles`
@@ -77,7 +77,7 @@ Falls back to `$SKILLS_DIR/sns-schedule-post/.env` if not found.
 }
 ```
 
-`profile_id` is **required** to isolate posts per project. Ensure all platform accounts are linked to this profile in the Late dashboard.
+`profile_id` is **required** to isolate posts per project. Ensure all platform accounts are linked to this profile in the Zernio dashboard.
 
 ## JSON Input Formats
 
@@ -138,7 +138,7 @@ Execute the script at `scripts/post.ts`:
 npx tsx $SKILLS_DIR/late-schedule-post/scripts/post.ts --json <file> [--dry-run]
 ```
 
-DO NOT manually call the Late API. Always use the provided script.
+DO NOT manually call the Zernio API. Always use the provided script.
 
 ## Notes
 

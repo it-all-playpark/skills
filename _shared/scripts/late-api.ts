@@ -1,8 +1,9 @@
 /**
- * Late API shared module
+ * Zernio (formerly Late) API shared module
  *
- * Common library for all Late API skills (late-schedule-post, late-sync).
+ * Common library for all Zernio API skills (late-schedule-post, late-sync).
  * Extracted from sns-schedule-post, video-schedule-post, and late-sync.
+ * Note: Variable names retain "late" prefix for backward compatibility.
  */
 
 import { readFileSync, existsSync, writeFileSync, statSync } from "fs";
@@ -373,7 +374,8 @@ export function parsePlatformsList(input: string | string[]): string[] {
 
 // ── API Client ──
 
-export const BASE_URL = "https://getlate.dev/api/v1";
+// Zernio API (formerly Late / getlate.dev)
+export const BASE_URL = "https://zernio.com/api/v1";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
