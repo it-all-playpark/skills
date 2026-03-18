@@ -1,13 +1,13 @@
 ---
 name: sales
 version: 1.0.0
-description: "リポジトリベースの統合営業管理スキル。YAML/Markdownで顧客情報・パイプライン・活動履歴を管理し、議事録生成・メール下書き・Gmail同期・ダッシュボードデプロイまでを一元化。
+description: "リポジトリベースの統合営業管理スキル。YAML/Markdownで顧客情報・パイプライン・活動履歴を管理し、議事録生成・メール下書き・Gmail同期・ダッシュボードデプロイまでを一元化。gBizINFO APIで法人公開情報を自動取得。
 Use when: (1) 営業パイプライン管理, (2) 顧客ステータス更新・確認, (3) 商談履歴・アポ回数の確認, (4) 顧客情報の登録・検索,
-(5) 議事録作成・お礼メール, (6) Gmail同期, (7) ダッシュボード更新,
-(8) keywords: 営業管理, パイプライン, 顧客追加, ステータス更新, NA期限, sales, CRM, 商談管理, フォローアップ, アポ, 活動履歴, 顧客マスタ, 議事録, meeting minutes, followup, お礼メール, dashboard,
-(9) meeting-followup, sales-tracker, sales-sync の後継スキル。
+(5) 議事録作成・お礼メール, (6) Gmail同期, (7) ダッシュボード更新, (8) 法人情報の調査・企業リサーチ,
+(9) keywords: 営業管理, パイプライン, 顧客追加, ステータス更新, NA期限, sales, CRM, 商談管理, フォローアップ, アポ, 活動履歴, 顧客マスタ, 議事録, meeting minutes, followup, お礼メール, dashboard, 法人情報, gBizINFO, 企業調査, 法人番号,
+(10) meeting-followup, sales-tracker, sales-sync の後継スキル。
 Accepts args: <subcommand> [options]
-Subcommands: add <企業名>, update <企業名>, log <企業名>, history <企業名>, info <企業名>, list [--status STATUS], followup [date], sync [--since DATE], remind, migrate, dashboard"
+Subcommands: add <企業名>, update <企業名>, log <企業名>, history <企業名>, info <企業名>, lookup <企業名|法人番号>, list [--status STATUS], followup [date], sync [--since DATE], remind, migrate, dashboard"
 ---
 
 # sales
@@ -62,10 +62,14 @@ sales/
       "closing": "引き続き、どうぞよろしくお願いいたします。"
     },
     "remind_days_before": 1,
-    "repo_path": "~/ghq/github.com/playpark-llc/sales"
+    "repo_path": "~/ghq/github.com/playpark-llc/sales",
+    "gbiz_api_token": "取得したAPIトークン"
   }
 }
 ```
+
+> **gBizINFO APIトークン取得**: https://info.gbiz.go.jp/api/registration から申請。
+> 環境変数 `GBIZ_API_TOKEN` でも設定可能（skill-config.json が優先）。
 
 ## 自動リマインド
 
@@ -105,6 +109,23 @@ sales/
 ```
 
 引数が不足している場合はLLMがユーザーに対話で確認する。profile.ymlの全項目を埋める必要はない — 分かっている情報だけで良い。
+
+#### gBizINFO 自動補完
+
+`add` 実行時、gBizINFO APIトークンが設定済みの場合:
+
+1. `scripts/gbiz-lookup.sh --name "企業名"` で法人情報を検索
+2. 候補が見つかったらユーザーに確認（複数候補の場合は選択）
+3. 確認された法人情報で profile.yml を自動補完:
+   - `corporate_number` — 法人番号
+   - `location` — 所在地
+   - `capital_stock` — 資本金
+   - `employee_number` — 従業員数
+   - `date_of_establishment` — 設立年月日
+   - `business_summary` — 事業概要
+   - `company_url` — 企業HP
+   - `representative_name` — 代表者名
+4. `--skip-gbiz` で自動補完をスキップ可能
 
 ### `update <企業名>` — パイプライン更新
 
@@ -146,6 +167,36 @@ sales/
 ### `info <企業名>` — 顧客情報表示
 
 profile.yml + pipeline.yml + 活動件数を表示。
+
+gBizINFO APIトークンが設定済み かつ profile.yml に `corporate_number` がある場合:
+- `scripts/gbiz-lookup.sh --number <法人番号>` で最新の公開情報も併せて表示
+- `--with-finance` で財務情報（売上・利益・総資産）も取得
+- `--with-workplace` で職場情報（平均年齢・勤続年数）も取得
+
+### `lookup <企業名|法人番号>` — gBizINFO 法人情報検索
+
+gBizINFO APIで法人の公開情報を検索・表示する。パイプラインへの登録は行わない。
+
+```
+/sales lookup 環境公害センター
+/sales lookup 1234567890123
+/sales lookup 環境公害センター --category finance
+```
+
+1. 引数が13桁の数字 → 法人番号として詳細取得:
+   ```bash
+   scripts/gbiz-lookup.sh --number "1234567890123"
+   ```
+2. それ以外 → 企業名として検索:
+   ```bash
+   scripts/gbiz-lookup.sh --name "企業名" --limit 5
+   ```
+3. 結果を整形して表示:
+   - 法人番号、法人名、所在地、資本金、従業員数、設立年月日、事業概要、企業HP、代表者名
+4. オプション:
+   - `--category finance|patent|procurement|subsidy|certification|workplace` — カテゴリ別詳細
+   - `--limit N` — 検索結果の件数上限（デフォルト: 5）
+5. 既存 `companies/` に該当企業がある場合は「登録済み」表示 + `info` へのリンクを案内
 
 ### `list` — パイプライン一覧
 
@@ -290,10 +341,12 @@ scripts/get-gemini-notes.sh <file-id>
 - `scripts/get-events.sh` — カレンダーイベント取得
 - `scripts/get-gemini-notes.sh` — Geminiメモ取得
 - `scripts/create-draft.sh` — Gmail下書き作成
+- `scripts/gbiz-lookup.sh` — gBizINFO API 法人情報取得
 
 ## リファレンス
 
 - `references/minutes-template.md` — 議事録テンプレート
+- `references/gbiz-api.md` — gBizINFO REST API リファレンス
 
 ## 自動デプロイパイプライン
 
