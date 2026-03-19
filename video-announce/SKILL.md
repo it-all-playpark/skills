@@ -101,7 +101,7 @@ $SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
 | **YouTube** | `mediaItems[].thumbnail.url` | `<output.dir>/thumbnails/youtube/<slug>.jpg` |
 | **TikTok** | `tiktokSettings.video_cover_timestamp_ms` | `<thumbOffset>` の値をそのまま設定（サムネファイル不要） |
 
-**重要**: サムネイル生成は JSON 出力の構築**前**に実行し、パスを JSON に埋め込むこと。後から追加では late-schedule-post / late-sync がサムネイルを認識できない。
+**重要**: サムネイル生成は JSON 出力の構築**前**に実行し、パスを JSON に埋め込むこと。後から追加では zernio post / zernio sync がサムネイルを認識できない。
 
 ### Scripts
 
@@ -156,7 +156,7 @@ $SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
 # 投稿パイプライン（1ファイルで全プラットフォーム）
 /video-announce video.mp4 --format json
 # → post/{date}-{slug}.json (配列: [instagram, youtube, tiktok])
-npx tsx $SKILLS_DIR/late-schedule-post/scripts/post.ts --json post/{date}-{slug}.json
+zernio post --json post/{date}-{slug}.json
 ```
 
 ## Backward Compatibility

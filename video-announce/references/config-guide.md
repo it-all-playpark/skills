@@ -48,6 +48,6 @@ Project config: `.claude/video-announce.json`
 動画メディアのサムネイル用フレーム切り出し位置（ミリ秒）。設定すると:
 
 1. JSON出力時、ffmpegで動画の指定位置からJPEGフレームを `{output.dir}/thumbnails/{platform}/{slug}.jpg` に自動生成
-2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `late-schedule-post` がアップロード
+2. **Instagram**: `platformSpecificData.instagramThumbnail` にサムネパスを設定 → `zernio post` がアップロード
 3. **YouTube**: `mediaItems[].thumbnail.url` にサムネパスを設定 → 投稿スクリプトがアップロードし `platformSpecificData.thumbnail` としてAPIに送信
 4. **TikTok**: `tiktokSettings.video_cover_timestamp_ms` にミリ秒を設定（フレーム指定のみ、サムネアップロード不要）

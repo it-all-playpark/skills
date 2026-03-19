@@ -7,10 +7,6 @@
       "google": { "enabled": true, "char_limit": 1500 }
     }
   },
-  "sns-schedule-post": {
-    "timezone": "Asia/Tokyo",
-    "default_platforms": ["x", "linkedin"]
-  },
   "blog-cross-post": {
     "content_dir": "content/blog",
     "blog_path_prefix": "/blog/"
