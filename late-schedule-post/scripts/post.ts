@@ -184,9 +184,11 @@ async function resolveYouTubeThumbnail(
   if (!thumbItem?.thumbnail?.url) return;
 
   const thumbSource = thumbItem.thumbnail.url;
-  delete thumbItem.thumbnail;
 
   if (!platformData) return;
+
+  // Note: thumbnail must NOT stay on mediaItems (Zernio API rejects it with "Failed to process media files")
+  delete thumbItem.thumbnail;
 
   if (isUrl(thumbSource)) {
     platformData.thumbnail = thumbSource;

@@ -127,13 +127,17 @@ sales/
    - `representative_name` — 代表者名
 4. `--skip-gbiz` で自動補完をスキップ可能
 
-### `update <企業名>` — パイプライン更新
+### `update <企業名>` — パイプライン更新 + 活動ログ
 
-**pipeline.yml のみ** を更新する。活動履歴も追加したい場合は `log` を使うこと。
+pipeline.yml を更新する。**具体的な営業活動（TEL、メール、訪問等）の記述が含まれる場合は、活動ログも自動作成する。**
 
 1. `companies/` から企業を検索（部分一致）
 2. 現在の pipeline.yml を読み込み、変更箇所を特定
 3. pipeline.yml を更新
+4. **活動ログ判定**: 引数に営業活動の内容（TEL結果、商談結果、メール送信等）が含まれる場合:
+   - `activities/YYYY-MM-DD_{type}.md` を作成（`log` サブコマンドと同じフォーマット）
+   - typeは活動内容から自動判定（TEL, メール, 訪問, 日程再調整 等）
+   - 純粋なステータス変更のみ（例: `--status "失注"`）の場合は活動ログ不要
 
 ```
 /sales update 環境公害センター --status "提案中" --next-action "見積書作成" --deadline "2026-03-20"

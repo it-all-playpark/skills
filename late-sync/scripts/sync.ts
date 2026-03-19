@@ -350,20 +350,23 @@ async function createPost(
     // Resolve thumbnails per platform (mirrors late-schedule-post logic)
     if (latePlatform === "youtube") {
       // YouTube: mediaItems[].thumbnail.url (local path) -> upload -> platformSpecificData.thumbnail
+      // Note: thumbnail must NOT stay on mediaItems (Zernio API rejects it with "Failed to process media files")
       const thumbItem = uploadedMedia.find((m) => m.thumbnail?.url);
       if (thumbItem?.thumbnail?.url) {
         const thumbSource = thumbItem.thumbnail.url;
         delete thumbItem.thumbnail;
+        let thumbUrl: string;
+        if (thumbSource.startsWith("http://") || thumbSource.startsWith("https://")) {
+          thumbUrl = thumbSource;
+        } else {
+          const thumbUploaded = await uploadMediaItemCached(apiKey, {
+            type: "image",
+            path: thumbSource,
+          });
+          thumbUrl = thumbUploaded.url;
+        }
         if (platformTarget.platformSpecificData) {
-          if (thumbSource.startsWith("http://") || thumbSource.startsWith("https://")) {
-            (platformTarget.platformSpecificData as Record<string, unknown>).thumbnail = thumbSource;
-          } else {
-            const thumbUploaded = await uploadMediaItemCached(apiKey, {
-              type: "image",
-              path: thumbSource,
-            });
-            (platformTarget.platformSpecificData as Record<string, unknown>).thumbnail = thumbUploaded.url;
-          }
+          (platformTarget.platformSpecificData as Record<string, unknown>).thumbnail = thumbUrl;
         }
       }
     } else if (latePlatform === "instagram") {

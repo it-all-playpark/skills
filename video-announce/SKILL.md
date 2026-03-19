@@ -68,9 +68,40 @@ $SKILLS_DIR/video-announce/scripts/load-config.sh
 2. Determine target platforms (`--platforms` or config)
 3. Identify source type and extract context (media metadata / article frontmatter / URL / topic)
 4. Detect media metadata and content type via `scripts/detect-media.sh <media-path> [--type TYPE]`
-5. For each platform: generate caption ([Caption Structures](references/caption-structures.md)) + hashtags ([Hashtag Strategy](references/short-video-hashtags.md))
-6. Write output as JSON array or Markdown ([Output Format](references/output-format.md))
-7. Generate thumbnails if `platformDefaults.thumbOffset` is set via `scripts/extract-thumbnail.sh`
+5. **Generate thumbnails** (JSON format + video media only): if `platformDefaults.thumbOffset` is set and source is a video file, run `scripts/extract-thumbnail.sh` for each target platform BEFORE building JSON output. See [Thumbnail Generation](#thumbnail-generation) for details.
+6. For each platform: generate caption ([Caption Structures](references/caption-structures.md)) + hashtags ([Hashtag Strategy](references/short-video-hashtags.md))
+7. Write output as JSON array or Markdown ([Output Format](references/output-format.md)), embedding thumbnail paths from step 5
+
+### Thumbnail Generation
+
+**条件**: `--format json` かつ source が動画ファイル かつ `platformDefaults.thumbOffset` が設定されている場合に実行。Markdown出力時はスキップ。
+
+**手順**:
+
+1. config から `platformDefaults.thumbOffset`（ミリ秒）と `output.dir` を取得
+2. 各プラットフォームごとにサムネイルを生成:
+
+```bash
+# Instagram用
+$SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
+  --offset-ms <thumbOffset> \
+  --output <output.dir>/thumbnails/instagram/<slug>.jpg
+
+# YouTube用
+$SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
+  --offset-ms <thumbOffset> \
+  --output <output.dir>/thumbnails/youtube/<slug>.jpg
+```
+
+3. 生成されたパスをJSON出力に埋め込む:
+
+| Platform | Field | Value |
+|----------|-------|-------|
+| **Instagram** | `platforms[].platformSpecificData.instagramThumbnail` | `<output.dir>/thumbnails/instagram/<slug>.jpg` |
+| **YouTube** | `mediaItems[].thumbnail.url` | `<output.dir>/thumbnails/youtube/<slug>.jpg` |
+| **TikTok** | `tiktokSettings.video_cover_timestamp_ms` | `<thumbOffset>` の値をそのまま設定（サムネファイル不要） |
+
+**重要**: サムネイル生成は JSON 出力の構築**前**に実行し、パスを JSON に埋め込むこと。後から追加では late-schedule-post / late-sync がサムネイルを認識できない。
 
 ### Scripts
 
