@@ -1,17 +1,18 @@
 ---
 name: seo-strategy
 description: |
-  GA4 + GSC + Trends データを統合分析し、包括的な SEO 戦略を構造化 JSON + MD で出力。
-  seo-content-planner の上流に位置し、既存記事改善・サイト構造・技術SEO・チャネル戦略を含む全体戦略を提供。
+  Agent Team による多角的 SEO 戦略生成。GA4 + GSC + Trends データを統合分析し、
+  コンテンツ戦略・技術SEO・チャネル分析の3専門家が並列分析 → 悪魔の代弁者レビューを経て
+  構造化 JSON + MD で出力。seo-content-planner の上流に位置する。
   Use when: (1) SEO全体戦略の策定・更新,
   (2) keywords: SEO戦略, サイト改善, CTR改善, 内部リンク, コンテンツ戦略,
   (3) blog-publish の --skip-seo なしフローの上流ステップとして。
   Accepts args: [--refresh] [--ga-report PATH] [--gsc-report PATH] [--trends-report PATH] [--config PATH]
 ---
 
-# SEO Strategy
+# SEO Strategy (Agent Team)
 
-GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claudedocs/seo-strategy.json` + `claudedocs/seo-strategy.md` で出力する。
+GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の代弁者レビュー**を経て、サイト全体の SEO 戦略を `claudedocs/seo-strategy.json` + `claudedocs/seo-strategy.md` で出力する。
 
 ## Usage
 
@@ -55,6 +56,28 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
 | `cluster_suggestion_min_impressions` | int | `50` | クラスタ提案に含める最低 imp |
 | `cluster_suggestion_top_n` | int | `5` | クラスタ提案の最大数 |
 
+## Agent Team Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      seo-lead (self)                        │
+│  統括・ステータス引き継ぎ・統合・悪魔の代弁者・最終出力      │
+└────────────┬──────────────┬──────────────┬──────────────────┘
+             │              │              │
+    ┌────────▼───────┐ ┌───▼──────────┐ ┌▼────────────────┐
+    │  content-      │ │  tech-seo-   │ │  channel-kpi-   │
+    │  strategist    │ │  specialist  │ │  analyst        │
+    │                │ │              │ │                 │
+    │ 記事改善       │ │ 技術SEO      │ │ チャネル分析    │
+    │ 新規記事方向性 │ │ サイト構造   │ │ KW競合性       │
+    │ クラスタ提案   │ │ コードベース │ │ ドメイン権威性  │
+    └────────────────┘ └──────────────┘ └─────────────────┘
+             │              │              │
+             └──── SendMessage で相互問い合わせ ────┘
+```
+
+詳細は `references/team-lifecycle.md` を参照。
+
 ## Workflow
 
 1. **キャッシュ確認**: `claudedocs/seo-strategy.json` の `metadata.generated_at` を確認。TTL 30日以内なら既存を返す（`--refresh` でスキップ）
@@ -70,22 +93,41 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
      --project-dir . --output claudedocs/seo-strategy-analysis.json
    ```
 4. **ステータス引き継ぎ**: 既存 `seo-strategy.json` がある場合、各要素の `status` を slug/type/channel をキーにマッピングし、新しい戦略に引き継ぐ。新規要素は `"pending"` で初期化。
-5. **戦略生成**: 分析結果を読み込み、LLM が以下を判断・生成:
+5. **Agent Team: 戦略生成** — 3専門家による並列分析 + 悪魔の代弁者レビュー:
 
-| セクション | 内容 | 判断基準 |
-| ---------- | ---- | -------- |
-| `existing_article_optimizations` | タイトル/メタ改善、リライト対象 | issues: low_ctr_high_imp, high_bounce |
-| `site_structure` | 内部リンク戦略、CTA設計 | pages_per_session, 記事間関連性, codebase_audit.internal_links |
-| `technical_seo` | モバイル最適化、CV設定、構造化データ・画像最適化 | device_gap, conversion_tracking, codebase_audit.jsonld/metadata/image_optimization |
-| `channel_strategy` | チャネル別改善アクション | channel_metrics の bounce_rate |
-| `new_article_directions` | 高ポテンシャル KW 領域 | query_clusters × trends_summary |
-| `keyword_competitiveness` | KW 競合性評価・ドメイン権威性分析 | category_performance, domain_authority_map |
-| `kpi_targets` | 3ヶ月目標値 | kpi_snapshot からの改善見込み |
-| `roadmap` | フェーズ別実行計画 | 優先度×インパクト（codebase_audit の issues severity を考慮） |
+   **Phase 1: Setup**
+   - TeamCreate で `seo-strategy-team` を作成
+   - 3専門家を Agent ツールで起動（`team_name: "seo-strategy-team"`）
+   - 各専門家に `seo-strategy-analysis.json` パスとステータスマッピングを配布
 
-6. **出力生成**:
-   - `claudedocs/seo-strategy.json` — 構造化戦略（schema は `references/schema.md`）
-   - `claudedocs/seo-strategy.md` — エグゼクティブサマリー + アクション一覧
+   **Phase 2: Parallel Analysis** (各専門家 max 8 ターン)
+
+   | Agent | 担当セクション | 入力データ |
+   |---|---|---|
+   | `content-strategist` | existing_article_optimizations, new_article_directions, cluster_suggestions | article_metrics, query_clusters, trends_summary |
+   | `tech-seo-specialist` | technical_seo, site_structure | codebase_audit, device_gap_analysis, article_metrics |
+   | `channel-kpi-analyst` | channel_strategy, category_performance, domain_authority_map | channel_metrics, category_performance, domain_authority_map |
+
+   専門家間は SendMessage でクロスドメイン問い合わせ可能（`references/cross-domain-patterns.md` 参照）
+
+   **Phase 3: Synthesize**
+   - seo-lead が3専門家の出力を統合
+   - 重複・矛盾を解消
+   - `kpi_targets` と `roadmap` を生成
+
+   **Phase 4: Devil's Advocate Review** (max 2 rounds)
+   - `references/devils-advocate.md` のチェックリストで統合ドラフトをレビュー
+   - blocking 項目を修正 → 再チェック
+   - blocking = 0 または 2ラウンド完了で終了
+
+   **Phase 5: Finalize**
+   - `claudedocs/seo-strategy.json` 出力（schema は `references/schema.md`）
+   - `claudedocs/seo-strategy.md` 出力 + Plan Quality Gate セクション
+
+   **Phase 6: Shutdown**
+   - 各専門家に shutdown_request → TeamDelete
+
+6. **フォールバック**: TeamCreate 失敗時は従来の単一LLM方式で戦略生成を続行
 
 ## Skill Delegation
 
@@ -94,6 +136,17 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
 | ga-analyzer      | GA4 データ取得             | `--refresh` 時 |
 | gsc              | GSC データ取得             | `--refresh` 時 |
 | trends-analyzer  | Trends データ取得          | `--refresh` 時 |
+
+## References
+
+| File | Purpose |
+|---|---|
+| `references/schema.md` | seo-strategy.json の構造化スキーマ |
+| `references/report_template.md` | seo-strategy.md のレポート構成 |
+| `references/analysis_guide.md` | 分析閾値・判断基準・Priority 判定ガイドライン |
+| `references/team-lifecycle.md` | Agent Team のライフサイクル・ターン予算・エラー回復 |
+| `references/cross-domain-patterns.md` | 専門家間 SendMessage テンプレート |
+| `references/devils-advocate.md` | 悪魔の代弁者チェックリスト・ループプロトコル |
 
 ## Output: seo-strategy.json
 
@@ -125,7 +178,9 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
 5. チャネル戦略
 6. 新規記事方向性
 7. クラスタ提案
-8. ロードマップ
+8. ドメイン権威性分析
+9. ロードマップ
+10. **Plan Quality Gate**（悪魔の代弁者レビュー結果）
 
 ## Error Handling
 
@@ -135,6 +190,9 @@ GA4 + GSC + Trends を統合分析し、サイト全体の SEO 戦略を `claude
 | strategy_analyzer.py 失敗     | stderr を確認し、入力ファイル形式を検証    |
 | 既存 strategy.json が TTL 内  | 既存を返す旨を通知（`--refresh` で上書き可能） |
 | config パスが無効             | デフォルト値にフォールバックして続行      |
+| TeamCreate 失敗              | 従来の単一LLM方式にフォールバック        |
+| 専門家が応答しない            | 2回リトライ → seo-lead が該当セクションを自力生成 |
+| 悪魔の代弁者 blocking 未解消  | 2ラウンド後、blocking 理由を MD に記載して出力 |
 
 ## Integration: seo-content-planner
 

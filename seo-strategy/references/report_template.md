@@ -167,6 +167,31 @@
 
 ---
 
+## 10. Plan Quality Gate
+
+> Devil's advocate review rounds: {N}
+> Blocking findings resolved: {yes/no}
+
+### Review Summary
+
+| Dimension | Result | Notes |
+|---|---|---|
+| データ根拠の妥当性 | {pass/blocking/non-blocking} | {notes} |
+| 優先度の一貫性 | {pass/blocking/non-blocking} | {notes} |
+| 実行可能性 | {pass/blocking/non-blocking} | {notes} |
+| 機会コストとトレードオフ | {pass/blocking/non-blocking} | {notes} |
+| KPI 目標の現実性 | {pass/blocking/non-blocking} | {notes} |
+| 内部整合性 | {pass/blocking/non-blocking} | {notes} |
+| 見落としチェック | {pass/blocking/non-blocking} | {notes} |
+
+### 留意事項（Non-blocking）
+
+{non-blocking 項目がある場合のみ記述}
+
+- {concern}: {rationale}
+
+---
+
 _次回更新: {generated_at + 30日}_
 ```
 
@@ -244,6 +269,7 @@ _次回更新: {generated_at + 30日}_
 | クラスタ提案 | 7. クラスタ提案 | `cluster_suggestions` |
 | ドメイン権威性分析 | 8. ドメイン権威性分析 | `category_performance` + `domain_authority_map` |
 | ロードマップ | 9. ロードマップ | `roadmap` |
+| Plan Quality Gate | 10. Plan Quality Gate | Devil's advocate review results |
 
 ## 注意事項
 
