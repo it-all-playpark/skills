@@ -1,37 +1,38 @@
 # Agent Skills Collection
 
-AIコーディングエージェント（Claude Code / Codex 等）の機能を拡張するスキルコレクションです。
+**70+ production-ready skills** for AI coding agents (Claude Code, Codex, and more).
 
-## インストール
+Dev workflow automation, SEO/marketing analytics, blog operations, Git workflow, image/video processing, Google Workspace integration — all in one repo.
 
-```bash
-# クローン（任意のパスに配置可能）
-git clone https://github.com/it-all-playpark/skills.git ~/skills
+Built and maintained by [playpark LLC](https://www.playpark.co.jp/) — an AI development studio specializing in agent-driven workflows and business process automation.
 
-# 各ツールからシンボリックリンクで参照
-# SKILLS_DIR は実体リポジトリのパスを指定
-ln -sf ~/skills ~/.<tool>/skills   # <tool>: claude, codex など
-```
-
-### 外部スキルの取り込み（skills.sh 由来）
-
-[skills.sh](https://skills.sh) 等で取得した外部スキルは `.agents/skills/` に配置し、シンボリックリンクで統合します。
+## Quick Start
 
 ```bash
-# 外部スキルの配置
-.agents/skills/<skill-name>/   # 外部スキルの実体
+# 1. Clone
+git clone https://github.com/it-all-playpark/skills.git ~/.claude/skills
 
-# シンボリックリンクの自動管理
-_lib/infra/link-agent-skills.sh    # リンク作成 + .gitignore 自動更新
-_lib/infra/unlink-agent-skills.sh  # リンク解除
+# 2. Done. Use skills in Claude Code:
+/dev-kickoff 123          # Issue → implementation → PR
+/git-commit --all         # Smart commit with Conventional Commits
+/sns-announce article.mdx # Generate social media posts
 ```
 
-`link-agent-skills.sh` を実行すると:
+For Codex or other agents, symlink to the appropriate directory:
 
-1. `.agents/skills/` 配下の全スキルを repo root にシンボリックリンク
-2. `.gitignore` に自動追記（git status を汚さない）
-3. 不要になった stale symlink を自動クリーンアップ
-4. 冪等: 何度実行しても同じ結果
+```bash
+ln -sf ~/.claude/skills ~/.<tool>/skills
+```
+
+### External Skills Integration (skills.sh)
+
+[skills.sh](https://skills.sh) で取得した外部スキルは `.agents/skills/` に配置し、シンボリックリンクで統合できます。
+
+```bash
+# Automated symlink management
+_lib/infra/link-agent-skills.sh    # Create symlinks + update .gitignore
+_lib/infra/unlink-agent-skills.sh  # Remove symlinks
+```
 
 ## 設定（skill-config.json）
 
@@ -465,6 +466,26 @@ skills/
 └── README.md
 ```
 
-## ライセンス
+## Contributing
+
+Issues and Pull Requests are welcome. Each skill follows this structure:
+
+```
+<skill-name>/
+├── SKILL.md             # Skill definition (required)
+├── scripts/             # Execution scripts
+├── references/          # Reference documents
+└── assets/              # Assets
+```
+
+## About playpark LLC
+
+AI開発を専門とするソフトウェア開発スタジオです。AIエージェントを活用した開発ワークフロー自動化、業務プロセスのAI化を得意としています。
+
+- Web: [playpark.co.jp](https://www.playpark.co.jp/)
+- Blog: [playpark.co.jp/blog](https://www.playpark.co.jp/blog/) — AI coding tools, agent workflows, and more
+- Contact: [playpark.co.jp/contact](https://www.playpark.co.jp/contact/) — AI開発・業務自動化のご相談
+
+## License
 
 各スキルのSKILL.mdを参照してください。

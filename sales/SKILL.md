@@ -4,10 +4,10 @@ version: 1.0.0
 description: "リポジトリベースの統合営業管理スキル。YAML/Markdownで顧客情報・パイプライン・活動履歴を管理し、議事録生成・メール下書き・Gmail同期・ダッシュボードデプロイまでを一元化。gBizINFO APIで法人公開情報を自動取得。
 Use when: (1) 営業パイプライン管理, (2) 顧客ステータス更新・確認, (3) 商談履歴・アポ回数の確認, (4) 顧客情報の登録・検索,
 (5) 議事録作成・お礼メール, (6) Gmail同期, (7) ダッシュボード更新, (8) 法人情報の調査・企業リサーチ,
-(9) keywords: 営業管理, パイプライン, 顧客追加, ステータス更新, NA期限, sales, CRM, 商談管理, フォローアップ, アポ, 活動履歴, 顧客マスタ, 議事録, meeting minutes, followup, お礼メール, dashboard, 法人情報, gBizINFO, 企業調査, 法人番号,
+(9) keywords: 営業管理, パイプライン, 顧客追加, ステータス更新, NA期限, sales, CRM, 商談管理, フォローアップ, アポ, 活動履歴, 顧客マスタ, 議事録, meeting minutes, followup, お礼メール, dashboard, 法人情報, gBizINFO, 企業調査, 法人番号, 問い合わせ分析, 企業分析, リード分析, prospect, analyze,
 (10) meeting-followup, sales-tracker, sales-sync の後継スキル。
 Accepts args: <subcommand> [options]
-Subcommands: add <企業名>, update <企業名>, log <企業名>, history <企業名>, info <企業名>, lookup <企業名|法人番号>, list [--status STATUS], followup [date], sync [--since DATE], remind, migrate, dashboard"
+Subcommands: add <企業名>, update <企業名>, log <企業名>, history <企業名>, info <企業名>, lookup <企業名|法人番号>, analyze <企業名>, list [--status STATUS], followup [date], sync [--since DATE], remind, migrate, dashboard"
 ---
 
 # sales
@@ -26,6 +26,8 @@ sales/
 │       ├── pipeline.yml      # パイプライン状態
 │       ├── activities/       # 活動履歴
 │       │   └── YYYY-MM-DD_{type}.md
+│       ├── briefs/           # 企業分析レポート
+│       │   └── analyze-YYYY-MM-DD.md
 │       └── minutes/          # 議事録
 │           └── YYYY-MM-DD.md
 ├── templates/                # テンプレート
@@ -298,9 +300,18 @@ scripts/get-gemini-notes.sh <file-id>
 
 承認された企業について `log` サブコマンド相当の処理を実行。
 
-### `remind` — リマインド表示
+### `remind` — パイプライン停滞レポート
 
-自動リマインドと同じ内容を明示的に表示。`--dry-run` 相当。
+パイプライン全体の健全性をスキャンし、停滞レポート + フォローアップメール案を生成する。
+
+```
+/sales remind                              # サマリーのみ
+/sales remind --with-email                 # フォローアップメール案も表示
+/sales remind --with-email --create-drafts # Gmail下書きまで一括作成
+```
+
+`scripts/pipeline-health.sh` で3種類の停滞（期限超過/長期未接触/ステータス停滞）を検知。
+詳細な検知ルール・レポートフォーマット・フォローアップメール生成・Gmail下書き作成は `references/remind-guide.md` を参照。
 
 ### `migrate` — Spreadsheetからの移行
 
@@ -327,6 +338,16 @@ scripts/get-gemini-notes.sh <file-id>
 1. `cd dashboard && npm run build`
 2. ビルド成功を確認
 
+### `analyze <企業名>` — 企業分析 + パーソナライズ返信案
+
+問い合わせ企業の情報を自動収集・分析し、課題仮説とパーソナライズされた返信案を生成する。
+
+```
+/sales analyze <企業名> [--email <メールアドレス>] [--inquiry <問い合わせ内容>] [--category <相談カテゴリ>] [--notify]
+```
+
+詳細な処理フロー・判定基準・出力フォーマットは `references/analyze-guide.md` を参照。
+
 ## 企業検索ロジック
 
 全サブコマンド共通の企業検索:
@@ -346,15 +367,19 @@ scripts/get-gemini-notes.sh <file-id>
 - `scripts/get-gemini-notes.sh` — Geminiメモ取得
 - `scripts/create-draft.sh` — Gmail下書き作成
 - `scripts/gbiz-lookup.sh` — gBizINFO API 法人情報取得
+- `scripts/analyze-prospect.py` — 企業追加情報収集（ニュース・求人・IT動向）
+- `scripts/pipeline-health.sh` — パイプライン停滞検知（JSON出力）
 
 ## リファレンス
 
 - `references/minutes-template.md` — 議事録テンプレート
 - `references/gbiz-api.md` — gBizINFO REST API リファレンス
+- `references/analyze-guide.md` — analyze サブコマンドの詳細フロー・判定基準・出力フォーマット
+- `references/remind-guide.md` — remind サブコマンドの停滞検知ルール・フォローアップ生成・Gmail連携
 
 ## 自動デプロイパイプライン
 
-データ変更を伴うサブコマンド（`add`, `update`, `log`, `followup`, `sync`, `migrate`）の処理完了後、
+データ変更を伴うサブコマンド（`add`, `update`, `log`, `followup`, `sync`, `migrate`, `analyze`）の処理完了後、
 自動で `scripts/auto-deploy.sh` を実行する。
 
 ```bash
