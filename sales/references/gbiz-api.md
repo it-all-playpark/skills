@@ -66,6 +66,28 @@ hojin-infos[]:
     average_continuous_service_years  # 平均勤続年数
 ```
 
+## CLI (`gbiz` コマンド)
+
+`playpark-llc/gbiz-cli` で提供。`cargo install --path .` で `~/.cargo/bin/gbiz` にインストール。
+
+```bash
+# 法人検索
+gbiz search "企業名" --output json
+gbiz search "企業名" -o table --limit 5
+
+# 法人詳細
+gbiz get 1234567890123
+
+# カテゴリ別取得
+gbiz finance 1234567890123 -o table
+gbiz subsidy 1234567890123 -o json
+gbiz workplace 1234567890123 -o compact
+
+# 全カテゴリ: search, get, finance, patent, procurement, subsidy, certification, commendation, workplace, corporation
+```
+
+環境変数 `GBIZ_API_TOKEN` または `--token` オプションで認証。
+
 ## 営業活用ポイント
 
 - **商談前リサーチ**: 資本金・従業員数・事業概要で企業規模を把握

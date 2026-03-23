@@ -56,7 +56,8 @@ sales/
 ```
 
 > **gBizINFO APIトークン取得**: https://info.gbiz.go.jp/api/registration から申請。
-> 環境変数 `GBIZ_API_TOKEN` でも設定可能（skill-config.json が優先）。
+> `gbiz` CLI は環境変数 `GBIZ_API_TOKEN` または `--token` オプションで認証。
+> skill-config.json の `gbiz_api_token` は `/sales` スキル内で `GBIZ_API_TOKEN` として `gbiz` コマンドに渡される。
 
 ## 自動リマインド
 

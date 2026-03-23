@@ -21,7 +21,7 @@
 
 `add` 実行時、gBizINFO APIトークンが設定済みの場合:
 
-1. `scripts/gbiz-lookup.sh --name "企業名"` で法人情報を検索
+1. `gbiz search "企業名" --output json` で法人情報を検索
 2. 候補が見つかったらユーザーに確認（複数候補の場合は選択）
 3. 確認された法人情報で profile.yml を自動補完:
    - `corporate_number` — 法人番号

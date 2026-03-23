@@ -8,11 +8,11 @@ gBizINFO + HP スクレイピングで基本情報を取得する。
 
 1. gBizINFO 検索:
    ```bash
-   scripts/gbiz-lookup.sh --name "企業名"
+   gbiz search "企業名" --output json
    ```
    - 法人番号が取得できた場合、補助金取得履歴も取得:
      ```bash
-     scripts/gbiz-lookup.sh --number "<法人番号>" --category subsidy
+     gbiz subsidy <法人番号> --output json
      ```
 
 2. HP URL 特定:
