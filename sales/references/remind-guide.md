@@ -11,7 +11,7 @@ bash scripts/pipeline-health.sh --repo-path "$REPO_PATH"
 | # | 検知ルール | 条件 |
 |---|-----------|------|
 | 1 | 期限超過 | `next_action_deadline` < today |
-| 2 | 長期未接触 | `last_contact` から14日以上経過 AND status が「失注」「受注」「保留」「アポお断り」以外 |
+| 2 | 長期未接触 | `last_contact` から14日以上経過 AND status が「失注」「受注」「保留」「アポお断り」以外 AND `next_action_deadline` が未設定（空） |
 | 3 | ステータス停滞 | status が「提案中」or「見積送付済」で30日以上変化なし（activities最新日 or last_contact基準） |
 
 ## Step 2: レポート生成

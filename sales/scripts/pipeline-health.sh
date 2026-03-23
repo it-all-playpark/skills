@@ -178,14 +178,17 @@ for company_dir in "$COMPANIES_DIR"/*/; do
     fi
   fi
 
-  # ---- Check 2: Stale contact (14+ days, active statuses only) ----
+  # ---- Check 2: Stale contact (14+ days, active statuses only, no deadline set) ----
   if [[ -n "$last_contact" && "$last_contact" != "null" ]]; then
     # Check if status is excluded
     if ! echo "$status" | grep -qE "^($EXCLUDED_CONTACT_STATUSES)$"; then
-      days_since=$(days_between "$TODAY" "$last_contact")
-      if [[ "$days_since" -ge "$STALE_CONTACT_DAYS" ]]; then
-        flagged=true
-        stale_contact_items+=("{\"slug\":\"$(json_esc "$slug")\",\"company\":\"$(json_esc "$company_name")\",\"last_contact\":\"$last_contact\",\"days_since\":$days_since,\"status\":\"$(json_esc "$status")\"}")
+      # Skip if next_action_deadline is set (covered by overdue/upcoming)
+      if [[ -z "$deadline" || "$deadline" == "null" ]]; then
+        days_since=$(days_between "$TODAY" "$last_contact")
+        if [[ "$days_since" -ge "$STALE_CONTACT_DAYS" ]]; then
+          flagged=true
+          stale_contact_items+=("{\"slug\":\"$(json_esc "$slug")\",\"company\":\"$(json_esc "$company_name")\",\"last_contact\":\"$last_contact\",\"days_since\":$days_since,\"status\":\"$(json_esc "$status")\"}")
+        fi
       fi
     fi
   fi
