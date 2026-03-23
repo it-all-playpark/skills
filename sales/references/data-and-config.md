@@ -7,7 +7,7 @@ sales/
 ├── schema.yml                # フィールド定義（単一真実源）
 ├── companies/
 │   └── {slug}/
-│       ├── profile.yml       # 顧客マスタ
+│       ├── profile.yml       # 企業情報 + 担当者情報（contacts配列）
 │       ├── pipeline.yml      # パイプライン状態
 │       ├── activities/       # 活動履歴
 │       │   └── YYYY-MM-DD_{type}.md
