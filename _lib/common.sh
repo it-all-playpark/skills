@@ -128,15 +128,21 @@ duration_since() { echo $(($(now_sec) - $1)); }
 # Config Loading
 # ============================================================================
 
-# Load skill section from global ~/.claude/skill-config.json
+# Load skill section from global config
+# Resolution: $SKILL_CONFIG_PATH > ~/.config/skills/config.json > ~/.claude/skill-config.json
 _load_global_skill_config() {
   local skill_name="$1"
-  local global_path="${HOME}/.claude/skill-config.json"
-  if [[ -f "$global_path" ]]; then
+  local candidates=(
+    "${SKILL_CONFIG_PATH:-}"
+    "${HOME}/.config/skills/config.json"
+    "${HOME}/.claude/skill-config.json"
+  )
+  for global_path in "${candidates[@]}"; do
+    [[ -n "$global_path" && -f "$global_path" ]] || continue
     local section
     section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$global_path" 2>/dev/null)
     [[ -n "$section" ]] && { echo "$section"; return; }
-  fi
+  done
   echo "{}"
 }
 
@@ -154,13 +160,18 @@ load_skill_config() {
   git_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
 
   if [[ -n "$git_root" ]]; then
-    # 2a. skill-config.json
-    local config_path="${git_root}/.claude/skill-config.json"
-    if [[ -f "$config_path" ]]; then
-      local section
-      section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$config_path" 2>/dev/null)
-      [[ -n "$section" ]] && project_cfg="$section"
-    fi
+    # 2a. skill-config.json (tool-agnostic path first, then legacy)
+    local config_candidates=(
+      "${git_root}/skill-config.json"
+      "${git_root}/.claude/skill-config.json"
+    )
+    for config_path in "${config_candidates[@]}"; do
+      if [[ -f "$config_path" ]]; then
+        local section
+        section=$(jq -r --arg key "$skill_name" '.[$key] // empty' "$config_path" 2>/dev/null)
+        [[ -n "$section" ]] && { project_cfg="$section"; break; }
+      fi
+    done
     # 2b. Legacy fallback
     if [[ "$project_cfg" == "{}" ]]; then
       local legacy_path="${git_root}/.claude/${skill_name}.json"

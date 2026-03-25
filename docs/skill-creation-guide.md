@@ -186,7 +186,7 @@ User triggers /command
 
 ## skill-config.json
 
-スキル固有の設定は `.claude/skill-config.json` に集約。
+スキル固有の設定は `skill-config.json`（リポジトリルート）に集約。
 
 ```json
 {
@@ -196,4 +196,11 @@ User triggers /command
 }
 ```
 
-スキル内からは Read ツールで読み取る。
+### Config 解決順序
+
+**グローバル**: `$SKILL_CONFIG_PATH` > `~/.config/skills/config.json` > `~/.claude/skill-config.json`
+
+**プロジェクト**: `$git_root/skill-config.json` > `$git_root/.claude/skill-config.json`
+
+スクリプトからは `_lib/common.sh` の `load_skill_config` / `merge_config` を使用。
+LLM からは Read ツールで `skill-config.json` を直接読み取る。

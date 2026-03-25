@@ -18,16 +18,29 @@ def _get_git_root() -> str | None:
 
 
 def _load_global_skill_config(skill_name: str) -> dict:
-    """Load skill section from global ~/.claude/skill-config.json."""
-    global_path = Path.home() / ".claude" / "skill-config.json"
-    if global_path.exists():
-        try:
-            data = json.loads(global_path.read_text())
-            section = data.get(skill_name)
-            if section is not None:
-                return section
-        except (json.JSONDecodeError, OSError):
-            pass
+    """Load skill section from global config.
+
+    Resolution: $SKILL_CONFIG_PATH > ~/.config/skills/config.json > ~/.claude/skill-config.json
+    """
+    import os
+
+    candidates = [
+        os.environ.get("SKILL_CONFIG_PATH", ""),
+        str(Path.home() / ".config" / "skills" / "config.json"),
+        str(Path.home() / ".claude" / "skill-config.json"),
+    ]
+    for global_path_str in candidates:
+        if not global_path_str:
+            continue
+        global_path = Path(global_path_str)
+        if global_path.exists():
+            try:
+                data = json.loads(global_path.read_text())
+                section = data.get(skill_name)
+                if section is not None:
+                    return section
+            except (json.JSONDecodeError, OSError):
+                pass
     return {}
 
 
@@ -50,16 +63,18 @@ def load_skill_config(skill_name: str) -> dict:
     if root:
         root_path = Path(root)
 
-        # 2a. skill-config.json の skill セクション
-        project_path = root_path / ".claude" / "skill-config.json"
-        if project_path.exists():
-            try:
-                data = json.loads(project_path.read_text())
-                section = data.get(skill_name)
-                if section is not None:
-                    project_cfg = section
-            except (json.JSONDecodeError, OSError):
-                pass
+        # 2a. skill-config.json (tool-agnostic path first, then legacy)
+        for config_rel in ["skill-config.json", ".claude/skill-config.json"]:
+            project_path = root_path / config_rel
+            if project_path.exists():
+                try:
+                    data = json.loads(project_path.read_text())
+                    section = data.get(skill_name)
+                    if section is not None:
+                        project_cfg = section
+                        break
+                except (json.JSONDecodeError, OSError):
+                    pass
 
         # 2b. フォールバック: 旧形式
         if not project_cfg:

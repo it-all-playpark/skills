@@ -17,7 +17,8 @@ skills/
 ├── _shared/              # 共有リソース（references, scripts）
 ├── _lib/                 # 共有ライブラリ（common.sh, config.py）
 ├── .agents/skills/       # 外部スキル（symlink）
-├── .claude/skill-config.json  # スキル固有設定
+├── skill-config.json     # スキル固有設定（ツール非依存）
+├── .claude/              # Claude Code 固有設定
 └── docs/                 # プロジェクトドキュメント
 ```
 
