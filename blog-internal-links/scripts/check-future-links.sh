@@ -103,6 +103,19 @@ resolve_target_status() {
         return
     fi
 
+    # Hub page slugs (hub/<hub-slug>) are valid if the hub route exists
+    if [[ "$slug" == hub/* ]]; then
+        local hub_route="$PROJECT_ROOT/app/blog/hub/[slug]/page.tsx"
+        if [[ -f "$hub_route" ]]; then
+            TARGET_STATUS[$slug]="published"
+            TARGET_DATE[$slug]=""
+        else
+            TARGET_STATUS[$slug]="not_found"
+            TARGET_DATE[$slug]=""
+        fi
+        return
+    fi
+
     # Find MDX file matching slug
     local mdx_file=""
     mdx_file="$(find "$BLOG_DIR" -name "*${slug}.mdx" -type f 2>/dev/null | head -1)"
