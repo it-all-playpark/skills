@@ -36,7 +36,92 @@
 
 ---
 
-## 2. 既存記事改善アクション
+## 2. 施策効果評価
+
+> 戦略提案の前に、既に実施済みの施策の効果を検証する。
+
+### 施策タイムライン
+
+| 日付 | 施策 | カテゴリ | 影響指標 |
+| ---- | ---- | -------- | -------- |
+| {deployment_timeline[].date} | {description} | {category} | {affected_metrics} |
+
+### 期間比較
+
+{measure_evaluation.period_comparisons を展開}
+
+#### {name}
+
+| 指標 | 施策前 ({period_a.label}) | 施策後 ({period_b.label}) | 変化率 |
+| ---- | ------------------------ | ------------------------ | ------ |
+| {metric} | {before} | {after} | {change_pct}% |
+
+**判定**: {verdict}（確度: {confidence}）
+**根拠**: {rationale}
+
+### 実装済み施策一覧
+
+| カテゴリ | コンポーネント | ステータス | 備考 |
+| -------- | -------------- | ---------- | ---- |
+| {category} | {component} | {status} | {note} |
+
+> ⚠️ 以降のセクションで提案される施策は、上記の実装済み施策と重複しない。
+
+---
+
+## 3. 計測データの信頼性
+
+### イベント計測開始日
+
+| イベント | 計測開始日 | 経過日数 | データ有効性 |
+| -------- | ---------- | -------- | ------------ |
+| {event} | {date} | {days_since} | {有効 / 参考値 / 評価不能} |
+
+### ノイズ分析
+
+- **(not set) LP**: {noise_analysis.not_set_lp_sessions} sessions ({not_set_lp_pct}%)、bounce {not_set_lp_bounce}%
+- **全体 PV/Session**: {raw_pv_per_session} → **(not set) 除外後**: {adjusted_pv_per_session}
+- **判定**: {severity}
+
+### 断言の信頼度
+
+| 主張 | 確度 | 根拠 |
+| ---- | ---- | ---- |
+| {claim} | {confidence} | {basis} |
+
+> confidence: low の主張は暫定値として扱い、追加データ収集後に再評価すること。
+
+---
+
+## 4. テーマ × CV 相関分析
+
+### テーマ別 CVR
+
+| テーマ | Sessions | CV | CVR | Engagement | 診断 |
+| ------ | -------- | -- | --- | ---------- | ---- |
+| {theme} | {sessions} | {conversions} | {cvr}% | {engagement_rate}% | {diagnosis} |
+
+### ブログ vs 非ブログ
+
+| 区分 | Sessions | CV | CVR |
+| ---- | -------- | -- | --- |
+| ブログ記事 | {blog_sessions} | {blog_cv} | {blog_cvr}% |
+| 非ブログ | {non_blog_sessions} | {non_blog_cv} | {non_blog_cvr}% |
+| **ミスマッチ倍率** | — | — | **{mismatch_ratio}x** |
+
+### CVが発生したページ
+
+| ページ | Sessions | CV | CVR | テーマ |
+| ------ | -------- | -- | --- | ------ |
+| {page} | {sessions} | {cv} | {cvr}% | {theme} |
+
+### 戦略的示唆
+
+{theme_cv_analysis.strategic_implication}
+
+---
+
+## 5. 既存記事改善アクション
 
 {existing_article_optimizations を priority 順に記述}
 
@@ -51,7 +136,7 @@
 
 ---
 
-## 3. サイト構造改善
+## 6. サイト構造改善
 
 ### 内部リンク戦略
 
@@ -73,7 +158,7 @@
 
 ---
 
-## 4. 技術 SEO 課題
+## 7. 技術 SEO 課題
 
 ### モバイル最適化
 
@@ -92,7 +177,7 @@
 
 ---
 
-## 5. チャネル戦略
+## 8. チャネル戦略
 
 {channel_strategy を priority 順に記述}
 
@@ -102,7 +187,7 @@
 
 ---
 
-## 6. 新規記事方向性
+## 9. 新規記事方向性
 
 {new_article_directions を priority 順に記述}
 
@@ -115,7 +200,7 @@
 
 ---
 
-## 7. クラスタ提案
+## 10. クラスタ提案
 
 {cluster_suggestions がある場合に記述。未分類クエリから自動検出された新クラスタ候補。}
 
@@ -127,7 +212,7 @@
 
 ---
 
-## 8. ドメイン権威性分析
+## 11. ドメイン権威性分析
 
 {category_performance と domain_authority_map から生成}
 
@@ -153,7 +238,7 @@
 
 ---
 
-## 9. ロードマップ
+## 12. ロードマップ
 
 {roadmap.phases を記述}
 
@@ -167,7 +252,7 @@
 
 ---
 
-## 10. Plan Quality Gate
+## 13. Plan Quality Gate
 
 > Devil's advocate review rounds: {N}
 > Blocking findings resolved: {yes/no}
@@ -197,7 +282,7 @@ _次回更新: {generated_at + 30日}_
 
 ## セクション別記述ガイドライン
 
-### 8. ドメイン権威性分析
+### 11. ドメイン権威性分析
 
 - `category_performance` からカテゴリ間の imp 格差を可視化
 - `domain_authority_map` から強み/弱み領域を分類
@@ -213,44 +298,68 @@ _次回更新: {generated_at + 30日}_
   - **最大の機会**: 未開拓だが高ポテンシャルな領域
 - 各発見には必ず **具体的な数値** を含める
 
-### 2. 既存記事改善アクション
+### 2. 施策効果評価
+
+- `measure_evaluation` の全データを展開
+- period_comparisons は verdict に応じた色分け表示（effective=太字、ineffective=打ち消し線）
+- 実装済み施策は必ず全件リストアップ。以降のセクションでの重複提案を明示的に防止
+- confidence: low の比較結果には「⚠️ 暫定値」を付記
+
+### 3. 計測データの信頼性
+
+- `data_validity` の全データを展開
+- イベント経過日数は生成日から自動計算
+- ノイズ分析は (not set) 除外前後の PV/Session を併記
+- 断言テーブルの confidence: low 行は **太字** で強調
+
+### 4. テーマ × CV 相関分析
+
+- `theme_cv_analysis` の全データを展開
+- diagnosis ごとに推奨アクションを付記:
+  - reader_cv_mismatch → 「導入検討層向け記事の拡充を検討」
+  - cv_potential → 「このテーマの記事増産を推奨」
+  - content_quality_issue → 「リライトまたは統合を検討」
+- blog_vs_non_blog のミスマッチ倍率が 10x 以上の場合、**構造的課題** として強調
+- strategic_implication はそのまま引用（LLM による加工なし）
+
+### 5. 既存記事改善アクション
 
 - `existing_article_optimizations` の各エントリを展開
 - priority: high → medium → low の順で記述
 - チェックボックス形式で実行可能なアクション一覧を提示
 - `expected_impact` は定量的に記述（例: 「CTR 2.8% → 5%+ で月 +30 clicks」）
 
-### 3. サイト構造改善
+### 6. サイト構造改善
 
 - 内部リンクと CTA を分けて記述
 - 具体的な記事 slug を列挙し、実装イメージを明確にする
 - ピラーページ提案がある場合は、ハブ/スポーク構造を図示
 
-### 4. 技術 SEO 課題
+### 7. 技術 SEO 課題
 
 - テーブル形式で現在値・目標値・アクションを一覧化
 - CV トラッキング未設定の場合は **critical** として強調
 - 実装手順は含めず、課題とアクション名のみ記述
 
-### 5. チャネル戦略
+### 8. チャネル戦略
 
 - テーブル形式でチャネル横断比較
 - 直帰率 100% 等の異常値は **太字** で強調
 - 良好なチャネル（qiita等）も「維持」として記載
 
-### 6. 新規記事方向性
+### 9. 新規記事方向性
 
 - `new_article_directions` の各エントリを展開
 - ファネルステージを明示（認知/興味/検討/行動）
 - 切り口案は seo-content-planner の `--strategy` 入力として活用される旨を注記
 
-### 7. クラスタ提案
+### 10. クラスタ提案
 
 - `cluster_suggestions` の各エントリをテーブル形式で記述
 - 提案が空の場合はセクションごと省略
 - 有用な提案を `seo-config.json` に追加するよう促す注記を含める
 
-### 8. ロードマップ
+### 12. ロードマップ
 
 - フェーズごとにチェックボックス形式
 - 時系列を明確にし、依存関係がある場合は注記
@@ -261,15 +370,18 @@ _次回更新: {generated_at + 30日}_
 | SKILL.md セクション | レポートセクション | 情報ソース |
 | -------------------- | ------------------ | ---------- |
 | エグゼクティブサマリー（KPI + 3つの重要発見） | 1. エグゼクティブサマリー | `kpi_snapshot` + `kpi_targets` + LLM判断 |
-| 既存記事改善アクション（優先度順） | 2. 既存記事改善アクション | `existing_article_optimizations` |
-| サイト構造改善 | 3. サイト構造改善 | `site_structure` |
-| 技術SEO課題 | 4. 技術 SEO 課題 | `technical_seo` |
-| チャネル戦略 | 5. チャネル戦略 | `channel_strategy` |
-| 新規記事方向性 | 6. 新規記事方向性 | `new_article_directions` |
-| クラスタ提案 | 7. クラスタ提案 | `cluster_suggestions` |
-| ドメイン権威性分析 | 8. ドメイン権威性分析 | `category_performance` + `domain_authority_map` |
-| ロードマップ | 9. ロードマップ | `roadmap` |
-| Plan Quality Gate | 10. Plan Quality Gate | Devil's advocate review results |
+| 施策効果評価 | 2. 施策効果評価 | `measure_evaluation` |
+| 計測データの信頼性 | 3. 計測データの信頼性 | `data_validity` |
+| テーマ×CV相関分析 | 4. テーマ×CV相関分析 | `theme_cv_analysis` |
+| 既存記事改善アクション（優先度順） | 5. 既存記事改善アクション | `existing_article_optimizations` |
+| サイト構造改善 | 6. サイト構造改善 | `site_structure` |
+| 技術SEO課題 | 7. 技術 SEO 課題 | `technical_seo` |
+| チャネル戦略 | 8. チャネル戦略 | `channel_strategy` |
+| 新規記事方向性 | 9. 新規記事方向性 | `new_article_directions` |
+| クラスタ提案 | 10. クラスタ提案 | `cluster_suggestions` |
+| ドメイン権威性分析 | 11. ドメイン権威性分析 | `category_performance` + `domain_authority_map` |
+| ロードマップ | 12. ロードマップ | `roadmap` |
+| Plan Quality Gate | 13. Plan Quality Gate | Devil's advocate review results |
 
 ## 注意事項
 

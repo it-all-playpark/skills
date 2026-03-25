@@ -378,6 +378,158 @@ strength の判定ロジック:
 - `codebase_audit.noindex_canonical` → `technical_seo` でcanonical設定の優先度判断
 - `codebase_audit.summary` → `roadmap` のフェーズ優先度に severity を加味
 
+## measure_evaluation
+
+施策効果評価。`measure-evaluator` が生成。
+
+```json
+{
+  "deployment_timeline": [
+    {
+      "date": "2026-03-13",
+      "commit": "7519328",
+      "category": "internal_link",
+      "description": "InlineRelatedCard 自動挿入",
+      "affected_metrics": ["internal_navigation", "pv_per_session"]
+    }
+  ],
+  "period_comparisons": [
+    {
+      "name": "InlineRelatedCard 効果",
+      "period_a": { "label": "施策前", "start": "2026-03-01", "end": "2026-03-12", "days": 12 },
+      "period_b": { "label": "施策後", "start": "2026-03-13", "end": "2026-03-25", "days": 13 },
+      "metrics": {
+        "sessions_per_day": { "before": 234, "after": 335, "change_pct": 43.2 },
+        "pv_per_session": { "before": 0.983, "after": 0.972, "change_pct": -1.1 },
+        "internal_nav_pct": { "before": null, "after": 4.09, "note": "計測開始が施策と同日のため施策前データなし" }
+      },
+      "verdict": "効果微小",
+      "confidence": "medium",
+      "rationale": "PV/Session に改善なし。internal_navigation は計測開始と同日のため前後比較不可"
+    }
+  ],
+  "implemented_measures": [
+    {
+      "category": "cta",
+      "component": "BlogCTABanner",
+      "file": "components/blog/blog-cta-banner.tsx",
+      "status": "deployed",
+      "note": "カテゴリ別CTA、GA4トラッキング付き"
+    }
+  ]
+}
+```
+
+### verdict 値
+
+| 値 | 意味 |
+|---|---|
+| `effective` | 施策後に有意な改善（日次正規化 +10% 以上） |
+| `marginal` | 微小な改善（±10% 以内） |
+| `ineffective` | 改善なし or 悪化 |
+| `insufficient_data` | 計測期間不足で判定不能 |
+
+### confidence 値
+
+| 値 | 条件 |
+|---|---|
+| `high` | 計測期間 14日+、CV数 20+、ノイズ除外済み |
+| `medium` | 計測期間 7-14日 or CV数 < 20 |
+| `low` | 計測期間 < 7日 or イベント追加日と施策日が同日 |
+
+## data_validity
+
+計測データの有効性評価。
+
+```json
+{
+  "event_tracking_dates": {
+    "scroll_depth_90": "2026-02-28",
+    "cta_click": "2026-02-28",
+    "internal_navigation": "2026-03-13",
+    "contact_start": "2026-02-28",
+    "contact_submit": "2026-02-28"
+  },
+  "noise_analysis": {
+    "not_set_lp_sessions": 846,
+    "not_set_lp_pct": 12.2,
+    "not_set_lp_bounce": 94.5,
+    "severity": "注意",
+    "raw_pv_per_session": 0.98,
+    "adjusted_pv_per_session": 1.11,
+    "recommendation": "分析時は (not set) LP を除外して評価"
+  },
+  "assertions": [
+    {
+      "claim": "PV/Session は約1.1",
+      "confidence": "high",
+      "basis": "25日間のデータ、(not set) 除外後"
+    },
+    {
+      "claim": "CTA CTR は 0.3%",
+      "confidence": "low",
+      "basis": "計測開始から6日間のみ"
+    }
+  ]
+}
+```
+
+### assertion.confidence
+
+各「断言」に信頼度を付与。レポートでは confidence: low の断言に「暫定値」と注記する。
+
+## theme_cv_analysis
+
+コンテンツテーマ × CV率のクロス分析。
+
+```json
+{
+  "themes": [
+    {
+      "theme": "ツール比較・選定",
+      "sessions": 4164,
+      "conversions": 4,
+      "cvr": 0.10,
+      "engagement_rate": 77,
+      "avg_duration_sec": 287,
+      "top_pages": [
+        { "page": "/blog/ai-coding-tools-comparison", "sessions": 2726, "cv": 0 },
+        { "page": "/blog/claude-code-vs-codex-comparison", "sessions": 814, "cv": 2 }
+      ],
+      "diagnosis": "reader_cv_mismatch"
+    }
+  ],
+  "blog_vs_non_blog": {
+    "blog_sessions": 5915,
+    "blog_cv": 5,
+    "blog_cvr": 0.08,
+    "non_blog_sessions": 147,
+    "non_blog_cv": 4,
+    "non_blog_cvr": 2.72,
+    "mismatch_ratio": 32.2
+  },
+  "cv_producing_pages": [
+    {
+      "page": "/",
+      "sessions": 111,
+      "cv": 4,
+      "cvr": 3.6,
+      "theme": "サービスページ"
+    }
+  ],
+  "strategic_implication": "ブログ読者層（開発者）とCVターゲット（企業担当者）の構造的ミスマッチ。導入検討層向け記事の拡充がCV改善の本筋。"
+}
+```
+
+### diagnosis 値
+
+| 値 | 条件 | 意味 |
+|---|---|---|
+| `reader_cv_mismatch` | engagement 60%+ & CVR < 0.5% | 読者は満足しているがCV対象外 |
+| `cv_potential` | CVR > 1% & sessions < 100 | 小規模だがCV効率高い → 増産候補 |
+| `content_quality_issue` | engagement < 40% & CVR < 0.5% | コンテンツ品質問題 |
+| `healthy` | engagement 50%+ & CVR > 0.5% | 良好 |
+
 ## kpi_targets
 
 ```json
