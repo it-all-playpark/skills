@@ -70,6 +70,55 @@ def load_json(path: str | None) -> dict | None:
         return json.load(f)
 
 
+def _extract_gsc_rows(gsc_data: dict | list, *, kind: str = "all") -> list[dict]:
+    """Normalize GSC report data into a flat list of row dicts.
+
+    Handles two formats:
+      1. Combined: top-level ``rows`` with ``page``/``query`` fields
+      2. Separated: ``queries`` list + ``pages`` list (each with ``keys[0]``)
+
+    *kind* controls which rows to return:
+      - ``"all"``: queries + pages (default)
+      - ``"queries"``: query rows only
+      - ``"pages"``: page rows only
+    """
+    if isinstance(gsc_data, list):
+        return gsc_data
+
+    # Format 1: combined rows
+    rows = gsc_data.get("rows", gsc_data.get("search_analytics", {}).get("rows", []))
+    if rows:
+        return rows
+
+    # Format 2: separated queries / pages (from /gsc skill)
+    result: list[dict] = []
+    if kind in ("all", "queries"):
+        for q in gsc_data.get("queries", []):
+            entry = dict(q)
+            keys = entry.pop("keys", [])
+            if keys:
+                entry.setdefault("query", keys[0])
+            result.append(entry)
+    if kind in ("all", "pages"):
+        for p in gsc_data.get("pages", []):
+            entry = dict(p)
+            keys = entry.pop("keys", [])
+            if keys:
+                url = keys[0]
+                # Normalize full URL to path
+                for prefix in ("https://www.", "http://www.", "https://", "http://"):
+                    if url.startswith(prefix):
+                        url = url.split("/", 3)[-1] if url.count("/") >= 3 else url
+                        # Rebuild as path: strip scheme+host
+                        from urllib.parse import urlparse
+                        parsed = urlparse(keys[0])
+                        url = parsed.path
+                        break
+                entry.setdefault("page", url)
+            result.append(entry)
+    return result
+
+
 def load_config(path: str | None) -> dict:
     """Load config JSON and merge with defaults.
 
@@ -222,12 +271,7 @@ def extract_gsc_page_metrics(gsc_data: dict, content_path_prefix: str = "/blog/"
     """Extract per-page GSC metrics (queries, impressions, clicks, CTR, position)."""
     metrics: dict[str, dict] = {}
 
-    # GSC reports may vary in structure; handle common formats
-    rows = []
-    if isinstance(gsc_data, list):
-        rows = gsc_data
-    elif isinstance(gsc_data, dict):
-        rows = gsc_data.get("rows", gsc_data.get("search_analytics", {}).get("rows", []))
+    rows = _extract_gsc_rows(gsc_data, kind="pages")
 
     for row in rows:
         page = row.get("page", row.get("keys", [""])[0] if "keys" in row else "")
@@ -286,11 +330,7 @@ def extract_gsc_page_metrics(gsc_data: dict, content_path_prefix: str = "/blog/"
 
 def extract_gsc_kpi(gsc_data: dict) -> dict:
     """Extract site-wide GSC KPIs."""
-    rows = []
-    if isinstance(gsc_data, list):
-        rows = gsc_data
-    elif isinstance(gsc_data, dict):
-        rows = gsc_data.get("rows", gsc_data.get("search_analytics", {}).get("rows", []))
+    rows = _extract_gsc_rows(gsc_data)
 
     total_clicks = sum(int(r.get("clicks", 0)) for r in rows)
     total_impressions = sum(int(r.get("impressions", 0)) for r in rows)
@@ -315,11 +355,7 @@ def build_query_clusters(
 
     Returns (clusters, unclustered) tuple.
     """
-    rows = []
-    if isinstance(gsc_data, list):
-        rows = gsc_data
-    elif isinstance(gsc_data, dict):
-        rows = gsc_data.get("rows", gsc_data.get("search_analytics", {}).get("rows", []))
+    rows = _extract_gsc_rows(gsc_data, kind="queries")
 
     content_path_prefix = config.get("content_path_prefix", "/blog/")
 
