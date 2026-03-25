@@ -32,7 +32,7 @@ Hybrid search (BM25 lexical + HNSW vector) with sub-millisecond retrieval.
 
 ## Configuration
 
-**グローバル設定** (`~/.claude/skills/.claude/skill-config.json`):
+**グローバル設定** (`skill-config.json` (skills リポジトリルート)):
 
 ```jsonc
 {
@@ -58,7 +58,7 @@ Hybrid search (BM25 lexical + HNSW vector) with sub-millisecond retrieval.
 }
 ```
 
-**プロジェクト固有設定** (`<project>/.claude/skill-config.json`) — デフォルトで十分なら不要:
+**プロジェクト固有設定** (`<project>/skill-config.json`) — デフォルトで十分なら不要:
 
 ```jsonc
 {

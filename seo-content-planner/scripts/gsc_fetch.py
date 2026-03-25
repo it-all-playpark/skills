@@ -322,7 +322,7 @@ def main() -> None:
     # Resolve site: CLI arg > config
     site = args.site or config.get("site")
     if not site:
-        print("Error: --site is required (or set in .claude/skill-config.json)", file=sys.stderr)
+        print("Error: --site is required (or set in skill-config.json)", file=sys.stderr)
         sys.exit(1)
     args.site = site
 

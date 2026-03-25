@@ -336,12 +336,18 @@ run_worktree_checks() {
 # ============================================================================
 
 run_config_checks() {
-  local global_config="${HOME}/.claude/skill-config.json"
+  local global_config=""
+  local candidates=("${SKILL_CONFIG_PATH:-}" "${HOME}/.config/skills/config.json" "${HOME}/.claude/skill-config.json")
+  for c in "${candidates[@]}"; do
+    [[ -n "$c" && -f "$c" ]] && { global_config="$c"; break; }
+  done
   local project_config=""
   local git_root
   git_root=$(git_root) || true
   if [[ -n "$git_root" ]]; then
-    project_config="${git_root}/.claude/skill-config.json"
+    for rel in "skill-config.json" ".claude/skill-config.json"; do
+      [[ -f "${git_root}/${rel}" ]] && { project_config="${git_root}/${rel}"; break; }
+    done
   fi
 
   local global_valid=false

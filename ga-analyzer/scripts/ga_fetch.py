@@ -391,7 +391,7 @@ def main():
     # Resolve property_id: CLI arg > config
     property_id = args.property_id or config.get("property_id")
     if not property_id:
-        print("Error: --property-id is required (or set in .claude/skill-config.json)", file=sys.stderr)
+        print("Error: --property-id is required (or set in skill-config.json)", file=sys.stderr)
         sys.exit(1)
     args.property_id = property_id
 

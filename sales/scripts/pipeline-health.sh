@@ -57,11 +57,15 @@ done
 # ============================================================================
 
 if [[ -z "$REPO_PATH" ]]; then
-  # Try global config
-  GLOBAL_CONFIG="${HOME}/.claude/skill-config.json"
-  if [[ -f "$GLOBAL_CONFIG" ]] && command -v jq &>/dev/null; then
-    REPO_PATH=$(jq -r '.sales.repo_path // empty' "$GLOBAL_CONFIG" 2>/dev/null || true)
-  fi
+  # Try global config (tool-agnostic path first, then legacy)
+  local config_candidates=("${SKILL_CONFIG_PATH:-}" "${HOME}/.config/skills/config.json" "${HOME}/.claude/skill-config.json")
+  for GLOBAL_CONFIG in "${config_candidates[@]}"; do
+    [[ -n "$GLOBAL_CONFIG" && -f "$GLOBAL_CONFIG" ]] || continue
+    if command -v jq &>/dev/null; then
+      REPO_PATH=$(jq -r '.sales.repo_path // empty' "$GLOBAL_CONFIG" 2>/dev/null || true)
+      [[ -n "$REPO_PATH" ]] && break
+    fi
+  done
   # Expand ~
   REPO_PATH="${REPO_PATH/#\~/$HOME}"
 fi

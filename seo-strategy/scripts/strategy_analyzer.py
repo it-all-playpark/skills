@@ -130,7 +130,7 @@ def load_config(path: str | None) -> dict:
         if user_config:
             config.update(user_config)
     else:
-        # Fallback: load from .claude/skill-config.json (with legacy support)
+        # Fallback: load from skill-config.json (with legacy support)
         skill_cfg = load_skill_config("seo-strategy")
         if skill_cfg:
             config.update(skill_cfg)

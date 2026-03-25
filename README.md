@@ -41,30 +41,30 @@ _lib/infra/unlink-agent-skills.sh  # Remove symlinks
 ### 設定ファイルの配置
 
 ```
-~/.claude/skill-config.json              # グローバル設定（全プロジェクト共通）
-<project-root>/.claude/skill-config.json  # プロジェクト設定（最優先）
+skill-config.json                              # プロジェクト設定（リポジトリルート）
+~/.config/skills/config.json                    # グローバル設定（ツール非依存）
 ```
 
 ### マージ順序（後勝ち）
 
 ```
-スキル内蔵デフォルト ← ~/.claude/skill-config.json[skill] ← <project>/.claude/skill-config.json[skill]
+スキル内蔵デフォルト ← グローバル config ← プロジェクト skill-config.json[skill]
                         (グローバル)                         (プロジェクト: 最優先)
 ```
 
 **設定の読み込み優先順位:**
 
-1. `<project>/.claude/skill-config.json` の該当スキルセクション（最優先）
-2. `~/.claude/skill-config.json` の該当スキルセクション（グローバル）
+1. `<project>/skill-config.json` の該当スキルセクション（最優先）
+2. グローバル config（`$SKILL_CONFIG_PATH` > `~/.config/skills/config.json` > `~/.claude/skill-config.json`）
 3. `.claude/<skill-name>.json`（旧形式、フォールバック）
 4. スキル内蔵のデフォルト値
 
 ### グローバル設定の例
 
-ユーザー共通のプリファレンス（timezone、言語、デフォルトプラットフォーム等）を記述します。リポジトリの `.claude/skill-config.json` をコピーして使えます: `cp .claude/skill-config.json ~/.claude/skill-config.json`
+ユーザー共通のプリファレンスを記述します: `cp skill-config.json ~/.config/skills/config.json`
 
 ```jsonc
-// ~/.claude/skill-config.json
+// ~/.config/skills/config.json (or ~/.claude/skill-config.json)
 {
   "sns-announce": {
     "default_lang": "ja",
@@ -85,7 +85,7 @@ _lib/infra/unlink-agent-skills.sh  # Remove symlinks
 ### マージ動作例
 
 ```jsonc
-// ~/.claude/skill-config.json (グローバル)
+// ~/.config/skills/config.json (or ~/.claude/skill-config.json) (グローバル)
 {
   "sns-announce": {
     "default_lang": "ja",
@@ -200,7 +200,7 @@ _lib/infra/unlink-agent-skills.sh  # Remove symlinks
 ### 設定例
 
 ```jsonc
-// <project-root>/.claude/skill-config.json
+// <project-root>/skill-config.json
 {
   "ga-analyzer": {
     "property_id": "123456789",

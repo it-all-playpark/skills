@@ -27,8 +27,8 @@ sales/
 ### 設定の優先順位
 
 1. **CLI引数** — 最優先
-2. **プロジェクト設定** — `.claude/skill-config.json`（salesリポジトリ）
-3. **グローバル設定** — `~/.claude/skill-config.json`
+2. **プロジェクト設定** — `skill-config.json`（salesリポジトリ）
+3. **グローバル設定** — `~/.config/skills/config.json` or `~/.claude/skill-config.json`
 
 ### Config
 

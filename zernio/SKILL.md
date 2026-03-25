@@ -36,12 +36,18 @@ Zernio CLI wrapper for SNS scheduling and sync.
 
 Resolution order:
 1. User explicitly passes `--profile-id` → use as-is
-2. Read `.claude/skill-config.json` → `zernio.profile_id` → pass as `--profile-id`
+2. Read `skill-config.json` → `zernio.profile_id` → pass as `--profile-id`
 3. `ZERNIO_PROFILE_ID` env var → used automatically by CLI
 4. None found → **WARN the user** that commands will affect ALL profiles
 
 ```bash
-PROFILE_ID=$(python3 -c "import json; print(json.load(open('.claude/skill-config.json')).get('zernio',{}).get('profile_id',''))" 2>/dev/null)
+PROFILE_ID=$(python3 -c "
+import json, os
+for p in ['skill-config.json', '.claude/skill-config.json']:
+    if os.path.exists(p):
+        v = json.load(open(p)).get('zernio',{}).get('profile_id','')
+        if v: print(v); break
+" 2>/dev/null)
 ```
 
 Then append `--profile-id $PROFILE_ID` to every `zernio` command if non-empty.
