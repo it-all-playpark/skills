@@ -7,7 +7,7 @@
   "properties": {
     "version": {
       "type": "string",
-      "const": "1.0.0",
+      "const": "3.0.0",
       "description": "Schema version"
     },
     "issue": {
@@ -43,16 +43,18 @@
       "properties": {
         "1_prepare": { "$ref": "#/$defs/phase" },
         "2_analyze": { "$ref": "#/$defs/phase" },
-        "3_implement": { "$ref": "#/$defs/phase" },
-        "4_validate": { "$ref": "#/$defs/phase" },
-        "5_commit": { "$ref": "#/$defs/phase" },
-        "6_pr": { "$ref": "#/$defs/phase" }
+        "3_plan_impl": { "$ref": "#/$defs/phase" },
+        "4_implement": { "$ref": "#/$defs/phase" },
+        "5_validate": { "$ref": "#/$defs/phase" },
+        "6_evaluate": { "$ref": "#/$defs/evaluate_phase" },
+        "7_commit": { "$ref": "#/$defs/phase" },
+        "8_pr": { "$ref": "#/$defs/phase" }
       },
       "additionalProperties": false
     },
     "current_phase": {
       "type": "string",
-      "enum": ["1_prepare", "2_analyze", "3_implement", "4_validate", "5_commit", "6_pr", "completed"],
+      "enum": ["1_prepare", "2_analyze", "3_plan_impl", "4_implement", "5_validate", "6_evaluate", "7_commit", "8_pr", "completed"],
       "description": "Currently active phase"
     },
     "next_actions": {
@@ -76,7 +78,8 @@
     "config": {
       "type": "object",
       "properties": {
-        "strategy": { "type": "string", "enum": ["tdd", "bdd", "ddd", "none"] },
+        "testing": { "type": "string", "enum": ["tdd", "bdd", "none"] },
+        "design": { "type": ["string", "null"], "enum": ["ddd", null] },
         "depth": { "type": "string", "enum": ["minimal", "standard", "comprehensive"] },
         "lang": { "type": "string", "enum": ["ja", "en"] },
         "env_mode": { "type": "string", "enum": ["hardlink", "symlink", "copy", "none"] },
@@ -114,6 +117,38 @@
           "type": "object",
           "description": "Results from delegated subagents"
         }
+      },
+      "required": ["status"]
+    },
+    "evaluate_phase": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "done", "failed", "skipped"],
+          "default": "pending"
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "iterations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "iteration": { "type": "integer" },
+              "verdict": { "type": "string", "enum": ["pass", "fail"] },
+              "total": { "type": "number" },
+              "feedback_level": { "type": "string", "enum": ["implementation", "design"] },
+              "feedback": { "type": "array", "items": { "type": "string" } },
+              "task_type": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            },
+            "required": ["iteration", "verdict", "total", "timestamp"]
+          }
+        },
+        "current_iteration": { "type": "integer", "default": 0 },
+        "max_iterations": { "type": "integer", "default": 5 },
+        "error": { "type": "string" }
       },
       "required": ["status"]
     }
