@@ -77,45 +77,65 @@ determine_next_action() {
         2_analyze)
             local status=$(get_phase_status "2_analyze")
             if [[ "$status" == "done" ]]; then
-                echo "3_implement"
-                echo "Skill: dev-implement --testing $TESTING${DESIGN:+ --design $DESIGN} --worktree $WORKTREE"
+                echo "3_plan_impl"
+                echo "Skill: dev-plan-impl $ISSUE --worktree $WORKTREE"
             else
                 echo "2_analyze"
                 echo "Skill: dev-issue-analyze $ISSUE --depth $DEPTH"
             fi
             ;;
-        3_implement)
-            local status=$(get_phase_status "3_implement")
+        3_plan_impl)
+            local status=$(get_phase_status "3_plan_impl")
             if [[ "$status" == "done" ]]; then
-                echo "4_validate"
+                echo "4_implement"
+                echo "Skill: dev-implement --testing $TESTING${DESIGN:+ --design $DESIGN} --worktree $WORKTREE"
+            else
+                echo "3_plan_impl"
+                echo "Skill: dev-plan-impl $ISSUE --worktree $WORKTREE"
+            fi
+            ;;
+        4_implement)
+            local status=$(get_phase_status "4_implement")
+            if [[ "$status" == "done" ]]; then
+                echo "5_validate"
                 echo "Skill: dev-validate --fix --worktree $WORKTREE"
             else
-                echo "3_implement"
+                echo "4_implement"
                 echo "Skill: dev-implement --testing $TESTING${DESIGN:+ --design $DESIGN} --worktree $WORKTREE"
             fi
             ;;
-        4_validate)
-            local status=$(get_phase_status "4_validate")
+        5_validate)
+            local status=$(get_phase_status "5_validate")
             if [[ "$status" == "done" ]]; then
-                echo "5_commit"
-                echo "Skill: git-commit --all --worktree $WORKTREE"
+                echo "6_evaluate"
+                echo "Skill: dev-evaluate $ISSUE --worktree $WORKTREE"
             else
-                echo "4_validate"
+                echo "5_validate"
                 echo "Skill: dev-validate --fix --worktree $WORKTREE"
             fi
             ;;
-        5_commit)
-            local status=$(get_phase_status "5_commit")
+        6_evaluate)
+            local status=$(get_phase_status "6_evaluate")
             if [[ "$status" == "done" ]]; then
-                echo "6_pr"
+                echo "7_commit"
+                echo "Skill: git-commit --all --worktree $WORKTREE"
+            else
+                echo "6_evaluate"
+                echo "Skill: dev-evaluate $ISSUE --worktree $WORKTREE"
+            fi
+            ;;
+        7_commit)
+            local status=$(get_phase_status "7_commit")
+            if [[ "$status" == "done" ]]; then
+                echo "8_pr"
                 echo "Skill: git-pr $ISSUE --base $BASE_BRANCH --lang $LANG --worktree $WORKTREE"
             else
-                echo "5_commit"
+                echo "7_commit"
                 echo "Skill: git-commit --all --worktree $WORKTREE"
             fi
             ;;
-        6_pr)
-            local status=$(get_phase_status "6_pr")
+        8_pr)
+            local status=$(get_phase_status "8_pr")
             if [[ "$status" == "done" ]]; then
                 echo "pr-iterate"
                 if [[ -n "$PR_URL" ]]; then
@@ -124,7 +144,7 @@ determine_next_action() {
                     echo "Skill: pr-iterate $PR_NUMBER"
                 fi
             else
-                echo "6_pr"
+                echo "8_pr"
                 echo "Skill: git-pr $ISSUE --base $BASE_BRANCH --lang $LANG --worktree $WORKTREE"
             fi
             ;;
