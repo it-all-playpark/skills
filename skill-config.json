@@ -25,6 +25,17 @@
     "top_n": 10,
     "title_strip_patterns": []
   },
+  "dev-evaluate": {
+    "model": "opus",
+    "threshold": 7.0,
+    "max_iterations": 5
+  },
+  "dev-plan-impl": {
+    "model": "opus"
+  },
+  "dev-implement": {
+    "model": "sonnet"
+  },
   "memory-cli": {
     "global_memory": "~/.claude/memory/global.mv2",
     "project_memory": ".claude/memory/project.mv2",
