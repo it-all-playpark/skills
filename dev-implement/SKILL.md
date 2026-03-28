@@ -5,6 +5,7 @@ description: |
   Use when: implementing features, fixing bugs, refactoring code, building components.
   Accepts args: [feature] [--testing tdd|bdd] [--design ddd] [--type component|api|service]
     [--framework react|vue|express] [--worktree <path>] [--with-tests] [--safe]
+model: sonnet
 ---
 
 # Implement
@@ -81,7 +82,18 @@ This phase produces a domain model that guides the subsequent implementation.
 
 ### Step 3: Plan Implementation
 
-**Skill-Aware Planning**: 実装計画時に、インストール済みスキルの中に
+**impl-plan.md Check**: If `$WORKTREE/.claude/impl-plan.md` exists (created by dev-plan-impl),
+follow that plan instead of creating your own. Do not re-plan from scratch.
+If the plan has a "Notes for Retry" section, address the feedback noted there.
+
+**Evaluator Feedback (retry mode)**: On retry, read `kickoff.json` → `phases.6_evaluate.iterations[]`
+for the latest feedback. The `feedback` array contains specific issues to address.
+The `feedback_level` indicates whether the issues are design-level (re-plan needed)
+or implementation-level (re-implement within existing plan).
+
+If `impl-plan.md` does NOT exist (standalone invocation), plan as before:
+
+**Skill-Aware Planning**: 実装計画時に、インストール済みスキルの中に 実装計画時に、インストール済みスキルの中に
 タスクの一部または全部を処理できるものがないか確認する。
 該当するスキルがあれば、手動実装より Skill 呼び出しを優先する。
 複数スキルの組み合わせや、スキル + 手動コード変更の混在も可能。
@@ -190,3 +202,5 @@ When combined with TDD (default): Domain model first → Write tests for domain 
 - Receives context from `dev-issue-analyze` if in kickoff workflow
 - Receives `WORKTREE_PATH` from `git-prepare` if worktree mode
 - Passes to `dev-validate` skill for verification
+- Reads `$WORKTREE/.claude/impl-plan.md` from `dev-plan-impl` if available
+- Receives Evaluator feedback via kickoff.json iterations on retry
