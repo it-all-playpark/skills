@@ -60,8 +60,13 @@ Phase 8: pr          — git-pr                    (既存, 番号シフト)
 ### コスト構造
 
 ```
-Opus:   analyze(1回) + plan-impl(1〜5回) + evaluate(1〜5回)
-Sonnet: implement(1〜5回) + validate(1〜5回)
+最悪ケース（全リトライが設計レベル）:
+  Opus:   analyze(1) + plan-impl(5) + evaluate(5)
+  Sonnet: implement(5) + validate(5)
+
+典型ケース（1〜2回の実装レベルリトライ）:
+  Opus:   analyze(1) + plan-impl(1) + evaluate(2〜3)
+  Sonnet: implement(2〜3) + validate(2〜3)
 ```
 
 ### リトライループ
@@ -86,6 +91,16 @@ loop:
 Phase 7: git-commit
 Phase 8: git-pr
 ```
+
+### Evaluate Phase のエラーハンドリング
+
+fork コンテキスト自体が失敗した場合（ツールエラー、タイムアウト、不正 JSON 等）:
+
+1. 1回だけ evaluate phase をリトライ（同一イテレーション内）
+2. 再度失敗 → 警告を出して evaluate をスキップし、git-commit に進む
+3. kickoff.json に `"error": "evaluate fork failed"` を記録
+
+品質ゲートを通過せず commit されるため、pr-iterate での確認が重要になる。
 
 ### リトライ時の Phase ステータス
 
