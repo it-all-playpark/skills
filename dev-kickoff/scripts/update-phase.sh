@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # update-phase.sh - Update phase status in kickoff state
-# Usage: update-phase.sh <phase> <status> [--result "..."] [--error "..."] [--worktree PATH]
+# Usage: update-phase.sh <phase> <status> [--result "..."] [--error "..."] [--worktree PATH] [--reset-to PHASE] [--eval-result JSON]
 
 set -euo pipefail
 
@@ -17,9 +17,11 @@ WORKTREE=""
 NEXT_ACTIONS=""
 PR_URL=""
 PR_NUMBER=""
+RESET_TO=""
+EVAL_RESULT=""
 
 # Valid phases and statuses for validation
-VALID_PHASES="1_prepare 2_analyze 3_implement 4_validate 5_commit 6_pr"
+VALID_PHASES="1_prepare 2_analyze 3_plan_impl 4_implement 5_validate 6_evaluate 7_commit 8_pr"
 VALID_STATUSES="pending in_progress done failed skipped"
 
 # Parse args
@@ -31,6 +33,8 @@ while [[ $# -gt 0 ]]; do
         --next) NEXT_ACTIONS="$2"; shift 2 ;;
         --pr-url) PR_URL="$2"; shift 2 ;;
         --pr-number) PR_NUMBER="$2"; shift 2 ;;
+        --reset-to) RESET_TO="$2"; shift 2 ;;
+        --eval-result) EVAL_RESULT="$2"; shift 2 ;;
         -*)
             die_json "Unknown option: $1" 1
             ;;
@@ -92,12 +96,14 @@ case "$STATUS" in
         JQ_FILTER="$JQ_FILTER | .phases[\$phase].completed_at = \$now"
         # Advance current_phase to next
         case "$PHASE" in
-            1_prepare) JQ_ARGS+=(--arg next "2_analyze"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
-            2_analyze) JQ_ARGS+=(--arg next "3_implement"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
-            3_implement) JQ_ARGS+=(--arg next "4_validate"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
-            4_validate) JQ_ARGS+=(--arg next "5_commit"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
-            5_commit) JQ_ARGS+=(--arg next "6_pr"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
-            6_pr) JQ_ARGS+=(--arg next "completed"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            1_prepare)  JQ_ARGS+=(--arg next "2_analyze"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            2_analyze)  JQ_ARGS+=(--arg next "3_plan_impl"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            3_plan_impl) JQ_ARGS+=(--arg next "4_implement"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            4_implement) JQ_ARGS+=(--arg next "5_validate"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            5_validate) JQ_ARGS+=(--arg next "6_evaluate"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            6_evaluate) JQ_ARGS+=(--arg next "7_commit"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            7_commit)   JQ_ARGS+=(--arg next "8_pr"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            8_pr)       JQ_ARGS+=(--arg next "completed"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
         esac
         ;;
     failed)
@@ -144,6 +150,29 @@ if [[ -n "$PR_URL" || -n "$PR_NUMBER" ]]; then
 
     # Set next_action for pr-iterate handoff
     JQ_FILTER="$JQ_FILTER | .next_action = \"pr-iterate\""
+fi
+
+if [[ -n "$EVAL_RESULT" ]]; then
+    JQ_ARGS+=(--argjson eval_result "$EVAL_RESULT")
+    JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].iterations += [\$eval_result]"
+    JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].current_iteration += 1"
+fi
+
+if [[ -n "$RESET_TO" ]]; then
+    # Reset phases from RESET_TO onwards to pending
+    # --reset-to must be used with "done" status. The normal done transition
+    # is applied first, then this override resets phases and current_phase.
+    PHASE_ORDER=("3_plan_impl" "4_implement" "5_validate" "6_evaluate")
+    resetting=false
+    for p in "${PHASE_ORDER[@]}"; do
+        if [[ "$p" == "$RESET_TO" ]]; then
+            resetting=true
+        fi
+        if [[ "$resetting" == true ]]; then
+            JQ_FILTER="$JQ_FILTER | .phases[\"$p\"].status = \"pending\""
+        fi
+    done
+    JQ_FILTER="$JQ_FILTER | .current_phase = \"$RESET_TO\""
 fi
 
 # Apply update
