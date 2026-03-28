@@ -105,7 +105,7 @@ jq -n \
     --arg lang "$LANG" \
     --arg env_mode "$ENV_MODE" \
     '{
-        version: "2.0.0",
+        version: "3.0.0",
         issue: $issue,
         branch: $branch,
         worktree: $worktree,
@@ -116,10 +116,12 @@ jq -n \
         phases: {
             "1_prepare": { status: "done", started_at: $now, completed_at: $now, result: "Worktree created" },
             "2_analyze": { status: "pending" },
-            "3_implement": { status: "pending" },
-            "4_validate": { status: "pending" },
-            "5_commit": { status: "pending" },
-            "6_pr": { status: "pending" }
+            "3_plan_impl": { status: "pending" },
+            "4_implement": { status: "pending" },
+            "5_validate": { status: "pending" },
+            "6_evaluate": { status: "pending", iterations: [], current_iteration: 0, max_iterations: 5 },
+            "7_commit": { status: "pending" },
+            "8_pr": { status: "pending" }
         },
         next_actions: ["Run dev-issue-analyze"],
         decisions: [],
