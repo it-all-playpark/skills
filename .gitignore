@@ -46,6 +46,7 @@ __pycache__/
 # --- external skills (auto-managed) ---
 agent-browser
 api-contract-testing
+bgm
 building-sales-team
 enterprise-sales
 fastify-best-practices

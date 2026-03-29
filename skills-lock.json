@@ -11,6 +11,11 @@
       "sourceType": "github",
       "computedHash": "8be0344d35cfbd832a16cd830054ae80a0ab7b7d2a3861403e5c19ffdd55f7f4"
     },
+    "bgm": {
+      "source": "matrixreligio/productvideocreator",
+      "sourceType": "github",
+      "computedHash": "c395d37cd7ca07725ed441a4c30665203f200fefb60445b3f128fd75e4b4784a"
+    },
     "building-sales-team": {
       "source": "refoundai/lenny-skills",
       "sourceType": "github",
