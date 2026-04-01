@@ -108,7 +108,16 @@ $SKILLS_DIR/night-patrol/scripts/scan-issues.sh \
 
 ### --deep mode
 
-Additionally invoke:
+`scan-lint.sh` をスキップし、代わりに `code-audit-team` を使用（静的解析を包含するため）:
+
+```bash
+# scan-lint.sh は実行しない（code-audit-team が代替）
+$SKILLS_DIR/night-patrol/scripts/scan-tests.sh
+$SKILLS_DIR/night-patrol/scripts/scan-issues.sh \
+  --allowed-labels "$CONFIG.allowed_labels" \
+  --denylist-labels "$CONFIG.denylist_labels" \
+  --denylist-issues "$CONFIG.denylist_issues"
+```
 
 ```
 Skill(skill: "code-audit-team", args: "--scope project")
@@ -249,7 +258,7 @@ Execute each issue sequentially:
 Skill(skill: "dev-flow", args: "<issue-number> --base nightly/$DATE")
 ```
 
-3. **Process results:**
+3. **Process results (per issue):**
 
 For each completed issue:
 - If dev-flow returned LGTM PR -> merge PR into `nightly/$DATE`
@@ -257,8 +266,20 @@ For each completed issue:
   gh pr merge <PR_NUMBER> --merge
   ```
 - If max_reached or error -> record as skipped/failed
+- Update `cumulative_lines_changed` in state
 
-4. **Update state:** Add result to `results[]`, update counters in `.claude/night-patrol.json`.
+4. **Post-issue guard check:**
+
+After each individual issue completes, check cumulative lines:
+
+```bash
+$SKILLS_DIR/night-patrol/scripts/guard-check.sh --mode pre-execute \
+  --cumulative-lines $CUMULATIVE
+```
+
+If `pass: false` -> skip all remaining issues in current batch AND remaining batches, proceed to Phase 4.
+
+5. **Update state:** Add result to `results[]`, update counters in `.claude/night-patrol.json`.
 
 ### After all batches
 
