@@ -34,6 +34,11 @@ Launch subtasks in dependency-ordered batches (independent first, then dependent
 Skill: dev-kickoff $ISSUE --worktree $SUBTASK_WORKTREE --task-id $TASK_ID --flow-state $FLOW_STATE --strategy $STRATEGY
 ```
 
+**CRITICAL: Subtask サブエージェントには `git push` しないよう明示指示すること。**
+Parallel mode では subtask ブランチはローカルのみ。リモートに push するのは最終 merge ブランチだけ（Step 7b の git-pr 時）。
+サブエージェントのプロンプトに以下を含めること:
+> DO NOT run `git push`. Keep all changes local. Only the final merge branch will be pushed.
+
 ## Result Aggregation (Step 5b)
 
 For each completed subtask, read kickoff.json and update flow.json:

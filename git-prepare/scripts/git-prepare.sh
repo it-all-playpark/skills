@@ -6,6 +6,7 @@
 #   --suffix <suffix>     Branch suffix (default: m)
 #   --base <branch>       Base branch (default: dev)
 #   --env-mode <mode>     hardlink|symlink|copy|none (default: hardlink)
+#   --local               Skip gh issue develop and keep branch local-only (no remote push)
 #
 # Output: JSON with worktree info
 
@@ -15,6 +16,7 @@ set -euo pipefail
 SUFFIX="m"
 BASE_BRANCH="dev"
 ENV_MODE="hardlink"
+LOCAL_ONLY=false
 ISSUE_NUMBER=""
 
 # Parse arguments
@@ -23,6 +25,7 @@ while [[ $# -gt 0 ]]; do
         --suffix) SUFFIX="$2"; shift 2 ;;
         --base) BASE_BRANCH="$2"; shift 2 ;;
         --env-mode) ENV_MODE="$2"; shift 2 ;;
+        --local) LOCAL_ONLY=true; shift ;;
         -h|--help)
             echo "Usage: git-prepare.sh <issue-number> [--suffix <s>] [--base <branch>] [--env-mode <mode>]"
             exit 0
@@ -104,16 +107,21 @@ if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME" 2>/dev/null; then
     # Branch exists, use it
     git worktree add "$WORKTREE_PATH" "$BRANCH_NAME"
 else
-    # Try creating linked branch via gh issue develop (links to issue's Development sidebar)
-    if gh issue develop "$ISSUE_NUMBER" --name "$BRANCH_NAME" --base "$BASE_BRANCH" 2>/dev/null; then
-        git fetch origin "$BRANCH_NAME" 2>/dev/null || true
-    fi
-
-    # Create worktree (auto-tracks remote branch if exists, otherwise creates from base)
-    if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH_NAME" 2>/dev/null; then
-        git worktree add "$WORKTREE_PATH" "$BRANCH_NAME"
-    else
+    if [[ "$LOCAL_ONLY" == true ]]; then
+        # Local-only mode: create branch locally without touching remote
         git worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "origin/$BASE_BRANCH"
+    else
+        # Try creating linked branch via gh issue develop (links to issue's Development sidebar)
+        if gh issue develop "$ISSUE_NUMBER" --name "$BRANCH_NAME" --base "$BASE_BRANCH" 2>/dev/null; then
+            git fetch origin "$BRANCH_NAME" 2>/dev/null || true
+        fi
+
+        # Create worktree (auto-tracks remote branch if exists, otherwise creates from base)
+        if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH_NAME" 2>/dev/null; then
+            git worktree add "$WORKTREE_PATH" "$BRANCH_NAME"
+        else
+            git worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "origin/$BASE_BRANCH"
+        fi
     fi
 fi
 

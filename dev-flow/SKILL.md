@@ -13,6 +13,10 @@ allowed-tools:
   - Task
 ---
 
+<SUPERPOWERS-SKIP>
+dev-flow は独自のステップ管理ワークフロー。superpowers スキル（brainstorming, verification-before-completion, writing-plans, executing-plans, test-driven-development 等）は一切呼び出さないこと。dev-flow が内部で呼ぶサブスキル（dev-kickoff, dev-decompose, pr-iterate 等）のみ使用する。
+</SUPERPOWERS-SKIP>
+
 # Dev Flow
 
 End-to-end development automation from issue to LGTM (merge manually).

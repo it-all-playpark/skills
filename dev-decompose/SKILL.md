@@ -79,15 +79,33 @@ Analyze issue, build file dependency graph, partition into subtasks. See [Decomp
 
 Generate contract per [Decomposition Guide](references/decomposition-guide.md). Branch: `feature/issue-{N}-contract`.
 
+**IMPORTANT: Contract branch は worktree で作成すること。メインリポジトリで直接 checkout しない。**
+
+```bash
+# Step 6: contract worktree 作成（--local でリモート push を防止）
+$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
+  --suffix contract \
+  --base $BASE \
+  --env-mode $ENV_MODE \
+  --local
+
+# Step 7: contract worktree 内でファイル作成・コミット
+cd $CONTRACT_WORKTREE
+# ... create contract files, git add, git commit ...
+```
+
 ### Step 8: Worktree Creation
 
-For each subtask, call git-prepare:
+For each subtask, call git-prepare with `--local` to keep branches local:
 ```bash
 $SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
   --suffix task${INDEX} \
   --base feature/issue-${ISSUE}-contract \
-  --env-mode $ENV_MODE
+  --env-mode $ENV_MODE \
+  --local
 ```
+
+**Subtask/contract ブランチはリモートに push しない。** push が必要なのは最終的な merge ブランチのみ（PR 作成時）。
 
 ### Step 9: Flow State Generation
 
