@@ -38,14 +38,17 @@
 │     └─ GitHub Issue 作成 (A/B由来の新規分のみ)
 │     出力: triage-results.json
 │
-├─ Phase 3: Execute (ループ)
-│  └─ for each issue in triage-results (priority順):
+├─ Phase 3: Execute (バッチ実行)
+│  └─ for each batch in execution_plan.batches (順序通り):
 │     ├─ guard-check.sh --pre-execute (累積変更量チェック)
-│     ├─ Skill: dev-flow <issue-number> (Task subagent)
+│     │   └─ 超過 → 残りバッチ全てスキップ
+│     ├─ parallel batch → 複数 dev-flow を Task subagent で並列起動
+│     │   serial batch  → dev-flow を1つずつ直列実行
 │     ├─ dev-flow 結果に応じて:
 │     │   ├─ LGTM → nightly/YYYY-MM-DD へマージ
 │     │   ├─ max_reached → スキップ、レポート記録
 │     │   └─ エラー中断 → スキップ、レポート記録
+│     ├─ バッチ内の1issueが失敗しても他issueは続行
 │     └─ night-patrol.json 更新
 │
 ├─ Phase 4: Report
@@ -178,7 +181,15 @@ agent: general-purpose
 2. **グルーピング** — LLM が関連する検出結果をまとめて1issueに（A/B由来のみ）
 3. **安全ガードフィルタ** — `scripts/guard-check.sh --pre-triage`
 4. **優先度付け** — LLM がスコアリング (critical > high > medium > low)
-5. **Issue 作成** — 新規分のみ `gh issue create`、ラベル: `night-patrol` + 優先度
+5. **依存解析** — issue間の関係を分析し実行プランを生成
+   - `scripts/analyze-dependencies.sh` で各issueの推定対象ファイルを抽出
+   - ファイル重複グラフを構築（同じファイルを触るissueを検出）
+   - LLM が論理依存を判定（issue A の修正が issue B の前提になるケース）
+   - 実行プラン生成:
+     - 独立したissueは並列バッチにまとめる
+     - ファイル競合・論理依存のあるissueは直列チェーンに
+     - バッチ内の優先度: critical > high > medium > low
+6. **Issue 作成** — 新規分のみ `gh issue create`、ラベル: `night-patrol` + 優先度
 
 **優先度基準:**
 
@@ -201,9 +212,27 @@ agent: general-purpose
       "priority": "critical",
       "source": "tests",
       "action": "created",
-      "estimated_lines": 30
+      "estimated_lines": 30,
+      "estimated_files": ["src/auth.ts", "tests/auth.test.ts"]
     }
   ],
+  "execution_plan": {
+    "batches": [
+      {
+        "batch": 1,
+        "issues": [456, 789],
+        "mode": "parallel",
+        "reason": "independent, no file overlap"
+      },
+      {
+        "batch": 2,
+        "issues": [123],
+        "mode": "serial",
+        "depends_on_batch": 1,
+        "reason": "#123 touches auth.ts modified by #456"
+      }
+    ]
+  },
   "skipped": [
     {"reason": "denylist", "detail": "touches .env.production"}
   ],
@@ -276,6 +305,7 @@ Night Patrol 完了
 | 1issue変更行数上限 | triage (Step 3) + execute後 | 推定/実測 > `max_lines_per_issue` | issueスキップ |
 | denylistパス | triage (Step 3) | 対象ファイルが `denylist_paths` に該当 | issueスキップ |
 | denylistラベル | triage (Step 3) | `do-not-autofix` 等のラベル付き | issueスキップ |
+| denylist issue番号 | scan (issue取得時) | `denylist_issues` に該当 | 取得段階で除外 |
 | 累積変更量上限 | execute (各issue前) | 合計 > `max_cumulative_lines` | ループ終了 |
 
 **ガード発動時の挙動:**
@@ -292,6 +322,7 @@ Night Patrol 完了
     "max_cumulative_lines": 2000,
     "denylist_paths": [".env*", "*.secret", "migrations/"],
     "denylist_labels": ["do-not-autofix", "needs-discussion"],
+    "denylist_issues": [45, 78, 102],
     "allowed_labels": ["bug", "enhancement", "tech-debt"],
     "issue_label": "night-patrol",
     "telegram_chat_id": null
@@ -337,6 +368,7 @@ night-patrol-triage/
 ├── SKILL.md
 └── scripts/
     ├── check-duplicates.sh
+    ├── analyze-dependencies.sh
     └── guard-check.sh     → ../night-patrol/scripts/guard-check.sh (symlink)
 
 night-patrol-report/
