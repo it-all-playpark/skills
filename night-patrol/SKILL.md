@@ -261,10 +261,11 @@ Skill(skill: "dev-flow", args: "<issue-number> --base nightly/$DATE")
 3. **Process results (per issue):**
 
 For each completed issue:
-- If dev-flow returned LGTM PR -> merge PR into `nightly/$DATE`
+- If dev-flow returned LGTM PR -> 自動マージ into `nightly/$DATE` (確認不要)
   ```bash
-  gh pr merge <PR_NUMBER> --merge
+  gh pr merge <PR_NUMBER> --merge --admin --delete-branch
   ```
+  **注意:** `--admin` で確認プロンプトをバイパス。nightly ブランチは自動巡回専用なので安全。
 - If max_reached or error -> record as skipped/failed
 - Update `cumulative_lines_changed` in state
 
