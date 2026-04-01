@@ -18,12 +18,17 @@
 ```
 /night-patrol (手動起動、オーケストレーター)
 │
-├─ Phase 1: Scan
-│  └─ Skill: night-patrol-scan (context: fork)
-│     ├─ scripts/scan-lint.sh      → lint/型エラー/TODO/脆弱性
+├─ Phase 1: Scan (ハイブリッドモード)
+│  ├─ 通常モード (デフォルト):
+│  │  ├─ scripts/scan-lint.sh      → lint/型エラー/TODO/脆弱性
+│  │  ├─ scripts/scan-tests.sh     → テスト失敗・スキップ検出
+│  │  └─ scripts/scan-issues.sh    → 未アサインissue取得
+│  └─ --deep モード:
+│     ├─ Skill: code-audit-team (既存、Agent Team)
+│     │   → security/performance/architecture の多角的分析
 │     ├─ scripts/scan-tests.sh     → テスト失敗・スキップ検出
 │     └─ scripts/scan-issues.sh    → 未アサインissue取得
-│     出力: scan-results.json
+│  出力: scan-results.json
 │
 ├─ Phase 2: Triage
 │  └─ Skill: night-patrol-triage (context: fork)
@@ -65,7 +70,7 @@ main
 - dev-flow が作る各 feature branch の PR ターゲットは `nightly/YYYY-MM-DD`
 - 巡回完了後、nightly ブランチはそのまま残す（ユーザーが朝に確認）
 
-## スキル構成 (4スキル)
+## スキル構成 (3スキル)
 
 ### 1. night-patrol (オーケストレーター)
 
@@ -74,7 +79,7 @@ name: night-patrol
 description: |
   Autonomous code patrol - scan, triage, implement, and report.
   Use when: (1) 自律巡回開発, (2) keywords: night patrol, 夜間巡回, 自動修正
-  Accepts args: [--dry-run] [--max-issues N] [--skip-scan]
+  Accepts args: [--dry-run] [--deep] [--max-issues N] [--skip-scan]
 ```
 
 **引数:**
@@ -82,6 +87,7 @@ description: |
 | Arg | Default | Description |
 |-----|---------|-------------|
 | `--dry-run` | false | Phase 2 (Triage) まで実行し、レポートのみ出力 |
+| `--deep` | false | Phase 1 で code-audit-team を使った多角的スキャン（コスト高） |
 | `--max-issues` | unlimited | 処理するissue数の上限 |
 | `--skip-scan` | false | 既存の scan-results.json を使い Phase 2 から開始 |
 
@@ -106,33 +112,34 @@ description: |
 }
 ```
 
-### 2. night-patrol-scan
+### 2. Phase 1: Scan (night-patrol 内蔵、独立スキル不要)
 
-```yaml
-name: night-patrol-scan
-description: |
-  Scan codebase for lint errors, test failures, and unassigned issues.
-  Use when: (1) night-patrol Phase 1, (2) keywords: scan, コードスキャン
-context: fork
-agent: general-purpose
-```
+Phase 1 は night-patrol オーケストレーター内で直接実行。独立スキルは作らない。
 
-**3つのスキャンソース:**
+**通常モード (デフォルト):**
 
 | ソース | スクリプト | 検出内容 |
 |--------|-----------|----------|
-| 静的解析 | `scan-lint.sh` | lint警告、型エラー、TODO/FIXME、未使用export、脆弱性 (`npm audit`) |
-| テスト | `scan-tests.sh` | 失敗テスト、スキップされたテスト (`.skip`/`.todo`) |
-| GitHub Issues | `scan-issues.sh` | 未アサイン＆ラベルフィルタ対応 |
+| 静的解析 | `scripts/scan-lint.sh` | lint警告、型エラー、TODO/FIXME、未使用export、脆弱性 (`npm audit`) |
+| テスト | `scripts/scan-tests.sh` | 失敗テスト、スキップされたテスト (`.skip`/`.todo`) |
+| GitHub Issues | `scripts/scan-issues.sh` | 未アサイン＆ラベルフィルタ対応 |
 
 - プロジェクト種別の自動検出は `dev-validate` のパターンを流用
 - スキャンスクリプトは全て冪等・副作用なし
+
+**--deep モード:**
+
+通常モードのスクリプトに加え、`code-audit-team` (既存スキル) を実行。
+- security/performance/architecture の3専門エージェントによる多角的分析
+- code-audit-team の findings を scan-results.json の `audit` ソースとして統合
+- コスト高（$5-15/回）のため週1-2回の使用を推奨
 
 **出力: `scan-results.json`**
 
 ```json
 {
   "scan_date": "2026-04-01T23:00:00Z",
+  "mode": "normal",
   "sources": {
     "lint": [
       {"type": "type_error", "file": "src/foo.ts", "line": 42, "message": "..."}
@@ -142,11 +149,14 @@ agent: general-purpose
     ],
     "issues": [
       {"number": 123, "title": "...", "labels": ["bug"], "created_at": "..."}
-    ]
+    ],
+    "audit": []
   },
-  "counts": {"lint": 5, "tests": 2, "issues": 3, "total": 10}
+  "counts": {"lint": 5, "tests": 2, "issues": 3, "audit": 0, "total": 10}
 }
 ```
+
+`--deep` モード時は `audit` に code-audit-team の findings が入り、`mode` が `"deep"` になる。
 
 ### 3. night-patrol-triage
 
@@ -292,8 +302,8 @@ Night Patrol 完了
 ## 既存スキルとの統合
 
 ```
-night-patrol (orchestrator)
-├── night-patrol-scan      ← 新規
+night-patrol (orchestrator, Phase 1 Scan 内蔵)
+├── code-audit-team        ← 既存 (--deep モード時のみ)
 ├── night-patrol-triage    ← 新規
 ├── dev-flow               ← 既存 (実装の8割)
 │   ├── dev-issue-analyze
@@ -313,28 +323,24 @@ night-patrol (orchestrator)
 
 ```
 night-patrol/
-├── SKILL.md
+├── SKILL.md              ← オーケストレーター + Phase 1 Scan
 ├── scripts/
-│   ├── guard-check.sh
-│   └── generate-report.sh
+│   ├── scan-lint.sh      ← 静的解析スキャン
+│   ├── scan-tests.sh     ← テスト失敗検出
+│   ├── scan-issues.sh    ← 未アサインissue取得
+│   ├── guard-check.sh    ← 安全ガード判定
+│   └── generate-report.sh ← レポート生成
 └── references/
     └── safety-guards.md
-
-night-patrol-scan/
-├── SKILL.md
-└── scripts/
-    ├── scan-lint.sh
-    ├── scan-tests.sh
-    └── scan-issues.sh
 
 night-patrol-triage/
 ├── SKILL.md
 └── scripts/
     ├── check-duplicates.sh
-    └── guard-check.sh  (night-patrol/scripts/ のsymlink)
+    └── guard-check.sh     → ../night-patrol/scripts/guard-check.sh (symlink)
 
 night-patrol-report/
 ├── SKILL.md
 └── scripts/
-    └── generate-report.sh  (night-patrol/scripts/ のsymlink)
+    └── generate-report.sh → ../night-patrol/scripts/generate-report.sh (symlink)
 ```
