@@ -13,6 +13,10 @@ argument-hint: post|sync [OPTIONS]
 
 # Zernio
 
+> **CRITICAL**: zernio CLI を直接呼び出さないでください。必ず `/zernio` スキル経由で実行してください。
+> スキルが `skill-config.json` から `sync_dirs`, `profile_id` を自動解決します。
+> 直接CLIを叩くと `sync_dirs` が欠落し、**投稿が削除される危険**があります。
+
 Zernio CLI wrapper for SNS scheduling and sync.
 
 ## Usage
@@ -71,7 +75,27 @@ Full options: [CLI Reference](references/cli-reference.md)
 
 ### sync — Sync local JSON with Zernio API
 
+**IMPORTANT**: Before running sync, resolve `sync_dirs` from config:
+
 ```bash
+SYNC_DIRS=$(python3 -c "
+import json, os
+for p in ['skill-config.json', '.claude/skill-config.json']:
+    if os.path.exists(p):
+        dirs = json.load(open(p)).get('zernio',{}).get('sync_dirs',[])
+        if dirs:
+            print(' '.join(f'--dir {d}' for d in dirs))
+            break
+" 2>/dev/null)
+```
+
+If `sync_dirs` is configured, ALWAYS use ALL directories. Never pass fewer `--dir` values than `sync_dirs` specifies — missing directories cause their posts to be **DELETED** from the API.
+
+```bash
+# When sync_dirs is configured (e.g. ["./post/blog", "./post/bip"]):
+zernio sync $SYNC_DIRS --from 2026-04-01 --execute
+
+# Single dir example (only when sync_dirs is not configured):
 zernio sync --dir ./post/blog --from 2026-04-01 --execute
 ```
 
@@ -88,8 +112,8 @@ This skill calls `zernio` CLI directly. Do NOT use the old TypeScript scripts.
 /sns-announce content/blog/2026-03-20-article.mdx --format json
 zernio post --json post/2026-03-20-article.json
 
-# Sync after date changes
-zernio sync --dir ./post/blog --from 2026-03-20 --execute
+# Sync after date changes (uses sync_dirs from config)
+zernio sync $SYNC_DIRS --from 2026-03-20 --execute
 ```
 
 ## References
