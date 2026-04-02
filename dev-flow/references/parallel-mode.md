@@ -28,7 +28,7 @@ Skill: dev-decompose $ISSUE --base $BASE --env-mode $ENV_MODE
 
 ## Batch Scheduling (Step 4b)
 
-Launch subtasks in dependency-ordered batches (independent first, then dependents). Each invocation:
+Launch subtasks in dependency-ordered batches (independent first, then dependents) with `mode: "auto"`. Each invocation:
 
 ```bash
 Skill: dev-kickoff $ISSUE --worktree $SUBTASK_WORKTREE --task-id $TASK_ID --flow-state $FLOW_STATE --strategy $STRATEGY

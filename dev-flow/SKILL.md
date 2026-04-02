@@ -27,6 +27,11 @@ End-to-end development automation from issue to LGTM (merge manually).
 - サブエージェントへのプロンプトでも日本語出力を明示指定する
 - 技術用語・コード識別子・ファイルパスはそのまま
 
+## Agent Mode
+
+サブエージェント（Agent tool）は `mode: "auto"` で起動すること。
+安全なコマンドは自動許可され、ワークフローが中断されない。
+
 ## CRITICAL: Complete All Steps
 
 **DO NOT EXIT until pr-iterate completes.**
