@@ -107,6 +107,26 @@ For `verdict: "fail"`, `feedback` MUST contain specific, actionable items descri
 - **Score honestly**: The purpose is to catch real issues before commit, not to rubber-stamp.
 - **feedback_level matters**: It determines whether the retry goes to the Planner (design) or Generator (implementation).
 
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On pass (verdict: pass)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-evaluate success \
+  --issue $ISSUE --duration-turns $TURNS --worktree $WORKTREE
+
+# On fail verdict (not an error — evaluation completed but implementation failed quality gate)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-evaluate success \
+  --issue $ISSUE --duration-turns $TURNS --worktree $WORKTREE
+
+# On evaluation error (script crash, missing inputs, etc.)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-evaluate failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>" --worktree $WORKTREE
+```
+
+Note: A "fail" verdict is a successful evaluation — the evaluator did its job. Only log as failure when the evaluation process itself errors.
+
 ## References
 
 - [Scoring Framework](references/scoring-framework.md) - Detailed scoring criteria

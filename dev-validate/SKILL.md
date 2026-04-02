@@ -63,3 +63,17 @@ scripts/validate.sh
 scripts/validate.sh --fix
 scripts/validate.sh --strict --worktree /path/to/worktree
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success (overall: pass)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-validate success \
+  --issue $ISSUE --duration-turns $TURNS --worktree $WORKTREE
+
+# On failure (overall: fail)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-validate failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>" --worktree $WORKTREE
+```

@@ -78,6 +78,46 @@ These are grouped as environment issues and analyzed for:
 2. Project-specific requirements not documented
 3. Cross-project patterns (e.g., always need npm install after worktree)
 
+### Axis 6: Phase-Level Bottleneck Detection
+
+**Detection**: For orchestrator skills (dev-kickoff, dev-flow), correlate child skill
+journal entries by timestamp to reconstruct per-phase timing.
+
+**Method**:
+1. Group entries by `context.issue` and time window (within 1 hour)
+2. Order child skill entries chronologically: dev-issue-analyze → dev-plan-impl → dev-implement → dev-validate → dev-evaluate
+3. Calculate per-phase turn count from `duration_turns`
+4. Flag phases that consistently exceed median + 1 stddev
+
+**Thresholds**:
+- Phase avg > 2x overall median: Bottleneck (investigate skill)
+- Phase failure rate > 10%: Reliability concern
+
+### Axis 7: Efficiency Trend Analysis
+
+**Detection**: Track turn count trends over time for each skill.
+
+**Method**:
+1. Group entries by `(skill, week)` or `(skill, 10-entry rolling window)`
+2. Calculate per-period average turn count
+3. Detect regression: current period avg > previous period avg * 1.3
+4. Detect improvement: current period avg < previous period avg * 0.7
+
+**Output**: Trend direction (improving/stable/regressing) with magnitude.
+
+### Axis 8: Journal Coverage Audit
+
+**Detection**: Verify all workflow skills have journal logging instrumented.
+
+**Method**:
+1. List all skills in `$SKILLS_DIR` with SKILL.md
+2. Filter to workflow/orchestration skills (has `allowed-tools` or calls other skills)
+3. Check for `## Journal Logging` section in SKILL.md
+4. Check for `journal.sh` references
+
+**Output**: Coverage percentage and list of unlogged skills.
+Should be run periodically (weekly recommended) to catch newly added skills.
+
 ## Scoring Formula
 
 ```

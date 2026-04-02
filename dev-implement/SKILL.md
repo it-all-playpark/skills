@@ -197,6 +197,20 @@ When combined with TDD (default): Domain model first → Write tests for domain 
 
 ```
 
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-implement success \
+  --issue $ISSUE --duration-turns $TURNS --worktree $WORKTREE
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-implement failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>" --worktree $WORKTREE
+```
+
 ## Integration
 
 - Receives context from `dev-issue-analyze` if in kickoff workflow

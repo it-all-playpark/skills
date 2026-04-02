@@ -79,6 +79,20 @@ If a previous plan exists (retry), overwrite it entirely with the revised plan.
 - **Address all feedback**: On retry, every feedback item from the Evaluator must be addressed
 - **Don't over-plan**: Keep the plan focused on what's needed for the issue. YAGNI.
 
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success (impl-plan.md written)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-plan-impl success \
+  --issue $ISSUE --duration-turns $TURNS --worktree $WORKTREE
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-plan-impl failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>" --worktree $WORKTREE
+```
+
 ## References
 
 - [Plan Format](references/plan-format.md) - Output format specification

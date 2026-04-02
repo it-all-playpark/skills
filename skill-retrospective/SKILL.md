@@ -52,6 +52,9 @@ See [references/workflow-phases.md](references/workflow-phases.md) for detailed 
 | **Guard deficiency** | Pre-condition not checked |
 | **Workflow inefficiency** | Recovery turns consistently > 2 |
 | **Environment issues** | Errors in env/config category |
+| **Phase bottleneck** | Child skill phases that consistently take too long or fail |
+| **Efficiency trend** | Turn count regression/improvement over time per skill |
+| **Coverage audit** | Workflow skills missing journal logging instrumentation |
 
 Each pattern is scored by: `frequency × impact × preventability`
 

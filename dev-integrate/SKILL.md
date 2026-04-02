@@ -150,3 +150,17 @@ Returns:
 ```json
 {"status": "integrated|failed", "merge_worktree": "/path", "type_check": "passed|failed", "validation": "passed|failed"}
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success (integrated)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-integrate success \
+  --issue $ISSUE --duration-turns $TURNS
+
+# On failure (merge conflict, type check, test failure)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-integrate failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>"
+```

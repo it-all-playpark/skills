@@ -198,6 +198,24 @@ No files created on disk. Return value only:
 | Worktree creation fails | Abort, report which subtask failed |
 | Validation fails | Report specific violations, do not proceed |
 
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success (flow.json created)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose success \
+  --issue $ISSUE --duration-turns $TURNS
+
+# On single_fallback (dry-run determined single mode)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose success \
+  --issue $ISSUE --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>"
+```
+
 ## References
 
 - [Decomposition Guide](references/decomposition-guide.md) - Detailed strategy and edge cases

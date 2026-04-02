@@ -70,3 +70,17 @@ $SKILLS_DIR/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-re
 - `comment` - Neutral feedback
 
 Report PR URL when complete.
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success (review submitted)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-review success \
+  --issue $ISSUE --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-review failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>"
+```

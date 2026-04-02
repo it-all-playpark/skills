@@ -144,7 +144,19 @@ $SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
 
 ## Journal Logging
 
-ワークフロー完了時に journal へログ記録。Details: [Journal Logging](references/journal-logging.md)
+ワークフロー完了時に journal へログ記録。
+
+```bash
+# On success (LGTM achieved)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow success \
+  --issue $ISSUE --duration-turns $TURNS --args "$ORIGINAL_ARGS" --mode "$MODE"
+
+# On failure (any step fails)
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow failure \
+  --issue $ISSUE --error-category <category> --error-msg "<message>" --args "$ORIGINAL_ARGS" --mode "$MODE"
+```
+
+Details: [Journal Logging](references/journal-logging.md)
 
 ## References
 
