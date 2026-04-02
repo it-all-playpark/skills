@@ -24,6 +24,22 @@
 
 ## Category D: Tips & Best Practices
 
+### D-1: ハーネス設計
+
+CLAUDE.md、settings.json、hooks、permissions、MCP、skills の設計・運用パターン。
+
+検索クエリ例:
+- `CLAUDE.md design OR best practices OR structure (この1週間)`
+- `"Claude Code" settings.json hooks configuration (この1週間)`
+- `"Claude Code" MCP server setup OR integration (この1週間)`
+- `"Claude Code" permissions OR auto mode configuration (この1週間)`
+- `AGENTS.md OR CLAUDE.md OR ".claude" configuration tips site:github.com`
+- `"Claude Code" skills design OR architecture (この1週間)`
+
+### D-2: 開発ワークフロー
+
+実践的なテクニック、ワークフロー改善、ベストプラクティス。
+
 検索クエリ例:
 - `Claude Code tips OR best practices OR productivity (この1週間)`
 - `AI coding assistant tips OR workflow (この1週間) site:dev.to OR site:medium.com OR site:zenn.dev`

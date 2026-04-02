@@ -54,7 +54,7 @@ Agent ツールで4カテゴリを**並列**検索する。各エージェント
 | A: Claude Code | CC の更新・tips。開発者の実用情報最優先 |
 | B: Claude API / Models | モデル・API 更新、新機能、料金変更 |
 | C: LLM / AI Industry | 競合含む業界主要ニュース |
-| D: Tips & Best Practices | 実践テクニック、ワークフロー改善 |
+| D: Tips & Best Practices | ハーネス設計（CLAUDE.md, hooks, MCP等）、開発ワークフロー |
 
 検索クエリ・信頼ソースティア: [references/search-queries.md](references/search-queries.md)
 
