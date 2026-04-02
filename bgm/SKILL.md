@@ -72,3 +72,17 @@ Remotion で動的音量制御を使う場合: [Remotion ガイド](references/r
 - [音量バランスガイド](references/volume-guide.md) - 音量設定表、決定フロー、テスト方法
 - [FFmpeg ガイド](references/ffmpeg-guide.md) - ミキシングコマンド、動的音量、サイドチェーン
 - [Remotion ガイド](references/remotion-guide.md) - 動的音量コンポーネント、スムーズトランジション
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log bgm success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log bgm failure \
+  --error-category <category> --error-msg "<message>"
+```

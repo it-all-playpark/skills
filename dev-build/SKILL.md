@@ -80,3 +80,17 @@ scripts/build.sh --type dev
 # Production build with clean
 scripts/build.sh --type prod --clean --optimize
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-build success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-build failure \
+  --error-category <category> --error-msg "<message>"
+```

@@ -60,3 +60,17 @@ Transform unstructured content into structured documents.
 /idea-to-document ./notes.md --type case-study
 /idea-to-document ./idea.md --output ./docs/article.md
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log idea-to-document success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log idea-to-document failure \
+  --error-category <category> --error-msg "<message>"
+```

@@ -109,3 +109,17 @@ Output: JSON with `score`, `rating`, `checks`, and `issues` fields. The LLM uses
 # Auto-fix safe issues
 /dev-flow-doctor --fix
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow-doctor success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow-doctor failure \
+  --error-category <category> --error-msg "<message>"
+```

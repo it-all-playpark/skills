@@ -326,3 +326,17 @@ Update state: `status: "done"`
 ## References
 
 - [Safety Guards](references/safety-guards.md) - 安全ガード詳細 (denylist, 変更量上限, 破壊的変更検出)
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log night-patrol success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log night-patrol failure \
+  --error-category <category> --error-msg "<message>"
+```

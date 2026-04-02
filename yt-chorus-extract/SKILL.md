@@ -50,3 +50,17 @@ extract.sh "https://youtu.be/xxxxx" --start 2:05 --duration 45 --fade 10
 # 出力先指定
 extract.sh "https://www.youtube.com/watch?v=xxxxx" --start 1:15 -o ~/Music/chorus.opus
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log yt-chorus-extract success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log yt-chorus-extract failure \
+  --error-category <category> --error-msg "<message>"
+```

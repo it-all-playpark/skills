@@ -126,3 +126,17 @@ Date: {date}
 | gsc | GSCデータ取得 |
 | ga-analyzer | GAデータ取得 |
 | seo-strategy | クラスタ・キーワード戦略参照 |
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-seo-improve success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-seo-improve failure \
+  --error-category <category> --error-msg "<message>"
+```

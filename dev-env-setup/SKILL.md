@@ -104,3 +104,17 @@ $SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path $WORKTREE
 # Preview only
 /dev-env-setup --path /path/to/worktree --dry-run
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-env-setup success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-env-setup failure \
+  --error-category <category> --error-msg "<message>"
+```

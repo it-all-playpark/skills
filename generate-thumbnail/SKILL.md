@@ -48,3 +48,17 @@ Requires: `GEMINI_API_KEY` in `.env.local`
 2. project `skill-config.json` で `brand_prompt_path` を設定
 
 未設定時は `~/.claude/skills/generate-thumbnail/prompts/default-brand-prompt.md` を使用。
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log generate-thumbnail success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log generate-thumbnail failure \
+  --error-category <category> --error-msg "<message>"
+```

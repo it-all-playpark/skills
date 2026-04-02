@@ -111,3 +111,17 @@ URL: https://www.playpark.co.jp/blog/<slug>
 | ------------------------------ | ---------------------------------------- |
 | 対象カテゴリの記事がない       | スキップされた記事一覧を表示、終了       |
 | slug指定の記事が対象外カテゴリ | エラーメッセージ表示、対象カテゴリを案内 |
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log cross-post-publish success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log cross-post-publish failure \
+  --error-category <category> --error-msg "<message>"
+```

@@ -165,3 +165,17 @@ Always return this summary after execution:
 - `references/issue-template.md`
 - `references/devils-advocate-checklist.md`
 - `scripts/create_issue.py`
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log github-issue-orchestrator success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log github-issue-orchestrator failure \
+  --error-category <category> --error-msg "<message>"
+```

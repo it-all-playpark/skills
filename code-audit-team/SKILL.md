@@ -182,3 +182,17 @@ audit-state.sh read
 - [Cross-Domain Patterns](references/cross-domain-patterns.md) - Inter-auditor query templates
 - [Severity Scoring](references/severity-scoring.md) - Priority scoring criteria
 - [Team Lifecycle](references/team-lifecycle.md) - Agent Team management patterns
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log code-audit-team success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log code-audit-team failure \
+  --error-category <category> --error-msg "<message>"
+```

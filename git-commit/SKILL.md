@@ -79,3 +79,17 @@ EOF
 
 Receives WORKTREE_PATH from `validate` skill.
 Passes context to `create-pr` skill.
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log git-commit success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log git-commit failure \
+  --error-category <category> --error-msg "<message>"
+```

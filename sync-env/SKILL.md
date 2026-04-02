@@ -70,3 +70,17 @@ scripts/sync-env.sh --worktree /path/to/worktree --source /path/to/repo
 - With `--force`, existing files are removed and re-created
 - Excludes `node_modules/`, `.git/`, and `*-worktrees/` directories
 - Falls back to copy if hardlink fails (cross-device)
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log sync-env success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log sync-env failure \
+  --error-category <category> --error-msg "<message>"
+```

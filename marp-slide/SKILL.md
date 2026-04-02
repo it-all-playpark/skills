@@ -161,3 +161,17 @@ marp --preview slides.md
 - `scripts/validate.sh` - 生成結果検証
 - `scripts/inject-logo.sh` - ロゴBase64注入
 - `scripts/export.sh` - PDF/HTML/PPTX変換
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log marp-slide success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log marp-slide failure \
+  --error-category <category> --error-msg "<message>"
+```

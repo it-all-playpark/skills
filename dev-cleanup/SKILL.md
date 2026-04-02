@@ -73,3 +73,17 @@ Systematic code cleanup and dead code removal.
 /dev-cleanup --type all --safe
 /dev-cleanup lib/ --aggressive
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-cleanup success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-cleanup failure \
+  --error-category <category> --error-msg "<message>"
+```

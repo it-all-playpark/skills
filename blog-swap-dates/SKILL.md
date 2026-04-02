@@ -112,3 +112,17 @@ Zernio API（旧Late）に既存スケジュールがある場合、手動変更
 # dry-run
 /blog-swap-dates 2026-02-03 2026-03-19 --dry-run
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-swap-dates success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-swap-dates failure \
+  --error-category <category> --error-msg "<message>"
+```

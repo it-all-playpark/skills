@@ -86,3 +86,17 @@ Source: <https://github.com/owner/repo>
 
 - `gh` CLI installed and authenticated
 - Python 3.10+
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-export success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-export failure \
+  --error-category <category> --error-msg "<message>"
+```

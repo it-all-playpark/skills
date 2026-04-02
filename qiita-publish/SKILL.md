@@ -33,3 +33,17 @@ bash $SKILLS_DIR/qiita-publish/scripts/publish.sh <file-path> [--public]
 
 - `.env.example` - トークン設定
 - `references/api-spec.md` - Qiita API v2 仕様
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log qiita-publish success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log qiita-publish failure \
+  --error-category <category> --error-msg "<message>"
+```

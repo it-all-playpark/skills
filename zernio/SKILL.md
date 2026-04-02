@@ -121,3 +121,17 @@ zernio sync $SYNC_DIRS --from 2026-03-20 --execute
 - [CLI Reference](references/cli-reference.md) - 全コマンド・オプション詳細
 - [Platforms](references/platforms.md) - プラットフォームエイリアス一覧
 - [Environment](references/environment.md) - 環境変数・Profile ID Resolution 詳細
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log zernio success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log zernio failure \
+  --error-category <category> --error-msg "<message>"
+```

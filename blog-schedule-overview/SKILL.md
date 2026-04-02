@@ -135,3 +135,17 @@ Issues:
 ## Preconditions
 
 なし（独立動作）
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-schedule-overview success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-schedule-overview failure \
+  --error-category <category> --error-msg "<message>"
+```

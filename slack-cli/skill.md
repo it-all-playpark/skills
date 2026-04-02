@@ -213,3 +213,17 @@ The LLM handles all actual Slack operations; this script only resolves which tok
 - Always use `-o json` when you need to parse output programmatically; use `-o table` for user-facing display
 - When posting messages, the text supports Slack mrkdwn format (bold: `*text*`, italic: `_text_`, code: `` `code` ``, link: `<url|text>`)
 - Before posting or replying, always confirm the message content and target channel with the user
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log slack-cli success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log slack-cli failure \
+  --error-category <category> --error-msg "<message>"
+```

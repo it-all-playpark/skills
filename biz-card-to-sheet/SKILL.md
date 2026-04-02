@@ -133,3 +133,17 @@ When processing multiple business card images in one session:
 1. Process each card sequentially
 2. Show batch summary at the end with count of added/skipped/updated
 3. Reuse the same spreadsheet ID across all cards
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-to-sheet success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-to-sheet failure \
+  --error-category <category> --error-msg "<message>"
+```

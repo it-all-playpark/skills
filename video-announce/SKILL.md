@@ -165,3 +165,17 @@ zernio post --json post/{date}-{slug}.json
 - `--platforms instagram` → Instagram単体（従来の動作）
 - config に `platforms` キーなし → 全プラットフォームにフォールバック
 - 旧形式の config（`hashtag` がトップレベル）→ Instagram設定として解釈
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce failure \
+  --error-category <category> --error-msg "<message>"
+```

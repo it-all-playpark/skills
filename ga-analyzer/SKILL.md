@@ -49,3 +49,17 @@ Markdownレポートは以下の構成で生成:
 - `scripts/ga_fetch.py`: GA4データ取得（OAuth/SA両対応）
 - `references/setup_guide.md`: API初期設定手順（OAuth推奨）
 - `references/metrics_guide.md`: メトリクス解釈・ベンチマーク・改善ポイント
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log ga-analyzer success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log ga-analyzer failure \
+  --error-category <category> --error-msg "<message>"
+```

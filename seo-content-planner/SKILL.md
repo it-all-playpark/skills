@@ -86,3 +86,17 @@ python scripts/seo_planner.py \
 - `scripts/seo_planner.py`: GA + Trends統合スコアリング
 - `scripts/gsc_fetch.py`: GSC API ラッパー（Search Analytics取得）
 - `references/scoring_guide.md`: スコアリング基準・レポートテンプレート
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-content-planner success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-content-planner failure \
+  --error-category <category> --error-msg "<message>"
+```

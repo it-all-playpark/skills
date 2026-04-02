@@ -33,3 +33,17 @@ Details: [Setup Guide](references/setup-guide.md)
 ```bash
 bash $SKILLS_DIR/zenn-publish/scripts/publish.sh <file-path> [--slug <slug>]
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log zenn-publish success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log zenn-publish failure \
+  --error-category <category> --error-msg "<message>"
+```

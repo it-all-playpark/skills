@@ -93,3 +93,17 @@ Tips は一般論ではなく「この JSON を追加すると Y ができる」
 - [references/search-queries.md](references/search-queries.md) - 検索クエリ例・ソース信頼度ティア
 - [references/agent-prompts.md](references/agent-prompts.md) - Fact Check / Tips エージェントのプロンプト
 - [references/output-template.md](references/output-template.md) - 出力 Markdown テンプレート
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log ai-news-digest success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log ai-news-digest failure \
+  --error-category <category> --error-msg "<message>"
+```

@@ -41,3 +41,17 @@ bash SKILL_DIR/scripts/zombie-kill.sh --force
 1. `SIGTERM` first (graceful)
 2. Wait 1 second
 3. `SIGKILL` for any survivors
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log claude-zombie-kill success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log claude-zombie-kill failure \
+  --error-category <category> --error-msg "<message>"
+```

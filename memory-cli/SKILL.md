@@ -122,3 +122,17 @@ The LLM decides WHAT to save (content generation); this script handles the deter
 1. **`put` は直接永続化する:** memvid V2 では `put` がデータを直接永続化する。別途 `commit` コマンドは不要（存在しない）。
 2. **`create` は新規ファイルのみ:** `memvid create` は既存 `.mv2` ファイルを**上書き**する。既存ファイルへの追記は `put` を使う。
 3. **`enrich` で検索品質向上:** 定期的に `memvid enrich <FILE.mv2> --engine rules` を実行すると、エンティティが抽出され `state`/`facts` コマンドでの O(1) ルックアップが有効になる。
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log memory-cli success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log memory-cli failure \
+  --error-category <category> --error-msg "<message>"
+```

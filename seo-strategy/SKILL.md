@@ -233,3 +233,17 @@ orchestrate.sh のフロー:
 strategy.needs_generation → /seo-strategy
 seo.needs_generation → /seo-content-planner (seo-strategy.json を参照)
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-strategy success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-strategy failure \
+  --error-category <category> --error-msg "<message>"
+```

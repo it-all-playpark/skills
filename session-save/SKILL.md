@@ -81,3 +81,17 @@ To resume: `/session-load --type checkpoint`
 ## Integration
 
 Pairs with `/session-load` for session lifecycle.
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log session-save success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log session-save failure \
+  --error-category <category> --error-msg "<message>"
+```

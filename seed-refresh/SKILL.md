@@ -46,3 +46,17 @@ python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py --dry-run
 # force refresh
 python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py --force
 ```
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seed-refresh success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seed-refresh failure \
+  --error-category <category> --error-msg "<message>"
+```

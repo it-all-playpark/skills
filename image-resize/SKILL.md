@@ -54,3 +54,17 @@ scripts/resize_image.sh icon.png -o icon_2x.png -s 2 -q 95
 - Output format determined by file extension
 - Supported formats: JPG, PNG, WEBP, AVIF, TIFF, GIF
 - Quality scale: 1-100 (higher is better), default 90
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-resize success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-resize failure \
+  --error-category <category> --error-msg "<message>"
+```

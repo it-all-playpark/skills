@@ -59,3 +59,17 @@ Empty array `[]` if no matches. Show full details only when user requests a spec
 Same auth/permission patterns as `biz-card-to-sheet`. Key actions:
 - **Token expired**: Delete `~/.config/gspread/authorized_user.json` and retry
 - **No credentials**: Guide user through `biz-card-to-sheet/references/setup-guide.md`
+
+## Journal Logging
+
+On completion, log execution to skill-retrospective journal:
+
+```bash
+# On success
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-search success \
+  --duration-turns $TURNS
+
+# On failure
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-search failure \
+  --error-category <category> --error-msg "<message>"
+```
