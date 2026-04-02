@@ -71,6 +71,11 @@
       "sourceType": "github",
       "computedHash": "13624b09c8dde98402647ffa13158f0e66a3fe6c440e74b2110e8b455a11153a"
     },
+    "playwright-cli": {
+      "source": "microsoft/playwright-cli",
+      "sourceType": "github",
+      "computedHash": "b59ec572042f6191e62c2fcf11623846769bfdf26582540daf0ddd69bf401be3"
+    },
     "pricing-strategy": {
       "source": "coreyhaines31/marketingskills",
       "sourceType": "github",
