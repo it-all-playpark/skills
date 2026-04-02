@@ -32,7 +32,8 @@ fi
 if [[ "$NO_PUSH" == false ]]; then
     echo ""
     echo "=== Push ===" >&2
-    git push --force-with-lease
+    BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    git push --force-with-lease origin "$BRANCH"
     echo "Pushed"
 else
     echo "Skipped push (--no-push)"
