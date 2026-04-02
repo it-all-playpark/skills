@@ -298,6 +298,142 @@ cmd_stats() {
 }
 
 # ============================================================================
+# Hook Capture Subcommand
+# ============================================================================
+
+# Error classification patterns (from error-categories.md)
+classify_error() {
+    local msg="$1"
+    if echo "$msg" | grep -qiE 'eslint|prettier|biome|stylelint|lint.*error'; then
+        echo "lint"
+    elif echo "$msg" | grep -qiE 'test.*fail|assert|expect.*to|FAIL.*test'; then
+        echo "test"
+    elif echo "$msg" | grep -qiE 'build.*fail|compile.*error|esbuild|webpack.*error|vite.*error'; then
+        echo "build"
+    elif echo "$msg" | grep -qiE 'CONFLICT|merge.*fail|rebase.*conflict|cannot.*merge'; then
+        echo "merge"
+    elif echo "$msg" | grep -qiE 'TS[0-9]+:|type.*error|mypy.*error|no.*overload'; then
+        echo "type-check"
+    elif echo "$msg" | grep -qiE 'node_modules|ENOENT.*package|pip.*not found|command not found|version.*mismatch'; then
+        echo "env"
+    elif echo "$msg" | grep -qiE 'config.*not found|invalid.*config|missing.*setting'; then
+        echo "config"
+    else
+        echo "runtime"
+    fi
+}
+
+# Called from PostToolUseFailure hook — only fires on actual tool failures
+cmd_hook_capture() {
+    local input
+    input=$(cat)
+
+    # Parse PostToolUseFailure JSON from stdin
+    local tool_name tool_input tool_result session_id
+    tool_name=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null) || return 0
+    tool_input=$(echo "$input" | jq -c '.tool_input // {}' 2>/dev/null) || return 0
+    tool_result=$(echo "$input" | jq -r '.tool_response // .tool_result // empty' 2>/dev/null) || return 0
+    session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null)
+
+    [[ -z "$tool_name" ]] && return 0
+
+    # Extract error snippet (first 3 lines with error context, max 300 chars)
+    local error_snippet
+    error_snippet=$(echo "$tool_result" | grep -iE 'error|fail|exception|fatal|panic|denied|not found' | head -3 | cut -c1-300)
+    [[ -z "$error_snippet" ]] && error_snippet=$(echo "$tool_result" | head -3 | cut -c1-300)
+
+    # Classify error
+    local category
+    category=$(classify_error "$error_snippet")
+
+    # Extract command for Bash tool (useful context)
+    local input_summary
+    if [[ "$tool_name" == "Bash" ]]; then
+        input_summary=$(echo "$tool_input" | jq -r '.command // empty' 2>/dev/null | cut -c1-200)
+    elif [[ "$tool_name" == "Skill" ]]; then
+        input_summary=$(echo "$tool_input" | jq -r '.skill // empty' 2>/dev/null)
+    else
+        input_summary=$(echo "$tool_input" | jq -c '.' 2>/dev/null | cut -c1-200)
+    fi
+
+    # Read active skill context from state file (written by PreToolUse Skill hook)
+    local active_skill=""
+    local state_file="/tmp/claude-skill-ctx-${session_id}"
+    if [[ -n "$session_id" && -f "$state_file" ]]; then
+        active_skill=$(cat "$state_file" 2>/dev/null)
+    fi
+
+    # Build skill name: prefer active skill context, fallback to tool name
+    local skill_label
+    if [[ -n "$active_skill" ]]; then
+        skill_label="$active_skill"
+    else
+        skill_label="hook-$tool_name"
+    fi
+
+    ensure_journal_dir
+
+    local now
+    now=$(iso_now)
+    local id
+    id=$(entry_id "$now" "$skill_label")
+
+    # Build context object
+    local context
+    context=$(jq -n \
+        --arg tool_name "$tool_name" \
+        --arg input_summary "$input_summary" \
+        --arg session_id "$session_id" \
+        --arg active_skill "$active_skill" \
+        '{tool_name: $tool_name, input_summary: $input_summary, session_id: $session_id}
+         | if $active_skill != "" then . + {active_skill: $active_skill} else . end
+         | with_entries(select(.value != ""))')
+
+    local entry
+    entry=$(jq -n \
+        --arg version "1.0.0" \
+        --arg id "$id" \
+        --arg timestamp "$now" \
+        --arg skill "$skill_label" \
+        --arg outcome "failure" \
+        --arg err_category "$category" \
+        --arg err_message "$error_snippet" \
+        --argjson context "$context" \
+        '{
+            version: $version,
+            id: $id,
+            timestamp: $timestamp,
+            skill: $skill,
+            outcome: "failure",
+            source: "hook-capture",
+            context: $context,
+            error: {
+                category: $err_category,
+                message: $err_message
+            }
+        }')
+
+    local filename="${now//:/-}"
+    filename="${filename//T/-}"
+    filename="${filename%Z}-${skill_label}.json"
+    echo "$entry" > "$JOURNAL_DIR/$filename"
+}
+
+# Track active skill: called by PreToolUse Skill hook to write state file
+cmd_track_skill() {
+    local input
+    input=$(cat)
+
+    local skill_name session_id
+    skill_name=$(echo "$input" | jq -r '.tool_input.skill // empty' 2>/dev/null) || return 0
+    session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null) || return 0
+
+    [[ -z "$skill_name" || -z "$session_id" ]] && return 0
+
+    echo "$skill_name" > "/tmp/claude-skill-ctx-${session_id}"
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -306,6 +442,8 @@ shift || true
 
 case "$SUBCMD" in
     log) cmd_log "$@" ;;
+    hook-capture) cmd_hook_capture ;;
+    track-skill) cmd_track_skill ;;
     query) cmd_query "$@" ;;
     stats) cmd_stats "$@" ;;
     *)
@@ -314,12 +452,15 @@ Usage: journal.sh <subcommand> [options]
 
 Subcommands:
   log <skill> <outcome>  Record skill execution
+  hook-capture           Capture failures from PostToolUse hook (reads stdin)
+  track-skill            Track active skill from PreToolUse Skill hook (reads stdin)
   query [--since] [--skill] [--outcome]  Query entries
   stats [--since]  Show summary statistics
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
+  journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff
   journal.sh stats --since 30d
 USAGE
