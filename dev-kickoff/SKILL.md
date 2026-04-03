@@ -59,28 +59,9 @@ After Phase 8: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
 
 ## State Management
 
-State persisted in `$WORKTREE/.claude/kickoff.json` for recovery.
+State persisted in `$WORKTREE/.claude/kickoff.json`. Use `init-kickoff.sh` after Phase 1, `update-phase.sh` for status updates.
 
-### Initialize (After Phase 1)
-
-```bash
-$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
-  --base $BASE --testing $TESTING --design $DESIGN --depth $DEPTH --lang $LANG --env-mode $ENV_MODE
-```
-
-### Update Phase Status
-
-```bash
-# Start phase
-$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh <phase> in_progress --worktree $PATH
-
-# Complete phase
-$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh <phase> done --result "Summary" --worktree $PATH
-
-# After PR creation (Phase 8)
-$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 8_pr done \
-  --result "PR created" --pr-number 123 --pr-url "URL" --worktree $PATH
-```
+Details: [State Management](references/state-management.md)
 
 ## Phase Execution
 
@@ -100,30 +81,9 @@ Phase 1: Must execute script. Direct `git worktree add` is prohibited.
 
 ## Evaluate-Retry Loop
 
-After Phase 6 (dev-evaluate) returns evaluation JSON:
+Phase 6 verdict determines next step: `pass` -> Phase 7, `fail` -> retry from Phase 3 (design feedback) or Phase 4 (implementation feedback). Max 5 iterations. Fork failure -> retry once, then skip with warning.
 
-1. **Record result**: `update-phase.sh 6_evaluate done --eval-result '$JSON' --worktree $PATH`
-2. **If `verdict == "pass"`**: Proceed to Phase 7 (git-commit)
-3. **If `verdict == "fail"` AND iterations < max_iterations (default 5)**:
-   - Read `feedback_level` from the evaluation result
-   - If `"design"`: Reset to Phase 3
-     ```bash
-     $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_evaluate done --reset-to 3_plan_impl --worktree $PATH
-     ```
-     Pass feedback to dev-plan-impl for plan revision
-   - If `"implementation"`: Reset to Phase 4
-     ```bash
-     $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_evaluate done --reset-to 4_implement --worktree $PATH
-     ```
-     Pass feedback to dev-implement for code revision
-4. **If max_iterations reached**: Proceed to Phase 7 with warning log
-5. **If evaluate fork fails**: Retry once. If still fails, skip evaluation and proceed to Phase 7 with warning. Record error in kickoff.json.
-
-## Phase 1 Verification
-
-```bash
-ls $WORKTREE/.env || echo "ERROR: .env not linked"
-```
+Details: [Evaluate-Retry Loop](references/evaluate-retry.md)
 
 ## Args
 
@@ -132,7 +92,6 @@ ls $WORKTREE/.env || echo "ERROR: .env not linked"
 | `<issue-number>` | required | GitHub issue number |
 | `--testing` | `tdd` | Implementation approach: tdd (test-first), bdd (behavior-first) |
 | `--design` | - | Design approach: ddd (domain modeling) |
-
 | `--depth` | `standard` | Analysis depth |
 | `--base` | `dev` | PR base branch |
 | `--lang` | `ja` | PR language |
@@ -143,60 +102,15 @@ ls $WORKTREE/.env || echo "ERROR: .env not linked"
 
 ## Parallel Subtask Mode
 
-When `--task-id` is specified, dev-kickoff runs in parallel subtask mode (see Phase table "Parallel Mode" column).
+When `--task-id` is specified, phases 1-2 and 8 are skipped. Subtask scope read from flow.json. Returns minimal `{"task_id", "status"}` JSON.
 
-### Reading Subtask Scope
-
-The subtask scope is read from flow.json:
-
-```bash
-$SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE --subtask $TASK_ID
-```
-
-### Phase 7 Enhancement
-
-After commit, record changed files:
-
-```bash
-git diff --name-only $BASE_BRANCH...HEAD
-```
-
-Result stored in kickoff.json under `actual_files_changed` field.
-
-### Return Value
-
-Return value in `--task-id` mode is minimal:
-
-```json
-{"task_id": "task1", "status": "completed|failed"}
-```
+Details: [Parallel Mode](references/parallel-mode.md)
 
 ## Error Handling
 
-| Phase | On Failure |
-|-------|------------|
-| 1-2 | Abort, update state |
-| 3 | Analyze error → retry with context (max 2). Still fails → pause |
-| 4 | Analyze error → retry with feedback (max 2). Still fails → pause |
-| 5 | Retry with --fix (max 2). Analyze failure between retries. Still fails → pause |
-| 6 | Retry once, then skip with warning |
-| 7 | Retry once (re-stage if needed). Still fails → report command, save state |
-| 8 | Retry once. Still fails → report command, save state |
+Phases 1-2: abort. Phases 3-5: analyze error, retry with context (max 2), then pause. Phase 6: retry once, skip with warning. Phases 7-8: retry once, report manual command.
 
-### Auto-Retry Protocol
-
-Phases 3-5 の失敗時は以下のプロトコルに従う:
-
-1. **エラー分析**: 失敗出力を読み、根本原因を特定
-2. **修正リトライ**: エラーコンテキストを付与して再実行（同じコマンドの盲目的リトライ禁止）
-3. **journal 記録**: リトライ回数を `recovery.turns_spent` に記録
-4. **pause 判断**: max リトライ超過時のみユーザー介入を要求
-
-```
-失敗 → エラー分析 → 修正して再実行 (1回目)
-  → まだ失敗 → 別アプローチで再実行 (2回目)
-    → まだ失敗 → journal partial 記録 → pause for intervention
-```
+Details: [Error Handling](references/error-handling.md)
 
 ## Journal Logging
 
@@ -220,5 +134,8 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-kickoff partial \
 
 ## References
 
+- [State Management](references/state-management.md) - Init scripts, update commands, state schema, recovery
+- [Evaluate-Retry Loop](references/evaluate-retry.md) - Detailed evaluate-retry flow with reset commands
+- [Error Handling](references/error-handling.md) - Per-phase error handling, auto-retry protocol
+- [Parallel Mode](references/parallel-mode.md) - Subtask scope reading, phase 7 enhancement, return value
 - [Phase Details](references/phase-detail.md) - Detailed phase documentation
-- [State Schema](references/phase-detail.md#state-schema) - kickoff.json format

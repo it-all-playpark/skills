@@ -15,173 +15,66 @@ Generate platform-optimized social media posts from articles or URLs.
 
 ## Usage
 
-\`\`\`
+```
 /sns-announce <source> [options]
-\`\`\`
+```
 
 ### Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| \`--output, -o FILE\` | Output to file | config or stdout |
-| \`--format FORMAT\` | md, json, yaml | config or md |
-| \`--schedule DATETIME\` | Schedule time (enables Zernio API format) | config or none |
-| \`--dedupe\` | Pre-check Zernio API and skip already scheduled platforms | false |
-| \`--x\` | X only | all enabled |
-| \`--linkedin\` | LinkedIn only | all enabled |
-| \`--google\` | Google Business only | all enabled |
-| \`--facebook\` | Facebook only | all enabled |
-| \`--bluesky\` | Bluesky only | all enabled |
-| \`--threads\` | Threads only | all enabled |
-| \`--base-url URL\` | Base URL for links | config |
-| \`--lang LANG\` | ja, en | config or ja |
+| `--output, -o FILE` | Output to file | config or stdout |
+| `--format FORMAT` | md, json, yaml | config or md |
+| `--schedule DATETIME` | Schedule time (enables Zernio API format) | config or none |
+| `--dedupe` | Pre-check Zernio API and skip already scheduled platforms | false |
+| `--x` | X only | all enabled |
+| `--linkedin` | LinkedIn only | all enabled |
+| `--google` | Google Business only | all enabled |
+| `--facebook` | Facebook only | all enabled |
+| `--bluesky` | Bluesky only | all enabled |
+| `--threads` | Threads only | all enabled |
+| `--base-url URL` | Base URL for links | config |
+| `--lang LANG` | ja, en | config or ja |
 
 **Priority**: CLI args > config file > defaults
 
 ## Configuration
 
-Project config: \`.claude/sns-announce.json\`
+Project config: `.claude/sns-announce.json` -- defines base_url, output path/format, schedule mode, and per-platform enable/disable.
 
-\`\`\`json
-{
-  "base_url": "https://example.com",
-  "url_pattern": "/blog/{slug}",
-  "default_lang": "ja",
-  "output": {
-    "dir": "post/blog",
-    "pattern": "{date}-{slug}.json",
-    "format": "json"
-  },
-  "schedule": {
-    "enabled": true,
-    "mode": "auto"
-  },
-  "platforms": {
-    "x": { "enabled": true },
-    "linkedin": { "enabled": true },
-    "google": { "enabled": true },
-    "facebook": { "enabled": true },
-    "bluesky": { "enabled": false },
-    "threads": { "enabled": false }
-  }
-}
-\`\`\`
-
-### Schedule Config
-
-| Key | Value | Description |
-|-----|-------|-------------|
-| \`enabled\` | true/false | Enable Zernio API format output |
-| \`mode\` | "auto" | Auto-calculate optimal posting times per platform based on article date |
-
-When \`schedule.enabled: true\`:
-- Output format becomes Zernio API array format
-- Each platform gets optimal posting time from \`references/posting-times.json\`
-- Schedule date defaults to article's publish date
-
-### Output Auto-Save
-
-When \`output.dir\` and \`output.pattern\` are set:
-1. Skip stdout, write directly to file
-2. Pattern variables: \`{date}\`, \`{slug}\`, \`{category}\`
-3. Returns only confirmation message (saves context)
-
-When not set: stdout (traditional behavior)
+Details: [Config Schema](references/config-schema.md)
 
 ## Workflow
 
 ### Standard (without --dedupe)
-\`\`\`
+```
 1. Load config → 2. Extract metadata → 3. Generate posts (all platforms) → 4. Write output
-\`\`\`
+```
 
-### Optimized (with --dedupe) ⚡
-\`\`\`
+### Optimized (with --dedupe)
+```
 1. Load config → 2. Extract metadata (get date) → 3. Query Zernio API → 4. Generate posts (needed only) → 5. Write output
-\`\`\`
+```
 
-**Key optimization**: When \`--dedupe\` is specified, query Zernio API BEFORE generation to identify which platforms need posts. This avoids wasting AI tokens generating content for already-scheduled platforms.
+**Key optimization**: When `--dedupe` is specified, query Zernio API BEFORE generation to identify which platforms need posts. This avoids wasting AI tokens generating content for already-scheduled platforms.
 
-### Dedupe Pre-Query Flow
-
-Uses \`$SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts\`:
-
-\`\`\`bash
-# Step 1: Extract date from article metadata
-DATE="2026-01-20"  # from frontmatter
-
-# Step 2: Query Zernio API for scheduled platforms
-npx tsx $SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date $DATE --platforms x,linkedin,googlebusiness,facebook,bluesky,threads
-
-# Output: { "date": "2026-01-20", "needed": ["x", "facebook"], "scheduled": ["linkedin", "googlebusiness", "bluesky", "threads"] }
-
-# Step 3: Generate posts for "needed" platforms only
-# (Skip linkedin, googlebusiness, bluesky, threads - already scheduled)
-\`\`\`
-
-Requires \`ZERNIO_API_KEY\` environment variable (global)
-
-## Scripts
-
-\`\`\`bash
-# Load config
-$SKILLS_DIR/sns-announce/scripts/load-config.sh [project-root]
-
-# Extract metadata (for file input)
-$SKILLS_DIR/sns-announce/scripts/extract-metadata.sh <file> --base-url URL
-
-# Get optimal posting time
-$SKILLS_DIR/sns-announce/scripts/get-posting-time.sh <platform> [--date YYYY-MM-DD]
-
-# Check scheduled platforms (for --dedupe optimization)
-$SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date YYYY-MM-DD --platforms LIST
-\`\`\`
+Details: [Dedupe Flow & Scripts](references/dedupe-flow.md)
 
 ## Platform Guidelines
 
-See `references/platform-guide.md` for detailed limits, audience, style, and templates per platform.
+See [Platform Guide](references/platform-guide.md) for detailed limits, audience, style, and templates per platform.
 
 **Quick reference**: X ~120字, LinkedIn 1,300, Google 1,500, Facebook 500推奨, Bluesky 300, Threads 500
 
 ## Output Format
 
-### Markdown (default)
-\`\`\`
-📋 SNS告知テンプレート
+Markdown (default): separator-delimited blocks per platform. JSON: standard object or Zernio API array format when schedule is enabled.
 
-━━━━━━━━━━━━━━━━━━━━
-X（Twitter）用
-━━━━━━━━━━━━━━━━━━━━
-{post}
-
-━━━━━━━━━━━━━━━━━━━━
-LinkedIn用
-━━━━━━━━━━━━━━━━━━━━
-{post}
-\`\`\`
-
-### JSON
-
-#### Standard (when schedule.enabled: false)
-\`\`\`json
-{"source": "...", "generated_at": "ISO8601", "posts": {"x": "...", "linkedin": "..."}}
-\`\`\`
-
-#### Zernio API format (when schedule.enabled: true or --schedule specified)
-\`\`\`json
-[
-  {"content": "X用の投稿文 #hashtag", "schedule": "2026-03-12 12:00", "platforms": ["x"]},
-  {"content": "LinkedIn用の投稿文", "schedule": "2026-03-12 08:30", "platforms": ["linkedin"]},
-  {"content": "Google Business用の投稿文", "schedule": "2026-03-12 10:00", "platforms": ["googlebusiness"]},
-  {"content": "Facebook用の投稿文", "schedule": "2026-03-12 09:00", "platforms": ["facebook"]},
-  {"content": "Bluesky用の投稿文", "schedule": "2026-03-12 19:00", "platforms": ["bluesky"]},
-  {"content": "Threads用の投稿文", "schedule": "2026-03-12 18:30", "platforms": ["threads"]}
-]
-\`\`\`
+Details: [Output Formats](references/output-formats.md)
 
 ## Examples
 
-\`\`\`bash
+```bash
 # Auto-save to config path
 /sns-announce content/blog/2026-01-15-article.mdx
 
@@ -199,7 +92,7 @@ LinkedIn用
 
 # Zernio API format with schedule
 /sns-announce article.mdx --format json --schedule "2026-03-12 09:00"
-\`\`\`
+```
 
 ## Journal Logging
 
