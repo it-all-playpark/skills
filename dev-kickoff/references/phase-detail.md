@@ -290,26 +290,38 @@ $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh $PHASE failed \
 
 Action: Abort workflow, report error.
 
-### Phase 3 Failures
+### Phase 3 Failures (Implementation Plan)
 
-Action: Pause for intervention, save progress.
+1. エラー出力を分析し、原因を特定（issue 要件の曖昧さ、コードベース理解不足等）
+2. エラーコンテキストを付与して dev-plan-impl を再実行（max 2回）
+3. 2回失敗後 → journal に partial 記録 → pause for intervention
 
-### Phase 4 Failures
+### Phase 4 Failures (Implementation)
 
-1. Retry with `--fix`
-2. If still failing, pause
-3. Report specific test failures
+1. エラー出力を分析し、原因を特定（型エラー、ロジックエラー、依存関係不足等）
+2. エラーコンテキストと修正方針を付与して dev-implement を再実行（max 2回）
+3. 2回失敗後 → journal に partial 記録 → pause for intervention
 
-### Phase 5-6 Failures
+### Phase 5 Failures (Validation)
 
-Action: Report manual command to run, save state.
+1. `--fix` で自動修正を試行
+2. 失敗した場合、エラー出力を分析し原因別に対処:
+   - lint エラー → 該当箇所を直接修正して再度 `--fix`
+   - テスト失敗 → テストまたは実装を修正して再度 `--fix`
+   - 型エラー → 型定義を修正して再度 `--fix`
+3. max 2回リトライ後も失敗 → journal に partial 記録 → pause for intervention
+
+### Phase 7-8 Failures (Commit / PR)
+
+1. 自動リトライ1回（Phase 7: re-stage して再コミット、Phase 8: 再実行）
+2. それでも失敗 → manual command を報告、state 保存
 
 Manual recovery:
 ```bash
-# Phase 5
+# Phase 7
 git add -A && git commit -m "feat: ..."
 
-# Phase 6
+# Phase 8
 gh pr create --title "..." --body "..."
 ```
 

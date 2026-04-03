@@ -130,8 +130,20 @@ Topological sort: independent subtasks first, then dependents. See [Integration 
 | Scenario | Action |
 |----------|--------|
 | Subtask not completed | Abort, report pending subtasks |
-| Unresolvable merge conflict | **Stop, request user intervention** |
-| Type check / test fails | Report, attempt fix with --fix |
+| Merge conflict (auto-resolvable) | 自動解決: lockfile → `--theirs`, import順序 → sort, 空白のみ → accept |
+| Merge conflict (code logic) | コンテキスト分析 → 両方の意図を理解して手動マージ試行 (1回) |
+| Merge conflict (解決不可) | `git merge --abort` → journal failure 記録 → stop, request user intervention |
+| Type check fails | エラー分析 → 修正試行 (max 2回). Still fails → report |
+| Test fails | `dev-validate --fix` (max 2回). Still fails → report |
+
+### Conflict Auto-Resolution パターン
+
+1. **Lockfile** (package-lock.json, yarn.lock, pnpm-lock.yaml): `git checkout --theirs` → `npm install` で再生成
+2. **Import 順序**: 両方の import を統合してソート
+3. **Adjacent additions**: 両方の追加行を保持（衝突しない追加）
+4. **同一ファイル・異なるセクション**: 両方の変更を保持
+
+コード logic の衝突のみ、分析→マージ試行→失敗時 stop。
 
 See [Integration Guide](references/integration-guide.md) for conflict resolution patterns and recovery procedures.
 

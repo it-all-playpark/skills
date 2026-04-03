@@ -176,10 +176,27 @@ Return value in `--task-id` mode is minimal:
 | Phase | On Failure |
 |-------|------------|
 | 1-2 | Abort, update state |
-| 3-4 | Pause for intervention |
-| 5 | Retry with --fix |
+| 3 | Analyze error → retry with context (max 2). Still fails → pause |
+| 4 | Analyze error → retry with feedback (max 2). Still fails → pause |
+| 5 | Retry with --fix (max 2). Analyze failure between retries. Still fails → pause |
 | 6 | Retry once, then skip with warning |
-| 7-8 | Report command, save state |
+| 7 | Retry once (re-stage if needed). Still fails → report command, save state |
+| 8 | Retry once. Still fails → report command, save state |
+
+### Auto-Retry Protocol
+
+Phases 3-5 の失敗時は以下のプロトコルに従う:
+
+1. **エラー分析**: 失敗出力を読み、根本原因を特定
+2. **修正リトライ**: エラーコンテキストを付与して再実行（同じコマンドの盲目的リトライ禁止）
+3. **journal 記録**: リトライ回数を `recovery.turns_spent` に記録
+4. **pause 判断**: max リトライ超過時のみユーザー介入を要求
+
+```
+失敗 → エラー分析 → 修正して再実行 (1回目)
+  → まだ失敗 → 別アプローチで再実行 (2回目)
+    → まだ失敗 → journal partial 記録 → pause for intervention
+```
 
 ## Journal Logging
 
