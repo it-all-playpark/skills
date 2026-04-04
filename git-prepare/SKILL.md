@@ -35,6 +35,12 @@ $SKILLS_DIR/git-prepare/scripts/git-prepare.sh <issue-number> [options]
 | `--base` | `dev` | Base branch |
 | `--env-mode` | `hardlink` | Env file handling |
 
+## `.worktreeinclude` 自動コピー
+
+プロジェクトルートに `.worktreeinclude` が存在する場合、Claude Code v2.1.x 以降が worktree 作成時にルートレベルの `.env` ファイルを自動コピーする。この場合、`git-prepare.sh` は新規 worktree 作成時にルートレベル `.env` の `--force` コピーをスキップし、サブディレクトリの `.env` のみ sync-env で処理する。
+
+`.worktreeinclude` が存在しない環境では従来通り sync-env が全 `.env` をコピーする（後方互換性あり）。
+
 ## Env Modes
 
 | Mode | Docker | Sync | Cross-FS |

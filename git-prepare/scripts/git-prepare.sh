@@ -125,8 +125,14 @@ else
     fi
 fi
 
-# Sync environment files via sync-env skill (--force for new worktrees)
-ENV_RESULT=$(run_sync_env "$WORKTREE_PATH" "$REPO_ROOT" "$ENV_MODE" "--force")
+# Sync environment files via sync-env skill
+# If .worktreeinclude exists, Claude Code already copied root-level .env files
+# so we skip --force to avoid overwriting them; sync-env will handle subdirectory .env files
+if [[ -f "$REPO_ROOT/.worktreeinclude" ]]; then
+    ENV_RESULT=$(run_sync_env "$WORKTREE_PATH" "$REPO_ROOT" "$ENV_MODE")
+else
+    ENV_RESULT=$(run_sync_env "$WORKTREE_PATH" "$REPO_ROOT" "$ENV_MODE" "--force")
+fi
 
 # Extract env_files array from sync-env result using jq
 ENV_FILES_JSON=$(echo "$ENV_RESULT" | jq -c '.files_synced' 2>/dev/null || echo '[]')

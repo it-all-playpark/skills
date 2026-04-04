@@ -13,6 +13,18 @@ allowed-tools:
 
 Sync `.env` files from a source repository to a target worktree directory.
 
+## `.worktreeinclude` との役割分担
+
+Claude Code v2.1.x 以降では、プロジェクトルートの `.worktreeinclude` により worktree 作成時にルートレベルの `.env` ファイルが自動コピーされる。
+
+**`.worktreeinclude` がカバーする範囲**: ルート直下の `.env`, `.env.local`, `.env.development`
+
+**sync-env が引き続き必要なケース**:
+- サブディレクトリの `.env` ファイル（例: `qiita-publish/.env`）
+- `--force` による再同期（既存ファイルの上書き）
+- `--mode symlink` によるシンボリックリンクモード
+- `.worktreeinclude` 非対応環境（Claude Code 旧バージョン）での後方互換
+
 ## Usage
 
 ```bash
