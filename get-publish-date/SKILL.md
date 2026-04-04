@@ -5,6 +5,7 @@ description: |
   Use when: determining blog/news publish date, scheduling content.
   Keywords: "次の投稿日", "公開日", "publish date", "schedule"
 user-invocable: true
+effort: low
 ---
 
 # Get Publish Date

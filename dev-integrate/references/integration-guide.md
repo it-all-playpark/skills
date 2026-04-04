@@ -67,6 +67,19 @@ npm install    # or yarn install / pnpm install
 go mod tidy
 ```
 
+### Additional Auto-Resolution Patterns
+
+Beyond lock files, the following patterns can be auto-resolved:
+
+| Pattern | Strategy | Rationale |
+|---------|----------|-----------|
+| Import order conflicts | Combine both imports and sort | Non-semantic ordering |
+| Adjacent additions | Keep both added lines | Non-overlapping additions |
+| Same file, different sections | Keep both changes | Changes don't interact |
+
+For code logic conflicts, analyze context from both branches to understand intent,
+then attempt manual merge (1 attempt). If unresolvable, abort.
+
 ### Unresolvable Conflicts
 
 Code file conflicts require manual intervention. When an unresolvable conflict is
@@ -262,6 +275,86 @@ flow-update.sh --flow-state $FLOW_STATE integration --field status --value "pend
 
 # 3. Re-run dev-integrate from scratch
 Skill: dev-integrate --flow-state $FLOW_STATE
+```
+
+## Execution Steps
+
+Detailed step-by-step commands for the dev-integrate workflow.
+
+### Step 1: Verify Subtask Completion
+
+```bash
+$SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE \
+  --field '.subtasks[] | select(.status != "completed") | .id'
+```
+
+If any subtask is not completed, abort and report which subtasks are pending.
+
+### Step 2: Detect File Change Drift
+
+```bash
+$SKILLS_DIR/dev-integrate/scripts/check-drift.sh --flow-state $FLOW_STATE
+```
+
+Warn on differences between planned and actual files changed. Do not abort on drift --
+it is informational only.
+
+### Step 3: Determine Merge Order
+
+Use topological sort based on `depends_on` fields. Independent subtasks (no dependencies)
+are merged first, followed by subtasks that depend on them.
+
+### Step 4: Create Merge Worktree
+
+```bash
+$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --suffix merge --base $BASE
+```
+
+### Step 4b: Sync .env Files (git-prepareが自動実行しない場合のみ)
+
+> **Note**: git-prepare.sh は内部で sync-env を自動呼び出しする。
+> `--env-mode none` で Step 4 を実行した場合や、手動で再同期が必要な場合のみ以下を実行する。
+
+```bash
+$SKILLS_DIR/sync-env/scripts/sync-env.sh --worktree $MERGE_WORKTREE --mode $ENV_MODE --force
+```
+
+### Step 5: Merge Subtask Branches
+
+```bash
+$SKILLS_DIR/dev-integrate/scripts/merge-subtasks.sh \
+  --flow-state $FLOW_STATE --worktree $MERGE_WORKTREE
+```
+
+### Step 6: Type Check
+
+Detect project type and run appropriate type checker:
+
+```bash
+# Detect project type:
+if [ -f "tsconfig.json" ]; then npx tsc --noEmit
+elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then mypy .
+elif [ -f "go.mod" ]; then go vet ./...
+fi
+```
+
+### Step 7: Integration Validation
+
+```
+Skill: dev-validate --worktree $MERGE_WORKTREE
+```
+
+### Step 8: Update Flow State
+
+```bash
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+  integration --field status --value "integrated"
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+  integration --field merge_worktree --value "$MERGE_WORKTREE"
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+  integration --field type_check --value "passed"
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+  integration --field validation --value "passed"
 ```
 
 ## Flow.json Integration Section

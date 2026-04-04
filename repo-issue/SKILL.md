@@ -6,6 +6,9 @@ description: |
   (2) needs issue context for understanding project evolution,
   (3) keywords like "export issues", "issue history", "issue summary".
   Accepts args: GITHUB_URL [-o output.md] [--state open|closed|all] [--limit N] [--labels LABELS]
+context: fork
+model: haiku
+effort: low
 ---
 
 # Repository Issue Export

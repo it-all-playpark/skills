@@ -11,7 +11,7 @@ description: |
 
 # Video Announce
 
-Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Shorts, and TikTok from media files, articles, or topics.
+Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Shorts, and TikTok.
 
 ## Usage
 
@@ -19,163 +19,58 @@ Generate platform-optimized captions with SEO hashtags for Instagram, YouTube Sh
 /video-announce <source> [options]
 ```
 
-### Source Types
+Source: video/image file, MDX/Markdown, URL, or topic text.
 
-| Source | Example |
-|--------|---------|
-| Video file | `packages/video/out/promo-video.mp4` |
-| Image file | `/path/to/image.jpg` |
-| MDX/Markdown | `content/blog/2026-01-15-article.mdx` |
-| URL | `https://example.com/blog/my-article` |
-| Topic text | `"シフト管理の効率化テクニック"` |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-t` | auto | feed, reel, story, carousel |
+| `-p` | all-video | instagram, youtube, tiktok |
+| `-o` | stdout | Output file |
+| `--format` | md | md, json |
+| `--schedule` | — | `"YYYY-MM-DD HH:MM"` |
+| `--lang` | ja | ja, en |
+| `--media` | — | Extra media paths |
 
-### Options
+Platforms: `all-video` (default) = IG + YT Shorts + TikTok. Or comma-separated subset.
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--type, -t TYPE` | Content type: feed, reel, story, carousel | Auto-detect from media |
-| `--platforms, -p PLATFORMS` | Target platforms: `instagram`, `youtube`, `tiktok`, `all-video` (comma-separated) | `all-video` |
-| `--output, -o FILE` | Output to file | config or stdout |
-| `--format FORMAT` | md, json | config or md |
-| `--schedule DATETIME` | Schedule time (enables Zernio API format) | none |
-| `--lang LANG` | ja, en | config or ja |
-| `--media PATHS` | Additional media file paths (comma-separated) | none |
-
-### Platform Selection
-
-| Value | Platforms |
-|-------|-----------|
-| `all-video` | Instagram + YouTube Shorts + TikTok (default) |
-| `instagram` | Instagram only |
-| `youtube` | YouTube Shorts only |
-| `tiktok` | TikTok only |
-| `instagram,youtube` | Instagram + YouTube Shorts |
-| `instagram,tiktok` | Instagram + TikTok |
-
-## Configuration
-
-Project config: `.claude/video-announce.json` — See [Config Guide](references/config-guide.md) for full example and details.
-
-Load merged config (defaults + project overrides):
-
-```bash
-$SKILLS_DIR/video-announce/scripts/load-config.sh
-```
+Config: `.claude/video-announce.json` — [Config Guide](references/config-guide.md)
 
 ## Workflow
 
-1. Load config via `scripts/load-config.sh`
-2. Determine target platforms (`--platforms` or config)
-3. Identify source type and extract context (media metadata / article frontmatter / URL / topic)
-4. Detect media metadata and content type via `scripts/detect-media.sh <media-path> [--type TYPE]`
-5. **Generate thumbnails** (JSON format + video media only): if `platformDefaults.thumbOffset` is set and source is a video file, run `scripts/extract-thumbnail.sh` for each target platform BEFORE building JSON output. See [Thumbnail Generation](#thumbnail-generation) for details.
-6. For each platform: generate caption ([Caption Structures](references/caption-structures.md)) + hashtags ([Hashtag Strategy](references/short-video-hashtags.md))
-7. Write output as JSON array or Markdown ([Output Format](references/output-format.md)), embedding thumbnail paths from step 5
+| # | Action | Details |
+|---|--------|---------|
+| 1 | Load config | `scripts/load-config.sh` |
+| 2 | Determine platforms | `-p` or config |
+| 3 | Extract source | metadata / frontmatter / URL |
+| 4 | Detect media | `scripts/detect-media.sh` |
+| 5 | Thumbnails | JSON + video only |
+| 6 | Captions + hashtags | Per platform |
+| 7 | Write output | JSON or Markdown |
 
-### Thumbnail Generation
+[Workflow Detail](references/workflow-detail.md) — thumbnails, auto-detect rules, backward compat
 
-**条件**: `--format json` かつ source が動画ファイル かつ `platformDefaults.thumbOffset` が設定されている場合に実行。Markdown出力時はスキップ。
-
-**手順**:
-
-1. config から `platformDefaults.thumbOffset`（ミリ秒）と `output.dir` を取得
-2. 各プラットフォームごとにサムネイルを生成:
-
-```bash
-# Instagram用
-$SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
-  --offset-ms <thumbOffset> \
-  --output <output.dir>/thumbnails/instagram/<slug>.jpg
-
-# YouTube用
-$SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
-  --offset-ms <thumbOffset> \
-  --output <output.dir>/thumbnails/youtube/<slug>.jpg
-```
-
-3. 生成されたパスをJSON出力に埋め込む:
-
-| Platform | Field | Value |
-|----------|-------|-------|
-| **Instagram** | `platforms[].platformSpecificData.instagramThumbnail` | `<output.dir>/thumbnails/instagram/<slug>.jpg` |
-| **YouTube** | `mediaItems[].thumbnail.url` | `<output.dir>/thumbnails/youtube/<slug>.jpg` |
-| **TikTok** | `tiktokSettings.video_cover_timestamp_ms` | `<thumbOffset>` の値をそのまま設定（サムネファイル不要） |
-
-**重要**: サムネイル生成は JSON 出力の構築**前**に実行し、パスを JSON に埋め込むこと。後から追加では zernio post / zernio sync がサムネイルを認識できない。
-
-### Scripts
-
-| Script | Purpose | Output |
-|--------|---------|--------|
-| `scripts/load-config.sh` | Load config with defaults | Merged config JSON |
-| `scripts/detect-media.sh <path> [--type T]` | Detect media metadata + content type per platform | `{width, height, duration, aspect, content_types}` |
-| `scripts/extract-thumbnail.sh <path> --offset-ms N --output P` | Extract video frame as thumbnail | `{thumbnail, offset_ms}` |
-
-### Auto-Detect Content Type
-
-`detect-media.sh` applies these rules automatically:
-
-| Condition | Instagram | YouTube | TikTok |
-|-----------|-----------|---------|--------|
-| Video, 9:16 (縦長), <= 90s | `reels` | `shorts` | `standard` |
-| Video, 16:9 (横長) or other | `feed` | `standard` | `standard` |
-| Video, > 90s | `feed` | `standard` | `standard` |
-| Single image | `feed` | — | — |
-
-`--type` で明示指定された場合はそちらを優先する。
+Scripts: `load-config.sh`, `detect-media.sh <path> [--type T]`, `extract-thumbnail.sh <path> --offset-ms N --output P`
 
 ## References
 
-- [Instagram guide](references/instagram-guide.md)
-- [YouTube Shorts guide](references/youtube-shorts-guide.md)
-- [TikTok guide](references/tiktok-guide.md)
-- [Hashtag strategy (cross-platform)](references/short-video-hashtags.md)
-- [Posting times](references/posting-times.json)
-- [Caption Structures](references/caption-structures.md)
-- [Output Format](references/output-format.md)
-- [Config Guide](references/config-guide.md)
+- [Workflow Detail](references/workflow-detail.md) | [Config Guide](references/config-guide.md) | [Output Format](references/output-format.md)
+- [Caption Structures](references/caption-structures.md) | [Hashtag strategy](references/short-video-hashtags.md) | [Posting times](references/posting-times.json)
+- [Instagram](references/instagram-guide.md) | [YouTube Shorts](references/youtube-shorts-guide.md) | [TikTok](references/tiktok-guide.md)
 
 ## Examples
 
 ```bash
-# 全プラットフォーム投稿文を生成（デフォルト: all-video）
-/video-announce packages/video/out/promo-video.mp4
-
-# Instagram単体
-/video-announce packages/video/out/promo-video.mp4 --platforms instagram
-
-# YouTube Shorts + TikTok のみ
-/video-announce packages/video/out/promo-video.mp4 --platforms youtube,tiktok
-
-# ブログ記事からフィード投稿文を生成
-/video-announce content/blog/2026-01-15-shift-management.mdx --type feed
-
-# JSON出力 + スケジュール
-/video-announce packages/video/out/guide-setup.mp4 --format json --schedule "2026-03-12 19:00"
-
-# 投稿パイプライン（1ファイルで全プラットフォーム）
-/video-announce video.mp4 --format json
-# → post/{date}-{slug}.json (配列: [instagram, youtube, tiktok])
-zernio post --json post/{date}-{slug}.json
+/video-announce promo-video.mp4                          # all-video (default)
+/video-announce promo-video.mp4 --platforms instagram     # Instagram only
+/video-announce promo-video.mp4 --platforms youtube,tiktok
+/video-announce blog/article.mdx --type feed
+/video-announce video.mp4 --format json --schedule "2026-03-12 19:00"
+/video-announce video.mp4 --format json && zernio post --json post/*.json
 ```
-
-## Backward Compatibility
-
-- `--platforms` 省略時 → `all-video`（全プラットフォーム生成）
-- `--platforms instagram` → Instagram単体（従来の動作）
-- config に `platforms` キーなし → 全プラットフォームにフォールバック
-- 旧形式の config（`hashtag` がトップレベル）→ Instagram設定として解釈
 
 ## Journal Logging
 
-On completion, log execution to skill-retrospective journal:
-
 ```bash
-# On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce success \
-  --duration-turns $TURNS
-
-# On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce failure \
-  --error-category <category> --error-msg "<message>"
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce success --duration-turns $TURNS
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce failure --error-category <cat> --error-msg "<msg>"
 ```

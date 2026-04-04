@@ -4,6 +4,8 @@ description: |
   MDX記事内の統計データ・バージョン情報・料金等を抽出し、公式ソースと照合するファクトチェックスキル。
   Use when: 記事の事実確認、データ検証、料金チェック、バージョン確認が必要な時。
   Accepts args: [file-path] [--all] [--category statistics|pricing|versions|dates] [--fix]
+context: fork
+model: sonnet
 ---
 
 # Blog Fact Check

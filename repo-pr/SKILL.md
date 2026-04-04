@@ -6,6 +6,9 @@ description: |
   (2) needs PR context for blog articles or case studies,
   (3) keywords like "export PR", "PR history", "pull request summary".
   Accepts args: GITHUB_URL [-o output.md] [--state open|closed|merged|all] [--limit N]
+context: fork
+model: haiku
+effort: low
 ---
 
 # Repository PR Export

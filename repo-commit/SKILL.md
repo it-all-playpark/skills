@@ -6,6 +6,9 @@ description: |
   (2) needs commit context for understanding development timeline,
   (3) keywords like "export commits", "commit history", "changelog".
   Accepts args: GITHUB_URL [-o output.md] [--limit N] [--since DATE] [--author AUTHOR]
+context: fork
+model: haiku
+effort: low
 ---
 
 # Repository Commit Export

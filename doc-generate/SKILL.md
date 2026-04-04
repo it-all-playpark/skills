@@ -5,6 +5,8 @@ description: |
   Use when: (1) generating JSDoc/docstrings for existing code, (2) creating API reference docs from endpoints,
   (3) writing developer guides for modules, (4) keywords: document, docs, jsdoc, docstring, API reference, guide
   Accepts args: [target] [--type inline|external|api|guide] [--style brief|detailed]
+context: fork
+model: sonnet
 ---
 
 # doc-generate

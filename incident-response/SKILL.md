@@ -16,192 +16,59 @@ allowed-tools:
 
 # Incident Response
 
-Parallel incident investigation via Agent Team. Three analysis lines (code, log, config) run concurrently with real-time cross-line coordination.
-
 ## Args
 
 | Arg | Default | Description |
 |-----|---------|-------------|
-| `<symptom>` | required | Symptom description text |
-| `--since` | - | Incident start time (ISO 8601 or "30min ago") |
-| `--deploy-ref` | - | Recent deploy git ref (diff analysis start point) |
-| `--max-turns` | `25` | Team-wide turn budget (lower for urgency) |
-| `--repo-path` | `.` | Target repository path |
+| `<symptom>` | required | Symptom description |
+| `--since` | - | Start time (ISO 8601 / "30min ago") |
+| `--deploy-ref` | - | Deploy git ref for diff scope |
+| `--max-turns` | `25` | Team turn budget |
+| `--repo-path` | `.` | Target repo path |
 
 ## Workflow
 
 ```
-Phase 1: Triage (incident-lead)         → Symptom analysis, timeline, line assignment
-Phase 2: Parallel Investigation (team)   → 3 lines run concurrently with cross-line messaging
-Phase 3: Root Cause Determination        → Integrate findings, build causality chain
-Phase 4: Resolution Plan                 → Immediate/permanent/prevention recommendations
+Phase 1: Triage → Phase 2: Parallel Investigation → Phase 3: Root Cause → Phase 4: Resolution
 ```
 
 ## Phase 1: Triage
 
-incident-lead executes:
+incident-lead: classify symptom (what/when/severity), build timeline, decide lines to launch, initialize state (`scripts/incident-state.sh init "$SYMPTOM" --since "$SINCE"`), create TaskList entries.
 
-1. Organize symptoms: **what** (affected function/endpoint), **when** (`--since` or inferred), **severity** (all users / partial / intermittent)
-2. Build initial timeline
-3. Decide investigation lines to launch:
-   - `--deploy-ref` present -> limit code-analyst scope to that diff
-   - Log file path unknown -> log-analyst explores first
-   - No config management tool -> config-analyst focuses on git diff of config files
-4. Initialize state: `scripts/incident-state.sh init "$SYMPTOM" --since "$SINCE"`
-5. Create TaskList entries, assign to each analyst
+Scope hints: `--deploy-ref` narrows code-analyst to that diff; unknown log paths trigger log-analyst exploration first; no config tool means config-analyst focuses on git diff of config files.
 
 ## Phase 2: Parallel Investigation
 
-### Team Composition
+### Team
 
-| Role | Name | Agent Type | Line |
-|------|------|-----------|------|
-| Leader | `incident-lead` | general-purpose | Triage, integration, decisions, user reporting |
-| Code | `code-analyst` | general-purpose | Code changes, deploy diffs, git blame |
-| Log | `log-analyst` | general-purpose | Log files, error patterns, metrics |
-| Config | `config-analyst` | general-purpose | Config files, env vars, infra changes |
+4 agents (all general-purpose): `incident-lead` (triage/integration), `code-analyst` (code/deploy diffs), `log-analyst` (logs/metrics), `config-analyst` (config/env/infra). Create with TeamCreate, spawn via Task. See [Team Lifecycle](references/team-lifecycle.md) and [Investigation Lines](references/investigation-lines.md).
 
-Create team with TeamCreate, spawn analysts via Task tool. See [Team Lifecycle](references/team-lifecycle.md) for patterns.
+### Cross-Line Coordination & Cost Control
 
-### Investigation Line Details
+Analysts share findings via SendMessage. incident-lead dynamically adjusts scope and shuts down idle analysts. **Only incident-lead writes to state file** (prevents concurrent write conflicts).
 
-Each analyst follows specialized procedures. See [Investigation Lines](references/investigation-lines.md) for:
-- code-analyst: git diff, git log --since, git blame, impact analysis
-- log-analyst: log file discovery, time-series analysis, error pattern extraction
-- config-analyst: config diff, env var check, infra (Docker/K8s/Terraform) inspection
-
-### Cross-Line Coordination
-
-Analysts share findings via SendMessage. Key pattern:
-
-```
-log-analyst → code-analyst:
-  "DB queries to 'users' table 10x slower since 15:30.
-   Any DB-related code changes around 15:30?"
-
-code-analyst → log-analyst:
-  "commit abc123 (15:28) removed composite index on users table.
-   Can you check slow query logs for that table?"
-
-config-analyst → incident-lead:
-  "No changes to DB connection settings, max_connections, or timeouts.
-   Infra cause unlikely."
-```
-
-### Dynamic Adjustment (incident-lead)
-
-- log-analyst finds "DB slow since 15:30" -> tell code-analyst "focus on DB commits around 15:30"
-- code-analyst finds "index deletion commit" -> tell log-analyst "check slow queries for that table"
-- config-analyst reports "no changes" -> send shutdown_request (cost saving)
-- Strong lead found -> narrow remaining analysts' scope
-
-### State Write Ownership
-
-**Only incident-lead writes to state file.** Analysts report findings via SendMessage to incident-lead, who consolidates and writes state. This prevents concurrent write conflicts when multiple analysts run in parallel.
-
-### Cost Control
-
-- `--max-turns` limits total team turns
-- Early shutdown for analysts with no findings (typically config-analyst)
-- Leader dynamically reallocates turn budget
-- Check budget: `scripts/incident-state.sh check-budget`
+Details: [Execution Detail](references/execution-detail.md)
 
 ## Phase 3: Root Cause Determination
 
-incident-lead integrates all findings:
-
-1. Merge all analyst findings into timeline (`scripts/incident-state.sh add-timeline`)
-2. Build causal chain on timeline
-3. Determine root cause with confidence level (High/Medium/Low)
+incident-lead merges findings into timeline (`scripts/incident-state.sh add-timeline`), builds causal chain, determines root cause with confidence (High/Medium/Low).
 
 ## Phase 4: Resolution Plan
 
-Generate three-tier resolution:
+Three tiers: **Immediate** (rollback/hotfix/scale-up), **Permanent** (code fix PR/architecture), **Prevention** (CI/monitoring/process). See [Resolution Patterns](references/resolution-patterns.md).
 
-1. **Immediate**: rollback (`git revert`), feature flag disable, hotfix, scale-up
-2. **Permanent**: code fix PR, migration strategy, architecture improvement
-3. **Prevention**: CI checks, monitoring alerts, review process improvements
+## State Management & Output
 
-See [Resolution Patterns](references/resolution-patterns.md) for templates.
-
-## State Management
-
-State persisted in `$CWD/.claude/incident-state.json`. When `--repo-path` is specified, run all scripts from that directory so `$CWD` resolves correctly.
-
-```bash
-# Initialize
-scripts/incident-state.sh init "<symptom>" [--since <datetime>]
-
-# Add timeline event
-scripts/incident-state.sh add-timeline "<time>" "<event>" "<source>" "<severity>"
-
-# Update investigation line status
-scripts/incident-state.sh update-line <line> <status>
-
-# Increment turn counter
-scripts/incident-state.sh increment-turns [count]
-
-# Check turn budget
-scripts/incident-state.sh check-budget
-
-# Read current state
-scripts/incident-state.sh read
-```
-
-## Output Format
-
-```markdown
-## Incident Response Report
-
-### Summary
-- **Symptom**: [1-sentence summary]
-- **Occurred**: [datetime]
-- **Root Cause**: [1-sentence summary]
-- **Confidence**: High / Medium / Low
-
-### Timeline
-| Time | Event | Source | Severity |
-|------|-------|--------|----------|
-| 15:28 | index deletion commit | code-analyst | High |
-| 15:30 | DB query 10x slowdown | log-analyst | Critical |
-
-### Root Cause Analysis
-[Detailed causal chain explanation]
-
-### Immediate Action
-[rollback/hotfix commands]
-
-### Permanent Fix
-[Fix PR proposal]
-
-### Prevention Measures
-1. [CI/monitoring/process improvement proposals]
-```
-
-## Error Handling
-
-| Scenario | Action |
-|----------|--------|
-| Log files not found | log-analyst reports, explores alternatives (stdout, journalctl) |
-| No/shallow git history | code-analyst works with available info |
-| max-turns reached | Report current findings (partial results are still useful) |
-| Root cause not identified | Present additional info request list to user |
-| Analyst stuck | incident-lead redefines investigation direction |
+State persisted in `$CWD/.claude/incident-state.json`. Script commands and output report template: [Execution Detail](references/execution-detail.md)
 
 ## Journal Logging
 
-```bash
-# On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log incident-response success \
-  --context "lines=code,log,config"
-
-# On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log incident-response failure \
-  --error-category runtime --error-msg "<message>"
-```
+`$SKILLS_DIR/skill-retrospective/scripts/journal.sh log incident-response {success|failure} [--context "lines=..."] [--error-category runtime --error-msg "..."]`
 
 ## References
 
+- [Execution Detail](references/execution-detail.md) - Coordination, state management, output format, error handling
 - [Team Lifecycle](references/team-lifecycle.md) - Agent Team lifecycle patterns
 - [Investigation Lines](references/investigation-lines.md) - Detailed procedures per analysis line
 - [Resolution Patterns](references/resolution-patterns.md) - Immediate/permanent/prevention pattern templates

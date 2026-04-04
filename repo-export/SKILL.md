@@ -7,6 +7,9 @@ description: |
   codebase context, (4) keywords like "export repo", "dump repository",
   "consolidate files", "repo to markdown".
   Accepts args: GITHUB_URL [-o output.md] [-b branch] [-p path]
+context: fork
+model: haiku
+effort: low
 ---
 
 # Repository Export

@@ -7,6 +7,7 @@ description: >
   (3) user reports slow system or too many Claude processes running,
   (4) session cleanup or process management for Claude Code CLI.
   Accepts args: [--force]
+effort: low
 ---
 
 # Claude Zombie Kill

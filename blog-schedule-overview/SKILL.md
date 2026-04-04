@@ -4,6 +4,7 @@ description: |
   全記事の公開スケジュールをカレンダー表示し、空きスロット・重複・整合性を検出するスキル。
   Use when: 記事スケジュール確認、空きスロット検出、公開日程管理、カレンダー表示が必要な時。
   Accepts args: [--days N] [--check] [--format table|calendar] [--save]
+effort: medium
 ---
 
 # Blog Schedule Overview

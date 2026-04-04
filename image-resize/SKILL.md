@@ -5,6 +5,7 @@ description: |
   Use when: (1) user wants to resize/scale images, (2) needs to change image dimensions,
   (3) keywords like "resize", "scale", "shrink", "enlarge", "smaller", "bigger", "dimensions",
   (4) file types: JPG, PNG, WEBP, AVIF, TIFF, BMP, GIF.
+effort: low
 ---
 
 # Image Resize Skill

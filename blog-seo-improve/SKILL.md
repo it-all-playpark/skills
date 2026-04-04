@@ -4,6 +4,8 @@ description: |
   GSC/GAデータに基づき、既存記事のtitle/description/冒頭セクションを改善するSEOスキル。
   Use when: 既存記事のSEO改善、CTR改善、bounce率改善、title/meta最適化が必要な時。
   Accepts args: [file-path] [--type ctr|bounce] [--dry-run]
+context: fork
+model: sonnet
 ---
 
 # Blog SEO Improve

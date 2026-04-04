@@ -7,6 +7,7 @@ description: >
   "Suica CSV", "Suica変換", "交通費インポート",
   (3) user wants to convert IC card transaction history to expense CSV.
   Accepts args: PDF_PATH [-o output.csv]
+effort: low
 ---
 
 # suica-to-csv
