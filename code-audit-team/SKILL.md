@@ -7,6 +7,8 @@ description: |
   (3) large-scale refactoring assessment, (4) compliance or quality gate review,
   (5) keywords: audit, 監査, comprehensive review, 多角的レビュー, pre-release check, セキュリティ監査
   Accepts args: <target> [--scope file|module|project] [--focus DOMAIN,...] [--max-turns N] [--report]
+model: opus
+effort: high
 allowed-tools:
   - Task
   - Bash

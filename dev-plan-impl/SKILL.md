@@ -11,6 +11,7 @@ allowed-tools:
   - Glob
   - Bash
 model: opus
+effort: high
 ---
 
 # Plan Implementation

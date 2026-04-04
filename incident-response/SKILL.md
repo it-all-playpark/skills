@@ -8,6 +8,8 @@ description: |
   (5) keywords: incident, 障害調査, production issue, 本番障害, エラー急増, レスポンス遅い,
   デプロイ後の不具合, postmortem, 原因特定
   Accepts args: <symptom> [--since <datetime>] [--deploy-ref <ref>] [--max-turns N] [--repo-path <path>]
+model: opus
+effort: high
 allowed-tools:
   - Task
   - Bash

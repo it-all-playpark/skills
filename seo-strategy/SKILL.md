@@ -8,6 +8,8 @@ description: |
   (2) keywords: SEO戦略, サイト改善, CTR改善, 内部リンク, コンテンツ戦略,
   (3) blog-publish の --skip-seo なしフローの上流ステップとして。
   Accepts args: [--refresh] [--ga-report PATH] [--gsc-report PATH] [--trends-report PATH] [--config PATH]
+model: opus
+effort: high
 ---
 
 # SEO Strategy (Agent Team)

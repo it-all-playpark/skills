@@ -8,6 +8,8 @@ description: |
   (4) keywords: bug hunt, root cause, investigate, debug, intermittent failure, flaky test,
   原因調査, なぜ落ちる, 再現しない, 時々失敗
   Accepts args: <issue-or-description> [--max-hypotheses N] [--max-turns N] [--repo-path <path>]
+model: opus
+effort: high
 allowed-tools:
   - Task
   - Bash

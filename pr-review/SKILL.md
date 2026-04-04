@@ -4,6 +4,8 @@ description: |
   Comprehensive PR review with deep analysis and auto-submit.
   Accepts args: <pr-number-or-url> [--depth quick|standard|deep]
 argument-hint: [pr-number] [--depth]
+model: opus
+effort: high
 context: fork
 agent: Plan
 allowed-tools:
