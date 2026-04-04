@@ -60,6 +60,7 @@ ls $WORKTREE/.env || echo "ERROR: .env not linked"
       "status": "in_progress",
       "started_at": "2026-01-28T10:15:00Z"
     },
+    "3b_plan_review": { "status": "pending" },
     "4_implement": { "status": "pending" },
     "5_validate": { "status": "pending" },
     "6_evaluate": { "status": "pending" },

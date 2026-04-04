@@ -33,6 +33,7 @@ When `--task-id` is NOT set (= single mode), Phase 1 MUST be executed FIRST. Imp
 | 1 | Worktree creation | Path exists, .env verified | **REQUIRED** | SKIP |
 | 2 | Issue analysis | Requirements understood | **REQUIRED** | SKIP |
 | 3 | Implementation plan | impl-plan.md created | Execute | Execute |
+| 3b | Plan review | Plan approved or revised | Execute | Execute |
 | 4 | Implementation | Code written | Execute | Execute |
 | 5 | Validation | Tests pass | Execute | Execute |
 | 6 | Evaluation | Quality gate passed | Execute | Execute |
@@ -47,6 +48,9 @@ After Phase 8: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
 [ ] Phase 1: git-prepare.sh → init-kickoff.sh          (REQUIRED unless --task-id)
 [ ] Phase 2: Skill: dev-issue-analyze                   (REQUIRED unless --task-id)
 [ ] Phase 3: Skill: dev-plan-impl                       (NEW - Opus planner)
+[ ] Phase 3b: Skill: dev-plan-review                    (NEW - Opus reviewer, context:fork)
+  → fail → back to Phase 3 (with feedback)
+  → pass or max rounds (3) → Phase 4
 [ ] Phase 4: Skill: dev-implement                       (Sonnet generator)
 [ ] Phase 5: Skill: dev-validate --fix
 [ ] Phase 6: Skill: dev-evaluate                        (NEW - Opus evaluator, context:fork)
@@ -71,6 +75,7 @@ Details: [State Management](references/state-management.md)
 | 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
 | 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
 | 3 | `Skill: dev-plan-impl $ISSUE --worktree $PATH` | - | Execute |
+| 3b | `Skill: dev-plan-review $ISSUE --worktree $PATH` | context:fork | Execute |
 | 4 | `Skill: dev-implement --testing $TESTING [--design $DESIGN] --worktree $PATH` | - | Execute |
 | 5 | `Skill: dev-validate --fix --worktree $PATH` | Task(quality-engineer) | Execute |
 | 6 | `Skill: dev-evaluate $ISSUE --worktree $PATH` | context:fork | Execute |
@@ -84,6 +89,12 @@ Phase 1: Must execute script. Direct `git worktree add` is prohibited.
 Phase 6 verdict determines next step: `pass` -> Phase 7, `fail` -> retry from Phase 3 (design feedback) or Phase 4 (implementation feedback). Max 5 iterations. Fork failure -> retry once, then skip with warning.
 
 Details: [Evaluate-Retry Loop](references/evaluate-retry.md)
+
+## Plan-Review Loop
+
+Phase 3b verdict determines next step: `pass` → Phase 4, `fail` → retry from Phase 3 (dev-plan-impl with feedback). Max 3 rounds. Fork failure → retry once, then skip with warning.
+
+Details: [Plan-Review Loop](references/evaluate-retry.md#plan-review-loop-phase-3b)
 
 ## Args
 

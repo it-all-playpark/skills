@@ -21,7 +21,7 @@ RESET_TO=""
 EVAL_RESULT=""
 
 # Valid phases and statuses for validation
-VALID_PHASES="1_prepare 2_analyze 3_plan_impl 4_implement 5_validate 6_evaluate 7_commit 8_pr"
+VALID_PHASES="1_prepare 2_analyze 3_plan_impl 3b_plan_review 4_implement 5_validate 6_evaluate 7_commit 8_pr"
 VALID_STATUSES="pending in_progress done failed skipped"
 
 # Parse args
@@ -98,7 +98,8 @@ case "$STATUS" in
         case "$PHASE" in
             1_prepare)  JQ_ARGS+=(--arg next "2_analyze"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
             2_analyze)  JQ_ARGS+=(--arg next "3_plan_impl"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
-            3_plan_impl) JQ_ARGS+=(--arg next "4_implement"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            3_plan_impl) JQ_ARGS+=(--arg next "3b_plan_review"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
+            3b_plan_review) JQ_ARGS+=(--arg next "4_implement"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
             4_implement) JQ_ARGS+=(--arg next "5_validate"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
             5_validate) JQ_ARGS+=(--arg next "6_evaluate"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
             6_evaluate) JQ_ARGS+=(--arg next "7_commit"); JQ_FILTER="$JQ_FILTER | .current_phase = \$next" ;;
@@ -162,7 +163,7 @@ if [[ -n "$RESET_TO" ]]; then
     # Reset phases from RESET_TO onwards to pending
     # --reset-to must be used with "done" status. The normal done transition
     # is applied first, then this override resets phases and current_phase.
-    PHASE_ORDER=("3_plan_impl" "4_implement" "5_validate" "6_evaluate")
+    PHASE_ORDER=("3_plan_impl" "3b_plan_review" "4_implement" "5_validate" "6_evaluate")
     resetting=false
     for p in "${PHASE_ORDER[@]}"; do
         if [[ "$p" == "$RESET_TO" ]]; then

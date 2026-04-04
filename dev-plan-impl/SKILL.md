@@ -41,7 +41,9 @@ Create a concrete implementation plan that the Generator (dev-implement) will fo
 1. **Issue requirements**: Read `$WORKTREE/.claude/kickoff.json` → `phases.2_analyze.result`
 2. **Config**: Read `$WORKTREE/.claude/kickoff.json` → `config` (testing strategy, design approach)
 
-## Step 2: Check for Evaluator Feedback (Retry)
+## Step 2: Check for Feedback (Retry)
+
+### Evaluator Feedback (Phase 6)
 
 If `$WORKTREE/.claude/kickoff.json` → `phases.6_evaluate.iterations[]` has entries:
 - Read the latest iteration's `feedback` array
@@ -49,7 +51,14 @@ If `$WORKTREE/.claude/kickoff.json` → `phases.6_evaluate.iterations[]` has ent
 - The feedback_level should be `"design"` (otherwise dev-implement handles it directly)
 - Address each feedback item in the new plan's Architecture Decisions and Notes for Retry sections
 
-If no iterations exist (first run), skip this step.
+### Plan Review Feedback (Phase 3b)
+
+If `$WORKTREE/.claude/plan-review-feedback.json` exists:
+- Read the review findings with severity `blocking`
+- Address each blocking finding in the revised plan
+- Note how each finding was addressed in the Architecture Decisions or relevant section
+
+If neither feedback source exists (first run), skip this step.
 
 ## Step 3: Analyze Codebase
 

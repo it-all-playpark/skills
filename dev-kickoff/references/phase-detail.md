@@ -13,6 +13,8 @@ Phase 2: Issue Analysis (dev-issue-analyze)
     ↓
 Phase 3: Implementation (dev-implement)
     ↓
+Phase 3b: Plan Review (dev-plan-review) ←→ Phase 3 (retry on fail)
+    ↓
 Phase 4: Validation (dev-validate)
     ↓
 Phase 5: Commit (git-commit)
@@ -107,6 +109,36 @@ Skill: dev-implement --strategy $STRATEGY --worktree $PATH
 ```bash
 $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3_implement done \
   --result "Implemented feature X" \
+  --worktree $PATH
+```
+
+## Phase 3b: Plan Review
+
+**Command:**
+```
+Skill: dev-plan-review $ISSUE --worktree $PATH
+```
+
+**Subagent:** context:fork (Opus, general-purpose) - independent review context
+
+**Purpose:** 実装計画を批判的にレビューし、実装前に問題を発見する。
+
+**Input:**
+- `$WORKTREE/.claude/impl-plan.md` (from Phase 3)
+- `$WORKTREE/.claude/kickoff.json` → `phases.2_analyze.result`
+
+**Completion Criteria:**
+- verdict: pass (blocking findings なし)
+- または max_rounds (3) に到達
+
+**On Fail:**
+1. Review feedback を `$WORKTREE/.claude/plan-review-feedback.json` に保存
+2. Phase 3 (dev-plan-impl) に戻り、feedback を反映した計画を再作成
+
+**State Update:**
+```bash
+$SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
+  --result "Plan approved" \
   --worktree $PATH
 ```
 

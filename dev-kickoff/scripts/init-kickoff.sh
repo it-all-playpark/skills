@@ -117,6 +117,7 @@ jq -n \
             "1_prepare": { status: "done", started_at: $now, completed_at: $now, result: "Worktree created" },
             "2_analyze": { status: "pending" },
             "3_plan_impl": { status: "pending" },
+            "3b_plan_review": { status: "pending" },
             "4_implement": { status: "pending" },
             "5_validate": { status: "pending" },
             "6_evaluate": { status: "pending", iterations: [], current_iteration: 0, max_iterations: 5 },
