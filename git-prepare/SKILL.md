@@ -3,7 +3,7 @@ name: git-prepare
 description: |
   Git worktree preparation for feature development. Creates isolated worktree for parallel development.
   Use when: starting new feature work, preparing isolated git environment for issue implementation.
-  Accepts args: <issue-number> [--suffix <suffix>] [--base <branch>] [--env-mode hardlink|symlink|copy|none]
+  Accepts args: <issue-number> [--suffix <suffix>] [--base <branch>]
 allowed-tools:
   - Bash
 ---
@@ -17,7 +17,7 @@ Prepare git worktree for isolated feature development.
 ❌ **NEVER**: `git worktree add` を直接実行
 ✅ **ALWAYS**: 下記スクリプトを使用
 
-理由: スクリプトが .env* ハードリンク処理と正しいディレクトリ命名を行う
+理由: スクリプトが正しいディレクトリ命名とブランチリンクを行う
 
 ## Execution
 
@@ -25,7 +25,7 @@ Prepare git worktree for isolated feature development.
 $SKILLS_DIR/git-prepare/scripts/git-prepare.sh <issue-number> [options]
 ```
 
-**Output**: JSON with `worktree_path`, `branch`, `base`, `env_mode`, `env_files`
+**Output**: JSON with `worktree_path`, `branch`, `base`
 
 ## Options
 
@@ -33,16 +33,11 @@ $SKILLS_DIR/git-prepare/scripts/git-prepare.sh <issue-number> [options]
 |--------|---------|-------------|
 | `--suffix` | `m` | Branch suffix → `feature/issue-{N}-{suffix}` |
 | `--base` | `dev` | Base branch |
-| `--env-mode` | `hardlink` | Env file handling |
 
-## Env Modes
+## .env ファイルの自動コピー
 
-| Mode | Docker | Sync | Cross-FS |
-|------|--------|------|----------|
-| `hardlink` | ✅ | ✅ bidirectional | ❌ (fallback to copy) |
-| `symlink` | ❌ | ✅ bidirectional | ✅ |
-| `copy` | ✅ | ❌ | ✅ |
-| `none` | - | - | - |
+`.worktreeinclude` と Claude Code hooks により、worktree 作成時に `.env` ファイルが自動コピーされる。
+`git-prepare` は `.env` の管理を行わない（Claude Code に委譲）。
 
 ## Journal Logging
 
