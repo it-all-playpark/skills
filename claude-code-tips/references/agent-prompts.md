@@ -1,6 +1,61 @@
 # Agent Prompts
 
-## Fact Check Agent
+## Search Agent (model: haiku / sonnet)
+
+Categories A-D は `model: "haiku"`、E-F は `model: "sonnet"` で起動する。
+
+```
+カテゴリ「{CATEGORY_NAME}」について、以下の検索クエリで WebSearch を実行してください。
+
+検索クエリ:
+{QUERIES}
+
+日付範囲: {DATE_RANGE}
+
+【重要】WebFetch は実行しない。WebSearch の結果のみを以下のフォーマットで返却すること。
+要約・分析・評価は一切不要。検索結果の生データを構造化して返すだけ。
+
+返却フォーマット（JSON）:
+{
+  "category": "{CATEGORY_ID}",
+  "results": [
+    {
+      "title": "記事タイトル",
+      "url": "https://...",
+      "snippet": "検索結果のスニペット（そのまま）",
+      "source_tier": 1-4,
+      "has_code_example": true/false
+    }
+  ]
+}
+
+source_tier の判定基準:
+- 1: code.claude.com, github.com/anthropics, anthropic.com/blog
+- 2: ClaudeCodeLog (X), Anthropic 社員のポスト
+- 3: GitHub repos, Zenn, dev.to, HN threads（実装記事）
+- 4: X/Twitter, Reddit, 個人ブログ（Tier 4 はコード例がある場合のみ含める）
+```
+
+## Fetch Agent (model: haiku)
+
+Step 4 の詳細取得用。URL リストを受け取り、WebFetch して生テキストを返す。
+
+```
+以下の URL リストに対して WebFetch を実行し、各ページの関連部分を抽出してください。
+
+URL リスト:
+{URLS}
+
+【重要】分析・要約は不要。以下のフォーマットで生データを返すこと。
+
+返却フォーマット:
+## {URL}
+**タイトル**: {ページタイトル}
+**関連引用**:
+{Claude Code に関連する部分のみを引用。最大500語/URL}
+```
+
+## Fact Check Agent (model: opus)
 
 ```
 以下の Claude Code tips を公式ソースと照合し、正確性を検証してください。
@@ -21,7 +76,7 @@
 特に JSON 設定のキー名・構造は1文字でも間違うと動作しないため、厳密に照合すること。
 ```
 
-## Implementation Agent
+## Implementation Agent (model: opus)
 
 ```
 以下の Claude Code tips について、コピペで即座に使える実装例を構築してください。
