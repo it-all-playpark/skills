@@ -79,9 +79,10 @@ $SKILLS_DIR/pr-iterate/scripts/post-summary.sh [--worktree PATH] [--dry-run]
 
 ### Resume After Compact
 
-1. Read `.claude/iterate.json`
-2. Check `current_iteration`, `status`, and `next_actions`
-3. Resume from where you left off
+1. Run `$SKILLS_DIR/pr-iterate/scripts/check-resume.sh` to detect stale state
+2. If `status: "stale_lgtm"` → re-initialize with `init-iterate.sh` (new commits found after LGTM)
+3. If `status: "in_progress"` → Read `.claude/iterate.json`, check `current_iteration` and `next_actions`, resume
+4. If `status: "lgtm"` (no new commits) → already complete, no action needed
 
 ## Workflow
 
