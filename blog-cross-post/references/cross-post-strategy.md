@@ -111,8 +111,12 @@
 | 対象 | Before | After |
 |------|--------|-------|
 | 画像 | `/blog/image.webp` | `https://www.playpark.co.jp/blog/image.webp` |
+| 記事リンク (Zenn) | `/blog/{slug}` or `{ORIGINAL_URL}` | `https://www.playpark.co.jp/blog/{slug}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug}` |
+| 記事リンク (Qiita) | `/blog/{slug}` or `{ORIGINAL_URL}` | `https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}` |
 | 内部リンク | `/contact` | `https://www.playpark.co.jp/contact` |
 | アンカー | `#section` | そのまま |
+
+> **Note**: UTMパラメータは記事単位のトラッキング用。お問い合わせ・ブログ一覧など非記事ページのリンクにはUTMを付与しない。詳細は `claudedocs/ref/utm-rules.md` を参照。
 
 ### 削除する要素
 

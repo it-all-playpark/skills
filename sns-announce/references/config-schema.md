@@ -18,6 +18,18 @@ Project config: `.claude/sns-announce.json`
     "enabled": true,
     "mode": "auto"
   },
+  "utm": {
+    "enabled": true,
+    "medium": "social",
+    "source_map": {
+      "x": "x",
+      "linkedin": "linkedin",
+      "google": "google_business",
+      "facebook": "facebook",
+      "bluesky": "bluesky",
+      "threads": "threads"
+    }
+  },
   "platforms": {
     "x": { "enabled": true },
     "linkedin": { "enabled": true },
@@ -28,6 +40,19 @@ Project config: `.claude/sns-announce.json`
   }
 }
 ```
+
+## UTM Config
+
+| Key | Value | Description |
+|-----|-------|-------------|
+| `enabled` | true/false | Enable UTM parameter auto-append to URLs |
+| `medium` | string | `utm_medium` value (e.g., "social") |
+| `source_map` | object | Platform-to-`utm_source` mapping |
+
+When `utm.enabled: true`:
+- All URLs include `?utm_source={source}&utm_medium={medium}&utm_campaign={slug}`
+- `{source}` is looked up from `utm.source_map` by platform key
+- `{slug}` is the article slug (from filename or URL path)
 
 ## Schedule Config
 

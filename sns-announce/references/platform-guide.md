@@ -42,6 +42,23 @@
 
 ---
 
+## URL Generation
+
+When UTM is enabled in config, replace `{url}` with platform-specific UTM URL:
+```
+{base_url}/blog/{slug}?utm_source={utm.source_map[platform]}&utm_medium={utm.medium}&utm_campaign={slug}
+```
+
+Example for slug `my-article`:
+- X: `https://www.playpark.co.jp/blog/my-article?utm_source=x&utm_medium=social&utm_campaign=my-article`
+- LinkedIn: `https://www.playpark.co.jp/blog/my-article?utm_source=linkedin&utm_medium=social&utm_campaign=my-article`
+- Google: `https://www.playpark.co.jp/blog/my-article?utm_source=google_business&utm_medium=social&utm_campaign=my-article`
+- Facebook: `https://www.playpark.co.jp/blog/my-article?utm_source=facebook&utm_medium=social&utm_campaign=my-article`
+- Bluesky: `https://www.playpark.co.jp/blog/my-article?utm_source=bluesky&utm_medium=social&utm_campaign=my-article`
+- Threads: `https://www.playpark.co.jp/blog/my-article?utm_source=threads&utm_medium=social&utm_campaign=my-article`
+
+---
+
 ## Japanese Templates
 
 ### X - 日本語 (~120字)
@@ -50,7 +67,7 @@
 
 {フック文（問題提起 or 価値提案）}
 
-▶ {url}
+▶ {url}?utm_source=x&utm_medium=social&utm_campaign={slug}
 
 #{tag1} #{tag2} #{tag3}
 ```
@@ -74,7 +91,7 @@
 
 {CTA文}
 
-🔗 {url}
+🔗 {url}?utm_source=linkedin&utm_medium=social&utm_campaign={slug}
 
 #{tag1} #{tag2} #{tag3} #{tag4}
 ```
@@ -88,7 +105,7 @@
 {特徴や価値}
 
 詳しくはこちらをご覧ください。
-{url}
+{url}?utm_source=google_business&utm_medium=social&utm_campaign={slug}
 ```
 
 ---
@@ -101,7 +118,7 @@
 
 {Hook sentence with value proposition}
 
-👉 {url}
+👉 {url}?utm_source=x&utm_medium=social&utm_campaign={slug}
 
 #{tag1} #{tag2} #{tag3}
 ```
@@ -119,7 +136,7 @@
 
 {CTA}
 
-🔗 {url}
+🔗 {url}?utm_source=linkedin&utm_medium=social&utm_campaign={slug}
 
 #{tag1} #{tag2} #{tag3} #{tag4}
 ```
