@@ -124,7 +124,20 @@ Phase 3b（dev-plan-review）の Output JSON schema は `{score, verdict, findin
 ### Feedback 受け渡し
 
 - Phase 3b の Output JSON 全体を `$WORKTREE/.claude/plan-review-feedback.json` に書き出す（dev-plan-impl が retry 時に読む）
-- 並行して `$WORKTREE/.claude/plan-review-history.json` に iteration ごとの結果を追記（stuck 検出用。`[{iteration, score, verdict, findings}, ...]` 形式）
+- 並行して `$WORKTREE/.claude/plan-review-history.json` に iteration ごとの結果を追記（stuck 検出用）。canonical schema は以下:
+  ```jsonc
+  [
+    {
+      "iteration": 1,                     // integer, 1-indexed
+      "score": 72,                        // integer 0–100
+      "verdict": "revise",                // "pass" | "revise" | "block"
+      "findings": [                       // dev-plan-review Output JSON の findings をそのまま保存
+        { "severity": "major", "dimension": "edge_cases", "topic": "Empty-input handling unspecified",
+          "description": "...", "suggestion": "..." }
+      ]
+    }
+  ]
+  ```
 
 ### Config
 

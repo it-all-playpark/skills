@@ -5,7 +5,7 @@ description: |
   Use when: (1) plan quality gate before implementation, (2) dev-kickoff Phase 3b,
   (3) standalone review of any impl-plan.md,
   (4) keywords: plan review, 計画レビュー, devil's advocate, 批判的レビュー
-  Accepts args: [<issue-number>] [--worktree <path>] [--plan <path>] [--max-rounds 3]
+  Accepts args: [<issue-number>] [--worktree <path>] [--plan <path>] [--pass-threshold 80]
 allowed-tools:
   - Read
   - Grep
@@ -42,7 +42,9 @@ Independent critical review of implementation plans. Runs in a separate context 
 | `<issue-number>` | - | GitHub issue number (worktree mode) |
 | `--worktree` | - | Worktree path (reads kickoff.json + impl-plan.md) |
 | `--plan` | - | Direct path to plan file (standalone mode) |
-| `--max-rounds` | `3` | Max review-revision rounds |
+| `--pass-threshold` | `80` | Verdict pass threshold (0–100 integer score) |
+
+> **Note**: ループ回数 (`max_iterations`) は orchestrator である `dev-kickoff` 側で制御します（`config.plan_review.max_iterations`、既定 3）。本 skill は単一 review を実行するだけで、ループ管理は行いません。旧 `--max-rounds` 引数は削除されました。
 
 ## Workflow
 

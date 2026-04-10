@@ -44,6 +44,7 @@
         "1_prepare": { "$ref": "#/$defs/phase" },
         "2_analyze": { "$ref": "#/$defs/phase" },
         "3_plan_impl": { "$ref": "#/$defs/phase" },
+        "3b_plan_review": { "$ref": "#/$defs/plan_review_phase" },
         "4_implement": { "$ref": "#/$defs/phase" },
         "5_validate": { "$ref": "#/$defs/phase" },
         "6_evaluate": { "$ref": "#/$defs/evaluate_phase" },
@@ -54,7 +55,7 @@
     },
     "current_phase": {
       "type": "string",
-      "enum": ["1_prepare", "2_analyze", "3_plan_impl", "4_implement", "5_validate", "6_evaluate", "7_commit", "8_pr", "completed"],
+      "enum": ["1_prepare", "2_analyze", "3_plan_impl", "3b_plan_review", "4_implement", "5_validate", "6_evaluate", "7_commit", "8_pr", "completed"],
       "description": "Currently active phase"
     },
     "next_actions": {
@@ -83,7 +84,16 @@
         "depth": { "type": "string", "enum": ["minimal", "standard", "comprehensive"] },
         "lang": { "type": "string", "enum": ["ja", "en"] },
         "env_mode": { "type": "string", "enum": ["hardlink", "symlink", "copy", "none"] },
-        "skip_pr": { "type": "boolean" }
+        "skip_pr": { "type": "boolean" },
+        "plan_review": {
+          "type": "object",
+          "description": "Plan-Review Loop (evaluator-optimizer) configuration",
+          "properties": {
+            "max_iterations": { "type": "integer", "default": 3, "minimum": 1 },
+            "pass_threshold": { "type": "integer", "default": 80, "minimum": 0, "maximum": 100 },
+            "escalate_on_stuck": { "type": "boolean", "default": true }
+          }
+        }
       },
       "description": "Kickoff configuration options"
     }
@@ -116,6 +126,38 @@
         "subagent_results": {
           "type": "object",
           "description": "Results from delegated subagents"
+        }
+      },
+      "required": ["status"]
+    },
+    "plan_review_phase": {
+      "type": "object",
+      "description": "Phase 3b: Plan Review (evaluator-optimizer loop)",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "done", "failed", "skipped"],
+          "default": "pending"
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "result": { "type": "string" },
+        "error": { "type": "string" },
+        "current_iteration": { "type": "integer", "default": 0, "minimum": 0 },
+        "last_verdict": { "type": "string", "enum": ["pass", "revise", "block"] },
+        "last_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "escalated": { "type": "boolean", "default": false },
+        "escalation_reason": { "type": "string", "enum": ["max_iterations", "stuck", "fork_failure"] },
+        "stuck_findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "dimension": { "type": "string" },
+              "topic": { "type": "string" }
+            },
+            "required": ["dimension", "topic"]
+          }
         }
       },
       "required": ["status"]

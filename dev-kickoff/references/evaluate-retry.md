@@ -92,7 +92,7 @@ After Phase 6 (dev-evaluate) returns evaluation JSON:
 2. **Parse verdict**（`config.plan_review.pass_threshold` 既定 80）:
    - `verdict == "pass"` → **Phase 4 (dev-implement)** に進行
    - `verdict == "revise" | "block"` → 次ステップへ
-3. **Append history**: `plan-review-history.json` に `{iteration: N, score, verdict, findings}` を追記
+3. **Append history**: `plan-review-history.json` に canonical schema `{"iteration": <int>, "score": <int>, "verdict": "pass"|"revise"|"block", "findings": [...]}` を追記（配列に push）。`findings` は dev-plan-review Output JSON の findings をそのまま保存
 4. **Stuck detection**: iteration N と N-1 の findings を比較し、同じ `{dimension, topic}` が両方に存在すれば **stuck escalate** して iter 3 を待たずに終了
 5. **Max iterations check**: `iteration >= max_iterations (既定 3)` なら **max_iterations escalate** して終了
 6. **Revise**: 上記どちらでもなければ、
