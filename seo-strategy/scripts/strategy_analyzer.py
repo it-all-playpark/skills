@@ -73,21 +73,65 @@ def load_json(path: str | None) -> dict | None:
 def _extract_gsc_rows(gsc_data: dict | list, *, kind: str = "all") -> list[dict]:
     """Normalize GSC report data into a flat list of row dicts.
 
-    Handles two formats:
-      1. Combined: top-level ``rows`` with ``page``/``query`` fields
+    Handles three formats:
+      1. Combined: top-level ``rows`` with ``page``/``query`` fields or ``keys``
       2. Separated: ``queries`` list + ``pages`` list (each with ``keys[0]``)
+      3. Query+URL pairs: ``rows`` with ``keys: [query, url]`` (2-element keys)
 
     *kind* controls which rows to return:
       - ``"all"``: queries + pages (default)
       - ``"queries"``: query rows only
       - ``"pages"``: page rows only
     """
+    from urllib.parse import urlparse
+
     if isinstance(gsc_data, list):
         return gsc_data
 
-    # Format 1: combined rows
+    # Format 1/3: combined rows (may have 1-key or 2-key format)
     rows = gsc_data.get("rows", gsc_data.get("search_analytics", {}).get("rows", []))
     if rows:
+        # Detect keys format by inspecting first row
+        first = rows[0] if rows else {}
+        first_keys = first.get("keys", [])
+
+        # Format 3: keys: [query, url] — normalize into page/query fields
+        if len(first_keys) == 2 and (first_keys[1].startswith("http") or first_keys[1].startswith("/")):
+            normalized: list[dict] = []
+            for row in rows:
+                entry = dict(row)
+                keys = entry.pop("keys", [])
+                if len(keys) >= 2:
+                    entry["query"] = keys[0]
+                    parsed = urlparse(keys[1])
+                    entry["page"] = parsed.path
+                elif len(keys) == 1:
+                    val = keys[0]
+                    if val.startswith("http") or val.startswith("/"):
+                        parsed = urlparse(val)
+                        entry["page"] = parsed.path
+                    else:
+                        entry["query"] = val
+                normalized.append(entry)
+            return normalized
+
+        # Format 1: single-key rows (page-only or query-only)
+        if first_keys:
+            normalized = []
+            for row in rows:
+                entry = dict(row)
+                keys = entry.pop("keys", [])
+                if keys:
+                    val = keys[0]
+                    if val.startswith("http") or val.startswith("/"):
+                        parsed = urlparse(val)
+                        entry.setdefault("page", parsed.path)
+                    else:
+                        entry.setdefault("query", val)
+                normalized.append(entry)
+            return normalized
+
+        # Already has page/query fields
         return rows
 
     # Format 2: separated queries / pages (from /gsc skill)
@@ -104,17 +148,8 @@ def _extract_gsc_rows(gsc_data: dict | list, *, kind: str = "all") -> list[dict]
             entry = dict(p)
             keys = entry.pop("keys", [])
             if keys:
-                url = keys[0]
-                # Normalize full URL to path
-                for prefix in ("https://www.", "http://www.", "https://", "http://"):
-                    if url.startswith(prefix):
-                        url = url.split("/", 3)[-1] if url.count("/") >= 3 else url
-                        # Rebuild as path: strip scheme+host
-                        from urllib.parse import urlparse
-                        parsed = urlparse(keys[0])
-                        url = parsed.path
-                        break
-                entry.setdefault("page", url)
+                parsed = urlparse(keys[0])
+                entry.setdefault("page", parsed.path)
             result.append(entry)
     return result
 
@@ -329,8 +364,16 @@ def extract_gsc_page_metrics(gsc_data: dict, content_path_prefix: str = "/blog/"
 
 
 def extract_gsc_kpi(gsc_data: dict) -> dict:
-    """Extract site-wide GSC KPIs."""
-    rows = _extract_gsc_rows(gsc_data)
+    """Extract site-wide GSC KPIs.
+
+    For combined (Format 2: {pages, queries}) data, uses pages-only to avoid
+    double-counting.  For other formats, uses all rows.
+    """
+    # Prefer pages-only for KPI to avoid double-counting
+    if isinstance(gsc_data, dict) and "pages" in gsc_data:
+        rows = _extract_gsc_rows(gsc_data, kind="pages")
+    else:
+        rows = _extract_gsc_rows(gsc_data)
 
     total_clicks = sum(int(r.get("clicks", 0)) for r in rows)
     total_impressions = sum(int(r.get("impressions", 0)) for r in rows)
