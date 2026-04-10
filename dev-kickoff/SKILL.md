@@ -65,7 +65,15 @@ After Phase 8: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
 
 State persisted in `$WORKTREE/.claude/kickoff.json`. Use `init-kickoff.sh` after Phase 1, `update-phase.sh` for status updates.
 
-Details: [State Management](references/state-management.md)
+Details: [State Management](references/state-management.md), [kickoff.json Schema](references/kickoff-schema.md)
+
+### Mandatory Rules — feature_list immutability
+
+**`kickoff.json.feature_list` の `id` と `desc` は書き換え禁止。** Phase 3 (`dev-plan-impl`) で一度だけ初期化し、以降は `status` のみ更新可能。
+
+- `id` / `desc` の書き換え → `dev-validate` が warning を出す
+- `status` 更新は `dev-kickoff/scripts/update-feature.sh` を必ず使用する（`Edit` ツールで JSON を直接書き換えない）
+- `progress_log` は append-only。追加は `dev-kickoff/scripts/append-progress.sh` を使用する
 
 ## Phase Execution
 
@@ -145,6 +153,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-kickoff partial \
 
 ## References
 
+- [kickoff.json Schema](references/kickoff-schema.md) - feature_list / progress_log / decisions 仕様
 - [State Management](references/state-management.md) - Init scripts, update commands, state schema, recovery
 - [Evaluate-Retry Loop](references/evaluate-retry.md) - Detailed evaluate-retry flow with reset commands
 - [Error Handling](references/error-handling.md) - Per-phase error handling, auto-retry protocol

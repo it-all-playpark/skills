@@ -125,6 +125,8 @@ jq -n \
             "8_pr": { status: "pending" }
         },
         next_actions: ["Run dev-issue-analyze"],
+        feature_list: [],
+        progress_log: [],
         decisions: [],
         config: {
             testing: $testing,
