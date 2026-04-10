@@ -52,14 +52,39 @@ If `$WORKTREE/.claude/kickoff.json` → `phases.6_evaluate.iterations[]` has ent
 - The feedback_level should be `"design"` (otherwise dev-implement handles it directly)
 - Address each feedback item in the new plan's Architecture Decisions and Notes for Retry sections
 
-### Plan Review Feedback (Phase 3b)
+### Plan Review Feedback (Phase 3b — Evaluator-Optimizer Loop)
 
-If `$WORKTREE/.claude/plan-review-feedback.json` exists:
-- Read the review findings with severity `blocking`
-- Address each blocking finding in the revised plan
-- Note how each finding was addressed in the Architecture Decisions or relevant section
+If `$WORKTREE/.claude/plan-review-feedback.json` exists, this is a **revise iteration** of the evaluator-optimizer loop (see dev-kickoff Plan-Review Loop).
 
-If neither feedback source exists (first run), skip this step.
+feedback ファイルは dev-plan-review の Output JSON を丸ごと保持する。以下の schema を持つ:
+
+```jsonc
+{
+  "score": 72,
+  "verdict": "revise",           // "pass" | "revise" | "block"
+  "pass_threshold": 80,
+  "findings": [
+    { "severity": "critical" | "major" | "minor",
+      "dimension": "...",
+      "topic": "...",
+      "description": "...",
+      "suggestion": "..." }
+  ],
+  "summary": "..."
+}
+```
+
+1. **優先順位**: `critical` → `major` → `minor` の順に対応する。critical は**必ず**1 件残らず解消する。major は可能な限り解消する。minor は余裕があれば対応（無視しても可）。
+2. **各 finding の反映**: `topic` を見出しに、`suggestion` を元に plan の該当箇所を修正する。「どう直したか」を Architecture Decisions または Notes for Retry に 1 行で残す（次回の stuck 検出に影響する）。
+3. **Revise モード**: iteration > 1 の場合、前回 plan を土台に**差分 revise** すること。無関係な章をゼロから書き直して迷子にならないよう、指摘点のみ書き換える。
+4. **Iteration 履歴**: `$WORKTREE/.claude/plan-review-history.json` が存在する場合、過去 iteration の findings を確認し、同じ `{dimension, topic}` が繰り返し残っている場合は revise 戦略を変えること（同じ直し方では stuck に突入する）。
+5. **後方互換**: 旧 schema（`verdict: "fail"` / `severity: "blocking" | "non-blocking"`）を持つ feedback も読み取り可能にする。`fail` は `revise` と同等、`blocking` は `major` と同等扱いにする。
+
+### Evaluator Feedback 消費時との併存
+
+Evaluator Feedback（Phase 6）と Plan Review Feedback（Phase 3b）が両方存在する場合、**Plan Review Feedback を優先**して先に反映し、残った範囲で Evaluator Feedback を重ねる。
+
+どちらも存在しない場合（first run）、このステップはスキップ。
 
 ## Step 3: Analyze Codebase
 

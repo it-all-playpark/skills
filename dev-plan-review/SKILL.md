@@ -47,8 +47,62 @@ Independent critical review of implementation plans. Runs in a separate context 
 ## Workflow
 
 ```
-1. Collect inputs → 2. Review against checklist → 3. Classify findings → 4. Verdict → 5. Output JSON
+1. Collect inputs → 2. Review against checklist → 3. Classify findings → 4. Score & verdict → 5. Output JSON
 ```
+
+## Output Contract (JSON Schema)
+
+本 skill は stdout に**必ず**以下の JSON を出力する（dev-kickoff Phase 3b ループはこの schema を前提にループ制御する）。
+
+```jsonc
+{
+  "score": 85,                       // 0–100 の整数（plan 全体の品質スコア）
+  "verdict": "pass",                 // "pass" | "revise" | "block"
+  "pass_threshold": 80,              // 本 review で使用した閾値（既定 80）
+  "findings": [
+    {
+      "severity": "major",           // "critical" | "major" | "minor"
+      "dimension": "architecture",   // checklist の次元名
+      "topic": "Missing rollback strategy",   // 1 行の short title（stuck 判定キー）
+      "description": "What's wrong and why it matters",
+      "suggestion": "Concrete fix to apply in next revision"
+    }
+  ],
+  "summary": "Plan is mostly solid; 1 major finding blocks pass."
+}
+```
+
+### Severity 定義
+
+- **critical**: 実装方針が根本的に誤っており、継続すると大きな手戻りが発生する
+- **major**: pass には届かない（revise 必須）レベルの設計/範囲/整合性の問題
+- **minor**: 非ブロッキング。次回 revise で直せれば望ましいが無視しても進行可
+
+### Verdict 判定ルール
+
+1. critical が 1 件でもある、または `score < 60` → **`block`**
+2. major が 1 件でもある、または `60 <= score < pass_threshold` → **`revise`**
+3. それ以外（critical/major なし かつ `score >= pass_threshold`） → **`pass`**
+
+### Scoring ガイドライン
+
+`score` は plan の全体品質を 0–100 の整数で採点する目安:
+
+- 90–100: 本質的な指摘なし。minor のみ
+- 80–89: minor 中心、軽微な曖昧さあり（`pass_threshold` 既定）
+- 60–79: major を含み revise 必要
+- 40–59: critical 1 件または major 複数
+- 0–39: 方針レベルで破綻、block
+
+### 後方互換
+
+旧 schema の `verdict: "fail"` / `severity: "blocking" | "non-blocking"` を参照していた呼び出し元が残っている場合は、次のように読み替える:
+
+- `verdict: "fail"` → `revise` または `block`（critical の有無で区別）
+- `severity: "blocking"` → `critical` または `major`
+- `severity: "non-blocking"` → `minor`
+
+dev-kickoff は本 SKILL.md 更新に合わせて新 verdict のみ評価する。
 
 ## Step 1: Collect Inputs
 
@@ -71,52 +125,101 @@ For each dimension, evaluate whether the plan adequately addresses the concern. 
 
 ## Step 3: Classify Findings
 
-For each finding:
-- **blocking**: Must be fixed before implementation. The plan has a gap that will cause rework.
-- **non-blocking**: Worth noting but implementation can proceed. Minor improvements.
+各 finding を **critical / major / minor** の 3 レベルで分類する。
 
-A finding is blocking if ANY of:
-- Missing or untestable acceptance criteria
-- Architecture decision without rationale that could lead to wrong direction
-- File changes that will conflict or are missing critical files
-- Edge cases listed without handling strategy
-- Dependencies not accounted for
-- Security implications ignored
-- Implementation order has dependency contradictions
+- **critical**: 方針が根本的に誤っている。見逃すと大規模な手戻り。
+  - 典型: テスト不能な受け入れ条件／根拠なき重要なアーキテクチャ決定で実装方向が間違う／必須ファイルの欠落で conflict 必至／依存関係の矛盾／セキュリティ脆弱性の無視
+- **major**: pass まで届かない品質ギャップ。revise で潰す必要あり。
+  - 典型: edge case の扱い未定／小～中規模の整合性欠如／テスト戦略の曖昧／変更ファイル list の取り違え
+- **minor**: 進行可能な改善提案。pass を妨げない。
+  - 典型: 命名／コメント／微細な YAGNI／将来の拡張メモ
 
-## Step 4: Determine Verdict
+各 finding は必ず以下を含める:
+- `severity`: 上の 3 レベル
+- `dimension`: チェックリストの次元名（scope / architecture / file_changes / edge_cases / dependencies / security / implementation_order / testing など）
+- `topic`: 1 行の短い識別子（**stuck 検出の fingerprinting キーになるため、毎回同じ問題は同じ文字列で書くこと**）
+- `description`: 何が問題でなぜ重要か
+- `suggestion`: 次の revision で取るべき具体的な修正
 
-- No blocking findings → verdict: **pass**
-- Blocking findings exist → verdict: **fail**
-  - Include specific, actionable feedback for each blocking finding
-  - Each feedback item should describe: what's wrong, why it matters, suggested fix
+## Step 4: Score and Determine Verdict
+
+1. **Score**: plan 全体の品質を `0–100` の整数で採点（上記 Scoring ガイドライン参照）
+2. **Verdict 判定**:
+   - critical が 1 件以上、または `score < 60` → **`block`**
+   - 上に該当しない & major が 1 件以上、または `60 <= score < pass_threshold` → **`revise`**
+   - critical/major がなく、`score >= pass_threshold` → **`pass`**
+3. 既定 `pass_threshold = 80`。caller が明示的に指定した場合はそれに従う。
+
+各 finding には「何が問題か」「なぜ重要か」「どう直すか」を具体的に書くこと。"Architecture is weak" 等の抽象は禁止。
 
 ## Step 5: Output JSON
 
-Print the review result as JSON to stdout. This is the return value to the caller (dev-kickoff or user).
+Print the review result as JSON to stdout. この JSON は dev-kickoff の Plan-Review Loop が読み取って verdict / findings / score を判定する正式 I/F である。
 
-### Pass:
+### Pass 例:
 
 ```json
 {
+  "score": 88,
   "verdict": "pass",
+  "pass_threshold": 80,
   "findings": [
-    {"dimension": "scope", "severity": "non-blocking", "description": "..."}
+    {
+      "severity": "minor",
+      "dimension": "scope",
+      "topic": "Docs polish",
+      "description": "Wording on README could be tightened",
+      "suggestion": "Optional cleanup in follow-up PR"
+    }
   ],
-  "summary": "Plan is solid. Minor suggestions noted."
+  "summary": "Plan is solid. Only minor cosmetic suggestions."
 }
 ```
 
-### Fail:
+### Revise 例:
 
 ```json
 {
-  "verdict": "fail",
+  "score": 72,
+  "verdict": "revise",
+  "pass_threshold": 80,
   "findings": [
-    {"dimension": "architecture", "severity": "blocking", "description": "...", "suggestion": "..."},
-    {"dimension": "edge_cases", "severity": "non-blocking", "description": "..."}
+    {
+      "severity": "major",
+      "dimension": "edge_cases",
+      "topic": "Empty-input handling unspecified",
+      "description": "Edge case is listed but no handling strategy is given; implementation will guess.",
+      "suggestion": "Specify that empty input returns early with a no-op and add a unit test."
+    },
+    {
+      "severity": "minor",
+      "dimension": "testing",
+      "topic": "Integration test missing",
+      "description": "Plan only covers unit tests.",
+      "suggestion": "Add one end-to-end smoke test path."
+    }
   ],
-  "summary": "2 blocking issues found. Plan needs revision before implementation."
+  "summary": "1 major gap in edge case handling needs revision."
+}
+```
+
+### Block 例:
+
+```json
+{
+  "score": 48,
+  "verdict": "block",
+  "pass_threshold": 80,
+  "findings": [
+    {
+      "severity": "critical",
+      "dimension": "architecture",
+      "topic": "Wrong ownership boundary",
+      "description": "Loop control is placed in dev-plan-impl, but that skill is invoked inside the loop — infinite recursion risk.",
+      "suggestion": "Move loop responsibility to dev-kickoff (orchestrator). Revise architecture decision."
+    }
+  ],
+  "summary": "Critical design issue — plan must be reworked before implementation."
 }
 ```
 
