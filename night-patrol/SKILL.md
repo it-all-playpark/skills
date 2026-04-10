@@ -117,19 +117,27 @@ Details: [Triage Steps](references/phase-triage.md) | [State Schemas](references
 
 Update state: `phase: 3, status: "executing"`
 
+**Mandatory rule: 1 issue = 1 commit = 1 progress 更新**
+
+各 issue の成果は必ず dev-flow が生成する単一コミット (1 PR) に閉じる。auto-merge 成功直後に `update_progress_log` を呼び、「commit と progress の atomic 対応」を保つ。Anthropic Effective Harnesses の "1 feature = 1 commit / git history を rollback 面に使う" 原則に従う。
+
 For each batch in `execution_plan.batches`:
 
 1. **Pre-execute guard** - `guard-check.sh --mode pre-execute` (fail -> skip to Phase 4)
 2. **Execute** - Parallel: `Task: dev-flow <issue> --base nightly/$DATE` / Serial: `Skill(dev-flow)`
-3. **Auto-merge** - LGTM PR -> `gh pr merge <PR> --merge --admin --delete-branch`
+3. **Result dispatch**
+   - LGTM PR → `gh pr merge <PR> --merge --admin --delete-branch` → `failures.sh reset <issue>` → `update_progress_log(issue, "done")`
+   - Failure → `failures.sh incr <issue> --reason "..."` → `escalated: true` なら `escalate-stuck.sh <issue>` して次 issue へ
 4. **Post-issue guard** - Cumulative line check (fail -> skip remaining, proceed to Phase 4)
 5. **Update state** - Record result, update counters
 
 **Critical**: `--admin` bypasses confirmation. Safe because nightly branch is autonomous patrol only.
 
+失敗カウントは `~/.claude/night-patrol/failures.json` (env `NIGHT_PATROL_FAILURES_PATH` で上書き可) に永続化され、同一 issue が run を跨いで閾値 (`skill-config.json.night-patrol.max_failures`, default 2) に達したら `patrol-stuck` label を付与し triage に差し戻す。
+
 After all batches: `status: "completed"`. If subcommand is `execute`, stop here.
 
-Details: [Execute Steps](references/phase-execute.md)
+Details: [Execute Steps](references/phase-execute.md) | [Failure Escalation](references/safety-guards.md#7-失敗ループ検出-execute)
 
 ## Phase 4: Report
 

@@ -36,6 +36,11 @@
   "dev-implement": {
     "model": "sonnet"
   },
+  "night-patrol": {
+    "max_failures": 2,
+    "failures_path": "~/.claude/night-patrol/failures.json",
+    "stuck_label": "patrol-stuck"
+  },
   "memory-cli": {
     "global_memory": "~/.claude/memory/global.mv2",
     "project_memory": ".claude/memory/project.mv2",
