@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "id": "20260407T100000-dev-kickoff",
+  "timestamp": "2026-04-07T10:00:00Z",
+  "skill": "dev-kickoff",
+  "outcome": "success",
+  "duration_turns": 22,
+  "context": {"issue": 102, "mode": "single"}
+}
