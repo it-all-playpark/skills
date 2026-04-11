@@ -30,6 +30,7 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 
 ```
 1. Read flow.json, verify all subtasks status == "completed"
+1b. Check shared_findings for unacked entries (warning only, non-blocking)
 2. Warn if actual_files_changed differs from planned files
 3. Determine merge order from depends_on (topological sort, leaves first)
 4. Create merge worktree via git-prepare --suffix merge --base $CONTRACT_BRANCH
@@ -42,6 +43,20 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 7. Run Skill: dev-validate --worktree $MERGE_WORKTREE
 8. Update flow.json integration section with results
 ```
+
+### Step 1b: Unacked Shared Findings Check
+
+```bash
+UNACKED=$($SKILLS_DIR/dev-integrate/scripts/check-unacked-findings.sh \
+  --flow-state "$FLOW_STATE")
+COUNT=$(echo "$UNACKED" | jq -r '.unacked_count')
+if [[ "$COUNT" -gt 0 ]]; then
+  echo "⚠️  $COUNT shared finding(s) not acknowledged by all subtasks:"
+  echo "$UNACKED" | jq -r '.unacked[] | "  - \(.id) [\(.category)] \(.title) (missing: \(.missing_ack | join(",")))"'
+fi
+```
+
+The check is **non-blocking**: integration continues even with unacked findings. It only surfaces potential cross-worker coordination gaps for human awareness. See [`_shared/references/shared-findings.md`](../_shared/references/shared-findings.md) for the pattern.
 
 ## Execution
 

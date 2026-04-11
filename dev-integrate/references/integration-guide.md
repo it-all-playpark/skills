@@ -290,6 +290,19 @@ $SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE \
 
 If any subtask is not completed, abort and report which subtasks are pending.
 
+### Step 1b: Check Unacked Shared Findings (warning only)
+
+```bash
+$SKILLS_DIR/dev-integrate/scripts/check-unacked-findings.sh --flow-state $FLOW_STATE
+```
+
+Output JSON: `{"unacked_count": N, "unacked": [...]}`. If `unacked_count > 0`,
+print a warning summary for each unacked finding (id, category, title, missing
+subtasks). **Never aborts** — this is a human-awareness signal, not an error.
+Legacy flow.json without `shared_findings` returns `unacked_count: 0`.
+
+Pattern background: [`_shared/references/shared-findings.md`](../../_shared/references/shared-findings.md).
+
 ### Step 2: Detect File Change Drift
 
 ```bash
