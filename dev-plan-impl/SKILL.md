@@ -41,6 +41,14 @@ Create a concrete implementation plan that the Generator (dev-implement) will fo
 
 1. **Issue requirements**: Read `$WORKTREE/.claude/kickoff.json` → `phases.2_analyze.result`
 2. **Config**: Read `$WORKTREE/.claude/kickoff.json` → `config` (testing strategy, design approach)
+3. **Shared findings** (parallel mode only): when `--task-id` is set, read unacked findings from other workers:
+
+   ```bash
+   FINDINGS=$($SKILLS_DIR/_shared/scripts/flow-read-findings.sh \
+     --flow-state "$FLOW_STATE" --task-id "$TASK_ID" --unacked-only --ack)
+   ```
+
+   Each finding has `category`, `title`, `description`, `scope`, `action_required`. Include the applicable ones in the plan's "Architecture Decisions" or "Notes" section so the Generator respects other workers' decisions. `--ack` marks them as read. See [`_shared/references/shared-findings.md`](../_shared/references/shared-findings.md).
 
 ## Step 2: Check for Feedback (Retry)
 

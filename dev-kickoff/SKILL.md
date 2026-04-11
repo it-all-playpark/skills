@@ -222,6 +222,16 @@ Details: [Plan-Review Loop](references/evaluate-retry.md#plan-review-loop-phase-
 
 When `--task-id` is specified, phases 1-2 and 8 are skipped. Subtask scope read from flow.json. Returns minimal `{"task_id", "status"}` JSON.
 
+### Shared Findings Channel
+
+Parallel workers exchange cross-cutting knowledge (breaking changes, API contracts, design decisions) through `flow.json.shared_findings[]`:
+
+- **Phase 3 (dev-plan-impl)**: reads unacked findings via `_shared/scripts/flow-read-findings.sh --unacked-only --ack` and incorporates them into the plan.
+- **Phase 4/5 (dev-implement / dev-validate)**: when the worker makes a decision that affects other workers, it appends a finding via `_shared/scripts/flow-append-finding.sh`.
+- **dev-integrate**: warns if any finding remains unacked across subtasks (non-blocking).
+
+Pattern details: [`_shared/references/shared-findings.md`](../_shared/references/shared-findings.md)
+
 Details: [Parallel Mode](references/parallel-mode.md)
 
 ## Error Handling
