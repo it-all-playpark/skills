@@ -184,6 +184,64 @@ User triggers /command
 5. **小タスクは vanilla**: 小さいタスクは素の Claude Code の方が優秀
 6. **Journal Logging**: ワークフロー完了時に skill-retrospective 経由でログ記録
 
+## Subagent Dispatch Rules
+
+Skill が `Task` / `Agent` tool 経由で subagent を呼び出す場合、以下の規約を**必ず遵守**する。
+[Anthropic: Multi-agent research system](https://www.anthropic.com/engineering/multi-agent-research-system) によれば delegation の品質で +90% が決まる。曖昧な委譲は重複作業・過剰呼び出し・誤った tool 選択を招く。
+
+### 必須5要素
+
+Subagent を呼び出すプロンプトには、以下5要素を**必ず含める**：
+
+1. **Objective** — 単一の明確なゴール（「X を調べる」ではなく「Y が A か B かを判定する」）
+2. **Output format** — 期待する構造（JSON schema / Markdown section 構成 / 語数上限）
+3. **Tools** — 使用可能 tool と禁止 tool を明示
+4. **Boundary** — 触ってはいけないファイル / commit 禁止 / ネットワーク禁止 等
+5. **Token cap** — 「1500 語以内で」「上位 10 件まで」等の計測可能な上限
+
+```markdown
+Task(
+  subagent_type: "general-purpose",
+  prompt: """
+  ## Objective
+  [単一の明確なゴール]
+
+  ## Output format
+  [JSON schema / Markdown section / 語数上限]
+
+  ## Tools
+  - 使用可: Read, Grep, Glob
+  - 禁止: Bash, Write, Edit
+
+  ## Boundary
+  - 除外: vendor/, node_modules/
+  - 禁止: commit, git 操作, ネットワーク
+
+  ## Token cap
+  - 1500 語以内、最大 20 ファイル
+  """
+)
+```
+
+### Routing Rule Table
+
+タスク性質に応じて subagent 種別を選択する：
+
+| タスク性質 | 推奨 subagent | model | 理由 |
+|------------|--------------|-------|------|
+| 探索 heavy（Read/Grep/Glob 多用、summary のみ欲しい） | `Explore` agent / Haiku 系 | haiku | token-heavy な探索をメイン context から隔離 |
+| 実装系（コード生成・編集・リファクタ） | `general-purpose` | sonnet | バランス型、tool 制約が緩い |
+| plan 系（設計・計画立案） | `Plan` agent | opus | 推論品質重視 |
+| review 系（コードレビュー・critique） | `code-reviewer` agent | opus | 批判的観点の品質 |
+| 並列調査（複数仮説検証） | `general-purpose` × N（並列） | sonnet | 独立タスクの並列化 |
+
+**判断基準**: 出力が大きい → Explore/Haiku、副作用あり → general-purpose/sonnet、推論深度重要 → Plan/opus または code-reviewer/opus。
+
+### 参照
+
+- **詳細規約・呼び出しテンプレート・失敗モード**: [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)
+- **チェックリスト**: 新規 skill で `Task` / `Agent` を呼ぶ前に 5要素 + routing を確認すること
+
 ## skill-config.json
 
 スキル固有の設定は `skill-config.json`（リポジトリルート）に集約。

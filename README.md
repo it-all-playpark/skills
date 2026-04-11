@@ -422,7 +422,7 @@ config = load_skill_config("ga-analyzer")
 | スキル | 説明 |
 |--------|------|
 | `seed-context` | プロジェクトコンテキスト抽出・保存 |
-| `skill-creator` | 新規スキル作成ガイド 🔗 |
+| `skill-creator` | 新規スキル作成ガイド（当リポジトリ規約版） |
 | `skill-retrospective` | スキル実行失敗からの自己改善 |
 | `find-skills` | スキル検索・インストール支援 🔗 |
 | `claude-zombie-kill` | ゾンビClaude Codeセッション検出・終了 |

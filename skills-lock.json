@@ -101,11 +101,6 @@
       "sourceType": "github",
       "computedHash": "aaba13bea7b98c41225a1893d90778ef53044642c3099e42876434f8f3712622"
     },
-    "skill-creator": {
-      "source": "anthropics/skills",
-      "sourceType": "github",
-      "computedHash": "b122f4d1e91aa1d83027e050b5b37c3156203ee85458d7b1360bc48167c9e02a"
-    },
     "strategy-and-competitive-analysis": {
       "source": "lyndonkl/claude",
       "sourceType": "github",
