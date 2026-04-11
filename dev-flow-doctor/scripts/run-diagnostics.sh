@@ -469,6 +469,44 @@ run_family_checks() {
 }
 
 # ============================================================================
+# Check 9: Termination Loop Health (kickoff.json driven) — issue #53
+# ============================================================================
+
+run_termination_loops_check() {
+  local analyze_sh="$SCRIPT_DIR_RD/analyze-termination-loops.sh"
+  if [[ ! -x "$analyze_sh" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "skipped", "reason": "analyze-termination-loops.sh not found"}')
+    return
+  fi
+
+  local term_data
+  if ! term_data=$("$analyze_sh" 2>/dev/null); then
+    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "error", "reason": "analyze-termination-loops.sh failed"}')
+    return
+  fi
+
+  if ! echo "$term_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "error", "reason": "invalid JSON from analyze-termination-loops.sh"}')
+    return
+  fi
+
+  local findings_count
+  findings_count=$(echo "$term_data" | jq '.findings | length')
+
+  if [[ "$findings_count" -gt 0 ]]; then
+    # Emit a single summary warn; detailed findings remain inside CHECKS.termination_loops
+    local repeated max_iter stuck_cnt fork_cnt
+    repeated=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "repeated_feedback_target")] | length')
+    max_iter=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "max_iterations")] | length')
+    stuck_cnt=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "stuck")] | length')
+    fork_cnt=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "fork_failure")] | length')
+    add_issue "warn" "Termination loop findings: repeated_feedback_target=${repeated}, max_iterations=${max_iter}, stuck=${stuck_cnt}, fork_failure=${fork_cnt}"
+  fi
+
+  CHECKS=$(echo "$CHECKS" | jq --argjson t "$term_data" '.termination_loops = $t')
+}
+
+# ============================================================================
 # Run checks based on scope
 # ============================================================================
 
@@ -478,6 +516,7 @@ case "$SCOPE" in
     run_worktree_checks
     run_config_checks
     run_family_checks
+    run_termination_loops_check
     ;;
   journal)
     run_journal_checks
@@ -490,6 +529,7 @@ case "$SCOPE" in
     ;;
   family)
     run_family_checks
+    run_termination_loops_check
     ;;
 esac
 

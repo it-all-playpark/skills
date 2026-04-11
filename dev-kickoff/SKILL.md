@@ -116,9 +116,13 @@ Phase 3b（dev-plan-review）の Output JSON schema は `{score, verdict, findin
 
 - **`max_iterations = 3`**（既定、`config.plan_review.max_iterations` で override 可）
 - 3 iteration で pass に達しない場合、**user escalate**:
-  - `kickoff.json` に `phases.3b_plan_review.escalated = true` と `escalation_reason = "max_iterations"` を記録
+  - `kickoff.json` の `phases.3b_plan_review.termination.reason = "max_iterations"` を記録（issue #53 の統一 termination schema）
+  - 同時に legacy フィールド `escalated = true` / `escalation_reason = "max_iterations"` も書き込む（1 リリース backward-compat）
   - Skill 出力に `⚠️ Plan did not converge after 3 iterations. Proceeding with last plan; please review manually.` を明示
   - 既定は warning 付きで Phase 4 に進行（ユーザー中断を妨げない）
+
+> `termination` block の schema は [kickoff-schema.md `termination` block](references/kickoff-schema.md#termination-block-v320-%E3%80%9C-generator-verifier-loop-%E7%B5%82%E4%BA%86%E7%8A%B6%E6%85%8B) を参照。
+> Phase 3b と Phase 6 で共通の schema を持ち、`dev-flow-doctor` の Check 9 が verdict_history を横断分析する。
 
 ### Stuck Detection（同一 finding 連続）
 
@@ -133,11 +137,10 @@ ESCALATE=$(echo "$STUCK_RESULT" | jq -r '.escalate')
 STUCK_FINDINGS=$(echo "$STUCK_RESULT" | jq -c '.stuck_findings')
 
 if [[ "$ESCALATE" == "true" ]]; then
-  # iter 3 を待たず即 escalate
+  # iter 3 を待たず即 escalate — 統一 termination schema (issue #53) 経由で記録
   $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
     --worktree "$WORKTREE" \
-    --escalated true \
-    --escalation-reason stuck \
+    --termination-reason stuck \
     --stuck-findings "$STUCK_FINDINGS"
   echo "⚠️ Plan-review loop stuck. Same finding persisted across iterations. Escalating to user."
   echo "Stuck findings: $STUCK_FINDINGS"
