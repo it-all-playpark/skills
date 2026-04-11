@@ -79,6 +79,108 @@
 
 **書き込みルール**: append-only。`decisions` フィールドは `init-kickoff.sh` で `[]` 初期化される。
 
+## `termination` block (v3.2.0〜) — Generator-Verifier loop 終了状態
+
+**目的**: dev-kickoff が内包する 2 つの evaluator-optimizer（Generator-Verifier）ループ
+（Phase 3 ⇄ 3b, Phase 4-5 ⇄ 6）の終了理由と verdict 履歴を **統一 schema** で記録する。
+これにより `dev-flow-doctor` が verdict_history を横断分析できる
+（e.g.「同一 feedback_target が 2 回以上繰り返された → 設計問題の可能性」）。
+
+### 位置
+
+- `phases.3b_plan_review.termination` — Plan-Review loop の終了状態
+- `phases.6_evaluate.termination` — Evaluate-Retry loop の終了状態
+
+### Schema
+
+```jsonc
+{
+  "termination": {
+    "reason": "converged",          // 必須 enum: 下記参照
+    "final_iteration": 2,            // 1-indexed、loop が実際に回った回数
+    "final_verdict": "pass",         // loop 終了時の最終 verdict (phase 依存 vocabulary)
+    "verdict_history": [             // append-only、iteration ごと
+      { "iteration": 1, "verdict": "revise", "score": 72 },
+      { "iteration": 2, "verdict": "pass",   "score": 85 }
+    ],
+    "recorded_at": "2026-04-11T11:45:00Z"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string (enum) | yes | `converged` / `max_iterations` / `stuck` / `fork_failure` |
+| `final_iteration` | integer (≥ 0) | yes | 1-indexed。0 は loop 未実行（fork_failure 等） |
+| `final_verdict` | string | no | phase 固有 vocabulary（Phase 3b: `pass`/`revise`/`block`、Phase 6: `pass`/`fail`） |
+| `verdict_history` | array | yes | append-only。要素 schema は下記 |
+| `recorded_at` | string (ISO8601 UTC) | yes | 記録タイムスタンプ |
+
+### `reason` enum
+
+| reason | 意味 |
+|--------|------|
+| `converged` | verdict `pass` に到達 → 正常終了 |
+| `max_iterations` | 最大 iteration 回数に到達してもまだ pass していない |
+| `stuck` | 同一 finding が連続 iteration に残った（Phase 3b のみ） |
+| `fork_failure` | `context:fork` による generator / verifier 起動に失敗 |
+
+### `verdict_history[]` 要素 schema
+
+#### Phase 3b (`3b_plan_review`)
+
+```jsonc
+{
+  "iteration": 1,
+  "verdict": "revise",   // "pass" | "revise" | "block"
+  "score": 72
+}
+```
+
+#### Phase 6 (`6_evaluate`)
+
+```jsonc
+{
+  "iteration": 1,
+  "verdict": "fail",              // "pass" | "fail"
+  "feedback_target": "design"     // "design" | "implementation"、pass 時は省略可
+}
+```
+
+`feedback_target` は `dev-flow-doctor` の診断対象フィールド。同一 `feedback_target` が
+**2 iteration 連続**で発生すると "repeated_feedback_target" として flag される
+（[dev-flow-doctor diagnostic-checks.md Check 9](../../dev-flow-doctor/references/diagnostic-checks.md) 参照）。
+
+### 書き込みルール
+
+1. **共通呼び出し点**: `_shared/scripts/termination-record.sh` を使用する。
+   両ループ（dev-kickoff Phase 3b / Phase 6）から同じインターフェースで呼び出す。
+2. **dev-kickoff 互換**: `dev-kickoff/scripts/update-phase.sh` の
+   `--termination-reason` オプション経由でも書き込める。
+3. **verdict_history の append**: `--append-verdict '<JSON>'` で単一 verdict を追加する。
+   `final_iteration` は自動的に配列長に同期する。
+4. **原子性**: `mktemp + mv` による atomic write を必ず行う。
+5. **冪等性**: 同じ reason を複数回書き込んでも state は崩れない。
+   `verdict_history` は append-only なので、同じ iteration を再度 append しないよう
+   呼び出し側が重複排除する責任を持つ。
+
+### 後方互換（1 リリース間維持、v3.2.0 → v3.3.0 で削除予定）
+
+既存の Phase 3b escalation フィールドは **deprecated** だが termination block と並行して
+書き込まれる:
+
+| 旧フィールド | 新しい位置 | deprecation |
+|------------|-----------|-------------|
+| `phases.3b_plan_review.escalated` (bool) | `termination.reason != "converged"` で true | deprecated、v3.3.0 で削除予定 |
+| `phases.3b_plan_review.escalation_reason` | `termination.reason` | 同上 |
+| `phases.3b_plan_review.stuck_findings` | `termination.reason == "stuck"` の補足情報 | 同上、termination block の `verdict_history` では表現しない |
+| `phases.3b_plan_review.last_verdict` | `termination.final_verdict` | 同上 |
+| `phases.3b_plan_review.last_score` | 最後の `verdict_history[].score` | 同上 |
+| `phases.6_evaluate.iterations[]` | `termination.verdict_history` | `iterations[]` は eval_result 全文を残すため継続維持 |
+| `phases.6_evaluate.current_iteration` | `termination.final_iteration` | 継続維持（状態機械の読み取りに使用） |
+
+読み取り側は **termination block を優先** し、存在しなければ旧フィールドへフォールバックする。
+
 ## 後方互換
 
 - 既存の kickoff.json に `feature_list` / `progress_log` が無い場合は **空配列扱い**。
@@ -102,6 +204,9 @@
 - `dev-kickoff/scripts/init-kickoff.sh` — 初期化
 - `dev-kickoff/scripts/append-progress.sh` — `progress_log.append`
 - `dev-kickoff/scripts/update-feature.sh` — `feature_list[i].status` 更新
+- `dev-kickoff/scripts/update-phase.sh` — phase 状態 + termination block 書き込み
+- `_shared/scripts/termination-record.sh` — 両ループ共通の termination block 書き込み
+- `dev-flow-doctor/scripts/analyze-termination-loops.sh` — verdict_history 横断分析
 - `dev-validate/scripts/validate-kickoff.sh` — immutability warning
 
 ## 参考

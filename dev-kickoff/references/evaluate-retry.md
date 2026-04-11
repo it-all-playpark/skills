@@ -4,8 +4,21 @@ After Phase 6 (dev-evaluate) returns evaluation JSON:
 
 ## Flow
 
-1. **Record result**: `update-phase.sh 6_evaluate done --eval-result '$JSON' --worktree $PATH`
-2. **If `verdict == "pass"`**: Proceed to Phase 7 (git-commit)
+1. **Record iteration**: `update-phase.sh 6_evaluate in_progress --eval-result '$JSON' --worktree $PATH`
+
+   `--eval-result` は `phases.6_evaluate.iterations[]` に eval_result 全体を append すると同時に、
+   **`phases.6_evaluate.termination.verdict_history`** にも
+   `{iteration, verdict, feedback_target}` を同期的に append する（issue #53）。
+
+2. **If `verdict == "pass"`**: Record termination and proceed to Phase 7 (git-commit).
+
+   ```bash
+   $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_evaluate done \
+     --worktree $PATH \
+     --termination-reason converged \
+     --termination-final-verdict pass
+   ```
+
 3. **If `verdict == "fail"` AND iterations < max_iterations (default 5)**:
    - Read `feedback_level` from the evaluation result
    - If `"design"`: Reset to Phase 3
@@ -18,8 +31,26 @@ After Phase 6 (dev-evaluate) returns evaluation JSON:
      $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_evaluate done --reset-to 4_implement --worktree $PATH
      ```
      Pass feedback to dev-implement for code revision
-4. **If max_iterations reached**: Proceed to Phase 7 with warning log
-5. **If evaluate fork fails**: Retry once. If still fails, skip evaluation and proceed to Phase 7 with warning. Record error in kickoff.json.
+
+4. **If max_iterations reached**: Record termination with reason `max_iterations` and proceed to Phase 7 with warning log.
+
+   ```bash
+   $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_evaluate done \
+     --worktree $PATH \
+     --termination-reason max_iterations \
+     --termination-final-verdict fail
+   ```
+
+5. **If evaluate fork fails**: Retry once. If still fails, skip evaluation and proceed to Phase 7 with warning.
+
+   ```bash
+   $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 6_evaluate done \
+     --worktree $PATH \
+     --termination-reason fork_failure
+   ```
+
+> `termination` block の schema は [kickoff-schema.md](kickoff-schema.md#termination-block-v320-%E3%80%9C-generator-verifier-loop-%E7%B5%82%E4%BA%86%E7%8A%B6%E6%85%8B) を参照。
+> Phase 3b / Phase 6 で共通の schema を持ち、`dev-flow-doctor` が `verdict_history` を横断分析する。
 
 ## Plan-Review Loop (Phase 3b — Evaluator-Optimizer)
 
@@ -90,7 +121,14 @@ After Phase 6 (dev-evaluate) returns evaluation JSON:
 
 1. **Record result**: `update-phase.sh 3b_plan_review done --worktree $PATH`（記録時に Output JSON 全体を保存）
 2. **Parse verdict**（`config.plan_review.pass_threshold` 既定 80）:
-   - `verdict == "pass"` → **Phase 4 (dev-implement)** に進行
+   - `verdict == "pass"` → `--termination-reason converged` で termination 記録 → **Phase 4 (dev-implement)** に進行
+     ```bash
+     $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
+       --worktree $PATH \
+       --termination-reason converged \
+       --termination-final-verdict pass \
+       --append-verdict "$(jq -c '{iteration:'$ITER',verdict:.verdict,score:.score}' review.json)"
+     ```
    - `verdict == "revise" | "block"` → 次ステップへ
 3. **Append history**: `plan-review-history.json` に canonical schema `{"iteration": <int>, "score": <int>, "verdict": "pass"|"revise"|"block", "findings": [...]}` を追記（配列に push）。`findings` は dev-plan-review Output JSON の findings をそのまま保存
 4. **Stuck detection**: iteration N と N-1 の findings を比較し、同じ `{dimension, topic}` が両方に存在すれば **stuck escalate** して iter 3 を待たずに終了
@@ -141,10 +179,16 @@ STUCK_RESULT=$($SKILLS_DIR/_shared/scripts/detect-stuck-findings.py \
   --history "$WORKTREE/.claude/plan-review-history.json")
 if [[ "$(echo "$STUCK_RESULT" | jq -r .escalate)" == "true" ]]; then
   STUCK=$(echo "$STUCK_RESULT" | jq -c .stuck_findings)
+  # New unified termination schema (issue #53) — also mirrors legacy escalation fields
   $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
-    --worktree "$WORKTREE" --escalated true --escalation-reason stuck --stuck-findings "$STUCK"
+    --worktree "$WORKTREE" \
+    --termination-reason stuck \
+    --stuck-findings "$STUCK"
 fi
 ```
+
+> `--escalated` / `--escalation-reason` を直接指定する旧 API は後方互換のため残るが、
+> 新規利用は `--termination-reason` に移行する（v3.2.0 の deprecation、v3.3.0 で旧 API 削除予定）。
 
 > 参考: 以前は `references/evaluate-retry.md` に下記の擬似 Python コードを載せていた。現在は上記スクリプトが同等ロジックを実装している。
 >
