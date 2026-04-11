@@ -81,6 +81,8 @@ TAGS_JSON=$(echo "$FRONTMATTER" | awk '
     if (match($0, /^name:[[:space:]]*/)) {
       gsub(/^name:[[:space:]]*/, "")
     }
+    # Qiita tags do not allow spaces - remove them
+    gsub(/ /, "", $0)
     tags[++n] = $0
     next
   }

@@ -328,19 +328,33 @@ cmd_hook_capture() {
     local input
     input=$(cat)
 
-    # Parse PostToolUseFailure JSON from stdin
-    local tool_name tool_input tool_result session_id
-    tool_name=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null) || return 0
-    tool_input=$(echo "$input" | jq -c '.tool_input // {}' 2>/dev/null) || return 0
-    tool_result=$(echo "$input" | jq -r '.tool_response // .tool_result // empty' 2>/dev/null) || return 0
-    session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null)
+    # Parse PostToolUseFailure JSON from stdin.
+    # Claude Code payload fields: session_id, tool_name, tool_input, error, is_interrupt.
+    # Also tolerate legacy/PostToolUse payloads that use tool_response/tool_result.
+    local tool_name tool_input error_text session_id is_interrupt
+    tool_name=$(jq -r '.tool_name // empty' <<<"$input" 2>/dev/null || true)
+    tool_input=$(jq -c '.tool_input // {}' <<<"$input" 2>/dev/null || echo '{}')
+    error_text=$(jq -r '.error // .tool_response // .tool_result // empty' <<<"$input" 2>/dev/null || true)
+    session_id=$(jq -r '.session_id // empty' <<<"$input" 2>/dev/null || true)
+    is_interrupt=$(jq -r '.is_interrupt // false' <<<"$input" 2>/dev/null || echo false)
 
     [[ -z "$tool_name" ]] && return 0
+    # Skip user-triggered interrupts — they aren't real failures worth analyzing
+    [[ "$is_interrupt" == "true" ]] && return 0
 
-    # Extract error snippet (first 3 lines with error context, max 300 chars)
-    local error_snippet
-    error_snippet=$(echo "$tool_result" | grep -iE 'error|fail|exception|fatal|panic|denied|not found' | head -3 | cut -c1-300)
-    [[ -z "$error_snippet" ]] && error_snippet=$(echo "$tool_result" | head -3 | cut -c1-300)
+    # Extract error snippet (first 3 matching lines, max 300 chars).
+    # Guard every stage so empty input / no-match doesn't trip `set -e -o pipefail`.
+    local error_snippet=""
+    if [[ -n "$error_text" ]]; then
+        error_snippet=$(printf '%s\n' "$error_text" \
+            | { grep -iE 'error|fail|exception|fatal|panic|denied|not found' || true; } \
+            | head -n 3 \
+            | cut -c1-300)
+        if [[ -z "$error_snippet" ]]; then
+            error_snippet=$(printf '%s\n' "$error_text" | head -n 3 | cut -c1-300)
+        fi
+    fi
+    [[ -z "$error_snippet" ]] && error_snippet="(no error text)"
 
     # Classify error
     local category

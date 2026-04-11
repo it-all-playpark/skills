@@ -32,7 +32,7 @@ tags:
 private: false
 ---
 
-> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}) からの転載です。
+> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
 
 ---
 
@@ -78,7 +78,7 @@ private: false
 
 この記事では{CORE_TOPIC}の選定理由を解説しました。
 
-:page_facing_up: **[{ARTICLE_TITLE}]({ORIGINAL_URL})** ではさらに：
+:page_facing_up: **[{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug})** ではさらに：
 
 - {DEPTH_1: 実運用での知見}
 - {DEPTH_2: 失敗パターンと対処法}
@@ -107,7 +107,7 @@ tags:
 private: false
 ---
 
-> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}) からの転載です。
+> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
 
 ---
 
@@ -165,7 +165,7 @@ private: false
 
 この記事では{CORE_TOPIC}の検証背景と設計を解説しました。
 
-:page_facing_up: **[{ARTICLE_TITLE}]({ORIGINAL_URL})** ではさらに：
+:page_facing_up: **[{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug})** ではさらに：
 
 - {DEPTH_1: 詳細データと追加分析}
 - {DEPTH_2: 他の検証パターン}
@@ -219,7 +219,7 @@ private: false
 記事**冒頭**に追加:
 
 ```markdown
-> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}) からの転載です。
+> この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=qiita&utm_medium=crosspost&utm_campaign={slug}) からの転載です。
 
 ---
 ```

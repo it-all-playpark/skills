@@ -44,16 +44,49 @@ Project config: `.claude/sns-announce.json` -- defines base_url, output path/for
 
 Details: [Config Schema](references/config-schema.md)
 
+## UTM Parameter Auto-Append
+
+When `utm.enabled: true` in config, all `{url}` placeholders MUST include UTM parameters.
+
+### URL Construction Rule
+
+For each platform, build the URL as:
+```
+{base_url}{url_pattern}?utm_source={source}&utm_medium={medium}&utm_campaign={slug}
+```
+
+Where:
+- `{source}` = `utm.source_map[platform]` from config (e.g., `x`, `linkedin`, `google_business`)
+- `{medium}` = `utm.medium` from config (default: `social`)
+- `{slug}` = article slug (extracted from filename or URL path)
+
+### Examples
+```
+# X
+https://www.playpark.co.jp/blog/my-article?utm_source=x&utm_medium=social&utm_campaign=my-article
+
+# LinkedIn
+https://www.playpark.co.jp/blog/my-article?utm_source=linkedin&utm_medium=social&utm_campaign=my-article
+
+# Google Business
+https://www.playpark.co.jp/blog/my-article?utm_source=google_business&utm_medium=social&utm_campaign=my-article
+```
+
+### Important
+- UTM parameters are appended to ALL URLs in generated posts (template `{url}` placeholders)
+- Each platform gets its own `utm_source` value from `utm.source_map`
+- If `utm.enabled` is false or missing, generate URLs without UTM parameters (backward compatible)
+
 ## Workflow
 
 ### Standard (without --dedupe)
 ```
-1. Load config → 2. Extract metadata → 3. Generate posts (all platforms) → 4. Write output
+1. Load config → 2. Extract metadata → 3. Build platform-specific UTM URLs → 4. Generate posts (all platforms) → 5. Write output
 ```
 
 ### Optimized (with --dedupe)
 ```
-1. Load config → 2. Extract metadata (get date) → 3. Query Zernio API → 4. Generate posts (needed only) → 5. Write output
+1. Load config → 2. Extract metadata (get date) → 3. Query Zernio API → 4. Build platform-specific UTM URLs → 5. Generate posts (needed only) → 6. Write output
 ```
 
 **Key optimization**: When `--dedupe` is specified, query Zernio API BEFORE generation to identify which platforms need posts. This avoids wasting AI tokens generating content for already-scheduled platforms.

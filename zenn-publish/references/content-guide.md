@@ -85,7 +85,7 @@ published: true
 
 ## 元記事
 
-この記事は **[{ARTICLE_TITLE}]({ORIGINAL_URL})** のコア部分を再構成したものです。元記事ではさらに：
+この記事は **[{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug})** のコア部分を再構成したものです。元記事ではさらに：
 
 - {DEPTH_1: 複数パターンの比較・使い分け}
 - {DEPTH_2: エッジケースと対処法}
@@ -144,7 +144,7 @@ published: true
 
 ## 元記事
 
-この記事は **[{ARTICLE_TITLE}]({ORIGINAL_URL})** のコア部分を再構成したものです。元記事ではさらに：
+この記事は **[{ARTICLE_TITLE}]({ORIGINAL_URL}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug})** のコア部分を再構成したものです。元記事ではさらに：
 
 - {DEPTH_1: 詳細な検証環境・条件}
 - {DEPTH_2: 生データと詳細な分析}
@@ -211,7 +211,7 @@ TypeScript → typescript
 ```markdown
 ---
 
-**この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}) からの転載です。**
+**この記事は [playpark Blog](https://www.playpark.co.jp/blog/{slug}?utm_source=zenn&utm_medium=crosspost&utm_campaign={slug}) からの転載です。**
 ```
 
 ---

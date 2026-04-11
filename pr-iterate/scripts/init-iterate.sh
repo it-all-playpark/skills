@@ -91,6 +91,14 @@ mkdir -p "$STATE_DIR"
 STATE_FILE="$STATE_DIR/iterate.json"
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+# Warn if overwriting a completed (LGTM/failed/max_reached) state
+if [[ -f "$STATE_FILE" ]]; then
+    PREV_STATUS=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
+    if [[ "$PREV_STATUS" == "lgtm" || "$PREV_STATUS" == "failed" || "$PREV_STATUS" == "max_reached" ]]; then
+        echo "⚠️  Overwriting previous iterate state (status: $PREV_STATUS)" >&2
+    fi
+fi
+
 # Create initial state using jq to prevent JSON injection
 jq -n \
     --argjson pr_number "$PR_NUMBER" \
