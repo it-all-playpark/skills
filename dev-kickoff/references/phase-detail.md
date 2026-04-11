@@ -127,13 +127,35 @@ Skill: dev-plan-review $ISSUE --worktree $PATH
 - `$WORKTREE/.claude/impl-plan.md` (from Phase 3)
 - `$WORKTREE/.claude/kickoff.json` → `phases.2_analyze.result`
 
-**Completion Criteria:**
-- verdict: pass (blocking findings なし)
-- または max_rounds (3) に到達
+**Output JSON Schema:**
 
-**On Fail:**
-1. Review feedback を `$WORKTREE/.claude/plan-review-feedback.json` に保存
-2. Phase 3 (dev-plan-impl) に戻り、feedback を反映した計画を再作成
+dev-plan-review は stdout に以下を出力する（evaluator-optimizer ループの I/F）:
+
+```jsonc
+{
+  "score": 0-100,
+  "verdict": "pass" | "revise" | "block",
+  "pass_threshold": 80,
+  "findings": [
+    { "severity": "critical" | "major" | "minor",
+      "dimension": "...", "topic": "...",
+      "description": "...", "suggestion": "..." }
+  ],
+  "summary": "..."
+}
+```
+
+**Completion Criteria:**
+- `verdict == "pass"`（critical/major なし かつ `score >= pass_threshold` 既定 80）
+- または `max_iterations` (既定 3) に到達 → warning 付きで Phase 4 に進行
+- または stuck 判定（同一 `{dimension, topic}` の major 以上が 2 iteration 連続で残存） → 即 escalate
+
+**On Revise / Block:**
+1. Output JSON 全体を `$WORKTREE/.claude/plan-review-feedback.json` に保存
+2. `$WORKTREE/.claude/plan-review-history.json` に iteration 結果を追記（stuck 検出用）
+3. `iteration++` して Phase 3 (dev-plan-impl) に戻り、feedback を反映した revise を作成
+
+詳細は [Plan-Review Loop](evaluate-retry.md#plan-review-loop-phase-3b--evaluator-optimizer) を参照。
 
 **State Update:**
 ```bash
