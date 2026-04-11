@@ -87,8 +87,28 @@ detected:
 
 1. The merge is aborted (`git merge --abort`)
 2. The conflict details are recorded in the merge results JSON
-3. The process stops and reports which files conflict
-4. User must resolve conflicts manually and re-run integration
+3. **An event is appended to `_shared/integration-feedback.json`** via
+   `integration-event-append.sh` (best-effort; never aborts the pipeline)
+   with `event_type=conflict` and `resolution=unresolved`
+4. The process stops and reports which files conflict
+5. User must resolve conflicts manually and re-run integration
+
+### Integration Feedback Events
+
+`merge-subtasks.sh` records the following events to the cross-run feedback
+channel so that `dev-decompose --dry-run` and `dev-flow-doctor` can learn
+from recurring conflict patterns:
+
+| Path | event_type | resolution |
+|------|------------|------------|
+| Auto-resolved lock/config conflict | `conflict` | `auto_resolved` |
+| Unresolvable code conflict | `conflict` | `unresolved` |
+| `git merge` failure without conflict markers | `integration_failure` | `unresolved` |
+
+All writes are best-effort: if the append fails (missing `jq`, read-only FS,
+lock timeout), the merge loop continues without error. See
+[`_shared/references/integration-feedback.md`](../../_shared/references/integration-feedback.md)
+for the full pattern.
 
 ### Common Conflict Scenarios
 
