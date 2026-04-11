@@ -35,6 +35,31 @@ if [[ -n "$WORKTREE" ]]; then
     cd "$WORKTREE"
 fi
 
+# Source issue (used when recording integration feedback events).
+SOURCE_ISSUE=$(jq -r '.issue // empty' "$FLOW_STATE" 2>/dev/null || echo "")
+
+# Helper: append an integration feedback event. Best-effort; never aborts the merge.
+# Args: <event_type> <task_id> <files_csv> <resolution> [lesson]
+append_feedback_event() {
+    local etype="$1" task_id="$2" files_csv="$3" resolution="$4" lesson="${5:-}"
+    local append_sh="${SKILLS_DIR}/_shared/scripts/integration-event-append.sh"
+
+    [[ -n "$SOURCE_ISSUE" ]] || return 0
+    [[ -n "$files_csv" ]] || return 0
+    [[ -x "$append_sh" ]] || return 0
+
+    local args=(
+        --source-issue "$SOURCE_ISSUE"
+        --event-type "$etype"
+        --files "$files_csv"
+        --subtask-pair "$task_id"
+        --resolution "$resolution"
+    )
+    [[ -n "$lesson" ]] && args+=(--lesson "$lesson")
+
+    "$append_sh" "${args[@]}" >/dev/null 2>&1 || true
+}
+
 # ============================================================================
 # Verify all subtasks are completed
 # ============================================================================
@@ -103,6 +128,14 @@ for i in $(seq 0 $((TASK_COUNT - 1))); do
                 --arg branch "$TASK_BRANCH" \
                 '. += [{"task_id": $id, "branch": $branch, "status": "error", "error": "merge failed unexpectedly"}]')
             OVERALL_STATUS="failed"
+
+            # Record generic integration failure (best-effort). We do not know
+            # the exact files, so fall back to the task's planned scope.
+            SCOPE_FILES=$(jq -r --arg tid "$TASK_ID" \
+                '.subtasks[] | select(.id == $tid) | (.files // []) | join(",")' \
+                "$FLOW_STATE" 2>/dev/null || echo "")
+            append_feedback_event "integration_failure" "$TASK_ID" "$SCOPE_FILES" "unresolved" \
+                "git merge が conflict marker を残さず失敗した"
             continue
         fi
 
@@ -123,6 +156,9 @@ for i in $(seq 0 $((TASK_COUNT - 1))); do
             esac
         done <<< "$CONFLICT_FILES"
 
+        # Normalize conflict file list to CSV for feedback append
+        CONFLICT_CSV=$(echo "$CONFLICT_FILES" | tr '\n' ',' | sed 's/,$//')
+
         if [[ "$AUTO_RESOLVED" == true ]]; then
             # All conflicts auto-resolved, complete the merge
             git commit --no-edit 2>/dev/null || true
@@ -131,6 +167,10 @@ for i in $(seq 0 $((TASK_COUNT - 1))); do
                 --arg branch "$TASK_BRANCH" \
                 --arg files "$CONFLICT_FILES" \
                 '. += [{"task_id": $id, "branch": $branch, "status": "merged_auto_resolved", "conflict_files": ($files | split("\n") | map(select(. != "")))}]')
+
+            # Record auto-resolved conflict as feedback (best-effort).
+            append_feedback_event "conflict" "$TASK_ID" "$CONFLICT_CSV" "auto_resolved" \
+                "lock/config 類の衝突は auto_resolved で吸収できた"
         else
             # Unresolvable conflicts -- abort and report
             CONFLICT_JSON=$(echo "$CONFLICT_FILES" | json_array)
@@ -141,6 +181,11 @@ for i in $(seq 0 $((TASK_COUNT - 1))); do
                 --argjson files "$CONFLICT_JSON" \
                 '. += [{"task_id": $id, "branch": $branch, "status": "conflict", "conflict_files": $files}]')
             OVERALL_STATUS="failed"
+
+            # Record unresolved conflict as feedback (best-effort) so that future
+            # dev-decompose runs can learn which file patterns keep colliding.
+            append_feedback_event "conflict" "$TASK_ID" "$CONFLICT_CSV" "unresolved" \
+                "未解決の code conflict — 同一 file を複数 subtask に割り当てないよう検討"
 
             # Stop on unresolvable conflict -- user intervention needed
             break
