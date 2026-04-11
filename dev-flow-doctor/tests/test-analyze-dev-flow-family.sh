@@ -152,6 +152,126 @@ DEAD_1D=$(echo "$RESULT_1D" | jq '.findings.dead_phases | length')
 assert_eq "all 8 family skills dead in 1d window" "8" "$DEAD_1D"
 
 # ----------------------------------------------------------------------------
+# Test 9: cold-start — empty journal dir triggers insufficient_data in
+# run-diagnostics.sh --scope family and family penalty stays at 0.
+# ----------------------------------------------------------------------------
+printf '\nTest 9: cold-start guard (empty journal)\n'
+EMPTY_JOURNAL="$WORKDIR/empty-journal"
+mkdir -p "$EMPTY_JOURNAL"
+
+# analyze script on empty dir: every family skill has total=0 → all dead,
+# all disconnected. This is the raw behaviour the cold-start guard must
+# translate into insufficient_data at the diagnostics layer.
+COLD_RAW=$(CLAUDE_JOURNAL_DIR="$EMPTY_JOURNAL" SKILL_CONFIG_PATH="$EMPTY_CONFIG" \
+  "$ANALYZE_SH" --window 30d 2>&1)
+if ! echo "$COLD_RAW" | jq empty 2>/dev/null; then
+  fail "analyze produces valid JSON on empty journal" "$COLD_RAW"
+else
+  pass "analyze produces valid JSON on empty journal"
+fi
+COLD_TOTAL=$(echo "$COLD_RAW" | jq '[.per_skill[].total] | add // 0')
+assert_eq "empty journal → family total entries = 0" "0" "$COLD_TOTAL"
+
+# Diagnostics layer: run-diagnostics.sh should skip family penalty.
+DIAG_SH="$SCRIPT_DIR/../scripts/run-diagnostics.sh"
+COLD_DIAG=$(CLAUDE_JOURNAL_DIR="$EMPTY_JOURNAL" SKILL_CONFIG_PATH="$EMPTY_CONFIG" \
+  "$DIAG_SH" --scope family --window 30d 2>&1)
+if ! echo "$COLD_DIAG" | jq empty 2>/dev/null; then
+  fail "run-diagnostics cold-start produces valid JSON" "$COLD_DIAG"
+else
+  pass "run-diagnostics cold-start produces valid JSON"
+fi
+COLD_STATUS=$(echo "$COLD_DIAG" | jq -r '.checks.dev_flow_family.status // ""')
+assert_eq "cold-start family status = insufficient_data" "insufficient_data" "$COLD_STATUS"
+COLD_SCORE=$(echo "$COLD_DIAG" | jq '.score')
+assert_eq "cold-start score stays 100 (no family penalty)" "100" "$COLD_SCORE"
+COLD_SCORE_SCOPE=$(echo "$COLD_DIAG" | jq -r '.score_scope // ""')
+assert_eq "cold-start score_scope = family" "family" "$COLD_SCORE_SCOPE"
+
+# ----------------------------------------------------------------------------
+# Test 10: broken JSON mix — one malformed file must not blank the whole
+# journal. Valid entries should still be aggregated.
+# ----------------------------------------------------------------------------
+printf '\nTest 10: parse error fallback (broken JSON mix)\n'
+MIXED_JOURNAL="$WORKDIR/mixed-journal"
+mkdir -p "$MIXED_JOURNAL"
+# Copy all existing fixtures
+cp "$FIXTURES"/*.json "$MIXED_JOURNAL"/
+# Add a malformed file that would break `jq -s '.' "${files[@]}"`
+printf '{"broken": ' > "$MIXED_JOURNAL/2026-04-09-10-00-00-broken.json"
+
+MIXED_RESULT=$(CLAUDE_JOURNAL_DIR="$MIXED_JOURNAL" SKILL_CONFIG_PATH="$EMPTY_CONFIG" \
+  "$ANALYZE_SH" --window 30d 2>&1)
+if ! echo "$MIXED_RESULT" | jq empty 2>/dev/null; then
+  fail "mixed journal produces valid JSON" "$MIXED_RESULT"
+else
+  pass "mixed journal produces valid JSON"
+fi
+# dev-kickoff still has its 3 valid entries
+MIXED_DK_TOTAL=$(echo "$MIXED_RESULT" | jq '[.per_skill[] | select(.skill == "dev-kickoff")][0].total')
+assert_eq "broken file ignored: dev-kickoff total = 3" "3" "$MIXED_DK_TOTAL"
+# pr-fix still has its 3 entries
+MIXED_PF_TOTAL=$(echo "$MIXED_RESULT" | jq '[.per_skill[] | select(.skill == "pr-fix")][0].total')
+assert_eq "broken file ignored: pr-fix total = 3" "3" "$MIXED_PF_TOTAL"
+
+# ----------------------------------------------------------------------------
+# Test 11: parent_refs — a hook-capture entry referencing a family skill
+# excludes that skill from disconnected_skills, and substring lookalikes
+# (e.g. "dev-validate-extra") do NOT count as a reference to "dev-validate".
+# ----------------------------------------------------------------------------
+printf '\nTest 11: parent_refs & word-boundary match\n'
+PARENT_JOURNAL="$WORKDIR/parent-journal"
+mkdir -p "$PARENT_JOURNAL"
+cp "$FIXTURES"/*.json "$PARENT_JOURNAL"/
+# hook-capture entry that references dev-integrate (via "Skill: dev-integrate")
+cat > "$PARENT_JOURNAL/2026-04-09-12-00-00-hook-capture.json" <<'JSON'
+{
+  "version": "1.0.0",
+  "id": "20260409T120000-hook-capture",
+  "timestamp": "2026-04-09T12:00:00Z",
+  "skill": "hook-capture",
+  "source": "hook-capture",
+  "outcome": "success",
+  "duration_turns": 0,
+  "context": {
+    "input_summary": "Skill: dev-integrate --subtask A"
+  }
+}
+JSON
+# hook-capture entry that mentions ONLY a substring lookalike of dev-validate
+cat > "$PARENT_JOURNAL/2026-04-09-12-05-00-hook-capture.json" <<'JSON'
+{
+  "version": "1.0.0",
+  "id": "20260409T120500-hook-capture",
+  "timestamp": "2026-04-09T12:05:00Z",
+  "skill": "hook-capture",
+  "source": "hook-capture",
+  "outcome": "success",
+  "duration_turns": 0,
+  "context": {
+    "input_summary": "Skill: dev-validate-extra --foo bar"
+  }
+}
+JSON
+
+PARENT_RESULT=$(CLAUDE_JOURNAL_DIR="$PARENT_JOURNAL" SKILL_CONFIG_PATH="$EMPTY_CONFIG" \
+  "$ANALYZE_SH" --window 30d 2>&1)
+if ! echo "$PARENT_RESULT" | jq empty 2>/dev/null; then
+  fail "parent-ref journal produces valid JSON" "$PARENT_RESULT"
+else
+  pass "parent-ref journal produces valid JSON"
+fi
+
+# dev-integrate has no own entries but IS referenced → should NOT be disconnected
+DI_DISC=$(echo "$PARENT_RESULT" | jq '[.findings.disconnected_skills[] | select(.skill == "dev-integrate")] | length')
+assert_eq "dev-integrate not disconnected (parent ref matched)" "0" "$DI_DISC"
+
+# dev-validate has no own entries and only a substring-lookalike reference
+# → substring must NOT count, so it should still be disconnected.
+DV_DISC=$(echo "$PARENT_RESULT" | jq '[.findings.disconnected_skills[] | select(.skill == "dev-validate")] | length')
+assert_eq "dev-validate still disconnected (substring lookalike)" "1" "$DV_DISC"
+
+# ----------------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------------
 printf '\n----------------------------------------\n'
