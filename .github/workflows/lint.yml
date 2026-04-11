@@ -1,0 +1,25 @@
+name: lint
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  subagent-dispatch-lint:
+    name: Subagent Dispatch Rules Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run subagent-dispatch-lint.sh
+        shell: bash
+        run: |
+          chmod +x tests/subagent-dispatch-lint.sh
+          ./tests/subagent-dispatch-lint.sh

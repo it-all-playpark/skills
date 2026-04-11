@@ -117,11 +117,50 @@ Tips は一般論ではなく「この JSON を追加すると Y ができる」
 - `--scope` で絞った場合、対象外カテゴリは省略
 - 日本語で出力。固有名詞・技術用語は原語のまま
 
+## Subagent Dispatch Rules
+
+ai-news-digest は Step 2（並列検索）、Step 4（詳細取得）、Step 5（Fact Check / Practical Tips）で `Agent` tool 経由で subagent を複数起動するため、[Subagent Dispatch Rules](../_shared/references/subagent-dispatch.md) を遵守する。各 Agent 呼び出し時のプロンプトには以下5要素を必ず含める：
+
+### Step 2: Search Agent（4 カテゴリ並列）
+
+1. **Objective** — 「指定カテゴリ（A/B/C/D）について、直近 `$DAYS` 日の AI 関連情報を WebSearch で収集し、構造化リストを返す」（単一カテゴリを 1 Agent が担当）
+2. **Output format** — `{ category, results: [{ title, url, source_tier, published_at, one_line_summary }] }` JSON。上位 10 件まで。
+3. **Tools** — 使用可: WebSearch のみ。禁止: WebFetch（Step 4 で一括取得）、Write、Edit、Bash
+4. **Boundary** — 対象カテゴリの検索のみ、ローカルファイル触らない、コミット・ネットワーク書き込み禁止
+5. **Token cap** — 800 語以内、検索クエリ最大 6 本
+
+### Step 4: Fetch Agent（model: haiku）
+
+1. **Objective** — 「与えられた URL リストを WebFetch で取得し、タイトル・関連引用・公開日のみ返す」（生テキストの抽出のみ）
+2. **Output format** — `[{ url, title, published_at, excerpts: [string] }]` JSON
+3. **Tools** — 使用可: WebFetch のみ。禁止: WebSearch、Write、Edit、Bash
+4. **Boundary** — 渡された URL 以外を辿らない、要約・分析・意見付与禁止、ローカルファイル触らない
+5. **Token cap** — 1 URL あたり引用 200 語以内、1 Agent あたり最大 10 URL
+
+### Step 5: Fact Check Agent（model: sonnet）
+
+1. **Objective** — 「Step 4 の抽出結果に含まれる日付・バージョン・API 仕様を公式ソース（CHANGELOG / Release Notes）と照合し、矛盾点を列挙する」
+2. **Output format** — `{ verified: [{ claim, source_url, status: "confirmed"|"contradicted"|"unverifiable" }], contradictions: [...] }` JSON
+3. **Tools** — 使用可: WebFetch, Read。禁止: Write, Edit, Bash, WebSearch（新規検索はしない）
+4. **Boundary** — 事実照合のみ、新規情報探索禁止、ローカルファイル書き込み禁止
+5. **Token cap** — 1200 語以内、照合対象 claim は最大 20 件
+
+### Step 5: Practical Tips Agent（model: opus）
+
+1. **Objective** — 「収集情報から `settings.json` / コマンド / ワークフローの具体例を構築し、即コピペ可能な Tips 集を返す」
+2. **Output format** — Markdown セクション `## Tips\n- ### <title>\n  ```json ... ```\n  影響: ...` 形式。各 Tip は設定例を必ず含む。
+3. **Tools** — 使用可: Read（既存テンプレート参照）。禁止: Write, Edit, Bash, WebSearch, WebFetch
+4. **Boundary** — 新規情報探索禁止、既存設定ファイルの破壊的変更禁止、親セッションの状態に依存しない
+5. **Token cap** — 2000 語以内、Tips 最大 8 本
+
+**Routing**: Search / Fetch は `haiku`、Fact Check は `sonnet`、Practical Tips は `opus`（`general-purpose` 系）。
+
 ## References
 
 - [references/search-queries.md](references/search-queries.md) - 検索クエリ例・ソース信頼度ティア
 - [references/agent-prompts.md](references/agent-prompts.md) - Fact Check / Tips エージェントのプロンプト
 - [references/output-template.md](references/output-template.md) - 出力 Markdown テンプレート
+- [Subagent Dispatch Rules](../_shared/references/subagent-dispatch.md) - Subagent 呼び出し必須5要素と routing rule
 
 ## Journal Logging
 

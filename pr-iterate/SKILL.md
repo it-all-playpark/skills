@@ -122,6 +122,28 @@ $SKILLS_DIR/pr-iterate/scripts/post-summary.sh [--worktree PATH] [--dry-run]
 |------|----------|--------|
 | pr-review | Task(Plan) | Sequential thinking for complex review analysis |
 
+## Subagent Dispatch Rules
+
+pr-iterate は iteration ループ内で `pr-review` / `pr-fix` を `Task` tool 経由で呼び出すため、[Subagent Dispatch Rules](../_shared/references/subagent-dispatch.md) を遵守する。各 Task 呼び出し時のプロンプトには以下5要素を必ず含める：
+
+### pr-review → Task(Plan, opus)
+
+1. **Objective** — 「PR `#$PR` の変更差分をレビューし、`{decision, issues, summary}` JSON 形式で単一判定を返す」（approved / request-changes / comment のいずれか）
+2. **Output format** — `{ decision: "approved"|"request-changes"|"comment", issues: [{ file, line?, severity, message }], summary: string (日本語) }` JSON
+3. **Tools** — 使用可: Read, Grep, Glob, Bash (gh pr view / gh pr diff のみ)。禁止: Write, Edit, gh pr review --approve（実レビュー送信は pr-iterate 親のみ）, commit, push
+4. **Boundary** — PR 差分範囲のみ、PR 外ファイルへの指摘禁止、`$WORKTREE` の書き換え禁止、main/dev への操作禁止、ネットワーク書き込み禁止
+5. **Token cap** — 1500 語以内、issues 最大 20 件
+
+### pr-fix → Task(general-purpose, sonnet)
+
+1. **Objective** — 「pr-review の `issues` リストに基づき、PR 差分範囲内のファイルに最小限の修正を適用する」
+2. **Output format** — `{ applied: [{ file, change_summary }], skipped: [{ issue_id, reason }] }` JSON。適用した修正は日本語で簡潔に記述。
+3. **Tools** — 使用可: Read, Edit, Bash (lint / test 実行のみ)。禁止: Write（新規ファイル作成禁止、ただし issue が require した場合は許可）, git commit, git push（pr-iterate 親が commit を扱う）, ネットワーク書き込み
+4. **Boundary** — PR 差分範囲内のファイルのみ編集、`.github/workflows/` への変更は issue が明示した場合のみ、main/dev 直接操作禁止、依存追加は lockfile がある場合のみ
+5. **Token cap** — 2000 語以内、編集ファイル最大 15 件
+
+**Routing**: pr-review は `Plan` agent (opus) — 批判的観点の品質重視。pr-fix は `general-purpose` (sonnet) — 副作用ありの実装系。
+
 ## State File Location
 
 ```
