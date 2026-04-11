@@ -211,7 +211,20 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log bug-hunt failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```
 
+## Subagent Dispatch Rules
+
+bug-hunt は `Task` tool 経由で hunt-lead / investigator subagent を呼び出すため、[Subagent Dispatch Rules](../_shared/references/subagent-dispatch.md) を遵守する。investigator 呼び出し時のプロンプトには以下5要素を必ず含める：
+
+1. **Objective** — 「hypothesis H_i が true か false かを判定する」（単一判定）
+2. **Output format** — `{ hypothesis_id, verdict: "confirmed"|"rejected"|"inconclusive", evidence: [...], confidence: 0-1 }` JSON
+3. **Tools** — 使用可: Read, Grep, Glob, Bash（read-only 診断のみ）。禁止: Write, Edit, commit
+4. **Boundary** — 対象 repo path のみ、`node_modules/`・`vendor/`・`dist/` 除外、git 操作禁止、ネットワーク禁止
+5. **Token cap** — 1000 語以内、最大 15 ファイル参照
+
+**Routing**: investigator は `general-purpose` (sonnet)、hunt-lead は `Plan` agent (opus) を推奨。
+
 ## References
 
 - [Team Lifecycle](references/team-lifecycle.md) - Agent Team lifecycle patterns
 - [Hypothesis Categories](references/hypothesis-categories.md) - Bug hypothesis categories and verification approaches
+- [Subagent Dispatch Rules](../_shared/references/subagent-dispatch.md) - Subagent 呼び出し必須5要素と routing rule
