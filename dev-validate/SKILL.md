@@ -46,6 +46,22 @@ $SKILLS_DIR/dev-validate/scripts/validate.sh [--fix] [--strict] [--worktree <pat
 | 2 | Lint/type errors |
 | 3 | No changes |
 
+## kickoff.json Immutability Check
+
+`dev-kickoff` ワークフロー下で動作する場合、`kickoff.json.feature_list` の `id` / `desc` が初コミット時点から変わっていないかを warning レベルでチェックする:
+
+```bash
+$SKILLS_DIR/dev-validate/scripts/validate-kickoff.sh --worktree <path>
+```
+
+挙動:
+- `feature_list` が空 / 未定義 → silent pass（後方互換）
+- `kickoff.json` に git 履歴が無い → silent pass
+- `id` / `desc` が変更されている → stderr に warning を出力、JSON の `status: warning` を返す（exit 0、非致命）
+- `id` が削除されている → 同じく warning
+
+このチェックは warning-only で、overall の pass/fail には影響しない。詳細: [kickoff.json Schema](../dev-kickoff/references/kickoff-schema.md)
+
 ## Auto-Detection
 
 | Project Type | Test Command | Lint Command |

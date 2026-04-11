@@ -107,6 +107,36 @@ Write the plan to `$WORKTREE/.claude/impl-plan.md`.
 
 If a previous plan exists (retry), overwrite it entirely with the revised plan.
 
+## Step 6: Initialize feature_list (first run only)
+
+Extract features from the plan and write them to `kickoff.json.feature_list` **once**.
+This list is immutable — `dev-implement` may only update `status`, never `id` or `desc`.
+
+**手順**:
+
+1. `impl-plan.md` の "Feature List" / "File Changes" / 主要タスクから `F1`, `F2`, ... の単位で feature を抽出
+2. `kickoff.json.feature_list` が空配列 (`[]`) の場合のみ書き込み (既に値があれば skip = immutability 尊重)
+3. jq で一度だけ書き込む:
+
+```bash
+jq --argjson features "$FEATURES_JSON" \
+   '.feature_list = (if (.feature_list // [] | length) == 0 then $features else .feature_list end)
+    | .updated_at = (now | todate)' \
+   "$WORKTREE/.claude/kickoff.json" > "$WORKTREE/.claude/kickoff.json.tmp" \
+  && mv "$WORKTREE/.claude/kickoff.json.tmp" "$WORKTREE/.claude/kickoff.json"
+```
+
+ここで `$FEATURES_JSON` は `[{"id":"F1","desc":"...","status":"todo"}, ...]` の形式。
+
+4. 初期化後、`append-progress.sh` で trace 記録:
+
+```bash
+$SKILLS_DIR/dev-kickoff/scripts/append-progress.sh \
+  --worktree "$WORKTREE" --phase "3" --note "impl-plan.md 作成、feature_list (N 件) 初期化"
+```
+
+**Retry 時**: `feature_list` が既に存在する場合は touch しない。plan の revision でも feature の追加・削除・rename はしない（新しい plan が必要な場合は issue 側で対応）。
+
 ## Important
 
 - **Be concrete, not abstract**: The Generator (Sonnet) needs specific instructions it can follow
