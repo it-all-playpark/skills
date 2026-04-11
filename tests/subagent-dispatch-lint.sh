@@ -70,6 +70,20 @@ echo "[3] 実地移行テスト (bug-hunt/SKILL.md)"
 check_file_contains "$BUG_HUNT" "Subagent Dispatch Rules" "Subagent Dispatch Rules セクション存在"
 check_file_contains "$BUG_HUNT" "subagent-dispatch.md" "reference link 存在"
 
+# 4. skill-creator/assets/skill-template.md
+TEMPLATE="$REPO_ROOT/skill-creator/assets/skill-template.md"
+echo ""
+echo "[4] skill-creator/assets/skill-template.md の必須要素"
+check_file_contains "$TEMPLATE" "Subagent Dispatch Rules" "Subagent Dispatch Rules セクション存在"
+check_file_contains "$TEMPLATE" "Objective" "必須要素: Objective"
+check_file_contains "$TEMPLATE" "Output format" "必須要素: Output format"
+check_file_contains "$TEMPLATE" "Tools" "必須要素: Tools"
+check_file_contains "$TEMPLATE" "Boundary" "必須要素: Boundary"
+check_file_contains "$TEMPLATE" "Token cap" "必須要素: Token cap"
+check_file_contains "$TEMPLATE" "Routing" "Routing セクション存在"
+check_file_contains "$TEMPLATE" "general-purpose" "routing table: general-purpose"
+check_file_contains "$TEMPLATE" "code-reviewer" "routing table: code-reviewer"
+
 # Summary
 echo ""
 echo "=== Result ==="
