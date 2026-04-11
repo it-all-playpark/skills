@@ -1,9 +1,10 @@
 # dev-flow-doctor ↔ skill-retrospective Responsibility Split
 
 `dev-flow-doctor` と `skill-retrospective` はいずれも `~/.claude/journal/*.json` を
-入力源にするが、**対象範囲・目的・出力**が異なる。重複実装を避けるため、dev-flow-doctor は
-journal アクセスを `skill-retrospective/scripts/journal.sh` 経由で行い、そのうえで
-**dev-flow 系 skill の連携健全性**に特化した集計を行う。
+入力源にするが、**対象範囲・目的・出力**が異なる。両者は journal ディレクトリ
+（`$CLAUDE_JOURNAL_DIR` または `~/.claude/journal`）を共通入力源として扱い、
+dev-flow-doctor は skill-retrospective の内部実装に依存せず **最小依存で直接読み取る**
+（詳細は後述）。そのうえで **dev-flow 系 skill の連携健全性**に特化した集計を行う。
 
 ## 対比表
 

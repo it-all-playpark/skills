@@ -85,7 +85,7 @@ run_journal_checks() {
   journal_data=$("$JOURNAL_SH" query --skill dev-flow --limit 200 2>/dev/null || echo "[]")
 
   # Validate journal_data is valid JSON array
-  if ! echo "$journal_data" | jq 'type == "array"' 2>/dev/null | grep -q true; then
+  if ! echo "$journal_data" | jq -e 'type == "array"' >/dev/null 2>&1; then
     journal_data="[]"
   fi
 
@@ -121,7 +121,7 @@ run_journal_checks() {
   # --- Check 3: Error Categories (via stats) ---
   local stats_data=""
   stats_data=$("$JOURNAL_SH" stats 2>/dev/null || echo "{}")
-  if ! echo "$stats_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+  if ! echo "$stats_data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     stats_data="{}"
   fi
 
@@ -135,7 +135,7 @@ run_journal_checks() {
   # --- Check 6: Success Rate Trend ---
   local recent_stats=""
   recent_stats=$("$JOURNAL_SH" stats --since 7d 2>/dev/null || echo "{}")
-  if ! echo "$recent_stats" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+  if ! echo "$recent_stats" | jq -e 'type == "object"' >/dev/null 2>&1; then
     recent_stats="{}"
   fi
 
@@ -409,9 +409,20 @@ run_family_checks() {
   fi
 
   # Validate JSON object
-  if ! echo "$family_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+  if ! echo "$family_data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "error", "reason": "invalid JSON from analyze-dev-flow-family.sh"}')
     add_issue "warn" "analyze-dev-flow-family.sh produced invalid JSON"
+    return
+  fi
+
+  # Cold-start guard: if the dev-flow family has zero total entries in the
+  # window, skip the dead/disconnected/stuck penalties entirely to avoid a
+  # false-positive -10 baseline on new or long-idle environments.
+  local total_family_entries
+  total_family_entries=$(echo "$family_data" | jq '[.per_skill[].total] | add // 0')
+  if [[ "$total_family_entries" -eq 0 ]]; then
+    add_issue "info" "Dev-flow family has no entries in ${WINDOW} — insufficient data, family checks skipped"
+    CHECKS=$(echo "$CHECKS" | jq --argjson f "$family_data" '.dev_flow_family = ($f + {status: "insufficient_data"})')
     return
   fi
 
@@ -509,6 +520,7 @@ jq -n \
     score: $score,
     rating: $rating,
     scope: $scope,
+    score_scope: $scope,
     checks: $checks,
     issues: $issues
   }'

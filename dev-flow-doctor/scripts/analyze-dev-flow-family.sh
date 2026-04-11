@@ -134,8 +134,27 @@ load_journal_entries() {
     printf '[]'
     return
   fi
-  # slurp with jq, tolerate individual parse failures by wrapping with --slurp-invalid workaround
-  jq -s '.' "${files[@]}" 2>/dev/null || printf '[]'
+  # Slurp all entries at once. If any single file is malformed, jq -s fails
+  # for the whole batch, which previously produced an empty [] and caused a
+  # false-positive "all family skills dead" result. Fall back to per-file
+  # parsing so one bad file never blanks the whole journal.
+  local slurped=""
+  if slurped=$(jq -s '.' "${files[@]}" 2>/dev/null); then
+    printf '%s' "$slurped"
+    return
+  fi
+  local rescued=""
+  if rescued=$(
+    for f in "${files[@]}"; do
+      jq -c '.' "$f" 2>/dev/null || true
+    done | jq -s '.' 2>/dev/null
+  ); then
+    if [[ -n "$rescued" ]]; then
+      printf '%s' "$rescued"
+      return
+    fi
+  fi
+  printf '[]'
 }
 
 ALL_ENTRIES=$(load_journal_entries)
@@ -204,20 +223,26 @@ BOTTLENECKS=$(echo "$PER_SKILL" | jq \
     to_entries |
     map({skill: .value.skill, avg_duration_turns: .value.avg_duration_turns, rank: (.key + 1)})')
 
-# Disconnected skills: skill has zero own entries AND name never appears in
-# any hook-capture entry's context.input_summary within the window.
+# Disconnected skills: skill has zero own entries AND name never appears as
+# a word-bounded reference in any hook-capture entry's context.input_summary
+# within the window. We match against "Skill: <name>" / "Task: <name>" and
+# also allow a generic non-word-character boundary so that e.g. "dev-integrate"
+# is not accidentally satisfied by "dev-integrate-extra".
 DISCONNECTED=$(jq -n \
   --argjson per_skill "$PER_SKILL" \
   --argjson entries "$WINDOW_ENTRIES" \
   --arg window "$WINDOW" \
   '
+  def escape_regex(s): s | gsub("([.+*?^$()\\[\\]{}|\\\\])"; "\\\\\(.)");
   [ $per_skill[] as $p |
     ($p.total == 0) as $no_own |
+    (escape_regex($p.skill)) as $esc |
+    ("(^|[^A-Za-z0-9_-])" + $esc + "([^A-Za-z0-9_-]|$)") as $re |
     ( $entries
       | map(select(.source == "hook-capture"))
       | map(.context.input_summary // "")
       | map(select(. != ""))
-      | map(select(contains($p.skill)))
+      | map(select(test($re)))
       | length
     ) as $parent_refs |
     if $no_own and ($parent_refs == 0) then
