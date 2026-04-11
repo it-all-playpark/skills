@@ -4,6 +4,7 @@ description: |
   Validate implementation by running tests and checking changes.
   Use when: verifying implementation quality, running tests, checking for regressions.
   Accepts args: [--fix] [--strict] [--worktree <path>]
+model: haiku
 ---
 
 # Validate
