@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # update-phase.sh - Update phase status in kickoff state
 # Usage: update-phase.sh <phase> <status> [--result "..."] [--error "..."] [--worktree PATH] [--reset-to PHASE] [--eval-result JSON]
+#        [--escalated true|false] [--escalation-reason max_iterations|stuck|fork_failure]
+#        [--stuck-findings JSON] [--review-iteration N] [--review-verdict pass|revise|block] [--review-score N]
 
 set -euo pipefail
 
@@ -19,6 +21,12 @@ PR_URL=""
 PR_NUMBER=""
 RESET_TO=""
 EVAL_RESULT=""
+ESCALATED=""
+ESCALATION_REASON=""
+STUCK_FINDINGS=""
+REVIEW_ITERATION=""
+REVIEW_VERDICT=""
+REVIEW_SCORE=""
 
 # Valid phases and statuses for validation
 VALID_PHASES="1_prepare 2_analyze 3_plan_impl 3b_plan_review 4_implement 5_validate 6_evaluate 7_commit 8_pr"
@@ -35,6 +43,12 @@ while [[ $# -gt 0 ]]; do
         --pr-number) PR_NUMBER="$2"; shift 2 ;;
         --reset-to) RESET_TO="$2"; shift 2 ;;
         --eval-result) EVAL_RESULT="$2"; shift 2 ;;
+        --escalated) ESCALATED="$2"; shift 2 ;;
+        --escalation-reason) ESCALATION_REASON="$2"; shift 2 ;;
+        --stuck-findings) STUCK_FINDINGS="$2"; shift 2 ;;
+        --review-iteration) REVIEW_ITERATION="$2"; shift 2 ;;
+        --review-verdict) REVIEW_VERDICT="$2"; shift 2 ;;
+        --review-score) REVIEW_SCORE="$2"; shift 2 ;;
         -*)
             die_json "Unknown option: $1" 1
             ;;
@@ -157,6 +171,58 @@ if [[ -n "$EVAL_RESULT" ]]; then
     JQ_ARGS+=(--argjson eval_result "$EVAL_RESULT")
     JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].iterations += [\$eval_result]"
     JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].current_iteration += 1"
+fi
+
+# Plan-Review Loop (Phase 3b) escalation / state fields
+if [[ -n "$ESCALATED" ]]; then
+    if [[ "$ESCALATED" != "true" && "$ESCALATED" != "false" ]]; then
+        die_json "--escalated must be 'true' or 'false'" 1
+    fi
+    JQ_ARGS+=(--argjson escalated "$ESCALATED")
+    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalated = \$escalated"
+fi
+
+if [[ -n "$ESCALATION_REASON" ]]; then
+    case "$ESCALATION_REASON" in
+        max_iterations|stuck|fork_failure) ;;
+        *) die_json "--escalation-reason must be one of: max_iterations, stuck, fork_failure" 1 ;;
+    esac
+    JQ_ARGS+=(--arg escalation_reason "$ESCALATION_REASON")
+    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalation_reason = \$escalation_reason"
+fi
+
+if [[ -n "$STUCK_FINDINGS" ]]; then
+    # Must be a JSON array
+    if ! echo "$STUCK_FINDINGS" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        die_json "--stuck-findings must be a JSON array" 1
+    fi
+    JQ_ARGS+=(--argjson stuck_findings "$STUCK_FINDINGS")
+    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].stuck_findings = \$stuck_findings"
+fi
+
+if [[ -n "$REVIEW_ITERATION" ]]; then
+    if ! [[ "$REVIEW_ITERATION" =~ ^[0-9]+$ ]]; then
+        die_json "--review-iteration must be a non-negative integer" 1
+    fi
+    JQ_ARGS+=(--argjson review_iteration "$REVIEW_ITERATION")
+    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].current_iteration = \$review_iteration"
+fi
+
+if [[ -n "$REVIEW_VERDICT" ]]; then
+    case "$REVIEW_VERDICT" in
+        pass|revise|block) ;;
+        *) die_json "--review-verdict must be one of: pass, revise, block" 1 ;;
+    esac
+    JQ_ARGS+=(--arg review_verdict "$REVIEW_VERDICT")
+    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].last_verdict = \$review_verdict"
+fi
+
+if [[ -n "$REVIEW_SCORE" ]]; then
+    if ! [[ "$REVIEW_SCORE" =~ ^[0-9]+$ ]]; then
+        die_json "--review-score must be a non-negative integer" 1
+    fi
+    JQ_ARGS+=(--argjson review_score "$REVIEW_SCORE")
+    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].last_score = \$review_score"
 fi
 
 if [[ -n "$RESET_TO" ]]; then

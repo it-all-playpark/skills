@@ -122,11 +122,34 @@ Phase 3b（dev-plan-review）の Output JSON schema は `{score, verdict, findin
 
 ### Stuck Detection（同一 finding 連続）
 
-各 iteration の findings を `$WORKTREE/.claude/plan-review-history.json` に追記し、**同じ `{dimension, topic}` の finding が 2 iteration 連続で残っていたら stuck 判定**。
+各 iteration の findings を `$WORKTREE/.claude/plan-review-history.json` に追記し、**同じ `{dimension, topic}` の finding が 2 iteration 連続で残っていたら stuck 判定**。この判定は LLM ではなく `$SKILLS_DIR/_shared/scripts/detect-stuck-findings.py` が mechanical に行う（#48 で決定論化）。
 
-- Stuck 時は iter 3 を待たず即 escalate
-  - `kickoff.json` に `phases.3b_plan_review.escalated = true`, `escalation_reason = "stuck"`, `stuck_findings: [{dimension, topic}, ...]` を記録
-  - Skill 出力に `⚠️ Plan-review loop stuck on: <topic>. Same finding persisted across iterations N-1 and N. Escalating to user.`
+**呼び出し例**:
+
+```bash
+STUCK_RESULT=$($SKILLS_DIR/_shared/scripts/detect-stuck-findings.py \
+  --history "$WORKTREE/.claude/plan-review-history.json")
+ESCALATE=$(echo "$STUCK_RESULT" | jq -r '.escalate')
+STUCK_FINDINGS=$(echo "$STUCK_RESULT" | jq -c '.stuck_findings')
+
+if [[ "$ESCALATE" == "true" ]]; then
+  # iter 3 を待たず即 escalate
+  $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
+    --worktree "$WORKTREE" \
+    --escalated true \
+    --escalation-reason stuck \
+    --stuck-findings "$STUCK_FINDINGS"
+  echo "⚠️ Plan-review loop stuck. Same finding persisted across iterations. Escalating to user."
+  echo "Stuck findings: $STUCK_FINDINGS"
+  # proceed to Phase 4 with warning
+fi
+```
+
+**仕様**:
+- 入力: `plan-review-history.json`（canonical schema。不在・空・破損いずれも `escalate: false` で exit 0）
+- 出力: `{escalate, current_iteration, stuck_findings, checked_severities}`
+- severity threshold: default `major` 以上（`--min-severity` で override 可能）
+- 後方互換: 旧 severity `blocking` は `major` に読み替え
 - `topic` が fingerprint として働くため、dev-plan-review は**同じ問題には同じ topic 文字列**を使う運用（dev-plan-review SKILL.md に明記済み）
 
 ### Feedback 受け渡し
@@ -157,11 +180,14 @@ Phase 3b（dev-plan-review）の Output JSON schema は `{score, verdict, findin
     "plan_review": {
       "max_iterations": 3,
       "pass_threshold": 80,
-      "escalate_on_stuck": true
+      "escalate_on_stuck": true,
+      "max_diff_ratio": 0.5
     }
   }
 }
 ```
+
+- `max_diff_ratio`: iteration > 1 の `dev-plan-impl` で前回 plan と今回 plan の行差分比が超えたら warning（`check-diff-scale.sh`）。default 0.5。
 
 ### 後方互換
 

@@ -91,7 +91,13 @@
           "properties": {
             "max_iterations": { "type": "integer", "default": 3, "minimum": 1 },
             "pass_threshold": { "type": "integer", "default": 80, "minimum": 0, "maximum": 100 },
-            "escalate_on_stuck": { "type": "boolean", "default": true }
+            "escalate_on_stuck": { "type": "boolean", "default": true },
+            "max_diff_ratio": {
+              "type": "number",
+              "default": 0.5,
+              "minimum": 0.0,
+              "description": "Upper bound on (changed_lines / total_lines) between previous and current impl-plan.md when iteration > 1. Exceeding this triggers a diff-scale warning (non-blocking). Used by dev-plan-impl/scripts/check-diff-scale.sh. Values > 1.0 are allowed because git --numstat can count both added and removed lines."
+            }
           }
         }
       },
