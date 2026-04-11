@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "id": "20260406T110000-pr-fix",
+  "timestamp": "2026-04-06T11:00:00Z",
+  "skill": "pr-fix",
+  "outcome": "failure",
+  "duration_turns": 3,
+  "context": {"issue": 101},
+  "error": {"category": "test", "message": "test failed"}
+}

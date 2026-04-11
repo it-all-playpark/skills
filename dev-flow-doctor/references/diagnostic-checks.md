@@ -141,3 +141,39 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limi
 | Outliers in single mode | Investigate: likely validation failures or complex implementations |
 | Average > 8 turns | Overall pipeline may need optimization |
 | Average < 5 turns | Pipeline is efficient |
+
+## Check 8: Dev-Flow Family Connector Health (Journal-Driven)
+
+dev-flow ファミリー 8 skill（既定: `dev-kickoff`, `dev-implement`, `dev-validate`,
+`dev-integrate`, `dev-evaluate`, `pr-iterate`, `pr-fix`, `night-patrol`）に限定して、
+journal から以下 4 カテゴリを検出する。
+
+```bash
+# Full (既定 window 30d, skill-config.json で上書き可能)
+$SKILLS_DIR/dev-flow-doctor/scripts/analyze-dev-flow-family.sh --window 30d
+
+# run-diagnostics 経由
+$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7d
+```
+
+### 検出カテゴリ
+
+| カテゴリ | 定義 | 推奨アクション |
+|---------|------|---------------|
+| **dead phase** | window 内で `success` が 0 件の family skill | 呼び出し経路を確認。parent orchestrator（例: dev-kickoff）から実際に呼ばれているか、phase 遷移が skip されていないかを検証 |
+| **stuck skill** | `(failure + partial) / total > 30%` かつ `total >= 3` | `/skill-retrospective` を走らせ proposal を生成、頻出する error category（lint/test/env 等）を直近の failure で確認 |
+| **bottleneck** | `avg(duration_turns)` 上位 3 skill | 実行時間が異常に長い skill を特定し、input 長 / tool 選定 / subagent fork コストを点検 |
+| **disconnected skill** | window 内で自身の entry が 0 件かつ parent skill（hook-capture の Skill tool invocation）で一度も参照されていない | connector が成立していない。orchestrator の分岐条件を確認、または deprecated なら skill を整理 |
+
+### window オプション
+
+- `--window 7d`: 直近の異常を捕まえたいとき
+- `--window 30d`（既定）: 傾向把握
+- `--window 14d` / `--window 2w`: 週次レビュー用
+- 任意の `Nd` / `Nw` / `Nm` フォーマットを受け付ける（`parse_since` と同じ）
+
+### 責務分離
+
+Check 8 は **dev-flow 系 skill の連携健全性** に特化している。全 skill を対象にした
+汎用的な failure pattern detection や proposal 生成は `skill-retrospective` 側で
+行うこと。詳しくは [responsibility-split.md](responsibility-split.md) を参照。

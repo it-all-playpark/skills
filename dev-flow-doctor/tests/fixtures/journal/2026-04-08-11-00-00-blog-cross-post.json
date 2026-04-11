@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "id": "20260408T110000-blog-cross-post",
+  "timestamp": "2026-04-08T11:00:00Z",
+  "skill": "blog-cross-post",
+  "outcome": "success",
+  "duration_turns": 3,
+  "context": {}
+}

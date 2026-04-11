@@ -2,22 +2,25 @@
 set -euo pipefail
 
 # run-diagnostics.sh - Run all diagnostic checks and output structured results
-# Usage: run-diagnostics.sh [--scope full|journal|worktrees|config]
+# Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family] [--window <dur>]
 # Output: JSON with diagnostic results
 
-source "$(dirname "$0")/../../_lib/common.sh"
+SCRIPT_DIR_RD="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR_RD/../../_lib/common.sh"
 
 # ============================================================================
 # Defaults & Args
 # ============================================================================
 
 SCOPE="full"
+WINDOW="30d"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scope) SCOPE="$2"; shift 2 ;;
+    --window) WINDOW="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config]"
+      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family] [--window <dur>]"
       exit 0
       ;;
     *) die_json "Unknown argument: $1" 1 ;;
@@ -25,8 +28,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$SCOPE" in
-  full|journal|worktrees|config) ;;
-  *) die_json "Invalid scope: $SCOPE (must be full|journal|worktrees|config)" 1 ;;
+  full|journal|worktrees|config|family) ;;
+  *) die_json "Invalid scope: $SCOPE (must be full|journal|worktrees|config|family)" 1 ;;
 esac
 
 require_cmd "jq" "jq is required for diagnostics"
@@ -387,6 +390,74 @@ run_config_checks() {
 }
 
 # ============================================================================
+# Check: Dev-Flow Family Connector Health (journal-driven)
+# ============================================================================
+
+run_family_checks() {
+  local analyze_sh="$SCRIPT_DIR_RD/analyze-dev-flow-family.sh"
+  if [[ ! -x "$analyze_sh" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "skipped", "reason": "analyze-dev-flow-family.sh not found"}')
+    add_issue "info" "analyze-dev-flow-family.sh not found — family checks skipped"
+    return
+  fi
+
+  local family_data
+  if ! family_data=$("$analyze_sh" --window "$WINDOW" 2>/dev/null); then
+    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "error", "reason": "analyze-dev-flow-family.sh failed"}')
+    add_issue "warn" "analyze-dev-flow-family.sh failed — family checks skipped"
+    return
+  fi
+
+  # Validate JSON object
+  if ! echo "$family_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "error", "reason": "invalid JSON from analyze-dev-flow-family.sh"}')
+    add_issue "warn" "analyze-dev-flow-family.sh produced invalid JSON"
+    return
+  fi
+
+  local dead_count stuck_count disc_count bn_count
+  dead_count=$(echo "$family_data" | jq '.findings.dead_phases | length')
+  stuck_count=$(echo "$family_data" | jq '.findings.stuck_skills | length')
+  disc_count=$(echo "$family_data" | jq '.findings.disconnected_skills | length')
+  bn_count=$(echo "$family_data" | jq '.findings.bottlenecks | length')
+
+  # Issues
+  if [[ "$dead_count" -gt 0 ]]; then
+    local dead_list
+    dead_list=$(echo "$family_data" | jq -r '[.findings.dead_phases[].skill] | join(", ")')
+    add_issue "warn" "Dead phase(s) detected (${WINDOW}): ${dead_list}"
+  fi
+  if [[ "$stuck_count" -gt 0 ]]; then
+    local stuck_list
+    stuck_list=$(echo "$family_data" | jq -r '[.findings.stuck_skills[] | "\(.skill)(\(.failure_rate | . * 100 | round)%)"] | join(", ")')
+    add_issue "warn" "Stuck skill(s) detected (${WINDOW}): ${stuck_list}"
+  fi
+  if [[ "$disc_count" -gt 0 ]]; then
+    local disc_list
+    disc_list=$(echo "$family_data" | jq -r '[.findings.disconnected_skills[].skill] | join(", ")')
+    add_issue "warn" "Disconnected skill(s) detected (${WINDOW}): ${disc_list}"
+  fi
+  if [[ "$bn_count" -gt 0 ]]; then
+    local bn_top
+    bn_top=$(echo "$family_data" | jq -r '.findings.bottlenecks[0] | "\(.skill) (avg \(.avg_duration_turns | . * 10 | round / 10) turns)"')
+    add_issue "info" "Top bottleneck (${WINDOW}): ${bn_top}"
+  fi
+
+  # Scoring: family health penalties (each capped at -5, total capped at -20)
+  local family_penalty=0
+  if [[ "$dead_count" -gt 0 ]]; then family_penalty=$((family_penalty + 5)); fi
+  if [[ "$stuck_count" -gt 0 ]]; then family_penalty=$((family_penalty + 5)); fi
+  if [[ "$disc_count" -gt 0 ]]; then family_penalty=$((family_penalty + 5)); fi
+  # bottleneck alone is informational — only penalize if avg top > 3x overall avg (best-effort, skip here)
+  if [[ $family_penalty -gt 20 ]]; then family_penalty=20; fi
+  if [[ $family_penalty -gt 0 ]]; then
+    subtract_score "$family_penalty" 20
+  fi
+
+  CHECKS=$(echo "$CHECKS" | jq --argjson family "$family_data" '.dev_flow_family = $family')
+}
+
+# ============================================================================
 # Run checks based on scope
 # ============================================================================
 
@@ -395,6 +466,7 @@ case "$SCOPE" in
     run_journal_checks
     run_worktree_checks
     run_config_checks
+    run_family_checks
     ;;
   journal)
     run_journal_checks
@@ -404,6 +476,9 @@ case "$SCOPE" in
     ;;
   config)
     run_config_checks
+    ;;
+  family)
+    run_family_checks
     ;;
 esac
 

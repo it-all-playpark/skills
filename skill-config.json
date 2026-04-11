@@ -36,6 +36,24 @@
   "dev-implement": {
     "model": "sonnet"
   },
+  "dev-flow-doctor": {
+    "family_skills": [
+      "dev-kickoff",
+      "dev-implement",
+      "dev-validate",
+      "dev-integrate",
+      "dev-evaluate",
+      "pr-iterate",
+      "pr-fix",
+      "night-patrol"
+    ],
+    "window_default": "30d",
+    "thresholds": {
+      "stuck_failure_rate": 0.30,
+      "stuck_min_total": 3,
+      "bottleneck_top_n": 3
+    }
+  },
   "night-patrol": {
     "max_failures": 2,
     "failures_path": "~/.claude/night-patrol/failures.json",
