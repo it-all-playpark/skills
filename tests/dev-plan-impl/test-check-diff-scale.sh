@@ -94,6 +94,54 @@ RESULT=$("$TARGET" --current "$CURR" --previous "$PREV" 2>/dev/null)
 STATUS=$(echo "$RESULT" | jq -r '.status')
 assert_eq "f_small_diff_status_ok" "ok" "$STATUS"
 
+# Test (g): non-numeric --max-ratio -> non-zero exit with error JSON on stderr
+ERR_OUT=$("$TARGET" --current "$CURR" --previous "$PREV" --max-ratio "abc" 2>&1 >/dev/null) || true
+EXIT_CODE=0
+"$TARGET" --current "$CURR" --previous "$PREV" --max-ratio "abc" >/dev/null 2>&1 || EXIT_CODE=$?
+if [[ $EXIT_CODE -ne 0 ]]; then
+    pass "g_nonnumeric_cli_max_ratio_fails_exit"
+else
+    fail "g_nonnumeric_cli_max_ratio_fails_exit" "expected non-zero exit, got $EXIT_CODE"
+fi
+ERR_STATUS=$(echo "$ERR_OUT" | jq -r '.status' 2>/dev/null || echo "")
+assert_eq "g_nonnumeric_cli_max_ratio_error_json" "error" "$ERR_STATUS"
+
+# Test (h): negative --max-ratio -> non-zero exit
+"$TARGET" --current "$CURR" --previous "$PREV" --max-ratio "-0.1" >/dev/null 2>&1
+EXIT_CODE=$?
+if [[ $EXIT_CODE -ne 0 ]]; then
+    pass "h_negative_cli_max_ratio_fails_exit"
+else
+    fail "h_negative_cli_max_ratio_fails_exit" "expected non-zero exit, got $EXIT_CODE"
+fi
+
+# Test (i): non-numeric config.plan_review.max_diff_ratio -> non-zero exit
+WTREE="$TMPDIR_TEST/wtree"
+mkdir -p "$WTREE/.claude"
+cat > "$WTREE/.claude/kickoff.json" <<'JSON'
+{"config":{"plan_review":{"max_diff_ratio":"not-a-number"}}}
+JSON
+"$TARGET" --current "$CURR" --previous "$PREV" --worktree "$WTREE" >/dev/null 2>&1
+EXIT_CODE=$?
+if [[ $EXIT_CODE -ne 0 ]]; then
+    pass "i_nonnumeric_config_max_diff_ratio_fails_exit"
+else
+    fail "i_nonnumeric_config_max_diff_ratio_fails_exit" "expected non-zero exit, got $EXIT_CODE"
+fi
+
+# Test (j): numeric config.plan_review.max_diff_ratio -> honored
+cat > "$WTREE/.claude/kickoff.json" <<'JSON'
+{"config":{"plan_review":{"max_diff_ratio":3.0}}}
+JSON
+# Re-use the full-rewrite previous/current from test (c) — recreate to make j self-contained.
+printf 'old1\nold2\nold3\nold4\nold5\n' > "$PREV"
+printf 'new1\nnew2\nnew3\nnew4\nnew5\n' > "$CURR"
+RESULT=$("$TARGET" --current "$CURR" --previous "$PREV" --worktree "$WTREE" 2>/dev/null)
+STATUS=$(echo "$RESULT" | jq -r '.status')
+assert_eq "j_numeric_config_max_diff_ratio_applies" "ok" "$STATUS"
+MAX_OUT=$(echo "$RESULT" | jq -r '.max_ratio')
+assert_eq "j_numeric_config_max_diff_ratio_value" "3.0" "$MAX_OUT"
+
 # --- summary ---
 echo ""
 echo "==> Summary: $TESTS_PASSED passed, $TESTS_FAILED failed"

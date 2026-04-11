@@ -190,11 +190,14 @@ fi
     "plan_review": {
       "max_iterations": 3,
       "pass_threshold": 80,
-      "escalate_on_stuck": true
+      "escalate_on_stuck": true,
+      "max_diff_ratio": 0.5
     }
   }
 }
 ```
+
+- `max_diff_ratio`: iteration > 1 で dev-plan-impl が書き直した plan と前回 plan の差分比率が超えたら warning（`dev-plan-impl/scripts/check-diff-scale.sh`）。default 0.5。非数値を入れると起動時にエラーで fail する。
 
 ### 後方互換
 

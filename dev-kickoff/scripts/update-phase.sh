@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -n "$PHASE" ]] || die_json "Phase required (1_prepare|2_analyze|3_implement|4_validate|5_commit|6_pr)" 1
+[[ -n "$PHASE" ]] || die_json "Phase required (1_prepare|2_analyze|3_plan_impl|3b_plan_review|4_implement|5_validate|6_evaluate|7_commit|8_pr)" 1
 [[ -n "$STATUS" ]] || die_json "Status required (pending|in_progress|done|failed|skipped)" 1
 
 # Validate PHASE enum

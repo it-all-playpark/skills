@@ -17,7 +17,8 @@
 #                       returns status="skipped")
 #   --worktree <path>   Worktree path used to resolve config.plan_review.max_diff_ratio
 #                       from .claude/kickoff.json (optional)
-#   --max-ratio <float> Override threshold (CLI > config > default 0.5)
+#   --max-ratio <float> Override threshold (CLI > config > default 0.5).
+#                       Must be a non-negative number (int or float).
 #
 # Output JSON (stdout):
 #   {
@@ -31,7 +32,8 @@
 #   }
 #
 # Always exits 0 on normal completion (warning is non-blocking).
-# Non-zero exit only on invalid arguments or missing commands.
+# Non-zero exit only on invalid arguments (including non-numeric thresholds)
+# or missing commands.
 
 set -uo pipefail
 
@@ -50,6 +52,14 @@ WORKTREE=""
 MAX_RATIO_CLI=""
 DEFAULT_MAX_RATIO="0.5"
 
+# is_nonneg_number: validate that $1 is a non-negative int or float (e.g. 0, 0.5, 1.25, 10).
+# Rejects: "", "abc", "-1", "1.2.3", ".", ".5" (leading dot), "1.".
+is_nonneg_number() {
+    local v="$1"
+    [[ -n "$v" ]] || return 1
+    [[ "$v" =~ ^[0-9]+(\.[0-9]+)?$ ]]
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --current) CURRENT="$2"; shift 2 ;;
@@ -57,7 +67,7 @@ while [[ $# -gt 0 ]]; do
         --worktree) WORKTREE="$2"; shift 2 ;;
         --max-ratio) MAX_RATIO_CLI="$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,30p' "$0"
+            sed -n '2,36p' "$0"
             exit 0
             ;;
         *)
@@ -82,15 +92,23 @@ if [[ ! -f "$CURRENT" ]]; then
     die_json "Current plan not found: $CURRENT" 1
 fi
 
-# Resolve max_ratio: CLI > kickoff.json config > default
+# Resolve max_ratio: CLI > kickoff.json config > default.
+# Every candidate value is validated — invalid values fail loudly (die_json)
+# rather than silently falling through to "awk treats non-numeric as 0".
 MAX_RATIO="$DEFAULT_MAX_RATIO"
 if [[ -n "$WORKTREE" ]] && [[ -f "$WORKTREE/.claude/kickoff.json" ]]; then
     CFG_VAL=$(jq -r '.config.plan_review.max_diff_ratio // empty' "$WORKTREE/.claude/kickoff.json" 2>/dev/null || true)
     if [[ -n "$CFG_VAL" ]]; then
+        if ! is_nonneg_number "$CFG_VAL"; then
+            die_json "config.plan_review.max_diff_ratio must be a non-negative number, got: $CFG_VAL" 1
+        fi
         MAX_RATIO="$CFG_VAL"
     fi
 fi
 if [[ -n "$MAX_RATIO_CLI" ]]; then
+    if ! is_nonneg_number "$MAX_RATIO_CLI"; then
+        die_json "--max-ratio must be a non-negative number, got: $MAX_RATIO_CLI" 1
+    fi
     MAX_RATIO="$MAX_RATIO_CLI"
 fi
 
