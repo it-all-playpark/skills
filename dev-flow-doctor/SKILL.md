@@ -143,6 +143,23 @@ Deterministic diagnostic data collection and health score calculation.
 
 Output: JSON with `score`, `rating`, `checks` (including `dev_flow_family`), and `issues` fields.
 
+### `scripts/analyze-termination-loops.sh`
+
+Cross-worktree Generator-Verifier loop analysis (Check 9, issue #53). Reads
+`phases.3b_plan_review.termination` / `phases.6_evaluate.termination` from each
+worktree's `.claude/kickoff.json` to detect:
+
+- `repeated_feedback_target` — same Phase 6 `feedback_target` in 2+ consecutive iterations
+- `max_iterations` — loop exhausted iteration budget
+- `stuck` — Phase 3b plan-review findings unresolved across iterations
+- `fork_failure` — verifier fork failed
+
+```bash
+./scripts/analyze-termination-loops.sh [--worktree-base <dir>]
+```
+
+Called by `run-diagnostics.sh --scope full|family`; can also be invoked directly.
+
 ### `scripts/analyze-dev-flow-family.sh`
 
 Dev-flow family connector analysis (Check 8). Called by `run-diagnostics.sh --scope full|family`,
@@ -177,14 +194,17 @@ Output JSON schema:
 
 ```bash
 ./tests/test-analyze-dev-flow-family.sh
+./tests/test-analyze-termination-loops.sh
 ```
 
 Fixture-based unit tests validate family filtering, 4 detection categories, per-skill
-statistics, and window filtering.
+statistics, and window filtering. `test-analyze-termination-loops.sh` covers Check 9
+(termination-loop health): repeated_feedback_target, max_iterations, stuck, fork_failure,
+and converged cases.
 
 ## References
 
-- [Diagnostic Checks](references/diagnostic-checks.md) -- Check 1–8 (family connector health in Check 8)
+- [Diagnostic Checks](references/diagnostic-checks.md) -- Check 1–9 (family connector in Check 8, termination loops in Check 9)
 - [Health Scoring](references/health-scoring.md) -- Scoring formula including family penalty
 - [Responsibility Split](references/responsibility-split.md) -- Boundary vs skill-retrospective
 

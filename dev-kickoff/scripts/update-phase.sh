@@ -3,6 +3,8 @@
 # Usage: update-phase.sh <phase> <status> [--result "..."] [--error "..."] [--worktree PATH] [--reset-to PHASE] [--eval-result JSON]
 #        [--escalated true|false] [--escalation-reason max_iterations|stuck|fork_failure]
 #        [--stuck-findings JSON] [--review-iteration N] [--review-verdict pass|revise|block] [--review-score N]
+#        [--termination-reason converged|max_iterations|stuck|fork_failure]
+#        [--termination-final-verdict V] [--termination-verdict-history JSON] [--append-verdict JSON]
 
 set -euo pipefail
 
@@ -27,6 +29,10 @@ STUCK_FINDINGS=""
 REVIEW_ITERATION=""
 REVIEW_VERDICT=""
 REVIEW_SCORE=""
+TERMINATION_REASON=""
+TERMINATION_FINAL_VERDICT=""
+TERMINATION_VERDICT_HISTORY=""
+APPEND_VERDICT=""
 
 # Valid phases and statuses for validation
 VALID_PHASES="1_prepare 2_analyze 3_plan_impl 3b_plan_review 4_implement 5_validate 6_evaluate 7_commit 8_pr"
@@ -49,6 +55,10 @@ while [[ $# -gt 0 ]]; do
         --review-iteration) REVIEW_ITERATION="$2"; shift 2 ;;
         --review-verdict) REVIEW_VERDICT="$2"; shift 2 ;;
         --review-score) REVIEW_SCORE="$2"; shift 2 ;;
+        --termination-reason) TERMINATION_REASON="$2"; shift 2 ;;
+        --termination-final-verdict) TERMINATION_FINAL_VERDICT="$2"; shift 2 ;;
+        --termination-verdict-history) TERMINATION_VERDICT_HISTORY="$2"; shift 2 ;;
+        --append-verdict) APPEND_VERDICT="$2"; shift 2 ;;
         -*)
             die_json "Unknown option: $1" 1
             ;;
@@ -171,6 +181,15 @@ if [[ -n "$EVAL_RESULT" ]]; then
     JQ_ARGS+=(--argjson eval_result "$EVAL_RESULT")
     JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].iterations += [\$eval_result]"
     JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].current_iteration += 1"
+    # Also mirror into termination.verdict_history (issue #53)
+    # Construct a verdict entry from eval_result: {iteration, verdict, feedback_target?}
+    JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].termination = (.phases[\"6_evaluate\"].termination // {\"verdict_history\": []})"
+    JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].termination.verdict_history += [{"
+    JQ_FILTER="$JQ_FILTER \"iteration\": .phases[\"6_evaluate\"].current_iteration,"
+    JQ_FILTER="$JQ_FILTER \"verdict\": (\$eval_result.verdict // null),"
+    JQ_FILTER="$JQ_FILTER \"feedback_target\": (\$eval_result.feedback_level // \$eval_result.feedback_target // null)"
+    JQ_FILTER="$JQ_FILTER }]"
+    JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].termination.final_iteration = .phases[\"6_evaluate\"].current_iteration"
 fi
 
 # Plan-Review Loop (Phase 3b) escalation / state fields
@@ -223,6 +242,63 @@ if [[ -n "$REVIEW_SCORE" ]]; then
     fi
     JQ_ARGS+=(--argjson review_score "$REVIEW_SCORE")
     JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].last_score = \$review_score"
+fi
+
+# ----------------------------------------------------------------------------
+# Termination block (issue #53) — unified Generator-Verifier loop state
+# Only applies to 3b_plan_review and 6_evaluate phases.
+# ----------------------------------------------------------------------------
+if [[ -n "$TERMINATION_REASON" ]]; then
+    case "$TERMINATION_REASON" in
+        converged|max_iterations|stuck|fork_failure) ;;
+        *) die_json "--termination-reason must be one of: converged, max_iterations, stuck, fork_failure" 1 ;;
+    esac
+    case "$PHASE" in
+        3b_plan_review|6_evaluate) ;;
+        *) die_json "--termination-reason only valid for 3b_plan_review or 6_evaluate (got: $PHASE)" 1 ;;
+    esac
+
+    if [[ -n "$TERMINATION_VERDICT_HISTORY" ]]; then
+        if ! echo "$TERMINATION_VERDICT_HISTORY" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            die_json "--termination-verdict-history must be a JSON array" 1
+        fi
+    fi
+    if [[ -n "$APPEND_VERDICT" ]]; then
+        if ! echo "$APPEND_VERDICT" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            die_json "--append-verdict must be a JSON object" 1
+        fi
+    fi
+
+    JQ_ARGS+=(--arg termination_reason "$TERMINATION_REASON")
+    JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination = (.phases[\$phase].termination // {\"verdict_history\": []})"
+    JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination.reason = \$termination_reason"
+    JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination.recorded_at = \$now"
+
+    if [[ -n "$TERMINATION_VERDICT_HISTORY" ]]; then
+        JQ_ARGS+=(--argjson termination_history "$TERMINATION_VERDICT_HISTORY")
+        JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination.verdict_history = \$termination_history"
+    elif [[ -n "$APPEND_VERDICT" ]]; then
+        JQ_ARGS+=(--argjson append_verdict "$APPEND_VERDICT")
+        JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination.verdict_history = ((.phases[\$phase].termination.verdict_history // []) + [\$append_verdict])"
+    fi
+
+    if [[ -n "$TERMINATION_FINAL_VERDICT" ]]; then
+        JQ_ARGS+=(--arg termination_final_verdict "$TERMINATION_FINAL_VERDICT")
+        JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination.final_verdict = \$termination_final_verdict"
+    fi
+
+    # Sync final_iteration from verdict_history length
+    JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination.final_iteration = (.phases[\$phase].termination.verdict_history | length)"
+
+    # Legacy mirror (deprecated, 1 release): escalated / escalation_reason on Phase 3b
+    if [[ "$PHASE" == "3b_plan_review" ]]; then
+        if [[ "$TERMINATION_REASON" == "converged" ]]; then
+            JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalated = false"
+        else
+            JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalated = true"
+            JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalation_reason = \$termination_reason"
+        fi
+    fi
 fi
 
 if [[ -n "$RESET_TO" ]]; then

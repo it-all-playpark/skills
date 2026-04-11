@@ -200,3 +200,54 @@ file / directory prefix** を抽出する。
 
 [`_shared/references/integration-feedback.md`](../../_shared/references/integration-feedback.md)
 で event store のスキーマ・書き込みパス・学習ループ全体を解説している。
+
+## Check 10: Termination Loop Health (kickoff.json-driven) — issue #53
+
+dev-kickoff の 2 つの evaluator-optimizer ループ（Phase 3 ⇄ 3b / Phase 4-5 ⇄ 6）が
+各 worktree の `kickoff.json` に書き出した `termination` block を横断分析する。
+verdict_history 履歴から「loop が健全に収束したか」「同一 feedback_target が繰り返されていないか」を検出する。
+
+```bash
+# kickoff.json 横断分析 (既定 worktree-base: $REPO_ROOT/../$(basename $REPO_ROOT)-worktrees)
+$SKILLS_DIR/dev-flow-doctor/scripts/analyze-termination-loops.sh
+
+# worktree-base を明示
+$SKILLS_DIR/dev-flow-doctor/scripts/analyze-termination-loops.sh --worktree-base /path/to/worktrees
+
+# run-diagnostics 経由 (scope full / family)
+$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family
+```
+
+### 検出パターン
+
+| pattern | 定義 | 推奨アクション |
+|---------|------|---------------|
+| **repeated_feedback_target** | Phase 6 `verdict_history` で同一 `feedback_target` が **2 iteration 連続** | 同じ層（design/implementation）の feedback が繰り返されている → もう一段上のレイヤー（例: design 連続なら issue 自体の要件）を疑う |
+| **max_iterations** | `termination.reason == "max_iterations"` | 最大 iteration で収束しなかった。issue のサイズ見直し・分解検討 |
+| **stuck** (3b のみ) | `termination.reason == "stuck"` | Plan-Review で同一 finding が 2 iteration 残った → 計画の根本見直し |
+| **fork_failure** | `termination.reason == "fork_failure"` | verifier (dev-plan-review / dev-evaluate) の fork 起動に失敗 → tooling issue 調査 |
+
+### 出力 JSON schema
+
+```jsonc
+{
+  "worktree_base": "/path/to/skills-worktrees",
+  "checked_worktrees": 3,
+  "findings": [
+    {
+      "worktree": "/path/to/skills-worktrees/feature-issue-53-m",
+      "issue": 53,
+      "phase": "6_evaluate",
+      "pattern": "repeated_feedback_target",
+      "feedback_target": "design",
+      "occurrences": 2,
+      "message": "同一 feedback_target (design) が 2 iteration 連続で発生 → 設計問題の可能性"
+    }
+  ]
+}
+```
+
+### スコアリングへの影響
+
+Check 10 の findings は現時点では **health score 計算に寄与しない**（informational のみ）。
+スコア組み込みは別 issue で扱う。
