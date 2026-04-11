@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # run-diagnostics.sh - Run all diagnostic checks and output structured results
-# Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family] [--window <dur>]
+# Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family|feedback] [--window <dur>]
 # Output: JSON with diagnostic results
 
 SCRIPT_DIR_RD="$(cd "$(dirname "$0")" && pwd)"
@@ -20,7 +20,7 @@ while [[ $# -gt 0 ]]; do
     --scope) SCOPE="$2"; shift 2 ;;
     --window) WINDOW="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family] [--window <dur>]"
+      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family|feedback] [--window <dur>]"
       exit 0
       ;;
     *) die_json "Unknown argument: $1" 1 ;;
@@ -28,8 +28,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$SCOPE" in
-  full|journal|worktrees|config|family) ;;
-  *) die_json "Invalid scope: $SCOPE (must be full|journal|worktrees|config|family)" 1 ;;
+  full|journal|worktrees|config|family|feedback) ;;
+  *) die_json "Invalid scope: $SCOPE (must be full|journal|worktrees|config|family|feedback)" 1 ;;
 esac
 
 require_cmd "jq" "jq is required for diagnostics"
@@ -458,6 +458,75 @@ run_family_checks() {
 }
 
 # ============================================================================
+# Check: Integration Feedback (recurring conflict patterns)
+# ============================================================================
+
+run_feedback_checks() {
+  local feedback_file="${SKILLS_DIR}/_shared/integration-feedback.json"
+
+  if [[ ! -f "$feedback_file" ]] || ! jq empty "$feedback_file" >/dev/null 2>&1; then
+    CHECKS=$(echo "$CHECKS" | jq \
+      '.integration_feedback = {"status":"no_data","total_events":0,"recurring_files":[],"recurring_prefixes":[]}')
+    return
+  fi
+
+  local total_events
+  total_events=$(jq '(.events // []) | length' "$feedback_file")
+
+  if [[ "$total_events" -eq 0 ]]; then
+    CHECKS=$(echo "$CHECKS" | jq \
+      '.integration_feedback = {"status":"no_data","total_events":0,"recurring_files":[],"recurring_prefixes":[]}')
+    return
+  fi
+
+  # Analyse last 100 events, any files/prefixes with >=3 occurrences are
+  # considered "recurring". Use analyze-past-conflicts.sh from dev-decompose
+  # with no --affected-files filter so we get a repo-wide view.
+  local analyzer="${SKILLS_DIR}/dev-decompose/scripts/analyze-past-conflicts.sh"
+  local report='{"recurring_files":[],"recurring_prefixes":[]}'
+  if [[ -x "$analyzer" ]]; then
+    report=$("$analyzer" --feedback-file "$feedback_file" --limit 100 --min-occurrences 3 2>/dev/null || echo '{"recurring_files":[],"recurring_prefixes":[]}')
+  fi
+
+  local recurring_file_count recurring_prefix_count
+  recurring_file_count=$(echo "$report" | jq '[.recurring_files // []] | flatten | length')
+  recurring_prefix_count=$(echo "$report" | jq '[.recurring_prefixes // []] | flatten | length')
+
+  # Surface findings (warning is intentional: recurrence suggests decomposition
+  # boundaries are wrong, not that the doctor itself found a bug).
+  if [[ "$recurring_file_count" -gt 0 ]]; then
+    local top_file
+    top_file=$(echo "$report" | jq -r '(.recurring_files // [])[0] | "\(.file) (\(.occurrences)x)"')
+    add_issue "warn" "Recurring integration conflict file: ${top_file}"
+  fi
+  if [[ "$recurring_prefix_count" -gt 0 ]]; then
+    local top_prefix
+    top_prefix=$(echo "$report" | jq -r '(.recurring_prefixes // [])[0] | "\(.prefix)/ (\(.occurrences)x)"')
+    add_issue "warn" "Recurring integration conflict directory: ${top_prefix}"
+  fi
+
+  # Score penalty is capped tightly so a noisy feedback store cannot dominate
+  # the health score.
+  local penalty=0
+  if [[ "$recurring_file_count" -gt 0 ]]; then penalty=$((penalty + 3)); fi
+  if [[ "$recurring_prefix_count" -gt 0 ]]; then penalty=$((penalty + 2)); fi
+  if [[ $penalty -gt 5 ]]; then penalty=5; fi
+  if [[ $penalty -gt 0 ]]; then
+    subtract_score "$penalty" 5
+  fi
+
+  CHECKS=$(echo "$CHECKS" | jq \
+    --argjson total "$total_events" \
+    --argjson report "$report" \
+    '.integration_feedback = {
+      status: "ok",
+      total_events: $total,
+      recurring_files: ($report.recurring_files // []),
+      recurring_prefixes: ($report.recurring_prefixes // [])
+    }')
+}
+
+# ============================================================================
 # Run checks based on scope
 # ============================================================================
 
@@ -467,6 +536,7 @@ case "$SCOPE" in
     run_worktree_checks
     run_config_checks
     run_family_checks
+    run_feedback_checks
     ;;
   journal)
     run_journal_checks
@@ -479,6 +549,9 @@ case "$SCOPE" in
     ;;
   family)
     run_family_checks
+    ;;
+  feedback)
+    run_feedback_checks
     ;;
 esac
 

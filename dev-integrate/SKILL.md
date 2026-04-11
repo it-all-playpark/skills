@@ -22,6 +22,10 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 - Create merge worktree (git-prepare --suffix merge)
 - Merge each subtask branch in dependency order (leaves first)
 - Detect and attempt auto-resolution of conflicts
+- **Record conflicts / integration failures to `_shared/integration-feedback.json`**
+  so that future `dev-decompose --dry-run` runs can learn from recurring patterns
+  (pub/sub event store — see
+  [`_shared/references/integration-feedback.md`](../_shared/references/integration-feedback.md))
 - Run type checking (tsc --noEmit, mypy, etc.)
 - Run integration tests via dev-validate
 - Update flow.json integration section
@@ -38,7 +42,9 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 5. For each subtask in order:
    a. git merge --no-ff $TASK_BRANCH
    b. If conflict: attempt auto-resolution, record in flow.json
-   c. If unresolvable: stop and request user intervention
+   c. Append event to `_shared/integration-feedback.json` (best-effort,
+      via `integration-event-append.sh` — never aborts the merge loop)
+   d. If unresolvable: stop and request user intervention
 6. Run type check (detect project type: tsc for TS, mypy for Python, etc.)
 7. Run Skill: dev-validate --worktree $MERGE_WORKTREE
 8. Update flow.json integration section with results

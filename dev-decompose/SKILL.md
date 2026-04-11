@@ -49,10 +49,41 @@ Lightweight mode that executes only Steps 1-4 (analysis and file grouping) witho
 ```
 1. Read issue analysis (from dev-issue-analyze output or issue body)
 2. Identify affected files and dependencies
-3. Group files into subtasks (no file overlap)
+2b. Read past integration feedback via analyze-past-conflicts.sh
+    (files + directory prefixes that recurred in previous conflicts)
+3. Group files into subtasks (no file overlap), biasing files flagged by
+   step 2b toward the same subtask when possible
 4. Apply fallback criteria (see Decomposition Guide)
-→ Return assessment JSON (no side effects)
+→ Return assessment JSON (no side effects). The dry-run JSON includes a
+  `past_conflict_hints` field with the analyzer output for observability.
 ```
+
+**Reading past feedback**:
+
+```bash
+$SKILLS_DIR/dev-decompose/scripts/analyze-past-conflicts.sh \
+  --affected-files "src/types/user.ts,src/api/auth.ts,..." \
+  --limit 50 --min-occurrences 2
+```
+
+Output shape (informational, decomposer LLM makes the final call):
+
+```jsonc
+{
+  "has_hints": true,
+  "scanned_events": 42,
+  "recurring_files": [
+    {"file": "src/types/user.ts", "occurrences": 3,
+     "lessons": ["同じ types/ 配下は 1 subtask にまとめるべき"]}
+  ],
+  "recurring_prefixes": [
+    {"prefix": "src/types", "occurrences": 4}
+  ]
+}
+```
+
+See [`_shared/references/integration-feedback.md`](../_shared/references/integration-feedback.md)
+for the pub/sub pattern and how events are written by `dev-integrate`.
 
 Dry-run output:
 ```json
@@ -182,11 +213,27 @@ Return value:
 No files created on disk. Return value only:
 ```json
 // Ready for parallel
-{"status": "ready", "subtask_count": N, "file_groups": [{"id": "taskN", "files": [...]}]}
+{
+  "status": "ready",
+  "subtask_count": N,
+  "file_groups": [{"id": "taskN", "files": ["..."]}],
+  "past_conflict_hints": {
+    "has_hints": true,
+    "scanned_events": 42,
+    "recurring_files": [{"file": "src/types/user.ts", "occurrences": 3, "lessons": ["..."]}],
+    "recurring_prefixes": [{"prefix": "src/types", "occurrences": 4}]
+  }
+}
 
 // Fallback to single
-{"status": "single_fallback", "reason": "<criteria from Decomposition Guide>", "file_count": N}
+{"status": "single_fallback", "reason": "<criteria from Decomposition Guide>", "file_count": N, "past_conflict_hints": {...}}
 ```
+
+`past_conflict_hints` is populated by
+`dev-decompose/scripts/analyze-past-conflicts.sh` reading
+`_shared/integration-feedback.json`. If the feedback file is missing or
+empty, the field has `{"has_hints": false, ...}` and decomposition proceeds
+normally.
 
 ## Error Handling
 

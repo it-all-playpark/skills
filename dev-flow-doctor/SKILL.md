@@ -5,8 +5,8 @@ description: |
   stuck skill, bottleneck, disconnected skill across the dev-flow family.
   Use when: (1) dev-flow issues or underperformance, (2) parallel mode not triggering,
   (3) stuck skill / dead phase suspicion, (4) weekly dev-flow health review,
-  (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector
-  Accepts args: [--scope full|journal|worktrees|config|family] [--window 7d|30d] [--fix]
+  (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector, integration feedback
+  Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix]
 allowed-tools:
   - Bash
 ---
@@ -32,7 +32,7 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 ## Usage
 
 ```
-/dev-flow-doctor [--scope full|journal|worktrees|config|family] [--window 7d|30d] [--fix]
+/dev-flow-doctor [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix]
 ```
 
 | Arg | Default | Description |
@@ -45,11 +45,12 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 
 | Scope | What It Checks |
 |-------|----------------|
-| `full` | All checks below (includes `family`) |
+| `full` | All checks below (includes `family` and `feedback`) |
 | `journal` | Legacy journal-based execution analysis (Check 1–7, dev-flow skill only) |
 | `worktrees` | Worktree state and cleanup |
 | `config` | Skill configuration validation |
 | `family` | **Dev-flow family connector health** (Check 8: dead / stuck / bottleneck / disconnected) |
+| `feedback` | **Recurring integration conflict patterns** (Check 9: reads `_shared/integration-feedback.json`) |
 
 ## Workflow
 
@@ -93,6 +94,17 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 
 **Disconnected Skills** (no parent invocation in 30d):
 - `night-patrol`: orchestrator 経路が不明
+
+### Integration Feedback (Check 9)
+
+**Recurring Conflict Files** (>= 3 occurrences in last 100 events):
+- `src/types/user.ts` (4x) — 「同じ types/ 配下は 1 subtask にまとめるべき」
+
+**Recurring Conflict Directories**:
+- `src/types/` (5x)
+
+→ 次回 `dev-decompose --dry-run` は自動的にこの hint を subtask grouping に
+  反映する。再発が収束しない場合は decomposition 戦略自体の見直しを検討。
 
 ### Other Findings
 

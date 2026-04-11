@@ -177,3 +177,26 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7
 Check 8 は **dev-flow 系 skill の連携健全性** に特化している。全 skill を対象にした
 汎用的な failure pattern detection や proposal 生成は `skill-retrospective` 側で
 行うこと。詳しくは [responsibility-split.md](responsibility-split.md) を参照。
+
+## Check 9: Integration Feedback（再発 conflict pattern）
+
+`_shared/integration-feedback.json` を pub/sub 型の event store として読み、
+`dev-integrate` が過去に記録した conflict / integration_failure から **再発している
+file / directory prefix** を抽出する。
+
+- 実装: `run-diagnostics.sh` の `run_feedback_checks` + `dev-decompose/scripts/analyze-past-conflicts.sh`
+- 閾値: default `min_occurrences=3`、`limit=100` events
+- 出力: `checks.integration_feedback = { status, total_events, recurring_files[], recurring_prefixes[] }`
+- 減点: `recurring_files` あり -3、`recurring_prefixes` あり -2、合計 -5 まで
+
+### 目的
+
+- 同じ file が繰り返し conflict する場合、decomposition 戦略が file boundary を誤っている可能性が高い
+- doctor は warning として surface し、次回 `dev-decompose --dry-run` への hint として
+  `analyze-past-conflicts.sh` 経由で自動反映される
+- event store が空 / 壊れている場合は `status: "no_data"` で減点なし
+
+### 関連パターン
+
+[`_shared/references/integration-feedback.md`](../../_shared/references/integration-feedback.md)
+で event store のスキーマ・書き込みパス・学習ループ全体を解説している。
