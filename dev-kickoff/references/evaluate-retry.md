@@ -101,20 +101,65 @@ After Phase 6 (dev-evaluate) returns evaluation JSON:
    - Phase 3 に戻り、dev-plan-impl が feedback を読んで revise する
 7. **Fork failure**: dev-plan-review の context:fork 起動自体が失敗 → 1 回 retry → 依然失敗なら warning 付きで Phase 4 に進行
 
-### Stuck Detection Pseudocode
+### Stuck Detection Script
 
-```python
-def is_stuck(history, current_iteration):
-    if current_iteration < 2:
-        return False
-    prev = history[current_iteration - 1]["findings"]
-    curr = history[current_iteration]["findings"]
-    prev_keys = {(f["dimension"], f["topic"]) for f in prev
-                 if f["severity"] in ("critical", "major")}
-    curr_keys = {(f["dimension"], f["topic"]) for f in curr
-                 if f["severity"] in ("critical", "major")}
-    return bool(prev_keys & curr_keys)
+Stuck detection is delegated to `$SKILLS_DIR/_shared/scripts/detect-stuck-findings.py` to eliminate LLM judgement drift (#48). dev-kickoff reads the script's JSON output and branches on `.escalate`.
+
+**CLI**:
+
 ```
+detect-stuck-findings.py --history <plan-review-history.json> [--min-severity critical|major|minor]
+```
+
+**Input**: `plan-review-history.json` (canonical schema below). Missing file, empty array, or corrupt JSON all yield `escalate: false` (exit 0) so the loop never breaks on telemetry problems.
+
+**Output JSON** (stdout):
+
+```json
+{
+  "escalate": true,
+  "current_iteration": 2,
+  "stuck_findings": [
+    {"dimension": "architecture", "topic": "Missing rollback strategy"}
+  ],
+  "checked_severities": ["critical", "major"]
+}
+```
+
+**Algorithm** (equivalent to the legacy pseudo-code, now mechanically enforced):
+
+1. `current_iteration = len(history)`
+2. If `current_iteration < 2` -> `escalate: false`
+3. For the last two iterations, build fingerprint sets `{(dimension, topic)}` from findings whose severity is `>= min_severity` (default `major`). Legacy `blocking` aliases to `major`; `non-blocking` aliases to `minor`.
+4. `stuck = prev_keys & curr_keys`
+5. `escalate = bool(stuck)`
+
+**Call example from dev-kickoff**:
+
+```bash
+STUCK_RESULT=$($SKILLS_DIR/_shared/scripts/detect-stuck-findings.py \
+  --history "$WORKTREE/.claude/plan-review-history.json")
+if [[ "$(echo "$STUCK_RESULT" | jq -r .escalate)" == "true" ]]; then
+  STUCK=$(echo "$STUCK_RESULT" | jq -c .stuck_findings)
+  $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
+    --worktree "$WORKTREE" --escalated true --escalation-reason stuck --stuck-findings "$STUCK"
+fi
+```
+
+> 参考: 以前は `references/evaluate-retry.md` に下記の擬似 Python コードを載せていた。現在は上記スクリプトが同等ロジックを実装している。
+>
+> ```python
+> def is_stuck(history, current_iteration):
+>     if current_iteration < 2:
+>         return False
+>     prev = history[current_iteration - 2]["findings"]
+>     curr = history[current_iteration - 1]["findings"]
+>     prev_keys = {(f["dimension"], f["topic"]) for f in prev
+>                  if f["severity"] in ("critical", "major")}
+>     curr_keys = {(f["dimension"], f["topic"]) for f in curr
+>                  if f["severity"] in ("critical", "major")}
+>     return bool(prev_keys & curr_keys)
+> ```
 
 ### Escalation Output Example
 
@@ -145,11 +190,14 @@ def is_stuck(history, current_iteration):
     "plan_review": {
       "max_iterations": 3,
       "pass_threshold": 80,
-      "escalate_on_stuck": true
+      "escalate_on_stuck": true,
+      "max_diff_ratio": 0.5
     }
   }
 }
 ```
+
+- `max_diff_ratio`: iteration > 1 で dev-plan-impl が書き直した plan と前回 plan の差分比率が超えたら warning（`dev-plan-impl/scripts/check-diff-scale.sh`）。default 0.5。非数値を入れると起動時にエラーで fail する。
 
 ### 後方互換
 
