@@ -85,7 +85,7 @@ run_journal_checks() {
   journal_data=$("$JOURNAL_SH" query --skill dev-flow --limit 200 2>/dev/null || echo "[]")
 
   # Validate journal_data is valid JSON array
-  if ! echo "$journal_data" | jq 'type == "array"' 2>/dev/null | grep -q true; then
+  if ! echo "$journal_data" | jq -e 'type == "array"' >/dev/null 2>&1; then
     journal_data="[]"
   fi
 
@@ -121,7 +121,7 @@ run_journal_checks() {
   # --- Check 3: Error Categories (via stats) ---
   local stats_data=""
   stats_data=$("$JOURNAL_SH" stats 2>/dev/null || echo "{}")
-  if ! echo "$stats_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+  if ! echo "$stats_data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     stats_data="{}"
   fi
 
@@ -135,7 +135,7 @@ run_journal_checks() {
   # --- Check 6: Success Rate Trend ---
   local recent_stats=""
   recent_stats=$("$JOURNAL_SH" stats --since 7d 2>/dev/null || echo "{}")
-  if ! echo "$recent_stats" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+  if ! echo "$recent_stats" | jq -e 'type == "object"' >/dev/null 2>&1; then
     recent_stats="{}"
   fi
 
@@ -409,9 +409,20 @@ run_family_checks() {
   fi
 
   # Validate JSON object
-  if ! echo "$family_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+  if ! echo "$family_data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "error", "reason": "invalid JSON from analyze-dev-flow-family.sh"}')
     add_issue "warn" "analyze-dev-flow-family.sh produced invalid JSON"
+    return
+  fi
+
+  # Cold-start guard: if the dev-flow family has zero total entries in the
+  # window, skip the dead/disconnected/stuck penalties entirely to avoid a
+  # false-positive -10 baseline on new or long-idle environments.
+  local total_family_entries
+  total_family_entries=$(echo "$family_data" | jq '[.per_skill[].total] | add // 0')
+  if [[ "$total_family_entries" -eq 0 ]]; then
+    add_issue "info" "Dev-flow family has no entries in ${WINDOW} — insufficient data, family checks skipped"
+    CHECKS=$(echo "$CHECKS" | jq --argjson f "$family_data" '.dev_flow_family = ($f + {status: "insufficient_data"})')
     return
   fi
 
@@ -458,7 +469,7 @@ run_family_checks() {
 }
 
 # ============================================================================
-# Check: Integration Feedback (recurring conflict patterns)
+# Check 9: Integration Feedback (recurring conflict patterns)
 # ============================================================================
 
 run_feedback_checks() {
@@ -527,6 +538,44 @@ run_feedback_checks() {
 }
 
 # ============================================================================
+# Check 10: Termination Loop Health (kickoff.json driven) — issue #53
+# ============================================================================
+
+run_termination_loops_check() {
+  local analyze_sh="$SCRIPT_DIR_RD/analyze-termination-loops.sh"
+  if [[ ! -x "$analyze_sh" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "skipped", "reason": "analyze-termination-loops.sh not found"}')
+    return
+  fi
+
+  local term_data
+  if ! term_data=$("$analyze_sh" 2>/dev/null); then
+    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "error", "reason": "analyze-termination-loops.sh failed"}')
+    return
+  fi
+
+  if ! echo "$term_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
+    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "error", "reason": "invalid JSON from analyze-termination-loops.sh"}')
+    return
+  fi
+
+  local findings_count
+  findings_count=$(echo "$term_data" | jq '.findings | length')
+
+  if [[ "$findings_count" -gt 0 ]]; then
+    # Emit a single summary warn; detailed findings remain inside CHECKS.termination_loops
+    local repeated max_iter stuck_cnt fork_cnt
+    repeated=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "repeated_feedback_target")] | length')
+    max_iter=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "max_iterations")] | length')
+    stuck_cnt=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "stuck")] | length')
+    fork_cnt=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "fork_failure")] | length')
+    add_issue "warn" "Termination loop findings: repeated_feedback_target=${repeated}, max_iterations=${max_iter}, stuck=${stuck_cnt}, fork_failure=${fork_cnt}"
+  fi
+
+  CHECKS=$(echo "$CHECKS" | jq --argjson t "$term_data" '.termination_loops = $t')
+}
+
+# ============================================================================
 # Run checks based on scope
 # ============================================================================
 
@@ -537,6 +586,7 @@ case "$SCOPE" in
     run_config_checks
     run_family_checks
     run_feedback_checks
+    run_termination_loops_check
     ;;
   journal)
     run_journal_checks
@@ -549,6 +599,7 @@ case "$SCOPE" in
     ;;
   family)
     run_family_checks
+    run_termination_loops_check
     ;;
   feedback)
     run_feedback_checks
@@ -582,6 +633,7 @@ jq -n \
     score: $score,
     rating: $rating,
     scope: $scope,
+    score_scope: $scope,
     checks: $checks,
     issues: $issues
   }'
