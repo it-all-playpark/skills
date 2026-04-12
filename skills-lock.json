@@ -36,6 +36,11 @@
       "sourceType": "github",
       "computedHash": "896220542e1db3e30638569a7d92d589d6c823b93a8d4e01f498ff090a852289"
     },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+    },
     "gsc": {
       "source": "jdrhyne/agent-skills",
       "sourceType": "github",
