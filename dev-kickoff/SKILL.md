@@ -131,7 +131,7 @@ Details: [Journal Logging](references/journal-logging.md)
 
 ## Subagent Dispatch Rules
 
-dev-kickoff は Phase 2 / 3b / 5 / 6 で subagent を起動する。必須5要素・routing・phase 別 prompt 仕様は [Subagent Dispatch Rules](references/subagent-dispatch.md)（共通規約は [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)）を参照。
+dev-kickoff は Phase 2 / 3b / 5 / 6 で subagent を起動する。各 Task 呼び出しは必須5要素（**Objective** / **Output format** / **Tools** / **Boundary** / **Token cap**）を含むこと。phase 別 prompt 仕様・routing は [Subagent Dispatch Rules](references/subagent-dispatch.md)（共通規約は [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)）を参照。
 
 ## References
 
