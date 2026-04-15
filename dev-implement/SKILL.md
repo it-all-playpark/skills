@@ -82,7 +82,32 @@ Based on `--testing` (default: tdd): tdd = Write tests first → Implement → R
 
 Create TodoWrite items for tracking (>3 steps).
 
-### Step 4: Implement
+### Step 4: Implement (Red → Green → Refactor)
+
+`impl-plan.md` に `## Test Plan` がある場合、**必ず以下 3 sub-phase を順に実行**する。確認ダイアログは挟まず、各 sub-phase の成否は自動検証（`dev-validate`）で判定する。
+
+#### Step 4a: Red — Write Failing Tests First
+
+1. `## Test Plan` のテストエントリを全て**テストファイルにのみ**書く（実装コードは書かない）
+2. `dev-validate` を実行し、「テストが期待通り FAIL している」ことを検証
+3. **Red 不成立時の自動リトライ条件**:
+   - `Expected Initial State: RED` のテストが PASS している → テストが実装を検証できていない疑い。テストを書き直す（最大 2 回）
+   - 既存の実装で通ってしまった場合は、テストの assertion を issue AC に合わせて強化する
+4. 2 回リトライしても RED にならないテストは Test Plan から落とす理由を `kickoff.json.phases.4_implement.red_failures[]` に記録して次の sub-phase へ
+
+#### Step 4b: Green — Implement to Pass
+
+1. テストファイルは**変更せず**、実装コードのみ書いて全テストを GREEN にする
+2. `dev-validate` で全テスト PASS を確認
+3. Green 不成立時は実装を修正して再検証（最大 3 回）。それでも失敗するなら Evaluator feedback を待つ（phase 6 へ）
+
+#### Step 4c: Refactor (optional)
+
+1. テストが GREEN のまま、重複・命名・構造を整理
+2. 各 refactor 後に `dev-validate` で回帰テスト
+3. Refactor で test が RED 化したら即 revert
+
+**Test Plan が無い場合**（standalone 実行 or `config.testing=none`）は上記 sub-phase をスキップし、従来通りの一括実装を行う。
 
 Select tools based on `--type`. Follow project conventions, maintain existing patterns, add error handling, include imports.
 
