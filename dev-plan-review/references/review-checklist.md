@@ -37,7 +37,14 @@ Implementation plan を批判的にレビューするためのチェックリス
 - ファイルパスは具体的か？
 - 実装順序に依存関係の矛盾がないか？
 
-### 7. Security & Data Safety
+### 7. Test Plan Coverage (config.testing != none の場合のみ)
+- `## Test Plan` セクションが存在するか？
+- 全 acceptance criterion (AC) に最低 1 テストが割り当てられているか？（AC ID が Test Plan に出現するか）
+- 各テストに `Expected Initial State` が明記されているか？（原則 `RED`）
+- テストファイルのパスが `## File Changes` にも列挙されているか？
+- 未カバーの AC があれば **critical** finding。Test Plan セクション自体の欠落も **critical**
+
+### 8. Security & Data Safety
 - ユーザー入力のバリデーションが考慮されているか？
 - 認証/認可への影響が検討されているか？
 - 機密データの扱いが適切か？
@@ -51,6 +58,7 @@ Implementation plan を批判的にレビューするためのチェックリス
 - Edge Case に対応方針がない（列挙のみ）
 - 依存関係の矛盾（実装不可能な順序）
 - セキュリティ上の懸念が無視されている
+- **Test Plan セクションの欠落、または AC が Test Plan に未カバー**（config.testing != none の場合）
 
 ## Review Protocol
 
