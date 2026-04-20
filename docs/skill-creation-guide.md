@@ -28,6 +28,7 @@ allowed-tools:                      # 許可ツール（省略時はデフォル
   - Skill
   - Task
 model: sonnet                       # 実行モデル（省略可）
+effort: max                         # 推論深度（省略時 session 設定を継承）
 context: fork                       # fork で別コンテキスト（省略可）
 agent: general-purpose              # context:fork 時のエージェント型（省略可）
 disable-model-invocation: false     # true で自動呼び出し禁止
@@ -35,7 +36,7 @@ user-invocable: true                # false でメニュー非表示（backgroun
 ---
 ```
 
-### Frontmatter 全10フィールド
+### Frontmatter 全11フィールド
 
 | Field | Required | Description |
 |-------|----------|-------------|
@@ -43,12 +44,33 @@ user-invocable: true                # false でメニュー非表示（backgroun
 | `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に |
 | `argument-hint` | No | autocomplete ヒント |
 | `allowed-tools` | No | 許可ツールリスト |
-| `model` | No | 実行モデル指定 |
+| `model` | No | 実行モデル指定（`haiku` / `sonnet` / `opus`） |
+| `effort` | No | 推論深度（`low` / `medium` / `high` / `xhigh` / `max`）。session 設定を override |
 | `context` | No | `fork` で分離サブエージェント |
 | `agent` | No | `context:fork` 時のサブエージェントタイプ |
 | `hooks` | No | ライフサイクルフック |
 | `disable-model-invocation` | No | `true` で自動呼び出し禁止（危険スキル向け） |
 | `user-invocable` | No | `false` でメニュー非表示（background knowledge 専用） |
+
+### effort の選び方
+
+`effort` は skill 実行時の推論深度（reasoning depth）を指定する。省略時は session の
+`effortLevel`（settings.json）を継承。Opus 4.7 は 5 段階全対応、Opus 4.6 / Sonnet 4.6 は
+`xhigh` 非対応で fallback する。
+
+| 値 | 用途 | 例 |
+|---|------|-----|
+| `low` | 決定論的処理・CLI wrapper・フォーマット変換 | `image-convert`, `repo-export` |
+| `medium` | 軽度の判断を伴う処理 | `blog-schedule-overview` |
+| `high` | 標準的なコード生成・通常ワークフロー | デフォルト推奨 |
+| `xhigh` | 長時間 agentic / 大規模コーディング（Opus 4.7 限定） | 複雑な実装タスク |
+| `max` | 計画・レビュー・批判的分析など**熟考が必要な処理** | `dev-plan-impl`, `dev-plan-review`, `dev-evaluate`, `pr-review`, `bug-hunt`, `code-audit-team`, `seo-strategy`, `incident-response` |
+
+**判断基準**: 推論の質が出力品質を決定する skill（planning, review, critique, strategy）は `max`。
+決定論的 tool wrapper は `low`。迷ったら省略して session 設定に委ねる。
+
+参照: [Claude Code docs — effort](https://code.claude.com/docs/en/skills#frontmatter-reference) /
+[model-config](https://code.claude.com/docs/en/model-config#adjust-effort-level)
 
 ### description の書き方
 

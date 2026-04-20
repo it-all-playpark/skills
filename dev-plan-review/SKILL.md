@@ -12,7 +12,7 @@ allowed-tools:
   - Glob
   - Bash
 model: opus
-effort: high
+effort: max
 context: fork
 agent: general-purpose
 ---

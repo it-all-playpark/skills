@@ -9,7 +9,7 @@ description: |
   デプロイ後の不具合, postmortem, 原因特定
   Accepts args: <symptom> [--since <datetime>] [--deploy-ref <ref>] [--max-turns N] [--repo-path <path>]
 model: opus
-effort: high
+effort: max
 allowed-tools:
   - Task
   - Bash
@@ -74,3 +74,4 @@ State persisted in `$CWD/.claude/incident-state.json`. Script commands and outpu
 - [Team Lifecycle](references/team-lifecycle.md) - Agent Team lifecycle patterns
 - [Investigation Lines](references/investigation-lines.md) - Detailed procedures per analysis line
 - [Resolution Patterns](references/resolution-patterns.md) - Immediate/permanent/prevention pattern templates
+

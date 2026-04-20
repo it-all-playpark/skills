@@ -5,6 +5,7 @@ description: |
   Use when: verifying implementation quality, running tests, checking for regressions.
   Accepts args: [--fix] [--strict] [--worktree <path>]
 model: haiku
+effort: low
 ---
 
 # Validate

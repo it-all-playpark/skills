@@ -9,7 +9,7 @@ description: |
   (3) blog-publish の --skip-seo なしフローの上流ステップとして。
   Accepts args: [--refresh] [--ga-report PATH] [--gsc-report PATH] [--trends-report PATH] [--config PATH]
 model: opus
-effort: high
+effort: max
 ---
 
 # SEO Strategy (Agent Team)
@@ -279,3 +279,4 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-strategy success \
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-strategy failure \
   --error-category <category> --error-msg "<message>"
 ```
+

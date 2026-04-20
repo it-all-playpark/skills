@@ -9,6 +9,8 @@ description: |
 allowed-tools:
   - Bash
   - Skill
+model: opus
+effort: max
 ---
 
 # skill-retrospective
