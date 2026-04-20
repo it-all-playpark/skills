@@ -12,6 +12,8 @@ allowed-tools:
   - Write
   - Edit
   - Skill
+model: opus
+effort: max
 ---
 
 # Skill Creator

@@ -16,6 +16,8 @@ allowed-tools:
   - Agent
   - TaskCreate
   - TaskUpdate
+model: opus
+effort: max
 ---
 
 # Night Patrol
