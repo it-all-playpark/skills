@@ -5,7 +5,7 @@ description: |
   Accepts args: <pr-number-or-url> [--depth quick|standard|deep]
 argument-hint: [pr-number] [--depth]
 model: opus
-effort: high
+effort: max
 context: fork
 agent: Plan
 allowed-tools:
@@ -86,3 +86,4 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-review success \
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-review failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```
+

@@ -9,6 +9,8 @@ description: |
 allowed-tools:
   - Bash
   - Task
+model: opus
+effort: max
 ---
 
 # Dev Decompose

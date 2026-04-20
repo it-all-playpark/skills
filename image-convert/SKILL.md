@@ -5,6 +5,7 @@ description: |
   Use when: (1) user wants to convert image to different format, (2) needs to change image extension,
   (3) keywords like "convert", "変換", "to jpg", "to png", "to webp", "to avif",
   (4) file types: JPG, PNG, WEBP, AVIF, TIFF, GIF.
+model: haiku
 effort: low
 ---
 

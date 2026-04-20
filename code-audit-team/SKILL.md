@@ -8,7 +8,7 @@ description: |
   (5) keywords: audit, 監査, comprehensive review, 多角的レビュー, pre-release check, セキュリティ監査
   Accepts args: <target> [--scope file|module|project] [--focus DOMAIN,...] [--max-turns N] [--report]
 model: opus
-effort: high
+effort: max
 allowed-tools:
   - Task
   - Bash
@@ -198,3 +198,4 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log code-audit-team success \
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log code-audit-team failure \
   --error-category <category> --error-msg "<message>"
 ```
+
