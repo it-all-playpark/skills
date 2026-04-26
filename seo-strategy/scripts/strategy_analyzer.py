@@ -900,9 +900,19 @@ def scan_robots_config(project_dir: str) -> dict:
     }
 
 
+_IMAGE_EXT_PATTERN = re.compile(r"\.(webp|png|jpe?g|svg|gif|avif)$", re.IGNORECASE)
+
+
 def _load_hub_slugs(blog_dir: str) -> set[str]:
-    """Read hub slugs from lib/blog-hubs.ts so /blog/hub/* links are valid."""
-    hub_file = Path(blog_dir).resolve().parent / "lib" / "blog-hubs.ts"
+    """Read hub slugs from lib/blog-hubs.ts so /blog/hub/* links are valid.
+
+    blog_dir は通常 'content/blog'。Next.js プロジェクト構成では
+    `<repo>/content/blog/` と `<repo>/lib/blog-hubs.ts` が同じリポジトリルートを
+    親に持つため、blog_dir から 2 階層上に登ってから lib/ を参照する。
+    """
+    blog_path = Path(blog_dir).resolve()
+    # blog_path: <repo>/content/blog → parent.parent: <repo>
+    hub_file = blog_path.parent.parent / "lib" / "blog-hubs.ts"
     if not hub_file.exists():
         return set()
     content = _read_text(str(hub_file))
@@ -912,6 +922,9 @@ def _load_hub_slugs(blog_dir: str) -> set[str]:
 
 def scan_internal_links(blog_dir: str) -> dict:
     """Build internal link graph from MDX content."""
+    # 画像は markdown image syntax `![alt](/blog/...)` を含むが、
+    # `\[...\]\(...\)` は `![alt](url)` の `[alt](url)` 部分にも一致してしまう。
+    # 画像存在確認は image scanner の責務なので、内部リンクの broken 判定からは画像を除外する。
     link_pattern = re.compile(r"\[([^\]]*)\]\((/blog/[^)#\s]+)")
     articles = scan_blog_articles(blog_dir)
     known_slugs = {a["slug"] for a in articles}
@@ -928,6 +941,9 @@ def scan_internal_links(blog_dir: str) -> dict:
 
         content = _read_text(mdx_path)
         for _text, href in link_pattern.findall(content):
+            # Skip image references (handled by image scanner, not internal links)
+            if _IMAGE_EXT_PATTERN.search(href):
+                continue
             # Recognize /blog/hub/* as valid link targets
             if href.startswith("/blog/hub/"):
                 hub_slug = href.strip("/").split("/")[-1]
