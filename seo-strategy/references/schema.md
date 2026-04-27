@@ -16,6 +16,7 @@
 | `channel_strategy` | array | チャネル別改善 |
 | `new_article_directions` | array | 新規記事の方向性 |
 | `cluster_suggestions` | array | 未分類クエリからの新クラスタ提案 |
+| `content_overlap_analysis` | object | KW × 既存記事の重複マップ（カニバリ防止） |
 | `kpi_targets` | object | 目標 KPI |
 | `roadmap` | object | フェーズ別計画 |
 
@@ -185,6 +186,47 @@
 ```
 
 LLM はこの提案を確認し、有用なものを `seo-config.json` の `cluster_keywords` に追加する判断を行う。
+
+## content_overlap_analysis
+
+`strategy_analyzer.py` が frontmatter ベースで機械的に算出する KW × 既存記事の重複マップ。
+`new_article_directions` が GSC 未反映の新着記事と重複するテーマを提案する事故 (Issue #69) を防ぐ。
+
+```jsonc
+{
+  "content_overlap_analysis": {
+    "match_threshold": 0.4,                  // number, 0.0-1.0 (config: overlap_match_threshold)
+    "thresholds": {                          // saturation 判定用 (config: saturation_thresholds の snapshot)
+      "none": 0,                             // count <= "none" → "none"
+      "low": 1,                              // count <= "low"  → "low"
+      "medium": 3                            // count <= "medium" → "medium" / それ以上 → "high"
+    },
+    "clusters": [
+      {
+        "name": "Claude Code",               // string, cluster_keywords のキー
+        "keywords": ["claude code", "..."],  // string[], cluster_keywords[name]
+        "coverage_articles": [               // match_score >= match_threshold の記事 (slug 順)
+          {
+            "slug": "claude-code-vs-codex-comparison",
+            "title": "Claude Code vs Codex 比較",
+            "match_score": 0.92,             // number, 0.0-1.0 (overlap coefficient)
+            "matched_on": ["title", "tags"]  // ("title"|"tags"|"description"|"keywords")[]
+          }
+        ],
+        "coverage_count": 3,                 // int, len(coverage_articles)
+        "saturation": "high"                 // "none" | "low" | "medium" | "high"
+      }
+    ]
+  }
+}
+```
+
+各 field は required。`cluster_keywords` が空の場合 `clusters: []`。
+スコアリングは KW トークン集合 × 記事結合トークン集合の overlap coefficient
+`|A∩B| / min(|A|,|B|)`。日本語は CJK bigram で対応。
+
+LLM はこのセクションを参照して `new_article_directions` の `priority` を決定する
+（references/analysis_guide.md の priority 表を参照）。
 
 ## category_performance
 

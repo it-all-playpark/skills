@@ -33,11 +33,18 @@ strategy_analyzer.py が使用する分析手法・閾値・判断基準。
 
 ### new_article_directions の priority
 
+`content_overlap_analysis.clusters[].coverage_count` を**必ず参照**して priority を決定する。
+
 | Priority | 条件 |
 | -------- | ---- |
-| high | クラスタ imp ≥ 500 AND 既存記事なし/不足 |
-| medium | クラスタ imp 100-500 OR トレンド上昇中 |
-| low | imp < 100 AND トレンド横ばい |
+| high | クラスタ imp ≥ 500 AND `coverage_count == 0` |
+| medium | クラスタ imp 100-500 AND `coverage_count ≤ 1` |
+| low | `coverage_count ≤ 2` AND トレンド上昇中 |
+| skip | `coverage_count ≥ 3`（既存記事の最適化を優先） |
+
+**注意**: `existing_articles` だけでは GSC 未反映の新着記事を見落とすため、必ず
+`content_overlap_analysis.coverage_articles` を参照すること。`content_overlap_analysis`
+は frontmatter ベースの機械的判定であり、LLM の主観判定より優先する（Issue #69）。
 
 ## Query Clustering ロジック
 
@@ -244,3 +251,34 @@ GA4 で `landingPage` が `(not set)` または空文字のセッションは以
 | CVR > 1% かつ sessions < 100 | **CVポテンシャル高**: このテーマの記事を増産すべき |
 | エンゲージメント率 < 40% かつ CVR < 0.5% | **コンテンツ品質問題**: リライト or 削除検討 |
 | ブログ全体CVR と 非ブログCVR の差が 10倍以上 | **構造的ミスマッチ**: ブログ→CVの導線設計を根本的に見直す |
+
+## Validation: content_overlap_analysis
+
+corporate-site (issue#419) など既知のカニバリ事例で再生成検証する場合の手順:
+
+1. 解析を実行して JSON を生成:
+
+   ```bash
+   python3 seo-strategy/scripts/strategy_analyzer.py \
+     --config seo-config.json \
+     --blog-dir content/blog \
+     --gsc-report claudedocs/gsc-report.json \
+     --output claudedocs/seo-strategy-analysis.json
+   ```
+
+2. high saturation クラスタを抽出:
+
+   ```bash
+   jq '.content_overlap_analysis.clusters[] | select(.saturation == "high")' \
+     claudedocs/seo-strategy-analysis.json
+   ```
+
+3. 上記クラスタに対して `seo-strategy.md` の `new_article_directions` で
+   `priority: high` 提案が含まれていないことを確認する。
+
+4. 含まれていれば content-strategist agent への入力ガード違反であり、
+   `references/devils-advocate.md` チェック項目 6 で **Blocking** として処理する。
+
+5. 設定の調整: false negative（実際にカニバリしているのに検出されない）が多い場合は
+   `seo-config.json` の `overlap_match_threshold` を下げる（例: 0.4 → 0.3）。
+   false positive が多い場合は上げる（例: 0.4 → 0.5）。
