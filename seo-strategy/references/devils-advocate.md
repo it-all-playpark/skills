@@ -61,11 +61,15 @@
 ### 6. 内部整合性
 
 - [ ] existing_article_optimizations と new_article_directions で同じ KW 領域を重複カバーしていないか
+- [ ] **new_article_directions の各提案が `content_overlap_analysis.coverage_articles` と重複していないか（GSC 未反映の新着記事を含む全件チェック）**
 - [ ] site_structure の内部リンク提案と existing_article_optimizations の対象記事が整合しているか
 - [ ] technical_seo の修正提案が channel_strategy の改善と矛盾していないか
 - [ ] cluster_suggestions が既存 cluster_keywords と重複していないか
 
-**Blocking**: 明確な矛盾が存在
+**Blocking**:
+- 明確な矛盾が存在
+- `content_overlap_analysis.clusters[].coverage_count >= 2` の領域に新規記事が
+  `priority: high` で提案されている（既存記事の最適化を優先すべき）
 
 ### 7. 見落としチェック
 

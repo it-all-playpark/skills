@@ -38,6 +38,17 @@ DEFAULT_CONFIG = {
     "unclustered_min_impressions": 20,
     "cluster_suggestion_min_impressions": 50,
     "cluster_suggestion_top_n": 5,
+    # content_overlap_analysis: KW × 既存記事の重複検出 (Issue #69)
+    "saturation_thresholds": {
+        # coverage_count <= "none" → "none" (新規提案OK)
+        # coverage_count <= "low"  → "low"
+        # coverage_count <= "medium" → "medium"
+        # それ以上 → "high" (新規提案禁止)
+        "none": 0,
+        "low": 1,
+        "medium": 3,
+    },
+    "overlap_match_threshold": 0.4,
 }
 
 # --- Stop words for cluster suggestions ---
@@ -172,8 +183,33 @@ def load_config(path: str | None) -> dict:
     return config
 
 
+def _split_csv_or_array(value) -> list[str]:
+    """Normalize CSV / array literal / list / single string into a list[str].
+
+    Accepts:
+      - list (returned as-is, items stripped)
+      - "[a, b, c]" → ["a", "b", "c"]
+      - "a, b, c" → ["a", "b", "c"]
+      - "single" → ["single"]
+      - "" / None → []
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [str(v).strip().strip('"').strip("'") for v in value if str(v).strip()]
+    s = str(value).strip()
+    if s.startswith("[") and s.endswith("]"):
+        s = s[1:-1]
+    return [t.strip().strip('"').strip("'") for t in s.split(",") if t.strip()]
+
+
 def parse_frontmatter(mdx_path: str) -> dict | None:
-    """Extract frontmatter from MDX file."""
+    """Extract frontmatter from MDX file.
+
+    Supports:
+      - inline `key: value`
+      - YAML block list (continuation lines starting with `- `)
+    """
     try:
         with open(mdx_path) as f:
             content = f.read()
@@ -184,14 +220,37 @@ def parse_frontmatter(mdx_path: str) -> dict | None:
     if not match:
         return None
 
-    fm = {}
-    for line in match.group(1).split("\n"):
-        if ":" in line:
+    fm: dict = {}
+    lines = match.group(1).split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if ":" in line and not line.lstrip().startswith("-"):
             key, _, value = line.partition(":")
             key = key.strip()
             value = value.strip().strip('"').strip("'")
             if value:
                 fm[key] = value
+            else:
+                # Empty value — check for following YAML block list (- item).
+                items: list[str] = []
+                j = i + 1
+                while j < len(lines):
+                    nxt = lines[j]
+                    stripped = nxt.lstrip()
+                    if stripped.startswith("- "):
+                        items.append(stripped[2:].strip().strip('"').strip("'"))
+                        j += 1
+                        continue
+                    if stripped == "" and not items:
+                        # blank line before any item — end of block
+                        break
+                    break
+                if items:
+                    fm[key] = items
+                    i = j
+                    continue
+        i += 1
     return fm
 
 
@@ -213,7 +272,8 @@ def scan_blog_articles(blog_dir: str) -> list[dict]:
             "description": fm.get("description", ""),
             "date": fm.get("date", ""),
             "category": fm.get("category", ""),
-            "tags": [t.strip() for t in fm.get("tags", "").split(",") if t.strip()],
+            "tags": _split_csv_or_array(fm.get("tags", "")),
+            "keywords": _split_csv_or_array(fm.get("keywords", "")),
         })
     return articles
 
@@ -479,6 +539,164 @@ def build_query_clusters(
 def _tokenize(text: str) -> list[str]:
     """Split text into tokens by whitespace, hyphens, underscores."""
     return [t for t in re.split(r"[\s\-_]+", text.lower()) if t and t not in STOP_WORDS and len(t) > 1]
+
+
+# CJK 連続部分を検出する正規表現 (Hiragana / Katakana / CJK Unified Ideographs)
+_CJK_RUN_RE = re.compile(r"[぀-ゟ゠-ヿ㐀-鿿]+")
+
+
+def _tokenize_for_overlap(text: str) -> set[str]:
+    """Tokenize text for overlap matching (CJK-aware, no MeCab dependency).
+
+    Returns a lowercase token set built from:
+    - whitespace/hyphen/underscore split tokens (length >= 2, stop-words removed)
+    - 2-gram of every contiguous CJK character run (covers Japanese/Chinese)
+
+    The bigram fallback lets us match terms like "シフト管理" against article
+    titles like "シフト管理アプリの選び方" without a morphological analyzer.
+    """
+    if not text:
+        return set()
+    tokens: set[str] = set()
+    # ASCII / latin tokens via the existing tokenizer.
+    tokens.update(_tokenize(text))
+    # CJK bigrams.
+    for run in _CJK_RUN_RE.findall(text):
+        if len(run) < 2:
+            continue
+        for i in range(len(run) - 1):
+            tokens.add(run[i:i + 2])
+    return tokens
+
+
+def _saturation_label(count: int, thresholds: dict) -> str:
+    """Map coverage_count to saturation label using config thresholds."""
+    none_max = int(thresholds.get("none", 0))
+    low_max = int(thresholds.get("low", 1))
+    medium_max = int(thresholds.get("medium", 3))
+    if count <= none_max:
+        return "none"
+    if count <= low_max:
+        return "low"
+    if count <= medium_max:
+        return "medium"
+    return "high"
+
+
+def build_content_overlap_analysis(
+    blog_articles: list[dict],
+    config: dict,
+) -> dict:
+    """Build content overlap analysis: cluster KW × existing articles coverage.
+
+    Mechanically detects which existing published articles already cover each
+    cluster keyword so that LLM-driven `new_article_directions` proposals can
+    avoid cannibalizing newly-published (GSC-not-yet-indexed) articles.
+
+    Output structure (see seo-strategy/references/schema.md):
+
+        {
+          "match_threshold": 0.4,
+          "thresholds": {"none": 0, "low": 1, "medium": 3},
+          "clusters": [
+            {
+              "name": "Claude Code",
+              "keywords": ["claude code", ...],
+              "coverage_articles": [
+                {"slug": "...", "title": "...", "match_score": 0.92,
+                 "matched_on": ["title", "tags"]}
+              ],
+              "coverage_count": 3,
+              "saturation": "high"
+            }
+          ]
+        }
+    """
+    cluster_keywords = config.get("cluster_keywords", {}) or {}
+    match_threshold = float(config.get("overlap_match_threshold", 0.4))
+    thresholds = dict(
+        config.get("saturation_thresholds")
+        or DEFAULT_CONFIG["saturation_thresholds"]
+    )
+
+    if not cluster_keywords:
+        return {
+            "match_threshold": match_threshold,
+            "thresholds": thresholds,
+            "clusters": [],
+        }
+
+    # Pre-tokenize each article: per-field token set + combined token set.
+    article_index = []
+    for article in blog_articles:
+        field_tokens = {
+            "title": _tokenize_for_overlap(article.get("title", "")),
+            "tags": _tokenize_for_overlap(" ".join(article.get("tags", []) or [])),
+            "description": _tokenize_for_overlap(article.get("description", "")),
+            "keywords": _tokenize_for_overlap(" ".join(article.get("keywords", []) or [])),
+        }
+        combined: set[str] = set()
+        for s in field_tokens.values():
+            combined |= s
+        if not combined:
+            continue
+        article_index.append({
+            "slug": article.get("slug", ""),
+            "title": article.get("title", ""),
+            "field_tokens": field_tokens,
+            "combined": combined,
+        })
+
+    clusters_out: list[dict] = []
+    # Iterate over cluster_keywords in declaration order.
+    for cluster_name, raw_keywords in cluster_keywords.items():
+        if isinstance(raw_keywords, str):
+            keywords = [raw_keywords]
+        else:
+            keywords = [str(k) for k in (raw_keywords or [])]
+
+        # Pre-tokenize each KW.
+        kw_token_sets = [(kw, _tokenize_for_overlap(kw)) for kw in keywords]
+        kw_token_sets = [(kw, ts) for kw, ts in kw_token_sets if ts]
+
+        coverage: list[dict] = []
+        for art in article_index:
+            best_score = 0.0
+            matched_fields: set[str] = set()
+            for _kw, kw_tokens in kw_token_sets:
+                inter_combined = kw_tokens & art["combined"]
+                if not inter_combined:
+                    continue
+                denom = min(len(kw_tokens), len(art["combined"]))
+                score = len(inter_combined) / denom if denom else 0.0
+                if score > best_score:
+                    best_score = score
+                # matched_on は KW トークンが intersect する field 名のみ採用
+                for field, ftokens in art["field_tokens"].items():
+                    if kw_tokens & ftokens:
+                        matched_fields.add(field)
+            if best_score >= match_threshold:
+                coverage.append({
+                    "slug": art["slug"],
+                    "title": art["title"],
+                    "match_score": round(best_score, 3),
+                    "matched_on": sorted(matched_fields),
+                })
+
+        coverage.sort(key=lambda c: c["slug"])
+        clusters_out.append({
+            "name": cluster_name,
+            "keywords": keywords,
+            "coverage_articles": coverage,
+            "coverage_count": len(coverage),
+            "saturation": _saturation_label(len(coverage), thresholds),
+        })
+
+    return {
+        "match_threshold": match_threshold,
+        "thresholds": thresholds,
+        "clusters": clusters_out,
+    }
 
 
 def build_cluster_suggestions(
@@ -900,9 +1118,19 @@ def scan_robots_config(project_dir: str) -> dict:
     }
 
 
+_IMAGE_EXT_PATTERN = re.compile(r"\.(webp|png|jpe?g|svg|gif|avif)$", re.IGNORECASE)
+
+
 def _load_hub_slugs(blog_dir: str) -> set[str]:
-    """Read hub slugs from lib/blog-hubs.ts so /blog/hub/* links are valid."""
-    hub_file = Path(blog_dir).resolve().parent / "lib" / "blog-hubs.ts"
+    """Read hub slugs from lib/blog-hubs.ts so /blog/hub/* links are valid.
+
+    blog_dir は通常 'content/blog'。Next.js プロジェクト構成では
+    `<repo>/content/blog/` と `<repo>/lib/blog-hubs.ts` が同じリポジトリルートを
+    親に持つため、blog_dir から 2 階層上に登ってから lib/ を参照する。
+    """
+    blog_path = Path(blog_dir).resolve()
+    # blog_path: <repo>/content/blog → parent.parent: <repo>
+    hub_file = blog_path.parent.parent / "lib" / "blog-hubs.ts"
     if not hub_file.exists():
         return set()
     content = _read_text(str(hub_file))
@@ -912,6 +1140,9 @@ def _load_hub_slugs(blog_dir: str) -> set[str]:
 
 def scan_internal_links(blog_dir: str) -> dict:
     """Build internal link graph from MDX content."""
+    # 画像は markdown image syntax `![alt](/blog/...)` を含むが、
+    # `\[...\]\(...\)` は `![alt](url)` の `[alt](url)` 部分にも一致してしまう。
+    # 画像存在確認は image scanner の責務なので、内部リンクの broken 判定からは画像を除外する。
     link_pattern = re.compile(r"\[([^\]]*)\]\((/blog/[^)#\s]+)")
     articles = scan_blog_articles(blog_dir)
     known_slugs = {a["slug"] for a in articles}
@@ -928,6 +1159,9 @@ def scan_internal_links(blog_dir: str) -> dict:
 
         content = _read_text(mdx_path)
         for _text, href in link_pattern.findall(content):
+            # Skip image references (handled by image scanner, not internal links)
+            if _IMAGE_EXT_PATTERN.search(href):
+                continue
             # Recognize /blog/hub/* as valid link targets
             if href.startswith("/blog/hub/"):
                 hub_slug = href.strip("/").split("/")[-1]
@@ -1215,6 +1449,13 @@ def build_output(
         for a in blog_articles
     ]
 
+    # Content overlap analysis (Issue #69): mechanical KW × article coverage
+    # Prevents new_article_directions from cannibalizing GSC-not-yet-indexed
+    # newly-published articles. Always emitted (clusters: [] when no KW config).
+    output["content_overlap_analysis"] = build_content_overlap_analysis(
+        blog_articles, config,
+    )
+
     # Codebase audit (technical SEO from source code)
     project_dir = getattr(args, "project_dir", None) or "."
     output["codebase_audit"] = build_codebase_audit(project_dir, blog_dir)
@@ -1264,7 +1505,16 @@ def main():
     n_suggestions = len(output.get("cluster_suggestions", []))
     audit_summary = output.get("codebase_audit", {}).get("summary", {})
     n_audit_issues = audit_summary.get("total_issues", 0)
-    print(f"Analysis complete: {n_articles} articles, {n_issues} issues detected, {n_clusters} query clusters, {n_suggestions} cluster suggestions, {n_audit_issues} codebase audit issues")
+    overlap = output.get("content_overlap_analysis", {}) or {}
+    overlap_clusters = overlap.get("clusters", []) or []
+    n_overlap = len(overlap_clusters)
+    n_high_sat = sum(1 for c in overlap_clusters if c.get("saturation") == "high")
+    print(
+        f"Analysis complete: {n_articles} articles, {n_issues} issues detected, "
+        f"{n_clusters} query clusters, {n_suggestions} cluster suggestions, "
+        f"{n_audit_issues} codebase audit issues, "
+        f"{n_overlap} overlap clusters analyzed ({n_high_sat} high saturation)"
+    )
     print(f"Output: {args.output}")
 
 

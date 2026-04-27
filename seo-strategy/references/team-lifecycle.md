@@ -65,6 +65,7 @@ Phase 6: Shutdown     → チーム解散
 - query_clusters: クエリクラスタ
 - cluster_suggestions: 新クラスタ提案
 - trends_summary: トレンドデータ
+- content_overlap_analysis: KW × 既存記事の重複マップ（**新規提案前に必ず参照**）
 
 出力セクション:
 1. existing_article_optimizations（references/schema.md 準拠）
@@ -75,6 +76,13 @@ measure-evaluator の結果を必ず参照し:
 - 既に実装済みの施策は提案から除外する
 - data_validity.assertions で confidence: low の指標に基づく提案には注意書きを付ける
 - theme_cv_analysis の diagnosis を new_article_directions の funnel 判定に活用する
+
+🔴 CRITICAL (新規記事提案ガード - Issue #69):
+- new_article_directions に書く前に必ず `content_overlap_analysis.clusters[].coverage_count` を確認する
+- `coverage_count >= 3` のクラスタには新規提案禁止（existing_article_optimizations を優先）
+- `coverage_count >= 2` でも `priority: high` は付けない
+- `existing_articles` だけでは GSC 未反映の新着記事を見落とすため、
+  必ず `content_overlap_analysis.coverage_articles` (frontmatter ベース機械判定) を参照する
 
 判断基準は references/analysis_guide.md に従う。
 tech-seo-specialist や channel-kpi-analyst に質問がある場合は SendMessage で問い合わせること。

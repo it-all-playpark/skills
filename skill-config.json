@@ -17,7 +17,13 @@
     "cluster_keywords": {},
     "unclustered_min_impressions": 20,
     "cluster_suggestion_min_impressions": 50,
-    "cluster_suggestion_top_n": 5
+    "cluster_suggestion_top_n": 5,
+    "saturation_thresholds": {
+      "none": 0,
+      "low": 1,
+      "medium": 3
+    },
+    "overlap_match_threshold": 0.4
   },
   "trends-analyzer": {
     "geo": "JP",
