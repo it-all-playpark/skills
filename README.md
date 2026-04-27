@@ -346,7 +346,7 @@ config = load_skill_config("ga-analyzer")
 | `cross-post-publish` | Zenn/Qiitaクロスポスト一括投稿オーケストレーション |
 | `zenn-publish` | Zennへの公開 |
 | `qiita-publish` | Qiitaへの公開 |
-| `generate-thumbnail` | Gemini APIによるブログサムネイル生成 |
+| `generate-thumbnail` | Codex CLI built-in image_gen（gpt-image-2）によるブログサムネイル生成 |
 | `get-publish-date` | スケジュール設定に基づく次回公開日算出 |
 | `blog-mv-date` | 記事の公開日変更（MDX/画像/seed/SNS予約を一括更新） |
 | `blog-swap-dates` | 2記事間の公開日入れ替え（MDX/画像/seed/SNS予約を一括更新） |
