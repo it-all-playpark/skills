@@ -8,12 +8,15 @@ model: opus
 effort: max
 context: fork
 allowed-tools:
-  - Bash(~/.claude/skills/*)
-  - Bash(gh:*)
-  - Bash(npm:*)
   - Read
   - Grep
   - Glob
+  - Bash(~/.claude/skills/pr-review/scripts/*)
+  - Bash(~/.claude/skills/_lib/scripts/*)
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
+  - Bash(gh:*)
+  - Bash(npm:*)
+  - Bash(cat:*)
 ---
 
 # PR Review: $ARGUMENTS

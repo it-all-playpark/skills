@@ -9,7 +9,13 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash
+  - Bash(~/.claude/skills/dev-plan-impl/scripts/*)
+  - Bash(~/.claude/skills/dev-kickoff/scripts/*)
+  - Bash(~/.claude/skills/_shared/scripts/*)
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
+  - Bash(cp:*)
+  - Bash(mv:*)
+  - Bash(jq:*)
 model: opus
 effort: max
 context: fork

@@ -10,7 +10,9 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
+  - Bash(git:*)
+  - Bash(gh:*)
 model: opus
 effort: max
 context: fork
