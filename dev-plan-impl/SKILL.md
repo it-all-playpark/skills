@@ -12,6 +12,7 @@ allowed-tools:
   - Bash
 model: opus
 effort: max
+context: fork
 ---
 
 # Plan Implementation

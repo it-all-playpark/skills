@@ -14,7 +14,6 @@ allowed-tools:
 model: opus
 effort: max
 context: fork
-agent: general-purpose
 ---
 
 # Plan Review

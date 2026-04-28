@@ -7,7 +7,6 @@ argument-hint: [pr-number] [--depth]
 model: opus
 effort: max
 context: fork
-agent: Plan
 allowed-tools:
   - Bash(~/.claude/skills/*)
   - Bash(gh:*)
