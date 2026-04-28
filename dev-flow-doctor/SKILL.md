@@ -8,7 +8,8 @@ description: |
   (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector, integration feedback
   Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix]
 allowed-tools:
-  - Bash
+  - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 ---
 
 # dev-flow-doctor

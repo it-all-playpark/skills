@@ -10,10 +10,10 @@ description: |
 allowed-tools:
   - WebSearch
   - WebFetch
-  - Bash
   - Read
   - Write
   - Agent
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 ---
 
 # AI News Digest

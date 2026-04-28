@@ -13,10 +13,10 @@ description: |
 allowed-tools:
   - WebSearch
   - WebFetch
-  - Bash
   - Read
   - Write
   - Agent
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 ---
 
 # Claude Code Tips (Deep Dive)

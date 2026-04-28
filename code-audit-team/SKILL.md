@@ -11,8 +11,9 @@ model: opus
 effort: max
 allowed-tools:
   - Task
-  - Bash
   - Skill
+  - Bash(~/.claude/skills/code-audit-team/scripts/*)
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 ---
 
 # Code Audit Team
