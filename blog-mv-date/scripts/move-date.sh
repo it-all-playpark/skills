@@ -113,6 +113,11 @@ update_seed() {
     # Find seed files containing this article
     local seed_files=$(grep -rl "$old_relative" "$seed_abs" 2>/dev/null || true)
 
+    if [[ -z "$seed_files" ]]; then
+        log "Warning: no seed files reference $old_relative (skipping seed update)"
+        return
+    fi
+
     for seed_file in $seed_files; do
         if [[ -z "$seed_file" ]]; then continue; fi
 
@@ -260,6 +265,19 @@ fi
 # Step 5: Update seed files
 log "Step 5: Updating seed files..."
 update_seed "$ARTICLE" "$NEW_MDX" "$OLD_DATE" "$DEST_DATE"
+
+# Step 6: Verify no stale references remain in seed/
+if [[ "$DRY_RUN" != "true" ]]; then
+    log "Step 6: Verifying no stale references..."
+    SEED_ABS="$PROJECT_ROOT/$SEED_DIR"
+    STALE=$(grep -rl "${OLD_DATE}-${SLUG}" "$SEED_ABS" 2>/dev/null || true)
+    if [[ -n "$STALE" ]]; then
+        echo "Error: stale references to ${OLD_DATE}-${SLUG} still remain in:" >&2
+        echo "$STALE" >&2
+        echo "Manual fix required before commit." >&2
+        exit 1
+    fi
+fi
 
 # Output summary
 cat << EOF
