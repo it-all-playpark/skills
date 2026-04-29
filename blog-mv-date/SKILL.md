@@ -7,6 +7,8 @@ description: |
   (3) user wants to reschedule a blog article to a different date.
   Accepts args: <article> <dest-date> [--dry-run]
 user-invocable: true
+context: fork
+model: haiku
 ---
 
 # Blog Move Date

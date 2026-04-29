@@ -7,6 +7,8 @@ description: |
   (3) user has a Qiita-formatted markdown file from blog-cross-post.
   Accepts args: <file-path> [--public]
 user-invocable: true
+context: fork
+model: haiku
 ---
 
 # Qiita Publish

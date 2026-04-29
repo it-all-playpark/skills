@@ -7,6 +7,8 @@ description: |
   (3) user wants to reorder blog publish schedule.
   Accepts args: <article1> <article2> [--dry-run]
 user-invocable: true
+context: fork
+model: haiku
 ---
 
 # Blog Swap Dates

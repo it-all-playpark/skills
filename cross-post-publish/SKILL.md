@@ -7,6 +7,8 @@ description: |
   (3) user wants end-to-end cross-post workflow from article selection.
   Accepts args: [slug] [--skip-qiita] [--skip-zenn]
 user-invocable: true
+context: fork
+model: sonnet
 ---
 
 # Cross-Post Publish

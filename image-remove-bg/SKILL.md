@@ -5,6 +5,8 @@ description: |
   Use when: (1) user wants to remove/delete background from image, (2) needs transparent PNG,
   (3) keywords like "背景透過", "背景削除", "remove background", "transparent background",
   "切り抜き", "抜き出し", (4) file types: JPG, PNG, WEBP, TIFF, BMP, GIF.
+context: fork
+model: haiku
 ---
 
 # Remove Background

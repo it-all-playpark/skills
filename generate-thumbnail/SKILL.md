@@ -7,6 +7,8 @@ description: |
   (3) after /blog-publish or /seed-to-blog execution.
   Accepts args: MDX_PATH [--optimize]
 user-invocable: true
+context: fork
+model: haiku
 ---
 
 # Generate Thumbnail
