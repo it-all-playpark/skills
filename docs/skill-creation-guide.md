@@ -36,21 +36,27 @@ user-invocable: true                # false でメニュー非表示（backgroun
 ---
 ```
 
-### Frontmatter 全11フィールド
+### Frontmatter 全15フィールド
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | 表示名・slash-command 識別子 |
-| `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に |
-| `argument-hint` | No | autocomplete ヒント |
+| `name` | Yes | 表示名・slash-command 識別子（小文字・数字・ハイフン、最大 64 文字。省略時はディレクトリ名） |
+| `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に。`when_to_use` と合算して **1,536 文字で truncate** される |
+| `when_to_use` | No | `description` の補足。トリガーフレーズや使用例を記載（合算 1,536 文字制限あり） |
+| `argument-hint` | No | autocomplete に表示する引数の型ヒント（例: `[issue-number]`, `<file> [--dry-run]`） |
+| `arguments` | No | named positional 引数の宣言（例: `[issue, branch]`）。skill 本文で `$issue` / `$branch` として参照可能 |
+| `paths` | No | glob リスト。指定パス配下でのみ自動呼び出し有効化（省略時は全パス） |
+| `shell` | No | SKILL.md 本文中の `` !`command` `` 実行ブロックのシェル（`bash`（既定）/ `powershell`） |
 | `allowed-tools` | No | 許可ツールリスト |
-| `model` | No | 実行モデル指定（`haiku` / `sonnet` / `opus`） |
+| `model` | No | 実行モデル指定（`haiku` / `sonnet` / `opus` / `inherit`） |
 | `effort` | No | 推論深度（`low` / `medium` / `high` / `xhigh` / `max`）。session 設定を override |
 | `context` | No | `fork` で分離サブエージェント |
 | `agent` | No | `context:fork` 時のサブエージェントタイプ |
 | `hooks` | No | ライフサイクルフック |
 | `disable-model-invocation` | No | `true` で自動呼び出し禁止（危険スキル向け） |
 | `user-invocable` | No | `false` でメニュー非表示（background knowledge 専用） |
+
+参照: [Skills frontmatter reference](https://code.claude.com/docs/en/skills#frontmatter-reference)
 
 ### effort の選び方
 
@@ -74,7 +80,9 @@ user-invocable: true                # false でメニュー非表示（backgroun
 
 ### description の書き方
 
-description は**常にコンテキストに注入される**（character budget デフォルト 15,000 文字）。
+description は**常にコンテキストに注入される**。`when_to_use` と合算して
+**1,536 文字で truncate** されるため簡潔に書く。なお session 全体の skill metadata
+合計は `descriptionCharacterBudget`（デフォルト 15,000 文字）で別途制限される。
 
 ```yaml
 # Good: トリガー条件・キーワード・引数を含む簡潔な記述
