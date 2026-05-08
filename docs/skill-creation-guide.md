@@ -96,7 +96,20 @@ description: |
   This skill reads MDX files, extracts metadata, generates platform-specific
   posts for X (280 chars), LinkedIn (1300 chars), and Facebook (1500 chars),
   with hashtag optimization and scheduling support...
+
+# Bad: 一人称 / 動詞だけ / undertrigger（控えめすぎる表現）
+description: |
+  I help with PDFs.              # ❌ 一人称（"I" / "this skill" 禁止）
+  Handles documents.             # ❌ 動詞だけ・"document" は汎用すぎ
+  For when you need it.          # ❌ undertrigger（push 気味に書く）
 ```
+
+**ルール（[T1 agent-skills/best-practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)）**:
+
+- third-person 命令形で書く（`Extracts ...`, `Converts ...`, `Generates ...`）
+- `Use when:` には具体トリガ語を列挙する（"document" のような汎用語を避け、"PDF form 抽出" 等まで具体化）
+- "I" / "this skill" などの一人称は使わない
+- 控えめに書くと Claude が呼ばない。push 気味に書く
 
 ## SKILL.md 本文構造
 
@@ -213,6 +226,15 @@ User triggers /command
 4. **Namespace 命名**: `dev-*`, `blog-*`, `git-*` 等のプレフィックスで整理
 5. **小タスクは vanilla**: 小さいタスクは素の Claude Code の方が優秀
 6. **Journal Logging**: ワークフロー完了時に skill-retrospective 経由でログ記録
+7. **破壊的・大量変更系は `disable-model-invocation: true` を検討**:
+   ファイル大量移動・worktree 大量生成・外部公開を伴う skill は LLM の自動起動を禁じ、
+   ユーザー明示起動（`/skill-name`）のみに限定する。
+   候補例: `blog-mv-date`, `blog-swap-dates`, `dev-decompose`, `cross-post-publish`,
+   `qiita-publish`, `zenn-publish`
+8. **「毎回確定実行」したい挙動は skill ではなく hook で実装**:
+   format / test / secret 検査のように LLM の判断を介さず必ず走らせたい処理は、
+   skill 化すると呼び出し漏れが起きる。hook での実装を検討すること。
+   hook 実装は dotfiles repo の `claude-code/hooks/` を参照
 
 ## Subagent Dispatch Rules
 
