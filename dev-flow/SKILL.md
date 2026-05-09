@@ -41,6 +41,8 @@ End-to-end development automation from issue to LGTM (merge manually).
 ```
 dev-flow <issue>
 │
+├─→ Phase 0: preflight (issue exists & open, gh auth)
+│
 ├─→ Step 0: dev-issue-analyze --depth standard
 │
 ├─→ Step 1: Mode Decision
@@ -53,6 +55,31 @@ dev-flow <issue>
 ├─→ [Single]   Steps 2a-4a → details: references/single-mode.md
 └─→ [Parallel] Steps 2b-8b → details: references/parallel-mode.md
 ```
+
+## Phase 0: Preflight (Always, Read-Only)
+
+```bash
+$SKILLS_DIR/dev-flow/scripts/preflight.sh $ISSUE [--strict|--warn-only]
+```
+
+Read-only verification before mode decision. Runs **once** at the top of dev-flow (single / parallel どちらでも 1 回のみ)。
+
+Checks:
+- `gh auth` valid
+- Issue `$ISSUE` exists and is `OPEN` (closed/merged は warning)
+
+Defaults to `--warn-only` — emit warnings to JSON, exit 0, dev-flow continues. Use `--strict` only when the user explicitly requests halt-on-failure semantics.
+
+| Outcome | Behavior |
+|---------|----------|
+| All checks pass | Continue to Step 0 |
+| Warnings only (e.g., closed issue) | Show warnings, continue |
+| Errors + `--warn-only` (default) | Show errors, continue (let downstream surface real failure) |
+| Errors + `--strict` | Halt with exit 10 (issue) or 11 (gh auth) |
+
+**git-prepare は呼ばない**: worktree 作成は `dev-kickoff` Phase 1 / `dev-decompose` の責務。Phase 0 は read-only に徹する。
+
+**`--task-id` 経由で起動された dev-kickoff には preflight は走らない**（dev-flow を経由しないため）。これは意図的な設計で、parallel subtask は flow.json で前提が既に確定しているため重複検証不要。
 
 ## Step 0: Issue Analysis (Always)
 
@@ -104,7 +131,7 @@ Details: [Parallel Mode](references/parallel-mode.md) -- decomposition, batch sc
 ## Usage
 
 ```
-/dev-flow <issue> [--testing tdd] [--design ddd] [--depth comprehensive] [--base dev] [--max-iterations 10] [--force-single] [--force-parallel]
+/dev-flow <issue> [--testing tdd] [--design ddd] [--depth comprehensive] [--base dev] [--max-iterations 10] [--force-single] [--force-parallel] [--preflight-mode warn-only|strict]
 ```
 
 ## Args
@@ -121,6 +148,7 @@ Details: [Parallel Mode](references/parallel-mode.md) -- decomposition, batch sc
 | `--force-single` | - | Skip auto-detect, force single mode |
 | `--force-parallel` | - | Skip auto-detect, force parallel mode |
 | `--parallel` | - | **Deprecated**: alias for `--force-parallel` |
+| `--preflight-mode` | `warn-only` | Phase 0 mode: `warn-only` (continue on errors) or `strict` (halt on errors) |
 
 ## Completion Conditions
 
