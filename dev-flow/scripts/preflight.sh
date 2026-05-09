@@ -7,12 +7,14 @@
 #
 # Exit codes:
 #   0  = all checks passed (or --warn-only with warnings)
-#   1  = generic failure
+#   1  = CLI-level failure (missing/invalid arg, unknown option) — JSON to stderr
 #   10 = issue check failed (--strict only)
 #   11 = gh auth check failed (--strict only)
 #
-# Output: single-line JSON to stdout
-#   {"status":"ok|warn|error","mode":"strict|warn-only","checks":{...},"warnings":[...],"errors":[...]}
+# Output:
+#   - Success / warn / strict-failure: structured JSON to stdout
+#       {"status":"ok|warn|error","mode":"strict|warn-only","checks":{...},"warnings":[...],"errors":[...]}
+#   - CLI-level failure (exit 1): error JSON to stderr via die_json (common.sh)
 
 set -euo pipefail
 

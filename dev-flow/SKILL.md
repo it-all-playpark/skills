@@ -59,7 +59,7 @@ dev-flow <issue>
 ## Phase 0: Preflight (Always, Read-Only)
 
 ```bash
-$SKILLS_DIR/dev-flow/scripts/preflight.sh $ISSUE [--strict|--warn-only]
+$SKILLS_DIR/dev-flow/scripts/preflight.sh $ISSUE [--strict|--warn-only] [--repo OWNER/REPO]
 ```
 
 Read-only verification before mode decision. Runs **once** at the top of dev-flow (single / parallel どちらでも 1 回のみ)。
@@ -68,7 +68,11 @@ Checks:
 - `gh auth` valid
 - Issue `$ISSUE` exists and is `OPEN` (closed/merged は warning)
 
-Defaults to `--warn-only` — emit warnings to JSON, exit 0, dev-flow continues. Use `--strict` only when the user explicitly requests halt-on-failure semantics.
+Options:
+- `--warn-only` (default) / `--strict` — failure handling mode
+- `--repo OWNER/REPO` — query a different repo (default: current repo from `gh repo view`)
+
+`--preflight-mode` の値はそのまま script フラグに対応する（`warn-only` → `--warn-only`、`strict` → `--strict`）。
 
 | Outcome | Behavior |
 |---------|----------|
