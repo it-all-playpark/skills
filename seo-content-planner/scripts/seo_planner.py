@@ -38,6 +38,68 @@ def load_json(path: str) -> dict:
         sys.exit(1)
 
 
+def load_published_articles(blog_dir: str) -> set[str]:
+    """content/blog/*.mdx の frontmatter から既存記事のテーマを抽出し、除外用キーワード set を返す。
+
+    抽出対象:
+    - tags (YAML list): 記事の主題タグ
+    - title 内の `【〜】` フレーズ: 記事の主題ピック
+
+    Returns:
+        set of lowercase normalized strings (length >= 2)
+    """
+    published: set[str] = set()
+    p = Path(blog_dir)
+    if not p.is_dir():
+        return published
+
+    bracket_pattern = re.compile(r"【([^】]+)】")
+
+    for mdx in sorted(p.glob("*.mdx")):
+        try:
+            text = mdx.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # frontmatter (between first two `---`)
+        m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+        if not m:
+            continue
+        fm = m.group(1)
+
+        # title: '【foo bar】baz' or "title: foo"
+        title_match = re.search(r"^title:\s*[\"']?(.+?)[\"']?\s*$", fm, re.MULTILINE)
+        if title_match:
+            title_raw = title_match.group(1).strip()
+            for b in bracket_pattern.findall(title_raw):
+                phrase = b.strip().lower()
+                if 2 <= len(phrase) <= 40:
+                    published.add(phrase)
+
+        # tags: YAML list (- item) 形式
+        tags_section_match = re.search(
+            r"^tags:\s*\n((?:[ \t]+-[ \t].+\n?)+)", fm, re.MULTILINE
+        )
+        if tags_section_match:
+            for tm in re.finditer(
+                r"^[ \t]+-[ \t]*[\"']?([^\"'\n]+?)[\"']?\s*$",
+                tags_section_match.group(1),
+                re.MULTILINE,
+            ):
+                tag = tm.group(1).strip().lower()
+                if 2 <= len(tag) <= 40:
+                    published.add(tag)
+
+        # tags: [a, b, c] インライン形式（後方互換）
+        inline_match = re.search(r"^tags:\s*\[([^\]]+)\]", fm, re.MULTILINE)
+        if inline_match:
+            for raw in inline_match.group(1).split(","):
+                tag = raw.strip().strip("\"'").lower()
+                if 2 <= len(tag) <= 40:
+                    published.add(tag)
+
+    return published
+
+
 def load_strategy(path: str) -> dict | None:
     """seo-strategy.json を読み込み、プランニングに必要な情報を抽出する。
 
@@ -318,6 +380,7 @@ def compute_seo_scores(
     top_n: int = 15,
     gsc_metrics: dict | None = None,
     strategy_data: dict | None = None,
+    published_keywords: set[str] | None = None,
 ) -> list[dict]:
     """GA4実績 × トレンドスコア × GSCデータ × 戦略データからSEOスコアを算出する。
 
@@ -337,16 +400,30 @@ def compute_seo_scores(
     gsc_enabled = gsc_metrics and gsc_metrics.get("enabled", False)
     strategy_keyword_areas = strategy_data.get("keyword_areas", {}) if strategy_data else {}
     strategy_rewrite_keywords = strategy_data.get("rewrite_keywords", set()) if strategy_data else set()
+    published_keywords = published_keywords or set()
 
+    excluded_by_published = 0
     results = []
     for ts in trend_scores:
         kw = ts["keyword"]
         meta = keywords_meta.get(kw, {})
+        kw_lower = kw.lower()
 
         # リライト対象キーワードを新規提案から除外
         if strategy_rewrite_keywords:
-            kw_lower = kw.lower()
             if any(rk in kw_lower or kw_lower in rk for rk in strategy_rewrite_keywords):
+                continue
+
+        # 既存公開記事のテーマと被るキーワードを除外
+        # - 完全一致: 常に除外
+        # - 部分一致: pk/kw 両方が長さ4以上のときのみ（短語の過剰除外を避ける）
+        if published_keywords:
+            if any(
+                pk == kw_lower
+                or (len(pk) >= 4 and len(kw_lower) >= 4 and (pk in kw_lower or kw_lower in pk))
+                for pk in published_keywords
+            ):
+                excluded_by_published += 1
                 continue
 
         # 1. Trend Score (0-40)
@@ -442,6 +519,11 @@ def compute_seo_scores(
             result["gsc"] = gsc_match
 
         results.append(result)
+
+    if published_keywords and excluded_by_published:
+        print(
+            f"  Excluded {excluded_by_published} keywords overlapping with published articles"
+        )
 
     # スコア順でソート
     results.sort(key=lambda x: x["seo_score"], reverse=True)
@@ -708,6 +790,11 @@ def main():
     parser.add_argument("--ga-report", help="ga-analyzer 出力JSON（任意）")
     parser.add_argument("--gsc-report", help="GSC export JSON（任意）")
     parser.add_argument("--strategy", help="seo-strategy.json パス（任意）")
+    parser.add_argument(
+        "--blog-dir",
+        default="content/blog",
+        help="既存公開記事ディレクトリ。frontmatter から tags/title を読み除外フィルタに使用（default: content/blog、存在しなければスキップ）",
+    )
     parser.add_argument("--output", default="content_plan.json", help="出力ファイルパス")
     parser.add_argument("--top-n", type=int, default=15, help="出力する記事ネタ候補数")
     parser.add_argument(
@@ -743,10 +830,23 @@ def main():
         print(f"Loading strategy: {args.strategy}")
         strategy_data = load_strategy(args.strategy)
 
+    published_keywords: set[str] = set()
+    if args.blog_dir:
+        published_keywords = load_published_articles(args.blog_dir)
+        if published_keywords:
+            print(
+                f"Loaded {len(published_keywords)} published-article keywords from {args.blog_dir}"
+            )
+
     # スコアリング
     print(f"\nScoring {len(trends_data.get('trend_scores', []))} keywords...")
     content_plan = compute_seo_scores(
-        trends_data, ga_metrics, args.top_n, gsc_metrics=gsc_metrics, strategy_data=strategy_data
+        trends_data,
+        ga_metrics,
+        args.top_n,
+        gsc_metrics=gsc_metrics,
+        strategy_data=strategy_data,
+        published_keywords=published_keywords,
     )
 
     # 出力フォーマット分岐
