@@ -73,7 +73,7 @@ Details: [State Management](references/state-management.md), [kickoff.json Schem
 
 | Phase | Command | Subagent | Parallel Mode |
 |-------|---------|----------|---------------|
-| 1 | `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - | SKIP |
+| 1 | `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE` | - | SKIP |
 | 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
 | 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
 | 3 | `Skill: dev-plan-impl $ISSUE --worktree $PATH` | - | Execute |

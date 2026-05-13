@@ -28,7 +28,7 @@ Handoff: pr-iterate
 
 **Command:**
 ```bash
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE
+$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE
 ```
 
 **Purpose:** Create isolated git worktree for feature development.
@@ -36,17 +36,19 @@ $SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $E
 **Output:**
 - Worktree at `../{repo}-worktrees/feature-issue-{N}-m/`
 - Branch: `feature/issue-{N}-m`
-- Environment files linked/copied per `--env-mode`
 
 **Verification:**
 ```bash
-ls $WORKTREE/.env || echo "ERROR: .env not found"
+[[ -d "$WORKTREE_PATH" ]] || echo "ERROR: worktree not created"
 ```
 
 **Completion Criteria:**
 - Worktree directory exists
 - Branch created and checked out
-- .env file present (if env-mode != none)
+
+**Note**: `--env-mode` は git-prepare では受け取らない（worktree 作成に専念）。
+Phase 1b の init-kickoff が `--env-mode` を引き継いで kickoff.json に記録する。
+env file の link/copy 実装は現状無く、TODO 扱い。
 
 ## Phase 1b: State Initialization
 
