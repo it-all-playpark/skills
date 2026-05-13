@@ -370,11 +370,21 @@ cmd_hook_capture() {
         input_summary=$(echo "$tool_input" | jq -c '.' 2>/dev/null | cut -c1-200)
     fi
 
-    # Read active skill context from state file (written by PreToolUse Skill hook)
+    # Read active skill context from state file (written by PreToolUse Skill hook).
+    # TTL (30 min) ガード: UserPromptSubmit hook がクリアし損ねたケース
+    # (skill が完了 log を呼ばずに死亡 等) でも誤帰属が無限に続かないよう保険を入れる。
     local active_skill=""
     local state_file="/tmp/claude-skill-ctx-${session_id}"
     if [[ -n "$session_id" && -f "$state_file" ]]; then
-        active_skill=$(cat "$state_file" 2>/dev/null)
+        # stat の引数は GNU (Linux / Nix) と BSD (macOS) で非互換。GNU を先に試す。
+        local file_mtime file_age
+        file_mtime=$(stat -c %Y "$state_file" 2>/dev/null || stat -f %m "$state_file" 2>/dev/null || echo 0)
+        # stat -f が format spec を誤解釈して "File: ..." を吐くケースに備えて数値検証
+        [[ "$file_mtime" =~ ^[0-9]+$ ]] || file_mtime=0
+        file_age=$(( $(date +%s) - file_mtime ))
+        if (( file_age <= 1800 )); then
+            active_skill=$(cat "$state_file" 2>/dev/null)
+        fi
     fi
 
     # Build skill name: prefer active skill context, fallback to tool name
