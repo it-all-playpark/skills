@@ -136,8 +136,11 @@ Agent(
 The worker returns `{status, branch, worktree_path, commit_sha}`. Record `worktree_path` as
 `$CONTRACT_WORKTREE` for use in Step 7.
 
-If `contract_files` is empty (no shared types needed), skip this step entirely and use
-`origin/${BASE}` as `base_ref` for subtask worktrees in Step 7.
+**If `contract_files` is empty (no shared types needed), you MUST NOT spawn the worker.**
+Skip Step 6 entirely and use `origin/${BASE}` directly as `base_ref` for subtask worktrees in
+Step 7. The worker treats an empty `contract_files` as a contract violation by the caller and
+returns `{status: "skipped", reason: ...}` defensively, but the caller is responsible for the
+skip decision — do not rely on the worker's defensive return.
 
 ### Step 7: Worktree Creation
 

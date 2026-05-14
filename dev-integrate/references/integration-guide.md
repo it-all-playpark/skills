@@ -228,25 +228,45 @@ grep -rn '<<<<<<< \|======= \|>>>>>>> ' --include='*.ts' --include='*.py' --incl
 
 ### Scenario 1: Merge Conflict
 
-```bash
-# 1. Check which subtask caused the conflict
-cat merge-results.json | jq '.results[] | select(.status == "conflict")'
+1. Identify which subtask caused the conflict:
 
-# 2. Create a fresh merge worktree
-Agent(subagent_type: dev-kickoff-worker, issue_number: $ISSUE, branch_name: feature/issue-${ISSUE}-merge-retry, base_ref: $BASE, mode: merge, flow_state: $FLOW_STATE)
+   ```bash
+   cat merge-results.json | jq '.results[] | select(.status == "conflict")'
+   ```
 
-# 3. Manually merge the conflicting branch
-cd $NEW_WORKTREE
-git merge --no-ff $CONFLICTING_BRANCH
+2. Re-spawn the merge worker with a retry branch name. `Agent(...)` is a Claude Code tool call,
+   not a shell command — invoke it from the conversation, not from bash:
 
-# 4. Resolve conflicts
-# Edit conflicting files
-git add .
-git commit
+   ```text
+   Agent(
+     subagent_type: "dev-kickoff-worker",
+     isolation: "worktree",
+     prompt: """
+     issue_number: $ISSUE
+     branch_name: feature/issue-${ISSUE}-merge-retry
+     base_ref: $BASE
+     mode: merge
+     flow_state: $FLOW_STATE
+     """
+   )
+   ```
 
-# 5. Continue with remaining branches
-# Re-run merge-subtasks.sh
-```
+   The worker runs inside its own isolated worktree (the parent cannot `cd` into it).
+   Conflict resolution and the final merge commit are performed by the worker; the parent
+   receives the resulting branch / commit SHA in the return JSON.
+
+3. If the worker reports residual conflicts that need human judgment, ask the user to attach
+   to the worker's worktree path (returned in the JSON) and resolve manually:
+
+   ```bash
+   # Worktree path comes from the worker's return JSON
+   git -C "$RETURNED_WORKTREE_PATH" status
+   # Edit conflicting files in $RETURNED_WORKTREE_PATH, then:
+   git -C "$RETURNED_WORKTREE_PATH" add .
+   git -C "$RETURNED_WORKTREE_PATH" commit
+   ```
+
+4. After resolution, re-run `merge-subtasks.sh` for the remaining branches.
 
 ### Scenario 2: Type Check Failure
 

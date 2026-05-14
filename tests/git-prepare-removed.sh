@@ -25,12 +25,14 @@ fi
 
 # Case 2: No git-prepare references in tracked source files
 # Exclude: tests/ (these guard files contain the literal string),
-#          claudedocs/ (session history), docs/superpowers/ (historical specs)
-echo "[Case 2] No git-prepare references in *.md / *.json (excluding tests/, claudedocs/, docs/superpowers/, _shared/references/worktree-isolation.md)"
+#          claudedocs/ (session history), docs/superpowers/ (historical specs),
+#          .claude/ (ephemeral state files like iterate.json / kickoff.json)
+echo "[Case 2] No git-prepare references in *.md / *.json (excluding tests/, claudedocs/, docs/superpowers/, .claude/, _shared/references/worktree-isolation.md)"
 RESIDUAL=$(grep -rn "git-prepare" "$REPO_ROOT" \
   --include="*.md" \
   --include="*.json" \
   --exclude-dir=.git \
+  --exclude-dir=.claude \
   --exclude-dir=tests \
   --exclude-dir=claudedocs \
   --exclude-dir=superpowers \
@@ -49,6 +51,7 @@ echo "[Case 2b] No git-prepare references in *.sh files (excluding tests/)"
 RESIDUAL_SH=$(grep -rn "git-prepare" "$REPO_ROOT" \
   --include="*.sh" \
   --exclude-dir=.git \
+  --exclude-dir=.claude \
   --exclude-dir=tests \
   --exclude-dir=claudedocs \
   2>/dev/null || true)
@@ -84,15 +87,17 @@ else
   _fail "dev-contract-worker.md not found — skipping input documentation check"
 fi
 
-# Case 3c: dev-contract-worker.md documents 5 steps
-echo "[Case 3c] dev-contract-worker.md must document Steps 1-5"
+# Case 3c: dev-contract-worker.md documents Steps 1-4
+# (After PR review: Step 3 + Step 4 unified into a single step with empty-diff guard,
+#  Step 5 became Step 4 = "Return JSON")
+echo "[Case 3c] dev-contract-worker.md must document Steps 1-4"
 if [[ -f "$AGENT_FILE" ]]; then
   MISSING_STEPS=()
-  for step in 1 2 3 4 5; do
+  for step in 1 2 3 4; do
     grep -qE "Step $step[^0-9]" "$AGENT_FILE" || MISSING_STEPS+=("Step $step")
   done
   if [[ ${#MISSING_STEPS[@]} -eq 0 ]]; then
-    _pass "All 5 steps documented in dev-contract-worker.md"
+    _pass "All 4 steps documented in dev-contract-worker.md"
   else
     _fail "Missing steps in dev-contract-worker.md: ${MISSING_STEPS[*]}"
   fi

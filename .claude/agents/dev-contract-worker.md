@@ -51,34 +51,42 @@ within your worktree. Paths are relative to worktree root. Create parent directo
 mkdir -p "$(dirname "$path")"
 ```
 
-If `contract_files` is empty, return immediately with:
+If `contract_files` is empty or missing, do NOT proceed to Step 3. Return immediately with:
 
 ```json
-{"status":"failed","phase_failed":"2","branch":"...","worktree_path":"...","commit_sha":"","error":"contract_files is empty — caller must not spawn dev-contract-worker when no contract is needed"}
+{"status":"skipped","branch":"<branch_name>","worktree_path":"<pwd>","commit_sha":"","reason":"contract_files is empty — no contract scaffold needed"}
 ```
 
-### Step 3: Stage and commit
+The caller (`dev-decompose`) MUST detect this and fall back to `origin/${BASE}` as base_ref
+for subtask workers. This is a contract, not a failure — both sides cooperate to handle the
+zero-contract case cleanly.
+
+### Step 3: Stage and commit (with empty diff guard)
+
+Stage everything and decide between normal commit and `--allow-empty` based on whether the
+Write step produced disk changes:
 
 ```bash
 git add -A
-git commit -m "contract: scaffold for issue #${issue_number}"
+if git diff --cached --quiet; then
+  # Write tool produced no on-disk changes (e.g., all writes failed silently).
+  # Create an allow-empty commit so the worktree is not auto-cleaned by Claude Code.
+  git commit --allow-empty -m "chore(issue-${issue_number}): empty contract scaffold"
+else
+  git commit -m "contract: scaffold for issue #${issue_number}"
+fi
 ```
 
-Capture the resulting commit SHA via `git rev-parse HEAD`.
-
-### Step 4: Empty diff guard
-
-If `git add -A` produces no staged changes (i.e., `git diff --cached --quiet` before commit),
-create an allow-empty commit to prevent the worktree from being auto-cleaned:
+Then capture the commit SHA:
 
 ```bash
-git commit --allow-empty -m "chore(issue-${issue_number}): empty contract scaffold"
+git rev-parse HEAD
 ```
 
-This edge case should not occur when `contract_files` is non-empty, but guards against
-Write failures that produce no disk changes.
+This single block replaces the previous Step 3 + Step 4 split, which had the empty-diff guard
+running *after* the unconditional commit (logically backwards).
 
-### Step 5: Return JSON (last line of your response)
+### Step 4: Return JSON (last line of your response)
 
 On success, your final response MUST end with a single-line JSON object:
 
@@ -92,8 +100,14 @@ On failure at any step:
 {"status":"failed","phase_failed":"<step number or name>","branch":"feature/issue-79-contract","worktree_path":"/abs/path","commit_sha":"<best-effort sha or empty>","error":"<message>"}
 ```
 
-Required fields: `status`, `branch`, `worktree_path`, `commit_sha` (may be empty on early failure).
-Optional fields: `phase_failed`, `error`.
+When `contract_files` is empty (Step 2 skip), return `status: "skipped"` with empty `commit_sha`
+and a `reason` field — the parent treats this as a normal cooperative case, not a failure.
+
+Required fields: `status`, `branch`, `worktree_path`, `commit_sha` (may be empty on early failure or skip).
+Optional fields: `phase_failed`, `error`, `reason`.
+
+`phase_failed` is a string identifying the step name where failure occurred (e.g., `"1"`, `"3"`).
+Use string consistently so consumer-side `jq` extraction remains stable.
 
 ## Boundaries
 
