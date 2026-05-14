@@ -24,7 +24,8 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 - Split work into non-conflicting subtasks at file boundaries
 - Define `depends_on` relationships between subtasks
 - Generate shared contract (types/interfaces) committed to a contract branch
-- Create N worktrees via git-prepare (base: contract branch, suffix: task1, task2, ...)
+- Create contract branch via dev-contract-worker (isolation: worktree, model: haiku)
+- Create N worktrees via dev-kickoff-worker (base: contract branch, mode: parallel)
 - Generate flow.json with subtask definitions, checklists, and contract info
 
 ## Workflow
@@ -37,11 +38,10 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 3. Group files into subtasks (no file overlap)
 4. Define checklist for each subtask
 5. Generate shared contract (interfaces/types if needed)
-6. Create contract branch from base
-7. Commit contract files to contract branch
-8. Create worktrees for each subtask (git-prepare --base contract-branch --suffix taskN)
-9. Generate flow.json
-10. Validate decomposition (validate-decomposition.sh)
+6. Create contract branch + commit contract files via dev-contract-worker (isolation: worktree)
+7. Create worktrees for each subtask via dev-kickoff-worker (mode: parallel, base: contract branch)
+8. Generate flow.json
+9. Validate decomposition (validate-decomposition.sh)
 ```
 
 ### Dry-Run Mode (`--dry-run`)
@@ -108,39 +108,58 @@ Skill: dev-decompose $ISSUE --resume /path/to/dry-run-result.json --base $BASE
 
 Analyze issue, build file dependency graph, partition into subtasks. See [Decomposition Guide](references/decomposition-guide.md) for strategy and edge cases.
 
-### Step 5-7: Contract Generation
+### Step 5-6: Contract Generation
 
 Generate contract per [Decomposition Guide](references/decomposition-guide.md). Branch: `feature/issue-{N}-contract`.
 
-**IMPORTANT: Contract branch は worktree で作成すること。メインリポジトリで直接 checkout しない。**
+**IMPORTANT: Contract branch は dev-contract-worker (isolation: worktree) 経由で作成すること。**
+**メインリポジトリで直接 checkout したり、git-prepare.sh を直接呼び出したりしない。**
 
-```bash
-# Step 6: contract worktree 作成（--local でリモート push を防止）
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
-  --suffix contract \
-  --base $BASE \
-  --env-mode $ENV_MODE \
-  --local
+Spawn `dev-contract-worker` via the Agent tool:
 
-# Step 7: contract worktree 内でファイル作成・コミット
-cd $CONTRACT_WORKTREE
-# ... create contract files, git add, git commit ...
+```
+Agent(
+  subagent_type: "dev-contract-worker",
+  prompt: """
+  issue_number: ${ISSUE}
+  branch_name: feature/issue-${ISSUE}-contract
+  base_ref: ${BASE}
+  contract_files:
+    - path: <relative path>
+      content: |
+        <file content>
+    ...
+  """
+)
 ```
 
-### Step 8: Worktree Creation
+The worker returns `{status, branch, worktree_path, commit_sha}`. Record `worktree_path` as
+`$CONTRACT_WORKTREE` for use in Step 7.
 
-For each subtask, call git-prepare with `--local` to keep branches local:
-```bash
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
-  --suffix task${INDEX} \
-  --base feature/issue-${ISSUE}-contract \
-  --env-mode $ENV_MODE \
-  --local
+If `contract_files` is empty (no shared types needed), skip this step entirely and use
+`origin/${BASE}` as `base_ref` for subtask worktrees in Step 7.
+
+### Step 7: Worktree Creation
+
+For each subtask, spawn `dev-kickoff-worker` with `mode: parallel`:
+
+```
+Agent(
+  subagent_type: "dev-kickoff-worker",
+  prompt: """
+  issue_number: ${ISSUE}
+  branch_name: feature/issue-${ISSUE}-task${INDEX}
+  base_ref: feature/issue-${ISSUE}-contract
+  mode: parallel
+  task_id: task${INDEX}
+  flow_state: ${FLOW_STATE}
+  """
+)
 ```
 
 **Subtask/contract ブランチはリモートに push しない。** push が必要なのは最終的な merge ブランチのみ（PR 作成時）。
 
-### Step 9: Flow State Generation
+### Step 8: Flow State Generation
 
 Initialize flow.json:
 ```bash
@@ -152,7 +171,7 @@ $SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
 
 Then populate subtask entries with file assignments, checklists, and dependency info.
 
-### Step 10: Validation
+### Step 9: Validation
 
 ```bash
 $SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
@@ -268,6 +287,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose failure \
 ## References
 
 - [Decomposition Guide](references/decomposition-guide.md) - Detailed strategy and edge cases
-- [git-prepare](../git-prepare/SKILL.md) - Worktree creation
+- [dev-contract-worker](../.claude/agents/dev-contract-worker.md) - Contract branch creation worker
+- [dev-kickoff-worker](../.claude/agents/dev-kickoff-worker.md) - Subtask/merge worktree worker
 - [dev-issue-analyze](../dev-issue-analyze/SKILL.md) - Issue analysis input
 - [dev-kickoff](../dev-kickoff/SKILL.md) - Per-subtask execution

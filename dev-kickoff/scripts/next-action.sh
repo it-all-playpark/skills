@@ -71,7 +71,7 @@ determine_next_action() {
                 echo "Skill: dev-issue-analyze $ISSUE --depth $DEPTH"
             else
                 echo "1_prepare"
-                echo "$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE_BRANCH"
+                echo "Agent(subagent_type: dev-kickoff-worker, issue_number: $ISSUE, branch_name: feature/issue-${ISSUE}-m, base_ref: $BASE_BRANCH, mode: single)"
             fi
             ;;
         2_analyze)
