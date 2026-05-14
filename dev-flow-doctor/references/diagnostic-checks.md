@@ -161,7 +161,7 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7
 | カテゴリ | 定義 | 推奨アクション |
 |---------|------|---------------|
 | **dead phase** | window 内で `success` が 0 件の family skill | 呼び出し経路を確認。parent orchestrator（例: dev-kickoff）から実際に呼ばれているか、phase 遷移が skip されていないかを検証 |
-| **stuck skill** | `(failure + partial) / total > 30%` かつ `total >= 3` | `/skill-retrospective` を走らせ proposal を生成、頻出する error category（lint/test/env 等）を直近の failure で確認 |
+| **stuck skill** | `(failure + partial) / total > 30%` OR `(BLOCKED + NEEDS_CONTEXT) / total_with_status > 30%`（dev-implement の場合）かつ `total >= 3` | `/skill-retrospective` を走らせ proposal を生成、頻出する error category（lint/test/env 等）を直近の failure で確認。dev-implement の場合は `status_distribution.BLOCKED` / `NEEDS_CONTEXT` を見て approach mismatch を疑う（issue #92） |
 | **bottleneck** | `avg(duration_turns)` 上位 3 skill | 実行時間が異常に長い skill を特定し、input 長 / tool 選定 / subagent fork コストを点検 |
 | **disconnected skill** | window 内で自身の entry が 0 件かつ parent skill（hook-capture の Skill tool invocation）で一度も参照されていない | connector が成立していない。orchestrator の分岐条件を確認、または deprecated なら skill を整理 |
 
@@ -171,6 +171,36 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7
 - `--window 30d`（既定）: 傾向把握
 - `--window 14d` / `--window 2w`: 週次レビュー用
 - 任意の `Nd` / `Nw` / `Nm` フォーマットを受け付ける（`parse_since` と同じ）
+
+### Status Distribution (dev-implement 4 値 status enum、issue #92)
+
+dev-implement worker の return JSON `status` を `context.return_status` 経由で集計し、
+per-skill 出力に `status_distribution` フィールドを追加する（additive、既存出力は維持）:
+
+```json
+{
+  "skill": "dev-implement",
+  "status_distribution": {
+    "DONE": 12,
+    "DONE_WITH_CONCERNS": 3,
+    "BLOCKED": 1,
+    "NEEDS_CONTEXT": 0,
+    "legacy_success": 5,
+    "legacy_fail": 2,
+    "unknown": 0,
+    "total_with_status": 16
+  },
+  "blocked_rate": 0.0625
+}
+```
+
+- `total_with_status`: 4 値の return_status を含む dev-implement entry の総数
+- `blocked_rate`: `(BLOCKED + NEEDS_CONTEXT) / total` で `total > 0` のとき計算
+- `legacy_success` / `legacy_fail`: rollout 期間中に旧形式 `success` / `fail` を返したエントリ
+- `unknown`: 上記いずれにも該当しない return_status を返した entry
+
+`--scope feedback` 指定時、`dev-flow-doctor` の Output Format Status Distribution セクションに
+この表を表示する。stuck 判定の OR ロジック（`blocked_rate > 0.30` も stuck）に使われる。
 
 ### 責務分離
 

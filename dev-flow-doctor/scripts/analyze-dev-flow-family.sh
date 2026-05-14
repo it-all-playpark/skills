@@ -176,6 +176,19 @@ PER_SKILL=$(jq -n \
   --argjson entries "$FAMILY_ENTRIES" \
   --argjson fam "$FAMILY_SKILLS_JSON" \
   '
+  # status_distribution buckets the dev-implement return_status enum (issue #92):
+  #   DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT — recorded explicitly
+  # plus legacy buckets for rollout monitoring:
+  #   legacy_success / legacy_fail — entries with outcome but no return_status
+  # plus unknown for everything else.
+  def bucket_status:
+    if . == null or . == "" then null
+    elif . == "DONE" then "DONE"
+    elif . == "DONE_WITH_CONCERNS" then "DONE_WITH_CONCERNS"
+    elif . == "BLOCKED" then "BLOCKED"
+    elif . == "NEEDS_CONTEXT" then "NEEDS_CONTEXT"
+    else "unknown"
+    end;
   [ $fam[] as $s |
     ($entries | map(select(.skill == $s))) as $es |
     ($es | length) as $total |
@@ -189,6 +202,19 @@ PER_SKILL=$(jq -n \
     ($es | map(select(.duration_turns != null) | .duration_turns)) as $durations |
     ($durations | length) as $dur_count |
     ($durations | add // 0) as $sum_turns |
+
+    # ----- status_distribution (4-value enum + legacy buckets) -----
+    ($es | map(.context.return_status // null) | map(bucket_status)) as $buckets |
+    ($buckets | map(select(. == "DONE"))               | length) as $done |
+    ($buckets | map(select(. == "DONE_WITH_CONCERNS")) | length) as $dwc  |
+    ($buckets | map(select(. == "BLOCKED"))            | length) as $blk  |
+    ($buckets | map(select(. == "NEEDS_CONTEXT"))      | length) as $ndc  |
+    ($buckets | map(select(. == "unknown"))            | length) as $unk  |
+    ($buckets | map(select(. != null))                 | length) as $tws  |
+    # legacy = outcome exists but return_status missing
+    ($es | map(select((.context.return_status // null) == null and .outcome == "success")) | length) as $lg_s |
+    ($es | map(select((.context.return_status // null) == null and (.outcome == "failure" or .outcome == "partial"))) | length) as $lg_f |
+    ($total | if . > 0 then ((($blk + $ndc) + 0.0) / .) else 0 end) as $blocked_rate |
     {
       skill: $s,
       total: $total,
@@ -199,7 +225,18 @@ PER_SKILL=$(jq -n \
       avg_duration_turns: (if $dur_count > 0 then ($sum_turns / $dur_count) else 0 end),
       duration_samples: $dur_count,
       last_success: ($es | map(select(.outcome == "success")) | sort_by(.timestamp) | last | .timestamp // null),
-      last_failure: ($es | map(select(.outcome != "success")) | sort_by(.timestamp) | last | .timestamp // null)
+      last_failure: ($es | map(select(.outcome != "success")) | sort_by(.timestamp) | last | .timestamp // null),
+      status_distribution: {
+        DONE: $done,
+        DONE_WITH_CONCERNS: $dwc,
+        BLOCKED: $blk,
+        NEEDS_CONTEXT: $ndc,
+        legacy_success: $lg_s,
+        legacy_fail: $lg_f,
+        unknown: $unk,
+        total_with_status: $tws
+      },
+      blocked_rate: $blocked_rate
     }
   ]
   ')
@@ -215,11 +252,21 @@ DEAD_PHASES=$(echo "$PER_SKILL" | jq \
     {skill: .skill, total: .total, reason: ("0 success within " + $window)}]')
 
 # Stuck skills: failure_rate > threshold AND total >= min_total
+# Additive (issue #92): also stuck if (BLOCKED + NEEDS_CONTEXT) / total > threshold
+# when status_distribution has at least one explicit return_status entry.
 STUCK_SKILLS=$(echo "$PER_SKILL" | jq \
   --argjson rate "$STUCK_RATE" \
   --argjson min_total "$STUCK_MIN_TOTAL" \
-  '[.[] | select(.total >= $min_total and .failure_rate > $rate) |
-    {skill: .skill, total: .total, failure_rate: .failure_rate}]')
+  '[.[] |
+    (.status_distribution.total_with_status // 0) as $tws |
+    (.blocked_rate // 0) as $br |
+    select(.total >= $min_total and
+      (.failure_rate > $rate or ($tws > 0 and $br > $rate))) |
+    {skill: .skill,
+     total: .total,
+     failure_rate: .failure_rate,
+     blocked_rate: $br,
+     status_distribution: .status_distribution}]')
 
 # Bottlenecks: top-N by avg_duration_turns (only skills with total > 0)
 BOTTLENECKS=$(echo "$PER_SKILL" | jq \
