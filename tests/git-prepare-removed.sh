@@ -26,7 +26,7 @@ fi
 # Case 2: No git-prepare references in tracked source files
 # Exclude: tests/ (these guard files contain the literal string),
 #          claudedocs/ (session history), docs/superpowers/ (historical specs)
-echo "[Case 2] No git-prepare references in *.md / *.json (excluding tests/, claudedocs/, docs/superpowers/)"
+echo "[Case 2] No git-prepare references in *.md / *.json (excluding tests/, claudedocs/, docs/superpowers/, _shared/references/worktree-isolation.md)"
 RESIDUAL=$(grep -rn "git-prepare" "$REPO_ROOT" \
   --include="*.md" \
   --include="*.json" \
@@ -34,7 +34,9 @@ RESIDUAL=$(grep -rn "git-prepare" "$REPO_ROOT" \
   --exclude-dir=tests \
   --exclude-dir=claudedocs \
   --exclude-dir=superpowers \
-  2>/dev/null || true)
+  2>/dev/null \
+  | grep -v "_shared/references/worktree-isolation.md" \
+  || true)
 if [[ -z "$RESIDUAL" ]]; then
   _pass "No residual git-prepare references in .md/.json files"
 else
@@ -103,9 +105,9 @@ echo "[Case 4] _shared/references/worktree-isolation.md must exist with spike re
 ISOLATION_FILE="$REPO_ROOT/_shared/references/worktree-isolation.md"
 if [[ -f "$ISOLATION_FILE" ]]; then
   MISSING_SECTIONS=()
-  for section in "worktreePath\|worktree_path" "\[locked\]\|locked" "git-common-dir\|GIT_COMMON_DIR"; do
-    grep -qE "$section" "$ISOLATION_FILE" || MISSING_SECTIONS+=("$section")
-  done
+  grep -qE "worktreePath|worktree_path" "$ISOLATION_FILE" || MISSING_SECTIONS+=("worktreePath/worktree_path")
+  grep -qE "\[locked\]|locked" "$ISOLATION_FILE" || MISSING_SECTIONS+=("[locked]/locked")
+  grep -qE "git-common-dir|GIT_COMMON_DIR" "$ISOLATION_FILE" || MISSING_SECTIONS+=("git-common-dir/GIT_COMMON_DIR")
   if [[ ${#MISSING_SECTIONS[@]} -eq 0 ]]; then
     _pass "worktree-isolation.md exists with required spike result sections"
   else
