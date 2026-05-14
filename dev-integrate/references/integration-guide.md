@@ -244,7 +244,7 @@ grep -rn '<<<<<<< \|======= \|>>>>>>> ' --include='*.ts' --include='*.py' --incl
      prompt: """
      issue_number: $ISSUE
      branch_name: feature/issue-${ISSUE}-merge-retry
-     base_ref: $BASE
+     base_ref: $CONTRACT_BRANCH
      mode: merge
      flow_state: $FLOW_STATE
      """
@@ -255,8 +255,9 @@ grep -rn '<<<<<<< \|======= \|>>>>>>> ' --include='*.ts' --include='*.py' --incl
    Conflict resolution and the final merge commit are performed by the worker; the parent
    receives the resulting branch / commit SHA in the return JSON.
 
-3. If the worker reports residual conflicts that need human judgment, ask the user to attach
-   to the worker's worktree path (returned in the JSON) and resolve manually:
+3. If the retry worker also reports `phase_failed=merge` with residual conflicts that need
+   human judgment, ask the user to attach to the worker's returned worktree path and resolve
+   manually:
 
    ```bash
    # Worktree path comes from the worker's return JSON
@@ -266,7 +267,15 @@ grep -rn '<<<<<<< \|======= \|>>>>>>> ' --include='*.ts' --include='*.py' --incl
    git -C "$RETURNED_WORKTREE_PATH" commit
    ```
 
-4. After resolution, re-run `merge-subtasks.sh` for the remaining branches.
+4. After resolution, re-run `merge-subtasks.sh` inside that worktree to continue with
+   the remaining branches:
+
+   ```bash
+   $SKILLS_DIR/dev-integrate/scripts/merge-subtasks.sh \
+       --flow-state $FLOW_STATE --worktree $RETURNED_WORKTREE_PATH
+   ```
+
+See [worker-dispatch.md](worker-dispatch.md) for the full re-spawn contract.
 
 ### Scenario 2: Type Check Failure
 
@@ -357,57 +366,64 @@ it is informational only.
 Use topological sort based on `depends_on` fields. Independent subtasks (no dependencies)
 are merged first, followed by subtasks that depend on them.
 
-### Step 4: Create Merge Worktree
+### Step 4: Spawn Worker for Merge Worktree
 
-Spawn `dev-kickoff-worker` with `mode: merge`:
+Spawn `dev-kickoff-worker` with `isolation: worktree` + `mode: merge`. The worker creates its own isolated worktree internally — do NOT call `git worktree add` directly.
 
-```
+```text
 Agent(
   subagent_type: "dev-kickoff-worker",
-  prompt: "issue_number: $ISSUE\nbranch_name: feature/issue-${ISSUE}-merge\nbase_ref: $BASE\nmode: merge\nflow_state: $FLOW_STATE"
+  isolation: "worktree",
+  prompt: "
+    issue_number: $ISSUE
+    branch_name: feature/issue-${ISSUE}-merge
+    base_ref: $CONTRACT_BRANCH
+    mode: merge
+    flow_state: $FLOW_STATE
+  "
 )
 ```
 
-### Step 4b: Sync .env Files (worktree 作成後に必要な場合のみ)
+Full dispatch contract: [worker-dispatch.md](worker-dispatch.md).
 
-> **Note**: `.env` の同期が必要な場合のみ以下を実行する。
+Inside the worker (Steps 5-7 below are now executed by the worker, not the parent):
 
-```bash
-$SKILLS_DIR/sync-env/scripts/sync-env.sh --worktree $MERGE_WORKTREE --mode $ENV_MODE --force
-```
+- Step 5 — merge subtask branches via `merge-subtasks.sh`
+- Step 6 — type check (tsc/mypy/go vet)
+- Step 7 — `Skill: dev-validate --worktree $(pwd)`
 
-### Step 5: Merge Subtask Branches
+### Step 4b: .env Sync (handled automatically by isolation: worktree)
 
-```bash
-$SKILLS_DIR/dev-integrate/scripts/merge-subtasks.sh \
-  --flow-state $FLOW_STATE --worktree $MERGE_WORKTREE
-```
+Claude Code's `isolation: worktree` mode owns the worktree creation lifecycle, including `.env` propagation. Manual `sync-env.sh` calls from dev-integrate are not required.
 
-### Step 6: Type Check
+### Step 5-7 (delegated to worker)
 
-Detect project type and run appropriate type checker:
+The merge / type check / validate sequence runs inside the worker. The parent only inspects the worker's return JSON:
 
-```bash
-# Detect project type:
-if [ -f "tsconfig.json" ]; then npx tsc --noEmit
-elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then mypy .
-elif [ -f "go.mod" ]; then go vet ./...
-fi
-```
-
-### Step 7: Integration Validation
-
-```
-Skill: dev-validate --worktree $MERGE_WORKTREE
+```json
+{
+  "status": "completed",
+  "branch": "feature/issue-${ISSUE}-merge",
+  "worktree_path": "/abs/path",
+  "commit_sha": "<sha>",
+  "merge_results": {"status": "success", "total_subtasks": N, "merged": N, "conflicts": 0, "results": [...]},
+  "conflicts": 0
+}
 ```
 
 ### Step 8: Update Flow State
+
+Transcribe the worker JSON into `flow.json.integration` using `flow-update.sh`:
 
 ```bash
 $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   integration --field status --value "integrated"
 $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
-  integration --field merge_worktree --value "$MERGE_WORKTREE"
+  integration --field merge_worktree --value "$WORKER_WORKTREE_PATH"
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+  integration --field merge_results --value "$WORKER_MERGE_RESULTS_JSON"
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
+  integration --field conflicts --value "$WORKER_CONFLICTS"
 $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \
   integration --field type_check --value "passed"
 $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state $FLOW_STATE \

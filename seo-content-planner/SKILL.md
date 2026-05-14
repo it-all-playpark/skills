@@ -9,7 +9,7 @@ description: |
   (2) GA4データとトレンドを掛け合わせてコンテンツ戦略を立てたい,
   (3) keywords: SEO記事, コンテンツ計画, 記事ネタ, 編集カレンダー, SEOスコア, コンテンツプランニング,
   (4) trends-analyzerの後続ステップとして記事提案を生成したい場合。
-  Accepts args: [--trends-report PATH] [--ga-report PATH] [--gsc-report PATH] [--output PATH] [--output-format content_plan|content_strategy] [--top-n N]
+  Accepts args: [--trends-report PATH] [--ga-report PATH] [--gsc-report PATH] [--strategy PATH] [--blog-dir PATH] [--output PATH] [--output-format content_plan|content_strategy] [--top-n N]
 ---
 
 # SEO Content Planner
@@ -70,6 +70,12 @@ python scripts/seo_planner.py \
 ```
 
 `--top-n`: 出力候補数（default: 15）
+
+`--blog-dir`: 既存公開記事ディレクトリ（default: `content/blog`）。frontmatter の `tags` と `title` 内の `【〜】` フレーズを抽出し、既存記事と被るキーワードを提案から除外する。ディレクトリが存在しない場合はスキップ。
+
+除外ロジック:
+- 完全一致: 常に除外
+- 部分一致: published キーワードと候補キーワードが**両方とも長さ4以上**のときのみ除外（`ai`/`cli` のような短語による過剰除外を防止）
 
 ## Report Generation
 

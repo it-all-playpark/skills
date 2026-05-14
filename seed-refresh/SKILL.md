@@ -4,6 +4,7 @@ description: |
   Bulk refresh seed cache files (`seed/**/exported.md`, `commits.md`, `issues.md`, `pr-summary.md`) by checking repository updates after `manifest.json.exportedAt`.
   Use when: (1) seed cache is stale, (2) user asks to refresh/update seed files in batch, (3) keywords like "seed更新", "再取得", "exportedAt以降", "main branch更新".
   Accepts args: [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N]
+model: haiku
 ---
 
 # Seed Refresh

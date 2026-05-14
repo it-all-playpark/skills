@@ -73,3 +73,14 @@ git add -A && git commit -m "feat: ..."
 # Phase 8
 gh pr create --title "..." --body "..."
 ```
+
+## AC4/AC5 baseline 比較
+
+dev-flow family の regression（特に glue-related エラーの再発）を検知するため、
+`dev-flow-doctor` の baseline 比較機能を併用する。
+
+- baseline snapshot 生成: `./dev-flow-doctor/scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json`
+- 比較: `./dev-flow-doctor/scripts/run-diagnostics.sh --compare .claude/dev-flow-doctor-baseline-pre-79.json`
+- CI: `.github/workflows/lint.yml` の `no-glue-errors` job が PR / push 毎に実行（baseline は `dev-flow-doctor/templates/baseline-pre-79.example.json` を template fallback として使用）
+
+詳細・schema・CI 運用パターンは [`dev-flow-doctor/references/baseline-comparison.md`](../../dev-flow-doctor/references/baseline-comparison.md) を参照。

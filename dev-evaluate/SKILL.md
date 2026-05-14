@@ -9,11 +9,12 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Bash
+  - Bash(~/.claude/skills/dev-evaluate/scripts/*)
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
+  - Bash(git:*)
 model: opus
 effort: max
 context: fork
-agent: general-purpose
 ---
 
 # Evaluate

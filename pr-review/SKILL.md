@@ -7,14 +7,16 @@ argument-hint: [pr-number] [--depth]
 model: opus
 effort: max
 context: fork
-agent: Plan
 allowed-tools:
-  - Bash(~/.claude/skills/*)
-  - Bash(gh:*)
-  - Bash(npm:*)
   - Read
   - Grep
   - Glob
+  - Bash(~/.claude/skills/pr-review/scripts/*)
+  - Bash(~/.claude/skills/_lib/scripts/*)
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
+  - Bash(gh:*)
+  - Bash(npm:*)
+  - Bash(cat:*)
 ---
 
 # PR Review: $ARGUMENTS
@@ -34,7 +36,7 @@ allowed-tools:
 
 ### Step 1: Tech Stack Detection & Best Practice Loading
 
-1. Run `$SKILLS_DIR/_lib/scripts/detect-stack.sh` on the PR's repository root to detect frameworks
+1. Run `$HOME/.claude/skills/_lib/scripts/detect-stack.sh` on the PR's repository root to detect frameworks
 2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md to load framework-specific rules
 3. Combine with [analysis-domains.md](~/.claude/skills/_lib/analysis-domains.md) domain criteria for comprehensive review
 
@@ -63,7 +65,7 @@ cat > /tmp/pr-review-body.md <<'EOF'
 EOF
 
 # Submit review (handles own-PR fallback automatically)
-$SKILLS_DIR/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-review-body.md
+$HOME/.claude/skills/pr-review/scripts/submit-review.sh <pr-number> <decision> /tmp/pr-review-body.md
 ```
 
 **Decision options**:
@@ -79,11 +81,11 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success (review submitted)
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-review success \
+$HOME/.claude/skills/skill-retrospective/scripts/journal.sh log pr-review success \
   --issue $ISSUE --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-review failure \
+$HOME/.claude/skills/skill-retrospective/scripts/journal.sh log pr-review failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```
 

@@ -1,5 +1,6 @@
 # Claude Code / Serena / Codex
 .claude/*
+# Track subagent definitions (issue #79/#89: dev-kickoff-worker, dev-contract-worker etc.)
 !.claude/agents/
 !.claude/agents/**
 # Legacy: skill-config.json は現在リポジトリルートに配置

@@ -7,6 +7,8 @@ description: |
   (3) keywords like "SNS告知", "告知文", "投稿文", "announce", "social media post",
   (4) input: MDX/Markdown files or published blog URLs.
   Accepts args: <source> [--output FILE] [--format md|json|yaml] [--schedule "YYYY-MM-DD HH:MM"] [--dedupe] [--x] [--linkedin] [--google] [--facebook] [--bluesky] [--threads] [--platforms LIST] [--base-url URL] [--lang ja|en]
+context: fork
+model: sonnet
 ---
 
 # SNS Announce

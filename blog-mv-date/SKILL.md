@@ -7,6 +7,8 @@ description: |
   (3) user wants to reschedule a blog article to a different date.
   Accepts args: <article> <dest-date> [--dry-run]
 user-invocable: true
+context: fork
+model: haiku
 ---
 
 # Blog Move Date
@@ -24,6 +26,18 @@ user-invocable: true
 | article    | 記事の識別子（ファイルパス、日付、slug、部分マッチ） |
 | dest-date  | 移動先の日付 (`YYYY-MM-DD`)             |
 | --dry-run  | 変更内容を表示するのみ                  |
+
+## Files to Update（必ず全て対象）
+
+| File                                  | 内容                          |
+| ------------------------------------- | ----------------------------- |
+| `content/blog/<date>-<slug>.mdx`      | リネーム + frontmatter        |
+| `public/blog/<date>-<slug>.webp`      | リネーム                      |
+| `post/blog/<date>-<slug>.json`        | リネーム + schedule 日付更新  |
+| `seed/*/articles.json`                | path 更新（★忘れがち）        |
+
+**重要**: 必ず `move-date.sh` を実行する。手動 mv / sed で個別に処理しない。
+過去に articles.json の更新漏れが発生したため、Step 6 で残存検証を行う。
 
 ## Workflow
 
@@ -52,13 +66,18 @@ bash $SKILLS_DIR/blog-mv-date/scripts/move-date.sh <path> <dest-date> --dry-run
 bash $SKILLS_DIR/blog-mv-date/scripts/move-date.sh <path> <dest-date>
 ```
 
-### Step 5: ビルド検証
+### Step 5: 残存検証
+
+`move-date.sh` の Step 6 が seed/ に旧 `<old-date>-<slug>` 文字列が残っていないかを自動検証する。
+失敗した場合は exit 1 で止まるので、表示されるパスを手動で修正してから次のステップに進む。
+
+### Step 6: ビルド検証
 
 ```bash
 npm run build
 ```
 
-### Step 6: Zernio API（旧Late）手順表示
+### Step 7: Zernio API（旧Late）手順表示
 
 Zernio API（旧Late）に既存スケジュールがある場合、手動変更手順を提示：
 

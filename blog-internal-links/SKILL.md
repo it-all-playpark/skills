@@ -4,6 +4,8 @@ description: |
   クラスタ内記事間の内部リンクを分析・挿入し、未公開記事へのリンクを防止するスキル。
   Use when: 内部リンク分析、クラスタリンク構築、リンク不足検出、未公開記事リンクチェックが必要な時。
   Accepts args: [--cluster "name"] [--check] [--fix] [--check-future]
+context: fork
+model: sonnet
 ---
 
 # Blog Internal Links

@@ -38,13 +38,23 @@ BODY=$(cat "$BODY_FILE")
 
 case "$DECISION" in
     approve)
-        echo "Attempting to approve PR #$PR_REF..." >&2
-        if gh pr review "$PR_REF" --approve --body "$BODY" 2>&1; then
-            echo "Review submitted: approved" >&2
-        else
-            echo "Cannot approve (likely own PR), falling back to comment..." >&2
+        # Pre-detect self-PR to avoid the "Cannot approve your own pull request"
+        # error from leaking into stderr (which gets logged as a journal failure).
+        pr_author=$(gh pr view "$PR_REF" --json author -q '.author.login' 2>/dev/null || echo "")
+        me=$(gh api user -q '.login' 2>/dev/null || echo "")
+        if [[ -n "$pr_author" && -n "$me" && "$pr_author" == "$me" ]]; then
+            echo "Self PR detected ($me); submitting as comment instead of approve..." >&2
             gh pr review "$PR_REF" --comment --body "$BODY"
-            echo "Review submitted: comment (fallback)" >&2
+            echo "Review submitted: comment (self-PR)" >&2
+        else
+            echo "Attempting to approve PR #$PR_REF..." >&2
+            if gh pr review "$PR_REF" --approve --body "$BODY" 2>&1; then
+                echo "Review submitted: approved" >&2
+            else
+                echo "Cannot approve, falling back to comment..." >&2
+                gh pr review "$PR_REF" --comment --body "$BODY"
+                echo "Review submitted: comment (fallback)" >&2
+            fi
         fi
         ;;
     request-changes)

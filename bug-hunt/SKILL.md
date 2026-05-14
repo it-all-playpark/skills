@@ -12,8 +12,9 @@ model: opus
 effort: max
 allowed-tools:
   - Task
-  - Bash
   - Skill
+  - Bash(~/.claude/skills/bug-hunt/scripts/*)
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 ---
 
 # Bug Hunt

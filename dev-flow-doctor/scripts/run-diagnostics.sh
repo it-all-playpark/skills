@@ -3,7 +3,13 @@ set -euo pipefail
 
 # run-diagnostics.sh - Run all diagnostic checks and output structured results
 # Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family|feedback] [--window <dur>]
+#                            [--compare <baseline-path>] [--update-baseline <path>]
 # Output: JSON with diagnostic results
+#
+# AC4/AC5 (issue #83): --compare invokes compare-baseline.sh and adds a
+# `baseline_compare` section to checks plus regression penalty (max -15).
+# --update-baseline delegates to baseline-snapshot.sh and writes the snapshot
+# to the given path; warns to stderr if total_entries == 0.
 
 SCRIPT_DIR_RD="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR_RD/../../_lib/common.sh"
@@ -14,18 +20,43 @@ source "$SCRIPT_DIR_RD/../../_lib/common.sh"
 
 SCOPE="full"
 WINDOW="30d"
+COMPARE_PATH=""
+UPDATE_BASELINE_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scope) SCOPE="$2"; shift 2 ;;
     --window) WINDOW="$2"; shift 2 ;;
+    --compare) COMPARE_PATH="$2"; shift 2 ;;
+    --update-baseline) UPDATE_BASELINE_PATH="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family|feedback] [--window <dur>]"
+      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family|feedback] [--window <dur>] [--compare <path>] [--update-baseline <path>]"
       exit 0
       ;;
     *) die_json "Unknown argument: $1" 1 ;;
   esac
 done
+
+# --update-baseline mode: delegate to baseline-snapshot.sh and exit.
+# Issue #83 AC2 / A6: run-diagnostics.sh is the sole owner of --update-baseline.
+if [[ -n "$UPDATE_BASELINE_PATH" ]]; then
+  SNAPSHOT_SH="$SCRIPT_DIR_RD/baseline-snapshot.sh"
+  if [[ ! -x "$SNAPSHOT_SH" ]]; then
+    die_json "baseline-snapshot.sh not found at $SNAPSHOT_SH" 1
+  fi
+  mkdir -p "$(dirname "$UPDATE_BASELINE_PATH")"
+  if ! "$SNAPSHOT_SH" --window "$WINDOW" --out "$UPDATE_BASELINE_PATH"; then
+    die_json "baseline-snapshot.sh failed when writing $UPDATE_BASELINE_PATH" 1
+  fi
+  # Warning if total_entries == 0 (vacuous baseline)
+  TOTAL_ENTRIES_OUT=$(jq -r '.total_entries // 0' "$UPDATE_BASELINE_PATH" 2>/dev/null || echo 0)
+  if [[ "$TOTAL_ENTRIES_OUT" -eq 0 ]]; then
+    echo "WARNING: baseline written to $UPDATE_BASELINE_PATH has total_entries == 0 (empty journal). Regression check will be vacuous until populated." >&2
+  fi
+  jq -n --arg path "$UPDATE_BASELINE_PATH" --argjson total "$TOTAL_ENTRIES_OUT" \
+    '{status: "baseline_updated", path: $path, total_entries: $total}'
+  exit 0
+fi
 
 case "$SCOPE" in
   full|journal|worktrees|config|family|feedback) ;;
@@ -576,6 +607,75 @@ run_termination_loops_check() {
 }
 
 # ============================================================================
+# Check 11: Baseline regression (issue #83 AC4/AC5)
+# ============================================================================
+
+run_baseline_compare_check() {
+  if [[ -z "$COMPARE_PATH" ]]; then
+    return
+  fi
+  local snapshot_sh="$SCRIPT_DIR_RD/baseline-snapshot.sh"
+  local compare_sh="$SCRIPT_DIR_RD/compare-baseline.sh"
+  if [[ ! -x "$snapshot_sh" || ! -x "$compare_sh" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq '.baseline_compare = {"status":"skipped","reason":"baseline-snapshot.sh or compare-baseline.sh not found"}')
+    return
+  fi
+  if [[ ! -f "$COMPARE_PATH" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq --arg p "$COMPARE_PATH" '.baseline_compare = {"status":"skipped","reason":("baseline file not found: " + $p)}')
+    return
+  fi
+
+  # Extract baseline.window (or default)
+  local baseline_window
+  baseline_window=$(jq -r '.window // "30d"' "$COMPARE_PATH" 2>/dev/null || echo "30d")
+
+  # Generate current snapshot to a temp file
+  local current_tmp
+  current_tmp=$(mktemp -t dffd-cmp-current-XXXXXX.json)
+  if ! "$snapshot_sh" --window "$baseline_window" --out "$current_tmp" 2>/dev/null; then
+    rm -f "$current_tmp"
+    CHECKS=$(echo "$CHECKS" | jq '.baseline_compare = {"status":"error","reason":"failed to generate current snapshot"}')
+    add_issue "warn" "baseline_compare: failed to generate current snapshot"
+    return
+  fi
+
+  local compare_out compare_rc
+  compare_out=$("$compare_sh" --baseline "$COMPARE_PATH" --current "$current_tmp" 2>/dev/null || true)
+  set +e
+  "$compare_sh" --baseline "$COMPARE_PATH" --current "$current_tmp" >/dev/null 2>&1
+  compare_rc=$?
+  set -e
+  rm -f "$current_tmp"
+
+  if ! echo "$compare_out" | jq empty 2>/dev/null; then
+    CHECKS=$(echo "$CHECKS" | jq '.baseline_compare = {"status":"error","reason":"compare-baseline.sh produced invalid JSON"}')
+    add_issue "warn" "baseline_compare: invalid JSON from compare-baseline.sh"
+    return
+  fi
+
+  # Apply penalty: -5 per critical finding, max -15
+  local critical_count
+  critical_count=$(echo "$compare_out" | jq '[.findings[] | select(.severity == "critical")] | length')
+  local error_count
+  error_count=$(echo "$compare_out" | jq '[.findings[] | select(.severity == "error")] | length')
+
+  if [[ "$critical_count" -gt 0 ]]; then
+    local penalty=$((critical_count * 5))
+    if [[ $penalty -gt 15 ]]; then penalty=15; fi
+    subtract_score "$penalty" 15
+    add_issue "warn" "Baseline regression: ${critical_count} critical finding(s) (penalty -${penalty})"
+  fi
+  if [[ "$error_count" -gt 0 ]]; then
+    add_issue "info" "Baseline compare error: ${error_count} (window mismatch / corrupt baseline / IO error)"
+  fi
+
+  CHECKS=$(echo "$CHECKS" | jq \
+    --argjson cmp "$compare_out" \
+    --argjson rc "$compare_rc" \
+    '.baseline_compare = ($cmp + {exit_code: $rc, status: "ok"})')
+}
+
+# ============================================================================
 # Run checks based on scope
 # ============================================================================
 
@@ -587,6 +687,7 @@ case "$SCOPE" in
     run_family_checks
     run_feedback_checks
     run_termination_loops_check
+    run_baseline_compare_check
     ;;
   journal)
     run_journal_checks
@@ -600,6 +701,7 @@ case "$SCOPE" in
   family)
     run_family_checks
     run_termination_loops_check
+    run_baseline_compare_check
     ;;
   feedback)
     run_feedback_checks

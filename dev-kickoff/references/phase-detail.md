@@ -5,7 +5,7 @@ Detailed documentation for each phase in the dev-kickoff workflow.
 ## Phase Overview
 
 ```
-Phase 1: Worktree Creation (dev-kickoff-worker)
+Phase 1: Worktree Creation (dev-kickoff-worker subagent)
     ↓
 Phase 1b: State Initialization (init-kickoff.sh)
     ↓
@@ -26,45 +26,30 @@ Handoff: pr-iterate
 
 ## Phase 1: Worktree Creation
 
-**Command:**
-```
+dev-kickoff spawns the `dev-kickoff-worker` subagent via the Agent tool. The subagent runs in `isolation: worktree` (Claude Code feature), giving it an isolated worktree managed by Claude Code itself.
+
+**Requirements**:
+- Claude Code >= 2.1.63 (`isolation: worktree` field support)
+- `.claude/agents/dev-kickoff-worker.md` present in the repo
+
+If either requirement is missing, dev-kickoff aborts with an explicit error — there is no fallback.
+
+**Spawn**:
+
+```text
 Agent(
   subagent_type: "dev-kickoff-worker",
-  prompt: "issue_number: $ISSUE\nbranch_name: feature/issue-${ISSUE}-m\nbase_ref: $BASE\nmode: single"
+  isolation: "worktree",
+  prompt: "
+    issue_number: $ISSUE
+    branch_name: feature/issue-$ISSUE-m   # single mode
+    base_ref: origin/$BASE
+    mode: single
+  "
 )
 ```
 
-**Purpose:** Create isolated git worktree for feature development via an isolated worktree subagent.
-
-**Output:**
-- Worktree at `../{repo}-worktrees/feature-issue-{N}-m/`
-- Branch: `feature/issue-{N}-m`
-- Environment files linked/copied per `--env-mode`
-
-**Verification:**
-```bash
-ls $WORKTREE/.env || echo "ERROR: .env not found"
-```
-
-**Completion Criteria:**
-- Worktree directory exists
-- Branch created and checked out
-- .env file present (if env-mode != none)
-
-## Phase 1b: State Initialization
-
-**Command:**
-```bash
-$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
-  --base $BASE --strategy $STRATEGY --depth $DEPTH --lang $LANG --env-mode $ENV_MODE
-```
-
-**Purpose:** Create kickoff.json for state tracking.
-
-**Output:**
-- `$WORKTREE/.claude/kickoff.json` created
-- Phase 1 marked as "done"
-- Current phase set to "2_analyze"
+The worker returns JSON containing the branch name, the worktree path it ran in, and the resulting commit SHA. Phase 1b (state init) is handled by the worker itself — it initializes `kickoff.json` inside the isolated worktree.
 
 ## Phase 2: Issue Analysis
 

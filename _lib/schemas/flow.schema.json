@@ -7,7 +7,7 @@
   "properties": {
     "version": {
       "type": "string",
-      "const": "1.0.0",
+      "const": "2.0.0",
       "description": "Schema version"
     },
     "issue": {
@@ -123,7 +123,7 @@
   "$defs": {
     "subtask": {
       "type": "object",
-      "required": ["id", "scope", "files", "status", "checklist"],
+      "required": ["id", "scope", "files", "branch", "status", "checklist"],
       "properties": {
         "id": {
           "type": "string",
@@ -145,6 +145,7 @@
         },
         "branch": {
           "type": "string",
+          "minLength": 1,
           "description": "Branch name for this subtask"
         },
         "depends_on": {

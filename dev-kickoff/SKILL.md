@@ -1,7 +1,7 @@
 ---
 name: dev-kickoff
 description: |
-  End-to-end feature development orchestrator using git worktree. Coordinates dev-kickoff-worker, issue-analyze, implement, validate, commit, and create-pr skills.
+  End-to-end feature development orchestrator. Spawns dev-kickoff-worker (isolation:worktree) and coordinates issue-analyze, plan, implement, validate, evaluate, commit, and create-pr skills.
   Use when: starting new feature development from GitHub issue, full development cycle automation with isolated worktree.
   Accepts args: <issue-number> [--testing tdd|bdd] [--design ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none] [--worktree <path>] [--task-id <id>] [--flow-state <path>]
 allowed-tools:
@@ -28,9 +28,11 @@ Orchestrate complete feature development cycle from issue to PR.
 **CRITICAL: Phase 1 (Worktree) is MANDATORY unless `--task-id` is specified.**
 When `--task-id` is NOT set (= single mode), Phase 1 MUST be executed FIRST. Implementation in the main repository directory is NEVER allowed.
 
+**Requires**: Claude Code >= 2.1.63 (`isolation: worktree` field support) and `.claude/agents/dev-kickoff-worker.md` present. If missing, dev-kickoff aborts with a clear error.
+
 | Phase | Action | Complete When | Single Mode | Parallel Mode (--task-id) |
 |-------|--------|---------------|-------------|---------------------------|
-| 1 | Worktree creation | Path exists, .env verified | **REQUIRED** | SKIP |
+| 1 | Worktree creation via `dev-kickoff-worker` subagent (`isolation: worktree`) | Path exists, .env verified | **REQUIRED** | SKIP |
 | 2 | Issue analysis | Requirements understood | **REQUIRED** | SKIP |
 | 3 | Implementation plan | impl-plan.md created | Execute | Execute |
 | 3b | Plan review | Plan approved or revised | Execute | Execute |
@@ -45,7 +47,7 @@ After Phase 8: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
 ## Phase Checklist
 
 ```
-[ ] Phase 1: dev-kickoff-worker (isolation: worktree) → init-kickoff.sh  (REQUIRED unless --task-id)
+[ ] Phase 1: Agent(dev-kickoff-worker, isolation: worktree)  (REQUIRED unless --task-id)
 [ ] Phase 2: Skill: dev-issue-analyze                   (REQUIRED unless --task-id)
 [ ] Phase 3: Skill: dev-plan-impl                       (Opus planner)
 [ ] Phase 3b: Skill: dev-plan-review                    (Opus reviewer, context:fork)
@@ -73,8 +75,8 @@ Details: [State Management](references/state-management.md), [kickoff.json Schem
 
 | Phase | Command | Subagent | Parallel Mode |
 |-------|---------|----------|---------------|
-| 1 | `Agent(subagent_type: dev-kickoff-worker, issue_number: $ISSUE, base_ref: $BASE, mode: single)` | dev-kickoff-worker | SKIP |
-| 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
+| 1 | `Agent(subagent_type: "dev-kickoff-worker", isolation: "worktree", prompt: <issue/branch/base/mode>)` | `dev-kickoff-worker` | SKIP |
+| 1b | Worker initializes `kickoff.json` itself inside the isolated worktree | - | SKIP |
 | 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
 | 3 | `Skill: dev-plan-impl $ISSUE --worktree $PATH` | - | Execute |
 | 3b | `Skill: dev-plan-review $ISSUE --worktree $PATH` | context:fork | Execute |
@@ -84,7 +86,25 @@ Details: [State Management](references/state-management.md), [kickoff.json Schem
 | 7 | `Skill: git-commit --all --worktree $PATH` | - | Execute |
 | 8 | `Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH` | - | SKIP |
 
-Phase 1: Must execute script. Direct `git worktree add` is prohibited.
+Phase 1: Spawn `dev-kickoff-worker` via Agent tool. Direct `git worktree add` is prohibited.
+
+## Phase 1 dispatch
+
+Phase 1 spawns the `dev-kickoff-worker` subagent through the Agent tool with `isolation: worktree`:
+
+```text
+Agent(
+  subagent_type: "dev-kickoff-worker",
+  isolation: "worktree",
+  prompt: "issue_number=$ISSUE branch_name=$BRANCH base_ref=$BASE_REF mode=$MODE"
+)
+```
+
+The worker runs Phase 1b-7 (and Phase 8 in single mode) inside its isolated worktree and returns `{status, branch, worktree_path, commit_sha, pr_url?, phase_failed?, error?}`. On `status: completed`, dev-kickoff records branch + sha and (single mode) calls `pr-iterate` with the returned `pr_url`.
+
+If the worker definition (`.claude/agents/dev-kickoff-worker.md`) is missing or claude CLI is < 2.1.63, dev-kickoff aborts with an explicit error — there is no fallback path.
+
+See [Phase 1 detail](references/phase-detail.md#phase-1-worktree-creation) for the full worker contract.
 
 ## Loops
 

@@ -7,6 +7,8 @@ description: |
   (3) user has content/blog/ MDX file and wants platform-specific output.
   Accepts args: <slug-or-path> [--platform zenn|qiita|both] [--output path]
 user-invocable: true
+context: fork
+model: sonnet
 ---
 
 # Blog Cross-Post

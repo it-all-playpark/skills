@@ -23,3 +23,28 @@ jobs:
         run: |
           chmod +x tests/subagent-dispatch-lint.sh
           ./tests/subagent-dispatch-lint.sh
+
+  no-glue-errors:
+    name: Dev-flow glue-error baseline check (AC4/AC5)
+    runs-on: ubuntu-latest
+    env:
+      # CI uses the committable schema-compliant template (issue #83 AC4/AC5).
+      # Local development uses .claude/dev-flow-doctor-baseline-pre-79.json
+      # (gitignored, generated via run-diagnostics.sh --update-baseline).
+      BASELINE_FILE: dev-flow-doctor/templates/baseline-pre-79.example.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        shell: bash
+        run: |
+          which jq || sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run tests/no-glue-errors.sh
+        shell: bash
+        run: |
+          chmod +x tests/no-glue-errors.sh \
+                   dev-flow-doctor/scripts/baseline-snapshot.sh \
+                   dev-flow-doctor/scripts/compare-baseline.sh
+          ./tests/no-glue-errors.sh

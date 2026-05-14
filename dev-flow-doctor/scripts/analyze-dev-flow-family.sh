@@ -182,7 +182,13 @@ PER_SKILL=$(jq -n \
     ($es | map(select(.outcome == "success")) | length) as $succ |
     ($es | map(select(.outcome == "failure")) | length) as $fail |
     ($es | map(select(.outcome == "partial")) | length) as $part |
-    ($es | map(.duration_turns // 0) | add // 0) as $sum_turns |
+    # duration_turns は明示 log されたエントリ (主に成功時) にのみ存在する。
+    # hook-capture failures には duration_turns が無いため、これを総数で割ると
+    # bottleneck 判定が壊れる (実際 5 turns でも avg 1.28 と出る)。
+    # サンプル数で割る方式に変更し、duration_samples を出力に追加する。
+    ($es | map(select(.duration_turns != null) | .duration_turns)) as $durations |
+    ($durations | length) as $dur_count |
+    ($durations | add // 0) as $sum_turns |
     {
       skill: $s,
       total: $total,
@@ -190,7 +196,8 @@ PER_SKILL=$(jq -n \
       failure: $fail,
       partial: $part,
       failure_rate: (if $total > 0 then (($fail + $part) / $total) else 0 end),
-      avg_duration_turns: (if $total > 0 then ($sum_turns / $total) else 0 end),
+      avg_duration_turns: (if $dur_count > 0 then ($sum_turns / $dur_count) else 0 end),
+      duration_samples: $dur_count,
       last_success: ($es | map(select(.outcome == "success")) | sort_by(.timestamp) | last | .timestamp // null),
       last_failure: ($es | map(select(.outcome != "success")) | sort_by(.timestamp) | last | .timestamp // null)
     }

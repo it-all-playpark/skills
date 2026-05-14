@@ -36,21 +36,27 @@ user-invocable: true                # false でメニュー非表示（backgroun
 ---
 ```
 
-### Frontmatter 全11フィールド
+### Frontmatter 全15フィールド
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | 表示名・slash-command 識別子 |
-| `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に |
-| `argument-hint` | No | autocomplete ヒント |
+| `name` | Yes | 表示名・slash-command 識別子（小文字・数字・ハイフン、最大 64 文字。省略時はディレクトリ名） |
+| `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に。`when_to_use` と合算して **1,536 文字で truncate** される |
+| `when_to_use` | No | `description` の補足。トリガーフレーズや使用例を記載（合算 1,536 文字制限あり） |
+| `argument-hint` | No | autocomplete に表示する引数の型ヒント（例: `[issue-number]`, `<file> [--dry-run]`） |
+| `arguments` | No | named positional 引数の宣言（例: `[issue, branch]`）。skill 本文で `$issue` / `$branch` として参照可能 |
+| `paths` | No | glob リスト。指定パス配下でのみ自動呼び出し有効化（省略時は全パス） |
+| `shell` | No | SKILL.md 本文中の `` !`command` `` 実行ブロックのシェル（`bash`（既定）/ `powershell`） |
 | `allowed-tools` | No | 許可ツールリスト |
-| `model` | No | 実行モデル指定（`haiku` / `sonnet` / `opus`） |
+| `model` | No | 実行モデル指定（`haiku` / `sonnet` / `opus` / `inherit`） |
 | `effort` | No | 推論深度（`low` / `medium` / `high` / `xhigh` / `max`）。session 設定を override |
 | `context` | No | `fork` で分離サブエージェント |
 | `agent` | No | `context:fork` 時のサブエージェントタイプ |
 | `hooks` | No | ライフサイクルフック |
 | `disable-model-invocation` | No | `true` で自動呼び出し禁止（危険スキル向け） |
 | `user-invocable` | No | `false` でメニュー非表示（background knowledge 専用） |
+
+参照: [Skills frontmatter reference](https://code.claude.com/docs/en/skills#frontmatter-reference)
 
 ### effort の選び方
 
@@ -74,7 +80,9 @@ user-invocable: true                # false でメニュー非表示（backgroun
 
 ### description の書き方
 
-description は**常にコンテキストに注入される**（character budget デフォルト 15,000 文字）。
+description は**常にコンテキストに注入される**。`when_to_use` と合算して
+**1,536 文字で truncate** されるため簡潔に書く。なお session 全体の skill metadata
+合計は `descriptionCharacterBudget`（デフォルト 15,000 文字）で別途制限される。
 
 ```yaml
 # Good: トリガー条件・キーワード・引数を含む簡潔な記述
@@ -88,7 +96,20 @@ description: |
   This skill reads MDX files, extracts metadata, generates platform-specific
   posts for X (280 chars), LinkedIn (1300 chars), and Facebook (1500 chars),
   with hashtag optimization and scheduling support...
+
+# Bad: 一人称 / 動詞だけ / undertrigger（控えめすぎる表現）
+description: |
+  I help with PDFs.              # ❌ 一人称（"I" / "this skill" 禁止）
+  Handles documents.             # ❌ 動詞だけ・"document" は汎用すぎ
+  For when you need it.          # ❌ undertrigger（push 気味に書く）
 ```
+
+**ルール（[T1 agent-skills/best-practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)）**:
+
+- third-person 命令形で書く（`Extracts ...`, `Converts ...`, `Generates ...`）
+- `Use when:` には具体トリガ語を列挙する（"document" のような汎用語を避け、"PDF form 抽出" 等まで具体化）
+- "I" / "this skill" などの一人称は使わない
+- 控えめに書くと Claude が呼ばない。push 気味に書く
 
 ## SKILL.md 本文構造
 
@@ -205,6 +226,15 @@ User triggers /command
 4. **Namespace 命名**: `dev-*`, `blog-*`, `git-*` 等のプレフィックスで整理
 5. **小タスクは vanilla**: 小さいタスクは素の Claude Code の方が優秀
 6. **Journal Logging**: ワークフロー完了時に skill-retrospective 経由でログ記録
+7. **破壊的・大量変更系は `disable-model-invocation: true` を検討**:
+   ファイル大量移動・worktree 大量生成・外部公開を伴う skill は LLM の自動起動を禁じ、
+   ユーザー明示起動（`/skill-name`）のみに限定する。
+   候補例: `blog-mv-date`, `blog-swap-dates`, `dev-decompose`, `cross-post-publish`,
+   `qiita-publish`, `zenn-publish`
+8. **「毎回確定実行」したい挙動は skill ではなく hook で実装**:
+   format / test / secret 検査のように LLM の判断を介さず必ず走らせたい処理は、
+   skill 化すると呼び出し漏れが起きる。hook での実装を検討すること。
+   hook 実装は dotfiles repo の `claude-code/hooks/` を参照
 
 ## Subagent Dispatch Rules
 

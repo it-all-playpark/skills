@@ -78,7 +78,15 @@ if ! "$SCRIPT_DIR/topo-sort.sh" --flow-state "$FLOW_STATE" >/dev/null 2>&1; then
     ERRORS+=("Circular dependency detected in subtask depends_on")
 fi
 
-# 6. Check depends_on references valid subtask IDs
+# 6. Check each subtask has a non-empty branch field (required by schema)
+MISSING_BRANCH=$(jq -r '.subtasks[] | select((.branch // "") == "") | .id' "$FLOW_STATE")
+if [[ -n "$MISSING_BRANCH" ]]; then
+    while IFS= read -r task_id; do
+        [[ -n "$task_id" ]] && ERRORS+=("Subtask $task_id is missing required 'branch' field")
+    done <<< "$MISSING_BRANCH"
+fi
+
+# 7. Check depends_on references valid subtask IDs
 INVALID_DEPS=$(jq -r '
   (.subtasks | map(.id)) as $valid_ids |
   .subtasks[] |

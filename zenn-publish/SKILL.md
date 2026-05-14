@@ -7,6 +7,8 @@ description: |
   (3) user has a Zenn-formatted markdown file from blog-cross-post.
   Accepts args: <file-path> [--slug <slug>]
 user-invocable: true
+context: fork
+model: haiku
 ---
 
 # Zenn Publish

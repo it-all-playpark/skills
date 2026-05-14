@@ -43,43 +43,49 @@ The scripts automatically detect the worktree path using this priority:
 
 ```bash
 # Explicit worktree
-$SKILLS_DIR/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N] --worktree $PATH
+$HOME/.claude/skills/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N] --worktree $PATH
 
 # Auto-detect from kickoff.json (when running from worktree or main repo with kickoff.json)
-$SKILLS_DIR/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N]
+$HOME/.claude/skills/pr-iterate/scripts/init-iterate.sh $PR [--max-iterations N]
 ```
 
 ### Record Results
 
 ```bash
 # Record review decision (--summary, --issues は日本語で記述)
-$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh review \
+$HOME/.claude/skills/pr-iterate/scripts/record-iteration.sh review \
   --decision <approved|request-changes|comment> \
   [--issues "型安全性の問題,未使用のimport"] \
   [--summary "コード品質に問題なし"]
 
-# Record CI status
-$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh ci --status <passed|failed|pending>
+# Check CI status (pending を failure 扱いせず、構造化 JSON で返す)
+# ⚠️ `gh pr checks` を直接呼ばないこと — exit code 8 (pending) が
+#    failure として journal に記録されるノイズの原因になる。
+$HOME/.claude/skills/pr-iterate/scripts/check-ci.sh <pr-number> [--repo owner/repo]
+# → 出力 JSON の status: "passed" | "failed" | "pending" | "no_checks"
+
+# Record CI status (上記の status をそのまま渡す)
+$HOME/.claude/skills/pr-iterate/scripts/record-iteration.sh ci --status <passed|failed|pending>
 
 # Record fixes applied (--applied は日本語で記述)
-$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh fix --applied "型アノテーションを追加,未使用importを削除"
+$HOME/.claude/skills/pr-iterate/scripts/record-iteration.sh fix --applied "型アノテーションを追加,未使用importを削除"
 
 # Start next iteration
-$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh next
+$HOME/.claude/skills/pr-iterate/scripts/record-iteration.sh next
 
 # Complete iteration loop (LGTM時は自動でサマリーをPRコメントに投稿)
-$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh complete --status <lgtm|failed|max_reached>
+$HOME/.claude/skills/pr-iterate/scripts/record-iteration.sh complete --status <lgtm|failed|max_reached>
 
 # サマリー投稿をスキップする場合
-$SKILLS_DIR/pr-iterate/scripts/record-iteration.sh complete --status lgtm --no-summary
+$HOME/.claude/skills/pr-iterate/scripts/record-iteration.sh complete --status lgtm --no-summary
 
 # 手動でサマリーを投稿する場合
-$SKILLS_DIR/pr-iterate/scripts/post-summary.sh [--worktree PATH] [--dry-run]
+$HOME/.claude/skills/pr-iterate/scripts/post-summary.sh [--worktree PATH] [--dry-run]
 ```
 
 ### Resume After Compact
 
-1. Run `$SKILLS_DIR/pr-iterate/scripts/check-resume.sh` to detect stale state
+1. Run `$HOME/.claude/skills/pr-iterate/scripts/check-resume.sh` to detect stale state
 2. If `status: "stale_lgtm"` → re-initialize with `init-iterate.sh` (new commits found after LGTM)
 3. If `status: "in_progress"` → Read `.claude/iterate.json`, check `current_iteration` and `next_actions`, resume
 4. If `status: "lgtm"` (no new commits) → already complete, no action needed
@@ -177,16 +183,16 @@ On workflow completion, log execution to skill-retrospective journal:
 
 ```bash
 # On LGTM
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-iterate success \
+$HOME/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate success \
   --issue $ISSUE --duration-turns $TURNS
 
 # On max iterations reached
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-iterate partial \
+$HOME/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate partial \
   --issue $ISSUE --error-category config --error-msg "max iterations reached ($N)" \
   --recovery "manual intervention needed" --recovery-turns 0
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log pr-iterate failure \
+$HOME/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```
 

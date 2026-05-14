@@ -20,7 +20,7 @@ dev-flow (main context - lightweight)
     │
     ├─→ [Single Mode]
     │   ├─→ Step 2a: Task subagent → dev-kickoff (independent context)
-    │   │       ├─→ Phase 1: dev-kickoff-worker (isolation: worktree)
+    │   │       ├─→ Phase 1: Agent(dev-kickoff-worker, isolation:worktree)
     │   │       ├─→ Phase 2: dev-issue-analyze (exploration)
     │   │       ├─→ Phase 3: dev-implement (coding)
     │   │       ├─→ Phase 4: dev-validate (testing)
@@ -41,9 +41,10 @@ dev-flow (main context - lightweight)
         │       ├─→ Build dependency graph
         │       ├─→ Split into subtasks (file boundary)
         │       ├─→ Generate shared contract (interfaces/types)
-        │       ├─→ Create contract branch + commit
-        │       ├─→ Create N worktrees (dev-kickoff-worker mode:parallel x N)
-        │       └─→ Generate flow.json
+        │       ├─→ Create contract branch via Agent(dev-contract-worker, isolation:worktree)
+        │       ├─→ Dispatch N dev-kickoff-worker subagents
+        │       │     (isolation:worktree, base: contract branch)
+        │       └─→ Generate flow.json (populates subtask.branch)
         │
         ├─→ Step 3b: Check decomposition
         │       └─→ subtask_count verified > 1
@@ -60,9 +61,10 @@ dev-flow (main context - lightweight)
         │
         ├─→ Step 6b: dev-integrate
         │       ├─→ Check drift (planned vs actual files)
-        │       ├─→ Merge subtask branches (topological order)
-        │       ├─→ Type check (tsc/mypy/go vet)
-        │       └─→ dev-validate (integration tests)
+        │       ├─→ Spawn Agent(dev-kickoff-worker, isolation:worktree, mode:merge)
+        │       │     (worker runs merge-subtasks.sh + type check + dev-validate
+        │       │      inside its isolated worktree and returns merge_results)
+        │       └─→ Transcribe worker JSON into flow.json.integration
         │
         ├─→ Step 7b: git-pr (from merge worktree)
         │
@@ -311,3 +313,14 @@ cat $SUBTASK_WT/.claude/kickoff.json | jq '.current_phase'
 - `gh pr view` for PR status
 - `gh pr checks` for CI status
 - `gh pr merge` - User performs manually after LGTM
+
+### With dev-flow-doctor (AC4/AC5 baseline 比較)
+
+dev-flow family の health monitoring と regression 検知に `dev-flow-doctor` を併用する。
+
+- 30 日 window で snapshot を生成（`baseline-snapshot.sh`）し baseline と比較（`compare-baseline.sh`）
+- `tests/no-glue-errors.sh` が CI で実行され glue-related regression を検出
+- health score への penalty integration（最大 -15）
+
+詳細・snapshot / compare JSON schema・CI 運用パターン（template fallback / vacuous pass 注意事項）は
+[`dev-flow-doctor/references/baseline-comparison.md`](../../dev-flow-doctor/references/baseline-comparison.md) を参照。
