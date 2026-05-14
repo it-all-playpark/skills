@@ -33,59 +33,40 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 ## Workflow
 
 ```
-1. Read flow.json, verify all subtasks status == "completed"
-1b. Check shared_findings for unacked entries (warning only, non-blocking)
-2. Warn if actual_files_changed differs from planned files
-3. Determine merge order from depends_on (topological sort, leaves first)
-4. Spawn worker: Agent(subagent_type: "dev-kickoff-worker", isolation: "worktree", mode: "merge")
-   prompt:
-     issue_number: $ISSUE
-     branch_name: feature/issue-${ISSUE}-merge   (or ...-merge-retry on retry)
-     base_ref: $CONTRACT_BRANCH
-     mode: merge
-     flow_state: $FLOW_STATE
-   worker internally runs:
-     a. git checkout -b $branch_name $base_ref
-     b. merge-subtasks.sh --flow-state $FLOW_STATE --worktree $(pwd)
-        (auto-resolves lock/config conflicts, appends integration-feedback events)
-     c. type check (tsc/mypy/go vet)
-     d. Skill: dev-validate --worktree $(pwd)
-   worker returns:
-     {status, branch, worktree_path, commit_sha, merge_results, conflicts, phase_failed?, error?}
-5. Parent writes worker result back to flow.json.integration via flow-update.sh
-   (status / merge_worktree / merge_order / type_check / validation / merge_results / conflicts)
-6. On merge failure: re-spawn worker with branch_name=feature/issue-${ISSUE}-merge-retry
+1.  Read flow.json, verify all subtasks status == "completed"
+1b. Check shared_findings (non-blocking warning)
+2.  Warn if actual_files_changed differs from planned files
+3.  Determine merge order from depends_on (topological)
+4.  Spawn dev-kickoff-worker (isolation: worktree, mode: merge)
+5.  Transcribe worker JSON to flow.json.integration via flow-update.sh
+6.  On merge failure: re-spawn worker with -merge-retry suffix (max 1)
 ```
 
 ### Step 1b: Unacked Shared Findings Check
 
 ```bash
-UNACKED=$($SKILLS_DIR/dev-integrate/scripts/check-unacked-findings.sh \
-  --flow-state "$FLOW_STATE")
-COUNT=$(echo "$UNACKED" | jq -r '.unacked_count')
-if [[ "$COUNT" -gt 0 ]]; then
-  echo "$COUNT shared finding(s) not acknowledged by all subtasks:"
-  echo "$UNACKED" | jq -r '.unacked[] | "  - \(.id) [\(.category)] \(.title) (missing: \(.missing_ack | join(",")))"'
-fi
+$SKILLS_DIR/dev-integrate/scripts/check-unacked-findings.sh --flow-state "$FLOW_STATE"
 ```
 
-The check is **non-blocking**: integration continues even with unacked findings. It only surfaces potential cross-worker coordination gaps for human awareness. See [`_shared/references/shared-findings.md`](../_shared/references/shared-findings.md) for the pattern.
+Non-blocking. Surfaces cross-worker coordination gaps. See [`_shared/references/shared-findings.md`](../_shared/references/shared-findings.md).
 
-## Execution
+### Step 4: Worker Dispatch
 
-See [Integration Guide](references/integration-guide.md#execution-steps) for detailed step-by-step commands, and [Worker Dispatch](references/worker-dispatch.md) for the `dev-kickoff-worker` (`mode: merge`) contract.
+Spawn `dev-kickoff-worker` (`isolation: worktree`, `mode: merge`) with prompt fields `issue_number` / `branch_name` (`feature/issue-${ISSUE}-merge`) / `base_ref` (contract branch) / `mode: merge` / `flow_state`. Worker internally runs `merge-subtasks.sh` → type check → `dev-validate` and returns `{status, branch, worktree_path, commit_sha, merge_results, conflicts}`.
+
+Agent call shape, retry pattern (`-merge-retry`), and full return JSON: [Worker Dispatch](references/worker-dispatch.md).
 
 ## Subagent Dispatch Rules
 
-dev-integrate spawns `dev-kickoff-worker` with `isolation: worktree` for the merge worktree (Step 4). Per `docs/skill-creation-guide.md`, the dispatch must satisfy the required 5 elements. Full prompt template and routing live in [`references/worker-dispatch.md`](references/worker-dispatch.md) (progressive disclosure); the binding values are summarised here.
+dev-integrate spawns `dev-kickoff-worker` (`Agent(isolation: worktree, mode: merge)`) at Step 4. Common rules ([`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)) require the 5 elements:
 
-1. **Objective** — 「contract branch `feature/issue-${ISSUE}-contract` をベースに merge 用 branch `feature/issue-${ISSUE}-merge` (or `-merge-retry`) を isolated worktree で作成し、`merge-subtasks.sh` → 型チェック → `dev-validate` を実行して `{status, branch, worktree_path, commit_sha, merge_results, conflicts}` を返す」
-2. **Output format** — `{ status: "completed"|"failed", branch: string, worktree_path: string, commit_sha: string, merge_results: object, conflicts: number, phase_failed?: string, error?: string }` (last-line JSON contract)
-3. **Tools** — worker frontmatter 既定: `Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep`。dev-integrate 側から追加制約は付けない
-4. **Boundary** — worker は自身の isolated worktree 内のみで作業、`git push` 禁止 (merge branch も含む)、subtask / contract branch を rewrite しない、`git worktree add` を直接実行しない、`git-prepare.sh --suffix merge` も呼ばない
-5. **Token cap** — worker 1 回あたり 2000 turn 以内 (`dev-kickoff-worker.md` 既定)、merge mode は通常 1 spawn で完結 (失敗時のみ `-merge-retry` で 1 回 re-spawn)
+- **Objective** — contract branch ベースに merge 用 isolated worktree を作成し `merge-subtasks.sh` → 型チェック → `dev-validate` を実行
+- **Output format** — `{status, branch, worktree_path, commit_sha, merge_results, conflicts, phase_failed?, error?}` JSON (worker last-line contract)
+- **Tools** — worker frontmatter で許可 (Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep)。追加制約は付けない
+- **Boundary** — worker は自身の isolated worktree 内のみで作業、`git push` 禁止 (merge branch も含む)、subtask / contract branch を rewrite しない、`git worktree add` / `git-prepare.sh --suffix merge` 直接実行禁止
+- **Token cap** — worker 1 回あたり 2000 turn 以内、merge mode は通常 1 spawn (失敗時のみ `-merge-retry` で 1 回 re-spawn)
 
-Routing: merge worktree 作成 + merge 実行 → `dev-kickoff-worker` (sonnet, `isolation: worktree`, `mode: merge`)。dev-integrate 自身は探索 / 集約 / `flow.json` 書き込みのみを担う。
+詳細・Routing: [Worker Dispatch](references/worker-dispatch.md)。
 
 ## Error Handling
 
