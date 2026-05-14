@@ -113,7 +113,7 @@ Analyze issue, build file dependency graph, partition into subtasks. See [Decomp
 Generate contract per [Decomposition Guide](references/decomposition-guide.md). Branch: `feature/issue-{N}-contract`.
 
 **IMPORTANT: Contract branch は dev-contract-worker (isolation: worktree) 経由で作成すること。**
-**メインリポジトリで直接 checkout したり、git-prepare.sh を直接呼び出したりしない。**
+**メインリポジトリで直接 checkout したり、worktree 作成スクリプトを直接呼び出したりしない。**
 
 Spawn `dev-contract-worker` via the Agent tool:
 

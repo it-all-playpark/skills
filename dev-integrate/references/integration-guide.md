@@ -233,7 +233,7 @@ grep -rn '<<<<<<< \|======= \|>>>>>>> ' --include='*.ts' --include='*.py' --incl
 cat merge-results.json | jq '.results[] | select(.status == "conflict")'
 
 # 2. Create a fresh merge worktree
-git-prepare.sh $ISSUE --suffix merge-retry --base $BASE
+Agent(subagent_type: dev-kickoff-worker, issue_number: $ISSUE, branch_name: feature/issue-${ISSUE}-merge-retry, base_ref: $BASE, mode: merge, flow_state: $FLOW_STATE)
 
 # 3. Manually merge the conflicting branch
 cd $NEW_WORKTREE
@@ -339,14 +339,18 @@ are merged first, followed by subtasks that depend on them.
 
 ### Step 4: Create Merge Worktree
 
-```bash
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --suffix merge --base $BASE
+Spawn `dev-kickoff-worker` with `mode: merge`:
+
+```
+Agent(
+  subagent_type: "dev-kickoff-worker",
+  prompt: "issue_number: $ISSUE\nbranch_name: feature/issue-${ISSUE}-merge\nbase_ref: $BASE\nmode: merge\nflow_state: $FLOW_STATE"
+)
 ```
 
-### Step 4b: Sync .env Files (git-prepareが自動実行しない場合のみ)
+### Step 4b: Sync .env Files (worktree 作成後に必要な場合のみ)
 
-> **Note**: git-prepare.sh は内部で sync-env を自動呼び出しする。
-> `--env-mode none` で Step 4 を実行した場合や、手動で再同期が必要な場合のみ以下を実行する。
+> **Note**: `.env` の同期が必要な場合のみ以下を実行する。
 
 ```bash
 $SKILLS_DIR/sync-env/scripts/sync-env.sh --worktree $MERGE_WORKTREE --mode $ENV_MODE --force

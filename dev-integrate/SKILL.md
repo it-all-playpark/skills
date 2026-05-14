@@ -19,7 +19,7 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 
 - Read flow.json and verify all subtasks completed
 - Detect planned vs actual file changes (actual_files_changed vs files)
-- Create merge worktree (git-prepare --suffix merge)
+- Create merge worktree (dev-kickoff-worker mode: merge)
 - Merge each subtask branch in dependency order (leaves first)
 - Detect and attempt auto-resolution of conflicts
 - **Record conflicts / integration failures to `_shared/integration-feedback.json`**
@@ -37,7 +37,7 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 1b. Check shared_findings for unacked entries (warning only, non-blocking)
 2. Warn if actual_files_changed differs from planned files
 3. Determine merge order from depends_on (topological sort, leaves first)
-4. Create merge worktree via git-prepare --suffix merge --base $CONTRACT_BRANCH
+4. Create merge worktree via dev-kickoff-worker (mode: merge, base: $CONTRACT_BRANCH)
 4b. Sync .env files to merge worktree via sync-env
 5. For each subtask in order:
    a. git merge --no-ff $TASK_BRANCH

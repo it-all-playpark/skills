@@ -259,7 +259,6 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `git-commit` | 変更分析・Conventional Commits生成 |
 | `git-pr` | GitHub PR作成 |
-| `git-prepare` | 機能開発用worktree準備 |
 | `sync-env` | ソースリポジトリからworktreeへ.envファイル同期 |
 
 ### PR/レビュー

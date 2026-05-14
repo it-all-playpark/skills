@@ -1,7 +1,7 @@
 ---
 name: dev-kickoff
 description: |
-  End-to-end feature development orchestrator using git worktree. Coordinates git-prepare, issue-analyze, implement, validate, commit, and create-pr skills.
+  End-to-end feature development orchestrator using git worktree. Coordinates dev-kickoff-worker, issue-analyze, implement, validate, commit, and create-pr skills.
   Use when: starting new feature development from GitHub issue, full development cycle automation with isolated worktree.
   Accepts args: <issue-number> [--testing tdd|bdd] [--design ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none] [--worktree <path>] [--task-id <id>] [--flow-state <path>]
 allowed-tools:
@@ -45,7 +45,7 @@ After Phase 8: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
 ## Phase Checklist
 
 ```
-[ ] Phase 1: git-prepare.sh → init-kickoff.sh          (REQUIRED unless --task-id)
+[ ] Phase 1: dev-kickoff-worker (isolation: worktree) → init-kickoff.sh  (REQUIRED unless --task-id)
 [ ] Phase 2: Skill: dev-issue-analyze                   (REQUIRED unless --task-id)
 [ ] Phase 3: Skill: dev-plan-impl                       (Opus planner)
 [ ] Phase 3b: Skill: dev-plan-review                    (Opus reviewer, context:fork)
@@ -73,7 +73,7 @@ Details: [State Management](references/state-management.md), [kickoff.json Schem
 
 | Phase | Command | Subagent | Parallel Mode |
 |-------|---------|----------|---------------|
-| 1 | `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - | SKIP |
+| 1 | `Agent(subagent_type: dev-kickoff-worker, issue_number: $ISSUE, base_ref: $BASE, mode: single)` | dev-kickoff-worker | SKIP |
 | 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
 | 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
 | 3 | `Skill: dev-plan-impl $ISSUE --worktree $PATH` | - | Execute |

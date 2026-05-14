@@ -29,7 +29,7 @@ Run analysis across 5 axes:
 | Axis | Detection | Example |
 |------|-----------|---------|
 | **Recurring failures** | Same error 2+ times across entries | node_modules missing 3x |
-| **Instruction gaps** | Skill .md lacks handling for observed error | git-prepare missing npm install step |
+| **Instruction gaps** | Skill .md lacks handling for observed error | dev-kickoff-worker missing dev-env-setup invocation |
 | **Guard deficiency** | Pre-condition not checked | No lockfile detection before install |
 | **Workflow inefficiency** | Recovery turns consistently > 2 | validate→fix loop averaging 4 turns |
 | **Environment issues** | Errors in env/config category | .env, deps, Docker not running |

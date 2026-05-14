@@ -169,7 +169,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-implement failure \
 ## Integration
 
 - Receives context from `dev-issue-analyze` if in kickoff workflow
-- Receives `WORKTREE_PATH` from `git-prepare` if worktree mode
+- Receives `WORKTREE_PATH` from `dev-kickoff-worker` (isolation: worktree) if worktree mode
 - Passes to `dev-validate` skill for verification
 - Reads `$WORKTREE/.claude/impl-plan.md` from `dev-plan-impl` if available
 - Receives Evaluator feedback via kickoff.json iterations on retry

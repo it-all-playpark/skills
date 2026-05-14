@@ -35,7 +35,7 @@ prevention mechanism.
 **Example**:
 ```
 Failure: "npm: command 'npm install' failed - ENOENT node_modules"
-Skill: git-prepare/SKILL.md
+Skill: dev-kickoff-worker (worktree creation)
 Search: "npm install" OR "node_modules" OR "dependency install"
 Result: 0 matches → INSTRUCTION GAP
 ```

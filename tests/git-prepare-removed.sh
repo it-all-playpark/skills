@@ -33,7 +33,7 @@ RESIDUAL=$(grep -rn "git-prepare" "$REPO_ROOT" \
   --exclude-dir=.git \
   --exclude-dir=tests \
   --exclude-dir=claudedocs \
-  --exclude-dir="docs/superpowers" \
+  --exclude-dir=superpowers \
   2>/dev/null || true)
 if [[ -z "$RESIDUAL" ]]; then
   _pass "No residual git-prepare references in .md/.json files"

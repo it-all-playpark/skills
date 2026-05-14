@@ -11,7 +11,7 @@ Classification taxonomy for skill execution failures.
 | `build` | Compilation / bundle errors | TypeScript tsc, webpack, esbuild failures | dev-validate, dev-build |
 | `runtime` | Runtime execution errors | Node.js crashes, Python exceptions | dev-implement |
 | `config` | Configuration issues | Missing config files, invalid settings | dev-kickoff |
-| `env` | Environment setup issues | Missing deps, wrong Node version, .env missing | git-prepare, dev-kickoff |
+| `env` | Environment setup issues | Missing deps, wrong Node version, .env missing | dev-kickoff-worker, dev-kickoff |
 | `merge` | Git merge conflicts | Branch conflicts, rebase failures | dev-integrate |
 | `type-check` | Type system errors | TypeScript strict errors, mypy violations | dev-validate |
 

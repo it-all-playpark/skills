@@ -20,7 +20,7 @@ dev-flow (main context - lightweight)
     │
     ├─→ [Single Mode]
     │   ├─→ Step 2a: Task subagent → dev-kickoff (independent context)
-    │   │       ├─→ Phase 1: git-prepare.sh (worktree)
+    │   │       ├─→ Phase 1: dev-kickoff-worker (isolation: worktree)
     │   │       ├─→ Phase 2: dev-issue-analyze (exploration)
     │   │       ├─→ Phase 3: dev-implement (coding)
     │   │       ├─→ Phase 4: dev-validate (testing)
@@ -42,7 +42,7 @@ dev-flow (main context - lightweight)
         │       ├─→ Split into subtasks (file boundary)
         │       ├─→ Generate shared contract (interfaces/types)
         │       ├─→ Create contract branch + commit
-        │       ├─→ Create N worktrees (git-prepare x N)
+        │       ├─→ Create N worktrees (dev-kickoff-worker mode:parallel x N)
         │       └─→ Generate flow.json
         │
         ├─→ Step 3b: Check decomposition

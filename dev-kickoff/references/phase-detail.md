@@ -5,7 +5,7 @@ Detailed documentation for each phase in the dev-kickoff workflow.
 ## Phase Overview
 
 ```
-Phase 1: Worktree Creation (git-prepare.sh)
+Phase 1: Worktree Creation (dev-kickoff-worker)
     ↓
 Phase 1b: State Initialization (init-kickoff.sh)
     ↓
@@ -27,11 +27,14 @@ Handoff: pr-iterate
 ## Phase 1: Worktree Creation
 
 **Command:**
-```bash
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE
+```
+Agent(
+  subagent_type: "dev-kickoff-worker",
+  prompt: "issue_number: $ISSUE\nbranch_name: feature/issue-${ISSUE}-m\nbase_ref: $BASE\nmode: single"
+)
 ```
 
-**Purpose:** Create isolated git worktree for feature development.
+**Purpose:** Create isolated git worktree for feature development via an isolated worktree subagent.
 
 **Output:**
 - Worktree at `../{repo}-worktrees/feature-issue-{N}-m/`
