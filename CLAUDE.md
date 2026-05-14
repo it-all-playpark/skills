@@ -30,6 +30,7 @@ skills/
 - **Namespace 命名** — `dev-*`, `blog-*`, `git-*`, `sns-*` 等でグループ化
 - **既存パターンに従う** — 新規スキルは同カテゴリの既存スキルを参考にする
 - **共有処理は `_shared/` か `_lib/`** — スキル間で重複するロジックは共有化
+- **後方互換 scaffolding を作らない** — 内製スキル間の schema 変更で legacy fallback / version enum / dual-path を入れない。新形式のみ受理、out-of-enum は schema error。詳細: [skill-creation-guide.md → 設計原則 #9](docs/skill-creation-guide.md#設計原則)
 
 ## コミット規約
 
