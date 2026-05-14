@@ -73,7 +73,6 @@ fi
 # ----------------------------------------------------------------------------
 assert_contains "Documents focus_areas input from concerns[]" "focus_areas"
 assert_contains "Documents DONE_WITH_CONCERNS handling"       "DONE_WITH_CONCERNS"
-assert_contains "Documents legacy_mapped focus-area skip"     "legacy_mapped"
 
 # ----------------------------------------------------------------------------
 printf '\n  %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"

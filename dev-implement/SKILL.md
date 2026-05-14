@@ -177,7 +177,7 @@ orchestrator はこの contract に従って分岐する。
 全 status 共通の必須ベースフィールド: `status`, `branch`, `worktree_path`, `commit_sha`。
 任意: `pr_url`, `phase_failed`, `error`。
 
-詳細仕様（legacy mapping、サンプル JSON、focus_area 汚染防止）: [Return Contract](references/return-contract.md)
+詳細仕様（サンプル JSON、schema error 時の挙動）: [Return Contract](references/return-contract.md)
 
 ## Examples
 

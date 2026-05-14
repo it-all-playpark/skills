@@ -178,19 +178,13 @@ PER_SKILL=$(jq -n \
   '
   # status_distribution buckets the dev-implement return_status enum (issue #92):
   #   DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT — recorded explicitly
-  # plus legacy buckets for rollout monitoring:
-  #   legacy_success / legacy_fail — entries with outcome but no return_status,
-  #     OR entries that explicitly returned legacy "success" / "fail" strings
-  #     (subagent-dispatch.md L101-103 legacy mapping)
-  # plus unknown for everything else.
+  # plus unknown for entries that returned a value outside the 4-value enum.
   def bucket_status:
     if . == null or . == "" then null
     elif . == "DONE" then "DONE"
     elif . == "DONE_WITH_CONCERNS" then "DONE_WITH_CONCERNS"
     elif . == "BLOCKED" then "BLOCKED"
     elif . == "NEEDS_CONTEXT" then "NEEDS_CONTEXT"
-    elif . == "success" then "legacy_success"
-    elif . == "fail" then "legacy_fail"
     else "unknown"
     end;
   [ $fam[] as $s |
@@ -207,7 +201,7 @@ PER_SKILL=$(jq -n \
     ($durations | length) as $dur_count |
     ($durations | add // 0) as $sum_turns |
 
-    # ----- status_distribution (4-value enum + legacy buckets) -----
+    # ----- status_distribution (4-value enum + unknown) -----
     ($es | map(.context.return_status // null) | map(bucket_status)) as $buckets |
     ($buckets | map(select(. == "DONE"))               | length) as $done |
     ($buckets | map(select(. == "DONE_WITH_CONCERNS")) | length) as $dwc  |
@@ -215,18 +209,7 @@ PER_SKILL=$(jq -n \
     ($buckets | map(select(. == "NEEDS_CONTEXT"))      | length) as $ndc  |
     ($buckets | map(select(. == "unknown"))            | length) as $unk  |
     # total_with_status counts only the 4-value enum entries (DONE / DWC / BLOCKED / NEEDS_CONTEXT).
-    # Legacy buckets and unknown are tracked separately for rollout monitoring.
     ($buckets | map(select(. == "DONE" or . == "DONE_WITH_CONCERNS" or . == "BLOCKED" or . == "NEEDS_CONTEXT")) | length) as $tws  |
-    # legacy = (a) outcome exists but return_status missing, OR
-    #         (b) return_status explicitly equals "success" / "fail" (legacy strings)
-    ($es | map(select(
-       ((.context.return_status // null) == null and .outcome == "success") or
-       ((.context.return_status // null) == "success")
-     )) | length) as $lg_s |
-    ($es | map(select(
-       ((.context.return_status // null) == null and (.outcome == "failure" or .outcome == "partial")) or
-       ((.context.return_status // null) == "fail")
-     )) | length) as $lg_f |
     ($total | if . > 0 then ((($blk + $ndc) + 0.0) / .) else 0 end) as $blocked_rate |
     {
       skill: $s,
@@ -244,8 +227,6 @@ PER_SKILL=$(jq -n \
         DONE_WITH_CONCERNS: $dwc,
         BLOCKED: $blk,
         NEEDS_CONTEXT: $ndc,
-        legacy_success: $lg_s,
-        legacy_fail: $lg_f,
         unknown: $unk,
         total_with_status: $tws
       },

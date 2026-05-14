@@ -35,11 +35,6 @@ When the Generator returns `status == DONE_WITH_CONCERNS`, dev-kickoff passes
 `focus_areas = concerns[]` into this evaluation. Treat each entry as a **pre-declared blind spot** —
 the implementer is telling you where they are least confident. Probe these areas first and harder.
 
-**legacy_mapped exception**: When `generator_meta.legacy_mapped == true` (rollout heuristic for legacy
-`fail` mapped to `BLOCKED`), the `blocking_reason` is a synthetic placeholder. **Do NOT use it to
-synthesize `focus_areas`** — synthetic strings narrow the search artificially. Instead, run the
-default full-scope audit. Detail: [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md#4-値-status-enum).
-
 ## Usage
 
 ```

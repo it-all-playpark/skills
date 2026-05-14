@@ -105,16 +105,6 @@ must be checked against the actual codebase / issue / file paths, not the planne
 - 40–59: critical 1 件または major 複数
 - 0–39: 方針レベルで破綻、block
 
-### 後方互換
-
-旧 schema の `verdict: "fail"` / `severity: "blocking" | "non-blocking"` を参照していた呼び出し元が残っている場合は、次のように読み替える:
-
-- `verdict: "fail"` → `revise` または `block`（critical の有無で区別）
-- `severity: "blocking"` → `critical` または `major`
-- `severity: "non-blocking"` → `minor`
-
-dev-kickoff は本 SKILL.md 更新に合わせて新 verdict のみ評価する。
-
 ## Step 1: Collect Inputs
 
 **Worktree mode** (from dev-kickoff):

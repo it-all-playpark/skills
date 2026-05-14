@@ -77,12 +77,6 @@ else
     "$RETURN_CONTRACT" "blocking_reason"
   assert_contains "Return Contract: missing_context[] for NEEDS_CONTEXT" \
     "$RETURN_CONTRACT" "missing_context"
-
-  # legacy mapping documented
-  assert_contains "Return Contract: legacy 'success' maps to DONE" \
-    "$RETURN_CONTRACT" "success"
-  assert_contains "Return Contract: legacy 'fail' maps to BLOCKED" \
-    "$RETURN_CONTRACT" "fail"
 fi
 
 # ----------------------------------------------------------------------------

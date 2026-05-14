@@ -74,11 +74,6 @@ assert_contains "Documents concerns field"               "concerns"
 assert_contains "Documents blocking_reason field"        "blocking_reason"
 assert_contains "Documents missing_context field"        "missing_context"
 
-# legacy mapping
-assert_contains "Documents legacy 'success' mapping"     "success"
-assert_contains "Documents legacy 'fail' mapping"        "fail"
-assert_contains "Documents legacy_mapped flag"           "legacy_mapped"
-
 # ----------------------------------------------------------------------------
 printf '\n  %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

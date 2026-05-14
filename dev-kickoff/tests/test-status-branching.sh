@@ -114,12 +114,5 @@ if [[ -f "$PHASE_DETAIL_MD" ]]; then
 fi
 
 # ============================================================================
-# AC2 (cont.): legacy mapping documentation
-# ============================================================================
-printf '\n[AC2-legacy] legacy success/fail mapping\n'
-
-assert_contains "evaluate-retry.md mentions legacy_mapped flag"      "$EVAL_RETRY_MD" "legacy_mapped"
-
-# ============================================================================
 printf '\n  %d passed, %d failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 exit $(( FAIL_COUNT > 0 ? 1 : 0 ))

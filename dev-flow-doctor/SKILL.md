@@ -98,13 +98,12 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 
 dev-implement の 4 値 status enum を集計する。`--scope feedback` 指定時に詳細表示。
 
-| Skill | DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT | legacy_success | legacy_fail | total_with_status |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| dev-implement | 12 | 3 | 1 | 0 | 5 | 2 | 16 |
+| Skill | DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT | total_with_status |
+|---|---:|---:|---:|---:|---:|
+| dev-implement | 12 | 3 | 1 | 0 | 16 |
 
 - `BLOCKED` 高比率 → approach mismatch、Plan 段階の見直しが必要
 - `NEEDS_CONTEXT` 高比率 → issue body / plan が不足、orchestrator から渡す context が不十分
-- `legacy_*` カテゴリの総和 → 0 に近づくほど rollout 完了に近い
 
 **Bottlenecks** (top avg duration):
 1. `dev-kickoff` — avg 18.3 turns

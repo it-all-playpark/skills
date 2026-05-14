@@ -185,8 +185,6 @@ per-skill 出力に `status_distribution` フィールドを追加する（addit
     "DONE_WITH_CONCERNS": 3,
     "BLOCKED": 1,
     "NEEDS_CONTEXT": 0,
-    "legacy_success": 5,
-    "legacy_fail": 2,
     "unknown": 0,
     "total_with_status": 16
   },
@@ -196,8 +194,7 @@ per-skill 出力に `status_distribution` フィールドを追加する（addit
 
 - `total_with_status`: 4 値の return_status を含む dev-implement entry の総数
 - `blocked_rate`: `(BLOCKED + NEEDS_CONTEXT) / total` で `total > 0` のとき計算
-- `legacy_success` / `legacy_fail`: rollout 期間中に旧形式 `success` / `fail` を返したエントリ
-- `unknown`: 上記いずれにも該当しない return_status を返した entry
+- `unknown`: 上記いずれにも該当しない return_status を返した entry（schema error として journal に failure 記録）
 
 `--scope feedback` 指定時、`dev-flow-doctor` の Output Format Status Distribution セクションに
 この表を表示する。stuck 判定の OR ロジック（`blocked_rate > 0.30` も stuck）に使われる。
