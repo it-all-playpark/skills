@@ -313,3 +313,14 @@ cat $SUBTASK_WT/.claude/kickoff.json | jq '.current_phase'
 - `gh pr view` for PR status
 - `gh pr checks` for CI status
 - `gh pr merge` - User performs manually after LGTM
+
+### With dev-flow-doctor (AC4/AC5 baseline 比較)
+
+dev-flow family の health monitoring と regression 検知に `dev-flow-doctor` を併用する。
+
+- 30 日 window で snapshot を生成（`baseline-snapshot.sh`）し baseline と比較（`compare-baseline.sh`）
+- `tests/no-glue-errors.sh` が CI で実行され glue-related regression を検出
+- health score への penalty integration（最大 -15）
+
+詳細・snapshot / compare JSON schema・CI 運用パターン（template fallback / vacuous pass 注意事項）は
+[`dev-flow-doctor/references/baseline-comparison.md`](../../dev-flow-doctor/references/baseline-comparison.md) を参照。

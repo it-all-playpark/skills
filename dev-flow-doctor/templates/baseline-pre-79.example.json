@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0",
+  "schema": "dev-flow-doctor-baseline/v1",
+  "_comment": "Committable schema-compliant fallback baseline used by CI when .claude/dev-flow-doctor-baseline-pre-79.json is absent. Regenerate locally via: ./dev-flow-doctor/scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d. Issue #83 / AC2 / A4.",
+  "window": "30d",
+  "since": "2026-03-15T00:00:00Z",
+  "taken_at": "2026-04-14T00:00:00Z",
+  "total_entries": 0,
+  "family_skills": [
+    "dev-kickoff",
+    "dev-implement",
+    "dev-validate",
+    "dev-integrate",
+    "dev-evaluate",
+    "pr-iterate",
+    "pr-fix",
+    "night-patrol"
+  ],
+  "per_skill": [],
+  "per_phase": {},
+  "error_categories": {},
+  "glue_errors": {
+    "count": 0,
+    "samples": [],
+    "patterns": [
+      "worktree.*not found",
+      "--worktree.*not",
+      "\\.env.*not.*copied",
+      "worktree-agent-[a-f0-9]+",
+      "phase_failed.*worktree"
+    ]
+  }
+}

@@ -6,7 +6,7 @@ description: |
   Use when: (1) dev-flow issues or underperformance, (2) parallel mode not triggering,
   (3) stuck skill / dead phase suspicion, (4) weekly dev-flow health review,
   (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector, integration feedback
-  Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix]
+  Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>]
 allowed-tools:
   - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
   - Bash(~/.claude/skills/skill-retrospective/scripts/*)
@@ -33,7 +33,9 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 ## Usage
 
 ```
-/dev-flow-doctor [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix]
+/dev-flow-doctor [--scope full|journal|worktrees|config|family|feedback]
+                 [--window 7d|30d] [--fix]
+                 [--compare <baseline-path>] [--update-baseline <path>]
 ```
 
 | Arg | Default | Description |
@@ -41,6 +43,8 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 | `--scope` | `full` | Diagnosis scope |
 | `--window` | `30d` | Lookback window for journal-based checks (7d/14d/30d/2w/1m) |
 | `--fix` | false | Auto-apply safe fixes (worktree cleanup only) |
+| `--compare` | - | Path to baseline snapshot to compare against (AC4). Adds `baseline_compare` to checks + max -15 penalty |
+| `--update-baseline` | - | Regenerate baseline snapshot at the given path (AC2). Delegates to `baseline-snapshot.sh`; emits warning if journal is empty |
 
 ## Diagnostic Scopes
 
@@ -140,9 +144,36 @@ Deterministic diagnostic data collection and health score calculation.
 ./scripts/run-diagnostics.sh --scope journal
 ./scripts/run-diagnostics.sh --scope worktrees
 ./scripts/run-diagnostics.sh --scope config
+
+# Baseline comparison (AC4) — adds baseline_compare check + regression penalty
+./scripts/run-diagnostics.sh --scope family --compare .claude/dev-flow-doctor-baseline-pre-79.json
+
+# Regenerate baseline (AC2) — delegates to baseline-snapshot.sh
+./scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d
 ```
 
-Output: JSON with `score`, `rating`, `checks` (including `dev_flow_family`), and `issues` fields.
+Output: JSON with `score`, `rating`, `checks` (including `dev_flow_family` and `baseline_compare` when `--compare` is used), and `issues` fields.
+
+### `scripts/baseline-snapshot.sh`
+
+Aggregate journal entries into a snapshot JSON (issue #83 AC2). Single-purpose:
+generate snapshot, write to stdout or `--out <path>`. Does NOT accept
+`--update-baseline` (ownership belongs to `run-diagnostics.sh`).
+
+```bash
+./scripts/baseline-snapshot.sh --window 30d [--out <path>] [--include-non-family]
+```
+
+### `scripts/compare-baseline.sh`
+
+Deterministic baseline vs current comparison (issue #83 AC3). Exit codes:
+0 = no regression, 1 = regression detected, 2 = corrupt baseline / window mismatch / IO.
+
+```bash
+./scripts/compare-baseline.sh --baseline <path> [--current <path>]   # stdin if --current omitted
+```
+
+Detail: [`references/baseline-comparison.md`](references/baseline-comparison.md).
 
 ### `scripts/analyze-termination-loops.sh`
 
@@ -206,7 +237,8 @@ and converged cases.
 ## References
 
 - [Diagnostic Checks](references/diagnostic-checks.md) -- Check 1–9 (family connector in Check 8, termination loops in Check 9)
-- [Health Scoring](references/health-scoring.md) -- Scoring formula including family penalty
+- [Health Scoring](references/health-scoring.md) -- Scoring formula including family penalty + baseline regression penalty (max -15)
+- [Baseline Comparison](references/baseline-comparison.md) -- AC4/AC5 snapshot schema, compare semantics, CI 運用パターン
 - [Responsibility Split](references/responsibility-split.md) -- Boundary vs skill-retrospective
 
 ## Examples

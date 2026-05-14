@@ -58,6 +58,21 @@
       "stuck_failure_rate": 0.30,
       "stuck_min_total": 3,
       "bottleneck_top_n": 3
+    },
+    "baseline": {
+      "default_path": ".claude/dev-flow-doctor-baseline-pre-79.json",
+      "fallback_template": "dev-flow-doctor/templates/baseline-pre-79.example.json",
+      "regression_thresholds": {
+        "max_glue_error_regression": 0,
+        "max_failure_rate_regression": 0.10
+      },
+      "glue_patterns": [
+        "worktree.*not found",
+        "--worktree.*not",
+        "\\.env.*not.*copied",
+        "worktree-agent-[a-f0-9]+",
+        "phase_failed.*worktree"
+      ]
     }
   },
   "night-patrol": {

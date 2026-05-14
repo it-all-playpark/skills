@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "id": "20260503T100000-pr-fix",
+  "timestamp": "2026-05-03T10:00:00Z",
+  "skill": "pr-fix",
+  "outcome": "failure",
+  "duration_turns": 6,
+  "context": {"issue": 202},
+  "error": {"phase": "fix", "category": "glue", "message": "phase_failed worktree state lost mid-merge in worktree-agent-deadbeef"}
+}
