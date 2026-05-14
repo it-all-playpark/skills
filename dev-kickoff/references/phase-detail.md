@@ -76,6 +76,12 @@ $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 2_analyze done \
 
 ## Phase 3: Implementation
 
+> **Phase 番号の注記**: 本ドキュメントは古い phase 番号体系 (Phase 3 = Implementation) を残しているが、
+> canonical な phase 番号は `dev-kickoff/SKILL.md` の Phase 表に従う（**Phase 3 = Plan (dev-plan-impl)**,
+> **Phase 4 = Implementation (dev-implement)**, **Phase 5 = Validation**, **Phase 6 = Evaluation**）。
+> 以下の "Phase 3: Implementation" セクションは canonical では **Phase 4** に相当する。
+> phase-detail.md 全体の番号体系整合化は別 issue で対応予定（issue #92 のスコープ外）。
+
 **Command:**
 ```
 Skill: dev-implement --strategy $STRATEGY --worktree $PATH
@@ -88,7 +94,7 @@ Skill: dev-implement --strategy $STRATEGY --worktree $PATH
 - `bdd`: Behavior-driven development
 - `ddd`: Domain-driven design
 
-**task_body paste contract (issue #92)**:
+**task_body paste contract (issue #92, canonical Phase 4 = dev-implement)**:
 
 dev-kickoff orchestrator (および parallel mode の dev-kickoff-worker spawn) は、`dev-implement` を呼び出す
 prompt 内に対応 task の本文を **verbatim paste** する。`impl-plan.md` 全体を Read させてはならない。

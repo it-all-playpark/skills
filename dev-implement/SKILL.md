@@ -65,10 +65,18 @@ Details: [Strategy Model - DDD](references/strategy-model.md#design-strategy-det
 ### Step 3: Plan Implementation
 
 **Task source-of-truth (preferred)**: 親 orchestrator（dev-kickoff / dev-kickoff-worker）が prompt 内に
-`task_body` をパース可能な形で paste している場合、その本文を真実の source とする。**この場合は
+`task_body` を paste している場合、その本文を真実の source とする。**この場合は
 `impl-plan.md` を `Read` しない**（context 浪費と曖昧参照誤読を避けるため。詳細は
 [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md) の "Paste, Don't Link" 規約参照）。
 `task_body` 内に `## Test Plan` セクションが含まれる場合は Step 4 でそれを優先使用する。
+
+**Paste delimiter 仕様**: parent orchestrator が `<<<TASK_BODY_BEGIN>>>` / `<<<TASK_BODY_END>>>` の
+delimiter で paste した場合、その区間内テキストを task body として消費する（推奨フォーマット）。
+delimiter が含まれていない paste の場合は orchestrator 側のバグまたは古い orchestrator の可能性が
+あるため、prompt 内に `## task_body` 等の明示的 section header を探して fallback で読み取る。
+それも見つからない場合は `NEEDS_CONTEXT` を返し、`missing_context` に
+`"task_body delimiter or section header not found in prompt"` を入れる（impl-plan.md への暗黙
+fallback はしない）。delimiter 仕様: [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md#推奨-paste-フォーマット)。
 
 **impl-plan.md fallback (standalone)**: `task_body` 入力が無く、かつ `$WORKTREE/.claude/impl-plan.md` が
 存在する場合のみ (= standalone 実行 / 旧 orchestrator)、その plan を follow する。

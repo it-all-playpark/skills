@@ -120,7 +120,7 @@ Phase 4 (`dev-implement`) は **4 値 status enum** (`DONE` / `DONE_WITH_CONCERN
 |---|---|---|
 | `DONE` | (なし) | Phase 6 (dev-evaluate) へ進む |
 | `DONE_WITH_CONCERNS` | `concerns: string[]` | Phase 6 に `focus_areas = concerns[]` を渡して重点監査 |
-| `BLOCKED` | `blocking_reason: string` | **同アプローチ retry 禁止**。Phase 3 に reset、`blocking_reason` を `plan-review-feedback.json` に書き込み dev-plan-impl に渡す |
+| `BLOCKED` | `blocking_reason: string` | **同アプローチ retry 禁止**。Phase 3 に reset、`blocking_reason` を **findings[] 形式 (`dimension: approach_mismatch`) に正規化**して `plan-review-feedback.json` に書き込み dev-plan-impl に渡す（整形ルール: [evaluate-retry.md](references/evaluate-retry.md#blocked-feedback-の整形)） |
 | `NEEDS_CONTEXT` | `missing_context: string[]` | Phase 4 に再 dispatch、`missing_context[]` を補足 paste。連続 2 回で human escalate |
 
 ## Phase 4 dispatch: Paste, Don't Link
