@@ -8,6 +8,7 @@ description: |
 allowed-tools:
   - Bash
   - Task
+  - Agent
   - Skill
 ---
 
@@ -19,16 +20,15 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 
 - Read flow.json and verify all subtasks completed
 - Detect planned vs actual file changes (actual_files_changed vs files)
-- Create merge worktree (git-prepare --suffix merge)
-- Merge each subtask branch in dependency order (leaves first)
-- Detect and attempt auto-resolution of conflicts
+- Spawn `dev-kickoff-worker` subagent (`isolation: worktree`, `mode: merge`) for the merge worktree
+- The worker merges each subtask branch in dependency order (leaves first) via `merge-subtasks.sh`
+- Detect and attempt auto-resolution of conflicts (delegated to the worker / `merge-subtasks.sh`)
 - **Record conflicts / integration failures to `_shared/integration-feedback.json`**
   so that future `dev-decompose --dry-run` runs can learn from recurring patterns
   (pub/sub event store — see
   [`_shared/references/integration-feedback.md`](../_shared/references/integration-feedback.md))
-- Run type checking (tsc --noEmit, mypy, etc.)
-- Run integration tests via dev-validate
-- Update flow.json integration section
+- The worker also runs type checking (tsc --noEmit, mypy, etc.) and integration tests via dev-validate
+- Receive worker JSON `{status, branch, worktree_path, commit_sha, merge_results, conflicts}` and write the result back to `flow.json.integration` via `flow-update.sh`
 
 ## Workflow
 
@@ -37,17 +37,24 @@ Merge parallel subtask branches, resolve conflicts, run type checks and integrat
 1b. Check shared_findings for unacked entries (warning only, non-blocking)
 2. Warn if actual_files_changed differs from planned files
 3. Determine merge order from depends_on (topological sort, leaves first)
-4. Create merge worktree via git-prepare --suffix merge --base $CONTRACT_BRANCH
-4b. Sync .env files to merge worktree via sync-env
-5. For each subtask in order:
-   a. git merge --no-ff $TASK_BRANCH
-   b. If conflict: attempt auto-resolution, record in flow.json
-   c. Append event to `_shared/integration-feedback.json` (best-effort,
-      via `integration-event-append.sh` — never aborts the merge loop)
-   d. If unresolvable: stop and request user intervention
-6. Run type check (detect project type: tsc for TS, mypy for Python, etc.)
-7. Run Skill: dev-validate --worktree $MERGE_WORKTREE
-8. Update flow.json integration section with results
+4. Spawn worker: Agent(subagent_type: "dev-kickoff-worker", isolation: "worktree", mode: "merge")
+   prompt:
+     issue_number: $ISSUE
+     branch_name: feature/issue-${ISSUE}-merge   (or ...-merge-retry on retry)
+     base_ref: $CONTRACT_BRANCH
+     mode: merge
+     flow_state: $FLOW_STATE
+   worker internally runs:
+     a. git checkout -b $branch_name $base_ref
+     b. merge-subtasks.sh --flow-state $FLOW_STATE --worktree $(pwd)
+        (auto-resolves lock/config conflicts, appends integration-feedback events)
+     c. type check (tsc/mypy/go vet)
+     d. Skill: dev-validate --worktree $(pwd)
+   worker returns:
+     {status, branch, worktree_path, commit_sha, merge_results, conflicts, phase_failed?, error?}
+5. Parent writes worker result back to flow.json.integration via flow-update.sh
+   (status / merge_worktree / merge_order / type_check / validation / merge_results / conflicts)
+6. On merge failure: re-spawn worker with branch_name=feature/issue-${ISSUE}-merge-retry
 ```
 
 ### Step 1b: Unacked Shared Findings Check
@@ -57,7 +64,7 @@ UNACKED=$($SKILLS_DIR/dev-integrate/scripts/check-unacked-findings.sh \
   --flow-state "$FLOW_STATE")
 COUNT=$(echo "$UNACKED" | jq -r '.unacked_count')
 if [[ "$COUNT" -gt 0 ]]; then
-  echo "⚠️  $COUNT shared finding(s) not acknowledged by all subtasks:"
+  echo "$COUNT shared finding(s) not acknowledged by all subtasks:"
   echo "$UNACKED" | jq -r '.unacked[] | "  - \(.id) [\(.category)] \(.title) (missing: \(.missing_ack | join(",")))"'
 fi
 ```
@@ -66,32 +73,44 @@ The check is **non-blocking**: integration continues even with unacked findings.
 
 ## Execution
 
-See [Integration Guide](references/integration-guide.md#execution-steps) for detailed step-by-step commands.
+See [Integration Guide](references/integration-guide.md#execution-steps) for detailed step-by-step commands, and [Worker Dispatch](references/worker-dispatch.md) for the `dev-kickoff-worker` (`mode: merge`) contract.
+
+## Subagent Dispatch Rules
+
+dev-integrate spawns `dev-kickoff-worker` with `isolation: worktree` for the merge worktree (Step 4). Per `docs/skill-creation-guide.md`, the dispatch must satisfy the required 5 elements. Full prompt template and routing live in [`references/worker-dispatch.md`](references/worker-dispatch.md) (progressive disclosure); the binding values are summarised here.
+
+1. **Objective** — 「contract branch `feature/issue-${ISSUE}-contract` をベースに merge 用 branch `feature/issue-${ISSUE}-merge` (or `-merge-retry`) を isolated worktree で作成し、`merge-subtasks.sh` → 型チェック → `dev-validate` を実行して `{status, branch, worktree_path, commit_sha, merge_results, conflicts}` を返す」
+2. **Output format** — `{ status: "completed"|"failed", branch: string, worktree_path: string, commit_sha: string, merge_results: object, conflicts: number, phase_failed?: string, error?: string }` (last-line JSON contract)
+3. **Tools** — worker frontmatter 既定: `Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep`。dev-integrate 側から追加制約は付けない
+4. **Boundary** — worker は自身の isolated worktree 内のみで作業、`git push` 禁止 (merge branch も含む)、subtask / contract branch を rewrite しない、`git worktree add` を直接実行しない、`git-prepare.sh --suffix merge` も呼ばない
+5. **Token cap** — worker 1 回あたり 2000 turn 以内 (`dev-kickoff-worker.md` 既定)、merge mode は通常 1 spawn で完結 (失敗時のみ `-merge-retry` で 1 回 re-spawn)
+
+Routing: merge worktree 作成 + merge 実行 → `dev-kickoff-worker` (sonnet, `isolation: worktree`, `mode: merge`)。dev-integrate 自身は探索 / 集約 / `flow.json` 書き込みのみを担う。
 
 ## Error Handling
 
 | Scenario | Action |
 |----------|--------|
 | Subtask not completed | Abort, report |
-| Merge conflict | Auto-resolve → manual attempt → abort |
-| Type check / test fails | Fix attempt (max 2x) → report |
+| Worker returns `status: failed` with `phase_failed: "merge"` | Re-spawn worker with `branch_name: feature/issue-${ISSUE}-merge-retry` (max 1 retry), then escalate |
+| Worker returns conflicts > 0 but `status: completed` | Auto-resolved (lock/config). Pass-through, record in flow.json |
+| Type check / test fails (worker reports inside merge_results) | Worker returns `phase_failed: "merge"`. Fix attempt (max 2x) via retry → report |
 
-Details: [Integration Guide](references/integration-guide.md#conflict-auto-resolution)
+Details: [Integration Guide](references/integration-guide.md#conflict-auto-resolution), [Worker Dispatch](references/worker-dispatch.md)
 
 ## Args
 
 | Arg | Default | Description |
 |-----|---------|-------------|
 | `--flow-state` | auto | Path to flow.json |
-| `--base` | from flow.json | Base branch for merge worktree |
+| `--base` | from flow.json | Contract branch (passed to worker as `base_ref`) |
 
 ## Output
 
-Updates flow.json integration section.
+Updates flow.json integration section using the worker's return JSON.
 
-Returns:
 ```json
-{"status": "integrated|failed", "merge_worktree": "/path", "type_check": "passed|failed", "validation": "passed|failed"}
+{"status": "integrated|failed", "merge_worktree": "/path", "type_check": "passed|failed", "validation": "passed|failed", "merge_results": {...}, "conflicts": <n>}
 ```
 
 ## Journal Logging

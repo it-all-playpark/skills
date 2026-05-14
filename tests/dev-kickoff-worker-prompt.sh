@@ -61,4 +61,17 @@ echo "$BODY" | grep -qiE '(commit_sha|commit sha)' \
     || fail "Case 4c: body should mention commit_sha"
 pass "Case 4: return JSON contract documented (status/branch/commit_sha)"
 
+# Case 5: body documents `mode: merge` branch and merge-subtasks invocation (issue #82)
+# 3-mode 化 (single / parallel / merge) と、merge mode 内での merge-subtasks.sh / 型チェック /
+# dev-validate シーケンス、加えて merge_results / conflicts を return JSON に含める拡張を要求する
+echo "$BODY" | grep -qE '(mode:[[:space:]]*merge|Mode:[[:space:]]*merge|`merge`[[:space:]]*mode)' \
+    || fail "Case 5a: body must document 'mode: merge' branch"
+echo "$BODY" | grep -qE 'merge-subtasks(\.sh)?' \
+    || fail "Case 5b: body must document merge-subtasks invocation under merge mode"
+echo "$BODY" | grep -qE 'merge_results' \
+    || fail "Case 5c: body must document return field 'merge_results' for merge mode"
+echo "$BODY" | grep -qE 'conflicts' \
+    || fail "Case 5d: body must document return field 'conflicts' for merge mode"
+pass "Case 5: mode:merge branch documented with merge-subtasks invocation and extended JSON contract"
+
 echo "OK: tests/dev-kickoff-worker-prompt.sh"
