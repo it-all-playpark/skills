@@ -2,6 +2,35 @@
 
 After Phase 6 (dev-evaluate) returns evaluation JSON:
 
+## Generator status branching (issue #92)
+
+Phase 5 (dev-validate) と Phase 6 (dev-evaluate) の合間に、`dev-implement` worker が返した
+**4 値 status enum** (`DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`) を読み取り、
+以降の挙動を分岐する。本ループは status を最初に消費し、その後の評価結果と組み合わせる。
+
+| Generator status | Phase 5/6 挙動 |
+|---|---|
+| `DONE` | 通常通り Phase 6 (dev-evaluate) を実行（既存挙動） |
+| `DONE_WITH_CONCERNS` | Phase 6 に `focus_areas = concerns[]` を渡す。dev-evaluate は `focus_areas` を受け取った場合、その領域を重点監査する |
+| `BLOCKED` | **同アプローチでの retry を禁止**する。`update-phase.sh 6_evaluate done --reset-to 3_plan_impl --worktree $PATH` で Phase 3 に戻し、`plan-review-feedback.json` に `blocking_reason` を書き込んで dev-plan-impl に渡す |
+| `NEEDS_CONTEXT` | Phase 4 に再 dispatch、`missing_context[]` を補足情報として paste する。連続 2 回 `NEEDS_CONTEXT` を観測したら human escalate (warning) して Phase 6 を skip。3 回目以降は dispatch しない |
+
+詳細仕様 (legacy mapping、focus_area 汚染防止、ベース必須フィールド) は
+[`_shared/references/subagent-dispatch.md`](../../_shared/references/subagent-dispatch.md#4-値-status-enum)
+を参照。
+
+### Legacy 互換マッピング (rollout 期間中のみ適用)
+
+旧 dev-implement worker が `success` / `fail` の binary status を返す場合、dev-kickoff の status parser
+は以下のマッピングを適用する:
+
+- `"success"` → `DONE`
+- `"fail"` → `BLOCKED`（`blocking_reason: "Legacy worker returned 'fail'; treat as approach mismatch (rollout heuristic)"`）
+
+`legacy_mapped: true` フラグを `kickoff.json.phases.6_evaluate.iterations[].generator_meta` に記録し、
+dev-evaluate は `legacy_mapped == true` の場合 `focus_areas` を `concerns[]` / `blocking_reason` から
+synthesize しない（synthetic な reason 文字列で探索範囲を狭めないため、全範囲監査モードに切り替える）。
+
 ## Flow
 
 1. **Record iteration**: `update-phase.sh 6_evaluate in_progress --eval-result '$JSON' --worktree $PATH`

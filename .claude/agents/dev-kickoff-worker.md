@@ -38,6 +38,12 @@ The caller MUST pass the following in your invocation prompt:
 - `base_ref`: e.g. `origin/main` (single mode) or `feature/issue-79-contract` (parallel and merge modes — the contract branch)
 - `mode`: `single`, `parallel`, or `merge`
 - `task_id` (parallel only): subtask ID from flow.json, e.g. `task1`
+- `task_body` (parallel only, **required**): verbatim copy of the corresponding task body from the
+  parent's plan (File Changes / Test Plan / Acceptance / Notes). The worker MUST consume this as
+  the source of truth for the task and MUST NOT Read the full `impl-plan.md`. The parent SHOULD
+  delimit it with `<<<TASK_BODY_BEGIN>>>` / `<<<TASK_BODY_END>>>`. See
+  [`_shared/references/subagent-dispatch.md`](../../_shared/references/subagent-dispatch.md#paste-dont-link)
+  for the Paste, Don't Link rule.
 - `flow_state` (parallel and merge): absolute path to flow.json
 
 ## Steps — execute IN ORDER, do NOT skip
@@ -168,6 +174,12 @@ Optional fields: `pr_url` (single mode Phase 8 only), `merge_results` / `conflic
 - DO NOT modify files outside your worktree (`pwd` boundary).
 - DO NOT spawn other subagents (Claude Code subagents cannot nest — public docs L737).
 - DO NOT auto-reset / force-delete existing branches. Abort with `phase_failed:1` (or `phase_failed:"merge"` for merge mode) instead and let the parent / human decide cleanup.
+- DO NOT Read the full `impl-plan.md` (parallel mode). Consume the paste-supplied `task_body`
+  instead. Reading `impl-plan.md` 全体 wastes context tokens (`N worker × plan size`) and exposes
+  the worker to ambiguous cross-task references ("Task 1 と同様" 等) that paste-don't-link is
+  designed to eliminate. The parent orchestrator is responsible for providing a self-contained
+  `task_body`. If `task_body` is missing in parallel mode, return `phase_failed: 3` with an
+  explicit error rather than falling back to `impl-plan.md` Read.
 
 ## References
 

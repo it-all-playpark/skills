@@ -88,6 +88,24 @@ Skill: dev-implement --strategy $STRATEGY --worktree $PATH
 - `bdd`: Behavior-driven development
 - `ddd`: Domain-driven design
 
+**task_body paste contract (issue #92)**:
+
+dev-kickoff orchestrator (および parallel mode の dev-kickoff-worker spawn) は、`dev-implement` を呼び出す
+prompt 内に対応 task の本文を **verbatim paste** する。`impl-plan.md` 全体を Read させてはならない。
+
+```text
+## task_body (verbatim from parent orchestrator)
+
+<<<TASK_BODY_BEGIN>>>
+[該当 task のフル本文 — File Changes / Test Plan / Acceptance / Notes すべて含む]
+<<<TASK_BODY_END>>>
+```
+
+`dev-implement` は `task_body` paste を受け取った場合、`impl-plan.md` を Read せず paste 本文を真実の
+source として扱う（standalone 実行時のみ `impl-plan.md` fallback を使用）。詳細は
+[`_shared/references/subagent-dispatch.md`](../../_shared/references/subagent-dispatch.md#paste-dont-link)
+の "Paste, Don't Link" 規約参照。
+
 **Completion Criteria:**
 - All code changes written
 - Tests added (if TDD)
