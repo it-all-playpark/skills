@@ -71,7 +71,7 @@ determine_next_action() {
                 echo "Skill: dev-issue-analyze $ISSUE --depth $DEPTH"
             else
                 echo "1_prepare"
-                echo "$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE_BRANCH"
+                echo "Skill: dev-kickoff $ISSUE --base $BASE_BRANCH  # spawns dev-kickoff-worker"
             fi
             ;;
         2_analyze)
