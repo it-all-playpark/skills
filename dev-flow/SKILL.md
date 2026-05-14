@@ -81,7 +81,7 @@ Options:
 | Errors + `--warn-only` (default) | Show errors, continue (let downstream surface real failure) |
 | Errors + `--strict` | Halt with exit 10 (issue) or 11 (gh auth) |
 
-**git-prepare は呼ばない**: worktree 作成は `dev-kickoff` Phase 1 / `dev-decompose` の責務。Phase 0 は read-only に徹する。
+**worktree を作らない**: worktree 作成は `dev-kickoff` Phase 1 / `dev-decompose` の責務。Phase 0 は read-only に徹する。
 
 **`--task-id` 経由で起動された dev-kickoff には preflight は走らない**（dev-flow を経由しないため）。これは意図的な設計で、parallel subtask は flow.json で前提が既に確定しているため重複検証不要。
 

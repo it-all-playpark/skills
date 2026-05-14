@@ -1,6 +1,6 @@
 # Step 4: Worker Subagent Dispatch (merge mode)
 
-dev-integrate の merge worktree 作成は、`dev-kickoff-worker` を `isolation: worktree` + `mode: merge` で spawn することで行う。`git-prepare.sh --suffix merge` は呼ばない (issue #82)。
+dev-integrate の merge worktree 作成は、`dev-kickoff-worker` を `isolation: worktree` + `mode: merge` で spawn することで行う。
 
 ## Agent 呼び出し
 
@@ -87,8 +87,7 @@ $SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state "$FLOW_STATE" \
 
 ## 制約
 
-- 直接 `git worktree add` の実行は **禁止**
-- `git-prepare.sh --suffix merge` / `--suffix merge-retry` の直接呼び出しも **禁止** (merge worktree は worker 経由のみ)
+- 直接 `git worktree add` の実行は **禁止** (merge worktree は worker 経由のみ)
 - merge branch は **リモートに push しない**。push は後続の PR 作成ステップ (parent 側) で行う
 - worker は flow.json を read-only で扱い、書き込みは必ず parent (dev-integrate) が行う
 

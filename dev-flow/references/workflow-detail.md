@@ -41,7 +41,7 @@ dev-flow (main context - lightweight)
         │       ├─→ Build dependency graph
         │       ├─→ Split into subtasks (file boundary)
         │       ├─→ Generate shared contract (interfaces/types)
-        │       ├─→ Create contract branch + commit
+        │       ├─→ Create contract branch via Agent(dev-contract-worker, isolation:worktree)
         │       ├─→ Dispatch N dev-kickoff-worker subagents
         │       │     (isolation:worktree, base: contract branch)
         │       └─→ Generate flow.json (populates subtask.branch)

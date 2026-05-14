@@ -73,12 +73,12 @@ This enables project-specific setup (DB migrations, env generation, etc.).
 6. Report results
 ```
 
-## Integration with git-prepare
+## Integration with dev-kickoff-worker
 
-After `git-prepare` creates a worktree, run dev-env-setup:
+After `dev-kickoff-worker` (isolation: worktree) creates a worktree, run dev-env-setup:
 
 ```bash
-# In dev-kickoff Phase 1, after git-prepare completes:
+# In dev-kickoff Phase 1, after worktree creation completes:
 $SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path $WORKTREE
 ```
 

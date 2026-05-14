@@ -63,7 +63,7 @@ dev-integrate spawns `dev-kickoff-worker` (`Agent(isolation: worktree, mode: mer
 - **Objective** — contract branch ベースに merge 用 isolated worktree を作成し `merge-subtasks.sh` → 型チェック → `dev-validate` を実行
 - **Output format** — `{status, branch, worktree_path, commit_sha, merge_results, conflicts, phase_failed?, error?}` JSON (worker last-line contract)
 - **Tools** — worker frontmatter で許可 (Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep)。追加制約は付けない
-- **Boundary** — worker は自身の isolated worktree 内のみで作業、`git push` 禁止 (merge branch も含む)、subtask / contract branch を rewrite しない、`git worktree add` / `git-prepare.sh --suffix merge` 直接実行禁止
+- **Boundary** — worker は自身の isolated worktree 内のみで作業、`git push` 禁止 (merge branch も含む)、subtask / contract branch を rewrite しない、`git worktree add` 直接実行禁止
 - **Token cap** — worker 1 回あたり 2000 turn 以内、merge mode は通常 1 spawn (失敗時のみ `-merge-retry` で 1 回 re-spawn)
 
 詳細・Routing: [Worker Dispatch](references/worker-dispatch.md)。

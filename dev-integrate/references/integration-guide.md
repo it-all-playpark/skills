@@ -228,36 +228,52 @@ grep -rn '<<<<<<< \|======= \|>>>>>>> ' --include='*.ts' --include='*.py' --incl
 
 ### Scenario 1: Merge Conflict
 
-```bash
-# 1. Check which subtask caused the conflict
-cat merge-results.json | jq '.results[] | select(.status == "conflict")'
+1. Identify which subtask caused the conflict:
 
-# 2. Re-spawn the worker with a merge-retry branch name
-#    (worker creates the fresh isolated worktree itself; no manual git-prepare invocation)
-Agent(
-  subagent_type: "dev-kickoff-worker",
-  isolation: "worktree",
-  prompt: "
-    issue_number: $ISSUE
-    branch_name: feature/issue-${ISSUE}-merge-retry
-    base_ref: $CONTRACT_BRANCH
-    mode: merge
-    flow_state: $FLOW_STATE
-  "
-)
+   ```bash
+   cat merge-results.json | jq '.results[] | select(.status == "conflict")'
+   ```
 
-# 3. If the retry worker also reports phase_failed=merge with conflicts,
-#    enter the returned worktree_path and resolve manually:
-cd $WORKER_RETURNED_WORKTREE_PATH
-git merge --no-ff $CONFLICTING_BRANCH
-# Edit conflicting files
-git add .
-git commit
+2. Re-spawn the merge worker with a retry branch name. `Agent(...)` is a Claude Code tool call,
+   not a shell command — invoke it from the conversation, not from bash:
 
-# 4. Re-run merge-subtasks.sh inside that worktree to continue with remaining branches:
-$SKILLS_DIR/dev-integrate/scripts/merge-subtasks.sh \
-    --flow-state $FLOW_STATE --worktree $WORKER_RETURNED_WORKTREE_PATH
-```
+   ```text
+   Agent(
+     subagent_type: "dev-kickoff-worker",
+     isolation: "worktree",
+     prompt: """
+     issue_number: $ISSUE
+     branch_name: feature/issue-${ISSUE}-merge-retry
+     base_ref: $CONTRACT_BRANCH
+     mode: merge
+     flow_state: $FLOW_STATE
+     """
+   )
+   ```
+
+   The worker runs inside its own isolated worktree (the parent cannot `cd` into it).
+   Conflict resolution and the final merge commit are performed by the worker; the parent
+   receives the resulting branch / commit SHA in the return JSON.
+
+3. If the retry worker also reports `phase_failed=merge` with residual conflicts that need
+   human judgment, ask the user to attach to the worker's returned worktree path and resolve
+   manually:
+
+   ```bash
+   # Worktree path comes from the worker's return JSON
+   git -C "$RETURNED_WORKTREE_PATH" status
+   # Edit conflicting files in $RETURNED_WORKTREE_PATH, then:
+   git -C "$RETURNED_WORKTREE_PATH" add .
+   git -C "$RETURNED_WORKTREE_PATH" commit
+   ```
+
+4. After resolution, re-run `merge-subtasks.sh` inside that worktree to continue with
+   the remaining branches:
+
+   ```bash
+   $SKILLS_DIR/dev-integrate/scripts/merge-subtasks.sh \
+       --flow-state $FLOW_STATE --worktree $RETURNED_WORKTREE_PATH
+   ```
 
 See [worker-dispatch.md](worker-dispatch.md) for the full re-spawn contract.
 
@@ -352,7 +368,7 @@ are merged first, followed by subtasks that depend on them.
 
 ### Step 4: Spawn Worker for Merge Worktree
 
-Spawn `dev-kickoff-worker` with `isolation: worktree` + `mode: merge`. The worker creates its own isolated worktree internally — do NOT call `git worktree add` or `git-prepare.sh` directly.
+Spawn `dev-kickoff-worker` with `isolation: worktree` + `mode: merge`. The worker creates its own isolated worktree internally — do NOT call `git worktree add` directly.
 
 ```text
 Agent(

@@ -26,7 +26,7 @@ Handoff: pr-iterate
 
 ## Phase 1: Worktree Creation
 
-dev-kickoff spawns the `dev-kickoff-worker` subagent via the Agent tool. The subagent runs in `isolation: worktree` (Claude Code feature), giving it an isolated worktree without an explicit `git-prepare.sh` call.
+dev-kickoff spawns the `dev-kickoff-worker` subagent via the Agent tool. The subagent runs in `isolation: worktree` (Claude Code feature), giving it an isolated worktree managed by Claude Code itself.
 
 **Requirements**:
 - Claude Code >= 2.1.63 (`isolation: worktree` field support)

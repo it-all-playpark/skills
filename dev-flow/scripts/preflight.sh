@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # preflight.sh - Verify dev-flow prerequisites before mode decision
 # Read-only checks: issue exists & open, gh auth valid
-# Does NOT call git-prepare or modify any state
+# Does NOT modify any state or create worktrees
 #
 # Usage: preflight.sh <issue-number> [--strict|--warn-only] [--repo OWNER/REPO]
 #

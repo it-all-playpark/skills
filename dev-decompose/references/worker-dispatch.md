@@ -23,8 +23,7 @@ worker が返す値: `{status, branch, worktree_path, commit_sha}`（last-line J
 
 ## 制約
 
-- 直接 `git worktree add` の実行は **禁止**
-- `git-prepare.sh --suffix task...` の直接呼び出しも **禁止**（subtask 用は worker 経由のみ）
+- 直接 `git worktree add` の実行は **禁止**（subtask 用 worktree は worker 経由のみ）
 - subtask / contract branch は **リモートに push しない**。push が必要なのは最終 merge ブランチのみ（PR 作成時）。worker は parallel mode で `git push` をスキップする
 
 ## 前提

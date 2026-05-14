@@ -25,8 +25,9 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 - Split work into non-conflicting subtasks at file boundaries
 - Define `depends_on` relationships between subtasks
 - Generate shared contract (types/interfaces) committed to a contract branch
-- Dispatch `dev-kickoff-worker` subagent (`isolation: worktree`) for each subtask to create its worktree from the contract branch
-- Generate flow.json with subtask definitions (including `branch` field), checklists, and contract info
+- Create contract branch via `dev-contract-worker` subagent (`isolation: worktree`, `model: haiku`)
+- Dispatch `dev-kickoff-worker` subagent (`isolation: worktree`, `mode: parallel`) for each subtask to create its worktree from the contract branch
+- Generate flow.json with subtask definitions (including `branch` field returned by each worker), checklists, and contract info
 
 ## Workflow (Full Execution, default)
 
@@ -36,12 +37,10 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 3. Group files into subtasks (no file overlap)
 4. Define checklist for each subtask
 5. Generate shared contract (interfaces/types if needed)
-6. Create contract worktree from base (orchestrator-local, see Step 5-7)
-7. Commit contract files to contract branch
-8. Dispatch dev-kickoff-worker subagent (isolation: worktree) per subtask
-   to create its branch (feature/issue-${N}-task${INDEX}) from the contract branch
-9. Generate flow.json (populating subtask.branch returned by each worker)
-10. Validate decomposition (validate-decomposition.sh)
+6. Create contract branch + commit contract files via `dev-contract-worker` subagent (isolation: worktree)
+7. Dispatch `dev-kickoff-worker` subagent per subtask (isolation: worktree, mode: parallel) to create its branch (`feature/issue-${N}-task${INDEX}`) from the contract branch
+8. Generate flow.json (populating `subtask.branch` returned by each worker)
+9. Validate decomposition (validate-decomposition.sh)
 ```
 
 Dry-run mode (`--dry-run`) executes Steps 1-4 only; see [Dry-Run Mode](references/dry-run.md).
@@ -50,31 +49,65 @@ Dry-run mode (`--dry-run`) executes Steps 1-4 only; see [Dry-Run Mode](reference
 
 Analyze issue, build file dependency graph, partition into subtasks. See [Decomposition Guide](references/decomposition-guide.md) for strategy and edge cases.
 
-### Step 5-7: Contract Generation
+### Step 5-6: Contract Generation
 
 Generate contract per [Decomposition Guide](references/decomposition-guide.md). Branch: `feature/issue-{N}-contract`.
 
-**IMPORTANT: Contract branch は worktree で作成すること。メインリポジトリで直接 checkout しない。**
+**IMPORTANT: Contract branch は dev-contract-worker (isolation: worktree) 経由で作成すること。**
+**メインリポジトリで直接 checkout したり、worktree 作成スクリプトを直接呼び出したりしない。**
 
-```bash
-# Step 6: contract worktree 作成（--local でリモート push を防止）
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
-  --suffix contract --base $BASE --env-mode $ENV_MODE --local
+Spawn `dev-contract-worker` via the Agent tool:
 
-# Step 7: contract worktree 内でファイル作成・コミット
-cd $CONTRACT_WORKTREE
-# ... create contract files, git add, git commit ...
+```text
+Agent(
+  subagent_type: "dev-contract-worker",
+  isolation: "worktree",
+  prompt: """
+  issue_number: ${ISSUE}
+  branch_name: feature/issue-${ISSUE}-contract
+  base_ref: ${BASE}
+  contract_files:
+    - path: <relative path>
+      content: |
+        <file content>
+    ...
+  """
+)
 ```
 
-### Step 8: Subtask Worktree Creation (worker subagent dispatch)
+The worker returns `{status, branch, worktree_path, commit_sha}`. Record `worktree_path` as
+`$CONTRACT_WORKTREE` for use in Step 7.
+
+**If `contract_files` is empty (no shared types needed), you MUST NOT spawn the worker.**
+Skip Step 6 entirely and use `origin/${BASE}` directly as `base_ref` for subtask worktrees in
+Step 7. The worker treats an empty `contract_files` as a contract violation by the caller and
+returns `{status: "skipped", reason: ...}` defensively, but the caller is responsible for the
+skip decision — do not rely on the worker's defensive return.
+
+### Step 7: Subtask Worktree Creation (worker subagent dispatch)
 
 For each subtask, spawn a `dev-kickoff-worker` subagent in `isolation: worktree` mode based on the contract branch. The worker creates its own branch (`feature/issue-${ISSUE}-task${INDEX}`) inside the isolated worktree and returns `{status, branch, worktree_path, commit_sha}`.
 
-Direct `git worktree add` and direct `git-prepare.sh --suffix task...` calls are **prohibited** for subtask worktrees. Subtask/contract ブランチはリモートに push しない。
+```text
+Agent(
+  subagent_type: "dev-kickoff-worker",
+  isolation: "worktree",
+  prompt: """
+  issue_number: ${ISSUE}
+  branch_name: feature/issue-${ISSUE}-task${INDEX}
+  base_ref: feature/issue-${ISSUE}-contract
+  mode: parallel
+  task_id: task${INDEX}
+  flow_state: ${FLOW_STATE}
+  """
+)
+```
+
+Direct `git worktree add` calls are **prohibited** for subtask worktrees. Subtask/contract ブランチはリモートに push しない。
 
 Details (Agent call shape, 5-element dispatch rules, constraints): [Worker Dispatch](references/worker-dispatch.md).
 
-### Step 9: Flow State Generation
+### Step 8: Flow State Generation
 
 ```bash
 $SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
@@ -83,7 +116,7 @@ $SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
 
 Populate each subtask entry with `id` / `scope` / `files` / **`branch` (required, v2 schema — populated from worker return)** / `status` / `checklist` / `depends_on` / `worktree_path`. See [flow.schema.json](../_lib/schemas/flow.schema.json) for the full schema.
 
-### Step 10: Validation
+### Step 9: Validation
 
 ```bash
 $SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
@@ -176,8 +209,8 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose failure \
 
 - [Decomposition Guide](references/decomposition-guide.md) - Detailed strategy and edge cases
 - [Dry-Run Mode](references/dry-run.md) - --dry-run mode, past_conflict_hints, resume
-- [Worker Dispatch](references/worker-dispatch.md) - Step 8 Agent call, 5-element dispatch rules
-- [dev-kickoff-worker](../.claude/agents/dev-kickoff-worker.md) - Subagent that creates each subtask worktree (Step 8)
-- [git-prepare](../git-prepare/SKILL.md) - Contract worktree creation (Step 6-7 only; subtask worktrees route through dev-kickoff-worker)
+- [Worker Dispatch](references/worker-dispatch.md) - Step 6-7 Agent call shape, 5-element dispatch rules
+- [dev-contract-worker](../.claude/agents/dev-contract-worker.md) - Contract branch creation worker (Step 6)
+- [dev-kickoff-worker](../.claude/agents/dev-kickoff-worker.md) - Subtask/merge worktree worker (Step 7)
 - [dev-issue-analyze](../dev-issue-analyze/SKILL.md) - Issue analysis input
 - [dev-kickoff](../dev-kickoff/SKILL.md) - Per-subtask execution (parallel mode, `--task-id`)
