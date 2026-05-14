@@ -40,7 +40,7 @@ git checkout -b "$branch_name" "$base_ref"
 ```
 
 Capture stdout/stderr. If the command fails with `"already exists"`, DO NOT auto-reset
-(`git reset --hard`). Return immediately with the failure JSON described in Step 5.
+(`git reset --hard`). Return immediately with the failure JSON described in Step 4.
 
 ### Step 2: Write contract files
 
