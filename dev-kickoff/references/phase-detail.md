@@ -5,7 +5,7 @@ Detailed documentation for each phase in the dev-kickoff workflow.
 ## Phase Overview
 
 ```
-Phase 1: Worktree Creation (git-prepare.sh)
+Phase 1: Worktree Creation (dev-kickoff-worker subagent)
     ↓
 Phase 1b: State Initialization (init-kickoff.sh)
     ↓
@@ -26,19 +26,13 @@ Handoff: pr-iterate
 
 ## Phase 1: Worktree Creation
 
-Phase 1 has **two dispatch paths** since issue #79. The choice is made by `dev-kickoff/scripts/detect-worker.sh`.
+dev-kickoff spawns the `dev-kickoff-worker` subagent via the Agent tool. The subagent runs in `isolation: worktree` (Claude Code feature), giving it an isolated worktree without an explicit `git-prepare.sh` call.
 
-### Path A: Worker subagent (preferred, Claude Code >= 2.1.63)
+**Requirements**:
+- Claude Code >= 2.1.63 (`isolation: worktree` field support)
+- `.claude/agents/dev-kickoff-worker.md` present in the repo
 
-When `detect-worker.sh` exits 0, dev-kickoff spawns the `dev-kickoff-worker` subagent via the Agent tool. The subagent runs in a `isolation: worktree` (Claude Code feature), giving it an isolated worktree without an explicit `git-prepare.sh` call.
-
-**Detection algorithm** (`detect-worker.sh`):
-
-1. Read `.claude/agents/dev-kickoff-worker.md` exists under `git rev-parse --show-toplevel`
-2. `claude --version` returns a parseable semver
-3. Parsed version >= `2.1.63` (subagent isolation:worktree shipped here)
-
-All three checks pass → exit 0 + JSON `{"available": true, ...}` → take Path A.
+If either requirement is missing, dev-kickoff aborts with an explicit error — there is no fallback.
 
 **Spawn**:
 
@@ -55,49 +49,7 @@ Agent(
 )
 ```
 
-The worker returns JSON containing the branch name, the worktree path it ran in, and the resulting commit SHA. Phase 1b (state init) is **skipped on this path** — the worker initializes its own kickoff.json inside the isolated worktree.
-
-### Path B: Legacy `git-prepare.sh` (fallback)
-
-When `detect-worker.sh` exits 1 (agent file missing, claude CLI not found, or version too old), fall back to the legacy command:
-
-```bash
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE
-```
-
-**Purpose:** Create isolated git worktree for feature development.
-
-**Output:**
-- Worktree at `../{repo}-worktrees/feature-issue-{N}-m/`
-- Branch: `feature/issue-{N}-m`
-
-**Verification:**
-```bash
-[[ -d "$WORKTREE_PATH" ]] || echo "ERROR: worktree not created"
-```
-
-**Completion Criteria:**
-- Worktree directory exists
-- Branch created and checked out
-
-**Note**: `--env-mode` は git-prepare では受け取らない（worktree 作成に専念）。
-Phase 1b の init-kickoff が `--env-mode` を引き継いで kickoff.json に記録する。
-env file の link/copy 実装は現状無く、TODO 扱い。
-
-## Phase 1b: State Initialization
-
-**Command:**
-```bash
-$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh $ISSUE $BRANCH $WORKTREE \
-  --base $BASE --strategy $STRATEGY --depth $DEPTH --lang $LANG --env-mode $ENV_MODE
-```
-
-**Purpose:** Create kickoff.json for state tracking.
-
-**Output:**
-- `$WORKTREE/.claude/kickoff.json` created
-- Phase 1 marked as "done"
-- Current phase set to "2_analyze"
+The worker returns JSON containing the branch name, the worktree path it ran in, and the resulting commit SHA. Phase 1b (state init) is handled by the worker itself — it initializes `kickoff.json` inside the isolated worktree.
 
 ## Phase 2: Issue Analysis
 

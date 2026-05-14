@@ -7,7 +7,7 @@
   "properties": {
     "version": {
       "type": "string",
-      "enum": ["1.0.0", "2.0.0"],
+      "const": "2.0.0",
       "description": "Schema version"
     },
     "issue": {
@@ -120,37 +120,10 @@
       "description": "Flow configuration options"
     }
   },
-  "if": {
-    "properties": {
-      "version": { "const": "2.0.0" }
-    },
-    "required": ["version"]
-  },
-  "then": {
-    "properties": {
-      "subtasks": {
-        "type": "array",
-        "items": {
-          "allOf": [
-            { "$ref": "#/$defs/subtask" },
-            {
-              "required": ["branch"],
-              "properties": {
-                "branch": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              }
-            }
-          ]
-        }
-      }
-    }
-  },
   "$defs": {
     "subtask": {
       "type": "object",
-      "required": ["id", "scope", "files", "status", "checklist"],
+      "required": ["id", "scope", "files", "branch", "status", "checklist"],
       "properties": {
         "id": {
           "type": "string",
@@ -172,6 +145,7 @@
         },
         "branch": {
           "type": "string",
+          "minLength": 1,
           "description": "Branch name for this subtask"
         },
         "depends_on": {
