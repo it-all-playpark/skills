@@ -9,3 +9,6 @@
 
 # Claude Code local config
 .claude/settings.local.json
+
+# Claude Code agent definitions (required for dev-kickoff-worker subagent)
+.claude/agents/**

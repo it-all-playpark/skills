@@ -72,10 +72,12 @@ case "$ACTION" in
 
         SUB_STATUS=""
         FILES_CHANGED=""
+        BRANCH=""
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --status) SUB_STATUS="$2"; shift 2 ;;
                 --files-changed) FILES_CHANGED="$2"; shift 2 ;;
+                --branch) BRANCH="$2"; shift 2 ;;
                 *) die_json "Unknown subtask option: $1" 1 ;;
             esac
         done
@@ -103,6 +105,14 @@ case "$ACTION" in
                 '(.subtasks[] | select(.id == $id)).actual_files_changed = $files | .updated_at = $now' \
                 "$FLOW_STATE" > "$TMP" && mv "$TMP" "$FLOW_STATE"
             echo "{\"status\":\"updated\",\"subtask\":\"$TASK_ID\",\"field\":\"actual_files_changed\"}"
+        fi
+
+        if [[ -n "$BRANCH" ]]; then
+            TMP=$(mktemp); TMP_FILES+=("$TMP")
+            jq --arg id "$TASK_ID" --arg b "$BRANCH" --arg now "$NOW" \
+                '(.subtasks[] | select(.id == $id)).branch = $b | .updated_at = $now' \
+                "$FLOW_STATE" > "$TMP" && mv "$TMP" "$FLOW_STATE"
+            echo "{\"status\":\"updated\",\"subtask\":\"$TASK_ID\",\"field\":\"branch\",\"value\":\"$BRANCH\"}"
         fi
         ;;
 

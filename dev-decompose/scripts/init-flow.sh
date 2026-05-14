@@ -126,7 +126,7 @@ FLOW_STATE="${FLOW_DIR}/$(basename "$FLOW_STATE")"
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 jq -n \
-    --arg version "1.0.0" \
+    --arg version "2.0.0" \
     --argjson issue "$ISSUE" \
     --arg status "decomposing" \
     --arg contract_branch "feature/issue-${ISSUE}-contract" \
