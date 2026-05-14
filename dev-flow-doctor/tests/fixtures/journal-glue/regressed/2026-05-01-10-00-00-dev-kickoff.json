@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "id": "20260501T100000-dev-kickoff",
+  "timestamp": "2026-05-01T10:00:00Z",
+  "skill": "dev-kickoff",
+  "outcome": "failure",
+  "duration_turns": 25,
+  "context": {"issue": 200, "mode": "single"},
+  "error": {"phase": "1", "category": "glue", "message": "worktree not found at .claude/worktrees/feature-issue-200-m"}
+}

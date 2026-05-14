@@ -1,0 +1,48 @@
+{
+  "version": "1.0.0",
+  "schema": "dev-flow-doctor-baseline/v1",
+  "window": "30d",
+  "since": "2026-04-14T00:00:00Z",
+  "taken_at": "2026-05-14T00:00:00Z",
+  "total_entries": 10,
+  "family_skills": [
+    "dev-kickoff",
+    "dev-implement",
+    "dev-validate",
+    "dev-integrate",
+    "dev-evaluate",
+    "pr-iterate",
+    "pr-fix",
+    "night-patrol"
+  ],
+  "per_skill": [
+    {"skill": "dev-kickoff", "total": 4, "success": 2, "failure": 2, "partial": 0, "failure_rate": 0.5, "avg_duration_turns": 22},
+    {"skill": "dev-implement", "total": 3, "success": 2, "failure": 1, "partial": 0, "failure_rate": 0.33, "avg_duration_turns": 16},
+    {"skill": "pr-fix", "total": 3, "success": 1, "failure": 1, "partial": 1, "failure_rate": 0.66, "avg_duration_turns": 6}
+  ],
+  "per_phase": {
+    "4_implement": {"total": 3, "failure": 1},
+    "6_evaluate": {"total": 1, "failure": 1}
+  },
+  "error_categories": {
+    "env": 2,
+    "type": 0,
+    "test": 1,
+    "glue": 12
+  },
+  "glue_errors": {
+    "count": 12,
+    "samples": [
+      "2026-05-01-dev-kickoff.json: worktree.*not found × 4",
+      "2026-05-05-dev-implement.json: phase_failed.*worktree × 5",
+      "2026-05-09-pr-fix.json: --worktree.*not × 3"
+    ],
+    "patterns": [
+      "worktree.*not found",
+      "--worktree.*not",
+      "\\.env.*not.*copied",
+      "worktree-agent-[a-f0-9]+",
+      "phase_failed.*worktree"
+    ]
+  }
+}
