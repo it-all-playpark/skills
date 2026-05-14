@@ -235,6 +235,23 @@ User triggers /command
    format / test / secret 検査のように LLM の判断を介さず必ず走らせたい処理は、
    skill 化すると呼び出し漏れが起きる。hook での実装を検討すること。
    hook 実装は dotfiles repo の `claude-code/hooks/` を参照
+9. **後方互換 scaffolding を作らない**:
+   内製スキルは外部公開ライブラリではなく本 repo 内で完結するため、schema 変更や
+   dispatch 仕様変更時の **legacy fallback / version enum / dual-path 実装は禁止**。
+   旧形式を返す呼び出し元は merge 前に存在せず、互換マッピングの実用上の必要性がない。
+   逆に SKILL.md / scripts / tests に rollout 期間の説明を入れると常時コンテキスト消費・
+   複雑性のオーバーヘッドになる。
+   - schema 変更時は **新形式のみ受理**。out-of-enum は `unknown` バケット →
+     `journal failure --error-category schema_error` で顕在化させる
+   - 「version >= X.Y.Z なら新方式、未満なら legacy」のような分岐を作らない。
+     未満は明確な error で abort、要件として「>= X.Y.Z 必須」と明示する
+   - JSON schema や config の version enum は最新版 `const` で固定
+   - 「クリティカルな問題があったら修正すればいい」原則 — 移行コストよりメンテ
+     コストの方が高い場合は移行を即実行
+   - **例外**: 外部 API / 公開フォーマット（GitHub Action input、blog MDX 等の
+     ユーザー所有データ、SemVer 公開している lib）の互換性は維持する
+   - 過去事例: PR #80 / PR #94 で `detect-worker.sh` dual-path や
+     `legacy_success` / `legacy_fail` / `legacy_mapped` を入れて指摘・全削除
 
 ## Subagent Dispatch Rules
 
