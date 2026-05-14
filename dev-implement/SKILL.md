@@ -64,16 +64,30 @@ Details: [Strategy Model - DDD](references/strategy-model.md#design-strategy-det
 
 ### Step 3: Plan Implementation
 
-**impl-plan.md Check**: If `$WORKTREE/.claude/impl-plan.md` exists (created by dev-plan-impl),
-follow that plan instead of creating your own. Do not re-plan from scratch.
-If the plan has a "Notes for Retry" section, address the feedback noted there.
+**Task source-of-truth (preferred)**: 親 orchestrator（dev-kickoff / dev-kickoff-worker）が prompt 内に
+`task_body` を paste している場合、その本文を真実の source とする。**この場合は
+`impl-plan.md` を `Read` しない**（context 浪費と曖昧参照誤読を避けるため。詳細は
+[`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md) の "Paste, Don't Link" 規約参照）。
+`task_body` 内に `## Test Plan` セクションが含まれる場合は Step 4 でそれを優先使用する。
+
+**Paste delimiter 仕様**: parent orchestrator が `<<<TASK_BODY_BEGIN>>>` / `<<<TASK_BODY_END>>>` の
+delimiter で paste した場合、その区間内テキストを task body として消費する（推奨フォーマット）。
+delimiter が含まれていない paste の場合は orchestrator 側のバグまたは古い orchestrator の可能性が
+あるため、prompt 内に `## task_body` 等の明示的 section header を探して fallback で読み取る。
+それも見つからない場合は `NEEDS_CONTEXT` を返し、`missing_context` に
+`"task_body delimiter or section header not found in prompt"` を入れる（impl-plan.md への暗黙
+fallback はしない）。delimiter 仕様: [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md#推奨-paste-フォーマット)。
+
+**impl-plan.md fallback (standalone)**: `task_body` 入力が無く、かつ `$WORKTREE/.claude/impl-plan.md` が
+存在する場合のみ (= standalone 実行 / 旧 orchestrator)、その plan を follow する。
+Do not re-plan from scratch. If the plan has a "Notes for Retry" section, address the feedback noted there.
 
 **Evaluator Feedback (retry mode)**: On retry, read `kickoff.json` → `phases.6_evaluate.iterations[]`
 for the latest feedback. The `feedback` array contains specific issues to address.
 The `feedback_level` indicates whether the issues are design-level (re-plan needed)
 or implementation-level (re-implement within existing plan).
 
-If `impl-plan.md` does NOT exist (standalone invocation), plan as before.
+If neither `task_body` nor `impl-plan.md` is available (true standalone invocation), plan as before.
 Check installed skills for tasks that match -- prefer Skill invocation over manual implementation.
 
 Details: [Skill-Aware Planning](references/skill-aware-planning.md)
@@ -84,7 +98,7 @@ Create TodoWrite items for tracking (>3 steps).
 
 ### Step 4: Implement (Red → Green → Refactor)
 
-`impl-plan.md` に `## Test Plan` がある場合、**必ず以下 3 sub-phase を順に実行**する。確認ダイアログは挟まず、各 sub-phase の成否は自動検証（`dev-validate`）で判定する。
+`task_body` または `impl-plan.md` (fallback) に `## Test Plan` がある場合、**必ず以下 3 sub-phase を順に実行**する。確認ダイアログは挟まず、各 sub-phase の成否は自動検証（`dev-validate`）で判定する。`task_body` が paste されている場合はそちらを優先し、`impl-plan.md` の全体 Read は行わない。
 
 #### Step 4a: Red — Write Failing Tests First
 
@@ -148,6 +162,23 @@ $SKILLS_DIR/dev-kickoff/scripts/append-progress.sh \
 
 If `--safe`: security check on auth/data handling, input validation review, error handling coverage.
 
+## Return Contract
+
+dev-implement worker は完了時に **4 値 status enum** を含む JSON を返す。dev-kickoff の Phase 5/6
+orchestrator はこの contract に従って分岐する。
+
+| status | 必須追加フィールド | 意味 |
+|---|---|---|
+| `DONE` | (なし) | 実装完了、self-doubt なし |
+| `DONE_WITH_CONCERNS` | `concerns: string[]` | 完了したが懸念を申告 → Phase 6 で重点監査 |
+| `BLOCKED` | `blocking_reason: string` | 同アプローチでは進めない → **同アプローチ retry 禁止**、Phase 3 に reset |
+| `NEEDS_CONTEXT` | `missing_context: string[]` | 不足情報あり → Phase 4 に再 dispatch (補足情報付き) |
+
+全 status 共通の必須ベースフィールド: `status`, `branch`, `worktree_path`, `commit_sha`。
+任意: `pr_url`, `phase_failed`, `error`。
+
+詳細仕様（サンプル JSON、schema error 時の挙動）: [Return Contract](references/return-contract.md)
+
 ## Examples
 
 Details: [Usage Examples](references/examples.md)
@@ -170,6 +201,12 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-implement failure \
 
 - Receives context from `dev-issue-analyze` if in kickoff workflow
 - Receives `WORKTREE_PATH` from `dev-kickoff-worker` (isolation: worktree) if worktree mode
+- Receives `task_body` (verbatim paste) from `dev-kickoff` / `dev-kickoff-worker` when invoked as
+  part of an orchestrated phase. **When `task_body` is provided, `$WORKTREE/.claude/impl-plan.md`
+  is NOT Read.** See [Return Contract](references/return-contract.md) and
+  [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md).
+- Falls back to reading `$WORKTREE/.claude/impl-plan.md` from `dev-plan-impl` only when no `task_body`
+  is paste-supplied (standalone invocation).
 - Passes to `dev-validate` skill for verification
-- Reads `$WORKTREE/.claude/impl-plan.md` from `dev-plan-impl` if available
 - Receives Evaluator feedback via kickoff.json iterations on retry
+- Returns 4-value `status` JSON per [Return Contract](references/return-contract.md)

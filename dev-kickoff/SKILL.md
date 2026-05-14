@@ -111,6 +111,37 @@ See [Phase 1 detail](references/phase-detail.md#phase-1-worktree-creation) for t
 - **Plan-Review Loop (Phase 3 ↔ 3b)**: verdict ベース分岐（pass/revise/block）、max 3 iterations、stuck detection、fork failure retry。詳細: [Plan-Review Loop](references/plan-review-loop.md)
 - **Evaluate-Retry Loop (Phase 6 → 3 or 4)**: Phase 6 verdict が `fail` なら design/implementation feedback に応じて Phase 3 or 4 へ戻る。max 5 iterations。詳細: [Evaluate-Retry Loop](references/evaluate-retry.md)
 
+## Generator Status Branching (issue #92)
+
+Phase 4 (`dev-implement`) は **4 値 status enum** (`DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`)
+を含む JSON を返す。dev-kickoff の Phase 5/6 orchestrator はこの status を最初に消費し、以降を分岐する。
+
+| status | 必須追加フィールド | dev-kickoff の挙動 |
+|---|---|---|
+| `DONE` | (なし) | Phase 6 (dev-evaluate) へ進む |
+| `DONE_WITH_CONCERNS` | `concerns: string[]` | Phase 6 に `focus_areas = concerns[]` を渡して重点監査 |
+| `BLOCKED` | `blocking_reason: string` | **同アプローチ retry 禁止**。Phase 3 に reset、`blocking_reason` を **findings[] 形式 (`dimension: approach_mismatch`) に正規化**して `plan-review-feedback.json` に書き込み dev-plan-impl に渡す（整形ルール: [evaluate-retry.md](references/evaluate-retry.md#blocked-feedback-の整形)） |
+| `NEEDS_CONTEXT` | `missing_context: string[]` | Phase 4 に再 dispatch、`missing_context[]` を補足 paste。連続 2 回で human escalate |
+
+## Phase 4 dispatch: Paste, Don't Link
+
+Phase 4 で `dev-implement` を呼び出す（または parallel mode で `dev-kickoff-worker` 経由で
+spawn する）際は、対応する task の本文を prompt 内に **verbatim paste** する。
+`impl-plan.md` 全体を Read させてはならない。
+
+```text
+## task_body (verbatim from parent orchestrator)
+
+<<<TASK_BODY_BEGIN>>>
+[該当 task のフル本文 — File Changes / Test Plan / Acceptance / Notes すべて含む]
+<<<TASK_BODY_END>>>
+```
+
+`dev-implement` は `task_body` paste を受け取った場合、`impl-plan.md` を Read せずに paste された
+本文を真実の source として扱う。`task_body` 不在時のみ `impl-plan.md` を fallback として読む。
+
+詳細規約: [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md#paste-dont-link)
+
 ## Args
 
 | Arg | Default | Description |

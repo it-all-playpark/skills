@@ -43,6 +43,60 @@ JSON schema、Markdown のセクション構成、語数上限などを明示す
 
 語数・件数・ファイル数など**計測可能な上限**を明示する。
 
+## Paste, Don't Link
+
+Subagent に渡したい task / context は **prompt 内に verbatim paste** すること。
+「`impl-plan.md` を Read してください」「`docs/foo.md` を読んで」といった**ファイル参照の指示で代替してはならない**。
+
+### なぜ paste するか
+
+| 失敗モード | 原因 | 対策 |
+|---|---|---|
+| Context 浪費 | 大型 plan を N worker × 全文 Read | 該当 task 本文のみを paste |
+| 曖昧参照誤読 | 「Task 1 と同様」「上述の通り」を worker が誤解釈 | task 本文を self-contained に書き verbatim paste |
+| Drift | plan が更新されても worker context が古い | dispatch 時点の snapshot を paste で固定 |
+
+### 規約
+
+1. **dev-kickoff / dev-kickoff-worker は worker spawn 時に `task_body` を prompt 内に verbatim paste する**。
+   worker は `impl-plan.md` 全体を Read しない（boundary 違反）。
+2. **dev-plan-impl は各 task を self-contained に書く**。「Task N と同様」「上述の通り」「前述」等の
+   曖昧参照は禁止。dev-plan-review はこのパターンを `findings` (severity: major) として flag する。
+3. **dev-implement は `task_body` paste がある場合はそれを真実の source とし、`impl-plan.md` を Read しない**。
+   `task_body` が無い standalone 実行の場合のみ `impl-plan.md` fallback を使用。
+
+### 推奨 paste フォーマット
+
+worker prompt 内に以下のような明確な区切りで `task_body` を埋め込む:
+
+```
+## task_body (verbatim from parent orchestrator)
+
+<<<TASK_BODY_BEGIN>>>
+[該当 task のフル本文。File Changes / Test Plan / Acceptance / Notes 含む]
+<<<TASK_BODY_END>>>
+```
+
+worker 側は `<<<TASK_BODY_BEGIN>>>` / `<<<TASK_BODY_END>>>` の delimiter で task 本文を抽出する。
+任意の文字列 hash や TASK_ID を埋め込むことで integrity check も可能。
+
+## 4 値 Status Enum
+
+Generator-Verifier ループ（dev-implement → dev-evaluate）で worker が返す `status` フィールドは
+**4 値**のいずれかを取る。dev-implement / dev-kickoff / dev-evaluate / dev-flow-doctor は
+本セクションを中央定義として参照する（個別 SKILL.md には簡易表だけ書き、詳細はここに集約）。
+
+| status | 必須追加フィールド | dev-kickoff orchestrator の挙動 |
+|---|---|---|
+| `DONE` | (なし) | Phase 6 (dev-evaluate) へ進む |
+| `DONE_WITH_CONCERNS` | `concerns: string[]` (>= 1 要素) | Phase 6 に `focus_areas = concerns[]` を渡して重点監査 |
+| `BLOCKED` | `blocking_reason: string` (非空、>= 10 文字) | **同アプローチ retry 禁止**、Phase 3 に reset し `blocking_reason` を `findings[]` 形式 (`severity: critical`, `dimension: approach_mismatch`) に正規化して `plan-review-feedback.json` に書き込む。詳細整形ルール: [`dev-kickoff/references/evaluate-retry.md`](../../dev-kickoff/references/evaluate-retry.md#blocked-feedback-の整形) |
+| `NEEDS_CONTEXT` | `missing_context: string[]` (>= 1 要素) | Phase 4 に再 dispatch、`missing_context[]` を補足 paste。連続 2 回 NEEDS_CONTEXT で human escalate |
+
+ベース必須フィールド: `status`, `branch`, `worktree_path`, `commit_sha`。任意: `pr_url`, `phase_failed`, `error`。
+
+詳細サンプル JSON は [`dev-implement/references/return-contract.md`](../../dev-implement/references/return-contract.md) を参照。
+
 ## Subagent Routing Rules
 
 タスク性質に応じて適切な subagent 種別を選ぶ。

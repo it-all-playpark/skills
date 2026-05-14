@@ -2,6 +2,48 @@
 
 After Phase 6 (dev-evaluate) returns evaluation JSON:
 
+## Generator status branching (issue #92)
+
+Phase 5 (dev-validate) と Phase 6 (dev-evaluate) の合間に、`dev-implement` worker が返した
+**4 値 status enum** (`DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`) を読み取り、
+以降の挙動を分岐する。本ループは status を最初に消費し、その後の評価結果と組み合わせる。
+
+| Generator status | Phase 5/6 挙動 |
+|---|---|
+| `DONE` | 通常通り Phase 6 (dev-evaluate) を実行（既存挙動） |
+| `DONE_WITH_CONCERNS` | Phase 6 に `focus_areas = concerns[]` を渡す。dev-evaluate は `focus_areas` を受け取った場合、その領域を重点監査する |
+| `BLOCKED` | **同アプローチでの retry を禁止**する。`update-phase.sh 6_evaluate done --reset-to 3_plan_impl --worktree $PATH` で Phase 3 に戻し、`plan-review-feedback.json` に `blocking_reason` を **dev-plan-review schema 互換の findings[] 形式**（`severity: critical`, `dimension: approach_mismatch`）に正規化して書き込み、dev-plan-impl に渡す（下記 "BLOCKED feedback の整形" を参照） |
+| `NEEDS_CONTEXT` | Phase 4 に再 dispatch、`missing_context[]` を補足情報として paste する。連続 2 回 `NEEDS_CONTEXT` を観測したら human escalate (warning) して Phase 6 を skip。3 回目以降は dispatch しない |
+
+### BLOCKED feedback の整形
+
+dev-plan-impl は `plan-review-feedback.json` を `findings[]` schema で読むため、BLOCKED 時に
+`blocking_reason` 文字列を生で書き込むと dev-plan-impl が見落とす（schema mismatch）。orchestrator は以下の形に正規化してから書き込む:
+
+```jsonc
+{
+  "score": 0,
+  "verdict": "block",
+  "pass_threshold": 80,
+  "generator_status": "BLOCKED",
+  "findings": [
+    {
+      "severity": "critical",
+      "dimension": "approach_mismatch",
+      "topic": "<blocking_reason の先頭 60 文字>",
+      "description": "<blocking_reason 全文>",
+      "suggestion": "同アプローチでは進行不可。代替設計を立案すること（現アプローチの再試行は禁止）。"
+    }
+  ],
+  "summary": "Generator returned BLOCKED. Plan must be redesigned with a different approach."
+}
+```
+
+詳細消費規約: [`../../dev-plan-impl/SKILL.md`](../../dev-plan-impl/SKILL.md#blocked-hand-off-phase-6--3-reset-issue-92)。
+ベース必須フィールド一覧は
+[`_shared/references/subagent-dispatch.md`](../../_shared/references/subagent-dispatch.md#4-値-status-enum)
+を参照。
+
 ## Flow
 
 1. **Record iteration**: `update-phase.sh 6_evaluate in_progress --eval-result '$JSON' --worktree $PATH`

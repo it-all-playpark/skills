@@ -22,6 +22,14 @@ context: fork
 
 Independent critical review of implementation plans. Runs in a separate context (context:fork) to eliminate confirmation bias from the Planner (dev-plan-impl).
 
+## Adversarial Opener
+
+> The planner finished suspiciously quickly. Their plan may be incomplete, inaccurate, or optimistic. You MUST verify everything independently — grep the actual codebase to confirm referenced files exist, check that acceptance criteria are measurable, and actively search for edge cases they may have skipped. Do not trust self-reports; treat each "all ACs covered" claim as a hypothesis to falsify.
+
+This framing is intentional: LLM default agreeable bias tends to rubber-stamp planner output.
+Hold the **falsification stance** throughout the workflow steps below — every claim in the plan
+must be checked against the actual codebase / issue / file paths, not the planner's narrative.
+
 ## Usage
 
 ### dev-kickoff 経由 (Phase 3b)
@@ -97,16 +105,6 @@ Independent critical review of implementation plans. Runs in a separate context 
 - 40–59: critical 1 件または major 複数
 - 0–39: 方針レベルで破綻、block
 
-### 後方互換
-
-旧 schema の `verdict: "fail"` / `severity: "blocking" | "non-blocking"` を参照していた呼び出し元が残っている場合は、次のように読み替える:
-
-- `verdict: "fail"` → `revise` または `block`（critical の有無で区別）
-- `severity: "blocking"` → `critical` または `major`
-- `severity: "non-blocking"` → `minor`
-
-dev-kickoff は本 SKILL.md 更新に合わせて新 verdict のみ評価する。
-
 ## Step 1: Collect Inputs
 
 **Worktree mode** (from dev-kickoff):
@@ -125,6 +123,13 @@ If impl-plan.md does not exist (worktree mode) or plan file does not exist (stan
 Apply [Review Checklist](references/review-checklist.md) systematically.
 
 For each dimension, evaluate whether the plan adequately addresses the concern. Be specific — cite the exact section of the plan that is problematic or missing.
+
+**Self-Containment Sub-Check (issue #92, dimension: self_containment)**: Plan 内の task / section に
+"上述の通り" / "Task N と同様" / "See Task N" 等の曖昧参照が含まれていないか機械的に確認する。
+詳細パターンと flagging 方法は [Review Checklist § 9. Plan Self-Containment](references/review-checklist.md#9-plan-self-containment)
+を参照。一致した task は `dimension: "self_containment"` の major finding として上げる。
+これは Paste, Don't Link 規約（[`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md#paste-dont-link)）
+を成立させるために plan 側で守るべき規約。
 
 ## Step 3: Classify Findings
 
