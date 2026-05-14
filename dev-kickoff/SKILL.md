@@ -30,7 +30,7 @@ When `--task-id` is NOT set (= single mode), Phase 1 MUST be executed FIRST. Imp
 
 | Phase | Action | Complete When | Single Mode | Parallel Mode (--task-id) |
 |-------|--------|---------------|-------------|---------------------------|
-| 1 | Worktree creation | Path exists, .env verified | **REQUIRED** | SKIP |
+| 1 | Worktree creation (via worker subagent if available, else legacy git-prepare — see **Phase 1 dispatch** below) | Path exists, .env verified | **REQUIRED** | SKIP |
 | 2 | Issue analysis | Requirements understood | **REQUIRED** | SKIP |
 | 3 | Implementation plan | impl-plan.md created | Execute | Execute |
 | 3b | Plan review | Plan approved or revised | Execute | Execute |
@@ -73,8 +73,8 @@ Details: [State Management](references/state-management.md), [kickoff.json Schem
 
 | Phase | Command | Subagent | Parallel Mode |
 |-------|---------|----------|---------------|
-| 1 | `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE` | - | SKIP |
-| 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - | SKIP |
+| 1 | See **Phase 1 dispatch** below (worker subagent or legacy git-prepare) | `dev-kickoff-worker` (if available) | SKIP |
+| 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` (skipped on worker path — worker initializes state itself) | - | SKIP |
 | 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
 | 3 | `Skill: dev-plan-impl $ISSUE --worktree $PATH` | - | Execute |
 | 3b | `Skill: dev-plan-review $ISSUE --worktree $PATH` | context:fork | Execute |
@@ -85,6 +85,24 @@ Details: [State Management](references/state-management.md), [kickoff.json Schem
 | 8 | `Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH` | - | SKIP |
 
 Phase 1: Must execute script. Direct `git worktree add` is prohibited.
+
+## Phase 1 dispatch
+
+Phase 1 has two dispatch paths controlled by `dev-kickoff/scripts/detect-worker.sh`:
+
+1. **Worker subagent path (preferred, issue #79)** — if `detect-worker.sh` exits 0 (agent file present + claude >= 2.1.63):
+   - Spawn via `Agent(subagent_type: "dev-kickoff-worker", isolation: "worktree", prompt: <issue/branch/base/mode>)`
+   - Worker runs Phase 1b-7 (and Phase 8 in single mode) inside the `isolation: worktree` subagent
+   - Worker returns JSON: `{status, branch, worktree_path, commit_sha, pr_url?, phase_failed?, error?}`
+   - On `status: completed`, dev-kickoff records branch + sha and (single mode) calls `pr-iterate` with the returned `pr_url`
+2. **Legacy fallback path** — if `detect-worker.sh` exits 1 (agent missing, claude not found, or version < 2.1.63):
+   - Run `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE`
+   - Then `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...`
+   - Continue Phases 2-8 in the current main session context (no subagent spawn)
+
+This dual-path is intentional backwards-compat. The fallback is exercised when Claude Code < 2.1.63 (no `isolation: worktree` field support) or the worker definition file is absent from the worktree (e.g. legacy repos before `.worktreeinclude` propagated `.claude/agents/**`).
+
+See [Worker dispatch](references/phase-detail.md#phase-1-worktree-creation) for full algorithm.
 
 ## Loops
 

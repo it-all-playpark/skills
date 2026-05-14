@@ -32,6 +32,9 @@ done
 ERRORS=()
 WARNINGS=()
 
+# 0. Read schema version (default to 1.0.0 if missing for backwards-compat)
+SCHEMA_VERSION=$(jq -r '.version // "1.0.0"' "$FLOW_STATE")
+
 # 1. Check subtask count
 SUBTASK_COUNT=$(jq '.subtasks | length' "$FLOW_STATE")
 if [[ "$SUBTASK_COUNT" -eq 0 ]]; then
@@ -76,6 +79,17 @@ fi
 # 5. Check for circular dependencies (using shared topo-sort)
 if ! "$SCRIPT_DIR/topo-sort.sh" --flow-state "$FLOW_STATE" >/dev/null 2>&1; then
     ERRORS+=("Circular dependency detected in subtask depends_on")
+fi
+
+# 7. Check schema v2 branch requirement
+if [[ "$SCHEMA_VERSION" == "2.0.0" ]]; then
+    # v2: each subtask must have a non-empty branch field
+    MISSING_BRANCH=$(jq -r '.subtasks[] | select((.branch // "") == "") | .id' "$FLOW_STATE")
+    if [[ -n "$MISSING_BRANCH" ]]; then
+        while IFS= read -r task_id; do
+            [[ -n "$task_id" ]] && ERRORS+=("Subtask $task_id is missing required 'branch' field (schema v2)")
+        done <<< "$MISSING_BRANCH"
+    fi
 fi
 
 # 6. Check depends_on references valid subtask IDs

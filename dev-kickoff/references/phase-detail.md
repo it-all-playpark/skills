@@ -26,7 +26,41 @@ Handoff: pr-iterate
 
 ## Phase 1: Worktree Creation
 
-**Command:**
+Phase 1 has **two dispatch paths** since issue #79. The choice is made by `dev-kickoff/scripts/detect-worker.sh`.
+
+### Path A: Worker subagent (preferred, Claude Code >= 2.1.63)
+
+When `detect-worker.sh` exits 0, dev-kickoff spawns the `dev-kickoff-worker` subagent via the Agent tool. The subagent runs in a `isolation: worktree` (Claude Code feature), giving it an isolated worktree without an explicit `git-prepare.sh` call.
+
+**Detection algorithm** (`detect-worker.sh`):
+
+1. Read `.claude/agents/dev-kickoff-worker.md` exists under `git rev-parse --show-toplevel`
+2. `claude --version` returns a parseable semver
+3. Parsed version >= `2.1.63` (subagent isolation:worktree shipped here)
+
+All three checks pass → exit 0 + JSON `{"available": true, ...}` → take Path A.
+
+**Spawn**:
+
+```text
+Agent(
+  subagent_type: "dev-kickoff-worker",
+  isolation: "worktree",
+  prompt: "
+    issue_number: $ISSUE
+    branch_name: feature/issue-$ISSUE-m   # single mode
+    base_ref: origin/$BASE
+    mode: single
+  "
+)
+```
+
+The worker returns JSON containing the branch name, the worktree path it ran in, and the resulting commit SHA. Phase 1b (state init) is **skipped on this path** — the worker initializes its own kickoff.json inside the isolated worktree.
+
+### Path B: Legacy `git-prepare.sh` (fallback)
+
+When `detect-worker.sh` exits 1 (agent file missing, claude CLI not found, or version too old), fall back to the legacy command:
+
 ```bash
 $SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE
 ```

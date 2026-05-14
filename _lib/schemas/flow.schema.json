@@ -7,7 +7,7 @@
   "properties": {
     "version": {
       "type": "string",
-      "const": "1.0.0",
+      "enum": ["1.0.0", "2.0.0"],
       "description": "Schema version"
     },
     "issue": {
@@ -118,6 +118,33 @@
         }
       },
       "description": "Flow configuration options"
+    }
+  },
+  "if": {
+    "properties": {
+      "version": { "const": "2.0.0" }
+    },
+    "required": ["version"]
+  },
+  "then": {
+    "properties": {
+      "subtasks": {
+        "type": "array",
+        "items": {
+          "allOf": [
+            { "$ref": "#/$defs/subtask" },
+            {
+              "required": ["branch"],
+              "properties": {
+                "branch": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      }
     }
   },
   "$defs": {
