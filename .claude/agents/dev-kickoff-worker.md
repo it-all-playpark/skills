@@ -1,10 +1,10 @@
 ---
 name: dev-kickoff-worker
 description: |
-  Execute one dev-kickoff phase cycle (1b-7, optionally 8) in an isolated git worktree.
-  Use when: dev-kickoff Phase 1 detects worker availability via detect-worker.sh.
-  Inputs: issue_number, branch_name, base_ref (single mode: origin/main; parallel mode: contract branch).
-  Returns: {status, branch, worktree_path, commit_sha, pr_url?, phase_failed?, error?}
+  Execute one dev-kickoff phase cycle (1b-7, optionally 8) or a merge cycle in an isolated git worktree.
+  Use when: dev-kickoff Phase 1 (single/parallel) or dev-integrate Step 4 (merge) need an isolated worktree subagent.
+  Inputs: issue_number, branch_name, base_ref. Mode-specific: task_id (parallel), flow_state (parallel/merge).
+  Returns: {status, branch, worktree_path, commit_sha, pr_url?, merge_results?, conflicts?, phase_failed?, error?}
 isolation: worktree
 permissionMode: auto
 model: sonnet
@@ -21,18 +21,24 @@ tools:
 
 # dev-kickoff-worker
 
-A dev-kickoff worker that runs phases 1b-7 (optionally 8 in single mode) inside a Claude Code `isolation: worktree` subagent. The parent orchestrator (dev-kickoff main session) invokes this subagent through the Agent tool to delegate worktree-bound work in a clean context.
+A dev-kickoff worker that runs phases 1b-7 (optionally 8 in single mode) inside a Claude Code `isolation: worktree` subagent. The parent orchestrator (dev-kickoff main session, or dev-integrate for the merge variant) invokes this subagent through the Agent tool to delegate worktree-bound work in a clean context.
+
+The worker supports **three modes**:
+
+- `single` — full dev-kickoff cycle for an entire issue (Phase 1b-8)
+- `parallel` — one-subtask cycle inside a parallel decomposition (Phase 3-7, no Phase 8)
+- `merge` — dev-integrate's merge worktree variant (branch checkout + `merge-subtasks.sh` + type check + dev-validate)
 
 ## Inputs (provided in the spawn prompt)
 
 The caller MUST pass the following in your invocation prompt:
 
 - `issue_number`: integer, e.g. `79`
-- `branch_name`: e.g. `feature/issue-79-m` (single mode) or `feature/issue-79-task1` (parallel mode)
-- `base_ref`: e.g. `origin/main` (single mode) or `feature/issue-79-contract` (parallel mode)
-- `mode`: `single` or `parallel`
+- `branch_name`: e.g. `feature/issue-79-m` (single), `feature/issue-79-task1` (parallel), or `feature/issue-79-merge` / `feature/issue-79-merge-retry` (merge)
+- `base_ref`: e.g. `origin/main` (single mode) or `feature/issue-79-contract` (parallel and merge modes — the contract branch)
+- `mode`: `single`, `parallel`, or `merge`
 - `task_id` (parallel only): subtask ID from flow.json, e.g. `task1`
-- `flow_state` (parallel only): absolute path to flow.json
+- `flow_state` (parallel and merge): absolute path to flow.json
 
 ## Steps — execute IN ORDER, do NOT skip
 
@@ -80,6 +86,51 @@ Parallel mode (Phase 3-7, no Phase 8):
 - Run Phase 3-7 the same way as single mode
 - Do NOT run `git push` for the subtask branch — parent dev-integrate handles merge
 
+Merge mode (`mode: merge`, issue #82) — NOT phase 2-8. Instead, run the merge cycle below.
+
+After branch checkout (Step 1) succeeds, the worker is sitting on the new merge branch (e.g. `feature/issue-${issue_number}-merge`, or `feature/issue-${issue_number}-merge-retry` on retry) created from the contract branch. Execute:
+
+1. **Merge subtask branches** in topological order via the existing decomposition script (it owns conflict detection / auto-resolution / integration-feedback recording):
+
+   ```bash
+   "$SKILLS_DIR/dev-integrate/scripts/merge-subtasks.sh" \
+     --flow-state "$flow_state" \
+     --worktree "$(pwd)" > merge-subtasks.out.json
+   ```
+
+   Capture the JSON output. The script returns `{status, total_subtasks, merged, conflicts, results}` — store this as the `merge_results` field of the worker return JSON. The flat `conflicts` field (number) is mirrored at the top level too.
+
+2. **Type check** (best-effort; detect project type by manifest files):
+
+   ```bash
+   if [ -f tsconfig.json ]; then npx tsc --noEmit
+   elif [ -f setup.py ] || [ -f pyproject.toml ]; then mypy . || true
+   elif [ -f go.mod ]; then go vet ./...
+   fi
+   ```
+
+3. **Integration validation** via dev-validate:
+
+   ```bash
+   Skill: dev-validate --worktree $(pwd)
+   ```
+
+4. **Do NOT push** the merge branch. Parent `dev-integrate` writes worker results back to `flow.json.integration` (status / merge_worktree / merge_order / merge_results) via `flow-update.sh`.
+
+5. Return JSON of the shape:
+
+   ```json
+   {"status":"completed","branch":"feature/issue-79-merge","worktree_path":"/abs/path","commit_sha":"<HEAD sha>","merge_results":{"status":"success","total_subtasks":N,"merged":N,"conflicts":0,"results":[...]},"conflicts":0}
+   ```
+
+   On failure (e.g. unresolvable conflict, type check fail, validation fail):
+
+   ```json
+   {"status":"failed","phase_failed":"merge","branch":"feature/issue-79-merge","worktree_path":"/abs/path","commit_sha":"<sha or empty>","merge_results":{...partial...},"conflicts":N,"error":"<message>"}
+   ```
+
+   `status` is `failed` only when `merge-subtasks.sh` exits non-zero, type check fails, or validation fails. Auto-resolved conflicts (lock files) keep `status: completed` and surface in `merge_results.results[*].status == "merged_auto_resolved"` plus the top-level `conflicts` count.
+
 ### Step 4: Empty diff handling (EC1 from issue #79)
 
 Before Phase 7 (commit), check whether there are staged or unstaged changes:
@@ -96,7 +147,7 @@ This rule exists because Claude Code automatically removes a temp worktree when 
 
 ### Step 5: Return JSON (last line of your response)
 
-On success, your final response MUST end with a single-line JSON object:
+On success (single / parallel), your final response MUST end with a single-line JSON object:
 
 ```json
 {"status":"completed","branch":"feature/issue-79-m","worktree_path":"/abs/path","commit_sha":"<HEAD sha>","pr_url":"https://github.com/...optional in parallel mode"}
@@ -109,17 +160,18 @@ On failure at any phase:
 ```
 
 Required fields: `status`, `branch`, `worktree_path`, `commit_sha` (may be empty on early failure).
-Optional fields: `pr_url` (single mode Phase 8 only), `phase_failed`, `error`.
+Optional fields: `pr_url` (single mode Phase 8 only), `merge_results` / `conflicts` (merge mode only), `phase_failed`, `error`.
 
 ## Boundaries
 
-- DO NOT run `git push` for subtask branches in parallel mode. Only Phase 8 (single mode) pushes via `git-pr`.
+- DO NOT run `git push` for subtask branches in parallel mode, nor for the merge branch in merge mode. Only Phase 8 (single mode) pushes via `git-pr`. The merge branch is pushed later by parent dev-integrate's downstream PR step (#82 keeps that responsibility on the parent).
 - DO NOT modify files outside your worktree (`pwd` boundary).
 - DO NOT spawn other subagents (Claude Code subagents cannot nest — public docs L737).
-- DO NOT auto-reset / force-delete existing branches. Abort with `phase_failed:1` instead and let the parent / human decide cleanup.
+- DO NOT auto-reset / force-delete existing branches. Abort with `phase_failed:1` (or `phase_failed:"merge"` for merge mode) instead and let the parent / human decide cleanup.
 
 ## References
 
-- Issue: github.com/it-all-playpark/skills/issues/79
+- Issue: github.com/it-all-playpark/skills/issues/79 (single / parallel), github.com/it-all-playpark/skills/issues/82 (merge)
 - Claude Code subagent docs: https://code.claude.com/docs/en/sub-agents
 - spike Layer 1+2 (parent session) for `isolation: worktree` behavior validation
+- dev-integrate dispatch detail: [`dev-integrate/references/worker-dispatch.md`](../../dev-integrate/references/worker-dispatch.md)

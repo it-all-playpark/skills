@@ -61,9 +61,10 @@ dev-flow (main context - lightweight)
         │
         ├─→ Step 6b: dev-integrate
         │       ├─→ Check drift (planned vs actual files)
-        │       ├─→ Merge subtask branches (topological order)
-        │       ├─→ Type check (tsc/mypy/go vet)
-        │       └─→ dev-validate (integration tests)
+        │       ├─→ Spawn Agent(dev-kickoff-worker, isolation:worktree, mode:merge)
+        │       │     (worker runs merge-subtasks.sh + type check + dev-validate
+        │       │      inside its isolated worktree and returns merge_results)
+        │       └─→ Transcribe worker JSON into flow.json.integration
         │
         ├─→ Step 7b: git-pr (from merge worktree)
         │
