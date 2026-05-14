@@ -9,6 +9,7 @@ description: |
 allowed-tools:
   - Bash
   - Task
+  - Agent
 model: opus
 effort: max
 ---
@@ -24,8 +25,8 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 - Split work into non-conflicting subtasks at file boundaries
 - Define `depends_on` relationships between subtasks
 - Generate shared contract (types/interfaces) committed to a contract branch
-- Create N worktrees via git-prepare (base: contract branch, suffix: task1, task2, ...)
-- Generate flow.json with subtask definitions, checklists, and contract info
+- Dispatch `dev-kickoff-worker` subagent (`isolation: worktree`) for each subtask to create its worktree from the contract branch
+- Generate flow.json with subtask definitions (including `branch` field), checklists, and contract info
 
 ## Workflow
 
@@ -37,10 +38,11 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 3. Group files into subtasks (no file overlap)
 4. Define checklist for each subtask
 5. Generate shared contract (interfaces/types if needed)
-6. Create contract branch from base
+6. Create contract worktree from base (orchestrator-local, see Step 5-7)
 7. Commit contract files to contract branch
-8. Create worktrees for each subtask (git-prepare --base contract-branch --suffix taskN)
-9. Generate flow.json
+8. Dispatch dev-kickoff-worker subagent (isolation: worktree) per subtask
+   to create its branch (feature/issue-${N}-task${INDEX}) from the contract branch
+9. Generate flow.json (populating subtask.branch returned by each worker)
 10. Validate decomposition (validate-decomposition.sh)
 ```
 
@@ -127,18 +129,32 @@ cd $CONTRACT_WORKTREE
 # ... create contract files, git add, git commit ...
 ```
 
-### Step 8: Worktree Creation
+### Step 8: Subtask Worktree Creation (worker subagent dispatch)
 
-For each subtask, call git-prepare with `--local` to keep branches local:
-```bash
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
-  --suffix task${INDEX} \
-  --base feature/issue-${ISSUE}-contract \
-  --env-mode $ENV_MODE \
-  --local
+For each subtask, spawn a `dev-kickoff-worker` subagent in `isolation: worktree` mode based on the contract branch. The worker creates its own branch (`feature/issue-${ISSUE}-task${INDEX}`) inside the isolated worktree and returns the resulting `branch` / `worktree_path` / `commit_sha`.
+
+```text
+Agent(
+  subagent_type: "dev-kickoff-worker",
+  isolation: "worktree",
+  prompt: "
+    issue_number: $ISSUE
+    branch_name: feature/issue-${ISSUE}-task${INDEX}
+    base_ref: feature/issue-${ISSUE}-contract
+    mode: parallel
+    task_id: task${INDEX}
+    flow_state: $FLOW_STATE
+  "
+)
 ```
 
-**Subtask/contract ブランチはリモートに push しない。** push が必要なのは最終的な merge ブランチのみ（PR 作成時）。
+The worker dispatch replaces the previous direct `git-prepare` invocation. Direct `git worktree add` and direct `git-prepare.sh --suffix task...` calls are **prohibited** for subtask worktrees.
+
+**Requirements**:
+- Claude Code >= 2.1.63 (`isolation: worktree` field support)
+- `.claude/agents/dev-kickoff-worker.md` present in the repo
+
+**Subtask/contract ブランチはリモートに push しない。** push が必要なのは最終的な merge ブランチのみ（PR 作成時）。worker は parallel mode で `git push` をスキップする。
 
 ### Step 9: Flow State Generation
 
@@ -150,7 +166,31 @@ $SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
   --env-mode $ENV_MODE
 ```
 
-Then populate subtask entries with file assignments, checklists, and dependency info.
+Then populate each subtask entry with:
+
+- `id` — `task1`, `task2`, ... (stable across reruns)
+- `scope` — short description of the subtask
+- `files` — array of file paths owned by this subtask
+- **`branch` — required (flow.json v2 schema).** Use the branch name returned by the `dev-kickoff-worker` dispatch in Step 8 (typically `feature/issue-${ISSUE}-task${INDEX}`). validate-decomposition.sh rejects empty/missing `branch`.
+- `status` — `pending`
+- `checklist` — at least 1 item per subtask
+- `depends_on` — array of other subtask `id`s (optional)
+- `worktree_path` — absolute path returned by the worker
+
+Example subtask entry:
+
+```jsonc
+{
+  "id": "task1",
+  "scope": "src/models/user types and tests",
+  "files": ["src/models/user.ts", "src/models/user.test.ts"],
+  "branch": "feature/issue-${ISSUE}-task1",
+  "worktree_path": "/abs/path/to/skills-worktrees/feature-issue-${ISSUE}-task1",
+  "status": "pending",
+  "checklist": [{"item": "Define User type", "done": false}],
+  "depends_on": []
+}
+```
 
 ### Step 10: Validation
 
@@ -247,6 +287,25 @@ normally.
 | Worktree creation fails | Abort, report which subtask failed |
 | Validation fails | Report specific violations, do not proceed |
 
+## Subagent Dispatch Rules
+
+dev-decompose は Step 8 で **subtask 数ぶんの `dev-kickoff-worker` subagent** を `Agent(isolation: worktree)` で起動する。共通規約 ([`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)) の必須5要素を遵守する。
+
+### Step 8: Agent(dev-kickoff-worker, isolation: worktree) — per subtask
+
+1. **Objective** — 「contract branch `feature/issue-${ISSUE}-contract` をベースに subtask `task${INDEX}` 用の branch `feature/issue-${ISSUE}-task${INDEX}` を isolated worktree で作成し、`{status, branch, worktree_path, commit_sha}` を返す」（Phase 1 のみ。Phase 2-7 は dev-kickoff から `--task-id` で再呼び出し）
+2. **Output format** — `{ status: "completed"|"failed", branch: string, worktree_path: string, commit_sha: string, phase_failed?: string, error?: string }` JSON（worker の last-line JSON contract）
+3. **Tools** — worker frontmatter で許可: Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep。dev-decompose 側から追加 tool 制約は付けない
+4. **Boundary** — worker は自身の isolated worktree 内のみで作業、`git push` 禁止（parallel mode）、subtask 外の branch 触らない、`git worktree add` を直接実行しない
+5. **Token cap** — worker 1 回あたり 2000 turn 以内（dev-kickoff-worker.md 既定）、Step 8 全体で subtask 数 ≤ 5 を推奨
+
+### Routing
+
+- subtask worktree 作成 → `dev-kickoff-worker` (sonnet, isolation: worktree)
+- 通常の探索 / planning は dev-decompose 自身（opus, effort: max）で行う
+
+詳細・チェックリスト: [Subagent Dispatch Rules（共通）](../_shared/references/subagent-dispatch.md)
+
 ## Journal Logging
 
 On completion, log execution to skill-retrospective journal:
@@ -268,6 +327,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose failure \
 ## References
 
 - [Decomposition Guide](references/decomposition-guide.md) - Detailed strategy and edge cases
-- [git-prepare](../git-prepare/SKILL.md) - Worktree creation
+- [dev-kickoff-worker](../.claude/agents/dev-kickoff-worker.md) - Subagent that creates each subtask worktree (Step 8)
+- [git-prepare](../git-prepare/SKILL.md) - Contract worktree creation (Step 6-7 only; subtask worktrees now route through dev-kickoff-worker)
 - [dev-issue-analyze](../dev-issue-analyze/SKILL.md) - Issue analysis input
-- [dev-kickoff](../dev-kickoff/SKILL.md) - Per-subtask execution
+- [dev-kickoff](../dev-kickoff/SKILL.md) - Per-subtask execution (parallel mode, `--task-id`)
