@@ -49,6 +49,38 @@ Implementation plan を批判的にレビューするためのチェックリス
 - 認証/認可への影響が検討されているか？
 - 機密データの扱いが適切か？
 
+### 9. Plan Self-Containment
+
+各 task / セクションが**単独で読めるように**書かれているか？ "paste, don't link" を満たすため、
+dev-kickoff orchestrator が task body を verbatim paste した worker は周辺 context を持たない。
+plan 内で曖昧参照を含む task は worker を混乱させる。
+
+**Flagging patterns (severity: major / dimension: self_containment)**:
+
+以下の正規表現にマッチする表現が含まれる task / section は finding として上げる:
+
+```
+- (上述の通り)
+- (上記(に|の)通り)
+- (前述(の通り|どおり))
+- (Task\s*\d+\s*と(同様|同じ))
+- (Task\s*\d+\s*に(倣う|準じる))
+- (See (Task|Section)\s*\d+)
+- (same\s+as\s+Task\s*\d+)
+```
+
+許容例外:
+- コミットメッセージのプレフィックス参照（`feat(dev-...)` 等）
+- "上述" を含まない section header（"上記内容について" 等の構造的見出しは別判定）
+
+`description` には flagged フレーズの行番号と原文の引用を入れる。`suggestion` には「Task N の本文を
+verbatim 展開する」または「該当規約 (specific term + path) を直接書く」と書く。
+
+各 finding は `dimension: "self_containment"`、`topic: "Ambiguous reference: '<phrase>'"` 形式で揃える
+ことで dev-flow-doctor の stuck detection が機能する。
+
+詳細: [`_shared/references/subagent-dispatch.md`](../../_shared/references/subagent-dispatch.md#paste-dont-link)
+
 ## Blocking Criteria
 
 以下のいずれかに該当する finding は blocking:
@@ -59,6 +91,7 @@ Implementation plan を批判的にレビューするためのチェックリス
 - 依存関係の矛盾（実装不可能な順序）
 - セキュリティ上の懸念が無視されている
 - **Test Plan セクションの欠落、または AC が Test Plan に未カバー**（config.testing != none の場合）
+- **Plan self-containment 違反**: 上記正規表現にマッチする曖昧参照を含む task が存在する（severity: major, dimension: self_containment）
 
 ## Review Protocol
 

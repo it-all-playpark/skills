@@ -116,6 +116,30 @@ Following [Plan Format](references/plan-format.md):
 - List edge cases with handling strategies
 - Note dependencies
 
+### Self-Contained Task Descriptions (issue #92)
+
+各 task 本文 / File Changes 行 / Test Plan 行は**単独で読めるように書く**こと。これは
+`dev-kickoff` orchestrator が "Paste, Don't Link" 規約のもとで task body を verbatim paste して
+worker に渡すため、worker は周辺 context を持たない状態で paste 本文だけを読むからである。
+
+**禁止表現** (dev-plan-review が `dimension: self_containment` の major finding として flag する):
+
+- `上述の通り` / `上記(に|の)通り` / `前述(の通り|どおり)`
+- `Task N と同様` / `Task N と同じ` / `Task N に倣う` / `Task N に準じる`
+- `See Task N` / `See Section N` / `same as Task N`
+
+**書き直しの指針**:
+- 「Task 2 と同様に Repository パターンで」→ 「Repository パターン (Entity: `Order`, Repo: `OrderRepo`, location: `src/orders/`) で」
+- 「上述のとおりエラーハンドリング」→ 「エラーハンドリングは `_lib/error-handler.ts` の `handleApiError` を使う」
+- 必要なら同じ説明を **複数 task に重複して書いて構わない**（DRY < self-containment）
+
+**許容例外**:
+- コミットメッセージのプレフィックス参照（`feat(dev-...)` 等）
+- "上述" を含まない section header（"上記内容について" 等の構造的見出し）
+
+詳細: [Paste, Don't Link](../_shared/references/subagent-dispatch.md#paste-dont-link),
+[Plan Review Checklist § 9](../dev-plan-review/references/review-checklist.md#9-plan-self-containment)
+
 ## Step 5: Write Plan File
 
 Write the plan to `$WORKTREE/.claude/impl-plan.md`.
