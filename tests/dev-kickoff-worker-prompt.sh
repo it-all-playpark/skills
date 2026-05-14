@@ -31,10 +31,10 @@ echo "$FRONTMATTER" | grep -qE '^isolation:[[:space:]]*worktree[[:space:]]*$' \
     || fail "Case 2c: isolation: worktree missing"
 pass "Case 2c: isolation: worktree"
 
-# Case 2d: permissionMode: acceptEdits
-echo "$FRONTMATTER" | grep -qE '^permissionMode:[[:space:]]*acceptEdits[[:space:]]*$' \
-    || fail "Case 2d: permissionMode: acceptEdits missing"
-pass "Case 2d: permissionMode: acceptEdits"
+# Case 2d: permissionMode: auto (classifier-based auto-approval for worktree isolation)
+echo "$FRONTMATTER" | grep -qE '^permissionMode:[[:space:]]*auto[[:space:]]*$' \
+    || fail "Case 2d: permissionMode: auto missing"
+pass "Case 2d: permissionMode: auto"
 
 # Case 2e: tools includes Bash, Read, Write, Edit
 echo "$FRONTMATTER" | grep -qE 'Bash' \

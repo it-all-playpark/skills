@@ -6,7 +6,7 @@ description: |
   Inputs: issue_number, branch_name, base_ref (single mode: origin/main; parallel mode: contract branch).
   Returns: {status, branch, worktree_path, commit_sha, pr_url?, phase_failed?, error?}
 isolation: worktree
-permissionMode: acceptEdits
+permissionMode: auto
 model: sonnet
 tools:
   - Bash
