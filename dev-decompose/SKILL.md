@@ -28,9 +28,7 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 - Dispatch `dev-kickoff-worker` subagent (`isolation: worktree`) for each subtask to create its worktree from the contract branch
 - Generate flow.json with subtask definitions (including `branch` field), checklists, and contract info
 
-## Workflow
-
-### Full Execution (default)
+## Workflow (Full Execution, default)
 
 ```
 1. Read issue analysis (from dev-issue-analyze output or issue body)
@@ -46,65 +44,7 @@ Decompose large issues into parallel subtasks with file-boundary isolation. Crea
 10. Validate decomposition (validate-decomposition.sh)
 ```
 
-### Dry-Run Mode (`--dry-run`)
-
-Lightweight mode that executes only Steps 1-4 (analysis and file grouping) without creating branches, worktrees, or flow.json. Used by dev-flow for auto-detect mode selection.
-
-```
-1. Read issue analysis (from dev-issue-analyze output or issue body)
-2. Identify affected files and dependencies
-2b. Read past integration feedback via analyze-past-conflicts.sh
-    (files + directory prefixes that recurred in previous conflicts)
-3. Group files into subtasks (no file overlap), biasing files flagged by
-   step 2b toward the same subtask when possible
-4. Apply fallback criteria (see Decomposition Guide)
-→ Return assessment JSON (no side effects). The dry-run JSON includes a
-  `past_conflict_hints` field with the analyzer output for observability.
-```
-
-**Reading past feedback**:
-
-```bash
-$SKILLS_DIR/dev-decompose/scripts/analyze-past-conflicts.sh \
-  --affected-files "src/types/user.ts,src/api/auth.ts,..." \
-  --limit 50 --min-occurrences 2
-```
-
-Output shape (informational, decomposer LLM makes the final call):
-
-```jsonc
-{
-  "has_hints": true,
-  "scanned_events": 42,
-  "recurring_files": [
-    {"file": "src/types/user.ts", "occurrences": 3,
-     "lessons": ["同じ types/ 配下は 1 subtask にまとめるべき"]}
-  ],
-  "recurring_prefixes": [
-    {"prefix": "src/types", "occurrences": 4}
-  ]
-}
-```
-
-See [`_shared/references/integration-feedback.md`](../_shared/references/integration-feedback.md)
-for the pub/sub pattern and how events are written by `dev-integrate`.
-
-Dry-run output:
-```json
-// single_fallback
-{"status": "single_fallback", "reason": "Fewer than 4 affected files", "file_count": 2}
-
-// ready for parallel
-{"status": "ready", "subtask_count": 3, "file_groups": [
-  {"id": "task1", "files": ["src/models/user.ts", "src/models/user.test.ts"]},
-  {"id": "task2", "files": ["src/routes/auth.ts", "src/middleware/jwt.ts"]}
-]}
-```
-
-To continue from dry-run to full execution, pass the dry-run result path:
-```bash
-Skill: dev-decompose $ISSUE --resume /path/to/dry-run-result.json --base $BASE
-```
+Dry-run mode (`--dry-run`) executes Steps 1-4 only; see [Dry-Run Mode](references/dry-run.md).
 
 ### Step 1-4: Analysis & File Grouping
 
@@ -119,10 +59,7 @@ Generate contract per [Decomposition Guide](references/decomposition-guide.md). 
 ```bash
 # Step 6: contract worktree 作成（--local でリモート push を防止）
 $SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
-  --suffix contract \
-  --base $BASE \
-  --env-mode $ENV_MODE \
-  --local
+  --suffix contract --base $BASE --env-mode $ENV_MODE --local
 
 # Step 7: contract worktree 内でファイル作成・コミット
 cd $CONTRACT_WORKTREE
@@ -131,66 +68,20 @@ cd $CONTRACT_WORKTREE
 
 ### Step 8: Subtask Worktree Creation (worker subagent dispatch)
 
-For each subtask, spawn a `dev-kickoff-worker` subagent in `isolation: worktree` mode based on the contract branch. The worker creates its own branch (`feature/issue-${ISSUE}-task${INDEX}`) inside the isolated worktree and returns the resulting `branch` / `worktree_path` / `commit_sha`.
+For each subtask, spawn a `dev-kickoff-worker` subagent in `isolation: worktree` mode based on the contract branch. The worker creates its own branch (`feature/issue-${ISSUE}-task${INDEX}`) inside the isolated worktree and returns `{status, branch, worktree_path, commit_sha}`.
 
-```text
-Agent(
-  subagent_type: "dev-kickoff-worker",
-  isolation: "worktree",
-  prompt: "
-    issue_number: $ISSUE
-    branch_name: feature/issue-${ISSUE}-task${INDEX}
-    base_ref: feature/issue-${ISSUE}-contract
-    mode: parallel
-    task_id: task${INDEX}
-    flow_state: $FLOW_STATE
-  "
-)
-```
+Direct `git worktree add` and direct `git-prepare.sh --suffix task...` calls are **prohibited** for subtask worktrees. Subtask/contract ブランチはリモートに push しない。
 
-The worker dispatch replaces the previous direct `git-prepare` invocation. Direct `git worktree add` and direct `git-prepare.sh --suffix task...` calls are **prohibited** for subtask worktrees.
-
-**Requirements**:
-- Claude Code >= 2.1.63 (`isolation: worktree` field support)
-- `.claude/agents/dev-kickoff-worker.md` present in the repo
-
-**Subtask/contract ブランチはリモートに push しない。** push が必要なのは最終的な merge ブランチのみ（PR 作成時）。worker は parallel mode で `git push` をスキップする。
+Details (Agent call shape, 5-element dispatch rules, constraints): [Worker Dispatch](references/worker-dispatch.md).
 
 ### Step 9: Flow State Generation
 
-Initialize flow.json:
 ```bash
 $SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
-  --flow-state $FLOW_STATE \
-  --base $BASE \
-  --env-mode $ENV_MODE
+  --flow-state $FLOW_STATE --base $BASE --env-mode $ENV_MODE
 ```
 
-Then populate each subtask entry with:
-
-- `id` — `task1`, `task2`, ... (stable across reruns)
-- `scope` — short description of the subtask
-- `files` — array of file paths owned by this subtask
-- **`branch` — required (flow.json v2 schema).** Use the branch name returned by the `dev-kickoff-worker` dispatch in Step 8 (typically `feature/issue-${ISSUE}-task${INDEX}`). validate-decomposition.sh rejects empty/missing `branch`.
-- `status` — `pending`
-- `checklist` — at least 1 item per subtask
-- `depends_on` — array of other subtask `id`s (optional)
-- `worktree_path` — absolute path returned by the worker
-
-Example subtask entry:
-
-```jsonc
-{
-  "id": "task1",
-  "scope": "src/models/user types and tests",
-  "files": ["src/models/user.ts", "src/models/user.test.ts"],
-  "branch": "feature/issue-${ISSUE}-task1",
-  "worktree_path": "/abs/path/to/skills-worktrees/feature-issue-${ISSUE}-task1",
-  "status": "pending",
-  "checklist": [{"item": "Define User type", "done": false}],
-  "depends_on": []
-}
-```
+Populate each subtask entry with `id` / `scope` / `files` / **`branch` (required, v2 schema — populated from worker return)** / `status` / `checklist` / `depends_on` / `worktree_path`. See [flow.schema.json](../_lib/schemas/flow.schema.json) for the full schema.
 
 ### Step 10: Validation
 
@@ -198,11 +89,11 @@ Example subtask entry:
 $SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
 ```
 
-Additionally verify manually: contract branch exists and has commits, all worktree paths exist on disk.
+Also verify manually: contract branch exists with commits, all worktree paths exist on disk.
 
 ## Decomposition Rules
 
-See [Decomposition Guide](references/decomposition-guide.md) for rules (file exclusivity, test co-location, contract isolation, coupling), edge cases, and examples.
+See [Decomposition Guide](references/decomposition-guide.md) for file exclusivity, test co-location, contract isolation, coupling rules, edge cases, and examples.
 
 ## Contract Branch Pattern
 
@@ -216,7 +107,7 @@ main --> feature/issue-{N}-contract (dev-decompose commits shared types)
 
 ## Fallback
 
-If decomposition yields 1 subtask, return fallback (see [Decomposition Guide](references/decomposition-guide.md) for criteria):
+If decomposition yields 1 subtask (see [Decomposition Guide](references/decomposition-guide.md) for criteria):
 
 ```json
 {"status": "single_fallback", "subtask_count": 1, "reason": "All files are tightly coupled"}
@@ -237,45 +128,13 @@ When `--flow-state` is `auto`, the path defaults to `$WORKTREE_BASE/.claude/flow
 
 ## Output
 
-### Full Execution
+Full execution creates flow.json at `$WORKTREE_BASE/.claude/flow.json` and returns:
 
-flow.json is created at `$WORKTREE_BASE/.claude/flow.json`.
-
-Structure: `{ version, issue, status, subtasks[], contract, config, created_at, updated_at }`
-
-See [flow.schema.json](../_lib/schemas/flow.schema.json) for full schema.
-
-Return value:
 ```json
 {"status": "decomposed|single_fallback", "subtask_count": N, "flow_state": "/path/to/flow.json"}
 ```
 
-### Dry-Run
-
-No files created on disk. Return value only:
-```json
-// Ready for parallel
-{
-  "status": "ready",
-  "subtask_count": N,
-  "file_groups": [{"id": "taskN", "files": ["..."]}],
-  "past_conflict_hints": {
-    "has_hints": true,
-    "scanned_events": 42,
-    "recurring_files": [{"file": "src/types/user.ts", "occurrences": 3, "lessons": ["..."]}],
-    "recurring_prefixes": [{"prefix": "src/types", "occurrences": 4}]
-  }
-}
-
-// Fallback to single
-{"status": "single_fallback", "reason": "<criteria from Decomposition Guide>", "file_count": N, "past_conflict_hints": {...}}
-```
-
-`past_conflict_hints` is populated by
-`dev-decompose/scripts/analyze-past-conflicts.sh` reading
-`_shared/integration-feedback.json`. If the feedback file is missing or
-empty, the field has `{"has_hints": false, ...}` and decomposition proceeds
-normally.
+Dry-run returns assessment JSON only (no files created); see [Dry-Run Mode](references/dry-run.md).
 
 ## Error Handling
 
@@ -289,33 +148,22 @@ normally.
 
 ## Subagent Dispatch Rules
 
-dev-decompose は Step 8 で **subtask 数ぶんの `dev-kickoff-worker` subagent** を `Agent(isolation: worktree)` で起動する。共通規約 ([`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)) の必須5要素を遵守する。
+dev-decompose は Step 8 で **subtask 数ぶんの `dev-kickoff-worker` subagent** を `Agent(isolation: worktree)` で起動する。共通規約 ([`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)) の必須5要素を遵守する:
 
-### Step 8: Agent(dev-kickoff-worker, isolation: worktree) — per subtask
+- **Objective** — contract branch をベースに subtask 用 isolated worktree を作成し `{status, branch, worktree_path, commit_sha}` を返す (Phase 1 のみ)
+- **Output format** — `{status, branch, worktree_path, commit_sha, phase_failed?, error?}` JSON (worker last-line contract)
+- **Tools** — worker frontmatter で許可 (Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep)。追加制約は付けない
+- **Boundary** — isolated worktree 内のみ作業、`git push` 禁止 (parallel mode)、subtask 外 branch 不可、`git worktree add` 直接実行禁止
+- **Token cap** — worker 1 回あたり 2000 turn 以内、Step 8 全体で subtask 数 ≤ 5 推奨
 
-1. **Objective** — 「contract branch `feature/issue-${ISSUE}-contract` をベースに subtask `task${INDEX}` 用の branch `feature/issue-${ISSUE}-task${INDEX}` を isolated worktree で作成し、`{status, branch, worktree_path, commit_sha}` を返す」（Phase 1 のみ。Phase 2-7 は dev-kickoff から `--task-id` で再呼び出し）
-2. **Output format** — `{ status: "completed"|"failed", branch: string, worktree_path: string, commit_sha: string, phase_failed?: string, error?: string }` JSON（worker の last-line JSON contract）
-3. **Tools** — worker frontmatter で許可: Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep。dev-decompose 側から追加 tool 制約は付けない
-4. **Boundary** — worker は自身の isolated worktree 内のみで作業、`git push` 禁止（parallel mode）、subtask 外の branch 触らない、`git worktree add` を直接実行しない
-5. **Token cap** — worker 1 回あたり 2000 turn 以内（dev-kickoff-worker.md 既定）、Step 8 全体で subtask 数 ≤ 5 を推奨
-
-### Routing
-
-- subtask worktree 作成 → `dev-kickoff-worker` (sonnet, isolation: worktree)
-- 通常の探索 / planning は dev-decompose 自身（opus, effort: max）で行う
-
-詳細・チェックリスト: [Subagent Dispatch Rules（共通）](../_shared/references/subagent-dispatch.md)
+詳細・チェックリストは [Worker Dispatch](references/worker-dispatch.md) を参照。
 
 ## Journal Logging
 
 On completion, log execution to skill-retrospective journal:
 
 ```bash
-# On success (flow.json created)
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose success \
-  --issue $ISSUE --duration-turns $TURNS
-
-# On single_fallback (dry-run determined single mode)
+# On success (flow.json created, or single_fallback)
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose success \
   --issue $ISSUE --duration-turns $TURNS
 
@@ -327,7 +175,9 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose failure \
 ## References
 
 - [Decomposition Guide](references/decomposition-guide.md) - Detailed strategy and edge cases
+- [Dry-Run Mode](references/dry-run.md) - --dry-run mode, past_conflict_hints, resume
+- [Worker Dispatch](references/worker-dispatch.md) - Step 8 Agent call, 5-element dispatch rules
 - [dev-kickoff-worker](../.claude/agents/dev-kickoff-worker.md) - Subagent that creates each subtask worktree (Step 8)
-- [git-prepare](../git-prepare/SKILL.md) - Contract worktree creation (Step 6-7 only; subtask worktrees now route through dev-kickoff-worker)
+- [git-prepare](../git-prepare/SKILL.md) - Contract worktree creation (Step 6-7 only; subtask worktrees route through dev-kickoff-worker)
 - [dev-issue-analyze](../dev-issue-analyze/SKILL.md) - Issue analysis input
 - [dev-kickoff](../dev-kickoff/SKILL.md) - Per-subtask execution (parallel mode, `--task-id`)
