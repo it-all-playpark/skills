@@ -1,5 +1,7 @@
 # Claude Code / Serena / Codex
 .claude/*
+!.claude/agents/
+!.claude/agents/**
 # Legacy: skill-config.json は現在リポジトリルートに配置
 .serena/
 .system/
