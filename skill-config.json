@@ -98,5 +98,11 @@
       "project": "project",
       "reference": "project"
     }
+  },
+  "auto_merge": {
+    "allowed_base_patterns": [
+      "integration/issue-*",
+      "nightly/*"
+    ]
   }
 }
