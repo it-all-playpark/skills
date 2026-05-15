@@ -57,7 +57,7 @@ $SKILLS_DIR/dev-validate/scripts/validate-kickoff.sh --worktree <path>
 ```
 
 挙動:
-- `feature_list` が空 / 未定義 → silent pass（後方互換）
+- `feature_list` が空 / 未定義 → silent pass（standalone モード / kickoff.json 不在）
 - `kickoff.json` に git 履歴が無い → silent pass
 - `id` / `desc` が変更されている → stderr に warning を出力、JSON の `status: warning` を返す（exit 0、非致命）
 - `id` が削除されている → 同じく warning

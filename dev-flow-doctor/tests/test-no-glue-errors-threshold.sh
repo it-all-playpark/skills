@@ -37,9 +37,9 @@ assert_eq() {
 printf 'Test suite: tests/no-glue-errors.sh threshold mode\n\n'
 
 # ----------------------------------------------------------------------------
-# Test 1: No baseline → exit 0 (backwards compat)
+# Test 1: No baseline → exit 0 (graceful degradation)
 # ----------------------------------------------------------------------------
-printf 'Test 1: no baseline file → exit 0 (back-compat)\n'
+printf 'Test 1: no baseline file → exit 0 (graceful degradation)\n'
 BASELINE_FILE="$WORKDIR/non-existent.json" \
 CLAUDE_JOURNAL_DIR="$JOURNAL_CLEAN" \
 SKILL_CONFIG_PATH="$EMPTY_CONFIG" \

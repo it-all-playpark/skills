@@ -35,7 +35,7 @@ if [[ ! -f "$STATE_FILE" ]]; then
     exit 0
 fi
 
-# Silent pass if feature_list is empty or missing (backward compat)
+# Silent pass if feature_list is empty or missing (standalone mode)
 FEATURE_COUNT=$(jq '(.feature_list // []) | length' "$STATE_FILE" 2>/dev/null || echo 0)
 if [[ "$FEATURE_COUNT" -eq 0 ]]; then
     echo '{"status":"skipped","reason":"feature_list is empty"}'
