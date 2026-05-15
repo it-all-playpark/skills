@@ -102,8 +102,19 @@ EOF
 }
 
 @test "errors when no batches in range" {
-    run "$SCRIPT" --batches-json "$BATCHES_JSON" --issue-runner "true" \
-        --batch-from 99
+    # Use a sparse fixture (batches 1, 5) so we can pick an in-bounds range
+    # (2..4) that contains no actual batch. With the standard fixture (batches
+    # 1..3), --batch-from 99 trips the "from > to" guard first instead of
+    # "No batches in range".
+    SPARSE="$BATS_TMPDIR/sparse.json"
+    cat > "$SPARSE" << 'EOF'
+[
+  {"batch": 1, "mode": "serial", "children": [1]},
+  {"batch": 5, "mode": "serial", "children": [5]}
+]
+EOF
+    run "$SCRIPT" --batches-json "$SPARSE" --issue-runner "true" \
+        --batch-from 2 --batch-to 4
     [ "$status" -ne 0 ]
     [[ "$output" == *"No batches in range"* ]]
 }

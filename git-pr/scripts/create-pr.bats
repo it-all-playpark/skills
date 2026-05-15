@@ -9,11 +9,26 @@ setup() {
     GH_LOG="$BATS_TMPDIR/gh.log"
     : > "$GH_LOG"
     # Create gh stub
+    #
+    # NOTE: Each invocation writes ONE record per call:
+    #   "<arg1> <arg2> ... <argN>"  (newlines inside argv are escaped to <NL>)
+    # then a final newline. Using `echo "$@"` raw would interleave argument
+    # values that themselves contain newlines (e.g. PR body), making per-line
+    # `grep "pr create"` unreliable: the body's leading line would split off
+    # and hide the trailing flags. By escaping argv newlines we keep the whole
+    # invocation on one log line.
     STUB_DIR="$BATS_TMPDIR/stub-bin"
     mkdir -p "$STUB_DIR"
     cat > "$STUB_DIR/gh" << EOF
 #!/usr/bin/env bash
-echo "\$@" >> "$GH_LOG"
+{
+    sep=""
+    for a in "\$@"; do
+        printf "%s%s" "\$sep" "\${a//$'\n'/<NL>}"
+        sep=" "
+    done
+    printf "\n"
+} >> "$GH_LOG"
 case "\$1" in
     issue)
         # gh issue view --json title,labels
