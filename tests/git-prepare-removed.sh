@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # tests/git-prepare-removed.sh
-# Invariant tests for issue #89: git-prepare deletion + dev-contract-worker creation
+# Invariant tests for issue #89 + #93:
+#   - git-prepare skill deletion (issue #89)
+#   - dev-contract-worker subagent removal (issue #93, child-split mode 統一に伴う撤廃)
 # Run: bash tests/git-prepare-removed.sh
 set -euo pipefail
 
@@ -62,47 +64,26 @@ else
   echo "$RESIDUAL_SH" | head -20 | sed 's/^/    /'
 fi
 
-# Case 3: dev-contract-worker.md exists
-echo "[Case 3] .claude/agents/dev-contract-worker.md must exist"
-if [[ -f "$REPO_ROOT/.claude/agents/dev-contract-worker.md" ]]; then
-  _pass "dev-contract-worker.md exists"
+# Case 3: dev-contract-worker.md must NOT exist (issue #93 で撤廃)
+echo "[Case 3] .claude/agents/dev-contract-worker.md must NOT exist (issue #93 撤廃)"
+if [[ ! -f "$REPO_ROOT/.claude/agents/dev-contract-worker.md" ]]; then
+  _pass "dev-contract-worker.md is absent"
 else
-  _fail "dev-contract-worker.md missing at $REPO_ROOT/.claude/agents/dev-contract-worker.md"
+  _fail "dev-contract-worker.md still exists at $REPO_ROOT/.claude/agents/dev-contract-worker.md"
 fi
 
-# Case 3b: dev-contract-worker.md documents 4 required inputs
-echo "[Case 3b] dev-contract-worker.md must document 4 inputs (issue_number, branch_name, base_ref, contract_files)"
-AGENT_FILE="$REPO_ROOT/.claude/agents/dev-contract-worker.md"
-if [[ -f "$AGENT_FILE" ]]; then
-  MISSING_INPUTS=()
-  for input in "issue_number" "branch_name" "base_ref" "contract_files"; do
-    grep -q "$input" "$AGENT_FILE" || MISSING_INPUTS+=("$input")
-  done
-  if [[ ${#MISSING_INPUTS[@]} -eq 0 ]]; then
-    _pass "All 4 inputs documented in dev-contract-worker.md"
+# Case 3b: dev-kickoff-worker.md exists and is single-mode only (issue #93)
+echo "[Case 3b] dev-kickoff-worker.md must declare single mode only"
+KICKOFF_AGENT="$REPO_ROOT/.claude/agents/dev-kickoff-worker.md"
+if [[ -f "$KICKOFF_AGENT" ]]; then
+  if grep -qE "mode.*parallel|mode.*merge" "$KICKOFF_AGENT" \
+       | grep -v "撤廃\|removed\|must be \`single\`" >/dev/null; then
+    _fail "dev-kickoff-worker.md still references parallel/merge mode without removal annotation"
   else
-    _fail "Missing inputs in dev-contract-worker.md: ${MISSING_INPUTS[*]}"
+    _pass "dev-kickoff-worker.md is single-mode only"
   fi
 else
-  _fail "dev-contract-worker.md not found — skipping input documentation check"
-fi
-
-# Case 3c: dev-contract-worker.md documents Steps 1-4
-# (After PR review: Step 3 + Step 4 unified into a single step with empty-diff guard,
-#  Step 5 became Step 4 = "Return JSON")
-echo "[Case 3c] dev-contract-worker.md must document Steps 1-4"
-if [[ -f "$AGENT_FILE" ]]; then
-  MISSING_STEPS=()
-  for step in 1 2 3 4; do
-    grep -qE "Step $step[^0-9]" "$AGENT_FILE" || MISSING_STEPS+=("Step $step")
-  done
-  if [[ ${#MISSING_STEPS[@]} -eq 0 ]]; then
-    _pass "All 4 steps documented in dev-contract-worker.md"
-  else
-    _fail "Missing steps in dev-contract-worker.md: ${MISSING_STEPS[*]}"
-  fi
-else
-  _fail "dev-contract-worker.md not found — skipping step documentation check"
+  _fail "dev-kickoff-worker.md missing"
 fi
 
 # Case 4: _shared/references/worktree-isolation.md exists with required sections
