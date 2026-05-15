@@ -1,22 +1,20 @@
 # Diagnostic Checks
 
-## Check 1: Mode Distribution
+## Check 1: Mode Distribution (v2)
 
-Analyze how often single vs parallel mode is actually used.
+Analyze how often `single` vs `child-split` mode is used.
 
 ```bash
-# Entries with context.mode
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 200 | \
   jq 'group_by(.context.mode // "unknown") | map({mode: .[0].context.mode // "unknown", count: length})'
 ```
 
-context.mode が記録されていない entry は schema error として扱う。heuristics による推定は行わない。
-
 | Finding | Recommendation |
 |---------|----------------|
-| All single (no parallel ever) | Auto-detect may be too conservative, review decompose dry-run criteria |
-| Parallel used but only via --force-parallel | Auto-detect not triggering when it should |
-| Healthy mix of single/parallel | Auto-detect working as intended |
+| All `single` (no `child-split` ever) | Decomposable parents aren't being recognized — review issue body structure |
+| `child-split` used but children frequently fail | Child sizing is too large — split parent more aggressively |
+| Healthy mix of `single` / `child-split` | Working as intended |
+| `parallel` / `force-parallel` in args | Legacy invocation — refuse and surface in audit (these should error out) |
 
 ## Check 2: Failure & Partial Distribution
 
@@ -35,7 +33,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-kickoff --l
 |---------|----------------|
 | Phase 3 (implement) > 30% | Review issue analysis depth, consider `--depth comprehensive` |
 | Phase 4 (validate) > 40% | Add pre-validation linting, consider `--fix` auto-mode |
-| Phase 1 (prepare) > 10% | Check worktree creation (dev-kickoff-worker / dev-contract-worker), env-mode settings |
+| Phase 1 (prepare) > 10% | Check git-prepare config, env-mode settings |
 | Phase 2 (analyze) issues | Check dev-issue-analyze / dev-decompose flow control |
 
 ## Check 3: Error Category Distribution
@@ -46,7 +44,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.by_category'
 
 | Category Dominance | Recommendation |
 |--------------------|----------------|
-| `env` > 30% | Ensure dev-env-setup runs within dev-kickoff-worker after worktree checkout |
+| `env` > 30% | Integrate dev-env-setup into git-prepare workflow |
 | `lint` > 40% | Add auto-fix in dev-validate, configure stricter editor settings |
 | `test` > 40% | Review test quality, consider TDD strategy |
 | `type-check` > 20% | Enable strict TypeScript mode, add pre-commit type checks |
@@ -151,7 +149,7 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7
 | カテゴリ | 定義 | 推奨アクション |
 |---------|------|---------------|
 | **dead phase** | window 内で `success` が 0 件の family skill | 呼び出し経路を確認。parent orchestrator（例: dev-kickoff）から実際に呼ばれているか、phase 遷移が skip されていないかを検証 |
-| **stuck skill** | `(failure + partial) / total > 30%` OR `(BLOCKED + NEEDS_CONTEXT) / total_with_status > 30%`（dev-implement の場合）かつ `total >= 3` | `/skill-retrospective` を走らせ proposal を生成、頻出する error category（lint/test/env 等）を直近の failure で確認。dev-implement の場合は `status_distribution.BLOCKED` / `NEEDS_CONTEXT` を見て approach mismatch を疑う（issue #92） |
+| **stuck skill** | `(failure + partial) / total > 30%` かつ `total >= 3` | `/skill-retrospective` を走らせ proposal を生成、頻出する error category（lint/test/env 等）を直近の failure で確認 |
 | **bottleneck** | `avg(duration_turns)` 上位 3 skill | 実行時間が異常に長い skill を特定し、input 長 / tool 選定 / subagent fork コストを点検 |
 | **disconnected skill** | window 内で自身の entry が 0 件かつ parent skill（hook-capture の Skill tool invocation）で一度も参照されていない | connector が成立していない。orchestrator の分岐条件を確認、または deprecated なら skill を整理 |
 
@@ -162,61 +160,18 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7
 - `--window 14d` / `--window 2w`: 週次レビュー用
 - 任意の `Nd` / `Nw` / `Nm` フォーマットを受け付ける（`parse_since` と同じ）
 
-### Status Distribution (dev-implement 4 値 status enum、issue #92)
-
-dev-implement worker の return JSON `status` を `context.return_status` 経由で集計し、
-per-skill 出力に `status_distribution` フィールドを追加する（additive、既存出力は維持）:
-
-```json
-{
-  "skill": "dev-implement",
-  "status_distribution": {
-    "DONE": 12,
-    "DONE_WITH_CONCERNS": 3,
-    "BLOCKED": 1,
-    "NEEDS_CONTEXT": 0,
-    "unknown": 0,
-    "total_with_status": 16
-  },
-  "blocked_rate": 0.0625
-}
-```
-
-- `total_with_status`: 4 値の return_status を含む dev-implement entry の総数
-- `blocked_rate`: `(BLOCKED + NEEDS_CONTEXT) / total` で `total > 0` のとき計算
-- `unknown`: 上記いずれにも該当しない return_status を返した entry（schema error として journal に failure 記録）
-
-`--scope feedback` 指定時、`dev-flow-doctor` の Output Format Status Distribution セクションに
-この表を表示する。stuck 判定の OR ロジック（`blocked_rate > 0.30` も stuck）に使われる。
-
 ### 責務分離
 
 Check 8 は **dev-flow 系 skill の連携健全性** に特化している。全 skill を対象にした
 汎用的な failure pattern detection や proposal 生成は `skill-retrospective` 側で
 行うこと。詳しくは [responsibility-split.md](responsibility-split.md) を参照。
 
-## Check 9: Integration Feedback（再発 conflict pattern）
+## Check 9: Integration Feedback（削除済）
 
-`_shared/integration-feedback.json` を pub/sub 型の event store として読み、
-`dev-integrate` が過去に記録した conflict / integration_failure から **再発している
-file / directory prefix** を抽出する。
-
-- 実装: `run-diagnostics.sh` の `run_feedback_checks` + `dev-decompose/scripts/analyze-past-conflicts.sh`
-- 閾値: default `min_occurrences=3`、`limit=100` events
-- 出力: `checks.integration_feedback = { status, total_events, recurring_files[], recurring_prefixes[] }`
-- 減点: `recurring_files` あり -3、`recurring_prefixes` あり -2、合計 -5 まで
-
-### 目的
-
-- 同じ file が繰り返し conflict する場合、decomposition 戦略が file boundary を誤っている可能性が高い
-- doctor は warning として surface し、次回 `dev-decompose --dry-run` への hint として
-  `analyze-past-conflicts.sh` 経由で自動反映される
-- event store が空 / 壊れている場合は `status: "no_data"` で減点なし
-
-### 関連パターン
-
-[`_shared/references/integration-feedback.md`](../../_shared/references/integration-feedback.md)
-で event store のスキーマ・書き込みパス・学習ループ全体を解説している。
+旧 v1 の `_shared/integration-feedback.json` event store と
+`dev-decompose/scripts/analyze-past-conflicts.sh` は v2 (issue #93) で削除された。
+parallel mode の subtask 衝突学習ループは child-split mode では不要なため、
+本チェックは廃止。`--scope feedback` を渡すと explicit error を返す。
 
 ## Check 10: Termination Loop Health (kickoff.json-driven) — issue #53
 

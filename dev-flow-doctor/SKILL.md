@@ -50,12 +50,12 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 
 | Scope | What It Checks |
 |-------|----------------|
-| `full` | All checks below (includes `family` and `feedback`) |
+| `full` | All checks below |
 | `journal` | Legacy journal-based execution analysis (Check 1–7, dev-flow skill only) |
 | `worktrees` | Worktree state and cleanup |
 | `config` | Skill configuration validation |
-| `family` | **Dev-flow family connector health** (Check 8: dead / stuck / bottleneck / disconnected) |
-| `feedback` | **Recurring integration conflict patterns** (Check 9: reads `_shared/integration-feedback.json`) |
+| `family` | **Dev-flow family connector health** (Check 8: dead / stuck / bottleneck / disconnected) + termination loops (Check 9) |
+| `feedback` | **Removed in v2** (parallel-mode infrastructure deleted); returns explicit error |
 
 ## Workflow
 
@@ -69,10 +69,9 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 
 ## Key Context
 
-- dev-flow defaults to auto-detect via `dev-decompose --dry-run`
-- Auto-detect resolves to `single` or `parallel` based on codebase file dependencies
-- `--force-single` / `--force-parallel` skip dry-run
-- Journal `context.mode` tracks resolved mode (added 2026-03-13)
+- dev-flow v2 uses explicit mode flags: `--force-single` (default) or `--child-split`
+- Auto-detect (`dev-decompose --dry-run`) was removed in v2 — passing `--force-parallel` / `--parallel` is an error
+- Journal `context.mode` tracks resolved mode
 - Family scope reads the same journal via direct jq (see `scripts/analyze-dev-flow-family.sh`)
 - Family skills / thresholds / default window are configured in `skill-config.json` under `"dev-flow-doctor"`
 

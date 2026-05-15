@@ -1,9 +1,9 @@
 ---
 name: dev-kickoff
 description: |
-  End-to-end feature development orchestrator. Spawns dev-kickoff-worker (isolation:worktree) and coordinates issue-analyze, plan, implement, validate, evaluate, commit, and create-pr skills.
+  End-to-end feature development orchestrator using git worktree. Coordinates git-prepare, issue-analyze, implement, validate, commit, and create-pr skills.
   Use when: starting new feature development from GitHub issue, full development cycle automation with isolated worktree.
-  Accepts args: <issue-number> [--testing tdd|bdd] [--design ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none] [--worktree <path>] [--task-id <id>] [--flow-state <path>]
+  Accepts args: <issue-number> [--testing tdd|bdd] [--design ddd] [--depth minimal|standard|comprehensive] [--base <branch>] [--lang ja|en] [--env-mode hardlink|symlink|copy|none] [--worktree <path>]
 allowed-tools:
   - Bash
   - TodoWrite
@@ -13,7 +13,7 @@ allowed-tools:
 
 # Kickoff
 
-Orchestrate complete feature development cycle from issue to PR.
+Orchestrate complete feature development cycle from issue to PR (single mode only).
 
 ## 言語ルール
 
@@ -25,30 +25,39 @@ Orchestrate complete feature development cycle from issue to PR.
 
 **DO NOT EXIT until Phase 8 (PR creation) completes and pr-iterate is called.**
 
-**CRITICAL: Phase 1 (Worktree) is MANDATORY unless `--task-id` is specified.**
-When `--task-id` is NOT set (= single mode), Phase 1 MUST be executed FIRST. Implementation in the main repository directory is NEVER allowed.
+**CRITICAL: Phase 1 (Worktree) is MANDATORY.**
+Implementation in the main repository directory is NEVER allowed.
 
-**Requires**: Claude Code >= 2.1.63 (`isolation: worktree` field support) and `.claude/agents/dev-kickoff-worker.md` present. If missing, dev-kickoff aborts with a clear error.
-
-| Phase | Action | Complete When | Single Mode | Parallel Mode (--task-id) |
-|-------|--------|---------------|-------------|---------------------------|
-| 1 | Worktree creation via `dev-kickoff-worker` subagent (`isolation: worktree`) | Path exists, .env verified | **REQUIRED** | SKIP |
-| 2 | Issue analysis | Requirements understood | **REQUIRED** | SKIP |
-| 3 | Implementation plan | impl-plan.md created | Execute | Execute |
-| 3b | Plan review | Plan approved or revised | Execute | Execute |
-| 4 | Implementation | Code written | Execute | Execute |
-| 5 | Validation | Tests pass | Execute | Execute |
-| 6 | Evaluation | Quality gate passed | Execute | Execute |
-| 7 | Commit | Changes committed | Execute | Execute |
-| 8 | PR creation | PR URL available | Execute | SKIP |
+| Phase | Action | Complete When |
+|-------|--------|---------------|
+| 1 | Worktree creation | Path exists, .env verified |
+| 2 | Issue analysis | Requirements understood |
+| 3 | Implementation plan | impl-plan.md created |
+| 3b | Plan review | Plan approved or revised |
+| 4 | Implementation | Code written |
+| 5 | Validation | Tests pass |
+| 6 | Evaluation | Quality gate passed |
+| 7 | Commit | Changes committed |
+| 8 | PR creation | PR URL available |
 
 After Phase 8: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
+
+## Note: Parallel Mode Removed (v2)
+
+Previous versions supported `--task-id` / `--flow-state` for running a single
+subtask within a parallel decomposition. This has been removed in v2.
+
+**Multi-PR coordination is now done at the dev-flow layer via `--child-split`**,
+which creates real GitHub child issues and an integration branch. dev-kickoff
+runs each child as a regular single-mode invocation (`dev-flow <child> --force-single`).
+
+Passing `--task-id` to dev-kickoff is now a hard error.
 
 ## Phase Checklist
 
 ```
-[ ] Phase 1: Agent(dev-kickoff-worker, isolation: worktree)  (REQUIRED unless --task-id)
-[ ] Phase 2: Skill: dev-issue-analyze                   (REQUIRED unless --task-id)
+[ ] Phase 1: git-prepare.sh → init-kickoff.sh
+[ ] Phase 2: Skill: dev-issue-analyze
 [ ] Phase 3: Skill: dev-plan-impl                       (Opus planner)
 [ ] Phase 3b: Skill: dev-plan-review                    (Opus reviewer, context:fork)
   → fail → back to Phase 3 (with feedback)
@@ -60,7 +69,7 @@ After Phase 8: Call `Skill: pr-iterate $PR_URL` to complete the workflow.
   → fail + implementation feedback → back to Phase 4
   → pass or max iterations (5) → Phase 7
 [ ] Phase 7: Skill: git-commit --all
-[ ] Phase 8: Skill: git-pr → pr-iterate                 (REQUIRED unless --task-id)
+[ ] Phase 8: Skill: git-pr → pr-iterate
 ```
 
 ## State Management
@@ -73,74 +82,25 @@ Details: [State Management](references/state-management.md), [kickoff.json Schem
 
 ## Phase Execution
 
-| Phase | Command | Subagent | Parallel Mode |
-|-------|---------|----------|---------------|
-| 1 | `Agent(subagent_type: "dev-kickoff-worker", isolation: "worktree", prompt: <issue/branch/base/mode>)` | `dev-kickoff-worker` | SKIP |
-| 1b | Worker initializes `kickoff.json` itself inside the isolated worktree | - | SKIP |
-| 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) | SKIP |
-| 3 | `Skill: dev-plan-impl $ISSUE --worktree $PATH` | - | Execute |
-| 3b | `Skill: dev-plan-review $ISSUE --worktree $PATH` | context:fork | Execute |
-| 4 | `Skill: dev-implement --testing $TESTING [--design $DESIGN] --worktree $PATH` | - | Execute |
-| 5 | `Skill: dev-validate --fix --worktree $PATH` | Task(quality-engineer) | Execute |
-| 6 | `Skill: dev-evaluate $ISSUE --worktree $PATH` | context:fork | Execute |
-| 7 | `Skill: git-commit --all --worktree $PATH` | - | Execute |
-| 8 | `Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH` | - | SKIP |
+| Phase | Command | Subagent |
+|-------|---------|----------|
+| 1 | `$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE --base $BASE --env-mode $ENV_MODE` | - |
+| 1b | `$SKILLS_DIR/dev-kickoff/scripts/init-kickoff.sh ...` | - |
+| 2 | `Skill: dev-issue-analyze $ISSUE --depth $DEPTH` | Task(Explore) |
+| 3 | `Skill: dev-plan-impl $ISSUE --worktree $PATH` | - |
+| 3b | `Skill: dev-plan-review $ISSUE --worktree $PATH` | context:fork |
+| 4 | `Skill: dev-implement --testing $TESTING [--design $DESIGN] --worktree $PATH` | - |
+| 5 | `Skill: dev-validate --fix --worktree $PATH` | Task(quality-engineer) |
+| 6 | `Skill: dev-evaluate $ISSUE --worktree $PATH` | context:fork |
+| 7 | `Skill: git-commit --all --worktree $PATH` | - |
+| 8 | `Skill: git-pr $ISSUE --base $BASE --lang $LANG --worktree $PATH` | - |
 
-Phase 1: Spawn `dev-kickoff-worker` via Agent tool. Direct `git worktree add` is prohibited.
-
-## Phase 1 dispatch
-
-Phase 1 spawns the `dev-kickoff-worker` subagent through the Agent tool with `isolation: worktree`:
-
-```text
-Agent(
-  subagent_type: "dev-kickoff-worker",
-  isolation: "worktree",
-  prompt: "issue_number=$ISSUE branch_name=$BRANCH base_ref=$BASE_REF mode=$MODE"
-)
-```
-
-The worker runs Phase 1b-7 (and Phase 8 in single mode) inside its isolated worktree and returns `{status, branch, worktree_path, commit_sha, pr_url?, phase_failed?, error?}`. On `status: completed`, dev-kickoff records branch + sha and (single mode) calls `pr-iterate` with the returned `pr_url`.
-
-If the worker definition (`.claude/agents/dev-kickoff-worker.md`) is missing or claude CLI is < 2.1.63, dev-kickoff aborts with an explicit error — there is no fallback path.
-
-See [Phase 1 detail](references/phase-detail.md#phase-1-worktree-creation) for the full worker contract.
+Phase 1: Must execute script. Direct `git worktree add` is prohibited.
 
 ## Loops
 
 - **Plan-Review Loop (Phase 3 ↔ 3b)**: verdict ベース分岐（pass/revise/block）、max 3 iterations、stuck detection、fork failure retry。詳細: [Plan-Review Loop](references/plan-review-loop.md)
 - **Evaluate-Retry Loop (Phase 6 → 3 or 4)**: Phase 6 verdict が `fail` なら design/implementation feedback に応じて Phase 3 or 4 へ戻る。max 5 iterations。詳細: [Evaluate-Retry Loop](references/evaluate-retry.md)
-
-## Generator Status Branching (issue #92)
-
-Phase 4 (`dev-implement`) は **4 値 status enum** (`DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`)
-を含む JSON を返す。dev-kickoff の Phase 5/6 orchestrator はこの status を最初に消費し、以降を分岐する。
-
-| status | 必須追加フィールド | dev-kickoff の挙動 |
-|---|---|---|
-| `DONE` | (なし) | Phase 6 (dev-evaluate) へ進む |
-| `DONE_WITH_CONCERNS` | `concerns: string[]` | Phase 6 に `focus_areas = concerns[]` を渡して重点監査 |
-| `BLOCKED` | `blocking_reason: string` | **同アプローチ retry 禁止**。Phase 3 に reset、`blocking_reason` を **findings[] 形式 (`dimension: approach_mismatch`) に正規化**して `plan-review-feedback.json` に書き込み dev-plan-impl に渡す（整形ルール: [evaluate-retry.md](references/evaluate-retry.md#blocked-feedback-の整形)） |
-| `NEEDS_CONTEXT` | `missing_context: string[]` | Phase 4 に再 dispatch、`missing_context[]` を補足 paste。連続 2 回で human escalate |
-
-## Phase 4 dispatch: Paste, Don't Link
-
-Phase 4 で `dev-implement` を呼び出す（または parallel mode で `dev-kickoff-worker` 経由で
-spawn する）際は、対応する task の本文を prompt 内に **verbatim paste** する。
-`impl-plan.md` 全体を Read させてはならない。
-
-```text
-## task_body (verbatim from parent orchestrator)
-
-<<<TASK_BODY_BEGIN>>>
-[該当 task のフル本文 — File Changes / Test Plan / Acceptance / Notes すべて含む]
-<<<TASK_BODY_END>>>
-```
-
-`dev-implement` は `task_body` paste を受け取った場合、`impl-plan.md` を Read せずに paste された
-本文を真実の source として扱う。`task_body` 不在時のみ `impl-plan.md` を fallback として読む。
-
-詳細規約: [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md#paste-dont-link)
 
 ## Args
 
@@ -154,14 +114,8 @@ spawn する）際は、対応する task の本文を prompt 内に **verbatim 
 | `--lang` | `ja` | PR language |
 | `--env-mode` | `hardlink` | Env file handling |
 | `--worktree` | - | Pre-created worktree path (skips Phase 1) |
-| `--task-id` | - | Subtask ID from flow.json (enables parallel mode) |
-| `--flow-state` | - | Path to flow.json (read-only reference) |
 
-## Parallel Subtask Mode
-
-When `--task-id` is specified, phases 1-2 and 8 are skipped. Subtask scope is read from flow.json, and workers exchange cross-cutting knowledge via `flow.json.shared_findings[]` (Phase 3 reads unacked, Phase 4/5 appends). Returns minimal `{"task_id", "status"}` JSON.
-
-Details: [Parallel Mode](references/parallel-mode.md), [Shared Findings Pattern](../_shared/references/shared-findings.md)
+**Removed in v2** (no-backcompat): `--task-id`, `--flow-state`. Passing these returns an explicit error.
 
 ## Error Handling
 
@@ -191,7 +145,6 @@ dev-kickoff は Phase 2 / 3b / 5 / 6 で subagent を起動する。各 Task 呼
 - [Plan-Review Loop](references/plan-review-loop.md) - Phase 3 ↔ 3b ループ遷移・escalation・stuck detection・config
 - [Evaluate-Retry Loop](references/evaluate-retry.md) - Phase 6 verdict に基づく retry フロー
 - [Error Handling](references/error-handling.md) - Per-phase error handling, auto-retry protocol
-- [Parallel Mode](references/parallel-mode.md) - Subtask scope reading, phase 7 enhancement, return value
 - [Phase Details](references/phase-detail.md) - Detailed phase documentation
 - [Journal Logging](references/journal-logging.md) - skill-retrospective 呼び出しパターン
 - [Subagent Dispatch Rules](references/subagent-dispatch.md) - Phase 2/3b/5/6 の 5要素と routing
