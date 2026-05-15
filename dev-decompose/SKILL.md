@@ -1,11 +1,10 @@
 ---
 name: dev-decompose
 description: |
-  Decompose large issues into parallel subtasks with file-boundary isolation.
-  Creates contract branch, worktrees, and flow.json for parallel dev-kickoff execution.
-  Use when: (1) large issues need parallel implementation, (2) file-boundary decomposition,
-  (3) keywords: decompose, split, parallel, subtasks
-  Accepts args: <issue-number> [--base <branch>] [--env-mode hardlink|symlink|copy|none] [--flow-state <path>] [--dry-run]
+  Decompose a parent issue into child GitHub issues + integration branch + batch flow.json.
+  Use when: (1) large issue needs multi-PR coordination, (2) child-split mode for dev-flow,
+  (3) keywords: decompose, child-split, child issue, integration branch
+  Accepts args: <issue-number> --child-split [--base <branch>] [--flow-state <path>] [--dry-run]
 allowed-tools:
   - Bash
   - Task
@@ -15,259 +14,187 @@ effort: max
 
 # Dev Decompose
 
-Decompose large issues into parallel subtasks with file-boundary isolation. Creates a contract branch, per-task worktrees, and a flow.json manifest for parallel dev-kickoff execution.
+Decompose a parent GitHub issue into:
+1. **Child issues** (created via `gh issue create`)
+2. **Integration branch** (`integration/issue-{N}-{slug}`)
+3. **Batch flow.json** (v2 schema, serial / parallel batches)
+
+Used by `dev-flow --child-split` to drive multi-PR coordination through `run-batch-loop.sh`.
 
 ## Responsibilities
 
-- Receive issue analysis results (from dev-issue-analyze or issue body)
-- Identify affected files and build a file dependency graph
-- Split work into non-conflicting subtasks at file boundaries
-- Define `depends_on` relationships between subtasks
-- Generate shared contract (types/interfaces) committed to a contract branch
-- Create N worktrees via git-prepare (base: contract branch, suffix: task1, task2, ...)
-- Generate flow.json with subtask definitions, checklists, and contract info
+- Read parent issue body / analysis (from `dev-issue-analyze`)
+- Propose a child split (2-12 children, max enforced by `skill-config.json`)
+- Generate `gh issue create` plan + batches array
+- Create integration branch via `_lib/scripts/integration-branch.sh`
+- Initialize v2 flow.json via `init-flow-v2.sh`
+- Validate the result via `_lib/scripts/validate-decomposition.sh`
 
 ## Workflow
 
-### Full Execution (default)
-
 ```
-1. Read issue analysis (from dev-issue-analyze output or issue body)
-2. Identify affected files and dependencies
-3. Group files into subtasks (no file overlap)
-4. Define checklist for each subtask
-5. Generate shared contract (interfaces/types if needed)
-6. Create contract branch from base
-7. Commit contract files to contract branch
-8. Create worktrees for each subtask (git-prepare --base contract-branch --suffix taskN)
-9. Generate flow.json
-10. Validate decomposition (validate-decomposition.sh)
+1. Read parent issue analysis
+2. Propose child-split plan (LLM)
+   - 1 commit = 1 child issue if the parent body has an explicit 実装順序 section
+   - Otherwise group by file boundary / responsibility
+3. Apply max_child_issues limits (soft: 8, hard: 12)
+4. Create integration branch (integration-branch.sh create)
+5. Create child issues (create-child-issues.sh)
+6. Compose batches (run-batch-loop friendly format)
+7. Write flow.json v2 (init-flow-v2.sh --children-json --batches-json)
+8. Validate (validate-decomposition.sh)
 ```
 
-### Dry-Run Mode (`--dry-run`)
+### Step 1-3: Plan Generation
 
-Lightweight mode that executes only Steps 1-4 (analysis and file grouping) without creating branches, worktrees, or flow.json. Used by dev-flow for auto-detect mode selection.
+LLM reads the parent issue and produces a **plan JSON**:
 
-```
-1. Read issue analysis (from dev-issue-analyze output or issue body)
-2. Identify affected files and dependencies
-2b. Read past integration feedback via analyze-past-conflicts.sh
-    (files + directory prefixes that recurred in previous conflicts)
-3. Group files into subtasks (no file overlap), biasing files flagged by
-   step 2b toward the same subtask when possible
-4. Apply fallback criteria (see Decomposition Guide)
-→ Return assessment JSON (no side effects). The dry-run JSON includes a
-  `past_conflict_hints` field with the analyzer output for observability.
-```
-
-**Reading past feedback**:
-
-```bash
-$SKILLS_DIR/dev-decompose/scripts/analyze-past-conflicts.sh \
-  --affected-files "src/types/user.ts,src/api/auth.ts,..." \
-  --limit 50 --min-occurrences 2
-```
-
-Output shape (informational, decomposer LLM makes the final call):
-
-```jsonc
+```json
 {
-  "has_hints": true,
-  "scanned_events": 42,
-  "recurring_files": [
-    {"file": "src/types/user.ts", "occurrences": 3,
-     "lessons": ["同じ types/ 配下は 1 subtask にまとめるべき"]}
+  "integration_branch_slug": "dag-to-batch",
+  "children": [
+    {
+      "slug": "run-batch-loop",
+      "title": "feat(_shared): run-batch-loop.sh を新設",
+      "scope": "Extract night-patrol Phase 3 batch loop into _shared",
+      "body": "## Context\n...\n\n## Tasks\n- ...",
+      "labels": ["enhancement"]
+    },
+    ...
   ],
-  "recurring_prefixes": [
-    {"prefix": "src/types", "occurrences": 4}
+  "batches": [
+    {"batch": 1, "mode": "serial",   "children_slug": ["run-batch-loop"]},
+    {"batch": 2, "mode": "parallel", "children_slug": ["auto-merge-guard", "integration-branch"]}
   ]
 }
 ```
 
-See [`_shared/references/integration-feedback.md`](../_shared/references/integration-feedback.md)
-for the pub/sub pattern and how events are written by `dev-integrate`.
+`batches[].children_slug` is reconciled to `children[]` issue numbers after Step 5.
 
-Dry-run output:
-```json
-// single_fallback
-{"status": "single_fallback", "reason": "Fewer than 4 affected files", "file_count": 2}
-
-// ready for parallel
-{"status": "ready", "subtask_count": 3, "file_groups": [
-  {"id": "task1", "files": ["src/models/user.ts", "src/models/user.test.ts"]},
-  {"id": "task2", "files": ["src/routes/auth.ts", "src/middleware/jwt.ts"]}
-]}
-```
-
-To continue from dry-run to full execution, pass the dry-run result path:
-```bash
-Skill: dev-decompose $ISSUE --resume /path/to/dry-run-result.json --base $BASE
-```
-
-### Step 1-4: Analysis & File Grouping
-
-Analyze issue, build file dependency graph, partition into subtasks. See [Decomposition Guide](references/decomposition-guide.md) for strategy and edge cases.
-
-### Step 5-7: Contract Generation
-
-Generate contract per [Decomposition Guide](references/decomposition-guide.md). Branch: `feature/issue-{N}-contract`.
-
-**IMPORTANT: Contract branch は worktree で作成すること。メインリポジトリで直接 checkout しない。**
+### Step 4: Create Integration Branch
 
 ```bash
-# Step 6: contract worktree 作成（--local でリモート push を防止）
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
-  --suffix contract \
-  --base $BASE \
-  --env-mode $ENV_MODE \
-  --local
-
-# Step 7: contract worktree 内でファイル作成・コミット
-cd $CONTRACT_WORKTREE
-# ... create contract files, git add, git commit ...
+$SKILLS_DIR/_lib/scripts/integration-branch.sh create \
+  --issue $PARENT \
+  --slug "$INTEGRATION_SLUG" \
+  --base "$BASE_BRANCH"
 ```
 
-### Step 8: Worktree Creation
+Output: `{status: created|exists, branch: "integration/issue-N-slug", ...}`
 
-For each subtask, call git-prepare with `--local` to keep branches local:
-```bash
-$SKILLS_DIR/git-prepare/scripts/git-prepare.sh $ISSUE \
-  --suffix task${INDEX} \
-  --base feature/issue-${ISSUE}-contract \
-  --env-mode $ENV_MODE \
-  --local
-```
-
-**Subtask/contract ブランチはリモートに push しない。** push が必要なのは最終的な merge ブランチのみ（PR 作成時）。
-
-### Step 9: Flow State Generation
-
-Initialize flow.json:
-```bash
-$SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
-  --flow-state $FLOW_STATE \
-  --base $BASE \
-  --env-mode $ENV_MODE
-```
-
-Then populate subtask entries with file assignments, checklists, and dependency info.
-
-### Step 10: Validation
+### Step 5: Create Child Issues
 
 ```bash
-$SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
+$SKILLS_DIR/dev-decompose/scripts/create-child-issues.sh \
+  --parent $PARENT --plan "$PLAN_PATH" \
+  [--dry-run]
 ```
 
-Additionally verify manually: contract branch exists and has commits, all worktree paths exist on disk.
+Output: `children[]` with `issue` numbers populated.
 
-## Decomposition Rules
+`max_child_issues_hard` (12) violates abort. `max_child_issues_soft` (8) emits a warning.
 
-See [Decomposition Guide](references/decomposition-guide.md) for rules (file exclusivity, test co-location, contract isolation, coupling), edge cases, and examples.
+### Step 6-7: Initialize flow.json
 
-## Contract Branch Pattern
+Resolve `batches[].children_slug` → `batches[].children` (issue numbers), write to files, and call:
 
+```bash
+$SKILLS_DIR/dev-decompose/scripts/init-flow-v2.sh $PARENT \
+  --flow-state "$FLOW_STATE" \
+  --integration-branch "$INTEGRATION_BRANCH" \
+  --integration-base "$BASE_BRANCH" \
+  --children-json "$CHILDREN_JSON" \
+  --batches-json "$BATCHES_JSON"
 ```
-main --> feature/issue-{N}-contract (dev-decompose commits shared types)
-  |-- feature/issue-{N}-task1 (branched from contract)
-  |-- feature/issue-{N}-task2 (branched from contract)
-  |-- feature/issue-{N}-task3 (branched from contract)
-  +-- feature/issue-{N}-merge (integration target)
+
+### Step 8: Validate
+
+```bash
+$SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state "$FLOW_STATE"
 ```
 
-## Fallback
+Validation enforces:
+- schema version `2.0.0` (v1 schema rejected — no-backcompat)
+- batches 1-indexed and contiguous
+- children unique per batch
+- max_child_issues_hard
+- `integration_branch.name` pattern
 
-If decomposition yields 1 subtask, return fallback (see [Decomposition Guide](references/decomposition-guide.md) for criteria):
+## Dry-Run Mode (`--dry-run`)
+
+Skips actual `gh issue create` and integration branch creation. Returns the plan JSON only.
 
 ```json
-{"status": "single_fallback", "subtask_count": 1, "reason": "All files are tightly coupled"}
+{
+  "status": "dry-run",
+  "parent": 93,
+  "proposed_children": [...],
+  "proposed_batches": [...],
+  "warnings": []
+}
 ```
 
 ## Args
 
 | Arg | Default | Description |
 |-----|---------|-------------|
-| `<issue-number>` | required | GitHub issue number |
-| `--base` | `main` | Base branch for contract |
-| `--env-mode` | `hardlink` | Env file handling for worktrees |
-| `--flow-state` | auto | Path to flow.json output location |
-| `--dry-run` | false | Run Steps 1-4 only (analysis + grouping), no side effects |
-| `--resume` | - | Path to dry-run result JSON, skip Steps 1-4 and continue from Step 5 |
+| `<issue-number>` | required | Parent GitHub issue number |
+| `--child-split` | (mode) | Required mode flag (v2 only; explicit) |
+| `--base` | `dev` | Base branch for integration branch |
+| `--flow-state` | auto | Output path for flow.json |
+| `--dry-run` | false | Plan only, no side effects |
 
-When `--flow-state` is `auto`, the path defaults to `$WORKTREE_BASE/.claude/flow.json` where `$WORKTREE_BASE` is the parent worktrees directory for the issue.
+`auto-detect dry-run` (v1 fallback) is **removed**. Callers must explicitly choose `--force-single` (in `dev-flow`) or `--child-split` (here).
+
+## Config
+
+`skill-config.json`:
+
+```json
+{
+  "dev-decompose": {
+    "max_child_issues_soft": 8,
+    "max_child_issues_hard": 12
+  }
+}
+```
 
 ## Output
 
-### Full Execution
+flow.json (v2 schema). Return value:
 
-flow.json is created at `$WORKTREE_BASE/.claude/flow.json`.
-
-Structure: `{ version, issue, status, subtasks[], contract, config, created_at, updated_at }`
-
-See [flow.schema.json](../_lib/schemas/flow.schema.json) for full schema.
-
-Return value:
 ```json
-{"status": "decomposed|single_fallback", "subtask_count": N, "flow_state": "/path/to/flow.json"}
-```
-
-### Dry-Run
-
-No files created on disk. Return value only:
-```json
-// Ready for parallel
 {
-  "status": "ready",
-  "subtask_count": N,
-  "file_groups": [{"id": "taskN", "files": ["..."]}],
-  "past_conflict_hints": {
-    "has_hints": true,
-    "scanned_events": 42,
-    "recurring_files": [{"file": "src/types/user.ts", "occurrences": 3, "lessons": ["..."]}],
-    "recurring_prefixes": [{"prefix": "src/types", "occurrences": 4}]
-  }
+  "status": "decomposed|dry-run|failed",
+  "parent": 93,
+  "child_count": N,
+  "integration_branch": "integration/issue-93-slug",
+  "flow_state": "/path/to/flow.json"
 }
-
-// Fallback to single
-{"status": "single_fallback", "reason": "<criteria from Decomposition Guide>", "file_count": N, "past_conflict_hints": {...}}
 ```
-
-`past_conflict_hints` is populated by
-`dev-decompose/scripts/analyze-past-conflicts.sh` reading
-`_shared/integration-feedback.json`. If the feedback file is missing or
-empty, the field has `{"has_hints": false, ...}` and decomposition proceeds
-normally.
 
 ## Error Handling
 
 | Condition | Action |
 |-----------|--------|
-| Issue not found | Abort with error JSON |
-| No affected files identified | Abort with error JSON |
-| Contract branch creation fails | Abort, clean up worktrees |
-| Worktree creation fails | Abort, report which subtask failed |
-| Validation fails | Report specific violations, do not proceed |
+| Parent issue not found | Abort with error JSON |
+| Child plan empty | Abort with error JSON |
+| Child count > hard limit | Abort with explicit `max_child_issues_hard` error |
+| Integration branch creation fails | Abort |
+| `gh issue create` fails | Abort and surface gh error |
+| Validation fails | Report errors, do not return success |
 
 ## Journal Logging
 
-On completion, log execution to skill-retrospective journal:
-
 ```bash
-# On success (flow.json created)
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose success \
-  --issue $ISSUE --duration-turns $TURNS
-
-# On single_fallback (dry-run determined single mode)
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose success \
-  --issue $ISSUE --duration-turns $TURNS
-
-# On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose failure \
-  --issue $ISSUE --error-category <category> --error-msg "<message>"
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose <success|failure> \
+  --issue $ISSUE --duration-turns $TURNS [--error-category <cat> --error-msg "<msg>"]
 ```
 
 ## References
 
-- [Decomposition Guide](references/decomposition-guide.md) - Detailed strategy and edge cases
-- [git-prepare](../git-prepare/SKILL.md) - Worktree creation
-- [dev-issue-analyze](../dev-issue-analyze/SKILL.md) - Issue analysis input
-- [dev-kickoff](../dev-kickoff/SKILL.md) - Per-subtask execution
+- [Decomposition Guide](references/decomposition-guide.md) - When to split, batch design heuristics, examples
+- [integration-branch.sh](../_lib/scripts/integration-branch.sh) - Integration branch helper
+- [run-batch-loop.sh](../_shared/scripts/run-batch-loop.sh) - Used by dev-flow to consume the batches array
+- [flow.schema.json](../_lib/schemas/flow.schema.json) - v2 schema
+- [dev-flow](../dev-flow/SKILL.md) - Consumer of decompose output (`--child-split` mode)
