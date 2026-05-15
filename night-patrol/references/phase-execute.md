@@ -31,12 +31,28 @@ If `pass: false` -> skip all remaining batches, proceed to Phase 4.
 
 ### 2. Execute batch
 
+**Implementation note**: v2 で batch loop は `_shared/scripts/run-batch-loop.sh` に
+抽出された (Commit 1 of issue #93)。phase-execute.md の以下の serial / parallel
+ロジックは run-batch-loop.sh 内に集約されているため、night-patrol Phase 3 は
+本 script を直接呼び出すのが推奨パターン。
+
+```bash
+$SKILLS_DIR/_shared/scripts/run-batch-loop.sh \
+  --batches-json "$BATCHES_JSON" \
+  --issue-runner "Skill: dev-flow {issue} --force-single --base nightly/$DATE" \
+  --on-success "$SKILLS_DIR/night-patrol/scripts/auto-merge-and-record.sh {issue} --base nightly/$DATE"
+```
+
+直接記述する場合の仕様は以下:
+
 **Parallel batch** (`mode: "parallel"`):
 Launch each issue as a Task subagent:
 
 ```
-Task: dev-flow <issue-number> --base nightly/$DATE
+Task: dev-flow <issue-number> --force-single --base nightly/$DATE
 ```
+
+(`--force-single` は v2 で必須。auto-detect dry-run が削除されたため明示)
 
 Wait for all to complete.
 
@@ -44,7 +60,7 @@ Wait for all to complete.
 Execute each issue sequentially:
 
 ```
-Skill(skill: "dev-flow", args: "<issue-number> --base nightly/$DATE")
+Skill(skill: "dev-flow", args: "<issue-number> --force-single --base nightly/$DATE")
 ```
 
 ### 3. Process results (per issue)
@@ -53,11 +69,13 @@ For each completed issue:
 
 **Success path (LGTM PR)**
 
-1. Auto-merge into `nightly/$DATE` (確認不要):
+1. Auto-merge guard を経由してから auto-merge:
    ```bash
+   $SKILLS_DIR/_lib/scripts/auto-merge-guard.sh --pr <PR_NUMBER>
+   # base が nightly/* なら exit 0 (allowed); それ以外なら exit 1 (refused)
    gh pr merge <PR_NUMBER> --merge --admin --delete-branch
    ```
-   **Note:** `--admin` bypasses confirmation. Safe because nightly branch is for autonomous patrol only.
+   **Note:** `--admin` bypasses confirmation. `auto-merge-guard.sh` で `nightly/*` 限定の安全性を担保。
 2. Reset failure counter (成功で連続失敗カウントを 0 に戻す):
    ```bash
    $SKILLS_DIR/night-patrol/scripts/failures.sh reset <ISSUE_NUMBER>

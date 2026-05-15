@@ -126,14 +126,16 @@ Update state: `phase: 3, status: "executing"`
 For each batch in `execution_plan.batches`:
 
 1. **Pre-execute guard** - `guard-check.sh --mode pre-execute` (fail -> skip to Phase 4)
-2. **Execute** - Parallel: `Task: dev-flow <issue> --base nightly/$DATE` / Serial: `Skill(dev-flow)`
+2. **Execute** - Parallel: `Task: dev-flow <issue> --force-single --base nightly/$DATE` / Serial: `Skill(dev-flow)` (auto-detect dry-run は v2 で廃止されたため `--force-single` を明示)
 3. **Result dispatch**
-   - LGTM PR → `gh pr merge <PR> --merge --admin --delete-branch` → `failures.sh reset <issue>` → `update_progress_log(issue, "done")`
+   - LGTM PR → `auto-merge-guard.sh --pr <PR>` で base 検査 (nightly/* は allow) → `gh pr merge <PR> --merge --admin --delete-branch` → `failures.sh reset <issue>` → `update_progress_log(issue, "done")`
    - Failure → `failures.sh incr <issue> --reason "..."` → `escalated: true` なら `escalate-stuck.sh <issue>` して次 issue へ
 4. **Post-issue guard** - Cumulative line check (fail -> skip remaining, proceed to Phase 4)
 5. **Update state** - Record result, update counters
 
-**Critical**: `--admin` bypasses confirmation. Safe because nightly branch is autonomous patrol only.
+**Critical**: `--admin` bypasses confirmation. `auto-merge-guard.sh` で `nightly/*` への base に限り allow されるため、誤って main / dev へ admin merge することを防ぐ。
+
+**Batch loop infrastructure**: night-patrol Phase 3 の serial / parallel batch 消化は `_shared/scripts/run-batch-loop.sh` で実装する (Commit 1 で抽出済み)。dev-flow child-split mode も同 script を使う。
 
 失敗カウントは `~/.claude/night-patrol/failures.json` (env `NIGHT_PATROL_FAILURES_PATH` で上書き可) に永続化され、同一 issue が run を跨いで閾値 (`skill-config.json.night-patrol.max_failures`, default 2) に達したら `patrol-stuck` label を付与し triage に差し戻す。
 
