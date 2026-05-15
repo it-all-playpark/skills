@@ -73,12 +73,20 @@ else
 fi
 
 # Case 3b: dev-kickoff-worker.md exists and is single-mode only (issue #93)
+#
+# 旧実装は `grep -q ... | grep -v ...` という pipeline を使っていたが、`grep -q` は
+# stdout に何も書き出さないため後段の grep -v が常に空入力に対して exit 1 を返し、
+# `set -euo pipefail` 環境では if 文が常に else 分岐に入っていた（regression を
+# 検出できなかった）。行ベースで OFFENDING を抽出して長さで判定する形式に統一する。
 echo "[Case 3b] dev-kickoff-worker.md must declare single mode only"
 KICKOFF_AGENT="$REPO_ROOT/.claude/agents/dev-kickoff-worker.md"
 if [[ -f "$KICKOFF_AGENT" ]]; then
-  if grep -qE "mode.*parallel|mode.*merge" "$KICKOFF_AGENT" \
-       | grep -v "撤廃\|removed\|must be \`single\`" >/dev/null; then
-    _fail "dev-kickoff-worker.md still references parallel/merge mode without removal annotation"
+  OFFENDING=$(grep -nE "mode.*parallel|mode.*merge" "$KICKOFF_AGENT" 2>/dev/null \
+                | grep -v -E "撤廃|removed|must be \`single\`|removed in issue #93|parallel/merge removed" \
+                || true)
+  if [[ -n "$OFFENDING" ]]; then
+    _fail "dev-kickoff-worker.md still references parallel/merge mode without removal annotation:"
+    echo "$OFFENDING" | head -5 | sed 's/^/    /'
   else
     _pass "dev-kickoff-worker.md is single-mode only"
   fi

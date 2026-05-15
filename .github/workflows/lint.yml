@@ -48,3 +48,22 @@ jobs:
                    dev-flow-doctor/scripts/baseline-snapshot.sh \
                    dev-flow-doctor/scripts/compare-baseline.sh
           ./tests/no-glue-errors.sh
+
+  bats-tests:
+    name: Bats Tests (issue #93 helpers)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bats + jq
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats jq
+
+      - name: Run tests/run-all-bats.sh --strict
+        shell: bash
+        run: |
+          chmod +x tests/run-all-bats.sh
+          ./tests/run-all-bats.sh --strict
