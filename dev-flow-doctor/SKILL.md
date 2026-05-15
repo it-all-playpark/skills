@@ -3,9 +3,9 @@ name: dev-flow-doctor
 description: |
   Diagnose dev-flow pipeline health from skill-retrospective journal. Detects dead phase,
   stuck skill, bottleneck, disconnected skill across the dev-flow family.
-  Use when: (1) dev-flow issues or underperformance, (2) parallel mode not triggering,
+  Use when: (1) dev-flow issues or underperformance, (2) child-split mode not triggering,
   (3) stuck skill / dead phase suspicion, (4) weekly dev-flow health review,
-  (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector, integration feedback
+  (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector, child-split
   Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>]
 allowed-tools:
   - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
@@ -87,7 +87,9 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 ### Dev-Flow Family (Check 8)
 
 **Dead Phases** (no success in 30d):
-- `dev-integrate`: 呼び出し経路を確認。parallel mode が発火していない可能性
+- `dev-integrate`: 呼び出し経路を確認。child-split mode が発火していない可能性
+  （`dev-flow --child-split` で parent issue が分割されているか、または
+  `verify-children-merged.sh` が呼ばれているか）
 
 **Stuck Skills** (failure rate > 30% OR blocked_rate > 30%):
 - `pr-fix`: 42% failure rate (12 entries) — lint/test errors が主要原因

@@ -125,7 +125,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limi
 
 | Finding | Recommendation |
 |---------|----------------|
-| Outliers are all parallel mode | Expected -- parallel takes more turns |
+| Outliers are all child-split children | Expected — child-split parents fan out to multiple `dev-kickoff` runs (1 per child issue) |
 | Outliers in single mode | Investigate: likely validation failures or complex implementations |
 | Average > 8 turns | Overall pipeline may need optimization |
 | Average < 5 turns | Pipeline is efficient |
