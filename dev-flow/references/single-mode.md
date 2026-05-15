@@ -1,46 +1,50 @@
 # Dev Flow - Single Mode
 
-小規模 issue、または auto-detect が `single_fallback` を返した場合に使用。
+Default mode. One issue → one PR via `dev-kickoff` and `pr-iterate` subagents.
 
-dev-kickoff と pr-iterate は Task subagent として独立コンテキストで実行し、メインの dev-flow コンテキストを軽量に保つ。
+dev-kickoff and pr-iterate run as Task subagents with their own context to
+keep the dev-flow context lean.
 
 ## Step Overview
 
 | Step | Action | Complete When |
 |------|--------|---------------|
-| 2a | `Task: dev-kickoff` (subagent) | PR URL available |
-| 3a | `gh pr view --json url` | URL captured |
-| 4a | `Task: pr-iterate` (subagent) | LGTM achieved or max iterations |
+| 1 | `Skill: dev-issue-analyze` | Requirements captured |
+| 2 | `Task: dev-kickoff` (subagent) | PR URL available |
+| 3 | `gh pr view --json url` | URL captured |
+| 4 | `Task: pr-iterate` (subagent) | LGTM achieved or max iterations |
 
 ## Checklist
 
 ```
-[ ] Step 0: Skill: dev-issue-analyze
-[ ] Step 1: Mode decision -> single
-[ ] Step 2a: Task subagent -> dev-kickoff (see prompt below)
-[ ] Step 3a: PR_URL=$(gh pr view --json url --jq .url)  (run in worktree)
-[ ] Step 4a: Task subagent -> pr-iterate (see prompt below)
+[ ] Step 1: Skill: dev-issue-analyze
+[ ] Step 2: Task subagent → dev-kickoff (see prompt below)
+[ ] Step 3: PR_URL=$(gh pr view --json url --jq .url)  (run in worktree)
+[ ] Step 4: Task subagent → pr-iterate (see prompt below)
 ```
 
-## Step 2a: dev-kickoff Subagent
+## Step 2: dev-kickoff Subagent
 
-Launch dev-kickoff as a Task subagent with `mode: "auto"`. The subagent runs in its own context and returns only the result.
+Launch dev-kickoff as a Task subagent with `mode: "auto"`. The subagent runs
+in its own context and returns only the result.
 
-**CRITICAL: Worktree is MANDATORY in single mode.** The subagent MUST create a worktree via Phase 1 (git-prepare.sh) before any implementation. Implementation in the main repository directory is NEVER allowed.
+**CRITICAL: Worktree is MANDATORY in single mode.** The subagent MUST create
+a worktree via Phase 1 before any implementation. Implementation in the main
+repository directory is NEVER allowed.
 
 **Task prompt:**
 
 ```
 Execute the dev-kickoff skill for issue #$ISSUE.
-Run: Skill: dev-kickoff $ISSUE --strategy $STRATEGY --depth $DEPTH --base $BASE --lang ja
+Run: Skill: dev-kickoff $ISSUE --testing $TESTING --depth $DEPTH --base $BASE --lang ja
 
-CRITICAL REQUIREMENT: You MUST execute Phase 1 (worktree creation via git-prepare.sh) FIRST.
+CRITICAL REQUIREMENT: You MUST execute Phase 1 (worktree creation) FIRST.
 - Phase 1 creates an isolated worktree. ALL implementation MUST happen inside this worktree.
 - Do NOT skip Phase 1. Do NOT implement in the current directory.
-- The --task-id flag is NOT set, so this is single mode — Phase 1 is REQUIRED.
 
-LANGUAGE REQUIREMENT: All PR body content, commit messages descriptions, and GitHub comments MUST be written in Japanese (日本語).
-Technical terms, code identifiers, and file paths remain in their original form.
+LANGUAGE REQUIREMENT: All PR body content, commit messages, descriptions, and GitHub comments
+MUST be written in Japanese (日本語). Technical terms, code identifiers, and file paths remain
+in their original form.
 
 After completion, return ONLY a JSON result:
 - On success: {"status": "completed", "worktree": "<path>", "pr_url": "<url>", "pr_number": <number>}
@@ -51,19 +55,19 @@ After completion, return ONLY a JSON result:
 
 | Result | Action |
 |--------|--------|
-| `status: "completed"` | Verify `worktree` path exists and is not the main repo -> proceed to Step 3a |
-| `status: "completed"` but no `worktree` or worktree is main repo | **ABORT** -- worktree was not created |
-| `status: "failed"` | Log failure via journal.sh -> abort dev-flow |
-| Task tool error | Log error -> abort dev-flow |
+| `status: "completed"` | Verify `worktree` path exists and is not the main repo → proceed to Step 3 |
+| `status: "completed"` but no `worktree` or worktree is main repo | **ABORT** — worktree was not created |
+| `status: "failed"` | Log failure via journal.sh → abort dev-flow |
+| Task tool error | Log error → abort dev-flow |
 
-## Step 3a: Get PR URL
+## Step 3: Get PR URL
 
 ```bash
-# Run from worktree returned by Step 2a
+# Run from worktree returned by Step 2
 cd $WORKTREE && gh pr view --json url --jq .url
 ```
 
-## Step 4a: pr-iterate Subagent
+## Step 4: pr-iterate Subagent
 
 Launch pr-iterate as a Task subagent with `mode: "auto"`.
 
@@ -73,8 +77,8 @@ Launch pr-iterate as a Task subagent with `mode: "auto"`.
 Execute the pr-iterate skill for PR $PR_URL in worktree $WORKTREE.
 The skills directory is at: $SKILLS_DIR
 
-LANGUAGE REQUIREMENT: All review comments, PR comments, and summaries MUST be written in Japanese (日本語).
-Technical terms, code identifiers, and file paths remain in their original form.
+LANGUAGE REQUIREMENT: All review comments, PR comments, and summaries MUST be written in
+Japanese (日本語). Technical terms, code identifiers, and file paths remain in their original form.
 
 CRITICAL REQUIREMENT: You MUST follow the COMPLETE pr-iterate workflow below.
 Do NOT skip steps. Do NOT check PR status via gh CLI and return early.
@@ -99,7 +103,7 @@ $SKILLS_DIR/pr-iterate/scripts/record-iteration.sh review \
 $SKILLS_DIR/pr-iterate/scripts/record-iteration.sh complete --status lgtm
 (This auto-posts a summary comment to the PR)
 
-### 4b. If changes requested -> fix -> next iteration
+### 4b. If changes requested → fix → next iteration
 Use Skill tool: pr-fix $PR_URL
 Record fixes, then record-iteration.sh next, then go back to Step 2.
 
@@ -115,5 +119,5 @@ After completion, return ONLY a JSON result:
 |--------|--------|
 | `status: "lgtm"` | Workflow complete (merge manually) |
 | `status: "max_reached"` | Report status, user decides |
-| `status: "failed"` | Log failure via journal.sh -> report error |
-| Task tool error | Log error -> report error |
+| `status: "failed"` | Log failure via journal.sh → report error |
+| Task tool error | Log error → report error |
