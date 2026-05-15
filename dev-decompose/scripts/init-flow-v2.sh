@@ -25,7 +25,7 @@ INTEGRATION_BRANCH=""
 INTEGRATION_BASE=""
 STRATEGY="tdd"
 DEPTH="standard"
-LANG="ja"
+SKILL_LANG="ja"
 ENV_MODE="hardlink"
 CHILDREN_JSON=""
 BATCHES_JSON=""
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
         --integration-base) INTEGRATION_BASE="$2"; shift 2 ;;
         --strategy) STRATEGY="$2"; shift 2 ;;
         --depth) DEPTH="$2"; shift 2 ;;
-        --lang) LANG="$2"; shift 2 ;;
+        --lang) SKILL_LANG="$2"; shift 2 ;;
         --env-mode) ENV_MODE="$2"; shift 2 ;;
         --children-json) CHILDREN_JSON="$2"; shift 2 ;;
         --batches-json) BATCHES_JSON="$2"; shift 2 ;;
@@ -68,7 +68,7 @@ done
 
 echo "$VALID_STRATEGIES" | grep -qw "$STRATEGY" || die_json "Invalid strategy: $STRATEGY (valid: $VALID_STRATEGIES)" 1
 echo "$VALID_DEPTHS" | grep -qw "$DEPTH" || die_json "Invalid depth: $DEPTH (valid: $VALID_DEPTHS)" 1
-echo "$VALID_LANGS" | grep -qw "$LANG" || die_json "Invalid lang: $LANG (valid: $VALID_LANGS)" 1
+echo "$VALID_LANGS" | grep -qw "$SKILL_LANG" || die_json "Invalid lang: $SKILL_LANG (valid: $VALID_LANGS)" 1
 echo "$VALID_ENV_MODES" | grep -qw "$ENV_MODE" || die_json "Invalid env-mode: $ENV_MODE (valid: $VALID_ENV_MODES)" 1
 
 # Resolve absolute paths
@@ -105,7 +105,7 @@ jq -n \
     --argjson batches "$BATCHES" \
     --arg strategy "$STRATEGY" \
     --arg depth "$DEPTH" \
-    --arg lang "$LANG" \
+    --arg lang "$SKILL_LANG" \
     --arg env_mode "$ENV_MODE" \
     --arg now "$NOW" \
     '{

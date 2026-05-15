@@ -60,3 +60,23 @@ EOF
     SKILL_CONFIG_PATH="$TMP" run "$SCRIPT" --base "integration/issue-1"
     [ "$status" -eq 1 ]
 }
+
+@test "pattern with whitespace is rejected with exit 2" {
+    TMP="$BATS_TMPDIR/skill-config-bad.json"
+    cat > "$TMP" << 'EOF'
+{ "auto_merge": { "allowed_base_patterns": ["integration/with space*"] } }
+EOF
+    SKILL_CONFIG_PATH="$TMP" run "$SCRIPT" --base "main"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"contains whitespace"* ]]
+}
+
+@test "empty pattern is rejected with exit 2" {
+    TMP="$BATS_TMPDIR/skill-config-empty.json"
+    cat > "$TMP" << 'EOF'
+{ "auto_merge": { "allowed_base_patterns": [""] } }
+EOF
+    SKILL_CONFIG_PATH="$TMP" run "$SCRIPT" --base "main"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"empty pattern"* ]]
+}

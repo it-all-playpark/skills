@@ -89,14 +89,32 @@ do
 done
 
 # ============================================================================
-# Match base against allowlist (glob, * = greedy)
+# Match base against allowlist (shell glob, * = greedy)
 # ============================================================================
+#
+# Patterns are bash shell globs (NOT regex). Supported metacharacters:
+#   *, ?, [...]
+# Patterns MUST NOT contain whitespace (space / tab) — git branch names cannot
+# contain those, and allowing them here risks IFS-based expansion bugs.
+# Out-of-spec patterns are rejected with exit 2 (misuse, no-backcompat).
 
-# Convert glob pattern to bash extended pattern; using case/esac for glob match.
 MATCHED_PATTERN=""
 PATTERN_COUNT=$(echo "$CONFIG_PATTERNS" | jq 'length')
+
+# Validate patterns up-front
 for i in $(seq 0 $((PATTERN_COUNT - 1))); do
     PATTERN=$(echo "$CONFIG_PATTERNS" | jq -r ".[$i]")
+    if [[ -z "$PATTERN" ]]; then
+        die_json "auto_merge.allowed_base_patterns contains empty pattern at index $i" 2
+    fi
+    if [[ "$PATTERN" =~ [[:space:]] ]]; then
+        die_json "auto_merge.allowed_base_patterns[$i] contains whitespace: '$PATTERN' (not allowed in branch names)" 2
+    fi
+done
+
+for i in $(seq 0 $((PATTERN_COUNT - 1))); do
+    PATTERN=$(echo "$CONFIG_PATTERNS" | jq -r ".[$i]")
+    # Unquoted $PATTERN here is intentional — case glob requires unquoted to expand.
     case "$BASE_BRANCH" in
         $PATTERN) MATCHED_PATTERN="$PATTERN"; break ;;
     esac

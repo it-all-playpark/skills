@@ -71,7 +71,7 @@ the main dev-flow context lean. The main context only holds:
 | 1 (analyze) | gh / network error | retry once, then abort |
 | 2 single (kickoff) | Subagent returns `failed` | journal failure, abort |
 | 2 child-split (decompose) | gh issue create rate limit / network | abort with manual recovery hint |
-| 3 child-split (batch loop) | child dev-flow returns failed | record in batch-state.json, continue or fail-fast per `--on-failure` |
+| 3 child-split (batch loop) | child dev-flow returns failed | record in batch-state.json; default continues all batches, `--fail-fast` skips subsequent batches after first failure |
 | 4 child-split (integrate) | type check / validate fail | abort, surface integration branch state |
 | 5 (git-pr) | gh failure | retry once, manual PR command on second failure |
 | 6 (pr-iterate) | max iterations | report status, do not error |
