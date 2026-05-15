@@ -205,6 +205,31 @@ User triggers /command
 4. **Namespace 命名**: `dev-*`, `blog-*`, `git-*` 等のプレフィックスで整理
 5. **小タスクは vanilla**: 小さいタスクは素の Claude Code の方が優秀
 6. **Journal Logging**: ワークフロー完了時に skill-retrospective 経由でログ記録
+7. **後方互換 scaffolding を作らない (no-backcompat)**:
+   内製スキル間の schema 変更や API 変更で **legacy fallback / version enum 分岐 / dual-path 実装は禁止**。
+   旧形式は schema error で reject し、新形式のみ受理する。
+   - 例: `flow.schema.json` の `version: "2.0.0"` const を使い、`"1.0.0"` 受信時は明示 error
+   - 例: dev-kickoff `--task-id` のような廃止フラグは `die_json` で即時 error
+   - 理由: 内製スキルは monorepo 内で同期更新できるため、互換 scaffolding は技術的負債にしかならない
+   - 外部 API (gh CLI, jq, Claude Code 自身) との接合面は当然互換性を維持する
+
+### Architectural pattern: child-split over DAG
+
+依存関係を持つ複数タスクの coordination が必要な場合、**任意 DAG (depends_on) ではなく
+layered linear batch 配列 + child-issue 分割** を選ぶ。
+
+| | DAG (subtask depends_on) | child-split (v2) |
+|--|--|--|
+| coordination 単位 | 内部 subtask | 外部 GitHub child issue |
+| merge 戦略 | Kahn 法 topological merge (最終 N-way) | integration branch への incremental merge |
+| 並列性表現 | 任意 DAG | layered linear (serial / parallel batch) |
+| 表現力 | 100% | ~90% (実務 case) |
+| 実装複雑度 | 高 (topo-sort, contract branch, shared_findings) | 低 (gh issue + batch loop) |
+| 中間 CI | 全 subtask で走る | child PR は draft で CI skip |
+| audit history | 1 merge commit に N branch | child PR ごとに merge commit |
+
+10% の "残り" DAG case は **親 issue 自体を分けて対応** する。コーディネーション
+コストよりメンテコストの方が低い設計を選ぶ。詳細は parent issue #93 を参照。
 
 ## Subagent Dispatch Rules
 
