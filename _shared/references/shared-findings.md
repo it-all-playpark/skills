@@ -40,7 +40,7 @@
 }
 ```
 
-`shared_findings` フィールドは optional（legacy flow.json は `[]` として扱われる）。
+`shared_findings` フィールドは flow.json 生成時に必ず初期化される（`init-flow.sh` が `[]` を書き込む）。
 
 ## 書き込み (worker 側 — Phase 4/5)
 
@@ -131,7 +131,7 @@ dev-integrate:
 - **Single-writer 原則の例外**: worker (= parallel 実行されるサブプロセス) からの書き込みは `flow-append-finding.sh` 経由で mkdir-based file lock を取るため安全。`flow-update.sh` は orchestrator 専用のまま。
 - **Ack は自己申告**: ack した = plan に反映した、という worker の自己申告。検証は人間側の責任範囲。
 - **Finding は append-only**: 一度書いた finding は変更しない。訂正が必要なら新しい finding を書く。
-- **後方互換**: `shared_findings` フィールドのない legacy flow.json はそのまま動く（空配列として扱う）。
+- **Reader robustness**: reader (`flow-read-findings.sh`) は欠落時に `// []` で空配列に fallback するが、これは graceful read のための保険であり、writer 側 (`init-flow.sh` / `flow-append-finding.sh`) が新規生成する flow.json では `shared_findings` フィールドは必ず存在する。
 
 ## 関連
 

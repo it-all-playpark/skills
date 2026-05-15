@@ -3,7 +3,7 @@
   "title": "Flow State",
   "description": "State persistence for dev-flow parallel subtask orchestration",
   "type": "object",
-  "required": ["version", "issue", "status", "subtasks", "config"],
+  "required": ["version", "issue", "status", "subtasks", "shared_findings", "config"],
   "properties": {
     "version": {
       "type": "string",
@@ -74,7 +74,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/shared_finding" },
       "default": [],
-      "description": "Cross-worker knowledge channel (Shared State pattern). Parallel dev-kickoff workers append breaking changes / design decisions here so other workers can incorporate them into their plans. dev-integrate verifies all findings are acknowledged before merging. Optional; legacy flow.json without this field remains valid."
+      "description": "Cross-worker knowledge channel (Shared State pattern). Parallel dev-kickoff workers append breaking changes / design decisions here so other workers can incorporate them into their plans. dev-integrate verifies all findings are acknowledged before merging."
     },
     "integration": {
       "$ref": "#/$defs/integration",
