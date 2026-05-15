@@ -1,62 +1,28 @@
-# Step 4: Worker Subagent Dispatch (merge mode)
+# Worker Subagent Dispatch (issue #93 以降)
 
-dev-integrate の merge worktree 作成は、`dev-kickoff-worker` を `mode: merge` で spawn することで行う。
+issue #93 で `dev-kickoff-worker` の `mode: merge` および dev-integrate の Kahn 法
+topological merge は撤廃された。dev-integrate は **independent worker を spawn しない**:
 
-共通規約 (Agent テンプレート、共通 Output schema、共通制約、5要素のうち共通部、Routing) は [`_shared/references/worker-dispatch.md`](../../_shared/references/worker-dispatch.md) を参照。本書は merge mode 固有の差分のみ記載する。
+- merge worktree 作成は不要（child PR は直接 `integration/issue-{N}-{slug}` に merge される）
+- `merge-subtasks.sh` / `topo-sort.sh` / `merge-subagent-result.sh` / `check-unacked-findings.sh`
+  は全て削除済み
+- dev-integrate に残る役割は `verify-children-merged.sh` のみ：integration branch 上で全 child の
+  merge commit が揃っているかを最終 PR 作成前に検証する
 
-## Prompt パラメータ (merge mode 差分)
+## 移行先
 
-| Field | Value (初回) | Value (retry) |
-|---|---|---|
-| `branch_name` | `feature/issue-${ISSUE}-merge` | `feature/issue-${ISSUE}-merge-retry` |
-| `base_ref` | `feature/issue-${ISSUE}-contract` | (同左) |
-| `mode` | `merge` | (同左) |
-| `flow_state` | `$FLOW_STATE` (path) | (同左) |
+| 旧 (廃止) | 新 (issue #93) |
+|-----------|---------------|
+| `dev-kickoff-worker mode: merge` | (廃止) child PR は `auto-merge-child.sh` が `integration/issue-*` base に対して `--admin` merge |
+| `merge-subtasks.sh` | (廃止) child PR の標準 merge で代替 |
+| `topo-sort.sh` | (廃止) batch 配列 (`flow.json.batches[]`) が順序を表現 |
+| `check-unacked-findings.sh` | (廃止) `shared_findings` 廃止に伴い不要 |
+| dev-integrate Step 4 (worker spawn) | `verify-children-merged.sh` |
 
-`task_id` は使用しない。
+共通の subagent dispatch 規約は [`_shared/references/worker-dispatch.md`](../../_shared/references/worker-dispatch.md) を参照。
 
-## Output schema (merge mode 拡張)
+## References
 
-共通 schema に以下を追加:
-
-```json
-{
-  "merge_results": {
-    "status": "success" | "failed",
-    "total_subtasks": 3,
-    "merged": 3,
-    "conflicts": 0,
-    "results": [
-      {"task_id": "task1", "branch": "feature/issue-79-task1", "status": "merged"}
-    ]
-  },
-  "conflicts": 0
-}
-```
-
-失敗時は共通 schema の `status: "failed"` / `phase_failed: "merge"` / `error` に加え、`merge_results.status: "failed"` と `conflicts: <count>` が入る。
-
-## Parent (dev-integrate) の責務
-
-worker から返った JSON をそのまま `flow.json.integration` に転記する。parent は worktree を直接操作せず、状態管理に専念する:
-
-```bash
-$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state "$FLOW_STATE" \
-    integration --field status --value "integrated"
-$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state "$FLOW_STATE" \
-    integration --field merge_worktree --value "$WORKTREE_PATH"
-$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state "$FLOW_STATE" \
-    integration --field merge_results --value "$MERGE_RESULTS_JSON"
-$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state "$FLOW_STATE" \
-    integration --field conflicts --value "$CONFLICTS_COUNT"
-```
-
-## 5要素 (merge mode 固有)
-
-- **Objective** — 「contract branch をベースに `feature/issue-${ISSUE}-merge` (or `-merge-retry`) を isolated worktree で作成し、`merge-subtasks.sh` → 型チェック → `dev-validate` を実行して `{..., merge_results, conflicts}` を返す」
-- **Boundary (追加)** — subtask / contract branch を rewrite しない
-- **Token cap (caller 上限)** — 通常 1 spawn で完結。失敗時のみ `-merge-retry` で最大 1 回 re-spawn
-
-## Routing 追記
-
-- type check / validation 詳細は worker 内で完結 (`dev-validate` が委譲する)
+- Issue #93: child-split mode 統一、parallel/merge 撤廃、Kahn 法 merge 廃止
+- `_lib/scripts/auto-merge-guard.sh` / `dev-flow/scripts/auto-merge-child.sh`
+- `_shared/scripts/run-batch-loop.sh`

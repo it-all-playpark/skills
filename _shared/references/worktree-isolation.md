@@ -86,10 +86,12 @@ Summary of push rules by worker type:
 
 | Worker | Push allowed? |
 |--------|--------------|
-| `dev-contract-worker` | No — parent dev-decompose decides |
-| `dev-kickoff-worker` (mode: parallel) | No — parent dev-integrate merges |
 | `dev-kickoff-worker` (mode: single) | Yes — Phase 8 git-pr pushes |
-| `dev-kickoff-worker` (mode: merge) | No — parent dev-integrate pushes merge branch |
+
+issue #93 で contract branch / parallel / merge mode は撤廃された。複数 issue の並列実行は
+`dev-decompose --child-split` で child issue を発行し、`dev-flow --child-split` の batch loop
+が child を独立 single-mode dev-kickoff として消化する（child PR は `integration/issue-{N}-{slug}`
+に直接 merge、Kahn 法 topological merge は廃止）。
 
 ## 5. Decomposition Matrix
 
@@ -97,10 +99,7 @@ Worker types and their intended use cases:
 
 | Subagent type | model | isolation | Spawned by | Purpose |
 |---------------|-------|-----------|------------|---------|
-| `dev-contract-worker` | haiku | worktree | dev-decompose | Create contract branch + commit contract files |
 | `dev-kickoff-worker` (single) | sonnet | worktree | dev-kickoff | Full issue dev cycle (Phase 1b-8) |
-| `dev-kickoff-worker` (parallel) | sonnet | worktree | dev-decompose / dev-flow | Single subtask dev cycle (Phase 3-7) |
-| `dev-kickoff-worker` (merge) | sonnet | worktree | dev-integrate | Merge subtask branches + integration validate |
 
 ## 6. Nesting Prohibition
 
@@ -111,7 +110,5 @@ to spawn additional subagents.
 ## References
 
 - Issue #79: spike layer 1+2, isolation:worktree behavior validation
-- Issue #82: dev-integrate merge worktree worker
-- Issue #89: dev-contract-worker introduction, git-prepare deletion
+- Issue #93: parallel / merge / contract mode 撤廃、child-split (child issue + integration branch + batch loop) に統一
 - [`dev-kickoff-worker.md`](../../.claude/agents/dev-kickoff-worker.md)
-- [`dev-contract-worker.md`](../../.claude/agents/dev-contract-worker.md)

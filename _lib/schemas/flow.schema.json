@@ -1,96 +1,62 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Flow State",
-  "description": "State persistence for dev-flow parallel subtask orchestration",
+  "title": "Flow State v2",
+  "description": "State persistence for dev-flow child-split orchestration. v2 (batch 配列 / child-issue 分割) のみ受理。旧 v1 (depends_on DAG / subtasks / contract) は schema error。",
   "type": "object",
-  "required": ["version", "issue", "status", "subtasks", "shared_findings", "config"],
+  "required": ["version", "issue", "status", "integration_branch", "children", "batches", "config"],
+  "additionalProperties": false,
   "properties": {
     "version": {
       "type": "string",
       "const": "2.0.0",
-      "description": "Schema version"
+      "description": "Schema version. v2 のみ受理。v1 形式は schema error。"
     },
     "issue": {
       "type": "integer",
-      "description": "GitHub issue number"
+      "description": "Parent GitHub issue number"
     },
     "status": {
       "type": "string",
-      "enum": ["analyzing", "decomposing", "implementing", "integrating", "pr", "iterating", "completed", "failed"],
+      "enum": ["decomposing", "running", "integrated", "failed"],
       "description": "Overall flow status"
     },
     "created_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "ISO 8601 timestamp when flow was created"
+      "format": "date-time"
     },
     "updated_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "ISO 8601 timestamp of last update"
+      "format": "date-time"
     },
-    "analysis": {
-      "type": "object",
-      "properties": {
-        "requirements": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Extracted requirements from issue"
-        },
-        "affected_files": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Files identified as needing changes"
-        }
-      },
-      "description": "Issue analysis results"
+    "integration_branch": {
+      "$ref": "#/$defs/integration_branch",
+      "description": "Integration branch where child PRs are merged"
     },
-    "contract": {
-      "type": "object",
-      "properties": {
-        "branch": {
-          "type": "string",
-          "description": "Contract branch name (e.g. feature/issue-42-contract)"
-        },
-        "files": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Files containing shared interface/type definitions"
-        },
-        "committed_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "When contract was committed"
-        }
-      },
-      "description": "Shared contract (interfaces/types) committed before subtask execution"
-    },
-    "subtasks": {
+    "children": {
       "type": "array",
-      "items": { "$ref": "#/$defs/subtask" },
-      "description": "Decomposed subtask definitions"
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/child" },
+      "description": "Child issues created from parent"
     },
-    "shared_findings": {
+    "batches": {
       "type": "array",
-      "items": { "$ref": "#/$defs/shared_finding" },
-      "default": [],
-      "description": "Cross-worker knowledge channel (Shared State pattern). Parallel dev-kickoff workers append breaking changes / design decisions here so other workers can incorporate them into their plans. dev-integrate verifies all findings are acknowledged before merging."
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/batch" },
+      "description": "Execution batches. 各 batch は serial / parallel mode を持つ"
     },
-    "integration": {
-      "$ref": "#/$defs/integration",
-      "description": "Integration phase state"
-    },
-    "pr": {
+    "final_pr": {
       "type": ["object", "null"],
+      "additionalProperties": false,
       "properties": {
         "number": { "type": "integer" },
         "url": { "type": "string" },
         "created_at": { "type": "string", "format": "date-time" }
       },
-      "description": "PR information after creation"
+      "description": "Final integration → dev/main PR information"
     },
     "config": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "strategy": {
           "type": "string",
@@ -109,209 +75,97 @@
         },
         "base_branch": {
           "type": "string",
-          "default": "main"
+          "default": "dev",
+          "description": "Final integration target (dev / main)"
         },
         "env_mode": {
           "type": "string",
           "enum": ["hardlink", "symlink", "copy", "none"],
           "default": "hardlink"
         }
-      },
-      "description": "Flow configuration options"
+      }
     }
   },
   "$defs": {
-    "subtask": {
+    "integration_branch": {
       "type": "object",
-      "required": ["id", "scope", "files", "branch", "status", "checklist"],
+      "required": ["name", "base"],
+      "additionalProperties": false,
       "properties": {
-        "id": {
+        "name": {
           "type": "string",
-          "pattern": "^task[0-9]+$",
-          "description": "Unique subtask identifier (e.g. task1, task2)"
+          "pattern": "^integration/issue-[0-9]+-[a-z0-9-]+$",
+          "description": "Integration branch name (e.g. integration/issue-93-foo)"
+        },
+        "base": {
+          "type": "string",
+          "description": "Base branch this integration branch was created from"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "child": {
+      "type": "object",
+      "required": ["issue", "slug", "scope", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "issue": {
+          "type": "integer",
+          "description": "Child GitHub issue number"
+        },
+        "slug": {
+          "type": "string",
+          "description": "Short identifier for the child (used in branch names, logs)"
         },
         "scope": {
           "type": "string",
           "description": "Human-readable scope description"
         },
-        "files": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Files assigned to this subtask (no overlap with other subtasks)"
-        },
-        "worktree": {
-          "type": "string",
-          "description": "Absolute path to subtask worktree"
-        },
-        "branch": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Branch name for this subtask"
-        },
-        "depends_on": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "description": "IDs of subtasks this one depends on"
-        },
         "status": {
           "type": "string",
-          "enum": ["pending", "in_progress", "completed", "failed"],
-          "default": "pending",
-          "description": "Subtask execution status"
+          "enum": ["pending", "running", "completed", "failed"],
+          "default": "pending"
         },
-        "actual_files_changed": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "description": "Files actually changed (populated by dev-flow from kickoff.json)"
+        "pr_number": {
+          "type": ["integer", "null"]
         },
-        "checklist": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["item", "done"],
-            "properties": {
-              "item": {
-                "type": "string",
-                "description": "Checklist item description"
-              },
-              "done": {
-                "type": "boolean",
-                "default": false,
-                "description": "Whether item is completed"
-              }
-            }
-          },
-          "minItems": 1,
-          "description": "Completion checklist for this subtask"
-        }
-      }
-    },
-    "shared_finding": {
-      "type": "object",
-      "required": ["id", "task_id", "timestamp", "category", "title", "description"],
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^sf_[0-9]{3,}$",
-          "description": "Unique finding id (sf_001, sf_002, ...), generated by flow-append-finding.sh"
-        },
-        "task_id": {
-          "type": "string",
-          "description": "ID of the subtask that authored this finding"
-        },
-        "timestamp": {
-          "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 time the finding was appended"
-        },
-        "category": {
-          "type": "string",
-          "enum": ["breaking_change", "api_contract", "design_decision", "dependency"]
-        },
-        "scope": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "description": "Files or modules affected by the finding"
-        },
-        "title": {
-          "type": "string",
-          "description": "Short human-readable headline"
-        },
-        "description": {
-          "type": "string",
-          "description": "Detailed explanation / context"
-        },
-        "action_required": {
-          "type": "string",
-          "default": "",
-          "description": "What other workers must do in response"
-        },
-        "acknowledged_by": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": [],
-          "description": "Subtask IDs that have read and accepted this finding"
-        }
-      }
-    },
-    "integration": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "type": "string",
-          "enum": ["pending", "merging", "integrated", "failed"],
-          "description": "Integration phase status"
-        },
-        "worktree": {
-          "type": "string",
-          "description": "Absolute path to merge worktree"
-        },
-        "branch": {
-          "type": "string",
-          "description": "Integration branch name"
-        },
-        "merge_results": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "task_id": { "type": "string" },
-              "status": { "type": "string", "enum": ["merged", "merged_auto_resolved", "conflict", "error", "failed"] },
-              "conflicts": {
-                "type": "array",
-                "items": { "type": "string" }
-              },
-              "conflict_files": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Files with conflicts for this merge"
-              },
-              "error": {
-                "type": "string",
-                "description": "Error message if merge failed"
-              }
-            }
-          },
-          "description": "Results of merging each subtask branch"
-        },
-        "merge_order": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Order in which subtasks were merged"
-        },
-        "conflicts": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Unresolved conflict files"
-        },
-        "type_check": {
-          "type": ["string", "null"],
-          "enum": ["passed", "failed", null],
-          "description": "Type checking result (tsc/mypy)"
-        },
-        "validation": {
-          "type": ["string", "null"],
-          "enum": ["passed", "failed", null],
-          "description": "Integration test result"
+        "pr_url": {
+          "type": ["string", "null"]
         },
         "merged_at": {
-          "type": "string",
-          "format": "date-time",
-          "description": "When integration merge was completed"
-        },
-        "failed_at_task": {
-          "type": "string",
-          "description": "Task ID where integration failed"
+          "type": ["string", "null"],
+          "format": "date-time"
         },
         "error": {
-          "type": "string",
-          "description": "Error message if integration failed"
+          "type": ["string", "null"]
         }
-      },
-      "description": "Integration phase tracking"
+      }
+    },
+    "batch": {
+      "type": "object",
+      "required": ["batch", "mode", "children"],
+      "additionalProperties": false,
+      "properties": {
+        "batch": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-indexed batch number"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["serial", "parallel"],
+          "description": "Execution mode for this batch"
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer" },
+          "description": "Child issue numbers assigned to this batch"
+        }
+      }
     }
   }
 }

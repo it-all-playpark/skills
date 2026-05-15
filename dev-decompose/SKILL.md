@@ -1,216 +1,200 @@
 ---
 name: dev-decompose
 description: |
-  Decompose large issues into parallel subtasks with file-boundary isolation.
-  Creates contract branch, worktrees, and flow.json for parallel dev-kickoff execution.
-  Use when: (1) large issues need parallel implementation, (2) file-boundary decomposition,
-  (3) keywords: decompose, split, parallel, subtasks
-  Accepts args: <issue-number> [--base <branch>] [--env-mode hardlink|symlink|copy|none] [--flow-state <path>] [--dry-run]
+  Decompose a parent issue into child GitHub issues + integration branch + batch flow.json.
+  Use when: (1) large issue needs multi-PR coordination, (2) child-split mode for dev-flow,
+  (3) keywords: decompose, child-split, child issue, integration branch
+  Accepts args: <issue-number> --child-split [--base <branch>] [--flow-state <path>] [--dry-run]
 allowed-tools:
   - Bash
   - Task
-  - Agent
 model: opus
 effort: max
 ---
 
 # Dev Decompose
 
-Decompose large issues into parallel subtasks with file-boundary isolation. Creates a contract branch, per-task worktrees, and a flow.json manifest for parallel dev-kickoff execution.
+Decompose a parent GitHub issue into:
+1. **Child issues** (created via `gh issue create`)
+2. **Integration branch** (`integration/issue-{N}-{slug}`)
+3. **Batch flow.json** (v2 schema, serial / parallel batches)
+
+Used by `dev-flow --child-split` to drive multi-PR coordination through `run-batch-loop.sh`.
 
 ## Responsibilities
 
-- Receive issue analysis results (from dev-issue-analyze or issue body)
-- Identify affected files and build a file dependency graph
-- Split work into non-conflicting subtasks at file boundaries
-- Define `depends_on` relationships between subtasks
-- Generate shared contract (types/interfaces) committed to a contract branch
-- Create contract branch via `dev-contract-worker` subagent (`isolation: worktree`, `model: haiku`)
-- Dispatch `dev-kickoff-worker` subagent (`isolation: worktree`, `mode: parallel`) for each subtask to create its worktree from the contract branch
-- Generate flow.json with subtask definitions (including `branch` field returned by each worker), checklists, and contract info
+- Read parent issue body / analysis (from `dev-issue-analyze`)
+- Propose a child split (2-12 children, max enforced by `skill-config.json`)
+- Generate `gh issue create` plan + batches array
+- Create integration branch via `_lib/scripts/integration-branch.sh`
+- Initialize v2 flow.json via `init-flow-v2.sh`
+- Validate the result via `_lib/scripts/validate-decomposition.sh`
 
-## Workflow (Full Execution, default)
+## Workflow
 
 ```
-1. Read issue analysis (from dev-issue-analyze output or issue body)
-2. Identify affected files and dependencies
-3. Group files into subtasks (no file overlap)
-4. Define checklist for each subtask
-5. Generate shared contract (interfaces/types if needed)
-6. Create contract branch + commit contract files via `dev-contract-worker` subagent (isolation: worktree)
-7. Dispatch `dev-kickoff-worker` subagent per subtask (isolation: worktree, mode: parallel) to create its branch (`feature/issue-${N}-task${INDEX}`) from the contract branch
-8. Generate flow.json (populating `subtask.branch` returned by each worker)
-9. Validate decomposition (validate-decomposition.sh)
+1. Read parent issue analysis
+2. Propose child-split plan (LLM)
+   - 1 commit = 1 child issue if the parent body has an explicit 実装順序 section
+   - Otherwise group by file boundary / responsibility
+3. Apply max_child_issues limits (soft: 8, hard: 12)
+4. Create integration branch (integration-branch.sh create)
+5. Create child issues (create-child-issues.sh)
+6. Compose batches (run-batch-loop friendly format)
+7. Write flow.json v2 (init-flow-v2.sh --children-json --batches-json)
+8. Validate (validate-decomposition.sh)
 ```
 
-Dry-run mode (`--dry-run`) executes Steps 1-4 only; see [Dry-Run Mode](references/dry-run.md).
+### Step 1-3: Plan Generation
 
-### Step 1-4: Analysis & File Grouping
-
-Analyze issue, build file dependency graph, partition into subtasks. See [Decomposition Guide](references/decomposition-guide.md) for strategy and edge cases.
-
-### Step 5-6: Contract Generation
-
-Generate contract per [Decomposition Guide](references/decomposition-guide.md). Branch: `feature/issue-{N}-contract`.
-
-**IMPORTANT: Contract branch は dev-contract-worker (isolation: worktree) 経由で作成すること。**
-**メインリポジトリで直接 checkout したり、worktree 作成スクリプトを直接呼び出したりしない。**
-
-Spawn `dev-contract-worker` via the Agent tool:
-
-```text
-Agent(
-  subagent_type: "dev-contract-worker",
-  isolation: "worktree",
-  prompt: """
-  issue_number: ${ISSUE}
-  branch_name: feature/issue-${ISSUE}-contract
-  base_ref: ${BASE}
-  contract_files:
-    - path: <relative path>
-      content: |
-        <file content>
-    ...
-  """
-)
-```
-
-The worker returns `{status, branch, worktree_path, commit_sha}`. Record `worktree_path` as
-`$CONTRACT_WORKTREE` for use in Step 7.
-
-**If `contract_files` is empty (no shared types needed), you MUST NOT spawn the worker.**
-Skip Step 6 entirely and use `origin/${BASE}` directly as `base_ref` for subtask worktrees in
-Step 7. The worker treats an empty `contract_files` as a contract violation by the caller and
-returns `{status: "skipped", reason: ...}` defensively, but the caller is responsible for the
-skip decision — do not rely on the worker's defensive return.
-
-### Step 7: Subtask Worktree Creation (worker subagent dispatch)
-
-For each subtask, spawn a `dev-kickoff-worker` subagent in `isolation: worktree` mode based on the contract branch. The worker creates its own branch (`feature/issue-${ISSUE}-task${INDEX}`) inside the isolated worktree and returns `{status, branch, worktree_path, commit_sha}`.
-
-```text
-Agent(
-  subagent_type: "dev-kickoff-worker",
-  isolation: "worktree",
-  prompt: """
-  issue_number: ${ISSUE}
-  branch_name: feature/issue-${ISSUE}-task${INDEX}
-  base_ref: feature/issue-${ISSUE}-contract
-  mode: parallel
-  task_id: task${INDEX}
-  flow_state: ${FLOW_STATE}
-  """
-)
-```
-
-Direct `git worktree add` calls are **prohibited** for subtask worktrees. Subtask/contract ブランチはリモートに push しない。
-
-Details (Agent call shape, 5-element dispatch rules, constraints): [Worker Dispatch](references/worker-dispatch.md).
-
-### Step 8: Flow State Generation
-
-```bash
-$SKILLS_DIR/dev-decompose/scripts/init-flow.sh $ISSUE \
-  --flow-state $FLOW_STATE --base $BASE --env-mode $ENV_MODE
-```
-
-Populate each subtask entry with `id` / `scope` / `files` / **`branch` (required, v2 schema — populated from worker return)** / `status` / `checklist` / `depends_on` / `worktree_path`. See [flow.schema.json](../_lib/schemas/flow.schema.json) for the full schema.
-
-### Step 9: Validation
-
-```bash
-$SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state $FLOW_STATE
-```
-
-Also verify manually: contract branch exists with commits, all worktree paths exist on disk.
-
-## Decomposition Rules
-
-See [Decomposition Guide](references/decomposition-guide.md) for file exclusivity, test co-location, contract isolation, coupling rules, edge cases, and examples.
-
-## Contract Branch Pattern
-
-```
-main --> feature/issue-{N}-contract (dev-decompose commits shared types)
-  |-- feature/issue-{N}-task1 (branched from contract)
-  |-- feature/issue-{N}-task2 (branched from contract)
-  |-- feature/issue-{N}-task3 (branched from contract)
-  +-- feature/issue-{N}-merge (integration target)
-```
-
-## Fallback
-
-If decomposition yields 1 subtask (see [Decomposition Guide](references/decomposition-guide.md) for criteria):
+LLM reads the parent issue and produces a **plan JSON**:
 
 ```json
-{"status": "single_fallback", "subtask_count": 1, "reason": "All files are tightly coupled"}
+{
+  "integration_branch_slug": "dag-to-batch",
+  "children": [
+    {
+      "slug": "run-batch-loop",
+      "title": "feat(_shared): run-batch-loop.sh を新設",
+      "scope": "Extract night-patrol Phase 3 batch loop into _shared",
+      "body": "## Context\n...\n\n## Tasks\n- ...",
+      "labels": ["enhancement"]
+    },
+    ...
+  ],
+  "batches": [
+    {"batch": 1, "mode": "serial",   "children_slug": ["run-batch-loop"]},
+    {"batch": 2, "mode": "parallel", "children_slug": ["auto-merge-guard", "integration-branch"]}
+  ]
+}
+```
+
+`batches[].children_slug` is reconciled to `children[]` issue numbers after Step 5.
+
+### Step 4: Create Integration Branch
+
+```bash
+$SKILLS_DIR/_lib/scripts/integration-branch.sh create \
+  --issue $PARENT \
+  --slug "$INTEGRATION_SLUG" \
+  --base "$BASE_BRANCH"
+```
+
+Output: `{status: created|exists, branch: "integration/issue-N-slug", ...}`
+
+### Step 5: Create Child Issues
+
+```bash
+$SKILLS_DIR/dev-decompose/scripts/create-child-issues.sh \
+  --parent $PARENT --plan "$PLAN_PATH" \
+  [--dry-run]
+```
+
+Output: `children[]` with `issue` numbers populated.
+
+`max_child_issues_hard` (12) violates abort. `max_child_issues_soft` (8) emits a warning.
+
+### Step 6-7: Initialize flow.json
+
+Resolve `batches[].children_slug` → `batches[].children` (issue numbers), write to files, and call:
+
+```bash
+$SKILLS_DIR/dev-decompose/scripts/init-flow-v2.sh $PARENT \
+  --flow-state "$FLOW_STATE" \
+  --integration-branch "$INTEGRATION_BRANCH" \
+  --integration-base "$BASE_BRANCH" \
+  --children-json "$CHILDREN_JSON" \
+  --batches-json "$BATCHES_JSON"
+```
+
+### Step 8: Validate
+
+```bash
+$SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state "$FLOW_STATE"
+```
+
+Validation enforces:
+- schema version `2.0.0` (v1 schema rejected — no-backcompat)
+- batches 1-indexed and contiguous
+- children unique per batch
+- max_child_issues_hard
+- `integration_branch.name` pattern
+
+## Dry-Run Mode (`--dry-run`)
+
+Skips actual `gh issue create` and integration branch creation. Returns the plan JSON only.
+
+```json
+{
+  "status": "dry-run",
+  "parent": 93,
+  "proposed_children": [...],
+  "proposed_batches": [...],
+  "warnings": []
+}
 ```
 
 ## Args
 
 | Arg | Default | Description |
 |-----|---------|-------------|
-| `<issue-number>` | required | GitHub issue number |
-| `--base` | `main` | Base branch for contract |
-| `--env-mode` | `hardlink` | Env file handling for worktrees |
-| `--flow-state` | auto | Path to flow.json output location |
-| `--dry-run` | false | Run Steps 1-4 only (analysis + grouping), no side effects |
-| `--resume` | - | Path to dry-run result JSON, skip Steps 1-4 and continue from Step 5 |
+| `<issue-number>` | required | Parent GitHub issue number |
+| `--child-split` | (mode) | Required mode flag (v2 only; explicit) |
+| `--base` | `dev` | Base branch for integration branch |
+| `--flow-state` | auto | Output path for flow.json |
+| `--dry-run` | false | Plan only, no side effects |
 
-When `--flow-state` is `auto`, the path defaults to `$WORKTREE_BASE/.claude/flow.json` where `$WORKTREE_BASE` is the parent worktrees directory for the issue.
+`auto-detect dry-run` (v1 fallback) is **removed**. Callers must explicitly choose `--force-single` (in `dev-flow`) or `--child-split` (here).
+
+## Config
+
+`skill-config.json`:
+
+```json
+{
+  "dev-decompose": {
+    "max_child_issues_soft": 8,
+    "max_child_issues_hard": 12
+  }
+}
+```
 
 ## Output
 
-Full execution creates flow.json at `$WORKTREE_BASE/.claude/flow.json` and returns:
+flow.json (v2 schema). Return value:
 
 ```json
-{"status": "decomposed|single_fallback", "subtask_count": N, "flow_state": "/path/to/flow.json"}
+{
+  "status": "decomposed|dry-run|failed",
+  "parent": 93,
+  "child_count": N,
+  "integration_branch": "integration/issue-93-slug",
+  "flow_state": "/path/to/flow.json"
+}
 ```
-
-Dry-run returns assessment JSON only (no files created); see [Dry-Run Mode](references/dry-run.md).
 
 ## Error Handling
 
 | Condition | Action |
 |-----------|--------|
-| Issue not found | Abort with error JSON |
-| No affected files identified | Abort with error JSON |
-| Contract branch creation fails | Abort, clean up worktrees |
-| Worktree creation fails | Abort, report which subtask failed |
-| Validation fails | Report specific violations, do not proceed |
-
-## Subagent Dispatch Rules
-
-dev-decompose は Step 8 で **subtask 数ぶんの `dev-kickoff-worker` subagent** を `Agent(isolation: worktree)` で起動する。共通規約 ([`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)) の必須5要素を遵守する:
-
-- **Objective** — contract branch をベースに subtask 用 isolated worktree を作成し `{status, branch, worktree_path, commit_sha}` を返す (Phase 1 のみ)
-- **Output format** — `{status, branch, worktree_path, commit_sha, phase_failed?, error?}` JSON (worker last-line contract)
-- **Tools** — worker frontmatter で許可 (Bash, Read, Write, Edit, Skill, TodoWrite, Glob, Grep)。追加制約は付けない
-- **Boundary** — isolated worktree 内のみ作業、`git push` 禁止 (parallel mode)、subtask 外 branch 不可、`git worktree add` 直接実行禁止
-- **Token cap** — worker 1 回あたり 2000 turn 以内、Step 8 全体で subtask 数 ≤ 5 推奨
-
-詳細・チェックリストは [Worker Dispatch](references/worker-dispatch.md) を参照。
+| Parent issue not found | Abort with error JSON |
+| Child plan empty | Abort with error JSON |
+| Child count > hard limit | Abort with explicit `max_child_issues_hard` error |
+| Integration branch creation fails | Abort |
+| `gh issue create` fails | Abort and surface gh error |
+| Validation fails | Report errors, do not return success |
 
 ## Journal Logging
 
-On completion, log execution to skill-retrospective journal:
-
 ```bash
-# On success (flow.json created, or single_fallback)
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose success \
-  --issue $ISSUE --duration-turns $TURNS
-
-# On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose failure \
-  --issue $ISSUE --error-category <category> --error-msg "<message>"
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-decompose <success|failure> \
+  --issue $ISSUE --duration-turns $TURNS [--error-category <cat> --error-msg "<msg>"]
 ```
 
 ## References
 
-- [Decomposition Guide](references/decomposition-guide.md) - Detailed strategy and edge cases
-- [Dry-Run Mode](references/dry-run.md) - --dry-run mode, past_conflict_hints, resume
-- [Worker Dispatch](references/worker-dispatch.md) - Step 6-7 Agent call shape, 5-element dispatch rules
-- [dev-contract-worker](../.claude/agents/dev-contract-worker.md) - Contract branch creation worker (Step 6)
-- [dev-kickoff-worker](../.claude/agents/dev-kickoff-worker.md) - Subtask/merge worktree worker (Step 7)
-- [dev-issue-analyze](../dev-issue-analyze/SKILL.md) - Issue analysis input
-- [dev-kickoff](../dev-kickoff/SKILL.md) - Per-subtask execution (parallel mode, `--task-id`)
+- [Decomposition Guide](references/decomposition-guide.md) - When to split, batch design heuristics, examples
+- [integration-branch.sh](../_lib/scripts/integration-branch.sh) - Integration branch helper
+- [run-batch-loop.sh](../_shared/scripts/run-batch-loop.sh) - Used by dev-flow to consume the batches array
+- [flow.schema.json](../_lib/schemas/flow.schema.json) - v2 schema
+- [dev-flow](../dev-flow/SKILL.md) - Consumer of decompose output (`--child-split` mode)

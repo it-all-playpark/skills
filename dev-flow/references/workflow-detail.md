@@ -1,326 +1,133 @@
 # Dev Flow - Workflow Details
 
-Detailed documentation for the dev-flow skill workflow.
+Detailed documentation for the dev-flow skill workflow (v2).
 
 ## Architecture
-
-### Auto-Detect Flow
 
 ```
 dev-flow (main context - lightweight)
     │
-    ├─→ Step 0: dev-issue-analyze --depth standard (always)
+    ├─→ Step 1: dev-issue-analyze --depth $DEPTH (always)
     │
-    ├─→ Step 1: Mode Decision
-    │       ├── --force-single  → Single Mode (skip dry-run)
-    │       ├── --force-parallel → Parallel Mode (skip dry-run)
-    │       └── auto → dev-decompose --dry-run
-    │           ├── single_fallback → Single Mode
-    │           └── ready → Parallel Mode
+    ├─→ Step 2: Mode Decision (explicit flag)
+    │       ├── (default / --force-single) → Single Mode
+    │       └── --child-split              → Child-Split Mode
     │
     ├─→ [Single Mode]
-    │   ├─→ Step 2a: Task subagent → dev-kickoff (independent context)
-    │   │       ├─→ Phase 1: Agent(dev-kickoff-worker, isolation:worktree)
-    │   │       ├─→ Phase 2: dev-issue-analyze (exploration)
-    │   │       ├─→ Phase 3: dev-implement (coding)
-    │   │       ├─→ Phase 4: dev-validate (testing)
-    │   │       ├─→ Phase 5: git-commit (commit)
-    │   │       ├─→ Phase 6: git-pr (PR creation)
-    │   │       └── Returns: {status, worktree, pr_url, pr_number}
+    │   ├─→ Step 2: Task subagent → dev-kickoff (independent context)
+    │   │       ├─→ Phase 1: worktree
+    │   │       ├─→ Phase 2: dev-issue-analyze
+    │   │       ├─→ Phase 3-3b: plan + review
+    │   │       ├─→ Phase 4-6: implement / validate / evaluate
+    │   │       ├─→ Phase 7: git-commit
+    │   │       └─→ Phase 8: git-pr → {worktree, pr_url, pr_number}
     │   │
-    │   ├─→ Step 3a: Get PR URL (main context)
+    │   ├─→ Step 3: PR URL から (main context)
     │   │       └─→ gh pr view --json url --jq .url
     │   │
-    │   └─→ Step 4a: Task subagent → pr-iterate (independent context)
+    │   └─→ Step 4: Task subagent → pr-iterate (independent context)
     │           ├─→ Review → Fix → Push → Repeat
-    │           └── Returns: {status, iterations}
+    │           └─→ {status: lgtm | max_reached, iterations}
     │
-    └─→ [Parallel Mode]
-        ├─→ Step 2b: dev-decompose (full, --resume if dry-run ran)
-        │       ├─→ Identify affected files
-        │       ├─→ Build dependency graph
-        │       ├─→ Split into subtasks (file boundary)
-        │       ├─→ Generate shared contract (interfaces/types)
-        │       ├─→ Create contract branch via Agent(dev-contract-worker, isolation:worktree)
-        │       ├─→ Dispatch N dev-kickoff-worker subagents
-        │       │     (isolation:worktree, base: contract branch)
-        │       └─→ Generate flow.json (populates subtask.branch)
+    └─→ [Child-Split Mode]
+        ├─→ Step 2: dev-decompose --child-split
+        │       ├─→ Read parent analysis
+        │       ├─→ Propose children + batches
+        │       ├─→ Create integration branch (integration-branch.sh create)
+        │       ├─→ Create child issues (gh issue create × N)
+        │       └─→ Write flow.json v2
         │
-        ├─→ Step 3b: Check decomposition
-        │       └─→ subtask_count verified > 1
+        ├─→ Step 3: run-batch-loop.sh
+        │       For each batch:
+        │       ├─→ serial:   children を順次 dev-flow --force-single → draft child PR
+        │       │              → auto-merge-child.sh で integration branch に merge
+        │       └─→ parallel: 同じことを並列起動
         │
-        ├─→ Step 4b: Batch scheduling (depends_on graph)
-        │       ├─→ Batch 1: [task1, task3] (independent) ── parallel
-        │       │       ├─→ dev-kickoff --task-id task1 (Phase 3-5 only)
-        │       │       └─→ dev-kickoff --task-id task3 (Phase 3-5 only)
-        │       └─→ Batch 2: [task2] (depends on task1) ── after batch 1
-        │               └─→ dev-kickoff --task-id task2 (Phase 3-5 only)
+        ├─→ Step 4: dev-integrate (v2)
+        │       ├─→ Verify all children completed
+        │       ├─→ Run type check on integration branch
+        │       └─→ Run dev-validate
         │
-        ├─→ Step 5b: Aggregate results
-        │       └─→ Read kickoff.json → update flow.json (actual_files_changed)
+        ├─→ Step 5: git-pr (final, non-draft)
+        │       └─→ integration branch → dev/main PR
         │
-        ├─→ Step 6b: dev-integrate
-        │       ├─→ Check drift (planned vs actual files)
-        │       ├─→ Spawn Agent(dev-kickoff-worker, isolation:worktree, mode:merge)
-        │       │     (worker runs merge-subtasks.sh + type check + dev-validate
-        │       │      inside its isolated worktree and returns merge_results)
-        │       └─→ Transcribe worker JSON into flow.json.integration
-        │
-        ├─→ Step 7b: git-pr (from merge worktree)
-        │
-        └─→ Step 8b: pr-iterate (review loop)
+        └─→ Step 6: pr-iterate
+                └─→ LGTM or max iterations
 ```
 
-## State Flow
+## Context Optimization
 
-### State Files
+Subagents (dev-kickoff, pr-iterate) run via Task with `mode: "auto"` to keep
+the main dev-flow context lean. The main context only holds:
 
-| File | Location | Mode | Purpose |
-|------|----------|------|---------|
-| kickoff.json | `$WORKTREE/.claude/kickoff.json` | Single | Phase tracking, PR info |
-| iterate.json | `$WORKTREE/.claude/iterate.json` | Both | Iteration count, review status |
-| flow.json | `$WORKTREE_BASE/.claude/flow.json` | Parallel | Overall flow state, subtask tracking |
-| kickoff.json (N) | `$SUBTASK_WT/.claude/kickoff.json` | Parallel | Per-subtask phase state |
+- Mode selection state
+- Subagent return values (JSON snippets)
+- Optional flow.json read (for child-split state recovery)
 
-### Single Mode Phase Progression
+## Error Handling Matrix
 
-```
-1_prepare → 2_analyze → 3_implement → 4_validate → 5_commit → 6_pr → completed
-```
+| Step | Failure Mode | Action |
+|------|--------------|--------|
+| 1 (analyze) | gh / network error | retry once, then abort |
+| 2 single (kickoff) | Subagent returns `failed` | journal failure, abort |
+| 2 child-split (decompose) | gh issue create rate limit / network | abort with manual recovery hint |
+| 3 child-split (batch loop) | child dev-flow returns failed | record in batch-state.json; default continues all batches, `--fail-fast` skips subsequent batches after first failure |
+| 4 child-split (integrate) | type check / validate fail | abort, surface integration branch state |
+| 5 (git-pr) | gh failure | retry once, manual PR command on second failure |
+| 6 (pr-iterate) | max iterations | report status, do not error |
 
-### Parallel Mode Status Progression
-
-```
-analyzing → decomposing → implementing → integrating → pr → iterating → completed
-```
-
-## Single Mode Details
-
-### Step 2a: dev-kickoff (Task Subagent)
-
-dev-kickoff runs as a Task subagent with its own independent context. The main dev-flow context only holds the Task invocation prompt and the returned result JSON. This prevents dev-kickoff's internal turns (up to 50) from accumulating in the main context.
-
-The orchestrator handles 6 phases internally. See [dev-kickoff/SKILL.md](../../dev-kickoff/SKILL.md).
-
-#### Task Invocation
-
-The Task tool is used to spawn a subagent that executes `Skill: dev-kickoff`. The subagent returns a structured JSON result containing the worktree path and PR information.
-
-#### Completion Signal
-
-When Phase 6 (PR creation) completes, kickoff.json is updated with:
-- `pr.number`: PR number
-- `pr.url`: Full PR URL
-- `next_action`: "pr-iterate"
-- `current_phase`: "completed"
-
-The subagent returns: `{"status": "completed", "worktree": "<path>", "pr_url": "<url>", "pr_number": <number>}`
-
-#### Error Signal
-
-On failure, the subagent returns: `{"status": "failed", "error": "<message>", "phase": "<failed_phase>"}`
-
-### Step 3a: Get PR URL
-
-```bash
-# Run from worktree returned by Step 2a subagent
-cd $WORKTREE && gh pr view --json url --jq .url
-```
-
-### Step 4a: pr-iterate (Task Subagent)
-
-pr-iterate runs as a Task subagent with its own independent context. This prevents the review-fix loop iterations from accumulating in the main dev-flow context.
-
-Handles the review-fix-push loop. See [pr-iterate/SKILL.md](../../pr-iterate/SKILL.md).
-
-#### Task Invocation
-
-The Task tool is used to spawn a subagent that executes `Skill: pr-iterate`. The subagent returns a structured JSON result containing the final status and iteration count.
-
-#### Result Signal
-
-- LGTM: `{"status": "lgtm", "iterations": <count>}`
-- Max reached: `{"status": "max_reached", "iterations": <count>}`
-- Failure: `{"status": "failed", "error": "<message>"}`
-
-## Parallel Mode Details
-
-### Step 0: Issue Analysis (Always)
+## Mode Selection Logic
 
 ```
-Skill: dev-issue-analyze $ISSUE --depth standard
+if --force-single and --child-split:
+    error("Cannot specify both --force-single and --child-split")
+elif --force-parallel or --parallel:
+    error("--force-parallel / --parallel is removed in v2; use --child-split")
+elif --child-split:
+    mode = "child-split"
+else:
+    mode = "single"  # default
 ```
 
-Provides context for dry-run decomposition assessment and for both modes.
-
-### Step 1: Mode Decision
-
-Auto-detect uses `dev-decompose --dry-run` to assess complexity based on actual codebase file dependencies. See [Decomposition Guide](../../dev-decompose/references/decomposition-guide.md#when-to-fall-back-to-single-mode) for criteria.
-
-### Step 2b: Decomposition
-
-```
-Skill: dev-decompose $ISSUE --resume $DRY_RUN_RESULT --base $BASE --env-mode $ENV_MODE
-```
-
-If `--force-parallel` (no dry-run), run full:
-```
-Skill: dev-decompose $ISSUE --base $BASE --env-mode $ENV_MODE
-```
-
-Creates:
-- Contract branch: `feature/issue-{N}-contract`
-- Subtask worktrees: `feature-issue-{N}-task1`, `feature-issue-{N}-task2`, ...
-- flow.json with subtask definitions
-
-### Step 4b: Parallel Execution
-
-Launch subtasks via Task tool in dependency-ordered batches:
-
-```
-# Batch computation:
-# 1. Find subtasks with empty depends_on → Batch 1
-# 2. After Batch 1 completes, find subtasks whose deps are all done → Batch 2
-# 3. Repeat until all subtasks scheduled
-
-# Each subtask invocation:
-Skill: dev-kickoff $ISSUE \
-  --worktree $SUBTASK_WORKTREE \
-  --task-id $TASK_ID \
-  --flow-state $FLOW_STATE \
-  --strategy $STRATEGY
-```
-
-In `--task-id` mode, dev-kickoff only executes:
-- Phase 3: implement (scoped to subtask files/checklist)
-- Phase 4: validate
-- Phase 5: commit (+ records actual_files_changed)
-
-### Step 5b: Result Aggregation
-
-For each completed subtask:
-1. Read `actual_files_changed` from subtask's kickoff.json
-2. Update flow.json via `flow-update.sh`
-3. Check for failures (any subtask status == "failed" → abort)
-
-### Step 6b: Integration
-
-```
-Skill: dev-integrate --flow-state $FLOW_STATE
-```
-
-See [dev-integrate/SKILL.md](../../dev-integrate/SKILL.md).
-
-### Step 7b: PR Creation
-
-```
-Skill: git-pr $ISSUE --base $BASE --worktree $MERGE_WORKTREE
-```
-
-PR is created from the merge worktree containing all integrated changes.
-
-### Step 8b: PR Iteration
-
-```
-Skill: pr-iterate $PR_URL --max-iterations $MAX
-```
-
-Same as single mode.
-
-## Recovery After Auto-Compact
-
-### Single Mode Recovery
-
-1. **Check State**
-   ```bash
-   $SKILLS_DIR/dev-flow/scripts/flow-status.sh --worktree $PATH
-   ```
-2. Follow `next_action` from output
-
-### Parallel Mode Recovery
-
-1. **Check flow.json**
-   ```bash
-   $SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
-   ```
-2. Check `status` field for current stage
-3. Check `subtasks[].status` for per-task progress
-4. Resume from current stage
-
-## Error Handling
-
-| Scenario | Action |
-|----------|--------|
-| Dry-run fails | Fall back to single mode (safe default) |
-| Phase fails in kickoff | kickoff.json records error, stops |
-| Subtask fails in parallel | flow.json records, abort remaining |
-| PR creation fails | Manual `gh pr create`, then update state |
-| pr-iterate fails | Check iterate.json, retry or manual fix |
-| Merge conflict | dev-integrate attempts auto-resolve |
-| Type check fails | Report errors, attempt fix |
-| State file missing | Cannot recover, start fresh |
-
-## Debugging
+## Recovery
 
 ### Single Mode
 
 ```bash
-cat $WORKTREE/.claude/kickoff.json | jq '.'
-cat $WORKTREE/.claude/kickoff.json | jq '.current_phase, .phases'
+$SKILLS_DIR/dev-flow/scripts/flow-status.sh --worktree $WORKTREE
 ```
 
-### Parallel Mode
+Reads `$WORKTREE/.claude/kickoff.json` to determine which dev-kickoff phase
+completed last.
+
+### Child-Split Mode
 
 ```bash
-# Overall status
-cat $FLOW_STATE | jq '{status, subtasks: [.subtasks[] | {id, status}]}'
-
-# Specific subtask
-cat $FLOW_STATE | jq '.subtasks[] | select(.id == "task1")'
-
-# Integration results
-cat $FLOW_STATE | jq '.integration'
-
-# Per-subtask kickoff state
-cat $SUBTASK_WT/.claude/kickoff.json | jq '.current_phase'
+$SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
 ```
 
-## Integration Points
+Then resume the batch loop with `--batch-from N`:
 
-### With dev-kickoff
-- Single mode: dev-flow launches dev-kickoff as Task subagent (independent context)
-- Parallel mode: dev-flow launches multiple dev-kickoff instances via Task tool
-- kickoff.json is the per-task handoff point
-- In single mode, the Task subagent returns `{status, worktree, pr_url, pr_number}` to dev-flow
+```bash
+$SKILLS_DIR/_shared/scripts/run-batch-loop.sh \
+  --batches-json $BATCHES_JSON \
+  --issue-runner "..." \
+  --batch-from $LAST_COMPLETED_BATCH+1 \
+  --state-file ...
+```
 
-### With dev-decompose
-- Auto-detect: dev-flow calls `dev-decompose --dry-run` for mode assessment
-- Parallel mode: dev-flow calls `dev-decompose --resume` (or full) for actual decomposition
-- flow.json is the handoff point (contains subtask definitions)
+## Why two modes instead of auto-detect
 
-### With dev-integrate
-- dev-flow calls dev-integrate after all subtasks complete
-- flow.json is used for merge order and drift detection
-- Merge worktree is the output
+v1 had `dev-decompose --dry-run` deciding between single and parallel. This
+caused:
 
-### With pr-iterate
-- Single mode: dev-flow launches pr-iterate as Task subagent (independent context)
-- Parallel mode: dev-flow extracts PR URL from flow.json, passes to pr-iterate (Skill call)
-- pr-iterate creates its own iterate.json
-- In single mode, the Task subagent returns `{status, iterations}` to dev-flow
+- 30%+ wasted dev-decompose runs that ultimately fell back to single
+- Subtle false-positives where dry-run said "ready for parallel" but the
+  actual decomposition was 1 subtask (= single anyway)
+- User confusion about what mode would actually run
 
-### With GitHub CLI
-- `gh pr view` for PR status
-- `gh pr checks` for CI status
-- `gh pr merge` - User performs manually after LGTM
+v2 makes the choice explicit. If you're unsure, default to `--force-single`
+(it's the safe default for ~80% of issues). Switch to `--child-split` only
+when the parent has explicit ordered decomposition.
 
-### With dev-flow-doctor (AC4/AC5 baseline 比較)
-
-dev-flow family の health monitoring と regression 検知に `dev-flow-doctor` を併用する。
-
-- 30 日 window で snapshot を生成（`baseline-snapshot.sh`）し baseline と比較（`compare-baseline.sh`）
-- `tests/no-glue-errors.sh` が CI で実行され glue-related regression を検出
-- health score への penalty integration（最大 -15）
-
-詳細・snapshot / compare JSON schema・CI 運用パターン（template fallback / vacuous pass 注意事項）は
-[`dev-flow-doctor/references/baseline-comparison.md`](../../dev-flow-doctor/references/baseline-comparison.md) を参照。
+See parent issue #93 for the full rationale.

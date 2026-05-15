@@ -36,6 +36,10 @@ while [[ $# -gt 0 ]]; do
         --depth) DEPTH="$2"; shift 2 ;;
         --lang) LANG="$2"; shift 2 ;;
         --env-mode) ENV_MODE="$2"; shift 2 ;;
+        --task-id|--flow-state)
+            # Removed in v2 (no-backcompat). Parallel mode no longer exists.
+            die_json "Option '$1' was removed in v2. Use dev-flow --child-split for multi-PR coordination." 1
+            ;;
         -*)
             die_json "Unknown option: $1" 1
             ;;
