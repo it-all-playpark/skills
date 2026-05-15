@@ -130,7 +130,7 @@ BASELINE_FILE=<path> tests/no-glue-errors.sh
 3. `compare-baseline.sh` を呼び、exit code に応じて:
    - 0 → "OK: no glue-error regression detected" + exit 0
    - 1 → "FAIL: glue-error regression detected (baseline=X, current=Y)" + findings 列挙 + exit 1
-   - 2 → warning（corrupt / window mismatch）+ exit 0（back-compat）
+   - 2 → warning（corrupt / window mismatch）+ exit 0（graceful degradation）
 
 ## CI 運用パターン (AC5)
 

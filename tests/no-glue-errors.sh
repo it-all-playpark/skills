@@ -5,7 +5,7 @@
 # (with window taken from baseline.window — NOT hardcoded), compares against
 # BASELINE_FILE via compare-baseline.sh, and exits non-zero only when a real
 # regression is detected (compare exit 1). Corrupt baseline / window mismatch /
-# missing baseline → warning + exit 0 (back-compat).
+# missing baseline → warning + exit 0 (graceful degradation).
 #
 # Env:
 #   BASELINE_FILE     Path to baseline snapshot JSON.
@@ -39,7 +39,7 @@ if [[ ! -f "$BASELINE_FILE" ]]; then
     echo "WARNING: baseline file not found at $BASELINE_FILE; falling back to template $TEMPLATE_FALLBACK"
     BASELINE_FILE="$TEMPLATE_FALLBACK"
   else
-    echo "WARNING: baseline file not found at $BASELINE_FILE and no template fallback available; skipping regression check (exit 0, back-compat)"
+    echo "WARNING: baseline file not found at $BASELINE_FILE and no template fallback available; skipping regression check (exit 0, graceful degradation)"
     echo "        Regenerate via: ./dev-flow-doctor/scripts/run-diagnostics.sh --update-baseline $DEFAULT_BASELINE"
     exit 0
   fi
@@ -104,7 +104,7 @@ case "$COMPARE_RC" in
     ;;
   2)
     echo "WARNING: compare-baseline.sh returned exit 2 (corrupt baseline / window mismatch / IO error)"
-    echo "         baseline=$BASELINE_COUNT, current=$CURRENT_COUNT; skipping regression check (exit 0, back-compat)"
+    echo "         baseline=$BASELINE_COUNT, current=$CURRENT_COUNT; skipping regression check (exit 0, graceful degradation)"
     exit 0
     ;;
   *)

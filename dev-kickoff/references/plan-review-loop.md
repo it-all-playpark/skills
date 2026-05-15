@@ -2,7 +2,7 @@
 
 Phase 3 → Phase 3b は **evaluator-optimizer ループ**として最大 **3 iteration** 回る（Anthropic: Building effective agents 推奨パターン）。
 
-詳細フロー・Output JSON schema・reset コマンドは [`evaluate-retry.md`](evaluate-retry.md#plan-review-loop-phase-3b--evaluator-optimizer) を参照。本ドキュメントは dev-kickoff 側の運用ルール（ループ遷移・escalation・stuck detection・config・後方互換）をまとめる。
+詳細フロー・Output JSON schema・reset コマンドは [`evaluate-retry.md`](evaluate-retry.md#plan-review-loop-phase-3b--evaluator-optimizer) を参照。本ドキュメントは dev-kickoff 側の運用ルール（ループ遷移・escalation・stuck detection・config）をまとめる。
 
 ## ループ遷移（verdict ベース）
 
@@ -18,8 +18,7 @@ Phase 3b（dev-plan-review）の Output JSON schema は `{score, verdict, findin
 
 - **`max_iterations = 3`**（既定、`config.plan_review.max_iterations` で override 可）
 - 3 iteration で pass に達しない場合、**user escalate**:
-  - `kickoff.json` の `phases.3b_plan_review.termination.reason = "max_iterations"` を記録（issue #53 の統一 termination schema）
-  - 同時に legacy フィールド `escalated = true` / `escalation_reason = "max_iterations"` も書き込む（1 リリース backward-compat）
+  - `kickoff.json` の `phases.3b_plan_review.termination.reason = "max_iterations"` を記録（統一 termination schema）
   - Skill 出力に `⚠️ Plan did not converge after 3 iterations. Proceeding with last plan; please review manually.` を明示
   - 既定は warning 付きで Phase 4 に進行（ユーザー中断を妨げない）
 
@@ -39,13 +38,12 @@ ESCALATE=$(echo "$STUCK_RESULT" | jq -r '.escalate')
 STUCK_FINDINGS=$(echo "$STUCK_RESULT" | jq -c '.stuck_findings')
 
 if [[ "$ESCALATE" == "true" ]]; then
-  # iter 3 を待たず即 escalate — 統一 termination schema (issue #53) 経由で記録
+  # iter 3 を待たず即 escalate — 統一 termination schema 経由で記録
   $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
     --worktree "$WORKTREE" \
-    --termination-reason stuck \
-    --stuck-findings "$STUCK_FINDINGS"
+    --termination-reason stuck
   echo "⚠️ Plan-review loop stuck. Same finding persisted across iterations. Escalating to user."
-  echo "Stuck findings: $STUCK_FINDINGS"
+  # stuck_findings の詳細は termination.verdict_history から確認可能
   # proceed to Phase 4 with warning
 fi
 ```
@@ -53,8 +51,7 @@ fi
 **仕様**:
 - 入力: `plan-review-history.json`（canonical schema。不在・空・破損いずれも `escalate: false` で exit 0）
 - 出力: `{escalate, current_iteration, stuck_findings, checked_severities}`
-- severity threshold: default `major` 以上（`--min-severity` で override 可能）
-- 後方互換: 旧 severity `blocking` は `major` に読み替え
+- severity threshold: default `major` 以上（`--min-severity` で override 可能）。`critical` / `major` / `minor` のみ受理
 - `topic` が fingerprint として働くため、dev-plan-review は**同じ問題には同じ topic 文字列**を使う運用（dev-plan-review SKILL.md に明記済み）
 
 ## Feedback 受け渡し
@@ -93,14 +90,6 @@ fi
 ```
 
 - `max_diff_ratio`: iteration > 1 の `dev-plan-impl` で前回 plan と今回 plan の行差分比が超えたら warning（`check-diff-scale.sh`）。default 0.5。
-
-## 後方互換
-
-旧 schema（`verdict: "fail"`, `severity: "blocking" | "non-blocking"`）を返す古い dev-plan-review 実装がある場合は次のように読み替える:
-
-- `fail` → `revise`（critical 相当の finding がある場合は `block`）
-- `blocking` → `major`（critical 級は `critical` に昇格）
-- `non-blocking` → `minor`
 
 ## Fork failure
 

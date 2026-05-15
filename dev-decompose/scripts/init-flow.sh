@@ -141,6 +141,7 @@ jq -n \
         issue: $issue,
         status: $status,
         subtasks: [],
+        shared_findings: [],
         contract: {
             files: [],
             branch: $contract_branch

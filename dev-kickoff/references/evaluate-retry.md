@@ -210,7 +210,7 @@ detect-stuck-findings.py --history <plan-review-history.json> [--min-severity cr
 
 1. `current_iteration = len(history)`
 2. If `current_iteration < 2` -> `escalate: false`
-3. For the last two iterations, build fingerprint sets `{(dimension, topic)}` from findings whose severity is `>= min_severity` (default `major`). Legacy `blocking` aliases to `major`; `non-blocking` aliases to `minor`.
+3. For the last two iterations, build fingerprint sets `{(dimension, topic)}` from findings whose severity is `>= min_severity` (default `major`).
 4. `stuck = prev_keys & curr_keys`
 5. `escalate = bool(stuck)`
 
@@ -220,17 +220,12 @@ detect-stuck-findings.py --history <plan-review-history.json> [--min-severity cr
 STUCK_RESULT=$($SKILLS_DIR/_shared/scripts/detect-stuck-findings.py \
   --history "$WORKTREE/.claude/plan-review-history.json")
 if [[ "$(echo "$STUCK_RESULT" | jq -r .escalate)" == "true" ]]; then
-  STUCK=$(echo "$STUCK_RESULT" | jq -c .stuck_findings)
-  # New unified termination schema (issue #53) — also mirrors legacy escalation fields
+  # Unified termination schema (issue #53)
   $SKILLS_DIR/dev-kickoff/scripts/update-phase.sh 3b_plan_review done \
     --worktree "$WORKTREE" \
-    --termination-reason stuck \
-    --stuck-findings "$STUCK"
+    --termination-reason stuck
 fi
 ```
-
-> `--escalated` / `--escalation-reason` を直接指定する旧 API は後方互換のため残るが、
-> 新規利用は `--termination-reason` に移行する（v3.2.0 の deprecation、v3.3.0 で旧 API 削除予定）。
 
 > 参考: 以前は `references/evaluate-retry.md` に下記の擬似 Python コードを載せていた。現在は上記スクリプトが同等ロジックを実装している。
 >
@@ -284,11 +279,3 @@ fi
 ```
 
 - `max_diff_ratio`: iteration > 1 で dev-plan-impl が書き直した plan と前回 plan の差分比率が超えたら warning（`dev-plan-impl/scripts/check-diff-scale.sh`）。default 0.5。非数値を入れると起動時にエラーで fail する。
-
-### 後方互換
-
-旧 schema を返す古い dev-plan-review 実装が混じる場合の読み替え:
-
-- `verdict: "fail"` → `revise`（critical 級 finding があれば `block` に昇格）
-- `severity: "blocking"` → `major`（致命度に応じて `critical`）
-- `severity: "non-blocking"` → `minor`

@@ -133,7 +133,8 @@ class TestDetectStuckFindings(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertFalse(result["escalate"])
 
-    def test_legacy_blocking_severity_treated_as_major(self):
+    def test_unknown_severity_excluded(self):
+        """Unknown severity values (including removed aliases like 'blocking') are not fingerprinted."""
         self.assert_script_exists()
         finding = {"severity": "blocking", "dimension": "edge_cases", "topic": "Empty input"}
         history = [
@@ -144,8 +145,9 @@ class TestDetectStuckFindings(unittest.TestCase):
         proc = run_script(path)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertTrue(result["escalate"])
-        self.assertEqual(result["stuck_findings"][0]["topic"], "Empty input")
+        # "blocking" is no longer aliased to "major" — unknown severity is excluded from fingerprint
+        self.assertFalse(result["escalate"])
+        self.assertEqual(result["stuck_findings"], [])
 
     def test_critical_finding_escalates(self):
         self.assert_script_exists()

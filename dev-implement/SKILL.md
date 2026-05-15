@@ -148,7 +148,7 @@ $SKILLS_DIR/dev-kickoff/scripts/append-progress.sh \
 - `feature_list[i].id` と `desc` は **書き換え禁止**。`update-feature.sh` は `status` のみ変更する。
 - `Edit` ツールで kickoff.json の `feature_list` を直接書き換えない。必ずスクリプトを使う。
 - `progress_log` は append-only。既存エントリに触れない。
-- 後方互換: `feature_list` が未定義 or 空の場合（standalone 実行時など）はスキップして通常実装を続行する。
+- Standalone モード: `feature_list` が未定義 or 空の場合（standalone 実行 / impl-plan.md 入力のみで起動した場合）はスキップして通常実装を続行する。
 
 ### Step 5: Validate
 

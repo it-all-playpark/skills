@@ -35,23 +35,7 @@ make_flow() {
     {"id": "task2", "scope": "B", "files": ["b.ts"], "status": "completed", "checklist": [{"item":"x","done":true}]},
     {"id": "task3", "scope": "C", "files": ["c.ts"], "status": "completed", "checklist": [{"item":"x","done":true}]}
   ],
-  "config": {"strategy": "tdd", "depth": "standard", "lang": "ja", "base_branch": "dev", "env_mode": "hardlink"}
-}
-JSON
-}
-
-make_legacy_flow() {
-    # No shared_findings field at all, missing optional fields.
-    local path="$1"
-    cat > "$path" <<'JSON'
-{
-  "version": "1.0.0",
-  "issue": 99,
-  "status": "implementing",
-  "subtasks": [
-    {"id": "task1", "scope": "A", "files": ["a.ts"], "status": "completed", "checklist": [{"item":"x","done":true}]},
-    {"id": "task2", "scope": "B", "files": ["b.ts"], "status": "completed", "checklist": [{"item":"x","done":true}]}
-  ],
+  "shared_findings": [],
   "config": {"strategy": "tdd", "depth": "standard", "lang": "ja", "base_branch": "dev", "env_mode": "hardlink"}
 }
 JSON
@@ -109,20 +93,6 @@ if [[ "$(echo "$UNACK_T2_AFTER" | jq 'length')" == "0" ]] && [[ "$ACKED_BY" == "
     pass "ack-semantics"
 else
     fail "ack-semantics" "unack=$(echo "$UNACK_T2_AFTER" | jq 'length') acked_by=$ACKED_BY"
-fi
-
-# ---------- Test 6: backward-compat ----------
-T=$TMP_ROOT/t6; mkdir -p "$T"; FLOW=$T/flow.json; make_legacy_flow "$FLOW"
-LEGACY_READ=$("$READ_SH" --flow-state "$FLOW")
-if [[ "$(echo "$LEGACY_READ" | jq 'length')" != "0" ]]; then
-    fail "backward-compat-read" "legacy flow should return []"
-else
-    "$APPEND_SH" --flow-state "$FLOW" --task-id task1 --category dependency --title "x" --description "x" >/dev/null
-    if [[ "$(jq '.shared_findings | length' "$FLOW")" == "1" ]]; then
-        pass "backward-compat"
-    else
-        fail "backward-compat" "append should initialize the field"
-    fi
 fi
 
 # ---------- Test 7: integration-check-warning ----------
