@@ -95,9 +95,9 @@ else
   fail "recorded_at is populated" "got: $RECORDED"
 fi
 
-# converged should NOT set escalated=true
-ESCALATED=$(jq -r '.phases["3b_plan_review"].escalated // false' "$STATE")
-assert_eq "converged: escalated = false" "false" "$ESCALATED"
+# converged should NOT write escalated field at all
+ESCALATED=$(jq -r '.phases["3b_plan_review"].escalated' "$STATE")
+assert_eq "converged: escalated not written (null)" "null" "$ESCALATED"
 
 # ----------------------------------------------------------------------------
 # Test 3: append-verdict grows history and updates final_iteration
@@ -122,9 +122,9 @@ LAST_VERDICT=$(jq -r '.phases["3b_plan_review"].termination.verdict_history[-1].
 assert_eq "last verdict = pass" "pass" "$LAST_VERDICT"
 
 # ----------------------------------------------------------------------------
-# Test 4: stuck reason writes legacy escalation fields
+# Test 4: stuck reason records only termination block (no legacy fields)
 # ----------------------------------------------------------------------------
-printf '\nTest 4: stuck termination writes legacy fields\n'
+printf '\nTest 4: stuck termination records only termination block\n'
 WT=$(make_worktree wt3)
 "$SCRIPT" 3b_plan_review stuck \
   --worktree "$WT" \
@@ -134,14 +134,15 @@ WT=$(make_worktree wt3)
 STATE="$WT/.claude/kickoff.json"
 REASON=$(jq -r '.phases["3b_plan_review"].termination.reason' "$STATE")
 assert_eq "termination.reason = stuck" "stuck" "$REASON"
+FINAL_VERDICT_STUCK=$(jq -r '.phases["3b_plan_review"].termination.final_verdict' "$STATE")
+assert_eq "termination.final_verdict = revise" "revise" "$FINAL_VERDICT_STUCK"
+LAST_HIST_SCORE=$(jq -r '.phases["3b_plan_review"].termination.verdict_history[-1].score' "$STATE")
+assert_eq "last verdict_history score = 69" "69" "$LAST_HIST_SCORE"
+# Legacy fields must NOT be written
 ESC=$(jq -r '.phases["3b_plan_review"].escalated' "$STATE")
-assert_eq "legacy escalated = true" "true" "$ESC"
+assert_eq "stuck: escalated not written (null)" "null" "$ESC"
 ESC_REASON=$(jq -r '.phases["3b_plan_review"].escalation_reason' "$STATE")
-assert_eq "legacy escalation_reason = stuck" "stuck" "$ESC_REASON"
-LAST_VERDICT_LEGACY=$(jq -r '.phases["3b_plan_review"].last_verdict' "$STATE")
-assert_eq "legacy last_verdict = revise" "revise" "$LAST_VERDICT_LEGACY"
-LAST_SCORE_LEGACY=$(jq -r '.phases["3b_plan_review"].last_score' "$STATE")
-assert_eq "legacy last_score = 69" "69" "$LAST_SCORE_LEGACY"
+assert_eq "stuck: escalation_reason not written (null)" "null" "$ESC_REASON"
 
 # ----------------------------------------------------------------------------
 # Test 5: Phase 6 termination with feedback_target in verdict_history
@@ -166,9 +167,9 @@ HIST_LEN=$(jq -r '.phases["6_evaluate"].termination.verdict_history | length' "$
 assert_eq "phase 6 verdict_history length = 5" "5" "$HIST_LEN"
 FIRST_FT=$(jq -r '.phases["6_evaluate"].termination.verdict_history[0].feedback_target' "$STATE")
 assert_eq "first iteration feedback_target = design" "design" "$FIRST_FT"
-# current_iteration (legacy) should be synced as well
+# current_iteration legacy mirror must NOT be written by termination-record.sh
 CUR_ITER=$(jq -r '.phases["6_evaluate"].current_iteration' "$STATE")
-assert_eq "legacy current_iteration = 5" "5" "$CUR_ITER"
+assert_eq "phase 6 current_iteration not written by termination-record (stays init value 0)" "0" "$CUR_ITER"
 
 # ----------------------------------------------------------------------------
 # Test 6: invalid reason → exit non-zero

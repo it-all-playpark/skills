@@ -164,31 +164,9 @@
    `verdict_history` は append-only なので、同じ iteration を再度 append しないよう
    呼び出し側が重複排除する責任を持つ。
 
-### 後方互換（1 リリース間維持、v3.2.0 → v3.3.0 で削除予定）
+## Standalone モード時のオプショナル動作
 
-既存の Phase 3b escalation フィールドは **deprecated** だが termination block と並行して
-書き込まれる:
-
-| 旧フィールド | 新しい位置 | deprecation |
-|------------|-----------|-------------|
-| `phases.3b_plan_review.escalated` (bool) | `termination.reason != "converged"` で true | deprecated、v3.3.0 で削除予定 |
-| `phases.3b_plan_review.escalation_reason` | `termination.reason` | 同上 |
-| `phases.3b_plan_review.stuck_findings` | `termination.reason == "stuck"` の補足情報 | 同上、termination block の `verdict_history` では表現しない |
-| `phases.3b_plan_review.last_verdict` | `termination.final_verdict` | 同上 |
-| `phases.3b_plan_review.last_score` | 最後の `verdict_history[].score` | 同上 |
-| `phases.6_evaluate.iterations[]` | `termination.verdict_history` | `iterations[]` は eval_result 全文を残すため継続維持 |
-| `phases.6_evaluate.current_iteration` | `termination.final_iteration` | 継続維持（状態機械の読み取りに使用） |
-
-読み取り側は **termination block を優先** し、存在しなければ旧フィールドへフォールバックする。
-
-## 後方互換
-
-- 既存の kickoff.json に `feature_list` / `progress_log` が無い場合は **空配列扱い**。
-- 読み取り側は必ず `// []` フォールバックを使う:
-  ```bash
-  jq '.feature_list // []' kickoff.json
-  jq '.progress_log // []' kickoff.json
-  ```
+- `feature_list` / `progress_log` が無い kickoff.json は **standalone 実行**（`dev-plan-impl` を経由しない直接起動）として扱う。`feature_list` が空または未定義の場合、`dev-implement` / `dev-validate` はスキップして通常処理を続行する。
 - `append-progress.sh` / `update-feature.sh` は、フィールド未定義の kickoff.json に対して自動的にフィールドを作成する。
 
 ## SessionStart hook 連携

@@ -6,8 +6,7 @@
 #   - phases.3b_plan_review (Phase 3 ⇄ 3b: dev-plan-impl ⇄ dev-plan-review)
 #   - phases.6_evaluate     (Phase 4-5 ⇄ 6: dev-implement/validate ⇄ dev-evaluate)
 #
-# Writes `phases[<phase>].termination` with the unified schema and
-# mirrors legacy fields for backward compatibility (deprecated, 1 release).
+# Writes `phases[<phase>].termination` using the unified schema.
 # See: dev-kickoff/references/kickoff-schema.md `termination` block.
 #
 # Usage:
@@ -166,41 +165,6 @@ if [[ -n "$FINAL_VERDICT" ]]; then
       | .phases[$phase].termination.final_verdict = $final_verdict
     '
 fi
-
-# -----------------------------------------------------------------
-# Legacy / mirror fields (deprecated, 1 release backward-compat)
-# -----------------------------------------------------------------
-
-case "$PHASE" in
-    3b_plan_review)
-        # Mirror escalation state based on reason
-        if [[ "$REASON" == "converged" ]]; then
-            JQ_FILTER+='
-              | .phases[$phase].escalated = false
-            '
-        else
-            JQ_FILTER+='
-              | .phases[$phase].escalated = true
-              | .phases[$phase].escalation_reason = $reason
-            '
-        fi
-        # Mirror last_verdict / last_score from the most recent verdict if present
-        JQ_FILTER+='
-          | (.phases[$phase].termination.verdict_history | last) as $lv
-          | if $lv then
-              (.phases[$phase].last_verdict = (if $lv.verdict then $lv.verdict else (.phases[$phase].last_verdict // null) end))
-              | (.phases[$phase].last_score = (if $lv.score then $lv.score else (.phases[$phase].last_score // null) end))
-            else . end
-          | .phases[$phase].current_iteration = .phases[$phase].termination.final_iteration
-        '
-        ;;
-    6_evaluate)
-        # Mirror current_iteration (state machine reads it)
-        JQ_FILTER+='
-          | .phases[$phase].current_iteration = .phases[$phase].termination.final_iteration
-        '
-        ;;
-esac
 
 # Apply update atomically
 TMP_FILE=$(mktemp)

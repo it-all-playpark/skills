@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # update-phase.sh - Update phase status in kickoff state
 # Usage: update-phase.sh <phase> <status> [--result "..."] [--error "..."] [--worktree PATH] [--reset-to PHASE] [--eval-result JSON]
-#        [--escalated true|false] [--escalation-reason max_iterations|stuck|fork_failure]
-#        [--stuck-findings JSON] [--review-iteration N] [--review-verdict pass|revise|block] [--review-score N]
 #        [--termination-reason converged|max_iterations|stuck|fork_failure]
 #        [--termination-final-verdict V] [--termination-verdict-history JSON] [--append-verdict JSON]
 
@@ -23,12 +21,6 @@ PR_URL=""
 PR_NUMBER=""
 RESET_TO=""
 EVAL_RESULT=""
-ESCALATED=""
-ESCALATION_REASON=""
-STUCK_FINDINGS=""
-REVIEW_ITERATION=""
-REVIEW_VERDICT=""
-REVIEW_SCORE=""
 TERMINATION_REASON=""
 TERMINATION_FINAL_VERDICT=""
 TERMINATION_VERDICT_HISTORY=""
@@ -49,12 +41,6 @@ while [[ $# -gt 0 ]]; do
         --pr-number) PR_NUMBER="$2"; shift 2 ;;
         --reset-to) RESET_TO="$2"; shift 2 ;;
         --eval-result) EVAL_RESULT="$2"; shift 2 ;;
-        --escalated) ESCALATED="$2"; shift 2 ;;
-        --escalation-reason) ESCALATION_REASON="$2"; shift 2 ;;
-        --stuck-findings) STUCK_FINDINGS="$2"; shift 2 ;;
-        --review-iteration) REVIEW_ITERATION="$2"; shift 2 ;;
-        --review-verdict) REVIEW_VERDICT="$2"; shift 2 ;;
-        --review-score) REVIEW_SCORE="$2"; shift 2 ;;
         --termination-reason) TERMINATION_REASON="$2"; shift 2 ;;
         --termination-final-verdict) TERMINATION_FINAL_VERDICT="$2"; shift 2 ;;
         --termination-verdict-history) TERMINATION_VERDICT_HISTORY="$2"; shift 2 ;;
@@ -192,58 +178,6 @@ if [[ -n "$EVAL_RESULT" ]]; then
     JQ_FILTER="$JQ_FILTER | .phases[\"6_evaluate\"].termination.final_iteration = .phases[\"6_evaluate\"].current_iteration"
 fi
 
-# Plan-Review Loop (Phase 3b) escalation / state fields
-if [[ -n "$ESCALATED" ]]; then
-    if [[ "$ESCALATED" != "true" && "$ESCALATED" != "false" ]]; then
-        die_json "--escalated must be 'true' or 'false'" 1
-    fi
-    JQ_ARGS+=(--argjson escalated "$ESCALATED")
-    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalated = \$escalated"
-fi
-
-if [[ -n "$ESCALATION_REASON" ]]; then
-    case "$ESCALATION_REASON" in
-        max_iterations|stuck|fork_failure) ;;
-        *) die_json "--escalation-reason must be one of: max_iterations, stuck, fork_failure" 1 ;;
-    esac
-    JQ_ARGS+=(--arg escalation_reason "$ESCALATION_REASON")
-    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalation_reason = \$escalation_reason"
-fi
-
-if [[ -n "$STUCK_FINDINGS" ]]; then
-    # Must be a JSON array
-    if ! echo "$STUCK_FINDINGS" | jq -e 'type == "array"' >/dev/null 2>&1; then
-        die_json "--stuck-findings must be a JSON array" 1
-    fi
-    JQ_ARGS+=(--argjson stuck_findings "$STUCK_FINDINGS")
-    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].stuck_findings = \$stuck_findings"
-fi
-
-if [[ -n "$REVIEW_ITERATION" ]]; then
-    if ! [[ "$REVIEW_ITERATION" =~ ^[0-9]+$ ]]; then
-        die_json "--review-iteration must be a non-negative integer" 1
-    fi
-    JQ_ARGS+=(--argjson review_iteration "$REVIEW_ITERATION")
-    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].current_iteration = \$review_iteration"
-fi
-
-if [[ -n "$REVIEW_VERDICT" ]]; then
-    case "$REVIEW_VERDICT" in
-        pass|revise|block) ;;
-        *) die_json "--review-verdict must be one of: pass, revise, block" 1 ;;
-    esac
-    JQ_ARGS+=(--arg review_verdict "$REVIEW_VERDICT")
-    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].last_verdict = \$review_verdict"
-fi
-
-if [[ -n "$REVIEW_SCORE" ]]; then
-    if ! [[ "$REVIEW_SCORE" =~ ^[0-9]+$ ]]; then
-        die_json "--review-score must be a non-negative integer" 1
-    fi
-    JQ_ARGS+=(--argjson review_score "$REVIEW_SCORE")
-    JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].last_score = \$review_score"
-fi
-
 # ----------------------------------------------------------------------------
 # Termination block (issue #53) — unified Generator-Verifier loop state
 # Only applies to 3b_plan_review and 6_evaluate phases.
@@ -289,16 +223,6 @@ if [[ -n "$TERMINATION_REASON" ]]; then
 
     # Sync final_iteration from verdict_history length
     JQ_FILTER="$JQ_FILTER | .phases[\$phase].termination.final_iteration = (.phases[\$phase].termination.verdict_history | length)"
-
-    # Legacy mirror (deprecated, 1 release): escalated / escalation_reason on Phase 3b
-    if [[ "$PHASE" == "3b_plan_review" ]]; then
-        if [[ "$TERMINATION_REASON" == "converged" ]]; then
-            JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalated = false"
-        else
-            JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalated = true"
-            JQ_FILTER="$JQ_FILTER | .phases[\"3b_plan_review\"].escalation_reason = \$termination_reason"
-        fi
-    fi
 fi
 
 if [[ -n "$RESET_TO" ]]; then
