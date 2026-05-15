@@ -114,12 +114,19 @@ jq '.batches' $FLOW_STATE > $BATCHES_JSON
 $SKILLS_DIR/_shared/scripts/run-batch-loop.sh \
   --batches-json $BATCHES_JSON \
   --issue-runner "Skill: dev-flow {issue} --force-single --base $INTEGRATION_BRANCH --lang ja" \
-  --on-success "$SKILLS_DIR/dev-flow/scripts/auto-merge-child.sh {issue} --base $INTEGRATION_BRANCH" \
-  --state-file $WORKTREE_BASE/.claude/batch-state.json
+  --on-success "$SKILLS_DIR/dev-flow/scripts/auto-merge-child.sh {issue} --base $INTEGRATION_BRANCH --flow-state $FLOW_STATE" \
+  --state-file $WORKTREE_BASE/.claude/batch-state.json \
+  --fail-fast
 ```
 
-`auto-merge-child.sh` runs `auto-merge-guard.sh` first; since base is
-`integration/issue-*`, the guard allows `gh pr merge --admin`.
+`--fail-fast` skips subsequent batches once any batch has a failed issue
+(recommended for layered dependencies like schema → API → E2E). Omit it when
+batches are loose-coupled.
+
+`auto-merge-child.sh` resolves the child's PR via flow.json `pr_number` or
+GitHub's authoritative Issue→PR link (`closedByPullRequestsReferences`), then
+runs `auto-merge-guard.sh`. Since base is `integration/issue-*`, the guard
+allows `gh pr merge --admin`.
 
 ## Step 4 (Child-Split): Integration
 

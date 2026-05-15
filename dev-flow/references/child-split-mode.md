@@ -61,18 +61,33 @@ For each child issue:
 1. `Skill: dev-flow <child> --force-single --base integration/issue-N-slug --lang ja`
    - This spawns dev-kickoff which creates a worktree, implements, and opens a **draft** child PR
    - The child PR base is the integration branch (NOT main/dev)
-2. `auto-merge-child.sh <child>` runs:
-   - `auto-merge-guard.sh --pr <child-pr>` → confirms base is `integration/issue-*` (allowed)
+2. `auto-merge-child.sh <child>` resolves the PR deterministically (no fuzzy search):
+   - First trusts `flow.json.children[].pr_number` if set
+   - Else queries GitHub's authoritative Issue→PR link (`closedByPullRequestsReferences`) — only OPEN PRs targeting the integration base
+   - Re-verifies state, base, and `closingIssuesReferences` matches the child issue before merging
+   - Then runs `auto-merge-guard.sh --pr <child-pr>` → confirms base is `integration/issue-*`
    - `gh pr merge <child-pr> --merge --admin --delete-branch`
    - `flow-update.sh child <child> --status completed --merged-at $NOW`
 
 ### Failure handling
 
 If a child fails:
-- `run-batch-loop.sh` records the failure but **continues with remaining batches if downstream batches don't depend on the failed one** (caller decides via `--on-failure`)
-- Default behavior: log failure, continue. Operator reviews `batch-state.json` after the run.
 
-For now, **fail-fast** is the default; downstream batches are not entered if the previous batch had any failure (caller passes `--on-failure "exit 1"` if strict mode is desired).
+- **Default**: `run-batch-loop.sh` logs the failure and **continues with remaining batches**. The final result aggregates per-issue status. Operator reviews `batch-state.json` after the run.
+- **`--fail-fast`**: pass `--fail-fast` to `run-batch-loop.sh`. Once any batch has at least one failed issue, all subsequent batches are skipped. In-flight parallel issues within the failing batch still complete (no mid-batch cancellation). Result includes `fail_fast_triggered: true`, `batches_skipped: N`, and per-skipped-issue entries with `status: "skipped"`.
+
+For child-split mode with strict layered dependencies (e.g. schema migration → API → E2E), **`--fail-fast` is recommended**: running API children after schema migration fails wastes time. Example:
+
+```bash
+$SKILLS_DIR/_shared/scripts/run-batch-loop.sh \
+  --batches-json $BATCHES_JSON \
+  --issue-runner "Skill: dev-flow {issue} --force-single --base $INTEGRATION_BRANCH --lang ja" \
+  --on-success "$SKILLS_DIR/dev-flow/scripts/auto-merge-child.sh {issue} --base $INTEGRATION_BRANCH --flow-state $FLOW_STATE" \
+  --state-file $WORKTREE_BASE/.claude/batch-state.json \
+  --fail-fast
+```
+
+For loose-coupled batches (independent endpoints all in one parallel batch), omit `--fail-fast` so that one bad endpoint doesn't block the rest.
 
 ## Step 4: Integration Validation
 

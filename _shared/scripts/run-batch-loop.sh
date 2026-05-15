@@ -9,7 +9,7 @@
 #   run-batch-loop.sh --batches-json PATH --issue-runner "CMD {issue}" \
 #     [--batch-from N] [--batch-to N] \
 #     [--on-success "CMD {issue}"] [--on-failure "CMD {issue}"] \
-#     [--max-parallel N] [--state-file PATH]
+#     [--max-parallel N] [--state-file PATH] [--fail-fast]
 #
 # Batch JSON schema (array of batches):
 #   [
@@ -21,12 +21,22 @@
 # The runner command uses `{issue}` as placeholder for the issue/child number
 # (substituted before each invocation).
 #
+# Failure handling:
+#   - Default: all batches run to completion regardless of intra-batch
+#     failures. Caller inspects `results[]` for per-issue state.
+#   - `--fail-fast`: after any batch has at least one failed issue, the
+#     current batch still completes (in-flight issues finish), but all
+#     remaining batches are skipped. The final status reflects partial /
+#     failed. In a parallel batch already-spawned issues are not cancelled.
+#
 # Returns JSON:
 #   {
 #     "status": "ok|partial|failed",
 #     "batches_processed": N,
+#     "batches_skipped": K,            # > 0 when --fail-fast triggered
 #     "issues_succeeded": M,
 #     "issues_failed": K,
+#     "fail_fast_triggered": true|false,
 #     "results": [
 #       {"batch": 1, "issue": 101, "status": "success|failed", "exit_code": 0, "duration_sec": 3}
 #     ]
@@ -51,6 +61,7 @@ BATCH_FROM=""
 BATCH_TO=""
 MAX_PARALLEL="0"  # 0 = unlimited
 STATE_FILE=""
+FAIL_FAST=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -62,8 +73,9 @@ while [[ $# -gt 0 ]]; do
         --batch-to) BATCH_TO="$2"; shift 2 ;;
         --max-parallel) MAX_PARALLEL="$2"; shift 2 ;;
         --state-file) STATE_FILE="$2"; shift 2 ;;
+        --fail-fast) FAIL_FAST=true; shift ;;
         -h|--help)
-            sed -n '2,40p' "$0"
+            sed -n '2,48p' "$0"
             exit 0
             ;;
         *) die_json "Unknown option: $1" 1 ;;
@@ -180,8 +192,10 @@ run_one_issue() {
 
 RESULTS="[]"
 BATCHES_PROCESSED=0
+BATCHES_SKIPPED=0
 ISSUES_SUCCEEDED=0
 ISSUES_FAILED=0
+FAIL_FAST_TRIGGERED=false
 
 for i in $(seq 0 $((FILTERED_COUNT - 1))); do
     BATCH_OBJ=$(echo "$FILTERED_BATCHES" | jq ".[$i]")
@@ -189,7 +203,22 @@ for i in $(seq 0 $((FILTERED_COUNT - 1))); do
     BATCH_MODE=$(echo "$BATCH_OBJ" | jq -r '.mode')
     CHILDREN=$(echo "$BATCH_OBJ" | jq -r '.children[]')
 
+    # Fail-fast: a previous batch has already failed — skip this batch.
+    if [[ "$FAIL_FAST" == true && "$FAIL_FAST_TRIGGERED" == true ]]; then
+        BATCHES_SKIPPED=$((BATCHES_SKIPPED + 1))
+        while IFS= read -r issue; do
+            [[ -z "$issue" ]] && continue
+            SKIP_RESULT=$(jq -n \
+                --argjson batch "$BATCH_NUM" \
+                --argjson issue "$issue" \
+                '{batch: $batch, issue: $issue, status: "skipped", exit_code: null, duration_sec: 0, reason: "fail-fast triggered by earlier batch"}')
+            RESULTS=$(echo "$RESULTS" | jq --argjson r "$SKIP_RESULT" '. += [$r]')
+        done <<< "$CHILDREN"
+        continue
+    fi
+
     BATCHES_PROCESSED=$((BATCHES_PROCESSED + 1))
+    BATCH_FAILED_COUNT=0
 
     if [[ "$BATCH_MODE" == "serial" ]]; then
         while IFS= read -r issue; do
@@ -203,11 +232,14 @@ for i in $(seq 0 $((FILTERED_COUNT - 1))); do
                 ISSUES_SUCCEEDED=$((ISSUES_SUCCEEDED + 1))
             else
                 ISSUES_FAILED=$((ISSUES_FAILED + 1))
+                BATCH_FAILED_COUNT=$((BATCH_FAILED_COUNT + 1))
             fi
         done <<< "$CHILDREN"
 
     elif [[ "$BATCH_MODE" == "parallel" ]]; then
-        # Spawn parallel children, optionally throttled by MAX_PARALLEL
+        # Spawn parallel children, optionally throttled by MAX_PARALLEL.
+        # NOTE: --fail-fast does NOT cancel in-flight parallel issues.
+        # Already-spawned subprocesses complete; only subsequent batches skip.
         PIDS=()
         ACTIVE=0
         while IFS= read -r issue; do
@@ -238,6 +270,7 @@ for i in $(seq 0 $((FILTERED_COUNT - 1))); do
                 ISSUES_SUCCEEDED=$((ISSUES_SUCCEEDED + 1))
             else
                 ISSUES_FAILED=$((ISSUES_FAILED + 1))
+                BATCH_FAILED_COUNT=$((BATCH_FAILED_COUNT + 1))
             fi
         done <<< "$CHILDREN"
 
@@ -245,14 +278,21 @@ for i in $(seq 0 $((FILTERED_COUNT - 1))); do
         die_json "Unknown batch mode '$BATCH_MODE' (must be 'serial' or 'parallel')" 1
     fi
 
+    # Trigger fail-fast for subsequent batches if this batch had any failure.
+    if [[ "$FAIL_FAST" == true && "$BATCH_FAILED_COUNT" -gt 0 ]]; then
+        FAIL_FAST_TRIGGERED=true
+    fi
+
     # Persist state after each batch (best-effort)
     if [[ -n "$STATE_FILE" ]]; then
         jq -n \
             --argjson processed "$BATCHES_PROCESSED" \
+            --argjson skipped "$BATCHES_SKIPPED" \
             --argjson succeeded "$ISSUES_SUCCEEDED" \
             --argjson failed "$ISSUES_FAILED" \
+            --argjson fail_fast_triggered "$FAIL_FAST_TRIGGERED" \
             --argjson results "$RESULTS" \
-            '{batches_processed: $processed, issues_succeeded: $succeeded, issues_failed: $failed, results: $results}' \
+            '{batches_processed: $processed, batches_skipped: $skipped, issues_succeeded: $succeeded, issues_failed: $failed, fail_fast_triggered: $fail_fast_triggered, results: $results}' \
             | write_state
     fi
 done
@@ -272,13 +312,17 @@ fi
 jq -n \
     --arg status "$OVERALL" \
     --argjson processed "$BATCHES_PROCESSED" \
+    --argjson skipped "$BATCHES_SKIPPED" \
     --argjson succeeded "$ISSUES_SUCCEEDED" \
     --argjson failed "$ISSUES_FAILED" \
+    --argjson fail_fast_triggered "$FAIL_FAST_TRIGGERED" \
     --argjson results "$RESULTS" \
     '{
         status: $status,
         batches_processed: $processed,
+        batches_skipped: $skipped,
         issues_succeeded: $succeeded,
         issues_failed: $failed,
+        fail_fast_triggered: $fail_fast_triggered,
         results: $results
     }'

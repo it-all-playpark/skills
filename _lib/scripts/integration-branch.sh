@@ -12,9 +12,12 @@
 #       slug is auto-derived from `gh issue view` title when unspecified.
 #       Output: {status: created|exists, branch, base, slug}
 #
-#   cleanup --issue N [--force]
+#   cleanup --issue N [--base BRANCH | --flow-state PATH] [--force]
 #       Delete the integration branch (local + remote). Refuses to delete if
-#       there are unmerged commits unless --force is given.
+#       the branch has commits unmerged into ALL of the candidate base
+#       branches. --base (or --flow-state's integration_branch.base) is
+#       checked first; otherwise origin/main, origin/dev, main, dev are tried.
+#       --force overrides the safety check.
 #       Output: {status: cleaned|skipped, branch, reason}
 #
 #   name    --issue N [--slug SLUG]
@@ -83,6 +86,7 @@ ISSUE=""
 BASE=""
 SLUG=""
 FORCE=false
+FLOW_STATE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -90,6 +94,7 @@ while [[ $# -gt 0 ]]; do
         --base) BASE="$2"; shift 2 ;;
         --slug) SLUG="$2"; shift 2 ;;
         --force) FORCE=true; shift ;;
+        --flow-state) FLOW_STATE="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,30p' "$0"
             exit 0
@@ -97,6 +102,13 @@ while [[ $# -gt 0 ]]; do
         *) die_json "Unknown option: $1" 1 ;;
     esac
 done
+
+# If --flow-state is given, derive --base from integration_branch.base when
+# the caller didn't pass it explicitly. This lets `cleanup` know which base
+# branch the integration branch was created from (authoritative source).
+if [[ -n "$FLOW_STATE" && -f "$FLOW_STATE" && -z "$BASE" ]]; then
+    BASE=$(jq -r '.integration_branch.base // empty' "$FLOW_STATE" 2>/dev/null || echo "")
+fi
 
 [[ -n "$ISSUE" ]] || die_json "--issue is required" 1
 [[ "$ISSUE" =~ ^[0-9]+$ ]] || die_json "--issue must be a positive integer" 1
@@ -199,21 +211,36 @@ cmd_cleanup() {
         return 0
     fi
 
-    # Safety check: refuse if there are unmerged commits relative to origin/main or origin/dev
+    # Safety check: refuse if there are unmerged commits relative to the
+    # recorded base (from --base / flow.json) or the conventional defaults.
+    # We require the branch to be merged into AT LEAST ONE of:
+    #   1. $BASE (if explicit / from flow.json), tried first
+    #   2. origin/main, origin/dev, main, dev (fallbacks)
+    # If none of them contains all of the branch's commits, refuse cleanup.
     if [[ "$existed_local" == true && "$FORCE" == false ]]; then
-        local upstream_unmerged=""
-        for target in origin/main origin/dev main dev; do
+        local candidate_bases=()
+        # Prefer the recorded base when provided
+        [[ -n "$BASE" ]] && candidate_bases+=("$BASE" "origin/$BASE")
+        candidate_bases+=("origin/main" "origin/dev" "main" "dev")
+
+        local fully_merged=false
+        local last_unmerged_msg=""
+        for target in "${candidate_bases[@]}"; do
             if git rev-parse --verify --quiet "$target" >/dev/null 2>&1; then
                 local count
                 count=$(git rev-list --count "$target..$branch" 2>/dev/null || echo "0")
-                if [[ "$count" -gt 0 ]]; then
-                    upstream_unmerged="$count commit(s) ahead of $target"
+                if [[ "$count" -eq 0 ]]; then
+                    fully_merged=true
                     break
+                else
+                    last_unmerged_msg="$count commit(s) ahead of $target"
                 fi
             fi
         done
-        if [[ -n "$upstream_unmerged" ]]; then
-            jq -n --arg branch "$branch" --arg reason "$upstream_unmerged; use --force to override" \
+
+        if [[ "$fully_merged" == false && -n "$last_unmerged_msg" ]]; then
+            jq -n --arg branch "$branch" \
+                --arg reason "$last_unmerged_msg (checked: ${candidate_bases[*]}); use --force to override" \
                 '{status: "skipped", branch: $branch, reason: $reason}'
             return 1
         fi

@@ -115,13 +115,6 @@ EOF
 )
 fi
 
-# Build gh pr create command
-GH_CMD="gh pr create --title \"$TITLE\" --base \"$BASE_BRANCH\" --head \"$BRANCH_NAME\" --assignee @me"
-
-if $DRAFT; then
-    GH_CMD="$GH_CMD --draft"
-fi
-
 # Create PR
 PR_URL=$(gh pr create \
     --title "$TITLE" \

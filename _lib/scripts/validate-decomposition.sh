@@ -67,8 +67,8 @@ for f in issue status integration_branch children batches config; do
 done
 
 ISSUE=$(jq -r '.issue // empty' "$FLOW_STATE")
-if ! [[ "$ISSUE" =~ ^[0-9]+$ ]]; then
-    ERRORS+=("Field 'issue' must be a positive integer (got: \"$ISSUE\")")
+if ! [[ "$ISSUE" =~ ^[1-9][0-9]*$ ]]; then
+    ERRORS+=("Field 'issue' must be a positive integer >= 1 (got: \"$ISSUE\")")
 fi
 
 # ---------------- integration_branch ----------------
@@ -90,11 +90,12 @@ if [[ "$CHILD_COUNT" -eq 0 ]]; then
     ERRORS+=("children array must have at least 1 entry")
 fi
 
-# Each child must have integer issue, non-empty slug+scope
+# Each child must have positive integer issue (>=1), non-empty slug+scope
 INVALID_CHILDREN=$(jq -r '
   .children[]? as $c |
   (
     if ($c.issue // null) == null or ($c.issue | type) != "number" then "child missing/invalid issue"
+    elif ($c.issue < 1) or (($c.issue | floor) != $c.issue) then "child issue \($c.issue) must be a positive integer >= 1"
     elif ($c.slug // "") == "" then "child #\($c.issue) missing slug"
     elif ($c.scope // "") == "" then "child #\($c.issue) missing scope"
     elif ($c.status | IN("pending","running","completed","failed") | not) then "child #\($c.issue) invalid status: \($c.status)"

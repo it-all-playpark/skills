@@ -116,3 +116,39 @@ EOF
     [ -f "$STATE" ]
     [[ "$(jq -r '.batches_processed' "$STATE")" = "3" ]]
 }
+
+@test "--fail-fast: default (off) processes all batches even with failures" {
+    # Batch 1 fails (issue 102), batch 2 and 3 still run.
+    run "$SCRIPT" --batches-json "$BATCHES_JSON" \
+        --issue-runner 'if [ "{issue}" = "102" ]; then exit 1; else exit 0; fi'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"batches_processed": 3'* ]]
+    [[ "$output" == *'"batches_skipped": 0'* ]]
+    [[ "$output" == *'"fail_fast_triggered": false'* ]]
+}
+
+@test "--fail-fast: skips subsequent batches after a batch has any failure" {
+    # Batch 1 has issue 102 failing → batch 2 and 3 should be skipped.
+    run "$SCRIPT" --batches-json "$BATCHES_JSON" \
+        --issue-runner 'if [ "{issue}" = "102" ]; then exit 1; else exit 0; fi' \
+        --fail-fast
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"batches_processed": 1'* ]]
+    [[ "$output" == *'"batches_skipped": 2'* ]]
+    [[ "$output" == *'"fail_fast_triggered": true'* ]]
+    # Issue 101 succeeded; issue 102 failed in batch 1
+    [[ "$output" == *'"issues_succeeded": 1'* ]]
+    [[ "$output" == *'"issues_failed": 1'* ]]
+    # Batch 2 (2 children) + Batch 3 (1 child) = 3 skipped
+    SKIPPED_COUNT=$(echo "$output" | jq '[.results[] | select(.status == "skipped")] | length')
+    [ "$SKIPPED_COUNT" -eq 3 ]
+}
+
+@test "--fail-fast: no failure → behaves like default" {
+    run "$SCRIPT" --batches-json "$BATCHES_JSON" --issue-runner "true" --fail-fast
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"status": "ok"'* ]]
+    [[ "$output" == *'"batches_processed": 3'* ]]
+    [[ "$output" == *'"batches_skipped": 0'* ]]
+    [[ "$output" == *'"fail_fast_triggered": false'* ]]
+}

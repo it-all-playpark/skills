@@ -2,8 +2,16 @@
 # auto-merge-child.sh - Auto-merge a child PR into the integration branch
 #
 # Used as `--on-success` callback by run-batch-loop.sh in dev-flow child-split
-# mode. Resolves the child issue's open PR, runs auto-merge-guard.sh, and if
-# allowed runs `gh pr merge --admin`. Also updates flow.json child status.
+# mode. Resolves the child issue's linked PR via GitHub's authoritative Issue→PR
+# link (closingIssuesReferences / closedByPullRequestsReferences), runs
+# auto-merge-guard.sh, and if allowed runs `gh pr merge --admin`. Also updates
+# flow.json child status.
+#
+# PR resolution priority (deterministic, no fuzzy search):
+#   1. flow.json `children[].pr_number` (if --flow-state provided and recorded)
+#   2. `gh issue view <CHILD> --json closedByPullRequestsReferences`
+#      (GitHub's authoritative linked-PR list; populated when the PR body
+#      contains "Closes #N" or the PR is created via gh CLI with `--issue`)
 #
 # Usage:
 #   auto-merge-child.sh <child-issue> --base <integration-branch> [--flow-state PATH]
@@ -25,7 +33,7 @@ while [[ $# -gt 0 ]]; do
         --base) BASE="$2"; shift 2 ;;
         --flow-state) FLOW_STATE="$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,10p' "$0"
+            sed -n '2,18p' "$0"
             exit 0
             ;;
         *)
@@ -38,21 +46,73 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$CHILD" ]] || die_json "child-issue argument required" 1
-[[ "$CHILD" =~ ^[0-9]+$ ]] || die_json "child-issue must be a positive integer" 1
+[[ "$CHILD" =~ ^[1-9][0-9]*$ ]] || die_json "child-issue must be a positive integer (>=1)" 1
 [[ -n "$BASE" ]] || die_json "--base is required" 1
 
-# Resolve the child's open PR targeting BASE
-PR_NUMBER=$(gh pr list --search "is:open author:@me $CHILD in:title" --json number,baseRefName \
-    --jq ".[] | select(.baseRefName == \"$BASE\") | .number" 2>/dev/null | head -1)
+# ============================================================================
+# Resolve PR_NUMBER deterministically
+# ============================================================================
+#
+# Step 1: Trust flow.json if it has pr_number recorded for this child.
+# Step 2: Otherwise use GitHub's Issue→PR authoritative link.
+# Step 3: Verify the resolved PR is OPEN and base matches BASE before merging.
 
+PR_NUMBER=""
+PR_SOURCE=""
+
+# Step 1: flow.json (most authoritative — set by dev-flow when child PR is created)
+if [[ -n "$FLOW_STATE" && -f "$FLOW_STATE" ]]; then
+    PR_NUMBER=$(jq -r --argjson i "$CHILD" \
+        '.children[] | select(.issue == $i) | .pr_number // empty' \
+        "$FLOW_STATE" 2>/dev/null || echo "")
+    if [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]]; then
+        PR_SOURCE="flow.json"
+    else
+        PR_NUMBER=""
+    fi
+fi
+
+# Step 2: GitHub Issue→PR authoritative link (closedByPullRequestsReferences)
 if [[ -z "$PR_NUMBER" ]]; then
-    # Fallback: search by issue link in body
-    PR_NUMBER=$(gh pr list --search "is:open in:body Closes #$CHILD" --json number,baseRefName \
-        --jq ".[] | select(.baseRefName == \"$BASE\") | .number" 2>/dev/null | head -1)
+    # closedByPullRequestsReferences lists PRs that GitHub's metadata links to
+    # this issue as closer (populated when PR body has "Closes #N" or
+    # development sidebar links the PR). This is the source of truth — no
+    # search/fuzzy match.
+    LINKED_JSON=$(gh issue view "$CHILD" \
+        --json closedByPullRequestsReferences 2>/dev/null || echo "")
+    if [[ -n "$LINKED_JSON" ]]; then
+        # Filter to open PRs only and pick the one targeting BASE.
+        PR_NUMBER=$(echo "$LINKED_JSON" | jq -r --arg base "$BASE" \
+            '.closedByPullRequestsReferences[]?
+             | select(.state == "OPEN")
+             | select(.baseRefName == $base)
+             | .number' 2>/dev/null | head -1)
+        [[ -n "$PR_NUMBER" ]] && PR_SOURCE="gh-issue-link"
+    fi
 fi
 
 if [[ -z "$PR_NUMBER" ]]; then
-    die_json "No open PR found for child #$CHILD targeting $BASE" 1
+    die_json "No linked open PR found for child #$CHILD targeting $BASE (checked flow.json and gh issue closedByPullRequestsReferences)" 1
+fi
+
+# Step 3: Verify the resolved PR — defense-in-depth before --admin merge.
+PR_META=$(gh pr view "$PR_NUMBER" --json state,baseRefName,closingIssuesReferences 2>/dev/null || echo "")
+if [[ -z "$PR_META" ]]; then
+    die_json "Could not fetch PR #$PR_NUMBER metadata" 1
+fi
+PR_STATE=$(echo "$PR_META" | jq -r '.state')
+PR_BASE=$(echo "$PR_META" | jq -r '.baseRefName')
+PR_CLOSES_CHILD=$(echo "$PR_META" | jq -r --argjson i "$CHILD" \
+    '[.closingIssuesReferences[]?.number] | any(. == $i)')
+
+if [[ "$PR_STATE" != "OPEN" ]]; then
+    die_json "PR #$PR_NUMBER is not OPEN (state: $PR_STATE)" 1
+fi
+if [[ "$PR_BASE" != "$BASE" ]]; then
+    die_json "PR #$PR_NUMBER base mismatch: got '$PR_BASE', expected '$BASE'" 1
+fi
+if [[ "$PR_CLOSES_CHILD" != "true" ]]; then
+    die_json "PR #$PR_NUMBER does not declare 'Closes #$CHILD' (closingIssuesReferences mismatch)" 1
 fi
 
 # Guard check
@@ -90,4 +150,5 @@ jq -n \
     --argjson pr "$PR_NUMBER" \
     --arg base "$BASE" \
     --arg merged_at "$NOW" \
-    '{status: "merged", child: $child, pr: $pr, base: $base, merged_at: $merged_at}'
+    --arg pr_source "$PR_SOURCE" \
+    '{status: "merged", child: $child, pr: $pr, pr_source: $pr_source, base: $base, merged_at: $merged_at}'
