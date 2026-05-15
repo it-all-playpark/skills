@@ -36,10 +36,6 @@ History schema (canonical)
   }
 ]
 
-Legacy severity aliases are honored:
-  - "blocking"     -> "major"
-  - "non-blocking" -> "minor"
-
 Output (stdout, JSON)
 ---------------------
 {
@@ -68,9 +64,6 @@ SEVERITY_ALIAS = {
     "critical": "critical",
     "major": "major",
     "minor": "minor",
-    # Legacy (pre-#46) aliases
-    "blocking": "major",
-    "non-blocking": "minor",
 }
 
 
