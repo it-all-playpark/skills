@@ -5,28 +5,18 @@
 Analyze how often single vs parallel mode is actually used.
 
 ```bash
-# New entries (with context.mode)
+# Entries with context.mode
 $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 200 | \
   jq 'group_by(.context.mode // "unknown") | map({mode: .[0].context.mode // "unknown", count: length})'
-
-# Legacy entries (without context.mode): infer from heuristics
-# - duration_turns <= 5 AND no "parallel" in args → likely single
-# - duration_turns >= 10 OR "parallel" in args → likely parallel
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 200 | \
-  jq '[.[] | select(.context.mode == null)] |
-    { legacy_count: length,
-      likely_single: [.[] | select(.duration_turns <= 5 and (.args // "" | test("parallel|force-parallel") | not))] | length,
-      likely_parallel: [.[] | select(.duration_turns >= 10 or (.args // "" | test("parallel|force-parallel")))] | length,
-      ambiguous: [.[] | select(.duration_turns > 5 and .duration_turns < 10 and (.args // "" | test("parallel|force-parallel") | not))] | length
-    }'
 ```
+
+context.mode が記録されていない entry は schema error として扱う。heuristics による推定は行わない。
 
 | Finding | Recommendation |
 |---------|----------------|
 | All single (no parallel ever) | Auto-detect may be too conservative, review decompose dry-run criteria |
 | Parallel used but only via --force-parallel | Auto-detect not triggering when it should |
 | Healthy mix of single/parallel | Auto-detect working as intended |
-| Many ambiguous legacy entries | No action (will resolve as new mode-tagged entries accumulate) |
 
 ## Check 2: Failure & Partial Distribution
 
