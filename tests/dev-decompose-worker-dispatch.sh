@@ -1,18 +1,11 @@
 #!/usr/bin/env bash
-# AC6: dev-decompose が subtask worktree 作成のために dev-kickoff-worker subagent を
-# Agent(isolation: worktree) で dispatch する経路の lint 検証。
-#
-# 検査対象: dev-decompose/SKILL.md および dev-decompose/references/ 配下
-#   - Step 8 で Agent(subagent_type: "dev-kickoff-worker", isolation: "worktree") を使用
-#   - 必須引数 (issue_number / branch_name / base_ref / mode=parallel / task_id) が記述
-#   - subtask 用に `git-prepare.sh --suffix task...` を直接呼び出していない
-#     (contract worktree 作成での --suffix contract は許可)
-#   - flow.json 生成手順で subtask.branch を populate することが文書化されている
-#
-# SKILL.md は progressive disclosure 方針で worker dispatch 詳細を references/ に分離するため、
-# Case 2/3/4/6/8 は SKILL.md + references/ の union を検査する。Case 5/7 は SKILL.md 本体のみ。
-#
-# Issue #81 で導入。
+# AC6 (v2 / issue #93): dev-decompose は **child-split mode** で child issue を発行する。
+# v1 で行っていた subtask 用 worktree dispatch (dev-kickoff-worker mode: parallel) は
+# 撤廃済み。本テストは:
+#   - SKILL.md が child-split mode を文書化していること
+#   - parent issue から child issue を作成する経路が記述されていること
+#   - integration branch + flow.json (v2 batch 配列) の生成が記述されていること
+#   - 旧 v1 機構 (`dev-contract-worker` / Kahn 法 / mode: parallel) を呼び出していない
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,48 +25,42 @@ search_union() {
 [[ -f "$SKILL_MD" ]] || fail "Case 1: $SKILL_MD not found"
 pass "Case 1: dev-decompose/SKILL.md exists"
 
-# Case 2: Agent(subagent_type: "dev-kickoff-worker") is referenced (SKILL.md or references)
-search_union 'subagent_type:[[:space:]]*"dev-kickoff-worker"' \
-    || fail "Case 2: SKILL.md or references must reference subagent_type: \"dev-kickoff-worker\""
-pass "Case 2: SKILL.md/references reference dev-kickoff-worker subagent"
+# Case 2: child-split mode is documented
+search_union 'child-split|--child-split|child issue' \
+    || fail "Case 2: SKILL.md/references must document child-split mode"
+pass "Case 2: child-split mode documented"
 
-# Case 3: isolation: "worktree" is specified for the dispatch (SKILL.md or references)
-search_union 'isolation:[[:space:]]*"worktree"' \
-    || fail "Case 3: SKILL.md or references must specify isolation: \"worktree\" for the worker dispatch"
-pass "Case 3: SKILL.md/references specify isolation: \"worktree\""
+# Case 3: integration branch concept is documented
+search_union 'integration[/_-]branch|integration/issue-' \
+    || fail "Case 3: SKILL.md/references must document integration branch"
+pass "Case 3: integration branch documented"
 
-# Case 4: required worker prompt fields are documented (SKILL.md or references)
-for field in issue_number branch_name base_ref mode task_id; do
-    search_union "^[[:space:]]*${field}:" \
-        || fail "Case 4: SKILL.md or references must document worker prompt field '${field}:'"
+# Case 4: v2 flow.json with batches[] is documented
+search_union 'batches?\[?\]?|batch[[:space:]]+配列|flow\.json.*v2|version.*2\.0\.0' \
+    || fail "Case 4: SKILL.md/references must document v2 flow.json (batches array)"
+pass "Case 4: v2 flow.json with batches array documented"
+
+# Case 5: legacy v1 機構 (mode: parallel / contract-worker / Kahn 法) は呼ばれていない
+LEGACY_PATTERNS=(
+    'dev-contract-worker'
+    'mode:[[:space:]]*"?parallel"?'
+    'Kahn'
+    'topological[[:space:]]+merge'
+    'merge-subtasks\.sh'
+)
+for p in "${LEGACY_PATTERNS[@]}"; do
+    if grep -qE "$p" "$SKILL_MD" 2>/dev/null; then
+        fail "Case 5: SKILL.md must NOT reference legacy v1 mechanism: $p"
+    fi
 done
-pass "Case 4: worker prompt fields (issue_number/branch_name/base_ref/mode/task_id) documented"
+pass "Case 5: SKILL.md does not invoke legacy v1 mechanisms"
 
-# Case 5: subtask worktree must NOT be created via direct git-prepare --suffix task...
-# (SKILL.md 本体のみチェック。references の散文記述で禁止理由を述べるのは許容)
-if grep -nE '(^|[[:space:]])(\$[A-Z_]+/)?(.*/)?git-prepare\.sh[[:space:]]+[^#]*--suffix[[:space:]]+task[0-9$]' "$SKILL_MD" >/dev/null 2>&1; then
-    echo "Offending line(s):" >&2
-    grep -nE '(^|[[:space:]])(\$[A-Z_]+/)?(.*/)?git-prepare\.sh[[:space:]]+[^#]*--suffix[[:space:]]+task[0-9$]' "$SKILL_MD" >&2
-    fail "Case 5: dev-decompose/SKILL.md must not invoke git-prepare.sh --suffix task... directly for subtasks"
+# Case 6 (issue #93): dev-decompose は v2 で gh issue create による child issue 発行のみを行い、
+# 自身は Agent / Task subagent を spawn しない。よって SKILL.md に
+# "Subagent Dispatch Rules" セクションが無いことが期待される。
+if grep -qE '^## Subagent Dispatch Rules' "$SKILL_MD"; then
+    fail "Case 6: SKILL.md must NOT include 'Subagent Dispatch Rules' (v2 dev-decompose は worker dispatch せず gh issue create のみ)"
 fi
-pass "Case 5: no direct git-prepare.sh --suffix task... invocation (worker dispatch required)"
-
-# Case 6: Step 9 documents that subtask.branch is populated (SKILL.md or references)
-search_union '(subtask\.branch|"branch":|branch\b.*required.*flow\.json|populate.*branch|populated from worker)' \
-    || fail "Case 6: SKILL.md/references Step 9 must document that subtask.branch is populated in flow.json"
-pass "Case 6: Step 9 documents subtask.branch population"
-
-# Case 7: Subagent Dispatch Rules section is present in SKILL.md
-# (subagent-dispatch-lint requires the section to exist in SKILL.md because Agent( is mentioned there)
-grep -qE '^## Subagent Dispatch Rules' "$SKILL_MD" \
-    || fail "Case 7: SKILL.md must include '## Subagent Dispatch Rules' section"
-pass "Case 7: Subagent Dispatch Rules section present in SKILL.md"
-
-# Case 8: required 5 elements present (SKILL.md or references)
-for elem in "Objective" "Output format" "Tools" "Boundary" "Token cap"; do
-    search_union "$elem" \
-        || fail "Case 8: required element '$elem' missing from SKILL.md/references"
-done
-pass "Case 8: required 5 elements present in dispatch documentation"
+pass "Case 6: dev-decompose does not declare Subagent Dispatch Rules (v2 expected)"
 
 echo "OK: tests/dev-decompose-worker-dispatch.sh"

@@ -33,7 +33,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-kickoff --l
 |---------|----------------|
 | Phase 3 (implement) > 30% | Review issue analysis depth, consider `--depth comprehensive` |
 | Phase 4 (validate) > 40% | Add pre-validation linting, consider `--fix` auto-mode |
-| Phase 1 (prepare) > 10% | Check git-prepare config, env-mode settings |
+| Phase 1 (prepare) > 10% | Check `dev-kickoff-worker` (`isolation: worktree`) configuration, env-mode settings |
 | Phase 2 (analyze) issues | Check dev-issue-analyze / dev-decompose flow control |
 
 ## Check 3: Error Category Distribution
@@ -44,7 +44,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.by_category'
 
 | Category Dominance | Recommendation |
 |--------------------|----------------|
-| `env` > 30% | Integrate dev-env-setup into git-prepare workflow |
+| `env` > 30% | Integrate dev-env-setup into `dev-kickoff-worker` Phase 1 workflow |
 | `lint` > 40% | Add auto-fix in dev-validate, configure stricter editor settings |
 | `test` > 40% | Review test quality, consider TDD strategy |
 | `type-check` > 20% | Enable strict TypeScript mode, add pre-commit type checks |
