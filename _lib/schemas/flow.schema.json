@@ -1,15 +1,15 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Flow State v2",
-  "description": "State persistence for dev-flow child-split orchestration. v2 (batch 配列 / child-issue 分割) のみ受理。旧 v1 (depends_on DAG / subtasks / contract) は schema error。",
+  "title": "Flow State v2.1",
+  "description": "State persistence for dev-flow child-split orchestration. v2.1 (batch 配列 / child-issue 分割 + top-level phases[]) のみ受理。旧 v2.0 / v1 形式は schema error (no-backcompat)。",
   "type": "object",
-  "required": ["version", "issue", "status", "integration_branch", "children", "batches", "config"],
+  "required": ["version", "issue", "status", "integration_branch", "children", "batches", "phases", "config"],
   "additionalProperties": false,
   "properties": {
     "version": {
       "type": "string",
-      "const": "2.0.0",
-      "description": "Schema version. v2 のみ受理。v1 形式は schema error。"
+      "const": "2.1.0",
+      "description": "Schema version. v2.1 のみ受理。v2.0 / v1 形式は schema error (no-backcompat)。"
     },
     "issue": {
       "type": "integer",
@@ -43,6 +43,13 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/batch" },
       "description": "Execution batches. 各 batch は serial / parallel mode を持つ"
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/phase" },
+      "description": "Top-level orchestration phases (decompose / batch_loop / integrate / final_pr / pr_iterate)。全 5 phase を seed する。name はユニーク。"
     },
     "final_pr": {
       "type": ["object", "null"],
@@ -164,6 +171,43 @@
           "minItems": 1,
           "items": { "type": "integer" },
           "description": "Child issue numbers assigned to this batch"
+        }
+      }
+    },
+    "phase": {
+      "type": "object",
+      "required": ["name", "status", "attempts"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["decompose", "batch_loop", "integrate", "final_pr", "pr_iterate"],
+          "description": "Top-level phase identifier. 5 値固定。"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "running", "done", "blocked", "failed"],
+          "description": "Phase lifecycle status. blocked は予約 (Stage 2 では使用しない)。"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Retry count (incremented via flow-update.sh --attempts +1)"
+        },
+        "retry_target": {
+          "type": ["string", "null"],
+          "description": "Phase name to retry to (e.g. \"integrate\") or \"abort\" or null"
+        },
+        "failed_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when status transitioned to failed"
+        },
+        "score": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 100,
+          "description": "0-100 score (used by pr_iterate)"
         }
       }
     }

@@ -429,12 +429,25 @@ bash coordinator 経由なら **どの agent でも nesting 制限なし** (別 
 - [x] worktree adapter (`worktree-create.sh` + `worktree-finalize.sh`)
 - [x] SKILL.md audit / lint script
 
-### Stage 2: Decision script + state machine (次)
+### Stage 2: Decision script + state machine (Issue #108 で実装)
 
-- [ ] `_lib/schemas/flow.schema.json` 拡張: `phases[].status`, `attempts`, `score`, `retry_target`
-- [ ] `_lib/scripts/dev-flow-next.sh` (decision script): phase 状態と結果を受けて次 action を JSON で返す
-- [ ] `_lib/scripts/dev-flow-state.sh`: flow.json 読み書きヘルパ
-- [ ] bats: state machine の単体テスト (retry counter、loop 終了、戻り先分岐)
+- [x] `_lib/schemas/flow.schema.json` v2.0.0 → **v2.1.0 bump** + 新規 `phases[]` (5 値固定 enum / required + minItems 5 / additionalProperties false)
+- [x] `_lib/schemas/decision-input.schema.json` 新規 (5 phase ごとの `oneOf` envelope、`phase` discriminator)
+- [x] `_lib/scripts/flow-decide.sh` 新規 (decision script — read-only、phase 状態と result を受けて `next_action: skill | complete | abort | retry` を JSON で返す)
+- [x] `_lib/scripts/flow-update.sh` に `phase <name> <status> [--retry-target] [--score] [--attempts +1]` action 追加 + `write_flow` を `flock -x` 化 (Python fcntl fallback あり)
+- [x] `dev-decompose/scripts/init-flow-v2.sh` で 5 phase を `status: pending` で seed
+- [x] tests:
+  - `tests/flow-schema-v2-validate.sh` (Case 1-9 / 新 Case 7 phase.additionalProperties / 8 name.enum / 9 phases.minItems==maxItems==5)
+  - `tests/flow-v2-version-bump.sh` (invariant: schema/scripts/tests に旧 `"2.0.0"` 残骸が無いこと)
+  - `tests/flow-update-phase-action.sh` (T1-T8: phase action 7 ケース + parallel race)
+  - `tests/flow-decide-cases.sh` (AC3.1-3.19: 各 phase 遷移 + retry + abort + dry-run 5-phase integration)
+  - `tests/validate-decomposition-v2-branch.sh` (fixture を v2.1.0 + phases[] に更新)
+- 役割分離: **flow.json (top-level orchestration phases[]) = child-split mode のみ / kickoff.json (single mode phase 内遷移) は version bump 波及させない**
+- 並行 writer 制御: `flow-update.sh write_flow` 内で `flock -x <flow>.lock` (flock 不在環境は Python fcntl で fallback)
+- iterate.schema.json と decision-input.schema.json の pr_iterate envelope は整合 (`lgtm | max_reached | failed` = iterate.status enum から `in_progress` を除外)
+- 2 階層 phases モデル:
+  - `flow.json.phases[]` = top-level orchestration (decompose / batch_loop / integrate / final_pr / pr_iterate)
+  - `kickoff.json.current_phase` = single mode の child 内 phase (1b → 8、`dev-kickoff/scripts/next-action.sh` の管轄、本 PR では変更しない)
 
 ### Stage 3: Orchestrator skill の薄化
 
@@ -506,4 +519,4 @@ bash coordinator 経由なら **どの agent でも nesting 制限なし** (別 
 
 ---
 
-_Last updated: 2026-05-21 (実機検証完了時点)_
+_Last updated: 2026-05-22 (Stage 2 実装完了 — issue #108)_

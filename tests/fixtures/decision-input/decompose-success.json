@@ -1,0 +1,8 @@
+{
+  "phase": "decompose",
+  "children_created": [101, 102, 103],
+  "batches": [
+    {"batch": 1, "mode": "serial", "children": [101, 102]},
+    {"batch": 2, "mode": "serial", "children": [103]}
+  ]
+}

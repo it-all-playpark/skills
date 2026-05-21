@@ -94,15 +94,27 @@ else
     BATCHES="[]"
 fi
 
-# Generate flow.json
+# Seed top-level phases[] (Stage 2: child-split orchestration state machine).
+# 5 phases固定: decompose / batch_loop / integrate / final_pr / pr_iterate.
+# All start as `status: "pending"`, `attempts: 0`.
+PHASES_SEED=$(jq -n '[
+    {name: "decompose",  status: "pending", attempts: 0, retry_target: null, failed_at: null, score: null},
+    {name: "batch_loop", status: "pending", attempts: 0, retry_target: null, failed_at: null, score: null},
+    {name: "integrate",  status: "pending", attempts: 0, retry_target: null, failed_at: null, score: null},
+    {name: "final_pr",   status: "pending", attempts: 0, retry_target: null, failed_at: null, score: null},
+    {name: "pr_iterate", status: "pending", attempts: 0, retry_target: null, failed_at: null, score: null}
+]')
+
+# Generate flow.json (v2.1)
 jq -n \
-    --arg version "2.0.0" \
+    --arg version "2.1.0" \
     --argjson issue "$ISSUE" \
     --arg status "decomposing" \
     --arg integ_name "$INTEGRATION_BRANCH" \
     --arg integ_base "$INTEGRATION_BASE" \
     --argjson children "$CHILDREN" \
     --argjson batches "$BATCHES" \
+    --argjson phases "$PHASES_SEED" \
     --arg strategy "$STRATEGY" \
     --arg depth "$DEPTH" \
     --arg lang "$SKILL_LANG" \
@@ -119,6 +131,7 @@ jq -n \
         },
         children: $children,
         batches: $batches,
+        phases: $phases,
         final_pr: null,
         config: {
             strategy: $strategy,

@@ -49,8 +49,8 @@ WARNINGS=()
 # ---------------- Schema version (no-backcompat) ----------------
 
 VERSION=$(jq -r '.version // empty' "$FLOW_STATE")
-if [[ "$VERSION" != "2.0.0" ]]; then
-    ERRORS+=("Schema version must be \"2.0.0\" (got: \"$VERSION\"). v1 format is not supported (no-backcompat).")
+if [[ "$VERSION" != "2.1.0" ]]; then
+    ERRORS+=("Schema version must be \"2.1.0\" (got: \"$VERSION\"). v2.0 / v1 は schema error (no-backcompat)。")
 fi
 
 # Detect explicit v1 markers and surface a clearer error
@@ -60,11 +60,32 @@ fi
 
 # ---------------- Required top-level fields ----------------
 
-for f in issue status integration_branch children batches config; do
+for f in issue status integration_branch children batches phases config; do
     if ! jq -e "has(\"$f\")" "$FLOW_STATE" >/dev/null 2>&1; then
         ERRORS+=("Missing required field: $f")
     fi
 done
+
+# ---------------- Phases (v2.1) ----------------
+
+PHASE_COUNT=$(jq '.phases | length' "$FLOW_STATE" 2>/dev/null || echo 0)
+if [[ "$PHASE_COUNT" -ne 5 ]]; then
+    ERRORS+=("phases array must have exactly 5 entries (got: $PHASE_COUNT)")
+fi
+
+EXPECTED_PHASES=("decompose" "batch_loop" "integrate" "final_pr" "pr_iterate")
+ACTUAL_PHASES=$(jq -r '.phases[]?.name // empty' "$FLOW_STATE" 2>/dev/null | tr '\n' ' ')
+for expected in "${EXPECTED_PHASES[@]}"; do
+    if ! echo "$ACTUAL_PHASES" | grep -qw "$expected"; then
+        ERRORS+=("phases array missing required name: $expected")
+    fi
+done
+
+# Duplicate phase names
+DUP_PHASES=$(jq -r '[.phases[]?.name // empty] | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$FLOW_STATE" 2>/dev/null || echo "")
+if [[ -n "$DUP_PHASES" ]]; then
+    while IFS= read -r p; do [[ -n "$p" ]] && ERRORS+=("Duplicate phase name: $p"); done <<< "$DUP_PHASES"
+fi
 
 ISSUE=$(jq -r '.issue // empty' "$FLOW_STATE")
 if ! [[ "$ISSUE" =~ ^[1-9][0-9]*$ ]]; then

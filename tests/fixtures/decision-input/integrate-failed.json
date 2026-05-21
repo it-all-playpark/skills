@@ -1,0 +1,5 @@
+{
+  "phase": "integrate",
+  "merge_conflicts": ["src/foo.ts"],
+  "tests_pass": false
+}

@@ -1,0 +1,99 @@
+{
+  "version": "2.1.0",
+  "issue": 108,
+  "status": "decomposing",
+  "integration_branch": {
+    "name": "integration/issue-108-flow-decide",
+    "base": "dev",
+    "created_at": "2026-05-21T22:00:00Z"
+  },
+  "children": [
+    {
+      "issue": 201,
+      "slug": "scope-a",
+      "scope": "scope a",
+      "status": "pending"
+    },
+    {
+      "issue": 202,
+      "slug": "scope-b",
+      "scope": "scope b",
+      "status": "pending"
+    },
+    {
+      "issue": 203,
+      "slug": "scope-c",
+      "scope": "scope c",
+      "status": "pending"
+    }
+  ],
+  "batches": [
+    {
+      "batch": 1,
+      "mode": "serial",
+      "children": [
+        201,
+        202
+      ]
+    },
+    {
+      "batch": 2,
+      "mode": "serial",
+      "children": [
+        203
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "name": "decompose",
+      "status": "pending",
+      "attempts": 0,
+      "retry_target": null,
+      "failed_at": null,
+      "score": null
+    },
+    {
+      "name": "batch_loop",
+      "status": "pending",
+      "attempts": 0,
+      "retry_target": null,
+      "failed_at": null,
+      "score": null
+    },
+    {
+      "name": "integrate",
+      "status": "pending",
+      "attempts": 0,
+      "retry_target": null,
+      "failed_at": null,
+      "score": null
+    },
+    {
+      "name": "final_pr",
+      "status": "pending",
+      "attempts": 0,
+      "retry_target": null,
+      "failed_at": null,
+      "score": null
+    },
+    {
+      "name": "pr_iterate",
+      "status": "pending",
+      "attempts": 0,
+      "retry_target": null,
+      "failed_at": null,
+      "score": null
+    }
+  ],
+  "final_pr": null,
+  "config": {
+    "strategy": "tdd",
+    "depth": "standard",
+    "lang": "ja",
+    "base_branch": "dev",
+    "env_mode": "hardlink"
+  },
+  "created_at": "2026-05-21T22:00:00Z",
+  "updated_at": "2026-05-21T22:09:51Z"
+}

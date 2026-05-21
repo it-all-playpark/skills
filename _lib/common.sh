@@ -98,6 +98,59 @@ require_cmds() {
 }
 
 # ============================================================================
+# File Locking (flock with Python fcntl fallback)
+# ============================================================================
+# Acquire an exclusive lock on a lockfile, run the supplied command, then
+# release the lock. Uses Linux `flock` when available, otherwise falls back to
+# Python's `fcntl.flock` (POSIX, available on macOS without extra deps).
+#
+# Usage:
+#   with_flock <lockfile> <command...>
+#
+# Returns: exit code of the inner command.
+with_flock() {
+    local lockfile="$1"; shift
+    [[ -n "$lockfile" ]] || { err "with_flock: lockfile path required"; return 1; }
+    # Ensure lock dir exists; create the lockfile if absent.
+    local lockdir
+    lockdir="$(dirname "$lockfile")"
+    [[ -d "$lockdir" ]] || mkdir -p "$lockdir"
+    [[ -e "$lockfile" ]] || : > "$lockfile"
+
+    if command -v flock >/dev/null 2>&1; then
+        # Linux / util-linux flock
+        # shellcheck disable=SC2094
+        (
+            exec 9>"$lockfile"
+            flock -x 9
+            "$@"
+        )
+        return $?
+    elif command -v python3 >/dev/null 2>&1; then
+        # macOS / POSIX fallback via Python fcntl
+        python3 - "$lockfile" "$@" <<'PYEOF'
+import fcntl, os, subprocess, sys
+lockfile = sys.argv[1]
+cmd = sys.argv[2:]
+fd = os.open(lockfile, os.O_RDWR | os.O_CREAT, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    rc = subprocess.call(cmd)
+finally:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+sys.exit(rc)
+PYEOF
+        return $?
+    else
+        err "with_flock: neither 'flock' nor 'python3' available; cannot acquire lock"
+        return 127
+    fi
+}
+
+# ============================================================================
 # Git Helpers
 # ============================================================================
 

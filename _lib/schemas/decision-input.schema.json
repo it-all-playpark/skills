@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Decision Input v1",
+  "description": "Per-phase result envelope passed to _lib/scripts/flow-decide.sh. The `phase` discriminator selects exactly one oneOf branch.",
+  "type": "object",
+  "required": ["phase"],
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["phase", "children_created", "batches"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "type": "string", "const": "decompose" },
+        "children_created": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "description": "Issue numbers created by dev-decompose"
+        },
+        "batches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "description": "Batches definition (mirrors flow.json.batches[] shape)"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["phase", "completed_children", "failed_children"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "type": "string", "const": "batch_loop" },
+        "completed_children": { "type": "integer", "minimum": 0 },
+        "failed_children": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["phase", "merge_conflicts", "tests_pass"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "type": "string", "const": "integrate" },
+        "merge_conflicts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Paths with unresolved merge conflicts (empty array on success)"
+        },
+        "tests_pass": { "type": "boolean" }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["phase", "pr_url", "ci_status"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "type": "string", "const": "final_pr" },
+        "pr_url": {
+          "type": "string",
+          "pattern": "^https?://"
+        },
+        "ci_status": {
+          "type": "string",
+          "enum": ["passed", "failed", "pending", "unknown"]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": ["phase", "decision", "iterations"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "type": "string", "const": "pr_iterate" },
+        "decision": {
+          "type": "string",
+          "enum": ["lgtm", "max_reached", "failed"],
+          "description": "Aligned with iterate.schema.json.status minus 'in_progress'"
+        },
+        "iterations": { "type": "integer", "minimum": 0 }
+      }
+    }
+  ]
+}
