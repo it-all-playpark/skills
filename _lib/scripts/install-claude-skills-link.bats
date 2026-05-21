@@ -29,6 +29,18 @@ make_portable_skill() {
   printf '%s\n' '---' "name: $name" 'description: Test.' '---' '# Body' > "$root/$name/SKILL.md"
 }
 
+# Portable directory content hash (md5sum on Linux, md5 on macOS)
+hash_tree() {
+  local dir="$1"
+  local hasher
+  if command -v md5sum >/dev/null 2>&1; then
+    hasher="md5sum"
+  else
+    hasher="md5"
+  fi
+  find "$dir" -type f | sort | xargs "$hasher" 2>/dev/null | "$hasher"
+}
+
 make_claude_overlay() {
   local root="$1"
   local name="$2"
@@ -201,7 +213,7 @@ MEOF
   echo "personal" > "$fake_home/.claude/skills/my-personal-skill/SKILL.md"
 
   local before_hash
-  before_hash="$(find "$fake_home/.claude/skills" -type f | sort | xargs md5 2>/dev/null | md5)"
+  before_hash="$(hash_tree "$fake_home/.claude/skills")"
 
   make_portable_skill "$tmpdir/repo" "repo-skill"
 
@@ -209,7 +221,7 @@ MEOF
   HOME="$fake_home" bash "$SCRIPT" restore 2>/dev/null
 
   local after_hash
-  after_hash="$(find "$fake_home/.claude/skills" -type f | sort | xargs md5 2>/dev/null | md5)"
+  after_hash="$(hash_tree "$fake_home/.claude/skills")"
 
   [ "$before_hash" = "$after_hash" ]
 
