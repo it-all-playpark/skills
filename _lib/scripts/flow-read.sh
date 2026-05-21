@@ -52,10 +52,10 @@ fi
 [[ -n "$FLOW_STATE" ]] || die_json "flow.json not found. Use --flow-state PATH" 1
 [[ -f "$FLOW_STATE" ]] || die_json "flow.json not found at: $FLOW_STATE" 1
 
-# Enforce v2 (no-backcompat)
+# Enforce v2.1 (no-backcompat). v2.0 / v1 は schema error。
 VERSION=$(jq -r '.version // empty' "$FLOW_STATE")
-if [[ "$VERSION" != "2.0.0" ]]; then
-    die_json "flow.json schema version must be 2.0.0 (got: \"$VERSION\"). v1 is not supported (no-backcompat)." 1
+if [[ "$VERSION" != "2.1.0" ]]; then
+    die_json "flow.json schema version must be 2.1.0 (got: \"$VERSION\"). v2.0 / v1 は schema error (no-backcompat)." 1
 fi
 
 # Query modes

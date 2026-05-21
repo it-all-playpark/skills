@@ -34,8 +34,8 @@ done
 
 if [[ -n "$FLOW_STATE" && -f "$FLOW_STATE" ]]; then
     VERSION=$(jq -r '.version // empty' "$FLOW_STATE")
-    if [[ "$VERSION" != "2.0.0" ]]; then
-        die_json "flow.json schema version must be 2.0.0 (got: \"$VERSION\"). v1 is not supported (no-backcompat)." 1
+    if [[ "$VERSION" != "2.1.0" ]]; then
+        die_json "flow.json schema version must be 2.1.0 (got: \"$VERSION\"). v2.0 / v1 は schema error (no-backcompat)." 1
     fi
 
     STATUS=$(jq -r '.status // "unknown"' "$FLOW_STATE")

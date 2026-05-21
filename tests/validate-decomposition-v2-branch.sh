@@ -16,10 +16,10 @@ validate_json() {
     jq empty "$1" 2>/dev/null || fail "Fixture is not valid JSON: $1"
 }
 
-# --- Fixture 1: minimal valid v2 flow.json ---
+# --- Fixture 1: minimal valid v2.1 flow.json (with phases[] seed) ---
 cat > "$TMP_DIR/v2-valid.json" <<'JSON'
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "issue": 1,
   "status": "decomposing",
   "integration_branch": {
@@ -34,6 +34,13 @@ cat > "$TMP_DIR/v2-valid.json" <<'JSON'
   "batches": [
     {"batch": 1, "mode": "serial", "children": [101]},
     {"batch": 2, "mode": "parallel", "children": [102]}
+  ],
+  "phases": [
+    {"name": "decompose",  "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "batch_loop", "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "integrate",  "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "final_pr",   "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "pr_iterate", "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null}
   ],
   "config": {"base_branch": "main"}
 }
@@ -54,10 +61,10 @@ cat > "$TMP_DIR/v1-legacy.json" <<'JSON'
 JSON
 validate_json "$TMP_DIR/v1-legacy.json"
 
-# --- Fixture 3: missing required v2 field (children) ---
+# --- Fixture 3: missing required v2.1 field (children) ---
 cat > "$TMP_DIR/v2-missing-children.json" <<'JSON'
 {
-  "version": "2.0.0",
+  "version": "2.1.0",
   "issue": 1,
   "status": "decomposing",
   "integration_branch": {
@@ -67,6 +74,13 @@ cat > "$TMP_DIR/v2-missing-children.json" <<'JSON'
   },
   "batches": [
     {"batch": 1, "mode": "serial", "children": [101]}
+  ],
+  "phases": [
+    {"name": "decompose",  "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "batch_loop", "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "integrate",  "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "final_pr",   "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null},
+    {"name": "pr_iterate", "status": "pending", "attempts": 0, "retry_target": null, "failed_at": null, "score": null}
   ],
   "config": {"base_branch": "main"}
 }
