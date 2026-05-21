@@ -15,14 +15,26 @@ skill-name/
 
 ## SKILL.md Frontmatter
 
+> **Cross-agent portability**: SKILL.md は SKILL.md open spec (Linux Foundation AAIF, 2025-12)
+> の **portable subset (8 field)** + Claude Code が解釈する **拡張 (12 field)** で構成される。
+> Codex CLI / Antigravity (agy) / その他 strict YAML parser を持つ agent で読ませる場合は
+> portable subset のみで書くこと。詳細は § Portable subset と Claude Code 拡張 を参照。
+
 ```yaml
 ---
+# === Portable subset (cross-agent 共通 / SKILL.md open spec) ===
 name: skill-name                    # slash-command 識別子
 description: |                      # 常にコンテキスト注入される（簡潔に）
   One-line summary.
   Use when: (1) trigger condition, (2) another condition,
   (3) keywords: keyword1, keyword2, keyword3
   Accepts args: <required> [--optional value]
+# version: 1.0.0                    # optional, semver
+# author: playpark                  # optional
+# tags: [dev, automation]           # optional
+# agents: [claude, codex, agy]      # optional, 対応 agent list
+
+# === Claude Code 拡張 (vendor-specific, 他 agent では parse error の可能性) ===
 allowed-tools:                      # 許可ツール（省略時はデフォルト）
   - Bash
   - Skill
@@ -36,12 +48,34 @@ user-invocable: true                # false でメニュー非表示（backgroun
 ---
 ```
 
-### Frontmatter 全15フィールド
+### Portable subset と Claude Code 拡張
+
+#### Portable subset (8 field, SKILL.md open spec)
+
+これらは **cross-vendor coding agent で共通** に解釈される標準フィールド。
+新規 skill は **必ず portable subset で `name` と `description` を埋めること**。
+それ以外は optional。
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | 表示名・slash-command 識別子（小文字・数字・ハイフン、最大 64 文字。省略時はディレクトリ名） |
-| `description` | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に。`when_to_use` と合算して **1,536 文字で truncate** される |
+| `name` | Yes | skill identifier (kebab-case, max 64 chars) |
+| `description` | Yes | one-line summary (auto-discovery / autocomplete 用) |
+| `version` | No | semver (省略時 unversioned) |
+| `author` | No | author / org |
+| `tags` | No | category tags (array) |
+| `agents` | No | 対応 agent list (`claude` / `codex` / `agy` 等) |
+| `license` | No | SPDX identifier |
+| `metadata` | No | vendor-neutral 追加 metadata (free-form object) |
+
+#### Claude Code 拡張 (12 field, vendor-specific)
+
+以下は **Claude Code 専用 frontmatter**。Codex CLI v0.132 / Antigravity (agy) v1.0.0 等の
+strict YAML parser を持つ agent では **parse error** になり skill 自体が起動できない
+(実機検証済、issue #103)。cross-agent で使う予定がある場合は使用を避けるか、将来的に
+adapter overlay (`<skill>/adapters/claude.yaml`) へ分離する予定。
+
+| Field | Required | Description |
+|-------|----------|-------------|
 | `when_to_use` | No | `description` の補足。トリガーフレーズや使用例を記載（合算 1,536 文字制限あり） |
 | `argument-hint` | No | autocomplete に表示する引数の型ヒント（例: `[issue-number]`, `<file> [--dry-run]`） |
 | `arguments` | No | named positional 引数の宣言（例: `[issue, branch]`）。skill 本文で `$issue` / `$branch` として参照可能 |
@@ -56,7 +90,57 @@ user-invocable: true                # false でメニュー非表示（backgroun
 | `disable-model-invocation` | No | `true` で自動呼び出し禁止（危険スキル向け） |
 | `user-invocable` | No | `false` でメニュー非表示（background knowledge 専用） |
 
-参照: [Skills frontmatter reference](https://code.claude.com/docs/en/skills#frontmatter-reference)
+#### Migration note (issue #103)
+
+既存 skill の多くは Claude Code 拡張を使用中 (audit 結果: 102 SKILL.md 中 73% が
+1 個以上の拡張 field を含む)。これらは **Phase C で段階移行中**。直近の状況は
+`bash _lib/scripts/lint-portable-frontmatter.sh --root . --json` で確認できる。
+
+```bash
+# 現状の集計を取得
+bash _lib/scripts/lint-portable-frontmatter.sh --root . --json
+
+# 拡張 field が 1 つでも残っていれば fail (将来 CI で有効化予定)
+bash _lib/scripts/lint-portable-frontmatter.sh --root . --strict
+```
+
+新規 skill 作成時のルール:
+
+1. **portable subset のみで書く** (cross-agent 対応が必要な場合は必須)
+2. Claude Code 拡張を使う場合は **後で adapter overlay に分離可能であること** を確認
+3. `disable-model-invocation: true` / `user-invocable: false` などの Claude 固有挙動が
+   必須なら、portable subset 不可能と明記して上記制約を accept
+
+### Frontmatter 全 20 フィールド (一覧)
+
+| Field | Portable? | Required | Description |
+|-------|-----------|----------|-------------|
+| `name` | ✅ portable | Yes | 表示名・slash-command 識別子（小文字・数字・ハイフン、最大 64 文字。省略時はディレクトリ名） |
+| `description` | ✅ portable | Yes | autocomplete・auto-discovery に使用。**常にコンテキスト消費**するため簡潔に。`when_to_use` と合算して **1,536 文字で truncate** される |
+| `version` | ✅ portable | No | semver (例: `1.0.0`) |
+| `author` | ✅ portable | No | author / org 名 |
+| `tags` | ✅ portable | No | category tags の array |
+| `agents` | ✅ portable | No | 対応 agent list (`[claude, codex, agy]` 等) |
+| `license` | ✅ portable | No | SPDX identifier (例: `MIT`, `Apache-2.0`) |
+| `metadata` | ✅ portable | No | vendor-neutral 追加 metadata (free-form object) |
+| `when_to_use` | ❌ Claude 拡張 | No | `description` の補足。トリガーフレーズや使用例を記載（合算 1,536 文字制限あり） |
+| `argument-hint` | ❌ Claude 拡張 | No | autocomplete に表示する引数の型ヒント（例: `[issue-number]`, `<file> [--dry-run]`） |
+| `arguments` | ❌ Claude 拡張 | No | named positional 引数の宣言（例: `[issue, branch]`）。skill 本文で `$issue` / `$branch` として参照可能 |
+| `paths` | ❌ Claude 拡張 | No | glob リスト。指定パス配下でのみ自動呼び出し有効化（省略時は全パス） |
+| `shell` | ❌ Claude 拡張 | No | SKILL.md 本文中の `` !`command` `` 実行ブロックのシェル（`bash`（既定）/ `powershell`） |
+| `allowed-tools` | ❌ Claude 拡張 | No | 許可ツールリスト |
+| `model` | ❌ Claude 拡張 | No | 実行モデル指定（`haiku` / `sonnet` / `opus` / `inherit`） |
+| `effort` | ❌ Claude 拡張 | No | 推論深度（`low` / `medium` / `high` / `xhigh` / `max`）。session 設定を override |
+| `context` | ❌ Claude 拡張 | No | `fork` で分離サブエージェント |
+| `agent` | ❌ Claude 拡張 | No | `context:fork` 時のサブエージェントタイプ |
+| `hooks` | ❌ Claude 拡張 | No | ライフサイクルフック |
+| `disable-model-invocation` | ❌ Claude 拡張 | No | `true` で自動呼び出し禁止（危険スキル向け） |
+| `user-invocable` | ❌ Claude 拡張 | No | `false` でメニュー非表示（background knowledge 専用） |
+
+参照:
+- [Skills frontmatter reference](https://code.claude.com/docs/en/skills#frontmatter-reference) (Claude 拡張)
+- [SKILL.md open spec](https://agents.md) (portable subset, Linux Foundation AAIF 2025-12)
+- 影響範囲調査: `claudedocs/skill-portability-audit-*.md`
 
 ### effort の選び方
 
