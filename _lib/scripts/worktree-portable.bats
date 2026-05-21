@@ -35,16 +35,18 @@ teardown() {
 }
 
 @test "create: makes worktree and emits its absolute path" {
-  run bash "$CREATE_SH" 999 main
-  [ "$status" -eq 0 ]
-  WT_PATH="$output"
+  # NOTE: capture stdout only (script writes 'git worktree add' progress to stderr).
+  # bats <1.5.0 (e.g. Ubuntu apt-get bats v1.2.1) merges stdout+stderr in `run`,
+  # so explicit `2>/dev/null` keeps WT_PATH equal to the path on both bats 1.2 and 1.10+.
+  WT_PATH=$(bash "$CREATE_SH" 999 main 2>/dev/null)
+  [ -n "$WT_PATH" ]
   [ -d "$WT_PATH" ]
   [ -f "$WT_PATH/README.md" ]
   [ "$(git -C "$WT_PATH" branch --show-current)" = "feature/issue-999" ]
 }
 
 @test "create: fails when the branch already exists" {
-  bash "$CREATE_SH" 999 main >/dev/null
+  bash "$CREATE_SH" 999 main >/dev/null 2>&1
   run bash "$CREATE_SH" 999 main
   [ "$status" -eq 2 ]
 }
