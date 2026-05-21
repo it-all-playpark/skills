@@ -67,3 +67,49 @@ jobs:
         run: |
           chmod +x tests/run-all-bats.sh
           ./tests/run-all-bats.sh --strict
+
+  merged-skill-build:
+    name: Merged Skill Build + Overlay Lint (issue #110)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PyYAML
+        shell: bash
+        run: |
+          pip3 install pyyaml
+
+      - name: Build all skill overlay artifacts
+        shell: bash
+        run: |
+          chmod +x _lib/scripts/build-all-skills.sh \
+                   _lib/scripts/build-skill-overlay.sh \
+                   _lib/scripts/lint-merged-frontmatter.sh
+          make skills
+
+      - name: Assert dev-plan-review artifact exists
+        shell: bash
+        run: |
+          [[ -f .build/skills/dev-plan-review/SKILL.md ]] || {
+            echo "error: .build/skills/dev-plan-review/SKILL.md not found" >&2
+            exit 1
+          }
+
+      - name: Lint dev-plan-review merged frontmatter
+        shell: bash
+        run: |
+          ./_lib/scripts/lint-merged-frontmatter.sh \
+            .build/skills/dev-plan-review/SKILL.md \
+            --require "model,effort,context,allowed-tools"
+
+      - name: Assert discover count equals built count
+        shell: bash
+        run: |
+          discovered=$(bash _lib/scripts/build-all-skills.sh --list-discovered | wc -l | tr -d ' ')
+          built=$(find .build/skills -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          echo "Discovered: $discovered, Built: $built"
+          [[ "$discovered" -eq "$built" ]] || {
+            echo "error: discovered ($discovered) != built ($built)" >&2
+            exit 1
+          }

@@ -12,7 +12,7 @@
 #
 # Usage:
 #   build-skill-overlay.sh <skill-name> [--vendor <vendor>] [--skill-root <path>]
-#                          [--output <path>]
+#                          [--output <path>] [--subdir-strategy symlink|copy]
 #
 # Arguments:
 #   <skill-name>         name of the skill directory (e.g. dev-plan-review)
@@ -22,7 +22,10 @@
 #   --skill-root <path>  root directory where skill subdirectories live
 #                        (default: parent of this script, i.e. the repo root)
 #   --output <path>      output path for merged SKILL.md
-#                        (default: $HOME/.cache/claude-skill-build/<skill-name>/SKILL.md)
+#                        (default: <skill-root>/.build/skills/<skill-name>/SKILL.md)
+#   --subdir-strategy    how to handle skill subdirs (references/, scripts/, etc.)
+#                        symlink: create absolute symlinks (default)
+#                        copy:    deep copy the subdirectory
 #   --help               print this help and exit 0
 #
 # Merge rules:
@@ -51,14 +54,18 @@ YAML_MERGE_PY="$SCRIPT_DIR/yaml-merge.py"
 # ---------------------------------------------------------------------------
 usage() {
   cat >&2 << EOF
-usage: $(basename "$0") <skill-name> [--vendor <vendor>] [--skill-root <path>] [--output <path>]
+usage: $(basename "$0") <skill-name> [--vendor <vendor>] [--skill-root <path>] [--output <path>] [--subdir-strategy symlink|copy]
 
-  <skill-name>       skill directory name (required)
-  --vendor <vendor>  adapter vendor (default: claude)
-  --skill-root <p>   repo root that contains skill subdirs (default: auto-detect from BASH_SOURCE)
-  --output <path>    output path for merged SKILL.md
-                     default: \$HOME/.cache/claude-skill-build/<skill-name>/SKILL.md
-  --help             print this help and exit 0
+  <skill-name>              skill directory name (required)
+  --vendor <vendor>         adapter vendor (default: claude)
+  --skill-root <p>          repo root that contains skill subdirs (default: auto-detect from BASH_SOURCE)
+  --output <path>           output path for merged SKILL.md
+                            default: <skill-root>/.build/skills/<skill-name>/SKILL.md
+  --subdir-strategy <s>     how to wire subdirs (references/, scripts/) into the build artifact dir
+                            symlink: create absolute symlinks pointing to <skill-root>/<skill>/<subdir>/
+                            copy:    deep copy the subdirectory
+                            default: symlink
+  --help                    print this help and exit 0
 
 Merge rules:
   - frontmatter: union(portable, overlay), overlay wins on key conflict
@@ -77,12 +84,21 @@ SKILL_NAME=""
 VENDOR="claude"
 SKILL_ROOT=""
 OUTPUT_PATH=""
+SUBDIR_STRATEGY="symlink"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --vendor)    VENDOR="$2";     shift 2 ;;
     --skill-root) SKILL_ROOT="$2"; shift 2 ;;
     --output)    OUTPUT_PATH="$2"; shift 2 ;;
+    --subdir-strategy)
+      SUBDIR_STRATEGY="$2"
+      if [[ "$SUBDIR_STRATEGY" != "symlink" && "$SUBDIR_STRATEGY" != "copy" ]]; then
+        echo "error: --subdir-strategy must be 'symlink' or 'copy', got: $SUBDIR_STRATEGY" >&2
+        usage
+        exit 1
+      fi
+      shift 2 ;;
     --help|-h)   usage; exit 0 ;;
     -*)
       echo "error: unknown option: $1" >&2
@@ -119,11 +135,12 @@ fi
 PORTABLE_SKILL_MD="$SKILL_ROOT/$SKILL_NAME/SKILL.md"
 OVERLAY_FILE="$SKILL_ROOT/$SKILL_NAME/adapters/$VENDOR.yaml"
 
-# Default output: genuinely outside the repo to avoid overwriting tracked sources.
-# IMPORTANT: ~/.claude/skills may be a symlink TO the repo on some setups; use
-# $HOME/.cache/claude-skill-build/ as a safe, non-repo default.
+# Default output: <skill-root>/.build/skills/<skill-name>/SKILL.md
+# This places the artifact inside the repo tree (gitignored via /.build/) so that
+# per-skill symlinks from ~/.claude/skills/<skill>/ can resolve subdirs via absolute symlinks.
+# Note: $HOME/.cache/... was the old default; changed in issue #110 to support adapter overlay wiring.
 if [[ -z "$OUTPUT_PATH" ]]; then
-  OUTPUT_PATH="$HOME/.cache/claude-skill-build/$SKILL_NAME/SKILL.md"
+  OUTPUT_PATH="$SKILL_ROOT/.build/skills/$SKILL_NAME/SKILL.md"
 fi
 
 # ---------------------------------------------------------------------------
@@ -213,3 +230,42 @@ mkdir -p "$(dirname "$OUTPUT_PATH")"
 mv "$MERGED_TMP_FILE" "$OUTPUT_PATH"
 
 echo "[build-skill-overlay] written: $OUTPUT_PATH" >&2
+
+# ---------------------------------------------------------------------------
+# Wire skill subdirs (references/, scripts/, etc.) into build artifact dir
+# ---------------------------------------------------------------------------
+# For each subdir that exists in the source skill, create either an absolute
+# symlink (--subdir-strategy symlink, default) or a deep copy
+# (--subdir-strategy copy) inside the build artifact directory.
+# This allows Claude Code to resolve references/ etc. when loading the skill
+# from ~/.claude/skills/<skill>/ → <repo>/.build/skills/<skill>/ per-skill symlink.
+
+BUILD_DIR="$(dirname "$OUTPUT_PATH")"
+SKILL_SRC_DIR="$SKILL_ROOT/$SKILL_NAME"
+
+for subdir in "$SKILL_SRC_DIR"/*/; do
+  # Skip if glob expands to nothing
+  [ -d "$subdir" ] || continue
+
+  subdir_name="$(basename "$subdir")"
+
+  # Skip the adapters/ directory (not needed in build artifact)
+  [[ "$subdir_name" == "adapters" ]] && continue
+
+  target="$BUILD_DIR/$subdir_name"
+
+  # Remove existing (stale symlink or old copy)
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    rm -rf "$target"
+  fi
+
+  if [[ "$SUBDIR_STRATEGY" == "symlink" ]]; then
+    # Absolute symlink: <build-dir>/<subdir> → <skill-root>/<skill>/<subdir>
+    ln -s "$SKILL_SRC_DIR/$subdir_name" "$target"
+    echo "[build-skill-overlay] subdir symlink: $target → $SKILL_SRC_DIR/$subdir_name" >&2
+  else
+    # Deep copy
+    cp -r "$SKILL_SRC_DIR/$subdir_name" "$target"
+    echo "[build-skill-overlay] subdir copy: $target" >&2
+  fi
+done

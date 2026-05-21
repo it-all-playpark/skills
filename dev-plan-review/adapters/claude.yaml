@@ -1,10 +1,9 @@
 # Claude Code adapter overlay for dev-plan-review
 #
 # このファイルは Claude Code 固有の frontmatter 拡張を保持する。
-# `_lib/scripts/build-skill-overlay.sh dev-plan-review` を実行すると
+# `make skills` (= _lib/scripts/build-all-skills.sh) を実行すると
 # SKILL.md (portable subset) と本ファイルが merge され、Claude Code 用
-# build artifact (`$HOME/.cache/claude-skill-build/dev-plan-review/SKILL.md` または
-# `--output` で指定したパス) が生成される。
+# build artifact (`<repo>/.build/skills/dev-plan-review/SKILL.md`) が生成される。
 #
 # 設計判断: issue #106 (#103 Phase C)
 #   Q1=A: adapter overlay は `<skill>/adapters/<vendor>.yaml`
