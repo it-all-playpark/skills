@@ -46,6 +46,12 @@ __pycache__/
 # Packaged skills
 *.skill
 
+# Adapter overlay build artifacts (issue #106, Q3=Y)
+# build-skill-overlay.sh のデフォルト出力先は $HOME/.cache/claude-skill-build/ (repo 外)
+# だが、開発者が --output で repo 内パスを指定したときの誤コミット防止のため defensive に ignore
+/.build/
+/dist/skills/
+
 # --- external skills (auto-managed) ---
 agent-browser
 api-contract-testing

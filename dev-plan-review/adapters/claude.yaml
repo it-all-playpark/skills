@@ -1,0 +1,25 @@
+# Claude Code adapter overlay for dev-plan-review
+#
+# このファイルは Claude Code 固有の frontmatter 拡張を保持する。
+# `_lib/scripts/build-skill-overlay.sh dev-plan-review` を実行すると
+# SKILL.md (portable subset) と本ファイルが merge され、Claude Code 用
+# build artifact (`$HOME/.cache/claude-skill-build/dev-plan-review/SKILL.md` または
+# `--output` で指定したパス) が生成される。
+#
+# 設計判断: issue #106 (#103 Phase C)
+#   Q1=A: adapter overlay は `<skill>/adapters/<vendor>.yaml`
+#   Q4=A: `context: fork` を build artifact に merge して Claude Code subagent 化を維持
+#
+# 注意: 他 agent (Codex CLI / Antigravity) は本ファイルを読まない。
+# それらは SKILL.md (portable subset) のみを参照する。
+
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
+  - Bash(git:*)
+  - Bash(gh:*)
+model: opus
+effort: max
+context: fork

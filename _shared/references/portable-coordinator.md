@@ -303,6 +303,46 @@ agents:
 [`docs/skill-creation-guide.md` § Portable subset と Claude Code 拡張](../../docs/skill-creation-guide.md)
 を参照 (PR #104 で改訂)。
 
+### Adapter overlay (reference 実装, issue #106)
+
+Claude Code 拡張 frontmatter を portable SKILL.md から分離し、build script で merge する仕組み。
+[`dev-plan-review`](../../dev-plan-review/SKILL.md) が **最初の reference 実装** (#103 Phase C)。
+
+```
+<skill-name>/
+├── SKILL.md                 # portable subset のみ (cross-agent で parse 可能)
+├── adapters/
+│   └── claude.yaml          # Claude Code 拡張 (model / effort / context / allowed-tools)
+└── ...                      # references/, scripts/ など既存構造
+        │
+        ▼
+[ _lib/scripts/build-skill-overlay.sh dev-plan-review ]
+        │
+        ▼
+$HOME/.cache/claude-skill-build/dev-plan-review/SKILL.md   ← Claude Code が読む merge artifact
+                                                           ← Codex CLI / agy は元の portable SKILL.md を直接読む
+```
+
+設計判断 (issue #106 推奨採用):
+
+| # | 判断 | 採用案 |
+|---|------|--------|
+| Q1 | adapter overlay の置き場所 | A: `<skill>/adapters/<vendor>.yaml` |
+| Q2 | Claude への merge 方法 | 1: build script artifact (runtime merge 不要) |
+| Q3 | artifact の git 管理 | Y: git ignore + CI/hook で再生成 |
+| Q4 | Claude Code subagent (`context: fork`) | A: build artifact に merge して既存挙動維持 |
+
+merge ルールと CLI 詳細は [`docs/skill-creation-guide.md` § Adapter Overlay 規約](../../docs/skill-creation-guide.md)
+を参照。
+
+実装ファイル:
+- `_lib/scripts/build-skill-overlay.sh` — bash entry point (frontmatter 抽出 / atomic write)
+- `_lib/scripts/yaml-merge.py` — PyYAML 6.x ベースの薄い merge helper (overlay-wins + block scalar 保持)
+- `_lib/scripts/build-skill-overlay.bats` — 単体テスト 7 ケース
+- `dev-plan-review/adapters/claude.yaml` — Claude Code 拡張 4 field の reference
+
+残り 52 skill (本 PR で 53→52) の移行は別 issue で機械的に進める。
+
 ### Lint and Audit scripts
 
 #### Invariant lint (PR #104 で追加、CI 連携前提)
@@ -383,7 +423,8 @@ bash coordinator 経由なら **どの agent でも nesting 制限なし** (別 
 - [x] SKILL.md portable subset 化 — Phase A/B 基盤整備 ([PR #104](https://github.com/it-all-playpark/skills/pull/104) merge 済)
   - `lint-portable-frontmatter.sh` 追加 (CI 連携前提)
   - `docs/skill-creation-guide.md` に portability 規約セクション追加
-- [ ] SKILL.md portable subset 化 — Phase C: 既存 skill の段階移行 (53/75 skill 残)
+- [x] SKILL.md portable subset 化 — Phase C reference 実装 (`dev-plan-review` + `build-skill-overlay.sh`、issue #106)
+- [ ] SKILL.md portable subset 化 — Phase C: 残り 52 skill の段階移行 (本 PR で 53→52)
 - [x] portable adapter PoC (`invoke-skill-poc.sh`)
 - [x] worktree adapter (`worktree-create.sh` + `worktree-finalize.sh`)
 - [x] SKILL.md audit / lint script

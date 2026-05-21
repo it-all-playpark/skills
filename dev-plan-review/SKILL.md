@@ -6,16 +6,15 @@ description: |
   (3) standalone review of any impl-plan.md,
   (4) keywords: plan review, 計画レビュー, devil's advocate, 批判的レビュー
   Accepts args: [<issue-number>] [--worktree <path>] [--plan <path>] [--pass-threshold 80]
-allowed-tools:
-  - Read
-  - Grep
-  - Glob
-  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
-  - Bash(git:*)
-  - Bash(gh:*)
-model: opus
-effort: max
-context: fork
+version: 1.0.0
+author: it-all-playpark
+tags:
+  - dev-flow
+  - review
+agents:
+  - claude
+  - codex
+  - agy
 ---
 
 # Plan Review

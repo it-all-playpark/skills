@@ -111,6 +111,95 @@ bash _lib/scripts/lint-portable-frontmatter.sh --root . --strict
 3. `disable-model-invocation: true` / `user-invocable: false` などの Claude 固有挙動が
    必須なら、portable subset 不可能と明記して上記制約を accept
 
+#### Adapter Overlay 規約 (issue #106, Phase C reference 実装)
+
+Claude Code 拡張を portable SKILL.md から分離して保持する仕組み。Codex CLI / Antigravity
+(agy) は portable な SKILL.md だけを読み、Claude Code は build artifact (portable + adapter overlay
+の merge 結果) を読む。**reference 実装は `dev-plan-review`** で、他 skill の段階移行は
+本 PR の規約を踏襲する。
+
+##### ディレクトリ構造
+
+```
+<skill-name>/
+├── SKILL.md                # portable subset のみ (cross-agent で parse 可能)
+├── adapters/
+│   └── claude.yaml         # Claude Code 拡張 4 field (model / effort / context / allowed-tools 等)
+└── ...
+```
+
+`<skill>/adapters/<vendor>.yaml` 形式 (Q1=A 採用)。将来 Cursor / Amp 等が独自 frontmatter
+拡張を持つようになった場合は `cursor.yaml`, `amp.yaml` 等を追加可能。
+
+##### `claude.yaml` のスキーマ
+
+`adapters/claude.yaml` には Claude Code 拡張 12 field のうち skill が必要とするものを記述
+する。最小例:
+
+```yaml
+# Claude Code adapter overlay
+model: opus           # 実行モデル
+effort: max           # 推論深度
+context: fork         # subagent 化
+allowed-tools:
+  - Read
+  - Bash(git:*)
+```
+
+`name` / `description` 等の portable field は **記述してはいけない** (重複定義になる)。ただし
+意図的に override したい場合は overlay 側が勝つ (warn 出力)。
+
+##### Build script
+
+`_lib/scripts/build-skill-overlay.sh` が portable SKILL.md + adapter overlay を merge して
+Claude Code 用 SKILL.md を生成する。
+
+```bash
+bash _lib/scripts/build-skill-overlay.sh <skill-name> \
+  [--vendor <vendor>]        # default: claude
+  [--skill-root <path>]      # default: repo root (auto-detect)
+  [--output <path>]          # default: $HOME/.cache/claude-skill-build/<skill-name>/SKILL.md
+```
+
+| 入力 | 出力 |
+|------|------|
+| `<repo>/<skill>/SKILL.md` (portable subset) | `--output` で指定した path に merged SKILL.md |
+| `<repo>/<skill>/adapters/<vendor>.yaml` (overlay) | (frontmatter union + body は portable のもの) |
+
+##### Merge ルール
+
+1. **body**: portable SKILL.md の body をそのまま使用 (overlay には body を持たせない)
+2. **frontmatter**: `union(portable_fm, overlay_fm)`、insertion order は portable → overlay の順
+3. **同一 key 衝突**: overlay が勝つ + warn を stderr に出す (意図的 override を許容しつつ意識させる)
+4. **overlay 不在**: portable をそのまま passthrough (`exit 0`、log のみ)
+5. **不正な YAML overlay**: PyYAML が parse error を stderr に出し `exit 2` (atomic write のため
+   partial file は生成しない)
+6. 複数行 string は **block scalar (`|`) 形式で保持** (description の見栄え保持)
+
+##### Build artifact のライフサイクル
+
+- デフォルト出力先 `$HOME/.cache/claude-skill-build/<skill>/SKILL.md` は **repo 外** なので
+  `.gitignore` 設定は不要 (Q3=Y 採用)
+- 開発者が `--output ./.build/...` のように repo 内パスを指定する場合に備え `.gitignore` に
+  `/.build/` と `/dist/skills/` を defensive に追加済
+- artifact 自体は **commit しない**。`_lib/scripts/build-skill-overlay.sh` で **再生成可能** な
+  derived data として扱う
+- 将来: pre-commit hook で SKILL.md / adapter overlay の変更を検知して自動 rebuild、
+  CI で `--check` モードで diff 比較する案あり (本 PR では未実装)
+
+##### Lint
+
+```bash
+# 拡張 field が残っている skill を集計
+bash _lib/scripts/lint-portable-frontmatter.sh --root . --json | jq .files_with_ext_fields
+
+# portable subset 化進捗の可視化
+bash _lib/scripts/lint-portable-frontmatter.sh --root . --json | jq .ext_field_usage
+```
+
+reference 実装 (`dev-plan-review`) では本 PR で `files_with_ext_fields: 53 → 52` の減少を
+確認している。残り 52 skill は別 issue で機械的に portable subset 化する。
+
 ### Frontmatter 全 20 フィールド (一覧)
 
 | Field | Portable? | Required | Description |
