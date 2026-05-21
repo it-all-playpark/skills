@@ -31,7 +31,7 @@ make_portable_skill() {
   local root="$1"
   local name="$2"
   mkdir -p "$root/$name"
-  printf '---\nname: %s\ndescription: Test.\n---\n# Body\n' "$name" > "$root/$name/SKILL.md"
+  printf '%s\n' '---' "name: $name" 'description: Test.' '---' '# Body' > "$root/$name/SKILL.md"
 }
 
 # Run the hook with a mocked git diff output and capture rebuilt skills

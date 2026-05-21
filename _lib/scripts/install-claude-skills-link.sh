@@ -194,9 +194,11 @@ EOF
           if [[ $move_fail -eq 0 ]]; then
             /bin/rmdir "$CLAUDE_SKILLS_DIR" 2>/dev/null || /bin/rm -rf "$CLAUDE_SKILLS_DIR"
           else
-            # Restore what we moved (roll back)
+            # Restore what we moved (roll back). Leave manifest.json behind — it is a
+            # backup meta file, not original ~/.claude/skills content.
             for entry in "$bak_dir"/*; do
               [[ -e "$entry" ]] || continue
+              [[ "$(basename "$entry")" == "manifest.json" ]] && continue
               mv "$entry" "$CLAUDE_SKILLS_DIR/" || true
             done
             exit 2
@@ -262,9 +264,11 @@ cmd_restore() {
   echo "[restore] restoring from $latest_bak" >&2
 
   # Read manifest to determine original type
+  # Path is passed via env (not interpolated into the Python source) to stay safe
+  # against paths containing quotes/newlines.
   local original_type="directory"
   if [[ -f "$latest_bak/manifest.json" ]]; then
-    original_type="$(python3 -c "import sys,json; d=json.load(open('$latest_bak/manifest.json')); print(d.get('original_type','directory'))" 2>/dev/null || echo "directory")"
+    original_type="$(MANIFEST_PATH="$latest_bak/manifest.json" python3 -c "import os,json; print(json.load(open(os.environ['MANIFEST_PATH'])).get('original_type','directory'))" 2>/dev/null || echo "directory")"
   fi
 
   # Remove current ~/.claude/skills
@@ -281,7 +285,7 @@ cmd_restore() {
   else
     if [[ "$original_type" == "symlink" ]]; then
       local original_target
-      original_target="$(python3 -c "import sys,json; d=json.load(open('$latest_bak/manifest.json')); print(d.get('original_target',''))" 2>/dev/null || echo "")"
+      original_target="$(MANIFEST_PATH="$latest_bak/manifest.json" python3 -c "import os,json; print(json.load(open(os.environ['MANIFEST_PATH'])).get('original_target',''))" 2>/dev/null || echo "")"
       if [[ -n "$original_target" ]]; then
         # Remove manifest from bak before moving, then symlink back
         ln -s "$original_target" "$CLAUDE_SKILLS_DIR"

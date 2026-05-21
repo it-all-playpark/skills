@@ -23,18 +23,21 @@ skills:
 # Developer setup: configure core.hooksPath + build skills
 # FORCE_HOOKS_PATH can be set to override conflicting core.hooksPath (use with caution)
 setup:
-	@result=$$(bash $(LIB_SCRIPTS)/check-hooks-path.sh --apply --repo-root "$(REPO_ROOT)" 2>&1) && \
-	  status=$$(echo "$$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])" 2>/dev/null); \
-	  if [ "$$status" = "conflict" ]; then \
+	@result=$$(bash $(LIB_SCRIPTS)/check-hooks-path.sh --check --repo-root "$(REPO_ROOT)" 2>/dev/null); \
+	  status=$$(printf '%s' "$$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null); \
+	  if [ "$$status" = "conflict" ] && [ "$(FORCE_HOOKS_PATH)" != "1" ]; then \
+	    current=$$(printf '%s' "$$result" | python3 -c "import sys,json; print(json.load(sys.stdin)['current'])" 2>/dev/null); \
 	    echo "error: core.hooksPath is already set to a different value:"; \
-	    echo "$$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print('  current: ' + d['current'])" 2>/dev/null; \
+	    echo "  current: $$current"; \
 	    echo "  target: .githooks"; \
 	    echo "To override, run: make setup FORCE_HOOKS_PATH=1"; \
 	    exit 1; \
+	  fi; \
+	  if [ "$(FORCE_HOOKS_PATH)" = "1" ]; then \
+	    bash $(LIB_SCRIPTS)/check-hooks-path.sh --apply --force --repo-root "$(REPO_ROOT)"; \
+	  else \
+	    bash $(LIB_SCRIPTS)/check-hooks-path.sh --apply --repo-root "$(REPO_ROOT)"; \
 	  fi
-	@if [ "$(FORCE_HOOKS_PATH)" = "1" ]; then \
-	  bash $(LIB_SCRIPTS)/check-hooks-path.sh --apply --force --repo-root "$(REPO_ROOT)"; \
-	fi
 	@$(MAKE) skills
 
 # Install per-skill symlinks in ~/.claude/skills
