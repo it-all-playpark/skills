@@ -7,7 +7,8 @@
 #       <repo>/*/SKILL.md           (root-level skills)
 #       <repo>/.claude/skills/*/SKILL.md   (internal tooling skills)
 #       <repo>/.agents/skills/*/SKILL.md   (external agent skills)
-#   - Cleans <repo>/.build/skills/ before rebuilding (idempotent, no stale entries)
+#   - Cleans <repo>/.build/skills/<vendor>/ before rebuilding (idempotent per-vendor,
+#     no stale entries; other vendors' artifacts are left intact)
 #   - Each skill is built by calling build-skill-overlay.sh
 #   - If any skill build fails, exits non-zero (all failures reported before exit)
 #   - Priority for same-name conflicts: root > .claude/skills > .agents/skills
@@ -136,9 +137,10 @@ if $LIST_DISCOVERED; then
 fi
 
 # ---------------------------------------------------------------------------
-# Clean build directory (idempotent: removes stale entries)
+# Clean build directory (idempotent per-vendor: removes stale entries for this
+# vendor only, leaving other vendors' artifacts intact)
 # ---------------------------------------------------------------------------
-BUILD_DIR="$REPO_ROOT/.build/skills"
+BUILD_DIR="$REPO_ROOT/.build/skills/$VENDOR"
 if [[ -d "$BUILD_DIR" ]]; then
   /bin/rm -rf "$BUILD_DIR"
 fi
@@ -152,7 +154,7 @@ total=0
 
 for skill_name in $(printf '%s\n' "${!SKILL_MAP[@]}" | sort); do
   skill_root="${SKILL_MAP[$skill_name]}"
-  output_path="$REPO_ROOT/.build/skills/$skill_name/SKILL.md"
+  output_path="$REPO_ROOT/.build/skills/$VENDOR/$skill_name/SKILL.md"
   ((total++)) || true
 
   echo "[build-all-skills] building: $skill_name (from $skill_root)" >&2

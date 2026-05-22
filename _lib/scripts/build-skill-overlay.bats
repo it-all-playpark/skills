@@ -217,18 +217,18 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 8: default-output-build-dir — default output is <repo>/.build/skills/<skill>/SKILL.md
+# Test 8: default-output-build-dir — default output is <repo>/.build/skills/<vendor>/<skill>/SKILL.md
 # ---------------------------------------------------------------------------
-@test "default-output-build-dir: default output path is <skill-root>/.build/skills/<skill>/SKILL.md" {
+@test "default-output-build-dir: default output path is <skill-root>/.build/skills/<vendor>/<skill>/SKILL.md" {
   local tmpdir
   tmpdir="$(mktemp -d)"
   make_portable_skill "$tmpdir"
 
-  # Run WITHOUT --output so default path is used
+  # Run WITHOUT --output so default path is used (default vendor = claude)
   run bash "$SCRIPT" test-skill --skill-root "$tmpdir"
   [ "$status" -eq 0 ]
 
-  local expected_path="$tmpdir/.build/skills/test-skill/SKILL.md"
+  local expected_path="$tmpdir/.build/skills/claude/test-skill/SKILL.md"
   [ -f "$expected_path" ]
   grep -q "name: test-skill" "$expected_path"
 

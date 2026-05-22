@@ -87,7 +87,7 @@ make_merged_skill() {
 # ---------------------------------------------------------------------------
 @test "dev-plan-review: merged artifact contains model, effort, context, allowed-tools" {
   # This test requires build-all-skills to have run first (or we run it here)
-  local build_artifact="$REPO_ROOT/.build/skills/dev-plan-review/SKILL.md"
+  local build_artifact="$REPO_ROOT/.build/skills/claude/dev-plan-review/SKILL.md"
 
   # If artifact doesn't exist yet, build it first
   if [[ ! -f "$build_artifact" ]]; then

@@ -22,7 +22,7 @@
 #   --skill-root <path>  root directory where skill subdirectories live
 #                        (default: parent of this script, i.e. the repo root)
 #   --output <path>      output path for merged SKILL.md
-#                        (default: <skill-root>/.build/skills/<skill-name>/SKILL.md)
+#                        (default: <skill-root>/.build/skills/<vendor>/<skill-name>/SKILL.md)
 #   --subdir-strategy    how to handle skill subdirs (references/, scripts/, etc.)
 #                        symlink: create absolute symlinks (default)
 #                        copy:    deep copy the subdirectory
@@ -60,7 +60,7 @@ usage: $(basename "$0") <skill-name> [--vendor <vendor>] [--skill-root <path>] [
   --vendor <vendor>         adapter vendor (default: claude)
   --skill-root <p>          repo root that contains skill subdirs (default: auto-detect from BASH_SOURCE)
   --output <path>           output path for merged SKILL.md
-                            default: <skill-root>/.build/skills/<skill-name>/SKILL.md
+                            default: <skill-root>/.build/skills/<vendor>/<skill-name>/SKILL.md
   --subdir-strategy <s>     how to wire subdirs (references/, scripts/) into the build artifact dir
                             symlink: create absolute symlinks pointing to <skill-root>/<skill>/<subdir>/
                             copy:    deep copy the subdirectory
@@ -135,12 +135,14 @@ fi
 PORTABLE_SKILL_MD="$SKILL_ROOT/$SKILL_NAME/SKILL.md"
 OVERLAY_FILE="$SKILL_ROOT/$SKILL_NAME/adapters/$VENDOR.yaml"
 
-# Default output: <skill-root>/.build/skills/<skill-name>/SKILL.md
+# Default output: <skill-root>/.build/skills/<vendor>/<skill-name>/SKILL.md
+# The artifact is namespaced by vendor because each vendor's merge injects different
+# vendor-specific frontmatter (e.g. claude's model/effort that other agents reject).
 # This places the artifact inside the repo tree (gitignored via /.build/) so that
 # per-skill symlinks from ~/.claude/skills/<skill>/ can resolve subdirs via absolute symlinks.
 # Note: $HOME/.cache/... was the old default; changed in issue #110 to support adapter overlay wiring.
 if [[ -z "$OUTPUT_PATH" ]]; then
-  OUTPUT_PATH="$SKILL_ROOT/.build/skills/$SKILL_NAME/SKILL.md"
+  OUTPUT_PATH="$SKILL_ROOT/.build/skills/$VENDOR/$SKILL_NAME/SKILL.md"
 fi
 
 # ---------------------------------------------------------------------------
@@ -238,7 +240,7 @@ echo "[build-skill-overlay] written: $OUTPUT_PATH" >&2
 # symlink (--subdir-strategy symlink, default) or a deep copy
 # (--subdir-strategy copy) inside the build artifact directory.
 # This allows Claude Code to resolve references/ etc. when loading the skill
-# from ~/.claude/skills/<skill>/ → <repo>/.build/skills/<skill>/ per-skill symlink.
+# from ~/.claude/skills/<skill>/ → <repo>/.build/skills/<vendor>/<skill>/ per-skill symlink.
 
 BUILD_DIR="$(dirname "$OUTPUT_PATH")"
 SKILL_SRC_DIR="$SKILL_ROOT/$SKILL_NAME"

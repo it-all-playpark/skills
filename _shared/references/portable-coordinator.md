@@ -311,7 +311,8 @@ Claude Code 拡張 frontmatter を portable SKILL.md から分離し、build scr
 **Wiring 問題と解決 (issue #110)**: `~/.claude/skills` が `<repo>` への単一 symlink では
 `<skill>/adapters/claude.yaml` が Claude Code に届かない。issue #110 で以下の 2 段階で解決した:
 
-1. `build-skill-overlay.sh` の出力先を `<repo>/.build/skills/<skill>/SKILL.md` に変更 (旧: `$HOME/.cache/...`)
+1. `build-skill-overlay.sh` の出力先を `<repo>/.build/skills/<vendor>/<skill>/SKILL.md` に変更 (旧: `$HOME/.cache/...`)。
+   merge artifact は vendor 固有 frontmatter を含むため **vendor 名で namespace 化** (default `claude`)
 2. `install-claude-skills-link.sh` で `~/.claude/skills` を **real directory + per-skill symlink** に変換
 
 ```
@@ -323,11 +324,11 @@ Claude Code 拡張 frontmatter を portable SKILL.md から分離し、build scr
         │
         ▼
 [ make skills  →  _lib/scripts/build-all-skills.sh ]
-        │    (idempotent full rebuild, rm -rf .build/skills/ first)
+        │    (idempotent rebuild, rm -rf .build/skills/<vendor>/ first; default vendor=claude)
         │
         ▼
-<repo>/.build/skills/<skill>/
-├── SKILL.md                  ← merge(portable SKILL.md + adapters/claude.yaml)
+<repo>/.build/skills/<vendor>/<skill>/
+├── SKILL.md                  ← merge(portable SKILL.md + adapters/<vendor>.yaml)
 ├── references/               ← absolute symlink → <repo>/<skill>/references/
 └── scripts/                  ← absolute symlink → <repo>/<skill>/scripts/
 
@@ -338,12 +339,13 @@ Claude Code 拡張 frontmatter を portable SKILL.md から分離し、build scr
         │
         ▼
 ~/.claude/skills/
-├── dev-plan-review  →  <repo>/.build/skills/dev-plan-review/   ← overlay あり skill
-├── bgm              →  <repo>/bgm/                             ← overlay なし skill (直接)
+├── dev-plan-review  →  <repo>/.build/skills/claude/dev-plan-review/   ← overlay あり skill
+├── bgm              →  <repo>/bgm/                                    ← overlay なし skill (直接)
 ├── (claude-skill)   →  <repo>/.claude/skills/(claude-skill)/
 └── (agent-skill)    →  <repo>/.agents/skills/(agent-skill)/
 
-Codex CLI / agy は <repo>/<skill>/SKILL.md を直接読む (overlay 不要)
+Codex CLI / agy は <repo>/<skill>/SKILL.md を直接読む (build artifact 不要)
+他 vendor が独自拡張を持つ場合は .build/skills/<その vendor>/ に分離されるため衝突しない
 ```
 
 **Phase 0 smoke test 確認済 (2026-05-22)**: absolute symlink 経由で `references/` 配下のファイルを

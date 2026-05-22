@@ -7,9 +7,9 @@
 #                                   populate per-skill symlinks
 #   restore [options]            — revert to latest ~/.claude/skills.bak-<ts>
 #
-# Per-skill symlink target:
-#   - skill WITH <repo>/<skill>/adapters/claude.yaml → <repo>/.build/skills/<skill>/
-#   - skill WITHOUT overlay                          → <repo>/<skill>/
+# Per-skill symlink target (vendor defaults to claude):
+#   - skill WITH <repo>/<skill>/adapters/<vendor>.yaml → <repo>/.build/skills/<vendor>/<skill>/
+#   - skill WITHOUT overlay                            → <repo>/<skill>/
 #
 # Skills discovered from:
 #   <repo>/*/SKILL.md
@@ -228,8 +228,8 @@ EOF
     local symlink_target
 
     if [[ -f "$overlay_file" ]]; then
-      # Has overlay → point to .build/skills artifact
-      symlink_target="$REPO_ROOT/.build/skills/$skill_name"
+      # Has overlay → point to vendor-namespaced .build/skills artifact
+      symlink_target="$REPO_ROOT/.build/skills/$VENDOR/$skill_name"
     else
       # No overlay → point directly to source skill dir
       symlink_target="$skill_root/$skill_name"

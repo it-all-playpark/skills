@@ -91,8 +91,8 @@ jobs:
       - name: Assert dev-plan-review artifact exists
         shell: bash
         run: |
-          [[ -f .build/skills/dev-plan-review/SKILL.md ]] || {
-            echo "error: .build/skills/dev-plan-review/SKILL.md not found" >&2
+          [[ -f .build/skills/claude/dev-plan-review/SKILL.md ]] || {
+            echo "error: .build/skills/claude/dev-plan-review/SKILL.md not found" >&2
             exit 1
           }
 
@@ -100,14 +100,14 @@ jobs:
         shell: bash
         run: |
           ./_lib/scripts/lint-merged-frontmatter.sh \
-            .build/skills/dev-plan-review/SKILL.md \
+            .build/skills/claude/dev-plan-review/SKILL.md \
             --require "model,effort,context,allowed-tools"
 
       - name: Assert discover count equals built count
         shell: bash
         run: |
           discovered=$(bash _lib/scripts/build-all-skills.sh --list-discovered | wc -l | tr -d ' ')
-          built=$(find .build/skills -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          built=$(find .build/skills/claude -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
           echo "Discovered: $discovered, Built: $built"
           [[ "$discovered" -eq "$built" ]] || {
             echo "error: discovered ($discovered) != built ($built)" >&2

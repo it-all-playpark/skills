@@ -152,10 +152,12 @@ portable SKILL.md + `adapters/claude.yaml` を Claude Code に届けるための
 
 **解決**: `make setup` + `make install-link` で以下を構築:
 
-1. `make skills` → `build-all-skills.sh` が `<repo>/.build/skills/<skill>/SKILL.md`
-   (portable + overlay merge artifact) を生成
+1. `make skills` → `build-all-skills.sh` が `<repo>/.build/skills/<vendor>/<skill>/SKILL.md`
+   (portable + overlay merge artifact) を生成。merge artifact は vendor 固有 frontmatter を
+   注入するため **vendor 名で namespace 化** する (default `claude`)。Codex / agy 等の他 agent は
+   portable な `<repo>/<skill>/SKILL.md` を直接読むので build artifact は不要。
 2. `make install-link` → `~/.claude/skills` を **real directory + per-skill symlink** に変換:
-   - overlay あり skill → `~/.claude/skills/<skill>` → `<repo>/.build/skills/<skill>/`
+   - overlay あり skill → `~/.claude/skills/<skill>` → `<repo>/.build/skills/claude/<skill>/`
    - overlay なし skill → `~/.claude/skills/<skill>` → `<repo>/<skill>/`
 
 **worktree での注意**: 各 worktree は独立した `.build/skills/` を持つ。

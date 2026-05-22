@@ -98,19 +98,19 @@ EOF
   # First run
   run bash "$SCRIPT" --repo-root "$fake_repo" 2>/dev/null
   [ "$status" -eq 0 ]
-  [ -d "$fake_repo/.build/skills/skill-alpha" ]
+  [ -d "$fake_repo/.build/skills/claude/skill-alpha" ]
 
-  # Inject stale ghost entry
-  mkdir -p "$fake_repo/.build/skills/_ghost-deleted"
+  # Inject stale ghost entry under the vendor namespace
+  mkdir -p "$fake_repo/.build/skills/claude/_ghost-deleted"
 
   # Second run — should remove the ghost
   run bash "$SCRIPT" --repo-root "$fake_repo" 2>/dev/null
   [ "$status" -eq 0 ]
 
   # Ghost must be gone
-  [ ! -d "$fake_repo/.build/skills/_ghost-deleted" ]
+  [ ! -d "$fake_repo/.build/skills/claude/_ghost-deleted" ]
   # Real skill still present
-  [ -d "$fake_repo/.build/skills/skill-alpha" ]
+  [ -d "$fake_repo/.build/skills/claude/skill-alpha" ]
 
   /bin/rm -rf "$tmpdir"
 }
@@ -135,7 +135,7 @@ EOF
   discovered_count="$(bash "$SCRIPT" --repo-root "$fake_repo" --list-discovered 2>/dev/null | wc -l | tr -d ' ')"
 
   local built_count
-  built_count="$(find "$fake_repo/.build/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+  built_count="$(find "$fake_repo/.build/skills/claude" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 
   [ "$discovered_count" -eq "$built_count" ]
 

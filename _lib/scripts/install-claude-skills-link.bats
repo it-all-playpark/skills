@@ -48,14 +48,14 @@ make_claude_overlay() {
   printf 'model: opus\neffort: max\ncontext: fork\n' > "$root/$name/adapters/claude.yaml"
 }
 
-# Pre-build the .build/skills artifact for overlay skills (mimics `make skills`)
+# Pre-build the .build/skills artifact for overlay skills (mimics `make skills`).
+# Uses the build script's default vendor-namespaced output path (.build/skills/claude/<skill>/).
 prebuild_skill() {
   local repo_root="$1"
   local skill_name="$2"
   bash "$SCRIPT_DIR/build-skill-overlay.sh" \
     "$skill_name" \
     --skill-root "$repo_root" \
-    --output "$repo_root/.build/skills/$skill_name/SKILL.md" \
     --subdir-strategy symlink \
     2>/dev/null
 }
@@ -80,8 +80,8 @@ prebuild_skill() {
   [ -L "$fake_home/.claude/skills/my-skill" ]
   local target
   target="$(readlink "$fake_home/.claude/skills/my-skill")"
-  # Must point to .build/skills/my-skill (not the source skill dir)
-  [[ "$target" == *".build/skills/my-skill"* ]]
+  # Must point to vendor-namespaced .build/skills/claude/my-skill (not the source skill dir)
+  [[ "$target" == *".build/skills/claude/my-skill"* ]]
 
   /bin/rm -rf "$tmpdir"
 }
