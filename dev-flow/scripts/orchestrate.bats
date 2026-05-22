@@ -17,6 +17,15 @@ setup() {
     write_flow
 }
 
+# bats 1.2's `run` merges stderr into $output. orchestrate.sh logs progress to
+# stderr, which corrupts `jq "$output"`. `orch` runs the script via bash -c with
+# stderr discarded, so $output holds only the clean JSON result emitted on stdout.
+# Tests that assert die_json diagnostics (written to stderr) use plain `run`
+# instead. ORCHESTRATE_DRY_* env vars are inherited, so export them before orch.
+orch() {
+    run bash -c '"$0" "$@" 2>/dev/null' "$SCRIPT" "$@"
+}
+
 # Write a fresh flow.json with N completed children, decompose done, rest pending.
 write_flow() {
     cat > "$FLOW" << 'EOF'
@@ -43,7 +52,7 @@ EOF
 }
 
 @test "dry-run completes all 4 phases (batch_loop->integrate->final_pr->pr_iterate)" {
-    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | jq -r '.status')" = "completed" ]
     # all phases done
@@ -59,6 +68,7 @@ EOF
 }
 
 @test "rejects flow.json version != 2.1.0 (no-backcompat)" {
+    # die_json writes to stderr; plain `run` (which merges) captures it.
     jq '.version = "2.0.0"' "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
     run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -ne 0 ]
@@ -66,6 +76,7 @@ EOF
 }
 
 @test "aborts when decompose phase not done" {
+    # die_json writes to stderr; plain `run` (which merges) captures it.
     jq '(.phases[] | select(.name=="decompose")).status = "pending"' "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
     run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -ne 0 ]
@@ -74,22 +85,22 @@ EOF
 
 @test "resumes from integrate when batch_loop already done" {
     jq '(.phases[] | select(.name=="batch_loop")).status = "done"' "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
-    run env "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | jq -r '.status')" = "completed" ]
 }
 
 @test "all phases done -> completed no-op" {
     jq '.phases |= map(.status = "done")' "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
-    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | jq -r '.status')" = "completed" ]
 }
 
 @test "abort when batch_loop has failed children and no --allow-partial" {
     echo '{"issues_succeeded":1,"issues_failed":1,"results":[{"issue":201,"status":"success"},{"issue":202,"status":"failed"}]}' > "$BATS_TMPDIR/br.json"
-    run env ORCHESTRATE_DRY_BATCH_RESULT="$BATS_TMPDIR/br.json" \
-        "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    export ORCHESTRATE_DRY_BATCH_RESULT="$BATS_TMPDIR/br.json"
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 2 ]
     [ "$(echo "$output" | jq -r '.status')" = "aborted" ]
     [ "$(echo "$output" | jq -r '.phase')" = "batch_loop" ]
@@ -99,16 +110,16 @@ EOF
 
 @test "continue past partial batch_loop with --allow-partial" {
     echo '{"issues_succeeded":1,"issues_failed":1,"results":[{"issue":201,"status":"success"},{"issue":202,"status":"failed"}]}' > "$BATS_TMPDIR/br.json"
-    run env ORCHESTRATE_DRY_BATCH_RESULT="$BATS_TMPDIR/br.json" \
-        "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --allow-partial --dry-run
+    export ORCHESTRATE_DRY_BATCH_RESULT="$BATS_TMPDIR/br.json"
+    orch --flow-state "$FLOW" --worktree "$WT" --allow-partial --dry-run
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | jq -r '.status')" = "completed" ]
 }
 
 @test "abort when final_pr CI status is not passed" {
     jq '(.phases[]|select(.name=="batch_loop")).status="done" | (.phases[]|select(.name=="integrate")).status="done"' "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
-    run env ORCHESTRATE_DRY_CI_STATUS="failed" \
-        "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    export ORCHESTRATE_DRY_CI_STATUS="failed"
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 2 ]
     [ "$(echo "$output" | jq -r '.phase')" = "final_pr" ]
     [[ "$(echo "$output" | jq -r '.reason')" == *"CI status=failed"* ]]
@@ -117,14 +128,14 @@ EOF
 @test "batch_loop skipped children counted as failed (consistency with build-envelope)" {
     # 1 success + 1 skipped: failed_children=1 -> abort without --allow-partial
     echo '{"issues_succeeded":1,"issues_failed":0,"results":[{"issue":201,"status":"success"},{"issue":202,"status":"skipped"}]}' > "$BATS_TMPDIR/br.json"
-    run env ORCHESTRATE_DRY_BATCH_RESULT="$BATS_TMPDIR/br.json" \
-        "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    export ORCHESTRATE_DRY_BATCH_RESULT="$BATS_TMPDIR/br.json"
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 2 ]
     [ "$(echo "$output" | jq -r '.phase')" = "batch_loop" ]
 }
 
 @test "marks phases done in order on success" {
-    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 0 ]
     [ "$(jq -r '.phases[]|select(.name=="batch_loop").status' "$FLOW")" = "done" ]
     [ "$(jq -r '.phases[]|select(.name=="integrate").status' "$FLOW")" = "done" ]
@@ -138,7 +149,7 @@ EOF
     # Seed a failed batch_loop carrying a non-abort retry_target (prior-run residue).
     jq '(.phases[]|select(.name=="batch_loop")) |= (.status="failed" | .retry_target="batch_loop" | .attempts=0)' \
         "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
-    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 0 ]
     [ "$(echo "$output" | jq -r '.status')" = "completed" ]
     # retry bumped attempts before re-running the phase
@@ -149,7 +160,7 @@ EOF
 @test "resume from failed phase at max attempts aborts (retry NOT fired)" {
     jq '(.phases[]|select(.name=="batch_loop")) |= (.status="failed" | .retry_target="batch_loop" | .attempts=3)' \
         "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
-    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 2 ]
     [ "$(echo "$output" | jq -r '.status')" = "aborted" ]
     [[ "$(echo "$output" | jq -r '.reason')" == *"max retry"* ]]
@@ -160,7 +171,7 @@ EOF
 @test "resume from failed phase with retry_target=abort aborts immediately" {
     jq '(.phases[]|select(.name=="batch_loop")) |= (.status="failed" | .retry_target="abort" | .attempts=0)' \
         "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
-    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    orch --flow-state "$FLOW" --worktree "$WT" --dry-run
     [ "$status" -eq 2 ]
     [ "$(echo "$output" | jq -r '.status')" = "aborted" ]
     # not re-run: still failed, attempts untouched
