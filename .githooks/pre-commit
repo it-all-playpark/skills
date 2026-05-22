@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit — rebuild skill overlay artifacts for changed skills.
+#
+# Triggered on: git commit (when core.hooksPath = .githooks)
+#
+# Behavior:
+#   - Reads staged file list from `git diff --cached --name-only`
+#   - For each changed file matching <skill>/SKILL.md or <skill>/adapters/*.yaml,
+#     rebuilds that skill's overlay artifact via build-skill-overlay.sh
+#   - Exits non-zero if any rebuild fails (blocking the commit)
+#
+# Escape hatch:
+#   SKIP_SKILL_REBUILD=1  — skip all rebuilds (useful for hotfixes)
+#
+# Environment overrides (for testing):
+#   BUILD_SKILL_OVERLAY   — path to build-skill-overlay.sh (default: auto-detect)
+#   REPO_ROOT             — repo root path (default: git rev-parse --show-toplevel)
+#   VENDOR                — adapter vendor / build namespace (default: claude)
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Escape hatch
+# ---------------------------------------------------------------------------
+if [[ "${SKIP_SKILL_REBUILD:-}" == "1" ]]; then
+  echo "[pre-commit] SKIP_SKILL_REBUILD=1: skipping skill rebuild" >&2
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Resolve paths
+# ---------------------------------------------------------------------------
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ -z "${REPO_ROOT:-}" ]]; then
+  REPO_ROOT="$(git rev-parse --show-toplevel)"
+fi
+
+if [[ -z "${BUILD_SKILL_OVERLAY:-}" ]]; then
+  BUILD_SKILL_OVERLAY="$REPO_ROOT/_lib/scripts/build-skill-overlay.sh"
+fi
+
+VENDOR="${VENDOR:-claude}"
+
+# ---------------------------------------------------------------------------
+# Check PyYAML availability (build-skill-overlay.sh depends on it)
+# ---------------------------------------------------------------------------
+if ! python3 -c "import yaml" 2>/dev/null; then
+  echo "[pre-commit] warning: PyYAML not available, skipping skill rebuild" >&2
+  echo "[pre-commit] install: pip3 install pyyaml" >&2
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Get list of staged files
+# ---------------------------------------------------------------------------
+staged_files="$(git diff --cached --name-only)"
+
+if [[ -z "$staged_files" ]]; then
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Identify skills to rebuild
+# ---------------------------------------------------------------------------
+skills_to_rebuild=""  # newline-separated list of skill names (deduplicated)
+
+while IFS= read -r file; do
+  skill_name=""
+  # Match: <skill>/SKILL.md
+  if [[ "$file" =~ ^([^/]+)/SKILL\.md$ ]]; then
+    skill_name="${BASH_REMATCH[1]}"
+  # Match: <skill>/adapters/*.yaml
+  elif [[ "$file" =~ ^([^/]+)/adapters/[^/]+\.yaml$ ]]; then
+    skill_name="${BASH_REMATCH[1]}"
+  fi
+
+  if [[ -n "$skill_name" ]]; then
+    # Deduplicate
+    if ! printf '%s\n' "$skills_to_rebuild" | grep -qxF "$skill_name"; then
+      skills_to_rebuild="${skills_to_rebuild:+$skills_to_rebuild$'\n'}$skill_name"
+    fi
+  fi
+done <<< "$staged_files"
+
+if [[ -z "$skills_to_rebuild" ]]; then
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Rebuild affected skills
+# ---------------------------------------------------------------------------
+fail_count=0
+
+while IFS= read -r skill_name; do
+  [[ -z "$skill_name" ]] && continue
+  skill_root="$REPO_ROOT"
+  output_path="$REPO_ROOT/.build/skills/$VENDOR/$skill_name/SKILL.md"
+
+  echo "[pre-commit] rebuilding: $skill_name" >&2
+
+  if ! bash "$BUILD_SKILL_OVERLAY" "$skill_name" \
+      --skill-root "$skill_root" \
+      --vendor "$VENDOR" \
+      --output "$output_path" \
+      --subdir-strategy symlink \
+      2>&1 >&2; then
+    echo "[pre-commit] FAILED: $skill_name rebuild failed" >&2
+    ((fail_count++)) || true
+  fi
+done <<< "$skills_to_rebuild"
+
+if [[ $fail_count -gt 0 ]]; then
+  echo "[pre-commit] $fail_count skill(s) failed to rebuild. Commit blocked." >&2
+  exit 1
+fi
+
+exit 0

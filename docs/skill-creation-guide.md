@@ -152,19 +152,28 @@ allowed-tools:
 ##### Build script
 
 `_lib/scripts/build-skill-overlay.sh` が portable SKILL.md + adapter overlay を merge して
-Claude Code 用 SKILL.md を生成する。
+Claude Code 用 SKILL.md を生成する。全 skill を一括再生成するには `make skills` を使う。
 
 ```bash
+# 単体 skill のビルド
 bash _lib/scripts/build-skill-overlay.sh <skill-name> \
-  [--vendor <vendor>]        # default: claude
-  [--skill-root <path>]      # default: repo root (auto-detect)
-  [--output <path>]          # default: $HOME/.cache/claude-skill-build/<skill-name>/SKILL.md
+  [--vendor <vendor>]            # default: claude
+  [--skill-root <path>]          # default: repo root (auto-detect)
+  [--output <path>]              # default: <repo>/.build/skills/<vendor>/<skill-name>/SKILL.md
+  [--subdir-strategy symlink|copy]  # default: symlink (absolute symlinks for references/, scripts/)
+
+# 全 skill 一括再生成 (idempotent, .build/skills/<vendor>/ を rm -rf してから再構築)
+make skills
+
+# 開発者初回セットアップ (git hooks 設定 + make skills)
+make setup
 ```
 
 | 入力 | 出力 |
 |------|------|
-| `<repo>/<skill>/SKILL.md` (portable subset) | `--output` で指定した path に merged SKILL.md |
+| `<repo>/<skill>/SKILL.md` (portable subset) | `<repo>/.build/skills/<vendor>/<skill>/SKILL.md` (merge artifact) |
 | `<repo>/<skill>/adapters/<vendor>.yaml` (overlay) | (frontmatter union + body は portable のもの) |
+| `<repo>/<skill>/references/`, `scripts/` 等 subdir | `.build/` 内に absolute symlink (or copy) |
 
 ##### Merge ルール
 
@@ -178,14 +187,18 @@ bash _lib/scripts/build-skill-overlay.sh <skill-name> \
 
 ##### Build artifact のライフサイクル
 
-- デフォルト出力先 `$HOME/.cache/claude-skill-build/<skill>/SKILL.md` は **repo 外** なので
-  `.gitignore` 設定は不要 (Q3=Y 採用)
-- 開発者が `--output ./.build/...` のように repo 内パスを指定する場合に備え `.gitignore` に
-  `/.build/` と `/dist/skills/` を defensive に追加済
-- artifact 自体は **commit しない**。`_lib/scripts/build-skill-overlay.sh` で **再生成可能** な
-  derived data として扱う
-- 将来: pre-commit hook で SKILL.md / adapter overlay の変更を検知して自動 rebuild、
-  CI で `--check` モードで diff 比較する案あり (本 PR では未実装)
+- デフォルト出力先 `<repo>/.build/skills/<vendor>/<skill>/SKILL.md` は `.gitignore` (`/.build/`) で除外
+  (Q3=Y 採用)。git に commit しない derived data として扱う。merge artifact は vendor 固有
+  frontmatter を含むため vendor 名 (default `claude`) で namespace 化し、将来 `cursor` 等を
+  build しても衝突しない
+- `references/`, `scripts/` 等の subdir は `.build/` 内に **absolute symlink** で配置
+  (`--subdir-strategy symlink`、default)。Claude Code `Read` ツールが解決できることを実機確認済
+  (`claudedocs/phase0-symlink-smoke-test.md`)
+- `--subdir-strategy copy` は EC1 fallback (symlink が機能しない環境向け)
+- artifact は **`make skills` で再生成可能**。SKILL.md / `adapters/*.yaml` の変更後は再実行が必要
+- `.githooks/pre-commit` フックが SKILL.md / `adapters/*.yaml` の staged 変更を検知し、
+  変更があった skill のみ自動 rebuild する (partial rebuild、commit 時間を最小化)
+- CI: `merged-skill-build` job で `make skills` → `lint-merged-frontmatter.sh` の content check
 
 ##### Lint
 

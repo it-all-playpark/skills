@@ -46,9 +46,9 @@ __pycache__/
 # Packaged skills
 *.skill
 
-# Adapter overlay build artifacts (issue #106, Q3=Y)
-# build-skill-overlay.sh のデフォルト出力先は $HOME/.cache/claude-skill-build/ (repo 外)
-# だが、開発者が --output で repo 内パスを指定したときの誤コミット防止のため defensive に ignore
+# Adapter overlay build artifacts (issue #106 / #110)
+# build-skill-overlay.sh / build-all-skills.sh のデフォルト出力先は <repo>/.build/skills/ (issue #110)。
+# merge artifact は derived data なので commit せず ignore する (make skills で再生成可能)。
 /.build/
 /dist/skills/
 

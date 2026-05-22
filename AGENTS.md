@@ -11,6 +11,16 @@ Subdirectory `AGENTS.md` files take precedence over this root file for their res
 ## Setup commands
 
 ```bash
+# 初回セットアップ (git hooks + skill build artifacts)
+# PyYAML が必要: pip3 install pyyaml
+make setup           # = git config core.hooksPath .githooks + make skills
+
+# Claude Code の ~/.claude/skills を per-skill symlink 構成に変換
+make install-link    # = install-claude-skills-link.sh install
+
+# 元の ~/.claude/skills に戻す
+make uninstall-link  # = install-claude-skills-link.sh restore
+
 # bats (テストフレームワーク) のインストール
 brew install bats-core        # macOS
 apt-get install bats          # Ubuntu / Debian
@@ -18,6 +28,9 @@ apt-get install bats          # Ubuntu / Debian
 # テスト実行
 bash tests/run-all-bats.sh           # ローカル開発 (bats 未インストール時は graceful skip)
 bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを error 扱い)
+
+# Skill build artifacts のみ再生成
+make skills          # = build-all-skills.sh (idempotent full rebuild)
 ```
 
 ディレクトリ構造:
@@ -129,6 +142,32 @@ bash _lib/scripts/lint-portable-frontmatter.sh --root . --strict
 (`<skill>/adapters/claude.yaml`) 化を念頭に置いて設計すること。
 
 詳細: `docs/skill-creation-guide.md` § Portable subset と Claude Code 拡張
+
+### Adapter overlay wiring (issue #110)
+
+portable SKILL.md + `adapters/claude.yaml` を Claude Code に届けるための wiring。
+
+**問題**: `~/.claude/skills` が `<repo>` への単一 symlink では `<skill>/adapters/claude.yaml`
+が Claude Code に届かない (PR #107 で確認)。
+
+**解決**: `make setup` + `make install-link` で以下を構築:
+
+1. `make skills` → `build-all-skills.sh` が `<repo>/.build/skills/<vendor>/<skill>/SKILL.md`
+   (portable + overlay merge artifact) を生成。merge artifact は vendor 固有 frontmatter を
+   注入するため **vendor 名で namespace 化** する (default `claude`)。Codex / agy 等の他 agent は
+   portable な `<repo>/<skill>/SKILL.md` を直接読むので build artifact は不要。
+2. `make install-link` → `~/.claude/skills` を **real directory + per-skill symlink** に変換:
+   - overlay あり skill → `~/.claude/skills/<skill>` → `<repo>/.build/skills/claude/<skill>/`
+   - overlay なし skill → `~/.claude/skills/<skill>` → `<repo>/<skill>/`
+
+**worktree での注意**: 各 worktree は独立した `.build/skills/` を持つ。
+`make skills` を worktree 内で実行すると worktree ローカルの `.build/` が生成される。
+
+**CI**: `.github/workflows/lint.yml` の `merged-skill-build` job が
+`make skills` → `lint-merged-frontmatter.sh` で merge artifact の内容を検証。
+discover 件数 == built 件数の drift check も含む (固定数値は使わない)。
+
+詳細: `_shared/references/portable-coordinator.md` § 6
 
 ### Subagent dispatch — 必須 5 要素
 

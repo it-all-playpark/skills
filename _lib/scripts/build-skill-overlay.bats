@@ -10,6 +10,9 @@
 #   5. invalid-yaml       - malformed overlay YAML causes exit 2 + stderr message
 #   6. field-collision    - overlay field 'name' overrides portable value (overlay wins)
 #   7. output-to-file     - --output writes merged content to specified path
+#   8. default-output-build-dir  - default output is <repo>/.build/skills/<skill>/SKILL.md
+#   9. subdir-strategy-symlink   - --subdir-strategy symlink creates absolute symlinks for subdirs
+#  10. subdir-strategy-copy      - --subdir-strategy copy creates deep copies of subdirs
 
 SCRIPT_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)"
 SCRIPT="$SCRIPT_DIR/build-skill-overlay.sh"
@@ -209,6 +212,92 @@ EOF
   [ -f "$out_file" ]
   grep -q "model: opus" "$out_file"
   grep -q "Test Skill Body" "$out_file"
+
+  rm -rf "$tmpdir"
+}
+
+# ---------------------------------------------------------------------------
+# Test 8: default-output-build-dir — default output is <repo>/.build/skills/<vendor>/<skill>/SKILL.md
+# ---------------------------------------------------------------------------
+@test "default-output-build-dir: default output path is <skill-root>/.build/skills/<vendor>/<skill>/SKILL.md" {
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  make_portable_skill "$tmpdir"
+
+  # Run WITHOUT --output so default path is used (default vendor = claude)
+  run bash "$SCRIPT" test-skill --skill-root "$tmpdir"
+  [ "$status" -eq 0 ]
+
+  local expected_path="$tmpdir/.build/skills/claude/test-skill/SKILL.md"
+  [ -f "$expected_path" ]
+  grep -q "name: test-skill" "$expected_path"
+
+  rm -rf "$tmpdir"
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: subdir-strategy-symlink — --subdir-strategy symlink creates absolute symlinks
+# ---------------------------------------------------------------------------
+@test "subdir-strategy-symlink: creates absolute symlinks for skill subdirs in build artifact dir" {
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  make_portable_skill "$tmpdir"
+  make_claude_overlay "$tmpdir"
+  # Create a references/ subdir in the source skill
+  mkdir -p "$tmpdir/test-skill/references"
+  echo "# Reference doc" > "$tmpdir/test-skill/references/guide.md"
+  mkdir -p "$tmpdir/test-skill/scripts"
+  echo "#!/usr/bin/env bash" > "$tmpdir/test-skill/scripts/run.sh"
+
+  local out_file="$tmpdir/.build/skills/test-skill/SKILL.md"
+
+  run bash "$SCRIPT" test-skill --skill-root "$tmpdir" --output "$out_file" --subdir-strategy symlink
+  [ "$status" -eq 0 ]
+  [ -f "$out_file" ]
+
+  # references/ and scripts/ should be symlinks in the build artifact dir
+  local build_dir
+  build_dir="$(dirname "$out_file")"
+  [ -L "$build_dir/references" ]
+  [ -L "$build_dir/scripts" ]
+
+  # Symlinks must be absolute (not relative)
+  local ref_target
+  ref_target="$(readlink "$build_dir/references")"
+  [[ "$ref_target" == /* ]]
+
+  # Symlink should resolve correctly (file inside is accessible)
+  [ -f "$build_dir/references/guide.md" ]
+
+  rm -rf "$tmpdir"
+}
+
+# ---------------------------------------------------------------------------
+# Test 10: subdir-strategy-copy — --subdir-strategy copy creates deep copies
+# ---------------------------------------------------------------------------
+@test "subdir-strategy-copy: creates deep copies of skill subdirs in build artifact dir" {
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  make_portable_skill "$tmpdir"
+  make_claude_overlay "$tmpdir"
+  # Create a references/ subdir in the source skill
+  mkdir -p "$tmpdir/test-skill/references"
+  echo "# Reference doc" > "$tmpdir/test-skill/references/guide.md"
+
+  local out_file="$tmpdir/.build/skills/test-skill/SKILL.md"
+
+  run bash "$SCRIPT" test-skill --skill-root "$tmpdir" --output "$out_file" --subdir-strategy copy
+  [ "$status" -eq 0 ]
+  [ -f "$out_file" ]
+
+  local build_dir
+  build_dir="$(dirname "$out_file")"
+  # references/ must NOT be a symlink but a real directory
+  [ -d "$build_dir/references" ]
+  [ ! -L "$build_dir/references" ]
+
+  # File inside should be present as a copy
+  [ -f "$build_dir/references/guide.md" ]
 
   rm -rf "$tmpdir"
 }

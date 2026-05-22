@@ -303,42 +303,79 @@ agents:
 [`docs/skill-creation-guide.md` § Portable subset と Claude Code 拡張](../../docs/skill-creation-guide.md)
 を参照 (PR #104 で改訂)。
 
-### Adapter overlay (reference 実装, issue #106)
+### Adapter overlay (reference 実装, issue #106) + Wiring (issue #110)
 
 Claude Code 拡張 frontmatter を portable SKILL.md から分離し、build script で merge する仕組み。
 [`dev-plan-review`](../../dev-plan-review/SKILL.md) が **最初の reference 実装** (#103 Phase C)。
+
+**Wiring 問題と解決 (issue #110)**: `~/.claude/skills` が `<repo>` への単一 symlink では
+`<skill>/adapters/claude.yaml` が Claude Code に届かない。issue #110 で以下の 2 段階で解決した:
+
+1. `build-skill-overlay.sh` の出力先を `<repo>/.build/skills/<vendor>/<skill>/SKILL.md` に変更 (旧: `$HOME/.cache/...`)。
+   merge artifact は vendor 固有 frontmatter を含むため **vendor 名で namespace 化** (default `claude`)
+2. `install-claude-skills-link.sh` で `~/.claude/skills` を **real directory + per-skill symlink** に変換
 
 ```
 <skill-name>/
 ├── SKILL.md                 # portable subset のみ (cross-agent で parse 可能)
 ├── adapters/
 │   └── claude.yaml          # Claude Code 拡張 (model / effort / context / allowed-tools)
-└── ...                      # references/, scripts/ など既存構造
+└── references/, scripts/    # 既存構造 (subdir)
         │
         ▼
-[ _lib/scripts/build-skill-overlay.sh dev-plan-review ]
+[ make skills  →  _lib/scripts/build-all-skills.sh ]
+        │    (idempotent rebuild, rm -rf .build/skills/<vendor>/ first; default vendor=claude)
         │
         ▼
-$HOME/.cache/claude-skill-build/dev-plan-review/SKILL.md   ← Claude Code が読む merge artifact
-                                                           ← Codex CLI / agy は元の portable SKILL.md を直接読む
+<repo>/.build/skills/<vendor>/<skill>/
+├── SKILL.md                  ← merge(portable SKILL.md + adapters/<vendor>.yaml)
+├── references/               ← absolute symlink → <repo>/<skill>/references/
+└── scripts/                  ← absolute symlink → <repo>/<skill>/scripts/
+
+        │
+        ▼
+[ make install-link  →  _lib/scripts/install-claude-skills-link.sh install ]
+        │    (backup ~/.claude/skills → .bak-<ts>/, create real dir)
+        │
+        ▼
+~/.claude/skills/
+├── dev-plan-review  →  <repo>/.build/skills/claude/dev-plan-review/   ← overlay あり skill
+├── bgm              →  <repo>/bgm/                                    ← overlay なし skill (直接)
+├── (claude-skill)   →  <repo>/.claude/skills/(claude-skill)/
+└── (agent-skill)    →  <repo>/.agents/skills/(agent-skill)/
+
+Codex CLI / agy は <repo>/<skill>/SKILL.md を直接読む (build artifact 不要)
+他 vendor が独自拡張を持つ場合は .build/skills/<その vendor>/ に分離されるため衝突しない
 ```
 
-設計判断 (issue #106 推奨採用):
+**Phase 0 smoke test 確認済 (2026-05-22)**: absolute symlink 経由で `references/` 配下のファイルを
+Claude Code `Read` ツールが解決できることを実機確認 (`claudedocs/phase0-symlink-smoke-test.md`)。
+`subdir strategy = symlink` (default) 採用、`copy` fallback は EC1 として option で提供。
+
+設計判断 (issue #106/#110 推奨採用):
 
 | # | 判断 | 採用案 |
 |---|------|--------|
 | Q1 | adapter overlay の置き場所 | A: `<skill>/adapters/<vendor>.yaml` |
-| Q2 | Claude への merge 方法 | 1: build script artifact (runtime merge 不要) |
-| Q3 | artifact の git 管理 | Y: git ignore + CI/hook で再生成 |
+| Q2 | Claude への merge 方法 | Approach 2: per-skill symlink + `.build/` artifact |
+| Q3 | artifact の git 管理 | Y: `.gitignore` の `/.build/` で除外 + CI/hook で再生成 |
 | Q4 | Claude Code subagent (`context: fork`) | A: build artifact に merge して既存挙動維持 |
+| Q5 | subdir wiring 方式 | symlink (absolute): Phase 0 smoke test で解決を確認 |
 
 merge ルールと CLI 詳細は [`docs/skill-creation-guide.md` § Adapter Overlay 規約](../../docs/skill-creation-guide.md)
 を参照。
 
-実装ファイル:
-- `_lib/scripts/build-skill-overlay.sh` — bash entry point (frontmatter 抽出 / atomic write)
-- `_lib/scripts/yaml-merge.py` — PyYAML 6.x ベースの薄い merge helper (overlay-wins + block scalar 保持)
-- `_lib/scripts/build-skill-overlay.bats` — 単体テスト 7 ケース
+実装ファイル (issue #110 で追加・変更):
+- `_lib/scripts/build-skill-overlay.sh` — `--output` default を `.build/`、`--subdir-strategy` flag 追加
+- `_lib/scripts/build-skill-overlay.bats` — 7 → 10 ケース (passthrough to .build/, symlink/copy subdir)
+- `_lib/scripts/build-all-skills.sh` — 全 skill 冪等 build (discover → clean → build)
+- `_lib/scripts/install-claude-skills-link.sh` — `install` / `restore` subcommand
+- `_lib/scripts/lint-merged-frontmatter.sh` — merge artifact の required key 検証
+- `_lib/scripts/check-hooks-path.sh` — `core.hooksPath` 設定 helper
+- `.githooks/pre-commit` — SKILL.md / adapters/*.yaml 変更時の partial rebuild
+- `Makefile` — `make skills` / `make setup` / `make install-link` / `make uninstall-link`
+- `.github/workflows/lint.yml` — `merged-skill-build` job (CI assertion: content check)
+- `_lib/scripts/yaml-merge.py` — 既存 (PyYAML 6.x ベース merge helper)
 - `dev-plan-review/adapters/claude.yaml` — Claude Code 拡張 4 field の reference
 
 残り 52 skill (本 PR で 53→52) の移行は別 issue で機械的に進める。
