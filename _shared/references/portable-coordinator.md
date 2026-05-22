@@ -486,15 +486,55 @@ bash coordinator 経由なら **どの agent でも nesting 制限なし** (別 
   - `flow.json.phases[]` = top-level orchestration (decompose / batch_loop / integrate / final_pr / pr_iterate)
   - `kickoff.json.current_phase` = single mode の child 内 phase (1b → 8、`dev-kickoff/scripts/next-action.sh` の管轄、本 PR では変更しない)
 
-### Stage 3: Orchestrator skill の薄化
+### Stage 3: child-split orchestration の bash decision loop 化 (Issue #112 で実装)
 
-- [ ] `dev-flow/SKILL.md` を「bash decision script + invoke-skill-poc.sh のループ」に書き換え
-- [ ] `dev-kickoff/SKILL.md` 同様
-- [ ] 既存 `dev-kickoff-worker` (`isolation: worktree`) は **Claude Code 用 adapter として残す** (後方互換)
-- [ ] 他 agent (Codex/agy) 用に `_lib/runners/codex-runner.sh`, `agy-runner.sh` を追加
+**スコープを「child-split mode top-level の orchestration 薄化」に限定** (dev-kickoff 薄化 /
+runner script は Stage 4+ に移動)。
 
-### Stage 4: 検証
+- [x] `dev-flow/scripts/build-envelope.sh` 新規 — **skill 実行結果 → decision-input envelope の
+  純変換 builder 層** (副作用なし、invoke-skill-poc.sh の raw text は parse しない)。
+- [x] `dev-flow/scripts/orchestrate.sh` 新規 — `flow-decide.sh` (decision engine) を駆動する
+  bash decision loop。各 phase で skill 実行 → build-envelope → flow-decide → flow-update を
+  繰り返す。**起点は batch_loop** (decompose は dev-decompose が内包)。
+- [x] dev-decompose 改修 — Step 8 validate 成功直後に `flow-update phase decompose done`
+  (decompose done 化の責務を dev-decompose が内包、Q3)。
+- [x] `dev-flow/SKILL.md` child-split Step 3-6 を `orchestrate.sh` 呼び出しに薄化。single mode
+  (dev-kickoff) は現状維持。
+- [x] schema version 全整合 (Q10) — `verify-children-merged.sh` の version gate を
+  `2.0.0 → 2.1.0` に修正 (Stage 2 の version bump 漏れ吸収)。`tests/flow-v2-version-bump.sh`
+  の target に追加。
+- [x] bats — `build-envelope.bats` (4 phase 変換 + skipped 整合性 + ci polling) /
+  `orchestrate.bats` (phase 遷移 + retry + abort + allow-partial)。
 
+#### envelope builder pattern (変換表)
+
+builder 層は「決定論的ソース (skill JSON 出力 / state ファイル) → decision-input envelope
+(`_lib/schemas/decision-input.schema.json`)」の **純変換関数**。LLM の raw text を一切 parse
+しないことで、orchestrate の decision 分岐を決定論的かつ test 可能にする。
+
+| phase | 入力ソース (決定論的) | envelope 構築規則 |
+|---|---|---|
+| batch_loop | run-batch-loop.sh JSON + flow.json `children[]` | `completed_children = issues_succeeded`、`failed_children = issues_failed + (results[]\|select(.status=="skipped")\|length)`。skipped は results[] から集約 (`completed+failed == children\|length` 保証) |
+| integrate | dev-integrate `{type_check, validation}` | `tests_pass = (type_check ∈ {passed,skipped}) && (validation==passed)`、`merge_conflicts = []` (merge は batch_loop の auto-merge-child で完結済) |
+| final_pr | git-pr `{pr_url}` + orchestrate の `gh pr checks` polling | `{pr_url, ci_status}` (ci_status は polling 解決の純粋引数。最大 30×20s=10 分、timeout→failed) |
+| pr_iterate | iterate.json `{status, current_iteration}` | `decision = status` (in_progress は abort)、`iterations = current_iteration` |
+
+> **Note**: `flow-decide.sh` の **decompose** ケースは現状 reserved。child-split では
+> dev-decompose が decompose done 化を内包するため orchestrate は batch_loop 起点で開始し、
+> decompose case を呼ばない。将来 single mode を flow-decide に統合する際 (Stage 5) に再利用する
+> ための予約分岐として残す (Round3-d)。
+
+#### Stage 3 で対象外 (別 issue)
+
+- single mode (dev-kickoff) の flow-decide 統合 → Stage 5
+- dev-kickoff 薄化 + runner script (`codex-runner.sh` / `agy-runner.sh`) → Stage 4+
+- 他 agent (Codex/agy) E2E → Stage 4
+- Phase 3b/6 verdict 分岐の bash 化
+
+### Stage 4: 検証 + dev-kickoff 薄化 / runner
+
+- [ ] dev-kickoff 薄化 + runner script (`_lib/runners/codex-runner.sh`, `agy-runner.sh`)
+- [ ] 既存 `dev-kickoff-worker` (`isolation: worktree`) は **Claude Code 用 adapter として残す**
 - [ ] 1 issue を 3 agent で完走 (single mode)
 - [ ] child-split mode で 1 親 issue を 3 child に分解 → 3 agent で個別完走
 - [ ] dev-flow-doctor で前後比較 (turns, duration, retry count)
@@ -556,4 +596,4 @@ bash coordinator 経由なら **どの agent でも nesting 制限なし** (別 
 
 ---
 
-_Last updated: 2026-05-22 (Stage 2 実装完了 — issue #108)_
+_Last updated: 2026-05-22 (Stage 3 実装完了 — issue #112: child-split orchestration の bash decision loop 化 + envelope builder)_

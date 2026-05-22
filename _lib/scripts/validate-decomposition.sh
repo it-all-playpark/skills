@@ -2,7 +2,7 @@
 # validate-decomposition.sh - Validate v2 child-split flow.json
 #
 # Checks:
-#   - schema version == 2.0.0 (no v1 fallback — no-backcompat)
+#   - schema version == 2.1.0 (no v2.0 / v1 fallback — no-backcompat)
 #   - parent issue is positive integer
 #   - integration_branch.name matches required pattern
 #   - children list non-empty and unique by issue number

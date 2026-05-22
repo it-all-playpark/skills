@@ -72,11 +72,13 @@ Details: [Single Mode](references/single-mode.md)
 | Step | Action | Complete When |
 |------|--------|---------------|
 | 1 | `Skill: dev-issue-analyze` | Parent requirements understood |
-| 2 | `Skill: dev-decompose --child-split` | children + integration branch + flow.json |
-| 3 | `run-batch-loop.sh` | All batches consumed, child PRs merged into integration branch |
-| 4 | `Skill: dev-integrate` | type check + dev-validate on integration branch |
-| 5 | `Skill: git-pr` | Final integration → dev/main PR created |
-| 6 | `Skill: pr-iterate` | LGTM or max iterations |
+| 2 | `Skill: dev-decompose --child-split` | children + integration branch + flow.json (decompose phase done) |
+| 3 | `bash dev-flow/scripts/orchestrate.sh` | batch_loop → integrate → final_pr → pr_iterate を flow-decide 駆動の decision loop で完走 |
+
+Step 3 は Stage 3 (issue #112) で `orchestrate.sh` に集約された。`run-batch-loop` /
+`dev-integrate` / `git-pr` / `pr-iterate` の各遷移は `flow-decide.sh` (decision engine) +
+`build-envelope.sh` (skill 出力 → decision-input envelope の純変換) + `flow-update.sh`
+(flow.json phase state 更新) の bash decision loop が制御する。
 
 Details: [Child-Split Mode](references/child-split-mode.md)
 
@@ -99,57 +101,43 @@ Skill: dev-decompose $ISSUE --child-split --base $BASE \
   --flow-state $WORKTREE_BASE/.claude/flow.json
 ```
 
-Output: integration branch + flow.json v2 (children[] + batches[]).
+Output: integration branch + flow.json v2.1 (children[] + batches[] + phases[])。
+dev-decompose は validate (Step 8) 成功直後に `flow-update phase decompose done` を呼ぶため、
+orchestrate.sh は `decompose == done` の flow.json を前提に **batch_loop 起点**で開始する
+(issue #112 Q3)。
 
-## Step 3 (Child-Split): Run Batch Loop
+## Step 3 (Child-Split): Orchestrate (decision loop)
 
-Each child issue is run through `dev-flow <child> --force-single --base $INTEGRATION_BRANCH`.
-Child PRs are auto-merged into the integration branch (auto-merge-guard permits it).
-
-```bash
-INTEGRATION_BRANCH=$(jq -r '.integration_branch.name' $FLOW_STATE)
-BATCHES_JSON=$(mktemp)
-jq '.batches' $FLOW_STATE > $BATCHES_JSON
-
-$SKILLS_DIR/_shared/scripts/run-batch-loop.sh \
-  --batches-json $BATCHES_JSON \
-  --issue-runner "Skill: dev-flow {issue} --force-single --base $INTEGRATION_BRANCH --lang ja" \
-  --on-success "$SKILLS_DIR/dev-flow/scripts/auto-merge-child.sh {issue} --base $INTEGRATION_BRANCH --flow-state $FLOW_STATE" \
-  --state-file $WORKTREE_BASE/.claude/batch-state.json \
-  --fail-fast
-```
-
-`--fail-fast` skips subsequent batches once any batch has a failed issue
-(recommended for layered dependencies like schema → API → E2E). Omit it when
-batches are loose-coupled.
-
-`auto-merge-child.sh` resolves the child's PR via flow.json `pr_number` or
-GitHub's authoritative Issue→PR link (`closedByPullRequestsReferences`), then
-runs `auto-merge-guard.sh`. Since base is `integration/issue-*`, the guard
-allows `gh pr merge --admin`.
-
-## Step 4 (Child-Split): Integration
+batch_loop → integrate → final_pr → pr_iterate の遷移は **`orchestrate.sh` の bash decision
+loop** に集約される。各 phase で skill を実行 → `build-envelope.sh` で決定論的ソース
+(run-batch-loop JSON / dev-integrate JSON / git-pr JSON / iterate.json) を decision-input
+envelope に純変換 → `flow-decide.sh` で next_action を決定 → `flow-update.sh` で phase state を
+更新、を繰り返す。
 
 ```bash
-Skill: dev-integrate --flow-state $FLOW_STATE --base $INTEGRATION_BRANCH
+$SKILLS_DIR/dev-flow/scripts/orchestrate.sh \
+  --flow-state $WORKTREE_BASE/.claude/flow.json \
+  --worktree $WORKTREE_BASE \
+  --base $BASE --lang ja \
+  [--allow-partial]
 ```
 
-`dev-integrate` (v2) verifies all children merged successfully and runs
-type check + dev-validate on the integration branch (linear, no Kahn sort).
+- **batch_loop**: 内部で `run-batch-loop.sh` を `--fail-fast` で回し、各 child PR を
+  `auto-merge-child.sh` で integration branch に auto-merge する (従来 Step 3 と同等)。
+  `build-envelope.sh batch_loop` が `issues_succeeded` → `completed_children`、
+  `issues_failed + (results[]|skipped)` → `failed_children` に集約する。
+- **integrate**: `dev-integrate` を実行し `{type_check, validation}` を tests_pass に変換。
+  merge は batch_loop で完結済のため `merge_conflicts = []`。
+- **final_pr**: `git-pr` で **non-draft** の integration → dev/main PR を作成。orchestrate が
+  `gh pr checks` を最大 10 分 polling して ci_status を解決 (Q12)。
+- **pr_iterate**: `pr-iterate` を実行し iterate.json `{status, current_iteration}` を
+  `{decision, iterations}` に変換。`lgtm` / `max_reached` で完了、`failed` で abort。
 
-## Step 5 (Child-Split): Final PR
+`--allow-partial` は default off。明示時のみ batch_loop で `failed_children > 0` でも
+integrate に進む (Q11)。retry が必要な phase は orchestrate が
+`flow-update phase <t> running --attempts +1` を呼んでから再実行する (Q5、max 3 attempts)。
 
-```bash
-Skill: git-pr $ISSUE --base $BASE --lang ja --worktree $INTEGRATION_WORKTREE
-```
-
-This creates the **non-draft** integration → dev/main PR (final review).
-
-## Step 6 (Child-Split): pr-iterate
-
-```bash
-Task: pr-iterate $FINAL_PR_URL --max-iterations $MAX
-```
+exit code: `0` = 完走 (next_action complete) / `2` = abort (手動介入要) / `3` = skill 起動エラー。
 
 ## Usage
 
@@ -213,6 +201,9 @@ Details: [Journal Logging](references/journal-logging.md)
 - [dev-decompose](../dev-decompose/SKILL.md) - Child-split planner
 - [dev-integrate](../dev-integrate/SKILL.md) - Integration verifier
 - [pr-iterate](../pr-iterate/SKILL.md) - PR iteration skill
+- [orchestrate.sh](scripts/orchestrate.sh) - Child-split decision loop (Stage 3)
+- [build-envelope.sh](scripts/build-envelope.sh) - skill 出力 → decision-input envelope 純変換
+- [flow-decide.sh](../_lib/scripts/flow-decide.sh) - Decision engine (read-only)
 - [run-batch-loop.sh](../_shared/scripts/run-batch-loop.sh) - Batch dispatcher
 - [auto-merge-guard.sh](../_lib/scripts/auto-merge-guard.sh) - --admin merge guard
 - [integration-branch.sh](../_lib/scripts/integration-branch.sh) - Integration branch helper

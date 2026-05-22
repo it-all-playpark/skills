@@ -50,7 +50,7 @@ branches) has been **removed** (no-backcompat).
 $SKILLS_DIR/_lib/scripts/flow-read.sh --flow-state $FLOW_STATE
 ```
 
-Rejects with schema error if version != `2.0.0`.
+Rejects with schema error if version != `2.1.0`.
 
 ## Step 2: Verify Children Completed
 
