@@ -43,6 +43,7 @@ Used by `dev-flow --child-split` to drive multi-PR coordination through `run-bat
 6. Compose batches (run-batch-loop friendly format)
 7. Write flow.json v2 (init-flow-v2.sh --children-json --batches-json)
 8. Validate (validate-decomposition.sh)
+9. Mark decompose phase done (flow-update.sh phase decompose done)
 ```
 
 ### Step 1-3: Plan Generation
@@ -114,11 +115,21 @@ $SKILLS_DIR/_lib/scripts/validate-decomposition.sh --flow-state "$FLOW_STATE"
 ```
 
 Validation enforces:
-- schema version `2.0.0` (v1 schema rejected — no-backcompat)
+- schema version `2.1.0` (v2.0 / v1 schema rejected — no-backcompat)
 - batches 1-indexed and contiguous
 - children unique per batch
 - max_child_issues_hard
 - `integration_branch.name` pattern
+
+### Step 9: Mark decompose phase done (child-split orchestration)
+
+`init-flow-v2.sh` が seed した top-level `phases[]` のうち `decompose` を `done` に遷移させる。
+これにより `dev-flow --child-split` の `orchestrate.sh` は **batch_loop 起点**で開始できる
+(issue #112 Q3: decompose done 化の責務は dev-decompose が内包する)。validate (Step 8) 成功直後にのみ実行する。
+
+```bash
+$SKILLS_DIR/_lib/scripts/flow-update.sh --flow-state "$FLOW_STATE" phase decompose done
+```
 
 ## Dry-Run Mode (`--dry-run`)
 

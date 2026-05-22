@@ -32,8 +32,8 @@ done
 [[ -f "$FLOW_STATE" ]] || die_json "flow.json not found: $FLOW_STATE" 1
 
 VERSION=$(jq -r '.version // empty' "$FLOW_STATE")
-if [[ "$VERSION" != "2.0.0" ]]; then
-    die_json "flow.json schema version must be 2.0.0 (got: \"$VERSION\"). v1 is not supported (no-backcompat)." 1
+if [[ "$VERSION" != "2.1.0" ]]; then
+    die_json "flow.json schema version must be 2.1.0 (got: \"$VERSION\"). v2.0 / v1 は schema error (no-backcompat)." 1
 fi
 
 TOTAL=$(jq '.children | length' "$FLOW_STATE")

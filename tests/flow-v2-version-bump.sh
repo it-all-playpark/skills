@@ -29,6 +29,7 @@ TARGETS=(
     "_lib/scripts/validate-decomposition.sh"
     "dev-flow/scripts/flow-status.sh"
     "dev-decompose/scripts/init-flow-v2.sh"
+    "dev-integrate/scripts/verify-children-merged.sh"
     "tests/flow-schema-v2-validate.sh"
     "tests/validate-decomposition-v2-branch.sh"
 )
