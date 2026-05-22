@@ -131,3 +131,38 @@ EOF
     [ "$(jq -r '.phases[]|select(.name=="final_pr").status' "$FLOW")" = "done" ]
     [ "$(jq -r '.phases[]|select(.name=="pr_iterate").status' "$FLOW")" = "done" ]
 }
+
+# --- Resume-from-failed / retry (Q5) ---
+
+@test "resume from failed batch_loop with retry_target fires retry, bumps attempts, completes" {
+    # Seed a failed batch_loop carrying a non-abort retry_target (prior-run residue).
+    jq '(.phases[]|select(.name=="batch_loop")) |= (.status="failed" | .retry_target="batch_loop" | .attempts=0)' \
+        "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
+    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.status')" = "completed" ]
+    # retry bumped attempts before re-running the phase
+    [ "$(jq -r '.phases[]|select(.name=="batch_loop").attempts' "$FLOW")" = "1" ]
+    [ "$(jq -r '.phases[]|select(.name=="batch_loop").status' "$FLOW")" = "done" ]
+}
+
+@test "resume from failed phase at max attempts aborts (retry NOT fired)" {
+    jq '(.phases[]|select(.name=="batch_loop")) |= (.status="failed" | .retry_target="batch_loop" | .attempts=3)' \
+        "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
+    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    [ "$status" -eq 2 ]
+    [ "$(echo "$output" | jq -r '.status')" = "aborted" ]
+    [[ "$(echo "$output" | jq -r '.reason')" == *"max retry"* ]]
+    # attempts must NOT be bumped past the cap
+    [ "$(jq -r '.phases[]|select(.name=="batch_loop").attempts' "$FLOW")" = "3" ]
+}
+
+@test "resume from failed phase with retry_target=abort aborts immediately" {
+    jq '(.phases[]|select(.name=="batch_loop")) |= (.status="failed" | .retry_target="abort" | .attempts=0)' \
+        "$FLOW" > "$FLOW.tmp" && mv "$FLOW.tmp" "$FLOW"
+    run "$SCRIPT" --flow-state "$FLOW" --worktree "$WT" --dry-run
+    [ "$status" -eq 2 ]
+    [ "$(echo "$output" | jq -r '.status')" = "aborted" ]
+    # not re-run: still failed, attempts untouched
+    [ "$(jq -r '.phases[]|select(.name=="batch_loop").attempts' "$FLOW")" = "0" ]
+}

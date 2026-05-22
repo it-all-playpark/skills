@@ -242,6 +242,42 @@ while (( iter < MAX_ITER )); do
     iter=$((iter + 1))
     log "iteration $iter: phase=$PHASE"
 
+    # Resume-from-failed guard (Q5): if this phase still carries a `failed`
+    # status from a prior orchestrate run, consult flow-decide BEFORE we
+    # overwrite the status to `running`. flow-decide's retry/abort shortcut is
+    # gated on `status == "failed"`, so marking running first would silently
+    # swallow the retry decision (and re-run / done-ify a failed phase).
+    if [[ "$(phase_status "$PHASE")" == "failed" ]]; then
+        # flow-decide validates result.phase == --phase; the retry/abort
+        # shortcut is gated on flow.json status, so a minimal phase-only
+        # envelope is sufficient here (the phase is not re-run yet).
+        RESUME_FILE=$(mktemp)
+        jq -n --arg p "$PHASE" '{phase:$p}' > "$RESUME_FILE"
+        RESUME_DECISION=$("$FLOW_DECIDE" --flow-state "$FLOW_STATE" --phase "$PHASE" --result "$RESUME_FILE" "${ALLOW_PARTIAL_ARG[@]}")
+        rm -f "$RESUME_FILE"
+        RESUME_ACTION=$(echo "$RESUME_DECISION" | jq -r '.next_action')
+        RESUME_PHASE=$(echo "$RESUME_DECISION" | jq -r '.phase // empty')
+        RESUME_REASON=$(echo "$RESUME_DECISION" | jq -r '.reason')
+        log "resume-from-failed decision: $RESUME_ACTION ${RESUME_PHASE:+→ $RESUME_PHASE} ($RESUME_REASON)"
+        case "$RESUME_ACTION" in
+            retry)
+                # Q5: bump attempts on the retry target before re-running.
+                "$FLOW_UPDATE" --flow-state "$FLOW_STATE" phase "$RESUME_PHASE" running --attempts +1 >/dev/null
+                PHASE="$RESUME_PHASE"
+                ;;
+            abort)
+                "$FLOW_UPDATE" --flow-state "$FLOW_STATE" status failed >/dev/null
+                log "flow aborted on resume: $RESUME_REASON"
+                jq -n --arg reason "$RESUME_REASON" --arg phase "$PHASE" \
+                    '{status:"aborted",phase:$phase,reason:$reason}'
+                exit 2
+                ;;
+            *)
+                die_json "Unexpected resume decision '$RESUME_ACTION' for failed phase '$PHASE'" 1
+                ;;
+        esac
+    fi
+
     # Mark phase running.
     "$FLOW_UPDATE" --flow-state "$FLOW_STATE" phase "$PHASE" running >/dev/null
 
