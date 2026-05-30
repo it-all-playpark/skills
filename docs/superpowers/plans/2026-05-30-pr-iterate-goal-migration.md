@@ -12,64 +12,23 @@
 
 ---
 
-## ⚠️ Phase 0 が gating
+## ✅ Phase 0（gating）は docs で決着 — Task 0 廃止
 
-Task 0 の spike 結果で Stop hook の形が分岐する：
-- **引数展開 OK** → agent-based Stop hook に `$pr` を埋める（design 本線）
-- **引数展開 NG** → 本文が verdict/CI を会話に明示し、引数不要の prompt-based Stop hook にフォールバック
+当初 Task 0（agent-based Stop hook の引数展開 spike）が Task 3 の gating だったが、
+**公式 docs（Claude Code v2.1.158, 2026-05-30 確認）で解決済**：
 
-Task 3 はこの結果を反映するため、Task 0 完了まで着手しない。
+- hook の `prompt:` 内 `$ARGUMENTS` は **hook の JSON input** に展開され、skill 引数
+  `$pr` には展開されない。`$pr` 等の skill 引数展開は **SKILL.md 本文のみ**。
+- よって plan 当初の「hook prompt に `$pr` を埋める」本線は廃案。**採用方式は
+  prompt-type / 会話判定**（本文が verdict/CI を会話に明示 → `type: prompt` Stop hook が
+  会話から判定）。詳細は design doc Open question 1 を参照。
+- **Task 0 spike は実施しない**（ライブ観察不要）。Task 3 は下記の改訂版で進める。
 
 ---
 
-### Task 0: Phase 0 spike — agent-based Stop hook の引数展開検証
+### Task 0: 廃止（docs で決着済 — 実施しない）
 
-**Files:**
-- Create（一時・検証後削除）: `.claude/skills/_spike-hook-arg/SKILL.md`
-
-- [ ] **Step 1: 検証用 skill を作成**
-
-```yaml
----
-name: _spike-hook-arg
-description: spike — agent-based Stop hook の引数展開検証用。使用後削除。
-arguments: [pr]
-disable-model-invocation: true
-hooks:
-  Stop:
-    - type: agent
-      prompt: |
-        次の値が数値 999 と一致するか確認: "$pr"。
-        一致したら {"ok": true, "reason": "arg expanded: $pr"}、
-        不一致なら {"ok": false, "reason": "got literal: $pr"} を返せ。
-        いずれにせよ1ターンで判定し継続させない。
----
-# _spike-hook-arg
-このターンでは何もせず即終了する。Stop hook の評価理由を観察するのが目的。
-```
-
-- [ ] **Step 2: セッション reload（subagent/skill hook 登録のため）**
-
-新セッションを開始（hook はセッション開始時に登録される）。
-
-- [ ] **Step 3: spike を起動して hook の reason を観察**
-
-Run: `/_spike-hook-arg 999`
-観察: `/goal` 風の status / transcript に出る Stop hook の reason に
-`arg expanded: 999`（展開成功）か `got literal: $pr`（展開失敗）のどちらが出るか。
-
-- [ ] **Step 4: 結果を design doc の Open question 1 に追記**
-
-`docs/superpowers/specs/2026-05-30-pr-iterate-goal-migration-design.md` の
-Open questions セクションに結果（OK/NG）と採用する Stop hook 形式を1行追記。
-
-- [ ] **Step 5: spike skill を削除して commit**
-
-```bash
-rip .claude/skills/_spike-hook-arg
-git add -A
-git commit -m "spike(pr-iterate): agent-based Stop hook の引数展開を検証"
-```
+当初の引数展開 spike は不要。design doc の Open question 1 に確定結果を記録済。
 
 ---
 
@@ -235,10 +194,16 @@ git commit -m "feat(pr-iterate): pr-fixer subagent 定義を追加"
 
 ---
 
-### Task 3: pr-iterate SKILL.md を goal 駆動へ書き換え
+### Task 3: pr-iterate SKILL.md を goal 駆動（prompt-type Stop hook / 会話判定）へ書き換え
 
-Task 0 の spike 結果を反映する。以下は **引数展開 OK** の本線。NG なら Step 1 の
-`hooks.Stop[].prompt` から `$pr` を除き、本文が「verdict=X / CI=Y」を会話に明示する形へ。
+**採用方式（docs 決着済）**: hook prompt には skill 引数が展開されないため、`$pr` は
+**SKILL.md 本文でのみ**展開する。本文が毎ターン pr-reviewer verdict と `check-ci.sh` の
+実出力を**会話に明示**し、`type: prompt` の Stop hook（Haiku 既定）が会話から
+`approved + CI passed` を判定する。新スクリプト・state ファイルは作らない。
+
+**重要（Task 2 からの carry-forward）**: 本文に pr-fixer の出力スキーマを再宣言しない。
+pr-fixer の契約は `.claude/agents/pr-fixer.md` を正とする（`skipped: [{file,message,reason}]`）。
+旧 SKILL.md の `skipped: [{issue_id, reason}]` や条件付き Write 但し書きは**全面書き換えで消す**。
 
 **Files:**
 - Modify: `pr-iterate/SKILL.md`（全面書き換え）
@@ -261,13 +226,15 @@ allowed-tools:
   - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 hooks:
   Stop:
-    - type: agent
+    - type: prompt
       prompt: |
-        PR #$pr が LGTM か検証せよ。
-        - pr-reviewer の直近 verdict が approved
-        - `~/.claude/skills/pr-iterate/scripts/check-ci.sh $pr` の status が passed
-        両方満たせば {"ok": true}。未達なら {"ok": false, "reason": "<残作業1文>"}。
-        会話が20ターンを超えていれば {"ok": true, "reason": "max turns reached"}。
+        直近の会話だけを根拠に、対象 PR が LGTM に到達したか判定せよ。
+        完了条件（両方必須）:
+        - pr-reviewer の最新 verdict が approved
+        - check-ci.sh の最新出力の status が passed
+        両方を会話が明示していれば {"ok": true}。
+        どちらか未達・不明なら {"ok": false, "reason": "<残作業を1文・日本語>"}。
+        会話のアシスタント手番が20回を超えていれば {"ok": true, "reason": "max turns reached"}。
 ---
 ```
 
@@ -276,37 +243,46 @@ hooks:
 ```markdown
 # PR Iterate: $pr
 
-レビュー指摘が解消され approved + CI passed になるまで、Stop hook が本スキルを
-毎ターン再実行する。**ループ・iteration カウンタは書かない。**
+PR #$pr のレビュー指摘が解消され **approved + CI passed** になるまで、Stop hook が
+本スキルを毎ターン再実行する。**ループ・iteration カウンタは書かない。**
+Stop hook は会話だけを見て継続判定するので、各ターンで下記の状態を会話に明示すること。
 
 ## 1 ターンの手順
 
 1. `pr-reviewer` subagent を Agent で呼び、PR #$pr の verdict を取得（read-only）。
-2. `verdict.decision == approved` なら
-   `~/.claude/skills/pr-iterate/scripts/post-summary.sh` で最終サマリーを投稿し終了。
-3. `request-changes` / `comment` なら `pr-fixer` subagent を Agent で呼び、
-   `verdict.issues` を渡して修正+push させる。
-4. ターンを終える（継続判定は Stop hook が行う）。
+2. `~/.claude/skills/pr-iterate/scripts/check-ci.sh $pr` を実行し CI status を取得。
+3. **状態を会話に明示**（Stop hook 判定の根拠）：
+   `PR #$pr: verdict=<approved|request-changes|comment>, CI=<passed|failed|pending>`
+4. verdict が `approved` かつ CI が `passed` なら
+   `~/.claude/skills/pr-iterate/scripts/post-summary.sh $pr` で最終サマリーを投稿し終了。
+5. それ以外（verdict が request-changes/comment、または CI failed）なら
+   `pr-fixer` subagent を Agent で呼び、`pr_number` と `verdict.issues` を渡して修正+push させる。
+6. ターンを終える（継続判定は Stop hook が行う）。
 
 ## 言語ルール
-verdict.message / summary / 投稿文は日本語。
+verdict.message / summary / 投稿文 / Stop hook の reason は日本語。
 
 ## Journal Logging
-LGTM 到達時に skill-retrospective へ記録：
+approved+CI passed 到達時に skill-retrospective へ記録：
 `~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate success --issue $pr`
 ```
 
-- [ ] **Step 3: 手動スモーク（reload 後）**
+- [ ] **Step 3: 静的検証（live スモークは Task 8 に集約）**
 
-新セッションで `/pr-iterate <自分の test PR>` を起動し、
-(a) pr-reviewer が呼ばれ verdict が出る (b) request-changes なら pr-fixer が走る
-(c) Stop hook の reason が status に出てループが回る、を確認。
+`pr-iterate/SKILL.md` の frontmatter が YAML として valid か、本文に `$pr` 以外の
+未定義変数が無いか、参照スクリプト（check-ci.sh / post-summary.sh）が実在するかを確認:
+```bash
+grep -n "post-summary.sh\|check-ci.sh" pr-iterate/SKILL.md
+ls pr-iterate/scripts/check-ci.sh pr-iterate/scripts/post-summary.sh
+```
+（live 起動は `~/.claude/skills` = メイン repo からのロードになるため、本ブランチ単体では
+動作確認できない。実起動の確認は Task 8 E2E で、メイン repo に新コードが入った状態で行う。）
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add pr-iterate/SKILL.md
-git commit -m "feat(pr-iterate): goal 駆動（skill-scoped Stop hook）へ書き換え"
+git commit -m "feat(pr-iterate): goal 駆動（prompt-type Stop hook / 会話判定）へ書き換え"
 ```
 
 ---

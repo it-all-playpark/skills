@@ -155,13 +155,21 @@ hooks:
 
 pr-iterate で「skill-scoped Stop hook + subagent」パターンを実証してから dev-flow に適用する。
 
-## Open questions（実装前 spike で確定）
+## Open questions
 
 1. **agent-based Stop hook が skill 引数（`$pr`）を prompt に展開できるか。**
-   docs hooks-guide line 817 に `$ARGUMENTS` 展開例があり見込みは高いが、
-   `arguments: [pr]` の named 引数が `$pr` として hook prompt に届くかは未確認。
-   → **Phase 0 spike で確定**。展開不可なら、本文が verdict/CI 結果を会話に明示し
-   prompt-based Stop hook（引数不要・会話履歴のみ参照）にフォールバック
+   → **解決済（公式 docs / Claude Code v2.1.158, 2026-05-30 確認）。展開不可。**
+   hook の `prompt:` 内の `$ARGUMENTS` は **hook の JSON input**（`stop_hook_active` /
+   `assistant_message` 等）に展開され、skill 引数 `$pr` には展開されない。
+   `$pr` / `$N` / `$ARGUMENTS[N]` の skill 引数展開は **SKILL.md 本文のみ**。
+   よって当初の Phase 0 spike は不要（docs で決着）、plan 本線の「hook prompt に `$pr`」は廃案。
+   - **採用方式（prompt-type / 会話判定）**: SKILL.md 本文が毎ターン `$pr` を展開し
+     pr-reviewer verdict と `check-ci.sh $pr` の実出力を会話に明示。`type: prompt` の
+     Stop hook（Haiku 既定）が会話から `approved + CI passed` を判定し、未達なら
+     `{"ok": false, "reason": ...}` で継続、20 ターン超で `{"ok": true}`。
+     `/goal` と同一機構。引数不要・state ファイル不要・experimental な `type: agent` 不使用。
+   - 補足: `type: agent` は **experimental（将来変更あり）**。Stop hook は **8 回連続 block で
+     強制終了**のセーフガードがあるため、20 ターン上限はこれと整合させる（`stop_hook_active` 検知）。
 2. **skill-scoped Stop hook の登録タイミング** — skill 起動と同時に有効化され、
    skill 終了で解除されるか。複数 skill が同時に Stop hook を持つ場合の合成挙動
 3. **subagent 登録のセッション制約**（[[dev-flow-workflow-migration]] gotcha 1）—
@@ -175,9 +183,20 @@ pr-iterate で「skill-scoped Stop hook + subagent」パターンを実証して
 
 ## 移行手順
 
-1. **Phase 0**: agent-based Stop hook の引数展開を spike（Open question 1）
+1. ~~**Phase 0**: agent-based Stop hook の引数展開 spike~~ → **不要**（Open question 1 が
+   公式 docs で決着。展開不可と確定し prompt-type / 会話判定方式を採用）
 2. pr-fixer.md 作成 → セッション reload
-3. pr-iterate/SKILL.md を goal 駆動に書き換え、state machine scripts 削除
+3. pr-iterate/SKILL.md を goal 駆動（**prompt-type Stop hook / 会話判定**）に書き換え、
+   state machine scripts 削除
 4. `pre-compact-save.sh` の iterate.json 参照削除
 5. 旧 pr-fix skill 削除
 6. dev-flow / dev-kickoff の `Skill: pr-iterate` 呼び出し口が新形式で動くか確認
+
+## 実行環境の前提（テスト時の注意）
+
+`~/.claude/skills` は **メイン repo の作業ツリー**（`<...>/it-all-playpark/skills`）への
+symlink。各 skill は repo ルート直下のディレクトリ（`~/.claude/skills/pr-iterate` =
+`<repo>/pr-iterate`）。**この worktree のブランチに置いただけでは Claude Code は新コードを
+ロードしない。** よって live スモーク（Task 3 Step 3）/ E2E（Task 8）は、新コードが
+メイン repo 側の作業ツリーに存在する状態（このブランチを main repo でチェックアウト、
+または merge 後）で実行する必要がある。
