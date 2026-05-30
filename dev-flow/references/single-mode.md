@@ -69,7 +69,9 @@ cd $WORKTREE && gh pr view --json url --jq .url
 
 ## Step 4: pr-iterate Subagent
 
-Launch pr-iterate as a Task subagent with `mode: "auto"`.
+外側 Task subagent を `mode: "auto"` で起動し、その中で `Skill: pr-iterate` を
+inline 実行する。`mode` は外側 Task subagent の起動オプションであり、
+pr-iterate に渡る引数ではない（pr-iterate は `mode` 引数を持たない）。
 
 pr-iterate は内部で pr-reviewer/pr-fixer subagent を自己駆動し、
 approved + CI passed になるまで内蔵の Stop hook ループを繰り返す。
@@ -86,13 +88,25 @@ Japanese (日本語). Technical terms, code identifiers, and file paths remain i
 Run: Skill: pr-iterate $PR_URL
 
 pr-iterate は approved + CI passed になるまで内部ループで自己駆動する。
-完了後、最終 PR 状態に基づき以下の JSON のみを返すこと:
-- approved + CI passed の場合: {"status": "lgtm", "iterations": <count>}
-- 内部上限到達の場合: {"status": "max_reached", "iterations": <count>}
-- 失敗の場合: {"status": "failed", "error": "<message>"}
+pr-iterate は iteration カウンタを持たないため、status は **最終 PR 状態から
+決定論的に導出**すること（自己申告のループ回数に依存しない）:
+
+1. CI status: `~/.claude/skills/pr-iterate/scripts/check-ci.sh $PR_URL` の status
+2. review 状態: `gh pr view $PR_URL --json reviewDecision --jq .reviewDecision`
+
+判定:
+- approved 相当（reviewDecision=APPROVED）かつ CI passed → {"status": "lgtm"}
+- 未 approved だが pr-iterate がエラーなく終了（=内部上限到達） → {"status": "max_reached"}
+- pr-iterate 実行自体がエラー → {"status": "failed", "error": "<message>"}
+
+完了後、上記いずれかの JSON のみを返すこと。`iterations` は返さなくてよい
+（pr-iterate は iteration を追跡しない）。
 ```
 
 **Result handling:**
+
+status は subagent が check-ci.sh + `gh pr view` で決定論的に導出する（3値固定）。
+`iterations` は契約に含めない（pr-iterate が iteration を追跡しないため省略可）。
 
 | Result | Action |
 |--------|--------|

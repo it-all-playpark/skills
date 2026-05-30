@@ -166,7 +166,7 @@ Task: pr-iterate $FINAL_PR_URL
 | `--design` | - | Design approach: ddd |
 | `--depth` | `standard` | Analysis depth |
 | `--base` | `dev` | PR base branch |
-| `--max-iterations` | `10` | Max pr-iterate iterations |
+| `--max-iterations` | `10` | 現在 pr-iterate には渡らない（pr-iterate は内蔵の上限で自己制御）。dev-flow goal 駆動化までの暫定 dead arg |
 | `--force-single` | (default) | Single mode |
 | `--child-split` | - | Child-split mode |
 
