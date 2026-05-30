@@ -94,6 +94,14 @@ hooks:
 ---
 ```
 
+> **⚠️ 実装との差分（authoritative は Open questions §1 + plan + 実装済 `pr-iterate/SKILL.md`）**
+> 上記スケッチは初期案。最終実装は以下が異なる：
+> - Stop hook は `type: agent` ではなく **`type: prompt`**（会話判定。docs で `$pr` 非展開が判明し採用）
+> - allowed-tools は `Agent` ではなく **`Task`**（subagent 呼び出し）
+> - 完了条件の turn clause は 20 ではなく **7**（エンジンの 8 連続 block セーフガードに整合）
+> - CI 条件は `passed` **または `no_checks`**（CI チェック皆無の PR も passing 扱い）
+> - 最終 summary は `post-summary.sh` ではなく **本文が `gh pr comment` で投稿**（下記「残す決定論部分」参照）
+
 ### 本文ワークフロー（1 ターン分のみ）
 
 ```
@@ -120,6 +128,10 @@ hooks:
 既存 `pr-fix` skill は subagent 化後に**削除**（no-backcompat 原則）。
 `pr-fix/scripts/pr-setup.sh` / `pr-finish.sh` のロジックは pr-fixer 本文に内包。
 
+> **実装メモ**: pr-fix skill の削除は dev-flow-doctor（family リスト・fixtures・baselines）
+> + `skill-config.json` + README への波及が大きいため、**この PR では分離し follow-up issue 化**
+> （minimal-coherent scope）。pr-fix は当面 standalone skill として残る（pr-iterate からは呼ばれない）。
+
 ### 廃止するもの
 
 - `pr-iterate/scripts/init-iterate.sh`
@@ -130,11 +142,17 @@ hooks:
 
 ### 残す決定論部分
 
-- `check-ci.sh` — Stop hook の agent と本文が CI status を取得（passed/failed/pending 区別）。
-  agent-based Stop hook はツールを呼べるため、ここで実検証できる
-- `submit`（`gh pr review`）— 最終 verdict の送信のみ。本文 step 2 で1回。
-  途中 iteration では submit せず、冷長なレビューコメント連投を解消（挙動改善）
-- `post-summary.sh` — LGTM 時の iteration 履歴サマリー投稿
+- `check-ci.sh` — 本文が CI status を取得（passed/failed/pending/no_checks 区別）。本文が
+  その実出力を会話に明示し、prompt-type Stop hook が会話からそれを読んで完了判定する
+- `pr-iterate-setup.sh` — standalone な PR checkout helper（state-free・Keep）
+
+### 廃止に伴い置換したもの
+
+- `post-summary.sh`（+ `references/summary-template.md`）— iterate.json の iteration 履歴に
+  完全結合していたため**削除**。最終サマリーは本文（LLM ターン）が会話履歴から日本語で構築し
+  `gh pr comment` で1回投稿する（approved+CI passed に到達したターンのみ。重複投稿の懸念なし）
+- `check-lgtm.sh` — review-file 方式の LGTM 判定。subagent verdict 方式へ移行し**削除**
+- 途中 iteration での `gh pr review` submit は廃止。冗長なレビューコメント連投を解消（挙動改善）
 
 ## compact / resume の扱い
 
