@@ -14,11 +14,10 @@ GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 
 STATE_DIR="$GIT_ROOT/.claude"
 KICKOFF_STATE="$STATE_DIR/kickoff.json"
-ITERATE_STATE="$STATE_DIR/iterate.json"
 STATE_MD="$GIT_ROOT/docs/STATE.md"
 
 # Check if any state exists
-[[ -f "$KICKOFF_STATE" || -f "$ITERATE_STATE" ]] || exit 0
+[[ -f "$KICKOFF_STATE" ]] || exit 0
 
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -92,38 +91,13 @@ mkdir -p "$(dirname "$STATE_MD")"
         fi
     fi
 
-    # Iterate state
-    if [[ -f "$ITERATE_STATE" ]] && command -v jq &>/dev/null; then
-        echo "## PR Iterate Status"
-        echo ""
-
-        PR=$(jq -r '.pr_number' "$ITERATE_STATE")
-        ITERATION=$(jq -r '.current_iteration' "$ITERATE_STATE")
-        STATUS=$(jq -r '.status' "$ITERATE_STATE")
-
-        echo "- **PR**: #$PR"
-        echo "- **Iteration**: $ITERATION"
-        echo "- **Status**: $STATUS"
-        echo ""
-
-        ITER_COUNT=$(jq -r '.iterations | length' "$ITERATE_STATE" 2>/dev/null)
-        if [[ "$ITER_COUNT" -gt 0 ]]; then
-            echo "### Iteration History"
-            echo ""
-            echo "| # | Review | CI |"
-            echo "|---|--------|-----|"
-            jq -r '.iterations[] | "| \(.number) | \(.review.decision // "pending") | \(.ci_status // "unknown") |"' "$ITERATE_STATE"
-            echo ""
-        fi
-    fi
-
     echo "---"
     echo ""
     echo "## Recovery Instructions"
     echo ""
     echo "If resuming after auto-compact:"
     echo ""
-    echo "1. Read \`.claude/kickoff.json\` or \`.claude/iterate.json\`"
+    echo "1. Read \`.claude/kickoff.json\`"
     echo "2. Check \`current_phase\` and \`next_actions\`"
     echo "3. Continue from where you left off"
 
