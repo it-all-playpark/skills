@@ -95,7 +95,7 @@ pr-iterate は iteration カウンタを持たないため、status は **最終
 2. review 状態: `gh pr view $PR_URL --json reviewDecision --jq .reviewDecision`
 
 判定:
-- approved 相当（reviewDecision=APPROVED）かつ CI passed → {"status": "lgtm"}
+- approved 相当（reviewDecision=APPROVED）かつ CI passed または no_checks → {"status": "lgtm"}
 - 未 approved だが pr-iterate がエラーなく終了（=内部上限到達） → {"status": "max_reached"}
 - pr-iterate 実行自体がエラー → {"status": "failed", "error": "<message>"}
 
