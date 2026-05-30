@@ -2,7 +2,7 @@
 name: git-pr
 description: |
   Create GitHub Pull Request from worktree with structured description.
-  Supports `--draft` for low-CI child PRs in dev-flow child-split mode.
+  Supports `--draft` for low-CI draft PRs.
   Use when: creating PR after implementation, pushing changes to remote.
   Accepts args: <issue-number> [--base <branch>] [--draft] [--worktree <path>] [--lang ja|en]
 allowed-tools:
@@ -84,12 +84,8 @@ Closes #$ISSUE
 
 ### `--draft` Usage
 
-dev-flow child-split mode では各 child PR を `--draft` で作成し、
-`integration/issue-*` への merge までの間 CI を抑制する。最終 integration →
-dev/main PR では `--draft` を **指定しない**（full CI を走らせる）。
-
-CI workflow 側で draft / `integration/**` の skip を設定するレシピは
-[`docs/ci-skip-recipe.md`](../docs/ci-skip-recipe.md) を参照。
+WIP の段階で CI を抑制したい場合に `--draft` で draft PR を作成する。
+review 準備が整ったら GitHub UI / `gh pr ready` で draft を解除する。
 
 ## PR Title Prefix (Auto)
 

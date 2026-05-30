@@ -3,9 +3,9 @@ name: dev-flow-doctor
 description: |
   Diagnose dev-flow pipeline health from skill-retrospective journal. Detects dead phase,
   stuck skill, bottleneck, disconnected skill across the dev-flow family.
-  Use when: (1) dev-flow issues or underperformance, (2) child-split mode not triggering,
-  (3) stuck skill / dead phase suspicion, (4) weekly dev-flow health review,
-  (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector, child-split
+  Use when: (1) dev-flow issues or underperformance,
+  (2) stuck skill / dead phase suspicion, (3) weekly dev-flow health review,
+  (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector
   Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>]
 allowed-tools:
   - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
