@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-compact-save.sh - Save state before auto-compact
 # Called by Claude Code PreCompact hook
-# Reads current kickoff/iterate state and updates docs/STATE.md
+# Reads current kickoff state and updates docs/STATE.md
 
 set -euo pipefail
 
