@@ -119,7 +119,7 @@ equals the cumulative child changes.
 ## Step 6: pr-iterate
 
 ```bash
-Task: pr-iterate $FINAL_PR_URL --max-iterations $MAX
+Task: pr-iterate $FINAL_PR_URL
 ```
 
 ## Child PR draft flag

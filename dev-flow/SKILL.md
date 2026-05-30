@@ -148,7 +148,7 @@ This creates the **non-draft** integration → dev/main PR (final review).
 ## Step 6 (Child-Split): pr-iterate
 
 ```bash
-Task: pr-iterate $FINAL_PR_URL --max-iterations $MAX
+Task: pr-iterate $FINAL_PR_URL
 ```
 
 ## Usage
