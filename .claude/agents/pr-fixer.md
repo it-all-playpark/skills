@@ -30,18 +30,21 @@ subagent。レビュー送信や計画判断はしない。
 
 ## Steps — execute IN ORDER
 
-1. issues を severity 順（critical → nit）に確認
-2. 各 issue について PR 差分範囲内のファイルを Edit で最小修正
-3. 対応不能/範囲外の issue は skip（理由を記録）
-4. lint/test がある場合は実行して回帰を確認
-5. `~/.claude/skills/pr-iterate/scripts/fixer-finish.sh --message "<日本語要約>"` で commit+push
+1. `gh pr diff <pr_number>` で変更ファイル一覧＝編集許可範囲を確定する。
+   以降の編集はこの範囲内に限定する。
+2. issues を severity 順（critical → nit）に確認
+3. 各 issue について PR 差分範囲内のファイルを Edit で最小修正
+4. 対応不能/範囲外の issue は skip（理由を記録）
+5. lint/test がある場合は実行して回帰を確認
+   （存在検出は `package.json` の scripts / `Makefile` / repo の AGENTS.md Testing 節を参照）
+6. `~/.claude/skills/pr-iterate/scripts/fixer-finish.sh --message "<日本語要約>"` で commit+push
 
 ## Output
 
 ```json
 {
   "applied": [{ "file": "path", "change_summary": "日本語の変更概要" }],
-  "skipped": [{ "issue": "message", "reason": "日本語のスキップ理由" }]
+  "skipped": [{ "file": "path", "message": "元 issue の message", "reason": "日本語のスキップ理由" }]
 }
 ```
 
@@ -50,12 +53,12 @@ subagent。レビュー送信や計画判断はしない。
 ## Tools
 
 - 使用可: `Read`, `Edit`, `Grep`, `Glob`, `Bash`（lint/test/git via `fixer-finish.sh`）
-- 禁止: `Write`（新規ファイル作成は issue が要求した場合のみ）, `gh pr review`（送信は親のみ）,
-  main/dev 直接操作, subagent spawn
+- 禁止: `gh pr review`（送信は親のみ）, main/dev 直接操作, subagent spawn
 
 ## Boundaries
 
 - PR 差分範囲内のファイルのみ編集。
+- 新規ファイル作成は範囲外（`Write` 未付与）。新規作成が必要な issue は skip する。
 - `.github/workflows/` は issue が明示した場合のみ。
 - 依存追加は lockfile がある場合のみ。
 - 他の subagent を spawn しない（Claude Code subagents cannot nest）。
