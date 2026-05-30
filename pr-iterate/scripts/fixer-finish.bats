@@ -22,3 +22,14 @@ teardown() { rm -rf "$REPO"; }
   run git log --oneline -1
   [[ "$output" == *"fix: tweak"* ]]
 }
+
+@test "push パスで bare remote に反映される" {
+  BARE="$(mktemp -d)"; git init -q --bare "$BARE"
+  git remote add origin "$BARE"
+  git push -q -u origin HEAD 2>/dev/null || git push -q -u origin master
+  echo z >> f.txt
+  run bash "$SCRIPT" --message "fix: push"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"result":"committed"'* ]]
+  rm -rf "$BARE"
+}
