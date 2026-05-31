@@ -242,8 +242,6 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `dev-flow` | Issue → LGTM までのE2E開発フロー (dynamic workflow: `.claude/workflows/dev-flow.js`) |
 | `dev-issue-analyze` | GitHub Issue分析・実装計画 |
-| `dev-build` | ビルド・コンパイル・パッケージング |
-| `dev-cleanup` | デッドコード削除・構造最適化 |
 | `dev-env-setup` | worktree作成後の依存関係自動インストール |
 | `dev-flow-doctor` | dev-flowの健全性診断・改善提案 |
 | `dep-guardian` | 依存関係更新PRのトリアージ・テスト・バッチマージ |

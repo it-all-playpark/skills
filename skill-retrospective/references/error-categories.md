@@ -6,14 +6,14 @@ Classification taxonomy for skill execution failures.
 
 | Category | Description | Typical Errors | Affected Skills |
 |----------|-------------|----------------|-----------------|
-| `lint` | Code style / static analysis | ESLint, Prettier, Biome violations | dev-validate |
-| `test` | Test execution failures | Jest, Vitest, Pytest assertion errors | dev-validate |
-| `build` | Compilation / bundle errors | TypeScript tsc, webpack, esbuild failures | dev-validate, dev-build |
-| `runtime` | Runtime execution errors | Node.js crashes, Python exceptions | dev-implement |
-| `config` | Configuration issues | Missing config files, invalid settings | dev-kickoff |
-| `env` | Environment setup issues | Missing deps, wrong Node version, .env missing | dev-kickoff-worker, dev-kickoff |
-| `merge` | Git merge conflicts | Branch conflicts, rebase failures | dev-integrate |
-| `type-check` | Type system errors | TypeScript strict errors, mypy violations | dev-validate |
+| `lint` | Code style / static analysis | ESLint, Prettier, Biome violations | dev-flow (Validate), dev-runner |
+| `test` | Test execution failures | Jest, Vitest, Pytest assertion errors | dev-flow (Validate), dev-runner |
+| `build` | Compilation / bundle errors | TypeScript tsc, webpack, esbuild failures | dev-flow (Validate), dev-runner |
+| `runtime` | Runtime execution errors | Node.js crashes, Python exceptions | dev-flow (Implement), implementer |
+| `config` | Configuration issues | Missing config files, invalid settings | dev-flow (Setup), dev-env-setup |
+| `env` | Environment setup issues | Missing deps, wrong Node version, .env missing | dev-env-setup |
+| `merge` | Git merge conflicts | Branch conflicts, rebase failures | dev-flow (PR) |
+| `type-check` | Type system errors | TypeScript strict errors, mypy violations | dev-flow (Validate), dev-runner |
 
 ## Classification Decision Tree
 
