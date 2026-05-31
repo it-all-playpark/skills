@@ -3,9 +3,9 @@ name: dev-flow-doctor
 description: |
   Diagnose dev-flow pipeline health from skill-retrospective journal. Detects dead phase,
   stuck skill, bottleneck, disconnected skill across the dev-flow family.
-  Use when: (1) dev-flow issues or underperformance, (2) child-split mode not triggering,
-  (3) stuck skill / dead phase suspicion, (4) weekly dev-flow health review,
-  (5) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector, child-split
+  Use when: (1) dev-flow issues or underperformance,
+  (2) stuck skill / dead phase suspicion, (3) weekly dev-flow health review,
+  (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector
   Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>]
 allowed-tools:
   - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
@@ -18,6 +18,15 @@ Diagnose dev-flow pipeline health by reading `skill-retrospective` journal entri
 (`~/.claude/journal/*.json`). Surfaces dead phases, stuck skills, bottlenecks, and
 disconnected skills across the dev-flow family — then generates actionable
 improvement recommendations.
+
+> ⚠️ **workflow 移行に伴う一部機能停止（別 issue で対応予定）**
+> dev-flow / pr-iterate / dev-kickoff / dev-implement / dev-validate / dev-integrate /
+> dev-evaluate / dev-decompose / night-patrol は dynamic workflow + subagent へ移行し、
+> 個別 skill としては廃止された（`.claude/workflows/dev-flow.js` / `pr-iterate.js` /
+> `.claude/agents/*.md`）。本 skill が前提とする `family_skills`・`kickoff.json` /
+> `flow.json` 依存の分析は現状これら旧 skill 名を参照しており、**該当部の診断は機能停止
+> または不正確**になる。journal 駆動の集計（skill 名ベースの failure/duration 統計）は
+> 引き続き動くが、family 構成・connector 判定の workflow 対応は別 issue で行う。
 
 ## Key shift: journal-driven (not static scan)
 

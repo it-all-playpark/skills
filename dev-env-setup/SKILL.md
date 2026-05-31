@@ -73,12 +73,11 @@ This enables project-specific setup (DB migrations, env generation, etc.).
 6. Report results
 ```
 
-## Integration with dev-kickoff-worker
+## Integration with worktree workflows
 
-After `dev-kickoff-worker` (isolation: worktree) creates a worktree, run dev-env-setup:
+After a worktree is created (e.g. dev-flow workflow の Setup phase), run dev-env-setup to install deps:
 
 ```bash
-# In dev-kickoff Phase 1, after worktree creation completes:
 $SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path $WORKTREE
 ```
 
