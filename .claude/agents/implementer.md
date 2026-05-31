@@ -20,7 +20,8 @@ tools:
 
 実装計画の 1 task（または独立 task 群）を、指定された testing 戦略に従って実装する。
 workflow の Implement phase（serial は for、parallel は `parallel()`）と Evaluate phase の
-差し戻し fix から `agent({agentType:'implementer', isolation:'worktree'})` で呼ばれる。
+差し戻し fix から `agent({agentType:'implementer'})` で呼ばれる（`isolation:'worktree'` は
+**付けない** — dev-flow が作る単一 worktree を全 implementer が共有する。下記参照）。
 
 **共有 worktree** 上で動く（dev-flow が単一 worktree を作り、複数 implementer が成果を積み上げる）。
 並列実行される他 task と衝突しないよう、**自分の task の `file_changes` に挙がったファイルだけを編集する**。

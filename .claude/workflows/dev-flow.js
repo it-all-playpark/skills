@@ -110,7 +110,7 @@ const EVAL = {
 const PRURL = {
   type: 'object', required: ['pr_url', 'pr_number'],
   properties: {
-    pr_url: { type: 'string' }, pr_number: { type: 'string' },
+    pr_url: { type: 'string' }, pr_number: { type: ['string', 'number'] },
     committed: { type: 'boolean' },
   },
 }

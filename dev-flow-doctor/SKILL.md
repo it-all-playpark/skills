@@ -19,6 +19,15 @@ Diagnose dev-flow pipeline health by reading `skill-retrospective` journal entri
 disconnected skills across the dev-flow family — then generates actionable
 improvement recommendations.
 
+> ⚠️ **workflow 移行に伴う一部機能停止（別 issue で対応予定）**
+> dev-flow / pr-iterate / dev-kickoff / dev-implement / dev-validate / dev-integrate /
+> dev-evaluate / dev-decompose / night-patrol は dynamic workflow + subagent へ移行し、
+> 個別 skill としては廃止された（`.claude/workflows/dev-flow.js` / `pr-iterate.js` /
+> `.claude/agents/*.md`）。本 skill が前提とする `family_skills`・`kickoff.json` /
+> `flow.json` 依存の分析は現状これら旧 skill 名を参照しており、**該当部の診断は機能停止
+> または不正確**になる。journal 駆動の集計（skill 名ベースの failure/duration 統計）は
+> 引き続き動くが、family 構成・connector 判定の workflow 対応は別 issue で行う。
+
 ## Key shift: journal-driven (not static scan)
 
 本 skill は **journal 駆動**である。静的な skill file scan ではなく、
