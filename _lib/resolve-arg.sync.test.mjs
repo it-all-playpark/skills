@@ -1,3 +1,9 @@
+// Sync test: workflow inline コピーが canonical と byte 一致することを保証する。
+//
+// 背景: .claude/workflows/*.js は Claude Code の dynamic workflow ローダーが独自の
+// VM コンテキストで評価する。ESM の import 文はそのコンテキストで使用できないため、
+// resolvePositiveIntArg の関数本体を各 workflow ファイルに inline コピーしている。
+// このテストはその手動同期の漏れを CI で検出するための安全網である。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
