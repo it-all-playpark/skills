@@ -45,6 +45,103 @@ function issueTopic(x) {
   return `${file}::${desc}`
 }
 
+// ---- PR コメント生成関数 inline コピー（_lib/pr-comment-format.mjs から export 除去）-----------
+// loader 制約（ESM import 不可）のため関数本体を inline コピーしている。
+// _lib/pr-comment-format.sync.test.mjs がこの inline コピーの byte 一致を CI で保証する。
+// この関数を修正する際は、必ず _lib/pr-comment-format.mjs の元も同期すること。
+
+const DECISION_LABEL = {
+  'approve': '承認 (LGTM)',
+  'request-changes': '変更要求',
+  'comment': 'コメント',
+};
+
+function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
+  const label = DECISION_LABEL[decision] ?? decision;
+  const lines = [];
+
+  lines.push(`## PR #${pr} — レビュー結果 (iteration ${iteration})`);
+  lines.push('');
+  lines.push(`**判定**: ${label}`);
+  lines.push('');
+  lines.push('### Blocking 指摘');
+
+  if (!blocking || blocking.length === 0) {
+    lines.push('blocking 指摘なし');
+  } else {
+    for (const f of blocking) {
+      const loc = f.file != null
+        ? `${f.file}${f.line != null ? ':' + f.line : ''} `
+        : '';
+      const sug = f.suggestion != null ? ` → ${f.suggestion}` : '';
+      lines.push(`- [${f.severity}] ${loc}${f.description}${sug}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+const STATUS_HEADLINE = {
+  'lgtm': '🎉 LGTM',
+  'stuck': '⚠️ STUCK — 人間レビューへエスカレーション',
+  'fix_failed': '⚠️ 自動修正失敗 — 人間へエスカレーション',
+  'max_reached': '⚠️ 反復上限到達',
+};
+
+function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, history }) {
+  const headline = STATUS_HEADLINE[status] ?? status;
+  const lines = [];
+
+  lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
+  lines.push('');
+  lines.push(`### ${headline}`);
+  lines.push('');
+  lines.push(`- **総反復回数**: ${iterations}`);
+  lines.push(`- **最終判定**: ${DECISION_LABEL[lastDecision] ?? lastDecision}`);
+  lines.push(`- **最終判定理由**: ${lastSummary}`);
+
+  if (history && history.length > 0) {
+    lines.push('');
+    lines.push('### 反復履歴');
+    for (const round of history) {
+      const roundLabel = DECISION_LABEL[round.decision] ?? round.decision;
+      lines.push('');
+      lines.push(`#### Iteration ${round.iteration}: ${roundLabel}`);
+      lines.push(`${round.summary}`);
+      if (round.blocking && round.blocking.length > 0) {
+        lines.push(`- blocking 指摘数: ${round.blocking.length}`);
+        for (const f of round.blocking) {
+          const loc = f.file != null
+            ? `${f.file}${f.line != null ? ':' + f.line : ''} `
+            : '';
+          const sug = f.suggestion != null ? ` → ${f.suggestion}` : '';
+          lines.push(`  - [${f.severity}] ${loc}${f.description}${sug}`);
+        }
+      } else {
+        lines.push('- blocking 指摘なし');
+      }
+    }
+  }
+
+  lines.push('');
+  lines.push('---');
+  lines.push('*このコメントは pr-iterate により自動生成されました。*');
+  lines.push(`<!-- pr-iterate:${status}:${iterations} -->`);
+
+  return lines.join('\n');
+}
+
+// ---- POST_RESULT schema（dev-runner 経由の PR 投稿結果）-----------------------------------
+const POST_RESULT = {
+  type: 'object',
+  required: ['posted'],
+  properties: {
+    posted: { type: 'boolean' },
+    method: { type: 'string' },
+    url: { type: 'string' },
+  },
+}
+
 const REVIEW = {
   type: 'object',
   required: ['decision', 'issues', 'summary'],
@@ -88,6 +185,7 @@ let lgtm = false
 let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
 const reviewSeen = {}            // topic → { issue, count }（findings 累積 & stuck 検出。issue #126）
+const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking}]
 
 for (i = 1; i <= MAX; i++) {
   const prior = Object.values(reviewSeen).map((s) => s.issue)   // 前 iteration までの累積 findings
@@ -107,6 +205,35 @@ for (i = 1; i <= MAX; i++) {
   if (review.decision === 'approve') {
     lgtm = true
     log(`iteration ${i}: LGTM`)
+
+    // approve ラウンドの history を記録（blocking なし）
+    history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: [] })
+
+    // per-round 投稿: approve（self-PR 検出 → --approve 失敗時 gh pr comment へフォールバック）
+    const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [] })
+    const approvePost = await agent(
+      `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n`
+      + `\n## Instructions\n`
+      + `以下の手順で投稿せよ：\n`
+      + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
+      + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
+      + `   \`gh pr comment ${PR} --body-file -\` でコメント投稿にフォールバックする。\n`
+      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file -\` を試みる。\n`
+      + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file -\` にフォールバックする。\n`
+      + `4. 投稿本文は以下の BODY を stdin（ヒアドキュメント）で渡すこと（シェルクォート問題を避けるため）:\n`
+      + `   \`\`\`\n${approveBody}\n\`\`\`\n`
+      + `5. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+      + `6. 投稿失敗時でも posted:false を返し throw しないこと。\n`
+      + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+      + `\n## Tools\n使用可: Bash\n`
+      + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
+      + `\n## Token cap\n200 語以内で完結すること。`,
+      { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+    )
+    if (!approvePost?.posted) {
+      log(`⚠️ post-review#${i} (approve) の投稿に失敗しました（posted=${approvePost?.posted ?? 'null'}）。ワークフローは継続します。`)
+    }
+
     break
   }
 
@@ -121,6 +248,32 @@ for (i = 1; i <= MAX; i++) {
   const stuckTopics = Object.entries(reviewSeen).filter(([, s]) => s.count >= REVIEW_STUCK).map(([t]) => t)
   log(`iteration ${i}: ${review.decision} — blocking ${blocking.length} 件`
     + `${stuckTopics.length ? ` [REVIEW_STUCK: ${stuckTopics.join(' / ')}]` : ''}`)
+
+  // history に記録（blocking findings を含む）
+  history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking })
+
+  // per-round 投稿: request-changes または comment
+  const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking })
+  const ghCmd = review.decision === 'request-changes'
+    ? `gh pr review ${PR} --request-changes --body-file -`
+    : `gh pr review ${PR} --comment --body-file -`
+  const roundPost = await agent(
+    `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n`
+    + `\n## Instructions\n`
+    + `以下のコマンドを実行せよ: \`${ghCmd}\`\n`
+    + `投稿本文は以下の BODY を stdin（ヒアドキュメント）で渡すこと（シェルクォート問題を避けるため）:\n`
+    + `\`\`\`\n${roundBody}\n\`\`\`\n`
+    + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+    + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+    + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+    + `\n## Tools\n使用可: Bash\n`
+    + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
+    + `\n## Token cap\n200 語以内で完結すること。`,
+    { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+  )
+  if (!roundPost?.posted) {
+    log(`⚠️ post-review#${i} (${review.decision}) の投稿に失敗しました（posted=${roundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+  }
 
   // stuck: 同一 topic が REVIEW_STUCK 回繰り返した = fix が刺さっていない。relax せず人間へエスカレーション。
   if (stuckTopics.length) {
@@ -153,6 +306,33 @@ for (i = 1; i <= MAX; i++) {
 
 const status = lgtm ? 'lgtm' : (terminal ?? 'max_reached')
 log(`pr-iterate 終端: status=${status}（iterations=${Math.min(i, MAX)}）`)
+
+// 終端サマリーを PR に 1 回だけ投稿する
+const summaryBody = buildTerminalSummaryBody({
+  pr: PR,
+  status,
+  iterations: Math.min(i, MAX),
+  lastDecision: lastReview?.decision ?? null,
+  lastSummary: lastReview?.summary ?? null,
+  history,
+})
+const summaryPost = await agent(
+  `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n`
+  + `\n## Instructions\n`
+  + `以下のコマンドを実行せよ: \`gh pr comment ${PR} --body-file -\`\n`
+  + `投稿本文は以下の BODY を stdin（ヒアドキュメント）で渡すこと（シェルクォート問題を避けるため）:\n`
+  + `\`\`\`\n${summaryBody}\n\`\`\`\n`
+  + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+  + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+  + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+  + `\n## Tools\n使用可: Bash\n`
+  + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
+  + `\n## Token cap\n200 語以内で完結すること。`,
+  { agentType: 'dev-runner', schema: POST_RESULT, label: `post-summary`, phase: 'Iterate' },
+)
+if (!summaryPost?.posted) {
+  log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+}
 
 return {
   pr: PR,
