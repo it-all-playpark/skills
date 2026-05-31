@@ -17,7 +17,7 @@ export const meta = {
 function resolvePositiveIntArg(args, name) {
   const raw = (typeof args === 'string' || typeof args === 'number')
     ? args
-    : (args?.[name] ?? args?.issue ?? args?.pr ?? args?.pr_number ?? args?.[0]);
+    : (args?.[name] ?? args?.[0]);
   const s = String(raw ?? '').trim();
   if (!/^[1-9][0-9]*$/.test(s)) {
     throw new Error(`${name}: 正の整数が必要です（受信: ${JSON.stringify(s)}）`);
