@@ -33,9 +33,48 @@ fi
 # ============================================================================
 # Delegate to detect-and-install.sh (single source of truth for install logic)
 # Idempotency, pm detection, and already_installed checks are all in that script.
+#
+# Error handling:
+#   - Temporarily disable set -e to prevent this wrapper from aborting on
+#     a non-zero exit from the delegate (non-blocking contract).
+#   - Capture stdout, stderr, and exit code separately via temp files.
+#   - If the delegate hard-crashes (nonexistent path, missing jq, etc.) and
+#     emits empty or non-JSON output, emit a structured fallback JSON so
+#     dev-runner always receives a valid ENVSETUP schema payload.
+#   - Re-emit stderr as a diagnostic warning (never silently swallowed).
 # ============================================================================
 
-output="$("$SCRIPT_DIR/detect-and-install.sh" --path "$TARGET_PATH" 2>/dev/null || true)"
+stdout_tmp="$(mktemp)"
+stderr_tmp="$(mktemp)"
+exit_tmp="$(mktemp)"
+
+# set +e so a non-zero exit from detect-and-install.sh does not propagate to us.
+set +e
+"$SCRIPT_DIR/detect-and-install.sh" --path "$TARGET_PATH" >"$stdout_tmp" 2>"$stderr_tmp"
+printf '%d' $? >"$exit_tmp"
+set -e
+
+output="$(cat "$stdout_tmp")"
+delegate_exit="$(cat "$exit_tmp")"
+stderr_content="$(cat "$stderr_tmp")"
+rm -f "$stdout_tmp" "$stderr_tmp" "$exit_tmp"
+
+# Re-emit stderr as a diagnostic warn on fd2 so it is visible in logs.
+if [[ -n "$stderr_content" ]]; then
+    printf '[ensure-worktree-deps] detect-and-install stderr: %s\n' "$stderr_content" >&2
+fi
+
+# Validate that output looks like JSON (starts with '{'), regardless of exit code.
+# The delegate may exit non-zero but still emit structured error JSON — pass it through.
+# Only synthesize a fallback when output is empty or non-JSON (i.e., the delegate
+# hard-crashed before it could write anything useful).
+if [[ -z "$output" ]] || [[ "${output:0:1}" != "{" ]]; then
+    error_detail="${stderr_content:-exit code ${delegate_exit}}"
+    printf '{"status":"failed","path":"%s","error":"%s"}\n' \
+        "$TARGET_PATH" \
+        "$(printf '%s' "$error_detail" | tr '"' "'")"
+    exit 0
+fi
 
 printf '%s\n' "$output"
 

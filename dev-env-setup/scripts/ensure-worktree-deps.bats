@@ -33,3 +33,16 @@ teardown() {
     run "$SCRIPT" --path "$TMP_DIR"
     [ "$status" -eq 0 ]
 }
+
+@test "detect-and-install.sh が存在しないパスで呼ばれても exit 0 かつ status:failed の JSON を返す" {
+    # /nonexistent/xyz を渡すと detect-and-install.sh が die_json で exit 1 する
+    run "$SCRIPT" --path "/nonexistent/xyz_$$"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"status":"failed"'* ]]
+}
+
+@test "委譲先失敗時の JSON に path フィールドが含まれる" {
+    run "$SCRIPT" --path "/nonexistent/xyz_$$"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"path"'* ]]
+}
