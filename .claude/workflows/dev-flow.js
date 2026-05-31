@@ -25,6 +25,33 @@ function resolvePositiveIntArg(args, name) {
   return s;
 }
 
+function classifyTriviality(req) {
+  const count = req.estimated_change_file_count;
+  if (typeof count !== 'number' || count < 0) {
+    return { trivial: false, reason: 'estimated_change_file_count missing or invalid → safe non-trivial' };
+  }
+  if (count > 2) {
+    return { trivial: false, reason: `estimated ${count} files > 2 → non-trivial` };
+  }
+  const ac = req.acceptance_criteria;
+  if (!Array.isArray(ac)) {
+    return { trivial: false, reason: 'acceptance_criteria missing or not array → safe non-trivial' };
+  }
+  if (ac.length > 3) {
+    return { trivial: false, reason: `${ac.length} acceptance criteria > 3 → non-trivial` };
+  }
+  const validTypes = ['feat', 'fix', 'docs', 'refactor'];
+  if (!validTypes.includes(req.issue_type)) {
+    return { trivial: false, reason: `issue_type '${req.issue_type}' not in allowed set → non-trivial` };
+  }
+  const breakingPattern = /breaking|incompatible|migration|破壊的|非互換/i;
+  const combined = `${req.scope ?? ''} ${req.summary ?? ''}`;
+  if (breakingPattern.test(combined)) {
+    return { trivial: false, reason: 'breaking change detected in scope/summary → non-trivial' };
+  }
+  return { trivial: true, reason: `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type}, no breaking — trivial path` };
+}
+
 // ---- args ----
 const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE = args?.base ?? 'dev'
@@ -79,6 +106,7 @@ const REQ = {
     issue_type: { type: 'string' },
     acceptance_criteria: { type: 'array', items: { type: 'string' } },
     scope: { type: 'string' },
+    estimated_change_file_count: { type: 'number' },
   },
 }
 const TASK = {
@@ -206,9 +234,15 @@ log(`worktree: ${WT} (branch ${setup.branch})`)
 phase('Analyze')
 const req = need(await agent(
   `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${DEPTH}\` を実行し、`
-  + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`,
+  + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
+  + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
+  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`,
   { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
 ), 'Analyze')
+
+const triage = classifyTriviality(req)
+const TRIVIAL = triage.trivial
+log(`triviality: ${TRIVIAL ? 'TRIVIAL(最短経路)' : 'NON-TRIVIAL(フルパイプライン)'} — ${triage.reason}`)
 
 // ============================================================
 // Phase Plan: dev-planner ⇄ plan-reviewer ループ。
@@ -221,6 +255,16 @@ let plan = null
 let planVerdict = null
 const planSeen = {}        // topic → { finding, count }（findings 累積 & stuck 検出。issue #123）
 let planConcerns = []      // 収束時に残った未解消 findings（Evaluate の focus_areas へ）
+if (TRIVIAL) {
+  plan = need(await agent(
+    `cd ${WT} で作業。issue 要件に基づき実装計画を立てよ。\n`
+    + `requirements: ${JSON.stringify(req)}\n`
+    + `testing: ${TESTING}\n`
+    + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
+    { agentType: 'dev-planner', schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
+  ), 'Plan(planner#trivial)')
+  log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
+} else {
 for (let i = 1; i <= PLAN_MAX; i++) {
   const prior = Object.values(planSeen).map((s) => s.finding)   // 前 iteration までの累積 findings
   plan = need(await agent(
@@ -271,6 +315,8 @@ for (let i = 1; i <= PLAN_MAX; i++) {
     log(`⚠️ plan は ${PLAN_MAX} iteration で収束せず（verdict=${rev.verdict}）— `
       + `throw せず未解消 ${planConcerns.length} 件を Evaluate/human review へ委譲`)
   }
+}
+
 }
 
 // ============================================================
@@ -342,8 +388,9 @@ for (let i = 1; i <= GREEN_MAX; i++) {
 // Phase Evaluate: evaluator → fail なら design=再計画+再実装 / implementation=implementer 修正（上限 10）
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
 // ============================================================
-phase('Evaluate')
 let evalResult = null
+if (!TRIVIAL) {
+phase('Evaluate')
 for (let i = 1; i <= EVAL_MAX; i++) {
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
@@ -377,6 +424,9 @@ for (let i = 1; i <= EVAL_MAX; i++) {
       { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
   }
 }
+} else {
+  log('triviality gate: Evaluate phase を skip(evaluator 0 回起動。reason: ' + triage.reason + ')')
+}
 
 // ============================================================
 // Phase PR: git-commit + git-pr skill を dev-runner で実行し PR URL を取得。
@@ -408,5 +458,7 @@ return {
   eval_verdict: evalResult?.verdict ?? null,
   test_green: val?.green ?? null,
   iterate_status: iterate?.status ?? null,
+  triviality: TRIVIAL,
+  triviality_reason: triage.reason,
   note: 'merge は手動で行ってください',
 }
