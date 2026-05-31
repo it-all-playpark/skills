@@ -131,6 +131,20 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   return lines.join('\n');
 }
 
+// ---- 投稿本文を一時ファイルに書き出すヘルパー ------------------------------------------
+// body をプロンプトに inline で埋め込むと triple-backtick フェンスやバッククォートを含む
+// コードレビュー本文でフェンス境界が衝突し LLM が本文を truncate / 誤解釈する危険がある。
+// 一時ファイルに書き出して agent にはパスのみ渡すことでこの問題を構造的に排除する。
+const _fs = require('fs')
+const _os = require('os')
+const _path = require('path')
+
+function writeTempBody(body, label) {
+  const file = _path.join(_os.tmpdir(), `pr-iterate-${label}-${Date.now()}.md`)
+  _fs.writeFileSync(file, body, 'utf8')
+  return file
+}
+
 // ---- POST_RESULT schema（dev-runner 経由の PR 投稿結果）-----------------------------------
 const POST_RESULT = {
   type: 'object',
@@ -211,19 +225,18 @@ for (i = 1; i <= MAX; i++) {
 
     // per-round 投稿: approve（self-PR 検出 → --approve 失敗時 gh pr comment へフォールバック）
     const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [] })
+    const approveBodyFile = writeTempBody(approveBody, `review-${PR}-${i}-approve`)
     const approvePost = await agent(
       `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n`
       + `\n## Instructions\n`
       + `以下の手順で投稿せよ：\n`
       + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
       + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
-      + `   \`gh pr comment ${PR} --body-file -\` でコメント投稿にフォールバックする。\n`
-      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file -\` を試みる。\n`
-      + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file -\` にフォールバックする。\n`
-      + `4. 投稿本文は以下の BODY を stdin（ヒアドキュメント）で渡すこと（シェルクォート問題を避けるため）:\n`
-      + `   \`\`\`\n${approveBody}\n\`\`\`\n`
-      + `5. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-      + `6. 投稿失敗時でも posted:false を返し throw しないこと。\n`
+      + `   \`gh pr comment ${PR} --body-file ${approveBodyFile}\` でコメント投稿にフォールバックする。\n`
+      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file ${approveBodyFile}\` を試みる。\n`
+      + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file ${approveBodyFile}\` にフォールバックする。\n`
+      + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+      + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
       + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
       + `\n## Tools\n使用可: Bash\n`
       + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
@@ -254,15 +267,14 @@ for (i = 1; i <= MAX; i++) {
 
   // per-round 投稿: request-changes または comment
   const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking })
+  const roundBodyFile = writeTempBody(roundBody, `review-${PR}-${i}-${review.decision}`)
   const ghCmd = review.decision === 'request-changes'
-    ? `gh pr review ${PR} --request-changes --body-file -`
-    : `gh pr review ${PR} --comment --body-file -`
+    ? `gh pr review ${PR} --request-changes --body-file ${roundBodyFile}`
+    : `gh pr review ${PR} --comment --body-file ${roundBodyFile}`
   const roundPost = await agent(
     `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n`
     + `\n## Instructions\n`
-    + `以下のコマンドを実行せよ: \`${ghCmd}\`\n`
-    + `投稿本文は以下の BODY を stdin（ヒアドキュメント）で渡すこと（シェルクォート問題を避けるため）:\n`
-    + `\`\`\`\n${roundBody}\n\`\`\`\n`
+    + `以下のコマンドをそのまま実行せよ: \`${ghCmd}\`\n`
     + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
     + `投稿失敗時でも posted:false を返し throw しないこと。\n`
     + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
@@ -316,12 +328,11 @@ const summaryBody = buildTerminalSummaryBody({
   lastSummary: lastReview?.summary ?? null,
   history,
 })
+const summaryBodyFile = writeTempBody(summaryBody, `summary-${PR}-${status}`)
 const summaryPost = await agent(
   `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n`
   + `\n## Instructions\n`
-  + `以下のコマンドを実行せよ: \`gh pr comment ${PR} --body-file -\`\n`
-  + `投稿本文は以下の BODY を stdin（ヒアドキュメント）で渡すこと（シェルクォート問題を避けるため）:\n`
-  + `\`\`\`\n${summaryBody}\n\`\`\`\n`
+  + `以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file ${summaryBodyFile}\`\n`
   + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
   + `投稿失敗時でも posted:false を返し throw しないこと。\n`
   + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
