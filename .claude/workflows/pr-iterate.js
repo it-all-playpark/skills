@@ -192,6 +192,30 @@ const FIX = {
   },
 }
 
+// CI gate schema — restores the gate lost in eb8aa7e (issue #133).
+// dev-runner runs pr-iterate/scripts/check-ci.sh and returns its stdout JSON unchanged.
+// failed_checks items match script output: {name, bucket, state} (conclusion was removed in
+// the bucket-field migration; see issue #133 / ci::bats-fabricated-schema).
+// 'error' status means gh API failed (auth/network); escalate to human immediately.
+const CI_STATUS = {
+  type: 'object',
+  required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['passed', 'failed', 'pending', 'no_checks', 'error'] },
+    failed_checks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          bucket: { type: 'string' },
+          state: { type: 'string' },
+        },
+      },
+    },
+  },
+}
+
 phase('Iterate')
 
 let lastReview = null
@@ -217,37 +241,133 @@ for (i = 1; i <= MAX; i++) {
   lastReview = review
 
   if (review.decision === 'approve') {
-    lgtm = true
-    log(`iteration ${i}: LGTM`)
-
-    // approve ラウンドの history を記録（blocking なし）
-    history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: [] })
-
-    // per-round 投稿: approve（self-PR 検出 → --approve 失敗時 gh pr comment へフォールバック）
-    const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [] })
-    const approveBodyFile = writeTempBody(approveBody, `review-${PR}-${i}-approve`)
-    const approvePost = await agent(
-      `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n`
-      + `\n## Instructions\n`
-      + `以下の手順で投稿せよ：\n`
-      + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
-      + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
-      + `   \`gh pr comment ${PR} --body-file ${approveBodyFile}\` でコメント投稿にフォールバックする。\n`
-      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file ${approveBodyFile}\` を試みる。\n`
-      + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file ${approveBodyFile}\` にフォールバックする。\n`
-      + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-      + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
-      + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-      + `\n## Tools\n使用可: Bash\n`
-      + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
-      + `\n## Token cap\n200 語以内で完結すること。`,
-      { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+    // CI gate — restores the gate lost in eb8aa7e (issue #133).
+    // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
+    // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
+    const ci = await agent(
+      `## Objective\n`
+      + `PR #${PR} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
+      + `## Tools\n`
+      + `- 使用可: Bash のみ\n`
+      + `- 禁止: Write, Edit, git commit, git push\n\n`
+      + `## Boundary\n`
+      + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
+      + `- 実行するスクリプト以外のファイルを変更しない\n\n`
+      + `## Steps\n`
+      + `skills repo（インストール済みの場合は \`$HOME/.claude/skills\`、`
+      + `またはリポジトリのワーキングツリーを locate して）の `
+      + `\`pr-iterate/scripts/check-ci.sh\` を実行せよ:\n`
+      + `\`\`\`\nbash pr-iterate/scripts/check-ci.sh ${PR}\n\`\`\`\n`
+      + `スクリプトの stdout JSON（{status, failed_checks, ...}）をそのまま返せ。\n\n`
+      + `## Output format\n`
+      + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...] }\n`
+      + `prose 禁止。JSON のみ返せ。\n\n`
+      + `## Token cap\n`
+      + `JSON のみ。1 行以内。`,
+      { agentType: 'dev-runner', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
     )
-    if (!approvePost?.posted) {
-      log(`⚠️ post-review#${i} (approve) の投稿に失敗しました（posted=${approvePost?.posted ?? 'null'}）。ワークフローは継続します。`)
-    }
 
-    break
+    if (ci == null) throw new Error(`pr-iterate: ci-check#${i} が結果を返しませんでした`)
+
+    if (ci.status === 'passed' || ci.status === 'no_checks') {
+      lgtm = true
+      log(`iteration ${i}: LGTM（CI status=${ci.status}）`)
+
+      // approve ラウンドの history を記録（blocking なし）
+      history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: [] })
+
+      // per-round 投稿: approve（self-PR 検出 → --approve 失敗時 gh pr comment へフォールバック）
+      const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [] })
+      const approveBodyFile = writeTempBody(approveBody, `review-${PR}-${i}-approve`)
+      const approvePost = await agent(
+        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n`
+        + `\n## Instructions\n`
+        + `以下の手順で投稿せよ：\n`
+        + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
+        + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
+        + `   \`gh pr comment ${PR} --body-file ${approveBodyFile}\` でコメント投稿にフォールバックする。\n`
+        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file ${approveBodyFile}\` を試みる。\n`
+        + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file ${approveBodyFile}\` にフォールバックする。\n`
+        + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+        + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
+        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+        + `\n## Tools\n使用可: Bash\n`
+        + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
+        + `\n## Token cap\n200 語以内で完結すること。`,
+        { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+      )
+      if (!approvePost?.posted) {
+        log(`⚠️ post-review#${i} (approve) の投稿に失敗しました（posted=${approvePost?.posted ?? 'null'}）。ワークフローは継続します。`)
+      }
+
+      break
+    } else if (ci.status === 'error') {
+      // Real gh API error (auth failure, network error, etc.) — do not misinterpret as CI failure.
+      // Surface to human immediately; retrying pr-fix on a non-existent bug would waste cycles.
+      terminal = 'ci_error'
+      log(`⚠️ CI check returned error — gh API failed (auth/network). 人間へエスカレーション`)
+      break
+    } else if (ci.status === 'pending') {
+      terminal = 'ci_pending'
+      log(`⚠️ CI pending — checks incomplete, never auto-approve. 人間/CI 完了待ちへエスカレーション`)
+      break
+    } else if (ci.status === 'failed') {
+      // ci.status === 'failed': convert failed_checks into synthetic blocking findings and route
+      // through the existing pr-fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
+      // automatically via the existing stuckTopics computation below.
+      // failed_checks items are {name, bucket, state} per check-ci.sh output (no conclusion field).
+      const ciFindings = (ci.failed_checks && ci.failed_checks.length > 0)
+        ? ci.failed_checks.map((c) => ({
+            severity: 'critical',
+            topic: `ci::${c.name}`,
+            description: `CI check failed: ${c.name} (${c.state ?? c.bucket})`,
+            suggestion: 'CI を green にする',
+          }))
+        : [{
+            severity: 'critical',
+            topic: 'ci::unknown',
+            description: 'CI failed (no specific check details available)',
+            suggestion: 'CI を green にする',
+          }]
+
+      // Register CI findings into reviewSeen exactly like the existing blocking loop so that
+      // repeated identical CI failures (same ci::<name> topic) trigger REVIEW_STUCK escalation.
+      for (const x of ciFindings) {
+        const t = issueTopic(x)
+        if (reviewSeen[t]) { reviewSeen[t].issue = x; reviewSeen[t].count += 1 }
+        else reviewSeen[t] = { issue: x, count: 1 }
+      }
+      const ciStuckTopics = Object.entries(reviewSeen).filter(([, s]) => s.count >= REVIEW_STUCK).map(([t]) => t)
+      log(`iteration ${i}: approve but CI failed — ${ciFindings.length} failing check(s)`
+        + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
+
+      if (ciStuckTopics.length) {
+        terminal = 'stuck'
+        log(`⚠️ Review STUCK — 同一 CI failure topic が ${REVIEW_STUCK} 回反復（${ciStuckTopics.join(' / ')}）。`
+          + `relax せず人間レビューへエスカレーション（critical/major のゲートは後退させない）`)
+        break
+      }
+
+      const issuesText = ciFindings
+        .map((x) => `- [${x.severity}] ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
+        .join('\n')
+
+      const fix = await agent(
+        `PR #${PR} の CI 失敗を修正する。次の CI 失敗を解消するため \`Skill: pr-fix ${PR}\` を実行し、`
+        + `修正を push まで行え。解消すべき CI 失敗:\n${issuesText}`,
+        { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
+      )
+
+      if (fix == null || fix.applied !== true) {
+        terminal = 'fix_failed'
+        log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
+          + `無言で再レビューを繰り返さず人間へエスカレーション`)
+        break
+      }
+
+      // CI fix applied — continue to next iteration for re-review + re-CI-check
+      continue
+    }
   }
 
   const blocking = review.issues.filter((x) => x.severity === 'critical' || x.severity === 'major')
