@@ -46,3 +46,10 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"path"'* ]]
 }
+
+@test "委譲先失敗時のフォールバック JSON が jq で parse でき status が failed である" {
+    run "$SCRIPT" --path "/nonexistent/xyz_$$"
+    [ "$status" -eq 0 ]
+    # Validate JSON is well-formed and status field equals "failed"
+    echo "$output" | jq -e '.status == "failed"'
+}

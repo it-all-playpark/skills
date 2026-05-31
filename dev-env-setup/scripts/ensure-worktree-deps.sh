@@ -12,6 +12,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=../../_lib/common.sh
+source "$SCRIPT_DIR/../../_lib/common.sh"
+
 # ============================================================================
 # Args
 # ============================================================================
@@ -70,9 +73,11 @@ fi
 # hard-crashed before it could write anything useful).
 if [[ -z "$output" ]] || [[ "${output:0:1}" != "{" ]]; then
     error_detail="${stderr_content:-exit code ${delegate_exit}}"
-    printf '{"status":"failed","path":"%s","error":"%s"}\n' \
-        "$TARGET_PATH" \
-        "$(printf '%s' "$error_detail" | tr '"' "'")"
+    # Use json_escape (jq -Rs . with fallback) to safely handle newlines,
+    # backslashes, and control characters that may appear in delegate stderr.
+    printf '{"status":"failed","path":%s,"error":%s}\n' \
+        "$(json_escape "$TARGET_PATH")" \
+        "$(json_escape "$error_detail")"
     exit 0
 fi
 
