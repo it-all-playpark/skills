@@ -60,7 +60,8 @@ const DEPTH = args?.depth ?? 'standard'
 const PLAN_MAX = 8         // 計画レビュー上限（収束モデルにより happy path は数回で抜ける。issue #123）
 const PLAN_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（moving target 打ち切り。issue #123）
 const PLAN_RELAX_FROM = 3  // この iteration 以降は critical 無しなら収束を許容（issue #123）
-const EVAL_MAX = 10   // 本質: 評価差し戻し上限
+const EVAL_MAX = 10        // 評価差し戻し上限（収束モデルにより happy path は数回で抜ける。issue #125）
+const EVAL_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（design churn 打ち切り。issue #125）
 const GREEN_MAX = 3   // test green までの実装差し戻し上限
 const BLOCK_MAX = 2   // BLOCKED 由来の再計画上限
 if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue）')
@@ -92,6 +93,27 @@ function planConverged(rev, iteration, stuck) {
 function findingsToConcerns(rev) {
   return (rev.findings ?? []).map(
     (f) => `[plan:${f?.severity ?? '?'}] ${f?.topic ?? ''}: ${f?.description ?? ''}`)
+}
+
+// ---- Evaluate 収束モデル（issue #125）----
+// Evaluate ループは Plan ループと同型の cold start moving target を抱える。evaluator は毎回 fresh
+// context で full diff を再評価するため、別観点を上乗せし続けて収束しない。さらに design 差し戻しは
+// replan + 全 task 再実装を走らせるため、1 反復のコストが Plan/Review より桁違いに高い（#123 が潰した
+// 抽象的な Plan 空間の moving target をループへ戻す）。Plan と同じ部品を Evaluate に適用する:
+//   1. 既出 feedback を evaluator に渡し「対応済み・新規 critical/major のみ」を強制（蒸し返し抑制）
+//   2. 同一 topic が EVAL_STUCK 回出たら stuck と判定（fingerprint を JS 側で突合）
+//   3. stuck かつ design パスが反復するなら replan+reimpl を繰り返さず早期打ち切り（コスト保護）
+//   4. critical は常にブロック（品質ゲートは後退させない。#123 と同一原則）
+//   5. stuck/上限到達でも throw せず現状で PR へ進む（後段は review のみ、merge は手動 = human review 委譲）
+// feedback 項目から stuck 検出用の fingerprint（topic）を取り出す。
+function feedbackTopic(f) {
+  if (!f) return ''
+  if (typeof f === 'string') return f
+  return f.topic ?? f.description ?? JSON.stringify(f)
+}
+// feedback に critical が含まれるか。critical は常にブロック（収束を許さない）。
+function evalHasCritical(ev) {
+  return (ev.feedback ?? []).some((f) => f && typeof f === 'object' && f.severity === 'critical')
 }
 
 // ---- schemas ----
@@ -385,26 +407,59 @@ for (let i = 1; i <= GREEN_MAX; i++) {
 }
 
 // ============================================================
-// Phase Evaluate: evaluator → fail なら design=再計画+再実装 / implementation=implementer 修正（上限 10）
+// Phase Evaluate: evaluator → fail なら design=再計画+再実装 / implementation=implementer 修正。
+// 収束は evalConverged() 相当のロジックがインライン判断する（issue #125。基準は EVAL 収束モデルの
+// コメント参照）: 既出 feedback 累積で cold start を補償 / 同一 topic 反復で stuck 検出 /
+// stuck かつ design 反復なら早期打ち切り（コスト保護）/ critical は常にブロック /
+// stuck・上限到達でも throw せず現状で PR へ進む（human review 委譲）。
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
 // ============================================================
 let evalResult = null
 if (!TRIVIAL) {
 phase('Evaluate')
+const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & stuck 検出。issue #125）
 for (let i = 1; i <= EVAL_MAX; i++) {
+  const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
     + `\`git diff $(git merge-base HEAD origin/${BASE})..HEAD\` で実 diff を確認し、テストを実際に走らせる）。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
-    + ((i === 1 && concerns.length) ? `focus_areas（重点監査せよ。implementer の自己申告した弱点/未解消BLOCKED）:\n${JSON.stringify(concerns)}\n` : ''),
+    + ((i === 1 && concerns.length) ? `focus_areas（重点監査せよ。implementer の自己申告した弱点/未解消BLOCKED）:\n${JSON.stringify(concerns)}\n` : '')
+    + (priorFeedback.length
+        ? `既出 feedback（前 iteration までに指摘済み。implementer/planner は対応済みのはず）:\n${JSON.stringify(priorFeedback)}\n`
+          + `**新規の critical/major のみ報告**せよ。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
+          + `同一問題には既出と同じ topic 文字列を再利用せよ（orchestrator が topic で stuck を突合する）。\n`
+        : ''),
     { agentType: 'evaluator', schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
   ), `Evaluate(eval#${i})`)
   evalResult = ev
-  log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})`)
-  if (ev.verdict === 'pass') break
+
+  // feedback を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
+  for (const f of (ev.feedback ?? [])) {
+    if (f == null) continue
+    const t = feedbackTopic(f)
+    if (evalSeen[t]) { evalSeen[t].feedback = f; evalSeen[t].count += 1 }
+    else evalSeen[t] = { feedback: f, count: 1 }
+  }
+  const stuckTopics = Object.entries(evalSeen).filter(([, s]) => s.count >= EVAL_STUCK).map(([t]) => t)
+  const stuck = stuckTopics.length > 0
+  log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
+
+  if (ev.verdict === 'pass') {
+    log(`evaluate 収束（pass, iter ${i}）— PR へ進む`)
+    break
+  }
+  // critical は常にブロック。critical が無く design パスが stuck したら早期打ち切り（replan+reimpl の
+  // コスト保護）。critical が残るうちは stuck でも打ち切らず差し戻しを続ける（品質ゲート後退なし）。
+  if (stuck && ev.feedback_level === 'design' && !evalHasCritical(ev)) {
+    log(`⚠️ evaluate 早期打ち切り（stuck design churn, iter ${i}, topics: ${stuckTopics.join(' / ')}）— `
+      + `replan+reimpl を繰り返さず現状で PR へ進む（human review に委ねる）`)
+    break
+  }
   if (i === EVAL_MAX) {
-    log(`evaluate: ${EVAL_MAX} 回で pass せず — 現状で PR へ進む（human review に委ねる）`)
+    log(`⚠️ evaluate は ${EVAL_MAX} iteration で pass せず（verdict=${ev.verdict}）— `
+      + `throw せず現状で PR へ進む（human review に委ねる）`)
     break
   }
   if (ev.feedback_level === 'design') {
