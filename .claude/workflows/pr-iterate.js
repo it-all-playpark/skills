@@ -81,6 +81,26 @@ const FIX = {
   },
 }
 
+// CI gate schema — restores the gate lost in eb8aa7e (issue #133).
+// dev-runner runs pr-iterate/scripts/check-ci.sh and returns its stdout JSON unchanged.
+const CI_STATUS = {
+  type: 'object',
+  required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['passed', 'failed', 'pending', 'no_checks'] },
+    failed_checks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          conclusion: { type: 'string' },
+        },
+      },
+    },
+  },
+}
+
 phase('Iterate')
 
 let lastReview = null
@@ -105,9 +125,100 @@ for (i = 1; i <= MAX; i++) {
   lastReview = review
 
   if (review.decision === 'approve') {
-    lgtm = true
-    log(`iteration ${i}: LGTM`)
-    break
+    // CI gate — restores the gate lost in eb8aa7e (issue #133).
+    // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
+    // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
+    const ci = await agent(
+      `## Objective\n`
+      + `PR #${PR} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
+      + `## Tools\n`
+      + `- 使用可: Bash のみ\n`
+      + `- 禁止: Write, Edit, git commit, git push\n\n`
+      + `## Boundary\n`
+      + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
+      + `- 実行するスクリプト以外のファイルを変更しない\n\n`
+      + `## Steps\n`
+      + `skills repo（インストール済みの場合は \`$HOME/.claude/skills\`、`
+      + `またはリポジトリのワーキングツリーを locate して）の `
+      + `\`pr-iterate/scripts/check-ci.sh\` を実行せよ:\n`
+      + `\`\`\`\nbash pr-iterate/scripts/check-ci.sh ${PR}\n\`\`\`\n`
+      + `スクリプトの stdout JSON（{status, failed_checks, ...}）をそのまま返せ。\n\n`
+      + `## Output format\n`
+      + `{ "status": "passed"|"failed"|"pending"|"no_checks", "failed_checks": [{name, conclusion}, ...] }\n`
+      + `prose 禁止。JSON のみ返せ。\n\n`
+      + `## Token cap\n`
+      + `JSON のみ。1 行以内。`,
+      { agentType: 'dev-runner', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
+    )
+
+    if (ci == null) throw new Error(`pr-iterate: ci-check#${i} が結果を返しませんでした`)
+
+    if (ci.status === 'passed' || ci.status === 'no_checks') {
+      lgtm = true
+      log(`iteration ${i}: LGTM（CI status=${ci.status}）`)
+      break
+    }
+
+    if (ci.status === 'pending') {
+      terminal = 'ci_pending'
+      log(`⚠️ CI pending — checks incomplete, never auto-approve. 人間/CI 完了待ちへエスカレーション`)
+      break
+    }
+
+    // ci.status === 'failed': convert failed_checks into synthetic blocking findings and route
+    // through the existing pr-fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
+    // automatically via the existing stuckTopics computation below.
+    const ciFindings = (ci.failed_checks && ci.failed_checks.length > 0)
+      ? ci.failed_checks.map((c) => ({
+          severity: 'critical',
+          topic: `ci::${c.name}`,
+          description: `CI check failed: ${c.name} (${c.conclusion})`,
+          suggestion: 'CI を green にする',
+        }))
+      : [{
+          severity: 'critical',
+          topic: 'ci::unknown',
+          description: 'CI failed (no specific check details available)',
+          suggestion: 'CI を green にする',
+        }]
+
+    // Register CI findings into reviewSeen exactly like the existing blocking loop so that
+    // repeated identical CI failures (same ci::<name> topic) trigger REVIEW_STUCK escalation.
+    for (const x of ciFindings) {
+      const t = issueTopic(x)
+      if (reviewSeen[t]) { reviewSeen[t].issue = x; reviewSeen[t].count += 1 }
+      else reviewSeen[t] = { issue: x, count: 1 }
+    }
+    const ciStuckTopics = Object.entries(reviewSeen).filter(([, s]) => s.count >= REVIEW_STUCK).map(([t]) => t)
+    log(`iteration ${i}: approve but CI failed — ${ciFindings.length} failing check(s)`
+      + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
+
+    if (ciStuckTopics.length) {
+      terminal = 'stuck'
+      log(`⚠️ Review STUCK — 同一 CI failure topic が ${REVIEW_STUCK} 回反復（${ciStuckTopics.join(' / ')}）。`
+        + `relax せず人間レビューへエスカレーション（critical/major のゲートは後退させない）`)
+      break
+    }
+
+    const issuesText = ciFindings
+      .map((x) => `- [${x.severity}] ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
+      .join('\n')
+
+    const fix = await agent(
+      `PR #${PR} の CI 失敗を修正する。次の CI 失敗を解消するため \`Skill: pr-fix ${PR}\` を実行し、`
+      + `修正を push まで行え。解消すべき CI 失敗:\n${issuesText}`,
+      { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
+    )
+
+    if (fix == null || fix.applied !== true) {
+      terminal = 'fix_failed'
+      log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
+        + `無言で再レビューを繰り返さず人間へエスカレーション`)
+      break
+    }
+
+    // CI fix applied — continue to next iteration for re-review + re-CI-check
+    continue
   }
 
   const blocking = review.issues.filter((x) => x.severity === 'critical' || x.severity === 'major')
