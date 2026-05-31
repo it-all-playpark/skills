@@ -75,11 +75,22 @@ This enables project-specific setup (DB migrations, env generation, etc.).
 
 ## Integration with worktree workflows
 
-After a worktree is created (e.g. dev-flow workflow の Setup phase), run dev-env-setup to install deps:
+dev-flow workflow の Setup phase は worktree 確定直後（WT 確定後・Analyze 前）に
+dev-runner 経由で非ブロッキングラッパーを自動実行する:
 
 ```bash
-$SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path $WORKTREE
+$SKILLS_DIR/dev-env-setup/scripts/ensure-worktree-deps.sh --path $WORKTREE
 ```
+
+`ensure-worktree-deps.sh` は内部で `detect-and-install.sh` を呼び出し、
+install が失敗しても **常に exit 0** を返す（呼び出し側向け非ブロッキング契約）。
+これにより dev-flow は install 失敗で abort せず、後段 Validate phase の
+test-green ループが第二段の保険として機能する二段構えとなる。
+
+> **dev-flow.js への 1 ステップ追加について**: dev-flow.js は Claude Code の
+> Self-Modification guard により agent が直接編集できない。そのため Setup phase への
+> `ensure-worktree-deps.sh` 呼び出し追加は `docs/issue-120-dev-flow-setup-install.patch`
+> として提供されており、human が `git apply` で適用する運用となっている（issue #120）。
 
 ## Error Handling
 
@@ -87,7 +98,7 @@ $SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh --path $WORKTREE
 |----------|--------|
 | No lockfile/config found | Report "no dependencies detected", exit 0 |
 | Package manager not installed | Warn and skip (don't fail the workflow) |
-| Install fails | Report error, exit 1 (caller decides to continue or abort) |
+| Install fails | Report error, exit 1 (caller decides to continue or abort); `ensure-worktree-deps.sh` ラッパー経由で呼ぶ場合は exit 0 へ正規化される |
 | Custom setup.sh fails | Warn but don't fail (non-blocking) |
 | Already installed | Report "dependencies up to date", skip install |
 

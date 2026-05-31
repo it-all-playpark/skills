@@ -1,0 +1,43 @@
+# NOTE: dev-flow.js は Claude Code の Self-Modification guard により agent が直接編集不能なため
+# 本変更は human が以下コマンドで手動適用すること:
+#
+#   git apply docs/issue-120-dev-flow-setup-install.patch
+#
+# 適用後の検証: Setup phase が WT 確定後・Analyze 前に ensure-worktree-deps.sh を
+# dev-runner 経由で非ブロッキング実行することを確認する。
+# （WT が確定した直後にインストールが走り、Analyze phase 開始前に完了する）
+#
+# 事前確認（実適用しない）:
+#   git apply --check docs/issue-120-dev-flow-setup-install.patch
+diff --git a/.claude/workflows/dev-flow.js b/.claude/workflows/dev-flow.js
+--- a/.claude/workflows/dev-flow.js
++++ b/.claude/workflows/dev-flow.js
+@@ -181,6 +181,15 @@
+     summary: { type: 'string' },
+   },
+ }
++const ENVSETUP = {
++  type: 'object', required: ['status'],
++  properties: {
++    status: { type: 'string' },
++    path: { type: 'string' },
++    results: { type: 'array' },
++    custom: { type: 'object' },
++  },
++}
+ const EVAL = {
+   type: 'object', required: ['verdict', 'total'],
+   properties: {
+@@ -250,6 +259,12 @@
+ WT = setup.worktree
+ log(`worktree: ${WT} (branch ${setup.branch})`)
+
++const envSetup = await agent(
++  `\`$SKILLS_DIR/dev-env-setup/scripts/ensure-worktree-deps.sh --path ${WT}\` を実行し、結果を返せ。`,
++  { agentType: 'dev-runner', schema: ENVSETUP, label: 'env-setup', phase: 'Setup' },
++)
++log(`env-setup status: ${envSetup?.status ?? 'skipped'}`)
++
+ // ============================================================
+ // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
+ // ============================================================
