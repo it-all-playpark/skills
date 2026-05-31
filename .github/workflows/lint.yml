@@ -42,3 +42,19 @@ jobs:
         run: |
           chmod +x tests/run-all-bats.sh
           ./tests/run-all-bats.sh --strict
+
+  node-tests:
+    name: Node Unit Tests (workflow arg resolver)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run tests/run-node-tests.sh --strict
+        shell: bash
+        run: |
+          chmod +x tests/run-node-tests.sh
+          ./tests/run-node-tests.sh --strict

@@ -14,8 +14,19 @@ export const meta = {
   ],
 }
 
+function resolvePositiveIntArg(args, name) {
+  const raw = (typeof args === 'string' || typeof args === 'number')
+    ? args
+    : (args?.[name] ?? args?.[0]);
+  const s = String(raw ?? '').trim();
+  if (!/^[1-9][0-9]*$/.test(s)) {
+    throw new Error(`${name}: 正の整数が必要です（受信: ${JSON.stringify(s)}）`);
+  }
+  return s;
+}
+
 // ---- args ----
-const ISSUE = String(args?.issue ?? args?.[0] ?? '').trim()
+const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE = args?.base ?? 'dev'
 const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
