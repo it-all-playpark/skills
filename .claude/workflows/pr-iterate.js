@@ -6,9 +6,19 @@ export const meta = {
   ],
 }
 
+function resolvePositiveIntArg(args, name) {
+  const raw = (typeof args === 'string' || typeof args === 'number')
+    ? args
+    : (args?.[name] ?? args?.issue ?? args?.pr ?? args?.pr_number ?? args?.[0]);
+  const s = String(raw ?? '').trim();
+  if (!/^[1-9][0-9]*$/.test(s)) {
+    throw new Error(`${name}: 正の整数が必要です（受信: ${JSON.stringify(s)}）`);
+  }
+  return s;
+}
+
 // args 正規化: 単体 /pr-iterate <pr> でも dev-flow からの workflow('pr-iterate', {pr}) でも受ける
-const PR = typeof args === 'string' ? args.trim()
-  : (args?.pr ?? args?.pr_number ?? args?.[0])
+const PR = resolvePositiveIntArg(args, 'pr')
 const MAX = Number(args?.max_iterations ?? 10)
 
 if (!PR) throw new Error('pr-iterate: PR number/URL が必要です（args.pr）')
