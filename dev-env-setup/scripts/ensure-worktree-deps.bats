@@ -1,0 +1,35 @@
+#!/usr/bin/env bats
+# Tests for dev-env-setup/scripts/ensure-worktree-deps.sh
+#
+# Strategy: mktemp -d で一時ディレクトリを作成し、ファイルの有無で挙動を検証する。
+# NOTE: F2 でスクリプトが実装されるまでこれらのテストは fail (red) になる。
+
+setup() {
+    SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
+    SCRIPT="$SKILLS_REPO/dev-env-setup/scripts/ensure-worktree-deps.sh"
+    TMP_DIR="$(mktemp -d)"
+}
+
+teardown() {
+    rm -rf "$TMP_DIR"
+}
+
+@test "依存ファイル皆無のディレクトリで exit 0 かつ no_dependencies を含む JSON を stdout に出す" {
+    # TMP_DIR は空 — 依存ファイルなし
+    run "$SCRIPT" --path "$TMP_DIR"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no_dependencies"* ]]
+}
+
+@test "--path 未指定で非 0 exit (必須引数エラー)" {
+    run "$SCRIPT"
+    [ "$status" -ne 0 ]
+}
+
+@test "package.json のみ (lock なし) のディレクトリでも exit 0 (pm_not_found 経由)" {
+    # lock ファイルなし、package.json のみ → npm-no-lock として検出
+    # テスト環境に npm がある場合でも install 失敗 / already_installed / installed いずれかで exit 0
+    echo '{"name":"test","version":"1.0.0"}' > "$TMP_DIR/package.json"
+    run "$SCRIPT" --path "$TMP_DIR"
+    [ "$status" -eq 0 ]
+}
