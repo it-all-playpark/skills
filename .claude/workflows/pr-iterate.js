@@ -21,8 +21,6 @@ function resolvePositiveIntArg(args, name) {
 const PR = resolvePositiveIntArg(args, 'pr')
 const MAX = Number(args?.max_iterations ?? 10)
 
-if (!PR) throw new Error('pr-iterate: PR number/URL が必要です（args.pr）')
-
 const REVIEW = {
   type: 'object',
   required: ['decision', 'issues', 'summary'],
