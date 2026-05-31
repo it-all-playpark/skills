@@ -48,8 +48,12 @@ teardown() {
 }
 
 @test "委譲先失敗時のフォールバック JSON が jq で parse でき status が failed である" {
-    run "$SCRIPT" --path "/nonexistent/xyz_$$"
+    # JSON は stdout、診断 warning は stderr に出る。bats の run は両者を $output に
+    # 結合するため、jq parse には stdout のみを渡す (2>/dev/null で stderr を分離)。
+    run bash -c "'$SCRIPT' --path '/nonexistent/xyz_$$' 2>/dev/null"
     [ "$status" -eq 0 ]
-    # Validate JSON is well-formed and status field equals "failed"
-    echo "$output" | jq -e '.status == "failed"'
+    # Validate JSON is well-formed and status field equals "failed".
+    # printf '%s' (not echo) so literal "\n" inside the JSON string stays as data
+    # regardless of the shell's echo escape semantics (zsh / xpg_echo).
+    printf '%s\n' "$output" | jq -e '.status == "failed"'
 }
