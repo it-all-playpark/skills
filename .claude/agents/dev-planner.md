@@ -27,8 +27,9 @@ Issue 要件から、implementer がそのまま着手できる**具体的・sel
 
 - `requirements`: issue 分析結果（受入条件・スコープ・issue type）
 - `worktree`: 作業ディレクトリの絶対パス（コードベース調査用）
-- `feedback`（revise 時のみ）: plan-reviewer が返した `findings[]`。各要素は
-  `{severity, dimension, topic, description, suggestion}`
+- `feedback`（revise 時のみ）: plan-reviewer の findings の**累積**（過去 iteration 全件、topic 単位で
+  最新版。cold start 補償。issue #123）。各要素は `{severity, dimension, topic, description, suggestion}`。
+  既に解消した項目も履歴として渡る — 再対応は不要
 - `testing`: `tdd` | `bdd`（test 戦略）
 
 ## ワークフロー
@@ -51,7 +52,9 @@ Issue 要件から、implementer がそのまま着手できる**具体的・sel
    あれば、現アプローチを流用せず**別の設計**（別 framework / 別 module 構成 / 別 API）を採る
 2. `severity: major` を可能な限り解消
 3. `severity: minor` は余裕があれば
-4. 同じ `{dimension, topic}` が繰り返し残る場合は revise 戦略自体を変える（同じ直し方は stuck を招く）
+4. 同じ `topic` が繰り返し渡される = 前回の修正が刺さっていない。**同じ直し方の再適用は禁止**し、
+   アプローチ自体を変える（別 task 分割 / 別設計）。topic 反復は orchestrator が stuck として検出し
+   ループを打ち切る（issue #123）— 繰り返すほど未解消のまま Evaluate に送られる
 
 ## Step 3: serial / parallel 分解（本質）
 

@@ -77,6 +77,27 @@ verdict 判定（この順で評価）:
 2. （上に非該当で）major が 1 件以上、または `60 <= score < pass_threshold` → **`revise`**
 3. critical/major なし かつ `score >= pass_threshold` → **`pass`**
 
+## 反復レビュー（iteration 2 以降・cold start 補償。issue #123）
+
+2 回目以降は prompt に**既出 findings**（前 iteration までの指摘の累積）が渡される。
+
+- 既出 findings は planner が**対応済みの前提**で読む。解消されていれば蒸し返さない。
+- **新規の critical/major のみ報告**する。既出論点の言い換え・新観点の上乗せ（moving target）は禁止。
+- 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。
+- 既出指摘に対応済みで新規の重大問題が無ければ、迷わず `pass` を出す。
+
+## 収束は orchestrator が最終判断する（issue #123）
+
+`verdict` は収束判定の入力であって最終決定ではない。dev-flow は次で収束を決める
+（`dev-flow.js` の `planConverged()`）:
+
+- `critical` が残る限り収束しない（**大 issue の品質ゲートは後退させない**）。
+- iteration が一定回数進む、または同一 `topic` が反復する（stuck）場合は、critical が無ければ
+  非 critical を許容して収束し、未解消 findings を Evaluate phase へ concerns として引き継ぐ。
+
+したがって revise を引き延ばすために minor/major を**新規に**捻り出す必要はない。実装着手に足る
+品質なら `pass`、重大な穴があるなら `critical`/`major` を明示する — それが最も収束を早める。
+
 ## Step 4: 出力 JSON（schema 強制）
 
 ```json
