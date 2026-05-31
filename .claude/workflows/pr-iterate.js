@@ -268,13 +268,17 @@ for (i = 1; i <= MAX; i++) {
   // per-round 投稿: request-changes または comment
   const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking })
   const roundBodyFile = writeTempBody(roundBody, `review-${PR}-${i}-${review.decision}`)
-  const ghCmd = review.decision === 'request-changes'
-    ? `gh pr review ${PR} --request-changes --body-file ${roundBodyFile}`
-    : `gh pr review ${PR} --comment --body-file ${roundBodyFile}`
   const roundPost = await agent(
     `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n`
     + `\n## Instructions\n`
-    + `以下のコマンドをそのまま実行せよ: \`${ghCmd}\`\n`
+    + (review.decision === 'request-changes'
+      ? `以下の手順で投稿せよ：\n`
+        + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
+        + `2. 自分自身の PR である場合（または --request-changes が "Can not request changes on your own pull request" エラーになる場合）は、\n`
+        + `   \`gh pr comment ${PR} --body-file ${roundBodyFile}\` でコメント投稿にフォールバックする。\n`
+        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file ${roundBodyFile}\` を試みる。\n`
+        + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file ${roundBodyFile}\` にフォールバックする。\n`
+      : `以下のコマンドをそのまま実行せよ: \`gh pr review ${PR} --comment --body-file ${roundBodyFile}\`\n`)
     + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
     + `投稿失敗時でも posted:false を返し throw しないこと。\n`
     + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
