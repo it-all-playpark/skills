@@ -83,18 +83,22 @@ const FIX = {
 
 // CI gate schema — restores the gate lost in eb8aa7e (issue #133).
 // dev-runner runs pr-iterate/scripts/check-ci.sh and returns its stdout JSON unchanged.
+// failed_checks items match script output: {name, bucket, state} (conclusion was removed in
+// the bucket-field migration; see issue #133 / ci::bats-fabricated-schema).
+// 'error' status means gh API failed (auth/network); escalate to human immediately.
 const CI_STATUS = {
   type: 'object',
   required: ['status'],
   properties: {
-    status: { type: 'string', enum: ['passed', 'failed', 'pending', 'no_checks'] },
+    status: { type: 'string', enum: ['passed', 'failed', 'pending', 'no_checks', 'error'] },
     failed_checks: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
           name: { type: 'string' },
-          conclusion: { type: 'string' },
+          bucket: { type: 'string' },
+          state: { type: 'string' },
         },
       },
     },
@@ -144,7 +148,7 @@ for (i = 1; i <= MAX; i++) {
       + `\`\`\`\nbash pr-iterate/scripts/check-ci.sh ${PR}\n\`\`\`\n`
       + `スクリプトの stdout JSON（{status, failed_checks, ...}）をそのまま返せ。\n\n`
       + `## Output format\n`
-      + `{ "status": "passed"|"failed"|"pending"|"no_checks", "failed_checks": [{name, conclusion}, ...] }\n`
+      + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...] }\n`
       + `prose 禁止。JSON のみ返せ。\n\n`
       + `## Token cap\n`
       + `JSON のみ。1 行以内。`,
@@ -157,68 +161,73 @@ for (i = 1; i <= MAX; i++) {
       lgtm = true
       log(`iteration ${i}: LGTM（CI status=${ci.status}）`)
       break
-    }
-
-    if (ci.status === 'pending') {
+    } else if (ci.status === 'error') {
+      // Real gh API error (auth failure, network error, etc.) — do not misinterpret as CI failure.
+      // Surface to human immediately; retrying pr-fix on a non-existent bug would waste cycles.
+      terminal = 'ci_error'
+      log(`⚠️ CI check returned error — gh API failed (auth/network). 人間へエスカレーション`)
+      break
+    } else if (ci.status === 'pending') {
       terminal = 'ci_pending'
       log(`⚠️ CI pending — checks incomplete, never auto-approve. 人間/CI 完了待ちへエスカレーション`)
       break
+    } else if (ci.status === 'failed') {
+      // ci.status === 'failed': convert failed_checks into synthetic blocking findings and route
+      // through the existing pr-fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
+      // automatically via the existing stuckTopics computation below.
+      // failed_checks items are {name, bucket, state} per check-ci.sh output (no conclusion field).
+      const ciFindings = (ci.failed_checks && ci.failed_checks.length > 0)
+        ? ci.failed_checks.map((c) => ({
+            severity: 'critical',
+            topic: `ci::${c.name}`,
+            description: `CI check failed: ${c.name} (${c.state ?? c.bucket})`,
+            suggestion: 'CI を green にする',
+          }))
+        : [{
+            severity: 'critical',
+            topic: 'ci::unknown',
+            description: 'CI failed (no specific check details available)',
+            suggestion: 'CI を green にする',
+          }]
+
+      // Register CI findings into reviewSeen exactly like the existing blocking loop so that
+      // repeated identical CI failures (same ci::<name> topic) trigger REVIEW_STUCK escalation.
+      for (const x of ciFindings) {
+        const t = issueTopic(x)
+        if (reviewSeen[t]) { reviewSeen[t].issue = x; reviewSeen[t].count += 1 }
+        else reviewSeen[t] = { issue: x, count: 1 }
+      }
+      const ciStuckTopics = Object.entries(reviewSeen).filter(([, s]) => s.count >= REVIEW_STUCK).map(([t]) => t)
+      log(`iteration ${i}: approve but CI failed — ${ciFindings.length} failing check(s)`
+        + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
+
+      if (ciStuckTopics.length) {
+        terminal = 'stuck'
+        log(`⚠️ Review STUCK — 同一 CI failure topic が ${REVIEW_STUCK} 回反復（${ciStuckTopics.join(' / ')}）。`
+          + `relax せず人間レビューへエスカレーション（critical/major のゲートは後退させない）`)
+        break
+      }
+
+      const issuesText = ciFindings
+        .map((x) => `- [${x.severity}] ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
+        .join('\n')
+
+      const fix = await agent(
+        `PR #${PR} の CI 失敗を修正する。次の CI 失敗を解消するため \`Skill: pr-fix ${PR}\` を実行し、`
+        + `修正を push まで行え。解消すべき CI 失敗:\n${issuesText}`,
+        { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
+      )
+
+      if (fix == null || fix.applied !== true) {
+        terminal = 'fix_failed'
+        log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
+          + `無言で再レビューを繰り返さず人間へエスカレーション`)
+        break
+      }
+
+      // CI fix applied — continue to next iteration for re-review + re-CI-check
+      continue
     }
-
-    // ci.status === 'failed': convert failed_checks into synthetic blocking findings and route
-    // through the existing pr-fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
-    // automatically via the existing stuckTopics computation below.
-    const ciFindings = (ci.failed_checks && ci.failed_checks.length > 0)
-      ? ci.failed_checks.map((c) => ({
-          severity: 'critical',
-          topic: `ci::${c.name}`,
-          description: `CI check failed: ${c.name} (${c.conclusion})`,
-          suggestion: 'CI を green にする',
-        }))
-      : [{
-          severity: 'critical',
-          topic: 'ci::unknown',
-          description: 'CI failed (no specific check details available)',
-          suggestion: 'CI を green にする',
-        }]
-
-    // Register CI findings into reviewSeen exactly like the existing blocking loop so that
-    // repeated identical CI failures (same ci::<name> topic) trigger REVIEW_STUCK escalation.
-    for (const x of ciFindings) {
-      const t = issueTopic(x)
-      if (reviewSeen[t]) { reviewSeen[t].issue = x; reviewSeen[t].count += 1 }
-      else reviewSeen[t] = { issue: x, count: 1 }
-    }
-    const ciStuckTopics = Object.entries(reviewSeen).filter(([, s]) => s.count >= REVIEW_STUCK).map(([t]) => t)
-    log(`iteration ${i}: approve but CI failed — ${ciFindings.length} failing check(s)`
-      + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
-
-    if (ciStuckTopics.length) {
-      terminal = 'stuck'
-      log(`⚠️ Review STUCK — 同一 CI failure topic が ${REVIEW_STUCK} 回反復（${ciStuckTopics.join(' / ')}）。`
-        + `relax せず人間レビューへエスカレーション（critical/major のゲートは後退させない）`)
-      break
-    }
-
-    const issuesText = ciFindings
-      .map((x) => `- [${x.severity}] ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
-      .join('\n')
-
-    const fix = await agent(
-      `PR #${PR} の CI 失敗を修正する。次の CI 失敗を解消するため \`Skill: pr-fix ${PR}\` を実行し、`
-      + `修正を push まで行え。解消すべき CI 失敗:\n${issuesText}`,
-      { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
-    )
-
-    if (fix == null || fix.applied !== true) {
-      terminal = 'fix_failed'
-      log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
-        + `無言で再レビューを繰り返さず人間へエスカレーション`)
-      break
-    }
-
-    // CI fix applied — continue to next iteration for re-review + re-CI-check
-    continue
   }
 
   const blocking = review.issues.filter((x) => x.severity === 'critical' || x.severity === 'major')
