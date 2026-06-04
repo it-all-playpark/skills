@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
-# Tests for dev-env-setup/scripts/ensure-worktree-deps.sh
+# Tests for _shared/scripts/ensure-worktree-deps.sh
 #
 # Strategy: mktemp -d で一時ディレクトリを作成し、ファイルの有無で挙動を検証する。
 # NOTE: F2 でスクリプトが実装されるまでこれらのテストは fail (red) になる。
 
 setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-    SCRIPT="$SKILLS_REPO/dev-env-setup/scripts/ensure-worktree-deps.sh"
+    SCRIPT="$SKILLS_REPO/_shared/scripts/ensure-worktree-deps.sh"
     TMP_DIR="$(mktemp -d)"
 }
 
