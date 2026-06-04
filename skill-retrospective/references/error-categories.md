@@ -10,8 +10,8 @@ Classification taxonomy for skill execution failures.
 | `test` | Test execution failures | Jest, Vitest, Pytest assertion errors | dev-flow (Validate), dev-runner |
 | `build` | Compilation / bundle errors | TypeScript tsc, webpack, esbuild failures | dev-flow (Validate), dev-runner |
 | `runtime` | Runtime execution errors | Node.js crashes, Python exceptions | dev-flow (Implement), implementer |
-| `config` | Configuration issues | Missing config files, invalid settings | dev-flow (Setup), dev-env-setup |
-| `env` | Environment setup issues | Missing deps, wrong Node version, .env missing | dev-env-setup |
+| `config` | Configuration issues | Missing config files, invalid settings | dev-flow (Setup) |
+| `env` | Environment setup issues | Missing deps, wrong Node version, .env missing | dev-flow (Setup) |
 | `merge` | Git merge conflicts | Branch conflicts, rebase failures | dev-flow (PR) |
 | `type-check` | Type system errors | TypeScript strict errors, mypy violations | dev-flow (Validate), dev-runner |
 

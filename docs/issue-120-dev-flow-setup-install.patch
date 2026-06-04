@@ -33,7 +33,7 @@ diff --git a/.claude/workflows/dev-flow.js b/.claude/workflows/dev-flow.js
  log(`worktree: ${WT} (branch ${setup.branch})`)
 
 +const envSetup = await agent(
-+  `\`$SKILLS_DIR/dev-env-setup/scripts/ensure-worktree-deps.sh --path ${WT}\` を実行し、結果を返せ。`,
++  `\`$SKILLS_DIR/_shared/scripts/ensure-worktree-deps.sh --path ${WT}\` を実行し、結果を返せ。`,
 +  { agentType: 'dev-runner', schema: ENVSETUP, label: 'env-setup', phase: 'Setup' },
 +)
 +log(`env-setup status: ${envSetup?.status ?? 'skipped'}`)
