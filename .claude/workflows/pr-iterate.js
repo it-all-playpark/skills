@@ -131,18 +131,21 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   return lines.join('\n');
 }
 
-// ---- 投稿本文を一時ファイルに書き出すヘルパー ------------------------------------------
-// body をプロンプトに inline で埋め込むと triple-backtick フェンスやバッククォートを含む
-// コードレビュー本文でフェンス境界が衝突し LLM が本文を truncate / 誤解釈する危険がある。
-// 一時ファイルに書き出して agent にはパスのみ渡すことでこの問題を構造的に排除する。
-const _fs = require('fs')
-const _os = require('os')
-const _path = require('path')
-
-function writeTempBody(body, label) {
-  const file = _path.join(_os.tmpdir(), `pr-iterate-${label}-${Date.now()}.md`)
-  _fs.writeFileSync(file, body, 'utf8')
-  return file
+// ---- 投稿本文を agent に保存・投稿させるヘルパー --------------------------------------
+// workflow runtime には fs/os/path（require）も Date.now() も無いため、orchestrator 側で
+// 一時ファイルを書き出すことはできない。代わりに本文を delimiter 付きで agent プロンプトへ
+// 埋め込み、agent 側で Write tool を使って一時ファイルへ保存させてから --body-file で投稿させる。
+// Write tool の content 引数は shell（echo/heredoc）を経由しないため、triple-backtick や
+// バッククォートを含むレビュー本文でもフェンス境界・コマンド置換が衝突しない
+// （旧 writeTempBody の「本文を shell に通さない」意図を agent 側で構造的に再現する）。
+function bodySaveInstr(body) {
+  return `## 本文の保存\n`
+    + `まず Bash で \`mktemp /tmp/pr-iterate-XXXXXX.md\` を実行して一時ファイルを作成し、\n`
+    + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
+    + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
+    + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
+    + `エスケープ・改変しないこと。以降のコマンドの \`--body-file\` には <BODY_FILE> を指定する。\n`
+    + `<<<PR_ITERATE_BODY_BEGIN>>>\n${body}\n<<<PR_ITERATE_BODY_END>>>\n\n`
 }
 
 // ---- POST_RESULT schema（dev-runner 経由の PR 投稿結果）-----------------------------------
@@ -278,21 +281,21 @@ for (i = 1; i <= MAX; i++) {
 
       // per-round 投稿: approve（self-PR 検出 → --approve 失敗時 gh pr comment へフォールバック）
       const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [] })
-      const approveBodyFile = writeTempBody(approveBody, `review-${PR}-${i}-approve`)
       const approvePost = await agent(
-        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n`
-        + `\n## Instructions\n`
-        + `以下の手順で投稿せよ：\n`
+        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n\n`
+        + bodySaveInstr(approveBody)
+        + `## Instructions\n`
+        + `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
         + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
         + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
-        + `   \`gh pr comment ${PR} --body-file ${approveBodyFile}\` でコメント投稿にフォールバックする。\n`
-        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file ${approveBodyFile}\` を試みる。\n`
-        + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file ${approveBodyFile}\` にフォールバックする。\n`
+        + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
+        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file <BODY_FILE>\` を試みる。\n`
+        + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
         + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
         + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
         + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-        + `\n## Tools\n使用可: Bash\n`
-        + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
+        + `\n## Tools\n使用可: Bash, Write\n`
+        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
         + `\n## Token cap\n200 語以内で完結すること。`,
         { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
       )
@@ -387,23 +390,23 @@ for (i = 1; i <= MAX; i++) {
 
   // per-round 投稿: request-changes または comment
   const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking })
-  const roundBodyFile = writeTempBody(roundBody, `review-${PR}-${i}-${review.decision}`)
   const roundPost = await agent(
-    `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n`
-    + `\n## Instructions\n`
+    `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n\n`
+    + bodySaveInstr(roundBody)
+    + `## Instructions\n`
     + (review.decision === 'request-changes'
-      ? `以下の手順で投稿せよ：\n`
+      ? `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
         + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
         + `2. 自分自身の PR である場合（または --request-changes が "Can not request changes on your own pull request" エラーになる場合）は、\n`
-        + `   \`gh pr comment ${PR} --body-file ${roundBodyFile}\` でコメント投稿にフォールバックする。\n`
-        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file ${roundBodyFile}\` を試みる。\n`
-        + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file ${roundBodyFile}\` にフォールバックする。\n`
-      : `以下のコマンドをそのまま実行せよ: \`gh pr review ${PR} --comment --body-file ${roundBodyFile}\`\n`)
+        + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
+        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file <BODY_FILE>\` を試みる。\n`
+        + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
+      : `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr review ${PR} --comment --body-file <BODY_FILE>\`\n`)
     + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
     + `投稿失敗時でも posted:false を返し throw しないこと。\n`
     + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-    + `\n## Tools\n使用可: Bash\n`
-    + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
+    + `\n## Tools\n使用可: Bash, Write\n`
+    + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
     + `\n## Token cap\n200 語以内で完結すること。`,
     { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
   )
@@ -452,16 +455,16 @@ const summaryBody = buildTerminalSummaryBody({
   lastSummary: lastReview?.summary ?? null,
   history,
 })
-const summaryBodyFile = writeTempBody(summaryBody, `summary-${PR}-${status}`)
 const summaryPost = await agent(
-  `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n`
-  + `\n## Instructions\n`
-  + `以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file ${summaryBodyFile}\`\n`
+  `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n\n`
+  + bodySaveInstr(summaryBody)
+  + `## Instructions\n`
+  + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
   + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
   + `投稿失敗時でも posted:false を返し throw しないこと。\n`
   + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-  + `\n## Tools\n使用可: Bash\n`
-  + `\n## Boundary\nファイル変更禁止。git commit 禁止。\n`
+  + `\n## Tools\n使用可: Bash, Write\n`
+  + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
   + `\n## Token cap\n200 語以内で完結すること。`,
   { agentType: 'dev-runner', schema: POST_RESULT, label: `post-summary`, phase: 'Iterate' },
 )
