@@ -84,8 +84,15 @@ for (const filePath of workflowFiles) {
 //
 // workflow ローダーが提供する最小グローバルをスタブとして注入し、
 // runInContext でファイルを評価する。
-// 評価は top-level の同期コードのみ実行される（await は async function 内なので skip される）。
-// ReferenceError が出ればここで検出できる。
+//
+// 修正点（旧実装の2つの欠陥を解消）:
+//   (a) クロスレルム instanceof 問題: vm.runInContext が投げる Error は VM コンテキスト側の
+//       レルムに属するため、外側の `instanceof ReferenceError` は常に false になる。
+//       `.name` 文字列比較（クロスレルム安全）を使う。
+//   (b) top-level await の parse SyntaxError マスキング: workflow ファイルは top-level に
+//       `await agent(...)` を持つため、裸の runInContext は parse 時点で SyntaxError を投げ、
+//       require 行に到達できない。ソースを async IIFE `(async () => { ... })()` で包んで評価し、
+//       Promise rejection も await して捕捉する。
 //
 // 注意: `export const meta = ...` は ESM 構文のため CJS sandbox では SyntaxError になる。
 // ローダーと同様の最小変換として export キーワードを strip して評価する。
@@ -123,29 +130,47 @@ function makeWorkflowSandbox(extraGlobals = {}) {
   return vm.createContext(sandbox);
 }
 
+/**
+ * workflow ソースを vm sandbox でロードし、発生したエラーを返す。
+ * エラーがなければ null を返す。
+ *
+ * 2つの問題を同時に解消:
+ *   (a) top-level await → async IIFE で包んで SyntaxError を回避
+ *   (b) Promise rejection も await して捕捉（require は同期例外だが念のため）
+ */
+async function runWorkflowInSandbox(src, context, filename) {
+  // ESM export 構文を strip
+  const stripped = src
+    .replace(/^export\s+const\s+/gm, 'const ')
+    .replace(/^export\s+function\s+/gm, 'function ');
+
+  // top-level await を許容するため async IIFE で包む
+  const wrapped = `(async () => {\n${stripped}\n})();`;
+
+  let caughtError = null;
+  try {
+    const result = vm.runInContext(wrapped, context, { filename });
+    // async IIFE が返す Promise の rejection も捕捉
+    if (result && typeof result.then === 'function') {
+      await result.catch((e) => { caughtError = e; });
+    }
+  } catch (e) {
+    caughtError = e;
+  }
+  return caughtError;
+}
+
 for (const filePath of workflowFiles) {
   const relPath = filePath.replace(repoRoot + '/', '');
 
-  test(`[vm-load] ${relPath}: 禁止グローバルなし sandbox でロードして ReferenceError が出ない`, () => {
+  test(`[vm-load] ${relPath}: 禁止グローバルなし sandbox でロードして ReferenceError が出ない`, async () => {
     const rawSrc = readFileSync(filePath, 'utf8');
-
-    // ESM export 構文を CJS sandbox 向けに strip
-    // ローダーと同様の最小変換: `export const` → `const`, `export function` → `function`
-    const src = rawSrc
-      .replace(/^export\s+const\s+/gm, 'const ')
-      .replace(/^export\s+function\s+/gm, 'function ');
-
     const context = makeWorkflowSandbox();
+    const caughtError = await runWorkflowInSandbox(rawSrc, context, relPath);
 
-    let caughtError = null;
-    try {
-      vm.runInContext(src, context, { filename: relPath });
-    } catch (e) {
-      caughtError = e;
-    }
-
+    // クロスレルム安全な .name 比較（instanceof は VM レルム越えで常に false になる）
     // ReferenceError は禁止グローバルの使用 → ロード時即死 → 修正必須
-    if (caughtError instanceof ReferenceError) {
+    if (caughtError && caughtError.name === 'ReferenceError') {
       assert.fail(
         `${relPath} がロード時に ReferenceError で即死: ${caughtError.message}\n`
         + `（禁止グローバル require/process/Buffer 等を module top-level で使用している可能性）`,
@@ -153,7 +178,7 @@ for (const filePath of workflowFiles) {
     }
 
     // SyntaxError は構文不正 → やはり修正必須
-    if (caughtError instanceof SyntaxError) {
+    if (caughtError && caughtError.name === 'SyntaxError') {
       assert.fail(`${relPath} がロード時に SyntaxError: ${caughtError.message}`);
     }
 
@@ -162,3 +187,57 @@ for (const filePath of workflowFiles) {
     // 警告に留めテストは pass させる（ReferenceError / SyntaxError のみをブロッキングとする）。
   });
 }
+
+// ---- 3. Negative test: vm-load が実際に機能していることを保証 ---------------------------------
+//
+// テスト自身が inert 化していないことを検証するための fixture テスト。
+// 禁止グローバルを含む合成ソースに対して vm-load が fail を検出できることを確認する。
+// これにより「本物の退行を挿入してもテストが pass してしまう」再発を防ぐ。
+
+test('[vm-load][negative] top-level require を含む合成ソースは ReferenceError として検出される', async () => {
+  // 本物の退行を模したソース（top-level の require + await を含む）
+  const badSrc = `
+const _fs = require('fs');
+const PR = '1';
+const x = await Promise.resolve('test');
+`;
+  const context = makeWorkflowSandbox();
+  const caughtError = await runWorkflowInSandbox(badSrc, context, '[fixture]');
+
+  // このテストは必ず ReferenceError を検出できなければならない
+  assert.ok(
+    caughtError && caughtError.name === 'ReferenceError',
+    `negative fixture: require を含むソースで ReferenceError が検出されるべきだが`
+    + ` caughtError=${JSON.stringify(caughtError?.name)} (${caughtError?.message})`,
+  );
+});
+
+test('[vm-load][negative] top-level process 使用を含む合成ソースは ReferenceError として検出される', async () => {
+  const badSrc = `
+const pid = process.pid;
+const x = await Promise.resolve('test');
+`;
+  const context = makeWorkflowSandbox();
+  const caughtError = await runWorkflowInSandbox(badSrc, context, '[fixture]');
+
+  assert.ok(
+    caughtError && caughtError.name === 'ReferenceError',
+    `negative fixture: process を含むソースで ReferenceError が検出されるべきだが`
+    + ` caughtError=${JSON.stringify(caughtError?.name)} (${caughtError?.message})`,
+  );
+});
+
+test('[vm-load][negative] top-level Buffer 使用を含む合成ソースは ReferenceError として検出される', async () => {
+  const badSrc = `
+const b = Buffer.from('hello');
+const x = await Promise.resolve('test');
+`;
+  const context = makeWorkflowSandbox();
+  const caughtError = await runWorkflowInSandbox(badSrc, context, '[fixture]');
+
+  assert.ok(
+    caughtError && caughtError.name === 'ReferenceError',
+    `negative fixture: Buffer を含むソースで ReferenceError が検出されるべきだが`
+    + ` caughtError=${JSON.stringify(caughtError?.name)} (${caughtError?.message})`,
+  );
+});
