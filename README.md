@@ -13,7 +13,7 @@ Built and maintained by [playpark LLC](https://www.playpark.co.jp/) — an AI de
 git clone https://github.com/it-all-playpark/skills.git ~/.claude/skills
 
 # 2. Done. Use skills in Claude Code:
-/dev-kickoff 123          # Issue → implementation → PR
+/dev-flow 123             # Issue → implementation → PR → LGTM (dynamic workflow)
 /git-commit --all         # Smart commit with Conventional Commits
 /sns-announce article.mdx # Generate social media posts
 ```
@@ -240,18 +240,13 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `dev-flow` | Issue → LGTM までのE2E開発フロー自動化 |
-| `dev-kickoff` | git worktreeを使った機能開発オーケストレーター |
-| `dev-implement` | TDD/BDD/DDD戦略での機能実装 |
+| `dev-flow` | Issue → LGTM までのE2E開発フロー (dynamic workflow: `.claude/workflows/dev-flow.js`) |
 | `dev-issue-analyze` | GitHub Issue分析・実装計画 |
-| `dev-validate` | 実装検証・テスト実行 |
-| `dev-build` | ビルド・コンパイル・パッケージング |
-| `dev-cleanup` | デッドコード削除・構造最適化 |
-| `dev-decompose` | 大規模Issue並列サブタスク分解 |
-| `dev-integrate` | 並列サブタスクブランチのマージ・統合テスト |
-| `dev-env-setup` | worktree作成後の依存関係自動インストール |
 | `dev-flow-doctor` | dev-flowの健全性診断・改善提案 |
 | `dep-guardian` | 依存関係更新PRのトリアージ・テスト・バッチマージ |
+
+> `dev-flow` の判断系 leaf (計画/レビュー/実装/評価) は subagent (`.claude/agents/`) として実装。
+> 最終 PR レビューは `pr-iterate` workflow (`/pr-iterate <pr>` で単体起動も可)。
 
 ### Git操作
 
@@ -265,9 +260,8 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `pr-review` | PRレビュー |
 | `pr-fix` | レビューフィードバックに基づくPR修正 |
-| `pr-iterate` | LGTM取得までの改善ループ |
+| `pr-iterate` | LGTM取得までの review ⇄ fix 改善ループ (dynamic workflow) |
 
 ### テスト
 
@@ -436,7 +430,7 @@ Claude Code内で `/スキル名` を実行:
 
 ```
 /git-commit --all
-/dev-kickoff 123
+/dev-flow 123
 /sns-announce
 ```
 

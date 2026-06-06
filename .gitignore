@@ -3,6 +3,9 @@
 # Track subagent definitions (issue #79/#89: dev-kickoff-worker, dev-contract-worker etc.)
 !.claude/agents/
 !.claude/agents/**
+# Track dynamic workflow definitions (dev-flow / pr-iterate are Claude workflows)
+!.claude/workflows/
+!.claude/workflows/**
 # Legacy: skill-config.json は現在リポジトリルートに配置
 .serena/
 .system/

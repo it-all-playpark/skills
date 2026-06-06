@@ -44,7 +44,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.by_category'
 
 | Category Dominance | Recommendation |
 |--------------------|----------------|
-| `env` > 30% | Integrate dev-env-setup into `dev-kickoff-worker` Phase 1 workflow |
+| `env` > 30% | Wire `_shared/scripts/ensure-worktree-deps.sh` into dev-flow.js Setup phase |
 | `lint` > 40% | Add auto-fix in dev-validate, configure stricter editor settings |
 | `test` > 40% | Review test quality, consider TDD strategy |
 | `type-check` > 20% | Enable strict TypeScript mode, add pre-commit type checks |

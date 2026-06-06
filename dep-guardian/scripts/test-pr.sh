@@ -69,7 +69,7 @@ run_phase() {
 gh pr checkout "$PR_NUMBER" >&2 2>&1 || die_json "Failed to checkout PR #$PR_NUMBER" 1
 
 # Phase: Install dependencies
-DETECT_SCRIPT="$SKILLS_DIR/dev-env-setup/scripts/detect-and-install.sh"
+DETECT_SCRIPT="$SKILLS_DIR/_shared/scripts/detect-and-install.sh"
 if [[ -x "$DETECT_SCRIPT" ]]; then
     "$DETECT_SCRIPT" --path . >&2 2>&1 || warn "detect-and-install.sh returned non-zero"
 else
