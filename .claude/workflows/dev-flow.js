@@ -245,7 +245,7 @@ const setup = need(await agent(
   + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
   + `   （branch が既に存在する場合は -b を外して既存 branch を checkout）\n`
   + `3. 作成/再利用した worktree の絶対パスと branch 名を返す`,
-  { agentType: 'dev-runner', schema: SETUP, label: 'worktree', phase: 'Setup' },
+  { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
 ), 'Setup(worktree)')
 WT = setup.worktree
 log(`worktree: ${WT} (branch ${setup.branch})`)
@@ -390,7 +390,7 @@ for (let i = 1; i <= GREEN_MAX; i++) {
   val = need(await agent(
     `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
     + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`,
-    { agentType: 'dev-runner', schema: GREEN, label: `test#${i}`, phase: 'Validate' },
+    { agentType: 'dev-runner-haiku', schema: GREEN, label: `test#${i}`, phase: 'Validate' },
   ), `Validate(test#${i})`)
   log(`validate iteration ${i}: tests=${val.tests} green=${val.green}`)
   if (val.green || val.tests === 'no_tests') break
