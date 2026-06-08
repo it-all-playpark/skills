@@ -68,11 +68,11 @@ user-invocable: true                # false でメニュー非表示（backgroun
 |---|------|-----|
 | `low` | 決定論的処理・CLI wrapper・フォーマット変換 | `image-convert`, `repo-export` |
 | `medium` | 軽度の判断を伴う処理 | `blog-schedule-overview` |
-| `high` | 標準的なコード生成・通常ワークフロー | デフォルト推奨 |
+| `high` | 標準的なコード生成・通常ワークフロー / 計画・レビュー・批判的分析（A/B 実測で max と精度同等） | デフォルト推奨。dev-flow 品質ゲート系 4 agent（dev-planner, plan-reviewer, evaluator, pr-reviewer）はこれ |
 | `xhigh` | 長時間 agentic / 大規模コーディング（Opus 4.7 限定） | 複雑な実装タスク |
-| `max` | 計画・レビュー・批判的分析など**熟考が必要な処理** | `dev-plan-impl`, `dev-plan-review`, `dev-evaluate`, `pr-review`, `bug-hunt`, `code-audit-team`, `seo-strategy`, `incident-response` |
+| `max` | 熟考・長大推論が必要な処理（quality-gate agent の effort 固定には通常 high を推奨） | `bug-hunt`, `code-audit-team`, `seo-strategy`, `incident-response` |
 
-**判断基準**: 推論の質が出力品質を決定する skill（planning, review, critique, strategy）は `max`。
+**判断基準**: 推論の質が出力品質を決定する skill（planning, review, critique, strategy）は `high` が品質標準ライン（A/B 実測で max と精度同等・より高速）。
 決定論的 tool wrapper は `low`。迷ったら省略して session 設定に委ねる。
 
 参照: [Claude Code docs — effort](https://code.claude.com/docs/en/skills#frontmatter-reference) /
