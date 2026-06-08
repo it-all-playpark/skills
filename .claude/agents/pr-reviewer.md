@@ -5,7 +5,7 @@ description: |
   stated intent. Classifies findings by severity and returns an approve/request-changes/comment
   decision with a Japanese summary. Use when: pr-iterate workflow needs a PR quality gate.
 model: opus
-effort: max
+effort: high
 tools:
   - Read
   - Grep

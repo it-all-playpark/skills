@@ -5,7 +5,7 @@ description: |
   plan, diff, and test output. Scores, decides pass/fail, and routes failures to design or
   implementation. Use when: dev-flow workflow Evaluate phase needs a quality gate.
 model: opus
-effort: max
+effort: high
 tools:
   - Read
   - Grep

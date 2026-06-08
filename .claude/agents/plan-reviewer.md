@@ -6,7 +6,7 @@ description: |
   and returns a pass/revise/block verdict.
   Use when: dev-flow workflow Plan phase needs a quality gate on a dev-planner plan.
 model: opus
-effort: max
+effort: high
 tools:
   - Read
   - Grep

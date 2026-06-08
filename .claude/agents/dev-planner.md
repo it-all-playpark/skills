@@ -6,7 +6,7 @@ description: |
   Use when: dev-flow workflow Plan phase needs an implementation plan or a revised plan
   after plan-reviewer feedback.
 model: opus
-effort: max
+effort: high
 tools:
   - Read
   - Grep
