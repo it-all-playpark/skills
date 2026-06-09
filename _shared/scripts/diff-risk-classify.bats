@@ -305,3 +305,35 @@ teardown() {
     rm -rf "$NON_GIT"
     [ "$status" -ne 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# docs EXCLUSION: docs ファイルは security 語彙を含んでも HIT しない (issue #155)
+# ---------------------------------------------------------------------------
+@test "docs EXCLUSION: .md に auth/exec 語彙 -> 除外され [] (false-positive 防止)" {
+    printf 'requireAuth と child_process と eval( を解説する docs\n' > "$REPO/AGENTS.md"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+@test "docs EXCLUSION: docs/ 配下の .txt に auth 語彙 -> 除外され []" {
+    mkdir -p "$REPO/docs"
+    printf 'authenticate jwt bearer session を説明\n' > "$REPO/docs/guide.txt"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+@test "docs EXCLUSION regression: 同じ auth 語彙でも .ts は HIT のまま (非 docs は不変)" {
+    mkdir -p "$REPO/src"
+    printf 'function requireAuth(u) { return u.jwt; }\n' > "$REPO/src/x.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"auth"'* ]]
+}
