@@ -203,6 +203,71 @@ function classifyMergeTier(s) {
 }
 // ---- /merge-tier エンジン ----
 
+// ---- gate-policy エンジン (canonical: _lib/gate-policy.mjs。修正時は両者を同期。byte 一致は _lib/gate-policy.sync.test.mjs が保証) ----
+// gate_policy の trust 昇順 4 値。
+const GATE_POLICIES = [
+  'deterministic-only',
+  'llm-major-advisory',
+  'llm-major-blocking',
+  'llm-autonomous',
+];
+
+// デフォルト gate_policy。
+const DEFAULT_GATE_POLICY = 'llm-major-advisory';
+
+// gate_policy 値を解決する。null/undefined/空文字は DEFAULT_GATE_POLICY を返す。
+// 有効値はそのまま返す。未知の値は Error を throw する。
+function resolveGatePolicy(value) {
+  if (value == null || value === '') return DEFAULT_GATE_POLICY;
+  if (GATE_POLICIES.includes(value)) return value;
+  throw new Error(
+    `gate-policy: 未知の gate_policy "${value}"（許可: ${GATE_POLICIES.join(', ')}）`,
+  );
+}
+
+// item を 'blocking' | 'advisory' に分類する純粋関数。
+//
+// 軸A invariant（policy によらず常に blocking）:
+//   - item.severity === 'critical'
+//   - item.check && item.check.kind === 'deterministic'
+//   - item.source === 'seed'
+//
+// LLM major（critical でなく deterministic でなく seed でない major）の写像:
+//   deterministic-only  → advisory
+//   llm-major-advisory  → advisory
+//   llm-major-blocking  → blocking
+//   llm-autonomous      → advisory
+//
+// LLM minor は全 policy で advisory。
+function gateLane(item, policy) {
+  // 軸A invariant: 決定論 oracle / critical / seed は policy に依らず blocking
+  if (item.severity === 'critical') return 'blocking';
+  if (item.check && item.check.kind === 'deterministic') return 'blocking';
+  if (item.source === 'seed') return 'blocking';
+  // LLM major の写像
+  if (item.severity === 'major') {
+    return policy === 'llm-major-blocking' ? 'blocking' : 'advisory';
+  }
+  // LLM minor（および未知 severity）は advisory
+  return 'advisory';
+}
+
+// ledger.items のうち blocking に分類される item を返す純粋関数。
+function policyBlockingItems(ledger, policy) {
+  return ledger.items.filter((it) => gateLane(it, policy) === 'blocking');
+}
+
+// ledger.items のうち advisory に分類される item を返す純粋関数。
+function policyAdvisoryItems(ledger, policy) {
+  return ledger.items.filter((it) => gateLane(it, policy) === 'advisory');
+}
+
+// 全 blocking item が checked かどうかを判定する純粋関数（空は true）。
+function isConvergedUnderPolicy(ledger, policy) {
+  return policyBlockingItems(ledger, policy).every((it) => it.checked);
+}
+// ---- /gate-policy エンジン ----
+
 function mergeShape(floor, llmShape) {
   if (!(llmShape in SHAPE_RANK)) {
     return floor;
@@ -268,6 +333,7 @@ const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE = args?.base ?? 'dev'
 const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
+const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
 const PLAN_MAX = 8         // 計画レビュー上限（収束モデルにより happy path は数回で抜ける。issue #123）
 const PLAN_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（moving target 打ち切り。issue #123）
 const PLAN_RELAX_FROM = 2  // この iteration 以降は critical 無しなら収束を許容（issue #123）
@@ -817,9 +883,9 @@ for (let i = 1; i <= EVAL_MAX; i++) {
   }
   ledger = nextRound(ledger)
   log(`ledger: blocking ${blockingItems(ledger).filter((it) => !it.checked).length} 件未 checked / `
-    + `converged(observe)=${isConverged(ledger)}`)
+    + `converged(observe)=${isConvergedUnderPolicy(ledger, GATE_POLICY)}`)
 
-  if (isConverged(ledger) && ev.verdict === 'pass') {
+  if (isConvergedUnderPolicy(ledger, GATE_POLICY) && ev.verdict === 'pass') {
     log(`evaluate 収束（ledger 全 blocking checked + verdict pass, iter ${i}）— PR へ進む`)
     break
   }
@@ -898,10 +964,10 @@ ledger = reconcileDanger(ledger, dangerHitsFinal)
 const unresolvedDanger = ledger.items.some(
   (it) => it.dimension === 'security' && it.source === 'seed' && it.floor && !it.checked)
 const breaking = /breaking|incompatible|migration|破壊的|非互換/i.test(`${req.scope ?? ''} ${req.summary ?? ''}`)
-const escalateCount = advisoryItems(ledger).filter((it) => it.escalate === true).length
+const escalateCount = policyAdvisoryItems(ledger, GATE_POLICY).filter((it) => it.escalate === true).length
 const mergeTier = classifyMergeTier({
   shape: SHAPE,
-  converged: isConverged(ledger),
+  converged: isConvergedUnderPolicy(ledger, GATE_POLICY),
   unresolvedDanger,
   breaking,
   docsOrTestOnly: isDocsOrTestOnly(changed.files ?? []),
@@ -922,9 +988,10 @@ return {
   shape: SHAPE,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,
-  ledger_blocking: blockingItems(ledger).length,
-  ledger_advisory: advisoryItems(ledger).length,
-  ledger_converged: isConverged(ledger),
+  gate_policy: GATE_POLICY,
+  ledger_blocking: policyBlockingItems(ledger, GATE_POLICY).length,
+  ledger_advisory: policyAdvisoryItems(ledger, GATE_POLICY).length,
+  ledger_converged: isConvergedUnderPolicy(ledger, GATE_POLICY),
   merge_tier: mergeTier.tier,
   merge_tier_reasons: mergeTier.reasons,
   danger_hits: dangerHitsFinal,
