@@ -597,6 +597,8 @@ const triage = classifyShape(req)
 const SHAPE = triage.shape
 const TRIVIAL = SHAPE === 'micro'
 log(`shape: ${SHAPE} — ${triage.reason}`)
+const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・reviewer 0回
+const EVAL_PASSES = SHAPE === 'standard' ? 1 : EVAL_MAX  // standard: evaluate 1パス・差し戻しなし
 
 // ============================================================
 // Phase Plan: dev-planner ⇄ plan-reviewer ループ。
@@ -618,6 +620,15 @@ if (TRIVIAL) {
     { agentType: 'dev-planner', schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
   ), 'Plan(planner#trivial)')
   log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
+} else if (PLAN_SOLO) {
+  plan = need(await agent(
+    `cd ${WT} で作業。issue 要件に基づき実装計画を立てよ。\n`
+    + `requirements: ${JSON.stringify(req)}\n`
+    + `testing: ${TESTING}\n`
+    + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
+    { agentType: 'dev-planner', schema: PLAN, label: 'plan#standard', phase: 'Plan' },
+  ), 'Plan(planner#standard)')
+  log('standard 経路: plan 1発（plan-reviewer 0 回起動）')
 } else {
 for (let i = 1; i <= PLAN_MAX; i++) {
   const prior = Object.values(planSeen).map((s) => s.finding)   // 前 iteration までの累積 findings
@@ -792,7 +803,7 @@ for (const [i, c] of concerns.entries()) {
 }
 log(`ledger 初期化: blocking ${blockingItems(ledger).length} / advisory ${advisoryItems(ledger).length} 件`)
 const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & stuck 検出。issue #125）
-for (let i = 1; i <= EVAL_MAX; i++) {
+for (let i = 1; i <= EVAL_PASSES; i++) {
   const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
@@ -899,6 +910,10 @@ for (let i = 1; i <= EVAL_MAX; i++) {
   if (i === EVAL_MAX) {
     log(`⚠️ evaluate は ${EVAL_MAX} iteration で pass せず（verdict=${ev.verdict}）— `
       + `throw せず現状で PR へ進む（human review に委ねる）`)
+    break
+  }
+  if (SHAPE === 'standard') {
+    log('standard 経路: 1 パス評価のみ（差し戻しなし仕様）。未解消 critical があれば merge tier HOLD + human review で担保')
     break
   }
   if (ev.feedback_level === 'design') {
