@@ -496,8 +496,26 @@ for (let i = 1; i <= GREEN_MAX; i++) {
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
 // ============================================================
 let evalResult = null
+let ledger = makeLedger()
 if (!TRIVIAL) {
 phase('Evaluate')
+// Goal Ledger を AC + 既出 concerns から observe-only に構築する(W3)。
+// W4 で収束 gate をこの isConverged(ledger) へ差し替える。現状は log + return のみ。
+ledger = makeLedger()
+for (const [i, crit] of (req.acceptance_criteria ?? []).entries()) {
+  // AC は現状 inspection-blocking(LLM 判定)。W4 で red→green 実証済みのものを deterministic 化する。
+  ledger = appendItem(ledger, {
+    id: `AC-${i + 1}`, text: String(crit), dimension: 'ac',
+    severity: 'major', source: 'ac', check: { kind: 'inspection' },
+  }).ledger
+}
+for (const [i, c] of concerns.entries()) {
+  ledger = appendItem(ledger, {
+    id: `CONCERN-${i + 1}`, text: String(c), dimension: 'concern',
+    severity: 'major', source: 'evaluator', check: { kind: 'inspection' },
+  }).ledger
+}
+log(`ledger 初期化: blocking ${blockingItems(ledger).length} / advisory ${advisoryItems(ledger).length} 件`)
 const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & stuck 検出。issue #125）
 for (let i = 1; i <= EVAL_MAX; i++) {
   const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
@@ -526,6 +544,20 @@ for (let i = 1; i <= EVAL_MAX; i++) {
   const stuckTopics = Object.entries(evalSeen).filter(([, s]) => s.count >= EVAL_STUCK).map(([t]) => t)
   const stuck = stuckTopics.length > 0
   log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
+  // evaluator の critical feedback を ledger に append(単調性は appendItem が強制)。
+  for (const f of (ev.feedback ?? [])) {
+    if (f && typeof f === 'object' && f.severity === 'critical') {
+      const r = appendItem(ledger, {
+        id: `EVAL-${i}-${feedbackTopic(f).slice(0, 24)}`, text: feedbackTopic(f),
+        dimension: f.dimension ?? 'eval', severity: 'critical', source: 'evaluator',
+        check: { kind: 'inspection' },
+      })
+      ledger = r.ledger
+    }
+  }
+  ledger = nextRound(ledger)
+  log(`ledger: blocking ${blockingItems(ledger).filter((it) => !it.checked).length} 件未 checked / `
+    + `converged(observe)=${isConverged(ledger)}`)
 
   if (ev.verdict === 'pass') {
     log(`evaluate 収束（pass, iter ${i}）— PR へ進む`)
@@ -596,5 +628,8 @@ return {
   iterate_status: iterate?.status ?? null,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,
+  ledger_blocking: blockingItems(ledger).length,
+  ledger_advisory: advisoryItems(ledger).length,
+  ledger_converged_observe: isConverged(ledger),
   note: 'merge は手動で行ってください',
 }
