@@ -418,6 +418,27 @@ const PRURL = {
     committed: { type: 'boolean' },
   },
 }
+const RISK = {
+  type: 'object', required: ['hits'],
+  properties: {
+    hits: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['file', 'class'],
+        properties: {
+          file: { type: 'string' },
+          class: { type: 'string' },
+          severity: { type: 'string' },
+        },
+      },
+    },
+  },
+}
+const CHANGED = {
+  type: 'object', required: ['files'],
+  properties: { files: { type: 'array', items: { type: 'string' } } },
+}
 
 // ---- helpers ----
 let WT // Setup で確定
@@ -627,6 +648,32 @@ for (let i = 1; i <= GREEN_MAX; i++) {
 }
 
 // ============================================================
+// Phase Security floor: realized diff に diff-risk-classify(W1)を当て、
+// 7 danger クラスを常時 seed した Goal Ledger に反映する(W5)。
+// clean クラスは自動 check、hit クラスは critical 据え置きで evaluator が evidence 解消する。
+// danger hit があれば micro でも Evaluate を走らせる(tier 無視の security path 強制)。
+// ============================================================
+phase('Security floor')
+let ledger = makeLedger()
+for (const seed of seedSecurityLedger()) {
+  ledger = appendItem(ledger, seed).ledger
+}
+const risk = need(await agent(
+  `cd ${WT} で作業。次を実行し **stdout の JSON 配列をそのまま** \`{"hits": <配列>}\` に包んで返せ`
+  + `（判定や脚色をしない。空配列なら hits:[]）:\n`
+  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+  { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
+), 'Security floor(danger-grep)')
+const dangerHits = [...new Set((risk.hits ?? []).map((h) => h.class))]
+ledger = reconcileDanger(ledger, dangerHits)
+log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
+  + `SEC blocking 未 checked ${blockingItems(ledger).filter((it) => !it.checked).length} 件`)
+const runEval = !TRIVIAL || dangerHits.length > 0
+if (TRIVIAL && dangerHits.length > 0) {
+  log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
+}
+
+// ============================================================
 // Phase Evaluate: evaluator → fail なら design=再計画+再実装 / implementation=implementer 修正。
 // 収束は evalConverged() 相当のロジックがインライン判断する（issue #125。基準は EVAL 収束モデルの
 // コメント参照）: 既出 feedback 累積で cold start を補償 / 同一 topic 反復で stuck 検出 /
@@ -635,12 +682,10 @@ for (let i = 1; i <= GREEN_MAX; i++) {
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
 // ============================================================
 let evalResult = null
-let ledger = makeLedger()
-if (!TRIVIAL) {
+if (runEval) {
 phase('Evaluate')
-// Goal Ledger を AC + 既出 concerns から observe-only に構築する(W3)。
-// W4 で収束 gate をこの isConverged(ledger) へ差し替える。現状は log + return のみ。
-ledger = makeLedger()
+// Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
+// makeLedger で作り直さない(SEC seed を失わないため)。
 for (const [i, crit] of (req.acceptance_criteria ?? []).entries()) {
   // AC は現状 inspection-blocking(LLM 判定)。W4 で red→green 実証済みのものを deterministic 化する。
   ledger = appendItem(ledger, {
@@ -767,7 +812,7 @@ for (let i = 1; i <= EVAL_MAX; i++) {
   }
 }
 } else {
-  log('triviality gate: Evaluate phase を skip(evaluator 0 回起動。reason: ' + triage.reason + ')')
+  log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
 
 // ============================================================
