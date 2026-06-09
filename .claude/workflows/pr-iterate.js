@@ -257,10 +257,13 @@ for (i = 1; i <= MAX; i++) {
       + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
       + `- 実行するスクリプト以外のファイルを変更しない\n\n`
       + `## Steps\n`
-      + `skills repo（インストール済みの場合は \`$HOME/.claude/skills\`、`
-      + `またはリポジトリのワーキングツリーを locate して）の `
-      + `\`pr-iterate/scripts/check-ci.sh\` を実行せよ:\n`
-      + `\`\`\`\nbash pr-iterate/scripts/check-ci.sh ${PR}\n\`\`\`\n`
+      + `インストール済み skills の **固定パス** で check-ci.sh を実行せよ（リテラルの \`~/.claude/skills/\` プレフィックスをそのまま使うこと）:\n`
+      + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${PR}\n\`\`\`\n`
+      + `**重要**: 必ずこの \`~/.claude/skills/...\` の絶対パス形で起動せよ。`
+      + `worktree 相対パス（\`bash pr-iterate/scripts/check-ci.sh\`）や \`$HOME\` 展開形で起動してはならない。`
+      + `\`~/.claude/skills/*\` で起動した場合のみ sandbox 除外（excludedCommands）が効き、`
+      + `内部の gh が自身の config（\`~/.config/gh\`）を読めて CI を取得できる。`
+      + `sandbox 下で起動すると gh が config 読み取りに失敗し、CI が green でも status:error の誤判定になる。\n`
       + `スクリプトの stdout JSON（{status, failed_checks, ...}）をそのまま返せ。\n\n`
       + `## Output format\n`
       + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...] }\n`
