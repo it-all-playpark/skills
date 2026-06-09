@@ -68,6 +68,14 @@ hits=""
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
 
+    # docs ファイル(.md/.mdx/.txt, docs/ 配下)は inert(実行されない)= realized danger
+    # ではないため danger-grep 対象から除外する。docs 本文に含まれる "auth"/"exec" 等の
+    # security 語彙による content-based class の false-positive を防ぐ(issue #155)。
+    # filename-based class(config/dependency/data-migration)も docs には該当しない。
+    if echo "$file" | grep -Eiq '\.(md|mdx|txt)$|(^|/)docs/'; then
+        continue
+    fi
+
     # Get added lines for this file (^+ lines, excluding +++ header).
     # Use git -C "$GIT_ROOT" so the pathspec is always root-relative and
     # correctly resolves even when the script is run from a subdirectory.
