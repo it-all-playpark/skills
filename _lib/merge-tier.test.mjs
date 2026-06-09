@@ -65,6 +65,53 @@ test('reconcileDanger: 未知 hit クラスは無視(対応 seed なし)', () =>
   assert.ok(out.items.every((it) => it.checked === true));
 });
 
+test('reconcileDanger: checked=true(evaluator clearance 済み)の hit item を 2 度目に reconcile しても checked が保持される(HOLD 巻き戻し防止)', () => {
+  // Step 1: 初回 reconcile — auth hit → critical/unchecked
+  const step1 = reconcileDanger(ledgerWithSeeds(), ['auth']);
+  const authAfterStep1 = step1.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(authAfterStep1.checked, false);
+  assert.equal(authAfterStep1.severity, 'critical');
+
+  // Step 2: evaluator が clearance → checked=true に
+  const ledgerCleared = {
+    ...step1,
+    items: step1.items.map((it) =>
+      it.id === 'SEC-AUTH' ? { ...it, checked: true, evidence: 'security cleared: no auth bypass' } : it,
+    ),
+  };
+  const authCleared = ledgerCleared.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(authCleared.checked, true);
+
+  // Step 3: 2 度目 reconcile(Merge tier phase) — auth は依然 hit だが checked を維持すべき
+  const step3 = reconcileDanger(ledgerCleared, ['auth']);
+  const authAfterStep3 = step3.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(authAfterStep3.checked, true, 'checked=true(clearance 済み)は 2 度目 reconcile で維持される');
+  assert.equal(authAfterStep3.severity, 'critical', 'severity は引き続き critical のまま');
+
+  // 非 hit クラスは依然 clean
+  const cfgAfterStep3 = step3.items.find((it) => it.id === 'SEC-CONFIG');
+  assert.equal(cfgAfterStep3.checked, true);
+});
+
+test('reconcileDanger: pr-iterate で新クラスが hit に増えた場合は unchecked(HOLD)', () => {
+  // auth を先に clearance 済みにした ledger から出発
+  const step1 = reconcileDanger(ledgerWithSeeds(), ['auth']);
+  const ledgerCleared = {
+    ...step1,
+    items: step1.items.map((it) =>
+      it.id === 'SEC-AUTH' ? { ...it, checked: true, evidence: 'security cleared: ok' } : it,
+    ),
+  };
+
+  // pr-iterate 後に crypto も新たに hit
+  const step2 = reconcileDanger(ledgerCleared, ['auth', 'crypto']);
+  const authAfter = step2.items.find((it) => it.id === 'SEC-AUTH');
+  const cryptoAfter = step2.items.find((it) => it.id === 'SEC-CRYPTO');
+  assert.equal(authAfter.checked, true, 'auth: clearance 済みは維持');
+  assert.equal(cryptoAfter.checked, false, 'crypto: 新 hit は unchecked(HOLD を保つ)');
+  assert.equal(cryptoAfter.severity, 'critical');
+});
+
 // ---- Task 3: isDocsOrTestOnly + classifyMergeTier ----
 
 test('isDocsOrTestOnly: md/test/bats のみ → true', () => {

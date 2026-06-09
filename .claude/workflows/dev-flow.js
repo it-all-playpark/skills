@@ -149,13 +149,26 @@ const SEC_SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
 
 // danger-grep の hit クラス集合で SEC seed item を解決する。
 // clean クラス → checked(evidence='danger-grep clean')。
-// hit クラス → critical へ raise(floor=true) + checked=false 据え置き(evaluator が evidence で解消)。
+// hit クラス → critical へ raise(floor=true)。
+//   - floor=true かつ checked=true(evaluator が evidence で clearance 済み) → checked を維持する(HOLD に巻き戻さない)。
+//   - floor=false かつ checked=true(前回 "danger-grep clean" 自動解決済み) → 今回 hit に転じたので unchecked 復活。
+//   - checked=false → checked=false 据え置き(evaluator が次ラウンドで解消するまで block)。
 // SEC 以外の item は touch しない。
+//
+// 再 reconcile ポリシー(pr-iterate 後の Merge tier phase での呼び出しを含む):
+//   danger が増えた(新クラスが hit に転じた)場合 → floor=false なので unchecked 復活 = HOLD。
+//   danger が減った(以前 hit だったクラスが clean に転じた)場合 → checked=true に解放(自動解消)。
+//   danger が同じ hit クラスで残る かつ evaluator clearance 済み(floor=true, checked=true) → checked 維持(温存)。
 function reconcileDanger(ledger, hitClasses) {
   const hits = new Set(hitClasses);
   const items = ledger.items.map((it) => {
     if (it.source !== 'seed' || it.dimension !== 'security') return it;
     if (hits.has(it.danger_class)) {
+      // floor=true かつ checked=true → evaluator が danger floor を evidence 付きで clearance 済み。
+      // 同クラスが依然 hit でも checked を維持して HOLD に巻き戻さない。
+      // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
+      // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
+      if (it.checked && it.floor) return it;
       const severity = SEC_SEVERITY_RANK['critical'] > SEC_SEVERITY_RANK[it.severity] ? 'critical' : it.severity;
       return { ...it, severity, floor: true, checked: false };
     }
