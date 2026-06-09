@@ -582,6 +582,16 @@ for (let i = 1; i <= EVAL_MAX; i++) {
       ledger = r.ledger
     }
   }
+  // 現 iteration の feedback に無くなった critical ledger item は解消とみなし checkItem(収束を妨げない)
+  const liveCriticalKeys = new Set(
+    (ev.feedback ?? []).filter((f) => f && typeof f === 'object' && f.severity === 'critical')
+      .map((f) => topicKey({ dimension: f.dimension ?? 'eval', text: feedbackTopic(f) })))
+  for (const it of ledger.items) {
+    if (it.source === 'evaluator' && it.severity === 'critical' && !it.checked
+        && !liveCriticalKeys.has(topicKey(it))) {
+      ledger = checkItem(ledger, it.id, '現 iteration で未報告=解消')
+    }
+  }
   // W4: evaluator の per-AC 判定を ledger に反映。test 実証できる AC は red→green を
   // dev-runner-haiku で決定論検証し、取れたら deterministic 昇格(blocking)。
   for (const r of (ev.ac_results ?? [])) {
