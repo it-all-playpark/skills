@@ -1,0 +1,110 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  makeLedger, laneOf, topicKey, canAppend, appendItem,
+  applySeverityFloor, mergeSeverity, checkItem, reopenItem,
+  blockingItems, advisoryItems, isConverged, nextRound,
+} from './goal-ledger.mjs';
+
+const ac = (over = {}) => ({ id: 'AC-1', text: 'returns 200', dimension: 'ac', severity: 'major', source: 'ac', ...over });
+
+test('laneOf: critical は blocking', () => {
+  assert.equal(laneOf(ac({ severity: 'critical' })), 'blocking');
+});
+test('laneOf: deterministic check 付きは blocking', () => {
+  assert.equal(laneOf(ac({ severity: 'minor', check: { kind: 'deterministic' } })), 'blocking');
+});
+test('laneOf: seed source は blocking', () => {
+  assert.equal(laneOf(ac({ severity: 'minor', source: 'seed' })), 'blocking');
+});
+test('laneOf: それ以外(LLM major/minor, inspection)は advisory', () => {
+  assert.equal(laneOf(ac({ severity: 'major', check: { kind: 'inspection' } })), 'advisory');
+  assert.equal(laneOf(ac({ severity: 'minor' })), 'advisory');
+});
+
+test('topicKey: dimension + 正規化 text', () => {
+  assert.equal(topicKey({ dimension: 'security', text: '  No  SQL Injection ' }), 'security::no sql injection');
+});
+
+test('canAppend: round 0 は何でも可', () => {
+  const l = makeLedger();
+  assert.equal(canAppend(l, ac({ severity: 'minor' })), true);
+});
+test('canAppend: round>=1 は既出 topic か critical のみ', () => {
+  let { ledger } = appendItem(makeLedger(), ac({ id: 'A', text: 'foo', dimension: 'd', severity: 'major' }));
+  ledger = nextRound(ledger);
+  assert.equal(canAppend(ledger, ac({ id: 'B', text: 'foo', dimension: 'd', severity: 'minor' })), true);
+  assert.equal(canAppend(ledger, ac({ id: 'C', text: 'bar', dimension: 'd', severity: 'minor' })), false);
+  assert.equal(canAppend(ledger, ac({ id: 'D', text: 'baz', dimension: 'd', severity: 'critical' })), true);
+});
+
+test('appendItem: 受理で accepted:true、新規は default 補完', () => {
+  const { ledger, accepted } = appendItem(makeLedger(), ac({ id: 'A' }));
+  assert.equal(accepted, true);
+  assert.equal(ledger.items.length, 1);
+  assert.equal(ledger.items[0].checked, false);
+  assert.equal(ledger.items[0].floor, false);
+});
+test('appendItem: 単調性違反は accepted:false で ledger 不変', () => {
+  let { ledger } = appendItem(makeLedger(), ac({ id: 'A', text: 'foo', dimension: 'd' }));
+  ledger = nextRound(ledger);
+  const res = appendItem(ledger, ac({ id: 'C', text: 'bar', dimension: 'd', severity: 'minor' }));
+  assert.equal(res.accepted, false);
+  assert.equal(res.ledger.items.length, 1);
+});
+test('appendItem: 既出 topic は id を保ったまま更新', () => {
+  let { ledger } = appendItem(makeLedger(), ac({ id: 'A', text: 'foo', dimension: 'd', severity: 'minor' }));
+  ledger = nextRound(ledger);
+  const { ledger: l2 } = appendItem(ledger, ac({ id: 'IGNORED', text: 'foo', dimension: 'd', severity: 'critical' }));
+  assert.equal(l2.items.length, 1);
+  assert.equal(l2.items[0].id, 'A');
+  assert.equal(l2.items[0].severity, 'critical');
+});
+
+test('applySeverityFloor: severity を floor 以上へ引き上げ floor=true', () => {
+  const r = applySeverityFloor(ac({ severity: 'minor' }), 'critical');
+  assert.equal(r.severity, 'critical');
+  assert.equal(r.floor, true);
+});
+test('mergeSeverity: LLM は raise 可', () => {
+  assert.equal(mergeSeverity(ac({ severity: 'minor', floor: false }), 'critical').severity, 'critical');
+});
+test('mergeSeverity: floor 項目を LLM が lower できない', () => {
+  const floored = applySeverityFloor(ac({ severity: 'critical' }), 'critical');
+  assert.equal(mergeSeverity(floored, 'minor').severity, 'critical');
+});
+
+test('checkItem: id で checked + evidence', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  const l2 = checkItem(ledger, 'A', 'test passed');
+  assert.equal(l2.items[0].checked, true);
+  assert.equal(l2.items[0].evidence, 'test passed');
+});
+test('checkItem: 未知 id は throw', () => {
+  assert.throws(() => checkItem(makeLedger(), 'X', 'e'), /未知の item id/);
+});
+test('reopenItem: id + reason 必須、未知 id / reason 無しは throw', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  const checked = checkItem(ledger, 'A', 'e');
+  const reopened = reopenItem(checked, 'A', 'regression detected');
+  assert.equal(reopened.items[0].checked, false);
+  assert.equal(reopened.items[0].reopen_reason, 'regression detected');
+  assert.throws(() => reopenItem(checked, 'X', 'r'), /未知の item id/);
+  assert.throws(() => reopenItem(checked, 'A', ''), /reason が必要/);
+});
+
+test('isConverged: blocking 全 checked で true、advisory 未 checked は無関係', () => {
+  let l = makeLedger();
+  l = appendItem(l, ac({ id: 'B', severity: 'critical' })).ledger;
+  l = appendItem(l, ac({ id: 'A', severity: 'minor' })).ledger;
+  assert.equal(isConverged(l), false);
+  l = checkItem(l, 'B', 'done');
+  assert.equal(isConverged(l), true);
+});
+test('blockingItems / advisoryItems の分離', () => {
+  let l = makeLedger();
+  l = appendItem(l, ac({ id: 'B', severity: 'critical' })).ledger;
+  l = appendItem(l, ac({ id: 'A', severity: 'minor' })).ledger;
+  assert.equal(blockingItems(l).map((i) => i.id).join(','), 'B');
+  assert.equal(advisoryItems(l).map((i) => i.id).join(','), 'A');
+});
