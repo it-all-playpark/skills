@@ -863,6 +863,39 @@ log(`PR created: ${pr.pr_url}`)
 // ============================================================
 const iterate = await workflow('pr-iterate', { pr: pr.pr_number })
 
+// ============================================================
+// Phase Merge tier: 最終 diff に danger-grep を再実行し、merge tier を算出して提示する(W5)。
+// merge は全 tier 人間。AUTO は推奨ラベルのみ(真 auto-merge は W6 earned-autonomy)。
+// ============================================================
+phase('Merge tier')
+const riskFinal = need(await agent(
+  `cd ${WT} で作業。次を実行し **stdout の JSON 配列をそのまま** \`{"hits": <配列>}\` に包んで返せ:\n`
+  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+  { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
+), 'Merge tier(danger-grep-final)')
+const dangerHitsFinal = [...new Set((riskFinal.hits ?? []).map((h) => h.class))]
+const changed = need(await agent(
+  `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
+  + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+  { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
+), 'Merge tier(changed-files)')
+
+// 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
+ledger = reconcileDanger(ledger, dangerHitsFinal)
+const unresolvedDanger = ledger.items.some(
+  (it) => it.dimension === 'security' && it.source === 'seed' && it.floor && !it.checked)
+const breaking = /breaking|incompatible|migration|破壊的|非互換/i.test(`${req.scope ?? ''} ${req.summary ?? ''}`)
+const escalateCount = advisoryItems(ledger).filter((it) => it.escalate === true).length
+const mergeTier = classifyMergeTier({
+  shape: SHAPE,
+  converged: isConverged(ledger),
+  unresolvedDanger,
+  breaking,
+  docsOrTestOnly: isDocsOrTestOnly(changed.files ?? []),
+  escalateCount,
+})
+log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
+
 return {
   issue: ISSUE,
   worktree: WT,
@@ -879,5 +912,12 @@ return {
   ledger_blocking: blockingItems(ledger).length,
   ledger_advisory: advisoryItems(ledger).length,
   ledger_converged: isConverged(ledger),
-  note: 'merge は手動で行ってください',
+  merge_tier: mergeTier.tier,
+  merge_tier_reasons: mergeTier.reasons,
+  danger_hits: dangerHitsFinal,
+  note: mergeTier.tier === 'HOLD'
+    ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
+    : mergeTier.tier === 'AUTO'
+    ? 'AUTO 推奨（低リスク）。最終判断と merge は人間が行ってください'
+    : 'REVIEW: 人間が LGTM を確認して merge してください',
 }
