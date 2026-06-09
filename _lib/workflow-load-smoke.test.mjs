@@ -323,3 +323,25 @@ test('[triage] dev-flow.js: 最終 return に shape: SHAPE が含まれる', () 
     '最終 return オブジェクトに shape: SHAPE が含まれること',
   );
 });
+
+// ---- 6. W5: danger-grep 配線 + merge tier --------------------------------------------------
+
+test('[W5] dev-flow.js: RISK schema と diff-risk-classify 呼び出しが存在', () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  assert.ok(src.includes('const RISK ='), 'RISK schema があること');
+  assert.ok(src.includes('diff-risk-classify.sh'), 'diff-risk-classify.sh を呼ぶこと');
+});
+
+test('[W5] dev-flow.js: 常時 SEC seed と runEval gate が存在', () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  assert.ok(src.includes('seedSecurityLedger('), 'SEC seed を積むこと');
+  assert.ok(src.includes('const runEval ='), 'runEval gate があること');
+  assert.ok(src.includes('reconcileDanger('), 'danger 反映を行うこと');
+});
+
+test('[W5] dev-flow.js: merge tier 算出と return フィールドが存在', () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  assert.ok(src.includes('classifyMergeTier('), 'classifyMergeTier を呼ぶこと');
+  assert.ok(src.includes('merge_tier:'), 'return に merge_tier があること');
+  assert.ok(src.includes("phase('Merge tier')"), 'Merge tier phase があること');
+});
