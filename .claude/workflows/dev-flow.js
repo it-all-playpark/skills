@@ -297,6 +297,10 @@ const EVAL = {
     },
   },
 }
+const RG = {
+  type: 'object', required: ['red', 'green'],
+  properties: { red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' } },
+}
 const PRURL = {
   type: 'object', required: ['pr_url', 'pr_number'],
   properties: {
@@ -578,12 +582,37 @@ for (let i = 1; i <= EVAL_MAX; i++) {
       ledger = r.ledger
     }
   }
+  // W4: evaluator の per-AC 判定を ledger に反映。test 実証できる AC は red→green を
+  // dev-runner-haiku で決定論検証し、取れたら deterministic 昇格(blocking)。
+  for (const r of (ev.ac_results ?? [])) {
+    if (!r || typeof r.ac_index !== 'number') continue
+    const acId = `AC-${r.ac_index + 1}`
+    if (!ledger.items.some((it) => it.id === acId)) continue   // 知らない AC は無視
+    if (r.satisfied && r.verified_by === 'test' && Array.isArray(r.test_files) && r.test_files.length
+        && Array.isArray(r.impl_files) && r.impl_files.length) {
+      const rg = await agent(
+        `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
+        + `bash ${WT}/_shared/scripts/redgreen-verify.sh ${WT} `
+        + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
+        { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
+      if (rg && rg.red === true && rg.green === true) {
+        ledger = setCheck(ledger, acId, { kind: 'deterministic' })
+        ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
+        log(`AC-${r.ac_index + 1}: red→green 実証 → deterministic 昇格 + checked`)
+      } else {
+        if (r.satisfied) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
+        log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
+      }
+    } else if (r.satisfied) {
+      ledger = checkItem(ledger, acId, r.evidence ?? 'inspection')
+    }
+  }
   ledger = nextRound(ledger)
   log(`ledger: blocking ${blockingItems(ledger).filter((it) => !it.checked).length} 件未 checked / `
     + `converged(observe)=${isConverged(ledger)}`)
 
-  if (ev.verdict === 'pass') {
-    log(`evaluate 収束（pass, iter ${i}）— PR へ進む`)
+  if (isConverged(ledger) && ev.verdict === 'pass') {
+    log(`evaluate 収束（ledger 全 blocking checked + verdict pass, iter ${i}）— PR へ進む`)
     break
   }
   // critical は常にブロック。critical が無く design パスが stuck したら早期打ち切り（replan+reimpl の
@@ -653,6 +682,6 @@ return {
   triviality_reason: triage.reason,
   ledger_blocking: blockingItems(ledger).length,
   ledger_advisory: advisoryItems(ledger).length,
-  ledger_converged_observe: isConverged(ledger),
+  ledger_converged: isConverged(ledger),
   note: 'merge は手動で行ってください',
 }
