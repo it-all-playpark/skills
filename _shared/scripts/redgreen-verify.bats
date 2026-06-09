@@ -93,3 +93,52 @@ EOF
   run bash "$SCRIPT" "$REPO" "feature.test.mjs" "feature.test.mjs"
   [ "$status" -eq 2 ]
 }
+
+# -----------------------------------------------------------------------
+# シナリオ D: 別ディレクトリに同名 untracked impl が複数ある
+# a/mod.mjs と b/mod.mjs を同時申告しても basename 衝突で上書きされないこと
+# -----------------------------------------------------------------------
+@test "D: 別ディレクトリの同名 untracked impl 2 件が両方正しく復元される" {
+  mkdir -p "$REPO/a" "$REPO/b"
+  echo "export const va = 1;" > "$REPO/a/mod.mjs"
+  echo "export const vb = 2;" > "$REPO/b/mod.mjs"
+
+  # test ファイル(参照しないが runner が必要)
+  cat > "$REPO/feature.test.mjs" <<'EOF'
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+test('dummy', () => { assert.ok(true); });
+EOF
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "a/mod.mjs,b/mod.mjs"
+  [ "$status" -eq 0 ]
+
+  # 両ファイルが正しい内容で復元されていること
+  [ -f "$REPO/a/mod.mjs" ]
+  grep -q "va = 1" "$REPO/a/mod.mjs"
+  [ -f "$REPO/b/mod.mjs" ]
+  grep -q "vb = 2" "$REPO/b/mod.mjs"
+}
+
+# -----------------------------------------------------------------------
+# シナリオ E: 複数 untracked impl の一部が不在 → 先行ファイルが消失しないこと
+# first.mjs は存在、second.mjs は不在 → exit 2 かつ first.mjs が復元されている
+# -----------------------------------------------------------------------
+@test "E: 複数 untracked impl の一部が不在のとき先行ファイルが消失しない" {
+  echo "export const ok = true;" > "$REPO/first.mjs"
+  # second.mjs は意図的に作らない
+
+  cat > "$REPO/feature.test.mjs" <<'EOF'
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+test('dummy', () => { assert.ok(true); });
+EOF
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "first.mjs,second.mjs"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'impl file not found'* ]]
+
+  # first.mjs が削除されずに残っている(消失しない)
+  [ -f "$REPO/first.mjs" ]
+  grep -q "true" "$REPO/first.mjs"
+}

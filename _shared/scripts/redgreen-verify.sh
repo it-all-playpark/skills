@@ -62,16 +62,14 @@ UNTRACKED_SAVED=false
 # --- cleanup / restore trap ---
 restore_impl() {
   local exit_code=$?
-  # untracked impl を復元
+  # untracked impl を復元(相対パスを保持して退避したパスから戻す)
   if [ "$UNTRACKED_SAVED" = true ]; then
     for f in "${UNTRACKED_IMPLS[@]}"; do
-      local bname
-      bname="$(basename "$f")"
       local dest_dir
       dest_dir="$(dirname "$f")"
-      if [ -f "$TMPDIR_IMPL/$bname" ]; then
+      if [ -f "$TMPDIR_IMPL/$f" ]; then
         mkdir -p "$dest_dir"
-        cp "$TMPDIR_IMPL/$bname" "$f"
+        cp "$TMPDIR_IMPL/$f" "$f"
       fi
     done
   fi
@@ -92,11 +90,16 @@ trap restore_impl EXIT
 
 # 1. untracked impl をコピーして削除
 if [ "${#UNTRACKED_IMPLS[@]}" -gt 0 ]; then
+  # 削除を開始する前に全 untracked impl の存在を検証する(部分削除による消失を防ぐ)
   for f in "${UNTRACKED_IMPLS[@]}"; do
     if [ ! -f "$f" ]; then
       echo "{\"red\":false,\"green\":false,\"reason\":\"impl file not found: $f\"}"; exit 2
     fi
-    cp "$f" "$TMPDIR_IMPL/$(basename "$f")"
+  done
+  # 全件存在を確認してから退避(相対パスを保持してコピー)
+  for f in "${UNTRACKED_IMPLS[@]}"; do
+    mkdir -p "$TMPDIR_IMPL/$(dirname "$f")"
+    cp "$f" "$TMPDIR_IMPL/$f"
     rm -f "$f"
   done
   UNTRACKED_SAVED=true
@@ -129,14 +132,13 @@ if [ "$STASH_CREATED" = true ]; then
   STASH_CREATED=false  # trap での二重 pop を防ぐ
 fi
 
-# untracked を復元
+# untracked を復元(相対パスを保持して退避したパスから戻す)
 if [ "$UNTRACKED_SAVED" = true ]; then
   for f in "${UNTRACKED_IMPLS[@]}"; do
-    local_bname="$(basename "$f")"
     local_dest_dir="$(dirname "$f")"
-    if [ -f "$TMPDIR_IMPL/$local_bname" ]; then
+    if [ -f "$TMPDIR_IMPL/$f" ]; then
       mkdir -p "$local_dest_dir"
-      cp "$TMPDIR_IMPL/$local_bname" "$f"
+      cp "$TMPDIR_IMPL/$f" "$f"
     fi
   done
   UNTRACKED_SAVED=false  # trap での二重復元を防ぐ
