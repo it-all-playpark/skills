@@ -12,7 +12,7 @@ const repoRoot = join(here, '..');
 const FN_NAMES = [
   'makeLedger', 'laneOf', 'topicKey', 'canAppend', 'appendItem',
   'applySeverityFloor', 'mergeSeverity', 'checkItem', 'reopenItem',
-  'blockingItems', 'advisoryItems', 'isConverged', 'nextRound',
+  'setCheck', 'blockingItems', 'advisoryItems', 'isConverged', 'nextRound',
 ];
 
 function extractFn(src, name) {

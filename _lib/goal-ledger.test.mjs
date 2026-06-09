@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   makeLedger, laneOf, topicKey, canAppend, appendItem,
   applySeverityFloor, mergeSeverity, checkItem, reopenItem,
-  blockingItems, advisoryItems, isConverged, nextRound,
+  blockingItems, advisoryItems, isConverged, nextRound, setCheck,
 } from './goal-ledger.mjs';
 
 const ac = (over = {}) => ({ id: 'AC-1', text: 'returns 200', dimension: 'ac', severity: 'major', source: 'ac', ...over });
@@ -122,4 +122,14 @@ test('mergeSeverity: 未定義 severity は現状 fail-safe passthrough（NaN比
   assert.equal(mergeSeverity({ severity: 'major', floor: false }, 'bogus').severity, 'major');
   const floored = applySeverityFloor({ severity: 'critical' }, 'critical');
   assert.equal(mergeSeverity(floored, 'bogus').severity, 'critical');
+});
+test('setCheck: 既存 item の check 種別を更新（inspection→deterministic で blocking 昇格）', () => {
+  let { ledger } = appendItem(makeLedger(), { id: 'AC-1', text: 'x', dimension: 'ac', severity: 'major', source: 'ac', check: { kind: 'inspection' } });
+  assert.equal(laneOf(ledger.items[0]), 'advisory');
+  ledger = setCheck(ledger, 'AC-1', { kind: 'deterministic' });
+  assert.equal(ledger.items[0].check.kind, 'deterministic');
+  assert.equal(laneOf(ledger.items[0]), 'blocking');
+});
+test('setCheck: 未知 id は throw', () => {
+  assert.throws(() => setCheck(makeLedger(), 'X', { kind: 'deterministic' }), /未知の item id/);
 });

@@ -76,6 +76,14 @@ export function reopenItem(ledger, id, reason) {
   return { ...ledger, items };
 }
 
+export function setCheck(ledger, id, check) {
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  const items = ledger.items.slice();
+  items[idx] = { ...items[idx], check };
+  return { ...ledger, items };
+}
+
 export function blockingItems(ledger) {
   return ledger.items.filter((it) => laneOf(it) === 'blocking');
 }
