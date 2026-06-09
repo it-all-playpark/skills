@@ -28,11 +28,17 @@ fi
 
 require_git_repo
 
+# Anchor all git operations to the repo root so that pathspecs are always
+# root-relative regardless of cwd. This prevents silent false-negatives when
+# the script is invoked from a repo subdirectory (content-based classes would
+# silently return [] because the per-file diff pathspec missed the file).
+GIT_ROOT="$(git rev-parse --show-toplevel)"
+
 # Validate the base ref resolves to a commit.
 # Use set +e / RC capture instead of "if \!" to avoid history-expansion issues
 # and set -e interactions across bash invocations.
 set +e
-git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null 2>&1
+git -C "$GIT_ROOT" rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null 2>&1
 _BASE_RC=$?
 set -e
 if [[ "$_BASE_RC" -ne 0 ]]; then
@@ -43,7 +49,7 @@ fi
 # Collect changed files
 # ============================================================================
 
-files="$(git -c core.quotepath=false diff --name-only "${BASE}...HEAD" 2>/dev/null)" || files=""
+files="$(git -C "$GIT_ROOT" -c core.quotepath=false diff --name-only "${BASE}...HEAD" 2>/dev/null)" || files=""
 
 if [[ -z "$files" ]]; then
     printf '%s\n' "[]"
@@ -62,8 +68,10 @@ hits=""
 while IFS= read -r file; do
     [[ -z "$file" ]] && continue
 
-    # Get added lines for this file (^+ lines, excluding +++ header)
-    added="$(git -c core.quotepath=false diff "${BASE}...HEAD" -- "$file" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true)"
+    # Get added lines for this file (^+ lines, excluding +++ header).
+    # Use git -C "$GIT_ROOT" so the pathspec is always root-relative and
+    # correctly resolves even when the script is run from a subdirectory.
+    added="$(git -C "$GIT_ROOT" -c core.quotepath=false diff "${BASE}...HEAD" -- "$file" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true)"
 
     # 1. auth
     if echo "$file" | grep -Eiq 'auth' || \

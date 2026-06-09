@@ -268,6 +268,25 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
+# SUBDIR-CWD: repo サブディレクトリを cwd にして content-based クラスが正しくヒットする
+# (regression: per-file diff pathspec が cwd 相対で解釈されると subdir 実行時に
+#  added が空になり content-based 6 クラスが silent false-negative になっていた)
+# ---------------------------------------------------------------------------
+@test "SUBDIR-CWD: repo subdir を cwd にして public-api (export function) が正しくヒットする" {
+    mkdir -p "$REPO/src"
+    printf 'export function getUser(id) {\n  return db.find(id);\n}\n' \
+        > "$REPO/src/sub.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    # Run from a subdirectory of the repo, NOT the repo root
+    run bash -c "cd '$REPO/src' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"public-api"'* ]]
+    [[ "$output" == *'"severity":"critical"'* ]]
+    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
 # ERROR: 不正な base ref -> 非 0 exit
 # ---------------------------------------------------------------------------
 @test "ERROR: 不正な base ref (invalid-sha) -> 非 0 exit" {
