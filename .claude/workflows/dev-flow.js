@@ -405,6 +405,18 @@ const EVAL = {
         },
       },
     },
+    security_clearance: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['danger_class', 'cleared'],
+        properties: {
+          danger_class: { type: 'string' },
+          cleared: { type: 'boolean' },
+          evidence: { type: 'string' },
+        },
+      },
+    },
   },
 }
 const RG = {
@@ -709,6 +721,11 @@ for (let i = 1; i <= EVAL_MAX; i++) {
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
     + ((i === 1 && concerns.length) ? `focus_areas（重点監査せよ。implementer の自己申告した弱点/未解消BLOCKED）:\n${JSON.stringify(concerns)}\n` : '')
+    + (dangerHits.length
+        ? `security_focus（danger-grep が realized diff で検出した危険クラス。各クラスの変更が安全かを判定し `
+          + `security_clearance:[{danger_class, cleared, evidence}] で返せ。安全確認できないものは cleared:false。`
+          + `evidence は具体的な根拠を1文で）:\n${JSON.stringify(dangerHits)}\n`
+        : '')
     + (priorFeedback.length
         ? `既出 feedback（前 iteration までに指摘済み。implementer/planner は対応済みのはず）:\n${JSON.stringify(priorFeedback)}\n`
           + `**新規の critical/major のみ報告**せよ。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
@@ -772,6 +789,17 @@ for (let i = 1; i <= EVAL_MAX; i++) {
       }
     } else if (r.satisfied) {
       ledger = checkItem(ledger, acId, r.evidence ?? 'inspection')
+    }
+  }
+  // W5: danger-grep hit の SEC item(critical 据え置き)を evaluator が evidence 付きで
+  // 安全確認したら checkItem(resolve-with-evidence)。確認できなければ block 据え置き。
+  for (const sc of (ev.security_clearance ?? [])) {
+    if (!sc || typeof sc.danger_class !== 'string') continue
+    const secId = `SEC-${sc.danger_class.toUpperCase()}`
+    if (!ledger.items.some((it) => it.id === secId)) continue
+    if (sc.cleared === true && typeof sc.evidence === 'string' && sc.evidence.length > 0) {
+      ledger = checkItem(ledger, secId, `security cleared: ${sc.evidence}`)
+      log(`${secId}: evaluator が安全確認 → checked`)
     }
   }
   ledger = nextRound(ledger)
