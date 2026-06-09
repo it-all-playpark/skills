@@ -280,6 +280,21 @@ const EVAL = {
     feedback: { type: 'array' },
     feedback_level: { type: 'string', enum: ['design', 'implementation'] },
     task_type: { type: 'string' },
+    ac_results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['ac_index', 'satisfied'],
+        properties: {
+          ac_index: { type: 'number' },
+          satisfied: { type: 'boolean' },
+          evidence: { type: 'string' },
+          verified_by: { type: 'string', enum: ['test', 'inspection'] },
+          test_files: { type: 'array', items: { type: 'string' } },
+          impl_files: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
   },
 }
 const PRURL = {

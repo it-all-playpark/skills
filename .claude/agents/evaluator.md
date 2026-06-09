@@ -106,6 +106,17 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 したがって fail を引き延ばすために minor/major を**新規に**捻り出す必要はない。受入条件を満たすなら
 `pass`、重大な穴があるなら `critical`/`major` を明示する — それが最も収束を早める。
 
+## per-AC 判定（ac_results。W4 item-validator 契約）
+
+`requirements.acceptance_criteria` の各項目を個別判定し `ac_results[]` に返す:
+
+- `ac_index`: acceptance_criteria の 0 始まり index。
+- `satisfied`: 実 diff / テスト出力に照らして満たされているか（自己申告でなく検証する）。
+- `evidence`: 根拠（file:line / テスト名）。
+- `verified_by`: テストで実証できるなら `"test"`、コード精査でしか判断できないなら `"inspection"`。
+- `test_files` / `impl_files`（`verified_by==="test"` のみ）: その AC を実証するテストファイルと、それが検証する実装ファイルを worktree 相対パスで列挙。**自分で red→green 判定を主張しないこと** — orchestrator が dev-runner-haiku 経由で `redgreen-verify.sh` を走らせ決定論判定する。申告のみ行う。
+- test_files は repo の test discovery（`*.test.mjs` / `*.bats`）一致のものだけ。混在ファイルは挙げない。
+
 ## Step 5: 出力 JSON（schema 強制）
 
 ```json
@@ -120,7 +131,10 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
      "suggestion": "zod スキーマで email を検証し 400 を返す"}
   ],
   "feedback_level": "implementation",
-  "task_type": "api"
+  "task_type": "api",
+  "ac_results": [
+    {"ac_index": 0, "satisfied": true, "evidence": "src/user.test.mjs::creates user", "verified_by": "test", "test_files": ["src/user.test.mjs"], "impl_files": ["src/user.mjs"]}
+  ]
 }
 ```
 
