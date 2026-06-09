@@ -43,7 +43,7 @@ fi
 # Collect changed files
 # ============================================================================
 
-files="$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)" || files=""
+files="$(git -c core.quotepath=false diff --name-only "${BASE}...HEAD" 2>/dev/null)" || files=""
 
 if [[ -z "$files" ]]; then
     printf '%s\n' "[]"
@@ -63,7 +63,7 @@ while IFS= read -r file; do
     [[ -z "$file" ]] && continue
 
     # Get added lines for this file (^+ lines, excluding +++ header)
-    added="$(git diff "${BASE}...HEAD" -- "$file" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true)"
+    added="$(git -c core.quotepath=false diff "${BASE}...HEAD" -- "$file" 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' || true)"
 
     # 1. auth
     if echo "$file" | grep -Eiq 'auth' || \

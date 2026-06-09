@@ -247,6 +247,27 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
+# NON-ASCII: 日本語ファイル名 × content-based クラス (public-api) の regression
+# core.quotepath=false なしでは git diff --name-only が "src/\350..." と
+# エスケープされ per-file diff が空になり false negative になる。
+# ---------------------------------------------------------------------------
+@test "NON-ASCII: 日本語ファイル名に export function -> class public-api を返す (core.quotepath regression)" {
+    mkdir -p "$REPO/src"
+    # 非 ASCII ファイル名（日本語）に public-api トリガーを追加
+    printf 'export function 認証API(user) {\n  return user.id;\n}\n' \
+        > "$REPO/src/認証api.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"public-api"'* ]]
+    [[ "$output" == *'"severity":"critical"'* ]]
+    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    # file 値が壊れた escape シーケンスでないことを確認
+    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")][0].file | test("認証api\\.ts$")'
+}
+
+# ---------------------------------------------------------------------------
 # ERROR: 不正な base ref -> 非 0 exit
 # ---------------------------------------------------------------------------
 @test "ERROR: 不正な base ref (invalid-sha) -> 非 0 exit" {
