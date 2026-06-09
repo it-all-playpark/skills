@@ -69,12 +69,18 @@ orchestrator は `ac_results` を見て `checkItem(ledger, 'AC-${i+1}', evidence
 HEAD = base(origin/dev の fork 点)。「変更前 = red」を作るには、**テストは残しつつ実装だけ base に戻した
 状態**でテストを走らせる必要がある。単一共有 worktree でこれをどう実現するかが選択ポイント。
 
-### 案 R1: path ヒューリスティックで impl/test を分離(推奨・最小)
-新規/変更テストファイル(`*.test.*` / `*.bats` / `tests/` 配下)を残し、それ以外(= 実装)を
-`git checkout HEAD -- <impl-paths>` で base に戻す → テスト実行(**red 期待**)→ `git checkout` で復元
-→ テスト実行(**green 期待**)。red→green が取れたテストに対応する AC を deterministic 昇格。
-- 利点: 追加インフラ不要、現 worktree で完結、決定論。
-- 欠点: impl/test の path 分離が雑だと誤判定。混在ファイルに弱い。
+### 案 R1+(採用): stash で impl だけ退避 + 推測しない4層分離
+`git stash push -- <impl-paths>` で実装だけ base に戻し test は残す → test 実行(**red 期待**)→
+`git stash pop` で復元 → test 実行(**green 期待**)。`<impl-paths>` を**推測でなく authoritative に**決める:
+
+1. **第一情報源 = agent 申告**: implementer/evaluator が per-AC で `test_files[] / impl_files[]` を申告。
+2. **runner glob で決定論クロスチェック**: 申告 `test_files` が repo の test discovery
+   (`*.test.mjs` / `*.bats`)に一致しなければ昇格拒否(mislabel を機械的に弾く)。
+3. **per-AC・per-test-file 粒度**: global 一括分離をせず AC ごとに紐づく test だけ stash 検証。
+4. **fail-safe**: 曖昧なら deterministic 昇格を諦め inspection(advisory)に留める。
+- 注意: workflow JS は bash 不可 → red→green の実行は **dev-runner-haiku agent** が
+  `_shared/scripts/redgreen-verify.sh` を走らせ raw exit code を verbatim 返す(opus evaluator に
+  判定させない = gaming 抑制)。
 
 ### 案 R2: base の別 checkout を temp に用意
 `git worktree add <tmp> origin/<base>` で clean な base worktree を作り、新規テストファイルだけ
@@ -103,7 +109,7 @@ JS が記録。
 
 ## 6. Open questions(plan 化前に解消)
 
-1. **red→green mechanism(R1/R2/R3)の選択** ← 最優先。これが W4-3/W4-4 の plan を決める。
+1. ~~red→green mechanism の選択~~ → **解決: R1+ 採用**(2026-06-09)。
 2. red→green が取れない AC が多数の場合、`isConverged` は実質 critical のみゲート → `verdict==pass`
    依存に戻る。それを許容するか(= traffic 次第。spec open question #5 と接続)。
 3. evaluator が `ac_index` を req.acceptance_criteria と正しく対応づけられるか(index ずれ対策)。
