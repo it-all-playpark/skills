@@ -57,7 +57,7 @@ function appendItem(ledger, item) {
   const idx = ledger.round > 0 ? ledger.items.findIndex((it) => topicKey(it) === key) : -1;
   const items = ledger.items.slice();
   if (idx >= 0) items[idx] = { ...items[idx], ...item, id: items[idx].id };
-  else items.push({ checked: false, evidence: null, floor: false, check: null, ...item });
+  else items.push({ checked: false, evidence: null, floor: false, check: null, ...item, check: item.check ? { ...item.check } : null });
   return { ledger: { ...ledger, items }, accepted: true };
 }
 

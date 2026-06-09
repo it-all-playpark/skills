@@ -133,3 +133,9 @@ test('setCheck: 既存 item の check 種別を更新（inspection→determinist
 test('setCheck: 未知 id は throw', () => {
   assert.throws(() => setCheck(makeLedger(), 'X', { kind: 'deterministic' }), /未知の item id/);
 });
+test('appendItem: check は shallow-clone され caller mutation の影響を受けない', () => {
+  const check = { kind: 'inspection' };
+  const { ledger } = appendItem(makeLedger(), { id: 'A', text: 'x', dimension: 'd', severity: 'major', source: 'ac', check });
+  check.kind = 'deterministic';                       // caller が後から変更
+  assert.equal(ledger.items[0].check.kind, 'inspection'); // ledger 側は不変
+});
