@@ -70,6 +70,7 @@ teardown() {
 # 4. crypto NEGATIVE
 # ---------------------------------------------------------------------------
 @test "crypto NEGATIVE: 無害な変更 -> 出力は []" {
+    mkdir -p "$REPO/src"
     printf 'const x = 1;\n' > "$REPO/src/index.js"
     git -C "$REPO" add -A
     git -C "$REPO" commit -q -m change
@@ -182,6 +183,7 @@ teardown() {
 # 12. exec-sink NEGATIVE
 # ---------------------------------------------------------------------------
 @test "exec-sink NEGATIVE: 無害な変更 -> 出力は []" {
+    mkdir -p "$REPO/src"
     printf 'const x = 2 + 2;\n' > "$REPO/src/math.js"
     git -C "$REPO" add -A
     git -C "$REPO" commit -q -m change
