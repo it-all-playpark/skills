@@ -199,7 +199,7 @@ export function canAppend(ledger, item) {
 export function appendItem(ledger, item) {
   if (!canAppend(ledger, item)) return { ledger, accepted: false };
   const key = topicKey(item);
-  const idx = ledger.items.findIndex((it) => topicKey(it) === key);
+  const idx = ledger.round > 0 ? ledger.items.findIndex((it) => topicKey(it) === key) : -1;
   const items = ledger.items.slice();
   if (idx >= 0) items[idx] = { ...items[idx], ...item, id: items[idx].id };
   else items.push({ checked: false, evidence: null, floor: false, check: null, ...item });
@@ -355,7 +355,7 @@ function canAppend(ledger, item) {
 function appendItem(ledger, item) {
   if (!canAppend(ledger, item)) return { ledger, accepted: false };
   const key = topicKey(item);
-  const idx = ledger.items.findIndex((it) => topicKey(it) === key);
+  const idx = ledger.round > 0 ? ledger.items.findIndex((it) => topicKey(it) === key) : -1;
   const items = ledger.items.slice();
   if (idx >= 0) items[idx] = { ...items[idx], ...item, id: items[idx].id };
   else items.push({ checked: false, evidence: null, floor: false, check: null, ...item });
