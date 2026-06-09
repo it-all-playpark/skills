@@ -108,3 +108,18 @@ test('blockingItems / advisoryItems の分離', () => {
   assert.equal(blockingItems(l).map((i) => i.id).join(','), 'B');
   assert.equal(advisoryItems(l).map((i) => i.id).join(','), 'A');
 });
+
+test('isConverged: 空 ledger(blocking 0件)は true（every([])===true を pin）', () => {
+  assert.equal(isConverged(makeLedger()), true);
+});
+test('appendItem: round 0 は同一 topicKey でも別 item として積む（distinct AC を合流させない）', () => {
+  let { ledger } = appendItem(makeLedger(), { id: 'AC-1', text: 'same', dimension: 'ac', severity: 'major', source: 'ac' });
+  ({ ledger } = appendItem(ledger, { id: 'AC-2', text: 'same', dimension: 'ac', severity: 'major', source: 'ac' }));
+  assert.equal(ledger.items.length, 2);
+  assert.deepEqual(ledger.items.map((i) => i.id), ['AC-1', 'AC-2']);
+});
+test('mergeSeverity: 未定義 severity は現状 fail-safe passthrough（NaN比較で現値維持）', () => {
+  assert.equal(mergeSeverity({ severity: 'major', floor: false }, 'bogus').severity, 'major');
+  const floored = applySeverityFloor({ severity: 'critical' }, 'critical');
+  assert.equal(mergeSeverity(floored, 'bogus').severity, 'critical');
+});
