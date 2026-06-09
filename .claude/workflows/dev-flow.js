@@ -27,6 +27,7 @@ function resolvePositiveIntArg(args, name) {
 
 // ---- Goal Ledger エンジン (canonical: _lib/goal-ledger.mjs。修正時は両者を同期。byte 一致は _lib/goal-ledger.sync.test.mjs が保証) ----
 const SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
+const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function makeLedger() {
   return { items: [], round: 0 };
@@ -114,31 +115,64 @@ function nextRound(ledger) {
 }
 // ---- /Goal Ledger エンジン ----
 
-function classifyTriviality(req) {
+function mergeShape(floor, llmShape) {
+  if (!(llmShape in SHAPE_RANK)) {
+    return floor;
+  }
+  return SHAPE_RANK[llmShape] > SHAPE_RANK[floor] ? llmShape : floor;
+}
+
+function classifyShape(req) {
   const count = req.estimated_change_file_count;
   if (typeof count !== 'number' || count < 0) {
-    return { trivial: false, reason: 'estimated_change_file_count missing or invalid → safe non-trivial' };
+    const floor = 'complex';
+    const reason = `estimated_change_file_count missing or invalid → safe floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
-  if (count > 2) {
-    return { trivial: false, reason: `estimated ${count} files > 2 → non-trivial` };
-  }
+
   const ac = req.acceptance_criteria;
   if (!Array.isArray(ac)) {
-    return { trivial: false, reason: 'acceptance_criteria missing or not array → safe non-trivial' };
+    const floor = 'complex';
+    const reason = `acceptance_criteria missing or not array → safe floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
-  if (ac.length > 3) {
-    return { trivial: false, reason: `${ac.length} acceptance criteria > 3 → non-trivial` };
-  }
+
   const validTypes = ['feat', 'fix', 'docs', 'refactor'];
   if (!validTypes.includes(req.issue_type)) {
-    return { trivial: false, reason: `issue_type '${req.issue_type}' not in allowed set → non-trivial` };
+    const floor = 'complex';
+    const reason = `issue_type '${req.issue_type}' not in allowed set → floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
+
   const breakingPattern = /breaking|incompatible|migration|破壊的|非互換/i;
   const combined = `${req.scope ?? ''} ${req.summary ?? ''}`;
   if (breakingPattern.test(combined)) {
-    return { trivial: false, reason: 'breaking change detected in scope/summary → non-trivial' };
+    const floor = 'complex';
+    const reason = `breaking change detected in scope/summary → floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
-  return { trivial: true, reason: `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type}, no breaking — trivial path` };
+
+  let floor;
+  if (count <= 2 && ac.length <= 3) {
+    floor = 'micro';
+  } else if (count <= 5 && ac.length <= 6) {
+    floor = 'standard';
+  } else {
+    floor = 'complex';
+  }
+
+  const shape = mergeShape(floor, req.shape);
+  let reason;
+  if (shape !== floor) {
+    reason = `LLM raised ${floor}→${shape}`;
+  } else {
+    reason = `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type} → floor=${floor}`;
+  }
+  return { shape, reason };
 }
 
 // ---- args ----
@@ -218,6 +252,7 @@ const REQ = {
     acceptance_criteria: { type: 'array', items: { type: 'string' } },
     scope: { type: 'string' },
     estimated_change_file_count: { type: 'number' },
+    shape: { type: 'string', enum: ['micro', 'standard', 'complex'] },
   },
 }
 const TASK = {
@@ -366,13 +401,15 @@ const req = need(await agent(
   `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${DEPTH}\` を実行し、`
   + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
   + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
-  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`,
+  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`
+  + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=単一ファイル軽微変更・AC 少数、standard=複数ファイルの通常実装、complex=多数ファイル・破壊的変更・設計判断を要する。判断に迷えば大きめ（安全側=complex 寄り）に評価せよ。`,
   { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
 ), 'Analyze')
 
-const triage = classifyTriviality(req)
-const TRIVIAL = triage.trivial
-log(`triviality: ${TRIVIAL ? 'TRIVIAL(最短経路)' : 'NON-TRIVIAL(フルパイプライン)'} — ${triage.reason}`)
+const triage = classifyShape(req)
+const SHAPE = triage.shape
+const TRIVIAL = SHAPE === 'micro'
+log(`shape: ${SHAPE} — ${triage.reason}`)
 
 // ============================================================
 // Phase Plan: dev-planner ⇄ plan-reviewer ループ。
@@ -688,6 +725,7 @@ return {
   eval_verdict: evalResult?.verdict ?? null,
   test_green: val?.green ?? null,
   iterate_status: iterate?.status ?? null,
+  shape: SHAPE,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,
   ledger_blocking: blockingItems(ledger).length,
