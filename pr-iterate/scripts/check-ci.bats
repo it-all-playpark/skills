@@ -19,13 +19,26 @@ setup() {
 
     # Default gh stub: responds to `pr checks` with canned JSON stored in
     # $GH_CHECKS_OUTPUT (exit code from $GH_EXIT_CODE, default 0).
+    # Supports call-count tracking via GH_CALL_COUNT_FILE.
+    # GH_FAIL_TIMES controls how many initial attempts fail with exit 1.
+    GH_CALL_COUNT_FILE="$BATS_TMPDIR/gh-call-count"
+    rm -f "$GH_CALL_COUNT_FILE"
+    GH_FAIL_TIMES=0
+    CHECK_CI_RETRY_DELAYS="0 0"
     GH_CHECKS_OUTPUT="[]"
     GH_EXIT_CODE=0
+    export GH_CALL_COUNT_FILE GH_FAIL_TIMES CHECK_CI_RETRY_DELAYS
     export GH_CHECKS_OUTPUT GH_EXIT_CODE
 
     cat > "$STUB_DIR/gh" << 'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "pr" && "$2" == "checks" ]]; then
+    count=$(( $(cat "$GH_CALL_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+    echo "$count" > "$GH_CALL_COUNT_FILE"
+    if (( count <= ${GH_FAIL_TIMES:-0} )); then
+        echo "transient network error" >&2
+        exit 1
+    fi
     echo "$GH_CHECKS_OUTPUT"
     exit "${GH_EXIT_CODE:-0}"
 fi
@@ -161,4 +174,70 @@ GHEOF
     # Output must contain status=error, NOT no_checks
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 8: gh fails once then succeeds -> status passed (retry path)
+# ---------------------------------------------------------------------------
+@test "gh fails once then succeeds -> status passed (retry path)" {
+    export GH_FAIL_TIMES=1
+    export GH_CHECKS_OUTPUT='[
+      {"name":"lint","state":"SUCCESS","bucket":"pass"},
+      {"name":"test","state":"SUCCESS","bucket":"pass"}
+    ]'
+    export GH_EXIT_CODE=0
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "passed" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 2 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 9: gh fails all attempts -> status error, exits 1
+# With CHECK_CI_RETRY_DELAYS="0 0", max attempts = 1 initial + 2 retries = 3
+# ---------------------------------------------------------------------------
+@test "gh fails all attempts -> status error, exits 1, call count 3" {
+    export GH_FAIL_TIMES=10
+    run "$SCRIPT" 42
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 3 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 10: failed status does not trigger retry (gh called exactly once)
+# ---------------------------------------------------------------------------
+@test "failed status does not trigger retry (gh called exactly once)" {
+    export GH_FAIL_TIMES=0
+    export GH_CHECKS_OUTPUT='[
+      {"name":"test","state":"FAILURE","bucket":"fail"}
+    ]'
+    export GH_EXIT_CODE=0
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "failed" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 11: pending (gh exit 8) does not trigger retry (gh called exactly once)
+# ---------------------------------------------------------------------------
+@test "pending (gh exit 8) does not trigger retry (gh called exactly once)" {
+    export GH_FAIL_TIMES=0
+    export GH_CHECKS_OUTPUT='[
+      {"name":"build","state":"IN_PROGRESS","bucket":"pending"}
+    ]'
+    export GH_EXIT_CODE=8
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "pending" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 1 ]
 }
