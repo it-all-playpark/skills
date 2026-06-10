@@ -6,6 +6,11 @@ export const meta = {
   ],
 }
 
+// ---- 品質ゲート系 agent（pr-reviewer）の model override ----
+// frontmatter 既定は opus。Fable 5 試験運用中は 'fable' を指定し、戻すときはこの 1 行を 'opus' にする。
+// effort は agent() opts に存在しないため引き続き frontmatter（high）固定。dev-flow.js 側にも同名定数あり。
+const QUALITY_MODEL = 'fable'
+
 function resolvePositiveIntArg(args, name) {
   const raw = (typeof args === 'string' || typeof args === 'number')
     ? args
@@ -238,7 +243,7 @@ for (i = 1; i <= MAX; i++) {
           + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
           + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
         : ''),
-    { agentType: 'pr-reviewer', schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
+    { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
   )
   if (review == null) throw new Error(`pr-iterate: review#${i} が結果を返しませんでした（skip された可能性）`)
   lastReview = review
