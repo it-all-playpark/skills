@@ -1,9 +1,7 @@
 // dev-flow W5: gate_policy による lane 分類の純粋関数群。
 //
-// INLINE COPY POLICY: .claude/workflows/dev-flow.js は dynamic workflow ローダーが
-// 独自 VM で評価するため ESM import 不可。本ファイルの関数は dev-flow.js に inline
-// コピーされ、_lib/gate-policy.sync.test.mjs が byte 一致を CI で保証する。
-// 修正時は必ず dev-flow.js の inline コピーも同期すること。
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 // gate_policy の trust 昇順 4 値。
 export const GATE_POLICIES = [

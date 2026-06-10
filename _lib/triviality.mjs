@@ -1,11 +1,8 @@
 // classifyShape: REQ オブジェクトから shape 判定を行う純粋関数。
 // dev-flow の shape check に使用する。
 //
-// INLINE COPY POLICY: .claude/workflows/dev-flow.js は dynamic workflow ローダーが
-// 独自の VM コンテキストで評価するため、ESM の import 文は使用できない。
-// そのため dev-flow.js に classifyShape の関数本体を inline コピーしており、
-// _lib/triviality.sync.test.mjs がその byte 一致を CI で保証する。
-// この関数を修正する際は、必ず dev-flow.js の inline コピーも同期すること。
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 export const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function mergeShape(floor, llmShape) {
@@ -74,10 +71,6 @@ export function classifyShape(req) {
  * realized diff には AC 情報が無いため、file count のみで floor を引く
  * (classifyShape と同じ境界値 count<=2/count<=5 を使用)。
  * estimatedShape より大きい floor が得られた場合のみ上書きする (raise-only)。
- *
- * INLINE COPY POLICY: dev-flow.js に本関数を inline コピーし
- * triviality.sync.test.mjs が byte 一致を保証する。
- * 修正時は両方同期すること。
  *
  * @param {string} estimatedShape - 計画時に決定した shape ('micro'|'standard'|'complex')
  * @param {number} realizedCount - realized diff の実ファイル数 (整数)

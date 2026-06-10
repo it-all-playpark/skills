@@ -11,6 +11,16 @@ export const meta = {
 // effort は agent() opts に存在しないため引き続き frontmatter（high）固定。dev-flow.js 側にも同名定数あり。
 const QUALITY_MODEL = 'fable'
 
+// ==== BEGIN inline: _lib/resolve-arg.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// 正の整数 arg を正規化する。dev-flow / pr-iterate の entrypoint 共通。
+// 受理: bare string '120' / number 120 / array ['120'] / object {issue:'120'} | {pr:'120'}
+// 拒否(throw): 空 / 未展開テンプレート '{' / '0' / 負数 / 小数 / 非数字混入
+// NOTE: name に対応するキー（args[name]）と bare/array 形式のみを解決する。
+//       cross-name fallback（例: name='pr' のときに args.issue を採用する）は
+//       型安全性を損なう footgun のため意図的に除外している。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 function resolvePositiveIntArg(args, name) {
   const raw = (typeof args === 'string' || typeof args === 'number')
     ? args
@@ -21,6 +31,7 @@ function resolvePositiveIntArg(args, name) {
   }
   return s;
 }
+// ==== END inline: _lib/resolve-arg.mjs ====
 
 // args 正規化: 単体 /pr-iterate <pr> でも dev-flow からの workflow('pr-iterate', {pr}) でも受ける
 const PR = resolvePositiveIntArg(args, 'pr')
@@ -50,10 +61,13 @@ function issueTopic(x) {
   return `${file}::${desc}`
 }
 
-// ---- PR コメント生成関数 inline コピー（_lib/pr-comment-format.mjs から export 除去）-----------
-// loader 制約（ESM import 不可）のため関数本体を inline コピーしている。
-// _lib/pr-comment-format.sync.test.mjs がこの inline コピーの byte 一致を CI で保証する。
-// この関数を修正する際は、必ず _lib/pr-comment-format.mjs の元も同期すること。
+// ==== BEGIN inline: _lib/pr-comment-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// buildReviewCommentBody / buildTerminalSummaryBody: pr-iterate の per-round
+// レビューコメントおよび終端サマリー markdown を生成する純粋関数。
+// I/O なし、gh なし、Date.now() 非決定性なし。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const DECISION_LABEL = {
   'approve': '承認 (LGTM)',
@@ -66,6 +80,15 @@ function mdCell(v) {
   return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 }
 
+/**
+ * per-round レビューコメント markdown を生成する。
+ * @param {object} opts
+ * @param {number|string} opts.pr - PR 番号
+ * @param {number} opts.iteration - 反復回数
+ * @param {string} opts.decision - 'approve' | 'request-changes' | 'comment'
+ * @param {Array} opts.blocking - blocking finding の配列
+ * @returns {string}
+ */
 function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
@@ -109,6 +132,17 @@ const STATUS_HEADLINE = {
   'max_reached': '⚠️ 反復上限到達',
 };
 
+/**
+ * 終端サマリー markdown を生成する。
+ * @param {object} opts
+ * @param {number|string} opts.pr - PR 番号
+ * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached'
+ * @param {number} opts.iterations - 総反復回数
+ * @param {string} opts.lastDecision - 最終判定
+ * @param {string} opts.lastSummary - 最終サマリーテキスト
+ * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking}]
+ * @returns {string}
+ */
 function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, history }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
@@ -173,6 +207,7 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 
   return lines.join('\n');
 }
+// ==== END inline: _lib/pr-comment-format.mjs ====
 
 // ---- 投稿本文を agent に保存・投稿させるヘルパー --------------------------------------
 // workflow runtime には fs/os/path（require）も Date.now() も無いため、orchestrator 側で

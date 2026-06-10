@@ -1,12 +1,8 @@
 // buildDevflowSummaryBody: dev-flow の終端サマリー markdown を生成する純粋関数。
 // I/O なし、gh なし、Date.now() 等の非決定性なし。同入力 -> byte 一致。
 //
-// INLINE COPY POLICY: .claude/workflows/dev-flow.js は Claude Code の
-// dynamic workflow ローダーが独自の VM コンテキストで評価するため、ESM の
-// import 文（`import { buildDevflowSummaryBody } from '../../_lib/devflow-summary-format.mjs'` 等）
-// は使用できない。そのため dev-flow.js にこの関数本体を inline コピーしており、
-// _lib/devflow-summary-format.sync.test.mjs がその byte 一致を CI で保証する。
-// この関数を修正する際は、必ず dev-flow.js の inline コピーも同期すること。
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 /**
  * Markdown テーブルセルの値をエスケープする。

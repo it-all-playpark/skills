@@ -19,6 +19,16 @@ export const meta = {
 // effort は agent() opts に存在しないため引き続き frontmatter（high）固定。pr-reviewer は pr-iterate.js 側の同名定数。
 const QUALITY_MODEL = 'fable'
 
+// ==== BEGIN inline: _lib/resolve-arg.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// 正の整数 arg を正規化する。dev-flow / pr-iterate の entrypoint 共通。
+// 受理: bare string '120' / number 120 / array ['120'] / object {issue:'120'} | {pr:'120'}
+// 拒否(throw): 空 / 未展開テンプレート '{' / '0' / 負数 / 小数 / 非数字混入
+// NOTE: name に対応するキー（args[name]）と bare/array 形式のみを解決する。
+//       cross-name fallback（例: name='pr' のときに args.issue を採用する）は
+//       型安全性を損なう footgun のため意図的に除外している。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 function resolvePositiveIntArg(args, name) {
   const raw = (typeof args === 'string' || typeof args === 'number')
     ? args
@@ -29,10 +39,23 @@ function resolvePositiveIntArg(args, name) {
   }
   return s;
 }
+// ==== END inline: _lib/resolve-arg.mjs ====
 
-// ---- Goal Ledger エンジン (canonical: _lib/goal-ledger.mjs。修正時は両者を同期。byte 一致は _lib/goal-ledger.sync.test.mjs が保証) ----
+// ==== BEGIN inline: _lib/goal-ledger.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
+// item = { id, text, dimension, severity, source, checked, evidence, check, floor, reopen_reason }
+//   severity: 'critical' | 'major' | 'minor'
+//   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep'
+//   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
+//   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
+//
+// BLOCKING lane = 決定論 oracle 付き OR LLM critical OR seeded mandatory。それ以外は ADVISORY。
+// 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
 const SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
-const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function makeLedger() {
   return { items: [], round: 0 };
@@ -119,9 +142,14 @@ function isConverged(ledger) {
 function nextRound(ledger) {
   return { ...ledger, round: ledger.round + 1 };
 }
-// ---- /Goal Ledger エンジン ----
+// ==== END inline: _lib/goal-ledger.mjs ====
 
-// ---- merge-tier エンジン (canonical: _lib/merge-tier.mjs。修正時は両者を同期。byte 一致は _lib/merge-tier.sync.test.mjs が保証) ----
+// ==== BEGIN inline: _lib/merge-tier.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow W5: merge tiering + 決定論 danger floor の純粋関数群。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
 // diff-risk-classify.sh が出力する 7 danger クラス（固定順）。
 const DANGER_CLASSES = [
   'auth', 'crypto', 'config', 'data-migration', 'public-api', 'exec-sink', 'dependency',
@@ -208,9 +236,14 @@ function classifyMergeTier(s) {
   }
   return { tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'] };
 }
-// ---- /merge-tier エンジン ----
+// ==== END inline: _lib/merge-tier.mjs ====
 
-// ---- gate-policy エンジン (canonical: _lib/gate-policy.mjs。修正時は両者を同期。byte 一致は _lib/gate-policy.sync.test.mjs が保証) ----
+// ==== BEGIN inline: _lib/gate-policy.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow W5: gate_policy による lane 分類の純粋関数群。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
 // gate_policy の trust 昇順 4 値。
 const GATE_POLICIES = [
   'deterministic-only',
@@ -273,7 +306,15 @@ function policyAdvisoryItems(ledger, policy) {
 function isConvergedUnderPolicy(ledger, policy) {
   return policyBlockingItems(ledger, policy).every((it) => it.checked);
 }
-// ---- /gate-policy エンジン ----
+// ==== END inline: _lib/gate-policy.mjs ====
+
+// ==== BEGIN inline: _lib/triviality.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// classifyShape: REQ オブジェクトから shape 判定を行う純粋関数。
+// dev-flow の shape check に使用する。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function mergeShape(floor, llmShape) {
   if (!(llmShape in SHAPE_RANK)) {
@@ -334,6 +375,18 @@ function classifyShape(req) {
   }
   return { shape, reason };
 }
+
+/**
+ * refloorShape: realized diff のファイル数から shape を raise-only で調整する純粋関数。
+ *
+ * realized diff には AC 情報が無いため、file count のみで floor を引く
+ * (classifyShape と同じ境界値 count<=2/count<=5 を使用)。
+ * estimatedShape より大きい floor が得られた場合のみ上書きする (raise-only)。
+ *
+ * @param {string} estimatedShape - 計画時に決定した shape ('micro'|'standard'|'complex')
+ * @param {number} realizedCount - realized diff の実ファイル数 (整数)
+ * @returns {{ shape: string, refloored: boolean, realizedFloor: string, realizedCount: number }}
+ */
 function refloorShape(estimatedShape, realizedCount) {
   let realizedFloor;
   if (typeof realizedCount !== 'number' || realizedCount < 0 || !Number.isFinite(realizedCount)) {
@@ -354,7 +407,14 @@ function refloorShape(estimatedShape, realizedCount) {
     realizedCount,
   };
 }
-// ---- parallel-disjoint エンジン (canonical: _lib/parallel-disjoint.mjs。修正時は両者を同期。byte 一致は _lib/parallel-disjoint.sync.test.mjs が保証) ----
+// ==== END inline: _lib/triviality.mjs ====
+// ==== BEGIN inline: _lib/parallel-disjoint.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// enforceDisjointParallel: parallel task の file_changes 衝突を検出し、衝突 task を serial に降格する純粋関数。
+// dev-flow の parallel fan-out 前に呼び出し、file-disjoint 制約を保証する。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
 /**
  * normalizePath: file_changes エントリを正規化したパス文字列に変換する。
  * - ':' で分割した先頭要素を取る（'src/foo.ts: 新規作成' → 'src/foo.ts'）
@@ -443,10 +503,11 @@ function enforceDisjointParallel(plan) {
  * diffDeclaredPaths: plan の全 task の file_changes と git status の変更ファイルを突合し、
  * 宣言外の変更ファイルパスの配列を返す純粋関数。
  *
- * normalizePath を共用して表記ゆれを正規化する。
+ * normalizePath を共用して表記ゆれ（'path: 説明' / './' プレフィックス / 空白）を正規化する。
+ *
  * @param {Array<{id: string, file_changes?: string[]}>} planTasks - serial + parallel の全 task 配列
- * @param {string[]} changedFiles - git status --porcelain の変更ファイル一覧
- * @returns {string[]} 宣言外変更ファイルパスの配列
+ * @param {string[]} changedFiles - `git status --porcelain` の変更ファイル一覧（正規化済みパスを期待する）
+ * @returns {string[]} 宣言外変更ファイルパスの配列（changedFiles の正規化値が基準）
  */
 function diffDeclaredPaths(planTasks, changedFiles) {
   // plan の全 task の file_changes を正規化した宣言パス集合を構築
@@ -467,14 +528,45 @@ function diffDeclaredPaths(planTasks, changedFiles) {
   }
   return undeclared;
 }
-// ---- /parallel-disjoint エンジン ----
+// ==== END inline: _lib/parallel-disjoint.mjs ====
 
-// ---- devflow-summary-format inline コピー (canonical: _lib/devflow-summary-format.mjs。修正時は両者を同期。byte 一致は _lib/devflow-summary-format.sync.test.mjs が保証) ----
+// ==== BEGIN inline: _lib/devflow-summary-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// buildDevflowSummaryBody: dev-flow の終端サマリー markdown を生成する純粋関数。
+// I/O なし、gh なし、Date.now() 等の非決定性なし。同入力 -> byte 一致。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+/**
+ * Markdown テーブルセルの値をエスケープする。
+ * パイプ文字を \| に、改行を <br> に変換する。
+ * @param {*} v
+ * @returns {string}
+ */
 function mdCell(v) {
   if (v == null) return '';
   return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 }
 
+/**
+ * dev-flow 終端サマリー markdown を生成する。
+ * @param {object} opts
+ * @param {number|string} opts.pr - PR 番号
+ * @param {string} opts.mergeTier - 'HOLD'|'REVIEW'|'AUTO'
+ * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
+ * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
+ * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason}>} opts.advisoryItems - advisory items
+ * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
+ * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
+ * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
+ * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
+ * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
+ * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
+ * @param {boolean|null|undefined} opts.testGreen - test green フラグ
+ * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
+ * @returns {string}
+ */
 function buildDevflowSummaryBody({
   pr,
   mergeTier,
@@ -730,7 +822,7 @@ function buildDevflowSummaryBody({
 
   return lines.join('\n');
 }
-// ---- /devflow-summary-format inline コピー ----
+// ==== END inline: _lib/devflow-summary-format.mjs ====
 
 function applyDisjoint(p, label) {
   const { plan: np, demoted } = enforceDisjointParallel(p);
