@@ -186,12 +186,14 @@ GHEOF
       {"name":"test","state":"SUCCESS","bucket":"pass"}
     ]'
     export GH_EXIT_CODE=0
-    run "$SCRIPT" 42
+    run --separate-stderr "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "passed" ]
     call_count=$(cat "$GH_CALL_COUNT_FILE")
     [ "$call_count" -eq 2 ]
+    # stderr must contain retry log (attempt number + failure reason)
+    [[ "$stderr" == *"check-ci: gh pr checks failed"* ]]
 }
 
 # ---------------------------------------------------------------------------

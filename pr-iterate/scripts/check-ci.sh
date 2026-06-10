@@ -61,6 +61,7 @@ while :; do
     if (( attempt >= ${#RETRY_DELAYS[@]} )); then
         break
     fi
+    echo "check-ci: gh pr checks failed (exit $gh_exit), retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $(cat "$gh_stderr_file")" >&2
     sleep "${RETRY_DELAYS[$attempt]}"
     attempt=$((attempt + 1))
 done
