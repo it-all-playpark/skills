@@ -164,6 +164,15 @@ const POST_RESULT = {
   },
 }
 
+const JOURNAL_RESULT = {
+  type: 'object',
+  required: ['logged'],
+  properties: {
+    logged: { type: 'boolean' },
+    summary: { type: 'string' },
+  },
+}
+
 const REVIEW = {
   type: 'object',
   required: ['decision', 'issues', 'summary'],
@@ -478,6 +487,21 @@ const summaryPost = await agent(
 )
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+}
+
+const journalCmd = `bash ~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate success --iterate-status ${status} --args "pr=${PR}"`
+const journalPost = await agent(
+  `## Objective\npr-iterate 終端 status の telemetry を journal に記録する。\n\n`
+  + `## Instructions\n次のコマンドをそのまま実行せよ。exit 0 なら logged:true、失敗時も throw せず logged:false を返すこと。\n`
+  + `\`\`\`\n${journalCmd}\n\`\`\`\n\n`
+  + `## Output format\n{ "logged": boolean, "summary": string }\n\n`
+  + `## Tools\n- 使用可: Bash のみ\n- 禁止: Write, Edit, git 操作\n\n`
+  + `## Boundary\n~/.claude/journal 以外のファイル変更禁止。git 操作禁止。\n\n`
+  + `## Token cap\n100 語以内で完結すること。`,
+  { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Iterate' },
+)
+if (!journalPost?.logged) {
+  log(`⚠️ journal-log の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
 }
 
 return {
