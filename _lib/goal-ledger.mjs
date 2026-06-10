@@ -34,6 +34,7 @@ export function topicKey(item) {
 export function canAppend(ledger, item) {
   if (ledger.round === 0) return true;
   if (item.severity === 'critical') return true;
+  if (item.escalate === true) return true;
   const key = topicKey(item);
   return ledger.items.some((it) => topicKey(it) === key);
 }

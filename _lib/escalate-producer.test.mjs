@@ -311,3 +311,180 @@ test('[escalate-producer] テスト3: escalate:true の major → post-summary p
     `post-summary の prompt に 'ESCALATE-TO-HUMAN' が含まれるべきだが含まれなかった。\ncaptured: ${capturedPrompt?.slice(0, 500)}`,
   );
 });
+
+// ============================================================
+// テスト 4: complex shape の iteration 2 以降で escalate が append される
+// ============================================================
+// complex shape では eval loop が最大 EVAL_MAX 回実行される。
+// iteration 1 で critical feedback を出し、iteration 2 で critical を resolve しつつ
+// 新規 escalate:true feedback を返す。
+// canAppend の escalate bypass により、round>0 の新規 topic でも ledger に積まれ
+// merge_tier === 'HOLD' になることを assert する。
+test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escalate:true → ledger に積まれ merge_tier === HOLD', async () => {
+  // complex shape: estimated_change_file_count >= 10 → classifyShape が complex に floor
+  const complexAnalyzeReq = {
+    summary: 'refactor auth module with new permission model',
+    acceptance_criteria: ['Auth permission model enforced'],
+    issue_type: 'feat',
+    scope: 'src/auth',
+    estimated_change_file_count: 12,
+    shape: 'complex',
+  };
+
+  // evaluator stub: 呼び出し回数を追跡して iteration 別に挙動を変える
+  let evaluatorCallCount = 0;
+
+  // iteration 1 で返す critical feedback の topic
+  const criticalTopic = 'missing auth check in api handler';
+  // ID 生成ロジックと一致させる: `EVAL-${i}-${topic.slice(0,24)}`
+  const criticalId = `EVAL-1-${criticalTopic.slice(0, 24)}`;
+
+  function makeAgentStub() {
+    return async (prompt, opts) => {
+      const label = opts?.label ?? '';
+      const agentType = opts?.agentType ?? '';
+
+      if (label === 'worktree') {
+        return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
+      }
+      if (label.startsWith('analyze')) {
+        return complexAnalyzeReq;
+      }
+      if (agentType === 'dev-planner') {
+        return { summary: 'p', serial: [], parallel: [] };
+      }
+      if (agentType === 'plan-reviewer') {
+        return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+      }
+      if (label.startsWith('danger-grep')) {
+        return { hits: [] };
+      }
+      if (label.startsWith('test')) {
+        return { tests: 'no_tests', green: true, summary: '' };
+      }
+      if (agentType === 'evaluator') {
+        evaluatorCallCount++;
+        if (evaluatorCallCount === 1) {
+          // iteration 1: critical を出す（差し戻しを起こす）
+          return {
+            verdict: 'fail',
+            total: 5,
+            threshold: 7,
+            feedback: [
+              {
+                severity: 'critical',
+                topic: criticalTopic,
+                description: 'auth handler lacks permission check',
+                suggestion: 'add permission gate',
+              },
+            ],
+            feedback_level: 'implementation',
+            ac_results: [
+              { ac_index: 0, satisfied: false, evidence: 'none', verified_by: 'inspection' },
+            ],
+            critical_resolutions: [],
+          };
+        }
+        // iteration 2: critical を resolve し、新規 escalate:true を返す
+        return {
+          verdict: 'pass',
+          total: 8,
+          threshold: 7,
+          feedback: [
+            {
+              severity: 'major',
+              topic: 'naming convention choice for permission enum',
+              description: 'enum naming is preference-based, no issue spec',
+              suggestion: 'human should decide',
+              escalate: true,
+              escalate_reason: 'preference',
+            },
+          ],
+          feedback_level: 'implementation',
+          ac_results: [
+            { ac_index: 0, satisfied: true, evidence: 'auth.test.mjs::enforces permission', verified_by: 'inspection' },
+          ],
+          // iteration 1 の critical を解消
+          critical_resolutions: [
+            { id: criticalId, resolved: true, evidence: 'permission gate added in auth/handler.ts:42' },
+          ],
+        };
+      }
+      if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+        return { red: false, green: false, reason: 'stub' };
+      }
+      if (label.startsWith('pr')) {
+        return { pr_url: 'http://x', pr_number: 1, committed: true };
+      }
+      if (label === 'changed-files') {
+        return { files: ['src/auth/handler.ts'] };
+      }
+      if (label === 'post-summary') {
+        return { posted: true, method: 'gh pr comment', url: 'http://x/1' };
+      }
+      if (agentType === 'implementer') {
+        return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+      }
+      return null;
+    };
+  }
+
+  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
+  const workflowStub = async () => ({ status: 'LGTM' });
+
+  const sandbox = {
+    phase: () => {},
+    log: () => {},
+    agent: makeAgentStub(),
+    parallel: parallelStub,
+    workflow: workflowStub,
+    args: '1',
+    console,
+    JSON,
+    Math,
+    String,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Error,
+    RegExp,
+    Promise,
+    Symbol,
+    Map,
+    Set,
+    Date,
+  };
+
+  const ctx = vm.createContext(sandbox);
+  const src = readFileSync(
+    join(repoRoot, '.claude/workflows/dev-flow.js'),
+    'utf8',
+  );
+
+  const { result, error } = await runDevFlowCapture(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  // evaluator が 2 回呼ばれたことを確認（iteration 2 が実行された）
+  assert.ok(
+    evaluatorCallCount >= 2,
+    `evaluator は 2 回以上呼ばれるべきだが ${evaluatorCallCount} 回だった（complex shape iteration ループが動作していない可能性）`,
+  );
+
+  // iteration 2 で追加した escalate:true が ledger に積まれ merge_tier === 'HOLD' になる
+  assert.equal(
+    result?.merge_tier,
+    'HOLD',
+    `complex shape iteration 2 の escalate:true feedback がある場合、merge_tier は 'HOLD' であるべきだが '${result?.merge_tier}' だった`,
+  );
+
+  // merge_tier_reasons に ESCALATE-TO-HUMAN が含まれる
+  assert.ok(
+    Array.isArray(result?.merge_tier_reasons)
+      && result.merge_tier_reasons.some((x) => /ESCALATE-TO-HUMAN/.test(x)),
+    `merge_tier_reasons に 'ESCALATE-TO-HUMAN' が含まれるべきだが含まれなかった: ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+});

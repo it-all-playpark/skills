@@ -77,7 +77,7 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
     → workflow は implementer に差し戻す
 
 `fail` の場合 `feedback[]` に**具体的で実行可能な**項目を入れる（「コード品質を上げよ」のような曖昧は禁止。
-ファイル・関数・パターンを名指す）。各 feedback 項目は次の構造を持つ:
+ファイル・関数・パターンを名指す）。feedback は `verdict: pass` でも返せる（escalate のみの報告がありうる。orchestrator は verdict に関係なく feedback[] を処理する）。各 feedback 項目は次の構造を持つ:
 
 - `severity`: `critical` | `major` | `minor`（`critical` は workflow が常にブロックする — 妥協で
   `major` に格下げしてはならない）
@@ -85,6 +85,8 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
   同一問題は iteration を跨いで**同じ topic 文字列を再利用**する（orchestrator が topic で stuck を突合する）
 - `description`: 問題の具体的な説明（ファイル・関数・パターンを名指す）
 - `suggestion`: 修正方針
+- `escalate`（省略時 false）: **正確性ではなく当事者性・好み・訓練分布外性が論点のとき true** にする人間 required-block フラグ。true にすると merge tier が HOLD になり人間が読まないと merge できない。**品質の高低（コードが良い/悪い）では使わない** — 品質問題は severity で表現する。判定基準: (a) accountability=結果責任を人間が負うべき決定（例: 外部公開 API 命名・課金挙動の変更）、(b) preference=技術的に複数解が同等で好みの問題（issue に指定なし）、(c) novelty=訓練分布外で自信を持って判定できない（前例なきドメイン固有仕様の解釈）、(d) blast-radius=誤りだった場合の影響が PR スコープを超える（例: データ移行方針）。escalate は major/minor いずれの severity にも付けられる。
+- `escalate_reason`: `accountability` | `preference` | `novelty` | `blast-radius`（escalate:true のとき (a)-(d) から選ぶ。escalate:false なら省略）。
 
 ## 反復評価（iteration 2 以降・cold start 補償。issue #125）
 
@@ -128,7 +130,12 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
   "feedback": [
     {"severity": "major", "topic": "missing input validation in createUser",
      "description": "src/user.ts createUser が email 形式を検証していない",
-     "suggestion": "zod スキーマで email を検証し 400 を返す"}
+     "suggestion": "zod スキーマで email を検証し 400 を返す"},
+    {"severity": "minor", "topic": "public API naming choice",
+     "description": "エンドポイント命名が issue に未指定で複数案が同等",
+     "suggestion": "人間が命名を決定する",
+     "escalate": true,
+     "escalate_reason": "accountability"}
   ],
   "feedback_level": "implementation",
   "task_type": "api",
@@ -144,3 +151,4 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 - **正直に採点**: commit 前に実問題を捕まえるのが目的。rubber-stamp しない
 - **feedback_level が肝**: design か implementation かで retry 先が変わる。慎重に判定する
 - **state を書かない**: 返り値 JSON が唯一の出力
+- **escalate は当事者性で立てる**: 正確性・品質の問題は severity、人間にしか決められない論点（当事者性/好み/分布外）は escalate。乱発しない — verdict: pass でも escalate は立てられる
