@@ -1047,6 +1047,9 @@ for (let i = 1; i <= PLAN_MAX; i++) {
 phase('Implement')
 let implResults = await runImplement(plan, null, 'impl')
 let blockedConcerns = []
+// blockFindings 累積 & アプローチ回帰禁止。planSeen と同型の frozen target
+// （incentive-structural — W7 分類。capability 非依存・撤去禁止）。issue #188
+const blockSeen = {}        // topic → { finding, count }
 for (let b = 1; b <= BLOCK_MAX; b++) {
   const blocked = implResults.filter((r) => r && r.status === 'BLOCKED')
   if (!blocked.length) break
@@ -1057,15 +1060,33 @@ for (let b = 1; b <= BLOCK_MAX; b++) {
     description: r.blocking_reason ?? 'BLOCKED',
     suggestion: '同アプローチでは進行不可。代替設計を立案すること（現アプローチの再試行は禁止）。',
   }))
+  // planSeen と同型のパターンで blockSeen に累積（当該 iteration 分も含む）
+  for (const f of blockFindings) {
+    const t = f.topic || f.description || JSON.stringify(f)
+    if (blockSeen[t]) { blockSeen[t].finding = f; blockSeen[t].count += 1 }
+    else blockSeen[t] = { finding: f, count: 1 }
+  }
+  const priorBlock = Object.values(blockSeen).map((s) => s.finding)  // 当該 iteration 分も含む累積全件
+  // DONE 成果の抽出（適用済み task を replan prompt へ注入して重複実装・矛盾設計を防ぐ）
+  const doneSoFar = implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS'))
   plan = need(await agent(
     `cd ${WT} で作業。前回実装が BLOCKED になった。別アプローチで計画を立て直せ。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `現計画: ${JSON.stringify(plan)}\n`
-    + `approach_mismatch findings:\n${JSON.stringify(blockFindings)}`,
+    + (doneSoFar.length
+        ? `適用済み task（成果は worktree に既に存在する。再実装の計画を立てるな。残作業のみ計画せよ）:\n${JSON.stringify(doneSoFar.map((r) => ({ id: r.task_id, files: r.files, summary: r.summary })))}\n`
+        : '')
+    + `approach_mismatch findings（過去 iteration 全件の累積。**過去に BLOCKED になったいずれのアプローチへの回帰も禁止** — 全件と異なる代替設計を立案せよ）:\n${JSON.stringify(priorBlock)}`,
     { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan-blocked#${b}`, phase: 'Implement' },
   ), `Implement(replan#${b})`)
   plan = applyDisjoint(plan, `replan-blocked#${b}`)
-  implResults = await runImplement(plan, null, `reimpl-blocked#${b}`)
+  // 再実装結果と旧 DONE のマージ保持:
+  //   旧 DONE/DONE_WITH_CONCERNS は保持（concerns の Evaluate 伝搬維持）、
+  //   同 task_id の新結果は新結果優先、
+  //   旧 BLOCKED/NEEDS_CONTEXT は保持しない（stale BLOCKED で b+1 の再発火を防ぐ）
+  const retryResults = await runImplement(plan, null, `reimpl-blocked#${b}`)
+  const retryIds = new Set(retryResults.map((r) => r && r.task_id).filter(Boolean))
+  implResults = [...implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS') && !retryIds.has(r.task_id)), ...retryResults]
   if (b === BLOCK_MAX) {
     const stillBlocked = implResults.filter((r) => r && r.status === 'BLOCKED')
     if (stillBlocked.length) {
