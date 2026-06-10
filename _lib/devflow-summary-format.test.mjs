@@ -779,3 +779,49 @@ test('旧形式「### Security clearance」セクション見出しが出ない'
   const body = buildDevflowSummaryBody({ ...BASE_INPUT });
   assert.ok(!body.includes('### Security clearance'), '旧 Security clearance セクションが出ない');
 });
+
+// ─── 空状態行の直前行が空行であること (GFM テーブル・bullet 崩壊防止) ──────────
+
+test('要対応テーブルあり + securityClearance 空 -> Security clearance 空状態行の直前行が空行', () => {
+  // ケース(a): HOLD + danger clean の典型。unchecked blocking item あり（テーブル行末）、
+  // acResults は非空（AC 空状態行は出ない）、securityClearance のみ空（clearance 空状態行が出る）。
+  // 要対応テーブルの最終行（| ... |）直後に空行なしで空状態行が push されると
+  // GFM がテーブル行として吸収し壊れる。直前行が空行であることを assert する。
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['blocking item unresolved'],
+    blockingItems: [
+      { id: 'B1', text: 'unresolved item', severity: 'critical', checked: false, dimension: 'security' },
+    ],
+    acResults: [
+      { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
+    ],
+    securityClearance: undefined,
+  });
+  const lines = body.split('\n');
+  const secIdx = lines.findIndex(l => l.includes('Security clearance: danger-grep clean'));
+  assert.ok(secIdx >= 0, 'Security clearance 空状態行が存在する');
+  assert.equal(lines[secIdx - 1], '', `Security clearance 空状態行の直前行（index ${secIdx - 1}）が空行`);
+});
+
+test('planConcerns あり + acResults 空 -> AC 空状態行の直前行が空行', () => {
+  // ケース(b): planConcerns が要対応セクションの最後の場合。
+  // blockingItems は非空（Goal Ledger 空状態行は出ない）、securityClearance は非空（clearance 空状態行は出ない）。
+  // "- concern A" 直後に空行なしで AC 空状態行が push されると
+  // GFM の lazy continuation で bullet 内に視覚的に併合される。
+  // 直前行が空行であることを assert する。
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [
+      { id: 'B1', text: 'unresolved', severity: 'critical', checked: false, dimension: 'security' },
+    ],
+    planConcerns: ['concern A'],
+    acResults: undefined,
+    securityClearance: [{ danger_class: 'SQL_INJECTION', cleared: true, evidence: 'ok' }],
+  });
+  const lines = body.split('\n');
+  const acIdx = lines.findIndex(l => l.includes('Acceptance Criteria: AC 判定なし'));
+  assert.ok(acIdx >= 0, 'AC 空状態行が存在する');
+  assert.equal(lines[acIdx - 1], '', `AC 空状態行の直前行（index ${acIdx - 1}）が空行`);
+});

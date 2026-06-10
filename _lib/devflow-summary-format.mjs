@@ -206,6 +206,10 @@ export function buildDevflowSummaryBody({
   }
 
   // 8. 空状態の常時可視行
+  // 直前コンテンツ（テーブル行 / bullet）との間に必ず空行を挿入する。
+  // GFM はテーブル終端行を空行で判定し、bullet も lazy continuation で吸収するため
+  // 空行なしで push するとテーブル壊れ・bullet 併合が起きる（AC-2 実効性を損なう）。
+  if (lines[lines.length - 1] !== '') lines.push('');
   if (blockArr.length === 0 && advArr.length === 0) {
     lines.push('Goal Ledger: item なし');
   }
