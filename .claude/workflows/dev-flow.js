@@ -14,6 +14,11 @@ export const meta = {
   ],
 }
 
+// ---- 品質ゲート系 agent（dev-planner / plan-reviewer / evaluator）の model override ----
+// frontmatter 既定は opus。Fable 5 試験運用中は 'fable' を指定し、戻すときはこの 1 行を 'opus' にする。
+// effort は agent() opts に存在しないため引き続き frontmatter（high）固定。pr-reviewer は pr-iterate.js 側の同名定数。
+const QUALITY_MODEL = 'fable'
+
 function resolvePositiveIntArg(args, name) {
   const raw = (typeof args === 'string' || typeof args === 'number')
     ? args
@@ -757,7 +762,7 @@ if (TRIVIAL) {
     + `requirements: ${JSON.stringify(req)}\n`
     + `testing: ${TESTING}\n`
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
-    { agentType: 'dev-planner', schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
+    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
   ), 'Plan(planner#trivial)')
   plan = applyDisjoint(plan, 'plan#trivial')
   log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
@@ -767,7 +772,7 @@ if (TRIVIAL) {
     + `requirements: ${JSON.stringify(req)}\n`
     + `testing: ${TESTING}\n`
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
-    { agentType: 'dev-planner', schema: PLAN, label: 'plan#standard', phase: 'Plan' },
+    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#standard', phase: 'Plan' },
   ), 'Plan(planner#standard)')
   plan = applyDisjoint(plan, 'plan#standard')
   log('standard 経路: plan 1発（plan-reviewer 0 回起動）')
@@ -783,7 +788,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
           + `同じ topic が繰り返し残るなら同じ直し方をやめてアプローチを変えよ）:\n${JSON.stringify(prior)}\n`
         : '')
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
-    { agentType: 'dev-planner', schema: PLAN, label: `plan#${i}`, phase: 'Plan' },
+    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `plan#${i}`, phase: 'Plan' },
   ), `Plan(planner#${i})`)
   plan = applyDisjoint(plan, `plan#${i}`)
   const rev = need(await agent(
@@ -795,7 +800,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
           + `**新規の critical/major のみ報告**せよ。既出論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
           + `同一問題には既出と同じ topic 文字列を再利用せよ。`
         : ''),
-    { agentType: 'plan-reviewer', schema: VERDICT, label: `review#${i}`, phase: 'Plan' },
+    { agentType: 'plan-reviewer', model: QUALITY_MODEL, schema: VERDICT, label: `review#${i}`, phase: 'Plan' },
   ), `Plan(reviewer#${i})`)
   planVerdict = rev
 
@@ -848,7 +853,7 @@ for (let b = 1; b <= BLOCK_MAX; b++) {
     + `requirements: ${JSON.stringify(req)}\n`
     + `現計画: ${JSON.stringify(plan)}\n`
     + `approach_mismatch findings:\n${JSON.stringify(blockFindings)}`,
-    { agentType: 'dev-planner', schema: PLAN, label: `replan-blocked#${b}`, phase: 'Implement' },
+    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan-blocked#${b}`, phase: 'Implement' },
   ), `Implement(replan#${b})`)
   plan = applyDisjoint(plan, `replan-blocked#${b}`)
   implResults = await runImplement(plan, null, `reimpl-blocked#${b}`)
@@ -1016,7 +1021,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
           + `**新規の critical/major のみ報告**せよ。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
           + `同一問題には既出と同じ topic 文字列を再利用せよ（orchestrator が topic で stuck を突合する）。\n`
         : ''),
-    { agentType: 'evaluator', schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
+    { agentType: 'evaluator', model: QUALITY_MODEL, schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
   ), `Evaluate(eval#${i})`)
   evalResult = ev
   unsatisfiedAc = (ev.ac_results ?? []).some((r) => r && r.satisfied === false)
@@ -1118,7 +1123,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       + `requirements: ${JSON.stringify(req)}\n`
       + `現計画: ${JSON.stringify(plan)}\n`
       + `evaluator feedback: ${JSON.stringify(ev.feedback)}`,
-      { agentType: 'dev-planner', schema: PLAN, label: `replan#${i}`, phase: 'Evaluate' },
+      { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan#${i}`, phase: 'Evaluate' },
     ), `Evaluate(replan#${i})`)
     plan = applyDisjoint(plan, `replan#${i}`)
     await runImplement(plan, ev.feedback, `reimpl#${i}`)
