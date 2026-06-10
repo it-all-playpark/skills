@@ -1054,7 +1054,7 @@ for (const seed of seedSecurityLedger()) {
 const risk = need(await agent(
   `cd ${WT} で作業。次を実行し **stdout の JSON 配列をそのまま** \`{"hits": <配列>}\` に包んで返せ`
   + `（判定や脚色をしない。空配列なら hits:[]）:\n`
-  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh --working-tree origin/${BASE}`,
   { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
 ), 'Security floor(danger-grep)')
 const dangerHits = [...new Set((risk.hits ?? []).map((h) => h.class))]
@@ -1065,11 +1065,11 @@ log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'}
 // realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
 // ?? [] は取得失敗と空 diff（正常な 0 ファイル）を同じ 0 に潰すため使わない。
 // 注: この時点で implementer はコミットしていない（git add / commit 禁止）ため、
-//     三点 diff（origin/${BASE}...HEAD）は HEAD==origin/BASE で空を返す。
-//     代わりに git status --porcelain でステージ済み・未ステージを含む作業ツリー変更を取得する
-//     （declared-path-check と同方式）。
+//     --working-tree モード（worktree 変更を merge-base 基点の二点 diff + untracked -uall で分類）
+//     を使う。commit 後の三点 diff（origin/${BASE}...HEAD）は HEAD==origin/BASE で空を返すため
+//     Merge tier 側はフラグなしのまま（通常の三点 diff が正しい）。
 const realized = await agent(
-  `cd ${WT} で作業。\`git -C ${WT} status --porcelain\` を実行し、`
+  `cd ${WT} で作業。\`git -C ${WT} status --porcelain --untracked-files=all\` を実行し、`
   + `変更ファイル一覧を取得せよ（ステージ済み・未ステージどちらも含む）。`
   + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
   + `リネームは -> の右側（新ファイル名）を使え。空白行は除く。`
@@ -1093,7 +1093,7 @@ if (TRIVIAL && dangerHits.length > 0) {
 {
   const planAllTasks = [...(plan.serial ?? []), ...(plan.parallel ?? [])]
   const gitStat = await agent(
-    `cd ${WT} で作業。\`git -C ${WT} status --porcelain\` を実行し、`
+    `cd ${WT} で作業。\`git -C ${WT} status --porcelain --untracked-files=all\` を実行し、`
     + `変更ファイル一覧を取得せよ（ステージ・未ステージどちらも含む）。`
     + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
     + `リネームは -> の右側（新ファイル名）を使え。空白行は除く。`
