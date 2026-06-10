@@ -84,6 +84,7 @@ export function classifyMergeTier(s) {
   if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
   if (s.breaking) reasons.push('breaking/migration 検出');
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
+  if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (reasons.length) return { tier: 'HOLD', reasons };
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     return { tier: 'AUTO', reasons: ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'] };
