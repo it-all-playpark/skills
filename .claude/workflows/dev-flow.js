@@ -491,6 +491,9 @@ const POST_RESULT = {
   },
 }
 
+// JOURNAL_RESULT schema（dev-runner-haiku 経由の journal.sh log 記録結果）
+const JOURNAL_RESULT = { type: 'object', required: ['logged'], properties: { logged: { type: 'boolean' }, summary: { type: 'string' } } }
+
 function buildDevflowSummaryBody({
   pr,
   mergeTier,
@@ -898,6 +901,7 @@ let plan = null
 let planVerdict = null
 const planSeen = {}        // topic → { finding, count }（findings 累積 & stuck 検出。issue #123）
 let planConcerns = []      // 収束時に残った未解消 findings（Evaluate の focus_areas へ）
+let planIters = 0            // plan iteration カウンタ（telemetry 用）
 if (TRIVIAL) {
   plan = need(await agent(
     `cd ${WT} で作業。issue 要件に基づき実装計画を立てよ。\n`
@@ -907,6 +911,7 @@ if (TRIVIAL) {
     { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
   ), 'Plan(planner#trivial)')
   plan = applyDisjoint(plan, 'plan#trivial')
+  planIters = 1
   log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
 } else if (PLAN_SOLO) {
   plan = need(await agent(
@@ -917,9 +922,11 @@ if (TRIVIAL) {
     { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#standard', phase: 'Plan' },
   ), 'Plan(planner#standard)')
   plan = applyDisjoint(plan, 'plan#standard')
+  planIters = 1
   log('standard 経路: plan 1発（plan-reviewer 0 回起動）')
 } else {
 for (let i = 1; i <= PLAN_MAX; i++) {
+  planIters = i
   const prior = Object.values(planSeen).map((s) => s.finding)   // 前 iteration までの累積 findings
   plan = need(await agent(
     `cd ${WT} で作業。issue 要件と${prior.length ? 'レビュー指摘' : '初回計画'}に基づき実装計画を立てよ。\n`
@@ -1125,6 +1132,7 @@ if (TRIVIAL && dangerHits.length > 0) {
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
 // ============================================================
 let evalResult = null
+let evalIters = 0            // eval iteration カウンタ（telemetry 用）
 let unsatisfiedAc = false
 if (runEval) {
 phase('Evaluate')
@@ -1146,6 +1154,7 @@ for (const [i, c] of concerns.entries()) {
 log(`ledger 初期化: blocking ${blockingItems(ledger).length} / advisory ${advisoryItems(ledger).length} 件`)
 const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & stuck 検出。issue #125）
 for (let i = 1; i <= EVAL_PASSES; i++) {
+  evalIters = i
   const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
@@ -1371,6 +1380,40 @@ const summaryPost = await agent(
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
 }
+
+// ============================================================
+// journal-log: dev-flow 完走の telemetry を journal.sh log に記録する（W6）。
+// 失敗は log 警告のみで workflow は継続（telemetry 欠損 > ワークフロー中断）。
+// need() で包まない — null 容認が必須。
+// ============================================================
+const journalCmd = [
+  `bash ${WT}/skill-retrospective/scripts/journal.sh log dev-flow success`,
+  `--issue ${ISSUE}`,
+  `--merge-tier ${mergeTier.tier}`,
+  `--gate-policy ${GATE_POLICY}`,
+  `--danger-hits '${JSON.stringify(dangerHitsFinal)}'`,
+  `--shape ${EFFECTIVE_SHAPE}`,
+  `--shape-refloored ${refloor.refloored}`,
+  `--plan-iter ${planIters}`,
+  `--eval-iter ${evalIters}`,
+  ...(evalResult?.verdict ? [`--eval-verdict ${evalResult.verdict}`] : []),
+  ...(iterate?.status ? [`--iterate-status ${iterate.status}`] : []),
+].join(' ')
+const journalPost = await agent(
+  `## Objective\ndev-flow 完走の telemetry を journal に記録する。\n\n`
+  + `## Instructions\n`
+  + `次のコマンドをそのまま実行せよ: \`${journalCmd}\`\n`
+  + `exit 0 なら logged:true、失敗しても throw せず logged:false を返すこと。\n`
+  + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
+  + `\n## Tools\n使用可: Bash のみ\n`
+  + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
+  + `\n## Token cap\n100 語以内で完結すること。`,
+  { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Merge tier' },
+)
+if (!journalPost?.logged) {
+  log(`⚠️ journal-log の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
+}
+
 
 
 return {
