@@ -1,10 +1,8 @@
 // enforceDisjointParallel: parallel task の file_changes 衝突を検出し、衝突 task を serial に降格する純粋関数。
 // dev-flow の parallel fan-out 前に呼び出し、file-disjoint 制約を保証する。
 //
-// INLINE COPY POLICY: .claude/workflows/dev-flow.js は dynamic workflow ローダーが
-// 独自 VM で評価し ESM import 不可のため enforceDisjointParallel と normalizePath を
-// inline コピーしている。修正時は dev-flow.js の inline コピーも同期。
-// byte 一致は _lib/parallel-disjoint.sync.test.mjs が保証する。
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 /**
  * normalizePath: file_changes エントリを正規化したパス文字列に変換する。

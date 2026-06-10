@@ -8,10 +8,8 @@
 // BLOCKING lane = 決定論 oracle 付き OR LLM critical OR seeded mandatory。それ以外は ADVISORY。
 // 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
 //
-// INLINE COPY POLICY: .claude/workflows/dev-flow.js は dynamic workflow ローダーが独自 VM で
-// 評価し ESM import を使えないため、本モジュールの関数群を inline コピーしている。
-// _lib/goal-ledger.sync.test.mjs がその byte 一致を CI で保証する。
-// 本モジュールを修正する際は dev-flow.js の inline コピーも必ず同期すること。
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
 
