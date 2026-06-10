@@ -789,6 +789,18 @@ const EVAL = {
         },
       },
     },
+    critical_resolutions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'resolved'],
+        properties: {
+          id: { type: 'string' },
+          resolved: { type: 'boolean' },
+          evidence: { type: 'string' },
+        },
+      },
+    },
   },
 }
 const RG = {
@@ -1218,6 +1230,7 @@ if (TRIVIAL && greenFixCount > 0) {
 // stuck かつ design 反復なら早期打ち切り（コスト保護）/ critical は常にブロック /
 // stuck・上限到達でも throw せず現状で PR へ進む（human review 委譲）。
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
+// 収束は isConvergedUnderPolicy のみで判定し ev.verdict は参照しない（issue #174）。
 // ============================================================
 let evalResult = null
 let evalIters = 0            // eval iteration カウンタ（telemetry 用）
@@ -1244,11 +1257,18 @@ const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & 
 for (let i = 1; i <= EVAL_PASSES; i++) {
   evalIters = i
   const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
+  // critical_resolutions の操作的契約は本 prompt が唯一の source of truth（issue #174）。
+  // .claude/agents/ は sandbox deny 対象（.claude/skills / .claude/hooks と同様に write 禁止。
+  // 実測確認済: touch .claude/agents/test.tmp → EPERM）のため workflow からは編集不可。
+  // evaluator.md の同期文言（critical_resolutions 契約）は human 編集が必要（follow-up issue 推奨）。
+  // 契約文面は EVAL schema と同居するここで管理し、_lib/eval-convergence.test.mjs の contract test が pin する。
+  const openEvalCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
     + `\`git diff $(git merge-base HEAD origin/${BASE})..HEAD\` で実 diff を確認し、テストを実際に走らせる）。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
+    + `収束判定は ledger（isConvergedUnderPolicy: critical/AC/SEC の解消状況）のみで行われ、verdict は収束判定に使われない（log/telemetry 表示用。issue #174）。fail を引き延ばすための新規 minor/major の捻出は不要。\n`
     + ((i === 1 && concerns.length) ? `focus_areas（重点監査せよ。implementer の自己申告した弱点/未解消BLOCKED）:\n${JSON.stringify(concerns)}\n` : '')
     + (dangerHits.length
         ? `security_focus（danger-grep が realized diff で検出した危険クラス。各クラスの変更が安全かを判定し `
@@ -1257,8 +1277,11 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
         : '')
     + (priorFeedback.length
         ? `既出 feedback（前 iteration までに指摘済み。implementer/planner は対応済みのはず）:\n${JSON.stringify(priorFeedback)}\n`
-          + `**新規の critical/major のみ報告**せよ。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
+          + `**新規の critical/major のみ報告**せよ（既出 critical の解消状況は feedback ではなく critical_resolutions で返す）。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
           + `同一問題には既出と同じ topic 文字列を再利用せよ（orchestrator が topic で stuck を突合する）。\n`
+        : '')
+    + (openEvalCriticals.length
+        ? `未解消 critical 一覧（各 item を実コードで再検証し、critical_resolutions:[{id, resolved, evidence}] で**全件**判定して返せ。resolved:true は具体的 evidence 必須。未解消なら resolved:false。feedback[] への再報告は不要 — critical_resolutions が解消判定の唯一の経路）:\n${JSON.stringify(openEvalCriticals)}\n`
         : ''),
     { agentType: 'evaluator', model: QUALITY_MODEL, schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
   ), `Evaluate(eval#${i})`)
@@ -1286,14 +1309,16 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       ledger = r.ledger
     }
   }
-  // 現 iteration の feedback に無くなった critical ledger item は解消とみなし checkItem(収束を妨げない)
-  const liveCriticalKeys = new Set(
-    (ev.feedback ?? []).filter((f) => f && typeof f === 'object' && f.severity === 'critical')
-      .map((f) => topicKey({ dimension: f.dimension ?? 'eval', text: feedbackTopic(f) })))
-  for (const it of ledger.items) {
-    if (it.source === 'evaluator' && it.severity === 'critical' && !it.checked
-        && !liveCriticalKeys.has(topicKey(it))) {
-      ledger = checkItem(ledger, it.id, '現 iteration で未報告=解消')
+  // 未解消 EVAL-* critical は evaluator の critical_resolutions（resolve-with-evidence）でのみ解消する。
+  // 沈黙＝解消の自動 checkItem は廃止（issue #174。「新規のみ報告」指示と矛盾し偽解消を生むため）。
+  for (const cr of (ev.critical_resolutions ?? [])) {
+    if (!cr || typeof cr.id !== 'string') continue
+    const item = ledger.items.find((it) => it.id === cr.id
+      && it.source === 'evaluator' && it.severity === 'critical' && !it.checked)
+    if (!item) continue   // 不明 id / SEC・AC 等の他経路 item / 既 checked は無視
+    if (cr.resolved === true && typeof cr.evidence === 'string' && cr.evidence.length > 0) {
+      ledger = checkItem(ledger, cr.id, `critical resolved: ${cr.evidence}`)
+      log(`${cr.id}: evaluator が解消確認 → checked`)
     }
   }
   // W4: evaluator の per-AC 判定を ledger に反映。test 実証できる AC は red→green を
@@ -1336,8 +1361,8 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   log(`ledger: blocking ${blockingItems(ledger).filter((it) => !it.checked).length} 件未 checked / `
     + `converged(observe)=${isConvergedUnderPolicy(ledger, GATE_POLICY)}`)
 
-  if (isConvergedUnderPolicy(ledger, GATE_POLICY) && ev.verdict === 'pass') {
-    log(`evaluate 収束（ledger 全 blocking checked + verdict pass, iter ${i}）— PR へ進む`)
+  if (isConvergedUnderPolicy(ledger, GATE_POLICY)) {
+    log(`evaluate 収束（ledger 全 blocking checked, iter ${i}, verdict=${ev.verdict}）— PR へ進む`)
     break
   }
   // critical は常にブロック。critical が無く design パスが stuck したら早期打ち切り（replan+reimpl の
@@ -1356,12 +1381,18 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     log('standard 経路: 1 パス評価のみ（差し戻しなし仕様）。未解消 critical があれば merge tier HOLD + human review で担保')
     break
   }
+  // iteration i+1 に渡すために open な EVAL-* critical を再取得する（critical_resolutions で
+  // 解消済みのものは checked になっているため、ここで取得するのは真に未解消のもののみ）。
+  const nextOpenCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
   if (ev.feedback_level === 'design') {
     plan = need(await agent(
       `cd ${WT} で作業。evaluator が設計レベルの問題を指摘した。計画を revise せよ。\n`
       + `requirements: ${JSON.stringify(req)}\n`
       + `現計画: ${JSON.stringify(plan)}\n`
-      + `evaluator feedback: ${JSON.stringify(ev.feedback)}`,
+      + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
+      + (nextOpenCriticals.length
+          ? `未解消 critical（最優先で解消せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
+          : ''),
       { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan#${i}`, phase: 'Evaluate' },
     ), `Evaluate(replan#${i})`)
     plan = applyDisjoint(plan, `replan#${i}`)
@@ -1370,7 +1401,10 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     await agent(
       `cd ${WT} で作業（Bash ごとに先頭で cd すること）。evaluator が実装レベルの問題を指摘した。`
       + `既存計画のまま修正せよ。無関係ファイルは触るな。git add / commit はするな。\n`
-      + `evaluator feedback: ${JSON.stringify(ev.feedback)}`,
+      + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
+      + (nextOpenCriticals.length
+          ? `未解消 critical（最優先で修正せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
+          : ''),
       { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
   }
 }

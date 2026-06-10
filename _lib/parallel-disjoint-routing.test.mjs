@@ -337,13 +337,13 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
           verdict: 'fail',
           total: 40,
           threshold: 80,
-          feedback: [{ severity: 'major', dimension: 'design', topic: 'arch', description: 'redesign needed', suggestion: 'fix it' }],
+          feedback: [{ severity: 'critical', dimension: 'design', topic: 'arch', description: 'redesign needed', suggestion: 'fix it' }],
           feedback_level: 'design',
           ac_results: [],
           security_clearance: [],
         };
       }
-      // 2 回目以降: pass
+      // 2 回目以降: pass。critical_resolutions で EVAL-1-arch を解消する（issue #174 新設計）。
       return {
         verdict: 'pass',
         total: 90,
@@ -352,6 +352,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
         feedback_level: 'implementation',
         ac_results: [],
         security_clearance: [],
+        critical_resolutions: [{ id: 'EVAL-1-arch', resolved: true, evidence: 'arch issue fixed: redesign implemented and verified' }],
       };
     }
     if (label.startsWith('pr')) {
@@ -406,10 +407,11 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     `dev-flow.js が予期せずエラーで終了: ${err}`,
   );
 
-  // evaluator が少なくとも 2 回呼ばれること（design replan 経路が発火したことの確認）
-  assert.ok(
-    evaluatorCallCount >= 2,
-    `evaluator が 2 回以上呼ばれるべき（design replan 経路確認）。実際: ${evaluatorCallCount} 回`,
+  // evaluator がちょうど 2 回呼ばれること（design replan → 解消 → 2 回で収束）
+  assert.equal(
+    evaluatorCallCount,
+    2,
+    `evaluator は 2 回で収束するべき（design replan → critical_resolutions 解消）。実際: ${evaluatorCallCount} 回`,
   );
 
   const implCalls = calls.filter((c) => c.agentType === 'implementer');
