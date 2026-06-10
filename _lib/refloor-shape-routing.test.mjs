@@ -277,7 +277,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
           security_clearance: [],
         };
       }
-      // 2 回目以降: pass
+      // 2 回目以降: pass。critical_resolutions で EVAL-1-test-issue を解消する（issue #174 新設計）。
       return {
         verdict: 'pass',
         total: 100,
@@ -286,6 +286,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
         feedback_level: 'implementation',
         ac_results: [],
         security_clearance: [],
+        critical_resolutions: [{ id: 'EVAL-1-test-issue', resolved: true, evidence: 'test-issue fixed and verified in tests' }],
       };
     }
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
@@ -329,9 +330,10 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  assert.ok(
-    evaluatorCallCount >= 2,
-    `(B) standard + realized 6 files: evaluator は >= 2 回呼ばれるべきだが ${evaluatorCallCount} 回`
+  assert.equal(
+    evaluatorCallCount,
+    2,
+    `(B) standard + realized 6 files: evaluator は 2 回で収束すべきだが ${evaluatorCallCount} 回`
       + ` (realized-diff 6 ファイル → re-floor → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX → 差し戻しループ可能)`,
   );
 });

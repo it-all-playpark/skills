@@ -1170,7 +1170,9 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   evalIters = i
   const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
   // critical_resolutions の操作的契約は本 prompt が唯一の source of truth（issue #174）。
-  // .claude/agents/evaluator.md は sandbox 保護（agent 自己改変防止）で workflow からは編集不可のため、
+  // .claude/agents/ は sandbox deny 対象（.claude/skills / .claude/hooks と同様に write 禁止。
+  // 実測確認済: touch .claude/agents/test.tmp → EPERM）のため workflow からは編集不可。
+  // evaluator.md の同期文言（critical_resolutions 契約）は human 編集が必要（follow-up issue 推奨）。
   // 契約文面は EVAL schema と同居するここで管理し、_lib/eval-convergence.test.mjs の contract test が pin する。
   const openEvalCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
   const ev = need(await agent(
@@ -1291,12 +1293,18 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     log('standard 経路: 1 パス評価のみ（差し戻しなし仕様）。未解消 critical があれば merge tier HOLD + human review で担保')
     break
   }
+  // iteration i+1 に渡すために open な EVAL-* critical を再取得する（critical_resolutions で
+  // 解消済みのものは checked になっているため、ここで取得するのは真に未解消のもののみ）。
+  const nextOpenCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
   if (ev.feedback_level === 'design') {
     plan = need(await agent(
       `cd ${WT} で作業。evaluator が設計レベルの問題を指摘した。計画を revise せよ。\n`
       + `requirements: ${JSON.stringify(req)}\n`
       + `現計画: ${JSON.stringify(plan)}\n`
-      + `evaluator feedback: ${JSON.stringify(ev.feedback)}`,
+      + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
+      + (nextOpenCriticals.length
+          ? `未解消 critical（最優先で解消せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
+          : ''),
       { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan#${i}`, phase: 'Evaluate' },
     ), `Evaluate(replan#${i})`)
     plan = applyDisjoint(plan, `replan#${i}`)
@@ -1305,7 +1313,10 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     await agent(
       `cd ${WT} で作業（Bash ごとに先頭で cd すること）。evaluator が実装レベルの問題を指摘した。`
       + `既存計画のまま修正せよ。無関係ファイルは触るな。git add / commit はするな。\n`
-      + `evaluator feedback: ${JSON.stringify(ev.feedback)}`,
+      + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
+      + (nextOpenCriticals.length
+          ? `未解消 critical（最優先で修正せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
+          : ''),
       { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
   }
 }
