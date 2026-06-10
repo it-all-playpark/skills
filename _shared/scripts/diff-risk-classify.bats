@@ -590,3 +590,50 @@ teardown() {
     [[ "$output" == *'"class":"exec-sink"'* ]]
     printf '%s\n' "$output" | jq -e '[.[] | select(.class == "exec-sink")] | length > 0'
 }
+
+# ---------------------------------------------------------------------------
+# [TOOLS-1] tools 緩和: tools/ 配下の export function は public-api に hit しない
+# AC: tools/ は repo 内部の generator/dev CLI 置き場で外部 consumer 不在のため
+#     public-api critical の構造的 false positive を除外する
+# ---------------------------------------------------------------------------
+@test "TOOLS-1 tools 緩和: tools/ 配下の export function -> public-api が含まれない" {
+    mkdir -p "$REPO/tools"
+    printf 'export function buildConfig(opts) {\n  return opts;\n}\n' \
+        > "$REPO/tools/gen-config.mjs"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length == 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TOOLS-2] tools 緩和の狭さ: tools/ 配下でも exec-sink は hit する
+# 緩和は public-api クラス限定であることを pin
+# ---------------------------------------------------------------------------
+@test "TOOLS-2 tools 緩和の狭さ: tools/ 配下の child_process+spawn -> exec-sink は hit する (緩和は public-api 限定)" {
+    mkdir -p "$REPO/tools"
+    printf 'const { spawn } = require("child_process");\nspawn("ls");\n' \
+        > "$REPO/tools/runner.mjs"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "exec-sink")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TOOLS-3] tools 緩和の narrow ガード: mytools/ は除外されない
+# (^|/)tools/ が mytools/ にはマッチしない = 除外が narrow であることを pin
+# ---------------------------------------------------------------------------
+@test "TOOLS-3 tools 緩和の narrow ガード: mytools/ 配下の export function -> public-api に hit する" {
+    mkdir -p "$REPO/mytools"
+    printf 'export function publicApi() {}\n' \
+        > "$REPO/mytools/api.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+}
