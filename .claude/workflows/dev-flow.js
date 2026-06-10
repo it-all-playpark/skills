@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow',
-  description: 'Issue から LGTM まで: 分析→計画(レビュー上限20)→実装(並列/直列)→test green→評価(差し戻し上限10)→PR→pr-iterate。merge は手動',
+  description: 'Issue から LGTM まで: 分析(shape判定)→計画→実装(並列/直列)→test green→評価→merge tier→PR→pr-iterate。micro/standard/complex で plan-review・evaluate の深さを切替(complex: plan上限8/eval上限10)。merge は手動',
   phases: [
     { title: 'Setup' },
     { title: 'Analyze' },

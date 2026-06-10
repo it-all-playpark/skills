@@ -3,6 +3,7 @@
 - 作成: 2026-05-31
 - branch: `worktree-dev-flow-workflow-rewrite`
 - 確定方針: **child-split 廃止 / ループ上限 plan 20・impl 10 / Claude 専用 (workflow 依存)**
+- 注: 本文中のループ上限値は設計当時のもの。現行実装は PLAN_MAX=8 / EVAL_MAX=10 + shape (micro/standard/complex) 別の経路切替（AGENTS.md 参照）
 
 ## 0. 目的
 
@@ -14,7 +15,7 @@ dev-flow family の本質（下記 9 段階）だけを残し、`skill が中間
 |---|------|----------------|------|
 | 1 | issue 確認 | `Analyze` | agent (dev-issue-analyze 相当) |
 | 2 | 実装計画 + 並列/直列分解 | `Plan` | agent `dev-planner` が `{serial:[], parallel:[]}` を返す |
-| 3 | 計画レビュー→指摘→OK まで **(上限20)** | `Plan` 内 while | `dev-planner` ⇄ `plan-reviewer` ループ |
+| 3 | 計画レビュー→指摘→OK まで **(上限 PLAN_MAX、設計当初 20 → 現行 8)** | `Plan` 内 while | `dev-planner` ⇄ `plan-reviewer` ループ |
 | 4 | 必要ならテスト実装 | `Implement` | implementer に `--testing tdd/bdd` 指示 |
 | 5 | 実装（並列/直列） | `Implement` | `parallel()` + 直列 for |
 | 6 | テスト/format/lint green | `Validate` | agent が test + lint + format を実行、exit 0 確認 |
@@ -135,7 +136,7 @@ const ISSUE = args.issue, BASE = args.base ?? 'dev', TESTING = args.testing ?? '
 phase('Analyze')
 const req = await agent(`issue #${ISSUE} を分析し受入条件を抽出`, { schema: REQ })
 
-// 2-3. Plan（計画 ⇄ レビュー、上限20）
+// 2-3. Plan（計画 ⇄ レビュー、上限 PLAN_MAX。設計当初 20 → 現行 8）
 phase('Plan')
 let plan, feedback = null
 for (let i = 1; i <= 20; i++) {
