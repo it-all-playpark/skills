@@ -67,3 +67,39 @@ export function classifyShape(req) {
   }
   return { shape, reason };
 }
+
+/**
+ * refloorShape: realized diff のファイル数から shape を raise-only で調整する純粋関数。
+ *
+ * realized diff には AC 情報が無いため、file count のみで floor を引く
+ * (classifyShape と同じ境界値 count<=2/count<=5 を使用)。
+ * estimatedShape より大きい floor が得られた場合のみ上書きする (raise-only)。
+ *
+ * INLINE COPY POLICY: dev-flow.js に本関数を inline コピーし
+ * triviality.sync.test.mjs が byte 一致を保証する。
+ * 修正時は両方同期すること。
+ *
+ * @param {string} estimatedShape - 計画時に決定した shape ('micro'|'standard'|'complex')
+ * @param {number} realizedCount - realized diff の実ファイル数 (整数)
+ * @returns {{ shape: string, refloored: boolean, realizedFloor: string, realizedCount: number }}
+ */
+export function refloorShape(estimatedShape, realizedCount) {
+  let realizedFloor;
+  if (typeof realizedCount !== 'number' || realizedCount < 0 || !Number.isFinite(realizedCount)) {
+    realizedFloor = 'complex';
+  } else if (realizedCount <= 2) {
+    realizedFloor = 'micro';
+  } else if (realizedCount <= 5) {
+    realizedFloor = 'standard';
+  } else {
+    realizedFloor = 'complex';
+  }
+
+  const effective = SHAPE_RANK[realizedFloor] > SHAPE_RANK[estimatedShape] ? realizedFloor : estimatedShape;
+  return {
+    shape: effective,
+    refloored: effective !== estimatedShape,
+    realizedFloor,
+    realizedCount,
+  };
+}
