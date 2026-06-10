@@ -327,6 +327,126 @@ function classifyShape(req) {
   }
   return { shape, reason };
 }
+// ---- parallel-disjoint エンジン (canonical: _lib/parallel-disjoint.mjs。修正時は両者を同期。byte 一致は _lib/parallel-disjoint.sync.test.mjs が保証) ----
+/**
+ * normalizePath: file_changes エントリを正規化したパス文字列に変換する。
+ * - ':' で分割した先頭要素を取る（'src/foo.ts: 新規作成' → 'src/foo.ts'）
+ * - trim して先頭の './' を1回除去する（'./src/foo.ts' → 'src/foo.ts'、'  src/bar.ts  ' → 'src/bar.ts'）
+ *
+ * @param {string} s - file_changes の1エントリ
+ * @returns {string} 正規化されたパス文字列
+ */
+function normalizePath(s) {
+  const base = s.split(':')[0].trim();
+  return base.startsWith('./') ? base.slice(2) : base;
+}
+
+/**
+ * enforceDisjointParallel: parallel task 群の file_changes が互いに disjoint であることを保証する。
+ * 衝突する task を serial 末尾に降格（demote）して返す。
+ *
+ * @param {Object} plan - { summary, serial: Task[], parallel: Task[] }
+ *   Task = { id, desc?, file_changes?: string[], test_plan?, depends_on? }
+ * @returns {{ plan: Object, demoted: Array<{id, conflictsWith, paths}> }}
+ *   plan: 元 plan を mutate せず浅いコピーしたもの（parallel = accepted のみ、serial = 元 serial + demoted）
+ *   demoted: 降格した task の { id, conflictsWith: 先に accept された衝突相手の id, paths: 交差パス配列 } の配列
+ */
+function enforceDisjointParallel(plan) {
+  const parallelTasks = plan.parallel;
+
+  // parallel が無い/空の場合はコピーして即返す
+  if (!parallelTasks || parallelTasks.length === 0) {
+    return {
+      plan: { ...plan, parallel: parallelTasks ? [] : plan.parallel },
+      demoted: [],
+    };
+  }
+
+  // accepted task 群の正規化パス和集合（パス → 最初に accept した task id のマップ）
+  const acceptedPaths = new Map(); // normalizedPath → task id
+  const accepted = [];
+  const demotedTasks = [];
+  const demoted = [];
+
+  for (const task of parallelTasks) {
+    const taskPaths = new Set(
+      (task.file_changes ?? []).map(normalizePath)
+    );
+
+    // 先行 accepted task 群との交差を検出
+    const intersectingPaths = [];
+    let firstConflictId = null;
+
+    for (const p of taskPaths) {
+      if (acceptedPaths.has(p)) {
+        intersectingPaths.push(p);
+        if (firstConflictId === null) {
+          firstConflictId = acceptedPaths.get(p);
+        }
+      }
+    }
+
+    if (intersectingPaths.length > 0) {
+      // 衝突あり → demote
+      demotedTasks.push(task);
+      demoted.push({
+        id: task.id,
+        conflictsWith: firstConflictId,
+        paths: intersectingPaths,
+      });
+    } else {
+      // 衝突なし → accept し、パスを登録
+      accepted.push(task);
+      for (const p of taskPaths) {
+        acceptedPaths.set(p, task.id);
+      }
+    }
+  }
+
+  const newPlan = {
+    ...plan,
+    parallel: accepted,
+    serial: [...(plan.serial ?? []), ...demotedTasks],
+  };
+
+  return { plan: newPlan, demoted };
+}
+
+/**
+ * diffDeclaredPaths: plan の全 task の file_changes と git status の変更ファイルを突合し、
+ * 宣言外の変更ファイルパスの配列を返す純粋関数。
+ *
+ * normalizePath を共用して表記ゆれを正規化する。
+ * @param {Array<{id: string, file_changes?: string[]}>} planTasks - serial + parallel の全 task 配列
+ * @param {string[]} changedFiles - git status --porcelain の変更ファイル一覧
+ * @returns {string[]} 宣言外変更ファイルパスの配列
+ */
+function diffDeclaredPaths(planTasks, changedFiles) {
+  // plan の全 task の file_changes を正規化した宣言パス集合を構築
+  const declaredSet = new Set();
+  for (const task of planTasks) {
+    for (const fc of (task.file_changes ?? [])) {
+      declaredSet.add(normalizePath(fc));
+    }
+  }
+
+  // changedFiles のうち宣言集合に含まれないものを宣言外として抽出
+  const undeclared = [];
+  for (const f of changedFiles) {
+    const normalized = normalizePath(f);
+    if (!declaredSet.has(normalized)) {
+      undeclared.push(f);
+    }
+  }
+  return undeclared;
+}
+// ---- /parallel-disjoint エンジン ----
+
+function applyDisjoint(p, label) {
+  const { plan: np, demoted } = enforceDisjointParallel(p);
+  if (demoted.length) log(`⚠️ ${label}: file_changes 衝突 ${demoted.length} task を parallel→serial 降格: ${demoted.map((d) => `${d.id}(vs ${d.conflictsWith})`).join(', ')}`);
+  return np;
+}
 
 // ---- args ----
 const ISSUE = resolvePositiveIntArg(args, 'issue')
@@ -619,6 +739,7 @@ if (TRIVIAL) {
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
     { agentType: 'dev-planner', schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
   ), 'Plan(planner#trivial)')
+  plan = applyDisjoint(plan, 'plan#trivial')
   log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
 } else if (PLAN_SOLO) {
   plan = need(await agent(
@@ -628,6 +749,7 @@ if (TRIVIAL) {
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
     { agentType: 'dev-planner', schema: PLAN, label: 'plan#standard', phase: 'Plan' },
   ), 'Plan(planner#standard)')
+  plan = applyDisjoint(plan, 'plan#standard')
   log('standard 経路: plan 1発（plan-reviewer 0 回起動）')
 } else {
 for (let i = 1; i <= PLAN_MAX; i++) {
@@ -643,6 +765,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
     { agentType: 'dev-planner', schema: PLAN, label: `plan#${i}`, phase: 'Plan' },
   ), `Plan(planner#${i})`)
+  plan = applyDisjoint(plan, `plan#${i}`)
   const rev = need(await agent(
     `cd ${WT} で作業。次の実装計画を批判的にレビューせよ（実コードベースに照合）。\n`
     + `requirements: ${JSON.stringify(req)}\n`
@@ -707,6 +830,7 @@ for (let b = 1; b <= BLOCK_MAX; b++) {
     + `approach_mismatch findings:\n${JSON.stringify(blockFindings)}`,
     { agentType: 'dev-planner', schema: PLAN, label: `replan-blocked#${b}`, phase: 'Implement' },
   ), `Implement(replan#${b})`)
+  plan = applyDisjoint(plan, `replan-blocked#${b}`)
   implResults = await runImplement(plan, null, `reimpl-blocked#${b}`)
   if (b === BLOCK_MAX) {
     const stillBlocked = implResults.filter((r) => r && r.status === 'BLOCKED')
@@ -773,6 +897,36 @@ log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'}
 const runEval = !TRIVIAL || dangerHits.length > 0
 if (TRIVIAL && dangerHits.length > 0) {
   log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
+}
+
+// ============================================================
+// Step DeclaredPath check: git status と plan 宣言パスを突合し、
+// 宣言外変更を concerns へ注入する（evaluator focus_areas 経由で重点監査）。
+// ============================================================
+{
+  const planAllTasks = [...(plan.serial ?? []), ...(plan.parallel ?? [])]
+  const gitStat = await agent(
+    `cd ${WT} で作業。\`git -C ${WT} status --porcelain\` を実行し、`
+    + `変更ファイル一覧を取得せよ（ステージ・未ステージどちらも含む）。`
+    + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
+    + `リネームは -> の右側（新ファイル名）を使え。空白行は除く。`
+    + `結果を {"files": ["path1", ...]} 形式で返せ。`,
+    { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'declared-path-check', phase: 'Validate' },
+  )
+  const changedFiles = gitStat?.files ?? []
+  const undeclared = diffDeclaredPaths(planAllTasks, changedFiles)
+  if (undeclared.length > 0) {
+    if (runEval) {
+      for (const p of undeclared) {
+        concerns.push(`宣言外変更: ${p} が plan の file_changes に無い。意図的か確認`)
+      }
+      log(`declared-path-check: 宣言外 ${undeclared.length} 件 → concerns へ注入: ${undeclared.join(', ')}`)
+    } else {
+      log(`declared-path-check(warn): 宣言外 ${undeclared.length} 件だが Evaluate=skip: ${undeclared.join(', ')}`)
+    }
+  } else {
+    log('declared-path-check: 宣言外変更なし（全変更が plan file_changes 内）')
+  }
 }
 
 // ============================================================
