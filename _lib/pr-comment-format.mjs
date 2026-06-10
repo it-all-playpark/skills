@@ -2,12 +2,8 @@
 // レビューコメントおよび終端サマリー markdown を生成する純粋関数。
 // I/O なし、gh なし、Date.now() 非決定性なし。
 //
-// INLINE COPY POLICY: .claude/workflows/pr-iterate.js は Claude Code の
-// dynamic workflow ローダーが独自の VM コンテキストで評価するため、ESM の
-// import 文（`import { buildReviewCommentBody } from '../../_lib/pr-comment-format.mjs'` 等）
-// は使用できない。そのため pr-iterate.js に両関数の本体を inline コピーしており、
-// _lib/pr-comment-format.sync.test.mjs がその byte 一致を CI で保証する。
-// この関数を修正する際は、必ず pr-iterate.js の inline コピーも同期すること。
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const DECISION_LABEL = {
   'approve': '承認 (LGTM)',

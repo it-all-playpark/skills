@@ -3,7 +3,7 @@
 // 背景: PLAN_RELAX_FROM は Plan レビューループの収束緩和を開始する iteration 閾値。
 // 3 → 2 への変更で往復回数を 1 減らす（issue #138）。
 // dev-flow.js は VM コンテキストで評価されるため ESM import 不可。
-// 既存の triviality.sync.test.mjs と同じ静的解析方式でソース文字列を regex 抽出して検証する。
+// ソース文字列を regex 抽出する静的解析方式で検証する。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
