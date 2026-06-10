@@ -1,9 +1,9 @@
 // Sync test: workflow inline コピーが canonical と byte 一致することを保証する。
 //
-// 背景: .claude/workflows/pr-iterate.js は Claude Code の dynamic workflow ローダーが
+// 背景: .claude/workflows/dev-flow.js は Claude Code の dynamic workflow ローダーが
 // 独自の VM コンテキストで評価する。ESM の import 文はそのコンテキストで使用できないため、
-// buildReviewCommentBody / buildTerminalSummaryBody の関数本体を pr-iterate.js に inline
-// コピーしている。このテストはその手動同期の漏れを CI で検出するための安全網である。
+// mdCell / buildDevflowSummaryBody の関数本体を dev-flow.js に inline コピーしている。
+// このテストはその手動同期の漏れを CI で検出するための安全網である。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -21,17 +21,17 @@ function extractFn(src, fnName) {
   return m[0].trim();
 }
 
-for (const fnName of ['mdCell', 'buildReviewCommentBody', 'buildTerminalSummaryBody']) {
-  const canonicalSrc = readFileSync(join(repoRoot, '_lib/pr-comment-format.mjs'), 'utf8');
+for (const fnName of ['mdCell', 'buildDevflowSummaryBody']) {
+  const canonicalSrc = readFileSync(join(repoRoot, '_lib/devflow-summary-format.mjs'), 'utf8');
   const canonical = extractFn(canonicalSrc, fnName);
 
-  test(`.claude/workflows/pr-iterate.js の inline ${fnName} が canonical と byte 一致`, () => {
-    const inlinedSrc = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
+  test(`.claude/workflows/dev-flow.js の inline ${fnName} が canonical と byte 一致`, () => {
+    const inlinedSrc = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
     const inlined = extractFn(inlinedSrc, fnName);
     assert.equal(
       inlined,
       canonical,
-      `.claude/workflows/pr-iterate.js の inline コピー ${fnName} が _lib/pr-comment-format.mjs と乖離している`,
+      `.claude/workflows/dev-flow.js の inline コピー ${fnName} が _lib/devflow-summary-format.mjs と乖離している`,
     );
   });
 }

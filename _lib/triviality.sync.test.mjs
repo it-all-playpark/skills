@@ -34,10 +34,18 @@ function extractConst(src) {
   return m[0].trim();
 }
 
+// canonical ソースおよび inline コピーから `function refloorShape ... }` ブロックを抽出
+function extractRefloorShape(src) {
+  const m = src.match(/function refloorShape\([\s\S]*?\n}/);
+  if (!m) throw new Error('refloorShape が見つからない');
+  return m[0].trim();
+}
+
 const canonicalSrc = readFileSync(join(repoRoot, '_lib/triviality.mjs'), 'utf8');
 const canonical = extractFn(canonicalSrc);
 const canonicalMerge = extractMergeShape(canonicalSrc);
 const canonicalRank = extractConst(canonicalSrc);
+const canonicalRefloor = extractRefloorShape(canonicalSrc);
 
 for (const wf of ['.claude/workflows/dev-flow.js']) {
   test(`${wf} の inline コピーが canonical と byte 一致`, () => {
@@ -53,5 +61,10 @@ for (const wf of ['.claude/workflows/dev-flow.js']) {
   test(`${wf} の SHAPE_RANK 定義が canonical と byte 一致`, () => {
     const inlinedRank = extractConst(readFileSync(join(repoRoot, wf), 'utf8'));
     assert.equal(inlinedRank, canonicalRank, `${wf} の SHAPE_RANK 定義が _lib/triviality.mjs と乖離`);
+  });
+
+  test(`${wf} の refloorShape 定義が canonical と byte 一致`, () => {
+    const inlinedRefloor = extractRefloorShape(readFileSync(join(repoRoot, wf), 'utf8'));
+    assert.equal(inlinedRefloor, canonicalRefloor, `${wf} の refloorShape が _lib/triviality.mjs と乖離`);
   });
 }

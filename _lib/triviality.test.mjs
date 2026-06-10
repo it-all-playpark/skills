@@ -241,3 +241,58 @@ test('acceptance_criteria が null → shape=complex, reason に missing/safe', 
     `reason should contain 'missing' or 'safe', got: ${result.reason}`
   );
 });
+
+// ---- refloorShape tests ----
+import { refloorShape } from './triviality.mjs';
+
+// (1) estimatedShape='micro' + realizedCount=6 → complex (count>5 なので complex floor), refloored=true
+test('refloorShape: estimatedShape=micro, realizedCount=6 → shape=complex, refloored=true', () => {
+  const result = refloorShape('micro', 6);
+  assert.equal(result.shape, 'complex');
+  assert.equal(result.refloored, true);
+  assert.equal(result.realizedFloor, 'complex');
+  assert.equal(result.realizedCount, 6);
+});
+
+// (2) estimatedShape='micro' + realizedCount=1 → micro (count<=2), refloored=false
+test('refloorShape: estimatedShape=micro, realizedCount=1 → shape=micro, refloored=false', () => {
+  const result = refloorShape('micro', 1);
+  assert.equal(result.shape, 'micro');
+  assert.equal(result.refloored, false);
+  assert.equal(result.realizedFloor, 'micro');
+  assert.equal(result.realizedCount, 1);
+});
+
+// (3) estimatedShape='standard' + realizedCount=6 → complex, refloored=true
+test('refloorShape: estimatedShape=standard, realizedCount=6 → shape=complex, refloored=true', () => {
+  const result = refloorShape('standard', 6);
+  assert.equal(result.shape, 'complex');
+  assert.equal(result.refloored, true);
+  assert.equal(result.realizedFloor, 'complex');
+  assert.equal(result.realizedCount, 6);
+});
+
+// (4) estimatedShape='complex' + realizedCount=1 → complex, refloored=false (raise-only: demote しない)
+test('refloorShape: estimatedShape=complex, realizedCount=1 → shape=complex, refloored=false (raise-only)', () => {
+  const result = refloorShape('complex', 1);
+  assert.equal(result.shape, 'complex');
+  assert.equal(result.refloored, false);
+  assert.equal(result.realizedFloor, 'micro');
+  assert.equal(result.realizedCount, 1);
+});
+
+// (5) realizedCount=NaN → realizedFloor='complex' (安全側)
+test('refloorShape: realizedCount=NaN → realizedFloor=complex', () => {
+  const result = refloorShape('micro', NaN);
+  assert.equal(result.realizedFloor, 'complex');
+  assert.equal(result.shape, 'complex');
+  assert.equal(result.refloored, true);
+});
+
+// (5b) realizedCount=-1 → realizedFloor='complex' (安全側)
+test('refloorShape: realizedCount=-1 → realizedFloor=complex', () => {
+  const result = refloorShape('micro', -1);
+  assert.equal(result.realizedFloor, 'complex');
+  assert.equal(result.shape, 'complex');
+  assert.equal(result.refloored, true);
+});

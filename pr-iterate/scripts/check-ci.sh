@@ -17,6 +17,8 @@
 #   0  = all checks complete (passed or failed)
 #   8  = checks still pending
 #   1  = real API error (auth, network, unknown JSON field, etc.)
+# Transient gh API errors (exit code other than 0/8) are retried with backoff.
+# Max retries = number of delay entries in CHECK_CI_RETRY_DELAYS (default 10s/30s).
 
 set -euo pipefail
 
@@ -40,11 +42,29 @@ done
 
 # Capture gh output and exit code explicitly.
 # gh exits 0 for complete checks, 8 for pending, 1 for real errors.
-# We allow exit 0 and 8; anything else is surfaced as {"status":"error"}.
+# We allow exit 0 and 8; anything else is retried then surfaced as {"status":"error"}.
+# Transient gh API errors (exit code other than 0/8) are retried with backoff.
+# Max retries = number of delay entries. Tests override via CHECK_CI_RETRY_DELAYS.
+read -r -a RETRY_DELAYS <<< "${CHECK_CI_RETRY_DELAYS:-10 30}"
+
 gh_stderr_file=$(mktemp)
 checks_json=""
 gh_exit=0
-checks_json=$(gh pr checks "$PR_REF" "${REPO_FLAG[@]}" --json name,state,bucket 2>"$gh_stderr_file") || gh_exit=$?
+attempt=0
+while :; do
+    gh_exit=0
+    checks_json=$(gh pr checks "$PR_REF" "${REPO_FLAG[@]}" --json name,state,bucket 2>"$gh_stderr_file") || gh_exit=$?
+    # exit 0 = checks complete, 8 = pending: both determinate -> NEVER retry
+    if [[ $gh_exit -eq 0 || $gh_exit -eq 8 ]]; then
+        break
+    fi
+    if (( attempt >= ${#RETRY_DELAYS[@]} )); then
+        break
+    fi
+    echo "check-ci: gh pr checks failed (exit $gh_exit), retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $(cat "$gh_stderr_file")" >&2
+    sleep "${RETRY_DELAYS[$attempt]}"
+    attempt=$((attempt + 1))
+done
 gh_stderr=$(cat "$gh_stderr_file")
 rm -f "$gh_stderr_file"
 

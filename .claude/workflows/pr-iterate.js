@@ -6,6 +6,11 @@ export const meta = {
   ],
 }
 
+// ---- 品質ゲート系 agent（pr-reviewer）の model override ----
+// frontmatter 既定は opus。Fable 5 試験運用中は 'fable' を指定し、戻すときはこの 1 行を 'opus' にする。
+// effort は agent() opts に存在しないため引き続き frontmatter（high）固定。dev-flow.js 側にも同名定数あり。
+const QUALITY_MODEL = 'fable'
+
 function resolvePositiveIntArg(args, name) {
   const raw = (typeof args === 'string' || typeof args === 'number')
     ? args
@@ -56,25 +61,41 @@ const DECISION_LABEL = {
   'comment': 'コメント',
 };
 
+function mdCell(v) {
+  if (v == null) return '';
+  return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
 function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
+  const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
+  const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const label = DECISION_LABEL[decision] ?? decision;
+  const emoji = DECISION_EMOJI[decision] ?? '';
   const lines = [];
 
   lines.push(`## PR #${pr} — レビュー結果 (iteration ${iteration})`);
   lines.push('');
-  lines.push(`**判定**: ${label}`);
-  lines.push('');
-  lines.push('### Blocking 指摘');
 
-  if (!blocking || blocking.length === 0) {
-    lines.push('blocking 指摘なし');
+  const blockingList = blocking || [];
+  if (blockingList.length === 0) {
+    lines.push(`**判定**: ${emoji} ${label} — ✅ blocking 指摘なし`);
   } else {
-    for (const f of blocking) {
+    const c = blockingList.filter((f) => f.severity === 'critical').length;
+    const m = blockingList.filter((f) => f.severity === 'major').length;
+    lines.push(`**判定**: ${emoji} ${label} — blocking ${blockingList.length} 件（critical ${c} / major ${m}）`);
+    lines.push('');
+    lines.push('| # | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    let idx = 1;
+    for (const f of blockingList) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
       const loc = f.file != null
-        ? `${f.file}${f.line != null ? ':' + f.line : ''} `
-        : '';
-      const sug = f.suggestion != null ? ` → ${f.suggestion}` : '';
-      lines.push(`- [${f.severity}] ${loc}${f.description}${sug}`);
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${idx} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+      idx++;
     }
   }
 
@@ -89,38 +110,60 @@ const STATUS_HEADLINE = {
 };
 
 function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, history }) {
-  const headline = STATUS_HEADLINE[status] ?? status;
+  const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
+  const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const lines = [];
 
   lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
   lines.push('');
-  lines.push(`### ${headline}`);
+  lines.push(`### ${STATUS_HEADLINE[status] ?? status}`);
   lines.push('');
-  lines.push(`- **総反復回数**: ${iterations}`);
-  lines.push(`- **最終判定**: ${DECISION_LABEL[lastDecision] ?? lastDecision}`);
-  lines.push(`- **最終判定理由**: ${lastSummary}`);
 
-  if (history && history.length > 0) {
+  lines.push('| 終了状態 | 総反復 | 最終判定 |');
+  lines.push('|---|---|---|');
+  const decEmoji = DECISION_EMOJI[lastDecision] ?? '';
+  const decLabel = DECISION_LABEL[lastDecision] ?? lastDecision;
+  lines.push(`| ${status} | ${iterations} | ${decEmoji} ${decLabel} |`);
+
+  lines.push('');
+  lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  const histList = history || [];
+  if (histList.length > 0) {
     lines.push('');
     lines.push('### 反復履歴');
-    for (const round of history) {
-      const roundLabel = DECISION_LABEL[round.decision] ?? round.decision;
-      lines.push('');
-      lines.push(`#### Iteration ${round.iteration}: ${roundLabel}`);
-      lines.push(`${round.summary}`);
-      if (round.blocking && round.blocking.length > 0) {
-        lines.push(`- blocking 指摘数: ${round.blocking.length}`);
-        for (const f of round.blocking) {
-          const loc = f.file != null
-            ? `${f.file}${f.line != null ? ':' + f.line : ''} `
-            : '';
-          const sug = f.suggestion != null ? ` → ${f.suggestion}` : '';
-          lines.push(`  - [${f.severity}] ${loc}${f.description}${sug}`);
-        }
-      } else {
-        lines.push('- blocking 指摘なし');
-      }
+    lines.push('');
+    lines.push('| iter | 判定 | blocking | summary |');
+    lines.push('|---|---|---|---|');
+    for (const round of histList) {
+      const rEmoji = DECISION_EMOJI[round.decision] ?? '';
+      const rLabel = DECISION_LABEL[round.decision] ?? round.decision;
+      const bCount = (round.blocking ?? []).length;
+      const rawSummary = mdCell(round.summary);
+      const rSummary = rawSummary.length > 120 ? rawSummary.slice(0, 120) + '…' : rawSummary;
+      lines.push(`| ${round.iteration} | ${rEmoji} ${rLabel} | ${bCount} | ${rSummary} |`);
     }
+  }
+
+  const allBlocking = histList.flatMap((r) => (r.blocking ?? []).map((f) => ({ iter: r.iteration, ...f })));
+  const totalBlocking = allBlocking.length;
+  if (totalBlocking > 0) {
+    lines.push('');
+    lines.push(`<details><summary>全 blocking 指摘の詳細（${totalBlocking} 件）</summary>`);
+    lines.push('');
+    lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    for (const f of allBlocking) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
+      const loc = f.file != null
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${f.iter} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+    }
+    lines.push('');
+    lines.push('</details>');
   }
 
   lines.push('');
@@ -156,6 +199,15 @@ const POST_RESULT = {
     posted: { type: 'boolean' },
     method: { type: 'string' },
     url: { type: 'string' },
+  },
+}
+
+const JOURNAL_RESULT = {
+  type: 'object',
+  required: ['logged'],
+  properties: {
+    logged: { type: 'boolean' },
+    summary: { type: 'string' },
   },
 }
 
@@ -238,7 +290,7 @@ for (i = 1; i <= MAX; i++) {
           + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
           + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
         : ''),
-    { agentType: 'pr-reviewer', schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
+    { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
   )
   if (review == null) throw new Error(`pr-iterate: review#${i} が結果を返しませんでした（skip された可能性）`)
   lastReview = review
@@ -473,6 +525,21 @@ const summaryPost = await agent(
 )
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+}
+
+const journalCmd = `bash ~/.claude/skills/skill-retrospective/scripts/journal.sh log pr-iterate success --iterate-status ${status} --args "pr=${PR}"`
+const journalPost = await agent(
+  `## Objective\npr-iterate 終端 status の telemetry を journal に記録する。\n\n`
+  + `## Instructions\n次のコマンドをそのまま実行せよ。exit 0 なら logged:true、失敗時も throw せず logged:false を返すこと。\n`
+  + `\`\`\`\n${journalCmd}\n\`\`\`\n\n`
+  + `## Output format\n{ "logged": boolean, "summary": string }\n\n`
+  + `## Tools\n- 使用可: Bash のみ\n- 禁止: Write, Edit, git 操作\n\n`
+  + `## Boundary\n~/.claude/journal 以外のファイル変更禁止。git 操作禁止。\n\n`
+  + `## Token cap\n100 語以内で完結すること。`,
+  { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Iterate' },
+)
+if (!journalPost?.logged) {
+  log(`⚠️ journal-log の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
 }
 
 return {

@@ -66,6 +66,7 @@ cmd_log() {
     local issue="" duration_turns="" context_extra=""
     local project="" worktree="" mode=""
     local merge_tier="" gate_policy="" danger_hits=""
+    local shape="" shape_refloored="" eval_verdict="" iterate_status="" plan_iter="" eval_iter=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -98,6 +99,12 @@ cmd_log() {
             --merge-tier) merge_tier="$2"; shift 2 ;;
             --gate-policy) gate_policy="$2"; shift 2 ;;
             --danger-hits) danger_hits="$2"; shift 2 ;;
+            --shape) shape="$2"; shift 2 ;;
+            --shape-refloored) shape_refloored="$2"; shift 2 ;;
+            --eval-verdict) eval_verdict="$2"; shift 2 ;;
+            --iterate-status) iterate_status="$2"; shift 2 ;;
+            --plan-iter) plan_iter="$2"; shift 2 ;;
+            --eval-iter) eval_iter="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -116,6 +123,24 @@ cmd_log() {
             lint|test|build|runtime|config|env|merge|type-check) ;;
             *) die_json "Invalid error category: $error_category" 1 ;;
         esac
+    fi
+
+    # Validate new telemetry fields
+    if [[ -n "$shape_refloored" ]]; then
+        case "$shape_refloored" in
+            true|false) ;;
+            *) die_json "Invalid --shape-refloored: $shape_refloored. Must be true|false" 1 ;;
+        esac
+    fi
+    if [[ -n "$plan_iter" ]]; then
+        if ! [[ "$plan_iter" =~ ^[0-9]+$ ]]; then
+            die_json "Invalid --plan-iter: $plan_iter. Must be a non-negative integer" 1
+        fi
+    fi
+    if [[ -n "$eval_iter" ]]; then
+        if ! [[ "$eval_iter" =~ ^[0-9]+$ ]]; then
+            die_json "Invalid --eval-iter: $eval_iter. Must be a non-negative integer" 1
+        fi
     fi
 
     ensure_journal_dir
@@ -184,6 +209,30 @@ cmd_log() {
     fi
     if [[ -n "$danger_hits" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson v "$danger_hits" '. + {danger_hits: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$shape" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$shape" '. + {shape: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$shape_refloored" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$shape_refloored" '. + {shape_refloored: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$eval_verdict" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$eval_verdict" '. + {eval_verdict: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$iterate_status" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$iterate_status" '. + {iterate_status: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$plan_iter" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$plan_iter" '. + {plan_iter: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$eval_iter" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$eval_iter" '. + {eval_iter: $v}')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then
@@ -506,6 +555,7 @@ Subcommands:
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
+  journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff
