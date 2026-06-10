@@ -271,7 +271,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
           verdict: 'fail',
           total: 50,
           threshold: 80,
-          feedback: [{ topic: 'test-issue', severity: 'major', dimension: 'implementation', body: 'fix needed' }],
+          feedback: [{ topic: 'test-issue', severity: 'critical', dimension: 'implementation', description: 'fix needed', suggestion: 'fix it' }],
           feedback_level: 'implementation',
           ac_results: [],
           security_clearance: [],

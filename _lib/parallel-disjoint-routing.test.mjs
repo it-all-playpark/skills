@@ -337,13 +337,13 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
           verdict: 'fail',
           total: 40,
           threshold: 80,
-          feedback: [{ severity: 'major', dimension: 'design', topic: 'arch', description: 'redesign needed', suggestion: 'fix it' }],
+          feedback: [{ severity: 'critical', dimension: 'design', topic: 'arch', description: 'redesign needed', suggestion: 'fix it' }],
           feedback_level: 'design',
           ac_results: [],
           security_clearance: [],
         };
       }
-      // 2 回目以降: pass
+      // 2 回目以降: pass。critical_resolutions で EVAL-1-arch を解消する（issue #174 新設計）。
       return {
         verdict: 'pass',
         total: 90,
