@@ -463,6 +463,148 @@ function diffDeclaredPaths(planTasks, changedFiles) {
 }
 // ---- /parallel-disjoint エンジン ----
 
+// ---- devflow-summary-format inline コピー (canonical: _lib/devflow-summary-format.mjs。修正時は両者を同期。byte 一致は _lib/devflow-summary-format.sync.test.mjs が保証) ----
+// bodySaveInstr: PR body 保存 + 投稿の共通指示文を組み立てるヘルパー（pr-iterate.js と同型）。
+function bodySaveInstr(body) {
+  return `## 本文の保存\n`
+    + `まず Bash で \`mktemp /tmp/dev-flow-XXXXXX.md\` を実行して一時ファイルを作成し、\n`
+    + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
+    + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
+    + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
+    + `エスケープ・改変しないこと。以降のコマンドの \`--body-file\` には <BODY_FILE> を指定する。\n`
+    + `<<<DEV_FLOW_BODY_BEGIN>>>\n${body}\n<<<DEV_FLOW_BODY_END>>>\n\n`
+}
+
+// POST_RESULT schema（dev-runner 経由の PR 投稿結果）
+const POST_RESULT = {
+  type: 'object',
+  required: ['posted'],
+  properties: {
+    posted: { type: 'boolean' },
+    method: { type: 'string' },
+    url: { type: 'string' },
+  },
+}
+
+function buildDevflowSummaryBody({
+  pr,
+  mergeTier,
+  mergeTierReasons,
+  gatePolicy,
+  blockingItems,
+  advisoryItems,
+  ledgerConverged,
+  acResults,
+  securityClearance,
+  planConcerns,
+  dangerHits,
+  shape,
+  testGreen,
+  evalVerdict,
+}) {
+  const lines = [];
+
+  // 1. 見出し
+  lines.push(`## dev-flow 終端サマリー — PR #${pr}`);
+  lines.push('');
+
+  // 2. Merge tier セクション
+  lines.push(`### Merge tier: ${mergeTier}`);
+  if (!mergeTierReasons || mergeTierReasons.length === 0) {
+    lines.push('- 理由記載なし');
+  } else {
+    for (const reason of mergeTierReasons) {
+      lines.push(`- ${reason}`);
+    }
+  }
+  lines.push('');
+
+  // 3. 実行結果サマリー（shape / test_green / eval_verdict）
+  lines.push('### 実行結果');
+  lines.push(`- shape: ${shape != null ? shape : '不明'}`);
+  lines.push(`- test_green: ${testGreen != null ? String(testGreen) : '不明'}`);
+  lines.push(`- eval_verdict: ${evalVerdict != null ? evalVerdict : '不明'}`);
+  lines.push('');
+
+  // 4. Goal Ledger セクション
+  lines.push('### Goal Ledger');
+  lines.push(`- gate_policy: ${gatePolicy}`);
+  lines.push(`- 収束: ${ledgerConverged ? '済' : '未収束'}`);
+
+  // blocking items
+  if (!blockingItems || blockingItems.length === 0) {
+    lines.push('- blocking item なし');
+  } else {
+    for (const item of blockingItems) {
+      const status = item.checked ? 'checked' : '未解消';
+      const dimension = item.dimension ? ` [${item.dimension}]` : '';
+      const evidence = item.evidence ? ': ' + item.evidence : '';
+      lines.push(`- [${status}] ${item.id}${dimension} ${item.text}${evidence}`);
+    }
+  }
+
+  // advisory items
+  if (!advisoryItems || advisoryItems.length === 0) {
+    lines.push('- advisory item なし');
+  } else {
+    for (const item of advisoryItems) {
+      const status = item.checked ? 'checked' : '未解消';
+      const escalateSuffix = item.escalate ? ' (ESCALATE)' : '';
+      const dimension = item.dimension ? ` [${item.dimension}]` : '';
+      const evidence = item.evidence ? ': ' + item.evidence : '';
+      lines.push(`- [${status}] ${item.id}${dimension} ${item.text}${evidence}${escalateSuffix}`);
+    }
+  }
+  lines.push('');
+
+  // 5. AC evidence セクション
+  lines.push('### Acceptance Criteria');
+  if (!acResults || acResults.length === 0) {
+    lines.push('AC 判定なし（evaluator 未実行 or AC 欠落）');
+  } else {
+    for (const ac of acResults) {
+      const satisfiedLabel = ac.satisfied ? 'satisfied' : '未達';
+      const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
+      const evidenceSuffix = ac.evidence ? ': ' + ac.evidence : '';
+      lines.push(`- AC#${ac.ac_index + 1}: ${satisfiedLabel}（${verifiedBy}）${evidenceSuffix}`);
+    }
+  }
+  lines.push('');
+
+  // 6. Security clearance セクション
+  lines.push('### Security clearance');
+  if (!securityClearance || securityClearance.length === 0) {
+    lines.push('- danger-grep clean（clearance 不要）');
+  } else {
+    for (const sc of securityClearance) {
+      const clearedLabel = sc.cleared ? 'cleared' : '未確認';
+      const evidenceSuffix = sc.evidence ? ': ' + sc.evidence : '';
+      lines.push(`- ${sc.danger_class}: ${clearedLabel}${evidenceSuffix}`);
+    }
+  }
+  if (dangerHits && dangerHits.length > 0) {
+    lines.push(`- 検出クラス: ${dangerHits.join(', ')}`);
+  }
+  lines.push('');
+
+  // 7. Plan concerns セクション（空なら省略）
+  if (planConcerns && planConcerns.length > 0) {
+    lines.push('### Plan 未解消 concerns');
+    for (const concern of planConcerns) {
+      lines.push(`- ${concern}`);
+    }
+    lines.push('');
+  }
+
+  // 8. 末尾
+  lines.push('---');
+  lines.push('*このコメントは dev-flow により自動生成されました。*');
+  lines.push(`<!-- dev-flow:${mergeTier} -->`);
+
+  return lines.join('\n');
+}
+// ---- /devflow-summary-format inline コピー ----
+
 function applyDisjoint(p, label) {
   const { plan: np, demoted } = enforceDisjointParallel(p);
   if (demoted.length) log(`⚠️ ${label}: file_changes 衝突 ${demoted.length} task を parallel→serial 降格: ${demoted.map((d) => `${d.id}(vs ${d.conflictsWith})`).join(', ')}`);
@@ -1187,6 +1329,44 @@ const mergeTier = classifyMergeTier({
   unsatisfiedAc,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
+
+// ============================================================
+// Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。
+// 投稿失敗は log 警告のみで workflow は正常 return（issue #162 AC#4）。
+// ============================================================
+const summaryBody = buildDevflowSummaryBody({
+  pr: pr.pr_number,
+  mergeTier: mergeTier.tier,
+  mergeTierReasons: mergeTier.reasons,
+  gatePolicy: GATE_POLICY,
+  blockingItems: policyBlockingItems(ledger, GATE_POLICY),
+  advisoryItems: policyAdvisoryItems(ledger, GATE_POLICY),
+  ledgerConverged: isConvergedUnderPolicy(ledger, GATE_POLICY),
+  acResults: evalResult?.ac_results ?? null,
+  securityClearance: evalResult?.security_clearance ?? null,
+  planConcerns: planConcerns ?? [],
+  dangerHits: dangerHitsFinal,
+  shape: EFFECTIVE_SHAPE,
+  testGreen: val?.green ?? null,
+  evalVerdict: evalResult?.verdict ?? null,
+})
+const summaryPost = await agent(
+  `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
+  + bodySaveInstr(summaryBody)
+  + `## Instructions\n`
+  + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
+  + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+  + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+  + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+  + `\n## Tools\n使用可: Bash, Write\n`
+  + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+  + `\n## Token cap\n200 語以内で完結すること。`,
+  { agentType: 'dev-runner', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
+)
+if (!summaryPost?.posted) {
+  log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+}
+
 
 return {
   issue: ISSUE,

@@ -373,3 +373,94 @@ test('箇条書きは「- 」始まりで「・」を使わない', () => {
   const bulletLines = lines.filter(l => l.trim().startsWith('- '));
   assert.ok(bulletLines.length > 0, '「- 」始まりの箇条書き行が存在する');
 });
+
+// ─── shape / testGreen / evalVerdict ─────────────────────────────────────────
+
+test('shape が渡されると「実行結果」セクションに shape 値を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    shape: 'standard',
+  });
+  assert.ok(body.includes('### 実行結果'), '実行結果セクションを含む');
+  assert.ok(body.includes('shape: standard'), 'shape 値を含む');
+});
+
+test('shape が null -> 「不明」を表示', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    shape: null,
+  });
+  assert.ok(body.includes('shape: 不明'), 'shape null -> 不明');
+});
+
+test('testGreen: true -> 「test_green: true」を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    testGreen: true,
+  });
+  assert.ok(body.includes('test_green: true'), 'testGreen true を含む');
+});
+
+test('testGreen: false -> 「test_green: false」を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    testGreen: false,
+  });
+  assert.ok(body.includes('test_green: false'), 'testGreen false を含む');
+});
+
+test('testGreen: null -> 「不明」を表示', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    testGreen: null,
+  });
+  assert.ok(body.includes('test_green: 不明'), 'testGreen null -> 不明');
+});
+
+test('evalVerdict: pass -> 「eval_verdict: pass」を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalVerdict: 'pass',
+  });
+  assert.ok(body.includes('eval_verdict: pass'), 'evalVerdict pass を含む');
+});
+
+test('evalVerdict: null -> 「不明」を表示', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalVerdict: null,
+  });
+  assert.ok(body.includes('eval_verdict: 不明'), 'evalVerdict null -> 不明');
+});
+
+// ─── dimension (lane) 表示 ────────────────────────────────────────────────────
+
+test('blockingItems の行に dimension を [lane] 形式で含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [
+      { id: 'B1', text: 'sec issue', severity: 'critical', checked: false, dimension: 'security' },
+    ],
+  });
+  assert.ok(body.includes('[security]'), 'dimension を [security] 形式で含む');
+});
+
+test('advisoryItems の行に dimension を [lane] 形式で含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'A1', text: 'style concern', severity: 'minor', checked: false, dimension: 'style', escalate: false },
+    ],
+  });
+  assert.ok(body.includes('[style]'), 'dimension を [style] 形式で含む');
+});
+
+test('blockingItems の checked 項目に evidence を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [
+      { id: 'B1', text: 'resolved', severity: 'major', checked: true, dimension: 'quality', evidence: 'test passed' },
+    ],
+  });
+  assert.ok(body.includes('test passed'), 'evidence を含む');
+});

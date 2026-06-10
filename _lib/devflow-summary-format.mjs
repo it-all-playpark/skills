@@ -15,13 +15,16 @@
  * @param {string} opts.mergeTier - 'HOLD'|'REVIEW'|'AUTO'
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
  * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
- * @param {Array<{id,text,severity,checked,dimension}>} opts.blockingItems - blocking items
- * @param {Array<{id,text,severity,checked,dimension,escalate}>} opts.advisoryItems - advisory items
+ * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate}>} opts.advisoryItems - advisory items
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
+ * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
+ * @param {boolean|null|undefined} opts.testGreen - test green フラグ
+ * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -36,6 +39,9 @@ export function buildDevflowSummaryBody({
   securityClearance,
   planConcerns,
   dangerHits,
+  shape,
+  testGreen,
+  evalVerdict,
 }) {
   const lines = [];
 
@@ -54,7 +60,14 @@ export function buildDevflowSummaryBody({
   }
   lines.push('');
 
-  // 3. Goal Ledger セクション
+  // 3. 実行結果サマリー（shape / test_green / eval_verdict）
+  lines.push('### 実行結果');
+  lines.push(`- shape: ${shape != null ? shape : '不明'}`);
+  lines.push(`- test_green: ${testGreen != null ? String(testGreen) : '不明'}`);
+  lines.push(`- eval_verdict: ${evalVerdict != null ? evalVerdict : '不明'}`);
+  lines.push('');
+
+  // 4. Goal Ledger セクション
   lines.push('### Goal Ledger');
   lines.push(`- gate_policy: ${gatePolicy}`);
   lines.push(`- 収束: ${ledgerConverged ? '済' : '未収束'}`);
@@ -65,7 +78,9 @@ export function buildDevflowSummaryBody({
   } else {
     for (const item of blockingItems) {
       const status = item.checked ? 'checked' : '未解消';
-      lines.push(`- [${status}] ${item.id} ${item.text}`);
+      const dimension = item.dimension ? ` [${item.dimension}]` : '';
+      const evidence = item.evidence ? ': ' + item.evidence : '';
+      lines.push(`- [${status}] ${item.id}${dimension} ${item.text}${evidence}`);
     }
   }
 
@@ -76,12 +91,14 @@ export function buildDevflowSummaryBody({
     for (const item of advisoryItems) {
       const status = item.checked ? 'checked' : '未解消';
       const escalateSuffix = item.escalate ? ' (ESCALATE)' : '';
-      lines.push(`- [${status}] ${item.id} ${item.text}${escalateSuffix}`);
+      const dimension = item.dimension ? ` [${item.dimension}]` : '';
+      const evidence = item.evidence ? ': ' + item.evidence : '';
+      lines.push(`- [${status}] ${item.id}${dimension} ${item.text}${evidence}${escalateSuffix}`);
     }
   }
   lines.push('');
 
-  // 4. AC evidence セクション
+  // 5. AC evidence セクション
   lines.push('### Acceptance Criteria');
   if (!acResults || acResults.length === 0) {
     lines.push('AC 判定なし（evaluator 未実行 or AC 欠落）');
@@ -95,7 +112,7 @@ export function buildDevflowSummaryBody({
   }
   lines.push('');
 
-  // 5. Security clearance セクション
+  // 6. Security clearance セクション
   lines.push('### Security clearance');
   if (!securityClearance || securityClearance.length === 0) {
     lines.push('- danger-grep clean（clearance 不要）');
@@ -111,7 +128,7 @@ export function buildDevflowSummaryBody({
   }
   lines.push('');
 
-  // 6. Plan concerns セクション（空なら省略）
+  // 7. Plan concerns セクション（空なら省略）
   if (planConcerns && planConcerns.length > 0) {
     lines.push('### Plan 未解消 concerns');
     for (const concern of planConcerns) {
@@ -120,7 +137,7 @@ export function buildDevflowSummaryBody({
     lines.push('');
   }
 
-  // 7. 末尾
+  // 8. 末尾
   lines.push('---');
   lines.push('*このコメントは dev-flow により自動生成されました。*');
   lines.push(`<!-- dev-flow:${mergeTier} -->`);
