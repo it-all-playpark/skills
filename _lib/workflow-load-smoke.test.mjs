@@ -330,6 +330,15 @@ test('[W5] dev-flow.js: RISK schema と diff-risk-classify 呼び出しが存在
   const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
   assert.ok(src.includes('const RISK ='), 'RISK schema があること');
   assert.ok(src.includes('diff-risk-classify.sh'), 'diff-risk-classify.sh を呼ぶこと');
+  assert.ok(
+    src.includes('diff-risk-classify.sh --working-tree origin/${' + 'BASE}'),
+    'Security floor は --working-tree モードで呼ぶこと',
+  );
+  assert.ok(
+    src.includes('diff-risk-classify.sh origin/${' + 'BASE}'),
+    'Merge tier はフラグなし（commit 後三点 diff）で呼ぶこと',
+  );
+  assert.ok(src.includes('--untracked-files=all'), 'porcelain は -uall で untracked dir を展開すること');
 });
 
 test('[W5] dev-flow.js: 常時 SEC seed と runEval gate が存在', () => {
