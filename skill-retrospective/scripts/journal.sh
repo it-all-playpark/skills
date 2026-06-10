@@ -65,6 +65,7 @@ cmd_log() {
     local recovery="" recovery_turns=""
     local issue="" duration_turns="" context_extra=""
     local project="" worktree="" mode=""
+    local merge_tier="" gate_policy="" danger_hits=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -94,6 +95,9 @@ cmd_log() {
             --worktree) worktree="$2"; shift 2 ;;
             --context) context_extra="$2"; shift 2 ;;
             --mode) mode="$2"; shift 2 ;;
+            --merge-tier) merge_tier="$2"; shift 2 ;;
+            --gate-policy) gate_policy="$2"; shift 2 ;;
+            --danger-hits) danger_hits="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -165,6 +169,25 @@ cmd_log() {
     fi
     if [[ "$has_context" == true ]]; then
         entry=$(echo "$entry" | jq --argjson ctx "$context" '. + {context: $ctx}')
+    fi
+
+    # Telemetry object
+    local has_telemetry=false
+    local telemetry='{}'
+    if [[ -n "$merge_tier" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$merge_tier" '. + {merge_tier: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$gate_policy" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$gate_policy" '. + {gate_policy: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$danger_hits" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$danger_hits" '. + {danger_hits: $v}')
+        has_telemetry=true
+    fi
+    if [[ "$has_telemetry" == true ]]; then
+        entry=$(echo "$entry" | jq --argjson tel "$telemetry" '. + {telemetry: $tel}')
     fi
 
     # Error object

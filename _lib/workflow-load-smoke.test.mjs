@@ -241,3 +241,107 @@ const x = await Promise.resolve('test');
     + ` caughtError=${JSON.stringify(caughtError?.name)} (${caughtError?.message})`,
   );
 });
+
+// ---- 4. REQ schema shape フィールド検証 ---------------------------------------------------
+//
+// dev-flow.js の REQ schema に shape enum フィールドが追加されていることを確認する。
+// shape は LLM が emit する optional フィールド（required に含めない）。
+
+test('[schema] dev-flow.js: REQ schema は valid object である', () => {
+  const devFlowPath = join(workflowDir, 'dev-flow.js');
+  const rawSrc = readFileSync(devFlowPath, 'utf8');
+
+  assert.ok(rawSrc.includes('const REQ ='), 'REQ schema が dev-flow.js に定義されていること');
+  assert.ok(
+    rawSrc.includes("'object'") || rawSrc.includes('"object"'),
+    'REQ schema が type: object を持つこと',
+  );
+});
+
+test('[schema] dev-flow.js: REQ schema に shape enum プロパティが存在する', () => {
+  const devFlowPath = join(workflowDir, 'dev-flow.js');
+  const rawSrc = readFileSync(devFlowPath, 'utf8');
+
+  assert.ok(
+    rawSrc.includes("shape:") && rawSrc.includes("'micro'") && rawSrc.includes("'standard'") && rawSrc.includes("'complex'"),
+    "REQ schema に shape: { type: string, enum: ['micro', 'standard', 'complex'] } が存在すること",
+  );
+});
+
+test('[schema] dev-flow.js: shape は required 配列に含まれない（optional フィールド）', () => {
+  const devFlowPath = join(workflowDir, 'dev-flow.js');
+  const rawSrc = readFileSync(devFlowPath, 'utf8');
+
+  const reqMatch = rawSrc.match(/const REQ\s*=\s*\{[\s\S]*?required:\s*\[([^\]]*)\]/);
+  assert.ok(reqMatch, 'REQ schema の required 配列が取得できること');
+  const requiredContent = reqMatch[1];
+  assert.ok(
+    !requiredContent.includes('shape'),
+    'REQ schema の required に shape が含まれていないこと',
+  );
+});
+
+// ---- 5. triage consume: classifyShape を使い TRIVIAL = (SHAPE==='micro') にマップ --------
+//
+// triage consume が classifyTriviality ではなく classifyShape を使っていることを確認する。
+// TRIVIAL = (SHAPE === 'micro') の式で micro が trivial 経路にマップされていることを確認。
+
+test('[triage] dev-flow.js: classifyShape を triage consume に使用している', () => {
+  const devFlowPath = join(workflowDir, 'dev-flow.js');
+  const rawSrc = readFileSync(devFlowPath, 'utf8');
+
+  assert.ok(
+    rawSrc.includes('classifyShape(req)'),
+    'triage consume で classifyShape(req) を呼び出していること',
+  );
+  assert.ok(
+    !rawSrc.includes('classifyTriviality'),
+    'classifyTriviality は削除され残存しないこと',
+  );
+});
+
+test('[triage] dev-flow.js: SHAPE 変数と TRIVIAL = (SHAPE === micro) が定義されている', () => {
+  const devFlowPath = join(workflowDir, 'dev-flow.js');
+  const rawSrc = readFileSync(devFlowPath, 'utf8');
+
+  assert.ok(
+    rawSrc.includes('const SHAPE =') || rawSrc.includes('const SHAPE='),
+    'SHAPE 変数が定義されていること',
+  );
+  assert.ok(
+    rawSrc.includes("SHAPE === 'micro'"),
+    "TRIVIAL = (SHAPE === 'micro') でマッピングされていること",
+  );
+});
+
+test('[triage] dev-flow.js: 最終 return に shape: SHAPE が含まれる', () => {
+  const devFlowPath = join(workflowDir, 'dev-flow.js');
+  const rawSrc = readFileSync(devFlowPath, 'utf8');
+
+  assert.ok(
+    rawSrc.includes('shape: SHAPE'),
+    '最終 return オブジェクトに shape: SHAPE が含まれること',
+  );
+});
+
+// ---- 6. W5: danger-grep 配線 + merge tier --------------------------------------------------
+
+test('[W5] dev-flow.js: RISK schema と diff-risk-classify 呼び出しが存在', () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  assert.ok(src.includes('const RISK ='), 'RISK schema があること');
+  assert.ok(src.includes('diff-risk-classify.sh'), 'diff-risk-classify.sh を呼ぶこと');
+});
+
+test('[W5] dev-flow.js: 常時 SEC seed と runEval gate が存在', () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  assert.ok(src.includes('seedSecurityLedger('), 'SEC seed を積むこと');
+  assert.ok(src.includes('const runEval ='), 'runEval gate があること');
+  assert.ok(src.includes('reconcileDanger('), 'danger 反映を行うこと');
+});
+
+test('[W5] dev-flow.js: merge tier 算出と return フィールドが存在', () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  assert.ok(src.includes('classifyMergeTier('), 'classifyMergeTier を呼ぶこと');
+  assert.ok(src.includes('merge_tier:'), 'return に merge_tier があること');
+  assert.ok(src.includes("phase('Merge tier')"), 'Merge tier phase があること');
+});

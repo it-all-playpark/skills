@@ -25,31 +25,307 @@ function resolvePositiveIntArg(args, name) {
   return s;
 }
 
-function classifyTriviality(req) {
+// ---- Goal Ledger エンジン (canonical: _lib/goal-ledger.mjs。修正時は両者を同期。byte 一致は _lib/goal-ledger.sync.test.mjs が保証) ----
+const SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
+const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
+
+function makeLedger() {
+  return { items: [], round: 0 };
+}
+
+function laneOf(item) {
+  if (item.severity === 'critical') return 'blocking';
+  if (item.check && item.check.kind === 'deterministic') return 'blocking';
+  if (item.source === 'seed') return 'blocking';
+  return 'advisory';
+}
+
+function topicKey(item) {
+  const norm = String(item.text ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return `${item.dimension ?? '?'}::${norm}`;
+}
+
+function canAppend(ledger, item) {
+  if (ledger.round === 0) return true;
+  if (item.severity === 'critical') return true;
+  const key = topicKey(item);
+  return ledger.items.some((it) => topicKey(it) === key);
+}
+
+function appendItem(ledger, item) {
+  if (!canAppend(ledger, item)) return { ledger, accepted: false };
+  const key = topicKey(item);
+  const idx = ledger.round > 0 ? ledger.items.findIndex((it) => topicKey(it) === key) : -1;
+  const items = ledger.items.slice();
+  if (idx >= 0) items[idx] = { ...items[idx], ...item, id: items[idx].id };
+  else items.push({ checked: false, evidence: null, floor: false, check: null, ...item, check: item.check ? { ...item.check } : null });
+  return { ledger: { ...ledger, items }, accepted: true };
+}
+
+function applySeverityFloor(item, floorSeverity) {
+  const raised = SEVERITY_RANK[floorSeverity] > SEVERITY_RANK[item.severity] ? floorSeverity : item.severity;
+  return { ...item, severity: raised, floor: true };
+}
+
+function mergeSeverity(item, llmSeverity) {
+  if (item.floor && SEVERITY_RANK[llmSeverity] < SEVERITY_RANK[item.severity]) return item;
+  const raised = SEVERITY_RANK[llmSeverity] > SEVERITY_RANK[item.severity] ? llmSeverity : item.severity;
+  return { ...item, severity: raised };
+}
+
+function checkItem(ledger, id, evidence) {
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  const items = ledger.items.slice();
+  items[idx] = { ...items[idx], checked: true, evidence: evidence ?? null };
+  return { ...ledger, items };
+}
+
+function reopenItem(ledger, id, reason) {
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  if (!reason) throw new Error('goal-ledger: reopen には reason が必要');
+  const items = ledger.items.slice();
+  items[idx] = { ...items[idx], checked: false, reopen_reason: reason };
+  return { ...ledger, items };
+}
+
+function setCheck(ledger, id, check) {
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  const items = ledger.items.slice();
+  items[idx] = { ...items[idx], check };
+  return { ...ledger, items };
+}
+
+function blockingItems(ledger) {
+  return ledger.items.filter((it) => laneOf(it) === 'blocking');
+}
+
+function advisoryItems(ledger) {
+  return ledger.items.filter((it) => laneOf(it) === 'advisory');
+}
+
+function isConverged(ledger) {
+  return blockingItems(ledger).every((it) => it.checked);
+}
+
+function nextRound(ledger) {
+  return { ...ledger, round: ledger.round + 1 };
+}
+// ---- /Goal Ledger エンジン ----
+
+// ---- merge-tier エンジン (canonical: _lib/merge-tier.mjs。修正時は両者を同期。byte 一致は _lib/merge-tier.sync.test.mjs が保証) ----
+// diff-risk-classify.sh が出力する 7 danger クラス（固定順）。
+const DANGER_CLASSES = [
+  'auth', 'crypto', 'config', 'data-migration', 'public-api', 'exec-sink', 'dependency',
+];
+
+const SEC_TEXT = {
+  'auth': '認証/認可ファイルの変更が安全か（権限昇格・認可バイパスなし）',
+  'crypto': '暗号処理の変更が安全か（弱いアルゴリズム・鍵漏洩なし）',
+  'config': 'config/secret の変更が安全か（秘密情報の平文混入なし）',
+  'data-migration': 'data migration が安全か（不可逆・データ欠損なし）',
+  'public-api': 'public API 変更が後方互換か（破壊的変更の明示）',
+  'exec-sink': 'exec/deserialization sink が安全か（任意コード実行なし）',
+  'dependency': '依存追加が安全か（既知脆弱性・supply chain リスクなし）',
+};
+
+// 7 danger クラスを常時 blocking seed する。danger-grep clean なら reconcileDanger が
+// 自動 check し、hit したクラスは critical へ raise して block 据え置きにする。
+function seedSecurityLedger() {
+  return DANGER_CLASSES.map((cls) => ({
+    id: `SEC-${cls.toUpperCase()}`,
+    text: SEC_TEXT[cls],
+    dimension: 'security',
+    severity: 'major',
+    source: 'seed',
+    check: { kind: 'deterministic' },
+    danger_class: cls,
+  }));
+}
+
+const SEC_SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
+
+// danger-grep の hit クラス集合で SEC seed item を解決する。
+// clean クラス → checked(evidence='danger-grep clean')。
+// hit クラス → critical へ raise(floor=true)。
+//   - floor=true かつ checked=true(evaluator が evidence で clearance 済み) → checked を維持する(HOLD に巻き戻さない)。
+//   - floor=false かつ checked=true(前回 "danger-grep clean" 自動解決済み) → 今回 hit に転じたので unchecked 復活。
+//   - checked=false → checked=false 据え置き(evaluator が次ラウンドで解消するまで block)。
+// SEC 以外の item は touch しない。
+//
+// 再 reconcile ポリシー(pr-iterate 後の Merge tier phase での呼び出しを含む):
+//   danger が増えた(新クラスが hit に転じた)場合 → floor=false なので unchecked 復活 = HOLD。
+//   danger が減った(以前 hit だったクラスが clean に転じた)場合 → checked=true に解放(自動解消)。
+//   danger が同じ hit クラスで残る かつ evaluator clearance 済み(floor=true, checked=true) → checked 維持(温存)。
+function reconcileDanger(ledger, hitClasses) {
+  const hits = new Set(hitClasses);
+  const items = ledger.items.map((it) => {
+    if (it.source !== 'seed' || it.dimension !== 'security') return it;
+    if (hits.has(it.danger_class)) {
+      // floor=true かつ checked=true → evaluator が danger floor を evidence 付きで clearance 済み。
+      // 同クラスが依然 hit でも checked を維持して HOLD に巻き戻さない。
+      // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
+      // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
+      if (it.checked && it.floor) return it;
+      const severity = SEC_SEVERITY_RANK['critical'] > SEC_SEVERITY_RANK[it.severity] ? 'critical' : it.severity;
+      return { ...it, severity, floor: true, checked: false };
+    }
+    return { ...it, checked: true, evidence: 'danger-grep clean' };
+  });
+  return { ...ledger, items };
+}
+
+// 変更ファイルが docs(.md/.mdx/.txt, docs/) か test(*test*, *spec*, .bats) のみか。
+function isDocsOrTestOnly(files) {
+  if (!Array.isArray(files) || files.length === 0) return false;
+  return files.every((f) =>
+    /\.(md|mdx|txt)$/i.test(f) || /(^|\/)docs\//i.test(f)
+    || /(^|\/|\.)(test|spec)([./]|$)/i.test(f) || /\.bats$/i.test(f));
+}
+
+// merge tier を算出する。merge は全 tier 人間(AUTO も推奨ラベルのみ。真 auto-merge は W6)。
+// HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
+// AUTO: micro かつ docs/test-only かつ danger clean かつ収束（推奨ラベル）。
+// REVIEW: それ以外（標準。人間が LGTM して merge）。
+function classifyMergeTier(s) {
+  const reasons = [];
+  if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
+  if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
+  if (s.breaking) reasons.push('breaking/migration 検出');
+  if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
+  if (reasons.length) return { tier: 'HOLD', reasons };
+  if (s.shape === 'micro' && s.docsOrTestOnly) {
+    return { tier: 'AUTO', reasons: ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'] };
+  }
+  return { tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'] };
+}
+// ---- /merge-tier エンジン ----
+
+// ---- gate-policy エンジン (canonical: _lib/gate-policy.mjs。修正時は両者を同期。byte 一致は _lib/gate-policy.sync.test.mjs が保証) ----
+// gate_policy の trust 昇順 4 値。
+const GATE_POLICIES = [
+  'deterministic-only',
+  'llm-major-advisory',
+  'llm-major-blocking',
+  'llm-autonomous',
+];
+
+// デフォルト gate_policy。
+const DEFAULT_GATE_POLICY = 'llm-major-advisory';
+
+// gate_policy 値を解決する。null/undefined/空文字は DEFAULT_GATE_POLICY を返す。
+// 有効値はそのまま返す。未知の値は Error を throw する。
+function resolveGatePolicy(value) {
+  if (value == null || value === '') return DEFAULT_GATE_POLICY;
+  if (GATE_POLICIES.includes(value)) return value;
+  throw new Error(
+    `gate-policy: 未知の gate_policy "${value}"（許可: ${GATE_POLICIES.join(', ')}）`,
+  );
+}
+
+// item を 'blocking' | 'advisory' に分類する純粋関数。
+//
+// 軸A invariant（policy によらず常に blocking）:
+//   - item.severity === 'critical'
+//   - item.check && item.check.kind === 'deterministic'
+//   - item.source === 'seed'
+//
+// LLM major（critical でなく deterministic でなく seed でない major）の写像:
+//   deterministic-only  → advisory
+//   llm-major-advisory  → advisory
+//   llm-major-blocking  → blocking
+//   llm-autonomous      → advisory
+//
+// LLM minor は全 policy で advisory。
+function gateLane(item, policy) {
+  // 軸A invariant: 決定論 oracle / critical / seed は policy に依らず blocking
+  if (item.severity === 'critical') return 'blocking';
+  if (item.check && item.check.kind === 'deterministic') return 'blocking';
+  if (item.source === 'seed') return 'blocking';
+  // LLM major の写像
+  if (item.severity === 'major') {
+    return policy === 'llm-major-blocking' ? 'blocking' : 'advisory';
+  }
+  // LLM minor（および未知 severity）は advisory
+  return 'advisory';
+}
+
+// ledger.items のうち blocking に分類される item を返す純粋関数。
+function policyBlockingItems(ledger, policy) {
+  return ledger.items.filter((it) => gateLane(it, policy) === 'blocking');
+}
+
+// ledger.items のうち advisory に分類される item を返す純粋関数。
+function policyAdvisoryItems(ledger, policy) {
+  return ledger.items.filter((it) => gateLane(it, policy) === 'advisory');
+}
+
+// 全 blocking item が checked かどうかを判定する純粋関数（空は true）。
+function isConvergedUnderPolicy(ledger, policy) {
+  return policyBlockingItems(ledger, policy).every((it) => it.checked);
+}
+// ---- /gate-policy エンジン ----
+
+function mergeShape(floor, llmShape) {
+  if (!(llmShape in SHAPE_RANK)) {
+    return floor;
+  }
+  return SHAPE_RANK[llmShape] > SHAPE_RANK[floor] ? llmShape : floor;
+}
+
+function classifyShape(req) {
   const count = req.estimated_change_file_count;
   if (typeof count !== 'number' || count < 0) {
-    return { trivial: false, reason: 'estimated_change_file_count missing or invalid → safe non-trivial' };
+    const floor = 'complex';
+    const reason = `estimated_change_file_count missing or invalid → safe floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
-  if (count > 2) {
-    return { trivial: false, reason: `estimated ${count} files > 2 → non-trivial` };
-  }
+
   const ac = req.acceptance_criteria;
   if (!Array.isArray(ac)) {
-    return { trivial: false, reason: 'acceptance_criteria missing or not array → safe non-trivial' };
+    const floor = 'complex';
+    const reason = `acceptance_criteria missing or not array → safe floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
-  if (ac.length > 3) {
-    return { trivial: false, reason: `${ac.length} acceptance criteria > 3 → non-trivial` };
-  }
+
   const validTypes = ['feat', 'fix', 'docs', 'refactor'];
   if (!validTypes.includes(req.issue_type)) {
-    return { trivial: false, reason: `issue_type '${req.issue_type}' not in allowed set → non-trivial` };
+    const floor = 'complex';
+    const reason = `issue_type '${req.issue_type}' not in allowed set → floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
+
   const breakingPattern = /breaking|incompatible|migration|破壊的|非互換/i;
   const combined = `${req.scope ?? ''} ${req.summary ?? ''}`;
   if (breakingPattern.test(combined)) {
-    return { trivial: false, reason: 'breaking change detected in scope/summary → non-trivial' };
+    const floor = 'complex';
+    const reason = `breaking change detected in scope/summary → floor=complex`;
+    const shape = mergeShape(floor, req.shape);
+    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
-  return { trivial: true, reason: `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type}, no breaking — trivial path` };
+
+  let floor;
+  if (count <= 2 && ac.length <= 3) {
+    floor = 'micro';
+  } else if (count <= 5 && ac.length <= 6) {
+    floor = 'standard';
+  } else {
+    floor = 'complex';
+  }
+
+  const shape = mergeShape(floor, req.shape);
+  let reason;
+  if (shape !== floor) {
+    reason = `LLM raised ${floor}→${shape}`;
+  } else {
+    reason = `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type} → floor=${floor}`;
+  }
+  return { shape, reason };
 }
 
 // ---- args ----
@@ -57,6 +333,7 @@ const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE = args?.base ?? 'dev'
 const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
+const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
 const PLAN_MAX = 8         // 計画レビュー上限（収束モデルにより happy path は数回で抜ける。issue #123）
 const PLAN_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（moving target 打ち切り。issue #123）
 const PLAN_RELAX_FROM = 2  // この iteration 以降は critical 無しなら収束を許容（issue #123）
@@ -129,6 +406,7 @@ const REQ = {
     acceptance_criteria: { type: 'array', items: { type: 'string' } },
     scope: { type: 'string' },
     estimated_change_file_count: { type: 'number' },
+    shape: { type: 'string', enum: ['micro', 'standard', 'complex'] },
   },
 }
 const TASK = {
@@ -191,7 +469,38 @@ const EVAL = {
     feedback: { type: 'array' },
     feedback_level: { type: 'string', enum: ['design', 'implementation'] },
     task_type: { type: 'string' },
+    ac_results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['ac_index', 'satisfied'],
+        properties: {
+          ac_index: { type: 'number' },
+          satisfied: { type: 'boolean' },
+          evidence: { type: 'string' },
+          verified_by: { type: 'string', enum: ['test', 'inspection'] },
+          test_files: { type: 'array', items: { type: 'string' } },
+          impl_files: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+    security_clearance: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['danger_class', 'cleared'],
+        properties: {
+          danger_class: { type: 'string' },
+          cleared: { type: 'boolean' },
+          evidence: { type: 'string' },
+        },
+      },
+    },
   },
+}
+const RG = {
+  type: 'object', required: ['red', 'green'],
+  properties: { red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' } },
 }
 const PRURL = {
   type: 'object', required: ['pr_url', 'pr_number'],
@@ -199,6 +508,27 @@ const PRURL = {
     pr_url: { type: 'string' }, pr_number: { type: ['string', 'number'] },
     committed: { type: 'boolean' },
   },
+}
+const RISK = {
+  type: 'object', required: ['hits'],
+  properties: {
+    hits: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['file', 'class'],
+        properties: {
+          file: { type: 'string' },
+          class: { type: 'string' },
+          severity: { type: 'string' },
+        },
+      },
+    },
+  },
+}
+const CHANGED = {
+  type: 'object', required: ['files'],
+  properties: { files: { type: 'array', items: { type: 'string' } } },
 }
 
 // ---- helpers ----
@@ -258,13 +588,17 @@ const req = need(await agent(
   `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${DEPTH}\` を実行し、`
   + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
   + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
-  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`,
+  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`
+  + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=単一ファイル軽微変更・AC 少数、standard=複数ファイルの通常実装、complex=多数ファイル・破壊的変更・設計判断を要する。判断に迷えば大きめ（安全側=complex 寄り）に評価せよ。`,
   { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
 ), 'Analyze')
 
-const triage = classifyTriviality(req)
-const TRIVIAL = triage.trivial
-log(`triviality: ${TRIVIAL ? 'TRIVIAL(最短経路)' : 'NON-TRIVIAL(フルパイプライン)'} — ${triage.reason}`)
+const triage = classifyShape(req)
+const SHAPE = triage.shape
+const TRIVIAL = SHAPE === 'micro'
+log(`shape: ${SHAPE} — ${triage.reason}`)
+const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・reviewer 0回
+const EVAL_PASSES = SHAPE === 'standard' ? 1 : EVAL_MAX  // standard: evaluate 1パス・差し戻しなし
 
 // ============================================================
 // Phase Plan: dev-planner ⇄ plan-reviewer ループ。
@@ -286,6 +620,15 @@ if (TRIVIAL) {
     { agentType: 'dev-planner', schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
   ), 'Plan(planner#trivial)')
   log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
+} else if (PLAN_SOLO) {
+  plan = need(await agent(
+    `cd ${WT} で作業。issue 要件に基づき実装計画を立てよ。\n`
+    + `requirements: ${JSON.stringify(req)}\n`
+    + `testing: ${TESTING}\n`
+    + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
+    { agentType: 'dev-planner', schema: PLAN, label: 'plan#standard', phase: 'Plan' },
+  ), 'Plan(planner#standard)')
+  log('standard 経路: plan 1発（plan-reviewer 0 回起動）')
 } else {
 for (let i = 1; i <= PLAN_MAX; i++) {
   const prior = Object.values(planSeen).map((s) => s.finding)   // 前 iteration までの累積 findings
@@ -407,6 +750,32 @@ for (let i = 1; i <= GREEN_MAX; i++) {
 }
 
 // ============================================================
+// Phase Security floor: realized diff に diff-risk-classify(W1)を当て、
+// 7 danger クラスを常時 seed した Goal Ledger に反映する(W5)。
+// clean クラスは自動 check、hit クラスは critical 据え置きで evaluator が evidence 解消する。
+// danger hit があれば micro でも Evaluate を走らせる(tier 無視の security path 強制)。
+// ============================================================
+phase('Security floor')
+let ledger = makeLedger()
+for (const seed of seedSecurityLedger()) {
+  ledger = appendItem(ledger, seed).ledger
+}
+const risk = need(await agent(
+  `cd ${WT} で作業。次を実行し **stdout の JSON 配列をそのまま** \`{"hits": <配列>}\` に包んで返せ`
+  + `（判定や脚色をしない。空配列なら hits:[]）:\n`
+  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+  { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
+), 'Security floor(danger-grep)')
+const dangerHits = [...new Set((risk.hits ?? []).map((h) => h.class))]
+ledger = reconcileDanger(ledger, dangerHits)
+log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
+  + `SEC blocking 未 checked ${blockingItems(ledger).filter((it) => !it.checked).length} 件`)
+const runEval = !TRIVIAL || dangerHits.length > 0
+if (TRIVIAL && dangerHits.length > 0) {
+  log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
+}
+
+// ============================================================
 // Phase Evaluate: evaluator → fail なら design=再計画+再実装 / implementation=implementer 修正。
 // 収束は evalConverged() 相当のロジックがインライン判断する（issue #125。基準は EVAL 収束モデルの
 // コメント参照）: 既出 feedback 累積で cold start を補償 / 同一 topic 反復で stuck 検出 /
@@ -415,10 +784,26 @@ for (let i = 1; i <= GREEN_MAX; i++) {
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
 // ============================================================
 let evalResult = null
-if (!TRIVIAL) {
+if (runEval) {
 phase('Evaluate')
+// Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
+// makeLedger で作り直さない(SEC seed を失わないため)。
+for (const [i, crit] of (req.acceptance_criteria ?? []).entries()) {
+  // AC は現状 inspection-blocking(LLM 判定)。W4 で red→green 実証済みのものを deterministic 化する。
+  ledger = appendItem(ledger, {
+    id: `AC-${i + 1}`, text: String(crit), dimension: 'ac',
+    severity: 'major', source: 'ac', check: { kind: 'inspection' },
+  }).ledger
+}
+for (const [i, c] of concerns.entries()) {
+  ledger = appendItem(ledger, {
+    id: `CONCERN-${i + 1}`, text: String(c), dimension: 'concern',
+    severity: 'major', source: 'evaluator', check: { kind: 'inspection' },
+  }).ledger
+}
+log(`ledger 初期化: blocking ${blockingItems(ledger).length} / advisory ${advisoryItems(ledger).length} 件`)
 const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & stuck 検出。issue #125）
-for (let i = 1; i <= EVAL_MAX; i++) {
+for (let i = 1; i <= EVAL_PASSES; i++) {
   const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
@@ -426,6 +811,11 @@ for (let i = 1; i <= EVAL_MAX; i++) {
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
     + ((i === 1 && concerns.length) ? `focus_areas（重点監査せよ。implementer の自己申告した弱点/未解消BLOCKED）:\n${JSON.stringify(concerns)}\n` : '')
+    + (dangerHits.length
+        ? `security_focus（danger-grep が realized diff で検出した危険クラス。各クラスの変更が安全かを判定し `
+          + `security_clearance:[{danger_class, cleared, evidence}] で返せ。安全確認できないものは cleared:false。`
+          + `evidence は具体的な根拠を1文で）:\n${JSON.stringify(dangerHits)}\n`
+        : '')
     + (priorFeedback.length
         ? `既出 feedback（前 iteration までに指摘済み。implementer/planner は対応済みのはず）:\n${JSON.stringify(priorFeedback)}\n`
           + `**新規の critical/major のみ報告**せよ。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
@@ -445,9 +835,69 @@ for (let i = 1; i <= EVAL_MAX; i++) {
   const stuckTopics = Object.entries(evalSeen).filter(([, s]) => s.count >= EVAL_STUCK).map(([t]) => t)
   const stuck = stuckTopics.length > 0
   log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
+  // evaluator の critical feedback を ledger に append(単調性は appendItem が強制)。
+  for (const f of (ev.feedback ?? [])) {
+    if (f && typeof f === 'object' && f.severity === 'critical') {
+      const r = appendItem(ledger, {
+        id: `EVAL-${i}-${feedbackTopic(f).slice(0, 24)}`, text: feedbackTopic(f),
+        dimension: f.dimension ?? 'eval', severity: 'critical', source: 'evaluator',
+        check: { kind: 'inspection' },
+      })
+      ledger = r.ledger
+    }
+  }
+  // 現 iteration の feedback に無くなった critical ledger item は解消とみなし checkItem(収束を妨げない)
+  const liveCriticalKeys = new Set(
+    (ev.feedback ?? []).filter((f) => f && typeof f === 'object' && f.severity === 'critical')
+      .map((f) => topicKey({ dimension: f.dimension ?? 'eval', text: feedbackTopic(f) })))
+  for (const it of ledger.items) {
+    if (it.source === 'evaluator' && it.severity === 'critical' && !it.checked
+        && !liveCriticalKeys.has(topicKey(it))) {
+      ledger = checkItem(ledger, it.id, '現 iteration で未報告=解消')
+    }
+  }
+  // W4: evaluator の per-AC 判定を ledger に反映。test 実証できる AC は red→green を
+  // dev-runner-haiku で決定論検証し、取れたら deterministic 昇格(blocking)。
+  for (const r of (ev.ac_results ?? [])) {
+    if (!r || typeof r.ac_index !== 'number') continue
+    const acId = `AC-${r.ac_index + 1}`
+    if (!ledger.items.some((it) => it.id === acId)) continue   // 知らない AC は無視
+    if (r.satisfied && r.verified_by === 'test' && Array.isArray(r.test_files) && r.test_files.length
+        && Array.isArray(r.impl_files) && r.impl_files.length) {
+      const rg = await agent(
+        `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
+        + `bash ${WT}/_shared/scripts/redgreen-verify.sh ${WT} `
+        + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
+        { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
+      if (rg && rg.red === true && rg.green === true) {
+        ledger = setCheck(ledger, acId, { kind: 'deterministic' })
+        ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
+        log(`AC-${r.ac_index + 1}: red→green 実証 → deterministic 昇格 + checked`)
+      } else {
+        if (r.satisfied) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
+        log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
+      }
+    } else if (r.satisfied) {
+      ledger = checkItem(ledger, acId, r.evidence ?? 'inspection')
+    }
+  }
+  // W5: danger-grep hit の SEC item(critical 据え置き)を evaluator が evidence 付きで
+  // 安全確認したら checkItem(resolve-with-evidence)。確認できなければ block 据え置き。
+  for (const sc of (ev.security_clearance ?? [])) {
+    if (!sc || typeof sc.danger_class !== 'string') continue
+    const secId = `SEC-${sc.danger_class.toUpperCase()}`
+    if (!ledger.items.some((it) => it.id === secId)) continue
+    if (sc.cleared === true && typeof sc.evidence === 'string' && sc.evidence.length > 0) {
+      ledger = checkItem(ledger, secId, `security cleared: ${sc.evidence}`)
+      log(`${secId}: evaluator が安全確認 → checked`)
+    }
+  }
+  ledger = nextRound(ledger)
+  log(`ledger: blocking ${blockingItems(ledger).filter((it) => !it.checked).length} 件未 checked / `
+    + `converged(observe)=${isConvergedUnderPolicy(ledger, GATE_POLICY)}`)
 
-  if (ev.verdict === 'pass') {
-    log(`evaluate 収束（pass, iter ${i}）— PR へ進む`)
+  if (isConvergedUnderPolicy(ledger, GATE_POLICY) && ev.verdict === 'pass') {
+    log(`evaluate 収束（ledger 全 blocking checked + verdict pass, iter ${i}）— PR へ進む`)
     break
   }
   // critical は常にブロック。critical が無く design パスが stuck したら早期打ち切り（replan+reimpl の
@@ -460,6 +910,10 @@ for (let i = 1; i <= EVAL_MAX; i++) {
   if (i === EVAL_MAX) {
     log(`⚠️ evaluate は ${EVAL_MAX} iteration で pass せず（verdict=${ev.verdict}）— `
       + `throw せず現状で PR へ進む（human review に委ねる）`)
+    break
+  }
+  if (SHAPE === 'standard') {
+    log('standard 経路: 1 パス評価のみ（差し戻しなし仕様）。未解消 critical があれば merge tier HOLD + human review で担保')
     break
   }
   if (ev.feedback_level === 'design') {
@@ -480,7 +934,7 @@ for (let i = 1; i <= EVAL_MAX; i++) {
   }
 }
 } else {
-  log('triviality gate: Evaluate phase を skip(evaluator 0 回起動。reason: ' + triage.reason + ')')
+  log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
 
 // ============================================================
@@ -503,6 +957,39 @@ log(`PR created: ${pr.pr_url}`)
 // ============================================================
 const iterate = await workflow('pr-iterate', { pr: pr.pr_number })
 
+// ============================================================
+// Phase Merge tier: 最終 diff に danger-grep を再実行し、merge tier を算出して提示する(W5)。
+// merge は全 tier 人間。AUTO は推奨ラベルのみ(真 auto-merge は W6 earned-autonomy)。
+// ============================================================
+phase('Merge tier')
+const riskFinal = need(await agent(
+  `cd ${WT} で作業。次を実行し **stdout の JSON 配列をそのまま** \`{"hits": <配列>}\` に包んで返せ:\n`
+  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+  { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
+), 'Merge tier(danger-grep-final)')
+const dangerHitsFinal = [...new Set((riskFinal.hits ?? []).map((h) => h.class))]
+const changed = need(await agent(
+  `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
+  + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+  { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
+), 'Merge tier(changed-files)')
+
+// 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
+ledger = reconcileDanger(ledger, dangerHitsFinal)
+const unresolvedDanger = ledger.items.some(
+  (it) => it.dimension === 'security' && it.source === 'seed' && it.floor && !it.checked)
+const breaking = /breaking|incompatible|migration|破壊的|非互換/i.test(`${req.scope ?? ''} ${req.summary ?? ''}`)
+const escalateCount = policyAdvisoryItems(ledger, GATE_POLICY).filter((it) => it.escalate === true).length
+const mergeTier = classifyMergeTier({
+  shape: SHAPE,
+  converged: isConvergedUnderPolicy(ledger, GATE_POLICY),
+  unresolvedDanger,
+  breaking,
+  docsOrTestOnly: isDocsOrTestOnly(changed.files ?? []),
+  escalateCount,
+})
+log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
+
 return {
   issue: ISSUE,
   worktree: WT,
@@ -513,7 +1000,19 @@ return {
   eval_verdict: evalResult?.verdict ?? null,
   test_green: val?.green ?? null,
   iterate_status: iterate?.status ?? null,
+  shape: SHAPE,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,
-  note: 'merge は手動で行ってください',
+  gate_policy: GATE_POLICY,
+  ledger_blocking: policyBlockingItems(ledger, GATE_POLICY).length,
+  ledger_advisory: policyAdvisoryItems(ledger, GATE_POLICY).length,
+  ledger_converged: isConvergedUnderPolicy(ledger, GATE_POLICY),
+  merge_tier: mergeTier.tier,
+  merge_tier_reasons: mergeTier.reasons,
+  danger_hits: dangerHitsFinal,
+  note: mergeTier.tier === 'HOLD'
+    ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
+    : mergeTier.tier === 'AUTO'
+    ? 'AUTO 推奨（低リスク）。最終判断と merge は人間が行ってください'
+    : 'REVIEW: 人間が LGTM を確認して merge してください',
 }
