@@ -527,6 +527,18 @@ function buildDevflowSummaryBody({
   }
   lines.push('');
 
+  // 2.5. ESCALATE-TO-HUMAN セクション（escalate item があるときのみ出力。人間が必ず読む冒頭近くに置く）
+  const escalated = (advisoryItems || []).filter((it) => it && it.escalate === true);
+  if (escalated.length > 0) {
+    lines.push('### ESCALATE-TO-HUMAN（人間の判断が必要）');
+    for (const item of escalated) {
+      const dimension = item.dimension ? ` [${item.dimension}]` : '';
+      const reason = item.escalate_reason ? `（reason: ${item.escalate_reason}）` : '';
+      lines.push(`- ${item.id}${dimension} ${item.text}${reason}`);
+    }
+    lines.push('');
+  }
+
   // 3. 実行結果サマリー（shape / test_green / eval_verdict）
   lines.push('### 実行結果');
   lines.push(`- shape: ${shape != null ? shape : '不明'}`);
@@ -760,7 +772,21 @@ const EVAL = {
     score: { type: 'object' },
     total: { type: 'number' },
     threshold: { type: 'number' },
-    feedback: { type: 'array' },
+    feedback: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          severity: { type: 'string', enum: ['critical', 'major', 'minor'] },
+          topic: { type: 'string' },
+          dimension: { type: 'string' },
+          description: { type: 'string' },
+          suggestion: { type: 'string' },
+          escalate: { type: 'boolean' },
+          escalate_reason: { type: 'string', enum: ['accountability', 'preference', 'novelty', 'blast-radius'] },
+        },
+      },
+    },
     feedback_level: { type: 'string', enum: ['design', 'implementation'] },
     task_type: { type: 'string' },
     ac_results: {
@@ -1300,17 +1326,26 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   const stuckTopics = Object.entries(evalSeen).filter(([, s]) => s.count >= EVAL_STUCK).map(([t]) => t)
   const stuck = stuckTopics.length > 0
   log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
-  // evaluator の critical feedback を ledger に append(単調性は appendItem が強制)。
+  // evaluator の critical feedback と ESCALATE-TO-HUMAN feedback を ledger に append(単調性は appendItem が強制)。
+  // ESCALATE-TO-HUMAN は blast-radius クラスの distrust 機構(W7): 正確性でなく当事者性/好み/訓練分布外性で
+  // 人間 required-block を立てる。advisory lane に積まれ escalateCount 経由で merge tier HOLD になる。
   for (const f of (ev.feedback ?? [])) {
-    if (f && typeof f === 'object' && f.severity === 'critical') {
-      const r = appendItem(ledger, {
-        id: `EVAL-${i}-${feedbackTopic(f).slice(0, 24)}`, text: feedbackTopic(f),
-        dimension: f.dimension ?? 'eval', severity: 'critical', source: 'evaluator',
-        check: { kind: 'inspection' },
-      })
-      ledger = r.ledger
-    }
+    if (!f || typeof f !== 'object') continue
+    const isCritical = f.severity === 'critical'
+    const isEscalate = f.escalate === true
+    if (!isCritical && !isEscalate) continue
+    const r = appendItem(ledger, {
+      id: `EVAL-${i}-${feedbackTopic(f).slice(0, 24)}`, text: feedbackTopic(f),
+      dimension: f.dimension ?? 'eval',
+      severity: isCritical ? 'critical' : (f.severity === 'minor' ? 'minor' : 'major'),
+      source: 'evaluator', check: { kind: 'inspection' },
+      ...(isEscalate ? { escalate: true, escalate_reason: f.escalate_reason ?? null } : {}),
+    })
+    ledger = r.ledger
+    if (isEscalate && !r.accepted) log(`⚠️ ESCALATE feedback "${feedbackTopic(f)}" は append 単調性により却下(round>0 の新規 topic)`)
   }
+  const escalateAppended = (ev.feedback ?? []).filter((f) => f && f.escalate === true).length
+  if (escalateAppended > 0) log(`ESCALATE-TO-HUMAN feedback ${escalateAppended} 件を検出(issue #177。乱発ガードは W6b)`)
   // 未解消 EVAL-* critical は evaluator の critical_resolutions（resolve-with-evidence）でのみ解消する。
   // 沈黙＝解消の自動 checkItem は廃止（issue #174。「新規のみ報告」指示と矛盾し偽解消を生むため）。
   for (const cr of (ev.critical_resolutions ?? [])) {

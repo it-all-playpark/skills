@@ -16,7 +16,7 @@
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
  * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
  * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate}>} opts.advisoryItems - advisory items
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason}>} opts.advisoryItems - advisory items
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
@@ -59,6 +59,18 @@ export function buildDevflowSummaryBody({
     }
   }
   lines.push('');
+
+  // 2.5. ESCALATE-TO-HUMAN セクション（escalate item があるときのみ出力。人間が必ず読む冒頭近くに置く）
+  const escalated = (advisoryItems || []).filter((it) => it && it.escalate === true);
+  if (escalated.length > 0) {
+    lines.push('### ESCALATE-TO-HUMAN（人間の判断が必要）');
+    for (const item of escalated) {
+      const dimension = item.dimension ? ` [${item.dimension}]` : '';
+      const reason = item.escalate_reason ? `（reason: ${item.escalate_reason}）` : '';
+      lines.push(`- ${item.id}${dimension} ${item.text}${reason}`);
+    }
+    lines.push('');
+  }
 
   // 3. 実行結果サマリー（shape / test_green / eval_verdict）
   lines.push('### 実行結果');
