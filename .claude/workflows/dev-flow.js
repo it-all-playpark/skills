@@ -328,6 +328,26 @@ function classifyShape(req) {
   }
   return { shape, reason };
 }
+function refloorShape(estimatedShape, realizedCount) {
+  let realizedFloor;
+  if (typeof realizedCount !== 'number' || realizedCount < 0 || !Number.isFinite(realizedCount)) {
+    realizedFloor = 'complex';
+  } else if (realizedCount <= 2) {
+    realizedFloor = 'micro';
+  } else if (realizedCount <= 5) {
+    realizedFloor = 'standard';
+  } else {
+    realizedFloor = 'complex';
+  }
+
+  const effective = SHAPE_RANK[realizedFloor] > SHAPE_RANK[estimatedShape] ? realizedFloor : estimatedShape;
+  return {
+    shape: effective,
+    refloored: effective !== estimatedShape,
+    realizedFloor,
+    realizedCount,
+  };
+}
 // ---- parallel-disjoint エンジン (canonical: _lib/parallel-disjoint.mjs。修正時は両者を同期。byte 一致は _lib/parallel-disjoint.sync.test.mjs が保証) ----
 /**
  * normalizePath: file_changes エントリを正規化したパス文字列に変換する。
@@ -719,7 +739,6 @@ const SHAPE = triage.shape
 const TRIVIAL = SHAPE === 'micro'
 log(`shape: ${SHAPE} — ${triage.reason}`)
 const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・reviewer 0回
-const EVAL_PASSES = SHAPE === 'standard' ? 1 : EVAL_MAX  // standard: evaluate 1パス・差し戻しなし
 
 // ============================================================
 // Phase Plan: dev-planner ⇄ plan-reviewer ループ。
@@ -895,7 +914,18 @@ const dangerHits = [...new Set((risk.hits ?? []).map((h) => h.class))]
 ledger = reconcileDanger(ledger, dangerHits)
 log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
   + `SEC blocking 未 checked ${blockingItems(ledger).filter((it) => !it.checked).length} 件`)
-const runEval = !TRIVIAL || dangerHits.length > 0
+// Step F2: realized diff のファイル数を取得して re-floor を算出する
+const realized = await agent(
+  `cd ${WT} で作業。次を実行し stdout の各行(ファイルパス)を {"files": [...]} に包んで返せ:\n`
+  + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+  { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'realized-diff', phase: 'Security floor' },
+)
+const realizedCount = (realized?.files ?? []).length
+const refloor = refloorShape(SHAPE, realizedCount)
+const EFFECTIVE_SHAPE = refloor.shape
+const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
+if (refloor.refloored) log(`⚠️ re-floor: 見積もり ${SHAPE} → realized ${realizedCount} file(s) で ${EFFECTIVE_SHAPE} へ昇格 (raise-only)`)
+const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0
 if (TRIVIAL && dangerHits.length > 0) {
   log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
 }
@@ -1069,7 +1099,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       + `throw せず現状で PR へ進む（human review に委ねる）`)
     break
   }
-  if (SHAPE === 'standard') {
+  if (EFFECTIVE_SHAPE === 'standard') {
     log('standard 経路: 1 パス評価のみ（差し戻しなし仕様）。未解消 critical があれば merge tier HOLD + human review で担保')
     break
   }
@@ -1160,6 +1190,9 @@ return {
   test_green: val?.green ?? null,
   iterate_status: iterate?.status ?? null,
   shape: SHAPE,
+  effective_shape: EFFECTIVE_SHAPE,
+  shape_refloored: refloor.refloored,
+  realized_file_count: realizedCount,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,
   gate_policy: GATE_POLICY,
