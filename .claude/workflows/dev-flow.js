@@ -917,9 +917,16 @@ log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'}
 // Step F2: realized diff のファイル数を取得して re-floor を算出する
 // realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
 // ?? [] は取得失敗と空 diff（正常な 0 ファイル）を同じ 0 に潰すため使わない。
+// 注: この時点で implementer はコミットしていない（git add / commit 禁止）ため、
+//     三点 diff（origin/${BASE}...HEAD）は HEAD==origin/BASE で空を返す。
+//     代わりに git status --porcelain でステージ済み・未ステージを含む作業ツリー変更を取得する
+//     （declared-path-check と同方式）。
 const realized = await agent(
-  `cd ${WT} で作業。次を実行し stdout の各行(ファイルパス)を {"files": [...]} に包んで返せ:\n`
-  + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+  `cd ${WT} で作業。\`git -C ${WT} status --porcelain\` を実行し、`
+  + `変更ファイル一覧を取得せよ（ステージ済み・未ステージどちらも含む）。`
+  + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
+  + `リネームは -> の右側（新ファイル名）を使え。空白行は除く。`
+  + `結果を {"files": ["path1", ...]} 形式で返せ。`,
   { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'realized-diff', phase: 'Security floor' },
 )
 const realizedCount = realized?.files ? realized.files.length : NaN
