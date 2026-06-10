@@ -415,3 +415,136 @@ test('[refloor][struct] runEval が EFFECTIVE_SHAPE 基準になっている', (
     "dev-flow.js の runEval が `EFFECTIVE_SHAPE !== 'micro'` 基準であること",
   );
 });
+
+// ============================================================
+// (D) [refloor] realized-diff agent が null を返す（drop / skip）→ NaN → complex 安全弁
+//     ?? [] を使うと失敗が 0 に潰れ runEval=false になるが、正しい実装では
+//     realizedCount=NaN → refloorShape('micro', NaN) → complex → runEval=true
+// ============================================================
+
+test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経由で complex → evaluator >= 1 回', async () => {
+  // micro に落ちる req（realized-diff が null を返しても complex 安全弁で evaluator が走ること）
+  const microReq = {
+    summary: 's',
+    acceptance_criteria: ['a', 'b'],
+    issue_type: 'feat',
+    scope: 'src',
+    estimated_change_file_count: 1,
+    shape: 'micro',
+  };
+
+  const calls = [];
+
+  // realized-diff label を意図的に null（agent drop 相当）で返す specialized stub
+  const agentStubNullRealized = async (prompt, opts) => {
+    const label = opts?.label ?? '';
+    const agentType = opts?.agentType ?? '';
+    calls.push({ label, agentType });
+
+    if (label === 'worktree') {
+      return { worktree: '/tmp/test-wt', branch: 'feature/issue-1' };
+    }
+    if (label.startsWith('analyze')) {
+      return microReq;
+    }
+    if (agentType === 'dev-planner') {
+      return {
+        serial: [{ task_id: 't1', title: 'task', file_changes: ['src/foo.ts'], description: 'd', acceptance: ['a'] }],
+        parallel: [],
+        summary: 's',
+      };
+    }
+    if (agentType === 'plan-reviewer') {
+      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    }
+    if (label.startsWith('danger-grep')) {
+      return { hits: [] };
+    }
+    // (D) realized-diff を null で返す → ?? [] を使うと 0 に潰れ runEval=false になるバグ再現
+    if (label === 'realized-diff') {
+      return null; // agent drop 相当
+    }
+    if (label === 'declared-path-check') {
+      return { files: [] };
+    }
+    if (label.startsWith('test')) {
+      return { tests: 'no_tests', green: true, summary: '' };
+    }
+    if (agentType === 'evaluator') {
+      return {
+        verdict: 'pass',
+        total: 100,
+        threshold: 80,
+        feedback: [],
+        feedback_level: 'implementation',
+        ac_results: [],
+        security_clearance: [],
+      };
+    }
+    if (label.startsWith('pr')) {
+      return { pr_url: 'http://x', pr_number: 1, committed: true };
+    }
+    if (label === 'changed-files') {
+      return { files: ['src/foo.ts'] };
+    }
+    if (agentType === 'implementer') {
+      return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    }
+    return null;
+  };
+
+  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
+
+  const sandbox = {
+    phase: () => {},
+    log: () => {},
+    agent: agentStubNullRealized,
+    parallel: parallelStub,
+    workflow: async () => ({ status: 'LGTM' }),
+    args: '1',
+    console,
+    JSON,
+    Math,
+    String,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Error,
+    RegExp,
+    Promise,
+    Symbol,
+    Map,
+    Set,
+    Date,
+  };
+
+  const ctx = vm.createContext(sandbox);
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { error } = await runDevFlowInSandbox(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  assert.ok(
+    evaluatorCalls.length >= 1,
+    `(D) realized-diff=null: evaluator は >= 1 回呼ばれるべきだが ${evaluatorCalls.length} 回`
+      + ' (null → NaN → refloorShape → complex → runEval=true)',
+  );
+});
+
+test('[refloor][struct] realized-diff の取得失敗を ?? [] で 0 に潰していない（NaN 経由で安全弁へ）', () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  // 誤ったパターン: (realized?.files ?? []).length は null を 0 に潰す
+  assert.ok(
+    !src.includes('(realized?.files ?? []).length'),
+    'dev-flow.js の realizedCount に `?? []` による null 潰しが残っている（NaN 経由に修正すること）',
+  );
+  // 正しいパターン: null → NaN で refloorShape の complex 安全弁へ流す
+  assert.ok(
+    src.includes('realized?.files ? realized.files.length : NaN'),
+    "dev-flow.js の realizedCount が `realized?.files ? realized.files.length : NaN` 形式であること",
+  );
+});

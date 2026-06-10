@@ -915,12 +915,14 @@ ledger = reconcileDanger(ledger, dangerHits)
 log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
   + `SEC blocking 未 checked ${blockingItems(ledger).filter((it) => !it.checked).length} 件`)
 // Step F2: realized diff のファイル数を取得して re-floor を算出する
+// realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
+// ?? [] は取得失敗と空 diff（正常な 0 ファイル）を同じ 0 に潰すため使わない。
 const realized = await agent(
   `cd ${WT} で作業。次を実行し stdout の各行(ファイルパス)を {"files": [...]} に包んで返せ:\n`
   + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
   { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'realized-diff', phase: 'Security floor' },
 )
-const realizedCount = (realized?.files ?? []).length
+const realizedCount = realized?.files ? realized.files.length : NaN
 const refloor = refloorShape(SHAPE, realizedCount)
 const EFFECTIVE_SHAPE = refloor.shape
 const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
