@@ -1020,6 +1020,7 @@ const concerns = [
 // ============================================================
 phase('Validate')
 let val = null
+let greenFixCount = 0
 for (let i = 1; i <= GREEN_MAX; i++) {
   val = need(await agent(
     `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
@@ -1035,9 +1036,18 @@ for (let i = 1; i <= GREEN_MAX; i++) {
   await agent(
     `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
     + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
+    + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
+    + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
     + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`,
     { agentType: 'implementer', schema: IMPL, label: `green-fix#${i}`, phase: 'Validate' },
   )
+  greenFixCount += 1
+}
+if (greenFixCount > 0) {
+  concerns.push(`green-fix が ${greenFixCount} 回発生: テスト diff を重点監査せよ。`
+    + `テストの期待値・assert の弱体化（テスト弱体化）で green 化していないか、`
+    + `テスト変更がある場合はその正当性（テスト自体の誤りの根拠）を検証すること`)
+  log(`green-fix ${greenFixCount} 回 → evaluator focus_areas にテスト弱体化監査を注入`)
 }
 
 // ============================================================
