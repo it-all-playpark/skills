@@ -1078,6 +1078,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       + `evaluator feedback: ${JSON.stringify(ev.feedback)}`,
       { agentType: 'dev-planner', schema: PLAN, label: `replan#${i}`, phase: 'Evaluate' },
     ), `Evaluate(replan#${i})`)
+    plan = applyDisjoint(plan, `replan#${i}`)
     await runImplement(plan, ev.feedback, `reimpl#${i}`)
   } else {
     await agent(
