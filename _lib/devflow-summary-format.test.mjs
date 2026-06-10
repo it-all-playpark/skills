@@ -464,3 +464,60 @@ test('blockingItems の checked 項目に evidence を含む', () => {
   });
   assert.ok(body.includes('test passed'), 'evidence を含む');
 });
+
+// ─── ESCALATE-TO-HUMAN セクション ────────────────────────────────────────────
+
+test('escalate:true の advisory item がある -> ESCALATE-TO-HUMAN セクションを含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'A1', text: 'naming preference', severity: 'major', checked: false, dimension: 'style', escalate: true, escalate_reason: 'preference' },
+    ],
+  });
+  assert.ok(body.includes('### ESCALATE-TO-HUMAN（人間の判断が必要）'), 'ESCALATE-TO-HUMAN 見出しを含む');
+  assert.ok(body.includes('- A1 [style] naming preference（reason: preference）'), 'escalate item 行を含む');
+});
+
+test('escalate_reason なしの escalate item -> 行末に（reason: ...）が付かない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'A2', text: 'some concern', severity: 'major', checked: false, dimension: 'quality', escalate: true },
+    ],
+  });
+  assert.ok(body.includes('### ESCALATE-TO-HUMAN（人間の判断が必要）'), 'ESCALATE-TO-HUMAN 見出しを含む');
+  assert.ok(body.includes('- A2 [quality] some concern'), 'escalate item 行を含む');
+  assert.ok(!body.includes('reason:'), '（reason: ...）を含まない');
+});
+
+test('escalate item ゼロ（escalate:false のみ）-> ESCALATE-TO-HUMAN セクションを含まない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'A1', text: 'normal advisory', severity: 'minor', checked: false, dimension: 'style', escalate: false },
+    ],
+  });
+  assert.ok(!body.includes('ESCALATE-TO-HUMAN'), 'ESCALATE-TO-HUMAN セクションを含まない');
+});
+
+test('advisoryItems 空 -> ESCALATE-TO-HUMAN セクションを含まない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [],
+  });
+  assert.ok(!body.includes('ESCALATE-TO-HUMAN'), 'ESCALATE-TO-HUMAN セクションを含まない');
+});
+
+test('ESCALATE-TO-HUMAN セクション位置: Merge tier より後、実行結果より前', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'A1', text: 'naming preference', severity: 'major', checked: false, dimension: 'style', escalate: true, escalate_reason: 'preference' },
+    ],
+  });
+  const escalateIdx = body.indexOf('### ESCALATE-TO-HUMAN');
+  const mergeTierIdx = body.indexOf('### Merge tier');
+  const jikkoIdx = body.indexOf('### 実行結果');
+  assert.ok(escalateIdx > mergeTierIdx, 'ESCALATE-TO-HUMAN は Merge tier より後');
+  assert.ok(escalateIdx < jikkoIdx, 'ESCALATE-TO-HUMAN は 実行結果 より前');
+});
