@@ -43,9 +43,12 @@ $SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth L
   "requirements": ["Req1", "Req2"],
   "affected_files": ["src/foo.ts"],
   "components": ["AuthService"],
-  "breaking_changes": false
+  "breaking_changes": false,
+  "ambiguities": ["確信を持って AC 化できなかった点"]
 }
 ```
+
+`ambiguities` は dev-flow の Analyze phase が要求する任意フィールド。issue から確信を持って受入条件化できなかった重要な曖昧点のみ列挙する（推測で安全に埋められる軽微な点は含めない）。dev-flow は `acceptance_criteria` が空、または `ambiguities` が閾値（2 件）を超えると `status: 'needs_clarification'` で早期 return し、呼び出し元セッションが AskUserQuestion で人間に確認する。
 
 ## Type Detection
 
