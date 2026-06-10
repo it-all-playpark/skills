@@ -1091,11 +1091,14 @@ const refloor = refloorShape(SHAPE, realizedCount)
 const EFFECTIVE_SHAPE = refloor.shape
 const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
 if (refloor.refloored) log(`⚠️ re-floor: 見積もり ${SHAPE} → realized ${realizedCount} file(s) で ${EFFECTIVE_SHAPE} へ昇格 (raise-only)`)
-const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0
+const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || greenFixCount > 0
 if (TRIVIAL && dangerHits.length > 0) {
   log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
 }
 
+if (TRIVIAL && greenFixCount > 0) {
+  log(`⚠️ micro だが green-fix ${greenFixCount} 回 → Evaluate を実行（テスト弱体化監査 強制）`)
+}
 // ============================================================
 // Step DeclaredPath check: git status と plan 宣言パスを突合し、
 // 宣言外変更を concerns へ注入する（evaluator focus_areas 経由で重点監査）。
