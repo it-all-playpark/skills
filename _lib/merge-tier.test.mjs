@@ -156,3 +156,25 @@ test('classifyMergeTier: micro だが docs/test-only でない → REVIEW', () =
   const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(r.tier, 'REVIEW');
 });
+
+
+test('classifyMergeTier: AC 未達(unsatisfiedAc:true) → HOLD', () => {
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: true });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => /AC 未達/.test(x)));
+});
+
+test('classifyMergeTier: unsatisfiedAc:false は既存 REVIEW 挙動不変', () => {
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: false });
+  assert.equal(r.tier, 'REVIEW');
+});
+
+test('classifyMergeTier: unsatisfiedAc 未指定でも REVIEW(後方互換 — フラグ省略時は false 扱い)', () => {
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  assert.equal(r.tier, 'REVIEW');
+});
+
+test('classifyMergeTier: unsatisfiedAc:true は AUTO 条件(micro+docs/test-only)でも HOLD に勝つ', () => {
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAc: true });
+  assert.equal(r.tier, 'HOLD');
+});
