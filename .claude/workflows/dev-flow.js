@@ -1047,7 +1047,7 @@ if (needsCtx.length) {
     + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`,
     { agentType: 'dev-runner', schema: REQ, label: `analyze-retry#${ISSUE}`, phase: 'Implement' },
   )
-  if (\!req2) {
+  if (!req2) {
     log(`⚠️ implement: comprehensive 再分析が null を返した — needs_clarification で中断`)
   } else {
     const ids = new Set(needsCtx.map((r) => r.task_id))
@@ -1062,7 +1062,7 @@ if (needsCtx.length) {
       'reimpl-context',
       req2,
     )
-    implResults = [...implResults.filter((r) => \!ids.has(r.task_id)), ...retryResults]
+    implResults = [...implResults.filter((r) => !ids.has(r.task_id)), ...retryResults]
   }
   const stillNeeds = (implResults).filter((r) => r && r.status === 'NEEDS_CONTEXT')
   if (stillNeeds.length) {

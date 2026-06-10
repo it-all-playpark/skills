@@ -565,3 +565,135 @@ test('[needs-clarification][struct] dev-flow.js に ambiguities と needs_clarif
     "dev-flow.js に 'needs_clarification' 文字列が存在すること",
   );
 });
+
+// ============================================================
+// T7: ambiguities 3 件 + AC 非空 → needs_clarification + missing_context が ambiguities と一致 + dev-planner 0 回
+//
+// レビュー指摘 (a) のケース: ambiguities.length > AMBIGUITY_MAX (3 > 2) かつ AC 非空
+// → missing_context 選択 ternary の ambiguities 側（row 900 の else 分岐）が通ることを確認
+// ============================================================
+test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarification + missing_context===ambiguities + dev-planner 0回', async () => {
+  const reqWithAmbiguities = {
+    summary: 's',
+    acceptance_criteria: ['ac1'],
+    issue_type: 'feat',
+    scope: 'src',
+    estimated_change_file_count: 3,
+    shape: 'standard',
+    ambiguities: ['a', 'b', 'c'],
+  };
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(
+    reqWithAmbiguities,
+    () => ({
+      status: 'DONE',
+      task_id: 'T1',
+      files: [],
+      summary: '',
+      concerns: [],
+      blocking_reason: null,
+      missing_context: null,
+    }),
+  );
+
+  const { error, result } = await runDevFlowInSandbox(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  // result.status === 'needs_clarification'
+  assert.equal(
+    result?.status,
+    'needs_clarification',
+    `T7: result.status は 'needs_clarification' のはずだが ${JSON.stringify(result?.status)} だった`,
+  );
+
+  // missing_context が ambiguities と一致（AC 非空なので ternary の else 側 = ambiguities）
+  assert.deepEqual(
+    result?.missing_context,
+    ['a', 'b', 'c'],
+    `T7: result.missing_context は ambiguities ['a','b','c'] のはずだが ${JSON.stringify(result?.missing_context)} だった`,
+  );
+
+  // dev-planner 0 回（曖昧ゲートで Plan 前に return）
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  assert.equal(
+    plannerCalls.length,
+    0,
+    `T7: dev-planner 呼び出しは 0 回のはずだが ${plannerCalls.length} 回だった`,
+  );
+
+  // label 'pr' 始まり 0 回
+  const prCalls = calls.filter((c) => c.label.startsWith('pr'));
+  assert.equal(
+    prCalls.length,
+    0,
+    `T7: label 'pr' 始まりの呼び出しは 0 回のはずだが ${prCalls.length} 回だった`,
+  );
+});
+
+// ============================================================
+// T8: ambiguities ちょうど 2 件 → ゲート通過し Plan へ進み PR まで完走
+//
+// レビュー指摘 (b) の boundary ケース: ambiguities.length === AMBIGUITY_MAX (2 === 2)
+// ゲート条件は > なので = は通過する。PR まで完走することを確認。
+// ============================================================
+test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通過し PR まで完走', async () => {
+  const reqWithBoundaryAmbiguities = {
+    summary: 's',
+    acceptance_criteria: ['ac1', 'ac2'],
+    issue_type: 'feat',
+    scope: 'src',
+    estimated_change_file_count: 3,
+    shape: 'standard',
+    ambiguities: ['a', 'b'],
+  };
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
+    reqWithBoundaryAmbiguities,
+    () => ({
+      status: 'DONE',
+      task_id: 'T1',
+      files: [],
+      summary: '',
+      concerns: [],
+      blocking_reason: null,
+      missing_context: null,
+    }),
+  );
+
+  const { error, result } = await runDevFlowInSandbox(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  // result.status は undefined（通常完走の return object に status フィールドはない）
+  assert.equal(
+    result?.status,
+    undefined,
+    `T8: result.status は undefined（通常完走）のはずだが ${JSON.stringify(result?.status)} だった`,
+  );
+
+  // result.pr_url 存在（PR まで完走）
+  assert.ok(
+    result?.pr_url != null,
+    `T8: result.pr_url が存在するはずだが ${JSON.stringify(result?.pr_url)} だった`,
+  );
+
+  // dev-planner 1 回（standard 経路で Plan まで進んだ）
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  assert.equal(
+    plannerCalls.length,
+    1,
+    `T8: dev-planner 呼び出しは 1 回のはずだが ${plannerCalls.length} 回だった`,
+  );
+
+  // workflow() 呼び出し済み（pr-iterate が起動された）
+  assert.equal(
+    workflowCalledRef.called,
+    true,
+    'T8: workflow() は呼ばれるはずだが呼ばれなかった',
+  );
+});
