@@ -232,10 +232,11 @@ while IFS= read -r file; do
     fi
 
     # 5. public-api
-    # _lib/ 配下は repo 内部専用ライブラリで外部 API surface ではないため public-api critical
-    # の構造的 false positive を除外する。緩和はこのクラス限定（他 6 クラスは _lib でも従来どおり判定する）。
-    if echo "$file" | grep -Eq '(^|/)_lib/'; then
-        : # _lib is repo-internal library; skip public-api check only
+    # _lib/ は repo 内部専用ライブラリ、tools/ は repo 内部の generator/dev CLI 置き場で、
+    # いずれも外部 API surface ではないため public-api critical の構造的 false positive を除外する。
+    # 緩和はこのクラス限定（他 6 クラスは _lib/ / tools/ でも従来どおり判定する）。
+    if echo "$file" | grep -Eq '(^|/)(_lib|tools)/'; then
+        : # _lib / tools are repo-internal; skip public-api check only
     elif echo "$added" | grep -Eiq 'export (default |async )?(function|class|const)|module\.exports|@(Get|Post|Put|Delete|Patch)\(|openapi|paths:'; then
         hits="${hits}${file}"$'\t'"public-api"$'\n'
     fi
