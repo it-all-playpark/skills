@@ -61,25 +61,41 @@ const DECISION_LABEL = {
   'comment': 'コメント',
 };
 
+function mdCell(v) {
+  if (v == null) return '';
+  return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
 function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
+  const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
+  const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const label = DECISION_LABEL[decision] ?? decision;
+  const emoji = DECISION_EMOJI[decision] ?? '';
   const lines = [];
 
   lines.push(`## PR #${pr} — レビュー結果 (iteration ${iteration})`);
   lines.push('');
-  lines.push(`**判定**: ${label}`);
-  lines.push('');
-  lines.push('### Blocking 指摘');
 
-  if (!blocking || blocking.length === 0) {
-    lines.push('blocking 指摘なし');
+  const blockingList = blocking || [];
+  if (blockingList.length === 0) {
+    lines.push(`**判定**: ${emoji} ${label} — ✅ blocking 指摘なし`);
   } else {
-    for (const f of blocking) {
+    const c = blockingList.filter((f) => f.severity === 'critical').length;
+    const m = blockingList.filter((f) => f.severity === 'major').length;
+    lines.push(`**判定**: ${emoji} ${label} — blocking ${blockingList.length} 件（critical ${c} / major ${m}）`);
+    lines.push('');
+    lines.push('| # | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    let idx = 1;
+    for (const f of blockingList) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
       const loc = f.file != null
-        ? `${f.file}${f.line != null ? ':' + f.line : ''} `
-        : '';
-      const sug = f.suggestion != null ? ` → ${f.suggestion}` : '';
-      lines.push(`- [${f.severity}] ${loc}${f.description}${sug}`);
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${idx} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+      idx++;
     }
   }
 
@@ -94,38 +110,60 @@ const STATUS_HEADLINE = {
 };
 
 function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, history }) {
-  const headline = STATUS_HEADLINE[status] ?? status;
+  const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
+  const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const lines = [];
 
   lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
   lines.push('');
-  lines.push(`### ${headline}`);
+  lines.push(`### ${STATUS_HEADLINE[status] ?? status}`);
   lines.push('');
-  lines.push(`- **総反復回数**: ${iterations}`);
-  lines.push(`- **最終判定**: ${DECISION_LABEL[lastDecision] ?? lastDecision}`);
-  lines.push(`- **最終判定理由**: ${lastSummary}`);
 
-  if (history && history.length > 0) {
+  lines.push('| 終了状態 | 総反復 | 最終判定 |');
+  lines.push('|---|---|---|');
+  const decEmoji = DECISION_EMOJI[lastDecision] ?? '';
+  const decLabel = DECISION_LABEL[lastDecision] ?? lastDecision;
+  lines.push(`| ${status} | ${iterations} | ${decEmoji} ${decLabel} |`);
+
+  lines.push('');
+  lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  const histList = history || [];
+  if (histList.length > 0) {
     lines.push('');
     lines.push('### 反復履歴');
-    for (const round of history) {
-      const roundLabel = DECISION_LABEL[round.decision] ?? round.decision;
-      lines.push('');
-      lines.push(`#### Iteration ${round.iteration}: ${roundLabel}`);
-      lines.push(`${round.summary}`);
-      if (round.blocking && round.blocking.length > 0) {
-        lines.push(`- blocking 指摘数: ${round.blocking.length}`);
-        for (const f of round.blocking) {
-          const loc = f.file != null
-            ? `${f.file}${f.line != null ? ':' + f.line : ''} `
-            : '';
-          const sug = f.suggestion != null ? ` → ${f.suggestion}` : '';
-          lines.push(`  - [${f.severity}] ${loc}${f.description}${sug}`);
-        }
-      } else {
-        lines.push('- blocking 指摘なし');
-      }
+    lines.push('');
+    lines.push('| iter | 判定 | blocking | summary |');
+    lines.push('|---|---|---|---|');
+    for (const round of histList) {
+      const rEmoji = DECISION_EMOJI[round.decision] ?? '';
+      const rLabel = DECISION_LABEL[round.decision] ?? round.decision;
+      const bCount = (round.blocking ?? []).length;
+      const rawSummary = mdCell(round.summary);
+      const rSummary = rawSummary.length > 120 ? rawSummary.slice(0, 120) + '…' : rawSummary;
+      lines.push(`| ${round.iteration} | ${rEmoji} ${rLabel} | ${bCount} | ${rSummary} |`);
     }
+  }
+
+  const allBlocking = histList.flatMap((r) => (r.blocking ?? []).map((f) => ({ iter: r.iteration, ...f })));
+  const totalBlocking = allBlocking.length;
+  if (totalBlocking > 0) {
+    lines.push('');
+    lines.push(`<details><summary>全 blocking 指摘の詳細（${totalBlocking} 件）</summary>`);
+    lines.push('');
+    lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    for (const f of allBlocking) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
+      const loc = f.file != null
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${f.iter} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+    }
+    lines.push('');
+    lines.push('</details>');
   }
 
   lines.push('');

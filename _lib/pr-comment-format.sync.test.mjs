@@ -21,7 +21,7 @@ function extractFn(src, fnName) {
   return m[0].trim();
 }
 
-for (const fnName of ['buildReviewCommentBody', 'buildTerminalSummaryBody']) {
+for (const fnName of ['mdCell', 'buildReviewCommentBody', 'buildTerminalSummaryBody']) {
   const canonicalSrc = readFileSync(join(repoRoot, '_lib/pr-comment-format.mjs'), 'utf8');
   const canonical = extractFn(canonicalSrc, fnName);
 

@@ -9,6 +9,17 @@
 // この関数を修正する際は、必ず dev-flow.js の inline コピーも同期すること。
 
 /**
+ * Markdown テーブルセルの値をエスケープする。
+ * パイプ文字を \| に、改行を <br> に変換する。
+ * @param {*} v
+ * @returns {string}
+ */
+export function mdCell(v) {
+  if (v == null) return '';
+  return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
+/**
  * dev-flow 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号
@@ -45,12 +56,60 @@ export function buildDevflowSummaryBody({
 }) {
   const lines = [];
 
+  const TIER_EMOJI = { 'HOLD': '🔶', 'REVIEW': '🔷', 'AUTO': '✅' };
+
   // 1. 見出し
   lines.push(`## dev-flow 終端サマリー — PR #${pr}`);
   lines.push('');
 
-  // 2. Merge tier セクション
-  lines.push(`### Merge tier: ${mergeTier}`);
+  // 2. at-a-glance テーブル
+  const tierCell = `${TIER_EMOJI[mergeTier] ?? ''} **${mergeTier}**`;
+  const shapeCell = shape != null ? shape : '不明';
+  let testCell;
+  if (testGreen == null) {
+    testCell = '不明';
+  } else if (testGreen === true) {
+    testCell = '✅ green';
+  } else {
+    testCell = '❌ red';
+  }
+  let evalCell;
+  if (evalVerdict == null) {
+    evalCell = '不明';
+  } else if (evalVerdict === 'pass') {
+    evalCell = '✅ pass';
+  } else {
+    evalCell = `❌ ${evalVerdict}`;
+  }
+  const ledgerCell = ledgerConverged ? '✅ 収束' : '⚠️ 未収束';
+  const acArr = acResults && acResults.length > 0 ? acResults : null;
+  let acCell;
+  if (!acArr) {
+    acCell = '—';
+  } else {
+    const s = acArr.filter(a => a.satisfied === true).length;
+    const t = acArr.length;
+    acCell = s === t ? `✅ ${s}/${t}` : `❌ ${s}/${t}`;
+  }
+  const dangerArr = dangerHits && dangerHits.length > 0 ? dangerHits : null;
+  const dangerCell = dangerArr ? `⚠️ ${dangerArr.length} クラス` : '✅ clean';
+
+  lines.push('| Merge tier | shape | test | eval | Ledger | AC | danger |');
+  lines.push('|---|---|---|---|---|---|---|');
+  lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
+  lines.push('');
+
+  // 3. gate_policy 行
+  lines.push(`gate_policy: \`${gatePolicy}\``);
+
+  // 4. dangerHits 検出クラス行（1件以上のとき）
+  if (dangerArr) {
+    lines.push(`検出クラス: ${dangerArr.join(', ')}`);
+  }
+
+  // 5. Merge tier 理由（常時可視）
+  lines.push('');
+  lines.push('**Merge tier 理由**:');
   if (!mergeTierReasons || mergeTierReasons.length === 0) {
     lines.push('- 理由記載なし');
   } else {
@@ -58,98 +117,172 @@ export function buildDevflowSummaryBody({
       lines.push(`- ${reason}`);
     }
   }
+
+  // 6. 要対応セクション（常時可視）
+  // 未解消事項を収集
+  const blockArr = blockingItems || [];
+  const advArr = advisoryItems || [];
+  const uncheckedBlocking = blockArr.filter(it => it.checked !== true);
+  const uncheckedAdvisory = advArr.filter(it => it.checked !== true);
+  const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true);
+  const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
+  const uncleared = securityClearance && securityClearance.length > 0
+    ? securityClearance.filter(sc => sc.cleared !== true)
+    : [];
+  const concerns = planConcerns || [];
+
+  const hasActionItems = uncheckedBlocking.length > 0
+    || uncheckedAdvisory.length > 0
+    || escalatedChecked.length > 0
+    || unsatisfiedAC.length > 0
+    || uncleared.length > 0
+    || concerns.length > 0;
+
   lines.push('');
-
-  // 2.5. ESCALATE-TO-HUMAN セクション（escalate item があるときのみ出力。人間が必ず読む冒頭近くに置く）
-  const escalated = (advisoryItems || []).filter((it) => it && it.escalate === true);
-  if (escalated.length > 0) {
-    lines.push('### ESCALATE-TO-HUMAN（人間の判断が必要）');
-    for (const item of escalated) {
-      const dimension = item.dimension ? ` [${item.dimension}]` : '';
-      const reason = item.escalate_reason ? `（reason: ${item.escalate_reason}）` : '';
-      lines.push(`- ${item.id}${dimension} ${item.text}${reason}`);
-    }
-    lines.push('');
-  }
-
-  // 3. 実行結果サマリー（shape / test_green / eval_verdict）
-  lines.push('### 実行結果');
-  lines.push(`- shape: ${shape != null ? shape : '不明'}`);
-  lines.push(`- test_green: ${testGreen != null ? String(testGreen) : '不明'}`);
-  lines.push(`- eval_verdict: ${evalVerdict != null ? evalVerdict : '不明'}`);
-  lines.push('');
-
-  // 4. Goal Ledger セクション
-  lines.push('### Goal Ledger');
-  lines.push(`- gate_policy: ${gatePolicy}`);
-  lines.push(`- 収束: ${ledgerConverged ? '済' : '未収束'}`);
-
-  // blocking items
-  if (!blockingItems || blockingItems.length === 0) {
-    lines.push('- blocking item なし');
+  if (!hasActionItems) {
+    lines.push('### ✅ 要対応事項なし');
   } else {
-    for (const item of blockingItems) {
-      const status = item.checked ? 'checked' : '未解消';
-      const dimension = item.dimension ? ` [${item.dimension}]` : '';
-      const evidence = item.evidence ? ': ' + item.evidence : '';
-      lines.push(`- [${status}] ${item.id}${dimension} ${item.text}${evidence}`);
+    lines.push('### ⚠️ 要対応');
+
+    // ledger 未解消テーブル（(i)(ii)(iii)）
+    const ledgerActionItems = [
+      ...uncheckedBlocking.map(it => ({ ...it, _lane: 'blocking' })),
+      ...uncheckedAdvisory.map(it => ({
+        ...it,
+        _lane: it.escalate ? 'advisory (ESCALATE)' : 'advisory',
+      })),
+      ...escalatedChecked.map(it => ({ ...it, _lane: 'advisory (ESCALATE)', _forceVisible: true })),
+    ];
+
+    if (ledgerActionItems.length > 0) {
+      lines.push('');
+      lines.push('| 状態 | id | lane | dimension | 内容 |');
+      lines.push('|---|---|---|---|---|');
+      for (const item of ledgerActionItems) {
+        const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : '❌ 未解消';
+        const dimension = item.dimension != null ? item.dimension : '—';
+        let content = mdCell(item.text);
+        if (item.evidence) {
+          content += ': ' + mdCell(item.evidence);
+        }
+        if (item.escalate_reason) {
+          content += `（reason: ${mdCell(item.escalate_reason)}）`;
+        }
+        lines.push(`| ${status} | ${item.id} | ${item._lane} | ${dimension} | ${content} |`);
+      }
+    }
+
+    // 未達 AC テーブル（(iv)）
+    if (unsatisfiedAC.length > 0) {
+      lines.push('');
+      lines.push('| 状態 | AC | 検証 | evidence |');
+      lines.push('|---|---|---|---|');
+      for (const ac of unsatisfiedAC) {
+        const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
+        const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
+        lines.push(`| ❌ 未達 | AC#${ac.ac_index + 1} | ${verifiedBy} | ${evidenceCell} |`);
+      }
+    }
+
+    // 未確認 clearance テーブル（(v)）
+    if (uncleared.length > 0) {
+      lines.push('');
+      lines.push('| 状態 | danger class | evidence |');
+      lines.push('|---|---|---|');
+      for (const sc of uncleared) {
+        const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
+        lines.push(`| ❌ 未確認 | ${sc.danger_class} | ${evidenceCell} |`);
+      }
+    }
+
+    // Plan concerns（(vi)）
+    if (concerns.length > 0) {
+      lines.push('');
+      lines.push('**Plan 未解消 concerns**:');
+      for (const concern of concerns) {
+        lines.push(`- ${concern}`);
+      }
     }
   }
 
-  // advisory items
-  if (!advisoryItems || advisoryItems.length === 0) {
-    lines.push('- advisory item なし');
-  } else {
-    for (const item of advisoryItems) {
-      const status = item.checked ? 'checked' : '未解消';
-      const escalateSuffix = item.escalate ? ' (ESCALATE)' : '';
-      const dimension = item.dimension ? ` [${item.dimension}]` : '';
-      const evidence = item.evidence ? ': ' + item.evidence : '';
-      lines.push(`- [${status}] ${item.id}${dimension} ${item.text}${evidence}${escalateSuffix}`);
-    }
+  // 8. 空状態の常時可視行
+  if (blockArr.length === 0 && advArr.length === 0) {
+    lines.push('Goal Ledger: item なし');
   }
-  lines.push('');
-
-  // 5. AC evidence セクション
-  lines.push('### Acceptance Criteria');
   if (!acResults || acResults.length === 0) {
-    lines.push('AC 判定なし（evaluator 未実行 or AC 欠落）');
-  } else {
-    for (const ac of acResults) {
-      const satisfiedLabel = ac.satisfied ? 'satisfied' : '未達';
-      const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
-      const evidenceSuffix = ac.evidence ? ': ' + ac.evidence : '';
-      lines.push(`- AC#${ac.ac_index + 1}: ${satisfiedLabel}（${verifiedBy}）${evidenceSuffix}`);
-    }
+    lines.push('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）');
   }
-  lines.push('');
-
-  // 6. Security clearance セクション
-  lines.push('### Security clearance');
   if (!securityClearance || securityClearance.length === 0) {
-    lines.push('- danger-grep clean（clearance 不要）');
-  } else {
-    for (const sc of securityClearance) {
-      const clearedLabel = sc.cleared ? 'cleared' : '未確認';
-      const evidenceSuffix = sc.evidence ? ': ' + sc.evidence : '';
-      lines.push(`- ${sc.danger_class}: ${clearedLabel}${evidenceSuffix}`);
-    }
+    lines.push('Security clearance: danger-grep clean（clearance 不要）');
   }
-  if (dangerHits && dangerHits.length > 0) {
-    lines.push(`- 検出クラス: ${dangerHits.join(', ')}`);
-  }
-  lines.push('');
 
-  // 7. Plan concerns セクション（空なら省略）
-  if (planConcerns && planConcerns.length > 0) {
-    lines.push('### Plan 未解消 concerns');
-    for (const concern of planConcerns) {
-      lines.push(`- ${concern}`);
+  // 7. 折りたたみブロック群（AC-3）
+
+  // 解消済み ledger
+  const resolvedItems = [
+    ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: 'blocking' })),
+    ...advArr.filter(it => it.checked === true && it.escalate !== true).map(it => ({ ...it, _lane: 'advisory' })),
+  ];
+  if (resolvedItems.length > 0) {
+    const n = resolvedItems.length;
+    lines.push('');
+    lines.push(`<details><summary>✅ Goal Ledger 解消済み ${n} 件</summary>`);
+    lines.push('');
+    lines.push('| id | lane | dimension | 内容 | evidence |');
+    lines.push('|---|---|---|---|---|');
+    for (const item of resolvedItems) {
+      const dimension = item.dimension != null ? item.dimension : '—';
+      const content = mdCell(item.text);
+      const evidence = item.evidence ? mdCell(item.evidence) : '—';
+      lines.push(`| ${item.id} | ${item._lane} | ${dimension} | ${content} | ${evidence} |`);
     }
     lines.push('');
+    lines.push('</details>');
   }
 
-  // 8. 末尾
+  // satisfied AC
+  if (acArr) {
+    const satisfiedAC = acArr.filter(a => a.satisfied === true);
+    const s = satisfiedAC.length;
+    const t = acArr.length;
+    if (s > 0) {
+      lines.push('');
+      lines.push(`<details><summary>✅ Acceptance Criteria ${s}/${t} satisfied</summary>`);
+      lines.push('');
+      lines.push('| AC | 検証 | evidence |');
+      lines.push('|---|---|---|');
+      for (const ac of satisfiedAC) {
+        const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
+        const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
+        lines.push(`| AC#${ac.ac_index + 1} | ${verifiedBy} | ${evidenceCell} |`);
+      }
+      lines.push('');
+      lines.push('</details>');
+    }
+  }
+
+  // cleared security clearance
+  if (securityClearance && securityClearance.length > 0) {
+    const cleared = securityClearance.filter(sc => sc.cleared === true);
+    const c = cleared.length;
+    const ct = securityClearance.length;
+    if (c > 0) {
+      lines.push('');
+      lines.push(`<details><summary>✅ Security clearance ${c}/${ct} cleared</summary>`);
+      lines.push('');
+      lines.push('| danger class | evidence |');
+      lines.push('|---|---|');
+      for (const sc of cleared) {
+        const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
+        lines.push(`| ${sc.danger_class} | ${evidenceCell} |`);
+      }
+      lines.push('');
+      lines.push('</details>');
+    }
+  }
+
+  // 9. 末尾
+  lines.push('');
   lines.push('---');
   lines.push('*このコメントは dev-flow により自動生成されました。*');
   lines.push(`<!-- dev-flow:${mergeTier} -->`);
