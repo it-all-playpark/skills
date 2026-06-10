@@ -1092,6 +1092,9 @@ const concerns = [
 // ============================================================
 phase('Validate')
 let val = null
+let greenFixCount = 0
+/** @type {Array<{files: string[], summary: string}>} */
+const greenFixIterations = []
 for (let i = 1; i <= GREEN_MAX; i++) {
   val = need(await agent(
     `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
@@ -1104,12 +1107,29 @@ for (let i = 1; i <= GREEN_MAX; i++) {
     log(`⚠️ ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
     break
   }
-  await agent(
+  const gfResult = await agent(
     `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
     + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
+    + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
+    + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
     + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`,
     { agentType: 'implementer', schema: IMPL, label: `green-fix#${i}`, phase: 'Validate' },
   )
+  greenFixCount += 1
+  greenFixIterations.push({
+    files: gfResult?.files ?? [],
+    summary: gfResult?.summary ?? '',
+  })
+}
+if (greenFixCount > 0) {
+  const gfFiles = [...new Set(greenFixIterations.flatMap((it) => it.files))]
+  const gfSummaries = greenFixIterations.map((it, idx) => `[#${idx + 1}] ${it.summary || '(no summary)'}`)
+  concerns.push(`green-fix が ${greenFixCount} 回発生: テスト diff を重点監査せよ。`
+    + `テストの期待値・assert の弱体化（テスト弱体化）で green 化していないか、`
+    + `テスト変更がある場合はその正当性（テスト自体の誤りの根拠）を検証すること。`
+    + (gfFiles.length > 0 ? `green-fix が変更したファイル: ${JSON.stringify(gfFiles)}。` : '')
+    + `申告された根拠: ${JSON.stringify(gfSummaries)}`)
+  log(`green-fix ${greenFixCount} 回 → evaluator focus_areas にテスト弱体化監査を注入（files: ${gfFiles.join(', ') || 'none'}）`)
 }
 
 // ============================================================
@@ -1153,11 +1173,14 @@ const refloor = refloorShape(SHAPE, realizedCount)
 const EFFECTIVE_SHAPE = refloor.shape
 const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
 if (refloor.refloored) log(`⚠️ re-floor: 見積もり ${SHAPE} → realized ${realizedCount} file(s) で ${EFFECTIVE_SHAPE} へ昇格 (raise-only)`)
-const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0
+const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || greenFixCount > 0
 if (TRIVIAL && dangerHits.length > 0) {
   log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
 }
 
+if (TRIVIAL && greenFixCount > 0) {
+  log(`⚠️ micro だが green-fix ${greenFixCount} 回 → Evaluate を実行（テスト弱体化監査 強制）`)
+}
 // ============================================================
 // Step DeclaredPath check: git status と plan 宣言パスを突合し、
 // 宣言外変更を concerns へ注入する（evaluator focus_areas 経由で重点監査）。
