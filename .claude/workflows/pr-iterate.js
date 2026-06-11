@@ -218,7 +218,7 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 // （旧 writeTempBody の「本文を shell に通さない」意図を agent 側で構造的に再現する）。
 function bodySaveInstr(body) {
   return `## 本文の保存\n`
-    + `まず Bash で \`mktemp /tmp/pr-iterate-XXXXXX.md\` を実行して一時ファイルを作成し、\n`
+    + `まず Bash で \`mktemp "\${TMPDIR:-/tmp}/pr-iterate-XXXXXX.md"\` を実行して一時ファイルを作成し、\n`
     + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
     + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
     + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
