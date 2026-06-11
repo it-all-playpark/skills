@@ -174,3 +174,24 @@ test('[empty-diff] (F) empty-diff gate retry 後に validate 再実行 → test#
   if (error) assert.fail(`(F) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(F) return object を返すべき');
 });
+
+// (G) empty-diff gate retry 後に danger-grep が retry 後 tree を見ること（issue #219 major fix）
+// gate 移動により Security floor が retry 後に実行される → danger-grep は reimpl-empty-diff より後に呼ばれる invariant。
+// もし gate が Security floor の後にあれば danger-grep は reimpl-empty-diff より前に来る（旧バグ）。
+test('[empty-diff] (G) retry 後に danger-grep が reimpl-empty-diff より後に呼ばれること（Security floor が retry 後 tree を見る）', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: false });
+  const { error } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(G) 想定外エラー: ${error.message}`);
+  const reimplIdx = calls.findIndex((c) => c.label.startsWith('reimpl-empty-diff'));
+  assert.ok(reimplIdx >= 0, `(G) reimpl-empty-diff が呼ばれていない`);
+  const dangerGrepIdx = calls.findIndex((c) => c.label.startsWith('danger-grep'));
+  assert.ok(dangerGrepIdx >= 0, `(G) danger-grep が呼ばれていない`);
+  assert.ok(
+    dangerGrepIdx > reimplIdx,
+    `(G) danger-grep（calls[${dangerGrepIdx}]）は reimpl-empty-diff（calls[${reimplIdx}]）より後に呼ばれるべき。`
+    + `danger-grep が retry 前の空 tree を見ると dangerHits が空のまま security path 強制が不発になる（issue #219）。`
+    + `実際の順序: reimpl-empty-diff=${reimplIdx}, danger-grep=${dangerGrepIdx}`,
+  );
+});

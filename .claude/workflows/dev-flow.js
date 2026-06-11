@@ -1470,6 +1470,75 @@ function pushGreenFixAudit(iters) {
 }
 pushGreenFixAudit(greenFixIterations)
 
+// diff-gate/diff-hash 共通 prompt（issue #215）。worktree-diff-hash.sh のコントラクトに依存。
+// Security floor より前に定義: PR phase でも参照するため（evalDiffHash != null ガードで micro は skip）。
+// Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
+// realized-diff / refloorShape / declared-path-check が自然に実行される（issue #219 fix）。
+const _dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+  + `bash ${WT}/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
+
+// ============================================================
+// empty-diff gate（issue #215）: Security floor phase の直前。
+// Security floor より前に置くことで retry 後の実体に対して danger-grep / realized-diff /
+// refloorShape / declared-path-check が正しく実行される（issue #219 major fix）。
+// 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
+// ============================================================
+{
+  const dhGate = need(await agent(
+    _dhPrompt,
+    { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate', phase: 'Security floor' },
+  ), 'Security floor(diff-gate)')
+  if (dhGate.empty === true) {
+    log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— Implement へ 1 回だけ差し戻す（issue #215）')
+    const retryResults = await runImplement(plan, [{
+      type: 'empty_diff',
+      detail: '前回 implementer 終了時点で working tree に変更が存在しない（base と内容一致）。plan の task を実際に実装し、変更を working tree に残せ（git add / commit は禁止）。',
+    }], 'reimpl-empty-diff')
+    for (const r of retryResults) { if (r && Array.isArray(r.concerns)) concerns.push(...r.concerns) }
+    const dhRetry = need(await agent(
+      _dhPrompt,
+      { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Security floor' },
+    ), 'Security floor(diff-gate-retry)')
+    if (dhRetry.empty === true) {
+      throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）')
+    }
+    // empty-diff gate 後の Validate 再実行（issue #219）。
+    // 差し戻し前の Validate は空 tree に対して走っており val.green が trivially green になっている。
+    // 差し戻しで書かれたコードが GREEN_MAX ループ・テスト弱体化監査を素通りするのを防ぎ、
+    // summary/telemetry の testGreen 値の誤表示を防ぐためにここで再計測する。
+    // retry 中の green-fix は loop 終了後に pushGreenFixAudit で focus_areas へ注入する（eval#1 より前）。
+    const gfIterCountBeforeRetry = greenFixIterations.length
+    for (let vi = 1; vi <= GREEN_MAX; vi++) {
+      val = need(await agent(
+        `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
+        + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`,
+        { agentType: 'dev-runner-haiku', schema: GREEN, label: `test#retry-${vi}`, phase: 'Security floor' },
+      ), `Security floor(test#retry-${vi})`)
+      log(`validate(after empty-diff retry) iteration ${vi}: tests=${val.tests} green=${val.green}`)
+      if (val.green || val.tests === 'no_tests') break
+      if (vi === GREEN_MAX) {
+        log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
+        break
+      }
+      const gfRetry = await agent(
+        `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
+        + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
+        + `**禁止**: テストの期待値・ assert を弱めて green にすることは禁止（テスト弱体化）。`
+        + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・ typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
+        + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`,
+        { agentType: 'implementer', schema: IMPL, label: `green-fix#retry-${vi}`, phase: 'Security floor' },
+      )
+      if (gfRetry && Array.isArray(gfRetry.concerns)) concerns.push(...gfRetry.concerns)
+      greenFixCount += 1
+      greenFixIterations.push({
+        files: gfRetry?.files ?? [],
+        summary: gfRetry?.summary ?? '',
+      })
+    }
+    pushGreenFixAudit(greenFixIterations.slice(gfIterCountBeforeRetry))
+  }
+}
+
 // ============================================================
 // Phase Security floor: realized diff に diff-risk-classify(W1)を当て、
 // 7 danger クラスを常時 seed した Goal Ledger に反映する(W5)。
@@ -1563,69 +1632,8 @@ let evalIters = 0            // eval iteration カウンタ（telemetry 用）
 let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
 let unsatisfiedAc = false
 let evalDiffHash = null  // 最後の evaluator 呼び出し直前の diff hash（issue #215。PR 直前と突合し乖離で summary 警告）
-// diff-gate/diff-hash 共通 prompt（issue #215）。worktree-diff-hash.sh のコントラクトに依存。
-// if(runEval) の外で定義: PR phase でも参照するため（evalDiffHash != null ガードで micro は skip）。
-const _dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
-  + `bash ${WT}/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
 if (runEval) {
 phase('Evaluate')
-// ============================================================
-// empty-diff gate（issue #215）: Evaluate phase 直後。
-// 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
-// ============================================================
-const dhGate = need(await agent(
-  _dhPrompt,
-  { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate', phase: 'Evaluate' },
-), 'Evaluate(diff-gate)')
-if (dhGate.empty === true) {
-  log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— Implement へ 1 回だけ差し戻す（issue #215）')
-  const retryResults = await runImplement(plan, [{
-    type: 'empty_diff',
-    detail: '前回 implementer 終了時点で working tree に変更が存在しない（base と内容一致）。plan の task を実際に実装し、変更を working tree に残せ（git add / commit は禁止）。',
-  }], 'reimpl-empty-diff')
-  for (const r of retryResults) { if (r && Array.isArray(r.concerns)) concerns.push(...r.concerns) }
-  const dhRetry = need(await agent(
-    _dhPrompt,
-    { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Evaluate' },
-  ), 'Evaluate(diff-gate-retry)')
-  if (dhRetry.empty === true) {
-    throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）')
-  }
-  // empty-diff gate 後の Validate 再実行（issue #219）。
-  // 差し戻し前の Validate は空 tree に対して走っており val.green が trivially green になっている。
-  // 差し戻しで書かれたコードが GREEN_MAX ループ・テスト弱体化監査を素通りするのを防ぎ、
-  // summary/telemetry の testGreen 値の誤表示を防ぐためにここで再計測する。
-  // retry 中の green-fix は loop 終了後に pushGreenFixAudit で focus_areas へ注入する（eval#1 より前）。
-  const gfIterCountBeforeRetry = greenFixIterations.length
-  for (let vi = 1; vi <= GREEN_MAX; vi++) {
-    val = need(await agent(
-      `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
-      + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`,
-      { agentType: 'dev-runner-haiku', schema: GREEN, label: `test#retry-${vi}`, phase: 'Evaluate' },
-    ), `Evaluate(test#retry-${vi})`)
-    log(`validate(after empty-diff retry) iteration ${vi}: tests=${val.tests} green=${val.green}`)
-    if (val.green || val.tests === 'no_tests') break
-    if (vi === GREEN_MAX) {
-      log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
-      break
-    }
-    const gfRetry = await agent(
-      `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
-      + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
-      + `**禁止**: テストの期待値・ assert を弱めて green にすることは禁止（テスト弱体化）。`
-      + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・ typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
-      + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`,
-      { agentType: 'implementer', schema: IMPL, label: `green-fix#retry-${vi}`, phase: 'Evaluate' },
-    )
-    if (gfRetry && Array.isArray(gfRetry.concerns)) concerns.push(...gfRetry.concerns)
-    greenFixCount += 1
-    greenFixIterations.push({
-      files: gfRetry?.files ?? [],
-      summary: gfRetry?.summary ?? '',
-    })
-  }
-  pushGreenFixAudit(greenFixIterations.slice(gfIterCountBeforeRetry))
-}
 // Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
 // makeLedger で作り直さない(SEC seed を失わないため)。
 for (const [i, crit] of (req.acceptance_criteria ?? []).entries()) {
