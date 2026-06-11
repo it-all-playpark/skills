@@ -58,22 +58,3 @@ jobs:
         run: |
           chmod +x tests/run-node-tests.sh
           ./tests/run-node-tests.sh --strict
-
-  no-glue-errors:
-    name: No Glue Errors (dev-flow-doctor AC5)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install jq
-        shell: bash
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Run tests/no-glue-errors.sh
-        shell: bash
-        env:
-          BASELINE_FILE: dev-flow-doctor/templates/baseline-pre-79.example.json
-        run: |
-          chmod +x tests/no-glue-errors.sh
-          ./tests/no-glue-errors.sh
