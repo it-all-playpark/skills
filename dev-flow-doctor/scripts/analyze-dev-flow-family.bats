@@ -42,7 +42,7 @@ setup_file() {
     local i
     for i in $(seq 1 8000); do
         local fname="${pad}-${i}.json"
-        printf '{"id":"t-%d","timestamp":"%s","skill":"dev-kickoff","outcome":"success","source":"manual","duration_turns":3}\n' \
+        printf '{"id":"t-%d","timestamp":"%s","skill":"dev-kickoff","outcome":"success","source":"skill","duration_turns":3}\n' \
             "$i" "$TODAY_ISO" > "${CORPUS_DIR}/${fname}"
     done
 }
@@ -99,7 +99,7 @@ teardown() {
     # 3 valid entries
     local i
     for i in 1 2 3; do
-        printf '{"id":"m-%d","timestamp":"%s","skill":"dev-kickoff","outcome":"success","source":"manual","duration_turns":2}\n' \
+        printf '{"id":"m-%d","timestamp":"%s","skill":"dev-kickoff","outcome":"success","source":"skill","duration_turns":2}\n' \
             "$i" "$today_iso" > "${jdir}/valid-${i}.json"
     done
     # 1 broken entry (truncated JSON)

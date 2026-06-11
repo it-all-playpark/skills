@@ -29,7 +29,7 @@ setup_file() {
     # 3,600 件のエントリを個別の *.json ファイルとして生成
     local i
     for i in $(seq 1 3600); do
-        printf '{"id":"c-%d","timestamp":"%s","skill":"pr-fix","outcome":"success","source":"manual","duration_turns":3}\n' \
+        printf '{"id":"c-%d","timestamp":"%s","skill":"pr-fix","outcome":"success","source":"skill","duration_turns":3}\n' \
             "$i" "$TODAY_ISO" > "${CORPUS_DIR}/corpus-$(printf '%04d' "$i")-pr-fix.json"
     done
 }
