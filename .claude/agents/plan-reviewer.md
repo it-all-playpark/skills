@@ -66,6 +66,15 @@ LLM の同調バイアスは planner 出力を rubber-stamp しがち。**反証
 各 finding に必須: `severity` / `dimension` / `topic`（1 行識別子、**stuck 検出 fingerprint。同じ問題は
 毎回同じ文字列で書く**）/ `description`（何が問題でなぜ重要か）/ `suggestion`（次 revision の具体修正）。
 
+### topic 命名（共有辞書。issue #207）
+
+- topic は repo root の `_shared/references/stuck-topic-dictionary.md`（topic 共有辞書）を Read して付ける
+- 辞書の problem-class enum に該当するクラスがあれば**必ず**その enum 値を使う（自由作文しない）
+- 詳細の特定が必要なら `<problem-class>::<詳細>` 形式。`<詳細>` はファイルパス・関数名・AC index 等の安定識別子（kebab-case / path 表記。形容文を書かない）
+- 該当クラスが無い場合のみ新語を kebab-case 英小文字で作る
+- 同一問題は iteration を跨いで同じ文字列を**完全一致**で再利用する（表記ゆれは orchestrator の stuck 突合を破る）
+- 辞書ファイルが読めない場合は従来通り安定した短い文字列を自作する
+
 ## Step 3: score & verdict
 
 `score` = plan 全体品質の 0–100 整数:
@@ -83,7 +92,7 @@ verdict 判定（この順で評価）:
 
 - 既出 findings は planner が**対応済みの前提**で読む。解消されていれば蒸し返さない。
 - **新規の critical/major のみ報告**する。既出論点の言い換え・新観点の上乗せ（moving target）は禁止。
-- 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。
+- 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。topic 命名は共有辞書（`_shared/references/stuck-topic-dictionary.md`）に従う。
 - 既出指摘に対応済みで新規の重大問題が無ければ、迷わず `pass` を出す。
 
 ## 収束は orchestrator が最終判断する（issue #123）
@@ -107,7 +116,7 @@ verdict 判定（この順で評価）:
   "pass_threshold": 80,
   "findings": [
     {"severity": "major", "dimension": "edge_cases",
-     "topic": "Empty-input handling unspecified",
+     "topic": "edge-case-unhandled::empty-input",
      "description": "edge case は列挙されているが handling 戦略がなく実装が推測になる",
      "suggestion": "空入力は early return の no-op とし unit test を 1 本追加する"}
   ],
