@@ -824,6 +824,57 @@ function buildDevflowSummaryBody({
 }
 // ==== END inline: _lib/devflow-summary-format.mjs ====
 
+// ==== BEGIN inline: _lib/stuck-detector.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow.js の planSeen/blockSeen/evalSeen と pr-iterate.js の reviewSeen が共有する
+// stuck 検出 canonical。incentive-structural クラス — W7、撤去禁止。issue #123/#125/#126/#208。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+//
+// 命名注記: goal-ledger.mjs の topicKey と同一ファイル dev-flow.js に inline されるため
+// 識別子衝突を避けて stuckTopicKey と命名。
+
+// topic fingerprint を導出する。
+// (a) x == null → ''
+// (b) typeof x === 'string' → x をそのまま返す
+// (c) typeof x.topic === 'string' かつ x.topic.trim() が非空 → x.topic.trim()
+// (d) x.file != null → `${String(x.file)}::${x.description != null ? String(x.description) : JSON.stringify(x)}`
+// (e) x.description != null かつ String(x.description) が非空 → String(x.description)
+// (f) それ以外 → JSON.stringify(x)
+function stuckTopicKey(x) {
+  if (x == null) return '';
+  if (typeof x === 'string') return x;
+  if (typeof x.topic === 'string' && x.topic.trim()) return x.topic.trim();
+  if (x.file != null) {
+    return `${String(x.file)}::${x.description != null ? String(x.description) : JSON.stringify(x)}`;
+  }
+  if (x.description != null && String(x.description)) return String(x.description);
+  return JSON.stringify(x);
+}
+
+// stuck 検出 closure tracker を返す。
+// 内部 state は plain object（Map 禁止 — Object.values/entries の列挙順序まで現行と一致させるため）。
+// register(item): topic → { item, count } に累積。同一 topic の再登録は item を最新版で上書き + count 加算。
+// prior(): Object.values(seen).map((s) => s.item) を返す。
+// stuckTopics(): count >= threshold の topic キー配列を返す。
+function makeSeenTracker(threshold) {
+  const seen = {};
+  return {
+    register(item) {
+      const t = stuckTopicKey(item);
+      if (seen[t]) { seen[t].item = item; seen[t].count += 1 }
+      else seen[t] = { item, count: 1 };
+    },
+    prior() {
+      return Object.values(seen).map((s) => s.item);
+    },
+    stuckTopics() {
+      return Object.entries(seen).filter(([, s]) => s.count >= threshold).map(([t]) => t);
+    },
+  };
+}
+// ==== END inline: _lib/stuck-detector.mjs ====
+
 function applyDisjoint(p, label) {
   const { plan: np, demoted } = enforceDisjointParallel(p);
   if (demoted.length) log(`⚠️ ${label}: file_changes 衝突 ${demoted.length} task を parallel→serial 降格: ${demoted.map((d) => `${d.id}(vs ${d.conflictsWith})`).join(', ')}`);
@@ -886,12 +937,6 @@ function findingsToConcerns(rev) {
 //   3. stuck かつ design パスが反復するなら replan+reimpl を繰り返さず早期打ち切り（コスト保護）
 //   4. critical は常にブロック（品質ゲートは後退させない。#123 と同一原則）
 //   5. stuck/上限到達でも throw せず現状で PR へ進む（後段は review のみ、merge は手動 = human review 委譲）
-// feedback 項目から stuck 検出用の fingerprint（topic）を取り出す。
-function feedbackTopic(f) {
-  if (!f) return ''
-  if (typeof f === 'string') return f
-  return f.topic ?? f.description ?? JSON.stringify(f)
-}
 // feedback に critical が含まれるか。critical は常にブロック（収束を許さない）。
 function evalHasCritical(ev) {
   return (ev.feedback ?? []).some((f) => f && typeof f === 'object' && f.severity === 'critical')
@@ -1184,7 +1229,7 @@ const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・re
 phase('Plan')
 let plan = null
 let planVerdict = null
-const planSeen = {}        // topic → { finding, count }（findings 累積 & stuck 検出。issue #123）
+const planSeen = makeSeenTracker(PLAN_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #123）
 let planConcerns = []      // 収束時に残った未解消 findings（Evaluate の focus_areas へ）
 let planIters = 0            // plan iteration カウンタ（telemetry 用）
 if (TRIVIAL) {
@@ -1212,7 +1257,7 @@ if (TRIVIAL) {
 } else {
 for (let i = 1; i <= PLAN_MAX; i++) {
   planIters = i
-  const prior = Object.values(planSeen).map((s) => s.finding)   // 前 iteration までの累積 findings
+  const prior = planSeen.prior()   // 前 iteration までの累積 findings
   plan = need(await agent(
     `cd ${WT} で作業。issue 要件と${prior.length ? 'レビュー指摘' : '初回計画'}に基づき実装計画を立てよ。\n`
     + `requirements: ${JSON.stringify(req)}\n`
@@ -1239,13 +1284,8 @@ for (let i = 1; i <= PLAN_MAX; i++) {
   planVerdict = rev
 
   // findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
-  for (const f of (rev.findings ?? [])) {
-    if (!f) continue
-    const t = f.topic ?? f.description ?? JSON.stringify(f)
-    if (planSeen[t]) { planSeen[t].finding = f; planSeen[t].count += 1 }
-    else planSeen[t] = { finding: f, count: 1 }
-  }
-  const stuckTopics = Object.entries(planSeen).filter(([, s]) => s.count >= PLAN_STUCK).map(([t]) => t)
+  for (const f of (rev.findings ?? [])) { if (!f) continue; planSeen.register(f) }
+  const stuckTopics = planSeen.stuckTopics()
   const stuck = stuckTopics.length > 0
   log(`plan iteration ${i}: ${rev.verdict} (score ${rev.score})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
 
@@ -1274,7 +1314,7 @@ let implResults = await runImplement(plan, null, 'impl')
 let blockedConcerns = []
 // blockFindings 累積 & アプローチ回帰禁止。planSeen と同型の frozen target
 // （incentive-structural — W7 分類。capability 非依存・撤去禁止）。issue #188
-const blockSeen = {}        // topic → { finding, count }
+const blockSeen = makeSeenTracker(Infinity)  // stuck 検出は使わず累積のみ（hard cap は BLOCK_MAX）
 for (let b = 1; b <= BLOCK_MAX; b++) {
   const blocked = implResults.filter((r) => r && r.status === 'BLOCKED')
   if (!blocked.length) break
@@ -1286,12 +1326,8 @@ for (let b = 1; b <= BLOCK_MAX; b++) {
     suggestion: '同アプローチでは進行不可。代替設計を立案すること（現アプローチの再試行は禁止）。',
   }))
   // planSeen と同型のパターンで blockSeen に累積（当該 iteration 分も含む）
-  for (const f of blockFindings) {
-    const t = f.topic || f.description || JSON.stringify(f)
-    if (blockSeen[t]) { blockSeen[t].finding = f; blockSeen[t].count += 1 }
-    else blockSeen[t] = { finding: f, count: 1 }
-  }
-  const priorBlock = Object.values(blockSeen).map((s) => s.finding)  // 当該 iteration 分も含む累積全件
+  for (const f of blockFindings) blockSeen.register(f)
+  const priorBlock = blockSeen.prior()  // 当該 iteration 分も含む累積全件
   // DONE 成果の抽出（適用済み task を replan prompt へ注入して重複実装・矛盾設計を防ぐ）
   const doneSoFar = implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS'))
   plan = need(await agent(
@@ -1528,10 +1564,10 @@ for (const [i, c] of concerns.entries()) {
   }).ledger
 }
 log(`ledger 初期化: blocking ${blockingItems(ledger).length} / advisory ${advisoryItems(ledger).length} 件`)
-const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & stuck 検出。issue #125）
+const evalSeen = makeSeenTracker(EVAL_STUCK)  // feedback 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #125）
 for (let i = 1; i <= EVAL_PASSES; i++) {
   evalIters = i
-  const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
+  const priorFeedback = evalSeen.prior()   // 前 iteration までの累積 feedback
   // critical_resolutions の操作的契約は本 prompt が唯一の source of truth（issue #174）。
   // .claude/agents/ は sandbox deny 対象（.claude/skills / .claude/hooks と同様に write 禁止。
   // 実測確認済: touch .claude/agents/test.tmp → EPERM）のため workflow からは編集不可。
@@ -1564,13 +1600,8 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   unsatisfiedAc = (ev.ac_results ?? []).some((r) => r && r.satisfied === false)
 
   // feedback を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
-  for (const f of (ev.feedback ?? [])) {
-    if (f == null) continue
-    const t = feedbackTopic(f)
-    if (evalSeen[t]) { evalSeen[t].feedback = f; evalSeen[t].count += 1 }
-    else evalSeen[t] = { feedback: f, count: 1 }
-  }
-  const stuckTopics = Object.entries(evalSeen).filter(([, s]) => s.count >= EVAL_STUCK).map(([t]) => t)
+  for (const f of (ev.feedback ?? [])) { if (f == null) continue; evalSeen.register(f) }
+  const stuckTopics = evalSeen.stuckTopics()
   const stuck = stuckTopics.length > 0
   log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
   // evaluator の critical feedback と ESCALATE-TO-HUMAN feedback を ledger に append(単調性は appendItem が強制)。
@@ -1582,14 +1613,14 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     const isEscalate = f.escalate === true
     if (!isCritical && !isEscalate) continue
     const r = appendItem(ledger, {
-      id: `EVAL-${i}-${feedbackTopic(f).slice(0, 24)}`, text: feedbackTopic(f),
+      id: `EVAL-${i}-${stuckTopicKey(f).slice(0, 24)}`, text: stuckTopicKey(f),
       dimension: f.dimension ?? 'eval',
       severity: isCritical ? 'critical' : (f.severity === 'minor' ? 'minor' : 'major'),
       source: 'evaluator', check: { kind: 'inspection' },
       ...(isEscalate ? { escalate: true, escalate_reason: f.escalate_reason ?? null } : {}),
     })
     ledger = r.ledger
-    if (isEscalate && !r.accepted) log(`⚠️ ESCALATE feedback "${feedbackTopic(f)}" は append 単調性により却下(round>0 の新規 topic)`)
+    if (isEscalate && !r.accepted) log(`⚠️ ESCALATE feedback "${stuckTopicKey(f)}" は append 単調性により却下(round>0 の新規 topic)`)
   }
   const escalateAppended = (ev.feedback ?? []).filter((f) => f && f.escalate === true).length
   if (escalateAppended > 0) log(`ESCALATE-TO-HUMAN feedback ${escalateAppended} 件を検出(issue #177。乱発ガードは W6b)`)
