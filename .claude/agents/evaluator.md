@@ -142,8 +142,8 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
   "total": 7.0,
   "threshold": 7.0,
   "feedback": [
-    {"severity": "major", "topic": "input-validation-missing::createUser",
-     "description": "src/user.ts createUser が email 形式を検証していない（plan F1 に入力検証が記載済みだが実装で漏れ）",
+    {"severity": "major", "topic": "input-validation-missing::create-user",
+     "description": "src/user.ts の create-user が email 形式を検証していない（plan F1 に入力検証が記載済みだが実装で漏れ）",
      "suggestion": "zod スキーマで email を検証し 400 を返す"},
     {"severity": "minor", "topic": "naming-convention::public-api-endpoint",
      "description": "エンドポイント命名が issue に未指定で複数案が同等",
