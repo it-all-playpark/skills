@@ -95,6 +95,11 @@
         }
       },
       "description": "Recovery information (present when outcome is failure or partial)"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["skill", "hook"],
+      "description": "Entry origin: skill = explicit journal.sh log call, hook = PostToolUseFailure hook capture. Pre-migration entries may have an absent field OR a legacy 'hook-capture' value (written by the old cmd_hook_capture). Consumers use inclusive semantics: (.source // \"skill\") == \"skill\" to match skill entries, (.source // \"skill\") != \"skill\" to match non-skill entries. Both absent and 'hook-capture' values are handled correctly without backfill."
     }
   }
 }

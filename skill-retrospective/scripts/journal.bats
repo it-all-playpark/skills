@@ -212,3 +212,163 @@ latest_entry() {
     [ "$has_plan_iter" = "false" ]
     [ "$has_eval_iter" = "false" ]
 }
+
+# ===========================================================================
+# Tests for new features: source field, atomic write, --source filter, iconv
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (a): log で書いたエントリに source == "skill" がある
+# ---------------------------------------------------------------------------
+@test "log entry has source == skill" {
+    run "$SCRIPT" log test-skill success
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    source_val=$(jq -r '.source' "$entry_file")
+    [ "$source_val" = "skill" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (b): hook-capture で書いたエントリに source == "hook" がある
+# ---------------------------------------------------------------------------
+@test "hook-capture entry has source == hook" {
+    run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"x\"},\"error\":\"boom error\",\"session_id\":\"s1\"}" | '"$SCRIPT"' hook-capture'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    source_val=$(jq -r '.source' "$entry_file")
+    [ "$source_val" = "hook" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (c): 同一秒 2 回書き込みで 2 ファイル存在し両方 jq empty を通る
+# (現実装: ファイル名衝突で 1 ファイルに上書きされ red)
+# ---------------------------------------------------------------------------
+@test "concurrent writes in same second produce 2 valid JSON files" {
+    # stub date: 引数を無視して固定時刻を返す
+    stub_dir="$BATS_TMPDIR/stub-date-$$"
+    mkdir -p "$stub_dir"
+    cat > "$stub_dir/date" <<'STUB'
+#!/usr/bin/env bash
+# Stub date: always return fixed timestamp regardless of args
+if [[ "$*" == *"+%s"* ]]; then
+    echo "1749600000"
+else
+    echo "2026-06-11T00:00:00Z"
+fi
+STUB
+    chmod +x "$stub_dir/date"
+
+    run bash -c "PATH='$stub_dir:$PATH' '$SCRIPT' log test-skill success"
+    [ "$status" -eq 0 ]
+    run bash -c "PATH='$stub_dir:$PATH' '$SCRIPT' log test-skill success"
+    [ "$status" -eq 0 ]
+
+    # 2 ファイルが存在すること
+    count=$(ls "$CLAUDE_JOURNAL_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ')
+    [ "$count" -eq 2 ]
+
+    # 両ファイルが valid JSON であること
+    for f in "$CLAUDE_JOURNAL_DIR"/*.json; do
+        run jq empty "$f"
+        [ "$status" -eq 0 ]
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Test (d): 制御文字 regression pin
+# --error-msg に制御文字を含む値を渡しても jq empty が通り生制御バイトが無い
+# NOTE: jq --arg が既にエスケープするためこのテストは最初から green になる。
+#       regression pin として残す（将来の変更で壊れないことを確認するため）。
+# ---------------------------------------------------------------------------
+@test "regression pin: control chars in error-msg produce valid JSON (jq --arg escapes them)" {
+    # $'...' はテストランナー (bash) が展開する
+    error_with_ctrl=$'line1\x01\x02\ttab'
+    run "$SCRIPT" log test-skill failure \
+        --error-category runtime \
+        --error-msg "$error_with_ctrl"
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    # ファイルが valid JSON であること
+    run jq empty "$entry_file"
+    [ "$status" -eq 0 ]
+
+    # 生制御バイト \x01 が含まれていないこと
+    raw_ctrl_count=$(LC_ALL=C grep -c $'\x01' "$entry_file" || true)
+    [ "$raw_ctrl_count" -eq 0 ]
+
+    # jq -s で複数ファイルをまとめて読めること
+    run jq -s '.' "$CLAUDE_JOURNAL_DIR"/*.json
+    [ "$status" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (e): query --source skill が hook エントリを除外し、source 欠落エントリを含む
+# ---------------------------------------------------------------------------
+@test "query --source skill excludes hook entries and includes entries without source" {
+    # hook エントリを書く
+    run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"x\"},\"error\":\"boom error\",\"session_id\":\"s1\"}" | '"$SCRIPT"' hook-capture'
+    [ "$status" -eq 0 ]
+
+    # skill エントリを書く
+    run "$SCRIPT" log my-skill success
+    [ "$status" -eq 0 ]
+
+    # source 欠落エントリを手書きで配置（後方互換確認）
+    cat > "$CLAUDE_JOURNAL_DIR/2026-06-11-00-00-01-legacy.json" <<'JSON'
+{"version":"1.0.0","id":"20260611T000001-legacy","timestamp":"2026-06-11T00:00:01Z","skill":"legacy","outcome":"success"}
+JSON
+
+    run "$SCRIPT" query --source skill
+    [ "$status" -eq 0 ]
+
+    # hook エントリが除外されていること（source == "hook" のエントリが結果に無い）
+    hook_count=$(echo "$output" | jq '[.[] | select(.source == "hook")] | length')
+    [ "$hook_count" -eq 0 ]
+
+    # skill エントリが含まれること
+    skill_count=$(echo "$output" | jq '[.[] | select(.source == "skill")] | length')
+    [ "$skill_count" -ge 1 ]
+
+    # source 欠落エントリが含まれること（後方互換: source 欠落は skill 扱い）
+    legacy_count=$(echo "$output" | jq '[.[] | select(.skill == "legacy")] | length')
+    [ "$legacy_count" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (f): query --source hook が hook エントリのみ返す
+# ---------------------------------------------------------------------------
+@test "query --source hook returns only hook entries" {
+    # hook エントリを書く
+    run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"x\"},\"error\":\"boom error\",\"session_id\":\"s1\"}" | '"$SCRIPT"' hook-capture'
+    [ "$status" -eq 0 ]
+
+    # skill エントリを書く
+    run "$SCRIPT" log my-skill success
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" query --source hook
+    [ "$status" -eq 0 ]
+
+    # hook エントリのみ含まれること
+    total=$(echo "$output" | jq 'length')
+    hook_count=$(echo "$output" | jq '[.[] | select(.source == "hook")] | length')
+    [ "$total" -eq "$hook_count" ]
+    [ "$total" -ge 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (g): query --source invalid が非 0 exit
+# ---------------------------------------------------------------------------
+@test "query --source invalid exits non-zero" {
+    run "$SCRIPT" query --source invalid
+    [ "$status" -ne 0 ]
+}

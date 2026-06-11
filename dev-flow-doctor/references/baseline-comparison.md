@@ -1,5 +1,13 @@
 # Baseline Comparison (AC4 / AC5)
 
+> ⚠️ **`tests/no-glue-errors.sh` と lint.yml の `no-glue-errors` CI job は撤去済み（PR #118 / commit 62f6b58）**
+> glue-error チェックは旧 child-split / dev-kickoff-worker 機構専用（patterns が v1 の worktree-agent
+> 失敗文言）であり、dynamic workflow 移行で監視対象が消滅したため意図的に削除された。
+> **復元しないこと** — PR #214 で一度 stale な本ドキュメントに誘導されて復元され、取り消された経緯がある。
+> workflow 時代の glue 定義・CI ゲート再設計は issue #116 のスコープ。
+> 比較エンジン本体（`baseline-snapshot.sh` / `compare-baseline.sh`）と `--compare` フラグは存続しており、
+> 以下の記述はエンジン仕様のリファレンスとして残している（CI 連携の節は歴史的記述）。
+
 `dev-flow-doctor` の baseline 比較機能は、リファクタや connector 変更
 （issue #79 で実装した worker subagent への移行など）が **回帰** を引き起こしていないかを
 journal driven に検証する。本ドキュメントは snapshot schema・比較セマンティクス・

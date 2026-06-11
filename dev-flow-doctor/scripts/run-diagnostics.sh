@@ -113,7 +113,7 @@ run_journal_checks() {
   fi
 
   local journal_data=""
-  journal_data=$("$JOURNAL_SH" query --skill dev-flow --limit 200 2>/dev/null || echo "[]")
+  journal_data=$("$JOURNAL_SH" query --skill dev-flow --limit 200 --source skill 2>/dev/null || echo "[]")
 
   # Validate journal_data is valid JSON array
   if ! echo "$journal_data" | jq -e 'type == "array"' >/dev/null 2>&1; then
@@ -151,7 +151,7 @@ run_journal_checks() {
 
   # --- Check 3: Error Categories (via stats) ---
   local stats_data=""
-  stats_data=$("$JOURNAL_SH" stats 2>/dev/null || echo "{}")
+  stats_data=$("$JOURNAL_SH" stats --source skill 2>/dev/null || echo "{}")
   if ! echo "$stats_data" | jq -e 'type == "object"' >/dev/null 2>&1; then
     stats_data="{}"
   fi
@@ -165,7 +165,7 @@ run_journal_checks() {
 
   # --- Check 6: Success Rate Trend ---
   local recent_stats=""
-  recent_stats=$("$JOURNAL_SH" stats --since 7d 2>/dev/null || echo "{}")
+  recent_stats=$("$JOURNAL_SH" stats --since 7d --source skill 2>/dev/null || echo "{}")
   if ! echo "$recent_stats" | jq -e 'type == "object"' >/dev/null 2>&1; then
     recent_stats="{}"
   fi

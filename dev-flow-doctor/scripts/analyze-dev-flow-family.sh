@@ -169,7 +169,7 @@ WINDOW_ENTRIES=$(echo "$ALL_ENTRIES" | jq -c \
 
 FAMILY_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq -c \
   --argjson fam "$FAMILY_SKILLS_JSON" \
-  '[.[] | select(.skill as $s | $fam | index($s))]')
+  '[.[] | select(.skill as $s | $fam | index($s)) | select((.source // "skill") == "skill")]')
 
 # ----------------------------------------------------------------------------
 # Per-skill aggregation
@@ -196,7 +196,7 @@ PER_SKILL=$(echo "$FAMILY_ENTRIES" | jq -c \
     ($es | map(select(.outcome == "failure")) | length) as $fail |
     ($es | map(select(.outcome == "partial")) | length) as $part |
     # duration_turns は明示 log されたエントリ (主に成功時) にのみ存在する。
-    # hook-capture failures には duration_turns が無いため、これを総数で割ると
+    # hook（source: "hook"）エントリには duration_turns が無いため、これを総数で割ると
     # bottleneck 判定が壊れる (実際 5 turns でも avg 1.28 と出る)。
     # サンプル数で割る方式に変更し、duration_samples を出力に追加する。
     ($es | map(select(.duration_turns != null) | .duration_turns)) as $durations |
@@ -274,7 +274,7 @@ BOTTLENECKS=$(echo "$PER_SKILL" | jq \
     map({skill: .value.skill, avg_duration_turns: .value.avg_duration_turns, rank: (.key + 1)})')
 
 # Disconnected skills: skill has zero own entries AND name never appears as
-# a word-bounded reference in any hook-capture entry's context.input_summary
+# a word-bounded reference in any hook（source: "hook"）エントリの Skill tool invocation
 # within the window. We match against "Skill: <name>" / "Task: <name>" and
 # also allow a generic non-word-character boundary so that e.g. "dev-integrate"
 # is not accidentally satisfied by "dev-integrate-extra".
@@ -288,7 +288,7 @@ DISCONNECTED=$(echo "$WINDOW_ENTRIES" | jq -c \
     (escape_regex($p.skill)) as $esc |
     ("(^|[^A-Za-z0-9_-])" + $esc + "([^A-Za-z0-9_-]|$)") as $re |
     ( .
-      | map(select(.source == "hook-capture"))
+      | map(select((.source // "skill") != "skill"))
       | map(.context.input_summary // "")
       | map(select(. != ""))
       | map(select(test($re)))

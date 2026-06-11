@@ -158,7 +158,7 @@ cmd_log() {
         --arg timestamp "$now" \
         --arg skill "$skill" \
         --arg outcome "$outcome" \
-        '{version: $version, id: $id, timestamp: $timestamp, skill: $skill, outcome: $outcome}')
+        '{version: $version, id: $id, timestamp: $timestamp, skill: $skill, outcome: $outcome, source: "skill"}')
 
     # Add optional fields
     if [[ -n "$args" ]]; then
@@ -260,11 +260,14 @@ cmd_log() {
         entry=$(echo "$entry" | jq --argjson rec "$recovery_obj" '. + {recovery: $rec}')
     fi
 
-    # Write entry to file
+    # Write entry to file (atomic write with PID suffix to avoid same-second collision)
     local filename="${now//:/-}"
     filename="${filename//T/-}"
-    filename="${filename%Z}-${skill}.json"
-    echo "$entry" > "$JOURNAL_DIR/$filename"
+    filename="${filename%Z}-${skill}-$$.json"
+    local tmp
+    tmp=$(mktemp "$JOURNAL_DIR/.tmp.XXXXXX")
+    printf '%s\n' "$entry" > "$tmp"
+    mv "$tmp" "$JOURNAL_DIR/$filename"
 
     echo "{\"status\":\"logged\",\"id\":\"$id\",\"file\":\"$filename\"}"
 }
@@ -274,7 +277,7 @@ cmd_log() {
 # ============================================================================
 
 cmd_query() {
-    local since="" skill="" outcome="" limit="50"
+    local since="" skill="" outcome="" limit="50" source_filter=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -282,9 +285,18 @@ cmd_query() {
             --skill) skill="$2"; shift 2 ;;
             --outcome) outcome="$2"; shift 2 ;;
             --limit) limit="$2"; shift 2 ;;
+            --source) source_filter="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
+
+    # Validate --source value
+    if [[ -n "$source_filter" ]]; then
+        case "$source_filter" in
+            skill|hook) ;;
+            *) die_json "Invalid --source: $source_filter. Must be skill|hook" 1 ;;
+        esac
+    fi
 
     ensure_journal_dir
 
@@ -316,15 +328,38 @@ cmd_query() {
     if [[ -n "$since_iso" ]]; then
         jq_filter="$jq_filter | select(.timestamp >= \$since_iso)"
     fi
+    if [[ "$source_filter" == "skill" ]]; then
+        # source 欠落 = skill 扱い（後方互換）
+        jq_filter="$jq_filter | select((.source // \"skill\") == \"skill\")"
+    elif [[ "$source_filter" == "hook" ]]; then
+        jq_filter="$jq_filter | select(.source == \"hook\")"
+    fi
 
-    # Slurp all files and filter/sort in a single jq call
+    # Validate each file individually and skip corrupt entries with a warning.
+    # This prevents a single malformed JSON file from blanking the entire query
+    # (the analyze-dev-flow-family.sh rescue path uses the same per-file strategy).
+    local valid_files=()
+    for f in "${files[@]}"; do
+        if jq empty "$f" 2>/dev/null; then
+            valid_files+=("$f")
+        else
+            echo "journal query: skipping corrupt file: $f" >&2
+        fi
+    done
+
+    if [[ ${#valid_files[@]} -eq 0 ]]; then
+        echo "[]"
+        return 0
+    fi
+
+    # Slurp all valid files and filter/sort in a single jq call
     jq -s \
         --arg skill "$skill" \
         --arg outcome "$outcome" \
         --arg since_iso "$since_iso" \
         --argjson lim "$limit" \
         "[.[] | $jq_filter] | sort_by(.timestamp) | reverse | .[:(\$lim)]" \
-        "${files[@]}"
+        "${valid_files[@]}"
 }
 
 # ============================================================================
@@ -332,21 +367,26 @@ cmd_query() {
 # ============================================================================
 
 cmd_stats() {
-    local since=""
+    local since="" source_filter=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --since) since="$2"; shift 2 ;;
+            --source) source_filter="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
 
-    local entries
+    local query_args=("--limit" "9999")
     if [[ -n "$since" ]]; then
-        entries=$(cmd_query --since "$since" --limit 9999)
-    else
-        entries=$(cmd_query --limit 9999)
+        query_args+=("--since" "$since")
     fi
+    if [[ -n "$source_filter" ]]; then
+        query_args+=("--source" "$source_filter")
+    fi
+
+    local entries
+    entries=$(cmd_query "${query_args[@]}")
 
     echo "$entries" | jq '{
         total: length,
@@ -416,14 +456,17 @@ cmd_hook_capture() {
 
     # Extract error snippet (first 3 matching lines, max 300 chars).
     # Guard every stage so empty input / no-match doesn't trip `set -e -o pipefail`.
+    # iconv -f UTF-8 -t UTF-8 -c removes invalid UTF-8 bytes caused by multibyte truncation,
+    # ensuring safe input to jq --arg.
     local error_snippet=""
     if [[ -n "$error_text" ]]; then
         error_snippet=$(printf '%s\n' "$error_text" \
             | { grep -iE 'error|fail|exception|fatal|panic|denied|not found' || true; } \
             | head -n 3 \
-            | cut -c1-300)
+            | cut -c1-300 \
+            | iconv -f UTF-8 -t UTF-8 -c)
         if [[ -z "$error_snippet" ]]; then
-            error_snippet=$(printf '%s\n' "$error_text" | head -n 3 | cut -c1-300)
+            error_snippet=$(printf '%s\n' "$error_text" | head -n 3 | cut -c1-300 | iconv -f UTF-8 -t UTF-8 -c)
         fi
     fi
     [[ -z "$error_snippet" ]] && error_snippet="(no error text)"
@@ -501,7 +544,7 @@ cmd_hook_capture() {
             timestamp: $timestamp,
             skill: $skill,
             outcome: "failure",
-            source: "hook-capture",
+            source: "hook",
             context: $context,
             error: {
                 category: $err_category,
@@ -509,10 +552,14 @@ cmd_hook_capture() {
             }
         }')
 
+    # Atomic write with PID suffix to avoid same-second collision
     local filename="${now//:/-}"
     filename="${filename//T/-}"
-    filename="${filename%Z}-${skill_label}.json"
-    echo "$entry" > "$JOURNAL_DIR/$filename"
+    filename="${filename%Z}-${skill_label}-$$.json"
+    local tmp
+    tmp=$(mktemp "$JOURNAL_DIR/.tmp.XXXXXX")
+    printf '%s\n' "$entry" > "$tmp"
+    mv "$tmp" "$JOURNAL_DIR/$filename"
 }
 
 # Track active skill: called by PreToolUse Skill hook to write state file
@@ -550,8 +597,8 @@ Subcommands:
   log <skill> <outcome>  Record skill execution
   hook-capture           Capture failures from PostToolUse hook (reads stdin)
   track-skill            Track active skill from PreToolUse Skill hook (reads stdin)
-  query [--since] [--skill] [--outcome]  Query entries
-  stats [--since]  Show summary statistics
+  query [--since] [--skill] [--outcome] [--source <skill|hook>]  Query entries
+  stats [--since] [--source <skill|hook>]  Show summary statistics
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
@@ -559,7 +606,10 @@ Examples:
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff
+  journal.sh query --source skill
+  journal.sh query --source hook
   journal.sh stats --since 30d
+  journal.sh stats --source skill
 USAGE
         exit 1
         ;;
