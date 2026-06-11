@@ -1790,25 +1790,31 @@ if (!summaryPost?.posted) {
 }
 
 // ============================================================
-// journal-log: dev-flow 完走の telemetry を journal.sh log に記録する（W6）。
+// journal-log: dev-flow 完走の telemetry handoff を pending dir へ書き出す。
+// dotfiles の Stop hook (stop-devflow-telemetry.sh) が journal.sh log へ flush する（issue #203）。
 // 失敗は log 警告のみで workflow は継続（telemetry 欠損 > ワークフロー中断）。
 // need() で包まない — null 容認が必須。
 // ============================================================
-const journalCmd = [
-  `bash ${WT}/skill-retrospective/scripts/journal.sh log dev-flow success`,
-  `--issue ${ISSUE}`,
-  `--merge-tier ${mergeTier.tier}`,
-  `--gate-policy ${GATE_POLICY}`,
-  `--danger-hits '${JSON.stringify(dangerHitsFinal)}'`,
-  `--shape ${EFFECTIVE_SHAPE}`,
-  `--shape-refloored ${refloor.refloored}`,
-  `--plan-iter ${planIters}`,
-  `--eval-iter ${evalIters}`,
-  ...(evalResult?.verdict ? [`--eval-verdict ${evalResult.verdict}`] : []),
-  ...(iterate?.status ? [`--iterate-status ${iterate.status}`] : []),
-].join(' ')
+const telemetryHandoff = JSON.stringify({
+  skill: 'dev-flow',
+  outcome: 'success',
+  issue: Number(ISSUE),
+  journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
+  telemetry: {
+    merge_tier: mergeTier.tier,
+    gate_policy: GATE_POLICY,
+    danger_hits: dangerHitsFinal,
+    shape: EFFECTIVE_SHAPE,
+    shape_refloored: refloor.refloored,
+    plan_iter: planIters,
+    eval_iter: evalIters,
+    ...(evalResult?.verdict ? { eval_verdict: evalResult.verdict } : {}),
+    ...(iterate?.status ? { iterate_status: iterate.status } : {}),
+  },
+})
+const journalCmd = `mkdir -p ~/.claude/journal/pending && cat > ~/.claude/journal/pending/devflow-${ISSUE}-$(date +%s).json <<'TELEMETRY_EOF'\n${telemetryHandoff}\nTELEMETRY_EOF`
 const journalPost = await agent(
-  `## Objective\ndev-flow 完走の telemetry を journal に記録する。\n\n`
+  `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
   + `## Instructions\n`
   + `次のコマンドをそのまま実行せよ: \`${journalCmd}\`\n`
   + `exit 0 なら logged:true、失敗しても throw せず logged:false を返すこと。\n`
