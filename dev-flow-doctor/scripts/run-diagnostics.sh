@@ -324,11 +324,17 @@ run_worktree_checks() {
       fi
 
       # Check staleness (>7 days since last modification)
-      local mod_time
+      local mod_time now age_days
       mod_time=$(stat -f %m "$wt_dir" 2>/dev/null || stat -c %Y "$wt_dir" 2>/dev/null || echo 0)
-      local now
-      now=$(now_sec)
-      local age_days=$(( (now - mod_time) / 86400 ))
+      now=$(now_sec 2>/dev/null || echo 0)
+      # Numeric guard: normalize non-numeric / empty values to 0
+      [[ "$mod_time" =~ ^[0-9]+$ ]] || mod_time=0
+      [[ "$now" =~ ^[0-9]+$ ]] || now=0
+      age_days=$(( (${now:-0} - ${mod_time:-0}) / 86400 ))
+      # Timestamp unavailable guard: skip stale classification when timestamps could not be read
+      if [[ "$mod_time" -eq 0 || "$now" -eq 0 ]]; then
+        age_days=0
+      fi
       if [[ $age_days -gt 7 ]]; then
         stale_count=$((stale_count + 1))
         stale_dirs=$(echo "$stale_dirs" | jq --arg d "$wt_dir" --argjson days "$age_days" '. + [{path: $d, age_days: $days}]')
