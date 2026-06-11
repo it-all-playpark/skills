@@ -34,7 +34,7 @@ All journal entries carry a `source` field indicating how the entry was written:
 | `"skill"` | Skill workflow | `journal.sh log` (explicit call from skill) |
 | `"hook"` | PostToolUseFailure hook | `journal.sh hook-capture` (automatic capture on tool failure) |
 
-**Migration compatibility**: Existing entries that predate this field are treated as `source: "skill"` by all consumers. No backfill is required.
+**Migration compatibility**: Entries that predate this field may have an absent `source` key **or** a legacy `"hook-capture"` value (written by the old `cmd_hook_capture` implementation). Both are handled by all consumers using inclusive semantics: `(.source // "skill") == "skill"` to select skill entries, and `(.source // "skill") != "skill"` to select non-skill (hook) entries. This treats absent-source as `"skill"` and correctly excludes legacy `"hook-capture"` entries from skill statistics. No backfill is required.
 
 **Aggregation default**: `dev-flow-doctor` and other stats/query consumers exclude `source == "hook"` entries by default, to avoid inflating skill-authored failure counts with hook-captured tool failures.
 

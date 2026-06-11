@@ -1,6 +1,10 @@
 #!/usr/bin/env bats
 # Tests for analyze-dev-flow-family.sh
-# Focus: hook source exclusion from family entries and parent_refs "hook" matching.
+# Focus: hook source exclusion from family entries and parent_refs matching.
+# Inclusive semantics: FAMILY_ENTRIES uses (.source // "skill") == "skill"
+# and parent_refs uses (.source // "skill") != "skill".
+# This covers source="hook" (new), source="hook-capture" (legacy pre-migration),
+# and absent source (treated as "skill").
 
 setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -102,5 +106,60 @@ EOF
     # dev-implement has no own entries but IS referenced via source="hook" entry
     # -> should NOT appear in disconnected_skills
     disc_count=$(echo "$output" | jq '[.findings.disconnected_skills[] | select(.skill == "dev-implement")] | length')
+    [ "$disc_count" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (d): legacy source="hook-capture" entry is excluded from per_skill total
+# (pre-migration entries written by cmd_hook_capture used "hook-capture" value)
+# ---------------------------------------------------------------------------
+@test "(d) legacy source=hook-capture entry is excluded from per_skill total" {
+    cat > "$CLAUDE_JOURNAL_DIR/hook-capture-entry.json" <<EOF
+{
+  "version": "1.0.0",
+  "id": "hook-capture-legacy-1",
+  "timestamp": "$TS",
+  "skill": "dev-kickoff",
+  "source": "hook-capture",
+  "outcome": "failure",
+  "duration_turns": 0,
+  "context": {}
+}
+EOF
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+
+    # The legacy hook-capture entry must not be counted in per_skill for dev-kickoff
+    total=$(echo "$output" | jq '[.per_skill[] | select(.skill == "dev-kickoff")] | .[0].total // 0')
+    [ "$total" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (e): legacy source="hook-capture" entry referencing a family skill
+#           prevents that skill from appearing in disconnected_skills
+# ---------------------------------------------------------------------------
+@test "(e) legacy source=hook-capture entry referencing dev-integrate keeps it out of disconnected_skills" {
+    cat > "$CLAUDE_JOURNAL_DIR/hook-capture-ref-entry.json" <<EOF
+{
+  "version": "1.0.0",
+  "id": "hook-capture-ref-1",
+  "timestamp": "$TS",
+  "skill": "hook-capture",
+  "source": "hook-capture",
+  "outcome": "success",
+  "duration_turns": 0,
+  "context": {
+    "input_summary": "Skill: dev-integrate --subtask A"
+  }
+}
+EOF
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+
+    # dev-integrate has no own entries but IS referenced via legacy hook-capture entry
+    # -> should NOT appear in disconnected_skills
+    disc_count=$(echo "$output" | jq '[.findings.disconnected_skills[] | select(.skill == "dev-integrate")] | length')
     [ "$disc_count" -eq 0 ]
 }

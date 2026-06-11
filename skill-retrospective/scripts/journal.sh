@@ -335,14 +335,31 @@ cmd_query() {
         jq_filter="$jq_filter | select(.source == \"hook\")"
     fi
 
-    # Slurp all files and filter/sort in a single jq call
+    # Validate each file individually and skip corrupt entries with a warning.
+    # This prevents a single malformed JSON file from blanking the entire query
+    # (the analyze-dev-flow-family.sh rescue path uses the same per-file strategy).
+    local valid_files=()
+    for f in "${files[@]}"; do
+        if jq empty "$f" 2>/dev/null; then
+            valid_files+=("$f")
+        else
+            echo "journal query: skipping corrupt file: $f" >&2
+        fi
+    done
+
+    if [[ ${#valid_files[@]} -eq 0 ]]; then
+        echo "[]"
+        return 0
+    fi
+
+    # Slurp all valid files and filter/sort in a single jq call
     jq -s \
         --arg skill "$skill" \
         --arg outcome "$outcome" \
         --arg since_iso "$since_iso" \
         --argjson lim "$limit" \
         "[.[] | $jq_filter] | sort_by(.timestamp) | reverse | .[:(\$lim)]" \
-        "${files[@]}"
+        "${valid_files[@]}"
 }
 
 # ============================================================================

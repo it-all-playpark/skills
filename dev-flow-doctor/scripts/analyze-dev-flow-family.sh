@@ -166,7 +166,7 @@ WINDOW_ENTRIES=$(echo "$ALL_ENTRIES" | jq \
 
 FAMILY_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq \
   --argjson fam "$FAMILY_SKILLS_JSON" \
-  '[.[] | select(.skill as $s | $fam | index($s)) | select(.source != "hook")]')
+  '[.[] | select(.skill as $s | $fam | index($s)) | select((.source // "skill") == "skill")]')
 
 # ----------------------------------------------------------------------------
 # Per-skill aggregation
@@ -287,7 +287,7 @@ DISCONNECTED=$(jq -n \
     (escape_regex($p.skill)) as $esc |
     ("(^|[^A-Za-z0-9_-])" + $esc + "([^A-Za-z0-9_-]|$)") as $re |
     ( $entries
-      | map(select(.source == "hook"))
+      | map(select((.source // "skill") != "skill"))
       | map(.context.input_summary // "")
       | map(select(. != ""))
       | map(select(test($re)))

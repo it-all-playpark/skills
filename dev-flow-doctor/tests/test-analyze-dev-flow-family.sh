@@ -6,17 +6,62 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ANALYZE_SH="$SCRIPT_DIR/../scripts/analyze-dev-flow-family.sh"
-FIXTURES="$SCRIPT_DIR/fixtures/journal"
+STATIC_FIXTURES="$SCRIPT_DIR/fixtures/journal"
 WORKDIR="$(mktemp -d -t dffd-test-XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 FAIL_COUNT=0
 PASS_COUNT=0
 
-# Compute a timestamp 2 days ago (within 30d window but outside 1d window)
-# Used for dynamically-created journal entries in tests that need recent data.
+# Compute timestamps relative to today so the 30d window assertions never expire.
+# Each fixture maps to a relative offset (days ago); offsets 3-6 keep entries
+# within a 30d window but outside a 1d window (matching Test 8 expectations).
 RECENT_DATE=$(date -u -v-2d +"%Y-%m-%d" 2>/dev/null || date -u -d "2 days ago" +"%Y-%m-%d")
 RECENT_TS=$(date -u -v-2d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "2 days ago" +"%Y-%m-%dT%H:%M:%SZ")
+
+# Generate a relative ISO timestamp: d days ago at a given HH:MM:SS.
+# Usage: rel_ts <days_ago> <HH-MM-SS>   e.g.  rel_ts 6 10:00:00
+rel_ts() {
+  local days="$1" time="$2"
+  date -u -v-"${days}d" +"${time}" 2>/dev/null \
+    || date -u -d "${days} days ago" +"${time}"
+}
+
+# Build a dynamic fixture directory whose timestamps are always relative to today.
+# Fixture mapping (static filename → relative days ago, time):
+#   2026-06-05-10-00-00-dev-kickoff.json   → 6d ago  10:00:00Z
+#   2026-06-05-11-00-00-pr-fix.json        → 6d ago  11:00:00Z
+#   2026-06-06-10-00-00-dev-kickoff.json   → 5d ago  10:00:00Z
+#   2026-06-06-11-00-00-pr-fix.json        → 5d ago  11:00:00Z
+#   2026-06-07-10-00-00-dev-kickoff.json   → 4d ago  10:00:00Z
+#   2026-06-07-11-00-00-pr-fix.json        → 4d ago  11:00:00Z
+#   2026-06-08-10-00-00-dev-implement.json → 3d ago  10:00:00Z
+#   2026-06-08-11-00-00-blog-cross-post.json → 3d ago 11:00:00Z
+DYN_FIXTURES="$WORKDIR/dynamic-fixtures"
+mkdir -p "$DYN_FIXTURES"
+
+declare -A FIXTURE_OFFSETS=(
+  ["2026-06-05-10-00-00-dev-kickoff.json"]="6 %Y-%m-%dT10:00:00Z"
+  ["2026-06-05-11-00-00-pr-fix.json"]="6 %Y-%m-%dT11:00:00Z"
+  ["2026-06-06-10-00-00-dev-kickoff.json"]="5 %Y-%m-%dT10:00:00Z"
+  ["2026-06-06-11-00-00-pr-fix.json"]="5 %Y-%m-%dT11:00:00Z"
+  ["2026-06-07-10-00-00-dev-kickoff.json"]="4 %Y-%m-%dT10:00:00Z"
+  ["2026-06-07-11-00-00-pr-fix.json"]="4 %Y-%m-%dT11:00:00Z"
+  ["2026-06-08-10-00-00-dev-implement.json"]="3 %Y-%m-%dT10:00:00Z"
+  ["2026-06-08-11-00-00-blog-cross-post.json"]="3 %Y-%m-%dT11:00:00Z"
+)
+
+for fname in "${!FIXTURE_OFFSETS[@]}"; do
+  read -r days_ago fmt <<< "${FIXTURE_OFFSETS[$fname]}"
+  new_ts=$(date -u -v-"${days_ago}d" +"${fmt}" 2>/dev/null \
+             || date -u -d "${days_ago} days ago" +"${fmt}")
+  jq --arg ts "$new_ts" '.timestamp = $ts' \
+    "$STATIC_FIXTURES/$fname" > "$DYN_FIXTURES/$fname"
+done
+
+# Use dynamic fixtures as the default fixture dir for run_analyze.
+# Tests that need static fixtures (e.g. cold-start) point CLAUDE_JOURNAL_DIR themselves.
+FIXTURES="$DYN_FIXTURES"
 
 pass() {
   PASS_COUNT=$((PASS_COUNT + 1))
@@ -51,7 +96,7 @@ run_analyze() {
 }
 
 printf 'Test suite: analyze-dev-flow-family.sh\n'
-printf 'Fixtures: %s\n\n' "$FIXTURES"
+printf 'Dynamic fixtures: %s\n\n' "$FIXTURES"
 
 # ----------------------------------------------------------------------------
 # Test 1: Default window (30d) covers all fixtures
@@ -150,7 +195,7 @@ if ! echo "$RESULT_1D" | jq empty 2>/dev/null; then
 else
   pass "1d produces valid JSON"
 fi
-# Fixtures are dated 3-6 days ago; 1d window → 0 entries
+# Dynamic fixtures are dated 3-6 days ago (relative); 1d window → 0 entries
 DK_1D_TOTAL=$(echo "$RESULT_1D" | jq '[.per_skill[] | select(.skill == "dev-kickoff")][0].total')
 assert_eq "dev-kickoff total = 0 in 1d window" "0" "$DK_1D_TOTAL"
 DEAD_1D=$(echo "$RESULT_1D" | jq '.findings.dead_phases | length')
