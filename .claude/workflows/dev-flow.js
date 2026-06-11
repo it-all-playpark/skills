@@ -565,6 +565,7 @@ function mdCell(v) {
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
+ * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）
  * @returns {string}
  */
 function buildDevflowSummaryBody({
@@ -582,6 +583,7 @@ function buildDevflowSummaryBody({
   shape,
   testGreen,
   evalVerdict,
+  evalTreeStale,
 }) {
   const lines = [];
 
@@ -627,6 +629,12 @@ function buildDevflowSummaryBody({
   lines.push('|---|---|---|---|---|---|---|');
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
+
+  // 2b. evalTreeStale 警告（at-a-glance テーブル直後・gate_policy 行前）
+  if (evalTreeStale === true) {
+    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('');
+  }
 
   // 3. gate_policy 行
   lines.push(`gate_policy: \`${gatePolicy}\``);
@@ -1106,6 +1114,10 @@ const CHANGED = {
   type: 'object', required: ['files'],
   properties: { files: { type: 'array', items: { type: 'string' } } },
 }
+const DIFFHASH = {
+  type: 'object', required: ['hash', 'empty'],
+  properties: { hash: { type: 'string' }, empty: { type: 'boolean' } },
+}
 const POST_RESULT = {
   type: 'object',
   required: ['posted'],
@@ -1546,8 +1558,36 @@ let evalResult = null
 let evalIters = 0            // eval iteration カウンタ（telemetry 用）
 let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
 let unsatisfiedAc = false
+let evalDiffHash = null  // Evaluate 終了時点の diff hash（issue #215。PR 直前と突合し乖離で summary 警告）
+// diff-gate/diff-hash 共通 prompt（issue #215）。worktree-diff-hash.sh のコントラクトに依存。
+// if(runEval) の外で定義: PR phase でも参照するため（evalDiffHash != null ガードで micro は skip）。
+const _dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+  + `bash ${WT}/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
 if (runEval) {
 phase('Evaluate')
+// ============================================================
+// empty-diff gate（issue #215）: Evaluate phase 直後。
+// 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
+// ============================================================
+const dhGate = need(await agent(
+  _dhPrompt,
+  { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate', phase: 'Evaluate' },
+), 'Evaluate(diff-gate)')
+if (dhGate.empty === true) {
+  log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— Implement へ 1 回だけ差し戻す（issue #215）')
+  const retryResults = await runImplement(plan, [{
+    type: 'empty_diff',
+    detail: '前回 implementer 終了時点で working tree に変更が存在しない（base と内容一致）。plan の task を実際に実装し、変更を working tree に残せ（git add / commit は禁止）。',
+  }], 'reimpl-empty-diff')
+  for (const r of retryResults) { if (r && Array.isArray(r.concerns)) concerns.push(...r.concerns) }
+  const dhRetry = need(await agent(
+    _dhPrompt,
+    { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Evaluate' },
+  ), 'Evaluate(diff-gate-retry)')
+  if (dhRetry.empty === true) {
+    throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）')
+  }
+}
 // Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
 // makeLedger で作り直さない(SEC seed を失わないため)。
 for (const [i, crit] of (req.acceptance_criteria ?? []).entries()) {
@@ -1725,6 +1765,11 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
   }
 }
+// Evaluate 終了時点の diff hash を取得（issue #215）。need() で包まず null 容認。
+// （Evaluate ループは全 break が evaluator 呼び出し直後にあるため、ループ終了直後の tree = 最後の evaluator が評価した tree）
+const dhEval = await agent(_dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
+evalDiffHash = (dhEval && typeof dhEval.hash === 'string') ? dhEval.hash : null
+if (evalDiffHash == null) log('⚠️ diff-hash-eval の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
 } else {
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
@@ -1732,6 +1777,17 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
 // ============================================================
 // Phase PR: git-commit + git-pr skill を dev-runner で実行し PR URL を取得。
 // ============================================================
+// PR 直前の diff hash を取得し、Evaluate 時点と突合（issue #215）。
+// 判定は hash 文字列の完全一致のみ（0/非0 二値。比率閾値なし）。
+// micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
+let evalTreeStale = false
+if (evalDiffHash != null) {
+  const dhPr = await agent(_dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
+  const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
+  if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
+  evalTreeStale = prDiffHash != null && evalDiffHash !== prDiffHash
+  if (evalTreeStale) log('⚠️ Evaluate 時点と PR 直前の diff hash が不一致 — 終端サマリーに stale-eval 警告を付記する（issue #215）')
+}
 phase('PR')
 const pr = need(await agent(
   `cd ${WT} で作業。次を順に実行せよ:\n`
@@ -1802,6 +1858,7 @@ const summaryBody = buildDevflowSummaryBody({
   shape: EFFECTIVE_SHAPE,
   testGreen: val?.green ?? null,
   evalVerdict: evalResult?.verdict ?? null,
+  evalTreeStale,
 })
 const summaryPost = await agent(
   `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
@@ -1875,6 +1932,7 @@ return {
   shape: SHAPE,
   effective_shape: EFFECTIVE_SHAPE,
   shape_refloored: refloor.refloored,
+  eval_tree_stale: evalTreeStale,
   realized_file_count: realizedCount,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,

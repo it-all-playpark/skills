@@ -102,6 +102,8 @@ function makeCountingSandbox(analyzeReq, realizedFiles) {
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
+    // diff-gate / diff-hash（issue #215）: need() による throw の回避
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     // デフォルト
     return null;
   };
@@ -292,6 +294,8 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
+    // diff-gate / diff-hash（issue #215）: need() による throw の回避
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     return null;
   };
 
@@ -492,6 +496,8 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
+    // diff-gate / diff-hash（issue #215）: need() による throw の回避
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     return null;
   };
 

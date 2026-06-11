@@ -90,6 +90,8 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
+    // diff-gate / diff-hash（issue #215）: need() による throw の回避
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     // デフォルト
     return null;
   };
@@ -425,6 +427,8 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       if (agentType === 'implementer') {
         return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
       }
+      // diff-gate / diff-hash（issue #215）: need() による throw の回避
+      if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
       return null;
     };
   }

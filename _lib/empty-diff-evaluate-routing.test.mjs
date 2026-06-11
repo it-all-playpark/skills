@@ -1,0 +1,157 @@
+// empty-diff gate と diff-hash 乖離検出の VM sandbox routing テスト（issue #215）。
+// _lib/refloor-shape-routing.test.mjs の makeCountingSandbox / runDevFlowInSandbox パターンを踏襲。
+//
+// stub に label==='diff-gate' / 'diff-gate-retry' / 'diff-hash-eval' / 'diff-hash-pr' の分岐を追加し
+// テストごとに可変の {hash, empty} を返す。
+//
+// analyzeReq は standard shape（estimated_change_file_count:3, acceptance_criteria あり, issue_type:'fix'）で
+// runEval を成立させる。
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..');
+const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+
+function makeCountingSandbox(analyzeReq, diffHashConfig) {
+  const calls = [];
+  const {
+    gateEmpty = false,
+    retryEmpty = false,
+    evalHash = 'H',
+    prHash = 'H',
+  } = diffHashConfig || {};
+
+  const agentStub = async (prompt, opts) => {
+    const label = opts?.label ?? '';
+    const agentType = opts?.agentType ?? '';
+    calls.push({ label, agentType, prompt: String(prompt ?? '') });
+
+    if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
+    if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
+    if (label === 'diff-hash-eval') return { hash: evalHash, empty: false };
+    if (label === 'diff-hash-pr') return { hash: prHash, empty: false };
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
+    if (label.startsWith('analyze')) return analyzeReq;
+    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: [], test_plan: '' }], parallel: [] };
+    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (label.startsWith('danger-grep')) return { hits: [] };
+    if (label === 'realized-diff') return { files: ['src/foo.ts'] };
+    if (label === 'declared-path-check') return { files: [] };
+    if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
+    if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
+    if (agentType === 'evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
+    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+    if (label === 'changed-files') return { files: ['src/foo.ts'] };
+    if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    return null;
+  };
+
+  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
+  const sandbox = {
+    phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
+    workflow: async () => ({ status: 'LGTM' }), args: '1',
+    console, JSON, Math, String, Number, Boolean, Array, Object, Error, RegExp, Promise, Symbol, Map, Set, Date,
+  };
+  const ctx = vm.createContext(sandbox);
+  return { ctx, calls };
+}
+
+async function runDevFlowInSandbox(src, ctx) {
+  const stripped = src
+    .replace(/^export\s+const\s+/gm, 'const ')
+    .replace(/^export\s+function\s+/gm, 'function ');
+  const wrapped = `(async () => {\n${stripped}\n})();`;
+  let caughtError = null;
+  let returned = null;
+  try {
+    const result = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
+    if (result && typeof result.then === 'function') {
+      returned = await result.catch((e) => { caughtError = e; return null; });
+    }
+  } catch (e) {
+    caughtError = e;
+  }
+  return { error: caughtError, returned };
+}
+
+const STANDARD_REQ = {
+  summary: 's',
+  acceptance_criteria: ['ac1', 'ac2'],
+  issue_type: 'fix',
+  scope: 'src',
+  estimated_change_file_count: 3,
+  shape: 'standard',
+};
+
+// (A) diff-gate empty:false → reimpl-empty-diff 0 件・diff-gate-retry 0 件・正常完了
+test('[empty-diff] (A) diff-gate empty:false → reimpl-empty-diff 0 件・diff-gate-retry 0 件・正常完了', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  const reimplCalls = calls.filter((c) => c.label.startsWith('reimpl-empty-diff'));
+  assert.strictEqual(reimplCalls.length, 0, `(A) empty:false なら reimpl-empty-diff 0 件のはずだが ${reimplCalls.length} 件`);
+  const retryGateCalls = calls.filter((c) => c.label === 'diff-gate-retry');
+  assert.strictEqual(retryGateCalls.length, 0, `(A) empty:false なら diff-gate-retry 0 件のはずだが ${retryGateCalls.length} 件`);
+  if (error) assert.fail(`(A) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(A) return object を返すべき');
+});
+
+// (B) diff-gate empty:true / diff-gate-retry empty:false → reimpl-empty-diff >= 1・diff-gate-retry 1 件・正常完了
+test('[empty-diff] (B) diff-gate empty:true / diff-gate-retry empty:false → reimpl-empty-diff >= 1・diff-gate-retry 1 件・正常完了', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: false });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  const reimplCalls = calls.filter((c) => c.label.startsWith('reimpl-empty-diff'));
+  assert.ok(reimplCalls.length >= 1, `(B) reimpl-empty-diff >= 1 件のはずだが ${reimplCalls.length} 件`);
+  const retryGateCalls = calls.filter((c) => c.label === 'diff-gate-retry');
+  assert.strictEqual(retryGateCalls.length, 1, `(B) diff-gate-retry は 1 件のはずだが ${retryGateCalls.length} 件（無限ループ禁止）`);
+  if (error) assert.fail(`(B) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(B) return object を返すべき');
+});
+
+// (C) diff-gate empty:true / diff-gate-retry empty:true → throw・evaluator 0 件（fail-fast）
+test('[empty-diff] (C) diff-gate empty:true / diff-gate-retry empty:true → throw し evaluator 0 件（fail-fast）', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: true });
+  const { error } = await runDevFlowInSandbox(src, ctx);
+  assert.ok(error !== null, '(C) 両方 empty:true なら workflow が throw すべきだが error が null だった');
+  assert.ok(typeof error?.message === 'string' && error.message.includes('empty-diff gate'), `(C) error.message に 'empty-diff gate' を含むべきだが: ${error?.message}`);
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  assert.strictEqual(evaluatorCalls.length, 0, `(C) evaluator は 0 件のはずだが ${evaluatorCalls.length} 件（fail-fast であること）`);
+});
+
+// (D) eval hash AAA != PR hash BBB → eval_tree_stale===true かつ post-summary に stale 警告
+test('[empty-diff] (D) eval hash AAA != PR hash BBB → eval_tree_stale===true かつ post-summary に stale 警告', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false, evalHash: 'AAA', prHash: 'BBB' });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(D) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(D) return object を返すべき');
+  assert.strictEqual(returned?.eval_tree_stale, true, `(D) eval hash 不一致なら eval_tree_stale===true のはずだが ${JSON.stringify(returned?.eval_tree_stale)}`);
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall !== undefined, '(D) post-summary の agent 呼び出しが存在すべき');
+  assert.ok(postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(D) post-summary prompt に stale 警告を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
+});
+
+// (E) 両 hash 'AAA' 一致 → eval_tree_stale===false・post-summary に stale 警告なし（誤検知なし）
+test('[empty-diff] (E) eval hash AAA == PR hash AAA → eval_tree_stale===false・post-summary に stale 警告なし', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false, evalHash: 'AAA', prHash: 'AAA' });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(E) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(E) return object を返すべき');
+  assert.strictEqual(returned?.eval_tree_stale, false, `(E) hash 一致なら eval_tree_stale===false のはずだが ${JSON.stringify(returned?.eval_tree_stale)}`);
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall !== undefined, '(E) post-summary の agent 呼び出しが存在すべき');
+  assert.ok(!postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(E) hash 一致時は post-summary prompt に stale 警告を含むべきでない`);
+});
