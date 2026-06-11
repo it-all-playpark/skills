@@ -11,22 +11,27 @@
 SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/run-diagnostics.sh"
 
 # ---------------------------------------------------------------------------
-# setup_file: AC1 smoke テスト用 journal corpus（3,600 エントリ）を生成
+# setup_file: smoke テスト用 journal corpus（3,600 エントリ）を生成
+#
+# ファイル形式: *.json（analyze-dev-flow-family.sh / journal.sh が glob する拡張子）
+# JSON schema: 実 schema に準拠（timestamp / skill / outcome / source / duration_turns）
+# skill: "pr-fix"（DEFAULT_FAMILY_SKILLS に含まれる family skill）
+# timestamp: 今日の UTC 日付（--window 30d フィルタを通過させるため）
 # ---------------------------------------------------------------------------
 setup_file() {
     CORPUS_DIR="$(mktemp -d)"
     export CORPUS_DIR
-    # 3,600 件の journal corpus を生成（basename ~240文字 padding 付き）
-    local pad
-    pad=$(printf '%0.s-' {1..200})  # 200文字のパディング
+
+    # 今日の UTC 日付（--window 30d のフィルタを通過するタイムスタンプ）
+    TODAY_ISO="$(date -u +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u --iso-8601=seconds | sed 's/+.*/Z/')"
+    export TODAY_ISO
+
+    # 3,600 件のエントリを個別の *.json ファイルとして生成
+    local i
     for i in $(seq 1 3600); do
-        local ts
-        ts=$(printf '%010d' "$i")
-        # skill=dev-flow の JSON lines 形式
-        printf '{"ts":"%s","skill":"dev-flow","status":"success","mode":"standard","padding":"%s"}\n' \
-            "$ts" "$pad" >> "${CORPUS_DIR}/journal-${ts}.jsonl"
+        printf '{"id":"c-%d","timestamp":"%s","skill":"pr-fix","outcome":"success","source":"manual","duration_turns":3}\n' \
+            "$i" "$TODAY_ISO" > "${CORPUS_DIR}/corpus-$(printf '%04d' "$i")-pr-fix.json"
     done
-    export CORPUS_DIR
 }
 
 teardown_file() {
@@ -125,10 +130,14 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# (4) AC1 smoke: 3,600 件 journal corpus で full 実行が status 0 かつ valid JSON
+# (4) 3,600 件 journal corpus で --scope full が corpus を実際に読み込むこと
+#
+# 単なる exit 0 ではなく、corpus が analyze-dev-flow-family.sh を通じて
+# 実際に集計されたことを non-vacuous に検証する:
+#   - .checks.dev_flow_family.status が "error"/"skipped" でないこと
+#   - .checks.dev_flow_family.per_skill 内の pr-fix エントリの total が 3600 であること
 # ---------------------------------------------------------------------------
-@test "(4) AC1 smoke: 3600件corpus で --scope full が status 0 かつ valid JSON（score/checks キー存在）" {
-    # 空の config を用意（SKILL_CONFIG_PATH を環境変数で指定）
+@test "(4) 3600件corpus: --scope full で pr-fix total==3600 が集計されること（corpus が実際に流れる）" {
     local empty_config
     empty_config="$(mktemp)"
     printf '{}' > "$empty_config"
@@ -136,10 +145,22 @@ teardown() {
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CORPUS_DIR}' SKILL_CONFIG_PATH='${empty_config}' '${SCRIPT}' --scope full --window 30d"
     rm -f "$empty_config"
     [ "$status" -eq 0 ]
-    # valid JSON
+
+    # valid JSON であること
     printf '%s\n' "$output" | jq empty
-    # score キーが存在
+
+    # score / checks キーが存在すること
     printf '%s\n' "$output" | jq -e 'has("score")'
-    # checks キーが存在
     printf '%s\n' "$output" | jq -e 'has("checks")'
+
+    # dev_flow_family が error / skipped でないこと（corpus が実際に読まれたこと）
+    local dff_status
+    dff_status=$(printf '%s\n' "$output" | jq -r '.checks.dev_flow_family.status // "missing"')
+    [ "$dff_status" != "error" ]
+    [ "$dff_status" != "skipped" ]
+
+    # pr-fix の total が 3600 であること（corpus が集計されたことの非自明な確認）
+    local pr_fix_total
+    pr_fix_total=$(printf '%s\n' "$output" | jq '[.checks.dev_flow_family.per_skill[] | select(.skill=="pr-fix")][0].total // 0')
+    [ "$pr_fix_total" -eq 3600 ]
 }
