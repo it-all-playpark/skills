@@ -13,6 +13,11 @@ trap 'rm -rf "$WORKDIR"' EXIT
 FAIL_COUNT=0
 PASS_COUNT=0
 
+# Compute a timestamp 2 days ago (within 30d window but outside 1d window)
+# Used for dynamically-created journal entries in tests that need recent data.
+RECENT_DATE=$(date -u -v-2d +"%Y-%m-%d" 2>/dev/null || date -u -d "2 days ago" +"%Y-%m-%d")
+RECENT_TS=$(date -u -v-2d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "2 days ago" +"%Y-%m-%dT%H:%M:%SZ")
+
 pass() {
   PASS_COUNT=$((PASS_COUNT + 1))
   printf '  \033[32mPASS\033[0m %s\n' "$1"
@@ -145,7 +150,7 @@ if ! echo "$RESULT_1D" | jq empty 2>/dev/null; then
 else
   pass "1d produces valid JSON"
 fi
-# With fixtures dated 2026-04-05..08 and today=2026-04-11, 1d window → 0 entries
+# Fixtures are dated 3-6 days ago; 1d window → 0 entries
 DK_1D_TOTAL=$(echo "$RESULT_1D" | jq '[.per_skill[] | select(.skill == "dev-kickoff")][0].total')
 assert_eq "dev-kickoff total = 0 in 1d window" "0" "$DK_1D_TOTAL"
 DEAD_1D=$(echo "$RESULT_1D" | jq '.findings.dead_phases | length')
@@ -198,7 +203,7 @@ mkdir -p "$MIXED_JOURNAL"
 # Copy all existing fixtures
 cp "$FIXTURES"/*.json "$MIXED_JOURNAL"/
 # Add a malformed file that would break `jq -s '.' "${files[@]}"`
-printf '{"broken": ' > "$MIXED_JOURNAL/2026-04-09-10-00-00-broken.json"
+printf '{"broken": ' > "$MIXED_JOURNAL/${RECENT_DATE}-10-00-00-broken.json"
 
 MIXED_RESULT=$(CLAUDE_JOURNAL_DIR="$MIXED_JOURNAL" SKILL_CONFIG_PATH="$EMPTY_CONFIG" \
   "$ANALYZE_SH" --window 30d 2>&1)
@@ -223,14 +228,14 @@ printf '\nTest 11: parent_refs & word-boundary match\n'
 PARENT_JOURNAL="$WORKDIR/parent-journal"
 mkdir -p "$PARENT_JOURNAL"
 cp "$FIXTURES"/*.json "$PARENT_JOURNAL"/
-# hook-capture entry that references dev-integrate (via "Skill: dev-integrate")
-cat > "$PARENT_JOURNAL/2026-04-09-12-00-00-hook-capture.json" <<'JSON'
+# hook entry that references dev-integrate (via "Skill: dev-integrate")
+cat > "$PARENT_JOURNAL/${RECENT_DATE}-12-00-00-hook-capture.json" <<JSON
 {
   "version": "1.0.0",
-  "id": "20260409T120000-hook-capture",
-  "timestamp": "2026-04-09T12:00:00Z",
+  "id": "hook-capture-integrate",
+  "timestamp": "${RECENT_TS}",
   "skill": "hook-capture",
-  "source": "hook-capture",
+  "source": "hook",
   "outcome": "success",
   "duration_turns": 0,
   "context": {
@@ -238,14 +243,14 @@ cat > "$PARENT_JOURNAL/2026-04-09-12-00-00-hook-capture.json" <<'JSON'
   }
 }
 JSON
-# hook-capture entry that mentions ONLY a substring lookalike of dev-validate
-cat > "$PARENT_JOURNAL/2026-04-09-12-05-00-hook-capture.json" <<'JSON'
+# hook entry that mentions ONLY a substring lookalike of dev-validate
+cat > "$PARENT_JOURNAL/${RECENT_DATE}-12-05-00-hook-capture.json" <<JSON
 {
   "version": "1.0.0",
-  "id": "20260409T120500-hook-capture",
-  "timestamp": "2026-04-09T12:05:00Z",
+  "id": "hook-capture-lookalike",
+  "timestamp": "${RECENT_TS}",
   "skill": "hook-capture",
-  "source": "hook-capture",
+  "source": "hook",
   "outcome": "success",
   "duration_turns": 0,
   "context": {

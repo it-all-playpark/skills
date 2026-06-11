@@ -95,6 +95,11 @@
         }
       },
       "description": "Recovery information (present when outcome is failure or partial)"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["skill", "hook"],
+      "description": "Entry origin: skill = explicit journal.sh log call, hook = PostToolUseFailure hook capture. Absent in pre-migration entries (treated as skill)."
     }
   }
 }
