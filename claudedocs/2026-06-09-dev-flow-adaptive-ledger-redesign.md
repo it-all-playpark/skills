@@ -62,8 +62,11 @@ LGTM まで人手なしで完走する自律パイプライン。merge だけ人
 SKILL は issue read を二重化するので作らない。
 
 - **決定論 floor 優先 + LLM は tier を上げるのみ・下げ禁止**。`classifyShape`（`_lib/triviality.mjs`、inline 生成区間）が
-  file 数 / breaking / danger-grep hit で `shape >= standard|complex` を強制。LLM の shape token は
-  この floor の上でのみ有効 (fail-safe: 不明なら重い側)。
+  file 数 / AC 数 / `issue_type` / breaking で `shape >= standard|complex` の floor を強制
+  （`estimated_change_file_count` 欠落・`acceptance_criteria` 欠落・out-of-enum `issue_type`・breaking → complex floor）。
+  LLM の shape token はこの floor の上でのみ有効 (fail-safe: 不明なら重い側)。
+  danger-grep hit は shape を上げない — micro でも Evaluate を強制実行する security path として
+  別経路で効く（dev-flow.js の `runEval` 判定）。
 - 単一 checked-in `dev-flow.js` が `args.shape` で分岐 (micro/standard/complex)。**動的コード生成は
   しない** — workflow ランタイムに fs/import/eval が無く registry はセッションキャッシュのため
   実装不能。SKILL が渡すのはデータ (shape token + 初期化済み ledger JSON) のみ。
