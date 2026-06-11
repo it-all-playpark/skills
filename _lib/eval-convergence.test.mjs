@@ -90,6 +90,8 @@ function makeSandbox(analyzeReq, responses) {
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
+    // diff-gate / diff-hash（issue #215）: need() による throw の回避
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     // デフォルト
     return null;
   };

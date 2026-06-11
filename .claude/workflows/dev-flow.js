@@ -528,6 +528,47 @@ function diffDeclaredPaths(planTasks, changedFiles) {
   }
   return undeclared;
 }
+
+/**
+ * isEphemeralPath: git status --porcelain 由来の raw パス文字列が ephemeral（一時）ファイルか判定する。
+ * - '.devflow-tmp' ディレクトリまたはその配下のファイル
+ * - basename に '.staged.' を含むファイル（例: evaluator.staged.md, plan.staged.json）
+ * - basename が /^fm_.*\.txt$/ に一致するファイル（例: fm_3821.txt）
+ *
+ * @param {string} p - git status --porcelain 由来の raw パス文字列
+ * @returns {boolean} ephemeral なら true、それ以外 false
+ */
+function isEphemeralPath(p) {
+  const trimmed = p.trim();
+  const base = trimmed.startsWith('./') ? trimmed.slice(2) : trimmed;
+  // (b) .devflow-tmp ディレクトリまたはその配下
+  if (base === '.devflow-tmp' || base.startsWith('.devflow-tmp/')) {
+    return true;
+  }
+  // basename（最後の '/' 以降）を取得
+  const slashIdx = base.lastIndexOf('/');
+  const basename = slashIdx === -1 ? base : base.slice(slashIdx + 1);
+  // (c) basename に '.staged.' を含む
+  if (basename.includes('.staged.')) {
+    return true;
+  }
+  // (d) basename が /^fm_.*\.txt$/ に一致
+  if (/^fm_.*\.txt$/.test(basename)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * filterEphemeralPaths: ファイルパス配列から ephemeral ファイルを除いた配列を返す。
+ * isEphemeralPath を使って各エントリをフィルタする。
+ *
+ * @param {string[]|null|undefined} files - フィルタ対象のファイルパス配列
+ * @returns {string[]} ephemeral でないパスのみを順序維持で返す配列
+ */
+function filterEphemeralPaths(files) {
+  return (files ?? []).filter((f) => !isEphemeralPath(f));
+}
 // ==== END inline: _lib/parallel-disjoint.mjs ====
 
 // ==== BEGIN inline: _lib/devflow-summary-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -565,6 +606,7 @@ function mdCell(v) {
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
+ * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）
  * @returns {string}
  */
 function buildDevflowSummaryBody({
@@ -582,6 +624,7 @@ function buildDevflowSummaryBody({
   shape,
   testGreen,
   evalVerdict,
+  evalTreeStale,
 }) {
   const lines = [];
 
@@ -627,6 +670,12 @@ function buildDevflowSummaryBody({
   lines.push('|---|---|---|---|---|---|---|');
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
+
+  // 2b. evalTreeStale 警告（at-a-glance テーブル直後・gate_policy 行前）
+  if (evalTreeStale === true) {
+    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('');
+  }
 
   // 3. gate_policy 行
   lines.push(`gate_policy: \`${gatePolicy}\``);
@@ -824,6 +873,57 @@ function buildDevflowSummaryBody({
 }
 // ==== END inline: _lib/devflow-summary-format.mjs ====
 
+// ==== BEGIN inline: _lib/stuck-detector.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow.js の planSeen/blockSeen/evalSeen と pr-iterate.js の reviewSeen が共有する
+// stuck 検出 canonical。incentive-structural クラス — W7、撤去禁止。issue #123/#125/#126/#208。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+//
+// 命名注記: goal-ledger.mjs の topicKey と同一ファイル dev-flow.js に inline されるため
+// 識別子衝突を避けて stuckTopicKey と命名。
+
+// topic fingerprint を導出する。
+// (a) x == null → ''
+// (b) typeof x === 'string' → x をそのまま返す
+// (c) typeof x.topic === 'string' かつ x.topic.trim() が非空 → x.topic.trim()
+// (d) x.file != null → `${String(x.file)}::${x.description != null ? String(x.description) : JSON.stringify(x)}`
+// (e) x.description != null かつ String(x.description) が非空 → String(x.description)
+// (f) それ以外 → JSON.stringify(x)
+function stuckTopicKey(x) {
+  if (x == null) return '';
+  if (typeof x === 'string') return x;
+  if (typeof x.topic === 'string' && x.topic.trim()) return x.topic.trim();
+  if (x.file != null) {
+    return `${String(x.file)}::${x.description != null ? String(x.description) : JSON.stringify(x)}`;
+  }
+  if (x.description != null && String(x.description)) return String(x.description);
+  return JSON.stringify(x);
+}
+
+// stuck 検出 closure tracker を返す。
+// 内部 state は plain object（Map 禁止 — Object.values/entries の列挙順序まで現行と一致させるため）。
+// register(item): topic → { item, count } に累積。同一 topic の再登録は item を最新版で上書き + count 加算。
+// prior(): Object.values(seen).map((s) => s.item) を返す。
+// stuckTopics(): count >= threshold の topic キー配列を返す。
+function makeSeenTracker(threshold) {
+  const seen = {};
+  return {
+    register(item) {
+      const t = stuckTopicKey(item);
+      if (seen[t]) { seen[t].item = item; seen[t].count += 1 }
+      else seen[t] = { item, count: 1 };
+    },
+    prior() {
+      return Object.values(seen).map((s) => s.item);
+    },
+    stuckTopics() {
+      return Object.entries(seen).filter(([, s]) => s.count >= threshold).map(([t]) => t);
+    },
+  };
+}
+// ==== END inline: _lib/stuck-detector.mjs ====
+
 function applyDisjoint(p, label) {
   const { plan: np, demoted } = enforceDisjointParallel(p);
   if (demoted.length) log(`⚠️ ${label}: file_changes 衝突 ${demoted.length} task を parallel→serial 降格: ${demoted.map((d) => `${d.id}(vs ${d.conflictsWith})`).join(', ')}`);
@@ -886,12 +986,6 @@ function findingsToConcerns(rev) {
 //   3. stuck かつ design パスが反復するなら replan+reimpl を繰り返さず早期打ち切り（コスト保護）
 //   4. critical は常にブロック（品質ゲートは後退させない。#123 と同一原則）
 //   5. stuck/上限到達でも throw せず現状で PR へ進む（後段は review のみ、merge は手動 = human review 委譲）
-// feedback 項目から stuck 検出用の fingerprint（topic）を取り出す。
-function feedbackTopic(f) {
-  if (!f) return ''
-  if (typeof f === 'string') return f
-  return f.topic ?? f.description ?? JSON.stringify(f)
-}
 // feedback に critical が含まれるか。critical は常にブロック（収束を許さない）。
 function evalHasCritical(ev) {
   return (ev.feedback ?? []).some((f) => f && typeof f === 'object' && f.severity === 'critical')
@@ -1061,6 +1155,10 @@ const CHANGED = {
   type: 'object', required: ['files'],
   properties: { files: { type: 'array', items: { type: 'string' } } },
 }
+const DIFFHASH = {
+  type: 'object', required: ['hash', 'empty'],
+  properties: { hash: { type: 'string' }, empty: { type: 'boolean' } },
+}
 const POST_RESULT = {
   type: 'object',
   required: ['posted'],
@@ -1081,7 +1179,7 @@ const JOURNAL_RESULT = {
 
 function bodySaveInstr(body) {
   return `## 本文の保存\n`
-    + `まず Bash で \`mktemp /tmp/dev-flow-XXXXXX.md\` を実行して一時ファイルを作成し、\n`
+    + `まず Bash で \`mktemp "\${TMPDIR:-/tmp}/dev-flow-XXXXXX.md"\` を実行して一時ファイルを作成し、\n`
     + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
     + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
     + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
@@ -1092,6 +1190,17 @@ function bodySaveInstr(body) {
 // ---- helpers ----
 let WT // Setup で確定
 
+// implementer への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を残すと
+// `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、refloor 誤発火・
+// 宣言外変更 concern の原因になる（issue #216）。agent 定義ファイル（.claude/agents/implementer.md）は
+// sandbox write-deny のため、workflow が全 implementer spawn prompt に決定論的に注入する。
+const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
+  + `一時ファイル・handoff ファイル（staging 用 markdown、断片テキスト等）は worktree 内に作るな。`
+  + `mktemp "\${TMPDIR:-/tmp}/implementer-XXXXXX" で worktree 外の $TMPDIR に置くのが原則。`
+  + `worktree 内が不可避な場合は .devflow-tmp/ 配下のみに置き、task 完了前に削除せよ。`
+  + `worktree 直下に *.staged.* / fm_*.txt のような一時ファイルを残すことは禁止`
+  + `（git status に混入し realized-diff の refloor 誤発火・宣言外変更 concern の原因になる）。\n`
+
 function implPrompt(t, fixFeedback, extraContext) {
   return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
     + `次の task を ${TESTING} 戦略で実装せよ。共有 worktree のため自分の task の file_changes 以外は触るな。`
@@ -1099,6 +1208,7 @@ function implPrompt(t, fixFeedback, extraContext) {
     + `task: ${JSON.stringify(t)}\n`
     + (fixFeedback ? `修正指摘（各項目を解消）:\n${JSON.stringify(fixFeedback)}\n` : '')
     + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
+    + STAGING_CONVENTION
 }
 
 // 計画の serial → 順次、parallel → 同時。drop（throw→null）を可視化して返す。
@@ -1184,7 +1294,7 @@ const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・re
 phase('Plan')
 let plan = null
 let planVerdict = null
-const planSeen = {}        // topic → { finding, count }（findings 累積 & stuck 検出。issue #123）
+const planSeen = makeSeenTracker(PLAN_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #123）
 let planConcerns = []      // 収束時に残った未解消 findings（Evaluate の focus_areas へ）
 let planIters = 0            // plan iteration カウンタ（telemetry 用）
 if (TRIVIAL) {
@@ -1212,7 +1322,7 @@ if (TRIVIAL) {
 } else {
 for (let i = 1; i <= PLAN_MAX; i++) {
   planIters = i
-  const prior = Object.values(planSeen).map((s) => s.finding)   // 前 iteration までの累積 findings
+  const prior = planSeen.prior()   // 前 iteration までの累積 findings
   plan = need(await agent(
     `cd ${WT} で作業。issue 要件と${prior.length ? 'レビュー指摘' : '初回計画'}に基づき実装計画を立てよ。\n`
     + `requirements: ${JSON.stringify(req)}\n`
@@ -1239,13 +1349,8 @@ for (let i = 1; i <= PLAN_MAX; i++) {
   planVerdict = rev
 
   // findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
-  for (const f of (rev.findings ?? [])) {
-    if (!f) continue
-    const t = f.topic ?? f.description ?? JSON.stringify(f)
-    if (planSeen[t]) { planSeen[t].finding = f; planSeen[t].count += 1 }
-    else planSeen[t] = { finding: f, count: 1 }
-  }
-  const stuckTopics = Object.entries(planSeen).filter(([, s]) => s.count >= PLAN_STUCK).map(([t]) => t)
+  for (const f of (rev.findings ?? [])) { if (!f) continue; planSeen.register(f) }
+  const stuckTopics = planSeen.stuckTopics()
   const stuck = stuckTopics.length > 0
   log(`plan iteration ${i}: ${rev.verdict} (score ${rev.score})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
 
@@ -1274,7 +1379,7 @@ let implResults = await runImplement(plan, null, 'impl')
 let blockedConcerns = []
 // blockFindings 累積 & アプローチ回帰禁止。planSeen と同型の frozen target
 // （incentive-structural — W7 分類。capability 非依存・撤去禁止）。issue #188
-const blockSeen = {}        // topic → { finding, count }
+const blockSeen = makeSeenTracker(Infinity)  // stuck 検出は使わず累積のみ（hard cap は BLOCK_MAX）
 for (let b = 1; b <= BLOCK_MAX; b++) {
   const blocked = implResults.filter((r) => r && r.status === 'BLOCKED')
   if (!blocked.length) break
@@ -1286,12 +1391,8 @@ for (let b = 1; b <= BLOCK_MAX; b++) {
     suggestion: '同アプローチでは進行不可。代替設計を立案すること（現アプローチの再試行は禁止）。',
   }))
   // planSeen と同型のパターンで blockSeen に累積（当該 iteration 分も含む）
-  for (const f of blockFindings) {
-    const t = f.topic || f.description || JSON.stringify(f)
-    if (blockSeen[t]) { blockSeen[t].finding = f; blockSeen[t].count += 1 }
-    else blockSeen[t] = { finding: f, count: 1 }
-  }
-  const priorBlock = Object.values(blockSeen).map((s) => s.finding)  // 当該 iteration 分も含む累積全件
+  for (const f of blockFindings) blockSeen.register(f)
+  const priorBlock = blockSeen.prior()  // 当該 iteration 分も含む累積全件
   // DONE 成果の抽出（適用済み task を replan prompt へ注入して重複実装・矛盾設計を防ぐ）
   const doneSoFar = implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS'))
   plan = need(await agent(
@@ -1398,7 +1499,8 @@ for (let i = 1; i <= GREEN_MAX; i++) {
     + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
     + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
     + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
-    + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`,
+    + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`
+    + '\n' + STAGING_CONVENTION,
     { agentType: 'implementer', schema: IMPL, label: `green-fix#${i}`, phase: 'Validate' },
   )
   greenFixCount += 1
@@ -1407,15 +1509,89 @@ for (let i = 1; i <= GREEN_MAX; i++) {
     summary: gfResult?.summary ?? '',
   })
 }
-if (greenFixCount > 0) {
-  const gfFiles = [...new Set(greenFixIterations.flatMap((it) => it.files))]
-  const gfSummaries = greenFixIterations.map((it, idx) => `[#${idx + 1}] ${it.summary || '(no summary)'}`)
-  concerns.push(`green-fix が ${greenFixCount} 回発生: テスト diff を重点監査せよ。`
+// green-fix 発生分を evaluator focus_areas へ注入する（テスト弱体化監査）。
+// empty-diff gate の retry 経路（Evaluate phase 内、eval#1 より前）でも同じ注入を行うため関数化。
+function pushGreenFixAudit(iters) {
+  if (iters.length === 0) return
+  const gfFiles = [...new Set(iters.flatMap((it) => it.files))]
+  const gfSummaries = iters.map((it, idx) => `[#${idx + 1}] ${it.summary || '(no summary)'}`)
+  concerns.push(`green-fix が ${iters.length} 回発生: テスト diff を重点監査せよ。`
     + `テストの期待値・assert の弱体化（テスト弱体化）で green 化していないか、`
     + `テスト変更がある場合はその正当性（テスト自体の誤りの根拠）を検証すること。`
     + (gfFiles.length > 0 ? `green-fix が変更したファイル: ${JSON.stringify(gfFiles)}。` : '')
     + `申告された根拠: ${JSON.stringify(gfSummaries)}`)
-  log(`green-fix ${greenFixCount} 回 → evaluator focus_areas にテスト弱体化監査を注入（files: ${gfFiles.join(', ') || 'none'}）`)
+  log(`green-fix ${iters.length} 回 → evaluator focus_areas にテスト弱体化監査を注入（files: ${gfFiles.join(', ') || 'none'}）`)
+}
+pushGreenFixAudit(greenFixIterations)
+
+// diff-gate/diff-hash 共通 prompt（issue #215）。worktree-diff-hash.sh のコントラクトに依存。
+// Security floor より前に定義: PR phase でも参照するため（evalDiffHash != null ガードで micro は skip）。
+// Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
+// realized-diff / refloorShape / declared-path-check が自然に実行される（issue #219 fix）。
+const _dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+  + `bash ${WT}/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
+
+// ============================================================
+// empty-diff gate（issue #215）: Security floor phase の直前。
+// Security floor より前に置くことで retry 後の実体に対して danger-grep / realized-diff /
+// refloorShape / declared-path-check が正しく実行される（issue #219 major fix）。
+// 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
+// ============================================================
+{
+  const dhGate = need(await agent(
+    _dhPrompt,
+    { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate', phase: 'Security floor' },
+  ), 'Security floor(diff-gate)')
+  if (dhGate.empty === true) {
+    log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— Implement へ 1 回だけ差し戻す（issue #215）')
+    const retryResults = await runImplement(plan, [{
+      type: 'empty_diff',
+      detail: '前回 implementer 終了時点で working tree に変更が存在しない（base と内容一致）。plan の task を実際に実装し、変更を working tree に残せ（git add / commit は禁止）。',
+    }], 'reimpl-empty-diff')
+    for (const r of retryResults) { if (r && Array.isArray(r.concerns)) concerns.push(...r.concerns) }
+    const dhRetry = need(await agent(
+      _dhPrompt,
+      { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Security floor' },
+    ), 'Security floor(diff-gate-retry)')
+    if (dhRetry.empty === true) {
+      throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）')
+    }
+    // empty-diff gate 後の Validate 再実行（issue #219）。
+    // 差し戻し前の Validate は空 tree に対して走っており val.green が trivially green になっている。
+    // 差し戻しで書かれたコードが GREEN_MAX ループ・テスト弱体化監査を素通りするのを防ぎ、
+    // summary/telemetry の testGreen 値の誤表示を防ぐためにここで再計測する。
+    // retry 中の green-fix は loop 終了後に pushGreenFixAudit で focus_areas へ注入する（eval#1 より前）。
+    const gfIterCountBeforeRetry = greenFixIterations.length
+    for (let vi = 1; vi <= GREEN_MAX; vi++) {
+      val = need(await agent(
+        `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
+        + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`,
+        { agentType: 'dev-runner-haiku', schema: GREEN, label: `test#retry-${vi}`, phase: 'Security floor' },
+      ), `Security floor(test#retry-${vi})`)
+      log(`validate(after empty-diff retry) iteration ${vi}: tests=${val.tests} green=${val.green}`)
+      if (val.green || val.tests === 'no_tests') break
+      if (vi === GREEN_MAX) {
+        log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
+        break
+      }
+      const gfRetry = await agent(
+        `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
+        + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
+        + `**禁止**: テストの期待値・ assert を弱めて green にすることは禁止（テスト弱体化）。`
+        + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・ typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
+        + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`
+    + '\n' + STAGING_CONVENTION,
+        { agentType: 'implementer', schema: IMPL, label: `green-fix#retry-${vi}`, phase: 'Security floor' },
+      )
+      if (gfRetry && Array.isArray(gfRetry.concerns)) concerns.push(...gfRetry.concerns)
+      greenFixCount += 1
+      greenFixIterations.push({
+        files: gfRetry?.files ?? [],
+        summary: gfRetry?.summary ?? '',
+      })
+    }
+    pushGreenFixAudit(greenFixIterations.slice(gfIterCountBeforeRetry))
+  }
 }
 
 // ============================================================
@@ -1454,7 +1630,11 @@ const realized = await agent(
   + `結果を {"files": ["path1", ...]} 形式で返せ。`,
   { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'realized-diff', phase: 'Security floor' },
 )
-const realizedCount = realized?.files ? realized.files.length : NaN
+// null → NaN 安全弁（realized?.files ? realized.files.length : NaN のパターンを継承）
+// ephemeral ファイルを除外してから count する（evaluator.staged.md / fm_*.txt / .devflow-tmp/ を除く）
+const realizedNonEphemeral = realized?.files ? filterEphemeralPaths(realized.files) : null
+const realizedCount = realizedNonEphemeral ? realizedNonEphemeral.length : NaN
+if (realized?.files && realizedNonEphemeral && realizedNonEphemeral.length !== realized.files.length) log(`realized-diff: ephemeral ${realized.files.length - realizedNonEphemeral.length} 件を file count から除外`)
 const refloor = refloorShape(SHAPE, realizedCount)
 const EFFECTIVE_SHAPE = refloor.shape
 const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
@@ -1481,14 +1661,12 @@ if (TRIVIAL && greenFixCount > 0) {
     + `結果を {"files": ["path1", ...]} 形式で返せ。`,
     { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'declared-path-check', phase: 'Validate' },
   )
-  const changedFiles = gitStat?.files ?? []
+  const changedFiles = filterEphemeralPaths(gitStat?.files ?? [])
   const undeclared = diffDeclaredPaths(planAllTasks, changedFiles)
   if (undeclared.length > 0) {
     if (runEval) {
-      for (const p of undeclared) {
-        concerns.push(`宣言外変更: ${p} が plan の file_changes に無い。意図的か確認`)
-      }
-      log(`declared-path-check: 宣言外 ${undeclared.length} 件 → concerns へ注入: ${undeclared.join(', ')}`)
+      concerns.push(`宣言外変更 ${undeclared.length} 件が plan の file_changes に無い。意図的か確認: ${undeclared.join(', ')}`)
+      log(`declared-path-check: 宣言外 ${undeclared.length} 件 → 1 item に集約して concerns へ注入: ${undeclared.join(', ')}`)
     } else {
       log(`declared-path-check(warn): 宣言外 ${undeclared.length} 件だが Evaluate=skip: ${undeclared.join(', ')}`)
     }
@@ -1510,6 +1688,7 @@ let evalResult = null
 let evalIters = 0            // eval iteration カウンタ（telemetry 用）
 let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
 let unsatisfiedAc = false
+let evalDiffHash = null  // 最後の evaluator 呼び出し直前の diff hash（issue #215。PR 直前と突合し乖離で summary 警告）
 if (runEval) {
 phase('Evaluate')
 // Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
@@ -1528,19 +1707,32 @@ for (const [i, c] of concerns.entries()) {
   }).ledger
 }
 log(`ledger 初期化: blocking ${blockingItems(ledger).length} / advisory ${advisoryItems(ledger).length} 件`)
-const evalSeen = {}        // topic → { feedback, count }（feedback 累積 & stuck 検出。issue #125）
+const evalSeen = makeSeenTracker(EVAL_STUCK)  // feedback 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #125）
 for (let i = 1; i <= EVAL_PASSES; i++) {
   evalIters = i
-  const priorFeedback = Object.values(evalSeen).map((s) => s.feedback)   // 前 iteration までの累積 feedback
+  const priorFeedback = evalSeen.prior()   // 前 iteration までの累積 feedback
   // critical_resolutions の操作的契約は本 prompt が唯一の source of truth（issue #174）。
   // .claude/agents/ は sandbox deny 対象（.claude/skills / .claude/hooks と同様に write 禁止。
   // 実測確認済: touch .claude/agents/test.tmp → EPERM）のため workflow からは編集不可。
   // evaluator.md の同期文言（critical_resolutions 契約）は human 編集が必要（follow-up issue 推奨）。
   // 契約文面は EVAL schema と同居するここで管理し、_lib/eval-convergence.test.mjs の contract test が pin する。
   const openEvalCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
+  // evaluator 呼び出し直前の diff hash を取得・保持（issue #215/#219）。
+  // ループ終了後ではなく各 evaluator 呼び出し前にここで取ることで、
+  // redgreen-verify.sh の restore 失敗等 evaluator 呼び出し後の tree 変化を検出可能にする。
+  {
+    const _dhPreEval = await agent(_dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
+    if (_dhPreEval && typeof _dhPreEval.hash === 'string') {
+      evalDiffHash = _dhPreEval.hash
+    } else {
+      log('⚠️ diff-hash-eval の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
+      evalDiffHash = null
+    }
+  }
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
-    + `\`git diff $(git merge-base HEAD origin/${BASE})..HEAD\` で実 diff を確認し、テストを実際に走らせる）。\n`
+    + `\`git diff $(git merge-base HEAD origin/${BASE})\` で実 diff を確認し（working tree 基準の二点 diff: merge-base から working tree への差分。implementer はコミットしないため HEAD 基準三点 diff では空になる）、`
+    + `さらに \`git status --porcelain --untracked-files=all\` で untracked の新規ファイルを列挙して Read で内容を確認し（implementer は git add しないため新規作成ファイルは git diff に映らない）、テストを実際に走らせる）。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
     + `収束判定は ledger（isConvergedUnderPolicy: critical/AC/SEC の解消状況）のみで行われ、verdict は収束判定に使われない（log/telemetry 表示用。issue #174）。fail を引き延ばすための新規 minor/major の捻出は不要。\n`
@@ -1564,13 +1756,8 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   unsatisfiedAc = (ev.ac_results ?? []).some((r) => r && r.satisfied === false)
 
   // feedback を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
-  for (const f of (ev.feedback ?? [])) {
-    if (f == null) continue
-    const t = feedbackTopic(f)
-    if (evalSeen[t]) { evalSeen[t].feedback = f; evalSeen[t].count += 1 }
-    else evalSeen[t] = { feedback: f, count: 1 }
-  }
-  const stuckTopics = Object.entries(evalSeen).filter(([, s]) => s.count >= EVAL_STUCK).map(([t]) => t)
+  for (const f of (ev.feedback ?? [])) { if (f == null) continue; evalSeen.register(f) }
+  const stuckTopics = evalSeen.stuckTopics()
   const stuck = stuckTopics.length > 0
   log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
   // evaluator の critical feedback と ESCALATE-TO-HUMAN feedback を ledger に append(単調性は appendItem が強制)。
@@ -1582,14 +1769,14 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     const isEscalate = f.escalate === true
     if (!isCritical && !isEscalate) continue
     const r = appendItem(ledger, {
-      id: `EVAL-${i}-${feedbackTopic(f).slice(0, 24)}`, text: feedbackTopic(f),
+      id: `EVAL-${i}-${stuckTopicKey(f).slice(0, 24)}`, text: stuckTopicKey(f),
       dimension: f.dimension ?? 'eval',
       severity: isCritical ? 'critical' : (f.severity === 'minor' ? 'minor' : 'major'),
       source: 'evaluator', check: { kind: 'inspection' },
       ...(isEscalate ? { escalate: true, escalate_reason: f.escalate_reason ?? null } : {}),
     })
     ledger = r.ledger
-    if (isEscalate && !r.accepted) log(`⚠️ ESCALATE feedback "${feedbackTopic(f)}" は append 単調性により却下(round>0 の新規 topic)`)
+    if (isEscalate && !r.accepted) log(`⚠️ ESCALATE feedback "${stuckTopicKey(f)}" は append 単調性により却下(round>0 の新規 topic)`)
   }
   const escalateAppended = (ev.feedback ?? []).filter((f) => f && f.escalate === true).length
   if (escalateAppended > 0) log(`ESCALATE-TO-HUMAN feedback ${escalateAppended} 件を検出(issue #177。乱発ガードは W6b)`)
@@ -1690,10 +1877,12 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
       + (nextOpenCriticals.length
           ? `未解消 critical（最優先で修正せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
-          : ''),
+          : '')
+      + STAGING_CONVENTION,
       { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
   }
 }
+
 } else {
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
@@ -1701,6 +1890,17 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
 // ============================================================
 // Phase PR: git-commit + git-pr skill を dev-runner で実行し PR URL を取得。
 // ============================================================
+// PR 直前の diff hash を取得し、Evaluate 時点と突合（issue #215）。
+// 判定は hash 文字列の完全一致のみ（0/非0 二値。比率閾値なし）。
+// micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
+let evalTreeStale = false
+if (evalDiffHash != null) {
+  const dhPr = await agent(_dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
+  const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
+  if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
+  evalTreeStale = prDiffHash != null && evalDiffHash !== prDiffHash
+  if (evalTreeStale) log('⚠️ Evaluate 時点と PR 直前の diff hash が不一致 — 終端サマリーに stale-eval 警告を付記する（issue #215）')
+}
 phase('PR')
 const pr = need(await agent(
   `cd ${WT} で作業。次を順に実行せよ:\n`
@@ -1771,6 +1971,7 @@ const summaryBody = buildDevflowSummaryBody({
   shape: EFFECTIVE_SHAPE,
   testGreen: val?.green ?? null,
   evalVerdict: evalResult?.verdict ?? null,
+  evalTreeStale,
 })
 const summaryPost = await agent(
   `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
@@ -1790,25 +1991,31 @@ if (!summaryPost?.posted) {
 }
 
 // ============================================================
-// journal-log: dev-flow 完走の telemetry を journal.sh log に記録する（W6）。
+// journal-log: dev-flow 完走の telemetry handoff を pending dir へ書き出す。
+// dotfiles の Stop hook (stop-devflow-telemetry.sh) が journal.sh log へ flush する（issue #203）。
 // 失敗は log 警告のみで workflow は継続（telemetry 欠損 > ワークフロー中断）。
 // need() で包まない — null 容認が必須。
 // ============================================================
-const journalCmd = [
-  `bash ${WT}/skill-retrospective/scripts/journal.sh log dev-flow success`,
-  `--issue ${ISSUE}`,
-  `--merge-tier ${mergeTier.tier}`,
-  `--gate-policy ${GATE_POLICY}`,
-  `--danger-hits '${JSON.stringify(dangerHitsFinal)}'`,
-  `--shape ${EFFECTIVE_SHAPE}`,
-  `--shape-refloored ${refloor.refloored}`,
-  `--plan-iter ${planIters}`,
-  `--eval-iter ${evalIters}`,
-  ...(evalResult?.verdict ? [`--eval-verdict ${evalResult.verdict}`] : []),
-  ...(iterate?.status ? [`--iterate-status ${iterate.status}`] : []),
-].join(' ')
+const telemetryHandoff = JSON.stringify({
+  skill: 'dev-flow',
+  outcome: 'success',
+  issue: Number(ISSUE),
+  journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
+  telemetry: {
+    merge_tier: mergeTier.tier,
+    gate_policy: GATE_POLICY,
+    danger_hits: dangerHitsFinal,
+    shape: EFFECTIVE_SHAPE,
+    shape_refloored: refloor.refloored,
+    plan_iter: planIters,
+    eval_iter: evalIters,
+    ...(evalResult?.verdict ? { eval_verdict: evalResult.verdict } : {}),
+    ...(iterate?.status ? { iterate_status: iterate.status } : {}),
+  },
+})
+const journalCmd = `mkdir -p ~/.claude/journal/pending && cat > ~/.claude/journal/pending/devflow-${ISSUE}-$(date +%s).json <<'TELEMETRY_EOF'\n${telemetryHandoff}\nTELEMETRY_EOF`
 const journalPost = await agent(
-  `## Objective\ndev-flow 完走の telemetry を journal に記録する。\n\n`
+  `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
   + `## Instructions\n`
   + `次のコマンドをそのまま実行せよ: \`${journalCmd}\`\n`
   + `exit 0 なら logged:true、失敗しても throw せず logged:false を返すこと。\n`
@@ -1838,6 +2045,7 @@ return {
   shape: SHAPE,
   effective_shape: EFFECTIVE_SHAPE,
   shape_refloored: refloor.refloored,
+  eval_tree_stale: evalTreeStale,
   realized_file_count: realizedCount,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,

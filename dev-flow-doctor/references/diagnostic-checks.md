@@ -151,7 +151,7 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7
 | **dead phase** | window 内で `success` が 0 件の family skill | 呼び出し経路を確認。parent orchestrator（例: dev-kickoff）から実際に呼ばれているか、phase 遷移が skip されていないかを検証 |
 | **stuck skill** | `(failure + partial) / total > 30%` かつ `total >= 3` | `/skill-retrospective` を走らせ proposal を生成、頻出する error category（lint/test/env 等）を直近の failure で確認 |
 | **bottleneck** | `avg(duration_turns)` 上位 3 skill | 実行時間が異常に長い skill を特定し、input 長 / tool 選定 / subagent fork コストを点検 |
-| **disconnected skill** | window 内で自身の entry が 0 件かつ parent skill（hook-capture の Skill tool invocation）で一度も参照されていない | connector が成立していない。orchestrator の分岐条件を確認、または deprecated なら skill を整理 |
+| **disconnected skill** | window 内で自身の entry が 0 件かつ parent skill（hook（source: "hook"）エントリの Skill tool invocation）で一度も参照されていない | connector が成立していない。orchestrator の分岐条件を確認、または deprecated なら skill を整理 |
 
 ### window オプション
 
