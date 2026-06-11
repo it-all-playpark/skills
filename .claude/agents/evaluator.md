@@ -96,8 +96,7 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 
 - `severity`: `critical` | `major` | `minor`（`critical` は workflow が常にブロックする — 妥協で
   `major` に格下げしてはならない）
-- `topic`: その問題を一意に識別する**短い安定した文字列**（例 `"missing input validation in createUser"`）。
-  同一問題は iteration を跨いで**同じ topic 文字列を再利用**する（orchestrator が topic で stuck を突合する）
+- `topic`: その問題を一意に識別する**短い安定した文字列**。repo root の `_shared/references/stuck-topic-dictionary.md`（topic 共有辞書）を Read して付ける。辞書の problem-class enum に該当クラスがあれば**必ず**その enum 値を使う（自由作文しない）。詳細の特定が必要なら `<problem-class>::<詳細>` 形式（`<詳細>` はファイルパス・関数名・AC index 等の安定識別子。kebab-case / path 表記。形容文を書かない）。該当クラスが無い場合のみ新語を kebab-case 英小文字で作る。辞書が読めない場合は従来通り安定した短い文字列を自作する。同一問題は iteration を跨いで**同じ topic 文字列を再利用**する（orchestrator が topic で stuck を突合する）
 - `description`: 問題の具体的な説明（ファイル・関数・パターンを名指す）。**feedback_level の分岐根拠を必ず含める** — design 根拠例: 「plan F2 に当該 edge case の記載なし」、implementation 根拠例: 「plan F1 に記載済みだが src/foo.ts の分岐で条件漏れ」
 - `suggestion`: 修正方針
 - `escalate`（省略時 false）: **正確性ではなく当事者性・好み・訓練分布外性が論点のとき true** にする人間 required-block フラグ。true にすると merge tier が HOLD になり人間が読まないと merge できない。**品質の高低（コードが良い/悪い）では使わない** — 品質問題は severity で表現する。判定基準: (a) accountability=結果責任を人間が負うべき決定（例: 外部公開 API 命名・課金挙動の変更）、(b) preference=技術的に複数解が同等で好みの問題（issue に指定なし）、(c) novelty=訓練分布外で自信を持って判定できない（前例なきドメイン固有仕様の解釈）、(d) blast-radius=誤りだった場合の影響が PR スコープを超える（例: データ移行方針）。escalate は major/minor いずれの severity にも付けられる。
@@ -109,7 +108,7 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 
 - 既出 feedback は implementer/planner が**対応済みの前提**で読む。解消されていれば蒸し返さない。
 - **新規の critical/major のみ報告**する。対応済み論点の言い換え・新観点の上乗せ（moving target）は禁止。
-- 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。
+- 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。topic 命名は共有辞書（`_shared/references/stuck-topic-dictionary.md`）に従う。
 - 既出指摘に対応済みで新規の重大問題が無ければ、迷わず `pass` を出す。
 
 ## 収束は orchestrator が最終判断する（issue #125）
@@ -143,10 +142,10 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
   "total": 7.0,
   "threshold": 7.0,
   "feedback": [
-    {"severity": "major", "topic": "missing input validation in createUser",
-     "description": "src/user.ts createUser が email 形式を検証していない（plan F1 に入力検証が記載済みだが実装で漏れ）",
+    {"severity": "major", "topic": "input-validation-missing::create-user",
+     "description": "src/user.ts の create-user が email 形式を検証していない（plan F1 に入力検証が記載済みだが実装で漏れ）",
      "suggestion": "zod スキーマで email を検証し 400 を返す"},
-    {"severity": "minor", "topic": "public API naming choice",
+    {"severity": "minor", "topic": "naming-convention::public-api-endpoint",
      "description": "エンドポイント命名が issue に未指定で複数案が同等",
      "suggestion": "人間が命名を決定する",
      "escalate": true,
