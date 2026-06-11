@@ -117,3 +117,44 @@ export function diffDeclaredPaths(planTasks, changedFiles) {
   }
   return undeclared;
 }
+
+/**
+ * isEphemeralPath: git status --porcelain 由来の raw パス文字列が ephemeral（一時）ファイルか判定する。
+ * - '.devflow-tmp' ディレクトリまたはその配下のファイル
+ * - basename に '.staged.' を含むファイル（例: evaluator.staged.md, plan.staged.json）
+ * - basename が /^fm_.*\.txt$/ に一致するファイル（例: fm_3821.txt）
+ *
+ * @param {string} p - git status --porcelain 由来の raw パス文字列
+ * @returns {boolean} ephemeral なら true、それ以外 false
+ */
+export function isEphemeralPath(p) {
+  const trimmed = p.trim();
+  const base = trimmed.startsWith('./') ? trimmed.slice(2) : trimmed;
+  // (b) .devflow-tmp ディレクトリまたはその配下
+  if (base === '.devflow-tmp' || base.startsWith('.devflow-tmp/')) {
+    return true;
+  }
+  // basename（最後の '/' 以降）を取得
+  const slashIdx = base.lastIndexOf('/');
+  const basename = slashIdx === -1 ? base : base.slice(slashIdx + 1);
+  // (c) basename に '.staged.' を含む
+  if (basename.includes('.staged.')) {
+    return true;
+  }
+  // (d) basename が /^fm_.*\.txt$/ に一致
+  if (/^fm_.*\.txt$/.test(basename)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * filterEphemeralPaths: ファイルパス配列から ephemeral ファイルを除いた配列を返す。
+ * isEphemeralPath を使って各エントリをフィルタする。
+ *
+ * @param {string[]|null|undefined} files - フィルタ対象のファイルパス配列
+ * @returns {string[]} ephemeral でないパスのみを順序維持で返す配列
+ */
+export function filterEphemeralPaths(files) {
+  return (files ?? []).filter((f) => !isEphemeralPath(f));
+}
