@@ -134,12 +134,15 @@ load_journal_entries() {
     printf '[]'
     return
   fi
-  # Slurp all entries at once. If any single file is malformed, jq -s fails
-  # for the whole batch, which previously produced an empty [] and caused a
-  # false-positive "all family skills dead" result. Fall back to per-file
-  # parsing so one bad file never blanks the whole journal.
+  # Slurp all entries via NUL-pipe + xargs cat + jq -s stdin.
+  # Avoids ARG_MAX ("Argument list too long") when journal has 3,500+ files:
+  #   printf is a bash builtin (ARG_MAX not applied), xargs -0 auto-splits
+  #   cat calls to stay within OS limits, jq -s slurps the concatenated stream
+  #   of JSON objects into a single array -- identical output to the old approach.
+  # If any file is malformed, jq -s fails for the whole batch and we fall
+  # through to the per-file rescue path below.
   local slurped=""
-  if slurped=$(jq -s '.' "${files[@]}" 2>/dev/null); then
+  if slurped=$(printf '%s\0' "${files[@]}" | xargs -0 cat -- 2>/dev/null | jq -cs '.' 2>/dev/null); then
     printf '%s' "$slurped"
     return
   fi
@@ -160,11 +163,11 @@ load_journal_entries() {
 ALL_ENTRIES=$(load_journal_entries)
 
 # Filter by since
-WINDOW_ENTRIES=$(echo "$ALL_ENTRIES" | jq \
+WINDOW_ENTRIES=$(echo "$ALL_ENTRIES" | jq -c \
   --arg since "$SINCE_ISO" \
   '[.[] | select(.timestamp >= $since)]')
 
-FAMILY_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq \
+FAMILY_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq -c \
   --argjson fam "$FAMILY_SKILLS_JSON" \
   '[.[] | select(.skill as $s | $fam | index($s))]')
 
@@ -172,8 +175,7 @@ FAMILY_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq \
 # Per-skill aggregation
 # ----------------------------------------------------------------------------
 
-PER_SKILL=$(jq -n \
-  --argjson entries "$FAMILY_ENTRIES" \
+PER_SKILL=$(echo "$FAMILY_ENTRIES" | jq -c \
   --argjson fam "$FAMILY_SKILLS_JSON" \
   '
   # status_distribution buckets the dev-implement return_status enum (issue #92):
@@ -188,7 +190,7 @@ PER_SKILL=$(jq -n \
     else "unknown"
     end;
   [ $fam[] as $s |
-    ($entries | map(select(.skill == $s))) as $es |
+    (. | map(select(.skill == $s))) as $es |
     ($es | length) as $total |
     ($es | map(select(.outcome == "success")) | length) as $succ |
     ($es | map(select(.outcome == "failure")) | length) as $fail |
@@ -276,9 +278,8 @@ BOTTLENECKS=$(echo "$PER_SKILL" | jq \
 # within the window. We match against "Skill: <name>" / "Task: <name>" and
 # also allow a generic non-word-character boundary so that e.g. "dev-integrate"
 # is not accidentally satisfied by "dev-integrate-extra".
-DISCONNECTED=$(jq -n \
+DISCONNECTED=$(echo "$WINDOW_ENTRIES" | jq -c \
   --argjson per_skill "$PER_SKILL" \
-  --argjson entries "$WINDOW_ENTRIES" \
   --arg window "$WINDOW" \
   '
   def escape_regex(s): s | gsub("([.+*?^$()\\[\\]{}|\\\\])"; "\\\\\(.)");
@@ -286,7 +287,7 @@ DISCONNECTED=$(jq -n \
     ($p.total == 0) as $no_own |
     (escape_regex($p.skill)) as $esc |
     ("(^|[^A-Za-z0-9_-])" + $esc + "([^A-Za-z0-9_-]|$)") as $re |
-    ( $entries
+    ( .
       | map(select(.source == "hook-capture"))
       | map(.context.input_summary // "")
       | map(select(. != ""))
