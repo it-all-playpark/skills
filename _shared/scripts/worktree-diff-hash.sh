@@ -1,4 +1,4 @@
-#\!/usr/bin/env bash
+#!/usr/bin/env bash
 # worktree-diff-hash.sh - 一時 index で working tree 全体の tree OID を算出し、
 # base tree と比較して一致するか JSON 1 行で出力する。
 #

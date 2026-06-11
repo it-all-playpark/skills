@@ -1455,16 +1455,20 @@ for (let i = 1; i <= GREEN_MAX; i++) {
     summary: gfResult?.summary ?? '',
   })
 }
-if (greenFixCount > 0) {
-  const gfFiles = [...new Set(greenFixIterations.flatMap((it) => it.files))]
-  const gfSummaries = greenFixIterations.map((it, idx) => `[#${idx + 1}] ${it.summary || '(no summary)'}`)
-  concerns.push(`green-fix が ${greenFixCount} 回発生: テスト diff を重点監査せよ。`
+// green-fix 発生分を evaluator focus_areas へ注入する（テスト弱体化監査）。
+// empty-diff gate の retry 経路（Evaluate phase 内、eval#1 より前）でも同じ注入を行うため関数化。
+function pushGreenFixAudit(iters) {
+  if (iters.length === 0) return
+  const gfFiles = [...new Set(iters.flatMap((it) => it.files))]
+  const gfSummaries = iters.map((it, idx) => `[#${idx + 1}] ${it.summary || '(no summary)'}`)
+  concerns.push(`green-fix が ${iters.length} 回発生: テスト diff を重点監査せよ。`
     + `テストの期待値・assert の弱体化（テスト弱体化）で green 化していないか、`
     + `テスト変更がある場合はその正当性（テスト自体の誤りの根拠）を検証すること。`
     + (gfFiles.length > 0 ? `green-fix が変更したファイル: ${JSON.stringify(gfFiles)}。` : '')
     + `申告された根拠: ${JSON.stringify(gfSummaries)}`)
-  log(`green-fix ${greenFixCount} 回 → evaluator focus_areas にテスト弱体化監査を注入（files: ${gfFiles.join(', ') || 'none'}）`)
+  log(`green-fix ${iters.length} 回 → evaluator focus_areas にテスト弱体化監査を注入（files: ${gfFiles.join(', ') || 'none'}）`)
 }
+pushGreenFixAudit(greenFixIterations)
 
 // ============================================================
 // Phase Security floor: realized diff に diff-risk-classify(W1)を当て、
@@ -1591,6 +1595,8 @@ if (dhGate.empty === true) {
   // 差し戻し前の Validate は空 tree に対して走っており val.green が trivially green になっている。
   // 差し戻しで書かれたコードが GREEN_MAX ループ・テスト弱体化監査を素通りするのを防ぎ、
   // summary/telemetry の testGreen 値の誤表示を防ぐためにここで再計測する。
+  // retry 中の green-fix は loop 終了後に pushGreenFixAudit で focus_areas へ注入する（eval#1 より前）。
+  const gfIterCountBeforeRetry = greenFixIterations.length
   for (let vi = 1; vi <= GREEN_MAX; vi++) {
     val = need(await agent(
       `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
@@ -1618,6 +1624,7 @@ if (dhGate.empty === true) {
       summary: gfRetry?.summary ?? '',
     })
   }
+  pushGreenFixAudit(greenFixIterations.slice(gfIterCountBeforeRetry))
 }
 // Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
 // makeLedger で作り直さない(SEC seed を失わないため)。
@@ -1659,7 +1666,8 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   }
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
-    + `\`git diff $(git merge-base HEAD origin/${BASE})\` で実 diff を確認し（working tree 基準の二点 diff: merge-base から working tree への差分。implementer はコミットしないため HEAD 基準三点 diff では空になる）、テストを実際に走らせる）。\n`
+    + `\`git diff $(git merge-base HEAD origin/${BASE})\` で実 diff を確認し（working tree 基準の二点 diff: merge-base から working tree への差分。implementer はコミットしないため HEAD 基準三点 diff では空になる）、`
+    + `さらに \`git status --porcelain --untracked-files=all\` で untracked の新規ファイルを列挙して Read で内容を確認し（implementer は git add しないため新規作成ファイルは git diff に映らない）、テストを実際に走らせる）。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
     + `収束判定は ledger（isConvergedUnderPolicy: critical/AC/SEC の解消状況）のみで行われ、verdict は収束判定に使われない（log/telemetry 表示用。issue #174）。fail を引き延ばすための新規 minor/major の捻出は不要。\n`

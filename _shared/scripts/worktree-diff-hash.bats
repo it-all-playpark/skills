@@ -1,4 +1,4 @@
-#\!/usr/bin/env bats
+#!/usr/bin/env bats
 # Tests for _shared/scripts/worktree-diff-hash.sh
 #
 # Strategy: mktemp -d で隔離 git repo + worktree を作成し、各ケースのシナリオで
