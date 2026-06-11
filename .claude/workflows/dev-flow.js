@@ -565,6 +565,7 @@ function mdCell(v) {
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
+ * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）
  * @returns {string}
  */
 function buildDevflowSummaryBody({
@@ -582,6 +583,7 @@ function buildDevflowSummaryBody({
   shape,
   testGreen,
   evalVerdict,
+  evalTreeStale,
 }) {
   const lines = [];
 
@@ -627,6 +629,12 @@ function buildDevflowSummaryBody({
   lines.push('|---|---|---|---|---|---|---|');
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
+
+  // 2b. evalTreeStale 警告（at-a-glance テーブル直後・gate_policy 行前）
+  if (evalTreeStale === true) {
+    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('');
+  }
 
   // 3. gate_policy 行
   lines.push(`gate_policy: \`${gatePolicy}\``);
@@ -1106,6 +1114,10 @@ const CHANGED = {
   type: 'object', required: ['files'],
   properties: { files: { type: 'array', items: { type: 'string' } } },
 }
+const DIFFHASH = {
+  type: 'object', required: ['hash', 'empty'],
+  properties: { hash: { type: 'string' }, empty: { type: 'boolean' } },
+}
 const POST_RESULT = {
   type: 'object',
   required: ['posted'],
@@ -1443,15 +1455,88 @@ for (let i = 1; i <= GREEN_MAX; i++) {
     summary: gfResult?.summary ?? '',
   })
 }
-if (greenFixCount > 0) {
-  const gfFiles = [...new Set(greenFixIterations.flatMap((it) => it.files))]
-  const gfSummaries = greenFixIterations.map((it, idx) => `[#${idx + 1}] ${it.summary || '(no summary)'}`)
-  concerns.push(`green-fix が ${greenFixCount} 回発生: テスト diff を重点監査せよ。`
+// green-fix 発生分を evaluator focus_areas へ注入する（テスト弱体化監査）。
+// empty-diff gate の retry 経路（Evaluate phase 内、eval#1 より前）でも同じ注入を行うため関数化。
+function pushGreenFixAudit(iters) {
+  if (iters.length === 0) return
+  const gfFiles = [...new Set(iters.flatMap((it) => it.files))]
+  const gfSummaries = iters.map((it, idx) => `[#${idx + 1}] ${it.summary || '(no summary)'}`)
+  concerns.push(`green-fix が ${iters.length} 回発生: テスト diff を重点監査せよ。`
     + `テストの期待値・assert の弱体化（テスト弱体化）で green 化していないか、`
     + `テスト変更がある場合はその正当性（テスト自体の誤りの根拠）を検証すること。`
     + (gfFiles.length > 0 ? `green-fix が変更したファイル: ${JSON.stringify(gfFiles)}。` : '')
     + `申告された根拠: ${JSON.stringify(gfSummaries)}`)
-  log(`green-fix ${greenFixCount} 回 → evaluator focus_areas にテスト弱体化監査を注入（files: ${gfFiles.join(', ') || 'none'}）`)
+  log(`green-fix ${iters.length} 回 → evaluator focus_areas にテスト弱体化監査を注入（files: ${gfFiles.join(', ') || 'none'}）`)
+}
+pushGreenFixAudit(greenFixIterations)
+
+// diff-gate/diff-hash 共通 prompt（issue #215）。worktree-diff-hash.sh のコントラクトに依存。
+// Security floor より前に定義: PR phase でも参照するため（evalDiffHash != null ガードで micro は skip）。
+// Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
+// realized-diff / refloorShape / declared-path-check が自然に実行される（issue #219 fix）。
+const _dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+  + `bash ${WT}/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
+
+// ============================================================
+// empty-diff gate（issue #215）: Security floor phase の直前。
+// Security floor より前に置くことで retry 後の実体に対して danger-grep / realized-diff /
+// refloorShape / declared-path-check が正しく実行される（issue #219 major fix）。
+// 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
+// ============================================================
+{
+  const dhGate = need(await agent(
+    _dhPrompt,
+    { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate', phase: 'Security floor' },
+  ), 'Security floor(diff-gate)')
+  if (dhGate.empty === true) {
+    log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— Implement へ 1 回だけ差し戻す（issue #215）')
+    const retryResults = await runImplement(plan, [{
+      type: 'empty_diff',
+      detail: '前回 implementer 終了時点で working tree に変更が存在しない（base と内容一致）。plan の task を実際に実装し、変更を working tree に残せ（git add / commit は禁止）。',
+    }], 'reimpl-empty-diff')
+    for (const r of retryResults) { if (r && Array.isArray(r.concerns)) concerns.push(...r.concerns) }
+    const dhRetry = need(await agent(
+      _dhPrompt,
+      { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Security floor' },
+    ), 'Security floor(diff-gate-retry)')
+    if (dhRetry.empty === true) {
+      throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）')
+    }
+    // empty-diff gate 後の Validate 再実行（issue #219）。
+    // 差し戻し前の Validate は空 tree に対して走っており val.green が trivially green になっている。
+    // 差し戻しで書かれたコードが GREEN_MAX ループ・テスト弱体化監査を素通りするのを防ぎ、
+    // summary/telemetry の testGreen 値の誤表示を防ぐためにここで再計測する。
+    // retry 中の green-fix は loop 終了後に pushGreenFixAudit で focus_areas へ注入する（eval#1 より前）。
+    const gfIterCountBeforeRetry = greenFixIterations.length
+    for (let vi = 1; vi <= GREEN_MAX; vi++) {
+      val = need(await agent(
+        `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
+        + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`,
+        { agentType: 'dev-runner-haiku', schema: GREEN, label: `test#retry-${vi}`, phase: 'Security floor' },
+      ), `Security floor(test#retry-${vi})`)
+      log(`validate(after empty-diff retry) iteration ${vi}: tests=${val.tests} green=${val.green}`)
+      if (val.green || val.tests === 'no_tests') break
+      if (vi === GREEN_MAX) {
+        log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
+        break
+      }
+      const gfRetry = await agent(
+        `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
+        + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
+        + `**禁止**: テストの期待値・ assert を弱めて green にすることは禁止（テスト弱体化）。`
+        + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・ typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
+        + `失敗内容: ${val.summary ?? '(詳細はテスト出力を確認)'}`,
+        { agentType: 'implementer', schema: IMPL, label: `green-fix#retry-${vi}`, phase: 'Security floor' },
+      )
+      if (gfRetry && Array.isArray(gfRetry.concerns)) concerns.push(...gfRetry.concerns)
+      greenFixCount += 1
+      greenFixIterations.push({
+        files: gfRetry?.files ?? [],
+        summary: gfRetry?.summary ?? '',
+      })
+    }
+    pushGreenFixAudit(greenFixIterations.slice(gfIterCountBeforeRetry))
+  }
 }
 
 // ============================================================
@@ -1546,6 +1631,7 @@ let evalResult = null
 let evalIters = 0            // eval iteration カウンタ（telemetry 用）
 let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
 let unsatisfiedAc = false
+let evalDiffHash = null  // 最後の evaluator 呼び出し直前の diff hash（issue #215。PR 直前と突合し乖離で summary 警告）
 if (runEval) {
 phase('Evaluate')
 // Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
@@ -1574,9 +1660,22 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   // evaluator.md の同期文言（critical_resolutions 契約）は human 編集が必要（follow-up issue 推奨）。
   // 契約文面は EVAL schema と同居するここで管理し、_lib/eval-convergence.test.mjs の contract test が pin する。
   const openEvalCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
+  // evaluator 呼び出し直前の diff hash を取得・保持（issue #215/#219）。
+  // ループ終了後ではなく各 evaluator 呼び出し前にここで取ることで、
+  // redgreen-verify.sh の restore 失敗等 evaluator 呼び出し後の tree 変化を検出可能にする。
+  {
+    const _dhPreEval = await agent(_dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
+    if (_dhPreEval && typeof _dhPreEval.hash === 'string') {
+      evalDiffHash = _dhPreEval.hash
+    } else {
+      log('⚠️ diff-hash-eval の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
+      evalDiffHash = null
+    }
+  }
   const ev = need(await agent(
     `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
-    + `\`git diff $(git merge-base HEAD origin/${BASE})..HEAD\` で実 diff を確認し、テストを実際に走らせる）。\n`
+    + `\`git diff $(git merge-base HEAD origin/${BASE})\` で実 diff を確認し（working tree 基準の二点 diff: merge-base から working tree への差分。implementer はコミットしないため HEAD 基準三点 diff では空になる）、`
+    + `さらに \`git status --porcelain --untracked-files=all\` で untracked の新規ファイルを列挙して Read で内容を確認し（implementer は git add しないため新規作成ファイルは git diff に映らない）、テストを実際に走らせる）。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
     + `収束判定は ledger（isConvergedUnderPolicy: critical/AC/SEC の解消状況）のみで行われ、verdict は収束判定に使われない（log/telemetry 表示用。issue #174）。fail を引き延ばすための新規 minor/major の捻出は不要。\n`
@@ -1725,6 +1824,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
   }
 }
+
 } else {
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
@@ -1732,6 +1832,17 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
 // ============================================================
 // Phase PR: git-commit + git-pr skill を dev-runner で実行し PR URL を取得。
 // ============================================================
+// PR 直前の diff hash を取得し、Evaluate 時点と突合（issue #215）。
+// 判定は hash 文字列の完全一致のみ（0/非0 二値。比率閾値なし）。
+// micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
+let evalTreeStale = false
+if (evalDiffHash != null) {
+  const dhPr = await agent(_dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
+  const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
+  if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
+  evalTreeStale = prDiffHash != null && evalDiffHash !== prDiffHash
+  if (evalTreeStale) log('⚠️ Evaluate 時点と PR 直前の diff hash が不一致 — 終端サマリーに stale-eval 警告を付記する（issue #215）')
+}
 phase('PR')
 const pr = need(await agent(
   `cd ${WT} で作業。次を順に実行せよ:\n`
@@ -1802,6 +1913,7 @@ const summaryBody = buildDevflowSummaryBody({
   shape: EFFECTIVE_SHAPE,
   testGreen: val?.green ?? null,
   evalVerdict: evalResult?.verdict ?? null,
+  evalTreeStale,
 })
 const summaryPost = await agent(
   `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
@@ -1875,6 +1987,7 @@ return {
   shape: SHAPE,
   effective_shape: EFFECTIVE_SHAPE,
   shape_refloored: refloor.refloored,
+  eval_tree_stale: evalTreeStale,
   realized_file_count: realizedCount,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,

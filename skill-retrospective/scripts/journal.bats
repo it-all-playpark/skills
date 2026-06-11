@@ -1,4 +1,4 @@
-#\!/usr/bin/env bats
+#!/usr/bin/env bats
 # Tests for skill-retrospective/scripts/journal.sh
 # Focus: telemetry fields (--merge-tier, --gate-policy, --danger-hits) in cmd_log.
 

@@ -78,6 +78,8 @@ function makeSandbox(analyzeReq, implementerStub) {
     if (label === 'changed-files') {
       return { files: ['src/a.ts'] };
     }
+    // diff-gate / diff-hash（issue #215）: need() による throw の回避
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     return null;
   };
 
