@@ -1942,7 +1942,7 @@ const unresolvedDanger = ledger.items.some(
 const breaking = /breaking|incompatible|migration|破壊的|非互換/i.test(`${req.scope ?? ''} ${req.summary ?? ''}`)
 const escalateCount = policyAdvisoryItems(ledger, GATE_POLICY).filter((it) => it.escalate === true).length
 const mergeTier = classifyMergeTier({
-  shape: SHAPE,
+  shape: EFFECTIVE_SHAPE,
   converged: isConvergedUnderPolicy(ledger, GATE_POLICY),
   unresolvedDanger,
   breaking,

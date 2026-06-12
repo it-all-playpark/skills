@@ -35,9 +35,10 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  *
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {string[]} realizedFiles - realized-diff stub が返すファイル一覧
+ * @param {string[]} [changedFiles=['src/foo.ts']] - changed-files stub が返すファイル一覧（merge tier 判定に使用）
  * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string}> }}
  */
-function makeCountingSandbox(analyzeReq, realizedFiles) {
+function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo.ts']) {
   const calls = [];
 
   // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
@@ -96,7 +97,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles) {
     }
     // Merge tier: changed-files
     if (label === 'changed-files') {
-      return { files: ['src/foo.ts'] };
+      return { files: changedFiles };
     }
     // implementer その他
     if (agentType === 'implementer') {
@@ -590,5 +591,122 @@ test('[refloor][struct] realized-diff は git status --porcelain を使う（三
     !f2Excerpt.includes('diff --name-only') || !f2Excerpt.includes('...HEAD'),
     'F2 ブロックの realized-diff が三点 diff `diff --name-only origin/${BASE}...HEAD` を使っていないこと'
       + ' (Security floor 時点で HEAD==origin/BASE のため diff が空になる)',
+  );
+});
+
+// ============================================================
+// [merge-tier] (D) micro 見積もり + realized 4 docs/test-only files + changed-files docs/test-only
+//              → merge_tier==='REVIEW'（refloor 昇格後は AUTO 推奨ラベル禁止）
+//
+// Bug: classifyMergeTier に SHAPE(='micro') を渡すと isDocsOrTestOnly=true のとき
+//      AUTO を返してしまう。正しくは EFFECTIVE_SHAPE(='standard') を渡すべき。
+// Fix: dev-flow.js L1945 の `shape: SHAPE,` を `shape: EFFECTIVE_SHAPE,` に変更する。
+// ============================================================
+test('[merge-tier] (D) micro 見積もり + realized 4 docs/test-only + changed-files docs-only → merge_tier===REVIEW（AUTO 禁止）', async () => {
+  // micro に落ちる req（count=1 ≤ 2, ac.length=2 ≤ 3, type=fix → floor='micro'）
+  const microReq = {
+    summary: 's',
+    acceptance_criteria: ['a', 'b'],
+    issue_type: 'fix',
+    scope: 'src',
+    estimated_change_file_count: 1,
+    shape: 'micro',
+  };
+
+  const src = readFileSync(devFlowPath, 'utf8');
+
+  // realized-diff: 4 件（.md / docs/ / *test* にマッチ → isDocsOrTestOnly=true）
+  // ephemeral filter（.devflow-tmp / .staged. / fm_*.txt）には掛からないパス
+  const docsTestFiles = ['docs/a.md', 'docs/b.md', 'README.md', '_lib/foo.test.mjs'];
+
+  // changed-files も同じ docs/test-only ファイル → isDocsOrTestOnly=true
+  // refloorShape('micro', 4): 4 ファイル → realizedFloor='standard' > micro → EFFECTIVE_SHAPE='standard'
+  // classifyMergeTier に EFFECTIVE_SHAPE='standard' を渡すと shape!='micro' → tier='REVIEW'（AUTO にならない）
+  const { ctx, calls } = makeCountingSandbox(microReq, docsTestFiles, docsTestFiles);
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  assert.ok(returned !== null, '(D) workflow は return object を返すべきだが null だった');
+
+  assert.strictEqual(
+    returned?.shape_refloored,
+    true,
+    `(D) returned.shape_refloored は true のはずだが ${JSON.stringify(returned?.shape_refloored)} だった`
+      + ' (4 docs/test-only files → refloorShape("micro", 4) → standard → refloored=true)',
+  );
+
+  assert.strictEqual(
+    returned?.effective_shape,
+    'standard',
+    `(D) returned.effective_shape は 'standard' のはずだが ${JSON.stringify(returned?.effective_shape)} だった`
+      + ' (micro + 4 files → refloor → standard)',
+  );
+
+  assert.strictEqual(
+    returned?.merge_tier,
+    'REVIEW',
+    `(D) returned.merge_tier は 'REVIEW' のはずだが ${JSON.stringify(returned?.merge_tier)} だった`
+      + ' — refloor 昇格後は AUTO 推奨ラベル禁止 — classifyMergeTier に EFFECTIVE_SHAPE を渡す'
+      + ' (現状 shape: SHAPE を渡しているため merge_tier=AUTO になるバグ)',
+  );
+});
+
+// ============================================================
+// [merge-tier] (E) micro 見積もり + realized 1 docs file + changed-files docs-only
+//              → merge_tier==='AUTO'（genuine micro の AUTO 経路を regress させない）
+//
+// Control: refloor が発火しない（1 file → micro 維持）かつ docs-only → AUTO のまま。
+// ============================================================
+test('[merge-tier] (E) micro 見積もり + realized 1 docs file + changed-files docs-only → merge_tier===AUTO（genuine micro regress なし）', async () => {
+  // micro に落ちる req（count=1 ≤ 2, ac.length=2 ≤ 3, type=fix → floor='micro'）
+  const microReq = {
+    summary: 's',
+    acceptance_criteria: ['a', 'b'],
+    issue_type: 'fix',
+    scope: 'src',
+    estimated_change_file_count: 1,
+    shape: 'micro',
+  };
+
+  const src = readFileSync(devFlowPath, 'utf8');
+
+  // realized-diff: 1 件（.md → isDocsOrTestOnly=true）
+  // refloorShape('micro', 1): 1 ファイル → realizedFloor='micro' → EFFECTIVE_SHAPE='micro'（昇格なし）
+  const docsFile = ['docs/a.md'];
+
+  // changed-files も docs-only → isDocsOrTestOnly=true
+  // classifyMergeTier に EFFECTIVE_SHAPE='micro' + docsOrTestOnly=true → tier='AUTO'（正常経路）
+  const { ctx } = makeCountingSandbox(microReq, docsFile, docsFile);
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  assert.ok(returned !== null, '(E) workflow は return object を返すべきだが null だった');
+
+  assert.strictEqual(
+    returned?.shape_refloored,
+    false,
+    `(E) returned.shape_refloored は false のはずだが ${JSON.stringify(returned?.shape_refloored)} だった`
+      + ' (1 file → refloor 発火せず micro 維持 → refloored=false)',
+  );
+
+  assert.strictEqual(
+    returned?.effective_shape,
+    'micro',
+    `(E) returned.effective_shape は 'micro' のはずだが ${JSON.stringify(returned?.effective_shape)} だった`
+      + ' (1 docs file → refloor なし → micro 維持)',
+  );
+
+  assert.strictEqual(
+    returned?.merge_tier,
+    'AUTO',
+    `(E) returned.merge_tier は 'AUTO' のはずだが ${JSON.stringify(returned?.merge_tier)} だった`
+      + ' — genuine micro + docs-only の AUTO 経路を regress させない'
+      + ' (EFFECTIVE_SHAPE=micro + docsOrTestOnly=true → AUTO が正常)',
   );
 });
