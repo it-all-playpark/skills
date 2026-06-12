@@ -32,8 +32,6 @@ export function seedSecurityLedger() {
   }));
 }
 
-const SEC_SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
-
 // danger-grep の hit クラス集合で SEC seed item を解決する。
 // clean クラス → checked(evidence='danger-grep clean')。
 // hit クラス → critical へ raise(floor=true)。
@@ -56,8 +54,7 @@ export function reconcileDanger(ledger, hitClasses) {
       // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
       // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
       if (it.checked && it.floor) return it;
-      const severity = SEC_SEVERITY_RANK['critical'] > SEC_SEVERITY_RANK[it.severity] ? 'critical' : it.severity;
-      return { ...it, severity, floor: true, checked: false };
+      return { ...it, severity: 'critical', floor: true, checked: false };
     }
     return { ...it, checked: true, evidence: 'danger-grep clean' };
   });
@@ -76,6 +73,9 @@ export function isDocsOrTestOnly(files) {
 // HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
 // AUTO: micro かつ docs/test-only かつ danger clean かつ収束（推奨ラベル）。
 // REVIEW: それ以外（標準。人間が LGTM して merge）。
+// s.evalSkipped (optional boolean): true の場合、AUTO branch で AC 未検証開示 reason を追記する。
+//   micro path は evaluator 0 回で AC を判定していないため、AUTO 推奨でもその事実を開示する（issue #233）。
+//   danger-grep hit / green-fix で security path により eval が強制実行された場合は false にして虚偽開示を避ける。
 export function classifyMergeTier(s) {
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -85,7 +85,11 @@ export function classifyMergeTier(s) {
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (reasons.length) return { tier: 'HOLD', reasons };
   if (s.shape === 'micro' && s.docsOrTestOnly) {
-    return { tier: 'AUTO', reasons: ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'] };
+    const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
+    // micro path は evaluator 0 回で AC を判定していない — AUTO 推奨でもその事実を開示する（issue #233）。
+    // evalSkipped は optional（未指定 = falsy = 開示なし）。tier 判定値は変更しない（ゲート境界不変）。
+    if (s.evalSkipped === true) autoReasons.push('AC は未検証（micro eval skip）— evaluator 0 回のため acceptance_criteria の充足は判定していない');
+    return { tier: 'AUTO', reasons: autoReasons };
   }
   return { tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'] };
 }

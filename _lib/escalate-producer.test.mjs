@@ -100,7 +100,7 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
 
   // pr-iterate stub: workflow() の呼び出し
-  const workflowStub = async () => ({ status: 'LGTM' });
+  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
 
   const sandbox = {
     // workflow 制御関数
@@ -434,7 +434,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
   }
 
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'LGTM' });
+  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
 
   const sandbox = {
     phase: () => {},

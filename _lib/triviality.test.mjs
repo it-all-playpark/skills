@@ -296,3 +296,59 @@ test('refloorShape: realizedCount=-1 → realizedFloor=complex', () => {
   assert.equal(result.shape, 'complex');
   assert.equal(result.refloored, true);
 });
+
+// ---- isBreakingText tests ----
+import { isBreakingText } from './triviality.mjs';
+
+// (1) breaking キーワードを含む文字列 → true
+test('isBreakingText: "breaking change in API" → true', () => {
+  assert.equal(isBreakingText('breaking change in API'), true);
+});
+
+test('isBreakingText: "DB migration required" → true', () => {
+  assert.equal(isBreakingText('DB migration required'), true);
+});
+
+test('isBreakingText: "破壊的変更" → true', () => {
+  assert.equal(isBreakingText('破壊的変更'), true);
+});
+
+test('isBreakingText: "BREAKING" (大文字) → true (case-insensitive)', () => {
+  assert.equal(isBreakingText('BREAKING'), true);
+});
+
+test('isBreakingText: "incompatible changes" → true', () => {
+  assert.equal(isBreakingText('incompatible changes'), true);
+});
+
+test('isBreakingText: "非互換" → true', () => {
+  assert.equal(isBreakingText('非互換'), true);
+});
+
+// (2) breaking キーワードを含まない → false
+test('isBreakingText: "normal refactor" → false', () => {
+  assert.equal(isBreakingText('normal refactor'), false);
+});
+
+// (3) null / undefined → false (String(s ?? '') ガード)
+test('isBreakingText: null → false', () => {
+  assert.equal(isBreakingText(null), false);
+});
+
+test('isBreakingText: undefined → false', () => {
+  assert.equal(isBreakingText(undefined), false);
+});
+
+// (4) classifyShape が scope='breaking change in API' で complex floor を返す（isBreakingText 経由）
+test('classifyShape: scope に "breaking change in API" → shape=complex (isBreakingText 経由)', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['x', 'y'],
+    issue_type: 'fix',
+    scope: 'breaking change in API',
+    summary: 'fix a bug',
+  });
+  assert.equal(result.shape, 'complex');
+  assert.equal(typeof result.reason, 'string');
+  assert.ok(result.reason.length > 0);
+});

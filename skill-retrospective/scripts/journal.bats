@@ -372,3 +372,94 @@ JSON
     run "$SCRIPT" query --source invalid
     [ "$status" -ne 0 ]
 }
+
+# ===========================================================================
+# Tests for new error categories: needs_clarification, empty_diff (#225)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (h): --error-category needs_clarification で failure が exit 0 で記録される
+# ---------------------------------------------------------------------------
+@test "failure with needs_clarification category exits 0 and records entry" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category needs_clarification \
+        --error-msg 'user clarification needed' \
+        --gate-policy llm-major-advisory \
+        --plan-iter 1 \
+        --eval-iter 0
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    outcome=$(jq -r '.outcome' "$entry_file")
+    [ "$outcome" = "failure" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "needs_clarification" ]
+
+    # merge_tier キーが telemetry に無いこと（省略時は含まれない）
+    has_merge_tier=$(jq '.telemetry | has("merge_tier")' "$entry_file")
+    [ "$has_merge_tier" = "false" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (i): --error-category empty_diff で failure が exit 0 で記録される
+# ---------------------------------------------------------------------------
+@test "failure with empty_diff category exits 0 and records entry" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category empty_diff \
+        --error-msg 'no changes produced' \
+        --gate-policy llm-major-advisory \
+        --plan-iter 0 \
+        --eval-iter 0
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    outcome=$(jq -r '.outcome' "$entry_file")
+    [ "$outcome" = "failure" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "empty_diff" ]
+
+    # merge_tier キーが telemetry に無いこと
+    has_merge_tier=$(jq '.telemetry | has("merge_tier")' "$entry_file")
+    [ "$has_merge_tier" = "false" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (j): --error-category bogus は die_json で失敗（out-of-enum 拒否の回帰）
+# ---------------------------------------------------------------------------
+@test "failure with bogus category exits non-zero (out-of-enum rejection)" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category bogus \
+        --error-msg 'some error'
+    [ "$status" -ne 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (k): failure で --error-msg 欠落は従来どおり失敗
+# ---------------------------------------------------------------------------
+@test "failure without --error-msg exits non-zero" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category needs_clarification
+    [ "$status" -ne 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (l): 既存 8 カテゴリへの回帰（runtime が引き続き受理される）
+# ---------------------------------------------------------------------------
+@test "existing category runtime is still accepted" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category runtime \
+        --error-msg 'runtime error'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "runtime" ]
+}

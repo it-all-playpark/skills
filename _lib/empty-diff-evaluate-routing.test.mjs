@@ -25,6 +25,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     retryEmpty = false,
     evalHash = 'H',
     prHash = 'H',
+    iterateResult = { status: 'lgtm', iterations: 1, fixes_applied: 0 },
   } = diffHashConfig || {};
 
   const agentStub = async (prompt, opts) => {
@@ -38,7 +39,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label === 'diff-hash-pr') return { hash: prHash, empty: false };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: [], test_plan: '' }], parallel: [] };
+    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
@@ -55,7 +56,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
   const sandbox = {
     phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
-    workflow: async () => ({ status: 'LGTM' }), args: '1',
+    workflow: async () => iterateResult, args: '1',
     console, JSON, Math, String, Number, Boolean, Array, Object, Error, RegExp, Promise, Symbol, Map, Set, Date,
   };
   const ctx = vm.createContext(sandbox);
@@ -194,4 +195,62 @@ test('[empty-diff] (G) retry 後に danger-grep が reimpl-empty-diff より後�
     + `danger-grep が retry 前の空 tree を見ると dangerHits が空のまま security path 強制が不発になる（issue #219）。`
     + `実際の順序: reimpl-empty-diff=${reimplIdx}, danger-grep=${dangerGrepIdx}`,
   );
+});
+
+// (H) 両 hash 一致 + fixes_applied=2 → eval_tree_stale===true かつ post-summary に stale 警告
+// pr-iterate fix 適用由来の stale 検出ピン（issue #233）
+test('[empty-diff] (H) 両 hash 一致 + fixes_applied=2 → eval_tree_stale===true + stale 警告あり', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
+    gateEmpty: false,
+    evalHash: 'AAA',
+    prHash: 'AAA',
+    iterateResult: { status: 'lgtm', iterations: 3, fixes_applied: 2 },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(H) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(H) return object を返すべき');
+  assert.strictEqual(returned?.eval_tree_stale, true, `(H) fixes_applied=2 なら eval_tree_stale===true のはずだが ${JSON.stringify(returned?.eval_tree_stale)}`);
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall !== undefined, '(H) post-summary の agent 呼び出しが存在すべき');
+  assert.ok(postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(H) post-summary prompt に stale 警告を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
+});
+
+// (I) 両 hash 一致 + status='stuck' → eval_tree_stale===true（status !== 'lgtm' 側の OR 分岐）
+test('[empty-diff] (I) 両 hash 一致 + status=stuck → eval_tree_stale===true（status !== lgtm 由来）+ stale 警告あり', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
+    gateEmpty: false,
+    evalHash: 'AAA',
+    prHash: 'AAA',
+    iterateResult: { status: 'stuck', iterations: 5, fixes_applied: 3 },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(I) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(I) return object を返すべき');
+  assert.strictEqual(returned?.eval_tree_stale, true, `(I) status=stuck なら eval_tree_stale===true のはずだが ${JSON.stringify(returned?.eval_tree_stale)}`);
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall !== undefined, '(I) post-summary の agent 呼び出しが存在すべき');
+  assert.ok(postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(I) post-summary prompt に stale 警告を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
+});
+
+// (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_tree_stale===false（誤検知なし）
+test('[empty-diff] (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_tree_stale===false（誤検知なし）', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
+    gateEmpty: false,
+    evalHash: 'AAA',
+    prHash: 'AAA',
+    iterateResult: { status: 'lgtm', iterations: 1, fixes_applied: 0 },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(J) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(J) return object を返すべき');
+  assert.strictEqual(returned?.eval_tree_stale, false, `(J) status=lgtm + fixes_applied=0 なら eval_tree_stale===false のはずだが ${JSON.stringify(returned?.eval_tree_stale)}`);
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall !== undefined, '(J) post-summary の agent 呼び出しが存在すべき');
+  assert.ok(!postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(J) hash 一致 + lgtm + no-fix 時は post-summary prompt に stale 警告を含むべきでない`);
 });

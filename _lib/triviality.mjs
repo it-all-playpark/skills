@@ -5,6 +5,10 @@
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 export const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
+export function isBreakingText(s) {
+  return /breaking|incompatible|migration|破壊的|非互換/i.test(String(s ?? ''));
+}
+
 function mergeShape(floor, llmShape) {
   if (!(llmShape in SHAPE_RANK)) {
     return floor;
@@ -37,9 +41,8 @@ export function classifyShape(req) {
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
 
-  const breakingPattern = /breaking|incompatible|migration|破壊的|非互換/i;
   const combined = `${req.scope ?? ''} ${req.summary ?? ''}`;
-  if (breakingPattern.test(combined)) {
+  if (isBreakingText(combined)) {
     const floor = 'complex';
     const reason = `breaking change detected in scope/summary → floor=complex`;
     const shape = mergeShape(floor, req.shape);

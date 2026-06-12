@@ -1,7 +1,5 @@
-// 負の制御群テスト（green-fix 0 回経路）。
-// green-fix が一度も発生しない run では evaluator prompt に「テスト弱体化」focus が
-// 注入されないことを pin する。このテストは F3 実装前から green で正しい（F1 が red を担う）。
-// F3 実装後も引き続き green であること（誤って負の制御群に focus が混入しないことを保証する）。
+// TDD red として作成。F1 実装（本経路 green-fix concerns → concerns 配列 push）までは fail する。
+// テスト 3（eval#1 prompt へのマーカー到達）・テスト 4（ソースの対称パターン存在）は F1 実装前の現時点で fail する。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,19 +12,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-// ---- VM sandbox helpers（shape-loop-routing.test.mjs の makeCountingSandbox / runDevFlowInSandbox をコピー）----
-// calls には prompt も記録: calls.push({ label, agentType, prompt })
+// ---- VM sandbox helpers（green-fix-test-audit.test.mjs の makeCountingSandbox / runDevFlowInSandbox / ensureSharedRun の 3 点セットと同型）----
 
 /**
- * green-fix なし経路専用の VM sandbox を組む。
+ * green-fix concerns routing 専用の VM sandbox を組む。
  * agent() を呼び出しカウンタ stub にし、calls 配列を expose する。
- * test runner（label startsWith 'test'）は常に passed (green:true) を返すため
- * green-fix 経路に入らない。
+ * test stub は 1 回目が failed (green:false)、2 回目以降は passed (green:true) を返す
+ * ことで green-fix#1 が 1 回だけ走る経路を再現する。
+ * 唯一の本質的差分: green-fix stub が concerns マーカーを返す（既存テンプレートは concerns: []）。
  *
  * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
  */
 function makeCountingSandbox() {
   const calls = [];
+  // test runner 呼び出し回数を追跡するクロージャカウンタ
+  let testCallCount = 0;
 
   // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
   const agentStub = async (prompt, opts) => {
@@ -39,6 +39,7 @@ function makeCountingSandbox() {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     }
     // Analyze: label が 'analyze' で始まる
+    // 必ず standard（micro だと Evaluate が skip され eval#1 が発生しない）
     if (label.startsWith('analyze')) {
       return {
         summary: 's',
@@ -62,8 +63,12 @@ function makeCountingSandbox() {
       return { hits: [] };
     }
     // Validate: test runner（label が 'test' で始まる）
-    // 常に passed (green:true) を返す — green-fix 経路に入らない
+    // 1 回目は failed (green:false)、2 回目以降は passed (green:true)
     if (label.startsWith('test')) {
+      testCallCount += 1;
+      if (testCallCount === 1) {
+        return { tests: 'failed', green: false, summary: 'assert mismatch' };
+      }
       return { tests: 'passed', green: true, summary: '' };
     }
     // Evaluate: evaluator
@@ -86,12 +91,24 @@ function makeCountingSandbox() {
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
-    // implementer
+    // diff-gate / diff-hash（issue #215）: empty:false で retry 経路に入らない（本経路のみを検証）
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
+      return { hash: 'H', empty: false };
+    }
+    // implementer（green-fix も含む）
+    // 【唯一の本質的差分】green-fix stub が concerns マーカーを返す
+    if (agentType === 'implementer' && label.startsWith('green-fix')) {
+      return {
+        status: 'DONE',
+        task_id: 't',
+        files: [],
+        summary: '',
+        concerns: ['GREEN_FIX_CONCERN_MARKER: retry ロジックに未検証の race が残る'],
+      };
+    }
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
-    // diff-gate / diff-hash（issue #215）: need() による throw の回避
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     // デフォルト
     return null;
   };
@@ -108,7 +125,7 @@ function makeCountingSandbox() {
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
     args: '1',
-    // JS 組み込み（shape-loop-routing.test.mjs と同一セット）
+    // JS 組み込み（green-fix-test-audit.test.mjs と同一セット）
     console,
     JSON,
     Math,
@@ -132,7 +149,7 @@ function makeCountingSandbox() {
 
 /**
  * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * shape-loop-routing.test.mjs の runDevFlowInSandbox と同型。
+ * green-fix-test-audit.test.mjs の runDevFlowInSandbox と同型。
  *
  * @param {string} src - dev-flow.js の raw ソース
  * @param {vm.Context} ctx - vm コンテキスト
@@ -159,7 +176,7 @@ async function runDevFlowInSandbox(src, ctx) {
 }
 
 // ============================================================
-// 共有実行（複数テストが同じ sandbox 実行結果を参照するため）
+// 共有実行（4 テストが同じ sandbox 実行結果を参照するため）
 // ============================================================
 
 let sharedCalls = null;
@@ -175,10 +192,10 @@ async function ensureSharedRun() {
 }
 
 // ============================================================
-// crash guard: ReferenceError / SyntaxError なら assert.fail
+// テスト 1: crash guard（green-fix-test-audit.test.mjs と同じパターン）
 // ============================================================
 
-test('[green-fix-no-audit] crash guard: dev-flow.js が sandbox で ReferenceError / SyntaxError を throw しない', async () => {
+test('[green-fix-concerns] crash guard: dev-flow.js が sandbox で ReferenceError / SyntaxError を throw しない', async () => {
   await ensureSharedRun();
   if (sharedErr && (sharedErr.name === 'ReferenceError' || sharedErr.name === 'SyntaxError')) {
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${sharedErr.name}: ${sharedErr.message}`);
@@ -186,42 +203,46 @@ test('[green-fix-no-audit] crash guard: dev-flow.js が sandbox で ReferenceErr
 });
 
 // ============================================================
-// テスト 1: sanity — green-fix label で始まる call が 0 件であること
+// テスト 2: sanity — green-fix call が 1 回以上発生していること
 // ============================================================
 
-test('[green-fix-no-audit] sanity: label が green-fix で始まる call が 0 件であること', async () => {
+test('[green-fix-concerns] sanity: green-fix call が 1 回以上発生すること', async () => {
   await ensureSharedRun();
   const greenFixCalls = sharedCalls.filter((c) => c.label.startsWith('green-fix'));
-  assert.equal(
-    greenFixCalls.length,
-    0,
-    `green-fix label の call が 0 件であるべきだが ${greenFixCalls.length} 件あった`
-      + ` (labels: ${greenFixCalls.map((c) => c.label).join(', ')})`,
+  assert.ok(
+    greenFixCalls.length >= 1,
+    `green-fix label の call が 1 回以上発生すべきだが ${greenFixCalls.length} 回だった`
+      + ` (全 labels: ${sharedCalls.map((c) => c.label).join(', ')})`,
   );
 });
 
 // ============================================================
-// テスト 2: 主検証（AC#2）— evaluator prompt に「テスト弱体化」が含まれないこと
+// テスト 3（本命・AC#3）: eval#1 の prompt に GREEN_FIX_CONCERN_MARKER が含まれること
+// 本経路 green-fix concerns → evaluator focus_areas 到達の pin
 // ============================================================
 
-test('[green-fix-no-audit] AC#2: green-fix 0 回経路では evaluator の prompt に「テスト弱体化」が含まれないこと', async () => {
+test('[green-fix-concerns] AC#3: eval#1 の prompt に GREEN_FIX_CONCERN_MARKER が含まれること（本経路 green-fix concerns → evaluator focus_areas 到達）', async () => {
   await ensureSharedRun();
-  const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'evaluator');
-
-  // evaluator が 1 回以上呼ばれていないと負の検証が無意味になる
+  const eval1 = sharedCalls.find((c) => c.label === 'eval#1');
   assert.ok(
-    evaluatorCalls.length >= 1,
-    `evaluator は 1 回以上呼ばれるべきだが ${evaluatorCalls.length} 回だった`
-      + ` (全 agentTypes: ${sharedCalls.map((c) => c.agentType).join(', ')})`,
+    eval1 != null,
+    `label === 'eval#1' の call が見つからない (全 labels: ${sharedCalls.map((c) => c.label).join(', ')})`,
   );
+  assert.ok(
+    eval1.prompt.includes('GREEN_FIX_CONCERN_MARKER'),
+    `eval#1 の prompt に 'GREEN_FIX_CONCERN_MARKER' が含まれていない。\nprompt (先頭600文字):\n${eval1.prompt.slice(0, 600)}`,
+  );
+});
 
-  // green-fix なし経路では evaluator prompt にテスト弱体化 focus が注入されないこと
-  const withAuditFocus = evaluatorCalls.filter((c) => c.prompt.includes('テスト弱体化'));
-  assert.equal(
-    withAuditFocus.length,
-    0,
-    `green-fix 0 回経路: evaluator の prompt に「テスト弱体化」が含まれてはいけないが`
-      + ` ${withAuditFocus.length} 件含まれていた`
-      + `\n最初の該当 prompt (先頭300文字):\n${withAuditFocus[0]?.prompt.slice(0, 300) ?? ''}`,
+// ============================================================
+// テスト 4（構造テスト・AC#2）: dev-flow.js ソースに対称パターンが含まれること
+// retry 経路 L1586 の `gfRetry` パターンとの対称性 pin
+// ============================================================
+
+test('[green-fix-concerns][struct] AC#2: dev-flow.js ソースに対称パターン「if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)」が含まれること', () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  assert.ok(
+    src.includes('if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)'),
+    'dev-flow.js に「if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)」が存在すること（retry 経路 gfRetry パターンとの対称性）',
   );
 });

@@ -9,7 +9,6 @@ import {
   policyAdvisoryItems,
   isConvergedUnderPolicy,
 } from './gate-policy.mjs';
-import { laneOf } from './goal-ledger.mjs';
 
 // ---- (1) resolveGatePolicy ----
 
@@ -85,24 +84,45 @@ test('gateLane: source=seed item は全 policy で blocking', () => {
   }
 });
 
-// ---- (3) default-equivalence: llm-major-advisory では goal-ledger.mjs の laneOf と一致 ----
+// ---- (3) default-equivalence: llm-major-advisory の挙動を明示 pin ----
 
-test('gateLane default-equivalence: llm-major-advisory は laneOf と完全一致', () => {
-  const items = [
-    mkItem({ id: 'critical', severity: 'critical' }),
-    mkItem({ id: 'deterministic', check: { kind: 'deterministic' }, severity: 'major' }),
-    mkItem({ id: 'seed', source: 'seed', severity: 'major' }),
-    mkItem({ id: 'llm-major', severity: 'major', source: 'evaluator' }),
-    mkItem({ id: 'llm-minor', severity: 'minor', source: 'ac' }),
-    mkItem({ id: 'inspection', check: { kind: 'inspection' }, severity: 'major', source: 'ac' }),
-  ];
-  for (const it of items) {
-    assert.equal(
-      gateLane(it, 'llm-major-advisory'),
-      laneOf(it),
-      `item id=${it.id}: gateLane vs laneOf 不一致`,
-    );
-  }
+test('gateLane default-equivalence: llm-major-advisory の lane を 6 item で直接 assert', () => {
+  // critical → blocking
+  assert.equal(
+    gateLane(mkItem({ id: 'critical', severity: 'critical' }), 'llm-major-advisory'),
+    'blocking',
+    'critical should be blocking',
+  );
+  // deterministic check → blocking
+  assert.equal(
+    gateLane(mkItem({ id: 'deterministic', check: { kind: 'deterministic' }, severity: 'major' }), 'llm-major-advisory'),
+    'blocking',
+    'deterministic check should be blocking',
+  );
+  // seed source → blocking
+  assert.equal(
+    gateLane(mkItem({ id: 'seed', source: 'seed', severity: 'major' }), 'llm-major-advisory'),
+    'blocking',
+    'seed source should be blocking',
+  );
+  // LLM major (source: evaluator) → advisory
+  assert.equal(
+    gateLane(mkItem({ id: 'llm-major', severity: 'major', source: 'evaluator' }), 'llm-major-advisory'),
+    'advisory',
+    'LLM major (evaluator) should be advisory under llm-major-advisory',
+  );
+  // LLM minor → advisory
+  assert.equal(
+    gateLane(mkItem({ id: 'llm-minor', severity: 'minor', source: 'ac' }), 'llm-major-advisory'),
+    'advisory',
+    'LLM minor should be advisory',
+  );
+  // inspection major → advisory
+  assert.equal(
+    gateLane(mkItem({ id: 'inspection', check: { kind: 'inspection' }, severity: 'major', source: 'ac' }), 'llm-major-advisory'),
+    'advisory',
+    'inspection major should be advisory',
+  );
 });
 
 // ---- (4) llm-major-blocking では LLM major が blocking に転じる ----
