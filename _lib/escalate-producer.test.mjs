@@ -58,7 +58,7 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を escalate のみに絞る
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     // Validate: test runner（label が 'test' で始まる）
     if (label.startsWith('test')) {
@@ -359,7 +359,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
         return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
       }
       if (label.startsWith('danger-grep')) {
-        return { hits: [] };
+        return { ok: true, hits: [] };
       }
       if (label.startsWith('test')) {
         return { tests: 'no_tests', green: true, summary: '' };

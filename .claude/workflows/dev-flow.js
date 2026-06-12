@@ -194,7 +194,9 @@ function seedSecurityLedger() {
   }));
 }
 
-// danger-grep の hit クラス集合で SEC seed item を解決する。
+// danger-grep の結果で SEC seed item を解決する。
+// risk.ok !== true は danger-grep 実行失敗/転写失敗/空出力を表し、fail-closed として
+// 全 SEC seed を unchecked に戻す（clean と区別する）。
 // clean クラス → checked(evidence='danger-grep clean')。
 // hit クラス → critical へ raise(floor=true)。
 //   - floor=true かつ checked=true(evaluator が evidence で clearance 済み) → checked を維持する(HOLD に巻き戻さない)。
@@ -206,8 +208,17 @@ function seedSecurityLedger() {
 //   danger が増えた(新クラスが hit に転じた)場合 → floor=false なので unchecked 復活 = HOLD。
 //   danger が減った(以前 hit だったクラスが clean に転じた)場合 → checked=true に解放(自動解消)。
 //   danger が同じ hit クラスで残る かつ evaluator clearance 済み(floor=true, checked=true) → checked 維持(温存)。
-function reconcileDanger(ledger, hitClasses) {
-  const hits = new Set(hitClasses);
+function reconcileDanger(ledger, risk) {
+  if (!risk || risk.ok !== true) {
+    const error = risk?.error ? `danger-grep error: ${risk.error}` : 'danger-grep error';
+    const items = ledger.items.map((it) => {
+      if (it.source !== 'seed' || it.dimension !== 'security') return it;
+      return { ...it, checked: false, evidence: error };
+    });
+    return { ...ledger, items };
+  }
+
+  const hits = new Set((risk.hits ?? []).map((h) => h.class));
   const items = ledger.items.map((it) => {
     if (it.source !== 'seed' || it.dimension !== 'security') return it;
     if (hits.has(it.danger_class)) {
@@ -1183,8 +1194,9 @@ const PRURL = {
   },
 }
 const RISK = {
-  type: 'object', required: ['hits'],
+  type: 'object', required: ['ok', 'hits'],
   properties: {
+    ok: { type: 'boolean' },
     hits: {
       type: 'array',
       items: {
@@ -1197,6 +1209,8 @@ const RISK = {
         },
       },
     },
+    error: { type: 'string' },
+    exit_code: { type: ['number', 'string'] },
   },
 }
 const CHANGED = {
@@ -1656,14 +1670,15 @@ for (const seed of seedSecurityLedger()) {
   ledger = appendItem(ledger, seed).ledger
 }
 const risk = need(await agent(
-  `cd ${WT} で作業。次を実行し **stdout の JSON 配列をそのまま** \`{"hits": <配列>}\` に包んで返せ`
-  + `（判定や脚色をしない。空配列なら hits:[]）:\n`
+  `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
+  + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。`
+  + `失敗時に ok:true を生成してはならない）:\n`
   + `bash ${WT}/_shared/scripts/diff-risk-classify.sh --working-tree origin/${BASE}`,
   { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
 ), 'Security floor(danger-grep)')
-const dangerHits = [...new Set((risk.hits ?? []).map((h) => h.class))]
-ledger = reconcileDanger(ledger, dangerHits)
-log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
+const dangerHits = risk.ok === true ? [...new Set((risk.hits ?? []).map((h) => h.class))] : []
+ledger = reconcileDanger(ledger, risk)
+log(`danger-grep: ${risk.ok !== true ? 'ERROR ' + (risk.error ?? 'unknown') : dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
   + `SEC blocking 未 checked ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件`)
 // Step F2: realized diff のファイル数を取得して re-floor を算出する
 // realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
@@ -1977,11 +1992,12 @@ if (runEval && iterateChangedTree && !evalTreeStale) {
 // ============================================================
 phase('Merge tier')
 const riskFinal = need(await agent(
-  `cd ${WT} で作業。次を実行し **stdout の JSON 配列をそのまま** \`{"hits": <配列>}\` に包んで返せ:\n`
+  `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
+  + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
   + `bash ${WT}/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
   { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
 ), 'Merge tier(danger-grep-final)')
-const dangerHitsFinal = [...new Set((riskFinal.hits ?? []).map((h) => h.class))]
+const dangerHitsFinal = riskFinal.ok === true ? [...new Set((riskFinal.hits ?? []).map((h) => h.class))] : []
 const changed = need(await agent(
   `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
   + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
@@ -1989,7 +2005,7 @@ const changed = need(await agent(
 ), 'Merge tier(changed-files)')
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
-ledger = reconcileDanger(ledger, dangerHitsFinal)
+ledger = reconcileDanger(ledger, riskFinal)
 const unresolvedDanger = ledger.items.some(
   (it) => it.dimension === 'security' && it.source === 'seed' && it.floor && !it.checked)
 const breaking = isBreakingText(`${req.scope ?? ''} ${req.summary ?? ''}`)

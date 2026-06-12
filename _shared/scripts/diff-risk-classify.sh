@@ -2,7 +2,7 @@
 # diff-risk-classify.sh - dev-flow W1 deterministic danger-grep on realized diff.
 #
 # Purpose: Grep the REALIZED git diff (actual written changes, not proposed/issue text)
-# between a base ref and HEAD for 7 danger classes and print hit files as a JSON array
+# between a base ref and HEAD for 7 danger classes and print hit files as a JSON object
 # to stdout. Called directly from workflow JS. Ungameable critical floor -- severity is
 # ALWAYS "critical" and cannot be lowered by any flag or input.
 #
@@ -10,7 +10,8 @@
 #   --working-tree  Classify worktree changes (staged + untracked) instead of committed
 #                   diff. Uses merge-base($BASE, HEAD) as anchor so BASE-ahead commits
 #                   from other branches do not bleed into the result.
-# Output: JSON array of {file, class, severity:"critical"} objects (stdout)
+# Output: {"ok":true,"hits":[{file, class, severity:"critical"}]} on success (stdout)
+#         {"ok":false,"hits":[],"error": "...", "exit_code": N} on error (stdout)
 # Exit: 0 on success (even with empty hits), non-zero via die_json on error.
 
 set -euo pipefail
@@ -19,6 +20,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=../../_lib/common.sh
 source "$SCRIPT_DIR/../../_lib/common.sh"
+
+die_json() {
+    local msg="$1"
+    local code="${2:-1}"
+    printf '{"ok":false,"hits":[],"error":%s,"exit_code":%s}\n' "$(json_str "$msg")" "$code"
+    exit "$code"
+}
 
 # ============================================================================
 # Args
@@ -134,7 +142,7 @@ else
 fi
 
 if [[ -z "$files" ]]; then
-    printf '%s\n' "[]"
+    printf '%s\n' '{"ok":true,"hits":[]}'
     exit 0
 fi
 
@@ -261,17 +269,17 @@ done <<< "$files"
 hits="${hits%$'\n'}"
 
 if [[ -z "$hits" ]]; then
-    printf '%s\n' "[]"
+    printf '%s\n' '{"ok":true,"hits":[]}'
     exit 0
 fi
 
 if has_jq; then
     # Use jq to build the array deterministically (compact output, no spaces)
     printf '%s\n' "$hits" | \
-        jq -c -R -n '[inputs | split("\t") | {file:.[0], class:.[1], severity:"critical"}]'
+        jq -c -R -n '{ok:true,hits:[inputs | split("\t") | {file:.[0], class:.[1], severity:"critical"}]}'
 else
     # Fallback: build JSON array with json_escape
-    result="["
+    result="{\"ok\":true,\"hits\":["
     first=true
     while IFS=$'\t' read -r f c; do
         [[ -z "$f" ]] && continue
@@ -283,7 +291,7 @@ else
         escaped_file="$(json_escape "$f")"
         result="${result}{\"file\":${escaped_file},\"class\":\"${c}\",\"severity\":\"critical\"}"
     done <<< "$hits"
-    result="${result}]"
+    result="${result}]}"
     printf '%s\n' "$result"
 fi
 

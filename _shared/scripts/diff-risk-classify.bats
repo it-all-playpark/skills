@@ -35,7 +35,7 @@ teardown() {
     [[ "$output" == *'"class":"auth"'* ]]
     [[ "$output" == *'auth.ts'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "auth")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "auth")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"crypto"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "crypto")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "crypto")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"config"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "config")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "config")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"data-migration"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "data-migration")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "data-migration")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"public-api"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -176,7 +176,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"exec-sink"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "exec-sink")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"dependency"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "dependency")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "dependency")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -216,7 +216,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -228,7 +228,13 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
+}
+
+@test "ERROR: invalid base ref -> ok:false error channel" {
+    run bash -c "cd '$REPO' && '$SCRIPT' does-not-exist"
+    [ "$status" -ne 0 ]
+    printf '%s\n' "$output" | jq -e '.ok == false and .hits == [] and (.error | test("invalid base ref"))'
 }
 
 # ---------------------------------------------------------------------------
@@ -243,9 +249,9 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "auth")] | length > 0'
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "exec-sink")] | length > 0'
-    printf '%s\n' "$output" | jq -e 'length >= 2'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "auth")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+    printf '%s\n' "$output" | jq -e '.hits | length >= 2'
 }
 
 # ---------------------------------------------------------------------------
@@ -264,9 +270,9 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"public-api"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
     # file 値が壊れた escape シーケンスでないことを確認
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")][0].file | test("認証api\\.ts$")'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")][0].file | test("認証api\\.ts$")'
 }
 
 # ---------------------------------------------------------------------------
@@ -285,7 +291,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"public-api"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -315,7 +321,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 @test "docs EXCLUSION: docs/ 配下の .txt に auth 語彙 -> 除外され []" {
@@ -325,7 +331,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 @test "docs EXCLUSION regression: 同じ auth 語彙でも .ts は HIT のまま (非 docs は不変)" {
@@ -351,7 +357,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"public-api"'* ]]
     [[ "$output" == *'"severity":"critical"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -366,7 +372,7 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' --working-tree '$BASE'"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"auth"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "auth")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "auth")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -381,7 +387,7 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' --working-tree '$BASE'"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"public-api"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -391,7 +397,7 @@ teardown() {
     # 何も変更しない
     run bash -c "cd '$REPO' && '$SCRIPT' --working-tree '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -423,7 +429,7 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' --working-tree '$MAIN_SHA'"
     [ "$status" -eq 0 ]
     # auth-helper が含まれないこと
-    printf '%s\n' "$output" | jq -e '[.[] | .file | test("auth-helper")] | any | not'
+    printf '%s\n' "$output" | jq -e '[.hits[] | .file | test("auth-helper")] | any | not'
 }
 
 # ---------------------------------------------------------------------------
@@ -437,7 +443,7 @@ teardown() {
     # git add も commit もしない
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -452,9 +458,9 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' --working-tree '$BASE'"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"public-api"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
     # file 値が壊れたエスケープシーケンスでないことを確認
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")][0].file | test("認証処理\\.ts$")'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")][0].file | test("認証処理\\.ts$")'
 }
 
 # ---------------------------------------------------------------------------
@@ -494,7 +500,7 @@ teardown() {
     run bash -c "cd '$C' && '$SCRIPT' --working-tree origin/main"
     [ "$status" -eq 0 ]
     # merged-auth が含まれないこと
-    printf '%s\n' "$output" | jq -e '[.[] | .file | test("merged-auth")] | any | not'
+    printf '%s\n' "$output" | jq -e '[.hits[] | .file | test("merged-auth")] | any | not'
 
     rm -rf "$R" "$C"
 }
@@ -514,7 +520,7 @@ teardown() {
 
     run bash -c "cd '$REPO' && '$SCRIPT' --working-tree origin/main"
     [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -528,7 +534,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    [ "$output" = "[]" ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
 }
 
 # ---------------------------------------------------------------------------
@@ -543,7 +549,7 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"crypto"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "crypto")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "crypto")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -557,7 +563,7 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"crypto"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "crypto")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "crypto")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -572,7 +578,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length == 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length == 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -588,7 +594,7 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "exec-sink")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -604,7 +610,7 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length == 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length == 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -620,7 +626,7 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"class":"exec-sink"'* ]]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "exec-sink")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
 }
 
 # ---------------------------------------------------------------------------
@@ -635,5 +641,5 @@ teardown() {
     git -C "$REPO" commit -q -m change
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '[.[] | select(.class == "public-api")] | length > 0'
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
 }

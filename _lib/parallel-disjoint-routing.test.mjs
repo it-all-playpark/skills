@@ -58,7 +58,7 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     // Validate: test runner（label が 'test' で始まる）
     if (label.startsWith('test')) {
@@ -326,7 +326,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };

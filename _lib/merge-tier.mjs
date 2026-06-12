@@ -32,7 +32,9 @@ export function seedSecurityLedger() {
   }));
 }
 
-// danger-grep の hit クラス集合で SEC seed item を解決する。
+// danger-grep の結果で SEC seed item を解決する。
+// risk.ok !== true は danger-grep 実行失敗/転写失敗/空出力を表し、fail-closed として
+// 全 SEC seed を unchecked に戻す（clean と区別する）。
 // clean クラス → checked(evidence='danger-grep clean')。
 // hit クラス → critical へ raise(floor=true)。
 //   - floor=true かつ checked=true(evaluator が evidence で clearance 済み) → checked を維持する(HOLD に巻き戻さない)。
@@ -44,8 +46,17 @@ export function seedSecurityLedger() {
 //   danger が増えた(新クラスが hit に転じた)場合 → floor=false なので unchecked 復活 = HOLD。
 //   danger が減った(以前 hit だったクラスが clean に転じた)場合 → checked=true に解放(自動解消)。
 //   danger が同じ hit クラスで残る かつ evaluator clearance 済み(floor=true, checked=true) → checked 維持(温存)。
-export function reconcileDanger(ledger, hitClasses) {
-  const hits = new Set(hitClasses);
+export function reconcileDanger(ledger, risk) {
+  if (!risk || risk.ok !== true) {
+    const error = risk?.error ? `danger-grep error: ${risk.error}` : 'danger-grep error';
+    const items = ledger.items.map((it) => {
+      if (it.source !== 'seed' || it.dimension !== 'security') return it;
+      return { ...it, checked: false, evidence: error };
+    });
+    return { ...ledger, items };
+  }
+
+  const hits = new Set((risk.hits ?? []).map((h) => h.class));
   const items = ledger.items.map((it) => {
     if (it.source !== 'seed' || it.dimension !== 'security') return it;
     if (hits.has(it.danger_class)) {
