@@ -131,9 +131,11 @@ function mdCell(v) {
  * @param {number} opts.iteration - 反復回数
  * @param {string} opts.decision - 'approve' | 'request-changes' | 'comment'
  * @param {Array} opts.blocking - blocking finding の配列
+ * @param {string} [opts.summary] - 結論 1-2 文（任意）
+ * @param {string[]} [opts.verificationEvidence] - 検証根拠リスト（任意）
  * @returns {string}
  */
-function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
+function buildReviewCommentBody({ pr, iteration, decision, blocking, summary, verificationEvidence }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const label = DECISION_LABEL[decision] ?? decision;
@@ -166,6 +168,17 @@ function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
     }
   }
 
+  if (summary != null && summary !== '') {
+    lines.push('');
+    lines.push(`**summary**: ${summary}`);
+  }
+  const evList = verificationEvidence || [];
+  if (evList.length > 0) {
+    lines.push('');
+    lines.push('**検証根拠**:');
+    for (const e of evList) lines.push(`- ${mdCell(e)}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -184,10 +197,11 @@ const STATUS_HEADLINE = {
  * @param {number} opts.iterations - 総反復回数
  * @param {string} opts.lastDecision - 最終判定
  * @param {string} opts.lastSummary - 最終サマリーテキスト
+ * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking}]
  * @returns {string}
  */
-function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, history }) {
+function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const lines = [];
@@ -205,6 +219,13 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 
   lines.push('');
   lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  const evList2 = lastVerificationEvidence || [];
+  if (evList2.length > 0) {
+    lines.push('');
+    lines.push('**検証根拠**:');
+    for (const e of evList2) lines.push(`- ${mdCell(e)}`);
+  }
 
   const histList = history || [];
   if (histList.length > 0) {
@@ -313,6 +334,8 @@ const REVIEW = {
       },
     },
     summary: { type: 'string' },
+    // 検証根拠の箇条書き（1 項目 1 文）。summary は結論 1-2 文に留める（issue #242）
+    verification_evidence: { type: 'array', items: { type: 'string' } },
   },
 }
 
@@ -415,7 +438,7 @@ for (i = 1; i <= MAX; i++) {
       history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: [] })
 
       // per-round 投稿: approve（self-PR 検出 → --approve 失敗時 gh pr comment へフォールバック）
-      const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [] })
+      const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [], summary: review.summary, verificationEvidence: review.verification_evidence })
       const approvePost = await agent(
         `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n\n`
         + bodySaveInstr(approveBody)
@@ -480,7 +503,7 @@ for (i = 1; i <= MAX; i++) {
 
       // per-round 投稿: CI failed。decision は approve だが CI red のため gh pr review --approve は使わず
       // plain な gh pr comment で情報提供のみ行う
-      const ciRoundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: ciFindings })
+      const ciRoundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: ciFindings, summary: review.summary, verificationEvidence: review.verification_evidence })
       const ciRoundPost = await agent(
         `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}、CI failed）。\n\n`
         + bodySaveInstr(ciRoundBody)
@@ -540,7 +563,7 @@ for (i = 1; i <= MAX; i++) {
   history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking })
 
   // per-round 投稿: request-changes または comment
-  const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking })
+  const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking, summary: review.summary, verificationEvidence: review.verification_evidence })
   const roundPost = await agent(
     `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n\n`
     + bodySaveInstr(roundBody)
@@ -605,6 +628,7 @@ const summaryBody = buildTerminalSummaryBody({
   iterations: Math.min(i, MAX),
   lastDecision: lastReview?.decision ?? null,
   lastSummary: lastReview?.summary ?? null,
+  lastVerificationEvidence: lastReview?.verification_evidence ?? null,
   history,
 })
 const summaryPost = await agent(

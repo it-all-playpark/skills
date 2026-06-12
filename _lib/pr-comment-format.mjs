@@ -23,9 +23,11 @@ export function mdCell(v) {
  * @param {number} opts.iteration - 反復回数
  * @param {string} opts.decision - 'approve' | 'request-changes' | 'comment'
  * @param {Array} opts.blocking - blocking finding の配列
+ * @param {string} [opts.summary] - 結論 1-2 文（任意）
+ * @param {string[]} [opts.verificationEvidence] - 検証根拠リスト（任意）
  * @returns {string}
  */
-export function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
+export function buildReviewCommentBody({ pr, iteration, decision, blocking, summary, verificationEvidence }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const label = DECISION_LABEL[decision] ?? decision;
@@ -58,6 +60,17 @@ export function buildReviewCommentBody({ pr, iteration, decision, blocking }) {
     }
   }
 
+  if (summary != null && summary !== '') {
+    lines.push('');
+    lines.push(`**summary**: ${summary}`);
+  }
+  const evList = verificationEvidence || [];
+  if (evList.length > 0) {
+    lines.push('');
+    lines.push('**検証根拠**:');
+    for (const e of evList) lines.push(`- ${mdCell(e)}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -76,10 +89,11 @@ const STATUS_HEADLINE = {
  * @param {number} opts.iterations - 総反復回数
  * @param {string} opts.lastDecision - 最終判定
  * @param {string} opts.lastSummary - 最終サマリーテキスト
+ * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking}]
  * @returns {string}
  */
-export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, history }) {
+export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const lines = [];
@@ -97,6 +111,13 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
 
   lines.push('');
   lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  const evList2 = lastVerificationEvidence || [];
+  if (evList2.length > 0) {
+    lines.push('');
+    lines.push('**検証根拠**:');
+    for (const e of evList2) lines.push(`- ${mdCell(e)}`);
+  }
 
   const histList = history || [];
   if (histList.length > 0) {

@@ -430,3 +430,175 @@ test('buildTerminalSummaryBody: 決定性（同入力 -> 同出力）', () => {
   const second = buildTerminalSummaryBody(input);
   assert.equal(first, second, '同入力 -> バイト完全一致');
 });
+
+// --- New tests: verification_evidence support ------------------------------------
+
+// (1) buildTerminalSummaryBody with lastVerificationEvidence — snapshot pin
+test('buildTerminalSummaryBody: lastVerificationEvidence を渡すと **検証根拠**: + 箇条書きが出る（スナップショット pin）', () => {
+  const body = buildTerminalSummaryBody({
+    pr: 10,
+    status: 'lgtm',
+    iterations: 2,
+    lastDecision: 'approve',
+    lastSummary: '問題なし',
+    lastVerificationEvidence: ['根拠A', '根拠B'],
+    history: [
+      { iteration: 1, decision: 'request-changes', summary: 'issues', blocking: [] },
+      { iteration: 2, decision: 'approve', summary: 'fixed', blocking: [] },
+    ],
+  });
+
+  const expectedBody = [
+    '## PR #10 — pr-iterate 終了レポート',
+    '',
+    '### 🎉 LGTM',
+    '',
+    '| 終了状態 | 総反復 | 最終判定 |',
+    '|---|---|---|',
+    '| lgtm | 2 | ✅ 承認 (LGTM) |',
+    '',
+    '**最終判定理由**: 問題なし',
+    '',
+    '**検証根拠**:',
+    '- 根拠A',
+    '- 根拠B',
+    '',
+    '### 反復履歴',
+    '',
+    '| iter | 判定 | blocking | summary |',
+    '|---|---|---|---|',
+    '| 1 | 🔴 変更要求 | 0 | issues |',
+    '| 2 | ✅ 承認 (LGTM) | 0 | fixed |',
+    '',
+    '---',
+    '*このコメントは pr-iterate により自動生成されました。*',
+    '<!-- pr-iterate:lgtm:2 -->',
+  ].join('\n');
+
+  assert.equal(body, expectedBody, 'スナップショット全文一致');
+});
+
+// (2) lastVerificationEvidence が undefined のとき現行出力と完全一致
+test('buildTerminalSummaryBody: lastVerificationEvidence が undefined のとき **検証根拠** を含まない', () => {
+  const withoutEvidence = buildTerminalSummaryBody({
+    pr: 5,
+    status: 'lgtm',
+    iterations: 1,
+    lastDecision: 'approve',
+    lastSummary: 'done',
+    history: [],
+  });
+  const withUndefined = buildTerminalSummaryBody({
+    pr: 5,
+    status: 'lgtm',
+    iterations: 1,
+    lastDecision: 'approve',
+    lastSummary: 'done',
+    lastVerificationEvidence: undefined,
+    history: [],
+  });
+  assert.ok(!withoutEvidence.includes('**検証根拠**'), 'undefined 時: **検証根拠** を含まない');
+  assert.equal(withoutEvidence, withUndefined, 'undefined 省略と undefined 明示で出力が完全一致');
+});
+
+// (3) lastVerificationEvidence が空配列 [] のとき (2) と同一
+test('buildTerminalSummaryBody: lastVerificationEvidence が [] のとき **検証根拠** を含まない', () => {
+  const withoutEvidence = buildTerminalSummaryBody({
+    pr: 5,
+    status: 'lgtm',
+    iterations: 1,
+    lastDecision: 'approve',
+    lastSummary: 'done',
+    history: [],
+  });
+  const withEmpty = buildTerminalSummaryBody({
+    pr: 5,
+    status: 'lgtm',
+    iterations: 1,
+    lastDecision: 'approve',
+    lastSummary: 'done',
+    lastVerificationEvidence: [],
+    history: [],
+  });
+  assert.ok(!withEmpty.includes('**検証根拠**'), '空配列時: **検証根拠** を含まない');
+  assert.equal(withoutEvidence, withEmpty, '省略と空配列で出力が完全一致');
+});
+
+// (4) history の round.summary が 120 文字超でテーブル truncation、evidence 非混入
+test('buildTerminalSummaryBody: 長文 summary truncation + evidence がテーブル行に混入しない', () => {
+  const longSummary = 'a'.repeat(130);
+  const body = buildTerminalSummaryBody({
+    pr: 7,
+    status: 'lgtm',
+    iterations: 1,
+    lastDecision: 'approve',
+    lastSummary: 'done',
+    lastVerificationEvidence: ['evidence item X'],
+    history: [
+      { iteration: 1, decision: 'approve', summary: longSummary, blocking: [] },
+    ],
+  });
+  const truncated = 'a'.repeat(120) + '\u2026';
+  assert.ok(body.includes(truncated), '120文字+… が反復履歴テーブルに出る');
+
+  // テーブル行（`| <数字> |` で始まる行）に evidence 文字列が混入しないことを検証
+  const tableRows = body.split('\n').filter(l => /^\| \d+ \|/.test(l));
+  assert.ok(tableRows.length > 0, 'テーブル行が存在する');
+  for (const row of tableRows) {
+    assert.ok(!row.includes('evidence item X'), 'テーブル行に evidence が混入しない');
+  }
+});
+
+// (5) buildReviewCommentBody に summary / verificationEvidence を渡すと表示される
+test('buildReviewCommentBody: summary と verificationEvidence を渡すと **summary** + **検証根拠** が出る', () => {
+  const body = buildReviewCommentBody({
+    pr: 3,
+    iteration: 1,
+    decision: 'approve',
+    blocking: [],
+    summary: '結論文',
+    verificationEvidence: ['根拠1'],
+  });
+  assert.ok(body.includes('**summary**: 結論文'), '**summary**: が出る');
+  assert.ok(body.includes('**検証根拠**:'), '**検証根拠**: が出る');
+  assert.ok(body.includes('- 根拠1'), '箇条書き項目が出る');
+
+  // 判定行の後に summary が来ることを確認（順序検証）
+  const summaryIdx = body.indexOf('**summary**:');
+  const decisionIdx = body.indexOf('**判定**:');
+  assert.ok(decisionIdx < summaryIdx, '判定行より後に **summary** が来る');
+});
+
+// (6) buildReviewCommentBody で summary / verificationEvidence を渡さない場合、現行出力と完全一致
+test('buildReviewCommentBody: summary / verificationEvidence 省略時は現行出力と完全一致', () => {
+  const withoutNew = buildReviewCommentBody({
+    pr: 5,
+    iteration: 2,
+    decision: 'request-changes',
+    blocking: [{ severity: 'critical', description: 'issue' }],
+  });
+  const withUndefined = buildReviewCommentBody({
+    pr: 5,
+    iteration: 2,
+    decision: 'request-changes',
+    blocking: [{ severity: 'critical', description: 'issue' }],
+    summary: undefined,
+    verificationEvidence: undefined,
+  });
+  assert.ok(!withoutNew.includes('**summary**'), '省略時: **summary** を含まない');
+  assert.ok(!withoutNew.includes('**検証根拠**'), '省略時: **検証根拠** を含まない');
+  assert.equal(withoutNew, withUndefined, '省略と undefined 明示で出力が完全一致');
+});
+
+// (7) evidence 項目に改行を含む文字列を渡すと mdCell で <br> になる
+test('buildReviewCommentBody: evidence 項目の改行が mdCell で <br> に変換される', () => {
+  const body = buildReviewCommentBody({
+    pr: 1,
+    iteration: 1,
+    decision: 'approve',
+    blocking: [],
+    summary: '要約',
+    verificationEvidence: ['a\nb'],
+  });
+  assert.ok(body.includes('- a<br>b'), 'evidence 改行が <br> に変換される');
+});
