@@ -68,7 +68,7 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig } = {}) {
   };
 
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'LGTM' });
+  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
 
   const sandbox = {
     phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
