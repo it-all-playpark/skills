@@ -32,7 +32,7 @@ export function mdCell(v) {
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
- * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）
+ * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）。pr-iterate fix 適用時も true（issue #233）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -99,7 +99,7 @@ export function buildDevflowSummaryBody({
 
   // 2b. evalTreeStale 警告（at-a-glance テーブル直後・gate_policy 行前）
   if (evalTreeStale === true) {
-    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致、または pr-iterate で fix が適用された。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
     lines.push('');
   }
 

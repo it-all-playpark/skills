@@ -103,7 +103,7 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
-    workflow: async () => ({ status: 'LGTM' }),
+    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
     args: '1',
     // JS 組み込み（makeWorkflowSandbox と同一セット）
@@ -378,7 +378,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
-    workflow: async () => ({ status: 'LGTM' }),
+    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     args: '1',
     console,
     JSON,

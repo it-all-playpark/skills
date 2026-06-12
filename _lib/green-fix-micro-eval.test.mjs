@@ -118,7 +118,7 @@ function makeMicroGreenFixSandbox() {
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
-    workflow: async () => ({ status: 'LGTM' }),
+    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     args: '1',
     console,
     JSON,
