@@ -111,7 +111,7 @@ function makeSandbox(analyzeReq, postResult) {
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
 
   // pr-iterate stub: workflow() の呼び出し
-  const workflowStub = async () => ({ status: 'LGTM' });
+  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
 
   // sandbox object（merge-tier-unsatisfied-ac.test.mjs と同一セット）
   const sandbox = {

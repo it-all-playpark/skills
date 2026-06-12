@@ -84,7 +84,7 @@ function makeSandbox(analyzeReq, implementerStub) {
   };
 
   const parallelStub = (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'LGTM' });
+  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
 
   const sandbox = {
     phase: () => {},

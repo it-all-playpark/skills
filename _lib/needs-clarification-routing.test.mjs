@@ -110,7 +110,7 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
   // workflow() stub: 呼ばれたら flag を立てて {status:'LGTM'} を返す
   const workflowStub = async () => {
     workflowCalledRef.called = true;
-    return { status: 'LGTM' };
+    return { status: 'lgtm', iterations: 1, fixes_applied: 0 };
   };
 
   const sandbox = {

@@ -356,6 +356,7 @@ let lastReview = null
 let lgtm = false
 let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
+let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking}]
 
@@ -522,6 +523,7 @@ for (i = 1; i <= MAX; i++) {
       }
 
       // CI fix applied — continue to next iteration for re-review + re-CI-check
+      fixesApplied++
       continue
     }
   }
@@ -590,6 +592,7 @@ for (i = 1; i <= MAX; i++) {
       + `無言で再レビューを繰り返さず人間へエスカレーション`)
     break
   }
+  fixesApplied++
 }
 
 const status = lgtm ? 'lgtm' : (terminal ?? 'max_reached')
@@ -640,6 +643,7 @@ return {
   pr: PR,
   status,
   iterations: Math.min(i, MAX),
+  fixes_applied: fixesApplied,
   last_decision: lastReview?.decision ?? null,
   last_summary: lastReview?.summary ?? null,
 }

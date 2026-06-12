@@ -223,6 +223,9 @@ function isDocsOrTestOnly(files) {
 // HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
 // AUTO: micro かつ docs/test-only かつ danger clean かつ収束（推奨ラベル）。
 // REVIEW: それ以外（標準。人間が LGTM して merge）。
+// s.evalSkipped (optional boolean): true の場合、AUTO branch で AC 未検証開示 reason を追記する。
+//   micro path は evaluator 0 回で AC を判定していないため、AUTO 推奨でもその事実を開示する（issue #233）。
+//   danger-grep hit / green-fix で security path により eval が強制実行された場合は false にして虚偽開示を避ける。
 function classifyMergeTier(s) {
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -232,7 +235,11 @@ function classifyMergeTier(s) {
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (reasons.length) return { tier: 'HOLD', reasons };
   if (s.shape === 'micro' && s.docsOrTestOnly) {
-    return { tier: 'AUTO', reasons: ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'] };
+    const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
+    // micro path は evaluator 0 回で AC を判定していない — AUTO 推奨でもその事実を開示する（issue #233）。
+    // evalSkipped は optional（未指定 = falsy = 開示なし）。tier 判定値は変更しない（ゲート境界不変）。
+    if (s.evalSkipped === true) autoReasons.push('AC は未検証（micro eval skip）— evaluator 0 回のため acceptance_criteria の充足は判定していない');
+    return { tier: 'AUTO', reasons: autoReasons };
   }
   return { tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'] };
 }
@@ -606,7 +613,7 @@ function mdCell(v) {
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
- * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）
+ * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）。pr-iterate fix 適用時も true（issue #233）
  * @returns {string}
  */
 function buildDevflowSummaryBody({
@@ -673,7 +680,7 @@ function buildDevflowSummaryBody({
 
   // 2b. evalTreeStale 警告（at-a-glance テーブル直後・gate_policy 行前）
   if (evalTreeStale === true) {
-    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致、または pr-iterate で fix が適用された。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
     lines.push('');
   }
 
@@ -1953,6 +1960,15 @@ log(`PR created: ${pr.pr_url}`)
 // ============================================================
 const iterate = await workflow('pr-iterate', { pr: pr.pr_number })
 
+// pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある（issue #233）。
+// runEval=false（micro path・eval 0 回）では「Evaluate が stale」という概念自体が成立しないため skip。
+// evalDiffHash の取得可否とは独立に判定する（hash 取得失敗でも eval は実行済みのため）。
+const iterateChangedTree = (iterate?.status != null && iterate.status !== 'lgtm') || ((iterate?.fixes_applied ?? 0) > 0)
+if (runEval && iterateChangedTree && !evalTreeStale) {
+  evalTreeStale = true
+  log(`⚠️ pr-iterate が fix を適用 / lgtm 以外で終端（status=${iterate?.status ?? 'null'}, fixes_applied=${iterate?.fixes_applied ?? 0}）— 終端サマリーに stale-eval 警告を付記する（issue #233）`)
+}
+
 // ============================================================
 // Phase Merge tier: 最終 diff に danger-grep を再実行し、merge tier を算出して提示する(W5)。
 // merge は全 tier 人間。AUTO は推奨ラベルのみ(真 auto-merge は W6 earned-autonomy)。
@@ -1984,6 +2000,7 @@ const mergeTier = classifyMergeTier({
   docsOrTestOnly: isDocsOrTestOnly(changed.files ?? []),
   escalateCount,
   unsatisfiedAc,
+  evalSkipped: !runEval,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 

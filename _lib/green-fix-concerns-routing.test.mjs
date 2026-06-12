@@ -122,7 +122,7 @@ function makeCountingSandbox() {
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
-    workflow: async () => ({ status: 'LGTM' }),
+    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
     args: '1',
     // JS 組み込み（green-fix-test-audit.test.mjs と同一セット）
