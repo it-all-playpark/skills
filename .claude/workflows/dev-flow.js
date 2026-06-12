@@ -1202,10 +1202,20 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
   + `（git status に混入し realized-diff の refloor 誤発火・宣言外変更 concern の原因になる）。\n`
 
 function implPrompt(t, fixFeedback, extraContext) {
+  // AC・plan contract（summary / architecture_decisions / edge_cases）を全 implementer spawn prompt に注入する。
+  // evaluator が AC ベースで採点するため implementer と採点軸を共有する（issue #224）。
+  // 注入は contract 粒度に留め line-level 詳細は含めない。req / plan は top-level binding で、
+  // 全呼び出しは Plan phase 後（replan 時は最新 plan が注入される）。
+  const archDecisions = plan?.architecture_decisions ?? []
+  const edgeCases = plan?.edge_cases ?? []
   return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
     + `次の task を ${TESTING} 戦略で実装せよ。共有 worktree のため自分の task の file_changes 以外は触るな。`
     + `git add / commit はするな。\n`
     + `task: ${JSON.stringify(t)}\n`
+    + `requirements（issue 受入条件。evaluator はこの AC を採点軸にする — 自 task に関係する AC を満たすこと）:\n${JSON.stringify(req?.acceptance_criteria ?? [])}\n`
+    + `plan summary: ${JSON.stringify(plan?.summary ?? '')}\n`
+    + (archDecisions.length ? `architecture_decisions（計画の設計判断。この方針に従うこと）:\n${JSON.stringify(archDecisions)}\n` : '')
+    + (edgeCases.length ? `edge_cases（計画が想定する edge case。実装時に考慮すること）:\n${JSON.stringify(edgeCases)}\n` : '')
     + (fixFeedback ? `修正指摘（各項目を解消）:\n${JSON.stringify(fixFeedback)}\n` : '')
     + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
     + STAGING_CONVENTION
