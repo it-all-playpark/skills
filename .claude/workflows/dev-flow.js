@@ -1503,6 +1503,8 @@ for (let i = 1; i <= GREEN_MAX; i++) {
     + '\n' + STAGING_CONVENTION,
     { agentType: 'implementer', schema: IMPL, label: `green-fix#${i}`, phase: 'Validate' },
   )
+  // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路の gfRetry と対称。issue #223）
+  if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)
   greenFixCount += 1
   greenFixIterations.push({
     files: gfResult?.files ?? [],
