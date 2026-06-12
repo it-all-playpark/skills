@@ -77,11 +77,13 @@ test("[dev-runner-model] Setup (schema:SETUP) uses agentType:'dev-runner-haiku'"
 });
 
 // (2) Validate uses dev-runner-haiku
+// F2 (runValidateLoop 統合) 後: label は ternary に抽象化されるため
+// /label:`test#/ の代わりに schema:GREEN 行で test# の存在を確認する。
 test("[dev-runner-model] Validate (schema:GREEN) uses agentType:'dev-runner-haiku'", () => {
-  const line = findAgentCallLine(src, 'GREEN', /label:\s*`test#/);
+  const line = findAgentCallLine(src, 'GREEN', /test#/);
   assert.ok(
     line !== null,
-    "Could not find Validate agent() call (schema:GREEN, label:`test#...`) in dev-flow.js",
+    "Could not find Validate agent() call (schema:GREEN, containing test#) in dev-flow.js",
   );
   assert.match(
     line,

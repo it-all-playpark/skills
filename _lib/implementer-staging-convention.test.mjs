@@ -31,13 +31,15 @@ const src = readFileSync(devFlowPath, 'utf8');
 // Part 1: source pin
 // ============================================================
 
-// (1) STAGING_CONVENTION が dev-flow.js にちょうど 5 回出現する（定義 1 + usage 4）
-test('[staging-convention] dev-flow.js に STAGING_CONVENTION がちょうど 5 回出現する', () => {
+// (1) STAGING_CONVENTION が dev-flow.js にちょうど 4 回出現する（定義 1 + usage 3）
+// F2 (runValidateLoop 統合) 後: green-fix 本経路 + retry 経路が runValidateLoop 内の 1 行に統合
+// されたため旧 5 → 4 に変更（implPrompt/runValidateLoop-green-fix/fix の usage 3）。
+test('[staging-convention] dev-flow.js に STAGING_CONVENTION がちょうど 4 回出現する', () => {
   const count = src.split('STAGING_CONVENTION').length - 1;
   assert.equal(
     count,
-    5,
-    `dev-flow.js に STAGING_CONVENTION が ${count} 回出現（期待: 5 回 = 定義 1 + implPrompt/green-fix/green-fix-retry/fix の usage 4）`,
+    4,
+    `dev-flow.js に STAGING_CONVENTION が ${count} 回出現（期待: 4 回 = 定義 1 + implPrompt/runValidateLoop-green-fix/fix の usage 3）`,
   );
 });
 
