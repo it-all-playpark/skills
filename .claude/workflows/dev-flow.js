@@ -1758,7 +1758,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
   // critical_resolutions の操作的契約は本 prompt が唯一の source of truth（issue #174）。
   // .claude/agents/ は sandbox deny 対象（.claude/skills / .claude/hooks と同様に write 禁止。
   // 実測確認済: touch .claude/agents/test.tmp → EPERM）のため workflow からは編集不可。
-  // evaluator.md の同期文言（critical_resolutions 契約）は human 編集が必要（follow-up issue 推奨）。
+  // evaluator.md の同期文言（critical_resolutions / security_clearance 契約）は issue #227 で対応（workflow からは編集不可のため、human が sandbox 外で evaluator.md を同期する必要がある）。
   // 契約文面は EVAL schema と同居するここで管理し、_lib/eval-convergence.test.mjs の contract test が pin する。
   const openEvalCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
   // evaluator 呼び出し直前の diff hash を取得・保持（issue #215/#219）。
