@@ -120,7 +120,7 @@ cmd_log() {
     # Validate error category
     if [[ -n "$error_category" ]]; then
         case "$error_category" in
-            lint|test|build|runtime|config|env|merge|type-check) ;;
+            lint|test|build|runtime|config|env|merge|type-check|needs_clarification|empty_diff) ;;
             *) die_json "Invalid error category: $error_category" 1 ;;
         esac
     fi

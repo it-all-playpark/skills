@@ -3,7 +3,13 @@
   "title": "Journal Entry",
   "description": "Skill execution journal entry for retrospective analysis",
   "type": "object",
-  "required": ["version", "id", "timestamp", "skill", "outcome"],
+  "required": [
+    "version",
+    "id",
+    "timestamp",
+    "skill",
+    "outcome"
+  ],
   "properties": {
     "version": {
       "type": "string",
@@ -30,7 +36,11 @@
     },
     "outcome": {
       "type": "string",
-      "enum": ["success", "failure", "partial"],
+      "enum": [
+        "success",
+        "failure",
+        "partial"
+      ],
       "description": "Execution outcome"
     },
     "duration_turns": {
@@ -70,11 +80,25 @@
         },
         "category": {
           "type": "string",
-          "enum": ["lint", "test", "build", "runtime", "config", "env", "merge", "type-check"],
+          "enum": [
+            "lint",
+            "test",
+            "build",
+            "runtime",
+            "config",
+            "env",
+            "merge",
+            "type-check",
+            "needs_clarification",
+            "empty_diff"
+          ],
           "description": "Error classification category"
         }
       },
-      "required": ["message", "category"],
+      "required": [
+        "message",
+        "category"
+      ],
       "description": "Error details (present when outcome is failure or partial)"
     },
     "recovery": {
@@ -98,7 +122,10 @@
     },
     "source": {
       "type": "string",
-      "enum": ["skill", "hook"],
+      "enum": [
+        "skill",
+        "hook"
+      ],
       "description": "Entry origin: skill = explicit journal.sh log call, hook = PostToolUseFailure hook capture. Pre-migration entries may have an absent field OR a legacy 'hook-capture' value (written by the old cmd_hook_capture). Consumers use inclusive semantics: (.source // \"skill\") == \"skill\" to match skill entries, (.source // \"skill\") != \"skill\" to match non-skill entries. Both absent and 'hook-capture' values are handled correctly without backfill."
     }
   }
