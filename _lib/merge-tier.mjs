@@ -32,8 +32,6 @@ export function seedSecurityLedger() {
   }));
 }
 
-const SEC_SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
-
 // danger-grep の hit クラス集合で SEC seed item を解決する。
 // clean クラス → checked(evidence='danger-grep clean')。
 // hit クラス → critical へ raise(floor=true)。
@@ -56,8 +54,7 @@ export function reconcileDanger(ledger, hitClasses) {
       // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
       // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
       if (it.checked && it.floor) return it;
-      const severity = SEC_SEVERITY_RANK['critical'] > SEC_SEVERITY_RANK[it.severity] ? 'critical' : it.severity;
-      return { ...it, severity, floor: true, checked: false };
+      return { ...it, severity: 'critical', floor: true, checked: false };
     }
     return { ...it, checked: true, evidence: 'danger-grep clean' };
   });
