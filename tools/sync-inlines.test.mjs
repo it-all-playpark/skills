@@ -19,12 +19,14 @@ import {
   transformCanonical,
   scanMarkers,
   syncRepo,
+  collectTopLevelDeclNames,
 } from './sync-inlines.mjs';
 
 const SCRIPT_PATH = join(dirname(fileURLToPath(import.meta.url)), 'sync-inlines.mjs');
 
 // Helper: create a minimal fixture repo in a tmpdir
-function makeFixtureRepo(canonicalContent, workflowContent, { multiWf = false, secondWfContent = null } = {}) {
+// extraCanonicals: { 'fake2.mjs': content, ... } — written to _lib/ alongside fake.mjs
+function makeFixtureRepo(canonicalContent, workflowContent, { multiWf = false, secondWfContent = null, extraCanonicals = {} } = {}) {
   const tmp = mkdtempSync(join(os.tmpdir(), 'sync-inlines-'));
   mkdirSync(join(tmp, '_lib'), { recursive: true });
   mkdirSync(join(tmp, '.claude', 'workflows'), { recursive: true });
@@ -32,6 +34,9 @@ function makeFixtureRepo(canonicalContent, workflowContent, { multiWf = false, s
   writeFileSync(join(tmp, '.claude', 'workflows', 'wf.js'), workflowContent, 'utf8');
   if (multiWf && secondWfContent !== null) {
     writeFileSync(join(tmp, '.claude', 'workflows', 'wf2.js'), secondWfContent, 'utf8');
+  }
+  for (const [name, content] of Object.entries(extraCanonicals)) {
+    writeFileSync(join(tmp, '_lib', name), content, 'utf8');
   }
   return tmp;
 }
@@ -329,4 +334,131 @@ test('CLI exits 2 with both --write and --check', () => {
 test('CLI exits 2 with unknown flag', () => {
   const result = runCli(['--unknown-flag']);
   assert.equal(result.status, 2);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test (t1-t3): collectTopLevelDeclNames unit tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('collectTopLevelDeclNames extracts function, async function, const, let, var, class', () => {
+  const src = `function foo(){}\nasync function bar(){}\nconst A = 1;\nlet b = 2;\nvar c = 3;\nclass D {}\n`;
+  const names = collectTopLevelDeclNames(src);
+  assert.deepEqual(names.sort(), ['A', 'D', 'b', 'bar', 'c', 'foo'].sort());
+});
+
+test('collectTopLevelDeclNames excludes indented nested declarations', () => {
+  const src = `function outer() {\n  const inner = 1;\n}\n`;
+  const names = collectTopLevelDeclNames(src);
+  assert.ok(names.includes('outer'), 'should include outer');
+  assert.ok(!names.includes('inner'), 'should NOT include inner (indented)');
+});
+
+test('collectTopLevelDeclNames excludes declarations in comments', () => {
+  const src = `// const ghost = 1;\nconst real = 2;\n`;
+  const names = collectTopLevelDeclNames(src);
+  assert.ok(names.includes('real'), 'should include real');
+  assert.ok(!names.includes('ghost'), 'should NOT include ghost (in comment)');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test (t4): function declaration collision between two canonicals
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('syncRepo throws on function declaration collision between two canonicals', () => {
+  const canonical1 = `export function topicKey(x) { return x; }\n`;
+  const canonical2 = `export function topicKey(y) { return y; }\n`;
+  const markerBegin1 = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd1 = `// ==== END inline: _lib/fake.mjs ====`;
+  const markerBegin2 = `// ==== BEGIN inline: _lib/fake2.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd2 = `// ==== END inline: _lib/fake2.mjs ====`;
+  const wf = `${markerBegin1}\n${markerEnd1}\n${markerBegin2}\n${markerEnd2}\n`;
+  const tmp = makeFixtureRepo(canonical1, wf, { extraCanonicals: { 'fake2.mjs': canonical2 } });
+  try {
+    assert.throws(() => syncRepo(tmp, { write: false }), /collision/i);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test (t5): const collision between two canonicals — explicit message, not SyntaxError
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('syncRepo throws on const collision between two canonicals with explicit collision message', () => {
+  const canonical1 = `export const topicKey = 1;\n`;
+  const canonical2 = `export const topicKey = 2;\n`;
+  const markerBegin1 = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd1 = `// ==== END inline: _lib/fake.mjs ====`;
+  const markerBegin2 = `// ==== BEGIN inline: _lib/fake2.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd2 = `// ==== END inline: _lib/fake2.mjs ====`;
+  const wf = `${markerBegin1}\n${markerEnd1}\n${markerBegin2}\n${markerEnd2}\n`;
+  const tmp = makeFixtureRepo(canonical1, wf, { extraCanonicals: { 'fake2.mjs': canonical2 } });
+  try {
+    assert.throws(() => syncRepo(tmp, { write: false }), /collision/i);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test (t6): syntax error canonical throws with 'syntax' in message
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('syncRepo throws with /syntax/i on canonical with syntax error', () => {
+  const canonical = `export const X = ;\n`;
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const wf = `${markerBegin}\n${markerEnd}\n`;
+  const tmp = makeFixtureRepo(canonical, wf);
+  try {
+    assert.throws(() => syncRepo(tmp, { write: false }), /syntax/i);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test (t7): non-colliding two canonicals in one workflow — normal case
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('syncRepo succeeds when two canonicals have no collision', () => {
+  const canonical1 = `export const A = 1;\n`;
+  const canonical2 = `export const B = 2;\n`;
+  const markerBegin1 = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd1 = `// ==== END inline: _lib/fake.mjs ====`;
+  const markerBegin2 = `// ==== BEGIN inline: _lib/fake2.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd2 = `// ==== END inline: _lib/fake2.mjs ====`;
+  const wf = `${markerBegin1}\n// old A\n${markerEnd1}\n${markerBegin2}\n// old B\n${markerEnd2}\n`;
+  const tmp = makeFixtureRepo(canonical1, wf, { extraCanonicals: { 'fake2.mjs': canonical2 } });
+  try {
+    assert.doesNotThrow(() => syncRepo(tmp, { write: true }));
+    const written = readFileSync(join(tmp, '.claude', 'workflows', 'wf.js'), 'utf8');
+    assert.ok(written.includes('const A = 1;'), 'should contain A');
+    assert.ok(written.includes('const B = 2;'), 'should contain B');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test (t8): same canonical in two different workflow files — per-file scope guard
+// (guard: collision detection is per workflow file, not global)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('syncRepo does NOT collision-error when same canonical is inlined in two different workflow files', () => {
+  const canonical = `export function topicKey(x) { return x; }\n`;
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const wf1 = `${markerBegin}\n// old 1\n${markerEnd}\n`;
+  const wf2 = `${markerBegin}\n// old 2\n${markerEnd}\n`;
+  const tmp = makeFixtureRepo(canonical, wf1, { multiWf: true, secondWfContent: wf2 });
+  try {
+    assert.doesNotThrow(() => syncRepo(tmp, { write: true }));
+    const wf1Written = readFileSync(join(tmp, '.claude', 'workflows', 'wf.js'), 'utf8');
+    const wf2Written = readFileSync(join(tmp, '.claude', 'workflows', 'wf2.js'), 'utf8');
+    assert.ok(wf1Written.includes('function topicKey'), 'wf.js should contain topicKey');
+    assert.ok(wf2Written.includes('function topicKey'), 'wf2.js should contain topicKey');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });

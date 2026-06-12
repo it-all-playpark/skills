@@ -24,6 +24,8 @@ const END_RE   = /^\/\/ ==== END inline: (\S+) ====$/;
 //   - Template literals: handled as string context up to the matching closing backtick.
 //     ${ } expressions inside template literals are NOT recursed into (not needed for current
 //     canonicals; a comment in the code makes this limitation explicit).
+//   - Regex literals are not parsed as regex context. This is acceptable for current canonicals;
+//     add a focused fixture before relying on regex literals containing comment-like tokens.
 //   - After comment removal, the positions of remaining code are preserved (comments -> spaces).
 //
 // NOTE: canonicals with ${ } containing a nested backtick are NOT supported. The current 8
@@ -117,6 +119,62 @@ export function transformCanonical(src, label) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// collectTopLevelDeclNames(src): collect declaration names that will share the
+// workflow file's top-level scope after inline generation. This intentionally
+// only considers column-0 declarations; nested declarations stay scoped.
+// ─────────────────────────────────────────────────────────────────────────────
+export function collectTopLevelDeclNames(src) {
+  const stripped = stripComments(src);
+  const names = [];
+  for (const line of stripped.split('\n')) {
+    let match = line.match(/^(?:async\s+function|function)\s+([A-Za-z_$][\w$]*)\b/);
+    if (match) {
+      names.push(match[1]);
+      continue;
+    }
+    match = line.match(/^class\s+([A-Za-z_$][\w$]*)\b/);
+    if (match) {
+      names.push(match[1]);
+      continue;
+    }
+    match = line.match(/^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\b/);
+    if (match) {
+      names.push(match[1]);
+    }
+  }
+  return names;
+}
+
+function validateInlineDeclCollisions(wfFile, inlineRegions) {
+  const seen = new Map();
+  for (const region of inlineRegions) {
+    for (const name of collectTopLevelDeclNames(region.transformed)) {
+      const firstSource = seen.get(name);
+      if (firstSource) {
+        throw new Error(
+          `${wfFile}: top-level declaration collision '${name}' in ${firstSource} and ${region.source}`,
+        );
+      }
+      seen.set(name, region.source);
+    }
+  }
+}
+
+function validateGeneratedWorkflowSyntax(wfFile, src) {
+  const parseableSrc = src
+    .replace(/^export\s+(?=(async\s+)?(function|const|let|var|class)\b)/gm, '')
+    .replace(/^export\s+default\s+/gm, '');
+  try {
+    // Workflow bodies may contain top-level await/return. Wrapping in an async
+    // function validates syntax without executing the generated workflow.
+    // eslint-disable-next-line no-new-func
+    new Function(`return (async () => {\n${parseableSrc}\n});`);
+  } catch (err) {
+    throw new Error(`${wfFile}: generated workflow syntax error: ${err.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // scanMarkers(wfSrc, wfLabel): parse BEGIN/END marker pairs in a workflow file source.
 // Returns: [{source: string (canonical relative path), beginLine: number, endLine: number}]
 // Line numbers are 0-indexed (index into wfSrc.split('\n')).
@@ -194,12 +252,14 @@ export function syncRepo(root, { write }) {
     const markers = scanMarkers(wfSrc, wfFile);
 
     if (markers.length === 0) {
+      validateGeneratedWorkflowSyntax(wfFile, wfSrc);
       results.push({ file: wfFile, source: null, changed: false });
       continue;
     }
 
     // Build new file content by replacing each marker zone
     const lines = wfSrc.split('\n');
+    const inlineRegions = [];
     // We need to process in reverse order to preserve line indices
     const sortedMarkers = [...markers].sort((a, b) => b.beginLine - a.beginLine);
 
@@ -215,6 +275,7 @@ export function syncRepo(root, { write }) {
       checkForbiddenTokens(canonicalSrc, marker.source);
       // Transform: strip export prefix, normalize trailing newline
       const transformed = transformCanonical(canonicalSrc, marker.source);
+      inlineRegions.push({ source: marker.source, transformed });
       // Replace: keep BEGIN line, replace body, keep END line
       const beginLine = lines[marker.beginLine];
       const endLine = lines[marker.endLine];
@@ -225,6 +286,8 @@ export function syncRepo(root, { write }) {
     }
 
     const newSrc = lines.join('\n');
+    validateInlineDeclCollisions(wfFile, inlineRegions);
+    validateGeneratedWorkflowSyntax(wfFile, newSrc);
     const changed = newSrc !== wfSrc;
 
     for (const marker of markers) {
