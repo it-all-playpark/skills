@@ -374,7 +374,7 @@ const REVIEW = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['severity', 'description'],
+        required: ['severity', 'topic', 'file', 'description', 'suggestion'],
         properties: {
           severity: { type: 'string', enum: ['critical', 'major', 'minor'] },
           // 同一問題の再出現を orchestrator が stuck 突合するための安定 ID（issue #126）。

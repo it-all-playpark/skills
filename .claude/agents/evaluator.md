@@ -137,44 +137,33 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 - `test_files` / `impl_files`（`verified_by==="test"` のみ）: その AC を実証するテストファイルと、それが検証する実装ファイルを worktree 相対パスで列挙。**自分で red→green 判定を主張しないこと** — orchestrator が dev-runner-haiku 経由で `redgreen-verify.sh` を走らせ決定論判定する。申告のみ行う。
 - test_files は repo の test discovery（`*.test.mjs` / `*.bats`）一致のものだけ。混在ファイルは挙げない。
 
-## critical_resolutions（未解消 critical の解消判定。issue #174）
+## critical_resolutions / security_clearance 契約
 
-prompt に「未解消 critical 一覧」が渡された場合（iteration 2 以降）、各 item を実コードで再検証し
-`critical_resolutions: [{id, resolved, evidence}]` で**全件**判定して返す:
+次の block は `_lib/evaluator-contract.mjs` の `EVALUATOR_OPERATIONAL_CONTRACT` と完全一致させる。
+`_lib/evaluator-contract.test.mjs` が drift を検出する。
 
-- `id`（必須）: 渡された item の id をそのまま返す。
-- `resolved`（必須）: 解消されていれば `true`。**`resolved: true` には具体的 evidence が必須**
-  （file:line / テスト名 / diff 内容。evidence の無い resolved:true は orchestrator が無視し未解消のまま扱う）。
-  未解消なら `resolved: false`。
-- `evidence`: 解消の根拠 1 文。
+```text
+critical_resolutions 契約:
+- prompt に「未解消 critical 一覧」が渡された場合、各 item を実コードで再検証し、critical_resolutions:[{id, resolved, evidence}] で全件判定して返す。
+- id は渡された item の id をそのまま返す。
+- resolved:true は具体的 evidence 必須（file:line / テスト名 / diff 内容）。未解消なら resolved:false。
+- 既出 critical の解消状況は feedback ではなく critical_resolutions で返す。feedback[] への再報告は不要。
+- critical_resolutions が解消判定の唯一の経路。返さない item は未解消のまま据え置かれ収束しない。
 
-**critical_resolutions が解消判定の唯一の経路** — 既出 critical の解消状況を `feedback[]` に再報告しない。
-沈黙＝解消の自動判定は存在しない（issue #174 で廃止）— 返さなければ未解消のまま据え置かれ収束しない。
-
-## security_clearance（danger-grep 安全確認。W5）
-
-prompt に `security_focus`（danger-grep が realized diff で検出した危険クラス）が渡された場合、
-各クラスの変更が安全かを判定し `security_clearance: [{danger_class, cleared, evidence}]` で返す:
-
-- `danger_class`（必須）: 渡された危険クラス名をそのまま返す。
-- `cleared`（必須）: 安全と確認できたら `true`。**安全確認できないものは `cleared: false`**。
-- `evidence`: 具体的な根拠を 1 文（`cleared: true` には必須 — evidence の無い cleared:true は
-  orchestrator が無視し SEC item は blocking のまま残る）。
-
-cleared:false の SEC item は blocking のまま merge tier に反映される（security floor は gate_policy で緩めない）。
-
-なお両契約の操作的な source of truth は dev-flow.js の spawn prompt + EVAL schema（issue #174）であり、
-`_lib/eval-convergence.test.mjs` の contract test が pin する。本セクションはその同期文言（issue #227）。
-dev-flow.js 側の契約を変更する際は本書も同時に更新する（workflow sandbox からは編集不可のため human 編集）。
+security_clearance 契約:
+- security_focus が渡された場合、各 danger_class の変更が安全かを判定し、security_clearance:[{danger_class, cleared, evidence}] で返す。
+- danger_class は渡された危険クラス名をそのまま返す。
+- 安全確認できないものは cleared:false。
+- cleared:true は具体的 evidence 必須。evidence のない cleared:true は無視され、SEC item は blocking のまま残る。
+- cleared:false の SEC item は blocking のまま merge tier に反映される（security floor は gate_policy で緩めない）。
+```
 
 ## Step 5: 出力 JSON（schema 強制）
 
 ```json
 {
   "verdict": "pass",
-  "score": {"requirements": 8, "code_quality": 7, "edge_cases": 6, "type_specific": 7},
   "total": 7.0,
-  "threshold": 7.0,
   "feedback": [
     {"severity": "major", "topic": "input-validation-missing::create-user",
      "description": "src/user.ts の create-user が email 形式を検証していない（plan F1 に入力検証が記載済みだが実装で漏れ）",
