@@ -109,7 +109,7 @@ async function runPrIterateCapture(src, ctx) {
 
 const src = readFileSync(prIteratePath, 'utf8');
 
-test('[journal-log] journalResult={logged:true} で完走 → journal-log 呼び出し 1 回、prompt に正しいコマンドが含まれ、result.status === lgtm', async () => {
+test('[journal-log] journalResult={logged:true} で完走 → journal-log 呼び出し 1 回、pending handoff コマンドが含まれ、result.status === lgtm', async () => {
   const journalResult = { logged: true, summary: 'ok' };
   const { ctx, getJournalCallCount, getCapturedPrompt } = makeSandbox(journalResult);
 
@@ -126,14 +126,23 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-log 呼び
   );
 
   const capturedPrompt = getCapturedPrompt();
+  const requiredKeys = [
+    '~/.claude/journal/pending/priterate-5-',
+    '"skill":"pr-iterate"',
+    '"outcome":"success"',
+    '"args":"pr=5"',
+    '"merge_tier":"PR_ITERATE"',
+    '"iterate_status":"lgtm"',
+  ];
+  for (const key of requiredKeys) {
+    assert.ok(
+      typeof capturedPrompt === 'string' && capturedPrompt.includes(key),
+      `journal-log prompt に '${key}' が含まれるべきだが含まれない。prompt=${capturedPrompt}`,
+    );
+  }
   assert.ok(
-    typeof capturedPrompt === 'string' && capturedPrompt.includes('--iterate-status'),
-    `journal-log prompt に '--iterate-status' が含まれるべきだが含まれない。prompt=${capturedPrompt}`,
-  );
-
-  assert.ok(
-    typeof capturedPrompt === 'string' && capturedPrompt.includes('journal.sh log pr-iterate'),
-    `journal-log prompt に 'journal.sh log pr-iterate' が含まれるべきだが含まれない。prompt=${capturedPrompt}`,
+    typeof capturedPrompt === 'string' && !capturedPrompt.includes('journal.sh log pr-iterate'),
+    `journal-log prompt は direct journal.sh 実行ではなく pending handoff であるべき。prompt=${capturedPrompt}`,
   );
 
   assert.equal(

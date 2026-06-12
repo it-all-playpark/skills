@@ -48,6 +48,55 @@ function resolvePositiveIntArg(args, name) {
 }
 // ==== END inline: _lib/resolve-arg.mjs ====
 
+// ==== BEGIN inline: _lib/journal-handoff.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// Journal telemetry handoff helpers for workflow runtime.
+// Workflow loader cannot import ESM, so tools/sync-inlines.mjs injects this file
+// into .claude/workflows/*.js. Keep this file import-free and deterministic.
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+const JOURNAL_PENDING_DIR = '~/.claude/journal/pending';
+const JOURNAL_HANDOFF_DELIMITER = 'TELEMETRY_EOF';
+
+function buildJournalHandoffPayload({
+  skill,
+  outcome,
+  args,
+  issue,
+  journal_sh,
+  telemetry,
+  error_category,
+  error_msg,
+}) {
+  if (!skill) throw new Error('journal-handoff: skill is required');
+  if (!outcome) throw new Error('journal-handoff: outcome is required');
+
+  const payload = { skill, outcome };
+  if (args) payload.args = args;
+  if (issue != null && issue !== '') payload.issue = Number(issue);
+  if (journal_sh) payload.journal_sh = journal_sh;
+  if (telemetry != null) payload.telemetry = telemetry;
+  if (error_category) payload.error_category = error_category;
+  if (error_msg) payload.error_msg = error_msg;
+  return JSON.stringify(payload);
+}
+
+function buildJournalHandoffCommand({ prefix, id, payload }) {
+  const safePrefix = String(prefix ?? '').trim();
+  const safeId = String(id ?? '').trim();
+  if (!/^[a-z][a-z0-9-]*$/.test(safePrefix)) {
+    throw new Error(`journal-handoff: invalid prefix: ${JSON.stringify(prefix)}`);
+  }
+  if (!/^[1-9][0-9]*$/.test(safeId)) {
+    throw new Error(`journal-handoff: invalid id: ${JSON.stringify(id)}`);
+  }
+  if (payload == null) throw new Error('journal-handoff: payload is required');
+
+  return `mkdir -p ${JOURNAL_PENDING_DIR} && cat > ${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-$(date +%s).json <<'${JOURNAL_HANDOFF_DELIMITER}'\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+}
+// ==== END inline: _lib/journal-handoff.mjs ====
+
 // ==== BEGIN inline: _lib/goal-ledger.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
 // item = { id, text, dimension, severity, source, checked, evidence, check, floor }
@@ -924,7 +973,7 @@ if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue�
 // 3 つの失敗経路（needs_clarification×2・empty-diff throw）で呼ばれる。
 // need() で包まず null 容認（telemetry 欠損 > workflow 中断。成功経路行 2040-2042 と同じ方針）。
 async function writeFailureTelemetry({ error_category, error_msg, telemetry, phase }) {
-  const payload = JSON.stringify({
+  const payload = buildJournalHandoffPayload({
     skill: 'dev-flow',
     outcome: 'failure',
     issue: Number(ISSUE),
@@ -933,7 +982,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     error_msg,
     telemetry,
   })
-  const journalCmd = `mkdir -p ~/.claude/journal/pending && cat > ~/.claude/journal/pending/devflow-${ISSUE}-$(date +%s).json <<'TELEMETRY_EOF'\n${payload}\nTELEMETRY_EOF`
+  const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload })
   const res = await agent(
     `## Objective\ndev-flow 失敗の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
     + `## Instructions\n`
@@ -2001,7 +2050,7 @@ if (!summaryPost?.posted) {
 // 失敗は log 警告のみで workflow は継続（telemetry 欠損 > ワークフロー中断）。
 // need() で包まない — null 容認が必須。
 // ============================================================
-const telemetryHandoff = JSON.stringify({
+const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'dev-flow',
   outcome: 'success',
   issue: Number(ISSUE),
@@ -2018,7 +2067,7 @@ const telemetryHandoff = JSON.stringify({
     ...(iterate?.status ? { iterate_status: iterate.status } : {}),
   },
 })
-const journalCmd = `mkdir -p ~/.claude/journal/pending && cat > ~/.claude/journal/pending/devflow-${ISSUE}-$(date +%s).json <<'TELEMETRY_EOF'\n${telemetryHandoff}\nTELEMETRY_EOF`
+const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
 const journalPost = await agent(
   `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
   + `## Instructions\n`
