@@ -90,9 +90,19 @@ moving target（蒸し返し）を生む。これを避ける:
      "description": "日本語で何が問題か",
      "suggestion": "日本語で具体的な修正"}
   ],
-  "summary": "日本語の総評（LGTM か、何が残っているか）"
+  "summary": "日本語の総評（LGTM か、何が残っているか）",
+  "verification_evidence": [
+    "worktree で全 N node テストを実行し green を確認",
+    "diff を PR の宣言意図（title/body）と照合し過不足なし"
+  ]
 }
 ```
+
+- `summary` は**結論 1-2 文に留める**。検証根拠の列挙を summary に詰め込まない
+  （改行なしの壁テキスト化を防ぐ。issue #242）
+- `verification_evidence`（任意だが原則列挙する）: 検証した根拠（テスト実行・diff 照合・
+  edge case 確認等）を **1 項目 1 文**の配列で列挙する。PR コメント・終了レポートで
+  箇条書き表示される
 
 - `topic`（任意だが**反復時は必須**）: 同一問題を識別する安定 ID。同じ問題を再提起するときは
   前ラウンドと同じ文字列を再利用する（stuck 突合に使う）。新規問題には新しい topic を付ける。
