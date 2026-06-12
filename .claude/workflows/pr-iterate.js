@@ -387,6 +387,7 @@ for (i = 1; i <= MAX; i++) {
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
   const review = await agent(
     `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
+    + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
     + (prior.length
         ? `既出 findings（前ラウンドまでに指摘済み。author は対応済みのはず）:\n${JSON.stringify(prior)}\n`
           + `**新規の critical/major のみ報告**せよ。前ラウンドで対応済み・却下済みの論点の蒸し返し、`
