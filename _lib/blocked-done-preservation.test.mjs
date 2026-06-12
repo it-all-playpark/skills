@@ -99,7 +99,7 @@ function makeSandbox(analyzeReq) {
       return { status: 'DONE', task_id: 'T?', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };

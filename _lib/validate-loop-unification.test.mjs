@@ -85,7 +85,7 @@ function makeCountingSandbox(opts) {
     }
 
     // Security / danger-grep
-    if (label.startsWith('danger-grep')) return { hits: [] };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
 
     // diff-gate / diff-gate-retry
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };

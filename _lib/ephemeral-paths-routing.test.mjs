@@ -56,7 +56,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles) {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     if (label === 'realized-diff') {
       return { files: realizedFiles };

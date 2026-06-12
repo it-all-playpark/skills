@@ -60,7 +60,7 @@ function makeCountingSandbox() {
     }
     // Security floor / danger-grep 系
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     // Validate: test runner（label が 'test' で始まる）
     // 1 回目は failed (green:false)、2 回目以降は passed (green:true)

@@ -170,6 +170,15 @@ pr-iterate major 閾値の sunset path —
 - 表現: dev-runner(-haiku) verbatim 転写プロンプト群
 - 再評価トリガ: harness が workflow への直接 exec（または fs/exec API）を解禁した時点で、当該プロンプト群を直接実行に置換して exec-proxy ごと撤去する
 
+exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示する:
+
+| proxy | 失敗検出 | ポリシー | 理由 |
+|-------|----------|----------|------|
+| danger-grep / `diff-risk-classify.sh` | `ok:false` / schema 不一致 / 空出力 / command failure | fail-closed（全 SEC seed を unchecked） | W7 軸A invariant の security floor。clean と失敗を同一視しない |
+| realized-diff | `null` / schema 不一致 | fail-safe（complex floor） | diff 不明時は shape を安全側へ raise する |
+| redgreen | `null` / schema 不一致 | fail-safe（inspection 据え置き） | テスト状態不明時は検査済みにしない |
+| diff-hash | `null` / schema 不一致 | fail-open（stale 検出 skip、警告のみ） | stale 検出の補助信号。失敗しても既存の deterministic gate を緩めない |
+
 ### 設計原則 (要約)
 
 1. **機能特化** — 汎用ロール (QA engineer 等) ではなく機能特化スキルを作る

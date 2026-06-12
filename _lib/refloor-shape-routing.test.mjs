@@ -65,7 +65,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     // (a) realized-diff: label レベルで分離。可変ファイル数を返す
     if (label === 'realized-diff') {
@@ -256,7 +256,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     if (label.startsWith('analyze')) return standardReq;
     if (agentType === 'dev-planner') return { summary: 'p', serial: [], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (label.startsWith('danger-grep')) return { hits: [] };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     // (a) realized-diff: 6 ファイル返す → standard+6件 → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX
     if (label === 'realized-diff') {
       return { files: ['a', 'b', 'c', 'd', 'e', 'f'] };
@@ -465,7 +465,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     // (D) realized-diff を null で返す → ?? [] を使うと 0 に潰れ runEval=false になるバグ再現
     if (label === 'realized-diff') {

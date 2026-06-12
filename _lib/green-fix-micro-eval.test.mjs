@@ -65,7 +65,7 @@ function makeMicroGreenFixSandbox() {
     }
     // danger-grep: 空（danger path ではない）
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     // realized-diff: 1 ファイル → refloor で micro 維持
     if (label === 'realized-diff') {

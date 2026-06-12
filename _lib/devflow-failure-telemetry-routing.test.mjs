@@ -35,7 +35,7 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig } = {}) {
       return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
     }
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (label.startsWith('danger-grep')) return { hits: [] };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
     if (label === 'declared-path-check') return { files: [] };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
