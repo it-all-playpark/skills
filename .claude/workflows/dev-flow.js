@@ -328,6 +328,10 @@ function isConvergedUnderPolicy(ledger, policy) {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
+function isBreakingText(s) {
+  return /breaking|incompatible|migration|破壊的|非互換/i.test(String(s ?? ''));
+}
+
 function mergeShape(floor, llmShape) {
   if (!(llmShape in SHAPE_RANK)) {
     return floor;
@@ -360,9 +364,8 @@ function classifyShape(req) {
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
 
-  const breakingPattern = /breaking|incompatible|migration|破壊的|非互換/i;
   const combined = `${req.scope ?? ''} ${req.summary ?? ''}`;
-  if (breakingPattern.test(combined)) {
+  if (isBreakingText(combined)) {
     const floor = 'complex';
     const reason = `breaking change detected in scope/summary → floor=complex`;
     const shape = mergeShape(floor, req.shape);
@@ -1300,17 +1303,19 @@ const setup = need(await agent(
 WT = setup.worktree
 log(`worktree: ${WT} (branch ${setup.branch})`)
 
+const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${depth}\` を実行し、`
+  + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
+  + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
+  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`
+  + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=単一ファイル軽微変更・AC 少数、standard=複数ファイルの通常実装、complex=多数ファイル・破壊的変更・設計判断を要する。判断に迷えば大きめ（安全側=complex 寄り）に評価せよ。`
+  + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`
+
 // ============================================================
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
 // ============================================================
 phase('Analyze')
 const req = need(await agent(
-  `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${DEPTH}\` を実行し、`
-  + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
-  + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
-  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`
-  + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=単一ファイル軽微変更・AC 少数、standard=複数ファイルの通常実装、complex=多数ファイル・破壊的変更・設計判断を要する。判断に迷えば大きめ（安全側=complex 寄り）に評価せよ。`
-  + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`,
+  analyzePrompt(DEPTH),
   { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
 ), 'Analyze')
 
@@ -1478,12 +1483,7 @@ let needsCtx = implResults.filter((r) => r && r.status === 'NEEDS_CONTEXT')
 if (needsCtx.length) {
   log(`implement: ${needsCtx.length} task が NEEDS_CONTEXT — comprehensive 再分析して再試行`)
   const req2 = await agent(
-    `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth comprehensive\` を実行し、`
-    + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
-    + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
-    + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`
-    + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=単一ファイル軽微変更・AC 少数、standard=複数ファイルの通常実装、complex=多数ファイル・破壊的変更・設計判断を要する。判断に迷えば大きめ（安全側=complex 寄り）に評価せよ。`
-    + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`,
+    analyzePrompt('comprehensive'),
     { agentType: 'dev-runner', schema: REQ, label: `analyze-retry#${ISSUE}`, phase: 'Implement' },
   )
   if (!req2) {
@@ -1699,15 +1699,10 @@ if (TRIVIAL && greenFixCount > 0) {
 // ============================================================
 {
   const planAllTasks = [...(plan.serial ?? []), ...(plan.parallel ?? [])]
-  const gitStat = await agent(
-    `cd ${WT} で作業。\`git -C ${WT} status --porcelain --untracked-files=all\` を実行し、`
-    + `変更ファイル一覧を取得せよ（ステージ・未ステージどちらも含む）。`
-    + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
-    + `リネームは -> の右側（新ファイル名）を使え。空白行は除く。`
-    + `結果を {"files": ["path1", ...]} 形式で返せ。`,
-    { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'declared-path-check', phase: 'Validate' },
-  )
-  const changedFiles = filterEphemeralPaths(gitStat?.files ?? [])
+  // porcelain 統合（F3）: 旧 declared-path-check の agent 呼び出しを削除し、
+  // Security floor で既に取得済みの realizedNonEphemeral を参照する（1 回に統合）。
+  // realized が null（agent drop）のときは空配列に倒す（旧 gitStat?.files ?? [] と同等）。
+  const changedFiles = realizedNonEphemeral ?? []
   const undeclared = diffDeclaredPaths(planAllTasks, changedFiles)
   if (undeclared.length > 0) {
     if (runEval) {
@@ -1815,15 +1810,13 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     const isCritical = f.severity === 'critical'
     const isEscalate = f.escalate === true
     if (!isCritical && !isEscalate) continue
-    const r = appendItem(ledger, {
+    ledger = appendItem(ledger, {
       id: `EVAL-${i}-${stuckTopicKey(f).slice(0, 24)}`, text: stuckTopicKey(f),
       dimension: f.dimension ?? 'eval',
       severity: isCritical ? 'critical' : (f.severity === 'minor' ? 'minor' : 'major'),
       source: 'evaluator', check: { kind: 'inspection' },
       ...(isEscalate ? { escalate: true, escalate_reason: f.escalate_reason ?? null } : {}),
-    })
-    ledger = r.ledger
-    if (isEscalate && !r.accepted) log(`⚠️ ESCALATE feedback "${stuckTopicKey(f)}" は append 単調性により却下(round>0 の新規 topic)`)
+    }).ledger
   }
   const escalateAppended = (ev.feedback ?? []).filter((f) => f && f.escalate === true).length
   if (escalateAppended > 0) log(`ESCALATE-TO-HUMAN feedback ${escalateAppended} 件を検出(issue #177。乱発ガードは W6b)`)
@@ -1995,7 +1988,7 @@ const changed = need(await agent(
 ledger = reconcileDanger(ledger, dangerHitsFinal)
 const unresolvedDanger = ledger.items.some(
   (it) => it.dimension === 'security' && it.source === 'seed' && it.floor && !it.checked)
-const breaking = /breaking|incompatible|migration|破壊的|非互換/i.test(`${req.scope ?? ''} ${req.summary ?? ''}`)
+const breaking = isBreakingText(`${req.scope ?? ''} ${req.summary ?? ''}`)
 const escalateCount = policyAdvisoryItems(ledger, GATE_POLICY).filter((it) => it.escalate === true).length
 const mergeTier = classifyMergeTier({
   shape: EFFECTIVE_SHAPE,

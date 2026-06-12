@@ -39,7 +39,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label === 'diff-hash-pr') return { hash: prHash, empty: false };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: [], test_plan: '' }], parallel: [] };
+    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
