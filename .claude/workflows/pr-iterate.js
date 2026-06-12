@@ -35,7 +35,9 @@ function resolvePositiveIntArg(args, name) {
 
 // args 正規化: 単体 /pr-iterate <pr> でも dev-flow からの workflow('pr-iterate', {pr}) でも受ける
 const PR = resolvePositiveIntArg(args, 'pr')
-const MAX = Number(args?.max_iterations ?? 10)
+const MAX = args?.max_iterations == null
+  ? 10
+  : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
 const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション（issue #126）
 
 // ---- Review de-churn モデル（issue #126。#123 Plan ループ収束モデルの Review 版を inline 複製）----
@@ -471,6 +473,29 @@ for (i = 1; i <= MAX; i++) {
       const ciStuckTopics = reviewSeen.stuckTopics()
       log(`iteration ${i}: approve but CI failed — ${ciFindings.length} failing check(s)`
         + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
+
+      // CI-failed ラウンドの history 記録（blocking は synthetic CI findings）
+      history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: ciFindings })
+
+      // per-round 投稿: CI failed。decision は approve だが CI red のため gh pr review --approve は使わず
+      // plain な gh pr comment で情報提供のみ行う
+      const ciRoundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: ciFindings })
+      const ciRoundPost = await agent(
+        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}、CI failed）。\n\n`
+        + bodySaveInstr(ciRoundBody)
+        + `## Instructions\n`
+        + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
+        + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+        + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+        + `\n## Tools\n使用可: Bash, Write\n`
+        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+        + `\n## Token cap\n200 語以内で完結すること。`,
+        { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+      )
+      if (!ciRoundPost?.posted) {
+        log(`⚠️ post-review#${i} (ci-failed) の投稿に失敗しました（posted=${ciRoundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+      }
 
       if (ciStuckTopics.length) {
         terminal = 'stuck'
