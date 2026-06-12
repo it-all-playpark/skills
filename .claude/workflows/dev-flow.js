@@ -14,10 +14,15 @@ export const meta = {
   ],
 }
 
-// ---- 品質ゲート系 agent（dev-planner / plan-reviewer / evaluator）の model override ----
-// frontmatter 既定は opus。Fable 5 試験運用中は 'fable' を指定し、戻すときはこの 1 行を 'opus' にする。
-// effort は agent() opts に存在しないため引き続き frontmatter（high）固定。pr-reviewer は pr-iterate.js 側の同名定数。
+// ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// 品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）の model override。
+// frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
+// effort は agent() opts に存在しないため frontmatter（high）固定。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const QUALITY_MODEL = 'fable'
+// ==== END inline: _lib/quality-model.mjs ====
 
 // ==== BEGIN inline: _lib/resolve-arg.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // 正の整数 arg を正規化する。dev-flow / pr-iterate の entrypoint 共通。
