@@ -1,27 +1,18 @@
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
-// item = { id, text, dimension, severity, source, checked, evidence, check, floor, reopen_reason }
+// item = { id, text, dimension, severity, source, checked, evidence, check, floor }
 //   severity: 'critical' | 'major' | 'minor'
 //   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep'
 //   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
 //   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
 //
-// BLOCKING lane = 決定論 oracle 付き OR LLM critical OR seeded mandatory。それ以外は ADVISORY。
+// lane 分類（blocking/advisory）は _lib/gate-policy.mjs の gateLane(item, policy) に一本化。
 // 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-const SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
-
 export function makeLedger() {
   return { items: [], round: 0 };
-}
-
-export function laneOf(item) {
-  if (item.severity === 'critical') return 'blocking';
-  if (item.check && item.check.kind === 'deterministic') return 'blocking';
-  if (item.source === 'seed') return 'blocking';
-  return 'advisory';
 }
 
 export function topicKey(item) {
@@ -47,31 +38,11 @@ export function appendItem(ledger, item) {
   return { ledger: { ...ledger, items }, accepted: true };
 }
 
-export function applySeverityFloor(item, floorSeverity) {
-  const raised = SEVERITY_RANK[floorSeverity] > SEVERITY_RANK[item.severity] ? floorSeverity : item.severity;
-  return { ...item, severity: raised, floor: true };
-}
-
-export function mergeSeverity(item, llmSeverity) {
-  if (item.floor && SEVERITY_RANK[llmSeverity] < SEVERITY_RANK[item.severity]) return item;
-  const raised = SEVERITY_RANK[llmSeverity] > SEVERITY_RANK[item.severity] ? llmSeverity : item.severity;
-  return { ...item, severity: raised };
-}
-
 export function checkItem(ledger, id, evidence) {
   const idx = ledger.items.findIndex((it) => it.id === id);
   if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
   const items = ledger.items.slice();
   items[idx] = { ...items[idx], checked: true, evidence: evidence ?? null };
-  return { ...ledger, items };
-}
-
-export function reopenItem(ledger, id, reason) {
-  const idx = ledger.items.findIndex((it) => it.id === id);
-  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
-  if (!reason) throw new Error('goal-ledger: reopen には reason が必要');
-  const items = ledger.items.slice();
-  items[idx] = { ...items[idx], checked: false, reopen_reason: reason };
   return { ...ledger, items };
 }
 
@@ -81,18 +52,6 @@ export function setCheck(ledger, id, check) {
   const items = ledger.items.slice();
   items[idx] = { ...items[idx], check };
   return { ...ledger, items };
-}
-
-export function blockingItems(ledger) {
-  return ledger.items.filter((it) => laneOf(it) === 'blocking');
-}
-
-export function advisoryItems(ledger) {
-  return ledger.items.filter((it) => laneOf(it) === 'advisory');
-}
-
-export function isConverged(ledger) {
-  return blockingItems(ledger).every((it) => it.checked);
 }
 
 export function nextRound(ledger) {

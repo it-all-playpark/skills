@@ -50,29 +50,20 @@ function resolvePositiveIntArg(args, name) {
 
 // ==== BEGIN inline: _lib/goal-ledger.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
-// item = { id, text, dimension, severity, source, checked, evidence, check, floor, reopen_reason }
+// item = { id, text, dimension, severity, source, checked, evidence, check, floor }
 //   severity: 'critical' | 'major' | 'minor'
 //   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep'
 //   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
 //   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
 //
-// BLOCKING lane = 決定論 oracle 付き OR LLM critical OR seeded mandatory。それ以外は ADVISORY。
+// lane 分類（blocking/advisory）は _lib/gate-policy.mjs の gateLane(item, policy) に一本化。
 // 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-const SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
-
 function makeLedger() {
   return { items: [], round: 0 };
-}
-
-function laneOf(item) {
-  if (item.severity === 'critical') return 'blocking';
-  if (item.check && item.check.kind === 'deterministic') return 'blocking';
-  if (item.source === 'seed') return 'blocking';
-  return 'advisory';
 }
 
 function topicKey(item) {
@@ -98,31 +89,11 @@ function appendItem(ledger, item) {
   return { ledger: { ...ledger, items }, accepted: true };
 }
 
-function applySeverityFloor(item, floorSeverity) {
-  const raised = SEVERITY_RANK[floorSeverity] > SEVERITY_RANK[item.severity] ? floorSeverity : item.severity;
-  return { ...item, severity: raised, floor: true };
-}
-
-function mergeSeverity(item, llmSeverity) {
-  if (item.floor && SEVERITY_RANK[llmSeverity] < SEVERITY_RANK[item.severity]) return item;
-  const raised = SEVERITY_RANK[llmSeverity] > SEVERITY_RANK[item.severity] ? llmSeverity : item.severity;
-  return { ...item, severity: raised };
-}
-
 function checkItem(ledger, id, evidence) {
   const idx = ledger.items.findIndex((it) => it.id === id);
   if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
   const items = ledger.items.slice();
   items[idx] = { ...items[idx], checked: true, evidence: evidence ?? null };
-  return { ...ledger, items };
-}
-
-function reopenItem(ledger, id, reason) {
-  const idx = ledger.items.findIndex((it) => it.id === id);
-  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
-  if (!reason) throw new Error('goal-ledger: reopen には reason が必要');
-  const items = ledger.items.slice();
-  items[idx] = { ...items[idx], checked: false, reopen_reason: reason };
   return { ...ledger, items };
 }
 
@@ -132,18 +103,6 @@ function setCheck(ledger, id, check) {
   const items = ledger.items.slice();
   items[idx] = { ...items[idx], check };
   return { ...ledger, items };
-}
-
-function blockingItems(ledger) {
-  return ledger.items.filter((it) => laneOf(it) === 'blocking');
-}
-
-function advisoryItems(ledger) {
-  return ledger.items.filter((it) => laneOf(it) === 'advisory');
-}
-
-function isConverged(ledger) {
-  return blockingItems(ledger).every((it) => it.checked);
 }
 
 function nextRound(ledger) {
@@ -186,8 +145,6 @@ function seedSecurityLedger() {
   }));
 }
 
-const SEC_SEVERITY_RANK = { minor: 0, major: 1, critical: 2 };
-
 // danger-grep の hit クラス集合で SEC seed item を解決する。
 // clean クラス → checked(evidence='danger-grep clean')。
 // hit クラス → critical へ raise(floor=true)。
@@ -210,8 +167,7 @@ function reconcileDanger(ledger, hitClasses) {
       // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
       // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
       if (it.checked && it.floor) return it;
-      const severity = SEC_SEVERITY_RANK['critical'] > SEC_SEVERITY_RANK[it.severity] ? 'critical' : it.severity;
-      return { ...it, severity, floor: true, checked: false };
+      return { ...it, severity: 'critical', floor: true, checked: false };
     }
     return { ...it, checked: true, evidence: 'danger-grep clean' };
   });
@@ -1079,7 +1035,6 @@ const VERDICT = {
   properties: {
     score: { type: 'number' },
     verdict: { type: 'string', enum: ['pass', 'revise', 'block'] },
-    pass_threshold: { type: 'number' },
     findings: { type: 'array' },
     summary: { type: 'string' },
   },
@@ -1108,9 +1063,7 @@ const EVAL = {
   type: 'object', required: ['verdict', 'total'],
   properties: {
     verdict: { type: 'string', enum: ['pass', 'fail'] },
-    score: { type: 'object' },
     total: { type: 'number' },
-    threshold: { type: 'number' },
     feedback: {
       type: 'array',
       items: {
@@ -1662,7 +1615,7 @@ const risk = need(await agent(
 const dangerHits = [...new Set((risk.hits ?? []).map((h) => h.class))]
 ledger = reconcileDanger(ledger, dangerHits)
 log(`danger-grep: ${dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
-  + `SEC blocking 未 checked ${blockingItems(ledger).filter((it) => !it.checked).length} 件`)
+  + `SEC blocking 未 checked ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件`)
 // Step F2: realized diff のファイル数を取得して re-floor を算出する
 // realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
 // ?? [] は取得失敗と空 diff（正常な 0 ファイル）を同じ 0 に潰すため使わない。
@@ -1749,7 +1702,7 @@ for (const [i, c] of concerns.entries()) {
     severity: 'major', source: 'evaluator', check: { kind: 'inspection' },
   }).ledger
 }
-log(`ledger 初期化: blocking ${blockingItems(ledger).length} / advisory ${advisoryItems(ledger).length} 件`)
+log(`ledger 初期化: blocking ${policyBlockingItems(ledger, GATE_POLICY).length} / advisory ${policyAdvisoryItems(ledger, GATE_POLICY).length} 件`)
 const evalSeen = makeSeenTracker(EVAL_STUCK)  // feedback 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #125）
 for (let i = 1; i <= EVAL_PASSES; i++) {
   evalIters = i
@@ -1871,7 +1824,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
     }
   }
   ledger = nextRound(ledger)
-  log(`ledger: blocking ${blockingItems(ledger).filter((it) => !it.checked).length} 件未 checked / `
+  log(`ledger: blocking ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件未 checked / `
     + `converged(observe)=${isConvergedUnderPolicy(ledger, GATE_POLICY)}`)
 
   if (isConvergedUnderPolicy(ledger, GATE_POLICY)) {
