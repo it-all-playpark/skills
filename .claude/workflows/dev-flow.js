@@ -23,7 +23,7 @@ export const meta = {
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-const QUALITY_MODEL = 'fable'
+const QUALITY_MODEL = 'opus'
 // ==== END inline: _lib/quality-model.mjs ====
 
 // ==== BEGIN inline: _lib/evaluator-contract.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
