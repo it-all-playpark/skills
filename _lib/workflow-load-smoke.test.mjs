@@ -329,6 +329,7 @@ test('[triage] dev-flow.js: 最終 return に shape: SHAPE が含まれる', () 
 test('[W5] dev-flow.js: RISK schema と diff-risk-classify 呼び出しが存在', () => {
   const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
   assert.ok(src.includes('const RISK ='), 'RISK schema があること');
+  assert.ok(src.includes("required: ['ok', 'hits']"), 'RISK schema が ok error channel を必須にすること');
   assert.ok(src.includes('diff-risk-classify.sh'), 'diff-risk-classify.sh を呼ぶこと');
   assert.ok(
     src.includes('diff-risk-classify.sh --working-tree origin/${' + 'BASE}'),

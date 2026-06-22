@@ -51,7 +51,7 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を AC のみに絞る
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     // Validate: test runner（label が 'test' で始まる）
     if (label.startsWith('test')) {

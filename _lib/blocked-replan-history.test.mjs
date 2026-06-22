@@ -47,7 +47,7 @@ function makeSandbox(analyzeReq, implementerStub) {
       return implementerStub(prompt, opts);
     }
     if (label.startsWith('danger-grep')) {
-      return { hits: [] };
+      return { ok: true, hits: [] };
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };

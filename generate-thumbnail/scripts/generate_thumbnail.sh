@@ -20,6 +20,34 @@ BRAND_PROMPT_PATH=$(echo "$CONFIG" | jq -r '.brand_prompt_path // ""')
 CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.4-mini"')
 CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 
+# ----------------------------------------------------------------------------
+# Resolve a working codex binary.
+# codex 0.140.0+ has broken built-in image_gen (#28422): it reports success but
+# never writes the file (or fabricates one). Prefer an installed 0.139.x.
+# Override with THUMBNAIL_CODEX_BIN. Remove this shim once upstream is fixed.
+# ----------------------------------------------------------------------------
+resolve_codex_bin() {
+    if [[ -n "${THUMBNAIL_CODEX_BIN:-}" ]]; then
+        echo "$THUMBNAIL_CODEX_BIN"; return
+    fi
+    local cur
+    cur="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    # If current codex < 0.140.0, image_gen works — use it as-is.
+    if [[ -n "$cur" && "$cur" != "0.140.0" \
+          && "$(printf '%s\n0.140.0\n' "$cur" | sort -V | head -1)" == "$cur" ]]; then
+        echo "codex"; return
+    fi
+    # Broken (>= 0.140.0) or unknown: fall back to newest installed 0.139.x.
+    local fb
+    fb="$(ls -d "$HOME/.local/share/mise/installs/codex/0.139".*/ 2>/dev/null | sort -V | tail -1)"
+    if [[ -n "$fb" && -x "${fb}codex" ]]; then
+        echo "${fb}codex"; return
+    fi
+    warn "codex ${cur:-unknown} image_gen may be broken (#28422) and no 0.139.x fallback found; using PATH codex"
+    echo "codex"
+}
+CODEX_BIN="$(resolve_codex_bin)"
+
 PROJECT_ROOT="$(git_root)"
 [[ -n "$PROJECT_ROOT" ]] || die_json "Not in a git repository" 128
 OUTPUT_ABS="$PROJECT_ROOT/$OUTPUT_DIR"
@@ -163,7 +191,7 @@ echo "   Output: $PNG_PATH"
 LOG_FILE="$(mktemp -t codex-thumb.XXXXXX.log)"
 trap 'rm -f "$LOG_FILE"' EXIT
 
-if ! codex exec \
+if ! "$CODEX_BIN" exec \
     --skip-git-repo-check \
     --full-auto \
     -m "$CODEX_MODEL" \

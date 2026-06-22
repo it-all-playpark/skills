@@ -41,7 +41,7 @@ function ledgerWithSeeds() {
 }
 
 test('reconcileDanger: clean クラスは checked=true(evidence=grep clean)', () => {
-  const out = reconcileDanger(ledgerWithSeeds(), []);
+  const out = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [] });
   for (const it of out.items) {
     assert.equal(it.checked, true);
     assert.match(it.evidence, /clean/);
@@ -50,7 +50,10 @@ test('reconcileDanger: clean クラスは checked=true(evidence=grep clean)', ()
 });
 
 test('reconcileDanger: hit クラスは critical へ raise + checked=false 据え置き', () => {
-  const out = reconcileDanger(ledgerWithSeeds(), ['auth', 'crypto']);
+  const out = reconcileDanger(ledgerWithSeeds(), {
+    ok: true,
+    hits: [{ class: 'auth' }, { class: 'crypto' }],
+  });
   const auth = out.items.find((it) => it.id === 'SEC-AUTH');
   assert.equal(auth.severity, 'critical');
   assert.equal(auth.floor, true);
@@ -61,13 +64,13 @@ test('reconcileDanger: hit クラスは critical へ raise + checked=false 据�
 });
 
 test('reconcileDanger: 未知 hit クラスは無視(対応 seed なし)', () => {
-  const out = reconcileDanger(ledgerWithSeeds(), ['bogus']);
+  const out = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [{ class: 'bogus' }] });
   assert.ok(out.items.every((it) => it.checked === true));
 });
 
 test('reconcileDanger: checked=true(evaluator clearance 済み)の hit item を 2 度目に reconcile しても checked が保持される(HOLD 巻き戻し防止)', () => {
   // Step 1: 初回 reconcile — auth hit → critical/unchecked
-  const step1 = reconcileDanger(ledgerWithSeeds(), ['auth']);
+  const step1 = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [{ class: 'auth' }] });
   const authAfterStep1 = step1.items.find((it) => it.id === 'SEC-AUTH');
   assert.equal(authAfterStep1.checked, false);
   assert.equal(authAfterStep1.severity, 'critical');
@@ -83,7 +86,7 @@ test('reconcileDanger: checked=true(evaluator clearance 済み)の hit item を 
   assert.equal(authCleared.checked, true);
 
   // Step 3: 2 度目 reconcile(Merge tier phase) — auth は依然 hit だが checked を維持すべき
-  const step3 = reconcileDanger(ledgerCleared, ['auth']);
+  const step3 = reconcileDanger(ledgerCleared, { ok: true, hits: [{ class: 'auth' }] });
   const authAfterStep3 = step3.items.find((it) => it.id === 'SEC-AUTH');
   assert.equal(authAfterStep3.checked, true, 'checked=true(clearance 済み)は 2 度目 reconcile で維持される');
   assert.equal(authAfterStep3.severity, 'critical', 'severity は引き続き critical のまま');
@@ -95,7 +98,7 @@ test('reconcileDanger: checked=true(evaluator clearance 済み)の hit item を 
 
 test('reconcileDanger: pr-iterate で新クラスが hit に増えた場合は unchecked(HOLD)', () => {
   // auth を先に clearance 済みにした ledger から出発
-  const step1 = reconcileDanger(ledgerWithSeeds(), ['auth']);
+  const step1 = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [{ class: 'auth' }] });
   const ledgerCleared = {
     ...step1,
     items: step1.items.map((it) =>
@@ -104,12 +107,36 @@ test('reconcileDanger: pr-iterate で新クラスが hit に増えた場合は u
   };
 
   // pr-iterate 後に crypto も新たに hit
-  const step2 = reconcileDanger(ledgerCleared, ['auth', 'crypto']);
+  const step2 = reconcileDanger(ledgerCleared, {
+    ok: true,
+    hits: [{ class: 'auth' }, { class: 'crypto' }],
+  });
   const authAfter = step2.items.find((it) => it.id === 'SEC-AUTH');
   const cryptoAfter = step2.items.find((it) => it.id === 'SEC-CRYPTO');
   assert.equal(authAfter.checked, true, 'auth: clearance 済みは維持');
   assert.equal(cryptoAfter.checked, false, 'crypto: 新 hit は unchecked(HOLD を保つ)');
   assert.equal(cryptoAfter.severity, 'critical');
+});
+
+test('reconcileDanger: danger-grep error は全 SEC seed を unchecked のまま返す(fail-closed)', () => {
+  const cleaned = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [] });
+  assert.ok(cleaned.items.every((it) => it.checked === true), 'precondition: clean risk checks all SEC seeds');
+
+  const out = reconcileDanger(cleaned, { ok: false, hits: [], error: 'script failed' });
+  for (const it of out.items) {
+    assert.equal(it.checked, false, `${it.id} should fail closed`);
+    assert.match(it.evidence, /script failed/);
+  }
+
+  const mergeTier = classifyMergeTier({
+    shape: 'micro',
+    converged: false,
+    unresolvedDanger: false,
+    breaking: false,
+    docsOrTestOnly: true,
+    escalateCount: 0,
+  });
+  assert.equal(mergeTier.tier, 'HOLD');
 });
 
 // ---- Task 3: isDocsOrTestOnly + classifyMergeTier ----

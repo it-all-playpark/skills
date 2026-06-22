@@ -104,7 +104,8 @@ moving target（蒸し返し）を生む。これを避ける:
   edge case 確認等）を **1 項目 1 文**の配列で列挙する。PR コメント・終了レポートで
   箇条書き表示される
 
-- `topic`（任意だが**反復時は必須**）: 同一問題を識別する安定 ID。同じ問題を再提起するときは
+- `severity` / `topic` / `file` / `description` / `suggestion` は schema 上必須。
+- `topic`: 同一問題を識別する安定 ID。同じ問題を再提起するときは
   前ラウンドと同じ文字列を再利用する（stuck 突合に使う）。新規問題には新しい topic を付ける。
   topic 付与手順:
   1. repo root を `git rev-parse --show-toplevel` で解決し、`_shared/references/stuck-topic-dictionary.md`（topic 共有辞書）を Read する
