@@ -236,10 +236,14 @@ function seedSecurityLedger() {
 //   danger が同じ hit クラスで残る かつ evaluator clearance 済み(floor=true, checked=true) → checked 維持(温存)。
 function reconcileDanger(ledger, risk) {
   if (!risk || risk.ok !== true) {
-    const error = risk?.error ? `danger-grep error: ${risk.error}` : 'danger-grep error';
+    // ツール欠落/スクリプト実行不能/JSON 不正などによる fail-closed。
+    // 実際の danger 検出（risk.ok:true + hits）とは語彙を分け、
+    // operator が log と HOLD reason から「danger を検出したのか」「ツールが走らなかったのか」を判別できるようにする。
+    const errDetail = risk?.error ? `: ${risk.error}` : '';
+    const evidence = `danger-grep unavailable (fail-closed)${errDetail}`;
     const items = ledger.items.map((it) => {
       if (it.source !== 'seed' || it.dimension !== 'security') return it;
-      return { ...it, checked: false, evidence: error };
+      return { ...it, checked: false, evidence };
     });
     return { ...ledger, items };
   }
@@ -1657,7 +1661,7 @@ pushGreenFixAudit(greenFixIterations)
 // Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
 // realized-diff / refloorShape / declared-path-check が自然に実行される（issue #219 fix）。
 const _dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
-  + `bash ${WT}/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
+  + `bash ~/.claude/skills/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
 
 // ============================================================
 // empty-diff gate（issue #215）: Security floor phase の直前。
@@ -1712,12 +1716,12 @@ const risk = need(await agent(
   `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
   + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。`
   + `失敗時に ok:true を生成してはならない）:\n`
-  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh --working-tree origin/${BASE}`,
+  + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --working-tree origin/${BASE}`,
   { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
 ), 'Security floor(danger-grep)')
 const dangerHits = risk.ok === true ? [...new Set((risk.hits ?? []).map((h) => h.class))] : []
 ledger = reconcileDanger(ledger, risk)
-log(`danger-grep: ${risk.ok !== true ? 'ERROR ' + (risk.error ?? 'unknown') : dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
+log(`danger-grep: ${risk.ok !== true ? 'UNAVAILABLE (fail-closed) ' + (risk.error ?? 'unknown') : dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
   + `SEC blocking 未 checked ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件`)
 // Step F2: realized diff のファイル数を取得して re-floor を算出する
 // realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
@@ -1898,7 +1902,7 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
         && Array.isArray(r.impl_files) && r.impl_files.length) {
       const rg = await agent(
         `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
-        + `bash ${WT}/_shared/scripts/redgreen-verify.sh ${WT} `
+        + `bash ~/.claude/skills/_shared/scripts/redgreen-verify.sh ${WT} `
         + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
         { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
       if (rg && rg.red === true && rg.green === true) {
@@ -2031,7 +2035,7 @@ phase('Merge tier')
 const riskFinal = need(await agent(
   `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
   + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-  + `bash ${WT}/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+  + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
   { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
 ), 'Merge tier(danger-grep-final)')
 const dangerHitsFinal = riskFinal.ok === true ? [...new Set((riskFinal.hits ?? []).map((h) => h.class))] : []
