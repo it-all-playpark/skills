@@ -48,10 +48,14 @@ export function seedSecurityLedger() {
 //   danger が同じ hit クラスで残る かつ evaluator clearance 済み(floor=true, checked=true) → checked 維持(温存)。
 export function reconcileDanger(ledger, risk) {
   if (!risk || risk.ok !== true) {
-    const error = risk?.error ? `danger-grep error: ${risk.error}` : 'danger-grep error';
+    // ツール欠落/スクリプト実行不能/JSON 不正などによる fail-closed。
+    // 実際の danger 検出（risk.ok:true + hits）とは語彙を分け、
+    // operator が log と HOLD reason から「danger を検出したのか」「ツールが走らなかったのか」を判別できるようにする。
+    const errDetail = risk?.error ? `: ${risk.error}` : '';
+    const evidence = `danger-grep unavailable (fail-closed)${errDetail}`;
     const items = ledger.items.map((it) => {
       if (it.source !== 'seed' || it.dimension !== 'security') return it;
-      return { ...it, checked: false, evidence: error };
+      return { ...it, checked: false, evidence };
     });
     return { ...ledger, items };
   }

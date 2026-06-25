@@ -139,6 +139,58 @@ test('reconcileDanger: danger-grep error は全 SEC seed を unchecked のまま
   assert.equal(mergeTier.tier, 'HOLD');
 });
 
+// AC #3: ツール欠落(fail-closed) と danger 実検出の evidence 語彙が区別できること
+test('reconcileDanger: risk.ok:false (tool 欠落/fail-closed) のとき evidence が tool-unavailable を示す語彙を含む', () => {
+  // error あり: evidence に "unavailable" または "fail-closed" の語彙が含まれ、
+  // "danger" 実検出と誤認できない形になること
+  const outWithError = reconcileDanger(ledgerWithSeeds(), { ok: false, error: 'No such file or directory' });
+  for (const it of outWithError.items) {
+    assert.equal(it.checked, false, `${it.id} should be unchecked (fail-closed)`);
+    // tool 欠落/fail-closed の文言を含む（"danger" 検出ではなく "unavailable" / "fail-closed" 語彙）
+    assert.match(it.evidence, /unavailable|fail-closed/i,
+      `fail-closed evidence should indicate tool unavailability, got: ${it.evidence}`);
+    // danger 実検出の evidence 語彙 ("danger-grep clean", critical/floor raise) と
+    // 混同できないよう、evidence が "danger-grep clean" や "danger detected" ではないことを確認
+    assert.doesNotMatch(it.evidence, /^danger-grep clean$/,
+      'fail-closed evidence must not say "danger-grep clean"');
+  }
+});
+
+test('reconcileDanger: risk.ok:false かつ error なし (空/null) のとき evidence が tool-unavailable を示す', () => {
+  // error フィールドなし
+  const outNoError = reconcileDanger(ledgerWithSeeds(), { ok: false });
+  for (const it of outNoError.items) {
+    assert.equal(it.checked, false, `${it.id} should be unchecked (fail-closed)`);
+    assert.match(it.evidence, /unavailable|fail-closed/i,
+      `no-error fail-closed evidence should indicate tool unavailability, got: ${it.evidence}`);
+  }
+});
+
+test('reconcileDanger: risk.ok:false と risk.ok:true(hit) の evidence 語彙が区別可能', () => {
+  // fail-closed (tool 欠落)
+  const failClosed = reconcileDanger(ledgerWithSeeds(), { ok: false, error: 'diff-risk-classify.sh not found' });
+  const failEvidence = failClosed.items.find((it) => it.id === 'SEC-AUTH')?.evidence ?? '';
+  assert.match(failEvidence, /unavailable|fail-closed/i, `fail-closed evidence: ${failEvidence}`);
+
+  // danger 実検出 (risk.ok:true + hit)
+  const hitResult = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [{ class: 'auth' }] });
+  const authHit = hitResult.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(authHit.severity, 'critical', 'danger hit raises to critical');
+  assert.equal(authHit.floor, true, 'danger hit sets floor=true');
+  assert.equal(authHit.checked, false, 'danger hit is unchecked');
+  // hit item の evidence はない（unchecked のまま）か、あっても "unavailable" ではない
+  if (authHit.evidence !== null && authHit.evidence !== undefined) {
+    assert.doesNotMatch(String(authHit.evidence), /unavailable|fail-closed/i,
+      `danger hit evidence must not say "unavailable": ${authHit.evidence}`);
+  }
+
+  // clean item は "danger-grep clean" のまま
+  const cleanItem = hitResult.items.find((it) => it.id === 'SEC-CONFIG');
+  assert.match(cleanItem.evidence, /clean/, `clean evidence: ${cleanItem.evidence}`);
+  assert.doesNotMatch(cleanItem.evidence, /unavailable|fail-closed/i,
+    `clean evidence must not say "unavailable": ${cleanItem.evidence}`);
+});
+
 // ---- Task 3: isDocsOrTestOnly + classifyMergeTier ----
 
 test('isDocsOrTestOnly: md/test/bats のみ → true', () => {
