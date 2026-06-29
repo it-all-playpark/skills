@@ -127,7 +127,7 @@ function buildJournalHandoffCommand({ prefix, id, payload }) {
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
 // item = { id, text, dimension, severity, source, checked, evidence, check, floor }
 //   severity: 'critical' | 'major' | 'minor'
-//   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep'
+//   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep' | 'concern' | 'analyze' | 'implement'
 //   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
 //   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
 //
@@ -1624,7 +1624,7 @@ const greenFixIterations = []
 // 2 複製のプロンプト空白 drift を根治し、両経路の挙動を 1 箇所で管理する。
 async function runValidateLoop(label) {
   const isRetry = label === 'retry'
-  const phaseName = isRetry ? 'Security floor' : 'Validate'
+  const phaseName = 'Validate'
   let v = null
   for (let i = 1; i <= GREEN_MAX; i++) {
     const testLabel = isRetry ? `test#retry-${i}` : `test#${i}`
@@ -1830,7 +1830,7 @@ for (const [i, crit] of (req.acceptance_criteria ?? []).entries()) {
 for (const [i, c] of concerns.entries()) {
   ledger = appendItem(ledger, {
     id: `CONCERN-${i + 1}`, text: String(c), dimension: 'concern',
-    severity: 'major', source: 'evaluator', check: { kind: 'inspection' },
+    severity: 'major', source: 'concern', check: { kind: 'inspection' },
   }).ledger
 }
 log(`ledger 初期化: blocking ${policyBlockingItems(ledger, GATE_POLICY).length} / advisory ${policyAdvisoryItems(ledger, GATE_POLICY).length} 件`)
@@ -1967,13 +1967,8 @@ for (let i = 1; i <= EVAL_PASSES; i++) {
       + `replan+reimpl を繰り返さず現状で PR へ進む（human review に委ねる）`)
     break
   }
-  if (i === EVAL_MAX) {
-    log(`⚠️ evaluate は ${EVAL_MAX} iteration で pass せず（verdict=${ev.verdict}）— `
-      + `throw せず現状で PR へ進む（human review に委ねる）`)
-    break
-  }
-  if (EFFECTIVE_SHAPE === 'standard') {
-    log('standard 経路: 1 パス評価のみ（差し戻しなし仕様）。未解消 critical があれば merge tier HOLD + human review で担保')
+  if (i === EVAL_PASSES) {
+    log(`⚠️ evaluate は ${EVAL_PASSES} iteration で pass せず（verdict=${ev.verdict}）— throw せず現状で PR へ進む（human review に委ねる）`)
     break
   }
   // iteration i+1 に渡すために open な EVAL-* critical を再取得する（critical_resolutions で
