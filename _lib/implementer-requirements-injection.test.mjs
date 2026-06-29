@@ -57,6 +57,19 @@ if (implPromptEnd === -1) {
 
 const implPromptSection = src.slice(implPromptStart, implPromptEnd);
 
+if (!(implPromptEnd > implPromptStart)) {
+  throw new Error(
+    'implPrompt 区間の終端 anchor (async function runImplement) が開始 anchor (function implPrompt) より後に来ること。'
+    + '逆転すると区間が空になり以降の包含 assert が無意味化する（窓ズレ検出）',
+  );
+}
+if (!(implPromptSection.length > 100)) {
+  throw new Error(
+    'implPrompt 区間が十分な長さを持つこと（窓ズレ検出: 異常に短ければ anchor 取得が壊れている）。'
+    + `現在の長さ: ${implPromptSection.length}`,
+  );
+}
+
 test('[requirements-injection] implPrompt 区間に acceptance_criteria が含まれる', () => {
   assert.ok(
     implPromptSection.includes('acceptance_criteria'),

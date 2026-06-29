@@ -6,34 +6,21 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-// ---- VM sandbox helpers（green-fix-test-audit.test.mjs の makeCountingSandbox / runDevFlowInSandbox / ensureSharedRun の 3 点セットと同型）----
+// ============================================================
+// responder: green-fix concerns routing 専用の agent 応答
+// 唯一の本質的差分: green-fix stub が concerns マーカーを返す。
+// test runner 呼び出し回数を追跡するクロージャカウンタを内包する。
+// ============================================================
 
-/**
- * green-fix concerns routing 専用の VM sandbox を組む。
- * agent() を呼び出しカウンタ stub にし、calls 配列を expose する。
- * test stub は 1 回目が failed (green:false)、2 回目以降は passed (green:true) を返す
- * ことで green-fix#1 が 1 回だけ走る経路を再現する。
- * 唯一の本質的差分: green-fix stub が concerns マーカーを返す（既存テンプレートは concerns: []）。
- *
- * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
- */
-function makeCountingSandbox() {
-  const calls = [];
-  // test runner 呼び出し回数を追跡するクロージャカウンタ
+function createResponder() {
   let testCallCount = 0;
-
-  // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType, prompt: prompt ?? '' });
-
+  return function({ label, agentType }) {
     // Setup(worktree)
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
@@ -112,67 +99,6 @@ function makeCountingSandbox() {
     // デフォルト
     return null;
   };
-
-  // parallel() stub: runImplement が parallel(par) を呼ぶため（par が空なら []）
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-
-  const sandbox = {
-    // workflow 制御関数
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    // 引数（ISSUE 解決用）
-    args: '1',
-    // JS 組み込み（green-fix-test-audit.test.mjs と同一セット）
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return { ctx, calls };
-}
-
-/**
- * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * green-fix-test-audit.test.mjs の runDevFlowInSandbox と同型。
- *
- * @param {string} src - dev-flow.js の raw ソース
- * @param {vm.Context} ctx - vm コンテキスト
- * @returns {Promise<Error|null>} エラーがあれば Error、無ければ null
- */
-async function runDevFlowInSandbox(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  try {
-    const result = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (result && typeof result.then === 'function') {
-      await result.catch((e) => {
-        caughtError = e;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return caughtError;
 }
 
 // ============================================================
@@ -185,7 +111,7 @@ let sharedErr = null;
 async function ensureSharedRun() {
   if (sharedCalls !== null) return;
   const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, calls } = makeCountingSandbox();
+  const { ctx, calls } = makeRecordingSandbox(createResponder());
   const err = await runDevFlowInSandbox(src, ctx);
   sharedCalls = calls;
   sharedErr = err;

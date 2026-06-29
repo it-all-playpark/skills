@@ -8,154 +8,82 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { TEST_WEAKENING } from './test-helpers/dev-flow-markers.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-// ---- VM sandbox helpers（shape-loop-routing.test.mjs の makeCountingSandbox / runDevFlowInSandbox をコピー）----
-// calls には prompt も記録: calls.push({ label, agentType, prompt })
+// ============================================================
+// responder: green-fix なし経路専用の agent 応答
+// test runner（label startsWith 'test'）は常に passed (green:true) を返すため
+// green-fix 経路に入らない。
+// ============================================================
 
-/**
- * green-fix なし経路専用の VM sandbox を組む。
- * agent() を呼び出しカウンタ stub にし、calls 配列を expose する。
- * test runner（label startsWith 'test'）は常に passed (green:true) を返すため
- * green-fix 経路に入らない。
- *
- * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
- */
-function makeCountingSandbox() {
-  const calls = [];
-
-  // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType, prompt: prompt ?? '' });
-
-    // Setup(worktree)
-    if (label === 'worktree') {
-      return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    }
-    // Analyze: label が 'analyze' で始まる
-    if (label.startsWith('analyze')) {
-      return {
-        summary: 's',
-        acceptance_criteria: ['a', 'b', 'c', 'd'],
-        issue_type: 'fix',
-        scope: 'src',
-        estimated_change_file_count: 3,
-        shape: 'standard',
-      };
-    }
-    // Plan: dev-planner
-    if (agentType === 'dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
-    // Security floor / danger-grep 系
-    if (label.startsWith('danger-grep')) {
-      return { ok: true, hits: [] };
-    }
-    // Validate: test runner（label が 'test' で始まる）
-    // 常に passed (green:true) を返す — green-fix 経路に入らない
-    if (label.startsWith('test')) {
-      return { tests: 'passed', green: true, summary: '' };
-    }
-    // Evaluate: evaluator
-    if (agentType === 'evaluator') {
-      return {
-        verdict: 'pass',
-        total: 100,
-        threshold: 80,
-        feedback: [],
-        feedback_level: 'implementation',
-        ac_results: [],
-        security_clearance: [],
-      };
-    }
-    // realized-diff / declared-path-check / changed-files → files: [] で refloor を standard 維持
-    if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') {
-      return { files: [] };
-    }
-    // PR 系: label が 'pr' で始まる
-    if (label.startsWith('pr')) {
-      return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    // implementer
-    if (agentType === 'implementer') {
-      return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
-    }
-    // diff-gate / diff-hash（issue #215）: need() による throw の回避
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
-    // デフォルト
-    return null;
-  };
-
-  // parallel() stub: runImplement が parallel(par) を呼ぶため（par が空なら []）
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-
-  const sandbox = {
-    // workflow 制御関数
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    // 引数（ISSUE 解決用）
-    args: '1',
-    // JS 組み込み（shape-loop-routing.test.mjs と同一セット）
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return { ctx, calls };
-}
-
-/**
- * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * shape-loop-routing.test.mjs の runDevFlowInSandbox と同型。
- *
- * @param {string} src - dev-flow.js の raw ソース
- * @param {vm.Context} ctx - vm コンテキスト
- * @returns {Promise<Error|null>} エラーがあれば Error、無ければ null
- */
-async function runDevFlowInSandbox(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  try {
-    const result = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (result && typeof result.then === 'function') {
-      await result.catch((e) => {
-        caughtError = e;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
+function responder({ label, agentType }) {
+  // Setup(worktree)
+  if (label === 'worktree') {
+    return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
   }
-  return caughtError;
+  // Analyze: label が 'analyze' で始まる
+  if (label.startsWith('analyze')) {
+    return {
+      summary: 's',
+      acceptance_criteria: ['a', 'b', 'c', 'd'],
+      issue_type: 'fix',
+      scope: 'src',
+      estimated_change_file_count: 3,
+      shape: 'standard',
+    };
+  }
+  // Plan: dev-planner
+  if (agentType === 'dev-planner') {
+    return { summary: 'p', serial: [], parallel: [] };
+  }
+  // Plan reviewer
+  if (agentType === 'plan-reviewer') {
+    return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+  }
+  // Security floor / danger-grep 系
+  if (label.startsWith('danger-grep')) {
+    return { ok: true, hits: [] };
+  }
+  // Validate: test runner（label が 'test' で始まる）
+  // 常に passed (green:true) を返す — green-fix 経路に入らない
+  if (label.startsWith('test')) {
+    return { tests: 'passed', green: true, summary: '' };
+  }
+  // Evaluate: evaluator
+  if (agentType === 'evaluator') {
+    return {
+      verdict: 'pass',
+      total: 100,
+      threshold: 80,
+      feedback: [],
+      feedback_level: 'implementation',
+      ac_results: [],
+      security_clearance: [],
+    };
+  }
+  // realized-diff / declared-path-check / changed-files → files: [] で refloor を standard 維持
+  if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') {
+    return { files: [] };
+  }
+  // PR 系: label が 'pr' で始まる
+  if (label.startsWith('pr')) {
+    return { pr_url: 'http://x', pr_number: 1, committed: true };
+  }
+  // implementer
+  if (agentType === 'implementer') {
+    return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+  }
+  // diff-gate / diff-hash（issue #215）: need() による throw の回避
+  if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
+    return { hash: 'H', empty: false };
+  }
+  // デフォルト
+  return null;
 }
 
 // ============================================================
@@ -168,7 +96,7 @@ let sharedErr = null;
 async function ensureSharedRun() {
   if (sharedCalls !== null) return;
   const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, calls } = makeCountingSandbox();
+  const { ctx, calls } = makeRecordingSandbox(responder);
   const err = await runDevFlowInSandbox(src, ctx);
   sharedCalls = calls;
   sharedErr = err;
@@ -216,7 +144,7 @@ test('[green-fix-no-audit] AC#2: green-fix 0 回経路では evaluator の promp
   );
 
   // green-fix なし経路では evaluator prompt にテスト弱体化 focus が注入されないこと
-  const withAuditFocus = evaluatorCalls.filter((c) => c.prompt.includes('テスト弱体化'));
+  const withAuditFocus = evaluatorCalls.filter((c) => c.prompt.includes(TEST_WEAKENING));
   assert.equal(
     withAuditFocus.length,
     0,
