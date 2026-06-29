@@ -8,13 +8,9 @@
  *   - JS_GLOBALS: VM sandbox に expose する 15 個の JS 組み込みをまとめた object
  *   - makeRecordingSandbox(responder, extraSandbox?): {ctx, calls} を返す
  *   - runDevFlowInSandbox(src, ctx): dev-flow.js ソースを strip して sandbox 実行する
- *   - createSharedRunner(responder, extraSandbox?): { run } を返す（memoized 実行）
  */
 
 import vm from 'node:vm';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 
 // ============================================================
 // JS_GLOBALS: VM sandbox に expose する JS 組み込み 15 個
@@ -117,35 +113,3 @@ export async function runDevFlowInSandbox(src, ctx) {
   return caughtError;
 }
 
-// ============================================================
-// createSharedRunner: memoized 共有実行ランナー（任意 export）
-//
-// 複数テストが同じ sandbox 実行結果を参照する場合（ensureSharedRun パターン）を共有化する。
-// ============================================================
-
-/**
- * dev-flow.js を 1 度だけ実行し、結果をメモ化するランナーを返す。
- *
- * @param {(opts: {label: string, agentType: string, prompt: string}) => unknown} responder
- * @param {Record<string, unknown>} [extraSandbox={}]
- * @returns {{ run: () => Promise<{calls: Array<{label: string, agentType: string, prompt: string}>, err: Error|null}> }}
- */
-export function createSharedRunner(responder, extraSandbox = {}) {
-  let memo = null;
-
-  const here = dirname(fileURLToPath(import.meta.url));
-  // _lib/test-helpers/vm-sandbox.mjs → repo root は 3 up
-  const repoRoot = join(here, '..', '..');
-  const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-
-  const run = async () => {
-    if (memo !== null) return memo;
-    const src = readFileSync(devFlowPath, 'utf8');
-    const { ctx, calls } = makeRecordingSandbox(responder, extraSandbox);
-    const err = await runDevFlowInSandbox(src, ctx);
-    memo = { calls, err };
-    return memo;
-  };
-
-  return { run };
-}
