@@ -1,26 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReviewCommentBody, buildTerminalSummaryBody, mdCell } from './pr-comment-format.mjs';
-
-// --- mdCell ------------------------------------------------------------------
-
-test('mdCell: null/undefined -> 空文字列', () => {
-  assert.equal(mdCell(null), '');
-  assert.equal(mdCell(undefined), '');
-});
-
-test('mdCell: | をエスケープする', () => {
-  assert.equal(mdCell('a|b'), 'a\\|b');
-});
-
-test('mdCell: 改行を <br> に変換する', () => {
-  assert.equal(mdCell('a\nb'), 'a<br>b');
-  assert.equal(mdCell('a\r\nb'), 'a<br>b');
-});
-
-test('mdCell: 数値を文字列に変換する', () => {
-  assert.equal(mdCell(42), '42');
-});
+import { buildReviewCommentBody, buildTerminalSummaryBody } from './pr-comment-format.mjs';
+import { mdCell } from './md-cell.mjs';
+globalThis.mdCell = mdCell;
 
 // --- buildReviewCommentBody --------------------------------------------------
 

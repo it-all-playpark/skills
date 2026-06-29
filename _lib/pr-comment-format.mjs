@@ -11,11 +11,6 @@ const DECISION_LABEL = {
   'comment': 'コメント',
 };
 
-export function mdCell(v) {
-  if (v == null) return '';
-  return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
-}
-
 /**
  * per-round レビューコメント markdown を生成する。
  * @param {object} opts
