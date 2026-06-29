@@ -1,7 +1,7 @@
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
 // item = { id, text, dimension, severity, source, checked, evidence, check, floor }
 //   severity: 'critical' | 'major' | 'minor'
-//   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep'
+//   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep' | 'concern' | 'analyze' | 'implement'
 //   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
 //   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
 //
