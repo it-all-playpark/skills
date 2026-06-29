@@ -5,17 +5,6 @@
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 /**
- * Markdown テーブルセルの値をエスケープする。
- * パイプ文字を \| に、改行を <br> に変換する。
- * @param {*} v
- * @returns {string}
- */
-export function mdCell(v) {
-  if (v == null) return '';
-  return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
-}
-
-/**
  * dev-flow 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号

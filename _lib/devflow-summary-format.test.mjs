@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDevflowSummaryBody, mdCell } from './devflow-summary-format.mjs';
+import { mdCell } from './md-cell.mjs';
+import { buildDevflowSummaryBody } from './devflow-summary-format.mjs';
+
+globalThis.mdCell = mdCell;
 
 // ─── 共通テストデータ ───────────────────────────────────────────────────────────
 
@@ -20,32 +23,6 @@ const BASE_INPUT = {
   testGreen: true,
   evalVerdict: 'pass',
 };
-
-// ─── mdCell ───────────────────────────────────────────────────────────────────
-
-test('mdCell: null -> 空文字', () => {
-  assert.equal(mdCell(null), '');
-});
-
-test('mdCell: undefined -> 空文字', () => {
-  assert.equal(mdCell(undefined), '');
-});
-
-test('mdCell: | をエスケープ', () => {
-  assert.equal(mdCell('a|b'), 'a\\|b');
-});
-
-test('mdCell: \\n を <br> に変換', () => {
-  assert.equal(mdCell('a\nb'), 'a<br>b');
-});
-
-test('mdCell: \\r\\n を <br> に変換', () => {
-  assert.equal(mdCell('a\r\nb'), 'a<br>b');
-});
-
-test('mdCell: 通常文字列はそのまま', () => {
-  assert.equal(mdCell('hello world'), 'hello world');
-});
 
 // ─── at-a-glance テーブル絵文字 ──────────────────────────────────────────────
 
