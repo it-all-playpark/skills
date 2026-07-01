@@ -65,3 +65,19 @@ export function policyAdvisoryItems(ledger, policy) {
 export function isConvergedUnderPolicy(ledger, policy) {
   return policyBlockingItems(ledger, policy).every((it) => it.checked);
 }
+
+// Evaluate ループ収束専用の純粋関数（issue #271）。
+//
+// danger-grep fail-closed(risk.ok!==true) でマークした SEC seed（source==='seed' &&
+// dimension==='security' && fail_closed===true）を Evaluate ループの収束対象からのみ
+// 除外する。merge tier 側は isConvergedUnderPolicy を使い fail_closed item を含めたまま
+// HOLD を強制する（分離。issue #271）。
+//
+// fail_closed でない SEC item（実際に danger を検出した hit item を含む）は除外されず、
+// 従来通り checked になるまでループを blocking し続ける。非 SEC dimension の blocking item
+// の収束ロジックは isConvergedUnderPolicy と同一。
+export function isLoopConvergedUnderPolicy(ledger, policy) {
+  return policyBlockingItems(ledger, policy)
+    .filter((it) => !(it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true))
+    .every((it) => it.checked);
+}

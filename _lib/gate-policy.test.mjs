@@ -11,6 +11,7 @@ import {
   policyBlockingItems,
   policyAdvisoryItems,
   isConvergedUnderPolicy,
+  isLoopConvergedUnderPolicy,
 } from './gate-policy.mjs';
 
 // ---- (1) resolveGatePolicy ----
@@ -190,6 +191,92 @@ test('isConvergedUnderPolicy: llm-major-blocking で LLM major が blocking に�
 
 test('isConvergedUnderPolicy: 空 ledger は true', () => {
   assert.equal(isConvergedUnderPolicy({ items: [], round: 0 }, 'llm-major-advisory'), true);
+});
+
+// ---- isLoopConvergedUnderPolicy（issue #271: Evaluate ループ収束専用）----
+
+test('isLoopConvergedUnderPolicy: fail_closed SEC seed が唯一の unchecked blocking のとき true（isConvergedUnderPolicy とは分離）', () => {
+  const items = [
+    {
+      ...mkItem({
+        id: 'SEC-1',
+        dimension: 'security',
+        source: 'seed',
+        severity: 'critical',
+        check: { kind: 'deterministic' },
+      }),
+      checked: false,
+      fail_closed: true,
+    },
+  ];
+  const ledger = { items, round: 0 };
+  assert.equal(isLoopConvergedUnderPolicy(ledger, 'llm-major-advisory'), true);
+  assert.equal(isConvergedUnderPolicy(ledger, 'llm-major-advisory'), false);
+});
+
+test('isLoopConvergedUnderPolicy: 非 SEC blocking (critical) が unchecked なら false', () => {
+  const items = [
+    { ...mkItem({ id: 'AC-1', severity: 'critical' }), checked: false },
+  ];
+  const ledger = { items, round: 0 };
+  assert.equal(isLoopConvergedUnderPolicy(ledger, 'llm-major-advisory'), false);
+});
+
+test('isLoopConvergedUnderPolicy: fail_closed を持たない実 hit SEC は除外されず false のまま', () => {
+  const items = [
+    {
+      ...mkItem({
+        id: 'SEC-2',
+        dimension: 'security',
+        source: 'seed',
+        severity: 'critical',
+        check: { kind: 'deterministic' },
+        floor: true,
+      }),
+      checked: false,
+      fail_closed: false,
+    },
+  ];
+  const ledger = { items, round: 0 };
+  assert.equal(isLoopConvergedUnderPolicy(ledger, 'llm-major-advisory'), false);
+});
+
+test('isLoopConvergedUnderPolicy: fail_closed 未定義の実 hit SEC も除外されず false のまま', () => {
+  const items = [
+    {
+      ...mkItem({
+        id: 'SEC-3',
+        dimension: 'security',
+        source: 'seed',
+        severity: 'critical',
+        check: { kind: 'deterministic' },
+        floor: true,
+      }),
+      checked: false,
+    },
+  ];
+  const ledger = { items, round: 0 };
+  assert.equal(isLoopConvergedUnderPolicy(ledger, 'llm-major-advisory'), false);
+});
+
+test('isLoopConvergedUnderPolicy: 全 blocking checked なら true', () => {
+  const items = [
+    {
+      ...mkItem({
+        id: 'SEC-4',
+        dimension: 'security',
+        source: 'seed',
+        severity: 'critical',
+        check: { kind: 'deterministic' },
+      }),
+      checked: true,
+      fail_closed: false,
+    },
+    { ...mkItem({ id: 'AC-2', severity: 'critical' }), checked: true },
+  ];
+  const ledger = { items, round: 0 };
+  assert.equal(isLoopConvergedUnderPolicy(ledger, 'llm-major-advisory'), true);
+  assert.equal(isConvergedUnderPolicy(ledger, 'llm-major-advisory'), true);
 });
 
 // ---- policyBlockingItems / policyAdvisoryItems ----
