@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import {
   GATE_POLICIES,
   DEFAULT_GATE_POLICY,
@@ -210,4 +213,53 @@ test('policyBlockingItems / policyAdvisoryItems: 分離が正しい', () => {
   const advisory2 = policyAdvisoryItems(ledger, 'llm-major-blocking');
   assert.deepEqual(blocking2.map((i) => i.id), ['crit', 'llm-maj']);
   assert.deepEqual(advisory2.map((i) => i.id), ['llm-min']);
+});
+
+// ---- F3: source='concern' CONCERN item のgating 挙動 characterization（回帰固定）----
+
+// CONCERN item は source='concern', severity='major', check={kind:'inspection'} で append される。
+// gateLane は source==='seed' のみ特別扱いするため、source='concern' への変更はgating 不変。
+// このテストは characterization test — 既存挙動を pin して regression を防ぐ。
+test('gateLane: source=concern の major/inspection item は llm-major-advisory で advisory（回帰固定）', () => {
+  const item = mkItem({ severity: 'major', source: 'concern', check: { kind: 'inspection' } });
+  assert.equal(
+    gateLane(item, 'llm-major-advisory'),
+    'advisory',
+    'source=concern の CONCERN item は default policy で advisory（source=evaluator と同分類）',
+  );
+});
+
+test('gateLane: source=concern は source=evaluator と同じ lane 分類になる（全 policy で一致）', () => {
+  const base = { severity: 'major', check: { kind: 'inspection' } };
+  const concern = mkItem({ ...base, source: 'concern' });
+  const evaluator = mkItem({ ...base, source: 'evaluator' });
+  for (const p of GATE_POLICIES) {
+    assert.equal(
+      gateLane(concern, p),
+      gateLane(evaluator, p),
+      `policy=${p} で source=concern と source=evaluator の lane が一致するべき`,
+    );
+  }
+});
+
+// ---- F3 structural: dev-flow.js の CONCERN append は source: 'concern' を使う ----
+
+// TDD red test: dev-flow.js が CONCERN append に source: 'evaluator' を誤用していると FAIL する。
+// F3 実装（source: 'evaluator' → source: 'concern' 変更）後に GREEN になる。
+test('dev-flow.js CONCERN append ブロックは source: "concern" を使い source: "evaluator" を使わない', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
+  const src = readFileSync(devFlowPath, 'utf8');
+  // CONCERN-${i + 1} の appendItem 呼び出しブロックを抽出（テンプレートリテラルのバッククォート含む）
+  const concernMatch = src.match(/`CONCERN-\$\{i \+ 1\}`[\s\S]{0,300}?\.ledger/);
+  assert.ok(concernMatch, 'CONCERN append ブロックが dev-flow.js に見つからない');
+  const block = concernMatch[0];
+  assert.ok(
+    !block.includes("source: 'evaluator'"),
+    `CONCERN append に source: 'evaluator' 誤用が残っている:\n${block}`,
+  );
+  assert.ok(
+    block.includes("source: 'concern'"),
+    `CONCERN append に source: 'concern' が設定されていない:\n${block}`,
+  );
 });

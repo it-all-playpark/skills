@@ -576,8 +576,20 @@ test('[refloor][struct] realized-diff は git status --porcelain を使う（三
   const f2Start = src.indexOf('Step F2');
   assert.ok(f2Start !== -1, 'dev-flow.js に Step F2 コメントが存在すること');
 
-  // F2 直後の 800 文字を検査範囲とする（realized-diff agent 呼び出しを包含するのに十分）
-  const f2Excerpt = src.slice(f2Start, f2Start + 800);
+  // F2 ブロックの終端を次の "Step " コメントで anchor する（固定幅 800 は窓ズレ false-green リスクあり）
+  // 'Step F2' 自身を再ヒットしないよう開始 offset を 'Step F2'.length 分ずらす
+  const f2SearchFrom = f2Start + 'Step F2'.length;
+  const nextStepPos = src.indexOf('Step ', f2SearchFrom);
+  assert.ok(nextStepPos !== -1, 'Step F2 の後続 Step が存在すること（anchor 取得失敗 → 窓範囲が検証不能）');
+  const f2Excerpt = src.slice(f2Start, nextStepPos);
+
+  // 窓ズレ検出 assert: excerpt が realized-diff agent 呼び出しを実際に内包していることを正の anchor で保証する
+  // この assert が落ちたら窓が対象領域から外れている = 下の否定 assert が無意味化している兆候
+  assert.ok(
+    f2Excerpt.includes('realized-diff'),
+    'F2 excerpt が realized-diff agent 呼び出しを跨いでいること'
+      + '（窓ズレ検出: この assert が落ちたら窓が対象領域から外れている = 下の否定 assert が無意味化している兆候）',
+  );
 
   // 正しいパターン: status --porcelain で未コミット変更を捕捉
   assert.ok(

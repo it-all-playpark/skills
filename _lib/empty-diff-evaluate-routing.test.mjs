@@ -31,7 +31,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
   const agentStub = async (prompt, opts) => {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType, prompt: String(prompt ?? '') });
+    calls.push({ label, agentType, prompt: String(prompt ?? ''), phase: opts?.phase ?? null });
 
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
@@ -234,6 +234,28 @@ test('[empty-diff] (I) 両 hash 一致 + status=stuck → eval_tree_stale===true
   const postSummaryCall = calls.find((c) => c.label === 'post-summary');
   assert.ok(postSummaryCall !== undefined, '(I) post-summary の agent 呼び出しが存在すべき');
   assert.ok(postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(I) post-summary prompt に stale 警告を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
+});
+
+// (K) empty-diff gate retry 経路の phase タグが 'Validate'（'Security floor' でない）こと（issue #253）
+// runValidateLoop('retry') は empty-diff gate 内（phase('Security floor') 呼び出し前）で実行されるため、
+// test#retry-N / green-fix#retry-N の agent 呼び出しに付く phase タグは 'Validate' が正しい。
+test('[empty-diff] (K) retry 経路の test#retry / green-fix#retry call の phase タグが Validate であること（issue #253）', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: false });
+  const { error } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(K) 想定外エラー: ${error.message}`);
+  // test#retry-N calls の phase が全て 'Validate' であること
+  const retryTestCalls = calls.filter((c) => c.label.startsWith('test#retry'));
+  assert.ok(retryTestCalls.length >= 1, `(K) test#retry-N が 1 件以上呼ばれるはず（gateEmpty:true で retry 経路が発火）`);
+  for (const c of retryTestCalls) {
+    assert.strictEqual(c.phase, 'Validate', `(K) test#retry call（label=${c.label}）の phase は 'Validate' のはずだが '${c.phase}'（Security floor タグ誤帰属）`);
+  }
+  // green-fix#retry-N calls の phase が全て 'Validate' であること（green が false になりうる場合は呼ばれる）
+  const retryGreenFixCalls = calls.filter((c) => c.label.startsWith('green-fix#retry'));
+  for (const c of retryGreenFixCalls) {
+    assert.strictEqual(c.phase, 'Validate', `(K) green-fix#retry call（label=${c.label}）の phase は 'Validate' のはずだが '${c.phase}'（Security floor タグ誤帰属）`);
+  }
 });
 
 // (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_tree_stale===false（誤検知なし）

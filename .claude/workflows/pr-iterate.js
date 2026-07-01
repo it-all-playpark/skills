@@ -159,6 +159,25 @@ function makeSeenTracker(threshold) {
 }
 // ==== END inline: _lib/stuck-detector.mjs ====
 
+// ==== BEGIN inline: _lib/md-cell.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// mdCell: Markdown テーブルセルの値をエスケープする純粋関数。
+// I/O なし、非決定性なし。同入力 -> byte 一致。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+/**
+ * Markdown テーブルセルの値をエスケープする。
+ * パイプ文字を \| に、改行を <br> に変換する。
+ * @param {*} v
+ * @returns {string}
+ */
+function mdCell(v) {
+  if (v == null) return '';
+  return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+// ==== END inline: _lib/md-cell.mjs ====
+
 // ==== BEGIN inline: _lib/pr-comment-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // buildReviewCommentBody / buildTerminalSummaryBody: pr-iterate の per-round
 // レビューコメントおよび終端サマリー markdown を生成する純粋関数。
@@ -172,11 +191,6 @@ const DECISION_LABEL = {
   'request-changes': '変更要求',
   'comment': 'コメント',
 };
-
-function mdCell(v) {
-  if (v == null) return '';
-  return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
-}
 
 /**
  * per-round レビューコメント markdown を生成する。
@@ -328,24 +342,13 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 }
 // ==== END inline: _lib/pr-comment-format.mjs ====
 
-// ---- 投稿本文を agent に保存・投稿させるヘルパー --------------------------------------
-// workflow runtime には fs/os/path（require）も Date.now() も無いため、orchestrator 側で
-// 一時ファイルを書き出すことはできない。代わりに本文を delimiter 付きで agent プロンプトへ
-// 埋め込み、agent 側で Write tool を使って一時ファイルへ保存させてから --body-file で投稿させる。
-// Write tool の content 引数は shell（echo/heredoc）を経由しないため、triple-backtick や
-// バッククォートを含むレビュー本文でもフェンス境界・コマンド置換が衝突しない
-// （旧 writeTempBody の「本文を shell に通さない」意図を agent 側で構造的に再現する）。
-function bodySaveInstr(body) {
-  return `## 本文の保存\n`
-    + `まず Bash で \`mktemp "\${TMPDIR:-/tmp}/pr-iterate-XXXXXX.md"\` を実行して一時ファイルを作成し、\n`
-    + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
-    + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
-    + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
-    + `エスケープ・改変しないこと。以降のコマンドの \`--body-file\` には <BODY_FILE> を指定する。\n`
-    + `<<<PR_ITERATE_BODY_BEGIN>>>\n${body}\n<<<PR_ITERATE_BODY_END>>>\n\n`
-}
+// ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// workflow-post-helpers: PR/Issue コメント投稿・ジャーナル記録用の共通スキーマ・ヘルパー。
+// I/O なし。bodySaveInstr は agent 向け instruction 文字列を生成する純粋関数。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// ---- POST_RESULT schema（dev-runner 経由の PR 投稿結果）-----------------------------------
 const POST_RESULT = {
   type: 'object',
   required: ['posted'],
@@ -364,6 +367,24 @@ const JOURNAL_RESULT = {
     summary: { type: 'string' },
   },
 }
+
+/**
+ * PR/Issue コメント本文保存の agent 向け instruction を生成する。
+ * Write tool 経由で一時ファイルに保存させる手順を返す。
+ * @param {string} body - 保存する本文
+ * @param {string} tmpPrefix - mktemp の prefix（例: 'dev-flow', 'pr-iterate'）
+ * @param {string} delimName - delimiter 名（例: 'DEV_FLOW', 'PR_ITERATE'）
+ */
+function bodySaveInstr(body, tmpPrefix, delimName) {
+  return `## 本文の保存\n`
+    + `まず Bash で \`mktemp "\${TMPDIR:-/tmp}/${tmpPrefix}-XXXXXX.md"\` を実行して一時ファイルを作成し、\n`
+    + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
+    + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
+    + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
+    + `エスケープ・改変しないこと。以降のコマンドの \`--body-file\` には <BODY_FILE> を指定する。\n`
+    + `<<<${delimName}_BODY_BEGIN>>>\n${body}\n<<<${delimName}_BODY_END>>>\n\n`
+}
+// ==== END inline: _lib/workflow-post-helpers.mjs ====
 
 const REVIEW = {
   type: 'object',
@@ -496,7 +517,7 @@ for (i = 1; i <= MAX; i++) {
       const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [], summary: review.summary, verificationEvidence: review.verification_evidence })
       const approvePost = await agent(
         `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n\n`
-        + bodySaveInstr(approveBody)
+        + bodySaveInstr(approveBody, 'pr-iterate', 'PR_ITERATE')
         + `## Instructions\n`
         + `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
         + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
@@ -561,7 +582,7 @@ for (i = 1; i <= MAX; i++) {
       const ciRoundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: ciFindings, summary: review.summary, verificationEvidence: review.verification_evidence })
       const ciRoundPost = await agent(
         `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}、CI failed）。\n\n`
-        + bodySaveInstr(ciRoundBody)
+        + bodySaveInstr(ciRoundBody, 'pr-iterate', 'PR_ITERATE')
         + `## Instructions\n`
         + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
         + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
@@ -621,7 +642,7 @@ for (i = 1; i <= MAX; i++) {
   const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking, summary: review.summary, verificationEvidence: review.verification_evidence })
   const roundPost = await agent(
     `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n\n`
-    + bodySaveInstr(roundBody)
+    + bodySaveInstr(roundBody, 'pr-iterate', 'PR_ITERATE')
     + `## Instructions\n`
     + (review.decision === 'request-changes'
       ? `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
@@ -688,7 +709,7 @@ const summaryBody = buildTerminalSummaryBody({
 })
 const summaryPost = await agent(
   `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n\n`
-  + bodySaveInstr(summaryBody)
+  + bodySaveInstr(summaryBody, 'pr-iterate', 'PR_ITERATE')
   + `## Instructions\n`
   + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
   + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
