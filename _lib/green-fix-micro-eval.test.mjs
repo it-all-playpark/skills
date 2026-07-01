@@ -16,30 +16,24 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { TEST_WEAKENING } from './test-helpers/dev-flow-markers.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-/**
- * micro shape + green-fix あり経路専用の VM sandbox を組む。
- * - analyze: shape: 'micro', estimated_change_file_count: 1
- * - realized-diff: files: ['src/foo.ts']（1 ファイル → refloor で micro 維持）
- * - test runner: 1 回目 fail、2 回目 pass（green-fix#1 が 1 回だけ走る）
- * - danger-grep: hits: []（danger path ではない）
- *
- * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
- */
-function makeMicroGreenFixSandbox() {
-  const calls = [];
+// ============================================================
+// responder: micro shape + green-fix あり経路専用の agent 応答
+// - analyze: shape: 'micro', estimated_change_file_count: 1
+// - realized-diff: files: ['src/foo.ts']（1 ファイル → refloor で micro 維持）
+// - test runner: 1 回目 fail、2 回目 pass（testCallCount クロージャ状態を内包）
+// - green-fix implementer: files / summary を返す
+// ============================================================
+
+function createResponder() {
   let testCallCount = 0;
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType, prompt: prompt ?? '' });
-
+  return function({ label, agentType }) {
     // Setup(worktree)
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
@@ -107,61 +101,11 @@ function makeMicroGreenFixSandbox() {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
+      return { hash: 'H', empty: false };
+    }
     return null;
   };
-
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    args: '1',
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return { ctx, calls };
-}
-
-/**
- * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- */
-async function runDevFlowInSandbox(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  try {
-    const result = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (result && typeof result.then === 'function') {
-      await result.catch((e) => {
-        caughtError = e;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return caughtError;
 }
 
 // ============================================================
@@ -174,7 +118,7 @@ let sharedErr = null;
 async function ensureSharedRun() {
   if (sharedCalls !== null) return;
   const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, calls } = makeMicroGreenFixSandbox();
+  const { ctx, calls } = makeRecordingSandbox(createResponder());
   const err = await runDevFlowInSandbox(src, ctx);
   sharedCalls = calls;
   sharedErr = err;
@@ -231,7 +175,7 @@ test('[green-fix-micro-eval] micro + green-fix 発生時に evaluator の prompt
     evaluatorCalls.length >= 1,
     `evaluator が呼ばれていない (全 agentTypes: ${sharedCalls.map((c) => c.agentType).join(', ')})`,
   );
-  const withFocus = evaluatorCalls.filter((c) => c.prompt.includes('テスト弱体化'));
+  const withFocus = evaluatorCalls.filter((c) => c.prompt.includes(TEST_WEAKENING));
   assert.ok(
     withFocus.length >= 1,
     `micro + green-fix 発生時: evaluator の prompt に「テスト弱体化」が含まれるべきだが含まれていない`
