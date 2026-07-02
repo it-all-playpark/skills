@@ -22,6 +22,8 @@
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
  * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）。pr-iterate fix 適用時も true（issue #233）
+ * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
+ * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -40,6 +42,8 @@ export function buildDevflowSummaryBody({
   testGreen,
   evalVerdict,
   evalTreeStale,
+  uiVerify,
+  uiVerifyMode,
 }) {
   const lines = [];
 
@@ -109,6 +113,12 @@ export function buildDevflowSummaryBody({
     for (const reason of mergeTierReasons) {
       lines.push(`- ${reason}`);
     }
+  }
+
+  // 5b. UI 検証（ui-verify）結果行（issue #285。skipped/null/undefined では出力しない）
+  if (uiVerify != null && uiVerify !== 'skipped') {
+    const modeSuffix = uiVerifyMode ? ` (mode: ${uiVerifyMode})` : '';
+    lines.push(`- UI 検証 (ui-verify): ${uiVerify}${modeSuffix}`);
   }
 
   // 6. 要対応セクション（常時可視）
