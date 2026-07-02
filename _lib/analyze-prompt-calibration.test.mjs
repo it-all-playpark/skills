@@ -70,3 +70,22 @@ test('PLANNER_HANDOFF_RULE: dev-flow.js 内の参照が 4 箇所以上', () => {
   const refCount = countOccurrences(src, 'PLANNER_HANDOFF_RULE');
   assert.ok(refCount >= 4, `PLANNER_HANDOFF_RULE 参照は ${refCount} 箇所（4 箇所以上が必要）`);
 });
+
+// issue #278: breaking 判定を LLM 自由文 (scope/summary への regex) から、analyze REQ の
+// 構造化 breaking_change フィールド + issue 本文への決定論 keyword scan の OR へ置換した pin。
+
+// (i) 「breaking_keyword_scan」が analyzePrompt と REQ schema の両方に存在する（3 箇所以上）
+test('breaking_keyword_scan: dev-flow.js 内の参照が 3 箇所以上（analyzePrompt + REQ schema）', () => {
+  const refCount = countOccurrences(src, 'breaking_keyword_scan');
+  assert.ok(refCount >= 3, `breaking_keyword_scan 参照は ${refCount} 箇所（3 箇所以上が必要）`);
+});
+
+// (j) 「breaking_evidence」が存在する
+test('breaking_evidence: dev-flow.js 内に存在', () => {
+  assert.ok(src.includes('breaking_evidence'));
+});
+
+// (k) isBreakingText（旧 LLM 自由文 regex 実装）の参照が 0 件
+test('isBreakingText: dev-flow.js 内の参照が 0 件', () => {
+  assert.equal(countOccurrences(src, 'isBreakingText'), 0);
+});

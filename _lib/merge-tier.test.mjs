@@ -132,7 +132,7 @@ test('reconcileDanger: danger-grep error は全 SEC seed を unchecked のまま
     shape: 'micro',
     converged: false,
     unresolvedDanger: false,
-    breaking: false,
+    breakingStructured: false, breakingKeyword: false,
     docsOrTestOnly: true,
     escalateCount: 0,
   });
@@ -201,92 +201,120 @@ test('isDocsOrTestOnly: md/test/bats のみ → true', () => {
 });
 
 test('classifyMergeTier: 未収束 → HOLD', () => {
-  const r = classifyMergeTier({ shape: 'standard', converged: false, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  const r = classifyMergeTier({ shape: 'standard', converged: false, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(r.tier, 'HOLD');
   assert.ok(r.reasons.some((x) => /収束/.test(x)));
 });
 
 test('classifyMergeTier: 未解消 danger → HOLD', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: true, breaking: false, docsOrTestOnly: true, escalateCount: 0 });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: true, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0 });
   assert.equal(r.tier, 'HOLD');
 });
 
-test('classifyMergeTier: breaking → HOLD', () => {
-  const r = classifyMergeTier({ shape: 'complex', converged: true, unresolvedDanger: false, breaking: true, docsOrTestOnly: false, escalateCount: 0 });
+// breaking 検出は「analyze 構造化判定」と「issue title/body keyword scan」の 2 入力を
+// 持つ（issue #278）。HOLD reason で由来を区別表示できることを origin ごとに担保する。
+
+test('classifyMergeTier: breakingStructured のみ true → HOLD、reasons に構造化判定文言を含み keyword scan 文言を含まない', () => {
+  const r = classifyMergeTier({ shape: 'complex', converged: true, unresolvedDanger: false, breakingStructured: true, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => x.includes('構造化判定')), `reasons に構造化判定文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.ok(!r.reasons.some((x) => x.includes('keyword scan')), `reasons に keyword scan 文言を含むべきでないが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: breakingKeyword のみ true → HOLD、reasons に keyword scan 文言を含み構造化判定文言を含まない', () => {
+  const r = classifyMergeTier({ shape: 'complex', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: true, docsOrTestOnly: false, escalateCount: 0 });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => x.includes('keyword scan')), `reasons に keyword scan 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.ok(!r.reasons.some((x) => x.includes('構造化判定')), `reasons に構造化判定文言を含むべきでないが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: breakingStructured と breakingKeyword が両方 true → HOLD、reasons に両文言が別要素として存在する', () => {
+  const r = classifyMergeTier({ shape: 'complex', converged: true, unresolvedDanger: false, breakingStructured: true, breakingKeyword: true, docsOrTestOnly: false, escalateCount: 0 });
+  assert.equal(r.tier, 'HOLD');
+  const structuredReason = r.reasons.find((x) => x.includes('構造化判定'));
+  const keywordReason = r.reasons.find((x) => x.includes('keyword scan'));
+  assert.ok(structuredReason, `reasons に構造化判定文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.ok(keywordReason, `reasons に keyword scan 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.notEqual(structuredReason, keywordReason, '両文言は別々の reasons 要素であるべき');
+});
+
+test('classifyMergeTier: breakingStructured / breakingKeyword が両方 false → HOLD にならない（regression）', () => {
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
+  assert.equal(r.tier, 'REVIEW');
+  assert.ok(!r.reasons.some((x) => /breaking|構造化判定|keyword scan/.test(x)), `breaking 関連 reason が無いはずだが: ${JSON.stringify(r.reasons)}`);
 });
 
 test('classifyMergeTier: ESCALATE 項目あり → HOLD', () => {
-  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 2 });
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 2 });
   assert.equal(r.tier, 'HOLD');
 });
 
 test('classifyMergeTier: micro + docs/test-only + clean + 収束 → AUTO', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0 });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0 });
   assert.equal(r.tier, 'AUTO');
 });
 
 test('classifyMergeTier: 収束済だが micro でない/コード変更 → REVIEW', () => {
-  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(r.tier, 'REVIEW');
 });
 
 test('classifyMergeTier: micro だが docs/test-only でない → REVIEW', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(r.tier, 'REVIEW');
 });
 
 
 test('classifyMergeTier: AC 未達(unsatisfiedAc:true) → HOLD', () => {
-  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: true });
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: true });
   assert.equal(r.tier, 'HOLD');
   assert.ok(r.reasons.some((x) => /AC 未達/.test(x)));
 });
 
 test('classifyMergeTier: unsatisfiedAc:false は既存 REVIEW 挙動不変', () => {
-  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: false });
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: false });
   assert.equal(r.tier, 'REVIEW');
 });
 
 test('classifyMergeTier: unsatisfiedAc 未指定でも REVIEW(後方互換 — フラグ省略時は false 扱い)', () => {
-  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(r.tier, 'REVIEW');
 });
 
 test('classifyMergeTier: unsatisfiedAc:true は AUTO 条件(micro+docs/test-only)でも HOLD に勝つ', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAc: true });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAc: true });
   assert.equal(r.tier, 'HOLD');
 });
 
 // ---- evalSkipped フラグ（issue #233）----
 
 test('classifyMergeTier: evalSkipped:true + micro AUTO → tier===AUTO かつ AC未検証文言を含む', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0, evalSkipped: true });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, evalSkipped: true });
   assert.equal(r.tier, 'AUTO');
   assert.ok(r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), `reasons に AC未検証文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
 });
 
 test('classifyMergeTier: evalSkipped:false + micro AUTO → tier===AUTO かつ AC未検証文言を含まない', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0, evalSkipped: false });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, evalSkipped: false });
   assert.equal(r.tier, 'AUTO');
   assert.ok(!r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), `evalSkipped:false では AC未検証文言を含むべきでないが: ${JSON.stringify(r.reasons)}`);
 });
 
 test('classifyMergeTier: evalSkipped 未指定 + micro AUTO → 従来通り reasons 1 件のみ（既存挙動不変）', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0 });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0 });
   assert.equal(r.tier, 'AUTO');
   assert.equal(r.reasons.length, 1, `evalSkipped 未指定時は reasons 1 件のはずだが: ${JSON.stringify(r.reasons)}`);
   assert.ok(!r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), 'evalSkipped 未指定では AC未検証文言なし');
 });
 
 test('classifyMergeTier: evalSkipped:true + standard → REVIEW かつ AC未検証文言なし（非AUTO ゲート境界不変）', () => {
-  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0, evalSkipped: true });
+  const r = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, evalSkipped: true });
   assert.equal(r.tier, 'REVIEW');
   assert.ok(!r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), `REVIEW tier では AC未検証文言なし: ${JSON.stringify(r.reasons)}`);
 });
 
 test('classifyMergeTier: evalSkipped:true + HOLD 条件(unsatisfiedAc:true) → HOLD かつ AC未検証文言なし（非AUTO ゲート境界不変）', () => {
-  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAc: true, evalSkipped: true });
+  const r = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAc: true, evalSkipped: true });
   assert.equal(r.tier, 'HOLD');
   assert.ok(!r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), `HOLD tier では AC未検証文言なし: ${JSON.stringify(r.reasons)}`);
 });
@@ -323,7 +351,7 @@ test('classifyMergeTier: dangerFailClosed:true → tier===HOLD かつ reasons �
     shape: 'standard',
     converged: false,
     unresolvedDanger: false,
-    breaking: false,
+    breakingStructured: false, breakingKeyword: false,
     docsOrTestOnly: false,
     escalateCount: 0,
     dangerFailClosed: true,
@@ -333,19 +361,19 @@ test('classifyMergeTier: dangerFailClosed:true → tier===HOLD かつ reasons �
 });
 
 test('classifyMergeTier: dangerFailClosed 未指定 → 従来通り(regression なし)', () => {
-  const rNotConverged = classifyMergeTier({ shape: 'standard', converged: false, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  const rNotConverged = classifyMergeTier({ shape: 'standard', converged: false, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(rNotConverged.tier, 'HOLD');
   assert.ok(!rNotConverged.reasons.some((x) => /fail-closed/.test(x)));
 
-  const rBreaking = classifyMergeTier({ shape: 'complex', converged: true, unresolvedDanger: false, breaking: true, docsOrTestOnly: false, escalateCount: 0 });
+  const rBreaking = classifyMergeTier({ shape: 'complex', converged: true, unresolvedDanger: false, breakingStructured: true, breakingKeyword: true, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(rBreaking.tier, 'HOLD');
   assert.ok(!rBreaking.reasons.some((x) => /fail-closed/.test(x)));
 
-  const rAuto = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0 });
+  const rAuto = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0 });
   assert.equal(rAuto.tier, 'AUTO');
   assert.ok(!rAuto.reasons.some((x) => /fail-closed/.test(x)));
 
-  const rReview = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  const rReview = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(rReview.tier, 'REVIEW');
   assert.ok(!rReview.reasons.some((x) => /fail-closed/.test(x)));
 });

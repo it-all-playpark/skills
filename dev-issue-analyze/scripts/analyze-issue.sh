@@ -55,9 +55,15 @@ detect_type() {
 
 TYPE=$(detect_type "$LABELS")
 
+# Breaking keyword scan (deterministic floor, applies to all depths).
+# NOTE: uses a here-string (not a pipe) so grep -q's early-exit on match
+# cannot cause an upstream SIGPIPE / silent false negative on large bodies.
+BREAKING_KEYWORD_SCAN="false"
+grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\n'"${BODY}" && BREAKING_KEYWORD_SCAN="true"
+
 # Minimal output
 if [[ "$DEPTH" == "minimal" ]]; then
-    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE")}"
+    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE"),\"breaking_keyword_scan\":$BREAKING_KEYWORD_SCAN}"
     exit 0
 fi
 
@@ -85,6 +91,7 @@ if [[ "$DEPTH" == "standard" ]]; then
   "milestone": $(json_str "$MILESTONE"),
   "acceptance_criteria": $AC,
   "requirements": $REQUIREMENTS,
+  "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
   "body_preview": $(printf '%s' "$BODY" | head -c 500 | jq -Rs .)
 }
 JSONEOF
@@ -94,9 +101,6 @@ fi
 # Comprehensive
 AFFECTED_FILES=$(echo "$BODY" | grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' | sort -u | head -10 | json_array)
 COMPONENTS=$(echo "$BODY" | grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' | sort -u | head -10 | json_array)
-
-BREAKING="false"
-echo "$BODY" | grep -qi "breaking\|incompatible\|migration" && BREAKING="true"
 
 cat <<JSONEOF
 {
@@ -110,7 +114,7 @@ cat <<JSONEOF
   "requirements": $REQUIREMENTS,
   "affected_files": $AFFECTED_FILES,
   "components": $COMPONENTS,
-  "breaking_changes": $BREAKING,
+  "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
   "body_full": $(printf '%s' "$BODY" | jq -Rs .)
 }
 JSONEOF
