@@ -26,9 +26,13 @@ $SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth L
 
 | Level | Output |
 |-------|--------|
-| `minimal` | title, type, labels, state |
+| `minimal` | title, type, labels, state, breaking_keyword_scan |
 | `standard` | + AC, requirements, body preview |
-| `comprehensive` | + affected files, components, breaking changes |
+| `comprehensive` | + affected files, components |
+
+`breaking_keyword_scan` is a **決定論的な keyword scan** (`breaking\|incompatible\|migration\|破壊的\|非互換`、
+title + body 全文、大文字小文字無視) が全 depth の JSON に含まれる。dev-flow の shape floor / merge tier HOLD の
+breaking 判定入力の一つ（`req.breaking_change`（LLM 構造化判定）との OR）として使われる決定論 floor。
 
 ## Output
 
@@ -43,7 +47,7 @@ $SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth L
   "requirements": ["Req1", "Req2"],
   "affected_files": ["src/foo.ts"],
   "components": ["AuthService"],
-  "breaking_changes": false,
+  "breaking_keyword_scan": false,
   "ambiguities": ["確信を持って AC 化できなかった点"]
 }
 ```

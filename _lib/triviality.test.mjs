@@ -100,18 +100,104 @@ test("issue_type='chore' (enum 外) → shape=complex", () => {
   assert.ok(result.reason.length > 0);
 });
 
-// (f) scope に 'breaking change' → 'complex'
-test("scope に 'breaking change' を含む → shape=complex", () => {
+// (f) regression (PR #277 相当): scope に breaking 文言があるが breaking_change/breaking_keyword_scan
+// が両方 false → 自由文言及だけでは floor 不発火 (complex にならない)
+test('PR#277 regression: scope に breaking 文言があるが両 flag false → complex にならない', () => {
   const result = classifyShape({
     estimated_change_file_count: 1,
-    acceptance_criteria: ['x', 'y'],
+    acceptance_criteria: ['x'],
     issue_type: 'fix',
     scope: 'breaking change in API',
     summary: 'fix a bug',
+    breaking_change: false,
+    breaking_keyword_scan: false,
+  });
+  assert.equal(result.shape, 'micro');
+});
+
+// (f2) breaking_change=true のみ → shape=complex, reason に 'analyze structured' 由来を明記
+test('breaking_change=true のみ → shape=complex, reason に analyze structured', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['x'],
+    issue_type: 'fix',
+    scope: 'src',
+    summary: 'fix a bug',
+    breaking_change: true,
+    breaking_keyword_scan: false,
   });
   assert.equal(result.shape, 'complex');
-  assert.equal(typeof result.reason, 'string');
-  assert.ok(result.reason.length > 0);
+  assert.ok(
+    /analyze structured/.test(result.reason),
+    `reason should mention analyze structured, got: ${result.reason}`
+  );
+});
+
+// (f3) breaking_keyword_scan=true のみ → shape=complex, reason に 'keyword scan' 由来を明記
+test('breaking_keyword_scan=true のみ → shape=complex, reason に keyword scan', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['x'],
+    issue_type: 'fix',
+    scope: 'src',
+    summary: 'fix a bug',
+    breaking_change: false,
+    breaking_keyword_scan: true,
+  });
+  assert.equal(result.shape, 'complex');
+  assert.ok(
+    /keyword scan/.test(result.reason),
+    `reason should mention keyword scan, got: ${result.reason}`
+  );
+});
+
+// (f4) 両 flag true → shape=complex, reason に両由来を明記
+test('breaking_change と breaking_keyword_scan 両方 true → shape=complex, reason に両由来', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['x'],
+    issue_type: 'fix',
+    scope: 'src',
+    summary: 'fix a bug',
+    breaking_change: true,
+    breaking_keyword_scan: true,
+  });
+  assert.equal(result.shape, 'complex');
+  assert.ok(
+    /analyze structured/.test(result.reason),
+    `reason missing analyze structured, got: ${result.reason}`
+  );
+  assert.ok(
+    /keyword scan/.test(result.reason),
+    `reason missing keyword scan, got: ${result.reason}`
+  );
+});
+
+// (f5) 両 field 未指定(undefined) → 非 breaking (=== true 判定のため欠落は false 扱い)、count/ac 由来の floor
+test('breaking_change / breaking_keyword_scan 未指定 → 非 breaking (count/ac 由来の floor)', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['x'],
+    issue_type: 'fix',
+    scope: 'src',
+    summary: 'fix a bug',
+  });
+  assert.equal(result.shape, 'micro');
+  assert.ok(!/breaking/i.test(result.reason), `reason should not mention breaking, got: ${result.reason}`);
+});
+
+// (f6) summary に破壊的変更への言及があっても両 flag false なら complex にならない
+test('summary に破壊的変更言及があるが両 flag false → complex にならない', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['x'],
+    issue_type: 'fix',
+    scope: 'src',
+    summary: '破壊的変更を避けるための修正',
+    breaking_change: false,
+    breaking_keyword_scan: false,
+  });
+  assert.equal(result.shape, 'micro');
 });
 
 // (g) estimated_change_file_count 欠落(undefined) → 'complex' かつ reason に 'missing'/'safe'
@@ -323,60 +409,4 @@ test('refloorShape: realizedCount=-1 → realizedFloor=complex', () => {
   assert.equal(result.realizedFloor, 'complex');
   assert.equal(result.shape, 'complex');
   assert.equal(result.refloored, true);
-});
-
-// ---- isBreakingText tests ----
-import { isBreakingText } from './triviality.mjs';
-
-// (1) breaking キーワードを含む文字列 → true
-test('isBreakingText: "breaking change in API" → true', () => {
-  assert.equal(isBreakingText('breaking change in API'), true);
-});
-
-test('isBreakingText: "DB migration required" → true', () => {
-  assert.equal(isBreakingText('DB migration required'), true);
-});
-
-test('isBreakingText: "破壊的変更" → true', () => {
-  assert.equal(isBreakingText('破壊的変更'), true);
-});
-
-test('isBreakingText: "BREAKING" (大文字) → true (case-insensitive)', () => {
-  assert.equal(isBreakingText('BREAKING'), true);
-});
-
-test('isBreakingText: "incompatible changes" → true', () => {
-  assert.equal(isBreakingText('incompatible changes'), true);
-});
-
-test('isBreakingText: "非互換" → true', () => {
-  assert.equal(isBreakingText('非互換'), true);
-});
-
-// (2) breaking キーワードを含まない → false
-test('isBreakingText: "normal refactor" → false', () => {
-  assert.equal(isBreakingText('normal refactor'), false);
-});
-
-// (3) null / undefined → false (String(s ?? '') ガード)
-test('isBreakingText: null → false', () => {
-  assert.equal(isBreakingText(null), false);
-});
-
-test('isBreakingText: undefined → false', () => {
-  assert.equal(isBreakingText(undefined), false);
-});
-
-// (4) classifyShape が scope='breaking change in API' で complex floor を返す（isBreakingText 経由）
-test('classifyShape: scope に "breaking change in API" → shape=complex (isBreakingText 経由)', () => {
-  const result = classifyShape({
-    estimated_change_file_count: 1,
-    acceptance_criteria: ['x', 'y'],
-    issue_type: 'fix',
-    scope: 'breaking change in API',
-    summary: 'fix a bug',
-  });
-  assert.equal(result.shape, 'complex');
-  assert.equal(typeof result.reason, 'string');
-  assert.ok(result.reason.length > 0);
 });

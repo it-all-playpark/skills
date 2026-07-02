@@ -89,6 +89,8 @@ export function isDocsOrTestOnly(files) {
 
 // merge tier を算出する。merge は全 tier 人間(AUTO も推奨ラベルのみ。真 auto-merge は W6)。
 // HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
+// breaking は analyze 構造化判定 (breakingStructured) と issue title/body keyword scan
+// (breakingKeyword) の 2 入力で、reason で由来を区別する（issue #278）。
 // AUTO: micro かつ docs/test-only かつ danger clean かつ収束（推奨ラベル）。
 // REVIEW: それ以外（標準。人間が LGTM して merge）。
 // s.evalSkipped (optional boolean): true の場合、AUTO branch で AC 未検証開示 reason を追記する。
@@ -103,7 +105,8 @@ export function classifyMergeTier(s) {
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
   if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
-  if (s.breaking) reasons.push('breaking/migration 検出');
+  if (s.breakingStructured) reasons.push('breaking/migration 検出（analyze 構造化判定 breaking_change=true）');
+  if (s.breakingKeyword) reasons.push('breaking/migration 検出（issue title/body keyword scan 決定論 hit）');
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');

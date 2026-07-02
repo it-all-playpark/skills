@@ -4,11 +4,9 @@
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // issue #272: AC 粒度と floor の較正 — micro floor の AC 境界を 3→4 に緩和。
+// issue #278: breaking 判定を LLM 自由文 (scope/summary への regex) から、analyze REQ の
+// 構造化 breaking_change フィールド + issue 本文への決定論 keyword scan の OR に変更。
 export const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
-
-export function isBreakingText(s) {
-  return /breaking|incompatible|migration|破壊的|非互換/i.test(String(s ?? ''));
-}
 
 function mergeShape(floor, llmShape) {
   if (!(llmShape in SHAPE_RANK)) {
@@ -42,10 +40,12 @@ export function classifyShape(req) {
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
 
-  const combined = `${req.scope ?? ''} ${req.summary ?? ''}`;
-  if (isBreakingText(combined)) {
+  if (req.breaking_change === true || req.breaking_keyword_scan === true) {
     const floor = 'complex';
-    const reason = `breaking change detected in scope/summary → floor=complex`;
+    const srcs = [];
+    if (req.breaking_change === true) srcs.push('analyze structured breaking_change=true');
+    if (req.breaking_keyword_scan === true) srcs.push('issue title/body keyword scan hit');
+    const reason = `breaking change detected (${srcs.join(' + ')}) → floor=complex`;
     const shape = mergeShape(floor, req.shape);
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
