@@ -399,6 +399,7 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+// issue #272: AC 粒度と floor の較正 — micro floor の AC 境界を 3→4 に緩和。
 const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function isBreakingText(s) {
@@ -446,7 +447,7 @@ function classifyShape(req) {
   }
 
   let floor;
-  if (count <= 2 && ac.length <= 3) {
+  if (count <= 2 && ac.length <= 4) {
     floor = 'micro';
   } else if (count <= 5 && ac.length <= 6) {
     floor = 'standard';
@@ -1355,6 +1356,12 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
   + `worktree 直下に *.staged.* / fm_*.txt のような一時ファイルを残すことは禁止`
   + `（git status に混入し realized-diff の refloor 誤発火・宣言外変更 concern の原因になる）。\n`
 
+// dev-planner への handoff 配置規約。plan が一時/handoff ファイルの残置を明示指示すると
+// 実装後の realized diff に残り、refloor 誤発火・宣言外変更 concern の原因になる（issue #272 原因(3)）。
+// agent 定義ファイル（.claude/agents/dev-planner.md）は sandbox write-deny のため、
+// 上記 implementer 向け規約と同型で workflow が全 dev-planner spawn prompt に決定論的に注入する。
+const PLANNER_HANDOFF_RULE = '計画規約: task が一時/handoff ファイルの残置を指示する場合は .devflow-tmp/ 配下のパスを指定せよ（realized diff から ephemeral として除外される）。恒久成果物でないファイルを file_changes に含めるな。\n'
+
 function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
   // AC・plan contract（summary / architecture_decisions / edge_cases）を全 implementer spawn prompt に注入する。
   // evaluator が AC ベースで採点するため implementer と採点軸を共有する（issue #224）。
@@ -1416,8 +1423,9 @@ log(`worktree: ${WT} (branch ${setup.branch})`)
 const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${depth}\` を実行し、`
   + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
   + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
-  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。判断に迷えば大きめ(安全側)に見積もれ。`
-  + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=単一ファイル軽微変更・AC 少数、standard=複数ファイルの通常実装、complex=多数ファイル・破壊的変更・設計判断を要する。判断に迷えば大きめ（安全側=complex 寄り）に評価せよ。`
+  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。過大にも過小にも倒さず実数を見積もれ。`
+  + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=1〜2 ファイルの軽微変更（AC 4 個以内）、standard=3〜5 ファイル程度の通常実装、complex=6 ファイル以上・破壊的変更・設計判断を要する。定義に最も合致する shape をそのまま返せ（安全側の floor は決定論ロジックが別途担保するため、迷っても大きめに倒すな）。`
+  + `受入条件（acceptance_criteria）は独立に検証可能な最小単位へ統合して列挙せよ（同義の言い換え・手段の重複で個数を水増ししない。1〜2 ファイルの軽微変更なら通常 4 個以内に収まる）。`
   + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`
 
 // ============================================================
@@ -1469,6 +1477,7 @@ function soloPlanPrompt(label) {
     + `requirements: ${JSON.stringify(req)}\n`
     + `testing: ${TESTING}\n`
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`
+    + PLANNER_HANDOFF_RULE
 }
 if (TRIVIAL) {
   plan = need(await agent(
@@ -1498,7 +1507,8 @@ for (let i = 1; i <= PLAN_MAX; i++) {
         ? `これまでの plan-reviewer findings（過去 iteration 全件の累積。既に解消した項目は再対応不要。`
           + `同じ topic が繰り返し残るなら同じ直し方をやめてアプローチを変えよ）:\n${JSON.stringify(prior)}\n`
         : '')
-    + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`,
+    + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`
+    + PLANNER_HANDOFF_RULE,
     { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `plan#${i}`, phase: 'Plan' },
   ), `Plan(planner#${i})`)
   plan = applyDisjoint(plan, `plan#${i}`)
@@ -1587,7 +1597,8 @@ async function execImplementPhase(state) {
       + (doneSoFar.length
           ? `適用済み task（成果は worktree に既に存在する。再実装の計画を立てるな。残作業のみ計画せよ）:\n${JSON.stringify(doneSoFar.map((r) => ({ id: r.task_id, files: r.files, summary: r.summary })))}\n`
           : '')
-      + `approach_mismatch findings（過去 iteration 全件の累積。**過去に BLOCKED になったいずれのアプローチへの回帰も禁止** — 全件と異なる代替設計を立案せよ）:\n${JSON.stringify(priorBlock)}`,
+      + `approach_mismatch findings（過去 iteration 全件の累積。**過去に BLOCKED になったいずれのアプローチへの回帰も禁止** — 全件と異なる代替設計を立案せよ）:\n${JSON.stringify(priorBlock)}`
+      + PLANNER_HANDOFF_RULE,
       { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan-blocked#${b}`, phase: 'Implement' },
     ), `Implement(replan#${b})`)
     plan = applyDisjoint(plan, `replan-blocked#${b}`)
@@ -1828,13 +1839,17 @@ async function execSecurityFloorPhase(state) {
   // null → NaN 安全弁（realized?.files ? realized.files.length : NaN のパターンを継承）
   // ephemeral ファイルを除外してから count する（evaluator.staged.md / fm_*.txt / .devflow-tmp/ を除く）
   const realizedNonEphemeral = realized?.files ? filterEphemeralPaths(realized.files) : null
-  const realizedCount = realizedNonEphemeral ? realizedNonEphemeral.length : NaN
   if (realized?.files && realizedNonEphemeral && realizedNonEphemeral.length !== realized.files.length) log(`realized-diff: ephemeral ${realized.files.length - realizedNonEphemeral.length} 件を file count から除外`)
+  // 宣言外 non-ephemeral 変更は refloor の size 信号にせず、Evaluate 強制 + concern 監査で扱う（issue #272 原因(3)）
+  const planAllTasks = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
+  const undeclared = realizedNonEphemeral ? diffDeclaredPaths(planAllTasks, realizedNonEphemeral) : []
+  const realizedCount = realizedNonEphemeral ? realizedNonEphemeral.length - undeclared.length : NaN
+  if (undeclared.length > 0) log(`realized-diff: 宣言外 ${undeclared.length} 件は refloor count から除外（declared ${realizedCount} 件で判定）`)
   const refloor = refloorShape(SHAPE, realizedCount)
   const EFFECTIVE_SHAPE = refloor.shape
   const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
   if (refloor.refloored) log(`⚠️ re-floor: 見積もり ${SHAPE} → realized ${realizedCount} file(s) で ${EFFECTIVE_SHAPE} へ昇格 (raise-only)`)
-  const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || state.greenFixCount > 0
+  const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || state.greenFixCount > 0 || undeclared.length > 0
   if (TRIVIAL && dangerHits.length > 0) {
     log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
   }
@@ -1842,17 +1857,16 @@ async function execSecurityFloorPhase(state) {
   if (TRIVIAL && state.greenFixCount > 0) {
     log(`⚠️ micro だが green-fix ${state.greenFixCount} 回 → Evaluate を実行（テスト弱体化監査 強制）`)
   }
+  if (EFFECTIVE_SHAPE === 'micro' && undeclared.length > 0) {
+    log(`⚠️ micro だが宣言外変更 ${undeclared.length} 件 → Evaluate を実行（宣言外監査 強制）`)
+  }
   // ============================================================
   // Step DeclaredPath check: git status と plan 宣言パスを突合し、
   // 宣言外変更を concerns へ注入する（evaluator focus_areas 経由で重点監査）。
   // ============================================================
   {
-    const planAllTasks = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
     // porcelain 統合（F3）: 旧 declared-path-check の agent 呼び出しを削除し、
-    // Security floor で既に取得済みの realizedNonEphemeral を参照する（1 回に統合）。
-    // realized が null（agent drop）のときは空配列に倒す（旧 gitStat?.files ?? [] と同等）。
-    const changedFiles = realizedNonEphemeral ?? []
-    const undeclared = diffDeclaredPaths(planAllTasks, changedFiles)
+    // Security floor で既に算出済みの undeclared（宣言ベース count と同一算出）を再利用する（1 回に統合）。
     if (undeclared.length > 0) {
       if (runEval) {
         state.concerns.push(`宣言外変更 ${undeclared.length} 件が plan の file_changes に無い。意図的か確認: ${undeclared.join(', ')}`)
@@ -2066,7 +2080,8 @@ async function execEvaluatePhase(state) {
         + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
         + (nextOpenCriticals.length
             ? `未解消 critical（最優先で解消せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
-            : ''),
+            : '')
+        + PLANNER_HANDOFF_RULE,
         { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan#${i}`, phase: 'Evaluate' },
       ), `Evaluate(replan#${i})`)
       plan = applyDisjoint(plan, `replan#${i}`)

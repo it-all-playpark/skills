@@ -3,6 +3,7 @@
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+// issue #272: AC 粒度と floor の較正 — micro floor の AC 境界を 3→4 に緩和。
 export const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 export function isBreakingText(s) {
@@ -50,7 +51,7 @@ export function classifyShape(req) {
   }
 
   let floor;
-  if (count <= 2 && ac.length <= 3) {
+  if (count <= 2 && ac.length <= 4) {
     floor = 'micro';
   } else if (count <= 5 && ac.length <= 6) {
     floor = 'standard';
