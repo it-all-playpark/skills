@@ -81,7 +81,7 @@ fi
 # Config resolution (mirrors analyze-dev-flow-family.sh)
 # ----------------------------------------------------------------------------
 
-DEFAULT_FAMILY_SKILLS='["dev-kickoff","dev-implement","dev-validate","dev-integrate","dev-evaluate","pr-iterate","pr-fix","night-patrol"]'
+DEFAULT_FAMILY_SKILLS='["dev-kickoff","dev-implement","dev-validate","dev-integrate","dev-evaluate","pr-iterate","night-patrol"]'
 DEFAULT_WINDOW="30d"
 DEFAULT_GLUE_PATTERNS='["worktree.*not found","--worktree.*not","\\.env.*not.*copied","worktree-agent-[a-f0-9]+","phase_failed.*worktree"]'
 
