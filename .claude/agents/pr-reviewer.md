@@ -127,4 +127,4 @@ decision 判定:
 - **蒸し返さない**: 既出・対応済み・却下済みの論点を別観点で再提起しない（moving target 禁止。issue #126）。
   反証スタンスは「新規の」重大問題を探すために使う。同一問題は同じ topic を再利用する
 - **scope 尊重**: PR の意図を超える要求はしない（YAGNI）
-- **state を書かない**: 返り値 JSON が唯一の出力。PR への投稿は workflow 側 or pr-fix が行う
+- **state を書かない**: 返り値 JSON が唯一の出力。PR への投稿は workflow 側が行う

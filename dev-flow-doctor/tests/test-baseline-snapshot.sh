@@ -187,6 +187,17 @@ else
   fail "--until invalid format: stderr is JSON error" "$ERR_OUT"
 fi
 
+printf '\nTest 8: pr-fix removed from default family (issue #116)\n'
+RESULT_116=$(run_snapshot "$JOURNAL_REGRESSED" --window 30d --until 2026-06-15T00:00:00Z)
+FAM_HAS_PRFIX=$(echo "$RESULT_116" | jq '.family_skills | index("pr-fix")')
+assert_eq "family_skills excludes pr-fix" "null" "$FAM_HAS_PRFIX"
+PRFIX_ROWS=$(echo "$RESULT_116" | jq '[.per_skill[] | select(.skill == "pr-fix")] | length')
+assert_eq "per_skill has no pr-fix row" "0" "$PRFIX_ROWS"
+KICKOFF_ROWS=$(echo "$RESULT_116" | jq '[.per_skill[] | select(.skill == "dev-kickoff")] | length')
+assert_eq "dev-kickoff still analyzed without pr-fix in family" "1" "$KICKOFF_ROWS"
+TOTAL_116=$(echo "$RESULT_116" | jq '.total_entries')
+assert_eq "pr-fix fixture entry excluded by family filter (3 fixtures -> 2)" "2" "$TOTAL_116"
+
 # ----------------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------------

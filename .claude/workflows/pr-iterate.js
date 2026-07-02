@@ -540,7 +540,7 @@ for (i = 1; i <= MAX; i++) {
       break
     } else if (ci.status === 'error') {
       // Real gh API error (auth failure, network error, etc.) — do not misinterpret as CI failure.
-      // Surface to human immediately; retrying pr-fix on a non-existent bug would waste cycles.
+      // Surface to human immediately; retrying a fix on a non-existent bug would waste cycles.
       terminal = 'ci_error'
       log(`⚠️ CI check returned error — gh API failed (auth/network). 人間へエスカレーション`)
       break
@@ -550,7 +550,7 @@ for (i = 1; i <= MAX; i++) {
       break
     } else if (ci.status === 'failed') {
       // ci.status === 'failed': convert failed_checks into synthetic blocking findings and route
-      // through the existing pr-fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
+      // through the existing fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
       // automatically via the existing stuckTopics computation below.
       // failed_checks items are {name, bucket, state} per check-ci.sh output (no conclusion field).
       const ciFindings = (ci.failed_checks && ci.failed_checks.length > 0)
@@ -609,8 +609,9 @@ for (i = 1; i <= MAX; i++) {
         .join('\n')
 
       const fix = await agent(
-        `PR #${PR} の CI 失敗を修正する。次の CI 失敗を解消するため \`Skill: pr-fix ${PR}\` を実行し、`
-        + `修正を push まで行え。解消すべき CI 失敗:\n${issuesText}`,
+        `PR #${PR} の CI 失敗を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
+        + `(2) 下記の CI 失敗を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
+        + `解消すべき CI 失敗:\n${issuesText}`,
         { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
       )
 
@@ -672,15 +673,15 @@ for (i = 1; i <= MAX; i++) {
     break
   }
 
-  // pr-fix は portable skill。汎用 workflow agent から Skill 経由で実行する。
   const issuesText = blocking
     .map((x) => `- [${x.severity}] ${x.file ?? ''}${x.line ? ':' + x.line : ''} ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
     .join('\n')
 
-  // pr-fix は portable skill。Skill を持つ dev-runner agent 経由で実行する。
+  // fix は dev-runner agent に直接指示する（旧 pr-fix skill は issue #116 で削除）。
   const fix = await agent(
-    `PR #${PR} のレビュー指摘を修正する。次の指摘を解消するため \`Skill: pr-fix ${PR}\` を実行し、`
-    + `修正を push まで行え。解消すべき指摘:\n${issuesText}`,
+    `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
+    + `(2) 下記の指摘を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
+    + `解消すべき指摘:\n${issuesText}`,
     { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
   )
 
