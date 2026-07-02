@@ -290,3 +290,62 @@ test('classifyMergeTier: evalSkipped:true + HOLD 条件(unsatisfiedAc:true) → 
   assert.equal(r.tier, 'HOLD');
   assert.ok(!r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), `HOLD tier では AC未検証文言なし: ${JSON.stringify(r.reasons)}`);
 });
+
+// ---- fail_closed フラグ + dangerFailClosed HOLD reason（issue #271）----
+
+test('reconcileDanger: fail-closed (risk.ok:false) では全 SEC seed item が fail_closed===true かつ checked===false', () => {
+  const out = reconcileDanger(ledgerWithSeeds(), { ok: false, error: 'script failed' });
+  for (const it of out.items) {
+    assert.equal(it.fail_closed, true, `${it.id} should be fail_closed`);
+    assert.equal(it.checked, false, `${it.id} should be unchecked`);
+  }
+});
+
+test('reconcileDanger: fail-closed した ledger を clean で再 reconcile すると各 SEC item が fail_closed===false かつ checked===true に戻る(stale フラグ解消)', () => {
+  const failClosed = reconcileDanger(ledgerWithSeeds(), { ok: false, error: 'script failed' });
+  const recovered = reconcileDanger(failClosed, { ok: true, hits: [] });
+  for (const it of recovered.items) {
+    assert.equal(it.fail_closed, false, `${it.id} should have fail_closed cleared`);
+    assert.equal(it.checked, true, `${it.id} should be checked (clean)`);
+  }
+});
+
+test('reconcileDanger: 実 hit(risk.ok:true + hits) で reconcile した SEC item は fail_closed===false(実 hit は fail-closed でない)', () => {
+  const out = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [{ class: 'auth' }] });
+  const auth = out.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(auth.fail_closed, false, 'hit item も fail_closed は false(danger_hits とは別軸)');
+  const cfg = out.items.find((it) => it.id === 'SEC-CONFIG');
+  assert.equal(cfg.fail_closed, false, 'clean item も fail_closed は false');
+});
+
+test('classifyMergeTier: dangerFailClosed:true → tier===HOLD かつ reasons に fail-closed 文言を含む', () => {
+  const r = classifyMergeTier({
+    shape: 'standard',
+    converged: false,
+    unresolvedDanger: false,
+    breaking: false,
+    docsOrTestOnly: false,
+    escalateCount: 0,
+    dangerFailClosed: true,
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => /fail-closed/.test(x)), `reasons に fail-closed 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: dangerFailClosed 未指定 → 従来通り(regression なし)', () => {
+  const rNotConverged = classifyMergeTier({ shape: 'standard', converged: false, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  assert.equal(rNotConverged.tier, 'HOLD');
+  assert.ok(!rNotConverged.reasons.some((x) => /fail-closed/.test(x)));
+
+  const rBreaking = classifyMergeTier({ shape: 'complex', converged: true, unresolvedDanger: false, breaking: true, docsOrTestOnly: false, escalateCount: 0 });
+  assert.equal(rBreaking.tier, 'HOLD');
+  assert.ok(!rBreaking.reasons.some((x) => /fail-closed/.test(x)));
+
+  const rAuto = classifyMergeTier({ shape: 'micro', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: true, escalateCount: 0 });
+  assert.equal(rAuto.tier, 'AUTO');
+  assert.ok(!rAuto.reasons.some((x) => /fail-closed/.test(x)));
+
+  const rReview = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breaking: false, docsOrTestOnly: false, escalateCount: 0 });
+  assert.equal(rReview.tier, 'REVIEW');
+  assert.ok(!rReview.reasons.some((x) => /fail-closed/.test(x)));
+});
