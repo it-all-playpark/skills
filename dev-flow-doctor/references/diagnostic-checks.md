@@ -1,40 +1,27 @@
 # Diagnostic Checks
 
-## Check 1: Mode Distribution (v2)
-
-Analyze how often `single` vs `child-split` mode is used.
-
-```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 200 | \
-  jq 'group_by(.context.mode // "unknown") | map({mode: .[0].context.mode // "unknown", count: length})'
-```
-
-| Finding | Recommendation |
-|---------|----------------|
-| All `single` (no `child-split` ever) | Decomposable parents aren't being recognized — review issue body structure |
-| `child-split` used but children frequently fail | Child sizing is too large — split parent more aggressively |
-| Healthy mix of `single` / `child-split` | Working as intended |
-| `parallel` / `force-parallel` in args | Legacy invocation — refuse and surface in audit (these should error out) |
-
 ## Check 2: Failure & Partial Distribution
 
 Analyze journal entries for both `failure` AND `partial` outcomes:
 
 ```bash
 # Include both failure and partial outcomes
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-kickoff --limit 200 | \
+$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 200 | \
   jq '[.[] | select(.outcome == "failure" or .outcome == "partial")] |
     group_by(.error.phase // "unknown") |
     map({phase: .[0].error.phase // "unknown", count: length, outcomes: (group_by(.outcome) | map({outcome: .[0].outcome, count: length}))}) |
     sort_by(-.count)'
 ```
 
+`error.phase` は dev-flow workflow の phase 名（`Setup` / `Analyze` / `Plan` / `Implement` /
+`Validate` / `Security floor` / `Evaluate` / `PR` / `Merge tier`）を取る。
+
 | Pattern | Recommendation |
 |---------|----------------|
-| Phase 3 (implement) > 30% | Review issue analysis depth, consider `--depth comprehensive` |
-| Phase 4 (validate) > 40% | Add pre-validation linting, consider `--fix` auto-mode |
-| Phase 1 (prepare) > 10% | Check `dev-kickoff-worker` (`isolation: worktree`) configuration, env-mode settings |
-| Phase 2 (analyze) issues | Check dev-issue-analyze / dev-decompose flow control |
+| `Implement` phase > 30% | Plan の粒度・自明性判定を見直す（plan-reviewer loop の収束状況を確認） |
+| `Validate` phase > 40% | test green 化のリトライ設計を見直す、静的解析を implement 前段に前倒し |
+| `Setup` phase > 10% | worktree isolation / env bootstrap（`_shared/scripts/ensure-worktree-deps.sh`）を確認 |
+| `Analyze` / `Plan` phase issues | shape classification（`classifyShape`）と要件抽出の精度を確認 |
 
 ## Check 3: Error Category Distribution
 
@@ -45,7 +32,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.by_category'
 | Category Dominance | Recommendation |
 |--------------------|----------------|
 | `env` > 30% | Wire `_shared/scripts/ensure-worktree-deps.sh` into dev-flow.js Setup phase |
-| `lint` > 40% | Add auto-fix in dev-validate, configure stricter editor settings |
+| `lint` > 40% | Add auto-fix to the Validate phase, configure stricter editor settings |
 | `test` > 40% | Review test quality, consider TDD strategy |
 | `type-check` > 20% | Enable strict TypeScript mode, add pre-commit type checks |
 | `runtime` > 20% | Investigate skill flow control issues (phase transitions) |
@@ -119,39 +106,52 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limi
   jq '(map(.duration_turns) | add / length) as $avg |
     { average_turns: $avg,
       outliers: [.[] | select(.duration_turns > ($avg * 3))] |
-        map({issue: .context.issue, turns: .duration_turns, mode: (.context.mode // "unknown"), args: .args})
+        map({issue: .context.issue, turns: .duration_turns, shape: (.telemetry.shape // "unknown"), args: .args})
     }'
 ```
 
 | Finding | Recommendation |
 |---------|----------------|
-| Outliers are all child-split children | Expected — child-split parents fan out to multiple `dev-kickoff` runs (1 per child issue) |
-| Outliers in single mode | Investigate: likely validation failures or complex implementations |
+| Outliers correlate with `complex` shape runs | Expected — complex issue の plan-review / evaluate ループが turn 数を押し上げる |
+| Outliers in `micro` / `standard` shape runs | Investigate: likely validation failures or unexpectedly complex implementations |
 | Average > 8 turns | Overall pipeline may need optimization |
 | Average < 5 turns | Pipeline is efficient |
 
-## Check 8: Dev-Flow Family Connector Health (Journal-Driven)
+## Check 8: Dev-Flow Telemetry Distribution & Anomaly Detection (Journal-Driven)
 
-dev-flow ファミリー 8 skill（既定: `dev-kickoff`, `dev-implement`, `dev-validate`,
-`dev-integrate`, `dev-evaluate`, `pr-iterate`, `pr-fix`, `night-patrol`）に限定して、
-journal から以下 4 カテゴリを検出する。
+dev-flow / pr-iterate が journal に書き出す telemetry（`shape` / `merge_tier` /
+`eval_iter` / `plan_iter` / `gate_policy` / `iterate_status`）を集計し、分布と
+3 種の anomaly を検出する。旧 v1 の family skill 集計（8 skill 固定リスト前提の
+dead phase / stuck skill / bottleneck / disconnected skill）は廃止され、
+workflow 化された dev-flow が実際に記録する telemetry 値のみを対象にする。
 
 ```bash
 # Full (既定 window 30d, skill-config.json で上書き可能)
-$SKILLS_DIR/dev-flow-doctor/scripts/analyze-dev-flow-family.sh --window 30d
+$SKILLS_DIR/dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh --window 30d
 
 # run-diagnostics 経由
-$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7d
+$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope telemetry --window 7d
 ```
 
-### 検出カテゴリ
+### 分布集計
 
-| カテゴリ | 定義 | 推奨アクション |
-|---------|------|---------------|
-| **dead phase** | window 内で `success` が 0 件の family skill | 呼び出し経路を確認。parent orchestrator（例: dev-kickoff）から実際に呼ばれているか、phase 遷移が skip されていないかを検証 |
-| **stuck skill** | `(failure + partial) / total > 30%` かつ `total >= 3` | `/skill-retrospective` を走らせ proposal を生成、頻出する error category（lint/test/env 等）を直近の failure で確認 |
-| **bottleneck** | `avg(duration_turns)` 上位 3 skill | 実行時間が異常に長い skill を特定し、input 長 / tool 選定 / subagent fork コストを点検 |
-| **disconnected skill** | window 内で自身の entry が 0 件かつ parent skill（hook（source: "hook"）エントリの Skill tool invocation）で一度も参照されていない | connector が成立していない。orchestrator の分岐条件を確認、または deprecated なら skill を整理 |
+| 分布 | 分母 | 説明 |
+|------|------|------|
+| `shape` | `skill == "dev-flow"` の entry | micro / standard / complex / unknown |
+| `merge_tier` | `skill == "dev-flow"` の entry | AUTO / REVIEW / HOLD / unknown（pr-iterate standalone entry は `merge_tier == "PR_ITERATE"` かつ `skill == "pr-iterate"` のため自然に対象外） |
+| `eval_iter` / `plan_iter` | `skill == "dev-flow"` の entry | max 値・cap（`eval_iter_cap` / `plan_iter_cap`）・cap 到達件数 |
+| `gate_policy` | `skill == "dev-flow"` の entry | deterministic-only / llm-major-advisory / llm-major-blocking / llm-autonomous / unknown |
+| `iterate_status` | `.telemetry.iterate_status != null` の全 entry（dev-flow + pr-iterate 両方） | lgtm / stuck / fix_failed / max_reached / unknown |
+
+欠落フィールドは `unknown` バケットへ計上する（fail-safe。die しない）。
+
+### 検出カテゴリ（anomaly 3 種）
+
+| anomaly | severity | 条件 | 推奨アクション |
+|---------|----------|------|---------------|
+| **cap_pinned** | `warn` | dev-flow entry の `eval_iter >= eval_iter_cap`（既定 10）または `plan_iter >= plan_iter_cap`（既定 8）が 1 件以上 | 収束しない run が cap で打ち切られている。該当 issue の plan/evaluate の差し戻し内容（frozen target・topic-stuck 判定）を確認 |
+| **iterate_unhealthy** | `warn` | `iterate_status` を持つ全 run（dev-flow + pr-iterate）のうち非 lgtm（stuck / fix_failed / max_reached）の割合が `iterate_unhealthy_rate`（既定 0.30）を超え、かつ母数が `iterate_min_runs`（既定 3）以上 | pr-iterate の review ⇄ fix ループが健全に収束していない。pr-reviewer の finding 傾向・critical/major-always-blocks の影響を確認 |
+| **micro_nonfiring** | `warn`（`skipped` は insufficient_data） | dev-flow の総 run 数が `micro_min_runs`（既定 10）以上あるにもかかわらず `shape: micro` の run が 0 件。run 数が `micro_min_runs` 未満のときは `severity: "skipped"`, `reason: "insufficient_data"` を明示出力し判定しない | classifyShape の micro floor 判定が過剰に安全側へ寄っていないか確認（`estimated_change_file_count` / `acceptance_criteria` 欠落・breaking 検出の誤爆有無） |
 
 ### window オプション
 
@@ -160,66 +160,14 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family --window 7
 - `--window 14d` / `--window 2w`: 週次レビュー用
 - 任意の `Nd` / `Nw` / `Nm` フォーマットを受け付ける（`parse_since` と同じ）
 
+### 閾値の設定
+
+すべての閾値は `skill-config.json` の `dev-flow-doctor.thresholds` から読み込む
+（`eval_iter_cap` / `plan_iter_cap` / `iterate_unhealthy_rate` / `iterate_min_runs` /
+`micro_min_runs`）。`--config <path>` で config ファイルを明示指定できる。
+
 ### 責務分離
 
-Check 8 は **dev-flow 系 skill の連携健全性** に特化している。全 skill を対象にした
+Check 8 は **dev-flow pipeline の telemetry 健全性** に特化している。全 skill を対象にした
 汎用的な failure pattern detection や proposal 生成は `skill-retrospective` 側で
 行うこと。詳しくは [responsibility-split.md](responsibility-split.md) を参照。
-
-## Check 9: Integration Feedback（削除済）
-
-旧 v1 の `_shared/integration-feedback.json` event store と
-`dev-decompose/scripts/analyze-past-conflicts.sh` は v2 (issue #93) で削除された。
-parallel mode の subtask 衝突学習ループは child-split mode では不要なため、
-本チェックは廃止。`--scope feedback` を渡すと explicit error を返す。
-
-## Check 10: Termination Loop Health (kickoff.json-driven) — issue #53
-
-dev-kickoff の 2 つの evaluator-optimizer ループ（Phase 3 ⇄ 3b / Phase 4-5 ⇄ 6）が
-各 worktree の `kickoff.json` に書き出した `termination` block を横断分析する。
-verdict_history 履歴から「loop が健全に収束したか」「同一 feedback_target が繰り返されていないか」を検出する。
-
-```bash
-# kickoff.json 横断分析 (既定 worktree-base: $REPO_ROOT/../$(basename $REPO_ROOT)-worktrees)
-$SKILLS_DIR/dev-flow-doctor/scripts/analyze-termination-loops.sh
-
-# worktree-base を明示
-$SKILLS_DIR/dev-flow-doctor/scripts/analyze-termination-loops.sh --worktree-base /path/to/worktrees
-
-# run-diagnostics 経由 (scope full / family)
-$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope family
-```
-
-### 検出パターン
-
-| pattern | 定義 | 推奨アクション |
-|---------|------|---------------|
-| **repeated_feedback_target** | Phase 6 `verdict_history` で同一 `feedback_target` が **2 iteration 連続** | 同じ層（design/implementation）の feedback が繰り返されている → もう一段上のレイヤー（例: design 連続なら issue 自体の要件）を疑う |
-| **max_iterations** | `termination.reason == "max_iterations"` | 最大 iteration で収束しなかった。issue のサイズ見直し・分解検討 |
-| **stuck** (3b のみ) | `termination.reason == "stuck"` | Plan-Review で同一 finding が 2 iteration 残った → 計画の根本見直し |
-| **fork_failure** | `termination.reason == "fork_failure"` | verifier (dev-plan-review / dev-evaluate) の fork 起動に失敗 → tooling issue 調査 |
-
-### 出力 JSON schema
-
-```jsonc
-{
-  "worktree_base": "/path/to/skills-worktrees",
-  "checked_worktrees": 3,
-  "findings": [
-    {
-      "worktree": "/path/to/skills-worktrees/feature-issue-53-m",
-      "issue": 53,
-      "phase": "6_evaluate",
-      "pattern": "repeated_feedback_target",
-      "feedback_target": "design",
-      "occurrences": 2,
-      "message": "同一 feedback_target (design) が 2 iteration 連続で発生 → 設計問題の可能性"
-    }
-  ]
-}
-```
-
-### スコアリングへの影響
-
-Check 10 の findings は現時点では **health score 計算に寄与しない**（informational のみ）。
-スコア組み込みは別 issue で扱う。

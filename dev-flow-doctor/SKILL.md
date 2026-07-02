@@ -1,12 +1,15 @@
 ---
 name: dev-flow-doctor
 description: |
-  Diagnose dev-flow pipeline health from skill-retrospective journal. Detects dead phase,
-  stuck skill, bottleneck, disconnected skill across the dev-flow family.
+  Diagnose dev-flow pipeline health from skill-retrospective journal telemetry.
+  Detects anomalies in dev-flow/pr-iterate distributions: cap張り付き
+  (eval_iter/plan_iter pinned at loop cap), iterate不調率 (pr-iterate
+  stuck/fix_failed/max_reached rate), micro不発火 (micro shape never selected
+  despite sufficient run volume).
   Use when: (1) dev-flow issues or underperformance,
-  (2) stuck skill / dead phase suspicion, (3) weekly dev-flow health review,
-  (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断, dead phase, stuck skill, bottleneck, connector
-  Accepts args: [--scope full|journal|worktrees|config|family|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>]
+  (2) shape / merge_tier / gate_policy distribution review, (3) weekly dev-flow health review,
+  (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断, telemetry, anomaly, 分布, cap張り付き, iterate不調率, micro不発火
+  Accepts args: [--scope full|journal|worktrees|config|telemetry|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>]
 allowed-tools:
   - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
   - Bash(~/.claude/skills/skill-retrospective/scripts/*)
@@ -15,26 +18,18 @@ allowed-tools:
 # dev-flow-doctor
 
 Diagnose dev-flow pipeline health by reading `skill-retrospective` journal entries
-(`~/.claude/journal/*.json`). Surfaces dead phases, stuck skills, bottlenecks, and
-disconnected skills across the dev-flow family — then generates actionable
-improvement recommendations.
-
-> ⚠️ **workflow 移行に伴う一部機能停止（別 issue で対応予定）**
-> dev-flow / pr-iterate / dev-kickoff / dev-implement / dev-validate / dev-integrate /
-> dev-evaluate / dev-decompose / night-patrol は dynamic workflow + subagent へ移行し、
-> 個別 skill としては廃止された（`.claude/workflows/dev-flow.js` / `pr-iterate.js` /
-> `.claude/agents/*.md`）。本 skill が前提とする `family_skills`・`kickoff.json` /
-> `flow.json` 依存の分析は現状これら旧 skill 名を参照しており、**該当部の診断は機能停止
-> または不正確**になる。journal 駆動の集計（skill 名ベースの failure/duration 統計）は
-> 引き続き動くが、family 構成・connector 判定の workflow 対応は別 issue で行う。
+(`~/.claude/journal/*.json`). Surfaces `dev-flow` / `pr-iterate` telemetry
+distributions (shape, merge_tier, eval_iter, plan_iter, gate_policy, iterate_status)
+and anomaly detections (cap張り付き, iterate不調率, micro不発火) — then generates
+actionable improvement recommendations.
 
 ## Key shift: journal-driven (not static scan)
 
 本 skill は **journal 駆動**である。静的な skill file scan ではなく、
 `skill-retrospective` が蓄積している `~/.claude/journal/*.json` を読み込み、
-dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
-`dev-integrate`, `dev-evaluate`, `pr-iterate`, `pr-fix`, `night-patrol`）に絞って
-**連携健全性**（connector 不成立、phase 停滞、failure 集中、実行時間肥大）を判定する。
+`dev-flow` / `pr-iterate` が書き出す telemetry フィールド（`shape`, `merge_tier`,
+`eval_iter`, `plan_iter`, `gate_policy`, `danger_hits`, `iterate_status`）を
+分布集計し、**anomaly 3 種**（cap張り付き / iterate不調率 / micro不発火）を判定する。
 
 汎用的な failure パターン検出や proposal 生成は `skill-retrospective` の責務である。
 詳しくは [responsibility-split.md](references/responsibility-split.md) を参照。
@@ -42,7 +37,7 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 ## Usage
 
 ```
-/dev-flow-doctor [--scope full|journal|worktrees|config|family|feedback]
+/dev-flow-doctor [--scope full|journal|worktrees|config|telemetry|feedback]
                  [--window 7d|30d] [--fix]
                  [--compare <baseline-path>] [--update-baseline <path>]
 ```
@@ -63,7 +58,7 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 | `journal` | Legacy journal-based execution analysis (Check 1–7, dev-flow skill only) |
 | `worktrees` | Worktree state and cleanup |
 | `config` | Skill configuration validation |
-| `family` | **Dev-flow family connector health** (Check 8: dead / stuck / bottleneck / disconnected) + termination loops (Check 9) |
+| `telemetry` | **Dev-flow telemetry health**: dev-flow/pr-iterate journal telemetry の分布集計（shape / merge_tier / eval_iter / plan_iter / gate_policy / iterate_status）+ anomaly 3 種（cap張り付き / iterate不調率 / micro不発火） |
 | `feedback` | **Removed in v2** (parallel-mode infrastructure deleted); returns explicit error |
 
 ## Workflow
@@ -78,11 +73,14 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 
 ## Key Context
 
-- dev-flow v2 uses explicit mode flags: `--force-single` (default) or `--child-split`
-- Auto-detect (`dev-decompose --dry-run`) was removed in v2 — passing `--force-parallel` / `--parallel` is an error
-- Journal `context.mode` tracks resolved mode
-- Family scope reads the same journal via direct jq (see `scripts/analyze-dev-flow-family.sh`)
-- Family skills / thresholds / default window are configured in `skill-config.json` under `"dev-flow-doctor"`
+- Telemetry scope は `dev-flow` / `pr-iterate` の journal entry を直接 jq で集計する
+  (see `scripts/analyze-dev-flow-telemetry.sh`)
+- 分布（shape / merge_tier / eval_iter / plan_iter / gate_policy）の分母は
+  `.skill == "dev-flow"` の entry のみ。`iterate_status` の分母のみ
+  `.telemetry.iterate_status` を持つ全 entry（dev-flow + pr-iterate 両方）
+- 閾値・default window は `skill-config.json` の `"dev-flow-doctor"` 配下
+  (`thresholds.eval_iter_cap` / `plan_iter_cap` / `iterate_unhealthy_rate` /
+  `iterate_min_runs` / `micro_min_runs`) で設定する
 
 ## Output Format
 
@@ -93,61 +91,45 @@ dev-flow family 8 skill（`dev-kickoff`, `dev-implement`, `dev-validate`,
 **Period**: 2026-02-12 ~ 2026-03-13 (window: 30d)
 **Total Executions**: 90 (success: 88, failure: 0, partial: 2)
 
-### Dev-Flow Family (Check 8)
+### Dev-Flow Telemetry (dev_flow_telemetry)
 
-**Dead Phases** (no success in 30d):
-- `dev-integrate`: 呼び出し経路を確認。child-split mode が発火していない可能性
-  （`dev-flow --child-split` で parent issue が分割されているか、または
-  `verify-children-merged.sh` が呼ばれているか）
+**Distributions** (denominator: dev-flow runs, total 42):
 
-**Stuck Skills** (failure rate > 30% OR blocked_rate > 30%):
-- `pr-fix`: 42% failure rate (12 entries) — lint/test errors が主要原因
-- `dev-implement`: blocked_rate 35% (3 BLOCKED + 1 NEEDS_CONTEXT / 11 entries) — approach mismatch suspect
+| shape | count | | merge_tier | count | | gate_policy | count |
+|---|---:|-|---|---:|-|---|---:|
+| micro | 12 | | AUTO | 5 | | llm-major-advisory | 40 |
+| standard | 24 | | REVIEW | 30 | | llm-major-blocking | 2 |
+| complex | 6 | | HOLD | 7 | | unknown | 0 |
+| unknown | 0 | | unknown | 0 | | | |
 
-### Status Distribution (Check 8 — dev-implement worker, issue #92)
+eval_iter: max 10, cap 10, at_cap_count 3
+plan_iter: max 7, cap 8, at_cap_count 0
 
-dev-implement の 4 値 status enum を集計する。`--scope feedback` 指定時に詳細表示。
+**iterate_status** distribution (denominator: dev-flow + pr-iterate runs with
+iterate_status set, total 38): lgtm 30, stuck 4, fix_failed 3, max_reached 1, unknown 0
 
-| Skill | DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT | total_with_status |
-|---|---:|---:|---:|---:|---:|
-| dev-implement | 12 | 3 | 1 | 0 | 16 |
+### Anomalies
 
-- `BLOCKED` 高比率 → approach mismatch、Plan 段階の見直しが必要
-- `NEEDS_CONTEXT` 高比率 → issue body / plan が不足、orchestrator から渡す context が不十分
+| type | severity | detail |
+|---|---|---|
+| `cap_pinned` | warn | 3 件が eval_iter/plan_iter cap に到達 |
+| `iterate_unhealthy` | warn | 非lgtm rate 21% (8/38) |
+| `micro_nonfiring` | skipped | insufficient_data (total_dev_flow_runs < micro_min_runs) |
 
-**Bottlenecks** (top avg duration):
-1. `dev-kickoff` — avg 18.3 turns
-2. `dev-implement` — avg 7.2 turns
-
-**Disconnected Skills** (no parent invocation in 30d):
-- `night-patrol`: orchestrator 経路が不明
-
-### Termination Loop Health (Check 10)
-
-dev-kickoff の Generator-Verifier ループ（Phase 3 ⇄ 3b / Phase 4-5 ⇄ 6）が
-各 worktree の `kickoff.json.termination` に書き出した verdict_history を横断分析。
-
-> **Note**: 旧 Check 9 "Integration Feedback" は v2 (issue #93) で削除済。
-> parallel mode の `_shared/integration-feedback.json` event store も削除されている
-> ため、`--scope feedback` を渡すと explicit error を返す。詳細:
-> [`references/diagnostic-checks.md`](references/diagnostic-checks.md) Check 9 / Check 10。
-
-| pattern | 推奨アクション |
-|---------|---------------|
-| `repeated_feedback_target` | 同一 feedback_target が連続 → もう一段上のレイヤー（要件・design）を疑う |
-| `max_iterations` | 最大 iteration で収束しなかった → issue サイズ見直し / child-split 検討 |
-| `stuck` (3b) | Plan-Review で finding が解消しない → 計画の根本見直し |
-| `fork_failure` | verifier (dev-plan-review / dev-evaluate) の fork 起動失敗 → tooling issue 調査 |
+- `cap_pinned` → 該当 issue の plan/evaluate loop が収束していない。issue サイズ見直しを検討
+- `iterate_unhealthy` (rate > 閾値 かつ run数 >= min_runs) → pr-reviewer feedback の質、または PR スコープの見直しが必要
+- `micro_nonfiring` (severity: warn, run数 >= min_runs だが micro 0件) → shape 判定ロジックの見直し。
+  `severity: skipped` は run 数不足を意味し、閾値未達の間は判定を保留する
 
 ### Other Findings
 
-1. **[INFO]** 80% of executions use single mode (default `--force-single`)
+1. **[INFO]** No journal entries found for dev-flow (journal scope)
 2. **[WARN]** 3 stale worktree directories found
 
 ### Recommended Actions
 
-- [ ] Run `/skill-retrospective` for pr-fix failure patterns
-- [ ] Investigate dev-integrate call path (Check 8)
+- [ ] Investigate cap_pinned issues (eval_iter/plan_iter loop convergence)
+- [ ] Review pr-iterate feedback quality (iterate_unhealthy)
 - [ ] Clean orphaned worktree directories
 
 ### Safe Auto-Fixes Available (--fix)
@@ -162,11 +144,11 @@ dev-kickoff の Generator-Verifier ループ（Phase 3 ⇄ 3b / Phase 4-5 ⇄ 6�
 Deterministic diagnostic data collection and health score calculation.
 
 ```bash
-# Full diagnostics (includes family check)
+# Full diagnostics (includes telemetry check)
 ./scripts/run-diagnostics.sh --window 30d
 
-# Dev-flow family connector only
-./scripts/run-diagnostics.sh --scope family --window 7d
+# Dev-flow telemetry only
+./scripts/run-diagnostics.sh --scope telemetry --window 7d
 
 # Legacy scopes
 ./scripts/run-diagnostics.sh --scope journal
@@ -174,13 +156,14 @@ Deterministic diagnostic data collection and health score calculation.
 ./scripts/run-diagnostics.sh --scope config
 
 # Baseline comparison (AC4) — adds baseline_compare check + regression penalty
-./scripts/run-diagnostics.sh --scope family --compare .claude/dev-flow-doctor-baseline-pre-79.json
+./scripts/run-diagnostics.sh --scope telemetry --compare .claude/dev-flow-doctor-baseline-pre-79.json
 
 # Regenerate baseline (AC2) — delegates to baseline-snapshot.sh
 ./scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d
 ```
 
-Output: JSON with `score`, `rating`, `checks` (including `dev_flow_family` and `baseline_compare` when `--compare` is used), and `issues` fields.
+Output: JSON with `score`, `rating`, `checks` (including `dev_flow_telemetry` and
+`baseline_compare` when `--compare` is used), and `issues` fields.
 
 ### `scripts/baseline-snapshot.sh`
 
@@ -203,31 +186,15 @@ Deterministic baseline vs current comparison (issue #83 AC3). Exit codes:
 
 Detail: [`references/baseline-comparison.md`](references/baseline-comparison.md).
 
-### `scripts/analyze-termination-loops.sh`
+### `scripts/analyze-dev-flow-telemetry.sh`
 
-Cross-worktree Generator-Verifier loop analysis (Check 9, issue #53). Reads
-`phases.3b_plan_review.termination` / `phases.6_evaluate.termination` from each
-worktree's `.claude/kickoff.json` to detect:
-
-- `repeated_feedback_target` — same Phase 6 `feedback_target` in 2+ consecutive iterations
-- `max_iterations` — loop exhausted iteration budget
-- `stuck` — Phase 3b plan-review findings unresolved across iterations
-- `fork_failure` — verifier fork failed
+Dev-flow telemetry distribution + anomaly analysis. Called by
+`run-diagnostics.sh --scope full|telemetry`, but can also be invoked directly
+for standalone diagnosis.
 
 ```bash
-./scripts/analyze-termination-loops.sh [--worktree-base <dir>]
-```
-
-Called by `run-diagnostics.sh --scope full|family`; can also be invoked directly.
-
-### `scripts/analyze-dev-flow-family.sh`
-
-Dev-flow family connector analysis (Check 8). Called by `run-diagnostics.sh --scope full|family`,
-but can also be invoked directly for standalone family diagnosis.
-
-```bash
-./scripts/analyze-dev-flow-family.sh --window 30d
-./scripts/analyze-dev-flow-family.sh --window 7d --config /path/to/skill-config.json
+./scripts/analyze-dev-flow-telemetry.sh --window 30d
+./scripts/analyze-dev-flow-telemetry.sh --window 7d --config /path/to/skill-config.json
 ```
 
 Output JSON schema:
@@ -236,47 +203,52 @@ Output JSON schema:
 {
   "window": "30d",
   "since": "2026-03-12T...",
-  "family_skills": ["dev-kickoff", "..."],
-  "per_skill": [
-    {"skill": "dev-kickoff", "total": 3, "success": 3, "failure": 0,
-     "partial": 0, "failure_rate": 0, "avg_duration_turns": 20, ...}
-  ],
-  "findings": {
-    "dead_phases": [...],
-    "stuck_skills": [...],
-    "bottlenecks": [...],
-    "disconnected_skills": [...]
-  }
+  "total_dev_flow_runs": 42,
+  "distributions": {
+    "shape": {"micro": 12, "standard": 24, "complex": 6, "unknown": 0},
+    "merge_tier": {"AUTO": 5, "REVIEW": 30, "HOLD": 7, "unknown": 0},
+    "eval_iter": {"max": 10, "cap": 10, "at_cap_count": 3},
+    "plan_iter": {"max": 7, "cap": 8, "at_cap_count": 0},
+    "gate_policy": {"deterministic-only": 0, "llm-major-advisory": 40, "llm-major-blocking": 2, "llm-autonomous": 0, "unknown": 0},
+    "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "unknown": 0, "total": 38}
+  },
+  "anomalies": [
+    {"type": "cap_pinned", "severity": "warn", "count": 3, "detail": {"...": "..."}},
+    {"type": "iterate_unhealthy", "severity": "warn", "rate": 0.21, "detail": {"...": "..."}},
+    {"type": "micro_nonfiring", "severity": "skipped", "reason": "insufficient_data", "detail": {"...": "..."}}
+  ]
 }
 ```
 
 ## Tests
 
 ```bash
-./tests/test-analyze-dev-flow-family.sh
-./tests/test-analyze-termination-loops.sh
+bats dev-flow-doctor/scripts/analyze-dev-flow-telemetry.bats
+bats dev-flow-doctor/scripts/run-diagnostics.bats
 ```
 
-Fixture-based unit tests validate family filtering, 4 detection categories, per-skill
-statistics, and window filtering. `test-analyze-termination-loops.sh` covers Check 9
-(termination-loop health): repeated_feedback_target, max_iterations, stuck, fork_failure,
-and converged cases.
+Fixture-based unit tests (相対日付生成、日付経過によるテスト崩壊なし) validate the
+shape/merge_tier/gate_policy/eval_iter/plan_iter/iterate_status distributions,
+the `.skill == "dev-flow"` vs `iterate_status`-only denominator split
+(pr-iterate standalone entries must not appear in `merge_tier`), and the 3
+anomaly detections (cap_pinned / iterate_unhealthy / micro_nonfiring including
+the insufficient-data skip path).
 
 ## References
 
-- [Diagnostic Checks](references/diagnostic-checks.md) -- Check 1–9 (family connector in Check 8, termination loops in Check 9)
-- [Health Scoring](references/health-scoring.md) -- Scoring formula including family penalty + baseline regression penalty (max -15)
+- [Diagnostic Checks](references/diagnostic-checks.md) -- journal-based checks (Check 1–7) + dev-flow telemetry health
+- [Health Scoring](references/health-scoring.md) -- Scoring formula including telemetry anomaly penalty + baseline regression penalty (max -15)
 - [Baseline Comparison](references/baseline-comparison.md) -- AC4/AC5 snapshot schema, compare semantics, CI 運用パターン
 - [Responsibility Split](references/responsibility-split.md) -- Boundary vs skill-retrospective
 
 ## Examples
 
 ```bash
-# Full health check (includes Check 8)
+# Full health check (includes telemetry anomalies)
 /dev-flow-doctor
 
-# Focused family connector check, last 7 days
-/dev-flow-doctor --scope family --window 7d
+# Focused telemetry check, last 7 days
+/dev-flow-doctor --scope telemetry --window 7d
 
 # Journal-only legacy analysis
 /dev-flow-doctor --scope journal
