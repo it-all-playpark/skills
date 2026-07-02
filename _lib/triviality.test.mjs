@@ -30,8 +30,8 @@ test('count=3, ac=2, type=feat → shape=standard', () => {
   assert.ok(result.reason.length > 0);
 });
 
-// (c) ac=4 の中規模 → 'standard'
-test('count=2, ac=4, type=fix → shape=standard', () => {
+// (c) ac=4 の micro floor 境界 → 'micro' (issue #272 floor 緩和)
+test('count=2, ac=4, type=fix → shape=micro (issue #272 floor 緩和)', () => {
   const result = classifyShape({
     estimated_change_file_count: 2,
     acceptance_criteria: ['a', 'b', 'c', 'd'],
@@ -39,7 +39,35 @@ test('count=2, ac=4, type=fix → shape=standard', () => {
     scope: 'src',
     summary: 'fix something',
   });
+  assert.equal(result.shape, 'micro');
+  assert.equal(typeof result.reason, 'string');
+  assert.ok(result.reason.length > 0);
+});
+
+// (c2) ac=5 → 'standard' (micro floor 境界の 1 個外)
+test('count=2, ac=5, type=fix → shape=standard', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 2,
+    acceptance_criteria: ['a', 'b', 'c', 'd', 'e'],
+    issue_type: 'fix',
+    scope: 'src',
+    summary: 'fix something bigger',
+  });
   assert.equal(result.shape, 'standard');
+  assert.equal(typeof result.reason, 'string');
+  assert.ok(result.reason.length > 0);
+});
+
+// (c3) count=1, ac=4, type=docs → 'micro'
+test('count=1, ac=4, type=docs → shape=micro', () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['a', 'b', 'c', 'd'],
+    issue_type: 'docs',
+    scope: 'docs/foo.md',
+    summary: 'update docs',
+  });
+  assert.equal(result.shape, 'micro');
   assert.equal(typeof result.reason, 'string');
   assert.ok(result.reason.length > 0);
 });

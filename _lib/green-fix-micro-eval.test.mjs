@@ -50,8 +50,11 @@ function createResponder() {
       };
     }
     // Plan: dev-planner
+    // file_changes は realized-diff stub（['src/foo.ts']）と一致させて宣言済みにする。
+    // 宣言外扱いで micro Evaluate 強制（issue #272 F2）が誤発火すると、このテストが
+    // 検証したい「green-fix 経由の Evaluate 強制」の pin が意味を失うため。
     if (agentType === 'dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
+      return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
     }
     // Plan reviewer
     if (agentType === 'plan-reviewer') {

@@ -7,10 +7,21 @@
 //   (b) runDevFlowInSandbox は vm.runInContext の戻り値（workflow の return object）を解決して
 //       呼び出し元へ返すよう拡張する（return object 検証のため）。
 //
+// issue #272 F2 実装後の新挙動: refloor の realized count は「non-ephemeral のうち plan の
+// file_changes に宣言済みのファイル数」（= filterEphemeralPaths 後の一覧から diffDeclaredPaths の
+// 宣言外を引いた数）で算出する。宣言外 non-ephemeral 変更が 1 件以上あると micro でも
+// runEval=true（Evaluate 強制）になる。そのため makeCountingSandbox は dev-planner stub の
+// file_changes に realized ファイルを宣言させる declaredFiles 引数を持つ（省略時は realizedFiles を
+// 全件宣言 = 従来どおり宣言外なしの挙動）。
+//
 // テストケース:
-//   (A) [refloor] micro 見積もり + realized 6 件 → evaluator >= 1 回 + shape_refloored===true + effective_shape==='complex'
-//   (B) [refloor] standard 見積もり + realized 6 件 → evaluator >= 2 回（EVAL_PASSES=EVAL_MAX 化で full ループ）
-//   (C) [refloor] micro 見積もり + realized 1 件 → evaluator 0 回 + shape_refloored===false
+//   (A) [refloor] micro 見積もり + realized 6 件（全件宣言）→ evaluator >= 1 回 + shape_refloored===true + effective_shape==='complex'
+//   (B) [refloor] standard 見積もり + realized 6 件（全件宣言）→ evaluator >= 2 回（EVAL_PASSES=EVAL_MAX 化で full ループ）
+//   (C) [refloor] micro 見積もり + realized 1 件（宣言済み）→ evaluator 0 回 + shape_refloored===false
+//   (F) [refloor] micro 見積もり + realized 6 件が全て宣言外（plan file_changes: []）→ declared count=0 で
+//       refloor 不発（shape_refloored===false・effective_shape===micro）だが宣言外監査で evaluator >= 1 回
+//   (G) [refloor] micro 見積もり + realized 3 件のうち宣言済み2件・宣言外1件 → declared count=2 で
+//       refloor 不発（shape_refloored===false）だが宣言外監査で evaluator >= 1 回
 //
 // TDD red: F2/F3 実装前は realized-diff call 不在・EFFECTIVE_SHAPE 不在で評価カウントと
 //          return フィールドが期待と乖離し赤になる。F2/F3 実装後に全緑。
@@ -36,9 +47,11 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {string[]} realizedFiles - realized-diff stub が返すファイル一覧
  * @param {string[]} [changedFiles=['src/foo.ts']] - changed-files stub が返すファイル一覧（merge tier 判定に使用）
+ * @param {string[]} [declaredFiles=realizedFiles] - dev-planner stub が file_changes として宣言するファイル一覧
+ *   （省略時は realizedFiles を全件宣言 = 宣言外なし。宣言外監査シナリオ用に部分集合/空配列を渡せる）
  * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string}> }}
  */
-function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo.ts']) {
+function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo.ts'], declaredFiles = realizedFiles) {
   const calls = [];
 
   // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
@@ -56,8 +69,9 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
       return analyzeReq;
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
+    // declaredFiles を file_changes として宣言する（省略時は realizedFiles 全件 = 宣言外なし）。
     if (agentType === 'dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
+      return { summary: 'p', serial: [{ id: 't1', file_changes: declaredFiles }], parallel: [] };
     }
     // Plan reviewer
     if (agentType === 'plan-reviewer') {
@@ -254,7 +268,10 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
 
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return standardReq;
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [], parallel: [] };
+    // (B) は「全件宣言」シナリオ（realized の 6 ファイルを file_changes に宣言）。
+    // 宣言外のままだと diffDeclaredPaths が全件を宣言外扱いし declared count=0 に潰れ、
+    // refloor が発火しない（EFFECTIVE_SHAPE が standard のまま止まる）ため明示的に宣言する。
+    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 't1', file_changes: ['a', 'b', 'c', 'd', 'e', 'f'] }], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     // (a) realized-diff: 6 ファイル返す → standard+6件 → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX
