@@ -260,7 +260,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `pr-fix` | レビューフィードバックに基づくPR修正 |
 | `pr-iterate` | LGTM取得までの review ⇄ fix 改善ループ (dynamic workflow) |
 
 ### テスト

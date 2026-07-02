@@ -10,11 +10,15 @@
 # dev-flow-doctor/templates/baseline-pre-79.example.json (committable fallback).
 #
 # Usage:
-#   baseline-snapshot.sh [--window <dur>] [--config <path>] [--include-non-family]
-#                        [--out <path>]
+#   baseline-snapshot.sh [--window <dur>] [--until <iso8601>] [--config <path>]
+#                        [--include-non-family] [--out <path>]
 #
 # Options:
 #   --window <dur>          Lookback window (e.g. 30d, 14d, 7d). Default 30d.
+#   --until <iso8601>       Upper bound of the window (UTC ISO8601, e.g.
+#                           2026-07-01T00:00:00Z). since is computed as
+#                           until - window (half-open interval [since, until)).
+#                           Omitted -> since is computed from now, no upper bound.
 #   --config <path>         Override skill-config.json (auto-detected otherwise).
 #   --include-non-family    Include skills outside the dev-flow family in per_skill.
 #   --out <path>            Write to file instead of stdout (parent dir created if missing).
@@ -25,6 +29,7 @@
 #     "schema": "dev-flow-doctor-baseline/v1",
 #     "window": "30d",
 #     "since": "ISO8601",
+#     "until": "ISO8601" | null,
 #     "taken_at": "ISO8601",
 #     "total_entries": <int>,
 #     "family_skills": [...],
@@ -35,7 +40,7 @@
 #   }
 #
 # Exit codes:
-#   0 success / 1 invalid arg or unparseable window
+#   0 success / 1 invalid arg, unparseable window, or invalid --until
 
 set -euo pipefail
 
@@ -50,6 +55,7 @@ require_cmd jq "jq is required"
 # ----------------------------------------------------------------------------
 
 WINDOW=""
+UNTIL_ISO=""
 CONFIG_OVERRIDE=""
 INCLUDE_NON_FAMILY=false
 OUT_PATH=""
@@ -57,20 +63,25 @@ OUT_PATH=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --window) WINDOW="$2"; shift 2 ;;
+    --until) UNTIL_ISO="$2"; shift 2 ;;
     --config) CONFIG_OVERRIDE="$2"; shift 2 ;;
     --include-non-family) INCLUDE_NON_FAMILY=true; shift ;;
     --out) OUT_PATH="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,40p' "$0"; exit 0 ;;
+      sed -n '2,43p' "$0"; exit 0 ;;
     *) die_json "Unknown argument: $1" 1 ;;
   esac
 done
+
+if [[ -n "$UNTIL_ISO" ]] && [[ ! "$UNTIL_ISO" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+  die_json "Invalid --until (expected UTC ISO8601 like 2026-07-01T00:00:00Z): $UNTIL_ISO" 1
+fi
 
 # ----------------------------------------------------------------------------
 # Config resolution (mirrors analyze-dev-flow-family.sh)
 # ----------------------------------------------------------------------------
 
-DEFAULT_FAMILY_SKILLS='["dev-kickoff","dev-implement","dev-validate","dev-integrate","dev-evaluate","pr-iterate","pr-fix","night-patrol"]'
+DEFAULT_FAMILY_SKILLS='["dev-kickoff","dev-implement","dev-validate","dev-integrate","dev-evaluate","pr-iterate","night-patrol"]'
 DEFAULT_WINDOW="30d"
 DEFAULT_GLUE_PATTERNS='["worktree.*not found","--worktree.*not","\\.env.*not.*copied","worktree-agent-[a-f0-9]+","phase_failed.*worktree"]'
 
@@ -110,8 +121,24 @@ GLUE_PATTERNS_JSON=$(load_config_field ".baseline.glue_patterns" "$DEFAULT_GLUE_
 # Window → ISO since
 # ----------------------------------------------------------------------------
 
+# parse_since <window> [anchor_iso]
+# Computes the ISO8601 UTC timestamp `window` before `anchor_iso` (or now, if
+# anchor_iso is omitted). BSD (-v-Nd from anchor via -j -f) / GNU (-d "anchor N
+# days ago") dual-command pattern.
 parse_since() {
-  local since="$1"
+  local since="$1" anchor="${2:-}"
+  if [[ -n "$anchor" ]]; then
+    case "$since" in
+      *d) date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$anchor" -v-"${since%d}"d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+           date -u -d "$anchor ${since%d} days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ;;
+      *w) date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$anchor" -v-"${since%w}"w +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+           date -u -d "$anchor ${since%w} weeks ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ;;
+      *m) date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$anchor" -v-"${since%m}"m +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+           date -u -d "$anchor ${since%m} months ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ;;
+      *) echo "$since" ;;
+    esac
+    return
+  fi
   case "$since" in
     *d) date -u -v-"${since%d}"d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
          date -u -d "${since%d} days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ;;
@@ -123,9 +150,13 @@ parse_since() {
   esac
 }
 
-SINCE_ISO=$(parse_since "$WINDOW")
+SINCE_ISO=$(parse_since "$WINDOW" "$UNTIL_ISO")
 if [[ -z "$SINCE_ISO" ]]; then
-  die_json "Failed to parse --window $WINDOW" 1
+  if [[ -n "$UNTIL_ISO" ]]; then
+    die_json "Failed to parse --window $WINDOW relative to --until $UNTIL_ISO" 1
+  else
+    die_json "Failed to parse --window $WINDOW" 1
+  fi
 fi
 
 TAKEN_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -166,7 +197,8 @@ ALL_ENTRIES=$(load_journal_entries)
 
 WINDOW_ENTRIES=$(echo "$ALL_ENTRIES" | jq \
   --arg since "$SINCE_ISO" \
-  '[.[] | select(.timestamp >= $since)]')
+  --arg until "$UNTIL_ISO" \
+  '[.[] | select(.timestamp >= $since and (if $until == "" then true else .timestamp < $until end))]')
 
 if [[ "$INCLUDE_NON_FAMILY" == "true" ]]; then
   TARGET_ENTRIES="$WINDOW_ENTRIES"
@@ -264,6 +296,9 @@ if [[ -d "$JOURNAL_DIR" ]]; then
       if [[ -n "$LOG_TS" ]] && [[ "$LOG_TS" < "$SINCE_ISO" ]]; then
         continue
       fi
+      if [[ -n "$UNTIL_ISO" && -n "$LOG_TS" && ! "$LOG_TS" < "$UNTIL_ISO" ]]; then
+        continue
+      fi
       LOG_COUNT=$(grep -ciE "$pat" "$log" 2>/dev/null | head -n1 || echo 0)
       LOG_COUNT=${LOG_COUNT:-0}
       # Sanitize: grep may emit "0\n" when no matches
@@ -296,6 +331,7 @@ GLUE_ERRORS=$(jq -n \
 SNAPSHOT=$(jq -n \
   --arg window "$WINDOW" \
   --arg since "$SINCE_ISO" \
+  --arg until "$UNTIL_ISO" \
   --arg taken_at "$TAKEN_AT" \
   --argjson total "$TOTAL_ENTRIES" \
   --argjson fam "$FAMILY_SKILLS_JSON" \
@@ -308,6 +344,7 @@ SNAPSHOT=$(jq -n \
     schema: "dev-flow-doctor-baseline/v1",
     window: $window,
     since: $since,
+    until: (if $until == "" then null else $until end),
     taken_at: $taken_at,
     total_entries: $total,
     family_skills: $fam,

@@ -1,22 +1,39 @@
 #!/usr/bin/env bash
 # compare-baseline.sh - Compare a baseline snapshot against a current snapshot
 #
-# Reads two snapshot JSONs (baseline + current, produced by baseline-snapshot.sh)
-# and outputs a comparison JSON with per-metric delta / direction and regression
-# findings. Used by `tests/no-glue-errors.sh` (AC4) and `run-diagnostics.sh`
-# (AC3, integrated into health-scoring) — issue #83.
+# Two modes:
+#   Fixed (default):  Reads two persisted snapshot JSONs (baseline + current,
+#                      produced by baseline-snapshot.sh) and outputs a comparison
+#                      JSON with per-metric delta / direction and regression
+#                      findings. Used by `tests/no-glue-errors.sh` (AC4) and
+#                      `run-diagnostics.sh` (AC3, integrated into health-scoring)
+#                      — issue #83.
+#   Rolling:           Auto-generates two snapshots from the journal — a
+#                      previous window [now-2N, now-N) and a recent window
+#                      [now-N, now) — and applies a ratio-based regression check
+#                      (recent / max(previous, 1) > ratio_threshold) — issue #88.
 #
 # Usage:
-#   compare-baseline.sh --baseline <path> [--current <path>]
+#   compare-baseline.sh --baseline <path> [--current <path>] [--config <path>]
+#   compare-baseline.sh --rolling --window <Nd|Nw|Nm> [--config <path>]
 #
 # Options:
-#   --baseline <path>  Path to baseline snapshot JSON. Required.
-#   --current <path>   Path to current snapshot JSON. If omitted, reads from stdin.
+#   --baseline <path>  Path to baseline snapshot JSON. Required in fixed mode.
+#   --current <path>   Path to current snapshot JSON. If omitted, reads from
+#                      stdin. Fixed mode only.
+#   --rolling          Rolling mode. Cannot be combined with --baseline/--current.
+#   --window <dur>     Rolling window (e.g. 7d, 2w, 1m). Required with --rolling.
+#   --config <path>    Override skill-config.json (auto-detected otherwise).
+#                      In rolling mode this is propagated to the internal
+#                      baseline-snapshot.sh calls.
 #
-# Output: comparison JSON on stdout. Schema:
+# Output: comparison JSON on stdout.
+#
+# Fixed mode schema:
 #   {
 #     "version": "1.0.0",
 #     "schema": "dev-flow-doctor-compare/v1",
+#     "mode": "fixed",
 #     "window": "<baseline window>",
 #     "metrics": [
 #       {"metric", "baseline", "current", "delta", "delta_pct", "direction"}
@@ -26,10 +43,29 @@
 #     ]
 #   }
 #
+# Rolling mode schema:
+#   {
+#     "version": "1.0.0",
+#     "schema": "dev-flow-doctor-compare/v1",
+#     "mode": "rolling",
+#     "window": "<Nd>",
+#     "windows": {
+#       "previous": {"since", "until", "total_entries"},
+#       "recent":   {"since", "until", "total_entries"}
+#     },
+#     "insufficient_data": <bool>,
+#     "metrics": [
+#       {"metric", "baseline", "current", "delta", "delta_pct", "ratio", "direction"}
+#     ],
+#     "findings": [
+#       {"metric", "severity": "critical", "ratio", "threshold", "previous", "recent", "reason"}
+#     ]
+#   }
+#
 # Exit codes:
-#   0 = no regression
+#   0 = no regression (or insufficient_data in rolling mode)
 #   1 = regression detected (one or more critical findings)
-#   2 = corrupt baseline / window mismatch / IO error
+#   2 = corrupt baseline / window mismatch / IO error / invalid --rolling args
 
 set -uo pipefail
 
@@ -46,13 +82,17 @@ require_cmd jq "jq is required"
 BASELINE_PATH=""
 CURRENT_PATH=""
 CONFIG_OVERRIDE=""
+ROLLING=false
+WINDOW_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline) BASELINE_PATH="$2"; shift 2 ;;
     --current) CURRENT_PATH="$2"; shift 2 ;;
     --config) CONFIG_OVERRIDE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    --rolling) ROLLING=true; shift ;;
+    --window) WINDOW_ARG="$2"; shift 2 ;;
+    -h|--help) sed -n '2,68p' "$0"; exit 0 ;;
     *)
       echo "{\"error\":\"Unknown argument: $1\"}" >&2
       exit 2
@@ -60,46 +100,240 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$BASELINE_PATH" ]]; then
-  echo '{"error":"--baseline is required"}' >&2
-  exit 2
-fi
+if [[ "$ROLLING" == "true" ]]; then
+  if [[ -n "$BASELINE_PATH" || -n "$CURRENT_PATH" ]]; then
+    echo '{"error":"--rolling cannot be combined with --baseline/--current"}' >&2
+    exit 2
+  fi
+  if [[ -z "$WINDOW_ARG" ]]; then
+    echo '{"error":"--rolling requires --window <Nd|Nw|Nm>"}' >&2
+    exit 2
+  fi
+  if [[ ! "$WINDOW_ARG" =~ ^[0-9]+[dwm]$ ]]; then
+    echo "{\"error\":\"invalid --window format (expected Nd|Nw|Nm): $WINDOW_ARG\"}" >&2
+    exit 2
+  fi
+else
+  if [[ -z "$BASELINE_PATH" ]]; then
+    echo '{"error":"--baseline is required"}' >&2
+    exit 2
+  fi
 
-if [[ ! -f "$BASELINE_PATH" ]]; then
-  echo "{\"error\":\"baseline file not found: $BASELINE_PATH\"}" >&2
-  exit 2
+  if [[ ! -f "$BASELINE_PATH" ]]; then
+    echo "{\"error\":\"baseline file not found: $BASELINE_PATH\"}" >&2
+    exit 2
+  fi
 fi
 
 # ----------------------------------------------------------------------------
-# Config: regression thresholds (skill-config.json)
+# Config resolution (shared by fixed regression thresholds and rolling config)
 # ----------------------------------------------------------------------------
 
-DEFAULT_MAX_GLUE_REG="0"
-DEFAULT_MAX_FAILURE_RATE_REG="0.10"
+resolve_skill_config_path() {
+  if [[ -n "$CONFIG_OVERRIDE" && -f "$CONFIG_OVERRIDE" ]]; then
+    printf '%s' "$CONFIG_OVERRIDE"; return
+  fi
+  local git_root
+  git_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  for candidate in \
+    "${SKILL_CONFIG_PATH:-}" \
+    "${git_root:+$git_root/skill-config.json}" \
+    "${git_root:+$git_root/.claude/skill-config.json}" \
+    "${HOME}/.config/skills/config.json" \
+    "${HOME}/.claude/skill-config.json"; do
+    [[ -n "$candidate" && -f "$candidate" ]] && { printf '%s' "$candidate"; return; }
+  done
+  printf ''
+}
 
 load_threshold() {
   local path="$1" default="$2"
-  local cfg=""
-  if [[ -n "$CONFIG_OVERRIDE" && -f "$CONFIG_OVERRIDE" ]]; then
-    cfg="$CONFIG_OVERRIDE"
-  else
-    local git_root
-    git_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
-    for candidate in \
-      "${SKILL_CONFIG_PATH:-}" \
-      "${git_root:+$git_root/skill-config.json}" \
-      "${git_root:+$git_root/.claude/skill-config.json}" \
-      "${HOME}/.config/skills/config.json" \
-      "${HOME}/.claude/skill-config.json"; do
-      [[ -n "$candidate" && -f "$candidate" ]] && { cfg="$candidate"; break; }
-    done
-  fi
+  local cfg
+  cfg=$(resolve_skill_config_path)
   if [[ -z "$cfg" ]]; then printf '%s' "$default"; return; fi
   local val
   val=$(jq -r --arg default "$default" \
     ".[\"dev-flow-doctor\"].baseline.regression_thresholds${path} // \$default" "$cfg" 2>/dev/null || echo "$default")
   printf '%s' "$val"
 }
+
+load_rolling_config() {
+  local path="$1" default="$2"
+  local cfg
+  cfg=$(resolve_skill_config_path)
+  if [[ -z "$cfg" ]]; then printf '%s' "$default"; return; fi
+  local val
+  val=$(jq -r --arg default "$default" \
+    ".[\"dev-flow-doctor\"].baseline.rolling${path} // \$default" "$cfg" 2>/dev/null || echo "$default")
+  printf '%s' "$val"
+}
+
+# ----------------------------------------------------------------------------
+# Rolling mode
+# ----------------------------------------------------------------------------
+
+if [[ "$ROLLING" == "true" ]]; then
+  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # compute_until_prev <anchor_iso> <window> - anchor - window (BSD/GNU dual)
+  compute_until_prev() {
+    local anchor="$1" window="$2"
+    local n="${window%[dwm]}" suffix="${window: -1}"
+    case "$suffix" in
+      d) date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$anchor" -v-"${n}"d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+           date -u -d "$anchor ${n} days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ;;
+      w) date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$anchor" -v-"${n}"w +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+           date -u -d "$anchor ${n} weeks ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ;;
+      m) date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$anchor" -v-"${n}"m +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+           date -u -d "$anchor ${n} months ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ;;
+    esac
+  }
+
+  UNTIL_PREV=$(compute_until_prev "$NOW" "$WINDOW_ARG")
+  if [[ -z "$UNTIL_PREV" ]]; then
+    echo "{\"error\":\"failed to compute rolling previous window boundary for --window $WINDOW_ARG\"}" >&2
+    exit 2
+  fi
+
+  TMP=$(mktemp -d -t dffd-rolling-XXXXXX)
+  # shellcheck disable=SC2064
+  trap "rm -rf \"$TMP\"" EXIT
+
+  RECENT_ARGS=(--window "$WINDOW_ARG" --until "$NOW" --out "$TMP/recent.json")
+  PREV_ARGS=(--window "$WINDOW_ARG" --until "$UNTIL_PREV" --out "$TMP/previous.json")
+  if [[ -n "$CONFIG_OVERRIDE" ]]; then
+    RECENT_ARGS+=(--config "$CONFIG_OVERRIDE")
+    PREV_ARGS+=(--config "$CONFIG_OVERRIDE")
+  fi
+
+  if ! "$SCRIPT_DIR/baseline-snapshot.sh" "${RECENT_ARGS[@]}" >/dev/null 2>&1; then
+    echo '{"error":"failed to generate rolling snapshot","window":"recent"}' >&2
+    exit 2
+  fi
+  if ! "$SCRIPT_DIR/baseline-snapshot.sh" "${PREV_ARGS[@]}" >/dev/null 2>&1; then
+    echo '{"error":"failed to generate rolling snapshot","window":"previous"}' >&2
+    exit 2
+  fi
+
+  if ! RECENT_JSON=$(jq -c '.' "$TMP/recent.json" 2>/dev/null); then
+    echo '{"error":"failed to generate rolling snapshot","reason":"invalid recent snapshot JSON"}' >&2
+    exit 2
+  fi
+  if ! PREVIOUS_JSON=$(jq -c '.' "$TMP/previous.json" 2>/dev/null); then
+    echo '{"error":"failed to generate rolling snapshot","reason":"invalid previous snapshot JSON"}' >&2
+    exit 2
+  fi
+
+  RATIO_THRESHOLD=$(load_rolling_config ".ratio_threshold" "1.5")
+  MIN_ENTRIES=$(load_rolling_config ".min_entries_per_window" "5")
+
+  RECENT_TOTAL=$(echo "$RECENT_JSON" | jq '.total_entries // 0')
+  PREVIOUS_TOTAL=$(echo "$PREVIOUS_JSON" | jq '.total_entries // 0')
+  RECENT_ERROR=$(echo "$RECENT_JSON" | jq '(.per_skill // []) | map((.failure + .partial)) | add // 0')
+  PREVIOUS_ERROR=$(echo "$PREVIOUS_JSON" | jq '(.per_skill // []) | map((.failure + .partial)) | add // 0')
+  RECENT_GLUE=$(echo "$RECENT_JSON" | jq '.glue_errors.count // 0')
+  PREVIOUS_GLUE=$(echo "$PREVIOUS_JSON" | jq '.glue_errors.count // 0')
+
+  INSUFFICIENT=false
+  if [[ "$(jq -n --argjson p "$PREVIOUS_TOTAL" --argjson r "$RECENT_TOTAL" --argjson m "$MIN_ENTRIES" \
+      'if ($p < $m) or ($r < $m) then "true" else "false" end' -r)" == "true" ]]; then
+    INSUFFICIENT=true
+  fi
+
+  make_metric() {
+    local name="$1" prev="$2" recent="$3"
+    jq -n --arg name "$name" --argjson p "$prev" --argjson r "$recent" '
+      ($r / (if $p < 1 then 1 else $p end)) as $ratio |
+      (if $p == 0 then null else (($r - $p) / $p * 100) end) as $pct |
+      {
+        metric: $name,
+        baseline: $p,
+        current: $r,
+        delta: ($r - $p),
+        delta_pct: $pct,
+        ratio: $ratio,
+        direction: (if $ratio > 1 then "regressed" elif $ratio < 1 then "improved" else "unchanged" end)
+      }'
+  }
+
+  METRIC_ERROR=$(make_metric "error_count" "$PREVIOUS_ERROR" "$RECENT_ERROR")
+  METRIC_GLUE=$(make_metric "glue_errors.count" "$PREVIOUS_GLUE" "$RECENT_GLUE")
+
+  ROLLING_METRICS=$(jq -n --argjson a "$METRIC_ERROR" --argjson b "$METRIC_GLUE" '[$a, $b]')
+
+  ROLLING_FINDINGS="[]"
+  if [[ "$INSUFFICIENT" != "true" ]]; then
+    for metric_json in "$METRIC_ERROR" "$METRIC_GLUE"; do
+      RATIO_VAL=$(echo "$metric_json" | jq '.ratio')
+      EXCEEDS=$(jq -n --argjson ratio "$RATIO_VAL" --argjson th "$RATIO_THRESHOLD" 'if $ratio > $th then "true" else "false" end' -r)
+      if [[ "$EXCEEDS" == "true" ]]; then
+        METRIC_NAME=$(echo "$metric_json" | jq -r '.metric')
+        PREV_VAL=$(echo "$metric_json" | jq '.baseline')
+        RECENT_VAL=$(echo "$metric_json" | jq '.current')
+        ROLLING_FINDINGS=$(echo "$ROLLING_FINDINGS" | jq \
+          --arg metric "$METRIC_NAME" \
+          --argjson ratio "$RATIO_VAL" \
+          --argjson th "$RATIO_THRESHOLD" \
+          --argjson prev "$PREV_VAL" \
+          --argjson recent "$RECENT_VAL" \
+          '. + [{
+            metric: $metric,
+            severity: "critical",
+            ratio: $ratio,
+            threshold: $th,
+            previous: $prev,
+            recent: $recent,
+            reason: ($metric + " ratio exceeds rolling ratio_threshold")
+          }]')
+      fi
+    done
+  else
+    echo "warning: insufficient rolling data (previous_total=$PREVIOUS_TOTAL, recent_total=$RECENT_TOTAL, min_entries_per_window=$MIN_ENTRIES)" >&2
+  fi
+
+  ROLLING_EXIT=0
+  if [[ "$(echo "$ROLLING_FINDINGS" | jq 'length')" -gt 0 ]]; then
+    ROLLING_EXIT=1
+  fi
+
+  WINDOWS_JSON=$(jq -n \
+    --arg p_since "$(echo "$PREVIOUS_JSON" | jq -r '.since // ""')" \
+    --arg p_until "$(echo "$PREVIOUS_JSON" | jq -r '.until // ""')" \
+    --argjson p_total "$PREVIOUS_TOTAL" \
+    --arg r_since "$(echo "$RECENT_JSON" | jq -r '.since // ""')" \
+    --arg r_until "$(echo "$RECENT_JSON" | jq -r '.until // ""')" \
+    --argjson r_total "$RECENT_TOTAL" \
+    '{
+      previous: {since: $p_since, until: (if $p_until == "" then null else $p_until end), total_entries: $p_total},
+      recent: {since: $r_since, until: (if $r_until == "" then null else $r_until end), total_entries: $r_total}
+    }')
+
+  jq -n \
+    --arg window "$WINDOW_ARG" \
+    --argjson windows "$WINDOWS_JSON" \
+    --argjson insufficient "$([[ "$INSUFFICIENT" == "true" ]] && echo true || echo false)" \
+    --argjson metrics "$ROLLING_METRICS" \
+    --argjson findings "$ROLLING_FINDINGS" \
+    '{
+      version: "1.0.0",
+      schema: "dev-flow-doctor-compare/v1",
+      mode: "rolling",
+      window: $window,
+      windows: $windows,
+      insufficient_data: $insufficient,
+      metrics: $metrics,
+      findings: $findings
+    }'
+
+  exit "$ROLLING_EXIT"
+fi
+
+# ----------------------------------------------------------------------------
+# Fixed mode: regression thresholds (skill-config.json)
+# ----------------------------------------------------------------------------
+
+DEFAULT_MAX_GLUE_REG="0"
+DEFAULT_MAX_FAILURE_RATE_REG="0.10"
 
 MAX_GLUE_REG=$(load_threshold ".max_glue_error_regression" "$DEFAULT_MAX_GLUE_REG")
 MAX_FAILURE_RATE_REG=$(load_threshold ".max_failure_rate_regression" "$DEFAULT_MAX_FAILURE_RATE_REG")
@@ -294,6 +528,7 @@ jq -n \
   '{
     version: "1.0.0",
     schema: "dev-flow-doctor-compare/v1",
+    mode: "fixed",
     window: $window,
     metrics: $metrics,
     findings: $findings
