@@ -65,9 +65,24 @@ done
 # stop (冪等・常に exit 0)
 # macOS に setsid が無く process group kill ができないため、
 # pkill -TERM -P <pid>(子) + kill -TERM <pid>(親) の親子 kill 方式を取る。
+# start でコピーした env file(secret 混入防止のため gitignored のみコピーする。
+# 下記参照)は $STATE_DIR/env-files-copied.list に一覧を記録しておき、stop が
+# それを読んで削除する(呼び出し側は stop の後に stateDir を rm -rf する運用のため、
+# 一覧を消してしまう前に読む必要がある)。
 # ============================================================================
 
+cleanup_copied_env_files() {
+    local list_file="$STATE_DIR/env-files-copied.list"
+    [[ -f "$list_file" ]] || return 0
+    while IFS= read -r dest; do
+        [[ -n "$dest" ]] && rm -f "$dest"
+    done < "$list_file"
+    rm -f "$list_file"
+}
+
 do_stop() {
+    cleanup_copied_env_files
+
     local pid_file="$STATE_DIR/server.pid"
 
     if [[ ! -f "$pid_file" ]]; then
@@ -124,6 +139,12 @@ PID_FILE="$STATE_DIR/server.pid"
 # ----------------------------------------------------------------------------
 # env files: main repo root(worktree 共通の git-common-dir 親)から <dir>/<relpath>
 # へコピーする。存在しないファイルは warning のみで続行(best-effort)。
+# secret 混入防止: コピー先(<dir>/<relpath>)が対象 repo で gitignore されている
+# ことを `git check-ignore` で確認してからのみコピーする。非 ignored ならコピーを
+# 拒否し warning のみ出す(dev-flow の PR phase は `git-commit --all` で worktree
+# 全体を commit するため、非 ignored な relpath をコピーすると secret が PR に
+# 混入する経路が成立してしまう)。コピー先一覧は $STATE_DIR/env-files-copied.list
+# に記録し、stop がそれを読んで削除する。
 # ----------------------------------------------------------------------------
 if [[ ${#ENV_FILES[@]} -gt 0 ]]; then
     main_repo_root=""
@@ -138,13 +159,18 @@ if [[ ${#ENV_FILES[@]} -gt 0 ]]; then
             continue
         fi
         src="$main_repo_root/$relpath"
-        if [[ -f "$src" ]]; then
-            dest="$DIR/$relpath"
-            mkdir -p "$(dirname "$dest")"
-            cp "$src" "$dest"
-        else
+        if [[ ! -f "$src" ]]; then
             echo "[ui-verify-server] warning: env-file not found: $src" >&2
+            continue
         fi
+        if ! git -C "$DIR" check-ignore -q "$relpath" 2>/dev/null; then
+            echo "[ui-verify-server] warning: env-file '$relpath' is not gitignored in '$DIR' — refusing to copy (would risk committing secrets)" >&2
+            continue
+        fi
+        dest="$DIR/$relpath"
+        mkdir -p "$(dirname "$dest")"
+        cp "$src" "$dest"
+        echo "$dest" >>"$STATE_DIR/env-files-copied.list"
     done
 fi
 

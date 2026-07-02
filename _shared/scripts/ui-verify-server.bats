@@ -166,3 +166,77 @@ teardown() {
   run bash "$SCRIPT" bogus --state-dir "$STATE_DIR"
   [ "$status" -eq 2 ]
 }
+
+# -----------------------------------------------------------------------
+# 7. env-file: secret 混入防止 (issue #285 PR #286 review)
+# -----------------------------------------------------------------------
+@test "7: env-file が worktree で gitignore されていなければ copy を拒否する" {
+  local main_repo wt
+  main_repo="$(mktemp -d)"
+  git -C "$main_repo" init -q
+  git -C "$main_repo" config user.email t@t
+  git -C "$main_repo" config user.name t
+  echo "# placeholder" > "$main_repo/.gitkeep"
+  git -C "$main_repo" add .gitkeep
+  git -C "$main_repo" commit -q -m base
+  # .gitignore に記載していない = 非 ignored な secret ファイル
+  echo "SECRET=1" > "$main_repo/.env.local"
+
+  wt="$(mktemp -d)"
+  rmdir "$wt"
+  git -C "$main_repo" worktree add -q -b "wt-branch-7-$$" "$wt" >/dev/null 2>&1
+
+  run bash "$SCRIPT" start \
+    --dir "$wt" \
+    --port "$PORT" \
+    --install-cmd "true" \
+    --dev-cmd "python3 -m http.server {port} --bind 127.0.0.1" \
+    --state-dir "$STATE_DIR" \
+    --env-file ".env.local" \
+    --timeout 30
+
+  [ "$status" -eq 0 ]
+  # 非 ignored なので copy されていないこと
+  [ ! -f "$wt/.env.local" ]
+
+  bash "$SCRIPT" stop --state-dir "$STATE_DIR" >/dev/null 2>&1 || true
+  git -C "$main_repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+  rm -rf "$main_repo" "$wt"
+}
+
+@test "8: env-file が gitignore されていれば copy され stop で削除される" {
+  local main_repo wt
+  main_repo="$(mktemp -d)"
+  git -C "$main_repo" init -q
+  git -C "$main_repo" config user.email t@t
+  git -C "$main_repo" config user.name t
+  echo ".env.local" > "$main_repo/.gitignore"
+  git -C "$main_repo" add .gitignore
+  git -C "$main_repo" commit -q -m base
+  echo "SECRET=1" > "$main_repo/.env.local"
+
+  wt="$(mktemp -d)"
+  rmdir "$wt"
+  git -C "$main_repo" worktree add -q -b "wt-branch-8-$$" "$wt" >/dev/null 2>&1
+
+  run bash "$SCRIPT" start \
+    --dir "$wt" \
+    --port "$PORT" \
+    --install-cmd "true" \
+    --dev-cmd "python3 -m http.server {port} --bind 127.0.0.1" \
+    --state-dir "$STATE_DIR" \
+    --env-file ".env.local" \
+    --timeout 30
+
+  [ "$status" -eq 0 ]
+  # ignored なので copy されているはず
+  [ -f "$wt/.env.local" ]
+
+  run bash "$SCRIPT" stop --state-dir "$STATE_DIR"
+  [ "$status" -eq 0 ]
+  # stop がコピー済み env file を削除する
+  [ ! -f "$wt/.env.local" ]
+
+  git -C "$main_repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
+  rm -rf "$main_repo" "$wt"
+}

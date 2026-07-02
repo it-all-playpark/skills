@@ -1985,16 +1985,22 @@ async function execSecurityFloorPhase(state) {
   let uiVerifyStatus = 'skipped'
   const uiPathTouched = (realizedNonEphemeral ?? []).some((f) => isUiPath(f))
   if (uiPathTouched) {
-    const rawCfg = await agent(
-      `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
-      + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
-      + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
-      { agentType: 'dev-runner-haiku', schema: UICFG, label: 'ui-verify-config', phase: 'Security floor' })
+    let rawCfg = null
+    try {
+      rawCfg = await agent(
+        `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
+        + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
+        + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
+        { agentType: 'dev-runner-haiku', schema: UICFG, label: 'ui-verify-config', phase: 'Security floor' })
+    } catch (e) {
+      uiVerifyStatus = 'setup_failed'
+      log(`⚠️ ui-verify: ui-verify-config 呼び出しが例外 (${e && e.message ? e.message : e}) — setup_failed として skip（fail-open）`)
+    }
     if (rawCfg?.found === true && rawCfg.config) {
       const v = validateUiVerifyConfig(rawCfg.config)
       if (v.ok) uiVerifyConfig = v.config
       else { uiVerifyStatus = 'setup_failed'; log(`⚠️ ui-verify: config が不正 (${v.error}) — setup_failed として skip（fail-open）`) }
-    } else {
+    } else if (uiVerifyStatus !== 'setup_failed') {
       log('ui-verify: UI パス touch だが ui_verify config 無し — 無効（opt-in）')
     }
   }
@@ -2146,6 +2152,11 @@ async function execEvaluatePhase(state) {
           log(`ui-verify: ${state.uiVerifyStatus}（mode=${mode}, findings ${uiFindings.length} 件）`)
         }
       }
+    } catch (e) {
+      // ui-verify は advisory な補助 gate（fail-open 契約）。agent() が reject しても
+      // dev-flow 全体を落とさず failed_open へ倒して継続する（teardown は finally で保証）。
+      state.uiVerifyStatus = 'failed_open'
+      log(`⚠️ ui-verify: 例外発生 (${e && e.message ? e.message : e}) — failed_open で継続（fail-open）`)
     } finally {
       const stop = await agent(
         `cd ${WT} で作業。以下を順に実行せよ。各手順は失敗しても次へ進め（|| true）:\n`
