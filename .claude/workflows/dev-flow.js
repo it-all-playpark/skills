@@ -277,6 +277,8 @@ function isDocsOrTestOnly(files) {
 
 // merge tier を算出する。merge は全 tier 人間(AUTO も推奨ラベルのみ。真 auto-merge は W6)。
 // HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
+// breaking は analyze 構造化判定 (breakingStructured) と issue title/body keyword scan
+// (breakingKeyword) の 2 入力で、reason で由来を区別する（issue #278）。
 // AUTO: micro かつ docs/test-only かつ danger clean かつ収束（推奨ラベル）。
 // REVIEW: それ以外（標準。人間が LGTM して merge）。
 // s.evalSkipped (optional boolean): true の場合、AUTO branch で AC 未検証開示 reason を追記する。
@@ -291,7 +293,8 @@ function classifyMergeTier(s) {
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
   if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
-  if (s.breaking) reasons.push('breaking/migration 検出');
+  if (s.breakingStructured) reasons.push('breaking/migration 検出（analyze 構造化判定 breaking_change=true）');
+  if (s.breakingKeyword) reasons.push('breaking/migration 検出（issue title/body keyword scan 決定論 hit）');
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
@@ -400,11 +403,9 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // issue #272: AC 粒度と floor の較正 — micro floor の AC 境界を 3→4 に緩和。
+// issue #278: breaking 判定を LLM 自由文 (scope/summary への regex) から、analyze REQ の
+// 構造化 breaking_change フィールド + issue 本文への決定論 keyword scan の OR に変更。
 const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
-
-function isBreakingText(s) {
-  return /breaking|incompatible|migration|破壊的|非互換/i.test(String(s ?? ''));
-}
 
 function mergeShape(floor, llmShape) {
   if (!(llmShape in SHAPE_RANK)) {
@@ -438,10 +439,12 @@ function classifyShape(req) {
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
 
-  const combined = `${req.scope ?? ''} ${req.summary ?? ''}`;
-  if (isBreakingText(combined)) {
+  if (req.breaking_change === true || req.breaking_keyword_scan === true) {
     const floor = 'complex';
-    const reason = `breaking change detected in scope/summary → floor=complex`;
+    const srcs = [];
+    if (req.breaking_change === true) srcs.push('analyze structured breaking_change=true');
+    if (req.breaking_keyword_scan === true) srcs.push('issue title/body keyword scan hit');
+    const reason = `breaking change detected (${srcs.join(' + ')}) → floor=complex`;
     const shape = mergeShape(floor, req.shape);
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
@@ -1123,7 +1126,8 @@ const SETUP = {
   properties: { worktree: { type: 'string' }, branch: { type: 'string' } },
 }
 const REQ = {
-  type: 'object', required: ['summary', 'acceptance_criteria'],
+  type: 'object',
+  required: ['summary', 'acceptance_criteria', 'breaking_change', 'breaking_keyword_scan'],
   properties: {
     summary: { type: 'string' },
     issue_type: { type: 'string' },
@@ -1132,6 +1136,9 @@ const REQ = {
     estimated_change_file_count: { type: 'number' },
     shape: { type: 'string', enum: ['micro', 'standard', 'complex'] },
     ambiguities: { type: 'array', items: { type: 'string' } },
+    breaking_change: { type: 'boolean' },
+    breaking_keyword_scan: { type: 'boolean' },
+    breaking_evidence: { type: 'string' },
   },
 }
 const TASK = {
@@ -1427,6 +1434,8 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=1〜2 ファイルの軽微変更（AC 4 個以内）、standard=3〜5 ファイル程度の通常実装、complex=6 ファイル以上・破壊的変更・設計判断を要する。定義に最も合致する shape をそのまま返せ（安全側の floor は決定論ロジックが別途担保するため、迷っても大きめに倒すな）。`
   + `受入条件（acceptance_criteria）は独立に検証可能な最小単位へ統合して列挙せよ（同義の言い換え・手段の重複で個数を水増ししない。1〜2 ファイルの軽微変更なら通常 4 個以内に収まる）。`
   + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`
+  + `さらに、skill の JSON 出力に含まれる breaking_keyword_scan (boolean) をそのまま verbatim で breaking_keyword_scan として返せ（全 depth の出力に含まれる。自分で再判定・変更するな）。`
+  + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
 
 // ============================================================
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
@@ -2190,13 +2199,15 @@ const changed = need(await agent(
 state.ledger = reconcileDanger(state.ledger, riskFinal)
 const unresolvedDanger = state.ledger.items.some(
   (it) => it.dimension === 'security' && it.source === 'seed' && it.floor && !it.checked)
-const breaking = isBreakingText(`${req.scope ?? ''} ${req.summary ?? ''}`)
+const breakingStructured = req.breaking_change === true
+const breakingKeyword = req.breaking_keyword_scan === true
 const escalateCount = policyAdvisoryItems(state.ledger, GATE_POLICY).filter((it) => it.escalate === true).length
 const mergeTier = classifyMergeTier({
   shape: state.EFFECTIVE_SHAPE,
   converged: isConvergedUnderPolicy(state.ledger, GATE_POLICY),
   unresolvedDanger,
-  breaking,
+  breakingStructured,
+  breakingKeyword,
   docsOrTestOnly: isDocsOrTestOnly(changed.files ?? []),
   escalateCount,
   unsatisfiedAc: state.unsatisfiedAc,

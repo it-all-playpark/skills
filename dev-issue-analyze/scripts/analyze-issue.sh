@@ -55,19 +55,28 @@ detect_type() {
 
 TYPE=$(detect_type "$LABELS")
 
+# Breaking keyword scan (deterministic floor, applies to all depths).
+# NOTE: uses a here-string (not a pipe) so grep -q's early-exit on match
+# cannot cause an upstream SIGPIPE / silent false negative on large bodies.
+BREAKING_KEYWORD_SCAN="false"
+grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\n'"${BODY}" && BREAKING_KEYWORD_SCAN="true"
+
 # Minimal output
 if [[ "$DEPTH" == "minimal" ]]; then
-    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE")}"
+    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE"),\"breaking_keyword_scan\":$BREAKING_KEYWORD_SCAN}"
     exit 0
 fi
 
 # Extract AC and requirements
+# NOTE: uses here-strings (not pipes) for the same SIGPIPE-safety reason as
+# breaking_keyword_scan above — a large $1 fed through a pipe into a
+# downstream head -N that early-exits can SIGPIPE-kill the upstream writer.
 extract_ac() {
-    echo "$1" | grep -E '^\s*-\s*\[[ x]\]|^[0-9]+\.\s' | head -20 | json_array
+    grep -E '^\s*-\s*\[[ x]\]|^[0-9]+\.\s' <<<"$1" | head -20 | json_array
 }
 
 extract_requirements() {
-    echo "$1" | grep -E '^\s*[-*]\s+[A-Z]' | head -15 | json_array
+    grep -E '^\s*[-*]\s+[A-Z]' <<<"$1" | head -15 | json_array
 }
 
 AC=$(extract_ac "$BODY")
@@ -85,18 +94,16 @@ if [[ "$DEPTH" == "standard" ]]; then
   "milestone": $(json_str "$MILESTONE"),
   "acceptance_criteria": $AC,
   "requirements": $REQUIREMENTS,
-  "body_preview": $(printf '%s' "$BODY" | head -c 500 | jq -Rs .)
+  "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
+  "body_preview": $(head -c 500 <<<"$BODY" | jq -Rs .)
 }
 JSONEOF
     exit 0
 fi
 
 # Comprehensive
-AFFECTED_FILES=$(echo "$BODY" | grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' | sort -u | head -10 | json_array)
-COMPONENTS=$(echo "$BODY" | grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' | sort -u | head -10 | json_array)
-
-BREAKING="false"
-echo "$BODY" | grep -qi "breaking\|incompatible\|migration" && BREAKING="true"
+AFFECTED_FILES=$(grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' <<<"$BODY" | sort -u | head -10 | json_array)
+COMPONENTS=$(grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' <<<"$BODY" | sort -u | head -10 | json_array)
 
 cat <<JSONEOF
 {
@@ -110,7 +117,7 @@ cat <<JSONEOF
   "requirements": $REQUIREMENTS,
   "affected_files": $AFFECTED_FILES,
   "components": $COMPONENTS,
-  "breaking_changes": $BREAKING,
+  "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
   "body_full": $(printf '%s' "$BODY" | jq -Rs .)
 }
 JSONEOF
