@@ -44,6 +44,13 @@ run_snapshot() {
     "$SNAPSHOT_SH" "${@:2}"
 }
 
+# helper: ISO8601 UTC timestamp N days before now (BSD/GNU dual)
+days_ago_iso() {
+  local n="$1"
+  date -u -v-"${n}"d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+    date -u -d "${n} days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null
+}
+
 printf 'Test suite: baseline-snapshot.sh\n\n'
 
 # ----------------------------------------------------------------------------
@@ -129,6 +136,55 @@ if [[ -s "$OUT_FILE" ]] && jq empty "$OUT_FILE" 2>/dev/null; then
   pass "--out wrote valid JSON to file"
 else
   fail "--out wrote valid JSON to file" "$OUT_FILE missing or invalid"
+fi
+
+# ----------------------------------------------------------------------------
+# Test 7: --until <iso8601> bounds the window to [since, until)
+# ----------------------------------------------------------------------------
+printf '\nTest 7: --until bounds the window\n'
+ROLLING_JOURNAL="$WORKDIR/journal-rolling"
+mkdir -p "$ROLLING_JOURNAL"
+
+TS_20D=$(days_ago_iso 20)
+TS_10D=$(days_ago_iso 10)
+TS_2D=$(days_ago_iso 2)
+
+cat > "$ROLLING_JOURNAL/entry-20d.json" <<EOF
+{"version":"1.0.0","id":"e-20d","timestamp":"$TS_20D","skill":"pr-iterate","outcome":"success","duration_turns":5,"context":{}}
+EOF
+cat > "$ROLLING_JOURNAL/entry-10d.json" <<EOF
+{"version":"1.0.0","id":"e-10d","timestamp":"$TS_10D","skill":"pr-iterate","outcome":"success","duration_turns":5,"context":{}}
+EOF
+cat > "$ROLLING_JOURNAL/entry-2d.json" <<EOF
+{"version":"1.0.0","id":"e-2d","timestamp":"$TS_2D","skill":"pr-iterate","outcome":"success","duration_turns":5,"context":{}}
+EOF
+
+UNTIL_7D=$(days_ago_iso 7)
+RESULT_UNTIL=$(run_snapshot "$ROLLING_JOURNAL" --window 7d --until "$UNTIL_7D" 2>&1)
+UNTIL_TOTAL=$(echo "$RESULT_UNTIL" | jq '.total_entries // -1')
+assert_eq "--until 7d ago: total_entries == 1 (only now-10d entry)" "1" "$UNTIL_TOTAL"
+UNTIL_VAL=$(echo "$RESULT_UNTIL" | jq -r '.until // "MISSING"')
+assert_eq "--until echoed in output.until" "$UNTIL_7D" "$UNTIL_VAL"
+UNTIL_SINCE=$(echo "$RESULT_UNTIL" | jq -r '.since // "MISSING"')
+EXPECTED_SINCE=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$UNTIL_7D" -v-7d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+  date -u -d "$UNTIL_7D 7 days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+assert_eq "--until 7d: .since == until - 7d" "$EXPECTED_SINCE" "$UNTIL_SINCE"
+
+# --until omitted: .until == null, and total_entries counts from since (no upper bound)
+RESULT_NO_UNTIL=$(run_snapshot "$ROLLING_JOURNAL" --window 7d 2>&1)
+NO_UNTIL_VAL=$(echo "$RESULT_NO_UNTIL" | jq -c '.until')
+assert_eq "--until omitted: .until == null" "null" "$NO_UNTIL_VAL"
+NO_UNTIL_TOTAL=$(echo "$RESULT_NO_UNTIL" | jq '.total_entries // -1')
+assert_eq "--until omitted: total_entries == 1 (only now-2d entry within 7d window)" "1" "$NO_UNTIL_TOTAL"
+
+# --until with invalid format -> exit 1, stderr JSON error
+ERR_OUT=$(run_snapshot "$ROLLING_JOURNAL" --window 7d --until "not-a-date" 2>&1)
+ERR_EC=$?
+if [[ "$ERR_EC" -eq 1 ]]; then pass "--until invalid format: exit code 1"; else fail "--until invalid format: exit code 1" "got $ERR_EC"; fi
+if echo "$ERR_OUT" | jq -e '.status == "error"' >/dev/null 2>&1; then
+  pass "--until invalid format: stderr is JSON error"
+else
+  fail "--until invalid format: stderr is JSON error" "$ERR_OUT"
 fi
 
 # ----------------------------------------------------------------------------

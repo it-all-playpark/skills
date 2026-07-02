@@ -53,7 +53,11 @@
         "\\.env.*not.*copied",
         "worktree-agent-[a-f0-9]+",
         "phase_failed.*worktree"
-      ]
+      ],
+      "rolling": {
+        "ratio_threshold": 1.5,
+        "min_entries_per_window": 5
+      }
     }
   },
   "memory-cli": {

@@ -172,7 +172,7 @@ generate snapshot, write to stdout or `--out <path>`. Does NOT accept
 `--update-baseline` (ownership belongs to `run-diagnostics.sh`).
 
 ```bash
-./scripts/baseline-snapshot.sh --window 30d [--out <path>] [--include-non-family]
+./scripts/baseline-snapshot.sh --window 30d [--until <iso>] [--out <path>] [--include-non-family]
 ```
 
 ### `scripts/compare-baseline.sh`
@@ -182,7 +182,14 @@ Deterministic baseline vs current comparison (issue #83 AC3). Exit codes:
 
 ```bash
 ./scripts/compare-baseline.sh --baseline <path> [--current <path>]   # stdin if --current omitted
+./scripts/compare-baseline.sh --rolling --window 7d                  # rolling: [now-2N,now-N) vs [now-N,now)
 ```
+
+Rolling mode (issue #88) compares two auto-generated journal windows via
+`ratio = recent / max(previous, 1)`; `ratio > 1.5` (config-overridable) flags a
+`critical` regression (exit 1). If either window has fewer than
+`min_entries_per_window` (default 5) entries, it reports `insufficient_data: true`
+and exits 0 (advisory) instead of alerting on small-N noise.
 
 Detail: [`references/baseline-comparison.md`](references/baseline-comparison.md).
 
