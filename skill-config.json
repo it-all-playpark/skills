@@ -32,21 +32,13 @@
     "title_strip_patterns": []
   },
   "dev-flow-doctor": {
-    "family_skills": [
-      "dev-kickoff",
-      "dev-implement",
-      "dev-validate",
-      "dev-integrate",
-      "dev-evaluate",
-      "pr-iterate",
-      "pr-fix",
-      "night-patrol"
-    ],
     "window_default": "30d",
     "thresholds": {
-      "stuck_failure_rate": 0.30,
-      "stuck_min_total": 3,
-      "bottleneck_top_n": 3
+      "eval_iter_cap": 10,
+      "plan_iter_cap": 8,
+      "iterate_unhealthy_rate": 0.30,
+      "iterate_min_runs": 3,
+      "micro_min_runs": 10
     },
     "baseline": {
       "default_path": ".claude/dev-flow-doctor-baseline-pre-79.json",

@@ -1,9 +1,0 @@
-{
-  "version": "1.0.0",
-  "id": "20260607T110000-pr-fix",
-  "timestamp": "2026-06-07T11:00:00Z",
-  "skill": "pr-fix",
-  "outcome": "success",
-  "duration_turns": 3,
-  "context": {"issue": 102}
-}
