@@ -222,7 +222,10 @@ function seedSecurityLedger() {
 
 // danger-grep の結果で SEC seed item を解決する。
 // risk.ok !== true は danger-grep 実行失敗/転写失敗/空出力を表し、fail-closed として
-// 全 SEC seed を unchecked に戻す（clean と区別する）。
+// 全 SEC seed を unchecked に戻す（clean と区別する）。この際 fail_closed:true を付与する
+// （danger_hits とは別軸の機械可読フラグ。Evaluate ループ収束判定からのみ除外するために使う。
+// merge tier 側は unchecked のまま含めて HOLD を強制し続ける — security floor は緩めない）。
+// clean/hit の成功分岐では fail_closed:false を明示セットして stale フラグを解消する。
 // clean クラス → checked(evidence='danger-grep clean')。
 // hit クラス → critical へ raise(floor=true)。
 //   - floor=true かつ checked=true(evaluator が evidence で clearance 済み) → checked を維持する(HOLD に巻き戻さない)。
@@ -243,7 +246,7 @@ function reconcileDanger(ledger, risk) {
     const evidence = `danger-grep unavailable (fail-closed)${errDetail}`;
     const items = ledger.items.map((it) => {
       if (it.source !== 'seed' || it.dimension !== 'security') return it;
-      return { ...it, checked: false, evidence };
+      return { ...it, checked: false, fail_closed: true, evidence };
     });
     return { ...ledger, items };
   }
@@ -257,9 +260,9 @@ function reconcileDanger(ledger, risk) {
       // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
       // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
       if (it.checked && it.floor) return it;
-      return { ...it, severity: 'critical', floor: true, checked: false };
+      return { ...it, severity: 'critical', floor: true, checked: false, fail_closed: false };
     }
-    return { ...it, checked: true, evidence: 'danger-grep clean' };
+    return { ...it, checked: true, fail_closed: false, evidence: 'danger-grep clean' };
   });
   return { ...ledger, items };
 }
@@ -279,6 +282,11 @@ function isDocsOrTestOnly(files) {
 // s.evalSkipped (optional boolean): true の場合、AUTO branch で AC 未検証開示 reason を追記する。
 //   micro path は evaluator 0 回で AC を判定していないため、AUTO 推奨でもその事実を開示する（issue #233）。
 //   danger-grep hit / green-fix で security path により eval が強制実行された場合は false にして虚偽開示を避ける。
+// s.dangerFailClosed (optional boolean): true の場合、danger-grep が実行不能（fail-closed）だったことを
+//   示す専用 HOLD reason を追記する（issue #271）。fail-closed 時は SEC seed item が unchecked のまま
+//   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
+//   security 不明という意味論で明示するための defense-in-depth（danger_hits の実 hit とは別軸）。
+//   未指定 = falsy = reason 追加なし、tier 判定値も従来と完全同一（regression なし）。
 function classifyMergeTier(s) {
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -286,6 +294,7 @@ function classifyMergeTier(s) {
   if (s.breaking) reasons.push('breaking/migration 検出');
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
+  if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
   if (reasons.length) return { tier: 'HOLD', reasons };
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
@@ -365,6 +374,22 @@ function policyAdvisoryItems(ledger, policy) {
 // 全 blocking item が checked かどうかを判定する純粋関数（空は true）。
 function isConvergedUnderPolicy(ledger, policy) {
   return policyBlockingItems(ledger, policy).every((it) => it.checked);
+}
+
+// Evaluate ループ収束専用の純粋関数（issue #271）。
+//
+// danger-grep fail-closed(risk.ok!==true) でマークした SEC seed（source==='seed' &&
+// dimension==='security' && fail_closed===true）を Evaluate ループの収束対象からのみ
+// 除外する。merge tier 側は isConvergedUnderPolicy を使い fail_closed item を含めたまま
+// HOLD を強制する（分離。issue #271）。
+//
+// fail_closed でない SEC item（実際に danger を検出した hit item を含む）は除外されず、
+// 従来通り checked になるまでループを blocking し続ける。非 SEC dimension の blocking item
+// の収束ロジックは isConvergedUnderPolicy と同一。
+function isLoopConvergedUnderPolicy(ledger, policy) {
+  return policyBlockingItems(ledger, policy)
+    .filter((it) => !(it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true))
+    .every((it) => it.checked);
 }
 // ==== END inline: _lib/gate-policy.mjs ====
 
@@ -2009,10 +2034,11 @@ async function execEvaluatePhase(state) {
       }
     }
     ledger = nextRound(ledger)
+    const failClosedSecCount = ledger.items.filter((it) => it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true).length
     log(`ledger: blocking ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件未 checked / `
-      + `converged(observe)=${isConvergedUnderPolicy(ledger, GATE_POLICY)}`)
+      + `loop-converged=${isLoopConvergedUnderPolicy(ledger, GATE_POLICY)} (fail-closed SEC 除外 ${failClosedSecCount} 件)`)
 
-    if (isConvergedUnderPolicy(ledger, GATE_POLICY)) {
+    if (isLoopConvergedUnderPolicy(ledger, GATE_POLICY)) {
       log(`evaluate 収束（ledger 全 blocking checked, iter ${i}, verdict=${ev.verdict}）— PR へ進む`)
       break
     }
@@ -2137,6 +2163,8 @@ const riskFinal = need(await agent(
   { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
 ), 'Merge tier(danger-grep-final)')
 const dangerHitsFinal = riskFinal.ok === true ? [...new Set((riskFinal.hits ?? []).map((h) => h.class))] : []
+const dangerFailClosedFinal = riskFinal.ok !== true
+if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${riskFinal.error ?? 'unknown'}) — merge tier を HOLD 強制`)
 const changed = need(await agent(
   `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
   + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
@@ -2158,6 +2186,7 @@ const mergeTier = classifyMergeTier({
   escalateCount,
   unsatisfiedAc: state.unsatisfiedAc,
   evalSkipped: !state.runEval,
+  dangerFailClosed: dangerFailClosedFinal,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
@@ -2214,6 +2243,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     merge_tier: mergeTier.tier,
     gate_policy: GATE_POLICY,
     danger_hits: dangerHitsFinal,
+    danger_fail_closed: dangerFailClosedFinal,
     shape: state.EFFECTIVE_SHAPE,
     shape_refloored: state.refloor.refloored,
     plan_iter: state.planIters,
@@ -2265,6 +2295,7 @@ return {
   merge_tier: mergeTier.tier,
   merge_tier_reasons: mergeTier.reasons,
   danger_hits: dangerHitsFinal,
+  danger_fail_closed: dangerFailClosedFinal,
   note: mergeTier.tier === 'HOLD'
     ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'

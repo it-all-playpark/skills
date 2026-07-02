@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # run-diagnostics.sh - Run all diagnostic checks and output structured results
-# Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family|feedback] [--window <dur>]
+# Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|telemetry|feedback] [--window <dur>]
 #                            [--compare <baseline-path>] [--update-baseline <path>]
 # Output: JSON with diagnostic results
 #
@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
     --compare) COMPARE_PATH="$2"; shift 2 ;;
     --update-baseline) UPDATE_BASELINE_PATH="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|family|feedback] [--window <dur>] [--compare <path>] [--update-baseline <path>]"
+      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|telemetry|feedback] [--window <dur>] [--compare <path>] [--update-baseline <path>]"
       exit 0
       ;;
     *) die_json "Unknown argument: $1" 1 ;;
@@ -59,8 +59,8 @@ if [[ -n "$UPDATE_BASELINE_PATH" ]]; then
 fi
 
 case "$SCOPE" in
-  full|journal|worktrees|config|family|feedback) ;;
-  *) die_json "Invalid scope: $SCOPE (must be full|journal|worktrees|config|family|feedback)" 1 ;;
+  full|journal|worktrees|config|telemetry|feedback) ;;
+  *) die_json "Invalid scope: $SCOPE (must be full|journal|worktrees|config|telemetry|feedback)" 1 ;;
 esac
 
 require_cmd "jq" "jq is required for diagnostics"
@@ -129,14 +129,6 @@ run_journal_checks() {
     return
   fi
 
-  # --- Check 1: Mode Distribution ---
-  local mode_dist
-  mode_dist=$(echo "$journal_data" | jq '
-    group_by(.context.mode // "unknown") |
-    map({mode: .[0].context.mode // "unknown", count: length}) |
-    sort_by(-.count)
-  ' 2>/dev/null || echo "[]")
-
   # --- Check 2: Failure & Partial Distribution ---
   local failure_dist
   failure_dist=$(echo "$journal_data" | jq '
@@ -197,7 +189,7 @@ run_journal_checks() {
       {
         average_turns: ($avg | . * 10 | round / 10),
         outliers: [.[] | select((.duration_turns // 0) > ($avg * 3))] |
-          map({issue: .context.issue, turns: .duration_turns, mode: (.context.mode // "unknown")}),
+          map({issue: .context.issue, turns: .duration_turns}),
         outlier_count: ([.[] | select((.duration_turns // 0) > ($avg * 3))] | length)
       }
     end
@@ -256,7 +248,6 @@ run_journal_checks() {
 
   # Build journal checks object
   CHECKS=$(echo "$CHECKS" | jq \
-    --argjson mode_dist "$mode_dist" \
     --argjson failure_dist "$failure_dist" \
     --argjson error_cat "$error_categories" \
     --argjson avg_rec "$avg_recovery" \
@@ -271,7 +262,6 @@ run_journal_checks() {
       success: $success,
       failure: $failure,
       partial: $partial,
-      mode_distribution: $mode_dist,
       failure_distribution: $failure_dist,
       error_categories: $error_cat,
       avg_recovery_turns: $avg_rec,
@@ -427,122 +417,86 @@ run_config_checks() {
 }
 
 # ============================================================================
-# Check: Dev-Flow Family Connector Health (journal-driven)
+# Check: Dev-Flow Telemetry Health (journal-driven)
 # ============================================================================
 
-run_family_checks() {
-  local analyze_sh="$SCRIPT_DIR_RD/analyze-dev-flow-family.sh"
+run_telemetry_checks() {
+  local analyze_sh="$SCRIPT_DIR_RD/analyze-dev-flow-telemetry.sh"
   if [[ ! -x "$analyze_sh" ]]; then
-    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "skipped", "reason": "analyze-dev-flow-family.sh not found"}')
-    add_issue "info" "analyze-dev-flow-family.sh not found — family checks skipped"
+    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_telemetry = {"status": "skipped", "reason": "analyze-dev-flow-telemetry.sh not found"}')
+    add_issue "info" "analyze-dev-flow-telemetry.sh not found — telemetry checks skipped"
     return
   fi
 
-  local family_data
-  if ! family_data=$("$analyze_sh" --window "$WINDOW" 2>/dev/null); then
-    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "error", "reason": "analyze-dev-flow-family.sh failed"}')
-    add_issue "warn" "analyze-dev-flow-family.sh failed — family checks skipped"
+  local telemetry_data
+  if ! telemetry_data=$("$analyze_sh" --window "$WINDOW" 2>/dev/null); then
+    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_telemetry = {"status": "error", "reason": "analyze-dev-flow-telemetry.sh failed"}')
+    add_issue "warn" "analyze-dev-flow-telemetry.sh failed — telemetry checks skipped"
     return
   fi
 
   # Validate JSON object
-  if ! echo "$family_data" | jq -e 'type == "object"' >/dev/null 2>&1; then
-    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_family = {"status": "error", "reason": "invalid JSON from analyze-dev-flow-family.sh"}')
-    add_issue "warn" "analyze-dev-flow-family.sh produced invalid JSON"
+  if ! echo "$telemetry_data" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    CHECKS=$(echo "$CHECKS" | jq '.dev_flow_telemetry = {"status": "error", "reason": "invalid JSON from analyze-dev-flow-telemetry.sh"}')
+    add_issue "warn" "analyze-dev-flow-telemetry.sh produced invalid JSON"
     return
   fi
 
-  # Cold-start guard: if the dev-flow family has zero total entries in the
-  # window, skip the dead/disconnected/stuck penalties entirely to avoid a
-  # false-positive -10 baseline on new or long-idle environments.
-  local total_family_entries
-  total_family_entries=$(echo "$family_data" | jq '[.per_skill[].total] | add // 0')
-  if [[ "$total_family_entries" -eq 0 ]]; then
-    add_issue "info" "Dev-flow family has no entries in ${WINDOW} — insufficient data, family checks skipped"
-    CHECKS=$(echo "$CHECKS" | jq --argjson f "$family_data" '.dev_flow_family = ($f + {status: "insufficient_data"})')
+  # Cold-start guard: zero dev-flow runs in the window -> insufficient data,
+  # skip anomaly penalties entirely (mirrors the old family-check cold-start
+  # guard so a new/idle environment does not get a false-positive penalty).
+  local total_runs
+  total_runs=$(echo "$telemetry_data" | jq '.total_dev_flow_runs // 0')
+  if [[ "$total_runs" -eq 0 ]]; then
+    add_issue "info" "Dev-flow telemetry has no entries in ${WINDOW} — insufficient data, telemetry checks skipped"
+    CHECKS=$(echo "$CHECKS" | jq --argjson t "$telemetry_data" '.dev_flow_telemetry = ($t + {status: "insufficient_data"})')
     return
   fi
 
-  local dead_count stuck_count disc_count bn_count
-  dead_count=$(echo "$family_data" | jq '.findings.dead_phases | length')
-  stuck_count=$(echo "$family_data" | jq '.findings.stuck_skills | length')
-  disc_count=$(echo "$family_data" | jq '.findings.disconnected_skills | length')
-  bn_count=$(echo "$family_data" | jq '.findings.bottlenecks | length')
+  # Issues from anomalies (severity: warn only; skipped anomalies are
+  # informational and never penalized/warned).
+  local anomaly
+  while IFS= read -r anomaly; do
+    local sev atype msg
+    sev=$(echo "$anomaly" | jq -r '.severity')
+    [[ "$sev" != "warn" ]] && continue
+    atype=$(echo "$anomaly" | jq -r '.type')
+    case "$atype" in
+      cap_pinned)
+        local count
+        count=$(echo "$anomaly" | jq -r '.count // 0')
+        msg="Cap張り付き検出 (${WINDOW}): ${count}件が eval_iter/plan_iter cap に到達"
+        ;;
+      iterate_unhealthy)
+        local rate_pct
+        rate_pct=$(echo "$anomaly" | jq -r '(.rate * 100 | round)')
+        msg="iterate不調率が高い (${WINDOW}): ${rate_pct}% が非lgtmで終了"
+        ;;
+      micro_nonfiring)
+        msg="micro shape不発火 (${WINDOW}): run数は十分だが micro が0件"
+        ;;
+      *)
+        msg="Anomaly detected (${WINDOW}): ${atype}"
+        ;;
+    esac
+    add_issue "warn" "$msg"
+  done < <(echo "$telemetry_data" | jq -c '.anomalies[]')
 
-  # Issues
-  if [[ "$dead_count" -gt 0 ]]; then
-    local dead_list
-    dead_list=$(echo "$family_data" | jq -r '[.findings.dead_phases[].skill] | join(", ")')
-    add_issue "warn" "Dead phase(s) detected (${WINDOW}): ${dead_list}"
-  fi
-  if [[ "$stuck_count" -gt 0 ]]; then
-    local stuck_list
-    stuck_list=$(echo "$family_data" | jq -r '[.findings.stuck_skills[] | "\(.skill)(\(.failure_rate | . * 100 | round)%)"] | join(", ")')
-    add_issue "warn" "Stuck skill(s) detected (${WINDOW}): ${stuck_list}"
-  fi
-  if [[ "$disc_count" -gt 0 ]]; then
-    local disc_list
-    disc_list=$(echo "$family_data" | jq -r '[.findings.disconnected_skills[].skill] | join(", ")')
-    add_issue "warn" "Disconnected skill(s) detected (${WINDOW}): ${disc_list}"
-  fi
-  if [[ "$bn_count" -gt 0 ]]; then
-    local bn_top
-    bn_top=$(echo "$family_data" | jq -r '.findings.bottlenecks[0] | "\(.skill) (avg \(.avg_duration_turns | . * 10 | round / 10) turns)"')
-    add_issue "info" "Top bottleneck (${WINDOW}): ${bn_top}"
-  fi
-
-  # Scoring: family health penalties (each capped at -5, total capped at -20)
-  local family_penalty=0
-  if [[ "$dead_count" -gt 0 ]]; then family_penalty=$((family_penalty + 5)); fi
-  if [[ "$stuck_count" -gt 0 ]]; then family_penalty=$((family_penalty + 5)); fi
-  if [[ "$disc_count" -gt 0 ]]; then family_penalty=$((family_penalty + 5)); fi
-  # bottleneck alone is informational — only penalize if avg top > 3x overall avg (best-effort, skip here)
-  if [[ $family_penalty -gt 20 ]]; then family_penalty=20; fi
-  if [[ $family_penalty -gt 0 ]]; then
-    subtract_score "$family_penalty" 20
-  fi
-
-  CHECKS=$(echo "$CHECKS" | jq --argjson family "$family_data" '.dev_flow_family = $family')
-}
-
-# ============================================================================
-# Check 9: Termination Loop Health (kickoff.json driven) — issue #53
-# ============================================================================
-# (Previous Check 9 "Integration Feedback" was removed in v2; the
-#  _shared/integration-feedback.json store is gone with parallel mode.)
-
-run_termination_loops_check() {
-  local analyze_sh="$SCRIPT_DIR_RD/analyze-termination-loops.sh"
-  if [[ ! -x "$analyze_sh" ]]; then
-    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "skipped", "reason": "analyze-termination-loops.sh not found"}')
-    return
+  # Scoring: anomaly penalties (each capped at -5, total capped at -15).
+  # severity == "skipped" (e.g. micro_nonfiring insufficient_data) never
+  # contributes to the penalty.
+  local anomaly_penalty=0
+  local sev
+  while IFS= read -r sev; do
+    [[ "$sev" != "warn" ]] && continue
+    anomaly_penalty=$((anomaly_penalty + 5))
+  done < <(echo "$telemetry_data" | jq -r '.anomalies[].severity')
+  if [[ $anomaly_penalty -gt 15 ]]; then anomaly_penalty=15; fi
+  if [[ $anomaly_penalty -gt 0 ]]; then
+    subtract_score "$anomaly_penalty" 15
   fi
 
-  local term_data
-  if ! term_data=$("$analyze_sh" 2>/dev/null); then
-    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "error", "reason": "analyze-termination-loops.sh failed"}')
-    return
-  fi
-
-  if ! echo "$term_data" | jq 'type == "object"' 2>/dev/null | grep -q true; then
-    CHECKS=$(echo "$CHECKS" | jq '.termination_loops = {"status": "error", "reason": "invalid JSON from analyze-termination-loops.sh"}')
-    return
-  fi
-
-  local findings_count
-  findings_count=$(echo "$term_data" | jq '.findings | length')
-
-  if [[ "$findings_count" -gt 0 ]]; then
-    # Emit a single summary warn; detailed findings remain inside CHECKS.termination_loops
-    local repeated max_iter stuck_cnt fork_cnt
-    repeated=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "repeated_feedback_target")] | length')
-    max_iter=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "max_iterations")] | length')
-    stuck_cnt=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "stuck")] | length')
-    fork_cnt=$(echo "$term_data" | jq '[.findings[] | select(.pattern == "fork_failure")] | length')
-    add_issue "warn" "Termination loop findings: repeated_feedback_target=${repeated}, max_iterations=${max_iter}, stuck=${stuck_cnt}, fork_failure=${fork_cnt}"
-  fi
-
-  CHECKS=$(echo "$CHECKS" | jq --argjson t "$term_data" '.termination_loops = $t')
+  CHECKS=$(echo "$CHECKS" | jq --argjson t "$telemetry_data" '.dev_flow_telemetry = ($t + {status: "ok"})')
 }
 
 # ============================================================================
@@ -623,8 +577,7 @@ case "$SCOPE" in
     run_journal_checks
     run_worktree_checks
     run_config_checks
-    run_family_checks
-    run_termination_loops_check
+    run_telemetry_checks
     run_baseline_compare_check
     ;;
   journal)
@@ -636,9 +589,8 @@ case "$SCOPE" in
   config)
     run_config_checks
     ;;
-  family)
-    run_family_checks
-    run_termination_loops_check
+  telemetry)
+    run_telemetry_checks
     run_baseline_compare_check
     ;;
   feedback)

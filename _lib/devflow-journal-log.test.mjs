@@ -230,6 +230,7 @@ test('[journal-log] AC#1: Merge tier phase 後に journal-log dev-runner-haiku �
     '"merge_tier"',
     '"gate_policy"',
     '"danger_hits"',
+    '"danger_fail_closed"',
     '"shape"',
     '"shape_refloored"',
     '"plan_iter"',

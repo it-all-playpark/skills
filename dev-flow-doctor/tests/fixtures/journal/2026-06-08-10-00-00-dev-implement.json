@@ -1,9 +1,0 @@
-{
-  "version": "1.0.0",
-  "id": "20260608T100000-dev-implement",
-  "timestamp": "2026-06-08T10:00:00Z",
-  "skill": "dev-implement",
-  "outcome": "success",
-  "duration_turns": 5,
-  "context": {"issue": 103}
-}
