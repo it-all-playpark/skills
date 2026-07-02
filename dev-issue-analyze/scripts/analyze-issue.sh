@@ -68,12 +68,15 @@ if [[ "$DEPTH" == "minimal" ]]; then
 fi
 
 # Extract AC and requirements
+# NOTE: uses here-strings (not pipes) for the same SIGPIPE-safety reason as
+# breaking_keyword_scan above — a large $1 fed through a pipe into a
+# downstream head -N that early-exits can SIGPIPE-kill the upstream writer.
 extract_ac() {
-    echo "$1" | grep -E '^\s*-\s*\[[ x]\]|^[0-9]+\.\s' | head -20 | json_array
+    grep -E '^\s*-\s*\[[ x]\]|^[0-9]+\.\s' <<<"$1" | head -20 | json_array
 }
 
 extract_requirements() {
-    echo "$1" | grep -E '^\s*[-*]\s+[A-Z]' | head -15 | json_array
+    grep -E '^\s*[-*]\s+[A-Z]' <<<"$1" | head -15 | json_array
 }
 
 AC=$(extract_ac "$BODY")
@@ -92,15 +95,15 @@ if [[ "$DEPTH" == "standard" ]]; then
   "acceptance_criteria": $AC,
   "requirements": $REQUIREMENTS,
   "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
-  "body_preview": $(printf '%s' "$BODY" | head -c 500 | jq -Rs .)
+  "body_preview": $(head -c 500 <<<"$BODY" | jq -Rs .)
 }
 JSONEOF
     exit 0
 fi
 
 # Comprehensive
-AFFECTED_FILES=$(echo "$BODY" | grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' | sort -u | head -10 | json_array)
-COMPONENTS=$(echo "$BODY" | grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' | sort -u | head -10 | json_array)
+AFFECTED_FILES=$(grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' <<<"$BODY" | sort -u | head -10 | json_array)
+COMPONENTS=$(grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' <<<"$BODY" | sort -u | head -10 | json_array)
 
 cat <<JSONEOF
 {
