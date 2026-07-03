@@ -213,6 +213,51 @@ latest_entry() {
     [ "$has_eval_iter" = "false" ]
 }
 
+# ---------------------------------------------------------------------------
+# Tests for --eval-staleness (issue #288)
+# ---------------------------------------------------------------------------
+
+@test "--eval-staleness hash_mismatch recorded as string" {
+    run "$SCRIPT" log dev-flow success --eval-staleness hash_mismatch
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
+    [ "$eval_staleness" = "hash_mismatch" ]
+
+    eval_staleness_type=$(jq '.telemetry.eval_staleness | type' "$entry_file")
+    [ "$eval_staleness_type" = '"string"' ]
+}
+
+@test "--eval-staleness none recorded correctly" {
+    run "$SCRIPT" log dev-flow success --eval-staleness none
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
+    [ "$eval_staleness" = "none" ]
+}
+
+@test "--eval-staleness bogus exits non-zero (out-of-enum rejection)" {
+    run "$SCRIPT" log dev-flow success --eval-staleness bogus
+    [ "$status" -ne 0 ]
+}
+
+@test "no --eval-staleness and no other telemetry -> no telemetry key" {
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
+    [ "$has_telemetry" = "false" ]
+}
+
 # ===========================================================================
 # Tests for new features: source field, atomic write, --source filter, iconv
 # ===========================================================================
