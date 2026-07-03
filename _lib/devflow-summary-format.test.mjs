@@ -958,3 +958,141 @@ test('uiVerify=failed_open, uiVerifyMode=null -> mode 括弧が付かない', ()
   assert.ok(body.includes('- UI 検証 (ui-verify): failed_open'), 'ui-verify 結果行を含む');
   assert.ok(!body.includes('mode:'), 'mode 括弧を含まない');
 });
+
+// ─── 環境ノート (issue #296) ──────────────────────────────────────────────────
+
+test('environment item は「⚠️ 要対応」テーブルから除外され「🏗 環境ノート 1 件」details に id/pattern/件数/内容/evidence 付きで現れる', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'ENV-TURBOPACK-SANDBOX',
+        text: 'Turbopack が sandbox 内で失敗した',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: false,
+        evidence: 'os error 1',
+        env_key: 'turbopack-sandbox',
+        env_count: 3,
+      },
+    ],
+  });
+  // 要対応テーブルには出ない
+  assert.ok(!body.includes('### ⚠️ 要対応'), 'environment のみでは要対応セクションが出ない');
+  const lines = body.split('\n');
+  const envItemLine = lines.find(l => l.includes('ENV-TURBOPACK-SANDBOX') && l.includes('turbopack-sandbox'));
+  assert.ok(envItemLine, 'ENV item 行を含む');
+  assert.ok(envItemLine.includes('| 3 |'), '件数 3 を含む');
+  assert.ok(envItemLine.includes('Turbopack が sandbox 内で失敗した'), '内容を含む');
+  assert.ok(envItemLine.includes('os error 1'), 'evidence を含む');
+  assert.ok(body.includes('🏗 環境ノート 1 件'), '環境ノート summary を含む');
+  assert.ok(body.includes('sandbox 環境事象 — 人間の対応は通常不要'), '環境ノート説明文を含む');
+});
+
+test('environment item のみ + 他に未解消なし -> 「### ✅ 要対応事項なし」と環境ノートが両方出る', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'ENV-NPM-CACHE-EPERM',
+        text: 'npm cache EPERM',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: false,
+        evidence: null,
+        env_key: 'npm-cache-eperm',
+        env_count: 1,
+      },
+    ],
+  });
+  assert.ok(body.includes('### ✅ 要対応事項なし'), '要対応事項なしを含む');
+  assert.ok(!body.includes('### ⚠️ 要対応'), '要対応を含まない');
+  assert.ok(body.includes('🏗 環境ノート 1 件'), '環境ノートを含む');
+});
+
+test('非 environment の advisory concern item は従来どおり要対応テーブルに残る（回帰なし）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'CONCERN-1',
+        text: '本物のコード欠陥concern',
+        dimension: 'concern',
+        severity: 'minor',
+        checked: false,
+        evidence: null,
+      },
+      {
+        id: 'ENV-TURBOPACK-SANDBOX',
+        text: 'Turbopack sandbox 失敗',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: false,
+        evidence: null,
+        env_key: 'turbopack-sandbox',
+        env_count: 2,
+      },
+    ],
+  });
+  assert.ok(body.includes('### ⚠️ 要対応'), '要対応セクションを含む');
+  const lines = body.split('\n');
+  const concernLine = lines.find(l => l.includes('CONCERN-1'));
+  assert.ok(concernLine, 'CONCERN-1 行が要対応テーブルに存在する');
+  assert.ok(!lines.some(l => l.includes('ENV-TURBOPACK-SANDBOX') && l.includes('| advisory |')), 'ENV item は要対応テーブルには出ない');
+  assert.ok(body.includes('🏗 環境ノート 1 件'), '環境ノートに ENV item が出る');
+});
+
+test('environment item が 0 件なら「環境ノート」セクション自体を出力しない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'A1', text: 'style concern', severity: 'minor', checked: false, dimension: 'style', escalate: false },
+    ],
+  });
+  assert.ok(!body.includes('環境ノート'), '環境ノートセクションが出ない');
+  assert.ok(!body.includes('🏗'), '🏗 絵文字が出ない');
+});
+
+test('env_key/env_count 欠落時は pattern が「—」、件数が「1」で表示される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'ENV-EDIT-WRITE-ISOLATION',
+        text: 'edit write isolation エラー',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: false,
+        evidence: null,
+      },
+    ],
+  });
+  const lines = body.split('\n');
+  const envItemLine = lines.find(l => l.includes('ENV-EDIT-WRITE-ISOLATION'));
+  assert.ok(envItemLine, 'ENV item 行を含む');
+  assert.ok(envItemLine.includes('| — |'), 'pattern が — で表示される');
+  assert.ok(envItemLine.includes('| 1 |'), '件数が 1 で表示される');
+});
+
+test('checked=true の environment item は「Goal Ledger 解消済み」details に出ず環境ノートにのみ出る', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'ENV-SANDBOX-DENIED',
+        text: 'sandbox denied エラー',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: true,
+        evidence: 'denied evidence',
+        env_key: 'sandbox-denied',
+        env_count: 1,
+      },
+    ],
+  });
+  assert.ok(!body.includes('✅ Goal Ledger 解消済み'), 'checked env item のみでは解消済み details が出ない');
+  assert.ok(body.includes('🏗 環境ノート 1 件'), '環境ノートに ENV item が出る');
+  const lines = body.split('\n');
+  const envItemLine = lines.find(l => l.includes('ENV-SANDBOX-DENIED'));
+  assert.ok(envItemLine, 'ENV item 行を含む');
+});
