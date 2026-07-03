@@ -12,7 +12,7 @@
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
  * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
  * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason}>} opts.advisoryItems - advisory items
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296）
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
@@ -139,9 +139,10 @@ export function buildDevflowSummaryBody({
   // 未解消事項を収集
   const blockArr = blockingItems || [];
   const advArr = advisoryItems || [];
+  const envItems = advArr.filter(it => it.dimension === 'environment');
   const uncheckedBlocking = blockArr.filter(it => it.checked !== true);
-  const uncheckedAdvisory = advArr.filter(it => it.checked !== true);
-  const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true);
+  const uncheckedAdvisory = advArr.filter(it => it.checked !== true && it.dimension !== 'environment');
+  const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true && it.dimension !== 'environment');
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance && securityClearance.length > 0
     ? securityClearance.filter(sc => sc.cleared !== true)
@@ -242,7 +243,7 @@ export function buildDevflowSummaryBody({
   // 解消済み ledger
   const resolvedItems = [
     ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: 'blocking' })),
-    ...advArr.filter(it => it.checked === true && it.escalate !== true).map(it => ({ ...it, _lane: 'advisory' })),
+    ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: 'advisory' })),
   ];
   if (resolvedItems.length > 0) {
     const n = resolvedItems.length;
@@ -256,6 +257,25 @@ export function buildDevflowSummaryBody({
       const content = mdCell(item.text);
       const evidence = item.evidence ? mdCell(item.evidence) : '—';
       lines.push(`| ${item.id} | ${item._lane} | ${dimension} | ${content} | ${evidence} |`);
+    }
+    lines.push('');
+    lines.push('</details>');
+  }
+
+  // 環境ノート（issue #296: sandbox 環境事象 — 折りたたみ表示、人間の対応は通常不要）
+  if (envItems.length > 0) {
+    const n = envItems.length;
+    lines.push('');
+    lines.push(`<details><summary>🏗 環境ノート ${n} 件（sandbox 環境事象 — 人間の対応は通常不要）</summary>`);
+    lines.push('');
+    lines.push('| id | pattern | 件数 | 内容 | evidence |');
+    lines.push('|---|---|---|---|---|');
+    for (const item of envItems) {
+      const pattern = item.env_key != null ? item.env_key : '—';
+      const envCount = typeof item.env_count === 'number' ? String(item.env_count) : '1';
+      const content = mdCell(item.text);
+      const evidence = item.evidence ? mdCell(item.evidence) : '—';
+      lines.push(`| ${item.id} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
     }
     lines.push('');
     lines.push('</details>');

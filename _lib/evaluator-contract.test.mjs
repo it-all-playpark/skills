@@ -25,6 +25,13 @@ test('[evaluator-contract] evaluator.md contains the canonical _lib contract blo
   );
 });
 
+test('[evaluator-contract] evaluator.md contains the canonical concern_resolutions contract block verbatim', () => {
+  assert.ok(
+    evaluatorMd.includes(EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions),
+    'evaluator.md の concern_resolutions 契約が _lib/evaluator-contract.mjs と乖離しています',
+  );
+});
+
 test('[evaluator-contract] dev-flow.js inlines and uses the canonical contract', () => {
   assert.ok(
     devFlowSrc.includes('BEGIN inline: _lib/evaluator-contract.mjs'),
@@ -38,6 +45,10 @@ test('[evaluator-contract] dev-flow.js inlines and uses the canonical contract',
   }
   assert.ok(devFlowSrc.includes('EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions'));
   assert.ok(devFlowSrc.includes('EVALUATOR_OPERATIONAL_CONTRACT.security_clearance'));
+  for (const line of EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions.split('\n')) {
+    assert.ok(devFlowSrc.includes(line), `dev-flow.js に concern_resolutions 契約行が必要です: ${line}`);
+  }
+  assert.ok(devFlowSrc.includes('EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions'));
 });
 
 test('[evaluator-contract] evaluator.md output example does not include schema-less score field', () => {
