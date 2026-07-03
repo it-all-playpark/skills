@@ -1623,6 +1623,20 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
 // 上記 implementer 向け規約と同型で workflow が全 dev-planner spawn prompt に決定論的に注入する。
 const PLANNER_HANDOFF_RULE = '計画規約: task が一時/handoff ファイルの残置を指示する場合は .devflow-tmp/ 配下のパスを指定せよ（realized diff から ephemeral として除外される）。恒久成果物でないファイルを file_changes に含めるな。\n'
 
+// Next.js/Turbopack 固有の build 検証規約（issue #292）。sandbox 内で `next build`（Turbopack）が
+// process 生成・ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する
+// 既知事象がある。implementer が git stash 等の対照実験を毎回再発明するのを防ぐため、非 Turbopack
+// fallback（`next build --webpack`）で build 検証してよい旨を規約化する。agent 定義ファイル
+// （.claude/agents/*.md）は sandbox write-deny のため、既存の一時ファイル配置規約と同型で workflow が
+// implementer/evaluator/dev-runner 向け prompt に決定論的に注入する。
+const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証規約（Next.js プロジェクト以外 — Vite 等 — には適用しない）: `
+  + `sandbox 内で \`next build\`（Turbopack）が TurbopackInternalError / os error 1（process 生成・ポートバインド制限）で失敗した場合、`
+  + `sandbox 環境依存の既知事象の可能性が高い。git stash 等の対照実験を再発明せず、`
+  + `\`next build --webpack\` 等の非 Turbopack fallback で build 検証してよい。`
+  + `fallback で build が成功した場合は「sandbox 環境依存の Turbopack 失敗の可能性（環境要因と断定しない）。実 CI での Turbopack build 確認を推奨」`
+  + `の旨を自分の出力（implementer は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
+  + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
+
 function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
   // AC・plan contract（summary / architecture_decisions / edge_cases）を全 implementer spawn prompt に注入する。
   // evaluator が AC ベースで採点するため implementer と採点軸を共有する（issue #224）。
@@ -1642,6 +1656,7 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
     + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
     + STAGING_CONVENTION
     + DEPS_NOTE
+    + TURBOPACK_FALLBACK_CONVENTION
 }
 
 // 計画の serial → 順次、parallel → 同時。drop（throw→null）を可視化して返す。
@@ -1968,7 +1983,8 @@ async function execValidatePhase(state) {
       const testLabel = isRetry ? `test#retry-${i}` : `test#${i}`
       v = need(await agent(
         `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
-        + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`,
+        + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`
+        + '\n' + TURBOPACK_FALLBACK_CONVENTION,
         { agentType: 'dev-runner-haiku', schema: GREEN, label: isRetry ? `test#retry-${i}` : `test#${i}`, phase: phaseName },
       ), `${phaseName}(${testLabel})`)
       if (isRetry) {
@@ -1991,7 +2007,8 @@ async function execValidatePhase(state) {
         + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
         + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
         + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}`
-        + '\n' + STAGING_CONVENTION,
+        + '\n' + STAGING_CONVENTION
+        + TURBOPACK_FALLBACK_CONVENTION,
         { agentType: 'implementer', schema: IMPL, label: isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`, phase: phaseName },
       )
       // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一。issue #223）
@@ -2361,7 +2378,8 @@ async function execEvaluatePhase(state) {
       + (openEvalCriticals.length
           ? `未解消 critical 一覧:\n${JSON.stringify(openEvalCriticals)}\n`
             + `${EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions}\n`
-          : ''),
+          : '')
+      + TURBOPACK_FALLBACK_CONVENTION,
       { agentType: 'evaluator', model: QUALITY_MODEL, schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
     ), `Evaluate(eval#${i})`)
     evalResult = ev
@@ -2485,7 +2503,8 @@ async function execEvaluatePhase(state) {
         + (nextOpenCriticals.length
             ? `未解消 critical（最優先で修正せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
             : '')
-        + STAGING_CONVENTION,
+        + STAGING_CONVENTION
+        + TURBOPACK_FALLBACK_CONVENTION,
         { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
     }
   }
