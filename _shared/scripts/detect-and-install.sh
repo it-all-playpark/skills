@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # detect-and-install.sh - Auto-detect and install project dependencies
-# Usage: detect-and-install.sh [--path <dir>] [--dry-run] [--skip-custom]
+# Usage: detect-and-install.sh [--path <dir>] [--dry-run] [--skip-custom] [--lockfile-only]
+#
+# --lockfile-only: restrict detection to ecosystems that already have a
+# lockfile present (package-lock.json / pnpm-lock.yaml / yarn.lock /
+# bun.lockb / poetry.lock / uv.lock / Pipfile.lock / go.sum / Gemfile.lock /
+# Cargo.lock / composer.lock). Manifest-only setups (e.g. package.json with
+# no lockfile) are skipped rather than running a lockfile-generating install
+# (npm install, pip install -e ., etc.), which would mutate the tree
+# non-deterministically. Default: off (existing behavior unchanged). Used by
+# dev-flow's Setup phase via ensure-worktree-deps.sh (issue #291).
 
 set -euo pipefail
 
@@ -14,12 +23,14 @@ source "$SCRIPT_DIR/../../_lib/common.sh"
 TARGET_PATH=""
 DRY_RUN=false
 SKIP_CUSTOM=false
+LOCKFILE_ONLY=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --path) TARGET_PATH="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         --skip-custom) SKIP_CUSTOM=true; shift ;;
+        --lockfile-only) LOCKFILE_ONLY=true; shift ;;
         *) die_json "Unknown option: $1" 1 ;;
     esac
 done
@@ -45,6 +56,13 @@ detect_node_pm() {
         echo "bun"
     elif [[ -f "$TARGET_PATH/package-lock.json" ]]; then
         echo "npm"
+    elif [[ "$LOCKFILE_ONLY" == true ]]; then
+        # --lockfile-only: package.json-only (no lockfile) is intentionally not
+        # detected here. Installing without a lockfile (npm install) would
+        # generate a new package-lock.json and mutate the worktree tree
+        # non-deterministically, which pollutes the realized diff used for
+        # shape refloor (issue #291).
+        echo ""
     elif [[ -f "$TARGET_PATH/package.json" ]]; then
         echo "npm-no-lock"
     else
@@ -53,7 +71,21 @@ detect_node_pm() {
 }
 
 detect_python_pm() {
-    if [[ -f "$TARGET_PATH/Pipfile.lock" || -f "$TARGET_PATH/Pipfile" ]]; then
+    if [[ -f "$TARGET_PATH/Pipfile.lock" ]]; then
+        echo "pipenv"
+    elif [[ "$LOCKFILE_ONLY" == true ]]; then
+        # --lockfile-only: only install when a lockfile is present. Pipfile
+        # (without .lock), bare pyproject.toml (pip-pyproject), and
+        # requirements.txt (pip) are non-deterministic / lockfile-less
+        # installs and are skipped (issue #291).
+        if [[ -f "$TARGET_PATH/pyproject.toml" ]] && grep -q '\[tool\.poetry\]' "$TARGET_PATH/pyproject.toml" 2>/dev/null && [[ -f "$TARGET_PATH/poetry.lock" ]]; then
+            echo "poetry"
+        elif [[ -f "$TARGET_PATH/uv.lock" ]]; then
+            echo "uv"
+        else
+            echo ""
+        fi
+    elif [[ -f "$TARGET_PATH/Pipfile" ]]; then
         echo "pipenv"
     elif [[ -f "$TARGET_PATH/pyproject.toml" ]]; then
         # Check for poetry or uv
@@ -73,10 +105,20 @@ detect_python_pm() {
 
 detect_other_pm() {
     local detected=()
-    [[ -f "$TARGET_PATH/go.mod" ]] && detected+=("go")
-    [[ -f "$TARGET_PATH/Gemfile" || -f "$TARGET_PATH/Gemfile.lock" ]] && detected+=("bundler")
-    [[ -f "$TARGET_PATH/Cargo.toml" || -f "$TARGET_PATH/Cargo.lock" ]] && detected+=("cargo")
-    [[ -f "$TARGET_PATH/composer.json" || -f "$TARGET_PATH/composer.lock" ]] && detected+=("composer")
+    if [[ "$LOCKFILE_ONLY" == true ]]; then
+        # --lockfile-only: require the lockfile itself, not just the
+        # manifest, to avoid non-deterministic lockfile-generating installs
+        # (issue #291).
+        [[ -f "$TARGET_PATH/go.sum" ]] && detected+=("go")
+        [[ -f "$TARGET_PATH/Gemfile.lock" ]] && detected+=("bundler")
+        [[ -f "$TARGET_PATH/Cargo.lock" ]] && detected+=("cargo")
+        [[ -f "$TARGET_PATH/composer.lock" ]] && detected+=("composer")
+    else
+        [[ -f "$TARGET_PATH/go.mod" ]] && detected+=("go")
+        [[ -f "$TARGET_PATH/Gemfile" || -f "$TARGET_PATH/Gemfile.lock" ]] && detected+=("bundler")
+        [[ -f "$TARGET_PATH/Cargo.toml" || -f "$TARGET_PATH/Cargo.lock" ]] && detected+=("cargo")
+        [[ -f "$TARGET_PATH/composer.json" || -f "$TARGET_PATH/composer.lock" ]] && detected+=("composer")
+    fi
     echo "${detected[*]:-}"
 }
 
