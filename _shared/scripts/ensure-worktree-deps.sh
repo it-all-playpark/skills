@@ -6,7 +6,12 @@
 # script exits 0 — the failure is visible in the JSON output (status partial/failed),
 # and the downstream Validate (test-green) loop acts as the second safety net.
 #
-# Usage: ensure-worktree-deps.sh --path <dir>
+# Usage: ensure-worktree-deps.sh --path <dir> [--lockfile-only] [--skip-custom]
+#
+# --lockfile-only / --skip-custom are forwarded verbatim to detect-and-install.sh
+# (see that script for semantics). dev-flow's Setup phase calls this wrapper as
+# `ensure-worktree-deps.sh --path <WT> --lockfile-only --skip-custom` — this flag
+# name is a fixed contract, do not rename (issue #291).
 
 set -euo pipefail
 
@@ -20,10 +25,13 @@ source "$SCRIPT_DIR/../../_lib/common.sh"
 # ============================================================================
 
 TARGET_PATH=""
+EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --path) TARGET_PATH="$2"; shift 2 ;;
+        --lockfile-only) EXTRA_ARGS+=("--lockfile-only"); shift ;;
+        --skip-custom) EXTRA_ARGS+=("--skip-custom"); shift ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -53,7 +61,7 @@ exit_tmp="$(mktemp)"
 
 # set +e so a non-zero exit from detect-and-install.sh does not propagate to us.
 set +e
-"$SCRIPT_DIR/detect-and-install.sh" --path "$TARGET_PATH" >"$stdout_tmp" 2>"$stderr_tmp"
+"$SCRIPT_DIR/detect-and-install.sh" --path "$TARGET_PATH" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} >"$stdout_tmp" 2>"$stderr_tmp"
 printf '%d' $? >"$exit_tmp"
 set -e
 

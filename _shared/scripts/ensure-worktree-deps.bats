@@ -57,3 +57,18 @@ teardown() {
     # regardless of the shell's echo escape semantics (zsh / xpg_echo).
     printf '%s\n' "$output" | jq -e '.status == "failed"'
 }
+
+# --- issue #291 (F3): --lockfile-only / --skip-custom flag forwarding ---
+
+@test "(g) package.json のみ + --lockfile-only は exit 0 かつ no_dependencies を含む JSON を出す" {
+    echo '{"name":"test","version":"1.0.0"}' > "$TMP_DIR/package.json"
+    run "$SCRIPT" --path "$TMP_DIR" --lockfile-only
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no_dependencies"* ]]
+}
+
+@test "(h) 空 dir + --lockfile-only --skip-custom は exit 0 かつ no_dependencies を含む JSON を出す (未知フラグエラーにならない)" {
+    run "$SCRIPT" --path "$TMP_DIR" --lockfile-only --skip-custom
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no_dependencies"* ]]
+}
