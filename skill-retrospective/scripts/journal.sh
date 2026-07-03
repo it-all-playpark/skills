@@ -67,6 +67,7 @@ cmd_log() {
     local project="" worktree="" mode=""
     local merge_tier="" gate_policy="" danger_hits=""
     local shape="" shape_refloored="" eval_verdict="" iterate_status="" plan_iter="" eval_iter=""
+    local eval_staleness=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -103,6 +104,7 @@ cmd_log() {
             --shape-refloored) shape_refloored="$2"; shift 2 ;;
             --eval-verdict) eval_verdict="$2"; shift 2 ;;
             --iterate-status) iterate_status="$2"; shift 2 ;;
+            --eval-staleness) eval_staleness="$2"; shift 2 ;;
             --plan-iter) plan_iter="$2"; shift 2 ;;
             --eval-iter) eval_iter="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
@@ -141,6 +143,12 @@ cmd_log() {
         if ! [[ "$eval_iter" =~ ^[0-9]+$ ]]; then
             die_json "Invalid --eval-iter: $eval_iter. Must be a non-negative integer" 1
         fi
+    fi
+    if [[ -n "$eval_staleness" ]]; then
+        case "$eval_staleness" in
+            none|hash_mismatch|iterate_incomplete|iterate_fixed) ;;
+            *) die_json "Invalid --eval-staleness: $eval_staleness. Must be none|hash_mismatch|iterate_incomplete|iterate_fixed" 1 ;;
+        esac
     fi
 
     ensure_journal_dir
@@ -233,6 +241,10 @@ cmd_log() {
     fi
     if [[ -n "$eval_iter" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson v "$eval_iter" '. + {eval_iter: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$eval_staleness" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$eval_staleness" '. + {eval_staleness: $v}')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then

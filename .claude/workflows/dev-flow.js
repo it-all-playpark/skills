@@ -811,7 +811,8 @@ function mdCell(v) {
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
- * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）。pr-iterate fix 適用時も true（issue #233）
+ * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'（issue #288）
+ * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
  * @returns {string}
@@ -831,10 +832,16 @@ function buildDevflowSummaryBody({
   shape,
   testGreen,
   evalVerdict,
-  evalTreeStale,
+  evalStaleness,
+  iterateFixesApplied,
   uiVerify,
   uiVerifyMode,
 }) {
+  const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
+  if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
+    throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
+  }
+
   const lines = [];
 
   const TIER_EMOJI = { 'HOLD': '🔶', 'REVIEW': '🔷', 'AUTO': '✅' };
@@ -880,9 +887,16 @@ function buildDevflowSummaryBody({
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
 
-  // 2b. evalTreeStale 警告（at-a-glance テーブル直後・gate_policy 行前）
-  if (evalTreeStale === true) {
-    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致、または pr-iterate で fix が適用された。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+  // 2b. eval_staleness 警告（at-a-glance テーブル直後・gate_policy 行前。issue #288）
+  if (evalStaleness === 'hash_mismatch') {
+    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('');
+  } else if (evalStaleness === 'iterate_incomplete') {
+    lines.push('> \u26a0\ufe0f **pr-iterate が LGTM 以外で終端した**（fix 適用後の tree に対する再評価・LGTM が得られていない。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('');
+  } else if (evalStaleness === 'iterate_fixed') {
+    const fixCount = (typeof iterateFixesApplied === 'number' && iterateFixesApplied >= 0) ? String(iterateFixesApplied) : '不明';
+    lines.push('> \u2139\ufe0f **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
     lines.push('');
   }
 
@@ -2380,13 +2394,15 @@ state = await execEvaluatePhase(state)
 // PR 直前の diff hash を取得し、Evaluate 時点と突合（issue #215）。
 // 判定は hash 文字列の完全一致のみ（0/非0 二値。比率閾値なし）。
 // micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
-let evalTreeStale = false
+let evalStaleness = 'none'
 if (state.evalDiffHash != null) {
   const dhPr = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
   const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
   if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
-  evalTreeStale = prDiffHash != null && state.evalDiffHash !== prDiffHash
-  if (evalTreeStale) log('⚠️ Evaluate 時点と PR 直前の diff hash が不一致 — 終端サマリーに stale-eval 警告を付記する（issue #215）')
+  if (prDiffHash != null && state.evalDiffHash !== prDiffHash) {
+    evalStaleness = 'hash_mismatch'
+    log('⚠️ Evaluate 時点と PR 直前の diff hash が不一致 — 終端サマリーに stale-eval 警告を付記する（issue #215/#288 hash_mismatch）')
+  }
 }
 phase('PR')
 const pr = need(await agent(
@@ -2408,10 +2424,15 @@ const iterate = await workflow('pr-iterate', { pr: pr.pr_number })
 // pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある（issue #233）。
 // runEval=false（micro path・eval 0 回）では「Evaluate が stale」という概念自体が成立しないため skip。
 // evalDiffHash の取得可否とは独立に判定する（hash 取得失敗でも eval は実行済みのため）。
-const iterateChangedTree = (iterate?.status != null && iterate.status !== 'lgtm') || ((iterate?.fixes_applied ?? 0) > 0)
-if (state.runEval && iterateChangedTree && !evalTreeStale) {
-  evalTreeStale = true
-  log(`⚠️ pr-iterate が fix を適用 / lgtm 以外で終端（status=${iterate?.status ?? 'null'}, fixes_applied=${iterate?.fixes_applied ?? 0}）— 終端サマリーに stale-eval 警告を付記する（issue #233）`)
+// 'none' からのみ昇格させる構造で hash_mismatch 優先を保証する（issue #288 AC-2）。
+if (state.runEval && evalStaleness === 'none') {
+  if (iterate?.status != null && iterate.status !== 'lgtm') {
+    evalStaleness = 'iterate_incomplete'
+    log(`⚠️ pr-iterate が lgtm 以外で終端（status=${iterate?.status ?? 'null'}）— 終端サマリーに stale-eval 警告を付記する（issue #288 iterate_incomplete）`)
+  } else if ((iterate?.fixes_applied ?? 0) > 0) {
+    evalStaleness = 'iterate_fixed'
+    log('ℹ️ pr-iterate が fix を適用して lgtm 終端（fixes_applied=' + (iterate?.fixes_applied ?? 0) + '）— 終端サマリーに情報行を付記する（issue #288 iterate_fixed）')
+  }
 }
 
 // ============================================================
@@ -2474,7 +2495,8 @@ const summaryBody = buildDevflowSummaryBody({
   shape: state.EFFECTIVE_SHAPE,
   testGreen: state.val?.green ?? null,
   evalVerdict: state.evalResult?.verdict ?? null,
-  evalTreeStale,
+  evalStaleness,
+  iterateFixesApplied: iterate?.fixes_applied ?? null,
   uiVerify: state.uiVerifyStatus,
   uiVerifyMode: state.uiVerifyMode,
 })
@@ -2515,6 +2537,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     shape_refloored: state.refloor.refloored,
     plan_iter: state.planIters,
     eval_iter: state.evalIters,
+    eval_staleness: evalStaleness,
     ...(state.evalResult?.verdict ? { eval_verdict: state.evalResult.verdict } : {}),
     ...(iterate?.status ? { iterate_status: iterate.status } : {}),
     ui_verify: state.uiVerifyStatus,
@@ -2553,7 +2576,7 @@ return {
   shape: SHAPE,
   effective_shape: state.EFFECTIVE_SHAPE,
   shape_refloored: state.refloor.refloored,
-  eval_tree_stale: evalTreeStale,
+  eval_staleness: evalStaleness,
   realized_file_count: state.realizedCount,
   triviality: TRIVIAL,
   triviality_reason: triage.reason,
