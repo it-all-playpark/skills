@@ -21,7 +21,8 @@
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
- * @param {boolean|null|undefined} opts.evalTreeStale - Evaluate 時点と PR phase 直前の diff hash が不一致なら true（issue #215）。pr-iterate fix 適用時も true（issue #233）
+ * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'（issue #288）
+ * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
  * @returns {string}
@@ -41,10 +42,16 @@ export function buildDevflowSummaryBody({
   shape,
   testGreen,
   evalVerdict,
-  evalTreeStale,
+  evalStaleness,
+  iterateFixesApplied,
   uiVerify,
   uiVerifyMode,
 }) {
+  const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
+  if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
+    throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
+  }
+
   const lines = [];
 
   const TIER_EMOJI = { 'HOLD': '🔶', 'REVIEW': '🔷', 'AUTO': '✅' };
@@ -90,9 +97,16 @@ export function buildDevflowSummaryBody({
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
 
-  // 2b. evalTreeStale 警告（at-a-glance テーブル直後・gate_policy 行前）
-  if (evalTreeStale === true) {
-    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致、または pr-iterate で fix が適用された。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+  // 2b. eval_staleness 警告（at-a-glance テーブル直後・gate_policy 行前。issue #288）
+  if (evalStaleness === 'hash_mismatch') {
+    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('');
+  } else if (evalStaleness === 'iterate_incomplete') {
+    lines.push('> \u26a0\ufe0f **pr-iterate が LGTM 以外で終端した**（fix 適用後の tree に対する再評価・LGTM が得られていない。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('');
+  } else if (evalStaleness === 'iterate_fixed') {
+    const fixCount = (typeof iterateFixesApplied === 'number' && iterateFixesApplied >= 0) ? String(iterateFixesApplied) : '不明';
+    lines.push('> \u2139\ufe0f **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
     lines.push('');
   }
 
