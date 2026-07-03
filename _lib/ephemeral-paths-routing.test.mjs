@@ -14,9 +14,12 @@
 //       (non-ephemeral 6 件を dev-planner stub の file_changes に宣言させ、宣言外 0 件にする
 //        → declared count=6 → refloorShape('micro', 6) → complex → 正しく refloor する側の pin)
 //   (C) standard 見積もり + realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
-//       → evaluator#1 の prompt に '宣言外変更' が 1 回だけ出現 かつ u1.ts/u2.ts/u3.ts が全部その 1 item 内に含まれる
+//       → evaluator#1 の prompt に '宣言外変更' が 2 回出現 かつ u1.ts/u2.ts/u3.ts が全部その item 内に含まれる
 //       (porcelain 統合後: realized-diff スナップショットが declared-path-check と同一参照。
-//        standard は refloor に関わらず常に Evaluate を実行するため、宣言外監査の挙動は F2 前後で不変)
+//        standard は refloor に関わらず常に Evaluate を実行するため、宣言外監査の挙動は F2 前後で不変。
+//        issue #296 (F4) 以降: focus_areas の raw dump に加え、CONCERN-* item は未解消 concern 一覧
+//        （concern_resolutions による resolve-with-evidence 経路）にも eval#1 から載るため、
+//        同一 item のテキストが focus_areas / 未解消 concern 一覧の 2 箇所に出現し出現回数は 1→2 になる)
 //   (D) realized-diff stub が ephemeral のみ ['evaluator.staged.md'] を返す
 //       → filter 後 0 件 → 宣言外なし → '宣言外変更' が evaluator prompt に出現しない
 //   (E) porcelain 取得 1 回ピン: realized-diff が 1 回 / declared-path-check が 0 回
@@ -285,7 +288,7 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
 //     (porcelain 統合後: realized-diff スナップショットが declared-path-check と同一参照)
 // ============================================================
 
-test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 → evaluator prompt に "宣言外変更" 1 回 + 全パス含む', async () => {
+test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 → evaluator prompt に "宣言外変更" 2 回（focus_areas + 未解消 concern 一覧） + 全パス含む', async () => {
   const standardReq = {
     summary: 's',
     acceptance_criteria: ['a', 'b', 'c', 'd'],
@@ -316,9 +319,9 @@ test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 →
   const matchCount = (prompt1.match(/宣言外変更/g) || []).length;
   assert.equal(
     matchCount,
-    1,
-    '(C) evaluator eval#1 prompt の "宣言外変更" 出現回数は 1 回のはずだが ' + matchCount + ' 回だった'
-      + ' (1 item に集約されていれば 1 回のみ)',
+    2,
+    '(C) evaluator eval#1 prompt の "宣言外変更" 出現回数は 2 回のはずだが ' + matchCount + ' 回だった'
+      + ' (1 item に集約された上で focus_areas + 未解消 concern 一覧の2箇所に載る。issue #296)',
   );
 
   for (const p of ['u1.ts', 'u2.ts', 'u3.ts']) {
