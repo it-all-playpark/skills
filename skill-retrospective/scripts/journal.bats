@@ -419,6 +419,79 @@ JSON
 }
 
 # ===========================================================================
+# Tests for stats default source filter (#308): stats defaults to skill-only
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (i): stats のデフォルトが hook エントリを集計から除外する
+# ---------------------------------------------------------------------------
+@test "stats default excludes hook entries" {
+    # skill success エントリを2件書く
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    # hook failure エントリを1件書く
+    run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"x\"},\"error\":\"boom error\",\"session_id\":\"s1\"}" | '"$SCRIPT"' hook-capture'
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" stats
+    [ "$status" -eq 0 ]
+
+    total=$(echo "$output" | jq '.total')
+    [ "$total" -eq 2 ]
+
+    failure=$(echo "$output" | jq '.failure')
+    [ "$failure" -eq 0 ]
+
+    hook_skill_count=$(echo "$output" | jq '[.by_skill[] | select(.skill == "Bash")] | length')
+    [ "$hook_skill_count" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (j): stats --source hook を明示した場合は hook エントリのみ集計する
+# ---------------------------------------------------------------------------
+@test "stats --source hook returns only hook entries" {
+    # skill success エントリを1件書く
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    # hook failure エントリを1件書く
+    run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"x\"},\"error\":\"boom error\",\"session_id\":\"s1\"}" | '"$SCRIPT"' hook-capture'
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" stats --source hook
+    [ "$status" -eq 0 ]
+
+    total=$(echo "$output" | jq '.total')
+    [ "$total" -eq 1 ]
+
+    failure=$(echo "$output" | jq '.failure')
+    [ "$failure" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (k): stats のデフォルトは source フィールド欠落エントリを skill 扱いで含む
+# ---------------------------------------------------------------------------
+@test "stats default includes entries without source field" {
+    # source 欠落エントリを手書きで配置（#201 以前の journal 互換）
+    cat > "$CLAUDE_JOURNAL_DIR/2026-06-11-00-00-01-legacy.json" <<'JSON'
+{"version":"1.0.0","id":"20260611T000001-legacy","timestamp":"2026-06-11T00:00:01Z","skill":"legacy","outcome":"success"}
+JSON
+
+    # skill エントリを1件書く
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" stats
+    [ "$status" -eq 0 ]
+
+    total=$(echo "$output" | jq '.total')
+    [ "$total" -eq 2 ]
+}
+
+# ===========================================================================
 # Tests for new error categories: needs_clarification, empty_diff (#225)
 # ===========================================================================
 
@@ -507,4 +580,73 @@ JSON
 
     error_category=$(jq -r '.error.category' "$entry_file")
     [ "$error_category" = "runtime" ]
+}
+
+# ===========================================================================
+# Tests for --repo / --pr-number (issue #309)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (m): --repo と --pr-number が context に記録され、telemetry と共存する
+# ---------------------------------------------------------------------------
+@test "--repo and --pr-number recorded in context and coexist with telemetry" {
+    run "$SCRIPT" log dev-flow success --merge-tier REVIEW --repo acme/skills --pr-number 123
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    repo_val=$(jq -r '.context.repo' "$entry_file")
+    [ "$repo_val" = "acme/skills" ]
+
+    pr_number_val=$(jq '.context.pr_number' "$entry_file")
+    [ "$pr_number_val" = "123" ]
+
+    pr_number_type=$(jq '.context.pr_number | type' "$entry_file")
+    [ "$pr_number_type" = '"number"' ]
+
+    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
+    [ "$merge_tier" = "REVIEW" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (n): --repo に owner/name 形式でない値（スラッシュ無し）を渡すと exit 1
+# ---------------------------------------------------------------------------
+@test "--repo without slash exits non-zero with Invalid message" {
+    run "$SCRIPT" log dev-flow success --repo acme
+    [ "$status" -eq 1 ]
+    combined_output="$output"
+    [[ "$combined_output" == *"Invalid"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Test (o): --pr-number 0 は exit 1
+# ---------------------------------------------------------------------------
+@test "--pr-number 0 exits non-zero" {
+    run "$SCRIPT" log dev-flow success --pr-number 0
+    [ "$status" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (p): --pr-number abc（非数値）は exit 1
+# ---------------------------------------------------------------------------
+@test "--pr-number abc exits non-zero" {
+    run "$SCRIPT" log dev-flow success --pr-number abc
+    [ "$status" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (q): --repo / --pr-number 未指定時は context.repo / context.pr_number キーが無い
+# ---------------------------------------------------------------------------
+@test "no --repo/--pr-number -> context has no repo/pr_number keys" {
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_repo=$(jq '.context // {} | has("repo")' "$entry_file")
+    has_pr_number=$(jq '.context // {} | has("pr_number")' "$entry_file")
+    [ "$has_repo" = "false" ]
+    [ "$has_pr_number" = "false" ]
 }

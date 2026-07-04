@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { buildJournalHandoffCommand, buildJournalHandoffPayload } from './journal-handoff.mjs';
+import { buildJournalHandoffCommand, buildJournalHandoffPayload, repoFromGithubUrl } from './journal-handoff.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -21,6 +21,46 @@ test('buildJournalHandoffPayload creates compact handoff JSON', () => {
     payload,
     '{"skill":"pr-iterate","outcome":"success","args":"pr=251","telemetry":{"merge_tier":"PR_ITERATE","iterate_status":"lgtm"}}',
   );
+});
+
+test('buildJournalHandoffPayload includes repo and pr_number top-level between issue and journal_sh', () => {
+  const payload = buildJournalHandoffPayload({
+    skill: 'dev-flow',
+    outcome: 'success',
+    issue: 309,
+    repo: 'acme/skills',
+    pr_number: 12,
+    telemetry: { merge_tier: 'REVIEW' },
+  });
+
+  assert.equal(
+    payload,
+    '{"skill":"dev-flow","outcome":"success","issue":309,"repo":"acme/skills","pr_number":12,"telemetry":{"merge_tier":"REVIEW"}}',
+  );
+});
+
+test('buildJournalHandoffPayload omits repo/pr_number when not provided', () => {
+  const payload = buildJournalHandoffPayload({
+    skill: 'dev-flow',
+    outcome: 'success',
+    issue: 309,
+    telemetry: { merge_tier: 'REVIEW' },
+  });
+
+  assert.ok(!payload.includes('"repo"'));
+  assert.ok(!payload.includes('"pr_number"'));
+});
+
+test('repoFromGithubUrl parses owner/name from GitHub pull request and repo URLs', () => {
+  assert.equal(repoFromGithubUrl('https://github.com/acme/skills/pull/12'), 'acme/skills');
+  assert.equal(repoFromGithubUrl('https://github.com/acme/skills'), 'acme/skills');
+});
+
+test('repoFromGithubUrl returns null for non-GitHub or malformed input', () => {
+  assert.equal(repoFromGithubUrl('http://x'), null);
+  assert.equal(repoFromGithubUrl(''), null);
+  assert.equal(repoFromGithubUrl(null), null);
+  assert.equal(repoFromGithubUrl('https://example.com/a/b'), null);
 });
 
 test('buildJournalHandoffCommand writes payload to pending dir with safe filename', () => {

@@ -194,6 +194,8 @@ function buildJournalHandoffPayload({
   outcome,
   args,
   issue,
+  repo,
+  pr_number,
   journal_sh,
   telemetry,
   error_category,
@@ -205,6 +207,8 @@ function buildJournalHandoffPayload({
   const payload = { skill, outcome };
   if (args) payload.args = args;
   if (issue != null && issue !== '') payload.issue = Number(issue);
+  if (repo != null && repo !== '') payload.repo = String(repo);
+  if (pr_number != null && pr_number !== '') payload.pr_number = Number(pr_number);
   if (journal_sh) payload.journal_sh = journal_sh;
   if (telemetry != null) payload.telemetry = telemetry;
   if (error_category) payload.error_category = error_category;
@@ -224,6 +228,14 @@ function buildJournalHandoffCommand({ prefix, id, payload }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
 
   return `mkdir -p ${JOURNAL_PENDING_DIR} && cat > ${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-$(date +%s).json <<'${JOURNAL_HANDOFF_DELIMITER}'\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+}
+
+function repoFromGithubUrl(url) {
+  const match = String(url ?? '').match(
+    /^https?:\/\/github\.com\/([^\/\s]+)\/([^\/\s#?]+)(?:[\/#?]|$)/,
+  );
+  if (!match) return null;
+  return `${match[1]}/${match[2]}`;
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
 
@@ -1338,6 +1350,7 @@ function makeSeenTracker(threshold) {
 
 const CONCERN_ENV_PATTERNS = [
   { key: 'turbopack-sandbox', re: /TurbopackInternalError|next build.*(os error 1|Operation not permitted)/is },
+  { key: 'bats-sandbox', re: /bats.{0,120}(command not found|not (found|installed|available)|未インストール|インストールされていな|インストールされておらず|インストールできな|入っていない|見つから)|(command not found|not (found|installed|available)|未インストール|見つから).{0,120}bats/is },
   { key: 'npm-cache-eperm', re: /EPERM|root-owned|cache folder contains root-owned/i },
   { key: 'edit-write-isolation', re: /parent bg session hasn'?t isolated|isolation ガード|heredoc.*(代替|回避)/is },
   { key: 'sandbox-denied', re: /(sandbox|サンドボックス).*(権限|拒否|denied)|npx .*拒否/is },
@@ -1374,18 +1387,22 @@ function classifyConcerns(list) {
 // ==== END inline: _lib/concern-classify.mjs ====
 
 // ==== BEGIN inline: _lib/ci-checks.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow Merge tier phase: gh pr checks の結果から build 系 CI check が全 green かを
+// dev-flow Merge tier phase: gh pr checks の結果から env_key ごとの CI check が全 green かを
 // 判定する純関数群。CI green を根拠に auto-close してよい ENV item を allowlist で限定する
-// （AC-3。npm-cache-eperm 等 build 検証系でない ENV key は含めない）。
+// （AC-3。npm-cache-eperm 等 CI で検証できない ENV key は含めない）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// build 検証系 CI check 名の判定 regex。
-const BUILD_CHECK_RE = /build|vercel|ci/i;
+// env_key ごとの CI check 名判定 regex。CI green で auto-close してよい ENV key の allowlist を兼ねる
+// （npm-cache-eperm 等 CI で検証できない ENV key は含めない）。
+const ENV_CHECK_RES = {
+  'turbopack-sandbox': /build|vercel|ci/i,
+  'bats-sandbox': /bats/i,
+};
 
-// CI green で auto-close してよい ENV key の allowlist（npm-cache-eperm 等は含めない）。
-const CI_VERIFIABLE_ENV_KEYS = ['turbopack-sandbox'];
+// CI green で auto-close してよい ENV key の allowlist（ENV_CHECK_RES の key 集合）。
+const CI_VERIFIABLE_ENV_KEYS = Object.keys(ENV_CHECK_RES);
 
 // gh pr checks exec-proxy の agent() schema。
 const CHECKS = {
@@ -1408,20 +1425,24 @@ const CHECKS = {
   },
 };
 
-// gh pr checks --json name,bucket の出力から build 系 check が全 pass かを判定する純関数。
-function buildChecksGreen(checks) {
+// gh pr checks --json name,bucket の出力から、指定 env_key に対応する CI check が全 pass かを判定する純関数。
+function envChecksGreen(checks, envKey) {
+  const re = ENV_CHECK_RES[envKey];
+  if (!re) {
+    return { green: false, reason: 'unknown-env-key', checkNames: [] };
+  }
   if (!Array.isArray(checks)) {
     return { green: false, reason: 'invalid', checkNames: [] };
   }
-  const builds = checks.filter((c) => c && typeof c.name === 'string' && BUILD_CHECK_RE.test(c.name));
-  if (builds.length === 0) {
-    return { green: false, reason: 'no-build-checks', checkNames: [] };
+  const relevant = checks.filter((c) => c && typeof c.name === 'string' && re.test(c.name));
+  if (relevant.length === 0) {
+    return { green: false, reason: 'no-matching-checks', checkNames: [] };
   }
-  const checkNames = builds.map((c) => c.name);
-  if (builds.every((c) => c.bucket === 'pass')) {
+  const checkNames = relevant.map((c) => c.name);
+  if (relevant.every((c) => c.bucket === 'pass')) {
     return { green: true, reason: 'all-pass', checkNames };
   }
-  if (builds.some((c) => c.bucket === 'pending')) {
+  if (relevant.some((c) => c.bucket === 'pending')) {
     return { green: false, reason: 'pending', checkNames };
   }
   return { green: false, reason: 'not-pass', checkNames };
@@ -1438,6 +1459,7 @@ function applyDisjoint(p, label) {
 const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE_ARG = normalizeBaseArg(args?.base) // 明示指定（string）or null（未指定）。非文字列は即 throw
 let BASE // Setup(resolve-base) で確定。明示指定→検証、未指定→origin/dev→origin/HEAD の順に解決（issue #298）
+let REPO = null // Setup で解決（owner/name）。解決不能なら telemetry の repo を省略（fail-open）
 const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
 const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
@@ -1460,6 +1482,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     skill: 'dev-flow',
     outcome: 'failure',
     issue: Number(ISSUE),
+    repo: REPO,
     journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
     error_category,
     error_msg,
@@ -1528,7 +1551,7 @@ function evalHasCritical(ev) {
 // ---- schemas ----
 const SETUP = {
   type: 'object', required: ['worktree', 'branch'],
-  properties: { worktree: { type: 'string' }, branch: { type: 'string' } },
+  properties: { worktree: { type: 'string' }, branch: { type: 'string' }, repo: { type: 'string' } },
 }
 const DEPS = {
   type: 'object', required: ['status'],
@@ -1999,10 +2022,13 @@ const setup = need(await agent(
   + `2. worktree dir \`<repo>/.claude/worktrees/df-${ISSUE}\` が既に存在すれば再利用、無ければ\n`
   + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
   + `   （branch が既に存在する場合は -b を外して既存 branch を checkout）\n`
-  + `3. 作成/再利用した worktree の絶対パスと branch 名を返す`,
+  + `3. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
+  + `4. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
   { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
 ), 'Setup(worktree)')
 WT = setup.worktree
+REPO = setup.repo ?? null
+if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
 log(`worktree: ${WT} (branch ${setup.branch})`)
 
 // deps install（issue #291）: lockfile がある repo では Setup 完了時点で node_modules を整備する。
@@ -2987,10 +3013,11 @@ const mergeTier = classifyMergeTier({
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
 // ============================================================
-// CI checks 委譲 auto-close (issue #297): PR の build 系 CI check（Vercel 等）が全 pass なら、
-// sandbox 環境要因の turbopack-sandbox ENV item を機械的に checkItem する。
-// 判定は buildChecksGreen（決定論）のみ — LLM に判定させない。取得失敗・pending・build 系
-// check 不在は fail-open（据え置き + 警告 log）。classifyMergeTier の後に置くため merge tier
+// CI checks 委譲 auto-close (issue #297): CI_VERIFIABLE_ENV_KEYS の ENV item
+// （turbopack-sandbox / bats-sandbox）を env_key ごとの check-name regex（envChecksGreen）で
+// 機械的に checkItem する。
+// 判定は envChecksGreen（決定論）のみ — LLM に判定させない。取得失敗・pending・該当 check
+// 不在は fail-open（据え置き + 警告 log）。classifyMergeTier の後に置くため merge tier
 // 判定・収束判定には構造的に影響しない（軸A 不変。ENV item は元々 advisory/minor lane）。
 // ============================================================
 const ciTargets = state.ledger.items.filter((it) =>
@@ -3006,14 +3033,14 @@ if (ciTargets.length > 0) {
   if (!ciChecks || ciChecks.ok !== true || !Array.isArray(ciChecks.checks)) {
     log(`⚠️ ci-checks: checks 取得失敗 (${ciChecks?.error ?? 'null/schema 不一致'}) — ENV item 据え置き（fail-open）`)
   } else {
-    const verdict = buildChecksGreen(ciChecks.checks)
-    if (verdict.green) {
-      for (const it of ciTargets) {
+    for (const it of ciTargets) {
+      const verdict = envChecksGreen(ciChecks.checks, it.env_key)
+      if (verdict.green) {
         state.ledger = checkItem(state.ledger, it.id, `CI で確認済み（${verdict.checkNames.join(', ')}）`)
+        log(`ci-checks: ${it.env_key} 系 check 全 pass（${verdict.checkNames.join(', ')}）— ${it.id} を CI 委譲で解消`)
+      } else {
+        log(`ci-checks: ${it.env_key} → ${verdict.reason} — ${it.id} 据え置き（fail-open）`)
       }
-      log(`ci-checks: build 系 check 全 pass（${verdict.checkNames.join(', ')}）— ENV item ${ciTargets.length} 件を CI 委譲で解消`)
-    } else {
-      log(`ci-checks: ${verdict.reason} — ENV item 据え置き（fail-open）`)
     }
   }
 }
@@ -3068,6 +3095,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'dev-flow',
   outcome: 'success',
   issue: Number(ISSUE),
+  repo: repoFromGithubUrl(pr.pr_url) ?? REPO,
+  pr_number: Number(pr.pr_number),
   journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
   telemetry: {
     merge_tier: mergeTier.tier,

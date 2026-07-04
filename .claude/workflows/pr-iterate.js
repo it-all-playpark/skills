@@ -54,6 +54,8 @@ function buildJournalHandoffPayload({
   outcome,
   args,
   issue,
+  repo,
+  pr_number,
   journal_sh,
   telemetry,
   error_category,
@@ -65,6 +67,8 @@ function buildJournalHandoffPayload({
   const payload = { skill, outcome };
   if (args) payload.args = args;
   if (issue != null && issue !== '') payload.issue = Number(issue);
+  if (repo != null && repo !== '') payload.repo = String(repo);
+  if (pr_number != null && pr_number !== '') payload.pr_number = Number(pr_number);
   if (journal_sh) payload.journal_sh = journal_sh;
   if (telemetry != null) payload.telemetry = telemetry;
   if (error_category) payload.error_category = error_category;
@@ -84,6 +88,14 @@ function buildJournalHandoffCommand({ prefix, id, payload }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
 
   return `mkdir -p ${JOURNAL_PENDING_DIR} && cat > ${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-$(date +%s).json <<'${JOURNAL_HANDOFF_DELIMITER}'\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+}
+
+function repoFromGithubUrl(url) {
+  const match = String(url ?? '').match(
+    /^https?:\/\/github\.com\/([^\/\s]+)\/([^\/\s#?]+)(?:[\/#?]|$)/,
+  );
+  if (!match) return null;
+  return `${match[1]}/${match[2]}`;
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
 
@@ -450,6 +462,16 @@ const CI_STATUS = {
 
 phase('Iterate')
 
+// repo (owner/name) probe: PR の base repo URL から owner/name を導出する（telemetry の repo 解決用。issue #309）。
+// fail-open — probe 失敗/null でも repo を省略するだけで workflow は継続する。
+const PR_META = { type: 'object', required: ['url'], properties: { url: { type: 'string' } } }
+const prMeta = await agent(
+  `## Objective\nPR #${PR} の URL を取得する（telemetry の repo 解決用）。\n\n## Instructions\n次のコマンドをそのまま実行し、stdout（1 行）を url として返せ: \`gh pr view ${PR} --json url -q .url\`\nコマンド失敗時は throw せず url を空文字で返すこと。\n\n## Output format\n{ "url": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n50 語以内で完結すること。`,
+  { agentType: 'dev-runner-haiku', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
+)
+const REPO = repoFromGithubUrl(prMeta?.url)
+if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
+
 let lastReview = null
 let lgtm = false
 let i = 0
@@ -729,6 +751,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'pr-iterate',
   outcome: 'success',
   args: `pr=${PR}`,
+  repo: REPO,
+  pr_number: Number(PR),
   telemetry: {
     merge_tier: 'PR_ITERATE',
     iterate_status: status,

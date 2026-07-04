@@ -174,15 +174,19 @@ WINDOW_ENTRIES=$(echo "$ALL_ENTRIES" | jq -c \
 # plan_iter / gate_policy distributions. pr-iterate standalone entries
 # (skill=="pr-iterate", telemetry.merge_tier=="PR_ITERATE") are excluded here
 # by construction -- they never have skill=="dev-flow".
+# source: skill のみ（hook 由来の failure capture エントリは telemetry を持たず
+# 分母を汚染するため除外。source 欠落は skill 扱い）。
 DEVFLOW_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq -c \
-  '[.[] | select(.skill == "dev-flow")]')
+  '[.[] | select(.skill == "dev-flow" and ((.source // "skill") == "skill"))]')
 
 TOTAL_DEV_FLOW_RUNS=$(echo "$DEVFLOW_ENTRIES" | jq 'length')
 
 # iterate_status entries: denominator is all entries (dev-flow + pr-iterate)
 # that recorded a telemetry.iterate_status value.
+# source: skill のみ（hook 由来の failure capture エントリは telemetry を持たず
+# 分母を汚染するため除外。source 欠落は skill 扱い）。
 ITERATE_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq -c \
-  '[.[] | select(.telemetry.iterate_status != null)]')
+  '[.[] | select(.telemetry.iterate_status != null and ((.source // "skill") == "skill"))]')
 
 # ----------------------------------------------------------------------------
 # Distributions

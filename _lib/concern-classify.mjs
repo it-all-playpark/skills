@@ -8,6 +8,7 @@
 
 export const CONCERN_ENV_PATTERNS = [
   { key: 'turbopack-sandbox', re: /TurbopackInternalError|next build.*(os error 1|Operation not permitted)/is },
+  { key: 'bats-sandbox', re: /bats.{0,120}(command not found|not (found|installed|available)|未インストール|インストールされていな|インストールされておらず|インストールできな|入っていない|見つから)|(command not found|not (found|installed|available)|未インストール|見つから).{0,120}bats/is },
   { key: 'npm-cache-eperm', re: /EPERM|root-owned|cache folder contains root-owned/i },
   { key: 'edit-write-isolation', re: /parent bg session hasn'?t isolated|isolation ガード|heredoc.*(代替|回避)/is },
   { key: 'sandbox-denied', re: /(sandbox|サンドボックス).*(権限|拒否|denied)|npx .*拒否/is },
