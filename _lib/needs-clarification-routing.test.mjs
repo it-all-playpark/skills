@@ -48,6 +48,10 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
     calls.push({ label, agentType, prompt: prompt ?? '' });
 
     // Setup(worktree)
+    // Setup(resolve-base): base 解決 probe（issue #298）
+    if (label === 'resolve-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     }

@@ -61,6 +61,10 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     calls.push({ label, agentType });
 
     // Setup(worktree)
+    // Setup(resolve-base): base 解決 probe（issue #298）
+    if (label === 'resolve-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     }
@@ -266,6 +270,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
 
+    if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return standardReq;
     // (B) は「全件宣言」シナリオ（realized の 6 ファイルを file_changes に宣言）。
@@ -465,6 +470,10 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     const agentType = opts?.agentType ?? '';
     calls.push({ label, agentType });
 
+    // Setup(resolve-base): base 解決 probe（issue #298）
+    if (label === 'resolve-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/test-wt', branch: 'feature/issue-1' };
     }

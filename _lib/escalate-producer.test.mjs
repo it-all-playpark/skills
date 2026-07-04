@@ -40,6 +40,10 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     const agentType = opts?.agentType ?? '';
 
     // Setup(worktree)
+    // Setup(resolve-base): base 解決 probe（issue #298）
+    if (label === 'resolve-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     }
@@ -346,6 +350,10 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       const label = opts?.label ?? '';
       const agentType = opts?.agentType ?? '';
 
+      // Setup(resolve-base): base 解決 probe（issue #298）
+      if (label === 'resolve-base') {
+        return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+      }
       if (label === 'worktree') {
         return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
       }
