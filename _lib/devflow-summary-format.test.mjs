@@ -1096,3 +1096,72 @@ test('checked=true の environment item は「Goal Ledger 解消済み」details
   const envItemLine = lines.find(l => l.includes('ENV-SANDBOX-DENIED'));
   assert.ok(envItemLine, 'ENV item 行を含む');
 });
+
+// ─── 環境ノート CI 確認済み表示 (issue #297) ───────────────────────────────────
+
+test('checked=true + evidence 有りの ENV item は環境ノート行に「✅ CI確認済」セルと evidence 文言を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'ENV-TURBOPACK-SANDBOX',
+        text: 'Turbopack が sandbox 内で失敗した',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: true,
+        evidence: 'CI で確認済み（Vercel, build）',
+        env_key: 'turbopack-sandbox',
+        env_count: 3,
+      },
+    ],
+  });
+  const lines = body.split('\n');
+  const envItemLine = lines.find(l => l.includes('ENV-TURBOPACK-SANDBOX') && l.includes('turbopack-sandbox'));
+  assert.ok(envItemLine, 'ENV item 行を含む');
+  assert.ok(envItemLine.includes('✅ CI確認済'), '状態セルに ✅ CI確認済 を含む');
+  assert.ok(envItemLine.includes('CI で確認済み（Vercel, build）'), 'evidence 文言を含む');
+});
+
+test('checked=false の ENV item は環境ノート行の状態セルが「—」で「CI で確認済み」を含まない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'ENV-TURBOPACK-SANDBOX',
+        text: 'Turbopack が sandbox 内で失敗した',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: false,
+        evidence: null,
+        env_key: 'turbopack-sandbox',
+        env_count: 3,
+      },
+    ],
+  });
+  const lines = body.split('\n');
+  const envItemLine = lines.find(l => l.includes('ENV-TURBOPACK-SANDBOX') && l.includes('turbopack-sandbox'));
+  assert.ok(envItemLine, 'ENV item 行を含む');
+  assert.ok(envItemLine.includes('| — |'), '状態セルが — である');
+  assert.ok(!envItemLine.includes('CI で確認済み'), 'CI で確認済み を含まない');
+});
+
+test('checked=true の ENV item でも「### ⚠️ 要対応」テーブルにも「✅ Goal Ledger 解消済み」details にも現れない（環境ノート専用の回帰固定）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        id: 'ENV-TURBOPACK-SANDBOX',
+        text: 'Turbopack が sandbox 内で失敗した',
+        dimension: 'environment',
+        severity: 'minor',
+        checked: true,
+        evidence: 'CI で確認済み（Vercel, build）',
+        env_key: 'turbopack-sandbox',
+        env_count: 3,
+      },
+    ],
+  });
+  assert.ok(!body.includes('### ⚠️ 要対応'), 'checked ENV item のみでは要対応セクションが出ない');
+  assert.ok(!body.includes('✅ Goal Ledger 解消済み'), 'checked ENV item のみでは解消済み details が出ない');
+  assert.ok(body.includes('🏗 環境ノート 1 件'), '環境ノートに ENV item が出る');
+});
