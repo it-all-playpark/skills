@@ -65,11 +65,44 @@ test('classifyConcern: 複数パターン同時該当は配列順 first-match（
   assert.deepEqual(classifyConcern(text), { kind: 'environment', key: 'npm-cache-eperm' });
 });
 
-test('CONCERN_ENV_PATTERNS: 4 パターンが配列順 turbopack→eperm→isolation→denied で定義されている', () => {
+test('CONCERN_ENV_PATTERNS: 5 パターンが配列順 turbopack→bats→eperm→isolation→denied で定義されている', () => {
   assert.deepEqual(
     CONCERN_ENV_PATTERNS.map((p) => p.key),
-    ['turbopack-sandbox', 'npm-cache-eperm', 'edit-write-isolation', 'sandbox-denied'],
+    ['turbopack-sandbox', 'bats-sandbox', 'npm-cache-eperm', 'edit-write-isolation', 'sandbox-denied'],
   );
+});
+
+test('classifyConcern: bats-sandbox パターンに該当（未インストール文脈）', () => {
+  const text = 'sandbox 環境に bats がインストールされていないため bats テストは CI に委譲した';
+  assert.deepEqual(classifyConcern(text), { kind: 'environment', key: 'bats-sandbox' });
+});
+
+test('classifyConcern: bats-sandbox パターンに該当（command not found）', () => {
+  const text = 'bats: command not found のため tests/run-all-bats.sh が graceful skip した';
+  assert.deepEqual(classifyConcern(text), { kind: 'environment', key: 'bats-sandbox' });
+});
+
+test('classifyConcern: bats-sandbox は sandbox-denied より優先される（non-vacuous first-match）', () => {
+  const text = 'sandbox で bats の実行が拒否されたため bats は未インストール状態';
+  // この fixture は sandbox-denied 側にも実際にマッチすることを確認した上で、
+  // 配列順（bats-sandbox が先）により bats-sandbox が返ることを検証する。
+  const sandboxDeniedRe = CONCERN_ENV_PATTERNS.find((p) => p.key === 'sandbox-denied').re;
+  assert.equal(sandboxDeniedRe.test(text), true);
+  assert.deepEqual(classifyConcern(text), { kind: 'environment', key: 'bats-sandbox' });
+});
+
+test('classifyConcern: bats-sandbox は npm-cache-eperm より優先される（non-vacuous first-match）', () => {
+  const text = 'bats install が EPERM で失敗し bats は未インストールのまま';
+  // この fixture は npm-cache-eperm 側にも実際にマッチすることを確認した上で、
+  // 配列順（bats-sandbox が先）により bats-sandbox が返ることを検証する。
+  const epermRe = CONCERN_ENV_PATTERNS.find((p) => p.key === 'npm-cache-eperm').re;
+  assert.equal(epermRe.test(text), true);
+  assert.deepEqual(classifyConcern(text), { kind: 'environment', key: 'bats-sandbox' });
+});
+
+test('classifyConcern: bats の skip 単独言及は環境ノートに吸収されない（過剰マッチ防止）', () => {
+  const text = 'bats テストの一部 case を skip した（フレーク対策）';
+  assert.deepEqual(classifyConcern(text), { kind: 'concern' });
 });
 
 test('classifyConcerns: 入力配列を mutate しない', () => {

@@ -143,6 +143,10 @@ const NPM_CACHE_CONCERNS = [
   'npm install が EPERM で失敗（cache folder contains root-owned files）',
 ];
 
+const BATS_CONCERNS = [
+  'sandbox 環境に bats がインストールされていないため bats テストは CI に委譲した',
+];
+
 // ============================================================
 // (a) green auto-close
 // ============================================================
@@ -320,4 +324,136 @@ test('[ci-checks][AC-4][d] gate-policy: checked/unchecked な ENV item(minor, in
   assert.equal(convergedBefore, true);
   assert.equal(convergedAfter, true);
   assert.equal(convergedBefore, convergedAfter);
+});
+
+// ============================================================
+// (e) bats green auto-close
+// ============================================================
+
+let sharedBatsGreen = null;
+async function ensureBatsGreenRun() {
+  if (sharedBatsGreen !== null) return;
+  sharedBatsGreen = await runScenario({
+    concerns: BATS_CONCERNS,
+    ciChecksResponse: {
+      ok: true,
+      checks: [
+        { name: 'Bats Tests (issue #93 helpers)', bucket: 'pass' },
+        { name: 'Node Unit Tests (workflow arg resolver)', bucket: 'pass' },
+      ],
+    },
+  });
+}
+
+test('[ci-checks][e] crash guard: bats green auto-close シナリオが sandbox でクラッシュしない', async () => {
+  await ensureBatsGreenRun();
+  assertNoCrash(sharedBatsGreen.err, 'e-bats-green');
+});
+
+test('[ci-checks][AC-2][e] bats check pass で ENV-BATS-SANDBOX が auto-close される（bats 不含の Node Unit Tests は evidence に含めない）', async () => {
+  await ensureBatsGreenRun();
+  const { calls } = sharedBatsGreen;
+  const post = calls.find((c) => c.label === 'post-summary');
+  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
+  assert.ok(
+    post.prompt.includes('ENV-BATS-SANDBOX'),
+    `post-summary の prompt に ENV-BATS-SANDBOX 行が含まれていない:\n${post.prompt.slice(0, 2000)}`,
+  );
+  assert.ok(
+    post.prompt.includes('✅ CI確認済'),
+    `post-summary の prompt に「✅ CI確認済」が含まれていない:\n${post.prompt.slice(0, 2000)}`,
+  );
+  assert.ok(
+    post.prompt.includes('CI で確認済み（Bats Tests (issue #93 helpers)）'),
+    `post-summary の prompt に bats-sandbox の CI 確認済み文字列が含まれていない:\n${post.prompt.slice(0, 2000)}`,
+  );
+  assert.ok(
+    !post.prompt.includes('Node Unit Tests (workflow arg resolver)'),
+    `bats を含まない汎用 test check（Node Unit Tests）が evidence に含まれている（regex が /bats/i に絞られていない疑い）:\n${post.prompt.slice(0, 2000)}`,
+  );
+});
+
+// ============================================================
+// (f) bats pending 据え置き
+// ============================================================
+
+let sharedBatsPending = null;
+async function ensureBatsPendingRun() {
+  if (sharedBatsPending !== null) return;
+  sharedBatsPending = await runScenario({
+    concerns: BATS_CONCERNS,
+    ciChecksResponse: {
+      ok: true,
+      checks: [
+        { name: 'Bats Tests (issue #93 helpers)', bucket: 'pending' },
+        { name: 'Node Unit Tests (workflow arg resolver)', bucket: 'pass' },
+      ],
+    },
+  });
+}
+
+test('[ci-checks][f] crash guard: bats pending 据え置きシナリオが sandbox でクラッシュしない', async () => {
+  await ensureBatsPendingRun();
+  assertNoCrash(sharedBatsPending.err, 'f-bats-pending');
+});
+
+test('[ci-checks][AC-3][f] bats/test 系 check が pending のとき ENV-BATS-SANDBOX は据え置かれる(positive assert)', async () => {
+  await ensureBatsPendingRun();
+  const { calls } = sharedBatsPending;
+  const post = calls.find((c) => c.label === 'post-summary');
+  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
+  assert.ok(
+    post.prompt.includes('ENV-BATS-SANDBOX'),
+    `post-summary の prompt に ENV-BATS-SANDBOX 行が含まれていない（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）:\n${post.prompt.slice(0, 2000)}`,
+  );
+  const batsLine = post.prompt.split('\n').find((l) => l.includes('ENV-BATS-SANDBOX'));
+  assert.ok(batsLine != null);
+  assert.ok(
+    !batsLine.includes('CI で確認済み'),
+    `ENV-BATS-SANDBOX 行に「CI で確認済み」が含まれている（pending なのに解消されている）:\n${batsLine}`,
+  );
+});
+
+// ============================================================
+// (g) per-key 独立性
+// ============================================================
+
+let sharedPerKey = null;
+async function ensurePerKeyRun() {
+  if (sharedPerKey !== null) return;
+  sharedPerKey = await runScenario({
+    concerns: [...TURBOPACK_CONCERNS, ...BATS_CONCERNS],
+    ciChecksResponse: {
+      ok: true,
+      checks: [
+        { name: 'build', bucket: 'pass' },
+        { name: 'Vercel', bucket: 'pass' },
+        { name: 'Bats Tests (issue #93 helpers)', bucket: 'fail' },
+      ],
+    },
+  });
+}
+
+test('[ci-checks][g] crash guard: per-key 独立性シナリオが sandbox でクラッシュしない', async () => {
+  await ensurePerKeyRun();
+  assertNoCrash(sharedPerKey.err, 'g-per-key');
+});
+
+test('[ci-checks][AC-4][g] turbopack-sandbox は auto-close、bats-sandbox は据え置きの per-key 独立判定', async () => {
+  await ensurePerKeyRun();
+  const { calls } = sharedPerKey;
+  const post = calls.find((c) => c.label === 'post-summary');
+  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
+  const turbopackLine = post.prompt.split('\n').find((l) => l.includes('ENV-TURBOPACK-SANDBOX'));
+  const batsLine = post.prompt.split('\n').find((l) => l.includes('ENV-BATS-SANDBOX'));
+  assert.ok(turbopackLine != null, `ENV-TURBOPACK-SANDBOX 行が見つからない:\n${post.prompt.slice(0, 2000)}`);
+  assert.ok(batsLine != null, `ENV-BATS-SANDBOX 行が見つからない:\n${post.prompt.slice(0, 2000)}`);
+  assert.ok(
+    turbopackLine.includes('CI で確認済み'),
+    `ENV-TURBOPACK-SANDBOX 行に「CI で確認済み」が含まれていない（build/Vercel が pass なのに auto-close されていない）:\n${turbopackLine}`,
+  );
+  assert.ok(
+    !batsLine.includes('CI で確認済み'),
+    `ENV-BATS-SANDBOX 行に「CI で確認済み」が含まれている（bats check が fail なのに解消されている）:\n${batsLine}`,
+  );
 });
