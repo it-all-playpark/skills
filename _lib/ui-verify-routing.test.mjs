@@ -67,6 +67,7 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
       return v;
     }
 
+    if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
     if (agentType === 'dev-planner') {

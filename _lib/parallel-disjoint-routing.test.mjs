@@ -41,6 +41,10 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
     calls.push({ label, agentType });
 
     // Setup(worktree)
+    // Setup(resolve-base): base 解決 probe（issue #298）
+    if (label === 'resolve-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     }
@@ -312,6 +316,10 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     const agentType = opts?.agentType ?? '';
     calls.push({ label, agentType });
 
+    // Setup(resolve-base): base 解決 probe（issue #298）
+    if (label === 'resolve-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     }
