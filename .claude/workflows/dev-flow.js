@@ -364,11 +364,39 @@ function reconcileDanger(ledger, risk) {
       // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
       // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
       if (it.checked && it.floor) return it;
-      return { ...it, severity: 'critical', floor: true, checked: false, fail_closed: false };
+      // evidence を null クリアする。前回 reconcile が "danger-grep clean" 等で自動 check した
+      // stale evidence を残すと、unchecked/critical に戻った item に矛盾した evidence 表示が残る。
+      return { ...it, severity: 'critical', floor: true, checked: false, fail_closed: false, evidence: null };
     }
     return { ...it, checked: true, fail_closed: false, evidence: 'danger-grep clean' };
   });
   return { ...ledger, items };
+}
+
+// Merge tier phase で reconcileDanger 前後の SEC ledger を比較し、one-shot security
+// clearance の対象候補を決定論的に算出する純関数。
+// 「before で checked（Evaluate 時点等で解消済み）だったが after で unchecked に転じた」
+// SEC seed item の danger_class のみを返す（Evaluate 時点から未解消のまま残る SEC は
+// merge tier で clear させない = security floor 不変）。
+// after 側で fail_closed:true の item は defense-in-depth として除外する（fail-closed 時は
+// clearance 対象にしない）。before に同 id が無い item も対象外。ledger は mutate しない。
+function newlyUncheckedSecClasses(before, after) {
+  const beforeById = new Map(
+    (before?.items ?? [])
+      .filter((it) => it.source === 'seed' && it.dimension === 'security')
+      .map((it) => [it.id, it]),
+  );
+  const result = [];
+  for (const it of (after?.items ?? [])) {
+    if (it.source !== 'seed' || it.dimension !== 'security') continue;
+    if (it.fail_closed === true) continue;
+    const prev = beforeById.get(it.id);
+    if (!prev) continue;
+    if (prev.checked === true && it.checked !== true) {
+      result.push(it.danger_class);
+    }
+  }
+  return result;
 }
 
 // 変更ファイルが docs(.md/.mdx/.txt, docs/) か test(*test*, *spec*, .bats) のみか。
@@ -905,11 +933,13 @@ function mdCell(v) {
  * @param {string} opts.mergeTier - 'HOLD'|'REVIEW'|'AUTO'
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
  * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
- * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
+ * @param {Array<{id,text,severity,checked,dimension,evidence,source,floor,danger_class,fail_closed}>} opts.blockingItems - blocking items。
+ *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
+ *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
+ *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す
  * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296。checked な environment item は環境ノートで ✅ CI確認済 と表示される（issue #297））
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
- * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
@@ -930,7 +960,6 @@ function buildDevflowSummaryBody({
   advisoryItems,
   ledgerConverged,
   acResults,
-  securityClearance,
   planConcerns,
   dangerHits,
   shape,
@@ -945,6 +974,24 @@ function buildDevflowSummaryBody({
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
     throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
   }
+
+  // Security clearance は最終 ledger の SEC seed item（source:'seed' && dimension:'security' && floor:true）
+  // から導出する（evalResult.security_clearance は使わない — PR #16 型の表示矛盾を防ぐため）。
+  // SEC seed item は check.kind:'deterministic' のため全 gate_policy で blocking lane（軸A invariant）
+  // であり、blockingItems からの導出は gate_policy に依存せず成立する。
+  const secLedgerItems = (blockingItems || []).filter(
+    (it) => it.source === 'seed' && it.dimension === 'security' && it.floor === true
+  );
+  const securityClearance = secLedgerItems.map((it) => ({
+    danger_class: it.danger_class,
+    cleared: it.checked === true,
+    evidence: it.evidence,
+  }));
+  // fail_closed:true の SEC seed item がある場合、danger-grep-final が実行不能だったことを示す。
+  // この場合は「clean（clearance 不要）」と混同せず、専用の fail-closed 空状態行を出す。
+  const secFailClosed = (blockingItems || []).some(
+    (it) => it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true
+  );
 
   const lines = [];
 
@@ -1038,9 +1085,7 @@ function buildDevflowSummaryBody({
   const uncheckedAdvisory = advArr.filter(it => it.checked !== true && it.dimension !== 'environment');
   const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true && it.dimension !== 'environment');
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
-  const uncleared = securityClearance && securityClearance.length > 0
-    ? securityClearance.filter(sc => sc.cleared !== true)
-    : [];
+  const uncleared = securityClearance.filter(sc => sc.cleared !== true);
   const concerns = planConcerns || [];
 
   const hasActionItems = uncheckedBlocking.length > 0
@@ -1128,8 +1173,12 @@ function buildDevflowSummaryBody({
   if (!acResults || acResults.length === 0) {
     lines.push('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）');
   }
-  if (!securityClearance || securityClearance.length === 0) {
-    lines.push('Security clearance: danger-grep clean（clearance 不要）');
+  if (securityClearance.length === 0) {
+    if (secFailClosed) {
+      lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
+    } else {
+      lines.push('Security clearance: danger-grep clean（clearance 不要）');
+    }
   }
 
   // 7. 折りたたみブロック群（AC-3）
@@ -1198,7 +1247,7 @@ function buildDevflowSummaryBody({
   }
 
   // cleared security clearance
-  if (securityClearance && securityClearance.length > 0) {
+  if (securityClearance.length > 0) {
     const cleared = securityClearance.filter(sc => sc.cleared === true);
     const c = cleared.length;
     const ct = securityClearance.length;
@@ -1636,6 +1685,18 @@ const EVAL = {
         type: 'object',
         required: ['id', 'resolved'],
         properties: { id: { type: 'string' }, resolved: { type: 'boolean' }, evidence: { type: 'string' } },
+      },
+    },
+  },
+}
+const SEC_CLEAR = {
+  type: 'object', required: ['security_clearance'],
+  properties: {
+    security_clearance: {
+      type: 'array',
+      items: {
+        type: 'object', required: ['danger_class', 'cleared'],
+        properties: { danger_class: { type: 'string' }, cleared: { type: 'boolean' }, evidence: { type: 'string' } },
       },
     },
   },
@@ -2877,7 +2938,35 @@ const changed = need(await agent(
 ), 'Merge tier(changed-files)')
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
+const ledgerBeforeFinalReconcile = state.ledger
 state.ledger = reconcileDanger(state.ledger, riskFinal)
+// one-shot security clearance (issue #299): Evaluate 時点 clean → 最終 danger-grep で新規 hit に
+// 転じた SEC class のみを対象に、evaluator へ 1 回だけ clearance を求める。cleared:true + 非空
+// evidence のみ checkItem。null / cleared:false / evidence 空は据え置き = HOLD（security floor は
+// 緩めない）。fail-closed 時は試みない。反復ループは作らない。
+const newlyUnchecked = dangerFailClosedFinal ? [] : newlyUncheckedSecClasses(ledgerBeforeFinalReconcile, state.ledger)
+if (newlyUnchecked.length > 0) {
+  log(`Merge tier: 新規 danger hit ${JSON.stringify(newlyUnchecked)} — one-shot security clearance を実行`)
+  const clearance = await agent(
+    `cd ${WT} で作業。PR #${pr.pr_number} の最終 tree に対し danger-grep が新規に検出した危険クラスの変更が安全かを判定せよ。`
+    + `\`git diff origin/${BASE}...HEAD\` で実 diff を確認し、該当ファイルを Read で精査すること。\n`
+    + `requirements: ${JSON.stringify(req)}\n`
+    + `security_focus（Merge tier 最終 danger-grep で新規 hit した危険クラス）:\n${JSON.stringify(newlyUnchecked)}\n`
+    + `${EVALUATOR_OPERATIONAL_CONTRACT.security_clearance}\n`,
+    { agentType: 'evaluator', model: QUALITY_MODEL, schema: SEC_CLEAR, label: 'security-clearance-final', phase: 'Merge tier' },
+  )
+  if (!clearance) log('⚠️ security-clearance-final が null — SEC item 据え置き（HOLD。security floor は緩めない）')
+  for (const sc of (clearance?.security_clearance ?? [])) {
+    if (!sc || typeof sc.danger_class !== 'string') continue
+    if (!newlyUnchecked.includes(sc.danger_class)) continue   // 新規 hit 以外（Evaluate 由来の未解消 SEC 等）は clear させない
+    const secId = `SEC-${sc.danger_class.toUpperCase()}`
+    if (!state.ledger.items.some((it) => it.id === secId && !it.checked)) continue
+    if (sc.cleared === true && typeof sc.evidence === 'string' && sc.evidence.length > 0) {
+      state.ledger = checkItem(state.ledger, secId, `security cleared (merge-tier one-shot): ${sc.evidence}`)
+      log(`${secId}: one-shot clearance で安全確認 → checked`)
+    }
+  }
+}
 const unresolvedDanger = state.ledger.items.some(
   (it) => it.dimension === 'security' && it.source === 'seed' && it.floor && !it.checked)
 const breakingStructured = req.breaking_change === true
@@ -2942,7 +3031,6 @@ const summaryBody = buildDevflowSummaryBody({
   advisoryItems: policyAdvisoryItems(state.ledger, GATE_POLICY),
   ledgerConverged: isConvergedUnderPolicy(state.ledger, GATE_POLICY),
   acResults: state.evalResult?.ac_results ?? null,
-  securityClearance: state.evalResult?.security_clearance ?? null,
   planConcerns: state.planConcerns ?? [],
   dangerHits: dangerHitsFinal,
   shape: state.EFFECTIVE_SHAPE,
