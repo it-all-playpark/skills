@@ -419,6 +419,79 @@ JSON
 }
 
 # ===========================================================================
+# Tests for stats default source filter (#308): stats defaults to skill-only
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (i): stats のデフォルトが hook エントリを集計から除外する
+# ---------------------------------------------------------------------------
+@test "stats default excludes hook entries" {
+    # skill success エントリを2件書く
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    # hook failure エントリを1件書く
+    run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"x\"},\"error\":\"boom error\",\"session_id\":\"s1\"}" | '"$SCRIPT"' hook-capture'
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" stats
+    [ "$status" -eq 0 ]
+
+    total=$(echo "$output" | jq '.total')
+    [ "$total" -eq 2 ]
+
+    failure=$(echo "$output" | jq '.failure')
+    [ "$failure" -eq 0 ]
+
+    hook_skill_count=$(echo "$output" | jq '[.by_skill[] | select(.skill == "Bash")] | length')
+    [ "$hook_skill_count" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (j): stats --source hook を明示した場合は hook エントリのみ集計する
+# ---------------------------------------------------------------------------
+@test "stats --source hook returns only hook entries" {
+    # skill success エントリを1件書く
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    # hook failure エントリを1件書く
+    run bash -c 'printf "%s" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"x\"},\"error\":\"boom error\",\"session_id\":\"s1\"}" | '"$SCRIPT"' hook-capture'
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" stats --source hook
+    [ "$status" -eq 0 ]
+
+    total=$(echo "$output" | jq '.total')
+    [ "$total" -eq 1 ]
+
+    failure=$(echo "$output" | jq '.failure')
+    [ "$failure" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (k): stats のデフォルトは source フィールド欠落エントリを skill 扱いで含む
+# ---------------------------------------------------------------------------
+@test "stats default includes entries without source field" {
+    # source 欠落エントリを手書きで配置（#201 以前の journal 互換）
+    cat > "$CLAUDE_JOURNAL_DIR/2026-06-11-00-00-01-legacy.json" <<'JSON'
+{"version":"1.0.0","id":"20260611T000001-legacy","timestamp":"2026-06-11T00:00:01Z","skill":"legacy","outcome":"success"}
+JSON
+
+    # skill エントリを1件書く
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" stats
+    [ "$status" -eq 0 ]
+
+    total=$(echo "$output" | jq '.total')
+    [ "$total" -eq 2 ]
+}
+
+# ===========================================================================
 # Tests for new error categories: needs_clarification, empty_diff (#225)
 # ===========================================================================
 

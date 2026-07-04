@@ -36,7 +36,7 @@ All journal entries carry a `source` field indicating how the entry was written:
 
 **Migration compatibility**: Entries that predate this field may have an absent `source` key **or** a legacy `"hook-capture"` value (written by the old `cmd_hook_capture` implementation). Both are handled by all consumers using inclusive semantics: `(.source // "skill") == "skill"` to select skill entries, and `(.source // "skill") != "skill"` to select non-skill (hook) entries. This treats absent-source as `"skill"` and correctly excludes legacy `"hook-capture"` entries from skill statistics. No backfill is required.
 
-**Aggregation default**: `dev-flow-doctor` and other stats/query consumers exclude `source == "hook"` entries by default, to avoid inflating skill-authored failure counts with hook-captured tool failures.
+**Aggregation default**: `dev-flow-doctor` and `journal.sh stats` exclude `source == "hook"` entries by default, to avoid inflating skill-authored failure counts with hook-captured tool failures.
 
 ### query/stats filter examples
 
@@ -51,7 +51,7 @@ journal.sh stats --source skill
 journal.sh query --since 7d --source hook
 ```
 
-`--source` accepts `skill` or `hook`. Specifying `--source skill` includes entries where the field is absent (migration compatibility). Omitting `--source` returns all entries.
+`--source` accepts `skill` or `hook`. Specifying `--source skill` includes entries where the field is absent (migration compatibility). Default behavior differs by subcommand: `query` omitting `--source` returns all entries (filtering use case); `stats` omitting `--source` defaults to `skill` (aggregation use case — hook failure captures are excluded from the denominator unless `--source hook` is given explicitly).
 
 ## Write guarantees
 

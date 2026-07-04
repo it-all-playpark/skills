@@ -393,9 +393,7 @@ cmd_stats() {
     if [[ -n "$since" ]]; then
         query_args+=("--since" "$since")
     fi
-    if [[ -n "$source_filter" ]]; then
-        query_args+=("--source" "$source_filter")
-    fi
+    query_args+=("--source" "${source_filter:-skill}")
 
     local entries
     entries=$(cmd_query "${query_args[@]}")
@@ -610,7 +608,7 @@ Subcommands:
   hook-capture           Capture failures from PostToolUse hook (reads stdin)
   track-skill            Track active skill from PreToolUse Skill hook (reads stdin)
   query [--since] [--skill] [--outcome] [--source <skill|hook>]  Query entries
-  stats [--since] [--source <skill|hook>]  Show summary statistics
+  stats [--since] [--source <skill|hook>]  Show summary statistics (default: skill)
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
