@@ -810,7 +810,7 @@ function mdCell(v) {
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
  * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
  * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296）
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296。checked な environment item は環境ノートで ✅ CI確認済 と表示される（issue #297））
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
@@ -1066,14 +1066,15 @@ function buildDevflowSummaryBody({
     lines.push('');
     lines.push(`<details><summary>🏗 環境ノート ${n} 件（sandbox 環境事象 — 人間の対応は通常不要）</summary>`);
     lines.push('');
-    lines.push('| id | pattern | 件数 | 内容 | evidence |');
-    lines.push('|---|---|---|---|---|');
+    lines.push('| 状態 | id | pattern | 件数 | 内容 | evidence |');
+    lines.push('|---|---|---|---|---|---|');
     for (const item of envItems) {
+      const status = item.checked === true ? '✅ CI確認済' : '—';
       const pattern = item.env_key != null ? item.env_key : '—';
       const envCount = typeof item.env_count === 'number' ? String(item.env_count) : '1';
       const content = mdCell(item.text);
       const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${item.id} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
+      lines.push(`| ${status} | ${item.id} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
     }
     lines.push('');
     lines.push('</details>');
@@ -1226,6 +1227,61 @@ function classifyConcerns(list) {
   return { env, concerns };
 }
 // ==== END inline: _lib/concern-classify.mjs ====
+
+// ==== BEGIN inline: _lib/ci-checks.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow Merge tier phase: gh pr checks の結果から build 系 CI check が全 green かを
+// 判定する純関数群。CI green を根拠に auto-close してよい ENV item を allowlist で限定する
+// （AC-3。npm-cache-eperm 等 build 検証系でない ENV key は含めない）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+// build 検証系 CI check 名の判定 regex。
+const BUILD_CHECK_RE = /build|vercel|ci/i;
+
+// CI green で auto-close してよい ENV key の allowlist（npm-cache-eperm 等は含めない）。
+const CI_VERIFIABLE_ENV_KEYS = ['turbopack-sandbox'];
+
+// gh pr checks exec-proxy の agent() schema。
+const CHECKS = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    checks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name', 'bucket'],
+        properties: {
+          name: { type: 'string' },
+          bucket: { type: 'string' },
+        },
+      },
+    },
+    error: { type: 'string' },
+  },
+};
+
+// gh pr checks --json name,bucket の出力から build 系 check が全 pass かを判定する純関数。
+function buildChecksGreen(checks) {
+  if (!Array.isArray(checks)) {
+    return { green: false, reason: 'invalid', checkNames: [] };
+  }
+  const builds = checks.filter((c) => c && typeof c.name === 'string' && BUILD_CHECK_RE.test(c.name));
+  if (builds.length === 0) {
+    return { green: false, reason: 'no-build-checks', checkNames: [] };
+  }
+  const checkNames = builds.map((c) => c.name);
+  if (builds.every((c) => c.bucket === 'pass')) {
+    return { green: true, reason: 'all-pass', checkNames };
+  }
+  if (builds.some((c) => c.bucket === 'pending')) {
+    return { green: false, reason: 'pending', checkNames };
+  }
+  return { green: false, reason: 'not-pass', checkNames };
+}
+// ==== END inline: _lib/ci-checks.mjs ====
 
 function applyDisjoint(p, label) {
   const { plan: np, demoted } = enforceDisjointParallel(p);
@@ -2731,6 +2787,38 @@ const mergeTier = classifyMergeTier({
   dangerFailClosed: dangerFailClosedFinal,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
+
+// ============================================================
+// CI checks 委譲 auto-close (issue #297): PR の build 系 CI check（Vercel 等）が全 pass なら、
+// sandbox 環境要因の turbopack-sandbox ENV item を機械的に checkItem する。
+// 判定は buildChecksGreen（決定論）のみ — LLM に判定させない。取得失敗・pending・build 系
+// check 不在は fail-open（据え置き + 警告 log）。classifyMergeTier の後に置くため merge tier
+// 判定・収束判定には構造的に影響しない（軸A 不変。ENV item は元々 advisory/minor lane）。
+// ============================================================
+const ciTargets = state.ledger.items.filter((it) =>
+  it.dimension === 'environment' && it.checked !== true && CI_VERIFIABLE_ENV_KEYS.includes(it.env_key))
+if (ciTargets.length > 0) {
+  const ciChecks = await agent(
+    `cd ${WT} で作業。次を実行し **stdout の JSON array を** {"ok": true, "checks": <array>} に包んで返せ`
+    + `（gh pr checks は check 失敗時 exit 1・pending 時 exit 8 を返すが、stdout に JSON array が出ていれば ok:true とする。`
+    + `stdout が空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
+    + `gh pr checks ${pr.pr_number} --json name,bucket`,
+    { agentType: 'dev-runner-haiku', schema: CHECKS, label: 'ci-checks', phase: 'Merge tier' },
+  )
+  if (!ciChecks || ciChecks.ok !== true || !Array.isArray(ciChecks.checks)) {
+    log(`⚠️ ci-checks: checks 取得失敗 (${ciChecks?.error ?? 'null/schema 不一致'}) — ENV item 据え置き（fail-open）`)
+  } else {
+    const verdict = buildChecksGreen(ciChecks.checks)
+    if (verdict.green) {
+      for (const it of ciTargets) {
+        state.ledger = checkItem(state.ledger, it.id, `CI で確認済み（${verdict.checkNames.join(', ')}）`)
+      }
+      log(`ci-checks: build 系 check 全 pass（${verdict.checkNames.join(', ')}）— ENV item ${ciTargets.length} 件を CI 委譲で解消`)
+    } else {
+      log(`ci-checks: ${verdict.reason} — ENV item 据え置き（fail-open）`)
+    }
+  }
+}
 
 // ============================================================
 // Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。

@@ -12,7 +12,7 @@
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
  * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
  * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296）
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296。checked な environment item は環境ノートで ✅ CI確認済 と表示される（issue #297））
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
@@ -268,14 +268,15 @@ export function buildDevflowSummaryBody({
     lines.push('');
     lines.push(`<details><summary>🏗 環境ノート ${n} 件（sandbox 環境事象 — 人間の対応は通常不要）</summary>`);
     lines.push('');
-    lines.push('| id | pattern | 件数 | 内容 | evidence |');
-    lines.push('|---|---|---|---|---|');
+    lines.push('| 状態 | id | pattern | 件数 | 内容 | evidence |');
+    lines.push('|---|---|---|---|---|---|');
     for (const item of envItems) {
+      const status = item.checked === true ? '✅ CI確認済' : '—';
       const pattern = item.env_key != null ? item.env_key : '—';
       const envCount = typeof item.env_count === 'number' ? String(item.env_count) : '1';
       const content = mdCell(item.text);
       const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${item.id} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
+      lines.push(`| ${status} | ${item.id} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
     }
     lines.push('');
     lines.push('</details>');
