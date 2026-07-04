@@ -94,11 +94,20 @@ function resolvePositiveIntArg(args, name) {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
+const BASE_ARG_ALLOWLIST = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
 function normalizeBaseArg(raw) {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
-    return trimmed === '' ? null : trimmed;
+    if (trimmed === '') return null;
+    if (!BASE_ARG_ALLOWLIST.test(trimmed)) {
+      throw new Error(
+        'dev-flow: args.base に使用できない文字が含まれる（受信: ' + JSON.stringify(trimmed) + '）。'
+        + '許可パターン: ' + BASE_ARG_ALLOWLIST.toString(),
+      );
+    }
+    return trimmed;
   }
   throw new Error('dev-flow: args.base は非空文字列で指定せよ（受信: ' + JSON.stringify(raw) + '）');
 }
@@ -118,8 +127,8 @@ function resolveBasePrompt(baseArg) {
   const req = typeof baseArg === 'string' ? baseArg : '';
   const cmd = 'REQ="' + req + '"; '
     + 'DB=$(git ls-remote --symref origin HEAD 2>/dev/null | awk \'/^ref:/{sub("refs/heads/","",$2); print $2; exit}\'); '
-    + 'DEV=false; git ls-remote --exit-code --heads origin dev >/dev/null 2>&1 && DEV=true; '
-    + 'REQE=false; if [ -n "$REQ" ]; then git ls-remote --exit-code --heads origin "$REQ" >/dev/null 2>&1 && REQE=true; fi; '
+    + 'DEV=false; git ls-remote --exit-code --heads origin "refs/heads/dev" >/dev/null 2>&1 && DEV=true; '
+    + 'REQE=false; if [ -n "$REQ" ]; then git ls-remote --exit-code --heads origin "refs/heads/$REQ" >/dev/null 2>&1 && REQE=true; fi; '
     + 'printf \'{"ok":true,"default_branch":"%s","dev_exists":%s,"requested_exists":%s}\\n\' "$DB" "$DEV" "$REQE"';
   return 'リポジトリルートで次のコマンドをそのまま実行し、stdout の JSON 1 行をそのまま **verbatim** で返せ'
     + '（判定や脚色をしない。要約・整形・追加コメントは付けない）:\n\n'

@@ -32,6 +32,34 @@ test('normalizeBaseArg: object → throw', () => {
   assert.throws(() => normalizeBaseArg({ base: 'main' }), /dev-flow: args\.base は非空文字列で指定せよ/);
 });
 
+test('normalizeBaseArg: コマンド置換 $(...) を含む → throw（shell injection 対策）', () => {
+  assert.throws(
+    () => normalizeBaseArg('x$(whoami)'),
+    /dev-flow: args\.base に使用できない文字が含まれる/,
+  );
+});
+
+test('normalizeBaseArg: ダブルクォートを含む → throw', () => {
+  assert.throws(
+    () => normalizeBaseArg('main"; rm -rf /; echo "'),
+    /dev-flow: args\.base に使用できない文字が含まれる/,
+  );
+});
+
+test('normalizeBaseArg: バッククォートを含む → throw', () => {
+  assert.throws(
+    () => normalizeBaseArg('x`whoami`'),
+    /dev-flow: args\.base に使用できない文字が含まれる/,
+  );
+});
+
+test('normalizeBaseArg: 先頭がハイフン → throw', () => {
+  assert.throws(
+    () => normalizeBaseArg('-rf'),
+    /dev-flow: args\.base に使用できない文字が含まれる/,
+  );
+});
+
 // ── RESOLVE_BASE_PROBE ──────────────────────────────────────────────────────
 
 test('RESOLVE_BASE_PROBE: required が期待通り', () => {
@@ -55,6 +83,12 @@ test('resolveBasePrompt: baseArg 指定時、その値を含む', () => {
 test('resolveBasePrompt: baseArg null 時、REQ が空文字になる', () => {
   const prompt = resolveBasePrompt(null);
   assert.match(prompt, /REQ=""/);
+});
+
+test('resolveBasePrompt: probe パターンが refs/heads/ 前置の完全 ref パス（tail-component match 誤検知対策）', () => {
+  const prompt = resolveBasePrompt(null);
+  assert.match(prompt, /git ls-remote --exit-code --heads origin "refs\/heads\/dev"/);
+  assert.match(prompt, /git ls-remote --exit-code --heads origin "refs\/heads\/\$REQ"/);
 });
 
 test('resolveBasePrompt: Output format / Tools / Boundary / Token cap セクションを含む', () => {
