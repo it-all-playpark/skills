@@ -46,7 +46,7 @@ function makeSandbox(analyzeReq, journalResult) {
       return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
     }
     if (label === 'worktree') {
-      return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
+      return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     }
     // Analyze: label が 'analyze' で始まる
     if (label.startsWith('analyze')) {
@@ -92,7 +92,7 @@ function makeSandbox(analyzeReq, journalResult) {
     }
     // PR: label が 'pr' で始まる
     if (label.startsWith('pr')) {
-      return { pr_url: 'http://x', pr_number: 1, committed: true };
+      return { pr_url: 'https://github.com/acme/skills/pull/1', pr_number: 1, committed: true };
     }
     // Merge tier: changed-files
     // → docs/test-only でないファイルを返す（AUTO 除外）
@@ -242,6 +242,8 @@ test('[journal-log] AC#1: Merge tier phase 後に journal-log dev-runner-haiku �
     '"skill":"dev-flow"',
     '"outcome":"success"',
     '"journal_sh"',
+    '"repo":"acme/skills"',
+    '"pr_number":1',
   ];
   for (const key of requiredKeys) {
     assert.ok(

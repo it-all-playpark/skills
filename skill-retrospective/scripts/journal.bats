@@ -581,3 +581,72 @@ JSON
     error_category=$(jq -r '.error.category' "$entry_file")
     [ "$error_category" = "runtime" ]
 }
+
+# ===========================================================================
+# Tests for --repo / --pr-number (issue #309)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (m): --repo と --pr-number が context に記録され、telemetry と共存する
+# ---------------------------------------------------------------------------
+@test "--repo and --pr-number recorded in context and coexist with telemetry" {
+    run "$SCRIPT" log dev-flow success --merge-tier REVIEW --repo acme/skills --pr-number 123
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    repo_val=$(jq -r '.context.repo' "$entry_file")
+    [ "$repo_val" = "acme/skills" ]
+
+    pr_number_val=$(jq '.context.pr_number' "$entry_file")
+    [ "$pr_number_val" = "123" ]
+
+    pr_number_type=$(jq '.context.pr_number | type' "$entry_file")
+    [ "$pr_number_type" = '"number"' ]
+
+    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
+    [ "$merge_tier" = "REVIEW" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (n): --repo に owner/name 形式でない値（スラッシュ無し）を渡すと exit 1
+# ---------------------------------------------------------------------------
+@test "--repo without slash exits non-zero with Invalid message" {
+    run "$SCRIPT" log dev-flow success --repo acme
+    [ "$status" -eq 1 ]
+    combined_output="$output"
+    [[ "$combined_output" == *"Invalid"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Test (o): --pr-number 0 は exit 1
+# ---------------------------------------------------------------------------
+@test "--pr-number 0 exits non-zero" {
+    run "$SCRIPT" log dev-flow success --pr-number 0
+    [ "$status" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (p): --pr-number abc（非数値）は exit 1
+# ---------------------------------------------------------------------------
+@test "--pr-number abc exits non-zero" {
+    run "$SCRIPT" log dev-flow success --pr-number abc
+    [ "$status" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (q): --repo / --pr-number 未指定時は context.repo / context.pr_number キーが無い
+# ---------------------------------------------------------------------------
+@test "no --repo/--pr-number -> context has no repo/pr_number keys" {
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_repo=$(jq '.context // {} | has("repo")' "$entry_file")
+    has_pr_number=$(jq '.context // {} | has("pr_number")' "$entry_file")
+    [ "$has_repo" = "false" ]
+    [ "$has_pr_number" = "false" ]
+}

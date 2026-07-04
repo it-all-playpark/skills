@@ -68,6 +68,7 @@ cmd_log() {
     local merge_tier="" gate_policy="" danger_hits=""
     local shape="" shape_refloored="" eval_verdict="" iterate_status="" plan_iter="" eval_iter=""
     local eval_staleness=""
+    local repo="" pr_number=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -107,6 +108,8 @@ cmd_log() {
             --eval-staleness) eval_staleness="$2"; shift 2 ;;
             --plan-iter) plan_iter="$2"; shift 2 ;;
             --eval-iter) eval_iter="$2"; shift 2 ;;
+            --repo) repo="$2"; shift 2 ;;
+            --pr-number) pr_number="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -149,6 +152,12 @@ cmd_log() {
             none|hash_mismatch|iterate_incomplete|iterate_fixed) ;;
             *) die_json "Invalid --eval-staleness: $eval_staleness. Must be none|hash_mismatch|iterate_incomplete|iterate_fixed" 1 ;;
         esac
+    fi
+    if [[ -n "$repo" ]] && ! [[ "$repo" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$ ]]; then
+        die_json "Invalid --repo: $repo. Must be owner/name format" 1
+    fi
+    if [[ -n "$pr_number" ]] && ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
+        die_json "Invalid --pr-number: $pr_number. Must be a positive integer" 1
     fi
 
     ensure_journal_dir
@@ -194,6 +203,14 @@ cmd_log() {
     fi
     if [[ -n "$mode" ]]; then
         context=$(echo "$context" | jq --arg v "$mode" '. + {mode: $v}')
+        has_context=true
+    fi
+    if [[ -n "$repo" ]]; then
+        context=$(echo "$context" | jq --arg v "$repo" '. + {repo: $v}')
+        has_context=true
+    fi
+    if [[ -n "$pr_number" ]]; then
+        context=$(echo "$context" | jq --argjson v "$pr_number" '. + {pr_number: $v}')
         has_context=true
     fi
     if [[ -n "$context_extra" ]]; then
@@ -612,7 +629,7 @@ Subcommands:
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
-  journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass
+  journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff

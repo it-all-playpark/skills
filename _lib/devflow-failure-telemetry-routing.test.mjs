@@ -30,7 +30,7 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig } = {}) {
     calls.push({ label, agentType, prompt: String(prompt ?? '') });
 
     if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
-    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label.startsWith('analyze')) return analyzeReq;
     if (agentType === 'dev-planner') {
       return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
@@ -135,10 +135,12 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-log-failure が
     `(1) agentType は 'dev-runner-haiku' のはずだが '${failureCalls[0]?.agentType}' だった`);
 
   const prompt = failureCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '~/.claude/journal/pending', 'devflow-']) {
+  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '~/.claude/journal/pending', 'devflow-', '"repo":"acme/skills"']) {
     assert.ok(prompt.includes(key),
       `(1) prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${prompt.slice(0, 500)}`);
   }
+  assert.ok(!prompt.includes('"pr_number"'),
+    `(1) failure 経路は PR 作成前のため prompt に '"pr_number"' を含むべきではない。prompt:\n${prompt.slice(0, 500)}`);
 
   assert.equal(result?.status, 'needs_clarification',
     `(1) result.status は 'needs_clarification' のはずだが ${JSON.stringify(result?.status)} だった`);
@@ -180,10 +182,12 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
     `(2) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回だった`);
 
   const prompt = failureCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '~/.claude/journal/pending', 'devflow-', '"shape"', '"plan_iter"']) {
+  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '~/.claude/journal/pending', 'devflow-', '"shape"', '"plan_iter"', '"repo":"acme/skills"']) {
     assert.ok(prompt.includes(key),
       `(2) prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${prompt.slice(0, 500)}`);
   }
+  assert.ok(!prompt.includes('"pr_number"'),
+    `(2) failure 経路は PR 作成前のため prompt に '"pr_number"' を含むべきではない。prompt:\n${prompt.slice(0, 500)}`);
 
   assert.equal(result?.status, 'needs_clarification',
     `(2) result.status は 'needs_clarification' のはずだが ${JSON.stringify(result?.status)} だった`);
@@ -219,10 +223,12 @@ test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前
     `(3) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回だった`);
 
   const prompt = failureCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"empty_diff"', '~/.claude/journal/pending', 'devflow-']) {
+  for (const key of ['"outcome":"failure"', '"error_category":"empty_diff"', '~/.claude/journal/pending', 'devflow-', '"repo":"acme/skills"']) {
     assert.ok(prompt.includes(key),
       `(3) prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${prompt.slice(0, 500)}`);
   }
+  assert.ok(!prompt.includes('"pr_number"'),
+    `(3) failure 経路は PR 作成前のため prompt に '"pr_number"' を含むべきではない。prompt:\n${prompt.slice(0, 500)}`);
 });
 
 // ============================================================

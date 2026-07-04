@@ -36,6 +36,11 @@ function makeSandbox(journalResult) {
       return { posted: true, method: 'gh', url: 'http://x' };
     }
 
+    // pr-meta: repo probe（F3。issue #309）
+    if (label === 'pr-meta' && agentType === 'dev-runner-haiku') {
+      return { url: 'https://github.com/acme/skills/pull/5' };
+    }
+
     // journal-log: label === 'journal-log' && agentType === 'dev-runner-haiku'
     if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
       journalCallCount += 1;
@@ -131,6 +136,8 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-log 呼び
     '"skill":"pr-iterate"',
     '"outcome":"success"',
     '"args":"pr=5"',
+    '"repo":"acme/skills"',
+    '"pr_number":5',
     '"merge_tier":"PR_ITERATE"',
     '"iterate_status":"lgtm"',
   ];
