@@ -185,7 +185,7 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | redgreen | `null` / schema 不一致 | fail-safe（inspection 据え置き） | テスト状態不明時は検査済みにしない |
 | diff-hash | `null` / schema 不一致 | fail-open（stale 検出 skip、警告のみ） | stale 検出の補助信号。失敗しても既存の deterministic gate を緩めない |
 | ui-verify（`ui-verify-server.sh` / ui-verifier） | `ok:false` / `null` / schema 不一致 | fail-open（skip + telemetry `failed_open`。install 失敗のみ `setup_failed` で区別） | advisory な UI 検証の補助信号。失敗しても既存の deterministic gate を緩めない。teardown は workflow 側 try/finally + 冪等 stop で保証 |
-| ci-checks（`gh pr checks`） | `null` / `ok:false` / schema 不一致 / build 系 check 不在 / pending | fail-open（turbopack-sandbox ENV item 据え置き、警告 log のみ） | advisory な環境ノート auto-close の補助信号。判定は buildChecksGreen（決定論）のみで LLM に委ねず、失敗しても deterministic gate・merge tier 判定を変えない（軸A 不変） |
+| ci-checks（`gh pr checks`） | `null` / `ok:false` / schema 不一致 / 該当 check 不在（env_key ごとの check-name regex 不一致） / pending | fail-open（対象 ENV item（turbopack-sandbox / bats-sandbox）据え置き、警告 log のみ） | advisory な環境ノート auto-close の補助信号。判定は envChecksGreen（決定論）のみで LLM に委ねず、失敗しても deterministic gate・merge tier 判定を変えない（軸A 不変） |
 
 ### 設計原則 (要約)
 
