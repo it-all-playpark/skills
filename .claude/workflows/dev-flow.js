@@ -194,6 +194,8 @@ function buildJournalHandoffPayload({
   outcome,
   args,
   issue,
+  repo,
+  pr_number,
   journal_sh,
   telemetry,
   error_category,
@@ -205,6 +207,8 @@ function buildJournalHandoffPayload({
   const payload = { skill, outcome };
   if (args) payload.args = args;
   if (issue != null && issue !== '') payload.issue = Number(issue);
+  if (repo != null && repo !== '') payload.repo = String(repo);
+  if (pr_number != null && pr_number !== '') payload.pr_number = Number(pr_number);
   if (journal_sh) payload.journal_sh = journal_sh;
   if (telemetry != null) payload.telemetry = telemetry;
   if (error_category) payload.error_category = error_category;
@@ -224,6 +228,14 @@ function buildJournalHandoffCommand({ prefix, id, payload }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
 
   return `mkdir -p ${JOURNAL_PENDING_DIR} && cat > ${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-$(date +%s).json <<'${JOURNAL_HANDOFF_DELIMITER}'\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+}
+
+function repoFromGithubUrl(url) {
+  const match = String(url ?? '').match(
+    /^https?:\/\/github\.com\/([^\/\s]+)\/([^\/\s#?]+)(?:[\/#?]|$)/,
+  );
+  if (!match) return null;
+  return `${match[1]}/${match[2]}`;
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
 
@@ -1438,6 +1450,7 @@ function applyDisjoint(p, label) {
 const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE_ARG = normalizeBaseArg(args?.base) // 明示指定（string）or null（未指定）。非文字列は即 throw
 let BASE // Setup(resolve-base) で確定。明示指定→検証、未指定→origin/dev→origin/HEAD の順に解決（issue #298）
+let REPO = null // Setup で解決（owner/name）。解決不能なら telemetry の repo を省略（fail-open）
 const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
 const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
@@ -1460,6 +1473,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     skill: 'dev-flow',
     outcome: 'failure',
     issue: Number(ISSUE),
+    repo: REPO,
     journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
     error_category,
     error_msg,
@@ -1528,7 +1542,7 @@ function evalHasCritical(ev) {
 // ---- schemas ----
 const SETUP = {
   type: 'object', required: ['worktree', 'branch'],
-  properties: { worktree: { type: 'string' }, branch: { type: 'string' } },
+  properties: { worktree: { type: 'string' }, branch: { type: 'string' }, repo: { type: 'string' } },
 }
 const DEPS = {
   type: 'object', required: ['status'],
@@ -1999,10 +2013,13 @@ const setup = need(await agent(
   + `2. worktree dir \`<repo>/.claude/worktrees/df-${ISSUE}\` が既に存在すれば再利用、無ければ\n`
   + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
   + `   （branch が既に存在する場合は -b を外して既存 branch を checkout）\n`
-  + `3. 作成/再利用した worktree の絶対パスと branch 名を返す`,
+  + `3. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
+  + `4. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
   { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
 ), 'Setup(worktree)')
 WT = setup.worktree
+REPO = setup.repo ?? null
+if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
 log(`worktree: ${WT} (branch ${setup.branch})`)
 
 // deps install（issue #291）: lockfile がある repo では Setup 完了時点で node_modules を整備する。
@@ -3068,6 +3085,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'dev-flow',
   outcome: 'success',
   issue: Number(ISSUE),
+  repo: repoFromGithubUrl(pr.pr_url) ?? REPO,
+  pr_number: Number(pr.pr_number),
   journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
   telemetry: {
     merge_tier: mergeTier.tier,

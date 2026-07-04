@@ -13,6 +13,8 @@ export function buildJournalHandoffPayload({
   outcome,
   args,
   issue,
+  repo,
+  pr_number,
   journal_sh,
   telemetry,
   error_category,
@@ -24,6 +26,8 @@ export function buildJournalHandoffPayload({
   const payload = { skill, outcome };
   if (args) payload.args = args;
   if (issue != null && issue !== '') payload.issue = Number(issue);
+  if (repo != null && repo !== '') payload.repo = String(repo);
+  if (pr_number != null && pr_number !== '') payload.pr_number = Number(pr_number);
   if (journal_sh) payload.journal_sh = journal_sh;
   if (telemetry != null) payload.telemetry = telemetry;
   if (error_category) payload.error_category = error_category;
@@ -43,4 +47,12 @@ export function buildJournalHandoffCommand({ prefix, id, payload }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
 
   return `mkdir -p ${JOURNAL_PENDING_DIR} && cat > ${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-$(date +%s).json <<'${JOURNAL_HANDOFF_DELIMITER}'\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+}
+
+export function repoFromGithubUrl(url) {
+  const match = String(url ?? '').match(
+    /^https?:\/\/github\.com\/([^\/\s]+)\/([^\/\s#?]+)(?:[\/#?]|$)/,
+  );
+  if (!match) return null;
+  return `${match[1]}/${match[2]}`;
 }
