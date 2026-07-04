@@ -11,11 +11,13 @@
  * @param {string} opts.mergeTier - 'HOLD'|'REVIEW'|'AUTO'
  * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
  * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
- * @param {Array<{id,text,severity,checked,dimension,evidence}>} opts.blockingItems - blocking items
+ * @param {Array<{id,text,severity,checked,dimension,evidence,source,floor,danger_class,fail_closed}>} opts.blockingItems - blocking items。
+ *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
+ *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
+ *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す
  * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296。checked な environment item は環境ノートで ✅ CI確認済 と表示される（issue #297））
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
- * @param {Array<{danger_class,cleared,evidence}>|null|undefined} opts.securityClearance - security clearance
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
@@ -36,7 +38,6 @@ export function buildDevflowSummaryBody({
   advisoryItems,
   ledgerConverged,
   acResults,
-  securityClearance,
   planConcerns,
   dangerHits,
   shape,
@@ -51,6 +52,24 @@ export function buildDevflowSummaryBody({
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
     throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
   }
+
+  // Security clearance は最終 ledger の SEC seed item（source:'seed' && dimension:'security' && floor:true）
+  // から導出する（evalResult.security_clearance は使わない — PR #16 型の表示矛盾を防ぐため）。
+  // SEC seed item は check.kind:'deterministic' のため全 gate_policy で blocking lane（軸A invariant）
+  // であり、blockingItems からの導出は gate_policy に依存せず成立する。
+  const secLedgerItems = (blockingItems || []).filter(
+    (it) => it.source === 'seed' && it.dimension === 'security' && it.floor === true
+  );
+  const securityClearance = secLedgerItems.map((it) => ({
+    danger_class: it.danger_class,
+    cleared: it.checked === true,
+    evidence: it.evidence,
+  }));
+  // fail_closed:true の SEC seed item がある場合、danger-grep-final が実行不能だったことを示す。
+  // この場合は「clean（clearance 不要）」と混同せず、専用の fail-closed 空状態行を出す。
+  const secFailClosed = (blockingItems || []).some(
+    (it) => it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true
+  );
 
   const lines = [];
 
@@ -144,9 +163,7 @@ export function buildDevflowSummaryBody({
   const uncheckedAdvisory = advArr.filter(it => it.checked !== true && it.dimension !== 'environment');
   const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true && it.dimension !== 'environment');
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
-  const uncleared = securityClearance && securityClearance.length > 0
-    ? securityClearance.filter(sc => sc.cleared !== true)
-    : [];
+  const uncleared = securityClearance.filter(sc => sc.cleared !== true);
   const concerns = planConcerns || [];
 
   const hasActionItems = uncheckedBlocking.length > 0
@@ -234,8 +251,12 @@ export function buildDevflowSummaryBody({
   if (!acResults || acResults.length === 0) {
     lines.push('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）');
   }
-  if (!securityClearance || securityClearance.length === 0) {
-    lines.push('Security clearance: danger-grep clean（clearance 不要）');
+  if (securityClearance.length === 0) {
+    if (secFailClosed) {
+      lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
+    } else {
+      lines.push('Security clearance: danger-grep clean（clearance 不要）');
+    }
   }
 
   // 7. 折りたたみブロック群（AC-3）
@@ -304,7 +325,7 @@ export function buildDevflowSummaryBody({
   }
 
   // cleared security clearance
-  if (securityClearance && securityClearance.length > 0) {
+  if (securityClearance.length > 0) {
     const cleared = securityClearance.filter(sc => sc.cleared === true);
     const c = cleared.length;
     const ct = securityClearance.length;

@@ -16,13 +16,31 @@ const BASE_INPUT = {
   advisoryItems: [],
   ledgerConverged: true,
   acResults: undefined,
-  securityClearance: undefined,
   planConcerns: [],
   dangerHits: [],
   shape: 'standard',
   testGreen: true,
   evalVerdict: 'pass',
 };
+
+// SEC seed ledger item ヘルパー（merge-tier.mjs の seedDangerLedgerItems 形状に合わせる）。
+// blockingItems の source:'seed' && dimension:'security' && floor:true item から
+// buildDevflowSummaryBody が Security clearance セクションを導出する。
+function secLedgerItem(dangerClass, { checked = false, evidence = null, floor = true, failClosed } = {}) {
+  const item = {
+    id: `SEC-${dangerClass.toUpperCase()}`,
+    text: `danger-grep detected ${dangerClass}`,
+    dimension: 'security',
+    severity: 'critical',
+    source: 'seed',
+    floor,
+    checked,
+    evidence,
+    danger_class: dangerClass,
+  };
+  if (failClosed !== undefined) item.fail_closed = failClosed;
+  return item;
+}
 
 // ─── at-a-glance テーブル絵文字 ──────────────────────────────────────────────
 
@@ -237,9 +255,9 @@ test('常時可視 invariant: 未達 AC が details より前に出る', () => {
 test('常時可視 invariant: 未確認 clearance が details より前に出る', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
-    securityClearance: [
-      { danger_class: 'XSS', cleared: false, evidence: '' },
-      { danger_class: 'SQL_INJECTION', cleared: true, evidence: 'ok' },
+    blockingItems: [
+      secLedgerItem('XSS', { checked: false, evidence: '' }),
+      secLedgerItem('SQL_INJECTION', { checked: true, evidence: 'ok' }),
     ],
   });
   const detailsIdx = body.indexOf('<details>');
@@ -273,15 +291,13 @@ test('要対応ゼロ -> 「### ✅ 要対応事項なし」を含み「### ⚠�
     ...BASE_INPUT,
     blockingItems: [
       { id: 'B1', text: 'resolved', severity: 'major', checked: true, dimension: 'quality' },
+      secLedgerItem('SQL_INJECTION', { checked: true, evidence: 'safe' }),
     ],
     advisoryItems: [
       { id: 'A1', text: 'resolved advisory', severity: 'minor', checked: true, dimension: 'style', escalate: false },
     ],
     acResults: [
       { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
-    ],
-    securityClearance: [
-      { danger_class: 'SQL_INJECTION', cleared: true, evidence: 'safe' },
     ],
     planConcerns: [],
   });
@@ -419,8 +435,8 @@ test('未達 AC テーブルに | 状態 | AC | 検証 | evidence | ヘッダー
 test('未確認 clearance テーブルに | 状態 | danger class | evidence | ヘッダーを含む', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
-    securityClearance: [
-      { danger_class: 'XSS', cleared: false, evidence: '' },
+    blockingItems: [
+      secLedgerItem('XSS', { checked: false, evidence: '' }),
     ],
   });
   assert.ok(body.includes('| 状態 | danger class | evidence |'), 'clearance テーブルヘッダーを含む');
@@ -518,23 +534,15 @@ test('acResults 6件全 satisfied -> details に「Acceptance Criteria 6/6 satis
 // ─── securityClearance details (AC-3) ────────────────────────────────────────
 
 test('securityClearance 未確認 1件 + cleared 6件 -> 未確認が details 外・cleared が details 内', () => {
-  const securityClearance = [];
+  const blockingItems = [];
   for (let i = 0; i < 6; i++) {
-    securityClearance.push({
-      danger_class: `SAFE_CLASS_${i}`,
-      cleared: true,
-      evidence: `evidence ${i}`,
-    });
+    blockingItems.push(secLedgerItem(`SAFE_CLASS_${i}`, { checked: true, evidence: `evidence ${i}` }));
   }
-  securityClearance.push({
-    danger_class: 'UNCLEARED_CLASS',
-    cleared: false,
-    evidence: '',
-  });
+  blockingItems.push(secLedgerItem('UNCLEARED_CLASS', { checked: false, evidence: '' }));
 
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
-    securityClearance,
+    blockingItems,
     dangerHits: ['UNCLEARED_CLASS'],
   });
 
@@ -545,6 +553,51 @@ test('securityClearance 未確認 1件 + cleared 6件 -> 未確認が details �
     assert.ok(unclearedIdx < detailsIdx, '未確認が details より前');
   }
   assert.ok(body.includes('Security clearance 6/7 cleared'), 'clearance details summary を含む');
+});
+
+// ─── PR #16 型表示矛盾の再現 / fail-closed 空状態行 (issue #299) ─────────────────
+
+test('PR#16 再現: dangerHits あり + SEC seed item unchecked -> 検出クラス行と未確認テーブルは出るが clean/cleared 表示は出ない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['danger hit unresolved'],
+    dangerHits: ['config'],
+    blockingItems: [
+      secLedgerItem('config', { checked: false, evidence: null }),
+    ],
+  });
+  assert.ok(body.includes('検出クラス: config'), '検出クラス行を含む');
+  assert.ok(body.includes('| ❌ 未確認 | config | —'), '未確認 clearance テーブル行を含む');
+  assert.ok(!body.includes('Security clearance: danger-grep clean（clearance 不要）'), 'clean 表示は出ない');
+  assert.ok(!body.includes('✅ Security clearance'), 'cleared details は出ない');
+});
+
+test('one-shot clearance 後: SEC seed item checked -> 「✅ Security clearance 1/1 cleared」details に config 行が出て未確認テーブルは出ない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'REVIEW',
+    dangerHits: ['config'],
+    blockingItems: [
+      secLedgerItem('config', { checked: true, evidence: 'security cleared (merge-tier one-shot): safe change' }),
+    ],
+  });
+  assert.ok(body.includes('✅ Security clearance 1/1 cleared'), 'cleared details summary を含む');
+  const lines = body.split('\n');
+  const clearedLine = lines.find(l => l.includes('| config |') && l.includes('security cleared (merge-tier one-shot)'));
+  assert.ok(clearedLine, 'cleared details に config 行を含む');
+  assert.ok(!body.includes('| 状態 | danger class | evidence |'), '未確認 clearance テーブルは出ない');
+});
+
+test('fail_closed:true の SEC item のみ -> 「Security clearance: danger-grep 実行不能（fail-closed — security 未検証）」を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [
+      secLedgerItem('config', { checked: false, evidence: null, floor: false, failClosed: true }),
+    ],
+  });
+  assert.ok(body.includes('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）'), 'fail-closed 空状態行を含む');
+  assert.ok(!body.includes('Security clearance: danger-grep clean（clearance 不要）'), 'clean 表示は出ない');
 });
 
 // ─── details 直後空行 (AC-3) ─────────────────────────────────────────────────
@@ -601,14 +654,19 @@ test('acResults 空配列 -> 「AC 判定なし」を含む', () => {
   assert.ok(body.includes('AC 判定なし'), '空配列時も AC 判定なしを含む');
 });
 
-test('securityClearance undefined -> 「Security clearance: danger-grep clean（clearance 不要）」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, securityClearance: undefined });
+test('blockingItems に SEC seed item が無い -> 「Security clearance: danger-grep clean（clearance 不要）」を含む', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, blockingItems: [] });
   assert.ok(body.includes('Security clearance: danger-grep clean（clearance 不要）'), 'clearance clean を含む');
 });
 
-test('securityClearance 空配列 -> 「Security clearance: danger-grep clean（clearance 不要）」を含む', () => {
-  const body = buildDevflowSummaryBody({ ...BASE_INPUT, securityClearance: [] });
-  assert.ok(body.includes('Security clearance: danger-grep clean（clearance 不要）'), '空配列 -> clean を含む');
+test('blockingItems に非 SEC item のみ含まれる -> 「Security clearance: danger-grep clean（clearance 不要）」を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [
+      { id: 'B1', text: 'non-security blocking item', severity: 'critical', checked: false, dimension: 'quality' },
+    ],
+  });
+  assert.ok(body.includes('Security clearance: danger-grep clean（clearance 不要）'), '非 SEC item のみ -> clean を含む');
 });
 
 // ─── 末尾マーカー (AC-5) ──────────────────────────────────────────────────────
@@ -648,6 +706,7 @@ test('決定性: 同入力 -> 2回呼んで byte 完全一致', () => {
     gatePolicy: 'llm-major-advisory',
     blockingItems: [
       { id: 'B1', text: 'critical issue', severity: 'critical', checked: false, dimension: 'security' },
+      secLedgerItem('SQL_INJECTION', { checked: true, evidence: 'parameterized' }),
     ],
     advisoryItems: [
       { id: 'A1', text: 'style', severity: 'minor', checked: false, dimension: 'style', escalate: false },
@@ -657,9 +716,6 @@ test('決定性: 同入力 -> 2回呼んで byte 完全一致', () => {
     acResults: [
       { ac_index: 0, satisfied: true, evidence: 'passed', verified_by: 'evaluator' },
       { ac_index: 1, satisfied: false, evidence: '', verified_by: undefined },
-    ],
-    securityClearance: [
-      { danger_class: 'SQL_INJECTION', cleared: true, evidence: 'parameterized' },
     ],
     planConcerns: ['concern 1', 'concern 2'],
     dangerHits: ['SQL_INJECTION'],
@@ -708,7 +764,7 @@ test('undefined が文字列に展開されない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     acResults: undefined,
-    securityClearance: undefined,
+    blockingItems: [],
   });
   assert.ok(!body.includes('undefined'), 'undefined が含まれない');
 });
@@ -761,7 +817,7 @@ test('旧形式「### Security clearance」セクション見出しが出ない'
 
 test('要対応テーブルあり + securityClearance 空 -> Security clearance 空状態行の直前行が空行', () => {
   // ケース(a): HOLD + danger clean の典型。unchecked blocking item あり（テーブル行末）、
-  // acResults は非空（AC 空状態行は出ない）、securityClearance のみ空（clearance 空状態行が出る）。
+  // acResults は非空（AC 空状態行は出ない）、SEC seed item なし（clearance 空状態行が出る）。
   // 要対応テーブルの最終行（| ... |）直後に空行なしで空状態行が push されると
   // GFM がテーブル行として吸収し壊れる。直前行が空行であることを assert する。
   const body = buildDevflowSummaryBody({
@@ -774,7 +830,6 @@ test('要対応テーブルあり + securityClearance 空 -> Security clearance 
     acResults: [
       { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
     ],
-    securityClearance: undefined,
   });
   const lines = body.split('\n');
   const secIdx = lines.findIndex(l => l.includes('Security clearance: danger-grep clean'));
@@ -784,7 +839,7 @@ test('要対応テーブルあり + securityClearance 空 -> Security clearance 
 
 test('planConcerns あり + acResults 空 -> AC 空状態行の直前行が空行', () => {
   // ケース(b): planConcerns が要対応セクションの最後の場合。
-  // blockingItems は非空（Goal Ledger 空状態行は出ない）、securityClearance は非空（clearance 空状態行は出ない）。
+  // blockingItems は非空（Goal Ledger 空状態行は出ない）、SEC seed item も非空（clearance 空状態行は出ない）。
   // "- concern A" 直後に空行なしで AC 空状態行が push されると
   // GFM の lazy continuation で bullet 内に視覚的に併合される。
   // 直前行が空行であることを assert する。
@@ -792,10 +847,10 @@ test('planConcerns あり + acResults 空 -> AC 空状態行の直前行が空�
     ...BASE_INPUT,
     blockingItems: [
       { id: 'B1', text: 'unresolved', severity: 'critical', checked: false, dimension: 'security' },
+      secLedgerItem('SQL_INJECTION', { checked: true, evidence: 'ok' }),
     ],
     planConcerns: ['concern A'],
     acResults: undefined,
-    securityClearance: [{ danger_class: 'SQL_INJECTION', cleared: true, evidence: 'ok' }],
   });
   const lines = body.split('\n');
   const acIdx = lines.findIndex(l => l.includes('Acceptance Criteria: AC 判定なし'));
