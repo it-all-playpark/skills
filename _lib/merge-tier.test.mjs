@@ -6,6 +6,7 @@ import {
   reconcileDanger,
   isDocsOrTestOnly,
   classifyMergeTier,
+  newlyUncheckedSecClasses,
 } from './merge-tier.mjs';
 
 // ---- Task 1: DANGER_CLASSES + seedSecurityLedger ----
@@ -376,4 +377,132 @@ test('classifyMergeTier: dangerFailClosed 未指定 → 従来通り(regression 
   const rReview = classifyMergeTier({ shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(rReview.tier, 'REVIEW');
   assert.ok(!rReview.reasons.some((x) => /fail-closed/.test(x)));
+});
+
+// ---- reconcileDanger: stale evidence クリア（issue #299）----
+
+test('reconcileDanger: checked=true(evidence="danger-grep clean")+floor=false の SEC item が hit に転じたとき evidence が null にクリアされる（自己矛盾 evidence を残さない）', () => {
+  const clean = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [] });
+  const authClean = clean.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(authClean.checked, true);
+  assert.match(authClean.evidence, /clean/);
+  assert.equal(authClean.floor, false);
+
+  const hit = reconcileDanger(clean, { ok: true, hits: [{ class: 'auth' }] });
+  const authHit = hit.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(authHit.checked, false);
+  assert.equal(authHit.severity, 'critical');
+  assert.equal(authHit.floor, true);
+  assert.equal(authHit.evidence, null, 'stale "danger-grep clean" evidence は null にクリアされるべき');
+});
+
+test('reconcileDanger: checked=false のまま引き続き hit する SEC item も evidence が null にクリアされる', () => {
+  const seeded = {
+    items: seedSecurityLedger().map((it) => ({ checked: false, evidence: 'some stale text', floor: false, ...it })),
+    round: 0,
+  };
+  const hit = reconcileDanger(seeded, { ok: true, hits: [{ class: 'auth' }] });
+  const authHit = hit.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(authHit.checked, false);
+  assert.equal(authHit.evidence, null);
+});
+
+test('reconcileDanger: floor=true+checked=true(evaluator clearance 済み)の SEC item が引き続き hit する場合は item 全体(evidence 含む)が据え置かれる', () => {
+  const step1 = reconcileDanger(ledgerWithSeeds(), { ok: true, hits: [{ class: 'auth' }] });
+  const cleared = {
+    ...step1,
+    items: step1.items.map((it) =>
+      it.id === 'SEC-AUTH' ? { ...it, checked: true, evidence: 'security cleared: no auth bypass' } : it),
+  };
+  const step2 = reconcileDanger(cleared, { ok: true, hits: [{ class: 'auth' }] });
+  const auth = step2.items.find((it) => it.id === 'SEC-AUTH');
+  assert.equal(auth.checked, true);
+  assert.equal(auth.floor, true);
+  assert.equal(auth.evidence, 'security cleared: no auth bypass', 'clearance 済みの evidence は据え置かれる');
+});
+
+// ---- newlyUncheckedSecClasses（issue #299）----
+
+function secItem(overrides) {
+  return {
+    id: `SEC-${(overrides.danger_class ?? 'auth').toUpperCase()}`,
+    dimension: 'security',
+    source: 'seed',
+    checked: false,
+    fail_closed: false,
+    danger_class: 'auth',
+    ...overrides,
+  };
+}
+
+test('newlyUncheckedSecClasses: before で checked(danger-grep clean) → after で unchecked に転じた class が返る', () => {
+  const before = { items: [secItem({ danger_class: 'auth', checked: true, evidence: 'danger-grep clean' })] };
+  const after = { items: [secItem({ danger_class: 'auth', checked: false, floor: true, severity: 'critical', evidence: null })] };
+  assert.deepEqual(newlyUncheckedSecClasses(before, after), ['auth']);
+});
+
+test('newlyUncheckedSecClasses: before から unchecked のままの class は返らない', () => {
+  const before = { items: [secItem({ danger_class: 'auth', checked: false })] };
+  const after = { items: [secItem({ danger_class: 'auth', checked: false })] };
+  assert.deepEqual(newlyUncheckedSecClasses(before, after), []);
+});
+
+test('newlyUncheckedSecClasses: floor+checked 維持(clearance 済み)の class は返らない', () => {
+  const before = { items: [secItem({ danger_class: 'auth', checked: true, floor: true, evidence: 'security cleared: ok' })] };
+  const after = { items: [secItem({ danger_class: 'auth', checked: true, floor: true, evidence: 'security cleared: ok' })] };
+  assert.deepEqual(newlyUncheckedSecClasses(before, after), []);
+});
+
+test('newlyUncheckedSecClasses: after で fail_closed:true の item は除外される', () => {
+  const before = { items: [secItem({ danger_class: 'auth', checked: true, evidence: 'danger-grep clean' })] };
+  const after = { items: [secItem({ danger_class: 'auth', checked: false, fail_closed: true, evidence: 'danger-grep unavailable (fail-closed)' })] };
+  assert.deepEqual(newlyUncheckedSecClasses(before, after), []);
+});
+
+test('newlyUncheckedSecClasses: SEC seed 以外(source評価者やdimension eval)の item は無視される', () => {
+  const before = {
+    items: [
+      secItem({ danger_class: 'auth', checked: true, evidence: 'danger-grep clean' }),
+      { id: 'EV-1', dimension: 'eval', source: 'evaluator', checked: true },
+    ],
+  };
+  const after = {
+    items: [
+      secItem({ danger_class: 'auth', checked: false, evidence: null }),
+      { id: 'EV-1', dimension: 'eval', source: 'evaluator', checked: false },
+    ],
+  };
+  assert.deepEqual(newlyUncheckedSecClasses(before, after), ['auth']);
+});
+
+test('newlyUncheckedSecClasses: before に同 id が無い item は対象外', () => {
+  const before = { items: [] };
+  const after = { items: [secItem({ danger_class: 'auth', checked: false })] };
+  assert.deepEqual(newlyUncheckedSecClasses(before, after), []);
+});
+
+test('newlyUncheckedSecClasses: 複数 class が after.items の順序で返る', () => {
+  const before = {
+    items: [
+      secItem({ danger_class: 'crypto', checked: true, evidence: 'danger-grep clean' }),
+      secItem({ danger_class: 'auth', checked: true, evidence: 'danger-grep clean' }),
+    ],
+  };
+  const after = {
+    items: [
+      secItem({ danger_class: 'auth', checked: false }),
+      secItem({ danger_class: 'crypto', checked: false }),
+    ],
+  };
+  assert.deepEqual(newlyUncheckedSecClasses(before, after), ['auth', 'crypto']);
+});
+
+test('newlyUncheckedSecClasses: 入力 ledger を mutate しない', () => {
+  const before = { items: [secItem({ danger_class: 'auth', checked: true, evidence: 'danger-grep clean' })] };
+  const after = { items: [secItem({ danger_class: 'auth', checked: false, evidence: null })] };
+  const beforeSnapshot = JSON.parse(JSON.stringify(before));
+  const afterSnapshot = JSON.parse(JSON.stringify(after));
+  newlyUncheckedSecClasses(before, after);
+  assert.deepEqual(before, beforeSnapshot);
+  assert.deepEqual(after, afterSnapshot);
 });

@@ -72,11 +72,39 @@ export function reconcileDanger(ledger, risk) {
       // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
       // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
       if (it.checked && it.floor) return it;
-      return { ...it, severity: 'critical', floor: true, checked: false, fail_closed: false };
+      // evidence を null クリアする。前回 reconcile が "danger-grep clean" 等で自動 check した
+      // stale evidence を残すと、unchecked/critical に戻った item に矛盾した evidence 表示が残る。
+      return { ...it, severity: 'critical', floor: true, checked: false, fail_closed: false, evidence: null };
     }
     return { ...it, checked: true, fail_closed: false, evidence: 'danger-grep clean' };
   });
   return { ...ledger, items };
+}
+
+// Merge tier phase で reconcileDanger 前後の SEC ledger を比較し、one-shot security
+// clearance の対象候補を決定論的に算出する純関数。
+// 「before で checked（Evaluate 時点等で解消済み）だったが after で unchecked に転じた」
+// SEC seed item の danger_class のみを返す（Evaluate 時点から未解消のまま残る SEC は
+// merge tier で clear させない = security floor 不変）。
+// after 側で fail_closed:true の item は defense-in-depth として除外する（fail-closed 時は
+// clearance 対象にしない）。before に同 id が無い item も対象外。ledger は mutate しない。
+export function newlyUncheckedSecClasses(before, after) {
+  const beforeById = new Map(
+    (before?.items ?? [])
+      .filter((it) => it.source === 'seed' && it.dimension === 'security')
+      .map((it) => [it.id, it]),
+  );
+  const result = [];
+  for (const it of (after?.items ?? [])) {
+    if (it.source !== 'seed' || it.dimension !== 'security') continue;
+    if (it.fail_closed === true) continue;
+    const prev = beforeById.get(it.id);
+    if (!prev) continue;
+    if (prev.checked === true && it.checked !== true) {
+      result.push(it.danger_class);
+    }
+  }
+  return result;
 }
 
 // 変更ファイルが docs(.md/.mdx/.txt, docs/) か test(*test*, *spec*, .bats) のみか。
