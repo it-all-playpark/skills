@@ -29,6 +29,7 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig } = {}) {
     const agentType = opts?.agentType ?? '';
     calls.push({ label, agentType, prompt: String(prompt ?? '') });
 
+    if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
     if (agentType === 'dev-planner') {

@@ -21,6 +21,10 @@ function makeSandbox(analyzeReq, implementerStub) {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
     allCapturedCalls.push({ label, agentType, prompt });
+    // Setup(resolve-base): base 解決 probe（issue #298）
+    if (label === 'resolve-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     }

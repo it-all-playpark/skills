@@ -55,6 +55,7 @@ function makeSandbox(analyzeReq, opts) {
     const agentType = agentOpts && agentOpts.agentType ? agentOpts.agentType : '';
     calls.push({ label, agentType, prompt: String(prompt || '') });
 
+    if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-233' };
     if (label.startsWith('analyze')) return analyzeReq;
     // file_changes は既定 realizedFiles（docs/a.md）と一致させ、宣言外扱いによる
