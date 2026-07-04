@@ -62,6 +62,26 @@ write_priterate_entry() {
 EOF
 }
 
+# Write one hook-capture journal entry (source="hook", no telemetry).
+# Mimics journal.sh cmd_hook_capture output on PostToolUseFailure: skill is
+# attributed to the active skill (e.g. "dev-flow") but source=="hook" and no
+# telemetry key is present.
+# $1 = filename, $2 = optional id override
+write_hook_entry() {
+    local fname="$1" id="${2:-$RANDOM}"
+    cat > "${CLAUDE_JOURNAL_DIR}/${fname}" <<EOF
+{
+  "version": "1.0.0",
+  "id": "hook-${id}",
+  "timestamp": "${TS}",
+  "skill": "dev-flow",
+  "outcome": "failure",
+  "source": "hook",
+  "error": { "category": "runtime", "message": "tool failed" }
+}
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # Test 1: empty journal -> exit 0, valid JSON, total_dev_flow_runs==0,
 #         micro_nonfiring severity=skipped
@@ -311,4 +331,83 @@ EOF
     [ "$status" -eq 0 ]
 
     printf '%s\n' "$output" | jq empty
+}
+
+# ---------------------------------------------------------------------------
+# Test 11: hook entries excluded from total and unknown buckets
+# ---------------------------------------------------------------------------
+@test "hook entries excluded from total and unknown buckets" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"gate_policy":"llm-major-advisory"}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"gate_policy":"llm-major-advisory"}' 2
+    write_hook_entry "hook-1.json" "h1"
+    write_hook_entry "hook-2.json" "h2"
+    write_hook_entry "hook-3.json" "h3"
+
+    # legacy hook-capture source (pre-canonicalization value) -- must also be excluded
+    cat > "${CLAUDE_JOURNAL_DIR}/legacy-hook.json" <<EOF
+{
+  "version": "1.0.0",
+  "id": "legacy-hook-1",
+  "timestamp": "${TS}",
+  "skill": "dev-flow",
+  "outcome": "failure",
+  "source": "hook-capture",
+  "error": { "category": "runtime", "message": "tool failed" }
+}
+EOF
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.total_dev_flow_runs')
+    [ "$total" -eq 2 ]
+
+    shape_unknown=$(printf '%s\n' "$output" | jq '.distributions.shape.unknown')
+    [ "$shape_unknown" -eq 0 ]
+
+    merge_tier_unknown=$(printf '%s\n' "$output" | jq '.distributions.merge_tier.unknown')
+    [ "$merge_tier_unknown" -eq 0 ]
+
+    gate_policy_unknown=$(printf '%s\n' "$output" | jq '.distributions.gate_policy.unknown')
+    [ "$gate_policy_unknown" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 12: micro_nonfiring denominator uses skill-source only
+# ---------------------------------------------------------------------------
+@test "micro_nonfiring denominator uses skill-source only" {
+    local i
+    for i in $(seq 1 9); do
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "s${i}"
+    done
+    for i in $(seq 1 5); do
+        write_hook_entry "hook-${i}.json" "h${i}"
+    done
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.total_dev_flow_runs')
+    [ "$total" -eq 9 ]
+
+    severity=$(printf '%s\n' "$output" | jq -r '[.anomalies[] | select(.type=="micro_nonfiring")][0].severity')
+    [ "$severity" = "skipped" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 13: iterate_status distribution unaffected by hook entries
+# ---------------------------------------------------------------------------
+@test "iterate_status distribution unaffected by hook entries" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' 1
+    write_hook_entry "hook-1.json" "h1"
+    write_hook_entry "hook-2.json" "h2"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    iterate_total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    [ "$iterate_total" -eq 1 ]
 }
