@@ -107,7 +107,7 @@ test('envChecksGreen(turbopack-sandbox): name が string でない要素は除�
 
 // --- bats-sandbox ---
 
-test('envChecksGreen(bats-sandbox): bats/test 系 check 全 pass（Lint は不一致で除外、fail でも影響なし）→ green:true', () => {
+test('envChecksGreen(bats-sandbox): bats check 全 pass（Lint・bats 不含の汎用 test check は不一致で除外、fail でも影響なし）→ green:true', () => {
   const checks = [
     { name: 'Bats Tests (issue #93 helpers)', bucket: 'pass' },
     { name: 'Node Unit Tests (workflow arg resolver)', bucket: 'pass' },
@@ -116,10 +116,10 @@ test('envChecksGreen(bats-sandbox): bats/test 系 check 全 pass（Lint は不�
   const result = envChecksGreen(checks, 'bats-sandbox');
   assert.equal(result.green, true);
   assert.equal(result.reason, 'all-pass');
-  assert.deepEqual(result.checkNames, ['Bats Tests (issue #93 helpers)', 'Node Unit Tests (workflow arg resolver)']);
+  assert.deepEqual(result.checkNames, ['Bats Tests (issue #93 helpers)']);
 });
 
-test('envChecksGreen(bats-sandbox): bats check が pending → reason:pending', () => {
+test('envChecksGreen(bats-sandbox): bats check が pending → reason:pending（bats 不含の Node Unit Tests は無関係）', () => {
   const checks = [
     { name: 'Bats Tests (issue #93 helpers)', bucket: 'pending' },
     { name: 'Node Unit Tests (workflow arg resolver)', bucket: 'pass' },
@@ -127,10 +127,17 @@ test('envChecksGreen(bats-sandbox): bats check が pending → reason:pending', 
   const result = envChecksGreen(checks, 'bats-sandbox');
   assert.equal(result.green, false);
   assert.equal(result.reason, 'pending');
+  assert.deepEqual(result.checkNames, ['Bats Tests (issue #93 helpers)']);
 });
 
 test('envChecksGreen(bats-sandbox): Subagent Dispatch Rules Lint のみ → no-matching-checks', () => {
   const checks = [{ name: 'Subagent Dispatch Rules Lint', bucket: 'pass' }];
+  const result = envChecksGreen(checks, 'bats-sandbox');
+  assert.deepEqual(result, { green: false, reason: 'no-matching-checks', checkNames: [] });
+});
+
+test('envChecksGreen(bats-sandbox): bats 不含の汎用 test check（Jest Tests）のみ pass → no-matching-checks（bats 未実行を green と誤認しない、false-green 回帰防止）', () => {
+  const checks = [{ name: 'Jest Tests', bucket: 'pass' }];
   const result = envChecksGreen(checks, 'bats-sandbox');
   assert.deepEqual(result, { green: false, reason: 'no-matching-checks', checkNames: [] });
 });
@@ -140,6 +147,11 @@ test('envChecksGreen(bats-sandbox): Subagent Dispatch Rules Lint のみ → no-m
 test('regex 境界: bats-sandbox は Bats Tests にマッチ、turbopack-sandbox は不一致', () => {
   assert.equal(ENV_CHECK_RES['bats-sandbox'].test('Bats Tests (issue #93 helpers)'), true);
   assert.equal(ENV_CHECK_RES['turbopack-sandbox'].test('Bats Tests (issue #93 helpers)'), false);
+});
+
+test('regex 境界: bats-sandbox は無関係な test/CI 系 check 名（Jest Tests / Contest Deploy）に不一致（部分文字列マッチによる誤爆防止）', () => {
+  assert.equal(ENV_CHECK_RES['bats-sandbox'].test('Jest Tests'), false);
+  assert.equal(ENV_CHECK_RES['bats-sandbox'].test('Contest Deploy'), false);
 });
 
 // --- unknown env key ---

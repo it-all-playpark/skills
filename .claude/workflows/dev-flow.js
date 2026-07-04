@@ -1398,7 +1398,7 @@ function classifyConcerns(list) {
 // （npm-cache-eperm 等 CI で検証できない ENV key は含めない）。
 const ENV_CHECK_RES = {
   'turbopack-sandbox': /build|vercel|ci/i,
-  'bats-sandbox': /bats|test/i,
+  'bats-sandbox': /bats/i,
 };
 
 // CI green で auto-close してよい ENV key の allowlist（ENV_CHECK_RES の key 集合）。

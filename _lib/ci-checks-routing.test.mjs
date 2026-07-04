@@ -350,7 +350,7 @@ test('[ci-checks][e] crash guard: bats green auto-close シナリオが sandbox 
   assertNoCrash(sharedBatsGreen.err, 'e-bats-green');
 });
 
-test('[ci-checks][AC-2][e] bats/test 系 check 全 pass で ENV-BATS-SANDBOX が auto-close される', async () => {
+test('[ci-checks][AC-2][e] bats check pass で ENV-BATS-SANDBOX が auto-close される（bats 不含の Node Unit Tests は evidence に含めない）', async () => {
   await ensureBatsGreenRun();
   const { calls } = sharedBatsGreen;
   const post = calls.find((c) => c.label === 'post-summary');
@@ -364,8 +364,12 @@ test('[ci-checks][AC-2][e] bats/test 系 check 全 pass で ENV-BATS-SANDBOX が
     `post-summary の prompt に「✅ CI確認済」が含まれていない:\n${post.prompt.slice(0, 2000)}`,
   );
   assert.ok(
-    post.prompt.includes('CI で確認済み（Bats Tests (issue #93 helpers), Node Unit Tests (workflow arg resolver)）'),
+    post.prompt.includes('CI で確認済み（Bats Tests (issue #93 helpers)）'),
     `post-summary の prompt に bats-sandbox の CI 確認済み文字列が含まれていない:\n${post.prompt.slice(0, 2000)}`,
+  );
+  assert.ok(
+    !post.prompt.includes('Node Unit Tests (workflow arg resolver)'),
+    `bats を含まない汎用 test check（Node Unit Tests）が evidence に含まれている（regex が /bats/i に絞られていない疑い）:\n${post.prompt.slice(0, 2000)}`,
   );
 });
 
