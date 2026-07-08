@@ -51,11 +51,21 @@ gh_stderr_file=$(mktemp)
 checks_json=""
 gh_exit=0
 attempt=0
+no_checks_detected=0
 while :; do
     gh_exit=0
     checks_json=$(gh pr checks "$PR_REF" "${REPO_FLAG[@]}" --json name,state,bucket 2>"$gh_stderr_file") || gh_exit=$?
     # exit 0 = checks complete, 8 = pending: both determinate -> NEVER retry
     if [[ $gh_exit -eq 0 || $gh_exit -eq 8 ]]; then
+        break
+    fi
+    # gh exits 1 (NOT 0) with "no checks reported on the '<branch>' branch" when the
+    # PR has zero checks (CI not configured / not yet triggered). Real gh never emits
+    # an empty JSON array with exit 0 for this case, so the length==0 jq branch below
+    # is unreachable in practice — this is where the "no checks" state actually lands.
+    # It is determinate, NOT a transient API error: stop, do not retry, report no_checks.
+    if [[ $gh_exit -eq 1 ]] && grep -qi 'no checks reported' "$gh_stderr_file"; then
+        no_checks_detected=1
         break
     fi
     if (( attempt >= ${#RETRY_DELAYS[@]} )); then
@@ -67,6 +77,12 @@ while :; do
 done
 gh_stderr=$(cat "$gh_stderr_file")
 rm -f "$gh_stderr_file"
+
+# PR has zero checks (gh exit 1 + "no checks reported"): determinate no_checks, exit 0.
+if [[ $no_checks_detected -eq 1 ]]; then
+    printf '{"status":"no_checks","passed":0,"failed":0,"pending":0,"skipped":0,"failed_checks":[],"pending_checks":[]}\n'
+    exit 0
+fi
 
 # exit 1 = real API error (auth failure, network error, unknown field, etc.)
 if [[ $gh_exit -ne 0 && $gh_exit -ne 8 ]]; then
