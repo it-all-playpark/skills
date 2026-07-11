@@ -141,7 +141,7 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope telemetry --windo
 | `merge_tier` | `skill == "dev-flow"` の entry | AUTO / REVIEW / HOLD / unknown（pr-iterate standalone entry は `merge_tier == "PR_ITERATE"` かつ `skill == "pr-iterate"` のため自然に対象外） |
 | `eval_iter` / `plan_iter` | `skill == "dev-flow"` の entry | max 値・cap（`eval_iter_cap` / `plan_iter_cap`）・cap 到達件数 |
 | `gate_policy` | `skill == "dev-flow"` の entry | deterministic-only / llm-major-advisory / llm-major-blocking / llm-autonomous / unknown |
-| `iterate_status` | `.telemetry.iterate_status != null` の全 entry（dev-flow + pr-iterate 両方） | lgtm / stuck / fix_failed / max_reached / unknown |
+| `iterate_status` | `.telemetry.iterate_status != null` の全 entry（dev-flow + pr-iterate 両方） | lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / unknown |
 
 欠落フィールドは `unknown` バケットへ計上する（fail-safe。die しない）。
 
@@ -150,7 +150,7 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope telemetry --windo
 | anomaly | severity | 条件 | 推奨アクション |
 |---------|----------|------|---------------|
 | **cap_pinned** | `warn` | dev-flow entry の `eval_iter >= eval_iter_cap`（既定 10）または `plan_iter >= plan_iter_cap`（既定 8）が 1 件以上 | 収束しない run が cap で打ち切られている。該当 issue の plan/evaluate の差し戻し内容（frozen target・topic-stuck 判定）を確認 |
-| **iterate_unhealthy** | `warn` | `iterate_status` を持つ全 run（dev-flow + pr-iterate）のうち非 lgtm（stuck / fix_failed / max_reached）の割合が `iterate_unhealthy_rate`（既定 0.30）を超え、かつ母数が `iterate_min_runs`（既定 3）以上 | pr-iterate の review ⇄ fix ループが健全に収束していない。pr-reviewer の finding 傾向・critical/major-always-blocks の影響を確認 |
+| **iterate_unhealthy** | `warn` | 非 lgtm（stuck / fix_failed / max_reached / ci_error）の割合が `iterate_unhealthy_rate`（既定 0.30）を超え（分母は ci_pending を除外した effective_total）、かつ effective_total が `iterate_min_runs`（既定 3）以上 | pr-iterate の review ⇄ fix ループが健全に収束していない。pr-reviewer の finding 傾向・critical/major-always-blocks の影響、または CI 未設定/pending が多い場合は CI 整備状況を確認 |
 | **micro_nonfiring** | `warn`（`skipped` は insufficient_data） | dev-flow の総 run 数が `micro_min_runs`（既定 10）以上あるにもかかわらず `shape: micro` の run が 0 件。run 数が `micro_min_runs` 未満のときは `severity: "skipped"`, `reason: "insufficient_data"` を明示出力し判定しない | classifyShape の micro floor 判定が過剰に安全側へ寄っていないか確認（`estimated_change_file_count` / `acceptance_criteria` 欠落・breaking 検出の誤爆有無） |
 
 ### window オプション

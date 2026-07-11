@@ -5,7 +5,9 @@
 # journal loader below, filters to the lookback window, and produces:
 #   - distributions : shape / merge_tier / eval_iter / plan_iter / gate_policy
 #                      (denominator = .skill == "dev-flow" entries)
-#                     iterate_status
+#                     iterate_status (6-value enum: lgtm / stuck / fix_failed /
+#                       max_reached / ci_error / ci_pending, plus unknown for
+#                       out-of-enum values)
 #                      (denominator = all entries with .telemetry.iterate_status
 #                       set, i.e. dev-flow AND pr-iterate)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring
@@ -244,7 +246,9 @@ ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c '
     stuck: ([.[] | select(.telemetry.iterate_status == "stuck")] | length),
     fix_failed: ([.[] | select(.telemetry.iterate_status == "fix_failed")] | length),
     max_reached: ([.[] | select(.telemetry.iterate_status == "max_reached")] | length),
-    unknown: ([.[] | select((.telemetry.iterate_status // "unknown") as $v | ($v != "lgtm" and $v != "stuck" and $v != "fix_failed" and $v != "max_reached"))] | length),
+    ci_error: ([.[] | select(.telemetry.iterate_status == "ci_error")] | length),
+    ci_pending: ([.[] | select(.telemetry.iterate_status == "ci_pending")] | length),
+    unknown: ([.[] | select((.telemetry.iterate_status // "unknown") as $v | ($v != "lgtm" and $v != "stuck" and $v != "fix_failed" and $v != "max_reached" and $v != "ci_error" and $v != "ci_pending"))] | length),
     total: (length)
   }
 ')
@@ -292,25 +296,30 @@ CAP_PINNED=$(echo "$DEVFLOW_ENTRIES" | jq -c \
   else [] end
   ')
 
-# (2) iterate_unhealthy: non-lgtm (stuck/fix_failed/max_reached) rate over
-#     iterate_status total, gated by iterate_min_runs.
+# (2) iterate_unhealthy: non-lgtm (stuck/fix_failed/max_reached/ci_error) rate
+#     over iterate_status total minus ci_pending (effective_total), gated by
+#     iterate_min_runs (evaluated against effective_total).
 ITERATE_UNHEALTHY=$(echo "$ITERATE_STATUS_DIST" | jq -c \
   --argjson rate_threshold "$ITERATE_UNHEALTHY_RATE" \
   --argjson min_runs "$ITERATE_MIN_RUNS" \
   '
   (.total) as $total |
-  (.stuck + .fix_failed + .max_reached) as $nonlgtm |
-  if $total >= $min_runs and $total > 0 and (($nonlgtm / $total) > $rate_threshold) then
+  (.total - .ci_pending) as $effective_total |
+  (.stuck + .fix_failed + .max_reached + .ci_error) as $nonlgtm |
+  if $effective_total >= $min_runs and $effective_total > 0 and (($nonlgtm / $effective_total) > $rate_threshold) then
     [{
       type: "iterate_unhealthy",
       severity: "warn",
-      rate: ($nonlgtm / $total),
+      rate: ($nonlgtm / $effective_total),
       detail: {
         total: $total,
+        effective_total: $effective_total,
         non_lgtm: $nonlgtm,
         stuck: .stuck,
         fix_failed: .fix_failed,
         max_reached: .max_reached,
+        ci_error: .ci_error,
+        ci_pending: .ci_pending,
         threshold: $rate_threshold,
         min_runs: $min_runs
       }

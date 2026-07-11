@@ -411,3 +411,91 @@ EOF
     iterate_total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
     [ "$iterate_total" -eq 1 ]
 }
+
+# ---------------------------------------------------------------------------
+# Test 14: ci_error/ci_pending counted in iterate_status distribution
+# ---------------------------------------------------------------------------
+@test "ci_error/ci_pending counted in iterate_status distribution" {
+    for i in 1 2; do
+        write_devflow_entry "ci-error-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"ci_error\"}" "ce${i}"
+    done
+    write_devflow_entry "ci-pending-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"ci_pending"}' "cp1"
+    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "l1"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    ci_error=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.ci_error')
+    ci_pending=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.ci_pending')
+    unknown=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.unknown')
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+
+    [ "$ci_error" -eq 2 ]
+    [ "$ci_pending" -eq 1 ]
+    [ "$unknown" -eq 0 ]
+    [ "$total" -eq 4 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 15: ci_error counts toward iterate_unhealthy numerator
+#          (lgtm x2 + ci_error x2, 2/4=50% > 30%, min_runs=3 satisfied)
+# ---------------------------------------------------------------------------
+@test "ci_error counts toward iterate_unhealthy numerator" {
+    for i in 1 2; do
+        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
+    done
+    for i in 1 2; do
+        write_devflow_entry "ci-error-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"ci_error\"}" "ce${i}"
+    done
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    found=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy" and .severity=="warn")] | length')
+    [ "$found" -ge 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 16: ci_pending excluded from iterate_unhealthy denominator
+#          (lgtm x2 + stuck x1 + ci_pending x7: raw total=10 -> 1/10=10% would
+#          not fire, but effective_total = 10 - 7 = 3 -> 1/3 ~= 33% > 30% with
+#          min_runs=3 satisfied on effective_total -> fires)
+# ---------------------------------------------------------------------------
+@test "ci_pending excluded from iterate_unhealthy denominator" {
+    for i in 1 2; do
+        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
+    done
+    write_devflow_entry "stuck-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"stuck"}' "st1"
+    for i in $(seq 1 7); do
+        write_devflow_entry "ci-pending-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"ci_pending\"}" "cp${i}"
+    done
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    found=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy" and .severity=="warn")] | length')
+    [ "$found" -ge 1 ]
+
+    effective_total=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy")][0].detail.effective_total')
+    ci_pending_detail=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy")][0].detail.ci_pending')
+
+    [ "$effective_total" -eq 3 ]
+    [ "$ci_pending_detail" -eq 7 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 17: out-of-enum iterate_status still lands in unknown
+# ---------------------------------------------------------------------------
+@test "out-of-enum iterate_status still lands in unknown" {
+    write_devflow_entry "bogus-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"bogus"}' "b1"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    unknown=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.unknown')
+    [ "$unknown" -eq 1 ]
+}
