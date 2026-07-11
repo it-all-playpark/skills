@@ -4,7 +4,7 @@ description: |
   Diagnose dev-flow pipeline health from skill-retrospective journal telemetry.
   Detects anomalies in dev-flow/pr-iterate distributions: cap張り付き
   (eval_iter/plan_iter pinned at loop cap), iterate不調率 (pr-iterate
-  stuck/fix_failed/max_reached rate), micro不発火 (micro shape never selected
+  stuck/fix_failed/max_reached/ci_error rate), micro不発火 (micro shape never selected
   despite sufficient run volume).
   Use when: (1) dev-flow issues or underperformance,
   (2) shape / merge_tier / gate_policy distribution review, (3) weekly dev-flow health review,
@@ -78,6 +78,8 @@ actionable improvement recommendations.
 - 分布（shape / merge_tier / eval_iter / plan_iter / gate_policy）の分母は
   `.skill == "dev-flow"` の entry のみ。`iterate_status` の分母のみ
   `.telemetry.iterate_status` を持つ全 entry（dev-flow + pr-iterate 両方）
+- `iterate_unhealthy` の判定では ci_error は非 lgtm 分子に含み、ci_pending は分母から除外する
+  （effective_total = total - ci_pending）
 - 閾値・default window は `skill-config.json` の `"dev-flow-doctor"` 配下
   (`thresholds.eval_iter_cap` / `plan_iter_cap` / `iterate_unhealthy_rate` /
   `iterate_min_runs` / `micro_min_runs`) で設定する
@@ -106,7 +108,7 @@ eval_iter: max 10, cap 10, at_cap_count 3
 plan_iter: max 7, cap 8, at_cap_count 0
 
 **iterate_status** distribution (denominator: dev-flow + pr-iterate runs with
-iterate_status set, total 38): lgtm 30, stuck 4, fix_failed 3, max_reached 1, unknown 0
+iterate_status set, total 41): lgtm 30, stuck 4, fix_failed 3, max_reached 1, ci_error 2, ci_pending 1, unknown 0
 
 ### Anomalies
 
@@ -217,7 +219,7 @@ Output JSON schema:
     "eval_iter": {"max": 10, "cap": 10, "at_cap_count": 3},
     "plan_iter": {"max": 7, "cap": 8, "at_cap_count": 0},
     "gate_policy": {"deterministic-only": 0, "llm-major-advisory": 40, "llm-major-blocking": 2, "llm-autonomous": 0, "unknown": 0},
-    "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "unknown": 0, "total": 38}
+    "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "ci_error": 2, "ci_pending": 1, "unknown": 0, "total": 41}
   },
   "anomalies": [
     {"type": "cap_pinned", "severity": "warn", "count": 3, "detail": {"...": "..."}},

@@ -26,9 +26,10 @@ anomaly は次の 3 種類で、それぞれ `severity: "warn"` のとき `-5`:
 
 - `cap_pinned`: dev-flow entry が `eval_iter_cap`（既定 10）または `plan_iter_cap`（既定 8）に
   張り付いている件数が 1 件以上
-- `iterate_unhealthy`: `iterate_status`（lgtm / stuck / fix_failed / max_reached）を持つ全 run
-  （dev-flow + pr-iterate）のうち非 lgtm で終了した割合が `iterate_unhealthy_rate`（既定 0.30）を
-  超え、かつ母数が `iterate_min_runs`（既定 3）以上
+- `iterate_unhealthy`: `iterate_status`（lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending）を
+  持つ全 run（dev-flow + pr-iterate）のうち非 lgtm（stuck / fix_failed / max_reached / ci_error）で
+  終了した割合（ci_pending は分母から除外）が `iterate_unhealthy_rate`（既定 0.30）を超え、かつ
+  ci_pending 除外後の母数が `iterate_min_runs`（既定 3）以上
 - `micro_nonfiring`: dev-flow の総 run 数が `micro_min_runs`（既定 10）以上あるにもかかわらず
   `shape: micro` の run が 0 件
 

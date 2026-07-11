@@ -74,13 +74,15 @@ const STATUS_HEADLINE = {
   'stuck': '⚠️ STUCK — 人間レビューへエスカレーション',
   'fix_failed': '⚠️ 自動修正失敗 — 人間へエスカレーション',
   'max_reached': '⚠️ 反復上限到達',
+  'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
+  'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
 };
 
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号
- * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached'
+ * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending'
  * @param {number} opts.iterations - 総反復回数
  * @param {string} opts.lastDecision - 最終判定
  * @param {string} opts.lastSummary - 最終サマリーテキスト
