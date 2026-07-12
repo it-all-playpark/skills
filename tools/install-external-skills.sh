@@ -2,12 +2,13 @@
 # Restore external skills into .agents/skills/ (gitignored) from tools/external-skills.tsv.
 # Usage: tools/install-external-skills.sh [--dry-run]
 #
-# `npx skills add <repo> -y` は repo 単位でインストールするため、マニフェスト記載外の
-# スキルが同じ repo から追加で入ることがある（skills CLI の仕様）。
+# per-skill 構文 (`npx skills add <repo>@<skill> -y`) でインストールするため、
+# 数百スキルを収録する repo が取得元でも manifest 記載分しか入らない。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="${MANIFEST:-$SCRIPT_DIR/external-skills.tsv}"
+REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 DRY_RUN=0
 case "${1:-}" in
   --dry-run) DRY_RUN=1 ;;
@@ -20,48 +21,47 @@ esac
 skills=()
 sources=()
 skipped=()
-while IFS=$'\t' read -r name source _; do
+while IFS=$'\t' read -r name source _ || [[ -n "$name" ]]; do
   [[ -z "$name" || "$name" == \#* ]] && continue
   if [[ -z "$source" || "$source" == "-" ]]; then
     skipped+=("$name")
     continue
   fi
   skills+=("$name")
-  dup=0
-  if ((${#sources[@]})); then
-    for s in "${sources[@]}"; do
-      [[ "$s" == "$source" ]] && { dup=1; break; }
-    done
-  fi
-  ((dup)) || sources+=("$source")
+  sources+=("$source")
 done <"$MANIFEST"
 
 if ((${#skipped[@]})); then
   echo "skipped (no recorded source): ${skipped[*]}" >&2
 fi
 
-if ((${#sources[@]} == 0)); then
+if ((${#skills[@]} == 0)); then
   echo "no installable sources in manifest" >&2
   exit 1
 fi
 
-echo "install sources (${#sources[@]}):"
-printf '  %s\n' "${sources[@]}"
+echo "install skills (${#skills[@]}):"
+for i in "${!skills[@]}"; do
+  echo "  ${sources[$i]}@${skills[$i]}"
+done
 
 if ((DRY_RUN)); then
-  printf 'npx skills add %s -y\n' "${sources[@]}"
+  for i in "${!skills[@]}"; do
+    echo "npx skills add ${sources[$i]}@${skills[$i]} -y"
+  done
   exit 0
 fi
 
 command -v npx >/dev/null 2>&1 || { echo "npx not found" >&2; exit 1; }
-for source in "${sources[@]}"; do
-  npx skills add "$source" -y
+# npx skills add は cwd 基準でインストールするため repo root に固定する
+cd "$REPO_ROOT"
+for i in "${!skills[@]}"; do
+  npx skills add "${sources[$i]}@${skills[$i]}" -y
 done
 
-repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
 missing=0
 for name in "${skills[@]}"; do
-  if [[ ! -d "$repo_root/.agents/skills/$name" ]]; then
+  if [[ ! -d "$REPO_ROOT/.agents/skills/$name" ]]; then
     echo "MISSING after install: $name" >&2
     missing=1
   fi
