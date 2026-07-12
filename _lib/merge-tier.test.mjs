@@ -506,3 +506,79 @@ test('newlyUncheckedSecClasses: 入力 ledger を mutate しない', () => {
   assert.deepEqual(before, beforeSnapshot);
   assert.deepEqual(after, afterSnapshot);
 });
+
+// ---- classifyMergeTier: finalReconcile / finalTestGreen（Final reconcile phase, issue #320）----
+
+test('classifyMergeTier: finalReconcile/finalTestGreen 未指定 → 既存挙動不変、reasons に final 関連文言なし', () => {
+  const r = classifyMergeTier({
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+  });
+  assert.equal(r.tier, 'REVIEW');
+  assert.ok(!r.reasons.some((x) => /final/i.test(x)), `reasons に final 関連文言を含むべきでないが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: finalReconcile:"skipped" + finalTestGreen:null → 既存挙動不変', () => {
+  const r = classifyMergeTier({
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    finalReconcile: 'skipped', finalTestGreen: null,
+  });
+  assert.equal(r.tier, 'REVIEW');
+  assert.ok(!r.reasons.some((x) => /final/i.test(x)), `reasons に final 関連文言を含むべきでないが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: finalReconcile:"reverified" + finalTestGreen:true → REVIEW のまま', () => {
+  const r = classifyMergeTier({
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    finalReconcile: 'reverified', finalTestGreen: true,
+  });
+  assert.equal(r.tier, 'REVIEW');
+  assert.ok(!r.reasons.some((x) => /final/i.test(x)), `reasons に final 関連文言を含むべきでないが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: finalReconcile:"reverified" + finalTestGreen:false → HOLD + reason に "final test red" を含む', () => {
+  const r = classifyMergeTier({
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    finalReconcile: 'reverified', finalTestGreen: false,
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => x.includes('final test red')), `reasons に 'final test red' を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: finalReconcile:"unavailable" → HOLD + reason に "Final reconcile 再検証不能" を含む', () => {
+  const r = classifyMergeTier({
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    finalReconcile: 'unavailable',
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => x.includes('Final reconcile 再検証不能')), `reasons に 'Final reconcile 再検証不能' を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: micro+docsOrTestOnly の AUTO ケースに finalReconcile:"reverified"+finalTestGreen:true を足しても AUTO のまま', () => {
+  const r = classifyMergeTier({
+    shape: 'micro', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: true, escalateCount: 0,
+    finalReconcile: 'reverified', finalTestGreen: true,
+  });
+  assert.equal(r.tier, 'AUTO');
+  assert.ok(!r.reasons.some((x) => /final/i.test(x)), `reasons に final 関連文言を含むべきでないが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: finalReconcile:"bogus"(out-of-enum) → throw', () => {
+  assert.throws(() => classifyMergeTier({
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    finalReconcile: 'bogus',
+  }), /invalid finalReconcile/);
+});

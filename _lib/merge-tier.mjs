@@ -115,6 +115,13 @@ export function isDocsOrTestOnly(files) {
     || /(^|\/|\.)(test|spec)([./]|$)/i.test(f) || /\.bats$/i.test(f));
 }
 
+// Final reconcile（pr-iterate fix 適用後の最終 tree 再検証、issue #320）の finalReconcile enum。
+// 'skipped': fixes_applied=0 で Final reconcile 自体を実行しなかった（zero-overhead routing）。
+// 'reverified': 最終 tree に対して sync + test 再実行を行った。
+// 'unavailable': worktree sync 失敗 / test agent null・schema 不一致等で再検証結果を取得できなかった
+//   （fail-safe。HOLD へ倒す）。
+const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
+
 // merge tier を算出する。merge は全 tier 人間(AUTO も推奨ラベルのみ。真 auto-merge は W6)。
 // HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
 // breaking は analyze 構造化判定 (breakingStructured) と issue title/body keyword scan
@@ -129,7 +136,15 @@ export function isDocsOrTestOnly(files) {
 //   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
 //   security 不明という意味論で明示するための defense-in-depth（danger_hits の実 hit とは別軸）。
 //   未指定 = falsy = reason 追加なし、tier 判定値も従来と完全同一（regression なし）。
+// s.finalReconcile (optional 'skipped'|'reverified'|'unavailable'): Final reconcile phase の実行結果
+//   （issue #320）。'unavailable' は fail-safe HOLD reason を追記する。out-of-enum は明示 error
+//   （後方互換 scaffolding 禁止規約）。未指定(undefined/null) = reason 追加なし。
+// s.finalTestGreen (optional true|false|null): Final reconcile での最終 tree test 再実行結果。
+//   false のとき専用 HOLD reason を追記する。true/null(未実行 or no_tests)は reason 追加なし。
 export function classifyMergeTier(s) {
+  if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
+    throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
+  }
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
   if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
@@ -138,6 +153,8 @@ export function classifyMergeTier(s) {
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
+  if (s.finalReconcile === 'unavailable') reasons.push('Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須');
+  if (s.finalTestGreen === false) reasons.push('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）');
   if (reasons.length) return { tier: 'HOLD', reasons };
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
