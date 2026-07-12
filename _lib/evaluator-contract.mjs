@@ -28,4 +28,16 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。',
     '- concern は advisory であり収束を block しない。解消済み concern を resolved:true にすると終端サマリーの要対応から除外される。',
   ].join('\n'),
+  // final_ac_reconcile は prompt 注入のみで配送する（evaluator.md へ mirror しない）。
+  // .claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification 防止）であり、
+  // dev-flow の final-ac-reconcile 呼び出しが本契約全文を毎回 prompt へ verbatim 注入するため
+  // 機能上も mirror は不要。既存 3 キーの evaluator.md verbatim mirror 規約の対象外。
+  final_ac_reconcile: [
+    'final_ac_reconcile 契約:',
+    '- prompt で「final AC 再検証」が指示された場合、渡された既存 acceptance_criteria のみを最終 PR tree に対して one-shot で再検証し、ac_results:[{ac_index, satisfied, evidence, verified_by}] を全 AC 分ちょうど 1 回ずつ返す。',
+    '- ac_index は渡された AC の index をそのまま返す。AC の追加・分割・言い換え・index の欠落や重複は禁止。',
+    '- 新規 finding の報告・feedback の付与・コード修正・追加検証 loop の要求は禁止（出力は ac_results のみが使われる）。',
+    '- satisfied:true / false のいずれでも非空 evidence 必須（file:line / テスト名 / 実行結果）。index 不完全・evidence 欠落は出力全体が unavailable 扱いとなり merge tier が HOLD になる。',
+    '- UI に関する AC は渡された final UI raw checks を根拠に判定する。final UI 検証が failed_open / setup_failed / 未実行の場合、inspection のみで satisfied:true にせず satisfied:false として理由を evidence に書く。',
+  ].join('\n'),
 }
