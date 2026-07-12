@@ -18,10 +18,6 @@ apt-get install bats          # Ubuntu / Debian
 # テスト実行
 bash tests/run-all-bats.sh           # ローカル開発 (bats 未インストール時は graceful skip)
 bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを error 扱い)
-
-# 外部スキル (.agents/skills/ — gitignored) の復元 (新規マシンのセットアップ時)
-tools/install-external-skills.sh --dry-run   # 実行内容の確認
-tools/install-external-skills.sh             # tools/external-skills.tsv から一括インストール
 ```
 
 ディレクトリ構造:
