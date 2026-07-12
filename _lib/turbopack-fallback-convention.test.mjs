@@ -97,13 +97,17 @@ test('[turbopack-fallback] implPrompt〜runImplement 区間に識別子が含ま
   );
 });
 
-test('[turbopack-fallback] execValidatePhase〜execSecurityFloorPhase 区間に識別子が 2 回含まれる（test prompt + green-fix prompt）', () => {
-  const region = sliceBetween(src, 'async function execValidatePhase', 'async function execSecurityFloorPhase');
+test('[turbopack-fallback] VALIDATE_TEST_PROMPT〜execSecurityFloorPhase 区間に識別子が 2 回含まれる（test prompt + green-fix prompt）', () => {
+  // issue #320 (F4): test prompt は runValidateLoop と Final reconcile の test#final で共有するため
+  // module-scope const VALIDATE_TEST_PROMPT へ抽出済み（WT 確定後・execValidatePhase 定義より前に配置）。
+  // そのため識別子の物理的な出現位置は execValidatePhase 関数本体の外（VALIDATE_TEST_PROMPT 定義）+
+  // 内（green-fix prompt）の 2 箇所に分かれる。
+  const region = sliceBetween(src, 'const VALIDATE_TEST_PROMPT', 'async function execSecurityFloorPhase');
   const count = region.split(IDENT).length - 1;
   assert.equal(
     count,
     2,
-    `execValidatePhase 区間に ${IDENT} が ${count} 回出現（期待: 2 回 = test prompt + green-fix prompt）`,
+    `VALIDATE_TEST_PROMPT〜execSecurityFloorPhase 区間に ${IDENT} が ${count} 回出現（期待: 2 回 = test prompt(VALIDATE_TEST_PROMPT) + green-fix prompt）`,
   );
 });
 

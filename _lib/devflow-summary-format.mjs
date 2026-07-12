@@ -27,6 +27,9 @@
  * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
+ * @param {string|null|undefined} opts.finalReconcile - Final reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #320）
+ * @param {boolean|null|undefined} opts.finalTestGreen - Final reconcile 時の test green フラグ（issue #320）
+ * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -47,10 +50,18 @@ export function buildDevflowSummaryBody({
   iterateFixesApplied,
   uiVerify,
   uiVerifyMode,
+  finalReconcile,
+  finalTestGreen,
+  finalUiVerify,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
     throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
+  }
+
+  const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
+  if (finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(finalReconcile)) {
+    throw new Error('buildDevflowSummaryBody: invalid finalReconcile: ' + finalReconcile);
   }
 
   // Security clearance は最終 ledger の SEC seed item（source:'seed' && dimension:'security' && floor:true）
@@ -152,6 +163,12 @@ export function buildDevflowSummaryBody({
   if (uiVerify != null && uiVerify !== 'skipped') {
     const modeSuffix = uiVerifyMode ? ` (mode: ${uiVerifyMode})` : '';
     lines.push(`- UI 検証 (ui-verify): ${uiVerify}${modeSuffix}`);
+  }
+
+  // 5c. Final reconcile 結果行（issue #320。null/undefined/'skipped' では出力しない）
+  if (finalReconcile != null && finalReconcile !== 'skipped') {
+    const t = finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
+    lines.push(`- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ${finalReconcile} — final test: ${t}` + (finalUiVerify != null ? `, final ui-verify: ${finalUiVerify}` : ''));
   }
 
   // 6. 要対応セクション（常時可視）
