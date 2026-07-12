@@ -26,8 +26,8 @@ function makeSandbox(journalResult) {
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
 
-    // CI チェック: agentType 'dev-runner' かつ prompt に 'check-ci.sh' を含む
-    if (agentType === 'dev-runner' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
+    // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
+    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
       return { status: 'passed', failed_checks: [] };
     }
 
@@ -37,7 +37,7 @@ function makeSandbox(journalResult) {
     }
 
     // pr-meta: repo probe（F3。issue #309）
-    if (label === 'pr-meta' && agentType === 'dev-runner-haiku') {
+    if (label === 'pr-meta' && agentType === 'dev-runner-haiku-ro') {
       return { url: 'https://github.com/acme/skills/pull/5' };
     }
 

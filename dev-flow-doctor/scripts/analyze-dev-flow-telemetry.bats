@@ -28,36 +28,65 @@ teardown() {
     rm -f "$SKILL_CONFIG_PATH"
 }
 
+# Compute an ISO-8601 UTC timestamp offset from a base ISO timestamp by N
+# seconds (may be negative). macOS (BSD date) and GNU date compatible.
+iso_offset() {
+    local base="$1" offset_secs="$2"
+    local epoch
+    epoch=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$base" "+%s" 2>/dev/null \
+        || date -u -d "$base" "+%s")
+    epoch=$((epoch + offset_secs))
+    date -u -r "$epoch" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+        || date -u -d "@${epoch}" "+%Y-%m-%dT%H:%M:%SZ"
+}
+
 # Write one dev-flow journal entry with the given telemetry JSON object.
-# $1 = filename, $2 = telemetry JSON (compact), $3 = optional id override
+# $1 = filename, $2 = telemetry JSON (compact), $3 = optional id override,
+# $4 = optional repo (e.g. "acme/skills"), $5 = optional pr_number,
+# $6 = optional timestamp override (defaults to $TS). $4/$5/$6 are additive:
+# existing 3-arg callers are unaffected (no "context" key emitted unless both
+# repo and pr_number are given).
 write_devflow_entry() {
-    local fname="$1" telemetry="$2" id="${3:-$RANDOM}"
+    local fname="$1" telemetry="$2" id="${3:-$RANDOM}" repo="${4:-}" pr_number="${5:-}" ts="${6:-$TS}"
+    local context_json=""
+    if [[ -n "$repo" && -n "$pr_number" ]]; then
+        context_json=",
+  \"context\": { \"repo\": \"${repo}\", \"pr_number\": ${pr_number} }"
+    fi
     cat > "${CLAUDE_JOURNAL_DIR}/${fname}" <<EOF
 {
   "version": "1.0.0",
   "id": "devflow-${id}",
-  "timestamp": "${TS}",
+  "timestamp": "${ts}",
   "skill": "dev-flow",
   "outcome": "success",
   "source": "skill",
-  "telemetry": ${telemetry}
+  "telemetry": ${telemetry}${context_json}
 }
 EOF
 }
 
 # Write one pr-iterate standalone journal entry.
-# $1 = filename, $2 = iterate_status value
+# $1 = filename, $2 = iterate_status value, $3 = optional id override,
+# $4 = optional repo, $5 = optional pr_number, $6 = optional timestamp override
+# (defaults to $TS). Additive, same backward-compat contract as
+# write_devflow_entry above.
 write_priterate_entry() {
-    local fname="$1" status="$2" id="${3:-$RANDOM}"
+    local fname="$1" status="$2" id="${3:-$RANDOM}" repo="${4:-}" pr_number="${5:-}" ts="${6:-$TS}"
+    local context_json=""
+    if [[ -n "$repo" && -n "$pr_number" ]]; then
+        context_json=",
+  \"context\": { \"repo\": \"${repo}\", \"pr_number\": ${pr_number} }"
+    fi
     cat > "${CLAUDE_JOURNAL_DIR}/${fname}" <<EOF
 {
   "version": "1.0.0",
   "id": "priterate-${id}",
-  "timestamp": "${TS}",
+  "timestamp": "${ts}",
   "skill": "pr-iterate",
   "outcome": "success",
   "source": "skill",
-  "telemetry": { "merge_tier": "PR_ITERATE", "iterate_status": "${status}" }
+  "telemetry": { "merge_tier": "PR_ITERATE", "iterate_status": "${status}" }${context_json}
 }
 EOF
 }
@@ -537,4 +566,211 @@ EOF
 
     found=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy" and .severity=="warn")] | length')
     [ "$found" -ge 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 19: nested join -- dev-flow + pr-iterate entries from the same PR
+#          execution (same repo/pr_number, within nested_join_window_seconds)
+#          are normalized into a single run.
+# ---------------------------------------------------------------------------
+@test "nested join: dev-flow + pr-iterate same repo/pr within window -> 1 normalized run" {
+    local ts2
+    ts2=$(iso_offset "$TS" 30)
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "10" "$TS"
+    write_priterate_entry "pi1.json" "lgtm" "1" "acme/skills" "10" "$ts2"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    raw=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.raw_entries')
+    joined=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.joined_pairs')
+    lgtm=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.lgtm')
+
+    [ "$total" -eq 1 ]
+    [ "$raw" -eq 2 ]
+    [ "$joined" -eq 1 ]
+    [ "$lgtm" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 20: standalone pr-iterate re-runs on the same PR are never joined to
+#          each other (structural guarantee -- only dev-flow x pr-iterate
+#          cross-skill pairs are eligible for joining).
+# ---------------------------------------------------------------------------
+@test "standalone pr-iterate re-runs are not joined to each other" {
+    local ts2
+    ts2=$(iso_offset "$TS" 60)
+    write_priterate_entry "pi1.json" "lgtm" "1" "acme/skills" "20" "$TS"
+    write_priterate_entry "pi2.json" "lgtm" "2" "acme/skills" "20" "$ts2"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    joined=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.joined_pairs')
+
+    [ "$total" -eq 2 ]
+    [ "$joined" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 21: a dev-flow entry joins only its nearest pr-iterate entry; an extra
+#          pr-iterate re-run on the same PR remains an independent run
+#          (no over-joining -- greedy matching consumes at most one pair).
+# ---------------------------------------------------------------------------
+@test "dev-flow joins only nearest pr-iterate, extra pr-iterate stays standalone" {
+    local ts_near ts_far
+    ts_near=$(iso_offset "$TS" 20)
+    ts_far=$(iso_offset "$TS" 120)
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "30" "$TS"
+    write_priterate_entry "pi-near.json" "lgtm" "near" "acme/skills" "30" "$ts_near"
+    write_priterate_entry "pi-far.json" "lgtm" "far" "acme/skills" "30" "$ts_far"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    joined=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.joined_pairs')
+
+    [ "$total" -eq 2 ]
+    [ "$joined" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 22: same PR number but different repo is never joined (cross-repo
+#          collision guard).
+# ---------------------------------------------------------------------------
+@test "cross-repo entries with the same pr_number are not joined" {
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "10" "$TS"
+    write_priterate_entry "pi1.json" "lgtm" "1" "other/repo" "10" "$TS"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    joined=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.joined_pairs')
+
+    [ "$total" -eq 2 ]
+    [ "$joined" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 23: entries lacking correlation info (no .context) are never
+#          implicitly deduped -- they are counted individually as unjoinable.
+# ---------------------------------------------------------------------------
+@test "legacy entries without context are unjoinable and counted individually" {
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1"
+    write_priterate_entry "pi1.json" "lgtm" "1"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    unjoinable=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.unjoinable')
+    joined=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.joined_pairs')
+
+    [ "$total" -eq 2 ]
+    [ "$unjoinable" -eq 2 ]
+    [ "$joined" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 24: when a joined pair's parent (dev-flow) and child (pr-iterate)
+#          iterate_status disagree, the child value wins and the run is
+#          counted once, with status_conflicts incremented.
+# ---------------------------------------------------------------------------
+@test "conflicting parent/child iterate_status counted once with status_conflicts" {
+    local ts2
+    ts2=$(iso_offset "$TS" 30)
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "40" "$TS"
+    write_priterate_entry "pi1.json" "stuck" "1" "acme/skills" "40" "$ts2"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    stuck=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.stuck')
+    lgtm=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.lgtm')
+    conflicts=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.status_conflicts')
+
+    [ "$total" -eq 1 ]
+    [ "$stuck" -eq 1 ]
+    [ "$lgtm" -eq 0 ]
+    [ "$conflicts" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 25: entries beyond nested_join_window_seconds are not joined (bounded
+#          fallback -- a delayed handoff flush is not incorrectly collapsed).
+# ---------------------------------------------------------------------------
+@test "join window boundary: entries beyond nested_join_window_seconds not joined" {
+    cat > "$SKILL_CONFIG_PATH" <<'EOF'
+{
+  "dev-flow-doctor": {
+    "thresholds": {
+      "nested_join_window_seconds": 600
+    }
+  }
+}
+EOF
+
+    local ts2
+    ts2=$(iso_offset "$TS" 7200)
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "50" "$TS"
+    write_priterate_entry "pi1.json" "lgtm" "1" "acme/skills" "50" "$ts2"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    joined=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.normalization.joined_pairs')
+
+    [ "$total" -eq 2 ]
+    [ "$joined" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 26: iterate_unhealthy anomaly must be evaluated against the
+#          *normalized* population, not the raw entry count. 3 nested pairs
+#          (parent+child, both lgtm) + 2 standalone pr-iterate "stuck" runs:
+#          raw non-lgtm rate is 2/8=25% (would not fire), but normalized rate
+#          is 2/5=40% (> 30% threshold) -- it must fire, proving the
+#          denominator switch.
+# ---------------------------------------------------------------------------
+@test "iterate_unhealthy anomaly uses normalized denominator, not raw" {
+    local i
+    for i in 1 2 3; do
+        local pr_num=$((100 + i))
+        local ts2
+        ts2=$(iso_offset "$TS" 30)
+        write_devflow_entry "df${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "p${i}" "acme/skills" "$pr_num" "$TS"
+        write_priterate_entry "pi${i}.json" "lgtm" "c${i}" "acme/skills" "$pr_num" "$ts2"
+    done
+    write_priterate_entry "stuck1.json" "stuck" "s1"
+    write_priterate_entry "stuck2.json" "stuck" "s2"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    raw=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.raw_entries')
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+    [ "$raw" -eq 8 ]
+    [ "$total" -eq 5 ]
+
+    found=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy" and .severity=="warn")] | length')
+    [ "$found" -ge 1 ]
+
+    detail_total=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy")][0].detail.total')
+    detail_raw=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy")][0].detail.raw_entries')
+    [ "$detail_total" -eq 5 ]
+    [ "$detail_raw" -eq 8 ]
 }

@@ -8,8 +8,10 @@
 #                     iterate_status (7-value enum: lgtm / stuck / fix_failed /
 #                       max_reached / ci_error / ci_pending / review_contract_error,
 #                       plus unknown for out-of-enum values)
-#                      (denominator = all entries with .telemetry.iterate_status
-#                       set, i.e. dev-flow AND pr-iterate)
+#                      (denominator = normalized run population -- nested
+#                       dev-flow + pr-iterate entries from the same PR
+#                       execution are joined into a single run before
+#                       counting; see "Nested run normalization" below)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring
 #
 # Usage:
@@ -58,6 +60,7 @@ DEFAULT_PLAN_ITER_CAP="8"
 DEFAULT_ITERATE_UNHEALTHY_RATE="0.30"
 DEFAULT_ITERATE_MIN_RUNS="3"
 DEFAULT_MICRO_MIN_RUNS="10"
+DEFAULT_NESTED_JOIN_WINDOW_SECONDS="600"
 
 load_config_field() {
   # $1 = jq path inside .["dev-flow-doctor"]
@@ -96,6 +99,7 @@ PLAN_ITER_CAP=$(load_config_field ".thresholds.plan_iter_cap" "$DEFAULT_PLAN_ITE
 ITERATE_UNHEALTHY_RATE=$(load_config_field ".thresholds.iterate_unhealthy_rate" "$DEFAULT_ITERATE_UNHEALTHY_RATE" | jq -r '.')
 ITERATE_MIN_RUNS=$(load_config_field ".thresholds.iterate_min_runs" "$DEFAULT_ITERATE_MIN_RUNS" | jq -r '.')
 MICRO_MIN_RUNS=$(load_config_field ".thresholds.micro_min_runs" "$DEFAULT_MICRO_MIN_RUNS" | jq -r '.')
+NESTED_JOIN_WINDOW_SECONDS=$(load_config_field ".thresholds.nested_join_window_seconds" "$DEFAULT_NESTED_JOIN_WINDOW_SECONDS" | jq -r '.')
 
 # ----------------------------------------------------------------------------
 # Window -> ISO since
@@ -183,8 +187,10 @@ DEVFLOW_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq -c \
 
 TOTAL_DEV_FLOW_RUNS=$(echo "$DEVFLOW_ENTRIES" | jq 'length')
 
-# iterate_status entries: denominator is all entries (dev-flow + pr-iterate)
-# that recorded a telemetry.iterate_status value.
+# iterate_status entries: raw population is all entries (dev-flow + pr-iterate)
+# that recorded a telemetry.iterate_status value. This raw population is then
+# normalized below (see "Nested run normalization") before being counted into
+# distributions.iterate_status.
 # source: skill のみ（hook 由来の failure capture エントリは telemetry を持たず
 # 分母を汚染するため除外。source 欠落は skill 扱い）。
 ITERATE_ENTRIES=$(echo "$WINDOW_ENTRIES" | jq -c \
@@ -240,17 +246,106 @@ PLAN_ITER_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson cap "$PLAN_ITER_CAP" 
   }
 ')
 
-ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c '
+# ----------------------------------------------------------------------------
+# Nested run normalization
+#
+# dev-flow can invoke pr-iterate as a nested workflow call (workflow('pr-iterate')).
+# When that happens, both the dev-flow entry (parent) and the pr-iterate entry
+# (child) record telemetry.iterate_status for the *same* logical run, which
+# would double-count that run in distributions.iterate_status. This stage
+# de-duplicates such nested pairs deterministically:
+#
+#   1. Entries with both .context.repo and .context.pr_number set, and a
+#      parseable ISO-8601 .timestamp, are "joinable". Everything else is
+#      "unjoinable" and is kept as-is (no implicit dedupe of entries lacking
+#      correlation info).
+#   2. Joinable entries are grouped by "repo#pr_number".
+#   3. Within each group, dev-flow entries are greedily matched (in
+#      timestamp/id order) against the *nearest* unconsumed pr-iterate entry
+#      within nested_join_window_seconds. Same-skill entries are never
+#      matched against each other (so standalone pr-iterate re-runs, or
+#      dev-flow re-runs, on the same PR are never collapsed into one run).
+#   4. A joined pair counts as a single normalized run, using the
+#      pr-iterate (child) telemetry.iterate_status value. If the parent and
+#      child values differ, normalization.status_conflicts is incremented
+#      (the run itself still counts once, using the child value).
+#   5. The normalized population = joined pairs + unmatched dev-flow entries
+#      + unmatched pr-iterate entries + other-skill joinable entries +
+#      unjoinable entries. normalized total = raw_entries - joined_pairs.
+# ----------------------------------------------------------------------------
+
+ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c --argjson window "$NESTED_JOIN_WINDOW_SECONDS" '
+  def try_epoch:
+    (try (.timestamp | fromdateiso8601) catch null);
+
+  def match_group(devflow; priterate):
+    (priterate | to_entries) as $pi_indexed |
+    (reduce devflow[] as $df (
+      {pairs: [], consumed: [], unmatched_df: []};
+      . as $acc |
+      ($pi_indexed
+        | map(select(. as $item | ($acc.consumed | index($item.key)) | not))
+        | map(. as $item | $item + {absdiff: (($df._epoch - $item.value._epoch) | if . < 0 then -. else . end)})
+        | map(select(.absdiff <= $window))
+        | sort_by([.absdiff, .value.timestamp, .value.id])
+      ) as $candidates |
+      if ($candidates | length) > 0 then
+        ($candidates[0]) as $best |
+        $acc | .pairs += [{df: $df, pi: $best.value}] | .consumed += [$best.key]
+      else
+        $acc | .unmatched_df += [$df]
+      end
+    )) as $result |
+    $result + {unmatched_pi: ($pi_indexed | map(select(. as $item | ($result.consumed | index($item.key)) | not)) | map(.value))};
+
+  . as $entries |
+  ($entries | length) as $raw_entries |
+  ($entries | map(. + {_epoch: try_epoch})) as $with_epoch |
+  ($with_epoch | map(select(
+    ((.context.repo // null) != null) and ((.context.pr_number // null) != null) and (._epoch != null)
+  ))) as $joinable |
+  ($with_epoch | map(select(
+    (((.context.repo // null) == null) or ((.context.pr_number // null) == null) or (._epoch == null))
+  ))) as $unjoinable |
+  ($joinable | group_by("\(.context.repo)#\(.context.pr_number|tostring)")) as $groups |
+
+  ($groups | map(
+    (map(select(.skill == "dev-flow")) | sort_by(.timestamp, .id)) as $devflow |
+    (map(select(.skill == "pr-iterate")) | sort_by(.timestamp, .id)) as $priterate |
+    (map(select(.skill != "dev-flow" and .skill != "pr-iterate"))) as $other |
+    match_group($devflow; $priterate) as $m |
+    {
+      joined_statuses: ($m.pairs | map(.pi.telemetry.iterate_status)),
+      status_conflicts: ($m.pairs | map(select(.df.telemetry.iterate_status != .pi.telemetry.iterate_status)) | length),
+      standalone_statuses: (($m.unmatched_df + $m.unmatched_pi + $other) | map(.telemetry.iterate_status))
+    }
+  )) as $group_results |
+
+  ($unjoinable | map(.telemetry.iterate_status)) as $unjoinable_statuses |
+
+  (($group_results | map(.joined_statuses) | add) // []) as $joined_all |
+  (($group_results | map(.standalone_statuses) | add) // []) as $standalone_all |
+  (($group_results | map(.status_conflicts) | add) // 0) as $conflicts_total |
+  ($group_results | map(.joined_statuses | length) | add // 0) as $joined_pairs |
+  ($joined_all + $standalone_all + $unjoinable_statuses) as $normalized_statuses |
+
   {
-    lgtm: ([.[] | select(.telemetry.iterate_status == "lgtm")] | length),
-    stuck: ([.[] | select(.telemetry.iterate_status == "stuck")] | length),
-    fix_failed: ([.[] | select(.telemetry.iterate_status == "fix_failed")] | length),
-    max_reached: ([.[] | select(.telemetry.iterate_status == "max_reached")] | length),
-    ci_error: ([.[] | select(.telemetry.iterate_status == "ci_error")] | length),
-    ci_pending: ([.[] | select(.telemetry.iterate_status == "ci_pending")] | length),
-    review_contract_error: ([.[] | select(.telemetry.iterate_status == "review_contract_error")] | length),
-    unknown: ([.[] | select((.telemetry.iterate_status // "unknown") as $v | ($v != "lgtm" and $v != "stuck" and $v != "fix_failed" and $v != "max_reached" and $v != "ci_error" and $v != "ci_pending" and $v != "review_contract_error"))] | length),
-    total: (length)
+    lgtm: ([$normalized_statuses[] | select(. == "lgtm")] | length),
+    stuck: ([$normalized_statuses[] | select(. == "stuck")] | length),
+    fix_failed: ([$normalized_statuses[] | select(. == "fix_failed")] | length),
+    max_reached: ([$normalized_statuses[] | select(. == "max_reached")] | length),
+    ci_error: ([$normalized_statuses[] | select(. == "ci_error")] | length),
+    ci_pending: ([$normalized_statuses[] | select(. == "ci_pending")] | length),
+    review_contract_error: ([$normalized_statuses[] | select(. == "review_contract_error")] | length),
+    unknown: ([$normalized_statuses[] | select(. as $v | ($v != "lgtm" and $v != "stuck" and $v != "fix_failed" and $v != "max_reached" and $v != "ci_error" and $v != "ci_pending" and $v != "review_contract_error"))] | length),
+    total: ($normalized_statuses | length),
+    raw_entries: $raw_entries,
+    normalization: {
+      joined_pairs: $joined_pairs,
+      unjoinable: ($unjoinable | length),
+      status_conflicts: $conflicts_total,
+      join_window_seconds: $window
+    }
   }
 ')
 
@@ -298,8 +393,11 @@ CAP_PINNED=$(echo "$DEVFLOW_ENTRIES" | jq -c \
   ')
 
 # (2) iterate_unhealthy: non-lgtm (stuck/fix_failed/max_reached/ci_error) rate
-#     over iterate_status total minus ci_pending (effective_total), gated by
-#     iterate_min_runs (evaluated against effective_total).
+#     over the normalized iterate_status total minus ci_pending
+#     (effective_total), gated by iterate_min_runs (evaluated against
+#     effective_total). detail.raw_entries surfaces the pre-normalization
+#     entry count alongside the normalized total/effective_total for
+#     visibility into how much de-duplication occurred.
 ITERATE_UNHEALTHY=$(echo "$ITERATE_STATUS_DIST" | jq -c \
   --argjson rate_threshold "$ITERATE_UNHEALTHY_RATE" \
   --argjson min_runs "$ITERATE_MIN_RUNS" \
@@ -314,6 +412,7 @@ ITERATE_UNHEALTHY=$(echo "$ITERATE_STATUS_DIST" | jq -c \
       rate: ($nonlgtm / $effective_total),
       detail: {
         total: $total,
+        raw_entries: .raw_entries,
         effective_total: $effective_total,
         non_lgtm: $nonlgtm,
         stuck: .stuck,
