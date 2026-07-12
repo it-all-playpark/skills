@@ -220,8 +220,9 @@ export function buildDevflowSummaryBody({
 
     if (ledgerActionItems.length > 0) {
       lines.push('');
-      lines.push('| 状態 | id | lane | dimension | 内容 |');
-      lines.push('|---|---|---|---|---|');
+      // id 列は出さない（ledger 内部識別子はレビュアーにはノイズ。機構側は ledger データを直接参照する）
+      lines.push('| 状態 | lane | dimension | 内容 |');
+      lines.push('|---|---|---|---|');
       for (const item of ledgerActionItems) {
         const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : '❌ 未解消';
         const dimension = item.dimension != null ? item.dimension : '—';
@@ -232,7 +233,7 @@ export function buildDevflowSummaryBody({
         if (item.escalate_reason) {
           content += `（reason: ${mdCell(item.escalate_reason)}）`;
         }
-        lines.push(`| ${status} | ${item.id} | ${item._lane} | ${dimension} | ${content} |`);
+        lines.push(`| ${status} | ${item._lane} | ${dimension} | ${content} |`);
       }
     }
 
@@ -300,13 +301,13 @@ export function buildDevflowSummaryBody({
     lines.push('');
     lines.push(`<details><summary>✅ Goal Ledger 解消済み ${n} 件</summary>`);
     lines.push('');
-    lines.push('| id | lane | dimension | 内容 | evidence |');
-    lines.push('|---|---|---|---|---|');
+    lines.push('| lane | dimension | 内容 | evidence |');
+    lines.push('|---|---|---|---|');
     for (const item of resolvedItems) {
       const dimension = item.dimension != null ? item.dimension : '—';
       const content = mdCell(item.text);
       const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${item.id} | ${item._lane} | ${dimension} | ${content} | ${evidence} |`);
+      lines.push(`| ${item._lane} | ${dimension} | ${content} | ${evidence} |`);
     }
     lines.push('');
     lines.push('</details>');
@@ -318,15 +319,15 @@ export function buildDevflowSummaryBody({
     lines.push('');
     lines.push(`<details><summary>🏗 環境ノート ${n} 件（sandbox 環境事象 — 人間の対応は通常不要）</summary>`);
     lines.push('');
-    lines.push('| 状態 | id | pattern | 件数 | 内容 | evidence |');
-    lines.push('|---|---|---|---|---|---|');
+    lines.push('| 状態 | pattern | 件数 | 内容 | evidence |');
+    lines.push('|---|---|---|---|---|');
     for (const item of envItems) {
       const status = item.checked === true ? '✅ CI確認済' : '—';
       const pattern = item.env_key != null ? item.env_key : '—';
       const envCount = typeof item.env_count === 'number' ? String(item.env_count) : '1';
       const content = mdCell(item.text);
       const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${status} | ${item.id} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
+      lines.push(`| ${status} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
     }
     lines.push('');
     lines.push('</details>');

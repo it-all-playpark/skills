@@ -166,6 +166,14 @@ concern_resolutions 契約:
 - concern は advisory であり収束を block しない。解消済み concern を resolved:true にすると終端サマリーの要対応から除外される。
 ```
 
+## 出力言語・簡潔性（description / suggestion / evidence 等の自然文フィールド）
+
+自然文フィールドは**日本語で書く**（コード識別子・パス・コマンド・エラーメッセージ引用は原文のまま）。
+feedback・evidence は終端サマリーのテーブルにそのまま表示される。1 件につき
+**「事実 → 影響 → 推奨対応」（evidence は根拠のみ）を 200 字以内目安**で書き、
+前置き・弁明・経緯の再説明・同内容の言い換えを入れない。情報（file:line・テスト名・
+推奨アクション）は削らない。
+
 ## Step 5: 出力 JSON（schema 強制）
 
 ```json

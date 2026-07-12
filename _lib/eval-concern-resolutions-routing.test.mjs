@@ -187,7 +187,7 @@ test('[eval-concern-resolutions] AC-2: post-summary prompt に環境ノートと
     `post-summary の prompt に「環境ノート」が含まれていない`,
   );
   assert.ok(
-    /ENV-TURBOPACK-SANDBOX\s*\|\s*turbopack-sandbox\s*\|\s*3\s*\|/.test(post.prompt),
+    /\|\s*turbopack-sandbox\s*\|\s*3\s*\|/.test(post.prompt),
     `post-summary の prompt の環境ノートテーブルに件数 3 の dedup 行が見つからない。\nprompt 抜粋:\n${post.prompt.slice(post.prompt.indexOf('環境ノート') - 50, post.prompt.indexOf('環境ノート') + 500)}`,
   );
   const actionSection = post.prompt.slice(

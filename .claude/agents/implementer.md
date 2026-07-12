@@ -67,6 +67,13 @@ workflow の Implement phase（serial は for、parallel は `parallel()`）と 
 
 status は**正直に**付ける。動かないものを DONE にしない。
 
+### 出力言語・簡潔性（summary / concerns / blocking_reason / missing_context）
+
+自然文フィールドは**日本語で書く**（コード識別子・パス・コマンド・エラーメッセージ引用は原文のまま）。
+concerns は終端サマリーの「要対応」テーブルにそのまま表示される。1 件につき
+**「事実 → 影響 → 推奨対応」だけを 200 字以内目安**で書き、前置き・弁明・経緯の再説明・
+同内容の言い換えを入れない。情報（対象パス・再現コマンド・推奨アクション）は削らない。
+
 ## Step 5: 返却 JSON（schema 強制）
 
 ```json
