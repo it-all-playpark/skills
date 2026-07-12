@@ -387,6 +387,46 @@ test("[ui-verify] (f) ui-verifier が throw しても ui-verify-teardown は必�
 });
 
 // ============================================================
+// (g) standard shape + UI touch + 有効 config → eval#1 prompt に
+//     ui_verification（ui-verifier の raw result）が注入される（F3: runUiVerifyFlow 抽出の pin）
+// ============================================================
+
+// standard に落ちる req（count=3 ≤ 5, ac.length=4 ≤ 6, type=feat → floor='standard'）
+const standardReq = {
+  summary: 's',
+  acceptance_criteria: ['a', 'b', 'c', 'd'],
+  issue_type: 'feat',
+  scope: 'src',
+  estimated_change_file_count: 3,
+  shape: 'standard',
+};
+
+test('[ui-verify] (g) eval#1 prompt に ui_verification（ui-verifier raw result）が注入される', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeUiVerifySandbox({
+    analyzeReq: standardReq,
+    realizedFiles: ['src/components/Foo.tsx'],
+    overrides: {
+      'ui-verify-config': { found: true, config: VALID_CFG },
+      'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'SENTINEL-UI-OK' },
+      'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
+    },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+  assert.ok(returned !== null, '(g) workflow は return object を返すべきだが null だった');
+
+  const evalCall = calls.find((c) => c.label === 'eval#1');
+  assert.ok(evalCall, "(g) 'eval#1' label の呼び出しが存在すること");
+  assert.ok(evalCall.prompt.includes('ui_verification'), "(g) eval#1 prompt に 'ui_verification' セクションが含まれること");
+  assert.ok(evalCall.prompt.includes('SENTINEL-UI-OK'), "(g) eval#1 prompt に ui-verifier の raw summary('SENTINEL-UI-OK') が含まれること");
+});
+
+// ============================================================
 // [struct] runEval 行に `|| uiTouched` が含まれる
 // ============================================================
 

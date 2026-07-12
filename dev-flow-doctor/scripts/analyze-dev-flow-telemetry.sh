@@ -5,9 +5,9 @@
 # journal loader below, filters to the lookback window, and produces:
 #   - distributions : shape / merge_tier / eval_iter / plan_iter / gate_policy
 #                      (denominator = .skill == "dev-flow" entries)
-#                     iterate_status (6-value enum: lgtm / stuck / fix_failed /
-#                       max_reached / ci_error / ci_pending, plus unknown for
-#                       out-of-enum values)
+#                     iterate_status (7-value enum: lgtm / stuck / fix_failed /
+#                       max_reached / ci_error / ci_pending / review_contract_error,
+#                       plus unknown for out-of-enum values)
 #                      (denominator = all entries with .telemetry.iterate_status
 #                       set, i.e. dev-flow AND pr-iterate)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring
@@ -248,7 +248,8 @@ ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c '
     max_reached: ([.[] | select(.telemetry.iterate_status == "max_reached")] | length),
     ci_error: ([.[] | select(.telemetry.iterate_status == "ci_error")] | length),
     ci_pending: ([.[] | select(.telemetry.iterate_status == "ci_pending")] | length),
-    unknown: ([.[] | select((.telemetry.iterate_status // "unknown") as $v | ($v != "lgtm" and $v != "stuck" and $v != "fix_failed" and $v != "max_reached" and $v != "ci_error" and $v != "ci_pending"))] | length),
+    review_contract_error: ([.[] | select(.telemetry.iterate_status == "review_contract_error")] | length),
+    unknown: ([.[] | select((.telemetry.iterate_status // "unknown") as $v | ($v != "lgtm" and $v != "stuck" and $v != "fix_failed" and $v != "max_reached" and $v != "ci_error" and $v != "ci_pending" and $v != "review_contract_error"))] | length),
     total: (length)
   }
 ')
@@ -305,7 +306,7 @@ ITERATE_UNHEALTHY=$(echo "$ITERATE_STATUS_DIST" | jq -c \
   '
   (.total) as $total |
   (.total - .ci_pending) as $effective_total |
-  (.stuck + .fix_failed + .max_reached + .ci_error) as $nonlgtm |
+  (.stuck + .fix_failed + .max_reached + .ci_error + .review_contract_error) as $nonlgtm |
   if $effective_total >= $min_runs and $effective_total > 0 and (($nonlgtm / $effective_total) > $rate_threshold) then
     [{
       type: "iterate_unhealthy",

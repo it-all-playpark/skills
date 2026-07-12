@@ -499,3 +499,42 @@ EOF
     unknown=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.unknown')
     [ "$unknown" -eq 1 ]
 }
+
+# ---------------------------------------------------------------------------
+# Test 18: review_contract_error counted in iterate_status distribution,
+#          not landed in unknown, and counted toward iterate_unhealthy
+#          (new terminal status from issue #321; same pattern as ci_error/
+#          ci_pending added in commit b1e6820).
+# ---------------------------------------------------------------------------
+@test "review_contract_error counted in iterate_status distribution and not unknown" {
+    for i in 1 2; do
+        write_devflow_entry "rce-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"review_contract_error\"}" "rce${i}"
+    done
+    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "l1"
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    review_contract_error=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.review_contract_error')
+    unknown=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.unknown')
+    total=$(printf '%s\n' "$output" | jq '.distributions.iterate_status.total')
+
+    [ "$review_contract_error" -eq 2 ]
+    [ "$unknown" -eq 0 ]
+    [ "$total" -eq 3 ]
+}
+
+@test "review_contract_error triggers iterate_unhealthy anomaly" {
+    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "l1"
+    for i in 1 2 3; do
+        write_devflow_entry "rce-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"review_contract_error\"}" "rce${i}"
+    done
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    found=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="iterate_unhealthy" and .severity=="warn")] | length')
+    [ "$found" -ge 1 ]
+}

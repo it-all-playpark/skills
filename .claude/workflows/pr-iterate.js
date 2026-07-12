@@ -171,6 +171,48 @@ function makeSeenTracker(threshold) {
 }
 // ==== END inline: _lib/stuck-detector.mjs ====
 
+// ==== BEGIN inline: _lib/review-normalize.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// pr-iterate.js の review 経路（decision × blocking findings）を正規化する canonical。issue #321。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+// review 経路の 3 値 enum。
+const REVIEW_ROUTE_CI_GATE = 'ci_gate';
+const REVIEW_ROUTE_FIX_LOOP = 'fix_loop';
+const REVIEW_ROUTE_CONTRACT_MISMATCH = 'contract_mismatch';
+
+// pr-reviewer の review 結果を route へ正規化する純粋関数。
+//
+// blocking findings の有無を一次入力、review.decision を tie-break とする:
+//   - blocking.length === 0                              → REVIEW_ROUTE_CI_GATE（decision に依らず）
+//   - blocking.length > 0 && decision === 'approve'       → REVIEW_ROUTE_CONTRACT_MISMATCH
+//   - blocking.length > 0 && decision !== 'approve'       → REVIEW_ROUTE_FIX_LOOP
+//
+// blocking = severity が 'critical' または 'major' の issue（pr-iterate.js 現行の blocking 定義と同一）。
+// minor = severity が 'minor' の issue。
+// severity は REVIEW schema で enum ['critical','major','minor'] に制約済みのため
+// out-of-enum の追加ハンドリングは入れない。
+//
+// review が null/undefined、review.issues が配列でない場合も throw せず空配列として扱う。
+function classifyReviewRoute(review) {
+  const issues = Array.isArray(review?.issues) ? review.issues : [];
+  const blocking = issues.filter((x) => x.severity === 'critical' || x.severity === 'major');
+  const minor = issues.filter((x) => x.severity === 'minor');
+
+  let route;
+  if (blocking.length === 0) {
+    route = REVIEW_ROUTE_CI_GATE;
+  } else if (review?.decision === 'approve') {
+    route = REVIEW_ROUTE_CONTRACT_MISMATCH;
+  } else {
+    route = REVIEW_ROUTE_FIX_LOOP;
+  }
+
+  return { route, blocking, minor };
+}
+// ==== END inline: _lib/review-normalize.mjs ====
+
 // ==== BEGIN inline: _lib/md-cell.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // mdCell: Markdown テーブルセルの値をエスケープする純粋関数。
 // I/O なし、非決定性なし。同入力 -> byte 一致。
@@ -211,11 +253,12 @@ const DECISION_LABEL = {
  * @param {number} opts.iteration - 反復回数
  * @param {string} opts.decision - 'approve' | 'request-changes' | 'comment'
  * @param {Array} opts.blocking - blocking finding の配列
+ * @param {Array} [opts.minor] - minor finding の配列（fix loop 対象外・参考表示のみ、任意）
  * @param {string} [opts.summary] - 結論 1-2 文（任意）
  * @param {string[]} [opts.verificationEvidence] - 検証根拠リスト（任意）
  * @returns {string}
  */
-function buildReviewCommentBody({ pr, iteration, decision, blocking, summary, verificationEvidence }) {
+function buildReviewCommentBody({ pr, iteration, decision, blocking, minor, summary, verificationEvidence }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const label = DECISION_LABEL[decision] ?? decision;
@@ -248,6 +291,26 @@ function buildReviewCommentBody({ pr, iteration, decision, blocking, summary, ve
     }
   }
 
+  const minorList = minor || [];
+  if (minorList.length > 0) {
+    lines.push('');
+    lines.push(`**minor 指摘（fix loop 対象外・参考）**: ${minorList.length} 件`);
+    lines.push('');
+    lines.push('| # | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    let midx = 1;
+    for (const f of minorList) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
+      const loc = f.file != null
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${midx} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+      midx++;
+    }
+  }
+
   if (summary != null && summary !== '') {
     lines.push('');
     lines.push(`**summary**: ${summary}`);
@@ -269,18 +332,19 @@ const STATUS_HEADLINE = {
   'max_reached': '⚠️ 反復上限到達',
   'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
+  'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision と blocking findings の矛盾が再 review 後も再発。人間へエスカレーション',
 };
 
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号
- * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending'
+ * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending' | 'review_contract_error'
  * @param {number} opts.iterations - 総反復回数
  * @param {string} opts.lastDecision - 最終判定
  * @param {string} opts.lastSummary - 最終サマリーテキスト
  * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
- * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking}]
+ * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
  * @returns {string}
  */
 function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history }) {
@@ -314,15 +378,16 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
     lines.push('');
     lines.push('### 反復履歴');
     lines.push('');
-    lines.push('| iter | 判定 | blocking | summary |');
-    lines.push('|---|---|---|---|');
+    lines.push('| iter | 判定 | blocking | minor | summary |');
+    lines.push('|---|---|---|---|---|');
     for (const round of histList) {
       const rEmoji = DECISION_EMOJI[round.decision] ?? '';
       const rLabel = DECISION_LABEL[round.decision] ?? round.decision;
       const bCount = (round.blocking ?? []).length;
+      const mCount = (round.minor ?? []).length;
       const rawSummary = mdCell(round.summary);
       const rSummary = rawSummary.length > 120 ? rawSummary.slice(0, 120) + '…' : rawSummary;
-      lines.push(`| ${round.iteration} | ${rEmoji} ${rLabel} | ${bCount} | ${rSummary} |`);
+      lines.push(`| ${round.iteration} | ${rEmoji} ${rLabel} | ${bCount} | ${mCount} | ${rSummary} |`);
     }
   }
 
@@ -335,6 +400,27 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
     lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
     lines.push('|---|---|---|---|---|');
     for (const f of allBlocking) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
+      const loc = f.file != null
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${f.iter} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+    }
+    lines.push('');
+    lines.push('</details>');
+  }
+
+  const allMinor = histList.flatMap((r) => (r.minor ?? []).map((f) => ({ iter: r.iteration, ...f })));
+  const totalMinor = allMinor.length;
+  if (totalMinor > 0) {
+    lines.push('');
+    lines.push(`<details><summary>全 minor 指摘の詳細（fix loop 対象外・${totalMinor} 件）</summary>`);
+    lines.push('');
+    lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    for (const f of allMinor) {
       const sev = SEV_LABEL[f.severity] ?? f.severity;
       const loc = f.file != null
         ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
@@ -480,26 +566,78 @@ let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
 let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
-const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking}]
+const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
 
 for (i = 1; i <= MAX; i++) {
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
-  const review = await agent(
-    `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
+  const reviewPrompt = `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
     + (prior.length
         ? `既出 findings（前ラウンドまでに指摘済み。author は対応済みのはず）:\n${JSON.stringify(prior)}\n`
           + `**新規の critical/major のみ報告**せよ。前ラウンドで対応済み・却下済みの論点の蒸し返し、`
           + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
           + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
-        : ''),
+        : '')
+  const review = await agent(
+    reviewPrompt,
     { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
   )
   if (review == null) throw new Error(`pr-iterate: review#${i} が結果を返しませんでした（skip された可能性）`)
   lastReview = review
 
-  if (review.decision === 'approve') {
-    // CI gate — restores the gate lost in eb8aa7e (issue #133).
+  let effReview = review
+  let outcome = classifyReviewRoute(review)
+
+  // contract mismatch（approve だが blocking あり）: 同一 iteration 内で 1 回だけ再 review する。
+  // MAX は消費しない — 有限性は「iteration ごと最大 1 回」で担保する（issue #321）。
+  if (outcome.route === 'contract_mismatch') {
+    log(`⚠️ iteration ${i}: review contract mismatch — decision=approve だが blocking ${outcome.blocking.length} 件。1 回だけ再 review する`)
+    const rereview = await agent(
+      reviewPrompt
+      + `\n\n直前の review 出力は decision='approve' なのに critical/major の issues が ${outcome.blocking.length} 件あり矛盾している。`
+      + `直前の出力: ${JSON.stringify(review)}。`
+      + `blocking issues が実在するなら decision を request-changes/comment にし、実在しないなら issues から除いて、`
+      + `decision と issues が整合した結果を再出力せよ。既出問題の topic 文字列は同一のものを再利用せよ。`,
+      { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}-contract-retry`, phase: 'Iterate' },
+    )
+    if (rereview == null) throw new Error(`pr-iterate: review#${i}-contract-retry が結果を返しませんでした（skip された可能性）`)
+    effReview = rereview
+    lastReview = rereview
+    outcome = classifyReviewRoute(rereview)
+
+    if (outcome.route === 'contract_mismatch') {
+      // 再 review 後も decision と blocking の矛盾が再発 — 無限ループせず人間へエスカレーション。
+      // 注意: この mismatch review の blocking は reviewSeen に register しない
+      // （fix を挟まない再 review が REVIEW_STUCK を 1 iteration 内で誤発火させるため）。
+      terminal = 'review_contract_error'
+      log(`⚠️ iteration ${i}: review contract mismatch が再 review 後も再発（decision=approve、blocking ${outcome.blocking.length} 件）。人間へエスカレーション`)
+
+      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor })
+
+      const mismatchBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking: outcome.blocking, minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
+      const mismatchPost = await agent(
+        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}、review contract mismatch）。\n\n`
+        + bodySaveInstr(mismatchBody, 'pr-iterate', 'PR_ITERATE')
+        + `## Instructions\n`
+        + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
+        + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+        + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+        + `\n## Tools\n使用可: Bash, Write\n`
+        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+        + `\n## Token cap\n200 語以内で完結すること。`,
+        { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+      )
+      if (!mismatchPost?.posted) {
+        log(`⚠️ post-review#${i} (review-contract-error) の投稿に失敗しました（posted=${mismatchPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+      }
+      break
+    }
+  }
+
+  if (outcome.route === 'ci_gate') {
+    // CI gate — restores the gate lost in eb8aa7e (issue #133)。blocking 0 件の comment/request-changes も
+    // ここへ合流する（AC-1/AC-2、issue #321）。lgtm 確定時の投稿のみ decision で分岐する（approve でなければ捏造しない）。
     // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
     // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
     const ci = await agent(
@@ -534,31 +672,49 @@ for (i = 1; i <= MAX; i++) {
       lgtm = true
       log(`iteration ${i}: LGTM（CI status=${ci.status}）`)
 
-      // approve ラウンドの history を記録（blocking なし）
-      history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: [] })
+      // lgtm 確定ラウンドの history を記録（blocking なし、minor は保持）
+      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor })
 
-      // per-round 投稿: approve（self-PR 検出 → --approve 失敗時 gh pr comment へフォールバック）
-      const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: [], summary: review.summary, verificationEvidence: review.verification_evidence })
-      const approvePost = await agent(
-        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n\n`
-        + bodySaveInstr(approveBody, 'pr-iterate', 'PR_ITERATE')
-        + `## Instructions\n`
-        + `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
-        + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
-        + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
-        + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
-        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file <BODY_FILE>\` を試みる。\n`
-        + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
-        + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-        + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
-        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-        + `\n## Tools\n使用可: Bash, Write\n`
-        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-        + `\n## Token cap\n200 語以内で完結すること。`,
-        { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
-      )
+      // per-round 投稿: approve のみ self-PR 検出 + --approve フォールバック経路（AC-6 byte 不変）。
+      // comment/request-changes（blocking 0 件で CI gate へ統合されたケース）は plain gh pr comment（approve 捏造禁止）。
+      const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking: [], minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
+      let approvePost
+      if (effReview.decision === 'approve') {
+        approvePost = await agent(
+          `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n\n`
+          + bodySaveInstr(approveBody, 'pr-iterate', 'PR_ITERATE')
+          + `## Instructions\n`
+          + `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
+          + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
+          + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
+          + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
+          + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file <BODY_FILE>\` を試みる。\n`
+          + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
+          + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+          + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
+          + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+          + `\n## Tools\n使用可: Bash, Write\n`
+          + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+          + `\n## Token cap\n200 語以内で完結すること。`,
+          { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+        )
+      } else {
+        approvePost = await agent(
+          `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}、CI gate passed）。\n\n`
+          + bodySaveInstr(approveBody, 'pr-iterate', 'PR_ITERATE')
+          + `## Instructions\n`
+          + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
+          + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+          + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+          + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+          + `\n## Tools\n使用可: Bash, Write\n`
+          + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+          + `\n## Token cap\n200 語以内で完結すること。`,
+          { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+        )
+      }
       if (!approvePost?.posted) {
-        log(`⚠️ post-review#${i} (approve) の投稿に失敗しました（posted=${approvePost?.posted ?? 'null'}）。ワークフローは継続します。`)
+        log(`⚠️ post-review#${i} (${effReview.decision}) の投稿に失敗しました（posted=${approvePost?.posted ?? 'null'}）。ワークフローは継続します。`)
       }
 
       break
@@ -595,17 +751,17 @@ for (i = 1; i <= MAX; i++) {
       // repeated identical CI failures (same ci::<name> topic) trigger REVIEW_STUCK escalation.
       for (const x of ciFindings) reviewSeen.register(x)
       const ciStuckTopics = reviewSeen.stuckTopics()
-      log(`iteration ${i}: approve but CI failed — ${ciFindings.length} failing check(s)`
+      log(`iteration ${i}: ${effReview.decision} だが CI failed — ${ciFindings.length} failing check(s)`
         + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
 
-      // CI-failed ラウンドの history 記録（blocking は synthetic CI findings）
-      history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: ciFindings })
+      // CI-failed ラウンドの history 記録（blocking は synthetic CI findings、minor は保持）
+      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor })
 
-      // per-round 投稿: CI failed。decision は approve だが CI red のため gh pr review --approve は使わず
+      // per-round 投稿: CI failed。decision が approve でも CI red のため gh pr review --approve は使わず
       // plain な gh pr comment で情報提供のみ行う
-      const ciRoundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking: ciFindings, summary: review.summary, verificationEvidence: review.verification_evidence })
+      const ciRoundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking: ciFindings, minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
       const ciRoundPost = await agent(
-        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}、CI failed）。\n\n`
+        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}、CI failed）。\n\n`
         + bodySaveInstr(ciRoundBody, 'pr-iterate', 'PR_ITERATE')
         + `## Instructions\n`
         + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
@@ -650,73 +806,75 @@ for (i = 1; i <= MAX; i++) {
       fixesApplied++
       continue
     }
+  } else {
+    // outcome.route === 'fix_loop'（blocking あり、decision は request-changes/comment。approve はここへ来ない）
+    const blocking = outcome.blocking
+
+    // blocking findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint。issue #126）
+    for (const x of blocking) reviewSeen.register(x)
+    const stuckTopics = reviewSeen.stuckTopics()
+    log(`iteration ${i}: ${effReview.decision} — blocking ${blocking.length} 件`
+      + `${stuckTopics.length ? ` [REVIEW_STUCK: ${stuckTopics.join(' / ')}]` : ''}`)
+
+    // history に記録（blocking findings と minor を含む）
+    history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor })
+
+    // per-round 投稿: request-changes または comment
+    const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking, minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
+    const roundPost = await agent(
+      `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}）。\n\n`
+      + bodySaveInstr(roundBody, 'pr-iterate', 'PR_ITERATE')
+      + `## Instructions\n`
+      + (effReview.decision === 'request-changes'
+        ? `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
+          + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
+          + `2. 自分自身の PR である場合（または --request-changes が "Can not request changes on your own pull request" エラーになる場合）は、\n`
+          + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
+          + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file <BODY_FILE>\` を試みる。\n`
+          + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
+        : `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr review ${PR} --comment --body-file <BODY_FILE>\`\n`)
+      + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+      + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+      + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+      + `\n## Tools\n使用可: Bash, Write\n`
+      + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+      + `\n## Token cap\n200 語以内で完結すること。`,
+      { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+    )
+    if (!roundPost?.posted) {
+      log(`⚠️ post-review#${i} (${effReview.decision}) の投稿に失敗しました（posted=${roundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+    }
+
+    // stuck: 同一 topic が REVIEW_STUCK 回繰り返した = fix が刺さっていない。relax せず人間へエスカレーション。
+    if (stuckTopics.length) {
+      terminal = 'stuck'
+      log(`⚠️ Review STUCK — 同一 topic が ${REVIEW_STUCK} 回反復（${stuckTopics.join(' / ')}）。`
+        + `relax せず人間レビューへエスカレーション（critical/major のゲートは後退させない）`)
+      break
+    }
+
+    // minor は fix loop の対象外 — issuesText / fix agent プロンプトに一切含めない（AC-5、issue #321）。
+    const issuesText = blocking
+      .map((x) => `- [${x.severity}] ${x.file ?? ''}${x.line ? ':' + x.line : ''} ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
+      .join('\n')
+
+    // fix は dev-runner agent に直接指示する（旧 pr-fix skill は issue #116 で削除）。
+    const fix = await agent(
+      `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
+      + `(2) 下記の指摘を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
+      + `解消すべき指摘:\n${issuesText}`,
+      { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
+    )
+
+    // fix の applied:false を検出して人間へエスカレーション（無言で MAX 回燃やさない。issue #126）。
+    if (fix == null || fix.applied !== true) {
+      terminal = 'fix_failed'
+      log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
+        + `無言で再レビューを繰り返さず人間へエスカレーション`)
+      break
+    }
+    fixesApplied++
   }
-
-  const blocking = review.issues.filter((x) => x.severity === 'critical' || x.severity === 'major')
-
-  // blocking findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint。issue #126）
-  for (const x of blocking) reviewSeen.register(x)
-  const stuckTopics = reviewSeen.stuckTopics()
-  log(`iteration ${i}: ${review.decision} — blocking ${blocking.length} 件`
-    + `${stuckTopics.length ? ` [REVIEW_STUCK: ${stuckTopics.join(' / ')}]` : ''}`)
-
-  // history に記録（blocking findings を含む）
-  history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking })
-
-  // per-round 投稿: request-changes または comment
-  const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: review.decision, blocking, summary: review.summary, verificationEvidence: review.verification_evidence })
-  const roundPost = await agent(
-    `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${review.decision}）。\n\n`
-    + bodySaveInstr(roundBody, 'pr-iterate', 'PR_ITERATE')
-    + `## Instructions\n`
-    + (review.decision === 'request-changes'
-      ? `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
-        + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
-        + `2. 自分自身の PR である場合（または --request-changes が "Can not request changes on your own pull request" エラーになる場合）は、\n`
-        + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
-        + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file <BODY_FILE>\` を試みる。\n`
-        + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
-      : `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr review ${PR} --comment --body-file <BODY_FILE>\`\n`)
-    + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-    + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-    + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-    + `\n## Tools\n使用可: Bash, Write\n`
-    + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-    + `\n## Token cap\n200 語以内で完結すること。`,
-    { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
-  )
-  if (!roundPost?.posted) {
-    log(`⚠️ post-review#${i} (${review.decision}) の投稿に失敗しました（posted=${roundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
-  }
-
-  // stuck: 同一 topic が REVIEW_STUCK 回繰り返した = fix が刺さっていない。relax せず人間へエスカレーション。
-  if (stuckTopics.length) {
-    terminal = 'stuck'
-    log(`⚠️ Review STUCK — 同一 topic が ${REVIEW_STUCK} 回反復（${stuckTopics.join(' / ')}）。`
-      + `relax せず人間レビューへエスカレーション（critical/major のゲートは後退させない）`)
-    break
-  }
-
-  const issuesText = blocking
-    .map((x) => `- [${x.severity}] ${x.file ?? ''}${x.line ? ':' + x.line : ''} ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
-    .join('\n')
-
-  // fix は dev-runner agent に直接指示する（旧 pr-fix skill は issue #116 で削除）。
-  const fix = await agent(
-    `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
-    + `(2) 下記の指摘を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
-    + `解消すべき指摘:\n${issuesText}`,
-    { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
-  )
-
-  // fix の applied:false を検出して人間へエスカレーション（無言で MAX 回燃やさない。issue #126）。
-  if (fix == null || fix.applied !== true) {
-    terminal = 'fix_failed'
-    log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
-      + `無言で再レビューを繰り返さず人間へエスカレーション`)
-    break
-  }
-  fixesApplied++
 }
 
 const status = lgtm ? 'lgtm' : (terminal ?? 'max_reached')
