@@ -84,3 +84,27 @@ EOF
   [[ "$output" == *"npx skills add vercel-labs/agent-browser@agent-browser -y"* ]]
   [[ "$output" == *"skipped (no recorded source): bgm"* ]]
 }
+
+# skills-lock.json は npx skills add 実行時に CLI が自動更新するが、
+# tools/external-skills.tsv は手動メンテのため置き去りになりうる。
+# lock 側の全スキルが tsv の第1列に存在することを決定論的に検証する
+# (逆方向: bgm/skill-creator のような tsv 側限定の記録は既知例外として許容)。
+@test "every skills-lock.json entry has a manifest row (prevents silent drift)" {
+  if ! command -v jq >/dev/null 2>&1; then
+    skip "jq not installed"
+  fi
+  local lock="$BATS_TEST_DIRNAME/../skills-lock.json"
+  local manifest="$BATS_TEST_DIRNAME/external-skills.tsv"
+  [ -f "$lock" ]
+  local missing=()
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if ! awk -F'\t' -v n="$name" '$1 == n {found=1} END {exit !found}' "$manifest"; then
+      missing+=("$name")
+    fi
+  done < <(jq -r '.skills | keys[]' "$lock")
+  if ((${#missing[@]})); then
+    echo "skills-lock.json entries missing from tools/external-skills.tsv: ${missing[*]}" >&2
+    return 1
+  fi
+}
