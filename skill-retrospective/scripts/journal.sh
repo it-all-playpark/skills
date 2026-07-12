@@ -69,6 +69,7 @@ cmd_log() {
     local shape="" shape_refloored="" eval_verdict="" iterate_status="" plan_iter="" eval_iter=""
     local eval_staleness=""
     local repo="" pr_number=""
+    local ci_wait_seconds="" ci_poll_attempts=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -110,6 +111,8 @@ cmd_log() {
             --eval-iter) eval_iter="$2"; shift 2 ;;
             --repo) repo="$2"; shift 2 ;;
             --pr-number) pr_number="$2"; shift 2 ;;
+            --ci-wait-seconds) ci_wait_seconds="$2"; shift 2 ;;
+            --ci-poll-attempts) ci_poll_attempts="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -158,6 +161,16 @@ cmd_log() {
     fi
     if [[ -n "$pr_number" ]] && ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
         die_json "Invalid --pr-number: $pr_number. Must be a positive integer" 1
+    fi
+    if [[ -n "$ci_wait_seconds" ]]; then
+        if ! [[ "$ci_wait_seconds" =~ ^[0-9]+$ ]]; then
+            die_json "Invalid --ci-wait-seconds: $ci_wait_seconds. Must be a non-negative integer" 1
+        fi
+    fi
+    if [[ -n "$ci_poll_attempts" ]]; then
+        if ! [[ "$ci_poll_attempts" =~ ^[0-9]+$ ]]; then
+            die_json "Invalid --ci-poll-attempts: $ci_poll_attempts. Must be a non-negative integer" 1
+        fi
     fi
 
     ensure_journal_dir
@@ -262,6 +275,14 @@ cmd_log() {
     fi
     if [[ -n "$eval_staleness" ]]; then
         telemetry=$(echo "$telemetry" | jq --arg v "$eval_staleness" '. + {eval_staleness: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$ci_wait_seconds" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$ci_wait_seconds" '. + {ci_wait_seconds: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$ci_poll_attempts" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$ci_poll_attempts" '. + {ci_poll_attempts: $v}')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then
@@ -630,6 +651,7 @@ Subcommands:
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
   journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
+  journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff

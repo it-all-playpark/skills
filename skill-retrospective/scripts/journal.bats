@@ -258,6 +258,94 @@ latest_entry() {
     [ "$has_telemetry" = "false" ]
 }
 
+# ---------------------------------------------------------------------------
+# Tests for --ci-wait-seconds / --ci-poll-attempts (issue #324, AC-7 journal side)
+# ---------------------------------------------------------------------------
+
+@test "--ci-wait-seconds and --ci-poll-attempts recorded as numbers" {
+    run "$SCRIPT" log pr-iterate success --ci-wait-seconds 30 --ci-poll-attempts 3
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    ci_wait_ok=$(jq '.telemetry.ci_wait_seconds == 30' "$entry_file")
+    [ "$ci_wait_ok" = "true" ]
+
+    ci_poll_ok=$(jq '.telemetry.ci_poll_attempts == 3' "$entry_file")
+    [ "$ci_poll_ok" = "true" ]
+
+    ci_wait_type=$(jq '.telemetry.ci_wait_seconds | type' "$entry_file")
+    [ "$ci_wait_type" = '"number"' ]
+
+    ci_poll_type=$(jq '.telemetry.ci_poll_attempts | type' "$entry_file")
+    [ "$ci_poll_type" = '"number"' ]
+}
+
+@test "--ci-wait-seconds 0 recorded as number 0 (key present)" {
+    run "$SCRIPT" log pr-iterate success --ci-wait-seconds 0
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_ci_wait=$(jq '.telemetry | has("ci_wait_seconds")' "$entry_file")
+    [ "$has_ci_wait" = "true" ]
+
+    ci_wait_ok=$(jq '.telemetry.ci_wait_seconds == 0' "$entry_file")
+    [ "$ci_wait_ok" = "true" ]
+}
+
+@test "--ci-wait-seconds -1 exits non-zero with Invalid message" {
+    run "$SCRIPT" log pr-iterate success --ci-wait-seconds -1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid"* ]]
+}
+
+@test "--ci-poll-attempts abc exits non-zero with Invalid message" {
+    run "$SCRIPT" log pr-iterate success --ci-poll-attempts abc
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Invalid"* ]]
+}
+
+@test "only --ci-wait-seconds specified -> only that key present" {
+    run "$SCRIPT" log pr-iterate success --ci-wait-seconds 45
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_ci_wait=$(jq '.telemetry | has("ci_wait_seconds")' "$entry_file")
+    has_ci_poll=$(jq '.telemetry | has("ci_poll_attempts")' "$entry_file")
+    [ "$has_ci_wait" = "true" ]
+    [ "$has_ci_poll" = "false" ]
+}
+
+@test "no ci telemetry flags and no other telemetry -> no telemetry key (regression)" {
+    run "$SCRIPT" log pr-iterate success
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
+    [ "$has_telemetry" = "false" ]
+}
+
+@test "--iterate-status lgtm and --ci-wait-seconds 30 coexist in telemetry" {
+    run "$SCRIPT" log pr-iterate success --iterate-status lgtm --ci-wait-seconds 30
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    iterate_status=$(jq -r '.telemetry.iterate_status' "$entry_file")
+    [ "$iterate_status" = "lgtm" ]
+
+    ci_wait_ok=$(jq '.telemetry.ci_wait_seconds == 30' "$entry_file")
+    [ "$ci_wait_ok" = "true" ]
+}
+
 # ===========================================================================
 # Tests for new features: source field, atomic write, --source filter, iconv
 # ===========================================================================

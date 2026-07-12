@@ -24,27 +24,44 @@ setup() {
     GH_CALL_COUNT_FILE="$BATS_TMPDIR/gh-call-count"
     rm -f "$GH_CALL_COUNT_FILE"
     GH_FAIL_TIMES=0
+    GH_PENDING_TIMES=0
+    GH_PENDING_OUTPUT='[{"name":"build","state":"IN_PROGRESS","bucket":"pending"}]'
     CHECK_CI_RETRY_DELAYS="0 0"
     GH_CHECKS_OUTPUT="[]"
     GH_EXIT_CODE=0
-    export GH_CALL_COUNT_FILE GH_FAIL_TIMES CHECK_CI_RETRY_DELAYS
-    export GH_CHECKS_OUTPUT GH_EXIT_CODE
+    export GH_CALL_COUNT_FILE GH_FAIL_TIMES GH_PENDING_TIMES GH_PENDING_OUTPUT
+    export CHECK_CI_RETRY_DELAYS GH_CHECKS_OUTPUT GH_EXIT_CODE
+
+    SLEEP_LOG_FILE="$BATS_TMPDIR/sleep-log"
+    rm -f "$SLEEP_LOG_FILE"
+    export SLEEP_LOG_FILE
 
     cat > "$STUB_DIR/gh" << 'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == "pr" && "$2" == "checks" ]]; then
     count=$(( $(cat "$GH_CALL_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
     echo "$count" > "$GH_CALL_COUNT_FILE"
-    if (( count <= ${GH_FAIL_TIMES:-0} )); then
+    if (( count <= ${GH_PENDING_TIMES:-0} )); then
+        echo "$GH_PENDING_OUTPUT"
+        exit 8
+    elif (( count <= ${GH_PENDING_TIMES:-0} + ${GH_FAIL_TIMES:-0} )); then
         echo "transient network error" >&2
         exit 1
+    else
+        echo "$GH_CHECKS_OUTPUT"
+        exit "${GH_EXIT_CODE:-0}"
     fi
-    echo "$GH_CHECKS_OUTPUT"
-    exit "${GH_EXIT_CODE:-0}"
 fi
 exit 0
 EOF
     chmod +x "$STUB_DIR/gh"
+
+    cat > "$STUB_DIR/sleep" << 'EOF'
+#!/usr/bin/env bash
+echo "$1" >> "$SLEEP_LOG_FILE"
+exit 0
+EOF
+    chmod +x "$STUB_DIR/sleep"
     export PATH="$STUB_DIR:$PATH"
 }
 
@@ -240,6 +257,144 @@ GHEOF
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "pending" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 12 (AC-1): pending -> passed within wait budget (bounded polling)
+# GH_PENDING_TIMES=2 -> 3rd fetch returns passed. wait=10/poll=5 ->
+# sleeps 5,5 (2 sleeps), 3 fetches, waited_seconds=10, poll_attempts=3.
+# ---------------------------------------------------------------------------
+@test "AC-1 pending -> passed within wait budget (bounded polling)" {
+    export GH_PENDING_TIMES=2
+    export GH_CHECKS_OUTPUT='[
+      {"name":"lint","state":"SUCCESS","bucket":"pass"},
+      {"name":"test","state":"SUCCESS","bucket":"pass"}
+    ]'
+    export GH_EXIT_CODE=0
+    run "$SCRIPT" 42 --wait-seconds 10 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "passed" ]
+    [ "$(echo "$result" | jq -r '.waited_seconds')" = "10" ]
+    [ "$(echo "$result" | jq -r '.poll_attempts')" = "3" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 3 ]
+    [ "$(cat "$SLEEP_LOG_FILE" | tr '\n' ',')" = "5,5," ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 13 (AC-2): timeout -> terminates finitely while still pending
+# GH_PENDING_TIMES=99 (always pending). wait=12/poll=5 ->
+# sleeps 5,5,2 (3 sleeps), 4 fetches, waited_seconds=12, poll_attempts=4.
+# ---------------------------------------------------------------------------
+@test "AC-2 timeout -> terminates finitely still pending" {
+    export GH_PENDING_TIMES=99
+    run "$SCRIPT" 42 --wait-seconds 12 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "pending" ]
+    [ "$(echo "$result" | jq -r '.waited_seconds')" = "12" ]
+    [ "$(echo "$result" | jq -r '.poll_attempts')" = "4" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 4 ]
+    [ "$(cat "$SLEEP_LOG_FILE" | tr '\n' ',')" = "5,5,2," ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 14 (AC-3): pending -> failed cuts polling short (immediate break)
+# GH_PENDING_TIMES=1 -> 2nd fetch returns failed. wait=30/poll=5 ->
+# 1 sleep (5s), 2 fetches, waited_seconds=5, poll_attempts=2.
+# ---------------------------------------------------------------------------
+@test "AC-3 pending -> failed cuts polling short" {
+    export GH_PENDING_TIMES=1
+    export GH_CHECKS_OUTPUT='[
+      {"name":"test","state":"FAILURE","bucket":"fail"}
+    ]'
+    export GH_EXIT_CODE=0
+    run "$SCRIPT" 42 --wait-seconds 30 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "failed" ]
+    [ "$(echo "$result" | jq -r '.waited_seconds')" = "5" ]
+    [ "$(echo "$result" | jq -r '.poll_attempts')" = "2" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 2 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 15 (AC-4): pending -> API error retry budget separate from wait budget
+# GH_PENDING_TIMES=1, GH_FAIL_TIMES=10, CHECK_CI_RETRY_DELAYS="0 0" (max 3
+# attempts per fetch cycle: 1 initial + 2 retries). wait=30/poll=5 ->
+# 1st fetch cycle: pending (1 call) -> sleep 5s -> waited=5
+# 2nd fetch cycle: fail,fail,fail (3 calls, retries exhausted) -> error
+# Total gh calls = 1 + 3 = 4. poll_attempts=2 (2 fetch cycles).
+# ---------------------------------------------------------------------------
+@test "AC-4 pending -> API error keeps wait/retry budgets separate" {
+    export GH_PENDING_TIMES=1
+    export GH_FAIL_TIMES=10
+    export CHECK_CI_RETRY_DELAYS="0 0"
+    run "$SCRIPT" 42 --wait-seconds 30 --poll-seconds 5
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    [ "$(echo "$result" | jq -r '.waited_seconds')" = "5" ]
+    [ "$(echo "$result" | jq -r '.poll_attempts')" = "2" ]
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 4 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 16 (AC-6): validation rejects invalid --wait-seconds / --poll-seconds
+# ---------------------------------------------------------------------------
+@test "AC-6 validation rejects non-numeric --wait-seconds" {
+    run "$SCRIPT" 42 --wait-seconds abc
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
+    [ ! -f "$GH_CALL_COUNT_FILE" ]
+}
+
+@test "AC-6 validation rejects negative --wait-seconds" {
+    run "$SCRIPT" 42 --wait-seconds -1
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
+    [ ! -f "$GH_CALL_COUNT_FILE" ]
+}
+
+@test "AC-6 validation rejects --wait-seconds over 1800" {
+    run "$SCRIPT" 42 --wait-seconds 1801
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
+    [ ! -f "$GH_CALL_COUNT_FILE" ]
+}
+
+@test "AC-6 validation rejects --poll-seconds under 5" {
+    run "$SCRIPT" 42 --wait-seconds 60 --poll-seconds 4
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
+    [ ! -f "$GH_CALL_COUNT_FILE" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 17 (AC-5 regression): no polling options -> unchanged behavior
+# ---------------------------------------------------------------------------
+@test "AC-5 regression: no polling options, pending (gh exit 8) -> single call" {
+    export GH_FAIL_TIMES=0
+    export GH_CHECKS_OUTPUT='[
+      {"name":"build","state":"IN_PROGRESS","bucket":"pending"}
+    ]'
+    export GH_EXIT_CODE=8
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "pending" ]
+    [ "$(echo "$result" | jq -r '.waited_seconds')" = "0" ]
+    [ "$(echo "$result" | jq -r '.poll_attempts')" = "1" ]
     call_count=$(cat "$GH_CALL_COUNT_FILE")
     [ "$call_count" -eq 1 ]
 }
