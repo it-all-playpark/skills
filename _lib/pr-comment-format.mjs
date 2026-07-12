@@ -18,11 +18,12 @@ const DECISION_LABEL = {
  * @param {number} opts.iteration - 反復回数
  * @param {string} opts.decision - 'approve' | 'request-changes' | 'comment'
  * @param {Array} opts.blocking - blocking finding の配列
+ * @param {Array} [opts.minor] - minor finding の配列（fix loop 対象外・参考表示のみ、任意）
  * @param {string} [opts.summary] - 結論 1-2 文（任意）
  * @param {string[]} [opts.verificationEvidence] - 検証根拠リスト（任意）
  * @returns {string}
  */
-export function buildReviewCommentBody({ pr, iteration, decision, blocking, summary, verificationEvidence }) {
+export function buildReviewCommentBody({ pr, iteration, decision, blocking, minor, summary, verificationEvidence }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const label = DECISION_LABEL[decision] ?? decision;
@@ -55,6 +56,26 @@ export function buildReviewCommentBody({ pr, iteration, decision, blocking, summ
     }
   }
 
+  const minorList = minor || [];
+  if (minorList.length > 0) {
+    lines.push('');
+    lines.push(`**minor 指摘（fix loop 対象外・参考）**: ${minorList.length} 件`);
+    lines.push('');
+    lines.push('| # | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    let midx = 1;
+    for (const f of minorList) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
+      const loc = f.file != null
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${midx} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+      midx++;
+    }
+  }
+
   if (summary != null && summary !== '') {
     lines.push('');
     lines.push(`**summary**: ${summary}`);
@@ -76,18 +97,19 @@ const STATUS_HEADLINE = {
   'max_reached': '⚠️ 反復上限到達',
   'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
+  'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision と blocking findings の矛盾が再 review 後も再発。人間へエスカレーション',
 };
 
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号
- * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending'
+ * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending' | 'review_contract_error'
  * @param {number} opts.iterations - 総反復回数
  * @param {string} opts.lastDecision - 最終判定
  * @param {string} opts.lastSummary - 最終サマリーテキスト
  * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
- * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking}]
+ * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
  * @returns {string}
  */
 export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history }) {
@@ -121,15 +143,16 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
     lines.push('');
     lines.push('### 反復履歴');
     lines.push('');
-    lines.push('| iter | 判定 | blocking | summary |');
-    lines.push('|---|---|---|---|');
+    lines.push('| iter | 判定 | blocking | minor | summary |');
+    lines.push('|---|---|---|---|---|');
     for (const round of histList) {
       const rEmoji = DECISION_EMOJI[round.decision] ?? '';
       const rLabel = DECISION_LABEL[round.decision] ?? round.decision;
       const bCount = (round.blocking ?? []).length;
+      const mCount = (round.minor ?? []).length;
       const rawSummary = mdCell(round.summary);
       const rSummary = rawSummary.length > 120 ? rawSummary.slice(0, 120) + '…' : rawSummary;
-      lines.push(`| ${round.iteration} | ${rEmoji} ${rLabel} | ${bCount} | ${rSummary} |`);
+      lines.push(`| ${round.iteration} | ${rEmoji} ${rLabel} | ${bCount} | ${mCount} | ${rSummary} |`);
     }
   }
 
@@ -142,6 +165,27 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
     lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
     lines.push('|---|---|---|---|---|');
     for (const f of allBlocking) {
+      const sev = SEV_LABEL[f.severity] ?? f.severity;
+      const loc = f.file != null
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '—';
+      const desc = mdCell(f.description);
+      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
+      lines.push(`| ${f.iter} | ${sev} | ${loc} | ${desc} | ${sug} |`);
+    }
+    lines.push('');
+    lines.push('</details>');
+  }
+
+  const allMinor = histList.flatMap((r) => (r.minor ?? []).map((f) => ({ iter: r.iteration, ...f })));
+  const totalMinor = allMinor.length;
+  if (totalMinor > 0) {
+    lines.push('');
+    lines.push(`<details><summary>全 minor 指摘の詳細（fix loop 対象外・${totalMinor} 件）</summary>`);
+    lines.push('');
+    lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
+    lines.push('|---|---|---|---|---|');
+    for (const f of allMinor) {
       const sev = SEV_LABEL[f.severity] ?? f.severity;
       const loc = f.file != null
         ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
