@@ -10,7 +10,7 @@ description: |
   Use when: (1) dev-flow issues or underperformance,
   (2) shape / merge_tier / gate_policy distribution review, (3) weekly dev-flow health review,
   (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断, telemetry, anomaly, 分布, cap張り付き, iterate不調率, micro不発火
-  Accepts args: [--scope full|journal|worktrees|config|telemetry|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>]
+  Accepts args: [--scope full|journal|worktrees|config|telemetry|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>] [--canary <path>]
 allowed-tools:
   - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
   - Bash(~/.claude/skills/skill-retrospective/scripts/*)
@@ -43,6 +43,7 @@ actionable improvement recommendations.
 /dev-flow-doctor [--scope full|journal|worktrees|config|telemetry|feedback]
                  [--window 7d|30d] [--fix]
                  [--compare <baseline-path>] [--update-baseline <path>]
+                 [--canary <path>]
 ```
 
 | Arg | Default | Description |
@@ -52,6 +53,7 @@ actionable improvement recommendations.
 | `--fix` | false | Auto-apply safe fixes (worktree cleanup only) |
 | `--compare` | - | Path to baseline snapshot to compare against (AC4). Adds `baseline_compare` to checks + max -15 penalty |
 | `--update-baseline` | - | Regenerate baseline snapshot at the given path (AC2). Delegates to `baseline-snapshot.sh`; emits warning if journal is empty |
+| `--canary` | - | Path to a `/dev-flow-canary` report JSON to validate and surface. Advisory only — never affects the health score (fail-open, mirrors ci-checks precedent). Adds `checks.canary` (`ok`/`unavailable`) |
 
 ## Diagnostic Scopes
 
@@ -168,10 +170,14 @@ Deterministic diagnostic data collection and health score calculation.
 
 # Regenerate baseline (AC2) — delegates to baseline-snapshot.sh
 ./scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d
+
+# Canary report intake (issue #325) — advisory, never affects score
+./scripts/run-diagnostics.sh --scope config --canary ~/.claude/logs/dev-flow-canary/latest.json
 ```
 
-Output: JSON with `score`, `rating`, `checks` (including `dev_flow_telemetry` and
-`baseline_compare` when `--compare` is used), and `issues` fields.
+Output: JSON with `score`, `rating`, `checks` (including `dev_flow_telemetry`,
+`baseline_compare` when `--compare` is used, and `canary` when `--canary` is used),
+and `issues` fields.
 
 ### `scripts/baseline-snapshot.sh`
 
@@ -200,6 +206,23 @@ Rolling mode (issue #88) compares two auto-generated journal windows via
 and exits 0 (advisory) instead of alerting on small-N noise.
 
 Detail: [`references/baseline-comparison.md`](references/baseline-comparison.md).
+
+### `scripts/validate-canary-report.sh`
+
+Deterministic schema validation for a `/dev-flow-canary` report JSON
+(canary_version `"1.0.0"` const, 9 capability ids, `bridge_sunset` verdict
+enum). Called by `run-diagnostics.sh --canary <path>`; can also be invoked
+directly.
+
+```bash
+./scripts/validate-canary-report.sh ~/.claude/logs/dev-flow-canary/latest.json
+```
+
+Exit 0 + `{"ok":true,...,"counts":{...},"failed_ids":[...],"unsupported_ids":[...],"bridge_sunset":{...}}`
+on a valid report; exit 2 + `{"ok":false,"error":"<reason>"}` on schema
+violation (missing keys, non-const `canary_version`, unknown/missing
+capability ids, invalid `status`/`verdict` enum values). No legacy fallback —
+out-of-spec reports are rejected outright.
 
 ### `scripts/analyze-dev-flow-telemetry.sh`
 
@@ -249,6 +272,7 @@ repo/pr_number 欠落や timestamp parse 不能で統合できず 1 run のま�
 ```bash
 bats dev-flow-doctor/scripts/analyze-dev-flow-telemetry.bats
 bats dev-flow-doctor/scripts/run-diagnostics.bats
+bats dev-flow-doctor/scripts/validate-canary-report.bats
 ```
 
 Fixture-based unit tests (相対日付生成、日付経過によるテスト崩壊なし) validate the
@@ -263,9 +287,20 @@ status_conflicts (parent/child divergence), window-boundary behavior, and
 normalized-denominator anomaly evaluation (`iterate_unhealthy` using
 normalized `total`/`effective_total`, not raw entry count).
 
+`validate-canary-report.bats` covers the `/dev-flow-canary` report schema
+(required keys, `canary_version` const check, exact 9-id capability set,
+`status`/`verdict` enum validation, counts/failed_ids/unsupported_ids
+summary). `run-diagnostics.bats` covers `--canary` intake: valid report ->
+`checks.canary.status == "ok"`, broken/missing report -> `"unavailable"` +
+warn issue (fail-open, exit 0), score parity with/without `--canary`
+(canary check never affects `score`), and the bridge-removal-NOT-possible
+info issue when `fail > 0` or `direct_fs`/`direct_shell`/`direct_import` is
+`unsupported`.
+
 ## References
 
 - [Diagnostic Checks](references/diagnostic-checks.md) -- journal-based checks (Check 1–7) + dev-flow telemetry health
+  (includes Canary intake section for `/dev-flow-canary` report ingestion)
 - [Health Scoring](references/health-scoring.md) -- Scoring formula including telemetry anomaly penalty + baseline regression penalty (max -15)
 - [Baseline Comparison](references/baseline-comparison.md) -- AC4/AC5 snapshot schema, compare semantics, CI 運用パターン
 - [Responsibility Split](references/responsibility-split.md) -- Boundary vs skill-retrospective

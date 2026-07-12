@@ -193,3 +193,55 @@ config ファイルを明示指定できる。
 Check 8 は **dev-flow pipeline の telemetry 健全性** に特化している。全 skill を対象にした
 汎用的な failure pattern detection や proposal 生成は `skill-retrospective` 側で
 行うこと。詳しくは [responsibility-split.md](responsibility-split.md) を参照。
+
+## Canary intake (issue #325)
+
+`/dev-flow-canary` は harness capability を read-only に検証する専用 workflow
+（`schema付きagent` / `parallel or pipeline` / `nested workflow 1段` /
+`model/effort routing` / `pause/resume` / `direct fs/shell/import`）で、
+production の `dev-flow` / `pr-iterate` とは独立に動作する。実行結果は
+repository 外の `~/.claude/logs/dev-flow-canary/` 配下に構造化 JSON
+（canary report）として書き出される（**repository・git state・GitHub state を
+一切変更しない**）。
+
+dev-flow-doctor はこの canary report を `run-diagnostics.sh --canary <path>`
+で取り込む。取り込みは決定論スクリプト `validate-canary-report.sh` による
+schema 検証のみを行い、LLM 判断は介在しない。
+
+```bash
+# canary を実行した後、生成された report を doctor に取り込む
+$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --canary ~/.claude/logs/dev-flow-canary/<timestamp>.json
+```
+
+### 出力: `checks.canary`
+
+| status | 意味 |
+|--------|------|
+| `ok` | schema 検証 pass。`claude_code_version` / `counts`（pass/fail/unsupported）/ `failed_ids` / `unsupported_ids` / `bridge_sunset` を含む |
+| `unavailable` | report 不在・非 JSON・schema violation・`validate-canary-report.sh` 不在 のいずれか。`reason` に理由を記載 |
+
+capability ごとの `pass` / `fail` / `unsupported` の意味:
+
+- `pass`: harness capability が期待通り動作した
+- `fail`: capability API は存在するが実行が失敗した（harness regression の可能性）
+- `unsupported`: capability API 自体が存在しない（harness が対応していない）
+
+### score への非影響（advisory）
+
+canary check は **health score の計算に一切影響しない**。`ci-checks` proxy
+（`gh pr checks` 経由の advisory check）と同じ fail-open advisory 設計であり、
+canary の fail/unsupported/report 取り込み失敗のいずれも score・merge tier
+判定を変えない。`fail > 0` または `unsupported_ids` に `direct_fs` /
+`direct_shell` / `direct_import` のいずれかが含まれる場合は、
+`issues[]` に `severity: "info"` で
+「canary: bridge (exec-proxy/inline generator) removal NOT possible —
+direct fs/shell/import unsupported」を追加するのみで、gate は緩めない。
+
+### harness 更新時の再評価トリガ
+
+Claude Code（harness）が更新されたら `/dev-flow-canary` を再実行し、
+`AGENTS.md` の inline 生成区間 bridge（`tools/sync-inlines.mjs`）と
+exec-proxy bridge（`dev-runner`/`dev-runner-haiku`/`dev-runner-haiku-ro`）の
+sunset path 再評価の判断材料にする。**bridge の撤去そのものは canary では
+行わない** — canary は capability の pass/fail/unsupported を報告するのみで、
+撤去の実施判断は別 issue を立てて human review を経て行う。

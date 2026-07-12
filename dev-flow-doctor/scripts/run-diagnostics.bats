@@ -282,3 +282,133 @@ EOF
     run bash -c "grep -Ei 'family_skills|dev-kickoff|dev-implement|dev-validate|dev-integrate|dev-evaluate|night-patrol|context\\.mode|termination' '${SCRIPT}'"
     [ "$status" -ne 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# Canary intake (issue #325 T2): --canary <path> flag delegates to
+# validate-canary-report.sh and adds a purely informational `checks.canary`
+# section. Must never affect score (fail-open advisory, ci-checks precedent).
+# ---------------------------------------------------------------------------
+
+# 9 capability を全部指定 status で埋めた canary report を $1 に書き出す。
+# direct_fs/direct_shell/direct_import の status だけ個別に上書き可能。
+write_canary_report() {
+    local out="$1" fs_status="${2:-pass}" shell_status="${3:-pass}" import_status="${4:-pass}"
+    cat > "$out" <<EOF
+{
+  "canary_version": "1.0.0",
+  "claude_code_version": "2.1.80",
+  "timestamp_utc": "2026-07-13T00:00:00Z",
+  "capabilities": [
+    {"id": "agent_schema", "status": "pass", "detail": "ok"},
+    {"id": "model_routing", "status": "pass", "detail": "ok"},
+    {"id": "effort_routing", "status": "pass", "detail": "ok"},
+    {"id": "parallel_fanout", "status": "pass", "detail": "ok"},
+    {"id": "nested_workflow", "status": "pass", "detail": "ok"},
+    {"id": "pause_resume", "status": "pass", "detail": "ok"},
+    {"id": "direct_fs", "status": "${fs_status}", "detail": "probe"},
+    {"id": "direct_shell", "status": "${shell_status}", "detail": "probe"},
+    {"id": "direct_import", "status": "${import_status}", "detail": "probe"}
+  ],
+  "bridge_sunset": {
+    "exec_proxy_removable": false,
+    "inline_generator_removable": false,
+    "verdict": "keep-bridges",
+    "note": "bridges kept"
+  },
+  "report_path": "${out}"
+}
+EOF
+}
+
+@test "(11) --canary valid fixture: checks.canary.status == ok, exit 0" {
+    CANARY="$BATS_TEST_TMPDIR/canary-valid.json"
+    write_canary_report "$CANARY"
+
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local st
+    st=$(printf '%s\n' "$output" | jq -r '.checks.canary.status')
+    [ "$st" = "ok" ]
+
+    local ccv
+    ccv=$(printf '%s\n' "$output" | jq -r '.checks.canary.claude_code_version')
+    [ "$ccv" = "2.1.80" ]
+
+    local pass_count
+    pass_count=$(printf '%s\n' "$output" | jq '.checks.canary.counts.pass')
+    [ "$pass_count" -eq 9 ]
+}
+
+@test "(12) --canary あり/なしで score が同一（score 非影響の assert）" {
+    CANARY="$BATS_TEST_TMPDIR/canary-score.json"
+    write_canary_report "$CANARY"
+
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    local score_with
+    score_with=$(printf '%s\n' "$output" | jq '.score')
+
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config"
+    [ "$status" -eq 0 ]
+    local score_without
+    score_without=$(printf '%s\n' "$output" | jq '.score')
+
+    [ "$score_with" -eq "$score_without" ]
+}
+
+@test "(13) 壊れた canary fixture: checks.canary.status == unavailable + warn issue, exit 0" {
+    CANARY="$BATS_TEST_TMPDIR/canary-broken.json"
+    printf 'this is not json\n' > "$CANARY"
+
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local st
+    st=$(printf '%s\n' "$output" | jq -r '.checks.canary.status')
+    [ "$st" = "unavailable" ]
+
+    local warn_found
+    warn_found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("canary")))] | length')
+    [ "$warn_found" -ge 1 ]
+}
+
+@test "(14) --canary 不指定: checks に canary キーが無い" {
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local has_canary
+    has_canary=$(printf '%s\n' "$output" | jq '.checks | has("canary")')
+    [ "$has_canary" = "false" ]
+}
+
+@test "(15) direct_fs/shell/import unsupported fixture: issues に bridge removal NOT possible の info" {
+    CANARY="$BATS_TEST_TMPDIR/canary-unsupported.json"
+    write_canary_report "$CANARY" "unsupported" "unsupported" "unsupported"
+
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local found
+    found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("bridge")))] | length')
+    [ "$found" -ge 1 ]
+}
+
+@test "(16) fail>0 fixture (unsupported ids 無し): issues に bridge removal NOT possible の info" {
+    CANARY="$BATS_TEST_TMPDIR/canary-fail.json"
+    write_canary_report "$CANARY"
+    jq '.capabilities[0].status = "fail"' "$CANARY" > "$CANARY.tmp"
+    mv "$CANARY.tmp" "$CANARY"
+
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local found
+    found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("bridge")))] | length')
+    [ "$found" -ge 1 ]
+}
