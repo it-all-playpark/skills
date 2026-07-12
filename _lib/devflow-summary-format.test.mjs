@@ -1304,3 +1304,70 @@ test('finalReconcile=bogus -> out-of-enum は validation error', () => {
     });
   }, /invalid finalReconcile/);
 });
+
+// ─── Final AC reconcile 表示 (issue #331) ────────────────────────────────────
+
+test('finalReconcile=reverified, finalAcReconcile=reverified -> 「, final AC: reverified」と再検証済み注記を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    finalReconcile: 'reverified',
+    finalTestGreen: true,
+    finalAcReconcile: 'reverified',
+    acResults: [
+      { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
+    ],
+  });
+  const lines = body.split('\n');
+  const line = lines.find(l => l.startsWith('- Final reconcile'));
+  assert.ok(line, 'Final reconcile 行を含む');
+  assert.ok(line.includes(', final AC: reverified'), 'final AC 部分を含む');
+  assert.ok(body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記を含む');
+  assert.ok(!body.includes('⚠️ AC 判定は stale'), 'stale 注記は出ない');
+});
+
+test('finalReconcile=reverified, finalAcReconcile=skipped + acResults 有り -> stale 注記を含み再検証済み注記は含まない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    finalReconcile: 'reverified',
+    finalTestGreen: true,
+    finalAcReconcile: 'skipped',
+    acResults: [
+      { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
+    ],
+  });
+  assert.ok(body.includes('⚠️ AC 判定は stale（fix 適用後の最終 tree に対する AC 再検証が未実施/判定不能 — AC テーブルは Evaluate 時点（fix 前 tree）基準であり final ではない）'), 'stale 注記を含む');
+  assert.ok(!body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記は出ない');
+});
+
+test('finalReconcile=reverified, finalAcReconcile=skipped + acResults:null -> stale 注記は出ず既存 AC 空状態行のみ', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    finalReconcile: 'reverified',
+    finalTestGreen: true,
+    finalAcReconcile: 'skipped',
+    acResults: null,
+  });
+  assert.ok(!body.includes('⚠️ AC 判定は stale'), 'stale 注記は出ない');
+  assert.ok(!body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記も出ない');
+  assert.ok(body.includes('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）'), '既存の AC 空状態行のみ出る');
+});
+
+test('finalReconcile 未指定（fix 非適用）+ finalAcReconcile=skipped -> 「final AC:」を含まない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    finalReconcile: null,
+    finalAcReconcile: 'skipped',
+  });
+  assert.ok(!body.includes('final AC:'), 'finalReconcile null 時は final AC: を含まない');
+  assert.ok(!body.includes('⚠️ AC 判定は stale'), 'stale 注記も出ない');
+  assert.ok(!body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記も出ない');
+});
+
+test('finalAcReconcile=stale -> out-of-enum は validation error', () => {
+  assert.throws(() => {
+    buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      finalAcReconcile: 'stale',
+    });
+  }, /invalid finalAcReconcile/);
+});
