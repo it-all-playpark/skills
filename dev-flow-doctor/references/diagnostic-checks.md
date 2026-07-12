@@ -141,16 +141,37 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope telemetry --windo
 | `merge_tier` | `skill == "dev-flow"` の entry | AUTO / REVIEW / HOLD / unknown（pr-iterate standalone entry は `merge_tier == "PR_ITERATE"` かつ `skill == "pr-iterate"` のため自然に対象外） |
 | `eval_iter` / `plan_iter` | `skill == "dev-flow"` の entry | max 値・cap（`eval_iter_cap` / `plan_iter_cap`）・cap 到達件数 |
 | `gate_policy` | `skill == "dev-flow"` の entry | deterministic-only / llm-major-advisory / llm-major-blocking / llm-autonomous / unknown |
-| `iterate_status` | `.telemetry.iterate_status != null` の全 entry（dev-flow + pr-iterate 両方） | lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / review_contract_error / unknown |
+| `iterate_status` | `.telemetry.iterate_status != null` の全 entry を正規化した normalized run（nested 実行の dev-flow×pr-iterate 親子ペアを 1 run に統合。raw_entries / unjoinable / status_conflicts を併記） | lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / review_contract_error / unknown |
 
 欠落フィールドは `unknown` バケットへ計上する（fail-safe。die しない）。
+
+### Nested run normalization（iterate_status のみ）
+
+dev-flow は pr-iterate を nested workflow 呼び出し（`workflow('pr-iterate')`）することがあり、
+その場合 dev-flow entry（親）と pr-iterate entry（子）が同一 run の `iterate_status` を
+二重に記録してしまう。この正規化 stage は以下のルールで de-dupe する: `.context.repo` と
+`.context.pr_number` を両方持ち `.timestamp` が ISO 8601 として parse 可能な entry のみを
+joinable とし `repo#pr_number` で group 化する。group 内では `skill=="dev-flow"` ×
+`skill=="pr-iterate"` の異種ペアのみを、timestamp 差が `nested_join_window_seconds`
+（既定 600 秒、`dev-flow-doctor.thresholds.nested_join_window_seconds` で上書き可）以内の
+最近接 greedy matching（各 entry の消費は最大 1 回）で 1 run に統合する。同種同士
+（pr-iterate 同士等）は絶対に join しないため、同一 PR への standalone pr-iterate
+複数回再実行は別 run のまま残る。joined run の status は pr-iterate（child）側の値を
+採用し、親子で値が異なる場合は `normalization.status_conflicts` を +1 する。
+`context.repo` / `context.pr_number` 欠落や timestamp parse 不能の entry は暗黙 dedupe
+せず `normalization.unjoinable` として明示集計し、各 1 run のまま残る。
+出力: `distributions.iterate_status.total`（normalized run 数）+ `raw_entries`
+（正規化前 entry 数）+ `normalization: {joined_pairs, unjoinable, status_conflicts,
+join_window_seconds}`。既知の限界: handoff flush が遅延して window を超えた nested
+ペアは join されず 2 run のまま残る（over-count 温存。`raw_entries` と
+`normalization.joined_pairs` の乖離で観測可能）。
 
 ### 検出カテゴリ（anomaly 3 種）
 
 | anomaly | severity | 条件 | 推奨アクション |
 |---------|----------|------|---------------|
 | **cap_pinned** | `warn` | dev-flow entry の `eval_iter >= eval_iter_cap`（既定 10）または `plan_iter >= plan_iter_cap`（既定 8）が 1 件以上 | 収束しない run が cap で打ち切られている。該当 issue の plan/evaluate の差し戻し内容（frozen target・topic-stuck 判定）を確認 |
-| **iterate_unhealthy** | `warn` | 非 lgtm（stuck / fix_failed / max_reached / ci_error / review_contract_error）の割合が `iterate_unhealthy_rate`（既定 0.30）を超え（分母は ci_pending を除外した effective_total）、かつ effective_total が `iterate_min_runs`（既定 3）以上 | pr-iterate の review ⇄ fix ループが健全に収束していない。pr-reviewer の finding 傾向・critical/major-always-blocks の影響、review decision と blocking findings の矛盾再発によるエスカレーション、または CI 未設定/pending が多い場合は CI 整備状況を確認 |
+| **iterate_unhealthy** | `warn` | 非 lgtm（stuck / fix_failed / max_reached / ci_error / review_contract_error）の割合が `iterate_unhealthy_rate`（既定 0.30）を超え（分母は normalized run（nested 親子統合後）から ci_pending を除外した effective_total）、かつ effective_total が `iterate_min_runs`（既定 3）以上。detail に正規化前の `raw_entries` も併記される | pr-iterate の review ⇄ fix ループが健全に収束していない。pr-reviewer の finding 傾向・critical/major-always-blocks の影響、review decision と blocking findings の矛盾再発によるエスカレーション、または CI 未設定/pending が多い場合は CI 整備状況を確認 |
 | **micro_nonfiring** | `warn`（`skipped` は insufficient_data） | dev-flow の総 run 数が `micro_min_runs`（既定 10）以上あるにもかかわらず `shape: micro` の run が 0 件。run 数が `micro_min_runs` 未満のときは `severity: "skipped"`, `reason: "insufficient_data"` を明示出力し判定しない | classifyShape の micro floor 判定が過剰に安全側へ寄っていないか確認（`estimated_change_file_count` / `acceptance_criteria` 欠落・breaking 検出の誤爆有無） |
 
 ### window オプション
@@ -164,7 +185,8 @@ $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope telemetry --windo
 
 すべての閾値は `skill-config.json` の `dev-flow-doctor.thresholds` から読み込む
 （`eval_iter_cap` / `plan_iter_cap` / `iterate_unhealthy_rate` / `iterate_min_runs` /
-`micro_min_runs`）。`--config <path>` で config ファイルを明示指定できる。
+`micro_min_runs` / `nested_join_window_seconds`、既定 600）。`--config <path>` で
+config ファイルを明示指定できる。
 
 ### 責務分離
 

@@ -4,7 +4,8 @@ description: |
   Diagnose dev-flow pipeline health from skill-retrospective journal telemetry.
   Detects anomalies in dev-flow/pr-iterate distributions: cap張り付き
   (eval_iter/plan_iter pinned at loop cap), iterate不調率 (pr-iterate
-  stuck/fix_failed/max_reached/ci_error/review_contract_error rate), micro不発火 (micro shape never selected
+  stuck/fix_failed/max_reached/ci_error/review_contract_error rate on normalized
+  runs, dedupe済み), micro不発火 (micro shape never selected
   despite sufficient run volume).
   Use when: (1) dev-flow issues or underperformance,
   (2) shape / merge_tier / gate_policy distribution review, (3) weekly dev-flow health review,
@@ -30,6 +31,8 @@ actionable improvement recommendations.
 `dev-flow` / `pr-iterate` が書き出す telemetry フィールド（`shape`, `merge_tier`,
 `eval_iter`, `plan_iter`, `gate_policy`, `danger_hits`, `iterate_status`）を
 分布集計し、**anomaly 3 種**（cap張り付き / iterate不調率 / micro不発火）を判定する。
+`iterate_status` 分布は nested 実行（同一 PR に対する `dev-flow` 親 entry と
+`pr-iterate` 子 entry）を 1 run に正規化した normalized 分母で集計する。
 
 汎用的な failure パターン検出や proposal 生成は `skill-retrospective` の責務である。
 詳しくは [responsibility-split.md](references/responsibility-split.md) を参照。
@@ -76,13 +79,17 @@ actionable improvement recommendations.
 - Telemetry scope は `dev-flow` / `pr-iterate` の journal entry を直接 jq で集計する
   (see `scripts/analyze-dev-flow-telemetry.sh`)
 - 分布（shape / merge_tier / eval_iter / plan_iter / gate_policy）の分母は
-  `.skill == "dev-flow"` の entry のみ。`iterate_status` の分母のみ
-  `.telemetry.iterate_status` を持つ全 entry（dev-flow + pr-iterate 両方）
+  `.skill == "dev-flow"` の entry のみ。`iterate_status` の分母は
+  `.telemetry.iterate_status` を持つ全 entry を repo+pr_number+timestamp 近接
+  （`nested_join_window_seconds` 既定 600s）で nested 親子統合した normalized run。
+  raw/normalized を併記し、相関不能 entry（repo/pr_number 欠落・timestamp parse
+  不能）は unjoinable として明示集計、親子 status 乖離は status_conflicts、
+  joined run は child（pr-iterate）値を採用する
 - `iterate_unhealthy` の判定では ci_error は非 lgtm 分子に含み、ci_pending は分母から除外する
-  （effective_total = total - ci_pending）
+  （effective_total = total - ci_pending）。この total/effective_total は normalized 母集団
 - 閾値・default window は `skill-config.json` の `"dev-flow-doctor"` 配下
   (`thresholds.eval_iter_cap` / `plan_iter_cap` / `iterate_unhealthy_rate` /
-  `iterate_min_runs` / `micro_min_runs`) で設定する
+  `iterate_min_runs` / `micro_min_runs` / `nested_join_window_seconds`) で設定する
 
 ## Output Format
 
@@ -107,8 +114,7 @@ actionable improvement recommendations.
 eval_iter: max 10, cap 10, at_cap_count 3
 plan_iter: max 7, cap 8, at_cap_count 0
 
-**iterate_status** distribution (denominator: dev-flow + pr-iterate runs with
-iterate_status set, total 41): lgtm 30, stuck 4, fix_failed 3, max_reached 1, ci_error 2, ci_pending 1, review_contract_error 0, unknown 0
+**iterate_status** distribution (raw entries 45 → normalized runs 41; joined_pairs 4, unjoinable 6, status_conflicts 0): lgtm 30, stuck 4, fix_failed 3, max_reached 1, ci_error 2, ci_pending 1, review_contract_error 0, unknown 0
 
 ### Anomalies
 
@@ -219,7 +225,7 @@ Output JSON schema:
     "eval_iter": {"max": 10, "cap": 10, "at_cap_count": 3},
     "plan_iter": {"max": 7, "cap": 8, "at_cap_count": 0},
     "gate_policy": {"deterministic-only": 0, "llm-major-advisory": 40, "llm-major-blocking": 2, "llm-autonomous": 0, "unknown": 0},
-    "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "ci_error": 2, "ci_pending": 1, "review_contract_error": 0, "unknown": 0, "total": 41}
+    "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "ci_error": 2, "ci_pending": 1, "review_contract_error": 0, "unknown": 0, "total": 41, "raw_entries": 45, "normalization": {"joined_pairs": 4, "unjoinable": 6, "status_conflicts": 0, "join_window_seconds": 600}}
   },
   "anomalies": [
     {"type": "cap_pinned", "severity": "warn", "count": 3, "detail": {"...": "..."}},
@@ -228,6 +234,15 @@ Output JSON schema:
   ]
 }
 ```
+
+`distributions.iterate_status` の `total` / `raw_entries` / `normalization`
+（`joined_pairs` / `unjoinable` / `status_conflicts` / `join_window_seconds`）は
+nested run normalization（dev-flow 親 entry と pr-iterate 子 entry の統合）の
+結果を表す。`total` は normalized run 数、`raw_entries` は正規化前の entry 数、
+`normalization.joined_pairs` は統合された親子ペア数、`unjoinable` は
+repo/pr_number 欠落や timestamp parse 不能で統合できず 1 run のまま残った entry
+数、`status_conflicts` は親子で status が乖離したペア数、
+`join_window_seconds` は統合判定に使った timestamp 近接ウィンドウ（秒）。
 
 ## Tests
 
@@ -241,7 +256,12 @@ shape/merge_tier/gate_policy/eval_iter/plan_iter/iterate_status distributions,
 the `.skill == "dev-flow"` vs `iterate_status`-only denominator split
 (pr-iterate standalone entries must not appear in `merge_tier`), and the 3
 anomaly detections (cap_pinned / iterate_unhealthy / micro_nonfiring including
-the insufficient-data skip path).
+the insufficient-data skip path). Nested run normalization is also covered:
+joined pairs (dev-flow + pr-iterate within `nested_join_window_seconds`),
+unjoinable entries (missing repo/pr_number or unparsable timestamp),
+status_conflicts (parent/child divergence), window-boundary behavior, and
+normalized-denominator anomaly evaluation (`iterate_unhealthy` using
+normalized `total`/`effective_total`, not raw entry count).
 
 ## References
 
