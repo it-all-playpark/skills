@@ -525,7 +525,7 @@ const FIX = {
 }
 
 // CI gate schema — restores the gate lost in eb8aa7e (issue #133).
-// dev-runner runs pr-iterate/scripts/check-ci.sh and returns its stdout JSON unchanged.
+// dev-runner-haiku-ro runs pr-iterate/scripts/check-ci.sh and returns its stdout JSON unchanged.
 // failed_checks items match script output: {name, bucket, state} (conclusion was removed in
 // the bucket-field migration; see issue #133 / ci::bats-fabricated-schema).
 // 'error' status means gh API failed (auth/network); escalate to human immediately.
@@ -555,7 +555,7 @@ phase('Iterate')
 const PR_META = { type: 'object', required: ['url'], properties: { url: { type: 'string' } } }
 const prMeta = await agent(
   `## Objective\nPR #${PR} の URL を取得する（telemetry の repo 解決用）。\n\n## Instructions\n次のコマンドをそのまま実行し、stdout（1 行）を url として返せ: \`gh pr view ${PR} --json url -q .url\`\nコマンド失敗時は throw せず url を空文字で返すこと。\n\n## Output format\n{ "url": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n50 語以内で完結すること。`,
-  { agentType: 'dev-runner-haiku', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
+  { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
 )
 const REPO = repoFromGithubUrl(prMeta?.url)
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
@@ -663,7 +663,7 @@ for (i = 1; i <= MAX; i++) {
       + `prose 禁止。JSON のみ返せ。\n\n`
       + `## Token cap\n`
       + `JSON のみ。1 行以内。`,
-      { agentType: 'dev-runner', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
+      { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
     )
 
     if (ci == null) throw new Error(`pr-iterate: ci-check#${i} が結果を返しませんでした`)

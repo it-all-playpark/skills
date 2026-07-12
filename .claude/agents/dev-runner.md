@@ -15,7 +15,7 @@ tools:
   - Glob
   - Grep
   - Skill
-  - TodoWrite
+maxTurns: 50
 ---
 
 # dev-runner

@@ -126,7 +126,7 @@ function makeSandbox(analyzeReq) {
         critical_resolutions: [],
       };
     }
-    if (agentType === 'dev-runner-haiku' && label === 'realized-diff') {
+    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['src/a.ts'] };
     }
     if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
