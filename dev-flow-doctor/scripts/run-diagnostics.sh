@@ -10,6 +10,13 @@ set -euo pipefail
 # `baseline_compare` section to checks plus regression penalty (max -15).
 # --update-baseline delegates to baseline-snapshot.sh and writes the snapshot
 # to the given path; warns to stderr if total_entries == 0.
+#
+# --canary (issue #325 T2): delegates to validate-canary-report.sh and adds
+# an informational `checks.canary` section (dev-flow-canary report intake).
+# This check is purely advisory (fail-open) and NEVER affects the health
+# score — mirrors the ci-checks proxy precedent (AGENTS.md exec-proxy 失敗
+# ポリシー表). Validation failure / missing script -> checks.canary =
+# {status:"unavailable", reason} + warn issue, continues (no die).
 
 SCRIPT_DIR_RD="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR_RD/../../_lib/common.sh"
@@ -22,6 +29,7 @@ SCOPE="full"
 WINDOW="30d"
 COMPARE_PATH=""
 UPDATE_BASELINE_PATH=""
+CANARY_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,8 +37,9 @@ while [[ $# -gt 0 ]]; do
     --window) WINDOW="$2"; shift 2 ;;
     --compare) COMPARE_PATH="$2"; shift 2 ;;
     --update-baseline) UPDATE_BASELINE_PATH="$2"; shift 2 ;;
+    --canary) CANARY_PATH="$2"; shift 2 ;;
     -h|--help)
-      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|telemetry|feedback] [--window <dur>] [--compare <path>] [--update-baseline <path>]"
+      echo "Usage: run-diagnostics.sh [--scope full|journal|worktrees|config|telemetry|feedback] [--window <dur>] [--compare <path>] [--update-baseline <path>] [--canary <path>]"
       exit 0
       ;;
     *) die_json "Unknown argument: $1" 1 ;;
@@ -569,6 +578,82 @@ run_baseline_compare_check() {
 }
 
 # ============================================================================
+# Check 12: Canary report intake (issue #325 T2)
+# ============================================================================
+# Advisory only — never contributes to SCORE. Delegates schema validation to
+# validate-canary-report.sh (decisive/deterministic). Failure modes:
+#   - CANARY_PATH empty            -> no-op, checks.canary is absent
+#   - validate script missing      -> checks.canary.status = "unavailable"
+#   - validate exits non-zero      -> checks.canary.status = "unavailable"
+#   - validate stdout not a JSON object -> checks.canary.status = "unavailable"
+# All "unavailable" cases add a warn issue but keep exit 0 (fail-open,
+# mirrors the ci-checks exec-proxy failure policy in AGENTS.md).
+run_canary_check() {
+  if [[ -z "$CANARY_PATH" ]]; then
+    return
+  fi
+
+  local validate_sh="$SCRIPT_DIR_RD/validate-canary-report.sh"
+  if [[ ! -x "$validate_sh" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq '.canary = {"status":"unavailable","reason":"validate-canary-report.sh not found"}')
+    add_issue "warn" "canary: validate-canary-report.sh not found — canary check skipped"
+    return
+  fi
+
+  local validate_out validate_rc
+  set +e
+  validate_out=$("$validate_sh" "$CANARY_PATH" 2>/dev/null)
+  validate_rc=$?
+  set -e
+
+  if [[ $validate_rc -ne 0 ]]; then
+    local reason
+    reason=$(echo "$validate_out" | jq -r '.error // "validate-canary-report.sh failed"' 2>/dev/null || echo "validate-canary-report.sh failed")
+    CHECKS=$(echo "$CHECKS" | jq --arg reason "$reason" '.canary = {status:"unavailable", reason:$reason}')
+    add_issue "warn" "canary: report validation failed — ${reason}"
+    return
+  fi
+
+  if ! echo "$validate_out" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    CHECKS=$(echo "$CHECKS" | jq '.canary = {"status":"unavailable","reason":"invalid JSON from validate-canary-report.sh"}')
+    add_issue "warn" "canary: invalid JSON from validate-canary-report.sh"
+    return
+  fi
+
+  local ccv counts failed_ids unsupported_ids bridge_sunset
+  ccv=$(echo "$validate_out" | jq -r '.claude_code_version')
+  counts=$(echo "$validate_out" | jq -c '.counts')
+  failed_ids=$(echo "$validate_out" | jq -c '.failed_ids')
+  unsupported_ids=$(echo "$validate_out" | jq -c '.unsupported_ids')
+  bridge_sunset=$(echo "$validate_out" | jq -c '.bridge_sunset')
+
+  CHECKS=$(echo "$CHECKS" | jq \
+    --arg ccv "$ccv" \
+    --argjson counts "$counts" \
+    --argjson failed_ids "$failed_ids" \
+    --argjson unsupported_ids "$unsupported_ids" \
+    --argjson bridge_sunset "$bridge_sunset" \
+    '.canary = {
+      status: "ok",
+      claude_code_version: $ccv,
+      counts: $counts,
+      failed_ids: $failed_ids,
+      unsupported_ids: $unsupported_ids,
+      bridge_sunset: $bridge_sunset
+    }')
+
+  # Informational only: never touches SCORE. fail>0 OR unsupported includes
+  # direct_fs/direct_shell/direct_import -> bridge removal is NOT possible.
+  local fail_count bridge_blockers
+  fail_count=$(echo "$counts" | jq '.fail')
+  bridge_blockers=$(echo "$unsupported_ids" | jq '[.[] | select(. == "direct_fs" or . == "direct_shell" or . == "direct_import")] | length')
+
+  if [[ "$fail_count" -gt 0 || "$bridge_blockers" -gt 0 ]]; then
+    add_issue "info" "canary: bridge (exec-proxy/inline generator) removal NOT possible — direct fs/shell/import unsupported"
+  fi
+}
+
+# ============================================================================
 # Run checks based on scope
 # ============================================================================
 
@@ -599,6 +684,8 @@ case "$SCOPE" in
     die_json "Scope 'feedback' was removed in v2 (parallel-mode infrastructure deleted)." 1
     ;;
 esac
+
+run_canary_check
 
 # ============================================================================
 # Determine rating
