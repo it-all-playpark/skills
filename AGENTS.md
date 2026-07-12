@@ -18,6 +18,9 @@ apt-get install bats          # Ubuntu / Debian
 # テスト実行
 bash tests/run-all-bats.sh           # ローカル開発 (bats 未インストール時は graceful skip)
 bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを error 扱い)
+
+# 外部スキル (.agents/skills/ — gitignored) の復元 (新規マシンのセットアップ時)
+npx skills experimental_install      # tracked の skills-lock.json から一括復元 (per-skill install)
 ```
 
 ディレクトリ構造:
