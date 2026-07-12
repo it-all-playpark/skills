@@ -103,7 +103,7 @@ function makeSandbox(analyzeReq) {
       return { red: false, green: false, reason: 'stub' };
     }
     // realized-diff（Security floor）: dev-runner-haiku, label='realized-diff', CHANGED schema
-    if (agentType === 'dev-runner-haiku' && label === 'realized-diff') {
+    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['src/foo.ts'] };
     }
     // declared-path-check（Validate）: dev-runner-haiku, label='declared-path-check', CHANGED schema

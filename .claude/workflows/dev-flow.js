@@ -2056,7 +2056,7 @@ phase('Setup')
 // danger-grep 実行時失敗の fail-closed ポリシー自体は不変（W7 軸A security floor）。
 const baseProbe = await agent(
   resolveBasePrompt(BASE_ARG),
-  { agentType: 'dev-runner-haiku', schema: RESOLVE_BASE_PROBE, label: 'resolve-base', phase: 'Setup' },
+  { agentType: 'dev-runner-haiku-ro', schema: RESOLVE_BASE_PROBE, label: 'resolve-base', phase: 'Setup' },
 )
 const resolvedBase = resolveBase(BASE_ARG, baseProbe) // 解決不能は throw（workflow abort、danger-grep 以降へ到達しない）
 BASE = resolvedBase.base
@@ -2438,7 +2438,7 @@ async function execValidatePhase(state) {
   {
     const dhGate = need(await agent(
       dhPrompt,
-      { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate', phase: 'Validate' },
+      { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-gate', phase: 'Validate' },
     ), 'Validate(diff-gate)')
     if (dhGate.empty === true) {
       log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— Implement へ 1 回だけ差し戻す（issue #215）')
@@ -2449,7 +2449,7 @@ async function execValidatePhase(state) {
       for (const r of retryResults) { if (r && Array.isArray(r.concerns)) concerns.push(...r.concerns) }
       const dhRetry = need(await agent(
         dhPrompt,
-        { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Validate' },
+        { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Validate' },
       ), 'Validate(diff-gate-retry)')
       if (dhRetry.empty === true) {
         await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 }, phase: 'Validate' })
@@ -2489,7 +2489,7 @@ async function execSecurityFloorPhase(state) {
     + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。`
     + `失敗時に ok:true を生成してはならない）:\n`
     + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --working-tree origin/${BASE}`,
-    { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
+    { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
   ), 'Security floor(danger-grep)')
   const dangerHits = risk.ok === true ? [...new Set((risk.hits ?? []).map((h) => h.class))] : []
   ledger = reconcileDanger(ledger, risk)
@@ -2508,7 +2508,7 @@ async function execSecurityFloorPhase(state) {
     + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
     + `リネームは -> の右側（新ファイル名）を使え。空白行は除く。`
     + `結果を {"files": ["path1", ...]} 形式で返せ。`,
-    { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'realized-diff', phase: 'Security floor' },
+    { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'realized-diff', phase: 'Security floor' },
   )
   // null → NaN 安全弁（realized?.files ? realized.files.length : NaN のパターンを継承）
   // ephemeral ファイルを除外してから count する（evaluator.staged.md / fm_*.txt / .devflow-tmp/ を除く）
@@ -2524,7 +2524,7 @@ async function execSecurityFloorPhase(state) {
   const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
   if (refloor.refloored) log(`⚠️ re-floor: 見積もり ${SHAPE} → realized ${realizedCount} file(s) で ${EFFECTIVE_SHAPE} へ昇格 (raise-only)`)
   // ui-verify: UI パス touch 時のみ opt-in で ui_verify config を確認する（0 オーバーヘッド原則。issue #285）。
-  // config 読み取りは workflow に fs が無いため dev-runner-haiku exec-proxy に委譲する。
+  // config 読み取りは workflow に fs が無いため dev-runner-haiku-ro exec-proxy に委譲する。
   // null / found:false / schema invalid は全て uiTouched=false へ倒す fail-open 設計。need() で包まない。
   let uiVerifyConfig = null
   let uiVerifyStatus = 'skipped'
@@ -2536,7 +2536,7 @@ async function execSecurityFloorPhase(state) {
         `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
         + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
         + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
-        { agentType: 'dev-runner-haiku', schema: UICFG, label: 'ui-verify-config', phase: 'Security floor' })
+        { agentType: 'dev-runner-haiku-ro', schema: UICFG, label: 'ui-verify-config', phase: 'Security floor' })
     } catch (e) {
       uiVerifyStatus = 'setup_failed'
       log(`⚠️ ui-verify: ui-verify-config 呼び出しが例外 (${e && e.message ? e.message : e}) — setup_failed として skip（fail-open）`)
@@ -2768,7 +2768,7 @@ async function execEvaluatePhase(state) {
     // ループ終了後ではなく各 evaluator 呼び出し前にここで取ることで、
     // redgreen-verify.sh の restore 失敗等 evaluator 呼び出し後の tree 変化を検出可能にする。
     {
-      const _dhPreEval = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
+      const _dhPreEval = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
       if (_dhPreEval && typeof _dhPreEval.hash === 'string') {
         evalDiffHash = _dhPreEval.hash
       } else {
@@ -2980,7 +2980,7 @@ state = await execEvaluatePhase(state)
 // micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
 let evalStaleness = 'none'
 if (state.evalDiffHash != null) {
-  const dhPr = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
+  const dhPr = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
   const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
   if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
   if (prDiffHash != null && state.evalDiffHash !== prDiffHash) {
@@ -3052,7 +3052,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
       const changedFinal = await agent(
         `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
         + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
-        { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'changed-files-final', phase: 'Final reconcile' })
+        { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files-final', phase: 'Final reconcile' })
       if (!changedFinal?.files) {
         log('⚠️ Final reconcile: changed-files-final 取得失敗 — UI 再判定・宣言外再監査を skip（fail-open。test gate は維持）')
       } else {
@@ -3073,7 +3073,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
               `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
               + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
               + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
-              { agentType: 'dev-runner-haiku', schema: UICFG, label: 'ui-verify-config-final', phase: 'Final reconcile' })
+              { agentType: 'dev-runner-haiku-ro', schema: UICFG, label: 'ui-verify-config-final', phase: 'Final reconcile' })
           } catch (e) { finalUiVerifyStatus = 'setup_failed'; log(`⚠️ Final reconcile: ui-verify-config-final 例外 (${e && e.message ? e.message : e}) — setup_failed で skip（fail-open）`) }
           if (rawCfgF?.found === true && rawCfgF.config) {
             const vF = validateUiVerifyConfig(rawCfgF.config)
@@ -3102,7 +3102,7 @@ const riskFinal = need(await agent(
   `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
   + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
   + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
-  { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
+  { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
 ), 'Merge tier(danger-grep-final)')
 const dangerHitsFinal = riskFinal.ok === true ? [...new Set((riskFinal.hits ?? []).map((h) => h.class))] : []
 const dangerFailClosedFinal = riskFinal.ok !== true
@@ -3110,7 +3110,7 @@ if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${risk
 const changed = need(await agent(
   `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
   + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
-  { agentType: 'dev-runner-haiku', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
+  { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
 ), 'Merge tier(changed-files)')
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
@@ -3182,7 +3182,7 @@ if (ciTargets.length > 0) {
     + `（gh pr checks は check 失敗時 exit 1・pending 時 exit 8 を返すが、stdout に JSON array が出ていれば ok:true とする。`
     + `stdout が空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
     + `gh pr checks ${pr.pr_number} --json name,bucket`,
-    { agentType: 'dev-runner-haiku', schema: CHECKS, label: 'ci-checks', phase: 'Merge tier' },
+    { agentType: 'dev-runner-haiku-ro', schema: CHECKS, label: 'ci-checks', phase: 'Merge tier' },
   )
   if (!ciChecks || ciChecks.ok !== true || !Array.isArray(ciChecks.checks)) {
     log(`⚠️ ci-checks: checks 取得失敗 (${ciChecks?.error ?? 'null/schema 不一致'}) — ENV item 据え置き（fail-open）`)
