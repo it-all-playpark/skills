@@ -96,7 +96,7 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
     if (agentType === 'pr-reviewer') {
       return reviewerStub(label);
     }
-    if (agentType === 'dev-runner' && promptStr.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci.sh')) {
       return ciStub ? ciStub(label) : { status: 'passed', failed_checks: [] };
     }
     if (label.startsWith('fix#')) {

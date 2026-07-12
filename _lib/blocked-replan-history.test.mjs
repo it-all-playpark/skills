@@ -70,7 +70,7 @@ function makeSandbox(analyzeReq, implementerStub) {
         security_clearance: [], critical_resolutions: [],
       };
     }
-    if (agentType === 'dev-runner-haiku' && (label === 'realized-diff' || label === 'declared-path-check')) {
+    if (agentType === 'dev-runner-haiku-ro' && (label === 'realized-diff' || label === 'declared-path-check')) {
       return { files: ['src/a.ts'] };
     }
     if (label.startsWith('redgreen')) {

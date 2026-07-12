@@ -79,7 +79,7 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
     }
-    if (agentType === 'dev-runner-haiku' && label === 'realized-diff') {
+    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['src/foo.ts'] };
     }
     if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
