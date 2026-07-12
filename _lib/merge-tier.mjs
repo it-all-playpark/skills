@@ -141,6 +141,15 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 //   （後方互換 scaffolding 禁止規約）。未指定(undefined/null) = reason 追加なし。
 // s.finalTestGreen (optional true|false|null): Final reconcile での最終 tree test 再実行結果。
 //   false のとき専用 HOLD reason を追記する。true/null(未実行 or no_tests)は reason 追加なし。
+// s.iterateStatus (string|null): pr-iterate の終端 status（'lgtm'|'stuck'|'fix_failed'|
+//   'max_reached'|'ci_error'|'ci_pending'|null）。'lgtm' 以外（未知値・null 含む）は
+//   決定論的 HOLD（fail-safe、allowlist しない厳格判定）。blast-radius クラス（issue #319）—
+//   merge 直前の最終ゲートが LGTM 未到達のまま AUTO/REVIEW を出すと既知の指摘が未解消のまま
+//   出荷されるため、gate_policy で緩和しない（軸A 不変）。
+// s.evalStaleness (string): 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'
+//   （issue #288 の 4 値）。'hash_mismatch' のみ HOLD 追加（Evaluate 対象 tree と PR tree の
+//   乖離）。'iterate_incomplete' は iterateStatus !== 'lgtm' と必ず同時発生するため個別条件に
+//   しない。'none'/'iterate_fixed' は tier に影響しない。
 export function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -155,6 +164,8 @@ export function classifyMergeTier(s) {
   if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
   if (s.finalReconcile === 'unavailable') reasons.push('Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須');
   if (s.finalTestGreen === false) reasons.push('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）');
+  if (s.iterateStatus !== 'lgtm') reasons.push(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`);
+  if (s.evalStaleness === 'hash_mismatch') reasons.push('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）');
   if (reasons.length) return { tier: 'HOLD', reasons };
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
