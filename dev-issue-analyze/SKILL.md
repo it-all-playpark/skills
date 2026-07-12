@@ -71,7 +71,7 @@ into context. This ensures implementation planning is informed by framework guid
 
 1. Run `$SKILLS_DIR/_lib/scripts/detect-stack.sh` to detect frameworks
 2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md
-3. Keep loaded — downstream skills (dev-implement, dev-decompose) benefit from
+3. Keep loaded — downstream dev-flow phases (dev-planner / implementer agents) benefit from
    the best-practice context already present in the conversation
 
 ## Examples

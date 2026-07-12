@@ -2024,8 +2024,6 @@ function setupDepsPrompt(worktree) {
     + `bash ~/.claude/skills/_shared/scripts/ensure-worktree-deps.sh --path ${worktree} --lockfile-only --skip-custom`;
 }
 
-const INSTALLED_RESULT_STATUSES = new Set(['installed', 'already_installed', 'dry_run']);
-
 function warningImplNote(detail) {
   return `依存インストール警告: ${detail}。この worktree では依存（node_modules 等）が未整備の可能性がある。`
     + `自分の task の実装/テスト実行に必要なら worktree 直下で install コマンド（例: npm ci）を自分で実行してよい（lockfile は書き換えるな）。\n`;
