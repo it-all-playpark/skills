@@ -32,6 +32,17 @@ test('[evaluator-contract] evaluator.md contains the canonical concern_resolutio
   );
 });
 
+// final_ac_reconcile 契約は evaluator.md へ mirror しない（issue #331 design decision）。
+// .claude/agents/ は sandbox レベルの書き込み禁止領域であり、契約は dev-flow.js の
+// final-ac-reconcile agent 呼び出し prompt への verbatim 注入のみで配送する（唯一の配送経路）。
+// mirror 化する場合はこの pin ごと人間が明示的に変更すること。
+test('[evaluator-contract] evaluator.md does NOT mirror the final_ac_reconcile contract (prompt-injection-only delivery, issue #331)', () => {
+  assert.ok(
+    !evaluatorMd.includes('final_ac_reconcile'),
+    'final_ac_reconcile 契約は evaluator.md へ mirror せず、dev-flow.js の final-ac-reconcile prompt 注入のみで配送する設計。mirror 化する場合はこの pin ごと人間が変更すること',
+  );
+});
+
 test('[evaluator-contract] dev-flow.js inlines and uses the canonical contract', () => {
   assert.ok(
     devFlowSrc.includes('BEGIN inline: _lib/evaluator-contract.mjs'),
@@ -49,6 +60,13 @@ test('[evaluator-contract] dev-flow.js inlines and uses the canonical contract',
     assert.ok(devFlowSrc.includes(line), `dev-flow.js に concern_resolutions 契約行が必要です: ${line}`);
   }
   assert.ok(devFlowSrc.includes('EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions'));
+});
+
+test('[evaluator-contract] dev-flow.js inlines and uses the canonical final_ac_reconcile contract', () => {
+  for (const line of EVALUATOR_OPERATIONAL_CONTRACT.final_ac_reconcile.split('\n')) {
+    assert.ok(devFlowSrc.includes(line), `dev-flow.js に final_ac_reconcile 契約行が必要です: ${line}`);
+  }
+  assert.ok(devFlowSrc.includes('EVALUATOR_OPERATIONAL_CONTRACT.final_ac_reconcile'));
 });
 
 test('[evaluator-contract] evaluator.md output example does not include schema-less score field', () => {
