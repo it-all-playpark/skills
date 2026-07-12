@@ -398,3 +398,36 @@ GHEOF
     call_count=$(cat "$GH_CALL_COUNT_FILE")
     [ "$call_count" -eq 1 ]
 }
+
+# ---------------------------------------------------------------------------
+# Test 18: real gh "no checks" behavior -> status 'no_checks', exits 0
+# Real gh returns EXIT 1 with empty stdout and stderr "no checks reported on
+# the '<branch>' branch" when a PR has zero checks (CI not configured). This is
+# a determinate state, NOT a real API error: must report no_checks and exit 0.
+# Regression for pr-iterate ci_error false positive on CI-less repos.
+# ---------------------------------------------------------------------------
+@test "gh exit 1 + 'no checks reported' -> status no_checks, exits 0, no retry" {
+    export GH_CALL_COUNT_FILE
+    cat > "$BATS_TMPDIR/stub-bin/gh" << 'GHEOF'
+#!/usr/bin/env bash
+if [[ "$1" == "pr" && "$2" == "checks" ]]; then
+    count=$(( $(cat "$GH_CALL_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+    echo "$count" > "$GH_CALL_COUNT_FILE"
+    echo "no checks reported on the 'feature-branch' branch" >&2
+    exit 1
+fi
+exit 0
+GHEOF
+    chmod +x "$BATS_TMPDIR/stub-bin/gh"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+    [ "$(echo "$result" | jq -r '.passed')" = "0" ]
+    [ "$(echo "$result" | jq -r '.failed')" = "0" ]
+    [ "$(echo "$result" | jq -r '.pending')" = "0" ]
+    # determinate -> must NOT retry
+    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    [ "$call_count" -eq 1 ]
+}
