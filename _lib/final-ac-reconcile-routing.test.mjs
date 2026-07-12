@@ -253,7 +253,7 @@ test("[final-ac-reconcile] (r5) fixes=1 + AC-2 不成立 → reverified + HOLD +
 
   const summaryCall = calls.find((c) => c.label === 'post-summary');
   assert.ok(summaryCall, "(r5) 'post-summary' の呼び出しが存在すること");
-  assert.ok(summaryCall.prompt.includes('AC-FINAL-2'), "(r5) post-summary prompt に 'AC-FINAL-2' が含まれること（critical append の実証）");
+  assert.ok(summaryCall.prompt.includes('[final-reconcile 不成立]'), "(r5) post-summary prompt に '[final-reconcile 不成立]' が含まれること（critical append の実証）");
 });
 
 // ============================================================
