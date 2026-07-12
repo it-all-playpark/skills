@@ -345,9 +345,11 @@ const STATUS_HEADLINE = {
  * @param {string} opts.lastSummary - 最終サマリーテキスト
  * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
+ * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。check-ci.sh --wait-seconds ポーリング分）
+ * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
  * @returns {string}
  */
-function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history }) {
+function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const lines = [];
@@ -365,6 +367,11 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 
   lines.push('');
   lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  if (ciWaitSeconds != null || ciPollAttempts != null) {
+    lines.push('');
+    lines.push(`**CI 待機**: ${ciWaitSeconds ?? 0}秒（ポーリング ${ciPollAttempts ?? 0} 回）`);
+  }
 
   const evList2 = lastVerificationEvidence || [];
   if (evList2.length > 0) {
@@ -545,6 +552,10 @@ const CI_STATUS = {
         },
       },
     },
+    // check-ci.sh --wait-seconds ポーリングの累積待機秒数 / ポーリング（gh fetch）回数（issue #324）。
+    // ポーリング未実行（wait-seconds 未指定 or 即決定）でも script は常に返す。
+    waited_seconds: { type: 'number' },
+    poll_attempts: { type: 'number' },
   },
 }
 
@@ -565,6 +576,8 @@ let lgtm = false
 let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
 let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
+let totalCiWaitSeconds = 0  // check-ci.sh --wait-seconds ポーリングの累積待機秒数（全 ci-check ラウンド合算。issue #324）
+let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
 
@@ -651,15 +664,19 @@ for (i = 1; i <= MAX; i++) {
       + `- 実行するスクリプト以外のファイルを変更しない\n\n`
       + `## Steps\n`
       + `インストール済み skills の **固定パス** で check-ci.sh を実行せよ（リテラルの \`~/.claude/skills/\` プレフィックスをそのまま使うこと）:\n`
-      + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${PR}\n\`\`\`\n`
+      + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${PR} --wait-seconds 90 --poll-seconds 15\n\`\`\`\n`
       + `**重要**: 必ずこの \`~/.claude/skills/...\` の絶対パス形で起動せよ。`
       + `worktree 相対パス（\`bash pr-iterate/scripts/check-ci.sh\`）や \`$HOME\` 展開形で起動してはならない。`
       + `\`~/.claude/skills/*\` で起動した場合のみ sandbox 除外（excludedCommands）が効き、`
       + `内部の gh が自身の config（\`~/.config/gh\`）を読めて CI を取得できる。`
       + `sandbox 下で起動すると gh が config 読み取りに失敗し、CI が green でも status:error の誤判定になる。\n`
-      + `スクリプトの stdout JSON（{status, failed_checks, ...}）をそのまま返せ。\n\n`
+      + `\`--wait-seconds 90 --poll-seconds 15\` は CI pending 時に最大 90 秒（15 秒間隔）ポーリングしてから確定する`
+      + `（AC-1/AC-2）。この Bash 実行の timeout パラメータには必ず 300000（ミリ秒。5分）を指定せよ — `
+      + `既定の 120000ms では最大 90 秒のポーリング＋ gh API retry backoff の合計に対して余裕が無い。\n`
+      + `スクリプトの stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。\n\n`
       + `## Output format\n`
-      + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...] }\n`
+      + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
+      + `"waited_seconds": number, "poll_attempts": number }\n`
       + `prose 禁止。JSON のみ返せ。\n\n`
       + `## Token cap\n`
       + `JSON のみ。1 行以内。`,
@@ -667,6 +684,12 @@ for (i = 1; i <= MAX; i++) {
     )
 
     if (ci == null) throw new Error(`pr-iterate: ci-check#${i} が結果を返しませんでした`)
+
+    // waited_seconds/poll_attempts は route（passed/pending/failed/error）に関わらず常に加算する。
+    totalCiWaitSeconds += Number(ci.waited_seconds ?? 0)
+    totalCiPollAttempts += Number(ci.poll_attempts ?? 0)
+    log(`iteration ${i}: ci-check waited_seconds=${ci.waited_seconds ?? 0} poll_attempts=${ci.poll_attempts ?? 0}`
+      + `（累積 waited=${totalCiWaitSeconds}s poll=${totalCiPollAttempts}）`)
 
     if (ci.status === 'passed' || ci.status === 'no_checks') {
       lgtm = true
@@ -889,6 +912,8 @@ const summaryBody = buildTerminalSummaryBody({
   lastSummary: lastReview?.summary ?? null,
   lastVerificationEvidence: lastReview?.verification_evidence ?? null,
   history,
+  ciWaitSeconds: totalCiWaitSeconds,
+  ciPollAttempts: totalCiPollAttempts,
 })
 const summaryPost = await agent(
   `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n\n`
@@ -916,6 +941,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
   telemetry: {
     merge_tier: 'PR_ITERATE',
     iterate_status: status,
+    ci_wait_seconds: totalCiWaitSeconds,
+    ci_poll_attempts: totalCiPollAttempts,
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'priterate', id: PR, payload: telemetryHandoff })
@@ -941,4 +968,6 @@ return {
   fixes_applied: fixesApplied,
   last_decision: lastReview?.decision ?? null,
   last_summary: lastReview?.summary ?? null,
+  ci_wait_seconds: totalCiWaitSeconds,
+  ci_poll_attempts: totalCiPollAttempts,
 }

@@ -110,9 +110,11 @@ const STATUS_HEADLINE = {
  * @param {string} opts.lastSummary - 最終サマリーテキスト
  * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
+ * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。check-ci.sh --wait-seconds ポーリング分）
+ * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
  * @returns {string}
  */
-export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history }) {
+export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const lines = [];
@@ -130,6 +132,11 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
 
   lines.push('');
   lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  if (ciWaitSeconds != null || ciPollAttempts != null) {
+    lines.push('');
+    lines.push(`**CI 待機**: ${ciWaitSeconds ?? 0}秒（ポーリング ${ciPollAttempts ?? 0} 回）`);
+  }
 
   const evList2 = lastVerificationEvidence || [];
   if (evList2.length > 0) {
