@@ -129,6 +129,15 @@ export function isDocsOrTestOnly(files) {
 //   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
 //   security 不明という意味論で明示するための defense-in-depth（danger_hits の実 hit とは別軸）。
 //   未指定 = falsy = reason 追加なし、tier 判定値も従来と完全同一（regression なし）。
+// s.iterateStatus (string|null): pr-iterate の終端 status（'lgtm'|'stuck'|'fix_failed'|
+//   'max_reached'|'ci_error'|'ci_pending'|null）。'lgtm' 以外（未知値・null 含む）は
+//   決定論的 HOLD（fail-safe、allowlist しない厳格判定）。blast-radius クラス（issue #319）—
+//   merge 直前の最終ゲートが LGTM 未到達のまま AUTO/REVIEW を出すと既知の指摘が未解消のまま
+//   出荷されるため、gate_policy で緩和しない（軸A 不変）。
+// s.evalStaleness (string): 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'
+//   （issue #288 の 4 値）。'hash_mismatch' のみ HOLD 追加（Evaluate 対象 tree と PR tree の
+//   乖離）。'iterate_incomplete' は iterateStatus !== 'lgtm' と必ず同時発生するため個別条件に
+//   しない。'none'/'iterate_fixed' は tier に影響しない。
 export function classifyMergeTier(s) {
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -138,6 +147,8 @@ export function classifyMergeTier(s) {
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
+  if (s.iterateStatus !== 'lgtm') reasons.push(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`);
+  if (s.evalStaleness === 'hash_mismatch') reasons.push('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）');
   if (reasons.length) return { tier: 'HOLD', reasons };
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
