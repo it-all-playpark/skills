@@ -4,4 +4,4 @@
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-export const QUALITY_MODEL = 'opus'
+export const QUALITY_MODEL = 'fable'
