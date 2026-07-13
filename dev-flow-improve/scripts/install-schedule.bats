@@ -22,7 +22,7 @@ teardown() {
     [[ "$output" == *"com.playpark.dev-flow-improve"* ]]
     [[ "$output" == *"$STUB_DIR/claude"* ]]
     [[ "$output" == *"/dev-flow-improve"* ]]
-    [[ "$output" == *"<key>Weekday</key><integer>1</integer>"* ]]
+    [[ "$output" == *"<key>Weekday</key><integer>6</integer>"* ]]
 }
 
 @test "--print: claude CLI 不在なら error" {

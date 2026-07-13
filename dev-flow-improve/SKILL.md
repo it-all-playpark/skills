@@ -48,7 +48,7 @@ dev-flow 自己改善ループの起動 skill。orchestration の実体は dynam
 
 ## Schedule 登録（週次）
 
-macOS launchd に毎週月曜 09:00 のジョブを登録する（1 回だけ手動実行）:
+macOS launchd に毎週土曜 01:00 のジョブを登録する（1 回だけ手動実行）:
 
 ```
 bash dev-flow-improve/scripts/install-schedule.sh --install

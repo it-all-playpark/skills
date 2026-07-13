@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install-schedule.sh - dev-flow-improve の週次 launchd ジョブ登録（macOS）
 #
-# 毎週月曜 09:00（ローカル時刻）に `claude -p "/dev-flow-improve"` を skills リポジトリの
+# 毎週土曜 01:00（ローカル時刻）に `claude -p "/dev-flow-improve"` を skills リポジトリの
 # root で headless 実行する LaunchAgent を登録する。
 #
 # Usage:
@@ -37,8 +37,8 @@ print_plist() {
   <key>WorkingDirectory</key><string>${REPO_ROOT}</string>
   <key>StartCalendarInterval</key>
   <dict>
-    <key>Weekday</key><integer>1</integer>
-    <key>Hour</key><integer>9</integer>
+    <key>Weekday</key><integer>6</integer>
+    <key>Hour</key><integer>1</integer>
     <key>Minute</key><integer>0</integer>
   </dict>
   <key>StandardOutPath</key><string>${LOG_DIR}/dev-flow-improve.log</string>
