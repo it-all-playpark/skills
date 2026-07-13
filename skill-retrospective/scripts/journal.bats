@@ -738,3 +738,37 @@ JSON
     [ "$has_repo" = "false" ]
     [ "$has_pr_number" = "false" ]
 }
+
+# ---------------------------------------------------------------------------
+# --telemetry-json (dev-improve improve-cycle telemetry 用の汎用 flag)
+# ---------------------------------------------------------------------------
+@test "--telemetry-json: 任意 object が telemetry にマージされる" {
+    run "$SCRIPT" log dev-improve success \
+        --telemetry-json '{"candidates_found":3,"issues_filed":2,"backpressure_skipped":false}'
+    [ "$status" -eq 0 ]
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+    [ "$(jq -r '.telemetry.candidates_found' "$entry_file")" = "3" ]
+    [ "$(jq -r '.telemetry.issues_filed' "$entry_file")" = "2" ]
+    [ "$(jq -r '.telemetry.backpressure_skipped' "$entry_file")" = "false" ]
+}
+
+@test "--telemetry-json: 既存 telemetry flag と併用できる" {
+    run "$SCRIPT" log dev-flow success \
+        --merge-tier REVIEW \
+        --telemetry-json '{"candidates_found":1}'
+    [ "$status" -eq 0 ]
+    entry_file=$(latest_entry)
+    [ "$(jq -r '.telemetry.merge_tier' "$entry_file")" = "REVIEW" ]
+    [ "$(jq -r '.telemetry.candidates_found' "$entry_file")" = "1" ]
+}
+
+@test "--telemetry-json: JSON でない値は error" {
+    run "$SCRIPT" log dev-improve success --telemetry-json 'not-json'
+    [ "$status" -ne 0 ]
+}
+
+@test "--telemetry-json: object 以外（配列）は error" {
+    run "$SCRIPT" log dev-improve success --telemetry-json '[1,2]'
+    [ "$status" -ne 0 ]
+}
