@@ -72,3 +72,14 @@ write_entry() {
     run bash "$SCRIPT" --metric micro_share --since not-a-date --target 0.3 --min-runs 1
     [ "$status" -ne 0 ]
 }
+
+@test "不正 JSON 混入でも有効 entry は per-file rescue で集計される" {
+    write_entry a.json 2026-07-01T00:00:00Z lgtm standard
+    write_entry b.json 2026-07-02T00:00:00Z stuck standard
+    echo '{not valid json' > "$CLAUDE_JOURNAL_DIR/broken.json"
+    run bash "$SCRIPT" --metric iterate_unhealthy_rate --since 2026-06-30T00:00:00Z --target 0.5 --min-runs 2
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.runs')" = "2" ]
+    [ "$(echo "$output" | jq -r '.value')" = "0.5" ]
+    [ "$(echo "$output" | jq -r '.verdict')" = "confirmed" ]
+}

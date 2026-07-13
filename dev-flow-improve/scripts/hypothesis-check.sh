@@ -61,13 +61,44 @@ case "$METRIC" in
   *) die_json "Out-of-enum metric: $METRIC" 1 ;;
 esac
 
-# journal load（ARG_MAX-safe: find + xargs cat → jq -s）
-ENTRIES='[]'
-if [[ -d "$JOURNAL_DIR" ]]; then
-  ENTRIES=$(find "$JOURNAL_DIR" -maxdepth 1 -name '*.json' -print0 2>/dev/null \
-    | xargs -0 cat 2>/dev/null \
-    | jq -s '[.[] | select(type == "object")]' 2>/dev/null || echo '[]')
-fi
+# journal load（ARG_MAX-safe: find + xargs cat → jq -s。不正 JSON 混入時は
+# per-file rescue で有効 entry のみ回収する。dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh
+# の load_journal_entries と同一パターン — 同一の測定器原則）
+load_journal_entries() {
+  if [[ ! -d "$JOURNAL_DIR" ]]; then
+    printf '[]'
+    return
+  fi
+  local files=()
+  while IFS= read -r -d '' f; do
+    files+=("$f")
+  done < <(find "$JOURNAL_DIR" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
+  if [[ ${#files[@]} -eq 0 ]]; then
+    printf '[]'
+    return
+  fi
+  local slurped=""
+  if slurped=$(printf '%s\0' "${files[@]}" | xargs -0 cat -- 2>/dev/null \
+      | jq -cs '[.[] | select(type == "object")]' 2>/dev/null); then
+    printf '%s' "$slurped"
+    return
+  fi
+  # jq -s のバッチ slurp が失敗（不正 JSON 混入）→ per-file rescue で有効 entry のみ回収
+  local rescued=""
+  if rescued=$(
+    for f in "${files[@]}"; do
+      jq -c '.' "$f" 2>/dev/null || true
+    done | jq -s '[.[] | select(type == "object")]' 2>/dev/null
+  ); then
+    if [[ -n "$rescued" ]]; then
+      printf '%s' "$rescued"
+      return
+    fi
+  fi
+  printf '[]'
+}
+
+ENTRIES=$(load_journal_entries)
 
 WINDOW=$(echo "$ENTRIES" | jq --arg since "$SINCE" \
   '[.[] | select(.skill == "dev-flow" and ((.timestamp // "") >= $since))]')
