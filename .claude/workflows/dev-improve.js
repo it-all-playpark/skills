@@ -459,7 +459,6 @@ for (const it of pendingIssues) {
   }
 
   const newStatus = check.verdict === 'confirmed' ? 'confirmed' : 'not_confirmed'
-  reconcile[newStatus]++
   let newBody
   try {
     newBody = setHypothesisStatus(it.body, newStatus)
@@ -468,6 +467,7 @@ for (const it of pendingIssues) {
     log(`⚠️ Reconcile: #${it.number} status 更新失敗 — skip（${e.message}）`)
     continue
   }
+  reconcile[newStatus]++
 
   const editRes = await agent(
     `## Objective\nissue #${it.number} の body を hypothesis status=${newStatus} に更新する。\n\n`
