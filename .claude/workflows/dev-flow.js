@@ -3453,6 +3453,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
   journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
   telemetry: {
     merge_tier: mergeTier.tier,
+    merge_tier_reasons: mergeTier.reasons,
     gate_policy: GATE_POLICY,
     danger_hits: dangerHitsFinal,
     danger_fail_closed: dangerFailClosedFinal,

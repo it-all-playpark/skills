@@ -232,6 +232,7 @@ test('[journal-log] AC#1: Merge tier phase 後に journal-log dev-runner-haiku �
   const requiredKeys = [
     '.claude/journal/pending/',
     '"merge_tier"',
+    '"merge_tier_reasons"',
     '"gate_policy"',
     '"danger_hits"',
     '"danger_fail_closed"',
