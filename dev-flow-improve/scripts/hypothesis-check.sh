@@ -6,6 +6,11 @@
 # 効果判定はこの script が単一実装（軸A: LLM に self-judge させない）。
 # metric enum は _lib/improve-hypothesis.mjs の IMPROVE_METRIC_DIRECTIONS と 1:1 を保つこと。
 #
+# 集計軸の注意: 本 oracle の母集団は skill=="dev-flow" entries のみ（pr-iterate 単独 run は含まず、
+# 分母に ci_pending を含む）。dev-flow-doctor の nested-run 正規化とは意図的に異なる —
+# 仮説の current（起票時）と verdict（突合時）を**同一の測定器**で測ることを優先する。
+# cap 閾値（eval>=10 / plan>=8）は dev-flow の既定 cap のハードコード（doctor は config 由来）。
+#
 # Usage:
 #   hypothesis-check.sh --metric <name> --since <ISO8601 UTC> --target <num> --min-runs <int>
 #

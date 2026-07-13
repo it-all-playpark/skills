@@ -231,7 +231,9 @@ skill（週次 launchd: `dev-flow-improve/scripts/install-schedule.sh --install`
   dev-flow-doctor がループ自体の不調も診断できる。
 - **自己改変 floor**: 候補の target_paths が dev-flow 本体（`.claude/workflows/` / `_lib/` /
   `.claude/agents/` / `tools/`）に触れる場合、issue AC に `/dev-flow-canary` 実行を自動追記。
-  merge tier は既存ロジックで REVIEW 以上になる（コード変更は micro AUTO の対象外）。
+  コード変更は既存 merge tier ロジックで REVIEW 以上になるが、`.claude/agents/*.md` のみの
+  変更は docs 扱いで micro AUTO 推奨になり得る（design §4-3 の REVIEW floor は未実装 —
+  follow-up。human merge が最終 gate である invariant は不変）。
 
 ### 設計原則 (要約)
 

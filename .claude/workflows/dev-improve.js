@@ -219,8 +219,9 @@ function buildImproveIssueBody(c, { hypothesisBlock }) {
   lines.push('## 受入条件');
   lines.push('');
   for (const a of c.acceptance_criteria) lines.push(`- [ ] ${a}`);
-  const touchesCore = Array.isArray(c.target_paths)
-    && c.target_paths.some((p) => IMPROVE_CORE_PREFIXES.some((pre) => String(p).startsWith(pre)));
+  const touchesCore = c.source === 'reconcile-revert'
+    || (Array.isArray(c.target_paths)
+      && c.target_paths.some((p) => IMPROVE_CORE_PREFIXES.some((pre) => String(p).startsWith(pre))));
   if (touchesCore) {
     lines.push('- [ ] PR 作成後に /dev-flow-canary を実行し、read-only capability canary が green であること（自己改変 floor）');
   }
@@ -318,6 +319,7 @@ const ISSUE_LIST = {
           title: { type: 'string' },
           body: { type: 'string' },
           closedAt: { type: 'string' },
+          stateReason: { type: 'string' },
         },
       },
     },
@@ -410,15 +412,19 @@ const revertCandidates = []
 const closedList = await agent(
   `## Objective\nlabel self-improve の closed issue 一覧を取得する（dev-improve Reconcile 用）。\n\n`
   + `## Instructions\n次のコマンドをそのまま実行し、stdout の JSON 配列を issues に入れて返せ:\n`
-  + `\`gh issue list --label self-improve --state closed --limit 20 --json number,title,body,closedAt\`\n`
+  + `\`gh issue list --label self-improve --state closed --limit 20 --json number,title,body,closedAt,stateReason\`\n`
   + `コマンド失敗時（label 不存在含む）は throw せず ok:false, issues:[] を返すこと。\n`
-  + `\n## Output format\n{ "ok": boolean, "issues": [{number, title, body, closedAt}] }\n`
+  + `\n## Output format\n{ "ok": boolean, "issues": [{number, title, body, closedAt, stateReason}] }\n`
   + `\n## Tools\n使用可: Bash のみ\n\n## Boundary\n読み取り専用。ファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ返す。`,
   { agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-closed', phase: 'Reconcile' },
 )
 
 const pendingIssues = []
 for (const it of (closedList?.ok ? closedList.issues : [])) {
+  if (it.stateReason && it.stateReason !== 'COMPLETED') {
+    log(`Reconcile: issue #${it.number} は ${it.stateReason} で close — 突合対象外（実装されていない）`)
+    continue
+  }
   try {
     const hyp = parseHypothesisBlock(it.body ?? '')
     if (hyp && hyp.status === 'pending') pendingIssues.push({ ...it, hyp })
@@ -529,7 +535,7 @@ const MINER_COMMON = `\n## Output format（共通 candidate schema）\n`
   + `candidates 配列で返す（最大 3 件、ゼロ件可）。各要素:\n`
   + `{source, title, evidence[], acceptance_criteria[], body_notes?, target_paths?, expected_metric_delta{metric,current,target,min_runs}, risk}\n`
   + `- evidence: journal entry id / PR 番号 / anomaly type と実測値への具体的参照（非空文字列の配列）。**根拠を示せない候補は返すな**（evidence 空は決定論で棄却される）。\n`
-  + `- expected_metric_delta.metric は次の enum から選ぶ: ${METRIC_NAMES.join(' / ')}。current は実測値、target は改善後の期待値、min_runs は突合に必要な最小 run 数（3〜10 程度）。\n`
+  + `- expected_metric_delta.metric は次の enum から選ぶ: ${METRIC_NAMES.join(' / ')}。**current は必ず突合 oracle 自身で実測せよ**: \`bash ~/.claude/skills/dev-flow-improve/scripts/hypothesis-check.sh --metric <metric> --since <30日前のISO UTC> --target 0 --min-runs 1\` を実行し、その value を current に使う（doctor の集計値は分母定義が異なるため current に使わない）。target は改善後の期待値、min_runs は突合に必要な最小 run 数（3〜10 程度）。\n`
   + `- acceptance_criteria: 実装 PR の受入条件（検証可能な形で 2〜5 件）。\n`
   + `- target_paths: 変更が想定されるファイル/ディレクトリの repo 相対 path。\n`
   + `- risk: low / medium / high。\n`

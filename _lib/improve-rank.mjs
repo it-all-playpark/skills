@@ -90,8 +90,9 @@ export function buildImproveIssueBody(c, { hypothesisBlock }) {
   lines.push('## 受入条件');
   lines.push('');
   for (const a of c.acceptance_criteria) lines.push(`- [ ] ${a}`);
-  const touchesCore = Array.isArray(c.target_paths)
-    && c.target_paths.some((p) => IMPROVE_CORE_PREFIXES.some((pre) => String(p).startsWith(pre)));
+  const touchesCore = c.source === 'reconcile-revert'
+    || (Array.isArray(c.target_paths)
+      && c.target_paths.some((p) => IMPROVE_CORE_PREFIXES.some((pre) => String(p).startsWith(pre))));
   if (touchesCore) {
     lines.push('- [ ] PR 作成後に /dev-flow-canary を実行し、read-only capability canary が green であること（自己改変 floor）');
   }

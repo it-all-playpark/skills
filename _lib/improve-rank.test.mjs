@@ -110,6 +110,14 @@ test('buildImproveIssueBody: core path 接触で canary AC を自動追記', () 
   assert.match(body, /dev-flow-canary/);
 });
 
+test('buildImproveIssueBody: reconcile-revert は target_paths が空でも canary AC を追記', () => {
+  const body = buildImproveIssueBody(
+    validCand({ source: 'reconcile-revert', target_paths: [] }),
+    { hypothesisBlock: '<HYP>' },
+  );
+  assert.match(body, /dev-flow-canary/);
+});
+
 test('buildBacklogSection: cycle 見出しと候補行', () => {
   const s = buildBacklogSection({ today: '2026-07-13T00:00:00Z', losers: [validCand()] });
   assert.match(s, /### cycle 2026-07-13T00:00:00Z/);
