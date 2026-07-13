@@ -576,10 +576,27 @@ let lgtm = false
 let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
 let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
+let fixNullRetries = 0  // fix agent が null（schema 不一致・技術的失敗）で 1 回 retry した累積回数。issue #347
 let totalCiWaitSeconds = 0  // check-ci.sh --wait-seconds ポーリングの累積待機秒数（全 ci-check ラウンド合算。issue #324）
 let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
+
+// fix agent が null（schema 不一致/技術的失敗）の場合のみ、同一 findings で 1 回だけ再試行する。
+// applied:false（agent の明示判断による修正不能）は retry しない — stuck 検出等の incentive-structural
+// 機構は不変。retry は iteration ごと最大 1 回で有限（review#N-contract-retry :604-614 と同パターン、
+// MAX 非消費）。issue #347
+async function callFixAgent(prompt, i) {
+  let fix = await agent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' })
+  let retried = false
+  if (fix == null) {
+    retried = true
+    fixNullRetries++
+    log(`⚠️ fix#${i} が null（schema 不一致/技術的失敗）— 同一 findings で 1 回だけ再試行する（fix-null-retry）`)
+    fix = await agent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}-retry`, phase: 'Iterate' })
+  }
+  return { fix, retried }
+}
 
 for (i = 1; i <= MAX; i++) {
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
@@ -778,7 +795,8 @@ for (i = 1; i <= MAX; i++) {
         + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
 
       // CI-failed ラウンドの history 記録（blocking は synthetic CI findings、minor は保持）
-      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor })
+      const ciRound = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor }
+      history.push(ciRound)
 
       // per-round 投稿: CI failed。decision が approve でも CI red のため gh pr review --approve は使わず
       // plain な gh pr comment で情報提供のみ行う
@@ -811,16 +829,15 @@ for (i = 1; i <= MAX; i++) {
         .map((x) => `- [${x.severity}] ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
         .join('\n')
 
-      const fix = await agent(
-        `PR #${PR} の CI 失敗を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
+      const ciFixPrompt = `PR #${PR} の CI 失敗を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
         + `(2) 下記の CI 失敗を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
-        + `解消すべき CI 失敗:\n${issuesText}`,
-        { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
-      )
+        + `解消すべき CI 失敗:\n${issuesText}`
+      const { fix, retried } = await callFixAgent(ciFixPrompt, i)
+      if (retried) ciRound.fix_retried = true
 
       if (fix == null || fix.applied !== true) {
         terminal = 'fix_failed'
-        log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
+        log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}${retried ? '（retry 後も null）' : ''}。`
           + `無言で再レビューを繰り返さず人間へエスカレーション`)
         break
       }
@@ -840,7 +857,8 @@ for (i = 1; i <= MAX; i++) {
       + `${stuckTopics.length ? ` [REVIEW_STUCK: ${stuckTopics.join(' / ')}]` : ''}`)
 
     // history に記録（blocking findings と minor を含む）
-    history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor })
+    const round = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor }
+    history.push(round)
 
     // per-round 投稿: request-changes または comment
     const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking, minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
@@ -882,17 +900,16 @@ for (i = 1; i <= MAX; i++) {
       .join('\n')
 
     // fix は dev-runner agent に直接指示する（旧 pr-fix skill は issue #116 で削除）。
-    const fix = await agent(
-      `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
+    const fixPrompt = `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
       + `(2) 下記の指摘を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
-      + `解消すべき指摘:\n${issuesText}`,
-      { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' },
-    )
+      + `解消すべき指摘:\n${issuesText}`
+    const { fix, retried } = await callFixAgent(fixPrompt, i)
+    if (retried) round.fix_retried = true
 
     // fix の applied:false を検出して人間へエスカレーション（無言で MAX 回燃やさない。issue #126）。
     if (fix == null || fix.applied !== true) {
       terminal = 'fix_failed'
-      log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}。`
+      log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}${retried ? '（retry 後も null）' : ''}。`
         + `無言で再レビューを繰り返さず人間へエスカレーション`)
       break
     }
@@ -943,6 +960,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     iterate_status: status,
     ci_wait_seconds: totalCiWaitSeconds,
     ci_poll_attempts: totalCiPollAttempts,
+    fix_null_retries: fixNullRetries,
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'priterate', id: PR, payload: telemetryHandoff })
@@ -970,4 +988,6 @@ return {
   last_summary: lastReview?.summary ?? null,
   ci_wait_seconds: totalCiWaitSeconds,
   ci_poll_attempts: totalCiPollAttempts,
+  fix_null_retries: fixNullRetries,
+  history,
 }
