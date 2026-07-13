@@ -70,6 +70,7 @@ cmd_log() {
     local eval_staleness=""
     local repo="" pr_number=""
     local ci_wait_seconds="" ci_poll_attempts=""
+    local telemetry_json=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -113,6 +114,7 @@ cmd_log() {
             --pr-number) pr_number="$2"; shift 2 ;;
             --ci-wait-seconds) ci_wait_seconds="$2"; shift 2 ;;
             --ci-poll-attempts) ci_poll_attempts="$2"; shift 2 ;;
+            --telemetry-json) telemetry_json="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -131,6 +133,13 @@ cmd_log() {
             lint|test|build|runtime|config|env|merge|type-check|needs_clarification|empty_diff) ;;
             *) die_json "Invalid error category: $error_category" 1 ;;
         esac
+    fi
+
+    # Validate --telemetry-json (must be a JSON object)
+    if [[ -n "$telemetry_json" ]]; then
+        if ! echo "$telemetry_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            die_json "Invalid --telemetry-json: must be a JSON object" 1
+        fi
     fi
 
     # Validate new telemetry fields
@@ -283,6 +292,10 @@ cmd_log() {
     fi
     if [[ -n "$ci_poll_attempts" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson v "$ci_poll_attempts" '. + {ci_poll_attempts: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$telemetry_json" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson extra "$telemetry_json" '. + $extra')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then
