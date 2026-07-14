@@ -49,6 +49,9 @@ __pycache__/
 # Packaged skills
 *.skill
 
+# hunk 同梱スキルへの symlink（dotfiles の home-manager activation が nix store へ貼る）
+hunk-review
+
 # --- external skills (auto-managed) ---
 agent-browser
 api-contract-testing
