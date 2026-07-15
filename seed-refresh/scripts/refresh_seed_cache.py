@@ -126,25 +126,52 @@ def check_dependencies() -> list[str]:
     return missing
 
 
-def refresh_seed(seed_dir: Path, repo_url: str, branch: str) -> tuple[bool, str | None]:
+def parse_token_lines(stdout: str) -> dict[str, int]:
+    """Parse `TOKENS=`/`TOKENS_RAW=` lines from export_repo.py --compress stdout.
+
+    Only int-convertible values are kept; `unknown` and missing lines are ignored.
+    """
+    result: dict[str, int] = {}
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("TOKENS_RAW="):
+            value = stripped[len("TOKENS_RAW="):]
+            if value.isdigit():
+                result["tokensRaw"] = int(value)
+        elif stripped.startswith("TOKENS="):
+            value = stripped[len("TOKENS="):]
+            if value.isdigit():
+                result["tokens"] = int(value)
+    return result
+
+
+def refresh_seed(seed_dir: Path, repo_url: str, branch: str) -> tuple[bool, str | None, dict[str, int]]:
     exported_path = seed_dir / EXPORT_FILE
     commits_path = seed_dir / COMMIT_FILE
     issues_path = seed_dir / ISSUE_FILE
     pr_path = seed_dir / PR_FILE
 
-    commands = [
-        ["python3", str(REPO_EXPORT_SCRIPT), repo_url, "-o", str(exported_path), "-b", branch],
+    export_cmd = [
+        "python3", str(REPO_EXPORT_SCRIPT), repo_url, "-o", str(exported_path), "-b", branch,
+    ]
+    other_commands = [
         ["python3", str(REPO_COMMIT_SCRIPT), repo_url, "-o", str(commits_path), "--limit", "50"],
         ["python3", str(REPO_ISSUE_SCRIPT), repo_url, "-o", str(issues_path), "--state", "all", "--limit", "30"],
         ["python3", str(REPO_PR_SCRIPT), repo_url, "-o", str(pr_path), "--state", "merged", "--limit", "30"],
     ]
 
-    for cmd in commands:
+    export_res = run(export_cmd)
+    if export_res.returncode != 0:
+        stderr = export_res.stderr.strip() or "command_failed"
+        return False, stderr, {}
+    token_info = parse_token_lines(export_res.stdout)
+
+    for cmd in other_commands:
         res = run(cmd)
         if res.returncode != 0:
             stderr = res.stderr.strip() or "command_failed"
-            return False, stderr
-    return True, None
+            return False, stderr, {}
+    return True, None, token_info
 
 
 def resolve_seed_dirs(seed_arg: str) -> list[Path]:
@@ -254,7 +281,7 @@ def main() -> int:
             results.append(result)
             continue
 
-        ok, refresh_err = refresh_seed(seed_dir, repo_url, branch_checked or args.branch)
+        ok, refresh_err, token_info = refresh_seed(seed_dir, repo_url, branch_checked or args.branch)
         if not ok:
             result.status = "error"
             result.reason = refresh_err
@@ -263,6 +290,29 @@ def main() -> int:
 
         now = datetime.now(timezone.utc)
         manifest["exportedAt"] = to_zulu(now)
+
+        tokens = token_info.get("tokens")
+        tokens_raw = token_info.get("tokensRaw")
+        if tokens is not None:
+            manifest["exportTokens"] = tokens
+        else:
+            manifest.pop("exportTokens", None)
+        if tokens_raw is not None:
+            manifest["exportTokensRaw"] = tokens_raw
+        else:
+            manifest.pop("exportTokensRaw", None)
+        if tokens is not None and tokens_raw is not None and tokens_raw > 0:
+            manifest["exportTokenReductionPct"] = round((1 - tokens / tokens_raw) * 100, 1)
+        else:
+            manifest.pop("exportTokenReductionPct", None)
+        # --compress is intentionally not passed (live smoke on
+        # octocat/Hello-World showed no token reduction for that repo, see
+        # .devflow-tmp/repomix-format-verification.md), so tokens_raw is
+        # expected to always be absent here. Only warn when the baseline
+        # `tokens` metric itself is unavailable.
+        if tokens is None:
+            print("  warning: token_metrics_unavailable")
+
         save_manifest(manifest_path, manifest)
 
         result.status = "refreshed"
