@@ -77,9 +77,10 @@ EOF
 @test "default run does not pass --compress and does not emit TOKENS_RAW" {
     run python3 "$SCRIPT" owner/repo -o "$OUT_FILE"
     [ "$status" -eq 0 ]
+    script_output="$output"
     run grep -c -- "--compress" "$CALLS_LOG"
     [ "$output" -eq 0 ]
-    [[ "$output" != *"TOKENS_RAW="* ]]
+    [[ "$script_output" != *"TOKENS_RAW="* ]]
 }
 
 @test "--compress runs repomix twice and emits TOKENS_RAW then TOKENS" {
