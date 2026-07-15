@@ -30,7 +30,7 @@ python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py [--seed DIR]
 ## Workflow
 
 ```
-manifest.json 読込 → exportedAt 比較 → 更新あり → 4ファイル再取得 → exportedAt 更新
+manifest.json 読込 → exportedAt 比較 → 更新あり → 4ファイル再取得 → exportedAt + トークン計測を manifest 更新
 ```
 
 Details: [Algorithm Detail](references/algorithm-detail.md)

@@ -1,12 +1,12 @@
 ---
 name: repo-export
 description: |
-  Export GitHub repository contents to a single Markdown file using gh CLI.
+  Export GitHub repository contents to a single Markdown file using repomix.
   Use when: (1) user wants to export/download repository code for review,
   (2) needs to consolidate repo files into one document, (3) wants to share
   codebase context, (4) keywords like "export repo", "dump repository",
   "consolidate files", "repo to markdown".
-  Accepts args: GITHUB_URL [-o output.md] [-b branch] [-p path]
+  Accepts args: GITHUB_URL [-o output.md] [-b branch] [-p path] [--compress]
 context: fork
 model: haiku
 effort: low
@@ -30,6 +30,7 @@ Export GitHub repository contents to a single Markdown file.
 | `-o, --output` | Output file path (default: `repo-export.md`) |
 | `-b, --branch` | Target branch (default: repository default branch) |
 | `-p, --path` | Only export files under this directory path |
+| `--compress` | Enable repomix code compression (reduces token count; also prints a `TOKENS_RAW=` baseline line for comparison) |
 
 ### Examples
 
@@ -57,37 +58,54 @@ python3 $SKILLS_DIR/repo-export/scripts/export_repo.py <url> [options]
 
 ## Output Format
 
-```markdown
-# repo-name
+repomix's `markdown` style: a file-summary header followed by one section per
+file (`## File: path/to/file`) with the contents in a fenced code block.
 
-Source: <https://github.com/owner/repo>
+````markdown
+This file is a merged representation of the entire codebase...
 
----
+# File Summary
+...
 
-## path/to/file.ts
-
-\`\`\`ts
-// file contents
-\`\`\`
-
-## path/to/another.py
-
-\`\`\`python
-# file contents
-\`\`\`
+# Directory Structure
 ```
+...
+```
+
+# Files
+
+## File: path/to/file.ts
+```ts
+// file contents
+```
+
+## File: path/to/another.py
+```python
+# file contents
+```
+````
+
+## Output (stdout contract)
+
+The script transcribes repomix's own stdout/stderr verbatim, then appends:
+
+- `TOKENS=<int>` (or `TOKENS=unknown` if repomix's summary doesn't expose a
+  parseable `Total Tokens:` line) — token count of the final output.
+- With `--compress`, an additional `TOKENS_RAW=<int>` (or `TOKENS_RAW=unknown`)
+  line is printed first, from an uncompressed baseline run, so callers can
+  compute the compression's token reduction.
 
 ## Filters
 
-**Auto-excluded**:
-- Binary files (images, audio, video, archives, fonts, compiled)
-- Lock files (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`)
-- Build artifacts (`node_modules`, `__pycache__`, `.git`)
-- Environment files (`.env`, `.env.local`)
+**Auto-excluded**: repomix's default ignore rules (`node_modules`, lock files,
+`.git`, build artifacts, etc.) plus repomix's built-in secretlint-based
+security check.
 
 ## Requirements
 
-- `gh` CLI installed and authenticated
+- Node.js (for `npx repomix`) or `repomix` installed directly
+- `git` (for remote clone; private repositories require git credentials to be
+  configured, e.g. via `gh auth setup-git`)
 - Python 3.10+
 
 ## Journal Logging
