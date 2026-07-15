@@ -200,6 +200,7 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | ci-checks（`gh pr checks`） | `null` / `ok:false` / schema 不一致 / 該当 check 不在（env_key ごとの check-name regex 不一致） / pending | fail-open（対象 ENV item（turbopack-sandbox / bats-sandbox）据え置き、警告 log のみ） | advisory な環境ノート auto-close の補助信号。判定は envChecksGreen（決定論）のみで LLM に委ねず、失敗しても deterministic gate・merge tier 判定を変えない（軸A 不変） |
 | final-reconcile（reconcile-sync / test#final） | `null` / `ok:false` / schema 不一致 / 非 fast-forward | fail-safe（`final_reconcile=unavailable` → merge tier HOLD） | fix 適用後の最終 tree の test 状態不明を green と同一視しない（軸A 決定論ゲート）。同様に changed-files-final / ui-verify-config-final は fail-open（UI 再判定・宣言外再監査 skip + 警告 log のみ。test gate は緩めない） |
 | final-ac-reconcile（targeted evaluator による既存 AC の最終 tree 再検証） | `null` / schema 不一致 / ac_index 欠落・重複・範囲外 / evidence 空 | fail-safe（`final_ac_reconcile=unavailable` → merge tier HOLD） | fix 適用後の最終 tree での AC 充足不明を satisfied と同一視しない（軸A 決定論検証。fail は既存 AC を uncheck せず critical AC-FINAL-n append — append 単調性・critical-always-blocks 維持） |
+| structural-classify（difft による構造変化/フォーマットのみ分類） | `null` / `ok:false` / `available:false`（difft 未インストール） / schema 不一致 | fail-open（format_only 除外なし・全ファイル精査の現行動作。警告 log のみ） | advisory な diff 前処理の補助信号。失敗しても refloorShape の raise-only・danger-grep・宣言外検出の deterministic gate を一切緩めない |
 
 ### dev-improve (self-improvement loop)
 

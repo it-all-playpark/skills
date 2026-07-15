@@ -104,6 +104,7 @@ const READ_ONLY_LABELS = [
   'danger-grep',
   'danger-grep-final',
   'realized-diff',
+  'structural-classify',
   'ui-verify-config',
   'ui-verify-config-final',
   'diff-hash-eval',
