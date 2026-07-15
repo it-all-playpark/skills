@@ -52,6 +52,12 @@ die_json() {
 wt="${1:-}"
 base="${2:-}"
 
+# Test seam: allows bats to force a deterministic "difft not installed" path
+# regardless of whether the real difft binary happens to be on PATH (e.g. a
+# dev machine with difft already installed via nix/homebrew). Production
+# callers never set this, so `command -v difft` still resolves normally.
+DIFFT_BIN="${DIFFT_BIN:-difft}"
+
 if [[ -z "$wt" || -z "$base" ]]; then
     die_json "usage: structural-classify.sh <worktree-path> <base-ref>" 2
 fi
@@ -68,7 +74,7 @@ fi
 # 1. difft availability check (fallback, NOT an error)
 # ============================================================================
 
-if ! command -v difft &>/dev/null; then
+if ! command -v "$DIFFT_BIN" &>/dev/null; then
     printf '%s\n' '{"ok":true,"available":false,"structural":[],"format_only":[],"reason":"difft_not_installed"}'
     exit 0
 fi
@@ -124,7 +130,7 @@ while IFS= read -r -d '' status && IFS= read -r -d '' path; do
         mkdir -p "$tmp/old/$(dirname "$path")"
         if git -C "$wt" show "${MB}:${path}" > "$tmp/old/$path" 2>/dev/null; then
             set +e
-            difft --check-only --exit-code "$tmp/old/$path" "$wt/$path" >/dev/null 2>&1
+            "$DIFFT_BIN" --check-only --exit-code "$tmp/old/$path" "$wt/$path" >/dev/null 2>&1
             _rc=$?
             set -e
             if [[ "$_rc" -eq 0 ]]; then

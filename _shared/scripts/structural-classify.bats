@@ -71,8 +71,12 @@ run_classify() {
 @test "difft 未インストール -> available:false の fallback JSON を返し exit 0" {
     printf 'x\n' > "$REPO/a.txt"
     commit_all
-    # NOTE: no install_fake_difft call -- FAKE_BIN stays empty, PATH stays default.
-    run bash -c "PATH='$FAKE_BIN:$ORIG_PATH' bash '$SCRIPT' '$REPO' '$BASE'"
+    # NOTE: real difft may or may not be present on PATH (e.g. dev machines
+    # with difft installed via nix/homebrew). Rather than relying on PATH
+    # isolation -- which does not actually hide a real difft already found
+    # via ORIG_PATH -- force the "not installed" branch deterministically via
+    # the DIFFT_BIN test seam pointing at a binary name that cannot exist.
+    run bash -c "DIFFT_BIN='difft-definitely-not-installed' PATH='$FAKE_BIN:$ORIG_PATH' bash '$SCRIPT' '$REPO' '$BASE'"
     [ "$status" -eq 0 ]
     printf '%s\n' "$output" | jq -e '.ok == true and .available == false and .structural == [] and .format_only == [] and .reason == "difft_not_installed"'
 }
