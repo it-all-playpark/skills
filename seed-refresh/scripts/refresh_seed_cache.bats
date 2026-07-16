@@ -184,3 +184,55 @@ EOF
     [ "$has_tokens" = "False" ]
     [ ! -f "$EXPORT_CALLS_LOG" ]
 }
+
+@test "default: exported.md export passes seed default tests-exclusion --ignore" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    [ "$status" -eq 0 ]
+    [ -f "$EXPORT_CALLS_LOG" ]
+    run grep -qF -- "--ignore **/[Tt]ests/**,**/*.test.*,**/*.spec.*,**/__tests__/**,**/testdata/**,**/__snapshots__/**,**/fixtures/**" "$EXPORT_CALLS_LOG"
+    [ "$status" -eq 0 ]
+}
+
+@test "opt-out: manifest includeTests=true disables the default --ignore" {
+    cat > "$MANIFEST" << 'EOF'
+{
+  "source": "https://github.com/owner/repo",
+  "exportedAt": "2020-01-01T00:00:00Z",
+  "includeTests": true
+}
+EOF
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    [ "$status" -eq 0 ]
+    run grep -c -- "--ignore" "$EXPORT_CALLS_LOG"
+    [ "$output" -eq 0 ]
+}
+
+@test "includeTests=false explicit: default --ignore still applied" {
+    cat > "$MANIFEST" << 'EOF'
+{
+  "source": "https://github.com/owner/repo",
+  "exportedAt": "2020-01-01T00:00:00Z",
+  "includeTests": false
+}
+EOF
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    [ "$status" -eq 0 ]
+    [ -f "$EXPORT_CALLS_LOG" ]
+    run grep -qF -- "--ignore **/[Tt]ests/**,**/*.test.*,**/*.spec.*,**/__tests__/**,**/testdata/**,**/__snapshots__/**,**/fixtures/**" "$EXPORT_CALLS_LOG"
+    [ "$status" -eq 0 ]
+}
+
+@test "invalid includeTests type yields status=error, no export invoked, exit 2" {
+    cat > "$MANIFEST" << 'EOF'
+{
+  "source": "https://github.com/owner/repo",
+  "exportedAt": "2020-01-01T00:00:00Z",
+  "includeTests": "yes"
+}
+EOF
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"[error]"* ]]
+    [[ "$output" == *"invalid_includeTests"* ]]
+    [ ! -f "$EXPORT_CALLS_LOG" ]
+}

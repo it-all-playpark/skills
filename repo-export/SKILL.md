@@ -6,7 +6,7 @@ description: |
   (2) needs to consolidate repo files into one document, (3) wants to share
   codebase context, (4) keywords like "export repo", "dump repository",
   "consolidate files", "repo to markdown".
-  Accepts args: GITHUB_URL [-o output.md] [-b branch] [-p path] [--compress]
+  Accepts args: GITHUB_URL [-o output.md] [-b branch] [-p path] [--compress] [--ignore patterns]
 context: fork
 model: haiku
 effort: low
@@ -31,6 +31,7 @@ Export GitHub repository contents to a single Markdown file.
 | `-b, --branch` | Target branch (default: repository default branch) |
 | `-p, --path` | Only export files under this directory path |
 | `--compress` | Enable repomix code compression (reduces token count; also prints a `TOKENS_RAW=` baseline line for comparison) |
+| `--ignore` | Comma-separated glob patterns passed through verbatim to repomix `--ignore`, applied in addition to repomix's default ignore rules. Default: unset (no additional exclusions) |
 
 ### Examples
 
@@ -46,6 +47,9 @@ Export GitHub repository contents to a single Markdown file.
 
 # Custom output file
 /repo-export user/repo -o analysis.md -b main -p lib
+
+# Exclude test files via repomix --ignore passthrough
+/repo-export user/repo --ignore '**/*.test.*,**/__tests__/**'
 ```
 
 ## Execution
@@ -100,6 +104,10 @@ The script transcribes repomix's own stdout/stderr verbatim, then appends:
 **Auto-excluded**: repomix's default ignore rules (`node_modules`, lock files,
 `.git`, build artifacts, etc.) plus repomix's built-in secretlint-based
 security check.
+
+**Additional exclusions**: pass `--ignore` with comma-separated glob patterns
+to exclude more files (e.g. test files) on top of repomix's default ignores.
+By default nothing extra is excluded.
 
 ## Requirements
 

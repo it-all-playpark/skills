@@ -35,6 +35,15 @@ manifest.json 読込 → exportedAt 比較 → 更新あり → 4ファイル再
 
 Details: [Algorithm Detail](references/algorithm-detail.md)
 
+## Tests exclusion
+
+`exported.md` 生成時は既定で tests 系パス
+(`**/[Tt]ests/**,**/*.test.*,**/*.spec.*,**/__tests__/**,**/testdata/**,**/__snapshots__/**,**/fixtures/**`)
+を repomix `--ignore` で除外する（seed のトークン削減目的・lossless）。
+
+per-seed で除外を無効化するには `manifest.json` に `"includeTests": true` を設定する。
+`includeTests` が boolean 以外の値の場合、当該 seed は error（reason: `invalid_includeTests`）になる。
+
 ## Examples
 
 ```bash

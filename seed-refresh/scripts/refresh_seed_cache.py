@@ -26,6 +26,11 @@ COMMIT_FILE = "commits.md"
 ISSUE_FILE = "issues.md"
 PR_FILE = "pr-summary.md"
 
+DEFAULT_TESTS_IGNORE = (
+    "**/[Tt]ests/**,**/*.test.*,**/*.spec.*,**/__tests__/**,"
+    "**/testdata/**,**/__snapshots__/**,**/fixtures/**"
+)
+
 
 @dataclass
 class SeedResult:
@@ -145,7 +150,27 @@ def parse_token_lines(stdout: str) -> dict[str, int]:
     return result
 
 
-def refresh_seed(seed_dir: Path, repo_url: str, branch: str) -> tuple[bool, str | None, dict[str, int]]:
+def resolve_export_ignore(manifest: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Resolve the repomix --ignore passthrough value for exported.md generation.
+
+    Returns (ignore, error). `includeTests` in manifest.json controls opt-out:
+    - key absent or False -> apply DEFAULT_TESTS_IGNORE
+    - True -> no ignore (None)
+    - any non-bool value -> error "invalid_includeTests" (out-of-enum, no silent fallback)
+    """
+    if "includeTests" not in manifest:
+        return DEFAULT_TESTS_IGNORE, None
+    value = manifest["includeTests"]
+    if not isinstance(value, bool):
+        return None, "invalid_includeTests"
+    if value:
+        return None, None
+    return DEFAULT_TESTS_IGNORE, None
+
+
+def refresh_seed(
+    seed_dir: Path, repo_url: str, branch: str, ignore: str | None
+) -> tuple[bool, str | None, dict[str, int]]:
     exported_path = seed_dir / EXPORT_FILE
     commits_path = seed_dir / COMMIT_FILE
     issues_path = seed_dir / ISSUE_FILE
@@ -154,6 +179,8 @@ def refresh_seed(seed_dir: Path, repo_url: str, branch: str) -> tuple[bool, str 
     export_cmd = [
         "python3", str(REPO_EXPORT_SCRIPT), repo_url, "-o", str(exported_path), "-b", branch,
     ]
+    if ignore:
+        export_cmd.extend(["--ignore", ignore])
     other_commands = [
         ["python3", str(REPO_COMMIT_SCRIPT), repo_url, "-o", str(commits_path), "--limit", "50"],
         ["python3", str(REPO_ISSUE_SCRIPT), repo_url, "-o", str(issues_path), "--state", "all", "--limit", "30"],
@@ -245,6 +272,13 @@ def main() -> int:
             results.append(result)
             continue
 
+        ignore, ignore_err = resolve_export_ignore(manifest)
+        if ignore_err:
+            result.status = "error"
+            result.reason = ignore_err
+            results.append(result)
+            continue
+
         latest_raw, branch_checked, err = get_latest_commit_date(repo_path, args.branch)
         result.branch_checked = branch_checked
         result.latest_commit_at = latest_raw
@@ -281,7 +315,7 @@ def main() -> int:
             results.append(result)
             continue
 
-        ok, refresh_err, token_info = refresh_seed(seed_dir, repo_url, branch_checked or args.branch)
+        ok, refresh_err, token_info = refresh_seed(seed_dir, repo_url, branch_checked or args.branch, ignore)
         if not ok:
             result.status = "error"
             result.reason = refresh_err

@@ -119,3 +119,30 @@ EOF
     run python3 "$SCRIPT" nopath -o "$OUT_FILE"
     [ "$status" -eq 1 ]
 }
+
+@test "--ignore passes through to repomix argv verbatim" {
+    run python3 "$SCRIPT" owner/repo -o "$OUT_FILE" --ignore '**/[Tt]ests/**,**/*.test.*'
+    [ "$status" -eq 0 ]
+    grep -qF -- "--ignore **/[Tt]ests/**,**/*.test.*" "$CALLS_LOG"
+}
+
+@test "default run does not pass --ignore" {
+    run python3 "$SCRIPT" owner/repo -o "$OUT_FILE"
+    [ "$status" -eq 0 ]
+    run grep -c -- "--ignore" "$CALLS_LOG"
+    [ "$output" -eq 0 ]
+}
+
+@test "--compress --ignore applies --ignore to both baseline and compressed runs" {
+    run python3 "$SCRIPT" owner/repo -o "$OUT_FILE" --compress --ignore '**/testdata/**'
+    [ "$status" -eq 0 ]
+
+    call_count=$(wc -l < "$CALLS_LOG" | tr -d ' ')
+    [ "$call_count" -eq 2 ]
+
+    first_call=$(sed -n '1p' "$CALLS_LOG")
+    second_call=$(sed -n '2p' "$CALLS_LOG")
+
+    [[ "$first_call" == *"--ignore **/testdata/**"* ]]
+    [[ "$second_call" == *"--ignore **/testdata/**"* ]]
+}

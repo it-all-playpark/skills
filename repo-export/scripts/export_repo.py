@@ -67,6 +67,7 @@ def build_repomix_args(
     branch: str | None,
     path: str | None,
     compress: bool,
+    ignore: str | None = None,
 ) -> list[str]:
     """Build repomix CLI args for a single export run."""
     args = ['--remote', remote_url, '--style', 'markdown', '-o', output]
@@ -83,6 +84,8 @@ def build_repomix_args(
         args.extend(['--include', f"{clean_path},**/{clean_path}/**"])
     if compress:
         args.append('--compress')
+    if ignore:
+        args.extend(['--ignore', ignore])
     return args
 
 
@@ -102,6 +105,7 @@ def export_repo(
     branch: str | None = None,
     path: str | None = None,
     compress: bool = False,
+    ignore: str | None = None,
 ) -> None:
     """Export repository to a markdown file via repomix."""
     remote_url = parse_repo_url(url)
@@ -115,7 +119,7 @@ def export_repo(
 
         try:
             baseline_args = build_repomix_args(
-                remote_url, tmp_path, branch, path, compress=False
+                remote_url, tmp_path, branch, path, compress=False, ignore=ignore
             )
             baseline_result = run_repomix(repomix_cmd, baseline_args)
             if baseline_result.returncode == 0:
@@ -126,7 +130,9 @@ def export_repo(
 
         print(f"TOKENS_RAW={baseline_tokens if baseline_tokens is not None else 'unknown'}")
 
-        compressed_args = build_repomix_args(remote_url, output, branch, path, compress=True)
+        compressed_args = build_repomix_args(
+            remote_url, output, branch, path, compress=True, ignore=ignore
+        )
         result = run_repomix(repomix_cmd, compressed_args)
         if result.returncode != 0:
             raise RuntimeError(f"repomix failed with exit code {result.returncode}")
@@ -135,7 +141,7 @@ def export_repo(
         print(f"TOKENS={tokens if tokens is not None else 'unknown'}")
         return
 
-    args = build_repomix_args(remote_url, output, branch, path, compress=False)
+    args = build_repomix_args(remote_url, output, branch, path, compress=False, ignore=ignore)
     result = run_repomix(repomix_cmd, args)
     if result.returncode != 0:
         raise RuntimeError(f"repomix failed with exit code {result.returncode}")
@@ -151,11 +157,15 @@ def main():
     parser.add_argument('-b', '--branch', help='Branch name (default: repository default branch)')
     parser.add_argument('-p', '--path', help='Only export files under this path')
     parser.add_argument('--compress', action='store_true', help='Enable repomix code compression')
+    parser.add_argument(
+        '--ignore',
+        help='Comma-separated glob patterns passed through to repomix --ignore (appended to repomix default ignores)',
+    )
 
     args = parser.parse_args()
 
     try:
-        export_repo(args.url, args.output, args.branch, args.path, args.compress)
+        export_repo(args.url, args.output, args.branch, args.path, args.compress, args.ignore)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

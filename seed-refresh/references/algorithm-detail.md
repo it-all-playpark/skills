@@ -11,7 +11,14 @@
      （octocat/Hello-World、`.devflow-tmp/repomix-format-verification.md`）でトークン削減が
      確認できなかったため未使用。`exportTokens` トークン計測値は manifest.json に記録
      （計測不能時は省略。`exportTokensRaw` / `exportTokenReductionPct` は `--compress` 使用時のみ
-     付与される仕組みを残しているが現在は付与されない）
+     付与される仕組みを残しているが現在は付与されない）。
+     既定で tests 系パス
+     (`**/[Tt]ests/**,**/*.test.*,**/*.spec.*,**/__tests__/**,**/testdata/**,**/__snapshots__/**,**/fixtures/**`)
+     を repo-export の `--ignore <comma区切りglob文字列>` passthrough 経由で除外する
+     （seed 用途のトークン削減目的）。per-seed で opt-out するには `manifest.json` に
+     `"includeTests": true` を設定する（省略または `false` は既定除外を適用）。
+     `includeTests` が boolean 以外の値の場合は export を実行せず、当該 seed を
+     `status: error` / `reason: invalid_includeTests` にする
    - `commits.md`
    - `issues.md`
    - `pr-summary.md`
