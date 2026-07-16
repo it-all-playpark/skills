@@ -2247,8 +2247,17 @@ log(deps.logLine)
 
 // Validate / Final reconcile 共有の test 実行 prompt（issue #320）。WT 確定後（Setup 完了後）に
 // 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
-const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し（npm test / pytest / cargo test 等、プロジェクトに合わせる）、`
-  + `green かどうか判定せよ。format/lint はこの phase の責務外。test の結果のみ報告せよ。`
+// issue #359: sandbox 除外は先頭トークン一致のため、bare 形（絶対パス先頭トークン・前置禁止）優先実行 +
+// EPERM 起動失敗時は原因調査せず即時報告する文言へ更新。
+const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し green かどうか判定せよ。\n`
+  + `test 実行コマンドの規約: repo に実行可能な test スクリプト（tests/run-*.sh 等）があればそれを優先し、`
+  + `\`${WT}/tests/run-tests.sh\` のように**絶対パスを先頭トークンとする bare 形**で実行せよ。`
+  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止`
+  + `（理由: 先頭トークン一致で sandbox 除外が外れるため）。`
+  + `実行可能な test スクリプトが repo に無い場合のみ npm test / pytest / cargo test 等へフォールバックせよ。\n`
+  + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな: bare 形の実行経路を 1 回だけ試し、`
+  + `それでも失敗するなら tests:"failed" とし失敗要約を summary に入れて即座に StructuredOutput で報告せよ。\n`
+  + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_FALLBACK_CONVENTION
 
 const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${depth}\` を実行し、`
@@ -2529,10 +2538,17 @@ async function execValidatePhase(state) {
     let v = null
     for (let i = 1; i <= GREEN_MAX; i++) {
       const testLabel = isRetry ? `test#retry-${i}` : `test#${i}`
-      v = need(await agent(
-        VALIDATE_TEST_PROMPT,
-        { agentType: 'dev-runner-haiku', schema: GREEN, label: isRetry ? `test#retry-${i}` : `test#${i}`, phase: phaseName },
-      ), `${phaseName}(${testLabel})`)
+      let raw
+      try {
+        raw = await agent(
+          VALIDATE_TEST_PROMPT,
+          { agentType: 'dev-runner-haiku', schema: GREEN, label: isRetry ? `test#retry-${i}` : `test#${i}`, phase: phaseName },
+        )
+      } catch (e) {
+        log(`⚠️ ${phaseName}(${testLabel}): test proxy が throw（${e && e.message ? e.message : e}）— red 扱いで継続（fail-safe。issue #359）`)
+        raw = { tests: 'failed', green: false, summary: `test proxy 実行失敗（throw）: ${String(e && e.message ? e.message : e)}` }
+      }
+      v = need(raw, `${phaseName}(${testLabel})`)
       if (isRetry) {
         log(`validate(after empty-diff retry) iteration ${i}: tests=${v.tests} green=${v.green}`)
       } else {
@@ -3227,7 +3243,12 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     log(`⚠️ Final reconcile: worktree を PR 最終 HEAD へ同期できず（${sync?.error ?? 'null'}）— unavailable（fail-safe → merge tier HOLD）`)
   } else {
     // Step2 test 一発再実行（fail-safe。green-fix ループなし — red は修正せず HOLD）
-    const ft = await agent(VALIDATE_TEST_PROMPT, { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final', phase: 'Final reconcile' })
+    let ft = null
+    try {
+      ft = await agent(VALIDATE_TEST_PROMPT, { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final', phase: 'Final reconcile' })
+    } catch (e) {
+      log(`⚠️ Final reconcile: test#final が throw（${e && e.message ? e.message : e}）— null 扱い（fail-safe → unavailable。issue #359）`)
+    }
     if (!ft) { finalReconcile = 'unavailable'; log('⚠️ Final reconcile: test#final が null — unavailable（fail-safe → merge tier HOLD）') }
     else {
       finalReconcile = 'reverified'

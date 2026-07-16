@@ -27,6 +27,8 @@
 //   (h) calls 配列で 'danger-grep-final'/'changed-files'（Merge tier）が 'reconcile-sync' より後（AC-5）
 //   (i) fixes=1 + changed-files-final null → final_reconcile==='reverified' のまま（fail-open）
 //       + 'ui-verify-config-final' 不発
+//   (j) fixes=1 + test#final throw(EPERM) → error===null（run 完走）+ unavailable + HOLD +
+//       reasons に 'Final reconcile 再検証不能'（AC-4 throw fail-safe）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -330,4 +332,27 @@ test('[final-reconcile] (i) fixes=1 + changed-files-final null → reverified �
 
   assert.equal(result?.final_reconcile, 'reverified', `(i) changed-files-final 取得失敗でも final_reconcile は 'reverified' のままのはずだが ${JSON.stringify(result?.final_reconcile)}`);
   assert.ok(!calls.some((c) => c.label === 'ui-verify-config-final'), "(i) changed-files-final が null なら 'ui-verify-config-final' は呼ばれないはず（fail-open）");
+});
+
+// ============================================================
+// (j) fixes=1 + test#final throw(EPERM) → run 完走 + unavailable + HOLD（AC-4 throw fail-safe）
+// ============================================================
+
+test("[final-reconcile] (j) fixes=1 + test#final throw(EPERM) → run 完走 + final_reconcile unavailable + HOLD", async () => {
+  const { ctx } = makeSandbox({
+    fixesApplied: 1,
+    overrides: {
+      'test#final': () => { throw new Error('EPERM: operation not permitted (vitest node_modules/.vite-temp)'); },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+
+  assert.equal(error, null, `(j) test#final の throw で run 全体が abort してはならないが error が発生: ${error?.message}`);
+  assert.ok(result !== null, '(j) workflow は return object を返すべきだが null だった（run 全体が死んだことを示す）');
+  assert.equal(result?.final_reconcile, 'unavailable', `(j) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(j) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok(
+    (result?.merge_tier_reasons ?? []).some((r) => r.includes('Final reconcile 再検証不能')),
+    `(j) merge_tier_reasons に 'Final reconcile 再検証不能' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
 });
