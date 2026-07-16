@@ -2,7 +2,7 @@
 // AC-1: pending -> passed で pr-iterate が LGTM へ進む。
 // AC-7: waited_seconds/poll_attempts が journal telemetry handoff / 終端サマリー / return に反映される。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

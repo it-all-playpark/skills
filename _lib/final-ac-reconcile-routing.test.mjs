@@ -23,7 +23,7 @@
 //        'final-ac-reconcile' 不発（agent 浪費ゼロの実証。acCount===0 の skip 判定自体は
 //        _lib/final-ac-reconcile.test.mjs の shouldRunFinalAcReconcile 単体テストが決定論的に担保）
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -6,7 +6,7 @@
 // _lib/workflow-load-smoke.test.mjs の makeWorkflowSandbox / runWorkflowInSandbox と同型の
 // VM sandbox helper をこのファイル内に持つ（返り値 Promise を await して resolve 値を取得する版）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

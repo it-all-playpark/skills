@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { normalizeBaseArg, resolveBase, resolveBasePrompt, RESOLVE_BASE_PROBE } from './resolve-base.mjs';
 

@@ -3,7 +3,7 @@
 //
 // Placement: _lib 直下フラット配置（AC#3 の `node --test _lib/*.test.mjs` glob に乗せるため）
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

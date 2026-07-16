@@ -4,7 +4,7 @@
 // 3 → 2 への変更で往復回数を 1 減らす（issue #138）。
 // dev-flow.js は VM コンテキストで評価されるため ESM import 不可。
 // ソース文字列を regex 抽出する静的解析方式で検証する。
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

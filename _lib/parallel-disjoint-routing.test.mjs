@@ -9,7 +9,7 @@
 // TDD red 条件: F3 適用前は P2 が `:par:P2` で呼ばれるため衝突テストが red。
 //               F3 適用後 P2 が `:serial:P2` になり green。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

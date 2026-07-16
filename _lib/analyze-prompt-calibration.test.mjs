@@ -4,7 +4,7 @@
 // (issue #272 — plan-reviewer 指摘 logic-bug::analyze-prompt-micro-definition 対応)
 //
 // VM 実行不要: readFileSync でソース文字列を assert するだけの静的 pin テスト。
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

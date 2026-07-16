@@ -27,7 +27,7 @@
 //       だが evaluator >= 1 回・evaluator prompt に宣言外 concern が含まれる
 //       (宣言外は size 信号ではなく監査信号であることの pin)
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

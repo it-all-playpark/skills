@@ -470,6 +470,21 @@ Issues and Pull Requests are welcome. Each skill follows this structure:
 └── assets/              # Assets
 ```
 
+## veridelta dogfooding
+
+本 repo は [veridelta](https://github.com/it-all-playpark/veridelta)（`vdelta` CLI）を
+dev-flow の redgreen 判定フックにdogfooding導入している（`.claude/redgreen.conf`）。
+
+- **運用ルール**: vdelta の摩擦・バグ・欲しい機能に気づいたら
+  [veridelta repo](https://github.com/it-all-playpark/veridelta) に issue を起票し、
+  本 repo の issue [#356](https://github.com/it-all-playpark/skills/issues/356) にリンクを残すこと。
+- **移行時実測値**（node --test → vitest 移行、2026-07-16）: `node --test` 1007 tests /
+  `vitest` 1007 tests passed（総件数一致を確認済み）。
+- **記録範囲**: vdelta の verdict（`vdelta compare --report json` の出力）は dev-flow
+  telemetry handoff の pending JSON（`~/.claude/journal/pending/`）に書き出されるところまでが
+  本 issue の記録範囲。journal 本体（`journal.sh log`）への反映は dotfiles 側 Stop hook
+  （`stop-devflow-telemetry.sh`）の jq whitelist 拡張が必要なため別 issue とする。
+
 ## About playpark LLC
 
 AI開発を専門とするソフトウェア開発スタジオです。AIエージェントを活用した開発ワークフロー自動化、業務プロセスのAI化を得意としています。

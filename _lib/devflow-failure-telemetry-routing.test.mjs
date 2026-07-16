@@ -6,7 +6,7 @@
 // needs-clarification-routing.test.mjs / empty-diff-evaluate-routing.test.mjs /
 // devflow-journal-log.test.mjs の makeSandbox / VM 実行パターンを踏襲する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

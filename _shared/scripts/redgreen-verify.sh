@@ -12,6 +12,16 @@ IMPL_CSV="${3:?impl_files required}"
 
 cd "$WT" 2>/dev/null || { echo '{"red":false,"green":false,"reason":"cd failed"}'; exit 2; }
 
+# opt-in 設定(.claude/redgreen.conf, key=value 平文, source は使わない)
+# 不在・キー不在・値なしなら空文字のまま = 従来挙動と完全不変。
+RG_CONF="$WT/.claude/redgreen.conf"
+RG_TEST_CMD=""
+RG_VERDICT_CMD=""
+if [ -f "$RG_CONF" ]; then
+  RG_TEST_CMD="$(grep -E '^test_cmd=' "$RG_CONF" | head -1 | cut -d= -f2-)"
+  RG_VERDICT_CMD="$(grep -E '^verdict_cmd=' "$RG_CONF" | head -1 | cut -d= -f2-)"
+fi
+
 IFS=',' read -r -a TESTS <<< "$TEST_CSV"
 IFS=',' read -r -a IMPLS <<< "$IMPL_CSV"
 
@@ -37,7 +47,15 @@ run_tests() {
       *.bats) bats_tests+=("$t") ;;
     esac
   done
-  if [ "${#node_tests[@]}" -gt 0 ]; then node --test "${node_tests[@]}" >/dev/null 2>&1 || rc=1; fi
+  if [ "${#node_tests[@]}" -gt 0 ]; then
+    if [ -n "$RG_TEST_CMD" ]; then
+      local _tc=()
+      read -r -a _tc <<< "$RG_TEST_CMD"
+      "${_tc[@]}" "${node_tests[@]}" >/dev/null 2>&1 || rc=1
+    else
+      node --test "${node_tests[@]}" >/dev/null 2>&1 || rc=1
+    fi
+  fi
   if [ "${#bats_tests[@]}" -gt 0 ]; then bats "${bats_tests[@]}" >/dev/null 2>&1 || rc=1; fi
   return $rc
 }
@@ -147,5 +165,21 @@ fi
 # green 判定(復元後: test は通るべき)
 if run_tests; then GREEN=true; else GREEN=false; fi
 
-echo "{\"red\":$RED,\"green\":$GREEN,\"reason\":\"ok\"}"
+BASE_JSON="{\"red\":$RED,\"green\":$GREEN,\"reason\":\"ok\"}"
+
+# post-green verdict フック(opt-in, fail-open): red/green 判定が確定した後にのみ走る。
+# 非ゼロ exit・空出力・不正 JSON・jq 不在のいずれでも BASE_JSON をそのまま返す。
+if [ -n "$RG_VERDICT_CMD" ] && command -v jq >/dev/null 2>&1; then
+  VC=()
+  read -r -a VC <<< "$RG_VERDICT_CMD"
+  HOOK_JSON="$("${VC[@]}" 2>/dev/null)"
+  HOOK_RC=$?
+  if [ "$HOOK_RC" -eq 0 ] && [ -n "$HOOK_JSON" ] && jq -c . >/dev/null 2>&1 <<< "$HOOK_JSON"; then
+    jq -c --argjson v "$HOOK_JSON" '. + {verdict: $v}' <<< "$BASE_JSON"
+  else
+    echo "$BASE_JSON"
+  fi
+else
+  echo "$BASE_JSON"
+fi
 exit 0

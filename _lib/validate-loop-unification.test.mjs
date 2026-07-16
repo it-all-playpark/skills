@@ -4,7 +4,7 @@
 // テスト弱体化監査注入・GREEN_MAX ループ）を VM sandbox で pin するテストである。
 // empty-diff-evaluate-routing.test.mjs の makeCountingSandbox / runDevFlowInSandbox と同型で実装する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

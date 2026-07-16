@@ -11,7 +11,7 @@
 //   2. VM sandbox: 禁止グローバルを持たない最小コンテキスト（agent/parallel/phase/log/workflow/args
 //      を stub）で runInNewContext を実行し、ReferenceError を投げないことを assert する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

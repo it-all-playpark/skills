@@ -4,7 +4,7 @@
 // Fixtures are generated at runtime in a tmpdir; never committed.
 // Cleanup is done in finally blocks to ensure removal even on failure.
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';

@@ -7,7 +7,7 @@
 // analyzeReq は standard shape（estimated_change_file_count:3, acceptance_criteria あり, issue_type:'fix'）で
 // runEval を成立させる。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

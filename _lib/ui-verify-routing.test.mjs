@@ -24,7 +24,7 @@
 // TDD red: F3 実装前は 'ui-verify-config' 等の新規 label 呼び出しが存在せず、
 // calls に現れない・returned.ui_verify が undefined のため全テストが赤くなる。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

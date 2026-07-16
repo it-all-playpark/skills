@@ -27,10 +27,10 @@
 //   No opts.model override is used, so there is no gap between source configuration and
 //   actual runtime behavior.
 //
-// Run: node --test _lib/dev-runner-model.test.mjs
+// Run: npx vitest run _lib/dev-runner-model.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

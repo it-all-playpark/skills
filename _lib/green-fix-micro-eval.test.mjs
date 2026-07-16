@@ -11,7 +11,7 @@
 //   1. evaluator が 1 回以上呼ばれること（TRIVIAL + green-fix で runEval=true になること）
 //   2. evaluator の prompt に「テスト弱体化」focus が含まれること
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

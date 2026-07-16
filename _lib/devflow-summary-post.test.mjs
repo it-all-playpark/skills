@@ -5,7 +5,7 @@
 // このテストファイルは TDD red として作成された。
 // F2 実装（post-summary dev-runner 呼び出し）完了後に green になる。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

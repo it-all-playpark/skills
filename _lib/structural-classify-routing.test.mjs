@@ -12,10 +12,10 @@
 //   .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
 //   よって _lib/exec-proxy-routing.test.mjs と同じ戦略 (source-as-string regex) で検証する。
 //
-// Run: node --test _lib/structural-classify-routing.test.mjs
+// Run: npx vitest run _lib/structural-classify-routing.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

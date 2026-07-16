@@ -1,7 +1,7 @@
 // blocked-replan-history.test.mjs
 // TDD red: case1 fails (R1 missing from replan-blocked#2 prompt), case2 passes.
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

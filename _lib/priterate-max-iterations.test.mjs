@@ -6,7 +6,7 @@
 //   (3) args={pr:'5'}（max_iterations 未指定）で pr-reviewer が即 approve、ci-check passed → lgtm
 //   (4) args='5'（bare string、max_iterations なし）でも lgtm（単体起動の回帰防止）
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

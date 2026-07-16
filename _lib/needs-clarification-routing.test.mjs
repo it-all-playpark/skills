@@ -11,7 +11,7 @@
 //   (a) agent stub の calls 配列に {label, agentType, prompt} を記録する（prompt 文字列の検証に使う）
 //   (b) run helper は IIFE の resolve 値（workflow の return object）を {error, result} で返す
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

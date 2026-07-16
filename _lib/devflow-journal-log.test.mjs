@@ -7,7 +7,7 @@
 // ~/.claude/journal/pending/devflow-<issue>-<ts>.json へ書き出す。
 // dotfiles の Stop hook (stop-devflow-telemetry.sh) が journal.sh log へ flush する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -2,7 +2,7 @@
 // fixes_applied: fix.applied===true の累積回数。dev-flow が stale-eval 警告の判定に使う。
 // VM sandbox パターン（priterate-journal-log.test.mjs と同一構造）
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -21,10 +21,10 @@
 //   閉じクォート直後を確認する (`agentType:\s*'dev-runner-haiku'` は末尾の `'` を要求するため
 //   `'dev-runner-haiku-ro'` にはマッチしない)。
 //
-// Run: node --test _lib/exec-proxy-routing.test.mjs
+// Run: npx vitest run _lib/exec-proxy-routing.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -11,7 +11,7 @@
 // classifyMergeTier への dangerFailClosed 引数追加 + telemetry/return への danger_fail_closed 露出）
 // 完了後に green になる。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -6,6 +6,8 @@
 # Track dynamic workflow definitions (dev-flow / pr-iterate are Claude workflows)
 !.claude/workflows/
 !.claude/workflows/**
+# Track redgreen-verify.sh opt-in config (issue #356: per-repo test_cmd/verdict_cmd)
+!.claude/redgreen.conf
 # Legacy: skill-config.json は現在リポジトリルートに配置
 .serena/
 .system/
@@ -79,3 +81,9 @@ ui-ux-pro-max
 vercel-react-best-practices
 youtube-channels
 # --- end external skills ---
+
+# veridelta run records (redgreen-verify.sh verdict_cmd hook output)
+.veridelta/
+
+# dev-flow ephemeral handoff files (must not be committed via git-commit --all)
+.devflow-tmp/

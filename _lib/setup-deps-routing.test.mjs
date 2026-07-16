@@ -14,7 +14,7 @@
 //   (e) routing: 'worktree-deps' call が worktree call の後・analyze call の前に記録される
 // を assert する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

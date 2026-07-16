@@ -10,7 +10,7 @@
 //   (c) pr-iterate.js に mktemp "\${TMPDIR:-/tmp}/pr-iterate-XXXXXX.md" が含まれること
 // を assert する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
