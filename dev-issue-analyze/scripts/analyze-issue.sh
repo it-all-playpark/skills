@@ -71,12 +71,14 @@ fi
 # NOTE: uses here-strings (not pipes) for the same SIGPIPE-safety reason as
 # breaking_keyword_scan above — a large $1 fed through a pipe into a
 # downstream head -N that early-exits can SIGPIPE-kill the upstream writer.
+# NOTE: `|| true` because a no-match grep exits 1, which under
+# set -e + pipefail kills the whole script with no output.
 extract_ac() {
-    grep -E '^\s*-\s*\[[ x]\]|^[0-9]+\.\s' <<<"$1" | head -20 | json_array
+    { grep -E '^\s*-\s*\[[ x]\]|^[0-9]+\.\s' <<<"$1" || true; } | head -20 | json_array
 }
 
 extract_requirements() {
-    grep -E '^\s*[-*]\s+[A-Z]' <<<"$1" | head -15 | json_array
+    { grep -E '^\s*[-*]\s+[A-Z]' <<<"$1" || true; } | head -15 | json_array
 }
 
 AC=$(extract_ac "$BODY")
@@ -102,8 +104,9 @@ JSONEOF
 fi
 
 # Comprehensive
-AFFECTED_FILES=$(grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' <<<"$BODY" | sort -u | head -10 | json_array)
-COMPONENTS=$(grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' <<<"$BODY" | sort -u | head -10 | json_array)
+# NOTE: `|| true` for the same no-match reason as extract_ac above.
+AFFECTED_FILES=$({ grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' <<<"$BODY" || true; } | sort -u | head -10 | json_array)
+COMPONENTS=$({ grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' <<<"$BODY" || true; } | sort -u | head -10 | json_array)
 
 cat <<JSONEOF
 {
