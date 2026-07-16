@@ -386,3 +386,44 @@ content ベースの 6 パターン（x-prefix alias 統合後）は **25 件中
   書き込み系操作の不安定性（clean tree でも再現）」は issue #361/#362 のスコープを超える、
   dev-flow exec-proxy 基盤全体に関わる既知事象（`devflow-vitest-sandbox-eperm.md` と同系統）である。
   本 issue では直接対処せず、事実の記録に留める。
+
+---
+
+## 7. 追記（2026-07-17）: §3-3 の sandbox EPERM は veridelta 側修正で解消済み — 判定は不変
+
+本レポート §3-3 で実測した「`vdelta run` 内部の `git add -A` が sandboxed Bash で EPERM になり
+record が全損する」制約は、レポート作成後に veridelta 側へ issue 化され
+（it-all-playpark/veridelta#9）、PR it-all-playpark/veridelta#10 の merge で解消された。
+修正内容は `GIT_OBJECT_DIRECTORY` を tmpdir の使い捨てディレクトリへリダイレクトし、既存オブジェクトは
+`GIT_ALTERNATE_OBJECT_DIRECTORIES` 経由で実 objects dir から読む方式。git の oid は content-addressed
+のため、保存先の変更は tree_digest に影響しない（spec §3.5 のアルゴリズムは byte-identical に維持）。
+
+§3-3 と同一条件（skills repo の scratch worktree・sandbox 内 `node dist/cli.js` 起動）での再検証結果
+（2026-07-17、再現ログは veridelta#9 のコメント参照）:
+
+| 検証項目 | §3-3 時点 | 再検証（PR #10 後） |
+|---------|-----------|---------------------|
+| clean tree での run 記録 | EPERM → raw passthrough 全損 | exit 0・構造化レポート出力・記録成功（observation 7/7） |
+| dirty tree での run 記録 | 同一 EPERM | 成功 |
+| tree_digest の正しさ | 記録不成立で測定不能 | `git rev-parse <sha>^{tree}` と完全一致（`480c475c…`） |
+| 観測対象 repo の `.git/objects` | 記録不成立（非 sandbox 環境では毎 run loose object が堆積する実装だった） | 4 run 通して loose object 数 323 → 323 で不変 |
+| compare（previous-comparable baseline） | 記録不成立で測定不能 | baseline 自動選択・comparability: exact・surface: intact |
+
+補足: 完全同一 tree・同一結果の re-run は content-address により同一 run_id となり、store に増えず
+baseline にも選ばれない（自己除外）。redgreen の R1↔R2 は impl 退避で tree が必ず異なるため実用上の
+影響はない。
+
+**§6 の go/no-go 判定への影響: なし（Option B 採用のまま）。** Option A no-go の根拠 3 点のうち
+(ii) sandbox EPERM のみが解消され、(i) baseline を同一 worktree・実装開始前に記録する運用制約、
+(iii) `record_integrity: advisory` 固定（INV-10 — store が agent-writable な実行モデルでは blocking
+昇格不可）は不変であり、この 2 点だけで no-go は成立する。Option A の現実的な復活経路は
+spec §11.5 の CI same-job 実行 + sealing（advisory 上限が外れる唯一の経路）であり、worktree 内
+exec-proxy への組み込みではない。issue #362 の本文更新（PR #363 merge 後に予定）では Open Questions
+の「Option A 再検討の前提条件」をこの現状（ツール側制約は解消済み・残る障壁は上記 2 点・復活経路は
+CI same-job）に合わせて書き換えること。
+
+なお §0 / §3-3 で言及した sandbox 書き込み制限のうち `.git` object DB 書き込み以外
+（`node_modules/.vite-temp` 等 — `devflow-vitest-sandbox-eperm.md` 系統）は本追記の対象外で、
+従来どおり残る。副次的効果として、`redgreen-verify.sh` の verdict フック（issue #356）が sandbox
+セッションでも fail-open に落ちず動作するようになったため、今後の実 dev-flow run では
+`vdelta_verdict` が安定して蓄積される（§2 の real サンプル不足が時間とともに解消される）見込み。
