@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { CONCERN_ENV_PATTERNS, classifyConcern, classifyConcerns } from './concern-classify.mjs';
 

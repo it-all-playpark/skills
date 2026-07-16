@@ -4,7 +4,7 @@
 // shape-loop-routing.test.mjs / workflow-load-smoke.test.mjs と同型の VM sandbox パターンで、
 // agent()/parallel()/workflow() を stub し、workflow 本体の戻り値（report）を検証する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

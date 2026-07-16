@@ -142,3 +142,102 @@ EOF
   [ -f "$REPO/first.mjs" ]
   grep -q "true" "$REPO/first.mjs"
 }
+
+# -----------------------------------------------------------------------
+# F1: opt-in test_cmd / verdict_cmd mechanism (.claude/redgreen.conf)
+# -----------------------------------------------------------------------
+
+make_mock_runner() {
+  cat > "$REPO/mock-runner.sh" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$REPO/calls.log"
+[ -f "$REPO/impl.mjs" ]
+EOF
+  chmod +x "$REPO/mock-runner.sh"
+}
+
+@test "F1-a: opt-in test_cmd runs mock runner twice (red + green) with declared test file" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+
+  [ -f "$REPO/calls.log" ]
+  call_count="$(grep -c 'feature.test.mjs' "$REPO/calls.log")"
+  [ "$call_count" -eq 2 ]
+}
+
+@test "F1-b: conf without test_cmd line falls back to node --test unchanged" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  mkdir -p "$REPO/.claude"
+  echo "# no test_cmd here" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ ! -f "$REPO/calls.log" ]
+}
+
+@test "F1-c: verdict_cmd success adds verdict field to output JSON" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"comparability":"exact","verdict":"improved"}'
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" == *'"reason":"ok"'* ]]
+  [[ "$output" == *'"verdict"'* ]]
+  [[ "$output" == *'"comparability":"exact"'* ]]
+}
+
+@test "F1-d: verdict_cmd exit 1 fails open, output keeps only the original 3 keys" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" != *'"verdict"'* ]]
+}
+
+@test "F1-e: verdict_cmd invalid JSON fails open, output keeps only the original 3 keys" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "not-json"
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" != *'"verdict"'* ]]
+}

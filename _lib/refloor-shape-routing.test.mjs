@@ -26,7 +26,7 @@
 // TDD red: F2/F3 実装前は realized-diff call 不在・EFFECTIVE_SHAPE 不在で評価カウントと
 //          return フィールドが期待と乖離し赤になる。F2/F3 実装後に全緑。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

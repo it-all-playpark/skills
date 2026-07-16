@@ -28,7 +28,7 @@
 //   (i) fixes=1 + changed-files-final null → final_reconcile==='reverified' のまま（fail-open）
 //       + 'ui-verify-config-final' 不発
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

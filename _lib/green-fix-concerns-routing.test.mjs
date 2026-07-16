@@ -1,7 +1,7 @@
 // TDD red として作成。F1 実装（本経路 green-fix concerns → concerns 配列 push）までは fail する。
 // テスト 3（eval#1 prompt へのマーカー到達）・テスト 4（ソースの対称パターン存在）は F1 実装前の現時点で fail する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -5,7 +5,7 @@
 // このテストファイルは TDD red として作成された。
 // 実装（F3）完了後に (a)(b)(c) が green になる。(d) は現行でも green（回帰ガード）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

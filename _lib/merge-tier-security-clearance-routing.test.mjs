@@ -10,7 +10,7 @@
 // 'security-clearance-final' の呼び出し回数・prompt、'journal-log'/'post-summary' の
 // prompt（merge_tier / summary body）を捕捉する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

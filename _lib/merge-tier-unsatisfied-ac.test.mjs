@@ -4,7 +4,7 @@
 // このテストファイルは TDD red として作成された。
 // F3 実装（AC 未達時に unsatisfiedAc フラグを立て classifyMergeTier に渡す）完了後に green になる。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

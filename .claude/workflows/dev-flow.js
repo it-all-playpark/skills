@@ -1923,7 +1923,7 @@ const SEC_CLEAR = {
 }
 const RG = {
   type: 'object', required: ['red', 'green'],
-  properties: { red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' } },
+  properties: { red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' }, verdict: {} },
 }
 const PRURL = {
   type: 'object', required: ['pr_url', 'pr_number'],
@@ -2396,6 +2396,7 @@ let state = {
   dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0,
   unsatisfiedAc: false, evalDiffHash: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
+  vdeltaVerdict: null,
 }
 
 // ============================================================
@@ -3051,6 +3052,7 @@ async function execEvaluatePhase(state) {
           + `bash ~/.claude/skills/_shared/scripts/redgreen-verify.sh ${WT} `
           + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
           { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
+        if (rg && rg.verdict != null) state.vdeltaVerdict = rg.verdict
         if (rg && rg.red === true && rg.green === true) {
           ledger = setCheck(ledger, acId, { kind: 'deterministic' })
           ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
@@ -3503,6 +3505,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(finalTestGreen != null ? { final_test_green: finalTestGreen } : {}),
     ...(finalUiVerifyStatus ? { final_ui_verify: finalUiVerifyStatus } : {}),
     final_ac_reconcile: finalAcReconcile,
+    ...(state.vdeltaVerdict != null ? { vdelta_verdict: state.vdeltaVerdict } : {}),
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })

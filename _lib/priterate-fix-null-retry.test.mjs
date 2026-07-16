@@ -3,7 +3,7 @@
 // fix.applied===false（agent の明示判断）は retry せず即時 fix_failed。
 // VM sandbox パターン（priterate-fixes-applied.test.mjs と同一構造。DRY より self-containment 優先）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -24,10 +24,10 @@
 //   既存 _lib/dev-runner-model.test.mjs と同じ抽出パターン
 //   (`/^---\n([\s\S]*?)\n---/` でフロントマター本文を切り出す) を踏襲する。
 //
-// Run: node --test _lib/exec-proxy-frontmatter.test.mjs
+// Run: npx vitest run _lib/exec-proxy-frontmatter.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

@@ -9,7 +9,7 @@
 // パターン: _lib/devflow-meta-phases.test.mjs と同スタイル（readFileSync + regex + node:test、
 // VM sandbox は使わない source-string only）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

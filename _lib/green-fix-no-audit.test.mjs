@@ -3,7 +3,7 @@
 // 注入されないことを pin する。このテストは F3 実装前から green で正しい（F1 が red を担う）。
 // F3 実装後も引き続き green であること（誤って負の制御群に focus が混入しないことを保証する）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

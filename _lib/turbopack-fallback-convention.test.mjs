@@ -15,7 +15,7 @@
 //   (4) 定義が inline 生成区間外（最後の END inline マーカーより後）にあること
 // を assert する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

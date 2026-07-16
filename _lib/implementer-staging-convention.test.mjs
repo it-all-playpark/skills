@@ -15,7 +15,7 @@
 // を assert する。
 // implementer.md は一切読まない（旧テストの readFileSync(implementerMdPath) は完全に廃止）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

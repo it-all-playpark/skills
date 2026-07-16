@@ -6,10 +6,10 @@
 //           will have `effort: max` which differs from the expected `high`.
 //   GREEN — after the 4 files are edited, all 6 agents should assert to `high`.
 //
-// Run: node --test _lib/agent-effort.test.mjs
+// Run: npx vitest run _lib/agent-effort.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

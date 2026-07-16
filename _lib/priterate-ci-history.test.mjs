@@ -6,7 +6,7 @@
 //   (4) result.status === 'lgtm' かつ result.iterations === 2
 //   (5) ReferenceError/SyntaxError での sandbox クラッシュは assert.fail
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

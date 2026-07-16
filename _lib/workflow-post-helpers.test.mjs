@@ -4,7 +4,7 @@
 // TDD-first: これらのテストが GREEN になることで canonical の仕様適合を保証する。
 // node --test _lib/workflow-post-helpers.test.mjs で実行。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { bodySaveInstr, POST_RESULT, JOURNAL_RESULT } from './workflow-post-helpers.mjs';
 

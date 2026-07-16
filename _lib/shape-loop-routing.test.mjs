@@ -4,7 +4,7 @@
 // F1 時点では dev-flow.js に PLAN_SOLO / plan#standard / EVAL_PASSES が未実装のため、
 // (A) のカウント assert（plan-reviewer=0 / evaluator=1）および (B) の構造 assert が fail する（= 赤）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

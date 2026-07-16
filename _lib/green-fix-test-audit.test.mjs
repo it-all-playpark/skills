@@ -2,7 +2,7 @@
 // テスト 1（green-fix prompt の禁止文）・テスト 2（evaluator prompt のテスト弱体化 focus）・
 // テスト 5（dev-flow.js ソースの禁止文構造確認）は F3 実装前の現時点で fail する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

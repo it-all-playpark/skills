@@ -7,7 +7,7 @@
 // このテストファイルは TDD red として作成された。F2 実装（classifyMergeTier への
 // s.finalAcReconcile 追加）完了後に green になる。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { classifyMergeTier } from './merge-tier.mjs';
 

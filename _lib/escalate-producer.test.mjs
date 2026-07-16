@@ -9,7 +9,7 @@
 //   → merge_tier === 'REVIEW'（HOLD にならない = 従来挙動）。
 // テスト 3: テスト 1 と同じ sandbox で post-summary prompt に 'ESCALATE-TO-HUMAN' を含む。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

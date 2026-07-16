@@ -12,7 +12,7 @@
 // （environment/concern とも既定 policy 'llm-major-advisory' で advisory lane のまま、
 // 収束判定が unchecked のまま true になる = W7 軸A 不変）。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

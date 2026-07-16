@@ -1,0 +1,14 @@
+{
+  "name": "skills",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vdelta": "^0.1.0",
+    "vitest": "^4"
+  }
+}

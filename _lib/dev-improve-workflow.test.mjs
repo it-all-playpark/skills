@@ -2,7 +2,7 @@
 // dev-improve.js の構造 invariant。挙動の決定論部分は inline 元 canonical のテストが担保し、
 // 構文・ロード安全性は workflow-load-smoke.test.mjs / workflow-inlines.sync.test.mjs が
 // 自動カバーする（両テストは .claude/workflows/*.js を自動発見する）。
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

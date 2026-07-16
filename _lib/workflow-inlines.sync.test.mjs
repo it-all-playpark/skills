@@ -5,7 +5,7 @@
 // Replaces the 8 per-canonical sync tests that used fragile function-name extraction.
 // Uses scanMarkers / transformCanonical from tools/sync-inlines.mjs (the same logic
 // used by the generator) so the test and the writer share a single implementation.
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

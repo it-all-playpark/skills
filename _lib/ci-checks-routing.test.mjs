@@ -10,7 +10,7 @@
 //       ci-checks を呼ばず、ENV item 自体は生成される（vacuous pass 防止の positive assert）。
 //   (d) merge tier 不変: auto-close の有無で merge tier 判定・収束判定（軸A 不変）が変わらない。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

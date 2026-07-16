@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { envChecksGreen, ENV_CHECK_RES, CI_VERIFIABLE_ENV_KEYS, CHECKS } from './ci-checks.mjs';
 

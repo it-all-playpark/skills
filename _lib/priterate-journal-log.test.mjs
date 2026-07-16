@@ -2,7 +2,7 @@
 // 終端サマリー投稿の後・return の前に journal-log (dev-runner-haiku) が
 // 1 回呼び出されること、および logged:false でも正常 return することを検証する。
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

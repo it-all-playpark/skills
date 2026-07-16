@@ -5,7 +5,7 @@
 // This test guards against:
 //   - someone deleting the quality-model marker zone and hand-writing const QUALITY_MODEL again
 //   - canonical drift (caught by workflow-inlines.sync.test.mjs per-zone tests once markers exist)
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

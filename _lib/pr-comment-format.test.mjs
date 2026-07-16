@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { buildReviewCommentBody, buildTerminalSummaryBody } from './pr-comment-format.mjs';
 import { mdCell } from './md-cell.mjs';

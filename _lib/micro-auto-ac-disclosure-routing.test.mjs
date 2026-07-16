@@ -7,7 +7,7 @@
 //   (B) standard shape run → merge_tier===REVIEW かつ文言なし（evaluator が走るので開示不要）
 //   (C) micro AUTO run で evaluator が 0 件であること（開示文言の前提確認）
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
