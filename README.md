@@ -485,6 +485,7 @@ dev-flow の redgreen 判定フックにdogfooding導入している（`.claude/
   本 issue の記録範囲。journal 本体（`journal.sh log`）への反映は dotfiles 側 Stop hook
   （`stop-devflow-telemetry.sh`）の jq whitelist 拡張が必要なため別 issue とする。
 
+## About playpark LLC
 
 AI開発を専門とするソフトウェア開発スタジオです。AIエージェントを活用した開発ワークフロー自動化、業務プロセスのAI化を得意としています。
 
