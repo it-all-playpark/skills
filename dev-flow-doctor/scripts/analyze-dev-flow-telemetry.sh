@@ -12,6 +12,9 @@
 #                       dev-flow + pr-iterate entries from the same PR
 #                       execution are joined into a single run before
 #                       counting; see "Nested run normalization" below)
+#                     duration_seconds_by_shape (per-shape count/min/p50/mean/max
+#                       over .telemetry.duration_seconds, numeric values only;
+#                       denominator = .skill == "dev-flow" entries)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring
 #
 # Usage:
@@ -246,6 +249,30 @@ PLAN_ITER_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson cap "$PLAN_ITER_CAP" 
   }
 ')
 
+# duration_seconds_by_shape: per-shape count/min/p50/mean/max over
+# .telemetry.duration_seconds (numeric values only -- non-number values and
+# missing keys are excluded via `select(type == "number")`, so legacy
+# entries predating this telemetry key naturally yield a zero record).
+DURATION_BY_SHAPE=$(echo "$DEVFLOW_ENTRIES" | jq -c '
+  def dstats: map(.telemetry.duration_seconds) | map(select(type == "number")) | sort as $v | ($v | length) as $n |
+    if $n == 0 then
+      {count: 0, min: null, p50: null, mean: null, max: null}
+    else
+      {
+        count: $n,
+        min: $v[0],
+        p50: (if $n % 2 == 1 then $v[($n-1)/2] else (($v[$n/2 - 1] + $v[$n/2]) / 2 | round) end),
+        mean: (($v | add) / $n | round),
+        max: $v[$n-1]
+      }
+    end;
+  {
+    micro: ([.[] | select(.telemetry.shape == "micro")] | dstats),
+    standard: ([.[] | select(.telemetry.shape == "standard")] | dstats),
+    complex: ([.[] | select(.telemetry.shape == "complex")] | dstats)
+  }
+')
+
 # ----------------------------------------------------------------------------
 # Nested run normalization
 #
@@ -356,13 +383,15 @@ DISTRIBUTIONS=$(jq -n \
   --argjson plan_iter "$PLAN_ITER_DIST" \
   --argjson gate_policy "$GATE_POLICY_DIST" \
   --argjson iterate_status "$ITERATE_STATUS_DIST" \
+  --argjson duration_seconds_by_shape "$DURATION_BY_SHAPE" \
   '{
     shape: $shape,
     merge_tier: $merge_tier,
     eval_iter: $eval_iter,
     plan_iter: $plan_iter,
     gate_policy: $gate_policy,
-    iterate_status: $iterate_status
+    iterate_status: $iterate_status,
+    duration_seconds_by_shape: $duration_seconds_by_shape
   }')
 
 # ----------------------------------------------------------------------------

@@ -121,6 +121,12 @@ for (const label of READ_ONLY_LABELS) {
   });
 }
 
+// clock# probe (issue #371 F2): duration telemetry の時刻取得 exec-proxy も read-only（Bash `date +%s` のみ）。
+test("[exec-proxy-routing] dev-flow.js label 'clock#' routes to agentType:'dev-runner-haiku-ro'", () => {
+  const line = findLineByLabelPrefix(devFlowSrc, 'clock#');
+  assertAgentTypeOnLine(line, 'clock#', 'dev-runner-haiku-ro', 'dev-flow.js');
+});
+
 // ---- (b) dev-flow.js: write/Skill exec-proxy labels stay on dev-runner-haiku ----
 
 test("[exec-proxy-routing] dev-flow.js label 'worktree' stays on agentType:'dev-runner-haiku'", () => {
