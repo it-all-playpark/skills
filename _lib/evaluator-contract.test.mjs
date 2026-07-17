@@ -69,6 +69,24 @@ test('[evaluator-contract] dev-flow.js inlines and uses the canonical final_ac_r
   assert.ok(devFlowSrc.includes('EVALUATOR_OPERATIONAL_CONTRACT.final_ac_reconcile'));
 });
 
+// testsurf_clearance 契約は evaluator.md へ mirror しない（issue #362 design decision、final_ac_reconcile
+// と同一 precedent）。.claude/agents/ は sandbox レベルの書き込み禁止領域であり、契約は dev-flow.js の
+// testsurf_focus 注入 prompt への verbatim 注入のみで配送する（唯一の配送経路）。
+// mirror 化する場合はこの pin ごと人間が明示的に変更すること。
+test('[evaluator-contract] evaluator.md does NOT mirror the testsurf_clearance contract (prompt-injection-only delivery, issue #362)', () => {
+  assert.ok(
+    !evaluatorMd.includes('testsurf_clearance'),
+    'testsurf_clearance 契約は evaluator.md へ mirror せず、dev-flow.js の testsurf_focus prompt 注入のみで配送する設計。mirror 化する場合はこの pin ごと人間が変更すること',
+  );
+});
+
+test('[evaluator-contract] dev-flow.js inlines and uses the canonical testsurf_clearance contract', () => {
+  for (const line of EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance.split('\n')) {
+    assert.ok(devFlowSrc.includes(line), `dev-flow.js に testsurf_clearance 契約行が必要です: ${line}`);
+  }
+  assert.ok(devFlowSrc.includes('EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance'));
+});
+
 test('[evaluator-contract] evaluator.md output example does not include schema-less score field', () => {
   assert.ok(!evaluatorMd.includes('"score"'), 'EVAL schema に無い score を evaluator.md の例に載せない');
 });

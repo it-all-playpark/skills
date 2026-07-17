@@ -2,7 +2,7 @@
 # diff-risk-classify.sh - dev-flow W1 deterministic danger-grep on realized diff.
 #
 # Purpose: Grep the REALIZED git diff (actual written changes, not proposed/issue text)
-# between a base ref and HEAD for 7 danger classes and print hit files as a JSON object
+# between a base ref and HEAD for 8 danger classes and print hit files as a JSON object
 # to stdout. Called directly from workflow JS. Ungameable critical floor -- severity is
 # ALWAYS "critical" and cannot be lowered by any flag or input.
 #
@@ -10,8 +10,10 @@
 #   --working-tree  Classify worktree changes (staged + untracked) instead of committed
 #                   diff. Uses merge-base($BASE, HEAD) as anchor so BASE-ahead commits
 #                   from other branches do not bleed into the result.
-# Output: {"ok":true,"hits":[{file, class, severity:"critical"}]} on success (stdout)
-#         {"ok":false,"hits":[],"error": "...", "exit_code": N} on error (stdout)
+# Output: {"ok":true,"hits":[{file, class, severity:"critical", pattern?}]} on success
+#         (stdout). "pattern" is only present for class:"test-weakening" hits (issue
+#         #361/#362 spike). {"ok":false,"hits":[],"error": "...", "exit_code": N} on
+#         error (stdout).
 # Exit: 0 on success (even with empty hits), non-zero via die_json on error.
 
 set -euo pipefail
@@ -147,11 +149,12 @@ if [[ -z "$files" ]]; then
 fi
 
 # ============================================================================
-# Classification: 7 fixed-order danger classes
+# Classification: 8 fixed-order danger classes
 # ============================================================================
 # Each class checks filename and/or added-line content with grep -Eiq.
 # A file may match multiple classes -> one object per matched class.
-# hits: newline-separated "file\tclass" records
+# hits: newline-separated "file\tclass\tpattern" records (pattern is only
+# populated for class "test-weakening"; empty for the other 7 classes).
 
 hits=""
 
@@ -211,7 +214,7 @@ while IFS= read -r file; do
     # 1. auth
     if echo "$file" | grep -Eiq 'auth' || \
        echo "$added" | grep -Eiq 'authoriz|authenticat|requireAuth|isAdmin|hasPermission|jwt|session|login|logout|bearer'; then
-        hits="${hits}${file}"$'\t'"auth"$'\n'
+        hits="${hits}${file}"$'\t'"auth"$'\t'$'\n'
     fi
 
     # 2. crypto
@@ -223,20 +226,20 @@ while IFS= read -r file; do
     # bare `hmac` is boundary-tightened in P2.
     if echo "$added" | grep -Eiq '(^|[^[:alnum:]_])(crypto\.|createHash|createCipher|createHmac|bcrypt|scrypt|randomBytes|pbkdf2)' || \
        echo "$added" | grep -Eiq '(^|[^[:alnum:]_])(hmac|rsa)([^[:alnum:]_]|$)|(^|[^[:alnum:]_])aes-'; then
-        hits="${hits}${file}"$'\t'"crypto"$'\n'
+        hits="${hits}${file}"$'\t'"crypto"$'\t'$'\n'
     fi
 
     # 3. config
     if echo "$file" | grep -Eiq '(^|/)\.env($|\.)' || \
        echo "$file" | grep -Eiq 'config/.*\.(ya?ml|json|toml)$' || \
        echo "$added" | grep -Eiq 'process\.env\.|[A-Z_]{3,}_(KEY|TOKEN|SECRET|PASSWORD)[[:space:]]*='; then
-        hits="${hits}${file}"$'\t'"config"$'\n'
+        hits="${hits}${file}"$'\t'"config"$'\t'$'\n'
     fi
 
     # 4. data-migration
     if echo "$file" | grep -Eiq 'migrations?/|/migrate' || \
        echo "$added" | grep -Eiq 'ALTER TABLE|DROP TABLE|CREATE TABLE|ADD COLUMN|DROP COLUMN|RENAME COLUMN'; then
-        hits="${hits}${file}"$'\t'"data-migration"$'\n'
+        hits="${hits}${file}"$'\t'"data-migration"$'\t'$'\n'
     fi
 
     # 5. public-api
@@ -246,7 +249,7 @@ while IFS= read -r file; do
     if echo "$file" | grep -Eq '(^|/)(_lib|tools)/'; then
         : # _lib / tools are repo-internal; skip public-api check only
     elif echo "$added" | grep -Eiq 'export (default |async )?(function|class|const)|module\.exports|@(Get|Post|Put|Delete|Patch)\(|openapi|paths:'; then
-        hits="${hits}${file}"$'\t'"public-api"$'\n'
+        hits="${hits}${file}"$'\t'"public-api"$'\t'$'\n'
     fi
 
     # 6. exec-sink
@@ -256,7 +259,44 @@ while IFS= read -r file; do
 
     # 7. dependency
     if echo "$file" | grep -Eiq '(^|/)(package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|requirements\.txt|Pipfile|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|Gemfile|Gemfile\.lock|composer\.json)$'; then
-        hits="${hits}${file}"$'\t'"dependency"$'\n'
+        hits="${hits}${file}"$'\t'"dependency"$'\t'$'\n'
+    fi
+
+    # 8. test-weakening (issue #361/#362 spike -- content patterns 1-5 restricted to test
+    # files; pattern 6 (exclude-cfg) also applies to vitest/vite/jest config files. Grep is
+    # intentionally case-sensitive (-E, not -Ei): the spike's 0/25 FP measurement was taken
+    # against these exact case-sensitive patterns. File-deletion detection and assert/expect
+    # net-reduction checks are NOT implemented here (spike FP 3-4/25, follow-up only).
+    _is_test_file=false
+    if echo "$file" | grep -Eq '\.(test|spec)\.|\.bats$|_test\.'; then
+        _is_test_file=true
+    fi
+    _is_test_cfg_file=false
+    if echo "$file" | grep -Eq '(^|/)(vitest|vite|jest)\.config\.(js|ts|mjs|cjs|mts|cts)$'; then
+        _is_test_cfg_file=true
+    fi
+
+    if [[ "$_is_test_file" == true ]]; then
+        if echo "$added" | grep -Eq '\b(test|it|describe)\.skip\b|\b(xit|xtest|xdescribe)[[:space:]]*\('; then
+            hits="${hits}${file}"$'\t'"test-weakening"$'\t'"skip"$'\n'
+        fi
+        if echo "$added" | grep -Eq '\b(test|it|describe)\.only\b'; then
+            hits="${hits}${file}"$'\t'"test-weakening"$'\t'"only"$'\n'
+        fi
+        if echo "$added" | grep -Eq '\b(test|it)\.todo\b'; then
+            hits="${hits}${file}"$'\t'"test-weakening"$'\t'"todo"$'\n'
+        fi
+        if echo "$added" | grep -Eq '\b(test|it)\.fails\b'; then
+            hits="${hits}${file}"$'\t'"test-weakening"$'\t'"xfail"$'\n'
+        fi
+        if echo "$added" | grep -Eq "expect\((true|1|'x')\)\.to(Be|Equal|BeTruthy)\("; then
+            hits="${hits}${file}"$'\t'"test-weakening"$'\t'"tautology"$'\n'
+        fi
+    fi
+    if [[ "$_is_test_file" == true || "$_is_test_cfg_file" == true ]]; then
+        if echo "$added" | grep -Eq '(test\.exclude|exclude:[[:space:]]*\[)'; then
+            hits="${hits}${file}"$'\t'"test-weakening"$'\t'"exclude-cfg"$'\n'
+        fi
     fi
 
 done <<< "$files"
@@ -274,14 +314,17 @@ if [[ -z "$hits" ]]; then
 fi
 
 if has_jq; then
-    # Use jq to build the array deterministically (compact output, no spaces)
+    # Use jq to build the array deterministically (compact output, no spaces).
+    # "pattern" (3rd tab field) is only included when non-empty -- the 7 legacy
+    # classes carry an empty 3rd field and therefore emit no "pattern" key.
     printf '%s\n' "$hits" | \
-        jq -c -R -n '{ok:true,hits:[inputs | split("\t") | {file:.[0], class:.[1], severity:"critical"}]}'
+        jq -c -R -n '{ok:true,hits:[inputs | split("\t") | {file:.[0], class:.[1], severity:"critical"} + (if (.[2] // "") != "" then {pattern:.[2]} else {} end)]}'
 else
-    # Fallback: build JSON array with json_escape
+    # Fallback: build JSON array with json_escape. Same pattern-optional rule as
+    # the jq branch above.
     result="{\"ok\":true,\"hits\":["
     first=true
-    while IFS=$'\t' read -r f c; do
+    while IFS=$'\t' read -r f c p; do
         [[ -z "$f" ]] && continue
         if [[ "$first" == true ]]; then
             first=false
@@ -289,7 +332,12 @@ else
             result="${result},"
         fi
         escaped_file="$(json_escape "$f")"
-        result="${result}{\"file\":${escaped_file},\"class\":\"${c}\",\"severity\":\"critical\"}"
+        obj="{\"file\":${escaped_file},\"class\":\"${c}\",\"severity\":\"critical\""
+        if [[ -n "$p" ]]; then
+            obj="${obj},\"pattern\":\"${p}\""
+        fi
+        obj="${obj}}"
+        result="${result}${obj}"
     done <<< "$hits"
     result="${result}]}"
     printf '%s\n' "$result"

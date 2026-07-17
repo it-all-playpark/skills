@@ -710,3 +710,35 @@ test('dev-flow.js: classifyMergeTier 呼び出しに iterateStatus / evalStalene
     `classifyMergeTier 呼び出し引数に evalStaleness, が見つからない: ${callMatch[0]}`,
   );
 });
+
+// ---- issue #362: testsurfUncleared ----
+
+test('classifyMergeTier: testsurfUncleared 非空 → HOLD reason に対象 id と test-weakening 文言を含む(converged:false と同時発生)', () => {
+  const r = classifyMergeTier({
+    shape: 'standard', converged: false, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    iterateStatus: 'lgtm', evalStaleness: 'none',
+    testsurfUncleared: ['TESTSURF-SKIP'],
+  });
+  assert.equal(r.tier, 'HOLD');
+  const tsReason = r.reasons.find((x) => x.includes('test-weakening'));
+  assert.ok(tsReason, `reasons に test-weakening 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.ok(tsReason.includes('TESTSURF-SKIP'), `reasons に対象 id TESTSURF-SKIP を含むべきだが: ${tsReason}`);
+});
+
+test('classifyMergeTier: testsurfUncleared 未指定/空 → 従来通り(regression なし、test-weakening 文言なし)', () => {
+  const base = {
+    shape: 'micro', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: true, escalateCount: 0,
+    iterateStatus: 'lgtm', evalStaleness: 'none',
+  };
+  const rUndefined = classifyMergeTier(base);
+  assert.equal(rUndefined.tier, 'AUTO');
+  assert.ok(!rUndefined.reasons.some((x) => /test-weakening/.test(x)));
+
+  const rEmpty = classifyMergeTier({ ...base, testsurfUncleared: [] });
+  assert.equal(rEmpty.tier, 'AUTO');
+  assert.ok(!rEmpty.reasons.some((x) => /test-weakening/.test(x)));
+});

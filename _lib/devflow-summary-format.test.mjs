@@ -42,6 +42,22 @@ function secLedgerItem(dangerClass, { checked = false, evidence = null, floor = 
   return item;
 }
 
+// TESTSURF seed ledger item ヘルパー（SEC seed item と同型。issue #362）。
+// blockingItems の source:'seed' && id が 'TESTSURF-' 始まりの item から
+// buildDevflowSummaryBody が TESTSURF セクションを導出する。
+function testsurfLedgerItem(pattern, { checked = false, evidence = null } = {}) {
+  return {
+    id: `TESTSURF-${pattern.toUpperCase()}`,
+    text: `test-weakening detected: ${pattern}`,
+    dimension: 'test-integrity',
+    severity: 'critical',
+    source: 'seed',
+    floor: true,
+    checked,
+    evidence,
+  };
+}
+
 // ─── at-a-glance テーブル絵文字 ──────────────────────────────────────────────
 
 test('mergeTier=HOLD -> at-a-glance テーブルに🔶 **HOLD** を含む', () => {
@@ -1371,4 +1387,81 @@ test('finalAcReconcile=stale -> out-of-enum は validation error', () => {
       finalAcReconcile: 'stale',
     });
   }, /invalid finalAcReconcile/);
+});
+
+// ─── TESTSURF (test-weakening) 表示 (issue #362) ─────────────────────────────
+
+test('testsurfHits=["skip"] + ledger に TESTSURF-SKIP unchecked -> TESTSURF セクション + 要人間確認文言を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    testsurfHits: ['skip'],
+    blockingItems: [testsurfLedgerItem('skip', { checked: false, evidence: null })],
+  });
+  assert.ok(body.includes('### 🧪 TESTSURF（test-weakening 検出）'), 'TESTSURF セクション見出しを含む');
+  assert.ok(body.includes('検出パターン (test-weakening): skip'), '検出パターン行を含む');
+  assert.ok(body.includes('| ❌ 未解消 | SKIP |'), '未解消行を含む');
+  assert.ok(body.includes('**要人間確認**: committed test の skip/削除/tautology 化の疑い'), '要人間確認文言を含む');
+});
+
+test('TESTSURF-SKIP checked（evidence "testsurf cleared: ..."） -> cleared 表示を含み要人間確認は出ない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    testsurfHits: ['skip'],
+    blockingItems: [
+      testsurfLedgerItem('skip', { checked: true, evidence: 'testsurf cleared: renamed skip helper, not a real skip' }),
+    ],
+  });
+  assert.ok(body.includes('| ✅ cleared | SKIP | testsurf cleared: renamed skip helper, not a real skip |'), 'cleared 行を含む');
+  assert.ok(!body.includes('要人間確認'), 'cleared 時は要人間確認文言が出ない');
+});
+
+test('testsurfHits 空 かつ TESTSURF ledger item なし -> 出力に「TESTSURF」文字列を含まない（regression）', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, testsurfHits: [] });
+  assert.ok(!body.includes('TESTSURF'), 'TESTSURF 文字列を含まない');
+  assert.ok(!body.includes('検出パターン'), '検出パターン行も出ない');
+});
+
+test('testsurfHits 未指定（既存呼び出し互換） -> 出力に「TESTSURF」文字列を含まない（regression）', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT });
+  assert.ok(!body.includes('TESTSURF'), 'TESTSURF 文字列を含まない');
+});
+
+test('複数 pattern（skip 未解消 + only cleared） -> 両方が TESTSURF テーブルに列挙される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    testsurfHits: ['skip', 'only'],
+    blockingItems: [
+      testsurfLedgerItem('skip', { checked: false, evidence: null }),
+      testsurfLedgerItem('only', { checked: true, evidence: 'testsurf cleared: intentional focus during WIP, reverted before merge' }),
+    ],
+  });
+  assert.ok(body.includes('検出パターン (test-weakening): skip, only'), '検出パターン 2件を含む');
+  assert.ok(body.includes('| ❌ 未解消 | SKIP |'), 'skip 未解消行を含む');
+  assert.ok(body.includes('| ✅ cleared | ONLY |'), 'only cleared行を含む');
+});
+
+test('TESTSURF セクションは dangerHits/Security clearance と独立して表示される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    dangerHits: [],
+    testsurfHits: ['tautology'],
+    blockingItems: [testsurfLedgerItem('tautology', { checked: false, evidence: null })],
+  });
+  assert.ok(body.includes('✅ clean'), 'danger は clean のまま');
+  assert.ok(body.includes('Security clearance: danger-grep clean（clearance 不要）'), 'Security clearance は clean のまま');
+  assert.ok(body.includes('### 🧪 TESTSURF（test-weakening 検出）'), 'TESTSURF セクションは独立して出る');
+});
+
+test('決定性: TESTSURF 込み入力でも 2回呼んで byte 完全一致', () => {
+  const input = {
+    ...BASE_INPUT,
+    testsurfHits: ['skip', 'xdescribe'],
+    blockingItems: [
+      testsurfLedgerItem('skip', { checked: false, evidence: null }),
+      testsurfLedgerItem('xdescribe', { checked: true, evidence: 'testsurf cleared: renamed suite, no logic removed' }),
+    ],
+  };
+  const body1 = buildDevflowSummaryBody(input);
+  const body2 = buildDevflowSummaryBody(input);
+  assert.equal(body1, body2, 'TESTSURF 込みでも byte 完全一致');
 });

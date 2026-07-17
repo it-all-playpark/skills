@@ -20,6 +20,7 @@
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
+ * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
@@ -44,6 +45,7 @@ export function buildDevflowSummaryBody({
   acResults,
   planConcerns,
   dangerHits,
+  testsurfHits,
   shape,
   testGreen,
   evalVerdict,
@@ -89,6 +91,17 @@ export function buildDevflowSummaryBody({
     (it) => it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true
   );
 
+  // TESTSURF clearance は最終 ledger の TESTSURF seed item（source:'seed' && id が 'TESTSURF-' 始まり）
+  // から導出する（SEC seed item と同型。issue #362）。id 形式は `TESTSURF-<PATTERN>` 固定。
+  const testsurfLedgerItems = (blockingItems || []).filter(
+    (it) => it.source === 'seed' && typeof it.id === 'string' && it.id.startsWith('TESTSURF-')
+  );
+  const testsurfClearance = testsurfLedgerItems.map((it) => ({
+    pattern: it.id.slice('TESTSURF-'.length),
+    cleared: it.checked === true,
+    evidence: it.evidence,
+  }));
+
   const lines = [];
 
   const TIER_EMOJI = { 'HOLD': '🔶', 'REVIEW': '🔷', 'AUTO': '✅' };
@@ -128,6 +141,8 @@ export function buildDevflowSummaryBody({
   }
   const dangerArr = dangerHits && dangerHits.length > 0 ? dangerHits : null;
   const dangerCell = dangerArr ? `⚠️ ${dangerArr.length} クラス` : '✅ clean';
+  const testsurfArr = testsurfHits && testsurfHits.length > 0 ? testsurfHits : null;
+  const hasTestsurf = testsurfArr != null || testsurfClearance.length > 0;
 
   lines.push('| Merge tier | shape | test | eval | Ledger | AC | danger |');
   lines.push('|---|---|---|---|---|---|---|');
@@ -155,6 +170,11 @@ export function buildDevflowSummaryBody({
     lines.push(`検出クラス: ${dangerArr.join(', ')}`);
   }
 
+  // 4b. testsurfHits 検出パターン行（1件以上のとき。issue #362）
+  if (testsurfArr) {
+    lines.push(`検出パターン (test-weakening): ${testsurfArr.join(', ')}`);
+  }
+
   // 5. Merge tier 理由（常時可視）
   lines.push('');
   lines.push('**Merge tier 理由**:');
@@ -180,6 +200,27 @@ export function buildDevflowSummaryBody({
       lines.push('- ✅ AC は最終 PR tree で再検証済み（Final AC reconcile — AC テーブルは final snapshot）');
     } else if (finalAcReconcile !== 'reverified' && acArr) {
       lines.push('- ⚠️ AC 判定は stale（fix 適用後の最終 tree に対する AC 再検証が未実施/判定不能 — AC テーブルは Evaluate 時点（fix 前 tree）基準であり final ではない）');
+    }
+  }
+
+  // 5d. TESTSURF セクション（committed test の skip/削除/tautology 化 疑いを検出したときのみ表示。issue #362）
+  // dangerHits/Security clearance と別系統（dimension:'test-integrity'）。hit ゼロ（testsurfHits 空 かつ
+  // ledger に TESTSURF item なし）では一切出力しない（既存サマリーとの byte 同一を保つ regression 要件）。
+  if (hasTestsurf) {
+    lines.push('');
+    lines.push('### 🧪 TESTSURF（test-weakening 検出）');
+    if (testsurfClearance.length > 0) {
+      lines.push('');
+      lines.push('| 状態 | pattern | 内容 |');
+      lines.push('|---|---|---|');
+      for (const tc of testsurfClearance) {
+        if (tc.cleared) {
+          const evidenceCell = tc.evidence ? mdCell(tc.evidence) : '—';
+          lines.push(`| ✅ cleared | ${tc.pattern} | ${evidenceCell} |`);
+        } else {
+          lines.push(`| ❌ 未解消 | ${tc.pattern} | **要人間確認**: committed test の skip/削除/tautology 化の疑い |`);
+        }
+      }
     }
   }
 

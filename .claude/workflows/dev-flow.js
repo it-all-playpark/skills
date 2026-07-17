@@ -58,6 +58,18 @@ const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。',
     '- concern は advisory であり収束を block しない。解消済み concern を resolved:true にすると終端サマリーの要対応から除外される。',
   ].join('\n'),
+  // testsurf_clearance は final_ac_reconcile と同様 prompt 注入のみで配送する（evaluator.md へ
+  // mirror しない）。.claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification
+  // 防止）であり、dev-flow の testsurf_focus 注入が本契約全文を毎回 prompt へ verbatim 注入するため
+  // 機能上も mirror は不要。既存 3 キーの evaluator.md verbatim mirror 規約の対象外（issue #362）。
+  testsurf_clearance: [
+    'testsurf_clearance 契約:',
+    '- testsurf_focus が渡された場合、各 pattern の test 変更が正当（refactor で網羅性維持 / 一時 skip でない 等）かを判定し、testsurf_clearance:[{pattern, cleared, evidence}] で返す。',
+    '- pattern は渡された検出パターン名をそのまま返す。',
+    '- 正当と確認できないものは cleared:false。',
+    '- cleared:true は具体的 evidence 必須（どのテストがどこで同等以上に担保されるか）。evidence のない cleared:true は無視され、TESTSURF item は blocking のまま残る。',
+    '- cleared:false の TESTSURF item は blocking のまま merge tier HOLD に反映される。',
+  ].join('\n'),
   // final_ac_reconcile は prompt 注入のみで配送する（evaluator.md へ mirror しない）。
   // .claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification 防止）であり、
   // dev-flow の final-ac-reconcile 呼び出しが本契約全文を毎回 prompt へ verbatim 注入するため
@@ -482,6 +494,11 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 //   'skipped'/'reverified'/未指定は tier 判定不変（fail/pass の gating は unsatisfiedAc と
 //   ledger 未収束が担う）。未指定 = 従来と完全同一挙動（regression なし）。out-of-enum は明示 error
 //   （後方互換 scaffolding 禁止規約）。
+// s.testsurfUncleared (optional string[]): 未 checked の TESTSURF-* seed item id 一覧（issue #362）。
+//   非空時に専用 HOLD reason を defense-in-depth として追記する（dangerFailClosed reason と同型の
+//   可視化）。TESTSURF item は source:'seed' の unchecked のまま converged=false → HOLD は既に成立
+//   しているため、この reason は tier 判定値そのものは変えない。未指定/空 = reason 追加なし
+//   （regression なし）。
 function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -507,6 +524,9 @@ function classifyMergeTier(s) {
   if (s.finalAcReconcile === 'unavailable') reasons.push('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）');
   if (s.iterateStatus !== 'lgtm') reasons.push(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`);
   if (s.evalStaleness === 'hash_mismatch') reasons.push('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）');
+  if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
+    reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
+  }
   if (reasons.length) {
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     return { tier: 'HOLD', reasons };
@@ -708,6 +728,195 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
     .every((it) => it.checked);
 }
 // ==== END inline: _lib/gate-policy.mjs ====
+
+// ==== BEGIN inline: _lib/vdelta-transitions.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// vdelta-transitions: redgreen R1↔R2 の veridelta verdict から deny-only チェックを判定する。
+// 用途: red&&green の決定論昇格を維持したまま、test 変更込みの「勝利宣言」を deny する
+// advisory シグナル（INV-10: record_integrity=advisory 恒久、blocking gate 化はしない）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+function vdeltaDenies(verdict) {
+  if (verdict === null || verdict === undefined) {
+    return { deny: false, reasons: [], status: 'fail_open' };
+  }
+
+  let parsed = verdict;
+  if (typeof verdict === 'string') {
+    try {
+      parsed = JSON.parse(verdict);
+    } catch {
+      return { deny: false, reasons: [], status: 'fail_open' };
+    }
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { deny: false, reasons: [], status: 'fail_open' };
+  }
+
+  const { transitions } = parsed;
+  if (typeof transitions !== 'object' || transitions === null || Array.isArray(transitions)) {
+    return { deny: false, reasons: [], status: 'fail_open' };
+  }
+
+  if (parsed.comparability !== 'exact') {
+    return { deny: false, reasons: [], status: 'abstain' };
+  }
+
+  const reasons = [];
+
+  const repaired = transitions.repaired_with_test_change;
+  if (Array.isArray(repaired) && repaired.length > 0) {
+    reasons.push(`repaired_with_test_change(${repaired.length}件)`);
+  }
+
+  const surfaceStatus = parsed.verification_surface?.status;
+  if (surfaceStatus !== undefined && surfaceStatus !== 'intact') {
+    reasons.push(`verification_surface:${surfaceStatus}`);
+  }
+
+  if (reasons.length > 0) {
+    return { deny: true, reasons, status: 'deny' };
+  }
+
+  return { deny: false, reasons: [], status: 'clean' };
+}
+// ==== END inline: _lib/vdelta-transitions.mjs ====
+
+// ==== BEGIN inline: _lib/testsurf.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow issue #362: TESTSURF ledger seeding/reconcile の pure 関数群（test-weakening 第8
+// danger クラス）。SEC の seedSecurityLedger/reconcileDanger（_lib/merge-tier.mjs L340-399 相当）と
+// 同型だが別 dimension（test-integrity）— dangerHits / security_focus / danger_hits telemetry /
+// reconcileDanger の意味論を一切変えない別系統の seed family。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+// diff-risk-classify.sh が test-weakening クラスの hit に付与する content pattern（固定順）。
+// file-deletion 系と assert/expect 純減は spike #361 の FP 実測により不採用（follow-up）。
+const TESTSURF_PATTERNS = ['skip', 'only', 'todo', 'xfail', 'tautology', 'exclude-cfg'];
+
+// risk.hits のうち class==='test-weakening'（test-surface 縮小系）の hit のみを返す。
+// risk が null または risk.ok!==true（danger-grep 実行失敗/転写失敗/空出力）は空配列を返す。
+// fail-closed（全 TESTSURF item を unchecked に戻す等）は同一スクリプトの SEC 側 reconcileDanger
+// が担保する invariant に相乗りするため、ここでは単に「hit なし」として扱う。
+function testsurfHitsOf(risk) {
+  if (!risk || risk.ok !== true) return [];
+  return (risk.hits ?? []).filter((h) => h.class === 'test-weakening');
+}
+
+// risk.hits のうち class!=='test-weakening'（従来の 7 danger クラス）の hit のみを返す。
+// 呼び出し側の dangerHits（SEC reconcile 用の入力）算出用の分離ヘルパー。test-weakening hit が
+// dangerHits に混入すると security_focus / danger_hits telemetry / SEC reconcile の意味論が壊れる
+// ため、workflow 側はこの関数で必ず分離してから reconcileDanger に渡す。
+function secHitsOf(risk) {
+  if (!risk || risk.ok !== true) return [];
+  return (risk.hits ?? []).filter((h) => h.class !== 'test-weakening');
+}
+
+// testsurfHitsOf の pattern を dedup した配列を返す。pattern 欠落/未知は 'unknown' にバケットする
+// （out-of-enum を握りつぶさない repo 規約）。
+function testsurfPatternsOf(risk) {
+  const hits = testsurfHitsOf(risk);
+  const seen = new Set();
+  const result = [];
+  for (const h of hits) {
+    const pattern = h.pattern ?? 'unknown';
+    if (seen.has(pattern)) continue;
+    seen.add(pattern);
+    result.push(pattern);
+  }
+  return result;
+}
+
+function testsurfId(pattern) {
+  return `TESTSURF-${pattern.toUpperCase()}`;
+}
+
+// TESTSURF-<PATTERN> の id から pattern を逆算する（testsurfId の逆写像）。TESTSURF- 接頭辞が
+// 無ければ null。
+function patternFromId(id) {
+  if (typeof id !== 'string' || !id.startsWith('TESTSURF-')) return null;
+  return id.slice('TESTSURF-'.length).toLowerCase();
+}
+
+function isTestsurfSeedItem(it) {
+  return typeof it.id === 'string' && it.id.startsWith('TESTSURF-')
+    && it.source === 'seed' && it.dimension === 'test-integrity';
+}
+
+// TESTSURF seed item を test-weakening hit で reconcile する。SEC の reconcileDanger と同型だが
+// dimension は 'test-integrity'、severity は常に 'critical'（実効 blocking は source:'seed' の
+// gateLane が担保 — 軸A invariant で policy に依らず blocking）。
+//
+// risk が null または risk.ok!==true のときは ledger をそのまま返す（一切 touch しない）。同一
+// スクリプト（diff-risk-classify.sh）の SEC 側 fail-closed（reconcileDanger）が全 SEC unchecked →
+// merge tier HOLD を既に担保しているため、fail と clean を同一視しないという invariant は SEC 側の
+// safety net に委ねてよい（TESTSURF 側での二重実装を避ける）。
+//
+// risk.ok===true のとき、hit を pattern ごとに group する（pattern 欠落は 'unknown' バケット）:
+//   - hit がある pattern:
+//       item 未存在 → append（id 重複時は追加しない = append 単調性）。
+//       既存 item が checked&&floor（evaluator clearance 済み）→ そのまま維持（HOLD に巻き戻さない）。
+//       既存 item が checked&&!floor（前回 "testsurf clean" で自動解決済み）→ 今回 hit に転じたので
+//         unchecked 復活（floor=true, evidence=null）。
+//       既存 item が unchecked → 据え置き。
+//   - hit が無い pattern の既存 TESTSURF item → checked=true + evidence 付与で自動解消（floor は
+//     touch しない — reconcileDanger clean 分岐と同型）。
+// TESTSURF 以外（id が TESTSURF- で始まらない / source!=='seed' / dimension!=='test-integrity'）の
+// item は一切 touch しない。ledger は mutate しない。
+function reconcileTestsurf(ledger, risk) {
+  if (!risk || risk.ok !== true) return ledger;
+
+  const hits = testsurfHitsOf(risk);
+  const hitsByPattern = new Map();
+  for (const h of hits) {
+    const pattern = h.pattern ?? 'unknown';
+    if (!hitsByPattern.has(pattern)) hitsByPattern.set(pattern, []);
+    if (h.file != null) hitsByPattern.get(pattern).push(h.file);
+  }
+
+  const items = ledger.items.map((it) => {
+    if (!isTestsurfSeedItem(it)) return it;
+    const pattern = patternFromId(it.id);
+    const hasHit = pattern != null && hitsByPattern.has(pattern);
+    if (hasHit) {
+      // floor=true かつ checked=true → evaluator が clearance 済み。同 pattern が依然 hit でも
+      // checked を維持して HOLD に巻き戻さない。
+      if (it.checked && it.floor) return it;
+      // floor=false かつ checked=true → 前回 reconcile で "testsurf clean" 自動解決されたが
+      // 今回 hit に転じた → unchecked にして block を復活させる。
+      if (it.checked && !it.floor) {
+        return { ...it, checked: false, floor: true, evidence: null };
+      }
+      // unchecked → 据え置き。
+      return it;
+    }
+    return { ...it, checked: true, evidence: 'testsurf clean (pattern no longer detected)' };
+  });
+
+  const existingIds = new Set(items.map((it) => it.id));
+  for (const [pattern, files] of hitsByPattern) {
+    const id = testsurfId(pattern);
+    if (existingIds.has(id)) continue;
+    const fileList = [...new Set(files)].join(', ');
+    items.push({
+      id,
+      text: `test-surface 縮小検出(${pattern}): ${fileList}`,
+      dimension: 'test-integrity',
+      severity: 'critical',
+      source: 'seed',
+      floor: true,
+      checked: false,
+      check: { kind: 'deterministic' },
+      evidence: null,
+    });
+  }
+
+  return { ...ledger, items };
+}
+// ==== END inline: _lib/testsurf.mjs ====
 
 // ==== BEGIN inline: _lib/triviality.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // classifyShape: REQ オブジェクトから shape 判定を行う純粋関数。
@@ -1132,6 +1341,7 @@ function mdCell(v) {
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
+ * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
@@ -1156,6 +1366,7 @@ function buildDevflowSummaryBody({
   acResults,
   planConcerns,
   dangerHits,
+  testsurfHits,
   shape,
   testGreen,
   evalVerdict,
@@ -1201,6 +1412,17 @@ function buildDevflowSummaryBody({
     (it) => it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true
   );
 
+  // TESTSURF clearance は最終 ledger の TESTSURF seed item（source:'seed' && id が 'TESTSURF-' 始まり）
+  // から導出する（SEC seed item と同型。issue #362）。id 形式は `TESTSURF-<PATTERN>` 固定。
+  const testsurfLedgerItems = (blockingItems || []).filter(
+    (it) => it.source === 'seed' && typeof it.id === 'string' && it.id.startsWith('TESTSURF-')
+  );
+  const testsurfClearance = testsurfLedgerItems.map((it) => ({
+    pattern: it.id.slice('TESTSURF-'.length),
+    cleared: it.checked === true,
+    evidence: it.evidence,
+  }));
+
   const lines = [];
 
   const TIER_EMOJI = { 'HOLD': '🔶', 'REVIEW': '🔷', 'AUTO': '✅' };
@@ -1240,6 +1462,8 @@ function buildDevflowSummaryBody({
   }
   const dangerArr = dangerHits && dangerHits.length > 0 ? dangerHits : null;
   const dangerCell = dangerArr ? `⚠️ ${dangerArr.length} クラス` : '✅ clean';
+  const testsurfArr = testsurfHits && testsurfHits.length > 0 ? testsurfHits : null;
+  const hasTestsurf = testsurfArr != null || testsurfClearance.length > 0;
 
   lines.push('| Merge tier | shape | test | eval | Ledger | AC | danger |');
   lines.push('|---|---|---|---|---|---|---|');
@@ -1267,6 +1491,11 @@ function buildDevflowSummaryBody({
     lines.push(`検出クラス: ${dangerArr.join(', ')}`);
   }
 
+  // 4b. testsurfHits 検出パターン行（1件以上のとき。issue #362）
+  if (testsurfArr) {
+    lines.push(`検出パターン (test-weakening): ${testsurfArr.join(', ')}`);
+  }
+
   // 5. Merge tier 理由（常時可視）
   lines.push('');
   lines.push('**Merge tier 理由**:');
@@ -1292,6 +1521,27 @@ function buildDevflowSummaryBody({
       lines.push('- ✅ AC は最終 PR tree で再検証済み（Final AC reconcile — AC テーブルは final snapshot）');
     } else if (finalAcReconcile !== 'reverified' && acArr) {
       lines.push('- ⚠️ AC 判定は stale（fix 適用後の最終 tree に対する AC 再検証が未実施/判定不能 — AC テーブルは Evaluate 時点（fix 前 tree）基準であり final ではない）');
+    }
+  }
+
+  // 5d. TESTSURF セクション（committed test の skip/削除/tautology 化 疑いを検出したときのみ表示。issue #362）
+  // dangerHits/Security clearance と別系統（dimension:'test-integrity'）。hit ゼロ（testsurfHits 空 かつ
+  // ledger に TESTSURF item なし）では一切出力しない（既存サマリーとの byte 同一を保つ regression 要件）。
+  if (hasTestsurf) {
+    lines.push('');
+    lines.push('### 🧪 TESTSURF（test-weakening 検出）');
+    if (testsurfClearance.length > 0) {
+      lines.push('');
+      lines.push('| 状態 | pattern | 内容 |');
+      lines.push('|---|---|---|');
+      for (const tc of testsurfClearance) {
+        if (tc.cleared) {
+          const evidenceCell = tc.evidence ? mdCell(tc.evidence) : '—';
+          lines.push(`| ✅ cleared | ${tc.pattern} | ${evidenceCell} |`);
+        } else {
+          lines.push(`| ❌ 未解消 | ${tc.pattern} | **要人間確認**: committed test の skip/削除/tautology 化の疑い |`);
+        }
+      }
     }
   }
 
@@ -1898,6 +2148,18 @@ const EVAL = {
         },
       },
     },
+    testsurf_clearance: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['pattern', 'cleared'],
+        properties: {
+          pattern: { type: 'string' },
+          cleared: { type: 'boolean' },
+          evidence: { type: 'string' },
+        },
+      },
+    },
     critical_resolutions: {
       type: 'array',
       items: {
@@ -1974,6 +2236,7 @@ const RISK = {
           file: { type: 'string' },
           class: { type: 'string' },
           severity: { type: 'string' },
+          pattern: { type: 'string' },
         },
       },
     },
@@ -2434,7 +2697,8 @@ let state = {
   dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0,
   unsatisfiedAc: false, evalDiffHash: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
-  vdeltaVerdict: null,
+  testsurfHits: [], testsurfPatterns: [],
+  vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
 }
 
 // ============================================================
@@ -2697,10 +2961,13 @@ async function execSecurityFloorPhase(state) {
     + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --working-tree origin/${BASE}`,
     { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
   ), 'Security floor(danger-grep)')
-  const dangerHits = risk.ok === true ? [...new Set((risk.hits ?? []).map((h) => h.class))] : []
+  const dangerHits = risk.ok === true ? [...new Set(secHitsOf(risk).map((h) => h.class))] : []
   ledger = reconcileDanger(ledger, risk)
+  ledger = reconcileTestsurf(ledger, risk)
+  const testsurfPatterns = testsurfPatternsOf(risk)
   log(`danger-grep: ${risk.ok !== true ? 'UNAVAILABLE (fail-closed) ' + (risk.error ?? 'unknown') : dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
     + `SEC blocking 未 checked ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件`)
+  log(`testsurf: ${testsurfPatterns.length ? 'HIT ' + testsurfPatterns.join(',') : 'clean'}`)
   // Step F2: realized diff のファイル数を取得して re-floor を算出する
   // realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
   // ?? [] は取得失敗と空 diff（正常な 0 ファイル）を同じ 0 に潰すため使わない。
@@ -2776,9 +3043,12 @@ async function execSecurityFloorPhase(state) {
     }
   }
   const uiTouched = uiVerifyConfig != null
-  const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || state.greenFixCount > 0 || undeclared.length > 0 || uiTouched
+  const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || testsurfPatterns.length > 0 || state.greenFixCount > 0 || undeclared.length > 0 || uiTouched
   if (TRIVIAL && dangerHits.length > 0) {
     log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
+  }
+  if (TRIVIAL && testsurfPatterns.length > 0) {
+    log(`⚠️ micro だが testsurf hit(${testsurfPatterns.join(',')}) → Evaluate を実行（test-weakening 監査 強制）`)
   }
 
   if (TRIVIAL && state.greenFixCount > 0) {
@@ -2812,6 +3082,8 @@ async function execSecurityFloorPhase(state) {
   state.ledger = ledger
   state.risk = risk
   state.dangerHits = dangerHits
+  state.testsurfHits = testsurfHitsOf(risk)
+  state.testsurfPatterns = testsurfPatterns
   state.realized = realized
   state.realizedNonEphemeral = realizedNonEphemeral
   state.realizedCount = realizedCount
@@ -2933,6 +3205,8 @@ async function execEvaluatePhase(state) {
   let ledger = state.ledger
   const concerns = state.concerns
   const dangerHits = state.dangerHits
+  const testsurfPatterns = state.testsurfPatterns
+  const testsurfHits = state.testsurfHits
   const EVAL_PASSES = state.EVAL_PASSES
   let evalResult = null
   let evalIters = 0            // eval iteration カウンタ（telemetry 用）
@@ -3017,6 +3291,10 @@ async function execEvaluatePhase(state) {
           ? `security_focus（danger-grep が realized diff で検出した危険クラス）:\n${JSON.stringify(dangerHits)}\n`
             + `${EVALUATOR_OPERATIONAL_CONTRACT.security_clearance}\n`
           : '')
+      + (testsurfPatterns.length
+          ? `testsurf_focus（決定論 test-weakening 検出。test-surface 縮小の疑い — 正当な refactor なら evidence 付きで clear せよ）:\n${JSON.stringify(testsurfHits)}\n`
+            + `${EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance}\n`
+          : '')
       + (priorFeedback.length
           ? `既出 feedback（前 iteration までに指摘済み。implementer/planner は対応済みのはず）:\n${JSON.stringify(priorFeedback)}\n`
             + `**新規の critical/major のみ報告**せよ。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。\n`
@@ -3097,14 +3375,21 @@ async function execEvaluatePhase(state) {
           + `bash ~/.claude/skills/_shared/scripts/redgreen-verify.sh ${WT} `
           + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
           { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
-        if (rg && rg.verdict != null) state.vdeltaVerdict = rg.verdict
-        if (rg && rg.red === true && rg.green === true) {
+        if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, verdict: rg.verdict })
+        const denyRes = vdeltaDenies(rg ? rg.verdict : null)
+        if (rg && denyRes.status === 'fail_open') state.vdeltaFailOpen += 1
+        if (rg && rg.red === true && rg.green === true && !denyRes.deny) {
           ledger = setCheck(ledger, acId, { kind: 'deterministic' })
           ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
           log(`AC-${r.ac_index + 1}: red→green 実証 → deterministic 昇格 + checked`)
         } else {
           if (r.satisfied) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
-          log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
+          if (rg && rg.red === true && rg.green === true && denyRes.deny) {
+            state.redgreenDenies.push({ ac: acId, reasons: denyRes.reasons })
+            log(`AC-${r.ac_index + 1}: red→green 実証だが vdelta deny(${denyRes.reasons.join(', ')})→ deterministic 昇格せず inspection 据え置き`)
+          } else {
+            log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
+          }
         }
       } else if (r.satisfied) {
         ledger = checkItem(ledger, acId, r.evidence ?? 'inspection')
@@ -3119,6 +3404,17 @@ async function execEvaluatePhase(state) {
       if (sc.cleared === true && typeof sc.evidence === 'string' && sc.evidence.length > 0) {
         ledger = checkItem(ledger, secId, `security cleared: ${sc.evidence}`)
         log(`${secId}: evaluator が安全確認 → checked`)
+      }
+    }
+    // issue #362: TESTSURF hit（test-weakening 決定論検出）を evaluator が evidence 付きで
+    // 正当な変更と確認したら checkItem(resolve-with-evidence)。確認できなければ block 据え置き。
+    for (const tc of (ev.testsurf_clearance ?? [])) {
+      if (!tc || typeof tc.pattern !== 'string') continue
+      const tsId = `TESTSURF-${tc.pattern.toUpperCase()}`
+      if (!ledger.items.some((it) => it.id === tsId && it.source === 'seed' && it.dimension === 'test-integrity')) continue
+      if (tc.cleared === true && typeof tc.evidence === 'string' && tc.evidence.length > 0) {
+        ledger = checkItem(ledger, tsId, `testsurf cleared: ${tc.evidence}`)
+        log(`${tsId}: evaluator が testsurf 正当性確認 → checked`)
       }
     }
     ledger = nextRound(ledger)
@@ -3383,7 +3679,8 @@ const riskFinal = need(await agent(
   + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
   { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
 ), 'Merge tier(danger-grep-final)')
-const dangerHitsFinal = riskFinal.ok === true ? [...new Set((riskFinal.hits ?? []).map((h) => h.class))] : []
+const dangerHitsFinal = riskFinal.ok === true ? [...new Set(secHitsOf(riskFinal).map((h) => h.class))] : []
+const testsurfPatternsFinal = testsurfPatternsOf(riskFinal)
 const dangerFailClosedFinal = riskFinal.ok !== true
 if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${riskFinal.error ?? 'unknown'}) — merge tier を HOLD 強制`)
 const changed = need(await agent(
@@ -3395,6 +3692,7 @@ const changed = need(await agent(
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
 const ledgerBeforeFinalReconcile = state.ledger
 state.ledger = reconcileDanger(state.ledger, riskFinal)
+state.ledger = reconcileTestsurf(state.ledger, riskFinal)
 // one-shot security clearance (issue #299): Evaluate 時点 clean → 最終 danger-grep で新規 hit に
 // 転じた SEC class のみを対象に、evaluator へ 1 回だけ clearance を求める。cleared:true + 非空
 // evidence のみ checkItem。null / cleared:false / evidence 空は据え置き = HOLD（security floor は
@@ -3443,6 +3741,7 @@ const mergeTier = classifyMergeTier({
   iterateStatus: iterate?.status ?? null,
   evalStaleness,
   finalAcReconcile,
+  testsurfUncleared: state.ledger.items.filter((it) => it.source === 'seed' && it.dimension === 'test-integrity' && !it.checked).map((it) => it.id),
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
@@ -3494,6 +3793,7 @@ const summaryBody = buildDevflowSummaryBody({
   acResults: finalAcReconcile === 'reverified' ? state.finalAcResults : (state.evalResult?.ac_results ?? null),
   planConcerns: state.planConcerns ?? [],
   dangerHits: dangerHitsFinal,
+  testsurfHits: testsurfPatternsFinal,
   shape: state.EFFECTIVE_SHAPE,
   testGreen: state.val?.green ?? null,
   evalVerdict: state.evalResult?.verdict ?? null,
@@ -3555,7 +3855,10 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(finalTestGreen != null ? { final_test_green: finalTestGreen } : {}),
     ...(finalUiVerifyStatus ? { final_ui_verify: finalUiVerifyStatus } : {}),
     final_ac_reconcile: finalAcReconcile,
-    ...(state.vdeltaVerdict != null ? { vdelta_verdict: state.vdeltaVerdict } : {}),
+    testsurf_hits: testsurfPatternsFinal,
+    ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
+    ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
+    ...(state.vdeltaVerdicts.length ? { vdelta_verdicts: state.vdeltaVerdicts } : {}),
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
@@ -3602,6 +3905,7 @@ return {
   merge_tier_reasons: mergeTier.reasons,
   danger_hits: dangerHitsFinal,
   danger_fail_closed: dangerFailClosedFinal,
+  testsurf_hits: testsurfPatternsFinal,
   ui_verify: state.uiVerifyStatus,
   ui_verify_mode: state.uiVerifyMode,
   final_reconcile: finalReconcile,
