@@ -245,8 +245,8 @@ test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+ev
     `post-summary body に未確認 clearance テーブル行 '❌ 未確認 | config' が含まれてはならない。body:\n${summaryPrompts[0]}`,
   );
   assert.ok(
-    summaryPrompts[0].includes('Security clearance 1/1 cleared'),
-    `post-summary body に 'Security clearance 1/1 cleared' が含まれるべき。body:\n${summaryPrompts[0]}`,
+    summaryPrompts[0].includes('セキュリティ確認 (Security clearance) 1/1 済'),
+    `post-summary body に 'セキュリティ確認 (Security clearance) 1/1 済' が含まれるべき。body:\n${summaryPrompts[0]}`,
   );
 });
 

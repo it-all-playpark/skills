@@ -246,6 +246,35 @@ const DECISION_LABEL = {
   'comment': 'コメント',
 };
 
+const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
+
+/**
+ * finding 配列を番号付き箇条書き markdown 行配列へ変換する。
+ * 1 finding = 見出し行（severity + 場所）+ `指摘` 行 + （suggestion があれば）`提案` 行。
+ * @param {Array} list - finding 配列（severity, file, line, description, suggestion, 任意で iter）
+ * @param {object} [opts]
+ * @param {boolean} [opts.withIter] - true の場合、見出し行末尾に `（反復 N 回目）` を付与する
+ * @returns {string[]}
+ */
+function formatFindingsList(list, { withIter = false } = {}) {
+  const out = [];
+  let idx = 1;
+  for (const f of list) {
+    const sev = SEV_LABEL[f.severity] ?? f.severity;
+    const loc = f.file != null
+      ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+      : '場所指定なし';
+    const iterSuffix = withIter ? `（反復 ${f.iter} 回目）` : '';
+    out.push(`${idx}. ${sev} — ${loc}${iterSuffix}`);
+    out.push(`   - 指摘: ${mdCell(f.description)}`);
+    if (f.suggestion != null) {
+      out.push(`   - 提案: ${mdCell(f.suggestion)}`);
+    }
+    idx++;
+  }
+  return out;
+}
+
 /**
  * per-round レビューコメント markdown を生成する。
  * @param {object} opts
@@ -260,7 +289,6 @@ const DECISION_LABEL = {
  */
 function buildReviewCommentBody({ pr, iteration, decision, blocking, minor, summary, verificationEvidence }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
-  const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const label = DECISION_LABEL[decision] ?? decision;
   const emoji = DECISION_EMOJI[decision] ?? '';
   const lines = [];
@@ -270,50 +298,30 @@ function buildReviewCommentBody({ pr, iteration, decision, blocking, minor, summ
 
   const blockingList = blocking || [];
   if (blockingList.length === 0) {
-    lines.push(`**判定**: ${emoji} ${label} — ✅ blocking 指摘なし`);
+    lines.push(`**判定**: ${emoji} ${label} — ✅ 要修正（blocking）の指摘なし`);
   } else {
     const c = blockingList.filter((f) => f.severity === 'critical').length;
     const m = blockingList.filter((f) => f.severity === 'major').length;
-    lines.push(`**判定**: ${emoji} ${label} — blocking ${blockingList.length} 件（critical ${c} / major ${m}）`);
+    lines.push(`**判定**: ${emoji} ${label} — 要修正（blocking）${blockingList.length} 件（critical ${c} / major ${m}）`);
     lines.push('');
-    lines.push('| # | 重大度 | 場所 | 指摘 | 提案 |');
-    lines.push('|---|---|---|---|---|');
-    let idx = 1;
-    for (const f of blockingList) {
-      const sev = SEV_LABEL[f.severity] ?? f.severity;
-      const loc = f.file != null
-        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
-        : '—';
-      const desc = mdCell(f.description);
-      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
-      lines.push(`| ${idx} | ${sev} | ${loc} | ${desc} | ${sug} |`);
-      idx++;
-    }
+    lines.push(...formatFindingsList(blockingList));
   }
 
   const minorList = minor || [];
   if (minorList.length > 0) {
     lines.push('');
-    lines.push(`**minor 指摘（fix loop 対象外・参考）**: ${minorList.length} 件`);
+    lines.push(`**軽微な指摘（minor、自動修正対象外・参考）**: ${minorList.length} 件`);
     lines.push('');
-    lines.push('| # | 重大度 | 場所 | 指摘 | 提案 |');
-    lines.push('|---|---|---|---|---|');
-    let midx = 1;
-    for (const f of minorList) {
-      const sev = SEV_LABEL[f.severity] ?? f.severity;
-      const loc = f.file != null
-        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
-        : '—';
-      const desc = mdCell(f.description);
-      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
-      lines.push(`| ${midx} | ${sev} | ${loc} | ${desc} | ${sug} |`);
-      midx++;
-    }
+    lines.push('<details><summary>詳細を表示</summary>');
+    lines.push('');
+    lines.push(...formatFindingsList(minorList));
+    lines.push('');
+    lines.push('</details>');
   }
 
   if (summary != null && summary !== '') {
     lines.push('');
-    lines.push(`**summary**: ${summary}`);
+    lines.push(`**総評**: ${summary}`);
   }
   const evList = verificationEvidence || [];
   if (evList.length > 0) {
@@ -351,7 +359,6 @@ const STATUS_HEADLINE = {
  */
 function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
-  const SEV_LABEL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
   const lines = [];
 
   lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
@@ -359,7 +366,7 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   lines.push(`### ${STATUS_HEADLINE[status] ?? status}`);
   lines.push('');
 
-  lines.push('| 終了状態 | 総反復 | 最終判定 |');
+  lines.push('| 終了状態 | 反復回数 | 最終判定 |');
   lines.push('|---|---|---|');
   const decEmoji = DECISION_EMOJI[lastDecision] ?? '';
   const decLabel = DECISION_LABEL[lastDecision] ?? lastDecision;
@@ -385,7 +392,7 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
     lines.push('');
     lines.push('### 反復履歴');
     lines.push('');
-    lines.push('| iter | 判定 | blocking | minor | summary |');
+    lines.push('| 反復 | 判定 | 要修正 (blocking) | 軽微 (minor) | 総評 |');
     lines.push('|---|---|---|---|---|');
     for (const round of histList) {
       const rEmoji = DECISION_EMOJI[round.decision] ?? '';
@@ -402,19 +409,9 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   const totalBlocking = allBlocking.length;
   if (totalBlocking > 0) {
     lines.push('');
-    lines.push(`<details><summary>全 blocking 指摘の詳細（${totalBlocking} 件）</summary>`);
+    lines.push(`<details><summary>要修正（blocking）指摘の全詳細（${totalBlocking} 件）</summary>`);
     lines.push('');
-    lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
-    lines.push('|---|---|---|---|---|');
-    for (const f of allBlocking) {
-      const sev = SEV_LABEL[f.severity] ?? f.severity;
-      const loc = f.file != null
-        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
-        : '—';
-      const desc = mdCell(f.description);
-      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
-      lines.push(`| ${f.iter} | ${sev} | ${loc} | ${desc} | ${sug} |`);
-    }
+    lines.push(...formatFindingsList(allBlocking, { withIter: true }));
     lines.push('');
     lines.push('</details>');
   }
@@ -423,19 +420,9 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   const totalMinor = allMinor.length;
   if (totalMinor > 0) {
     lines.push('');
-    lines.push(`<details><summary>全 minor 指摘の詳細（fix loop 対象外・${totalMinor} 件）</summary>`);
+    lines.push(`<details><summary>軽微な指摘（minor）の全詳細（自動修正対象外・${totalMinor} 件）</summary>`);
     lines.push('');
-    lines.push('| iter | 重大度 | 場所 | 指摘 | 提案 |');
-    lines.push('|---|---|---|---|---|');
-    for (const f of allMinor) {
-      const sev = SEV_LABEL[f.severity] ?? f.severity;
-      const loc = f.file != null
-        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
-        : '—';
-      const desc = mdCell(f.description);
-      const sug = f.suggestion != null ? mdCell(f.suggestion) : '—';
-      lines.push(`| ${f.iter} | ${sev} | ${loc} | ${desc} | ${sug} |`);
-    }
+    lines.push(...formatFindingsList(allMinor, { withIter: true }));
     lines.push('');
     lines.push('</details>');
   }
@@ -510,14 +497,14 @@ const REVIEW = {
           topic: { type: 'string' },
           file: { type: 'string' },
           line: { type: 'number' },
-          description: { type: 'string' },
-          suggestion: { type: 'string' },
+          description: { type: 'string', maxLength: 300 },
+          suggestion: { type: 'string', maxLength: 200 },
         },
       },
     },
-    summary: { type: 'string' },
+    summary: { type: 'string', maxLength: 200 },
     // 検証根拠の箇条書き（1 項目 1 文）。summary は結論 1-2 文に留める（issue #242）
-    verification_evidence: { type: 'array', items: { type: 'string' } },
+    verification_evidence: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 120 } },
   },
 }
 
