@@ -2632,7 +2632,14 @@ async function runImplement(req, plan, fixFeedback, tag, extraContext) {
 // ============================================================
 const clockMarks = {}
 async function clockProbe(name, phaseName) {
-  const res = await agent(clockProbePrompt(), { agentType: 'dev-runner-haiku-ro', schema: CLOCK, label: `clock#${name}`, phase: phaseName })
+  // clock probe は advisory telemetry（duration 集計のみ）のため fail-open で扱う --
+  // agent() throw（issue #359 で実在確認済みの EPERM 等の proxy 実行失敗・StructuredOutput 未返却）
+  // を run 即死にせず recordClockMark(marks, name, null) 相当の欠落記録に落とす
+  // （structural-classify の try 包み precedent と同型）。
+  let res = null
+  try {
+    res = await agent(clockProbePrompt(), { agentType: 'dev-runner-haiku-ro', schema: CLOCK, label: `clock#${name}`, phase: phaseName })
+  } catch (e) { log(`⚠️ clock#${name} 呼び出しが例外 — duration telemetry は当該区間を欠落させる（fail-open）`) }
   const warn = recordClockMark(clockMarks, name, res)
   if (warn) log(warn)
 }
