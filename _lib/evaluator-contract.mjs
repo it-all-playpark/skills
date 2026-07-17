@@ -28,6 +28,18 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。',
     '- concern は advisory であり収束を block しない。解消済み concern を resolved:true にすると終端サマリーの要対応から除外される。',
   ].join('\n'),
+  // testsurf_clearance は final_ac_reconcile と同様 prompt 注入のみで配送する（evaluator.md へ
+  // mirror しない）。.claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification
+  // 防止）であり、dev-flow の testsurf_focus 注入が本契約全文を毎回 prompt へ verbatim 注入するため
+  // 機能上も mirror は不要。既存 3 キーの evaluator.md verbatim mirror 規約の対象外（issue #362）。
+  testsurf_clearance: [
+    'testsurf_clearance 契約:',
+    '- testsurf_focus が渡された場合、各 pattern の test 変更が正当（refactor で網羅性維持 / 一時 skip でない 等）かを判定し、testsurf_clearance:[{pattern, cleared, evidence}] で返す。',
+    '- pattern は渡された検出パターン名をそのまま返す。',
+    '- 正当と確認できないものは cleared:false。',
+    '- cleared:true は具体的 evidence 必須（どのテストがどこで同等以上に担保されるか）。evidence のない cleared:true は無視され、TESTSURF item は blocking のまま残る。',
+    '- cleared:false の TESTSURF item は blocking のまま merge tier HOLD に反映される。',
+  ].join('\n'),
   // final_ac_reconcile は prompt 注入のみで配送する（evaluator.md へ mirror しない）。
   // .claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification 防止）であり、
   // dev-flow の final-ac-reconcile 呼び出しが本契約全文を毎回 prompt へ verbatim 注入するため

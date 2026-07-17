@@ -3,9 +3,10 @@
 #
 # Strategy: mktemp -d で隔離 git repo を作成し、各 danger class の陽性/陰性 diff を
 # commit してスクリプトの出力を検証する。
-# NOTE: F2 でスクリプトが実装されるまでこれらのテストは fail (red) になる。
 #
-# Class 文字列: auth / crypto / config / data-migration / public-api / exec-sink / dependency
+# Class 文字列: auth / crypto / config / data-migration / public-api / exec-sink /
+# dependency / test-weakening (issue #361/#362 spike -- 8th class, has an optional
+# "pattern" sub-field: skip / only / todo / xfail / tautology / exclude-cfg)
 
 setup() {
     SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)/_shared/scripts/diff-risk-classify.sh"
@@ -15,10 +16,21 @@ setup() {
     git -C "$REPO" config user.name t
     git -C "$REPO" commit -q --allow-empty -m base
     BASE="$(git -C "$REPO" rev-parse HEAD)"
+
+    # FAKE_BIN: minimal PATH containing exactly the external commands the script
+    # needs (bash/git/grep/sed/cut/sort/cat/dirname/pwd), symlinked from wherever
+    # they really live, but deliberately WITHOUT jq -- used by the fallback-path
+    # tests to deterministically exercise the has_jq==false branch regardless of
+    # whether the host machine happens to have jq installed.
+    FAKE_BIN="$(mktemp -d)"
+    for c in bash git grep sed cut sort cat dirname pwd mkdir; do
+        real="$(/usr/bin/which -a "$c" 2>/dev/null | head -1)"
+        [[ -n "$real" ]] && ln -s "$real" "$FAKE_BIN/$c"
+    done
 }
 
 teardown() {
-    rm -rf "$REPO"
+    rm -rf "$REPO" "$FAKE_BIN"
 }
 
 # ---------------------------------------------------------------------------
@@ -642,4 +654,224 @@ teardown() {
     run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
     [ "$status" -eq 0 ]
     printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-a] test-weakening POSITIVE: test.skip( on a *.test.* file -> class
+# test-weakening / pattern skip / severity critical
+# ---------------------------------------------------------------------------
+@test "TW-a test-weakening POSITIVE: test.skip( in *.test.ts -> class test-weakening / pattern skip" {
+    mkdir -p "$REPO/src"
+    printf "test.skip('checks value', () => {\n  expect(1).toBe(1);\n});\n" \
+        > "$REPO/src/sample.test.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"test-weakening"'* ]]
+    [[ "$output" == *'"pattern":"skip"'* ]]
+    [[ "$output" == *'"severity":"critical"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "skip")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-b] test-weakening POSITIVE: x-prefix skip aliases (xit/xtest/xdescribe)
+# each map to pattern "skip" too
+# ---------------------------------------------------------------------------
+@test "TW-b1 test-weakening POSITIVE: xit( in *.spec.ts -> pattern skip" {
+    mkdir -p "$REPO/src"
+    printf "xit('checks value', () => {\n  expect(1).toBe(1);\n});\n" \
+        > "$REPO/src/sample.spec.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "skip")] | length > 0'
+}
+
+@test "TW-b2 test-weakening POSITIVE: xtest( in *.spec.ts -> pattern skip" {
+    mkdir -p "$REPO/src"
+    printf "xtest('checks value', () => {\n  expect(1).toBe(1);\n});\n" \
+        > "$REPO/src/sample.spec.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "skip")] | length > 0'
+}
+
+@test "TW-b3 test-weakening POSITIVE: xdescribe( in *.spec.ts -> pattern skip" {
+    mkdir -p "$REPO/src"
+    printf "xdescribe('group', () => {\n  it('x', () => { expect(1).toBe(1); });\n});\n" \
+        > "$REPO/src/sample.spec.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "skip")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-c] test-weakening POSITIVE: only / todo / xfail / tautology (1 each)
+# ---------------------------------------------------------------------------
+@test "TW-c1 test-weakening POSITIVE: test.only( in *.test.js -> pattern only" {
+    mkdir -p "$REPO/src"
+    printf "test.only('x', () => {\n  expect(1).toBe(1);\n});\n" \
+        > "$REPO/src/sample.test.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "only")] | length > 0'
+}
+
+@test "TW-c2 test-weakening POSITIVE: test.todo( in *.test.js -> pattern todo" {
+    mkdir -p "$REPO/src"
+    printf "test.todo('x')\n" \
+        > "$REPO/src/sample.test.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "todo")] | length > 0'
+}
+
+@test "TW-c3 test-weakening POSITIVE: test.fails( in *.test.js -> pattern xfail" {
+    mkdir -p "$REPO/src"
+    printf "test.fails('x', () => {\n  expect(1).toBe(2);\n});\n" \
+        > "$REPO/src/sample.test.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "xfail")] | length > 0'
+}
+
+@test "TW-c4 test-weakening POSITIVE: expect(true).toBe(true) in *.test.js -> pattern tautology" {
+    mkdir -p "$REPO/src"
+    printf "test('x', () => {\n  expect(true).toBe(true);\n});\n" \
+        > "$REPO/src/sample.test.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "tautology")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-d] test-weakening POSITIVE: exclude: [...] added to vitest.config.mjs
+# (config file, NOT a *.test.*/*.spec.*/*.bats file) -> pattern exclude-cfg
+# ---------------------------------------------------------------------------
+@test "TW-d test-weakening POSITIVE: exclude: [ added to vitest.config.mjs -> pattern exclude-cfg" {
+    printf "export default {\n  test: {\n    exclude: ['tests/flaky.test.ts'],\n  },\n};\n" \
+        > "$REPO/vitest.config.mjs"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"test-weakening"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening" and .pattern == "exclude-cfg")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-e] test-weakening NEGATIVE: same skip marker in a non-test file -> no hit
+# (content patterns 1-5 are restricted to test files)
+# ---------------------------------------------------------------------------
+@test "TW-e test-weakening NEGATIVE: test.skip( string in non-test file src/foo.mjs -> no test-weakening hit" {
+    mkdir -p "$REPO/src"
+    printf "// helper referencing test.skip( as a string, not an actual test file\nconst marker = 'test.skip(';\n" \
+        > "$REPO/src/foo.mjs"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening")] | length == 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-f] test-weakening NEGATIVE: docs file exclusion wins over test-file-name
+# lookalike (docs continue happens before class checks run at all)
+# ---------------------------------------------------------------------------
+@test "TW-f test-weakening NEGATIVE: docs file notes.test.md with skip marker -> excluded, no hit" {
+    printf "This doc mentions test.skip( as prose, not code.\n" \
+        > "$REPO/notes.test.md"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-g] test-weakening NEGATIVE: deleting a test file (no content addition)
+# does NOT produce a test-weakening hit (file-deletion detection intentionally
+# not implemented -- spike FP 3-4/25, follow-up only)
+# ---------------------------------------------------------------------------
+@test "TW-g test-weakening NEGATIVE: deleting a *.test.ts file -> no test-weakening hit" {
+    mkdir -p "$REPO/src"
+    printf "test('x', () => {\n  expect(1).toBe(1);\n});\n" \
+        > "$REPO/src/sample.test.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m "add test file"
+    DEL_BASE="$(git -C "$REPO" rev-parse HEAD)"
+
+    rm "$REPO/src/sample.test.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m "delete test file"
+
+    run bash -c "cd '$REPO' && '$SCRIPT' '$DEL_BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "test-weakening")] | length == 0'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-h] REGRESSION: existing 7 classes emit no "pattern" key (only
+# test-weakening hits carry the optional sub-field)
+# ---------------------------------------------------------------------------
+@test "TW-h REGRESSION: auth hit has no pattern key (pattern is test-weakening-only)" {
+    mkdir -p "$REPO/src"
+    printf 'function requireAuth(user) {\n  return user.isAuthenticated;\n}\n' \
+        > "$REPO/src/auth.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "auth")][0] | has("pattern") | not'
+}
+
+# ---------------------------------------------------------------------------
+# [TW-i] jq-absent fallback path: pattern key still appears for test-weakening
+# hits, and is still absent for the 7 legacy classes, when jq is unavailable
+# on PATH (FAKE_BIN excludes jq -- see setup()).
+# ---------------------------------------------------------------------------
+@test "TW-i jq-absent fallback: test-weakening hit still carries pattern key" {
+    mkdir -p "$REPO/src"
+    printf "test.skip('checks value', () => {\n  expect(1).toBe(1);\n});\n" \
+        > "$REPO/src/sample.test.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+
+    # Sanity: confirm jq is truly unreachable under FAKE_BIN before trusting the
+    # fallback-path assertions below.
+    run bash -c "PATH='$FAKE_BIN' command -v jq"
+    [ "$status" -ne 0 ]
+
+    run bash -c "cd '$REPO' && PATH='$FAKE_BIN' '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"test-weakening"'* ]]
+    [[ "$output" == *'"pattern":"skip"'* ]]
+    [[ "$output" == *'"severity":"critical"'* ]]
+}
+
+@test "TW-i2 jq-absent fallback: legacy 7-class hit carries no pattern key" {
+    mkdir -p "$REPO/src"
+    printf 'function requireAuth(user) {\n  return user.isAuthenticated;\n}\n' \
+        > "$REPO/src/auth.ts"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+
+    run bash -c "cd '$REPO' && PATH='$FAKE_BIN' '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"auth"'* ]]
+    [[ "$output" != *'"pattern"'* ]]
 }

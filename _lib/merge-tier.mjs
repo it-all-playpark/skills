@@ -165,6 +165,11 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 //   'skipped'/'reverified'/未指定は tier 判定不変（fail/pass の gating は unsatisfiedAc と
 //   ledger 未収束が担う）。未指定 = 従来と完全同一挙動（regression なし）。out-of-enum は明示 error
 //   （後方互換 scaffolding 禁止規約）。
+// s.testsurfUncleared (optional string[]): 未 checked の TESTSURF-* seed item id 一覧（issue #362）。
+//   非空時に専用 HOLD reason を defense-in-depth として追記する（dangerFailClosed reason と同型の
+//   可視化）。TESTSURF item は source:'seed' の unchecked のまま converged=false → HOLD は既に成立
+//   しているため、この reason は tier 判定値そのものは変えない。未指定/空 = reason 追加なし
+//   （regression なし）。
 export function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -190,6 +195,9 @@ export function classifyMergeTier(s) {
   if (s.finalAcReconcile === 'unavailable') reasons.push('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）');
   if (s.iterateStatus !== 'lgtm') reasons.push(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`);
   if (s.evalStaleness === 'hash_mismatch') reasons.push('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）');
+  if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
+    reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
+  }
   if (reasons.length) {
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     return { tier: 'HOLD', reasons };
