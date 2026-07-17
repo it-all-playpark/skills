@@ -774,3 +774,101 @@ EOF
     [ "$detail_total" -eq 5 ]
     [ "$detail_raw" -eq 8 ]
 }
+
+# ---------------------------------------------------------------------------
+# Test 27: distributions.duration_seconds_by_shape -- per-shape count/min/
+#          p50/mean/max, computed only over entries with a numeric
+#          telemetry.duration_seconds. micro: 100,200 -> count 2 / min 100 /
+#          p50 150 / mean 150 / max 200. standard: 300 -> count 1, all
+#          stats == 300. complex: no entries -> all-null zero record.
+# ---------------------------------------------------------------------------
+@test "duration_seconds_by_shape: computes count/min/p50/mean/max per shape" {
+    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":100}' 1
+    write_devflow_entry "e2.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":200}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"duration_seconds":300}' 3
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    micro_count=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.count')
+    micro_min=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.min')
+    micro_p50=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.p50')
+    micro_mean=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.mean')
+    micro_max=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.max')
+    [ "$micro_count" -eq 2 ]
+    [ "$micro_min" -eq 100 ]
+    [ "$micro_p50" -eq 150 ]
+    [ "$micro_mean" -eq 150 ]
+    [ "$micro_max" -eq 200 ]
+
+    standard_count=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.standard.count')
+    standard_min=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.standard.min')
+    standard_p50=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.standard.p50')
+    standard_mean=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.standard.mean')
+    standard_max=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.standard.max')
+    [ "$standard_count" -eq 1 ]
+    [ "$standard_min" -eq 300 ]
+    [ "$standard_p50" -eq 300 ]
+    [ "$standard_mean" -eq 300 ]
+    [ "$standard_max" -eq 300 ]
+
+    complex_count=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.complex.count')
+    complex_min=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.complex.min')
+    complex_p50=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.complex.p50')
+    complex_mean=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.complex.mean')
+    complex_max=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.complex.max')
+    [ "$complex_count" -eq 0 ]
+    [ "$complex_min" = "null" ]
+    [ "$complex_p50" = "null" ]
+    [ "$complex_mean" = "null" ]
+    [ "$complex_max" = "null" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 28: duration_seconds_by_shape -- entries without duration_seconds
+#          (legacy entries) yield all-zero/null records for every shape,
+#          exit 0, and do not disturb the pre-existing shape/merge_tier
+#          distributions.
+# ---------------------------------------------------------------------------
+@test "duration_seconds_by_shape: legacy entries without duration_seconds -> all shapes count 0" {
+    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 2
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    micro_count=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.count')
+    standard_count=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.standard.count')
+    complex_count=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.complex.count')
+    [ "$micro_count" -eq 0 ]
+    [ "$standard_count" -eq 0 ]
+    [ "$complex_count" -eq 0 ]
+
+    shape_micro=$(printf '%s\n' "$output" | jq '.distributions.shape.micro')
+    shape_standard=$(printf '%s\n' "$output" | jq '.distributions.shape.standard')
+    [ "$shape_micro" -eq 1 ]
+    [ "$shape_standard" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 29: duration_seconds_by_shape -- a string-typed duration_seconds is
+#          ignored (treated as if absent), while a sibling numeric entry in
+#          the same shape is still counted correctly.
+# ---------------------------------------------------------------------------
+@test "duration_seconds_by_shape: string-typed duration_seconds is ignored" {
+    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":"120"}' 1
+    write_devflow_entry "e2.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":180}' 2
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    micro_count=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.count')
+    micro_min=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.min')
+    micro_max=$(printf '%s\n' "$output" | jq '.distributions.duration_seconds_by_shape.micro.max')
+    [ "$micro_count" -eq 1 ]
+    [ "$micro_min" -eq 180 ]
+    [ "$micro_max" -eq 180 ]
+}

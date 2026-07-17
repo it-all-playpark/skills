@@ -264,6 +264,134 @@ function repoFromGithubUrl(url) {
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
 
+// ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
+// I/O なし・Date.now/Math.random 不使用。時刻取得は dev-runner-haiku-ro exec-proxy（clockProbePrompt）
+// に委譲し、recordClockMark/computeDurations が結果を集計する（fail-open — probe 失敗は当該区間欠落）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+// dev-flow.js の probe 発火順と一致する序列。
+const CLOCK_MARK_ORDER = [
+  'start',
+  'analyze_start',
+  'analyze_end',
+  'plan_end',
+  'implement_end',
+  'validate_end',
+  'evaluate_end',
+  'pr_end',
+  'iterate_end',
+  'final_end',
+  'end',
+];
+
+// phase キー → 終端 mark 名。
+const CLOCK_PHASE_ENDS = [
+  ['analyze', 'analyze_end'],
+  ['plan', 'plan_end'],
+  ['implement', 'implement_end'],
+  ['validate', 'validate_end'],
+  ['evaluate', 'evaluate_end'],
+  ['pr', 'pr_end'],
+  ['iterate', 'iterate_end'],
+  ['final', 'final_end'],
+];
+
+/**
+ * exec-proxy（dev-runner-haiku-ro）向けの現在時刻取得 prompt を返す。
+ */
+function clockProbePrompt() {
+  return '## Objective\n'
+    + '現在時刻の epoch 秒を取得する。\n'
+    + '\n'
+    + '## Instructions\n'
+    + '`date +%s` を実行し、出力の整数を epoch として返せ。成功なら ok:true。失敗しても throw せず ok:false を返すこと。\n'
+    + '\n'
+    + '## Output format\n'
+    + '{ "ok": boolean, "epoch": number }\n'
+    + '\n'
+    + '## Tools\n'
+    + '使用可: Bash のみ\n'
+    + '\n'
+    + '## Boundary\n'
+    + 'ファイル変更禁止。git 操作禁止。\n'
+    + '\n'
+    + '## Token cap\n'
+    + '30 語以内で完結すること。';
+}
+
+// marks から number 値のみを取り出す内部ヘルパー（null/undefined/非数値/NaN は null 扱い）。
+function readMark(marks, name) {
+  const v = marks ? marks[name] : undefined;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * exec-proxy の応答 res を marks[name] へ記録する。
+ * 成功（ok:true かつ epoch が有限数値）なら marks[name]=epoch を設定し null を返す。
+ * 失敗（null / ok:false / schema 不一致）は marks[name]=null を設定し警告文字列を返す（fail-open）。
+ * @param {object} marks - mutate 対象の mark 集計 object
+ * @param {string} name - CLOCK_MARK_ORDER 上の mark 名
+ * @param {{ok?: boolean, epoch?: number}|null} res - exec-proxy 応答
+ * @returns {string|null} 警告文字列、または成功時 null
+ */
+function recordClockMark(marks, name, res) {
+  const ok = res && res.ok === true && typeof res.epoch === 'number' && Number.isFinite(res.epoch);
+  if (ok) {
+    marks[name] = res.epoch;
+    return null;
+  }
+  marks[name] = null;
+  return `⚠️ clock#${name} の取得に失敗 — duration telemetry は当該区間を欠落させる（fail-open）`;
+}
+
+/**
+ * marks から duration_seconds（run 全体）と phase_durations（8 phase）を算出する。
+ * @param {object} marks - CLOCK_MARK_ORDER の各 mark 名をキーに持つ object（値は epoch 秒 or null）
+ * @returns {{duration_seconds: number|null, phase_durations: object}}
+ */
+function computeDurations(marks) {
+  const start = readMark(marks, 'start');
+  const end = readMark(marks, 'end');
+  let duration_seconds = null;
+  if (start !== null && end !== null) {
+    const diff = end - start;
+    if (diff >= 0) {
+      duration_seconds = diff;
+    }
+  }
+
+  const phase_durations = {};
+  for (const [key, endMarkName] of CLOCK_PHASE_ENDS) {
+    const endVal = readMark(marks, endMarkName);
+    if (endVal === null) {
+      continue;
+    }
+    const endIdx = CLOCK_MARK_ORDER.indexOf(endMarkName);
+    let startVal = null;
+    for (let i = endIdx - 1; i >= 0; i--) {
+      const v = readMark(marks, CLOCK_MARK_ORDER[i]);
+      if (v !== null) {
+        startVal = v;
+        break;
+      }
+    }
+    if (startVal === null) {
+      continue;
+    }
+    const diff = endVal - startVal;
+    if (diff < 0) {
+      continue;
+    }
+    phase_durations[key] = diff;
+  }
+
+  return { duration_seconds, phase_durations };
+}
+// ==== END inline: _lib/devflow-durations.mjs ====
+
 // ==== BEGIN inline: _lib/goal-ledger.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
 // item = { id, text, dimension, severity, source, checked, evidence, check, floor }
@@ -2263,6 +2391,7 @@ const DIFFHASH = {
   type: 'object', required: ['hash', 'empty'],
   properties: { hash: { type: 'string' }, empty: { type: 'boolean' } },
 }
+const CLOCK = { type: 'object', required: ['ok', 'epoch'], properties: { ok: { type: 'boolean' }, epoch: { type: 'number' } } }
 const UICFG = { type: 'object', required: ['found'], properties: { found: { type: 'boolean' }, config: { type: ['object', 'null'] } } }
 const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { type: 'boolean' }, phase: { type: 'string', enum: ['install', 'start', 'ready'] }, port: { type: ['number', 'string'] }, pid: { type: ['number', 'string'] }, error: { type: 'string' }, log: { type: 'string' } } }
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
@@ -2501,7 +2630,22 @@ async function runImplement(req, plan, fixFeedback, tag, extraContext) {
 // （isolation:'worktree' は使わない — 各 agent が別 worktree になり並列実装の成果が分散するため。
 //  並列は同一 worktree 内で「file_changes が disjoint な」task のみ。plan-reviewer が検証する。）
 // ============================================================
+const clockMarks = {}
+async function clockProbe(name, phaseName) {
+  // clock probe は advisory telemetry（duration 集計のみ）のため fail-open で扱う --
+  // agent() throw（issue #359 で実在確認済みの EPERM 等の proxy 実行失敗・StructuredOutput 未返却）
+  // を run 即死にせず recordClockMark(marks, name, null) 相当の欠落記録に落とす
+  // （structural-classify の try 包み precedent と同型）。
+  let res = null
+  try {
+    res = await agent(clockProbePrompt(), { agentType: 'dev-runner-haiku-ro', schema: CLOCK, label: `clock#${name}`, phase: phaseName })
+  } catch (e) { log(`⚠️ clock#${name} 呼び出しが例外 — duration telemetry は当該区間を欠落させる（fail-open）`) }
+  const warn = recordClockMark(clockMarks, name, res)
+  if (warn) log(warn)
+}
+
 phase('Setup')
+await clockProbe('start', 'Setup')
 
 // base 解決（issue #298）: 明示指定→origin 存在検証 / 未指定→origin/dev→origin/HEAD。
 // 解決不能は Setup で明示 error（設定ミスを danger-grep fail-closed の SEC 誤 HOLD にしない）。
@@ -2566,6 +2710,7 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
 // ============================================================
 phase('Analyze')
+await clockProbe('analyze_start', 'Analyze')
 const req = need(await agent(
   analyzePrompt(DEPTH),
   { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
@@ -2600,6 +2745,7 @@ const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・re
 //   既出 findings 累積で cold start を補償 / 同一 topic 反復で stuck 打ち切り /
 //   iteration 経過で relax / critical は常にブロック / 上限到達でも throw せず Evaluate へ委譲。
 // ============================================================
+await clockProbe('analyze_end', 'Analyze')
 phase('Plan')
 let plan = null
 let planVerdict = null
@@ -3480,12 +3626,15 @@ async function execEvaluatePhase(state) {
   return state
 }
 
+await clockProbe('plan_end', 'Plan')
 phase('Implement')
 state = await execImplementPhase(state)
 if (state.__earlyReturn) return state.__earlyReturn
+await clockProbe('implement_end', 'Implement')
 
 phase('Validate')
 state = await execValidatePhase(state)
+await clockProbe('validate_end', 'Validate')
 
 phase('Security floor')
 state = await execSecurityFloorPhase(state)
@@ -3493,6 +3642,7 @@ state = await execSecurityFloorPhase(state)
 if (state.runEval) {
 phase('Evaluate')
 state = await execEvaluatePhase(state)
+await clockProbe('evaluate_end', 'Evaluate')
 } else {
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
@@ -3522,6 +3672,7 @@ const pr = need(await agent(
   { agentType: 'dev-runner', schema: PRURL, label: `pr#${ISSUE}`, phase: 'PR' },
 ), 'PR')
 log(`PR created: ${pr.pr_url}`)
+await clockProbe('pr_end', 'PR')
 
 // ============================================================
 // pr-iterate をサブ workflow として呼ぶ（review ⇄ fix, LGTM まで, 上限10）。
@@ -3529,6 +3680,7 @@ log(`PR created: ${pr.pr_url}`)
 //     pr-iterate.js 内に workflow() を足すと2段になり throw するので入れないこと。
 // ============================================================
 const iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+await clockProbe('iterate_end', 'PR')
 
 // pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある（issue #233）。
 // runEval=false（micro path・eval 0 回）では「Evaluate が stale」という概念自体が成立しないため skip。
@@ -3667,6 +3819,8 @@ if (_facDecision.run) {
   else { state.finalAcResults = null; state.finalUnsatisfiedAc = state.unsatisfiedAc }
   log(`Final AC reconcile: skip（reason=${_facDecision.reason}）`)
 }
+
+await clockProbe('final_end', 'Final reconcile')
 
 // ============================================================
 // Phase Merge tier: 最終 diff に danger-grep を再実行し、merge tier を算出して提示する(W5)。
@@ -3829,6 +3983,8 @@ if (!summaryPost?.posted) {
 // 失敗は log 警告のみで workflow は継続（telemetry 欠損 > ワークフロー中断）。
 // need() で包まない — null 容認が必須。
 // ============================================================
+await clockProbe('end', 'Merge tier')
+const durations = computeDurations(clockMarks)
 const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'dev-flow',
   outcome: 'success',
@@ -3859,6 +4015,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
     ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
     ...(state.vdeltaVerdicts.length ? { vdelta_verdicts: state.vdeltaVerdicts } : {}),
+    ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
+    ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
