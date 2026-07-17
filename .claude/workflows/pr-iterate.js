@@ -643,7 +643,7 @@ for (i = 1; i <= MAX; i++) {
         + `\n## Tools\n使用可: Bash, Write\n`
         + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
         + `\n## Token cap\n200 語以内で完結すること。`,
-        { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+        { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
       )
       if (!mismatchPost?.posted) {
         log(`⚠️ post-review#${i} (review-contract-error) の投稿に失敗しました（posted=${mismatchPost?.posted ?? 'null'}）。ワークフローは継続します。`)
@@ -723,7 +723,7 @@ for (i = 1; i <= MAX; i++) {
           + `\n## Tools\n使用可: Bash, Write\n`
           + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
           + `\n## Token cap\n200 語以内で完結すること。`,
-          { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+          { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
         )
       } else {
         approvePost = await agent(
@@ -737,7 +737,7 @@ for (i = 1; i <= MAX; i++) {
           + `\n## Tools\n使用可: Bash, Write\n`
           + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
           + `\n## Token cap\n200 語以内で完結すること。`,
-          { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+          { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
         )
       }
       if (!approvePost?.posted) {
@@ -799,7 +799,7 @@ for (i = 1; i <= MAX; i++) {
         + `\n## Tools\n使用可: Bash, Write\n`
         + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
         + `\n## Token cap\n200 語以内で完結すること。`,
-        { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+        { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
       )
       if (!ciRoundPost?.posted) {
         log(`⚠️ post-review#${i} (ci-failed) の投稿に失敗しました（posted=${ciRoundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
@@ -867,7 +867,7 @@ for (i = 1; i <= MAX; i++) {
       + `\n## Tools\n使用可: Bash, Write\n`
       + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
       + `\n## Token cap\n200 語以内で完結すること。`,
-      { agentType: 'dev-runner', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
+      { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
     )
     if (!roundPost?.posted) {
       log(`⚠️ post-review#${i} (${effReview.decision}) の投稿に失敗しました（posted=${roundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
@@ -930,7 +930,7 @@ const summaryPost = await agent(
   + `\n## Tools\n使用可: Bash, Write\n`
   + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
   + `\n## Token cap\n200 語以内で完結すること。`,
-  { agentType: 'dev-runner', schema: POST_RESULT, label: `post-summary`, phase: 'Iterate' },
+  { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-summary`, phase: 'Iterate' },
 )
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)

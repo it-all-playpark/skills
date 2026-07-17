@@ -107,8 +107,8 @@ function createResponder() {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
-    // post-summary（dev-runner）
-    if (label === 'post-summary' && agentType === 'dev-runner') {
+    // post-summary（dev-runner-haiku）
+    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // implementer（本経路の main call。concerns に既知 4 パターン系 ×3 + 非該当 ×1）

@@ -99,7 +99,7 @@ function createResponder({ concerns, ciChecksResponse }) {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
-    // post-summary（dev-runner）
+    // post-summary（dev-runner-haiku）
     if (label === 'post-summary') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }

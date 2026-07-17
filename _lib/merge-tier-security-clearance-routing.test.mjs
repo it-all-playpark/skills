@@ -94,7 +94,7 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (label === 'ci-checks') {
       return { ok: false, error: 'stub: no checks' };
     }
-    if (label === 'post-summary' && agentType === 'dev-runner') {
+    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
       summaryPrompts.push(prompt);
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
