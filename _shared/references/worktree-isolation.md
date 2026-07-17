@@ -59,13 +59,31 @@ git worktree list
 # /path/to/repo/.claude/worktrees/...   def5678 [feature/issue-N-m] (locked)
 ```
 
-The parent can prune it after use:
+The parent can prune it after use. For dev-flow 管理 worktree（`df-*`）は、生の
+`git worktree remove` の代わりに `_shared/scripts/worktree-teardown.sh <worktree-path>` を
+使うこと:
 
 ```bash
+_shared/scripts/worktree-teardown.sh /path/to/repo/.claude/worktrees/df-<issue>
+# or (df-* 以外・従来通り)
 git worktree remove --force /path/to/repo/.claude/worktrees/agent-<uuid>
-# or
 git worktree prune
 ```
+
+`worktree-teardown.sh` は `git worktree remove` する前に、その worktree の
+`.veridelta/runs/*.json`（red→green の検証証跡）を repo 直下 `.veridelta-archive/` へ退避してから
+削除する。退避失敗は teardown を止めない（fail-open）。痕跡は
+`~/.claude/logs/veridelta-archive.log` に記録される。retention は件数/バイト上限があり、
+超過した古い entry から自動で回収される。
+
+**実行文脈の注意**: `worktree-teardown.sh`（および内部で使う退避処理）は**非 sandbox の
+human terminal で実行すること**。Claude sandbox 下では repo 内（`.veridelta-archive/`）への
+書き込みが deny され、退避が fail-open no-op になる（remove 自体は成功するが証跡は残らない）。
+sandbox 経由でどうしても使いたい場合は、`.claude/settings.json` の sandbox write allow に
+`.veridelta-archive/` を追加する（人間が設定変更する）。
+
+手動検証（red→green 記録が teardown 後も退避先から読めることの確認）も同様に、
+**非 sandbox の human terminal で実施する**こと。
 
 **Empty-commit guard**: If a worker runs but makes no changes (e.g., analysis-only run),
 create an allow-empty commit to prevent the worktree from being auto-cleaned:
