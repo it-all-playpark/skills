@@ -6,6 +6,9 @@
 // issue #272: AC 粒度と floor の較正 — micro floor の AC 境界を 3→4 に緩和。
 // issue #278: breaking 判定を LLM 自由文 (scope/summary への regex) から、analyze REQ の
 // 構造化 breaking_change フィールド + issue 本文への決定論 keyword scan の OR に変更。
+// issue #364: keyword scan 単独 (breaking_keyword_scan=true && breaking_change!==true) は
+// complex floor に採用しない (低 precision ヒューリスティック、実測 FP: #359/#361)。
+// 構造化判定 breaking_change===true との corroboration があるときのみ floor へ採用する。
 export const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function mergeShape(floor, llmShape) {
@@ -40,12 +43,15 @@ export function classifyShape(req) {
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
 
-  if (req.breaking_change === true || req.breaking_keyword_scan === true) {
+  // keyword-alone (breaking_keyword_scan=true かつ breaking_change!==true) は complex floor に
+  // 採用しない (issue #364)。構造化判定とのみ組合せたときに blocking へ採用する。
+  const keywordAlone = req.breaking_keyword_scan === true && req.breaking_change !== true;
+
+  if (req.breaking_change === true) {
     const floor = 'complex';
-    const srcs = [];
-    if (req.breaking_change === true) srcs.push('analyze structured breaking_change=true');
-    if (req.breaking_keyword_scan === true) srcs.push('issue title/body keyword scan hit');
-    const reason = `breaking change detected (${srcs.join(' + ')}) → floor=complex`;
+    const reason = `breaking change detected (analyze structured breaking_change=true`
+      + (req.breaking_keyword_scan === true ? ' + issue title/body keyword scan hit' : '')
+      + `) → floor=complex`;
     const shape = mergeShape(floor, req.shape);
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
@@ -65,6 +71,9 @@ export function classifyShape(req) {
     reason = `LLM raised ${floor}→${shape}`;
   } else {
     reason = `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type} → floor=${floor}`;
+  }
+  if (keywordAlone) {
+    reason += `（breaking keyword hit は構造化判定 breaking_change=false のため floor 不採用 — 可視化のみ。issue #364）`;
   }
   return { shape, reason };
 }

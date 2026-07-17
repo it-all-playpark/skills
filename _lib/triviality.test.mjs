@@ -133,25 +133,32 @@ test('breaking_change=true のみ → shape=complex, reason に analyze structur
   );
 });
 
-// (f3) breaking_keyword_scan=true のみ → shape=complex, reason に 'keyword scan' 由来を明記
-test('breaking_keyword_scan=true のみ → shape=complex, reason に keyword scan', () => {
+// (f3) breaking_keyword_scan=true のみ (breaking_change=false) → keyword-alone は complex floor
+// に採用しない (issue #364)。count/AC 由来の floor (micro) のまま、reason に keyword と
+// 不採用の可視化文言を含む。
+test('breaking_keyword_scan=true のみ (breaking_change=false) → shape=micro (count/AC floor のまま、keyword floor 不採用)', () => {
   const result = classifyShape({
     estimated_change_file_count: 1,
-    acceptance_criteria: ['x'],
+    acceptance_criteria: ['x', 'y'],
     issue_type: 'fix',
     scope: 'src',
     summary: 'fix a bug',
     breaking_change: false,
     breaking_keyword_scan: true,
   });
-  assert.equal(result.shape, 'complex');
+  assert.equal(result.shape, 'micro');
   assert.ok(
-    /keyword scan/.test(result.reason),
-    `reason should mention keyword scan, got: ${result.reason}`
+    /keyword/.test(result.reason),
+    `reason should mention keyword, got: ${result.reason}`
+  );
+  assert.ok(
+    /不採用/.test(result.reason),
+    `reason should mention 不採用 (not adopted), got: ${result.reason}`
   );
 });
 
-// (f4) 両 flag true → shape=complex, reason に両由来を明記
+// (f4) 両 flag true → shape=complex, reason に構造化判定 breaking_change=true と
+// keyword scan hit の両方を明記 (corroboration、issue #364)
 test('breaking_change と breaking_keyword_scan 両方 true → shape=complex, reason に両由来', () => {
   const result = classifyShape({
     estimated_change_file_count: 1,
@@ -164,12 +171,12 @@ test('breaking_change と breaking_keyword_scan 両方 true → shape=complex, r
   });
   assert.equal(result.shape, 'complex');
   assert.ok(
-    /analyze structured/.test(result.reason),
-    `reason missing analyze structured, got: ${result.reason}`
+    /analyze structured breaking_change=true/.test(result.reason),
+    `reason missing 'analyze structured breaking_change=true', got: ${result.reason}`
   );
   assert.ok(
-    /keyword scan/.test(result.reason),
-    `reason missing keyword scan, got: ${result.reason}`
+    /keyword scan hit/.test(result.reason),
+    `reason missing 'keyword scan hit', got: ${result.reason}`
   );
 });
 

@@ -141,6 +141,15 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 //   （後方互換 scaffolding 禁止規約）。未指定(undefined/null) = reason 追加なし。
 // s.finalTestGreen (optional true|false|null): Final reconcile での最終 tree test 再実行結果。
 //   false のとき専用 HOLD reason を追記する。true/null(未実行 or no_tests)は reason 追加なし。
+// s.breakingStructured / s.breakingKeyword: breaking 検出は analyze 構造化判定
+//   (breakingStructured = breaking_change===true) と issue title/body keyword scan
+//   (breakingKeyword) の 2 入力を持つ（issue #278）。ただし breakingKeyword は単独では
+//   HOLD にしない（issue #364 precision fix）。issue 本文への keyword grep は変更の
+//   破壊性を担保する oracle ではなく低 precision ヒューリスティック（実測 FP: #359/#361）
+//   であり、構造化判定との corroboration があるときのみ blocking 理由に採用する。
+//   keyword-alone（breakingKeyword && !breakingStructured）のときは tier/shape を
+//   変えない可視化 reason を末尾に追記するのみ。コード実体に対する決定論 breaking 検出は
+//   danger-grep 'public-api' クラス（realized diff 上、blast-radius floor）が別途担保する。
 // s.iterateStatus (string|null): pr-iterate の終端 status（'lgtm'|'stuck'|'fix_failed'|
 //   'max_reached'|'ci_error'|'ci_pending'|null）。'lgtm' 以外（未知値・null 含む）は
 //   決定論的 HOLD（fail-safe、allowlist しない厳格判定）。blast-radius クラス（issue #319）—
@@ -166,8 +175,13 @@ export function classifyMergeTier(s) {
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
   if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
-  if (s.breakingStructured) reasons.push('breaking/migration 検出（analyze 構造化判定 breaking_change=true）');
-  if (s.breakingKeyword) reasons.push('breaking/migration 検出（issue title/body keyword scan 決定論 hit）');
+  if (s.breakingStructured) {
+    reasons.push('breaking/migration 検出（analyze 構造化判定 breaking_change=true'
+      + (s.breakingKeyword ? ' + issue title/body keyword scan hit' : '') + '）');
+  }
+  const keywordAloneDisclosure = (s.breakingKeyword && !s.breakingStructured)
+    ? 'breaking keyword hit（issue title/body 決定論 scan）— 構造化判定 breaking_change=false のため HOLD 不採用（可視化のみ。issue #364）'
+    : null;
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
   if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
@@ -176,13 +190,19 @@ export function classifyMergeTier(s) {
   if (s.finalAcReconcile === 'unavailable') reasons.push('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）');
   if (s.iterateStatus !== 'lgtm') reasons.push(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`);
   if (s.evalStaleness === 'hash_mismatch') reasons.push('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）');
-  if (reasons.length) return { tier: 'HOLD', reasons };
+  if (reasons.length) {
+    if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
+    return { tier: 'HOLD', reasons };
+  }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
     // micro path は evaluator 0 回で AC を判定していない — AUTO 推奨でもその事実を開示する（issue #233）。
     // evalSkipped は optional（未指定 = falsy = 開示なし）。tier 判定値は変更しない（ゲート境界不変）。
     if (s.evalSkipped === true) autoReasons.push('AC は未検証（micro eval skip）— evaluator 0 回のため acceptance_criteria の充足は判定していない');
+    if (keywordAloneDisclosure) autoReasons.push(keywordAloneDisclosure);
     return { tier: 'AUTO', reasons: autoReasons };
   }
-  return { tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'] };
+  const reviewReasons = ['標準 — 人間が LGTM して merge'];
+  if (keywordAloneDisclosure) reviewReasons.push(keywordAloneDisclosure);
+  return { tier: 'REVIEW', reasons: reviewReasons };
 }
