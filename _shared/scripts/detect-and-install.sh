@@ -10,6 +10,13 @@
 # (npm install, pip install -e ., etc.), which would mutate the tree
 # non-deterministically. Default: off (existing behavior unchanged). Used by
 # dev-flow's Setup phase via ensure-worktree-deps.sh (issue #291).
+#
+# Node install skip cache (issue #375): install_node() skips `npm ci` /
+# `pnpm install` / etc. when the target lockfile's sha256 matches the hash
+# recorded from the last successful install (cache file:
+# .devflow-tmp/deps-lockfile-hash, content "<pm>:<sha256>"). Hash lookup
+# failure or missing cache info fails open (install still runs) so a broken
+# cache never causes a missed install.
 
 set -euo pipefail
 
@@ -144,6 +151,21 @@ resolve_bin() {
     esac
 }
 
+# Hash a lockfile for the install skip cache (issue #375). Prefers
+# sha256sum (Linux), falls back to shasum -a 256 (macOS). Returns non-zero
+# (empty stdout) if neither tool is available or the file can't be read, so
+# callers can fail open.
+hash_lockfile() {
+    local f="$1"
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$f" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$f" 2>/dev/null | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
 # ============================================================================
 # Install Functions
 # ============================================================================
@@ -151,12 +173,6 @@ resolve_bin() {
 install_node() {
     local pm="$1"
     local cmd=""
-    local already_installed=false
-
-    # Check if already installed
-    if [[ -d "$TARGET_PATH/node_modules" ]]; then
-        already_installed=true
-    fi
 
     case "$pm" in
         pnpm)   cmd="pnpm install --frozen-lockfile" ;;
@@ -166,7 +182,38 @@ install_node() {
         npm-no-lock) cmd="npm install" ;;
     esac
 
-    if [[ "$already_installed" == true ]]; then
+    # Lockfile-hash skip cache (issue #375): if node_modules already exists
+    # and the lockfile's hash matches the hash recorded from the last
+    # successful install for this pm, skip the install deterministically.
+    # npm-no-lock has no lockfile to hash (the --lockfile-only dev-flow
+    # entrypoint never selects npm-no-lock, so this only matters for
+    # direct/manual invocations) and falls back to the coarse
+    # already_installed check below. Any failure to establish a hash match
+    # (missing tools, unreadable lockfile, no cache file, mismatched
+    # content) fails open into the normal install path below.
+    local lockfile=""
+    case "$pm" in
+        pnpm) lockfile="pnpm-lock.yaml" ;;
+        yarn) lockfile="yarn.lock" ;;
+        bun)  lockfile="bun.lockb" ;;
+        npm)  lockfile="package-lock.json" ;;
+    esac
+
+    local cache_file="$TARGET_PATH/.devflow-tmp/deps-lockfile-hash"
+    local current_hash=""
+    if [[ -n "$lockfile" ]]; then
+        current_hash=$(hash_lockfile "$TARGET_PATH/$lockfile" 2>/dev/null || true)
+        if [[ -d "$TARGET_PATH/node_modules" && -n "$current_hash" && -f "$cache_file" ]]; then
+            local cached
+            cached=$(cat "$cache_file" 2>/dev/null || true)
+            if [[ "$cached" == "${pm}:${current_hash}" ]]; then
+                echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"cache_hit\",\"command\":\"$cmd\"}"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ "$pm" == "npm-no-lock" && -d "$TARGET_PATH/node_modules" ]]; then
         echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"already_installed\",\"command\":\"$cmd\"}"
         return 0
     fi
@@ -184,6 +231,9 @@ install_node() {
     fi
 
     if run_install_cmd "$cmd"; then
+        if [[ -n "$lockfile" && -n "$current_hash" ]]; then
+            { mkdir -p "$TARGET_PATH/.devflow-tmp" && printf '%s\n' "${pm}:${current_hash}" > "$cache_file"; } 2>/dev/null || true
+        fi
         echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"installed\",\"command\":\"$cmd\"}"
     else
         echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"failed\",\"command\":\"$cmd\"}"
