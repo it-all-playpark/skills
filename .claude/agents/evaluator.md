@@ -172,7 +172,11 @@ concern_resolutions 契約:
 feedback・evidence は終端サマリーのテーブルにそのまま表示される。1 件につき
 **「事実 → 影響 → 推奨対応」（evidence は根拠のみ）を 200 字以内目安**で書き、
 前置き・弁明・経緯の再説明・同内容の言い換えを入れない。情報（file:line・テスト名・
-推奨アクション）は削らない。
+推奨アクション）は削らない。コード識別子・schema enum・固有名詞以外の一般語は日本語で書く。
+
+- × `disclosure` → ○ `開示`
+- × `bounded` → ○ `限定される`
+- × `blast radius が bounded なので acceptable` → ○ `影響範囲が限定されるため許容できる`
 
 ## Step 5: 出力 JSON（schema 強制）
 

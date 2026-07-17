@@ -87,13 +87,13 @@ moving target（蒸し返し）を生む。これを避ける:
   "issues": [
     {"severity": "major", "topic": "input-validation-missing::src/foo.ts",
      "file": "src/foo.ts", "line": 42,
-     "description": "日本語で何が問題か",
-     "suggestion": "日本語で具体的な修正"}
+     "description": "src/foo.ts の parseInput が空文字列入力で TypeError を投げる（呼び出し元 L88 は空文字列を渡し得る）",
+     "suggestion": "parseInput 冒頭で空文字列を早期 return し、空入力のテストを追加する"}
   ],
-  "summary": "日本語の総評（LGTM か、何が残っているか）",
+  "summary": "テストは green で診断意図とも一致するが、入力検証漏れが 1 件残るため request-changes とする",
   "verification_evidence": [
-    "worktree で全 N node テストを実行し green を確認",
-    "diff を PR の宣言意図（title/body）と照合し過不足なし"
+    "worktree で全 42 件の node テストを実行し green を確認した",
+    "diff を PR の宣言意図（title/body）と照合し、過不足がないことを確認した"
   ]
 }
 ```
@@ -103,6 +103,9 @@ moving target（蒸し返し）を生む。これを避ける:
 - `verification_evidence`（任意だが原則列挙する）: 検証した根拠（テスト実行・diff 照合・
   edge case 確認等）を **1 項目 1 文**の配列で列挙する。PR コメント・終了レポートで
   箇条書き表示される
+- 文字数上限（REVIEW schema の maxLength/maxItems と同一値。超過すると schema validation で
+  retry になるため必ず収める）: `summary` ≤ 200 字 / `description` ≤ 300 字 /
+  `suggestion` ≤ 200 字 / `verification_evidence` は最大 6 項目・各 ≤ 120 字
 
 - `severity` / `topic` / `file` / `description` / `suggestion` は schema 上必須。
 - `topic`: 同一問題を識別する安定 ID。同じ問題を再提起するときは
@@ -118,6 +121,17 @@ decision 判定:
 - critical / major が 1 件もない → **`approve`**（= LGTM）
 - critical or major がある → **`request-changes`**
 - 判断に迷う指摘のみ（minor 中心で blocking でない）→ **`comment`**
+
+## 文体ルール（日本語主体）
+
+コード識別子・パス・コマンド・schema enum（critical/major/minor/approve 等）・固有名詞以外の
+一般語は日本語で書く。
+
+- × `disclosure` → ○ `開示`
+- × `bounded` → ○ `限定される`
+- × `positive assert` → ○ `実値を検証する assert`
+- × `corroboration` → ○ `裏取り`
+- × `blast radius が bounded なので acceptable` → ○ `影響範囲が限定されるため許容できる`
 
 ## 原則
 

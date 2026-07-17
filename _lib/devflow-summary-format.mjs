@@ -144,7 +144,7 @@ export function buildDevflowSummaryBody({
   const testsurfArr = testsurfHits && testsurfHits.length > 0 ? testsurfHits : null;
   const hasTestsurf = testsurfArr != null || testsurfClearance.length > 0;
 
-  lines.push('| Merge tier | shape | test | eval | Ledger | AC | danger |');
+  lines.push('| Merge tier | shape | テスト | 評価 | 台帳 (Ledger) | AC | 危険検出 |');
   lines.push('|---|---|---|---|---|---|---|');
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
@@ -251,18 +251,18 @@ export function buildDevflowSummaryBody({
 
     // ledger 未解消テーブル（(i)(ii)(iii)）
     const ledgerActionItems = [
-      ...uncheckedBlocking.map(it => ({ ...it, _lane: 'blocking' })),
+      ...uncheckedBlocking.map(it => ({ ...it, _lane: '必須（blocking）' })),
       ...uncheckedAdvisory.map(it => ({
         ...it,
-        _lane: it.escalate ? 'advisory (ESCALATE)' : 'advisory',
+        _lane: it.escalate ? '要判断（advisory ESCALATE）' : '助言（advisory）',
       })),
-      ...escalatedChecked.map(it => ({ ...it, _lane: 'advisory (ESCALATE)', _forceVisible: true })),
+      ...escalatedChecked.map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _forceVisible: true })),
     ];
 
     if (ledgerActionItems.length > 0) {
       lines.push('');
       // id 列は出さない（ledger 内部識別子はレビュアーにはノイズ。機構側は ledger データを直接参照する）
-      lines.push('| 状態 | lane | dimension | 内容 |');
+      lines.push('| 状態 | 区分 | 観点 | 内容 |');
       lines.push('|---|---|---|---|');
       for (const item of ledgerActionItems) {
         const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : '❌ 未解消';
@@ -272,7 +272,7 @@ export function buildDevflowSummaryBody({
           content += ': ' + mdCell(item.evidence);
         }
         if (item.escalate_reason) {
-          content += `（reason: ${mdCell(item.escalate_reason)}）`;
+          content += `（理由: ${mdCell(item.escalate_reason)}）`;
         }
         lines.push(`| ${status} | ${item._lane} | ${dimension} | ${content} |`);
       }
@@ -281,7 +281,7 @@ export function buildDevflowSummaryBody({
     // 未達 AC テーブル（(iv)）
     if (unsatisfiedAC.length > 0) {
       lines.push('');
-      lines.push('| 状態 | AC | 検証 | evidence |');
+      lines.push('| 状態 | AC | 検証 | 根拠 |');
       lines.push('|---|---|---|---|');
       for (const ac of unsatisfiedAC) {
         const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
@@ -293,7 +293,7 @@ export function buildDevflowSummaryBody({
     // 未確認 clearance テーブル（(v)）
     if (uncleared.length > 0) {
       lines.push('');
-      lines.push('| 状態 | danger class | evidence |');
+      lines.push('| 状態 | danger class | 根拠 |');
       lines.push('|---|---|---|');
       for (const sc of uncleared) {
         const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
@@ -334,15 +334,15 @@ export function buildDevflowSummaryBody({
 
   // 解消済み ledger
   const resolvedItems = [
-    ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: 'blocking' })),
-    ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: 'advisory' })),
+    ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: '必須（blocking）' })),
+    ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: '助言（advisory）' })),
   ];
   if (resolvedItems.length > 0) {
     const n = resolvedItems.length;
     lines.push('');
     lines.push(`<details><summary>✅ Goal Ledger 解消済み ${n} 件</summary>`);
     lines.push('');
-    lines.push('| lane | dimension | 内容 | evidence |');
+    lines.push('| 区分 | 観点 | 内容 | 根拠 |');
     lines.push('|---|---|---|---|');
     for (const item of resolvedItems) {
       const dimension = item.dimension != null ? item.dimension : '—';
@@ -360,7 +360,7 @@ export function buildDevflowSummaryBody({
     lines.push('');
     lines.push(`<details><summary>🏗 環境ノート ${n} 件（sandbox 環境事象 — 人間の対応は通常不要）</summary>`);
     lines.push('');
-    lines.push('| 状態 | pattern | 件数 | 内容 | evidence |');
+    lines.push('| 状態 | パターン (env_key) | 件数 | 内容 | 根拠 |');
     lines.push('|---|---|---|---|---|');
     for (const item of envItems) {
       const status = item.checked === true ? '✅ CI確認済' : '—';
@@ -381,9 +381,9 @@ export function buildDevflowSummaryBody({
     const t = acArr.length;
     if (s > 0) {
       lines.push('');
-      lines.push(`<details><summary>✅ Acceptance Criteria ${s}/${t} satisfied</summary>`);
+      lines.push(`<details><summary>✅ 受け入れ基準 (AC) ${s}/${t} 達成</summary>`);
       lines.push('');
-      lines.push('| AC | 検証 | evidence |');
+      lines.push('| AC | 検証 | 根拠 |');
       lines.push('|---|---|---|');
       for (const ac of satisfiedAC) {
         const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
@@ -402,9 +402,9 @@ export function buildDevflowSummaryBody({
     const ct = securityClearance.length;
     if (c > 0) {
       lines.push('');
-      lines.push(`<details><summary>✅ Security clearance ${c}/${ct} cleared</summary>`);
+      lines.push(`<details><summary>✅ セキュリティ確認 (Security clearance) ${c}/${ct} 済</summary>`);
       lines.push('');
-      lines.push('| danger class | evidence |');
+      lines.push('| danger class | 根拠 |');
       lines.push('|---|---|');
       for (const sc of cleared) {
         const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
