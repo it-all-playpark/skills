@@ -10,6 +10,8 @@ description: |
   (3) keywords: SEO記事, コンテンツ計画, 記事ネタ, 編集カレンダー, SEOスコア, コンテンツプランニング,
   (4) trends-analyzerの後続ステップとして記事提案を生成したい場合。
   Accepts args: [--trends-report PATH] [--ga-report PATH] [--gsc-report PATH] [--strategy PATH] [--blog-dir PATH] [--output PATH] [--output-format content_plan|content_strategy] [--top-n N]
+model: opus
+effort: max
 ---
 
 # SEO Content Planner
