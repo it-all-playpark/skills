@@ -3971,7 +3971,7 @@ const summaryPost = await agent(
   + `\n## Tools\n使用可: Bash, Write\n`
   + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
   + `\n## Token cap\n200 語以内で完結すること。`,
-  { agentType: 'dev-runner', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
+  { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
 )
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)

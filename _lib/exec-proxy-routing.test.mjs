@@ -6,8 +6,8 @@
 //     - dev-runner-haiku-ro: read-only 決定論 proxy (danger-grep / diff-hash /
 //       changed-files / CI read 系など)
 //     - dev-runner-haiku: write/Skill 系 proxy 専任 (worktree 作成 / test 実行 /
-//       redgreen / journal / ui-verify-server など)
-//     - dev-runner: 判断寄り (fix / analyze / post-summary)
+//       redgreen / journal / ui-verify-server / PR コメント投稿 (post-review#i / post-summary) など)
+//     - dev-runner: 判断寄り (fix / analyze)
 //
 //   .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
 //   よって _lib/dev-runner-model.test.mjs と同じ戦略 (source-as-string regex) で検証する。
@@ -67,6 +67,19 @@ function findLineByLabelPrefix(source, labelPrefix) {
     if (re.test(line)) return line;
   }
   return null;
+}
+
+/**
+ * Find ALL lines in `source` whose `label:` value matches a template-literal pattern
+ * containing `labelPrefix` (same matching rule as findLineByLabelPrefix, but returns
+ * every matching line instead of only the first). Used to verify that every call site
+ * sharing a label prefix (e.g. `post-review#${i}` appearing at multiple branch points)
+ * has been migrated consistently, and to detect missing/extra call sites via count.
+ */
+function findAllLinesByLabelPrefix(source, labelPrefix) {
+  const escaped = labelPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`label:\\s*[\`']${escaped}`);
+  return source.split('\n').filter((line) => re.test(line));
 }
 
 /**
@@ -238,12 +251,63 @@ test("[exec-proxy-routing] pr-iterate.js label 'fix#' routes to agentType:'dev-r
   assertAgentTypeOnLine(line, 'fix#', 'dev-runner', 'pr-iterate.js');
 });
 
-test("[exec-proxy-routing] pr-iterate.js label 'post-review#' routes to agentType:'dev-runner'", () => {
+test("[exec-proxy-routing] pr-iterate.js label 'post-review#' routes to agentType:'dev-runner-haiku'", () => {
   const line = findLineByLabelPrefix(prIterateSrc, 'post-review#');
-  assertAgentTypeOnLine(line, 'post-review#', 'dev-runner', 'pr-iterate.js');
+  assertAgentTypeOnLine(line, 'post-review#', 'dev-runner-haiku', 'pr-iterate.js');
 });
 
-test("[exec-proxy-routing] pr-iterate.js label 'post-summary' routes to agentType:'dev-runner'", () => {
+test("[exec-proxy-routing] pr-iterate.js label 'post-summary' routes to agentType:'dev-runner-haiku'", () => {
   const line = findLineByLabelPrefix(prIterateSrc, 'post-summary');
-  assertAgentTypeOnLine(line, 'post-summary', 'dev-runner', 'pr-iterate.js');
+  assertAgentTypeOnLine(line, 'post-summary', 'dev-runner-haiku', 'pr-iterate.js');
+});
+
+// ---- (d) pr-iterate.js: all post-review#${i} call sites (issue #372) ----
+//
+// post-review#${i} is posted from multiple branch points in the review⇄fix loop
+// (contract-error / approve / ci-gate / ci-failed / per-round). A single-line check
+// (as in (c) above) cannot catch a partial migration where only some call sites are
+// updated. This verifies exact call-site count AND that every one routes to
+// 'dev-runner-haiku'.
+test("[exec-proxy-routing] pr-iterate.js has exactly 5 label 'post-review#${i}' call sites, all routing to agentType:'dev-runner-haiku'", () => {
+  const lines = findAllLinesByLabelPrefix(prIterateSrc, 'post-review#');
+  assert.equal(
+    lines.length,
+    5,
+    `Expected exactly 5 'post-review#\${i}' call sites in pr-iterate.js, found ${lines.length}:\n${lines.join('\n')}`,
+  );
+  for (const line of lines) {
+    assert.match(
+      line,
+      /agentType:\s*'dev-runner-haiku'/,
+      `all 'post-review#\${i}' call sites should route to agentType:'dev-runner-haiku', but found: ${line}`,
+    );
+  }
+});
+
+// ---- (e) dev-flow.js: post-summary migration (issue #372) ----
+
+test("[exec-proxy-routing] dev-flow.js label 'post-summary' routes to agentType:'dev-runner-haiku'", () => {
+  const line = findLineByExactLabel(devFlowSrc, 'post-summary');
+  assertAgentTypeOnLine(line, 'post-summary', 'dev-runner-haiku', 'dev-flow.js');
+});
+
+// ---- (f) verbatim-transcription guard (AC-2, issue #372) ----
+//
+// All post-comment exec-proxy prompts must be verbatim transcriptions of a
+// workflow-determined string (via bodySaveInstr), not agent-side summarization/judgement.
+// pr-iterate.js has 7 bodySaveInstr( occurrences: 1 function definition + 6 call sites
+// (5x post-review#${i} + 1x post-summary).
+test('[exec-proxy-routing] pr-iterate.js source contains at least 6 bodySaveInstr( occurrences (verbatim transcription guard)', () => {
+  const count = (prIterateSrc.match(/bodySaveInstr\(/g) || []).length;
+  assert.ok(
+    count >= 6,
+    `Expected pr-iterate.js to contain at least 6 'bodySaveInstr(' occurrences (verbatim-transcription guard for post-review#i / post-summary), found ${count}`,
+  );
+});
+
+test("[exec-proxy-routing] dev-flow.js post-summary call site uses bodySaveInstr (verbatim transcription guard)", () => {
+  assert.ok(
+    devFlowSrc.includes('bodySaveInstr('),
+    `Expected dev-flow.js to contain 'bodySaveInstr(' near its post-summary agent() call (verbatim-transcription guard)`,
+  );
 });

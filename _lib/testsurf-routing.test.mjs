@@ -80,7 +80,7 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (label === 'changed-files') {
       return { files: ['_lib/foo.test.mjs'] };
     }
-    if (label === 'post-summary' && agentType === 'dev-runner') {
+    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     if (label === 'journal-log' && agentType === 'dev-runner-haiku') {

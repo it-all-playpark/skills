@@ -99,8 +99,8 @@ function makeSandbox(analyzeReq, journalResult) {
     if (label === 'changed-files') {
       return { files: ['src/foo.ts'] };
     }
-    // post-summary: posted:true 固定
-    if (label === 'post-summary' && agentType === 'dev-runner') {
+    // post-summary（dev-runner-haiku）: posted:true 固定
+    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // journal-log: 呼び出しカウンタをインクリメントし journalResult を返す

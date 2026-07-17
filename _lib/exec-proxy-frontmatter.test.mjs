@@ -5,8 +5,9 @@
 //   (architecture_decisions 参照):
 //     - dev-runner-haiku-ro (新設): read-only 決定論 proxy 専任。tools: [Bash, Read] のみ。
 //       Write/Edit/Skill/TodoWrite/Glob/Grep を持たない (least privilege)。
-//     - dev-runner-haiku: write/Skill 系 proxy 専任。tools: [Bash, Read, Skill] のみ。
-//       Write/Edit/Glob/Grep/TodoWrite を除去する (Write 除去が本 issue の要点)。
+//     - dev-runner-haiku: write/Skill 系 proxy 専任。tools: [Bash, Read, Write, Skill] のみ。
+//       Edit/Glob/Grep/TodoWrite を除去する。Write は post-comment 系 proxy（post-review#i /
+//       post-summary）の bodySaveInstr が要求する一時ファイル保存に必要 (issue #372)。
 //     - dev-runner: 判断寄り (fix/analyze) を担う sonnet agent。tools から TodoWrite のみ除去。
 //       Write/Edit は post-summary 等の実要求があるため残置。
 //
@@ -165,19 +166,19 @@ test(`[exec-proxy-frontmatter] dev-runner-haiku.md declares effort:${ADOPTED_EFF
   );
 });
 
-test('[exec-proxy-frontmatter] dev-runner-haiku.md tools is exactly [Bash, Read, Skill]', () => {
+test('[exec-proxy-frontmatter] dev-runner-haiku.md tools is exactly [Bash, Read, Write, Skill]', () => {
   const { frontmatter, path } = loadAgent('dev-runner-haiku.md');
   assert.ok(frontmatter !== null, `${path} must have a YAML frontmatter block`);
   const tools = extractToolsList(frontmatter);
   assert.deepEqual(
     [...tools].sort(),
-    ['Bash', 'Read', 'Skill'],
-    `dev-runner-haiku.md tools should be exactly [Bash, Read, Skill], but found: ${JSON.stringify(tools)}`,
+    ['Bash', 'Read', 'Skill', 'Write'],
+    `dev-runner-haiku.md tools should be exactly [Bash, Read, Write, Skill], but found: ${JSON.stringify(tools)}`,
   );
-  for (const forbidden of ['Write', 'Edit', 'TodoWrite', 'Glob', 'Grep']) {
+  for (const forbidden of ['Edit', 'TodoWrite', 'Glob', 'Grep']) {
     assert.ok(
       !tools.includes(forbidden),
-      `dev-runner-haiku.md tools must NOT include ${forbidden} (Write removal is the key change), but found: ${JSON.stringify(tools)}`,
+      `dev-runner-haiku.md tools must NOT include ${forbidden}, but found: ${JSON.stringify(tools)}`,
     );
   }
 });
