@@ -17,6 +17,17 @@
 # .devflow-tmp/deps-lockfile-hash, content "<pm>:<sha256>"). Hash lookup
 # failure or missing cache info fails open (install still runs) so a broken
 # cache never causes a missed install.
+#
+# Scope note (PR #386 review): the cache_hit condition requires both
+# node_modules and the cache file to already exist in this worktree, so it
+# only fires on a *repeat* install against an unchanged lockfile within the
+# same worktree (e.g. re-running Setup after a failed later phase). It is a
+# strict subset of the old node_modules-exists skip and does not reduce the
+# per-run fixed cost of installing into a fresh dev-flow worktree (which has
+# neither node_modules nor a cache file yet) — that cross-worktree sharing
+# problem is tracked separately in issue #387. The effect actually delivered
+# here is correctness: previously a stale node_modules was skipped even when
+# the lockfile had changed since the last install; now it re-installs.
 
 set -euo pipefail
 
