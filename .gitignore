@@ -85,5 +85,8 @@ youtube-channels
 # veridelta run records (redgreen-verify.sh verdict_cmd hook output)
 .veridelta/
 
+# veridelta archived records (worktree-teardown.sh が worktree 削除前に退避)
+.veridelta-archive/
+
 # dev-flow ephemeral handoff files (must not be committed via git-commit --all)
 .devflow-tmp/

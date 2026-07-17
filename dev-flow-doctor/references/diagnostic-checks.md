@@ -63,7 +63,7 @@ fi
 
 | Finding | Recommendation |
 |---------|----------------|
-| Stale worktrees (>7 days) | Clean up: `git worktree remove <path>` |
+| Stale worktrees (>7 days) | Clean up: `_shared/scripts/worktree-teardown.sh <path>`（veridelta 証跡を退避してから削除） |
 | Directories without kickoff.json | Orphaned worktrees, safe to remove |
 | Worktrees with failed state | Investigate or remove |
 | Directories not registered as git worktrees | Leftover from failed cleanup, safe to remove |
