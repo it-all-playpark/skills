@@ -96,6 +96,7 @@ test('selectTop: open 数 >= 2 で backpressure（全候補 backlog へ）', () 
 test('buildImproveIssueBody: evidence / AC / hypothesis を含む', () => {
   const body = buildImproveIssueBody(validCand(), { hypothesisBlock: '<HYP>' });
   assert.match(body, /## Evidence/);
+  assert.match(body, /## 受け入れ条件/);
   assert.match(body, /journal entry 20260712T211350/);
   assert.match(body, /- \[ \] stuck 終端率が下がる/);
   assert.match(body, /<HYP>/);

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import shutil
 import subprocess
@@ -52,6 +53,48 @@ def ensure_body_file(path: Path) -> None:
         raise ValueError(f"body file is empty: {path}")
 
 
+def lint_ac(body_file: Path) -> dict:
+    script = Path(__file__).resolve().parents[2] / "_lib" / "scripts" / "ac-lint.sh"
+    if not script.exists():
+        raise RuntimeError(f"AC lint script not found: {script}")
+
+    result = subprocess.run(
+        ["bash", str(script), str(body_file)],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode not in (0, 3):
+        message = (result.stderr or result.stdout or "unknown ac-lint error").strip()
+        raise RuntimeError(f"AC lint script failed: {message}")
+
+    try:
+        report = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise RuntimeError(f"AC lint script returned invalid JSON: {e}") from e
+
+    if result.returncode == 3 or report.get("verdict") == "non_compliant":
+        raise ValueError(
+            "issue body does not satisfy the AC contract "
+            "(missing AC heading and/or checkbox items). "
+            "Add one of the headings "
+            "'## 受け入れ基準' / '受け入れ条件' / 'Acceptance Criteria' / '完了条件' "
+            "followed by '- [ ]' checkbox items. "
+            "If checkbox items already exist without a heading, insert "
+            "'## 受け入れ基準（Acceptance Criteria）' directly above the checkbox "
+            "block and re-run."
+        )
+
+    if report.get("verdict") == "t2":
+        print(
+            "Warning: AC section uses plain bullets (T2). "
+            "Prefer `- [ ]` checkboxes (T1).",
+            file=sys.stderr,
+        )
+
+    return report
+
+
 def ensure_gh_ready() -> None:
     if shutil.which("gh") is None:
         raise RuntimeError("gh CLI is not installed or not in PATH")
@@ -72,6 +115,7 @@ def command_to_string(cmd: list[str]) -> str:
 
 def run(args: argparse.Namespace) -> int:
     ensure_body_file(args.body_file)
+    lint_ac(args.body_file)
     cmd = build_command(args)
 
     if args.dry_run:

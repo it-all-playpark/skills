@@ -124,7 +124,30 @@ Ensure the body includes:
 
 When `--lang` is omitted, write this body in Japanese.
 
+#### AC Lint Self-Check
+
+After the body file is written, run the shared AC contract lint against it:
+
+```bash
+bash $SKILLS_DIR/_lib/scripts/ac-lint.sh /tmp/github-issue-orchestrator-body.md
+```
+
+The script returns a single-line JSON `{"ok":true,"verdict":"t1|t2|non_compliant",...}` on
+stdout and signals the result via exit code (`0` = t1/t2, `3` = non_compliant, `1` = usage/IO
+error). Apply this policy based on `verdict`:
+
+| Verdict | Policy |
+|---------|--------|
+| `t1` | AC セクションが `- [ ]` checkbox 形式に準拠。そのまま Phase 6 へ進む。 |
+| `t2` | **自動整形**。AC セクション内の箇条書き（`- `/`* `/番号リスト）を `- [ ]` checkbox 形式に書き換え、`ac-lint.sh` を再実行して `t1` になったことを確認してから Phase 6 へ進む。 |
+| `non_compliant` | **自動整形を試み、不能なら abort**。以下いずれか該当する救済手順を適用してから `ac-lint.sh` を再実行する: (a) checkbox または箇条書きは存在するが AC 見出しが無い場合、当該リストブロックの直上に `## 受け入れ基準（Acceptance Criteria）` を挿入する（既存項目の文言は一切変えない）。(b) AC 項目自体が存在しない場合、Phase 3 に戻り検証可能な受け入れ基準を作成してから本文を再構成する。(c) (a)(b) のいずれも適用できない場合、issue を作成せず abort し、`ac-lint.sh` が返した JSON verdict をそのままユーザーへ報告する。 |
+
 ### Phase 6: Create Issue
+
+`create_issue.py` は同じ `ac-lint.sh` を決定論ゲートとして内蔵しており、body が
+`non_compliant` の場合は（`--dry-run` を含め）exit 1 で abort する。`t2` は警告付きで
+通過する（advisory）。Phase 5 の AC Lint Self-Check を通していれば、この Phase 6 で
+abort することはない。
 
 Run:
 
@@ -167,6 +190,7 @@ Always return this summary after execution:
 - `references/issue-template.md`
 - `references/devils-advocate-checklist.md`
 - `scripts/create_issue.py`
+- `_lib/scripts/ac-lint.sh` (shared)
 
 ## Journal Logging
 
