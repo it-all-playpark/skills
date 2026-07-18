@@ -216,7 +216,7 @@ function buildImproveIssueBody(c, { hypothesisBlock }) {
   lines.push('');
   for (const e of c.evidence) lines.push(`- ${e}`);
   lines.push('');
-  lines.push('## 受入条件');
+  lines.push('## 受け入れ条件');
   lines.push('');
   for (const a of c.acceptance_criteria) lines.push(`- [ ] ${a}`);
   const touchesCore = c.source === 'reconcile-revert'
@@ -670,9 +670,12 @@ for (const c of winners) {
     + bodySaveInstr(body, 'dev-improve-issue', 'DEV_IMPROVE')
     + `## Instructions\n`
     + `1. \`gh label create self-improve --color 1D76DB --description "dev-improve self-improvement" --force\` を実行（既存でも成功する）。\n`
-    + `2. 保存した <BODY_FILE> で issue を作成: \`gh issue create --title <TITLE> --label self-improve --body-file <BODY_FILE>\`\n`
+    + `2. 保存した <BODY_FILE> に対し次を実行: \`bash ~/.claude/skills/_lib/scripts/ac-lint.sh <BODY_FILE>\`（journal.sh と同じリテラル固定パス形）。\n`
+    + `   exit code 3（stdout JSON の verdict が non_compliant）の場合は issue を作成せず、throw もせず created:false を返せ（lint の stdout JSON は url フィールドではなく応答テキストにも含めず created:false のみ返す）。\n`
+    + `   exit 0（verdict が t1 または t2）なら次 step へ進め。lint スクリプト自体が実行不能（not found 等の exit 1 / コマンド失敗）の場合は fail-open — 警告として扱い issue 作成を続行せよ。\n`
+    + `3. 保存した <BODY_FILE> で issue を作成: \`gh issue create --title <TITLE> --label self-improve --body-file <BODY_FILE>\`\n`
     + `   <TITLE> は次のタイトルを一字一句そのまま、shell 安全にクォートして渡す: ${JSON.stringify(c.title)}\n`
-    + `3. 出力 URL 末尾の issue 番号を number に入れ created:true を返す。失敗時は throw せず created:false。\n`
+    + `4. 出力 URL 末尾の issue 番号を number に入れ created:true を返す。失敗時は throw せず created:false。\n`
     + `\n## Output format\n{ "created": boolean, "number": number, "url": string }\n`
     + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。issue 作成は 1 件のみ。\n\n## Token cap\n100 語以内。`,
     { agentType: 'dev-runner', schema: ISSUE_CREATED, label: `file-issue#${filed.length + 1}`, phase: 'File' },

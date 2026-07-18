@@ -87,7 +87,7 @@ export function buildImproveIssueBody(c, { hypothesisBlock }) {
   lines.push('');
   for (const e of c.evidence) lines.push(`- ${e}`);
   lines.push('');
-  lines.push('## 受入条件');
+  lines.push('## 受け入れ条件');
   lines.push('');
   for (const a of c.acceptance_criteria) lines.push(`- [ ] ${a}`);
   const touchesCore = c.source === 'reconcile-revert'
