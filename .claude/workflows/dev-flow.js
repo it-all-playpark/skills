@@ -2415,6 +2415,53 @@ const PRURL = {
     committed: { type: 'boolean' },
   },
 }
+// pr-reviewer レビュースキーマ（pr-iterate.js の REVIEW と同型。issue #376 F3: lite 経路の
+// pr-review-lite 1-pass にもこのスキーマを使う）。
+const REVIEW = {
+  type: 'object',
+  required: ['decision', 'issues', 'summary'],
+  properties: {
+    decision: { type: 'string', enum: ['approve', 'request-changes', 'comment'] },
+    issues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['severity', 'topic', 'file', 'description', 'suggestion'],
+        properties: {
+          severity: { type: 'string', enum: ['critical', 'major', 'minor'] },
+          topic: { type: 'string' },
+          file: { type: 'string' },
+          line: { type: 'number' },
+          description: { type: 'string', maxLength: 300 },
+          suggestion: { type: 'string', maxLength: 200 },
+        },
+      },
+    },
+    summary: { type: 'string', maxLength: 200 },
+    verification_evidence: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 120 } },
+  },
+}
+// CI gate schema（pr-iterate.js の CI_STATUS と同型。issue #376 F3: lite 経路の ci-check-lite に使う）。
+const CI_STATUS = {
+  type: 'object',
+  required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['passed', 'failed', 'pending', 'no_checks', 'error'] },
+    failed_checks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          bucket: { type: 'string' },
+          state: { type: 'string' },
+        },
+      },
+    },
+    waited_seconds: { type: 'number' },
+    poll_attempts: { type: 'number' },
+  },
+}
 const RISK = {
   type: 'object', required: ['ok', 'hits'],
   properties: {
@@ -2612,6 +2659,48 @@ function summarizeDepsResult(res) {
   };
 }
 // ==== END inline: _lib/setup-deps.mjs ====
+
+// ==== BEGIN inline: _lib/lite-route.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow micro lite 経路の escalation 判定を行う canonical。issue #376。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+/**
+ * lite pr-reviewer pass の review 結果から、full pr-iterate（fix loop）への
+ * escalation 要否を判定する純粋関数。
+ *
+ * escalate 条件は `review == null || blocking.length > 0` に限定する。
+ * review.decision には一切依存しない（comment / request-changes でも blocking が
+ * 空なら escalate=false）。これは `_lib/review-normalize.mjs` の
+ * classifyReviewRoute（blocking 空を decision 非依存で CI_GATE=続行扱いにする）との
+ * parity を意味する。blocking フィルタ述語（severity === 'critical' || 'major'）は
+ * classifyReviewRoute と同一だが、sync-inlines generator が canonical 内の
+ * import/require/Date.now/Math.random を検出して error にするため、review-normalize
+ * を import せず本ファイルに inline 再実装する。
+ *
+ * 真理値表:
+ *   | review                                             | escalate | 備考 |
+ *   |-----------------------------------------------------|----------|------|
+ *   | null / undefined                                     | true     | safety fail（agent skip/drop 相当） |
+ *   | { decision: 'approve', issues: undefined }           | false    | Array.isArray ガードで issues を [] 扱い |
+ *   | { decision: 'comment', issues: [] }                  | false    | blocking 0 |
+ *   | { decision: 'request-changes', issues: [minor] }     | false    | minor のみは blocking 対象外 |
+ *   | { decision: 'comment', issues: [major] }             | true     | decision 非依存で blocking>0 は escalate |
+ *   | { decision: 'approve', issues: [critical] }          | true     | contract mismatch も blocking>0 で escalate |
+ *
+ * @param {{ decision?: string, issues?: Array<{ severity: string }> } | null | undefined} review
+ * @returns {{ escalate: boolean, blocking: Array<{ severity: string }>, minor: Array<{ severity: string }> }}
+ */
+function classifyLiteReview(review) {
+  const issues = Array.isArray(review?.issues) ? review.issues : [];
+  const blocking = issues.filter((x) => x.severity === 'critical' || x.severity === 'major');
+  const minor = issues.filter((x) => x.severity === 'minor');
+  const escalate = review == null || blocking.length > 0;
+
+  return { escalate, blocking, minor };
+}
+// ==== END inline: _lib/lite-route.mjs ====
 
 // ---- helpers ----
 let WT // Setup で確定
@@ -3780,11 +3869,99 @@ log(`PR created: ${pr.pr_url}`)
 await clockProbe('pr_end', 'PR')
 
 // ============================================================
-// pr-iterate をサブ workflow として呼ぶ（review ⇄ fix, LGTM まで, 上限10）。
-// 注: これは「親 workflow の中の workflow()」= ネスト1段で合法。
+// PR phase 経路分岐（issue #376 F3）: clean-micro（LITE）は pr-reviewer 1-pass レビュー +
+// CI gate のみで完結させ、フル pr-iterate（review ⇄ fix loop, 上限10）を起動しない
+// （AC-1）。LITE ゲート条件は「lite に入れない全条件」を集約する: TRIVIAL（micro shape）
+// かつ !state.runEval（Evaluate が強制実行されていない）かつ state.dangerHits が空
+// （danger-grep hit なし）。runEval を forced にする条件（danger hit / testsurf / 宣言外 /
+// green-fix / UI touch。いずれも軸A invariant 由来）が 1 つでも成立していれば lite から
+// 除外され、現行 workflow('pr-iterate') フル経路を通す（AC-3 軸A invariant 不変）。
+// 注: workflow('pr-iterate') は「親 workflow の中の workflow()」= ネスト1段で合法。
 //     pr-iterate.js 内に workflow() を足すと2段になり throw するので入れないこと。
 // ============================================================
-const iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+const LITE = TRIVIAL && !state.runEval && state.dangerHits.length === 0
+let iterate
+// route: telemetry 用の経路識別子（'lite'|'full'。AC-5）。journal whitelist 登録・
+// dotfiles Stop hook への転送配線は別 issue に繰り延べる（vdelta_verdicts と同じ precedent。
+// 本 PR は handoff JSON への到達と統合テストでの検証まで）。
+let route
+if (LITE) {
+  const reviewPromptLite = `cd ${WT} で作業。PR #${pr.pr_number} を批判的にレビューせよ。`
+    + `gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
+    + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は`
+    + `verification_evidence に 1 項目 1 文の配列で列挙せよ。`
+  const reviewLite = await agent(
+    reviewPromptLite,
+    { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: 'pr-review-lite', phase: 'PR' },
+  )
+  const liteOutcome = classifyLiteReview(reviewLite)
+  if (liteOutcome.escalate) {
+    log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
+    iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+    route = 'full'
+  } else {
+    const ciLite = await agent(
+      `## Objective\nPR #${pr.pr_number} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
+      + `## Tools\n`
+      + `- 使用可: Bash のみ\n`
+      + `- 禁止: Write, Edit, git commit, git push\n\n`
+      + `## Boundary\n`
+      + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
+      + `- 実行するスクリプト以外のファイルを変更しない\n\n`
+      + `## Steps\n`
+      + `インストール済み skills の **固定パス** で check-ci.sh を実行せよ（リテラルの \`~/.claude/skills/\` プレフィックスをそのまま使うこと）:\n`
+      + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${pr.pr_number} --wait-seconds 90 --poll-seconds 15\n\`\`\`\n`
+      + `**重要**: 必ずこの \`~/.claude/skills/...\` の絶対パス形で起動せよ。`
+      + `worktree 相対パス（\`bash pr-iterate/scripts/check-ci.sh\`）や \`$HOME\` 展開形で起動してはならない。`
+      + `\`~/.claude/skills/*\` で起動した場合のみ sandbox 除外（excludedCommands）が効き、`
+      + `内部の gh が自身の config（\`~/.config/gh\`）を読めて CI を取得できる。`
+      + `sandbox 下で起動すると gh が config 読み取りに失敗し、CI が green でも status:error の誤判定になる。\n`
+      + `\`--wait-seconds 90 --poll-seconds 15\` は CI pending 時に最大 90 秒（15 秒間隔）ポーリングしてから確定する。`
+      + `この Bash 実行の timeout パラメータには必ず 300000（ミリ秒。5分）を指定せよ — `
+      + `既定の 120000ms では最大 90 秒のポーリング＋ gh API retry backoff の合計に対して余裕が無い。\n`
+      + `スクリプトの stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。\n\n`
+      + `## Output format\n`
+      + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
+      + `"waited_seconds": number, "poll_attempts": number }\n`
+      + `prose 禁止。JSON のみ返せ。\n\n`
+      + `## Token cap\n`
+      + `JSON のみ。1 行以内。`,
+      { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: 'ci-check-lite', phase: 'PR' },
+    )
+    if (ciLite != null && (ciLite.status === 'passed' || ciLite.status === 'no_checks')) {
+      const liteBody = `## pr-iterate lite review（issue #376）\n\n`
+        + `**decision**: ${reviewLite?.decision ?? 'n/a'}\n`
+        + `**CI**: ${ciLite.status}\n\n`
+        + `${reviewLite?.summary ?? ''}\n`
+      const postResultLite = await agent(
+        `## Objective\nPR #${pr.pr_number} に lite レビュー結果コメントを投稿する。\n\n`
+        + bodySaveInstr(liteBody, 'dev-flow', 'DEV_FLOW')
+        + `## Instructions\n`
+        + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
+        + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+        + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+        + `\n## Tools\n使用可: Bash, Write\n`
+        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+        + `\n## Token cap\n200 語以内で完結すること。`,
+        { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-review-lite', phase: 'PR' },
+      )
+      if (!postResultLite?.posted) {
+        log(`⚠️ post-review-lite の投稿に失敗しました（posted=${postResultLite?.posted ?? 'null'}）。ワークフローは継続します。`)
+      }
+      iterate = { status: 'lgtm', fixes_applied: 0 }
+      route = 'lite'
+      log(`lite 経路: clean review + CI ${ciLite.status} — lgtm 終端（フル pr-iterate 起動なし）`)
+    } else {
+      log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
+      iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+      route = 'full'
+    }
+  }
+} else {
+  iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+  route = 'full'
+}
 await clockProbe('iterate_end', 'PR')
 
 // pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある（issue #233）。
@@ -4120,6 +4297,9 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
     ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
     ...(state.vdeltaVerdicts.length ? { vdelta_verdicts: state.vdeltaVerdicts } : {}),
+    // route: PR phase 経路識別子（'lite'|'full'。issue #376 AC-5）。常時出力。journal whitelist
+    // 登録・dotfiles Stop hook への転送配線は別 issue に繰り延べる（vdelta_verdicts と同じ precedent）。
+    route,
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
   },
@@ -4153,6 +4333,7 @@ return {
   design_replan_count: state.designReplanCount,
   test_green: state.val?.green ?? null,
   iterate_status: iterate?.status ?? null,
+  route,
   shape: SHAPE,
   effective_shape: state.EFFECTIVE_SHAPE,
   shape_refloored: state.refloor.refloored,
