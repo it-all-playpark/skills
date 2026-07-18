@@ -415,3 +415,57 @@ Update dev-issue-analyze/scripts/analyze-issue.sh and dev-issue-analyze/scripts/
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.estimated_change_file_count == 2'
 }
+
+# ---------------------------------------------------------------------------
+# (x) Multi-line non-AC body over 4000 bytes must not SIGPIPE-kill the script
+#     via `extract_non_ac_body | head -c 4000` (PR #388 review finding,
+#     critical #1). Regression: with the pipe form, head -c's early exit after
+#     reading its byte quota SIGPIPEs the upstream printf writer under
+#     set -o pipefail, causing exit 141 with empty stdout instead of exit 0 +
+#     JSON. 200 lines x 30 chars (~6000 bytes incl. newlines) reproduces the
+#     multi-write pattern that a single large single-line body does not.
+# ---------------------------------------------------------------------------
+@test "contract mode: multi-line non-AC scope over 4000 bytes -> exit 0, eligible" {
+    LINES=""
+    for i in $(seq 1 200); do
+        LINES="${LINES}line-${i}-xxxxxxxxxxxxxxxxxxxx"$'\n'
+    done
+    BODY="## Acceptance Criteria
+
+- [ ] item one
+
+## Scope
+${LINES}"
+    FIXTURE="$FIXTURE_DIR/contract-large-scope.json"
+    make_fixture "$FIXTURE" "feat: large scope" "$BODY"
+    export GH_FIXTURE="$FIXTURE"
+    run "$SCRIPT" 27 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "t1" and .eligible == true'
+}
+
+# ---------------------------------------------------------------------------
+# (y) A `# comment`-style line inside a fenced code block within the AC
+#     section must not be mistaken for a markdown heading and prematurely
+#     terminate the AC section (PR #388 review finding, major #1/fence
+#     tracking). Without fence tracking, the fenced `# comment` line closes
+#     the AC section early and "item two" (after the fence) is silently
+#     dropped from acceptance_criteria.
+# ---------------------------------------------------------------------------
+@test "contract mode: '#' comment inside fenced code block in AC section does not truncate AC items" {
+    FIXTURE="$FIXTURE_DIR/contract-fence.json"
+    make_fixture "$FIXTURE" "feat: something with code fence" '## Acceptance Criteria
+
+- [ ] item one
+
+```
+# comment not a heading
+some code
+```
+
+- [ ] item two'
+    export GH_FIXTURE="$FIXTURE"
+    run "$SCRIPT" 28 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.acceptance_criteria == ["item one", "item two"]'
+}

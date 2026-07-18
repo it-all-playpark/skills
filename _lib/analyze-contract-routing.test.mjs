@@ -24,20 +24,23 @@ const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
-// ---- (a) label 'contract-probe#' と agentType 'dev-runner-haiku' が Analyze phase に存在 ----
+// ---- (a) label 'contract-probe#' と agentType 'dev-runner-haiku-ro' が Analyze phase に存在 ----
+// contract probe は read-only 決定論 proxy（Write/Edit 禁止を prompt 自身が宣言）のため、
+// AGENTS.md の exec-proxy 分離規約に従い dev-runner-haiku-ro（tools: [Bash, Read] のみ）を
+// 使用する（PR #388 review, major #2）。
 
 test("[analyze-contract-routing] (a) label 'contract-probe#' が dev-flow.js に存在する", () => {
   assert.ok(src.includes("'contract-probe#'"), "label 'contract-probe#' が見つからない");
 });
 
-test("[analyze-contract-routing] (a) 'contract-probe#' の agent() 呼び出しが agentType:'dev-runner-haiku' を使う", () => {
+test("[analyze-contract-routing] (a) 'contract-probe#' の agent() 呼び出しが agentType:'dev-runner-haiku-ro' を使う", () => {
   const idx = src.indexOf("'contract-probe#'");
   assert.ok(idx !== -1);
   const window = src.slice(Math.max(0, idx - 200), idx + 300);
   assert.match(
     window,
-    /agentType:\s*'dev-runner-haiku'/,
-    `'contract-probe#' 呼び出し周辺に agentType:'dev-runner-haiku' が見つからない。window: ${window}`,
+    /agentType:\s*'dev-runner-haiku-ro'/,
+    `'contract-probe#' 呼び出し周辺に agentType:'dev-runner-haiku-ro' が見つからない。window: ${window}`,
   );
 });
 

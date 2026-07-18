@@ -2799,7 +2799,7 @@ if (DEPTH === 'standard') {
   try {
     contractRes = await agent(
       contractProbePrompt,
-      { agentType: 'dev-runner-haiku', schema: CONTRACT, label: 'contract-probe#' + ISSUE, phase: 'Analyze' },
+      { agentType: 'dev-runner-haiku-ro', schema: CONTRACT, label: 'contract-probe#' + ISSUE, phase: 'Analyze' },
     )
   } catch (e) { log(`⚠️ analyze-contract 呼び出しが例外 — sonnet fallback（fail-open）`) }
   if (contractRes?.ok === true && contractRes.result) {

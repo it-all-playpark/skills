@@ -90,18 +90,31 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # returns true, so awk string-equality cannot be trusted for this comparison here.
 AC_HEADING_LINE_RE='^#{1,6}[[:space:]]+(acceptance criteria|受け入れ基準)[[:space:]]*[:：]?[[:space:]]*$'
 HEADING_LINE_RE='^#{1,6}[[:space:]]+'
+# Fenced code block delimiter: ``` or ~~~ (>=3 chars), optionally indented up to 3 spaces
+# per CommonMark. Used to toggle fence state so lines inside a fenced code block (e.g. a
+# `# comment` in a shell snippet) are never mistaken for markdown headings (issue #388 review).
+FENCE_LINE_RE='^[[:space:]]{0,3}(```+|~~~+)'
 
 is_ac_heading_line() { grep -qiE "$AC_HEADING_LINE_RE" <<<"$1"; }
 is_heading_line() { grep -qE "$HEADING_LINE_RE" <<<"$1"; }
+is_fence_line() { grep -qE "$FENCE_LINE_RE" <<<"$1"; }
 
 # Extracts the body lines that fall under the AC heading (heading line itself excluded,
 # section ends at the next heading of any level or EOF). Empty when no AC heading found.
+# Tracks fenced-code-block state so heading detection is skipped for lines inside a fence
+# (a `# comment` line inside a ```code block``` in the AC section must not be treated as a
+# heading and prematurely close the AC section).
 # NOTE: reads via a here-string / `read` loop (not a pipe) for the same SIGPIPE-safety
 # reason as breaking_keyword_scan above.
 extract_ac_section() {
-    local body="$1" skip=false line
+    local body="$1" skip=false in_fence=false line
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if is_heading_line "$line"; then
+        if is_fence_line "$line"; then
+            [[ "$in_fence" == true ]] && in_fence=false || in_fence=true
+            [[ "$skip" == true ]] && printf '%s\n' "$line"
+            continue
+        fi
+        if [[ "$in_fence" != true ]] && is_heading_line "$line"; then
             if is_ac_heading_line "$line"; then skip=true; else skip=false; fi
             continue
         fi
@@ -111,10 +124,17 @@ extract_ac_section() {
 }
 
 # Returns the body with the AC heading + its section removed (everything else preserved).
+# Same fence-tracking as extract_ac_section (issue #388 review).
 extract_non_ac_body() {
-    local body="$1" skip=false line
+    local body="$1" skip=false in_fence=false line
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if is_heading_line "$line"; then
+        if is_fence_line "$line"; then
+            [[ "$in_fence" == true ]] && in_fence=false || in_fence=true
+            [[ "$skip" == true ]] && continue
+            printf '%s\n' "$line"
+            continue
+        fi
+        if [[ "$in_fence" != true ]] && is_heading_line "$line"; then
             if is_ac_heading_line "$line"; then skip=true; continue; else skip=false; fi
         fi
         if [[ "$skip" == true ]]; then continue; fi
@@ -142,9 +162,13 @@ extract_contract_ac_items() {
 }
 
 run_contract_mode() {
-    local heading_found=false line
+    local heading_found=false in_fence=false line
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if is_heading_line "$line" && is_ac_heading_line "$line"; then
+        if is_fence_line "$line"; then
+            [[ "$in_fence" == true ]] && in_fence=false || in_fence=true
+            continue
+        fi
+        if [[ "$in_fence" != true ]] && is_heading_line "$line" && is_ac_heading_line "$line"; then
             heading_found=true
             break
         fi
@@ -211,8 +235,14 @@ run_contract_mode() {
         ineligible_reason="breaking_keyword_scan true"
     fi
 
-    local scope scope_files_count
-    scope="$(extract_non_ac_body "$BODY" | head -c 4000)"
+    local scope_full scope scope_files_count
+    # NOTE: no pipe into `head -c` here — for multi-line non-AC bodies over 4000 bytes,
+    # `head -c` early-exits after reading its byte quota and SIGPIPEs the upstream
+    # extract_non_ac_body writer (printf), which under set -o pipefail kills the whole
+    # script (exit 141) before the JSON is emitted, violating the "exit 0 + JSON" contract
+    # (issue #388 review). Capture full output first, then substring in bash (no pipe).
+    scope_full="$(extract_non_ac_body "$BODY")"
+    scope="${scope_full:0:4000}"
     scope_files_count=$({ grep -oE "[a-zA-Z0-9_/-]+\\.($FILE_EXT_PATTERN)" <<<"$scope" || true; } | sort -u | grep -c '^.' || true)
 
     local ac_items_json
