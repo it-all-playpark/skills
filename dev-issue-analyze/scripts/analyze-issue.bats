@@ -358,3 +358,60 @@ Just prose, no other files mentioned."
     [ "$status" -eq 0 ]
     echo "$output" | jq -e 'has("ineligible_reason")'
 }
+
+# ---------------------------------------------------------------------------
+# (u) AC heading match must be EXACT, not substring: a sibling heading whose
+#     text merely CONTAINS "受け入れ基準" (e.g. "受け入れ基準外") must NOT be
+#     treated as the AC heading (PR #388 review finding, major #1).
+# ---------------------------------------------------------------------------
+@test "contract mode: 受け入れ基準外 heading (substring, not AC) -> not eligible" {
+    FIXTURE="$FIXTURE_DIR/contract-ac-gaiku.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受け入れ基準外
+
+- this must not be treated as an AC item"
+    export GH_FIXTURE="$FIXTURE"
+    run "$SCRIPT" 24 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found"'
+}
+
+# ---------------------------------------------------------------------------
+# (v) A sibling heading that STARTS WITH the real AC heading text (e.g.
+#     "受け入れ基準の補足") must not merge its items into the real AC section
+#     (PR #388 review finding, major #1).
+# ---------------------------------------------------------------------------
+@test "contract mode: 受け入れ基準の補足 sibling heading does not merge into AC section" {
+    FIXTURE="$FIXTURE_DIR/contract-ac-hosoku.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受け入れ基準
+
+- [ ] real ac item
+
+## 受け入れ基準の補足
+
+- this must not merge into acceptance_criteria"
+    export GH_FIXTURE="$FIXTURE"
+    run "$SCRIPT" 25 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.acceptance_criteria == ["real ac item"]'
+}
+
+# ---------------------------------------------------------------------------
+# (w) File-extension whitelist must include shell/config extensions common in
+#     this repo (sh/bats/mjs/...), not just general source extensions, so a
+#     scope mentioning only .sh/.bats files still yields
+#     estimated_change_file_count instead of spuriously falling into
+#     classifyShape's complex floor (PR #388 review finding, major #2).
+# ---------------------------------------------------------------------------
+@test "contract mode: sh/bats-only scope -> estimated_change_file_count present" {
+    FIXTURE="$FIXTURE_DIR/contract-sh-scope.json"
+    make_fixture "$FIXTURE" "feat: touch shell files" "## Acceptance Criteria
+
+- [ ] done
+
+## Scope
+Update dev-issue-analyze/scripts/analyze-issue.sh and dev-issue-analyze/scripts/analyze-issue.bats."
+    export GH_FIXTURE="$FIXTURE"
+    run "$SCRIPT" 26 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.estimated_change_file_count == 2'
+}

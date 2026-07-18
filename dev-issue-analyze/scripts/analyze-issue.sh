@@ -9,6 +9,13 @@ source "$SCRIPT_DIR/../../_lib/common.sh"
 require_gh_auth
 require_cmd "jq" "jq is required for JSON parsing. Install: brew install jq"
 
+# Shared file-extension whitelist for affected-file scanning (contract-mode scope scan
+# and comprehensive-mode AFFECTED_FILES). Includes scripting/config extensions common in
+# this repo (sh/bats/mjs/json/...) in addition to general source extensions, so issues that
+# only mention shell/workflow/config files still yield a non-empty estimated_change_file_count
+# instead of spuriously triggering classifyShape's complex floor (issue #388 review).
+FILE_EXT_PATTERN='ts|tsx|js|jsx|mjs|cjs|py|go|rs|md|sh|bash|bats|json|yml|yaml|toml'
+
 ISSUE_NUMBER=""
 DEPTH="standard"
 CONTRACT_MODE=false
@@ -73,40 +80,47 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # Ineligible/unparseable => eligible:false + ineligible_reason (exit 0; caller falls back to
 # the existing sonnet(dev-runner) analyze path — this is a fail-open speed optimization only).
 
+# Line-anchored regex matching a markdown heading whose text (after optional trailing
+# ':'/'：') is EXACTLY "acceptance criteria" (case-insensitive) or "受け入れ基準" — not
+# a substring match, so sibling headings like "受け入れ基準外" or "受け入れ基準の補足"
+# do not match and their content is never folded into the AC section (issue #388 review).
+# NOTE: implemented with grep -E (not awk ==) — macOS's bundled awk (one true awk
+# 20200816) has a confirmed locale-dependent bug where `==` between two non-identical
+# multibyte Japanese strings (e.g. "受け入れ基準外" vs "受け入れ基準") spuriously
+# returns true, so awk string-equality cannot be trusted for this comparison here.
+AC_HEADING_LINE_RE='^#{1,6}[[:space:]]+(acceptance criteria|受け入れ基準)[[:space:]]*[:：]?[[:space:]]*$'
+HEADING_LINE_RE='^#{1,6}[[:space:]]+'
+
+is_ac_heading_line() { grep -qiE "$AC_HEADING_LINE_RE" <<<"$1"; }
+is_heading_line() { grep -qE "$HEADING_LINE_RE" <<<"$1"; }
+
 # Extracts the body lines that fall under the AC heading (heading line itself excluded,
 # section ends at the next heading of any level or EOF). Empty when no AC heading found.
-# NOTE: uses a here-string (not a pipe) for the same SIGPIPE-safety reason as
-# breaking_keyword_scan above.
+# NOTE: reads via a here-string / `read` loop (not a pipe) for the same SIGPIPE-safety
+# reason as breaking_keyword_scan above.
 extract_ac_section() {
-    awk '
-        BEGIN { skip=0 }
-        /^#{1,6}[ \t]+/ {
-            if (skip) { skip=0 }
-            low=tolower($0)
-            if (index(low, "acceptance criteria") > 0 || index($0, "受け入れ基準") > 0) {
-                skip=1
-            }
-            next
-        }
-        skip { print }
-    ' <<<"$1"
+    local body="$1" skip=false line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if is_heading_line "$line"; then
+            if is_ac_heading_line "$line"; then skip=true; else skip=false; fi
+            continue
+        fi
+        if [[ "$skip" == true ]]; then printf '%s\n' "$line"; fi
+    done <<<"$body"
+    return 0
 }
 
 # Returns the body with the AC heading + its section removed (everything else preserved).
 extract_non_ac_body() {
-    awk '
-        BEGIN { skip=0 }
-        /^#{1,6}[ \t]+/ {
-            if (skip) { skip=0 }
-            low=tolower($0)
-            if (index(low, "acceptance criteria") > 0 || index($0, "受け入れ基準") > 0) {
-                skip=1
-                next
-            }
-        }
-        skip { next }
-        { print }
-    ' <<<"$1"
+    local body="$1" skip=false line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if is_heading_line "$line"; then
+            if is_ac_heading_line "$line"; then skip=true; continue; else skip=false; fi
+        fi
+        if [[ "$skip" == true ]]; then continue; fi
+        printf '%s\n' "$line"
+    done <<<"$body"
+    return 0
 }
 
 # Extracts item text (marker stripped, blank lines dropped) from an AC section.
@@ -128,10 +142,13 @@ extract_contract_ac_items() {
 }
 
 run_contract_mode() {
-    local heading_found=false
-    if { grep -E '^#{1,6}[[:space:]]+' <<<"$BODY" || true; } | grep -qiE 'acceptance criteria|受け入れ基準'; then
-        heading_found=true
-    fi
+    local heading_found=false line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if is_heading_line "$line" && is_ac_heading_line "$line"; then
+            heading_found=true
+            break
+        fi
+    done <<<"$BODY"
 
     local contract="none" eligible=true ineligible_reason="" ac_items="" ac_section=""
 
@@ -196,7 +213,7 @@ run_contract_mode() {
 
     local scope scope_files_count
     scope="$(extract_non_ac_body "$BODY" | head -c 4000)"
-    scope_files_count=$({ grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' <<<"$scope" || true; } | sort -u | grep -c '^.' || true)
+    scope_files_count=$({ grep -oE "[a-zA-Z0-9_/-]+\\.($FILE_EXT_PATTERN)" <<<"$scope" || true; } | sort -u | grep -c '^.' || true)
 
     local ac_items_json
     ac_items_json=$(printf '%s\n' "$ac_items" | grep -v '^[[:space:]]*$' | head -20 | json_array || true)
@@ -279,7 +296,7 @@ fi
 
 # Comprehensive
 # NOTE: `|| true` for the same no-match reason as extract_ac above.
-AFFECTED_FILES=$({ grep -oE '[a-zA-Z0-9_/-]+\.(ts|tsx|js|jsx|py|go|rs|md)' <<<"$BODY" || true; } | sort -u | head -10 | json_array)
+AFFECTED_FILES=$({ grep -oE "[a-zA-Z0-9_/-]+\\.($FILE_EXT_PATTERN)" <<<"$BODY" || true; } | sort -u | head -10 | json_array)
 COMPONENTS=$({ grep -oE '\b[A-Z][a-zA-Z]+Component\b|\b[a-z]+Service\b' <<<"$BODY" || true; } | sort -u | head -10 | json_array)
 
 cat <<JSONEOF
