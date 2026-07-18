@@ -3035,7 +3035,7 @@ let state = {
   realizedNonEphemeral: null, realizedCount: NaN, refloor: null,
   EFFECTIVE_SHAPE: null, EVAL_PASSES: null, runEval: null,
   dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0,
-  unsatisfiedAc: false, evalDiffHash: null,
+  unsatisfiedAc: false, evalDiffHash: null, secDiffHash: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
@@ -3436,6 +3436,17 @@ async function execSecurityFloorPhase(state) {
   state.uiVerifyStatus = uiVerifyStatus
   state.undeclared = undeclared
   state.diffClassification = structOk ? { structural: struct.structural ?? [], format_only: struct.format_only } : null
+  // diff-hash reuse (issue #377): danger-grep が成功し realized-diff が取れた場合のみ、
+  // Merge tier での danger-grep-final/changed-files 再実行を tree OID 完全一致時に skip できる
+  // よう diff-hash を捕捉しておく。fail-open — need() で包まない。取得失敗時は null のまま
+  // Merge tier 側で必ず再実行させる（Security floor の fail-closed 性は変えない）。
+  if (risk.ok === true && Array.isArray(realized?.files)) {
+    const dh = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-secfloor', phase: 'Security floor' })
+    state.secDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
+    if (state.secDiffHash == null) log('⚠️ diff-hash-secfloor: hash 取得失敗 — Merge tier での再利用は skip（fail-open、danger-grep-final は再実行）')
+  } else {
+    state.secDiffHash = null
+  }
   return state
 }
 
@@ -4109,21 +4120,39 @@ await clockProbe('final_end', 'Final reconcile')
 // merge は全 tier 人間。AUTO は推奨ラベルのみ(真 auto-merge は W6 earned-autonomy)。
 // ============================================================
 phase('Merge tier')
-const riskFinal = need(await agent(
-  `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
-  + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-  + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
-  { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
-), 'Merge tier(danger-grep-final)')
+// diff-hash reuse (issue #377): Security floor 時点の tree OID（state.secDiffHash）と Merge tier
+// 冒頭の tree OID が完全一致するときのみ danger-grep-final/changed-files の再実行を skip し、
+// Security floor の risk/realized をそのまま再利用する。secDiffHash が null（Security floor
+// 側 fail-closed・取得失敗）のときは diff-hash-merge 自体を呼ばない（無駄な proxy を発行しない）。
+let riskFinal
+let changed
+let mergeDiffHash = null
+if (state.secDiffHash != null) {
+  const dh = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-merge', phase: 'Merge tier' })
+  mergeDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
+}
+const reuseSecFloor = state.secDiffHash != null && mergeDiffHash != null && state.secDiffHash === mergeDiffHash
+if (reuseSecFloor) {
+  log(`Merge tier: diff-hash 一致（${mergeDiffHash}）— Security floor の danger-grep/changed-files 結果を再利用（danger-grep-final/changed-files 再実行を skip）`)
+  riskFinal = state.risk
+  changed = { files: state.realized?.files ?? [] }
+} else {
+  riskFinal = need(await agent(
+    `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
+    + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
+    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+    { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
+  ), 'Merge tier(danger-grep-final)')
+  changed = need(await agent(
+    `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
+    + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+    { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
+  ), 'Merge tier(changed-files)')
+}
 const dangerHitsFinal = riskFinal.ok === true ? [...new Set(secHitsOf(riskFinal).map((h) => h.class))] : []
 const testsurfPatternsFinal = testsurfPatternsOf(riskFinal)
 const dangerFailClosedFinal = riskFinal.ok !== true
 if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${riskFinal.error ?? 'unknown'}) — merge tier を HOLD 強制`)
-const changed = need(await agent(
-  `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
-  + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
-  { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
-), 'Merge tier(changed-files)')
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
 const ledgerBeforeFinalReconcile = state.ledger

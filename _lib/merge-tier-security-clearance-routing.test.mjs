@@ -105,6 +105,11 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
+    // diff-hash-merge のみ別ハッシュを返す（issue #377 diff-hash reuse）。本 test はシナリオごとに
+    // Security floor（danger-grep）と Merge tier（danger-grep-final）で意図的に異なる応答を注入する
+    // ため、両段の diff-hash を同一にすると reuse が発火し danger-grep-final が呼ばれなくなって
+    // シナリオの前提（pre/final の乖離）が壊れる。
+    if (label === 'diff-hash-merge') return { hash: 'H_MERGE', empty: false };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     return null;
   };

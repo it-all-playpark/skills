@@ -127,6 +127,12 @@ function createResponder(overrides = {}) {
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/x.ts'] };
     if (label === 'changed-files-final') return { files: [] };
+    // diff-hash-merge のみ別ハッシュを返す（issue #377 diff-hash reuse）。この test 群は
+    // fixes_applied>0（Final reconcile で tree が変化）を想定しており、Security floor 時点
+    // (diff-hash-secfloor) と Merge tier 時点 (diff-hash-merge) のハッシュ不一致が意味的に正しい。
+    // 一致させると reuse が発火し、以下の danger-grep-final/changed-files 呼び出し assertion
+    // （特に case (h)）が成立しなくなる。
+    if (label === 'diff-hash-merge') return { hash: 'H_MERGE', empty: false };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
