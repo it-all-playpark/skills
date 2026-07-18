@@ -1159,6 +1159,61 @@ function refloorShape(estimatedShape, realizedCount) {
   };
 }
 // ==== END inline: _lib/triviality.mjs ====
+// ==== BEGIN inline: _lib/analyze-contract.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// _lib/analyze-contract.mjs
+// buildReqFromContract: dev-issue-analyze の `--contract` モード出力 (F1) から REQ 互換オブジェクトを
+// 決定論構成する純粋関数。dev-flow の Analyze phase が DEPTH==='standard' のときのみ試行する
+// 決定論 parse 降格経路 (issue #374) が使用する。whitelist 検証に 1 つでも不合格なら null を返し、
+// 呼び出し元は現行の sonnet(dev-runner) analyze へ fail-open fallback する。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+//
+// whitelist 検証項目（全て合格して初めて採用）:
+//   - contract が object（配列・null 除く）
+//   - contract.eligible === true
+//   - contract.contract が 't1' か 't2' のいずれか
+//   - contract.title が非空 string
+//   - contract.issue_type が feat/fix/docs/refactor のいずれか
+//   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
+//   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
+//   - contract.scope が string
+//
+// 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
+// `shape` キーは出力しない（classifyShape の複数 floor 安全則をそのまま働かせるため）。
+// estimated_change_file_count は正の整数として導出できたときのみキーを立てる（欠落時は
+// classifyShape の complex floor 安全則がそのまま働く）。
+function buildReqFromContract(contract, issueNumber) {
+  if (contract === null || typeof contract !== 'object' || Array.isArray(contract)) return null
+  if (contract.eligible !== true) return null
+  if (contract.contract !== 't1' && contract.contract !== 't2') return null
+  if (typeof contract.title !== 'string' || contract.title.length === 0) return null
+
+  const validTypes = ['feat', 'fix', 'docs', 'refactor']
+  if (!validTypes.includes(contract.issue_type)) return null
+
+  if (!Array.isArray(contract.acceptance_criteria) || contract.acceptance_criteria.length === 0) return null
+  if (!contract.acceptance_criteria.every((ac) => typeof ac === 'string' && ac.length > 0)) return null
+
+  if (contract.breaking_keyword_scan !== false) return null
+  if (typeof contract.scope !== 'string') return null
+
+  const req = {
+    summary: `Issue #${issueNumber}: ${contract.title}`,
+    issue_type: contract.issue_type,
+    acceptance_criteria: contract.acceptance_criteria.slice(0, 20),
+    scope: contract.scope,
+    breaking_change: false,
+    breaking_keyword_scan: false,
+    breaking_evidence: '',
+    ambiguities: [],
+  }
+  if (Number.isInteger(contract.estimated_change_file_count) && contract.estimated_change_file_count > 0) {
+    req.estimated_change_file_count = contract.estimated_change_file_count
+  }
+  return req
+}
+// ==== END inline: _lib/analyze-contract.mjs ====
 // ==== BEGIN inline: _lib/ui-verify.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // UI Verify: dev-flow の Evaluate phase に付随する agent-browser ベースの UI 検証ゲート向け純関数群。
 // isUiPath: 変更ファイルが UI 検証対象かを判定する。
@@ -2165,6 +2220,15 @@ const REQ = {
     breaking_evidence: { type: 'string' },
   },
 }
+const CONTRACT = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    result: { type: 'object' },
+    error: { type: 'string' },
+  },
+}
 const TASK = {
   type: 'object', required: ['id', 'desc'],
   properties: {
@@ -2706,15 +2770,56 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `さらに、skill の JSON 出力に含まれる breaking_keyword_scan (boolean) をそのまま verbatim で breaking_keyword_scan として返せ（全 depth の出力に含まれる。自分で再判定・変更するな）。`
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
 
+// contract probe prompt（issue #374）: DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。
+// dev-issue-analyze/scripts/analyze-issue.sh --contract の stdout JSON を verbatim 転写させるだけの
+// read-only exec-proxy（結果の判断は buildReqFromContract 側の whitelist 検証が担う）。
+const contractProbePrompt = `## Objective\n`
+  + `\`${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止`
+  + `（理由: 先頭トークン一致で sandbox 除外が外れ、script 内部の gh コマンドが失敗するため）。`
+  + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
+  + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
+  + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
+  + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
+  + `## Boundary\nファイルは一切変更しない（read-only probe）。\n`
+  + `## Token cap\n150 語以内で完結すること。`
+
 // ============================================================
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
 // ============================================================
 phase('Analyze')
 await clockProbe('analyze_start', 'Analyze')
-const req = need(await agent(
-  analyzePrompt(DEPTH),
-  { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
-), 'Analyze')
+// 決定論 parse 降格経路（issue #374）: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
+// analyze-issue.sh --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
+// fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ
+// フォールバックする（analyzePrompt・REQ・need()・needs_clarification 判定・classifyShape 呼び出しは不変）。
+let req = null
+if (DEPTH === 'standard') {
+  let contractRes = null
+  try {
+    contractRes = await agent(
+      contractProbePrompt,
+      { agentType: 'dev-runner-haiku', schema: CONTRACT, label: 'contract-probe#' + ISSUE, phase: 'Analyze' },
+    )
+  } catch (e) { log(`⚠️ analyze-contract 呼び出しが例外 — sonnet fallback（fail-open）`) }
+  if (contractRes?.ok === true && contractRes.result) {
+    const c = contractRes.result
+    req = buildReqFromContract(c, ISSUE)
+    if (req) {
+      log('analyze: 決定論 parse 採用（contract=' + c.contract + '）— sonnet analyze skip')
+    } else {
+      log('analyze: contract 非準拠（' + (c?.ineligible_reason || 'whitelist 検証不合格') + '）— sonnet fallback')
+    }
+  } else if (contractRes != null) {
+    log('⚠️ analyze-contract: probe ok!==true — sonnet fallback（fail-open）')
+  }
+}
+if (!req) {
+  req = need(await agent(
+    analyzePrompt(DEPTH),
+    { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
+  ), 'Analyze')
+}
 
 const ambiguities = req.ambiguities ?? []
 if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUITY_MAX) {

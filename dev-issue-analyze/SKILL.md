@@ -34,6 +34,34 @@ $SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth L
 title + body 全文、大文字小文字無視) が全 depth の JSON に含まれる。dev-flow の shape floor / merge tier HOLD の
 breaking 判定入力の一つ（`req.breaking_change`（LLM 構造化判定）との OR）として使われる決定論 floor。
 
+## Contract Mode (`--contract`)
+
+T1/T2 契約準拠 issue の決定論 parse。T1 = AC 見出し（`## 受け入れ基準` / `Acceptance Criteria` 等、h1〜h6）+
+checkbox 項目 1 件以上。T2 = 同見出し + 素の箇条書き（`- `/`* `/番号付き）1 件以上。
+
+出力 JSON:
+
+| Key | Description |
+|-----|-------------|
+| `contract` | `t1` / `t2` / `none` |
+| `eligible` | boolean |
+| `ineligible_reason` | 不合格理由（該当時のみ） |
+| `issue_number` | issue 番号 |
+| `title` | issue title |
+| `issue_type` | `feat`/`fix`/`docs`/`refactor`（title prefix → label fallback） |
+| `acceptance_criteria` | marker 除去済み、最大 20 件 |
+| `scope` | AC 節を除く body 全文 head -c 4000 |
+| `estimated_change_file_count` | スコープ節のファイルパス数。導出不能時はキー省略（dev-flow 側 classifyShape の complex floor 安全則がそのまま働く） |
+| `breaking_keyword_scan` | 決定論 keyword scan の結果 |
+
+**Eligibility**: `contract` ∈ `{t1, t2}` かつ `issue_type` ∈ `{feat, fix, docs, refactor}`（title prefix → label
+fallback。`chore:` 等 out-of-enum prefix は不合格）かつ title に `!` breaking marker なし かつ
+`breaking_keyword_scan === false`。不合格は exit 0 + `eligible:false`（dev-flow が sonnet analyze へ fallback）。
+
+**残余リスク**: light path（`--contract` 採用時）は LLM 構造化 breaking 判定を行わない。keyword hit 時は
+eligibility で sonnet へ回すため、残余は keyword を含まない実質 breaking issue のみで、事後の danger-grep on
+realized diff / merge tier が補償する（意図的な設計判断）。
+
 ## Output
 
 ```json
