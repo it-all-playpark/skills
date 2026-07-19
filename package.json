@@ -8,7 +8,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "vdelta": "^0.1.0",
+    "vdelta": "^0.2.0",
     "vitest": "^4"
   }
 }
