@@ -772,8 +772,8 @@ const summaryBody = buildTerminalSummaryBody({
   ciWaitSeconds: totalCiWaitSeconds,
   ciPollAttempts: totalCiPollAttempts,
 })
-const totalBlocking = history.flatMap((r) => r.blocking ?? []).length
-const termAction = terminalReviewAction({ status, lastDecision: lastReview?.decision ?? null, blockingCount: totalBlocking })
+const terminalBlockingCount = (history[history.length - 1]?.blocking ?? []).length
+const termAction = terminalReviewAction({ status, lastDecision: lastReview?.decision ?? null, blockingCount: terminalBlockingCount })
 
 if (POST_TERMINAL_SUMMARY) {
   let summaryInstructions
