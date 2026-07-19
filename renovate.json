@@ -6,7 +6,6 @@
     {
       "matchPackageNames": ["vdelta"],
       "rangeStrategy": "bump",
-      "matchUpdateTypes": ["major", "minor", "patch"],
       "automerge": true
     }
   ]
