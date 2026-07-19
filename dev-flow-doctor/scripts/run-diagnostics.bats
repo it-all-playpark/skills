@@ -412,3 +412,73 @@ EOF
     found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("bridge")))] | length')
     [ "$found" -ge 1 ]
 }
+
+# ---------------------------------------------------------------------------
+# vdelta_verdict distribution / vdelta_unhealthy anomaly (issue #367 F2)
+# ---------------------------------------------------------------------------
+
+@test "(17) AC-1: vdelta_verdicts corpus (real producer shape) -> distributions.vdelta_verdict に正しい件数が集計される" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{"repaired_with_test_change":["test/foo.test.js"]},"verification_surface":{"status":"intact"}}}]}' 2
+
+    run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local total clean abstain deny
+    total=$(printf '%s\n' "$output" | jq '.checks.dev_flow_telemetry.distributions.vdelta_verdict.total // -1')
+    [ "$total" -eq 3 ]
+    clean=$(printf '%s\n' "$output" | jq '.checks.dev_flow_telemetry.distributions.vdelta_verdict.clean // -1')
+    [ "$clean" -eq 1 ]
+    abstain=$(printf '%s\n' "$output" | jq '.checks.dev_flow_telemetry.distributions.vdelta_verdict.abstain // -1')
+    [ "$abstain" -eq 1 ]
+    deny=$(printf '%s\n' "$output" | jq '.checks.dev_flow_telemetry.distributions.vdelta_verdict.deny // -1')
+    [ "$deny" -eq 1 ]
+}
+
+@test "(18) AC-3: abstain+fail_open 率が閾値超・total>=vdelta_min_runs -> issues に vdelta warn + anomaly type vdelta_unhealthy severity warn" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 3
+    write_devflow_entry "e4.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":null}]}' 4
+    write_devflow_entry "e5.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}}]}' 5
+
+    run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    # dedicated case branch (not the generic "Anomaly detected: <type>" fallback):
+    # message must surface the computed rate (4/5 = 80%) and must NOT be the
+    # generic fallback text.
+    local found generic_found
+    found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("80%")) and (.message | test("vdelta")))] | length')
+    [ "$found" -ge 1 ]
+    generic_found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("Anomaly detected")) and (.message | test("vdelta_unhealthy")))] | length')
+    [ "$generic_found" -eq 0 ]
+
+    local anomaly_found
+    anomaly_found=$(printf '%s\n' "$output" | jq '[.checks.dev_flow_telemetry.anomalies[] | select(.type=="vdelta_unhealthy" and .severity=="warn")] | length')
+    [ "$anomaly_found" -ge 1 ]
+}
+
+@test "(19) AC-4 回帰: vdelta データ無し corpus -> vdelta_unhealthy は skipped で warn を出さずスコアに影響しない（既存 cap_pinned/micro_nonfiring 系と同型）" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"REVIEW","plan_iter":2,"eval_iter":10}' 1
+
+    run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    # cap_pinned warn は既存どおり出る（回帰確認）
+    local cap_found
+    cap_found=$(printf '%s\n' "$output" | jq '[.checks.dev_flow_telemetry.anomalies[] | select(.type=="cap_pinned" and .severity=="warn")] | length')
+    [ "$cap_found" -ge 1 ]
+
+    # vdelta_unhealthy は insufficient_data で skipped、warn は出ない
+    local vdelta_sev
+    vdelta_sev=$(printf '%s\n' "$output" | jq -r '[.checks.dev_flow_telemetry.anomalies[] | select(.type=="vdelta_unhealthy")][0].severity // "missing"')
+    [ "$vdelta_sev" = "skipped" ]
+
+    local vdelta_warn_found
+    vdelta_warn_found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("vdelta")))] | length')
+    [ "$vdelta_warn_found" -eq 0 ]
+}

@@ -484,6 +484,11 @@ run_telemetry_checks() {
       micro_nonfiring)
         msg="micro shape不発火 (${WINDOW}): run数は十分だが micro が0件"
         ;;
+      vdelta_unhealthy)
+        local rate_pct
+        rate_pct=$(echo "$anomaly" | jq -r '(.rate * 100 | round)')
+        msg="vdelta verdict 低情報率が高い (${WINDOW}): ${rate_pct}% が abstain+fail_open"
+        ;;
       *)
         msg="Anomaly detected (${WINDOW}): ${atype}"
         ;;

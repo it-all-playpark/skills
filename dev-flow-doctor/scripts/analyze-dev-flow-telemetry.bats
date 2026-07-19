@@ -872,3 +872,168 @@ EOF
     [ "$micro_min" -eq 180 ]
     [ "$micro_max" -eq 180 ]
 }
+
+# ---------------------------------------------------------------------------
+# Test 30: distributions.vdelta_verdict -- per-AC vdelta_verdicts[] items are
+#          flattened from DEVFLOW_ENTRIES and bucketed by category, using the
+#          REAL producer shape recorded by dev-flow.js (state.vdeltaVerdicts.
+#          push({ ac, verdict: rg.verdict }), where rg.verdict is the veridelta
+#          hook's raw JSON: {comparability, transitions, verification_surface}
+#          -- see _lib/redgreen-vdelta-deny-routing.test.mjs fixtures). This is
+#          NOT the {verdict:"improved"} shape dev-flow never generates.
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: counts clean/deny from real producer-shaped vdelta_verdicts[]" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"exact","transitions":{"repaired_with_test_change":["test/foo.test.js"]},"verification_surface":{"status":"intact"}}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    clean=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.clean')
+    deny=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.deny')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+
+    [ "$clean" -eq 1 ]
+    [ "$deny" -eq 1 ]
+    [ "$total" -eq 2 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 31: distributions.vdelta_verdict -- 0 vdelta_verdicts payload across
+#          the corpus is safe "no data" (all keys 0, total 0, exit 0, valid
+#          JSON), and the anomaly is severity=="skipped".
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: no vdelta_verdicts payload -> total 0, anomaly skipped" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+    clean=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.clean')
+    deny=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.deny')
+    abstain=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.abstain')
+    fail_open=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.fail_open')
+
+    [ "$total" -eq 0 ]
+    [ "$clean" -eq 0 ]
+    [ "$deny" -eq 0 ]
+    [ "$abstain" -eq 0 ]
+    [ "$fail_open" -eq 0 ]
+
+    severity=$(printf '%s\n' "$output" | jq -r '[.anomalies[] | select(.type=="vdelta_unhealthy")][0].severity')
+    [ "$severity" = "skipped" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 32: distributions.vdelta_verdict -- a same-window entry from a
+#          different skill (bug-hunt) containing the literal substrings
+#          "abstain" and "vdelta_verdict" (singular, not the real per-AC
+#          array key) must not be counted. Proves structured-key + skill-
+#          scoped parsing, not raw-text substring matching.
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: non-dev-flow skill entries with matching substrings are not counted" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+
+    cat > "${CLAUDE_JOURNAL_DIR}/bughunt-1.json" <<EOF
+{
+  "version": "1.0.0",
+  "id": "bughunt-1",
+  "timestamp": "${TS}",
+  "skill": "bug-hunt",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": { "note": "comparability result was abstain", "vdelta_verdict": "abstain-looking-string" }
+}
+EOF
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+    clean=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.clean')
+    abstain=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.abstain')
+
+    [ "$total" -eq 1 ]
+    [ "$clean" -eq 1 ]
+    [ "$abstain" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 33: vdelta_unhealthy anomaly -- total>=vdelta_min_runs(5) and
+#          (abstain+fail_open)/total (3/5=60%) exceeds threshold (0.50) ->
+#          severity warn.
+# ---------------------------------------------------------------------------
+@test "vdelta_unhealthy: 3/5 abstain (60%) with total>=min_runs -> anomaly warn" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-3","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-4","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-5","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    found=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="vdelta_unhealthy" and .severity=="warn")] | length')
+    [ "$found" -ge 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 34: vdelta_unhealthy anomaly -- total(3) < vdelta_min_runs(5) even
+#          though all 3 are low-info (abstain) -> severity skipped, no warn
+#          (minimum sample guard).
+# ---------------------------------------------------------------------------
+@test "vdelta_unhealthy: total below min_runs -> severity skipped, no warn" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-3","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    severity=$(printf '%s\n' "$output" | jq -r '[.anomalies[] | select(.type=="vdelta_unhealthy")][0].severity')
+    [ "$severity" = "skipped" ]
+
+    warn_count=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="vdelta_unhealthy" and .severity=="warn")] | length')
+    [ "$warn_count" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 35: distributions.vdelta_verdict -- category derivation fail_open path:
+#          an unparseable string verdict, and a verdict object missing
+#          .transitions entirely, both land in "fail_open" (no usable signal),
+#          matching _lib/vdelta-transitions.mjs's vdeltaDenies() fail_open
+#          branches exactly.
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: unparseable string and missing-transitions object both fail_open" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":"not-json-and-not-an-enum"},{"ac":"AC-2","verdict":{"comparability":"exact"}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    fail_open=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.fail_open')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+
+    [ "$fail_open" -eq 2 ]
+    [ "$total" -eq 2 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 36: distributions.vdelta_verdict -- deny path via verification_surface
+#          not "intact" (repaired_with_test_change absent), and a null verdict
+#          lands in fail_open (matches vdeltaDenies(null) -> fail_open).
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: verification_surface-not-intact denies, null verdict is fail_open" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"changed"}}},{"ac":"AC-2","verdict":null}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    deny=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.deny')
+    fail_open=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.fail_open')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+
+    [ "$deny" -eq 1 ]
+    [ "$fail_open" -eq 1 ]
+    [ "$total" -eq 2 ]
+}

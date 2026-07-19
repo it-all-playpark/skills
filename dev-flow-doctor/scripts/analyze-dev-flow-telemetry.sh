@@ -15,7 +15,14 @@
 #                     duration_seconds_by_shape (per-shape count/min/p50/mean/max
 #                       over .telemetry.duration_seconds, numeric values only;
 #                       denominator = .skill == "dev-flow" entries)
-#   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring
+#                     vdelta_verdict (clean/deny/abstain/fail_open counts --
+#                       mirrors _lib/vdelta-transitions.mjs vdeltaDenies()
+#                       status values, the only real producer semantics for
+#                       the raw veridelta verdict object -- flattened over
+#                       per-AC .telemetry.vdelta_verdicts[]; denominator =
+#                       .skill == "dev-flow" entries)
+#   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring /
+#                      vdelta_unhealthy
 #
 # Usage:
 #   analyze-dev-flow-telemetry.sh [--window <dur>] [--config <path>]
@@ -64,6 +71,10 @@ DEFAULT_ITERATE_UNHEALTHY_RATE="0.30"
 DEFAULT_ITERATE_MIN_RUNS="3"
 DEFAULT_MICRO_MIN_RUNS="10"
 DEFAULT_NESTED_JOIN_WINDOW_SECONDS="600"
+# placeholder — pending calibration (no real vdelta_verdicts corpus yet; see
+# issue Open Questions). Override via skill-config.json thresholds.
+DEFAULT_VDELTA_UNHEALTHY_RATE="0.50"
+DEFAULT_VDELTA_MIN_RUNS="5"
 
 load_config_field() {
   # $1 = jq path inside .["dev-flow-doctor"]
@@ -103,6 +114,9 @@ ITERATE_UNHEALTHY_RATE=$(load_config_field ".thresholds.iterate_unhealthy_rate" 
 ITERATE_MIN_RUNS=$(load_config_field ".thresholds.iterate_min_runs" "$DEFAULT_ITERATE_MIN_RUNS" | jq -r '.')
 MICRO_MIN_RUNS=$(load_config_field ".thresholds.micro_min_runs" "$DEFAULT_MICRO_MIN_RUNS" | jq -r '.')
 NESTED_JOIN_WINDOW_SECONDS=$(load_config_field ".thresholds.nested_join_window_seconds" "$DEFAULT_NESTED_JOIN_WINDOW_SECONDS" | jq -r '.')
+# placeholder — pending calibration (see DEFAULT_VDELTA_UNHEALTHY_RATE above).
+VDELTA_UNHEALTHY_RATE=$(load_config_field ".thresholds.vdelta_unhealthy_rate" "$DEFAULT_VDELTA_UNHEALTHY_RATE" | jq -r '.')
+VDELTA_MIN_RUNS=$(load_config_field ".thresholds.vdelta_min_runs" "$DEFAULT_VDELTA_MIN_RUNS" | jq -r '.')
 
 # ----------------------------------------------------------------------------
 # Window -> ISO since
@@ -273,6 +287,54 @@ DURATION_BY_SHAPE=$(echo "$DEVFLOW_ENTRIES" | jq -c '
   }
 ')
 
+# vdelta_verdict: flatten per-AC .telemetry.vdelta_verdicts[] items across
+# DEVFLOW_ENTRIES (already scoped to skill == "dev-flow" AND source == "skill",
+# so other-skill journal entries -- even ones containing substrings like
+# "inconclusive" or "vdelta_verdict" in unrelated fields -- can never leak in).
+# Parsing is structured-key only (no raw-text grep / substring matching).
+#
+# category derivation mirrors _lib/vdelta-transitions.mjs's vdeltaDenies()
+# EXACTLY, since that is the only real producer semantics for the raw
+# veridelta verdict recorded at telemetry.vdelta_verdicts[].verdict (dev-flow.js:
+# state.vdeltaVerdicts.push({ ac: acId, verdict: rg.verdict }), where rg.verdict
+# is the veridelta hook's raw JSON: {comparability, transitions,
+# verification_surface}). There is no "improved"/"unchanged"/"regressed"/
+# "inconclusive" schema anywhere in the codebase -- only vdeltaDenies()'s four
+# statuses:
+#   1. verdict null/undefined, or an unparseable string, or non-object/array
+#      after parsing, or .transitions non-object/array -> "fail_open" (no
+#      usable signal)
+#   2. .comparability != "exact" -> "abstain" (can't compare, e.g. parallel
+#      redgreen stream mix-in)
+#   3. otherwise: non-empty .transitions.repaired_with_test_change OR
+#      .verification_surface.status not "intact" -> "deny" (test-integrity
+#      concern detected)
+#   4. otherwise -> "clean" (verified genuine red->green, no integrity concern)
+VDELTA_VERDICT_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
+  def category:
+    (.verdict) as $v
+    | (if ($v | type) == "string" then ($v | try fromjson catch null) else $v end) as $p
+    | if ($p == null) then "fail_open"
+      elif (($p | type) != "object") then "fail_open"
+      elif (($p.transitions | type) != "object") then "fail_open"
+      elif ($p.comparability != "exact") then "abstain"
+      else
+        ( (($p.transitions.repaired_with_test_change // []) | type == "array"
+            and (($p.transitions.repaired_with_test_change // []) | length) > 0) as $repaired
+        | ($p.verification_surface.status // null) as $surface
+        | if $repaired or ($surface != null and $surface != "intact") then "deny" else "clean" end
+        )
+      end;
+  ([.[] | .telemetry.vdelta_verdicts[]? ] | map(category)) as $cats |
+  {
+    clean: ([$cats[] | select(. == "clean")] | length),
+    deny: ([$cats[] | select(. == "deny")] | length),
+    abstain: ([$cats[] | select(. == "abstain")] | length),
+    fail_open: ([$cats[] | select(. == "fail_open")] | length),
+    total: ($cats | length)
+  }
+')
+
 # ----------------------------------------------------------------------------
 # Nested run normalization
 #
@@ -384,6 +446,7 @@ DISTRIBUTIONS=$(jq -n \
   --argjson gate_policy "$GATE_POLICY_DIST" \
   --argjson iterate_status "$ITERATE_STATUS_DIST" \
   --argjson duration_seconds_by_shape "$DURATION_BY_SHAPE" \
+  --argjson vdelta_verdict "$VDELTA_VERDICT_DIST" \
   '{
     shape: $shape,
     merge_tier: $merge_tier,
@@ -391,7 +454,8 @@ DISTRIBUTIONS=$(jq -n \
     plan_iter: $plan_iter,
     gate_policy: $gate_policy,
     iterate_status: $iterate_status,
-    duration_seconds_by_shape: $duration_seconds_by_shape
+    duration_seconds_by_shape: $duration_seconds_by_shape,
+    vdelta_verdict: $vdelta_verdict
   }')
 
 # ----------------------------------------------------------------------------
@@ -480,11 +544,49 @@ else
   fi
 fi
 
+# (4) vdelta_unhealthy: (abstain + fail_open) rate over vdelta_verdict.total --
+#     i.e. the share of verdicts that carry no usable comparison signal
+#     (matches vdeltaDenies()'s low-info statuses; "deny"/"clean" are both
+#     informative and excluded) -- gated by vdelta_min_runs. Both thresholds
+#     are placeholder values pending real-corpus calibration (see
+#     DEFAULT_VDELTA_UNHEALTHY_RATE above). report-only -- does not gate
+#     blocking / veridelta itself / journal schema.
+VDELTA_UNHEALTHY=$(echo "$VDELTA_VERDICT_DIST" | jq -c \
+  --argjson rate_threshold "$VDELTA_UNHEALTHY_RATE" \
+  --argjson min_runs "$VDELTA_MIN_RUNS" \
+  '
+  (.total) as $total |
+  (.abstain + .fail_open) as $low_info |
+  if $total < $min_runs then
+    [{
+      type: "vdelta_unhealthy",
+      severity: "skipped",
+      reason: "insufficient_data",
+      detail: { total: $total, vdelta_min_runs: $min_runs }
+    }]
+  elif $total > 0 and (($low_info / $total) > $rate_threshold) then
+    [{
+      type: "vdelta_unhealthy",
+      severity: "warn",
+      rate: ($low_info / $total),
+      detail: {
+        total: $total,
+        abstain: .abstain,
+        fail_open: .fail_open,
+        low_info: $low_info,
+        threshold: $rate_threshold,
+        min_runs: $min_runs
+      }
+    }]
+  else [] end
+  ')
+
 ANOMALIES=$(jq -n \
   --argjson cap_pinned "$CAP_PINNED" \
   --argjson iterate_unhealthy "$ITERATE_UNHEALTHY" \
   --argjson micro_nonfiring "$MICRO_NONFIRING" \
-  '$cap_pinned + $iterate_unhealthy + $micro_nonfiring')
+  --argjson vdelta_unhealthy "$VDELTA_UNHEALTHY" \
+  '$cap_pinned + $iterate_unhealthy + $micro_nonfiring + $vdelta_unhealthy')
 
 # ----------------------------------------------------------------------------
 # Output
