@@ -8,11 +8,18 @@ setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     SCRIPT="$SKILLS_REPO/_shared/scripts/detect-and-install.sh"
     TMP_DIR="$(mktemp -d)"
+    # Isolate the cross-worktree shared cache (issue #387) to a directory
+    # under TMP_DIR by default, so tests never read from or write into the
+    # real $HOME/.cache/devflow-deps. Individual shared-cache tests below
+    # re-export DEVFLOW_DEPS_CACHE_DIR to their own TMP_DIR-scoped path,
+    # which simply overrides this default; both stay hermetic.
+    export DEVFLOW_DEPS_CACHE_DIR="$TMP_DIR/.default-shared-cache"
 }
 
 teardown() {
     chmod 644 "$TMP_DIR/package-lock.json" 2>/dev/null || true
     rm -rf "$TMP_DIR"
+    unset DEVFLOW_DEPS_CACHE_DIR
 }
 
 # Mirrors the sha256sum -> shasum -a 256 fallback used by hash_lockfile() in
