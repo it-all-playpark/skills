@@ -122,6 +122,8 @@ const READ_ONLY_LABELS = [
   'ui-verify-config-final',
   'diff-hash-eval',
   'diff-hash-pr',
+  'diff-hash-secfloor',
+  'diff-hash-merge',
   'changed-files',
   'changed-files-final',
   'ci-checks',
