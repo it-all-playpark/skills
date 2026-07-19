@@ -206,17 +206,40 @@ hash_lockfile() {
     fi
 }
 
-# Copy a directory tree, preferring a hardlink clone for speed (mirrors the
-# pnpm-store idea for node_modules) and falling back to a full copy on
-# platforms/filesystems where hardlinking isn't available (e.g. macOS `cp`
-# has no -l). -a/-R preserve symlinks (node_modules/.bin etc.) so the
-# restored tree stays functionally intact. Used by the cross-worktree
-# shared cache (issue #387). Returns 0 on the first successful strategy, 1
-# if all of them fail (caller fails open).
+# Copy a directory tree, preferring a copy-on-write (CoW) clone for speed
+# and falling back to a full (independent-inode) copy on platforms/
+# filesystems where CoW cloning isn't available. -a/-R preserve symlinks
+# (node_modules/.bin etc.) so the restored tree stays functionally intact.
+# Used by the cross-worktree shared cache (issue #387). Returns 0 on the
+# first successful strategy, 1 if all of them fail (caller fails open).
+#
+# Deliberately does NOT use `cp -al` (hardlink clone): measured on this
+# runtime (macOS 26.5, both BSD /bin/cp and GNU coreutils cp via nix
+# profile), `-l` succeeds and creates a real hardlink shared between the
+# source and destination inode — same as on Linux. Because node_modules is
+# restored into every fresh worktree from, and later populated into, the
+# single persistent shared cache dir, a hardlinked tree means any later
+# in-place rewrite of a file (truncate+write, which package managers and
+# build tools commonly do) in one worktree is immediately visible in every
+# sibling worktree and in the shared cache itself, breaking the worktree
+# isolation invariant. (A previous version of this comment claimed "macOS
+# cp has no -l" as the safety rationale for using -l here; that claim does
+# not hold on this runtime and is corrected above.)
+#
+# CoW cloning gives comparable copy speed to hardlinking without the
+# shared-inode hazard: `cp -c` uses APFS clonefile(2) on macOS (BSD cp),
+# `cp --reflink=auto` uses filesystem reflink on Linux (GNU coreutils,
+# e.g. btrfs/XFS) and transparently falls back to a real copy when the
+# filesystem doesn't support it (documented GNU behavior — never fails,
+# never links inodes). Either way, each clone gets independent
+# copy-on-write semantics: a later in-place write causes the OS to
+# transparently break the sharing for just that file, never mutating the
+# original.
 copy_tree() {
     local src="$1"
     local dst="$2"
-    cp -al "$src" "$dst" 2>/dev/null && return 0
+    cp -Rc "$src" "$dst" 2>/dev/null && return 0
+    cp -a --reflink=auto "$src" "$dst" 2>/dev/null && return 0
     cp -a "$src" "$dst" 2>/dev/null && return 0
     cp -R "$src" "$dst" 2>/dev/null && return 0
     return 1
