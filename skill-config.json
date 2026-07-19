@@ -38,7 +38,9 @@
       "plan_iter_cap": 8,
       "iterate_unhealthy_rate": 0.30,
       "iterate_min_runs": 3,
-      "micro_min_runs": 10
+      "micro_min_runs": 10,
+      "vdelta_unhealthy_rate": 0.5,
+      "vdelta_min_runs": 5
     },
     "baseline": {
       "default_path": ".claude/dev-flow-doctor-baseline-pre-79.json",

@@ -872,3 +872,167 @@ EOF
     [ "$micro_min" -eq 180 ]
     [ "$micro_max" -eq 180 ]
 }
+
+# ---------------------------------------------------------------------------
+# Test 30: distributions.vdelta_verdict -- per-AC vdelta_verdicts[] items are
+#          flattened from DEVFLOW_ENTRIES and bucketed by category (string
+#          verdict, or nested object's .verdict.verdict).
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: counts improved/inconclusive from vdelta_verdicts[]" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","verdict":"improved"}},{"ac":"AC-2","verdict":{"verdict":"inconclusive"}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    improved=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.improved')
+    inconclusive=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.inconclusive')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+
+    [ "$improved" -eq 1 ]
+    [ "$inconclusive" -eq 1 ]
+    [ "$total" -eq 2 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 31: distributions.vdelta_verdict -- 0 vdelta_verdicts payload across
+#          the corpus is safe "no data" (all keys 0, total 0, exit 0, valid
+#          JSON), and the anomaly is severity=="skipped".
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: no vdelta_verdicts payload -> total 0, anomaly skipped" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+    improved=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.improved')
+    unchanged=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.unchanged')
+    regressed=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.regressed')
+    inconclusive=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.inconclusive')
+    null_count=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict["null"]')
+    unknown=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.unknown')
+
+    [ "$total" -eq 0 ]
+    [ "$improved" -eq 0 ]
+    [ "$unchanged" -eq 0 ]
+    [ "$regressed" -eq 0 ]
+    [ "$inconclusive" -eq 0 ]
+    [ "$null_count" -eq 0 ]
+    [ "$unknown" -eq 0 ]
+
+    severity=$(printf '%s\n' "$output" | jq -r '[.anomalies[] | select(.type=="vdelta_unhealthy")][0].severity')
+    [ "$severity" = "skipped" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 32: distributions.vdelta_verdict -- a same-window entry from a
+#          different skill (bug-hunt) containing the literal substrings
+#          "inconclusive" and "vdelta_verdict" (singular, not the real
+#          per-AC array key) must not be counted. Proves structured-key +
+#          skill-scoped parsing, not raw-text substring matching.
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: non-dev-flow skill entries with matching substrings are not counted" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"verdict":"improved"}}]}' 1
+
+    cat > "${CLAUDE_JOURNAL_DIR}/bughunt-1.json" <<EOF
+{
+  "version": "1.0.0",
+  "id": "bughunt-1",
+  "timestamp": "${TS}",
+  "skill": "bug-hunt",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": { "note": "investigation result was inconclusive", "vdelta_verdict": "inconclusive-looking-string" }
+}
+EOF
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+    improved=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.improved')
+    inconclusive=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.inconclusive')
+
+    [ "$total" -eq 1 ]
+    [ "$improved" -eq 1 ]
+    [ "$inconclusive" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 33: vdelta_unhealthy anomaly -- total>=vdelta_min_runs(5) and
+#          (inconclusive+null)/total (3/5=60%) exceeds threshold (0.50) ->
+#          severity warn.
+# ---------------------------------------------------------------------------
+@test "vdelta_unhealthy: 3/5 inconclusive (60%) with total>=min_runs -> anomaly warn" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"verdict":"inconclusive"}},{"ac":"AC-2","verdict":{"verdict":"inconclusive"}},{"ac":"AC-3","verdict":{"verdict":"inconclusive"}},{"ac":"AC-4","verdict":{"verdict":"improved"}},{"ac":"AC-5","verdict":{"verdict":"improved"}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    found=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="vdelta_unhealthy" and .severity=="warn")] | length')
+    [ "$found" -ge 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 34: vdelta_unhealthy anomaly -- total(3) < vdelta_min_runs(5) even
+#          though all 3 are low-info (inconclusive) -> severity skipped, no
+#          warn (minimum sample guard).
+# ---------------------------------------------------------------------------
+@test "vdelta_unhealthy: total below min_runs -> severity skipped, no warn" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"verdict":"inconclusive"}},{"ac":"AC-2","verdict":{"verdict":"inconclusive"}},{"ac":"AC-3","verdict":{"verdict":"inconclusive"}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    severity=$(printf '%s\n' "$output" | jq -r '[.anomalies[] | select(.type=="vdelta_unhealthy")][0].severity')
+    [ "$severity" = "skipped" ]
+
+    warn_count=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="vdelta_unhealthy" and .severity=="warn")] | length')
+    [ "$warn_count" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 35: distributions.vdelta_verdict -- category derivation: a bare string
+#          verdict ("regressed") is counted directly; a verdict object with
+#          no inner .verdict field (e.g. only .transitions) is counted as
+#          "null" (low-info).
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: bare string verdict and verdict-object-without-inner-verdict" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":"regressed"},{"ac":"AC-2","verdict":{"transitions":["red","green"]}}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    regressed=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.regressed')
+    null_count=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict["null"]')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+
+    [ "$regressed" -eq 1 ]
+    [ "$null_count" -eq 1 ]
+    [ "$total" -eq 2 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 36: distributions.vdelta_verdict -- an out-of-enum verdict value lands
+#          in the unknown bucket (same convention as shape/merge_tier/
+#          gate_policy/iterate_status).
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: out-of-enum verdict lands in unknown" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":"weird_value"}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    unknown=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.unknown')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+
+    [ "$unknown" -eq 1 ]
+    [ "$total" -eq 1 ]
+}
