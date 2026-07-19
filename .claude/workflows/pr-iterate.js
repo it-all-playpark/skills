@@ -101,6 +101,7 @@ function repoFromGithubUrl(url) {
 
 // args 正規化: 単体 /pr-iterate <pr> でも dev-flow からの workflow('pr-iterate', {pr}) でも受ける
 const PR = resolvePositiveIntArg(args, 'pr')
+const POST_TERMINAL_SUMMARY = args?.post_terminal_summary !== false
 const MAX = args?.max_iterations == null
   ? 10
   : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
@@ -233,8 +234,9 @@ function mdCell(v) {
 // ==== END inline: _lib/md-cell.mjs ====
 
 // ==== BEGIN inline: _lib/pr-comment-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// buildReviewCommentBody / buildTerminalSummaryBody: pr-iterate の per-round
-// レビューコメントおよび終端サマリー markdown を生成する純粋関数。
+// buildTerminalSummaryBody / terminalReviewAction: pr-iterate の終端サマリー
+// markdown 生成、および終端 review action（approve/request-changes/comment）
+// を決定する純粋関数。
 // I/O なし、gh なし、Date.now() 非決定性なし。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -273,64 +275,6 @@ function formatFindingsList(list, { withIter = false } = {}) {
     idx++;
   }
   return out;
-}
-
-/**
- * per-round レビューコメント markdown を生成する。
- * @param {object} opts
- * @param {number|string} opts.pr - PR 番号
- * @param {number} opts.iteration - 反復回数
- * @param {string} opts.decision - 'approve' | 'request-changes' | 'comment'
- * @param {Array} opts.blocking - blocking finding の配列
- * @param {Array} [opts.minor] - minor finding の配列（fix loop 対象外・参考表示のみ、任意）
- * @param {string} [opts.summary] - 結論 1-2 文（任意）
- * @param {string[]} [opts.verificationEvidence] - 検証根拠リスト（任意）
- * @returns {string}
- */
-function buildReviewCommentBody({ pr, iteration, decision, blocking, minor, summary, verificationEvidence }) {
-  const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
-  const label = DECISION_LABEL[decision] ?? decision;
-  const emoji = DECISION_EMOJI[decision] ?? '';
-  const lines = [];
-
-  lines.push(`## PR #${pr} — レビュー結果 (iteration ${iteration})`);
-  lines.push('');
-
-  const blockingList = blocking || [];
-  if (blockingList.length === 0) {
-    lines.push(`**判定**: ${emoji} ${label} — ✅ 要修正（blocking）の指摘なし`);
-  } else {
-    const c = blockingList.filter((f) => f.severity === 'critical').length;
-    const m = blockingList.filter((f) => f.severity === 'major').length;
-    lines.push(`**判定**: ${emoji} ${label} — 要修正（blocking）${blockingList.length} 件（critical ${c} / major ${m}）`);
-    lines.push('');
-    lines.push(...formatFindingsList(blockingList));
-  }
-
-  const minorList = minor || [];
-  if (minorList.length > 0) {
-    lines.push('');
-    lines.push(`**軽微な指摘（minor、自動修正対象外・参考）**: ${minorList.length} 件`);
-    lines.push('');
-    lines.push('<details><summary>詳細を表示</summary>');
-    lines.push('');
-    lines.push(...formatFindingsList(minorList));
-    lines.push('');
-    lines.push('</details>');
-  }
-
-  if (summary != null && summary !== '') {
-    lines.push('');
-    lines.push(`**総評**: ${summary}`);
-  }
-  const evList = verificationEvidence || [];
-  if (evList.length > 0) {
-    lines.push('');
-    lines.push('**検証根拠**:');
-    for (const e of evList) lines.push(`- ${mdCell(e)}`);
-  }
-
-  return lines.join('\n');
 }
 
 const STATUS_HEADLINE = {
@@ -433,6 +377,20 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   lines.push(`<!-- pr-iterate:${status}:${iterations} -->`);
 
   return lines.join('\n');
+}
+
+/**
+ * 終端レビューアクションを決定する純粋関数（AC-2）。
+ * @param {object} opts
+ * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'
+ * @param {string|null} opts.lastDecision - 'approve'|'request-changes'|'comment'|null
+ * @param {number} opts.blockingCount - 終端時点の blocking finding 総数
+ * @returns {'approve'|'request-changes'|'comment'}
+ */
+function terminalReviewAction({ status, lastDecision, blockingCount }) {
+  if (status === 'lgtm' && lastDecision === 'approve') return 'approve';
+  if (blockingCount > 0 && lastDecision === 'request-changes') return 'request-changes';
+  return 'comment';
 }
 // ==== END inline: _lib/pr-comment-format.mjs ====
 
@@ -631,23 +589,6 @@ for (i = 1; i <= MAX; i++) {
 
       history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor })
 
-      const mismatchBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking: outcome.blocking, minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
-      const mismatchPost = await agent(
-        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}、review contract mismatch）。\n\n`
-        + bodySaveInstr(mismatchBody, 'pr-iterate', 'PR_ITERATE')
-        + `## Instructions\n`
-        + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
-        + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-        + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-        + `\n## Tools\n使用可: Bash, Write\n`
-        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-        + `\n## Token cap\n200 語以内で完結すること。`,
-        { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
-      )
-      if (!mismatchPost?.posted) {
-        log(`⚠️ post-review#${i} (review-contract-error) の投稿に失敗しました（posted=${mismatchPost?.posted ?? 'null'}）。ワークフローは継続します。`)
-      }
       break
     }
   }
@@ -702,48 +643,6 @@ for (i = 1; i <= MAX; i++) {
       // lgtm 確定ラウンドの history を記録（blocking なし、minor は保持）
       history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor })
 
-      // per-round 投稿: approve のみ self-PR 検出 + --approve フォールバック経路（AC-6 byte 不変）。
-      // comment/request-changes（blocking 0 件で CI gate へ統合されたケース）は plain gh pr comment（approve 捏造禁止）。
-      const approveBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking: [], minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
-      let approvePost
-      if (effReview.decision === 'approve') {
-        approvePost = await agent(
-          `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: approve）。\n\n`
-          + bodySaveInstr(approveBody, 'pr-iterate', 'PR_ITERATE')
-          + `## Instructions\n`
-          + `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
-          + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
-          + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
-          + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
-          + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file <BODY_FILE>\` を試みる。\n`
-          + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
-          + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-          + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
-          + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-          + `\n## Tools\n使用可: Bash, Write\n`
-          + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-          + `\n## Token cap\n200 語以内で完結すること。`,
-          { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
-        )
-      } else {
-        approvePost = await agent(
-          `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}、CI gate passed）。\n\n`
-          + bodySaveInstr(approveBody, 'pr-iterate', 'PR_ITERATE')
-          + `## Instructions\n`
-          + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
-          + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-          + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-          + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-          + `\n## Tools\n使用可: Bash, Write\n`
-          + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-          + `\n## Token cap\n200 語以内で完結すること。`,
-          { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
-        )
-      }
-      if (!approvePost?.posted) {
-        log(`⚠️ post-review#${i} (${effReview.decision}) の投稿に失敗しました（posted=${approvePost?.posted ?? 'null'}）。ワークフローは継続します。`)
-      }
-
       break
     } else if (ci.status === 'error') {
       // Real gh API error (auth failure, network error, etc.) — do not misinterpret as CI failure.
@@ -784,26 +683,6 @@ for (i = 1; i <= MAX; i++) {
       // CI-failed ラウンドの history 記録（blocking は synthetic CI findings、minor は保持）
       const ciRound = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor }
       history.push(ciRound)
-
-      // per-round 投稿: CI failed。decision が approve でも CI red のため gh pr review --approve は使わず
-      // plain な gh pr comment で情報提供のみ行う
-      const ciRoundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking: ciFindings, minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
-      const ciRoundPost = await agent(
-        `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}、CI failed）。\n\n`
-        + bodySaveInstr(ciRoundBody, 'pr-iterate', 'PR_ITERATE')
-        + `## Instructions\n`
-        + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
-        + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-        + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-        + `\n## Tools\n使用可: Bash, Write\n`
-        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-        + `\n## Token cap\n200 語以内で完結すること。`,
-        { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
-      )
-      if (!ciRoundPost?.posted) {
-        log(`⚠️ post-review#${i} (ci-failed) の投稿に失敗しました（posted=${ciRoundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
-      }
 
       if (ciStuckTopics.length) {
         terminal = 'stuck'
@@ -846,32 +725,6 @@ for (i = 1; i <= MAX; i++) {
     // history に記録（blocking findings と minor を含む）
     const round = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor }
     history.push(round)
-
-    // per-round 投稿: request-changes または comment
-    const roundBody = buildReviewCommentBody({ pr: PR, iteration: i, decision: effReview.decision, blocking, minor: outcome.minor, summary: effReview.summary, verificationEvidence: effReview.verification_evidence })
-    const roundPost = await agent(
-      `## Objective\nPR #${PR} に pr-iterate のレビュー結果コメントを投稿する（iteration ${i}、判定: ${effReview.decision}）。\n\n`
-      + bodySaveInstr(roundBody, 'pr-iterate', 'PR_ITERATE')
-      + `## Instructions\n`
-      + (effReview.decision === 'request-changes'
-        ? `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
-          + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
-          + `2. 自分自身の PR である場合（または --request-changes が "Can not request changes on your own pull request" エラーになる場合）は、\n`
-          + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
-          + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file <BODY_FILE>\` を試みる。\n`
-          + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
-        : `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr review ${PR} --comment --body-file <BODY_FILE>\`\n`)
-      + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-      + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-      + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-      + `\n## Tools\n使用可: Bash, Write\n`
-      + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-      + `\n## Token cap\n200 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-review#${i}`, phase: 'Iterate' },
-    )
-    if (!roundPost?.posted) {
-      log(`⚠️ post-review#${i} (${effReview.decision}) の投稿に失敗しました（posted=${roundPost?.posted ?? 'null'}）。ワークフローは継続します。`)
-    }
 
     // stuck: 同一 topic が REVIEW_STUCK 回繰り返した = fix が刺さっていない。relax せず人間へエスカレーション。
     if (stuckTopics.length) {
@@ -919,21 +772,49 @@ const summaryBody = buildTerminalSummaryBody({
   ciWaitSeconds: totalCiWaitSeconds,
   ciPollAttempts: totalCiPollAttempts,
 })
-const summaryPost = await agent(
-  `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n\n`
-  + bodySaveInstr(summaryBody, 'pr-iterate', 'PR_ITERATE')
-  + `## Instructions\n`
-  + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
-  + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-  + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-  + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-  + `\n## Tools\n使用可: Bash, Write\n`
-  + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-  + `\n## Token cap\n200 語以内で完結すること。`,
-  { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-summary`, phase: 'Iterate' },
-)
-if (!summaryPost?.posted) {
-  log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+const terminalBlockingCount = (history[history.length - 1]?.blocking ?? []).length
+const termAction = terminalReviewAction({ status, lastDecision: lastReview?.decision ?? null, blockingCount: terminalBlockingCount })
+
+if (POST_TERMINAL_SUMMARY) {
+  let summaryInstructions
+  if (termAction === 'approve') {
+    summaryInstructions = `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
+      + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
+      + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
+      + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
+      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file <BODY_FILE>\` を試みる。\n`
+      + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
+      + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+      + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
+  } else if (termAction === 'request-changes') {
+    summaryInstructions = `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
+      + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
+      + `2. 自分自身の PR である場合（または --request-changes が "Can not request changes on your own pull request" エラーになる場合）は、\n`
+      + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
+      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file <BODY_FILE>\` を試みる。\n`
+      + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
+      + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+      + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
+  } else {
+    summaryInstructions = `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
+      + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+      + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+  }
+
+  const summaryPost = await agent(
+    `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}、action: ${termAction}）。\n\n`
+    + bodySaveInstr(summaryBody, 'pr-iterate', 'PR_ITERATE')
+    + `## Instructions\n`
+    + summaryInstructions
+    + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+    + `\n## Tools\n使用可: Bash, Write\n`
+    + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+    + `\n## Token cap\n200 語以内で完結すること。`,
+    { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: `post-summary`, phase: 'Iterate' },
+  )
+  if (!summaryPost?.posted) {
+    log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
+  }
 }
 
 const telemetryHandoff = buildJournalHandoffPayload({

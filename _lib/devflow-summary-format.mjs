@@ -32,6 +32,7 @@
  * @param {boolean|null|undefined} opts.finalTestGreen - Final reconcile 時の test green フラグ（issue #320）
  * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
  * @param {string|null|undefined} opts.finalAcReconcile - Final AC reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #331）
+ * @param {{decision:string|null, ci:string, summary:string|null}|null|undefined} [opts.liteReview] - dev-flow lite 経路の pr-review-lite 結果。非 null の場合のみ「lite レビュー」セクションを描画する（issue #392 AC-6）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -57,6 +58,7 @@ export function buildDevflowSummaryBody({
   finalTestGreen,
   finalUiVerify,
   finalAcReconcile,
+  liteReview,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -412,6 +414,21 @@ export function buildDevflowSummaryBody({
       }
       lines.push('');
       lines.push('</details>');
+    }
+  }
+
+  // 8b. lite レビュー統合セクション（issue #392 AC-6）
+  // liteReview が非 null の場合のみ描画する。既存の post-review-lite が独立コメントで
+  // 出していた decision / CI status / summary を dev-flow 終端サマリーへ統合する。
+  // null/undefined 時は 1 行も追加せず既存出力と byte 一致を維持する（回帰保証）。
+  if (liteReview != null) {
+    lines.push('');
+    lines.push('### lite レビュー（pr-iterate 起動なし）');
+    lines.push('');
+    lines.push(`- **decision**: ${liteReview.decision ?? 'n/a'}`);
+    lines.push(`- **CI**: ${liteReview.ci}`);
+    if (liteReview.summary != null && liteReview.summary !== '') {
+      lines.push(`- **総評**: ${mdCell(liteReview.summary)}`);
     }
   }
 

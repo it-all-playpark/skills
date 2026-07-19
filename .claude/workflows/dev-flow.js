@@ -1536,6 +1536,7 @@ function mdCell(v) {
  * @param {boolean|null|undefined} opts.finalTestGreen - Final reconcile 時の test green フラグ（issue #320）
  * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
  * @param {string|null|undefined} opts.finalAcReconcile - Final AC reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #331）
+ * @param {{decision:string|null, ci:string, summary:string|null}|null|undefined} [opts.liteReview] - dev-flow lite 経路の pr-review-lite 結果。非 null の場合のみ「lite レビュー」セクションを描画する（issue #392 AC-6）
  * @returns {string}
  */
 function buildDevflowSummaryBody({
@@ -1561,6 +1562,7 @@ function buildDevflowSummaryBody({
   finalTestGreen,
   finalUiVerify,
   finalAcReconcile,
+  liteReview,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -1916,6 +1918,21 @@ function buildDevflowSummaryBody({
       }
       lines.push('');
       lines.push('</details>');
+    }
+  }
+
+  // 8b. lite レビュー統合セクション（issue #392 AC-6）
+  // liteReview が非 null の場合のみ描画する。既存の post-review-lite が独立コメントで
+  // 出していた decision / CI status / summary を dev-flow 終端サマリーへ統合する。
+  // null/undefined 時は 1 行も追加せず既存出力と byte 一致を維持する（回帰保証）。
+  if (liteReview != null) {
+    lines.push('');
+    lines.push('### lite レビュー（pr-iterate 起動なし）');
+    lines.push('');
+    lines.push(`- **decision**: ${liteReview.decision ?? 'n/a'}`);
+    lines.push(`- **CI**: ${liteReview.ci}`);
+    if (liteReview.summary != null && liteReview.summary !== '') {
+      lines.push(`- **総評**: ${mdCell(liteReview.summary)}`);
     }
   }
 
@@ -3956,7 +3973,7 @@ if (LITE) {
   const liteOutcome = classifyLiteReview(reviewLite)
   if (liteOutcome.escalate) {
     log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
-    iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+    iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
     route = 'full'
   } else {
     const ciLite = await agent(
@@ -3988,37 +4005,18 @@ if (LITE) {
       { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: 'ci-check-lite', phase: 'PR' },
     )
     if (ciLite != null && (ciLite.status === 'passed' || ciLite.status === 'no_checks')) {
-      const liteBody = `## pr-iterate lite review（issue #376）\n\n`
-        + `**decision**: ${reviewLite?.decision ?? 'n/a'}\n`
-        + `**CI**: ${ciLite.status}\n\n`
-        + `${reviewLite?.summary ?? ''}\n`
-      const postResultLite = await agent(
-        `## Objective\nPR #${pr.pr_number} に lite レビュー結果コメントを投稿する。\n\n`
-        + bodySaveInstr(liteBody, 'dev-flow', 'DEV_FLOW')
-        + `## Instructions\n`
-        + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
-        + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-        + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-        + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-        + `\n## Tools\n使用可: Bash, Write\n`
-        + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-        + `\n## Token cap\n200 語以内で完結すること。`,
-        { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-review-lite', phase: 'PR' },
-      )
-      if (!postResultLite?.posted) {
-        log(`⚠️ post-review-lite の投稿に失敗しました（posted=${postResultLite?.posted ?? 'null'}）。ワークフローは継続します。`)
-      }
+      state.liteReview = { decision: reviewLite?.decision ?? null, ci: ciLite.status, summary: reviewLite?.summary ?? null }
       iterate = { status: 'lgtm', fixes_applied: 0 }
       route = 'lite'
       log(`lite 経路: clean review + CI ${ciLite.status} — lgtm 終端（フル pr-iterate 起動なし）`)
     } else {
       log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
-      iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+      iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
       route = 'full'
     }
   }
 } else {
-  iterate = await workflow('pr-iterate', { pr: pr.pr_number })
+  iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
   route = 'full'
 }
 await clockProbe('iterate_end', 'PR')
@@ -4318,6 +4316,7 @@ const summaryBody = buildDevflowSummaryBody({
   finalTestGreen,
   finalUiVerify: finalUiVerifyStatus,
   finalAcReconcile,
+  liteReview: state.liteReview ?? null,
 })
 const summaryPost = await agent(
   `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`

@@ -1465,3 +1465,64 @@ test('決定性: TESTSURF 込み入力でも 2回呼んで byte 完全一致', (
   const body2 = buildDevflowSummaryBody(input);
   assert.equal(body1, body2, 'TESTSURF 込みでも byte 完全一致');
 });
+
+// ─── liteReview 統合表示 (issue #392 AC-6) ───────────────────────────────────
+
+test('liteReview あり -> 「### lite レビュー（pr-iterate 起動なし）」セクションに decision / CI / 総評を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    liteReview: { decision: 'lgtm', ci: 'passed', summary: 'looks good, no blocking findings' },
+  });
+  assert.ok(body.includes('### lite レビュー（pr-iterate 起動なし）'), 'lite レビュー見出しを含む');
+  assert.ok(body.includes('- **decision**: lgtm'), 'decision 行を含む');
+  assert.ok(body.includes('- **CI**: passed'), 'CI 行を含む');
+  assert.ok(body.includes('- **総評**: looks good, no blocking findings'), '総評行を含む');
+});
+
+test('liteReview.decision=null -> decision セルが「n/a」で表示される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    liteReview: { decision: null, ci: 'pending', summary: null },
+  });
+  assert.ok(body.includes('- **decision**: n/a'), 'decision n/a を含む');
+  assert.ok(body.includes('- **CI**: pending'), 'CI 行を含む');
+  assert.ok(!body.includes('- **総評**:'), 'summary null 時は総評行を出さない');
+});
+
+test('liteReview.summary が空文字 -> 総評行を出さない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    liteReview: { decision: 'lgtm', ci: 'passed', summary: '' },
+  });
+  assert.ok(!body.includes('- **総評**:'), 'summary 空文字時は総評行を出さない');
+});
+
+test('liteReview.summary に | と改行を含む -> mdCell でエスケープされる', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    liteReview: { decision: 'lgtm', ci: 'passed', summary: 'summary with | pipe\nand newline' },
+  });
+  assert.ok(body.includes('summary with \\| pipe<br>and newline'), 'summary が mdCell でエスケープされる');
+});
+
+test('liteReview=null -> 「lite レビュー」セクションを一切含まず、liteReview 省略時と byte 完全一致する（回帰保証）', () => {
+  const withNull = buildDevflowSummaryBody({ ...BASE_INPUT, liteReview: null });
+  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
+  assert.ok(!withNull.includes('lite レビュー'), 'liteReview=null 時は lite レビューセクションを含まない');
+  assert.equal(withNull, omitted, 'liteReview=null は省略時と byte 完全一致');
+});
+
+test('liteReview=undefined -> 「lite レビュー」セクションを一切含まない', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, liteReview: undefined });
+  assert.ok(!body.includes('lite レビュー'), 'liteReview=undefined 時は lite レビューセクションを含まない');
+});
+
+test('決定性: liteReview 込み入力でも 2回呼んで byte 完全一致', () => {
+  const input = {
+    ...BASE_INPUT,
+    liteReview: { decision: 'lgtm', ci: 'passed', summary: 'all good' },
+  };
+  const body1 = buildDevflowSummaryBody(input);
+  const body2 = buildDevflowSummaryBody(input);
+  assert.equal(body1, body2, 'liteReview 込みでも byte 完全一致');
+});
