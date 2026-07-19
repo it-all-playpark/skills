@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-inc-ui-failed-open-10",
+  "timestamp": "2026-01-19T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_staleness": "none",
+    "final_reconcile": "skipped",
+    "ui_verify": "failed_open"
+  }
+}

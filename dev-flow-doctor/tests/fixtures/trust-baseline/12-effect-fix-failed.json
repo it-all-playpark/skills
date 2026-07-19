@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-effect-fix-failed-12",
+  "timestamp": "2026-01-21T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "iterate_status": "fix_failed"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-normal-01",
+  "timestamp": "2026-01-10T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "shape": "standard",
+    "merge_tier": "REVIEW",
+    "eval_verdict": "pass",
+    "final_ac_reconcile": "reverified",
+    "testsurf_hits": [],
+    "eval_staleness": "none",
+    "final_reconcile": "reverified",
+    "vdelta_fail_open": 0,
+    "ui_verify": "passed",
+    "iterate_status": "lgtm"
+  }
+}

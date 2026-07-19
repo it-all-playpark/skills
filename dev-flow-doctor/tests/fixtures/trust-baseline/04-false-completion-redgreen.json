@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-fc-redgreen-04",
+  "timestamp": "2026-01-13T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "final_ac_reconcile": "reverified",
+    "testsurf_hits": [],
+    "redgreen_deny": [{"ac": "AC-3", "reasons": ["repaired_with_test_change"]}]
+  }
+}

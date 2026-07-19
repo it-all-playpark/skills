@@ -1,0 +1,111 @@
+{
+  "schema": "trust-layer-baseline/v1",
+  "version": "1.0.0",
+  "window": "30d",
+  "since": "2026-01-02T00:00:00Z",
+  "until": "2026-02-01T00:00:00Z",
+  "taken_at": "2026-07-20T00:00:00Z",
+  "total_runs": 16,
+  "false_completion_proxy": {
+    "denominator": 16,
+    "count": 3,
+    "rate": 0.1875,
+    "passed_count": 4,
+    "checks": {
+      "final_ac_reconcile_unavailable": {
+        "denominator": 4,
+        "count": 1,
+        "rate": 0.25
+      },
+      "testsurf_hits_nonempty": {
+        "denominator": 4,
+        "count": 1,
+        "rate": 0.25
+      },
+      "redgreen_deny_nonempty": {
+        "denominator": 1,
+        "count": 1,
+        "rate": 1
+      }
+    }
+  },
+  "inconclusive_events": {
+    "denominator": 16,
+    "count": 5,
+    "rate": 0.3125,
+    "checks": {
+      "eval_staleness_inconclusive": {
+        "denominator": 5,
+        "count": 1,
+        "rate": 0.2
+      },
+      "final_reconcile_unavailable": {
+        "denominator": 5,
+        "count": 1,
+        "rate": 0.2
+      },
+      "vdelta_fail_open_positive": {
+        "denominator": 3,
+        "count": 1,
+        "rate": 0.3333333333333333
+      },
+      "ui_verify_inconclusive": {
+        "denominator": 6,
+        "count": 2,
+        "rate": 0.3333333333333333
+      }
+    }
+  },
+  "phase_latency": {
+    "analyze": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "plan": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "implement": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "validate": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "evaluate": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "pr": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "iterate": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "final": {
+      "count": 2,
+      "p50": 150,
+      "p95": 195
+    },
+    "duration_seconds": {
+      "count": 2,
+      "p50": 1500,
+      "p95": 1950
+    }
+  },
+  "effect_failure_rate": {
+    "denominator": 4,
+    "count": 2,
+    "rate": 0.5
+  }
+}
