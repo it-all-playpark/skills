@@ -1,5 +1,6 @@
-// buildReviewCommentBody / buildTerminalSummaryBody: pr-iterate の per-round
-// レビューコメントおよび終端サマリー markdown を生成する純粋関数。
+// buildTerminalSummaryBody / terminalReviewAction: pr-iterate の終端サマリー
+// markdown 生成、および終端 review action（approve/request-changes/comment）
+// を決定する純粋関数。
 // I/O なし、gh なし、Date.now() 非決定性なし。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -38,64 +39,6 @@ function formatFindingsList(list, { withIter = false } = {}) {
     idx++;
   }
   return out;
-}
-
-/**
- * per-round レビューコメント markdown を生成する。
- * @param {object} opts
- * @param {number|string} opts.pr - PR 番号
- * @param {number} opts.iteration - 反復回数
- * @param {string} opts.decision - 'approve' | 'request-changes' | 'comment'
- * @param {Array} opts.blocking - blocking finding の配列
- * @param {Array} [opts.minor] - minor finding の配列（fix loop 対象外・参考表示のみ、任意）
- * @param {string} [opts.summary] - 結論 1-2 文（任意）
- * @param {string[]} [opts.verificationEvidence] - 検証根拠リスト（任意）
- * @returns {string}
- */
-export function buildReviewCommentBody({ pr, iteration, decision, blocking, minor, summary, verificationEvidence }) {
-  const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
-  const label = DECISION_LABEL[decision] ?? decision;
-  const emoji = DECISION_EMOJI[decision] ?? '';
-  const lines = [];
-
-  lines.push(`## PR #${pr} — レビュー結果 (iteration ${iteration})`);
-  lines.push('');
-
-  const blockingList = blocking || [];
-  if (blockingList.length === 0) {
-    lines.push(`**判定**: ${emoji} ${label} — ✅ 要修正（blocking）の指摘なし`);
-  } else {
-    const c = blockingList.filter((f) => f.severity === 'critical').length;
-    const m = blockingList.filter((f) => f.severity === 'major').length;
-    lines.push(`**判定**: ${emoji} ${label} — 要修正（blocking）${blockingList.length} 件（critical ${c} / major ${m}）`);
-    lines.push('');
-    lines.push(...formatFindingsList(blockingList));
-  }
-
-  const minorList = minor || [];
-  if (minorList.length > 0) {
-    lines.push('');
-    lines.push(`**軽微な指摘（minor、自動修正対象外・参考）**: ${minorList.length} 件`);
-    lines.push('');
-    lines.push('<details><summary>詳細を表示</summary>');
-    lines.push('');
-    lines.push(...formatFindingsList(minorList));
-    lines.push('');
-    lines.push('</details>');
-  }
-
-  if (summary != null && summary !== '') {
-    lines.push('');
-    lines.push(`**総評**: ${summary}`);
-  }
-  const evList = verificationEvidence || [];
-  if (evList.length > 0) {
-    lines.push('');
-    lines.push('**検証根拠**:');
-    for (const e of evList) lines.push(`- ${mdCell(e)}`);
-  }
-
-  return lines.join('\n');
 }
 
 const STATUS_HEADLINE = {
@@ -198,4 +141,18 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
   lines.push(`<!-- pr-iterate:${status}:${iterations} -->`);
 
   return lines.join('\n');
+}
+
+/**
+ * 終端レビューアクションを決定する純粋関数（AC-2）。
+ * @param {object} opts
+ * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'
+ * @param {string|null} opts.lastDecision - 'approve'|'request-changes'|'comment'|null
+ * @param {number} opts.blockingCount - 終端時点の blocking finding 総数
+ * @returns {'approve'|'request-changes'|'comment'}
+ */
+export function terminalReviewAction({ status, lastDecision, blockingCount }) {
+  if (status === 'lgtm' && lastDecision === 'approve') return 'approve';
+  if (blockingCount > 0 && lastDecision === 'request-changes') return 'request-changes';
+  return 'comment';
 }

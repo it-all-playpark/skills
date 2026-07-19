@@ -6,7 +6,8 @@
 //     - dev-runner-haiku-ro: read-only 決定論 proxy (danger-grep / diff-hash /
 //       changed-files / CI read 系など)
 //     - dev-runner-haiku: write/Skill 系 proxy 専任 (worktree 作成 / test 実行 /
-//       redgreen / journal / ui-verify-server / PR コメント投稿 (post-review#i / post-summary) など)
+//       redgreen / journal / ui-verify-server / PR コメント投稿 (post-summary。issue #392 で
+//       per-round post-review#i 投稿は終端 post-summary へ統合済み) など)
 //     - dev-runner: 判断寄り (fix / analyze)
 //
 //   .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
@@ -253,37 +254,25 @@ test("[exec-proxy-routing] pr-iterate.js label 'fix#' routes to agentType:'dev-r
   assertAgentTypeOnLine(line, 'fix#', 'dev-runner', 'pr-iterate.js');
 });
 
-test("[exec-proxy-routing] pr-iterate.js label 'post-review#' routes to agentType:'dev-runner-haiku'", () => {
-  const line = findLineByLabelPrefix(prIterateSrc, 'post-review#');
-  assertAgentTypeOnLine(line, 'post-review#', 'dev-runner-haiku', 'pr-iterate.js');
-});
-
 test("[exec-proxy-routing] pr-iterate.js label 'post-summary' routes to agentType:'dev-runner-haiku'", () => {
   const line = findLineByLabelPrefix(prIterateSrc, 'post-summary');
   assertAgentTypeOnLine(line, 'post-summary', 'dev-runner-haiku', 'pr-iterate.js');
 });
 
-// ---- (d) pr-iterate.js: all post-review#${i} call sites (issue #372) ----
+// ---- (d) pr-iterate.js: no more mid-loop post-review#${i} call sites (issue #392) ----
 //
-// post-review#${i} is posted from multiple branch points in the review⇄fix loop
-// (contract-error / approve / ci-gate / ci-failed / per-round). A single-line check
-// (as in (c) above) cannot catch a partial migration where only some call sites are
-// updated. This verifies exact call-site count AND that every one routes to
-// 'dev-runner-haiku'.
-test("[exec-proxy-routing] pr-iterate.js has exactly 5 label 'post-review#${i}' call sites, all routing to agentType:'dev-runner-haiku'", () => {
+// issue #392 AC-1/AC-3 consolidates PR posting to a single terminal `post-summary`
+// call: the review⇄fix loop's per-round `post-review#${i}` postings (previously at
+// 4-5 branch points: contract-error / approve / ci-gate / ci-failed / per-round) and
+// `buildReviewCommentBody` were removed entirely. This guards against a regression
+// reintroducing mid-loop PR posting.
+test("[exec-proxy-routing] pr-iterate.js has zero label 'post-review#${i}' call sites (issue #392 AC-1: per-round posting removed)", () => {
   const lines = findAllLinesByLabelPrefix(prIterateSrc, 'post-review#');
   assert.equal(
     lines.length,
-    5,
-    `Expected exactly 5 'post-review#\${i}' call sites in pr-iterate.js, found ${lines.length}:\n${lines.join('\n')}`,
+    0,
+    `Expected zero 'post-review#\${i}' call sites in pr-iterate.js (issue #392 consolidates posting to terminal post-summary), found ${lines.length}:\n${lines.join('\n')}`,
   );
-  for (const line of lines) {
-    assert.match(
-      line,
-      /agentType:\s*'dev-runner-haiku'/,
-      `all 'post-review#\${i}' call sites should route to agentType:'dev-runner-haiku', but found: ${line}`,
-    );
-  }
 });
 
 // ---- (e) dev-flow.js: post-summary migration (issue #372) ----
@@ -297,13 +286,13 @@ test("[exec-proxy-routing] dev-flow.js label 'post-summary' routes to agentType:
 //
 // All post-comment exec-proxy prompts must be verbatim transcriptions of a
 // workflow-determined string (via bodySaveInstr), not agent-side summarization/judgement.
-// pr-iterate.js has 7 bodySaveInstr( occurrences: 1 function definition + 6 call sites
-// (5x post-review#${i} + 1x post-summary).
-test('[exec-proxy-routing] pr-iterate.js source contains at least 6 bodySaveInstr( occurrences (verbatim transcription guard)', () => {
+// pr-iterate.js has 2 bodySaveInstr( occurrences: 1 function definition + 1 call site
+// (post-summary — the sole PR-posting call site after issue #392 consolidation).
+test('[exec-proxy-routing] pr-iterate.js source contains at least 2 bodySaveInstr( occurrences (verbatim transcription guard)', () => {
   const count = (prIterateSrc.match(/bodySaveInstr\(/g) || []).length;
   assert.ok(
-    count >= 6,
-    `Expected pr-iterate.js to contain at least 6 'bodySaveInstr(' occurrences (verbatim-transcription guard for post-review#i / post-summary), found ${count}`,
+    count >= 2,
+    `Expected pr-iterate.js to contain at least 2 'bodySaveInstr(' occurrences (verbatim-transcription guard for post-summary), found ${count}`,
   );
 });
 
