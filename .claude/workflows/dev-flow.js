@@ -2204,6 +2204,10 @@ const DEPS = {
     custom: { type: 'object' },
   },
 }
+const ISOLATION_PROBE = {
+  type: 'object', required: ['written'],
+  properties: { written: { type: 'boolean' }, error: { type: 'string' } },
+}
 const REQ = {
   type: 'object',
   required: ['summary', 'acceptance_criteria', 'breaking_change', 'breaking_keyword_scan'],
@@ -2778,6 +2782,31 @@ async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   return results
 }
 
+// isolation probe（bg-isolation guard 検知、2026-07 実証）: bg job から dev-flow を起動する際、
+// 呼び出し元セッションが自身の cwd を worktree へ isolate（harness の EnterWorktree）していないと、
+// harness の bg-isolation guard により implementer の Write/Edit tool 呼び出しが共有チェックアウト
+// への書き込みとして拒否される。dev-flow の Setup は EnterWorktree を使わず git worktree add のみで
+// worktree を作るため（workflow script からは EnterWorktree を呼べない — top-level セッション専用）、
+// この guard を workflow 側から解除することはできない。放置すると Implement/Evaluate まで数十 agent
+// 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に Write tool で実際に
+// worktree へ probe 書き込みを行い、早期に検知する。
+function isolationProbePrompt(worktree) {
+  return `worktree ${worktree} 直下に Write tool で \`.devflow-tmp/.isolation-probe\` というファイルを`
+    + `内容 "ok" で書き込め。成功したら {"written": true} を返せ。`
+    + `Write tool がエラー・拒否を返した場合は、例外を投げずに `
+    + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
+}
+function isolationFailureMessage(worktree, branch, base, issue, error) {
+  const relWt = worktree.includes('.claude/worktrees/') ? worktree.slice(worktree.indexOf('.claude/worktrees/')) : worktree;
+  return `dev-flow: worktree isolation エラー — implementer が ${worktree} に書き込めません`
+    + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
+    + `対処: 呼び出し元セッションで以下を実行してから dev-flow を再起動してください:\n`
+    + `  1. git worktree add -b ${branch} ${worktree} origin/${base}（既に存在する場合は不要）\n`
+    + `  2. EnterWorktree({ path: "${relWt}" })\n`
+    + `  3. Workflow({ name: "dev-flow", args: "${issue}" }) を再実行\n`
+    + (error ? `probe error: ${error}` : '');
+}
+
 // ============================================================
 // Phase Setup: 単一 worktree + branch を作る。全 agent が同じパスで作業し成果を集約する。
 // （isolation:'worktree' は使わない — 各 agent が別 worktree になり並列実装の成果が分散するため。
@@ -2826,6 +2855,15 @@ WT = setup.worktree
 REPO = setup.repo ?? null
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
 log(`worktree: ${WT} (branch ${setup.branch})`)
+
+// isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。
+// 失敗（written:false）は bg-isolation guard を強く示唆するため即中断（fail-closed）。
+// probe agent 自体が落ちた場合（written が取れない）は診断不能なだけなので fail-open で続行する。
+const isoProbe = await agent(isolationProbePrompt(WT), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
+if (isoProbe && isoProbe.written === false) {
+  throw new Error(isolationFailureMessage(WT, branch, BASE, ISSUE, isoProbe.error))
+}
+if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 
 // deps install（issue #291）: lockfile がある repo では Setup 完了時点で node_modules を整備する。
 // fail-open — 失敗/null でも workflow は継続し、警告 log + DEPS_NOTE 経由で implementer へ伝える。need() で包まない。
