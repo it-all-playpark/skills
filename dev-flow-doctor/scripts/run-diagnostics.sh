@@ -487,7 +487,7 @@ run_telemetry_checks() {
       vdelta_unhealthy)
         local rate_pct
         rate_pct=$(echo "$anomaly" | jq -r '(.rate * 100 | round)')
-        msg="vdelta verdict 低情報率が高い (${WINDOW}): ${rate_pct}% が inconclusive+null"
+        msg="vdelta verdict 低情報率が高い (${WINDOW}): ${rate_pct}% が abstain+fail_open"
         ;;
       *)
         msg="Anomaly detected (${WINDOW}): ${atype}"

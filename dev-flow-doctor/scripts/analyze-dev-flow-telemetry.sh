@@ -15,9 +15,11 @@
 #                     duration_seconds_by_shape (per-shape count/min/p50/mean/max
 #                       over .telemetry.duration_seconds, numeric values only;
 #                       denominator = .skill == "dev-flow" entries)
-#                     vdelta_verdict (improved/unchanged/regressed/inconclusive/
-#                       null/unknown counts flattened over per-AC
-#                       .telemetry.vdelta_verdicts[]; denominator =
+#                     vdelta_verdict (clean/deny/abstain/fail_open counts --
+#                       mirrors _lib/vdelta-transitions.mjs vdeltaDenies()
+#                       status values, the only real producer semantics for
+#                       the raw veridelta verdict object -- flattened over
+#                       per-AC .telemetry.vdelta_verdicts[]; denominator =
 #                       .skill == "dev-flow" entries)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring /
 #                      vdelta_unhealthy
@@ -290,24 +292,45 @@ DURATION_BY_SHAPE=$(echo "$DEVFLOW_ENTRIES" | jq -c '
 # so other-skill journal entries -- even ones containing substrings like
 # "inconclusive" or "vdelta_verdict" in unrelated fields -- can never leak in).
 # Parsing is structured-key only (no raw-text grep / substring matching).
-# category derivation per item is deterministic:
-#   1. .verdict is a string -> that string
-#   2. .verdict is an object with .verdict.verdict a string -> that inner string
-#   3. otherwise (null / object without inner verdict) -> "null"
+#
+# category derivation mirrors _lib/vdelta-transitions.mjs's vdeltaDenies()
+# EXACTLY, since that is the only real producer semantics for the raw
+# veridelta verdict recorded at telemetry.vdelta_verdicts[].verdict (dev-flow.js:
+# state.vdeltaVerdicts.push({ ac: acId, verdict: rg.verdict }), where rg.verdict
+# is the veridelta hook's raw JSON: {comparability, transitions,
+# verification_surface}). There is no "improved"/"unchanged"/"regressed"/
+# "inconclusive" schema anywhere in the codebase -- only vdeltaDenies()'s four
+# statuses:
+#   1. verdict null/undefined, or an unparseable string, or non-object/array
+#      after parsing, or .transitions non-object/array -> "fail_open" (no
+#      usable signal)
+#   2. .comparability != "exact" -> "abstain" (can't compare, e.g. parallel
+#      redgreen stream mix-in)
+#   3. otherwise: non-empty .transitions.repaired_with_test_change OR
+#      .verification_surface.status not "intact" -> "deny" (test-integrity
+#      concern detected)
+#   4. otherwise -> "clean" (verified genuine red->green, no integrity concern)
 VDELTA_VERDICT_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
   def category:
-    if (.verdict | type) == "string" then .verdict
-    elif (.verdict | type) == "object" and ((.verdict.verdict) | type) == "string" then .verdict.verdict
-    else "null"
-    end;
+    (.verdict) as $v
+    | (if ($v | type) == "string" then ($v | try fromjson catch null) else $v end) as $p
+    | if ($p == null) then "fail_open"
+      elif (($p | type) != "object") then "fail_open"
+      elif (($p.transitions | type) != "object") then "fail_open"
+      elif ($p.comparability != "exact") then "abstain"
+      else
+        ( (($p.transitions.repaired_with_test_change // []) | type == "array"
+            and (($p.transitions.repaired_with_test_change // []) | length) > 0) as $repaired
+        | ($p.verification_surface.status // null) as $surface
+        | if $repaired or ($surface != null and $surface != "intact") then "deny" else "clean" end
+        )
+      end;
   ([.[] | .telemetry.vdelta_verdicts[]? ] | map(category)) as $cats |
   {
-    improved: ([$cats[] | select(. == "improved")] | length),
-    unchanged: ([$cats[] | select(. == "unchanged")] | length),
-    regressed: ([$cats[] | select(. == "regressed")] | length),
-    inconclusive: ([$cats[] | select(. == "inconclusive")] | length),
-    "null": ([$cats[] | select(. == "null")] | length),
-    unknown: ([$cats[] | select(. as $v | ($v != "improved" and $v != "unchanged" and $v != "regressed" and $v != "inconclusive" and $v != "null"))] | length),
+    clean: ([$cats[] | select(. == "clean")] | length),
+    deny: ([$cats[] | select(. == "deny")] | length),
+    abstain: ([$cats[] | select(. == "abstain")] | length),
+    fail_open: ([$cats[] | select(. == "fail_open")] | length),
     total: ($cats | length)
   }
 ')
@@ -521,16 +544,19 @@ else
   fi
 fi
 
-# (4) vdelta_unhealthy: (inconclusive + null) rate over vdelta_verdict.total,
-#     gated by vdelta_min_runs. Both thresholds are placeholder values pending
-#     real-corpus calibration (see DEFAULT_VDELTA_UNHEALTHY_RATE above).
-#     report-only -- does not gate blocking / veridelta itself / journal schema.
+# (4) vdelta_unhealthy: (abstain + fail_open) rate over vdelta_verdict.total --
+#     i.e. the share of verdicts that carry no usable comparison signal
+#     (matches vdeltaDenies()'s low-info statuses; "deny"/"clean" are both
+#     informative and excluded) -- gated by vdelta_min_runs. Both thresholds
+#     are placeholder values pending real-corpus calibration (see
+#     DEFAULT_VDELTA_UNHEALTHY_RATE above). report-only -- does not gate
+#     blocking / veridelta itself / journal schema.
 VDELTA_UNHEALTHY=$(echo "$VDELTA_VERDICT_DIST" | jq -c \
   --argjson rate_threshold "$VDELTA_UNHEALTHY_RATE" \
   --argjson min_runs "$VDELTA_MIN_RUNS" \
   '
   (.total) as $total |
-  (.inconclusive + .["null"]) as $low_info |
+  (.abstain + .fail_open) as $low_info |
   if $total < $min_runs then
     [{
       type: "vdelta_unhealthy",
@@ -545,8 +571,8 @@ VDELTA_UNHEALTHY=$(echo "$VDELTA_VERDICT_DIST" | jq -c \
       rate: ($low_info / $total),
       detail: {
         total: $total,
-        inconclusive: .inconclusive,
-        null_count: .["null"],
+        abstain: .abstain,
+        fail_open: .fail_open,
         low_info: $low_info,
         threshold: $rate_threshold,
         min_runs: $min_runs
