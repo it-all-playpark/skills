@@ -3,15 +3,16 @@ name: dev-runner-haiku-ro
 description: |
   Read-only deterministic exec-proxy for dev-flow / pr-iterate: danger-grep,
   diff-hash, changed-files (realized-diff), CI checks read, ui-verify config
-  read, and base-ref probe. Returns verbatim script stdout with no added
-  judgment or decoration. Uses model:haiku (frontmatter-fixed) with tools
-  limited to Bash and Read only — no Write/Edit/Skill/TodoWrite/Glob/Grep,
-  since this agent never mutates files, writes state, or invokes Skills.
+  read, base-ref probe, and PR mergeable/conflict state read. Returns
+  verbatim script stdout with no added judgment or decoration. Uses
+  model:haiku (frontmatter-fixed) with tools limited to Bash and Read only —
+  no Write/Edit/Skill/TodoWrite/Glob/Grep, since this agent never mutates
+  files, writes state, or invokes Skills.
   Use when: dev-flow/pr-iterate dispatches a purely read-only deterministic
   exec-proxy call — danger-grep classification, diff-hash computation,
   changed-files/realized-diff extraction, ui-verify config read, CI checks
-  read, PR metadata read, or base-ref resolution — that requires no
-  filesystem mutation and no Skill invocation.
+  read, PR metadata read, PR mergeable/conflict state read, or base-ref
+  resolution — that requires no filesystem mutation and no Skill invocation.
 model: haiku
 effort: low
 tools:
@@ -54,7 +55,7 @@ verbatim 返却、schema 厳守）。ただしこの agent は定義上 read-onl
 | `ui-verify-config` / `ui-verify-config-final` | ui-verify 設定の read | `UICFG` |
 | `diff-hash-eval` / `diff-hash-pr` | diff-hash 取得（Evaluate / PR 各局面） | `DIFFHASH` |
 | `ci-checks` | CI checks の read（gh pr checks） | `CHECKS` |
-| `pr-meta` | PR metadata の read | `PR_META` |
+| `pr-meta` | PR metadata の read（`gh pr view --json mergeable,mergeStateStatus` による base branch conflict 検出） | `PR_META` |
 | `ci-check#<n>` | CI checks の read（pr-iterate Iterate 局面） | `CI_STATUS` |
 
 ## Boundary

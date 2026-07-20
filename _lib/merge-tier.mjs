@@ -122,6 +122,20 @@ export function isDocsOrTestOnly(files) {
 //   （fail-safe。HOLD へ倒す）。
 const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 
+// gh pr view --json mergeable,mergeStateStatus の生出力を 3 値 enum に写像する pure 関数。
+// 'conflicting': base branch と conflict（mergeable=CONFLICTING もしくは mergeStateStatus=DIRTY）。
+// 'clean': mergeable=MERGEABLE かつ conflict なし。
+// 'unknown': proxy 失敗（ok!==true / null）または GitHub が mergeability 未計算（UNKNOWN 等）。
+//   fail-open — conflict gate を適用しない（後述 classifyMergeTier で reason 追加なし）。
+export function classifyMergeableState(meta) {
+  if (!meta || meta.ok !== true) return 'unknown';
+  const ms = String(meta.mergeStateStatus ?? '').toUpperCase();
+  const mg = String(meta.mergeable ?? '').toUpperCase();
+  if (mg === 'CONFLICTING' || ms === 'DIRTY') return 'conflicting';
+  if (mg === 'MERGEABLE') return 'clean';
+  return 'unknown';
+}
+
 // merge tier を算出する。merge は全 tier 人間(AUTO も推奨ラベルのみ。真 auto-merge は W6)。
 // HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
 // breaking は analyze 構造化判定 (breakingStructured) と issue title/body keyword scan
@@ -170,12 +184,22 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 //   可視化）。TESTSURF item は source:'seed' の unchecked のまま converged=false → HOLD は既に成立
 //   しているため、この reason は tier 判定値そのものは変えない。未指定/空 = reason 追加なし
 //   （regression なし）。
+// s.mergeableState (optional 'clean'|'conflicting'|'unknown'): classifyMergeableState() が
+//   gh pr view --json mergeable,mergeStateStatus を写像した結果（issue #405）。'conflicting' は
+//   他条件によらず無条件 HOLD reason を追記する（blast-radius クラス、gate_policy に依らず不変 —
+//   base branch と conflict した状態で AUTO/REVIEW を出すと merge 不能な PR を出荷することになる）。
+//   'clean'/'unknown'/未指定は reason 追加なし（fail-open no-op、regression なし）。'unknown' は
+//   proxy 失敗や GitHub 側 mergeability 未計算を含むため conflict と決めつけない。out-of-enum は
+//   明示 error（後方互換 scaffolding 禁止規約）。
 export function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
   }
   if (s.finalAcReconcile != null && !['skipped', 'reverified', 'unavailable'].includes(s.finalAcReconcile)) {
     throw new Error('classifyMergeTier: invalid finalAcReconcile: ' + s.finalAcReconcile);
+  }
+  if (s.mergeableState != null && !['clean', 'conflicting', 'unknown'].includes(s.mergeableState)) {
+    throw new Error('classifyMergeTier: invalid mergeableState: ' + s.mergeableState);
   }
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -198,6 +222,7 @@ export function classifyMergeTier(s) {
   if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
     reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
   }
+  if (s.mergeableState === 'conflicting') reasons.push('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）');
   if (reasons.length) {
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     return { tier: 'HOLD', reasons };
