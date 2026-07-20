@@ -146,7 +146,10 @@ test('[gh-pr-view][1] dispatch: agentType=dev-runner-haiku-ro, phase=Merge tier,
   assert.equal(c.agentType, 'dev-runner-haiku-ro', `gh-pr-view の agentType は 'dev-runner-haiku-ro' のはずだが '${c.agentType}' だった`);
   assert.equal(c.phase, 'Merge tier', `gh-pr-view の phase は 'Merge tier' のはずだが '${c.phase}' だった`);
   assert.ok(c.schema != null, 'gh-pr-view の schema (PR_META) が undefined/null になっている');
-  assert.deepEqual(c.schema.required, ['ok'], `PR_META.required は ['ok'] のはずだが ${JSON.stringify(c.schema.required)}`);
+  // c.schema は vm sandbox（別 realm）内で生成された配列を含むため、assert/strict の
+  // deepEqual は prototype 不一致で reference-equal 判定に落ちて誤 fail する
+  // （values same but not reference-equal）。JSON.stringify での構造比較に落として realm 差異を吸収する。
+  assert.equal(JSON.stringify(c.schema.required), JSON.stringify(['ok']), `PR_META.required は ['ok'] のはずだが ${JSON.stringify(c.schema.required)}`);
   assert.ok(
     'mergeable' in c.schema.properties && 'mergeStateStatus' in c.schema.properties && 'error' in c.schema.properties,
     `PR_META.properties に mergeable/mergeStateStatus/error が揃っていない: ${JSON.stringify(Object.keys(c.schema.properties ?? {}))}`,
