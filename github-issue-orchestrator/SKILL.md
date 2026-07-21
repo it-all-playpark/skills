@@ -8,7 +8,7 @@ description: |
   Accepts args: [discussion-source] [--repo owner/repo] [--title "TITLE"] [--labels a,b] [--assignees a,b] [--milestone name] [--max-review-rounds N] [--lang ja|en] [--dry-run]
 allowed-tools:
   - Bash
-model: opus
+model: fable
 effort: max
 ---
 

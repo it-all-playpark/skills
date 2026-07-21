@@ -9,7 +9,7 @@ description: |
 allowed-tools:
   - Bash
   - Skill
-model: opus
+model: fable
 effort: max
 ---
 
