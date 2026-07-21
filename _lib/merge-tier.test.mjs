@@ -10,6 +10,7 @@ import {
   isDocsOrTestOnly,
   classifyMergeTier,
   newlyUncheckedSecClasses,
+  classifyMergeableState,
 } from './merge-tier.mjs';
 
 // ---- Task 1: DANGER_CLASSES + seedSecurityLedger ----
@@ -741,4 +742,93 @@ test('classifyMergeTier: testsurfUncleared 未指定/空 → 従来通り(regres
   const rEmpty = classifyMergeTier({ ...base, testsurfUncleared: [] });
   assert.equal(rEmpty.tier, 'AUTO');
   assert.ok(!rEmpty.reasons.some((x) => /test-weakening/.test(x)));
+});
+
+// ---- issue #405: classifyMergeableState + classifyMergeTier conflict gate ----
+
+test('classifyMergeableState: mergeable=MERGEABLE + mergeStateStatus=CLEAN → clean', () => {
+  assert.equal(
+    classifyMergeableState({ ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' }),
+    'clean',
+  );
+});
+
+test('classifyMergeableState: mergeable=CONFLICTING → conflicting', () => {
+  assert.equal(classifyMergeableState({ ok: true, mergeable: 'CONFLICTING' }), 'conflicting');
+});
+
+test('classifyMergeableState: mergeStateStatus=DIRTY(mergeable 未設定) → conflicting', () => {
+  assert.equal(classifyMergeableState({ ok: true, mergeStateStatus: 'DIRTY' }), 'conflicting');
+});
+
+test('classifyMergeableState: mergeable=UNKNOWN → unknown(fail-open)', () => {
+  assert.equal(classifyMergeableState({ ok: true, mergeable: 'UNKNOWN' }), 'unknown');
+});
+
+test('classifyMergeableState: ok:false → unknown(fail-open)', () => {
+  assert.equal(classifyMergeableState({ ok: false }), 'unknown');
+});
+
+test('classifyMergeableState: null → unknown(fail-open)', () => {
+  assert.equal(classifyMergeableState(null), 'unknown');
+});
+
+test('classifyMergeTier: mergeableState:"conflicting" → 本来 AUTO(micro+docs/test-only+収束)でも HOLD、reasons に conflict 文言を含む', () => {
+  const r = classifyMergeTier({
+    ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    mergeableState: 'conflicting',
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => /conflict/.test(x)), `reasons に conflict 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: mergeableState:"conflicting" → 本来 REVIEW(standard+収束済)でも HOLD', () => {
+  const r = classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    mergeableState: 'conflicting',
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => /conflict/.test(x)), `reasons に conflict 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: mergeableState:"clean" → tier に影響しない(AUTO/REVIEW とも従来通り)', () => {
+  const rAuto = classifyMergeTier({
+    ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    mergeableState: 'clean',
+  });
+  assert.equal(rAuto.tier, 'AUTO');
+  assert.ok(!rAuto.reasons.some((x) => /conflict/.test(x)));
+
+  const rReview = classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    mergeableState: 'clean',
+  });
+  assert.equal(rReview.tier, 'REVIEW');
+  assert.ok(!rReview.reasons.some((x) => /conflict/.test(x)));
+});
+
+test('classifyMergeTier: mergeableState 未指定(undefined) → 従来と完全同一 tier(regression なし、fail-open no-op)', () => {
+  const rAuto = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(rAuto.tier, 'AUTO');
+  assert.ok(!rAuto.reasons.some((x) => /conflict/.test(x)));
+
+  const rReview = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(rReview.tier, 'REVIEW');
+  assert.ok(!rReview.reasons.some((x) => /conflict/.test(x)));
+});
+
+test('classifyMergeTier: mergeableState:"unknown" → tier に影響しない(fail-open)', () => {
+  const rAuto = classifyMergeTier({
+    ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    mergeableState: 'unknown',
+  });
+  assert.equal(rAuto.tier, 'AUTO');
+  assert.ok(!rAuto.reasons.some((x) => /conflict/.test(x)));
+});
+
+test('classifyMergeTier: mergeableState:"bogus"(out-of-enum) → throw', () => {
+  assert.throws(() => classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    mergeableState: 'bogus',
+  }), /invalid mergeableState/);
 });

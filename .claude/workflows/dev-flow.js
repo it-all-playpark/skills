@@ -579,6 +579,20 @@ function isDocsOrTestOnly(files) {
 //   （fail-safe。HOLD へ倒す）。
 const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 
+// gh pr view --json mergeable,mergeStateStatus の生出力を 3 値 enum に写像する pure 関数。
+// 'conflicting': base branch と conflict（mergeable=CONFLICTING もしくは mergeStateStatus=DIRTY）。
+// 'clean': mergeable=MERGEABLE かつ conflict なし。
+// 'unknown': proxy 失敗（ok!==true / null）または GitHub が mergeability 未計算（UNKNOWN 等）。
+//   fail-open — conflict gate を適用しない（後述 classifyMergeTier で reason 追加なし）。
+function classifyMergeableState(meta) {
+  if (!meta || meta.ok !== true) return 'unknown';
+  const ms = String(meta.mergeStateStatus ?? '').toUpperCase();
+  const mg = String(meta.mergeable ?? '').toUpperCase();
+  if (mg === 'CONFLICTING' || ms === 'DIRTY') return 'conflicting';
+  if (mg === 'MERGEABLE') return 'clean';
+  return 'unknown';
+}
+
 // merge tier を算出する。merge は全 tier 人間(AUTO も推奨ラベルのみ。真 auto-merge は W6)。
 // HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
 // breaking は analyze 構造化判定 (breakingStructured) と issue title/body keyword scan
@@ -627,12 +641,22 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 //   可視化）。TESTSURF item は source:'seed' の unchecked のまま converged=false → HOLD は既に成立
 //   しているため、この reason は tier 判定値そのものは変えない。未指定/空 = reason 追加なし
 //   （regression なし）。
+// s.mergeableState (optional 'clean'|'conflicting'|'unknown'): classifyMergeableState() が
+//   gh pr view --json mergeable,mergeStateStatus を写像した結果（issue #405）。'conflicting' は
+//   他条件によらず無条件 HOLD reason を追記する（blast-radius クラス、gate_policy に依らず不変 —
+//   base branch と conflict した状態で AUTO/REVIEW を出すと merge 不能な PR を出荷することになる）。
+//   'clean'/'unknown'/未指定は reason 追加なし（fail-open no-op、regression なし）。'unknown' は
+//   proxy 失敗や GitHub 側 mergeability 未計算を含むため conflict と決めつけない。out-of-enum は
+//   明示 error（後方互換 scaffolding 禁止規約）。
 function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
   }
   if (s.finalAcReconcile != null && !['skipped', 'reverified', 'unavailable'].includes(s.finalAcReconcile)) {
     throw new Error('classifyMergeTier: invalid finalAcReconcile: ' + s.finalAcReconcile);
+  }
+  if (s.mergeableState != null && !['clean', 'conflicting', 'unknown'].includes(s.mergeableState)) {
+    throw new Error('classifyMergeTier: invalid mergeableState: ' + s.mergeableState);
   }
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -655,6 +679,7 @@ function classifyMergeTier(s) {
   if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
     reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
   }
+  if (s.mergeableState === 'conflicting') reasons.push('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）');
   if (reasons.length) {
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     return { tier: 'HOLD', reasons };
@@ -2529,6 +2554,16 @@ const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { t
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
 const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' } } }
+// PR_META: gh pr view --json mergeable,mergeStateStatus の read-only exec-proxy 結果 (issue #405)。
+const PR_META = {
+  type: 'object', required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    mergeable: { type: ['string', 'null'] },
+    mergeStateStatus: { type: ['string', 'null'] },
+    error: { type: 'string' },
+  },
+}
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // workflow-post-helpers: PR/Issue コメント投稿・ジャーナル記録用の共通スキーマ・ヘルパー。
 // I/O なし。bodySaveInstr は agent 向け instruction 文字列を生成する純粋関数。
@@ -4236,6 +4271,20 @@ const unresolvedDanger = state.ledger.items.some(
 const breakingStructured = req.breaking_change === true
 const breakingKeyword = req.breaking_keyword_scan === true
 const escalateCount = policyAdvisoryItems(state.ledger, GATE_POLICY).filter((it) => it.escalate === true).length
+// base branch conflict 検出 (issue #405): gh pr view で mergeable/mergeStateStatus を read-only 取得し、
+// conflict 時は classifyMergeTier で無条件 HOLD。UNKNOWN/proxy 失敗は fail-open（definitive conflict のみ HOLD）。
+// label は 'gh-pr-view'（'pr' 始まりにしない — 既存 routing test 群が label.startsWith('pr') を
+// PR 作成 phase の呼び出し数カウントに使っており、'pr' 始まりの label を追加すると衝突するため。
+// lite-route-routing.test.mjs の同種コメント参照）。
+const prMeta = await agent(
+  `cd ${WT} で作業。次を実行し **stdout の JSON object を** {"ok": true, "mergeable": <値>, "mergeStateStatus": <値>} に包んで返せ`
+  + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
+  + `gh pr view ${pr.pr_number} --json mergeable,mergeStateStatus`,
+  { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'gh-pr-view', phase: 'Merge tier' },
+)
+const mergeableState = classifyMergeableState(prMeta)
+if (mergeableState === 'conflicting') log('gh-pr-view: base branch と conflict 検出 — merge tier を HOLD 強制')
+else if (mergeableState === 'unknown') log(`⚠️ gh-pr-view: mergeable 状態を確定できず（${prMeta?.error ?? 'null / UNKNOWN'}）— conflict gate は fail-open（HOLD しない。definitive CONFLICTING/DIRTY のみ HOLD）`)
 const mergeTier = classifyMergeTier({
   shape: state.EFFECTIVE_SHAPE,
   converged: isConvergedUnderPolicy(state.ledger, GATE_POLICY),
@@ -4253,6 +4302,7 @@ const mergeTier = classifyMergeTier({
   evalStaleness,
   finalAcReconcile,
   testsurfUncleared: state.ledger.items.filter((it) => it.source === 'seed' && it.dimension === 'test-integrity' && !it.checked).map((it) => it.id),
+  mergeableState,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
