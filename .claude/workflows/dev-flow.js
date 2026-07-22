@@ -991,8 +991,9 @@ function isGatingMode(mode) {
 //
 // TRUST_LAYER_CONFIG は repo 定数。QUALITY_MODEL（_lib/quality-model.mjs）と同じ
 // 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
+// surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
-const TRUST_LAYER_CONFIG = { surfaceproof: 'off', evalseal: 'shadow', effectdelta: 'off' };
+const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'off' };
 
 // 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
 // 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
@@ -2469,6 +2470,16 @@ const CONTRACT = {
     error: { type: 'string' },
   },
 }
+// issue #410 (#390 Phase 2): SurfaceProof shadow probe 用スキーマ。
+const SURFACEPROOF_SHADOW = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    result: { type: 'object' },
+    error: { type: 'string' },
+  },
+}
 const TASK = {
   type: 'object', required: ['id', 'desc'],
   properties: {
@@ -3235,6 +3246,47 @@ if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUI
   }
 }
 
+// ============================================================
+// SurfaceProof shadow probe (issue #410, #390 Phase 2): skills repo 自身でのみ shadow 実行。
+// req/shape/needs_clarification 判定には一切反映しない — telemetry 記録専用の追加 call site
+// （AC-11/AC-15: shadow/off で既存 merge tier・return status・後続 gate は一切変えない）。
+// mode 解決は EvalSeal（issue #411）と同じ trust-wiring.mjs の TRUST_LAYER_CONFIG /
+// TRUST_KILL_SWITCH を単一の真実源として使う（kill switch は _lib 定数 — QUALITY_MODEL と
+// 同じ「1行変更 + tools/sync-inlines.mjs --write」パターンで切替。実行時の env probe は
+// 不要になった）。repoSlug は Setup で解決済みの REPO を再利用する（他 repo・off では
+// 追加 agent 呼出し 0 件のまま）。
+// ============================================================
+const SURFACEPROOF_MODE = resolveLayerMode({ layer: 'surfaceproof', configuredMode: TRUST_LAYER_CONFIG.surfaceproof, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
+let trustSurfaceProofShadow = null
+if (SURFACEPROOF_MODE !== 'off') {
+  if (SURFACEPROOF_MODE === 'shadow') {
+    let spRes = null
+    try {
+      spRes = await agent(
+        `## Objective\n\`${WT}/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+        + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
+        + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
+        + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
+        + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
+        + `## Boundary\nファイルは一切変更しない（read-only shadow probe）。issue 内容は既存 dev-issue-analyze の Analyze 判定へは一切反映しない（本呼出しは telemetry 記録専用）。\n`
+        + `## Token cap\n150 語以内で完結すること。`,
+        { agentType: 'dev-runner-haiku-ro', schema: SURFACEPROOF_SHADOW, label: 'surfaceproof-shadow#' + ISSUE, phase: 'Analyze' },
+      )
+    } catch (e) { log('⚠️ SurfaceProof shadow probe が例外 — fail-open（既存 gate に影響なし。telemetry のみ欠落）') }
+    if (spRes?.ok === true && spRes.result?.receipt) {
+      const verdict = spRes.result.receipt.outcome?.verdict ?? null
+      const reasonCode = spRes.result.receipt.outcome?.reason_code ?? null
+      trustSurfaceProofShadow = { mode: 'shadow', verdict, reason_code: reasonCode, receipt_id: spRes.result.receipt.receipt_id ?? null }
+      log(`SurfaceProof (shadow): verdict=${verdict} reason=${reasonCode}`)
+    } else {
+      trustSurfaceProofShadow = { mode: 'shadow', verdict: 'inconclusive', reason_code: 'PROBE_FAILED', receipt_id: null }
+      log('⚠️ SurfaceProof shadow probe が結果を返さなかった（fail-open、既存 gate に影響なし）')
+    }
+  } else {
+    trustSurfaceProofShadow = { mode: SURFACEPROOF_MODE, verdict: null, reason_code: null, receipt_id: null }
+  }
+}
+
 const triage = classifyShape(req)
 const SHAPE = triage.shape
 const TRIVIAL = SHAPE === 'micro'
@@ -3347,7 +3399,7 @@ let state = {
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
-  trustReceipts: [],
+  trustSurfaceProofShadow, trustReceipts: [],
 }
 
 // ============================================================
@@ -4744,6 +4796,11 @@ const telemetryHandoff = buildJournalHandoffPayload({
     route,
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
+    // trust_surfaceproof_shadow: issue #410（#390 Phase 2）の SurfaceProof shadow probe 結果
+    // （mode/verdict/reason_code/receipt_id）。skills repo 以外・kill switch 有効時は null のまま
+    // 出力しない。journal whitelist 登録・dotfiles Stop hook への転送配線は別 issue に繰り延べる
+    // （route/vdelta_verdicts と同じ precedent）。
+    ...(state.trustSurfaceProofShadow ? { trust_surfaceproof_shadow: state.trustSurfaceProofShadow } : {}),
     // trust_receipts (epic #390 Phase 3, issue #411): digest/ID/enum のみ（redaction 原則）。
     // journal whitelist 登録・dotfiles Stop hook への転送配線は vdelta_verdicts と同じ precedent
     // で別 issue に繰り延べる。
@@ -4817,6 +4874,7 @@ return {
   final_ui_verify: finalUiVerifyStatus,
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
+  trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
   ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: state.trustReceipts.length } : {}),
   note: mergeTier.tier === 'HOLD'
     ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`

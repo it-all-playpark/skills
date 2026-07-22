@@ -1,0 +1,23 @@
+{
+  "description": "body に GitHub 添付 URL（allowlist ホスト）と非 allowlist 外部 spec link を含む snapshot。添付は fetch_results で fetched、外部 link は evaluateUrlPolicy により unsupported/URL_NOT_ALLOWLISTED になる。reconcile.status=UNIT_UNSUPPORTED、verdict=inconclusive（pass にならない）ことを検証する。",
+  "snapshot": {
+    "repo": "it-all-playpark/skills",
+    "issue_number": 412,
+    "issue": {
+      "title": "スクリーンショット添付と外部仕様書リンク",
+      "body": "再現手順のスクリーンショット: https://github.com/user-attachments/assets/12345/screenshot.png\n\n参考仕様書: https://example.com/spec.md",
+      "updated_at": "2026-07-20T11:00:00Z",
+      "labels": []
+    },
+    "comments": [],
+    "fetch_errors": []
+  },
+  "fetch_results": [
+    {
+      "url": "https://github.com/user-attachments/assets/12345/screenshot.png",
+      "status": "fetched",
+      "content_digest": "test-digest-attachment-001"
+    }
+  ],
+  "capabilities": ["issue-read"]
+}

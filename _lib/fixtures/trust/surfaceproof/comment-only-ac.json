@@ -1,0 +1,26 @@
+{
+  "description": "受入条件が comment にのみ書かれた snapshot。presented_unit_ids が comment unit を意図的に省く planted omission。reconcile.status=REQUIRED_UNIT_OMITTED、verdict=fail（pass にならない）ことを検証する。",
+  "snapshot": {
+    "repo": "it-all-playpark/skills",
+    "issue_number": 411,
+    "issue": {
+      "title": "モーダルの閉じ方を統一する",
+      "body": "詳細は下記コメントを参照してください。",
+      "updated_at": "2026-07-20T10:00:00Z",
+      "labels": [
+        { "name": "needs-triage" }
+      ]
+    },
+    "comments": [
+      {
+        "id": 1,
+        "body": "受け入れ条件: ボタン押下でモーダルが閉じ、ESCキーでも閉じること。",
+        "user": { "login": "carol" },
+        "updated_at": "2026-07-20T10:05:00Z"
+      }
+    ],
+    "fetch_errors": []
+  },
+  "presented_unit_ids": ["body", "label:needs-triage"],
+  "capabilities": ["issue-read"]
+}

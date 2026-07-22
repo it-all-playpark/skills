@@ -1,0 +1,24 @@
+{
+  "description": "body の添付URL（fetch成功済み・allowlistホスト）を presented_unit_ids から意図的に省いた planted omission。REQUIRED_KINDS に attachment_ref/spec_link を含めない実装だと見逃される（issue #416 review 指摘）。reconcile.status=REQUIRED_UNIT_OMITTED、verdict=fail（pass にならない）ことを検証する。",
+  "snapshot": {
+    "repo": "it-all-playpark/skills",
+    "issue_number": 416,
+    "issue": {
+      "title": "添付 unit の意図的省略",
+      "body": "再現手順のスクリーンショット: https://github.com/user-attachments/assets/99999/repro.png",
+      "updated_at": "2026-07-21T09:00:00Z",
+      "labels": []
+    },
+    "comments": [],
+    "fetch_errors": []
+  },
+  "fetch_results": [
+    {
+      "url": "https://github.com/user-attachments/assets/99999/repro.png",
+      "status": "fetched",
+      "content_digest": "test-digest-attach-omit"
+    }
+  ],
+  "presented_unit_ids": ["body"],
+  "capabilities": ["issue-read"]
+}
