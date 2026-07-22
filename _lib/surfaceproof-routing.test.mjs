@@ -143,7 +143,12 @@ function makeSandbox({ repo = null, req = STANDARD_REQ, overrides = {}, fixesApp
 // heredoc delimiter を経由。見つからなければ null）。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  const m = prompt.match(/TELEMETRY_EOF'\n([\s\S]*?)\nTELEMETRY_EOF/);
+  // journal-handoff.mjs (issue #412 F3: atomic mktemp/mv write) の heredoc は
+  // `<<'TELEMETRY_EOF' && __jh_id=... && mv -f ...` のように delimiter 直後に
+  // シェルコマンドが続くため、旧 `TELEMETRY_EOF'\n` 直後開始の前提が崩れる。
+  // payload（JSON.stringify、常に単一行・`{`始まり）を挟む 2 個の改行のうち
+  // 前者直後から `\nTELEMETRY_EOF` 直前までを取り出す。
+  const m = prompt.match(/\n(\{[\s\S]*?\})\nTELEMETRY_EOF/);
   if (!m) return null;
   try {
     return JSON.parse(m[1]);
