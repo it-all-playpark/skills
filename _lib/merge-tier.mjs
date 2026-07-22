@@ -191,6 +191,12 @@ export function classifyMergeableState(meta) {
 //   'clean'/'unknown'/未指定は reason 追加なし（fail-open no-op、regression なし）。'unknown' は
 //   proxy 失敗や GitHub 側 mergeability 未計算を含むため conflict と決めつけない。out-of-enum は
 //   明示 error（後方互換 scaffolding 禁止規約）。
+// s.trustGate (optional { blocking: true, verdict: 'pass'|'fail'|'inconclusive' }): EvalSeal
+//   receipt の trust-layer blocking 昇格経路（epic #390 Phase 3, issue #411）。現行 config は
+//   shadow 固定のため live 呼び出しは常に null（isGatingMode(mode) が true のときのみ workflow
+//   が non-null を渡す設計）— 未指定/null = 挙動完全不変（regression なし）。non-null かつ
+//   blocking===true かつ verdict!=='pass' のとき HOLD reason を追記する（inconclusive も成功
+//   扱いしない）。verdict が closed enum 外は throw（後方互換 scaffolding 禁止規約）。
 export function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -200,6 +206,9 @@ export function classifyMergeTier(s) {
   }
   if (s.mergeableState != null && !['clean', 'conflicting', 'unknown'].includes(s.mergeableState)) {
     throw new Error('classifyMergeTier: invalid mergeableState: ' + s.mergeableState);
+  }
+  if (s.trustGate != null && !['pass', 'fail', 'inconclusive'].includes(s.trustGate.verdict)) {
+    throw new Error('classifyMergeTier: invalid trustGate: ' + s.trustGate.verdict);
   }
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -223,6 +232,9 @@ export function classifyMergeTier(s) {
     reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
   }
   if (s.mergeableState === 'conflicting') reasons.push('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）');
+  if (s.trustGate != null && s.trustGate.blocking === true && s.trustGate.verdict !== 'pass') {
+    reasons.push(`EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`);
+  }
   if (reasons.length) {
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     return { tier: 'HOLD', reasons };
