@@ -172,6 +172,15 @@ fetch_one() {
             continue
         fi
 
+        if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            # 2xx 以外（404/410/5xx 等）は content-type が偶然 allowlist と一致しても
+            # "fetched" とみなさない。curl は 404 応答でも exit 0 を返すため、この
+            # チェックが無いと消えたリンクのエラーページが FETCH_FAILED ではなく
+            # fetched/OK として receipt に載ってしまう（issue #416 review 指摘）。
+            denied_result "$start_url" "FETCH_FAILED"
+            return
+        fi
+
         if [[ "$size_bytes" =~ ^[0-9]+$ ]] && (( size_bytes > MAX_BYTES )); then
             denied_result "$start_url" "SIZE_EXCEEDED"
             return

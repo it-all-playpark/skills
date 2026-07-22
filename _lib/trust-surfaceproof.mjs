@@ -56,6 +56,10 @@ export const SURFACEPROOF_URL_POLICY = {
 // GitHub 所有の添付ホスト（github.com 自体は /user-attachments/ path 判定で別扱い）。
 const ATTACHMENT_HOSTS = ['user-images.githubusercontent.com', 'private-user-images.githubusercontent.com', 'objects.githubusercontent.com'];
 
+// reconcileSource の omission 検出対象 kind（body/comment/label に加え attachment_ref/spec_link
+// も含む）。freezeSource の confirmed_fetched_unit_ids 算出とも共有し、二重管理を避ける。
+const REQUIRED_KINDS = ['body', 'comment', 'label', 'attachment_ref', 'spec_link'];
+
 // reconcileSource の status closed enum + 優先順位（先頭が最悪）。
 const RECONCILE_STATUS_PRIORITY = [
   'STALE_SOURCE',
@@ -323,14 +327,27 @@ export function buildInventory(snapshot, fetchResults = []) {
 
 // issue の updatedAt と source digest を freeze する。source_digest は snapshot 全体の
 // canonical digest（digest が authoritative — updated_at 同一でも内容変化を検知するため）。
-export function freezeSource(snapshot) {
+//
+// fetchResults（既定 []）: freeze 時点で確認できた外部 URL fetch 結果。buildInventory へ
+// そのまま渡し、fetch===‘fetched’ が確定した required-kind unit の id を
+// confirmed_fetched_unit_ids として記録する。CLI の reconcile 境界（Analyze 直前の再照合）は
+// リンクを再 fetch せず buildInventory(currentSnapshot, []) で unit を作り直すため、そこでは
+// 常に fetch==='not_attempted' に戻ってしまう。confirmed_fetched_unit_ids を frozen 側に
+// 残すことで、reconcileSource が「freeze 時点で fetch 済みだった unit の省略」を再照合時にも
+// 検出できるようにする（issue #416 review 指摘: CLI reconcile 境界で fetched な
+// attachment_ref/spec_link の omission が見えなくなるバグの修正）。
+export function freezeSource(snapshot, fetchResults = []) {
   if (!isPlainObject(snapshot)) {
     throw new Error('trust-surfaceproof: snapshot は object が必要');
   }
   const issue = isPlainObject(snapshot.issue) ? snapshot.issue : {};
-  const units = buildInventory(snapshot);
+  const units = buildInventory(snapshot, fetchResults);
   const unitDigests = {};
-  for (const u of units) unitDigests[u.unit_id] = u.digest;
+  const confirmedFetchedUnitIds = [];
+  for (const u of units) {
+    unitDigests[u.unit_id] = u.digest;
+    if (u.fetch === 'fetched' && REQUIRED_KINDS.includes(u.kind)) confirmedFetchedUnitIds.push(u.unit_id);
+  }
 
   return {
     schema: 'surfaceproof-freeze/1',
@@ -339,6 +356,7 @@ export function freezeSource(snapshot) {
     updated_at: issue.updated_at,
     source_digest: domainSeparatedDigest('surfaceproof/1:source', snapshot),
     unit_digests: unitDigests,
+    confirmed_fetched_unit_ids: confirmedFetchedUnitIds,
   };
 }
 
@@ -411,13 +429,21 @@ export function reconcileSource({ frozen, currentSnapshot, units, requireFetchAt
   // fetch に成功した添付・仕様書リンクが presentation から省かれた場合も
   // REQUIRED_UNIT_OMITTED として検出する（AC-4: fetched な必須 unit の planted omission を
   // pass にしない。issue #416 review 指摘）。
-  const REQUIRED_KINDS = ['body', 'comment', 'label', 'attachment_ref', 'spec_link'];
+  //
+  // frozen.confirmed_fetched_unit_ids（freezeSource 参照）は、この呼び出しで渡された
+  // `units` 自体が fetch 未実施（'not_attempted'）に戻っていても、freeze 時点で
+  // fetch===‘fetched’ が確定していた required unit を omission 検出対象として扱うための
+  // fallback signal。CLI の reconcile 境界（Analyze 直前の再照合）はリンクを再 fetch せず
+  // units を作り直すため、これが無いと freeze 時点で確認済みだった unit の省略を
+  // 検出できない（issue #416 review 指摘）。
+  const confirmedFetchedUnitIds = new Set(Array.isArray(frozen.confirmed_fetched_unit_ids) ? frozen.confirmed_fetched_unit_ids : []);
   for (const u of units) {
-    // fetch が成功した required unit のみ「presentation で除外された」ことを omission と
-    // 見なす。fetch 自体が forbidden/failed/unsupported/not_attempted な unit は、fetch 側の
-    // reason code が既に不能を示すため二重に omission も立てない（AC: 403 が偽の omission に
-    // 丸められない）。
-    if (u.fetch === 'fetched' && REQUIRED_KINDS.includes(u.kind) && u.presentation === 'omitted') {
+    // fetch が成功した required unit（または freeze 時点で fetch 済みが確定していた unit）
+    // のみ「presentation で除外された」ことを omission と見なす。fetch 自体が
+    // forbidden/failed/unsupported/not_attempted な unit は、fetch 側の reason code が
+    // 既に不能を示すため二重に omission も立てない（AC: 403 が偽の omission に丸められない）。
+    const wasConfirmedFetched = u.fetch === 'fetched' || confirmedFetchedUnitIds.has(u.unit_id);
+    if (wasConfirmedFetched && REQUIRED_KINDS.includes(u.kind) && u.presentation === 'omitted') {
       reasons.push({ unit_id: u.unit_id, reason_code: 'REQUIRED_UNIT_OMITTED' });
     } else if (u.fetch === 'forbidden') {
       reasons.push({ unit_id: u.unit_id, reason_code: 'FETCH_FORBIDDEN' });

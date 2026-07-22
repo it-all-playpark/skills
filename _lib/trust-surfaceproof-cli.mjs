@@ -119,8 +119,13 @@ function applyPresentationMap(units, presentationMap) {
 
 function cmdFreeze(snapshot, opts) {
   const fetchResults = opts.fetches ? readJsonFile(opts.fetches) : [];
-  const frozen = freezeSource(snapshot);
-  const units = buildInventory(snapshot, Array.isArray(fetchResults) ? fetchResults : []);
+  const safeFetchResults = Array.isArray(fetchResults) ? fetchResults : [];
+  // freezeSource へも同じ fetchResults を渡し、frozen.confirmed_fetched_unit_ids が実際に
+  // fetch 済みだった required unit の id と一致するようにする（cmdReconcile 側で
+  // fetchResults 無しに units を作り直しても、この id 集合で omission 検出を継続できる。
+  // issue #416 review 指摘の CLI reconcile 境界バグ修正）。
+  const frozen = freezeSource(snapshot, safeFetchResults);
+  const units = buildInventory(snapshot, safeFetchResults);
   const presentedUnitIds = units.map((u) => u.unit_id);
   const pack = buildPresentationPack(units, presentedUnitIds);
   const presentedUnits = applyPresentationMap(units, pack.presentation_map);

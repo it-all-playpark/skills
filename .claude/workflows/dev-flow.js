@@ -1344,6 +1344,90 @@ function uiVerifyPort(basePort, issue) {
   return basePort + (n % 1000);
 }
 // ==== END inline: _lib/ui-verify.mjs ====
+// ==== BEGIN inline: _lib/trust-mode.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// issue #409 (epic #390 Phase 1): trust-layer protocol kernel — layer 別 mode
+// (off/shadow/advisory/blocking) と全体 kill switch を解決する純粋関数群。
+//
+// Phase 0 spec (claudedocs/2026-07-20-issue-390-phase0-child-decomposition-and-shadow-boundary.md
+// §3「Shadow opt-in 境界決定」) の決定を実装する:
+//   - repoSlug は allowlist（TRUST_SHADOW_REPO_SLUG）に厳密一致（===）する場合のみ非 off を許可。
+//     null / undefined / 別 repo / fork / 大文字小文字違いは全て fail-closed で off。
+//   - killSwitch===true は allowlist 一致・configuredMode に関わらず全 layer を強制 off。
+//   - repoSlug の取得（git remote get-url / GITHUB_REPOSITORY 読み取り）は adapter の責務
+//     （Phase 2+）であり、本モジュールは文字列注入のみ受ける（他モジュール非依存・import なし）。
+
+const TRUST_LAYERS = ['surfaceproof', 'evalseal', 'effectdelta'];
+
+const TRUST_MODES = ['off', 'shadow', 'advisory', 'blocking'];
+
+const DEFAULT_TRUST_MODE = 'off';
+
+const TRUST_SHADOW_REPO_SLUG = 'it-all-playpark/skills';
+
+// layer 別の trust mode を解決する純粋関数。
+//
+// 優先順位:
+//   (a) layer が TRUST_LAYERS 外 → throw
+//   (b) configuredMode が null/undefined/空文字 → DEFAULT_TRUST_MODE、TRUST_MODES 外 → throw
+//   (c) killSwitch === true → 'off'（全 layer 無効化）
+//   (d) repoSlug が TRUST_SHADOW_REPO_SLUG と厳密一致しない → 'off'（fail-closed allowlist）
+//   (e) 一致した場合のみ configuredMode をそのまま返す
+function resolveLayerMode({ layer, configuredMode, repoSlug, killSwitch }) {
+  if (!TRUST_LAYERS.includes(layer)) {
+    throw new Error(
+      `trust-mode: 未知の layer "${layer}"（許可: ${TRUST_LAYERS.join(', ')}）`,
+    );
+  }
+
+  const mode = configuredMode == null || configuredMode === '' ? DEFAULT_TRUST_MODE : configuredMode;
+  if (!TRUST_MODES.includes(mode)) {
+    throw new Error(
+      `trust-mode: 未知の configuredMode "${configuredMode}"（許可: ${TRUST_MODES.join(', ')}）`,
+    );
+  }
+
+  if (killSwitch === true) return 'off';
+  if (repoSlug !== TRUST_SHADOW_REPO_SLUG) return 'off';
+  return mode;
+}
+
+// TRUST_LAYERS 全てについて resolveLayerMode を適用し {surfaceproof, evalseal, effectdelta}
+// を返す純粋関数。config は各 layer キーを持つ部分 object（未指定は DEFAULT_TRUST_MODE）。
+// config 内の未知 key は closed（throw）。
+function resolveAllLayerModes({ config, repoSlug, killSwitch }) {
+  const safeConfig = config ?? {};
+  for (const key of Object.keys(safeConfig)) {
+    if (!TRUST_LAYERS.includes(key)) {
+      throw new Error(
+        `trust-mode: 未知の config key "${key}"（許可: ${TRUST_LAYERS.join(', ')}）`,
+      );
+    }
+  }
+
+  const result = {};
+  for (const layer of TRUST_LAYERS) {
+    result[layer] = resolveLayerMode({
+      layer,
+      configuredMode: safeConfig[layer],
+      repoSlug,
+      killSwitch,
+    });
+  }
+  return result;
+}
+
+// mode が既存 gate を変更する（gating）かどうかを判定する純粋関数。
+// blocking のときのみ true。shadow/advisory/off は既存 gate を一切変えない
+// （epic #390 AC-11 / AC-15 非緩和）。TRUST_MODES 外は throw。
+function isGatingMode(mode) {
+  if (!TRUST_MODES.includes(mode)) {
+    throw new Error(
+      `trust-mode: 未知の mode "${mode}"（許可: ${TRUST_MODES.join(', ')}）`,
+    );
+  }
+  return mode === 'blocking';
+}
+// ==== END inline: _lib/trust-mode.mjs ====
 // ==== BEGIN inline: _lib/parallel-disjoint.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // enforceDisjointParallel: parallel task の file_changes 衝突を検出し、衝突 task を serial に降格する純粋関数。
 // dev-flow の parallel fan-out 前に呼び出し、file-disjoint 制約を保証する。
@@ -2275,6 +2359,25 @@ const CONTRACT = {
     error: { type: 'string' },
   },
 }
+// issue #410 (#390 Phase 2): SurfaceProof shadow probe 用スキーマ。
+const TRUST_KILL_SWITCH = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    kill_switch: { type: 'boolean' },
+    error: { type: 'string' },
+  },
+}
+const SURFACEPROOF_SHADOW = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    result: { type: 'object' },
+    error: { type: 'string' },
+  },
+}
 const TASK = {
   type: 'object', required: ['id', 'desc'],
   properties: {
@@ -3027,6 +3130,58 @@ if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUI
   }
 }
 
+// ============================================================
+// SurfaceProof shadow probe (issue #410, #390 Phase 2): skills repo 自身でのみ shadow 実行。
+// req/shape/needs_clarification 判定には一切反映しない — telemetry 記録専用の追加 call site
+// （AC-11/AC-15: shadow/off で既存 merge tier・return status・後続 gate は一切変えない）。
+// repoSlug は Setup で解決済みの REPO を再利用する（他 repo では追加 agent 呼出し 0 件のまま off）。
+// ============================================================
+let trustSurfaceProofShadow = null
+if (REPO === TRUST_SHADOW_REPO_SLUG) {
+  let killSwitchRes = null
+  try {
+    killSwitchRes = await agent(
+      `## Objective\n環境変数 TRUST_LAYER_KILL_SWITCH の有無を確認せよ。\`[ -n "\${TRUST_LAYER_KILL_SWITCH:-}" ] && echo true || echo false\` を1回だけ実行し、出力（true/false）を kill_switch として返せ。原因調査・再試行はするな。\n`
+      + `## Output format\n{ "ok": boolean, "kill_switch": boolean, "error": string }\n`
+      + `## Tools\n使用可: Bash のみ\n`
+      + `## Boundary\nファイルは一切変更しない（read-only probe）。\n`
+      + `## Token cap\n80 語以内で完結すること。`,
+      { agentType: 'dev-runner-haiku-ro', schema: TRUST_KILL_SWITCH, label: 'trust-kill-switch-probe#' + ISSUE, phase: 'Analyze' },
+    )
+  } catch (e) { log('⚠️ trust kill-switch probe が例外 — fail-safe で kill switch 有効相当（off）扱い') }
+  // probe 失敗（ok!==true）は fail-safe で kill switch 有効相当として扱う — 判定不能を
+  // 「shadow 実行してよい」側に倒さない（他の distrust 機構と同じ fail-safe 方針）。
+  const killSwitch = killSwitchRes?.ok === true ? killSwitchRes.kill_switch === true : true
+  const spMode = resolveLayerMode({ layer: 'surfaceproof', configuredMode: 'shadow', repoSlug: REPO, killSwitch })
+
+  if (spMode === 'shadow') {
+    let spRes = null
+    try {
+      spRes = await agent(
+        `## Objective\ncd ${WT} で作業。\`dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO}\` を絶対パスを先頭トークンとする bare 形で1回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+        + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
+        + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
+        + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
+        + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
+        + `## Boundary\nファイルは一切変更しない（read-only shadow probe）。issue 内容は既存 dev-issue-analyze の Analyze 判定へは一切反映しない（本呼出しは telemetry 記録専用）。\n`
+        + `## Token cap\n150 語以内で完結すること。`,
+        { agentType: 'dev-runner-haiku-ro', schema: SURFACEPROOF_SHADOW, label: 'surfaceproof-shadow#' + ISSUE, phase: 'Analyze' },
+      )
+    } catch (e) { log('⚠️ SurfaceProof shadow probe が例外 — fail-open（既存 gate に影響なし。telemetry のみ欠落）') }
+    if (spRes?.ok === true && spRes.result?.receipt) {
+      const verdict = spRes.result.receipt.outcome?.verdict ?? null
+      const reasonCode = spRes.result.receipt.outcome?.reason_code ?? null
+      trustSurfaceProofShadow = { mode: 'shadow', verdict, reason_code: reasonCode, receipt_id: spRes.result.receipt.receipt_id ?? null }
+      log(`SurfaceProof (shadow): verdict=${verdict} reason=${reasonCode}`)
+    } else {
+      trustSurfaceProofShadow = { mode: 'shadow', verdict: 'inconclusive', reason_code: 'PROBE_FAILED', receipt_id: null }
+      log('⚠️ SurfaceProof shadow probe が結果を返さなかった（fail-open、既存 gate に影響なし）')
+    }
+  } else {
+    trustSurfaceProofShadow = { mode: spMode, verdict: null, reason_code: null, receipt_id: null }
+  }
+}
+
 const triage = classifyShape(req)
 const SHAPE = triage.shape
 const TRIVIAL = SHAPE === 'micro'
@@ -3139,6 +3294,7 @@ let state = {
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
+  trustSurfaceProofShadow,
 }
 
 // ============================================================
@@ -4428,6 +4584,11 @@ const telemetryHandoff = buildJournalHandoffPayload({
     route,
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
+    // trust_surfaceproof_shadow: issue #410（#390 Phase 2）の SurfaceProof shadow probe 結果
+    // （mode/verdict/reason_code/receipt_id）。skills repo 以外・kill switch 有効時は null のまま
+    // 出力しない。journal whitelist 登録・dotfiles Stop hook への転送配線は別 issue に繰り延べる
+    // （route/vdelta_verdicts と同じ precedent）。
+    ...(state.trustSurfaceProofShadow ? { trust_surfaceproof_shadow: state.trustSurfaceProofShadow } : {}),
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
@@ -4483,6 +4644,7 @@ return {
   final_ui_verify: finalUiVerifyStatus,
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
+  trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
   note: mergeTier.tier === 'HOLD'
     ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'

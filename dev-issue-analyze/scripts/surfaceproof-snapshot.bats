@@ -87,6 +87,11 @@ case "${CURL_MODE:-fail}" in
         printf '302\t\t0\thttps://evil.example.com/redirected'
         exit 0
         ;;
+    notfound)
+        [[ -n "$outfile" ]] && printf 'not found' > "$outfile"
+        printf '404\ttext/plain\t9\t'
+        exit 0
+        ;;
     *)
         exit 1
         ;;
@@ -187,7 +192,28 @@ make_comments_fixture() {
 }
 
 # ---------------------------------------------------------------------------
-# (5) freeze -> reconcile: source updated after freeze -> STALE_SOURCE
+# (5) HTTP 404 response -> FETCH_FAILED, not a false "fetched" (issue #416 review)
+# ---------------------------------------------------------------------------
+@test "freeze: HTTP 404 response -> FETCH_FAILED even when content-type matches allowlist" {
+    ISSUE_FIXTURE="$FIXTURE_DIR/issue6.json"
+    COMMENTS_FIXTURE="$FIXTURE_DIR/comments6.json"
+    make_issue_fixture "$ISSUE_FIXTURE" "Removed spec" "see https://github.com/it-all-playpark/skills/blob/main/removed.md" "2026-07-22T00:00:00Z"
+    make_comments_fixture "$COMMENTS_FIXTURE" '[]'
+    export GH_ISSUE_FIXTURE="$ISSUE_FIXTURE" GH_COMMENTS_FIXTURE="$COMMENTS_FIXTURE"
+    export CURL_MODE=notfound
+    export CURL_CALLED_FILE="$BATS_TMPDIR/curl-called-6"
+    rm -f "$CURL_CALLED_FILE"
+
+    run bash "$SCRIPT" 415 --repo it-all-playpark/skills
+    [ "$status" -eq 0 ]
+    [ -e "$CURL_CALLED_FILE" ]
+    echo "$output" | jq -e '[.units[] | select(.kind == "spec_link")][0].fetch == "failed"'
+    echo "$output" | jq -e '[.units[] | select(.kind == "spec_link")][0].reason_code == "FETCH_FAILED"'
+    echo "$output" | jq -e '.receipt.outcome.verdict != "pass"'
+}
+
+# ---------------------------------------------------------------------------
+# (6) freeze -> reconcile: source updated after freeze -> STALE_SOURCE
 # ---------------------------------------------------------------------------
 @test "reconcile: source updated after freeze -> STALE_SOURCE" {
     ISSUE_FIXTURE="$FIXTURE_DIR/issue5.json"

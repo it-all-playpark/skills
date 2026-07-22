@@ -278,6 +278,47 @@ test('reconcileSource: requireFetchAttempted=true で allowlist 通過 link が 
   assert.equal(mapReconcileToOutcome(withGate.status).verdict, 'inconclusive');
 });
 
+test('freezeSource: fetchResults を渡すと fetch===fetched な required unit の id が confirmed_fetched_unit_ids に入る', () => {
+  const snapshot = makeSnapshot({
+    issue: {
+      ...makeSnapshot().issue,
+      body: '添付: https://github.com/user-attachments/files/1/foo.png',
+    },
+  });
+  const fetchResults = [{ url: 'https://github.com/user-attachments/files/1/foo.png', status: 'fetched', content_digest: 'test-digest' }];
+  const frozenWithout = freezeSource(snapshot);
+  assert.deepEqual(frozenWithout.confirmed_fetched_unit_ids.filter((id) => id.startsWith('attachment:')), []);
+
+  const frozenWith = freezeSource(snapshot, fetchResults);
+  const attachmentUnit = buildInventory(snapshot, fetchResults).find((u) => u.kind === 'attachment_ref');
+  assert.ok(frozenWith.confirmed_fetched_unit_ids.includes(attachmentUnit.unit_id));
+  assert.ok(frozenWith.confirmed_fetched_unit_ids.includes('body'));
+});
+
+test('reconcileSource: CLI reconcile 境界の再現 — frozen.confirmed_fetched_unit_ids があれば units 側が not_attempted に戻っていても REQUIRED_UNIT_OMITTED を検出する（issue #416 review 指摘）', () => {
+  const snapshot = makeSnapshot({
+    issue: {
+      ...makeSnapshot().issue,
+      body: '仕様: https://github.com/it-all-playpark/skills/blob/main/spec.md',
+    },
+  });
+  const fetchResults = [{ url: 'https://github.com/it-all-playpark/skills/blob/main/spec.md', status: 'fetched', content_digest: 'test-digest-spec' }];
+  // freeze 時点では fetch 済み（confirmed_fetched_unit_ids に記録される）。
+  const frozen = freezeSource(snapshot, fetchResults);
+
+  // CLI の cmdReconcile は fetchResults を再取得せず buildInventory(currentSnapshot, []) で
+  // unit を作り直すため、link unit は常に fetch==='not_attempted' に戻る。この状態を再現する。
+  const rebuiltUnits = buildInventory(snapshot, []);
+  const linkUnit = rebuiltUnits.find((u) => u.kind === 'spec_link');
+  assert.equal(linkUnit.fetch, 'not_attempted');
+
+  const omittedUnits = rebuiltUnits.map((u) => (u.unit_id === linkUnit.unit_id ? { ...u, presentation: 'omitted' } : { ...u, presentation: 'presented' }));
+  const result = reconcileSource({ frozen, currentSnapshot: snapshot, units: omittedUnits });
+  assert.equal(result.status, 'REQUIRED_UNIT_OMITTED');
+  assert.ok(result.reasons.some((r) => r.unit_id === linkUnit.unit_id && r.reason_code === 'REQUIRED_UNIT_OMITTED'));
+  assert.notEqual(mapReconcileToOutcome(result.status).verdict, 'pass');
+});
+
 test('reconcileSource: priority は STALE_SOURCE > REQUIRED_UNIT_OMITTED > FETCH_FORBIDDEN > FETCH_FAILED > UNIT_UNSUPPORTED > OK', () => {
   const snapshot = makeSnapshot({ fetch_errors: [{ resource: 'comments', http_status: 403 }] });
   const frozen = freezeSource(snapshot);

@@ -76,6 +76,50 @@ test('cli reconcile: comment unit を --presented から省くと REQUIRED_UNIT_
   }
 });
 
+test('cli reconcile: fetch 済みの attachment_ref unit を --presented から省くと REQUIRED_UNIT_OMITTED になり verdict は pass にならない（issue #416 review 指摘: CLI reconcile 境界でのlink omission検出漏れ）', () => {
+  // cmdReconcile は fetchResults を再取得せず buildInventory(currentSnapshot, []) で unit を
+  // 作り直すため、修正前は link unit が常に fetch==='not_attempted' に戻り omission を
+  // 検出できなかった（frozen.confirmed_fetched_unit_ids による fallback で修正済み）。
+  const fixturePath = join(__dirname, 'fixtures', 'trust', 'surfaceproof', 'attachment-omission.json');
+  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
+  const tmp = mkdtempSync(join(os.tmpdir(), 'surfaceproof-cli-'));
+  try {
+    const fetchesPath = join(tmp, 'fetches.json');
+    writeFileSync(fetchesPath, JSON.stringify(fixture.fetch_results), 'utf8');
+
+    const freezeResult = runCli('freeze', ['--fetches', fetchesPath], fixture.snapshot);
+    const attachmentUnit = freezeResult.units.find((u) => u.kind === 'attachment_ref');
+    assert.ok(attachmentUnit, 'attachment_ref unit が buildInventory で生成されること');
+    assert.equal(attachmentUnit.fetch, 'fetched');
+    assert.ok(
+      freezeResult.frozen.confirmed_fetched_unit_ids.includes(attachmentUnit.unit_id),
+      'freeze 時点で fetch 済みの attachment unit が confirmed_fetched_unit_ids に記録されること',
+    );
+
+    const frozenPath = join(tmp, 'frozen.json');
+    writeFileSync(frozenPath, JSON.stringify(freezeResult.frozen), 'utf8');
+    const presentedPath = join(tmp, 'presented.json');
+    writeFileSync(presentedPath, JSON.stringify(fixture.presented_unit_ids), 'utf8');
+
+    // --fetches を渡さず reconcile する（Analyze 直前の再照合は再 fetch しない設計）。
+    const { reconcile, receipt } = runCli(
+      'reconcile',
+      ['--frozen', frozenPath, '--presented', presentedPath],
+      fixture.snapshot,
+    );
+
+    assert.equal(reconcile.status, 'REQUIRED_UNIT_OMITTED');
+    assert.ok(
+      reconcile.reasons.some((r) => r.unit_id === attachmentUnit.unit_id && r.reason_code === 'REQUIRED_UNIT_OMITTED'),
+      `reasons に ${attachmentUnit.unit_id} の REQUIRED_UNIT_OMITTED が含まれること: ${JSON.stringify(reconcile.reasons)}`,
+    );
+    assert.notEqual(receipt.outcome.verdict, 'pass');
+    assert.equal(receipt.outcome.verdict, 'fail');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('cli reconcile: --presented 省略（全 unit 提示）なら reconcile.status=OK で verdict=pass になる', () => {
   const fixture = loadFixture();
   const tmp = mkdtempSync(join(os.tmpdir(), 'surfaceproof-cli-'));
