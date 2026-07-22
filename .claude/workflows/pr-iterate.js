@@ -46,7 +46,7 @@ function resolvePositiveIntArg(args, name) {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-const JOURNAL_PENDING_DIR = '~/.claude/journal/pending';
+const JOURNAL_PENDING_DIR = '${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending';
 const JOURNAL_HANDOFF_DELIMITER = 'TELEMETRY_EOF';
 
 function buildJournalHandoffPayload({
@@ -87,7 +87,11 @@ function buildJournalHandoffCommand({ prefix, id, payload }) {
   }
   if (payload == null) throw new Error('journal-handoff: payload is required');
 
-  return `mkdir -p ${JOURNAL_PENDING_DIR} && cat > ${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-$(date +%s).json <<'${JOURNAL_HANDOFF_DELIMITER}'\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+  // Stable effect-ID naming (sha256 of payload, first 16 hex chars) + mktemp/mv atomic
+  // write: partial JSON can never be visible under a *.json name (tmp is dot-prefixed
+  // and non-.json until the atomic `mv -f`), and re-running with an identical payload
+  // reproduces the same final filename (idempotent overwrite, no duplicate entries).
+  return `mkdir -p ${JOURNAL_PENDING_DIR} && __jh_tmp=$(mktemp "${JOURNAL_PENDING_DIR}/.${safePrefix}-${safeId}.XXXXXX") && cat > "$__jh_tmp" <<'${JOURNAL_HANDOFF_DELIMITER}' && __jh_id=$(shasum -a 256 "$__jh_tmp" | cut -c1-16) && mv -f "$__jh_tmp" "${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-\${__jh_id}.json"\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
 }
 
 function repoFromGithubUrl(url) {
