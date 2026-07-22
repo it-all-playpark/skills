@@ -648,6 +648,12 @@ function classifyMergeableState(meta) {
 //   'clean'/'unknown'/未指定は reason 追加なし（fail-open no-op、regression なし）。'unknown' は
 //   proxy 失敗や GitHub 側 mergeability 未計算を含むため conflict と決めつけない。out-of-enum は
 //   明示 error（後方互換 scaffolding 禁止規約）。
+// s.trustGate (optional { blocking: true, verdict: 'pass'|'fail'|'inconclusive' }): EvalSeal
+//   receipt の trust-layer blocking 昇格経路（epic #390 Phase 3, issue #411）。現行 config は
+//   shadow 固定のため live 呼び出しは常に null（isGatingMode(mode) が true のときのみ workflow
+//   が non-null を渡す設計）— 未指定/null = 挙動完全不変（regression なし）。non-null かつ
+//   blocking===true かつ verdict!=='pass' のとき HOLD reason を追記する（inconclusive も成功
+//   扱いしない）。verdict が closed enum 外は throw（後方互換 scaffolding 禁止規約）。
 function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -657,6 +663,9 @@ function classifyMergeTier(s) {
   }
   if (s.mergeableState != null && !['clean', 'conflicting', 'unknown'].includes(s.mergeableState)) {
     throw new Error('classifyMergeTier: invalid mergeableState: ' + s.mergeableState);
+  }
+  if (s.trustGate != null && !['pass', 'fail', 'inconclusive'].includes(s.trustGate.verdict)) {
+    throw new Error('classifyMergeTier: invalid trustGate: ' + s.trustGate.verdict);
   }
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
@@ -680,6 +689,9 @@ function classifyMergeTier(s) {
     reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
   }
   if (s.mergeableState === 'conflicting') reasons.push('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）');
+  if (s.trustGate != null && s.trustGate.blocking === true && s.trustGate.verdict !== 'pass') {
+    reasons.push(`EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`);
+  }
   if (reasons.length) {
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     return { tier: 'HOLD', reasons };
@@ -881,6 +893,189 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
     .every((it) => it.checked);
 }
 // ==== END inline: _lib/gate-policy.mjs ====
+
+// ==== BEGIN inline: _lib/trust-mode.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// issue #409 (epic #390 Phase 1): trust-layer protocol kernel — layer 別 mode
+// (off/shadow/advisory/blocking) と全体 kill switch を解決する純粋関数群。
+//
+// Phase 0 spec (claudedocs/2026-07-20-issue-390-phase0-child-decomposition-and-shadow-boundary.md
+// §3「Shadow opt-in 境界決定」) の決定を実装する:
+//   - repoSlug は allowlist（TRUST_SHADOW_REPO_SLUG）に厳密一致（===）する場合のみ非 off を許可。
+//     null / undefined / 別 repo / fork / 大文字小文字違いは全て fail-closed で off。
+//   - killSwitch===true は allowlist 一致・configuredMode に関わらず全 layer を強制 off。
+//   - repoSlug の取得（git remote get-url / GITHUB_REPOSITORY 読み取り）は adapter の責務
+//     （Phase 2+）であり、本モジュールは文字列注入のみ受ける（他モジュール非依存・import なし）。
+
+const TRUST_LAYERS = ['surfaceproof', 'evalseal', 'effectdelta'];
+
+const TRUST_MODES = ['off', 'shadow', 'advisory', 'blocking'];
+
+const DEFAULT_TRUST_MODE = 'off';
+
+const TRUST_SHADOW_REPO_SLUG = 'it-all-playpark/skills';
+
+// layer 別の trust mode を解決する純粋関数。
+//
+// 優先順位:
+//   (a) layer が TRUST_LAYERS 外 → throw
+//   (b) configuredMode が null/undefined/空文字 → DEFAULT_TRUST_MODE、TRUST_MODES 外 → throw
+//   (c) killSwitch === true → 'off'（全 layer 無効化）
+//   (d) repoSlug が TRUST_SHADOW_REPO_SLUG と厳密一致しない → 'off'（fail-closed allowlist）
+//   (e) 一致した場合のみ configuredMode をそのまま返す
+function resolveLayerMode({ layer, configuredMode, repoSlug, killSwitch }) {
+  if (!TRUST_LAYERS.includes(layer)) {
+    throw new Error(
+      `trust-mode: 未知の layer "${layer}"（許可: ${TRUST_LAYERS.join(', ')}）`,
+    );
+  }
+
+  const mode = configuredMode == null || configuredMode === '' ? DEFAULT_TRUST_MODE : configuredMode;
+  if (!TRUST_MODES.includes(mode)) {
+    throw new Error(
+      `trust-mode: 未知の configuredMode "${configuredMode}"（許可: ${TRUST_MODES.join(', ')}）`,
+    );
+  }
+
+  if (killSwitch === true) return 'off';
+  if (repoSlug !== TRUST_SHADOW_REPO_SLUG) return 'off';
+  return mode;
+}
+
+// TRUST_LAYERS 全てについて resolveLayerMode を適用し {surfaceproof, evalseal, effectdelta}
+// を返す純粋関数。config は各 layer キーを持つ部分 object（未指定は DEFAULT_TRUST_MODE）。
+// config 内の未知 key は closed（throw）。
+function resolveAllLayerModes({ config, repoSlug, killSwitch }) {
+  const safeConfig = config ?? {};
+  for (const key of Object.keys(safeConfig)) {
+    if (!TRUST_LAYERS.includes(key)) {
+      throw new Error(
+        `trust-mode: 未知の config key "${key}"（許可: ${TRUST_LAYERS.join(', ')}）`,
+      );
+    }
+  }
+
+  const result = {};
+  for (const layer of TRUST_LAYERS) {
+    result[layer] = resolveLayerMode({
+      layer,
+      configuredMode: safeConfig[layer],
+      repoSlug,
+      killSwitch,
+    });
+  }
+  return result;
+}
+
+// mode が既存 gate を変更する（gating）かどうかを判定する純粋関数。
+// blocking のときのみ true。shadow/advisory/off は既存 gate を一切変えない
+// （epic #390 AC-11 / AC-15 非緩和）。TRUST_MODES 外は throw。
+function isGatingMode(mode) {
+  if (!TRUST_MODES.includes(mode)) {
+    throw new Error(
+      `trust-mode: 未知の mode "${mode}"（許可: ${TRUST_MODES.join(', ')}）`,
+    );
+  }
+  return mode === 'blocking';
+}
+// ==== END inline: _lib/trust-mode.mjs ====
+
+// ==== BEGIN inline: _lib/trust-wiring.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// issue #411 (epic #390 Phase 3): trust 配線用 canonical モジュール。
+//
+// tools/sync-inlines.mjs の canonical 制約により import / require / Date.now / Math.random
+// を一切含めない（トップレベル export const / export function のみ。export default /
+// export { } 禁止）。trust-mode.mjs / trust-telemetry.mjs は import せず、layer 名・mode 値・
+// summary formatter を self-containment のためローカルで重複定義する（trust-telemetry.mjs が
+// Phase 1 で宣言した precedent に従う）。両定数の一致は本ファイル隣接の
+// _lib/trust-wiring.test.mjs（cross-import して比較する側）で担保する。
+//
+// TRUST_LAYER_CONFIG は repo 定数。QUALITY_MODEL（_lib/quality-model.mjs）と同じ
+// 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
+// surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
+// sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
+const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'off' };
+
+// 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
+// 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
+const TRUST_KILL_SWITCH = false;
+
+const EVALSEAL_VERDICTS = ['pass', 'fail', 'inconclusive'];
+
+// EvalSeal obligation（evaluator 収束スナップショット）を構築する pure function。
+// verdict は closed enum（out-of-enum は throw）。evidence は文字列配列必須
+// （非配列・非文字列要素は throw）。reasonCode 未指定/null は既定 'OK'。
+// context は plain object のみ許可（配列・null・非 object は throw）、未指定は空 object。
+function buildEvalsealObligation({ verdict, reasonCode, evidence, context } = {}) {
+  if (!EVALSEAL_VERDICTS.includes(verdict)) {
+    throw new Error(
+      `trust-wiring: 未知の verdict "${verdict}"（許可: ${EVALSEAL_VERDICTS.join(', ')}）`,
+    );
+  }
+  if (!Array.isArray(evidence) || evidence.some((e) => typeof e !== 'string')) {
+    throw new Error('trust-wiring: evidence は文字列配列が必要');
+  }
+
+  const reason_code = reasonCode == null ? 'OK' : reasonCode;
+
+  const safeContext = context === undefined ? {} : context;
+  if (safeContext === null || typeof safeContext !== 'object' || Array.isArray(safeContext)) {
+    throw new Error('trust-wiring: context は plain object が必要');
+  }
+
+  return { verdict, reason_code, evidence, context: safeContext };
+}
+
+// [{ envelope: {verdict,...}, invalidated: boolean, stage: 'evaluate'|'final' }] から、
+// invalidated でない最新（配列末尾優先）entry の envelope.verdict を返す。
+// 全滅/空配列/非配列は 'inconclusive' を返す（受領物なし = 成功扱いしない）。
+function effectiveTrustVerdict(receiptEntries) {
+  if (!Array.isArray(receiptEntries)) return 'inconclusive';
+  for (let i = receiptEntries.length - 1; i >= 0; i -= 1) {
+    const entry = receiptEntries[i];
+    if (entry && entry.invalidated !== true) {
+      return entry.envelope?.verdict ?? 'inconclusive';
+    }
+  }
+  return 'inconclusive';
+}
+
+// verdict → PR summary 上の STATUS 表記への写像（_lib/trust-telemetry.mjs の
+// formatTrustSummary と同一写像をローカルで重複定義）。
+const VERDICT_STATUS = {
+  pass: 'VERIFIED',
+  fail: 'HOLD',
+  inconclusive: 'INCONCLUSIVE',
+};
+
+// _lib/trust-telemetry.mjs の formatTrustSummary の import-free 複製 + invalidated 拡張。
+// 空配列、または全 envelope が mode==='off' の場合は空文字を返す（既存 summary を
+// byte 互換に保つ UX 決定を踏襲）。invalidated===true の entry には行末に
+// ` [invalidated]` を付ける（旧 receipt 失効の可視化）。invalidated フィールドを
+// 含まない入力では formatTrustSummary と文字列完全一致する（cross-check test で担保）。
+function formatTrustReceiptsSummary(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return '';
+  }
+  const active = entries.filter((env) => env.mode !== 'off');
+  if (active.length === 0) {
+    return '';
+  }
+
+  const lines = ['### Trust receipts (shadow)', ''];
+  const detailLines = ['<details><summary>digests</summary>', ''];
+
+  for (const env of active) {
+    const status = VERDICT_STATUS[env.verdict];
+    const suffix = env.invalidated === true ? ' [invalidated]' : '';
+    lines.push(`- ${env.layer} [${env.mode}]: ${status} (${env.reason_code}) subject=${env.subject_kind}:${env.subject_identity}${suffix}`);
+    detailLines.push(`- ${env.layer}: receipt_id=${env.receipt_id} revision_digest=${env.revision_digest}`);
+  }
+
+  detailLines.push('', '</details>');
+
+  return [...lines, '', ...detailLines].join('\n');
+}
+// ==== END inline: _lib/trust-wiring.mjs ====
 
 // ==== BEGIN inline: _lib/vdelta-transitions.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // vdelta-transitions: redgreen R1↔R2 の veridelta verdict から deny-only チェックを判定する。
@@ -1344,90 +1539,6 @@ function uiVerifyPort(basePort, issue) {
   return basePort + (n % 1000);
 }
 // ==== END inline: _lib/ui-verify.mjs ====
-// ==== BEGIN inline: _lib/trust-mode.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// issue #409 (epic #390 Phase 1): trust-layer protocol kernel — layer 別 mode
-// (off/shadow/advisory/blocking) と全体 kill switch を解決する純粋関数群。
-//
-// Phase 0 spec (claudedocs/2026-07-20-issue-390-phase0-child-decomposition-and-shadow-boundary.md
-// §3「Shadow opt-in 境界決定」) の決定を実装する:
-//   - repoSlug は allowlist（TRUST_SHADOW_REPO_SLUG）に厳密一致（===）する場合のみ非 off を許可。
-//     null / undefined / 別 repo / fork / 大文字小文字違いは全て fail-closed で off。
-//   - killSwitch===true は allowlist 一致・configuredMode に関わらず全 layer を強制 off。
-//   - repoSlug の取得（git remote get-url / GITHUB_REPOSITORY 読み取り）は adapter の責務
-//     （Phase 2+）であり、本モジュールは文字列注入のみ受ける（他モジュール非依存・import なし）。
-
-const TRUST_LAYERS = ['surfaceproof', 'evalseal', 'effectdelta'];
-
-const TRUST_MODES = ['off', 'shadow', 'advisory', 'blocking'];
-
-const DEFAULT_TRUST_MODE = 'off';
-
-const TRUST_SHADOW_REPO_SLUG = 'it-all-playpark/skills';
-
-// layer 別の trust mode を解決する純粋関数。
-//
-// 優先順位:
-//   (a) layer が TRUST_LAYERS 外 → throw
-//   (b) configuredMode が null/undefined/空文字 → DEFAULT_TRUST_MODE、TRUST_MODES 外 → throw
-//   (c) killSwitch === true → 'off'（全 layer 無効化）
-//   (d) repoSlug が TRUST_SHADOW_REPO_SLUG と厳密一致しない → 'off'（fail-closed allowlist）
-//   (e) 一致した場合のみ configuredMode をそのまま返す
-function resolveLayerMode({ layer, configuredMode, repoSlug, killSwitch }) {
-  if (!TRUST_LAYERS.includes(layer)) {
-    throw new Error(
-      `trust-mode: 未知の layer "${layer}"（許可: ${TRUST_LAYERS.join(', ')}）`,
-    );
-  }
-
-  const mode = configuredMode == null || configuredMode === '' ? DEFAULT_TRUST_MODE : configuredMode;
-  if (!TRUST_MODES.includes(mode)) {
-    throw new Error(
-      `trust-mode: 未知の configuredMode "${configuredMode}"（許可: ${TRUST_MODES.join(', ')}）`,
-    );
-  }
-
-  if (killSwitch === true) return 'off';
-  if (repoSlug !== TRUST_SHADOW_REPO_SLUG) return 'off';
-  return mode;
-}
-
-// TRUST_LAYERS 全てについて resolveLayerMode を適用し {surfaceproof, evalseal, effectdelta}
-// を返す純粋関数。config は各 layer キーを持つ部分 object（未指定は DEFAULT_TRUST_MODE）。
-// config 内の未知 key は closed（throw）。
-function resolveAllLayerModes({ config, repoSlug, killSwitch }) {
-  const safeConfig = config ?? {};
-  for (const key of Object.keys(safeConfig)) {
-    if (!TRUST_LAYERS.includes(key)) {
-      throw new Error(
-        `trust-mode: 未知の config key "${key}"（許可: ${TRUST_LAYERS.join(', ')}）`,
-      );
-    }
-  }
-
-  const result = {};
-  for (const layer of TRUST_LAYERS) {
-    result[layer] = resolveLayerMode({
-      layer,
-      configuredMode: safeConfig[layer],
-      repoSlug,
-      killSwitch,
-    });
-  }
-  return result;
-}
-
-// mode が既存 gate を変更する（gating）かどうかを判定する純粋関数。
-// blocking のときのみ true。shadow/advisory/off は既存 gate を一切変えない
-// （epic #390 AC-11 / AC-15 非緩和）。TRUST_MODES 外は throw。
-function isGatingMode(mode) {
-  if (!TRUST_MODES.includes(mode)) {
-    throw new Error(
-      `trust-mode: 未知の mode "${mode}"（許可: ${TRUST_MODES.join(', ')}）`,
-    );
-  }
-  return mode === 'blocking';
-}
-// ==== END inline: _lib/trust-mode.mjs ====
 // ==== BEGIN inline: _lib/parallel-disjoint.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // enforceDisjointParallel: parallel task の file_changes 衝突を検出し、衝突 task を serial に降格する純粋関数。
 // dev-flow の parallel fan-out 前に呼び出し、file-disjoint 制約を保証する。
@@ -2360,15 +2471,6 @@ const CONTRACT = {
   },
 }
 // issue #410 (#390 Phase 2): SurfaceProof shadow probe 用スキーマ。
-const TRUST_KILL_SWITCH = {
-  type: 'object',
-  required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    kill_switch: { type: 'boolean' },
-    error: { type: 'string' },
-  },
-}
 const SURFACEPROOF_SHADOW = {
   type: 'object',
   required: ['ok'],
@@ -2664,6 +2766,20 @@ const PR_META = {
     ok: { type: 'boolean' },
     mergeable: { type: ['string', 'null'] },
     mergeStateStatus: { type: ['string', 'null'] },
+    error: { type: 'string' },
+  },
+}
+// TRUSTSEAL: _shared/scripts/evalseal-seal.mjs exec-proxy の stdout JSON（epic #390 Phase 3, issue #411）。
+// seal 呼び出しは receipt/envelope、check 呼び出しは check を返す（同一 schema で共用）。
+const TRUSTSEAL = {
+  type: 'object', required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    mode: { type: 'string' },
+    stage: { type: 'string' },
+    receipt: { type: 'object' },
+    envelope: { type: 'object' },
+    check: { type: 'object' },
     error: { type: 'string' },
   },
 }
@@ -3134,27 +3250,16 @@ if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUI
 // SurfaceProof shadow probe (issue #410, #390 Phase 2): skills repo 自身でのみ shadow 実行。
 // req/shape/needs_clarification 判定には一切反映しない — telemetry 記録専用の追加 call site
 // （AC-11/AC-15: shadow/off で既存 merge tier・return status・後続 gate は一切変えない）。
-// repoSlug は Setup で解決済みの REPO を再利用する（他 repo では追加 agent 呼出し 0 件のまま off）。
+// mode 解決は EvalSeal（issue #411）と同じ trust-wiring.mjs の TRUST_LAYER_CONFIG /
+// TRUST_KILL_SWITCH を単一の真実源として使う（kill switch は _lib 定数 — QUALITY_MODEL と
+// 同じ「1行変更 + tools/sync-inlines.mjs --write」パターンで切替。実行時の env probe は
+// 不要になった）。repoSlug は Setup で解決済みの REPO を再利用する（他 repo・off では
+// 追加 agent 呼出し 0 件のまま）。
 // ============================================================
+const SURFACEPROOF_MODE = resolveLayerMode({ layer: 'surfaceproof', configuredMode: TRUST_LAYER_CONFIG.surfaceproof, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
 let trustSurfaceProofShadow = null
-if (REPO === TRUST_SHADOW_REPO_SLUG) {
-  let killSwitchRes = null
-  try {
-    killSwitchRes = await agent(
-      `## Objective\n環境変数 TRUST_LAYER_KILL_SWITCH の有無を確認せよ。\`[ -n "\${TRUST_LAYER_KILL_SWITCH:-}" ] && echo true || echo false\` を1回だけ実行し、出力（true/false）を kill_switch として返せ。原因調査・再試行はするな。\n`
-      + `## Output format\n{ "ok": boolean, "kill_switch": boolean, "error": string }\n`
-      + `## Tools\n使用可: Bash のみ\n`
-      + `## Boundary\nファイルは一切変更しない（read-only probe）。\n`
-      + `## Token cap\n80 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku-ro', schema: TRUST_KILL_SWITCH, label: 'trust-kill-switch-probe#' + ISSUE, phase: 'Analyze' },
-    )
-  } catch (e) { log('⚠️ trust kill-switch probe が例外 — fail-safe で kill switch 有効相当（off）扱い') }
-  // probe 失敗（ok!==true）は fail-safe で kill switch 有効相当として扱う — 判定不能を
-  // 「shadow 実行してよい」側に倒さない（他の distrust 機構と同じ fail-safe 方針）。
-  const killSwitch = killSwitchRes?.ok === true ? killSwitchRes.kill_switch === true : true
-  const spMode = resolveLayerMode({ layer: 'surfaceproof', configuredMode: 'shadow', repoSlug: REPO, killSwitch })
-
-  if (spMode === 'shadow') {
+if (SURFACEPROOF_MODE !== 'off') {
+  if (SURFACEPROOF_MODE === 'shadow') {
     let spRes = null
     try {
       spRes = await agent(
@@ -3178,7 +3283,7 @@ if (REPO === TRUST_SHADOW_REPO_SLUG) {
       log('⚠️ SurfaceProof shadow probe が結果を返さなかった（fail-open、既存 gate に影響なし）')
     }
   } else {
-    trustSurfaceProofShadow = { mode: spMode, verdict: null, reason_code: null, receipt_id: null }
+    trustSurfaceProofShadow = { mode: SURFACEPROOF_MODE, verdict: null, reason_code: null, receipt_id: null }
   }
 }
 
@@ -3294,7 +3399,7 @@ let state = {
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
-  trustSurfaceProofShadow,
+  trustSurfaceProofShadow, trustReceipts: [],
 }
 
 // ============================================================
@@ -4100,9 +4205,46 @@ await clockProbe('validate_end', 'Validate')
 phase('Security floor')
 state = await execSecurityFloorPhase(state)
 
+// EvalSeal (epic #390 Phase 3, issue #411): repo allowlist + kill switch を解決した mode。
+// runEval 分岐の外で宣言し、後続の Final reconcile / Merge tier からも参照する。
+// off（allowlist 不一致・kill switch・REPO null）では常に 'off' — trust 系 agent 呼び出しゼロ。
+const EVALSEAL_MODE = resolveLayerMode({ layer: 'evalseal', configuredMode: TRUST_LAYER_CONFIG.evalseal, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
+
 if (state.runEval) {
 phase('Evaluate')
 state = await execEvaluatePhase(state)
+if (EVALSEAL_MODE !== 'off' && state.runEval) {
+  try {
+    const evalObligation = buildEvalsealObligation({
+      verdict: (isConvergedUnderPolicy(state.ledger, GATE_POLICY) && !state.unsatisfiedAc) ? 'pass' : 'fail',
+      reasonCode: 'OK',
+      evidence: state.ledger.items.filter((it) => it.checked && typeof it.evidence === 'string').map((it) => `${it.id}: ${it.evidence}`.slice(0, 300)),
+      context: { issue: ISSUE, eval_iters: state.evalIters },
+    })
+    const trustSealEval = await agent(
+      `## Objective\ncd ${WT} で作業し EvalSeal (evalseal/1) receipt を生成する。\n\n`
+      + `## Instructions\n`
+      + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
+      + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-obligation-eval.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
+      + `<<<TRUST_OBLIGATION_EVAL_BEGIN>>>\n${JSON.stringify(evalObligation)}\n<<<TRUST_OBLIGATION_EVAL_END>>>\n\n`
+      + `3. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-eval.json\`\n`
+      + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
+      + `\n## Tools\n使用可: Bash, Write, Read\n`
+      + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Token cap\n150 語以内で完結すること。`,
+      { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-eval', phase: 'Evaluate' },
+    )
+    if (trustSealEval?.ok === true && trustSealEval.mode !== 'off' && trustSealEval.receipt && trustSealEval.envelope) {
+      state.trustReceipts.push({ stage: 'evaluate', receipt: trustSealEval.receipt, envelope: trustSealEval.envelope, invalidated: false, invalidated_reason: null })
+      log(`trust-seal-eval: EvalSeal receipt を記録（mode=${trustSealEval.mode}, verdict=${trustSealEval.envelope?.verdict ?? 'n/a'}）`)
+    } else {
+      log(`⚠️ trust-seal-eval: receipt 取得できず（ok=${trustSealEval?.ok}, mode=${trustSealEval?.mode}）— fail-open（既存 gate へ影響なし）`)
+    }
+  } catch (err) {
+    log(`⚠️ trust-seal-eval で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
+  }
+}
 await clockProbe('evaluate_end', 'Evaluate')
 } else {
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
@@ -4350,6 +4492,72 @@ if (_facDecision.run) {
   log(`Final AC reconcile: skip（reason=${_facDecision.reason}）`)
 }
 
+// EvalSeal (epic #390 Phase 3, issue #411): pr-iterate が fix を適用した run（tree が変化した
+// run）のみ、Evaluate 時点の旧 receipt を最終 PR HEAD に対し検証・失効させ、Final PR HEAD に
+// 対する新 receipt を再 seal する。finalReconcile !== 'reverified'（tree 状態不明）のときは
+// 再 seal せず旧 receipt を失効のみ（受領物なし = 成功扱いしない）。
+if (EVALSEAL_MODE !== 'off' && (iterate?.fixes_applied ?? 0) > 0 && state.trustReceipts.length > 0) {
+  try {
+    const evalEntry = state.trustReceipts.find((r) => r.stage === 'evaluate')
+    if (evalEntry) {
+      if (finalReconcile !== 'reverified') {
+        evalEntry.invalidated = true
+        evalEntry.invalidated_reason = 'final_tree_unverified'
+        log('trust: Final reconcile が reverified でないため EvalSeal(evaluate) receipt を final_tree_unverified で失効')
+      } else {
+        const trustCheckFinal = await agent(
+          `## Objective\ncd ${WT} で作業し既存 EvalSeal receipt を Final PR HEAD に対し検証する。\n\n`
+          + `## Instructions\n`
+          + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
+          + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-receipt-eval.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
+          + `<<<TRUST_RECEIPT_EVAL_BEGIN>>>\n${JSON.stringify(evalEntry.receipt)}\n<<<TRUST_RECEIPT_EVAL_END>>>\n\n`
+          + `3. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+          + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --check-receipt-file ${WT}/.devflow-tmp/trust-receipt-eval.json\`\n`
+          + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
+          + `\n## Tools\n使用可: Bash, Write, Read\n`
+          + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
+          + `\n## Token cap\n150 語以内で完結すること。`,
+          { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-check-final', phase: 'Final reconcile' },
+        )
+        if (!trustCheckFinal || trustCheckFinal.check?.verdict !== 'pass') {
+          evalEntry.invalidated = true
+          evalEntry.invalidated_reason = trustCheckFinal?.check?.reason_code ?? 'check_unavailable'
+          log(`trust: EvalSeal(evaluate) receipt が Final PR HEAD で検証不合格（reason=${evalEntry.invalidated_reason}）— invalidated`)
+        }
+
+        const finalObligation = buildEvalsealObligation({
+          verdict: (finalTestGreen !== false && finalAcReconcile !== 'unavailable' && state.finalUnsatisfiedAc !== true) ? 'pass' : 'fail',
+          reasonCode: 'OK',
+          evidence: [`final_reconcile=${finalReconcile}`, `final_test_green=${finalTestGreen}`, `final_ac_reconcile=${finalAcReconcile}`],
+          context: { issue: ISSUE, fixes_applied: iterate?.fixes_applied ?? 0 },
+        })
+        const trustSealFinal = await agent(
+          `## Objective\ncd ${WT} で作業し Final PR HEAD に対する EvalSeal (evalseal/1) receipt を生成する。\n\n`
+          + `## Instructions\n`
+          + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
+          + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-obligation-final.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
+          + `<<<TRUST_OBLIGATION_FINAL_BEGIN>>>\n${JSON.stringify(finalObligation)}\n<<<TRUST_OBLIGATION_FINAL_END>>>\n\n`
+          + `3. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+          + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --stage final --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-final.json\`\n`
+          + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
+          + `\n## Tools\n使用可: Bash, Write, Read\n`
+          + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
+          + `\n## Token cap\n150 語以内で完結すること。`,
+          { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-final', phase: 'Final reconcile' },
+        )
+        if (trustSealFinal?.ok === true && trustSealFinal.mode !== 'off' && trustSealFinal.receipt && trustSealFinal.envelope) {
+          state.trustReceipts.push({ stage: 'final', receipt: trustSealFinal.receipt, envelope: trustSealFinal.envelope, invalidated: false, invalidated_reason: null })
+          log(`trust-seal-final: EvalSeal receipt(final) を記録（mode=${trustSealFinal.mode}, verdict=${trustSealFinal.envelope?.verdict ?? 'n/a'}）`)
+        } else {
+          log(`⚠️ trust-seal-final: receipt 取得できず（ok=${trustSealFinal?.ok}, mode=${trustSealFinal?.mode}）— fail-open（既存 gate へ影響なし）`)
+        }
+      }
+    }
+  } catch (err) {
+    log(`⚠️ trust Final reconcile 処理で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
+  }
+}
+
 await clockProbe('final_end', 'Final reconcile')
 
 // ============================================================
@@ -4459,6 +4667,7 @@ const mergeTier = classifyMergeTier({
   finalAcReconcile,
   testsurfUncleared: state.ledger.items.filter((it) => it.source === 'seed' && it.dimension === 'test-integrity' && !it.checked).map((it) => it.id),
   mergeableState,
+  trustGate: isGatingMode(EVALSEAL_MODE) ? { blocking: true, verdict: effectiveTrustVerdict(state.trustReceipts) } : null,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
@@ -4499,6 +4708,9 @@ if (ciTargets.length > 0) {
 // Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。
 // 投稿失敗は log 警告のみで workflow は正常 return（issue #162 AC#4）。
 // ============================================================
+// EvalSeal (epic #390 Phase 3, issue #411): trust receipts が無い（off / fail-open で受領物な
+// し）場合は空文字を返す — 既存 summary を byte 互換に保つ（AC-6）。
+const trustSummaryMd = formatTrustReceiptsSummary(state.trustReceipts.map((r) => ({ ...r.envelope, invalidated: r.invalidated })))
 const summaryBody = buildDevflowSummaryBody({
   pr: pr.pr_number,
   mergeTier: mergeTier.tier,
@@ -4523,7 +4735,7 @@ const summaryBody = buildDevflowSummaryBody({
   finalUiVerify: finalUiVerifyStatus,
   finalAcReconcile,
   liteReview: state.liteReview ?? null,
-})
+}) + (trustSummaryMd ? '\n\n' + trustSummaryMd : '')
 const summaryPost = await agent(
   `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
   + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
@@ -4589,6 +4801,24 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // 出力しない。journal whitelist 登録・dotfiles Stop hook への転送配線は別 issue に繰り延べる
     // （route/vdelta_verdicts と同じ precedent）。
     ...(state.trustSurfaceProofShadow ? { trust_surfaceproof_shadow: state.trustSurfaceProofShadow } : {}),
+    // trust_receipts (epic #390 Phase 3, issue #411): digest/ID/enum のみ（redaction 原則）。
+    // journal whitelist 登録・dotfiles Stop hook への転送配線は vdelta_verdicts と同じ precedent
+    // で別 issue に繰り延べる。
+    ...(state.trustReceipts.length ? {
+      trust_receipts: state.trustReceipts.map((r) => ({
+        stage: r.stage,
+        invalidated: r.invalidated,
+        ...(r.invalidated_reason ? { invalidated_reason: r.invalidated_reason } : {}),
+        layer: r.envelope.layer,
+        mode: r.envelope.mode,
+        schema_version: r.envelope.schema_version,
+        receipt_id: r.envelope.receipt_id,
+        verdict: r.envelope.verdict,
+        reason_code: r.envelope.reason_code,
+        record_integrity: r.envelope.record_integrity,
+        revision_digest: r.envelope.revision_digest,
+      })),
+    } : {}),
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
@@ -4645,6 +4875,7 @@ return {
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
+  ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: state.trustReceipts.length } : {}),
   note: mergeTier.tier === 'HOLD'
     ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'
