@@ -132,7 +132,10 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-log 呼び
 
   const capturedPrompt = getCapturedPrompt();
   const requiredKeys = [
-    '~/.claude/journal/pending/priterate-5-',
+    // journal-handoff.mjs (issue #412 F3: atomic mktemp/mv write) は最終ファイル名に
+    // stable effect-ID（payload sha256 先頭16hex）を含むため、旧 `priterate-5-` 直後の
+    // 固定 timestamp 前提ではなく `-effect-` サフィックス付きの新命名を確認する。
+    '${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending/priterate-5-effect-',
     '"skill":"pr-iterate"',
     '"outcome":"success"',
     '"args":"pr=5"',

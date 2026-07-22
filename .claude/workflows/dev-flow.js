@@ -211,7 +211,7 @@ function resolveBase(baseArg, probe) {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-const JOURNAL_PENDING_DIR = '~/.claude/journal/pending';
+const JOURNAL_PENDING_DIR = '${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending';
 const JOURNAL_HANDOFF_DELIMITER = 'TELEMETRY_EOF';
 
 function buildJournalHandoffPayload({
@@ -252,7 +252,11 @@ function buildJournalHandoffCommand({ prefix, id, payload }) {
   }
   if (payload == null) throw new Error('journal-handoff: payload is required');
 
-  return `mkdir -p ${JOURNAL_PENDING_DIR} && cat > ${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-$(date +%s).json <<'${JOURNAL_HANDOFF_DELIMITER}'\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+  // Stable effect-ID naming (sha256 of payload, first 16 hex chars) + mktemp/mv atomic
+  // write: partial JSON can never be visible under a *.json name (tmp is dot-prefixed
+  // and non-.json until the atomic `mv -f`), and re-running with an identical payload
+  // reproduces the same final filename (idempotent overwrite, no duplicate entries).
+  return `mkdir -p ${JOURNAL_PENDING_DIR} && __jh_tmp=$(mktemp "${JOURNAL_PENDING_DIR}/.${safePrefix}-${safeId}.XXXXXX") && cat > "$__jh_tmp" <<'${JOURNAL_HANDOFF_DELIMITER}' && __jh_id=$(shasum -a 256 "$__jh_tmp" | cut -c1-16) && mv -f "$__jh_tmp" "${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-\${__jh_id}.json"\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
 }
 
 function repoFromGithubUrl(url) {
@@ -992,8 +996,11 @@ function isGatingMode(mode) {
 // TRUST_LAYER_CONFIG は repo 定数。QUALITY_MODEL（_lib/quality-model.mjs）と同じ
 // 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
 // surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
+// evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み）。
+// effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
+// post-summary（comment-ensure）へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
-const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'off' };
+const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'shadow' };
 
 // 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
 // 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
@@ -2783,6 +2790,25 @@ const TRUSTSEAL = {
     error: { type: 'string' },
   },
 }
+// EFFECTDELTA_OBS: _shared/scripts/effectdelta-github.sh exec-proxy の stdout JSON
+// （epic #390 Phase 4, issue #412）。pr-observe / comment-ensure（+ gh pr comment fallback）で
+// 共用するため posted/url/method（comment 系）と observation/effect_id/receipt/envelope
+// （両系）を同一 schema に併記する。
+const EFFECTDELTA_OBS = {
+  type: 'object', required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    mode: { type: 'string' },
+    op: { type: 'string' },
+    posted: { type: 'boolean' },
+    url: { type: 'string' },
+    method: { type: 'string' },
+    effect_id: { type: 'string' },
+    observation: { type: 'object' },
+    receipt: { type: 'object' },
+    envelope: { type: 'object' },
+  },
+}
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // workflow-post-helpers: PR/Issue コメント投稿・ジャーナル記録用の共通スキーマ・ヘルパー。
 // I/O なし。bodySaveInstr は agent 向け instruction 文字列を生成する純粋関数。
@@ -4210,6 +4236,11 @@ state = await execSecurityFloorPhase(state)
 // off（allowlist 不一致・kill switch・REPO null）では常に 'off' — trust 系 agent 呼び出しゼロ。
 const EVALSEAL_MODE = resolveLayerMode({ layer: 'evalseal', configuredMode: TRUST_LAYER_CONFIG.evalseal, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
 
+// EffectDelta (epic #390 Phase 4, issue #412): repo allowlist + kill switch を解決した mode。
+// PR phase（pr-observe）・post-summary（comment-ensure/fallback）から参照する。
+// off（allowlist 不一致・kill switch・REPO null）では常に 'off' — trust 系 agent 呼び出しゼロ。
+const EFFECTDELTA_MODE = resolveLayerMode({ layer: 'effectdelta', configuredMode: TRUST_LAYER_CONFIG.effectdelta, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
+
 if (state.runEval) {
 phase('Evaluate')
 state = await execEvaluatePhase(state)
@@ -4275,6 +4306,31 @@ const pr = need(await agent(
   { agentType: 'dev-runner', schema: PRURL, label: `pr#${ISSUE}`, phase: 'PR' },
 ), 'PR')
 log(`PR created: ${pr.pr_url}`)
+
+// EffectDelta (epic #390 Phase 4, issue #412): PR 作成経路（git-pr skill）自体は変更せず、
+// 作成後の PR を read-only で観測する shadow probe のみ追加する（AC-8 観測側）。
+if (EFFECTDELTA_MODE === 'shadow') {
+  try {
+    const edPrRes = await agent(
+      `## Objective\n\`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
+      + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
+      + `exit 0 かつ stdout が JSON として parse できればそのオブジェクトをそのまま返し、それ以外（exit 非0・stdout 空・JSON 不正）は { "ok": false, "error": "<理由>" } を返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
+      + `## Output format\nスクリプト stdout の JSON object をそのまま返す（{ "ok": boolean, "mode": string, "op": string, "observation": object, "effect_id": string, "receipt": object, "envelope": object }）。\n`
+      + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
+      + `## Boundary\nファイルは一切変更しない（read-only shadow probe）。PR 作成経路自体（git-pr skill）には一切影響しない（本呼出しは telemetry 記録専用）。\n`
+      + `## Token cap\n150 語以内で完結すること。`,
+      { agentType: 'dev-runner-haiku-ro', schema: EFFECTDELTA_OBS, label: 'trust-effectdelta-pr', phase: 'PR' },
+    )
+    if (edPrRes?.ok === true && edPrRes.mode !== 'off' && edPrRes.receipt && edPrRes.envelope) {
+      state.trustReceipts.push({ stage: 'pr', receipt: edPrRes.receipt, envelope: edPrRes.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: edPrRes.observation?.reason_code ?? null })
+      log(`trust-effectdelta-pr: EffectDelta PR receipt を記録（mode=${edPrRes.mode}, status=${edPrRes.observation?.status ?? 'n/a'}）`)
+    } else {
+      log(`⚠️ trust-effectdelta-pr: receipt 取得できず（ok=${edPrRes?.ok}, mode=${edPrRes?.mode}）— fail-open（既存 gate へ影響なし）`)
+    }
+  } catch (err) {
+    log(`⚠️ trust-effectdelta-pr で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
+  }
+}
 await clockProbe('pr_end', 'PR')
 
 // ============================================================
@@ -4736,19 +4792,49 @@ const summaryBody = buildDevflowSummaryBody({
   finalAcReconcile,
   liteReview: state.liteReview ?? null,
 }) + (trustSummaryMd ? '\n\n' + trustSummaryMd : '')
-const summaryPost = await agent(
-  `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
-  + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
-  + `## Instructions\n`
-  + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
-  + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-  + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-  + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-  + `\n## Tools\n使用可: Bash, Write\n`
-  + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-  + `\n## Token cap\n200 語以内で完結すること。`,
-  { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
-)
+// EffectDelta (epic #390 Phase 4, issue #412): shadow 時は effectdelta-github.sh
+// comment-ensure（write-once + readback）経由で投稿し、script 不在・実行不可・
+// posted!==true の場合は gh pr comment への無条件 fallback を prompt 内に明記する（AC-9）。
+// off 経路は既存 prompt を byte 単位で不変に保つ（AC-15 非干渉）。
+let summaryPost
+if (EFFECTDELTA_MODE === 'shadow') {
+  const RUN_ID = String(clockMarks?.start ?? ISSUE)
+  try {
+    summaryPost = await agent(
+      `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
+      + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
+      + `## Instructions\n`
+      + `保存した <BODY_FILE> を使い \`${WT}/_shared/scripts/effectdelta-github.sh comment-ensure --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID}\` を実行し stdout の JSON を verbatim 転写して返せ。`
+      + `script が存在しない・実行不可・または出力の posted が true でない場合は、fallback として \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\` をそのまま実行し、posted:true/false と method:'gh-pr-comment-fallback' を返せ。\n`
+      + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+      + `\n## Output format\n{ "ok": boolean, "posted": boolean, "method": string, "url": string, "mode": string, "effect_id": string, "receipt": object, "envelope": object }\n`
+      + `\n## Tools\n使用可: Bash, Write\n`
+      + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+      + `\n## Token cap\n200 語以内で完結すること。`,
+      { agentType: 'dev-runner-haiku', schema: EFFECTDELTA_OBS, label: 'post-summary', phase: 'Merge tier' },
+    )
+  } catch (err) {
+    log(`⚠️ post-summary(shadow) で例外（${err && err.message ? err.message : err}）— fail-open`)
+    summaryPost = null
+  }
+  if (summaryPost?.envelope && summaryPost?.receipt && summaryPost?.mode !== 'off') {
+    state.trustReceipts.push({ stage: 'summary-comment', receipt: summaryPost.receipt, envelope: summaryPost.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: summaryPost.observation?.reason_code ?? null })
+  }
+} else {
+  summaryPost = await agent(
+    `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
+    + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
+    + `## Instructions\n`
+    + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
+    + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+    + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+    + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+    + `\n## Tools\n使用可: Bash, Write\n`
+    + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+    + `\n## Token cap\n200 語以内で完結すること。`,
+    { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
+  )
+}
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
 }
@@ -4809,6 +4895,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
         stage: r.stage,
         invalidated: r.invalidated,
         ...(r.invalidated_reason ? { invalidated_reason: r.invalidated_reason } : {}),
+        ...(r.domain_reason_code ? { domain_reason_code: r.domain_reason_code } : {}),
         layer: r.envelope.layer,
         mode: r.envelope.mode,
         schema_version: r.envelope.schema_version,

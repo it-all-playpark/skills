@@ -163,7 +163,12 @@ function makeSandbox({ repo = null, req = STANDARD_REQ, overrides = {}, fixesApp
 // prompt テキストから telemetry payload を JSON.parse して返す。見つからなければ null。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  const m = prompt.match(/TELEMETRY_EOF'\n([\s\S]*?)\nTELEMETRY_EOF/);
+  // journal-handoff.mjs (issue #412 F3: atomic mktemp/mv write) の heredoc は
+  // `<<'TELEMETRY_EOF' && __jh_id=... && mv -f ...` のように delimiter 直後に
+  // シェルコマンドが続くため、旧 `TELEMETRY_EOF'\n` 直後開始の前提が崩れる。
+  // payload（JSON.stringify、常に単一行・`{`始まり）を挟む 2 個の改行のうち
+  // 前者直後から `\nTELEMETRY_EOF` 直前までを取り出す。
+  const m = prompt.match(/\n(\{[\s\S]*?\})\nTELEMETRY_EOF/);
   if (!m) return null;
   try {
     return JSON.parse(m[1]);
@@ -346,7 +351,10 @@ test('[evalseal] (e) micro path（runEval=false）→ trust-* 呼び出しゼロ
   assertNoCrash(error, 'e');
   assert.ok(result !== null, '(e) workflow は return object を返すべきだが null だった');
 
-  assert.ok(!calls.some((c) => c.label.startsWith('trust-')), "(e) micro path（runEval=false）では 'trust-' 始まりの呼び出しが存在してはならない");
+  // 'trust-effectdelta-*'（issue #412, epic #390 Phase 4）は EFFECTDELTA_MODE 独立配線で
+  // runEval と無関係に PR phase で発火するため、本 test の関心事（EvalSeal の runEval ゲート）
+  // からは除外する（evalseal-routing (f) が surfaceproof-shadow を除外する precedent と同型）。
+  assert.ok(!calls.some((c) => c.label.startsWith('trust-') && !c.label.startsWith('trust-effectdelta')), "(e) micro path（runEval=false）では EvalSeal 系 'trust-' 始まりの呼び出しが存在してはならない");
   // repo は allowlist のため EVALSEAL_MODE 自体は 'shadow'（mode 解決は runEval と独立）だが、
   // obligation の実体（evaluator 収束スナップショット）が無いため seal されず trust_receipts=0。
   assert.equal(result?.trust_receipts, 0, `(e) trust_receipts は 0 のはずだが ${result?.trust_receipts}（seal 自体が発生しない）`);

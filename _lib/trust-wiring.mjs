@@ -10,8 +10,11 @@
 // TRUST_LAYER_CONFIG は repo 定数。QUALITY_MODEL（_lib/quality-model.mjs）と同じ
 // 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
 // surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
+// evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み）。
+// effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
+// post-summary（comment-ensure）へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
-export const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'off' };
+export const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'shadow' };
 
 // 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
 // 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
