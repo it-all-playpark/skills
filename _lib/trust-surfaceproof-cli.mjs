@@ -108,21 +108,31 @@ function planFetch(snapshot) {
   return { urls };
 }
 
+// units（buildInventory 直後は全 unit が presentation:'presented' 固定）へ
+// pack.presentation_map の実提示状態をマージしてから reconcileSource へ渡す
+// （fixtures テストの runPipeline と同型。issue #416 review 指摘: マージを省くと
+// --presented による omission が reconcileSource から見えず、comment-only AC unit を
+// 省いても verdict=pass になってしまう）。
+function applyPresentationMap(units, presentationMap) {
+  return units.map((u) => ({ ...u, presentation: presentationMap[u.unit_id] }));
+}
+
 function cmdFreeze(snapshot, opts) {
   const fetchResults = opts.fetches ? readJsonFile(opts.fetches) : [];
   const frozen = freezeSource(snapshot);
   const units = buildInventory(snapshot, Array.isArray(fetchResults) ? fetchResults : []);
   const presentedUnitIds = units.map((u) => u.unit_id);
   const pack = buildPresentationPack(units, presentedUnitIds);
+  const presentedUnits = applyPresentationMap(units, pack.presentation_map);
   // requireFetchAttempted: true — freeze 時点で allowlist 通過 link が --fetches 省略等で
   // 一度も fetch されていない（fetch === 'not_attempted'）場合、それを見過ごして pass に
   // しない（issue #416 review 指摘: freeze は「fetch 未実施」と「fetch 済みで検証済み」を
   // 区別できる必要がある）。reconcile 経路（cmdReconcile）は既定 false のままで
   // not_attempted を許容する（Analyze 直前の再照合は freeze 時点の判定を再度覆さない設計）。
-  const reconcile = reconcileSource({ frozen, currentSnapshot: snapshot, units, requireFetchAttempted: true });
+  const reconcile = reconcileSource({ frozen, currentSnapshot: snapshot, units: presentedUnits, requireFetchAttempted: true });
   const capabilities = deriveCapabilities(snapshot);
   const receipt = buildSurfaceProofReceipt({ frozen, input_pack_digest: pack.input_pack_digest, reconcile, capabilities });
-  return { frozen, units, pack: { input_pack_digest: pack.input_pack_digest }, receipt };
+  return { frozen, units: presentedUnits, pack: { input_pack_digest: pack.input_pack_digest }, receipt };
 }
 
 function cmdReconcile(currentSnapshot, opts) {
@@ -131,9 +141,10 @@ function cmdReconcile(currentSnapshot, opts) {
   const units = buildInventory(currentSnapshot, []);
   const presentedUnitIds = opts.presented ? readJsonFile(opts.presented) : units.map((u) => u.unit_id);
   const pack = buildPresentationPack(units, Array.isArray(presentedUnitIds) ? presentedUnitIds : units.map((u) => u.unit_id));
+  const presentedUnits = applyPresentationMap(units, pack.presentation_map);
   // requireFetchAttempted は既定 false のまま呼ぶ — not_attempted な link の許容は
   // freeze 時点の判定を踏襲する設計意図（上記 cmdFreeze のコメント参照）。
-  const reconcile = reconcileSource({ frozen, currentSnapshot, units });
+  const reconcile = reconcileSource({ frozen, currentSnapshot, units: presentedUnits });
   const capabilities = deriveCapabilities(currentSnapshot);
   const receipt = buildSurfaceProofReceipt({ frozen, input_pack_digest: pack.input_pack_digest, reconcile, capabilities });
   return { reconcile, receipt };
