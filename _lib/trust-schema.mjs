@@ -194,9 +194,19 @@ export function validateReceipt(receipt) {
 
 // receipt.instrument.capabilities が REQUIRED_CAPABILITIES[schema_version] を
 // 全て満たすか検査する。能力不足を pass に丸めない（epic #390: inconclusive へ
-// route する材料）。receipt は validateReceipt({ok:true}) 済みであることを前提とする。
+// route する材料）。receipt は validateReceipt({ok:true}) 済みであることを前提とするが、
+// Phase 2+ の standalone 呼出に備え schema_version 自体も fail-closed で検証する
+// （TRUST_SCHEMA_VERSIONS 外は required=[] に丸めず SCHEMA_VERSION_UNSUPPORTED を返す。
+// throw しない — validator 群は closed reason code で報告する規約に揃える）。
 export function checkCapabilities(receipt) {
-  const required = REQUIRED_CAPABILITIES[receipt.schema_version] || [];
+  if (!TRUST_SCHEMA_VERSIONS.includes(receipt?.schema_version)) {
+    return {
+      ok: false,
+      reason_code: 'SCHEMA_VERSION_UNSUPPORTED',
+      missing: [],
+    };
+  }
+  const required = REQUIRED_CAPABILITIES[receipt.schema_version];
   const provided = Array.isArray(receipt?.instrument?.capabilities) ? receipt.instrument.capabilities : [];
   const missing = required.filter((c) => !provided.includes(c));
   if (missing.length > 0) {
