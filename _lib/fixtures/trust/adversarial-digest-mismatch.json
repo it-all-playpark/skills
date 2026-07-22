@@ -1,0 +1,28 @@
+{
+  "schema_version": "surfaceproof/1",
+  "subject": {
+    "kind": "issue",
+    "identity": "999",
+    "revision_digest": "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  },
+  "instrument": {
+    "adapter": "dev-flow",
+    "adapter_version": "1.0.0",
+    "config_digest": "sha256:cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+    "capabilities": [
+      "issue-read"
+    ]
+  },
+  "outcome": {
+    "verdict": "pass",
+    "reason_code": "OK"
+  },
+  "trust": {
+    "record_integrity": "advisory"
+  },
+  "anchors": {
+    "source_revision": "sha256:facefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeed",
+    "input_pack_digest": "sha256:feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface"
+  },
+  "receipt_id": "sha256:e665c4f4c3ed7a7b7b2f312d3297fbaf25b8f88a3606b80d2cc0748121e6d448"
+}

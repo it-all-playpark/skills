@@ -1,0 +1,28 @@
+{
+  "schema_version": "effectdelta/1",
+  "subject": {
+    "kind": "workflow_run",
+    "identity": "409",
+    "revision_digest": "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  },
+  "instrument": {
+    "adapter": "dev-flow",
+    "adapter_version": "1.0.0",
+    "config_digest": "sha256:cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+    "capabilities": [
+      "effect-readback"
+    ]
+  },
+  "outcome": {
+    "verdict": "pass",
+    "reason_code": "OK"
+  },
+  "trust": {
+    "record_integrity": "advisory"
+  },
+  "anchors": {
+    "effect_id": "effect-1",
+    "readback_digest": "sha256:feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface"
+  },
+  "receipt_id": "sha256:4f46f3709983ad245a21089eef2fc551f58a82ff525ee166053a8f47bba91401"
+}
