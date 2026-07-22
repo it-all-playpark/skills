@@ -1,0 +1,29 @@
+{
+  "schema_version": "evalseal/1",
+  "subject": {
+    "kind": "issue",
+    "identity": "409",
+    "revision_digest": "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  },
+  "instrument": {
+    "adapter": "dev-flow",
+    "adapter_version": "1.0.0",
+    "config_digest": "sha256:cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+    "capabilities": [
+      "tree-read"
+    ]
+  },
+  "outcome": {
+    "verdict": "pass",
+    "reason_code": "OK"
+  },
+  "trust": {
+    "record_integrity": "advisory"
+  },
+  "anchors": {
+    "base_oid": "abc123",
+    "head_oid": "def456",
+    "tree_oid": "aaa111"
+  },
+  "receipt_id": "sha256:e665c4f4c3ed7a7b7b2f312d3297fbaf25b8f88a3606b80d2cc0748121e6d448"
+}
