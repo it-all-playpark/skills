@@ -3,8 +3,10 @@
 # plan+fetch referenced external URLs under a fail-closed allowlist (manual redirect
 # loop, no -L), then freeze/reconcile the SurfaceProof snapshot via the thin CLI
 # (_lib/trust-surfaceproof-cli.mjs, which wraps the pure core in
-# _lib/trust-surfaceproof.mjs). issue #410 (#390 Phase 2, standalone shadow adapter —
-# no dev-flow/Analyze wiring in this script).
+# _lib/trust-surfaceproof.mjs). issue #410 (#390 Phase 2). Invoked from dev-flow.js's
+# Analyze phase as a read-only shadow probe (dev-runner-haiku-ro exec-proxy, skills
+# repo only) — the shadow result is telemetry-only and never feeds req/shape/gate
+# decisions (AC-11/AC-15 non-interference).
 
 set -euo pipefail
 

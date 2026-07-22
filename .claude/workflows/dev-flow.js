@@ -3158,7 +3158,7 @@ if (REPO === TRUST_SHADOW_REPO_SLUG) {
     let spRes = null
     try {
       spRes = await agent(
-        `## Objective\ncd ${WT} で作業。\`dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO}\` を絶対パスを先頭トークンとする bare 形で1回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+        `## Objective\n\`${WT}/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
         + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
         + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
         + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`

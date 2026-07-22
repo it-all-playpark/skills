@@ -1,5 +1,9 @@
 // issue #410 (#390 Phase 2): SurfaceProof adapter — GitHub Issue 専用 pure core。
-// workflow inline 対象外（Phase 2 時点で dev-flow/Analyze への配線なし。standalone shadow）。
+// workflow inline 対象外（本ファイル自体は _lib/tools/sync-inlines.mjs の生成区間に含めない —
+// dev-flow.js からは surfaceproof-snapshot.sh 経由の CLI 呼び出しのみ利用する）。
+// dev-flow.js の Analyze phase に shadow probe として配線済み（dev-runner-haiku-ro
+// exec-proxy、skills repo 限定）。probe 結果は telemetry 専用であり req/shape/gate
+// 判定には一切反映しない（AC-11/AC-15 non-interference）。
 //
 // Phase 1 kernel（trust-schema.mjs / trust-mode.mjs / trust-digest.mjs / trust-telemetry.mjs）
 // は一切変更しない。本ファイルは kernel と同一の I/O 規約に従う pure function 群 —
