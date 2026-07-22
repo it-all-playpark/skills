@@ -8,7 +8,8 @@
 // サブコマンド:
 //   plan-fetch  stdin: snapshot          -> stdout: {urls:[{url,kind,allowed,reason_code}]}
 //   freeze      stdin: snapshot          -> stdout: {frozen, units, pack:{input_pack_digest}, receipt}
-//               [--fetches <path>] 外部 URL fetch 結果 JSON（省略可）
+//               [--fetches <path>] 外部 URL fetch 結果 JSON（省略可。省略時、allowlist 通過
+//               link が未 fetch のまま残ると verdict は pass にならず inconclusive になる）
 //   reconcile   stdin: 現在 snapshot     -> stdout: {reconcile:{status,reasons}, receipt}
 //               --frozen <path> 必須 / [--presented <path>] presented_unit_ids JSON 配列（省略時は全 unit）
 
@@ -113,7 +114,12 @@ function cmdFreeze(snapshot, opts) {
   const units = buildInventory(snapshot, Array.isArray(fetchResults) ? fetchResults : []);
   const presentedUnitIds = units.map((u) => u.unit_id);
   const pack = buildPresentationPack(units, presentedUnitIds);
-  const reconcile = reconcileSource({ frozen, currentSnapshot: snapshot, units });
+  // requireFetchAttempted: true — freeze 時点で allowlist 通過 link が --fetches 省略等で
+  // 一度も fetch されていない（fetch === 'not_attempted'）場合、それを見過ごして pass に
+  // しない（issue #416 review 指摘: freeze は「fetch 未実施」と「fetch 済みで検証済み」を
+  // 区別できる必要がある）。reconcile 経路（cmdReconcile）は既定 false のままで
+  // not_attempted を許容する（Analyze 直前の再照合は freeze 時点の判定を再度覆さない設計）。
+  const reconcile = reconcileSource({ frozen, currentSnapshot: snapshot, units, requireFetchAttempted: true });
   const capabilities = deriveCapabilities(snapshot);
   const receipt = buildSurfaceProofReceipt({ frozen, input_pack_digest: pack.input_pack_digest, reconcile, capabilities });
   return { frozen, units, pack: { input_pack_digest: pack.input_pack_digest }, receipt };
@@ -125,6 +131,8 @@ function cmdReconcile(currentSnapshot, opts) {
   const units = buildInventory(currentSnapshot, []);
   const presentedUnitIds = opts.presented ? readJsonFile(opts.presented) : units.map((u) => u.unit_id);
   const pack = buildPresentationPack(units, Array.isArray(presentedUnitIds) ? presentedUnitIds : units.map((u) => u.unit_id));
+  // requireFetchAttempted は既定 false のまま呼ぶ — not_attempted な link の許容は
+  // freeze 時点の判定を踏襲する設計意図（上記 cmdFreeze のコメント参照）。
   const reconcile = reconcileSource({ frozen, currentSnapshot, units });
   const capabilities = deriveCapabilities(currentSnapshot);
   const receipt = buildSurfaceProofReceipt({ frozen, input_pack_digest: pack.input_pack_digest, reconcile, capabilities });

@@ -31,6 +31,7 @@ export const SURFACEPROOF_REASON_CODES = [
   'UNIT_UNSUPPORTED',
   'FETCH_FORBIDDEN',
   'FETCH_FAILED',
+  'FETCH_NOT_ATTEMPTED',
   'URL_NOT_ALLOWLISTED',
   'REDIRECT_DENIED',
   'SIZE_EXCEEDED',
@@ -62,6 +63,7 @@ const RECONCILE_STATUS_PRIORITY = [
   'FETCH_FORBIDDEN',
   'FETCH_FAILED',
   'UNIT_UNSUPPORTED',
+  'FETCH_NOT_ATTEMPTED',
   'OK',
 ];
 
@@ -73,6 +75,7 @@ const RECONCILE_OUTCOME_MAP = {
   FETCH_FORBIDDEN: { verdict: 'inconclusive', reason_code: 'CAPABILITY_MISSING' },
   FETCH_FAILED: { verdict: 'inconclusive', reason_code: 'CAPABILITY_MISSING' },
   UNIT_UNSUPPORTED: { verdict: 'inconclusive', reason_code: 'CAPABILITY_MISSING' },
+  FETCH_NOT_ATTEMPTED: { verdict: 'inconclusive', reason_code: 'CAPABILITY_MISSING' },
 };
 
 const URL_RE = /https?:\/\/[^\s)\]"'<>]+/g;
@@ -183,12 +186,15 @@ export function buildInventory(snapshot, fetchResults = []) {
 
   const units = [];
 
-  // body（required、空文字列でも常に生成）
+  // body（required、空文字列でも常に生成）。digest は sha256Hex(content) —
+  // frozen.unit_digests / pack の digest フィールドに「本文そのもの」ではなく
+  // 実ハッシュを流すため、raw content は別途 content フィールドに保持する。
   const bodyText = typeof issue.body === 'string' ? issue.body : '';
   units.push({
     unit_id: 'body',
     kind: 'body',
-    digest: bodyText,
+    digest: sha256Hex(bodyText),
+    content: bodyText,
     fetch: 'fetched',
     presentation: 'presented',
     reason_code: 'OK',
@@ -198,20 +204,24 @@ export function buildInventory(snapshot, fetchResults = []) {
   const commentsFetchError = fetchErrors.find((e) => isPlainObject(e) && e.resource === 'comments');
   if (commentsFetchError) {
     const status = commentsFetchError.http_status === 403 || commentsFetchError.http_status === 404 ? 'forbidden' : 'failed';
+    const placeholderText = `comments-fetch-error:${commentsFetchError.http_status}`;
     units.push({
       unit_id: 'comments:*',
       kind: 'comment',
-      digest: sha256Hex(`comments-fetch-error:${commentsFetchError.http_status}`),
+      digest: sha256Hex(placeholderText),
+      content: placeholderText,
       fetch: status,
       presentation: 'presented',
       reason_code: status === 'forbidden' ? 'FETCH_FORBIDDEN' : 'FETCH_FAILED',
     });
   } else {
     for (const c of comments) {
+      const commentText = typeof c.body === 'string' ? c.body : '';
       units.push({
         unit_id: `comment:${c.id}`,
         kind: 'comment',
-        digest: typeof c.body === 'string' ? c.body : '',
+        digest: sha256Hex(commentText),
+        content: commentText,
         fetch: 'fetched',
         presentation: 'presented',
         reason_code: 'OK',
@@ -224,7 +234,8 @@ export function buildInventory(snapshot, fetchResults = []) {
     units.push({
       unit_id: `label:${l.name}`,
       kind: 'label',
-      digest: l.name,
+      digest: sha256Hex(l.name),
+      content: l.name,
       fetch: 'fetched',
       presentation: 'presented',
       reason_code: 'OK',
@@ -252,12 +263,15 @@ export function buildInventory(snapshot, fetchResults = []) {
     const idPrefix = kind === 'attachment_ref' ? 'attachment' : 'spec_link';
     const unitId = `${idPrefix}:${shortDigestHex(url)}`;
 
+    // link 系 unit は raw fetched body を保持しない（policy 上 digest のみ許可）ため、
+    // content フィールドには url 自体（唯一保持している文字列表現）を格納する。
     const policyCheck = evaluateUrlPolicy(url);
     if (!policyCheck.allowed) {
       units.push({
         unit_id: unitId,
         kind,
         digest: sha256Hex(url),
+        content: url,
         fetch: 'unsupported',
         presentation: 'presented',
         reason_code: policyCheck.reason_code,
@@ -271,6 +285,7 @@ export function buildInventory(snapshot, fetchResults = []) {
         unit_id: unitId,
         kind,
         digest: sha256Hex(url),
+        content: url,
         fetch: 'not_attempted',
         presentation: 'presented',
         reason_code: 'OK',
@@ -283,6 +298,7 @@ export function buildInventory(snapshot, fetchResults = []) {
         unit_id: unitId,
         kind,
         digest: typeof fr.content_digest === 'string' ? fr.content_digest : sha256Hex(url),
+        content: url,
         fetch: 'fetched',
         presentation: 'presented',
         reason_code: 'OK',
@@ -292,6 +308,7 @@ export function buildInventory(snapshot, fetchResults = []) {
         unit_id: unitId,
         kind,
         digest: sha256Hex(url),
+        content: url,
         fetch: 'failed',
         presentation: 'presented',
         reason_code: typeof fr.reason_code === 'string' ? fr.reason_code : 'FETCH_FAILED',
@@ -330,6 +347,8 @@ export function freezeSource(snapshot) {
 // presentedUnitIds に含まれる unit のみを untrusted envelope（{schema, trust_boundary,
 // note, units}）へ詰め、canonicalJsonBytes で直列化する。unit content は JSON 文字列として
 // エスケープ格納されるため、issue 本文内の偽 delimiter・命令文が top-level 構造を破らない。
+// pack の `content` は unit の raw content（u.content。link 系 unit は url 文字列）、
+// `digest` は sha256Hex(content) 相当の実ハッシュ（buildInventory 参照）— 両者は分離する。
 export function buildPresentationPack(units, presentedUnitIds) {
   if (!Array.isArray(units)) {
     throw new Error('trust-surfaceproof: units は配列が必要');
@@ -341,7 +360,7 @@ export function buildPresentationPack(units, presentedUnitIds) {
   for (const u of units) {
     if (presentedSet.has(u.unit_id)) {
       presentationMap[u.unit_id] = 'presented';
-      presentedUnits.push({ unit_id: u.unit_id, kind: u.kind, digest: u.digest, content: u.digest });
+      presentedUnits.push({ unit_id: u.unit_id, kind: u.kind, digest: u.digest, content: u.content });
     } else {
       presentationMap[u.unit_id] = 'omitted';
     }
@@ -366,8 +385,17 @@ export function buildPresentationPack(units, presentedUnitIds) {
 // freeze 時点と Analyze 直前の再照合。stale・required unit omission・
 // unsupported/fetch failure を closed taxonomy（reason code）で区別して返す。
 // 優先順位（先頭が最悪）: STALE_SOURCE > REQUIRED_UNIT_OMITTED > FETCH_FORBIDDEN >
-// FETCH_FAILED > UNIT_UNSUPPORTED > OK。
-export function reconcileSource({ frozen, currentSnapshot, units }) {
+// FETCH_FAILED > UNIT_UNSUPPORTED > FETCH_NOT_ATTEMPTED > OK。
+//
+// requireFetchAttempted（既定 false）: true の場合、allowlist 通過したが一度も
+// fetch されていない link unit（fetch === 'not_attempted'）を FETCH_NOT_ATTEMPTED として
+// 検出し pass にしない。freeze 経路（cmdFreeze）はこれを true で呼ぶ — freeze 時点で
+// 「fetch 未実施」と「fetch 済みで検証済み」を区別できないと、--fetches 省略時に
+// 未検証 link を含む receipt が誤って pass になる（issue #416 review 指摘）。
+// reconcile 経路（cmdReconcile、Analyze 直前の再照合）は既定の false のまま —
+// Analyze 時点で全 link を再 fetch する運用は想定しておらず、fetch 未実施 link は
+// freeze 時点で既に許容判定済みという設計意図（この関数はその是非を再判定しない）。
+export function reconcileSource({ frozen, currentSnapshot, units, requireFetchAttempted = false }) {
   if (!isPlainObject(frozen) || !isPlainObject(currentSnapshot) || !Array.isArray(units)) {
     throw new Error('trust-surfaceproof: reconcileSource には frozen/currentSnapshot/units が必要');
   }
@@ -379,11 +407,16 @@ export function reconcileSource({ frozen, currentSnapshot, units }) {
     reasons.push({ unit_id: '*', reason_code: 'STALE_SOURCE' });
   }
 
-  const REQUIRED_KINDS = ['body', 'comment', 'label'];
+  // body/comment/label に加え attachment_ref/spec_link も required 対象に含める —
+  // fetch に成功した添付・仕様書リンクが presentation から省かれた場合も
+  // REQUIRED_UNIT_OMITTED として検出する（AC-4: fetched な必須 unit の planted omission を
+  // pass にしない。issue #416 review 指摘）。
+  const REQUIRED_KINDS = ['body', 'comment', 'label', 'attachment_ref', 'spec_link'];
   for (const u of units) {
     // fetch が成功した required unit のみ「presentation で除外された」ことを omission と
-    // 見なす。fetch 自体が forbidden/failed/unsupported な unit は、fetch 側の reason code
-    // が既に不能を示すため二重に omission も立てない（AC: 403 が偽の omission に丸められない）。
+    // 見なす。fetch 自体が forbidden/failed/unsupported/not_attempted な unit は、fetch 側の
+    // reason code が既に不能を示すため二重に omission も立てない（AC: 403 が偽の omission に
+    // 丸められない）。
     if (u.fetch === 'fetched' && REQUIRED_KINDS.includes(u.kind) && u.presentation === 'omitted') {
       reasons.push({ unit_id: u.unit_id, reason_code: 'REQUIRED_UNIT_OMITTED' });
     } else if (u.fetch === 'forbidden') {
@@ -392,6 +425,8 @@ export function reconcileSource({ frozen, currentSnapshot, units }) {
       reasons.push({ unit_id: u.unit_id, reason_code: 'FETCH_FAILED' });
     } else if (u.fetch === 'unsupported') {
       reasons.push({ unit_id: u.unit_id, reason_code: 'UNIT_UNSUPPORTED' });
+    } else if (u.fetch === 'not_attempted' && requireFetchAttempted) {
+      reasons.push({ unit_id: u.unit_id, reason_code: 'FETCH_NOT_ATTEMPTED' });
     }
   }
 
