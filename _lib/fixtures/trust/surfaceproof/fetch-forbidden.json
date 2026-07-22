@@ -1,0 +1,20 @@
+{
+  "description": "comments の fetch が 403（権限不足）で失敗した snapshot。capabilities=[] で build した receipt が checkCapabilities で CAPABILITY_MISSING、reconcile.status=FETCH_FORBIDDEN、verdict=inconclusive（pass にならない）ことを検証する。",
+  "snapshot": {
+    "repo": "it-all-playpark/skills",
+    "issue_number": 413,
+    "issue": {
+      "title": "権限不足で comments が取得できない",
+      "body": "本文はある程度読める状態です。",
+      "updated_at": "2026-07-20T12:00:00Z",
+      "labels": [
+        { "name": "trust-layer" }
+      ]
+    },
+    "comments": [],
+    "fetch_errors": [
+      { "resource": "comments", "http_status": 403 }
+    ]
+  },
+  "capabilities": []
+}

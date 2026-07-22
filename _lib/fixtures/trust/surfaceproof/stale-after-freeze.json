@@ -1,0 +1,39 @@
+{
+  "description": "freezeSource(frozen_snapshot) に対する reconcileSource が STALE_SOURCE / fail / DIGEST_MISMATCH になることを2変種で検証する。current_snapshot は updated_at と body の両方が変化。second_current は updated_at が frozen_snapshot と同一のまま body(digest)だけ変化する（同秒編集）。",
+  "frozen_snapshot": {
+    "repo": "it-all-playpark/skills",
+    "issue_number": 414,
+    "issue": {
+      "title": "Stale source 検出のテスト",
+      "body": "初期状態の本文です。",
+      "updated_at": "2026-07-20T13:00:00Z",
+      "labels": []
+    },
+    "comments": [],
+    "fetch_errors": []
+  },
+  "current_snapshot": {
+    "repo": "it-all-playpark/skills",
+    "issue_number": 414,
+    "issue": {
+      "title": "Stale source 検出のテスト",
+      "body": "編集後の本文です（末尾追記）。",
+      "updated_at": "2026-07-20T13:30:00Z",
+      "labels": []
+    },
+    "comments": [],
+    "fetch_errors": []
+  },
+  "second_current": {
+    "repo": "it-all-playpark/skills",
+    "issue_number": 414,
+    "issue": {
+      "title": "Stale source 検出のテスト",
+      "body": "同秒編集された別の本文です。",
+      "updated_at": "2026-07-20T13:00:00Z",
+      "labels": []
+    },
+    "comments": [],
+    "fetch_errors": []
+  }
+}
