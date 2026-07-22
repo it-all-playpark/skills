@@ -832,3 +832,64 @@ test('classifyMergeTier: mergeableState:"bogus"(out-of-enum) → throw', () => {
     mergeableState: 'bogus',
   }), /invalid mergeableState/);
 });
+
+// ---- issue #411 (epic #390 Phase 3): trustGate ----
+
+test('classifyMergeTier: trustGate 未指定 → 既存挙動不変(AUTO/REVIEW/HOLD とも trustGate 由来 reason なし)', () => {
+  const rAuto = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(rAuto.tier, 'AUTO');
+  assert.ok(!rAuto.reasons.some((x) => /EvalSeal/.test(x)));
+
+  const rReview = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(rReview.tier, 'REVIEW');
+  assert.ok(!rReview.reasons.some((x) => /EvalSeal/.test(x)));
+
+  const rHold = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAc: true });
+  assert.equal(rHold.tier, 'HOLD');
+  assert.ok(!rHold.reasons.some((x) => /EvalSeal/.test(x)));
+});
+
+test('classifyMergeTier: trustGate:null → 既存挙動不変', () => {
+  const r = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none', trustGate: null });
+  assert.equal(r.tier, 'AUTO');
+  assert.ok(!r.reasons.some((x) => /EvalSeal/.test(x)));
+});
+
+test('classifyMergeTier: trustGate={blocking:true,verdict:"inconclusive"} → HOLD + EvalSeal receipt 非 pass reason（inconclusive は成功扱いしない）', () => {
+  const r = classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    trustGate: { blocking: true, verdict: 'inconclusive' },
+  });
+  assert.equal(r.tier, 'HOLD');
+  const reason = r.reasons.find((x) => x.includes('EvalSeal receipt 非 pass'));
+  assert.ok(reason, `reasons に EvalSeal receipt 非 pass 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.ok(reason.includes('verdict=inconclusive'), `reasons に verdict=inconclusive を含むべきだが: ${reason}`);
+  assert.ok(reason.includes('inconclusive は成功扱いしない'), `reasons に "inconclusive は成功扱いしない" を含むべきだが: ${reason}`);
+});
+
+test('classifyMergeTier: trustGate={blocking:true,verdict:"fail"} → HOLD + EvalSeal receipt 非 pass reason', () => {
+  const r = classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    trustGate: { blocking: true, verdict: 'fail' },
+  });
+  assert.equal(r.tier, 'HOLD');
+  const reason = r.reasons.find((x) => x.includes('EvalSeal receipt 非 pass'));
+  assert.ok(reason, `reasons に EvalSeal receipt 非 pass 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.ok(reason.includes('verdict=fail'));
+});
+
+test('classifyMergeTier: trustGate={blocking:true,verdict:"pass"} → trustGate 由来 reason なし(AUTO 適格なら AUTO のまま)', () => {
+  const r = classifyMergeTier({
+    ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    trustGate: { blocking: true, verdict: 'pass' },
+  });
+  assert.equal(r.tier, 'AUTO');
+  assert.ok(!r.reasons.some((x) => /EvalSeal/.test(x)));
+});
+
+test('classifyMergeTier: trustGate.verdict が out-of-enum → throw', () => {
+  assert.throws(() => classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
+    trustGate: { blocking: true, verdict: 'bogus' },
+  }), /invalid trustGate/);
+});
