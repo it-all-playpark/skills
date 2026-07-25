@@ -79,6 +79,17 @@ moving target（蒸し返し）を生む。これを避ける:
 これは**ゲートの緩和ではない**: 本物の新規 critical/major は依然として必ず報告する。
 殺すのは「同じコードを別の切り口で蒸し返す churn」だけ。
 
+## レンズ指定レビュー（multi-review mode）
+
+prompt にレンズ（dimension の部分集合）が指定された場合、Step 3 の系統的レビューを
+指定 dimension のみに限定し、他 dimension の指摘は報告しない（別レンズが担当する）。
+topic 辞書・severity 分類・反復レビューの anti-churn 規則・出力 schema（Step 5）は
+通常時と同一のまま適用する。
+
+prompt が「finding の adversarial verify」を要求する場合は、レビュー（Step 3-5）ではなく、
+指定 schema（`verdicts` 配列: 各 finding の index に対する `verdict`（confirmed/rejected）と
+根拠）で各 finding の実在検証結果のみを返す。
+
 ## Step 5: 出力 JSON（schema 強制）
 
 ```json

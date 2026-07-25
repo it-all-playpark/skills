@@ -543,3 +543,36 @@ test('terminalReviewAction: 決定性（同入力 -> 同出力）', () => {
   const second = terminalReviewAction(input);
   assert.equal(first, second, '同入力 -> 同出力');
 });
+
+// --- New tests: review_only status (issue #418, F2) ------------------------
+
+test('buildTerminalSummaryBody: review_only -> 🔎 REVIEW ONLY 見出しとマーカーが出る', () => {
+  const body = buildTerminalSummaryBody({
+    pr: 60,
+    status: 'review_only',
+    iterations: 1,
+    lastDecision: 'request-changes',
+    lastSummary: '計測用 1-pass レビュー',
+    history: [],
+  });
+  assert.ok(body.includes('🔎 REVIEW ONLY'), 'review_only 見出しを含む');
+  assert.ok(body.includes('<!-- pr-iterate:review_only:1 -->'), '終端マーカーに review_only が出る');
+});
+
+test('terminalReviewAction: status=review_only, lastDecision=request-changes, blockingCount=3 -> comment（PR へ request-changes を出さない）', () => {
+  const action = terminalReviewAction({ status: 'review_only', lastDecision: 'request-changes', blockingCount: 3 });
+  assert.equal(action, 'comment', 'review_only は blocking>0 + request-changes でも comment 固定');
+});
+
+test('terminalReviewAction: 既存 status（lgtm/approve, stuck/request-changes）の回帰（review_only 追加後も不変）', () => {
+  assert.equal(
+    terminalReviewAction({ status: 'lgtm', lastDecision: 'approve', blockingCount: 0 }),
+    'approve',
+    'lgtm + approve は approve のまま',
+  );
+  assert.equal(
+    terminalReviewAction({ status: 'stuck', lastDecision: 'request-changes', blockingCount: 2 }),
+    'request-changes',
+    'stuck + blocking>0 + request-changes は request-changes のまま',
+  );
+});

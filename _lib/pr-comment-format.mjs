@@ -49,13 +49,14 @@ const STATUS_HEADLINE = {
   'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
   'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision と blocking findings の矛盾が再 review 後も再発。人間へエスカレーション',
+  'review_only': '🔎 REVIEW ONLY — 計測用 1-pass レビュー（fix/CI loop なし）',
 };
 
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号
- * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending' | 'review_contract_error'
+ * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending' | 'review_contract_error' | 'review_only'
  * @param {number} opts.iterations - 総反復回数
  * @param {string} opts.lastDecision - 最終判定
  * @param {string} opts.lastSummary - 最終サマリーテキスト
@@ -146,12 +147,13 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
 /**
  * 終端レビューアクションを決定する純粋関数（AC-2）。
  * @param {object} opts
- * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'
+ * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'|'review_only'
  * @param {string|null} opts.lastDecision - 'approve'|'request-changes'|'comment'|null
  * @param {number} opts.blockingCount - 終端時点の blocking finding 総数
  * @returns {'approve'|'request-changes'|'comment'}
  */
 export function terminalReviewAction({ status, lastDecision, blockingCount }) {
+  if (status === 'review_only') return 'comment';
   if (status === 'lgtm' && lastDecision === 'approve') return 'approve';
   if (blockingCount > 0 && lastDecision === 'request-changes') return 'request-changes';
   return 'comment';

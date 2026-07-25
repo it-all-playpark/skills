@@ -106,6 +106,11 @@ const MAX = args?.max_iterations == null
   ? 10
   : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
 const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション（issue #126）
+// issue #418: 多視点レビュー（2 レンズ並列 + adversarial verify）への opt-in フラグ群。
+// 既定値は全て false = 旧方式・全 loop 実行のまま（即座にロールバック可能）。
+const MULTI_REVIEW = args?.multi_review === true
+const REVIEW_ONLY = args?.review_only === true
+const AB_RECORD = args?.ab_record === true
 
 // ---- Review de-churn モデル（issue #126。#123 Plan ループ収束モデルの Review 版を inline 複製）----
 // cold start の pr-reviewer は moving target を生む（毎回 fresh context で全 PR diff を再レビューし、
@@ -171,6 +176,254 @@ function makeSeenTracker(threshold) {
   };
 }
 // ==== END inline: _lib/stuck-detector.mjs ====
+
+// ==== BEGIN inline: _lib/multireview.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// pr-iterate.js の review ステップへ多視点レビュー（2 レンズ並列 + adversarial verify）を
+// 追加するための canonical。issue #418。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+//
+// 命名注記: stuckTopicKey は import せず自由識別子として参照する（同一ファイルに inline 済みの
+// _lib/stuck-detector.mjs を workflow 側で共有するため — _lib/pr-comment-format.mjs が mdCell を
+// 自由識別子として参照する precedent と同じ）。単体テストでは
+// `globalThis.stuckTopicKey = stuckTopicKey` を注入すること。
+
+// 2 レンズ定義（dimension を分割して 1 レンズあたりの報告範囲を絞る）。
+const MULTIREVIEW_LENSES = [
+  { id: 'a', name: 'Correctness+Security', dimensions: ['Correctness', 'Security'] },
+  { id: 'b', name: 'Testing+Maintainability+Performance', dimensions: ['Testing', 'Maintainability', 'Performance'] },
+];
+
+// _shared/references/stuck-topic-dictionary.md の Problem-Class Enum テーブル全 20 値（append-only）。
+const MULTIREVIEW_PROBLEM_CLASSES = [
+  'scope-mismatch',
+  'yagni-violation',
+  'untestable-ac',
+  'missing-file-reference',
+  'wrong-file-target',
+  'file-conflict-in-parallel',
+  'dependency-contradiction',
+  'self-containment-violation',
+  'edge-case-unhandled',
+  'error-handling-missing',
+  'input-validation-missing',
+  'security-vuln',
+  'secret-exposure',
+  'logic-bug',
+  'regression',
+  'test-missing',
+  'test-weakening',
+  'test-not-asserting',
+  'performance-issue',
+  'naming-convention',
+];
+
+const ZERO_WIDTH_RE = /[​‌‍﻿]/g;
+
+// topic 文字列を stuck 検出突合可能な形へ正規化する。
+// (a) string 以外・空 → ''
+// (b) zero-width 文字除去 → trim
+// (c) 最初の '::' より前（problem-class セグメント）を小文字化 + 空白/アンダースコアをハイフン化
+//     '::' 以降の詳細 suffix は verbatim 保持（path の大小文字を壊さない）
+function normalizeReviewTopic(topic) {
+  if (typeof topic !== 'string') return '';
+  const cleaned = topic.replace(ZERO_WIDTH_RE, '').trim();
+  if (!cleaned) return '';
+
+  const sepIdx = cleaned.indexOf('::');
+  if (sepIdx === -1) {
+    return cleaned.toLowerCase().replace(/[\s_]+/g, '-');
+  }
+  const head = cleaned.slice(0, sepIdx);
+  const tail = cleaned.slice(sepIdx + 2);
+  const normHead = head.toLowerCase().replace(/[\s_]+/g, '-');
+  return `${normHead}::${tail}`;
+}
+
+const SEVERITY_RANK = { critical: 3, major: 2, minor: 1 };
+
+function truncateStr(v, max) {
+  const s = String(v ?? '');
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+// decision を issues から決定論導出する（critical/major あり→'request-changes'、
+// minor のみ→'comment'、0 件→'approve'）。mergeLensReviews / applyAdversarialVerdicts で共有。
+function deriveDecision(issues) {
+  if (issues.some((x) => x.severity === 'critical' || x.severity === 'major')) return 'request-changes';
+  if (issues.length > 0) return 'comment';
+  return 'approve';
+}
+
+// 同一 dedup key で衝突した issue のうち保持する方を選ぶ:
+//   1. severity が高い方（critical > major > minor）
+//   2. 同 severity は file/line を両方持つ方を優先（file のみ < file+line）
+//   3. なお同点なら既存（先に採用された方）を保持
+function pickBetterIssue(existing, candidate) {
+  const rankExisting = SEVERITY_RANK[existing.severity] ?? 0;
+  const rankCandidate = SEVERITY_RANK[candidate.severity] ?? 0;
+  if (rankCandidate > rankExisting) return candidate;
+  if (rankExisting > rankCandidate) return existing;
+
+  const scoreExisting = (existing.file != null ? 1 : 0) + (existing.line != null ? 1 : 0);
+  const scoreCandidate = (candidate.file != null ? 1 : 0) + (candidate.line != null ? 1 : 0);
+  if (scoreCandidate > scoreExisting) return candidate;
+  return existing;
+}
+
+// [{lens, review}] を単一の REVIEW schema 互換オブジェクトへマージする。
+// - topic は normalizeReviewTopic で正規化してから stuckTopicKey で dedup
+// - description/suggestion/summary は REVIEW schema の maxLength に truncate
+// - verification_evidence は各項目へ [lens-<id>] prefix を付け 120 字 truncate・最大 6 件
+// - decision は deriveDecision で issues から決定論導出
+function mergeLensReviews(lensResults) {
+  const list = Array.isArray(lensResults) ? lensResults : [];
+
+  const merged = {};
+  const mergeOrder = [];
+  const lensIssueCounts = {};
+  let mergedDupes = 0;
+
+  for (const entry of list) {
+    const lensId = entry?.lens?.id ?? (typeof entry?.lens === 'string' ? entry.lens : null);
+    const issues = Array.isArray(entry?.review?.issues) ? entry.review.issues : [];
+    if (lensId != null) lensIssueCounts[lensId] = issues.length;
+
+    for (const issue of issues) {
+      const candidate = { ...issue, topic: normalizeReviewTopic(issue?.topic) };
+      const key = stuckTopicKey(candidate);
+      if (Object.prototype.hasOwnProperty.call(merged, key)) {
+        mergedDupes++;
+        merged[key] = pickBetterIssue(merged[key], candidate);
+      } else {
+        merged[key] = candidate;
+        mergeOrder.push(key);
+      }
+    }
+  }
+
+  const mergedIssues = mergeOrder.map((key) => {
+    const issue = merged[key];
+    const out = {
+      severity: issue.severity,
+      topic: issue.topic,
+      file: issue.file,
+      description: truncateStr(issue.description, 300),
+      suggestion: truncateStr(issue.suggestion, 200),
+    };
+    if (issue.line != null) out.line = issue.line;
+    return out;
+  });
+
+  const evidence = [];
+  outer: for (const entry of list) {
+    const lensId = entry?.lens?.id ?? (typeof entry?.lens === 'string' ? entry.lens : '?');
+    const ev = Array.isArray(entry?.review?.verification_evidence) ? entry.review.verification_evidence : [];
+    for (const e of ev) {
+      if (evidence.length >= 6) break outer;
+      evidence.push(truncateStr(`[lens-${lensId}] ${String(e)}`, 120));
+    }
+  }
+
+  const summaries = list
+    .map((entry) => entry?.review?.summary)
+    .filter((s) => typeof s === 'string' && s.length > 0);
+  const summary = truncateStr(summaries.join(' / '), 200);
+
+  const review = {
+    decision: deriveDecision(mergedIssues),
+    issues: mergedIssues,
+    summary,
+    verification_evidence: evidence,
+  };
+
+  return { review, stats: { lens_issue_counts: lensIssueCounts, merged_dupes: mergedDupes } };
+}
+
+// adversarial verify の結果（[{index, verdict, reason}] または null/非配列）を review へ適用する。
+// null/非配列 → fail-open（review 不変、dropped:0）。
+// verdict==='rejected' の index の issue を除去し、除去後に decision を再導出する。
+// 範囲外/非整数 index は無視する。
+function applyAdversarialVerdicts(review, verdicts) {
+  if (!Array.isArray(verdicts)) {
+    return { review, dropped: 0, fail_open: true };
+  }
+
+  const issues = Array.isArray(review?.issues) ? review.issues : [];
+  const rejected = new Set();
+  for (const v of verdicts) {
+    const idx = v?.index;
+    if (!Number.isInteger(idx)) continue;
+    if (idx < 0 || idx >= issues.length) continue;
+    if (v?.verdict === 'rejected') rejected.add(idx);
+  }
+
+  if (rejected.size === 0) {
+    return { review, dropped: 0, fail_open: false };
+  }
+
+  const keptIssues = issues.filter((_, i) => !rejected.has(i));
+  const nextReview = { ...review, issues: keptIssues, decision: deriveDecision(keptIssues) };
+  return { review: nextReview, dropped: rejected.size, fail_open: false };
+}
+
+// 1 レンズ分の review prompt を生成する純粋関数。
+function buildLensReviewPrompt({ pr, lens, prior }) {
+  const dims = Array.isArray(lens?.dimensions) ? lens.dimensions.join('/') : '';
+  const lines = [];
+  lines.push(`PR #${pr} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。`);
+  lines.push(`このレビューでは ${dims} の dimension のみ報告せよ（他 dimension は別レンズが担当）。`);
+  lines.push(
+    'topic は _shared/references/stuck-topic-dictionary.md の Problem-Class Enum に従え。'
+    + '該当クラスがあれば必ず enum 値を使い、自由作文は禁止する。',
+  );
+
+  const prior_ = Array.isArray(prior) ? prior : [];
+  if (prior_.length) {
+    lines.push(
+      `既出 findings（前ラウンドまでに指摘済み。author は対応済みのはず）:\n${JSON.stringify(prior_)}\n`
+      + '**新規の critical/major のみ報告**せよ。前ラウンドで対応済み・却下済みの論点の蒸し返し、'
+      + '別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を'
+      + '必ず再利用せよ（orchestrator が topic で stuck を突合する）。',
+    );
+  }
+
+  return lines.join('\n');
+}
+
+// adversarial verify prompt を生成する純粋関数。
+function buildVerifyPrompt({ pr, issues }) {
+  const list = Array.isArray(issues) ? issues : [];
+  const enumerated = list
+    .map((issue, i) => {
+      const loc = issue.line != null ? `${issue.file}:${issue.line}` : `${issue.file}`;
+      return `${i}. [${issue.severity}] ${issue.topic} — ${loc}: ${issue.description}`;
+    })
+    .join('\n');
+
+  return `PR #${pr} の以下の findings を反証スタンスで検証せよ: 該当 file:line を実際に読み、`
+    + '指摘が実在・再現可能か確認せよ。実在しない/誤読/PR スコープ外なら rejected、実在するなら confirmed とせよ。'
+    + `index は列挙番号（0 始まり）を使え。\n\n${enumerated}`;
+}
+
+// AB 計測結果を ~/.claude/journal/ab-runs/ へ書き出す shell コマンドを生成する。
+// buildJournalHandoffCommand（_lib/journal-handoff.mjs）と同構造。$(date +%s) は shell 側評価。
+function buildAbRecordCommand({ pr, mode, payload }) {
+  const safePr = String(pr ?? '').trim();
+  if (!/^[1-9][0-9]*$/.test(safePr)) {
+    throw new Error(`multireview: invalid pr: ${JSON.stringify(pr)}`);
+  }
+  if (mode !== 'single' && mode !== 'multi') {
+    throw new Error(`multireview: invalid mode: ${JSON.stringify(mode)}`);
+  }
+  if (payload == null) throw new Error('multireview: payload is required');
+
+  const AB_RUNS_DIR = '~/.claude/journal/ab-runs';
+  const DELIM = 'AB_RUN_EOF';
+  return `mkdir -p ${AB_RUNS_DIR} && cat > ${AB_RUNS_DIR}/result-${safePr}-${mode}-$(date +%s).json <<'${DELIM}'\n${String(payload)}\n${DELIM}`;
+}
+// ==== END inline: _lib/multireview.mjs ====
 
 // ==== BEGIN inline: _lib/review-normalize.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // pr-iterate.js の review 経路（decision × blocking findings）を正規化する canonical。issue #321。
@@ -285,13 +538,14 @@ const STATUS_HEADLINE = {
   'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
   'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision と blocking findings の矛盾が再 review 後も再発。人間へエスカレーション',
+  'review_only': '🔎 REVIEW ONLY — 計測用 1-pass レビュー（fix/CI loop なし）',
 };
 
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
  * @param {number|string} opts.pr - PR 番号
- * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending' | 'review_contract_error'
+ * @param {string} opts.status - 'lgtm' | 'stuck' | 'fix_failed' | 'max_reached' | 'ci_error' | 'ci_pending' | 'review_contract_error' | 'review_only'
  * @param {number} opts.iterations - 総反復回数
  * @param {string} opts.lastDecision - 最終判定
  * @param {string} opts.lastSummary - 最終サマリーテキスト
@@ -382,12 +636,13 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 /**
  * 終端レビューアクションを決定する純粋関数（AC-2）。
  * @param {object} opts
- * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'
+ * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'|'review_only'
  * @param {string|null} opts.lastDecision - 'approve'|'request-changes'|'comment'|null
  * @param {number} opts.blockingCount - 終端時点の blocking finding 総数
  * @returns {'approve'|'request-changes'|'comment'}
  */
 function terminalReviewAction({ status, lastDecision, blockingCount }) {
+  if (status === 'review_only') return 'comment';
   if (status === 'lgtm' && lastDecision === 'approve') return 'approve';
   if (blockingCount > 0 && lastDecision === 'request-changes') return 'request-changes';
   return 'comment';
@@ -476,6 +731,36 @@ const FIX = {
   },
 }
 
+// issue #418: adversarial verify（多視点レビュー merge 後の findings を反証スタンスで検証）の schema。
+const MULTIREVIEW_VERIFY = {
+  type: 'object',
+  required: ['verdicts'],
+  properties: {
+    verdicts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['index', 'verdict'],
+        properties: {
+          index: { type: 'number' },
+          verdict: { type: 'string', enum: ['confirmed', 'rejected'] },
+          reason: { type: 'string', maxLength: 200 },
+        },
+      },
+    },
+  },
+}
+
+// issue #418: AB 計測結果の ~/.claude/journal/ab-runs/ への書き出し可否の schema（advisory / fail-open）。
+const AB_RECORD_RESULT = {
+  type: 'object',
+  required: ['recorded'],
+  properties: {
+    recorded: { type: 'boolean' },
+    path: { type: 'string' },
+  },
+}
+
 // CI gate schema — restores the gate lost in eb8aa7e (issue #133).
 // dev-runner-haiku-ro runs pr-iterate/scripts/check-ci.sh and returns its stdout JSON unchanged.
 // failed_checks items match script output: {name, bucket, state} (conclusion was removed in
@@ -508,13 +793,18 @@ phase('Iterate')
 
 // repo (owner/name) probe: PR の base repo URL から owner/name を導出する（telemetry の repo 解決用。issue #309）。
 // fail-open — probe 失敗/null でも repo を省略するだけで workflow は継続する。
-const PR_META = { type: 'object', required: ['url'], properties: { url: { type: 'string' } } }
+// issue #418: headRefOid を追加取得し AB 計測の HEAD SHA 突合に使う（fail-open。required は url のまま）。
+const PR_META = { type: 'object', required: ['url'], properties: { url: { type: 'string' }, head_sha: { type: 'string' } } }
 const prMeta = await agent(
-  `## Objective\nPR #${PR} の URL を取得する（telemetry の repo 解決用）。\n\n## Instructions\n次のコマンドをそのまま実行し、stdout（1 行）を url として返せ: \`gh pr view ${PR} --json url -q .url\`\nコマンド失敗時は throw せず url を空文字で返すこと。\n\n## Output format\n{ "url": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n50 語以内で完結すること。`,
+  `## Objective\nPR #${PR} の URL と現在の head SHA を取得する（telemetry の repo 解決 / AB 計測の HEAD 突合用）。\n\n`
+  + `## Instructions\n次のコマンドをそのまま実行し、JSON の url を url、headRefOid を head_sha として返せ: \`gh pr view ${PR} --json url,headRefOid\`\n`
+  + `コマンド失敗時は throw せず url を空文字で返すこと（head_sha は省略可）。\n\n`
+  + `## Output format\n{ "url": string, "head_sha": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n60 語以内で完結すること。`,
   { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
 )
 const REPO = repoFromGithubUrl(prMeta?.url)
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
+const HEAD_SHA = prMeta?.head_sha ?? null
 
 let lastReview = null
 let lgtm = false
@@ -524,6 +814,7 @@ let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale
 let fixNullRetries = 0  // fix agent が null（schema 不一致・技術的失敗）で 1 回 retry した累積回数。issue #347
 let totalCiWaitSeconds = 0  // check-ci.sh --wait-seconds ポーリングの累積待機秒数（全 ci-check ラウンド合算。issue #324）
 let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
+let reviewAgentCallsTotal = 0  // review 系 agent 呼び出し（review#/verify#/contract-retry）の累積回数。issue #418
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
 
@@ -545,23 +836,68 @@ async function callFixAgent(prompt, i) {
 
 for (i = 1; i <= MAX; i++) {
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
-  const reviewPrompt = `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
-    + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
-    + (prior.length
-        ? `既出 findings（前ラウンドまでに指摘済み。author は対応済みのはず）:\n${JSON.stringify(prior)}\n`
-          + `**新規の critical/major のみ報告**せよ。前ラウンドで対応済み・却下済みの論点の蒸し返し、`
-          + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
-          + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
-        : '')
-  const review = await agent(
-    reviewPrompt,
-    { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
-  )
-  if (review == null) throw new Error(`pr-iterate: review#${i} が結果を返しませんでした（skip された可能性）`)
+
+  // issue #418: 多視点レビュー（2 レンズ並列 + adversarial verify）への opt-in ルーティング。
+  // MULTI_REVIEW=false は現行コード（reviewPrompt + 単一 pr-reviewer 呼び出し + contract-retry）を
+  // 一切変更しない（AC-1 ロールバック保証）。
+  const roundMetrics = { review_mode: MULTI_REVIEW ? 'multi' : 'single', review_agent_calls: MULTI_REVIEW ? 2 : 1 }
+  reviewAgentCallsTotal += roundMetrics.review_agent_calls
+
+  let review
+  let reviewPrompt = ''
+  if (MULTI_REVIEW) {
+    const lensResults = await parallel(MULTIREVIEW_LENSES.map((lens) => () => agent(
+      buildLensReviewPrompt({ pr: PR, lens, prior }),
+      { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}-lens-${lens.id}`, phase: 'Iterate' },
+    )))
+    for (let li = 0; li < MULTIREVIEW_LENSES.length; li++) {
+      if (lensResults[li] == null) {
+        throw new Error(`pr-iterate: review#${i}-lens-${MULTIREVIEW_LENSES[li].id} が結果を返しませんでした（skip された可能性）`)
+      }
+    }
+    const merged = mergeLensReviews(MULTIREVIEW_LENSES.map((lens, idx) => ({ lens, review: lensResults[idx] })))
+    review = merged.review
+    roundMetrics.lens_issue_counts = merged.stats.lens_issue_counts
+    roundMetrics.merged_count = review.issues.length
+    roundMetrics.verify_dropped = 0
+    roundMetrics.verify_fail_open = false
+
+    // merge 後の issues が 0 件なら verify agent 呼び出しを skip する（agent call 節約）
+    if (review.issues.length > 0) {
+      const verify = await agent(
+        buildVerifyPrompt({ pr: PR, issues: review.issues }),
+        { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: MULTIREVIEW_VERIFY, label: `verify#${i}`, phase: 'Iterate' },
+      )
+      roundMetrics.review_agent_calls += 1
+      reviewAgentCallsTotal += 1
+      const verdicts = Array.isArray(verify?.verdicts) ? verify.verdicts : null
+      const verifyResult = applyAdversarialVerdicts(review, verdicts)
+      review = verifyResult.review
+      roundMetrics.verify_dropped = verifyResult.dropped
+      roundMetrics.verify_fail_open = verifyResult.fail_open
+    }
+  } else {
+    reviewPrompt = `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
+      + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
+      + (prior.length
+          ? `既出 findings（前ラウンドまでに指摘済み。author は対応済みのはず）:\n${JSON.stringify(prior)}\n`
+            + `**新規の critical/major のみ報告**せよ。前ラウンドで対応済み・却下済みの論点の蒸し返し、`
+            + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
+            + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
+          : '')
+    review = await agent(
+      reviewPrompt,
+      { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
+    )
+    if (review == null) throw new Error(`pr-iterate: review#${i} が結果を返しませんでした（skip された可能性）`)
+  }
   lastReview = review
 
   let effReview = review
   let outcome = classifyReviewRoute(review)
+  // multi mode の decision は issues から決定論導出される（mergeLensReviews / applyAdversarialVerdicts の
+  // deriveDecision）ため、approve なのに blocking ありという contract_mismatch は構造上発生しない。
+  // classifyReviewRoute() と下記 contract-retry 分岐は single/multi 双方で無変更のまま共用する。
 
   // contract mismatch（approve だが blocking あり）: 同一 iteration 内で 1 回だけ再 review する。
   // MAX は消費しない — 有限性は「iteration ごと最大 1 回」で担保する（issue #321）。
@@ -576,6 +912,8 @@ for (i = 1; i <= MAX; i++) {
       { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}-contract-retry`, phase: 'Iterate' },
     )
     if (rereview == null) throw new Error(`pr-iterate: review#${i}-contract-retry が結果を返しませんでした（skip された可能性）`)
+    roundMetrics.review_agent_calls += 1
+    reviewAgentCallsTotal += 1
     effReview = rereview
     lastReview = rereview
     outcome = classifyReviewRoute(rereview)
@@ -587,10 +925,19 @@ for (i = 1; i <= MAX; i++) {
       terminal = 'review_contract_error'
       log(`⚠️ iteration ${i}: review contract mismatch が再 review 後も再発（decision=approve、blocking ${outcome.blocking.length} 件）。人間へエスカレーション`)
 
-      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor })
+      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor, ...roundMetrics })
 
       break
     }
+  }
+
+  // issue #418: 計測用 1-pass レビュー。fix agent / CI gate を一切呼ばず終端する
+  // （AB protocol の review_only 実行 — 同一 HEAD SHA に対する交絡除去用）。
+  if (REVIEW_ONLY) {
+    for (const x of outcome.blocking) reviewSeen.register(x)
+    history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor, ...roundMetrics })
+    terminal = 'review_only'
+    break
   }
 
   if (outcome.route === 'ci_gate') {
@@ -641,7 +988,7 @@ for (i = 1; i <= MAX; i++) {
       log(`iteration ${i}: LGTM（CI status=${ci.status}）`)
 
       // lgtm 確定ラウンドの history を記録（blocking なし、minor は保持）
-      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor })
+      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor, ...roundMetrics })
 
       break
     } else if (ci.status === 'error') {
@@ -681,7 +1028,7 @@ for (i = 1; i <= MAX; i++) {
         + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
 
       // CI-failed ラウンドの history 記録（blocking は synthetic CI findings、minor は保持）
-      const ciRound = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor }
+      const ciRound = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor, ...roundMetrics }
       history.push(ciRound)
 
       if (ciStuckTopics.length) {
@@ -723,7 +1070,7 @@ for (i = 1; i <= MAX; i++) {
       + `${stuckTopics.length ? ` [REVIEW_STUCK: ${stuckTopics.join(' / ')}]` : ''}`)
 
     // history に記録（blocking findings と minor を含む）
-    const round = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor }
+    const round = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor, ...roundMetrics }
     history.push(round)
 
     // stuck: 同一 topic が REVIEW_STUCK 回繰り返した = fix が刺さっていない。relax せず人間へエスカレーション。
@@ -829,6 +1176,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ci_wait_seconds: totalCiWaitSeconds,
     ci_poll_attempts: totalCiPollAttempts,
     fix_null_retries: fixNullRetries,
+    review_mode: MULTI_REVIEW ? 'multi' : 'single',
+    review_agent_calls_total: reviewAgentCallsTotal,
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'priterate', id: PR, payload: telemetryHandoff })
@@ -847,6 +1196,38 @@ if (!journalPost?.logged) {
   log(`⚠️ journal-log の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
 }
 
+// issue #418: AB 計測 opt-in — ~/.claude/journal/ab-runs/ へ結果 JSON を書き出す（advisory / fail-open）。
+// ~/.claude/journal/pending は Stop hook が毎 Stop で claim→削除する ephemeral dir のため使わない。
+if (AB_RECORD) {
+  const abPayload = JSON.stringify({
+    pr: Number(PR),
+    mode: MULTI_REVIEW ? 'multi' : 'single',
+    head_sha: HEAD_SHA,
+    status,
+    iterations: Math.min(i, MAX),
+    fixes_applied: fixesApplied,
+    review_agent_calls_total: reviewAgentCallsTotal,
+    last_decision: lastReview?.decision ?? null,
+    last_summary: lastReview?.summary ?? null,
+    history,
+  })
+  const abCmd = buildAbRecordCommand({ pr: PR, mode: MULTI_REVIEW ? 'multi' : 'single', payload: abPayload })
+  const abPost = await agent(
+    `## Objective\npr-iterate の AB 計測結果を ~/.claude/journal/ab-runs/ に書き出す（advisory / fail-open。merge tier・gate 判定に影響しない）。\n\n`
+    + `## Instructions\n`
+    + `次のコマンドをそのまま実行せよ: \`${abCmd}\`\n`
+    + `exit 0 なら recorded:true、失敗しても throw せず recorded:false を返すこと。\n`
+    + `\n## Output format\n{ "recorded": boolean, "path": string }\n`
+    + `\n## Tools\n使用可: Bash のみ\n`
+    + `\n## Boundary\n~/.claude/journal/ab-runs 以外のファイルを変更しない。git 操作禁止。\n`
+    + `\n## Token cap\n100 語以内で完結すること。`,
+    { agentType: 'dev-runner-haiku', schema: AB_RECORD_RESULT, label: 'ab-record', phase: 'Iterate' },
+  )
+  if (!abPost?.recorded) {
+    log(`⚠️ ab-record の記録に失敗しました（recorded=${abPost?.recorded ?? 'null'}）。ワークフローは継続します（advisory）。`)
+  }
+}
+
 return {
   pr: PR,
   status,
@@ -857,5 +1238,8 @@ return {
   ci_wait_seconds: totalCiWaitSeconds,
   ci_poll_attempts: totalCiPollAttempts,
   fix_null_retries: fixNullRetries,
+  review_mode: MULTI_REVIEW ? 'multi' : 'single',
+  review_agent_calls_total: reviewAgentCallsTotal,
+  head_sha: HEAD_SHA,
   history,
 }
