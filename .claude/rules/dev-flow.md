@@ -96,14 +96,18 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   これら 4 キー（testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts）に加え duration_seconds /
   phase_durations の 2 キーも、journal whitelist 登録・dotfiles Stop hook への転送配線は別 issue（issue #356 記載）
   で扱う — 本 PR は handoff JSON への到達と統合テストでの検証まで（`vdelta_verdict` の既存 precedent 踏襲）。
-  `trust_receipts` は EvalSeal shadow 時のみ出力される receipt envelope 配列（stage/invalidated/receipt_id/verdict/record_integrity
-  等の digest・ID・closed enum のみ — redaction 原則で raw 本文・anchors 値は保存しない）。journal whitelist 登録・
+  `trust_receipts` は EvalSeal/EffectDelta shadow 時のみ出力される receipt envelope 配列（stage/invalidated/receipt_id/verdict/record_integrity
+  等の digest・ID・closed enum のみ — redaction 原則で raw 本文・anchors 値は保存しない）。stage は EvalSeal の
+  `evaluate`/`final` に加え、EffectDelta（issue #412, epic #390 Phase 4）の `pr`（PR phase の read-only pr-observe
+  観測）/`summary-comment`（post-summary の comment-ensure 投稿）を含む。EffectDelta entry には任意で
+  `domain_reason_code`（DUPLICATE_EFFECT/WRONG_TARGET/RESPONSE_LOST 等、observation 由来の分類）が付き、
+  Phase 5 calibration での原因別集計に使う。journal whitelist 登録・
   dotfiles Stop hook への転送配線は別 issue（`vdelta_verdicts` precedent）で扱う — 本 issue は handoff JSON への
   到達と統合テストでの検証まで。
   earned-autonomy 集計・calibration は **W6b へ繰り延べ**（W6 は enum 骨格と telemetry 蓄積開始のみ）。
   `trust_surfaceproof_shadow`（issue #410, epic #390 Phase 2）は `{mode, verdict, reason_code, receipt_id}`
   — Analyze phase で SurfaceProof adapter を shadow 実行した結果。REPO が `it-all-playpark/skills` と厳密一致
-  し kill switch（環境変数 `TRUST_LAYER_KILL_SWITCH`）が無効な場合のみ shadow 実行され、それ以外の repo では
+  し kill switch（環境変数 `TRUST_KILL_SWITCH`）が無効な場合のみ shadow 実行され、それ以外の repo では
   追加 agent 呼出し 0 件のまま出力自体が省略される（AC-11: shadow/off で既存 merge tier・agent 呼出回数・
   return status は不変）。req/shape/needs_clarification 判定へは一切反映しない telemetry 専用キー。journal
   whitelist 登録・dotfiles Stop hook への転送配線は route/vdelta_verdicts と同じ precedent で別 issue に
@@ -143,6 +147,9 @@ redgreen vdelta deny の sunset path —
 EvalSeal shadow 固定の sunset path —
 - 表現: `_lib/trust-wiring.mjs` の `TRUST_LAYER_CONFIG.evalseal` enum 値（'shadow' → 'advisory' → 'blocking'）。同一 harness evaluator の receipt は verifier 種別により常に `record_integrity='advisory'`（`resolveTrustLevel` の same-harness 経路 — これは incentive-structural 側で sunset しない）。
 - 再評価トリガ: epic #390 Phase 5 の 2x2x2 dogfood（20〜30 eligible runs の shadow 観測）と calibration が receipt 品質（取得成功率・inconclusive 率）を実証した時点で blocking へ昇格し、`classifyMergeTier` の `trustGate`（実装済み・shadow では null）を活性化する。pinned verifier（agent write 圏外）実装までは 'trusted-environment' を主張しない。
+EffectDelta shadow 固定の sunset path —
+- 表現: `_lib/trust-wiring.mjs` の `TRUST_LAYER_CONFIG.effectdelta` enum 値（'shadow' → 'advisory' → 'blocking'）。PR phase の pr-observe（read-only 観測）・post-summary の comment-ensure（write-once 投稿）は EvalSeal shadow と同じ shadow 固定パターンで配線する（issue #412, epic #390 Phase 4）。
+- 再評価トリガ: EvalSeal と同じく epic #390 Phase 5 の 2x2x2 dogfood と calibration が receipt 品質（observed/mismatch/inconclusive の分布、DUPLICATE_EFFECT/WRONG_TARGET/RESPONSE_LOST 等 domain_reason_code の発生率）を実証した時点で blocking へ昇格を検討する。実証まではゲート後退（relax）させず、既存の PR 作成経路（git-pr skill）・summary comment 投稿（gh pr comment）を変更しない。
 - 逆に incentive-structural / blast-radius はモデル更新で撤去してはならない（§6 軸A 保持）。
 
 ### inline 生成区間（_lib → workflows の sync generator）
@@ -187,6 +194,7 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | analyze-parse（analyze-issue.sh --contract 決定論 parse → REQ 転写） | throw / null / ok:false / schema 不一致 / eligible:false / whitelist 検証（buildReqFromContract）不合格 | fail-open（現行 sonnet analyze へ fallback — 挙動不変。DEPTH=standard のみ試行） | 高速化の補助経路であり品質ゲートではない。fallback 先が現行経路そのものなので失敗しても後退なし。light path は構造化 breaking 判定を行わない（keyword hit は eligibility で sonnet へ回し、残余は事後の danger-grep / merge tier が補償） |
 | pr-meta（`gh pr view --json mergeable,mergeStateStatus` による base branch conflict 検出、dev-flow Merge tier phase） | `ok:false` / `null` / schema 不一致 / `mergeable=UNKNOWN` 継続 | fail-open（mergeableState='unknown' → conflict gate 不適用、警告 log のみ。definitive な CONFLICTING / mergeStateStatus=DIRTY のみ HOLD） | merge は全 tier 人間であり GitHub 自体が conflict merge を platform で hard-block するため、conflict signal を取りこぼしても実害ある merge は起こり得ない。`mergeable=UNKNOWN` は GitHub の mergeability background 計算中の transient 状態であり fail-safe(HOLD) にすると healthy PR を spurious HOLD する。既存 deterministic gate・security floor を一切緩めず、definitive conflict 検出時にのみ HOLD reason を追加する（軸A 不変） |
 | trust-surfaceproof-shadow（`surfaceproof-snapshot.sh` による SurfaceProof shadow probe、dev-flow Analyze phase。kill-switch probe も同一ポリシー） | `ok:false` / `null` / schema 不一致 / agent throw / receipt 欠落 | fail-open（`trust_surfaceproof_shadow` は `verdict:'inconclusive', reason_code:'PROBE_FAILED'` を記録、警告 log のみ。kill-switch probe 失敗は fail-safe で kill switch 有効相当＝shadow 実行自体を skip） | advisory な shadow dogfooding の観測信号（W7 capability-bound。AC-11/AC-15 非緩和）。req/shape/needs_clarification 判定・merge tier・既存 deterministic gate には一切反映しない — 失敗しても後退する既存ゲートが無い |
+| trust-effectdelta（effectdelta-github.sh pr-observe / comment-ensure — PR readback 観測・summary comment の write-once 投稿） | ok:false / null / schema 不一致 / posted:false / agent throw | fail-open（receipt 無しで続行・comment は gh pr comment 直接実行へ fallback、警告 log のみ。merge tier・security floor・gate 判定へ影響しない） | advisory な trust-layer shadow dogfood の補助信号（epic #390 Phase 4）。journal handoff は stable effect ID + atomic write で同秒/並列/再実行に耐性（AC-10）— gate ではなく handoff 耐久性の決定論改善 |
 
 ## dev-improve (self-improvement loop)
 
