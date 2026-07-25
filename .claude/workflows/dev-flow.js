@@ -4312,7 +4312,7 @@ log(`PR created: ${pr.pr_url}`)
 if (EFFECTDELTA_MODE === 'shadow') {
   try {
     const edPrRes = await agent(
-      `## Objective\n\`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
+      `## Objective\n\`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number} --base ${BASE}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
       + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
       + `exit 0 かつ stdout が JSON として parse できればそのオブジェクトをそのまま返し、それ以外（exit 非0・stdout 空・JSON 不正）は { "ok": false, "error": "<理由>" } を返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
       + `## Output format\nスクリプト stdout の JSON object をそのまま返す（{ "ok": boolean, "mode": string, "op": string, "observation": object, "effect_id": string, "receipt": object, "envelope": object }）。\n`

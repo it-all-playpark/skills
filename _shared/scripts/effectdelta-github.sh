@@ -8,10 +8,13 @@
 # CLI does pure classification).
 #
 # Subcommands:
-#   pr-observe <issue> --repo R --worktree WT --pr N
+#   pr-observe <issue> --repo R --worktree WT --pr N --base B
 #     Read-only. Classifies the current state of an existing PR against the local
-#     worktree's HEAD (intended.head_oid) via `gh pr view`/`gh pr list`. Never
-#     writes.
+#     worktree's HEAD (intended.head_oid) and the caller's intended base branch
+#     (--base, e.g. dev-flow.js's resolveBase result) via `gh pr view`/`gh pr list`.
+#     `--base` must come from the caller's intent, never from the readback itself —
+#     deriving it from `gh pr view` would make the base comparison tautological and
+#     make base-induced WRONG_TARGET structurally undetectable. Never writes.
 #   pr-ensure <issue> --repo R --worktree WT --base B --title-file F --body-file F2
 #     Write-once. Only invoked from bats fixtures in this PR (not wired into
 #     dev-flow.js shadow probing) — the real `gh pr create` path continues to run
@@ -58,7 +61,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 usage() {
     cat << EOF
 Usage:
-  effectdelta-github.sh pr-observe <issue> --repo R --worktree WT --pr N
+  effectdelta-github.sh pr-observe <issue> --repo R --worktree WT --pr N --base B
   effectdelta-github.sh pr-ensure <issue> --repo R --worktree WT --base B --title-file F --body-file F2
   effectdelta-github.sh comment-ensure --repo R --pr N --body-file F --effect-type T --run-id ID
 EOF
@@ -116,12 +119,13 @@ call_cli_or_bail() {
 # pr-observe: read-only classification of an existing PR
 # ============================================================================
 cmd_pr_observe() {
-    local issue="" repo="" worktree="" pr=""
+    local issue="" repo="" worktree="" pr="" base=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo) repo="$2"; shift 2 ;;
             --worktree) worktree="$2"; shift 2 ;;
             --pr) pr="$2"; shift 2 ;;
+            --base) base="$2"; shift 2 ;;
             -*) die_json "Unknown option: $1" ;;
             *) [[ -z "$issue" ]] && issue="$1"; shift ;;
         esac
@@ -129,6 +133,7 @@ cmd_pr_observe() {
     [[ -z "$issue" ]] && die_json "pr-observe: issue number required"
     [[ -z "$worktree" ]] && die_json "pr-observe: --worktree required"
     [[ -z "$pr" ]] && die_json "pr-observe: --pr required"
+    [[ -z "$base" ]] && die_json "pr-observe: --base required"
 
     repo=$(resolve_repo "$repo")
     local head_oid
@@ -140,8 +145,6 @@ cmd_pr_observe() {
         emit_gh_error "gh pr view $pr failed" "$view_err"
         exit 0
     fi
-    local base
-    base=$(printf '%s' "$view_json" | jq -r '.baseRefName')
 
     local list_err="$TMP_DIR/pr_list_err"
     local candidates_json="null"

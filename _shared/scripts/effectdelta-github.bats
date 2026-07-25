@@ -202,7 +202,7 @@ count_file() {
         '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}')
     jq -c --argjson e "$ENTRY" '. + [$e]' "$OPEN_PRS_FILE" > "$OPEN_PRS_FILE.tmp" && mv "$OPEN_PRS_FILE.tmp" "$OPEN_PRS_FILE"
 
-    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200 --base main
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.observation.status == "observed"'
@@ -210,10 +210,31 @@ count_file() {
 }
 
 @test "pr-observe: gh pr view failure -> {ok:false,error} exit 0 (not die)" {
-    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 999
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 999 --base main
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
     echo "$output" | jq -e '.error | length > 0'
+}
+
+# intended.base は呼び出し元の意図値（--base）から取る。readback 由来にすると base 照合が
+# 恒真になり、base 起因の WRONG_TARGET が構造的に検出不能になる（PR #417 レビュー指摘）。
+@test "pr-observe: readback の base が intended.base(--base) と不一致 -> mismatch/WRONG_TARGET" {
+    ENTRY=$(jq -n --argjson number 301 --arg url "https://github.com/it-all-playpark/skills/pull/301" \
+        --arg base "develop" --arg head_oid "$GIT_STUB_HEAD_OID" \
+        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}')
+    jq -c --argjson e "$ENTRY" '. + [$e]' "$OPEN_PRS_FILE" > "$OPEN_PRS_FILE.tmp" && mv "$OPEN_PRS_FILE.tmp" "$OPEN_PRS_FILE"
+
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 301 --base main
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e '.observation.status == "mismatch"'
+    echo "$output" | jq -e '.observation.reason_code == "WRONG_TARGET"'
+}
+
+@test "pr-observe: --base 未指定は usage error (readback からの導出へ暗黙 fallback しない)" {
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--base required"* ]]
 }
 
 # ---------------------------------------------------------------------------
