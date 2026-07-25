@@ -8,6 +8,9 @@
 !.claude/workflows/**
 # Track redgreen-verify.sh opt-in config (issue #356: per-repo test_cmd/verdict_cmd)
 !.claude/redgreen.conf
+# Track path-scoped rules (dev-flow 内部仕様の遅延読み込み — AGENTS.md から分離)
+!.claude/rules/
+!.claude/rules/**
 # Legacy: skill-config.json は現在リポジトリルートに配置
 .serena/
 .system/
