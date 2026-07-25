@@ -126,12 +126,6 @@
       "skillPath": "skills/sales-enablement/SKILL.md",
       "computedHash": "554e501e3c5926eced49cae2fd3460a61252d8979891e212aad6e39ff999c703"
     },
-    "skill-creator": {
-      "source": "anthropics/skills",
-      "sourceType": "github",
-      "skillPath": "skills/skill-creator/SKILL.md",
-      "computedHash": "5ea13a6d9f0d4bb694405d79acd00cadec0d21bb138c4dd10fcf3c500cb835c2"
-    },
     "strategy-and-competitive-analysis": {
       "source": "lyndonkl/claude",
       "sourceType": "github",
