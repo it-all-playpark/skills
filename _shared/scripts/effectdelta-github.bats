@@ -76,6 +76,18 @@ case "$1" in
                 exit 0
                 ;;
             create)
+                # Reject flags that don't exist on the real `gh pr create` (e.g. a
+                # stale --title-file) so drift between this stub and the real CLI
+                # surfaces as a test failure instead of silently passing.
+                ALLOWED_CREATE_FLAGS=" --repo --base --head --title --body-file "
+                for a in "$@"; do
+                    if [[ "$a" == --* ]]; then
+                        if [[ "$ALLOWED_CREATE_FLAGS" != *" $a "* ]]; then
+                            echo "gh: unknown flag: $a" >&2
+                            exit 1
+                        fi
+                    fi
+                done
                 incr "$PR_CREATE_CALLS_FILE"
                 BASE="" HEAD_OID=""
                 prev=""
@@ -202,6 +214,18 @@ count_file() {
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
     echo "$output" | jq -e '.error | length > 0'
+}
+
+# ---------------------------------------------------------------------------
+# gh stub flag drift guard: real `gh pr create` has no --title-file flag
+# (only --title <string> / --body-file <path>). This documents the safety
+# net that would have caught the --title-file regression (see AC-8 below,
+# which exercises the real invocation path end to end).
+# ---------------------------------------------------------------------------
+@test "gh stub: pr create rejects unknown flag (e.g. --title-file) like the real CLI would" {
+    run "$STUB_DIR/gh" pr create --repo it-all-playpark/skills --base main --head feature/issue-412 --title-file "$BATS_TMPDIR/title.txt" --body-file "$BATS_TMPDIR/body.txt"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"unknown flag: --title-file"* ]]
 }
 
 # ---------------------------------------------------------------------------

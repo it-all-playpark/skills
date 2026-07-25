@@ -254,8 +254,12 @@ cmd_pr_ensure() {
         readback_json="$existing_match"
     else
         local create_err="$TMP_DIR/pr_create_err"
-        local create_out
-        if create_out=$(gh pr create --repo "$repo" --base "$base" --head "$branch" --title-file "$title_file" --body-file "$body_file" 2>"$create_err"); then
+        local create_out title_content
+        # gh CLI has no --title-file flag (only --title <string> / --body-file <path>),
+        # so the file content pointed to by our own --title-file arg must be read here
+        # and passed as a literal --title value.
+        title_content=$(cat "$title_file") || die_json "pr-ensure: failed to read --title-file $title_file"
+        if create_out=$(gh pr create --repo "$repo" --base "$base" --head "$branch" --title "$title_content" --body-file "$body_file" 2>"$create_err"); then
             response_lost="false"
             local new_url new_number view_err view_json
             new_url=$(printf '%s' "$create_out" | tail -1)
