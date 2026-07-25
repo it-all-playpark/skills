@@ -192,7 +192,9 @@ test('[AC-2] multi + lens blocking 1件 -> verify#1 が呼ばれ confirmed -> fi
 
   const verifyCalls = agentCalls.filter((c) => c.label === 'verify#1');
   assert.equal(verifyCalls.length, 1, `verify#1 は 1 回呼ばれるべきだが ${verifyCalls.length} 回だった`);
-  assert.ok(verifyCalls[0].prompt.includes('logic-bug::x'), 'verify prompt に対象 issue の topic が含まれるべき');
+  // マージ時に canonicalizeMergeTopic が topic を <class>::<file>（issue #418 dedup 修正）へ
+  // 正規化するため、merged review の topic は元の 'logic-bug::x' ではなく 'logic-bug::a.ts' になる。
+  assert.ok(verifyCalls[0].prompt.includes('logic-bug::a.ts'), 'verify prompt に対象 issue の topic が含まれるべき');
 
   const fixCalls = agentCalls.filter((c) => c.label.startsWith('fix#'));
   assert.equal(fixCalls.length, 1, `fix# は 1 回起動されるべきだが ${fixCalls.length} 回だった`);

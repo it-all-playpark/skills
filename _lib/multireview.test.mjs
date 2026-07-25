@@ -113,11 +113,86 @@ test('mergeLensReviews: dedups case/underscore-varied topics via stuckTopicKey a
 
   assert.equal(review.issues.length, 1);
   assert.equal(review.issues[0].severity, 'critical');
-  assert.equal(review.issues[0].topic, 'logic-bug::x');
+  assert.equal(review.issues[0].topic, 'logic-bug::a.mjs');
   assert.equal(review.issues[0].description, 'd2');
   assert.equal(review.decision, 'request-changes');
   assert.equal(stats.merged_dupes, 1);
   assert.deepEqual(stats.lens_issue_counts, { a: 1, b: 1 });
+});
+
+// issue #418 A/B 実測（PR #420 review_only probe）で発見した実バグの再現テスト:
+// 2 レンズが互いの出力を見ずに同一問題を報告すると、topic の `::` 以降（詳細 suffix）を
+// 独立に自由生成し得るため、同一 file・同一 problem-class でも suffix 違いで dedup が
+// 効かず blocking が重複していた。file をキーに含める canonicalizeMergeTopic で dedup する。
+test('mergeLensReviews: same file + same problem-class but different free-text topic suffix still dedups (issue #418 regression)', () => {
+  const lensResults = [
+    {
+      lens: MULTIREVIEW_LENSES[0],
+      review: {
+        decision: 'request-changes',
+        issues: [
+          {
+            severity: 'major',
+            topic: 'scope-mismatch::.claude/skills/skill-creator',
+            file: 'skills-lock.json',
+            line: 126,
+            description: 'lock entry を除去しても既存マシンでは symlink が残り shadowing が継続する',
+            suggestion: '既存マシン向けの手動 cleanup 手順を明記する',
+          },
+        ],
+        summary: 'lens a summary',
+      },
+    },
+    {
+      lens: MULTIREVIEW_LENSES[1],
+      review: {
+        decision: 'request-changes',
+        issues: [
+          {
+            severity: 'major',
+            topic: 'scope-mismatch::skill-creator',
+            file: 'skills-lock.json',
+            line: 129,
+            description: '同上の shadowing 問題を別 suffix で報告',
+            suggestion: '同上',
+          },
+        ],
+        summary: 'lens b summary',
+      },
+    },
+  ];
+
+  const { review, stats } = mergeLensReviews(lensResults);
+
+  assert.equal(review.issues.length, 1);
+  assert.equal(review.issues[0].topic, 'scope-mismatch::skills-lock.json');
+  assert.equal(stats.merged_dupes, 1);
+});
+
+test('mergeLensReviews: same problem-class in different files does NOT dedup (negative control)', () => {
+  const lensResults = [
+    {
+      lens: MULTIREVIEW_LENSES[0],
+      review: {
+        decision: 'request-changes',
+        issues: [{ severity: 'major', topic: 'scope-mismatch::a.mjs', file: 'a.mjs', description: 'd1', suggestion: 's1' }],
+        summary: 's',
+      },
+    },
+    {
+      lens: MULTIREVIEW_LENSES[1],
+      review: {
+        decision: 'request-changes',
+        issues: [{ severity: 'major', topic: 'scope-mismatch::b.mjs', file: 'b.mjs', description: 'd2', suggestion: 's2' }],
+        summary: 's',
+      },
+    },
+  ];
+
+  const { review, stats } = mergeLensReviews(lensResults);
+
+  assert.equal(review.issues.length, 2);
+  assert.equal(stats.merged_dupes, 0);
 });
 
 test('mergeLensReviews: same-severity tie-break prefers issue with file/line over file-only', () => {
@@ -353,6 +428,21 @@ test('buildLensReviewPrompt: includes PR number, dimension restriction, dictiona
   assert.ok(prompt.includes('Correctness/Security'));
   assert.ok(prompt.includes('stuck-topic-dictionary.md'));
   assert.ok(!prompt.includes('既出 findings'));
+});
+
+// issue #418 A/B 実測（PR #417 review_only probe）で発見した見落とし: 単一パスなら拾えていた
+// ファイルモード（実行権限）変更の critical bug が、Correctness+Security レンズでも見落とされた。
+// dimension を絞ったことによる機械的な見落としを防ぐリマインドが Correctness レンズにのみ入ることを確認する。
+test('buildLensReviewPrompt: Correctness lens includes file-mode check reminder, non-Correctness lens does not', () => {
+  const correctnessLens = MULTIREVIEW_LENSES.find((l) => l.dimensions.includes('Correctness'));
+  const otherLens = MULTIREVIEW_LENSES.find((l) => !l.dimensions.includes('Correctness'));
+
+  const withCorrectness = buildLensReviewPrompt({ pr: 42, lens: correctnessLens, prior: [] });
+  assert.ok(withCorrectness.includes('mode 変更'));
+  assert.ok(withCorrectness.includes('実行権限'));
+
+  const withoutCorrectness = buildLensReviewPrompt({ pr: 42, lens: otherLens, prior: [] });
+  assert.ok(!withoutCorrectness.includes('mode 変更'));
 });
 
 test('buildLensReviewPrompt: includes anti-churn instructions when prior non-empty', () => {

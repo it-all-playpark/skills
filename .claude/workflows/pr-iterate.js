@@ -248,6 +248,25 @@ function truncateStr(v, max) {
   return s.length > max ? s.slice(0, max) : s;
 }
 
+// topic を dedup 用に正規形（<problem-class>::<file>）へ倒す。
+// なぜ必要か（issue #418 A/B 実測で判明）: 2 レンズは互いの出力を見ずに並列実行されるため、
+// 同一の実問題でも topic の `::` 以降（詳細 suffix）を独立に自由生成し得る
+// （実測例: 同じ skills-lock.json 上の同一問題を "scope-mismatch::.claude/skills/skill-creator"
+// と "scope-mismatch::skill-creator" のように異なる suffix で報告し、旧ロジック（topic 文字列
+// そのものをキーにした dedup）では別問題として扱われ blocking が重複した）。suffix の自由記述
+// ではなく schema 必須フィールドの file をキーに使うことで、suffix のばらつきに依存せず
+// 同一ファイル内の同一 problem-class を決定論的に dedup する。file が無い場合のみ
+// 元の topic 文字列にフォールバックする。
+function canonicalizeMergeTopic(candidate) {
+  const topic = typeof candidate?.topic === 'string' ? candidate.topic : '';
+  const file = candidate?.file != null ? String(candidate.file) : '';
+  if (!file) return topic;
+  const sepIdx = topic.indexOf('::');
+  const cls = sepIdx === -1 ? topic : topic.slice(0, sepIdx);
+  if (!cls) return topic;
+  return `${cls}::${file}`;
+}
+
 // decision を issues から決定論導出する（critical/major あり→'request-changes'、
 // minor のみ→'comment'、0 件→'approve'）。mergeLensReviews / applyAdversarialVerdicts で共有。
 function deriveDecision(issues) {
@@ -273,7 +292,8 @@ function pickBetterIssue(existing, candidate) {
 }
 
 // [{lens, review}] を単一の REVIEW schema 互換オブジェクトへマージする。
-// - topic は normalizeReviewTopic で正規化してから stuckTopicKey で dedup
+// - topic は normalizeReviewTopic で正規化した後 canonicalizeMergeTopic で <class>::<file> へ
+//   正規形化し、stuckTopicKey で dedup（file が無ければ正規化 topic のままフォールバック）
 // - description/suggestion/summary は REVIEW schema の maxLength に truncate
 // - verification_evidence は各項目へ [lens-<id>] prefix を付け 120 字 truncate・最大 6 件
 // - decision は deriveDecision で issues から決定論導出
@@ -292,6 +312,7 @@ function mergeLensReviews(lensResults) {
 
     for (const issue of issues) {
       const candidate = { ...issue, topic: normalizeReviewTopic(issue?.topic) };
+      candidate.topic = canonicalizeMergeTopic(candidate);
       const key = stuckTopicKey(candidate);
       if (Object.prototype.hasOwnProperty.call(merged, key)) {
         mergedDupes++;
@@ -378,6 +399,17 @@ function buildLensReviewPrompt({ pr, lens, prior }) {
     'topic は _shared/references/stuck-topic-dictionary.md の Problem-Class Enum に従え。'
     + '該当クラスがあれば必ず enum 値を使い、自由作文は禁止する。',
   );
+  // issue #418 A/B 実測: dimension を絞ったことで、単一パスなら拾えていた機械的な観点
+  // （ファイルモード変更等）が Correctness 担当レンズでも見落とされた実例があった。
+  // 絞り込みによる見落としを防ぐため、Correctness 担当レンズには決定論的に確認可能な
+  // 項目を明示リマインドする。
+  if (Array.isArray(lens?.dimensions) && lens.dimensions.includes('Correctness')) {
+    lines.push(
+      'Correctness の一部として、diff に含まれるファイルの mode 変更（`git diff --summary` や '
+      + '`gh pr diff` のパーミッション変更行で確認できる、実行権限の付与漏れ/剥奪等）も必ず確認せよ。'
+      + 'dimension を絞った分、機械的に見落としやすい観点である。',
+    );
+  }
 
   const prior_ = Array.isArray(prior) ? prior : [];
   if (prior_.length) {
