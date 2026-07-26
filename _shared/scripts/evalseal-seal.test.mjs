@@ -4,7 +4,7 @@
 // stdout の JSON 1行を検証する。TDD: このテストを先に書き red を確認してから
 // evalseal-seal.mjs を実装する。
 
-import { test, afterEach } from 'vitest';
+import { test, afterEach, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -16,6 +16,15 @@ import { validateReceipt } from '../../_lib/trust-schema.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH = join(__dirname, 'evalseal-seal.mjs');
 const FIXTURES_DIR = join(__dirname, '..', '..', '_lib', 'fixtures', 'trust');
+
+// このファイルは各テストが実 git repo (init/config/commit) + evalseal-seal.mjs CLI
+// 起動 (内部で複数回 git を subprocess 実行) を組み合わせる統合テストであり、通常の
+// vitest testTimeout デフォルト (5000ms) は CI 負荷時のプロセス生成コストに対して
+// マージンが薄い。実測: フル suite 実行時の CPU 競合下でこのファイル内の異なる
+// テスト（4 CLI 呼び出しを行うテスト等）が入れ替わりで 5000ms を超過する
+// (単発では 2〜3s 台、負荷時は 5.3〜7.6s 観測)。アサーションは一切変更せず、
+// このファイル全体の実行時間予算のみ引き上げる。
+vi.setConfig({ testTimeout: 20000 });
 
 let tmpDirs = [];
 

@@ -2,7 +2,7 @@
 name: evaluator
 description: |
   Independently evaluate implementation quality (GAN-style verifier) against requirements,
-  plan, diff, and test output. Scores, decides pass/fail, and routes failures to design or
+  plan, diff, and test output. Decides pass/fail, and routes failures to design or
   implementation. Use when: dev-flow workflow Evaluate phase needs a quality gate.
 model: opus
 effort: high
@@ -49,7 +49,7 @@ implementer が `DONE_WITH_CONCERNS` を返した場合、その `concerns[]` �
 
 ## ワークフロー
 
-1. 入力収集（diff・テスト結果を実際に確認）→ 2. task type 判定 → 3. 採点 → 4. verdict → 5. JSON 出力
+1. 入力収集（diff・テスト結果を実際に確認）→ 2. task type 判定 → 3. 品質検証 → 4. verdict → 5. JSON 出力
 
 ## Step 1: 入力収集
 
@@ -63,19 +63,16 @@ implementer が `DONE_WITH_CONCERNS` を返した場合、その `concerns[]` �
 diff の内容から task type を推定（`api` / `ui` / `lib` / `cli` / `infra` / `generic` 等）。
 type に応じた追加観点を持つ（例: api なら入力検証・エラー応答、ui ならアクセシビリティ）。
 
-## Step 3: 採点（各 1–10）
+## Step 3: 品質検証
 
 - **common 基準**（必須）: `requirements`（受入条件充足）/ `code_quality`（可読性・規約遵守）/
   `edge_cases`（境界・異常系の handling）
 - **type_specific 基準**（該当時）: task type 固有の品質
-- total 計算:
-  - type_specific あり: `total = avg(common) × 0.7 + type_specific × 0.3`
-  - generic: `total = avg(common)`
 
 ## Step 4: verdict & 差し戻し先
 
-- `total >= threshold（既定 7.0）` → **`pass`**
-- `total < threshold` → **`fail`**。`feedback_level` を判定:
+- 受入条件を満たし critical/major 相当の重大な欠陥が無ければ **`pass`**。重大な欠陥があれば
+  **`fail`** とし、`feedback_level` を判定する:
   - **`design`**: 計画レベルの欠陥（設計方針が誤り / スコープ漏れ / アーキ不整合）→ workflow は
     dev-planner に差し戻す
   - **`implementation`**: 実装レベルの欠陥（計画は正しいがコードが追従していない / バグ / テスト不足）
@@ -183,7 +180,6 @@ feedback・evidence は終端サマリーのテーブルにそのまま表示さ
 ```json
 {
   "verdict": "pass",
-  "total": 7.0,
   "feedback": [
     {"severity": "major", "topic": "input-validation-missing::create-user",
      "description": "src/user.ts の create-user が email 形式を検証していない（plan F1 に入力検証が記載済みだが実装で漏れ）",
@@ -214,7 +210,7 @@ feedback・evidence は終端サマリーのテーブルにそのまま表示さ
 ## 原則
 
 - **diff・plan・テスト結果しか見ない**: 実装の経緯は知らない（by design）
-- **正直に採点**: commit 前に実問題を捕まえるのが目的。rubber-stamp しない
+- **正直に評価**: commit 前に実問題を捕まえるのが目的。rubber-stamp しない
 - **feedback_level が肝**: design か implementation かで retry 先が変わる。Step 4 の判定フローに従い慎重に判定する
 - **state を書かない**: 返り値 JSON が唯一の出力
 - **escalate は当事者性で立てる**: 正確性・品質の問題は severity、人間にしか決められない論点（当事者性/好み/分布外）は escalate。乱発しない — verdict: pass でも escalate は立てられる

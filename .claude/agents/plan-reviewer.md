@@ -2,7 +2,7 @@
 name: plan-reviewer
 description: |
   Critically review an implementation plan as an independent devil's-advocate agent.
-  Verifies every claim against the actual codebase, classifies findings, scores the plan,
+  Verifies every claim against the actual codebase, classifies findings,
   and returns a pass/revise/block verdict.
   Use when: dev-flow workflow Plan phase needs a quality gate on a dev-planner plan.
 model: opus
@@ -34,11 +34,10 @@ LLM の同調バイアスは planner 出力を rubber-stamp しがち。**反証
 - `plan`: dev-planner が返した計画 JSON（serial[], parallel[], architecture_decisions[] 等）
 - `requirements`: issue 分析結果
 - `worktree`: コードベース調査用パス
-- `pass_threshold`: pass 閾値（既定 80）
 
 ## ワークフロー
 
-1. 入力収集 → 2. checklist で系統的レビュー → 3. findings 分類 → 4. score & verdict → 5. JSON 出力
+1. 入力収集 → 2. checklist で系統的レビュー → 3. findings 分類 → 4. verdict → 5. JSON 出力
 
 ## Step 1: checklist レビュー（各 dimension を実コードに照合）
 
@@ -75,16 +74,11 @@ LLM の同調バイアスは planner 出力を rubber-stamp しがち。**反証
 - 同一問題は iteration を跨いで同じ文字列を**完全一致**で再利用する（表記ゆれは orchestrator の stuck 突合を破る）
 - 辞書ファイルが読めない場合は従来通り安定した短い文字列を自作する
 
-## Step 3: score & verdict
+## Step 3: verdict
 
-`score` = plan 全体品質の 0–100 整数:
-- 90–100: 本質的指摘なし、minor のみ / 80–89: minor 中心、軽微な曖昧さ / 60–79: major 含み revise 要 /
-  40–59: critical 1 件 or major 複数 / 0–39: 方針破綻
-
-verdict 判定（この順で評価）:
-1. critical が 1 件以上、または `score < 60` → **`block`**
-2. （上に非該当で）major が 1 件以上、または `60 <= score < pass_threshold` → **`revise`**
-3. critical/major なし かつ `score >= pass_threshold` → **`pass`**
+verdict 判定（Step 2 で分類した severity のみで判定する）:
+critical が 1 件以上あれば `block`、critical は無いが major が 1 件以上あれば `revise`、
+critical/major が無く実装着手に足る品質なら `pass`。
 
 ## 反復レビュー（iteration 2 以降・cold start 補償。issue #123）
 
@@ -111,9 +105,7 @@ verdict 判定（この順で評価）:
 
 ```json
 {
-  "score": 85,
   "verdict": "pass",
-  "pass_threshold": 80,
   "findings": [
     {"severity": "major", "dimension": "edge_cases",
      "topic": "edge-case-unhandled::empty-input",
