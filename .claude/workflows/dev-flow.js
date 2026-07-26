@@ -2508,9 +2508,8 @@ const PLAN = {
   },
 }
 const VERDICT = {
-  type: 'object', required: ['score', 'verdict', 'findings', 'summary'],
+  type: 'object', required: ['verdict', 'findings', 'summary'],
   properties: {
-    score: { type: 'number' },
     verdict: { type: 'string', enum: ['pass', 'revise', 'block'] },
     findings: {
       type: 'array',
@@ -2550,10 +2549,9 @@ const GREEN = {
   },
 }
 const EVAL = {
-  type: 'object', required: ['verdict', 'total'],
+  type: 'object', required: ['verdict'],
   properties: {
     verdict: { type: 'string', enum: ['pass', 'fail'] },
-    total: { type: 'number' },
     feedback: {
       type: 'array',
       items: {
@@ -3389,7 +3387,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
   for (const f of (rev.findings ?? [])) { if (!f) continue; planSeen.register(f) }
   const stuckTopics = planSeen.stuckTopics()
   const stuck = stuckTopics.length > 0
-  log(`plan iteration ${i}: ${rev.verdict} (score ${rev.score})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
+  log(`plan iteration ${i}: ${rev.verdict}${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
 
   if (planConverged(rev, i, stuck)) {
     if (rev.verdict !== 'pass') {
@@ -4057,7 +4055,7 @@ async function execEvaluatePhase(state) {
     for (const f of (ev.feedback ?? [])) { if (f == null) continue; evalSeen.register(f) }
     const stuckTopics = evalSeen.stuckTopics()
     const stuck = stuckTopics.length > 0
-    log(`evaluate iteration ${i}: ${ev.verdict} (total ${ev.total})${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
+    log(`evaluate iteration ${i}: ${ev.verdict}${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
     // evaluator の critical feedback と ESCALATE-TO-HUMAN feedback を ledger に append(単調性は appendItem が強制)。
     // ESCALATE-TO-HUMAN は blast-radius クラスの distrust 機構(W7): 正確性でなく当事者性/好み/訓練分布外性で
     // 人間 required-block を立てる。advisory lane に積まれ escalateCount 経由で merge tier HOLD になる。

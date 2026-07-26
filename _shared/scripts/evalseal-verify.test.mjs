@@ -6,7 +6,7 @@
 //
 // TDD: このテストを先に書き red を確認してから evalseal-verify.mjs を実装する。
 
-import { test, afterEach } from 'vitest';
+import { test, afterEach, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, copyFileSync, readFileSync, rmSync } from 'node:fs';
@@ -19,6 +19,12 @@ import { computeReceiptId } from '../../_lib/trust-digest.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH = join(__dirname, 'evalseal-verify.mjs');
 const FIXTURES_DIR = join(__dirname, '..', '..', '_lib', 'fixtures', 'trust');
+
+// evalseal-seal.test.mjs と同じ理由（実 git repo + keygen/CLI subprocess を伴う統合
+// テストのため、vitest testTimeout デフォルト 5000ms は CI/sandbox 負荷時のプロセス
+// 生成コストに対してマージンが薄い。実測でフル suite 実行時に本ファイル内のテストが
+// 5000ms を超過するのを複数回確認）。アサーションは変更せず実行時間予算のみ引き上げる。
+vi.setConfig({ testTimeout: 20000 });
 
 let tmpDirs = [];
 
