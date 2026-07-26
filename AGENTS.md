@@ -89,7 +89,7 @@ orchestration (phase 遷移 / 各ループ / 並列実装の fan-out) は workfl
 - Claude 専用 (workflow 依存)。cross-vendor portability は dev-flow / pr-iterate のみ放棄する例外扱い。
 
 **内部仕様の詳細**（shape 判定と 3 tier 経路 / micro lite route / subagent の model・effort 割り当て /
-gate_policy enum / telemetry キー一覧 / W7 distrust 正当化クラスと sunset path / inline 生成区間の制約 /
+gate_policy enum / telemetry キー一覧 / W7 distrust 正当化クラスと sunset path / 指示規範性 (prescription) の正当化クラス / inline 生成区間の制約 /
 exec-proxy の失敗ポリシー表 / dev-improve のループ設計）は
 [`.claude/rules/dev-flow.md`](.claude/rules/dev-flow.md) を参照。
 dev-flow 本体 (`.claude/workflows/` / `.claude/agents/` / `_lib/` / `tools/`) を触るときに自動で読み込まれる。
