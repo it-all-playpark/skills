@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-planted-observer-timeout",
+  "timestamp": "2026-01-26T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1700,
+    "phase_durations": { "evaluate": 120 },
+    "trust_run_id": "planted-observer-timeout",
+    "trust_surfaceproof_shadow": {
+      "mode": "shadow",
+      "verdict": "pass",
+      "reason_code": "OK",
+      "receipt_id": "sha256:sp-observer-timeout"
+    },
+    "trust_receipts": [
+      {
+        "stage": "evaluate",
+        "invalidated": false,
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-observer-timeout",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:observer-timeout-es"
+      },
+      {
+        "stage": "pr",
+        "invalidated": false,
+        "domain_reason_code": "PROBE_FAILED",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-observer-timeout",
+        "verdict": "inconclusive",
+        "reason_code": "CAPABILITY_MISSING",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:observer-timeout-ed"
+      }
+    ]
+  }
+}

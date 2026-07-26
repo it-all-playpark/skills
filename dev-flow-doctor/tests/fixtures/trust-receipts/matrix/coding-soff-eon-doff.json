@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "id": "matrix-coding-soff-eon-doff",
+  "timestamp": "2026-07-01T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "context": {
+    "fixture_axis": "coding",
+    "layer_modes": { "surfaceproof": "off", "evalseal": "shadow", "effectdelta": "off" }
+  },
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 130,
+    "trust_receipts": [
+      {
+        "stage": "evaluate",
+        "invalidated": false,
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-coding-soff-eon-doff",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:esd-coding-soff-eon-doff"
+      }
+    ]
+  }
+}

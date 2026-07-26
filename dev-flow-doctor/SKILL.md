@@ -9,7 +9,8 @@ description: |
   despite sufficient run volume).
   Use when: (1) dev-flow issues or underperformance,
   (2) shape / merge_tier / gate_policy distribution review, (3) weekly dev-flow health review,
-  (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断, telemetry, anomaly, 分布, cap張り付き, iterate不調率, micro不発火
+  (4) keywords: doctor, diagnose, health check, dev-flow問題, 診断, telemetry, anomaly, 分布, cap張り付き, iterate不調率, micro不発火,
+  trust receipts, SLO, Go/No-Go
   Accepts args: [--scope full|journal|worktrees|config|telemetry|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>] [--canary <path>]
 allowed-tools:
   - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
@@ -267,6 +268,29 @@ repo/pr_number 欠落や timestamp parse 不能で統合できず 1 run のま�
 数、`status_conflicts` は親子で status が乖離したペア数、
 `join_window_seconds` は統合判定に使った timestamp 近接ウィンドウ（秒）。
 
+### `scripts/trust-receipts-report.sh`
+
+Real trust receipt (SurfaceProof/EvalSeal/EffectDelta) consumption report
+(issue #413, epic #390 Phase 5, AC-13). Aggregates dev-flow journal telemetry
+trust keys into run_id-level metrics — `layer_status` (per-layer verdict x
+reason_code) / `missing_receipt` / `inconclusive` / `effect_mismatch`
+(`domain_reason_code` breakdown) / `false_completion` / `latency`
+(trust_active vs inactive p50/p95 + `trust_added_p95_seconds`) / `cost_proxy`
+— and reports safely (rate `null`) when 0 matching runs exist.
+
+```bash
+./scripts/trust-receipts-report.sh --window 30d
+./scripts/trust-receipts-report.sh --window 30d --slo          # adds Go/No-Go verdict
+./scripts/trust-receipts-report.sh --matrix path/to/fixtures    # 2x2x2 dogfood comparison
+```
+
+`--slo` checks the initial SLO hypothesis (`receipt_success_min: 0.99`,
+`inconclusive_max: 0.01`, `added_p95_max_seconds: 180`, `min_runs: 20`) and
+emits `go_no_go` + `reasons[]`. `--matrix <dir>` classifies fixtures by
+`fixture_axis` (long-issue/coding/pr-side-effect/e2e) x surfaceproof/evalseal/
+effectdelta off/shadow (2x2x2, 32 cells) for the Phase 5 dogfood comparison.
+Detail: [`references/diagnostic-checks.md`](references/diagnostic-checks.md#trust-receipts-consumption-issue-413-epic-390-phase-5).
+
 ## Tests
 
 ```bash
@@ -300,7 +324,8 @@ info issue when `fail > 0` or `direct_fs`/`direct_shell`/`direct_import` is
 ## References
 
 - [Diagnostic Checks](references/diagnostic-checks.md) -- journal-based checks (Check 1–7) + dev-flow telemetry health
-  (includes Canary intake section for `/dev-flow-canary` report ingestion)
+  (includes Canary intake section for `/dev-flow-canary` report ingestion, and Trust receipts
+  consumption section for `trust-receipts-report.sh`)
 - [Health Scoring](references/health-scoring.md) -- Scoring formula including telemetry anomaly penalty + baseline regression penalty (max -15)
 - [Baseline Comparison](references/baseline-comparison.md) -- AC4/AC5 snapshot schema, compare semantics, CI 運用パターン
 - [Responsibility Split](references/responsibility-split.md) -- Boundary vs skill-retrospective

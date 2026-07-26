@@ -1,0 +1,44 @@
+{
+  "version": "1.0.0",
+  "id": "matrix-pr-side-effect-soff-eoff-don",
+  "timestamp": "2026-07-01T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "context": {
+    "fixture_axis": "pr-side-effect",
+    "layer_modes": { "surfaceproof": "off", "evalseal": "off", "effectdelta": "shadow" }
+  },
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 130,
+    "trust_receipts": [
+      {
+        "stage": "pr",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-pr-pr-side-effect-soff-eoff-don",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:edprd-pr-side-effect-soff-eoff-don"
+      },
+      {
+        "stage": "summary-comment",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-sc-pr-side-effect-soff-eoff-don",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:edscd-pr-side-effect-soff-eoff-don"
+      }
+    ]
+  }
+}

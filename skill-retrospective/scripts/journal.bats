@@ -772,3 +772,75 @@ JSON
     run "$SCRIPT" log dev-improve success --telemetry-json '[1,2]'
     [ "$status" -ne 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# trust telemetry (--trust-run-id / --trust-receipts / --trust-surfaceproof)
+# dev-flow.js Stop hook 転送を受ける journal 側の受理口 (issue #413)
+# ---------------------------------------------------------------------------
+@test "trust telemetry: 3 フラグ受理時に telemetry.trust_* へ到達する" {
+    run "$SCRIPT" log dev-flow success \
+        --trust-run-id "run-abc123" \
+        --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"},{"layer":"evalseal","mode":"advisory","verdict":"inconclusive"}]' \
+        --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    [ "$(jq -r '.telemetry.trust_run_id' "$entry_file")" = "run-abc123" ]
+    [ "$(jq -c '.telemetry.trust_receipts' "$entry_file")" = '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"},{"layer":"evalseal","mode":"advisory","verdict":"inconclusive"}]' ]
+    [ "$(jq -c '.telemetry.trust_surfaceproof_shadow' "$entry_file")" = '{"mode":"shadow","verdict":"pass"}' ]
+}
+
+@test "trust telemetry: --trust-receipts に非配列 JSON は error" {
+    run "$SCRIPT" log dev-flow success --trust-receipts '{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}'
+    [ "$status" -ne 0 ]
+}
+
+@test "trust telemetry: --trust-receipts の未知 layer は error" {
+    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"bogus","mode":"shadow","verdict":"pass"}]'
+    [ "$status" -ne 0 ]
+}
+
+@test "trust telemetry: --trust-receipts の未知 mode は error" {
+    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"surfaceproof","mode":"bogus","verdict":"pass"}]'
+    [ "$status" -ne 0 ]
+}
+
+@test "trust telemetry: --trust-receipts の未知 verdict は error" {
+    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"bogus"}]'
+    [ "$status" -ne 0 ]
+}
+
+@test "trust telemetry: --trust-receipts の欠落フィールドは error" {
+    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"surfaceproof","mode":"shadow"}]'
+    [ "$status" -ne 0 ]
+}
+
+@test "trust telemetry: --trust-surfaceproof の未知 mode/verdict は error" {
+    run "$SCRIPT" log dev-flow success --trust-surfaceproof '{"mode":"bogus","verdict":"pass"}'
+    [ "$status" -ne 0 ]
+
+    run "$SCRIPT" log dev-flow success --trust-surfaceproof '{"mode":"shadow","verdict":"bogus"}'
+    [ "$status" -ne 0 ]
+}
+
+@test "trust telemetry: --trust-run-id 空文字は error" {
+    run "$SCRIPT" log dev-flow success --trust-run-id ""
+    [ "$status" -ne 0 ]
+}
+
+@test "trust telemetry: 3 フラグ未指定の既存呼び出しは telemetry に trust キーが現れない" {
+    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_run_id=$(jq '.telemetry | has("trust_run_id")' "$entry_file")
+    has_receipts=$(jq '.telemetry | has("trust_receipts")' "$entry_file")
+    has_surfaceproof=$(jq '.telemetry | has("trust_surfaceproof_shadow")' "$entry_file")
+    [ "$has_run_id" = "false" ]
+    [ "$has_receipts" = "false" ]
+    [ "$has_surfaceproof" = "false" ]
+}
