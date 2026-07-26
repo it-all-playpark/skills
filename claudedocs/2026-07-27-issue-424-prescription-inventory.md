@@ -45,12 +45,14 @@ sunset path 列は **主分類が capability-bound の行にのみ** 記入し�
 | frontmatter | `plan-reviewer.md:L1-15` | contract | 同上（agentType/schema/model/effort ルーティング契約） | — |
 | タイトル・役割記述（dev-planner とは別 agent として confirmation bias を排除） | `L17-22` | incentive-structural | 別 agent として独立呼び出しすることで同調バイアス（confirmation bias／self-judge）を構造的に排除する設計そのもの | — |
 | ## Adversarial Opener（反証スタンス明示） | `L23-31` | incentive-structural | rubber-stamp 化を防ぐ反証スタンスの明示。逸脱は能力不足でなく同調バイアスという incentive 構造由来 | — |
-| ## 入力 | `L32-38` | contract | `plan`/`requirements`/`worktree`/`pass_threshold` の入力キー定義 | — |
+| ## 入力（`plan`/`requirements`/`worktree`） | `L32-36` | contract | `plan`/`requirements`/`worktree` は spawn prompt（`dev-flow.js:L3375-3384`）が実際に渡す入力キーで、意味定義変更は呼び出し元 prompt 生成と drift する | — |
+| ## 入力（`pass_threshold`） | `L37` | capability-bound | spawn prompt（`dev-flow.js:L3375-3384`）は `pass_threshold` を渡しておらず、VERDICT schema（`dev-flow.js:L2510-2531`）にも存在しない。agent 内部で完結する self-contained default（既定 80）であり、workflow との入出力契約は存在しない（消費者ゼロ） | 表現: 入力節からの削除（Step 3 の閾値記述にのみ既定値 80 として残す）、または残存 schema フィールドとして別 issue で削除要否を検討 / 再評価トリガ: 別 issue でのフォローアップ時に確認 |
 | ## ワークフロー（5 step 概要） | `L39-42` | capability-bound | 手順箇条書きの概要 | 表現: 本節の削除・1 文への圧縮 / 再評価トリガ: major モデルリリース毎（同上条件） |
 | ## Step 1: checklist レビュー（dimension 別確認内容の表） | `L43-56` | capability-bound | dimension ごとの確認観点を過剰に具体化した checklist。frontier モデルなら「実コードに照合して系統的にレビューせよ」の 1 文で同等の網羅性が期待できる | 表現: 表を「各 dimension を実コードに照合しレビューする」の 1 文へ圧縮 / 再評価トリガ: major モデルリリース毎（`QUALITY_MODEL` 世代交代時に当該指示なし dry-run で網羅性が劣化しないことを確認） |
 | ## Step 2: findings 分類（severity enum 定義 + 必須フィールド） | `L57-68` | contract | severity enum（critical/major/minor）は `planConverged()` の block/revise/pass 判定に直接使われ、findings 必須フィールドは workflow の feedback 累積処理が依存するスキーマ | — |
 | ### topic 命名（共有辞書、issue #207） | `L69-77` | incentive-structural | stuck 検出（#123 topic 反復）を成立させるための命名規約。cold-context 補償と同型の incentive 設計 | 備考: L71-76 の 5 項目手順列挙は capability-bound 側面。次回 major モデル更新時に「共有辞書の enum を再利用し、無ければ kebab-case 新語」の 1 文へ圧縮できるか確認する |
-| ## Step 3: score & verdict（score 帯 + verdict 判定順序） | `L78-88` | contract | score 帯と verdict 判定順序（block/revise/pass）は `planConverged()` が直接消費するインターフェース契約 | — |
+| ## Step 3: verdict enum（pass/revise/block） | `L84-87`（enum 値） | contract | `verdict` enum 自体は `planConverged()`（`dev-flow.js:L2410-2415`）が `rev.verdict === 'pass'` で直接消費するインターフェース契約 | — |
+| ## Step 3: score 帯定義 + `pass_threshold` 比較式 | `L78-88`（計算式・帯定義） | capability-bound | `planConverged()`（`dev-flow.js:L2410-2415`）は `rev.verdict` と `findings[].severity` のみを消費し、score 値・score 帯・`pass_threshold` 比較を再消費しない（score は `log()` 出力のみ、`dev-flow.js:L3392`）。verdict を導く閾値式は agent 内部で完結するヒューリスティック | 表現: score 帯定義・`pass_threshold` 比較式を「妥当な根拠で verdict を決める」の 1 文へ圧縮し、score フィールド自体は schema 必須のまま残す（ログ用途のみ） / 再評価トリガ: major モデルリリース毎（`QUALITY_MODEL` 世代交代時に dry-run で verdict 判定精度が劣化しないことを確認） |
 | ## 反復レビュー（iteration 2 以降・cold start 補償） | `L89-97` | incentive-structural | 既出 findings 対応済み前提・新規 critical/major のみ報告・topic 再利用という cold-context 補償／moving-target 抑制の incentive 設計（#123） | — |
 | ## 収束は orchestrator が最終判断する | `L98-109` | incentive-structural | verdict を最終決定にせず topic-stuck + early-cutoff で orchestrator が収束判定する W7 同型機構の説明 | — |
 | ## Step 4: 出力 JSON（schema 強制） | `L110-126` | contract | workflow が parse する返り値 schema 定義 | — |
@@ -73,8 +75,9 @@ sunset path 列は **主分類が capability-bound の行にのみ** 記入し�
 | ## ワークフロー（5 step 概要） | `L50-53` | capability-bound | 手順箇条書きの概要 | 表現: 本節の削除・1 文への圧縮 / 再評価トリガ: major モデルリリース毎（同上条件） |
 | ## Step 1: 入力収集（report を鵜呑みにしない・実際に diff/テストを確認） | `L54-60` | incentive-structural | 「report を鵜呑みにしない」＝implementer の自己申告を信用しない self-judge 回避の設計 | 備考: `git diff $(git merge-base...)` の具体コマンド例（L56）は capability-bound 側面。次回 major モデル更新時に「実 diff とテスト結果を実際に確認する」の 1 文へ圧縮できるか確認する |
 | ## Step 2: task type 判定（type enum + 追加観点の列挙） | `L61-65` | capability-bound | task type の具体例とタイプ別追加観点の列挙という具体化補助 | 表現: 本節の削除、type 判定を model の自律推定に委任 / 再評価トリガ: major モデルリリース毎（同上条件） |
-| ## Step 3: 採点（スコア式 total = avg(common)×0.7 + type_specific×0.3） | `L66-74` | contract | Step 4 の threshold 比較にそのまま使われる workflow 依存の計算式定義 | — |
-| ## Step 4: verdict & 差し戻し先（pass/fail 閾値 + feedback_level enum） | `L75-83` | contract | threshold 比較・feedback_level（design/implementation）は workflow の phase ルーティング（dev-planner 差し戻し vs implementer 差し戻し）が直接消費する | — |
+| ## Step 3: `total` フィールド | `L66-74`（フィールド定義のみ） | contract | `total` は EVAL schema（`dev-flow.js:L2552-2556`）の必須フィールドで、削除すると schema 検証が壊れる。ただし workflow は `total` を `log()` 出力（`dev-flow.js:L4060`）以外で消費せず、gate は ledger（`isConvergedUnderPolicy`、`dev-flow.js:L3938,L4163`）が消費する | — |
+| ## Step 3: 採点式（スコア式 total = avg(common)×0.7 + type_specific×0.3） | `L66-74`（計算式） | capability-bound | 加重平均の計算式・スコア帯は workflow のどの判定にも再消費されない（phase ルーティングは `feedback_level` と ledger が担う。`dev-flow.js:L3938`「収束は isConvergedUnderPolicy のみで判定し ev.verdict は参照しない」）。agent 内部で完結する採点ヒューリスティック | 表現: 加重平均式を「common/type_specific 観点を総合し 0-100 で採点する」の 1 文へ圧縮 / 再評価トリガ: major モデルリリース毎（`QUALITY_MODEL` 世代交代時に dry-run で採点の相対順序が劣化しないことを確認） |
+| ## Step 4: verdict & 差し戻し先（pass/fail 閾値 + feedback_level enum） | `L75-83` | contract | `feedback_level`（design/implementation）は workflow の phase ルーティング（`dev-flow.js:L4169,L4181` の分岐）が直接消費するスキーマ。`total >= threshold` の閾値比較自体は verdict を導出する agent 内部の計算であり、workflow は再消費しない（`dev-flow.js:L3938`） | 備考: `total >= threshold`（既定 7.0）の閾値比較部分は capability-bound 側面（agent 内部完結・workflow 非消費）。次回 major モデル更新時に threshold 明記の要否を見直す |
 | ### feedback_level 判定フロー：根本質問 | `L84-88` | capability-bound | 「plan 通り再実装しても再現するか」という一発判定ヒューリスティックの明示 | 表現: 根本質問文の削除、feedback_level enum 定義のみを残す / 再評価トリガ: major モデルリリース毎（同上条件） |
 | 灰色領域の個別規則 1-5 + tie-breaker | `L89-97` | capability-bound | 5 パターンの逐条列挙という過剰な具体化 | 表現: 個別規則 1-5 を削除し根本質問 + tie-breaker のみへ圧縮 / 再評価トリガ: major モデルリリース毎（`QUALITY_MODEL` 世代交代時に dry-run で判定精度が劣化しないことを確認）。備考: tie-breaker の根拠（design churn は orchestrator の early-cutoff 対象）は incentive-structural 側面 |
 | feedback[] 必須フィールド定義（severity/topic/description/suggestion/escalate/escalate_reason） | `L98-109` | contract | severity=critical は軸A invariant で workflow が常時 blocking にし、escalate=true は merge tier を HOLD にする——いずれも workflow 側 gate 判定が直接依存する schema | 備考: escalate_reason (a)-(d) の詳細基準列挙（L107）は capability-bound 側面。topic 命名規約部分は incentive-structural 側面（stuck 検出支援）。次回 major モデル更新時に (a)-(d) の説明を「当事者性・好み・分布外」の 1 文へ圧縮できるか確認する |
@@ -119,7 +122,7 @@ sunset path 列は **主分類が capability-bound の行にのみ** 記入し�
 
 ## 集計
 
-- 総ブロック数: 75（dev-planner 13 / plan-reviewer 18 / evaluator 24 / pr-reviewer 20）
-- クラス別内訳: **contract 29 件（38.7%）** / **incentive-structural 24 件（32.0%）** / **capability-bound 22 件（29.3%）**
-- capability-bound 比率（sunset 対象比率）: 22/75 ≈ **29.3%**。全 22 件に sunset path（表現 + 再評価トリガ）を併記済み（併記漏れゼロ）。
-- 主分類が contract/incentive-structural でも capability-bound 側面を併記した混在ブロック: 8 件（dev-planner 2 / plan-reviewer 1 / evaluator 3 / pr-reviewer 2）。実際の削減判断は本インベントリの非目標であり、別 issue で扱う。
+- 総ブロック数: 78（dev-planner 13 / plan-reviewer 20 / evaluator 25 / pr-reviewer 20）
+- クラス別内訳: **contract 29 件（37.2%）** / **incentive-structural 24 件（30.8%）** / **capability-bound 25 件（32.1%）**
+- capability-bound 比率（sunset 対象比率）: 25/78 ≈ **32.1%**。全 25 件に sunset path（表現 + 再評価トリガ）を併記済み（併記漏れゼロ）。
+- 主分類が contract/incentive-structural でも capability-bound 側面を併記した混在ブロック: 10 件（dev-planner 2 / plan-reviewer 1 / evaluator 4 / pr-reviewer 3）。実際の削減判断は本インベントリの非目標であり、別 issue で扱う。
