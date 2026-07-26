@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-06",
+  "timestamp": "2026-01-15T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1000,
+    "phase_durations": { "evaluate": 50 }
+  }
+}

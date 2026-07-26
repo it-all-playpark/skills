@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "id": "matrix-pr-side-effect-son-eon-doff",
+  "timestamp": "2026-07-01T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "context": {
+    "fixture_axis": "pr-side-effect",
+    "layer_modes": { "surfaceproof": "shadow", "evalseal": "shadow", "effectdelta": "off" }
+  },
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 160,
+    "trust_surfaceproof_shadow": {
+      "mode": "shadow",
+      "verdict": "pass",
+      "reason_code": "OK",
+      "receipt_id": "sha256:sp-pr-side-effect-son-eon-doff"
+    },
+    "trust_receipts": [
+      {
+        "stage": "evaluate",
+        "invalidated": false,
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-pr-side-effect-son-eon-doff",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:esd-pr-side-effect-son-eon-doff"
+      }
+    ]
+  }
+}

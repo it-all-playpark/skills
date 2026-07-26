@@ -249,3 +249,99 @@ exec-proxy bridge（`dev-runner`/`dev-runner-haiku`/`dev-runner-haiku-ro`）の
 sunset path 再評価の判断材料にする。**bridge の撤去そのものは canary では
 行わない** — canary は capability の pass/fail/unsupported を報告するのみで、
 撤去の実施判断は別 issue を立てて human review を経て行う。
+
+## Trust receipts consumption (issue #413, epic #390 Phase 5)
+
+`scripts/trust-receipts-report.sh` は real trust receipt（SurfaceProof/EvalSeal/
+EffectDelta）を dev-flow journal telemetry から run_id 単位で消費し、AC-13
+（missing receipt率・inconclusive率・effect mismatch率・false completion検出・
+追加 latency/cost 分布の集計、0 件時も安全報告）を満たす。
+
+### 母集団・分母規約
+
+- 母集団は `.skill == "dev-flow" AND (.source // "skill") == "skill"` の journal
+  entry（window 内）。`trust-baseline-snapshot.sh` と同一規約。
+- `trust_active_runs`（missing_receipt の分母）= `.telemetry.{trust_surfaceproof_shadow,
+  trust_receipts, trust_run_id}` のいずれか 1 つ以上を持つ run。**presence-only
+  denominator** — trust キーを一切持たない legacy run は missing に数えず分母
+  からも除外する。
+- `invalidated: true` の receipt は verdict/reason_code 集計から除外し
+  `invalidated_count` に別掲する（pr-iterate fix 後の stale SHA 失効等）。
+- 同一 run 内で同一 layer×stage の receipt が複数存在する場合、非 invalidated
+  の配列末尾優先で採用する（`_lib/trust-wiring.mjs` の `effectiveTrustVerdict`
+  と同一規則）。
+
+### 集計 block
+
+| block | 内容 |
+|-------|------|
+| `layer_status` | layer 別 verdict × reason_code 分布（+ evalseal/effectdelta の stage 別内訳 + `invalidated_count`） |
+| `missing_receipt` | layer 別の missing count/rate（分母は `trust_active_runs`）+ `overall_receipt_success_rate`（3 layer 全て receipt ありの割合） |
+| `inconclusive` | 採用済み receipt のうち verdict `"inconclusive"` の rate |
+| `effect_mismatch` | EffectDelta receipt が verdict `"fail"` または `domain_reason_code` が `DUPLICATE_EFFECT`/`WRONG_TARGET`/`RESPONSE_LOST`/`PROBE_FAILED`/`TARGET_MISSING` のいずれかの rate（domain_reason_code 別分布を含む） |
+| `false_completion` | `eval_verdict == "pass"` かつ非 invalidated receipt が verdict `"fail"` を報告している run の rate |
+| `latency` | `trust_active` vs `trust_inactive` の `duration_seconds`/`phase_durations` の count/p50/p95 + `trust_added_p95_seconds`（active p95 − inactive p95） |
+| `cost_proxy` | run あたり trust receipt 件数の count/p50/p95（直接 cost telemetry が無いための proxy） |
+
+0 件（journal 空・window 内 run 0 件・trust キー保有 run 0 件）でも script は
+exit 0 で完走し、各 rate は `null` を返す（AC-13 の 0 件安全報告）。
+
+### latency 計測不能時の扱い
+
+`trust_inactive` 母集団が 0 件など added p95 が算出できない場合は
+`trust_added_p95_seconds` を `null` とする。計測不能を SLO 達成と同一視しない
+（後述の `LATENCY_UNMEASURABLE` reason を参照）。
+
+### `--slo` — Go/No-Go 判定
+
+`--slo` を付けると初期 SLO 仮説との照合結果を `slo` object として追加する。
+
+- 閾値: `receipt_success_min: 0.99` / `inconclusive_max: 0.01` /
+  `added_p95_max_seconds: 180` / `min_runs: 20`
+- `go_no_go`: `"go"` | `"no-go"`（`reasons` が空のときのみ `"go"`）
+- `reasons`（closed enum、複数可）:
+  - `INSUFFICIENT_RUNS` — eligible run 数が `min_runs`（20）未満
+  - `RECEIPT_SUCCESS_BELOW_SLO` — `overall_receipt_success_rate < 0.99`
+  - `INCONCLUSIVE_ABOVE_SLO` — inconclusive rate `> 0.01`
+  - `LATENCY_P95_ABOVE_SLO` — `trust_added_p95_seconds > 180`
+  - `LATENCY_UNMEASURABLE` — `trust_added_p95_seconds == null`（計測不能を
+    達成扱いにしない。`LATENCY_P95_ABOVE_SLO` とは排他）
+
+計測不能（`eligible_runs < 20` または added p95 算出不能）は必ず `no-go` に
+倒す（決定論 oracle。`hypothesis-check.sh` と同型 — LLM に効果の self-judge
+をさせない）。
+
+### `--matrix <dir>` — 2×2×2 dogfood 比較
+
+`--matrix <dir>` は journal window を無視し、`<dir>` 配下の journal-shaped
+fixture を 1 entry 1 file で読み込み、`trust-receipts-matrix/v1` schema で
+出力する。
+
+- 3 軸: `surfaceproof` × `evalseal` × `effectdelta`（各 `off`/`shadow` の 2 値、
+  fixture の `.context.layer_modes.{surfaceproof,evalseal,effectdelta}` 明示値で判定）
+- 4 fixture 軸: `long-issue` / `coding` / `pr-side-effect` / `e2e`
+  （`.context.fixture_axis` 明示値で判定）
+- 4 fixture 軸 × 2^3 layer-mode combo = 32 cell（全 cell 網羅を検証）
+- `fixture_axis` / `layer_modes` が out-of-enum の場合は `die_json` で exit 1
+  （legacy fallback・黙殺なし）
+
+### Planted failure corpus（AC-14）
+
+7 分類の planted failure corpus — omission（receipt 欠落）/ tamper（改ざん）/
+stale SHA（EvalSeal receipt 失効）/ response loss（EffectDelta observation
+喪失）/ duplicate（EffectDelta 重複検出）/ partial effect（部分適用検出）/
+observer timeout（observer 側タイムアウト）— を CI bats（
+`trust-receipts-planted.bats`）で固定し、planted failure recall 100%
+（全 7 分類が該当する anomaly block・reason_code で確実に検出される）を
+維持する。recall 100% は決定論 fixture ベースの回帰であり、モデル判断に
+依らない。
+
+### rollback
+
+本セクションが対象とする変更は dev-flow-doctor（消費側）の
+`trust-receipts-report.sh` および本ドキュメントのみ。producer 側
+（`_lib/trust-wiring.mjs` の `TRUST_LAYER_CONFIG` / EvalSeal・EffectDelta
+shadow 実行そのもの）は不変（W7 sunset path の一部として別途 Phase 5
+calibration を経て昇格判断される）。rollback する場合は doctor 消費コード
+（`trust-receipts-report.sh` とこのドキュメントセクション）を revert すれば
+足り、producer 側の telemetry 出力・shadow 実行には影響しない。

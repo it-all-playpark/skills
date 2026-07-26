@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-planted-response-loss",
+  "timestamp": "2026-01-23T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1550,
+    "phase_durations": { "evaluate": 105 },
+    "trust_run_id": "planted-response-loss",
+    "trust_surfaceproof_shadow": {
+      "mode": "shadow",
+      "verdict": "pass",
+      "reason_code": "OK",
+      "receipt_id": "sha256:sp-response-loss"
+    },
+    "trust_receipts": [
+      {
+        "stage": "evaluate",
+        "invalidated": false,
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-response-loss",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:response-loss-es"
+      },
+      {
+        "stage": "pr",
+        "invalidated": false,
+        "domain_reason_code": "RESPONSE_LOST",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-response-loss",
+        "verdict": "inconclusive",
+        "reason_code": "CAPABILITY_MISSING",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:response-loss-ed"
+      }
+    ]
+  }
+}

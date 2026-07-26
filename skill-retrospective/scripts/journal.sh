@@ -71,6 +71,8 @@ cmd_log() {
     local repo="" pr_number=""
     local ci_wait_seconds="" ci_poll_attempts=""
     local telemetry_json=""
+    local trust_run_id="" trust_receipts="" trust_surfaceproof=""
+    local trust_run_id_set=false
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -115,6 +117,9 @@ cmd_log() {
             --ci-wait-seconds) ci_wait_seconds="$2"; shift 2 ;;
             --ci-poll-attempts) ci_poll_attempts="$2"; shift 2 ;;
             --telemetry-json) telemetry_json="$2"; shift 2 ;;
+            --trust-run-id) trust_run_id="$2"; trust_run_id_set=true; shift 2 ;;
+            --trust-receipts) trust_receipts="$2"; shift 2 ;;
+            --trust-surfaceproof) trust_surfaceproof="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -179,6 +184,44 @@ cmd_log() {
     if [[ -n "$ci_poll_attempts" ]]; then
         if ! [[ "$ci_poll_attempts" =~ ^[0-9]+$ ]]; then
             die_json "Invalid --ci-poll-attempts: $ci_poll_attempts. Must be a non-negative integer" 1
+        fi
+    fi
+
+    # Validate --trust-run-id (non-empty string only)
+    if [[ "$trust_run_id_set" == true && -z "$trust_run_id" ]]; then
+        die_json "Invalid --trust-run-id: must be a non-empty string" 1
+    fi
+
+    # Validate --trust-receipts (JSON array of {layer, mode, verdict} closed-enum objects)
+    if [[ -n "$trust_receipts" ]]; then
+        if ! echo "$trust_receipts" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            die_json "Invalid --trust-receipts: must be a JSON array" 1
+        fi
+        if ! echo "$trust_receipts" | jq -e '
+            all(.[];
+                (.layer // "") as $l |
+                (.mode // "") as $m |
+                (.verdict // "") as $v |
+                (["surfaceproof","evalseal","effectdelta"] | index($l)) != null and
+                (["off","shadow","advisory","blocking"] | index($m)) != null and
+                (["pass","fail","inconclusive"] | index($v)) != null
+            )' >/dev/null 2>&1; then
+            die_json "Invalid --trust-receipts: each element must have layer in surfaceproof|evalseal|effectdelta, mode in off|shadow|advisory|blocking, verdict in pass|fail|inconclusive" 1
+        fi
+    fi
+
+    # Validate --trust-surfaceproof (JSON object with {mode, verdict} closed-enum)
+    if [[ -n "$trust_surfaceproof" ]]; then
+        if ! echo "$trust_surfaceproof" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            die_json "Invalid --trust-surfaceproof: must be a JSON object" 1
+        fi
+        if ! echo "$trust_surfaceproof" | jq -e '
+            (.mode // "") as $m |
+            (.verdict // "") as $v |
+            (["off","shadow","advisory","blocking"] | index($m)) != null and
+            (["pass","fail","inconclusive"] | index($v)) != null
+            ' >/dev/null 2>&1; then
+            die_json "Invalid --trust-surfaceproof: mode must be off|shadow|advisory|blocking and verdict must be pass|fail|inconclusive" 1
         fi
     fi
 
@@ -296,6 +339,18 @@ cmd_log() {
     fi
     if [[ -n "$telemetry_json" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson extra "$telemetry_json" '. + $extra')
+        has_telemetry=true
+    fi
+    if [[ "$trust_run_id_set" == true ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$trust_run_id" '. + {trust_run_id: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$trust_receipts" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$trust_receipts" '. + {trust_receipts: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$trust_surfaceproof" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$trust_surfaceproof" '. + {trust_surfaceproof_shadow: $v}')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then
@@ -665,6 +720,7 @@ Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
   journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
   journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
+  journal.sh log dev-flow success --trust-run-id run-abc123 --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}]' --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff

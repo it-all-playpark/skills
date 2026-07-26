@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-clean-03",
+  "timestamp": "2026-01-29T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1300,
+    "phase_durations": { "evaluate": 84 },
+    "trust_run_id": "clean-03",
+    "trust_surfaceproof_shadow": {
+      "mode": "shadow",
+      "verdict": "pass",
+      "reason_code": "OK",
+      "receipt_id": "sha256:sp-clean-03"
+    },
+    "trust_receipts": [
+      {
+        "stage": "evaluate",
+        "invalidated": false,
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-clean-03",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:clean-03-es"
+      },
+      {
+        "stage": "pr",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-clean-03",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:clean-03-ed"
+      }
+    ]
+  }
+}

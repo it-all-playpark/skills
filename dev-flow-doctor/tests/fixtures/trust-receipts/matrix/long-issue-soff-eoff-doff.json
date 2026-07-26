@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "id": "matrix-long-issue-soff-eoff-doff",
+  "timestamp": "2026-07-01T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "context": {
+    "fixture_axis": "long-issue",
+    "layer_modes": { "surfaceproof": "off", "evalseal": "off", "effectdelta": "off" }
+  },
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 100
+  }
+}

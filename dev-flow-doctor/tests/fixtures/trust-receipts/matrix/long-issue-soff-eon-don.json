@@ -1,0 +1,56 @@
+{
+  "version": "1.0.0",
+  "id": "matrix-long-issue-soff-eon-don",
+  "timestamp": "2026-07-01T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "context": {
+    "fixture_axis": "long-issue",
+    "layer_modes": { "surfaceproof": "off", "evalseal": "shadow", "effectdelta": "shadow" }
+  },
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 160,
+    "trust_receipts": [
+      {
+        "stage": "evaluate",
+        "invalidated": false,
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-long-issue-soff-eon-don",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:esd-long-issue-soff-eon-don"
+      },
+      {
+        "stage": "pr",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-pr-long-issue-soff-eon-don",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:edprd-long-issue-soff-eon-don"
+      },
+      {
+        "stage": "summary-comment",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-sc-long-issue-soff-eon-don",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:edscd-long-issue-soff-eon-don"
+      }
+    ]
+  }
+}

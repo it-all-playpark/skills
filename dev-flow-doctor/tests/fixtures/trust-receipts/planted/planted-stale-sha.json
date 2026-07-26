@@ -1,0 +1,60 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-planted-stale-sha",
+  "timestamp": "2026-01-22T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1500,
+    "phase_durations": { "evaluate": 100 },
+    "trust_run_id": "planted-stale-sha",
+    "trust_surfaceproof_shadow": {
+      "mode": "shadow",
+      "verdict": "pass",
+      "reason_code": "OK",
+      "receipt_id": "sha256:sp-stale"
+    },
+    "trust_receipts": [
+      {
+        "stage": "evaluate",
+        "invalidated": true,
+        "invalidated_reason": "DIGEST_MISMATCH",
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-stale-eval",
+        "verdict": "fail",
+        "reason_code": "DIGEST_MISMATCH",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:stale-es-eval"
+      },
+      {
+        "stage": "final",
+        "invalidated": false,
+        "layer": "evalseal",
+        "mode": "shadow",
+        "schema_version": "evalseal/1",
+        "receipt_id": "sha256:es-stale-final",
+        "verdict": "inconclusive",
+        "reason_code": "CAPABILITY_MISSING",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:stale-es-final"
+      },
+      {
+        "stage": "pr",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed-stale",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:stale-ed"
+      }
+    ]
+  }
+}

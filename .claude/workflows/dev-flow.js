@@ -4797,8 +4797,12 @@ const summaryBody = buildDevflowSummaryBody({
 // posted!==true の場合は gh pr comment への無条件 fallback を prompt 内に明記する（AC-9）。
 // off 経路は既存 prompt を byte 単位で不変に保つ（AC-15 非干渉）。
 let summaryPost
+// RUN_ID (issue #413 F4): comment-ensure の --run-id と journal-log telemetry の trust_run_id が
+// 同一 run 識別子を共有できるよう、EFFECTDELTA_MODE 分岐の外（unconditional）で宣言する。
+// 値・算出式は不変（EffectDelta の effect_id 導出（repo+pr+effect_type+run_id+body_digest）と
+// journal 集計が同一 run 識別子を共有するのが本配線の目的）。
+const RUN_ID = String(clockMarks?.start ?? ISSUE)
 if (EFFECTDELTA_MODE === 'shadow') {
-  const RUN_ID = String(clockMarks?.start ?? ISSUE)
   try {
     summaryPost = await agent(
       `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
@@ -4906,6 +4910,14 @@ const telemetryHandoff = buildJournalHandoffPayload({
         revision_digest: r.envelope.revision_digest,
       })),
     } : {}),
+    // trust_run_id (issue #413 F4, epic #390 Phase 5): trust receipt/shadow probe を持つ run のみ
+    // RUN_ID（comment-ensure --run-id と同一定数）を telemetry へ再掲し、EffectDelta の effect_id
+    // 導出（repo+pr+effect_type+run_id+body_digest）と journal 集計が同一 run 識別子を共有できる
+    // ようにする。trust 非活性 run（skills repo 以外・kill switch 有効）では出力自体を省略し
+    // handoff JSON を byte 互換に保つ（AC-11/AC-15）。journal whitelist 側は journal.sh の
+    // --trust-run-id（本 PR）、dotfiles Stop hook の転送は companion patch
+    // （claudedocs/2026-07-26-issue-413-trust-dogfood-go-no-go.md 記載）。
+    ...(state.trustSurfaceProofShadow || state.trustReceipts.length ? { trust_run_id: RUN_ID } : {}),
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
