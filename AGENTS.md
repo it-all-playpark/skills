@@ -34,6 +34,9 @@ npx skills experimental_install      # tracked の skills-lock.json から一括
 - **既存パターンに従う** — 新規スキルは同カテゴリの既存スキルを参考にする
 - **共有処理は `_shared/` か `_lib/`** — スキル間で重複するロジックは共有化
 - **後方互換 scaffolding を作らない** — schema 変更で legacy fallback / version enum / dual-path を入れない。新形式のみ受理
+- **「なぜ」は残し「経緯」は書かない** — 判別基準は「次にこのファイルを触る agent の判断を変えるか」。
+  不変条件・sunset トリガ・fail-closed の理由は残す (理由なきルールは圧力下で合理化して破られる)。
+  比較検討テーブル・不採用案・旧仕様の解説は書かない (腐って現行 invariant と逆を指示する)。追跡は git log / issue
 
 SKILL.md description は third-person 命令形で書く (`Extracts ...`, `Converts ...`)。
 `Use when:` には具体トリガ語を列挙する。`"I"` / `"this skill"` 等の一人称は禁止。
