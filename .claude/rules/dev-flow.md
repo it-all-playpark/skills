@@ -1,5 +1,5 @@
 ---
-description: dev-flow / pr-iterate / dev-improve の内部仕様（phase 経路・shape 判定・distrust 正当化クラス W7・inline 生成区間・exec-proxy 失敗ポリシー・telemetry キー）
+description: dev-flow / pr-iterate / dev-improve の内部仕様（phase 経路・shape 判定・distrust 正当化クラス W7・指示規範性 (prescription) の正当化クラス・inline 生成区間・exec-proxy 失敗ポリシー・telemetry キー）
 paths:
   - ".claude/workflows/**"
   - ".claude/agents/**"
@@ -151,6 +151,32 @@ EffectDelta shadow 固定の sunset path —
 - 表現: `_lib/trust-wiring.mjs` の `TRUST_LAYER_CONFIG.effectdelta` enum 値（'shadow' → 'advisory' → 'blocking'）。PR phase の pr-observe（read-only 観測）・post-summary の comment-ensure（write-once 投稿）は EvalSeal shadow と同じ shadow 固定パターンで配線する（issue #412, epic #390 Phase 4）。
 - 再評価トリガ: EvalSeal と同じく epic #390 Phase 5 の 2x2x2 dogfood と calibration が receipt 品質（observed/mismatch/inconclusive の分布、DUPLICATE_EFFECT/WRONG_TARGET/RESPONSE_LOST 等 domain_reason_code の発生率）を実証した時点で blocking へ昇格を検討する。実証まではゲート後退（relax）させず、既存の PR 作成経路（git-pr skill）・summary comment 投稿（gh pr comment）を変更しない。
 - 逆に incentive-structural / blast-radius はモデル更新で撤去してはならない（§6 軸A 保持）。
+
+### 指示の規範性 (prescription) の正当化クラス
+
+dev-flow の agent 指示・guardrail（`.claude/agents/*.md` の指示ブロック等、agent に「こう振る舞え」と
+規範を課す記述）は、以下 **3 つの正当化クラスのいずれか**に必ず分類する。**正当化クラスの無い指示は
+W7 の distrust 機構と同様「将来の技術的負債」**（モデルが賢くなっても削減判断ができず prompt 肥大が
+累積する）。W7 が「LLM の出力を信用しない仕組み」の分類であるのに対し、本節は「LLM への指示の
+規範性」の分類である。
+
+| クラス | 正当化根拠 | 能力依存 | 判定基準 |
+|--------|-----------|---------|---------|
+| **contract**（永続） | 指示がインターフェース契約そのもの（出力 JSON schema・StructuredOutput 呼び出し義務・Boundary（触ってはいけないファイル・commit 禁止）・入出力キーの意味定義）。呼び出し側 workflow の parse / gate がその記述に依存するため、モデルがどれだけ賢くても明示が必要 | **非依存** | 指示を削除すると workflow 側の schema 検証・phase 遷移が壊れる、または契約が暗黙化して呼び出し側と drift する |
+| **incentive-structural**（永続） | 賢いモデルでも incentive 構造・context 構造上、放置すると守られない方向に傾く指示。例: self-judge 禁止（勝利宣言を当事者にさせない）、feedback 全件対応義務（critical を握りつぶす incentive の抑制）、self-contained 記述強制（cold-context の implementer に周辺 context が無いという構造要因）、topic 反復時のアプローチ変更強制 | **非依存**（賢いモデルほど巧妙に逸脱し得る） | 逸脱がモデルの能力不足ではなく optimization pressure または context 分断に由来する |
+| **capability-bound**（**sunset 対象**） | 現行モデルの能力不足を補う手取り足取り指示。例: 詳細な手順分解（step-by-step 列挙）、禁止表現の具体列挙、書き直し例・few-shot 例示、判定基準の過剰な具体化 | **依存** | frontier モデルなら指示なしでも同じ品質の出力が期待でき、指示の役割が「現行モデルの取りこぼし防止」のみである |
+
+**capability-bound の sunset path（必須）**: capability-bound に分類した指示には sunset path を必ず
+併記する。既存 gate_policy sunset path と同基準で、以下 2 項目を書く。
+- 表現: どの指示ブロック（ファイル・セクション）を削減・パラメータ化するか。
+- 再評価トリガ: **major モデルリリース毎**（`QUALITY_MODEL` の世代交代時）に当該指示を外した
+  dry-run / 実測で品質劣化が無いことを確認してから削減する。
+
+新しく指示・guardrail を足すときは必ずクラスを宣言し、capability-bound なら sunset path
+（表現 + 再評価トリガ）を併記すること。
+
+QUALITY_MODEL 向け 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）の現状分類は
+`claudedocs/2026-07-27-issue-424-prescription-inventory.md` を参照。実際の指示削減は別 issue で扱う。
 
 ### inline 生成区間（_lib → workflows の sync generator）
 
