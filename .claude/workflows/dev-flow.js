@@ -2360,12 +2360,13 @@ const AMBIGUITY_MAX = 2  // ambiguities がこの件数を超えたら needs_cla
 if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue）')
 
 // ---- failure telemetry helper（issue #225）----
-// 3 つの失敗経路（needs_clarification×2・empty-diff throw）で呼ばれる。
+// 4 つの経路（needs_clarification×2・empty-diff throw・cross-repo graceful 終了）で呼ばれる。
+// outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す（issue #432）。
 // need() で包まず null 容認（telemetry 欠損 > workflow 中断。成功経路行 2040-2042 と同じ方針）。
-async function writeFailureTelemetry({ error_category, error_msg, telemetry, phase }) {
+async function writeFailureTelemetry({ error_category, error_msg, telemetry, phase, outcome = 'failure' }) {
   const payload = buildJournalHandoffPayload({
     skill: 'dev-flow',
-    outcome: 'failure',
+    outcome,
     issue: Number(ISSUE),
     repo: REPO,
     journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
@@ -2758,6 +2759,18 @@ const DIFFHASH = {
   type: 'object', required: ['hash', 'empty'],
   properties: { hash: { type: 'string' }, empty: { type: 'boolean' } },
 }
+// ISSUE_LABELS: `gh issue view --json labels` の read-only exec-proxy 結果（issue #432、empty-diff gate の
+// cross-repo lazy probe 用）。required は 'ok' のみ（fail-safe: schema 不一致・ok:false は非 cross-repo 扱い）。
+const ISSUE_LABELS = {
+  type: 'object', required: ['ok'],
+  properties: { ok: { type: 'boolean' }, labels: { type: 'array', items: { type: 'string' } }, error: { type: 'string' } },
+}
+// CROSSREPO_ARTIFACTS: `_shared/scripts/cross-repo-artifacts.sh` の read-only exec-proxy 結果（issue #432）。
+// required は 'ok' のみ（fail-safe: schema 不一致・ok:false は handoff 不成立扱い）。
+const CROSSREPO_ARTIFACTS = {
+  type: 'object', required: ['ok'],
+  properties: { ok: { type: 'boolean' }, found: { type: 'number' }, artifacts: { type: 'array' }, error: { type: 'string' } },
+}
 const CLOCK = { type: 'object', required: ['ok', 'epoch'], properties: { ok: { type: 'boolean' }, epoch: { type: 'number' } } }
 const UICFG = { type: 'object', required: ['found'], properties: { found: { type: 'boolean' }, config: { type: ['object', 'null'] } } }
 const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { type: 'boolean' }, phase: { type: 'string', enum: ['install', 'start', 'ready'] }, port: { type: ['number', 'string'] }, pid: { type: ['number', 'string'] }, error: { type: 'string' }, log: { type: 'string' } } }
@@ -3035,6 +3048,82 @@ function isolationFailureMessage(worktree, branch, base, issue, error) {
     + (error ? `probe error: ${error}` : '');
 }
 // ==== END inline: _lib/isolation-probe.mjs ====
+
+// ==== BEGIN inline: _lib/cross-repo-gate.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// cross-repo-gate: empty-diff gate に cross-repo issue の graceful 終了経路を追加するための純関数群
+// （implementer の成果が本 repo の worktree ではなく別リポジトリの working tree にある場合、
+// 空 diff を fail-closed で throw する既存 gate は実装完了済みの run を誤って中断させてしまう。
+// 人間が明示的に付与した `cross-repo` ラベルと、implementer 申告ファイルのうち worktree 外の
+// working tree が実際に dirty である決定論的証拠が揃った場合のみ graceful 終了へ倒す — cross-repo と判定
+// されたケースでも成果物の所在を人間に報告し、黙って破棄しない）。
+//
+// hasCrossRepoLabel: `gh issue view --json labels` の生形式（文字列配列 or {name} オブジェクト配列）を
+//   受け取り、'cross-repo' ラベルの厳密一致有無を判定する純関数。
+// crossRepoCandidatePaths: implementer 結果配列から、worktree 外の絶対パス候補を抽出する純関数
+//   （BLOCKED/NEEDS_CONTEXT の files は対象外、worktree 配下・.devflow-tmp/ は除外、重複排除、最大50件）。
+// summarizeCrossRepoArtifacts: cross-repo-artifacts.sh exec-proxy の結果を fail-safe に正規化する純関数。
+// crossRepoReturnNote: 成果物の所在を人間に報告する定型文を組み立てる純関数。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
+
+function hasCrossRepoLabel(labels) {
+  if (!Array.isArray(labels)) return false;
+  return labels.some((label) => {
+    if (typeof label === 'string') return label === 'cross-repo';
+    if (label && typeof label === 'object' && typeof label.name === 'string') return label.name === 'cross-repo';
+    return false;
+  });
+}
+
+function crossRepoCandidatePaths(implResults, worktree) {
+  if (!Array.isArray(implResults)) return [];
+  const normalizedWorktree = worktree.endsWith('/') ? worktree.slice(0, -1) : worktree;
+  const out = [];
+  const seen = new Set();
+  for (const result of implResults) {
+    if (!result || (result.status !== 'DONE' && result.status !== 'DONE_WITH_CONCERNS')) continue;
+    if (!Array.isArray(result.files)) continue;
+    for (const file of result.files) {
+      if (typeof file !== 'string') continue;
+      if (!(file.startsWith('/') || file.startsWith('~/'))) continue;
+      if (file === normalizedWorktree || file.startsWith(`${normalizedWorktree}/`)) continue;
+      if (file.includes('.devflow-tmp/')) continue;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      out.push(file);
+      if (out.length >= 50) return out;
+    }
+  }
+  return out;
+}
+
+function summarizeCrossRepoArtifacts(res) {
+  const handoff = res != null && res.ok === true && typeof res.found === 'number' && res.found >= 1;
+  if (!handoff) {
+    return { handoff: false, found: 0, artifacts: [] };
+  }
+  return {
+    handoff: true,
+    found: res.found,
+    artifacts: Array.isArray(res.artifacts) ? res.artifacts : [],
+  };
+}
+
+function crossRepoReturnNote(artifacts) {
+  const list = Array.isArray(artifacts) ? artifacts : [];
+  const dirty = list.filter((a) => a && a.dirty === true);
+  const header = '実装成果は本 repo の worktree ではなく別リポジトリの working tree に存在する'
+    + '（cross-repo issue）。以下のファイルを手動で commit / PR 化すること。'
+    + '放置すると成果物が失われる。';
+  if (dirty.length === 0) {
+    return `${header}\n対象リポジトリ: なし（成果物は検出されなかった）`;
+  }
+  const lines = dirty.map((a) => `- repo_root: ${a.repo_root}`);
+  return `${header}\n${lines.join('\n')}`;
+}
+// ==== END inline: _lib/cross-repo-gate.mjs ====
 
 // ---- helpers ----
 let WT // Setup で確定
@@ -3636,7 +3725,58 @@ async function execValidatePhase(state) {
       { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-gate', phase: 'Validate' },
     ), 'Validate(diff-gate)')
     if (dhGate.empty === true) {
-      log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— Implement へ 1 回だけ差し戻す（issue #215）')
+      log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— cross-repo 判定を試行（issue #432）')
+      // cross-repo lazy probe（issue #432）: dhGate.empty===true の場合のみ実行するため通常経路の
+      // agent 呼び出しは増えない。人間の明示 opt-in（cross-repo ラベル）+ implementer 申告ファイルの
+      // うち worktree 外 working tree が実際に dirty という決定論的証拠が揃った場合のみ graceful 終了へ
+      // 倒す。ラベル無し・証拠ゼロは既存の fail-closed 経路（差し戻し1回→再度空ならthrow）を維持する。
+      let crossRepoHandled = false
+      const issueLabelsRes = await agent(
+        `cd ${WT} で作業。次を実行し stdout の JSON 配列を {"ok": true, "labels": <配列>} に包んで返せ`
+        + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
+        + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json labels --jq '[.labels[].name]'`,
+        { agentType: 'dev-runner-haiku-ro', schema: ISSUE_LABELS, label: 'issue-labels', phase: 'Validate' },
+      )
+      if (issueLabelsRes?.ok === true && hasCrossRepoLabel(issueLabelsRes.labels)) {
+        log('empty-diff gate: cross-repo ラベル検出 — worktree 外の申告ファイルを検証')
+        const candidatePaths = crossRepoCandidatePaths(state.implResults, WT)
+        if (candidatePaths.length > 0) {
+          const artifactsRes = await agent(
+            `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+            + `bash ~/.claude/skills/_shared/scripts/cross-repo-artifacts.sh ${WT} ${candidatePaths.map((p) => `'${p}'`).join(' ')}`,
+            { agentType: 'dev-runner-haiku-ro', schema: CROSSREPO_ARTIFACTS, label: 'cross-repo-artifacts', phase: 'Validate' },
+          )
+          const summary = summarizeCrossRepoArtifacts(artifactsRes)
+          if (summary.handoff === true) {
+            log(`empty-diff gate: cross-repo 成果物を検出（found=${summary.found}）— 差し戻し・throw をせず graceful 終了する`)
+            for (const a of summary.artifacts) {
+              if (a && a.dirty === true) log(`  cross-repo artifact: repo_root=${a.repo_root} path=${a.path}`)
+            }
+            await writeFailureTelemetry({
+              outcome: 'partial',
+              error_category: 'cross_repo',
+              error_msg: 'empty-diff gate: cross-repo issue — 成果物は対象 repo の working tree に存在（issue #432）',
+              telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 },
+              phase: 'Validate',
+            })
+            state.__earlyReturn = {
+              status: 'cross_repo_artifact',
+              issue: ISSUE,
+              worktree: WT,
+              branch: state.setup.branch,
+              artifacts: summary.artifacts,
+              note: crossRepoReturnNote(summary.artifacts),
+            }
+            crossRepoHandled = true
+          } else {
+            log('empty-diff gate: cross-repo ラベルはあるが worktree 外の dirty 成果物を検証できない — 既存 empty-diff fail-closed 経路へ')
+          }
+        } else {
+          log('empty-diff gate: cross-repo ラベルはあるが worktree 外の候補パスが無い — 既存 empty-diff fail-closed 経路へ')
+        }
+      }
+      if (crossRepoHandled) return state
+      log('empty-diff gate: cross-repo 不成立 — Implement へ 1 回だけ差し戻す（issue #215）')
       const retryResults = await runImplement(req, plan, [{
         type: 'empty_diff',
         detail: '前回 implementer 終了時点で working tree に変更が存在しない（base と内容一致）。plan の task を実際に実装し、変更を working tree に残せ（git add / commit は禁止）。',
@@ -3648,7 +3788,8 @@ async function execValidatePhase(state) {
       ), 'Validate(diff-gate-retry)')
       if (dhRetry.empty === true) {
         await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 }, phase: 'Validate' })
-        throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）')
+        throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）。'
+          + '修正対象が別リポジトリにある cross-repo issue の場合は issue に cross-repo ラベルを付けて /dev-flow を再実行せよ（issue #432）')
       }
       // empty-diff gate 後の Validate 再実行（issue #219）。
       // 差し戻し前の Validate は空 tree に対して走っており val.green が trivially green になっている。
@@ -4224,6 +4365,7 @@ await clockProbe('implement_end', 'Implement')
 
 phase('Validate')
 state = await execValidatePhase(state)
+if (state.__earlyReturn) return state.__earlyReturn
 await clockProbe('validate_end', 'Validate')
 
 phase('Security floor')

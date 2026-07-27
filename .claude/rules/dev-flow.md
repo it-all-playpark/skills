@@ -81,6 +81,12 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   残るため記録漏れに気づける。journal.sh の telemetry フラグは未指定なら telemetry キー無し。calibration の原資料。
   `ui_verify` は `skipped`/`passed`/`findings`/`failed_open`/`setup_failed` の 5 値（`setup_failed` は dev-flow-doctor の検出対象）。
   `eval_staleness` は `none`/`hash_mismatch`/`iterate_incomplete`/`iterate_fixed` の 4 値（Evaluate 時点と PR tree の乖離原因を区別する。issue #288）。
+  cross-repo issue（修正対象が本 repo 外にある issue）で empty-diff gate が graceful 終了する run は
+  `journal.sh` の `error_category` に `cross_repo`（`outcome:'partial'`）を記録し、dev-flow の返り値は
+  `status:'cross_repo_artifact'`（`issue`/`worktree`/`branch`/`artifacts`/`note` を含む）を返す。
+  `empty_diff` failure として誤記録せず dev-flow-doctor の異常検知（iterate 不調率等）の統計を汚さない
+  （issue #432）。当該機構は W7 分類上 blast-radius（人間ラベル opt-in + 決定論的 dirty 検証が揃った
+  場合のみ graceful 終了する仕組みで、gate の fail-closed 既定は不変）。
   `final_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`）。
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ）。
@@ -225,6 +231,8 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | pr-meta（`gh pr view --json mergeable,mergeStateStatus` による base branch conflict 検出、dev-flow Merge tier phase） | `ok:false` / `null` / schema 不一致 / `mergeable=UNKNOWN` 継続 | fail-open（mergeableState='unknown' → conflict gate 不適用、警告 log のみ。definitive な CONFLICTING / mergeStateStatus=DIRTY のみ HOLD） | merge は全 tier 人間であり GitHub 自体が conflict merge を platform で hard-block するため、conflict signal を取りこぼしても実害ある merge は起こり得ない。`mergeable=UNKNOWN` は GitHub の mergeability background 計算中の transient 状態であり fail-safe(HOLD) にすると healthy PR を spurious HOLD する。既存 deterministic gate・security floor を一切緩めず、definitive conflict 検出時にのみ HOLD reason を追加する（軸A 不変） |
 | trust-surfaceproof-shadow（`surfaceproof-snapshot.sh` による SurfaceProof shadow probe、dev-flow Analyze phase。kill-switch probe も同一ポリシー） | `ok:false` / `null` / schema 不一致 / agent throw / receipt 欠落 | fail-open（`trust_surfaceproof_shadow` は `verdict:'inconclusive', reason_code:'PROBE_FAILED'` を記録、警告 log のみ。kill-switch probe 失敗は fail-safe で kill switch 有効相当＝shadow 実行自体を skip） | advisory な shadow dogfooding の観測信号（W7 capability-bound。AC-11/AC-15 非緩和）。req/shape/needs_clarification 判定・merge tier・既存 deterministic gate には一切反映しない — 失敗しても後退する既存ゲートが無い |
 | trust-effectdelta（effectdelta-github.sh pr-observe / comment-ensure — PR readback 観測・summary comment の write-once 投稿） | ok:false / null / schema 不一致 / posted:false / agent throw | fail-open（receipt 無しで続行・comment は gh pr comment 直接実行へ fallback、警告 log のみ。merge tier・security floor・gate 判定へ影響しない） | advisory な trust-layer shadow dogfood の補助信号（epic #390 Phase 4）。journal handoff は stable effect ID + atomic write で同秒/並列/再実行に耐性（AC-10）— gate ではなく handoff 耐久性の決定論改善 |
+| issue-labels（`gh issue view --json labels` による empty-diff gate の cross-repo lazy ラベル probe。dhGate.empty===true 時のみ実行） | null / `ok:false` / schema 不一致 / throw | fail-safe（非 cross-repo 扱いで既存 empty-diff fail-closed 経路（差し戻し1回→再度空なら throw）を維持） | ラベル不明を人間の opt-in 成立と同一視しない（issue #432）。成果物は worktree/外部 repo に残存するため破壊的ではなく、throw メッセージにラベル付与のヒントを追記して人間の再実行を促す |
+| cross-repo-artifacts（`_shared/scripts/cross-repo-artifacts.sh` による worktree 外 working tree の dirty 検証。cross-repo ラベル検出時のみ実行） | null / `ok:false` / schema 不一致 / found=0 | fail-safe（handoff 不成立で既存 empty-diff fail-closed 経路へフォールスルー。ラベルのみで gate を skip しない） | 決定論的証拠（dirty working tree）なしに gate を skip すると軸A invariant（決定論ゲートを LLM/ラベルで緩めない）に反する（issue #432） |
 
 ## dev-improve (self-improvement loop)
 
