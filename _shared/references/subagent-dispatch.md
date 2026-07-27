@@ -36,6 +36,9 @@ JSON schema、Markdown のセクション構成、語数上限などを明示す
 
 ファイル/ディレクトリの除外、commit 禁止、ネットワーク禁止などを明記する。
 
+**subagent はネストできない**（harness 制約）。dispatch した subagent に `Task` / `Agent` /
+`Workflow` tool を使わせる設計にしないこと。fan-out は必ず呼び出し元（top-level）が行う。
+
 ### 5. Token cap（トークン上限）
 
 - **Good**: 「1500 語以内で要約」「上位 10 件まで」「最大 5 ファイルまで開く」

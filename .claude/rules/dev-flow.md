@@ -62,6 +62,10 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
 - **1 issue = 1 PR**。並列実装は単一 worktree 内で file-disjoint な task を `parallel()` で fan-out する
   (旧 child-split / DAG / integration branch / batch loop は廃止)。
 - **merge は手動** (LGTM 後にユーザーが merge)。
+- worktree の後片付けは `_shared/scripts/worktree-teardown.sh <worktree-path>` を使う
+  (`git worktree remove` 直打ちは `.veridelta/runs/*.json` の red→green 検証証跡を失う)。
+  archive の fail-open 仕様・sandbox 実行文脈の制約は同スクリプトと
+  `_shared/scripts/veridelta-archive.sh` のヘッダコメントが正典。
 - Claude 専用 (workflow 依存)。cross-vendor portability は dev-flow / pr-iterate のみ放棄する例外扱い。
 - **gate_policy**: trust 昇順の 4 値 enum — `deterministic-only` / `llm-major-advisory`（既定）/ `llm-major-blocking` / `llm-autonomous`。
   **軸A invariant 不変** — deterministic oracle / seed / critical アイテムは全 policy で blocking のまま（security floor / 決定論ゲートは policy で緩めない）。

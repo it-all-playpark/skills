@@ -1,6 +1,6 @@
 # Claude Code / Serena / Codex
 .claude/*
-# Track subagent definitions (issue #79/#89: dev-kickoff-worker, dev-contract-worker etc.)
+# Track subagent definitions (.claude/agents/*.md — dev-planner / implementer / evaluator 等)
 !.claude/agents/
 !.claude/agents/**
 # Track dynamic workflow definitions (dev-flow / pr-iterate are Claude workflows)
@@ -43,8 +43,9 @@ content_plan.json
 # Late API upload cache
 .late-upload-cache.json
 
-# Node
-node_modules/
+# Node (末尾 / を付けない — worktree 側の node_modules は main checkout への symlink で、
+# `node_modules/` は directory にしかマッチせず symlink が untracked のまま残る)
+node_modules
 
 # Python
 __pycache__/
