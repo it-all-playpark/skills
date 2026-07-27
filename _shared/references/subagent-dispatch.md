@@ -61,11 +61,11 @@ Subagent に渡したい task / context は **prompt 内に verbatim paste** す
 
 ### 規約
 
-1. **dev-kickoff / dev-kickoff-worker は worker spawn 時に `task_body` を prompt 内に verbatim paste する**。
-   worker は `impl-plan.md` 全体を Read しない（boundary 違反）。
-2. **dev-plan-impl は各 task を self-contained に書く**。「Task N と同様」「上述の通り」「前述」等の
-   曖昧参照は禁止。dev-plan-review はこのパターンを `findings` (severity: major) として flag する。
-3. **dev-implement は `task_body` paste がある場合はそれを真実の source とし、`impl-plan.md` を Read しない**。
+1. **呼び出し元 (dev-flow workflow) は implementer spawn 時に `task_body` を prompt 内に verbatim paste する**。
+   implementer は `impl-plan.md` 全体を Read しない（boundary 違反）。
+2. **dev-planner は各 task を self-contained に書く**。「Task N と同様」「上述の通り」「前述」等の
+   曖昧参照は禁止。plan-reviewer はこのパターンを `findings` (severity: major) として flag する。
+3. **implementer は `task_body` paste がある場合はそれを真実の source とし、`impl-plan.md` を Read しない**。
    `task_body` が無い standalone 実行の場合のみ `impl-plan.md` fallback を使用。
 
 ### 推奨 paste フォーマット
@@ -85,20 +85,22 @@ worker 側は `<<<TASK_BODY_BEGIN>>>` / `<<<TASK_BODY_END>>>` の delimiter で 
 
 ## 4 値 Status Enum
 
-Generator-Verifier ループ（dev-implement → dev-evaluate）で worker が返す `status` フィールドは
-**4 値**のいずれかを取る。dev-implement / dev-kickoff / dev-evaluate / dev-flow-doctor は
-本セクションを中央定義として参照する（個別 SKILL.md には簡易表だけ書き、詳細はここに集約）。
+Generator-Verifier ループ（implementer → evaluator）で worker が返す `status` フィールドは
+**4 値**のいずれかを取る。本セクションを中央定義として参照する
+（個別 SKILL.md / agent 定義には簡易表だけ書き、詳細はここに集約）。
 
-| status | 必須追加フィールド | dev-kickoff orchestrator の挙動 |
+| status | 追加フィールド | 呼び出し元 (dev-flow) の挙動 |
 |---|---|---|
-| `DONE` | (なし) | Phase 6 (dev-evaluate) へ進む |
-| `DONE_WITH_CONCERNS` | `concerns: string[]` (>= 1 要素) | Phase 6 に `focus_areas = concerns[]` を渡して重点監査 |
-| `BLOCKED` | `blocking_reason: string` (非空、>= 10 文字) | **同アプローチ retry 禁止**、Phase 3 に reset し `blocking_reason` を `findings[]` 形式 (`severity: critical`, `dimension: approach_mismatch`) に正規化して `plan-review-feedback.json` に書き込む。詳細整形ルール: [`dev-kickoff/references/evaluate-retry.md`](../../dev-kickoff/references/evaluate-retry.md#blocked-feedback-の整形) |
-| `NEEDS_CONTEXT` | `missing_context: string[]` (>= 1 要素) | Phase 4 に再 dispatch、`missing_context[]` を補足 paste。連続 2 回 NEEDS_CONTEXT で human escalate |
+| `DONE` | (なし) | Evaluate phase へ進む |
+| `DONE_WITH_CONCERNS` | `concerns: string[]` (>= 1 要素) | 結果を保持し `concerns[]` を Evaluate へ伝搬して重点監査 |
+| `BLOCKED` | `blocking_reason: string` (なぜ進めないか全文) | **同アプローチ retry 禁止**。`blocking_reason` を `approach_mismatch` findings として累積し、別アプローチで再計画→再実装（上限 `BLOCK_MAX`）。過去に BLOCKED になったいずれのアプローチへの回帰も禁止 |
+| `NEEDS_CONTEXT` | `missing_context: string` (何が分かれば進めるか) | comprehensive で再分析して再試行。それでも解消しなければ `needs_clarification` で早期 return し、呼び出し元セッションが人間に確認する |
 
-ベース必須フィールド: `status`, `branch`, `worktree_path`, `commit_sha`。任意: `pr_url`, `phase_failed`, `error`。
+必須フィールド: `status`, `task_id`。任意: `files`, `summary`, `concerns`,
+`blocking_reason`, `missing_context`。
 
-詳細サンプル JSON は [`dev-implement/references/return-contract.md`](../../dev-implement/references/return-contract.md) を参照。
+正典は `.claude/workflows/dev-flow.js` の `IMPL` schema と
+[`.claude/agents/implementer.md`](../../.claude/agents/implementer.md)。
 
 ## Subagent Routing Rules
 
