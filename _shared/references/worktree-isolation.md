@@ -1,7 +1,6 @@
-# Worktree Isolation — Spike Results
+# Worktree Isolation
 
-Findings from the `isolation: worktree` spike conducted in issues #79 and #82.
-Preserved here as a permanent reference for workers spawned with `isolation: worktree`.
+`isolation: worktree` で spawn された subagent が従う運用規約。
 
 ## 1. Directory Structure
 
@@ -96,30 +95,10 @@ fi
 
 ## 4. Push Prohibition
 
-Workers with `isolation: worktree` must NOT push their branch. Only the final Phase 8
-(`git-pr` in single mode) pushes via the PR creation flow. Subtask and contract branches
-stay local until the merge branch is pushed by `dev-integrate`.
+Workers with `isolation: worktree` must NOT push their branch. Push は PR 作成フロー
+（`git-pr` skill）だけが行う。
 
-Summary of push rules by worker type:
-
-| Worker | Push allowed? |
-|--------|--------------|
-| `dev-kickoff-worker` (mode: single) | Yes — Phase 8 git-pr pushes |
-
-issue #93 で contract branch / parallel / merge mode は撤廃された。複数 issue の並列実行は
-`dev-decompose --child-split` で child issue を発行し、`dev-flow --child-split` の batch loop
-が child を独立 single-mode dev-kickoff として消化する（child PR は `integration/issue-{N}-{slug}`
-に直接 merge、Kahn 法 topological merge は廃止）。
-
-## 5. Decomposition Matrix
-
-Worker types and their intended use cases:
-
-| Subagent type | model | isolation | Spawned by | Purpose |
-|---------------|-------|-----------|------------|---------|
-| `dev-kickoff-worker` (single) | sonnet | worktree | dev-kickoff | Full issue dev cycle (Phase 1b-8) |
-
-## 6. Nesting Prohibition
+## 5. Nesting Prohibition
 
 Claude Code subagents spawned via `isolation: worktree` cannot nest further subagents
 (documented behavior, public docs). Workers must not use the `Task` or `Agent` tools
@@ -127,6 +106,5 @@ to spawn additional subagents.
 
 ## References
 
-- Issue #79: spike layer 1+2, isolation:worktree behavior validation
-- Issue #93: parallel / merge / contract mode 撤廃、child-split (child issue + integration branch + batch loop) に統一
-- [`dev-kickoff-worker.md`](../../.claude/agents/dev-kickoff-worker.md)
+- [`_shared/scripts/worktree-teardown.sh`](../scripts/worktree-teardown.sh)
+- [`AGENTS.md`](../../AGENTS.md) — 並列実装は task 単位 (issue 分割しない)

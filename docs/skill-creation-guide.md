@@ -287,23 +287,13 @@ User triggers /command
    - 例: `flow.schema.json` の `version: "2.0.0"` const を使い、`"1.0.0"` 受信時は明示 error
    - 例: dev-kickoff `--task-id` のような廃止フラグは `die_json` で即時 error
 
-### Architectural pattern: child-split over DAG
+### Architectural pattern: 並列実装は task 単位（issue 分割しない）
 
-依存関係を持つ複数タスクの coordination が必要な場合、**任意 DAG (depends_on) ではなく
-layered linear batch 配列 + child-issue 分割** を選ぶ。
+1 issue 内で並列化できる箇所は、計画段階で `{serial, parallel}` に分解し、**単一 worktree 内**で
+`parallel()` を使って fan-out する。parallel に置く task は file_changes が互いに disjoint であること。
+**1 issue = 1 PR**。任意 DAG (depends_on) / child-issue 分割 / integration branch は使わない。
 
-| | DAG (subtask depends_on) | child-split (v2) |
-|--|--|--|
-| coordination 単位 | 内部 subtask | 外部 GitHub child issue |
-| merge 戦略 | Kahn 法 topological merge (最終 N-way) | integration branch への incremental merge |
-| 並列性表現 | 任意 DAG | layered linear (serial / parallel batch) |
-| 表現力 | 100% | ~90% (実務 case) |
-| 実装複雑度 | 高 (topo-sort, contract branch, shared_findings) | 低 (gh issue + batch loop) |
-| 中間 CI | 全 subtask で走る | child PR は draft で CI skip |
-| audit history | 1 merge commit に N branch | child PR ごとに merge commit |
-
-10% の "残り" DAG case は **親 issue 自体を分けて対応** する。コーディネーション
-コストよりメンテコストの方が低い設計を選ぶ。詳細は parent issue #93 を参照。
+詳細は [`AGENTS.md`](../AGENTS.md) の「並列実装は task 単位 (issue 分割しない)」節を参照。
 
 ## Subagent Dispatch Rules
 

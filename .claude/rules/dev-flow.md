@@ -84,7 +84,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `testsurf_hits` は test-weakening pattern 名の配列（常時出力、hit 無しは空配列）。
   `redgreen_deny` は `{ac, reasons}` の配列（deny 発生時のみ出力）。
   `vdelta_fail_open` は fail_open 発生件数（>0 時のみ出力）。
-  `vdelta_verdicts` は per-AC の vdelta verdict 配列（旧 `vdelta_verdict` 単発上書きキーを置換 — dual-key 互換なし）。
+  `vdelta_verdicts` は per-AC の vdelta verdict 配列（単一キーへの上書き出力・dual-key 併記はしない）。
   `duration_seconds` は run 全体の wall-clock 秒（clock#start 〜 clock#end）。
   `phase_durations` は analyze / plan / implement / validate / evaluate / pr / iterate / final の 8 phase の秒数 object。
   各 phase は開始〜終了の全体時間（plan-review loop / evaluate 差し戻し loop 等の内部反復を含む）。evaluate 区間は
@@ -161,7 +161,7 @@ EffectDelta shadow 固定の sunset path —
 **canonical の構造制約**: ESM import / require / Date.now / Math.random を含めない（generator がコメント除去後のコードを走査して error）。
 **ファイル全体が inline 可能**であること（export は行頭接頭辞除去のみで verbatim 注入。export default / export { } は不可）。
 
-**#190 由来のコーディング制約の撤廃**: 旧規約「複数行 template literal 禁止（lines.push + join スタイル維持）」「新規 const は関数内に置く」は旧 regex 抽出 sync test の都合だったため撤廃。区間全文一致方式では canonical の書き方は自由。
+**上記以外に canonical のコーディングスタイル制約はない**: 区間全文一致方式のため、template literal の書き方・const の配置等は自由。
 
 **この generator は harness-capability-bound な橋**（W7 表の capability-bound クラスとは別の軸: LLM judge 能力依存ではなく harness 機能依存）。workflow loader が ESM import 不可という harness 制約への対応として存在する。
 - 表現: `tools/sync-inlines.mjs` + マーカー区間そのもの
