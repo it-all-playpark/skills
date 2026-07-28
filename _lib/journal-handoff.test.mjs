@@ -1,19 +1,43 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import os from 'node:os';
 
-import { buildJournalHandoffCommand, buildJournalHandoffPayload, repoFromGithubUrl } from './journal-handoff.mjs';
+import {
+  buildJournalFinalizeCommand,
+  buildJournalHandoffInstr,
+  buildJournalHandoffPayload,
+  repoFromGithubUrl,
+} from './journal-handoff.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 
-// AC-10: run the generated command for real through bash, with CLAUDE_JOURNAL_DIR
-// pointed at a scratch dir, to verify stable-effect-ID naming + atomic write behavior
-// (not just the literal command string).
+// issue #433 regression fixture: a payload that stresses the multi-escaping class the
+// Write-tool verbatim pattern is meant to eliminate — a Japanese test name, a backtick-quoted
+// shell anchor, and a JSON string value whose content is itself an escaped JSON string
+// (mirrors the devflow-411 malformed-park incident shape, but valid here).
+const EDGE_CASE_PAYLOAD = JSON.stringify({
+  skill: 'dev-flow',
+  outcome: 'success',
+  telemetry: {
+    vdelta_verdicts: [
+      {
+        ac: 'AC-1',
+        name: '日本語テスト名の検証',
+        anchor: '`vdelta show run_x --raw`',
+        raw: '{"verdict":"{\\"transitions\\":{\\"new_fail\\":[]}}"}',
+      },
+    ],
+  },
+});
+
+// AC-1/AC-2: run the generated finalize command for real through bash, with
+// CLAUDE_JOURNAL_DIR pointed at a scratch dir, to verify jq validation + stable-effect-ID
+// naming + atomic write behavior (not just the literal command string).
 function withScratchJournalDir(fn) {
   const dir = mkdtempSync(join(os.tmpdir(), 'journal-handoff-'));
   try {
@@ -23,7 +47,18 @@ function withScratchJournalDir(fn) {
   }
 }
 
-function runHandoffCommand(cmd, journalDir) {
+function writeTempPayloadFile(content) {
+  const dir = mkdtempSync(join(os.tmpdir(), 'journal-handoff-payload-'));
+  const file = join(dir, 'payload.json');
+  writeFileSync(file, content, 'utf8');
+  return { dir, file };
+}
+
+// Simulates the agent step: buildJournalFinalizeCommand returns a command containing the
+// literal placeholder `<PAYLOAD_FILE>`; the caller substitutes it with a real path (in
+// production this is done by the agent per buildJournalHandoffInstr's instructions).
+function runFinalize({ prefix, id, payloadFile, journalDir }) {
+  const cmd = buildJournalFinalizeCommand({ prefix, id }).split('<PAYLOAD_FILE>').join(payloadFile);
   execFileSync('bash', ['-c', cmd], {
     env: { ...process.env, CLAUDE_JOURNAL_DIR: journalDir },
     encoding: 'utf8',
@@ -31,7 +66,11 @@ function runHandoffCommand(cmd, journalDir) {
 }
 
 function listPending(journalDir) {
-  return readdirSync(join(journalDir, 'pending'));
+  try {
+    return readdirSync(join(journalDir, 'pending'));
+  } catch {
+    return [];
+  }
 }
 
 test('buildJournalHandoffPayload creates compact handoff JSON', () => {
@@ -88,120 +127,168 @@ test('repoFromGithubUrl returns null for non-GitHub or malformed input', () => {
   assert.equal(repoFromGithubUrl('https://example.com/a/b'), null);
 });
 
-test('buildJournalHandoffCommand writes payload via mktemp/mv atomic write with stable effect-ID naming', () => {
-  const cmd = buildJournalHandoffCommand({
-    prefix: 'priterate',
-    id: 251,
-    payload: '{"ok":true}',
-  });
+// ---- buildJournalHandoffInstr ----
 
-  assert.equal(
-    cmd,
-    'mkdir -p ${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending'
-      + ' && __jh_tmp=$(mktemp "${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending/.priterate-251.XXXXXX")'
-      + ' && cat > "$__jh_tmp" <<\'TELEMETRY_EOF\''
-      + ' && __jh_id=$(shasum -a 256 "$__jh_tmp" | cut -c1-16)'
-      + ' && mv -f "$__jh_tmp" "${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending/priterate-251-effect-${__jh_id}.json"'
-      + '\n{"ok":true}\nTELEMETRY_EOF',
+test('buildJournalHandoffInstr embeds the payload verbatim between delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
+  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: EDGE_CASE_PAYLOAD });
+  const match = instr.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  assert.ok(match, 'expected instr to contain the delimited payload block');
+  assert.equal(match[1], EDGE_CASE_PAYLOAD);
+});
+
+test('buildJournalHandoffInstr instructs Write tool usage and forbids passing the payload through shell', () => {
+  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: '{"ok":true}' });
+  assert.ok(instr.includes('Write tool'));
+  assert.ok(instr.includes('echo'));
+  assert.ok(instr.includes('printf'));
+  assert.ok(instr.includes('heredoc'));
+});
+
+test('buildJournalHandoffInstr never includes the payload outside the delimited block (finalize command stays payload-free)', () => {
+  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: EDGE_CASE_PAYLOAD });
+  const afterEnd = instr.slice(instr.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>'));
+  assert.ok(!afterEnd.includes(EDGE_CASE_PAYLOAD));
+});
+
+test('buildJournalHandoffInstr embeds the buildJournalFinalizeCommand result with a substitute-and-run + fail-open instruction', () => {
+  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: '{"ok":true}' });
+  const finalizeCmd = buildJournalFinalizeCommand({ prefix: 'devflow', id: 433 });
+  assert.ok(instr.includes(finalizeCmd));
+  assert.ok(instr.includes('<PAYLOAD_FILE>'));
+  assert.ok(instr.includes('実パスに置換'));
+  assert.ok(instr.includes('logged:false'));
+});
+
+test('buildJournalHandoffInstr throws when payload is null', () => {
+  assert.throws(
+    () => buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: null }),
+    /payload is required/,
   );
 });
 
-test('buildJournalHandoffCommand rejects unsafe filename parts', () => {
+// ---- buildJournalFinalizeCommand ----
+
+test('buildJournalFinalizeCommand rejects unsafe filename parts', () => {
   assert.throws(
-    () => buildJournalHandoffCommand({ prefix: 'bad/prefix', id: 251, payload: '{}' }),
+    () => buildJournalFinalizeCommand({ prefix: 'bad/prefix', id: 251 }),
     /invalid prefix/,
   );
   assert.throws(
-    () => buildJournalHandoffCommand({ prefix: 'priterate', id: '251;rm', payload: '{}' }),
+    () => buildJournalFinalizeCommand({ prefix: 'priterate', id: '251;rm' }),
     /invalid id/,
   );
 });
 
-test('AC-10: executing the command produces exactly one valid-JSON effect file matching the payload', () => {
+test('AC-1/AC-2: executing the finalize command against a real payload file produces exactly one valid-JSON effect file matching the payload', () => {
   withScratchJournalDir((journalDir) => {
-    const payload = '{"skill":"pr-iterate","outcome":"success"}';
-    const cmd = buildJournalHandoffCommand({ prefix: 'priterate', id: 251, payload });
+    const { dir, file } = writeTempPayloadFile(EDGE_CASE_PAYLOAD);
+    try {
+      runFinalize({ prefix: 'devflow', id: 433, payloadFile: file, journalDir });
 
-    runHandoffCommand(cmd, journalDir);
-
-    const files = listPending(journalDir);
-    assert.equal(files.length, 1);
-    assert.match(files[0], /^priterate-251-effect-[0-9a-f]{16}\.json$/);
-    // heredoc writes payload followed by its own line terminator (pre-existing
-    // behavior, unrelated to this task's atomic-write change).
-    const content = readFileSync(join(journalDir, 'pending', files[0]), 'utf8');
-    assert.equal(content, `${payload}\n`);
-    assert.doesNotThrow(() => JSON.parse(content));
+      const files = listPending(journalDir);
+      assert.equal(files.length, 1);
+      assert.match(files[0], /^devflow-433-effect-[0-9a-f]{16}\.json$/);
+      const content = readFileSync(join(journalDir, 'pending', files[0]), 'utf8');
+      assert.equal(content, EDGE_CASE_PAYLOAD);
+      assert.doesNotThrow(() => JSON.parse(content));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
-test('AC-10: re-running with an identical payload does not create a duplicate entry (idempotent overwrite)', () => {
+test('AC-1/AC-2: re-running the finalize command with an identical payload file does not create a duplicate entry (idempotent overwrite)', () => {
   withScratchJournalDir((journalDir) => {
     const payload = '{"skill":"dev-flow","outcome":"success","issue":412}';
-    const cmd = buildJournalHandoffCommand({ prefix: 'devflow', id: 412, payload });
+    const { dir, file } = writeTempPayloadFile(payload);
+    try {
+      runFinalize({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
+      const firstListing = listPending(journalDir);
+      runFinalize({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
+      const secondListing = listPending(journalDir);
 
-    runHandoffCommand(cmd, journalDir);
-    const firstListing = listPending(journalDir);
-    runHandoffCommand(cmd, journalDir);
-    const secondListing = listPending(journalDir);
-
-    assert.equal(firstListing.length, 1);
-    assert.deepEqual(secondListing, firstListing);
-    const content = readFileSync(join(journalDir, 'pending', secondListing[0]), 'utf8');
-    assert.equal(content, `${payload}\n`);
+      assert.equal(firstListing.length, 1);
+      assert.deepEqual(secondListing, firstListing);
+      const content = readFileSync(join(journalDir, 'pending', secondListing[0]), 'utf8');
+      assert.equal(content, payload);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
-test('AC-10: a different payload for the same prefix/id produces a distinct effect file (no collision)', () => {
+test('AC-1/AC-2: a different payload for the same prefix/id produces a distinct effect file (no collision)', () => {
   withScratchJournalDir((journalDir) => {
-    const cmdA = buildJournalHandoffCommand({
-      prefix: 'devflow',
-      id: 412,
-      payload: '{"skill":"dev-flow","outcome":"success"}',
-    });
-    const cmdB = buildJournalHandoffCommand({
-      prefix: 'devflow',
-      id: 412,
-      payload: '{"skill":"dev-flow","outcome":"failure"}',
-    });
+    const a = writeTempPayloadFile('{"skill":"dev-flow","outcome":"success"}');
+    const b = writeTempPayloadFile('{"skill":"dev-flow","outcome":"failure"}');
+    try {
+      runFinalize({ prefix: 'devflow', id: 412, payloadFile: a.file, journalDir });
+      runFinalize({ prefix: 'devflow', id: 412, payloadFile: b.file, journalDir });
 
-    runHandoffCommand(cmdA, journalDir);
-    runHandoffCommand(cmdB, journalDir);
-
-    const files = listPending(journalDir).sort();
-    assert.equal(files.length, 2);
-    assert.notEqual(files[0], files[1]);
+      const files = listPending(journalDir).sort();
+      assert.equal(files.length, 2);
+      assert.notEqual(files[0], files[1]);
+    } finally {
+      rmSync(a.dir, { recursive: true, force: true });
+      rmSync(b.dir, { recursive: true, force: true });
+    }
   });
 });
 
-test('AC-10: no dot-prefixed temp file remains after execution (atomic mv leaves no partial JSON)', () => {
+test('AC-1/AC-2: no dot-prefixed temp file remains after execution (atomic mv leaves no partial JSON)', () => {
   withScratchJournalDir((journalDir) => {
-    const cmd = buildJournalHandoffCommand({
-      prefix: 'priterate',
-      id: 99,
-      payload: '{"skill":"pr-iterate","outcome":"success"}',
-    });
+    const { dir, file } = writeTempPayloadFile('{"skill":"pr-iterate","outcome":"success"}');
+    try {
+      runFinalize({ prefix: 'priterate', id: 99, payloadFile: file, journalDir });
 
-    runHandoffCommand(cmd, journalDir);
-
-    const files = listPending(journalDir);
-    assert.ok(files.every((f) => !f.startsWith('.')));
-    assert.ok(files.every((f) => f.endsWith('.json')));
+      const files = listPending(journalDir);
+      assert.ok(files.every((f) => !f.startsWith('.')));
+      assert.ok(files.every((f) => f.endsWith('.json')));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
-test('workflows construct journal commands through the canonical helper', () => {
+test('AC-1: a malformed JSON payload (devflow-411-style extra closing brace) fails jq -e validation and writes nothing to pending/', () => {
+  withScratchJournalDir((journalDir) => {
+    // Mirrors the devflow-411 malformed-park incident shape: an extra `}` mid-structure.
+    const malformed = '{"skill":"dev-flow","outcome":"success","telemetry":{"vdelta_verdicts":[{"ac":"AC-1"}]}}}';
+    const { dir, file } = writeTempPayloadFile(malformed);
+    try {
+      let threw = false;
+      try {
+        runFinalize({ prefix: 'devflow', id: 411, payloadFile: file, journalDir });
+      } catch (err) {
+        threw = true;
+        assert.notEqual(err.status, 0);
+      }
+      assert.ok(threw, 'expected the finalize command to fail (non-zero exit) on malformed JSON');
+
+      const files = listPending(journalDir);
+      assert.equal(files.filter((f) => f.endsWith('.json')).length, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---- conformance: call sites use the canonical Write-tool-verbatim helper ----
+
+test('workflows construct journal handoff instructions through the canonical Write-tool-verbatim helper', () => {
   const devFlow = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
   const prIterate = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 
   assert.equal(
-    (devFlow.match(/const journalCmd = buildJournalHandoffCommand\(\{ prefix: 'devflow'/g) ?? []).length,
+    (devFlow.match(/buildJournalHandoffInstr\(\{ prefix: 'devflow'/g) ?? []).length,
     2,
   );
   assert.equal(
-    (prIterate.match(/const journalCmd = buildJournalHandoffCommand\(\{ prefix: 'priterate'/g) ?? []).length,
+    (prIterate.match(/buildJournalHandoffInstr\(\{ prefix: 'priterate'/g) ?? []).length,
     1,
   );
-  assert.ok(!devFlow.includes('const journalCmd = `mkdir -p ~/.claude/journal/pending'));
-  assert.ok(!prIterate.includes('journal.sh log pr-iterate'));
+  assert.ok(!devFlow.includes('buildJournalHandoffCommand'));
+  assert.ok(!prIterate.includes('buildJournalHandoffCommand'));
+  assert.ok(!devFlow.includes("<<'TELEMETRY_EOF'"));
+  assert.ok(!prIterate.includes("<<'TELEMETRY_EOF'"));
 });
