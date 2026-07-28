@@ -877,3 +877,297 @@ JSON
     [ "$has_receipts" = "false" ]
     [ "$has_surfaceproof" = "false" ]
 }
+
+# ===========================================================================
+# telemetry 8-key flags (issue #430)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (a) 8 フラグ全指定 -> 全キーが正しい型で記録される
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: all specified are recorded with correct types" {
+    run "$SCRIPT" log dev-flow success \
+        --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' \
+        --vdelta-fail-open 1 \
+        --redgreen-deny '[{"ac":2,"reasons":["no red"]}]' \
+        --testsurf-hits '[]' \
+        --duration-seconds 840 \
+        --phase-durations '{"analyze":120}' \
+        --merge-tier-reasons '["danger hit"]' \
+        --route lite
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    [ "$(jq '.telemetry.vdelta_verdicts | type' "$entry_file")" = '"array"' ]
+    [ "$(jq -c '.telemetry.vdelta_verdicts' "$entry_file")" = '[{"ac":1,"status":"promoted"}]' ]
+
+    [ "$(jq '.telemetry.vdelta_fail_open | type' "$entry_file")" = '"number"' ]
+    [ "$(jq '.telemetry.vdelta_fail_open' "$entry_file")" = "1" ]
+
+    [ "$(jq '.telemetry.redgreen_deny | type' "$entry_file")" = '"array"' ]
+    [ "$(jq -c '.telemetry.redgreen_deny' "$entry_file")" = '[{"ac":2,"reasons":["no red"]}]' ]
+
+    [ "$(jq '.telemetry.testsurf_hits | type' "$entry_file")" = '"array"' ]
+    [ "$(jq -c '.telemetry.testsurf_hits' "$entry_file")" = '[]' ]
+
+    [ "$(jq '.telemetry.duration_seconds | type' "$entry_file")" = '"number"' ]
+    [ "$(jq '.telemetry.duration_seconds' "$entry_file")" = "840" ]
+
+    [ "$(jq '.telemetry.phase_durations | type' "$entry_file")" = '"object"' ]
+    [ "$(jq -c '.telemetry.phase_durations' "$entry_file")" = '{"analyze":120}' ]
+
+    [ "$(jq '.telemetry.merge_tier_reasons | type' "$entry_file")" = '"array"' ]
+    [ "$(jq -c '.telemetry.merge_tier_reasons' "$entry_file")" = '["danger hit"]' ]
+
+    [ "$(jq -r '.telemetry.route' "$entry_file")" = "lite" ]
+    [ "$(jq '.telemetry.route | type' "$entry_file")" = '"string"' ]
+}
+
+# ---------------------------------------------------------------------------
+# (b) --route full が "full" で記録される
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: --route full recorded as full" {
+    run "$SCRIPT" log dev-flow success --route full
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    [ "$(jq -r '.telemetry.route' "$entry_file")" = "full" ]
+}
+
+# ---------------------------------------------------------------------------
+# (c) --route bogus -> exit 0, base entry 正常, telemetry.route が無い
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: --route bogus is dropped, base entry still recorded" {
+    run "$SCRIPT" log dev-flow success --route bogus --merge-tier REVIEW
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    skill_val=$(jq -r '.skill' "$entry_file")
+    [ "$skill_val" = "dev-flow" ]
+    outcome_val=$(jq -r '.outcome' "$entry_file")
+    [ "$outcome_val" = "success" ]
+
+    has_route=$(jq '.telemetry | has("route")' "$entry_file")
+    [ "$has_route" = "false" ]
+
+    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
+    [ "$merge_tier" = "REVIEW" ]
+}
+
+@test "8 telemetry flags: --route bogus alone (no other telemetry) -> no telemetry key" {
+    run "$SCRIPT" log dev-flow success --route bogus
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
+    [ "$has_telemetry" = "false" ]
+}
+
+# ---------------------------------------------------------------------------
+# (d) 各キーの型違反が drop される（個別検証）
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: --vdelta-verdicts with non-object element is dropped" {
+    run "$SCRIPT" log dev-flow success --vdelta-verdicts '["str"]'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("vdelta_verdicts")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "8 telemetry flags: --vdelta-fail-open abc is dropped" {
+    run "$SCRIPT" log dev-flow success --vdelta-fail-open abc
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("vdelta_fail_open")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "8 telemetry flags: --redgreen-deny non-array is dropped" {
+    run "$SCRIPT" log dev-flow success --redgreen-deny '{}'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("redgreen_deny")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "8 telemetry flags: --testsurf-hits with non-string element is dropped" {
+    run "$SCRIPT" log dev-flow success --testsurf-hits '[1]'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("testsurf_hits")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "8 telemetry flags: --duration-seconds -5 is dropped" {
+    run "$SCRIPT" log dev-flow success --duration-seconds -5
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("duration_seconds")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "8 telemetry flags: --phase-durations with non-number value is dropped" {
+    run "$SCRIPT" log dev-flow success --phase-durations '{"analyze":"x"}'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("phase_durations")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "8 telemetry flags: --merge-tier-reasons with non-string element is dropped" {
+    run "$SCRIPT" log dev-flow success --merge-tier-reasons '[{}]'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("merge_tier_reasons")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "8 telemetry flags: unparseable JSON for --phase-durations is dropped without polluting stdout" {
+    run "$SCRIPT" log dev-flow success --phase-durations '{broken'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    run jq empty "$entry_file"
+    [ "$status" -eq 0 ]
+
+    has_key=$(jq '.telemetry // {} | has("phase_durations")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+# ---------------------------------------------------------------------------
+# (e) drop の独立性: 1 キーの drop は他キー・base entry に影響しない
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: drop independence - route drop doesn't affect other telemetry" {
+    run "$SCRIPT" log dev-flow success --route bogus --merge-tier REVIEW --duration-seconds 840
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_route=$(jq '.telemetry | has("route")' "$entry_file")
+    [ "$has_route" = "false" ]
+
+    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
+    [ "$merge_tier" = "REVIEW" ]
+
+    duration=$(jq '.telemetry.duration_seconds' "$entry_file")
+    [ "$duration" = "840" ]
+}
+
+# ---------------------------------------------------------------------------
+# (f) --testsurf-hits '[]' -> telemetry.testsurf_hits が [] で記録される（キー存在）
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: --testsurf-hits empty array is recorded (key present)" {
+    run "$SCRIPT" log dev-flow success --testsurf-hits '[]'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("testsurf_hits")' "$entry_file")
+    [ "$has_key" = "true" ]
+
+    val=$(jq -c '.telemetry.testsurf_hits' "$entry_file")
+    [ "$val" = "[]" ]
+}
+
+# ---------------------------------------------------------------------------
+# (g) --vdelta-fail-open 0 -> number 0 で記録される（キー存在）
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: --vdelta-fail-open 0 is recorded as number 0 (key present)" {
+    run "$SCRIPT" log dev-flow success --vdelta-fail-open 0
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("vdelta_fail_open")' "$entry_file")
+    [ "$has_key" = "true" ]
+
+    val=$(jq '.telemetry.vdelta_fail_open' "$entry_file")
+    [ "$val" = "0" ]
+}
+
+# ---------------------------------------------------------------------------
+# (h) 8 フラグのうち --route lite のみ指定 -> route のみ存在し他 7 キーは欠落
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: only --route lite specified -> only route key present among the 8" {
+    run "$SCRIPT" log dev-flow success --route lite
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    [ "$(jq -r '.telemetry.route' "$entry_file")" = "lite" ]
+
+    for key in vdelta_verdicts vdelta_fail_open redgreen_deny testsurf_hits duration_seconds phase_durations merge_tier_reasons; do
+        has_key=$(jq --arg k "$key" '.telemetry | has($k)' "$entry_file")
+        [ "$has_key" = "false" ]
+    done
+}
+
+# ---------------------------------------------------------------------------
+# (i) 8 フラグ未指定・他 telemetry フラグも未指定 -> telemetry キー自体が無い
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: none specified and no other telemetry -> no telemetry key" {
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
+    [ "$has_telemetry" = "false" ]
+}
+
+# ---------------------------------------------------------------------------
+# (j) 既存フラグ回帰: 8 新キーが混入しない
+# ---------------------------------------------------------------------------
+@test "8 telemetry flags: existing flags only -> new 8 keys don't leak in" {
+    run "$SCRIPT" log dev-flow success --merge-tier REVIEW --gate-policy llm-major-advisory
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
+    [ "$merge_tier" = "REVIEW" ]
+    gate_policy=$(jq -r '.telemetry.gate_policy' "$entry_file")
+    [ "$gate_policy" = "llm-major-advisory" ]
+
+    for key in vdelta_verdicts vdelta_fail_open redgreen_deny testsurf_hits duration_seconds phase_durations merge_tier_reasons route; do
+        has_key=$(jq --arg k "$key" '.telemetry | has($k)' "$entry_file")
+        [ "$has_key" = "false" ]
+    done
+}

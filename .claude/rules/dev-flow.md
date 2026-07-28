@@ -74,7 +74,8 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
 - **telemetry**: dev-flow 完走時に workflow が telemetry handoff JSON（merge_tier / gate_policy / danger_hits / shape /
   shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
-  vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations / trust_surfaceproof_shadow）を
+  vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations / trust_surfaceproof_shadow /
+  merge_tier_reasons / route）を
   `~/.claude/journal/pending/` へ書き出し、
   dotfiles の Stop hook `claude-code/hooks/stop-devflow-telemetry.sh` が `journal.sh log dev-flow success --merge-tier ...`
   へ毎回自動 flush する（issue #203）。flush 失敗は `~/.claude/logs/stop-devflow-telemetry.log` に記録され pending file が
@@ -103,16 +104,19 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   **計測値には clock proxy 呼び出し自体の時間（各数秒〜十数秒）を含むため、絶対値ではなく相対比較・分布用途で
   解釈すること（特に micro run では相対歪みが大きい）**。probe 失敗は fail-open（当該 mark null → 対応する
   duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
-  これら 4 キー（testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts）に加え duration_seconds /
-  phase_durations の 2 キーも、journal whitelist 登録・dotfiles Stop hook への転送配線は別 issue（issue #356 記載）
-  で扱う — 本 PR は handoff JSON への到達と統合テストでの検証まで（`vdelta_verdict` の既存 precedent 踏襲）。
+  `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
+  （`lite`|`full` の 2 値 enum）。
+  testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
+  merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
+  する fail-open）に到達済み（issue #430）。dotfiles Stop hook 側の jq projection（送り側配線）は
+  it-all-playpark/dotfiles#143 で扱う。
   `trust_receipts` は EvalSeal/EffectDelta shadow 時のみ出力される receipt envelope 配列（stage/invalidated/receipt_id/verdict/record_integrity
   等の digest・ID・closed enum のみ — redaction 原則で raw 本文・anchors 値は保存しない）。stage は EvalSeal の
   `evaluate`/`final` に加え、EffectDelta（issue #412, epic #390 Phase 4）の `pr`（PR phase の read-only pr-observe
   観測）/`summary-comment`（post-summary の comment-ensure 投稿）を含む。EffectDelta entry には任意で
   `domain_reason_code`（DUPLICATE_EFFECT/WRONG_TARGET/RESPONSE_LOST 等、observation 由来の分類）が付き、
   Phase 5 calibration での原因別集計に使う。journal whitelist 登録・
-  dotfiles Stop hook への転送配線は別 issue（`vdelta_verdicts` precedent）で扱う — 本 issue は handoff JSON への
+  dotfiles Stop hook への転送配線は別 issue で扱う — 本 issue は handoff JSON への
   到達と統合テストでの検証まで。
   earned-autonomy 集計・calibration は **W6b へ繰り延べ**（W6 は enum 骨格と telemetry 蓄積開始のみ）。
   `trust_surfaceproof_shadow`（issue #410, epic #390 Phase 2）は `{mode, verdict, reason_code, receipt_id}`
@@ -120,7 +124,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   し kill switch（環境変数 `TRUST_KILL_SWITCH`）が無効な場合のみ shadow 実行され、それ以外の repo では
   追加 agent 呼出し 0 件のまま出力自体が省略される（AC-11: shadow/off で既存 merge tier・agent 呼出回数・
   return status は不変）。req/shape/needs_clarification 判定へは一切反映しない telemetry 専用キー。journal
-  whitelist 登録・dotfiles Stop hook への転送配線は route/vdelta_verdicts と同じ precedent で別 issue に
+  whitelist 登録・dotfiles Stop hook への転送配線は別 issue に
   繰り延べる（本 PR は handoff JSON への到達まで）。
 
 ### distrust 機構の正当化クラス (W7)

@@ -73,6 +73,8 @@ cmd_log() {
     local telemetry_json=""
     local trust_run_id="" trust_receipts="" trust_surfaceproof=""
     local trust_run_id_set=false
+    local vdelta_verdicts="" vdelta_fail_open="" redgreen_deny="" testsurf_hits=""
+    local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -120,6 +122,14 @@ cmd_log() {
             --trust-run-id) trust_run_id="$2"; trust_run_id_set=true; shift 2 ;;
             --trust-receipts) trust_receipts="$2"; shift 2 ;;
             --trust-surfaceproof) trust_surfaceproof="$2"; shift 2 ;;
+            --vdelta-verdicts) vdelta_verdicts="$2"; shift 2 ;;
+            --vdelta-fail-open) vdelta_fail_open="$2"; shift 2 ;;
+            --redgreen-deny) redgreen_deny="$2"; shift 2 ;;
+            --testsurf-hits) testsurf_hits="$2"; shift 2 ;;
+            --duration-seconds) duration_seconds="$2"; shift 2 ;;
+            --phase-durations) phase_durations="$2"; shift 2 ;;
+            --merge-tier-reasons) merge_tier_reasons="$2"; shift 2 ;;
+            --route) route="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -223,6 +233,61 @@ cmd_log() {
             ' >/dev/null 2>&1; then
             die_json "Invalid --trust-surfaceproof: mode must be off|shadow|advisory|blocking and verdict must be pass|fail|inconclusive" 1
         fi
+    fi
+
+    # Validate the 8 telemetry flags added for issue #430 (fail-open: drop-and-warn,
+    # never die_json — a single bad key must not lose the whole entry since the
+    # sender is a Stop hook auto-flush with no human retry path).
+    if [[ -n "$vdelta_verdicts" ]]; then
+        if ! echo "$vdelta_verdicts" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --vdelta-verdicts: $vdelta_verdicts (must be a JSON array of objects)" >&2
+            vdelta_verdicts=""
+        fi
+    fi
+    if [[ -n "$vdelta_fail_open" ]]; then
+        if ! [[ "$vdelta_fail_open" =~ ^[0-9]+$ ]]; then
+            echo "journal log: dropping invalid --vdelta-fail-open: $vdelta_fail_open (must be a non-negative integer)" >&2
+            vdelta_fail_open=""
+        fi
+    fi
+    if [[ -n "$redgreen_deny" ]]; then
+        if ! echo "$redgreen_deny" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --redgreen-deny: $redgreen_deny (must be a JSON array of objects)" >&2
+            redgreen_deny=""
+        fi
+    fi
+    if [[ -n "$testsurf_hits" ]]; then
+        if ! echo "$testsurf_hits" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --testsurf-hits: $testsurf_hits (must be a JSON array of strings)" >&2
+            testsurf_hits=""
+        fi
+    fi
+    if [[ -n "$duration_seconds" ]]; then
+        if ! [[ "$duration_seconds" =~ ^[0-9]+$ ]]; then
+            echo "journal log: dropping invalid --duration-seconds: $duration_seconds (must be a non-negative integer)" >&2
+            duration_seconds=""
+        fi
+    fi
+    if [[ -n "$phase_durations" ]]; then
+        if ! echo "$phase_durations" | jq -e 'type == "object" and all(.[]; type == "number")' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --phase-durations: $phase_durations (must be a JSON object of numbers)" >&2
+            phase_durations=""
+        fi
+    fi
+    if [[ -n "$merge_tier_reasons" ]]; then
+        if ! echo "$merge_tier_reasons" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --merge-tier-reasons: $merge_tier_reasons (must be a JSON array of strings)" >&2
+            merge_tier_reasons=""
+        fi
+    fi
+    if [[ -n "$route" ]]; then
+        case "$route" in
+            lite|full) ;;
+            *)
+                echo "journal log: dropping invalid --route: $route (must be lite|full)" >&2
+                route=""
+                ;;
+        esac
     fi
 
     ensure_journal_dir
@@ -351,6 +416,38 @@ cmd_log() {
     fi
     if [[ -n "$trust_surfaceproof" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson v "$trust_surfaceproof" '. + {trust_surfaceproof_shadow: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$vdelta_verdicts" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$vdelta_verdicts" '. + {vdelta_verdicts: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$vdelta_fail_open" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$vdelta_fail_open" '. + {vdelta_fail_open: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$redgreen_deny" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$redgreen_deny" '. + {redgreen_deny: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$testsurf_hits" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$testsurf_hits" '. + {testsurf_hits: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$duration_seconds" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$duration_seconds" '. + {duration_seconds: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$phase_durations" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$phase_durations" '. + {phase_durations: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$merge_tier_reasons" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$merge_tier_reasons" '. + {merge_tier_reasons: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$route" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$route" '. + {route: $v}')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then
@@ -721,6 +818,7 @@ Examples:
   journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
   journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
   journal.sh log dev-flow success --trust-run-id run-abc123 --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}]' --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
+  journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff

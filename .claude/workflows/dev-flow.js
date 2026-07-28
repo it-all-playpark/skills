@@ -4553,9 +4553,9 @@ await clockProbe('pr_end', 'PR')
 // ============================================================
 const LITE = TRIVIAL && !state.runEval && state.dangerHits.length === 0
 let iterate
-// route: telemetry 用の経路識別子（'lite'|'full'。AC-5）。journal whitelist 登録・
-// dotfiles Stop hook への転送配線は別 issue に繰り延べる（vdelta_verdicts と同じ precedent。
-// 本 PR は handoff JSON への到達と統合テストでの検証まで）。
+// route: telemetry 用の経路識別子（'lite'|'full'。AC-5）。journal.sh の --route フラグに
+// 到達済み（issue #430。lite|full 以外は当該キーのみ drop の fail-open）。dotfiles Stop hook の
+// jq projection（送り側配線）は it-all-playpark/dotfiles#143。
 let route
 if (LITE) {
   const reviewPromptLite = `cd ${WT} で作業。PR #${pr.pr_number} を批判的にレビューせよ。`
@@ -5088,8 +5088,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
     ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
     ...(state.vdeltaVerdicts.length ? { vdelta_verdicts: state.vdeltaVerdicts } : {}),
-    // route: PR phase 経路識別子（'lite'|'full'。issue #376 AC-5）。常時出力。journal whitelist
-    // 登録・dotfiles Stop hook への転送配線は別 issue に繰り延べる（vdelta_verdicts と同じ precedent）。
+    // route: PR phase 経路識別子（'lite'|'full'。issue #376 AC-5）。常時出力。journal.sh の
+    // --route フラグに到達済み（issue #430）。送り側の jq projection は it-all-playpark/dotfiles#143。
     route,
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
