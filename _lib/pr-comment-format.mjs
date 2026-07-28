@@ -48,7 +48,7 @@ const STATUS_HEADLINE = {
   'max_reached': '⚠️ 反復上限到達',
   'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
-  'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision と blocking findings の矛盾が再 review 後も再発。人間へエスカレーション',
+  'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision/blocking 矛盾の再発、または reviewer が StructuredOutput 契約違反で結果を返さず。人間へエスカレーション',
 };
 
 /**
@@ -77,7 +77,7 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
   lines.push('| 終了状態 | 反復回数 | 最終判定 |');
   lines.push('|---|---|---|');
   const decEmoji = DECISION_EMOJI[lastDecision] ?? '';
-  const decLabel = DECISION_LABEL[lastDecision] ?? lastDecision;
+  const decLabel = DECISION_LABEL[lastDecision] ?? lastDecision ?? '—';
   lines.push(`| ${status} | ${iterations} | ${decEmoji} ${decLabel} |`);
 
   lines.push('');
