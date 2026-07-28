@@ -212,7 +212,6 @@ function resolveBase(baseArg, probe) {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const JOURNAL_PENDING_DIR = '${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending';
-const JOURNAL_HANDOFF_DELIMITER = 'TELEMETRY_EOF';
 
 function buildJournalHandoffPayload({
   skill,
@@ -241,7 +240,18 @@ function buildJournalHandoffPayload({
   return JSON.stringify(payload);
 }
 
-function buildJournalHandoffCommand({ prefix, id, payload }) {
+// buildJournalFinalizeCommand({ prefix, id }): returns a single-line bash command that
+// validates a payload file (already written verbatim to disk elsewhere, e.g. by the Write
+// tool per buildJournalHandoffInstr) via `jq -e` BEFORE ever touching pending/, then performs
+// the same stable-effect-ID naming + mktemp/mv atomic write as the previous heredoc-based
+// command: partial JSON can never be visible under a *.json name (tmp is dot-prefixed and
+// non-.json until the atomic `mv -f`, and lives in the same pending/ filesystem so the mv is
+// atomic), and re-running with an identical payload reproduces the same final filename
+// (idempotent overwrite, no duplicate entries). `<PAYLOAD_FILE>` is a literal placeholder —
+// the caller (the agent executing the instruction from buildJournalHandoffInstr) must
+// substitute it with a real file path before running the command. A jq parse failure
+// (malformed JSON) short-circuits the `&&` chain so nothing is ever written under pending/.
+function buildJournalFinalizeCommand({ prefix, id }) {
   const safePrefix = String(prefix ?? '').trim();
   const safeId = String(id ?? '').trim();
   if (!/^[a-z][a-z0-9-]*$/.test(safePrefix)) {
@@ -250,13 +260,31 @@ function buildJournalHandoffCommand({ prefix, id, payload }) {
   if (!/^[1-9][0-9]*$/.test(safeId)) {
     throw new Error(`journal-handoff: invalid id: ${JSON.stringify(id)}`);
   }
-  if (payload == null) throw new Error('journal-handoff: payload is required');
 
-  // Stable effect-ID naming (sha256 of payload, first 16 hex chars) + mktemp/mv atomic
-  // write: partial JSON can never be visible under a *.json name (tmp is dot-prefixed
-  // and non-.json until the atomic `mv -f`), and re-running with an identical payload
-  // reproduces the same final filename (idempotent overwrite, no duplicate entries).
-  return `mkdir -p ${JOURNAL_PENDING_DIR} && __jh_tmp=$(mktemp "${JOURNAL_PENDING_DIR}/.${safePrefix}-${safeId}.XXXXXX") && cat > "$__jh_tmp" <<'${JOURNAL_HANDOFF_DELIMITER}' && __jh_id=$(shasum -a 256 "$__jh_tmp" | cut -c1-16) && mv -f "$__jh_tmp" "${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-\${__jh_id}.json"\n${String(payload)}\n${JOURNAL_HANDOFF_DELIMITER}`;
+  return `jq -e . "<PAYLOAD_FILE>" >/dev/null && mkdir -p ${JOURNAL_PENDING_DIR} && __jh_tmp=$(mktemp "${JOURNAL_PENDING_DIR}/.${safePrefix}-${safeId}.XXXXXX") && cp "<PAYLOAD_FILE>" "$__jh_tmp" && __jh_id=$(shasum -a 256 "$__jh_tmp" | cut -c1-16) && mv -f "$__jh_tmp" "${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-\${__jh_id}.json"`;
+}
+
+// buildJournalHandoffInstr({ prefix, id, payload }): agent 向け instruction 文字列を生成する。
+// _lib/workflow-post-helpers.mjs の bodySaveInstr と同じ Write-tool verbatim パターン — payload
+// を shell/heredoc へ一切通さず、agent に **Write tool** の content 引数として <PAYLOAD_FILE> へ
+// そのまま書かせることで、heredoc + プロンプト + tool-call JSON という多重エスケープの発生源
+// そのものを除去する。書き出し後、buildJournalFinalizeCommand の結果（jq -e 検証込み）を
+// <PAYLOAD_FILE> を実パスに置換した上でそのまま実行させ、失敗（jq parse error 含む）しても
+// throw せず logged:false を返させる（既存の telemetry fail-open ポリシーを維持）。
+function buildJournalHandoffInstr({ prefix, id, payload }) {
+  if (payload == null) throw new Error('journal-handoff: payload is required');
+  const finalizeCmd = buildJournalFinalizeCommand({ prefix, id });
+
+  return `## Journal handoff の書き出し\n`
+    + `1. まず Bash で \`mktemp "\${TMPDIR:-/tmp}/journal-handoff-XXXXXX.json"\` を実行し、\n`
+    + `出力されたパスを <PAYLOAD_FILE> とする。\n`
+    + `2. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
+    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
+    + `渡さず、必ず Write tool の content 引数として渡すこと。エスケープ・改変・pretty-print も\n`
+    + `禁止する。\n`
+    + `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`
+    + `3. <PAYLOAD_FILE> を実パスに置換した上で、次のコマンドをそのまま実行せよ: \`${finalizeCmd}\`\n`
+    + `jq の parse error を含め失敗しても throw せず logged:false を返すこと。\n`;
 }
 
 function repoFromGithubUrl(url) {
@@ -1136,6 +1164,36 @@ function vdeltaDenies(verdict) {
   }
 
   return { deny: false, reasons: [], status: 'clean' };
+}
+
+// vdeltaVerdictDigest: raw verdict（テスト名・anchors・run_id・transitions 配列本体等を含み得る）を
+// telemetry に安全に載せられる閉じた 4 キー scalar digest へ還元する（issue #433 方式 B）。
+// trust_receipts と同じ redaction 原則: 生の verdict フィールドは一切保持しない。
+function vdeltaVerdictDigest(verdict) {
+  const status = vdeltaDenies(verdict).status;
+
+  let parsed = verdict;
+  if (typeof verdict === 'string') {
+    try {
+      parsed = JSON.parse(verdict);
+    } catch {
+      parsed = null;
+    }
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { status, comparability: null, verification_surface: null, repaired_with_test_change: 0 };
+  }
+
+  const comparability = typeof parsed.comparability === 'string' ? parsed.comparability.slice(0, 64) : null;
+
+  const surfaceStatus = parsed.verification_surface?.status;
+  const verification_surface = typeof surfaceStatus === 'string' ? surfaceStatus.slice(0, 64) : null;
+
+  const repaired = parsed.transitions?.repaired_with_test_change;
+  const repaired_with_test_change = Array.isArray(repaired) ? repaired.length : 0;
+
+  return { status, comparability, verification_surface, repaired_with_test_change };
 }
 // ==== END inline: _lib/vdelta-transitions.mjs ====
 
@@ -2374,16 +2432,15 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     error_msg,
     telemetry,
   })
-  const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload })
+  const journalInstr = buildJournalHandoffInstr({ prefix: 'devflow', id: ISSUE, payload })
   const res = await agent(
     `## Objective\ndev-flow 失敗の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
     + `## Instructions\n`
-    + `次のコマンドをそのまま実行せよ: \`${journalCmd}\`\n`
-    + `exit 0 なら logged:true、失敗しても throw せず logged:false を返すこと。\n`
+    + journalInstr
     + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-    + `\n## Tools\n使用可: Bash のみ\n`
-    + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
-    + `\n## Token cap\n100 語以内で完結すること。`,
+    + `\n## Tools\n使用可: Bash, Write のみ\n`
+    + `\n## Boundary\n<PAYLOAD_FILE>（一時ファイル）と ~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
+    + `\n## Token cap\n150 語以内で完結すること。`,
     { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log-failure', phase },
   )
   if (!res?.logged) log('⚠️ journal-log(failure) の記録に失敗 — workflow は継続')
@@ -4262,7 +4319,7 @@ async function execEvaluatePhase(state) {
           + `bash ~/.claude/skills/_shared/scripts/redgreen-verify.sh ${WT} `
           + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
           { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
-        if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, verdict: rg.verdict })
+        if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })
         const denyRes = vdeltaDenies(rg ? rg.verdict : null)
         if (rg && denyRes.status === 'fail_open') state.vdeltaFailOpen += 1
         if (rg && rg.red === true && rg.green === true && !denyRes.deny) {
@@ -5070,16 +5127,15 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.trustSurfaceProofShadow || state.trustReceipts.length ? { trust_run_id: RUN_ID } : {}),
   },
 })
-const journalCmd = buildJournalHandoffCommand({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
+const journalInstr = buildJournalHandoffInstr({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
 const journalPost = await agent(
   `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
   + `## Instructions\n`
-  + `次のコマンドをそのまま実行せよ: \`${journalCmd}\`\n`
-  + `exit 0 なら logged:true、失敗しても throw せず logged:false を返すこと。\n`
+  + journalInstr
   + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-  + `\n## Tools\n使用可: Bash のみ\n`
-  + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
-  + `\n## Token cap\n100 語以内で完結すること。`,
+  + `\n## Tools\n使用可: Bash, Write のみ\n`
+  + `\n## Boundary\n<PAYLOAD_FILE>（一時ファイル）と ~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
+  + `\n## Token cap\n150 語以内で完結すること。`,
   { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Merge tier' },
 )
 if (!journalPost?.logged) {

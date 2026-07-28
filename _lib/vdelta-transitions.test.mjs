@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
-import { vdeltaDenies } from './vdelta-transitions.mjs';
+import { vdeltaDenies, vdeltaVerdictDigest } from './vdelta-transitions.mjs';
 
 const cleanVerdict = (over = {}) => ({
   comparability: 'exact',
@@ -133,4 +133,98 @@ test('[vdeltaDenies] verification_surface 欠落は deny 理由にしない（cl
   const res = vdeltaDenies(cleanVerdict({ verification_surface: undefined }));
   assert.equal(res.deny, false);
   assert.equal(res.status, 'clean');
+});
+
+test('[vdeltaVerdictDigest] object verdict → 閉じた 4 キー digest', () => {
+  const verdict = cleanVerdict({
+    transitions: { repaired_with_test_change: ['AC-1', 'AC-2'] },
+  });
+  const digest = vdeltaVerdictDigest(verdict);
+  assert.deepEqual(digest, {
+    status: 'deny',
+    comparability: 'exact',
+    verification_surface: 'intact',
+    repaired_with_test_change: 2,
+  });
+});
+
+test('[vdeltaVerdictDigest] JSON 文字列 verdict でも同結果', () => {
+  const verdict = cleanVerdict({
+    transitions: { repaired_with_test_change: ['AC-1', 'AC-2'] },
+  });
+  const digest = vdeltaVerdictDigest(JSON.stringify(verdict));
+  assert.deepEqual(digest, {
+    status: 'deny',
+    comparability: 'exact',
+    verification_surface: 'intact',
+    repaired_with_test_change: 2,
+  });
+});
+
+test('[vdeltaVerdictDigest] 不正 JSON 文字列 → fail_open + fields null/0', () => {
+  const digest = vdeltaVerdictDigest('not-json{');
+  assert.deepEqual(digest, {
+    status: 'fail_open',
+    comparability: null,
+    verification_surface: null,
+    repaired_with_test_change: 0,
+  });
+});
+
+test('[vdeltaVerdictDigest] comparability≠exact → status:abstain', () => {
+  const digest = vdeltaVerdictDigest(cleanVerdict({ comparability: 'stream_changed' }));
+  assert.equal(digest.status, 'abstain');
+  assert.equal(digest.comparability, 'stream_changed');
+});
+
+test('[vdeltaVerdictDigest] redaction 回帰: 日本語テスト名・vdelta show --raw anchor を含む raw verdict でも digest に漏れない', () => {
+  const rawVerdict = {
+    comparability: 'exact',
+    verification_surface: { status: 'intact' },
+    transitions: {
+      repaired_with_test_change: ['AC-1'],
+      updated_fail: [
+        {
+          test_name: '日本語のテスト名：異常系がエスケープされた文字列を含む場合の挙動確認',
+          anchor: 'vdelta show run_devflow-411 --raw',
+          run_id: 'devflow-411',
+          nested: '{"escaped":"\\\\n\\\\t\\"quoted\\"\\\\u0041"}',
+        },
+      ],
+    },
+  };
+  const digest = vdeltaVerdictDigest(rawVerdict);
+  const serialized = JSON.stringify(digest);
+  assert.ok(!serialized.includes('日本語'));
+  assert.ok(!serialized.includes('vdelta show'));
+  assert.ok(!serialized.includes('devflow-411'));
+  assert.ok(!serialized.includes('escaped'));
+  assert.ok(serialized.length < 300, `digest serialized length should be < 300 bytes, got ${serialized.length}`);
+});
+
+test('[vdeltaVerdictDigest] 64 文字超の comparability は slice(0,64) される', () => {
+  const longComparability = 'x'.repeat(100);
+  const digest = vdeltaVerdictDigest(cleanVerdict({ comparability: longComparability }));
+  assert.equal(digest.comparability, 'x'.repeat(64));
+  assert.equal(digest.comparability.length, 64);
+});
+
+test('[vdeltaVerdictDigest] verification_surface.status 欠落 → null', () => {
+  const digest = vdeltaVerdictDigest(cleanVerdict({ verification_surface: undefined }));
+  assert.equal(digest.verification_surface, null);
+});
+
+test('[vdeltaVerdictDigest] transitions.repaired_with_test_change が配列でない → 0', () => {
+  const digest = vdeltaVerdictDigest(cleanVerdict({ transitions: { repaired_with_test_change: 'not-an-array' } }));
+  assert.equal(digest.repaired_with_test_change, 0);
+});
+
+test('[vdeltaVerdictDigest] null verdict → fail_open + fields null/0', () => {
+  const digest = vdeltaVerdictDigest(null);
+  assert.deepEqual(digest, {
+    status: 'fail_open',
+    comparability: null,
+    verification_surface: null,
+    repaired_with_test_change: 0,
+  });
 });

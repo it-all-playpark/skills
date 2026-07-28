@@ -94,7 +94,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `testsurf_hits` は test-weakening pattern 名の配列（常時出力、hit 無しは空配列）。
   `redgreen_deny` は `{ac, reasons}` の配列（deny 発生時のみ出力）。
   `vdelta_fail_open` は fail_open 発生件数（>0 時のみ出力）。
-  `vdelta_verdicts` は per-AC の vdelta verdict 配列（単一キーへの上書き出力・dual-key 併記はしない）。
+  `vdelta_verdicts` は per-AC digest 配列（`{ac, status, comparability, verification_surface, repaired_with_test_change}` のみ。raw verdict・anchors・テスト名は redaction 原則で保存しない — issue #433。単一キーへの上書き出力・dual-key 併記はしない）。
   `duration_seconds` は run 全体の wall-clock 秒（clock#start 〜 clock#end）。
   `phase_durations` は analyze / plan / implement / validate / evaluate / pr / iterate / final の 8 phase の秒数 object。
   各 phase は開始〜終了の全体時間（plan-review loop / evaluate 差し戻し loop 等の内部反復を含む）。evaluate 区間は

@@ -104,7 +104,10 @@ function evaluatorResponseFor(req) {
 // から `\nTELEMETRY_EOF` 直前までを取り出す。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  const m = prompt.match(/\n(\{[\s\S]*?\})\nTELEMETRY_EOF/);
+  // issue #433: journal-handoff.mjs の journal-log prompt は buildJournalHandoffInstr の
+  // Write-tool verbatim delimiter（<<<JOURNAL_HANDOFF_BODY_BEGIN/END>>>）で payload を囲む
+  // （旧 heredoc `TELEMETRY_EOF` 形式は撤去済み）。
+  const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
   if (!m) return null;
   try {
     return JSON.parse(m[1]);

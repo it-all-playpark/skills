@@ -50,3 +50,33 @@ export function vdeltaDenies(verdict) {
 
   return { deny: false, reasons: [], status: 'clean' };
 }
+
+// vdeltaVerdictDigest: raw verdict（テスト名・anchors・run_id・transitions 配列本体等を含み得る）を
+// telemetry に安全に載せられる閉じた 4 キー scalar digest へ還元する（issue #433 方式 B）。
+// trust_receipts と同じ redaction 原則: 生の verdict フィールドは一切保持しない。
+export function vdeltaVerdictDigest(verdict) {
+  const status = vdeltaDenies(verdict).status;
+
+  let parsed = verdict;
+  if (typeof verdict === 'string') {
+    try {
+      parsed = JSON.parse(verdict);
+    } catch {
+      parsed = null;
+    }
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { status, comparability: null, verification_surface: null, repaired_with_test_change: 0 };
+  }
+
+  const comparability = typeof parsed.comparability === 'string' ? parsed.comparability.slice(0, 64) : null;
+
+  const surfaceStatus = parsed.verification_surface?.status;
+  const verification_surface = typeof surfaceStatus === 'string' ? surfaceStatus.slice(0, 64) : null;
+
+  const repaired = parsed.transitions?.repaired_with_test_change;
+  const repaired_with_test_change = Array.isArray(repaired) ? repaired.length : 0;
+
+  return { status, comparability, verification_surface, repaired_with_test_change };
+}
