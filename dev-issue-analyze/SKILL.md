@@ -48,14 +48,14 @@ checkbox 項目 1 件以上。T2 = 同見出し + 素の箇条書き（`- `/`* `
 | `ineligible_reason` | 不合格理由（該当時のみ） |
 | `issue_number` | issue 番号 |
 | `title` | issue title |
-| `issue_type` | `feat`/`fix`/`docs`/`refactor`（title prefix → label fallback） |
+| `issue_type` | `feat`/`fix`/`docs`/`refactor`/`chore`/`test`/`perf`/`ci`（title prefix → label fallback） |
 | `acceptance_criteria` | marker 除去済み、最大 20 件 |
 | `scope` | AC 節を除く body 全文 head -c 4000 |
 | `estimated_change_file_count` | スコープ節のファイルパス数。導出不能時はキー省略（dev-flow 側 classifyShape の complex floor 安全則がそのまま働く） |
 | `breaking_keyword_scan` | 決定論 keyword scan の結果 |
 
-**Eligibility**: `contract` ∈ `{t1, t2}` かつ `issue_type` ∈ `{feat, fix, docs, refactor}`（title prefix → label
-fallback。`chore:` 等 out-of-enum prefix は不合格）かつ title に `!` breaking marker なし かつ
+**Eligibility**: `contract` ∈ `{t1, t2}` かつ `issue_type` ∈ `{feat, fix, docs, refactor, chore, test, perf, ci}`
+（title prefix → label fallback。`style:` 等 out-of-enum prefix は不合格）かつ title に `!` breaking marker なし かつ
 `breaking_keyword_scan === false`。不合格は exit 0 + `eligible:false`（dev-flow が sonnet analyze へ fallback）。
 
 **残余リスク**: light path（`--contract` 採用時）は LLM 構造化 breaking 判定を行わない。keyword hit 時は
@@ -68,7 +68,7 @@ realized diff / merge tier が補償する（意図的な設計判断）。
 {
   "issue_number": 123,
   "title": "...",
-  "type": "feat|fix|refactor|docs",
+  "type": "feat|fix|refactor|docs|chore|test|perf|ci",
   "state": "open|closed",
   "labels": ["bug", "enhancement"],
   "acceptance_criteria": ["- [ ] AC1", "- [ ] AC2"],
