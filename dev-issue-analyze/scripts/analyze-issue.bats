@@ -216,9 +216,10 @@ Some prose but no bullet points here.
 }
 
 # ---------------------------------------------------------------------------
-# (l) chore: prefix -> issue_type not in {feat,fix,docs,refactor} -> ineligible
+# (l) chore: prefix -> issue_type in {feat,fix,docs,refactor,chore,test,perf,ci}
+#     -> eligible (issue #442 enum 拡張)
 # ---------------------------------------------------------------------------
-@test "contract mode: chore: prefix title -> issue_type ineligible" {
+@test "contract mode: chore: prefix title -> eligible (issue #442 enum 拡張)" {
     FIXTURE="$FIXTURE_DIR/contract-chore.json"
     make_fixture "$FIXTURE" "chore: bump deps" "## Acceptance Criteria
 
@@ -226,7 +227,37 @@ Some prose but no bullet points here.
     export GH_FIXTURE="$FIXTURE"
     run "$SCRIPT" 14 --contract
     [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.eligible == true and .issue_type == "chore"'
+}
+
+# ---------------------------------------------------------------------------
+# (l2) style: prefix -> issue_type not in enum -> ineligible (out-of-enum
+#      regression coverage now that chore is valid; 'style' stays out-of-enum)
+# ---------------------------------------------------------------------------
+@test "contract mode: style: prefix title -> ineligible (out-of-enum)" {
+    FIXTURE="$FIXTURE_DIR/contract-style.json"
+    make_fixture "$FIXTURE" "style: tweak css" "## Acceptance Criteria
+
+- [ ] css tweaked"
+    export GH_FIXTURE="$FIXTURE"
+    run "$SCRIPT" 29 --contract
+    [ "$status" -eq 0 ]
     echo "$output" | jq -e '.eligible == false and (.ineligible_reason | contains("issue_type"))'
+}
+
+# ---------------------------------------------------------------------------
+# (l3) test: prefix -> issue_type in enum -> eligible (bash reserved-word /
+#      `test` command name collision check, issue #442)
+# ---------------------------------------------------------------------------
+@test "contract mode: test: prefix title -> eligible (issue #442 enum 拡張)" {
+    FIXTURE="$FIXTURE_DIR/contract-test-type.json"
+    make_fixture "$FIXTURE" "test: add regression spec" "## Acceptance Criteria
+
+- [ ] regression spec added"
+    export GH_FIXTURE="$FIXTURE"
+    run "$SCRIPT" 30 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.eligible == true and .issue_type == "test"'
 }
 
 # ---------------------------------------------------------------------------

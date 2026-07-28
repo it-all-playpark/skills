@@ -76,7 +76,8 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # T1 = AC heading (h1-h6, "Acceptance Criteria" / "受け入れ基準" etc.) + >=1 checkbox item.
 # T2 = same heading + >=1 plain bullet/numbered item (no checkbox).
 # Eligible only when contract in {t1,t2}, issue_type (title prefix -> label fallback) is in
-# {feat,fix,docs,refactor}, no `!` breaking marker in title, and breaking_keyword_scan==false.
+# {feat,fix,docs,refactor,chore,test,perf,ci}, no `!` breaking marker in title, and
+# breaking_keyword_scan==false.
 # Ineligible/unparseable => eligible:false + ineligible_reason (exit 0; caller falls back to
 # the existing sonnet(dev-runner) analyze path — this is a fail-open speed optimization only).
 
@@ -217,10 +218,10 @@ run_contract_mode() {
 
     if [[ "$eligible" == true ]]; then
         case "$issue_type" in
-            feat|fix|docs|refactor) ;;
+            feat|fix|docs|refactor|chore|test|perf|ci) ;;
             *)
                 eligible=false
-                ineligible_reason="issue_type '$issue_type' not in {feat,fix,docs,refactor}"
+                ineligible_reason="issue_type '$issue_type' not in {feat,fix,docs,refactor,chore,test,perf,ci}"
                 ;;
         esac
     fi

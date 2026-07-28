@@ -77,10 +77,19 @@ test('[analyze-contract] (5) contract:\'none\' → null', () => {
   assert.equal(buildReqFromContract(baseContract({ contract: 'none' }), 374), null);
 });
 
-// (6) issue_type 'chore' → null
-test('[analyze-contract] (6) issue_type \'chore\' (out-of-enum) → null', () => {
-  assert.equal(buildReqFromContract(baseContract({ issue_type: 'chore' }), 374), null);
+// (6) issue_type 'style' (out-of-enum) → null
+test('[analyze-contract] (6) issue_type \'style\' (out-of-enum) → null', () => {
+  assert.equal(buildReqFromContract(baseContract({ issue_type: 'style' }), 374), null);
 });
+
+// (6b) 新規4型 (chore/test/perf/ci) → 非 null、issue_type は入力どおり
+for (const issueType of ['chore', 'test', 'perf', 'ci']) {
+  test(`[analyze-contract] (6b) issue_type '${issueType}' → 非 null、issue_type は入力どおり`, () => {
+    const req = buildReqFromContract(baseContract({ issue_type: issueType }), 442);
+    assert.ok(req !== null);
+    assert.equal(req.issue_type, issueType);
+  });
+}
 
 // (7) breaking_keyword_scan:true → null
 test('[analyze-contract] (7) breaking_keyword_scan:true → null', () => {

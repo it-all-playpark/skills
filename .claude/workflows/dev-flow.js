@@ -1343,6 +1343,7 @@ function reconcileTestsurf(ledger, risk) {
 // issue #364: keyword scan 単独 (breaking_keyword_scan=true && breaking_change!==true) は
 // complex floor に採用しない (低 precision ヒューリスティック、実測 FP: #359/#361)。
 // 構造化判定 breaking_change===true との corroboration があるときのみ floor へ採用する。
+// issue #442: issue_type enum ドリフト修正 — AGENTS.md の正規 Conventional Commits 型 (chore/test/perf/ci) を validTypes に追加。
 const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function mergeShape(floor, llmShape) {
@@ -1369,7 +1370,7 @@ function classifyShape(req) {
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
 
-  const validTypes = ['feat', 'fix', 'docs', 'refactor'];
+  const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci'];
   if (!validTypes.includes(req.issue_type)) {
     const floor = 'complex';
     const reason = `issue_type '${req.issue_type}' not in allowed set → floor=complex`;
@@ -1459,7 +1460,7 @@ function refloorShape(estimatedShape, realizedCount) {
 //   - contract.eligible === true
 //   - contract.contract が 't1' か 't2' のいずれか
 //   - contract.title が非空 string
-//   - contract.issue_type が feat/fix/docs/refactor のいずれか
+//   - contract.issue_type が feat/fix/docs/refactor/chore/test/perf/ci のいずれか
 //   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
 //   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
 //   - contract.scope が string
@@ -1474,7 +1475,7 @@ function buildReqFromContract(contract, issueNumber) {
   if (contract.contract !== 't1' && contract.contract !== 't2') return null
   if (typeof contract.title !== 'string' || contract.title.length === 0) return null
 
-  const validTypes = ['feat', 'fix', 'docs', 'refactor']
+  const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci']
   if (!validTypes.includes(contract.issue_type)) return null
 
   if (!Array.isArray(contract.acceptance_criteria) || contract.acceptance_criteria.length === 0) return null

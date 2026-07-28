@@ -86,18 +86,59 @@ test('count=6, ac=2, type=feat → shape=complex', () => {
   assert.ok(result.reason.length > 0);
 });
 
-// (e) issue_type='chore' (enum 外) → 'complex'
-test("issue_type='chore' (enum 外) → shape=complex", () => {
+// (e) issue_type='style' (enum 外) → 'complex'
+test("issue_type='style' (enum 外) → shape=complex", () => {
   const result = classifyShape({
     estimated_change_file_count: 1,
     acceptance_criteria: ['x', 'y'],
-    issue_type: 'chore',
+    issue_type: 'style',
     scope: 'src/foo.ts',
-    summary: 'chore something',
+    summary: 'style something',
   });
   assert.equal(result.shape, 'complex');
   assert.equal(typeof result.reason, 'string');
   assert.ok(result.reason.length > 0);
+});
+
+// (e2) 新規4型 (chore/test/perf/ci) は micro 適格の他条件を満たせば shape=micro
+for (const issueType of ['chore', 'test', 'perf', 'ci']) {
+  test(`issue_type='${issueType}' (新規4型), count=1, ac=2, no breaking → shape=micro`, () => {
+    const result = classifyShape({
+      estimated_change_file_count: 1,
+      acceptance_criteria: ['a', 'b'],
+      issue_type: issueType,
+      breaking_change: false,
+      shape: 'micro',
+    });
+    assert.equal(result.shape, 'micro');
+  });
+}
+
+// (e3) 新規4型でも complex floor の既存条件は素通りしない (回帰)
+test("issue_type='chore', estimated_change_file_count 欠落 → shape=complex", () => {
+  const result = classifyShape({
+    acceptance_criteria: ['a', 'b'],
+    issue_type: 'chore',
+  });
+  assert.equal(result.shape, 'complex');
+});
+
+test("issue_type='chore', acceptance_criteria 欠落 → shape=complex", () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    issue_type: 'chore',
+  });
+  assert.equal(result.shape, 'complex');
+});
+
+test("issue_type='chore', breaking_change=true (count=1, ac=2) → shape=complex", () => {
+  const result = classifyShape({
+    estimated_change_file_count: 1,
+    acceptance_criteria: ['a', 'b'],
+    issue_type: 'chore',
+    breaking_change: true,
+  });
+  assert.equal(result.shape, 'complex');
 });
 
 // (f) regression (PR #277 相当): scope に breaking 文言があるが breaking_change/breaking_keyword_scan

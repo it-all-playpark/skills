@@ -12,7 +12,7 @@
 //   - contract.eligible === true
 //   - contract.contract が 't1' か 't2' のいずれか
 //   - contract.title が非空 string
-//   - contract.issue_type が feat/fix/docs/refactor のいずれか
+//   - contract.issue_type が feat/fix/docs/refactor/chore/test/perf/ci のいずれか
 //   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
 //   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
 //   - contract.scope が string
@@ -27,7 +27,7 @@ export function buildReqFromContract(contract, issueNumber) {
   if (contract.contract !== 't1' && contract.contract !== 't2') return null
   if (typeof contract.title !== 'string' || contract.title.length === 0) return null
 
-  const validTypes = ['feat', 'fix', 'docs', 'refactor']
+  const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci']
   if (!validTypes.includes(contract.issue_type)) return null
 
   if (!Array.isArray(contract.acceptance_criteria) || contract.acceptance_criteria.length === 0) return null
