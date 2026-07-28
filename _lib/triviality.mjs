@@ -9,6 +9,7 @@
 // issue #364: keyword scan 単独 (breaking_keyword_scan=true && breaking_change!==true) は
 // complex floor に採用しない (低 precision ヒューリスティック、実測 FP: #359/#361)。
 // 構造化判定 breaking_change===true との corroboration があるときのみ floor へ採用する。
+// issue #442: issue_type enum ドリフト修正 — AGENTS.md の正規 Conventional Commits 型 (chore/test/perf/ci) を validTypes に追加。
 export const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
 function mergeShape(floor, llmShape) {
@@ -35,7 +36,7 @@ export function classifyShape(req) {
     return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
   }
 
-  const validTypes = ['feat', 'fix', 'docs', 'refactor'];
+  const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci'];
   if (!validTypes.includes(req.issue_type)) {
     const floor = 'complex';
     const reason = `issue_type '${req.issue_type}' not in allowed set → floor=complex`;
