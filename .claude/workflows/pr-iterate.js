@@ -288,7 +288,7 @@ const STATUS_HEADLINE = {
   'max_reached': '⚠️ 反復上限到達',
   'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
-  'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision と blocking findings の矛盾が再 review 後も再発。人間へエスカレーション',
+  'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision/blocking 矛盾の再発、または reviewer が StructuredOutput 契約違反で結果を返さず。人間へエスカレーション',
 };
 
 /**
@@ -317,7 +317,7 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   lines.push('| 終了状態 | 反復回数 | 最終判定 |');
   lines.push('|---|---|---|');
   const decEmoji = DECISION_EMOJI[lastDecision] ?? '';
-  const decLabel = DECISION_LABEL[lastDecision] ?? lastDecision;
+  const decLabel = DECISION_LABEL[lastDecision] ?? lastDecision ?? '—';
   lines.push(`| ${status} | ${iterations} | ${decEmoji} ${decLabel} |`);
 
   lines.push('');
@@ -508,6 +508,10 @@ const CI_STATUS = {
   },
 }
 
+// issue #437: 終端 dirty 検出（AC-2）と fix 適用後 commit 保証（AC-3）の exec-proxy スキーマ。
+const DIRTY_STATUS = { type: 'object', required: ['dirty'], properties: { dirty: { type: 'boolean' }, files: { type: 'number' } } }
+const COMMIT_ENSURE = { type: 'object', required: ['dirty'], properties: { dirty: { type: 'boolean' }, committed: { type: 'boolean' }, pushed: { type: 'boolean' } } }
+
 phase('Iterate')
 
 // repo (owner/name) probe: PR の base repo URL から owner/name を導出する（telemetry の repo 解決用。issue #309）。
@@ -526,6 +530,8 @@ let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
 let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
 let fixNullRetries = 0  // fix agent が null（schema 不一致・技術的失敗）で 1 回 retry した累積回数。issue #347
+let reviewNullRetries = 0  // review agent が throw または null で schema-retry した累積回数。issue #437
+let fixUncommittedRecovered = 0  // fix が applied:true なのに未コミット変更が残っており ensure-committed が commit+push で回収した回数（issue #437）
 let totalCiWaitSeconds = 0  // check-ci.sh --wait-seconds ポーリングの累積待機秒数（全 ci-check ラウンド合算。issue #324）
 let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
@@ -547,6 +553,53 @@ async function callFixAgent(prompt, i) {
   return { fix, retried }
 }
 
+// review agent の throw（StructuredOutput 契約違反等の harness 例外）と null（schema 不一致）を
+// 同一の契約失敗として扱い、呼び出しごと最大 1 回だけ同一 prompt で再試行する（issue #437）。
+// retry 後も失敗なら null を返し、呼び出し側が status:'review_contract_error' で graceful に終了する。
+async function callReviewAgent(prompt, label) {
+  let review = null
+  try {
+    review = await agent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label, phase: 'Iterate' })
+  } catch (e) {
+    log(`⚠️ ${label} が例外を投げた（StructuredOutput 契約違反等）: ${e?.message ?? e}`)
+  }
+  if (review == null) {
+    reviewNullRetries++
+    log(`⚠️ ${label} が結果を返さず — 同一 prompt で 1 回だけ再試行する（schema-retry）`)
+    try {
+      review = await agent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `${label}-schema-retry`, phase: 'Iterate' })
+    } catch (e) {
+      log(`⚠️ ${label}-schema-retry も例外: ${e?.message ?? e}`)
+    }
+  }
+  return review
+}
+
+// fix 適用直後の commit 保証（AC-3, issue #437）。fix agent の self-report（applied:true）を信用せず
+// 決定論スクリプトで worktree の未コミット変更を検証し、dirty なら commit+push で回収する。
+// 失敗ポリシー: fail-safe — null/schema 不一致/回収失敗（dirty なのに committed&&pushed でない）は
+// false を返し、呼び出し側が terminal='fix_failed' で人間へエスカレーションする
+// （未コミットのまま次 iteration へ進むと再 review が stale な PR diff を見るため、状態不明を green と同一視しない）。
+async function ensureFixCommitted(i) {
+  let ensured = null
+  try {
+    ensured = await agent(
+      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証する（残っていれば commit + push で回収する）。\n\n## Steps\nインストール済み skills の **固定パス** で ensure-committed.sh を実行せよ（リテラルの \`~/.claude/skills/\` プレフィックスをそのまま使うこと）:\n\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/ensure-committed.sh --pr ${PR} --iteration ${i}\n\`\`\`\n**重要**: 必ずこの \`~/.claude/skills/...\` の絶対パス形で起動せよ。worktree 相対パスや $HOME 展開形で起動してはならない。\`~/.claude/skills/*\` で起動した場合のみ sandbox 除外（excludedCommands）が効き、内部の git push が credential helper（gh 連携）を読める。\nスクリプトの stdout JSON をそのまま返せ。\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\nこのスクリプト実行以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+      { agentType: 'dev-runner-haiku', schema: COMMIT_ENSURE, label: `commit-ensure#${i}`, phase: 'Iterate' },
+    )
+  } catch (e) {
+    log(`⚠️ commit-ensure#${i} が例外: ${e?.message ?? e}`)
+  }
+  if (ensured == null) return false
+  if (ensured.dirty === false) return true
+  if (ensured.committed === true && ensured.pushed === true) {
+    fixUncommittedRecovered++
+    log(`⚠️ fix#${i} は applied:true だが未コミット変更が残っていた — ensure-committed が commit+push で回収した`)
+    return true
+  }
+  return false
+}
+
 for (i = 1; i <= MAX; i++) {
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
   const reviewPrompt = `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
@@ -557,11 +610,12 @@ for (i = 1; i <= MAX; i++) {
           + `別観点の上乗せ（moving target）は禁止。既出問題を再提起する場合は既出と同じ topic 文字列を`
           + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
         : '')
-  const review = await agent(
-    reviewPrompt,
-    { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}`, phase: 'Iterate' },
-  )
-  if (review == null) throw new Error(`pr-iterate: review#${i} が結果を返しませんでした（skip された可能性）`)
+  const review = await callReviewAgent(reviewPrompt, `review#${i}`)
+  if (review == null) {
+    terminal = 'review_contract_error'
+    log(`⚠️ iteration ${i}: review#${i} が schema-retry 後も結果を返さず（StructuredOutput 契約違反）。人間へエスカレーション`)
+    break
+  }
   lastReview = review
 
   let effReview = review
@@ -571,15 +625,20 @@ for (i = 1; i <= MAX; i++) {
   // MAX は消費しない — 有限性は「iteration ごと最大 1 回」で担保する（issue #321）。
   if (outcome.route === 'contract_mismatch') {
     log(`⚠️ iteration ${i}: review contract mismatch — decision=approve だが blocking ${outcome.blocking.length} 件。1 回だけ再 review する`)
-    const rereview = await agent(
+    const rereview = await callReviewAgent(
       reviewPrompt
       + `\n\n直前の review 出力は decision='approve' なのに critical/major の issues が ${outcome.blocking.length} 件あり矛盾している。`
       + `直前の出力: ${JSON.stringify(review)}。`
       + `blocking issues が実在するなら decision を request-changes/comment にし、実在しないなら issues から除いて、`
       + `decision と issues が整合した結果を再出力せよ。既出問題の topic 文字列は同一のものを再利用せよ。`,
-      { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `review#${i}-contract-retry`, phase: 'Iterate' },
+      `review#${i}-contract-retry`,
     )
-    if (rereview == null) throw new Error(`pr-iterate: review#${i}-contract-retry が結果を返しませんでした（skip された可能性）`)
+    if (rereview == null) {
+      terminal = 'review_contract_error'
+      log(`⚠️ iteration ${i}: review#${i}-contract-retry が schema-retry 後も結果を返さず（StructuredOutput 契約違反）。人間へエスカレーション`)
+      history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: outcome.blocking, minor: outcome.minor })
+      break
+    }
     effReview = rereview
     lastReview = rereview
     outcome = classifyReviewRoute(rereview)
@@ -712,6 +771,12 @@ for (i = 1; i <= MAX; i++) {
         break
       }
 
+      if (!(await ensureFixCommitted(i))) {
+        terminal = 'fix_failed'
+        log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
+        break
+      }
+
       // CI fix applied — continue to next iteration for re-review + re-CI-check
       fixesApplied++
       continue
@@ -757,6 +822,12 @@ for (i = 1; i <= MAX; i++) {
         + `無言で再レビューを繰り返さず人間へエスカレーション`)
       break
     }
+
+    if (!(await ensureFixCommitted(i))) {
+      terminal = 'fix_failed'
+      log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
+      break
+    }
     fixesApplied++
   }
 }
@@ -764,13 +835,31 @@ for (i = 1; i <= MAX; i++) {
 const status = lgtm ? 'lgtm' : (terminal ?? 'max_reached')
 log(`pr-iterate 終端: status=${status}（iterations=${Math.min(i, MAX)}）`)
 
+// 異常終端時の worktree dirty 検出（AC-2, issue #437）。advisory telemetry — 失敗は fail-open
+// （'unknown' + 警告のみ。gate・status には影響しない）。lgtm 終端では probe しない（agent 呼び出し追加ゼロ）。
+let worktreeDirty = null  // 'dirty' | 'clean' | 'unknown' | null(=lgtm で未実施)
+if (status !== 'lgtm') {
+  let probe = null
+  try {
+    probe = await agent(
+      `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\nインストール済み skills の固定パスで実行せよ: \`bash ~/.claude/skills/pr-iterate/scripts/ensure-committed.sh --check-only\`\nスクリプトの stdout JSON をそのまま返せ。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+      { agentType: 'dev-runner-haiku-ro', schema: DIRTY_STATUS, label: 'worktree-dirty-check', phase: 'Iterate' },
+    )
+  } catch (e) {
+    log(`⚠️ worktree-dirty-check が例外: ${e?.message ?? e}`)
+  }
+  worktreeDirty = probe == null ? 'unknown' : (probe.dirty === true ? 'dirty' : 'clean')
+  if (worktreeDirty === 'dirty') log(`⚠️ 終端 status=${status} で作業ツリーが dirty（未コミット変更 ${probe?.files ?? '?'} 件）— fix 適用分が失われる可能性。人間が確認すること`)
+  if (worktreeDirty === 'unknown') log('⚠️ worktree-dirty-check probe に失敗 — dirty 状態は不明（fail-open で続行）')
+}
+
 // 終端サマリーを PR に 1 回だけ投稿する
 const summaryBody = buildTerminalSummaryBody({
   pr: PR,
   status,
   iterations: Math.min(i, MAX),
   lastDecision: lastReview?.decision ?? null,
-  lastSummary: lastReview?.summary ?? null,
+  lastSummary: lastReview?.summary ?? '(review agent が StructuredOutput 契約違反で結果を返さなかったため最終判定なし)',
   lastVerificationEvidence: lastReview?.verification_evidence ?? null,
   history,
   ciWaitSeconds: totalCiWaitSeconds,
@@ -833,6 +922,9 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ci_wait_seconds: totalCiWaitSeconds,
     ci_poll_attempts: totalCiPollAttempts,
     fix_null_retries: fixNullRetries,
+    review_null_retries: reviewNullRetries,
+    fix_uncommitted_recovered: fixUncommittedRecovered,
+    ...(worktreeDirty != null ? { worktree_dirty: worktreeDirty } : {}),
   },
 })
 const journalCmd = buildJournalHandoffCommand({ prefix: 'priterate', id: PR, payload: telemetryHandoff })
@@ -861,5 +953,8 @@ return {
   ci_wait_seconds: totalCiWaitSeconds,
   ci_poll_attempts: totalCiPollAttempts,
   fix_null_retries: fixNullRetries,
+  review_null_retries: reviewNullRetries,
+  worktree_dirty: worktreeDirty,
+  fix_uncommitted_recovered: fixUncommittedRecovered,
   history,
 }
