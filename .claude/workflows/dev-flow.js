@@ -3061,6 +3061,10 @@ function isolationFailureMessage(worktree, branch, base, issue, error) {
 //   受け取り、'cross-repo' ラベルの厳密一致有無を判定する純関数。
 // crossRepoCandidatePaths: implementer 結果配列から、worktree 外の絶対パス候補を抽出する純関数
 //   （BLOCKED/NEEDS_CONTEXT の files は対象外、worktree 配下・.devflow-tmp/ は除外、重複排除、最大50件）。
+//   後続の cross-repo-artifacts.sh 呼び出しは各パスを単一引用符で囲んで bash コマンド行に埋め込むため
+//   （dev-runner-haiku-ro が exec-proxy として実行）、単一引用符 (') と改行/制御文字を含むパスは
+//   shell quoting を突破しコマンド注入に使われ得る。files は implementer（LLM）申告値であり issue 本文
+//   経由の間接汚染経路もあるため、当該文字を含む候補はここで除外する（PR #434 review）。
 // summarizeCrossRepoArtifacts: cross-repo-artifacts.sh exec-proxy の結果を fail-safe に正規化する純関数。
 // crossRepoReturnNote: 成果物の所在を人間に報告する定型文を組み立てる純関数。
 //
@@ -3090,6 +3094,9 @@ function crossRepoCandidatePaths(implResults, worktree) {
       if (!(file.startsWith('/') || file.startsWith('~/'))) continue;
       if (file === normalizedWorktree || file.startsWith(`${normalizedWorktree}/`)) continue;
       if (file.includes('.devflow-tmp/')) continue;
+      // shell quoting breakout guard: 単一引用符・改行・制御文字を含む候補は、後段で単一引用符
+      // 囲みのまま bash コマンド行へ埋め込まれる際に quoting を突破し得るため除外する。
+      if (/['\n\r\x00-\x1f]/.test(file)) continue;
       if (seen.has(file)) continue;
       seen.add(file);
       out.push(file);

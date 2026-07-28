@@ -138,6 +138,38 @@ test('crossRepoCandidatePaths: worktree 末尾スラッシュありでも前方�
   assert.deepEqual(paths, ['/Users/x/other-repo/bar.ts']);
 });
 
+test('crossRepoCandidatePaths: 単一引用符を含むパスは除外される（shell quoting breakout 防止, PR #434）', () => {
+  const implResults = [
+    { status: 'DONE', task_id: 'F1', files: ["/Users/x/other-repo/'; rm -rf /; echo '.ts", '/Users/x/other-repo/bar.ts'] },
+  ];
+  const paths = crossRepoCandidatePaths(implResults, worktree);
+  assert.deepEqual(paths, ['/Users/x/other-repo/bar.ts']);
+});
+
+test('crossRepoCandidatePaths: 改行を含むパスは除外される（コマンド行注入防止, PR #434）', () => {
+  const implResults = [
+    { status: 'DONE', task_id: 'F1', files: ['/Users/x/other-repo/foo\nrm -rf /.ts', '/Users/x/other-repo/bar.ts'] },
+  ];
+  const paths = crossRepoCandidatePaths(implResults, worktree);
+  assert.deepEqual(paths, ['/Users/x/other-repo/bar.ts']);
+});
+
+test('crossRepoCandidatePaths: 制御文字（NUL等）を含むパスは除外される（PR #434）', () => {
+  const implResults = [
+    { status: 'DONE', task_id: 'F1', files: ['/Users/x/other-repo/foo\x00.ts', '/Users/x/other-repo/bar.ts'] },
+  ];
+  const paths = crossRepoCandidatePaths(implResults, worktree);
+  assert.deepEqual(paths, ['/Users/x/other-repo/bar.ts']);
+});
+
+test('crossRepoCandidatePaths: 危険文字を含まない通常パスは影響を受けない', () => {
+  const implResults = [
+    { status: 'DONE', task_id: 'F1', files: ["/Users/x/other-repo/file (copy).ts"] },
+  ];
+  const paths = crossRepoCandidatePaths(implResults, worktree);
+  assert.deepEqual(paths, ["/Users/x/other-repo/file (copy).ts"]);
+});
+
 // ── summarizeCrossRepoArtifacts ──────────────────────────────────────────────
 
 test('summarizeCrossRepoArtifacts: found>=1 かつ ok:true で handoff true', () => {
