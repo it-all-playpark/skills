@@ -80,18 +80,9 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 
 ### feedback_level 判定フロー
 
-**根本質問**: 「plan に忠実に従って実装し直しても同じ欠陥が再現するか？」
-- **Yes（再現する）** → `design`
-- **No（plan 通りに直せば解消する）** → `implementation`
+**根本質問**: 「plan に忠実に従って実装し直しても同じ欠陥が再現するか？」— Yes（再現する）なら `design`、No（plan 通りに直せば解消する）なら `implementation`。
 
-**灰色領域の個別規則**:
-1. plan に edge case / 要件が記載済みだが実装で条件漏れ → `implementation`（plan は正しく、コードが追従していない）
-2. plan にも実装にも当該 edge case / 要件の記載が無い → `design`（スコープ漏れ）
-3. plan の記載が曖昧で実装が誤った解釈を選んだ → `design`（plan の具体化不足。同じ plan から再実装しても再発しうる）
-4. plan が誤った設計を指示し実装が忠実に従った → `design`
-5. 複数 task 間のインターフェース不整合で原因が task 分割・契約定義にある → `design`、単一 task 内のバグ → `implementation`
-
-**tie-breaker**: 上記で決められない場合は `implementation` に倒す（design 差し戻しは replan+reimpl の二重コストで、design churn は orchestrator の early-cutoff 対象 — 上記「収束は orchestrator が最終判断する」セクションと整合）。
+**tie-breaker**: 決められない場合は `implementation` に倒す（design 差し戻しは replan+reimpl の二重コストで、design churn は orchestrator の early-cutoff 対象 — 「収束は orchestrator が最終判断する」セクションと整合）。
 
 `fail` の場合 `feedback[]` に**具体的で実行可能な**項目を入れる（「コード品質を上げよ」のような曖昧は禁止。
 ファイル・関数・パターンを名指す）。feedback は `verdict: pass` でも返せる（escalate のみの報告がありうる。orchestrator は verdict に関係なく feedback[] を処理する）。各 feedback 項目は次の構造を持つ:
@@ -165,15 +156,7 @@ concern_resolutions 契約:
 
 ## 出力言語・簡潔性（description / suggestion / evidence 等の自然文フィールド）
 
-自然文フィールドは**日本語で書く**（コード識別子・パス・コマンド・エラーメッセージ引用は原文のまま）。
-feedback・evidence は終端サマリーのテーブルにそのまま表示される。1 件につき
-**「事実 → 影響 → 推奨対応」（evidence は根拠のみ）を 200 字以内目安**で書き、
-前置き・弁明・経緯の再説明・同内容の言い換えを入れない。情報（file:line・テスト名・
-推奨アクション）は削らない。コード識別子・schema enum・固有名詞以外の一般語は日本語で書く。
-
-- × `disclosure` → ○ `開示`
-- × `bounded` → ○ `限定される`
-- × `blast radius が bounded なので acceptable` → ○ `影響範囲が限定されるため許容できる`
+自然文フィールドは日本語で簡潔に書く（コード識別子・パス・コマンド・schema enum・エラーメッセージ引用は原文のまま。それ以外の一般語を英単語のまま残さない）。feedback・evidence は終端サマリーのテーブルにそのまま表示されるため、1 件 200 字以内目安で「事実 → 影響 → 推奨対応」（evidence は根拠のみ）を書き、file:line・テスト名・推奨アクションの情報は削らない。
 
 ## Step 5: 出力 JSON（schema 強制）
 
