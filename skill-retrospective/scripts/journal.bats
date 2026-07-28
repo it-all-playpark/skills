@@ -671,6 +671,39 @@ JSON
 }
 
 # ===========================================================================
+# Tests for new error category: cross_repo (issue #432)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (n): --error-category cross_repo で partial が exit 0 で記録される
+# ---------------------------------------------------------------------------
+@test "partial with cross_repo category exits 0 and records entry" {
+    run "$SCRIPT" log dev-flow partial \
+        --error-category cross_repo \
+        --error-msg 'x'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    outcome=$(jq -r '.outcome' "$entry_file")
+    [ "$outcome" = "partial" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "cross_repo" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (o): 未知カテゴリは引き続き die_json で拒否される（enum が閉じたままの回帰確認）
+# ---------------------------------------------------------------------------
+@test "partial with bogus category still exits non-zero (enum stays closed)" {
+    run "$SCRIPT" log dev-flow partial \
+        --error-category bogus \
+        --error-msg 'some error'
+    [ "$status" -ne 0 ]
+}
+
+# ===========================================================================
 # Tests for --repo / --pr-number (issue #309)
 # ===========================================================================
 
