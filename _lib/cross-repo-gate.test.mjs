@@ -216,14 +216,15 @@ test('summarizeCrossRepoArtifacts: artifacts が配列でなければ空配列�
 
 // ── crossRepoReturnNote ──────────────────────────────────────────────────────
 
-test('crossRepoReturnNote: dirty な artifact の repo_root と手動 commit/PR 化の趣旨を含む', () => {
+test('crossRepoReturnNote: dirty な artifact の path・repo_root と手動 commit/PR 化の趣旨を含む', () => {
   const note = crossRepoReturnNote([
-    { repo_root: '/Users/x/other-repo', dirty: true },
-    { repo_root: '/Users/x/clean-repo', dirty: false },
+    { path: '/Users/x/other-repo/src/a.ts', repo_root: '/Users/x/other-repo', dirty: true },
+    { path: '/Users/x/clean-repo/src/b.ts', repo_root: '/Users/x/clean-repo', dirty: false },
   ]);
   assert.match(note, /別リポジトリ/);
   assert.match(note, /手動/);
   assert.match(note, /commit/);
+  assert.match(note, /\/Users\/x\/other-repo\/src\/a\.ts/);
   assert.match(note, /\/Users\/x\/other-repo/);
   assert.doesNotMatch(note, /\/Users\/x\/clean-repo/);
 });
@@ -232,6 +233,14 @@ test('crossRepoReturnNote: artifacts 空なら空一覧の定型文を返す', (
   const note = crossRepoReturnNote([]);
   assert.equal(typeof note, 'string');
   assert.match(note, /別リポジトリ/);
+});
+
+test('crossRepoReturnNote: artifacts 空の返り値は現行の定型文と完全一致する', () => {
+  const note = crossRepoReturnNote([]);
+  const header = '実装成果は本 repo の worktree ではなく別リポジトリの working tree に存在する'
+    + '（cross-repo issue）。以下のファイルを手動で commit / PR 化すること。'
+    + '放置すると成果物が失われる。';
+  assert.equal(note, `${header}\n対象リポジトリ: なし（成果物は検出されなかった）`);
 });
 
 test('crossRepoReturnNote: 放置すると成果物が失われる旨に言及する', () => {
@@ -243,4 +252,15 @@ test('crossRepoReturnNote: 放置すると成果物が失われる旨に言及�
 test('crossRepoReturnNote: null artifacts は空配列相当として扱われる', () => {
   const note = crossRepoReturnNote(null);
   assert.equal(typeof note, 'string');
+});
+
+test('crossRepoReturnNote: path 欠落の dirty artifact でも throw せず repo_root を含み undefined を含まない', () => {
+  const note = crossRepoReturnNote([{ repo_root: '/x/r', dirty: true }]);
+  assert.match(note, /\/x\/r/);
+  assert.doesNotMatch(note, /undefined/);
+});
+
+test('crossRepoReturnNote: dirty artifact ありの場合は git add -A への注意書きを含む', () => {
+  const note = crossRepoReturnNote([{ path: '/x/r/a.ts', repo_root: '/x/r', dirty: true }]);
+  assert.match(note, /git add -A/);
 });

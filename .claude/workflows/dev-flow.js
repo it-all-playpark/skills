@@ -3127,8 +3127,11 @@ function crossRepoReturnNote(artifacts) {
   if (dirty.length === 0) {
     return `${header}\n対象リポジトリ: なし（成果物は検出されなかった）`;
   }
-  const lines = dirty.map((a) => `- repo_root: ${a.repo_root}`);
-  return `${header}\n${lines.join('\n')}`;
+  const lines = dirty.map((a) => {
+    const p = typeof a.path === 'string' && a.path !== '' ? a.path : '(path 不明)';
+    return `- ${p} (repo_root: ${a.repo_root})`;
+  });
+  return `${header}\n${lines.join('\n')}\n列挙されたファイルのみを stage すること（git add -A は使わない）。`;
 }
 // ==== END inline: _lib/cross-repo-gate.mjs ====
 
