@@ -146,7 +146,9 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   workflow 内の counting wrapper（trackedAgent — 全 call site を wrapper 経由に置換し、bare `agent(` 残存ゼロは
   `_lib/subagent-invocations-routing.test.mjs` が CI 保証）が計上する。nested `workflow('pr-iterate')` の起動分は
   pr-iterate の返り値 `subagent_invocations` を dev-flow 側 counts へ合算する（lite route 非昇格時は pr-iterate
-  呼び出し自体が無いため合算 0。単体起動の pr-iterate は自身の handoff に同キーを記録）。by_type は agentType 別の
+  呼び出し自体が無いため合算 0。単体起動の pr-iterate は自身の handoff に同キーを記録）。
+  nested 起動時は同じ counts が pr-iterate 側 journal entry にも記録されるため、journal を skill 横断で
+  単純合計すると二重計上になる（集計時は dev-flow entry のみを使う）。by_type は agentType 別の
   起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-planner / plan-reviewer / implementer /
   evaluator / pr-reviewer / dev-runner / dev-runner-haiku / dev-runner-haiku-ro / ui-verifier の 9 種、agentType 欠落は
   'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
