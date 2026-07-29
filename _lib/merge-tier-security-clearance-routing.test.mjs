@@ -111,6 +111,7 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     // シナリオの前提（pre/final の乖離）が壊れる。
     if (label === 'diff-hash-merge') return { hash: 'H_MERGE', empty: false };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (label === 'issue-meta') return { ok: true, number: 16, title: 'stub-issue-title' };
     return null;
   };
 
@@ -194,6 +195,8 @@ const ANALYZE_REQ = {
   scope: 'src',
   estimated_change_file_count: 7,
   shape: 'complex',
+  issue_number: 16,
+  issue_title: 'stub-issue-title',
 };
 
 const DANGER_CLEAN = { ok: true, hits: [] };

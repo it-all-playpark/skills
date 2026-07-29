@@ -38,6 +38,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 405,
+  issue_title: 'stub-issue-title',
 };
 
 function createResponder(prMetaResponse) {
@@ -76,6 +78,7 @@ function createResponder(prMetaResponse) {
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
     // gh-pr-view (issue #405): シナリオ別の応答
     if (label === 'gh-pr-view') return prMetaResponse;
+    if (label === 'issue-meta') return { ok: true, number: 405, title: 'stub-issue-title' };
     return null;
   };
 }

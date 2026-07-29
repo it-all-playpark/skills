@@ -84,6 +84,8 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -170,6 +172,8 @@ test('[unsatisfied-ac] standard 経路: evaluator が satisfied:false → merge_
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // evaluatorResponse: AC#1（ac_index:0）を satisfied:false にする。
@@ -219,6 +223,8 @@ test('[unsatisfied-ac] standard 経路: 全 AC satisfied:true → merge_tier \!=
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // evaluatorResponse: 全 AC に対し satisfied:true。AC 未達フラグが false の時に不要な HOLD を出さないことを pin。

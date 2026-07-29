@@ -1595,6 +1595,76 @@ function buildReqFromContract(contract, issueNumber) {
   return req
 }
 // ==== END inline: _lib/analyze-contract.mjs ====
+// ==== BEGIN inline: _lib/analyze-provenance.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// _lib/analyze-provenance.mjs
+// verifyAnalyzeProvenance: dev-flow の Analyze phase (sonnet analyze 経路) が返す REQ の issue 取得
+// 実在性を、ground-truth probe（gh issue view --json number,title の exec-proxy 結果）との決定論突合
+// で検証する純粋関数（issue #451）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+//
+// fail-closed の理由（W7 分類: incentive-structural）: probe（issue-meta exec-proxy）に到達できない、
+// または probe 自体が要求 issue と不一致という状況は、analyze agent 自身も issue 本文を取得できて
+// いない状況と等価であり、捏造 REQ のまま Implement phase へ進行させるより中断（needs_clarification）
+// の方がコストが低い。analyze agent に「取得成功」を self-report させる incentive を与えないため、
+// 判定は本関数のような決定論突合のみに委ねる。
+//
+// 判定順（最初に落ちた項目の reason を返す）:
+//   1. probe が null/非object または probe.ok !== true            → 'probe_failed'
+//   2. Number(probe.number) !== Number(issueNumber)                 → 'probe_issue_mismatch'
+//   3. probe.title が非空 string でない（trim 後空含む）           → 'probe_title_empty'
+//   4. Number(req?.issue_number) !== Number(issueNumber)             → 'req_issue_mismatch'
+//   5. norm(req?.issue_title) !== norm(probe.title)                  → 'title_mismatch'
+//   6. 全合格                                                        → ok:true
+//
+// norm は trim + 連続空白の単一空白畳み込みのみ（case・記号は保持 — 過剰正規化は反証力を落とす）。
+function verifyAnalyzeProvenance(req, probe, issueNumber) {
+  const norm = (s) => String(s ?? '').trim().replace(/\s+/g, ' ')
+
+  if (probe === null || typeof probe !== 'object' || Array.isArray(probe) || probe.ok !== true) {
+    return {
+      ok: false,
+      reason: 'probe_failed',
+      detail: 'issue metadata の決定論取得に失敗（gh 到達不能の可能性）— 取得検証不能のため fail-closed',
+    }
+  }
+
+  if (Number(probe.number) !== Number(issueNumber)) {
+    return {
+      ok: false,
+      reason: 'probe_issue_mismatch',
+      detail: `probe.number(${probe.number}) と issueNumber(${issueNumber}) が不一致`,
+    }
+  }
+
+  if (typeof probe.title !== 'string' || probe.title.trim().length === 0) {
+    return {
+      ok: false,
+      reason: 'probe_title_empty',
+      detail: 'probe.title が非空文字列でない',
+    }
+  }
+
+  if (Number(req?.issue_number) !== Number(issueNumber)) {
+    return {
+      ok: false,
+      reason: 'req_issue_mismatch',
+      detail: `req.issue_number(${req?.issue_number}) と issueNumber(${issueNumber}) が不一致`,
+    }
+  }
+
+  if (norm(req?.issue_title) !== norm(probe.title)) {
+    return {
+      ok: false,
+      reason: 'title_mismatch',
+      detail: `req.issue_title(${JSON.stringify(req?.issue_title)}) が probe.title(${JSON.stringify(probe.title)}) と不一致`,
+    }
+  }
+
+  return { ok: true, reason: null, detail: null }
+}
+// ==== END inline: _lib/analyze-provenance.mjs ====
 // ==== BEGIN inline: _lib/ui-verify.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // UI Verify: dev-flow の Evaluate phase に付随する agent-browser ベースの UI 検証ゲート向け純関数群。
 // isUiPath: 変更ファイルが UI 検証対象かを判定する。
@@ -2608,7 +2678,7 @@ const ISOLATION_PROBE = {
 }
 const REQ = {
   type: 'object',
-  required: ['summary', 'acceptance_criteria', 'breaking_change', 'breaking_keyword_scan'],
+  required: ['summary', 'acceptance_criteria', 'breaking_change', 'breaking_keyword_scan', 'issue_number', 'issue_title'],
   properties: {
     summary: { type: 'string' },
     issue_type: { type: 'string' },
@@ -2620,6 +2690,8 @@ const REQ = {
     breaking_change: { type: 'boolean' },
     breaking_keyword_scan: { type: 'boolean' },
     breaking_evidence: { type: 'string' },
+    issue_number: { type: 'number' },
+    issue_title: { type: 'string' },
   },
 }
 const CONTRACT = {
@@ -2628,6 +2700,17 @@ const CONTRACT = {
   properties: {
     ok: { type: 'boolean' },
     result: { type: 'object' },
+    error: { type: 'string' },
+  },
+}
+// issue #451: analyze 結果の決定論 provenance 突合（gh issue view の exec-proxy）用スキーマ。
+const ISSUE_META = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    number: { type: 'number' },
+    title: { type: 'string' },
     error: { type: 'string' },
   },
 }
@@ -3472,6 +3555,7 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`
   + `さらに、skill の JSON 出力に含まれる breaking_keyword_scan (boolean) をそのまま verbatim で breaking_keyword_scan として返せ（全 depth の出力に含まれる。自分で再判定・変更するな）。`
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
+  + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
 
 // contract probe prompt（issue #374）: DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。
 // dev-issue-analyze/scripts/analyze-issue.sh --contract の stdout JSON を verbatim 転写させるだけの
@@ -3522,6 +3606,23 @@ if (!req) {
     analyzePrompt(DEPTH),
     { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
   ), 'Analyze')
+
+  // issue #451: analyze 結果の決定論 provenance 突合（fail-closed — 取得成功を self-report させない）
+  let issueMetaRes = null
+  try {
+    issueMetaRes = await agent(
+      `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>} の形で返せ`
+      + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。title は一字一句 verbatim で転写せよ）:\n`
+      + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json number,title`,
+      { agentType: 'dev-runner-haiku-ro', schema: ISSUE_META, label: 'issue-meta', phase: 'Analyze' },
+    )
+  } catch (e) { log('⚠️ issue-meta probe が例外 — fail-closed（取得検証不能として扱う）') }
+  const prov = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
+  if (prov.ok !== true) {
+    log(`⚠️ analyze: 取得検証不合格（${prov.reason}）— REQ を採用せず needs_clarification で中断（issue #451）`)
+    await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 取得検証不合格（${prov.reason}）で中断（source=analyze_provenance）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+    return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（${prov.reason}）: ${prov.detail}`], note: 'analyze 結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
+  }
 }
 
 const ambiguities = req.ambiguities ?? []

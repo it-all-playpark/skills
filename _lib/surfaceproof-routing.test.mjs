@@ -78,6 +78,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 410,
+  issue_title: 'stub-issue-title',
 };
 
 function evaluatorResponseFor(req) {
@@ -127,6 +129,7 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     // surfaceproof-shadow / trust-* 系は override で明示指定しない限り応答しない
     // （未知 label → null、fail-open の実測）
     if (label.startsWith('surfaceproof-shadow') || label.startsWith('trust-')) return null;
+    if (label === 'issue-meta') return { ok: true, number: 410, title: 'stub-issue-title' };
     return null;
   };
 }

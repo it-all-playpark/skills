@@ -125,6 +125,8 @@ function makeSandbox(analyzeReq) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -217,6 +219,8 @@ test('[design-replan-cap] AC#1-5: paraphrase design critical 連発 → DESIGN_R
     scope: 'src',
     estimated_change_file_count: 7,
     shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const src = readFileSync(devFlowPath, 'utf8');

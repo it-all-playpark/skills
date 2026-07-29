@@ -56,6 +56,9 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     const p = prompt ?? '';
     calls.push({ label, agentType, prompt: p });
     const result = responder({ label, agentType, prompt: p });
+    if (result === undefined && label === 'issue-meta') {
+      return { ok: true, number: 1, title: 'stub-issue-title' };
+    }
     return result === undefined ? null : result;
   };
 

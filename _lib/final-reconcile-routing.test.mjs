@@ -83,6 +83,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 320,
+  issue_title: 'stub-issue-title',
 };
 
 const VALID_CFG = {
@@ -140,6 +142,7 @@ function createResponder(overrides = {}) {
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
+    if (label === 'issue-meta') return { ok: true, number: 320, title: 'stub-issue-title' };
     return null;
   };
 }

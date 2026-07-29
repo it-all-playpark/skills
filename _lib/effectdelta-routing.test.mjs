@@ -83,6 +83,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 412,
+  issue_title: 'stub-issue-title',
 };
 
 function evaluatorResponseFor(req) {
@@ -153,6 +155,7 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (label.startsWith('trust-') || label.startsWith('surfaceproof-shadow')) return null;
+    if (label === 'issue-meta') return { ok: true, number: 412, title: 'stub-issue-title' };
     return null;
   };
 }

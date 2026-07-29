@@ -57,6 +57,7 @@ function makeCountingSandbox(analyzeReq, config) {
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 'T1', files: implementerFiles, summary: '', concerns: [], blocking_reason: null, missing_context: null };
     }
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -95,6 +96,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 const src = readFileSync(devFlowPath, 'utf8');

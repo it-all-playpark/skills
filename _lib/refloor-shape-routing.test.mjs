@@ -123,6 +123,8 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -207,6 +209,8 @@ test('[refloor] (A) micro 見積もり + realized 6 files → evaluator >= 1 回
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const src = readFileSync(devFlowPath, 'utf8');
@@ -260,6 +264,8 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   let evaluatorCallCount = 0;
@@ -319,6 +325,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -378,6 +385,8 @@ test('[refloor] (C) micro 見積もり + realized 1 file → evaluator 0 回（r
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const src = readFileSync(devFlowPath, 'utf8');
@@ -460,6 +469,8 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const calls = [];
@@ -525,6 +536,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -649,6 +661,8 @@ test('[merge-tier] (D) micro 見積もり + realized 4 docs/test-only + changed-
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const src = readFileSync(devFlowPath, 'utf8');
@@ -707,6 +721,8 @@ test('[merge-tier] (E) micro 見積もり + realized 1 docs file + changed-files
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const src = readFileSync(devFlowPath, 'utf8');

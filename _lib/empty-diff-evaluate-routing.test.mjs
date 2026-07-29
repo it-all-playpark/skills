@@ -51,6 +51,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -89,6 +90,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 // (A) diff-gate empty:false → reimpl-empty-diff 0 件・diff-gate-retry 0 件・正常完了
@@ -308,6 +311,8 @@ test('[empty-diff] (M) micro path（runEval=false）+ iterate fix あり → eva
     scope: 'docs',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
   const { ctx, calls } = makeCountingSandbox(MICRO_REQ, {
     gateEmpty: false,

@@ -87,6 +87,7 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
     if (label === 'changed-files') return { files: chg };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -158,6 +159,8 @@ const microReq = {
   scope: 'src',
   estimated_change_file_count: 1,
   shape: 'micro',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 const VALID_CFG = {
@@ -399,6 +402,8 @@ const standardReq = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 test('[ui-verify] (g) eval#1 prompt に ui_verification（ui-verifier raw result）が注入される', async () => {

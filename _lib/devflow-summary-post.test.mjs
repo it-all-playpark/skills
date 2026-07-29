@@ -107,6 +107,8 @@ function makeSandbox(analyzeReq, postResult) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -196,6 +198,8 @@ const ANALYZE_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 const src = readFileSync(devFlowPath, 'utf8');

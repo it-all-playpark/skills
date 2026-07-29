@@ -84,6 +84,8 @@ function makeSandbox(analyzeReq, implementerStub) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -139,6 +141,8 @@ const STANDARD_ANALYZE_REQ = {
   scope: 'src',
   estimated_change_file_count: 4,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 // case1: BLOCKED x2 -> replan-blocked#2 prompt must include R1 AND R2

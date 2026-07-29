@@ -88,6 +88,8 @@ function makeCountingSandbox(analyzeReq) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -167,6 +169,8 @@ test('[shape-loop] SHAPE=standard: plan-reviewer 呼び出し 0 回・evaluator 
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const src = readFileSync(devFlowPath, 'utf8');
@@ -206,6 +210,8 @@ test('[shape-loop] SHAPE=complex: plan-reviewer 呼び出し >= 1（制御群）
     scope: 'src',
     estimated_change_file_count: 8,
     shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const src = readFileSync(devFlowPath, 'utf8');

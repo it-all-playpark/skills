@@ -96,6 +96,8 @@ function makeSandbox(analyzeReq, responses) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -181,6 +183,8 @@ test('[eval-convergence] AC#1: complex 経路・minor のみ feedback・AC 全 s
     scope: 'src',
     estimated_change_file_count: 7,
     shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // evaluator stub: 全呼び出しで verdict=fail を返すが、minor のみ・critical なし・AC 全 satisfied。
@@ -244,6 +248,8 @@ test('[eval-convergence] AC#2: 沈黙 critical → EVAL_MAX(10 回)まで差し�
     scope: 'src',
     estimated_change_file_count: 7,
     shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const ac4 = [
@@ -313,6 +319,8 @@ test('[eval-convergence] AC#3: critical_resolutions {resolved:true, evidence} �
     scope: 'src',
     estimated_change_file_count: 7,
     shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const ac4 = [

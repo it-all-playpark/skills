@@ -39,6 +39,8 @@ function createResponder() {
         scope: 'src',
         estimated_change_file_count: 3,
         shape: 'standard',
+        issue_number: 1,
+        issue_title: 'stub-issue-title',
       };
     }
     // Plan: dev-planner
@@ -100,6 +102,8 @@ function createResponder() {
     if (agentType === 'implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };

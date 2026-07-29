@@ -146,6 +146,8 @@ function makeCountingSandbox() {
         scope: 'src',
         estimated_change_file_count: 3,
         shape: 'standard',
+        issue_number: 1,
+        issue_title: 'stub-issue-title',
       };
     }
     if (agentType === 'dev-planner') {
@@ -195,6 +197,7 @@ function makeCountingSandbox() {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 

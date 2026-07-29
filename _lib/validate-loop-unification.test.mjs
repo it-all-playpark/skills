@@ -78,6 +78,8 @@ function makeCountingSandbox(opts) {
         scope: 'src',
         estimated_change_file_count: 3,
         shape: 'standard',
+        issue_number: 1,
+        issue_title: 'stub-issue-title',
       };
     }
 
@@ -165,6 +167,7 @@ function makeCountingSandbox(opts) {
     // PR 系
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
 
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
