@@ -450,7 +450,7 @@ test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-plan
     () => ({
       status: 'BLOCKED',
       task_id: 'T1',
-      blocking_reason: 'no way',
+      blocking_reason: { block_class: 'approach_mismatch', detail: 'no way' },
       files: [],
       summary: '',
       concerns: [],

@@ -148,15 +148,15 @@ test('[blocked-replan-history] case1: cumulative blockSeen', async () => {
     const label = opts?.label ?? '';
     if (label === 'impl:serial:T1') {
       return { status: 'BLOCKED', task_id: 'T1', files: [], summary: '', concerns: [],
-               blocking_reason: 'R1: patch-api approach failed' };
+               blocking_reason: { block_class: 'approach_mismatch', detail: 'R1: patch-api approach failed' } };
     }
     if (label === 'reimpl-blocked#1:serial:T2') {
       return { status: 'BLOCKED', task_id: 'T2', files: [], summary: '', concerns: [],
-               blocking_reason: 'R2: hook approach failed' };
+               blocking_reason: { block_class: 'approach_mismatch', detail: 'R2: hook approach failed' } };
     }
     if (label === 'reimpl-blocked#2:serial:T3') {
       return { status: 'BLOCKED', task_id: 'T3', files: [], summary: '', concerns: [],
-               blocking_reason: 'R3: rewrite approach failed' };
+               blocking_reason: { block_class: 'approach_mismatch', detail: 'R3: rewrite approach failed' } };
     }
     const m = label.match(/:([^:]+)$/);
     return { status: 'DONE', task_id: m ? m[1] : 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };

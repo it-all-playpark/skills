@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // tools/sync-inlines.mjs
 // Inline-sync generator: rewrites BEGIN/END inline marker zones in workflow files.
 // Usage: node tools/sync-inlines.mjs [--write|--check] [--root <dir>]
@@ -9,7 +10,7 @@
 //   scanMarkers(wfSrc, wfLabel)     - parse BEGIN/END markers, return [{source, beginLine, endLine}]
 //   syncRepo(root, {write})         - orchestrate all workflow files
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -303,10 +304,23 @@ export function syncRepo(root, { write }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CLI entry point: only runs when directly executed (not when imported)
+// CLI entry point: only runs when directly executed (not when imported).
+//
+// Compares realpath(process.argv[1]) against realpath(this file) so bare-form
+// invocation (direct execve of the script path — e.g. exec-proxy subagent
+// Bash calls, or invocation via a symlink) still resolves to the same file
+// as `node tools/sync-inlines.mjs`. Falls back to the previous strict-path
+// equality if realpath fails (e.g. argv[1] does not exist on disk).
 // ─────────────────────────────────────────────────────────────────────────────
-const isMain = process.argv[1] &&
-  fileURLToPath(import.meta.url) === process.argv[1];
+const isMain = (() => {
+  if (!process.argv[1]) return false;
+  const thisFile = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(thisFile);
+  } catch {
+    return thisFile === process.argv[1];
+  }
+})();
 
 if (isMain) {
   const args = process.argv.slice(2);

@@ -88,7 +88,8 @@ orchestration (phase 遷移 / 各ループ / 並列実装の fan-out) は workfl
 - **後方互換 scaffolding を作らない** — out-of-enum 値は明示 error (legacy fallback / version 分岐なし)。
 - `.claude/workflows/*.js` の `// ==== BEGIN inline: <path> ====` 〜 `// ==== END inline: <path> ====`
   区間は**生成物であり直接編集禁止**。編集は `_lib` の canonical 側で行い
-  `node tools/sync-inlines.mjs --write` で再生成する。
+  `tools/sync-inlines.mjs --write` で再生成する（先頭トークン=スクリプトパスの bare 形。sandbox
+  excludedCommands は先頭トークンでマッチするため node 前置は付けない）。
 - Claude 専用 (workflow 依存)。cross-vendor portability は dev-flow / pr-iterate のみ放棄する例外扱い。
 
 **内部仕様の詳細**（shape 判定と 3 tier 経路 / micro lite route / subagent の model・effort 割り当て /
