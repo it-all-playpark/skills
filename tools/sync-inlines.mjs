@@ -440,6 +440,13 @@ if (isMain) {
       process.stderr.write(`--add canonical must be a repo-root-relative path starting with '_lib/' and ending with '.mjs': ${add}\n${USAGE}`);
       process.exit(2);
     }
+    // Reject '..' segments: join(root, add) would otherwise resolve outside _lib/ and the
+    // non-normalized path would be embedded verbatim as the marker's canonical source,
+    // making the marker unresolvable by --write/--check from a different cwd.
+    if (add.split('/').includes('..')) {
+      process.stderr.write(`--add canonical must not contain '..' path segments: ${add}\n${USAGE}`);
+      process.exit(2);
+    }
     if (into.includes('/')) {
       process.stderr.write(`--into must be a bare workflow file name (no '/'): ${into}\n${USAGE}`);
       process.exit(2);

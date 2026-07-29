@@ -611,6 +611,18 @@ test('--add exits 2 when canonical path does not end with .mjs', () => {
   assert.equal(result.status, 2);
 });
 
+test('--add exits 2 when canonical path contains a .. segment (traversal)', () => {
+  const result = runCli(['--add', '_lib/../evil.mjs', '--into', 'wf.js', '--after', 'x']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /'\.\.' path segments/);
+});
+
+test('--add exits 2 on a .. segment that stays inside _lib/ (rejected before fs access)', () => {
+  const result = runCli(['--add', '_lib/sub/../foo.mjs', '--into', 'wf.js', '--after', 'x']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /'\.\.' path segments/);
+});
+
 test('--add exits 2 when --into contains a slash', () => {
   const result = runCli(['--add', '_lib/foo.mjs', '--into', 'sub/wf.js', '--after', 'x']);
   assert.equal(result.status, 2);
