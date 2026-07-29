@@ -565,10 +565,14 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 // isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
 //   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
-//   （branch/base/workflow 名・args を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
+//   （branch/起点 ref/workflow 名・args を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
 //   呼び出し元（dev-flow.js / pr-iterate.js）ごとに workflow 名・再実行 args・回避手順で提示する
-//   worktree 先（targetPath）が異なるため、いずれも呼び出し元が明示的に渡す必須引数にする
-//   （デフォルト値による暗黙の workflow 名混同を避ける — issue #455 レビュー指摘）。
+//   worktree 先（targetPath）・新規 worktree の起点 ref（startRef）が異なるため、いずれも呼び出し元が
+//   明示的に渡す必須引数にする（デフォルト値による暗黙の workflow 名混同を避ける — issue #455 レビュー指摘）。
+//   startRef は `origin/<ref>` 等の完全な ref 式を受け取る（関数側で origin/ を補わない）。
+//   dev-flow は未実装 issue の作業を base から始めるため `origin/<base>`、pr-iterate は既存 PR の
+//   head を再現する必要があるため `origin/<head_ref>` を渡す（base 起点だと PR の変更を含まない
+//   worktree を提示してしまう — issue #455 レビュー指摘）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -581,13 +585,13 @@ function isolationProbePrompt(worktree) {
     + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
 }
 
-function isolationFailureMessage({ worktree, branch, base, workflowName, workflowArgs, targetPath, error }) {
+function isolationFailureMessage({ worktree, branch, startRef, workflowName, workflowArgs, targetPath, error }) {
   const wt = targetPath || worktree;
   const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
   return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
     + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
     + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
-    + `  1. git worktree add -b ${branch} ${wt} origin/${base}（既に存在する場合は不要）\n`
+    + `  1. git worktree add -b ${branch} ${wt} ${startRef}（既に存在する場合は不要）\n`
     + `  2. EnterWorktree({ path: "${relWt}" })\n`
     + `  3. Workflow({ name: "${workflowName}", args: "${workflowArgs}" }) を再実行\n`
     + (error ? `probe error: ${error}` : '');
@@ -610,7 +614,10 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 const isoProbe = await agent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
 if (isoProbe && isoProbe.written === false) {
   throw new Error(isolationFailureMessage({
-    worktree: isoWt, branch: prMeta?.head_ref || '?', base: prMeta?.base_ref || '?',
+    // startRef は PR の head（base ではない）— pr-iterate は既存 PR の変更を含む worktree を
+    // 再現させる必要がある。base 起点だと fix 対象の diff を持たない worktree を提示してしまう
+    // （issue #455 レビュー指摘）。
+    worktree: isoWt, branch: prMeta?.head_ref || '?', startRef: `origin/${prMeta?.head_ref || '?'}`,
     workflowName: 'pr-iterate', workflowArgs: PR, targetPath: isoTargetPath, error: isoProbe.error,
   }))
 }

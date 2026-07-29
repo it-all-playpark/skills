@@ -21,9 +21,9 @@ test('isolationProbePrompt: 失敗時は例外を投げず error フィールド
 
 // ── isolationFailureMessage ─────────────────────────────────────────────────
 
-test('isolationFailureMessage: worktree/branch/base/workflow 名/args を含む復旧手順を返す', () => {
+test('isolationFailureMessage: worktree/branch/startRef/workflow 名/args を含む復旧手順を返す', () => {
   const msg = isolationFailureMessage({
-    worktree: '/repo/.claude/worktrees/df-123', branch: 'feature/issue-123', base: 'main',
+    worktree: '/repo/.claude/worktrees/df-123', branch: 'feature/issue-123', startRef: 'origin/main',
     workflowName: 'dev-flow', workflowArgs: '123', error: 'Permission denied',
   });
   assert.match(msg, /\/repo\/\.claude\/worktrees\/df-123/);
@@ -34,7 +34,7 @@ test('isolationFailureMessage: worktree/branch/base/workflow 名/args を含む�
 
 test('isolationFailureMessage: workflow 名/args は呼び出し元ごとに切り替わる（pr-iterate）', () => {
   const msg = isolationFailureMessage({
-    worktree: '/repo', branch: 'feature/issue-1', base: 'main',
+    worktree: '/repo', branch: 'feature/issue-1', startRef: 'origin/main',
     workflowName: 'pr-iterate', workflowArgs: '455', error: '',
   });
   assert.match(msg, /^pr-iterate: worktree isolation エラー/);
@@ -44,7 +44,7 @@ test('isolationFailureMessage: workflow 名/args は呼び出し元ごとに切�
 
 test('isolationFailureMessage: git worktree add / EnterWorktree / Workflow 再実行の3手順を番号付きで含む', () => {
   const msg = isolationFailureMessage({
-    worktree: '/repo/.claude/worktrees/df-1', branch: 'feature/issue-1', base: 'dev',
+    worktree: '/repo/.claude/worktrees/df-1', branch: 'feature/issue-1', startRef: 'origin/dev',
     workflowName: 'dev-flow', workflowArgs: '1', error: 'err',
   });
   assert.match(msg, /1\. git worktree add -b feature\/issue-1/);
@@ -54,7 +54,7 @@ test('isolationFailureMessage: git worktree add / EnterWorktree / Workflow 再�
 
 test('isolationFailureMessage: EnterWorktree の path は .claude/worktrees/ 以降の相対パスに変換される', () => {
   const msg = isolationFailureMessage({
-    worktree: '/Users/x/ghq/github.com/o/r/.claude/worktrees/df-42', branch: 'feature/issue-42', base: 'main',
+    worktree: '/Users/x/ghq/github.com/o/r/.claude/worktrees/df-42', branch: 'feature/issue-42', startRef: 'origin/main',
     workflowName: 'dev-flow', workflowArgs: '42', error: '',
   });
   assert.match(msg, /EnterWorktree\(\{ path: "\.claude\/worktrees\/df-42" \}\)/);
@@ -63,7 +63,7 @@ test('isolationFailureMessage: EnterWorktree の path は .claude/worktrees/ 以
 
 test('isolationFailureMessage: .claude/worktrees/ を含まない worktree パスはそのまま使われる', () => {
   const msg = isolationFailureMessage({
-    worktree: '/tmp/some-other-wt', branch: 'feature/issue-9', base: 'main',
+    worktree: '/tmp/some-other-wt', branch: 'feature/issue-9', startRef: 'origin/main',
     workflowName: 'dev-flow', workflowArgs: '9', error: '',
   });
   assert.match(msg, /EnterWorktree\(\{ path: "\/tmp\/some-other-wt" \}\)/);
@@ -71,7 +71,7 @@ test('isolationFailureMessage: .claude/worktrees/ を含まない worktree パ�
 
 test('isolationFailureMessage: targetPath 指定時は worktree（書き込み失敗先）と異なる先を回避手順に提示する', () => {
   const msg = isolationFailureMessage({
-    worktree: '/repo', branch: 'feature/issue-455', base: 'main',
+    worktree: '/repo', branch: 'feature/issue-455', startRef: 'origin/main',
     workflowName: 'pr-iterate', workflowArgs: '455', error: '',
     targetPath: '/repo/.claude/worktrees/pr-455',
   });
@@ -81,23 +81,42 @@ test('isolationFailureMessage: targetPath 指定時は worktree（書き込み�
   assert.doesNotMatch(msg, /git worktree add -b feature\/issue-455 \/repo origin/);
 });
 
+test('isolationFailureMessage: startRef は verbatim で使われる（関数側で origin/ を補わない）', () => {
+  const msg = isolationFailureMessage({
+    worktree: '/repo/.claude/worktrees/df-7', branch: 'feature/issue-7', startRef: 'upstream/release-1.x',
+    workflowName: 'dev-flow', workflowArgs: '7', error: '',
+  });
+  assert.match(msg, /git worktree add -b feature\/issue-7 \/repo\/\.claude\/worktrees\/df-7 upstream\/release-1\.x/);
+  assert.doesNotMatch(msg, /origin\/upstream/);
+});
+
+test('isolationFailureMessage: pr-iterate は PR head 起点を提示できる（base 起点だと PR の変更を含まない）', () => {
+  const msg = isolationFailureMessage({
+    worktree: '/repo', branch: 'feature/issue-449', startRef: 'origin/feature/issue-449',
+    workflowName: 'pr-iterate', workflowArgs: '455', error: '',
+    targetPath: '/repo/.claude/worktrees/pr-455',
+  });
+  assert.match(msg, /1\. git worktree add -b feature\/issue-449 \/repo\/\.claude\/worktrees\/pr-455 origin\/feature\/issue-449/);
+  assert.doesNotMatch(msg, /origin\/main/);
+});
+
 test('isolationFailureMessage: error が非空なら probe error を末尾に含む', () => {
   const msg = isolationFailureMessage({
-    worktree: '/wt', branch: 'b', base: 'main', workflowName: 'dev-flow', workflowArgs: '1', error: 'EPERM: denied',
+    worktree: '/wt', branch: 'b', startRef: 'origin/main', workflowName: 'dev-flow', workflowArgs: '1', error: 'EPERM: denied',
   });
   assert.match(msg, /probe error: EPERM: denied/);
 });
 
 test('isolationFailureMessage: error が空文字なら probe error 行を含まない', () => {
   const msg = isolationFailureMessage({
-    worktree: '/wt', branch: 'b', base: 'main', workflowName: 'dev-flow', workflowArgs: '1', error: '',
+    worktree: '/wt', branch: 'b', startRef: 'origin/main', workflowName: 'dev-flow', workflowArgs: '1', error: '',
   });
   assert.doesNotMatch(msg, /probe error:/);
 });
 
 test('isolationFailureMessage: bg-isolation guard の可能性に言及する', () => {
   const msg = isolationFailureMessage({
-    worktree: '/wt', branch: 'b', base: 'main', workflowName: 'dev-flow', workflowArgs: '1', error: '',
+    worktree: '/wt', branch: 'b', startRef: 'origin/main', workflowName: 'dev-flow', workflowArgs: '1', error: '',
   });
   assert.match(msg, /bg-isolation guard/);
 });

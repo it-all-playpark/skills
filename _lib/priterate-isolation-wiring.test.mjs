@@ -63,6 +63,17 @@ test('isolationFailureMessage の呼び出しは workflowName: pr-iterate を明
   assert.doesNotMatch(call[0], /workflowName:\s*'dev-flow'/, 'workflowName が誤って dev-flow になっている');
 });
 
+test('isolationFailureMessage の startRef は PR head 起点（base 起点は PR の変更を含まない worktree を提示する）', () => {
+  const call = src.match(/throw new Error\(\s*isolationFailureMessage\(\{[\s\S]*?\}\)\)/);
+  assert.ok(call, 'isolationFailureMessage({...}) 呼び出しが見つからない');
+  assert.match(
+    call[0],
+    /startRef:\s*`origin\/\$\{prMeta\?\.head_ref \|\| '\?'\}`/,
+    'startRef に origin/${head_ref}（PR head 起点）が渡されていない',
+  );
+  assert.doesNotMatch(call[0], /startRef:[^,]*base_ref/, 'startRef が base_ref 起点になっている（PR の変更を含まない worktree を提示してしまう）');
+});
+
 test('isolationFailureMessage の targetPath は isolation probe 対象の cwd（isoWt）とは別の worktree 先を渡す', () => {
   const call = src.match(/throw new Error\(\s*isolationFailureMessage\(\{[\s\S]*?\}\)\)/);
   assert.ok(call, 'isolationFailureMessage({...}) 呼び出しが見つからない');

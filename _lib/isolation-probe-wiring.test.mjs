@@ -23,7 +23,7 @@ test('isolation probe agent 呼び出しが agentType/schema/label/phase 込み�
 test('probe が written:false を返した場合に isolationFailureMessage で throw する分岐が存在する（workflowName: dev-flow を明示）', () => {
   assert.match(
     src,
-    /if\s*\(isoProbe\s*&&\s*isoProbe\.written\s*===\s*false\)\s*\{\s*throw new Error\(isolationFailureMessage\(\{\s*worktree:\s*WT,\s*branch,\s*base:\s*BASE,\s*workflowName:\s*'dev-flow',\s*workflowArgs:\s*ISSUE,\s*targetPath:\s*WT,\s*error:\s*isoProbe\.error\s*\}\)\)\s*\}/,
+    /if\s*\(isoProbe\s*&&\s*isoProbe\.written\s*===\s*false\)\s*\{\s*throw new Error\(isolationFailureMessage\(\{\s*worktree:\s*WT,\s*branch,\s*startRef:\s*`origin\/\$\{BASE\}`,\s*workflowName:\s*'dev-flow',\s*workflowArgs:\s*ISSUE,\s*targetPath:\s*WT,\s*error:\s*isoProbe\.error\s*\}\)\)\s*\}/,
     'written===false → throw new Error(isolationFailureMessage({..., workflowName: \'dev-flow\', ...})) の分岐が見つからない',
   );
 });
