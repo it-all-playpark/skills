@@ -68,6 +68,25 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   (`git worktree remove` 直打ちは `.veridelta/runs/*.json` の red→green 検証証跡を失う)。
   archive の fail-open 仕様・sandbox 実行文脈の制約は同スクリプトと
   `_shared/scripts/veridelta-archive.sh` のヘッダコメントが正典。
+- **bg-isolation guard と isolation probe**: bg 起動セッションが呼び出し元 cwd を worktree へ
+  isolate しないまま dev-flow / pr-iterate を起動すると、harness の bg-isolation guard が
+  subagent の Write/Edit を共有 checkout への書き込みとして拒否する。dev-flow は Setup phase
+  直後（deps install より前の早期検知）、pr-iterate は review loop 進入前（fix stage 不到達の
+  保証）に probe を配置する。probe は worktree 直下 `.devflow-tmp/.isolation-probe` への Write
+  で isolation 成立を検証し、`written:false` は fail-closed（確定回避手順つき throw: 1. 書き込みに
+  失敗した cwd とは別の worktree を `git worktree add`、2. `EnterWorktree({path})`、
+  3. Workflow 再実行）、probe 自体の失敗（null）は
+  fail-open（警告 log のみ）で扱う（issue #449）。canonical は `_lib/isolation-probe.mjs` の
+  `isolationProbePrompt` / `isolationFailureMessage` を dev-flow.js・pr-iterate.js 双方へ
+  inline 生成して流用する（新規 canonical 関数は追加しない）。
+  (a) `EnterWorktree({path})` は bg 起動セッションからも成立する — repo 内
+  `.claude/worktrees/`（throw メッセージが提示する既定の先）・repo 外 worktree の双方で実測済み
+  （issue #449）。したがって bg 経由でも上記の確定回避手順が正規経路として機能する。
+  (b) `worktree.bgIsolation:"none"` 設定による guard 無効化は採らない —
+  guard は共有 checkout への意図しない書き込みを防ぐ safety であり、設定で無効化すると
+  保護ごと失われる（W7 分類: blast-radius。共有 checkout 汚染は blast-radius が大きく、
+  guard 緩和ではなく fail-closed 検知 + 正規 isolation 経路で解決する。設定緩和による
+  sunset はしない）。
 - Claude 専用 (workflow 依存)。cross-vendor portability は dev-flow / pr-iterate のみ放棄する例外扱い。
 - **gate_policy**: trust 昇順の 4 値 enum — `deterministic-only` / `llm-major-advisory`（既定）/ `llm-major-blocking` / `llm-autonomous`。
   **軸A invariant 不変** — deterministic oracle / seed / critical アイテムは全 policy で blocking のまま（security floor / 決定論ゲートは policy で緩めない）。

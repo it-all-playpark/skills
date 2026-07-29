@@ -544,13 +544,87 @@ phase('Iterate')
 
 // repo (owner/name) probe: PR の base repo URL から owner/name を導出する（telemetry の repo 解決用。issue #309）。
 // fail-open — probe 失敗/null でも repo を省略するだけで workflow は継続する。
-const PR_META = { type: 'object', required: ['url'], properties: { url: { type: 'string' } } }
+// head_ref/base_ref/cwd は isolation probe（issue #449）の失敗メッセージ・probe 対象パス解決にも使う。
+const PR_META = {
+  type: 'object', required: ['url'],
+  properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' } },
+}
 const prMeta = await agent(
-  `## Objective\nPR #${PR} の URL を取得する（telemetry の repo 解決用）。\n\n## Instructions\n次のコマンドをそのまま実行し、stdout（1 行）を url として返せ: \`gh pr view ${PR} --json url -q .url\`\nコマンド失敗時は throw せず url を空文字で返すこと。\n\n## Output format\n{ "url": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n50 語以内で完結すること。`,
+  `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
   { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
 )
 const REPO = repoFromGithubUrl(prMeta?.url)
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
+// ==== BEGIN inline: _lib/isolation-probe.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// Isolation probe: dev-flow の Setup phase 完了直後に bg-isolation guard を早期検知する純関数群
+// （bg job から dev-flow を起動する際、呼び出し元セッションが自身の cwd を worktree へ isolate
+// していないと、harness の bg-isolation guard により implementer の Write/Edit tool 呼び出しが
+// 共有チェックアウトへの書き込みとして拒否される。放置すると Implement/Evaluate まで数十 agent
+// 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
+//
+// isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
+//   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
+// isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
+//   （branch/起点 ref/workflow 名・args を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
+//   呼び出し元（dev-flow.js / pr-iterate.js）ごとに workflow 名・再実行 args・回避手順で提示する
+//   worktree 先（targetPath）・新規 worktree の起点 ref（startRef）が異なるため、いずれも呼び出し元が
+//   明示的に渡す必須引数にする（デフォルト値による暗黙の workflow 名混同を避ける — issue #455 レビュー指摘）。
+//   startRef は `origin/<ref>` 等の完全な ref 式を受け取る（関数側で origin/ を補わない）。
+//   dev-flow は未実装 issue の作業を base から始めるため `origin/<base>`、pr-iterate は既存 PR の
+//   head を再現する必要があるため `origin/<head_ref>` を渡す（base 起点だと PR の変更を含まない
+//   worktree を提示してしまう — issue #455 レビュー指摘）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
+
+function isolationProbePrompt(worktree) {
+  return `worktree ${worktree} 直下に Write tool で \`.devflow-tmp/.isolation-probe\` というファイルを`
+    + `内容 "ok" で書き込め。成功したら {"written": true} を返せ。`
+    + `Write tool がエラー・拒否を返した場合は、例外を投げずに `
+    + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
+}
+
+function isolationFailureMessage({ worktree, branch, startRef, workflowName, workflowArgs, targetPath, error }) {
+  const wt = targetPath || worktree;
+  const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
+  return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
+    + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
+    + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
+    + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
+    + `     （branch ${branch} がローカルに既存なら -b と起点を外して \`git worktree add ${wt} ${branch}\`、`
+    + `さらに他 worktree で checkout 済みなら \`git worktree add --force ${wt} ${branch}\`、`
+    + `worktree ${wt} 自体が既存なら本手順ごと不要）\n`
+    + `  2. EnterWorktree({ path: "${relWt}" })\n`
+    + `  3. Workflow({ name: "${workflowName}", args: "${workflowArgs}" }) を再実行\n`
+    + (error ? `probe error: ${error}` : '');
+}
+// ==== END inline: _lib/isolation-probe.mjs ====
+
+// isolation probe: bg 起動セッションが cwd を worktree へ isolate していないと fix stage の
+// Write/Edit tool 呼び出しが harness の bg-isolation guard に拒否される。review loop（fix stage の
+// 手前）に進入する前に probe で早期検知する（issue #449。dev-flow.js Setup phase と同型パターン）。
+// 失敗（written:false）は fail-closed（即中断）、probe 自体の失敗（null）は fail-open（警告のみ）。
+const ISOLATION_PROBE = {
+  type: 'object', required: ['written'],
+  properties: { written: { type: 'boolean' }, error: { type: 'string' } },
+}
+const isoWt = prMeta?.cwd || '.'
+// isoTargetPath: 回避手順で提示する新規 worktree 先。isoWt（書き込みに失敗した共有 checkout の cwd）
+// とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
+// （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
+const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claude/worktrees/pr-${PR}`
+const isoProbe = await agent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
+if (isoProbe && isoProbe.written === false) {
+  throw new Error(isolationFailureMessage({
+    // startRef は PR の head（base ではない）— pr-iterate は既存 PR の変更を含む worktree を
+    // 再現させる必要がある。base 起点だと fix 対象の diff を持たない worktree を提示してしまう
+    // （issue #455 レビュー指摘）。
+    worktree: isoWt, branch: prMeta?.head_ref || '?', startRef: `origin/${prMeta?.head_ref || '?'}`,
+    workflowName: 'pr-iterate', workflowArgs: PR, targetPath: isoTargetPath, error: isoProbe.error,
+  }))
+}
+if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 
 let lastReview = null
 let lgtm = false
