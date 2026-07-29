@@ -55,6 +55,21 @@ test('probe が written:false を返した場合に isolationFailureMessage で 
   );
 });
 
+test('isolationFailureMessage の呼び出しは workflowName: pr-iterate を明示する（issue #455: dev-flow 誤 workflow 名の再発防止）', () => {
+  const call = src.match(/throw new Error\(\s*isolationFailureMessage\(\{[\s\S]*?\}\)\)/);
+  assert.ok(call, 'isolationFailureMessage({...}) 呼び出しが見つからない');
+  assert.match(call[0], /workflowName:\s*'pr-iterate'/, 'workflowName に \'pr-iterate\' が渡されていない（dev-flow 混同の再発）');
+  assert.match(call[0], /workflowArgs:\s*PR\b/, 'workflowArgs に PR（PR 番号）が渡されていない');
+  assert.doesNotMatch(call[0], /workflowName:\s*'dev-flow'/, 'workflowName が誤って dev-flow になっている');
+});
+
+test('isolationFailureMessage の targetPath は isolation probe 対象の cwd（isoWt）とは別の worktree 先を渡す', () => {
+  const call = src.match(/throw new Error\(\s*isolationFailureMessage\(\{[\s\S]*?\}\)\)/);
+  assert.ok(call, 'isolationFailureMessage({...}) 呼び出しが見つからない');
+  assert.match(call[0], /targetPath:\s*isoTargetPath/, 'targetPath に isoWt（共有 checkout の cwd）そのものではない専用変数が渡されていない');
+  assert.match(src, /const isoTargetPath = /, 'isoWt とは別の worktree 提示先（isoTargetPath）を計算する行が見つからない');
+});
+
 test('probe 自体が失敗（null）した場合の fail-open log 分岐が存在する', () => {
   assert.match(
     src,
@@ -191,6 +206,16 @@ test('[isolation-probe] written:false → throw で終端し、review/fix stage 
     String(error?.message ?? ''),
     /EnterWorktree/,
     'throw メッセージに回避手順（EnterWorktree）の一部が含まれるべき',
+  );
+  assert.match(
+    String(error?.message ?? ''),
+    /Workflow\(\{ name: "pr-iterate", args: "5" \}\)/,
+    'throw メッセージの再実行手順は workflow 名 pr-iterate・PR 番号 args を指すべき（issue #455: dev-flow 誤 workflow 名の再発防止）',
+  );
+  assert.doesNotMatch(
+    String(error?.message ?? ''),
+    /name: "dev-flow"/,
+    'throw メッセージが誤って dev-flow を再起動先として指示してはいけない',
   );
   assert.equal(getReviewerCallCount(), 0, 'written:false 検知後は pr-reviewer に到達しないべき');
   assert.equal(getFixCallCount(), 0, 'written:false 検知後は fix stage に到達しないべき');

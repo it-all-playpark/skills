@@ -565,7 +565,10 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 // isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
 //   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
-//   （branch/base/issue を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
+//   （branch/base/workflow 名・args を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
+//   呼び出し元（dev-flow.js / pr-iterate.js）ごとに workflow 名・再実行 args・回避手順で提示する
+//   worktree 先（targetPath）が異なるため、いずれも呼び出し元が明示的に渡す必須引数にする
+//   （デフォルト値による暗黙の workflow 名混同を避ける — issue #455 レビュー指摘）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -578,14 +581,15 @@ function isolationProbePrompt(worktree) {
     + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
 }
 
-function isolationFailureMessage(worktree, branch, base, issue, error) {
-  const relWt = worktree.includes('.claude/worktrees/') ? worktree.slice(worktree.indexOf('.claude/worktrees/')) : worktree;
-  return `dev-flow: worktree isolation エラー — implementer が ${worktree} に書き込めません`
+function isolationFailureMessage({ worktree, branch, base, workflowName, workflowArgs, targetPath, error }) {
+  const wt = targetPath || worktree;
+  const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
+  return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
     + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
-    + `対処: 呼び出し元セッションで以下を実行してから dev-flow を再起動してください:\n`
-    + `  1. git worktree add -b ${branch} ${worktree} origin/${base}（既に存在する場合は不要）\n`
+    + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
+    + `  1. git worktree add -b ${branch} ${wt} origin/${base}（既に存在する場合は不要）\n`
     + `  2. EnterWorktree({ path: "${relWt}" })\n`
-    + `  3. Workflow({ name: "dev-flow", args: "${issue}" }) を再実行\n`
+    + `  3. Workflow({ name: "${workflowName}", args: "${workflowArgs}" }) を再実行\n`
     + (error ? `probe error: ${error}` : '');
 }
 // ==== END inline: _lib/isolation-probe.mjs ====
@@ -598,9 +602,17 @@ const ISOLATION_PROBE = {
   type: 'object', required: ['written'],
   properties: { written: { type: 'boolean' }, error: { type: 'string' } },
 }
-const isoProbe = await agent(isolationProbePrompt(prMeta?.cwd || '.'), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
+const isoWt = prMeta?.cwd || '.'
+// isoTargetPath: 回避手順で提示する新規 worktree 先。isoWt（書き込みに失敗した共有 checkout の cwd）
+// とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
+// （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
+const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claude/worktrees/pr-${PR}`
+const isoProbe = await agent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
 if (isoProbe && isoProbe.written === false) {
-  throw new Error(isolationFailureMessage(prMeta?.cwd || '.', prMeta?.head_ref || '?', prMeta?.base_ref || '?', PR, isoProbe.error))
+  throw new Error(isolationFailureMessage({
+    worktree: isoWt, branch: prMeta?.head_ref || '?', base: prMeta?.base_ref || '?',
+    workflowName: 'pr-iterate', workflowArgs: PR, targetPath: isoTargetPath, error: isoProbe.error,
+  }))
 }
 if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 
