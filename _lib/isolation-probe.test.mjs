@@ -89,6 +89,9 @@ test('isolationFailureMessage: branch 既存時の代替コマンドを案内す
   });
   assert.match(msg, /git worktree add \/repo\/\.claude\/worktrees\/pr-455 feature\/issue-449/);
   assert.match(msg, /worktree \/repo\/\.claude\/worktrees\/pr-455 自体が既存なら本手順ごと不要/);
+  // branch が他 worktree で checkout 済み（実測 #417 の「cwd が df-<issue> のまま未 isolate」）だと
+  // 上記フォールバックも already checked out で拒否されるため --force 版まで案内する。
+  assert.match(msg, /git worktree add --force \/repo\/\.claude\/worktrees\/pr-455 feature\/issue-449/);
 });
 
 test('isolationFailureMessage: startRef は verbatim で使われる（関数側で origin/ を補わない）', () => {

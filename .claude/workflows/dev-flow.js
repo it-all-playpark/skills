@@ -3213,6 +3213,7 @@ function isolationFailureMessage({ worktree, branch, startRef, workflowName, wor
     + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
     + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
     + `     （branch ${branch} がローカルに既存なら -b と起点を外して \`git worktree add ${wt} ${branch}\`、`
+    + `さらに他 worktree で checkout 済みなら \`git worktree add --force ${wt} ${branch}\`、`
     + `worktree ${wt} 自体が既存なら本手順ごと不要）\n`
     + `  2. EnterWorktree({ path: "${relWt}" })\n`
     + `  3. Workflow({ name: "${workflowName}", args: "${workflowArgs}" }) を再実行\n`
