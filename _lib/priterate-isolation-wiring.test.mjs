@@ -39,11 +39,11 @@ test('ISOLATION_PROBE schema が written(boolean, required) を持つ', () => {
   assert.match(match[0], /written:\s*\{\s*type:\s*'boolean'\s*\}/);
 });
 
-test('isolation probe agent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
+test('isolation probe trackedAgent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
   assert.match(
     src,
-    /await agent\(isolationProbePrompt\([^)]*\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Iterate'\s*\}\)/,
-    'isolation probe の agent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
+    /await trackedAgent\(isolationProbePrompt\([^)]*\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Iterate'\s*\}\)/,
+    'isolation probe の trackedAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
   );
 });
 
@@ -92,7 +92,7 @@ test('probe 自体が失敗（null）した場合の fail-open log 分岐が存�
 });
 
 test('isolation probe は review loop（for (i = 1; i <= MAX; i++)）進入より前に配置されている', () => {
-  const probeIdx = src.indexOf(`await agent(isolationProbePrompt(`);
+  const probeIdx = src.indexOf(`await trackedAgent(isolationProbePrompt(`);
   const loopIdx = src.indexOf('for (i = 1; i <= MAX; i++)');
   assert.notStrictEqual(probeIdx, -1, 'isolation probe 呼び出しが見つからない');
   assert.notStrictEqual(loopIdx, -1, 'review loop の for 文が見つからない');

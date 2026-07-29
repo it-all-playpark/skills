@@ -62,13 +62,13 @@ test('[structural-classify-routing] structural-classify agent() call is NOT wrap
   const before = devFlowSrc.slice(windowStart, idx);
   assert.doesNotMatch(
     before,
-    /need\(\s*await agent\(/,
+    /need\(\s*await trackedAgent\(/,
     'structural-classify call must not be wrapped in need() -- diff-hash-style fail-open policy required',
   );
   assert.match(
     before,
-    /struct\s*=\s*await agent\(/,
-    'expected a plain "struct = await agent(" assignment (not need-wrapped) preceding the structural-classify label',
+    /struct\s*=\s*await trackedAgent\(/,
+    'expected a plain "struct = await trackedAgent(" assignment (not need-wrapped) preceding the structural-classify label',
   );
 });
 

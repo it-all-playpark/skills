@@ -130,6 +130,65 @@ function repoFromGithubUrl(url) {
   return `${match[1]}/${match[2]}`;
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
+// ==== BEGIN inline: _lib/subagent-invocations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// subagent-invocations: run あたりの subagent (agent-invoke) 起動数カウント用の純関数群。
+// I/O なし・Date.now/Math.random 不使用。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+/**
+ * counts（plain object）の counts[key] を +1 する。
+ * agentType が非空文字列の string でなければ 'unknown' へ計上する（fail-safe）。
+ * @param {object} counts - mutate 対象のカウント集計 object
+ * @param {string|undefined} agentType - subagent の agentType
+ * @returns {object} counts（同一 object）
+ */
+function recordSubagentInvocation(counts, agentType) {
+  const key = typeof agentType === 'string' && agentType.trim() !== '' ? agentType : 'unknown';
+  counts[key] = (counts[key] || 0) + 1;
+  return counts;
+}
+
+/**
+ * counts から telemetry 用の { total, by_type } を組み立てる。
+ * by_type はキーを sort した新 object（counts を mutate しない）。
+ * @param {object} counts - recordSubagentInvocation の集計 object
+ * @returns {{total: number, by_type: object}}
+ */
+function buildSubagentInvocations(counts) {
+  const keys = Object.keys(counts).sort();
+  let total = 0;
+  const by_type = {};
+  for (const key of keys) {
+    const value = counts[key];
+    total += value;
+    by_type[key] = value;
+  }
+  return { total, by_type };
+}
+
+/**
+ * byType（{agentType: number} 形式）を counts へ加算 merge する。
+ * byType が null/undefined/非 object なら no-op。数値でない値は skip する。
+ * @param {object} counts - mutate 対象のカウント集計 object
+ * @param {object|null|undefined} byType - merge 元
+ * @returns {object} counts（同一 object）
+ */
+function mergeSubagentCounts(counts, byType) {
+  if (byType == null || typeof byType !== 'object') {
+    return counts;
+  }
+  for (const key of Object.keys(byType)) {
+    const value = byType[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      continue;
+    }
+    counts[key] = (counts[key] || 0) + value;
+  }
+  return counts;
+}
+// ==== END inline: _lib/subagent-invocations.mjs ====
 
 // args 正規化: 単体 /pr-iterate <pr> でも dev-flow からの workflow('pr-iterate', {pr}) でも受ける
 const PR = resolvePositiveIntArg(args, 'pr')
@@ -138,6 +197,14 @@ const MAX = args?.max_iterations == null
   ? 10
   : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
 const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション（issue #126）
+
+// run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
+// trackedAgent() 経由で呼び、SUBAGENT_COUNTS へ計上する（issue #445。dev-flow.js と同型）。
+const SUBAGENT_COUNTS = {};
+async function trackedAgent(prompt, opts) {
+  recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
+  return agent(prompt, opts);
+}
 
 // ---- Review de-churn モデル（issue #126。#123 Plan ループ収束モデルの Review 版を inline 複製）----
 // cold start の pr-reviewer は moving target を生む（毎回 fresh context で全 PR diff を再レビューし、
@@ -549,7 +616,7 @@ const PR_META = {
   type: 'object', required: ['url'],
   properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' } },
 }
-const prMeta = await agent(
+const prMeta = await trackedAgent(
   `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
   { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
 )
@@ -614,7 +681,7 @@ const isoWt = prMeta?.cwd || '.'
 // とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
 // （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
 const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claude/worktrees/pr-${PR}`
-const isoProbe = await agent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
+const isoProbe = await trackedAgent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
 if (isoProbe && isoProbe.written === false) {
   throw new Error(isolationFailureMessage({
     // startRef は PR の head（base ではない）— pr-iterate は既存 PR の変更を含む worktree を
@@ -644,13 +711,13 @@ const history = []               // ラウンド履歴 [{iteration, decision, su
 // 機構は不変。retry は iteration ごと最大 1 回で有限（review#N-contract-retry :604-614 と同パターン、
 // MAX 非消費）。issue #347
 async function callFixAgent(prompt, i) {
-  let fix = await agent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' })
+  let fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' })
   let retried = false
   if (fix == null) {
     retried = true
     fixNullRetries++
     log(`⚠️ fix#${i} が null（schema 不一致/技術的失敗）— 同一 findings で 1 回だけ再試行する（fix-null-retry）`)
-    fix = await agent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}-retry`, phase: 'Iterate' })
+    fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}-retry`, phase: 'Iterate' })
   }
   return { fix, retried }
 }
@@ -661,7 +728,7 @@ async function callFixAgent(prompt, i) {
 async function callReviewAgent(prompt, label) {
   let review = null
   try {
-    review = await agent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label, phase: 'Iterate' })
+    review = await trackedAgent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label, phase: 'Iterate' })
   } catch (e) {
     log(`⚠️ ${label} が例外を投げた（StructuredOutput 契約違反等）: ${e?.message ?? e}`)
   }
@@ -669,7 +736,7 @@ async function callReviewAgent(prompt, label) {
     reviewNullRetries++
     log(`⚠️ ${label} が結果を返さず — 同一 prompt で 1 回だけ再試行する（schema-retry）`)
     try {
-      review = await agent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `${label}-schema-retry`, phase: 'Iterate' })
+      review = await trackedAgent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `${label}-schema-retry`, phase: 'Iterate' })
     } catch (e) {
       log(`⚠️ ${label}-schema-retry も例外: ${e?.message ?? e}`)
     }
@@ -685,7 +752,7 @@ async function callReviewAgent(prompt, label) {
 async function ensureFixCommitted(i) {
   let ensured = null
   try {
-    ensured = await agent(
+    ensured = await trackedAgent(
       `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証する（残っていれば commit + push で回収する）。\n\n## Steps\nインストール済み skills の **固定パス** で ensure-committed.sh を実行せよ（リテラルの \`~/.claude/skills/\` プレフィックスをそのまま使うこと）:\n\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/ensure-committed.sh --pr ${PR} --iteration ${i}\n\`\`\`\n**重要**: 必ずこの \`~/.claude/skills/...\` の絶対パス形で起動せよ。worktree 相対パスや $HOME 展開形で起動してはならない。\`~/.claude/skills/*\` で起動した場合のみ sandbox 除外（excludedCommands）が効き、内部の git push が credential helper（gh 連携）を読める。\nスクリプトの stdout JSON をそのまま返せ。\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\nこのスクリプト実行以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
       { agentType: 'dev-runner-haiku', schema: COMMIT_ENSURE, label: `commit-ensure#${i}`, phase: 'Iterate' },
     )
@@ -763,7 +830,7 @@ for (i = 1; i <= MAX; i++) {
     // ここへ合流する（AC-1/AC-2、issue #321）。lgtm 確定時の投稿のみ decision で分岐する（approve でなければ捏造しない）。
     // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
     // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
-    const ci = await agent(
+    const ci = await trackedAgent(
       `## Objective\n`
       + `PR #${PR} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
       + `## Tools\n`
@@ -943,7 +1010,7 @@ let worktreeDirty = null  // 'dirty' | 'clean' | 'unknown' | null(=lgtm で未�
 if (status !== 'lgtm') {
   let probe = null
   try {
-    probe = await agent(
+    probe = await trackedAgent(
       `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\nインストール済み skills の固定パスで実行せよ: \`bash ~/.claude/skills/pr-iterate/scripts/ensure-committed.sh --check-only\`\nスクリプトの stdout JSON をそのまま返せ。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
       { agentType: 'dev-runner-haiku-ro', schema: DIRTY_STATUS, label: 'worktree-dirty-check', phase: 'Iterate' },
     )
@@ -996,7 +1063,7 @@ if (POST_TERMINAL_SUMMARY) {
       + `投稿失敗時でも posted:false を返し throw しないこと。\n`
   }
 
-  const summaryPost = await agent(
+  const summaryPost = await trackedAgent(
     `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}、action: ${termAction}）。\n\n`
     + bodySaveInstr(summaryBody, 'pr-iterate', 'PR_ITERATE')
     + `## Instructions\n`
@@ -1027,10 +1094,11 @@ const telemetryHandoff = buildJournalHandoffPayload({
     review_null_retries: reviewNullRetries,
     fix_uncommitted_recovered: fixUncommittedRecovered,
     ...(worktreeDirty != null ? { worktree_dirty: worktreeDirty } : {}),
+    subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
   },
 })
 const journalInstr = buildJournalHandoffInstr({ prefix: 'priterate', id: PR, payload: telemetryHandoff })
-const journalPost = await agent(
+const journalPost = await trackedAgent(
   `## Objective\npr-iterate 終端 status の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
   + `## Instructions\n`
   + journalInstr
@@ -1058,4 +1126,5 @@ return {
   worktree_dirty: worktreeDirty,
   fix_uncommitted_recovered: fixUncommittedRecovered,
   history,
+  subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
 }
