@@ -81,6 +81,16 @@ test('isolationFailureMessage: targetPath 指定時は worktree（書き込み�
   assert.doesNotMatch(msg, /git worktree add -b feature\/issue-455 \/repo origin/);
 });
 
+test('isolationFailureMessage: branch 既存時の代替コマンドを案内する（pr-iterate では head_ref がローカル既存になりやすい）', () => {
+  const msg = isolationFailureMessage({
+    worktree: '/repo', branch: 'feature/issue-449', startRef: 'origin/feature/issue-449',
+    workflowName: 'pr-iterate', workflowArgs: '455', error: '',
+    targetPath: '/repo/.claude/worktrees/pr-455',
+  });
+  assert.match(msg, /git worktree add \/repo\/\.claude\/worktrees\/pr-455 feature\/issue-449/);
+  assert.match(msg, /worktree \/repo\/\.claude\/worktrees\/pr-455 自体が既存なら本手順ごと不要/);
+});
+
 test('isolationFailureMessage: startRef は verbatim で使われる（関数側で origin/ を補わない）', () => {
   const msg = isolationFailureMessage({
     worktree: '/repo/.claude/worktrees/df-7', branch: 'feature/issue-7', startRef: 'upstream/release-1.x',

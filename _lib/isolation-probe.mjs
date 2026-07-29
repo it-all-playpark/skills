@@ -33,7 +33,9 @@ export function isolationFailureMessage({ worktree, branch, startRef, workflowNa
   return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
     + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
     + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
-    + `  1. git worktree add -b ${branch} ${wt} ${startRef}（既に存在する場合は不要）\n`
+    + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
+    + `     （branch ${branch} がローカルに既存なら -b と起点を外して \`git worktree add ${wt} ${branch}\`、`
+    + `worktree ${wt} 自体が既存なら本手順ごと不要）\n`
     + `  2. EnterWorktree({ path: "${relWt}" })\n`
     + `  3. Workflow({ name: "${workflowName}", args: "${workflowArgs}" }) を再実行\n`
     + (error ? `probe error: ${error}` : '');
