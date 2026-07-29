@@ -844,7 +844,7 @@ for (i = 1; i <= MAX; i++) {
       + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${PR} --wait-seconds 90 --poll-seconds 15\n\`\`\`\n`
       + `\`--wait-seconds 90 --poll-seconds 15\` は CI pending 時に最大 90 秒（15 秒間隔）ポーリングしてから確定する`
       + `（AC-1/AC-2）。この Bash 実行の timeout パラメータには必ず 300000（ミリ秒。5分）を指定せよ — `
-      + `既定の 120000ms では最大 90 秒のポーリング＋ gh API retry backoff の合計に対して余裕が無い。\n`
+      + `既定の 120000ms では最大 90 秒のポーリング＋ GitHub API retry backoff の合計に対して余裕が無い。\n`
       + `スクリプトの stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。\n\n`
       + `## Output format\n`
       + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `

@@ -647,3 +647,34 @@ EOF
     message=$(echo "$result" | jq -r '.message')
     [[ "$message" == *"rate limit remaining: 0"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# Test 26: HTTP 200 with a non-JSON body (e.g. a middlebox/proxy returning an
+# HTML interstitial with a 200 code) must not crash the script either. This is
+# the sibling of Test 24 for the head-SHA extraction path: that jq runs on the
+# success branch, so a 200 + non-JSON body is the only way to reach it, and an
+# unguarded jq there dies via errexit (no stdout, exit 5) instead of reporting
+# status=error/exit 1.
+# ---------------------------------------------------------------------------
+@test "HTTP 200 with non-JSON body -> status error, exits 1, not a silent crash" {
+    export CHECK_CI_RETRY_DELAYS="0"
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+case "$url" in
+    */pulls/*) printf '<html><body>proxy interstitial</body></html>\n%s\n' "200" ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 1 ]
+    [ -n "$output" ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    message=$(echo "$result" | jq -r '.message')
+    [[ "$message" == *"head.sha"* ]]
+}

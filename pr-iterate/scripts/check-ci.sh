@@ -154,7 +154,10 @@ fetch_checks() {
         return
     fi
     local sha
-    sha=$(echo "$body" | jq -r '.head.sha // empty' 2>/dev/null)
+    # `|| true`: under `set -e` the assignment inherits jq's exit status, so a
+    # parse error on a non-JSON 200 body would kill the script silently instead
+    # of falling through to the "no head.sha" error path below.
+    sha=$(echo "$body" | jq -r '.head.sha // empty' 2>/dev/null || true)
     if [[ -z "$sha" ]]; then
         FETCH_ERR="GET pulls/${PR_NUM}: response had no head.sha"
         return
