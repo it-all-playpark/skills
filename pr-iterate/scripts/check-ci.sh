@@ -4,9 +4,15 @@
 #                     [--wait-seconds N] [--poll-seconds M]
 #
 # Exits 0 when CI status is determined (passed/failed/pending/no_checks).
-# Exits 1 when gh API fails with a real error (auth, network, unknown field)
-# or when --wait-seconds/--poll-seconds validation fails.
+# Exits 1 when the GitHub API fails with a real error (auth, network, unknown
+# repo/PR) or when --wait-seconds/--poll-seconds validation fails.
 # CI state is reported via stdout JSON so the caller can treat pending != failure.
+#
+# issue #458: this script talks to the GitHub REST API directly via curl
+# instead of shelling out to `gh`, so it runs fully inside the sandboxed
+# Bash tool with no special invocation requirements — `gh` needed its own
+# config file and had known TLS verification issues under sandboxing that
+# curl does not have.
 #
 # --wait-seconds N (default 0): total seconds to keep polling while CI is
 #   pending, in bounded increments of --poll-seconds. 0 = no polling
@@ -20,17 +26,17 @@
 #     "failed_checks": [...], "pending_checks": [...],
 #     "waited_seconds": N, "poll_attempts": N }
 #
-# gh bucket field values (gh help pr checks):
-#   pass | fail | pending | skipping | cancel
-# gh exit codes:
-#   0  = all checks complete (passed or failed)
-#   8  = checks still pending
-#   1  = real API error (auth, network, unknown JSON field, etc.)
-# Transient gh API errors (exit code other than 0/8) are retried with backoff
-# within each poll cycle. Max retries = number of delay entries in
-# CHECK_CI_RETRY_DELAYS (default 10s/30s). The retry budget resets every poll
-# cycle and is independent from the --wait-seconds wait budget (AC-4):
-# API-error retries never consume waited_seconds.
+# Auth: if GH_TOKEN or GITHUB_TOKEN is set, requests are authenticated
+# (Bearer token) for a higher rate limit and private-repo access. Otherwise
+# requests are unauthenticated (60 req/hour/IP — fine for public repos at
+# normal dev-flow run volume; each fetch cycle costs 3 API calls).
+#
+# Transient failures (network error, non-2xx HTTP response from any of the
+# 3 API calls a fetch cycle makes) are retried with backoff within each poll
+# cycle. Max retries = number of delay entries in CHECK_CI_RETRY_DELAYS
+# (default 10s/30s). The retry budget resets every poll cycle and is
+# independent from the --wait-seconds wait budget (AC-4): API-error retries
+# never consume waited_seconds.
 
 set -euo pipefail
 
@@ -38,15 +44,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../_lib/common.sh"
 
 require_cmd jq
-require_cmd gh
+require_cmd curl
 
 PR_REF=""
-REPO_FLAG=()
+REPO=""
 WAIT_SECONDS=0
 POLL_SECONDS=30
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --repo) REPO_FLAG=(--repo "$2"); shift 2 ;;
+        --repo) REPO="$2"; shift 2 ;;
         --wait-seconds) WAIT_SECONDS="$2"; shift 2 ;;
         --poll-seconds) POLL_SECONDS="$2"; shift 2 ;;
         -*) die_json "Unknown option: $1" 1 ;;
@@ -56,7 +62,7 @@ done
 
 [[ -n "$PR_REF" ]] || die_json "PR reference required" 1
 
-# Validation (deterministic, before any gh call — AC-6).
+# Validation (deterministic, before any network call — AC-6).
 POLL_MIN=5
 WAIT_MAX=1800
 [[ "$WAIT_SECONDS" =~ ^[0-9]+$ ]] || die_json "Invalid --wait-seconds: $WAIT_SECONDS. Must be an integer 0-1800" 1
@@ -64,70 +70,140 @@ WAIT_MAX=1800
 (( WAIT_SECONDS <= WAIT_MAX )) || die_json "Invalid --wait-seconds: $WAIT_SECONDS. Must be an integer 0-1800" 1
 (( POLL_SECONDS >= POLL_MIN )) || die_json "Invalid --poll-seconds: $POLL_SECONDS. Must be an integer >= 5" 1
 
-# Capture gh output and exit code explicitly.
-# gh exits 0 for complete checks, 8 for pending, 1 for real errors.
-# We allow exit 0 and 8; anything else is retried then surfaced as {"status":"error"}.
-# Transient gh API errors (exit code other than 0/8) are retried with backoff.
-# Max retries = number of delay entries. Tests override via CHECK_CI_RETRY_DELAYS.
+# Resolve PR_NUM / REPO from a full PR URL if given, otherwise from --repo /
+# the local git remote (mirrors `gh`'s own auto-detection from cwd).
+PR_NUM="$PR_REF"
+if [[ "$PR_REF" =~ ^https?://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+    [[ -n "$REPO" ]] || REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    PR_NUM="${BASH_REMATCH[3]}"
+fi
+[[ "$PR_NUM" =~ ^[0-9]+$ ]] || die_json "Invalid PR reference: $PR_REF. Must be a PR number or https://github.com/<owner>/<repo>/pull/<n> URL" 1
+
+if [[ -z "$REPO" ]]; then
+    origin_url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    if [[ "$origin_url" =~ github\.com[:/]+([^/]+)/([^/.]+)(\.git)?/?$ ]]; then
+        REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    fi
+fi
+[[ -n "$REPO" ]] || die_json "Could not resolve owner/repo. Pass --repo <owner/repo> or run inside a github.com git repo" 1
+
+AUTH_ARGS=()
+TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+[[ -n "$TOKEN" ]] && AUTH_ARGS=(-H "Authorization: Bearer ${TOKEN}")
+
 read -r -a RETRY_DELAYS <<< "${CHECK_CI_RETRY_DELAYS:-10 30}"
+
+# api_get <path-with-query> - GETs https://api.github.com<path>, prints the
+# response body followed by a final line with the HTTP status code. Returns
+# non-zero only on a curl-level failure (network unreachable, DNS, etc.);
+# a non-2xx HTTP response is still printed (with its status code) so the
+# caller can classify it.
+api_get() {
+    curl -sS -w '\n%{http_code}' \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "${AUTH_ARGS[@]}" \
+        "https://api.github.com$1"
+}
+
+# fetch_checks - one fetch cycle: resolve the PR's head SHA, then fetch
+# check-runs + legacy commit statuses for that SHA and merge them into a
+# gh-pr-checks-compatible array (name/state/bucket), matching the shape the
+# rest of this script (unchanged from the `gh`-based version) already knows
+# how to reduce to a status. Sets FETCH_OK (0/1), CHECKS_JSON, FETCH_ERR.
+fetch_checks() {
+    FETCH_OK=0
+    CHECKS_JSON="[]"
+    FETCH_ERR=""
+
+    local resp http_code body
+    if ! resp=$(api_get "/repos/${REPO}/pulls/${PR_NUM}" 2>&1); then
+        FETCH_ERR="network error fetching PR #${PR_NUM}: $resp"
+        return
+    fi
+    http_code=$(echo "$resp" | tail -1)
+    body=$(echo "$resp" | sed '$d')
+    if [[ "$http_code" != "200" ]]; then
+        FETCH_ERR="GET pulls/${PR_NUM} -> HTTP $http_code: $(echo "$body" | jq -r '.message // "unknown error"' 2>/dev/null)"
+        return
+    fi
+    local sha
+    sha=$(echo "$body" | jq -r '.head.sha // empty' 2>/dev/null)
+    if [[ -z "$sha" ]]; then
+        FETCH_ERR="GET pulls/${PR_NUM}: response had no head.sha"
+        return
+    fi
+
+    local cr_resp cr_code cr_body
+    if ! cr_resp=$(api_get "/repos/${REPO}/commits/${sha}/check-runs?per_page=100" 2>&1); then
+        FETCH_ERR="network error fetching check-runs: $cr_resp"
+        return
+    fi
+    cr_code=$(echo "$cr_resp" | tail -1)
+    cr_body=$(echo "$cr_resp" | sed '$d')
+    if [[ "$cr_code" != "200" ]]; then
+        FETCH_ERR="GET check-runs -> HTTP $cr_code: $(echo "$cr_body" | jq -r '.message // "unknown error"' 2>/dev/null)"
+        return
+    fi
+
+    local st_resp st_code st_body
+    if ! st_resp=$(api_get "/repos/${REPO}/commits/${sha}/status?per_page=100" 2>&1); then
+        FETCH_ERR="network error fetching commit status: $st_resp"
+        return
+    fi
+    st_code=$(echo "$st_resp" | tail -1)
+    st_body=$(echo "$st_resp" | sed '$d')
+    if [[ "$st_code" != "200" ]]; then
+        FETCH_ERR="GET status -> HTTP $st_code: $(echo "$st_body" | jq -r '.message // "unknown error"' 2>/dev/null)"
+        return
+    fi
+
+    CHECKS_JSON=$(jq -cn --argjson cr "$cr_body" --argjson st "$st_body" '
+      def cr_bucket:
+        if .status != "completed" then "pending"
+        elif .conclusion == "success" then "pass"
+        elif (.conclusion == "neutral" or .conclusion == "skipped") then "skipping"
+        else "fail"
+        end;
+      def st_bucket:
+        if .state == "success" then "pass"
+        elif .state == "pending" then "pending"
+        else "fail"
+        end;
+      ([$cr.check_runs[]? | {name, state: (.conclusion // .status), bucket: cr_bucket}])
+      + ([$st.statuses[]?  | {name: .context, state, bucket: st_bucket}])
+    ') || { FETCH_ERR="failed to merge check-runs/status responses"; return; }
+    FETCH_OK=1
+}
 
 WAITED=0
 POLL_ATTEMPTS=0
-checks_json=""
-gh_exit=0
 result_json=""
 status=""
-no_checks_detected=0
 
 while :; do
-    gh_stderr_file=$(mktemp)
     attempt=0
     while :; do
-        gh_exit=0
-        checks_json=$(gh pr checks "$PR_REF" "${REPO_FLAG[@]}" --json name,state,bucket 2>"$gh_stderr_file") || gh_exit=$?
-        # exit 0 = checks complete, 8 = pending: both determinate -> NEVER retry
-        if [[ $gh_exit -eq 0 || $gh_exit -eq 8 ]]; then
-            break
-        fi
-        # gh exits 1 (NOT 0) with "no checks reported on the '<branch>' branch" when the
-        # PR has zero checks (CI not configured / not yet triggered). Real gh never emits
-        # an empty JSON array with exit 0 for this case, so the length==0 jq branch below
-        # is unreachable in practice — this is where the "no checks" state actually lands.
-        # It is determinate, NOT a transient API error: stop, do not retry, report no_checks.
-        if [[ $gh_exit -eq 1 ]] && grep -qi 'no checks reported' "$gh_stderr_file"; then
-            no_checks_detected=1
-            break
-        fi
-        if (( attempt >= ${#RETRY_DELAYS[@]} )); then
-            break
-        fi
-        echo "check-ci: gh pr checks failed (exit $gh_exit), retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $(cat "$gh_stderr_file")" >&2
+        fetch_checks
+        (( FETCH_OK == 1 )) && break
+        if (( attempt >= ${#RETRY_DELAYS[@]} )); then break; fi
+        echo "check-ci: fetch failed, retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $FETCH_ERR" >&2
         sleep "${RETRY_DELAYS[$attempt]}"
         attempt=$((attempt + 1))
     done
-    gh_stderr=$(cat "$gh_stderr_file")
-    rm -f "$gh_stderr_file"
     POLL_ATTEMPTS=$((POLL_ATTEMPTS + 1))
 
-    # PR has zero checks (gh exit 1 + "no checks reported"): determinate no_checks,
-    # nothing to poll for — stop and report with exit 0.
-    if [[ $no_checks_detected -eq 1 ]]; then
-        result_json='{"status":"no_checks","passed":0,"failed":0,"pending":0,"skipped":0,"failed_checks":[],"pending_checks":[]}'
-        break
-    fi
-
-    # exit 1 = real API error (auth failure, network error, unknown field, etc.)
-    if [[ $gh_exit -ne 0 && $gh_exit -ne 8 ]]; then
+    if (( FETCH_OK != 1 )); then
         printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
-            "$(printf '%s' "$gh_stderr" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
+            "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
         exit 1
     fi
 
-    # bucket field values: pass | fail | pending | skipping | cancel
+    # bucket field values: pass | fail | pending | skipping
     # is_passed:  bucket IN("pass", "skipping")   — completed successfully or intentionally skipped
     # is_failed:  bucket IN("fail", "cancel")     — failed or cancelled
     # is_pending: bucket == "pending"             — still running
-    result_json=$(echo "$checks_json" | jq -c '
+    result_json=$(echo "$CHECKS_JSON" | jq -c '
       def is_passed:  .bucket | IN("pass", "skipping");
       def is_failed:  .bucket | IN("fail", "cancel");
       def is_pending: .bucket == "pending";

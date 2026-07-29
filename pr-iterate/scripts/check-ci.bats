@@ -1,14 +1,23 @@
 #!/usr/bin/env bats
 # Tests for pr-iterate/scripts/check-ci.sh
 #
-# Strategy: stub `gh` via a PATH-prepended script that responds to
-# `pr checks ... --json name,state,bucket` with canned JSON matching the
-# real gh pr checks --json output schema (bucket + state, no conclusion field).
+# Strategy: stub `curl` via a PATH-prepended script that inspects the request
+# URL (the only arg starting with "https://") and responds per endpoint:
+#   .../pulls/<n>                -> PR lookup (head.sha)
+#   .../commits/<sha>/check-runs -> check-runs array
+#   .../commits/<sha>/status     -> legacy combined-status array (kept empty
+#                                    in all tests below except where noted;
+#                                    check-runs alone exercises every bucket)
 #
-# gh exit code semantics mirrored from real gh:
-#   0  = all checks complete
-#   8  = checks still pending
-#   1  = real API error
+# A single call-count file (CI_CYCLE_COUNT_FILE) increments once per fetch
+# cycle (on the /pulls/ call, which fires exactly once per cycle), so it is
+# directly comparable to the old GH_CALL_COUNT_FILE / "gh called N times"
+# assertions from the `gh`-based version of this script.
+#
+# "Pending" / "fail" simulation ordering mirrors the old `gh` stub: the
+# leading CI_PENDING_TIMES cycles report pending data, the next CI_FAIL_TIMES
+# cycles report an HTTP 500 (transient API error), and everything after that
+# reports the fixed CI_CHECKRUNS_BODY / CI_STATUS_BODY.
 
 setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -17,44 +26,57 @@ setup() {
     STUB_DIR="$BATS_TMPDIR/stub-bin"
     mkdir -p "$STUB_DIR"
 
-    # Default gh stub: responds to `pr checks` with canned JSON stored in
-    # $GH_CHECKS_OUTPUT (exit code from $GH_EXIT_CODE, default 0).
-    # Supports call-count tracking via GH_CALL_COUNT_FILE.
-    # GH_FAIL_TIMES controls how many initial attempts fail with exit 1.
-    GH_CALL_COUNT_FILE="$BATS_TMPDIR/gh-call-count"
-    rm -f "$GH_CALL_COUNT_FILE"
-    GH_FAIL_TIMES=0
-    GH_PENDING_TIMES=0
-    GH_PENDING_OUTPUT='[{"name":"build","state":"IN_PROGRESS","bucket":"pending"}]'
+    CI_CYCLE_COUNT_FILE="$BATS_TMPDIR/curl-cycle-count"
+    rm -f "$CI_CYCLE_COUNT_FILE"
+    CI_FAIL_TIMES=0
+    CI_PENDING_TIMES=0
+    CI_PENDING_CHECKRUNS_BODY='{"total_count":1,"check_runs":[{"name":"build","status":"in_progress"}]}'
     CHECK_CI_RETRY_DELAYS="0 0"
-    GH_CHECKS_OUTPUT="[]"
-    GH_EXIT_CODE=0
-    export GH_CALL_COUNT_FILE GH_FAIL_TIMES GH_PENDING_TIMES GH_PENDING_OUTPUT
-    export CHECK_CI_RETRY_DELAYS GH_CHECKS_OUTPUT GH_EXIT_CODE
+    CI_PR_BODY='{"head":{"sha":"deadbeef"}}'
+    CI_CHECKRUNS_BODY='{"total_count":0,"check_runs":[]}'
+    CI_STATUS_BODY='{"state":"pending","statuses":[]}'
+    export CI_CYCLE_COUNT_FILE CI_FAIL_TIMES CI_PENDING_TIMES CI_PENDING_CHECKRUNS_BODY
+    export CHECK_CI_RETRY_DELAYS CI_PR_BODY CI_CHECKRUNS_BODY CI_STATUS_BODY
 
     SLEEP_LOG_FILE="$BATS_TMPDIR/sleep-log"
     rm -f "$SLEEP_LOG_FILE"
     export SLEEP_LOG_FILE
 
-    cat > "$STUB_DIR/gh" << 'EOF'
+    cat > "$STUB_DIR/curl" << 'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "pr" && "$2" == "checks" ]]; then
-    count=$(( $(cat "$GH_CALL_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
-    echo "$count" > "$GH_CALL_COUNT_FILE"
-    if (( count <= ${GH_PENDING_TIMES:-0} )); then
-        echo "$GH_PENDING_OUTPUT"
-        exit 8
-    elif (( count <= ${GH_PENDING_TIMES:-0} + ${GH_FAIL_TIMES:-0} )); then
-        echo "transient network error" >&2
-        exit 1
-    else
-        echo "$GH_CHECKS_OUTPUT"
-        exit "${GH_EXIT_CODE:-0}"
-    fi
-fi
+url=""
+for a in "$@"; do
+    case "$a" in
+        https://*) url="$a" ;;
+    esac
+done
+
+case "$url" in
+    */pulls/*)
+        count=$(( $(cat "$CI_CYCLE_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+        echo "$count" > "$CI_CYCLE_COUNT_FILE"
+        printf '%s\n%s\n' "$CI_PR_BODY" "200"
+        ;;
+    */check-runs*)
+        n=$(cat "$CI_CYCLE_COUNT_FILE" 2>/dev/null || echo 0)
+        if (( n <= ${CI_PENDING_TIMES:-0} )); then
+            printf '%s\n%s\n' "$CI_PENDING_CHECKRUNS_BODY" "200"
+        elif (( n <= ${CI_PENDING_TIMES:-0} + ${CI_FAIL_TIMES:-0} )); then
+            printf '%s\n%s\n' '{"message":"transient error"}' "500"
+        else
+            printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200"
+        fi
+        ;;
+    */status*)
+        printf '%s\n%s\n' "$CI_STATUS_BODY" "200"
+        ;;
+    *)
+        printf '%s\n%s\n' '{"message":"not found"}' "404"
+        ;;
+esac
 exit 0
 EOF
-    chmod +x "$STUB_DIR/gh"
+    chmod +x "$STUB_DIR/curl"
 
     cat > "$STUB_DIR/sleep" << 'EOF'
 #!/usr/bin/env bash
@@ -62,15 +84,24 @@ echo "$1" >> "$SLEEP_LOG_FILE"
 exit 0
 EOF
     chmod +x "$STUB_DIR/sleep"
+
+    cat > "$STUB_DIR/git" << 'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "config" && "$2" == "--get" && "$3" == "remote.origin.url" ]]; then
+    echo "https://github.com/acme/widget.git"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$STUB_DIR/git"
+
     export PATH="$STUB_DIR:$PATH"
 }
 
 # ---------------------------------------------------------------------------
-# Test 1: empty checks array -> status 'no_checks'
+# Test 1: empty check-runs + empty statuses -> status 'no_checks'
 # ---------------------------------------------------------------------------
-@test "empty checks array -> status no_checks" {
-    export GH_CHECKS_OUTPUT='[]'
-    export GH_EXIT_CODE=0
+@test "empty checks -> status no_checks" {
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
@@ -81,15 +112,13 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 2: all bucket=pass -> status 'passed'
-# Real gh schema: {"bucket":"pass","name":"...","state":"SUCCESS"}
+# Test 2: all check-runs conclusion=success -> status 'passed'
 # ---------------------------------------------------------------------------
-@test "all bucket=pass -> status passed" {
-    export GH_CHECKS_OUTPUT='[
-      {"name":"lint","state":"SUCCESS","bucket":"pass"},
-      {"name":"test","state":"SUCCESS","bucket":"pass"}
-    ]'
-    export GH_EXIT_CODE=0
+@test "all check-runs success -> status passed" {
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
@@ -99,14 +128,13 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 3: one bucket=fail -> status 'failed', failed_checks populated
+# Test 3: one check-run failure -> status 'failed', failed_checks populated
 # ---------------------------------------------------------------------------
-@test "one bucket=fail -> status failed with failed_checks" {
-    export GH_CHECKS_OUTPUT='[
-      {"name":"lint","state":"SUCCESS","bucket":"pass"},
-      {"name":"test","state":"FAILURE","bucket":"fail"}
-    ]'
-    export GH_EXIT_CODE=0
+@test "one check-run failure -> status failed with failed_checks" {
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"failure"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
@@ -117,14 +145,12 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 4: bucket=pending + gh exit 8 -> status 'pending'
-# Real gh exits 8 when checks are still in progress
+# Test 4: one check-run still in_progress -> status 'pending'
 # ---------------------------------------------------------------------------
-@test "bucket=pending with gh exit 8 -> status pending" {
-    export GH_CHECKS_OUTPUT='[
-      {"name":"build","state":"IN_PROGRESS","bucket":"pending"}
-    ]'
-    export GH_EXIT_CODE=8
+@test "check-run in_progress -> status pending" {
+    export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
+      {"name":"build","status":"in_progress"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
@@ -135,14 +161,13 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 5: mix of bucket=fail + bucket=pending -> status 'failed' (failure wins)
+# Test 5: mix of failure + in_progress -> status 'failed' (failure wins)
 # ---------------------------------------------------------------------------
-@test "bucket=fail + bucket=pending -> status failed (failure wins)" {
-    export GH_CHECKS_OUTPUT='[
-      {"name":"test","state":"FAILURE","bucket":"fail"},
-      {"name":"deploy","state":"IN_PROGRESS","bucket":"pending"}
-    ]'
-    export GH_EXIT_CODE=0
+@test "failure + in_progress -> status failed (failure wins)" {
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"test","status":"completed","conclusion":"failure"},
+      {"name":"deploy","status":"in_progress"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
@@ -152,14 +177,13 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 6: bucket=skipping -> counted as passed (status 'passed')
+# Test 6: conclusion=skipped -> counted as passed (status 'passed')
 # ---------------------------------------------------------------------------
-@test "bucket=skipping -> status passed" {
-    export GH_CHECKS_OUTPUT='[
-      {"name":"skip-check","state":"SKIPPED","bucket":"skipping"},
-      {"name":"pass-check","state":"SUCCESS","bucket":"pass"}
-    ]'
-    export GH_EXIT_CODE=0
+@test "skipped conclusion -> status passed" {
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"skip-check","status":"completed","conclusion":"skipped"},
+      {"name":"pass-check","status":"completed","conclusion":"success"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
@@ -170,170 +194,163 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 7: gh exits 1 (real API error) -> script exits 1 with status=error
+# Test 7: check-runs endpoint returns HTTP 500 forever -> exits 1, status=error
 # Regression: must NOT silently degrade to no_checks (passing) on API failure.
 # ---------------------------------------------------------------------------
-@test "gh API error (exit 1) -> script exits 1 with status=error, not no_checks" {
-    # Stub: print an error message to stderr and exit 1
-    cat > "$BATS_TMPDIR/stub-bin/gh" << 'GHEOF'
+@test "check-runs API error (HTTP 500) -> script exits 1 with status=error, not no_checks" {
+    cat > "$STUB_DIR/curl" << 'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "pr" && "$2" == "checks" ]]; then
-    echo 'Unknown JSON field: "conclusion"' >&2
-    exit 1
-fi
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+case "$url" in
+    */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
+    */check-runs*) printf '%s\n%s\n' '{"message":"Server Error"}' "500" ;;
+    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+esac
 exit 0
-GHEOF
-    chmod +x "$BATS_TMPDIR/stub-bin/gh"
+EOF
+    chmod +x "$STUB_DIR/curl"
 
     run "$SCRIPT" 42
-    # Script must exit 1 on real API error
     [ "$status" -eq 1 ]
-    # Output must contain status=error, NOT no_checks
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 8: gh fails once then succeeds -> status passed (retry path)
+# Test 8: check-runs fails once then succeeds -> status passed (retry path)
 # ---------------------------------------------------------------------------
-@test "gh fails once then succeeds -> status passed (retry path)" {
-    export GH_FAIL_TIMES=1
-    export GH_CHECKS_OUTPUT='[
-      {"name":"lint","state":"SUCCESS","bucket":"pass"},
-      {"name":"test","state":"SUCCESS","bucket":"pass"}
-    ]'
-    export GH_EXIT_CODE=0
+@test "fetch fails once then succeeds -> status passed (retry path)" {
+    export CI_FAIL_TIMES=1
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
     run --separate-stderr "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "passed" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 2 ]
-    # stderr must contain retry log (attempt number + failure reason)
-    [[ "$stderr" == *"check-ci: gh pr checks failed"* ]]
+    [[ "$stderr" == *"check-ci: fetch failed"* ]]
 }
 
 # ---------------------------------------------------------------------------
-# Test 9: gh fails all attempts -> status error, exits 1
+# Test 9: fetch fails all attempts -> status error, exits 1
 # With CHECK_CI_RETRY_DELAYS="0 0", max attempts = 1 initial + 2 retries = 3
 # ---------------------------------------------------------------------------
-@test "gh fails all attempts -> status error, exits 1, call count 3" {
-    export GH_FAIL_TIMES=10
+@test "fetch fails all attempts -> status error, exits 1, call count 3" {
+    export CI_FAIL_TIMES=10
     run "$SCRIPT" 42
     [ "$status" -eq 1 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 3 ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 10: failed status does not trigger retry (gh called exactly once)
+# Test 10: failed status does not trigger retry (fetch called exactly once)
 # ---------------------------------------------------------------------------
-@test "failed status does not trigger retry (gh called exactly once)" {
-    export GH_FAIL_TIMES=0
-    export GH_CHECKS_OUTPUT='[
-      {"name":"test","state":"FAILURE","bucket":"fail"}
-    ]'
-    export GH_EXIT_CODE=0
+@test "failed status does not trigger retry (fetch called exactly once)" {
+    export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
+      {"name":"test","status":"completed","conclusion":"failure"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "failed" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 1 ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 11: pending (gh exit 8) does not trigger retry (gh called exactly once)
+# Test 11: pending with no --wait-seconds does not trigger retry/polling
+# (fetch called exactly once)
 # ---------------------------------------------------------------------------
-@test "pending (gh exit 8) does not trigger retry (gh called exactly once)" {
-    export GH_FAIL_TIMES=0
-    export GH_CHECKS_OUTPUT='[
-      {"name":"build","state":"IN_PROGRESS","bucket":"pending"}
-    ]'
-    export GH_EXIT_CODE=8
+@test "pending with no wait budget -> fetch called exactly once" {
+    export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
+      {"name":"build","status":"in_progress"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "pending" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 1 ]
 }
 
 # ---------------------------------------------------------------------------
 # Test 12 (AC-1): pending -> passed within wait budget (bounded polling)
-# GH_PENDING_TIMES=2 -> 3rd fetch returns passed. wait=10/poll=5 ->
+# CI_PENDING_TIMES=2 -> 3rd fetch returns passed. wait=10/poll=5 ->
 # sleeps 5,5 (2 sleeps), 3 fetches, waited_seconds=10, poll_attempts=3.
 # ---------------------------------------------------------------------------
 @test "AC-1 pending -> passed within wait budget (bounded polling)" {
-    export GH_PENDING_TIMES=2
-    export GH_CHECKS_OUTPUT='[
-      {"name":"lint","state":"SUCCESS","bucket":"pass"},
-      {"name":"test","state":"SUCCESS","bucket":"pass"}
-    ]'
-    export GH_EXIT_CODE=0
+    export CI_PENDING_TIMES=2
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
     run "$SCRIPT" 42 --wait-seconds 10 --poll-seconds 5
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "passed" ]
     [ "$(echo "$result" | jq -r '.waited_seconds')" = "10" ]
     [ "$(echo "$result" | jq -r '.poll_attempts')" = "3" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 3 ]
     [ "$(cat "$SLEEP_LOG_FILE" | tr '\n' ',')" = "5,5," ]
 }
 
 # ---------------------------------------------------------------------------
 # Test 13 (AC-2): timeout -> terminates finitely while still pending
-# GH_PENDING_TIMES=99 (always pending). wait=12/poll=5 ->
+# CI_PENDING_TIMES=99 (always pending). wait=12/poll=5 ->
 # sleeps 5,5,2 (3 sleeps), 4 fetches, waited_seconds=12, poll_attempts=4.
 # ---------------------------------------------------------------------------
 @test "AC-2 timeout -> terminates finitely still pending" {
-    export GH_PENDING_TIMES=99
+    export CI_PENDING_TIMES=99
     run "$SCRIPT" 42 --wait-seconds 12 --poll-seconds 5
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "pending" ]
     [ "$(echo "$result" | jq -r '.waited_seconds')" = "12" ]
     [ "$(echo "$result" | jq -r '.poll_attempts')" = "4" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 4 ]
     [ "$(cat "$SLEEP_LOG_FILE" | tr '\n' ',')" = "5,5,2," ]
 }
 
 # ---------------------------------------------------------------------------
 # Test 14 (AC-3): pending -> failed cuts polling short (immediate break)
-# GH_PENDING_TIMES=1 -> 2nd fetch returns failed. wait=30/poll=5 ->
+# CI_PENDING_TIMES=1 -> 2nd fetch returns failed. wait=30/poll=5 ->
 # 1 sleep (5s), 2 fetches, waited_seconds=5, poll_attempts=2.
 # ---------------------------------------------------------------------------
 @test "AC-3 pending -> failed cuts polling short" {
-    export GH_PENDING_TIMES=1
-    export GH_CHECKS_OUTPUT='[
-      {"name":"test","state":"FAILURE","bucket":"fail"}
-    ]'
-    export GH_EXIT_CODE=0
+    export CI_PENDING_TIMES=1
+    export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
+      {"name":"test","status":"completed","conclusion":"failure"}
+    ]}'
     run "$SCRIPT" 42 --wait-seconds 30 --poll-seconds 5
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "failed" ]
     [ "$(echo "$result" | jq -r '.waited_seconds')" = "5" ]
     [ "$(echo "$result" | jq -r '.poll_attempts')" = "2" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 2 ]
 }
 
 # ---------------------------------------------------------------------------
 # Test 15 (AC-4): pending -> API error retry budget separate from wait budget
-# GH_PENDING_TIMES=1, GH_FAIL_TIMES=10, CHECK_CI_RETRY_DELAYS="0 0" (max 3
+# CI_PENDING_TIMES=1, CI_FAIL_TIMES=10, CHECK_CI_RETRY_DELAYS="0 0" (max 3
 # attempts per fetch cycle: 1 initial + 2 retries). wait=30/poll=5 ->
 # 1st fetch cycle: pending (1 call) -> sleep 5s -> waited=5
 # 2nd fetch cycle: fail,fail,fail (3 calls, retries exhausted) -> error
-# Total gh calls = 1 + 3 = 4. poll_attempts=2 (2 fetch cycles).
+# Total fetch calls = 1 + 3 = 4. poll_attempts=2 (2 fetch cycles).
 # ---------------------------------------------------------------------------
 @test "AC-4 pending -> API error keeps wait/retry budgets separate" {
-    export GH_PENDING_TIMES=1
-    export GH_FAIL_TIMES=10
+    export CI_PENDING_TIMES=1
+    export CI_FAIL_TIMES=10
     export CHECK_CI_RETRY_DELAYS="0 0"
     run "$SCRIPT" 42 --wait-seconds 30 --poll-seconds 5
     [ "$status" -eq 1 ]
@@ -341,7 +358,7 @@ GHEOF
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
     [ "$(echo "$result" | jq -r '.waited_seconds')" = "5" ]
     [ "$(echo "$result" | jq -r '.poll_attempts')" = "2" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 4 ]
 }
 
@@ -353,7 +370,7 @@ GHEOF
     [ "$status" -eq 1 ]
     result=$(echo "$output" | tail -1)
     [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
-    [ ! -f "$GH_CALL_COUNT_FILE" ]
+    [ ! -f "$CI_CYCLE_COUNT_FILE" ]
 }
 
 @test "AC-6 validation rejects negative --wait-seconds" {
@@ -361,7 +378,7 @@ GHEOF
     [ "$status" -eq 1 ]
     result=$(echo "$output" | tail -1)
     [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
-    [ ! -f "$GH_CALL_COUNT_FILE" ]
+    [ ! -f "$CI_CYCLE_COUNT_FILE" ]
 }
 
 @test "AC-6 validation rejects --wait-seconds over 1800" {
@@ -369,7 +386,7 @@ GHEOF
     [ "$status" -eq 1 ]
     result=$(echo "$output" | tail -1)
     [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
-    [ ! -f "$GH_CALL_COUNT_FILE" ]
+    [ ! -f "$CI_CYCLE_COUNT_FILE" ]
 }
 
 @test "AC-6 validation rejects --poll-seconds under 5" {
@@ -377,57 +394,117 @@ GHEOF
     [ "$status" -eq 1 ]
     result=$(echo "$output" | tail -1)
     [[ "$(echo "$result" | jq -r '.error')" == *"Invalid"* ]]
-    [ ! -f "$GH_CALL_COUNT_FILE" ]
+    [ ! -f "$CI_CYCLE_COUNT_FILE" ]
 }
 
 # ---------------------------------------------------------------------------
 # Test 17 (AC-5 regression): no polling options -> unchanged behavior
 # ---------------------------------------------------------------------------
-@test "AC-5 regression: no polling options, pending (gh exit 8) -> single call" {
-    export GH_FAIL_TIMES=0
-    export GH_CHECKS_OUTPUT='[
-      {"name":"build","state":"IN_PROGRESS","bucket":"pending"}
-    ]'
-    export GH_EXIT_CODE=8
+@test "AC-5 regression: no polling options, pending -> single call" {
+    export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
+      {"name":"build","status":"in_progress"}
+    ]}'
     run "$SCRIPT" 42
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "pending" ]
     [ "$(echo "$result" | jq -r '.waited_seconds')" = "0" ]
     [ "$(echo "$result" | jq -r '.poll_attempts')" = "1" ]
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
+    call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 1 ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 18: real gh "no checks" behavior -> status 'no_checks', exits 0
-# Real gh returns EXIT 1 with empty stdout and stderr "no checks reported on
-# the '<branch>' branch" when a PR has zero checks (CI not configured). This is
-# a determinate state, NOT a real API error: must report no_checks and exit 0.
-# Regression for pr-iterate ci_error false positive on CI-less repos.
+# Test 18: --repo owner/repo flag is honored (no git remote lookup needed)
 # ---------------------------------------------------------------------------
-@test "gh exit 1 + 'no checks reported' -> status no_checks, exits 0, no retry" {
-    export GH_CALL_COUNT_FILE
-    cat > "$BATS_TMPDIR/stub-bin/gh" << 'GHEOF'
+@test "repo resolution: --repo flag is used directly" {
+    cat > "$STUB_DIR/curl" << 'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "pr" && "$2" == "checks" ]]; then
-    count=$(( $(cat "$GH_CALL_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
-    echo "$count" > "$GH_CALL_COUNT_FILE"
-    echo "no checks reported on the 'feature-branch' branch" >&2
-    exit 1
-fi
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+[[ "$url" == *"/repos/explicit-owner/explicit-repo/"* ]] || { echo "unexpected url: $url" >&2; exit 1; }
+case "$url" in
+    */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
+    */check-runs*) printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
+    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+esac
 exit 0
-GHEOF
-    chmod +x "$BATS_TMPDIR/stub-bin/gh"
+EOF
+    chmod +x "$STUB_DIR/curl"
 
-    run "$SCRIPT" 42
+    run "$SCRIPT" 7 --repo explicit-owner/explicit-repo
     [ "$status" -eq 0 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
-    [ "$(echo "$result" | jq -r '.passed')" = "0" ]
-    [ "$(echo "$result" | jq -r '.failed')" = "0" ]
-    [ "$(echo "$result" | jq -r '.pending')" = "0" ]
-    # determinate -> must NOT retry
-    call_count=$(cat "$GH_CALL_COUNT_FILE")
-    [ "$call_count" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 19: repo/PR number parsed from a full PR URL (overrides git remote)
+# ---------------------------------------------------------------------------
+@test "repo resolution: owner/repo/pr-number parsed from a PR URL" {
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+case "$url" in
+    */pulls/*)
+        [[ "$url" == *"/repos/url-owner/url-repo/pulls/99"* ]] || { echo "unexpected pulls url: $url" >&2; exit 1; }
+        printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
+    */check-runs*)
+        [[ "$url" == *"/repos/url-owner/url-repo/"* ]] || { echo "unexpected check-runs url: $url" >&2; exit 1; }
+        printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
+    */status*)
+        [[ "$url" == *"/repos/url-owner/url-repo/"* ]] || { echo "unexpected status url: $url" >&2; exit 1; }
+        printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" "https://github.com/url-owner/url-repo/pull/99"
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 20: repo auto-detected from `git remote get-url origin` when --repo
+# is not given (stubbed to https://github.com/acme/widget.git in setup()).
+# ---------------------------------------------------------------------------
+@test "repo resolution: falls back to git remote origin url" {
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+[[ "$url" == *"/repos/acme/widget/"* ]] || { echo "unexpected url: $url" >&2; exit 1; }
+case "$url" in
+    */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
+    */check-runs*) printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
+    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 3
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 21: no --repo, no PR URL, and git remote can't be resolved -> error
+# ---------------------------------------------------------------------------
+@test "repo resolution: unresolvable repo -> status error, exits 1, no network call" {
+    cat > "$STUB_DIR/git" << 'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$STUB_DIR/git"
+
+    run "$SCRIPT" 3
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [[ "$(echo "$result" | jq -r '.error')" == *"repo"* ]]
+    [ ! -f "$CI_CYCLE_COUNT_FILE" ]
 }
