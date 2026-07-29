@@ -73,13 +73,15 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   subagent の Write/Edit を共有 checkout への書き込みとして拒否する。dev-flow は Setup phase
   直後（deps install より前の早期検知）、pr-iterate は review loop 進入前（fix stage 不到達の
   保証）に probe を配置する。probe は worktree 直下 `.devflow-tmp/.isolation-probe` への Write
-  で isolation 成立を検証し、`written:false` は fail-closed（確定回避手順つき throw: 1. repo 外に
-  `git worktree add`、2. `EnterWorktree({path})`、3. Workflow 再実行）、probe 自体の失敗（null）は
+  で isolation 成立を検証し、`written:false` は fail-closed（確定回避手順つき throw: 1. 書き込みに
+  失敗した cwd とは別の worktree を `git worktree add`、2. `EnterWorktree({path})`、
+  3. Workflow 再実行）、probe 自体の失敗（null）は
   fail-open（警告 log のみ）で扱う（issue #449）。canonical は `_lib/isolation-probe.mjs` の
   `isolationProbePrompt` / `isolationFailureMessage` を dev-flow.js・pr-iterate.js 双方へ
   inline 生成して流用する（新規 canonical 関数は追加しない）。
-  (a) bg 起動セッションから repo 外 worktree への `EnterWorktree({path})` は成立することを
-  実測済み（issue #449）。したがって bg 経由でも上記の確定回避手順が正規経路として機能する。
+  (a) `EnterWorktree({path})` は bg 起動セッションからも成立する — repo 内
+  `.claude/worktrees/`（throw メッセージが提示する既定の先）・repo 外 worktree の双方で実測済み
+  （issue #449）。したがって bg 経由でも上記の確定回避手順が正規経路として機能する。
   (b) `worktree.bgIsolation:"none"` 設定による guard 無効化は採らない —
   guard は共有 checkout への意図しない書き込みを防ぐ safety であり、設定で無効化すると
   保護ごと失われる（W7 分類: blast-radius。共有 checkout 汚染は blast-radius が大きく、
