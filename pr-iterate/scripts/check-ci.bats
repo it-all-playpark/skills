@@ -7,7 +7,10 @@
 #   .../commits/<sha>/check-runs -> check-runs array
 #   .../commits/<sha>/status     -> legacy combined-status array (kept empty
 #                                    in all tests below except where noted;
-#                                    check-runs alone exercises every bucket)
+#                                    check-runs alone exercises every bucket.
+#                                    "Test 23" below is the noted exception:
+#                                    it populates statuses[] and asserts the
+#                                    st_bucket mapping + merge with check-runs)
 #
 # A single call-count file (CI_CYCLE_COUNT_FILE) increments once per fetch
 # cycle (on the /pulls/ call, which fires exactly once per cycle), so it is
@@ -507,4 +510,140 @@ EOF
     result=$(echo "$output" | tail -1)
     [[ "$(echo "$result" | jq -r '.error')" == *"repo"* ]]
     [ ! -f "$CI_CYCLE_COUNT_FILE" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 22: repo resolution handles a repo name containing a dot (e.g.
+# "acme/my.repo" - legal on GitHub, matches "next.js"-style names). Regression
+# for the old ([^/.]+)(\.git)?/?$ regex, which never matched such names.
+# ---------------------------------------------------------------------------
+@test "repo resolution: git remote origin url with a dot in the repo name" {
+    cat > "$STUB_DIR/git" << 'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "config" && "$2" == "--get" && "$3" == "remote.origin.url" ]]; then
+    echo "https://github.com/acme/my.repo.git"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$STUB_DIR/git"
+
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+[[ "$url" == *"/repos/acme/my.repo/"* ]] || { echo "unexpected url: $url" >&2; exit 1; }
+case "$url" in
+    */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
+    */check-runs*) printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
+    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 3
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 23: legacy combined status (.../status statuses[] array) is merged
+# with check-runs and its state->bucket mapping (success->pass,
+# pending->pending, anything else->fail) is honored. Regression: this data
+# source (the second half of fetch_checks' merge) had zero test coverage.
+# ---------------------------------------------------------------------------
+@test "legacy commit status statuses[] merges with check-runs and maps state to bucket" {
+    export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
+      {"name":"build","status":"completed","conclusion":"success"}
+    ]}'
+    export CI_STATUS_BODY='{"state":"failure","statuses":[
+      {"context":"ci/legacy-pass","state":"success"},
+      {"context":"ci/legacy-pending","state":"pending"},
+      {"context":"ci/legacy-fail","state":"failure"},
+      {"context":"ci/legacy-error","state":"error"}
+    ]}'
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    # 1 check-run pass + 1 legacy pass = 2; 1 legacy pending; 2 legacy fail
+    # (failure, error both map to "fail") -> overall status "failed".
+    [ "$(echo "$result" | jq -r '.status')" = "failed" ]
+    [ "$(echo "$result" | jq -r '.passed')" = "2" ]
+    [ "$(echo "$result" | jq -r '.pending')" = "1" ]
+    [ "$(echo "$result" | jq -r '.failed')" = "2" ]
+    failed_names=$(echo "$result" | jq -r '.failed_checks[].name' | sort | tr '\n' ',')
+    [ "$failed_names" = "ci/legacy-error,ci/legacy-fail," ]
+    pending_names=$(echo "$result" | jq -r '.pending_checks[].name')
+    [ "$pending_names" = "ci/legacy-pending" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 24: non-JSON response body (e.g. an HTML page from an HTTP 502
+# gateway error) must not crash the script under `set -euo pipefail`.
+# Regression: the jq calls inside FETCH_ERR's command substitution had no
+# `|| true`, so a jq parse-error on non-JSON body triggered errexit and the
+# whole script died silently (no stdout, exit 5) instead of reporting a
+# JSON status=error/exit 1 like every other API failure path.
+# ---------------------------------------------------------------------------
+@test "non-JSON response body (HTML 502) -> status error, exits 1, not a silent crash" {
+    export CHECK_CI_RETRY_DELAYS="0"
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+case "$url" in
+    */pulls/*) printf '<html><body>502 Bad Gateway</body></html>\n%s\n' "502" ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 1 ]
+    [ -n "$output" ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    message=$(echo "$result" | jq -r '.message')
+    [[ "$message" == *"HTTP 502"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Test 25: HTTP 403 with X-RateLimit-Remaining: 0 is surfaced distinctly
+# from a generic API error, so callers/logs can tell "rate limited" apart
+# from an arbitrary 4xx/5xx failure.
+# ---------------------------------------------------------------------------
+@test "HTTP 403 rate limit exhaustion is disambiguated via X-RateLimit-Remaining" {
+    export CHECK_CI_RETRY_DELAYS="0"
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+headerfile=""
+prev=""
+for a in "$@"; do
+    case "$a" in https://*) url="$a" ;; esac
+    [[ "$prev" == "-D" ]] && headerfile="$a"
+    prev="$a"
+done
+case "$url" in
+    */pulls/*)
+        if [[ -n "$headerfile" ]]; then
+            printf 'HTTP/2 403\r\nx-ratelimit-remaining: 0\r\n\r\n' > "$headerfile"
+        fi
+        printf '%s\n%s\n' '{"message":"API rate limit exceeded for 1.2.3.4"}' "403"
+        ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    message=$(echo "$result" | jq -r '.message')
+    [[ "$message" == *"rate limit remaining: 0"* ]]
 }

@@ -81,7 +81,11 @@ fi
 
 if [[ -z "$REPO" ]]; then
     origin_url="$(git config --get remote.origin.url 2>/dev/null || true)"
-    if [[ "$origin_url" =~ github\.com[:/]+([^/]+)/([^/.]+)(\.git)?/?$ ]]; then
+    # Strip a trailing .git suffix first so repo names containing dots
+    # (e.g. "next.js", "my.repo" — both valid on GitHub) still match; a
+    # combined "strip .git in the regex" approach mismatches those names.
+    origin_url="${origin_url%.git}"
+    if [[ "$origin_url" =~ github\.com[:/]+([^/]+)/([^/]+)/?$ ]]; then
         REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
     fi
 fi
@@ -93,17 +97,39 @@ TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 
 read -r -a RETRY_DELAYS <<< "${CHECK_CI_RETRY_DELAYS:-10 30}"
 
+# Unauthenticated requests are rate-limited at 60 req/hour/IP; each fetch
+# cycle costs 3 calls, so this can be exhausted well inside pr-iterate's
+# iteration budget. api_get captures response headers to API_HEADERS_FILE
+# so a 403/429 can be told apart from an ordinary API error via
+# X-RateLimit-Remaining (see rate_limit_suffix below).
+API_HEADERS_FILE="$(mktemp)"
+trap 'rm -f "$API_HEADERS_FILE"' EXIT
+
 # api_get <path-with-query> - GETs https://api.github.com<path>, prints the
 # response body followed by a final line with the HTTP status code. Returns
 # non-zero only on a curl-level failure (network unreachable, DNS, etc.);
 # a non-2xx HTTP response is still printed (with its status code) so the
 # caller can classify it.
 api_get() {
-    curl -sS -w '\n%{http_code}' \
+    curl -sS -D "$API_HEADERS_FILE" -w '\n%{http_code}' \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         "${AUTH_ARGS[@]}" \
         "https://api.github.com$1"
+}
+
+# rate_limit_suffix <http_code> - on 403/429 (GitHub's rate-limit status
+# codes), reads X-RateLimit-Remaining from the last api_get response headers
+# and returns a distinguishing suffix (e.g. " (rate limit remaining: 0)")
+# so a caller/log can tell "rate limited" apart from an ordinary API error
+# instead of both surfacing as an opaque HTTP 403/429.
+rate_limit_suffix() {
+    local http_code="$1"
+    [[ "$http_code" == "403" || "$http_code" == "429" ]] || return 0
+    local remaining
+    remaining=$(grep -i '^x-ratelimit-remaining:' "$API_HEADERS_FILE" 2>/dev/null | tail -1 | tr -d '\r' | awk '{print $2}')
+    [[ -n "$remaining" ]] && printf ' (rate limit remaining: %s)' "$remaining"
+    return 0
 }
 
 # fetch_checks - one fetch cycle: resolve the PR's head SHA, then fetch
@@ -124,7 +150,7 @@ fetch_checks() {
     http_code=$(echo "$resp" | tail -1)
     body=$(echo "$resp" | sed '$d')
     if [[ "$http_code" != "200" ]]; then
-        FETCH_ERR="GET pulls/${PR_NUM} -> HTTP $http_code: $(echo "$body" | jq -r '.message // "unknown error"' 2>/dev/null)"
+        FETCH_ERR="GET pulls/${PR_NUM} -> HTTP $http_code$(rate_limit_suffix "$http_code"): $(echo "$body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
         return
     fi
     local sha
@@ -142,7 +168,7 @@ fetch_checks() {
     cr_code=$(echo "$cr_resp" | tail -1)
     cr_body=$(echo "$cr_resp" | sed '$d')
     if [[ "$cr_code" != "200" ]]; then
-        FETCH_ERR="GET check-runs -> HTTP $cr_code: $(echo "$cr_body" | jq -r '.message // "unknown error"' 2>/dev/null)"
+        FETCH_ERR="GET check-runs -> HTTP $cr_code$(rate_limit_suffix "$cr_code"): $(echo "$cr_body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
         return
     fi
 
@@ -154,7 +180,7 @@ fetch_checks() {
     st_code=$(echo "$st_resp" | tail -1)
     st_body=$(echo "$st_resp" | sed '$d')
     if [[ "$st_code" != "200" ]]; then
-        FETCH_ERR="GET status -> HTTP $st_code: $(echo "$st_body" | jq -r '.message // "unknown error"' 2>/dev/null)"
+        FETCH_ERR="GET status -> HTTP $st_code$(rate_limit_suffix "$st_code"): $(echo "$st_body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
         return
     fi
 
