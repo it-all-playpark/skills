@@ -75,6 +75,7 @@ cmd_log() {
     local trust_run_id_set=false
     local vdelta_verdicts="" vdelta_fail_open="" redgreen_deny="" testsurf_hits=""
     local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
+    local subagent_invocations=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -130,6 +131,7 @@ cmd_log() {
             --phase-durations) phase_durations="$2"; shift 2 ;;
             --merge-tier-reasons) merge_tier_reasons="$2"; shift 2 ;;
             --route) route="$2"; shift 2 ;;
+            --subagent-invocations) subagent_invocations="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -278,6 +280,12 @@ cmd_log() {
         if ! echo "$merge_tier_reasons" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
             echo "journal log: dropping invalid --merge-tier-reasons: $merge_tier_reasons (must be a JSON array of strings)" >&2
             merge_tier_reasons=""
+        fi
+    fi
+    if [[ -n "$subagent_invocations" ]]; then
+        if ! echo "$subagent_invocations" | jq -e 'type == "object" and (.total | type == "number") and ((.by_type // {}) | type == "object") and ((.by_type // {}) | all(.[]; type == "number"))' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --subagent-invocations: $subagent_invocations (must be {total: number, by_type: object of numbers})" >&2
+            subagent_invocations=""
         fi
     fi
     if [[ -n "$route" ]]; then
@@ -448,6 +456,10 @@ cmd_log() {
     fi
     if [[ -n "$route" ]]; then
         telemetry=$(echo "$telemetry" | jq --arg v "$route" '. + {route: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$subagent_invocations" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$subagent_invocations" '. + {subagent_invocations: $v}')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then

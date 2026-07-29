@@ -15,8 +15,8 @@ const src = readFileSync(devFlowPath, 'utf8');
 test('isolation probe agent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
   assert.match(
     src,
-    /const isoProbe = await agent\(isolationProbePrompt\(WT\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Setup'\s*\}\)/,
-    'isolation probe の agent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
+    /const isoProbe = await trackedAgent\(isolationProbePrompt\(WT\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Setup'\s*\}\)/,
+    'isolation probe の trackedAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
   );
 });
 
@@ -47,8 +47,8 @@ test('ISOLATION_PROBE schema が written(boolean, required) を持つ', () => {
 
 test('isolation probe は worktree 作成後・deps install より前（Setup phase 内）に配置されている', () => {
   const setupIdx = src.indexOf(`, 'Setup(worktree)')`);
-  const probeIdx = src.indexOf('const isoProbe = await agent(isolationProbePrompt(WT)');
-  const depsIdx = src.indexOf('const depsRes = await agent(setupDepsPrompt(WT)');
+  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT)');
+  const depsIdx = src.indexOf('const depsRes = await trackedAgent(setupDepsPrompt(WT)');
   assert.notStrictEqual(setupIdx, -1, 'worktree 作成 need() 呼び出しが見つからない');
   assert.notStrictEqual(probeIdx, -1, 'isolation probe 呼び出しが見つからない');
   assert.notStrictEqual(depsIdx, -1, 'deps install 呼び出しが見つからない');

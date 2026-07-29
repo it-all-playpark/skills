@@ -104,7 +104,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
   vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations / trust_surfaceproof_shadow /
-  merge_tier_reasons / route）を
+  merge_tier_reasons / route / subagent_invocations）を
   `~/.claude/journal/pending/` へ書き出し、
   dotfiles の Stop hook `claude-code/hooks/stop-devflow-telemetry.sh` が `journal.sh log dev-flow success --merge-tier ...`
   へ毎回自動 flush する（issue #203）。flush 失敗は `~/.claude/logs/stop-devflow-telemetry.log` に記録され pending file が
@@ -142,6 +142,20 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
   `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
   （`lite`|`full` の 2 値 enum）。
+  `subagent_invocations` は `{total, by_type}` の object（常時出力）。total は run 全体の agent() 起動数で、
+  workflow 内の counting wrapper（trackedAgent — 全 call site を wrapper 経由に置換し、bare `agent(` 残存ゼロは
+  `_lib/subagent-invocations-routing.test.mjs` が CI 保証）が計上する。nested `workflow('pr-iterate')` の起動分は
+  pr-iterate の返り値 `subagent_invocations` を dev-flow 側 counts へ合算する（lite route 非昇格時は pr-iterate
+  呼び出し自体が無いため合算 0。単体起動の pr-iterate は自身の handoff に同キーを記録）。by_type は agentType 別の
+  起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-planner / plan-reviewer / implementer /
+  evaluator / pr-reviewer / dev-runner / dev-runner-haiku / dev-runner-haiku-ro / ui-verifier の 9 種、agentType 欠落は
+  'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
+  tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで
+  usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric（issue #445）。
+  journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
+  dotfiles Stop hook 側の jq projection（送り側配線）は route 等 8 キー（issue #430 → it-all-playpark/dotfiles#143）
+  と同じ precedent で別 issue に繰り延べる。gate・merge tier・ledger・shape 判定には一切影響しない telemetry
+  専用キー（軸A invariant 非抵触）。
   testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
   merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
   する fail-open）に到達済み（issue #430）。dotfiles Stop hook 側の jq projection（送り側配線）は

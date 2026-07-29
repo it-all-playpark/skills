@@ -1171,3 +1171,81 @@ JSON
         [ "$has_key" = "false" ]
     done
 }
+
+# ===========================================================================
+# --subagent-invocations flag (issue #445)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (a) 正常値 -> telemetry.subagent_invocations が object で記録され total/by_type が一致
+# ---------------------------------------------------------------------------
+@test "--subagent-invocations: valid object recorded with total and by_type" {
+    run "$SCRIPT" log dev-flow success \
+        --subagent-invocations '{"total":59,"by_type":{"implementer":4,"dev-runner-haiku":16}}'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    [ "$(jq '.telemetry.subagent_invocations | type' "$entry_file")" = '"object"' ]
+    [ "$(jq '.telemetry.subagent_invocations.total' "$entry_file")" = "59" ]
+    [ "$(jq -c '.telemetry.subagent_invocations.by_type' "$entry_file")" = '{"implementer":4,"dev-runner-haiku":16}' ]
+}
+
+# ---------------------------------------------------------------------------
+# (b) 不正値 -> exit 0・base entry 正常・telemetry.subagent_invocations キー無し
+# ---------------------------------------------------------------------------
+@test "--subagent-invocations: total as non-number is dropped" {
+    run "$SCRIPT" log dev-flow success --subagent-invocations '{"total":"x"}'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    skill_val=$(jq -r '.skill' "$entry_file")
+    [ "$skill_val" = "dev-flow" ]
+    outcome_val=$(jq -r '.outcome' "$entry_file")
+    [ "$outcome_val" = "success" ]
+
+    has_key=$(jq '.telemetry // {} | has("subagent_invocations")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "--subagent-invocations: JSON array (non-object) is dropped" {
+    run "$SCRIPT" log dev-flow success --subagent-invocations '[1]'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry // {} | has("subagent_invocations")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+@test "--subagent-invocations: unparseable JSON is dropped without polluting stdout" {
+    run "$SCRIPT" log dev-flow success --subagent-invocations 'not-json'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    run jq empty "$entry_file"
+    [ "$status" -eq 0 ]
+
+    has_key=$(jq '.telemetry // {} | has("subagent_invocations")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+# ---------------------------------------------------------------------------
+# (c) フラグ未指定 -> telemetry にキー無し
+# ---------------------------------------------------------------------------
+@test "--subagent-invocations: not specified -> no telemetry key" {
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
+    [ "$has_telemetry" = "false" ]
+}

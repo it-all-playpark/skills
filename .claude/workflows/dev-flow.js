@@ -295,6 +295,65 @@ function repoFromGithubUrl(url) {
   return `${match[1]}/${match[2]}`;
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
+// ==== BEGIN inline: _lib/subagent-invocations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// subagent-invocations: run あたりの subagent (agent-invoke) 起動数カウント用の純関数群。
+// I/O なし・Date.now/Math.random 不使用。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+/**
+ * counts（plain object）の counts[key] を +1 する。
+ * agentType が非空文字列の string でなければ 'unknown' へ計上する（fail-safe）。
+ * @param {object} counts - mutate 対象のカウント集計 object
+ * @param {string|undefined} agentType - subagent の agentType
+ * @returns {object} counts（同一 object）
+ */
+function recordSubagentInvocation(counts, agentType) {
+  const key = typeof agentType === 'string' && agentType.trim() !== '' ? agentType : 'unknown';
+  counts[key] = (counts[key] || 0) + 1;
+  return counts;
+}
+
+/**
+ * counts から telemetry 用の { total, by_type } を組み立てる。
+ * by_type はキーを sort した新 object（counts を mutate しない）。
+ * @param {object} counts - recordSubagentInvocation の集計 object
+ * @returns {{total: number, by_type: object}}
+ */
+function buildSubagentInvocations(counts) {
+  const keys = Object.keys(counts).sort();
+  let total = 0;
+  const by_type = {};
+  for (const key of keys) {
+    const value = counts[key];
+    total += value;
+    by_type[key] = value;
+  }
+  return { total, by_type };
+}
+
+/**
+ * byType（{agentType: number} 形式）を counts へ加算 merge する。
+ * byType が null/undefined/非 object なら no-op。数値でない値は skip する。
+ * @param {object} counts - mutate 対象のカウント集計 object
+ * @param {object|null|undefined} byType - merge 元
+ * @returns {object} counts（同一 object）
+ */
+function mergeSubagentCounts(counts, byType) {
+  if (byType == null || typeof byType !== 'object') {
+    return counts;
+  }
+  for (const key of Object.keys(byType)) {
+    const value = byType[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      continue;
+    }
+    counts[key] = (counts[key] || 0) + value;
+  }
+  return counts;
+}
+// ==== END inline: _lib/subagent-invocations.mjs ====
 
 // ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
@@ -2599,7 +2658,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     telemetry,
   })
   const journalInstr = buildJournalHandoffInstr({ prefix: 'devflow', id: ISSUE, payload })
-  const res = await agent(
+  const res = await trackedAgent(
     `## Objective\ndev-flow 失敗の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
     + `## Instructions\n`
     + journalInstr
@@ -3391,6 +3450,15 @@ function crossRepoReturnNote(artifacts) {
 // ==== END inline: _lib/cross-repo-gate.mjs ====
 
 // ---- helpers ----
+
+// run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
+// trackedAgent() 経由で呼び、SUBAGENT_COUNTS へ計上する（issue #445）。
+const SUBAGENT_COUNTS = {};
+async function trackedAgent(prompt, opts) {
+  recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
+  return agent(prompt, opts);
+}
+
 let WT // Setup で確定
 let DEPS_NOTE = '' // Setup(deps) で確定。install 失敗/未確認時のみ非空（fail-open。issue #291）
 
@@ -3451,12 +3519,12 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
 async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   const results = []
   for (const t of (plan.serial ?? [])) {
-    const r = await agent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
+    const r = await trackedAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
       { agentType: 'implementer', schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
     if (r) results.push(r)
   }
   const par = (plan.parallel ?? []).map((t) => () =>
-    agent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
+    trackedAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
       { agentType: 'implementer', schema: IMPL, label: `${tag}:par:${t.id}`, phase: 'Implement' }))
   const parResults = await parallel(par)
   const ok = parResults.filter(Boolean)
@@ -3479,7 +3547,7 @@ async function clockProbe(name, phaseName) {
   // （structural-classify の try 包み precedent と同型）。
   let res = null
   try {
-    res = await agent(clockProbePrompt(), { agentType: 'dev-runner-haiku-ro', schema: CLOCK, label: `clock#${name}`, phase: phaseName })
+    res = await trackedAgent(clockProbePrompt(), { agentType: 'dev-runner-haiku-ro', schema: CLOCK, label: `clock#${name}`, phase: phaseName })
   } catch (e) { log(`⚠️ clock#${name} 呼び出しが例外 — duration telemetry は当該区間を欠落させる（fail-open）`) }
   const warn = recordClockMark(clockMarks, name, res)
   if (warn) log(warn)
@@ -3491,7 +3559,7 @@ await clockProbe('start', 'Setup')
 // base 解決（issue #298）: 明示指定→origin 存在検証 / 未指定→origin/dev→origin/HEAD。
 // 解決不能は Setup で明示 error（設定ミスを danger-grep fail-closed の SEC 誤 HOLD にしない）。
 // danger-grep 実行時失敗の fail-closed ポリシー自体は不変（W7 軸A security floor）。
-const baseProbe = await agent(
+const baseProbe = await trackedAgent(
   resolveBasePrompt(BASE_ARG),
   { agentType: 'dev-runner-haiku-ro', schema: RESOLVE_BASE_PROBE, label: 'resolve-base', phase: 'Setup' },
 )
@@ -3500,7 +3568,7 @@ BASE = resolvedBase.base
 log(`base: origin/${BASE}（source: ${resolvedBase.source}）`)
 
 const branch = `feature/issue-${ISSUE}`
-const setup = need(await agent(
+const setup = need(await trackedAgent(
   `git worktree を 1 つ作って絶対パスを返せ。手順:\n`
   + `1. リポジトリルートで \`git fetch origin\`\n`
   + `2. worktree dir \`<repo>/.claude/worktrees/df-${ISSUE}\` が既に存在すれば再利用、無ければ\n`
@@ -3518,7 +3586,7 @@ log(`worktree: ${WT} (branch ${setup.branch})`)
 // isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。
 // 失敗（written:false）は bg-isolation guard を強く示唆するため即中断（fail-closed）。
 // probe agent 自体が落ちた場合（written が取れない）は診断不能なだけなので fail-open で続行する。
-const isoProbe = await agent(isolationProbePrompt(WT), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
+const isoProbe = await trackedAgent(isolationProbePrompt(WT), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
 if (isoProbe && isoProbe.written === false) {
   throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow', workflowArgs: ISSUE, targetPath: WT, error: isoProbe.error }))
 }
@@ -3526,7 +3594,7 @@ if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可�
 
 // deps install（issue #291）: lockfile がある repo では Setup 完了時点で node_modules を整備する。
 // fail-open — 失敗/null でも workflow は継続し、警告 log + DEPS_NOTE 経由で implementer へ伝える。need() で包まない。
-const depsRes = await agent(setupDepsPrompt(WT), { agentType: 'dev-runner-haiku', schema: DEPS, label: 'worktree-deps', phase: 'Setup' })
+const depsRes = await trackedAgent(setupDepsPrompt(WT), { agentType: 'dev-runner-haiku', schema: DEPS, label: 'worktree-deps', phase: 'Setup' })
 const deps = summarizeDepsResult(depsRes)
 DEPS_NOTE = deps.implNote ?? ''
 log(deps.logLine)
@@ -3584,7 +3652,7 @@ let req = null
 if (DEPTH === 'standard') {
   let contractRes = null
   try {
-    contractRes = await agent(
+    contractRes = await trackedAgent(
       contractProbePrompt,
       { agentType: 'dev-runner-haiku-ro', schema: CONTRACT, label: 'contract-probe#' + ISSUE, phase: 'Analyze' },
     )
@@ -3602,7 +3670,7 @@ if (DEPTH === 'standard') {
   }
 }
 if (!req) {
-  req = need(await agent(
+  req = need(await trackedAgent(
     analyzePrompt(DEPTH),
     { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
   ), 'Analyze')
@@ -3610,7 +3678,7 @@ if (!req) {
   // issue #451: analyze 結果の決定論 provenance 突合（fail-closed — 取得成功を self-report させない）
   let issueMetaRes = null
   try {
-    issueMetaRes = await agent(
+    issueMetaRes = await trackedAgent(
       `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>} の形で返せ`
       + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。title は一字一句 verbatim で転写せよ）:\n`
       + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json number,title`,
@@ -3658,7 +3726,7 @@ if (SURFACEPROOF_MODE !== 'off') {
   if (SURFACEPROOF_MODE === 'shadow') {
     let spRes = null
     try {
-      spRes = await agent(
+      spRes = await trackedAgent(
         `## Objective\n\`${WT}/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
         + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
         + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
@@ -3710,7 +3778,7 @@ function soloPlanPrompt(label) {
     + PLANNER_HANDOFF_RULE
 }
 if (TRIVIAL) {
-  plan = need(await agent(
+  plan = need(await trackedAgent(
     soloPlanPrompt('plan#trivial'),
     { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
   ), 'Plan(planner#trivial)')
@@ -3718,7 +3786,7 @@ if (TRIVIAL) {
   planIters = 1
   log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
 } else if (PLAN_SOLO) {
-  plan = need(await agent(
+  plan = need(await trackedAgent(
     soloPlanPrompt('plan#standard'),
     { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#standard', phase: 'Plan' },
   ), 'Plan(planner#standard)')
@@ -3729,7 +3797,7 @@ if (TRIVIAL) {
 for (let i = 1; i <= PLAN_MAX; i++) {
   planIters = i
   const prior = planSeen.prior()   // 前 iteration までの累積 findings
-  plan = need(await agent(
+  plan = need(await trackedAgent(
     `cd ${WT} で作業。issue 要件と${prior.length ? 'レビュー指摘' : '初回計画'}に基づき実装計画を立てよ。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `testing: ${TESTING}\n`
@@ -3742,7 +3810,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
     { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `plan#${i}`, phase: 'Plan' },
   ), `Plan(planner#${i})`)
   plan = applyDisjoint(plan, `plan#${i}`)
-  const rev = need(await agent(
+  const rev = need(await trackedAgent(
     `cd ${WT} で作業。次の実装計画を批判的にレビューせよ（実コードベースに照合）。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `plan: ${JSON.stringify(plan)}\n`
@@ -3846,7 +3914,7 @@ async function execImplementPhase(state) {
     const priorBlock = blockSeen.prior()  // 当該 iteration 分も含む累積全件
     // DONE 成果の抽出（適用済み task を replan prompt へ注入して重複実装・矛盾設計を防ぐ）
     const doneSoFar = implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS'))
-    plan = need(await agent(
+    plan = need(await trackedAgent(
       `cd ${WT} で作業。前回実装が BLOCKED になった。別アプローチで計画を立て直せ。\n`
       + `requirements: ${JSON.stringify(req)}\n`
       + `現計画: ${JSON.stringify(plan)}\n`
@@ -3883,7 +3951,7 @@ async function execImplementPhase(state) {
   let needsCtx = implResults.filter((r) => r && r.status === 'NEEDS_CONTEXT')
   if (needsCtx.length) {
     log(`implement: ${needsCtx.length} task が NEEDS_CONTEXT — comprehensive 再分析して再試行`)
-    const req2 = await agent(
+    const req2 = await trackedAgent(
       analyzePrompt('comprehensive'),
       { agentType: 'dev-runner', schema: REQ, label: `analyze-retry#${ISSUE}`, phase: 'Implement' },
     )
@@ -3958,7 +4026,7 @@ async function execValidatePhase(state) {
       const testLabel = isRetry ? `test#retry-${i}` : `test#${i}`
       let raw
       try {
-        raw = await agent(
+        raw = await trackedAgent(
           VALIDATE_TEST_PROMPT,
           { agentType: 'dev-runner-haiku', schema: GREEN, label: isRetry ? `test#retry-${i}` : `test#${i}`, phase: phaseName },
         )
@@ -3981,7 +4049,7 @@ async function execValidatePhase(state) {
         }
         break
       }
-      const gfResult = await agent(
+      const gfResult = await trackedAgent(
         `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
         + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
         + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
@@ -4031,7 +4099,7 @@ async function execValidatePhase(state) {
   // 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
   // ============================================================
   {
-    const dhGate = need(await agent(
+    const dhGate = need(await trackedAgent(
       dhPrompt,
       { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-gate', phase: 'Validate' },
     ), 'Validate(diff-gate)')
@@ -4042,7 +4110,7 @@ async function execValidatePhase(state) {
       // うち worktree 外 working tree が実際に dirty という決定論的証拠が揃った場合のみ graceful 終了へ
       // 倒す。ラベル無し・証拠ゼロは既存の fail-closed 経路（差し戻し1回→再度空ならthrow）を維持する。
       let crossRepoHandled = false
-      const issueLabelsRes = await agent(
+      const issueLabelsRes = await trackedAgent(
         `cd ${WT} で作業。次を実行し stdout の JSON 配列を {"ok": true, "labels": <配列>} に包んで返せ`
         + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
         + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json labels --jq '[.labels[].name]'`,
@@ -4052,7 +4120,7 @@ async function execValidatePhase(state) {
         log('empty-diff gate: cross-repo ラベル検出 — worktree 外の申告ファイルを検証')
         const candidatePaths = crossRepoCandidatePaths(state.implResults, WT)
         if (candidatePaths.length > 0) {
-          const artifactsRes = await agent(
+          const artifactsRes = await trackedAgent(
             `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
             + `bash ~/.claude/skills/_shared/scripts/cross-repo-artifacts.sh ${WT} ${candidatePaths.map((p) => `'${p}'`).join(' ')}`,
             { agentType: 'dev-runner-haiku-ro', schema: CROSSREPO_ARTIFACTS, label: 'cross-repo-artifacts', phase: 'Validate' },
@@ -4093,7 +4161,7 @@ async function execValidatePhase(state) {
         detail: '前回 implementer 終了時点で working tree に変更が存在しない（base と内容一致）。plan の task を実際に実装し、変更を working tree に残せ（git add / commit は禁止）。',
       }], 'reimpl-empty-diff')
       for (const r of retryResults) { if (r && Array.isArray(r.concerns)) concerns.push(...r.concerns) }
-      const dhRetry = need(await agent(
+      const dhRetry = need(await trackedAgent(
         dhPrompt,
         { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Validate' },
       ), 'Validate(diff-gate-retry)')
@@ -4131,7 +4199,7 @@ async function execSecurityFloorPhase(state) {
   for (const seed of seedSecurityLedger()) {
     ledger = appendItem(ledger, seed).ledger
   }
-  const risk = need(await agent(
+  const risk = need(await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
     + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。`
     + `失敗時に ok:true を生成してはならない）:\n`
@@ -4152,7 +4220,7 @@ async function execSecurityFloorPhase(state) {
   //     --working-tree モード（worktree 変更を merge-base 基点の二点 diff + untracked -uall で分類）
   //     を使う。commit 後の三点 diff（origin/${BASE}...HEAD）は HEAD==origin/BASE で空を返すため
   //     Merge tier 側はフラグなしのまま（通常の三点 diff が正しい）。
-  const realized = await agent(
+  const realized = await trackedAgent(
     `cd ${WT} で作業。\`git -C ${WT} status --porcelain --untracked-files=all\` を実行し、`
     + `変更ファイル一覧を取得せよ（ステージ済み・未ステージどちらも含む）。`
     + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
@@ -4166,7 +4234,7 @@ async function execSecurityFloorPhase(state) {
   // realizedCount・evaluator prompt とも現行動作 (全ファイル精査扱い) と完全一致させる。
   let struct = null
   try {
-    struct = await agent(
+    struct = await trackedAgent(
       `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/error で返せ）:\n`
       + `bash ~/.claude/skills/_shared/scripts/structural-classify.sh ${WT} origin/${BASE}`,
       { agentType: 'dev-runner-haiku-ro', schema: STRUCT, label: 'structural-classify', phase: 'Security floor' },
@@ -4202,7 +4270,7 @@ async function execSecurityFloorPhase(state) {
   if (uiPathTouched) {
     let rawCfg = null
     try {
-      rawCfg = await agent(
+      rawCfg = await trackedAgent(
         `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
         + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
         + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
@@ -4278,7 +4346,7 @@ async function execSecurityFloorPhase(state) {
   // よう diff-hash を捕捉しておく。fail-open — need() で包まない。取得失敗時は null のまま
   // Merge tier 側で必ず再実行させる（Security floor の fail-closed 性は変えない）。
   if (risk.ok === true && Array.isArray(realized?.files)) {
-    const dh = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-secfloor', phase: 'Security floor' })
+    const dh = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-secfloor', phase: 'Security floor' })
     state.secDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
     if (state.secDiffHash == null) log('⚠️ diff-hash-secfloor: hash 取得失敗 — Merge tier での再利用は skip（fail-open、danger-grep-final は再実行）')
   } else {
@@ -4309,7 +4377,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
   const session = `devflow-${ISSUE}${labelSuffix}`
   try {
     const envFileArgs = (cfg.env_files ?? []).map((f) => `--env-file '${f}'`).join(' ')
-    const srv = await agent(
+    const srv = await trackedAgent(
       `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
       + `（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
       + `bash ~/.claude/skills/_shared/scripts/ui-verify-server.sh start `
@@ -4323,7 +4391,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
       log(`⚠️ ui-verify: dev サーバー ${srv ? srv.phase + ' 失敗 (' + (srv.error ?? 'unknown') + ')' : '起動結果 null'} — ${status} で skip（fail-open）`)
     } else {
       mode = (effectiveShape === 'micro' || !(cfg.scenarios && cfg.scenarios.length)) ? 'smoke' : 'scenario'
-      result = await agent(
+      result = await trackedAgent(
         `cd ${WT} で作業。agent-browser で http://localhost:${srv.port} を検証せよ（session: '${session}'）。\n`
         + `mode: ${mode}\n`
         + (mode === 'scenario'
@@ -4360,7 +4428,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
     status = 'failed_open'
     log(`⚠️ ui-verify: 例外発生 (${e && e.message ? e.message : e}) — failed_open で継続（fail-open）`)
   } finally {
-    const stop = await agent(
+    const stop = await trackedAgent(
       `cd ${WT} で作業。以下を順に実行せよ。各手順は失敗しても次へ進め（|| true）:\n`
       + `1. \`bash ~/.claude/skills/_shared/scripts/ui-verify-server.sh stop --state-dir '${stateDir}'\`（PID 無しでも ok の idempotent 停止）\n`
       + `2. \`agent-browser close --session '${session}'\`（コマンド不在なら \`npx agent-browser close --session '${session}'\`。失敗しても続行）\n`
@@ -4457,7 +4525,7 @@ async function execEvaluatePhase(state) {
     // ループ終了後ではなく各 evaluator 呼び出し前にここで取ることで、
     // redgreen-verify.sh の restore 失敗等 evaluator 呼び出し後の tree 変化を検出可能にする。
     {
-      const _dhPreEval = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
+      const _dhPreEval = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
       if (_dhPreEval && typeof _dhPreEval.hash === 'string') {
         evalDiffHash = _dhPreEval.hash
       } else {
@@ -4465,7 +4533,7 @@ async function execEvaluatePhase(state) {
         evalDiffHash = null
       }
     }
-    const ev = need(await agent(
+    const ev = need(await trackedAgent(
       `cd ${WT} で作業。実装品質を独立評価せよ（base は origin/${BASE}。`
       + `\`git diff $(git merge-base HEAD origin/${BASE})\` で実 diff を確認し（working tree 基準の二点 diff: merge-base から working tree への差分。implementer はコミットしないため HEAD 基準三点 diff では空になる）、`
       + `さらに \`git status --porcelain --untracked-files=all\` で untracked の新規ファイルを列挙して Read で内容を確認し（implementer は git add しないため新規作成ファイルは git diff に映らない）、テストを実際に走らせる）。\n`
@@ -4558,7 +4626,7 @@ async function execEvaluatePhase(state) {
       if (!ledger.items.some((it) => it.id === acId)) continue   // 知らない AC は無視
       if (r.satisfied && r.verified_by === 'test' && Array.isArray(r.test_files) && r.test_files.length
           && Array.isArray(r.impl_files) && r.impl_files.length) {
-        const rg = await agent(
+        const rg = await trackedAgent(
           `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
           + `bash ~/.claude/skills/_shared/scripts/redgreen-verify.sh ${WT} `
           + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
@@ -4631,7 +4699,7 @@ async function execEvaluatePhase(state) {
     if (ev.feedback_level === 'design') {
       if (designReplanCount >= DESIGN_REPLAN_MAX) { log(`⚠️ design replan 上限到達 — human review へ委譲（DESIGN_REPLAN_MAX=${DESIGN_REPLAN_MAX}, iter ${i}。topic paraphrase 等で stuck 検出を経ずに総回数 cap に到達）`); break }
       designReplanCount++
-      plan = need(await agent(
+      plan = need(await trackedAgent(
         `cd ${WT} で作業。evaluator が設計レベルの問題を指摘した。計画を revise せよ。\n`
         + `requirements: ${JSON.stringify(req)}\n`
         + `現計画: ${JSON.stringify(plan)}\n`
@@ -4645,7 +4713,7 @@ async function execEvaluatePhase(state) {
       plan = applyDisjoint(plan, `replan#${i}`)
       await runImplement(req, plan, ev.feedback, `reimpl#${i}`)
     } else {
-      await agent(
+      await trackedAgent(
         `cd ${WT} で作業（Bash ごとに先頭で cd すること）。evaluator が実装レベルの問題を指摘した。`
         + `既存計画のまま修正せよ。無関係ファイルは触るな。git add / commit はするな。\n`
         + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
@@ -4703,7 +4771,7 @@ if (EVALSEAL_MODE !== 'off' && state.runEval) {
       evidence: state.ledger.items.filter((it) => it.checked && typeof it.evidence === 'string').map((it) => `${it.id}: ${it.evidence}`.slice(0, 300)),
       context: { issue: ISSUE, eval_iters: state.evalIters },
     })
-    const trustSealEval = await agent(
+    const trustSealEval = await trackedAgent(
       `## Objective\ncd ${WT} で作業し EvalSeal (evalseal/1) receipt を生成する。\n\n`
       + `## Instructions\n`
       + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
@@ -4740,7 +4808,7 @@ await clockProbe('evaluate_end', 'Evaluate')
 // micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
 let evalStaleness = 'none'
 if (state.evalDiffHash != null) {
-  const dhPr = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
+  const dhPr = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
   const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
   if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
   if (prDiffHash != null && state.evalDiffHash !== prDiffHash) {
@@ -4749,7 +4817,7 @@ if (state.evalDiffHash != null) {
   }
 }
 phase('PR')
-const pr = need(await agent(
+const pr = need(await trackedAgent(
   `cd ${WT} で作業。次を順に実行せよ:\n`
   + `1. \`Skill: git-commit --all --worktree ${WT}\`（変更を日本語メッセージで commit）\n`
   + `2. \`Skill: git-pr ${ISSUE} --base ${BASE} --lang ja --worktree ${WT}\`（PR 作成）\n`
@@ -4762,7 +4830,7 @@ log(`PR created: ${pr.pr_url}`)
 // 作成後の PR を read-only で観測する shadow probe のみ追加する（AC-8 観測側）。
 if (EFFECTDELTA_MODE === 'shadow') {
   try {
-    const edPrRes = await agent(
+    const edPrRes = await trackedAgent(
       `## Objective\n\`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number} --base ${BASE}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
       + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
       + `exit 0 かつ stdout が JSON として parse できればそのオブジェクトをそのまま返し、それ以外（exit 非0・stdout 空・JSON 不正）は { "ok": false, "error": "<理由>" } を返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
@@ -4806,7 +4874,7 @@ if (LITE) {
     + `gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は`
     + `verification_evidence に 1 項目 1 文の配列で列挙せよ。`
-  const reviewLite = await agent(
+  const reviewLite = await trackedAgent(
     reviewPromptLite,
     { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: 'pr-review-lite', phase: 'PR' },
   )
@@ -4816,7 +4884,7 @@ if (LITE) {
     iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
     route = 'full'
   } else {
-    const ciLite = await agent(
+    const ciLite = await trackedAgent(
       `## Objective\nPR #${pr.pr_number} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
       + `## Tools\n`
       + `- 使用可: Bash のみ\n`
@@ -4859,6 +4927,9 @@ if (LITE) {
   iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
   route = 'full'
 }
+// nested pr-iterate の subagent 起動数を run 合計へ合算する（issue #445）。pr-iterate が
+// subagent_invocations を返さない run（lite 経路・未実装）は optional chain で no-op。
+if (iterate?.subagent_invocations?.by_type) mergeSubagentCounts(SUBAGENT_COUNTS, iterate.subagent_invocations.by_type)
 await clockProbe('iterate_end', 'PR')
 
 // pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある（issue #233）。
@@ -4888,7 +4959,7 @@ let finalUiVerifyStatus = null   // 'passed'|'findings'|'failed_open'|'setup_fai
 let finalUiVerifyResult = null   // ui-verifier の raw checks（issue #331 final-ac-reconcile prompt 用）
 if ((iterate?.fixes_applied ?? 0) > 0) {
   // Step1 sync（fail-safe）
-  const sync = await agent(
+  const sync = await trackedAgent(
     `cd ${WT} で作業。次を順に実行し **JSON object のみ** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
     + `1. git -C ${WT} fetch origin ${state.setup.branch}\n`
     + `2. git -C ${WT} merge --ff-only FETCH_HEAD\n`
@@ -4901,7 +4972,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     // Step2 test 一発再実行（fail-safe。green-fix ループなし — red は修正せず HOLD）
     let ft = null
     try {
-      ft = await agent(VALIDATE_TEST_PROMPT, { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final', phase: 'Final reconcile' })
+      ft = await trackedAgent(VALIDATE_TEST_PROMPT, { agentType: 'dev-runner-haiku', schema: GREEN, label: 'test#final', phase: 'Final reconcile' })
     } catch (e) {
       log(`⚠️ Final reconcile: test#final が throw（${e && e.message ? e.message : e}）— null 扱い（fail-safe → unavailable。issue #359）`)
     }
@@ -4911,7 +4982,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
       finalTestGreen = ft.tests === 'no_tests' ? null : ft.green === true
       log(`Final reconcile: test#final tests=${ft.tests} green=${ft.green}`)
       // Step3 最終 changed-files（fail-open）
-      const changedFinal = await agent(
+      const changedFinal = await trackedAgent(
         `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
         + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
         { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files-final', phase: 'Final reconcile' })
@@ -4931,7 +5002,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
         if (filesFinal.some((f) => isUiPath(f))) {
           let rawCfgF = null
           try {
-            rawCfgF = await agent(
+            rawCfgF = await trackedAgent(
               `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
               + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
               + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
@@ -4967,7 +5038,7 @@ state.finalUnsatisfiedAc = null
 const _acCount = (req.acceptance_criteria ?? []).length
 const _facDecision = shouldRunFinalAcReconcile({ fixesApplied: iterate?.fixes_applied ?? 0, finalReconcile, finalTestGreen, runEval: state.runEval, acCount: _acCount })
 if (_facDecision.run) {
-  const fa = await agent(
+  const fa = await trackedAgent(
     `cd ${WT} で作業。pr-iterate の fix 適用後の最終 PR tree に対し、以下の既存 acceptance_criteria のみを one-shot で再検証せよ（final AC 再検証）。\n`
     + `\`git diff origin/${BASE}...HEAD\` で最終 diff を確認し該当ファイルを Read で精査すること（fix は commit 済みのため三点 diff でよい）。\n`
     + `acceptance_criteria（index 順。これが全対象 — 追加・分割・言い換え禁止）:\n${JSON.stringify(req.acceptance_criteria)}\n`
@@ -5012,7 +5083,7 @@ if (EVALSEAL_MODE !== 'off' && (iterate?.fixes_applied ?? 0) > 0 && state.trustR
         evalEntry.invalidated_reason = 'final_tree_unverified'
         log('trust: Final reconcile が reverified でないため EvalSeal(evaluate) receipt を final_tree_unverified で失効')
       } else {
-        const trustCheckFinal = await agent(
+        const trustCheckFinal = await trackedAgent(
           `## Objective\ncd ${WT} で作業し既存 EvalSeal receipt を Final PR HEAD に対し検証する。\n\n`
           + `## Instructions\n`
           + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
@@ -5038,7 +5109,7 @@ if (EVALSEAL_MODE !== 'off' && (iterate?.fixes_applied ?? 0) > 0 && state.trustR
           evidence: [`final_reconcile=${finalReconcile}`, `final_test_green=${finalTestGreen}`, `final_ac_reconcile=${finalAcReconcile}`],
           context: { issue: ISSUE, fixes_applied: iterate?.fixes_applied ?? 0 },
         })
-        const trustSealFinal = await agent(
+        const trustSealFinal = await trackedAgent(
           `## Objective\ncd ${WT} で作業し Final PR HEAD に対する EvalSeal (evalseal/1) receipt を生成する。\n\n`
           + `## Instructions\n`
           + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
@@ -5080,7 +5151,7 @@ let riskFinal
 let changed
 let mergeDiffHash = null
 if (state.secDiffHash != null) {
-  const dh = await agent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-merge', phase: 'Merge tier' })
+  const dh = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-merge', phase: 'Merge tier' })
   mergeDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
 }
 const reuseSecFloor = state.secDiffHash != null && mergeDiffHash != null && state.secDiffHash === mergeDiffHash
@@ -5089,13 +5160,13 @@ if (reuseSecFloor) {
   riskFinal = state.risk
   changed = { files: state.realized?.files ?? [] }
 } else {
-  riskFinal = need(await agent(
+  riskFinal = need(await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
     + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
     + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
     { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
   ), 'Merge tier(danger-grep-final)')
-  changed = need(await agent(
+  changed = need(await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
     + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
     { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
@@ -5117,7 +5188,7 @@ state.ledger = reconcileTestsurf(state.ledger, riskFinal)
 const newlyUnchecked = dangerFailClosedFinal ? [] : newlyUncheckedSecClasses(ledgerBeforeFinalReconcile, state.ledger)
 if (newlyUnchecked.length > 0) {
   log(`Merge tier: 新規 danger hit ${JSON.stringify(newlyUnchecked)} — one-shot security clearance を実行`)
-  const clearance = await agent(
+  const clearance = await trackedAgent(
     `cd ${WT} で作業。PR #${pr.pr_number} の最終 tree に対し danger-grep が新規に検出した危険クラスの変更が安全かを判定せよ。`
     + `\`git diff origin/${BASE}...HEAD\` で実 diff を確認し、該当ファイルを Read で精査すること。\n`
     + `requirements: ${JSON.stringify(req)}\n`
@@ -5147,7 +5218,7 @@ const escalateCount = policyAdvisoryItems(state.ledger, GATE_POLICY).filter((it)
 // label は 'gh-pr-view'（'pr' 始まりにしない — 既存 routing test 群が label.startsWith('pr') を
 // PR 作成 phase の呼び出し数カウントに使っており、'pr' 始まりの label を追加すると衝突するため。
 // lite-route-routing.test.mjs の同種コメント参照）。
-const prMeta = await agent(
+const prMeta = await trackedAgent(
   `cd ${WT} で作業。次を実行し **stdout の JSON object を** {"ok": true, "mergeable": <値>, "mergeStateStatus": <値>} に包んで返せ`
   + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
   + `gh pr view ${pr.pr_number} --json mergeable,mergeStateStatus`,
@@ -5189,7 +5260,7 @@ log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 const ciTargets = state.ledger.items.filter((it) =>
   it.dimension === 'environment' && it.checked !== true && CI_VERIFIABLE_ENV_KEYS.includes(it.env_key))
 if (ciTargets.length > 0) {
-  const ciChecks = await agent(
+  const ciChecks = await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の JSON array を** {"ok": true, "checks": <array>} に包んで返せ`
     + `（gh pr checks は check 失敗時 exit 1・pending 時 exit 8 を返すが、stdout に JSON array が出ていれば ok:true とする。`
     + `stdout が空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
@@ -5255,7 +5326,7 @@ let summaryPost
 const RUN_ID = String(clockMarks?.start ?? ISSUE)
 if (EFFECTDELTA_MODE === 'shadow') {
   try {
-    summaryPost = await agent(
+    summaryPost = await trackedAgent(
       `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
       + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
       + `## Instructions\n`
@@ -5276,7 +5347,7 @@ if (EFFECTDELTA_MODE === 'shadow') {
     state.trustReceipts.push({ stage: 'summary-comment', receipt: summaryPost.receipt, envelope: summaryPost.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: summaryPost.observation?.reason_code ?? null })
   }
 } else {
-  summaryPost = await agent(
+  summaryPost = await trackedAgent(
     `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
     + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
     + `## Instructions\n`
@@ -5336,6 +5407,9 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // route: PR phase 経路識別子（'lite'|'full'。issue #376 AC-5）。常時出力。journal.sh の
     // --route フラグに到達済み（issue #430）。送り側の jq projection は it-all-playpark/dotfiles#143。
     route,
+    // subagent_invocations: run あたりの subagent (agent()) 起動数 {total, by_type}。
+    // 常時出力（issue #445）。nested pr-iterate 分は上記 mergeSubagentCounts で合算済み。
+    subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
     // trust_surfaceproof_shadow: issue #410（#390 Phase 2）の SurfaceProof shadow probe 結果
@@ -5376,7 +5450,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
   },
 })
 const journalInstr = buildJournalHandoffInstr({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
-const journalPost = await agent(
+const journalPost = await trackedAgent(
   `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
   + `## Instructions\n`
   + journalInstr
