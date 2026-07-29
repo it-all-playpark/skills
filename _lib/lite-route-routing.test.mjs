@@ -49,6 +49,8 @@ function makeCleanMicroReq() {
     estimated_change_file_count: 1,
     breaking_change: false,
     breaking_keyword_scan: false,
+    issue_number: 376,
+    issue_title: 'stub-issue-title',
   };
 }
 
@@ -152,6 +154,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
+    if (label === 'issue-meta') return { ok: true, number: 376, title: 'stub-issue-title' };
     return null;
   };
 

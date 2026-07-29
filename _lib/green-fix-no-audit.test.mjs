@@ -39,6 +39,8 @@ function responder({ label, agentType }) {
       scope: 'src',
       estimated_change_file_count: 3,
       shape: 'standard',
+      issue_number: 1,
+      issue_title: 'stub-issue-title',
     };
   }
   // Plan: dev-planner
@@ -86,6 +88,8 @@ function responder({ label, agentType }) {
   if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
     return { hash: 'H', empty: false };
   }
+  // issue-meta（issue #451）: analyze provenance 突合 probe
+  if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
   // デフォルト
   return null;
 }

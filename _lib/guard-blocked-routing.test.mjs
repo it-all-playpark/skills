@@ -43,6 +43,8 @@ const STANDARD_ANALYZE_REQ = {
   scope: 'src',
   estimated_change_file_count: 4,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 function makeSandbox({ implementerFn, plannerFn } = {}) {
@@ -81,6 +83,7 @@ function makeSandbox({ implementerFn, plannerFn } = {}) {
     if (label === 'journal-log' && agentType === 'dev-runner-haiku') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return null;
     if (agentType === 'implementer') return implementerFn(label, opts);
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 

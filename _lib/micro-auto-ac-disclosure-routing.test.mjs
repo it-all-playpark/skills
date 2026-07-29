@@ -26,6 +26,8 @@ const MICRO_REQ = {
   scope: 'docs',
   estimated_change_file_count: 1,
   shape: 'micro',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 // standard shape 用の analyzeReq（empty-diff-evaluate-routing.test.mjs の STANDARD_REQ 相当）
@@ -36,6 +38,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 /**
@@ -76,6 +80,7 @@ function makeSandbox(analyzeReq, opts) {
     };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 

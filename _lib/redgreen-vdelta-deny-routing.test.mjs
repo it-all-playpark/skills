@@ -91,6 +91,7 @@ function makeSandbox(analyzeReq, evaluatorResponse, redgreenResponseFor) {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -171,6 +172,8 @@ const ANALYZE_REQ_1AC = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 const ANALYZE_REQ_2AC = {
@@ -180,6 +183,8 @@ const ANALYZE_REQ_2AC = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 function evalTestVerified(acCount) {

@@ -84,6 +84,8 @@ const STANDARD_REQ = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 411,
+  issue_title: 'stub-issue-title',
 };
 
 // clean-micro（TRIVIAL && !runEval && dangerHits===[] → LITE 経路が発火し得る）
@@ -95,6 +97,8 @@ const MICRO_REQ = {
   estimated_change_file_count: 1,
   breaking_change: false,
   breaking_keyword_scan: false,
+  issue_number: 411,
+  issue_title: 'stub-issue-title',
 };
 
 function evaluatorResponseFor(req) {
@@ -147,6 +151,7 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     // trust-* 系は overrides で明示指定しない限り応答しない（未知 label → null、fail-open の実測）
     if (label.startsWith('trust-')) return null;
+    if (label === 'issue-meta') return { ok: true, number: 411, title: 'stub-issue-title' };
     return null;
   };
 }

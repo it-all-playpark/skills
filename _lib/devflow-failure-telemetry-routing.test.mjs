@@ -56,6 +56,7 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig } = {}) {
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     if (agentType === 'implementer') {
       const fn = implementerFn ?? (() => ({
         status: 'DONE', task_id: 'T1', files: [], summary: '', concerns: [],
@@ -118,6 +119,8 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-log-failure が
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const { ctx, calls } = makeSandbox({ analyzeReq });
@@ -163,6 +166,8 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const implementerFn = () => ({
@@ -208,6 +213,8 @@ test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const { ctx, calls } = makeSandbox({ analyzeReq, diffGateConfig: { gateEmpty: true, retryEmpty: true } });
@@ -244,6 +251,8 @@ test('[failure-telemetry] (4) 完走経路: journal-log-failure が 0 回・jour
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const { ctx, calls } = makeSandbox({ analyzeReq });

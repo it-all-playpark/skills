@@ -85,11 +85,18 @@ blocking_reason: {
     `'safety-classifier'`, `'bg-isolation'`）。不明なら省略可（`'unspecified'` へ正規化される）。
   - `detail` には**エラー要旨のみ**を書く。実行したコマンド列（git/gh/bash 等のコマンド行、
     バッククォート内のコマンド、`$(...)` サブシェル、URL）を貼らないこと。
+  - 壁に当たったら、まず **sanctioned path（正規経路）** の有無を確認する（例: inline 生成区間なら
+    `tools/sync-inlines.mjs --write` / `--add`）。**sanctioned path が存在しない壁**（hook deny /
+    sandbox EPERM / bg-isolation 等）では代替手段を探索せず、**即座に `status:'BLOCKED'` +
+    `block_class:'guard_blocked'` で報告して終端する**。
   - **guard_blocked を検知したら即座にその status で報告し、迂回手段
-    （mirror clone / fetch / checkout FETCH_HEAD / chmod 回避 等）を探索・実行してはならない**。
+    （mirror clone / fetch / checkout FETCH_HEAD / chmod 回避 / git plumbing（`git hash-object` /
+    `git update-index` / `git checkout-index` 等による guard 対象ファイルの直接書き込み — PR #452
+    で実測された迂回）等）を探索・実行してはならない**。
     W7 分類: incentive-structural（永続・撤去禁止） — guard 由来のブロックを「別アプローチ探索」の
     余地として扱うと、guard を迂回する手順の組み立てを incentive 化してしまう
-    （賢いモデルほど巧妙な迂回を組み立て得るため capability 非依存。issue #448 の実害に基づく）。
+    （賢いモデルほど巧妙な迂回を組み立て得るため capability 非依存。issue #448 の実害・issue #451 で
+    git plumbing 迂回を明示禁止に追加）。
 
 ### 出力言語・簡潔性（summary / concerns / blocking_reason / missing_context）
 

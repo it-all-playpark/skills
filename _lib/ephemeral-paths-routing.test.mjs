@@ -116,6 +116,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -188,6 +189,8 @@ test('[ephemeral-paths-routing] (A) micro + realized ephemeral 3 件 non-ephemer
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const realizedFiles = [
@@ -240,6 +243,8 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   const realizedFiles = [
@@ -300,6 +305,8 @@ test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 →
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // realized-diff が宣言外 3 件を返す（declaredFiles を省略 → dev-planner stub の file_changes は
@@ -350,6 +357,8 @@ test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣�
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // realized-diff が ephemeral のみを返す → filterEphemeralPaths 後 0 件 → 宣言外なし
@@ -389,6 +398,8 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: realized-diff=
     scope: 'src',
     estimated_change_file_count: 3,
     shape: 'standard',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // realized-diff が宣言外 1 件を返す（declaredFiles を省略 → dev-planner stub の file_changes は
@@ -448,6 +459,8 @@ test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → sh
     scope: 'src',
     estimated_change_file_count: 1,
     shape: 'micro',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // non-ephemeral 宣言外 1 件のみ（declaredFiles を省略 → dev-planner stub の file_changes は

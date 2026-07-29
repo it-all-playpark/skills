@@ -94,6 +94,8 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -169,6 +171,8 @@ const standardReq = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 // ============================================================
@@ -296,6 +300,8 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     scope: 'src',
     estimated_change_file_count: 10,
     shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // replan で返す衝突 plan: P1/P2 が共に 'src/shared.ts' を触る
@@ -376,6 +382,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 

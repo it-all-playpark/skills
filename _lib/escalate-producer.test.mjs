@@ -96,6 +96,8 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト
     return null;
   };
@@ -180,6 +182,8 @@ const standardAnalyzeReq = {
   scope: 'src',
   estimated_change_file_count: 3,
   shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
 };
 
 // ============================================================
@@ -335,6 +339,8 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
     scope: 'src/auth',
     estimated_change_file_count: 12,
     shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
   };
 
   // evaluator stub: 呼び出し回数を追跡して iteration 別に挙動を変える
@@ -437,6 +443,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       }
       // diff-gate / diff-hash（issue #215）: need() による throw の回避
       if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
+      if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
       return null;
     };
   }

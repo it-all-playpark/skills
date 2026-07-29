@@ -51,6 +51,8 @@ function createResponder() {
         scope: 'src',
         estimated_change_file_count: 1,
         shape: 'micro',
+        issue_number: 1,
+        issue_title: 'stub-issue-title',
       };
     }
     // Plan: dev-planner
@@ -111,6 +113,7 @@ function createResponder() {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 }

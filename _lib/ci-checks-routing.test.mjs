@@ -48,6 +48,8 @@ function createResponder({ concerns, ciChecksResponse }) {
         scope: 'src',
         estimated_change_file_count: 3,
         shape: 'standard',
+        issue_number: 1,
+        issue_title: 'stub-issue-title',
       };
     }
     // Plan: dev-planner（1 task を serial に置く — task 0 件だと implementer が呼ばれず
@@ -117,6 +119,8 @@ function createResponder({ concerns, ciChecksResponse }) {
         concerns,
       };
     }
+    // issue-meta（issue #451）: analyze provenance 突合 probe
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // デフォルト（worktree-deps / ui-verify-config 等）
     return null;
   };
