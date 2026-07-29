@@ -37,7 +37,7 @@ setup() {
     CHECK_CI_RETRY_DELAYS="0 0"
     CI_PR_BODY='{"head":{"sha":"deadbeef"}}'
     CI_CHECKRUNS_BODY='{"total_count":0,"check_runs":[]}'
-    CI_STATUS_BODY='{"state":"pending","statuses":[]}'
+    CI_STATUS_BODY='{"state":"pending","total_count":0,"statuses":[]}'
     export CI_CYCLE_COUNT_FILE CI_FAIL_TIMES CI_PENDING_TIMES CI_PENDING_CHECKRUNS_BODY
     export CHECK_CI_RETRY_DELAYS CI_PR_BODY CI_CHECKRUNS_BODY CI_STATUS_BODY
 
@@ -208,7 +208,7 @@ for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
 case "$url" in
     */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
     */check-runs*) printf '%s\n%s\n' '{"message":"Server Error"}' "500" ;;
-    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+    */status*) printf '%s\n%s\n' '{"total_count":0,"statuses":[]}' "200" ;;
 esac
 exit 0
 EOF
@@ -429,7 +429,7 @@ for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
 case "$url" in
     */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
     */check-runs*) printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
-    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+    */status*) printf '%s\n%s\n' '{"total_count":0,"statuses":[]}' "200" ;;
 esac
 exit 0
 EOF
@@ -458,7 +458,7 @@ case "$url" in
         printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
     */status*)
         [[ "$url" == *"/repos/url-owner/url-repo/"* ]] || { echo "unexpected status url: $url" >&2; exit 1; }
-        printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+        printf '%s\n%s\n' '{"total_count":0,"statuses":[]}' "200" ;;
 esac
 exit 0
 EOF
@@ -483,7 +483,7 @@ for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
 case "$url" in
     */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
     */check-runs*) printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
-    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+    */status*) printf '%s\n%s\n' '{"total_count":0,"statuses":[]}' "200" ;;
 esac
 exit 0
 EOF
@@ -536,7 +536,7 @@ for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
 case "$url" in
     */pulls/*) printf '%s\n%s\n' '{"head":{"sha":"deadbeef"}}' "200" ;;
     */check-runs*) printf '%s\n%s\n' '{"total_count":0,"check_runs":[]}' "200" ;;
-    */status*) printf '%s\n%s\n' '{"statuses":[]}' "200" ;;
+    */status*) printf '%s\n%s\n' '{"total_count":0,"statuses":[]}' "200" ;;
 esac
 exit 0
 EOF
@@ -558,7 +558,7 @@ EOF
     export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
       {"name":"build","status":"completed","conclusion":"success"}
     ]}'
-    export CI_STATUS_BODY='{"state":"failure","statuses":[
+    export CI_STATUS_BODY='{"state":"failure","total_count":4,"statuses":[
       {"context":"ci/legacy-pass","state":"success"},
       {"context":"ci/legacy-pending","state":"pending"},
       {"context":"ci/legacy-fail","state":"failure"},
@@ -677,4 +677,36 @@ EOF
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
     message=$(echo "$result" | jq -r '.message')
     [[ "$message" == *"head.sha"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Test 27: check-runs/status endpoints paginate at per_page=100. A commit
+# with more results than total_count reflects (2nd+ page silently missing)
+# must not be misreported as passed/no_checks -> status=error, fail-closed.
+# Regression: without this guard a failing check-run stranded on a dropped
+# page would silently degrade to "passed", the wrong-green class Test 7
+# already guards for outright API failures.
+# ---------------------------------------------------------------------------
+@test "check-runs total_count > fetched length (pagination truncation) -> status error" {
+    export CI_CHECKRUNS_BODY='{"total_count":150,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"}
+    ]}'
+    run "$SCRIPT" 42
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    message=$(echo "$result" | jq -r '.message')
+    [[ "$message" == *"fetched 1 of 150 check runs"* ]]
+}
+
+@test "status total_count > fetched length (pagination truncation) -> status error" {
+    export CI_STATUS_BODY='{"state":"success","total_count":150,"statuses":[
+      {"context":"ci/only-one","state":"success"}
+    ]}'
+    run "$SCRIPT" 42
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    message=$(echo "$result" | jq -r '.message')
+    [[ "$message" == *"fetched 1 of 150 statuses"* ]]
 }

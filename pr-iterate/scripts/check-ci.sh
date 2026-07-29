@@ -174,6 +174,23 @@ fetch_checks() {
         FETCH_ERR="GET check-runs -> HTTP $cr_code$(rate_limit_suffix "$cr_code"): $(echo "$cr_body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
         return
     fi
+    # per_page=100 with no pagination follow-up: a commit with >100 check
+    # runs would otherwise silently drop runs past page 1, and a failing run
+    # on a dropped page would make this cycle misreport "passed" (the exact
+    # wrong-green regression Test 7 guards against for API failures). Compare
+    # the fetched array length against the API's total_count and fail closed
+    # (status=error) instead of silently truncating.
+    local cr_total cr_len
+    cr_total=$(echo "$cr_body" | jq -r '.total_count // empty' 2>/dev/null || true)
+    cr_len=$(echo "$cr_body" | jq -r '(.check_runs // []) | length' 2>/dev/null || true)
+    if [[ ! "$cr_total" =~ ^[0-9]+$ || ! "$cr_len" =~ ^[0-9]+$ ]]; then
+        FETCH_ERR="GET check-runs: response missing total_count/check_runs"
+        return
+    fi
+    if (( cr_len != cr_total )); then
+        FETCH_ERR="GET check-runs: fetched ${cr_len} of ${cr_total} check runs (>100 check runs on this commit; pagination not implemented)"
+        return
+    fi
 
     local st_resp st_code st_body
     if ! st_resp=$(api_get "/repos/${REPO}/commits/${sha}/status?per_page=100" 2>&1); then
@@ -184,6 +201,19 @@ fetch_checks() {
     st_body=$(echo "$st_resp" | sed '$d')
     if [[ "$st_code" != "200" ]]; then
         FETCH_ERR="GET status -> HTTP $st_code$(rate_limit_suffix "$st_code"): $(echo "$st_body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
+        return
+    fi
+    # Same silent-truncation guard as check-runs above, for the legacy
+    # combined-status statuses[] array.
+    local st_total st_len
+    st_total=$(echo "$st_body" | jq -r '.total_count // empty' 2>/dev/null || true)
+    st_len=$(echo "$st_body" | jq -r '(.statuses // []) | length' 2>/dev/null || true)
+    if [[ ! "$st_total" =~ ^[0-9]+$ || ! "$st_len" =~ ^[0-9]+$ ]]; then
+        FETCH_ERR="GET status: response missing total_count/statuses"
+        return
+    fi
+    if (( st_len != st_total )); then
+        FETCH_ERR="GET status: fetched ${st_len} of ${st_total} statuses (>100 statuses on this commit; pagination not implemented)"
         return
     fi
 
