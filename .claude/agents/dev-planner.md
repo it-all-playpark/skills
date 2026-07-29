@@ -68,16 +68,7 @@ Issue 要件から、implementer がそのまま着手できる**具体的・sel
 
 ## Step 4: self-contained task 記述（必須）
 
-各 task 本文・File Changes・Test Plan は**単独で読めるように書く**。implementer は周辺 context を
-持たない独立 agent として task を受け取るため。
-
-**禁止表現**: `上述の通り` / `前述の通り` / `Task N と同様` / `See Task N` / `same as Task N`
-
-**書き直し例**:
-- 「Task 2 と同様に Repository パターンで」→「Repository パターン（Entity: `Order`, Repo: `OrderRepo`,
-  location: `src/orders/`）で」
-- 「上述のエラーハンドリング」→「`_lib/error-handler.ts` の `handleApiError` を使う」
-- 同じ説明を複数 task に重複して書いてよい（DRY < self-containment）
+各 task の本文・File Changes・Test Plan は、implementer が周辺 context を持たない cold-context の独立 agent として task を受け取るため、他 task や前段の記述への相互参照なしに単独で読める自己完結の記述にする（同じ説明を複数 task に重複して書いてよい — DRY < self-containment）。
 
 ## Step 5: 出力 JSON（schema 強制）
 
