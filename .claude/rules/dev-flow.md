@@ -217,6 +217,14 @@ QUALITY_MODEL 向け 4 agent（dev-planner / plan-reviewer / evaluator / pr-revi
 先頭トークンでマッチするため node/cd/bash 前置は付けない）で再生成する（`--check` が CI で全文一致を
 検証 — `_lib/workflow-inlines.sync.test.mjs`）。blame は `_lib` 側を見る。
 
+**新規 inline 区間の追加**にも正規経路がある: `tools/sync-inlines.mjs --add <_lib/xxx.mjs> --into
+<workflow.js> --after '<挿入位置直前の一意な行（完全一致）>'`（同じく bare 形。node/cd/bash 前置は
+付けない）。marker ペアの挿入と canonical 本文の充填・全検証（forbidden tokens / duplicate / decl
+collision / 生成後 syntax）を 1 コマンドで validate-then-write するため、途中失敗時も対象ファイルは
+不変のままになる。marker 行を Edit/Write で直接書くことは pretool-inline-edit-guard が deny する。
+**git plumbing（hash-object/update-index/checkout-index 等）による迂回は禁止** — 迂回すると guard
+の存在理由（生成物の手編集が次回 `--write` で黙って消失する事故防止）が破られる。
+
 **canonical の構造制約**: ESM import / require / Date.now / Math.random を含めない（generator がコメント除去後のコードを走査して error）。
 **ファイル全体が inline 可能**であること（export は行頭接頭辞除去のみで verbatim 注入。export default / export { } は不可）。
 
