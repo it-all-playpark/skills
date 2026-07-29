@@ -20,6 +20,7 @@ import {
   scanMarkers,
   syncRepo,
   collectTopLevelDeclNames,
+  insertMarkerPair,
 } from './sync-inlines.mjs';
 
 const SCRIPT_PATH = join(dirname(fileURLToPath(import.meta.url)), 'sync-inlines.mjs');
@@ -511,5 +512,168 @@ test('bare-form spawnSync via a symlink to the script also runs main (realpath-a
   } finally {
     rmSync(tmp, { recursive: true, force: true });
     rmSync(symlinkDir, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// insertMarkerPair(wfSrc, source, anchor, wfLabel): unit tests (issue #453)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('insertMarkerPair inserts a BEGIN/END marker pair immediately after a unique anchor line', () => {
+  const wfSrc = `line1\nconst anchor = 1;\nline3\n`;
+  const result = insertMarkerPair(wfSrc, '_lib/foo.mjs', 'const anchor = 1;', 'wf.js');
+  const lines = result.split('\n');
+  assert.equal(lines[0], 'line1');
+  assert.equal(lines[1], 'const anchor = 1;');
+  assert.ok(/^\/\/ ==== BEGIN inline: _lib\/foo\.mjs .*====$/.test(lines[2]), `unexpected BEGIN line: ${lines[2]}`);
+  assert.equal(lines[3], '// ==== END inline: _lib/foo.mjs ====');
+  assert.equal(lines[4], 'line3');
+});
+
+test('insertMarkerPair throws when anchor matches zero lines', () => {
+  const wfSrc = `line1\nline2\n`;
+  assert.throws(() => insertMarkerPair(wfSrc, '_lib/foo.mjs', 'nonexistent', 'wf.js'), /anchor/i);
+});
+
+test('insertMarkerPair throws when anchor matches multiple lines', () => {
+  const wfSrc = `dup\ndup\n`;
+  assert.throws(() => insertMarkerPair(wfSrc, '_lib/foo.mjs', 'dup', 'wf.js'), /anchor/i);
+});
+
+test('insertMarkerPair throws when anchor is inside an existing BEGIN..END region', () => {
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const wfSrc = `${markerBegin}\nconst inside = 1;\n${markerEnd}\n`;
+  assert.throws(
+    () => insertMarkerPair(wfSrc, '_lib/other.mjs', 'const inside = 1;', 'wf.js'),
+    /nested|inside/i,
+  );
+});
+
+test('insertMarkerPair allows anchoring on the END line of an existing region (insert right after)', () => {
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const wfSrc = `${markerBegin}\nconst inside = 1;\n${markerEnd}\nnext\n`;
+  const result = insertMarkerPair(wfSrc, '_lib/other.mjs', markerEnd, 'wf.js');
+  const lines = result.split('\n');
+  assert.equal(lines[2], markerEnd);
+  assert.ok(/^\/\/ ==== BEGIN inline: _lib\/other\.mjs .*====$/.test(lines[3]), `unexpected BEGIN line: ${lines[3]}`);
+  assert.equal(lines[4], '// ==== END inline: _lib/other.mjs ====');
+  assert.equal(lines[5], 'next');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLI --add mode: end-to-end integration (issue #453 AC1/AC3)
+//
+// AC3 evidence: this whole suite (including the CLI --add flow below) never
+// shells out to `git` — the entire "new marker pair" flow runs through
+// insertMarkerPair + syncWorkflowSource on a tmpdir fixture, exercised only via
+// spawnSync(process.execPath, ...) / direct function calls. No hash-object /
+// update-index / checkout-index / apply / checkout FETCH_HEAD anywhere in this
+// file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('--add inserts a new inline region, fills it, and --check passes afterwards', () => {
+  const anchor = 'const anchor = 1;';
+  const wfContent = `// header\n${anchor}\n// footer\n`;
+  const unusedCanonical = `export const UNUSED = 0;\n`;
+  const newCanonical = `export const NEW_VALUE = 42;\n`;
+  const tmp = makeFixtureRepo(unusedCanonical, wfContent, { extraCanonicals: { 'fake2.mjs': newCanonical } });
+  try {
+    const addResult = runCli(['--add', '_lib/fake2.mjs', '--into', 'wf.js', '--after', anchor, '--root', tmp]);
+    assert.equal(addResult.status, 0, `--add failed: ${addResult.stderr}`);
+    assert.ok(addResult.stdout.includes('added: wf.js (_lib/fake2.mjs)'), `unexpected stdout: ${addResult.stdout}`);
+
+    const written = readFileSync(join(tmp, '.claude', 'workflows', 'wf.js'), 'utf8');
+    assert.ok(written.includes('BEGIN inline: _lib/fake2.mjs'), 'BEGIN marker should be present');
+    assert.ok(written.includes('END inline: _lib/fake2.mjs'), 'END marker should be present');
+    assert.ok(written.includes('const NEW_VALUE = 42;'), 'canonical body should be filled in verbatim');
+
+    const checkResult = runCli(['--check', '--root', tmp]);
+    assert.equal(checkResult.status, 0, `--check should pass after --add, got: ${checkResult.stderr}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('--add and --write cannot be combined (exit 2)', () => {
+  const result = runCli(['--add', '_lib/foo.mjs', '--into', 'wf.js', '--after', 'x', '--write']);
+  assert.equal(result.status, 2);
+});
+
+test('--add exits 2 when canonical path does not start with _lib/', () => {
+  const result = runCli(['--add', 'scripts/foo.mjs', '--into', 'wf.js', '--after', 'x']);
+  assert.equal(result.status, 2);
+});
+
+test('--add exits 2 when canonical path does not end with .mjs', () => {
+  const result = runCli(['--add', '_lib/foo.js', '--into', 'wf.js', '--after', 'x']);
+  assert.equal(result.status, 2);
+});
+
+test('--add exits 2 when --into contains a slash', () => {
+  const result = runCli(['--add', '_lib/foo.mjs', '--into', 'sub/wf.js', '--after', 'x']);
+  assert.equal(result.status, 2);
+});
+
+test('--add exits 1 and leaves workflow unchanged when canonical file does not exist', () => {
+  const anchor = 'const anchor = 1;';
+  const wfContent = `// header\n${anchor}\n// footer\n`;
+  const unusedCanonical = `export const UNUSED = 0;\n`;
+  const tmp = makeFixtureRepo(unusedCanonical, wfContent);
+  try {
+    const result = runCli(['--add', '_lib/does-not-exist.mjs', '--into', 'wf.js', '--after', anchor, '--root', tmp]);
+    assert.equal(result.status, 1, `expected exit 1, got ${result.status}: ${result.stderr}`);
+    const written = readFileSync(join(tmp, '.claude', 'workflows', 'wf.js'), 'utf8');
+    assert.equal(written, wfContent, 'workflow file must remain unchanged');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('--add exits 1 and leaves workflow unchanged when the target workflow file does not exist', () => {
+  const unusedCanonical = `export const UNUSED = 0;\n`;
+  const newCanonical = `export const NEW_VALUE = 42;\n`;
+  const tmp = makeFixtureRepo(unusedCanonical, `// header\n`, { extraCanonicals: { 'fake2.mjs': newCanonical } });
+  try {
+    const result = runCli(['--add', '_lib/fake2.mjs', '--into', 'nonexistent-wf.js', '--after', 'x', '--root', tmp]);
+    assert.equal(result.status, 1, `expected exit 1, got ${result.status}: ${result.stderr}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('--add exits 1 and leaves workflow unchanged when canonical is already inlined in the target workflow (duplicate)', () => {
+  const canonical = `export const VALUE = 1;\n`;
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const anchor = 'const anchor = 1;';
+  const wfContent = `${markerBegin}\nconst VALUE = 1;\n${markerEnd}\n${anchor}\n`;
+  const tmp = makeFixtureRepo(canonical, wfContent);
+  try {
+    const result = runCli(['--add', '_lib/fake.mjs', '--into', 'wf.js', '--after', anchor, '--root', tmp]);
+    assert.equal(result.status, 1, `expected exit 1, got ${result.status}: ${result.stderr}`);
+    assert.ok(/duplicate/i.test(result.stderr), `expected duplicate error, got: ${result.stderr}`);
+    const written = readFileSync(join(tmp, '.claude', 'workflows', 'wf.js'), 'utf8');
+    assert.equal(written, wfContent, 'workflow file must remain unchanged on duplicate error');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('--add exits 1 and leaves workflow unchanged when canonical contains a forbidden token', () => {
+  const anchor = 'const anchor = 1;';
+  const wfContent = `// header\n${anchor}\n// footer\n`;
+  const unusedCanonical = `export const UNUSED = 0;\n`;
+  const badCanonical = `export const BAD = Date.now();\n`;
+  const tmp = makeFixtureRepo(unusedCanonical, wfContent, { extraCanonicals: { 'fake2.mjs': badCanonical } });
+  try {
+    const result = runCli(['--add', '_lib/fake2.mjs', '--into', 'wf.js', '--after', anchor, '--root', tmp]);
+    assert.equal(result.status, 1, `expected exit 1, got ${result.status}: ${result.stderr}`);
+    assert.ok(/Date\.now/i.test(result.stderr), `expected forbidden-token error, got: ${result.stderr}`);
+    const written = readFileSync(join(tmp, '.claude', 'workflows', 'wf.js'), 'utf8');
+    assert.equal(written, wfContent, 'workflow file must remain unchanged on validation failure');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

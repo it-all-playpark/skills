@@ -2,12 +2,17 @@
 // tools/sync-inlines.mjs
 // Inline-sync generator: rewrites BEGIN/END inline marker zones in workflow files.
 // Usage: node tools/sync-inlines.mjs [--write|--check] [--root <dir>]
+//    or: node tools/sync-inlines.mjs --add <canonical> --into <workflow> --after <anchor> [--root <dir>]
 //
 // Named exports (pure functions):
 //   stripComments(src)              - remove JS comments for forbidden-token scanning
 //   checkForbiddenTokens(src, lbl)  - error if import/require/Date.now/Math.random in code
 //   transformCanonical(src, lbl)    - strip 'export ' prefix, normalize trailing newline
 //   scanMarkers(wfSrc, wfLabel)     - parse BEGIN/END markers, return [{source, beginLine, endLine}]
+//   insertMarkerPair(wfSrc, source, anchor, wfLabel)
+//                                   - insert a new BEGIN/END marker pair after a unique
+//                                     literal anchor line; rejects anchors inside an
+//                                     existing inline region (nested markers)
 //   syncRepo(root, {write})         - orchestrate all workflow files
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
@@ -236,6 +241,113 @@ export function scanMarkers(wfSrc, wfLabel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// insertMarkerPair(wfSrc, source, anchor, wfLabel): insert a new BEGIN/END inline
+// marker pair immediately after a literal anchor line.
+//
+// Rules:
+//   - `anchor` must match exactly one line in wfSrc (via `line === anchor` after
+//     split('\n')). 0 or >1 matches throw.
+//   - The anchor line must not fall inside an existing BEGIN..END region (checked
+//     via scanMarkers): the range is [beginLine, endLine) — the END line itself
+//     is "outside" and may be used as an anchor (i.e. inserting a new region
+//     immediately after an existing one is allowed).
+//   - Does not fill the region body or validate the canonical; callers run the
+//     existing pipeline (scanMarkers -> checkForbiddenTokens -> transformCanonical
+//     -> validateInlineDeclCollisions -> validateGeneratedWorkflowSyntax) via
+//     syncWorkflowSource on the returned source.
+//
+// Returns: new wfSrc string with the marker pair inserted (region body empty).
+// ─────────────────────────────────────────────────────────────────────────────
+export function insertMarkerPair(wfSrc, source, anchor, wfLabel) {
+  const lines = wfSrc.split('\n');
+  const matchIndices = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === anchor) matchIndices.push(i);
+  }
+  if (matchIndices.length === 0) {
+    throw new Error(`${wfLabel}: --after anchor not found (expected exactly 1 matching line): ${JSON.stringify(anchor)}`);
+  }
+  if (matchIndices.length > 1) {
+    throw new Error(`${wfLabel}: --after anchor matched ${matchIndices.length} lines, expected exactly 1: ${JSON.stringify(anchor)}`);
+  }
+  const anchorIndex = matchIndices[0];
+
+  // Reject anchors inside an existing inline region (nested markers). Let any
+  // scanMarkers error on malformed existing marker structure propagate as-is.
+  const markers = scanMarkers(wfSrc, wfLabel);
+  for (const marker of markers) {
+    if (anchorIndex >= marker.beginLine && anchorIndex < marker.endLine) {
+      throw new Error(
+        `${wfLabel}: --after anchor (line ${anchorIndex + 1}) is inside existing inline region '${marker.source}' (BEGIN line ${marker.beginLine + 1} - END line ${marker.endLine + 1}) — nested markers are not allowed`,
+      );
+    }
+  }
+
+  const beginLine = `// ==== BEGIN inline: ${source} (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const endLine = `// ==== END inline: ${source} ====`;
+  lines.splice(anchorIndex + 1, 0, beginLine, endLine);
+  return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// syncWorkflowSource(root, wfFile, wfSrc): fill all BEGIN/END inline regions in a
+// single workflow file source against canonicals under root/_lib, running the
+// full validation pipeline (forbidden tokens -> transform -> decl collisions ->
+// generated syntax) before returning. Shared by syncRepo (multi-file
+// orchestration) and the --add CLI mode (single newly-inserted marker pair).
+//
+// Returns: { newSrc, changed, markerSources }
+//   markerSources preserves scan order (top-to-bottom); the reverse-order splice
+//   processing used internally is an implementation detail.
+// ─────────────────────────────────────────────────────────────────────────────
+function syncWorkflowSource(root, wfFile, wfSrc) {
+  const markers = scanMarkers(wfSrc, wfFile);
+
+  if (markers.length === 0) {
+    validateGeneratedWorkflowSyntax(wfFile, wfSrc);
+    return { newSrc: wfSrc, changed: false, markerSources: [] };
+  }
+
+  // Build new file content by replacing each marker zone
+  const lines = wfSrc.split('\n');
+  const inlineRegions = [];
+  // We need to process in reverse order to preserve line indices
+  const sortedMarkers = [...markers].sort((a, b) => b.beginLine - a.beginLine);
+
+  for (const marker of sortedMarkers) {
+    const canonicalPath = join(root, marker.source);
+    if (!existsSync(canonicalPath)) {
+      throw new Error(
+        `${wfFile}: canonical '${marker.source}' not found at '${canonicalPath}'`,
+      );
+    }
+    const canonicalSrc = readFileSync(canonicalPath, 'utf8');
+    // Check forbidden tokens in canonical BEFORE transforming
+    checkForbiddenTokens(canonicalSrc, marker.source);
+    // Transform: strip export prefix, normalize trailing newline
+    const transformed = transformCanonical(canonicalSrc, marker.source);
+    inlineRegions.push({ source: marker.source, transformed });
+    // Replace: keep BEGIN line, replace body, keep END line
+    const beginLine = lines[marker.beginLine];
+    const endLine = lines[marker.endLine];
+    // New region: BEGIN line + newline + transformed content + END line
+    // transformed already ends with \n, so join with no extra separator
+    const newRegion = [beginLine, ...transformed.split('\n').slice(0, -1), endLine];
+    lines.splice(marker.beginLine, marker.endLine - marker.beginLine + 1, ...newRegion);
+  }
+
+  const newSrc = lines.join('\n');
+  validateInlineDeclCollisions(wfFile, inlineRegions);
+  validateGeneratedWorkflowSyntax(wfFile, newSrc);
+
+  return {
+    newSrc,
+    changed: newSrc !== wfSrc,
+    markerSources: markers.map(m => m.source),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // syncRepo(root, {write}): orchestrate sync across all workflow files in root.
 // Returns: { results: [{file, source, changed}], ... }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,49 +362,15 @@ export function syncRepo(root, { write }) {
   for (const wfFile of wfFiles) {
     const wfPath = join(wfDir, wfFile);
     const wfSrc = readFileSync(wfPath, 'utf8');
-    const markers = scanMarkers(wfSrc, wfFile);
+    const { newSrc, changed, markerSources } = syncWorkflowSource(root, wfFile, wfSrc);
 
-    if (markers.length === 0) {
-      validateGeneratedWorkflowSyntax(wfFile, wfSrc);
+    if (markerSources.length === 0) {
       results.push({ file: wfFile, source: null, changed: false });
       continue;
     }
 
-    // Build new file content by replacing each marker zone
-    const lines = wfSrc.split('\n');
-    const inlineRegions = [];
-    // We need to process in reverse order to preserve line indices
-    const sortedMarkers = [...markers].sort((a, b) => b.beginLine - a.beginLine);
-
-    for (const marker of sortedMarkers) {
-      const canonicalPath = join(root, marker.source);
-      if (!existsSync(canonicalPath)) {
-        throw new Error(
-          `${wfFile}: canonical '${marker.source}' not found at '${canonicalPath}'`,
-        );
-      }
-      const canonicalSrc = readFileSync(canonicalPath, 'utf8');
-      // Check forbidden tokens in canonical BEFORE transforming
-      checkForbiddenTokens(canonicalSrc, marker.source);
-      // Transform: strip export prefix, normalize trailing newline
-      const transformed = transformCanonical(canonicalSrc, marker.source);
-      inlineRegions.push({ source: marker.source, transformed });
-      // Replace: keep BEGIN line, replace body, keep END line
-      const beginLine = lines[marker.beginLine];
-      const endLine = lines[marker.endLine];
-      // New region: BEGIN line + newline + transformed content + END line
-      // transformed already ends with \n, so join with no extra separator
-      const newRegion = [beginLine, ...transformed.split('\n').slice(0, -1), endLine];
-      lines.splice(marker.beginLine, marker.endLine - marker.beginLine + 1, ...newRegion);
-    }
-
-    const newSrc = lines.join('\n');
-    validateInlineDeclCollisions(wfFile, inlineRegions);
-    validateGeneratedWorkflowSyntax(wfFile, newSrc);
-    const changed = newSrc !== wfSrc;
-
-    for (const marker of markers) {
-      results.push({ file: wfFile, source: marker.source, changed });
+    for (const source of markerSources) {
+      results.push({ file: wfFile, source, changed });
     }
 
     if (changed && write) {
@@ -322,24 +400,52 @@ const isMain = (() => {
   }
 })();
 
+const USAGE = 'Usage: sync-inlines.mjs [--write|--check] [--root <dir>]\n' +
+  '   or: sync-inlines.mjs --add <canonical> --into <workflow> --after <anchor> [--root <dir>]\n';
+
 if (isMain) {
   const args = process.argv.slice(2);
   let write = false;
   let check = false;
   let root = null;
+  let add = null;
+  let into = null;
+  let after = null;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--write') { write = true; }
     else if (args[i] === '--check') { check = true; }
     else if (args[i] === '--root' && i + 1 < args.length) { root = args[++i]; }
+    else if (args[i] === '--add' && i + 1 < args.length) { add = args[++i]; }
+    else if (args[i] === '--into' && i + 1 < args.length) { into = args[++i]; }
+    else if (args[i] === '--after' && i + 1 < args.length) { after = args[++i]; }
     else {
-      process.stderr.write(`Unknown flag: ${args[i]}\nUsage: sync-inlines.mjs [--write|--check] [--root <dir>]\n`);
+      process.stderr.write(`Unknown flag: ${args[i]}\n${USAGE}`);
       process.exit(2);
     }
   }
 
-  if (write === check) {  // both true (xor false) means either both set or neither
-    process.stderr.write('Usage: sync-inlines.mjs [--write|--check] [--root <dir>]\nExactly one of --write or --check is required.\n');
+  const addMode = add !== null || into !== null || after !== null;
+
+  if (addMode) {
+    if (write || check) {
+      process.stderr.write(`--add cannot be combined with --write/--check.\n${USAGE}`);
+      process.exit(2);
+    }
+    if (add === null || into === null || after === null) {
+      process.stderr.write(`--add requires --into and --after.\n${USAGE}`);
+      process.exit(2);
+    }
+    if (!add.startsWith('_lib/') || !add.endsWith('.mjs')) {
+      process.stderr.write(`--add canonical must be a repo-root-relative path starting with '_lib/' and ending with '.mjs': ${add}\n${USAGE}`);
+      process.exit(2);
+    }
+    if (into.includes('/')) {
+      process.stderr.write(`--into must be a bare workflow file name (no '/'): ${into}\n${USAGE}`);
+      process.exit(2);
+    }
+  } else if (write === check) {  // both true (xor false) means either both set or neither
+    process.stderr.write(`Exactly one of --write or --check is required.\n${USAGE}`);
     process.exit(2);
   }
 
@@ -348,26 +454,42 @@ if (isMain) {
   }
 
   try {
-    const { results } = syncRepo(root, { write });
-    if (check) {
-      const drifted = results.filter(r => r.changed);
-      if (drifted.length > 0) {
-        process.stderr.write('sync-inlines: inline sections out of date:\n');
-        for (const r of drifted) {
-          process.stderr.write(`  ${r.file}: _lib/${r.source}\n`);
-        }
-        process.exit(1);
+    if (addMode) {
+      const canonicalPath = join(root, add);
+      if (!existsSync(canonicalPath)) {
+        throw new Error(`canonical '${add}' not found at '${canonicalPath}'`);
       }
-      process.exit(0);
-    }
-    // --write: report what changed
-    const changed = results.filter(r => r.changed);
-    if (changed.length > 0) {
-      for (const r of changed) {
-        process.stdout.write(`updated: ${r.file} (${r.source})\n`);
+      const wfPath = join(root, '.claude', 'workflows', into);
+      if (!existsSync(wfPath)) {
+        throw new Error(`workflow '${into}' not found at '${wfPath}'`);
       }
+      const wfSrc = readFileSync(wfPath, 'utf8');
+      const inserted = insertMarkerPair(wfSrc, add, after, into);
+      const { newSrc } = syncWorkflowSource(root, into, inserted);
+      writeFileSync(wfPath, newSrc, 'utf8');
+      process.stdout.write(`added: ${into} (${add})\n`);
     } else {
-      process.stdout.write('sync-inlines: all inline sections are up to date.\n');
+      const { results } = syncRepo(root, { write });
+      if (check) {
+        const drifted = results.filter(r => r.changed);
+        if (drifted.length > 0) {
+          process.stderr.write('sync-inlines: inline sections out of date:\n');
+          for (const r of drifted) {
+            process.stderr.write(`  ${r.file}: _lib/${r.source}\n`);
+          }
+          process.exit(1);
+        }
+        process.exit(0);
+      }
+      // --write: report what changed
+      const changed = results.filter(r => r.changed);
+      if (changed.length > 0) {
+        for (const r of changed) {
+          process.stdout.write(`updated: ${r.file} (${r.source})\n`);
+        }
+      } else {
+        process.stdout.write('sync-inlines: all inline sections are up to date.\n');
+      }
     }
   } catch (err) {
     process.stderr.write(`sync-inlines error: ${err.message}\n`);
