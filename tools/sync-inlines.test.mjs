@@ -6,7 +6,7 @@
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import os from 'node:os';
@@ -460,5 +460,56 @@ test('syncRepo does NOT collision-error when same canonical is inlined in two di
     assert.ok(wf2Written.includes('function topicKey'), 'wf2.js should contain topicKey');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test (bare): bare-form execution (no `node` prefix — direct execve of the
+// script path, matching exec-proxy Bash invocation). Requires shebang +
+// executable bit + realpath-aware isMain.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('script file starts with a node shebang line', () => {
+  const src = readFileSync(SCRIPT_PATH, 'utf8');
+  const firstLine = src.split('\n')[0];
+  assert.equal(firstLine, '#!/usr/bin/env node');
+});
+
+test('script file has the executable bit set on disk', () => {
+  const mode = statSync(SCRIPT_PATH).mode;
+  assert.notEqual(mode & 0o111, 0, `expected executable bit set, got mode ${mode.toString(8)}`);
+});
+
+test('bare-form spawnSync (no node prefix) runs --check successfully against a fixture repo', () => {
+  const canonical = `export const A = 1;\n`;
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const wf = `${markerBegin}\nconst A = 1;\n${markerEnd}\n`;
+  const tmp = makeFixtureRepo(canonical, wf);
+  try {
+    const result = spawnSync(SCRIPT_PATH, ['--check', '--root', tmp], { encoding: 'utf8' });
+    assert.equal(result.error, undefined, `spawnSync errored: ${result.error}`);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('bare-form spawnSync via a symlink to the script also runs main (realpath-aware isMain)', () => {
+  const canonical = `export const A = 1;\n`;
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const wf = `${markerBegin}\nconst A = 1;\n${markerEnd}\n`;
+  const tmp = makeFixtureRepo(canonical, wf);
+  const symlinkDir = mkdtempSync(join(os.tmpdir(), 'sync-inlines-symlink-'));
+  const symlinkPath = join(symlinkDir, 'sync-inlines-link.mjs');
+  symlinkSync(SCRIPT_PATH, symlinkPath);
+  try {
+    const result = spawnSync(symlinkPath, ['--check', '--root', tmp], { encoding: 'utf8' });
+    assert.equal(result.error, undefined, `spawnSync errored: ${result.error}`);
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(symlinkDir, { recursive: true, force: true });
   }
 });

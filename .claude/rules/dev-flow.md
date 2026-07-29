@@ -51,7 +51,9 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer、frontmatter 既定 opus）は
   `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で一括指定する（tools/sync-inlines.mjs で
   dev-flow.js / pr-iterate.js へ inline 生成。現在 `fable` 試験運用中。戻すときは
-  `_lib/quality-model.mjs` の 1 行を `'opus'` に変更し `node tools/sync-inlines.mjs --write` を実行）。
+  `_lib/quality-model.mjs` の 1 行を `'opus'` に変更し `tools/sync-inlines.mjs --write` を実行 —
+  先頭トークン=スクリプトパスの bare 形。shebang + 実行bit 付与済みで、sandbox excludedCommands は
+  先頭トークンでマッチするため node/cd/bash 前置は付けない）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。
   品質ゲート系 4 agent は `effort: high`
@@ -71,6 +73,14 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   **軸A invariant 不変** — deterministic oracle / seed / critical アイテムは全 policy で blocking のまま（security floor / 決定論ゲートは policy で緩めない）。
   **既定同一挙動** — 既定 `llm-major-advisory` は軸A invariant（critical / deterministic / seed = blocking）+ LLM major/minor = advisory の既定 lane 分類と全アイテムで一致し、非 default policy のみ gating が変わる（enum で境界を滑らせる設計）。
   out-of-enum 値は明示 error（legacy fallback / version 分岐なし）。canonical は `_lib/gate-policy.mjs`、dev-flow.js への inline は tools/sync-inlines.mjs で生成・`_lib/workflow-inlines.sync.test.mjs` が全文一致保証。
+- **block_class**: implementer 返り値 `status:'BLOCKED'` の `blocking_reason` は閉じた 2 値 enum
+  `approach_mismatch` / `guard_blocked` を持つ構造化 object（`{block_class, detail, guard_id}`）で、
+  string（free text）は受理せず schema error になる。`guard_blocked` は guard/hook 由来の BLOCKED
+  （inline-edit-guard deny / sandbox EPERM / safety classifier block / bg-isolation 等）を指し、
+  Implement phase の replan ループ（blockSeen 登録・`approach_mismatch` findings 化・dev-planner
+  再呼出し）から除外され、blockedConcerns 経由で evaluator focus へ直行する。out-of-enum の
+  `block_class` は明示 error（legacy fallback / version 分岐なし）。canonical は
+  `_lib/block-routing.mjs`、dev-flow.js への inline は tools/sync-inlines.mjs で生成する。
 - **telemetry**: dev-flow 完走時に workflow が telemetry handoff JSON（merge_tier / gate_policy / danger_hits / shape /
   shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
@@ -88,6 +98,13 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `empty_diff` failure として誤記録せず dev-flow-doctor の異常検知（iterate 不調率等）の統計を汚さない
   （issue #432）。当該機構は W7 分類上 blast-radius（人間ラベル opt-in + 決定論的 dirty 検証が揃った
   場合のみ graceful 終了する仕組みで、gate の fail-closed 既定は不変）。
+  guard/hook 由来 BLOCKED（block_class:'guard_blocked'。inline-edit-guard deny / sandbox EPERM /
+  safety classifier block / bg-isolation 等）が Implement phase で 1 件以上発生した run は、
+  成功 handoff（`outcome:'success'` のまま）に `error_category:'guard_blocked'` と telemetry キー
+  `guard_id`（発生した guard_id を unique・sort した上で comma 結合した文字列。各要素は
+  pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。journal.sh 側の専用フラグ配線・dotfiles Stop hook
+  への転送配線は `trust_receipts` 等と同じ precedent に倣い別 issue で扱う — 本 issue（#448）は
+  handoff JSON への到達までを保証する（issue #448）。
   `final_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`）。
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ）。
@@ -138,7 +155,7 @@ dev-flow の各「distrust 機構」（LLM/自動化の判定を信用しきら�
 
 | クラス | 正当化根拠 | 能力依存 | 代表機構 |
 |--------|-----------|---------|---------|
-| **incentive-structural**（永続・撤去禁止） | 敵対ループの勝利宣言を当事者に self-judge させない incentive 設計 + cold-context moving-target の抑制 | **非依存**（賢いモデルほどシャープな non-convergent nitpick を出すため逆に悪化） | frozen target（planSeen/evalSeen/blockSeen 累積）・既出 findings/feedback 累積・topic-stuck 検出 + relax + early-cutoff・critical-always-blocks + severity floor + append 単調性・hard cap（PLAN/EVAL/GREEN/BLOCK_MAX, last-resort safety net）・dev-improve IMPROVE_MAX + backpressure（ループが自分の提案量を自己増幅させない）|
+| **incentive-structural**（永続・撤去禁止） | 敵対ループの勝利宣言を当事者に self-judge させない incentive 設計 + cold-context moving-target の抑制 | **非依存**（賢いモデルほどシャープな non-convergent nitpick を出すため逆に悪化） | frozen target（planSeen/evalSeen/blockSeen 累積）・既出 findings/feedback 累積・topic-stuck 検出 + relax + early-cutoff・critical-always-blocks + severity floor + append 単調性・hard cap（PLAN/EVAL/GREEN/BLOCK_MAX, last-resort safety net）・dev-improve IMPROVE_MAX + backpressure（ループが自分の提案量を自己増幅させない）・guard_blocked の replan 除外（guard/hook 由来 BLOCKED を「別アプローチ探索」ループに入れず blockedConcerns→evaluator focus へ直行 — guard 迂回手順の探索 incentive を絶つ。issue #448）・blocking_reason 決定論スクラバー（迂回コマンド列の replan/evaluator prompt への verbatim 伝播遮断。issue #448）|
 | **blast-radius**（永続） | 不可逆性 / accountability / liability / blast-radius。正確性ではなく当事者性で正当化するため frontier が人間を超えても残る | **非依存** | human merge（accountability/不可逆/values/novelty）・danger-grep on realized diff → security path 強制・seeded SEC + merge tiering HOLD（danger/breaking/不可逆）・pr-iterate critical/major-always-blocks（merge 直前の最終ゲート: この先は human merge のみで、ここで relax すると既知の critical/major が出荷される。修正コストは PR スコープに bounded）・Final reconcile（pr-iterate fix 適用後の最終 tree に対する決定論 test 再実行 + 既存 AC の one-shot 再検証（fail は critical AC-FINAL append・既存 checked は不変の append 単調） → red/unavailable で HOLD。merge 直前の最終ゲート）・dev-improve 自動 revert 禁止・sunset 昇格の issue→人間 merge 経由・仮説突合の決定論 oracle（hypothesis-check.sh — LLM に効果の self-judge をさせない）・TESTSURF seeding（test-weakening 決定論検出 + evaluator clearance、merge tier HOLD）・lite route の pr-reviewer 1-pass → critical/major findings 検出で `workflow('pr-iterate')` フル fix loop へ自動昇格（critical/major-always-blocks 不変。縮約経路でも merge 直前のゲートを維持）|
 | **capability-bound**（**sunset 対象**） | 現行 LLM judge の信頼性不足（ECE≈39% / FPR≈35%）。モデルが賢くなるほど縮む | **依存** | `gate_policy = llm-major-advisory`（LLM major を blocking にしない distrust）・ui-verify advisory 固定（UI 判定を blocking にしない distrust）|
 
@@ -195,8 +212,10 @@ QUALITY_MODEL 向け 4 agent（dev-planner / plan-reviewer / evaluator / pr-revi
 ### inline 生成区間（_lib → workflows の sync generator）
 
 `.claude/workflows/*.js` 内の `// ==== BEGIN inline: <path> ... ====` 〜 `// ==== END inline: <path> ====`
-区間は**生成物であり直接編集禁止**。編集は `_lib` の canonical 側で行い `node tools/sync-inlines.mjs --write`
-で再生成する（`--check` が CI で全文一致を検証 — `_lib/workflow-inlines.sync.test.mjs`）。blame は `_lib` 側を見る。
+区間は**生成物であり直接編集禁止**。編集は `_lib` の canonical 側で行い `tools/sync-inlines.mjs --write`
+（先頭トークン=スクリプトパスの bare 形。shebang + 実行bit 付与済み — sandbox excludedCommands は
+先頭トークンでマッチするため node/cd/bash 前置は付けない）で再生成する（`--check` が CI で全文一致を
+検証 — `_lib/workflow-inlines.sync.test.mjs`）。blame は `_lib` 側を見る。
 
 **canonical の構造制約**: ESM import / require / Date.now / Math.random を含めない（generator がコメント除去後のコードを走査して error）。
 **ファイル全体が inline 可能**であること（export は行頭接頭辞除去のみで verbatim 注入。export default / export { } は不可）。

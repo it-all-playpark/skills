@@ -1112,6 +1112,101 @@ function formatTrustReceiptsSummary(entries) {
 }
 // ==== END inline: _lib/trust-wiring.mjs ====
 
+// ==== BEGIN inline: _lib/block-routing.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// block-routing: BLOCKED task result の block_class 判定・決定論スクラブ・振り分けを行う純関数群。
+// guard/hook 由来の BLOCKED（block_class:'guard_blocked'）を approach_mismatch の replan ループ
+// （blockSeen 登録・findings 化・dev-planner 再呼出し）から遮断し、迂回コマンド列を prompt へ
+// 伝播させないためのチョークポイント（issue #448）。
+//
+// W7 正当化クラス: incentive-structural（永続・撤去禁止）。
+// guard/hook 由来の BLOCKED を「別アプローチ探索」として dev-planner に渡すと、guard を迂回する
+// コマンド列の組み立てを incentive 化する（run wf_17d7a7be の実害）。この遮断は capability 非依存
+// （賢いモデルほど巧妙な迂回手順を組み立て得るため、モデル世代が進んでも撤去しない）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+const BLOCK_CLASSES = ['approach_mismatch', 'guard_blocked']
+
+const GUARD_ID_PATTERN = '^[a-z][a-z0-9-]{0,39}$'
+
+function normalizeBlockingReason(raw) {
+  if (raw === null) {
+    return { block_class: 'approach_mismatch', detail: 'BLOCKED（詳細未申告）', guard_id: null }
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('normalizeBlockingReason: blocking_reason must be a structured object (null は approach_mismatch へ fallback、free text は受理しない)')
+  }
+  const { block_class, detail, guard_id } = raw
+  if (!BLOCK_CLASSES.includes(block_class)) {
+    throw new Error(`normalizeBlockingReason: block_class '${block_class}' is out-of-enum (expected one of ${JSON.stringify(BLOCK_CLASSES)})`)
+  }
+  if (typeof detail !== 'string') {
+    throw new Error('normalizeBlockingReason: detail must be a string')
+  }
+  if (block_class !== 'guard_blocked') {
+    return { block_class, detail, guard_id: null }
+  }
+  if (guard_id === undefined || guard_id === null) {
+    return { block_class, detail, guard_id: 'unspecified' }
+  }
+  const guardIdRe = new RegExp(GUARD_ID_PATTERN)
+  if (typeof guard_id !== 'string' || !guardIdRe.test(guard_id)) {
+    throw new Error(`normalizeBlockingReason: guard_id '${guard_id}' does not match pattern ${GUARD_ID_PATTERN}`)
+  }
+  return { block_class, detail, guard_id }
+}
+
+const GUARD_EVASION_VOCAB_RE = /\b(fetch|FETCH_HEAD|mirror|checkout|clone|push|pull|remote|update-ref|worktree|symlink|chmod)\b/gi
+const COMMAND_PREFIX_RE = /^(git|gh|sh|bash|node|npm|curl|wget|ssh|scp|rsync)\s.*$/gm
+const CHAINED_LINE_RE = /^.*&&.*$/gm
+const BACKTICK_SPAN_RE = /`[^`]*`/g
+const SUBSHELL_SPAN_RE = /\$\([^)]*\)/g
+const URL_RE = /https?:\/\/\S+/g
+
+function scrubBlockingDetail(text) {
+  let scrubbed = String(text)
+  scrubbed = scrubbed.replace(BACKTICK_SPAN_RE, '[REDACTED-CMD]')
+  scrubbed = scrubbed.replace(SUBSHELL_SPAN_RE, '[REDACTED-CMD]')
+  scrubbed = scrubbed.replace(CHAINED_LINE_RE, '[REDACTED-CMD]')
+  scrubbed = scrubbed.replace(COMMAND_PREFIX_RE, '[REDACTED-CMD]')
+  scrubbed = scrubbed.replace(URL_RE, '[REDACTED-CMD]')
+  scrubbed = scrubbed.replace(GUARD_EVASION_VOCAB_RE, '[REDACTED]')
+  scrubbed = scrubbed.replace(/\s+/g, ' ').trim()
+  scrubbed = scrubbed.slice(0, 500)
+  return scrubbed === '' ? '[REDACTED]' : scrubbed
+}
+
+function partitionBlocked(results) {
+  const guardBlocked = []
+  const approachBlocked = []
+  for (const r of results) {
+    if (!r || r.status !== 'BLOCKED') continue
+    const normalized = normalizeBlockingReason(r.blocking_reason ?? null)
+    if (normalized.block_class === 'guard_blocked') {
+      guardBlocked.push({ task_id: r.task_id, guard_id: normalized.guard_id, detail: normalized.detail })
+    } else {
+      approachBlocked.push({ task_id: r.task_id, detail: normalized.detail })
+    }
+  }
+  return { guardBlocked, approachBlocked }
+}
+
+function buildGuardBlockedConcern({ task_id, guard_id, detail }) {
+  return 'guard_blocked(' + task_id + ')[guard=' + guard_id + ']: ' + scrubBlockingDetail(detail)
+}
+
+function buildApproachBlockFinding({ task_id, detail }) {
+  return {
+    severity: 'critical',
+    dimension: 'approach_mismatch',
+    topic: scrubBlockingDetail(detail).slice(0, 60),
+    description: scrubBlockingDetail(detail),
+    suggestion: '同アプローチでは進行不可。代替設計を立案すること（現アプローチの再試行は禁止）。',
+  }
+}
+// ==== END inline: _lib/block-routing.mjs ====
+
 // ==== BEGIN inline: _lib/vdelta-transitions.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // vdelta-transitions: redgreen R1↔R2 の veridelta verdict から deny-only チェックを判定する。
 // 用途: red&&green の決定論昇格を維持したまま、test 変更込みの「勝利宣言」を deny する
@@ -2595,7 +2690,15 @@ const IMPL = {
     files: { type: 'array', items: { type: 'string' } },
     summary: { type: 'string' },
     concerns: { type: 'array' },
-    blocking_reason: { type: ['string', 'null'] },
+    blocking_reason: {
+      type: ['object', 'null'],
+      required: ['block_class', 'detail'],
+      properties: {
+        block_class: { type: 'string', enum: ['approach_mismatch', 'guard_blocked'] },
+        detail: { type: 'string' },
+        guard_id: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,39}$' },
+      },
+    },
     missing_context: { type: ['string', 'null'] },
   },
 }
@@ -3570,7 +3673,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
 // ============================================================
 let state = {
   req, plan, setup, planVerdict, planConcerns, planIters,
-  implResults: null, concerns: [], blockedConcerns: [],
+  implResults: null, concerns: [], blockedConcerns: [], guardBlockedResults: [],
   val: null, greenFixCount: 0, greenFixIterations: [],
   ledger: null, risk: null, dangerHits: [], realized: null,
   realizedNonEphemeral: null, realizedCount: NaN, refloor: null,
@@ -3584,13 +3687,37 @@ let state = {
 }
 
 // ============================================================
+// extractGuardBlocked: implResults から guard_blocked task を partitionBlocked で抽出し、
+// implResults から除去（stale BLOCKED の再発火防止・replan 対象にしない・blockSeen 非登録）。
+// concerns はスクラブ済み文字列、digests は task_id/guard_id/block_class のみの薄い記録
+// （state.guardBlockedResults 用 — 終端サマリーからの task 欠落補償）。issue #448
+// ============================================================
+function extractGuardBlocked(results) {
+  const { guardBlocked } = partitionBlocked(results)
+  if (!guardBlocked.length) return { filtered: results, concerns: [], digests: [] }
+  const guardTaskIds = new Set(guardBlocked.map((g) => g.task_id))
+  const filtered = results.filter((r) => !(r && r.status === 'BLOCKED' && guardTaskIds.has(r.task_id)))
+  const concerns = guardBlocked.map((g) => buildGuardBlockedConcern(g))
+  const digests = guardBlocked.map((g) => ({ task_id: g.task_id, guard_id: g.guard_id, block_class: 'guard_blocked' }))
+  return { filtered, concerns, digests }
+}
+
+// ============================================================
 // Phase Implement: 実装 → BLOCKED があれば別アプローチで再計画して再実装（上限 BLOCK_MAX）
+// guard_blocked（hook deny / classifier block 等）は replan ループから遮断し blockedConcerns へ
+// 直行させる（extractGuardBlocked。issue #448、W7 incentive-structural）。
 // ============================================================
 async function execImplementPhase(state) {
   const { req } = state
   let plan = state.plan
   let implResults = await runImplement(req, plan, null, 'impl')
   let blockedConcerns = []
+  {
+    const gb = extractGuardBlocked(implResults)
+    implResults = gb.filtered
+    blockedConcerns.push(...gb.concerns)
+    state.guardBlockedResults.push(...gb.digests)
+  }
   // blockFindings 累積 & アプローチ回帰禁止。planSeen と同型の frozen target
   // （incentive-structural — W7 分類。capability 非依存・撤去禁止）。issue #188
   const blockSeen = makeSeenTracker(Infinity)  // stuck 検出は使わず累積のみ（hard cap は BLOCK_MAX）
@@ -3598,11 +3725,9 @@ async function execImplementPhase(state) {
     const blocked = implResults.filter((r) => r && r.status === 'BLOCKED')
     if (!blocked.length) break
     log(`implement: ${blocked.length} task が BLOCKED — 別アプローチで再計画 (${b}/${BLOCK_MAX})`)
-    const blockFindings = blocked.map((r) => ({
-      severity: 'critical', dimension: 'approach_mismatch',
-      topic: String(r.blocking_reason ?? '').slice(0, 60),
-      description: r.blocking_reason ?? 'BLOCKED',
-      suggestion: '同アプローチでは進行不可。代替設計を立案すること（現アプローチの再試行は禁止）。',
+    const blockFindings = blocked.map((r) => buildApproachBlockFinding({
+      task_id: r.task_id,
+      detail: normalizeBlockingReason(r.blocking_reason ?? null).detail,
     }))
     // planSeen と同型のパターンで blockSeen に累積（当該 iteration 分も含む）
     for (const f of blockFindings) blockSeen.register(f)
@@ -3628,10 +3753,16 @@ async function execImplementPhase(state) {
     const retryResults = await runImplement(req, plan, null, `reimpl-blocked#${b}`)
     const retryIds = new Set(retryResults.map((r) => r && r.task_id).filter(Boolean))
     implResults = [...implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS') && !retryIds.has(r.task_id)), ...retryResults]
+    {
+      const gb = extractGuardBlocked(implResults)
+      implResults = gb.filtered
+      blockedConcerns.push(...gb.concerns)
+      state.guardBlockedResults.push(...gb.digests)
+    }
     if (b === BLOCK_MAX) {
       const stillBlocked = implResults.filter((r) => r && r.status === 'BLOCKED')
       if (stillBlocked.length) {
-        blockedConcerns = stillBlocked.map((r) => r.blocking_reason ?? 'BLOCKED')
+        blockedConcerns.push(...stillBlocked.map((r) => `approach_mismatch(${r.task_id}): ${scrubBlockingDetail(normalizeBlockingReason(r.blocking_reason ?? null).detail)}`))
         log(`⚠️ ${BLOCK_MAX} 回再計画しても ${stillBlocked.length} task が BLOCKED — Evaluate/human review へ`)
       }
     }
@@ -5066,6 +5197,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
   repo: repoFromGithubUrl(pr.pr_url) ?? REPO,
   pr_number: Number(pr.pr_number),
   journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
+  ...(state.guardBlockedResults.length ? { error_category: 'guard_blocked' } : {}),
   telemetry: {
     merge_tier: mergeTier.tier,
     merge_tier_reasons: mergeTier.reasons,
@@ -5126,6 +5258,9 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // --trust-run-id（本 PR）、dotfiles Stop hook の転送は companion patch
     // （claudedocs/2026-07-26-issue-413-trust-dogfood-go-no-go.md 記載）。
     ...(state.trustSurfaceProofShadow || state.trustReceipts.length ? { trust_run_id: RUN_ID } : {}),
+    // guard_id: guard_blocked task が 1 件以上ある run のみ出力する telemetry 専用キー
+    // （unique sort 済み comma 結合文字列。issue #448 F3）。journal.sh whitelist 配線は別 issue。
+    ...(state.guardBlockedResults.length ? { guard_id: [...new Set(state.guardBlockedResults.map((g) => g.guard_id))].sort().join(',') } : {}),
   },
 })
 const journalInstr = buildJournalHandoffInstr({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })

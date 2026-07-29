@@ -88,7 +88,7 @@ function makeSandbox(analyzeReq) {
           files: [],
           summary: '',
           concerns: [],
-          blocking_reason: 'RZ: lib-z api missing',
+          blocking_reason: { block_class: 'approach_mismatch', detail: 'RZ: lib-z api missing' },
         };
       }
       if (label === 'reimpl-blocked#1:serial:T4') {
