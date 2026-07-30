@@ -23,6 +23,8 @@
 # reports the fixed CI_CHECKRUNS_BODY / CI_STATUS_BODY.
 
 setup() {
+    unset GH_TOKEN GITHUB_TOKEN
+
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     SCRIPT="$SKILLS_REPO/pr-iterate/scripts/check-ci.sh"
 
@@ -44,6 +46,10 @@ setup() {
     SLEEP_LOG_FILE="$BATS_TMPDIR/sleep-log"
     rm -f "$SLEEP_LOG_FILE"
     export SLEEP_LOG_FILE
+
+    CHECK_CI_CACHE_DIR="$BATS_TMPDIR/check-ci-cache"
+    rm -rf "$CHECK_CI_CACHE_DIR"
+    export CHECK_CI_CACHE_DIR
 
     cat > "$STUB_DIR/curl" << 'EOF'
 #!/usr/bin/env bash
@@ -418,6 +424,48 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Test (AC-1 unauth warning): unauthenticated run emits a one-line stderr
+# warning naming the env vars and "unauthenticated", while the stdout JSON
+# contract (last line = JSON, parseable) is unchanged.
+# ---------------------------------------------------------------------------
+@test "unauthenticated run emits one-line stderr warning, stdout JSON contract unchanged" {
+    run --separate-stderr "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    warning_count=$(echo "$stderr" | grep -c 'GH_TOKEN.*unauthenticated\|unauthenticated.*GH_TOKEN' || true)
+    [ "$warning_count" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (AC-1 no warning when authenticated): GH_TOKEN set -> no unauthenticated
+# warning on stderr.
+# ---------------------------------------------------------------------------
+@test "authenticated run (GH_TOKEN set) emits no unauthenticated warning" {
+    export GH_TOKEN=dummy-token
+    run --separate-stderr "$SCRIPT" 42
+    unset GH_TOKEN
+    [ "$status" -eq 0 ]
+    ! echo "$stderr" | grep -qi 'unauthenticated'
+}
+
+# ---------------------------------------------------------------------------
+# Test (AC-1 warning emitted once): polling run (multiple fetch cycles)
+# still emits the warning exactly once (at startup, not per-cycle).
+# ---------------------------------------------------------------------------
+@test "polling run emits warning only once" {
+    export CI_PENDING_TIMES=2
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
+    run --separate-stderr "$SCRIPT" 42 --wait-seconds 10 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    warning_count=$(echo "$stderr" | grep -c 'unauthenticated' || true)
+    [ "$warning_count" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
 # Test 18: --repo owner/repo flag is honored (no git remote lookup needed)
 # ---------------------------------------------------------------------------
 @test "repo resolution: --repo flag is used directly" {
@@ -709,4 +757,354 @@ EOF
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
     message=$(echo "$result" | jq -r '.message')
     [[ "$message" == *"fetched 1 of 150 statuses"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# issue #463 (F2): api_get ETag conditional requests + file cache + 24h GC.
+# Each stub below inspects the -D headerfile arg and any "If-None-Match:"
+# arg the same way Test 25 does, so it can decide whether to answer with a
+# fresh 200 (+ETag) or a cache-hit 304.
+# ---------------------------------------------------------------------------
+
+@test "200 with ETag header populates cache files" {
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+headerfile=""
+prev=""
+for a in "$@"; do
+    case "$a" in https://*) url="$a" ;; esac
+    [[ "$prev" == "-D" ]] && headerfile="$a"
+    prev="$a"
+done
+case "$url" in
+    */pulls/*)
+        [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
+        printf '%s\n%s\n' "$CI_PR_BODY" "200"
+        ;;
+    */check-runs*) printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200" ;;
+    */status*) printf '%s\n%s\n' "$CI_STATUS_BODY" "200" ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+
+    [ -d "$CHECK_CI_CACHE_DIR" ]
+    etag_count=$(find "$CHECK_CI_CACHE_DIR" -name '*.etag' | wc -l | tr -d ' ')
+    body_count=$(find "$CHECK_CI_CACHE_DIR" -name '*.body' | wc -l | tr -d ' ')
+    [ "$etag_count" -ge 1 ]
+    [ "$body_count" -ge 1 ]
+
+    found=0
+    for f in "$CHECK_CI_CACHE_DIR"/*.etag; do
+        grep -qF 'W/"pr-v1"' "$f" && found=1
+    done
+    [ "$found" -eq 1 ]
+}
+
+@test "second run sends If-None-Match and reuses cached body on 304" {
+    # Exercises the conditional-request round trip on all 3 endpoints
+    # (pulls / check-runs / status), not just pulls: each branch below
+    # checks If-None-Match against its own cached ETag and logs a
+    # per-endpoint marker to INM_SEEN_FILE before answering 304, so the
+    # assertions below can confirm every endpoint actually took the
+    # cache-hit path rather than only one of the three.
+    INM_SEEN_FILE="$BATS_TMPDIR/inm-seen"
+    rm -f "$INM_SEEN_FILE"
+    export INM_SEEN_FILE
+
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+headerfile=""
+inm=""
+prev=""
+for a in "$@"; do
+    case "$a" in
+        https://*) url="$a" ;;
+        If-None-Match:*) inm="${a#If-None-Match: }" ;;
+    esac
+    [[ "$prev" == "-D" ]] && headerfile="$a"
+    prev="$a"
+done
+case "$url" in
+    */pulls/*)
+        if [[ "$inm" == 'W/"pr-v1"' ]]; then
+            echo "pulls:$inm" >> "$INM_SEEN_FILE"
+            printf '\n%s\n' "304"
+        else
+            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
+            printf '%s\n%s\n' "$CI_PR_BODY" "200"
+        fi
+        ;;
+    */check-runs*)
+        if [[ "$inm" == 'W/"cr-v1"' ]]; then
+            echo "check-runs:$inm" >> "$INM_SEEN_FILE"
+            printf '\n%s\n' "304"
+        else
+            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"cr-v1"\r\n\r\n' > "$headerfile"
+            printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200"
+        fi
+        ;;
+    */status*)
+        if [[ "$inm" == 'W/"st-v1"' ]]; then
+            echo "status:$inm" >> "$INM_SEEN_FILE"
+            printf '\n%s\n' "304"
+        else
+            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"st-v1"\r\n\r\n' > "$headerfile"
+            printf '%s\n%s\n' "$CI_STATUS_BODY" "200"
+        fi
+        ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+    [ ! -s "$INM_SEEN_FILE" ]
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+    [ -s "$INM_SEEN_FILE" ]
+    grep -qF 'pulls:W/"pr-v1"' "$INM_SEEN_FILE"
+    grep -qF 'check-runs:W/"cr-v1"' "$INM_SEEN_FILE"
+    grep -qF 'status:W/"st-v1"' "$INM_SEEN_FILE"
+}
+
+@test "304 with missing cached body falls back to unconditional refetch (fail-open)" {
+    # All 3 endpoints check If-None-Match symmetrically (matching the
+    # "second run..." test above) so removing every cached *.body file
+    # exercises the same fail-open fallback on check-runs/status as on
+    # pulls, not just pulls.
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+headerfile=""
+inm=""
+prev=""
+for a in "$@"; do
+    case "$a" in
+        https://*) url="$a" ;;
+        If-None-Match:*) inm="${a#If-None-Match: }" ;;
+    esac
+    [[ "$prev" == "-D" ]] && headerfile="$a"
+    prev="$a"
+done
+case "$url" in
+    */pulls/*)
+        if [[ -n "$inm" ]]; then
+            printf '\n%s\n' "304"
+        else
+            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
+            printf '%s\n%s\n' "$CI_PR_BODY" "200"
+        fi
+        ;;
+    */check-runs*)
+        if [[ -n "$inm" ]]; then
+            printf '\n%s\n' "304"
+        else
+            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"cr-v1"\r\n\r\n' > "$headerfile"
+            printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200"
+        fi
+        ;;
+    */status*)
+        if [[ -n "$inm" ]]; then
+            printf '\n%s\n' "304"
+        else
+            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"st-v1"\r\n\r\n' > "$headerfile"
+            printf '%s\n%s\n' "$CI_STATUS_BODY" "200"
+        fi
+        ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+
+    rm -f "$CHECK_CI_CACHE_DIR"/*.body
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+}
+
+@test "unwritable cache dir is fail-open" {
+    UNWRITABLE_FILE="$BATS_TMPDIR/not-a-dir-cache"
+    rm -rf "$UNWRITABLE_FILE"
+    : > "$UNWRITABLE_FILE"
+    export CHECK_CI_CACHE_DIR="$UNWRITABLE_FILE"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
+}
+
+@test "newly created cache dir is mode 700 (owner-only, cache poisoning defense)" {
+    # issue #463 (F3, security-vuln): the cache dir path is predictable
+    # (${CHECK_CI_CACHE_DIR:-${TMPDIR:-/tmp}/check-ci-cache}), so on a
+    # shared multi-user machine another user could pre-create it and
+    # plant a forged ETag+body pair to inject a wrong-green 304 response.
+    # Creating it 700 blocks other users from reading/writing into it.
+    # (The companion `[[ ! -O "$CACHE_DIR" ]]` ownership check that
+    # disables the cache when an existing dir isn't owned by the current
+    # user can't be exercised here: non-root bats runs can't create a
+    # dir owned by another user, so that fail-open branch is verified by
+    # code review instead of a test.)
+    [ ! -e "$CHECK_CI_CACHE_DIR" ]
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+
+    [ -d "$CHECK_CI_CACHE_DIR" ]
+    perms="$(ls -ld "$CHECK_CI_CACHE_DIR")"
+    [[ "$perms" == drwx------* ]]
+}
+
+@test "startup GC removes entries older than 24h and keeps fresh ones" {
+    mkdir -p "$CHECK_CI_CACHE_DIR"
+    touch -t 202601010000 "$CHECK_CI_CACHE_DIR/old.etag" "$CHECK_CI_CACHE_DIR/old.body"
+    touch "$CHECK_CI_CACHE_DIR/fresh.body"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+
+    [ ! -e "$CHECK_CI_CACHE_DIR/old.etag" ]
+    [ ! -e "$CHECK_CI_CACHE_DIR/old.body" ]
+    [ -e "$CHECK_CI_CACHE_DIR/fresh.body" ]
+}
+
+@test "3 API calls per fetch cycle are preserved" {
+    URL_LOG_FILE="$BATS_TMPDIR/url-log"
+    rm -f "$URL_LOG_FILE"
+    export URL_LOG_FILE
+
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+case "$url" in
+    */pulls/*) echo "pulls" >> "$URL_LOG_FILE"; printf '%s\n%s\n' "$CI_PR_BODY" "200" ;;
+    */check-runs*) echo "check-runs" >> "$URL_LOG_FILE"; printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200" ;;
+    */status*) echo "status" >> "$URL_LOG_FILE"; printf '%s\n%s\n' "$CI_STATUS_BODY" "200" ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+
+    [ "$(grep -c '^pulls$' "$URL_LOG_FILE")" -eq 1 ]
+    [ "$(grep -c '^check-runs$' "$URL_LOG_FILE")" -eq 1 ]
+    [ "$(grep -c '^status$' "$URL_LOG_FILE")" -eq 1 ]
+    [ "$(wc -l < "$URL_LOG_FILE" | tr -d ' ')" -eq 3 ]
+}
+
+# ---------------------------------------------------------------------------
+# issue #463 (F1): CHECK_CI_DEBUG=1-gated per-request stderr instrumentation
+# on api_get, so a diagnosis can tell "If-None-Match not sent" apart from
+# "sent but 304 never comes back" (bats-stub 304 handling alone doesn't
+# prove that against the real GitHub API). Default (unset/not "1") emits
+# nothing; stdout JSON contract is unaffected either way.
+# ---------------------------------------------------------------------------
+
+@test "CHECK_CI_DEBUG=1 emits per-request stderr lines with http codes" {
+    export CHECK_CI_DEBUG=1
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+headerfile=""
+prev=""
+for a in "$@"; do
+    case "$a" in https://*) url="$a" ;; esac
+    [[ "$prev" == "-D" ]] && headerfile="$a"
+    prev="$a"
+done
+case "$url" in
+    */pulls/*)
+        [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
+        printf '%s\n%s\n' "$CI_PR_BODY" "200"
+        ;;
+    */check-runs*) printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200" ;;
+    */status*) printf '%s\n%s\n' "$CI_STATUS_BODY" "200" ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run --separate-stderr "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+
+    debug_lines=$(printf '%s\n' "$stderr" | grep -c 'check-ci-debug: GET ')
+    [ "$debug_lines" -eq 3 ]
+    [[ "$stderr" == *"-> 200"* ]]
+
+    result=$(echo "$output" | tail -1)
+    echo "$result" | jq -e . >/dev/null
+}
+
+@test "CHECK_CI_DEBUG unset emits no debug lines" {
+    unset CHECK_CI_DEBUG
+    run --separate-stderr "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"check-ci-debug:"* ]]
+}
+
+@test "CHECK_CI_DEBUG=1 shows sent If-None-Match and 304" {
+    export CHECK_CI_DEBUG=1
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+headerfile=""
+inm=""
+prev=""
+for a in "$@"; do
+    case "$a" in
+        https://*) url="$a" ;;
+        If-None-Match:*) inm="${a#If-None-Match: }" ;;
+    esac
+    [[ "$prev" == "-D" ]] && headerfile="$a"
+    prev="$a"
+done
+case "$url" in
+    */pulls/*)
+        if [[ "$inm" == 'W/"pr-v1"' ]]; then
+            printf '\n%s\n' "304"
+        else
+            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
+            printf '%s\n%s\n' "$CI_PR_BODY" "200"
+        fi
+        ;;
+    */check-runs*) printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200" ;;
+    */status*) printf '%s\n%s\n' "$CI_STATUS_BODY" "200" ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run --separate-stderr "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+
+    run --separate-stderr "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    [[ "$stderr" == *"if-none-match=W/"* ]]
+    [[ "$stderr" == *"-> 304"* ]]
 }

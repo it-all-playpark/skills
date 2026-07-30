@@ -29,7 +29,8 @@
 # Auth: if GH_TOKEN or GITHUB_TOKEN is set, requests are authenticated
 # (Bearer token) for a higher rate limit and private-repo access. Otherwise
 # requests are unauthenticated (60 req/hour/IP — fine for public repos at
-# normal dev-flow run volume; each fetch cycle costs 3 API calls).
+# normal dev-flow run volume; each fetch cycle costs 3 API calls). When
+# unauthenticated, a one-line warning is printed to stderr at startup.
 #
 # Transient failures (network error, non-2xx HTTP response from any of the
 # 3 API calls a fetch cycle makes) are retried with backoff within each poll
@@ -37,8 +38,26 @@
 # (default 10s/30s). The retry budget resets every poll cycle and is
 # independent from the --wait-seconds wait budget (AC-4): API-error retries
 # never consume waited_seconds.
+#
+# ETag cache (issue #463): each of the 3 API calls' response ETag and body
+# is cached under ${CHECK_CI_CACHE_DIR:-${TMPDIR:-/tmp}/check-ci-cache}
+# (keyed by sha256 of the request path). Subsequent requests for the same
+# path send If-None-Match; a 304 reuses the cached body and does not
+# consume a rate-limit unit, dropping steady-state polling from 3 to 0
+# units/cycle. Cache I/O failures (missing sha256 tool, unwritable dir,
+# unreadable/corrupt entry, missing ETag on a 200) fail-open to an
+# unconditional request; the call count per cycle is unaffected either way.
+# A GC at startup deletes cache entries older than 24h.
 
 set -euo pipefail
+
+# fd 3: a stable duplicate of the real stderr, used by _dbg_log below. Each
+# of the 3 api_get call sites in fetch_checks wraps its call with `2>&1` to
+# capture curl-level network-error text into the same variable as the
+# response body; writing debug lines straight to fd 2 there would get
+# merged into that captured body/http_code parsing instead of reaching the
+# terminal. fd 3 is untouched by that local `2>&1` redirection.
+exec 3>&2
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../_lib/common.sh"
@@ -95,7 +114,43 @@ AUTH_ARGS=()
 TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 [[ -n "$TOKEN" ]] && AUTH_ARGS=(-H "Authorization: Bearer ${TOKEN}")
 
+if [[ -z "$TOKEN" ]]; then
+    echo "check-ci: warning: GH_TOKEN/GITHUB_TOKEN not set - using unauthenticated GitHub API (60 req/hour/IP rate limit)" >&2
+fi
+
 read -r -a RETRY_DELAYS <<< "${CHECK_CI_RETRY_DELAYS:-10 30}"
+
+# ETag cache: api_get sends If-None-Match for a path it has seen before and,
+# on 304, reuses the cached body instead of consuming a rate-limit unit.
+# Cache dir defaults to ${TMPDIR:-/tmp}/check-ci-cache, keyed by sha256 of
+# the request path; ETag and body are stored as separate files. The dir
+# is created mode 700 and, if it already exists under a different owner
+# (the path is predictable on a shared machine, enabling cache poisoning
+# via a planted forged ETag+body pair), the cache is disabled rather than
+# trusted. Any cache
+# I/O failure (missing sha256 tool, unwritable dir, unreadable/corrupt
+# entry) disables the cache (fail-open) rather than failing the run. A
+# startup GC deletes entries older than 24h. Set CHECK_CI_DEBUG=1 to emit
+# one stderr line per api_get request (path, sent If-None-Match, received
+# http_code, received etag) for diagnosing whether 304s are actually
+# happening; default is silent and stdout is never affected.
+CACHE_DIR="${CHECK_CI_CACHE_DIR:-${TMPDIR:-/tmp}/check-ci-cache}"
+CACHE_ENABLED=1
+if command -v sha256sum >/dev/null 2>&1; then
+    _cache_key() { printf '%s' "$1" | sha256sum | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+    _cache_key() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
+else
+    CACHE_ENABLED=0
+fi
+mkdir -p -m 700 "$CACHE_DIR" 2>/dev/null || CACHE_ENABLED=0
+if (( CACHE_ENABLED )) && [[ ! -O "$CACHE_DIR" ]]; then
+    CACHE_ENABLED=0
+fi
+if (( CACHE_ENABLED )); then
+    # GC: drop entries older than 24h at startup.
+    find "$CACHE_DIR" -type f -mmin +1440 -delete 2>/dev/null || true
+fi
 
 # Unauthenticated requests are rate-limited at 60 req/hour/IP; each fetch
 # cycle costs 3 calls, so this can be exhausted well inside pr-iterate's
@@ -105,17 +160,95 @@ read -r -a RETRY_DELAYS <<< "${CHECK_CI_RETRY_DELAYS:-10 30}"
 API_HEADERS_FILE="$(mktemp)"
 trap 'rm -f "$API_HEADERS_FILE"' EXIT
 
+# _api_curl [If-None-Match value] - internal helper: truncates
+# API_HEADERS_FILE, then GETs $1 (the path passed to api_get, captured via
+# the caller's local "$path"), optionally with a conditional If-None-Match
+# header. Prints curl's raw output (body + final http_code line).
+_api_curl() {
+    local inm="${1:-}"
+    : > "$API_HEADERS_FILE"
+    local cond_args=()
+    [[ -n "$inm" ]] && cond_args=(-H "If-None-Match: ${inm}")
+    curl -sS -D "$API_HEADERS_FILE" -w '\n%{http_code}' \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "${cond_args[@]}" \
+        "${AUTH_ARGS[@]}" \
+        "https://api.github.com$path"
+}
+
+# _dbg_log <if-none-match-sent> <http-code> - CHECK_CI_DEBUG=1-gated stderr
+# instrumentation for one api_get request (path taken from the caller's
+# local "$path", same as _api_curl). No-op, no stdout output, unless
+# CHECK_CI_DEBUG=1. Writes to fd 3 (see the `exec 3>&2` above), not fd 2,
+# because api_get's callers wrap it with `2>&1` to capture curl-level
+# errors; a plain `>&2` here would leak into that captured body/http_code
+# parsing on the success path. The etag extraction is 2>/dev/null-guarded
+# so a missing header (no match for grep) can never trigger errexit under
+# set -e.
+_dbg_log() {
+    [[ "${CHECK_CI_DEBUG:-0}" == "1" ]] || return 0
+    local inm="${1:-}" code="$2" dbg_etag
+    dbg_etag=$(grep -i '^etag:' "$API_HEADERS_FILE" 2>/dev/null | tail -1 | tr -d '\r' | awk '{print $2}')
+    echo "check-ci-debug: GET ${path} if-none-match=${inm:--} -> ${code} etag=${dbg_etag:--}" >&3
+}
+
 # api_get <path-with-query> - GETs https://api.github.com<path>, prints the
 # response body followed by a final line with the HTTP status code. Returns
 # non-zero only on a curl-level failure (network unreachable, DNS, etc.);
 # a non-2xx HTTP response is still printed (with its status code) so the
 # caller can classify it.
+#
+# When the cache is enabled, sends If-None-Match for a path it has a cached
+# ETag for; a 304 response is translated back into a synthetic 200 + cached
+# body (transparent to callers) without consuming a rate-limit unit. A 200
+# response with an ETag header is cached for next time.
 api_get() {
-    curl -sS -D "$API_HEADERS_FILE" -w '\n%{http_code}' \
-        -H "Accept: application/vnd.github+json" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${AUTH_ARGS[@]}" \
-        "https://api.github.com$1"
+    local path="$1"
+    local key="" etag_file="" body_file="" cached_etag=""
+    if (( CACHE_ENABLED )); then
+        key=$(_cache_key "$path")
+        etag_file="$CACHE_DIR/$key.etag"
+        body_file="$CACHE_DIR/$key.body"
+        if [[ -r "$etag_file" && -r "$body_file" ]]; then
+            cached_etag=$(cat "$etag_file" 2>/dev/null || true)
+        fi
+    fi
+
+    local resp http_code body
+    resp=$(_api_curl "$cached_etag") || return $?
+    http_code=$(echo "$resp" | tail -1)
+    _dbg_log "$cached_etag" "$http_code"
+
+    if [[ "$http_code" == "304" ]]; then
+        body=$(cat "$body_file" 2>/dev/null || true)
+        if [[ -n "$body" ]]; then
+            { touch "$etag_file" "$body_file"; } 2>/dev/null || true
+            printf '%s\n%s\n' "$body" "200"
+            return 0
+        fi
+        # Cached body missing/corrupt: fail-open, refetch unconditionally.
+        resp=$(_api_curl "") || return $?
+        http_code=$(echo "$resp" | tail -1)
+        _dbg_log "" "$http_code"
+    fi
+
+    body=$(echo "$resp" | sed '$d')
+
+    if (( CACHE_ENABLED )) && [[ "$http_code" == "200" ]]; then
+        local new_etag
+        new_etag=$(grep -i '^etag:' "$API_HEADERS_FILE" 2>/dev/null | tail -1 | tr -d '\r' | awk '{print $2}')
+        if [[ -n "$new_etag" ]]; then
+            {
+                printf '%s' "$new_etag" > "$etag_file.tmp.$$" &&
+                printf '%s' "$body" > "$body_file.tmp.$$" &&
+                mv -f "$etag_file.tmp.$$" "$etag_file" &&
+                mv -f "$body_file.tmp.$$" "$body_file"
+            } 2>/dev/null || true
+        fi
+    fi
+
+    printf '%s\n%s\n' "$body" "$http_code"
 }
 
 # rate_limit_suffix <http_code> - on 403/429 (GitHub's rate-limit status
