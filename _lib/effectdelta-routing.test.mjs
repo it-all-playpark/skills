@@ -1,9 +1,10 @@
 // issue #412 (epic #390 Phase 4) F4: EffectDelta shadow wiring routing test。
 //
 // 本ファイルは dev-flow.js への EffectDelta (effectdelta/1) shadow 配線
-// （PR phase 直後の read-only pr-observe / post-summary の comment-ensure + gh pr comment
-// fallback / telemetry / return）が意図どおり行われ、off/shadow で既存挙動（req/shape/
-// merge_tier）が変化しないことを実測する。
+// （PR phase 直後の read-only pr-observe / post-summary の comment-prepare・comment-observe
+// + gh pr comment fallback（issue #466 で gh choreography を subagent へ移管）/ telemetry /
+// return）が意図どおり行われ、off/shadow で既存挙動（req/shape/merge_tier）が変化しないことを
+// 実測する。
 //
 // ハーネスは makeRecordingSandbox（_lib/test-helpers/vm-sandbox.mjs）+ evalseal-routing.test.mjs /
 // surfaceproof-routing.test.mjs と同型のローカル runDevFlowCapture（{result, error} を返す）を使う。
@@ -281,7 +282,7 @@ test('[effectdelta] (ii) pr-observe / post-summary(shadow) prompt は worktree �
     repo: ALLOWLISTED_REPO,
     overrides: {
       'trust-effectdelta-pr': { ok: true, mode: 'shadow', op: 'pr-classify', observation: { status: 'observed', reason_code: 'OK' }, receipt: sampleReceipt({ stage: 'pr' }), envelope: sampleEnvelope({ stage: 'pr' }) },
-      'post-summary': { ok: true, posted: true, method: 'comment-ensure', mode: 'shadow', receipt: sampleReceipt({ stage: 'summary-comment' }), envelope: sampleEnvelope({ stage: 'summary-comment' }) },
+      'post-summary': { ok: true, posted: true, method: 'comment-prepare+observe', mode: 'shadow', receipt: sampleReceipt({ stage: 'summary-comment' }), envelope: sampleEnvelope({ stage: 'summary-comment' }) },
     },
   });
   const { error } = await runDevFlowCapture(devFlowSrc, ctx);
@@ -294,7 +295,8 @@ test('[effectdelta] (ii) pr-observe / post-summary(shadow) prompt は worktree �
 
   const postSummaryCall = calls.find((c) => c.label === 'post-summary');
   assert.ok(postSummaryCall, "(ii) 'post-summary' 呼び出しが存在するはず");
-  assert.match(postSummaryCall.prompt, /\/_shared\/scripts\/effectdelta-github\.sh comment-ensure/, "(ii) post-summary(shadow) prompt に worktree パスの effectdelta-github.sh comment-ensure 呼び出しが含まれるはず");
+  assert.match(postSummaryCall.prompt, /\/_shared\/scripts\/effectdelta-github\.sh comment-prepare/, "(ii) post-summary(shadow) prompt に worktree パスの effectdelta-github.sh comment-prepare 呼び出しが含まれるはず");
+  assert.match(postSummaryCall.prompt, /\/_shared\/scripts\/effectdelta-github\.sh comment-observe/, "(ii) post-summary(shadow) prompt に worktree パスの effectdelta-github.sh comment-observe 呼び出しが含まれるはず");
   assert.doesNotMatch(postSummaryCall.prompt, /~\/\.claude\/skills\/.*effectdelta-github\.sh/, '(ii) post-summary(shadow) prompt は installed パスを使ってはならない');
 });
 

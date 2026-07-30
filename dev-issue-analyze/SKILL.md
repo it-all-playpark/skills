@@ -12,8 +12,11 @@ Fetch and parse GitHub issue for implementation planning.
 
 ## Execution
 
+Two steps: fetch the issue JSON with `gh`, then run the pure-transform script against that file.
+
 ```bash
-$SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> [--depth LEVEL]
+gh issue view <issue-number> --json body,title,labels,assignees,milestone,state > $TMPDIR/issue-<issue-number>.json
+$SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> --issue-json $TMPDIR/issue-<issue-number>.json [--depth LEVEL|--contract]
 ```
 
 ## Options
@@ -105,9 +108,14 @@ into context. This ensures implementation planning is informed by framework guid
 ## Examples
 
 ```bash
-scripts/analyze-issue.sh 123
-scripts/analyze-issue.sh 45 --depth minimal
-scripts/analyze-issue.sh 67 --depth comprehensive
+gh issue view 123 --json body,title,labels,assignees,milestone,state > $TMPDIR/issue-123.json
+scripts/analyze-issue.sh 123 --issue-json $TMPDIR/issue-123.json
+
+gh issue view 45 --json body,title,labels,assignees,milestone,state > $TMPDIR/issue-45.json
+scripts/analyze-issue.sh 45 --issue-json $TMPDIR/issue-45.json --depth minimal
+
+gh issue view 67 --json body,title,labels,assignees,milestone,state > $TMPDIR/issue-67.json
+scripts/analyze-issue.sh 67 --issue-json $TMPDIR/issue-67.json --depth comprehensive
 ```
 
 ## Journal Logging

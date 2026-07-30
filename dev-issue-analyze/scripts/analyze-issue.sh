@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# analyze-issue.sh - Fetch and parse GitHub issue
+# analyze-issue.sh - Parse a pre-fetched GitHub issue JSON file
+#
+# Pure transform: takes the file path passed via --issue-json (verbatim stdout
+# of `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state`,
+# fetched by the caller) and emits the analysis JSON. Performs no GitHub CLI or
+# network I/O itself.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../_lib/common.sh"
 
-require_gh_auth
 require_cmd "jq" "jq is required for JSON parsing. Install: brew install jq"
 
 # Shared file-extension whitelist for affected-file scanning (contract-mode scope scan
@@ -19,13 +23,15 @@ FILE_EXT_PATTERN='ts|tsx|js|jsx|mjs|cjs|py|go|rs|md|sh|bash|bats|json|yml|yaml|t
 ISSUE_NUMBER=""
 DEPTH="standard"
 CONTRACT_MODE=false
+ISSUE_JSON_FILE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --depth) DEPTH="$2"; shift 2 ;;
         --contract) CONTRACT_MODE=true; shift ;;
+        --issue-json) ISSUE_JSON_FILE="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: analyze-issue.sh <issue-number> [--depth minimal|standard|comprehensive] [--contract]"
+            echo "Usage: analyze-issue.sh <issue-number> --issue-json <file> [--depth minimal|standard|comprehensive] [--contract]"
             exit 0
             ;;
         -*)
@@ -39,10 +45,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$ISSUE_NUMBER" ]] && die_json "Issue number required"
+[[ -z "$ISSUE_JSON_FILE" ]] && die_json "--issue-json is required"
+[[ -r "$ISSUE_JSON_FILE" ]] || die_json "--issue-json file not found or unreadable: $ISSUE_JSON_FILE"
 
-# Fetch issue
-ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json body,title,labels,assignees,milestone,state 2>&1) || \
-    die_json "Failed to fetch issue #$ISSUE_NUMBER. Check if issue exists and you have access."
+# Load pre-fetched issue JSON (verbatim stdout of
+# `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state`).
+ISSUE_JSON=$(cat "$ISSUE_JSON_FILE")
 
 # Extract fields
 TITLE=$(echo "$ISSUE_JSON" | jq -r '.title // ""')
@@ -291,7 +299,7 @@ fi
 
 # Extract AC and requirements
 # NOTE: uses here-strings (not pipes) for the same SIGPIPE-safety reason as
-# breaking_keyword_scan above — a large $1 fed through a pipe into a
+# breaking_keyword_scan above — a large $1 fed via a pipe into a
 # downstream head -N that early-exits can SIGPIPE-kill the upstream writer.
 # NOTE: `|| true` because a no-match grep exits 1, which under
 # set -e + pipefail kills the whole script with no output.

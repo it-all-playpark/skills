@@ -1,49 +1,58 @@
 #!/usr/bin/env bash
 # effectdelta-github.sh - GitHub adapter for the EffectDelta trust-layer protocol
-# (issue #412, epic #390 Phase 4). Wraps `gh` write-once/read-only effect calls
-# (PR create/observe, PR summary comment) with classification delegated to the thin
-# CLI (_lib/trust-effectdelta-cli.mjs, which wraps the pure core in
+# (issue #412, epic #390 Phase 4; refactored to a pure file-input transform in
+# issue #466). Classification is delegated to the thin CLI
+# (_lib/trust-effectdelta-cli.mjs, which wraps the pure core in
 # _lib/trust-effectdelta.mjs). Pattern follows dev-issue-analyze/scripts/
-# surfaceproof-snapshot.sh + _lib/trust-surfaceproof-cli.mjs (script does gh I/O,
-# CLI does pure classification).
+# surfaceproof-snapshot.sh + _lib/trust-surfaceproof-cli.mjs (script does pure
+# classification, caller supplies read-only listing/readback snapshots as
+# files).
+#
+# This script performs no authenticated network I/O of its own. Any
+# `gh`-based PR/comment discovery, posting, or the branch's push happens as a
+# bare single-line command in the calling subagent's turn, with stdout/stderr
+# captured to a file that is passed in via a flag (see
+# .claude/rules/dev-flow.md, exec-proxy invariant). This script only reads
+# those files and performs deterministic classification.
 #
 # Subcommands:
 #   pr-observe <issue> --repo R --worktree WT --pr N --base B
+#     (--pr-view-json F | --pr-view-err F) [--pr-list-json F]
 #     Read-only. Classifies the current state of an existing PR against the local
 #     worktree's HEAD (intended.head_oid) and the caller's intended base branch
-#     (--base, e.g. dev-flow.js's resolveBase result) via `gh pr view`/`gh pr list`.
-#     `--base` must come from the caller's intent, never from the readback itself —
-#     deriving it from `gh pr view` would make the base comparison tautological and
-#     make base-induced WRONG_TARGET structurally undetectable. Never writes.
-#   pr-ensure <issue> --repo R --worktree WT --base B --title-file F --body-file F2
-#     Write-once. Only invoked from bats fixtures in this PR (not wired into
-#     dev-flow.js shadow probing) — the real `gh pr create` path continues to run
-#     through the git-pr skill. Finds-or-creates: skips `gh pr create` when a
-#     matching open PR (base+head_oid+state=OPEN) is already discovered.
-#   comment-ensure --repo R --pr N --body-file F --effect-type T --run-id ID
-#     Write-once. Derives effect_id via the CLI *before* any gh write (so the
-#     kill switch / repo allowlist gate the comment write, not just its
-#     classification), embeds a `commentMarker` line, searches for an existing
-#     marker match before posting (duplicate suppression), and re-searches after
-#     posting for readback verification.
+#     (--base, e.g. dev-flow.js's resolveBase result), using the caller-supplied
+#     PR view/list snapshot files. `--base` must come from the caller's intent,
+#     never from the readback itself — deriving it from the readback would make
+#     the base comparison tautological and make base-induced WRONG_TARGET
+#     structurally undetectable. Never triggers a write.
+#   comment-prepare --repo R --pr N --body-file F --effect-type T --run-id ID --out-body OUT
+#     Derives effect_id via the CLI *before* the caller decides whether to post
+#     (so the kill switch / repo allowlist gate the write, not just its
+#     classification), embeds a `commentMarker` line, and writes the resulting
+#     body to --out-body for the caller to post.
+#   comment-observe --repo R --pr N --body-file F --effect-type T --run-id ID
+#     (--pre-comments-json F | --pre-comments-err F) [--post-comments-json F] [--response-lost]
+#     Read-only. Re-derives effect_id/marker from the same inputs as
+#     comment-prepare, then classifies duplicate suppression (pre-listing
+#     marker match) and posted-comment readback (post-listing marker match)
+#     against the caller-supplied comment listing snapshot files.
 #
-# None of the three subcommands perform blind retries. Ambiguous outcomes
+# None of the subcommands perform blind retries. Ambiguous outcomes
 # (provider timeout / lost response) are resolved via read-only rediscovery only,
-# and fall through to the CLI's closed observed|mismatch|inconclusive taxonomy.
+# and fall into the CLI's closed observed|mismatch|inconclusive taxonomy.
 #
-# gh call failures that are not part of the modeled write-once/rediscovery flow
-# (e.g. a listing that fails before we know whether to skip creation) are NOT
-# fatal: the script emits `{"ok":false,"error":"..."}` to stdout and exits 0, so
-# that an exec-proxy caller can transcribe the result verbatim instead of the
-# script dying via die_json. Only script-level usage errors (missing subcommand /
-# required flag) use die_json.
+# Listing/readback failures that are not part of the modeled write-once/
+# rediscovery flow (e.g. a listing that fails before we know whether to skip
+# posting) are NOT fatal: the script emits `{"ok":false,"error":"..."}` to
+# stdout and exits 0, so that an exec-proxy caller can transcribe the result
+# verbatim instead of the script dying via die_json. Only script-level usage
+# errors (missing subcommand / required flag) use die_json.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../_lib/common.sh"
 
-require_gh_auth
 require_cmd "jq" "jq is required for JSON parsing. Install: brew install jq"
 require_cmd "node" "node is required to run trust-effectdelta-cli.mjs."
 
@@ -62,8 +71,10 @@ usage() {
     cat << EOF
 Usage:
   effectdelta-github.sh pr-observe <issue> --repo R --worktree WT --pr N --base B
-  effectdelta-github.sh pr-ensure <issue> --repo R --worktree WT --base B --title-file F --body-file F2
-  effectdelta-github.sh comment-ensure --repo R --pr N --body-file F --effect-type T --run-id ID
+      (--pr-view-json F | --pr-view-err F) [--pr-list-json F]
+  effectdelta-github.sh comment-prepare --repo R --pr N --body-file F --effect-type T --run-id ID --out-body OUT
+  effectdelta-github.sh comment-observe --repo R --pr N --body-file F --effect-type T --run-id ID
+      (--pre-comments-json F | --pre-comments-err F) [--post-comments-json F] [--response-lost]
 EOF
 }
 
@@ -73,15 +84,6 @@ kill_switch_bool() {
     else
         echo "false"
     fi
-}
-
-resolve_repo() {
-    local repo_arg="$1"
-    if [[ -n "$repo_arg" ]]; then
-        echo "$repo_arg"
-        return
-    fi
-    gh repo view --json nameWithOwner -q .nameWithOwner
 }
 
 # emit_gh_error <context> <stderr-file>: prints {"ok":false,"error":"..."} to
@@ -119,39 +121,50 @@ call_cli_or_bail() {
 # pr-observe: read-only classification of an existing PR
 # ============================================================================
 cmd_pr_observe() {
-    local issue="" repo="" worktree="" pr="" base=""
+    local issue="" repo="" worktree="" pr="" base="" view_json_file="" view_err_file="" list_json_file=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo) repo="$2"; shift 2 ;;
             --worktree) worktree="$2"; shift 2 ;;
             --pr) pr="$2"; shift 2 ;;
             --base) base="$2"; shift 2 ;;
+            --pr-view-json) view_json_file="$2"; shift 2 ;;
+            --pr-view-err) view_err_file="$2"; shift 2 ;;
+            --pr-list-json) list_json_file="$2"; shift 2 ;;
             -*) die_json "Unknown option: $1" ;;
             *) [[ -z "$issue" ]] && issue="$1"; shift ;;
         esac
     done
     [[ -z "$issue" ]] && die_json "pr-observe: issue number required"
+    [[ -z "$repo" ]] && die_json "pr-observe: --repo required"
     [[ -z "$worktree" ]] && die_json "pr-observe: --worktree required"
     [[ -z "$pr" ]] && die_json "pr-observe: --pr required"
     [[ -z "$base" ]] && die_json "pr-observe: --base required"
+    if [[ -z "$view_json_file" && -z "$view_err_file" ]]; then
+        die_json "pr-observe: one of --pr-view-json or --pr-view-err is required"
+    fi
+    if [[ -n "$view_json_file" && -n "$view_err_file" ]]; then
+        die_json "pr-observe: --pr-view-json and --pr-view-err are mutually exclusive"
+    fi
 
-    repo=$(resolve_repo "$repo")
-    local head_oid
+    # Local read-only worktree state. Kept in-script (not moved to the
+    # subagent) — see .claude/rules/dev-flow.md exec-proxy invariant and the
+    # issue #466 plan's architecture_decisions for pr-observe.
+    local head_oid branch
     head_oid=$(git -C "$worktree" rev-parse HEAD)
+    branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD)
 
-    local view_err="$TMP_DIR/pr_view_err"
-    local view_json
-    if ! view_json=$(gh pr view "$pr" --repo "$repo" --json baseRefName,headRefOid,number,url,state 2>"$view_err"); then
-        emit_gh_error "gh pr view $pr failed" "$view_err"
+    if [[ -n "$view_err_file" ]]; then
+        emit_gh_error "pr view readback failed" "$view_err_file"
         exit 0
     fi
 
-    local list_err="$TMP_DIR/pr_list_err"
+    local view_json
+    view_json=$(cat "$view_json_file") || die_json "pr-observe: failed to read --pr-view-json $view_json_file"
+
     local candidates_json="null"
-    local branch
-    branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD)
-    if list_out=$(gh pr list --repo "$repo" --head "$branch" --state open --json number,url,baseRefName,headRefOid,state 2>"$list_err"); then
-        candidates_json="$list_out"
+    if [[ -n "$list_json_file" ]]; then
+        candidates_json=$(cat "$list_json_file") || die_json "pr-observe: failed to read --pr-list-json $list_json_file"
     fi
 
     local input_file="$TMP_DIR/pr_observe_input.json"
@@ -177,163 +190,83 @@ cmd_pr_observe() {
 }
 
 # ============================================================================
-# pr-ensure: write-once find-or-create + rediscovery
+# comment-prepare: derive effect_id + marker-embedded body, no reads/writes
 # ============================================================================
-
-# matched_pr_entry <candidates-json> <base> <head-oid>: prints the first entry in
-# candidates matching state=OPEN + base + head_oid, or "null".
-matched_pr_entry() {
-    local candidates="$1" base="$2" head_oid="$3"
-    printf '%s' "$candidates" | jq -c --arg base "$base" --arg head_oid "$head_oid" \
-        '[.[] | select(.state == "OPEN" and .baseRefName == $base and .headRefOid == $head_oid)][0] // null'
-}
-
-cmd_pr_ensure() {
-    local issue="" repo="" worktree="" base="" title_file="" body_file=""
+cmd_comment_prepare() {
+    local repo="" pr="" body_file="" effect_type="" run_id="" out_body=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo) repo="$2"; shift 2 ;;
-            --worktree) worktree="$2"; shift 2 ;;
-            --base) base="$2"; shift 2 ;;
-            --title-file) title_file="$2"; shift 2 ;;
+            --pr) pr="$2"; shift 2 ;;
             --body-file) body_file="$2"; shift 2 ;;
+            --effect-type) effect_type="$2"; shift 2 ;;
+            --run-id) run_id="$2"; shift 2 ;;
+            --out-body) out_body="$2"; shift 2 ;;
             -*) die_json "Unknown option: $1" ;;
-            *) [[ -z "$issue" ]] && issue="$1"; shift ;;
+            *) die_json "Unexpected argument: $1" ;;
         esac
     done
-    [[ -z "$issue" ]] && die_json "pr-ensure: issue number required"
-    [[ -z "$worktree" ]] && die_json "pr-ensure: --worktree required"
-    [[ -z "$base" ]] && die_json "pr-ensure: --base required"
-    [[ -z "$title_file" ]] && die_json "pr-ensure: --title-file required"
-    [[ -z "$body_file" ]] && die_json "pr-ensure: --body-file required"
+    [[ -z "$repo" ]] && die_json "comment-prepare: --repo required"
+    [[ -z "$pr" ]] && die_json "comment-prepare: --pr required"
+    [[ -z "$body_file" ]] && die_json "comment-prepare: --body-file required"
+    [[ -z "$effect_type" ]] && die_json "comment-prepare: --effect-type required"
+    [[ -z "$run_id" ]] && die_json "comment-prepare: --run-id required"
+    [[ -z "$out_body" ]] && die_json "comment-prepare: --out-body required"
 
-    repo=$(resolve_repo "$repo")
-    local head_oid branch
-    head_oid=$(git -C "$worktree" rev-parse HEAD)
-    branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD)
+    local body_digest
+    body_digest="sha256:$(shasum -a 256 "$body_file" | awk '{print $1}')"
 
-    # Mode gate BEFORE any gh write: intended.{repo,issue,base,head_oid} are all
-    # known without a gh call, so we can resolve mode up front and bail before
-    # touching gh at all when off (kill switch / repo allowlist).
-    local gate_input="$TMP_DIR/pr_ensure_gate.json"
-    write_json "$gate_input" "$(jq -n \
+    # Derive effect_id BEFORE the caller decides whether to post. mode
+    # resolution happens inside this CLI call too, so an off mode (kill switch
+    # / repo allowlist) short-circuits here without ever authorizing a write —
+    # comment-prepare is a shadow-only capability and must never authorize a
+    # post when off.
+    local derive_input="$TMP_DIR/derive_input.json"
+    write_json "$derive_input" "$(jq -n \
         --arg repoSlug "$repo" \
         --argjson killSwitch "$(kill_switch_bool)" \
         --arg configuredMode "$CONFIGURED_MODE" \
         --arg repo "$repo" \
-        --argjson issue "$issue" \
-        --arg base "$base" \
-        --arg head_oid "$head_oid" \
+        --argjson pr "$pr" \
+        --arg effect_type "$effect_type" \
+        --arg run_id "$run_id" \
+        --arg body_digest "$body_digest" \
         '{repoSlug:$repoSlug, killSwitch:$killSwitch, configuredMode:$configuredMode,
-          intended:{repo:$repo, issue:$issue, base:$base, head_oid:$head_oid},
-          candidates:null, readback:null, responseLost:false}')"
-    local gate_out
-    if ! gate_out=$(call_cli_or_bail pr-classify "$gate_input"); then
+          repo:$repo, pr:$pr, effect_type:$effect_type, run_id:$run_id, body_digest:$body_digest}')"
+
+    local derive_out
+    if ! derive_out=$(call_cli_or_bail derive-comment-id "$derive_input"); then
         exit 0
     fi
-    local gate_mode
-    gate_mode=$(printf '%s' "$gate_out" | jq -r '.mode')
-    if [[ "$gate_mode" == "off" ]]; then
-        printf '{"ok":true,"mode":"off"}\n'
+    local mode
+    mode=$(printf '%s' "$derive_out" | jq -r '.mode')
+    if [[ "$mode" == "off" ]]; then
+        printf '{"ok":true,"mode":"off","op":"comment-ensure","posted":false}\n'
         exit 0
     fi
+    local effect_id
+    effect_id=$(printf '%s' "$derive_out" | jq -r '.effect_id')
+    local marker="<!-- devflow-effect: ${effect_id} -->"
 
-    # (1) Pre-creation exploration: an already-open matching PR means idempotent
-    #     skip (no gh pr create call at all).
-    local list_err="$TMP_DIR/pr_ensure_list_err"
-    local existing_json
-    if ! existing_json=$(gh pr list --repo "$repo" --head "$branch" --state open --json number,url,baseRefName,headRefOid,state 2>"$list_err"); then
-        emit_gh_error "gh pr list failed (pre-creation discovery)" "$list_err"
-        exit 0
-    fi
-    local existing_match
-    existing_match=$(matched_pr_entry "$existing_json" "$base" "$head_oid")
+    { cat "$body_file"; printf '\n%s\n' "$marker"; } > "$out_body"
 
-    local candidates_json="$existing_json"
-    local readback_json="null"
-    local response_lost="false"
-
-    if [[ "$existing_match" != "null" ]]; then
-        readback_json="$existing_match"
-    else
-        local create_err="$TMP_DIR/pr_create_err"
-        local create_out title_content
-        # gh CLI has no --title-file flag (only --title <string> / --body-file <path>),
-        # so the file content pointed to by our own --title-file arg must be read here
-        # and passed as a literal --title value.
-        title_content=$(cat "$title_file") || die_json "pr-ensure: failed to read --title-file $title_file"
-        if create_out=$(gh pr create --repo "$repo" --base "$base" --head "$branch" --title "$title_content" --body-file "$body_file" 2>"$create_err"); then
-            response_lost="false"
-            local new_url new_number view_err view_json
-            new_url=$(printf '%s' "$create_out" | tail -1)
-            new_number=$(printf '%s' "$new_url" | grep -oE '[0-9]+$' || true)
-            view_err="$TMP_DIR/pr_ensure_view_err"
-            if [[ -n "$new_number" ]] && view_json=$(gh pr view "$new_number" --repo "$repo" --json baseRefName,headRefOid,number,url,state 2>"$view_err"); then
-                readback_json="$view_json"
-            fi
-        else
-            response_lost="true"
-        fi
-
-        local list2_err="$TMP_DIR/pr_ensure_list2_err"
-        local candidates2_json
-        if candidates2_json=$(gh pr list --repo "$repo" --head "$branch" --state open --json number,url,baseRefName,headRefOid,state 2>"$list2_err"); then
-            candidates_json="$candidates2_json"
-        else
-            candidates_json="null"
-        fi
-
-        if [[ "$readback_json" == "null" && "$candidates_json" != "null" ]]; then
-            # No dedicated `gh pr view` readback (create failed / view failed) — fall
-            # back to the freshest listing so a response-lost-but-actually-succeeded
-            # create can still be recognized via rediscovery.
-            readback_json=$(matched_pr_entry "$candidates_json" "$base" "$head_oid")
-        fi
-    fi
-
-    local input_file="$TMP_DIR/pr_ensure_input.json"
-    write_json "$input_file" "$(jq -n \
-        --arg repoSlug "$repo" \
-        --argjson killSwitch "$(kill_switch_bool)" \
-        --arg configuredMode "$CONFIGURED_MODE" \
-        --arg repo "$repo" \
-        --argjson issue "$issue" \
-        --arg base "$base" \
-        --arg head_oid "$head_oid" \
-        --argjson candidates "$candidates_json" \
-        --argjson readback "$readback_json" \
-        --argjson responseLost "$response_lost" \
-        '{repoSlug:$repoSlug, killSwitch:$killSwitch, configuredMode:$configuredMode,
-          intended:{repo:$repo, issue:$issue, base:$base, head_oid:$head_oid},
-          candidates:$candidates, readback:$readback, responseLost:$responseLost}')"
-
-    local out
-    if ! out=$(call_cli_or_bail pr-classify "$input_file"); then
-        exit 0
-    fi
-    printf '%s\n' "$out"
+    jq -n --arg mode "$mode" --arg effect_id "$effect_id" --arg marker "$marker" \
+        '{ok:true, mode:$mode, effect_id:$effect_id, marker:$marker}'
 }
 
 # ============================================================================
-# comment-ensure: marker-based write-once summary comment
+# comment-observe: marker-based classification from caller-supplied snapshots
 # ============================================================================
 
-# find_marker_matches <repo> <pr> <marker>: prints a JSON array of
-# {id, body_digest, author, pr, html_url} entries whose body contains <marker>,
-# or the literal string "null" if the comments listing itself failed (probe
-# failure, distinct from a successful-but-empty search). Always returns 0
-# (failure is signaled via the "null" stdout literal, not the exit code) so
-# callers can use a plain `VAR=$(find_marker_matches ...)` under `set -e`.
-find_marker_matches() {
-    local repo="$1" pr="$2" marker="$3"
-    local err_file raw
-    err_file="$TMP_DIR/comments_err_$$_$RANDOM"
-    if ! raw=$(gh api --paginate "repos/$repo/issues/$pr/comments" 2>"$err_file"); then
-        echo "null"
-        return 0
-    fi
+# find_marker_matches_file <comments-json-file> <marker> <pr>: prints a JSON
+# array of {id, body_digest, author, pr, html_url} entries whose body contains
+# <marker>. <comments-json-file> holds the verbatim stdout of the caller's
+# paginated comment-listing call (one JSON array per page, newline-
+# concatenated), merged the same way a live paginated call would be.
+find_marker_matches_file() {
+    local file="$1" marker="$2" pr="$3"
     local merged filtered count result
-    merged=$(printf '%s' "$raw" | jq -s -c 'add // []')
+    merged=$(jq -s -c 'add // []' "$file")
     filtered=$(printf '%s' "$merged" | jq -c --arg m "$marker" \
         '[.[] | select((.body // "") | contains($m)) | {id, author: (.user.login // ""), html_url: (.html_url // ""), body}]')
     count=$(printf '%s' "$filtered" | jq 'length')
@@ -354,11 +287,10 @@ find_marker_matches() {
         done
     fi
     printf '%s\n' "$result"
-    return 0
 }
 
-cmd_comment_ensure() {
-    local repo="" pr="" body_file="" effect_type="" run_id=""
+cmd_comment_observe() {
+    local repo="" pr="" body_file="" effect_type="" run_id="" pre_json="" pre_err="" post_json="" response_lost="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo) repo="$2"; shift 2 ;;
@@ -366,24 +298,30 @@ cmd_comment_ensure() {
             --body-file) body_file="$2"; shift 2 ;;
             --effect-type) effect_type="$2"; shift 2 ;;
             --run-id) run_id="$2"; shift 2 ;;
+            --pre-comments-json) pre_json="$2"; shift 2 ;;
+            --pre-comments-err) pre_err="$2"; shift 2 ;;
+            --post-comments-json) post_json="$2"; shift 2 ;;
+            --response-lost) response_lost="true"; shift 1 ;;
             -*) die_json "Unknown option: $1" ;;
             *) die_json "Unexpected argument: $1" ;;
         esac
     done
-    [[ -z "$repo" ]] && repo=""
-    repo=$(resolve_repo "$repo")
-    [[ -z "$pr" ]] && die_json "comment-ensure: --pr required"
-    [[ -z "$body_file" ]] && die_json "comment-ensure: --body-file required"
-    [[ -z "$effect_type" ]] && die_json "comment-ensure: --effect-type required"
-    [[ -z "$run_id" ]] && die_json "comment-ensure: --run-id required"
+    [[ -z "$repo" ]] && die_json "comment-observe: --repo required"
+    [[ -z "$pr" ]] && die_json "comment-observe: --pr required"
+    [[ -z "$body_file" ]] && die_json "comment-observe: --body-file required"
+    [[ -z "$effect_type" ]] && die_json "comment-observe: --effect-type required"
+    [[ -z "$run_id" ]] && die_json "comment-observe: --run-id required"
+    if [[ -z "$pre_json" && -z "$pre_err" ]]; then
+        die_json "comment-observe: one of --pre-comments-json or --pre-comments-err is required"
+    fi
+    if [[ -n "$pre_json" && -n "$pre_err" ]]; then
+        die_json "comment-observe: --pre-comments-json and --pre-comments-err are mutually exclusive"
+    fi
 
     local body_digest
     body_digest="sha256:$(shasum -a 256 "$body_file" | awk '{print $1}')"
 
-    # Derive effect_id BEFORE any gh call. mode resolution happens inside this CLI
-    # call too, so an off mode (kill switch / repo allowlist) short-circuits here
-    # without ever touching gh — comment-ensure is a shadow-only capability and
-    # must never post/read GitHub when off.
+    # Re-derive effect_id/mode from the same inputs comment-prepare used.
     local derive_input="$TMP_DIR/derive_input.json"
     write_json "$derive_input" "$(jq -n \
         --arg repoSlug "$repo" \
@@ -416,20 +354,19 @@ cmd_comment_ensure() {
     local post_body_digest
     post_body_digest="sha256:$(shasum -a 256 "$post_body_file" | awk '{print $1}')"
 
-    # (1) Pre-post exploration: an existing marker match means the comment already
-    #     exists — skip posting (duplicate suppression, idempotent).
-    local pre_matches
-    pre_matches=$(find_marker_matches "$repo" "$pr" "$marker")
-    local pre_count=0
-    if [[ "$pre_matches" != "null" ]]; then
-        pre_count=$(printf '%s' "$pre_matches" | jq 'length')
-    else
-        emit_gh_error "gh api comments listing failed (pre-post discovery)" "$TMP_DIR/comments_err_$$_$RANDOM"
+    if [[ -n "$pre_err" ]]; then
+        emit_gh_error "comments listing failed (pre-post discovery)" "$pre_err"
         exit 0
     fi
 
-    local posted="false" response_lost="false" preexisting="false"
-    local matches_json readback_json url
+    # (1) Pre-post exploration: an existing marker match means the comment already
+    #     exists — treat as posted (duplicate suppression, idempotent).
+    local pre_matches pre_count
+    pre_matches=$(find_marker_matches_file "$pre_json" "$marker" "$pr")
+    pre_count=$(printf '%s' "$pre_matches" | jq 'length')
+
+    local posted="false" preexisting="false"
+    local matches_json="null" readback_json="null" url=""
     if [[ "$pre_count" -ge 1 ]]; then
         posted="true"
         preexisting="true"
@@ -438,30 +375,20 @@ cmd_comment_ensure() {
         url=$(printf '%s' "$pre_matches" | jq -r '.[0].html_url // ""')
     else
         preexisting="false"
-        if gh pr comment "$pr" --repo "$repo" --body-file "$post_body_file" > "$TMP_DIR/comment_post_out" 2>"$TMP_DIR/comment_post_err"; then
-            response_lost="false"
-        else
-            response_lost="true"
-        fi
-
-        local post_matches post_count
-        post_matches=$(find_marker_matches "$repo" "$pr" "$marker")
-        if [[ "$post_matches" == "null" ]]; then
-            matches_json="null"
-            post_count=0
-        else
-            matches_json="$post_matches"
+        if [[ -n "$post_json" ]]; then
+            local post_matches post_count
+            post_matches=$(find_marker_matches_file "$post_json" "$marker" "$pr")
             post_count=$(printf '%s' "$post_matches" | jq 'length')
-        fi
-
-        if [[ "$post_count" -eq 1 ]]; then
-            readback_json=$(printf '%s' "$post_matches" | jq -c '.[0]')
-            posted="true"
-            url=$(printf '%s' "$readback_json" | jq -r '.html_url // ""')
-        else
-            readback_json="null"
-            posted="false"
-            url=""
+            matches_json="$post_matches"
+            if [[ "$post_count" -eq 1 ]]; then
+                readback_json=$(printf '%s' "$post_matches" | jq -c '.[0]')
+                posted="true"
+                url=$(printf '%s' "$readback_json" | jq -r '.html_url // ""')
+            else
+                readback_json="null"
+                posted="false"
+                url=""
+            fi
         fi
     fi
 
@@ -503,8 +430,8 @@ shift
 
 case "$SUBCOMMAND" in
     pr-observe) cmd_pr_observe "$@" ;;
-    pr-ensure) cmd_pr_ensure "$@" ;;
-    comment-ensure) cmd_comment_ensure "$@" ;;
+    comment-prepare) cmd_comment_prepare "$@" ;;
+    comment-observe) cmd_comment_observe "$@" ;;
     -h|--help) usage; exit 0 ;;
     *) usage; die_json "Unknown subcommand: $SUBCOMMAND" ;;
 esac

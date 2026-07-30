@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# surfaceproof-snapshot.sh - Fetch a GitHub Issue's body/comments/labels via `gh api`,
-# plan+fetch referenced external URLs under a fail-closed allowlist (manual redirect
-# loop, no -L), then freeze/reconcile the SurfaceProof snapshot via the thin CLI
-# (_lib/trust-surfaceproof-cli.mjs, which wraps the pure core in
-# _lib/trust-surfaceproof.mjs). issue #410 (#390 Phase 2). Invoked from dev-flow.js's
-# Analyze phase as a read-only shadow probe (dev-runner-haiku-ro exec-proxy, skills
-# repo only) — the shadow result is telemetry-only and never feeds req/shape/gate
-# decisions (AC-11/AC-15 non-interference).
+# surfaceproof-snapshot.sh - Pure transform over a GitHub Issue's body/comments/labels
+# (supplied as pre-fetched `gh` output files — this script performs no authenticated
+# network I/O itself), plan+fetch referenced external URLs under a fail-closed
+# allowlist (manual redirect loop, no -L), then freeze/reconcile the SurfaceProof
+# snapshot via the thin CLI (_lib/trust-surfaceproof-cli.mjs, which wraps the pure
+# core in _lib/trust-surfaceproof.mjs). issue #410 (#390 Phase 2). Invoked from
+# dev-flow.js's Analyze phase as a read-only shadow probe — the shadow result is
+# telemetry-only and never feeds req/shape/gate decisions (AC-11/AC-15
+# non-interference). The caller subagent fetches the issue/comments via `gh` bare
+# statements and passes the output as files (issue #466).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../_lib/common.sh"
 
-require_gh_auth
 require_cmd "jq" "jq is required for JSON parsing. Install: brew install jq"
 require_cmd "curl" "curl is required to fetch allowlisted external URLs."
 require_cmd "node" "node is required to run trust-surfaceproof-cli.mjs."
@@ -24,14 +25,20 @@ ISSUE_NUMBER=""
 REPO=""
 FREEZE_OUT=""
 RECONCILE_AGAINST=""
+ISSUE_JSON_FILE=""
+COMMENTS_JSON_FILE=""
+COMMENTS_ERR_FILE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --repo) REPO="$2"; shift 2 ;;
+        --issue-json) ISSUE_JSON_FILE="$2"; shift 2 ;;
+        --comments-json) COMMENTS_JSON_FILE="$2"; shift 2 ;;
+        --comments-err) COMMENTS_ERR_FILE="$2"; shift 2 ;;
         --freeze-out) FREEZE_OUT="$2"; shift 2 ;;
         --reconcile-against) RECONCILE_AGAINST="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: surfaceproof-snapshot.sh <issue-number> [--repo owner/name] [--freeze-out <path>] [--reconcile-against <frozen.json>]"
+            echo "Usage: surfaceproof-snapshot.sh <issue-number> --repo owner/name --issue-json <path> (--comments-json <path> | --comments-err <path>) [--freeze-out <path>] [--reconcile-against <frozen.json>]"
             exit 0
             ;;
         -*)
@@ -45,32 +52,45 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$ISSUE_NUMBER" ]] && die_json "Issue number required"
+[[ -z "$REPO" ]] && die_json "--repo owner/name is required"
+[[ -z "$ISSUE_JSON_FILE" ]] && die_json "--issue-json <path> is required"
+[[ -r "$ISSUE_JSON_FILE" ]] || die_json "Cannot read --issue-json file: $ISSUE_JSON_FILE"
 
-if [[ -z "$REPO" ]]; then
-    REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner) || die_json "Failed to detect repo. Pass --repo owner/name."
+if [[ -n "$COMMENTS_JSON_FILE" && -n "$COMMENTS_ERR_FILE" ]]; then
+    die_json "--comments-json and --comments-err are mutually exclusive"
+fi
+if [[ -z "$COMMENTS_JSON_FILE" && -z "$COMMENTS_ERR_FILE" ]]; then
+    die_json "One of --comments-json or --comments-err is required"
+fi
+if [[ -n "$COMMENTS_JSON_FILE" ]]; then
+    [[ -r "$COMMENTS_JSON_FILE" ]] || die_json "Cannot read --comments-json file: $COMMENTS_JSON_FILE"
+fi
+if [[ -n "$COMMENTS_ERR_FILE" ]]; then
+    [[ -r "$COMMENTS_ERR_FILE" ]] || die_json "Cannot read --comments-err file: $COMMENTS_ERR_FILE"
 fi
 
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/surfaceproof.XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 # ============================================================================
-# (1) issue 本体の取得（body/title/labels/updated_at）。ここが失敗する場合は
-#     inventory の起点自体が無いため通常どおり die する。
+# (1) issue 本体（body/title/labels/updated_at）を --issue-json ファイルから読む。
+#     ここが読めない場合は inventory の起点自体が無いため通常どおり die する。
 # ============================================================================
-ISSUE_RAW=$(gh api "repos/$REPO/issues/$ISSUE_NUMBER" 2>"$TMP_DIR/issue_err") || \
-    die_json "Failed to fetch issue #$ISSUE_NUMBER: $(cat "$TMP_DIR/issue_err")"
+ISSUE_RAW=$(cat "$ISSUE_JSON_FILE") || die_json "Failed to read --issue-json file: $ISSUE_JSON_FILE"
 
 ISSUE_JSON=$(printf '%s' "$ISSUE_RAW" | jq -c '{title, body, updated_at, labels: [(.labels // [])[] | {name: .name}]}')
 
 # ============================================================================
-# (2) comments の取得。403/404 等の権限不足は die せず fetch_errors に記録する
+# (2) comments。呼び出し側が --comments-json（成功時の出力ファイル）か
+#     --comments-err（403/404 等の権限不足時の stderr テキスト）のどちらかを渡す。
+#     権限不足は die せず fetch_errors に記録する
 #     （fail-closed への反映は buildInventory/reconcileSource 側 pure core の責務）。
 # ============================================================================
-if COMMENTS_RAW=$(gh api --paginate "repos/$REPO/issues/$ISSUE_NUMBER/comments" 2>"$TMP_DIR/comments_err"); then
-    COMMENTS_JSON=$(printf '%s' "$COMMENTS_RAW" | jq -s -c 'add // []')
+if [[ -n "$COMMENTS_JSON_FILE" ]]; then
+    COMMENTS_JSON=$(jq -s -c 'add // []' < "$COMMENTS_JSON_FILE")
     FETCH_ERRORS_JSON="[]"
 else
-    HTTP_CODE=$(grep -oE '\b(4|5)[0-9]{2}\b' "$TMP_DIR/comments_err" | head -1)
+    HTTP_CODE=$(grep -oE '\b(4|5)[0-9]{2}\b' "$COMMENTS_ERR_FILE" | head -1)
     [[ -z "$HTTP_CODE" ]] && HTTP_CODE=500
     COMMENTS_JSON="[]"
     FETCH_ERRORS_JSON=$(jq -n --argjson code "$HTTP_CODE" '[{resource: "comments", http_status: $code}]')

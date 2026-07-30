@@ -1,38 +1,21 @@
 #!/usr/bin/env bats
 # Tests for dev-issue-analyze/scripts/analyze-issue.sh
 #
-# Strategy: shim out `gh` with a stub that answers `gh auth token` (for
-# common.sh's require_gh_auth) and `gh issue view <n> --json ...` by cat-ing
-# a fixture JSON file pointed to by $GH_FIXTURE.
+# Strategy: analyze-issue.sh is a pure transform over a pre-fetched issue
+# JSON file (contract: verbatim stdout of
+# `gh issue view <n> --json body,title,labels,assignees,milestone,state`).
+# Each test writes a fixture file and passes it via --issue-json; no gh
+# stub is needed (the script performs no gh/network I/O).
 #
 # Covers: breaking_keyword_scan determinism across all depths (minimal /
 # standard / comprehensive), full-body scan beyond the 500-char body_preview
-# boundary, Japanese keyword detection, and a >64KB body regression to pin
-# the here-string (non-pipe) SIGPIPE-safe implementation.
+# boundary, Japanese keyword detection, a >64KB body regression to pin
+# the here-string (non-pipe) SIGPIPE-safe implementation, and --issue-json
+# argument validation (missing flag / missing file).
 
 setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     SCRIPT="$SKILLS_REPO/dev-issue-analyze/scripts/analyze-issue.sh"
-
-    STUB_DIR="$BATS_TMPDIR/stub-bin"
-    mkdir -p "$STUB_DIR"
-    cat > "$STUB_DIR/gh" << 'EOF'
-#!/usr/bin/env bash
-case "$1" in
-    auth)
-        echo "dummy-token"
-        exit 0
-        ;;
-    issue)
-        cat "$GH_FIXTURE"
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-EOF
-    chmod +x "$STUB_DIR/gh"
-    export PATH="$STUB_DIR:$PATH"
 
     FIXTURE_DIR="$BATS_TMPDIR/fixtures"
     mkdir -p "$FIXTURE_DIR"
@@ -64,8 +47,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 @test "minimal depth: clean issue -> breaking_keyword_scan:false present" {
     FIXTURE="$FIXTURE_DIR/clean.json"
     make_fixture "$FIXTURE" "Add a button" "Just a UI tweak, nothing else."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 1 --depth minimal
+    run "$SCRIPT" 1 --issue-json "$FIXTURE" --depth minimal
     [ "$status" -eq 0 ]
     [[ "$output" == *'"breaking_keyword_scan":false'* ]]
     echo "$output" | jq -e '.breaking_keyword_scan == false'
@@ -77,8 +59,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 @test "minimal depth: breaking keyword in title -> breaking_keyword_scan:true" {
     FIXTURE="$FIXTURE_DIR/breaking-title.json"
     make_fixture "$FIXTURE" "Breaking: rename API" "Just a UI tweak, nothing else."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 2 --depth minimal
+    run "$SCRIPT" 2 --issue-json "$FIXTURE" --depth minimal
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.breaking_keyword_scan == true'
 }
@@ -92,8 +73,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
     BODY="${AC_STUB}${PAD} migration required for downstream consumers."
     FIXTURE="$FIXTURE_DIR/boundary.json"
     make_fixture "$FIXTURE" "Refactor internals" "$BODY"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 3 --depth standard
+    run "$SCRIPT" 3 --issue-json "$FIXTURE" --depth standard
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.breaking_keyword_scan == true'
 }
@@ -104,8 +84,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 @test "standard depth: Japanese keyword 破壊的変更 -> true" {
     FIXTURE="$FIXTURE_DIR/ja.json"
     make_fixture "$FIXTURE" "スキーマ更新" "${AC_STUB}この変更には破壊的変更が含まれます。"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 4 --depth standard
+    run "$SCRIPT" 4 --issue-json "$FIXTURE" --depth standard
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.breaking_keyword_scan == true'
 }
@@ -121,8 +100,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
     BODY="${AC_STUB}breaking change needed"$'\n'"${PAD}"
     FIXTURE="$FIXTURE_DIR/large.json"
     make_fixture "$FIXTURE" "Large body issue" "$BODY"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 5 --depth standard
+    run "$SCRIPT" 5 --issue-json "$FIXTURE" --depth standard
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.breaking_keyword_scan == true'
 }
@@ -134,8 +112,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 @test "comprehensive depth: clean issue -> breaking_keyword_scan present, breaking_changes absent" {
     FIXTURE="$FIXTURE_DIR/clean-comprehensive.json"
     make_fixture "$FIXTURE" "Add a button" "${COMPREHENSIVE_STUB}Just a UI tweak, nothing else."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 6 --depth comprehensive
+    run "$SCRIPT" 6 --issue-json "$FIXTURE" --depth comprehensive
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '(.breaking_keyword_scan == false) and (has("breaking_changes") | not)'
 }
@@ -147,8 +124,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 @test "standard depth: clean issue output is valid JSON with breaking_keyword_scan:false" {
     FIXTURE="$FIXTURE_DIR/clean-standard.json"
     make_fixture "$FIXTURE" "Add a button" "${AC_STUB}Just a UI tweak, nothing else."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 7 --depth standard
+    run "$SCRIPT" 7 --issue-json "$FIXTURE" --depth standard
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.breaking_keyword_scan == false'
 }
@@ -166,8 +142,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 
 - [ ] item one
 - [x] item two"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 10 --contract
+    run "$SCRIPT" 10 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "t1" and .eligible == true and .issue_type == "feat"'
 }
@@ -181,8 +156,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 
 - plain item 1
 - plain item 2"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 11 --contract
+    run "$SCRIPT" 11 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "t2" and .eligible == true and .issue_type == "fix"'
 }
@@ -193,8 +167,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 @test "contract mode: no AC heading -> none, ineligible, exit 0" {
     FIXTURE="$FIXTURE_DIR/contract-none.json"
     make_fixture "$FIXTURE" "feat: something" "Just prose, no AC heading anywhere."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 12 --contract
+    run "$SCRIPT" 12 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found"'
 }
@@ -209,8 +182,7 @@ COMPREHENSIVE_STUB="${AC_STUB}See src/example.ts and FooComponent for details."$
 Some prose but no bullet points here.
 
 ## Next Section"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 13 --contract
+    run "$SCRIPT" 13 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading found but no items"'
 }
@@ -224,8 +196,7 @@ Some prose but no bullet points here.
     make_fixture "$FIXTURE" "chore: bump deps" "## Acceptance Criteria
 
 - [ ] deps bumped"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 14 --contract
+    run "$SCRIPT" 14 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.eligible == true and .issue_type == "chore"'
 }
@@ -239,8 +210,7 @@ Some prose but no bullet points here.
     make_fixture "$FIXTURE" "style: tweak css" "## Acceptance Criteria
 
 - [ ] css tweaked"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 29 --contract
+    run "$SCRIPT" 29 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.eligible == false and (.ineligible_reason | contains("issue_type"))'
 }
@@ -254,8 +224,7 @@ Some prose but no bullet points here.
     make_fixture "$FIXTURE" "test: add regression spec" "## Acceptance Criteria
 
 - [ ] regression spec added"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 30 --contract
+    run "$SCRIPT" 30 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.eligible == true and .issue_type == "test"'
 }
@@ -268,8 +237,7 @@ Some prose but no bullet points here.
     make_fixture "$FIXTURE" "feat!: change API" "## Acceptance Criteria
 
 - [ ] API changed"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 15 --contract
+    run "$SCRIPT" 15 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.eligible == false and (.ineligible_reason | contains("breaking marker"))'
 }
@@ -283,8 +251,7 @@ Some prose but no bullet points here.
     make_fixture "$FIXTURE" "feat: update" "## Acceptance Criteria
 
 - [ ] item with a breaking change noted here"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 16 --contract
+    run "$SCRIPT" 16 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.breaking_keyword_scan == true and .eligible == false and .ineligible_reason == "breaking_keyword_scan true"'
 }
@@ -297,8 +264,7 @@ Some prose but no bullet points here.
     make_fixture "$FIXTURE" "Something is broken" "## Acceptance Criteria
 
 - [ ] it works again" '[{"name":"bug"}]'
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 17 --contract
+    run "$SCRIPT" 17 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.eligible == true and .issue_type == "fix"'
 }
@@ -314,8 +280,7 @@ Some prose but no bullet points here.
 
 ## Scope
 Update src/foo.ts and src/bar.ts."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 18 --contract
+    run "$SCRIPT" 18 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.estimated_change_file_count == 2'
 }
@@ -331,8 +296,7 @@ Update src/foo.ts and src/bar.ts."
 - [ ] update src/only-in-ac.ts
 
 Just prose, no other files mentioned."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 19 --contract
+    run "$SCRIPT" 19 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '(has("estimated_change_file_count") | not)'
 }
@@ -345,8 +309,7 @@ Just prose, no other files mentioned."
     make_fixture "$FIXTURE" "feat: deep heading" "#### Acceptance Criteria
 
 - [ ] deep item"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 20 --contract
+    run "$SCRIPT" 20 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "t1" and .eligible == true'
 }
@@ -362,8 +325,7 @@ Just prose, no other files mentioned."
     BODY="## Acceptance Criteria"$'\n\n'"- [ ] item"$'\n\n'"${PAD}"$'\n'"migration required afterward."
     FIXTURE="$FIXTURE_DIR/contract-large.json"
     make_fixture "$FIXTURE" "feat: large issue" "$BODY"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 21 --contract
+    run "$SCRIPT" 21 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "t1" and .breaking_keyword_scan == true and .eligible == false'
 }
@@ -377,15 +339,13 @@ Just prose, no other files mentioned."
     make_fixture "$ELIGIBLE_FIXTURE" "docs: update readme" "## Acceptance Criteria
 
 - [ ] readme updated"
-    export GH_FIXTURE="$ELIGIBLE_FIXTURE"
-    run "$SCRIPT" 22 --contract
+    run "$SCRIPT" 22 --issue-json "$ELIGIBLE_FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '(has("ineligible_reason") | not)'
 
     INELIGIBLE_FIXTURE="$FIXTURE_DIR/contract-key-ineligible.json"
     make_fixture "$INELIGIBLE_FIXTURE" "no prefix title" "no AC heading here"
-    export GH_FIXTURE="$INELIGIBLE_FIXTURE"
-    run "$SCRIPT" 23 --contract
+    run "$SCRIPT" 23 --issue-json "$INELIGIBLE_FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e 'has("ineligible_reason")'
 }
@@ -400,8 +360,7 @@ Just prose, no other files mentioned."
     make_fixture "$FIXTURE" "feat: something" "## 受け入れ基準外
 
 - this must not be treated as an AC item"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 24 --contract
+    run "$SCRIPT" 24 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found"'
 }
@@ -420,8 +379,7 @@ Just prose, no other files mentioned."
 ## 受け入れ基準の補足
 
 - this must not merge into acceptance_criteria"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 25 --contract
+    run "$SCRIPT" 25 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.acceptance_criteria == ["real ac item"]'
 }
@@ -441,8 +399,7 @@ Just prose, no other files mentioned."
 
 ## Scope
 Update dev-issue-analyze/scripts/analyze-issue.sh and dev-issue-analyze/scripts/analyze-issue.bats."
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 26 --contract
+    run "$SCRIPT" 26 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.estimated_change_file_count == 2'
 }
@@ -469,8 +426,7 @@ Update dev-issue-analyze/scripts/analyze-issue.sh and dev-issue-analyze/scripts/
 ${LINES}"
     FIXTURE="$FIXTURE_DIR/contract-large-scope.json"
     make_fixture "$FIXTURE" "feat: large scope" "$BODY"
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 27 --contract
+    run "$SCRIPT" 27 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "t1" and .eligible == true'
 }
@@ -495,8 +451,29 @@ some code
 ```
 
 - [ ] item two'
-    export GH_FIXTURE="$FIXTURE"
-    run "$SCRIPT" 28 --contract
+    run "$SCRIPT" 28 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.acceptance_criteria == ["item one", "item two"]'
+}
+
+# ===========================================================================
+# --issue-json argument validation
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (z1) --issue-json omitted -> die_json (required option)
+# ---------------------------------------------------------------------------
+@test "--issue-json omitted -> die_json required option" {
+    run "$SCRIPT" 31 --depth minimal
+    [ "$status" -ne 0 ]
+    echo "$output" | jq -e '.status == "error" and (.error | contains("--issue-json"))'
+}
+
+# ---------------------------------------------------------------------------
+# (z2) --issue-json points at a nonexistent file -> die_json
+# ---------------------------------------------------------------------------
+@test "--issue-json file does not exist -> die_json" {
+    run "$SCRIPT" 32 --issue-json "$FIXTURE_DIR/does-not-exist.json" --depth minimal
+    [ "$status" -ne 0 ]
+    echo "$output" | jq -e '.status == "error"'
 }

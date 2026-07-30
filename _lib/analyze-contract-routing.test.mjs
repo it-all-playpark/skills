@@ -88,10 +88,13 @@ test("[analyze-contract-routing] (d) \"DEPTH === 'standard'\" ガードが存在
 });
 
 // ---- (e) bare 形実行指示（cd 前置禁止文言）が prompt に含まれる ----
+// issue #466: analyze-issue.sh は --issue-json ファイル入力の純変換へ改修されたため、
+// contract probe は事前に bare `gh issue view` で issue JSON を $TMPDIR file へ取得してから
+// script を --issue-json 付きで呼ぶ 2 段階 choreography になった。
 
 test('[analyze-contract-routing] (e) contract probe prompt に cd 前置禁止の bare 形指示が含まれる', () => {
-  const idx = src.indexOf('analyze-issue.sh ${ISSUE} --contract');
-  assert.ok(idx !== -1, "'analyze-issue.sh ${ISSUE} --contract' 実行コマンドが prompt 内に見つからない");
+  const idx = src.indexOf('analyze-issue.sh ${ISSUE} --issue-json');
+  assert.ok(idx !== -1, "'analyze-issue.sh ${ISSUE} --issue-json' 実行コマンドが prompt 内に見つからない");
   const window = src.slice(Math.max(0, idx - 100), idx + 500);
   assert.match(window, /cd 前置/, `cd 前置禁止の文言が見つからない。window: ${window}`);
 });
@@ -99,7 +102,14 @@ test('[analyze-contract-routing] (e) contract probe prompt に cd 前置禁止�
 test('[analyze-contract-routing] (e) script 呼び出しが WT 絶対パス先頭トークンの bare 形である', () => {
   assert.match(
     src,
-    /\$\{WT\}\/dev-issue-analyze\/scripts\/analyze-issue\.sh \$\{ISSUE\} --contract/,
-    '${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --contract という絶対パス先頭トークン形式が見つからない',
+    /\$\{WT\}\/dev-issue-analyze\/scripts\/analyze-issue\.sh \$\{ISSUE\} --issue-json <ISSUE_JSON> --contract/,
+    '${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract という絶対パス先頭トークン形式が見つからない',
   );
+});
+
+test('[analyze-contract-routing] (e) contract probe prompt が issue JSON を bare `gh issue view` で先行取得する', () => {
+  const idx = src.indexOf("'contract-probe#'");
+  assert.ok(idx !== -1);
+  const window = src.slice(Math.max(0, idx - 200), idx + 2000);
+  assert.match(window, /gh issue view \$\{ISSUE\}/, `bare 'gh issue view \${ISSUE}' 実行指示が見つからない。window: ${window}`);
 });

@@ -12,7 +12,7 @@
 // surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
 // evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み）。
 // effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
-// post-summary（comment-ensure）へ配線済み）。
+// post-summary（comment-prepare/comment-observe + subagent の bare gh choreography。issue #466）へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
 export const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'shadow' };
 
