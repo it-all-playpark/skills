@@ -3638,8 +3638,7 @@ const contractProbePrompt = `## Objective\n`
   + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
   + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
   + `3. \`${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
-  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止`
-  + `（理由: 先頭トークン一致で sandbox 除外が外れるため）。\n`
+  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止。\n`
   + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
   + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
   + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
@@ -3745,7 +3744,7 @@ if (SURFACEPROOF_MODE !== 'off') {
         + `4. \`gh api repos/${REPO}/issues/${ISSUE}/comments --paginate\` を同じ bare 単文の制約で実行し、stdout を <COMMENTS_FILE> へリダイレクトせよ。`
         + `exit 非0 の場合は代わりに \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-comments-err-${ISSUE}-XXXXXX.txt"\`（<COMMENTS_ERR_FILE>）へ stderr を保存し、手順5では \`--comments-json <COMMENTS_FILE>\` の代わりに \`--comments-err <COMMENTS_ERR_FILE>\` を使え。\n`
         + `5. \`${WT}/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO} --issue-json <ISSUE_JSON> (--comments-json <COMMENTS_FILE> | --comments-err <COMMENTS_ERR_FILE>)\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
-        + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れるため）。\n`
+        + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止。\n`
         + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
         + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
         + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
@@ -4858,7 +4857,7 @@ if (EFFECTDELTA_MODE === 'shadow') {
       + `4. \`gh pr list --repo ${REPO} --head ${branch} --state open --json number,url,baseRefName,headRefOid,state\` を同じ bare 単文の制約で実行し stdout を <LIST_FILE> へリダイレクトせよ。失敗しても中断せず <LIST_FILE> を省略して次へ進んでよい。\n`
       + `5. \`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number} --base ${BASE} (--pr-view-json <VIEW_FILE> | --pr-view-err <VIEW_ERR_FILE>) [--pr-list-json <LIST_FILE>]\` を`
       + `**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
-      + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れるため）。\n`
+      + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止。\n`
       + `exit 0 かつ stdout が JSON として parse できればそのオブジェクトをそのまま返し、それ以外（exit 非0・stdout 空・JSON 不正）は { "ok": false, "error": "<理由>" } を返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
       + `## Output format\nスクリプト stdout の JSON object をそのまま返す（{ "ok": boolean, "mode": string, "op": string, "observation": object, "effect_id": string, "receipt": object, "envelope": object }）。\n`
       + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`

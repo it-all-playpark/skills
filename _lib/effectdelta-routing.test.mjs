@@ -301,6 +301,27 @@ test('[effectdelta] (ii) pr-observe / post-summary(shadow) prompt は worktree �
 });
 
 // ============================================================
+// (iii) pr-observe prompt が分類器 trigger 文言（sandbox/excludedCommands 起動理由の説明）を
+// 含まない（issue #466 AC-1）。前置禁止の指示自体は (ii) 等で不変。
+// ============================================================
+
+test("[effectdelta] (iii) pr-observe prompt が 'sandbox'/'excludedCommands' を含まない", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'trust-effectdelta-pr': { ok: true, mode: 'shadow', op: 'pr-classify', observation: { status: 'observed', reason_code: 'OK' }, receipt: sampleReceipt({ stage: 'pr' }), envelope: sampleEnvelope({ stage: 'pr' }) },
+    },
+  });
+  const { error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'iii');
+
+  const prObserveCall = calls.find((c) => c.label === 'trust-effectdelta-pr');
+  assert.ok(prObserveCall, "(iii) 'trust-effectdelta-pr' 呼び出しが存在するはず");
+  assert.doesNotMatch(prObserveCall.prompt, /sandbox/, `(iii) pr-observe prompt に 'sandbox' が含まれてはならない。prompt: ${prObserveCall.prompt}`);
+  assert.doesNotMatch(prObserveCall.prompt, /excludedCommands/, `(iii) pr-observe prompt に 'excludedCommands' が含まれてはならない。prompt: ${prObserveCall.prompt}`);
+});
+
+// ============================================================
 // (c) pr-observe responder が null → run 完走・error null・trust_receipts に stage:'pr' 無し
 // （fail-open）
 // ============================================================

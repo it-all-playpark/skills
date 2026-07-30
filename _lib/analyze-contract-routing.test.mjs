@@ -113,3 +113,15 @@ test('[analyze-contract-routing] (e) contract probe prompt が issue JSON を ba
   const window = src.slice(Math.max(0, idx - 200), idx + 2000);
   assert.match(window, /gh issue view \$\{ISSUE\}/, `bare 'gh issue view \${ISSUE}' 実行指示が見つからない。window: ${window}`);
 });
+
+// ---- (f) 分類器 trigger 文言（sandbox/excludedCommands 起動理由の説明）を含まない ----
+// issue #466 AC-1: prompt に sandbox / excludedCommands / 特定パス起動の理由を書いてはならない
+// （分類器 trigger）。前置禁止の指示自体は (e) で別途固定済み。
+
+test("[analyze-contract-routing] (f) contract probe prompt が 'sandbox'/'excludedCommands' を含まない", () => {
+  const idx = src.indexOf("'contract-probe#'");
+  assert.ok(idx !== -1);
+  const window = src.slice(idx, idx + 2500);
+  assert.doesNotMatch(window, /sandbox/, `contract probe prompt に 'sandbox' が含まれてはならない。window: ${window}`);
+  assert.doesNotMatch(window, /excludedCommands/, `contract probe prompt に 'excludedCommands' が含まれてはならない。window: ${window}`);
+});
