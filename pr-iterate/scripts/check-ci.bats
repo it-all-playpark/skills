@@ -964,3 +964,65 @@ EOF
     # so the design does not re-verify: pulls fires only on cycle 1.
     [ "$(grep -c '^pulls$' "$URL_LOG_FILE")" -eq 1 ]
 }
+
+@test "reverify_terminal: status total_count 0->1 on terminal re-verify flips passed to failed" {
+    # First status fetch reports total_count==0 (STATUS_SKIP=1, caches the
+    # empty body). A later cycle settles to a would-be "passed" verdict from
+    # check-runs alone while reusing that cached status. Because the verdict
+    # was terminal and used the cache, reverify_terminal re-fetches status
+    # (line ~478: STATUS_SKIP==1 branch) and this second fetch now reports a
+    # failing status. merge_checks/compute_verdict must be re-run against it,
+    # flipping the final verdict from passed to failed instead of leaving the
+    # stale passed verdict in place.
+    STATUS_COUNT_FILE="$BATS_TMPDIR/status-count"
+    rm -f "$STATUS_COUNT_FILE"
+    export STATUS_COUNT_FILE
+
+    export CI_PENDING_TIMES=1
+    export CI_CHECKRUNS_BODY='{"total_count":1,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"}
+    ]}'
+
+    cat > "$STUB_DIR/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+case "$url" in
+    */pulls/*)
+        echo "pulls" >> "$URL_LOG_FILE"
+        printf '%s\n%s\n' "$CI_PR_BODY" "200"
+        ;;
+    */check-runs*)
+        echo "check-runs" >> "$URL_LOG_FILE"
+        n=$(( $(cat "$CI_CYCLE_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$CI_CYCLE_COUNT_FILE"
+        if (( n <= ${CI_PENDING_TIMES:-0} )); then
+            printf '%s\n%s\n' "$CI_PENDING_CHECKRUNS_BODY" "200"
+        else
+            printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200"
+        fi
+        ;;
+    */status*)
+        echo "status" >> "$URL_LOG_FILE"
+        n=$(( $(cat "$STATUS_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$STATUS_COUNT_FILE"
+        if [ "$n" -eq 1 ]; then
+            printf '%s\n%s\n' '{"state":"success","total_count":0,"statuses":[]}' "200"
+        else
+            printf '%s\n%s\n' '{"state":"failure","total_count":1,"statuses":[{"context":"ci/legacy","state":"failure"}]}' "200"
+        fi
+        ;;
+    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
+esac
+exit 0
+EOF
+    chmod +x "$STUB_DIR/curl"
+
+    run "$SCRIPT" 42 --wait-seconds 10 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "failed" ]
+    failed_names=$(echo "$result" | jq -r '.failed_checks[].name')
+    [[ "$failed_names" == *"ci/legacy"* ]]
+    [ "$(grep -c '^status$' "$URL_LOG_FILE")" -eq 2 ]
+}
