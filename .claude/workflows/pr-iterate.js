@@ -840,16 +840,11 @@ for (i = 1; i <= MAX; i++) {
       + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
       + `- 実行するスクリプト以外のファイルを変更しない\n\n`
       + `## Steps\n`
-      + `インストール済み skills の **固定パス** で check-ci.sh を実行せよ（リテラルの \`~/.claude/skills/\` プレフィックスをそのまま使うこと）:\n`
+      + `インストール済み skills の check-ci.sh を実行せよ:\n`
       + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${PR} --wait-seconds 90 --poll-seconds 15\n\`\`\`\n`
-      + `**重要**: 必ずこの \`~/.claude/skills/...\` の絶対パス形で起動せよ。`
-      + `worktree 相対パス（\`bash pr-iterate/scripts/check-ci.sh\`）や \`$HOME\` 展開形で起動してはならない。`
-      + `\`~/.claude/skills/*\` で起動した場合のみ sandbox 除外（excludedCommands）が効き、`
-      + `内部の gh が自身の config（\`~/.config/gh\`）を読めて CI を取得できる。`
-      + `sandbox 下で起動すると gh が config 読み取りに失敗し、CI が green でも status:error の誤判定になる。\n`
       + `\`--wait-seconds 90 --poll-seconds 15\` は CI pending 時に最大 90 秒（15 秒間隔）ポーリングしてから確定する`
       + `（AC-1/AC-2）。この Bash 実行の timeout パラメータには必ず 300000（ミリ秒。5分）を指定せよ — `
-      + `既定の 120000ms では最大 90 秒のポーリング＋ gh API retry backoff の合計に対して余裕が無い。\n`
+      + `既定の 120000ms では最大 90 秒のポーリング＋ GitHub API retry backoff の合計に対して余裕が無い。\n`
       + `スクリプトの stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。\n\n`
       + `## Output format\n`
       + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
