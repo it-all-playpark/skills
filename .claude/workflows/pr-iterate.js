@@ -600,6 +600,9 @@ const CI_STATUS = {
     // ポーリング未実行（wait-seconds 未指定 or 即決定）でも script は常に返す。
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
+    // dev-flow の clock telemetry（issue #443）が iterate_end の給電元として読む optional epoch。
+    // 旧版 check-ci.sh（epoch 非対応）や失敗時は省略され、返り値の end_epoch も省略される（fail-open）。
+    epoch: { type: 'number' },
   },
 }
 
@@ -703,6 +706,9 @@ let reviewNullRetries = 0  // review agent が throw または null で schema-r
 let fixUncommittedRecovered = 0  // fix が applied:true なのに未コミット変更が残っており ensure-committed が commit+push で回収した回数（issue #437）
 let totalCiWaitSeconds = 0  // check-ci.sh --wait-seconds ポーリングの累積待機秒数（全 ci-check ラウンド合算。issue #324）
 let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
+// 直近の ci-check#i 応答が返した epoch（issue #443）。dev-flow の iterate_end 給電元として返り値
+// end_epoch に載せる。応答が epoch を欠く/非数値なら更新せず、直前の値（または null）を保持する（fail-open）。
+let lastCiEpoch = null
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
 
@@ -860,6 +866,7 @@ for (i = 1; i <= MAX; i++) {
     // waited_seconds/poll_attempts は route（passed/pending/failed/error）に関わらず常に加算する。
     totalCiWaitSeconds += Number(ci.waited_seconds ?? 0)
     totalCiPollAttempts += Number(ci.poll_attempts ?? 0)
+    if (Number.isFinite(ci?.epoch)) lastCiEpoch = ci.epoch
     log(`iteration ${i}: ci-check waited_seconds=${ci.waited_seconds ?? 0} poll_attempts=${ci.poll_attempts ?? 0}`
       + `（累積 waited=${totalCiWaitSeconds}s poll=${totalCiPollAttempts}）`)
 
@@ -1122,4 +1129,5 @@ return {
   fix_uncommitted_recovered: fixUncommittedRecovered,
   history,
   subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
+  ...(lastCiEpoch != null ? { end_epoch: lastCiEpoch } : {}),
 }

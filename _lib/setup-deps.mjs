@@ -9,7 +9,9 @@
 
 export function setupDepsPrompt(worktree) {
   return `cd ${worktree} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/ensure-worktree-deps.sh --path ${worktree} --lockfile-only --skip-custom`;
+    + `bash ~/.claude/skills/_shared/scripts/ensure-worktree-deps.sh --path ${worktree} --lockfile-only --skip-custom\n`
+    + `全手順の最後に Bash で \`date +%s\` を 1 回実行し、出力の整数を epoch フィールドとして返せ。`
+    + `取得に失敗した場合は epoch を省略してよい（deps 処理の status 判定には一切影響させるな）。`;
 }
 
 function warningImplNote(detail) {

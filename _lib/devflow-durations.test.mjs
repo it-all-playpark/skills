@@ -6,6 +6,8 @@ import {
   clockProbePrompt,
   recordClockMark,
   computeDurations,
+  epochResOf,
+  maxEpochRes,
 } from './devflow-durations.mjs';
 
 // ---- (0) constants ----
@@ -170,4 +172,100 @@ test('computeDurations: start 欠落 → duration_seconds=null だが analyze �
   const result = computeDurations(marks);
   assert.equal(result.duration_seconds, null);
   assert.equal(result.phase_durations.analyze, 10);
+});
+
+// ---- (8) epochResOf ----
+
+test('epochResOf: 有限数値の epoch を持つ object → {ok:true, epoch}', () => {
+  assert.deepEqual(epochResOf({ epoch: 123 }), { ok: true, epoch: 123 });
+});
+
+test('epochResOf: ok:false でも epoch が有限数値なら採用する', () => {
+  assert.deepEqual(epochResOf({ ok: false, epoch: 456 }), { ok: true, epoch: 456 });
+});
+
+test('epochResOf: null → null', () => {
+  assert.equal(epochResOf(null), null);
+});
+
+test('epochResOf: undefined → null', () => {
+  assert.equal(epochResOf(undefined), null);
+});
+
+test('epochResOf: {} (epoch 欠落) → null', () => {
+  assert.equal(epochResOf({}), null);
+});
+
+test('epochResOf: {epoch:"x"} (非数値) → null', () => {
+  assert.equal(epochResOf({ epoch: 'x' }), null);
+});
+
+test('epochResOf: {epoch:NaN} → null', () => {
+  assert.equal(epochResOf({ epoch: NaN }), null);
+});
+
+test('epochResOf: {epoch:Infinity} → null', () => {
+  assert.equal(epochResOf({ epoch: Infinity }), null);
+});
+
+test('epochResOf: 非 object（number）→ null', () => {
+  assert.equal(epochResOf(123), null);
+});
+
+// ---- (9) maxEpochRes ----
+
+test('maxEpochRes: 空配列 → null', () => {
+  assert.equal(maxEpochRes([]), null);
+});
+
+test('maxEpochRes: 全 null 要素 → null', () => {
+  assert.equal(maxEpochRes([null, null]), null);
+});
+
+test('maxEpochRes: 混在配列 → 最大 epoch の {ok:true, epoch}', () => {
+  const list = [
+    epochResOf({ epoch: 10 }),
+    null,
+    epochResOf({ epoch: 30 }),
+    epochResOf({ epoch: 20 }),
+  ];
+  assert.deepEqual(maxEpochRes(list), { ok: true, epoch: 30 });
+});
+
+test('maxEpochRes: 非配列 → null', () => {
+  assert.equal(maxEpochRes(null), null);
+  assert.equal(maxEpochRes(undefined), null);
+  assert.equal(maxEpochRes({}), null);
+  assert.equal(maxEpochRes('not-an-array'), null);
+});
+
+// ---- (10) fail-open: epochResOf(null) を recordClockMark へ通す給電失敗経路 ----
+
+test('recordClockMark(marks, name, epochResOf(null)) → mark null + 警告文字列（fail-open 不変）', () => {
+  const marks = {};
+  const warn = recordClockMark(marks, 'plan_end', epochResOf(null));
+  assert.equal(marks.plan_end, null);
+  assert.match(warn, /clock#plan_end/);
+});
+
+// ---- (11) computeDurations の出力キー語彙は epochResOf/maxEpochRes 給電後も不変 ----
+
+test('computeDurations: epochResOf/maxEpochRes で給電した marks でも出力キーは duration_seconds + phase_durations（8 phase）のまま', () => {
+  const marks = {};
+  CLOCK_MARK_ORDER.forEach((name, i) => {
+    const res = epochResOf({ epoch: i * 10 });
+    recordClockMark(marks, name, res);
+  });
+  const result = computeDurations(marks);
+  assert.deepEqual(Object.keys(result).sort(), ['duration_seconds', 'phase_durations']);
+  assert.deepEqual(Object.keys(result.phase_durations).sort(), [
+    'analyze',
+    'evaluate',
+    'final',
+    'implement',
+    'iterate',
+    'plan',
+    'pr',
+    'validate',
+  ]);
 });

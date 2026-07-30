@@ -19,6 +19,12 @@ test('setupDepsPrompt: cd で worktree に移動する指示を含む', () => {
   assert.match(prompt, /cd \/some\/wt/);
 });
 
+test('setupDepsPrompt: epoch 取得のための date +%s 手順を含む', () => {
+  const prompt = setupDepsPrompt('/some/wt');
+  assert.match(prompt, /date \+%s/);
+  assert.match(prompt, /epoch/);
+});
+
 // ── summarizeDepsResult ─────────────────────────────────────────────────────
 
 test('summarizeDepsResult: null → unverified + implNote 非 null', () => {

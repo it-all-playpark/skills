@@ -136,10 +136,13 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `phase_durations` は analyze / plan / implement / validate / evaluate / pr / iterate / final の 8 phase の秒数 object。
   各 phase は開始〜終了の全体時間（plan-review loop / evaluate 差し戻し loop 等の内部反復を含む）。evaluate 区間は
   Security floor を含む。micro path（Evaluate skip）では evaluate キー自体が欠落し pr は直近 mark（validate_end）
-  起点で計算される。時刻は clock exec-proxy（dev-runner-haiku-ro が `date +%s` を実行、11 probe/run）で取得する。
-  **計測値には clock proxy 呼び出し自体の時間（各数秒〜十数秒）を含むため、絶対値ではなく相対比較・分布用途で
-  解釈すること（特に micro run では相対歪みが大きい）**。probe 失敗は fail-open（当該 mark null → 対応する
-  duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
+  起点で計算される。時刻は clock exec-proxy（dev-runner-haiku-ro が `date +%s` を実行）を start/end の 2 回のみ
+  起動し、残り 9 mark は phase 境界に隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから
+  給電する（fail-open 不変）。
+  **専用 probe 2 回分 + 給電元応答の完了タイミング依存の skew（contract 経路の analyze_end は shape 判定・
+  surfaceproof の時間が plan 区間へ付け替わる等）を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
+  Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。probe 失敗は fail-open（当該 mark null →
+  対応する duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
   `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
   （`lite`|`full` の 2 値 enum）。
   `subagent_invocations` は `{total, by_type}` の object（常時出力）。total は run 全体の agent() 起動数で、
@@ -298,7 +301,7 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | vdelta-verdict（redgreen R1↔R2 の deny-only ラベル精度保護） | `verdict null / 不正 JSON / transitions 欠落` | fail-open（deny せず現行の deterministic 昇格判定のまま。fail_open 発生は telemetry `vdelta_fail_open` で可視化） | advisory な昇格ラベル精度の補助信号（INV-10: record_integrity=advisory 恒久）。失敗しても red&&green の決定論ゲート自体は緩めない。comparability≠exact は abstain（並列 stream 混入の誤 deny 防止） |
 | testsurf（`diff-risk-classify.sh` test-weakening クラス → TESTSURF seed） | danger-grep と同一（`ok:false` / schema 不一致 / 空出力） | 既存 TESTSURF item 据え置き・新規 seed なし（同一スクリプトの SEC fail-closed が全 SEC unchecked → HOLD を担保するため安全側は成立） | 検出は決定論 grep、解除は evaluator clearance（evidence 必須）のみ。hit は `source:'seed'` 常時 blocking で merge tier HOLD（軸A: 決定論 hit を policy で緩めない） |
 | post-comment（pr-iterate post-review#i / post-summary、dev-flow post-summary — PR コメント投稿） | `posted:false` / `null` / schema 不一致 | fail-open（投稿失敗は警告 log のみ。merge tier 判定・ledger・gate に影響しない） | advisory な結果報告投稿。本文は workflow 側で確定済み文字列の verbatim 転写 + `gh` 実行のみで agent 側の要約・判断を含まない（dev-runner-haiku, issue #372） |
-| clock（`date +%s` 現在時刻 probe × 11/run） | `null` / `ok:false` / schema 不一致 / agent throw（EPERM 等の proxy 実行失敗・StructuredOutput 未返却） | fail-open（当該 mark 欠落 → 対応する duration キー欠落、警告 log のみ。throw は try/catch で吸収） | advisory な duration telemetry の補助信号。失敗しても deterministic gate・merge tier 判定を一切変えない（軸A 不変） |
+| clock（`date +%s` 現在時刻 probe × 2/run（start/end）。残り 9 mark は隣接 proxy の optional epoch 給電で、給電元失敗時も同ポリシー（当該 mark 欠落）） | `null` / `ok:false` / schema 不一致 / agent throw（EPERM 等の proxy 実行失敗・StructuredOutput 未返却） | fail-open（当該 mark 欠落 → 対応する duration キー欠落、警告 log のみ。throw は try/catch で吸収） | advisory な duration telemetry の補助信号。失敗しても deterministic gate・merge tier 判定を一切変えない（軸A 不変） |
 | trust-seal（evalseal-seal.mjs による EvalSeal shadow receipt の seal / check。trust-seal-eval / trust-check-final / trust-seal-final） | null / ok:false / schema 不一致 / mode:off / agent throw | fail-open（receipt 無し・旧 receipt invalidated 扱いで続行、警告 log のみ。merge tier・security floor・gate 判定へ影響しない — shadow は isGatingMode=false で classifyMergeTier の trustGate が常に null） | advisory な trust-layer shadow dogfood の補助信号（epic #390 Phase 3）。receipt 生成失敗を fail と同一視せず、受領物なしは effectiveTrustVerdict が 'inconclusive' に倒す（成功扱いしない）。blocking 昇格は Phase 5 の calibration 実証後（軸A 不変） |
 | analyze-parse（analyze-issue.sh --contract --issue-json <file> 決定論 parse → REQ 転写。issue JSON は subagent の bare `gh issue view --json ...` 出力を $TMPDIR file 経由で渡すファイル入力化を採る） | throw / null / ok:false / schema 不一致 / eligible:false / whitelist 検証（buildReqFromContract）不合格 | fail-open（現行 sonnet analyze へ fallback — 挙動不変。DEPTH=standard のみ試行） | 高速化の補助経路であり品質ゲートではない。fallback 先が現行経路そのものなので失敗しても後退なし。light path は構造化 breaking 判定を行わない（keyword hit は eligibility で sonnet へ回し、残余は事後の danger-grep / merge tier が補償） |
 | analyze-provenance（`gh issue view --json number,title` による sonnet analyze 結果の決定論突合。Analyze phase、sonnet 経路のみ — contract 決定論 parse 採用時は不実行） | `null` / `ok:false` / schema 不一致 / agent throw / issue 番号・title 突合不一致 | fail-closed（needs_clarification で終端 — 捏造 REQ を Implement へ流さない） | analyze agent に「取得成功」を self-report させない（incentive-structural、issue #451）。probe が gh に到達できない状況は analyze 側も取得できていない状況そのものであり、捏造 REQ で進行する方が中断より高コスト。light path（analyze-issue.sh --contract）の fail-open fallback は不変 |

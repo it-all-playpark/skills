@@ -1,6 +1,11 @@
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
-// I/O なし・Date.now/Math.random 不使用。時刻取得は dev-runner-haiku-ro exec-proxy（clockProbePrompt）
-// に委譲し、recordClockMark/computeDurations が結果を集計する（fail-open — probe 失敗は当該区間欠落）。
+// I/O なし・Date.now/Math.random 不使用。専用 clock probe（dev-runner-haiku-ro）は start/end の
+// 2 回のみ。残り 9 mark（analyze_start/analyze_end/plan_end/implement_end/validate_end/
+// evaluate_end/pr_end/iterate_end/final_end）は phase 境界に隣接する既存 exec-proxy / agent 応答の
+// optional epoch フィールドから recordClockMark へ給電する（fail-open — 給電元失敗は当該 mark null →
+// 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
+// 使うため shape 判定・surfaceproof shadow の時間が plan 区間へ付け替わる — phase_durations は
+// 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -78,6 +83,43 @@ export function recordClockMark(marks, name, res) {
   }
   marks[name] = null;
   return `⚠️ clock#${name} の取得に失敗 — duration telemetry は当該区間を欠落させる（fail-open）`;
+}
+
+/**
+ * 隣接する既存 exec-proxy / agent 応答から recordClockMark 給電用の {ok:true, epoch} を抽出する。
+ * ok フラグの有無は見ない（LLM agent 応答には ok が無いため）。epoch が有限数値でなければ null。
+ * @param {{epoch?: unknown}|null|undefined} res - 給電元の応答 object
+ * @returns {{ok: true, epoch: number}|null}
+ */
+export function epochResOf(res) {
+  if (!res || typeof res !== 'object') {
+    return null;
+  }
+  const epoch = res.epoch;
+  if (typeof epoch === 'number' && Number.isFinite(epoch)) {
+    return { ok: true, epoch };
+  }
+  return null;
+}
+
+/**
+ * epochResOf 由来の候補配列（null 混在可）から最大 epoch の給電結果を選ぶ。
+ * 並列 implementer など完了順が不定な複数給電元から「最後に完了したもの」を採用するために使う。
+ * @param {Array<{ok: true, epoch: number}|null>|null|undefined} list - epochResOf の適用結果配列
+ * @returns {{ok: true, epoch: number}|null}
+ */
+export function maxEpochRes(list) {
+  if (!Array.isArray(list)) {
+    return null;
+  }
+  let best = null;
+  for (const item of list) {
+    const res = epochResOf(item);
+    if (res !== null && (best === null || res.epoch > best.epoch)) {
+      best = res;
+    }
+  }
+  return best;
 }
 
 /**

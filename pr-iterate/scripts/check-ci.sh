@@ -24,7 +24,13 @@
 #   { "status": "passed" | "failed" | "pending" | "no_checks" | "error",
 #     "passed": N, "failed": N, "pending": N, "skipped": N,
 #     "failed_checks": [...], "pending_checks": [...],
-#     "waited_seconds": N, "poll_attempts": N }
+#     "waited_seconds": N, "poll_attempts": N,
+#     "epoch": N | null }
+#
+# "epoch" is `date +%s` taken immediately before the JSON is emitted (present
+# on every status, including "error"). If `date +%s` fails, epoch is emitted
+# as JSON null instead of failing the script (fail-open; exit code and every
+# other key are unaffected).
 #
 # Auth: if GH_TOKEN or GITHUB_TOKEN is set, requests are authenticated
 # (Bearer token) for a higher rate limit and private-repo access. Otherwise
@@ -176,6 +182,21 @@ api_get() {
     _dbg_log "$http_code"
     body=$(echo "$resp" | sed '$d')
     printf '%s\n%s\n' "$body" "$http_code"
+}
+
+# epoch_field - prints the current `date +%s` as a bare JSON number, or the
+# JSON literal `null` if `date +%s` fails. Called once per JSON emission site
+# (never cached), so its output can be spliced directly into printf/jq output
+# without further quoting: both a digit string and the literal `null` are
+# valid unquoted JSON.
+epoch_field() {
+    local e
+    e=$(date +%s 2>/dev/null) || true
+    if [[ "$e" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$e"
+    else
+        printf 'null'
+    fi
 }
 
 # rate_limit_suffix <http_code> - on 403/429 (GitHub's rate-limit status
@@ -386,8 +407,8 @@ do_fetch_cycle() {
     POLL_ATTEMPTS=$((POLL_ATTEMPTS + 1))
 
     if (( FETCH_OK != 1 )); then
-        printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
-            "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
+        printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s,"epoch":%s}\n' \
+            "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS" "$(epoch_field)"
         exit 1
     fi
 }
@@ -423,8 +444,8 @@ reverify_terminal() {
             FETCH_ERR="network error fetching PR #${PR_NUM}: $resp"
         fi
         if (( attempt >= ${#RETRY_DELAYS[@]} )); then
-            printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
-                "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
+            printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s,"epoch":%s}\n' \
+                "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS" "$(epoch_field)"
             exit 1
         fi
         echo "check-ci: fetch failed, retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $FETCH_ERR" >&2
@@ -462,8 +483,8 @@ reverify_terminal() {
                 FETCH_ERR="network error fetching commit status: $st_resp"
             fi
             if (( st_attempt >= ${#RETRY_DELAYS[@]} )); then
-                printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
-                    "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
+                printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s,"epoch":%s}\n' \
+                    "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS" "$(epoch_field)"
                 exit 1
             fi
             echo "check-ci: fetch failed, retry $((st_attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$st_attempt]}s: $FETCH_ERR" >&2
@@ -526,4 +547,4 @@ while :; do
     break
 done
 
-echo "$result_json" | jq -c --argjson w "$WAITED" --argjson p "$POLL_ATTEMPTS" '. + {waited_seconds:$w, poll_attempts:$p}'
+echo "$result_json" | jq -c --argjson w "$WAITED" --argjson p "$POLL_ATTEMPTS" --argjson e "$(epoch_field)" '. + {waited_seconds:$w, poll_attempts:$p, epoch:$e}'

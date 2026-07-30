@@ -122,6 +122,8 @@ EOF
     [ "$(echo "$result" | jq -r '.passed')" = "0" ]
     [ "$(echo "$result" | jq -r '.failed')" = "0" ]
     [ "$(echo "$result" | jq -r '.pending')" = "0" ]
+    [ "$(echo "$result" | jq -r '.epoch | type')" = "number" ]
+    [ "$(echo "$result" | jq -r '.epoch')" -gt 0 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,7 @@ EOF
     [ "$(echo "$result" | jq -r '.status')" = "passed" ]
     [ "$(echo "$result" | jq -r '.passed')" = "2" ]
     [ "$(echo "$result" | jq -r '.failed')" = "0" ]
+    [ "$(echo "$result" | jq -r '.epoch | type')" = "number" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -155,6 +158,7 @@ EOF
     [ "$(echo "$result" | jq -r '.failed')" = "1" ]
     failed_names=$(echo "$result" | jq -r '.failed_checks[].name')
     [[ "$failed_names" == *"test"* ]]
+    [ "$(echo "$result" | jq -r '.epoch | type')" = "number" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -171,6 +175,7 @@ EOF
     [ "$(echo "$result" | jq -r '.pending')" = "1" ]
     pending_count=$(echo "$result" | jq '.pending_checks | length')
     [ "$pending_count" -gt 0 ]
+    [ "$(echo "$result" | jq -r '.epoch | type')" = "number" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -228,6 +233,7 @@ EOF
     [ "$status" -eq 1 ]
     result=$(echo "$output" | tail -1)
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    [ "$(echo "$result" | jq -r '.epoch | type')" = "number" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -260,6 +266,7 @@ EOF
     [ "$(echo "$result" | jq -r '.status')" = "error" ]
     call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 3 ]
+    [ "$(echo "$result" | jq -r '.epoch | type')" = "number" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -275,6 +282,50 @@ EOF
     [ "$(echo "$result" | jq -r '.status')" = "failed" ]
     call_count=$(cat "$CI_CYCLE_COUNT_FILE")
     [ "$call_count" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 10b: `date +%s` failure -> epoch is JSON null, fail-open (exit code and
+# every other key unaffected). Stubs `date` to fail unconditionally.
+# ---------------------------------------------------------------------------
+@test "date +%s failure -> epoch is null, exit code and other keys unaffected" {
+    cat > "$STUB_DIR/date" << 'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$STUB_DIR/date"
+
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
+    run "$SCRIPT" 42
+    rm -f "$STUB_DIR/date"
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "passed" ]
+    [ "$(echo "$result" | jq -r '.passed')" = "2" ]
+    [ "$(echo "$result" | jq -r '.epoch')" = "null" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 10c: `date +%s` failure on the error path -> epoch still null, status
+# still "error", exit code still 1 (fail-open must hold on both output paths).
+# ---------------------------------------------------------------------------
+@test "date +%s failure on error path -> epoch null, status error, exit 1" {
+    cat > "$STUB_DIR/date" << 'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$STUB_DIR/date"
+
+    export CI_FAIL_TIMES=10
+    run "$SCRIPT" 42
+    rm -f "$STUB_DIR/date"
+    [ "$status" -eq 1 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "error" ]
+    [ "$(echo "$result" | jq -r '.epoch')" = "null" ]
 }
 
 # ---------------------------------------------------------------------------
