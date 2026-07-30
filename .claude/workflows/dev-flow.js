@@ -5363,10 +5363,10 @@ if (EFFECTDELTA_MODE === 'shadow') {
       + `（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <PRE_FILE> へリダイレクトせよ。\n`
       + `3. \`${WT}/_shared/scripts/effectdelta-github.sh comment-observe --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --pre-comments-json <PRE_FILE>\` を実行せよ。`
       + `結果 JSON の posted が true（既に投稿済み=重複）なら、この結果を最終結果として手順4〜6 を skip し手順8へ進め。\n`
-      + `4. posted が true でなければ実際に投稿する: \`gh pr comment ${pr.pr_number} --repo ${REPO} --body-file <OUT_BODY_FILE>\` を同じ bare 単文の制約で実行せよ。exit 非0 なら手順7（fallback）へ進め。\n`
+      + `4. posted が true でなければ実際に投稿する: \`gh pr comment ${pr.pr_number} --repo ${REPO} --body-file <OUT_BODY_FILE>\` を同じ bare 単文の制約で実行し、その exit code を <POST_EXIT> として覚えておけ。exit 非0 でも手順7（fallback）へ直行せず、応答消失の可能性があるため手順5-6で rediscovery を試みよ。\n`
       + `5. \`mktemp "\${TMPDIR:-/tmp}/dev-flow-summary-post-XXXXXX.json"\` で <POST_FILE> を作成し、`
       + `\`gh api repos/${REPO}/issues/${pr.pr_number}/comments --paginate\` を同じ制約で実行し stdout を <POST_FILE> へリダイレクトせよ。\n`
-      + `6. \`${WT}/_shared/scripts/effectdelta-github.sh comment-observe --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --pre-comments-json <PRE_FILE> --post-comments-json <POST_FILE>\` を実行し、この結果を最終結果として手順8へ進め。\n`
+      + `6. \`${WT}/_shared/scripts/effectdelta-github.sh comment-observe --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --pre-comments-json <PRE_FILE> --post-comments-json <POST_FILE>\` を、<POST_EXIT> が非0 なら末尾に \` --response-lost\` を付けて（0 なら付けずに）実行し、この結果を最終結果とする。posted が true なら手順8へ進め（再投稿しない）。posted が true でない場合のみ手順7（fallback）へ進め。\n`
       + `7. fallback: script が存在しない・実行不可・エラー、または最終結果の posted が true でない場合、\`gh pr comment ${pr.pr_number} --repo ${REPO} --body-file <BODY_FILE>\` をそのまま実行し、posted:true/false と method:'gh-pr-comment-fallback' を返せ。\n`
       + `8. 最終結果の stdout JSON を verbatim 転写して返せ。投稿失敗時でも posted:false を返し throw しないこと。\n`
       + `\n## Output format\n{ "ok": boolean, "posted": boolean, "method": string, "url": string, "mode": string, "effect_id": string, "receipt": object, "envelope": object }\n`
