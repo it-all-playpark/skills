@@ -226,6 +226,27 @@ test('[surfaceproof] (b) repo=allowlist + probe ok → surfaceproof-shadow 1回 
 });
 
 // ============================================================
+// (f) surfaceproof-shadow prompt が分類器 trigger 文言（sandbox/excludedCommands 起動理由の
+// 説明）を含まない（issue #466 AC-1）。前置禁止の指示自体は不変。
+// ============================================================
+
+test("[surfaceproof] (f) surfaceproof-shadow#410 prompt が 'sandbox'/'excludedCommands' を含まない", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      [`surfaceproof-shadow#410`]: { ok: true, result: { receipt: sampleReceipt() } },
+    },
+  });
+  const { error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'f');
+
+  const shadowCall = calls.find((c) => c.label === 'surfaceproof-shadow#410');
+  assert.ok(shadowCall, "(f) 'surfaceproof-shadow#410' 呼び出しが存在するはず");
+  assert.doesNotMatch(shadowCall.prompt, /sandbox/, `(f) surfaceproof-shadow prompt に 'sandbox' が含まれてはならない。prompt: ${shadowCall.prompt}`);
+  assert.doesNotMatch(shadowCall.prompt, /excludedCommands/, `(f) surfaceproof-shadow prompt に 'excludedCommands' が含まれてはならない。prompt: ${shadowCall.prompt}`);
+});
+
+// ============================================================
 // (c) probe responder が null → run 完走・error null・fail-open で inconclusive/PROBE_FAILED
 // ============================================================
 

@@ -63,7 +63,7 @@ function makeSandbox() {
     }
 
     // commit-ensure（issue #437: fix 適用直後の commit 保証。未 stub だと fail-safe で fix_failed になる）
-    if (typeof prompt === 'string' && prompt.includes('ensure-committed.sh') && !prompt.includes('--check-only')) {
+    if (label.startsWith('commit-ensure#')) {
       return { dirty: false, committed: false, pushed: false };
     }
 

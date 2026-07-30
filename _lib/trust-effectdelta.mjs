@@ -1,6 +1,6 @@
 // issue #412 (#390 Phase 4): EffectDelta adapter — write-once GitHub effect (PR / comment)
 // 用の pure core。workflow inline 対象外（_lib/trust-surfaceproof.mjs と同じ位置づけ —
-// F4 で dev-flow.js からは effectdelta-github.sh / CLI 経由でのみ利用する）。
+// dev-flow.js からは effectdelta-github.sh / CLI 経由でのみ利用する）。
 //
 // Phase 1 kernel（trust-digest.mjs / trust-schema.mjs）は一切変更しない。本ファイルは
 // kernel と同一の I/O 規約に従う pure function 群 — import は `./trust-digest.mjs` の
@@ -10,7 +10,11 @@
 //
 // blind retry を行わない（provider timeout・成功応答消失時も read-only rediscovery で
 // observed|mismatch|inconclusive の closed taxonomy に落とす — AC-8/AC-9/edge case
-// response-lost）。write-once の実際の gh 呼び出しは F2（effectdelta-github.sh）が担う。
+// response-lost）。GitHub への実 I/O（issue #466 以降）は effectdelta-github.sh からも
+// 排除されており、subagent の bare `gh`/`git` 単文が担う。effectdelta-github.sh は
+// pr-observe（PR readback/list の file 入力による純分類）と comment-prepare/
+// comment-observe（marker 導出・投稿本文組み立て／pre-post snapshot の純分類）のみを
+// 持ち、write choreography 自体（探索→投稿→readback）は呼び出し元 subagent が行う。
 
 import { domainSeparatedDigest, sha256Hex, computeReceiptId } from './trust-digest.mjs';
 import { resolveTrustLevel } from './trust-schema.mjs';

@@ -1085,7 +1085,7 @@ function isGatingMode(mode) {
 // surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
 // evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み）。
 // effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
-// post-summary（comment-ensure）へ配線済み）。
+// post-summary（comment-prepare/comment-observe + subagent の bare gh choreography。issue #466）へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
 const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'shadow' };
 
@@ -3105,9 +3105,9 @@ const TRUSTSEAL = {
   },
 }
 // EFFECTDELTA_OBS: _shared/scripts/effectdelta-github.sh exec-proxy の stdout JSON
-// （epic #390 Phase 4, issue #412）。pr-observe / comment-ensure（+ gh pr comment fallback）で
-// 共用するため posted/url/method（comment 系）と observation/effect_id/receipt/envelope
-// （両系）を同一 schema に併記する。
+// （epic #390 Phase 4, issue #412）。pr-observe / comment-prepare・comment-observe（+ gh pr comment
+// fallback。issue #466）で共用するため posted/url/method（comment 系）と
+// observation/effect_id/receipt/envelope（両系）を同一 schema に併記する。
 const EFFECTDELTA_OBS = {
   type: 'object', required: ['ok'],
   properties: {
@@ -3625,19 +3625,26 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
   + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
 
-// contract probe prompt（issue #374）: DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。
-// dev-issue-analyze/scripts/analyze-issue.sh --contract の stdout JSON を verbatim 転写させるだけの
-// read-only exec-proxy（結果の判断は buildReqFromContract 側の whitelist 検証が担う）。
+// contract probe prompt（issue #374, issue #466 で --issue-json ファイル入力化）:
+// DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。issue 本体は subagent の bare
+// `gh issue view` で $TMPDIR file へ取得し、analyze-issue.sh --contract の stdout JSON を
+// verbatim 転写させるだけの read-only exec-proxy（結果の判断は buildReqFromContract 側の
+// whitelist 検証が担う）。
 const contractProbePrompt = `## Objective\n`
-  + `\`${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
-  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止`
-  + `（理由: 先頭トークン一致で sandbox 除外が外れ、script 内部の gh コマンドが失敗するため）。`
+  + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
+  + `## Steps\n`
+  + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/analyze-contract-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <ISSUE_JSON> とする。\n`
+  + `2. \`gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json body,title,labels,assignees,milestone,state\` を`
+  + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
+  + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
+  + `3. \`${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止。\n`
   + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
   + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
   + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
   + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
-  + `## Boundary\nファイルは一切変更しない（read-only probe）。\n`
-  + `## Token cap\n150 語以内で完結すること。`
+  + `## Boundary\n\${TMPDIR} の一時ファイル以外は一切変更しない（read-only probe）。\n`
+  + `## Token cap\n220 語以内で完結すること。`
 
 // ============================================================
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
@@ -3727,13 +3734,22 @@ if (SURFACEPROOF_MODE !== 'off') {
     let spRes = null
     try {
       spRes = await trackedAgent(
-        `## Objective\n\`${WT}/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
-        + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
+        `## Objective\nissue #${ISSUE} の SurfaceProof shadow snapshot を作成し、stdout の JSON を result へ verbatim 転写せよ。\n`
+        + `## Steps\n`
+        + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-issue-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <ISSUE_JSON> とする。\n`
+        + `2. \`gh issue view ${ISSUE} --repo ${REPO} --json title,body,labels,updatedAt --jq '{title, body, updated_at: .updatedAt, labels}'\` を`
+        + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
+        + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
+        + `3. Bash で \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-comments-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <COMMENTS_FILE> とする。\n`
+        + `4. \`gh api repos/${REPO}/issues/${ISSUE}/comments --paginate\` を同じ bare 単文の制約で実行し、stdout を <COMMENTS_FILE> へリダイレクトせよ。`
+        + `exit 非0 の場合は代わりに \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-comments-err-${ISSUE}-XXXXXX.txt"\`（<COMMENTS_ERR_FILE>）へ stderr を保存し、手順5では \`--comments-json <COMMENTS_FILE>\` の代わりに \`--comments-err <COMMENTS_ERR_FILE>\` を使え。\n`
+        + `5. \`${WT}/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO} --issue-json <ISSUE_JSON> (--comments-json <COMMENTS_FILE> | --comments-err <COMMENTS_ERR_FILE>)\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+        + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止。\n`
         + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
         + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
         + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
-        + `## Boundary\nファイルは一切変更しない（read-only shadow probe）。issue 内容は既存 dev-issue-analyze の Analyze 判定へは一切反映しない（本呼出しは telemetry 記録専用）。\n`
-        + `## Token cap\n150 語以内で完結すること。`,
+        + `## Boundary\n\${TMPDIR} の一時ファイル以外は一切変更しない（read-only shadow probe）。issue 内容は既存 dev-issue-analyze の Analyze 判定へは一切反映しない（本呼出しは telemetry 記録専用）。\n`
+        + `## Token cap\n280 語以内で完結すること。`,
         { agentType: 'dev-runner-haiku-ro', schema: SURFACEPROOF_SHADOW, label: 'surfaceproof-shadow#' + ISSUE, phase: 'Analyze' },
       )
     } catch (e) { log('⚠️ SurfaceProof shadow probe が例外 — fail-open（既存 gate に影響なし。telemetry のみ欠落）') }
@@ -4756,7 +4772,7 @@ state = await execSecurityFloorPhase(state)
 const EVALSEAL_MODE = resolveLayerMode({ layer: 'evalseal', configuredMode: TRUST_LAYER_CONFIG.evalseal, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
 
 // EffectDelta (epic #390 Phase 4, issue #412): repo allowlist + kill switch を解決した mode。
-// PR phase（pr-observe）・post-summary（comment-ensure/fallback）から参照する。
+// PR phase（pr-observe）・post-summary（comment-prepare/comment-observe/fallback。issue #466）から参照する。
 // off（allowlist 不一致・kill switch・REPO null）では常に 'off' — trust 系 agent 呼び出しゼロ。
 const EFFECTDELTA_MODE = resolveLayerMode({ layer: 'effectdelta', configuredMode: TRUST_LAYER_CONFIG.effectdelta, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
 
@@ -4831,13 +4847,22 @@ log(`PR created: ${pr.pr_url}`)
 if (EFFECTDELTA_MODE === 'shadow') {
   try {
     const edPrRes = await trackedAgent(
-      `## Objective\n\`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number} --base ${BASE}\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
-      + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止（先頭トークン一致で sandbox 除外が外れ内部の gh コマンドが失敗するため）。`
+      `## Objective\nPR #${pr.pr_number} の状態を read-only で観測し、effectdelta-github.sh pr-observe の判定結果を verbatim 転写せよ。\n`
+      + `## Steps\n`
+      + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/effectdelta-pr-view-XXXXXX.json"\` を実行し、出力パスを <VIEW_FILE> とする。\n`
+      + `2. \`gh pr view ${pr.pr_number} --repo ${REPO} --json number,url,baseRefName,headRefOid,state\` を`
+      + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <VIEW_FILE> へリダイレクトせよ。`
+      + `exit 非0 の場合は代わりに \`mktemp "\${TMPDIR:-/tmp}/effectdelta-pr-view-err-XXXXXX.txt"\`（<VIEW_ERR_FILE>）へ stderr を保存し、手順3・4 は skip して手順5へ進め。\n`
+      + `3. Bash で \`mktemp "\${TMPDIR:-/tmp}/effectdelta-pr-list-XXXXXX.json"\` を実行し、出力パスを <LIST_FILE> とする。\n`
+      + `4. \`gh pr list --repo ${REPO} --head ${branch} --state open --json number,url,baseRefName,headRefOid,state\` を同じ bare 単文の制約で実行し stdout を <LIST_FILE> へリダイレクトせよ。失敗しても中断せず <LIST_FILE> を省略して次へ進んでよい。\n`
+      + `5. \`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number} --base ${BASE} (--pr-view-json <VIEW_FILE> | --pr-view-err <VIEW_ERR_FILE>) [--pr-list-json <LIST_FILE>]\` を`
+      + `**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
+      + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止。\n`
       + `exit 0 かつ stdout が JSON として parse できればそのオブジェクトをそのまま返し、それ以外（exit 非0・stdout 空・JSON 不正）は { "ok": false, "error": "<理由>" } を返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
       + `## Output format\nスクリプト stdout の JSON object をそのまま返す（{ "ok": boolean, "mode": string, "op": string, "observation": object, "effect_id": string, "receipt": object, "envelope": object }）。\n`
       + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
-      + `## Boundary\nファイルは一切変更しない（read-only shadow probe）。PR 作成経路自体（git-pr skill）には一切影響しない（本呼出しは telemetry 記録専用）。\n`
-      + `## Token cap\n150 語以内で完結すること。`,
+      + `## Boundary\n\${TMPDIR} の一時ファイル以外は一切変更しない（read-only shadow probe）。PR 作成経路自体（git-pr skill）には一切影響しない（本呼出しは telemetry 記録専用）。\n`
+      + `## Token cap\n300 語以内で完結すること。`,
       { agentType: 'dev-runner-haiku-ro', schema: EFFECTDELTA_OBS, label: 'trust-effectdelta-pr', phase: 'PR' },
     )
     if (edPrRes?.ok === true && edPrRes.mode !== 'off' && edPrRes.receipt && edPrRes.envelope) {
@@ -5256,10 +5281,12 @@ const ciTargets = state.ledger.items.filter((it) =>
   it.dimension === 'environment' && it.checked !== true && CI_VERIFIABLE_ENV_KEYS.includes(it.env_key))
 if (ciTargets.length > 0) {
   const ciChecks = await trackedAgent(
-    `cd ${WT} で作業。次を実行し **stdout の JSON array を** {"ok": true, "checks": <array>} に包んで返せ`
+    `\`gh pr checks ${pr.pr_number}${REPO ? ' --repo ' + REPO : ''} --json name,bucket\` を`
+    + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止。`
+    + `\`--repo\` で cwd 非依存化しているため cd は不要）で 1 回だけ実行し、`
+    + `**stdout の JSON array を** {"ok": true, "checks": <array>} に包んで返せ`
     + `（gh pr checks は check 失敗時 exit 1・pending 時 exit 8 を返すが、stdout に JSON array が出ていれば ok:true とする。`
-    + `stdout が空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-    + `gh pr checks ${pr.pr_number} --json name,bucket`,
+    + `stdout が空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。原因調査はするな。再試行禁止）。`,
     { agentType: 'dev-runner-haiku-ro', schema: CHECKS, label: 'ci-checks', phase: 'Merge tier' },
   )
   if (!ciChecks || ciChecks.ok !== true || !Array.isArray(ciChecks.checks)) {
@@ -5309,29 +5336,42 @@ const summaryBody = buildDevflowSummaryBody({
   finalAcReconcile,
   liteReview: state.liteReview ?? null,
 }) + (trustSummaryMd ? '\n\n' + trustSummaryMd : '')
-// EffectDelta (epic #390 Phase 4, issue #412): shadow 時は effectdelta-github.sh
-// comment-ensure（write-once + readback）経由で投稿し、script 不在・実行不可・
-// posted!==true の場合は gh pr comment への無条件 fallback を prompt 内に明記する（AC-9）。
-// off 経路は既存 prompt を byte 単位で不変に保つ（AC-15 非干渉）。
+// EffectDelta (epic #390 Phase 4, issue #412, issue #466 で gh choreography を subagent へ移管):
+// shadow 時は effectdelta-github.sh の comment-prepare（marker/effect_id 導出 + posted body 組み立て）
+// → 投稿前後の PR コメント一覧を subagent の bare `gh api` で取得 → comment-observe（readback 分類）
+// の choreography で投稿し、script 不在・実行不可・posted!==true の場合は gh pr comment への
+// 無条件 fallback を prompt 内に明記する（AC-9）。off 経路は既存 prompt を byte 単位で不変に保つ
+// （AC-15 非干渉）。
 let summaryPost
-// RUN_ID (issue #413 F4): comment-ensure の --run-id と journal-log telemetry の trust_run_id が
-// 同一 run 識別子を共有できるよう、EFFECTDELTA_MODE 分岐の外（unconditional）で宣言する。
-// 値・算出式は不変（EffectDelta の effect_id 導出（repo+pr+effect_type+run_id+body_digest）と
+// RUN_ID (issue #413 F4): comment-prepare/comment-observe の --run-id と journal-log telemetry の
+// trust_run_id が同一 run 識別子を共有できるよう、EFFECTDELTA_MODE 分岐の外（unconditional）で
+// 宣言する。値・算出式は不変（EffectDelta の effect_id 導出（repo+pr+effect_type+run_id+body_digest）と
 // journal 集計が同一 run 識別子を共有するのが本配線の目的）。
 const RUN_ID = String(clockMarks?.start ?? ISSUE)
 if (EFFECTDELTA_MODE === 'shadow') {
   try {
     summaryPost = await trackedAgent(
-      `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
+      `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。write-once の重複防止のため投稿前後に PR コメント一覧を確認する。\n\n`
       + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
       + `## Instructions\n`
-      + `保存した <BODY_FILE> を使い \`${WT}/_shared/scripts/effectdelta-github.sh comment-ensure --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID}\` を実行し stdout の JSON を verbatim 転写して返せ。`
-      + `script が存在しない・実行不可・または出力の posted が true でない場合は、fallback として \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\` をそのまま実行し、posted:true/false と method:'gh-pr-comment-fallback' を返せ。\n`
-      + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+      + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/dev-flow-summary-out-XXXXXX.md"\` を実行し出力パスを <OUT_BODY_FILE> とする。次に `
+      + `\`${WT}/_shared/scripts/effectdelta-github.sh comment-prepare --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --out-body <OUT_BODY_FILE>\` を実行せよ。`
+      + `結果 JSON の mode が "off" なら手順2〜6 を skip し、手順7（fallback）へ進め。\n`
+      + `2. \`mktemp "\${TMPDIR:-/tmp}/dev-flow-summary-pre-XXXXXX.json"\` で <PRE_FILE> を作成し、`
+      + `\`gh api repos/${REPO}/issues/${pr.pr_number}/comments --paginate\` を**先頭トークンが gh の bare 単文**`
+      + `（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <PRE_FILE> へリダイレクトせよ。\n`
+      + `3. \`${WT}/_shared/scripts/effectdelta-github.sh comment-observe --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --pre-comments-json <PRE_FILE>\` を実行せよ。`
+      + `結果 JSON の posted が true（既に投稿済み=重複）なら、この結果を最終結果として手順4〜6 を skip し手順8へ進め。\n`
+      + `4. posted が true でなければ実際に投稿する: \`gh pr comment ${pr.pr_number} --repo ${REPO} --body-file <OUT_BODY_FILE>\` を同じ bare 単文の制約で実行し、その exit code を <POST_EXIT> として覚えておけ。exit 非0 でも手順7（fallback）へ直行せず、応答消失の可能性があるため手順5-6で rediscovery を試みよ。\n`
+      + `5. \`mktemp "\${TMPDIR:-/tmp}/dev-flow-summary-post-XXXXXX.json"\` で <POST_FILE> を作成し、`
+      + `\`gh api repos/${REPO}/issues/${pr.pr_number}/comments --paginate\` を同じ制約で実行し stdout を <POST_FILE> へリダイレクトせよ。\n`
+      + `6. \`${WT}/_shared/scripts/effectdelta-github.sh comment-observe --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --pre-comments-json <PRE_FILE> --post-comments-json <POST_FILE>\` を、<POST_EXIT> が非0 なら末尾に \` --response-lost\` を付けて（0 なら付けずに）実行し、この結果を最終結果とする。posted が true なら手順8へ進め（再投稿しない）。posted が true でない場合のみ手順7（fallback）へ進め。\n`
+      + `7. fallback: script が存在しない・実行不可・エラー、または最終結果の posted が true でない場合、\`gh pr comment ${pr.pr_number} --repo ${REPO} --body-file <BODY_FILE>\` をそのまま実行し、posted:true/false と method:'gh-pr-comment-fallback' を返せ。\n`
+      + `8. 最終結果の stdout JSON を verbatim 転写して返せ。投稿失敗時でも posted:false を返し throw しないこと。\n`
       + `\n## Output format\n{ "ok": boolean, "posted": boolean, "method": string, "url": string, "mode": string, "effect_id": string, "receipt": object, "envelope": object }\n`
       + `\n## Tools\n使用可: Bash, Write\n`
-      + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-      + `\n## Token cap\n200 語以内で完結すること。`,
+      + `\n## Boundary\n\${TMPDIR} の一時ファイル以外のファイルを変更しない。git commit 禁止。\n`
+      + `\n## Token cap\n350 語以内で完結すること。`,
       { agentType: 'dev-runner-haiku', schema: EFFECTDELTA_OBS, label: 'post-summary', phase: 'Merge tier' },
     )
   } catch (err) {
@@ -5432,7 +5472,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
       })),
     } : {}),
     // trust_run_id (issue #413 F4, epic #390 Phase 5): trust receipt/shadow probe を持つ run のみ
-    // RUN_ID（comment-ensure --run-id と同一定数）を telemetry へ再掲し、EffectDelta の effect_id
+    // RUN_ID（comment-prepare/comment-observe --run-id と同一定数）を telemetry へ再掲し、EffectDelta の effect_id
     // 導出（repo+pr+effect_type+run_id+body_digest）と journal 集計が同一 run 識別子を共有できる
     // ようにする。trust 非活性 run（skills repo 以外・kill switch 有効）では出力自体を省略し
     // handoff JSON を byte 互換に保つ（AC-11/AC-15）。journal whitelist 側は journal.sh の

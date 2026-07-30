@@ -137,10 +137,21 @@ test('[D1][AC-3] fix applied:true + commit-ensure dirty:false -> commit-ensure#1
 
   const commitEnsureCalls = agentCalls.filter((c) => c.label.startsWith('commit-ensure#'));
   assert.equal(commitEnsureCalls.length, 1, `commit-ensure# は 1 回であるべきだが ${commitEnsureCalls.length} 回だった`);
+  const commitEnsurePrompt = commitEnsureCalls[0].prompt;
   assert.ok(
-    commitEnsureCalls[0].prompt.includes('ensure-committed.sh --pr 5 --iteration 1'),
-    `commit-ensure#1 の prompt に 'ensure-committed.sh --pr 5 --iteration 1' を含むべき。先頭400文字: ${commitEnsureCalls[0].prompt.slice(0, 400)}`,
+    commitEnsurePrompt.includes('git') && commitEnsurePrompt.includes('status --porcelain'),
+    `commit-ensure#1 の prompt に 'git' と 'status --porcelain' を含むべき。先頭400文字: ${commitEnsurePrompt.slice(0, 400)}`,
   );
+  assert.ok(
+    commitEnsurePrompt.includes('fix(pr-5)'),
+    `commit-ensure#1 の prompt に 'fix(pr-5)' コミットメッセージを含むべき。先頭400文字: ${commitEnsurePrompt.slice(0, 400)}`,
+  );
+  for (const forbidden of ['ensure-committed.sh', '~/.claude/skills', 'sandbox', 'excludedCommands']) {
+    assert.ok(
+      !commitEnsurePrompt.includes(forbidden),
+      `commit-ensure#1 の prompt は '${forbidden}' を含んではならない。先頭400文字: ${commitEnsurePrompt.slice(0, 400)}`,
+    );
+  }
 
   assert.equal(result?.status, 'lgtm', `result.status は lgtm であるべきだが '${result?.status}' だった`);
   assert.equal(result?.fix_uncommitted_recovered, 0, `fix_uncommitted_recovered は 0 であるべきだが ${result?.fix_uncommitted_recovered} だった`);

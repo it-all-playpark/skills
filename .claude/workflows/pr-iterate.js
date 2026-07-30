@@ -753,7 +753,7 @@ async function ensureFixCommitted(i) {
   let ensured = null
   try {
     ensured = await trackedAgent(
-      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証する（残っていれば commit + push で回収する）。\n\n## Steps\nインストール済み skills の **固定パス** で ensure-committed.sh を実行せよ（リテラルの \`~/.claude/skills/\` プレフィックスをそのまま使うこと）:\n\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/ensure-committed.sh --pr ${PR} --iteration ${i}\n\`\`\`\n**重要**: 必ずこの \`~/.claude/skills/...\` の絶対パス形で起動せよ。worktree 相対パスや $HOME 展開形で起動してはならない。\`~/.claude/skills/*\` で起動した場合のみ sandbox 除外（excludedCommands）が効き、内部の git push が credential helper（gh 連携）を読める。\nスクリプトの stdout JSON をそのまま返せ。\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\nこのスクリプト実行以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証する（残っていれば commit + push で回収する）。\n\n## Steps\n以下を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ:\n1. \`git -C ${isoWt} status --porcelain\` を実行する。出力が空なら { "dirty": false, "committed": false, "pushed": false } を返して終了。\n2. 出力が空でなければ順に実行: \`git -C ${isoWt} add -A\` → \`git -C ${isoWt} commit -m "fix(pr-${PR}): commit leftover review fixes (iteration ${i})"\` → \`git -C ${isoWt} push\`（push が失敗した場合のみ \`git -C ${isoWt} push -u origin HEAD\` を実行）。\n3. \`git -C ${isoWt} status --porcelain\` を再実行する。出力が空なら committed:true、空でなければ committed:false。\n4. \`git -C ${isoWt} rev-list "@{u}"..HEAD --count\` を実行する。出力が 0 なら pushed:true。コマンド失敗または非数値出力なら pushed:false。\n5. { "dirty": true, "committed": <3の結果>, "pushed": <4の結果> } を返す。\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n上記 git コマンド以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
       { agentType: 'dev-runner-haiku', schema: COMMIT_ENSURE, label: `commit-ensure#${i}`, phase: 'Iterate' },
     )
   } catch (e) {
@@ -1006,7 +1006,7 @@ if (status !== 'lgtm') {
   let probe = null
   try {
     probe = await trackedAgent(
-      `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\nインストール済み skills の固定パスで実行せよ: \`bash ~/.claude/skills/pr-iterate/scripts/ensure-committed.sh --check-only\`\nスクリプトの stdout JSON をそのまま返せ。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+      `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\n\`git -C ${isoWt} status --porcelain\` を bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ。出力が空なら { "dirty": false, "files": 0 }。出力が非空なら { "dirty": true, "files": <出力の非空行数> }。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
       { agentType: 'dev-runner-haiku-ro', schema: DIRTY_STATUS, label: 'worktree-dirty-check', phase: 'Iterate' },
     )
   } catch (e) {

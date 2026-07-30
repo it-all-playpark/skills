@@ -109,7 +109,7 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
       return { logged: true, summary: 'ok' };
     }
     // commit-ensure（issue #437: fix 適用直後の commit 保証。未 stub だと fail-safe で fix_failed になる）
-    if (agentType === 'dev-runner-haiku' && promptStr.includes('ensure-committed.sh') && !promptStr.includes('--check-only')) {
+    if (label.startsWith('commit-ensure#')) {
       return { dirty: false, committed: false, pushed: false };
     }
     return null;

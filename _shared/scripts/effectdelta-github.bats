@@ -1,380 +1,282 @@
 #!/usr/bin/env bats
-# Tests for _shared/scripts/effectdelta-github.sh (issue #412, #390 Phase 4)
+# Tests for _shared/scripts/effectdelta-github.sh (issue #412, #390 Phase 4;
+# refactored to a pure file-input transform in issue #466).
 #
-# Strategy: shim out `gh` and `git` with stubs (same pattern as
-# dev-issue-analyze/scripts/surfaceproof-snapshot.bats / git-pr/scripts/create-pr.bats).
-# The `gh` stub tracks state (open PRs / comments) in JSON files under $STATE_DIR so a
-# single test can drive the script twice (idempotency fixtures) and observe how many
-# times the underlying gh write commands (`pr create` / `pr comment`) were actually
-# invoked (via counter files), independent of what the script *reports*.
+# Strategy: this script performs no `gh` I/O of its own — callers (subagents)
+# run bare `gh`/`git` commands and hand their stdout/stderr to the script as
+# fixture files. So these tests build fixture JSON files directly (no `gh`
+# stub) and drive the script's file-input flags. A real local git repo is used
+# for the worktree fixture since pr-observe still runs local read-only
+# `git -C <worktree> rev-parse` (kept in-script, see issue #466 plan).
 #
-# Covers: AC-8 (PR write-once idempotency + wrong-target + response-loss),
-# AC-9 (comment write-once idempotency + duplicate), kill switch (mode off, zero writes).
+# Covers: AC-8-equivalent (PR observe wrong-target/probe-failure), AC-9-equivalent
+# (comment write-once idempotency via pre/post snapshot classification,
+# duplicate, response-lost), kill switch (mode off, zero out-body writes).
 
 setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     SCRIPT="$SKILLS_REPO/_shared/scripts/effectdelta-github.sh"
 
-    STATE_DIR="$BATS_TMPDIR/state-$$-$RANDOM"
-    mkdir -p "$STATE_DIR"
-    OPEN_PRS_FILE="$STATE_DIR/open_prs.json"
-    COMMENTS_FILE="$STATE_DIR/comments.json"
-    PR_CREATE_CALLS_FILE="$STATE_DIR/pr_create_calls"
-    PR_COMMENT_CALLS_FILE="$STATE_DIR/pr_comment_calls"
-    NEXT_PR_NUMBER_FILE="$STATE_DIR/next_pr_number"
-    NEXT_COMMENT_ID_FILE="$STATE_DIR/next_comment_id"
-
-    echo '[]' > "$OPEN_PRS_FILE"
-    echo '[]' > "$COMMENTS_FILE"
-    echo '0' > "$PR_CREATE_CALLS_FILE"
-    echo '0' > "$PR_COMMENT_CALLS_FILE"
-    echo '100' > "$NEXT_PR_NUMBER_FILE"
-    echo '900' > "$NEXT_COMMENT_ID_FILE"
-
-    export OPEN_PRS_FILE COMMENTS_FILE PR_CREATE_CALLS_FILE PR_COMMENT_CALLS_FILE NEXT_PR_NUMBER_FILE NEXT_COMMENT_ID_FILE
-    export PR_CREATE_MODE=success
-    export COMMENT_POST_MODE=success
     unset TRUST_KILL_SWITCH
-
-    STUB_DIR="$BATS_TMPDIR/stub-bin-$$-$RANDOM"
-    mkdir -p "$STUB_DIR"
-
-    cat > "$STUB_DIR/gh" << 'GHEOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-incr() {
-    local f="$1" n
-    n=$(cat "$f")
-    echo $((n + 1)) > "$f"
-}
-
-case "$1" in
-    auth)
-        echo "dummy-token"
-        exit 0
-        ;;
-    repo)
-        echo "it-all-playpark/skills"
-        exit 0
-        ;;
-    pr)
-        shift
-        case "$1" in
-            view)
-                NUM="$2"
-                MATCH=$(jq -c --argjson n "$NUM" '[.[] | select(.number == $n)][0] // null' "$OPEN_PRS_FILE")
-                if [[ "$MATCH" == "null" ]]; then
-                    echo "gh: pull request #$NUM not found" >&2
-                    exit 1
-                fi
-                echo "$MATCH"
-                exit 0
-                ;;
-            list)
-                jq -c '.' "$OPEN_PRS_FILE"
-                exit 0
-                ;;
-            create)
-                # Reject flags that don't exist on the real `gh pr create` (e.g. a
-                # stale --title-file) so drift between this stub and the real CLI
-                # surfaces as a test failure instead of silently passing.
-                ALLOWED_CREATE_FLAGS=" --repo --base --head --title --body-file "
-                for a in "$@"; do
-                    if [[ "$a" == --* ]]; then
-                        if [[ "$ALLOWED_CREATE_FLAGS" != *" $a "* ]]; then
-                            echo "gh: unknown flag: $a" >&2
-                            exit 1
-                        fi
-                    fi
-                done
-                incr "$PR_CREATE_CALLS_FILE"
-                BASE="" HEAD_OID=""
-                prev=""
-                for a in "$@"; do
-                    if [[ "$prev" == "--base" ]]; then BASE="$a"; fi
-                    prev="$a"
-                done
-                NUM=$(cat "$NEXT_PR_NUMBER_FILE")
-                echo $((NUM + 1)) > "$NEXT_PR_NUMBER_FILE"
-                URL="https://github.com/it-all-playpark/skills/pull/$NUM"
-                if [[ "${PR_CREATE_MODE:-success}" == "success" ]]; then
-                    ENTRY=$(jq -n --argjson number "$NUM" --arg url "$URL" --arg base "$BASE" --arg head_oid "$PR_CREATE_HEAD_OID" \
-                        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}')
-                    jq -c --argjson e "$ENTRY" '. + [$e]' "$OPEN_PRS_FILE" > "$OPEN_PRS_FILE.tmp" && mv "$OPEN_PRS_FILE.tmp" "$OPEN_PRS_FILE"
-                    echo "$URL"
-                    exit 0
-                elif [[ "${PR_CREATE_MODE:-success}" == "fail-but-succeeded" ]]; then
-                    ENTRY=$(jq -n --argjson number "$NUM" --arg url "$URL" --arg base "$BASE" --arg head_oid "$PR_CREATE_HEAD_OID" \
-                        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}')
-                    jq -c --argjson e "$ENTRY" '. + [$e]' "$OPEN_PRS_FILE" > "$OPEN_PRS_FILE.tmp" && mv "$OPEN_PRS_FILE.tmp" "$OPEN_PRS_FILE"
-                    echo "gh: response lost" >&2
-                    exit 1
-                else
-                    echo "gh: create failed" >&2
-                    exit 1
-                fi
-                ;;
-            comment)
-                incr "$PR_COMMENT_CALLS_FILE"
-                PRNUM="$2"
-                BODY_FILE=""
-                prev=""
-                for a in "$@"; do
-                    if [[ "$prev" == "--body-file" ]]; then BODY_FILE="$a"; fi
-                    prev="$a"
-                done
-                ID=$(cat "$NEXT_COMMENT_ID_FILE")
-                echo $((ID + 1)) > "$NEXT_COMMENT_ID_FILE"
-                URL="https://github.com/it-all-playpark/skills/pull/$PRNUM#issuecomment-$ID"
-                if [[ "${COMMENT_POST_MODE:-success}" == "success" ]]; then
-                    BODY_B64=$(base64 < "$BODY_FILE" | tr -d '\n')
-                    ENTRY=$(jq -n --argjson id "$ID" --arg body_b64 "$BODY_B64" --arg html_url "$URL" \
-                        '{id:$id, author:"github-actions[bot]", html_url:$html_url, body:($body_b64 | @base64d)}')
-                    jq -c --argjson e "$ENTRY" '. + [$e]' "$COMMENTS_FILE" > "$COMMENTS_FILE.tmp" && mv "$COMMENTS_FILE.tmp" "$COMMENTS_FILE"
-                    echo "$URL"
-                    exit 0
-                elif [[ "${COMMENT_POST_MODE:-success}" == "fail-but-succeeded" ]]; then
-                    BODY_B64=$(base64 < "$BODY_FILE" | tr -d '\n')
-                    ENTRY=$(jq -n --argjson id "$ID" --arg body_b64 "$BODY_B64" --arg html_url "$URL" \
-                        '{id:$id, author:"github-actions[bot]", html_url:$html_url, body:($body_b64 | @base64d)}')
-                    jq -c --argjson e "$ENTRY" '. + [$e]' "$COMMENTS_FILE" > "$COMMENTS_FILE.tmp" && mv "$COMMENTS_FILE.tmp" "$COMMENTS_FILE"
-                    echo "gh: response lost" >&2
-                    exit 1
-                else
-                    echo "gh: comment post failed" >&2
-                    exit 1
-                fi
-                ;;
-            *)
-                exit 1
-                ;;
-        esac
-        ;;
-    api)
-        # gh api --paginate repos/R/issues/N/comments
-        jq -c '.' "$COMMENTS_FILE"
-        exit 0
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-GHEOF
-    chmod +x "$STUB_DIR/gh"
-
-    cat > "$STUB_DIR/git" << GITEOF
-#!/usr/bin/env bash
-case "\$*" in
-    *"rev-parse HEAD"*)
-        echo "\${GIT_STUB_HEAD_OID:-$(printf 'a%.0s' {1..40})}"
-        ;;
-    *"rev-parse --abbrev-ref HEAD"*)
-        echo "\${GIT_STUB_BRANCH:-feature/issue-412}"
-        ;;
-    *)
-        exit 1
-        ;;
-esac
-GITEOF
-    chmod +x "$STUB_DIR/git"
-
-    export PATH="$STUB_DIR:$PATH"
-    export PR_CREATE_HEAD_OID
-    export GIT_STUB_HEAD_OID="$(printf 'a%.0s' {1..40})"
-    export GIT_STUB_BRANCH="feature/issue-412"
-    PR_CREATE_HEAD_OID="$GIT_STUB_HEAD_OID"
 
     WORKTREE_DIR="$BATS_TMPDIR/wt-$$-$RANDOM"
     mkdir -p "$WORKTREE_DIR"
-}
-
-count_file() {
-    cat "$1"
+    git -C "$WORKTREE_DIR" init -q
+    git -C "$WORKTREE_DIR" config user.email "test@example.com"
+    git -C "$WORKTREE_DIR" config user.name "Test"
+    echo "seed" > "$WORKTREE_DIR/seed.txt"
+    git -C "$WORKTREE_DIR" add seed.txt
+    git -C "$WORKTREE_DIR" commit -q -m "seed"
+    HEAD_OID="$(git -C "$WORKTREE_DIR" rev-parse HEAD)"
 }
 
 # ---------------------------------------------------------------------------
 # pr-observe: happy path readback matches intended -> observed/OK
 # ---------------------------------------------------------------------------
 @test "pr-observe: readback matches intended -> observation.status=observed" {
-    ENTRY=$(jq -n --argjson number 200 --arg url "https://github.com/it-all-playpark/skills/pull/200" \
-        --arg base "main" --arg head_oid "$GIT_STUB_HEAD_OID" \
-        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}')
-    jq -c --argjson e "$ENTRY" '. + [$e]' "$OPEN_PRS_FILE" > "$OPEN_PRS_FILE.tmp" && mv "$OPEN_PRS_FILE.tmp" "$OPEN_PRS_FILE"
+    VIEW_FILE="$BATS_TMPDIR/view-200.json"
+    jq -n --argjson number 200 --arg url "https://github.com/it-all-playpark/skills/pull/200" \
+        --arg base "main" --arg head_oid "$HEAD_OID" \
+        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}' > "$VIEW_FILE"
+    LIST_FILE="$BATS_TMPDIR/list-200.json"
+    jq -n --argjson number 200 --arg url "https://github.com/it-all-playpark/skills/pull/200" \
+        --arg base "main" --arg head_oid "$HEAD_OID" \
+        '[{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}]' > "$LIST_FILE"
 
-    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200 --base main
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200 --base main \
+        --pr-view-json "$VIEW_FILE" --pr-list-json "$LIST_FILE"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.observation.status == "observed"'
     echo "$output" | jq -e '.observation.reason_code == "OK"'
 }
 
-@test "pr-observe: gh pr view failure -> {ok:false,error} exit 0 (not die)" {
-    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 999 --base main
+@test "pr-observe: --pr-view-err -> {ok:false,error} exit 0 (not die)" {
+    ERR_FILE="$BATS_TMPDIR/view-err-999.txt"
+    echo "pull request #999 not found" > "$ERR_FILE"
+
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 999 --base main \
+        --pr-view-err "$ERR_FILE"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false'
-    echo "$output" | jq -e '.error | length > 0'
+    echo "$output" | jq -e '.error | contains("pr view readback failed")'
 }
 
 # intended.base は呼び出し元の意図値（--base）から取る。readback 由来にすると base 照合が
 # 恒真になり、base 起因の WRONG_TARGET が構造的に検出不能になる（PR #417 レビュー指摘）。
 @test "pr-observe: readback の base が intended.base(--base) と不一致 -> mismatch/WRONG_TARGET" {
-    ENTRY=$(jq -n --argjson number 301 --arg url "https://github.com/it-all-playpark/skills/pull/301" \
-        --arg base "develop" --arg head_oid "$GIT_STUB_HEAD_OID" \
-        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}')
-    jq -c --argjson e "$ENTRY" '. + [$e]' "$OPEN_PRS_FILE" > "$OPEN_PRS_FILE.tmp" && mv "$OPEN_PRS_FILE.tmp" "$OPEN_PRS_FILE"
+    VIEW_FILE="$BATS_TMPDIR/view-301.json"
+    jq -n --argjson number 301 --arg url "https://github.com/it-all-playpark/skills/pull/301" \
+        --arg base "develop" --arg head_oid "$HEAD_OID" \
+        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}' > "$VIEW_FILE"
 
-    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 301 --base main
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 301 --base main \
+        --pr-view-json "$VIEW_FILE"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true'
     echo "$output" | jq -e '.observation.status == "mismatch"'
     echo "$output" | jq -e '.observation.reason_code == "WRONG_TARGET"'
 }
 
+@test "pr-observe: --pr-list-json 省略時は candidates=null -> readback 一致でも matchCount!=1 で mismatch/WRONG_TARGET" {
+    VIEW_FILE="$BATS_TMPDIR/view-210.json"
+    jq -n --argjson number 210 --arg url "https://github.com/it-all-playpark/skills/pull/210" \
+        --arg base "main" --arg head_oid "$HEAD_OID" \
+        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}' > "$VIEW_FILE"
+
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 210 --base main \
+        --pr-view-json "$VIEW_FILE"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.observation.status == "mismatch"'
+    echo "$output" | jq -e '.observation.reason_code == "WRONG_TARGET"'
+}
+
 @test "pr-observe: --base 未指定は usage error (readback からの導出へ暗黙 fallback しない)" {
-    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200
+    VIEW_FILE="$BATS_TMPDIR/view-200b.json"
+    echo '{}' > "$VIEW_FILE"
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200 --pr-view-json "$VIEW_FILE"
     [ "$status" -ne 0 ]
     [[ "$output" == *"--base required"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# gh stub flag drift guard: real `gh pr create` has no --title-file flag
-# (only --title <string> / --body-file <path>). This documents the safety
-# net that would have caught the --title-file regression (see AC-8 below,
-# which exercises the real invocation path end to end).
-# ---------------------------------------------------------------------------
-@test "gh stub: pr create rejects unknown flag (e.g. --title-file) like the real CLI would" {
-    run "$STUB_DIR/gh" pr create --repo it-all-playpark/skills --base main --head feature/issue-412 --title-file "$BATS_TMPDIR/title.txt" --body-file "$BATS_TMPDIR/body.txt"
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"unknown flag: --title-file"* ]]
+@test "pr-observe: --repo 未指定は usage error (gh repo view fallback を撤去)" {
+    VIEW_FILE="$BATS_TMPDIR/view-200c.json"
+    echo '{}' > "$VIEW_FILE"
+    run bash "$SCRIPT" pr-observe 412 --worktree "$WORKTREE_DIR" --pr 200 --base main --pr-view-json "$VIEW_FILE"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--repo required"* ]]
+}
+
+@test "pr-observe: --pr-view-json / --pr-view-err のどちらも未指定は usage error" {
+    run bash "$SCRIPT" pr-observe 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --pr 200 --base main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--pr-view-json or --pr-view-err"* ]]
 }
 
 # ---------------------------------------------------------------------------
-# AC-8: pr-ensure write-once idempotency
+# comment-prepare
 # ---------------------------------------------------------------------------
-@test "AC-8 pr-ensure: 2回実行しても gh pr create はちょうど1回・open PRは1件のみ" {
-    TITLE_FILE="$BATS_TMPDIR/title.txt"; echo "Test PR" > "$TITLE_FILE"
-    BODY_FILE="$BATS_TMPDIR/body.txt"; echo "body" > "$BODY_FILE"
+@test "comment-prepare: mode off -> byte-identical short-circuit output, out-body not written" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-kill.txt"; echo "kill switch body" > "$BODY_FILE"
+    OUT_BODY="$BATS_TMPDIR/out-body-kill.md"
+    export TRUST_KILL_SWITCH=1
 
-    run bash "$SCRIPT" pr-ensure 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --base main --title-file "$TITLE_FILE" --body-file "$BODY_FILE"
+    run bash "$SCRIPT" comment-prepare --repo it-all-playpark/skills --pr 7 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-kill --out-body "$OUT_BODY"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.observation.status == "observed"'
-    [ "$(count_file "$PR_CREATE_CALLS_FILE")" -eq 1 ]
-
-    run bash "$SCRIPT" pr-ensure 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --base main --title-file "$TITLE_FILE" --body-file "$BODY_FILE"
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.observation.status == "observed"'
-    # gh pr create must NOT have been called again (idempotent skip)
-    [ "$(count_file "$PR_CREATE_CALLS_FILE")" -eq 1 ]
-
-    OPEN_COUNT=$(jq '[.[] | select(.state == "OPEN")] | length' "$OPEN_PRS_FILE")
-    [ "$OPEN_COUNT" -eq 1 ]
+    [ "$output" = '{"ok":true,"mode":"off","op":"comment-ensure","posted":false}' ]
+    [ ! -f "$OUT_BODY" ]
 }
 
-@test "wrong-target fixture: readback の base 不一致 -> mismatch/WRONG_TARGET" {
-    ENTRY=$(jq -n --argjson number 300 --arg url "https://github.com/it-all-playpark/skills/pull/300" \
-        --arg base "develop" --arg head_oid "$GIT_STUB_HEAD_OID" \
-        '{number:$number, url:$url, baseRefName:$base, headRefOid:$head_oid, state:"OPEN"}')
-    jq -c --argjson e "$ENTRY" '. + [$e]' "$OPEN_PRS_FILE" > "$OPEN_PRS_FILE.tmp" && mv "$OPEN_PRS_FILE.tmp" "$OPEN_PRS_FILE"
+@test "comment-prepare: normal mode -> effect_id/marker derived, out-body has marker appended" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-prep.txt"; echo "Summary comment body" > "$BODY_FILE"
+    OUT_BODY="$BATS_TMPDIR/out-body-prep.md"
 
-    TITLE_FILE="$BATS_TMPDIR/title2.txt"; echo "Test PR" > "$TITLE_FILE"
-    BODY_FILE="$BATS_TMPDIR/body2.txt"; echo "body" > "$BODY_FILE"
-
-    # base=main is requested but the only existing open PR for this head has base=develop,
-    # so pr-ensure creates a NEW PR (no exact base+head+state match) rather than treating
-    # the develop-based PR as the same effect.
-    run bash "$SCRIPT" pr-ensure 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --base main --title-file "$TITLE_FILE" --body-file "$BODY_FILE"
+    run bash "$SCRIPT" comment-prepare --repo it-all-playpark/skills --pr 5 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-412 --out-body "$OUT_BODY"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.observation.status == "observed"'
-    [ "$(count_file "$PR_CREATE_CALLS_FILE")" -eq 1 ]
+    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e '.mode == "shadow"'
+    EFFECT_ID=$(echo "$output" | jq -r '.effect_id')
+    [ -n "$EFFECT_ID" ]
+    MARKER=$(echo "$output" | jq -r '.marker')
+    [[ "$MARKER" == "<!-- devflow-effect: ${EFFECT_ID} -->" ]]
+    [ -f "$OUT_BODY" ]
+    grep -qF "Summary comment body" "$OUT_BODY"
+    grep -qF "$MARKER" "$OUT_BODY"
 }
 
-@test "response-loss fixture: gh pr create が exit 1 だが rediscovery で PR が見つかる -> observed" {
-    export PR_CREATE_MODE=fail-but-succeeded
-    TITLE_FILE="$BATS_TMPDIR/title3.txt"; echo "Test PR" > "$TITLE_FILE"
-    BODY_FILE="$BATS_TMPDIR/body3.txt"; echo "body" > "$BODY_FILE"
-
-    run bash "$SCRIPT" pr-ensure 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --base main --title-file "$TITLE_FILE" --body-file "$BODY_FILE"
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.observation.status == "observed"'
-}
-
-@test "response-loss fixture: gh pr create が exit 1 で rediscoveryでも見つからない -> inconclusive/RESPONSE_LOST" {
-    export PR_CREATE_MODE=fail
-    TITLE_FILE="$BATS_TMPDIR/title4.txt"; echo "Test PR" > "$TITLE_FILE"
-    BODY_FILE="$BATS_TMPDIR/body4.txt"; echo "body" > "$BODY_FILE"
-
-    run bash "$SCRIPT" pr-ensure 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --base main --title-file "$TITLE_FILE" --body-file "$BODY_FILE"
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.observation.status == "inconclusive"'
-    echo "$output" | jq -e '.observation.reason_code == "RESPONSE_LOST"'
+@test "comment-prepare: --out-body 未指定は usage error" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-noout.txt"; echo "body" > "$BODY_FILE"
+    run bash "$SCRIPT" comment-prepare --repo it-all-playpark/skills --pr 5 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-412
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--out-body required"* ]]
 }
 
 # ---------------------------------------------------------------------------
-# AC-9: comment-ensure write-once idempotency
+# comment-observe: AC-9-equivalent write-once idempotency (via caller-supplied
+# pre/post comment listing snapshots instead of a live post)
 # ---------------------------------------------------------------------------
-@test "AC-9 comment-ensure: 2回実行しても comment POST はちょうど1回・2回目は posted:true observed/DUPLICATE_EFFECT" {
+@test "AC-9 comment-observe: post-listing に投稿発見 -> observed/OK、再度 pre-listing 発見 -> observed/DUPLICATE_EFFECT" {
     BODY_FILE="$BATS_TMPDIR/comment-body.txt"; echo "Summary comment body" > "$BODY_FILE"
+    OUT_BODY="$BATS_TMPDIR/out-body-ac9.md"
 
-    run bash "$SCRIPT" comment-ensure --repo it-all-playpark/skills --pr 5 --body-file "$BODY_FILE" --effect-type summary-comment --run-id run-412
+    run bash "$SCRIPT" comment-prepare --repo it-all-playpark/skills --pr 5 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-412 --out-body "$OUT_BODY"
+    [ "$status" -eq 0 ]
+
+    # --rawfile (not $(cat ...)) to preserve OUT_BODY's exact bytes (including
+    # trailing newline) — the script's expected_body_digest is computed from
+    # the same bytes, so a stripped newline would make digests diverge.
+    PRE_FILE="$BATS_TMPDIR/pre-ac9.json"; echo '[]' > "$PRE_FILE"
+    POST_FILE="$BATS_TMPDIR/post-ac9.json"
+    jq -n --rawfile body "$OUT_BODY" \
+        '[{id:9001, user:{login:"github-actions[bot]"}, html_url:"https://github.com/it-all-playpark/skills/pull/5#issuecomment-9001", body:$body}]' \
+        > "$POST_FILE"
+
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 5 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-412 --pre-comments-json "$PRE_FILE" --post-comments-json "$POST_FILE"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.posted == true'
     echo "$output" | jq -e '.observation.status == "observed"'
     echo "$output" | jq -e '.observation.reason_code == "OK"'
-    [ "$(count_file "$PR_COMMENT_CALLS_FILE")" -eq 1 ]
 
-    run bash "$SCRIPT" comment-ensure --repo it-all-playpark/skills --pr 5 --body-file "$BODY_FILE" --effect-type summary-comment --run-id run-412
+    PRE_FILE2="$BATS_TMPDIR/pre2-ac9.json"
+    jq -n --rawfile body "$OUT_BODY" \
+        '[{id:9001, user:{login:"github-actions[bot]"}, html_url:"https://github.com/it-all-playpark/skills/pull/5#issuecomment-9001", body:$body}]' \
+        > "$PRE_FILE2"
+
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 5 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-412 --pre-comments-json "$PRE_FILE2"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.posted == true'
     echo "$output" | jq -e '.observation.status == "observed"'
     echo "$output" | jq -e '.observation.reason_code == "DUPLICATE_EFFECT"'
-    # gh pr comment must NOT have been called again
-    [ "$(count_file "$PR_COMMENT_CALLS_FILE")" -eq 1 ]
-
-    COMMENT_COUNT=$(jq 'length' "$COMMENTS_FILE")
-    [ "$COMMENT_COUNT" -eq 1 ]
 }
 
-@test "duplicate fixture: marker 2件 -> mismatch/DUPLICATE_EFFECT" {
+@test "duplicate fixture: pre-listing に marker 2件 -> mismatch/DUPLICATE_EFFECT" {
     BODY_FILE="$BATS_TMPDIR/comment-body-dup.txt"; echo "Duplicated body" > "$BODY_FILE"
+    OUT_BODY="$BATS_TMPDIR/out-body-dup.md"
 
-    # Seed two pre-existing comments that already contain the marker for this exact
-    # effect (simulating a prior concurrent duplicate post) before running the script.
-    run bash "$SCRIPT" comment-ensure --repo it-all-playpark/skills --pr 6 --body-file "$BODY_FILE" --effect-type summary-comment --run-id run-dup
+    run bash "$SCRIPT" comment-prepare --repo it-all-playpark/skills --pr 6 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-dup --out-body "$OUT_BODY"
     [ "$status" -eq 0 ]
-    EFFECT_ID=$(echo "$output" | jq -r '.effect_id')
-    MARKER="<!-- devflow-effect: ${EFFECT_ID} -->"
+    MARKER=$(echo "$output" | jq -r '.marker')
 
-    EXTRA=$(jq -n --argjson id 999001 --arg body "duplicate 1${MARKER}" '{id:$id, author:"someone", html_url:"https://x/1", body:$body}')
-    jq -c --argjson e "$EXTRA" '. + [$e]' "$COMMENTS_FILE" > "$COMMENTS_FILE.tmp" && mv "$COMMENTS_FILE.tmp" "$COMMENTS_FILE"
+    PRE_FILE="$BATS_TMPDIR/pre-dup.json"
+    jq -n --arg body1 "duplicate 1${MARKER}" --arg body2 "duplicate 2${MARKER}" \
+        '[{id:999001, user:{login:"someone"}, html_url:"https://x/1", body:$body1},
+          {id:999002, user:{login:"someone"}, html_url:"https://x/2", body:$body2}]' \
+        > "$PRE_FILE"
 
-    run bash "$SCRIPT" comment-ensure --repo it-all-playpark/skills --pr 6 --body-file "$BODY_FILE" --effect-type summary-comment --run-id run-dup
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 6 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-dup --pre-comments-json "$PRE_FILE"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.observation.status == "mismatch"'
     echo "$output" | jq -e '.observation.reason_code == "DUPLICATE_EFFECT"'
 }
 
-# ---------------------------------------------------------------------------
-# kill switch: TRUST_KILL_SWITCH set -> mode off, zero writes
-# ---------------------------------------------------------------------------
-@test "kill switch fixture: TRUST_KILL_SWITCH=1 -> mode off, comment-ensure が投稿ゼロ" {
-    BODY_FILE="$BATS_TMPDIR/comment-body-kill.txt"; echo "kill switch body" > "$BODY_FILE"
-    export TRUST_KILL_SWITCH=1
+@test "response-lost fixture: --response-lost かつ post-listing でも rediscovery できない -> inconclusive/RESPONSE_LOST" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-lost.txt"; echo "Lost body" > "$BODY_FILE"
+    PRE_FILE="$BATS_TMPDIR/pre-lost.json"; echo '[]' > "$PRE_FILE"
 
-    run bash "$SCRIPT" comment-ensure --repo it-all-playpark/skills --pr 7 --body-file "$BODY_FILE" --effect-type summary-comment --run-id run-kill
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 8 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-lost --pre-comments-json "$PRE_FILE" --response-lost
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.mode == "off"'
-    echo "$output" | jq -e '.posted == false'
-    [ "$(count_file "$PR_COMMENT_CALLS_FILE")" -eq 0 ]
+    echo "$output" | jq -e '.observation.status == "inconclusive"'
+    echo "$output" | jq -e '.observation.reason_code == "RESPONSE_LOST"'
 }
 
-@test "kill switch fixture: TRUST_KILL_SWITCH=1 -> mode off, pr-ensure が gh pr create を一切呼ばない" {
-    TITLE_FILE="$BATS_TMPDIR/title-kill.txt"; echo "Test PR" > "$TITLE_FILE"
-    BODY_FILE="$BATS_TMPDIR/body-kill.txt"; echo "body" > "$BODY_FILE"
+@test "response-lost fixture: --response-lost だが post-listing で rediscovery できた -> observed/OK" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-relost.txt"; echo "Recovered body" > "$BODY_FILE"
+    OUT_BODY="$BATS_TMPDIR/out-body-relost.md"
+
+    run bash "$SCRIPT" comment-prepare --repo it-all-playpark/skills --pr 9 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-relost --out-body "$OUT_BODY"
+    [ "$status" -eq 0 ]
+
+    PRE_FILE="$BATS_TMPDIR/pre-relost.json"; echo '[]' > "$PRE_FILE"
+    POST_FILE="$BATS_TMPDIR/post-relost.json"
+    jq -n --rawfile body "$OUT_BODY" \
+        '[{id:9100, user:{login:"github-actions[bot]"}, html_url:"https://github.com/it-all-playpark/skills/pull/9#issuecomment-9100", body:$body}]' \
+        > "$POST_FILE"
+
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 9 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-relost --pre-comments-json "$PRE_FILE" \
+        --post-comments-json "$POST_FILE" --response-lost
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.posted == true'
+    echo "$output" | jq -e '.observation.status == "observed"'
+    echo "$output" | jq -e '.observation.reason_code == "OK"'
+}
+
+@test "comment-observe: --pre-comments-err -> {ok:false,error} exit 0 (not die)" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-err.txt"; echo "body" > "$BODY_FILE"
+    ERR_FILE="$BATS_TMPDIR/pre-err.txt"; echo "API rate limit exceeded" > "$ERR_FILE"
+
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 10 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-err --pre-comments-err "$ERR_FILE"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false'
+    echo "$output" | jq -e '.error | contains("comments listing failed (pre-post discovery)")'
+}
+
+@test "comment-observe: --pre-comments-json / --pre-comments-err のどちらも未指定は usage error" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-noargs.txt"; echo "body" > "$BODY_FILE"
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 10 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-noargs
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--pre-comments-json or --pre-comments-err"* ]]
+}
+
+@test "comment-observe: mode off -> byte-identical short-circuit output even with pre-comments-json supplied" {
+    BODY_FILE="$BATS_TMPDIR/comment-body-obskill.txt"; echo "body" > "$BODY_FILE"
+    PRE_FILE="$BATS_TMPDIR/pre-obskill.json"; echo '[]' > "$PRE_FILE"
     export TRUST_KILL_SWITCH=1
 
-    run bash "$SCRIPT" pr-ensure 412 --repo it-all-playpark/skills --worktree "$WORKTREE_DIR" --base main --title-file "$TITLE_FILE" --body-file "$BODY_FILE"
+    run bash "$SCRIPT" comment-observe --repo it-all-playpark/skills --pr 11 --body-file "$BODY_FILE" \
+        --effect-type summary-comment --run-id run-obskill --pre-comments-json "$PRE_FILE"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.mode == "off"'
-    [ "$(count_file "$PR_CREATE_CALLS_FILE")" -eq 0 ]
+    [ "$output" = '{"ok":true,"mode":"off","op":"comment-ensure","posted":false}' ]
 }
