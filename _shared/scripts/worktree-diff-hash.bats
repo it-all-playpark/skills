@@ -153,3 +153,40 @@ teardown() {
     [ "$status" -eq 0 ]
     printf '%s\n' "$output" | grep -q '"empty":false'
 }
+
+# ---------------------------------------------------------------------------
+# 9. 正常出力に整数 epoch フィールドが含まれる（jq で number 型を検証）
+# ---------------------------------------------------------------------------
+@test "output includes integer epoch field" {
+    run bash "$SCRIPT" "$WT" "$BASE_REF"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | grep -q '"epoch":'
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$output" | jq -e '.epoch | type == "number"' >/dev/null
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 10. hash/empty の既存挙動は epoch 追加後も不変
+# ---------------------------------------------------------------------------
+@test "hash and empty fields remain unchanged after epoch addition" {
+    run bash "$SCRIPT" "$WT" "$BASE_REF"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | grep -q '"hash":"[^"]*"'
+    printf '%s\n' "$output" | grep -q '"empty":true'
+}
+
+# ---------------------------------------------------------------------------
+# 11. エラー経路（引数不足・worktree 不在）は epoch 追加後も JSON 無し・exit 1 のまま
+# ---------------------------------------------------------------------------
+@test "error path (missing args) still exits non-zero without JSON output" {
+    run bash "$SCRIPT"
+    [ "$status" -ne 0 ]
+    [[ "$output" != *'"epoch"'* ]]
+}
+
+@test "error path (nonexistent worktree) still exits non-zero without JSON output" {
+    run bash "$SCRIPT" "/nonexistent-worktree-path-xyz" "$BASE_REF"
+    [ "$status" -ne 0 ]
+    [[ "$output" != *'"epoch"'* ]]
+}

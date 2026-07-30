@@ -355,3 +355,75 @@ test('[W5] dev-flow.js: merge tier 算出と return フィールドが存在', (
   assert.ok(src.includes('merge_tier:'), 'return に merge_tier があること');
   assert.ok(src.includes("phase('Merge tier')"), 'Merge tier phase があること');
 });
+
+// ---- 7. issue #443: clock epoch 給電 prompt の退行検出 --------------------------------------
+//
+// 専用 clock probe（dev-runner-haiku-ro の clockProbe() 呼び出し）は Setup 冒頭の start と
+// Merge tier 末尾の end の 2 回のみに削減され、残り 9 mark は隣接する既存 exec-proxy / agent
+// 応答の optional epoch フィールドから feedClockMark() 経由で給電される。給電元 prompt は
+// 末尾に EPOCH_INSTRUCTION（`date +%s` を 1 回実行し epoch として返せという指示）を追記して
+// いる。この指示が silent に prompt から失われる退行を検出するため:
+//   (a) EPOCH_INSTRUCTION 自体の定義が `date +%s` を実行する指示であること
+//   (b) 給電対象 prompt 定義（PLANNER_HANDOFF_RULE / STAGING_CONVENTION / VALIDATE_TEST_PROMPT /
+//       reviewPromptLite / contractProbePrompt）の近傍に EPOCH_INSTRUCTION 参照が存在すること
+//   (c) 専用 clock probe の呼び出し（clockProbe('...')）が clockProbe('start' / clockProbe('end')
+//       の 2 箇所のみであること（AC-1 の静的検出）
+// をソース文字列 assert で保証する。
+
+test('[epoch-instruction] dev-flow.js: EPOCH_INSTRUCTION の定義自体が `date +%s` を実行する指示を含む', () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  const m = src.match(/const EPOCH_INSTRUCTION\s*=\s*'([^']*)'/);
+  assert.ok(m, 'EPOCH_INSTRUCTION の定義（`const EPOCH_INSTRUCTION = \'...\'`）が dev-flow.js に見つかること');
+  assert.ok(
+    m[1].includes('date +%s'),
+    `EPOCH_INSTRUCTION の定義に "date +%s" 指示が含まれるべきだが含まれていなかった: ${m[1]}`,
+  );
+});
+
+/**
+ * src を行分割し、anchorPattern に最初にマッチした行から windowLines 行分を切り出して返す。
+ * 見つからなければ null。
+ */
+function sourceWindowAfterAnchor(src, anchorPattern, windowLines) {
+  const lines = src.split('\n');
+  const idx = lines.findIndex((l) => anchorPattern.test(l));
+  if (idx === -1) return null;
+  return lines.slice(idx, idx + windowLines).join('\n');
+}
+
+// [定数名/アンカー行に一致する正規表現, 切り出す行数] — 各 prompt 定義の近傍に
+// EPOCH_INSTRUCTION 参照（date +%s 給電指示）が存在することを検証する対象。
+const EPOCH_FED_PROMPT_ANCHORS = [
+  ['PLANNER_HANDOFF_RULE', /^\s*const PLANNER_HANDOFF_RULE\b/, 6],
+  ['STAGING_CONVENTION', /^\s*const STAGING_CONVENTION\b/, 10],
+  ['VALIDATE_TEST_PROMPT', /^\s*const VALIDATE_TEST_PROMPT\b/, 15],
+  ['reviewPromptLite', /^\s*const reviewPromptLite\b/, 10],
+  ['contractProbePrompt', /^\s*const contractProbePrompt\b/, 20],
+];
+
+for (const [name, anchorPattern, windowLines] of EPOCH_FED_PROMPT_ANCHORS) {
+  test(`[epoch-instruction] dev-flow.js: ${name} 定義の近傍に epoch 取得指示（EPOCH_INSTRUCTION）が含まれる`, () => {
+    const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+    const region = sourceWindowAfterAnchor(src, anchorPattern, windowLines);
+    assert.ok(region, `${name} の定義箇所（アンカー行）が dev-flow.js に見つかること`);
+    assert.ok(
+      region.includes('EPOCH_INSTRUCTION'),
+      `${name} の定義（近傍 ${windowLines} 行）に EPOCH_INSTRUCTION 参照が含まれるべきだが含まれていなかった:\n${region}`,
+    );
+  });
+}
+
+test("[epoch-instruction] dev-flow.js: clockProbe(' の呼び出しは clockProbe('start' と clockProbe('end' の 2 箇所のみ", () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  const clockProbeCalls = [...src.matchAll(/clockProbe\('[^']*'/g)].map((m) => m[0]);
+  assert.equal(
+    clockProbeCalls.length,
+    2,
+    `clockProbe(' の呼び出しはちょうど 2 箇所であるべきだが ${clockProbeCalls.length} 箇所だった: ${JSON.stringify(clockProbeCalls)}`,
+  );
+  assert.deepEqual(
+    [...clockProbeCalls].sort(),
+    ["clockProbe('end'", "clockProbe('start'"],
+    `clockProbe(' の呼び出しは clockProbe('start' / clockProbe('end') の 2 種のみであるべきだが ${JSON.stringify(clockProbeCalls)} だった`,
+  );
+});

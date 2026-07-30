@@ -6,8 +6,10 @@
 # 実 index・working tree を一切変更しない（GIT_INDEX_FILE 退避で保証）。
 #
 # 使い方: worktree-diff-hash.sh <worktree-path> <base-ref>
-# 出力(stdout, JSON 1行): {"hash":"<tree OID>","empty":true|false}
+# 出力(stdout, JSON 1行): {"hash":"<tree OID>","empty":true|false,"epoch":<int>|null}
 #   empty は tree == base_tree の文字列一致（staged+unstaged+untracked を包含）
+#   epoch は `date +%s` 取得の整数秒（失敗時は null。fail-open で
+#   recordClockMark 側は非数値を mark null 扱いする）
 # Exit: 0 on success, 1 on error (no JSON on error)
 set -euo pipefail
 
@@ -63,4 +65,7 @@ else
     empty="false"
 fi
 
-printf '{"hash":"%s","empty":%s}\n' "$tree" "$empty"
+# epoch 取得失敗（date コマンド異常等）でもスクリプト全体を fail させない
+epoch=$(date +%s 2>/dev/null || echo null)
+
+printf '{"hash":"%s","empty":%s,"epoch":%s}\n' "$tree" "$empty" "$epoch"

@@ -357,8 +357,13 @@ function mergeSubagentCounts(counts, byType) {
 
 // ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
-// I/O なし・Date.now/Math.random 不使用。時刻取得は dev-runner-haiku-ro exec-proxy（clockProbePrompt）
-// に委譲し、recordClockMark/computeDurations が結果を集計する（fail-open — probe 失敗は当該区間欠落）。
+// I/O なし・Date.now/Math.random 不使用。専用 clock probe（dev-runner-haiku-ro）は start/end の
+// 2 回のみ。残り 9 mark（analyze_start/analyze_end/plan_end/implement_end/validate_end/
+// evaluate_end/pr_end/iterate_end/final_end）は phase 境界に隣接する既存 exec-proxy / agent 応答の
+// optional epoch フィールドから recordClockMark へ給電する（fail-open — 給電元失敗は当該 mark null →
+// 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
+// 使うため shape 判定・surfaceproof shadow の時間が plan 区間へ付け替わる — phase_durations は
+// 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -436,6 +441,43 @@ function recordClockMark(marks, name, res) {
   }
   marks[name] = null;
   return `⚠️ clock#${name} の取得に失敗 — duration telemetry は当該区間を欠落させる（fail-open）`;
+}
+
+/**
+ * 隣接する既存 exec-proxy / agent 応答から recordClockMark 給電用の {ok:true, epoch} を抽出する。
+ * ok フラグの有無は見ない（LLM agent 応答には ok が無いため）。epoch が有限数値でなければ null。
+ * @param {{epoch?: unknown}|null|undefined} res - 給電元の応答 object
+ * @returns {{ok: true, epoch: number}|null}
+ */
+function epochResOf(res) {
+  if (!res || typeof res !== 'object') {
+    return null;
+  }
+  const epoch = res.epoch;
+  if (typeof epoch === 'number' && Number.isFinite(epoch)) {
+    return { ok: true, epoch };
+  }
+  return null;
+}
+
+/**
+ * epochResOf 由来の候補配列（null 混在可）から最大 epoch の給電結果を選ぶ。
+ * 並列 implementer など完了順が不定な複数給電元から「最後に完了したもの」を採用するために使う。
+ * @param {Array<{ok: true, epoch: number}|null>|null|undefined} list - epochResOf の適用結果配列
+ * @returns {{ok: true, epoch: number}|null}
+ */
+function maxEpochRes(list) {
+  if (!Array.isArray(list)) {
+    return null;
+  }
+  let best = null;
+  for (const item of list) {
+    const res = epochResOf(item);
+    if (res !== null && (best === null || res.epoch > best.epoch)) {
+      best = res;
+    }
+  }
+  return best;
 }
 
 /**
@@ -2729,6 +2771,7 @@ const DEPS = {
     results: { type: 'array' },
     error: { type: 'string' },
     custom: { type: 'object' },
+    epoch: { type: 'number' },
   },
 }
 const ISOLATION_PROBE = {
@@ -2760,6 +2803,7 @@ const CONTRACT = {
     ok: { type: 'boolean' },
     result: { type: 'object' },
     error: { type: 'string' },
+    epoch: { type: 'number' },
   },
 }
 // issue #451: analyze 結果の決定論 provenance 突合（gh issue view の exec-proxy）用スキーマ。
@@ -2771,6 +2815,7 @@ const ISSUE_META = {
     number: { type: 'number' },
     title: { type: 'string' },
     error: { type: 'string' },
+    epoch: { type: 'number' },
   },
 }
 // issue #410 (#390 Phase 2): SurfaceProof shadow probe 用スキーマ。
@@ -2801,6 +2846,7 @@ const PLAN = {
     parallel: { type: 'array', items: TASK },
     edge_cases: { type: 'array' },
     notes_for_retry: { type: 'string' },
+    epoch: { type: 'number' },
   },
 }
 const VERDICT = {
@@ -2822,6 +2868,7 @@ const VERDICT = {
       },
     },
     summary: { type: 'string' },
+    epoch: { type: 'number' },
   },
 }
 const IMPL = {
@@ -2842,6 +2889,7 @@ const IMPL = {
       },
     },
     missing_context: { type: ['string', 'null'] },
+    epoch: { type: 'number' },
   },
 }
 const GREEN = {
@@ -2850,6 +2898,7 @@ const GREEN = {
     tests: { type: 'string', enum: ['passed', 'failed', 'no_tests'] },
     green: { type: 'boolean' },
     summary: { type: 'string' },
+    epoch: { type: 'number' },
   },
 }
 const EVAL = {
@@ -2932,6 +2981,7 @@ const EVAL = {
         properties: { id: { type: 'string' }, resolved: { type: 'boolean' }, evidence: { type: 'string' } },
       },
     },
+    epoch: { type: 'number' },
   },
 }
 const FINAL_AC = {
@@ -2973,6 +3023,7 @@ const PRURL = {
   properties: {
     pr_url: { type: 'string' }, pr_number: { type: ['string', 'number'] },
     committed: { type: 'boolean' },
+    epoch: { type: 'number' },
   },
 }
 // pr-reviewer レビュースキーマ（pr-iterate.js の REVIEW と同型。issue #376 F3: lite 経路の
@@ -2999,6 +3050,7 @@ const REVIEW = {
     },
     summary: { type: 'string', maxLength: 200 },
     verification_evidence: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 120 } },
+    epoch: { type: 'number' },
   },
 }
 // CI gate schema（pr-iterate.js の CI_STATUS と同型。issue #376 F3: lite 経路の ci-check-lite に使う）。
@@ -3020,6 +3072,7 @@ const CI_STATUS = {
     },
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
+    epoch: { type: 'number' },
   },
 }
 const RISK = {
@@ -3060,7 +3113,7 @@ const STRUCT = {
 }
 const DIFFHASH = {
   type: 'object', required: ['hash', 'empty'],
-  properties: { hash: { type: 'string' }, empty: { type: 'boolean' } },
+  properties: { hash: { type: 'string' }, empty: { type: 'boolean' }, epoch: { type: 'number' } },
 }
 // ISSUE_LABELS: `gh issue view --json labels` の read-only exec-proxy 結果（issue #432、empty-diff gate の
 // cross-repo lazy probe 用）。required は 'ok' のみ（fail-safe: schema 不一致・ok:false は非 cross-repo 扱い）。
@@ -3079,7 +3132,7 @@ const UICFG = { type: 'object', required: ['found'], properties: { found: { type
 const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { type: 'boolean' }, phase: { type: 'string', enum: ['install', 'start', 'ready'] }, port: { type: ['number', 'string'] }, pid: { type: ['number', 'string'] }, error: { type: 'string' }, log: { type: 'string' } } }
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
-const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' } } }
+const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' }, epoch: { type: 'number' } } }
 // PR_META: gh pr view --json mergeable,mergeStateStatus の read-only exec-proxy 結果 (issue #405)。
 const PR_META = {
   type: 'object', required: ['ok'],
@@ -3179,7 +3232,9 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 
 function setupDepsPrompt(worktree) {
   return `cd ${worktree} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/ensure-worktree-deps.sh --path ${worktree} --lockfile-only --skip-custom`;
+    + `bash ~/.claude/skills/_shared/scripts/ensure-worktree-deps.sh --path ${worktree} --lockfile-only --skip-custom\n`
+    + `全手順の最後に Bash で \`date +%s\` を 1 回実行し、出力の整数を epoch フィールドとして返せ。`
+    + `取得に失敗した場合は epoch を省略してよい（deps 処理の status 判定には一切影響させるな）。`;
 }
 
 function warningImplNote(detail) {
@@ -3462,6 +3517,13 @@ async function trackedAgent(prompt, opts) {
 let WT // Setup で確定
 let DEPS_NOTE = '' // Setup(deps) で確定。install 失敗/未確認時のみ非空（fail-open。issue #291）
 
+// clock 給電（issue #443）: 専用 clock probe を start/end の 2 回のみに削減し、残り 9 mark は
+// 隣接する既存 exec-proxy/agent 応答の optional epoch から給電する。決定論 proxy が隣接しない
+// 境界（plan_end/implement_end/evaluate_end/pr_end 等）は、対象 prompt 末尾へこの 1 文を注入し
+// date +%s の実測値を返させる（fail-open — 取得失敗は epoch 省略、mark null に落ちるのみで
+// 本来の判断・schema required には一切影響しない）。
+const EPOCH_INSTRUCTION = '作業完了後、最後に Bash で `date +%s` を 1 回実行し、出力の整数を epoch フィールドとして返せ。取得に失敗した場合は epoch を省略してよい（本来の作業・判定には一切影響させるな）。\n'
+
 // implementer への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を残すと
 // `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、refloor 誤発火・
 // 宣言外変更 concern の原因になる（issue #216）。agent 定義ファイル（.claude/agents/implementer.md）は
@@ -3472,12 +3534,14 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
   + `worktree 内が不可避な場合は .devflow-tmp/ 配下のみに置き、task 完了前に削除せよ。`
   + `worktree 直下に *.staged.* / fm_*.txt のような一時ファイルを残すことは禁止`
   + `（git status に混入し realized-diff の refloor 誤発火・宣言外変更 concern の原因になる）。\n`
+  + EPOCH_INSTRUCTION
 
 // dev-planner への handoff 配置規約。plan が一時/handoff ファイルの残置を明示指示すると
 // 実装後の realized diff に残り、refloor 誤発火・宣言外変更 concern の原因になる（issue #272 原因(3)）。
 // agent 定義ファイル（.claude/agents/dev-planner.md）は sandbox write-deny のため、
 // 上記 implementer 向け規約と同型で workflow が全 dev-planner spawn prompt に決定論的に注入する。
 const PLANNER_HANDOFF_RULE = '計画規約: task が一時/handoff ファイルの残置を指示する場合は .devflow-tmp/ 配下のパスを指定せよ（realized diff から ephemeral として除外される）。恒久成果物でないファイルを file_changes に含めるな。\n'
+  + EPOCH_INSTRUCTION
 
 // Next.js/Turbopack 固有の build 検証規約（issue #292）。sandbox 内で `next build`（Turbopack）が
 // process 生成・ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する
@@ -3540,6 +3604,8 @@ async function runImplement(req, plan, fixFeedback, tag, extraContext) {
 //  並列は同一 worktree 内で「file_changes が disjoint な」task のみ。plan-reviewer が検証する。）
 // ============================================================
 const clockMarks = {}
+// 専用 probe は start/end の 2 回のみ。残り 9 mark は feedClockMark が隣接 proxy/agent 応答の
+// optional epoch から給電する（fail-open 不変。issue #443）。
 async function clockProbe(name, phaseName) {
   // clock probe は advisory telemetry（duration 集計のみ）のため fail-open で扱う --
   // agent() throw（issue #359 で実在確認済みの EPERM 等の proxy 実行失敗・StructuredOutput 未返却）
@@ -3552,6 +3618,12 @@ async function clockProbe(name, phaseName) {
   const warn = recordClockMark(clockMarks, name, res)
   if (warn) log(warn)
 }
+
+// feedClockMark（issue #443）: 専用 clock probe を経由せず、隣接する既存 exec-proxy/agent 応答の
+// optional epoch から mark を給電する。epochResOf/maxEpochRes は _lib/devflow-durations.mjs の
+// canonical から inline 生成済み（本ファイル冒頭）。recordClockMark の fail-open 契約
+// （null/不一致→mark null+警告）はそのまま踏襲する。
+function feedClockMark(name, res) { const warn = recordClockMark(clockMarks, name, res); if (warn) log(warn) }
 
 phase('Setup')
 await clockProbe('start', 'Setup')
@@ -3613,6 +3685,7 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `それでも失敗するなら tests:"failed" とし失敗要約を summary に入れて即座に StructuredOutput で報告せよ。\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_FALLBACK_CONVENTION
+  + EPOCH_INSTRUCTION
 
 const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${depth}\` を実行し、`
   + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
@@ -3641,7 +3714,8 @@ const contractProbePrompt = `## Objective\n`
   + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止。\n`
   + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
   + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
-  + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
+  + `4. ` + EPOCH_INSTRUCTION
+  + `## Output format\n{ "ok": boolean, "result": object, "error": string, "epoch": number(optional) }\n`
   + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
   + `## Boundary\n\${TMPDIR} の一時ファイル以外は一切変更しない（read-only probe）。\n`
   + `## Token cap\n220 語以内で完結すること。`
@@ -3650,14 +3724,17 @@ const contractProbePrompt = `## Objective\n`
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
 // ============================================================
 phase('Analyze')
-await clockProbe('analyze_start', 'Analyze')
+feedClockMark('analyze_start', epochResOf(depsRes))
 // 決定論 parse 降格経路（issue #374）: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
 // analyze-issue.sh --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
 // fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ
 // フォールバックする（analyzePrompt・REQ・need()・needs_clarification 判定・classifyShape 呼び出しは不変）。
 let req = null
+// analyze_end の clock 給電（issue #443）用に hoist。contract 経路採用時は contractRes、
+// sonnet 経路採用時は issueMetaRes の epoch から給電する（maxEpochRes が両者から最大を採る）。
+let contractRes = null
+let issueMetaRes = null
 if (DEPTH === 'standard') {
-  let contractRes = null
   try {
     contractRes = await trackedAgent(
       contractProbePrompt,
@@ -3683,12 +3760,12 @@ if (!req) {
   ), 'Analyze')
 
   // issue #451: analyze 結果の決定論 provenance 突合（fail-closed — 取得成功を self-report させない）
-  let issueMetaRes = null
   try {
     issueMetaRes = await trackedAgent(
-      `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>} の形で返せ`
+      `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>, "epoch": <date +%s の出力(optional)>} の形で返せ`
       + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。title は一字一句 verbatim で転写せよ）:\n`
-      + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json number,title`,
+      + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json number,title\n`
+      + EPOCH_INSTRUCTION,
       { agentType: 'dev-runner-haiku-ro', schema: ISSUE_META, label: 'issue-meta', phase: 'Analyze' },
     )
   } catch (e) { log('⚠️ issue-meta probe が例外 — fail-closed（取得検証不能として扱う）') }
@@ -3779,7 +3856,10 @@ const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・re
 //   既出 findings 累積で cold start を補償 / 同一 topic 反復で stuck 打ち切り /
 //   iteration 経過で relax / critical は常にブロック / 上限到達でも throw せず Evaluate へ委譲。
 // ============================================================
-await clockProbe('analyze_end', 'Analyze')
+// contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電するため、
+// 以降の shape 判定・SurfaceProof shadow probe の時間が plan 区間へ付け替わる（相対比較・分布
+// 用途のため許容。issue #443）。
+feedClockMark('analyze_end', maxEpochRes([contractRes, issueMetaRes]))
 phase('Plan')
 let plan = null
 let planVerdict = null
@@ -3834,7 +3914,8 @@ for (let i = 1; i <= PLAN_MAX; i++) {
         ? `既出 findings（前 iteration までに指摘済み。planner は対応済みのはず）:\n${JSON.stringify(prior)}\n`
           + `**新規の critical/major のみ報告**せよ。既出論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
           + `同一問題には既出と同じ topic 文字列を再利用せよ。`
-        : ''),
+        : '')
+    + EPOCH_INSTRUCTION,
     { agentType: 'plan-reviewer', model: QUALITY_MODEL, schema: VERDICT, label: `review#${i}`, phase: 'Plan' },
   ), `Plan(reviewer#${i})`)
   planVerdict = rev
@@ -4032,6 +4113,9 @@ async function execValidatePhase(state) {
   let greenFixCount = 0
   /** @type {Array<{files: string[], summary: string}>} */
   const greenFixIterations = []
+  // validate_end の clock 給電（issue #443）候補。test#i/diff-gate/diff-gate-retry/test#retry-i の
+  // 応答（いずれも Validate 内で境界に隣接する）を集め、maxEpochRes で最後に完了したものを採る。
+  const validateEpochCandidates = []
   // 本経路（label=''）と empty-diff retry 経路（label='retry'）を統合した Validate ループ（issue #223）。
   // 2 複製のプロンプト空白 drift を根治し、両経路の挙動を 1 箇所で管理する。
   async function runValidateLoop(label) {
@@ -4084,6 +4168,7 @@ async function execValidatePhase(state) {
   }
   // 本経路: Validate phase で test green を確認
   val = await runValidateLoop('')
+  validateEpochCandidates.push(val)
   // green-fix 発生分を evaluator focus_areas へ注入する（テスト弱体化監査）。
   // empty-diff gate の retry 経路（Evaluate phase 内、eval#1 より前）でも同じ注入を行うため関数化。
   function pushGreenFixAudit(iters) {
@@ -4119,6 +4204,7 @@ async function execValidatePhase(state) {
       dhPrompt,
       { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-gate', phase: 'Validate' },
     ), 'Validate(diff-gate)')
+    validateEpochCandidates.push(dhGate)
     if (dhGate.empty === true) {
       log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— cross-repo 判定を試行（issue #432）')
       // cross-repo lazy probe（issue #432）: dhGate.empty===true の場合のみ実行するため通常経路の
@@ -4181,6 +4267,7 @@ async function execValidatePhase(state) {
         dhPrompt,
         { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-gate-retry', phase: 'Validate' },
       ), 'Validate(diff-gate-retry)')
+      validateEpochCandidates.push(dhRetry)
       if (dhRetry.empty === true) {
         await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 }, phase: 'Validate' })
         throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）。'
@@ -4194,10 +4281,12 @@ async function execValidatePhase(state) {
       // runValidateLoop('retry') が GREEN_MAX ループ・テスト弱体化監査注入・concerns 伝搬を担う（issue #223）。
       const gfIterCountBeforeRetry = greenFixIterations.length
       val = await runValidateLoop('retry')
+      validateEpochCandidates.push(val)
       pushGreenFixAudit(greenFixIterations.slice(gfIterCountBeforeRetry))
     }
   }
 
+  state.validateEndEpochRes = maxEpochRes(validateEpochCandidates)
   state.val = val
   state.greenFixCount = greenFixCount
   state.greenFixIterations = greenFixIterations
@@ -4581,7 +4670,8 @@ async function execEvaluatePhase(state) {
           ? `未解消 concern 一覧:\n${JSON.stringify(openConcerns)}\n`
             + `${EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions}\n`
           : '')
-      + TURBOPACK_FALLBACK_CONVENTION,
+      + TURBOPACK_FALLBACK_CONVENTION
+      + EPOCH_INSTRUCTION,
       { agentType: 'evaluator', model: QUALITY_MODEL, schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
     ), `Evaluate(eval#${i})`)
     evalResult = ev
@@ -4752,16 +4842,16 @@ async function execEvaluatePhase(state) {
   return state
 }
 
-await clockProbe('plan_end', 'Plan')
+feedClockMark('plan_end', maxEpochRes([plan, planVerdict]))
 phase('Implement')
 state = await execImplementPhase(state)
 if (state.__earlyReturn) return state.__earlyReturn
-await clockProbe('implement_end', 'Implement')
+feedClockMark('implement_end', maxEpochRes(state.implResults ?? []))
 
 phase('Validate')
 state = await execValidatePhase(state)
 if (state.__earlyReturn) return state.__earlyReturn
-await clockProbe('validate_end', 'Validate')
+feedClockMark('validate_end', epochResOf(state.validateEndEpochRes))
 
 phase('Security floor')
 state = await execSecurityFloorPhase(state)
@@ -4811,7 +4901,8 @@ if (EVALSEAL_MODE !== 'off' && state.runEval) {
     log(`⚠️ trust-seal-eval で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
   }
 }
-await clockProbe('evaluate_end', 'Evaluate')
+// trust-seal-eval の時間は pr 区間へ付け替わる（相対比較用途のため許容。issue #443）。
+feedClockMark('evaluate_end', epochResOf(state.evalResult))
 } else {
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
@@ -4837,7 +4928,8 @@ const pr = need(await trackedAgent(
   `cd ${WT} で作業。次を順に実行せよ:\n`
   + `1. \`Skill: git-commit --all --worktree ${WT}\`（変更を日本語メッセージで commit）\n`
   + `2. \`Skill: git-pr ${ISSUE} --base ${BASE} --lang ja --worktree ${WT}\`（PR 作成）\n`
-  + `作成された PR の URL と番号を返せ。`,
+  + `作成された PR の URL と番号を返せ。`
+  + EPOCH_INSTRUCTION,
   { agentType: 'dev-runner', schema: PRURL, label: `pr#${ISSUE}`, phase: 'PR' },
 ), 'PR')
 log(`PR created: ${pr.pr_url}`)
@@ -4875,7 +4967,7 @@ if (EFFECTDELTA_MODE === 'shadow') {
     log(`⚠️ trust-effectdelta-pr で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
   }
 }
-await clockProbe('pr_end', 'PR')
+feedClockMark('pr_end', epochResOf(pr))
 
 // ============================================================
 // PR phase 経路分岐（issue #376 F3）: clean-micro（LITE）は pr-reviewer 1-pass レビュー +
@@ -4894,11 +4986,15 @@ let iterate
 // 到達済み（issue #430。lite|full 以外は当該キーのみ drop の fail-open）。dotfiles Stop hook の
 // jq projection（送り側配線）は it-all-playpark/dotfiles#143。
 let route
+// iterate_end の clock 給電（issue #443）候補。branch ごとに設定する — lite clean 終端は
+// reviewLite/ciLite の epoch、full・lite 昇格は workflow('pr-iterate') 返り値の end_epoch から。
+let iterateEpochRes = null
 if (LITE) {
   const reviewPromptLite = `cd ${WT} で作業。PR #${pr.pr_number} を批判的にレビューせよ。`
     + `gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は`
     + `verification_evidence に 1 項目 1 文の配列で列挙せよ。`
+    + EPOCH_INSTRUCTION
   const reviewLite = await trackedAgent(
     reviewPromptLite,
     { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: 'pr-review-lite', phase: 'PR' },
@@ -4908,6 +5004,7 @@ if (LITE) {
     log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
     iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
     route = 'full'
+    iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
   } else {
     const ciLite = await trackedAgent(
       `## Objective\nPR #${pr.pr_number} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
@@ -4936,21 +5033,24 @@ if (LITE) {
       state.liteReview = { decision: reviewLite?.decision ?? null, ci: ciLite.status, summary: reviewLite?.summary ?? null }
       iterate = { status: 'lgtm', fixes_applied: 0 }
       route = 'lite'
+      iterateEpochRes = maxEpochRes([reviewLite, ciLite])
       log(`lite 経路: clean review + CI ${ciLite.status} — lgtm 終端（フル pr-iterate 起動なし）`)
     } else {
       log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
       iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
       route = 'full'
+      iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
     }
   }
 } else {
   iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
   route = 'full'
+  iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
 }
 // nested pr-iterate の subagent 起動数を run 合計へ合算する（issue #445）。pr-iterate が
 // subagent_invocations を返さない run（lite 経路・未実装）は optional chain で no-op。
 if (iterate?.subagent_invocations?.by_type) mergeSubagentCounts(SUBAGENT_COUNTS, iterate.subagent_invocations.by_type)
-await clockProbe('iterate_end', 'PR')
+feedClockMark('iterate_end', iterateEpochRes)
 
 // pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある（issue #233）。
 // runEval=false（micro path・eval 0 回）では「Evaluate が stale」という概念自体が成立しないため skip。
@@ -4977,13 +5077,17 @@ let finalReconcile = 'skipped'   // 'skipped'|'reverified'|'unavailable'
 let finalTestGreen = null        // true|false|null（null = 未実行/no_tests/取得不能）
 let finalUiVerifyStatus = null   // 'passed'|'findings'|'failed_open'|'setup_failed'|null
 let finalUiVerifyResult = null   // ui-verifier の raw checks（issue #331 final-ac-reconcile prompt 用）
+// final_end の clock 給電（issue #443）候補。fixes_applied=0 の skip run は null のまま
+// （キー欠落 — 従来は probe 往復分の微小値が入っていたが、より正確な欠落表現になる意図的変更）。
+let finalEpochRes = null
 if ((iterate?.fixes_applied ?? 0) > 0) {
   // Step1 sync（fail-safe）
   const sync = await trackedAgent(
     `cd ${WT} で作業。次を順に実行し **JSON object のみ** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
     + `1. git -C ${WT} fetch origin ${state.setup.branch}\n`
     + `2. git -C ${WT} merge --ff-only FETCH_HEAD\n`
-    + `両方 exit 0 なら {"ok":true,"head":"<git -C ${WT} rev-parse HEAD の出力>"}、いずれかが失敗（非 fast-forward・fetch 失敗等）なら {"ok":false,"error":"<stderr の要約>"} を返せ。`,
+    + `両方 exit 0 なら {"ok":true,"head":"<git -C ${WT} rev-parse HEAD の出力>","epoch":<date +%s の出力(optional)>}、いずれかが失敗（非 fast-forward・fetch 失敗等）なら {"ok":false,"error":"<stderr の要約>","epoch":<date +%s の出力(optional)>} を返せ。\n`
+    + EPOCH_INSTRUCTION,
     { agentType: 'dev-runner-haiku', schema: SYNCRES, label: 'reconcile-sync', phase: 'Final reconcile' })
   if (!sync || sync.ok !== true) {
     finalReconcile = 'unavailable'
@@ -4996,6 +5100,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     } catch (e) {
       log(`⚠️ Final reconcile: test#final が throw（${e && e.message ? e.message : e}）— null 扱い（fail-safe → unavailable。issue #359）`)
     }
+    finalEpochRes = maxEpochRes([sync, ft])
     if (!ft) { finalReconcile = 'unavailable'; log('⚠️ Final reconcile: test#final が null — unavailable（fail-safe → merge tier HOLD）') }
     else {
       finalReconcile = 'reverified'
@@ -5156,7 +5261,7 @@ if (EVALSEAL_MODE !== 'off' && (iterate?.fixes_applied ?? 0) > 0 && state.trustR
   }
 }
 
-await clockProbe('final_end', 'Final reconcile')
+feedClockMark('final_end', finalEpochRes)
 
 // ============================================================
 // Phase Merge tier: 最終 diff に danger-grep を再実行し、merge tier を算出して提示する(W5)。
