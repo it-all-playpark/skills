@@ -13,9 +13,11 @@
 #                                    st_bucket mapping + merge with check-runs)
 #
 # A single call-count file (CI_CYCLE_COUNT_FILE) increments once per fetch
-# cycle (on the /pulls/ call, which fires exactly once per cycle), so it is
-# directly comparable to the old GH_CALL_COUNT_FILE / "gh called N times"
-# assertions from the `gh`-based version of this script.
+# cycle (on the check-runs call, which fires exactly once per fetch cycle,
+# retries included; the /pulls/ call is skipped on pending-continuation
+# cycles under the call-reduction design and so cannot serve as the cycle
+# marker), so it is directly comparable to the old GH_CALL_COUNT_FILE /
+# "gh called N times" assertions from the `gh`-based version of this script.
 #
 # "Pending" / "fail" simulation ordering mirrors the old `gh` stub: the
 # leading CI_PENDING_TIMES cycles report pending data, the next CI_FAIL_TIMES
@@ -47,9 +49,9 @@ setup() {
     rm -f "$SLEEP_LOG_FILE"
     export SLEEP_LOG_FILE
 
-    CHECK_CI_CACHE_DIR="$BATS_TMPDIR/check-ci-cache"
-    rm -rf "$CHECK_CI_CACHE_DIR"
-    export CHECK_CI_CACHE_DIR
+    URL_LOG_FILE="$BATS_TMPDIR/url-log"
+    rm -f "$URL_LOG_FILE"
+    export URL_LOG_FILE
 
     cat > "$STUB_DIR/curl" << 'EOF'
 #!/usr/bin/env bash
@@ -62,12 +64,13 @@ done
 
 case "$url" in
     */pulls/*)
-        count=$(( $(cat "$CI_CYCLE_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
-        echo "$count" > "$CI_CYCLE_COUNT_FILE"
+        echo "pulls" >> "$URL_LOG_FILE"
         printf '%s\n%s\n' "$CI_PR_BODY" "200"
         ;;
     */check-runs*)
-        n=$(cat "$CI_CYCLE_COUNT_FILE" 2>/dev/null || echo 0)
+        echo "check-runs" >> "$URL_LOG_FILE"
+        n=$(( $(cat "$CI_CYCLE_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$CI_CYCLE_COUNT_FILE"
         if (( n <= ${CI_PENDING_TIMES:-0} )); then
             printf '%s\n%s\n' "$CI_PENDING_CHECKRUNS_BODY" "200"
         elif (( n <= ${CI_PENDING_TIMES:-0} + ${CI_FAIL_TIMES:-0} )); then
@@ -77,6 +80,7 @@ case "$url" in
         fi
         ;;
     */status*)
+        echo "status" >> "$URL_LOG_FILE"
         printf '%s\n%s\n' "$CI_STATUS_BODY" "200"
         ;;
     *)
@@ -760,235 +764,15 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# issue #463 (F2): api_get ETag conditional requests + file cache + 24h GC.
-# Each stub below inspects the -D headerfile arg and any "If-None-Match:"
-# arg the same way Test 25 does, so it can decide whether to answer with a
-# fresh 200 (+ETag) or a cache-hit 304.
+# issue #463 (F2 -> Phase 2 revision): AC-8 "immediate settle keeps call count
+# at 3" regression test (this test was previously named
+# "3 API calls per fetch cycle are preserved" under the now-removed ETag
+# cache design; renamed here since the call-reduction design changes what
+# "preserved" means for pending cycles, but an immediate single-cycle settle
+# must still cost exactly 3 calls: pulls + check-runs + status, no re-verify).
 # ---------------------------------------------------------------------------
 
-@test "200 with ETag header populates cache files" {
-    cat > "$STUB_DIR/curl" << 'EOF'
-#!/usr/bin/env bash
-url=""
-headerfile=""
-prev=""
-for a in "$@"; do
-    case "$a" in https://*) url="$a" ;; esac
-    [[ "$prev" == "-D" ]] && headerfile="$a"
-    prev="$a"
-done
-case "$url" in
-    */pulls/*)
-        [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
-        printf '%s\n%s\n' "$CI_PR_BODY" "200"
-        ;;
-    */check-runs*) printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200" ;;
-    */status*) printf '%s\n%s\n' "$CI_STATUS_BODY" "200" ;;
-    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
-esac
-exit 0
-EOF
-    chmod +x "$STUB_DIR/curl"
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-
-    [ -d "$CHECK_CI_CACHE_DIR" ]
-    etag_count=$(find "$CHECK_CI_CACHE_DIR" -name '*.etag' | wc -l | tr -d ' ')
-    body_count=$(find "$CHECK_CI_CACHE_DIR" -name '*.body' | wc -l | tr -d ' ')
-    [ "$etag_count" -ge 1 ]
-    [ "$body_count" -ge 1 ]
-
-    found=0
-    for f in "$CHECK_CI_CACHE_DIR"/*.etag; do
-        grep -qF 'W/"pr-v1"' "$f" && found=1
-    done
-    [ "$found" -eq 1 ]
-}
-
-@test "second run sends If-None-Match and reuses cached body on 304" {
-    # Exercises the conditional-request round trip on all 3 endpoints
-    # (pulls / check-runs / status), not just pulls: each branch below
-    # checks If-None-Match against its own cached ETag and logs a
-    # per-endpoint marker to INM_SEEN_FILE before answering 304, so the
-    # assertions below can confirm every endpoint actually took the
-    # cache-hit path rather than only one of the three.
-    INM_SEEN_FILE="$BATS_TMPDIR/inm-seen"
-    rm -f "$INM_SEEN_FILE"
-    export INM_SEEN_FILE
-
-    cat > "$STUB_DIR/curl" << 'EOF'
-#!/usr/bin/env bash
-url=""
-headerfile=""
-inm=""
-prev=""
-for a in "$@"; do
-    case "$a" in
-        https://*) url="$a" ;;
-        If-None-Match:*) inm="${a#If-None-Match: }" ;;
-    esac
-    [[ "$prev" == "-D" ]] && headerfile="$a"
-    prev="$a"
-done
-case "$url" in
-    */pulls/*)
-        if [[ "$inm" == 'W/"pr-v1"' ]]; then
-            echo "pulls:$inm" >> "$INM_SEEN_FILE"
-            printf '\n%s\n' "304"
-        else
-            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
-            printf '%s\n%s\n' "$CI_PR_BODY" "200"
-        fi
-        ;;
-    */check-runs*)
-        if [[ "$inm" == 'W/"cr-v1"' ]]; then
-            echo "check-runs:$inm" >> "$INM_SEEN_FILE"
-            printf '\n%s\n' "304"
-        else
-            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"cr-v1"\r\n\r\n' > "$headerfile"
-            printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200"
-        fi
-        ;;
-    */status*)
-        if [[ "$inm" == 'W/"st-v1"' ]]; then
-            echo "status:$inm" >> "$INM_SEEN_FILE"
-            printf '\n%s\n' "304"
-        else
-            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"st-v1"\r\n\r\n' > "$headerfile"
-            printf '%s\n%s\n' "$CI_STATUS_BODY" "200"
-        fi
-        ;;
-    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
-esac
-exit 0
-EOF
-    chmod +x "$STUB_DIR/curl"
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-    result=$(echo "$output" | tail -1)
-    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
-    [ ! -s "$INM_SEEN_FILE" ]
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-    result=$(echo "$output" | tail -1)
-    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
-    [ -s "$INM_SEEN_FILE" ]
-    grep -qF 'pulls:W/"pr-v1"' "$INM_SEEN_FILE"
-    grep -qF 'check-runs:W/"cr-v1"' "$INM_SEEN_FILE"
-    grep -qF 'status:W/"st-v1"' "$INM_SEEN_FILE"
-}
-
-@test "304 with missing cached body falls back to unconditional refetch (fail-open)" {
-    # All 3 endpoints check If-None-Match symmetrically (matching the
-    # "second run..." test above) so removing every cached *.body file
-    # exercises the same fail-open fallback on check-runs/status as on
-    # pulls, not just pulls.
-    cat > "$STUB_DIR/curl" << 'EOF'
-#!/usr/bin/env bash
-url=""
-headerfile=""
-inm=""
-prev=""
-for a in "$@"; do
-    case "$a" in
-        https://*) url="$a" ;;
-        If-None-Match:*) inm="${a#If-None-Match: }" ;;
-    esac
-    [[ "$prev" == "-D" ]] && headerfile="$a"
-    prev="$a"
-done
-case "$url" in
-    */pulls/*)
-        if [[ -n "$inm" ]]; then
-            printf '\n%s\n' "304"
-        else
-            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
-            printf '%s\n%s\n' "$CI_PR_BODY" "200"
-        fi
-        ;;
-    */check-runs*)
-        if [[ -n "$inm" ]]; then
-            printf '\n%s\n' "304"
-        else
-            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"cr-v1"\r\n\r\n' > "$headerfile"
-            printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200"
-        fi
-        ;;
-    */status*)
-        if [[ -n "$inm" ]]; then
-            printf '\n%s\n' "304"
-        else
-            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"st-v1"\r\n\r\n' > "$headerfile"
-            printf '%s\n%s\n' "$CI_STATUS_BODY" "200"
-        fi
-        ;;
-    *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
-esac
-exit 0
-EOF
-    chmod +x "$STUB_DIR/curl"
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-
-    rm -f "$CHECK_CI_CACHE_DIR"/*.body
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-    result=$(echo "$output" | tail -1)
-    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
-}
-
-@test "unwritable cache dir is fail-open" {
-    UNWRITABLE_FILE="$BATS_TMPDIR/not-a-dir-cache"
-    rm -rf "$UNWRITABLE_FILE"
-    : > "$UNWRITABLE_FILE"
-    export CHECK_CI_CACHE_DIR="$UNWRITABLE_FILE"
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-    result=$(echo "$output" | tail -1)
-    [ "$(echo "$result" | jq -r '.status')" = "no_checks" ]
-}
-
-@test "newly created cache dir is mode 700 (owner-only, cache poisoning defense)" {
-    # issue #463 (F3, security-vuln): the cache dir path is predictable
-    # (${CHECK_CI_CACHE_DIR:-${TMPDIR:-/tmp}/check-ci-cache}), so on a
-    # shared multi-user machine another user could pre-create it and
-    # plant a forged ETag+body pair to inject a wrong-green 304 response.
-    # Creating it 700 blocks other users from reading/writing into it.
-    # (The companion `[[ ! -O "$CACHE_DIR" ]]` ownership check that
-    # disables the cache when an existing dir isn't owned by the current
-    # user can't be exercised here: non-root bats runs can't create a
-    # dir owned by another user, so that fail-open branch is verified by
-    # code review instead of a test.)
-    [ ! -e "$CHECK_CI_CACHE_DIR" ]
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-
-    [ -d "$CHECK_CI_CACHE_DIR" ]
-    perms="$(ls -ld "$CHECK_CI_CACHE_DIR")"
-    [[ "$perms" == drwx------* ]]
-}
-
-@test "startup GC removes entries older than 24h and keeps fresh ones" {
-    mkdir -p "$CHECK_CI_CACHE_DIR"
-    touch -t 202601010000 "$CHECK_CI_CACHE_DIR/old.etag" "$CHECK_CI_CACHE_DIR/old.body"
-    touch "$CHECK_CI_CACHE_DIR/fresh.body"
-
-    run "$SCRIPT" 42
-    [ "$status" -eq 0 ]
-
-    [ ! -e "$CHECK_CI_CACHE_DIR/old.etag" ]
-    [ ! -e "$CHECK_CI_CACHE_DIR/old.body" ]
-    [ -e "$CHECK_CI_CACHE_DIR/fresh.body" ]
-}
-
-@test "3 API calls per fetch cycle are preserved" {
+@test "immediate settle (single cycle) makes exactly 3 API calls, no terminal re-verify" {
     URL_LOG_FILE="$BATS_TMPDIR/url-log"
     rm -f "$URL_LOG_FILE"
     export URL_LOG_FILE
@@ -1017,11 +801,12 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# issue #463 (F1): CHECK_CI_DEBUG=1-gated per-request stderr instrumentation
-# on api_get, so a diagnosis can tell "If-None-Match not sent" apart from
-# "sent but 304 never comes back" (bats-stub 304 handling alone doesn't
-# prove that against the real GitHub API). Default (unset/not "1") emits
-# nothing; stdout JSON contract is unaffected either way.
+# issue #463 (F1, retained after Phase 2 ETag removal): CHECK_CI_DEBUG=1-gated
+# per-request stderr instrumentation on api_get. Format is
+# "check-ci-debug: GET <path> -> <code>" (no if-none-match field: the ETag
+# conditional-request machinery this originally diagnosed has been removed).
+# Default (unset/not "1") emits nothing; stdout JSON contract is unaffected
+# either way.
 # ---------------------------------------------------------------------------
 
 @test "CHECK_CI_DEBUG=1 emits per-request stderr lines with http codes" {
@@ -1029,18 +814,9 @@ EOF
     cat > "$STUB_DIR/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""
-headerfile=""
-prev=""
-for a in "$@"; do
-    case "$a" in https://*) url="$a" ;; esac
-    [[ "$prev" == "-D" ]] && headerfile="$a"
-    prev="$a"
-done
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
 case "$url" in
-    */pulls/*)
-        [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
-        printf '%s\n%s\n' "$CI_PR_BODY" "200"
-        ;;
+    */pulls/*) printf '%s\n%s\n' "$CI_PR_BODY" "200" ;;
     */check-runs*) printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200" ;;
     */status*) printf '%s\n%s\n' "$CI_STATUS_BODY" "200" ;;
     *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
@@ -1067,44 +843,124 @@ EOF
     [[ "$stderr" != *"check-ci-debug:"* ]]
 }
 
-@test "CHECK_CI_DEBUG=1 shows sent If-None-Match and 304" {
-    export CHECK_CI_DEBUG=1
+# ---------------------------------------------------------------------------
+# issue #463 Phase 2: call-reduction design. A single invocation caches the
+# head SHA and, once the first cycle's commit status shows total_count==0,
+# skips status too, for as long as the poll loop keeps returning pending.
+# Whichever cycle produces the terminal verdict (passed/failed/no_checks) by
+# reusing that cache re-verifies pulls (and status, if it had been skipped)
+# once immediately before returning, so a SHA/status change that happened
+# mid-poll is never missed. A pending return from wait-budget exhaustion is
+# not a terminal verdict, so it is not re-verified (the caller re-invokes).
+# ---------------------------------------------------------------------------
+
+@test "pending -> terminal: pulls called exactly twice (initial + terminal re-verify)" {
+    export CI_PENDING_TIMES=2
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
+    run "$SCRIPT" 42 --wait-seconds 10 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "passed" ]
+    [ "$(grep -c '^pulls$' "$URL_LOG_FILE")" -eq 2 ]
+    [ "$(grep -c '^check-runs$' "$URL_LOG_FILE")" -eq 3 ]
+    [ "$(grep -c '^status$' "$URL_LOG_FILE")" -eq 2 ]
+}
+
+@test "SHA change during poll -> terminal verdict is based on the new SHA" {
+    PULLS_COUNT_FILE="$BATS_TMPDIR/pulls-count"
+    OLDSHA_CR_COUNT_FILE="$BATS_TMPDIR/oldsha-cr-count"
+    CR_URL_LOG_FILE="$BATS_TMPDIR/cr-url-log"
+    rm -f "$PULLS_COUNT_FILE" "$OLDSHA_CR_COUNT_FILE" "$CR_URL_LOG_FILE"
+    export PULLS_COUNT_FILE OLDSHA_CR_COUNT_FILE CR_URL_LOG_FILE
+
     cat > "$STUB_DIR/curl" << 'EOF'
 #!/usr/bin/env bash
 url=""
-headerfile=""
-inm=""
-prev=""
-for a in "$@"; do
-    case "$a" in
-        https://*) url="$a" ;;
-        If-None-Match:*) inm="${a#If-None-Match: }" ;;
-    esac
-    [[ "$prev" == "-D" ]] && headerfile="$a"
-    prev="$a"
-done
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
 case "$url" in
     */pulls/*)
-        if [[ "$inm" == 'W/"pr-v1"' ]]; then
-            printf '\n%s\n' "304"
+        n=$(( $(cat "$PULLS_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$PULLS_COUNT_FILE"
+        if [ "$n" -eq 1 ]; then
+            printf '%s\n%s\n' '{"head":{"sha":"oldsha"}}' "200"
         else
-            [[ -n "$headerfile" ]] && printf 'HTTP/2 200\r\netag: W/"pr-v1"\r\n\r\n' > "$headerfile"
-            printf '%s\n%s\n' "$CI_PR_BODY" "200"
+            printf '%s\n%s\n' '{"head":{"sha":"newsha"}}' "200"
         fi
         ;;
-    */check-runs*) printf '%s\n%s\n' "$CI_CHECKRUNS_BODY" "200" ;;
-    */status*) printf '%s\n%s\n' "$CI_STATUS_BODY" "200" ;;
+    */oldsha/check-runs*)
+        echo "$url" >> "$CR_URL_LOG_FILE"
+        n=$(( $(cat "$OLDSHA_CR_COUNT_FILE" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$OLDSHA_CR_COUNT_FILE"
+        if [ "$n" -eq 1 ]; then
+            printf '%s\n%s\n' '{"total_count":1,"check_runs":[{"name":"build","status":"in_progress"}]}' "200"
+        else
+            printf '%s\n%s\n' '{"total_count":1,"check_runs":[{"name":"build","status":"completed","conclusion":"success"}]}' "200"
+        fi
+        ;;
+    */newsha/check-runs*)
+        echo "$url" >> "$CR_URL_LOG_FILE"
+        printf '%s\n%s\n' '{"total_count":1,"check_runs":[{"name":"newsha-gate","status":"completed","conclusion":"failure"}]}' "200"
+        ;;
+    */status*)
+        printf '%s\n%s\n' '{"state":"success","total_count":0,"statuses":[]}' "200"
+        ;;
     *) printf '%s\n%s\n' '{"message":"not found"}' "404" ;;
 esac
 exit 0
 EOF
     chmod +x "$STUB_DIR/curl"
 
-    run --separate-stderr "$SCRIPT" 42
+    run "$SCRIPT" 42 --wait-seconds 30 --poll-seconds 5
     [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "failed" ]
+    failed_names=$(echo "$result" | jq -r '.failed_checks[].name')
+    [[ "$failed_names" == *"newsha-gate"* ]]
+    grep -q "oldsha" "$CR_URL_LOG_FILE"
+    grep -q "newsha" "$CR_URL_LOG_FILE"
+}
 
-    run --separate-stderr "$SCRIPT" 42
+@test "first status total_count>0 -> status fetched every cycle, no extra terminal status refetch" {
+    export CI_STATUS_BODY='{"state":"success","total_count":1,"statuses":[{"context":"ci/legacy","state":"success"}]}'
+    export CI_PENDING_TIMES=2
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
+    run "$SCRIPT" 42 --wait-seconds 10 --poll-seconds 5
     [ "$status" -eq 0 ]
-    [[ "$stderr" == *"if-none-match=W/"* ]]
-    [[ "$stderr" == *"-> 304"* ]]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "passed" ]
+    [ "$(grep -c '^status$' "$URL_LOG_FILE")" -eq 3 ]
+    [ "$(grep -c '^pulls$' "$URL_LOG_FILE")" -eq 2 ]
+}
+
+@test "immediate settle with wait budget -> still 3 calls, no re-verify" {
+    export CI_CHECKRUNS_BODY='{"total_count":2,"check_runs":[
+      {"name":"lint","status":"completed","conclusion":"success"},
+      {"name":"test","status":"completed","conclusion":"success"}
+    ]}'
+    run "$SCRIPT" 42 --wait-seconds 30 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "passed" ]
+    [ "$(wc -l < "$URL_LOG_FILE" | tr -d ' ')" -eq 3 ]
+    [ "$(grep -c '^pulls$' "$URL_LOG_FILE")" -eq 1 ]
+    [ "$(grep -c '^check-runs$' "$URL_LOG_FILE")" -eq 1 ]
+    [ "$(grep -c '^status$' "$URL_LOG_FILE")" -eq 1 ]
+}
+
+@test "pending timeout -> no terminal re-verify, pulls called once" {
+    export CI_PENDING_TIMES=99
+    run "$SCRIPT" 42 --wait-seconds 12 --poll-seconds 5
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" = "pending" ]
+    [ "$(echo "$result" | jq -r '.waited_seconds')" = "12" ]
+    # Wait-budget exhaustion while still pending is not a terminal verdict,
+    # so the design does not re-verify: pulls fires only on cycle 1.
+    [ "$(grep -c '^pulls$' "$URL_LOG_FILE")" -eq 1 ]
 }

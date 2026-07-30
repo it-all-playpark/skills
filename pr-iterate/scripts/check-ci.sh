@@ -29,34 +29,45 @@
 # Auth: if GH_TOKEN or GITHUB_TOKEN is set, requests are authenticated
 # (Bearer token) for a higher rate limit and private-repo access. Otherwise
 # requests are unauthenticated (60 req/hour/IP — fine for public repos at
-# normal dev-flow run volume; each fetch cycle costs 3 API calls). When
-# unauthenticated, a one-line warning is printed to stderr at startup.
+# normal dev-flow run volume; see the in-invocation call reduction note
+# below for the actual per-cycle call cost). When unauthenticated, a
+# one-line warning is printed to stderr at startup.
 #
 # Transient failures (network error, non-2xx HTTP response from any of the
-# 3 API calls a fetch cycle makes) are retried with backoff within each poll
+# API calls a fetch cycle makes) are retried with backoff within each poll
 # cycle. Max retries = number of delay entries in CHECK_CI_RETRY_DELAYS
 # (default 10s/30s). The retry budget resets every poll cycle and is
 # independent from the --wait-seconds wait budget (AC-4): API-error retries
 # never consume waited_seconds.
 #
-# ETag cache (issue #463): each of the 3 API calls' response ETag and body
-# is cached under ${CHECK_CI_CACHE_DIR:-${TMPDIR:-/tmp}/check-ci-cache}
-# (keyed by sha256 of the request path). Subsequent requests for the same
-# path send If-None-Match; a 304 reuses the cached body and does not
-# consume a rate-limit unit, dropping steady-state polling from 3 to 0
-# units/cycle. Cache I/O failures (missing sha256 tool, unwritable dir,
-# unreadable/corrupt entry, missing ETag on a 200) fail-open to an
-# unconditional request; the call count per cycle is unaffected either way.
-# A GC at startup deletes cache entries older than 24h.
+# In-invocation call reduction (issue #463 Phase 2): a single invocation
+# keeps two shell variables only (CACHED_SHA, STATUS_SKIP) — nothing is
+# persisted to disk across invocations. The first cycle costs 3 calls
+# (pulls -> head SHA, check-runs, status). Once the head SHA is resolved,
+# subsequent pending-continuation cycles skip the pulls GET and reuse
+# CACHED_SHA; once a status GET reports total_count==0, subsequent cycles
+# skip the status GET too and reuse that empty body (a status GET with
+# total_count>0 is refetched every cycle, since new statuses can still
+# post). Right before returning a non-pending (terminal) verdict that was
+# produced using this cache, the script re-fetches pulls once (and status
+# once too, if it had been skipped) to catch a head SHA or status change
+# that happened mid-poll; if the head SHA changed, the cache is reset and
+# a fresh fetch cycle runs before returning, so a stale SHA never yields a
+# wrong-green result. A pending verdict returned due to --wait-seconds
+# exhaustion is not re-verified, since it isn't a final answer — the caller
+# is expected to invoke this script again. Set CHECK_CI_DEBUG=1 to emit one
+# stderr line per API request (path and received HTTP code) for diagnosing
+# call counts; default is silent and stdout is never affected.
 
 set -euo pipefail
 
 # fd 3: a stable duplicate of the real stderr, used by _dbg_log below. Each
-# of the 3 api_get call sites in fetch_checks wraps its call with `2>&1` to
-# capture curl-level network-error text into the same variable as the
-# response body; writing debug lines straight to fd 2 there would get
-# merged into that captured body/http_code parsing instead of reaching the
-# terminal. fd 3 is untouched by that local `2>&1` redirection.
+# api_get call site in fetch_checks (up to 3 per cycle, fewer once the
+# in-invocation cache skips a call) wraps its call with `2>&1` to capture
+# curl-level network-error text into the same variable as the response
+# body; writing debug lines straight to fd 2 there would get merged into
+# that captured body/http_code parsing instead of reaching the terminal.
+# fd 3 is untouched by that local `2>&1` redirection.
 exec 3>&2
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -120,77 +131,36 @@ fi
 
 read -r -a RETRY_DELAYS <<< "${CHECK_CI_RETRY_DELAYS:-10 30}"
 
-# ETag cache: api_get sends If-None-Match for a path it has seen before and,
-# on 304, reuses the cached body instead of consuming a rate-limit unit.
-# Cache dir defaults to ${TMPDIR:-/tmp}/check-ci-cache, keyed by sha256 of
-# the request path; ETag and body are stored as separate files. The dir
-# is created mode 700 and, if it already exists under a different owner
-# (the path is predictable on a shared machine, enabling cache poisoning
-# via a planted forged ETag+body pair), the cache is disabled rather than
-# trusted. Any cache
-# I/O failure (missing sha256 tool, unwritable dir, unreadable/corrupt
-# entry) disables the cache (fail-open) rather than failing the run. A
-# startup GC deletes entries older than 24h. Set CHECK_CI_DEBUG=1 to emit
-# one stderr line per api_get request (path, sent If-None-Match, received
-# http_code, received etag) for diagnosing whether 304s are actually
-# happening; default is silent and stdout is never affected.
-CACHE_DIR="${CHECK_CI_CACHE_DIR:-${TMPDIR:-/tmp}/check-ci-cache}"
-CACHE_ENABLED=1
-if command -v sha256sum >/dev/null 2>&1; then
-    _cache_key() { printf '%s' "$1" | sha256sum | awk '{print $1}'; }
-elif command -v shasum >/dev/null 2>&1; then
-    _cache_key() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
-else
-    CACHE_ENABLED=0
-fi
-mkdir -p -m 700 "$CACHE_DIR" 2>/dev/null || CACHE_ENABLED=0
-if (( CACHE_ENABLED )) && [[ ! -O "$CACHE_DIR" ]]; then
-    CACHE_ENABLED=0
-fi
-if (( CACHE_ENABLED )); then
-    # GC: drop entries older than 24h at startup.
-    find "$CACHE_DIR" -type f -mmin +1440 -delete 2>/dev/null || true
-fi
-
-# Unauthenticated requests are rate-limited at 60 req/hour/IP; each fetch
-# cycle costs 3 calls, so this can be exhausted well inside pr-iterate's
-# iteration budget. api_get captures response headers to API_HEADERS_FILE
-# so a 403/429 can be told apart from an ordinary API error via
-# X-RateLimit-Remaining (see rate_limit_suffix below).
+# Unauthenticated requests are rate-limited at 60 req/hour/IP; see the
+# in-invocation call reduction note in the header comment for the actual
+# per-cycle call cost. api_get captures response headers to
+# API_HEADERS_FILE so a 403/429 can be told apart from an ordinary API
+# error via X-RateLimit-Remaining (see rate_limit_suffix below).
 API_HEADERS_FILE="$(mktemp)"
 trap 'rm -f "$API_HEADERS_FILE"' EXIT
 
-# _api_curl [If-None-Match value] - internal helper: truncates
-# API_HEADERS_FILE, then GETs $1 (the path passed to api_get, captured via
-# the caller's local "$path"), optionally with a conditional If-None-Match
-# header. Prints curl's raw output (body + final http_code line).
+# _api_curl - internal helper: truncates API_HEADERS_FILE, then GETs $1
+# (the path passed to api_get, captured via the caller's local "$path").
+# Prints curl's raw output (body + final http_code line).
 _api_curl() {
-    local inm="${1:-}"
     : > "$API_HEADERS_FILE"
-    local cond_args=()
-    [[ -n "$inm" ]] && cond_args=(-H "If-None-Match: ${inm}")
     curl -sS -D "$API_HEADERS_FILE" -w '\n%{http_code}' \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${cond_args[@]}" \
         "${AUTH_ARGS[@]}" \
         "https://api.github.com$path"
 }
 
-# _dbg_log <if-none-match-sent> <http-code> - CHECK_CI_DEBUG=1-gated stderr
-# instrumentation for one api_get request (path taken from the caller's
-# local "$path", same as _api_curl). No-op, no stdout output, unless
-# CHECK_CI_DEBUG=1. Writes to fd 3 (see the `exec 3>&2` above), not fd 2,
-# because api_get's callers wrap it with `2>&1` to capture curl-level
-# errors; a plain `>&2` here would leak into that captured body/http_code
-# parsing on the success path. The etag extraction is 2>/dev/null-guarded
-# so a missing header (no match for grep) can never trigger errexit under
-# set -e.
+# _dbg_log <http-code> - CHECK_CI_DEBUG=1-gated stderr instrumentation for
+# one api_get request (path taken from the caller's local "$path", same as
+# _api_curl). No-op, no stdout output, unless CHECK_CI_DEBUG=1. Writes to
+# fd 3 (see the `exec 3>&2` above), not fd 2, because api_get's callers
+# wrap it with `2>&1` to capture curl-level errors; a plain `>&2` here
+# would leak into that captured body/http_code parsing on the success path.
 _dbg_log() {
     [[ "${CHECK_CI_DEBUG:-0}" == "1" ]] || return 0
-    local inm="${1:-}" code="$2" dbg_etag
-    dbg_etag=$(grep -i '^etag:' "$API_HEADERS_FILE" 2>/dev/null | tail -1 | tr -d '\r' | awk '{print $2}')
-    echo "check-ci-debug: GET ${path} if-none-match=${inm:--} -> ${code} etag=${dbg_etag:--}" >&3
+    local code="$1"
+    echo "check-ci-debug: GET ${path} -> ${code}" >&3
 }
 
 # api_get <path-with-query> - GETs https://api.github.com<path>, prints the
@@ -198,56 +168,13 @@ _dbg_log() {
 # non-zero only on a curl-level failure (network unreachable, DNS, etc.);
 # a non-2xx HTTP response is still printed (with its status code) so the
 # caller can classify it.
-#
-# When the cache is enabled, sends If-None-Match for a path it has a cached
-# ETag for; a 304 response is translated back into a synthetic 200 + cached
-# body (transparent to callers) without consuming a rate-limit unit. A 200
-# response with an ETag header is cached for next time.
 api_get() {
     local path="$1"
-    local key="" etag_file="" body_file="" cached_etag=""
-    if (( CACHE_ENABLED )); then
-        key=$(_cache_key "$path")
-        etag_file="$CACHE_DIR/$key.etag"
-        body_file="$CACHE_DIR/$key.body"
-        if [[ -r "$etag_file" && -r "$body_file" ]]; then
-            cached_etag=$(cat "$etag_file" 2>/dev/null || true)
-        fi
-    fi
-
     local resp http_code body
-    resp=$(_api_curl "$cached_etag") || return $?
+    resp=$(_api_curl) || return $?
     http_code=$(echo "$resp" | tail -1)
-    _dbg_log "$cached_etag" "$http_code"
-
-    if [[ "$http_code" == "304" ]]; then
-        body=$(cat "$body_file" 2>/dev/null || true)
-        if [[ -n "$body" ]]; then
-            { touch "$etag_file" "$body_file"; } 2>/dev/null || true
-            printf '%s\n%s\n' "$body" "200"
-            return 0
-        fi
-        # Cached body missing/corrupt: fail-open, refetch unconditionally.
-        resp=$(_api_curl "") || return $?
-        http_code=$(echo "$resp" | tail -1)
-        _dbg_log "" "$http_code"
-    fi
-
+    _dbg_log "$http_code"
     body=$(echo "$resp" | sed '$d')
-
-    if (( CACHE_ENABLED )) && [[ "$http_code" == "200" ]]; then
-        local new_etag
-        new_etag=$(grep -i '^etag:' "$API_HEADERS_FILE" 2>/dev/null | tail -1 | tr -d '\r' | awk '{print $2}')
-        if [[ -n "$new_etag" ]]; then
-            {
-                printf '%s' "$new_etag" > "$etag_file.tmp.$$" &&
-                printf '%s' "$body" > "$body_file.tmp.$$" &&
-                mv -f "$etag_file.tmp.$$" "$etag_file" &&
-                mv -f "$body_file.tmp.$$" "$body_file"
-            } 2>/dev/null || true
-        fi
-    fi
-
     printf '%s\n%s\n' "$body" "$http_code"
 }
 
@@ -265,35 +192,82 @@ rate_limit_suffix() {
     return 0
 }
 
-# fetch_checks - one fetch cycle: resolve the PR's head SHA, then fetch
-# check-runs + legacy commit statuses for that SHA and merge them into a
-# gh-pr-checks-compatible array (name/state/bucket), matching the shape the
-# rest of this script (unchanged from the `gh`-based version) already knows
-# how to reduce to a status. Sets FETCH_OK (0/1), CHECKS_JSON, FETCH_ERR.
+# In-invocation call reduction state (issue #463 Phase 2). Shell variables
+# only, scoped to this process; never persisted to disk.
+#   CACHED_SHA  - the PR's head SHA once resolved; "" means "not yet fetched".
+#   STATUS_SKIP - 1 once a status fetch has reported total_count==0 (no
+#                 legacy commit statuses on this commit); subsequent cycles
+#                 reuse LAST_ST_BODY instead of refetching. 0 keeps fetching
+#                 every cycle (a nonempty statuses[] can still change).
+#   LAST_ST_BODY / LAST_CR_BODY - most recent status / check-runs response
+#                 body, reused by cache-skipped cycles and by re-verify's
+#                 recompute.
+#   USED_CACHE  - set by fetch_checks for the cycle just run: 1 if it
+#                 skipped the pulls GET and/or the status GET, 0 if it
+#                 fetched everything fresh (e.g. the first cycle).
+CACHED_SHA=""
+STATUS_SKIP=0
+LAST_ST_BODY=""
+LAST_CR_BODY=""
+USED_CACHE=0
+
+# merge_checks <check-runs-body> <status-body> - merges a check-runs
+# response and a legacy commit-status response into a gh-pr-checks-
+# compatible array (name/state/bucket), matching the shape the rest of
+# this script already knows how to reduce to a status.
+merge_checks() {
+    local cr_body="$1" st_body="$2"
+    jq -cn --argjson cr "$cr_body" --argjson st "$st_body" '
+      def cr_bucket:
+        if .status != "completed" then "pending"
+        elif .conclusion == "success" then "pass"
+        elif (.conclusion == "neutral" or .conclusion == "skipped") then "skipping"
+        else "fail"
+        end;
+      def st_bucket:
+        if .state == "success" then "pass"
+        elif .state == "pending" then "pending"
+        else "fail"
+        end;
+      ([$cr.check_runs[]? | {name, state: (.conclusion // .status), bucket: cr_bucket}])
+      + ([$st.statuses[]?  | {name: .context, state, bucket: st_bucket}])
+    '
+}
+
+# fetch_checks - one fetch cycle: resolve the PR's head SHA (skipped if
+# CACHED_SHA is already set), fetch check-runs (always), fetch the legacy
+# commit status (skipped if STATUS_SKIP is set), then merge them via
+# merge_checks. Sets FETCH_OK (0/1), CHECKS_JSON, FETCH_ERR, USED_CACHE.
 fetch_checks() {
     FETCH_OK=0
     CHECKS_JSON="[]"
     FETCH_ERR=""
+    USED_CACHE=0
 
-    local resp http_code body
-    if ! resp=$(api_get "/repos/${REPO}/pulls/${PR_NUM}" 2>&1); then
-        FETCH_ERR="network error fetching PR #${PR_NUM}: $resp"
-        return
-    fi
-    http_code=$(echo "$resp" | tail -1)
-    body=$(echo "$resp" | sed '$d')
-    if [[ "$http_code" != "200" ]]; then
-        FETCH_ERR="GET pulls/${PR_NUM} -> HTTP $http_code$(rate_limit_suffix "$http_code"): $(echo "$body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
-        return
-    fi
-    local sha
-    # `|| true`: under `set -e` the assignment inherits jq's exit status, so a
-    # parse error on a non-JSON 200 body would kill the script silently instead
-    # of falling through to the "no head.sha" error path below.
-    sha=$(echo "$body" | jq -r '.head.sha // empty' 2>/dev/null || true)
+    local sha="$CACHED_SHA"
     if [[ -z "$sha" ]]; then
-        FETCH_ERR="GET pulls/${PR_NUM}: response had no head.sha"
-        return
+        local resp http_code body
+        if ! resp=$(api_get "/repos/${REPO}/pulls/${PR_NUM}" 2>&1); then
+            FETCH_ERR="network error fetching PR #${PR_NUM}: $resp"
+            return
+        fi
+        http_code=$(echo "$resp" | tail -1)
+        body=$(echo "$resp" | sed '$d')
+        if [[ "$http_code" != "200" ]]; then
+            FETCH_ERR="GET pulls/${PR_NUM} -> HTTP $http_code$(rate_limit_suffix "$http_code"): $(echo "$body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
+            return
+        fi
+        # `|| true`: under `set -e` the assignment inherits jq's exit status, so
+        # a parse error on a non-JSON 200 body would kill the script silently
+        # instead of falling through to the "no head.sha" error path below.
+        sha=$(echo "$body" | jq -r '.head.sha // empty' 2>/dev/null || true)
+        if [[ -z "$sha" ]]; then
+            FETCH_ERR="GET pulls/${PR_NUM}: response had no head.sha"
+            return
+        fi
+        CACHED_SHA="$sha"
+    else
+        USED_CACHE=1
     fi
 
     local cr_resp cr_code cr_body
@@ -324,77 +298,51 @@ fetch_checks() {
         FETCH_ERR="GET check-runs: fetched ${cr_len} of ${cr_total} check runs (>100 check runs on this commit; pagination not implemented)"
         return
     fi
+    LAST_CR_BODY="$cr_body"
 
-    local st_resp st_code st_body
-    if ! st_resp=$(api_get "/repos/${REPO}/commits/${sha}/status?per_page=100" 2>&1); then
-        FETCH_ERR="network error fetching commit status: $st_resp"
-        return
-    fi
-    st_code=$(echo "$st_resp" | tail -1)
-    st_body=$(echo "$st_resp" | sed '$d')
-    if [[ "$st_code" != "200" ]]; then
-        FETCH_ERR="GET status -> HTTP $st_code$(rate_limit_suffix "$st_code"): $(echo "$st_body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
-        return
-    fi
-    # Same silent-truncation guard as check-runs above, for the legacy
-    # combined-status statuses[] array.
-    local st_total st_len
-    st_total=$(echo "$st_body" | jq -r '.total_count // empty' 2>/dev/null || true)
-    st_len=$(echo "$st_body" | jq -r '(.statuses // []) | length' 2>/dev/null || true)
-    if [[ ! "$st_total" =~ ^[0-9]+$ || ! "$st_len" =~ ^[0-9]+$ ]]; then
-        FETCH_ERR="GET status: response missing total_count/statuses"
-        return
-    fi
-    if (( st_len != st_total )); then
-        FETCH_ERR="GET status: fetched ${st_len} of ${st_total} statuses (>100 statuses on this commit; pagination not implemented)"
-        return
+    local st_body
+    if (( STATUS_SKIP == 1 )); then
+        USED_CACHE=1
+        st_body="$LAST_ST_BODY"
+    else
+        local st_resp st_code
+        if ! st_resp=$(api_get "/repos/${REPO}/commits/${sha}/status?per_page=100" 2>&1); then
+            FETCH_ERR="network error fetching commit status: $st_resp"
+            return
+        fi
+        st_code=$(echo "$st_resp" | tail -1)
+        st_body=$(echo "$st_resp" | sed '$d')
+        if [[ "$st_code" != "200" ]]; then
+            FETCH_ERR="GET status -> HTTP $st_code$(rate_limit_suffix "$st_code"): $(echo "$st_body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
+            return
+        fi
+        # Same silent-truncation guard as check-runs above, for the legacy
+        # combined-status statuses[] array.
+        local st_total st_len
+        st_total=$(echo "$st_body" | jq -r '.total_count // empty' 2>/dev/null || true)
+        st_len=$(echo "$st_body" | jq -r '(.statuses // []) | length' 2>/dev/null || true)
+        if [[ ! "$st_total" =~ ^[0-9]+$ || ! "$st_len" =~ ^[0-9]+$ ]]; then
+            FETCH_ERR="GET status: response missing total_count/statuses"
+            return
+        fi
+        if (( st_len != st_total )); then
+            FETCH_ERR="GET status: fetched ${st_len} of ${st_total} statuses (>100 statuses on this commit; pagination not implemented)"
+            return
+        fi
+        LAST_ST_BODY="$st_body"
+        [[ "$st_total" == "0" ]] && STATUS_SKIP=1
     fi
 
-    CHECKS_JSON=$(jq -cn --argjson cr "$cr_body" --argjson st "$st_body" '
-      def cr_bucket:
-        if .status != "completed" then "pending"
-        elif .conclusion == "success" then "pass"
-        elif (.conclusion == "neutral" or .conclusion == "skipped") then "skipping"
-        else "fail"
-        end;
-      def st_bucket:
-        if .state == "success" then "pass"
-        elif .state == "pending" then "pending"
-        else "fail"
-        end;
-      ([$cr.check_runs[]? | {name, state: (.conclusion // .status), bucket: cr_bucket}])
-      + ([$st.statuses[]?  | {name: .context, state, bucket: st_bucket}])
-    ') || { FETCH_ERR="failed to merge check-runs/status responses"; return; }
+    CHECKS_JSON=$(merge_checks "$cr_body" "$st_body") || { FETCH_ERR="failed to merge check-runs/status responses"; return; }
     FETCH_OK=1
 }
 
-WAITED=0
-POLL_ATTEMPTS=0
-result_json=""
-status=""
-
-while :; do
-    attempt=0
-    while :; do
-        fetch_checks
-        (( FETCH_OK == 1 )) && break
-        if (( attempt >= ${#RETRY_DELAYS[@]} )); then break; fi
-        echo "check-ci: fetch failed, retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $FETCH_ERR" >&2
-        sleep "${RETRY_DELAYS[$attempt]}"
-        attempt=$((attempt + 1))
-    done
-    POLL_ATTEMPTS=$((POLL_ATTEMPTS + 1))
-
-    if (( FETCH_OK != 1 )); then
-        printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
-            "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
-        exit 1
-    fi
-
-    # bucket field values: pass | fail | pending | skipping
-    # is_passed:  bucket IN("pass", "skipping")   — completed successfully or intentionally skipped
-    # is_failed:  bucket IN("fail", "cancel")     — failed or cancelled
-    # is_pending: bucket == "pending"             — still running
+# compute_verdict - reduces $CHECKS_JSON to $result_json / $status.
+# bucket field values: pass | fail | pending | skipping
+# is_passed:  bucket IN("pass", "skipping")   — completed successfully or intentionally skipped
+# is_failed:  bucket IN("fail", "cancel")     — failed or cancelled
+# is_pending: bucket == "pending"             — still running
+compute_verdict() {
     result_json=$(echo "$CHECKS_JSON" | jq -c '
       def is_passed:  .bucket | IN("pass", "skipping");
       def is_failed:  .bucket | IN("fail", "cancel");
@@ -420,18 +368,162 @@ while :; do
       end
     ')
     status=$(echo "$result_json" | jq -r '.status')
+}
 
-    [[ "$status" == "pending" ]] || break
+# do_fetch_cycle - runs fetch_checks with the retry/backoff policy, counts
+# it as one poll attempt, and on persistent failure emits the {status:
+# "error"} JSON and exits 1 (fail-closed, same contract as before).
+do_fetch_cycle() {
+    local attempt=0
+    while :; do
+        fetch_checks
+        (( FETCH_OK == 1 )) && break
+        if (( attempt >= ${#RETRY_DELAYS[@]} )); then break; fi
+        echo "check-ci: fetch failed, retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $FETCH_ERR" >&2
+        sleep "${RETRY_DELAYS[$attempt]}"
+        attempt=$((attempt + 1))
+    done
+    POLL_ATTEMPTS=$((POLL_ATTEMPTS + 1))
 
-    (( WAIT_SECONDS == 0 )) && break
+    if (( FETCH_OK != 1 )); then
+        printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
+            "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
+        exit 1
+    fi
+}
 
-    remaining=$((WAIT_SECONDS - WAITED))
-    (( remaining <= 0 )) && break
+# reverify_terminal - called right before returning a non-pending verdict
+# that was produced by a cycle which used the in-invocation cache (skipped
+# pulls and/or status), to catch a head SHA or status change that happened
+# mid-poll. Re-fetches pulls once (retried on API error, fail-closed same
+# as do_fetch_cycle). Sets REVERIFY_STATUS to:
+#   "confirmed" - same head SHA. If STATUS_SKIP was 1, status is refetched
+#     once and $result_json/$status are recomputed against it; otherwise
+#     the existing $result_json/$status stand as-is.
+#   "resha" - the head SHA changed. CACHED_SHA/STATUS_SKIP/LAST_ST_BODY are
+#     reset; the caller must run a fresh fetch cycle (do_fetch_cycle) on
+#     the new SHA and use its verdict instead.
+reverify_terminal() {
+    local attempt=0 sha=""
+    while :; do
+        local resp http_code body
+        if resp=$(api_get "/repos/${REPO}/pulls/${PR_NUM}" 2>&1); then
+            http_code=$(echo "$resp" | tail -1)
+            body=$(echo "$resp" | sed '$d')
+            if [[ "$http_code" == "200" ]]; then
+                sha=$(echo "$body" | jq -r '.head.sha // empty' 2>/dev/null || true)
+                if [[ -n "$sha" ]]; then
+                    break
+                fi
+                FETCH_ERR="GET pulls/${PR_NUM}: response had no head.sha"
+            else
+                FETCH_ERR="GET pulls/${PR_NUM} -> HTTP $http_code$(rate_limit_suffix "$http_code"): $(echo "$body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
+            fi
+        else
+            FETCH_ERR="network error fetching PR #${PR_NUM}: $resp"
+        fi
+        if (( attempt >= ${#RETRY_DELAYS[@]} )); then
+            printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
+                "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
+            exit 1
+        fi
+        echo "check-ci: fetch failed, retry $((attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$attempt]}s: $FETCH_ERR" >&2
+        sleep "${RETRY_DELAYS[$attempt]}"
+        attempt=$((attempt + 1))
+    done
 
-    sleep_for=$(( remaining < POLL_SECONDS ? remaining : POLL_SECONDS ))
+    if [[ "$sha" != "$CACHED_SHA" ]]; then
+        CACHED_SHA="$sha"
+        STATUS_SKIP=0
+        LAST_ST_BODY=""
+        REVERIFY_STATUS="resha"
+        return
+    fi
+
+    if (( STATUS_SKIP == 1 )); then
+        local st_attempt=0 st_body st_code
+        while :; do
+            local st_resp
+            if st_resp=$(api_get "/repos/${REPO}/commits/${sha}/status?per_page=100" 2>&1); then
+                st_code=$(echo "$st_resp" | tail -1)
+                st_body=$(echo "$st_resp" | sed '$d')
+                if [[ "$st_code" == "200" ]]; then
+                    local st_total st_len
+                    st_total=$(echo "$st_body" | jq -r '.total_count // empty' 2>/dev/null || true)
+                    st_len=$(echo "$st_body" | jq -r '(.statuses // []) | length' 2>/dev/null || true)
+                    if [[ "$st_total" =~ ^[0-9]+$ && "$st_len" =~ ^[0-9]+$ && "$st_len" == "$st_total" ]]; then
+                        break
+                    fi
+                    FETCH_ERR="GET status: response missing total_count/statuses, or fetched ${st_len:-0} of ${st_total:-0} statuses"
+                else
+                    FETCH_ERR="GET status -> HTTP $st_code$(rate_limit_suffix "$st_code"): $(echo "$st_body" | jq -r '.message // "unknown error"' 2>/dev/null || true)"
+                fi
+            else
+                FETCH_ERR="network error fetching commit status: $st_resp"
+            fi
+            if (( st_attempt >= ${#RETRY_DELAYS[@]} )); then
+                printf '{"status":"error","message":%s,"waited_seconds":%s,"poll_attempts":%s}\n' \
+                    "$(printf '%s' "$FETCH_ERR" | jq -Rs '.')" "$WAITED" "$POLL_ATTEMPTS"
+                exit 1
+            fi
+            echo "check-ci: fetch failed, retry $((st_attempt + 1))/${#RETRY_DELAYS[@]} in ${RETRY_DELAYS[$st_attempt]}s: $FETCH_ERR" >&2
+            sleep "${RETRY_DELAYS[$st_attempt]}"
+            st_attempt=$((st_attempt + 1))
+        done
+        LAST_ST_BODY="$st_body"
+        local st_total
+        st_total=$(echo "$st_body" | jq -r '.total_count // empty')
+        STATUS_SKIP=0
+        [[ "$st_total" == "0" ]] && STATUS_SKIP=1
+        CHECKS_JSON=$(merge_checks "$LAST_CR_BODY" "$st_body")
+        compute_verdict
+    fi
+
+    REVERIFY_STATUS="confirmed"
+}
+
+# maybe_wait_or_break - if $status is "pending" and wait budget remains,
+# sleeps and returns 0 (caller should `continue` the poll loop). Returns 1
+# (caller should `break`) if $status is not "pending", or if no wait
+# budget remains.
+maybe_wait_or_break() {
+    [[ "$status" == "pending" ]] || return 1
+    (( WAIT_SECONDS == 0 )) && return 1
+    local remaining=$((WAIT_SECONDS - WAITED))
+    (( remaining <= 0 )) && return 1
+    local sleep_for=$(( remaining < POLL_SECONDS ? remaining : POLL_SECONDS ))
     echo "check-ci: CI pending - sleeping ${sleep_for}s (waited ${WAITED}/${WAIT_SECONDS}s, poll ${POLL_ATTEMPTS})" >&2
     sleep "$sleep_for"
     WAITED=$((WAITED + sleep_for))
+    return 0
+}
+
+WAITED=0
+POLL_ATTEMPTS=0
+result_json=""
+status=""
+REVERIFY_STATUS=""
+
+while :; do
+    do_fetch_cycle
+    compute_verdict
+
+    if [[ "$status" != "pending" && "$USED_CACHE" == "1" ]]; then
+        reverify_terminal
+        if [[ "$REVERIFY_STATUS" == "resha" ]]; then
+            # Head SHA changed since the cache was populated: the cached
+            # verdict is stale. Run a fresh fetch cycle on the new SHA and
+            # use its verdict instead. USED_CACHE is forced 0 afterward so
+            # this fresh cycle's terminal verdict (if any) is not
+            # re-verified again — its SHA was just confirmed above.
+            do_fetch_cycle
+            USED_CACHE=0
+            compute_verdict
+        fi
+    fi
+
+    maybe_wait_or_break && continue
+    break
 done
 
 echo "$result_json" | jq -c --argjson w "$WAITED" --argjson p "$POLL_ATTEMPTS" '. + {waited_seconds:$w, poll_attempts:$p}'
