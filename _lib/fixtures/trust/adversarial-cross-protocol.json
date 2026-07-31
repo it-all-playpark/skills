@@ -1,5 +1,5 @@
 {
-  "schema_version": "evalseal/1",
+  "schema_version": "evalseal/2",
   "subject": {
     "kind": "issue",
     "identity": "409",
@@ -23,7 +23,8 @@
   "anchors": {
     "base_oid": "abc123",
     "head_oid": "def456",
-    "tree_oid": "aaa111"
+    "tree_oid": "aaa111",
+    "evidence_bundle_digest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
   },
   "receipt_id": "sha256:e665c4f4c3ed7a7b7b2f312d3297fbaf25b8f88a3606b80d2cc0748121e6d448"
 }

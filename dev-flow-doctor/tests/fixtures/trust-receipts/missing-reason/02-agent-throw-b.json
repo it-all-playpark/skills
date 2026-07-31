@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-reason-02",
+  "timestamp": "2026-01-12T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1550,
+    "phase_durations": { "evaluate": 95 },
+    "trust_run_id": "run-reason-002",
+    "trust_evalseal_missing_reason": "agent_throw",
+    "trust_surfaceproof_shadow": {
+      "mode": "shadow",
+      "verdict": "pass",
+      "reason_code": "OK",
+      "receipt_id": "sha256:sprsn02"
+    }
+  }
+}

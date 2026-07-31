@@ -72,7 +72,9 @@ cmd_log() {
     local ci_wait_seconds="" ci_poll_attempts=""
     local telemetry_json=""
     local trust_run_id="" trust_receipts="" trust_surfaceproof=""
+    local trust_evalseal_missing_reason=""
     local trust_run_id_set=false
+    local trust_evalseal_missing_reason_set=false
     local vdelta_verdicts="" vdelta_fail_open="" redgreen_deny="" testsurf_hits=""
     local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
     local subagent_invocations=""
@@ -123,6 +125,7 @@ cmd_log() {
             --trust-run-id) trust_run_id="$2"; trust_run_id_set=true; shift 2 ;;
             --trust-receipts) trust_receipts="$2"; shift 2 ;;
             --trust-surfaceproof) trust_surfaceproof="$2"; shift 2 ;;
+            --trust-evalseal-missing-reason) trust_evalseal_missing_reason="$2"; trust_evalseal_missing_reason_set=true; shift 2 ;;
             --vdelta-verdicts) vdelta_verdicts="$2"; shift 2 ;;
             --vdelta-fail-open) vdelta_fail_open="$2"; shift 2 ;;
             --redgreen-deny) redgreen_deny="$2"; shift 2 ;;
@@ -235,6 +238,17 @@ cmd_log() {
             ' >/dev/null 2>&1; then
             die_json "Invalid --trust-surfaceproof: mode must be off|shadow|advisory|blocking and verdict must be pass|fail|inconclusive" 1
         fi
+    fi
+
+    # Validate --trust-evalseal-missing-reason (closed 6-value enum; receipt-missing
+    # reason distribution for issue #471. fail-closed like --trust-receipts: out-of-enum
+    # and empty string both die_json since a bad reason must surface as a bug, not silently
+    # drop (unlike the fail-open 8-key telemetry flags below).
+    if [[ "$trust_evalseal_missing_reason_set" == true ]]; then
+        case "$trust_evalseal_missing_reason" in
+            eval_skipped|agent_throw|agent_null|seal_error|mode_off|unknown) ;;
+            *) die_json "Invalid --trust-evalseal-missing-reason: $trust_evalseal_missing_reason. Must be eval_skipped|agent_throw|agent_null|seal_error|mode_off|unknown" 1 ;;
+        esac
     fi
 
     # Validate the 8 telemetry flags added for issue #430 (fail-open: drop-and-warn,
@@ -424,6 +438,10 @@ cmd_log() {
     fi
     if [[ -n "$trust_surfaceproof" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson v "$trust_surfaceproof" '. + {trust_surfaceproof_shadow: $v}')
+        has_telemetry=true
+    fi
+    if [[ "$trust_evalseal_missing_reason_set" == true ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$trust_evalseal_missing_reason" '. + {trust_evalseal_missing_reason: $v}')
         has_telemetry=true
     fi
     if [[ -n "$vdelta_verdicts" ]]; then
@@ -830,6 +848,7 @@ Examples:
   journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
   journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
   journal.sh log dev-flow success --trust-run-id run-abc123 --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}]' --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
+  journal.sh log dev-flow success --trust-evalseal-missing-reason agent_throw  # receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
   journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json

@@ -12,7 +12,9 @@
 import { computeReceiptId } from './trust-digest.mjs';
 
 // receipt envelope の schema_version closed enum。
-export const TRUST_SCHEMA_VERSIONS = ['surfaceproof/1', 'evalseal/1', 'effectdelta/1'];
+// evalseal/1 は epic #390 Phase 6（issue #471）で撤去済み — evalseal/2 に完全置換
+// （後方互換読み取りなし。evalseal/1 receipt は SCHEMA_VERSION_UNSUPPORTED で reject）。
+export const TRUST_SCHEMA_VERSIONS = ['surfaceproof/1', 'evalseal/2', 'effectdelta/1'];
 
 // outcome.verdict closed enum。
 export const TRUST_VERDICTS = ['pass', 'fail', 'inconclusive'];
@@ -31,22 +33,34 @@ export const TRUST_REASON_CODES = [
   'RECEIPT_ID_MISMATCH',
   'DIGEST_MISMATCH',
   'CAPABILITY_MISSING',
+  'EVIDENCE_NOT_DERIVED',
 ];
 
 // schema_version ごとに instrument.capabilities が満たすべき最小語彙（Phase 1 固定）。
 // Phase 2+ で語彙拡張する場合は新 schema version を追加する（dual-path 禁止規約）。
 export const REQUIRED_CAPABILITIES = {
   'surfaceproof/1': ['issue-read'],
-  'evalseal/1': ['tree-read'],
+  'evalseal/2': ['tree-read'],
   'effectdelta/1': ['effect-readback'],
 };
 
 // schema_version ごとに anchors が持てる key の whitelist。値は
 // `sha256:<hex64>` digest か git OID 文字列のみ（raw 本文・secret を持たせない redaction 原則）。
+// evalseal/2: evidence_digest は撤去し evidence_bundle_digest / asserted_digest に置換
+// （issue #471 — evidence bundle の機械導出 digest と asserted 区画 digest を分離する）。
 export const TRUST_ANCHOR_KEYS = {
   'surfaceproof/1': ['source_revision', 'input_pack_digest'],
-  'evalseal/1': ['base_oid', 'head_oid', 'tree_oid', 'bundle_digest', 'evidence_digest'],
+  'evalseal/2': ['base_oid', 'head_oid', 'tree_oid', 'bundle_digest', 'evidence_bundle_digest', 'asserted_digest'],
   'effectdelta/1': ['effect_id', 'readback_digest'],
+};
+
+// schema_version ごとに anchors が必ず持つべき key（TRUST_ANCHOR_KEYS の部分集合）。
+// evalseal/2 は evidence_bundle_digest を必須化し、evidence bundle からの機械導出
+// verdict を持たない receipt を構造的に reject する（issue #471 AC-1）。
+export const TRUST_REQUIRED_ANCHOR_KEYS = {
+  'surfaceproof/1': [],
+  'evalseal/2': ['evidence_bundle_digest'],
+  'effectdelta/1': [],
 };
 
 const TOP_LEVEL_KEYS = ['schema_version', 'receipt_id', 'subject', 'instrument', 'outcome', 'trust', 'anchors'];
@@ -56,6 +70,10 @@ const OUTCOME_KEYS = ['verdict', 'reason_code'];
 const TRUST_KEYS = ['record_integrity'];
 
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+
+// anchors の中で `sha256:<hex64>` 形式を強制する key（digest 系 anchor のみ。
+// base_oid / head_oid / tree_oid / effect_id 等の git OID / ID 系 anchor は対象外）。
+const DIGEST_ANCHOR_KEYS = ['evidence_bundle_digest', 'asserted_digest', 'bundle_digest'];
 
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -173,6 +191,21 @@ export function validateReceipt(receipt) {
   for (const k of Object.keys(anchors)) {
     if (typeof anchors[k] !== 'string') {
       return fail('SCHEMA_TYPE_MISMATCH', `receipt.anchors.${k} は文字列が必要`);
+    }
+  }
+
+  // (f-2) schema_version ごとの必須 anchor 欠落検査（issue #471: evalseal/2 の
+  // evidence_bundle_digest 必須化 — 機械導出 verdict の裏付けが無い receipt を reject する）
+  const requiredAnchorKeys = TRUST_REQUIRED_ANCHOR_KEYS[schemaVersion];
+  const missingAnchorKeys = requiredAnchorKeys.filter((k) => !Object.prototype.hasOwnProperty.call(anchors, k));
+  if (missingAnchorKeys.length > 0) {
+    return fail('SCHEMA_MISSING_FIELD', `receipt.anchors: 必須 anchor 欠落 ${missingAnchorKeys.join(', ')}`);
+  }
+
+  // (f-3) digest 系 anchor の形式検証（sha256:<hex64>）
+  for (const k of DIGEST_ANCHOR_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(anchors, k) && !DIGEST_RE.test(anchors[k])) {
+      return fail('DIGEST_MISMATCH', `receipt.anchors.${k} が sha256:<hex64> 形式でない`);
     }
   }
 

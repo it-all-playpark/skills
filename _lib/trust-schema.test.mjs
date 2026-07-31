@@ -17,18 +17,19 @@ const DIGEST_A = `sha256:${'a'.repeat(64)}`;
 const DIGEST_B = `sha256:${'b'.repeat(64)}`;
 const DIGEST_C = `sha256:${'c'.repeat(64)}`;
 const DIGEST_D = `sha256:${'d'.repeat(64)}`;
+const DIGEST_E = `sha256:${'e'.repeat(64)}`;
 
 // schema_version ごとの valid receipt body（receipt_id 抜き）を作り、
 // computeReceiptId で receipt_id を確定させたものを返す。
 function makeValidReceipt(schemaVersion, overrides = {}) {
   const anchorsBySchema = {
     'surfaceproof/1': { source_revision: DIGEST_C, input_pack_digest: DIGEST_D },
-    'evalseal/1': { base_oid: 'abc123', head_oid: 'def456', tree_oid: 'aaa111' },
+    'evalseal/2': { base_oid: 'abc123', head_oid: 'def456', tree_oid: 'aaa111', evidence_bundle_digest: DIGEST_E },
     'effectdelta/1': { effect_id: 'effect-1', readback_digest: DIGEST_D },
   };
   const capabilitiesBySchema = {
     'surfaceproof/1': ['issue-read'],
-    'evalseal/1': ['tree-read'],
+    'evalseal/2': ['tree-read'],
     'effectdelta/1': ['effect-readback'],
   };
   const base = {
@@ -256,9 +257,9 @@ test('validateReceipt: receipt_id を改竄すると RECEIPT_ID_MISMATCH', () =>
 });
 
 test('validateReceipt: valid な evalseal receipt の schema_version を surfaceproof/1 に差し替えると receipt_id 不一致で reject（AC-2: protocol 間差し替え防止）', () => {
-  const evalsealReceipt = makeValidReceipt('evalseal/1');
+  const evalsealReceipt = makeValidReceipt('evalseal/2');
   // schema_version と anchors の shape だけ surfaceproof/1 に合わせ、receipt_id は
-  // evalseal/1 のまま据え置く（= domain-separated digest の差し替え防止を検証する）。
+  // evalseal/2 のまま据え置く（= domain-separated digest の差し替え防止を検証する）。
   const tampered = {
     ...evalsealReceipt,
     schema_version: 'surfaceproof/1',
@@ -310,7 +311,7 @@ test('checkCapabilities: capabilities が空配列は CAPABILITY_MISSING', () =>
 });
 
 test('checkCapabilities: 必要な capability が揃っていれば ok:true', () => {
-  const receipt = makeValidReceipt('evalseal/1');
+  const receipt = makeValidReceipt('evalseal/2');
   const result = checkCapabilities(receipt);
   assert.deepEqual(result, { ok: true, reason_code: 'OK', missing: [] });
 });
@@ -374,7 +375,7 @@ test('resolveTrustLevel: verifier 欠落は throw', () => {
 // ---- (12) 定数の closed enum 確認 ----
 
 test('TRUST_SCHEMA_VERSIONS は 3 protocol', () => {
-  assert.deepEqual(TRUST_SCHEMA_VERSIONS, ['surfaceproof/1', 'evalseal/1', 'effectdelta/1']);
+  assert.deepEqual(TRUST_SCHEMA_VERSIONS, ['surfaceproof/1', 'evalseal/2', 'effectdelta/1']);
 });
 
 test('TRUST_VERDICTS は pass/fail/inconclusive', () => {
@@ -388,9 +389,55 @@ test('TRUST_RECORD_INTEGRITY は advisory/tamper-evident/trusted-environment', (
 test('TRUST_REASON_CODES は OK を含む closed enum', () => {
   assert.ok(TRUST_REASON_CODES.includes('OK'));
   assert.ok(TRUST_REASON_CODES.includes('CAPABILITY_MISSING'));
-  assert.equal(TRUST_REASON_CODES.length, 9);
+  assert.equal(TRUST_REASON_CODES.length, 10);
 });
 
-test('TRUST_ANCHOR_KEYS: evalseal/1 は 5 種の anchor key を許可する', () => {
-  assert.deepEqual(TRUST_ANCHOR_KEYS['evalseal/1'], ['base_oid', 'head_oid', 'tree_oid', 'bundle_digest', 'evidence_digest']);
+test('TRUST_REASON_CODES: EVIDENCE_NOT_DERIVED を含む（issue #471: evidence bundle 導出不能の受理コード）', () => {
+  assert.ok(TRUST_REASON_CODES.includes('EVIDENCE_NOT_DERIVED'));
+});
+
+test('TRUST_ANCHOR_KEYS: evalseal/2 は 6 種の anchor key を許可する（evidence_digest 撤去、evidence_bundle_digest / asserted_digest 追加）', () => {
+  assert.deepEqual(TRUST_ANCHOR_KEYS['evalseal/2'], [
+    'base_oid',
+    'head_oid',
+    'tree_oid',
+    'bundle_digest',
+    'evidence_bundle_digest',
+    'asserted_digest',
+  ]);
+});
+
+test('validateReceipt: evalseal/1 は撤去済みのため SCHEMA_VERSION_UNSUPPORTED（後方互換読み取りなし）', () => {
+  const receipt = makeValidReceipt('evalseal/2');
+  receipt.schema_version = 'evalseal/1';
+  const result = validateReceipt(receipt);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason_code, 'SCHEMA_VERSION_UNSUPPORTED');
+});
+
+test('validateReceipt: evalseal/2 receipt の anchors.evidence_bundle_digest が欠落すると SCHEMA_MISSING_FIELD', () => {
+  const receipt = makeValidReceipt('evalseal/2');
+  delete receipt.anchors.evidence_bundle_digest;
+  receipt.receipt_id = computeReceiptId(receipt);
+  const result = validateReceipt(receipt);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason_code, 'SCHEMA_MISSING_FIELD');
+});
+
+test('validateReceipt: evalseal/2 receipt の anchors.evidence_bundle_digest が sha256:<hex64> 形式でないと DIGEST_MISMATCH', () => {
+  const receipt = makeValidReceipt('evalseal/2');
+  receipt.anchors.evidence_bundle_digest = 'not-a-digest';
+  receipt.receipt_id = computeReceiptId(receipt);
+  const result = validateReceipt(receipt);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason_code, 'DIGEST_MISMATCH');
+});
+
+test('validateReceipt: evalseal/2 receipt の anchors.asserted_digest が sha256:<hex64> 形式でないと DIGEST_MISMATCH', () => {
+  const receipt = makeValidReceipt('evalseal/2');
+  receipt.anchors.asserted_digest = 'bad';
+  receipt.receipt_id = computeReceiptId(receipt);
+  const result = validateReceipt(receipt);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason_code, 'DIGEST_MISMATCH');
 });
