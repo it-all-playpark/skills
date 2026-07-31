@@ -1249,3 +1249,61 @@ JSON
     has_telemetry=$(jq 'has("telemetry")' "$entry_file")
     [ "$has_telemetry" = "false" ]
 }
+
+# ===========================================================================
+# --trust-evalseal-missing-reason (issue #471 AC-6)
+# receipt 欠落理由の closed 6値 enum を journal telemetry へ到達させるフラグ
+# ---------------------------------------------------------------------------
+
+# (a) valid 値が telemetry.trust_evalseal_missing_reason へ到達する
+@test "--trust-evalseal-missing-reason: valid value reaches telemetry" {
+    run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason agent_throw
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    reason=$(jq -r '.telemetry.trust_evalseal_missing_reason' "$entry_file")
+    [ "$reason" = "agent_throw" ]
+}
+
+# (a-2) enum の他の値も同様に通る
+@test "--trust-evalseal-missing-reason: all 6 enum values are accepted" {
+    for v in eval_skipped agent_throw agent_null seal_error mode_off unknown; do
+        run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason "$v"
+        [ "$status" -eq 0 ]
+
+        entry_file=$(latest_entry)
+        [ -n "$entry_file" ]
+
+        reason=$(jq -r '.telemetry.trust_evalseal_missing_reason' "$entry_file")
+        [ "$reason" = "$v" ]
+    done
+}
+
+# (b) enum 外の値は exit 非0 + error JSON (die_json fail-closed)
+@test "--trust-evalseal-missing-reason: out-of-enum value is rejected (die_json)" {
+    run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason bogus
+    [ "$status" -ne 0 ]
+
+    error_status=$(echo "$output" | jq -r '.status')
+    [ "$error_status" = "error" ]
+}
+
+# (b-2) 空文字も reject される
+@test "--trust-evalseal-missing-reason: empty string is rejected" {
+    run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason ""
+    [ "$status" -ne 0 ]
+}
+
+# (c) フラグ未指定時は telemetry に当該キーが存在しない
+@test "--trust-evalseal-missing-reason: not specified -> no telemetry key" {
+    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("trust_evalseal_missing_reason")' "$entry_file")
+    [ "$has_key" = "false" ]
+}

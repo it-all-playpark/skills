@@ -141,7 +141,11 @@ function runVerify(args) {
 
   const validation = validateReceipt(receipt);
   if (!validation.ok) {
-    return advisory('schema-invalid');
+    // schema_version が TRUST_SCHEMA_VERSIONS 圏外（例: 撤去済み evalseal/1）の場合は
+    // reason_code をそのまま propagate して 'schema-unsupported' を返す（issue #471
+    // AC-8）。バージョン個別分岐は作らない — reason_code の汎用 propagate のみで
+    // evalseal/1 は自動的に明示 'schema-unsupported' になる（後方互換 scaffolding 禁止）。
+    return advisory(validation.reason_code === 'SCHEMA_VERSION_UNSUPPORTED' ? 'schema-unsupported' : 'schema-invalid');
   }
 
   let pubkeyPem;

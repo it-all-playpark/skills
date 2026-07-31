@@ -1,10 +1,13 @@
 // issue #411 (epic #390 Phase 3) F3: EvalSeal shadow wiring routing test。
+// issue #471 (epic #390 Phase 6) で evalseal/2（機械導出 verdict）への移行に合わせて更新。
 //
 // Phase 1 の _lib/trust-noninterference.test.mjs（「配線ゼロ」を固定する非干渉 guard）は、
 // 本 task で意図どおり配線 routing test に置換される（同 test ファイル冒頭のコメント参照）。
-// 本ファイルは dev-flow.js への EvalSeal (evalseal/1) shadow 配線
-// （Evaluate 後 seal / Final reconcile 失効+再 seal / classifyMergeTier trustGate / summary /
-// telemetry / return）が意図どおり行われ、shadow/off で既存挙動が変化しないことを実測する。
+// 本ファイルは dev-flow.js への EvalSeal (evalseal/2) shadow 配線
+// （Evaluate 後 seal(--evidence-file 付き) / Final reconcile 失効+asserted 組立 / Merge tier での
+// trust-seal-final(riskFinal 由来 evidence bundle) / classifyMergeTier trustGate / summary /
+// telemetry(trust_evalseal_missing_reason) / return）が意図どおり行われ、shadow/off で既存挙動が
+// 変化しないことを実測する。
 //
 // ハーネスは makeRecordingSandbox（_lib/test-helpers/vm-sandbox.mjs）+ final-reconcile-
 // routing.test.mjs / merge-tier-security-clearance-routing.test.mjs と同型のローカル
@@ -12,18 +15,25 @@
 //
 // テストケース:
 //   (a) repo が allowlist 不一致（省略）→ EVALSEAL_MODE='off' → trust-* 呼び出しゼロ +
-//       journal-log prompt に 'trust_receipts' 無し + post-summary prompt に
-//       'Trust receipts' 無し + return に trust_evalseal_mode 無し（AC-6 off 経路）
+//       journal-log prompt に 'trust_receipts'/'trust_evalseal_missing_reason' 無し +
+//       post-summary prompt に 'Trust receipts' 無し + return に trust_evalseal_mode /
+//       trust_evalseal_missing_reason 無し（AC-6 off 経路）
 //   (b) repo=allowlist + runEval + trust-seal-eval ok:true → 'trust-seal-eval' が 1 回 +
+//       prompt に --evidence-file / trust-evidence-eval.json Write 指示あり +
 //       journal-log telemetry の trust_receipts[0].verdict/record_integrity==='advisory' +
-//       post-summary prompt に 'Trust receipts (shadow)' + merge_tier/reasons が (a) と同一
-//       （shadow 非干渉）
-//   (c) trust-seal-eval responder が null → run 完走・error null・trust キーなし（fail-open）
+//       trust_evalseal_missing_reason 無し + post-summary prompt に 'Trust receipts (shadow)' +
+//       merge_tier/reasons が (a) と同一（shadow 非干渉）
+//   (c) trust-seal-eval responder が null → run 完走・error null・trust_receipts=0 +
+//       trust_evalseal_missing_reason='agent_null'（journal telemetry + return 両方。AC-6）
+//   (c2) trust-seal-eval responder が {ok:false} → trust_evalseal_missing_reason='seal_error'
+//   (c3) trust-seal-eval responder が {ok:true, mode:'off'} → trust_evalseal_missing_reason='mode_off'
+//   (c4) trust-seal-eval responder が throw → trust_evalseal_missing_reason='agent_throw'
 //   (d) fixes_applied>0 + finalReconcile reverified + trust-check-final が
 //       check.verdict:'inconclusive'/reason_code:'DIGEST_MISMATCH' → evaluate entry が
-//       telemetry 上 invalidated:true + 'trust-seal-final' が 'reconcile-sync' より後に呼ばれ
-//       trust_receipts 2 件（AC-4）
-//   (e) micro path（runEval=false）→ trust-* 呼び出しゼロ
+//       telemetry 上 invalidated:true + 'trust-seal-final' が 'reconcile-sync' より後・
+//       'danger-grep-final' 系より後に呼ばれ prompt に --evidence-file / trust-evidence-final.json
+//       Write 指示あり + trust_receipts 2 件（AC-4）
+//   (e) micro path（runEval=false）→ trust-* 呼び出しゼロ + trust_evalseal_missing_reason='eval_skipped'
 //   (f) (a) と (b) の calls から 'trust-' 始まり label を除いた列が完全一致（AC-6 実測）
 //   (g) 旧 noninterference test の残存 pin: pr-iterate.js / dev-improve.js /
 //       .claude/agents/*.md に /trust-(schema|digest|mode|telemetry|wiring)|evalseal|EvalSeal/
@@ -185,7 +195,7 @@ function sampleEnvelope({ stage, verdict = 'pass', receiptId, revisionDigest }) 
     run_id: `trust-1-${stage}aaaaaaaaaaaa`.slice(0, 25),
     layer: 'evalseal',
     mode: 'shadow',
-    schema_version: 'evalseal/1',
+    schema_version: 'evalseal/2',
     receipt_id: receiptId ?? `r-${stage}`,
     verdict,
     reason_code: 'OK',
@@ -198,12 +208,12 @@ function sampleEnvelope({ stage, verdict = 'pass', receiptId, revisionDigest }) 
 
 function sampleReceipt({ stage, verdict = 'pass' }) {
   return {
-    schema_version: 'evalseal/1',
+    schema_version: 'evalseal/2',
     subject: { kind: 'pull_request', identity: '411', revision_digest: `digest-${stage}` },
-    instrument: { adapter: 'dev-flow-evaluator', adapter_version: 'evalseal-seal/1', config_digest: 'bundle-digest', capabilities: ['tree-read'] },
+    instrument: { adapter: 'dev-flow-evaluator', adapter_version: 'evalseal-seal/2', config_digest: 'bundle-digest', capabilities: ['tree-read'] },
     outcome: { verdict, reason_code: 'OK' },
     trust: { record_integrity: 'advisory' },
-    anchors: { base_oid: 'base', head_oid: 'head', tree_oid: 'tree', bundle_digest: 'bundle-digest', evidence_digest: 'evidence-digest' },
+    anchors: { base_oid: 'base', head_oid: 'head', tree_oid: 'tree', bundle_digest: 'bundle-digest', evidence_bundle_digest: 'sha256:' + '0'.repeat(64), asserted_digest: 'sha256:' + '1'.repeat(64) },
     receipt_id: `r-${stage}`,
   };
 }
@@ -224,6 +234,7 @@ test('[evalseal] (a) repo が allowlist 不一致 → EVALSEAL_MODE=off → trus
   const journalCall = calls.find((c) => c.label === 'journal-log');
   assert.ok(journalCall, "(a) 'journal-log' の呼び出しが存在すること");
   assert.ok(!journalCall.prompt.includes('trust_receipts'), "(a) journal-log prompt に 'trust_receipts' が含まれてはならない");
+  assert.ok(!journalCall.prompt.includes('trust_evalseal_missing_reason'), "(a) journal-log prompt に 'trust_evalseal_missing_reason' が含まれてはならない（EVALSEAL_MODE=off）");
 
   const summaryCall = calls.find((c) => c.label === 'post-summary');
   assert.ok(summaryCall, "(a) 'post-summary' の呼び出しが存在すること");
@@ -231,15 +242,16 @@ test('[evalseal] (a) repo が allowlist 不一致 → EVALSEAL_MODE=off → trus
 
   assert.equal(result?.trust_evalseal_mode, undefined, "(a) return に trust_evalseal_mode が含まれてはならない");
   assert.equal(result?.trust_receipts, undefined, "(a) return に trust_receipts が含まれてはならない");
+  assert.equal(result?.trust_evalseal_missing_reason, undefined, "(a) return に trust_evalseal_missing_reason が含まれてはならない");
 });
 
 // ============================================================
 // (b) repo=allowlist + runEval + trust-seal-eval ok:true → trust-seal-eval 1 回 +
-// telemetry trust_receipts[0].verdict/record_integrity==='advisory' + summary に
-// 'Trust receipts (shadow)' + merge_tier/reasons が (a) と同一（shadow 非干渉）
+// prompt に --evidence-file 付き + telemetry trust_receipts[0].verdict/record_integrity==='advisory' +
+// summary に 'Trust receipts (shadow)' + merge_tier/reasons が (a) と同一（shadow 非干渉）
 // ============================================================
 
-test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1回 + telemetry advisory + summary 追記 + merge_tier 不変', async () => {
+test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1回(--evidence-file付き) + telemetry advisory + summary 追記 + merge_tier 不変', async () => {
   const evalEnvelope = sampleEnvelope({ stage: 'evaluate' });
   const { ctx: ctxA } = makeSandbox({ repo: null });
   const { result: resultA } = await runDevFlowCapture(devFlowSrc, ctxA);
@@ -256,6 +268,8 @@ test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1�
 
   const sealCalls = calls.filter((c) => c.label === 'trust-seal-eval');
   assert.equal(sealCalls.length, 1, `(b) 'trust-seal-eval' はちょうど 1 回呼ばれるはずだが ${sealCalls.length} 回だった`);
+  assert.ok(sealCalls[0].prompt.includes('--evidence-file'), "(b) trust-seal-eval prompt に '--evidence-file' が含まれるはず");
+  assert.ok(sealCalls[0].prompt.includes('trust-evidence-eval.json'), "(b) trust-seal-eval prompt に 'trust-evidence-eval.json' への Write 指示が含まれるはず");
 
   const journalCall = calls.find((c) => c.label === 'journal-log');
   const payload = extractTelemetryPayload(journalCall?.prompt);
@@ -266,6 +280,8 @@ test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1�
   assert.equal(receipts[0].record_integrity, 'advisory', `(b) trust_receipts[0].record_integrity は 'advisory' のはずだが ${receipts[0]?.record_integrity}`);
   assert.equal(receipts[0].stage, 'evaluate');
   assert.equal(receipts[0].invalidated, false);
+  assert.equal(payload?.telemetry?.trust_evalseal_missing_reason, undefined, "(b) receipt が 1 件あるので telemetry に trust_evalseal_missing_reason が含まれてはならない");
+  assert.equal(result?.trust_evalseal_missing_reason, undefined, '(b) return に trust_evalseal_missing_reason が含まれてはならない');
 
   const summaryCall = calls.find((c) => c.label === 'post-summary');
   assert.ok(summaryCall.prompt.includes('Trust receipts (shadow)'), "(b) post-summary prompt に 'Trust receipts (shadow)' が含まれるはず");
@@ -281,10 +297,11 @@ test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1�
 });
 
 // ============================================================
-// (c) trust-seal-eval responder が null → run 完走・error null・trust キーなし（fail-open）
+// (c) trust-seal-eval responder が null → run 完走・error null・trust_receipts=0 +
+// trust_evalseal_missing_reason='agent_null'（AC-6）
 // ============================================================
 
-test('[evalseal] (c) trust-seal-eval が null → run 完走 + error null + trust キーなし（fail-open）', async () => {
+test("[evalseal] (c) trust-seal-eval が null → run 完走 + error null + trust_receipts=0 + missing_reason='agent_null'（fail-open）", async () => {
   const { ctx, calls } = makeSandbox({
     repo: ALLOWLISTED_REPO,
     overrides: { 'trust-seal-eval': null },
@@ -295,18 +312,62 @@ test('[evalseal] (c) trust-seal-eval が null → run 完走 + error null + trus
   assert.ok(result !== null, '(c) workflow は return object を返すべきだが null だった');
   assert.ok(calls.some((c) => c.label === 'trust-seal-eval'), "(c) 'trust-seal-eval' は呼ばれているはず（応答が null なだけ）");
   assert.equal(result?.trust_receipts, 0, `(c) trust_receipts は 0 のはずだが ${result?.trust_receipts}（受領物なし = 成功扱いしない）`);
+  assert.equal(result?.trust_evalseal_missing_reason, 'agent_null', `(c) trust_evalseal_missing_reason は 'agent_null' のはずだが ${result?.trust_evalseal_missing_reason}`);
 
   const journalCall = calls.find((c) => c.label === 'journal-log');
-  assert.ok(!journalCall.prompt.includes('trust_receipts'), "(c) receipt が無いので journal-log prompt に 'trust_receipts' が含まれてはならない");
+  assert.ok(!journalCall.prompt.includes('"trust_receipts"'), "(c) receipt が無いので journal-log prompt に 'trust_receipts' キーが含まれてはならない");
+  const payload = extractTelemetryPayload(journalCall?.prompt);
+  assert.equal(payload?.telemetry?.trust_evalseal_missing_reason, 'agent_null', "(c) journal telemetry の trust_evalseal_missing_reason は 'agent_null' のはず");
+});
+
+// ============================================================
+// (c2)(c3)(c4) missing_reason の他分岐（seal_error / mode_off / agent_throw）
+// ============================================================
+
+test("[evalseal] (c2) trust-seal-eval が {ok:false} → missing_reason='seal_error'", async () => {
+  const { ctx } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: { 'trust-seal-eval': { ok: false, mode: 'shadow', error: 'boom' } },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'c2');
+  assert.equal(result?.trust_evalseal_missing_reason, 'seal_error', `(c2) missing_reason は 'seal_error' のはずだが ${result?.trust_evalseal_missing_reason}`);
+});
+
+test("[evalseal] (c3) trust-seal-eval が {ok:true, mode:'off'} → missing_reason='mode_off'", async () => {
+  const { ctx } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: { 'trust-seal-eval': { ok: true, mode: 'off' } },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'c3');
+  assert.equal(result?.trust_evalseal_missing_reason, 'mode_off', `(c3) missing_reason は 'mode_off' のはずだが ${result?.trust_evalseal_missing_reason}`);
+});
+
+test("[evalseal] (c4) trust-seal-eval responder が throw → missing_reason='agent_throw'", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'trust-seal-eval': () => {
+        throw new Error('boom-throw');
+      },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'c4');
+  assert.ok(result !== null, '(c4) workflow は return object を返すべきだが null だった（例外が run 全体を落としてはならない）');
+  assert.ok(calls.some((c) => c.label === 'trust-seal-eval'), "(c4) 'trust-seal-eval' は呼ばれているはず");
+  assert.equal(result?.trust_evalseal_missing_reason, 'agent_throw', `(c4) missing_reason は 'agent_throw' のはずだが ${result?.trust_evalseal_missing_reason}`);
 });
 
 // ============================================================
 // (d) fixes_applied>0 + finalReconcile reverified + trust-check-final が
 // check.verdict:'inconclusive'/reason_code:'DIGEST_MISMATCH' → evaluate entry が telemetry 上
-// invalidated:true + 'trust-seal-final' が 'reconcile-sync' より後に呼ばれ trust_receipts 2 件
+// invalidated:true + 'trust-seal-final' が 'reconcile-sync'/danger-grep-final 系より後に呼ばれ
+// --evidence-file 付き + trust_receipts 2 件
 // ============================================================
 
-test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → evaluate entry invalidated:true + trust-seal-final が reconcile-sync より後 + trust_receipts 2件", async () => {
+test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → evaluate entry invalidated:true + trust-seal-final(Merge tier, --evidence-file付き)が reconcile-sync より後 + trust_receipts 2件", async () => {
   const finalEnvelope = sampleEnvelope({ stage: 'final', receiptId: 'r-final', revisionDigest: 'digest-final' });
   const { ctx, calls } = makeSandbox({
     repo: ALLOWLISTED_REPO,
@@ -328,7 +389,13 @@ test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → eva
   assert.ok(idxCheckFinal >= 0, "(d) 'trust-check-final' が呼ばれるはず");
   assert.ok(idxSealFinal >= 0, "(d) 'trust-seal-final' が呼ばれるはず");
   assert.ok(idxCheckFinal > idxSync, "(d) 'trust-check-final' は 'reconcile-sync' より後であるべき（Final PR HEAD 確定後）");
-  assert.ok(idxSealFinal > idxSync, "(d) 'trust-seal-final' は 'reconcile-sync' より後であるべき（Final PR HEAD 確定後）");
+  assert.ok(idxSealFinal > idxSync, "(d) 'trust-seal-final' は 'reconcile-sync' より後であるべき（Final PR HEAD 確定後、Merge tier phase へ移設。issue #471）");
+  assert.ok(idxSealFinal > idxCheckFinal, "(d) 'trust-seal-final' は 'trust-check-final' より後であるべき（Final reconcile → Merge tier の順）");
+
+  const sealFinalCall = calls[idxSealFinal];
+  assert.ok(sealFinalCall.prompt.includes('--evidence-file'), "(d) trust-seal-final prompt に '--evidence-file' が含まれるはず");
+  assert.ok(sealFinalCall.prompt.includes('trust-evidence-final.json'), "(d) trust-seal-final prompt に 'trust-evidence-final.json' への Write 指示が含まれるはず");
+  assert.ok(sealFinalCall.prompt.includes('--tree-source head'), "(d) trust-seal-final prompt に '--tree-source head' が含まれるはず");
 
   const journalCall = calls.find((c) => c.label === 'journal-log');
   const payload = extractTelemetryPayload(journalCall?.prompt);
@@ -342,13 +409,14 @@ test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → eva
   assert.equal(evalEntry.invalidated, true, `(d) evaluate entry は invalidated:true のはずだが ${JSON.stringify(evalEntry)}`);
   assert.equal(evalEntry.invalidated_reason, 'DIGEST_MISMATCH', `(d) evaluate entry の invalidated_reason は 'DIGEST_MISMATCH' のはずだが ${evalEntry.invalidated_reason}`);
   assert.equal(finalEntry.invalidated, false, "(d) final entry は invalidated:false のはず（新規 seal）");
+  assert.equal(payload?.telemetry?.trust_evalseal_missing_reason, undefined, '(d) receipt が 2 件あるので telemetry に trust_evalseal_missing_reason が含まれてはならない');
 });
 
 // ============================================================
-// (e) micro path（runEval=false）→ trust-* 呼び出しゼロ
+// (e) micro path（runEval=false）→ trust-* 呼び出しゼロ + trust_evalseal_missing_reason='eval_skipped'
 // ============================================================
 
-test('[evalseal] (e) micro path（runEval=false）→ trust-* 呼び出しゼロ（repo=allowlist でも obligation 実体が無いため seal しない）', async () => {
+test("[evalseal] (e) micro path（runEval=false）→ trust-* 呼び出しゼロ + missing_reason='eval_skipped'（repo=allowlist でも obligation 実体が無いため seal しない）", async () => {
   const { ctx, calls } = makeSandbox({ repo: ALLOWLISTED_REPO, req: MICRO_REQ });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'e');
@@ -361,6 +429,7 @@ test('[evalseal] (e) micro path（runEval=false）→ trust-* 呼び出しゼロ
   // repo は allowlist のため EVALSEAL_MODE 自体は 'shadow'（mode 解決は runEval と独立）だが、
   // obligation の実体（evaluator 収束スナップショット）が無いため seal されず trust_receipts=0。
   assert.equal(result?.trust_receipts, 0, `(e) trust_receipts は 0 のはずだが ${result?.trust_receipts}（seal 自体が発生しない）`);
+  assert.equal(result?.trust_evalseal_missing_reason, 'eval_skipped', `(e) trust_evalseal_missing_reason は 'eval_skipped' のはずだが ${result?.trust_evalseal_missing_reason}`);
 });
 
 // ============================================================

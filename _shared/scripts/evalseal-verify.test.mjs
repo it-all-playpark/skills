@@ -198,6 +198,32 @@ test('verify: adversarial-schema-invalid.json は advisory + schema-invalid', ()
   assert.equal(out.reason, 'schema-invalid');
 });
 
+// ---- (e-2) AC-8: 撤去済み schema_version "evalseal/1" は silent pass せず明示 error ----
+// _lib/trust-schema.mjs は evalseal/1 を TRUST_SCHEMA_VERSIONS から撤去済み（issue #471
+// 先行 task）— validateReceipt は SCHEMA_VERSION_UNSUPPORTED で reject する。runVerify は
+// その reason_code を汎用 propagate し 'schema-unsupported' を返す（'schema-invalid' や
+// 'ok' への丸め込みをしない）。署名・pubkey が正当でも到達しないことを、検証不能な
+// pubkey/sig パスで確認する（schema_version チェックが署名検証より先に短絡するため）。
+
+test('verify: 撤去済み schema_version "evalseal/1" は silent pass せず advisory + schema-unsupported (AC-8)', () => {
+  const repoRoot = mkTmpDir('evalseal-verify-repo-');
+  const legacyReceipt = { ...loadValidReceipt(), schema_version: 'evalseal/1' };
+  const receiptFile = writeJson(repoRoot, 'legacy-evalseal1.json', legacyReceipt);
+
+  const out = runScript([
+    'verify',
+    '--receipt-file', receiptFile,
+    '--pubkey-file', '/nonexistent/evalseal-verifier.pub',
+    '--sig-file', '/nonexistent/receipt.sig',
+    '--repo-root', '/nonexistent/repo-root',
+  ]);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.trust_level, 'advisory');
+  assert.equal(out.reason, 'schema-unsupported');
+  assert.notEqual(out.reason, 'ok');
+});
+
 // ---- (f) canonical bytes 決定論: key 順序を入れ替えた JSON でも署名検証が通る ----
 
 test('verify: 同一 receipt を key 順序入替した JSON でも canonicalJsonBytes の決定論により署名検証が通り trusted-environment', () => {

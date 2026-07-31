@@ -25,7 +25,7 @@ function loadFixture(name) {
 
 const VALID_CASES = [
   { file: 'valid-surfaceproof.json', schemaVersion: 'surfaceproof/1' },
-  { file: 'valid-evalseal.json', schemaVersion: 'evalseal/1' },
+  { file: 'valid-evalseal.json', schemaVersion: 'evalseal/2' },
   { file: 'valid-effectdelta.json', schemaVersion: 'effectdelta/1' },
 ];
 
@@ -103,6 +103,6 @@ test('adversarial-cross-protocol.json は surfaceproof の receipt_id を evalse
   const surfaceproof = loadFixture('valid-surfaceproof.json');
   // cross-protocol fixture は surfaceproof の receipt_id をそのまま貼り込んでいる
   assert.equal(receipt.receipt_id, surfaceproof.receipt_id);
-  // しかし schema_version が evalseal/1 に変わっているため実際の digest は一致しない
+  // しかし schema_version が evalseal/2 に変わっているため実際の digest は一致しない
   assert.notEqual(computeReceiptId(receipt), receipt.receipt_id);
 });

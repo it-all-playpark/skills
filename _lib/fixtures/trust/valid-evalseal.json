@@ -1,5 +1,5 @@
 {
-  "schema_version": "evalseal/1",
+  "schema_version": "evalseal/2",
   "subject": {
     "kind": "pull_request",
     "identity": "409",
@@ -23,7 +23,8 @@
   "anchors": {
     "base_oid": "abc123",
     "head_oid": "def456",
-    "tree_oid": "aaa111"
+    "tree_oid": "aaa111",
+    "evidence_bundle_digest": "sha256:0101010101010101010101010101010101010101010101010101010101010101"
   },
-  "receipt_id": "sha256:0b5db107d15c24108dcf198174c3fe10f1c1d29069eb7874c582c586490df2d2"
+  "receipt_id": "sha256:11f6f5479cb81f6dce41d619d1eceb0170f1cc29025b95b7079fd5194ddd22d4"
 }

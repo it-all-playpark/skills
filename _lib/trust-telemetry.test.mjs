@@ -147,7 +147,7 @@ test('formatTrustSummary: 全 envelope が mode==="off" なら空文字を返す
       mode: 'off',
       receipt: {
         receipt_id: 'sha256:' + 'c'.repeat(64),
-        schema_version: 'evalseal/1',
+        schema_version: 'evalseal/2',
         subject: { kind: 'pr', identity: '410', revision_digest: 'sha256:' + 'd'.repeat(64) },
         outcome: { verdict: 'fail', reason_code: 'OK' },
         trust: { record_integrity: 'tamper-evident' },
@@ -171,7 +171,7 @@ test('formatTrustSummary: verdict → STATUS 写像 pass/fail/inconclusive', () 
       layer: 'evalseal',
       receipt: {
         receipt_id: 'sha256:' + 'c'.repeat(64),
-        schema_version: 'evalseal/1',
+        schema_version: 'evalseal/2',
         subject: { kind: 'pr', identity: '410', revision_digest: 'sha256:' + 'd'.repeat(64) },
         outcome: { verdict: 'fail', reason_code: 'OK' },
         trust: { record_integrity: 'tamper-evident' },

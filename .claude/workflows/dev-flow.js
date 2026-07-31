@@ -1125,7 +1125,8 @@ function isGatingMode(mode) {
 // TRUST_LAYER_CONFIG は repo 定数。QUALITY_MODEL（_lib/quality-model.mjs）と同じ
 // 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
 // surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
-// evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み）。
+// evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み。
+// issue #471, epic #390 Phase 6 で evalseal/2（機械導出 verdict）へ移行済み）。
 // effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
 // post-summary（comment-prepare/comment-observe + subagent の bare gh choreography。issue #466）へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
@@ -1135,31 +1136,39 @@ const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectd
 // 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
 const TRUST_KILL_SWITCH = false;
 
-const EVALSEAL_VERDICTS = ['pass', 'fail', 'inconclusive'];
-
-// EvalSeal obligation（evaluator 収束スナップショット）を構築する pure function。
-// verdict は closed enum（out-of-enum は throw）。evidence は文字列配列必須
-// （非配列・非文字列要素は throw）。reasonCode 未指定/null は既定 'OK'。
+// EvalSeal (evalseal/2) obligation の asserted 区画（evaluator 収束スナップショット等の agent
+// 判断）を構築する pure function。issue #471 で verdict/reasonCode 引数を撤去し asserted-only
+// 化した — outcome.verdict は evalseal-seal.mjs が evidence bundle から機械導出するため、
+// obligation は digest のみに寄与する asserted 区画（{evidence, context}）に閉じる（AC-2）。
+// evidence は文字列配列必須（非配列・非文字列要素は throw）。
 // context は plain object のみ許可（配列・null・非 object は throw）、未指定は空 object。
-function buildEvalsealObligation({ verdict, reasonCode, evidence, context } = {}) {
-  if (!EVALSEAL_VERDICTS.includes(verdict)) {
-    throw new Error(
-      `trust-wiring: 未知の verdict "${verdict}"（許可: ${EVALSEAL_VERDICTS.join(', ')}）`,
-    );
-  }
+function buildEvalsealObligation({ evidence, context } = {}) {
   if (!Array.isArray(evidence) || evidence.some((e) => typeof e !== 'string')) {
     throw new Error('trust-wiring: evidence は文字列配列が必要');
   }
-
-  const reason_code = reasonCode == null ? 'OK' : reasonCode;
 
   const safeContext = context === undefined ? {} : context;
   if (safeContext === null || typeof safeContext !== 'object' || Array.isArray(safeContext)) {
     throw new Error('trust-wiring: context は plain object が必要');
   }
 
-  return { verdict, reason_code, evidence, context: safeContext };
+  return { asserted: { evidence, context: safeContext } };
 }
+
+// EvalSeal (evalseal/2) evidence bundle を構築する pure function（issue #471）。
+// diff-risk-classify.sh の risk 判定 raw object と test green 判定を素通しで包むだけ
+// （検証・導出は evalseal-seal.mjs 側の責務のため throw しない）。risk 未指定は null、
+// testGreen が boolean でなければ null（no_tests・未実行等を機械導出不能として扱わせる）。
+function buildEvalsealEvidenceBundle({ risk, testGreen } = {}) {
+  return {
+    risk: risk ?? null,
+    test: { green: typeof testGreen === 'boolean' ? testGreen : null },
+  };
+}
+
+// EvalSeal receipt 欠落理由の closed enum（issue #471 AC-6）。out-of-enum は telemetry 出力側
+// （dev-flow.js）で 'unknown' に正規化する。
+const TRUST_EVALSEAL_MISSING_REASONS = ['eval_skipped', 'agent_throw', 'agent_null', 'seal_error', 'mode_off', 'unknown'];
 
 // [{ envelope: {verdict,...}, invalidated: boolean, stage: 'evaluate'|'final' }] から、
 // invalidated でない最新（配列末尾優先）entry の envelope.verdict を返す。
@@ -3960,7 +3969,7 @@ let state = {
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
-  trustSurfaceProofShadow, trustReceipts: [],
+  trustSurfaceProofShadow, trustReceipts: [], trustEvalsealMissingReason: null, pendingFinalSeal: null,
 }
 
 // ============================================================
@@ -4880,19 +4889,20 @@ state = await execEvaluatePhase(state)
 if (EVALSEAL_MODE !== 'off' && state.runEval) {
   try {
     const evalObligation = buildEvalsealObligation({
-      verdict: (isConvergedUnderPolicy(state.ledger, GATE_POLICY) && !state.unsatisfiedAc) ? 'pass' : 'fail',
-      reasonCode: 'OK',
       evidence: state.ledger.items.filter((it) => it.checked && typeof it.evidence === 'string').map((it) => `${it.id}: ${it.evidence}`.slice(0, 300)),
       context: { issue: ISSUE, eval_iters: state.evalIters },
     })
+    const evalEvidenceBundle = buildEvalsealEvidenceBundle({ risk: state.risk, testGreen: state.val?.green ?? null })
     const trustSealEval = await trackedAgent(
-      `## Objective\ncd ${WT} で作業し EvalSeal (evalseal/1) receipt を生成する。\n\n`
+      `## Objective\ncd ${WT} で作業し EvalSeal (evalseal/2) receipt を生成する。\n\n`
       + `## Instructions\n`
       + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
       + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-obligation-eval.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
       + `<<<TRUST_OBLIGATION_EVAL_BEGIN>>>\n${JSON.stringify(evalObligation)}\n<<<TRUST_OBLIGATION_EVAL_END>>>\n\n`
-      + `3. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-eval.json\`\n`
+      + `3. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-evidence-eval.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
+      + `<<<TRUST_EVIDENCE_EVAL_BEGIN>>>\n${JSON.stringify(evalEvidenceBundle)}\n<<<TRUST_EVIDENCE_EVAL_END>>>\n\n`
+      + `4. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-eval.json --evidence-file ${WT}/.devflow-tmp/trust-evidence-eval.json\`\n`
       + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
       + `\n## Tools\n使用可: Bash, Write, Read\n`
       + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
@@ -4902,16 +4912,25 @@ if (EVALSEAL_MODE !== 'off' && state.runEval) {
     if (trustSealEval?.ok === true && trustSealEval.mode !== 'off' && trustSealEval.receipt && trustSealEval.envelope) {
       state.trustReceipts.push({ stage: 'evaluate', receipt: trustSealEval.receipt, envelope: trustSealEval.envelope, invalidated: false, invalidated_reason: null })
       log(`trust-seal-eval: EvalSeal receipt を記録（mode=${trustSealEval.mode}, verdict=${trustSealEval.envelope?.verdict ?? 'n/a'}）`)
+    } else if (trustSealEval == null) {
+      state.trustEvalsealMissingReason = 'agent_null'
+      log(`⚠️ trust-seal-eval: receipt 取得できず（応答 null）— fail-open（既存 gate へ影響なし）`)
+    } else if (trustSealEval.mode === 'off') {
+      state.trustEvalsealMissingReason = 'mode_off'
+      log(`⚠️ trust-seal-eval: mode=off — fail-open（既存 gate へ影響なし）`)
     } else {
+      state.trustEvalsealMissingReason = 'seal_error'
       log(`⚠️ trust-seal-eval: receipt 取得できず（ok=${trustSealEval?.ok}, mode=${trustSealEval?.mode}）— fail-open（既存 gate へ影響なし）`)
     }
   } catch (err) {
+    state.trustEvalsealMissingReason = 'agent_throw'
     log(`⚠️ trust-seal-eval で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
   }
 }
 // trust-seal-eval の時間は pr 区間へ付け替わる（相対比較用途のため許容。issue #443）。
 feedClockMark('evaluate_end', epochResOf(state.evalResult))
 } else {
+  state.trustEvalsealMissingReason = 'eval_skipped'
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
 
@@ -5236,31 +5255,14 @@ if (EVALSEAL_MODE !== 'off' && (iterate?.fixes_applied ?? 0) > 0 && state.trustR
           log(`trust: EvalSeal(evaluate) receipt が Final PR HEAD で検証不合格（reason=${evalEntry.invalidated_reason}）— invalidated`)
         }
 
-        const finalObligation = buildEvalsealObligation({
-          verdict: (finalTestGreen !== false && finalAcReconcile !== 'unavailable' && state.finalUnsatisfiedAc !== true) ? 'pass' : 'fail',
-          reasonCode: 'OK',
-          evidence: [`final_reconcile=${finalReconcile}`, `final_test_green=${finalTestGreen}`, `final_ac_reconcile=${finalAcReconcile}`],
-          context: { issue: ISSUE, fixes_applied: iterate?.fixes_applied ?? 0 },
-        })
-        const trustSealFinal = await trackedAgent(
-          `## Objective\ncd ${WT} で作業し Final PR HEAD に対する EvalSeal (evalseal/1) receipt を生成する。\n\n`
-          + `## Instructions\n`
-          + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
-          + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-obligation-final.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
-          + `<<<TRUST_OBLIGATION_FINAL_BEGIN>>>\n${JSON.stringify(finalObligation)}\n<<<TRUST_OBLIGATION_FINAL_END>>>\n\n`
-          + `3. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-          + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --stage final --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-final.json\`\n`
-          + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
-          + `\n## Tools\n使用可: Bash, Write, Read\n`
-          + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
-          + `\n## Token cap\n150 語以内で完結すること。`,
-          { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-final', phase: 'Final reconcile' },
-        )
-        if (trustSealFinal?.ok === true && trustSealFinal.mode !== 'off' && trustSealFinal.receipt && trustSealFinal.envelope) {
-          state.trustReceipts.push({ stage: 'final', receipt: trustSealFinal.receipt, envelope: trustSealFinal.envelope, invalidated: false, invalidated_reason: null })
-          log(`trust-seal-final: EvalSeal receipt(final) を記録（mode=${trustSealFinal.mode}, verdict=${trustSealFinal.envelope?.verdict ?? 'n/a'}）`)
-        } else {
-          log(`⚠️ trust-seal-final: receipt 取得できず（ok=${trustSealFinal?.ok}, mode=${trustSealFinal?.mode}）— fail-open（既存 gate へ影響なし）`)
+        // trust-seal-final 自体は Merge tier phase（danger-grep-final 算出後）へ移設した
+        // （issue #471 — riskFinal の実測 risk 出力を evidence bundle に含めるため）。ここでは
+        // obligation の asserted 区画のみを組み立てて state.pendingFinalSeal に保持する。
+        state.pendingFinalSeal = {
+          obligation: buildEvalsealObligation({
+            evidence: [`final_reconcile=${finalReconcile}`, `final_test_green=${finalTestGreen}`, `final_ac_reconcile=${finalAcReconcile}`],
+            context: { issue: ISSUE, fixes_applied: iterate?.fixes_applied ?? 0 },
+          }),
         }
       }
     }
@@ -5309,6 +5311,45 @@ const dangerHitsFinal = riskFinal.ok === true ? [...new Set(secHitsOf(riskFinal)
 const testsurfPatternsFinal = testsurfPatternsOf(riskFinal)
 const dangerFailClosedFinal = riskFinal.ok !== true
 if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${riskFinal.error ?? 'unknown'}) — merge tier を HOLD 強制`)
+
+// EvalSeal (epic #390 Phase 3, issue #411; issue #471 で Merge tier へ移設): Final reconcile で
+// finalReconcile==='reverified' となった run のみ（state.pendingFinalSeal 非 null）、riskFinal
+// （直上で算出した実測 danger-grep-final 結果）を evidence bundle に含めて Final PR HEAD に
+// 対する新 receipt を再 seal する。Final reconcile 時点では riskFinal が未算出のため、実測 risk
+// 出力から derived verdict を機械導出するにはこの位置（danger-grep-final 算出直後）に置く必要が
+// ある（issue #471 architecture_decisions）。
+if (state.pendingFinalSeal && EVALSEAL_MODE !== 'off') {
+  try {
+    const finalEvidenceBundle = buildEvalsealEvidenceBundle({
+      risk: riskFinal,
+      testGreen: finalTestGreen === true ? true : finalTestGreen === false ? false : null,
+    })
+    const trustSealFinal = await trackedAgent(
+      `## Objective\ncd ${WT} で作業し Final PR HEAD に対する EvalSeal (evalseal/2) receipt を生成する。\n\n`
+      + `## Instructions\n`
+      + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
+      + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-obligation-final.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
+      + `<<<TRUST_OBLIGATION_FINAL_BEGIN>>>\n${JSON.stringify(state.pendingFinalSeal.obligation)}\n<<<TRUST_OBLIGATION_FINAL_END>>>\n\n`
+      + `3. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-evidence-final.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
+      + `<<<TRUST_EVIDENCE_FINAL_BEGIN>>>\n${JSON.stringify(finalEvidenceBundle)}\n<<<TRUST_EVIDENCE_FINAL_END>>>\n\n`
+      + `4. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --stage final --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-final.json --evidence-file ${WT}/.devflow-tmp/trust-evidence-final.json\`\n`
+      + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
+      + `\n## Tools\n使用可: Bash, Write, Read\n`
+      + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Token cap\n150 語以内で完結すること。`,
+      { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-final', phase: 'Merge tier' },
+    )
+    if (trustSealFinal?.ok === true && trustSealFinal.mode !== 'off' && trustSealFinal.receipt && trustSealFinal.envelope) {
+      state.trustReceipts.push({ stage: 'final', receipt: trustSealFinal.receipt, envelope: trustSealFinal.envelope, invalidated: false, invalidated_reason: null })
+      log(`trust-seal-final: EvalSeal receipt(final) を記録（mode=${trustSealFinal.mode}, verdict=${trustSealFinal.envelope?.verdict ?? 'n/a'}）`)
+    } else {
+      log(`⚠️ trust-seal-final: receipt 取得できず（ok=${trustSealFinal?.ok}, mode=${trustSealFinal?.mode}）— fail-open（既存 gate へ影響なし）`)
+    }
+  } catch (err) {
+    log(`⚠️ trust-seal-final で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
+  }
+}
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
 const ledgerBeforeFinalReconcile = state.ledger
@@ -5584,6 +5625,10 @@ const telemetryHandoff = buildJournalHandoffPayload({
         revision_digest: r.envelope.revision_digest,
       })),
     } : {}),
+    // trust_evalseal_missing_reason (issue #471 AC-6): EvalSeal receipt が 1 件も無い run
+    // （trustReceipts.length===0）のみ、欠落理由を closed enum で出力する。out-of-enum は
+    // 'unknown' へ正規化（TRUST_EVALSEAL_MISSING_REASONS 未含有は起こらない想定だが fail-safe）。
+    ...(EVALSEAL_MODE !== 'off' && state.trustReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
     // trust_run_id (issue #413 F4, epic #390 Phase 5): trust receipt/shadow probe を持つ run のみ
     // RUN_ID（comment-prepare/comment-observe --run-id と同一定数）を telemetry へ再掲し、EffectDelta の effect_id
     // 導出（repo+pr+effect_type+run_id+body_digest）と journal 集計が同一 run 識別子を共有できる
@@ -5651,6 +5696,7 @@ return {
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
   ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: state.trustReceipts.length } : {}),
+  ...(EVALSEAL_MODE !== 'off' && state.trustReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
   note: mergeTier.tier === 'HOLD'
     ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'

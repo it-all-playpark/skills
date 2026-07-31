@@ -123,6 +123,43 @@ teardown() {
 
     overall=$(printf '%s\n' "$output" | jq '.missing_receipt.overall_receipt_success_rate')
     [ "$overall" = "0.8" ]
+
+    es_reason_dist=$(printf '%s\n' "$output" | jq -c '.missing_receipt.evalseal.reason_distribution')
+    [ "$es_reason_dist" = '{"unrecorded":1}' ]
+}
+
+# ---------------------------------------------------------------------------
+# (c2) missing_receipt.evalseal.reason_distribution (issue #454 AC-7)
+# ---------------------------------------------------------------------------
+@test "(c2) reason_distribution groups missing evalseal runs by trust_evalseal_missing_reason" {
+    local fixtures
+    fixtures="$(cd "$(dirname "$BATS_TEST_FILENAME")/../tests/fixtures/trust-receipts/missing-reason" && pwd)"
+
+    run env CLAUDE_JOURNAL_DIR="$fixtures" bash "$SCRIPT_PATH" --window 30d --until "$UNTIL"
+    [ "$status" -eq 0 ]
+
+    active=$(printf '%s\n' "$output" | jq '.trust_active_runs')
+    [ "$active" -eq 3 ]
+
+    es_count=$(printf '%s\n' "$output" | jq '.missing_receipt.evalseal.count')
+    [ "$es_count" -eq 3 ]
+
+    es_reason_dist=$(printf '%s\n' "$output" | jq -Sc '.missing_receipt.evalseal.reason_distribution')
+    [ "$es_reason_dist" = '{"agent_throw":2,"unrecorded":1}' ]
+}
+
+@test "(c3) reason_distribution is {} when no evalseal receipts are missing" {
+    local fixtures
+    fixtures="$(cd "$(dirname "$BATS_TEST_FILENAME")/../tests/fixtures/trust-receipts/missing-reason-none" && pwd)"
+
+    run env CLAUDE_JOURNAL_DIR="$fixtures" bash "$SCRIPT_PATH" --window 30d --until "$UNTIL"
+    [ "$status" -eq 0 ]
+
+    es_count=$(printf '%s\n' "$output" | jq '.missing_receipt.evalseal.count')
+    [ "$es_count" -eq 0 ]
+
+    es_reason_dist=$(printf '%s\n' "$output" | jq -c '.missing_receipt.evalseal.reason_distribution')
+    [ "$es_reason_dist" = "{}" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -260,6 +297,9 @@ teardown() {
     [ "$es_rate" = "null" ]
     overall=$(printf '%s\n' "$output" | jq '.missing_receipt.overall_receipt_success_rate')
     [ "$overall" = "null" ]
+
+    es_reason_dist=$(printf '%s\n' "$output" | jq -c '.missing_receipt.evalseal.reason_distribution')
+    [ "$es_reason_dist" = "{}" ]
 
     inc_rate=$(printf '%s\n' "$output" | jq '.inconclusive.run_rate')
     [ "$inc_rate" = "null" ]

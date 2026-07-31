@@ -8,7 +8,10 @@
 #                           + invalidated_count).
 #   2. missing_receipt    - per-layer rate of trust-active runs with zero
 #                           receipts for that layer + overall_receipt_success_rate
-#                           (all 3 layers present).
+#                           (all 3 layers present). evalseal also carries
+#                           reason_distribution: {<reason>: count} built from
+#                           .telemetry.trust_evalseal_missing_reason on each
+#                           missing run (unrecorded when absent; issue #454 AC-7).
 #   3. inconclusive       - rate of adopted receipts / runs with verdict=="inconclusive".
 #   4. effect_mismatch    - rate of runs whose EffectDelta receipt is
 #                           verdict=="fail" or domain_reason_code in
@@ -371,6 +374,7 @@ JQ_ENRICH='
       eval_verdict: (.telemetry.eval_verdict // null),
       duration_seconds: (.telemetry.duration_seconds // null),
       phase_durations: (.telemetry.phase_durations // {}),
+      evalseal_missing_reason: (.telemetry.trust_evalseal_missing_reason // null),
       is_active: ($has_sp or $has_receipts or $has_run_id),
       surfaceproof_raw: (if $sp != null then [ ($sp + {layer: "surfaceproof", stage: null, invalidated: false}) ] else [] end),
       evalseal_raw: (raw_layer($receipts; "evalseal")),
@@ -426,8 +430,12 @@ MISSING_RECEIPT=$(echo "$ENRICHED" | jq -c --argjson active "$TRUST_ACTIVE_RUNS"
       runs: $miss
     };
 
+  def evalseal_reason_distribution:
+    ( [ $runs[] | select((.evalseal_adopted | length) == 0) | (.evalseal_missing_reason // "unrecorded") ] ) as $reasons |
+    ( $reasons | group_by(.) | map({key: .[0], value: length}) | from_entries );
+
   ( layer_missing(.surfaceproof_raw | length > 0) ) as $sp |
-  ( layer_missing(.evalseal_adopted | length > 0) ) as $es |
+  ( layer_missing(.evalseal_adopted | length > 0) + { reason_distribution: evalseal_reason_distribution } ) as $es |
   ( layer_missing(.effectdelta_adopted | length > 0) ) as $ed |
 
   ( [ $runs[] | select(
