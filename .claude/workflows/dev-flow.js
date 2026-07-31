@@ -4729,7 +4729,15 @@ async function execEvaluatePhase(state) {
     for (const r of (ev.ac_results ?? [])) {
       if (!r || typeof r.ac_index !== 'number') continue
       const acId = `AC-${r.ac_index + 1}`
-      if (!ledger.items.some((it) => it.id === acId)) continue   // 知らない AC は無視
+      const acItem = ledger.items.find((it) => it.id === acId)
+      if (!acItem) continue   // 知らない AC は無視
+      // issue #444: 既に deterministic 昇格 + checked 済みの AC は redgreen-verify を再実行しない。
+      // checkItem/setCheck は単調不可逆（uncheck 経路なし）のため再実行はゲート上の no-op であり、
+      // skip は初回 iteration の evidence / telemetry entry をそのまま保持する（vdelta 追記もしない）。
+      if (acItem.checked === true && acItem.check && acItem.check.kind === 'deterministic') {
+        log(`AC-${r.ac_index + 1}: deterministic 昇格 + checked 済み → redgreen-verify skip（issue #444）`)
+        continue
+      }
       if (r.satisfied && r.verified_by === 'test' && Array.isArray(r.test_files) && r.test_files.length
           && Array.isArray(r.impl_files) && r.impl_files.length) {
         const rg = await trackedAgent(
