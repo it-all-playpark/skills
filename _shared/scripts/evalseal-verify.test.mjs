@@ -240,6 +240,7 @@ test('verify: 同一 receipt を key 順序入替した JSON でも canonicalJso
       tree_oid: original.anchors.tree_oid,
       head_oid: original.anchors.head_oid,
       base_oid: original.anchors.base_oid,
+      evidence_bundle_digest: original.anchors.evidence_bundle_digest,
     },
     trust: { record_integrity: original.trust.record_integrity },
     outcome: { reason_code: original.outcome.reason_code, verdict: original.outcome.verdict },
