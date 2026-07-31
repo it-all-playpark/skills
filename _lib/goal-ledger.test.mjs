@@ -79,3 +79,42 @@ test('appendItem: check は shallow-clone され caller mutation の影響を受
   check.kind = 'deterministic';                       // caller が後から変更
   assert.equal(ledger.items[0].check.kind, 'inspection'); // ledger 側は不変
 });
+
+// issue #444: deterministic 昇格 + checked 済み item への再昇格操作は ledger 上の no-op である
+// （skip した AC の ledger 状態が skip しない場合と同一であることの純関数レベル回帰固定）
+test('U1: 昇格済み AC への再昇格は skip と同値（no-op 性）', () => {
+  let { ledger } = appendItem(makeLedger(), { id: 'AC-1', text: 'a', dimension: 'ac', severity: 'major', source: 'ac', check: { kind: 'inspection' } });
+  ledger = setCheck(ledger, 'AC-1', { kind: 'deterministic' });
+  const l1 = checkItem(ledger, 'AC-1', 'red→green 実証: t.test.mjs');
+
+  const item1 = l1.items.find((i) => i.id === 'AC-1');
+  assert.equal(item1.checked, true);
+  assert.deepEqual(item1.check, { kind: 'deterministic' });
+  assert.equal(item1.evidence, 'red→green 実証: t.test.mjs');
+
+  let l2 = setCheck(l1, 'AC-1', { kind: 'deterministic' });
+  l2 = checkItem(l2, 'AC-1', 'red→green 実証: t.test.mjs');
+  const item2 = l2.items.find((i) => i.id === 'AC-1');
+
+  assert.deepEqual(item2, item1); // skip == 再実行の同値性
+});
+
+test('U2: 単調不可逆性（checked を true→false に戻す経路が無い）', () => {
+  let { ledger } = appendItem(makeLedger(), { id: 'AC-1', text: 'a', dimension: 'ac', severity: 'major', source: 'ac', check: { kind: 'inspection' } });
+  ledger = setCheck(ledger, 'AC-1', { kind: 'deterministic' });
+  const l1 = checkItem(ledger, 'AC-1', 'red→green 実証: t.test.mjs');
+
+  // checkItem を別 evidence で再適用しても checked/check.kind は保持され evidence のみ変わる
+  const l1b = checkItem(l1, 'AC-1', '別の evidence');
+  const item1b = l1b.items.find((i) => i.id === 'AC-1');
+  assert.equal(item1b.checked, true);
+  assert.equal(item1b.check.kind, 'deterministic');
+  assert.equal(item1b.evidence, '別の evidence');
+
+  // appendItem の merge 経路（同一 topicKey の item を round>0 で上書き）でも
+  // item 側に checked が明示されない限り既存の checked は保持される
+  const roundedLedger = nextRound(l1);
+  const { ledger: l3 } = appendItem(roundedLedger, { id: 'X', text: 'a', dimension: 'ac', severity: 'critical', source: 'evaluator', check: { kind: 'inspection' } });
+  const item3 = l3.items.find((i) => i.id === 'AC-1');
+  assert.equal(item3.checked, true); // merge しても checked は false に戻らない
+});
