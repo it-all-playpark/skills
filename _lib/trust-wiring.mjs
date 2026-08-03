@@ -55,6 +55,85 @@ export function buildEvalsealEvidenceBundle({ risk, testGreen } = {}) {
 // （dev-flow.js）で 'unknown' に正規化する。
 export const TRUST_EVALSEAL_MISSING_REASONS = ['eval_skipped', 'agent_throw', 'agent_null', 'seal_error', 'mode_off', 'unknown'];
 
+// EffectDelta PR stage receipt 欠落理由の closed enum（issue #476 D-3）。EvalSeal と共通化せず
+// 独立定義する — 送り側（dev-flow.js の trust-effectdelta-pr probe）の実分岐が catch（throw）と
+// mode==='off' に加え、agent fallback 形 {ok:false,error} の error 文字列由来の 3 分類
+// （gh_failed/script_error/agent_error）と成功条件未達（schema_invalid）を持つため。
+// out-of-enum は telemetry 出力側（dev-flow.js）で 'unknown' に正規化する。
+export const TRUST_EFFECTDELTA_PR_MISSING_REASONS = [
+  'agent_throw',
+  'agent_null',
+  'mode_off',
+  'gh_failed',
+  'script_error',
+  'agent_error',
+  'schema_invalid',
+  'unknown',
+];
+
+// gh/GitHub API 由来の失敗を示す決定論 regex（上流原因を優先するため script 系より先に判定する）。
+const EFFECTDELTA_GH_FAILURE_RE = /(^|[^a-z])gh([^a-z]|$)|github|http[ _-]?[45][0-9][0-9]|rate ?limit|auth/i;
+
+// pr-observe / effectdelta-github.sh 等の決定論スクリプト実行系失敗を示す regex。
+const EFFECTDELTA_SCRIPT_FAILURE_RE = /pr-observe|effectdelta-github|exit +[1-9]|stdout|json/i;
+
+// trust-effectdelta-pr probe の非 throw 欠落ケースを分類する pure function（issue #476）。
+// 呼び出し側（dev-flow.js）が try/catch で throw を 'agent_throw' に振り分けた残余（非 throw の
+// res）だけを受け取る前提。判定順は上流原因優先: (a) res が null/undefined → 'agent_null'、
+// (b) res.mode === 'off' → 'mode_off'、(c) res.ok === false かつ error が文字列のとき gh 系 regex
+// 優先で gh_failed → script 系 regex で script_error → 非マッチ/非文字列は agent_error、
+// (d) res.ok === true（receipt/envelope 欠落等で成功条件を満たさなかった場合にのみ到達）→
+// 'schema_invalid'、(e) それ以外の未知形状 → 'unknown'。
+export function classifyEffectdeltaPrMissing(res) {
+  if (res === null || res === undefined) {
+    return 'agent_null';
+  }
+  if (res.mode === 'off') {
+    return 'mode_off';
+  }
+  if (res.ok === false) {
+    if (typeof res.error === 'string') {
+      if (EFFECTDELTA_GH_FAILURE_RE.test(res.error)) {
+        return 'gh_failed';
+      }
+      if (EFFECTDELTA_SCRIPT_FAILURE_RE.test(res.error)) {
+        return 'script_error';
+      }
+    }
+    return 'agent_error';
+  }
+  if (res.ok === true) {
+    return 'schema_invalid';
+  }
+  return 'unknown';
+}
+
+// log 専用の redacted hint を返す pure function（issue #476 AC-3）。raw error は telemetry /
+// receipt / PR summary のどこにも保存せず、workflow log 行にのみこの出力を使う想定。
+// 非文字列は ''、文字列は先頭行のみ抽出し、URL を '<url>'、16 文字以上の token 様文字列を
+// '<token>' に置換した上で 120 文字に truncate する。
+export function redactEffectdeltaError(error) {
+  if (typeof error !== 'string') {
+    return '';
+  }
+  const firstLine = error.split('\n')[0];
+  const redacted = firstLine
+    .replace(/https?:\/\/\S+/g, '<url>')
+    .replace(/[A-Za-z0-9_-]{16,}/g, '<token>');
+  return redacted.slice(0, 120);
+}
+
+// EffectDelta PR stage receipt 欠落理由を PR summary へ追記するブロックを構築する pure
+// function（issue #476）。呼び出し側（dev-flow.js）が EFFECTDELTA_MODE!=='off' 判定・
+// out-of-enum の 'unknown' 正規化を行った上で reason を渡す前提。reason が非文字列・空文字の
+// 場合は追記しない意図で '' を返す。
+export function formatEffectdeltaPrMissingSummary(reason) {
+  if (typeof reason !== 'string' || reason === '') {
+    return '';
+  }
+  return `### Trust receipts (shadow) — missing\n\n- effectdelta [shadow]: INCONCLUSIVE (missing_reason=${reason}) stage=pr`;
+}
+
 // [{ envelope: {verdict,...}, invalidated: boolean, stage: 'evaluate'|'final' }] から、
 // invalidated でない最新（配列末尾優先）entry の envelope.verdict を返す。
 // 全滅/空配列/非配列は 'inconclusive' を返す（受領物なし = 成功扱いしない）。

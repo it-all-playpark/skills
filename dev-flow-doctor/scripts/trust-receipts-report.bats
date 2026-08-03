@@ -163,6 +163,192 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
+# (c4) missing_receipt.effectdelta.pr_stage_reason_distribution (issue #476 AC-4)
+# ---------------------------------------------------------------------------
+@test "(c4) pr_stage_reason_distribution groups runs missing a stage==pr effectdelta receipt by trust_effectdelta_pr_missing_reason" {
+    local fixtures="$BATS_TMPDIR/pr-missing-reason-$$-${BATS_TEST_NUMBER:-0}-$RANDOM"
+    mkdir -p "$fixtures"
+
+    cat > "$fixtures/01-gh-failed-a.json" <<'EOF'
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-ed-01",
+  "timestamp": "2026-01-11T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1500,
+    "trust_run_id": "run-ed-01",
+    "trust_effectdelta_pr_missing_reason": "gh_failed",
+    "trust_receipts": []
+  }
+}
+EOF
+
+    cat > "$fixtures/02-gh-failed-b.json" <<'EOF'
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-ed-02",
+  "timestamp": "2026-01-12T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1500,
+    "trust_run_id": "run-ed-02",
+    "trust_effectdelta_pr_missing_reason": "gh_failed",
+    "trust_receipts": []
+  }
+}
+EOF
+
+    cat > "$fixtures/03-agent-null.json" <<'EOF'
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-ed-03",
+  "timestamp": "2026-01-13T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1500,
+    "trust_run_id": "run-ed-03",
+    "trust_effectdelta_pr_missing_reason": "agent_null",
+    "trust_receipts": []
+  }
+}
+EOF
+
+    cat > "$fixtures/04-no-reason.json" <<'EOF'
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-ed-04",
+  "timestamp": "2026-01-14T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1500,
+    "trust_run_id": "run-ed-04",
+    "trust_receipts": []
+  }
+}
+EOF
+
+    cat > "$fixtures/05-has-pr-receipt.json" <<'EOF'
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-ed-05",
+  "timestamp": "2026-01-15T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1500,
+    "trust_run_id": "run-ed-05",
+    "trust_effectdelta_pr_missing_reason": "gh_failed",
+    "trust_receipts": [
+      {
+        "stage": "pr",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed05",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:ccc0"
+      }
+    ]
+  }
+}
+EOF
+
+    cat > "$fixtures/06-summary-comment-only.json" <<'EOF'
+{
+  "version": "1.0.0",
+  "id": "devflow-trust-ed-06",
+  "timestamp": "2026-01-16T00:00:00Z",
+  "skill": "dev-flow",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": {
+    "eval_verdict": "pass",
+    "duration_seconds": 1500,
+    "trust_run_id": "run-ed-06",
+    "trust_effectdelta_pr_missing_reason": "schema_invalid",
+    "trust_receipts": [
+      {
+        "stage": "summary-comment",
+        "invalidated": false,
+        "domain_reason_code": "OK",
+        "layer": "effectdelta",
+        "mode": "shadow",
+        "schema_version": "effectdelta/1",
+        "receipt_id": "sha256:ed06",
+        "verdict": "pass",
+        "reason_code": "OK",
+        "record_integrity": "advisory",
+        "revision_digest": "sha256:ddd0"
+      }
+    ]
+  }
+}
+EOF
+
+    run env CLAUDE_JOURNAL_DIR="$fixtures" bash "$SCRIPT_PATH" --window 30d --until "$UNTIL"
+    [ "$status" -eq 0 ]
+
+    active=$(printf '%s\n' "$output" | jq '.trust_active_runs')
+    [ "$active" -eq 6 ]
+
+    ed_reason_dist=$(printf '%s\n' "$output" | jq -Sc '.missing_receipt.effectdelta.pr_stage_reason_distribution')
+    [ "$ed_reason_dist" = '{"agent_null":1,"gh_failed":2,"schema_invalid":1,"unrecorded":1}' ]
+
+    rm -rf "$fixtures"
+}
+
+# ---------------------------------------------------------------------------
+# (c5) pr_stage_reason_distribution is {} when 0 trust-active runs in window
+#      (issue #476 AC-4, 0-run safety)
+# ---------------------------------------------------------------------------
+@test "(c5) pr_stage_reason_distribution is {} on empty journal (exit 0)" {
+    run env CLAUDE_JOURNAL_DIR="$EMPTY_JOURNAL_DIR" bash "$SCRIPT_PATH" --window 30d
+    [ "$status" -eq 0 ]
+
+    ed_reason_dist=$(printf '%s\n' "$output" | jq -c '.missing_receipt.effectdelta.pr_stage_reason_distribution')
+    [ "$ed_reason_dist" = "{}" ]
+}
+
+# ---------------------------------------------------------------------------
+# (c6) base fixtures: all 5 trust-active runs already carry a stage==pr
+#      effectdelta receipt -> pr_stage_reason_distribution is {}, and
+#      existing evalseal reason_distribution / overall_receipt_success_rate
+#      are unaffected by the new key (regression guard).
+# ---------------------------------------------------------------------------
+@test "(c6) base fixtures: pr_stage_reason_distribution is {} and existing keys unaffected" {
+    run env CLAUDE_JOURNAL_DIR="$FIXTURES" bash "$SCRIPT_PATH" --window 30d --until "$UNTIL"
+    [ "$status" -eq 0 ]
+
+    ed_reason_dist=$(printf '%s\n' "$output" | jq -c '.missing_receipt.effectdelta.pr_stage_reason_distribution')
+    [ "$ed_reason_dist" = "{}" ]
+
+    es_reason_dist=$(printf '%s\n' "$output" | jq -c '.missing_receipt.evalseal.reason_distribution')
+    [ "$es_reason_dist" = '{"unrecorded":1}' ]
+
+    overall=$(printf '%s\n' "$output" | jq '.missing_receipt.overall_receipt_success_rate')
+    [ "$overall" = "0.8" ]
+}
+
+# ---------------------------------------------------------------------------
 # (d) inconclusive
 # ---------------------------------------------------------------------------
 @test "(d) inconclusive: run-003 surfaceproof PROBE_FAILED is the only hit" {

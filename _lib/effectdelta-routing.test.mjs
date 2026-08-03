@@ -500,3 +500,163 @@ for (const fileName of agentFiles) {
     assert.equal(EFFECTDELTA_REFERENCE_RE.test(content), false, `.claude/agents/${fileName} に effectdelta 参照が見つかった`);
   });
 }
+
+// ============================================================
+// issue #476 F2: trust-effectdelta-pr fail-open 分岐の欠落理由分類・redaction 配線
+// （telemetry handoff / return / PR summary への理由コード出力）
+// ============================================================
+
+// (1) gh_failed 分類 + raw error の redaction（AC-1/AC-3）+ PR 作成経路・merge_tier 不変（AC-9）
+test("[effectdelta-missing-reason] (1) pr-observe ok:false（gh 系 error）→ reason='gh_failed' + raw error が journal-log/post-summary prompt に現れない + PR 作成・merge_tier 不変", async () => {
+  const { ctx: ctxA, calls: callsA } = makeSandbox({ repo: null });
+  const { result: resultA } = await runDevFlowCapture(devFlowSrc, ctxA);
+
+  const SECRET = 'ghp_SECRETSECRETSECRET123456';
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'trust-effectdelta-pr': { ok: false, error: `gh pr view failed: token ${SECRET}` },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'missing-reason-1');
+  assert.equal(error, null, `(1) pr-observe が ok:false でも run 全体が abort してはならないが error が発生: ${error?.message}`);
+  assert.ok(result !== null, '(1) workflow は return object を返すべきだが null だった');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall, "(1) 'journal-log' の呼び出しが存在すること");
+  const payload = extractTelemetryPayload(journalCall.prompt);
+  assert.ok(payload, '(1) journal-log prompt から telemetry payload を JSON.parse できるはず');
+  assert.equal(
+    payload?.telemetry?.trust_effectdelta_pr_missing_reason,
+    'gh_failed',
+    `(1) trust_effectdelta_pr_missing_reason は 'gh_failed' のはずだが ${payload?.telemetry?.trust_effectdelta_pr_missing_reason}`,
+  );
+
+  assert.ok(!journalCall.prompt.includes(SECRET), '(1) journal-log prompt に raw error 文字列（secret）が現れてはならない');
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall, "(1) 'post-summary' 呼び出しが存在するはず");
+  assert.ok(!postSummaryCall.prompt.includes(SECRET), '(1) post-summary prompt に raw error 文字列（secret）が現れてはならない');
+
+  const prCallA = callsA.find((c) => c.label.startsWith('pr#'));
+  const prCallB = calls.find((c) => c.label.startsWith('pr#'));
+  assert.ok(prCallA && prCallB, "(1) 両シナリオで 'pr#...' 呼び出しが存在するはず");
+  assert.equal(prCallB.prompt, prCallA.prompt, '(1) PR 作成呼び出しの prompt は不変であるべき（AC-9）');
+  assert.equal(result?.merge_tier, resultA?.merge_tier, `(1) merge_tier は baseline と同一のはずだが baseline=${resultA?.merge_tier} 実測=${result?.merge_tier}`);
+});
+
+// (2) responder null → 'agent_null'
+test("[effectdelta-missing-reason] (2) pr-observe が null → reason='agent_null'", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: { 'trust-effectdelta-pr': null },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'missing-reason-2');
+  assert.equal(error, null, `(2) error が発生してはならない: ${error?.message}`);
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const payload = extractTelemetryPayload(journalCall?.prompt);
+  assert.equal(
+    payload?.telemetry?.trust_effectdelta_pr_missing_reason,
+    'agent_null',
+    `(2) trust_effectdelta_pr_missing_reason は 'agent_null' のはずだが ${payload?.telemetry?.trust_effectdelta_pr_missing_reason}`,
+  );
+});
+
+// (3) responder throw → 'agent_throw'（run 完走）
+test("[effectdelta-missing-reason] (3) pr-observe が throw → reason='agent_throw' + run 完走", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'trust-effectdelta-pr': () => { throw new Error('boom'); },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'missing-reason-3');
+  assert.equal(error, null, `(3) pr-observe が throw しても run 全体が abort してはならないが error が発生: ${error?.message}`);
+  assert.ok(result !== null, '(3) workflow は return object を返すべきだが null だった');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const payload = extractTelemetryPayload(journalCall?.prompt);
+  assert.equal(
+    payload?.telemetry?.trust_effectdelta_pr_missing_reason,
+    'agent_throw',
+    `(3) trust_effectdelta_pr_missing_reason は 'agent_throw' のはずだが ${payload?.telemetry?.trust_effectdelta_pr_missing_reason}`,
+  );
+});
+
+// (4) 完全 receipt（ok:true） → キー無し + trust_receipts に stage:'pr' entry
+test("[effectdelta-missing-reason] (4) pr-observe ok:true 完全 receipt → trust_effectdelta_pr_missing_reason キー無し + trust_receipts に stage:'pr'", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'trust-effectdelta-pr': { ok: true, mode: 'shadow', op: 'pr-classify', observation: { status: 'observed', reason_code: 'OK' }, receipt: sampleReceipt({ stage: 'pr' }), envelope: sampleEnvelope({ stage: 'pr' }) },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'missing-reason-4');
+  assert.ok(result !== null, '(4) workflow は return object を返すべきだが null だった');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const payload = extractTelemetryPayload(journalCall?.prompt);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(payload?.telemetry ?? {}, 'trust_effectdelta_pr_missing_reason'),
+    false,
+    "(4) receipt 取得成功時は trust_effectdelta_pr_missing_reason キーが存在してはならない",
+  );
+  const receipts = payload?.telemetry?.trust_receipts ?? [];
+  assert.ok(receipts.some((r) => r.stage === 'pr'), "(4) trust_receipts に stage:'pr' の entry が存在するはず");
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result ?? {}, 'trust_effectdelta_pr_missing_reason'),
+    false,
+    '(4) return object にも trust_effectdelta_pr_missing_reason キーが存在してはならない',
+  );
+});
+
+// (5) off 経路（repo allowlist 不一致） → キー無し + summaryBody（post-summary prompt）に missing ブロックが含まれない（AC-11）
+test("[effectdelta-missing-reason] (5) off 経路 → trust_effectdelta_pr_missing_reason キー無し + post-summary prompt に missing ブロックが含まれない", async () => {
+  const { ctx, calls } = makeSandbox({ repo: null });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'missing-reason-5');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const payload = extractTelemetryPayload(journalCall?.prompt);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(payload?.telemetry ?? {}, 'trust_effectdelta_pr_missing_reason'),
+    false,
+    '(5) off 経路では trust_effectdelta_pr_missing_reason キーが存在してはならない',
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result ?? {}, 'trust_effectdelta_pr_missing_reason'),
+    false,
+    '(5) return object にも off 経路では trust_effectdelta_pr_missing_reason キーが存在してはならない',
+  );
+
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall, "(5) 'post-summary' 呼び出しが存在するはず");
+  assert.doesNotMatch(postSummaryCall.prompt, /Trust receipts \(shadow\) — missing/, '(5) off 経路の PR summary に missing ブロックが含まれてはならない（AC-11 byte 一致）');
+  assert.doesNotMatch(postSummaryCall.prompt, /missing_reason=/, '(5) off 経路の PR summary に missing_reason 表記が含まれてはならない（AC-11 byte 一致）');
+});
+
+// (6) shadow 欠落時の summaryBody（post-summary prompt）に missing ブロックが含まれる
+test("[effectdelta-missing-reason] (6) shadow + pr-observe 欠落 → post-summary prompt に '### Trust receipts (shadow) — missing' と '(missing_reason=' が含まれる", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: { 'trust-effectdelta-pr': null },
+  });
+  const { error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'missing-reason-6');
+
+  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
+  assert.ok(postSummaryCall, "(6) 'post-summary' 呼び出しが存在するはず");
+  assert.match(postSummaryCall.prompt, /### Trust receipts \(shadow\) — missing/, "(6) post-summary prompt に見出しブロックが含まれるはず");
+  assert.match(postSummaryCall.prompt, /\(missing_reason=/, "(6) post-summary prompt に '(missing_reason=' が含まれるはず");
+});
+
+// (7) 静的確認: telemetry handoff / return の 2 箇所に EvalSeal 同型の gating（TRUST_EFFECTDELTA_PR_MISSING_REASONS.includes）がある
+test('[effectdelta-missing-reason] (7) dev-flow.js ソースに trust_effectdelta_pr_missing_reason の closed-enum gating が handoff/return の2箇所にある', () => {
+  const re = /trust_effectdelta_pr_missing_reason:\s*TRUST_EFFECTDELTA_PR_MISSING_REASONS\.includes\(state\.trustEffectdeltaPrMissingReason\)\s*\?\s*state\.trustEffectdeltaPrMissingReason\s*:\s*'unknown'/g;
+  const matches = devFlowSrc.match(re) ?? [];
+  assert.equal(matches.length, 2, `trust_effectdelta_pr_missing_reason の EvalSeal 同型 gating は telemetry handoff と return の2箇所にあるはずだが ${matches.length} 箇所だった`);
+});

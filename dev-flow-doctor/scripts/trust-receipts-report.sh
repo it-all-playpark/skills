@@ -12,6 +12,11 @@
 #                           reason_distribution: {<reason>: count} built from
 #                           .telemetry.trust_evalseal_missing_reason on each
 #                           missing run (unrecorded when absent; issue #454 AC-7).
+#                           effectdelta also carries pr_stage_reason_distribution:
+#                           {<reason>: count} built from
+#                           .telemetry.trust_effectdelta_pr_missing_reason on each
+#                           run with no stage=="pr" effectdelta receipt (unrecorded
+#                           when absent; issue #476 AC-4).
 #   3. inconclusive       - rate of adopted receipts / runs with verdict=="inconclusive".
 #   4. effect_mismatch    - rate of runs whose EffectDelta receipt is
 #                           verdict=="fail" or domain_reason_code in
@@ -375,6 +380,7 @@ JQ_ENRICH='
       duration_seconds: (.telemetry.duration_seconds // null),
       phase_durations: (.telemetry.phase_durations // {}),
       evalseal_missing_reason: (.telemetry.trust_evalseal_missing_reason // null),
+      effectdelta_pr_missing_reason: (.telemetry.trust_effectdelta_pr_missing_reason // null),
       is_active: ($has_sp or $has_receipts or $has_run_id),
       surfaceproof_raw: (if $sp != null then [ ($sp + {layer: "surfaceproof", stage: null, invalidated: false}) ] else [] end),
       evalseal_raw: (raw_layer($receipts; "evalseal")),
@@ -434,9 +440,13 @@ MISSING_RECEIPT=$(echo "$ENRICHED" | jq -c --argjson active "$TRUST_ACTIVE_RUNS"
     ( [ $runs[] | select((.evalseal_adopted | length) == 0) | (.evalseal_missing_reason // "unrecorded") ] ) as $reasons |
     ( $reasons | group_by(.) | map({key: .[0], value: length}) | from_entries );
 
+  def effectdelta_pr_reason_distribution:
+    ( [ $runs[] | select(([.effectdelta_adopted[]? | select(.stage == "pr")] | length) == 0) | (.effectdelta_pr_missing_reason // "unrecorded") ] ) as $reasons |
+    ( $reasons | group_by(.) | map({key: .[0], value: length}) | from_entries );
+
   ( layer_missing(.surfaceproof_raw | length > 0) ) as $sp |
   ( layer_missing(.evalseal_adopted | length > 0) + { reason_distribution: evalseal_reason_distribution } ) as $es |
-  ( layer_missing(.effectdelta_adopted | length > 0) ) as $ed |
+  ( layer_missing(.effectdelta_adopted | length > 0) + { pr_stage_reason_distribution: effectdelta_pr_reason_distribution } ) as $ed |
 
   ( [ $runs[] | select(
       (.surfaceproof_raw | length > 0) and
