@@ -133,3 +133,37 @@ test('isolationFailureMessage: bg-isolation guard の可能性に言及する', 
   });
   assert.match(msg, /bg-isolation guard/);
 });
+
+// ── issue #482: stale probe artifact による恒久 fail-closed の解消（冪等化） ─────
+
+test('isolationProbePrompt: 既存ファイル時は Read tool で先に読んでから Write する冪等化指示を含む', () => {
+  const prompt = isolationProbePrompt('/path/to/worktree');
+  assert.match(prompt, /Read tool/);
+  assert.match(prompt, /既に存在する場合/);
+});
+
+test('isolationProbePrompt: written は Write の成否のみで報告させ Read の成否を混ぜない指示を含む', () => {
+  const prompt = isolationProbePrompt('/path/to/worktree');
+  assert.match(prompt, /Read が失敗しても Write は必ず試み/);
+  assert.match(prompt, /Write の結果のみで written を報告/);
+});
+
+test('isolationFailureMessage: stale な probe artifact の可能性とフルパスに言及する', () => {
+  const msg = isolationFailureMessage({
+    worktree: '/repo/.claude/worktrees/df-482', branch: 'feature/issue-482', startRef: 'origin/main',
+    workflowName: 'dev-flow', workflowArgs: '482', error: 'EPERM: denied',
+  });
+  assert.match(msg, /stale/);
+  assert.match(msg, /\/repo\/\.claude\/worktrees\/df-482\/\.devflow-tmp\/\.isolation-probe/);
+});
+
+test('isolationFailureMessage: rm / git clean が sandbox・permission で不可な場合の Read→Write 上書き代替手順を含む', () => {
+  const msg = isolationFailureMessage({
+    worktree: '/repo/.claude/worktrees/df-482', branch: 'feature/issue-482', startRef: 'origin/main',
+    workflowName: 'dev-flow', workflowArgs: '482', error: 'EPERM: denied',
+  });
+  assert.match(msg, /rm/);
+  assert.match(msg, /git clean/);
+  assert.match(msg, /Read tool/);
+  assert.match(msg, /Write tool/);
+});
