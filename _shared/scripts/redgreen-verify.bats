@@ -288,9 +288,14 @@ EOF
 # -----------------------------------------------------------------------
 @test "F1-g: bats-only AC では verdict_cmd が起動されない" {
   echo "export const ok = true;" > "$REPO/impl.mjs"
+  # NOTE: 先頭カラムに "@test" を置くと、この .bats ファイル自身を静的スキャンする
+  # bats のテスト発見ロジックが nested heredoc 内の行まで誤って test 宣言として
+  # 拾ってしまう (bats: unknown test name エラーで plan count がずれる)。
+  # 実際にこの feature.bats は bats で実行されない (test_cmd がモック実行のため)
+  # ので、先頭に半角スペースを入れて誤検出を避ける。
   cat > "$REPO/feature.bats" <<EOF
 #!/usr/bin/env bats
-@test "impl exists" {
+ @test "impl exists" {
   [ -f "$REPO/impl.mjs" ]
 }
 EOF
