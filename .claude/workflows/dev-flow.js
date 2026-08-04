@@ -2782,7 +2782,8 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     outcome,
     issue: Number(ISSUE),
     repo: REPO,
-    journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
+    // skills 実体固定（WT は対象 repo — issue #484）。tilde は Stop hook の [[ -x ]] では展開されず FALLBACK_JOURNAL で解決される（fail-open）
+    journal_sh: '~/.claude/skills/skill-retrospective/scripts/journal.sh',
     error_category,
     error_msg,
     telemetry,
@@ -3814,6 +3815,7 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
 // `gh issue view` で $TMPDIR file へ取得し、analyze-issue.sh --contract の stdout JSON を
 // verbatim 転写させるだけの read-only exec-proxy（結果の判断は buildReqFromContract 側の
 // whitelist 検証が担う）。
+// script パスは skills 実体固定（~/.claude/skills）— WT は対象 repo の worktree であり skills 内部 script が存在しない（issue #484）
 const contractProbePrompt = `## Objective\n`
   + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
   + `## Steps\n`
@@ -3821,7 +3823,7 @@ const contractProbePrompt = `## Objective\n`
   + `2. \`gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json body,title,labels,assignees,milestone,state\` を`
   + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
   + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
-  + `3. \`${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+  + `3. \`~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
   + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止。\n`
   + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
   + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
@@ -3931,7 +3933,7 @@ if (SURFACEPROOF_MODE !== 'off') {
         + `3. Bash で \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-comments-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <COMMENTS_FILE> とする。\n`
         + `4. \`gh api repos/${REPO}/issues/${ISSUE}/comments --paginate\` を同じ bare 単文の制約で実行し、stdout を <COMMENTS_FILE> へリダイレクトせよ。`
         + `exit 非0 の場合は代わりに \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-comments-err-${ISSUE}-XXXXXX.txt"\`（<COMMENTS_ERR_FILE>）へ stderr を保存し、手順5では \`--comments-json <COMMENTS_FILE>\` の代わりに \`--comments-err <COMMENTS_ERR_FILE>\` を使え。\n`
-        + `5. \`${WT}/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO} --issue-json <ISSUE_JSON> (--comments-json <COMMENTS_FILE> | --comments-err <COMMENTS_ERR_FILE>)\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+        + `5. \`~/.claude/skills/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO} --issue-json <ISSUE_JSON> (--comments-json <COMMENTS_FILE> | --comments-err <COMMENTS_ERR_FILE>)\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
         + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止。\n`
         + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
         + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
@@ -5682,7 +5684,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
   issue: Number(ISSUE),
   repo: repoFromGithubUrl(pr.pr_url) ?? REPO,
   pr_number: Number(pr.pr_number),
-  journal_sh: `${WT}/skill-retrospective/scripts/journal.sh`,
+  // skills 実体固定（WT は対象 repo — issue #484）。tilde は Stop hook の [[ -x ]] では展開されず FALLBACK_JOURNAL で解決される（fail-open）
+  journal_sh: '~/.claude/skills/skill-retrospective/scripts/journal.sh',
   ...(state.guardBlockedResults.length ? { error_category: 'guard_blocked' } : {}),
   telemetry: {
     merge_tier: mergeTier.tier,

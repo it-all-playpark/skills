@@ -99,11 +99,11 @@ test('[analyze-contract-routing] (e) contract probe prompt に cd 前置禁止�
   assert.match(window, /cd 前置/, `cd 前置禁止の文言が見つからない。window: ${window}`);
 });
 
-test('[analyze-contract-routing] (e) script 呼び出しが WT 絶対パス先頭トークンの bare 形である', () => {
+test('[analyze-contract-routing] (e) script 呼び出しが skills 実体固定パス先頭トークンの bare 形である', () => {
   assert.match(
     src,
-    /\$\{WT\}\/dev-issue-analyze\/scripts\/analyze-issue\.sh \$\{ISSUE\} --issue-json <ISSUE_JSON> --contract/,
-    '${WT}/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract という絶対パス先頭トークン形式が見つからない',
+    /~\/\.claude\/skills\/dev-issue-analyze\/scripts\/analyze-issue\.sh \$\{ISSUE\} --issue-json <ISSUE_JSON> --contract/,
+    '~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract という絶対パス先頭トークン形式が見つからない',
   );
 });
 
