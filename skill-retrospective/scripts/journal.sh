@@ -73,8 +73,10 @@ cmd_log() {
     local telemetry_json=""
     local trust_run_id="" trust_receipts="" trust_surfaceproof=""
     local trust_evalseal_missing_reason=""
+    local trust_effectdelta_pr_missing_reason=""
     local trust_run_id_set=false
     local trust_evalseal_missing_reason_set=false
+    local trust_effectdelta_pr_missing_reason_set=false
     local vdelta_verdicts="" vdelta_fail_open="" redgreen_deny="" testsurf_hits=""
     local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
     local subagent_invocations=""
@@ -126,6 +128,7 @@ cmd_log() {
             --trust-receipts) trust_receipts="$2"; shift 2 ;;
             --trust-surfaceproof) trust_surfaceproof="$2"; shift 2 ;;
             --trust-evalseal-missing-reason) trust_evalseal_missing_reason="$2"; trust_evalseal_missing_reason_set=true; shift 2 ;;
+            --trust-effectdelta-pr-missing-reason) trust_effectdelta_pr_missing_reason="$2"; trust_effectdelta_pr_missing_reason_set=true; shift 2 ;;
             --vdelta-verdicts) vdelta_verdicts="$2"; shift 2 ;;
             --vdelta-fail-open) vdelta_fail_open="$2"; shift 2 ;;
             --redgreen-deny) redgreen_deny="$2"; shift 2 ;;
@@ -248,6 +251,18 @@ cmd_log() {
         case "$trust_evalseal_missing_reason" in
             eval_skipped|agent_throw|agent_null|seal_error|mode_off|unknown) ;;
             *) die_json "Invalid --trust-evalseal-missing-reason: $trust_evalseal_missing_reason. Must be eval_skipped|agent_throw|agent_null|seal_error|mode_off|unknown" 1 ;;
+        esac
+    fi
+
+    # Validate --trust-effectdelta-pr-missing-reason (closed 8-value enum; PR stage
+    # receipt-missing reason distribution for issue #476. Independently defined from
+    # --trust-evalseal-missing-reason (D-3). fail-closed like --trust-evalseal-missing-reason:
+    # out-of-enum and empty string both die_json since a bad reason must surface as a bug,
+    # not silently drop (unlike the fail-open 8-key telemetry flags below).
+    if [[ "$trust_effectdelta_pr_missing_reason_set" == true ]]; then
+        case "$trust_effectdelta_pr_missing_reason" in
+            agent_throw|agent_null|mode_off|gh_failed|script_error|agent_error|schema_invalid|unknown) ;;
+            *) die_json "Invalid --trust-effectdelta-pr-missing-reason: $trust_effectdelta_pr_missing_reason. Must be agent_throw|agent_null|mode_off|gh_failed|script_error|agent_error|schema_invalid|unknown" 1 ;;
         esac
     fi
 
@@ -442,6 +457,10 @@ cmd_log() {
     fi
     if [[ "$trust_evalseal_missing_reason_set" == true ]]; then
         telemetry=$(echo "$telemetry" | jq --arg v "$trust_evalseal_missing_reason" '. + {trust_evalseal_missing_reason: $v}')
+        has_telemetry=true
+    fi
+    if [[ "$trust_effectdelta_pr_missing_reason_set" == true ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$trust_effectdelta_pr_missing_reason" '. + {trust_effectdelta_pr_missing_reason: $v}')
         has_telemetry=true
     fi
     if [[ -n "$vdelta_verdicts" ]]; then
@@ -849,6 +868,7 @@ Examples:
   journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
   journal.sh log dev-flow success --trust-run-id run-abc123 --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}]' --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
   journal.sh log dev-flow success --trust-evalseal-missing-reason agent_throw  # receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
+  journal.sh log dev-flow success --trust-effectdelta-pr-missing-reason gh_failed  # PR stage receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
   journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json

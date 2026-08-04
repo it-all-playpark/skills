@@ -24,6 +24,10 @@ import {
   TRUST_EVALSEAL_MISSING_REASONS,
   effectiveTrustVerdict,
   formatTrustReceiptsSummary,
+  TRUST_EFFECTDELTA_PR_MISSING_REASONS,
+  classifyEffectdeltaPrMissing,
+  redactEffectdeltaError,
+  formatEffectdeltaPrMissingSummary,
 } from './trust-wiring.mjs';
 import { TRUST_LAYERS, TRUST_MODES } from './trust-mode.mjs';
 import { TELEMETRY_LAYERS, TELEMETRY_MODES, formatTrustSummary } from './trust-telemetry.mjs';
@@ -207,4 +211,117 @@ test('formatTrustReceiptsSummary: 空配列は空文字', () => {
 test('formatTrustReceiptsSummary: 全 mode==="off" は空文字', () => {
   const envelopes = [sampleEnvelope({ mode: 'off' })];
   assert.equal(formatTrustReceiptsSummary(envelopes), '');
+});
+
+// ---- (e) TRUST_EFFECTDELTA_PR_MISSING_REASONS（issue #476 D-3: 独立 8 値 closed enum） ----
+
+test('TRUST_EFFECTDELTA_PR_MISSING_REASONS: closed 8 値 enum', () => {
+  assert.deepEqual(TRUST_EFFECTDELTA_PR_MISSING_REASONS, [
+    'agent_throw',
+    'agent_null',
+    'mode_off',
+    'gh_failed',
+    'script_error',
+    'agent_error',
+    'schema_invalid',
+    'unknown',
+  ]);
+});
+
+// ---- (f) classifyEffectdeltaPrMissing ----
+
+test('classifyEffectdeltaPrMissing: null は agent_null', () => {
+  assert.equal(classifyEffectdeltaPrMissing(null), 'agent_null');
+});
+
+test('classifyEffectdeltaPrMissing: undefined は agent_null', () => {
+  assert.equal(classifyEffectdeltaPrMissing(undefined), 'agent_null');
+});
+
+test('classifyEffectdeltaPrMissing: mode:"off" は mode_off', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ mode: 'off' }), 'mode_off');
+});
+
+test('classifyEffectdeltaPrMissing: ok:false かつ gh 系 error 文字列は gh_failed', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ ok: false, error: 'gh pr view failed: HTTP 403' }), 'gh_failed');
+});
+
+test('classifyEffectdeltaPrMissing: ok:false かつ script 系 error 文字列は script_error', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ ok: false, error: 'pr-observe exit 1' }), 'script_error');
+});
+
+test('classifyEffectdeltaPrMissing: ok:false かつどちらにもマッチしない error 文字列は agent_error', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ ok: false, error: 'gave up' }), 'agent_error');
+});
+
+test('classifyEffectdeltaPrMissing: ok:false かつ error 無しは agent_error', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ ok: false }), 'agent_error');
+});
+
+test('classifyEffectdeltaPrMissing: ok:false かつ error が非文字列は agent_error', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ ok: false, error: { code: 500 } }), 'agent_error');
+});
+
+test('classifyEffectdeltaPrMissing: ok:true（成功条件未達で到達）は schema_invalid', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ ok: true }), 'schema_invalid');
+});
+
+test('classifyEffectdeltaPrMissing: gh 系と script 系の両方の token を含む error は gh_failed が優先', () => {
+  assert.equal(classifyEffectdeltaPrMissing({ ok: false, error: 'gh failed: pr-observe skipped' }), 'gh_failed');
+});
+
+test('classifyEffectdeltaPrMissing: それ以外の未知形状は unknown', () => {
+  assert.equal(classifyEffectdeltaPrMissing({}), 'unknown');
+});
+
+// ---- (g) redactEffectdeltaError ----
+
+test('redactEffectdeltaError: 非文字列は空文字', () => {
+  assert.equal(redactEffectdeltaError(null), '');
+  assert.equal(redactEffectdeltaError(undefined), '');
+  assert.equal(redactEffectdeltaError(123), '');
+  assert.equal(redactEffectdeltaError({ code: 500 }), '');
+});
+
+test('redactEffectdeltaError: URL は <url> に置換される', () => {
+  assert.equal(redactEffectdeltaError('failed: see https://api.github.com/repos/x/y for details'), 'failed: see <url> for details');
+});
+
+test('redactEffectdeltaError: 16 文字以上の token 様文字列は <token> に置換される', () => {
+  const out = redactEffectdeltaError('auth failed token=ghp_abcdefghijklmnopqrstuvwxyz');
+  assert.match(out, /<token>/);
+  assert.doesNotMatch(out, /ghp_abcdefghijklmnopqrstuvwxyz/);
+});
+
+test('redactEffectdeltaError: 複数行は先頭行のみを対象にする', () => {
+  assert.equal(redactEffectdeltaError('first line\nsecond line with secret'), 'first line');
+});
+
+test('redactEffectdeltaError: 120 文字に truncate される', () => {
+  const longError = 'error occurred while processing the request '.repeat(5);
+  const out = redactEffectdeltaError(longError);
+  assert.equal(out.length, 120);
+});
+
+// ---- (h) formatEffectdeltaPrMissingSummary ----
+
+test('formatEffectdeltaPrMissingSummary: null は空文字', () => {
+  assert.equal(formatEffectdeltaPrMissingSummary(null), '');
+});
+
+test('formatEffectdeltaPrMissingSummary: 空文字は空文字', () => {
+  assert.equal(formatEffectdeltaPrMissingSummary(''), '');
+});
+
+test('formatEffectdeltaPrMissingSummary: 非文字列は空文字', () => {
+  assert.equal(formatEffectdeltaPrMissingSummary(undefined), '');
+  assert.equal(formatEffectdeltaPrMissingSummary(123), '');
+});
+
+test('formatEffectdeltaPrMissingSummary: reason 入力でブロック文字列を完全一致で返す', () => {
+  const out = formatEffectdeltaPrMissingSummary('agent_error');
+  assert.equal(
+    out,
+    '### Trust receipts (shadow) — missing\n\n- effectdelta [shadow]: INCONCLUSIVE (missing_reason=agent_error) stage=pr',
+  );
 });

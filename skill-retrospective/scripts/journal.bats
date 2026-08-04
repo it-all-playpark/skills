@@ -1307,3 +1307,62 @@ JSON
     has_key=$(jq '.telemetry | has("trust_evalseal_missing_reason")' "$entry_file")
     [ "$has_key" = "false" ]
 }
+
+# ===========================================================================
+# --trust-effectdelta-pr-missing-reason (issue #476 D-3)
+# PR stage receipt 欠落理由の closed 8値 enum を journal telemetry へ到達させるフラグ
+# (EvalSeal の trust_evalseal_missing_reason とは独立定義)
+# ---------------------------------------------------------------------------
+
+# (a) valid 値が telemetry.trust_effectdelta_pr_missing_reason へ到達する
+@test "--trust-effectdelta-pr-missing-reason: valid value reaches telemetry" {
+    run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason gh_failed
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    reason=$(jq -r '.telemetry.trust_effectdelta_pr_missing_reason' "$entry_file")
+    [ "$reason" = "gh_failed" ]
+}
+
+# (a-2) enum の他の値も同様に通る
+@test "--trust-effectdelta-pr-missing-reason: all 8 enum values are accepted" {
+    for v in agent_throw agent_null mode_off gh_failed script_error agent_error schema_invalid unknown; do
+        run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason "$v"
+        [ "$status" -eq 0 ]
+
+        entry_file=$(latest_entry)
+        [ -n "$entry_file" ]
+
+        reason=$(jq -r '.telemetry.trust_effectdelta_pr_missing_reason' "$entry_file")
+        [ "$reason" = "$v" ]
+    done
+}
+
+# (b) enum 外の値は exit 非0 + error JSON (die_json fail-closed)
+@test "--trust-effectdelta-pr-missing-reason: out-of-enum value is rejected (die_json)" {
+    run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason bogus
+    [ "$status" -ne 0 ]
+
+    error_status=$(echo "$output" | jq -r '.status')
+    [ "$error_status" = "error" ]
+}
+
+# (b-2) 空文字も reject される
+@test "--trust-effectdelta-pr-missing-reason: empty string is rejected" {
+    run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason ""
+    [ "$status" -ne 0 ]
+}
+
+# (c) フラグ未指定時は telemetry に当該キーが存在しない
+@test "--trust-effectdelta-pr-missing-reason: not specified -> no telemetry key" {
+    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("trust_effectdelta_pr_missing_reason")' "$entry_file")
+    [ "$has_key" = "false" ]
+}

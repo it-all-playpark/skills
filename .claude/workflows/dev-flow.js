@@ -1170,6 +1170,85 @@ function buildEvalsealEvidenceBundle({ risk, testGreen } = {}) {
 // （dev-flow.js）で 'unknown' に正規化する。
 const TRUST_EVALSEAL_MISSING_REASONS = ['eval_skipped', 'agent_throw', 'agent_null', 'seal_error', 'mode_off', 'unknown'];
 
+// EffectDelta PR stage receipt 欠落理由の closed enum（issue #476 D-3）。EvalSeal と共通化せず
+// 独立定義する — 送り側（dev-flow.js の trust-effectdelta-pr probe）の実分岐が catch（throw）と
+// mode==='off' に加え、agent fallback 形 {ok:false,error} の error 文字列由来の 3 分類
+// （gh_failed/script_error/agent_error）と成功条件未達（schema_invalid）を持つため。
+// out-of-enum は telemetry 出力側（dev-flow.js）で 'unknown' に正規化する。
+const TRUST_EFFECTDELTA_PR_MISSING_REASONS = [
+  'agent_throw',
+  'agent_null',
+  'mode_off',
+  'gh_failed',
+  'script_error',
+  'agent_error',
+  'schema_invalid',
+  'unknown',
+];
+
+// gh/GitHub API 由来の失敗を示す決定論 regex（上流原因を優先するため script 系より先に判定する）。
+const EFFECTDELTA_GH_FAILURE_RE = /(^|[^a-z])gh([^a-z]|$)|github|http[ _-]?[45][0-9][0-9]|rate ?limit|auth/i;
+
+// pr-observe / effectdelta-github.sh 等の決定論スクリプト実行系失敗を示す regex。
+const EFFECTDELTA_SCRIPT_FAILURE_RE = /pr-observe|effectdelta-github|exit +[1-9]|stdout|json/i;
+
+// trust-effectdelta-pr probe の非 throw 欠落ケースを分類する pure function（issue #476）。
+// 呼び出し側（dev-flow.js）が try/catch で throw を 'agent_throw' に振り分けた残余（非 throw の
+// res）だけを受け取る前提。判定順は上流原因優先: (a) res が null/undefined → 'agent_null'、
+// (b) res.mode === 'off' → 'mode_off'、(c) res.ok === false かつ error が文字列のとき gh 系 regex
+// 優先で gh_failed → script 系 regex で script_error → 非マッチ/非文字列は agent_error、
+// (d) res.ok === true（receipt/envelope 欠落等で成功条件を満たさなかった場合にのみ到達）→
+// 'schema_invalid'、(e) それ以外の未知形状 → 'unknown'。
+function classifyEffectdeltaPrMissing(res) {
+  if (res === null || res === undefined) {
+    return 'agent_null';
+  }
+  if (res.mode === 'off') {
+    return 'mode_off';
+  }
+  if (res.ok === false) {
+    if (typeof res.error === 'string') {
+      if (EFFECTDELTA_GH_FAILURE_RE.test(res.error)) {
+        return 'gh_failed';
+      }
+      if (EFFECTDELTA_SCRIPT_FAILURE_RE.test(res.error)) {
+        return 'script_error';
+      }
+    }
+    return 'agent_error';
+  }
+  if (res.ok === true) {
+    return 'schema_invalid';
+  }
+  return 'unknown';
+}
+
+// log 専用の redacted hint を返す pure function（issue #476 AC-3）。raw error は telemetry /
+// receipt / PR summary のどこにも保存せず、workflow log 行にのみこの出力を使う想定。
+// 非文字列は ''、文字列は先頭行のみ抽出し、URL を '<url>'、16 文字以上の token 様文字列を
+// '<token>' に置換した上で 120 文字に truncate する。
+function redactEffectdeltaError(error) {
+  if (typeof error !== 'string') {
+    return '';
+  }
+  const firstLine = error.split('\n')[0];
+  const redacted = firstLine
+    .replace(/https?:\/\/\S+/g, '<url>')
+    .replace(/[A-Za-z0-9_-]{16,}/g, '<token>');
+  return redacted.slice(0, 120);
+}
+
+// EffectDelta PR stage receipt 欠落理由を PR summary へ追記するブロックを構築する pure
+// function（issue #476）。呼び出し側（dev-flow.js）が EFFECTDELTA_MODE!=='off' 判定・
+// out-of-enum の 'unknown' 正規化を行った上で reason を渡す前提。reason が非文字列・空文字の
+// 場合は追記しない意図で '' を返す。
+function formatEffectdeltaPrMissingSummary(reason) {
+  if (typeof reason !== 'string' || reason === '') {
+    return '';
+  }
+  return `### Trust receipts (shadow) — missing\n\n- effectdelta [shadow]: INCONCLUSIVE (missing_reason=${reason}) stage=pr`;
+}
+
 // [{ envelope: {verdict,...}, invalidated: boolean, stage: 'evaluate'|'final' }] から、
 // invalidated でない最新（配列末尾優先）entry の envelope.verdict を返す。
 // 全滅/空配列/非配列は 'inconclusive' を返す（受領物なし = 成功扱いしない）。
@@ -3970,6 +4049,7 @@ let state = {
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
   trustSurfaceProofShadow, trustReceipts: [], trustEvalsealMissingReason: null, pendingFinalSeal: null,
+  trustEffectdeltaPrMissingReason: null,
 }
 
 // ============================================================
@@ -4988,9 +5068,12 @@ if (EFFECTDELTA_MODE === 'shadow') {
       state.trustReceipts.push({ stage: 'pr', receipt: edPrRes.receipt, envelope: edPrRes.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: edPrRes.observation?.reason_code ?? null })
       log(`trust-effectdelta-pr: EffectDelta PR receipt を記録（mode=${edPrRes.mode}, status=${edPrRes.observation?.status ?? 'n/a'}）`)
     } else {
-      log(`⚠️ trust-effectdelta-pr: receipt 取得できず（ok=${edPrRes?.ok}, mode=${edPrRes?.mode}）— fail-open（既存 gate へ影響なし）`)
+      state.trustEffectdeltaPrMissingReason = classifyEffectdeltaPrMissing(edPrRes)
+      const hint = redactEffectdeltaError(edPrRes?.error)
+      log(`⚠️ trust-effectdelta-pr: receipt 取得できず（reason=${state.trustEffectdeltaPrMissingReason}${hint ? ', hint=' + hint : ''}）— fail-open（既存 gate へ影響なし）`)
     }
   } catch (err) {
+    state.trustEffectdeltaPrMissingReason = 'agent_throw'
     log(`⚠️ trust-effectdelta-pr で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
   }
 }
@@ -5465,6 +5548,11 @@ if (ciTargets.length > 0) {
 // EvalSeal (epic #390 Phase 3, issue #411): trust receipts が無い（off / fail-open で受領物な
 // し）場合は空文字を返す — 既存 summary を byte 互換に保つ（AC-6）。
 const trustSummaryMd = formatTrustReceiptsSummary(state.trustReceipts.map((r) => ({ ...r.envelope, invalidated: r.invalidated })))
+// EffectDelta PR stage receipt 欠落理由 (issue #476 AC-1): EFFECTDELTA_MODE==='off' では常に空文字
+// になるため summaryBody は従来と byte 一致（AC-11）。
+const edPrMissingMd = EFFECTDELTA_MODE !== 'off' && !state.trustReceipts.some((r) => r.stage === 'pr')
+  ? formatEffectdeltaPrMissingSummary(TRUST_EFFECTDELTA_PR_MISSING_REASONS.includes(state.trustEffectdeltaPrMissingReason) ? state.trustEffectdeltaPrMissingReason : 'unknown')
+  : ''
 const summaryBody = buildDevflowSummaryBody({
   pr: pr.pr_number,
   mergeTier: mergeTier.tier,
@@ -5489,7 +5577,7 @@ const summaryBody = buildDevflowSummaryBody({
   finalUiVerify: finalUiVerifyStatus,
   finalAcReconcile,
   liteReview: state.liteReview ?? null,
-}) + (trustSummaryMd ? '\n\n' + trustSummaryMd : '')
+}) + (trustSummaryMd ? '\n\n' + trustSummaryMd : '') + (edPrMissingMd ? '\n\n' + edPrMissingMd : '')
 // EffectDelta (epic #390 Phase 4, issue #412, issue #466 で gh choreography を subagent へ移管):
 // shadow 時は effectdelta-github.sh の comment-prepare（marker/effect_id 導出 + posted body 組み立て）
 // → 投稿前後の PR コメント一覧を subagent の bare `gh api` で取得 → comment-observe（readback 分類）
@@ -5629,6 +5717,11 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // （trustReceipts.length===0）のみ、欠落理由を closed enum で出力する。out-of-enum は
     // 'unknown' へ正規化（TRUST_EVALSEAL_MISSING_REASONS 未含有は起こらない想定だが fail-safe）。
     ...(EVALSEAL_MODE !== 'off' && state.trustReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
+    // trust_effectdelta_pr_missing_reason (issue #476 AC-1): EffectDelta PR stage receipt が無い
+    // run（trustReceipts に stage:'pr' が無い）のみ、欠落理由を closed enum で出力する
+    // （EvalSeal 同型 gating）。journal.sh の --trust-effectdelta-pr-missing-reason へ受け側到達済み
+    // （dotfiles Stop hook 転送は別 issue dotfiles#154）。
+    ...(EFFECTDELTA_MODE !== 'off' && !state.trustReceipts.some((r) => r.stage === 'pr') ? { trust_effectdelta_pr_missing_reason: TRUST_EFFECTDELTA_PR_MISSING_REASONS.includes(state.trustEffectdeltaPrMissingReason) ? state.trustEffectdeltaPrMissingReason : 'unknown' } : {}),
     // trust_run_id (issue #413 F4, epic #390 Phase 5): trust receipt/shadow probe を持つ run のみ
     // RUN_ID（comment-prepare/comment-observe --run-id と同一定数）を telemetry へ再掲し、EffectDelta の effect_id
     // 導出（repo+pr+effect_type+run_id+body_digest）と journal 集計が同一 run 識別子を共有できる
@@ -5697,6 +5790,10 @@ return {
   trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
   ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: state.trustReceipts.length } : {}),
   ...(EVALSEAL_MODE !== 'off' && state.trustReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
+  // trust_effectdelta_pr_missing_reason (issue #476 AC-1): telemetry handoff と同一構造の
+  // closed-enum gating（EvalSeal 同型）。journal.sh の --trust-effectdelta-pr-missing-reason へ
+  // 受け側到達済み（dotfiles Stop hook 転送は別 issue dotfiles#154）。
+  ...(EFFECTDELTA_MODE !== 'off' && !state.trustReceipts.some((r) => r.stage === 'pr') ? { trust_effectdelta_pr_missing_reason: TRUST_EFFECTDELTA_PR_MISSING_REASONS.includes(state.trustEffectdeltaPrMissingReason) ? state.trustEffectdeltaPrMissingReason : 'unknown' } : {}),
   note: mergeTier.tier === 'HOLD'
     ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'
