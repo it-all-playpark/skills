@@ -1,0 +1,89 @@
+// _lib/skills-script-path-routing.test.mjs
+// Pin test: skills 内部 script のパス解決を固定する（issue #484 task F1）。
+//
+// `.claude/workflows/dev-flow.js` は、skills リポジトリ（it-all-playpark/skills）内部にのみ
+// 存在する script 群（analyze-issue.sh / surfaceproof-snapshot.sh / journal.sh）を
+// `${WT}/...`（WT=対象repoのworktree）相対で subagent prompt / journal handoff payload に
+// 埋め込んでいた。対象 repo が skills 自身でない場合（例: veridelta）にこれらの script は WT 配下に
+// 存在せず Exit 127 で落ちる。修正後の期待状態は、既存 precedent（L4339 の
+// `~/.claude/skills/_shared/scripts/cross-repo-artifacts.sh`）と同じ skills 実体固定パス
+// `~/.claude/skills/...` を使うことである。この test は修正後の期待状態を先に固定する。
+//
+// effectdelta-github.sh は本ファイルの対象外（意図的に WT 相対のまま）: (1) TRUST_SHADOW_REPO_SLUG
+// ガードにより repoSlug==='it-all-playpark/skills' の場合しか到達せず WT に script が必ず存在する
+// ため元々 Exit 127 のバグではない、(2) 既存の committed pin test _lib/effectdelta-routing.test.mjs
+// の test (ii) が installed パス（~/.claude/skills/...）不使用を明示的に assert している
+// （issue #412: skills 自身の run では worktree 内の in-flight 版 script を dogfood する設計）。
+// 本ファイルで effectdelta の固定パスを重複 assert すると pin の二重管理になるため行わない。
+//
+// .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
+// よって既存 *-routing.test.mjs 群と同じ戦略（source-as-string assert）で検証する。
+//
+// Run: npx vitest run _lib/skills-script-path-routing.test.mjs
+import { test } from 'vitest';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..');
+const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
+const src = readFileSync(devFlowPath, 'utf8');
+
+function countOccurrences(haystack, needle) {
+  let count = 0;
+  let idx = 0;
+  while (true) {
+    idx = haystack.indexOf(needle, idx);
+    if (idx === -1) break;
+    count += 1;
+    idx += needle.length;
+  }
+  return count;
+}
+
+// ---- (a) 禁止パターン不在: WT 相対で skills 内部 script を呼んではならない ----
+
+test('[skills-script-path-routing] (a) dev-flow.js に `${WT}/dev-issue-analyze/` が残っていない', () => {
+  assert.ok(
+    !src.includes('${WT}/dev-issue-analyze/'),
+    'dev-flow.js に禁止パターン `${WT}/dev-issue-analyze/` が残っている（対象repoがskills以外だとExit 127）',
+  );
+});
+
+test('[skills-script-path-routing] (a) dev-flow.js に `${WT}/skill-retrospective/` が残っていない', () => {
+  assert.ok(
+    !src.includes('${WT}/skill-retrospective/'),
+    'dev-flow.js に禁止パターン `${WT}/skill-retrospective/` が残っている（対象repoがskills以外だとExit 127）',
+  );
+});
+
+// ---- (b) 固定パス存在（出現回数込み）----
+
+test('[skills-script-path-routing] (b) analyze-issue.sh が skills 実体固定パスで1回存在する', () => {
+  const needle = '~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh';
+  const count = countOccurrences(src, needle);
+  assert.equal(count, 1, `固定パス '${needle}' の出現回数が期待(1)と異なる: ${count}`);
+});
+
+test('[skills-script-path-routing] (b) surfaceproof-snapshot.sh が skills 実体固定パスで1回存在する', () => {
+  const needle = '~/.claude/skills/dev-issue-analyze/scripts/surfaceproof-snapshot.sh';
+  const count = countOccurrences(src, needle);
+  assert.equal(count, 1, `固定パス '${needle}' の出現回数が期待(1)と異なる: ${count}`);
+});
+
+test('[skills-script-path-routing] (b) journal.sh が skills 実体固定パスで2回存在する', () => {
+  const needle = '~/.claude/skills/skill-retrospective/scripts/journal.sh';
+  const count = countOccurrences(src, needle);
+  assert.equal(count, 2, `固定パス '${needle}' の出現回数が期待(2)と異なる: ${count}`);
+});
+
+// ---- (c) 負の対照（誤爆防止）: 対象repo自身のファイルを指す WT 相対パスは修正対象外 ----
+
+test('[skills-script-path-routing] (c) `${WT}/tests/run-tests.sh`（対象repoのテストランナー）は残っている', () => {
+  assert.ok(
+    src.includes('${WT}/tests/run-tests.sh'),
+    '`${WT}/tests/run-tests.sh` が見つからない（修正対象外の WT 相対パスまで誤って書き換えた可能性）',
+  );
+});
