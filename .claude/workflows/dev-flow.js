@@ -3245,16 +3245,23 @@ const TRUSTSEAL = {
     error: { type: 'string' },
   },
 }
+// EFFECTDELTA_OPS: effectdelta-github.sh の stdout に最終的に現れる op はこの 2 値のみ
+// （pr-observe 成功 = CLI pr-classify の passthrough、comment-observe / comment 系 kill switch =
+// 'comment-ensure' へ上書き）。CLI 内部 op（comment-classify / derive-comment-id）は途中で上書き
+// され表に出ないため enum に含めない（issue #480）。
+const EFFECTDELTA_OPS = ['pr-classify', 'comment-ensure'];
 // EFFECTDELTA_OBS: _shared/scripts/effectdelta-github.sh exec-proxy の stdout JSON
 // （epic #390 Phase 4, issue #412）。pr-observe / comment-prepare・comment-observe（+ gh pr comment
 // fallback。issue #466）で共用するため posted/url/method（comment 系）と
 // observation/effect_id/receipt/envelope（両系）を同一 schema に併記する。
+// mode/op は issue #480 で TRUST_MODES / EFFECTDELTA_OPS の closed enum に制約する
+// （実運用で観測された mode:"pr-observe" 等の契約違反 payload を弾くため）。
 const EFFECTDELTA_OBS = {
   type: 'object', required: ['ok'],
   properties: {
     ok: { type: 'boolean' },
-    mode: { type: 'string' },
-    op: { type: 'string' },
+    mode: { type: 'string', enum: TRUST_MODES },
+    op: { type: 'string', enum: EFFECTDELTA_OPS },
     posted: { type: 'boolean' },
     url: { type: 'string' },
     method: { type: 'string' },
@@ -5064,7 +5071,10 @@ if (EFFECTDELTA_MODE === 'shadow') {
       + `## Token cap\n300 語以内で完結すること。`,
       { agentType: 'dev-runner-haiku-ro', schema: EFFECTDELTA_OBS, label: 'trust-effectdelta-pr', phase: 'PR' },
     )
-    if (edPrRes?.ok === true && edPrRes.mode !== 'off' && edPrRes.receipt && edPrRes.envelope) {
+    // issue #480: harness の schema 検証を素通りし得る契約違反 payload（実観測: mode:"pr-observe"）を
+    // TRUST_MODES.includes guard で決定論的に弾き、else 分岐の classifyEffectdeltaPrMissing の
+    // schema_invalid 経路へ落とす（fail-open 不変 — gate へ影響しない）。
+    if (edPrRes?.ok === true && edPrRes.mode !== 'off' && TRUST_MODES.includes(edPrRes.mode) && edPrRes.receipt && edPrRes.envelope) {
       state.trustReceipts.push({ stage: 'pr', receipt: edPrRes.receipt, envelope: edPrRes.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: edPrRes.observation?.reason_code ?? null })
       log(`trust-effectdelta-pr: EffectDelta PR receipt を記録（mode=${edPrRes.mode}, status=${edPrRes.observation?.status ?? 'n/a'}）`)
     } else {
@@ -5620,7 +5630,7 @@ if (EFFECTDELTA_MODE === 'shadow') {
     log(`⚠️ post-summary(shadow) で例外（${err && err.message ? err.message : err}）— fail-open`)
     summaryPost = null
   }
-  if (summaryPost?.envelope && summaryPost?.receipt && summaryPost?.mode !== 'off') {
+  if (summaryPost?.envelope && summaryPost?.receipt && summaryPost?.mode !== 'off' && TRUST_MODES.includes(summaryPost.mode)) {
     state.trustReceipts.push({ stage: 'summary-comment', receipt: summaryPost.receipt, envelope: summaryPost.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: summaryPost.observation?.reason_code ?? null })
   }
 } else {
