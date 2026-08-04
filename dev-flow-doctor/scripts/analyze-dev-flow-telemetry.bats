@@ -876,14 +876,15 @@ EOF
 # ---------------------------------------------------------------------------
 # Test 30: distributions.vdelta_verdict -- per-AC vdelta_verdicts[] items are
 #          flattened from DEVFLOW_ENTRIES and bucketed by category, using the
-#          REAL producer shape recorded by dev-flow.js (state.vdeltaVerdicts.
-#          push({ ac, verdict: rg.verdict }), where rg.verdict is the veridelta
-#          hook's raw JSON: {comparability, transitions, verification_surface}
-#          -- see _lib/redgreen-vdelta-deny-routing.test.mjs fixtures). This is
-#          NOT the {verdict:"improved"} shape dev-flow never generates.
+#          redacted digest shape recorded by dev-flow.js's vdeltaVerdictDigest
+#          (issue #433): {ac, status, comparability, verification_surface,
+#          repaired_with_test_change}, where .status is the closed 4-value
+#          enum already computed by the producer (_lib/vdelta-transitions.mjs
+#          vdeltaDenies()). The analyzer transcribes .status, it does not
+#          re-derive it from comparability/transitions.
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: counts clean/deny from real producer-shaped vdelta_verdicts[]" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"exact","transitions":{"repaired_with_test_change":["test/foo.test.js"]},"verification_surface":{"status":"intact"}}}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"deny","comparability":"exact","verification_surface":"intact","repaired_with_test_change":1}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -934,7 +935,7 @@ EOF
 #          scoped parsing, not raw-text substring matching.
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: non-dev-flow skill entries with matching substrings are not counted" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
 
     cat > "${CLAUDE_JOURNAL_DIR}/bughunt-1.json" <<EOF
 {
@@ -967,7 +968,7 @@ EOF
 #          severity warn.
 # ---------------------------------------------------------------------------
 @test "vdelta_unhealthy: 3/5 abstain (60%) with total>=min_runs -> anomaly warn" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-3","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-4","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-5","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-3","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-4","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-5","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -983,7 +984,7 @@ EOF
 #          (minimum sample guard).
 # ---------------------------------------------------------------------------
 @test "vdelta_unhealthy: total below min_runs -> severity skipped, no warn" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-3","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-3","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -997,13 +998,14 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 35: distributions.vdelta_verdict -- category derivation fail_open path:
-#          an unparseable string verdict, and a verdict object missing
-#          .transitions entirely, both land in "fail_open" (no usable signal),
-#          matching _lib/vdelta-transitions.mjs's vdeltaDenies() fail_open
-#          branches exactly.
+# Test 35: distributions.vdelta_verdict -- status derivation fail_open path:
+#          items with no top-level .status key (including pre-#433 legacy
+#          {"verdict": {...}}-shaped items) both land in "fail_open" (no
+#          usable signal). The closed 4-value enum has no dual-path fallback
+#          to the pre-#433 raw {comparability, transitions,
+#          verification_surface} shape.
 # ---------------------------------------------------------------------------
-@test "vdelta_verdict distribution: unparseable string and missing-transitions object both fail_open" {
+@test "vdelta_verdict distribution: missing-status items (incl. legacy .verdict shape) both fail_open" {
     write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":"not-json-and-not-an-enum"},{"ac":"AC-2","verdict":{"comparability":"exact"}}]}' 1
 
     run "$SCRIPT" --window 30d
@@ -1018,12 +1020,13 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 36: distributions.vdelta_verdict -- deny path via verification_surface
-#          not "intact" (repaired_with_test_change absent), and a null verdict
-#          lands in fail_open (matches vdeltaDenies(null) -> fail_open).
+# Test 36: distributions.vdelta_verdict -- a digest item with .status:"deny"
+#          is transcribed as deny, and an item with .status:null (producer
+#          recorded no signal) lands in fail_open (closed enum -- analyzer
+#          does not re-derive deny/clean from comparability/transitions).
 # ---------------------------------------------------------------------------
-@test "vdelta_verdict distribution: verification_surface-not-intact denies, null verdict is fail_open" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"changed"}}},{"ac":"AC-2","verdict":null}]}' 1
+@test "vdelta_verdict distribution: status deny transcribed, null status is fail_open" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"deny","comparability":"exact","verification_surface":"changed","repaired_with_test_change":0},{"ac":"AC-2","status":null,"comparability":null,"verification_surface":null,"repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1034,6 +1037,28 @@ EOF
     total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
 
     [ "$deny" -eq 1 ]
+    [ "$fail_open" -eq 1 ]
+    [ "$total" -eq 2 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 37: distributions.vdelta_verdict -- an out-of-enum .status value (e.g.
+#          a stale/foreign "improved" string that vdeltaDenies() never
+#          produces) lands in fail_open, same as a missing .status (closed
+#          4-value enum, no silent pass-through of unrecognized values).
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict distribution: out-of-enum status value is fail_open" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"improved","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    clean=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.clean')
+    fail_open=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.fail_open')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+
+    [ "$clean" -eq 1 ]
     [ "$fail_open" -eq 1 ]
     [ "$total" -eq 2 ]
 }

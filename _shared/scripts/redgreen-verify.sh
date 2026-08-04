@@ -22,6 +22,12 @@ if [ -f "$RG_CONF" ]; then
   RG_VERDICT_CMD="$(grep -E '^verdict_cmd=' "$RG_CONF" | head -1 | cut -d= -f2-)"
 fi
 
+# verdict_cmd は当該 invocation で test_cmd(vdelta run) 経路が実際に実行された
+# 場合のみ起動する。bats-only 等 test_cmd 未実行の invocation では RunStore に
+# 当該 red/green の run pair が存在せず、無条件実行すると spurious な
+# baseline-missing/malformed verdict を招くため。
+VDELTA_TESTCMD_RAN=false
+
 IFS=',' read -r -a TESTS <<< "$TEST_CSV"
 IFS=',' read -r -a IMPLS <<< "$IMPL_CSV"
 
@@ -52,6 +58,9 @@ run_tests() {
       local _tc=()
       read -r -a _tc <<< "$RG_TEST_CMD"
       "${_tc[@]}" "${node_tests[@]}" >/dev/null 2>&1 || rc=1
+      # test_cmd(vdelta run) 経路を実行した事実を記録する(rc とは独立。
+      # red phase の失敗は期待値であり test_cmd 未実行を意味しない)。
+      VDELTA_TESTCMD_RAN=true
     else
       node --test "${node_tests[@]}" >/dev/null 2>&1 || rc=1
     fi
@@ -169,7 +178,9 @@ BASE_JSON="{\"red\":$RED,\"green\":$GREEN,\"reason\":\"ok\"}"
 
 # post-green verdict フック(opt-in, fail-open): red/green 判定が確定した後にのみ走る。
 # 非ゼロ exit・空出力・不正 JSON・jq 不在のいずれでも BASE_JSON をそのまま返す。
-if [ -n "$RG_VERDICT_CMD" ] && command -v jq >/dev/null 2>&1; then
+# 当該 invocation で test_cmd 経路が実行されていない場合(bats-only AC 等)は
+# RunStore に run pair が存在しないため起動しない(VDELTA_TESTCMD_RAN guard)。
+if [ -n "$RG_VERDICT_CMD" ] && [ "$VDELTA_TESTCMD_RAN" = true ] && command -v jq >/dev/null 2>&1; then
   VC=()
   read -r -a VC <<< "$RG_VERDICT_CMD"
   HOOK_JSON="$("${VC[@]}" 2>/dev/null)"
