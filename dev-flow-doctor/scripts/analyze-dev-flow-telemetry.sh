@@ -16,11 +16,16 @@
 #                       over .telemetry.duration_seconds, numeric values only;
 #                       denominator = .skill == "dev-flow" entries)
 #                     vdelta_verdict (clean/deny/abstain/fail_open counts --
-#                       mirrors _lib/vdelta-transitions.mjs vdeltaDenies()
-#                       status values, the only real producer semantics for
-#                       the raw veridelta verdict object -- flattened over
-#                       per-AC .telemetry.vdelta_verdicts[]; denominator =
-#                       .skill == "dev-flow" entries)
+#                       per-AC .telemetry.vdelta_verdicts[] items are the
+#                       redacted digest {ac, status, comparability,
+#                       verification_surface, repaired_with_test_change}
+#                       produced by dev-flow.js's vdeltaVerdictDigest (issue
+#                       #433); status is the closed 4-value enum already
+#                       computed by the producer (_lib/vdelta-transitions.mjs
+#                       vdeltaDenies()) at record time -- the analyzer
+#                       transcribes status, it does not re-derive it;
+#                       flattened over per-AC .telemetry.vdelta_verdicts[];
+#                       denominator = .skill == "dev-flow" entries)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring /
 #                      vdelta_unhealthy
 #
@@ -293,37 +298,23 @@ DURATION_BY_SHAPE=$(echo "$DEVFLOW_ENTRIES" | jq -c '
 # "inconclusive" or "vdelta_verdict" in unrelated fields -- can never leak in).
 # Parsing is structured-key only (no raw-text grep / substring matching).
 #
-# category derivation mirrors _lib/vdelta-transitions.mjs's vdeltaDenies()
-# EXACTLY, since that is the only real producer semantics for the raw
-# veridelta verdict recorded at telemetry.vdelta_verdicts[].verdict (dev-flow.js:
-# state.vdeltaVerdicts.push({ ac: acId, verdict: rg.verdict }), where rg.verdict
-# is the veridelta hook's raw JSON: {comparability, transitions,
-# verification_surface}). There is no "improved"/"unchanged"/"regressed"/
-# "inconclusive" schema anywhere in the codebase -- only vdeltaDenies()'s four
-# statuses:
-#   1. verdict null/undefined, or an unparseable string, or non-object/array
-#      after parsing, or .transitions non-object/array -> "fail_open" (no
-#      usable signal)
-#   2. .comparability != "exact" -> "abstain" (can't compare, e.g. parallel
-#      redgreen stream mix-in)
-#   3. otherwise: non-empty .transitions.repaired_with_test_change OR
-#      .verification_surface.status not "intact" -> "deny" (test-integrity
-#      concern detected)
-#   4. otherwise -> "clean" (verified genuine red->green, no integrity concern)
+# Since issue #433 (commit 670133d), dev-flow.js records a redacted digest at
+# telemetry.vdelta_verdicts[] -- {ac, status, comparability,
+# verification_surface, repaired_with_test_change} -- via vdeltaVerdictDigest,
+# not the raw veridelta verdict object. .status is the closed 4-value enum
+# ("clean" | "deny" | "abstain" | "fail_open") already computed by the
+# producer (_lib/vdelta-transitions.mjs's vdeltaDenies()) at record time.
+# The analyzer does not re-derive comparability/transitions/verification_surface
+# semantics -- it transcribes .status as-is. Items with a missing .status, or
+# a .status outside the closed enum, are classified "fail_open" (malformed =
+# no usable signal); there is no dual-path fallback to the pre-#433 raw
+# {comparability, transitions, verification_surface} shape.
 VDELTA_VERDICT_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
   def category:
-    (.verdict) as $v
-    | (if ($v | type) == "string" then ($v | try fromjson catch null) else $v end) as $p
-    | if ($p == null) then "fail_open"
-      elif (($p | type) != "object") then "fail_open"
-      elif (($p.transitions | type) != "object") then "fail_open"
-      elif ($p.comparability != "exact") then "abstain"
-      else
-        ( (($p.transitions.repaired_with_test_change // []) | type == "array"
-            and (($p.transitions.repaired_with_test_change // []) | length) > 0) as $repaired
-        | ($p.verification_surface.status // null) as $surface
-        | if $repaired or ($surface != null and $surface != "intact") then "deny" else "clean" end
-        )
+    (.status) as $s
+    | if ($s == "clean" or $s == "deny" or $s == "abstain" or $s == "fail_open")
+      then $s
+      else "fail_open"
       end;
   ([.[] | .telemetry.vdelta_verdicts[]? ] | map(category)) as $cats |
   {

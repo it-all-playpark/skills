@@ -189,13 +189,17 @@ EOF
 @test "F1-c: verdict_cmd success adds verdict field to output JSON" {
   echo "export const ok = true;" > "$REPO/impl.mjs"
   make_test
+  make_mock_runner
   mkdir -p "$REPO/.claude"
   cat > "$REPO/mock-verdict.sh" <<'EOF'
 #!/usr/bin/env bash
 echo '{"comparability":"exact","verdict":"improved"}'
 EOF
   chmod +x "$REPO/mock-verdict.sh"
-  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
+  {
+    echo "test_cmd=bash ./mock-runner.sh"
+    echo "verdict_cmd=bash ./mock-verdict.sh"
+  } > "$REPO/.claude/redgreen.conf"
 
   run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
   [ "$status" -eq 0 ]
@@ -209,13 +213,17 @@ EOF
 @test "F1-d: verdict_cmd exit 1 fails open, output keeps only the original 3 keys" {
   echo "export const ok = true;" > "$REPO/impl.mjs"
   make_test
+  make_mock_runner
   mkdir -p "$REPO/.claude"
   cat > "$REPO/mock-verdict.sh" <<'EOF'
 #!/usr/bin/env bash
 exit 1
 EOF
   chmod +x "$REPO/mock-verdict.sh"
-  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
+  {
+    echo "test_cmd=bash ./mock-runner.sh"
+    echo "verdict_cmd=bash ./mock-verdict.sh"
+  } > "$REPO/.claude/redgreen.conf"
 
   run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
   [ "$status" -eq 0 ]
@@ -227,10 +235,95 @@ EOF
 @test "F1-e: verdict_cmd invalid JSON fails open, output keeps only the original 3 keys" {
   echo "export const ok = true;" > "$REPO/impl.mjs"
   make_test
+  make_mock_runner
   mkdir -p "$REPO/.claude"
   cat > "$REPO/mock-verdict.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "not-json"
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  {
+    echo "test_cmd=bash ./mock-runner.sh"
+    echo "verdict_cmd=bash ./mock-verdict.sh"
+  } > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" != *'"verdict"'* ]]
+}
+
+# -----------------------------------------------------------------------
+# F1-f: AC-3 対応。test_cmd + verdict_cmd の両方が設定され、verdict_cmd が
+# veridelta 実形の digest JSON を返す正常応答経路。
+# -----------------------------------------------------------------------
+@test "F1-f: test_cmd と verdict_cmd の両方設定時、正常応答 verdict が出力に含まれる" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"comparability":"exact","transitions":{"repaired_with_test_change":[]},"verification_surface":{"status":"intact"}}'
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  {
+    echo "test_cmd=bash ./mock-runner.sh"
+    echo "verdict_cmd=bash ./mock-verdict.sh"
+  } > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" == *'"verdict"'* ]]
+  [[ "$output" == *'"comparability":"exact"'* ]]
+  [[ "$output" == *'"intact"'* ]]
+}
+
+# -----------------------------------------------------------------------
+# F1-g: bats-only AC では test_cmd(vdelta run) 経路が実行されないため
+# verdict_cmd も起動されない(guard による抑止)。
+# -----------------------------------------------------------------------
+@test "F1-g: bats-only AC では verdict_cmd が起動されない" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  cat > "$REPO/feature.bats" <<EOF
+#!/usr/bin/env bats
+@test "impl exists" {
+  [ -f "$REPO/impl.mjs" ]
+}
+EOF
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<EOF
+#!/usr/bin/env bash
+touch "$REPO/verdict-called"
+echo '{"comparability":"exact"}'
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  {
+    echo "test_cmd=bash ./mock-runner.sh"
+    echo "verdict_cmd=bash ./mock-verdict.sh"
+  } > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.bats" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'"verdict"'* ]]
+  [ ! -f "$REPO/verdict-called" ]
+}
+
+# -----------------------------------------------------------------------
+# F1-h: test_cmd 未設定(conf に verdict_cmd のみ)の node test AC では
+# node --test fallback で red/green は成立するが verdict_cmd は起動されない。
+# -----------------------------------------------------------------------
+@test "F1-h: test_cmd 未設定時は node --test fallback でも verdict_cmd が起動されない" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"comparability":"exact"}'
 EOF
   chmod +x "$REPO/mock-verdict.sh"
   echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"

@@ -418,8 +418,14 @@ EOF
 # ---------------------------------------------------------------------------
 
 @test "(17) AC-1: vdelta_verdicts corpus (real producer shape) -> distributions.vdelta_verdict に正しい件数が集計される" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}},{"ac":"AC-2","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{"repaired_with_test_change":["test/foo.test.js"]},"verification_surface":{"status":"intact"}}}]}' 2
+    # issue #433 (commit 670133d) 以降、実 producer は vdeltaVerdictDigest() が生成する
+    # フラット digest {ac, status, comparability, verification_surface,
+    # repaired_with_test_change} を telemetry に記録する（dev-flow.js:4860
+    # state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })）。
+    # analyze-dev-flow-telemetry.sh は .status を transcribe するだけで raw verdict を
+    # 再導出しない（同スクリプトの vdelta_verdict distribution テストで既に検証済み）。
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"deny","comparability":"exact","verification_surface":"intact","repaired_with_test_change":1}]}' 2
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
@@ -437,11 +443,12 @@ EOF
 }
 
 @test "(18) AC-3: abstain+fail_open 率が閾値超・total>=vdelta_min_runs -> issues に vdelta warn + anomaly type vdelta_unhealthy severity warn" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 2
-    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"partial","transitions":{},"verification_surface":{"status":"intact"}}}]}' 3
-    write_devflow_entry "e4.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":null}]}' 4
-    write_devflow_entry "e5.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":{"comparability":"exact","transitions":{},"verification_surface":{"status":"intact"}}}]}' 5
+    # issue #433 (commit 670133d) 以降の実 producer digest 形（テスト17と同じ根拠）。
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 3
+    write_devflow_entry "e4.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"fail_open","comparability":null,"verification_surface":null,"repaired_with_test_change":0}]}' 4
+    write_devflow_entry "e5.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 5
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
