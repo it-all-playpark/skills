@@ -5630,7 +5630,7 @@ if (EFFECTDELTA_MODE === 'shadow') {
     log(`⚠️ post-summary(shadow) で例外（${err && err.message ? err.message : err}）— fail-open`)
     summaryPost = null
   }
-  if (summaryPost?.envelope && summaryPost?.receipt && summaryPost?.mode !== 'off') {
+  if (summaryPost?.envelope && summaryPost?.receipt && summaryPost?.mode !== 'off' && TRUST_MODES.includes(summaryPost.mode)) {
     state.trustReceipts.push({ stage: 'summary-comment', receipt: summaryPost.receipt, envelope: summaryPost.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: summaryPost.observation?.reason_code ?? null })
   }
 } else {

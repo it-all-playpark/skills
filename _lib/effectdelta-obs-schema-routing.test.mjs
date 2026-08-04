@@ -410,3 +410,64 @@ test("[effectdelta-obs-schema] group3(ii): baseline — 正しい shadow payload
     "group3(ii): 正しい shadow payload では trust_receipts に stage:'pr' の entry が存在するはず（AC-7 既存挙動保持）",
   );
 });
+
+// PR #481 レビュー指摘: post-summary shadow 分岐（dev-flow.js post-summary receipt push）は
+// mode !== 'off' のみで receipt を記録しており、trust-effectdelta-pr 側（group3(i)/(ii)）に
+// 追加した TRUST_MODES.includes guard が無かった。schema は 'trust-effectdelta-pr' と
+// 'post-summary' の2箇所で共用されるため、schema 検証を素通りし得る契約違反 payload
+// （mode がTRUST_MODES外）は summary-comment stage の receipt としても記録されてはならない。
+test("[effectdelta-obs-schema] group3(iii): mode:'pr-observe' 契約違反 payload（post-summary/shadow） → trust_receipts に stage:'summary-comment' 無し + fail-open 完走", async () => {
+  const { ctx, calls } = makeSchemaCaptureSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'post-summary': {
+        ok: true, posted: true, mode: 'pr-observe', op: 'comment-ensure', url: 'http://x', effect_id: 'e',
+        observation: { status: 'observed', reason_code: 'OK' },
+        receipt: sampleReceipt({ stage: 'summary-comment' }),
+        envelope: sampleEnvelope({ stage: 'summary-comment' }),
+      },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'group3-iii');
+  assert.equal(error, null, `group3(iii): 契約違反 payload でも run 全体が abort してはならないが error が発生: ${error?.message}`);
+  assert.ok(result !== null, 'group3(iii): workflow は return object を返すべきだが null だった');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall, "group3(iii): 'journal-log' の呼び出しが存在すること（fail-open で完走）");
+  const payload = extractTelemetryPayload(journalCall.prompt);
+  assert.ok(payload, 'group3(iii): journal-log prompt から telemetry payload を JSON.parse できるはず');
+
+  const receipts = payload?.telemetry?.trust_receipts ?? [];
+  assert.ok(
+    !receipts.some((r) => r.stage === 'summary-comment'),
+    "group3(iii): 契約違反 payload（mode:'pr-observe'）の receipt は trust_receipts の stage:'summary-comment' に記録されてはならない",
+  );
+});
+
+test("[effectdelta-obs-schema] group3(iv): baseline — 正しい shadow payload（post-summary） → trust_receipts に stage:'summary-comment' entry が存在する（既存挙動保持）", async () => {
+  const { ctx, calls } = makeSchemaCaptureSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'post-summary': {
+        ok: true, posted: true, mode: 'shadow', op: 'comment-ensure', url: 'http://x', effect_id: 'e',
+        observation: { status: 'observed', reason_code: 'OK' },
+        receipt: sampleReceipt({ stage: 'summary-comment' }),
+        envelope: sampleEnvelope({ stage: 'summary-comment' }),
+      },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'group3-iv');
+  assert.ok(result !== null, 'group3(iv): workflow は return object を返すべきだが null だった');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall, "group3(iv): 'journal-log' の呼び出しが存在すること");
+  const payload = extractTelemetryPayload(journalCall.prompt);
+  assert.ok(payload, 'group3(iv): journal-log prompt から telemetry payload を JSON.parse できるはず');
+  const receipts = payload?.telemetry?.trust_receipts ?? [];
+  assert.ok(
+    receipts.some((r) => r.stage === 'summary-comment'),
+    "group3(iv): 正しい shadow payload では trust_receipts に stage:'summary-comment' の entry が存在するはず（既存挙動保持）",
+  );
+});
