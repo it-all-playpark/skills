@@ -3489,10 +3489,20 @@ function classifyLiteReview(review) {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
+//
+// issue #482: 前 run が残した stale な `.devflow-tmp/.isolation-probe`（gitignored）が存在すると、
+// Write tool の「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」挙動により isolation が
+// 正常でも written:false → fail-closed abort してしまうため、prompt に Read-then-Write の冪等化手順を
+// 追加し、throw メッセージにも stale artifact の可能性と復旧手順を追記した。
 
 function isolationProbePrompt(worktree) {
   return `worktree ${worktree} 直下に Write tool で \`.devflow-tmp/.isolation-probe\` というファイルを`
-    + `内容 "ok" で書き込め。成功したら {"written": true} を返せ。`
+    + `内容 "ok" で書き込め。\`.devflow-tmp/.isolation-probe\` が既に存在する場合は、`
+    + `先に Read tool で同ファイルを読んでから Write tool で上書きせよ`
+    + `（Write tool は既存ファイルを未 Read のまま上書きできない）。`
+    + `Read が失敗しても Write は必ず試み、Write の結果のみで written を報告せよ`
+    + `（Read の成否を written に混ぜない）。`
+    + `成功したら {"written": true} を返せ。`
     + `Write tool がエラー・拒否を返した場合は、例外を投げずに `
     + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
 }
@@ -3500,8 +3510,14 @@ function isolationProbePrompt(worktree) {
 function isolationFailureMessage({ worktree, branch, startRef, workflowName, workflowArgs, targetPath, error }) {
   const wt = targetPath || worktree;
   const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
+  const staleProbePath = `${worktree}/.devflow-tmp/.isolation-probe`;
   return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
     + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
+    + `別の原因として、前 run が残した stale な probe artifact（\`${staleProbePath}\`）の可能性もあります。`
+    + `Read tool で \`${staleProbePath}\` を読み、存在するか確認してください。`
+    + `存在する場合、\`rm\` や \`git clean\` は sandbox・permission で拒否されることがあるため`
+    + `（issue #480 実測）、同一セッションで Read tool により \`${staleProbePath}\` を読んだ上で`
+    + `Write tool で上書きする代替手順を推奨します。\n`
     + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
     + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
     + `     （branch ${branch} がローカルに既存なら -b と起点を外して \`git worktree add ${wt} ${branch}\`、`
