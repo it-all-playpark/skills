@@ -1,6 +1,8 @@
-// F2: check-ci.sh の --wait-seconds/--poll-seconds ポーリング配線検証テスト（TDD）。
+// F2: CI ポーリング配線の検証テスト（TDD）。
 // AC-1: pending -> passed で pr-iterate が LGTM へ進む。
 // AC-7: waited_seconds/poll_attempts が journal telemetry handoff / 終端サマリー / return に反映される。
+// issue #488: fetch は subagent の bare `gh pr checks`、check-ci.sh はその snapshot に対する
+// 純変換。ポーリングは呼び出し側（prompt の attempt ループ）が持つ。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -116,7 +118,7 @@ async function runPrIterateCapture(src, ctx) {
 
 const src = readFileSync(prIteratePath, 'utf8');
 
-test('[ci-wait-telemetry] ci-check#1 の prompt が --wait-seconds 90 --poll-seconds 15 で check-ci.sh を呼ぶ（AC-1配線）', async () => {
+test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci.sh 純変換で配線される（AC-1配線）', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });
@@ -128,9 +130,25 @@ test('[ci-wait-telemetry] ci-check#1 の prompt が --wait-seconds 90 --poll-sec
 
   const ciCheck1 = getAgentCalls().find((c) => c.label === 'ci-check#1');
   assert.ok(ciCheck1 != null, 'label===ci-check#1 の agent 呼び出しが存在するべき');
+  // fetch は subagent の bare `gh pr checks`（先頭トークンが gh）で行う。
   assert.ok(
-    ciCheck1.prompt.includes('check-ci.sh ${PR} --wait-seconds 90 --poll-seconds 15'.replace('${PR}', '5')),
-    `ci-check#1 の prompt に --wait-seconds 90 --poll-seconds 15 付きの check-ci.sh 呼び出しが含まれるべき。\nprompt: ${ciCheck1.prompt.slice(0, 800)}`,
+    ciCheck1.prompt.includes('gh pr checks 5') && ciCheck1.prompt.includes('--json name,state,bucket'),
+    `ci-check#1 の prompt に bare gh pr checks fetch が含まれるべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+  );
+  // check-ci.sh は fetch 済み snapshot に対する純変換として呼ばれる。
+  assert.ok(
+    ciCheck1.prompt.includes('check-ci.sh --checks-json'),
+    `ci-check#1 の prompt が check-ci.sh を --checks-json 入力の純変換として呼ぶべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+  );
+  // bounded wait は呼び出し側が持つ: 3 attempts × 45s = ceiling 90s。
+  assert.ok(
+    ciCheck1.prompt.includes('--max-attempts 3 --poll-seconds 45'),
+    `ci-check#1 の prompt に --max-attempts 3 --poll-seconds 45 が含まれるべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+  );
+  // script 内ポーリング（--wait-seconds）は撤去済み。復活は exec-proxy 内 network I/O の再導入を意味する。
+  assert.ok(
+    !ciCheck1.prompt.includes('--wait-seconds'),
+    `ci-check#1 の prompt に --wait-seconds が残っているべきでない（script 内ポーリングは撤去済み）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
   );
   assert.equal(result?.status, 'lgtm', `pending->passed 相当（今回は即 passed）で LGTM へ進むべきだが '${result?.status}' だった`);
 });

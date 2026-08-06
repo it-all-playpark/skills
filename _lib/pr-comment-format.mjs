@@ -61,7 +61,7 @@ const STATUS_HEADLINE = {
  * @param {string} opts.lastSummary - 最終サマリーテキスト
  * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
- * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。check-ci.sh --wait-seconds ポーリング分）
+ * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。ci-check の attempt ループ待機分）
  * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
  * @returns {string}
  */

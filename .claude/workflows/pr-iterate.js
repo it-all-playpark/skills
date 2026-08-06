@@ -396,7 +396,7 @@ const STATUS_HEADLINE = {
  * @param {string} opts.lastSummary - 最終サマリーテキスト
  * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
- * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。check-ci.sh --wait-seconds ポーリング分）
+ * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。ci-check の attempt ループ待機分）
  * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
  * @returns {string}
  */
@@ -576,10 +576,20 @@ const FIX = {
 }
 
 // CI gate schema — restores the gate lost in eb8aa7e (issue #133).
-// dev-runner-haiku-ro runs pr-iterate/scripts/check-ci.sh and returns its stdout JSON unchanged.
+// dev-runner-haiku-ro fetches the CI snapshot with a bare `gh pr checks` call, classifies it with
+// pr-iterate/scripts/check-ci.sh (a pure transform over that snapshot), and returns the script's
+// stdout JSON unchanged. The fetch lives in the agent rather than inside the script because an
+// exec-proxy script must not carry authenticated network I/O (issue #488).
 // failed_checks items match script output: {name, bucket, state} (conclusion was removed in
 // the bucket-field migration; see issue #133 / ci::bats-fabricated-schema).
-// 'error' status means gh API failed (auth/network); escalate to human immediately.
+// 'error' status means the gh fetch failed (auth/network); escalate to human immediately.
+//
+// Bounded wait for pending CI: CI_MAX_ATTEMPTS attempts spaced CI_POLL_SECONDS apart, so the
+// ceiling is (CI_MAX_ATTEMPTS-1)*CI_POLL_SECONDS = 90s (unchanged from the previous --wait-seconds 90).
+// The agent now spends one Bash turn per fetch, per classify, and per sleep, so the worst case is
+// 3+3+2 = 8 tool calls; keep the product within dev-runner-haiku-ro's maxTurns (10) when tuning these.
+const CI_MAX_ATTEMPTS = 3
+const CI_POLL_SECONDS = 45
 const CI_STATUS = {
   type: 'object',
   required: ['status'],
@@ -596,8 +606,8 @@ const CI_STATUS = {
         },
       },
     },
-    // check-ci.sh --wait-seconds ポーリングの累積待機秒数 / ポーリング（gh fetch）回数（issue #324）。
-    // ポーリング未実行（wait-seconds 未指定 or 即決定）でも script は常に返す。
+    // ci-check の attempt ループの累積待機秒数 / ポーリング（gh fetch）回数（issue #324）。
+    // 待機なし（1 attempt で確定）でも script は常に返す。
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
     // dev-flow の clock telemetry（issue #443）が iterate_end の給電元として読む optional epoch。
@@ -720,7 +730,7 @@ let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale
 let fixNullRetries = 0  // fix agent が null（schema 不一致・技術的失敗）で 1 回 retry した累積回数。issue #347
 let reviewNullRetries = 0  // review agent が throw または null で schema-retry した累積回数。issue #437
 let fixUncommittedRecovered = 0  // fix が applied:true なのに未コミット変更が残っており ensure-committed が commit+push で回収した回数（issue #437）
-let totalCiWaitSeconds = 0  // check-ci.sh --wait-seconds ポーリングの累積待機秒数（全 ci-check ラウンド合算。issue #324）
+let totalCiWaitSeconds = 0  // ci-check の attempt ループの累積待機秒数（全 ci-check ラウンド合算。issue #324）
 let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
 // 直近の ci-check#i 応答が返した epoch（issue #443）。dev-flow の iterate_end 給電元として返り値
 // end_epoch に載せる。応答が epoch を欠く/非数値なら更新せず、直前の値（または null）を保持する（fail-open）。
@@ -862,12 +872,17 @@ for (i = 1; i <= MAX; i++) {
       + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
       + `- 実行するスクリプト以外のファイルを変更しない\n\n`
       + `## Steps\n`
-      + `インストール済み skills の check-ci.sh を実行せよ:\n`
-      + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${PR} --wait-seconds 90 --poll-seconds 15\n\`\`\`\n`
-      + `\`--wait-seconds 90 --poll-seconds 15\` は CI pending 時に最大 90 秒（15 秒間隔）ポーリングしてから確定する`
-      + `（AC-1/AC-2）。この Bash 実行の timeout パラメータには必ず 300000（ミリ秒。5分）を指定せよ — `
-      + `既定の 120000ms では最大 90 秒のポーリング＋ GitHub API retry backoff の合計に対して余裕が無い。\n`
-      + `スクリプトの stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。\n\n`
+      + `attempt=1 から開始し、次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ:\n`
+      + `1. \`gh pr checks ${PR}${REPO ? ' --repo ' + REPO : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行し、`
+      + `stdout を \`$TMPDIR/ci-checks-<attempt>.json\` へ、stderr を \`$TMPDIR/ci-err-<attempt>.txt\` へリダイレクトせよ。`
+      + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
+      + `2. \`bash ~/.claude/skills/pr-iterate/scripts/check-ci.sh --checks-json $TMPDIR/ci-checks-<attempt>.json `
+      + `--fetch-error $TMPDIR/ci-err-<attempt>.txt --attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
+      + `を実行し、stdout の JSON を読め。\n`
+      + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を実行し、attempt を 1 増やして 1 へ戻れ。`
+      + `\`"done"\` なら 4 へ進め。\n`
+      + `4. 最後に得た stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。\n`
+      + `CI pending 時は最大 ${(CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS} 秒（${CI_POLL_SECONDS} 秒間隔）待ってから確定する（AC-1/AC-2）。\n\n`
       + `## Output format\n`
       + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
       + `"waited_seconds": number, "poll_attempts": number }\n`

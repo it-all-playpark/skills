@@ -280,8 +280,20 @@ collision / 生成後 syntax）を 1 コマンドで validate-then-write する�
 > subagent の Bash で「先頭トークンが gh または git の bare 単文」（--repo/-C で cwd 非依存化、
 > cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落として、スクリプトは file 入力の
 > 純変換とする。prompt に sandbox / excludedCommands / 特定パス起動の理由を書いてはならない
-> （分類器 trigger）。例外は wall-clock polling を要するサイトのみで、その場合は sandbox 内で完結する
-> curl+REST を使う（check-ci.sh が precedent）。
+> （分類器 trigger）。**例外はない**。wall-clock polling を要するサイトも例外ではなく、fetch と sleep を
+> 呼び出し側（prompt の attempt ループ）へ置き、スクリプトは snapshot 1 枚に対する純変換に保つ
+> （`check-ci.sh` が precedent。issue #488）。
+>
+> 旧版はここに「wall-clock polling のみ sandbox 内で完結する curl+REST を使ってよい」という例外を
+> 置いていたが、これは成立しない — sandbox 内で完結させるには env token に頼るしかなく、private repo
+> では無認証となり GitHub が存在秘匿のため 404 を返して CI 全 green でも `ci_error` に落ちる（issue #488
+> の実害）。逆に例外を「script 内 `gh`」で埋めると、`~/.config/gh` が denyRead であるためスクリプトの
+> 起動形（`excludedCommands` 登録パス）に正しさが依存し、起動形を変えた瞬間に静かに回帰する。
+> どちらも塞がっているので、polling は呼び出し側に置くこと。
+>
+> 呼び出し側ループは subagent の `maxTurns` を消費する（fetch / 純変換 / sleep がそれぞれ 1 turn）。
+> attempt 数を調整するときは `(attempt 数 × 2) - 1` が当該 agent の `maxTurns` を超えないこと
+> （現行 `ci-check`: 3 attempts × 45s = 90s ceiling / 最悪 8 turns、`dev-runner-haiku-ro` の maxTurns 10）。
 
 exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示する:
 

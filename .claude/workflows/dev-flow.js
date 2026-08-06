@@ -3164,6 +3164,12 @@ const CI_STATUS = {
     epoch: { type: 'number' },
   },
 }
+// Bounded wait for pending CI（pr-iterate.js と同値）。ceiling は
+// (CI_MAX_ATTEMPTS-1)*CI_POLL_SECONDS = 90 秒。fetch / classify / sleep が
+// それぞれ 1 Bash turn を消費するため、最悪 3+3+2 = 8 tool call。
+// 調整時は dev-runner-haiku-ro の maxTurns (10) を超えないこと。
+const CI_MAX_ATTEMPTS = 3
+const CI_POLL_SECONDS = 45
 const RISK = {
   type: 'object', required: ['ok', 'hits'],
   properties: {
@@ -5153,12 +5159,17 @@ if (LITE) {
       + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
       + `- 実行するスクリプト以外のファイルを変更しない\n\n`
       + `## Steps\n`
-      + `インストール済み skills の check-ci.sh を実行せよ:\n`
-      + `\`\`\`\nbash ~/.claude/skills/pr-iterate/scripts/check-ci.sh ${pr.pr_number} --wait-seconds 90 --poll-seconds 15\n\`\`\`\n`
-      + `\`--wait-seconds 90 --poll-seconds 15\` は CI pending 時に最大 90 秒（15 秒間隔）ポーリングしてから確定する。`
-      + `この Bash 実行の timeout パラメータには必ず 300000（ミリ秒。5分）を指定せよ — `
-      + `既定の 120000ms では最大 90 秒のポーリング＋ GitHub API retry backoff の合計に対して余裕が無い。\n`
-      + `スクリプトの stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。\n\n`
+      + `attempt=1 から開始し、次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ:\n`
+      + `1. \`gh pr checks ${pr.pr_number}${REPO ? ' --repo ' + REPO : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行し、`
+      + `stdout を \`$TMPDIR/ci-checks-<attempt>.json\` へ、stderr を \`$TMPDIR/ci-err-<attempt>.txt\` へリダイレクトせよ。`
+      + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
+      + `2. \`bash ~/.claude/skills/pr-iterate/scripts/check-ci.sh --checks-json $TMPDIR/ci-checks-<attempt>.json `
+      + `--fetch-error $TMPDIR/ci-err-<attempt>.txt --attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
+      + `を実行し、stdout の JSON を読め。\n`
+      + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を実行し、attempt を 1 増やして 1 へ戻れ。`
+      + `\`"done"\` なら 4 へ進め。\n`
+      + `4. 最後に得た stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。\n`
+      + `CI pending 時は最大 ${(CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS} 秒（${CI_POLL_SECONDS} 秒間隔）待ってから確定する。\n\n`
       + `## Output format\n`
       + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
       + `"waited_seconds": number, "poll_attempts": number }\n`
