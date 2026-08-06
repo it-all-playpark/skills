@@ -21,7 +21,12 @@
 # Verdict derivation is a pure function of the `bucket` field in
 # `gh pr checks --json ...`'s output (pass/fail/pending/skipping/cancel);
 # `cancel` is folded into "failed" (fail-closed) and `skipping` is folded
-# into "passed" (+ a separate skipped count). The verdict is never derived
+# into "passed" (+ a separate skipped count). Any bucket value outside this
+# known 5-value vocabulary is also folded into "failed" (fail-closed): if
+# `gh` ever emits a new bucket, an unrecognized value must never fall
+# through the passed/failed/pending partition uncounted and let the
+# `else -> "passed"` default paper over it (that would be wrong-green). The
+# verdict is never derived
 # from gh's own exit code: `gh pr checks` exits 8 while checks are pending
 # and exits 1 when any check has failed, so treating a non-zero exit code
 # as a fetch failure would misclassify pending/failed runs as "error" (the
@@ -165,13 +170,18 @@ fetch_checks() {
 # compute_verdict - reduces $CHECKS_JSON to $result_json / $status.
 # bucket field values: pass | fail | pending | skipping | cancel
 # is_passed:  bucket IN("pass", "skipping")   — completed successfully or intentionally skipped
-# is_failed:  bucket IN("fail", "cancel")     — failed or cancelled
 # is_pending: bucket == "pending"             — still running
+# is_failed:  bucket IN("fail", "cancel") OR bucket outside the known
+#             5-value vocabulary — failed, cancelled, or unrecognized
+#             (fail-closed: an unknown bucket must count as failed, not
+#             silently drop out of every count and let the "no failed, no
+#             pending -> passed" default misreport it as green).
 compute_verdict() {
     result_json=$(echo "$CHECKS_JSON" | jq -c '
       def is_passed:  .bucket | IN("pass", "skipping");
-      def is_failed:  .bucket | IN("fail", "cancel");
       def is_pending: .bucket == "pending";
+      def is_known:   .bucket | IN("pass", "fail", "pending", "skipping", "cancel");
+      def is_failed:  (.bucket | IN("fail", "cancel")) or (is_known | not);
 
       if length == 0 then
         {status: "no_checks", passed: 0, failed: 0, pending: 0, skipped: 0,

@@ -235,6 +235,28 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Test 8b (fail-closed regression): a bucket value outside the known 5-value
+# vocabulary (pass/fail/pending/skipping/cancel) must never fall through to
+# status=passed uncounted. It must be folded into "failed" so an unrecognized
+# future `gh` bucket value can't produce a wrong-green verdict.
+# ---------------------------------------------------------------------------
+@test "unknown bucket value -> status failed, not silently dropped into passed" {
+    export CI_CHECKS_JSON='[
+      {"name":"mystery","state":"SOMETHING_NEW","bucket":"neutral"}
+    ]'
+    run "$SCRIPT" 42
+    [ "$status" -eq 0 ]
+    result=$(echo "$output" | tail -1)
+    [ "$(echo "$result" | jq -r '.status')" != "passed" ]
+    [ "$(echo "$result" | jq -r '.status')" = "failed" ]
+    [ "$(echo "$result" | jq -r '.failed')" = "1" ]
+    [ "$(echo "$result" | jq -r '.passed')" = "0" ]
+    entry=$(echo "$result" | jq -c '.failed_checks[0]')
+    [ "$(echo "$entry" | jq -r '.name')" = "mystery" ]
+    [ "$(echo "$entry" | jq -r '.bucket')" = "neutral" ]
+}
+
+# ---------------------------------------------------------------------------
 # Test 9: gh fails every attempt -> script exits 1, status error, call
 # count 3 (1 initial + 2 retries, CHECK_CI_RETRY_DELAYS="0 0").
 # ---------------------------------------------------------------------------
