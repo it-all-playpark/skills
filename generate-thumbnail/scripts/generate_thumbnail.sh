@@ -21,32 +21,41 @@ CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.4-mini"')
 CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 
 # ----------------------------------------------------------------------------
-# Resolve a working codex binary.
-# codex 0.140.0+ has broken built-in image_gen (#28422): it reports success but
-# never writes the file (or fabricates one). Prefer an installed 0.139.x.
-# Override with THUMBNAIL_CODEX_BIN. Remove this shim once upstream is fixed.
+# Resolve the codex binary and the flags this build accepts.
+#
+# Two upstream changes matter here:
+#   1. built-in image_gen was broken in 0.140.0–0.144.3 (#28422): codex reported
+#      success but never wrote the file. Fixed in 0.144.4, so we no longer pin to
+#      an old 0.139.x — we just warn if the running build is inside that window.
+#   2. 0.147.0 renamed --full-auto to --approve-for-me. Both mean "auto-approve
+#      while KEEPING the workspace-write sandbox", so we detect which one this
+#      build accepts. Never use --dangerously-bypass-approvals-and-sandbox here:
+#      thumbnail generation has no need to escape the sandbox.
+#
+# Override the binary with THUMBNAIL_CODEX_BIN.
 # ----------------------------------------------------------------------------
-resolve_codex_bin() {
-    if [[ -n "${THUMBNAIL_CODEX_BIN:-}" ]]; then
-        echo "$THUMBNAIL_CODEX_BIN"; return
-    fi
-    local cur
-    cur="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-    # If current codex < 0.140.0, image_gen works — use it as-is.
-    if [[ -n "$cur" && "$cur" != "0.140.0" \
-          && "$(printf '%s\n0.140.0\n' "$cur" | sort -V | head -1)" == "$cur" ]]; then
-        echo "codex"; return
-    fi
-    # Broken (>= 0.140.0) or unknown: fall back to newest installed 0.139.x.
-    local fb
-    fb="$(ls -d "$HOME/.local/share/mise/installs/codex/0.139".*/ 2>/dev/null | sort -V | tail -1)"
-    if [[ -n "$fb" && -x "${fb}codex" ]]; then
-        echo "${fb}codex"; return
-    fi
-    warn "codex ${cur:-unknown} image_gen may be broken (#28422) and no 0.139.x fallback found; using PATH codex"
-    echo "codex"
+CODEX_IMAGE_GEN_FIXED="0.144.4"
+
+# ver_lt A B -> true when A is strictly older than B
+ver_lt() {
+    [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]
 }
-CODEX_BIN="$(resolve_codex_bin)"
+
+CODEX_BIN="${THUMBNAIL_CODEX_BIN:-codex}"
+CODEX_VERSION="$("$CODEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+
+if [[ -n "$CODEX_VERSION" ]] \
+   && ! ver_lt "$CODEX_VERSION" "0.140.0" \
+   && ver_lt "$CODEX_VERSION" "$CODEX_IMAGE_GEN_FIXED"; then
+    warn "codex $CODEX_VERSION has broken built-in image_gen (#28422, fixed in $CODEX_IMAGE_GEN_FIXED); the thumbnail may not be written"
+fi
+
+# --full-auto (<= 0.146.x) vs --approve-for-me (>= 0.147.0)
+if "$CODEX_BIN" exec --help 2>/dev/null | grep -q -- '--approve-for-me'; then
+    CODEX_APPROVAL_FLAG="--approve-for-me"
+else
+    CODEX_APPROVAL_FLAG="--full-auto"
+fi
 
 PROJECT_ROOT="$(git_root)"
 [[ -n "$PROJECT_ROOT" ]] || die_json "Not in a git repository" 128
@@ -193,7 +202,7 @@ trap 'rm -f "$LOG_FILE"' EXIT
 
 if ! "$CODEX_BIN" exec \
     --skip-git-repo-check \
-    --full-auto \
+    "$CODEX_APPROVAL_FLAG" \
     -m "$CODEX_MODEL" \
     -c "model_reasoning_effort=$CODEX_EFFORT" \
     --json \

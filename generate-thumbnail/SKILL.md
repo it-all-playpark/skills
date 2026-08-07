@@ -58,7 +58,7 @@ Requires: `codex` CLI（ログイン済み）, `python3`, `jq`. `--optimize` 使
 ## 動作の補足
 
 - Codex は画像を `$CODEX_HOME/generated_images/<session-id>/` 以下に保存後、エージェントが指定パスにコピーする
-- `codex exec --skip-git-repo-check --full-auto` を内部で使用（自動承認 + sandbox-write）。書き込み範囲は `output_dir` のみを想定
+- `codex exec --skip-git-repo-check` を内部で使用。自動承認フラグは codex のバージョンで異なるため実行時に判定する（`--approve-for-me` = 0.147.0 以降 / `--full-auto` = それ以前）。どちらも sandbox-write を維持したままの自動承認で、書き込み範囲は `output_dir` のみを想定。sandbox を外す `--dangerously-bypass-approvals-and-sandbox` は使わない
 - Codex usage limits は通常ターンより 3-5x 早く消費されるため、量産時は注意
 
 ## Journal Logging
