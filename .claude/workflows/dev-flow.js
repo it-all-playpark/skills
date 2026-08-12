@@ -5689,6 +5689,10 @@ if (!summaryPost?.posted) {
 // ============================================================
 await clockProbe('end', 'Merge tier')
 const durations = computeDurations(clockMarks)
+// EvalSeal stage スコープ (issue #491): state.trustReceipts は 3 layer（surfaceproof/evalseal/
+// effectdelta）共有配列のため、EvalSeal 固有の存在判定・カウントは自 layer の stage
+// （'evaluate'/'final'）で分離する（EffectDelta の stage:'pr' 判定（issue #476）と同型）。
+const evalsealStageReceipts = state.trustReceipts.filter((r) => r.stage === 'evaluate' || r.stage === 'final')
 const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'dev-flow',
   outcome: 'success',
@@ -5736,7 +5740,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.trustSurfaceProofShadow ? { trust_surfaceproof_shadow: state.trustSurfaceProofShadow } : {}),
     // trust_receipts (epic #390 Phase 3, issue #411): digest/ID/enum のみ（redaction 原則）。
     // journal whitelist 登録・dotfiles Stop hook への転送配線は vdelta_verdicts と同じ precedent
-    // で別 issue に繰り延べる。
+    // で別 issue に繰り延べる。配列は 3 layer union のまま — layer 別集計は entry ごとの layer
+    // フィールドで行う（trust-receipts-report.sh の adopted_stage/raw_layer。issue #491）。
     ...(state.trustReceipts.length ? {
       trust_receipts: state.trustReceipts.map((r) => ({
         stage: r.stage,
@@ -5753,10 +5758,11 @@ const telemetryHandoff = buildJournalHandoffPayload({
         revision_digest: r.envelope.revision_digest,
       })),
     } : {}),
-    // trust_evalseal_missing_reason (issue #471 AC-6): EvalSeal receipt が 1 件も無い run
-    // （trustReceipts.length===0）のみ、欠落理由を closed enum で出力する。out-of-enum は
-    // 'unknown' へ正規化（TRUST_EVALSEAL_MISSING_REASONS 未含有は起こらない想定だが fail-safe）。
-    ...(EVALSEAL_MODE !== 'off' && state.trustReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
+    // trust_evalseal_missing_reason (issue #471 AC-6): EvalSeal receipt（stage 'evaluate'/'final'）
+    // が 1 件も無い run のみ — EffectDelta receipt の有無に依存しない（issue #491）、欠落理由を
+    // closed enum で出力する。out-of-enum は 'unknown' へ正規化（TRUST_EVALSEAL_MISSING_REASONS
+    // 未含有は起こらない想定だが fail-safe）。
+    ...(EVALSEAL_MODE !== 'off' && evalsealStageReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
     // trust_effectdelta_pr_missing_reason (issue #476 AC-1): EffectDelta PR stage receipt が無い
     // run（trustReceipts に stage:'pr' が無い）のみ、欠落理由を closed enum で出力する
     // （EvalSeal 同型 gating）。journal.sh の --trust-effectdelta-pr-missing-reason へ受け側到達済み
@@ -5828,8 +5834,9 @@ return {
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
-  ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: state.trustReceipts.length } : {}),
-  ...(EVALSEAL_MODE !== 'off' && state.trustReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
+  // trust_receipts: EvalSeal 層（stage 'evaluate'/'final'）固有の receipt 件数（issue #491 で layer 合算から分離）
+  ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: evalsealStageReceipts.length } : {}),
+  ...(EVALSEAL_MODE !== 'off' && evalsealStageReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
   // trust_effectdelta_pr_missing_reason (issue #476 AC-1): telemetry handoff と同一構造の
   // closed-enum gating（EvalSeal 同型）。journal.sh の --trust-effectdelta-pr-missing-reason へ
   // 受け側到達済み（dotfiles Stop hook 転送は別 issue dotfiles#154）。
