@@ -38,6 +38,17 @@
 //   (g) 旧 noninterference test の残存 pin: pr-iterate.js / dev-improve.js /
 //       .claude/agents/*.md に /trust-(schema|digest|mode|telemetry|wiring)|evalseal|EvalSeal/
 //       参照が無い（EvalSeal 配線は dev-flow.js のみ、という境界の固定）
+//   (h) issue #491 AC-2/AC-5: EffectDelta receipt はあるが EvalSeal receipt が無い run →
+//       trust_evalseal_missing_reason='agent_null'（telemetry + return 両方）+ return
+//       trust_receipts===0（EvalSeal 側は stage スコープで 0 件。EffectDelta receipt の有無に
+//       非干渉）+ trust_effectdelta_pr_missing_reason キー無し + trust_run_id は出力される
+//   (h2) issue #491 AC-3/AC-5: EvalSeal + EffectDelta 両方の receipt を持つ run →
+//        trust_evalseal_missing_reason キーが telemetry/return どちらにも無い + return
+//        trust_receipts===1（EvalSeal stage のみ、EffectDelta stage を含まない）
+//   (h3) issue #491 AC-4: dev-flow.js ソースの静的 parity — gating spread 式が telemetry
+//        handoff/return の 2 箇所に同一文字列で存在し、stage スコープ定義（evalsealStageReceipts）
+//        が 1 箇所のみ、旧 layer 合算述語（state.trustReceipts.length===0 の gating 版）がコード上に
+//        残っていないこと
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -216,6 +227,15 @@ function sampleReceipt({ stage, verdict = 'pass' }) {
     anchors: { base_oid: 'base', head_oid: 'head', tree_oid: 'tree', bundle_digest: 'bundle-digest', evidence_bundle_digest: 'sha256:' + '0'.repeat(64), asserted_digest: 'sha256:' + '1'.repeat(64) },
     receipt_id: `r-${stage}`,
   };
+}
+
+// EffectDelta 側 fixture (issue #491): 既存 sampleEnvelope/sampleReceipt は layer:'evalseal' 固定で
+// (b)/(d) が使用中のため、衝突しない sampleEd* 名で layer:'effectdelta' 版を定義する。
+function sampleEdEnvelope({ stage = 'pr', verdict = 'pass' } = {}) {
+  return { run_id: `trust-1-${stage}aaaaaaaaaaaa`.slice(0, 25), layer: 'effectdelta', mode: 'shadow', schema_version: 'effectdelta/1', receipt_id: `r-ed-${stage}`, verdict, reason_code: 'OK', record_integrity: 'advisory', subject_kind: 'pull_request', subject_identity: '411', revision_digest: `digest-ed-${stage}` };
+}
+function sampleEdReceipt({ stage = 'pr', verdict = 'pass' } = {}) {
+  return { schema_version: 'effectdelta/1', subject: { kind: 'pull_request', identity: '411', revision_digest: `digest-ed-${stage}` }, instrument: { adapter: 'effectdelta-github', adapter_version: '1.0.0', config_digest: 'config-digest', capabilities: ['gh-write-once'] }, outcome: { verdict, reason_code: 'OK' }, trust: { record_integrity: 'advisory' }, anchors: { effect_id: `effect-${stage}` }, receipt_id: `r-ed-${stage}` };
 }
 
 // ============================================================
@@ -489,3 +509,100 @@ for (const fileName of agentFiles) {
     assert.equal(TRUST_REFERENCE_RE.test(content), false, `.claude/agents/${fileName} に trust 参照が見つかった`);
   });
 }
+
+// ============================================================
+// (h) issue #491 AC-2/AC-5: EffectDelta receipt はあるが EvalSeal receipt が無い run →
+// trust_evalseal_missing_reason は EffectDelta receipt の有無に非干渉のまま 'agent_null' を出力し、
+// return trust_receipts は EvalSeal stage スコープの 0 件になる
+// ============================================================
+
+test("[evalseal] (h) EffectDelta receipt のみ（EvalSeal receipt 無し）→ trust_evalseal_missing_reason='agent_null' + trust_receipts=0（EvalSeal 側は非干渉）", async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'trust-effectdelta-pr': { ok: true, mode: 'shadow', op: 'pr-classify', observation: { status: 'observed', reason_code: 'OK' }, receipt: sampleEdReceipt({ stage: 'pr' }), envelope: sampleEdEnvelope({ stage: 'pr' }) },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'h');
+  assert.equal(error, null, `(h) run が abort してはならないが error が発生: ${error?.message}`);
+  assert.ok(result !== null, '(h) workflow は return object を返すべきだが null だった');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  assert.ok(journalCall, "(h) 'journal-log' の呼び出しが存在すること");
+  const payload = extractTelemetryPayload(journalCall.prompt);
+  assert.ok(payload, '(h) journal-log prompt から telemetry payload を JSON.parse できるはず');
+
+  const receipts = payload?.telemetry?.trust_receipts ?? [];
+  assert.ok(receipts.some((r) => r.stage === 'pr' && r.layer === 'effectdelta'), "(h) telemetry.trust_receipts に stage:'pr'/layer:'effectdelta' の entry が存在するはず");
+  assert.ok(!receipts.some((r) => r.layer === 'evalseal'), "(h) telemetry.trust_receipts に layer:'evalseal' の entry が含まれてはならない");
+
+  assert.equal(payload?.telemetry?.trust_evalseal_missing_reason, 'agent_null', `(h) telemetry.trust_evalseal_missing_reason は 'agent_null' のはずだが ${payload?.telemetry?.trust_evalseal_missing_reason}`);
+  assert.equal(result?.trust_evalseal_missing_reason, 'agent_null', `(h) return.trust_evalseal_missing_reason は 'agent_null' のはずだが ${result?.trust_evalseal_missing_reason}`);
+  assert.equal(result?.trust_receipts, 0, `(h) return.trust_receipts は EvalSeal stage スコープで 0 のはずだが ${result?.trust_receipts}`);
+
+  assert.ok(payload?.telemetry?.trust_run_id, "(h) EffectDelta receipt があるので telemetry.trust_run_id は出力されるはず（union 判定は不変）");
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(payload?.telemetry ?? {}, 'trust_effectdelta_pr_missing_reason'),
+    false,
+    '(h) EffectDelta 側は receipt があるので trust_effectdelta_pr_missing_reason キーが存在してはならない（非干渉）',
+  );
+});
+
+// ============================================================
+// (h2) issue #491 AC-3/AC-5: EvalSeal + EffectDelta 両方の receipt を持つ run →
+// trust_evalseal_missing_reason キーが telemetry/return どちらにも無く、trust_receipts は
+// EvalSeal stage のみの件数（=1）になる
+// ============================================================
+
+test('[evalseal] (h2) EvalSeal + EffectDelta 両方の receipt あり → trust_evalseal_missing_reason キー無し + trust_receipts=1（EvalSeal stage のみ）', async () => {
+  const { ctx, calls } = makeSandbox({
+    repo: ALLOWLISTED_REPO,
+    overrides: {
+      'trust-seal-eval': { ok: true, mode: 'shadow', stage: 'evaluate', receipt: sampleReceipt({ stage: 'evaluate' }), envelope: sampleEnvelope({ stage: 'evaluate' }) },
+      'trust-effectdelta-pr': { ok: true, mode: 'shadow', op: 'pr-classify', observation: { status: 'observed', reason_code: 'OK' }, receipt: sampleEdReceipt({ stage: 'pr' }), envelope: sampleEdEnvelope({ stage: 'pr' }) },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'h2');
+  assert.ok(result !== null, '(h2) workflow は return object を返すべきだが null だった');
+
+  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const payload = extractTelemetryPayload(journalCall?.prompt);
+  assert.ok(payload, '(h2) journal-log prompt から telemetry payload を JSON.parse できるはず');
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(payload?.telemetry ?? {}, 'trust_evalseal_missing_reason'),
+    false,
+    '(h2) EvalSeal receipt があるので telemetry.trust_evalseal_missing_reason キーが存在してはならない',
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(result ?? {}, 'trust_evalseal_missing_reason'),
+    false,
+    '(h2) return にも trust_evalseal_missing_reason キーが存在してはならない',
+  );
+  assert.equal(result?.trust_receipts, 1, `(h2) return.trust_receipts は EvalSeal stage のみで 1 のはずだが ${result?.trust_receipts}`);
+
+  const receipts = payload?.telemetry?.trust_receipts ?? [];
+  assert.equal(receipts.filter((r) => r.layer === 'evalseal').length, 1, "(h2) telemetry.trust_receipts の layer:'evalseal' entry は 1 件のはず");
+  assert.equal(receipts.filter((r) => r.layer === 'effectdelta').length, 1, "(h2) telemetry.trust_receipts の layer:'effectdelta' entry は 1 件のはず");
+});
+
+// ============================================================
+// (h3) issue #491 AC-4: 静的 parity — telemetry handoff / return の gating spread 式が同一
+// 文字列で 2 箇所にあり、stage スコープ定義が 1 箇所のみ、旧 layer 合算 gating 述語が残っていない
+// ============================================================
+
+test('[evalseal] (h3) dev-flow.js ソースに evalsealStageReceipts スコープの gating が handoff/return の2箇所に同一文字列であり、旧 layer 合算述語が残っていない', () => {
+  const gatingRe = /\.\.\.\(EVALSEAL_MODE !== 'off' && evalsealStageReceipts\.length === 0 \? \{ trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS\.includes\(state\.trustEvalsealMissingReason\) \? state\.trustEvalsealMissingReason : 'unknown' \} : \{\}\)/g;
+  const gatingMatches = devFlowSrc.match(gatingRe) ?? [];
+  assert.equal(gatingMatches.length, 2, `evalsealStageReceipts スコープの gating spread 式は telemetry handoff と return の2箇所にあるはずだが ${gatingMatches.length} 箇所だった`);
+
+  const defRe = /const evalsealStageReceipts = state\.trustReceipts\.filter\(\(r\) => r\.stage === 'evaluate' \|\| r\.stage === 'final'\)/g;
+  const defMatches = devFlowSrc.match(defRe) ?? [];
+  assert.equal(defMatches.length, 1, `evalsealStageReceipts の定義は1箇所のみのはずだが ${defMatches.length} 箇所だった`);
+
+  const staleRe = /\.\.\.\(EVALSEAL_MODE !== 'off' && state\.trustReceipts\.length === 0/g;
+  const staleMatches = devFlowSrc.match(staleRe) ?? [];
+  assert.equal(staleMatches.length, 0, `旧 layer 合算 gating 述語（state.trustReceipts.length===0）がコード上に残ってはならないが ${staleMatches.length} 箇所見つかった`);
+});
