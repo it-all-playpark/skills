@@ -52,9 +52,11 @@ function makeSandbox(journalResult, journalSaveResult) {
     }
 
     // journal-log (stage2): label === 'journal-log' && agentType === 'dev-runner-haiku'
+    // journalResult が Error なら throw する（schema 不一致・proxy 実行失敗の再現）。
     if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
       journalCallCount += 1;
       capturedLogPrompt = typeof prompt === 'string' ? prompt : null;
+      if (journalResult instanceof Error) throw journalResult;
       return journalResult;
     }
 
@@ -251,5 +253,28 @@ test('[journal-log] journal-save が saved:false を返す場合 journal-log(sta
     result?.journal_log_status,
     'save_failed',
     `journal-save が saved:false を返す場合 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
+  );
+});
+
+// stage 帰属テスト: stage1 成功 → stage2 が throw した場合、失敗したのは stage2 なので
+// log_failed でなければならない（save_failed に落ちると誤った診断を telemetry 利用側へ伝える）。
+test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場合 result.journal_log_status は log_failed（save_failed に誤帰属しない）', async () => {
+  const journalResult = new Error('agent({schema}): subagent completed without calling StructuredOutput');
+  const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox(journalResult);
+
+  const { result, error } = await runPrIterateCapture(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`pr-iterate.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  assert.equal(getJournalSaveCallCount(), 1);
+  assert.equal(getJournalCallCount(), 1);
+  // fail-open: stage2 の throw は workflow を落とさない
+  assert.ok(result != null, 'journal-log(stage2) の throw で workflow が落ちてはならない（fail-open）');
+  assert.equal(
+    result?.journal_log_status,
+    'log_failed',
+    `stage2 throw 時 result.journal_log_status は 'log_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
 });

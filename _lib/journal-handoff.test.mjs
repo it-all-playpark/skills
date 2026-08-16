@@ -408,6 +408,18 @@ test('workflows construct journal handoff instructions through the canonical Wri
     (prIterate.match(/buildJournalLogInstr\(\{ prefix: 'priterate'/g) ?? []).length,
     1,
   );
+  // dev-improve.js: run 専用 worktree を持たないため saveDir は TMPDIR 配下の固定サブディレクトリ。
+  // 他 2 経路と同じディレクトリ固定の防御を保つため requiredDirSuffix で pin されていること。
+  const devImprove = readFileSync(join(repoRoot, '.claude/workflows/dev-improve.js'), 'utf8');
+  assert.equal(
+    (devImprove.match(/buildJournalSaveInstr\(\{ payload: improveHandoff, saveDir: '\$\{TMPDIR:-\/tmp\}\/dev-improve' \}\)/g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (devImprove.match(/validateJournalSavedPath\(saveRes\.path, \{ requiredDirSuffix: '\/dev-improve' \}\)/g) ?? []).length,
+    1,
+  );
+  assert.ok(!devImprove.includes('buildJournalHandoffInstr('));
   // The removed single-stage buildJournalHandoffInstr is not referenced by either workflow.
   assert.ok(!devFlow.includes('buildJournalHandoffInstr('));
   assert.ok(!prIterate.includes('buildJournalHandoffInstr('));

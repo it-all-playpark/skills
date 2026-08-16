@@ -892,14 +892,22 @@ try {
   const saveRes = await agent(
     `## Objective\ndev-improve サイクルの journal handoff payload を一時ファイルへ保存する。\n\n`
     + `## Instructions\n`
-    + buildJournalSaveInstr({ payload: improveHandoff, saveDir: null })
+    // dev-improve は run 専用 worktree を持たない（issue を起票するだけで作業ツリーを作らない）ため、
+    // dev-flow / pr-iterate のような `<worktree>/.devflow-tmp` は使えない。代わりに TMPDIR 配下の
+    // 固定サブディレクトリへ置き、requiredDirSuffix で保存先を pin する（他 2 経路と同じ
+    // ディレクトリ固定の防御を維持するため。展開は shell 側で行われる）。
+    + buildJournalSaveInstr({ payload: improveHandoff, saveDir: '${TMPDIR:-/tmp}/dev-improve' })
     + `\n## Output format\n{ "saved": boolean, "path": string }\n`
     + `\n## Tools\n使用可: Bash, Write のみ\n\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n\n## Token cap\n120 語以内。`,
     { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase: 'File' },
   )
-  const savedPath = saveRes?.saved === true && validateJournalSavedPath(saveRes.path, {}) ? saveRes.path : null
+  const savedPath = saveRes?.saved === true && validateJournalSavedPath(saveRes.path, { requiredDirSuffix: '/dev-improve' }) ? saveRes.path : null
 
   if (savedPath) {
+    // stage1 は成功済み。stage2 が throw（schema 不一致・proxy 実行失敗等）すると catch へ
+    // 抜けて代入が走らないため、呼び出し前に log_failed へ倒しておく。こうしないと stage2 の
+    // 失敗が save_failed として報告され、観測した status が実際の失敗段と食い違う。
+    journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
     const journalRes = await agent(
       `## Objective\ndev-improve サイクルの telemetry を journal に記録する。\n\n`
       + `## Instructions\n次のコマンドをそのまま実行せよ（リテラル固定パス形）:\n`

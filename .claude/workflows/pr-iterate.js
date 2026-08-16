@@ -1212,6 +1212,10 @@ try {
   const journalSavedPath = journalSaveRes?.saved === true && validateJournalSavedPath(journalSaveRes.path, { requiredDirSuffix: '/.devflow-tmp' }) ? journalSaveRes.path : null
 
   if (journalSavedPath) {
+    // stage1 は成功済み。stage2 が throw（schema 不一致・proxy 実行失敗等）すると catch へ
+    // 抜けて代入が走らないため、呼び出し前に log_failed へ倒しておく。こうしないと stage2 の
+    // 失敗が save_failed として報告され、観測した status が実際の失敗段と食い違う。
+    journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
     const journalPost = await trackedAgent(
       `## Objective\npr-iterate 終端 status の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
       + `## Instructions\n`
