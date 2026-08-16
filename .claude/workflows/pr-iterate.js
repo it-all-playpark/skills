@@ -213,11 +213,16 @@ function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
 }
 
 // buildJournalLogInstr({ prefix, id, payloadPath }): stage2 instruction string. Takes only a
-// (pre-validated, see validateJournalSavedPath) file path — never the payload body — so
-// conclusion values structurally cannot appear in this prompt. Splices payloadPath into
-// buildJournalFinalizeCommand's `<PAYLOAD_FILE>` placeholder and instructs the agent to run it
-// as-is, failing open (logged:false, no throw) on any error including jq parse failures.
+// file path — never the payload body — so conclusion values structurally cannot appear in this
+// prompt. Splices payloadPath into buildJournalFinalizeCommand's `<PAYLOAD_FILE>` placeholder
+// and instructs the agent to run it as-is, failing open (logged:false, no throw) on any error
+// including jq parse failures. payloadPath is re-validated here rather than trusting the caller
+// to have done it: the value is spliced into a bash command, so the guard must not depend on
+// call-site discipline that a future caller can forget.
 function buildJournalLogInstr({ prefix, id, payloadPath }) {
+  if (!validateJournalSavedPath(payloadPath)) {
+    throw new Error(`journal-handoff: invalid payloadPath: ${JSON.stringify(payloadPath ?? null)}`);
+  }
   const finalizeCmd = buildJournalFinalizeCommand({ prefix, id })
     .split('<PAYLOAD_FILE>')
     .join(payloadPath);
@@ -821,6 +826,10 @@ const ISOLATION_PROBE = {
   properties: { written: { type: 'boolean' }, error: { type: 'string' } },
 }
 const isoWt = prMeta?.cwd || '.'
+// cwd 欠落は後段に効く: journal-save の savePath が相対パスになり buildJournalSaveInstr が
+// throw するため、その run の telemetry は決定論的に save_failed になる（fail-open なので run は
+// 継続する）。原因が pr-meta probe 側にあることを追えるよう fallback 発生を明示する。
+if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=. で継続します（telemetry は save_failed になります）')
 // isoTargetPath: 回避手順で提示する新規 worktree 先。isoWt（書き込みに失敗した共有 checkout の cwd）
 // とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
 // （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。

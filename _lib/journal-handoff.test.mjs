@@ -179,6 +179,33 @@ test('buildJournalSaveInstr instructs a Read-before-overwrite idempotency step f
   assert.ok(/Read tool[\s\S]*Write tool/.test(saveDirInstr), 'Read の指示は Write の指示より前に現れるべき');
 });
 
+// payloadPath は finalize command へ splice されるため、呼び出し側の検証規律に依存せず
+// buildJournalLogInstr 自身でも同じ決定論検証を通す（将来の呼び出し側が検証を忘れても
+// 未検証 splice が復活しない）。
+test('buildJournalLogInstr throws when payloadPath violates the payload path contract', () => {
+  for (const bad of [
+    'relative/payload-x.json',
+    '/wt/.devflow-tmp/telemetry.json',
+    '/wt/.devflow-tmp/payload-x.json; rm -rf /',
+    '/wt/../.devflow-tmp/payload-x.json',
+    '',
+    null,
+    undefined,
+  ]) {
+    assert.throws(
+      () => buildJournalLogInstr({ prefix: 'devflow', id: 494, payloadPath: bad }),
+      /invalid payloadPath/,
+      `payloadPath=${JSON.stringify(bad ?? null)} は reject されるべき`,
+    );
+  }
+});
+
+test('buildJournalLogInstr accepts a contract-conforming payloadPath and splices it into the finalize command', () => {
+  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 494, payloadPath: SAVE_PATH });
+  assert.ok(instr.includes(SAVE_PATH));
+  assert.ok(!instr.includes('<PAYLOAD_FILE>'));
+});
+
 test('buildJournalSaveInstr throws when payload is null', () => {
   assert.throws(
     () => buildJournalSaveInstr({ payload: null, savePath: SAVE_PATH }),

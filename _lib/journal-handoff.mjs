@@ -172,11 +172,16 @@ export function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
 }
 
 // buildJournalLogInstr({ prefix, id, payloadPath }): stage2 instruction string. Takes only a
-// (pre-validated, see validateJournalSavedPath) file path — never the payload body — so
-// conclusion values structurally cannot appear in this prompt. Splices payloadPath into
-// buildJournalFinalizeCommand's `<PAYLOAD_FILE>` placeholder and instructs the agent to run it
-// as-is, failing open (logged:false, no throw) on any error including jq parse failures.
+// file path — never the payload body — so conclusion values structurally cannot appear in this
+// prompt. Splices payloadPath into buildJournalFinalizeCommand's `<PAYLOAD_FILE>` placeholder
+// and instructs the agent to run it as-is, failing open (logged:false, no throw) on any error
+// including jq parse failures. payloadPath is re-validated here rather than trusting the caller
+// to have done it: the value is spliced into a bash command, so the guard must not depend on
+// call-site discipline that a future caller can forget.
 export function buildJournalLogInstr({ prefix, id, payloadPath }) {
+  if (!validateJournalSavedPath(payloadPath)) {
+    throw new Error(`journal-handoff: invalid payloadPath: ${JSON.stringify(payloadPath ?? null)}`);
+  }
   const finalizeCmd = buildJournalFinalizeCommand({ prefix, id })
     .split('<PAYLOAD_FILE>')
     .join(payloadPath);
