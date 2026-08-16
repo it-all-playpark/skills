@@ -3788,6 +3788,18 @@ async function trackedAgent(prompt, opts) {
   return agent(prompt, opts);
 }
 
+// fail-open 規定の exec-proxy 呼び出し用ラッパ（issue #499。pr-iterate.js と同型）。trackedAgent が
+// throw した場合（isolation guard 等による StructuredOutput 未返却）も run 全体を落とさず null に
+// 落とす。throw と schema 不一致（既存の null 返却）を呼び出し側で同一の fail-open 経路へ合流させる。
+async function failOpenAgent(prompt, opts) {
+  try {
+    return await trackedAgent(prompt, opts)
+  } catch (e) {
+    log(`⚠️ ${opts?.label ?? 'exec-proxy'} が例外を投げた（StructuredOutput 未返却等）— fail-open で null 扱い: ${e?.message ?? e}`)
+    return null
+  }
+}
+
 let WT // Setup で確定
 let DEPS_NOTE = '' // Setup(deps) で確定。install 失敗/未確認時のみ非空（fail-open。issue #291）
 
@@ -5333,7 +5345,7 @@ if (LITE) {
     route = 'full'
     iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
   } else {
-    const ciLite = await trackedAgent(
+    const ciLite = await failOpenAgent(
       `## Objective\nPR #${pr.pr_number} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
       + `## Tools\n`
       + `- 使用可: Bash のみ\n`
@@ -5343,13 +5355,14 @@ if (LITE) {
       + `- 実行するスクリプト以外のファイルを変更しない\n\n`
       + `## Steps\n`
       + `attempt=1 から開始し、次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ:\n`
-      + `1. \`gh pr checks ${pr.pr_number}${REPO ? ' --repo ' + REPO : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行し、`
-      + `stdout を \`$TMPDIR/ci-checks-<attempt>.json\` へ、stderr を \`$TMPDIR/ci-err-<attempt>.txt\` へリダイレクトせよ。`
+      + `1. \`gh pr checks ${pr.pr_number}${REPO ? ' --repo ' + REPO : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
+      + `（リダイレクト・パイプ・複合コマンドは使わない）。`
       + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
-      + `2. \`bash ~/.claude/skills/pr-iterate/scripts/check-ci.sh --checks-json $TMPDIR/ci-checks-<attempt>.json `
-      + `--fetch-error $TMPDIR/ci-err-<attempt>.txt --attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
-      + `を実行し、stdout の JSON を読め。\n`
-      + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を実行し、attempt を 1 増やして 1 へ戻れ。`
+      + `2. \`bash ~/.claude/skills/pr-iterate/scripts/check-ci.sh --checks-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
+      + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>' `
+      + `--attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
+      + `を単文で実行し、stdout の JSON を読め。\n`
+      + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を単文で実行し、attempt を 1 増やして 1 へ戻れ。`
       + `\`"done"\` なら 4 へ進め。\n`
       + `4. 最後に得た stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。\n`
       + `CI pending 時は最大 ${(CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS} 秒（${CI_POLL_SECONDS} 秒間隔）待ってから確定する。\n\n`

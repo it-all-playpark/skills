@@ -455,6 +455,29 @@ test('AC-1/AC-2: no dot-prefixed temp file remains after execution (atomic mv le
   });
 });
 
+// issue #499 F4 (AC3): buildJournalFinalizeCommand's first operation is `jq -e . "<PAYLOAD_FILE>"`;
+// the `&&` chain guarantees pending/ is never touched if that leading check fails or the command
+// itself is rejected outright (e.g. by an isolate-session guard). この不変条件を「PAYLOAD_FILE が
+// 存在しない」ケースで実測する — isolate 済みセッションではこのコマンド自体が実行拒否されうるが、
+// その場合も logged が true にならず log_failed として観測可能なまま run に影響しない
+// (issue #499 AC3 選択肢B: コマンドは変更せず fail-open 挙動をテストで pin する)。
+test('AC3 (issue #499): a nonexistent PAYLOAD_FILE fails the leading jq -e check and the && short-circuit leaves pending/ untouched', () => {
+  withScratchJournalDir((journalDir) => {
+    const missingPayloadFile = join(journalDir, 'does-not-exist-payload.json');
+    let threw = false;
+    try {
+      runFinalize({ prefix: 'devflow', id: 499, payloadFile: missingPayloadFile, journalDir });
+    } catch (err) {
+      threw = true;
+      assert.notEqual(err.status, 0);
+    }
+    assert.ok(threw, 'expected the finalize command to fail (non-zero exit) when PAYLOAD_FILE does not exist');
+
+    const files = listPending(journalDir);
+    assert.equal(files.length, 0, '&& 短絡により pending/ には何も書き込まれないはず');
+  });
+});
+
 test('AC-1: a malformed JSON payload (devflow-411-style extra closing brace) fails jq -e validation and writes nothing to pending/', () => {
   withScratchJournalDir((journalDir) => {
     // Mirrors the devflow-411 malformed-park incident shape: an extra `}` mid-structure.

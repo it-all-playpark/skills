@@ -45,10 +45,12 @@ function makeSandbox(journalResult, journalSaveResult) {
     }
 
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
-    // 返して journal-log (stage2) へ進めさせる。
+    // 返して journal-log (stage2) へ進めさせる。journalSaveResult が Error なら throw する
+    // （stage1 の proxy 実行失敗・schema 不一致の再現。issue #499 F4）。
     if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
       journalSaveCallCount += 1;
       capturedPrompt = typeof prompt === 'string' ? prompt : null;
+      if (journalSaveResult instanceof Error) throw journalSaveResult;
       return journalSaveResult ?? { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
 
@@ -278,4 +280,62 @@ test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場�
     'log_failed',
     `stage2 throw 時 result.journal_log_status は 'log_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
+});
+
+// issue #499 F4: stage1（journal-save）が throw した場合は journal-log(stage2) が呼ばれる前に
+// 外側 catch へ抜けるため、journalLogStatus は初期値 'save_failed' のまま run が継続する（fail-open）。
+// buildJournalFinalizeCommand（&& 連結を含む単行コマンド）自体は変更しない — isolate 済みセッション
+// でこのコマンドが実行拒否されうるが、その場合も journal-log が呼ばれずに済み journal_log_status は
+// 正しく 'save_failed'（or stage2 throw 時は 'log_failed'）として観測可能なまま run に影響しない。
+test('[journal-log] stage1 の journal-save(agent) が throw した場合 journal-log(stage2) は呼ばれず result.journal_log_status は save_failed のまま run 完走する（fail-open）', async () => {
+  const journalSaveResult = new Error('agent({schema}): subagent completed without calling StructuredOutput');
+  const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox({ logged: true, summary: 'ok' }, journalSaveResult);
+
+  const { result, error } = await runPrIterateCapture(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`pr-iterate.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  assert.equal(getJournalSaveCallCount(), 1);
+  assert.equal(
+    getJournalCallCount(),
+    0,
+    `journal-save(stage1) が throw する場合 journal-log(stage2) は呼ばれないはずだが ${getJournalCallCount()} 回呼ばれた`,
+  );
+  assert.ok(result != null, 'journal-save(stage1) の throw で workflow が落ちてはならない（fail-open）');
+  assert.equal(
+    result?.status,
+    'lgtm',
+    `stage1 throw でも result.status は 'lgtm' であるべきだが '${result?.status}' だった`,
+  );
+  assert.equal(
+    result?.journal_log_status,
+    'save_failed',
+    `stage1 throw 時 result.journal_log_status は 'save_failed' のはずだが '${result?.journal_log_status}' だった`,
+  );
+});
+
+// issue #499 F4: pr-iterate.js のソース構造 pin — journal-log(stage2) の trackedAgent 呼び出しは
+// try ブロック内にあり、かつその直前で journalLogStatus が 'log_failed' へ preset されていること
+// （『stage2 throw が save_failed と誤報告されない』不変条件の pin。preset が無いと stage2 throw時に
+// 初期値 'save_failed' のまま返ってしまい、失敗した段（stage2）と観測される段（stage1 相当）が
+// 食い違う）。
+test('[journal-log] source pin: journal-log(stage2) 呼び出しは try ブロック内にあり、直前で journalLogStatus が log_failed へ preset されている', () => {
+  const tryIdx = src.indexOf('let journalLogStatus = \'save_failed\'');
+  assert.ok(tryIdx >= 0, 'journalLogStatus の初期化行が見つからない');
+
+  const presetIdx = src.indexOf("journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })", tryIdx);
+  assert.ok(presetIdx > tryIdx, 'stage2 呼び出し前の log_failed preset 行が見つからない');
+
+  const stage2CallIdx = src.indexOf("agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log'", presetIdx);
+  assert.ok(stage2CallIdx > presetIdx, 'log_failed preset の後に journal-log(stage2) の trackedAgent 呼び出しが続くべき');
+
+  // preset と stage2 呼び出しの間が try ブロックの開始（`try {`）より後、かつ対応する `} catch (e) {`
+  // より前にあることを、直近の try/catch トークンで確認する。
+  const tryBlockOpenIdx = src.lastIndexOf('try {', presetIdx);
+  assert.ok(tryBlockOpenIdx >= 0 && tryBlockOpenIdx < presetIdx, 'log_failed preset は try ブロック内にあるべき');
+
+  const catchIdx = src.indexOf('} catch (e) {', stage2CallIdx);
+  assert.ok(catchIdx > stage2CallIdx, 'journal-log(stage2) 呼び出しの後に対応する catch 節が続くべき');
 });

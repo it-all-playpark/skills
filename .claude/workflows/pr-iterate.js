@@ -316,6 +316,18 @@ async function trackedAgent(prompt, opts) {
   return agent(prompt, opts);
 }
 
+// fail-open 規定の exec-proxy 呼び出し用ラッパ（issue #499）。trackedAgent が throw した場合
+// （isolation guard 等による StructuredOutput 未返却）も run 全体を落とさず null に落とす。
+// throw と schema 不一致（既存の null 返却）を呼び出し側で同一の fail-open 経路へ合流させる。
+async function failOpenAgent(prompt, opts) {
+  try {
+    return await trackedAgent(prompt, opts)
+  } catch (e) {
+    log(`⚠️ ${opts?.label ?? 'exec-proxy'} が例外を投げた（StructuredOutput 未返却等）— fail-open で null 扱い: ${e?.message ?? e}`)
+    return null
+  }
+}
+
 // ---- Review de-churn モデル（issue #126。#123 Plan ループ収束モデルの Review 版を inline 複製）----
 // cold start の pr-reviewer は moving target を生む（毎回 fresh context で全 PR diff を再レビューし、
 // Adversarial Opener の「能動的に探せ」指示と相まって、安定コードに新しい主観的 major を捻り出しうる）。
@@ -749,7 +761,7 @@ const PR_META = {
   type: 'object', required: ['url'],
   properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' } },
 }
-const prMeta = await trackedAgent(
+const prMeta = await failOpenAgent(
   `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
   { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
 )
@@ -834,7 +846,7 @@ if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=
 // とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
 // （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
 const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claude/worktrees/pr-${PR}`
-const isoProbe = await trackedAgent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
+const isoProbe = await failOpenAgent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
 if (isoProbe && isoProbe.written === false) {
   throw new Error(isolationFailureMessage({
     // startRef は PR の head（base ではない）— pr-iterate は既存 PR の変更を含む worktree を
@@ -986,7 +998,7 @@ for (i = 1; i <= MAX; i++) {
     // ここへ合流する（AC-1/AC-2、issue #321）。lgtm 確定時の投稿のみ decision で分岐する（approve でなければ捏造しない）。
     // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
     // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
-    const ci = await trackedAgent(
+    const ci = await failOpenAgent(
       `## Objective\n`
       + `PR #${PR} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
       + `## Tools\n`
@@ -997,13 +1009,14 @@ for (i = 1; i <= MAX; i++) {
       + `- 実行するスクリプト以外のファイルを変更しない\n\n`
       + `## Steps\n`
       + `attempt=1 から開始し、次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ:\n`
-      + `1. \`gh pr checks ${PR}${REPO ? ' --repo ' + REPO : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行し、`
-      + `stdout を \`$TMPDIR/ci-checks-<attempt>.json\` へ、stderr を \`$TMPDIR/ci-err-<attempt>.txt\` へリダイレクトせよ。`
+      + `1. \`gh pr checks ${PR}${REPO ? ' --repo ' + REPO : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
+      + `（リダイレクト・パイプ・複合コマンドは使わない）。`
       + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
-      + `2. \`bash ~/.claude/skills/pr-iterate/scripts/check-ci.sh --checks-json $TMPDIR/ci-checks-<attempt>.json `
-      + `--fetch-error $TMPDIR/ci-err-<attempt>.txt --attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
-      + `を実行し、stdout の JSON を読め。\n`
-      + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を実行し、attempt を 1 増やして 1 へ戻れ。`
+      + `2. \`bash ~/.claude/skills/pr-iterate/scripts/check-ci.sh --checks-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
+      + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>' `
+      + `--attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
+      + `を単文で実行し、stdout の JSON を読め。\n`
+      + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を単文で実行し、attempt を 1 増やして 1 へ戻れ。`
       + `\`"done"\` なら 4 へ進め。\n`
       + `4. 最後に得た stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。\n`
       + `CI pending 時は最大 ${(CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS} 秒（${CI_POLL_SECONDS} 秒間隔）待ってから確定する（AC-1/AC-2）。\n\n`
@@ -1016,40 +1029,43 @@ for (i = 1; i <= MAX; i++) {
       { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
     )
 
-    if (ci == null) throw new Error(`pr-iterate: ci-check#${i} が結果を返しませんでした`)
+    if (ci == null) {
+      log(`⚠️ ci-check#${i} が結果を返さず — fail-open で status=error（ci_error 終端）扱い`)
+    }
+    const ciEff = ci ?? { status: 'error', failed_checks: [] }
 
     // waited_seconds/poll_attempts は route（passed/pending/failed/error）に関わらず常に加算する。
-    totalCiWaitSeconds += Number(ci.waited_seconds ?? 0)
-    totalCiPollAttempts += Number(ci.poll_attempts ?? 0)
+    totalCiWaitSeconds += Number(ciEff.waited_seconds ?? 0)
+    totalCiPollAttempts += Number(ciEff.poll_attempts ?? 0)
     if (Number.isFinite(ci?.epoch)) lastCiEpoch = ci.epoch
-    log(`iteration ${i}: ci-check waited_seconds=${ci.waited_seconds ?? 0} poll_attempts=${ci.poll_attempts ?? 0}`
+    log(`iteration ${i}: ci-check waited_seconds=${ciEff.waited_seconds ?? 0} poll_attempts=${ciEff.poll_attempts ?? 0}`
       + `（累積 waited=${totalCiWaitSeconds}s poll=${totalCiPollAttempts}）`)
 
-    if (ci.status === 'passed' || ci.status === 'no_checks') {
+    if (ciEff.status === 'passed' || ciEff.status === 'no_checks') {
       lgtm = true
-      log(`iteration ${i}: LGTM（CI status=${ci.status}）`)
+      log(`iteration ${i}: LGTM（CI status=${ciEff.status}）`)
 
       // lgtm 確定ラウンドの history を記録（blocking なし、minor は保持）
       history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor })
 
       break
-    } else if (ci.status === 'error') {
+    } else if (ciEff.status === 'error') {
       // Real gh API error (auth failure, network error, etc.) — do not misinterpret as CI failure.
       // Surface to human immediately; retrying a fix on a non-existent bug would waste cycles.
       terminal = 'ci_error'
       log(`⚠️ CI check returned error — gh API failed (auth/network). 人間へエスカレーション`)
       break
-    } else if (ci.status === 'pending') {
+    } else if (ciEff.status === 'pending') {
       terminal = 'ci_pending'
       log(`⚠️ CI pending — checks incomplete, never auto-approve. 人間/CI 完了待ちへエスカレーション`)
       break
-    } else if (ci.status === 'failed') {
-      // ci.status === 'failed': convert failed_checks into synthetic blocking findings and route
+    } else if (ciEff.status === 'failed') {
+      // ciEff.status === 'failed': convert failed_checks into synthetic blocking findings and route
       // through the existing fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
       // automatically via the existing stuckTopics computation below.
       // failed_checks items are {name, bucket, state} per check-ci.sh output (no conclusion field).
-      const ciFindings = (ci.failed_checks && ci.failed_checks.length > 0)
-        ? ci.failed_checks.map((c) => ({
+      const ciFindings = (ciEff.failed_checks && ciEff.failed_checks.length > 0)
+        ? ciEff.failed_checks.map((c) => ({
             severity: 'critical',
             topic: `ci::${c.name}`,
             description: `CI check failed: ${c.name} (${c.state ?? c.bucket})`,
@@ -1165,15 +1181,10 @@ log(`pr-iterate 終端: status=${status}（iterations=${Math.min(i, MAX)}）`)
 // （'unknown' + 警告のみ。gate・status には影響しない）。lgtm 終端では probe しない（agent 呼び出し追加ゼロ）。
 let worktreeDirty = null  // 'dirty' | 'clean' | 'unknown' | null(=lgtm で未実施)
 if (status !== 'lgtm') {
-  let probe = null
-  try {
-    probe = await trackedAgent(
-      `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\n\`git -C ${isoWt} status --porcelain\` を bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ。出力が空なら { "dirty": false, "files": 0 }。出力が非空なら { "dirty": true, "files": <出力の非空行数> }。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
-      { agentType: 'dev-runner-haiku-ro', schema: DIRTY_STATUS, label: 'worktree-dirty-check', phase: 'Iterate' },
-    )
-  } catch (e) {
-    log(`⚠️ worktree-dirty-check が例外: ${e?.message ?? e}`)
-  }
+  const probe = await failOpenAgent(
+    `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\n\`git -C ${isoWt} status --porcelain\` を bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ。出力が空なら { "dirty": false, "files": 0 }。出力が非空なら { "dirty": true, "files": <出力の非空行数> }。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+    { agentType: 'dev-runner-haiku-ro', schema: DIRTY_STATUS, label: 'worktree-dirty-check', phase: 'Iterate' },
+  )
   worktreeDirty = probe == null ? 'unknown' : (probe.dirty === true ? 'dirty' : 'clean')
   if (worktreeDirty === 'dirty') log(`⚠️ 終端 status=${status} で作業ツリーが dirty（未コミット変更 ${probe?.files ?? '?'} 件）— fix 適用分が失われる可能性。人間が確認すること`)
   if (worktreeDirty === 'unknown') log('⚠️ worktree-dirty-check probe に失敗 — dirty 状態は不明（fail-open で続行）')
@@ -1220,7 +1231,7 @@ if (POST_TERMINAL_SUMMARY) {
       + `投稿失敗時でも posted:false を返し throw しないこと。\n`
   }
 
-  const summaryPost = await trackedAgent(
+  const summaryPost = await failOpenAgent(
     `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}、action: ${termAction}）。\n\n`
     + bodySaveInstr(summaryBody, 'pr-iterate', 'PR_ITERATE')
     + `## Instructions\n`
