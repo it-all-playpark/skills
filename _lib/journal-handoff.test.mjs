@@ -162,6 +162,23 @@ test('buildJournalSaveInstr instructs Write tool usage and forbids passing the p
   }
 });
 
+// issue #498 review: Write tool refuses to overwrite an existing file it hasn't Read in the
+// same session. savePath / saveDir fileName are fixed across runs (worktree reuse, TMPDIR
+// persistence), so a stale payload from a prior run makes stage1 deterministically
+// save_failed unless the instruction tells the agent to Read-then-Write (same idempotency
+// pattern as isolationProbePrompt, issue #482).
+test('buildJournalSaveInstr instructs a Read-before-overwrite idempotency step for both modes', () => {
+  const savePathInstr = buildJournalSaveInstr({ payload: '{"ok":true}', savePath: SAVE_PATH });
+  assert.ok(savePathInstr.includes('Read tool'));
+  assert.ok(savePathInstr.includes('既に存在する場合'));
+  assert.ok(/Read tool[\s\S]*Write tool/.test(savePathInstr), 'Read の指示は Write の指示より前に現れるべき');
+
+  const saveDirInstr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' });
+  assert.ok(saveDirInstr.includes('Read tool'));
+  assert.ok(saveDirInstr.includes('既に存在する場合'));
+  assert.ok(/Read tool[\s\S]*Write tool/.test(saveDirInstr), 'Read の指示は Write の指示より前に現れるべき');
+});
+
 test('buildJournalSaveInstr throws when payload is null', () => {
   assert.throws(
     () => buildJournalSaveInstr({ payload: null, savePath: SAVE_PATH }),

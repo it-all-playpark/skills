@@ -312,6 +312,14 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
   const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
     + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
+  // issue #482 の isolationProbePrompt と同じ冪等化パターン: Write tool は同一セッション内で
+  // 未 Read の既存ファイルを上書きできない。savePath / saveDir とも保存先ファイル名は run を
+  // またいで固定（worktree 再利用・TMPDIR 永続時は前 run の payload が残り得る）なので、
+  // 上書き前に Read を試みる一手順を必須にする。Read の成否は saved の判定に混ぜない
+  // （Read 失敗＝新規ファイルの可能性が高いだけで、それ自体は保存失敗ではない）。
+  const idempotentReadRule = (target) => `${target} が既に存在する場合は、先に **Read tool** で同ファイルを`
+    + `読んでから **Write tool** で上書きせよ（Write tool は既存ファイルを未 Read のまま上書きできない）。`
+    + `Read が失敗しても Write は必ず試み、Read の成否を saved の判定に混ぜないこと。\n`;
 
   if (savePath != null) {
     // stage2 の bash コマンドへそのまま splice されるので、申告値に対するのと同じ決定論検証を
@@ -320,11 +328,12 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
       throw new Error(`journal-handoff: invalid savePath: ${JSON.stringify(savePath)}`);
     }
     return `## Journal handoff payload の保存\n`
-      + `1. **Write tool** を使い、下記 delimiter 内の JSON を **一字一句そのまま**\n`
+      + `1. ${idempotentReadRule(`\`${savePath}\``)}`
+      + `2. **Write tool** を使い、下記 delimiter 内の JSON を **一字一句そのまま**\n`
       + `\`${savePath}\` へ書き出せ。${verbatimRule}`
       + `Bash は使うな。保存先は上記のパスで固定されており、一時ファイル名を作る必要はない。\n`
       + bodyBlock
-      + `2. 書き出しに成功したら {saved:true, path:"${savePath}"} を返せ。\n`
+      + `3. 書き出しに成功したら {saved:true, path:"${savePath}"} を返せ。\n`
       + `失敗した場合は throw せず {saved:false} を返せ。\n`;
   }
 
@@ -337,10 +346,11 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   return `## Journal handoff payload の保存\n`
     + `1. まず Bash で \`${resolveCmd}\` を実行し、\n`
     + `出力された絶対パスを <PAYLOAD_FILE> とする。\n`
-    + `2. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
+    + `2. ${idempotentReadRule('<PAYLOAD_FILE>')}`
+    + `3. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
     + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。${verbatimRule}`
     + bodyBlock
-    + `3. 書き出しに成功したら {saved:true, path:<PAYLOAD_FILE の絶対パス>} を返せ。\n`
+    + `4. 書き出しに成功したら {saved:true, path:<PAYLOAD_FILE の絶対パス>} を返せ。\n`
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
@@ -2895,7 +2905,8 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
       + `## Instructions\n`
       + buildJournalSaveInstr({ payload, savePath: journalPayloadPath })
       + `\n## Output format\n{ "saved": boolean, "path": string }\n`
-      + `\n## Tools\n使用可: Write のみ（保存先は指示で固定済み — Bash は不要）\n`
+      + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
+      + `冪等上書きに必要）\n`
       + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
       + `\n## Token cap\n120 語以内。`,
       { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase },
@@ -5935,7 +5946,8 @@ try {
     + `## Instructions\n`
     + buildJournalSaveInstr({ payload: telemetryHandoff, savePath: journalPayloadPath })
     + `\n## Output format\n{ "saved": boolean, "path": string }\n`
-    + `\n## Tools\n使用可: Write のみ（保存先は指示で固定済み — Bash は不要）\n`
+    + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
+    + `冪等上書きに必要）\n`
     + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
     + `\n## Token cap\n120 語以内。`,
     { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase: 'Merge tier' },
