@@ -457,10 +457,10 @@ test('AC-1: a malformed JSON payload (devflow-411-style extra closing brace) fai
 // (dev-flow.js Merge tier, pr-iterate.js Iterate, dev-improve.js File) and dev-flow.js's
 // writeFailureTelemetry (outcome:'failure'/'partial') — migrate to the 2-stage
 // buildJournalSaveInstr + buildJournalLogInstr split, so the payload body is carried as a file
-// on disk and the finalize prompt takes only a path, regardless of outcome. The saveDir
-// passed to buildJournalSaveInstr pins the payload file under the worktree's gitignored
-// `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`, pr-iterate: `${isoWt}/.devflow-tmp`) rather
-// than `${TMPDIR:-/tmp}`, so validateJournalSavedPath can pin `requiredDirSuffix`. This test
+// on disk and the finalize prompt takes only a path, regardless of outcome. dev-flow /
+// pr-iterate use the `savePath` mode: the payload file sits under the worktree's gitignored
+// `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`, pr-iterate: `${isoWt}/.devflow-tmp`) at a
+// path the workflow fixes itself, so the agent-reported path is never used. This test
 // pins that neither workflow references the removed single-stage buildJournalHandoffInstr /
 // buildFailureJournalInstr names.
 

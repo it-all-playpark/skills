@@ -442,12 +442,13 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
-// validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard run on
-// the path an agent claims to have saved a stage1 payload to, before that string is spliced
-// into the stage2 bash command (buildJournalLogInstr). Rejects anything that is not a plain
-// absolute path built from a restricted charset, contains '..', or whose basename does not
-// match the expected `payload-*.json` shape produced by buildJournalSaveInstr's mktemp
-// template. requiredDirSuffix optionally pins the containing directory (e.g. '/.devflow-tmp').
+// validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard for any
+// path that gets spliced into the stage2 bash command (buildJournalLogInstr) — both the
+// JS-constructed `savePath` (checked at build time) and the path an agent claims to have saved
+// to in `saveDir` mode. Rejects anything that is not a plain absolute path built from a
+// restricted charset, contains '..', or whose basename violates the payload basename contract
+// (JOURNAL_PAYLOAD_BASENAME_RE). requiredDirSuffix optionally pins the containing directory
+// (e.g. '/.devflow-tmp').
 function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   if (typeof path !== 'string' || path === '') return false;
   if (!path.startsWith('/')) return false;
