@@ -111,8 +111,16 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, commitEnsureStub, dirty
     if (label.startsWith('post-')) {
       return { posted: true, method: 'gh', url: 'http://x' };
     }
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') {
+      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    }
     if (label === 'journal-log') {
       return { logged: true, summary: 'ok' };
+    }
+    // pr-meta: cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
+    if (label === 'pr-meta') {
+      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
     }
     return null;
   };
@@ -232,7 +240,7 @@ test('[D5][AC-2] stuck 終端 + worktree-dirty-check dirty:true -> result.worktr
   assert.equal(result?.status, 'stuck', `result.status は stuck であるべきだが '${result?.status}' だった`);
   assert.equal(result?.worktree_dirty, 'dirty', `result.worktree_dirty は dirty であるべきだが '${result?.worktree_dirty}' だった`);
 
-  const journalCall = agentCalls.find((c) => c.label === 'journal-log');
+  const journalCall = agentCalls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall != null, 'journal-log の呼び出しが存在するべき');
   assert.ok(
     journalCall.prompt.includes('worktree_dirty'),
@@ -273,7 +281,7 @@ test('[D7][AC-2 lgtm 非実施] 正常 lgtm 経路 -> worktree-dirty-check 呼�
   assert.equal(dirtyCheckCalls.length, 0, `worktree-dirty-check の呼び出しは 0 回であるべきだが ${dirtyCheckCalls.length} 回だった`);
   assert.equal(result?.worktree_dirty, null, `result.worktree_dirty は null であるべきだが '${result?.worktree_dirty}' だった`);
 
-  const journalCall = agentCalls.find((c) => c.label === 'journal-log');
+  const journalCall = agentCalls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall != null, 'journal-log の呼び出しが存在するべき');
   assert.ok(
     !journalCall.prompt.includes('worktree_dirty'),

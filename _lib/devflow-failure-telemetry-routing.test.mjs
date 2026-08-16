@@ -1,7 +1,10 @@
-// failure telemetry handoff のルーティングテスト（issue #225）。
-// dev-flow.js の 3 つの失敗経路に writeFailureTelemetry helper が呼ばれ、
-// label='journal-log-failure' / agentType='dev-runner-haiku' の agent 呼び出しが発生し、
-// prompt に正しい JSON キーが含まれることを VM sandbox で検証する。
+// failure telemetry handoff のルーティングテスト（issue #225, 2-stage handoff issue #494 F3）。
+// dev-flow.js の 4 つの失敗経路（analyze provenance / analyze ambiguity / implement
+// NEEDS_CONTEXT / cross-repo graceful 終了。empty-diff throw も含む）に writeFailureTelemetry
+// helper が呼ばれ、Merge tier 成功経路と同じ journal-save（stage1）→ journal-log-failure
+// （stage2）の 2 段構成で agent 呼び出しが発生することを VM sandbox で検証する。結論値リテラル
+// （outcome/error_category 等）は stage1（journal-save）の prompt にのみ現れ、stage2
+// （journal-log-failure）の prompt にはファイルパスのみが現れることを確認する。
 //
 // needs-clarification-routing.test.mjs / empty-diff-evaluate-routing.test.mjs /
 // devflow-journal-log.test.mjs の makeSandbox / VM 実行パターンを踏襲する。
@@ -19,7 +22,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 // ---- VM sandbox helpers ----
 
-function makeSandbox({ analyzeReq, implementerFn, diffGateConfig } = {}) {
+function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFailureResult } = {}) {
   const calls = [];
   let implementerCallIndex = 0;
   const { gateEmpty = false, retryEmpty = false } = diffGateConfig || {};
@@ -50,9 +53,13 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig } = {}) {
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。成功経路・
+    // failure 経路（writeFailureTelemetry）の両方が同じ label を使うため共通スタブでよい。
+    if (label === 'journal-save' && agentType === 'dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log' && agentType === 'dev-runner-haiku') return { logged: true, summary: 'ok' };
-    // journal-log-failure: null を返す（null 容認設計を確認するため）
-    if (label === 'journal-log-failure') return null;
+    // journal-log-failure (stage2): 既定は null を返す（null 容認設計を確認するため）。
+    // journalLogFailureResult でケースごとに上書き可能。
+    if (label === 'journal-log-failure') return journalLogFailureResult !== undefined ? journalLogFailureResult : null;
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
@@ -106,12 +113,12 @@ const src = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
 // ケース (1): analyze 経路（AC 空 → needs_clarification）
-// - label='journal-log-failure' / agentType='dev-runner-haiku' が 1 回発生する
-// - prompt に '"outcome":"failure"' / '"error_category":"needs_clarification"' /
-//   '~/.claude/journal/pending' / 'devflow-' が含まれる
-// - workflow の返り値が status:'needs_clarification' / source:'analyze' のまま
+// - journal-save（stage1）が 1 回発生し prompt に結論値の必須キーを含む
+// - journal-log-failure（stage2）が 1 回発生し prompt にファイルパスのみを含み結論値を含まない
+// - workflow の返り値が status:'needs_clarification' / source:'analyze' / journal_log_status
+//   （journal-log-failure が null を返すため 'log_failed'）
 // ============================================================
-test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-log-failure が 1 回発生し prompt に必須キーを含む', async () => {
+test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-save→journal-log-failure の 2 段呼び出しがそれぞれ 1 回発生し新契約に従う', async () => {
   const analyzeReq = {
     summary: 's',
     acceptance_criteria: [],
@@ -130,35 +137,45 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-log-failure が
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const failureCalls = calls.filter((c) => c.label === 'journal-log-failure');
-  assert.equal(failureCalls.length, 1,
-    `(1) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回だった (labels: ${calls.map((c) => c.label).join(', ')})`);
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  assert.equal(saveCalls.length, 1,
+    `(1) journal-save は 1 回のはずだが ${saveCalls.length} 回だった (labels: ${calls.map((c) => c.label).join(', ')})`);
 
-  assert.equal(failureCalls[0]?.agentType, 'dev-runner-haiku',
-    `(1) agentType は 'dev-runner-haiku' のはずだが '${failureCalls[0]?.agentType}' だった`);
-
-  const prompt = failureCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '~/.claude/journal/pending', 'devflow-', '"repo":"acme/skills"']) {
-    assert.ok(prompt.includes(key),
-      `(1) prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${prompt.slice(0, 500)}`);
+  const savePrompt = saveCalls[0]?.prompt ?? '';
+  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '"repo":"acme/skills"']) {
+    assert.ok(savePrompt.includes(key),
+      `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 500)}`);
   }
-  assert.ok(!prompt.includes('"pr_number"'),
-    `(1) failure 経路は PR 作成前のため prompt に '"pr_number"' を含むべきではない。prompt:\n${prompt.slice(0, 500)}`);
+  assert.ok(!savePrompt.includes('"pr_number"'),
+    `(1) failure 経路は PR 作成前のため journal-save prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
+
+  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-runner-haiku');
+  assert.equal(logCalls.length, 1,
+    `(1) journal-log-failure は 1 回のはずだが ${logCalls.length} 回だった`);
+  const logPrompt = logCalls[0]?.prompt ?? '';
+  assert.ok(logPrompt.includes('~/.claude/journal/pending') || logPrompt.includes('.claude/journal/pending'),
+    `(1) journal-log-failure prompt に pending パスが含まれるべきだが含まれていなかった。prompt:\n${logPrompt.slice(0, 500)}`);
+  assert.ok(logPrompt.includes('devflow-'),
+    `(1) journal-log-failure prompt に 'devflow-' prefix が含まれるべきだが含まれていなかった。prompt:\n${logPrompt.slice(0, 500)}`);
+  assert.ok(!logPrompt.includes('"outcome":"failure"'),
+    `(1) journal-log-failure prompt に結論値リテラル '"outcome":"failure"' が含まれるべきではないが含まれていた。prompt:\n${logPrompt.slice(0, 500)}`);
 
   assert.equal(result?.status, 'needs_clarification',
     `(1) result.status は 'needs_clarification' のはずだが ${JSON.stringify(result?.status)} だった`);
   assert.equal(result?.source, 'analyze',
     `(1) result.source は 'analyze' のはずだが ${JSON.stringify(result?.source)} だった`);
+  // journal-log-failure スタブは null を返す（既定）ため journalPost?.logged !== true → 'log_failed'
+  assert.equal(result?.journal_log_status, 'log_failed',
+    `(1) journal-log-failure が null（logged 不明）を返す場合 result.journal_log_status は 'log_failed' のはずだが ${JSON.stringify(result?.journal_log_status)} だった`);
 });
 
 // ============================================================
 // ケース (2): implement 経路（NEEDS_CONTEXT 解消不能 → needs_clarification）
-// - label='journal-log-failure' が 1 回発生する
-// - prompt に '"outcome":"failure"' / '"error_category":"needs_clarification"' /
-//   '"shape"' / '"plan_iter"' が含まれる
+// - journal-save（stage1）が 1 回発生し prompt に shape/plan_iter を含む
+// - journal-log-failure（stage2）が logged:true を返すとき result.journal_log_status === 'logged'
 // - result.source === 'implement'
 // ============================================================
-test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → journal-log-failure が 1 回・prompt に shape/plan_iter を含む', async () => {
+test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → journal-save→journal-log-failure が新契約に従い journal_log_status が配線される', async () => {
   const analyzeReq = {
     summary: 's',
     acceptance_criteria: ['ac1', 'ac2'],
@@ -175,37 +192,46 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
     blocking_reason: null, missing_context: 'API 仕様が不明',
   });
 
-  const { ctx, calls } = makeSandbox({ analyzeReq, implementerFn });
+  const { ctx, calls } = makeSandbox({ analyzeReq, implementerFn, journalLogFailureResult: { logged: true, summary: 'ok' } });
   const { error, result } = await runDevFlowInSandbox(src, ctx);
 
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const failureCalls = calls.filter((c) => c.label === 'journal-log-failure');
-  assert.equal(failureCalls.length, 1,
-    `(2) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回だった`);
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  assert.equal(saveCalls.length, 1,
+    `(2) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
 
-  const prompt = failureCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '~/.claude/journal/pending', 'devflow-', '"shape"', '"plan_iter"', '"repo":"acme/skills"']) {
-    assert.ok(prompt.includes(key),
-      `(2) prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${prompt.slice(0, 500)}`);
+  const savePrompt = saveCalls[0]?.prompt ?? '';
+  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '"shape"', '"plan_iter"', '"repo":"acme/skills"']) {
+    assert.ok(savePrompt.includes(key),
+      `(2) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 500)}`);
   }
-  assert.ok(!prompt.includes('"pr_number"'),
-    `(2) failure 経路は PR 作成前のため prompt に '"pr_number"' を含むべきではない。prompt:\n${prompt.slice(0, 500)}`);
+  assert.ok(!savePrompt.includes('"pr_number"'),
+    `(2) failure 経路は PR 作成前のため journal-save prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
+
+  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-runner-haiku');
+  assert.equal(logCalls.length, 1,
+    `(2) journal-log-failure は 1 回のはずだが ${logCalls.length} 回だった`);
+  const logPrompt = logCalls[0]?.prompt ?? '';
+  assert.ok(!logPrompt.includes('"outcome":"failure"'),
+    `(2) journal-log-failure prompt に結論値リテラル '"outcome":"failure"' が含まれるべきではないが含まれていた。prompt:\n${logPrompt.slice(0, 500)}`);
 
   assert.equal(result?.status, 'needs_clarification',
     `(2) result.status は 'needs_clarification' のはずだが ${JSON.stringify(result?.status)} だった`);
   assert.equal(result?.source, 'implement',
     `(2) result.source は 'implement' のはずだが ${JSON.stringify(result?.source)} だった`);
+  assert.equal(result?.journal_log_status, 'logged',
+    `(2) journal-log-failure が logged:true を返す場合 result.journal_log_status は 'logged' のはずだが ${JSON.stringify(result?.journal_log_status)} だった`);
 });
 
 // ============================================================
 // ケース (3): empty-diff 経路（diff-gate + diff-gate-retry 両方 empty:true → throw）
-// - throw 直前に journal-log-failure が 1 回発生する
-// - prompt に '"error_category":"empty_diff"' が含まれる
+// - throw 直前に journal-save→journal-log-failure がそれぞれ 1 回発生する
+// - journal-save prompt に '"error_category":"empty_diff"' が含まれる
 // ============================================================
-test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前に journal-log-failure が 1 回・prompt に empty_diff を含む', async () => {
+test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前に journal-save→journal-log-failure が新契約に従う', async () => {
   const analyzeReq = {
     summary: 's',
     acceptance_criteria: ['ac1', 'ac2'],
@@ -225,25 +251,33 @@ test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前
   assert.ok(typeof error?.message === 'string' && error.message.includes('empty-diff gate'),
     `(3) error.message に 'empty-diff gate' を含むべきだが: ${error?.message}`);
 
-  const failureCalls = calls.filter((c) => c.label === 'journal-log-failure');
-  assert.equal(failureCalls.length, 1,
-    `(3) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回だった`);
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  assert.equal(saveCalls.length, 1,
+    `(3) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
 
-  const prompt = failureCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"empty_diff"', '~/.claude/journal/pending', 'devflow-', '"repo":"acme/skills"']) {
-    assert.ok(prompt.includes(key),
-      `(3) prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${prompt.slice(0, 500)}`);
+  const savePrompt = saveCalls[0]?.prompt ?? '';
+  for (const key of ['"outcome":"failure"', '"error_category":"empty_diff"', '"repo":"acme/skills"']) {
+    assert.ok(savePrompt.includes(key),
+      `(3) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 500)}`);
   }
-  assert.ok(!prompt.includes('"pr_number"'),
-    `(3) failure 経路は PR 作成前のため prompt に '"pr_number"' を含むべきではない。prompt:\n${prompt.slice(0, 500)}`);
+  assert.ok(!savePrompt.includes('"pr_number"'),
+    `(3) failure 経路は PR 作成前のため journal-save prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
+
+  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-runner-haiku');
+  assert.equal(logCalls.length, 1,
+    `(3) journal-log-failure は 1 回のはずだが ${logCalls.length} 回だった`);
+  const logPrompt = logCalls[0]?.prompt ?? '';
+  assert.ok(!logPrompt.includes('"outcome":"failure"'),
+    `(3) journal-log-failure prompt に結論値リテラル '"outcome":"failure"' が含まれるべきではないが含まれていた。prompt:\n${logPrompt.slice(0, 500)}`);
 });
 
 // ============================================================
 // ケース (4): 完走経路（全 stub 正常）
-// - label='journal-log-failure' が 0 回
-// - label='journal-log'（success）が 1 回・prompt に '"outcome":"success"' を含む
+// - journal-log-failure が 0 回
+// - journal-save（success）が 1 回・prompt に '"outcome":"success"' を含む
+// - result.journal_log_status === 'logged'（journal-log が logged:true を返すため）
 // ============================================================
-test('[failure-telemetry] (4) 完走経路: journal-log-failure が 0 回・journal-log(success) が 1 回・outcome:success を含む', async () => {
+test('[failure-telemetry] (4) 完走経路: journal-log-failure が 0 回・journal-save(success) が 1 回・outcome:success を含み journal_log_status が logged', async () => {
   const analyzeReq = {
     summary: 's',
     acceptance_criteria: ['ac1', 'ac2', 'ac3'],
@@ -266,16 +300,20 @@ test('[failure-telemetry] (4) 完走経路: journal-log-failure が 0 回・jour
   assert.equal(failureCalls.length, 0,
     `(4) 完走経路では journal-log-failure は 0 回のはずだが ${failureCalls.length} 回だった`);
 
+  // issue #494: 実際の telemetry payload（outcome 等の結論値）は journal-save (stage1) の prompt
+  // に載る。journal-log (stage2) はファイルパスのみを扱い payload literal を含まない。
   const successCalls = calls.filter(
-    (c) => c.label === 'journal-log' && c.agentType === 'dev-runner-haiku',
+    (c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku',
   );
   assert.equal(successCalls.length, 1,
-    `(4) journal-log(success) は 1 回のはずだが ${successCalls.length} 回だった`);
+    `(4) journal-save(success) は 1 回のはずだが ${successCalls.length} 回だった`);
 
   const successPrompt = successCalls[0]?.prompt ?? '';
   assert.ok(successPrompt.includes('"outcome":"success"'),
-    `(4) journal-log(success) prompt に '"outcome":"success"' が含まれるべきだが:\n${successPrompt.slice(0, 500)}`);
+    `(4) journal-save(success) prompt に '"outcome":"success"' が含まれるべきだが:\n${successPrompt.slice(0, 500)}`);
 
   assert.ok(result?.pr_url != null,
     `(4) 完走経路では result.pr_url が存在するべきだが ${JSON.stringify(result?.pr_url)} だった`);
+  assert.equal(result?.journal_log_status, 'logged',
+    `(4) journal-log が logged:true を返す完走経路では result.journal_log_status は 'logged' のはずだが ${JSON.stringify(result?.journal_log_status)} だった`);
 });

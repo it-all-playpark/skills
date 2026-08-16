@@ -122,6 +122,8 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'gh-pr-view') return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
@@ -142,13 +144,11 @@ function makeSandbox({ repo = null, req = STANDARD_REQ, overrides = {}, fixesApp
   return { ctx, calls };
 }
 
-// journal-log prompt から telemetry payload を JSON.parse して返す（journal-handoff.mjs の
-// heredoc delimiter を経由。見つからなければ null）。
+// journal-save (stage1, issue #494) prompt から telemetry payload を JSON.parse して返す
+// （journal-handoff.mjs の Write-tool verbatim delimiter <<<JOURNAL_HANDOFF_BODY_BEGIN/END>>> から抽出。
+// journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  // issue #433: journal-handoff.mjs の journal-log prompt は buildJournalHandoffInstr の
-  // Write-tool verbatim delimiter（<<<JOURNAL_HANDOFF_BODY_BEGIN/END>>>）で payload を囲む
-  // （旧 heredoc `TELEMETRY_EOF` 形式は撤去済み）。
   const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
   if (!m) return null;
   try {
@@ -181,7 +181,7 @@ test('[surfaceproof] (a) repo が allowlist 不一致 → SURFACEPROOF_MODE=off 
 
   assert.ok(!calls.some((c) => c.label.startsWith('surfaceproof-shadow')), "(a) label が 'surfaceproof-shadow' 始まりの呼び出しが存在してはならない");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "(a) 'journal-log' の呼び出しが存在すること");
   assert.ok(!journalCall.prompt.includes('trust_surfaceproof_shadow'), "(a) journal-log prompt に 'trust_surfaceproof_shadow' が含まれてはならない");
 });
@@ -194,7 +194,7 @@ test('[surfaceproof] (a) repo が allowlist 不一致 → SURFACEPROOF_MODE=off 
 test('[surfaceproof] (b) repo=allowlist + probe ok → surfaceproof-shadow 1回 + telemetry 反映 + merge_tier 不変', async () => {
   const { ctx: ctxA, calls: callsA } = makeSandbox({ repo: null });
   await runDevFlowCapture(devFlowSrc, ctxA);
-  const journalA = callsA.find((c) => c.label === 'journal-log');
+  const journalA = callsA.find((c) => c.label === 'journal-save');
   const payloadA = extractTelemetryPayload(journalA?.prompt);
 
   const { ctx, calls } = makeSandbox({
@@ -209,7 +209,7 @@ test('[surfaceproof] (b) repo=allowlist + probe ok → surfaceproof-shadow 1回 
   const shadowCalls = calls.filter((c) => c.label === 'surfaceproof-shadow#410');
   assert.equal(shadowCalls.length, 1, `(b) 'surfaceproof-shadow#410' はちょうど 1 回呼ばれるはずだが ${shadowCalls.length} 回だった`);
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.ok(payload, '(b) journal-log prompt から telemetry payload を JSON.parse できるはず');
   const shadow = payload?.telemetry?.trust_surfaceproof_shadow;
@@ -260,7 +260,7 @@ test('[surfaceproof] (c) probe が null → run 完走 + error null + inconclusi
   assert.equal(error, null, `(c) probe が null でも run 全体が abort してはならないが error が発生: ${error?.message}`);
   assert.ok(calls.some((c) => c.label === 'surfaceproof-shadow#410'), "(c) 'surfaceproof-shadow#410' は呼ばれているはず（応答が null なだけ）");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   const shadow = payload?.telemetry?.trust_surfaceproof_shadow;
   assert.equal(shadow?.mode, 'shadow');

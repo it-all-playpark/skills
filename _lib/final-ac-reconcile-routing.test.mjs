@@ -125,6 +125,8 @@ function createResponder(overrides = {}) {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
@@ -175,9 +177,10 @@ test('[final-ac-reconcile] (r2) fixes=1 + test#final green → final-ac-reconcil
   assert.equal(result?.final_ac_reconcile, 'reverified', `(r2) final_ac_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_ac_reconcile)}`);
   assert.equal(result?.merge_tier, 'REVIEW', `(r2) merge_tier は REVIEW のはずだが ${JSON.stringify(result?.merge_tier)}`);
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
-  assert.ok(journalCall, "(r2) 'journal-log' の呼び出しが存在すること");
-  assert.ok(journalCall.prompt.includes('final_ac_reconcile'), "(r2) journal-log prompt に 'final_ac_reconcile' が含まれること");
+  // issue #494: 実際の telemetry payload は journal-save (stage1) の prompt に載る
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall, "(r2) 'journal-save' の呼び出しが存在すること");
+  assert.ok(journalCall.prompt.includes('final_ac_reconcile'), "(r2) journal-save prompt に 'final_ac_reconcile' が含まれること");
 });
 
 // ============================================================

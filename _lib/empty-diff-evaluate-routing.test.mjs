@@ -52,6 +52,10 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
+    // 返して journal-log (stage2) へ進めさせる。
+    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    if (label === 'journal-log') return { logged: true, summary: 'ok' };
     return null;
   };
 
@@ -341,9 +345,10 @@ test('[empty-diff] (N) journal-log の telemetry handoff payload に eval_stalen
   const r1 = await runDevFlowInSandbox(src, sbox1.ctx);
   if (r1.error && (r1.error.name === 'ReferenceError' || r1.error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${r1.error.name}: ${r1.error.message}`);
   if (r1.error) assert.fail(`(N-hash_mismatch) 想定外エラー: ${r1.error.message}`);
-  const journalCall1 = sbox1.calls.find((c) => c.label === 'journal-log');
-  assert.ok(journalCall1 !== undefined, '(N) journal-log の agent 呼び出しが存在すべき');
-  assert.ok(journalCall1?.prompt?.includes('"eval_staleness":"hash_mismatch"'), `(N) journal-log prompt に "eval_staleness":"hash_mismatch" を含むべきだが: ${journalCall1?.prompt?.slice(0, 500)}`);
+  // issue #494: 実際の telemetry payload は journal-save (stage1) の prompt に載る
+  const journalCall1 = sbox1.calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall1 !== undefined, '(N) journal-save の agent 呼び出しが存在すべき');
+  assert.ok(journalCall1?.prompt?.includes('"eval_staleness":"hash_mismatch"'), `(N) journal-save prompt に "eval_staleness":"hash_mismatch" を含むべきだが: ${journalCall1?.prompt?.slice(0, 500)}`);
 
   // none ケース
   const sbox2 = makeCountingSandbox(STANDARD_REQ, {
@@ -355,7 +360,7 @@ test('[empty-diff] (N) journal-log の telemetry handoff payload に eval_stalen
   const r2 = await runDevFlowInSandbox(src, sbox2.ctx);
   if (r2.error && (r2.error.name === 'ReferenceError' || r2.error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${r2.error.name}: ${r2.error.message}`);
   if (r2.error) assert.fail(`(N-none) 想定外エラー: ${r2.error.message}`);
-  const journalCall2 = sbox2.calls.find((c) => c.label === 'journal-log');
-  assert.ok(journalCall2 !== undefined, '(N) journal-log の agent 呼び出しが存在すべき（none ケース）');
-  assert.ok(journalCall2?.prompt?.includes('"eval_staleness":"none"'), `(N) journal-log prompt に "eval_staleness":"none" を含むべきだが: ${journalCall2?.prompt?.slice(0, 500)}`);
+  const journalCall2 = sbox2.calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall2 !== undefined, '(N) journal-save の agent 呼び出しが存在すべき（none ケース）');
+  assert.ok(journalCall2?.prompt?.includes('"eval_staleness":"none"'), `(N) journal-save prompt に "eval_staleness":"none" を含むべきだが: ${journalCall2?.prompt?.slice(0, 500)}`);
 });

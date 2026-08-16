@@ -99,17 +99,11 @@ function evaluatorResponseFor(req) {
   };
 }
 
-// journal-log prompt から telemetry payload を JSON.parse して返す（journal-handoff.mjs の
-// heredoc delimiter を経由。見つからなければ null）。
-// journal-handoff.mjs (issue #412 F3: atomic mktemp/mv write) の heredoc は
-// `<<'TELEMETRY_EOF' && __jh_id=... && mv -f ...` のように delimiter 直後にシェルコマンドが
-// 続くため、payload（JSON.stringify、常に単一行・`{`始まり）を挟む 2 個の改行のうち前者直後
-// から `\nTELEMETRY_EOF` 直前までを取り出す。
+// journal-save (stage1, issue #494) prompt から telemetry payload を JSON.parse して返す
+// （journal-handoff.mjs の Write-tool verbatim delimiter <<<JOURNAL_HANDOFF_BODY_BEGIN/END>>> から抽出。
+// journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  // issue #433: journal-handoff.mjs の journal-log prompt は buildJournalHandoffInstr の
-  // Write-tool verbatim delimiter（<<<JOURNAL_HANDOFF_BODY_BEGIN/END>>>）で payload を囲む
-  // （旧 heredoc `TELEMETRY_EOF` 形式は撤去済み）。
   const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
   if (!m) return null;
   try {
@@ -151,6 +145,8 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'gh-pr-view') return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
@@ -222,7 +218,7 @@ test('[effectdelta] (a) repo が allowlist 不一致 → EFFECTDELTA_MODE=off �
 
   assert.ok(!calls.some((c) => c.label.startsWith('trust-effectdelta')), "(a) label が 'trust-effectdelta' 始まりの呼び出しが存在してはならない");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "(a) 'journal-log' の呼び出しが存在すること");
   const payload = extractTelemetryPayload(journalCall.prompt);
   const receipts = payload?.telemetry?.trust_receipts ?? [];
@@ -256,7 +252,7 @@ test("[effectdelta] (b) repo=allowlist + pr-observe ok → 'trust-effectdelta-pr
   assert.ok(idxPrCreate >= 0, "(b) PR 作成呼び出し（label 'pr#...'）が存在するはず");
   assert.ok(idxPrObserve > idxPrCreate, "(b) 'trust-effectdelta-pr' は PR 作成呼び出しより後であるべき（作成後の read-only 観測）");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.ok(payload, '(b) journal-log prompt から telemetry payload を JSON.parse できるはず');
   const receipts = payload?.telemetry?.trust_receipts ?? [];
@@ -337,7 +333,7 @@ test("[effectdelta] (c) trust-effectdelta-pr が null → run 完走 + error nul
   assert.ok(result !== null, '(c) workflow は return object を返すべきだが null だった');
   assert.ok(calls.some((c) => c.label === 'trust-effectdelta-pr'), "(c) 'trust-effectdelta-pr' は呼ばれているはず（応答が null なだけ）");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   const receipts = payload?.telemetry?.trust_receipts ?? [];
   assert.ok(!receipts.some((r) => r.stage === 'pr'), "(c) receipt が無いので trust_receipts に stage:'pr' entry が含まれてはならない");
@@ -399,7 +395,7 @@ test("[effectdelta] (d) shadow + comment-ensure ok → trust_receipts に stage:
   assertNoCrash(error, 'd');
   assert.ok(result !== null, '(d) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.ok(payload, '(d) journal-log prompt から telemetry payload を JSON.parse できるはず');
   const receipts = payload?.telemetry?.trust_receipts ?? [];
@@ -523,7 +519,7 @@ test("[effectdelta-missing-reason] (1) pr-observe ok:false（gh 系 error）→ 
   assert.equal(error, null, `(1) pr-observe が ok:false でも run 全体が abort してはならないが error が発生: ${error?.message}`);
   assert.ok(result !== null, '(1) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "(1) 'journal-log' の呼び出しが存在すること");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, '(1) journal-log prompt から telemetry payload を JSON.parse できるはず');
@@ -555,7 +551,7 @@ test("[effectdelta-missing-reason] (2) pr-observe が null → reason='agent_nul
   assertNoCrash(error, 'missing-reason-2');
   assert.equal(error, null, `(2) error が発生してはならない: ${error?.message}`);
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.equal(
     payload?.telemetry?.trust_effectdelta_pr_missing_reason,
@@ -577,7 +573,7 @@ test("[effectdelta-missing-reason] (3) pr-observe が throw → reason='agent_th
   assert.equal(error, null, `(3) pr-observe が throw しても run 全体が abort してはならないが error が発生: ${error?.message}`);
   assert.ok(result !== null, '(3) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.equal(
     payload?.telemetry?.trust_effectdelta_pr_missing_reason,
@@ -598,7 +594,7 @@ test("[effectdelta-missing-reason] (4) pr-observe ok:true 完全 receipt → tru
   assertNoCrash(error, 'missing-reason-4');
   assert.ok(result !== null, '(4) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.equal(
     Object.prototype.hasOwnProperty.call(payload?.telemetry ?? {}, 'trust_effectdelta_pr_missing_reason'),
@@ -620,7 +616,7 @@ test("[effectdelta-missing-reason] (5) off 経路 → trust_effectdelta_pr_missi
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'missing-reason-5');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.equal(
     Object.prototype.hasOwnProperty.call(payload?.telemetry ?? {}, 'trust_effectdelta_pr_missing_reason'),

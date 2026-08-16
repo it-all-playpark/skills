@@ -24,6 +24,7 @@ test('dev-improve.js: 必要な canonical が inline されている', () => {
   assert.deepEqual(sources, [
     '_lib/improve-hypothesis.mjs',
     '_lib/improve-rank.mjs',
+    '_lib/journal-handoff.mjs',
     '_lib/quality-model.mjs',
     '_lib/workflow-post-helpers.mjs',
   ]);
@@ -36,8 +37,12 @@ test('dev-improve.js: args.today を検証し Date 系 API を使わない', () 
   assert.doesNotMatch(src, /\bMath\.random\b/);
 });
 
-test('dev-improve.js: journal telemetry を --telemetry-json で記録する', () => {
-  assert.match(src, /journal\.sh log dev-improve success --telemetry-json/);
+test('dev-improve.js: journal telemetry を --telemetry-json で記録する（結論値リテラルは prompt から排除）', () => {
+  assert.doesNotMatch(src, /log dev-improve success/);
+  assert.match(src, /jq -r \.outcome/);
+  assert.match(src, /jq -c \.telemetry/);
+  assert.match(src, /journal_log_status/);
+  assert.match(src, /validateJournalSavedPath/);
 });
 
 test('dev-improve.js: 4 miner ソースが揃っている', () => {

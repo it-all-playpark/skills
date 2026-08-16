@@ -47,7 +47,11 @@ function makeSandbox({ ciResponses }) {
       return { posted: true, method: 'gh', url: 'http://x' };
     }
 
-    // journal-log
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') {
+      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    }
+    // journal-log (stage2)
     if (label === 'journal-log') {
       return { logged: true, summary: 'ok' };
     }
@@ -55,6 +59,11 @@ function makeSandbox({ ciResponses }) {
     // commit-ensure（issue #437: fix 適用直後の commit 保証。未 stub だと fail-safe で fix_failed になる）
     if (label.startsWith('commit-ensure#')) {
       return { dirty: false, committed: false, pushed: false };
+    }
+
+    // pr-meta: cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
+    if (label === 'pr-meta') {
+      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
     }
 
     return null;
@@ -173,9 +182,9 @@ test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_se
   assert.equal(result?.ci_wait_seconds, 40, `result.ci_wait_seconds は累積 40 であるべきだが ${result?.ci_wait_seconds} だった`);
   assert.equal(result?.ci_poll_attempts, 5, `result.ci_poll_attempts は累積 5 であるべきだが ${result?.ci_poll_attempts} だった`);
 
-  // journal-log の telemetry handoff prompt に累積値が反映される
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-log');
-  assert.ok(journalCall != null, 'label===journal-log の agent 呼び出しが存在するべき');
+  // journal-save (stage1, issue #494) の telemetry handoff prompt に累積値が反映される
+  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
+  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
   assert.ok(
     journalCall.prompt.includes('"ci_wait_seconds":40'),
     `journal-log prompt に "ci_wait_seconds":40 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,

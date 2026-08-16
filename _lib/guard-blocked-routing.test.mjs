@@ -80,6 +80,8 @@ function makeSandbox({ implementerFn, plannerFn } = {}) {
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save' && agentType === 'dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log' && agentType === 'dev-runner-haiku') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return null;
     if (agentType === 'implementer') return implementerFn(label, opts);
@@ -169,8 +171,9 @@ test('[guard-blocked-routing] guard_blocked task: replan 0回・blockSeen非登�
   }
 
   // (c) journal handoff payload に error_category:guard_blocked と guard_id が到達する
-  const journalCalls = calls.filter((c) => c.label === 'journal-log' && c.agentType === 'dev-runner-haiku');
-  assert.equal(journalCalls.length, 1, `journal-log(success) は 1 回のはずだが ${journalCalls.length} 回だった`);
+  // issue #494: 実際の telemetry payload は journal-save (stage1) の prompt に載る
+  const journalCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  assert.equal(journalCalls.length, 1, `journal-save(success) は 1 回のはずだが ${journalCalls.length} 回だった`);
   const journalPrompt = journalCalls[0].prompt;
   assert.ok(journalPrompt.includes('"error_category":"guard_blocked"'),
     `journal payload に "error_category":"guard_blocked" が含まれるべきだが:\n${journalPrompt.slice(0, 800)}`);

@@ -242,15 +242,15 @@ function buildJournalHandoffPayload({
 
 // buildJournalFinalizeCommand({ prefix, id }): returns a single-line bash command that
 // validates a payload file (already written verbatim to disk elsewhere, e.g. by the Write
-// tool per buildJournalHandoffInstr) via `jq -e` BEFORE ever touching pending/, then performs
+// tool per buildJournalSaveInstr) via `jq -e` BEFORE ever touching pending/, then performs
 // the same stable-effect-ID naming + mktemp/mv atomic write as the previous heredoc-based
 // command: partial JSON can never be visible under a *.json name (tmp is dot-prefixed and
 // non-.json until the atomic `mv -f`, and lives in the same pending/ filesystem so the mv is
 // atomic), and re-running with an identical payload reproduces the same final filename
 // (idempotent overwrite, no duplicate entries). `<PAYLOAD_FILE>` is a literal placeholder —
-// the caller (the agent executing the instruction from buildJournalHandoffInstr) must
-// substitute it with a real file path before running the command. A jq parse failure
-// (malformed JSON) short-circuits the `&&` chain so nothing is ever written under pending/.
+// the caller (buildJournalLogInstr) must substitute it with a real, validated file path
+// before running the command. A jq parse failure (malformed JSON) short-circuits the `&&`
+// chain so nothing is ever written under pending/.
 function buildJournalFinalizeCommand({ prefix, id }) {
   const safePrefix = String(prefix ?? '').trim();
   const safeId = String(id ?? '').trim();
@@ -264,26 +264,136 @@ function buildJournalFinalizeCommand({ prefix, id }) {
   return `jq -e . "<PAYLOAD_FILE>" >/dev/null && mkdir -p ${JOURNAL_PENDING_DIR} && __jh_tmp=$(mktemp "${JOURNAL_PENDING_DIR}/.${safePrefix}-${safeId}.XXXXXX") && cp "<PAYLOAD_FILE>" "$__jh_tmp" && __jh_id=$(shasum -a 256 "$__jh_tmp" | cut -c1-16) && mv -f "$__jh_tmp" "${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-\${__jh_id}.json"`;
 }
 
-// buildJournalHandoffInstr({ prefix, id, payload }): agent 向け instruction 文字列を生成する。
-// _lib/workflow-post-helpers.mjs の bodySaveInstr と同じ Write-tool verbatim パターン — payload
-// を shell/heredoc へ一切通さず、agent に **Write tool** の content 引数として <PAYLOAD_FILE> へ
-// そのまま書かせることで、heredoc + プロンプト + tool-call JSON という多重エスケープの発生源
-// そのものを除去する。書き出し後、buildJournalFinalizeCommand の結果（jq -e 検証込み）を
-// <PAYLOAD_FILE> を実パスに置換した上でそのまま実行させ、失敗（jq parse error 含む）しても
-// throw せず logged:false を返させる（既存の telemetry fail-open ポリシーを維持）。
-function buildJournalHandoffInstr({ prefix, id, payload }) {
-  if (payload == null) throw new Error('journal-handoff: payload is required');
-  const finalizeCmd = buildJournalFinalizeCommand({ prefix, id });
+const JOURNAL_LOG_STATUSES = ['logged', 'save_failed', 'log_failed'];
 
-  return `## Journal handoff の書き出し\n`
-    + `1. まず Bash で \`mktemp "\${TMPDIR:-/tmp}/journal-handoff-XXXXXX.json"\` を実行し、\n`
-    + `出力されたパスを <PAYLOAD_FILE> とする。\n`
-    + `2. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
-    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
-    + `渡さず、必ず Write tool の content 引数として渡すこと。エスケープ・改変・pretty-print も\n`
-    + `禁止する。\n`
-    + `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`
-    + `3. <PAYLOAD_FILE> を実パスに置換した上で、次のコマンドをそのまま実行せよ: \`${finalizeCmd}\`\n`
+// classifyJournalLogStatus({ saved, logged }): reduces the 2-stage handoff outcome to the
+// 3-value closed enum reported on the caller's return object. saved!==true means stage1
+// (journal-save) never produced a validated payload file, so stage2 could not even be
+// attempted. logged===true means stage2 (journal-log) ran the finalize command successfully.
+function classifyJournalLogStatus({ saved, logged }) {
+  if (saved !== true) return 'save_failed';
+  if (logged === true) return 'logged';
+  return 'log_failed';
+}
+
+// stage1 が作る payload ファイルの basename 契約。validateJournalSavedPath の basename 検証と
+// 同一パターンで、fileName モードの呼び出し側が渡す名前もこれに従う。
+const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
+
+// buildJournalSaveInstr({ payload, savePath | saveDir }): stage1 instruction string. Persists the
+// journal handoff payload verbatim to a file so that stage2 (buildJournalLogInstr) can be driven
+// by a path alone — the payload body has no reason to be re-stated in the prompt that writes
+// under pending/, and keeping it out means a long telemetry blob is carried as data on disk
+// rather than as prompt text. Either way the agent must write `payload` via the **Write tool**
+// content argument only, never through shell/echo/printf/heredoc, and never re-escape or
+// pretty-print it (same pattern as _lib/workflow-post-helpers.mjs bodySaveInstr).
+//
+// 2 つのモードがあるのは、保存先が JS 側で確定しているかどうかで実行可能な手段が変わるため:
+//
+// - `savePath`（dev-flow / pr-iterate — worktree パスが JS 側で確定している）: 保存先の絶対パスが
+//   prompt 構築時点で決まるので **shell を一切使わない**。これは必須の性質で、repo 配下を Bash から
+//   書けない環境（skills repo の自己改変ガードは worktree 配下も含めて deny する）では
+//   `mktemp "<worktree>/…"` が EPERM になり、agent が別ディレクトリへ退避して保存先固定の検証に
+//   落ちる。Write tool は同じ場所へ書けるので（isolation probe が同経路）、パスを固定して渡す。
+//   呼び出し側は agent 申告の path を使わず、この `savePath` をそのまま stage2 へ渡す（確定値が
+//   あるのに申告値を信用する理由がない）。agent が別の場所へ書いていた場合は stage2 の jq 検証が
+//   落ちて log_failed になり、欠落は観測可能なまま。
+// - `saveDir` + `fileName`（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
+//   shell 展開に依存し JS 側で解決できないため、shell に絶対パスを組み立てさせてから Write する。
+//   ファイル名は固定で、mktemp は使わない — テンプレート `payload-XXXXXX.json` は X 列が suffix の
+//   前にあるため BSD mktemp では展開されず、リテラル名のファイルを exit 0 で作る（一意性が silent に
+//   失われる）。呼び出し側は申告パスを requiredDirSuffix で pin する（絶対パスが JS 側で確定しない
+//   ため完全一致はできない）。
+function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
+  if (payload == null) throw new Error('journal-handoff: payload is required');
+  if (savePath != null && saveDir != null) {
+    throw new Error('journal-handoff: savePath と saveDir は同時に指定できません');
+  }
+
+  const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
+  const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
+    + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
+  // issue #482 の isolationProbePrompt と同じ冪等化パターン: Write tool は同一セッション内で
+  // 未 Read の既存ファイルを上書きできない。savePath / saveDir とも保存先ファイル名は run を
+  // またいで固定（worktree 再利用・TMPDIR 永続時は前 run の payload が残り得る）なので、
+  // 上書き前に Read を試みる一手順を必須にする。Read の成否は saved の判定に混ぜない
+  // （Read 失敗＝新規ファイルの可能性が高いだけで、それ自体は保存失敗ではない）。
+  const idempotentReadRule = (target) => `${target} が既に存在する場合は、先に **Read tool** で同ファイルを`
+    + `読んでから **Write tool** で上書きせよ（Write tool は既存ファイルを未 Read のまま上書きできない）。`
+    + `Read が失敗しても Write は必ず試み、Read の成否を saved の判定に混ぜないこと。\n`;
+
+  if (savePath != null) {
+    // stage2 の bash コマンドへそのまま splice されるので、申告値に対するのと同じ決定論検証を
+    // 構築時点でも通す（絶対パス / 限定 charset / '..' 不可 / basename 契約）。
+    if (!validateJournalSavedPath(savePath)) {
+      throw new Error(`journal-handoff: invalid savePath: ${JSON.stringify(savePath)}`);
+    }
+    return `## Journal handoff payload の保存\n`
+      + `1. ${idempotentReadRule(`\`${savePath}\``)}`
+      + `2. **Write tool** を使い、下記 delimiter 内の JSON を **一字一句そのまま**\n`
+      + `\`${savePath}\` へ書き出せ。${verbatimRule}`
+      + `Bash は使うな。保存先は上記のパスで固定されており、一時ファイル名を作る必要はない。\n`
+      + bodyBlock
+      + `3. 書き出しに成功したら {saved:true, path:"${savePath}"} を返せ。\n`
+      + `失敗した場合は throw せず {saved:false} を返せ。\n`;
+  }
+
+  if (!saveDir) throw new Error('journal-handoff: savePath か saveDir のどちらかが必要です');
+  if (!JOURNAL_PAYLOAD_BASENAME_RE.test(String(fileName ?? ''))) {
+    throw new Error(`journal-handoff: invalid fileName: ${JSON.stringify(fileName ?? null)}`);
+  }
+  const resolveCmd = `mkdir -p "${saveDir}" && printf '%s\\n' "${saveDir}/${fileName}"`;
+
+  return `## Journal handoff payload の保存\n`
+    + `1. まず Bash で \`${resolveCmd}\` を実行し、\n`
+    + `出力された絶対パスを <PAYLOAD_FILE> とする。\n`
+    + `2. ${idempotentReadRule('<PAYLOAD_FILE>')}`
+    + `3. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
+    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。${verbatimRule}`
+    + bodyBlock
+    + `4. 書き出しに成功したら {saved:true, path:<PAYLOAD_FILE の絶対パス>} を返せ。\n`
+    + `失敗した場合は throw せず {saved:false} を返せ。\n`;
+}
+
+// validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard for any
+// path that gets spliced into the stage2 bash command (buildJournalLogInstr) — both the
+// JS-constructed `savePath` (checked at build time) and the path an agent claims to have saved
+// to in `saveDir` mode. Rejects anything that is not a plain absolute path built from a
+// restricted charset, contains '..', or whose basename violates the payload basename contract
+// (JOURNAL_PAYLOAD_BASENAME_RE). requiredDirSuffix optionally pins the containing directory
+// (e.g. '/.devflow-tmp').
+function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
+  if (typeof path !== 'string' || path === '') return false;
+  if (!path.startsWith('/')) return false;
+  if (!/^[A-Za-z0-9._\/-]+$/.test(path)) return false;
+  if (path.includes('..')) return false;
+
+  const idx = path.lastIndexOf('/');
+  const dirPart = idx === 0 ? '/' : path.slice(0, idx);
+  const basePart = path.slice(idx + 1);
+  if (!JOURNAL_PAYLOAD_BASENAME_RE.test(basePart)) return false;
+  if (requiredDirSuffix && !dirPart.endsWith(requiredDirSuffix)) return false;
+
+  return true;
+}
+
+// buildJournalLogInstr({ prefix, id, payloadPath }): stage2 instruction string. Takes only a
+// file path — never the payload body — so conclusion values structurally cannot appear in this
+// prompt. Splices payloadPath into buildJournalFinalizeCommand's `<PAYLOAD_FILE>` placeholder
+// and instructs the agent to run it as-is, failing open (logged:false, no throw) on any error
+// including jq parse failures. payloadPath is re-validated here rather than trusting the caller
+// to have done it: the value is spliced into a bash command, so the guard must not depend on
+// call-site discipline that a future caller can forget.
+function buildJournalLogInstr({ prefix, id, payloadPath }) {
+  if (!validateJournalSavedPath(payloadPath)) {
+    throw new Error(`journal-handoff: invalid payloadPath: ${JSON.stringify(payloadPath ?? null)}`);
+  }
+  const finalizeCmd = buildJournalFinalizeCommand({ prefix, id })
+    .split('<PAYLOAD_FILE>')
+    .join(payloadPath);
+
+  return `## Journal pending への書き出し\n`
+    + `次のコマンドをそのまま実行せよ: \`${finalizeCmd}\`\n`
     + `jq の parse error を含め失敗しても throw せず logged:false を返すこと。\n`;
 }
 
@@ -2772,10 +2882,16 @@ const DESIGN_REPLAN_MAX = 2  // design 差し戻し(replan+reimpl)の決定論�
 const AMBIGUITY_MAX = 2  // ambiguities がこの件数を超えたら needs_clarification で人間へ
 if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue）')
 
-// ---- failure telemetry helper（issue #225）----
-// 4 つの経路（needs_clarification×2・empty-diff throw・cross-repo graceful 終了）で呼ばれる。
+// ---- failure telemetry helper（issue #225, 2-stage handoff issue #494 F3）----
+// 4 つの経路（needs_clarification×3・cross-repo graceful 終了。empty-diff throw 直前でも呼ぶが
+// throw のため呼び出し元へ status を戻さない）で呼ばれる。成功経路（Merge tier）と同じ
+// journal-save（stage1: 結論値を含む payload を worktree 内 gitignored 領域へ verbatim 永続化）→
+// journal-log（stage2: 検証済みファイルパスのみを finalize command へ渡す）の 2 段構成を踏襲する。
+// payload 本文はディスク上のデータとして運び、pending/ へ書き出す prompt 自体はパスのみを持つ。
+// 戻り値は journal_log_status の 3 値 closed enum
+// （logged/save_failed/log_failed）。fail-open は維持（gate・merge tier には無影響。呼び出し元は
+// null/例外容認で先へ進む）。
 // outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す（issue #432）。
-// need() で包まず null 容認（telemetry 欠損 > workflow 中断。成功経路行 2040-2042 と同じ方針）。
 async function writeFailureTelemetry({ error_category, error_msg, telemetry, phase, outcome = 'failure' }) {
   const payload = buildJournalHandoffPayload({
     skill: 'dev-flow',
@@ -2788,18 +2904,48 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     error_msg,
     telemetry,
   })
-  const journalInstr = buildJournalHandoffInstr({ prefix: 'devflow', id: ISSUE, payload })
-  const res = await trackedAgent(
-    `## Objective\ndev-flow 失敗の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
-    + `## Instructions\n`
-    + journalInstr
-    + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-    + `\n## Tools\n使用可: Bash, Write のみ\n`
-    + `\n## Boundary\n<PAYLOAD_FILE>（一時ファイル）と ~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
-    + `\n## Token cap\n150 語以内で完結すること。`,
-    { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log-failure', phase },
-  )
-  if (!res?.logged) log('⚠️ journal-log(failure) の記録に失敗 — workflow は継続')
+  let journalLogStatus = 'save_failed'
+  try {
+    const journalPayloadPath = `${WT}/.devflow-tmp/payload-devflow-${ISSUE}-failure.json`
+    const journalSaveRes = await trackedAgent(
+      `## Objective\ndev-flow 失敗の telemetry handoff payload を一時ファイルへ保存する。\n\n`
+      + `## Instructions\n`
+      + buildJournalSaveInstr({ payload, savePath: journalPayloadPath })
+      + `\n## Output format\n{ "saved": boolean, "path": string }\n`
+      + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
+      + `冪等上書きに必要）\n`
+      + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Token cap\n120 語以内。`,
+      { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase },
+    )
+    // 保存先は JS 側で確定しているので agent 申告の path は使わない（Merge tier 側と同じ理由）。
+    const journalSavedPath = journalSaveRes?.saved === true ? journalPayloadPath : null
+
+    if (journalSavedPath) {
+      // stage1 は成功済み。stage2 が throw（schema 不一致・proxy 実行失敗等）すると catch へ
+      // 抜けて代入が走らないため、呼び出し前に log_failed へ倒しておく。こうしないと stage2 の
+      // 失敗が save_failed として報告され、観測した status が実際の失敗段と食い違う。
+      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
+      const journalPost = await trackedAgent(
+        `## Objective\ndev-flow 失敗の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
+        + `## Instructions\n`
+        + buildJournalLogInstr({ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath })
+        + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
+        + `\n## Tools\n使用可: Bash のみ\n`
+        + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
+        + `\n## Token cap\n100 語以内で完結すること。`,
+        { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log-failure', phase },
+      )
+      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: journalPost?.logged === true })
+      if (!journalPost?.logged) log('⚠️ journal-log(failure) の記録に失敗 — workflow は継続')
+    } else {
+      journalLogStatus = classifyJournalLogStatus({ saved: false })
+      log('⚠️ journal-save(failure) 失敗（fail-open）— telemetry 記録漏れの可能性')
+    }
+  } catch (e) {
+    log(`⚠️ journal handoff(failure) 失敗（fail-open）: ${e?.message ?? e}`)
+  }
+  return journalLogStatus
 }
 
 
@@ -3276,6 +3422,16 @@ const EFFECTDELTA_OBS = {
     observation: { type: 'object' },
     receipt: { type: 'object' },
     envelope: { type: 'object' },
+  },
+}
+
+// journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う（issue #494）。
+const JOURNAL_SAVE_RESULT = {
+  type: 'object',
+  required: ['saved'],
+  properties: {
+    saved: { type: 'boolean' },
+    path: { type: 'string' },
   },
 }
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -3891,15 +4047,15 @@ if (!req) {
   const prov = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
   if (prov.ok !== true) {
     log(`⚠️ analyze: 取得検証不合格（${prov.reason}）— REQ を採用せず needs_clarification で中断（issue #451）`)
-    await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 取得検証不合格（${prov.reason}）で中断（source=analyze_provenance）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
-    return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（${prov.reason}）: ${prov.detail}`], note: 'analyze 結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
+    const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 取得検証不合格（${prov.reason}）で中断（source=analyze_provenance）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+    return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（${prov.reason}）: ${prov.detail}`], journal_log_status: journalLogStatus, note: 'analyze 結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
   }
 }
 
 const ambiguities = req.ambiguities ?? []
 if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUITY_MAX) {
   log(`⚠️ analyze: 要件が曖昧（AC 空=${(req.acceptance_criteria ?? []).length === 0} / ambiguities=${ambiguities.length} > AMBIGUITY_MAX=${AMBIGUITY_MAX}）— needs_clarification で中断`)
-  await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: 'analyze: 要件が曖昧（AC 空 or ambiguities 超過）で中断（source=analyze）', telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: 'analyze: 要件が曖昧（AC 空 or ambiguities 超過）で中断（source=analyze）', telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
   return {
     status: 'needs_clarification',
     source: 'analyze',
@@ -3909,6 +4065,7 @@ if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUI
     missing_context: (req.acceptance_criteria ?? []).length === 0
       ? (ambiguities.length ? ambiguities : ['acceptance_criteria が空 — issue から受入条件を抽出できなかった'])
       : ambiguities,
+    journal_log_status: journalLogStatus,
     note: '要件が曖昧なため中断。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue を更新して /dev-flow を再起動すること。worktree は保持済みで再利用される',
   }
 }
@@ -4193,7 +4350,7 @@ async function execImplementPhase(state) {
     const stillNeeds = (implResults).filter((r) => r && r.status === 'NEEDS_CONTEXT')
     if (stillNeeds.length) {
       log(`implement: ${stillNeeds.length} task が依然 NEEDS_CONTEXT — needs_clarification で中断`)
-      await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 }, phase: 'Implement' })
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 }, phase: 'Implement' })
       state.__earlyReturn = {
         status: 'needs_clarification',
         source: 'implement',
@@ -4201,6 +4358,7 @@ async function execImplementPhase(state) {
         worktree: WT,
         branch: state.setup.branch,
         missing_context: stillNeeds.map((r) => r.missing_context ?? `task ${r.task_id}: 情報不足（詳細未申告）`),
+        journal_log_status: journalLogStatus,
         note: '要件が曖昧なため中断。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue を更新して /dev-flow を再起動すること。worktree は保持済みで再利用される',
       }
       return state
@@ -4353,7 +4511,7 @@ async function execValidatePhase(state) {
             for (const a of summary.artifacts) {
               if (a && a.dirty === true) log(`  cross-repo artifact: repo_root=${a.repo_root} path=${a.path}`)
             }
-            await writeFailureTelemetry({
+            const journalLogStatus = await writeFailureTelemetry({
               outcome: 'partial',
               error_category: 'cross_repo',
               error_msg: 'empty-diff gate: cross-repo issue — 成果物は対象 repo の working tree に存在（issue #432）',
@@ -4366,6 +4524,7 @@ async function execValidatePhase(state) {
               worktree: WT,
               branch: state.setup.branch,
               artifacts: summary.artifacts,
+              journal_log_status: journalLogStatus,
               note: crossRepoReturnNote(summary.artifacts),
             }
             crossRepoHandled = true
@@ -5781,19 +5940,55 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.guardBlockedResults.length ? { guard_id: [...new Set(state.guardBlockedResults.map((g) => g.guard_id))].sort().join(',') } : {}),
   },
 })
-const journalInstr = buildJournalHandoffInstr({ prefix: 'devflow', id: ISSUE, payload: telemetryHandoff })
-const journalPost = await trackedAgent(
-  `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
-  + `## Instructions\n`
-  + journalInstr
-  + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-  + `\n## Tools\n使用可: Bash, Write のみ\n`
-  + `\n## Boundary\n<PAYLOAD_FILE>（一時ファイル）と ~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
-  + `\n## Token cap\n150 語以内で完結すること。`,
-  { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Merge tier' },
-)
-if (!journalPost?.logged) {
-  log(`⚠️ journal-log の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
+// journal handoff（issue #494）: journal-save（payload をファイルへ verbatim 永続化）→
+// journal-log（検証済みファイルパスを finalize command で pending/ へ格納）の 2 段構成。
+// payload 本文はディスク上のデータとして運び、pending/ へ書き出す prompt 自体はパスのみを
+// 持つ。journal_log_status は 3 値 closed enum
+// （logged/save_failed/log_failed）で返り値へ現れる。fail-open は維持（gate・merge tier には無影響）。
+let journalLogStatus = 'save_failed'
+try {
+  const journalPayloadPath = `${WT}/.devflow-tmp/payload-devflow-${ISSUE}.json`
+  const journalSaveRes = await trackedAgent(
+    `## Objective\ndev-flow 完走の telemetry handoff payload を一時ファイルへ保存する。\n\n`
+    + `## Instructions\n`
+    + buildJournalSaveInstr({ payload: telemetryHandoff, savePath: journalPayloadPath })
+    + `\n## Output format\n{ "saved": boolean, "path": string }\n`
+    + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
+    + `冪等上書きに必要）\n`
+    + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
+    + `\n## Token cap\n120 語以内。`,
+    { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase: 'Merge tier' },
+  )
+  // 保存先は JS 側で確定しているので agent 申告の path は使わない（確定値があるのに申告値を信用する
+  // 理由がなく、suffix 一致で通すと別ディレクトリの同名ファイルが stage2 へ渡りうる）。agent が別の
+  // 場所へ書いていた場合は stage2 の jq 検証が落ちて log_failed になり、欠落は観測可能なまま。
+  const journalSavedPath = journalSaveRes?.saved === true ? journalPayloadPath : null
+
+  if (journalSavedPath) {
+    // stage1 は成功済み。stage2 が throw（schema 不一致・proxy 実行失敗等）すると catch へ
+    // 抜けて代入が走らないため、呼び出し前に log_failed へ倒しておく。こうしないと stage2 の
+    // 失敗が save_failed として報告され、観測した status が実際の失敗段と食い違う。
+    journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
+    const journalPost = await trackedAgent(
+      `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
+      + `## Instructions\n`
+      + buildJournalLogInstr({ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath })
+      + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
+      + `\n## Tools\n使用可: Bash のみ\n`
+      + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Token cap\n100 語以内で完結すること。`,
+      { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Merge tier' },
+    )
+    journalLogStatus = classifyJournalLogStatus({ saved: true, logged: journalPost?.logged === true })
+    if (!journalPost?.logged) {
+      log(`⚠️ journal-log の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
+    }
+  } else {
+    journalLogStatus = classifyJournalLogStatus({ saved: false })
+    log('⚠️ journal-save 失敗（fail-open）— telemetry 記録漏れの可能性')
+  }
+} catch (e) {
+  log(`⚠️ journal handoff 失敗（fail-open）: ${e?.message ?? e}`)
 }
 
 
@@ -5833,6 +6028,7 @@ return {
   final_ui_verify: finalUiVerifyStatus,
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
+  journal_log_status: journalLogStatus,
   trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
   // trust_receipts: EvalSeal 層（stage 'evaluate'/'final'）固有の receipt 件数（issue #491 で layer 合算から分離）
   ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: evalsealStageReceipts.length } : {}),

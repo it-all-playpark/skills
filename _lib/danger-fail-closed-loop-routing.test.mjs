@@ -104,9 +104,15 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
-    // journal-log: prompt を捕捉し logged:true を返す
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る（journal-log は
+    // stage2 でファイルパスのみを扱うため payload literal を含まない）。prompt を捕捉し
+    // saved:true を返して journal-log (stage2) へ進めさせる。
+    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
       journalPrompts.push(prompt);
+      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    }
+    // journal-log (stage2): logged:true を返す
+    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
     // implementer その他

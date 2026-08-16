@@ -51,6 +51,7 @@ function makeCountingSandbox(analyzeReq, config) {
     if (agentType === 'evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
+    if (label === 'journal-save' && agentType === 'dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log-failure') return null;
     if (label === 'journal-log' && agentType === 'dev-runner-haiku') return { logged: true, summary: 'ok' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
@@ -121,11 +122,18 @@ test('[cross-repo-gate] (1) label=cross-repo かつ found>=1 → graceful 終了
   assert.ok(returned !== null, '(1) return object を返すべき');
   assert.strictEqual(returned?.status, 'cross_repo_artifact', `(1) status は 'cross_repo_artifact' のはずだが ${JSON.stringify(returned?.status)}`);
 
+  // issue #494 F3: 結論値リテラル（error_category 等）は journal-save (stage1) の prompt に載る。
+  // journal-log-failure (stage2) はファイルパスのみを扱い payload literal を含まない。
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  assert.strictEqual(saveCalls.length, 1, `(1) journal-save は 1 回のはずだが ${saveCalls.length} 回`);
+  const savePrompt = saveCalls[0]?.prompt ?? '';
+  assert.ok(savePrompt.includes('cross_repo'), `(1) journal-save prompt に 'cross_repo' を含むべきだが:\n${savePrompt.slice(0, 500)}`);
+  assert.ok(!savePrompt.includes('"error_category":"empty_diff"'), `(1) journal-save prompt に empty_diff を含むべきでないが:\n${savePrompt.slice(0, 500)}`);
+
   const failureCalls = calls.filter((c) => c.label === 'journal-log-failure');
   assert.strictEqual(failureCalls.length, 1, `(1) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回`);
   const prompt = failureCalls[0]?.prompt ?? '';
-  assert.ok(prompt.includes('cross_repo'), `(1) prompt に 'cross_repo' を含むべきだが:\n${prompt.slice(0, 500)}`);
-  assert.ok(!prompt.includes('"error_category":"empty_diff"'), `(1) prompt に empty_diff を含むべきでないが:\n${prompt.slice(0, 500)}`);
+  assert.ok(!prompt.includes('"error_category"'), `(1) journal-log-failure prompt に結論値リテラルを含むべきでないが:\n${prompt.slice(0, 500)}`);
 });
 
 // (2) empty=true + ラベルあり + found=0 → 既存挙動（reimpl-empty-diff → diff-gate-retry empty=true → throw、error_category empty_diff）
@@ -144,10 +152,14 @@ test('[cross-repo-gate] (2) label=cross-repo だが found=0 → 既存 fail-clos
   const reimplCalls = calls.filter((c) => c.label.startsWith('reimpl-empty-diff'));
   assert.ok(reimplCalls.length >= 1, `(2) reimpl-empty-diff は >= 1 件のはずだが ${reimplCalls.length} 件`);
 
+  // issue #494 F3: 結論値リテラル（error_category 等）は journal-save (stage1) の prompt に載る。
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  assert.strictEqual(saveCalls.length, 1, `(2) journal-save は 1 回のはずだが ${saveCalls.length} 回`);
+  const savePrompt = saveCalls[0]?.prompt ?? '';
+  assert.ok(savePrompt.includes('"error_category":"empty_diff"'), `(2) journal-save prompt に empty_diff を含むべきだが:\n${savePrompt.slice(0, 500)}`);
+
   const failureCalls = calls.filter((c) => c.label === 'journal-log-failure');
   assert.strictEqual(failureCalls.length, 1, `(2) journal-log-failure は 1 回のはずだが ${failureCalls.length} 回`);
-  const prompt = failureCalls[0]?.prompt ?? '';
-  assert.ok(prompt.includes('"error_category":"empty_diff"'), `(2) prompt に empty_diff を含むべきだが:\n${prompt.slice(0, 500)}`);
 });
 
 // (3) empty=true + labels=[] → issue-labels probe 1 回のみで既存挙動維持
