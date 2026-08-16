@@ -60,30 +60,15 @@ hunk-review
 
 # --- external skills (auto-managed) ---
 agent-browser
-api-contract-testing
-building-sales-team
-enterprise-sales
 fastify-best-practices
 find-skills
-founder-sales
-frontend-design
 gsc
 gws-calendar-agenda
-gws-calendar-insert
-gws-calendar
-gws-docs-write
-gws-docs
 neon-postgres
-playwright-cli
 pricing-strategy
 prisma-cli
 remotion-best-practices
-rust-best-practices
-sales-enablement
-strategy-and-competitive-analysis
-ui-ux-pro-max
 vercel-react-best-practices
-youtube-channels
 # --- end external skills ---
 
 # veridelta run records (redgreen-verify.sh verdict_cmd hook output)

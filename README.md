@@ -262,12 +262,6 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `pr-iterate` | LGTM取得までの review ⇄ fix 改善ループ (dynamic workflow) |
 
-### テスト
-
-| スキル | 説明 |
-|--------|------|
-| `api-contract-testing` | APIコントラクトテスト（Pact等） 🔗 |
-
 ### ドキュメント
 
 | スキル | 説明 |
@@ -328,7 +322,6 @@ config = load_skill_config("ga-analyzer")
 | `remotion-video` | Remotionによる動画制作（React） |
 | `remotion-best-practices` | Remotion開発ベストプラクティス 🔗 |
 | `yt-chorus-extract` | YouTube動画からサビ音声クリップ抽出 |
-| `youtube-channels` | YouTubeチャンネル情報・動画一覧取得 |
 
 ### ブログ運用
 
@@ -363,26 +356,17 @@ config = load_skill_config("ga-analyzer")
 | `meeting-followup` | カレンダーアポ情報→議事録生成→お礼メール下書き作成 |
 | `sales-tracker` | Google Spreadsheetで営業パイプライン管理（3シート構成） |
 | `sales-sync` | Gmail確認→営業パイプライン変更検知→スプレッドシート自動更新 |
-| `founder-sales` | 創業者向け初期顧客獲得・再現可能な営業プロセス構築 🔗 |
-| `enterprise-sales` | エンタープライズセールス・大型案件クロージング 🔗 |
-| `building-sales-team` | 営業組織構築・スケーリング 🔗 |
-| `sales-enablement` | 営業資料作成（ピッチデッキ/提案書/デモスクリプト等） 🔗 |
 
 ### Google Workspace
 
 | スキル | 説明 |
 |--------|------|
-| `gws-calendar` | Google Calendar管理（イベント操作） 🔗 |
 | `gws-calendar-agenda` | Google Calendar全カレンダーの予定一覧表示 🔗 |
-| `gws-calendar-insert` | Google Calendarイベント作成 🔗 |
-| `gws-docs` | Google Docsの読み書き 🔗 |
-| `gws-docs-write` | Google Docsへのテキスト追記 🔗 |
 
 ### ビジネス・戦略
 
 | スキル | 説明 |
 |--------|------|
-| `strategy-and-competitive-analysis` | 事業戦略・競合分析フレームワーク 🔗 |
 | `pricing-strategy` | 価格戦略・パッケージング・マネタイズ 🔗 |
 | `biz-card-to-sheet` | 名刺画像からスプレッドシートへ登録 |
 | `biz-card-search` | 登録済み名刺データ検索 |
@@ -391,7 +375,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `ui-ux-pro-max` | UI/UXデザインインテリジェンス（50スタイル/21パレット） 🔗 |
 | `vercel-react-best-practices` | React/Next.jsパフォーマンス最適化ガイドライン 🔗 |
 
 ### バックエンド・データベース
@@ -401,7 +384,6 @@ config = load_skill_config("ga-analyzer")
 | `fastify-best-practices` | Fastify開発ベストプラクティス 🔗 |
 | `prisma-cli` | Prisma CLIコマンドリファレンス 🔗 |
 | `neon-postgres` | Neon Serverless Postgresガイド 🔗 |
-| `rust-best-practices` | Rust開発ベストプラクティス（Apollo GraphQL準拠） 🔗 |
 
 ### コミュニケーション
 
