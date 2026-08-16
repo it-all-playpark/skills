@@ -371,20 +371,6 @@ config = load_skill_config("ga-analyzer")
 | `biz-card-to-sheet` | 名刺画像からスプレッドシートへ登録 |
 | `biz-card-search` | 登録済み名刺データ検索 |
 
-### UI/UX・フロントエンド
-
-| スキル | 説明 |
-|--------|------|
-| `vercel-react-best-practices` | React/Next.jsパフォーマンス最適化ガイドライン 🔗 |
-
-### バックエンド・データベース
-
-| スキル | 説明 |
-|--------|------|
-| `fastify-best-practices` | Fastify開発ベストプラクティス 🔗 |
-| `prisma-cli` | Prisma CLIコマンドリファレンス 🔗 |
-| `neon-postgres` | Neon Serverless Postgresガイド 🔗 |
-
 ### コミュニケーション
 
 | スキル | 説明 |

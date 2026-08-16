@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# detect-stack.sh - Detect framework/tech stack and map to best-practice skills
+# detect-stack.sh - Detect framework/tech stack of a project
 # Usage: detect-stack.sh [project-dir]
-# Output: JSON with detected frameworks and corresponding skill references
+# Output: JSON {"frameworks": [...]} — framework 名のみ
+#
+# なぜ framework 検出を残すか: Implement phase で implementer が context7 を
+# 呼ぶかどうかを判定する決定論的門番 (issue #497)。vendored skill への
+# マッピング (best_practice_skills / rules_paths) は出力しない。
 
 set -euo pipefail
 
@@ -11,25 +15,14 @@ source "$SCRIPT_DIR/../common.sh"
 DIR="${1:-.}"
 cd "$DIR" || die_json "Cannot access directory: $DIR"
 
-# Resolve skills directory for existence checks
-: "${SKILLS_DIR:=$(cd "$SCRIPT_DIR/../.." && pwd)}"
-
 # ============================================================================
 # Detection helpers
 # ============================================================================
 
 FRAMEWORKS=()
-SKILLS=()
-RULES_PATHS=()
 
-add_skill() {
-    local framework="$1" skill="$2"
-    # Only add if the skill directory actually exists (installed)
-    if [[ -d "$SKILLS_DIR/$skill" ]]; then
-        FRAMEWORKS+=("$framework")
-        SKILLS+=("$skill")
-        RULES_PATHS+=("$skill/SKILL.md")
-    fi
+add_framework() {
+    FRAMEWORKS+=("$1")
 }
 
 # ============================================================================
@@ -41,24 +34,24 @@ if [[ -f "package.json" ]] && has_jq; then
 
     # React / Next.js
     if echo "$deps" | grep -qE '^(next|@next/)'; then
-        add_skill "next" "vercel-react-best-practices"
+        add_framework "next"
     elif echo "$deps" | grep -qE '^react$'; then
-        add_skill "react" "vercel-react-best-practices"
+        add_framework "react"
     fi
 
     # Fastify
     if echo "$deps" | grep -qE '^fastify$'; then
-        add_skill "fastify" "fastify-best-practices"
+        add_framework "fastify"
     fi
 
     # Remotion
     if echo "$deps" | grep -qE '^(remotion|@remotion/)'; then
-        add_skill "remotion" "remotion-best-practices"
+        add_framework "remotion"
     fi
 
     # Prisma
     if echo "$deps" | grep -qE '^(@prisma/client|prisma)$'; then
-        add_skill "prisma" "prisma-cli"
+        add_framework "prisma"
     fi
 fi
 
@@ -81,7 +74,7 @@ detect_neon() {
 }
 
 if detect_neon; then
-    add_skill "neon" "neon-postgres"
+    add_framework "neon"
 fi
 
 # ============================================================================
@@ -99,12 +92,8 @@ arr_to_jq_array() {
 if has_jq; then
     jq -n \
         --argjson frameworks "$(arr_to_jq_array "${FRAMEWORKS[@]+"${FRAMEWORKS[@]}"}")" \
-        --argjson skills "$(arr_to_jq_array "${SKILLS[@]+"${SKILLS[@]}"}")" \
-        --argjson paths "$(arr_to_jq_array "${RULES_PATHS[@]+"${RULES_PATHS[@]}"}")" \
         '{
-            frameworks: $frameworks,
-            best_practice_skills: $skills,
-            rules_paths: $paths
+            frameworks: $frameworks
         }'
 else
     # Fallback: manual JSON construction
@@ -120,9 +109,7 @@ else
     }
     cat <<JSONEOF
 {
-  "frameworks": $(to_json_array "${FRAMEWORKS[@]+"${FRAMEWORKS[@]}"}"),
-  "best_practice_skills": $(to_json_array "${SKILLS[@]+"${SKILLS[@]}"}"),
-  "rules_paths": $(to_json_array "${RULES_PATHS[@]+"${RULES_PATHS[@]}"}")
+  "frameworks": $(to_json_array "${FRAMEWORKS[@]+"${FRAMEWORKS[@]}"}")
 }
 JSONEOF
 fi

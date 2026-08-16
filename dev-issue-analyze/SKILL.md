@@ -97,13 +97,10 @@ realized diff / merge tier が補償する（意図的な設計判断）。
 
 ## Tech Stack & Best Practice Context
 
-After issue analysis, detect the project's tech stack and load relevant best practices
-into context. This ensures implementation planning is informed by framework guidelines.
-
-1. Run `$SKILLS_DIR/_lib/scripts/detect-stack.sh` to detect frameworks
-2. For each detected skill in `rules_paths`, Read the corresponding SKILL.md
-3. Keep loaded — downstream dev-flow phases (dev-planner / implementer agents) benefit from
-   the best-practice context already present in the conversation
+Framework best-practice の供給は Implement phase で行う（dev-flow.js が implementer の spawn prompt に
+条件付き context7 参照規約を注入し、`_lib/scripts/detect-stack.sh`（`{"frameworks": [...]}` を返す決定論
+的門番）で該当 framework が検出された場合のみ引く）。Analyze phase では stack 検出も best-practice 読み込
+みも行わない — plan-reviewer の入力を決定論的に保つため（issue #497）。
 
 ## Examples
 

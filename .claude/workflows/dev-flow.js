@@ -3831,6 +3831,27 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `の旨を自分の出力（implementer は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
+// framework best-practice 参照規約（issue #497）。旧: Analyze phase で vendored SKILL.md
+// （react-best-practices 等）を無条件 Read していたが、常時 stale なコピーを読ませる固定コストの
+// 割に効果が薄いため撤去し、Implement phase で「対象 repo が実際に使っている framework の API に
+// 触る task のときだけ」context7 (MCP) で最新 docs を引く条件付き参照へ置換する。
+// `_lib/scripts/detect-stack.sh` が「呼ぶかどうか」の決定論的門番（frameworks 配列を返すのみ）。
+// agent 定義ファイル（.claude/agents/implementer.md）は sandbox write-deny かつ本 issue の AC で
+// 編集禁止のため、他の staging/build 検証規約と同型で workflow が
+// spawn prompt へ注入する。注入先は implementer spawn prompt の全 3 箇所（implPrompt /
+// green-fix#i / fix#i）のみ — test prompt（dev-runner）と evaluator prompt には注入しない。
+// evaluator が判定するのは diff であって docs ではなく、test prompt は実装判断を伴わないため。
+// 現行 implementer.md の tools は閉じた列挙（Read/Write/Edit/Bash/Grep/Glob/Skill）で MCP tool を
+// 含まないため、現行構成では context7 は静的に利用不可であり規約内の fail-open 節が常用される。
+// MCP tool 配線は follow-up issue で扱う。
+const CONTEXT7_BEST_PRACTICE_CONVENTION = `framework best-practice 参照規約（条件付き — 無条件に発動しない）: `
+  + `自分の task が対象 repo で使われている framework（React/Next.js/Fastify/Remotion/Prisma/Neon 等）の API に`
+  + `触る場合のみ、まず \`~/.claude/skills/_lib/scripts/detect-stack.sh .\` を worktree 直下で bare 形`
+  + `（スクリプトパスが先頭トークン）で 1 回実行し、出力 JSON の frameworks に該当 framework が含まれる場合のみ`
+  + `context7 (MCP) で該当 library の最新 docs を必要箇所に限って引いてよい。frameworks が空、または task が`
+  + `framework API に触らない場合は context7 を呼ぶな（コストと出力揺れの抑制）。context7 tool が利用できない`
+  + `環境では fail-open で通常どおり実装を続行せよ（docs 参照は必須ではない）。\n`
+
 function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
   // AC・plan contract（summary / architecture_decisions / edge_cases）を全 implementer spawn prompt に注入する。
   // evaluator が AC ベースで採点するため implementer と採点軸を共有する（issue #224）。
@@ -3851,6 +3872,7 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
     + STAGING_CONVENTION
     + DEPS_NOTE
     + TURBOPACK_FALLBACK_CONVENTION
+    + CONTEXT7_BEST_PRACTICE_CONVENTION
 }
 
 // 計画の serial → 順次、parallel → 同時。drop（throw→null）を可視化して返す。
@@ -4434,7 +4456,8 @@ async function execValidatePhase(state) {
         + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
         + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}`
         + '\n' + STAGING_CONVENTION
-        + TURBOPACK_FALLBACK_CONVENTION,
+        + TURBOPACK_FALLBACK_CONVENTION
+        + CONTEXT7_BEST_PRACTICE_CONVENTION,
         { agentType: 'implementer', schema: IMPL, label: isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`, phase: phaseName },
       )
       // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一。issue #223）
@@ -5114,7 +5137,8 @@ async function execEvaluatePhase(state) {
             ? `未解消 critical（最優先で修正せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
             : '')
         + STAGING_CONVENTION
-        + TURBOPACK_FALLBACK_CONVENTION,
+        + TURBOPACK_FALLBACK_CONVENTION
+        + CONTEXT7_BEST_PRACTICE_CONVENTION,
         { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
     }
   }
