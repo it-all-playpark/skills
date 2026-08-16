@@ -187,11 +187,11 @@ function makeSandbox({ repo = null, req = STANDARD_REQ, overrides = {}, fixesApp
 }
 
 // journal-save (stage1, issue #494) prompt から telemetry payload を JSON.parse して返す
-// （journal-handoff.mjs の Write-tool verbatim delimiter <<<HANDOFF_DATA_BEGIN/END>>> から抽出。
+// （journal-handoff.mjs の Write-tool verbatim delimiter <<<JOURNAL_HANDOFF_BODY_BEGIN/END>>> から抽出。
 // journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  const m = prompt.match(/<<<HANDOFF_DATA_BEGIN>>>\n(\{[\s\S]*?\})\n<<<HANDOFF_DATA_END>>>/);
+  const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
   if (!m) return null;
   try {
     return JSON.parse(m[1]);

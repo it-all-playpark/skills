@@ -115,14 +115,14 @@ function makeResponder(journalPrompts) {
 }
 
 /**
- * journal-save (stage1, issue #494) prompt から `<<<HANDOFF_DATA_BEGIN>>>`〜`END` 区間の JSON を
+ * journal-save (stage1, issue #494) prompt から `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>`〜`END` 区間の JSON を
  * 抽出して parse する（journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
  * @param {string} prompt
  * @returns {object}
  */
 function parseJournalHandoffPayload(prompt) {
-  const match = prompt.match(/<<<HANDOFF_DATA_BEGIN>>>\n([\s\S]*?)\n<<<HANDOFF_DATA_END>>>/);
-  assert.ok(match, `journal-save prompt に HANDOFF_DATA delimiter が見つからない。prompt:\n${prompt}`);
+  const match = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  assert.ok(match, `journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない。prompt:\n${prompt}`);
   return JSON.parse(match[1]);
 }
 

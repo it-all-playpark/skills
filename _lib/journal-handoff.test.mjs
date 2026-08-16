@@ -133,19 +133,9 @@ test('repoFromGithubUrl returns null for non-GitHub or malformed input', () => {
 
 // ---- buildJournalSaveInstr (stage1) ----
 
-// journal_sh is present on every real dev-flow payload (buildJournalHandoffPayload always
-// forwards it when provided), so the neutral-vocabulary guarantee below is scoped to the
-// instruction template only, never the delimited data block itself (plan-reviewer feedback
-// logic-bug::journal-save-vocab-assert).
-const JOURNAL_SH_PAYLOAD = JSON.stringify({
-  skill: 'dev-flow',
-  outcome: 'success',
-  journal_sh: '~/.claude/skills/skill-retrospective/scripts/journal.sh',
-});
-
-test('buildJournalSaveInstr embeds the payload verbatim between HANDOFF_DATA delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
+test('buildJournalSaveInstr embeds the payload verbatim between JOURNAL_HANDOFF_BODY delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
   const instr = buildJournalSaveInstr({ payload: EDGE_CASE_PAYLOAD, saveDir: null });
-  const match = instr.match(/<<<HANDOFF_DATA_BEGIN>>>\n([\s\S]*?)\n<<<HANDOFF_DATA_END>>>/);
+  const match = instr.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
   assert.ok(match, 'expected instr to contain the delimited payload block');
   assert.equal(match[1], EDGE_CASE_PAYLOAD);
 });
@@ -177,17 +167,6 @@ test('buildJournalSaveInstr falls back to ${TMPDIR:-/tmp} mktemp when saveDir is
   assert.ok(!instr.includes('mkdir -p'));
 });
 
-test('buildJournalSaveInstr template outside the HANDOFF_DATA delimiters carries no audit-log or outcome vocabulary, even when the payload itself contains journal_sh', () => {
-  const instr = buildJournalSaveInstr({ payload: JOURNAL_SH_PAYLOAD, saveDir: null });
-  const beginIdx = instr.indexOf('<<<HANDOFF_DATA_BEGIN>>>');
-  const endIdx = instr.indexOf('<<<HANDOFF_DATA_END>>>') + '<<<HANDOFF_DATA_END>>>'.length;
-  const templateOnly = instr.slice(0, beginIdx) + instr.slice(endIdx);
-
-  // The payload itself (data block) is allowed -- and in this fixture guaranteed -- to
-  // contain 'journal'. Assert that guarantee holds before asserting the template is clean.
-  assert.ok(instr.slice(beginIdx, endIdx).includes('journal'));
-  assert.doesNotMatch(templateOnly, /journal|pending|監査|audit/i);
-});
 
 // ---- validateJournalSavedPath ----
 
@@ -389,11 +368,11 @@ test('AC-1: a malformed JSON payload (devflow-411-style extra closing brace) fai
 
 // ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----
 //
-// issue #494 F3: all payload-carrying journal handoff call sites — the 3 claimed-success
-// sites (dev-flow.js Merge tier, pr-iterate.js Iterate, dev-improve.js File) and dev-flow.js's
+// issue #494 F3: all payload-carrying journal handoff call sites — the 3 telemetry sites
+// (dev-flow.js Merge tier, pr-iterate.js Iterate, dev-improve.js File) and dev-flow.js's
 // writeFailureTelemetry (outcome:'failure'/'partial') — migrate to the 2-stage
-// buildJournalSaveInstr + buildJournalLogInstr split, so conclusion-value literals never
-// co-occur with journal/pending wording in a single prompt regardless of outcome. The saveDir
+// buildJournalSaveInstr + buildJournalLogInstr split, so the payload body is carried as a file
+// on disk and the finalize prompt takes only a path, regardless of outcome. The saveDir
 // passed to buildJournalSaveInstr pins the payload file under the worktree's gitignored
 // `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`, pr-iterate: `${isoWt}/.devflow-tmp`) rather
 // than `${TMPDIR:-/tmp}`, so validateJournalSavedPath can pin `requiredDirSuffix`. This test

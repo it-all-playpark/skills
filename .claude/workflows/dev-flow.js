@@ -276,14 +276,14 @@ function classifyJournalLogStatus({ saved, logged }) {
   return 'log_failed';
 }
 
-// buildJournalSaveInstr({ payload, saveDir }): stage1 instruction string. Neutral-vocabulary
-// template (no journal/pending/audit wording, no outcome literals outside the delimited data
-// block) so that the conclusion values embedded in `payload` never co-occur, in the same
-// prompt, with audit-log wording — the pairing is what trips the safety classifier. Follows
-// the same Write-tool verbatim pattern as _lib/workflow-post-helpers.mjs bodySaveInstr /
-// buildJournalFinalizeCommand: the agent must write `payload` to disk via the **Write tool**
-// content argument only, never through shell/echo/printf/heredoc, and never re-escape or
-// pretty-print it.
+// buildJournalSaveInstr({ payload, saveDir }): stage1 instruction string. Persists the journal
+// handoff payload verbatim to a file so that stage2 (buildJournalLogInstr) can be driven by a
+// path alone — the payload body has no reason to be re-stated in the prompt that writes under
+// pending/, and keeping it out means a long telemetry blob is carried as data on disk rather
+// than as prompt text. Follows the same Write-tool verbatim pattern as
+// _lib/workflow-post-helpers.mjs bodySaveInstr / buildJournalFinalizeCommand: the agent must
+// write `payload` to disk via the **Write tool** content argument only, never through
+// shell/echo/printf/heredoc, and never re-escape or pretty-print it.
 function buildJournalSaveInstr({ payload, saveDir }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
 
@@ -291,14 +291,14 @@ function buildJournalSaveInstr({ payload, saveDir }) {
     ? `mkdir -p "${saveDir}" && mktemp "${saveDir}/payload-XXXXXX.json"`
     : `mktemp "\${TMPDIR:-/tmp}/payload-XXXXXX.json"`;
 
-  return `## データの保存\n`
+  return `## Journal handoff payload の保存\n`
     + `1. まず Bash で \`${mktempCmd}\` を実行し、\n`
     + `出力された絶対パスを <PAYLOAD_FILE> とする。\n`
-    + `2. 次に **Write tool** を使い、下記 delimiter 内のデータを\n`
-    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。データは絶対に shell（echo/printf/heredoc 等）へ\n`
+    + `2. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
+    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
     + `渡さず、必ず Write tool の content 引数として渡すこと。エスケープ・改変・pretty-print も\n`
     + `禁止する。\n`
-    + `<<<HANDOFF_DATA_BEGIN>>>\n${payload}\n<<<HANDOFF_DATA_END>>>\n\n`
+    + `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`
     + `3. 書き出しに成功したら {saved:true, path:<PAYLOAD_FILE の絶対パス>} を返せ。\n`
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
@@ -334,7 +334,7 @@ function buildJournalLogInstr({ prefix, id, payloadPath }) {
     .split('<PAYLOAD_FILE>')
     .join(payloadPath);
 
-  return `## 記録コマンドの実行\n`
+  return `## Journal pending への書き出し\n`
     + `次のコマンドをそのまま実行せよ: \`${finalizeCmd}\`\n`
     + `jq の parse error を含め失敗しても throw せず logged:false を返すこと。\n`;
 }
@@ -2828,9 +2828,9 @@ if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue�
 // 4 つの経路（needs_clarification×3・cross-repo graceful 終了。empty-diff throw 直前でも呼ぶが
 // throw のため呼び出し元へ status を戻さない）で呼ばれる。成功経路（Merge tier）と同じ
 // journal-save（stage1: 結論値を含む payload を worktree 内 gitignored 領域へ verbatim 永続化）→
-// journal-log（stage2: 検証済みファイルパスのみを finalize command へ渡す）の 2 段構成を踏襲し、
-// 結論値リテラル（outcome:'failure'/'partial' 等）と journal/pending 呼び出し語彙が同一 prompt に
-// 同居しないようにする（safety classifier 対策）。戻り値は journal_log_status の 3 値 closed enum
+// journal-log（stage2: 検証済みファイルパスのみを finalize command へ渡す）の 2 段構成を踏襲する。
+// payload 本文はディスク上のデータとして運び、pending/ へ書き出す prompt 自体はパスのみを持つ。
+// 戻り値は journal_log_status の 3 値 closed enum
 // （logged/save_failed/log_failed）。fail-open は維持（gate・merge tier には無影響。呼び出し元は
 // null/例外容認で先へ進む）。
 // outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す（issue #432）。
@@ -2849,7 +2849,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
   let journalLogStatus = 'save_failed'
   try {
     const journalSaveRes = await trackedAgent(
-      `## Objective\ndev-flow 失敗の結果データを一時ファイルへ保存する。\n\n`
+      `## Objective\ndev-flow 失敗の telemetry handoff payload を一時ファイルへ保存する。\n\n`
       + `## Instructions\n`
       + buildJournalSaveInstr({ payload, saveDir: `${WT}/.devflow-tmp` })
       + `\n## Output format\n{ "saved": boolean, "path": string }\n`
@@ -5875,15 +5875,15 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.guardBlockedResults.length ? { guard_id: [...new Set(state.guardBlockedResults.map((g) => g.guard_id))].sort().join(',') } : {}),
   },
 })
-// journal handoff（issue #494）: journal-save（結果データをファイルへ verbatim 永続化）→
+// journal handoff（issue #494）: journal-save（payload をファイルへ verbatim 永続化）→
 // journal-log（検証済みファイルパスを finalize command で pending/ へ格納）の 2 段構成。
-// 結論値リテラル（outcome / merge_tier 等）と journal/pending 呼び出し語彙が同一 prompt に
-// 同居しないようにする（safety classifier 対策）。journal_log_status は 3 値 closed enum
+// payload 本文はディスク上のデータとして運び、pending/ へ書き出す prompt 自体はパスのみを
+// 持つ。journal_log_status は 3 値 closed enum
 // （logged/save_failed/log_failed）で返り値へ現れる。fail-open は維持（gate・merge tier には無影響）。
 let journalLogStatus = 'save_failed'
 try {
   const journalSaveRes = await trackedAgent(
-    `## Objective\ndev-flow 完走の結果データを一時ファイルへ保存する。\n\n`
+    `## Objective\ndev-flow 完走の telemetry handoff payload を一時ファイルへ保存する。\n\n`
     + `## Instructions\n`
     + buildJournalSaveInstr({ payload: telemetryHandoff, saveDir: `${WT}/.devflow-tmp` })
     + `\n## Output format\n{ "saved": boolean, "path": string }\n`
