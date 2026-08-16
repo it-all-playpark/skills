@@ -70,16 +70,50 @@ export function classifyJournalLogStatus({ saved, logged }) {
   return 'log_failed';
 }
 
-// buildJournalSaveInstr({ payload, saveDir }): stage1 instruction string. Persists the journal
-// handoff payload verbatim to a file so that stage2 (buildJournalLogInstr) can be driven by a
-// path alone — the payload body has no reason to be re-stated in the prompt that writes under
-// pending/, and keeping it out means a long telemetry blob is carried as data on disk rather
-// than as prompt text. Follows the same Write-tool verbatim pattern as
-// _lib/workflow-post-helpers.mjs bodySaveInstr / buildJournalFinalizeCommand: the agent must
-// write `payload` to disk via the **Write tool** content argument only, never through
-// shell/echo/printf/heredoc, and never re-escape or pretty-print it.
-export function buildJournalSaveInstr({ payload, saveDir }) {
+// stage1 が作る payload ファイルの basename 契約。validateJournalSavedPath の basename 検証と
+// 同一パターンで、fileName モードの呼び出し側が渡す名前もこれに従う。
+const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
+
+// buildJournalSaveInstr({ payload, saveDir, fileName }): stage1 instruction string. Persists the
+// journal handoff payload verbatim to a file so that stage2 (buildJournalLogInstr) can be driven
+// by a path alone — the payload body has no reason to be re-stated in the prompt that writes
+// under pending/, and keeping it out means a long telemetry blob is carried as data on disk
+// rather than as prompt text. Either way the agent must write `payload` via the **Write tool**
+// content argument only, never through shell/echo/printf/heredoc, and never re-escape or
+// pretty-print it (same pattern as _lib/workflow-post-helpers.mjs bodySaveInstr).
+//
+// 2 つのモードがあるのは、保存先が JS 側で確定しているかどうかで実行可能な手段が変わるため:
+//
+// - `fileName` あり（saveDir が JS 側で確定している dev-flow / pr-iterate）: 保存先の絶対パスが
+//   prompt 構築時点で決まるので **shell を一切使わない**。これは必須の性質で、repo 配下を Bash から
+//   書けない環境（skills repo の自己改変ガードは worktree 配下も含めて deny する）では
+//   `mktemp "<worktree>/…"` が EPERM になり、agent が別ディレクトリへ退避して保存先固定の検証に
+//   落ちる。Write tool は同じ場所へ書けるので（isolation probe が同経路）、パスを固定して渡す。
+// - `fileName` なし（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
+//   shell 展開に依存し JS 側で解決できないため、Bash の mktemp で一意なパスを得てから Write する。
+export function buildJournalSaveInstr({ payload, saveDir, fileName }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
+
+  const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
+  const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
+    + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
+
+  if (fileName != null) {
+    if (!saveDir) {
+      throw new Error('journal-handoff: fileName を渡す場合 saveDir は必須です');
+    }
+    if (!JOURNAL_PAYLOAD_BASENAME_RE.test(fileName)) {
+      throw new Error(`journal-handoff: invalid fileName: ${JSON.stringify(fileName)}`);
+    }
+    const payloadPath = `${saveDir}/${fileName}`;
+    return `## Journal handoff payload の保存\n`
+      + `1. **Write tool** を使い、下記 delimiter 内の JSON を **一字一句そのまま**\n`
+      + `\`${payloadPath}\` へ書き出せ。${verbatimRule}`
+      + `Bash は使うな。保存先は上記のパスで固定されており、一時ファイル名を作る必要はない。\n`
+      + bodyBlock
+      + `2. 書き出しに成功したら {saved:true, path:"${payloadPath}"} を返せ。\n`
+      + `失敗した場合は throw せず {saved:false} を返せ。\n`;
+  }
 
   const mktempCmd = saveDir
     ? `mkdir -p "${saveDir}" && mktemp "${saveDir}/payload-XXXXXX.json"`
@@ -89,10 +123,8 @@ export function buildJournalSaveInstr({ payload, saveDir }) {
     + `1. まず Bash で \`${mktempCmd}\` を実行し、\n`
     + `出力された絶対パスを <PAYLOAD_FILE> とする。\n`
     + `2. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
-    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
-    + `渡さず、必ず Write tool の content 引数として渡すこと。エスケープ・改変・pretty-print も\n`
-    + `禁止する。\n`
-    + `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`
+    + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。${verbatimRule}`
+    + bodyBlock
     + `3. 書き出しに成功したら {saved:true, path:<PAYLOAD_FILE の絶対パス>} を返せ。\n`
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
@@ -112,7 +144,7 @@ export function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   const idx = path.lastIndexOf('/');
   const dirPart = idx === 0 ? '/' : path.slice(0, idx);
   const basePart = path.slice(idx + 1);
-  if (!/^payload-[A-Za-z0-9._-]+\.json$/.test(basePart)) return false;
+  if (!JOURNAL_PAYLOAD_BASENAME_RE.test(basePart)) return false;
   if (requiredDirSuffix && !dirPart.endsWith(requiredDirSuffix)) return false;
 
   return true;

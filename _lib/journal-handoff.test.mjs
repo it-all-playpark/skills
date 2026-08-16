@@ -161,6 +161,64 @@ test('buildJournalSaveInstr uses mkdir -p + saveDir mktemp when saveDir is given
   assert.ok(instr.includes('mktemp "/wt/.devflow-tmp/payload-XXXXXX.json"'));
 });
 
+// fileName モード（dev-flow / pr-iterate）: 保存先が JS 側で確定しているので shell を一切使わない。
+// Bash 依存を残すと、repo 配下を Bash から書けない環境（skills repo の自己改変ガード）で
+// mktemp が EPERM になり、agent が別ディレクトリへ退避して requiredDirSuffix 検証に落ちる。
+test('buildJournalSaveInstr with fileName pins the absolute path and uses no shell (mktemp/mkdir を含まない)', () => {
+  const instr = buildJournalSaveInstr({
+    payload: '{"ok":true}',
+    saveDir: '/wt/.devflow-tmp',
+    fileName: 'payload-devflow-494.json',
+  });
+  assert.ok(instr.includes('/wt/.devflow-tmp/payload-devflow-494.json'));
+  assert.ok(instr.includes('Write tool'));
+  assert.ok(!instr.includes('mktemp'), 'fileName モードでは mktemp を使ってはならない');
+  assert.ok(!instr.includes('mkdir -p'), 'fileName モードでは mkdir -p を使ってはならない');
+  assert.ok(!instr.includes('<PAYLOAD_FILE>'), 'fileName モードではパスが確定しているため placeholder は残らない');
+});
+
+test('buildJournalSaveInstr with fileName embeds the payload verbatim between JOURNAL_HANDOFF_BODY delimiters', () => {
+  const instr = buildJournalSaveInstr({
+    payload: EDGE_CASE_PAYLOAD,
+    saveDir: '/wt/.devflow-tmp',
+    fileName: 'payload-priterate-498.json',
+  });
+  const match = instr.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  assert.ok(match, 'expected instr to contain the delimited payload block');
+  assert.equal(match[1], EDGE_CASE_PAYLOAD);
+});
+
+// 固定パスは stage2 の bash コマンドへそのまま展開されるため、basename 契約は
+// validateJournalSavedPath と同一パターンで build 時に閉じておく。
+test('buildJournalSaveInstr throws when fileName does not match the payload-*.json contract', () => {
+  for (const bad of ['telemetry.json', 'payload-x.txt', '../payload-x.json', 'payload-x.json/../y', '']) {
+    assert.throws(
+      () => buildJournalSaveInstr({ payload: '{}', saveDir: '/wt/.devflow-tmp', fileName: bad }),
+      /invalid fileName/,
+      `fileName=${JSON.stringify(bad)} は reject されるべき`,
+    );
+  }
+});
+
+test('buildJournalSaveInstr throws when fileName is given without saveDir', () => {
+  assert.throws(
+    () => buildJournalSaveInstr({ payload: '{}', saveDir: null, fileName: 'payload-devflow-1.json' }),
+    /saveDir は必須/,
+  );
+});
+
+// 生成される固定パスは validateJournalSavedPath を必ず通過すること（stage1 と stage2 の契約整合）。
+test('buildJournalSaveInstr の fileName モードが作るパスは validateJournalSavedPath を通る', () => {
+  assert.equal(
+    validateJournalSavedPath('/wt/.devflow-tmp/payload-devflow-494.json', { requiredDirSuffix: '/.devflow-tmp' }),
+    true,
+  );
+  assert.equal(
+    validateJournalSavedPath('/wt/.devflow-tmp/payload-devflow-494-failure.json', { requiredDirSuffix: '/.devflow-tmp' }),
+    true,
+  );
+});
+
 test('buildJournalSaveInstr falls back to ${TMPDIR:-/tmp} mktemp when saveDir is null', () => {
   const instr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: null });
   assert.ok(instr.includes('mktemp "${TMPDIR:-/tmp}/payload-XXXXXX.json"'));
@@ -385,13 +443,13 @@ test('workflows construct journal handoff instructions through the canonical Wri
 
   // dev-flow.js: Merge tier telemetry handoff uses the 2-stage split, worktree-scoped saveDir.
   assert.equal(
-    (devFlow.match(/buildJournalSaveInstr\(\{ payload: telemetryHandoff, saveDir: `\$\{WT\}\/\.devflow-tmp` \}\)/g) ?? []).length,
+    (devFlow.match(/buildJournalSaveInstr\(\{ payload: telemetryHandoff, saveDir: `\$\{WT\}\/\.devflow-tmp`, fileName: `payload-devflow-\$\{ISSUE\}\.json` \}\)/g) ?? []).length,
     1,
   );
   // dev-flow.js: writeFailureTelemetry (needs_clarification/cross_repo/empty_diff) also uses the
   // 2-stage split with the same worktree-scoped saveDir — no local single-stage helper remains.
   assert.equal(
-    (devFlow.match(/buildJournalSaveInstr\(\{ payload, saveDir: `\$\{WT\}\/\.devflow-tmp` \}\)/g) ?? []).length,
+    (devFlow.match(/buildJournalSaveInstr\(\{ payload, saveDir: `\$\{WT\}\/\.devflow-tmp`, fileName: `payload-devflow-\$\{ISSUE\}-failure\.json` \}\)/g) ?? []).length,
     1,
   );
   assert.equal(
@@ -401,7 +459,7 @@ test('workflows construct journal handoff instructions through the canonical Wri
   assert.ok(!devFlow.includes('buildFailureJournalInstr'));
   // pr-iterate.js: Iterate telemetry handoff uses the 2-stage split, worktree-scoped saveDir.
   assert.equal(
-    (prIterate.match(/buildJournalSaveInstr\(\{ payload: telemetryHandoff, saveDir: `\$\{isoWt\}\/\.devflow-tmp` \}\)/g) ?? []).length,
+    (prIterate.match(/buildJournalSaveInstr\(\{ payload: telemetryHandoff, saveDir: `\$\{isoWt\}\/\.devflow-tmp`, fileName: `payload-priterate-\$\{PR\}\.json` \}\)/g) ?? []).length,
     1,
   );
   assert.equal(
