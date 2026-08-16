@@ -7,10 +7,14 @@ import { dirname, join } from 'node:path';
 import os from 'node:os';
 
 import {
+  JOURNAL_LOG_STATUSES,
   buildJournalFinalizeCommand,
-  buildJournalHandoffInstr,
   buildJournalHandoffPayload,
+  buildJournalLogInstr,
+  buildJournalSaveInstr,
+  classifyJournalLogStatus,
   repoFromGithubUrl,
+  validateJournalSavedPath,
 } from './journal-handoff.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -127,43 +131,153 @@ test('repoFromGithubUrl returns null for non-GitHub or malformed input', () => {
   assert.equal(repoFromGithubUrl('https://example.com/a/b'), null);
 });
 
-// ---- buildJournalHandoffInstr ----
+// ---- buildJournalSaveInstr (stage1) ----
 
-test('buildJournalHandoffInstr embeds the payload verbatim between delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
-  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: EDGE_CASE_PAYLOAD });
-  const match = instr.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+// journal_sh is present on every real dev-flow payload (buildJournalHandoffPayload always
+// forwards it when provided), so the neutral-vocabulary guarantee below is scoped to the
+// instruction template only, never the delimited data block itself (plan-reviewer feedback
+// logic-bug::journal-save-vocab-assert).
+const JOURNAL_SH_PAYLOAD = JSON.stringify({
+  skill: 'dev-flow',
+  outcome: 'success',
+  journal_sh: '~/.claude/skills/skill-retrospective/scripts/journal.sh',
+});
+
+test('buildJournalSaveInstr embeds the payload verbatim between HANDOFF_DATA delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
+  const instr = buildJournalSaveInstr({ payload: EDGE_CASE_PAYLOAD, saveDir: null });
+  const match = instr.match(/<<<HANDOFF_DATA_BEGIN>>>\n([\s\S]*?)\n<<<HANDOFF_DATA_END>>>/);
   assert.ok(match, 'expected instr to contain the delimited payload block');
   assert.equal(match[1], EDGE_CASE_PAYLOAD);
 });
 
-test('buildJournalHandoffInstr instructs Write tool usage and forbids passing the payload through shell', () => {
-  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: '{"ok":true}' });
+test('buildJournalSaveInstr instructs Write tool usage and forbids passing the payload through shell', () => {
+  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: null });
   assert.ok(instr.includes('Write tool'));
   assert.ok(instr.includes('echo'));
   assert.ok(instr.includes('printf'));
   assert.ok(instr.includes('heredoc'));
 });
 
-test('buildJournalHandoffInstr never includes the payload outside the delimited block (finalize command stays payload-free)', () => {
-  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: EDGE_CASE_PAYLOAD });
-  const afterEnd = instr.slice(instr.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>'));
-  assert.ok(!afterEnd.includes(EDGE_CASE_PAYLOAD));
+test('buildJournalSaveInstr throws when payload is null', () => {
+  assert.throws(
+    () => buildJournalSaveInstr({ payload: null, saveDir: null }),
+    /payload is required/,
+  );
 });
 
-test('buildJournalHandoffInstr embeds the buildJournalFinalizeCommand result with a substitute-and-run + fail-open instruction', () => {
-  const instr = buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: '{"ok":true}' });
-  const finalizeCmd = buildJournalFinalizeCommand({ prefix: 'devflow', id: 433 });
-  assert.ok(instr.includes(finalizeCmd));
-  assert.ok(instr.includes('<PAYLOAD_FILE>'));
-  assert.ok(instr.includes('実パスに置換'));
+test('buildJournalSaveInstr uses mkdir -p + saveDir mktemp when saveDir is given', () => {
+  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: '/wt/.devflow-tmp' });
+  assert.ok(instr.includes('mkdir -p "/wt/.devflow-tmp"'));
+  assert.ok(instr.includes('mktemp "/wt/.devflow-tmp/payload-XXXXXX.json"'));
+});
+
+test('buildJournalSaveInstr falls back to ${TMPDIR:-/tmp} mktemp when saveDir is null', () => {
+  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: null });
+  assert.ok(instr.includes('mktemp "${TMPDIR:-/tmp}/payload-XXXXXX.json"'));
+  assert.ok(!instr.includes('mkdir -p'));
+});
+
+test('buildJournalSaveInstr template outside the HANDOFF_DATA delimiters carries no audit-log or outcome vocabulary, even when the payload itself contains journal_sh', () => {
+  const instr = buildJournalSaveInstr({ payload: JOURNAL_SH_PAYLOAD, saveDir: null });
+  const beginIdx = instr.indexOf('<<<HANDOFF_DATA_BEGIN>>>');
+  const endIdx = instr.indexOf('<<<HANDOFF_DATA_END>>>') + '<<<HANDOFF_DATA_END>>>'.length;
+  const templateOnly = instr.slice(0, beginIdx) + instr.slice(endIdx);
+
+  // The payload itself (data block) is allowed -- and in this fixture guaranteed -- to
+  // contain 'journal'. Assert that guarantee holds before asserting the template is clean.
+  assert.ok(instr.slice(beginIdx, endIdx).includes('journal'));
+  assert.doesNotMatch(templateOnly, /journal|pending|監査|audit/i);
+});
+
+// ---- validateJournalSavedPath ----
+
+test('validateJournalSavedPath accepts an absolute payload path under the required dir suffix', () => {
+  assert.equal(
+    validateJournalSavedPath('/wt/.devflow-tmp/payload-abc123.json', { requiredDirSuffix: '/.devflow-tmp' }),
+    true,
+  );
+});
+
+test('validateJournalSavedPath accepts an absolute payload path with no requiredDirSuffix constraint', () => {
+  assert.equal(validateJournalSavedPath('/tmp/x/payload-a1.json', {}), true);
+  assert.equal(validateJournalSavedPath('/tmp/x/payload-a1.json'), true);
+});
+
+test('validateJournalSavedPath rejects a relative path', () => {
+  assert.equal(validateJournalSavedPath('wt/.devflow-tmp/payload-abc123.json', {}), false);
+});
+
+test('validateJournalSavedPath rejects a path containing ..', () => {
+  assert.equal(validateJournalSavedPath('/wt/.devflow-tmp/../payload-abc123.json', {}), false);
+});
+
+test('validateJournalSavedPath rejects shell metacharacters', () => {
+  assert.equal(validateJournalSavedPath('/tmp/payload-a b.json', {}), false);
+  assert.equal(validateJournalSavedPath('/tmp/payload-a;rm.json', {}), false);
+  assert.equal(validateJournalSavedPath('/tmp/payload-a$(x).json', {}), false);
+  assert.equal(validateJournalSavedPath('/tmp/payload-a`x`.json', {}), false);
+  assert.equal(validateJournalSavedPath('/tmp/payload-a"x".json', {}), false);
+});
+
+test('validateJournalSavedPath rejects a dir suffix mismatch', () => {
+  assert.equal(
+    validateJournalSavedPath('/wt/other-dir/payload-abc123.json', { requiredDirSuffix: '/.devflow-tmp' }),
+    false,
+  );
+});
+
+test('validateJournalSavedPath rejects a path not ending in .json', () => {
+  assert.equal(validateJournalSavedPath('/tmp/payload-abc123.txt', {}), false);
+});
+
+test('validateJournalSavedPath rejects a basename not matching the payload- pattern', () => {
+  assert.equal(validateJournalSavedPath('/tmp/other-abc123.json', {}), false);
+  assert.equal(validateJournalSavedPath('/tmp/payload.json', {}), false);
+});
+
+test('validateJournalSavedPath rejects non-string input', () => {
+  assert.equal(validateJournalSavedPath(null, {}), false);
+  assert.equal(validateJournalSavedPath(undefined, {}), false);
+  assert.equal(validateJournalSavedPath(42, {}), false);
+});
+
+// ---- buildJournalLogInstr (stage2) ----
+
+test('buildJournalLogInstr leaves no <PAYLOAD_FILE> placeholder and embeds the real path plus the pending dir', () => {
+  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath: '/wt/.devflow-tmp/payload-abc123.json' });
+  assert.ok(!instr.includes('<PAYLOAD_FILE>'));
+  assert.ok(instr.includes('/wt/.devflow-tmp/payload-abc123.json'));
+  assert.ok(instr.includes('pending'));
   assert.ok(instr.includes('logged:false'));
 });
 
-test('buildJournalHandoffInstr throws when payload is null', () => {
-  assert.throws(
-    () => buildJournalHandoffInstr({ prefix: 'devflow', id: 433, payload: null }),
-    /payload is required/,
-  );
+test('buildJournalLogInstr embeds exactly buildJournalFinalizeCommand with the placeholder substituted', () => {
+  const payloadPath = '/wt/.devflow-tmp/payload-abc123.json';
+  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath });
+  const expectedCmd = buildJournalFinalizeCommand({ prefix: 'devflow', id: 433 }).split('<PAYLOAD_FILE>').join(payloadPath);
+  assert.ok(instr.includes(expectedCmd));
+});
+
+// ---- classifyJournalLogStatus ----
+
+test('JOURNAL_LOG_STATUSES is the closed 3-value enum', () => {
+  assert.deepEqual(JOURNAL_LOG_STATUSES, ['logged', 'save_failed', 'log_failed']);
+});
+
+test('classifyJournalLogStatus returns save_failed when saved is not true', () => {
+  assert.equal(classifyJournalLogStatus({ saved: false, logged: true }), 'save_failed');
+  assert.equal(classifyJournalLogStatus({ saved: undefined, logged: true }), 'save_failed');
+  assert.equal(classifyJournalLogStatus({ saved: null, logged: true }), 'save_failed');
+});
+
+test('classifyJournalLogStatus returns logged when saved is true and logged is true', () => {
+  assert.equal(classifyJournalLogStatus({ saved: true, logged: true }), 'logged');
+});
+
+test('classifyJournalLogStatus returns log_failed when saved is true but logged is not true', () => {
+  assert.equal(classifyJournalLogStatus({ saved: true, logged: false }), 'log_failed');
+  assert.equal(classifyJournalLogStatus({ saved: true, logged: undefined }), 'log_failed');
+  assert.equal(classifyJournalLogStatus({ saved: true, logged: null }), 'log_failed');
 });
 
 // ---- buildJournalFinalizeCommand ----
@@ -273,20 +387,51 @@ test('AC-1: a malformed JSON payload (devflow-411-style extra closing brace) fai
   });
 });
 
-// ---- conformance: call sites use the canonical Write-tool-verbatim helper ----
+// ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----
+//
+// issue #494 F3: all payload-carrying journal handoff call sites — the 3 claimed-success
+// sites (dev-flow.js Merge tier, pr-iterate.js Iterate, dev-improve.js File) and dev-flow.js's
+// writeFailureTelemetry (outcome:'failure'/'partial') — migrate to the 2-stage
+// buildJournalSaveInstr + buildJournalLogInstr split, so conclusion-value literals never
+// co-occur with journal/pending wording in a single prompt regardless of outcome. The saveDir
+// passed to buildJournalSaveInstr pins the payload file under the worktree's gitignored
+// `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`, pr-iterate: `${isoWt}/.devflow-tmp`) rather
+// than `${TMPDIR:-/tmp}`, so validateJournalSavedPath can pin `requiredDirSuffix`. This test
+// pins that neither workflow references the removed single-stage buildJournalHandoffInstr /
+// buildFailureJournalInstr names.
 
-test('workflows construct journal handoff instructions through the canonical Write-tool-verbatim helper', () => {
+test('workflows construct journal handoff instructions through the canonical Write-tool-verbatim helpers', () => {
   const devFlow = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
   const prIterate = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 
+  // dev-flow.js: Merge tier telemetry handoff uses the 2-stage split, worktree-scoped saveDir.
   assert.equal(
-    (devFlow.match(/buildJournalHandoffInstr\(\{ prefix: 'devflow'/g) ?? []).length,
-    2,
-  );
-  assert.equal(
-    (prIterate.match(/buildJournalHandoffInstr\(\{ prefix: 'priterate'/g) ?? []).length,
+    (devFlow.match(/buildJournalSaveInstr\(\{ payload: telemetryHandoff, saveDir: `\$\{WT\}\/\.devflow-tmp` \}\)/g) ?? []).length,
     1,
   );
+  // dev-flow.js: writeFailureTelemetry (needs_clarification/cross_repo/empty_diff) also uses the
+  // 2-stage split with the same worktree-scoped saveDir — no local single-stage helper remains.
+  assert.equal(
+    (devFlow.match(/buildJournalSaveInstr\(\{ payload, saveDir: `\$\{WT\}\/\.devflow-tmp` \}\)/g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (devFlow.match(/buildJournalLogInstr\(\{ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath \}\)/g) ?? []).length,
+    2, // Merge tier success handoff + writeFailureTelemetry
+  );
+  assert.ok(!devFlow.includes('buildFailureJournalInstr'));
+  // pr-iterate.js: Iterate telemetry handoff uses the 2-stage split, worktree-scoped saveDir.
+  assert.equal(
+    (prIterate.match(/buildJournalSaveInstr\(\{ payload: telemetryHandoff, saveDir: `\$\{isoWt\}\/\.devflow-tmp` \}\)/g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (prIterate.match(/buildJournalLogInstr\(\{ prefix: 'priterate'/g) ?? []).length,
+    1,
+  );
+  // The removed single-stage buildJournalHandoffInstr is not referenced by either workflow.
+  assert.ok(!devFlow.includes('buildJournalHandoffInstr('));
+  assert.ok(!prIterate.includes('buildJournalHandoffInstr('));
   assert.ok(!devFlow.includes('buildJournalHandoffCommand'));
   assert.ok(!prIterate.includes('buildJournalHandoffCommand'));
   assert.ok(!devFlow.includes("<<'TELEMETRY_EOF'"));

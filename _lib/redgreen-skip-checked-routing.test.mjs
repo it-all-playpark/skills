@@ -93,8 +93,12 @@ function makeSandbox(analyzeReq, evaluatorResponses, redgreenResponseFor) {
     if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
       journalPrompts.push(prompt);
+      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    }
+    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
     if (agentType === 'implementer') {

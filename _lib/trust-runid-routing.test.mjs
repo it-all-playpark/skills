@@ -109,6 +109,8 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'gh-pr-view') return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
@@ -127,14 +129,12 @@ function makeSandbox({ repo = null, req = STANDARD_REQ, overrides = {}, fixesApp
   return { ctx, calls };
 }
 
-// journal-log prompt から telemetry payload を JSON.parse して返す（effectdelta-routing.test.mjs の
-// extractTelemetryPayload と同型）。
+// journal-save (stage1, issue #494) prompt から telemetry payload を JSON.parse して返す
+// （journal-handoff.mjs の Write-tool verbatim delimiter <<<HANDOFF_DATA_BEGIN/END>>> から抽出。
+// journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  // issue #433: journal-handoff.mjs の journal-log prompt は buildJournalHandoffInstr の
-  // Write-tool verbatim delimiter（<<<JOURNAL_HANDOFF_BODY_BEGIN/END>>>）で payload を囲む
-  // （旧 heredoc `TELEMETRY_EOF` 形式は撤去済み）。
-  const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  const m = prompt.match(/<<<HANDOFF_DATA_BEGIN>>>\n(\{[\s\S]*?\})\n<<<HANDOFF_DATA_END>>>/);
   if (!m) return null;
   try {
     return JSON.parse(m[1]);
@@ -206,7 +206,7 @@ test('[trust-run-id] (d) repo が allowlist 不一致（trust 非活性）→ jo
   assertNoCrash(error, 'd');
   assert.ok(result !== null, '(d) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "(d) 'journal-log' の呼び出しが存在すること");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, '(d) journal-log prompt から telemetry payload を JSON.parse できるはず');
@@ -233,7 +233,7 @@ test('[trust-run-id] (e) repo=allowlist（trust 活性）→ journal telemetry �
   assertNoCrash(error, 'e');
   assert.ok(result !== null, '(e) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "(e) 'journal-log' の呼び出しが存在すること");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, '(e) journal-log prompt から telemetry payload を JSON.parse できるはず');

@@ -95,6 +95,10 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
     if (label.startsWith('post-')) {
       return { posted: true, method: 'gh', url: 'http://x' };
     }
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') {
+      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    }
     if (label === 'journal-log') {
       return { logged: true, summary: 'ok' };
     }

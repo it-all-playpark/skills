@@ -88,11 +88,12 @@ function evaluatorResponseFor(req) {
   };
 }
 
-// journal-log prompt から telemetry payload を JSON.parse して返す（journal-handoff.mjs の
-// Write-tool verbatim delimiter <<<JOURNAL_HANDOFF_BODY_BEGIN/END>>> から抽出）。
+// journal-save (stage1, issue #494) prompt から telemetry payload を JSON.parse して返す
+// （journal-handoff.mjs の Write-tool verbatim delimiter <<<HANDOFF_DATA_BEGIN/END>>> から抽出。
+// journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  const m = prompt.match(/<<<HANDOFF_DATA_BEGIN>>>\n(\{[\s\S]*?\})\n<<<HANDOFF_DATA_END>>>/);
   if (!m) return null;
   try {
     return JSON.parse(m[1]);
@@ -133,6 +134,8 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'gh-pr-view') return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
@@ -364,7 +367,7 @@ test("[effectdelta-obs-schema] group3(i): mode:'pr-observe' 契約違反 payload
   assert.equal(error, null, `group3(i): 契約違反 payload でも run 全体が abort してはならないが error が発生: ${error?.message}`);
   assert.ok(result !== null, 'group3(i): workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "group3(i): 'journal-log' の呼び出しが存在すること（fail-open で完走）");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, 'group3(i): journal-log prompt から telemetry payload を JSON.parse できるはず');
@@ -400,7 +403,7 @@ test("[effectdelta-obs-schema] group3(ii): baseline — 正しい shadow payload
   assertNoCrash(error, 'group3-ii');
   assert.ok(result !== null, 'group3(ii): workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "group3(ii): 'journal-log' の呼び出しが存在すること");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, 'group3(ii): journal-log prompt から telemetry payload を JSON.parse できるはず');
@@ -433,7 +436,7 @@ test("[effectdelta-obs-schema] group3(iii): mode:'pr-observe' 契約違反 paylo
   assert.equal(error, null, `group3(iii): 契約違反 payload でも run 全体が abort してはならないが error が発生: ${error?.message}`);
   assert.ok(result !== null, 'group3(iii): workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "group3(iii): 'journal-log' の呼び出しが存在すること（fail-open で完走）");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, 'group3(iii): journal-log prompt から telemetry payload を JSON.parse できるはず');
@@ -461,7 +464,7 @@ test("[effectdelta-obs-schema] group3(iv): baseline — 正しい shadow payload
   assertNoCrash(error, 'group3-iv');
   assert.ok(result !== null, 'group3(iv): workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "group3(iv): 'journal-log' の呼び出しが存在すること");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, 'group3(iv): journal-log prompt から telemetry payload を JSON.parse できるはず');

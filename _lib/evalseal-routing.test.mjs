@@ -166,6 +166,8 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'gh-pr-view') return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
@@ -184,15 +186,12 @@ function makeSandbox({ repo = null, req = STANDARD_REQ, overrides = {}, fixesApp
   });
 }
 
-// journalCmd は payload を `<<'TELEMETRY_EOF'\n<json>\nTELEMETRY_EOF` heredoc として
-// journal-log prompt に埋め込む（journal-handoff.mjs の JOURNAL_HANDOFF_DELIMITER）。
-// prompt テキストから telemetry payload を JSON.parse して返す。見つからなければ null。
+// journal-save (stage1, issue #494) prompt から telemetry payload を JSON.parse して返す
+// （journal-handoff.mjs の Write-tool verbatim delimiter <<<HANDOFF_DATA_BEGIN/END>>> から抽出。
+// journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
 function extractTelemetryPayload(prompt) {
   if (typeof prompt !== 'string') return null;
-  // issue #433: journal-handoff.mjs の journal-log prompt は buildJournalHandoffInstr の
-  // Write-tool verbatim delimiter（<<<JOURNAL_HANDOFF_BODY_BEGIN/END>>>）で payload を囲む
-  // （旧 heredoc `TELEMETRY_EOF` 形式は撤去済み）。
-  const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
+  const m = prompt.match(/<<<HANDOFF_DATA_BEGIN>>>\n(\{[\s\S]*?\})\n<<<HANDOFF_DATA_END>>>/);
   if (!m) return null;
   try {
     return JSON.parse(m[1]);
@@ -251,7 +250,7 @@ test('[evalseal] (a) repo が allowlist 不一致 → EVALSEAL_MODE=off → trus
 
   assert.ok(!calls.some((c) => c.label.startsWith('trust-')), "(a) label が 'trust-' 始まりの呼び出しが存在してはならない");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "(a) 'journal-log' の呼び出しが存在すること");
   assert.ok(!journalCall.prompt.includes('trust_receipts'), "(a) journal-log prompt に 'trust_receipts' が含まれてはならない");
   assert.ok(!journalCall.prompt.includes('trust_evalseal_missing_reason'), "(a) journal-log prompt に 'trust_evalseal_missing_reason' が含まれてはならない（EVALSEAL_MODE=off）");
@@ -291,7 +290,7 @@ test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1�
   assert.ok(sealCalls[0].prompt.includes('--evidence-file'), "(b) trust-seal-eval prompt に '--evidence-file' が含まれるはず");
   assert.ok(sealCalls[0].prompt.includes('trust-evidence-eval.json'), "(b) trust-seal-eval prompt に 'trust-evidence-eval.json' への Write 指示が含まれるはず");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.ok(payload, '(b) journal-log prompt から telemetry payload を JSON.parse できるはず');
   const receipts = payload?.telemetry?.trust_receipts;
@@ -334,7 +333,7 @@ test("[evalseal] (c) trust-seal-eval が null → run 完走 + error null + trus
   assert.equal(result?.trust_receipts, 0, `(c) trust_receipts は 0 のはずだが ${result?.trust_receipts}（受領物なし = 成功扱いしない）`);
   assert.equal(result?.trust_evalseal_missing_reason, 'agent_null', `(c) trust_evalseal_missing_reason は 'agent_null' のはずだが ${result?.trust_evalseal_missing_reason}`);
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(!journalCall.prompt.includes('"trust_receipts"'), "(c) receipt が無いので journal-log prompt に 'trust_receipts' キーが含まれてはならない");
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.equal(payload?.telemetry?.trust_evalseal_missing_reason, 'agent_null', "(c) journal telemetry の trust_evalseal_missing_reason は 'agent_null' のはず");
@@ -417,7 +416,7 @@ test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → eva
   assert.ok(sealFinalCall.prompt.includes('trust-evidence-final.json'), "(d) trust-seal-final prompt に 'trust-evidence-final.json' への Write 指示が含まれるはず");
   assert.ok(sealFinalCall.prompt.includes('--tree-source head'), "(d) trust-seal-final prompt に '--tree-source head' が含まれるはず");
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.ok(payload, '(d) journal-log prompt から telemetry payload を JSON.parse できるはず');
   const receipts = payload?.telemetry?.trust_receipts;
@@ -528,7 +527,7 @@ test("[evalseal] (h) EffectDelta receipt のみ（EvalSeal receipt 無し）→ 
   assert.equal(error, null, `(h) run が abort してはならないが error が発生: ${error?.message}`);
   assert.ok(result !== null, '(h) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall, "(h) 'journal-log' の呼び出しが存在すること");
   const payload = extractTelemetryPayload(journalCall.prompt);
   assert.ok(payload, '(h) journal-log prompt から telemetry payload を JSON.parse できるはず');
@@ -567,7 +566,7 @@ test('[evalseal] (h2) EvalSeal + EffectDelta 両方の receipt あり → trust_
   assertNoCrash(error, 'h2');
   assert.ok(result !== null, '(h2) workflow は return object を返すべきだが null だった');
 
-  const journalCall = calls.find((c) => c.label === 'journal-log');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
   assert.ok(payload, '(h2) journal-log prompt から telemetry payload を JSON.parse できるはず');
 

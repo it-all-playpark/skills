@@ -93,8 +93,12 @@ function makeResponder(journalPrompts) {
     if (label === 'post-summary') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
       journalPrompts.push(prompt);
+      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    }
+    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
     if (agentType === 'implementer') {
@@ -111,13 +115,14 @@ function makeResponder(journalPrompts) {
 }
 
 /**
- * journal-log prompt から `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>`〜`END` 区間の JSON を抽出して parse する。
+ * journal-save (stage1, issue #494) prompt から `<<<HANDOFF_DATA_BEGIN>>>`〜`END` 区間の JSON を
+ * 抽出して parse する（journal-log (stage2) はファイルパスのみを扱い payload literal を含まない）。
  * @param {string} prompt
  * @returns {object}
  */
 function parseJournalHandoffPayload(prompt) {
-  const match = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
-  assert.ok(match, `journal-log prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない。prompt:\n${prompt}`);
+  const match = prompt.match(/<<<HANDOFF_DATA_BEGIN>>>\n([\s\S]*?)\n<<<HANDOFF_DATA_END>>>/);
+  assert.ok(match, `journal-save prompt に HANDOFF_DATA delimiter が見つからない。prompt:\n${prompt}`);
   return JSON.parse(match[1]);
 }
 
@@ -130,8 +135,10 @@ test('[subagent-invocations] journal handoff の subagent_invocations.total は 
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const journalIdx = calls.findIndex((c) => c.label === 'journal-log');
-  assert.ok(journalIdx >= 0, 'journal-log 呼び出しが発生しなかった');
+  // issue #494: telemetry payload は journal-save (stage1) の呼び出し直前に JS 側で構築される
+  // ため、subagent_invocations.total は journal-save の calls 配列 index と一致する。
+  const journalIdx = calls.findIndex((c) => c.label === 'journal-save');
+  assert.ok(journalIdx >= 0, 'journal-save 呼び出しが発生しなかった');
 
   const capturedPrompt = journalPrompts[0] ?? '';
   const payload = parseJournalHandoffPayload(capturedPrompt);
@@ -165,8 +172,10 @@ test('[subagent-invocations] nested pr-iterate の subagent_invocations（total=
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const journalIdx = calls.findIndex((c) => c.label === 'journal-log');
-  assert.ok(journalIdx >= 0, 'journal-log 呼び出しが発生しなかった');
+  // issue #494: telemetry payload は journal-save (stage1) の呼び出し直前に JS 側で構築される
+  // ため、subagent_invocations.total は journal-save の calls 配列 index と一致する。
+  const journalIdx = calls.findIndex((c) => c.label === 'journal-save');
+  assert.ok(journalIdx >= 0, 'journal-save 呼び出しが発生しなかった');
 
   const capturedPrompt = journalPrompts[0] ?? '';
   const payload = parseJournalHandoffPayload(capturedPrompt);
