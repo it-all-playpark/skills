@@ -118,6 +118,10 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, commitEnsureStub, dirty
     if (label === 'journal-log') {
       return { logged: true, summary: 'ok' };
     }
+    // pr-meta: cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
+    if (label === 'pr-meta') {
+      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
+    }
     return null;
   };
 }

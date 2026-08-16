@@ -39,8 +39,9 @@ function makeSandbox(journalResult, journalSaveResult) {
     }
 
     // pr-meta: repo probe（F3。issue #309）
+    // cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
     if (label === 'pr-meta' && agentType === 'dev-runner-haiku-ro') {
-      return { url: 'https://github.com/acme/skills/pull/5' };
+      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
     }
 
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を

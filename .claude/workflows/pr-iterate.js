@@ -115,7 +115,7 @@ function classifyJournalLogStatus({ saved, logged }) {
 // 同一パターンで、fileName モードの呼び出し側が渡す名前もこれに従う。
 const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
 
-// buildJournalSaveInstr({ payload, saveDir, fileName }): stage1 instruction string. Persists the
+// buildJournalSaveInstr({ payload, savePath | saveDir }): stage1 instruction string. Persists the
 // journal handoff payload verbatim to a file so that stage2 (buildJournalLogInstr) can be driven
 // by a path alone — the payload body has no reason to be re-stated in the prompt that writes
 // under pending/, and keeping it out means a long telemetry blob is carried as data on disk
@@ -125,43 +125,52 @@ const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
 //
 // 2 つのモードがあるのは、保存先が JS 側で確定しているかどうかで実行可能な手段が変わるため:
 //
-// - `fileName` あり（saveDir が JS 側で確定している dev-flow / pr-iterate）: 保存先の絶対パスが
+// - `savePath`（dev-flow / pr-iterate — worktree パスが JS 側で確定している）: 保存先の絶対パスが
 //   prompt 構築時点で決まるので **shell を一切使わない**。これは必須の性質で、repo 配下を Bash から
 //   書けない環境（skills repo の自己改変ガードは worktree 配下も含めて deny する）では
 //   `mktemp "<worktree>/…"` が EPERM になり、agent が別ディレクトリへ退避して保存先固定の検証に
 //   落ちる。Write tool は同じ場所へ書けるので（isolation probe が同経路）、パスを固定して渡す。
-// - `fileName` なし（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
-//   shell 展開に依存し JS 側で解決できないため、Bash の mktemp で一意なパスを得てから Write する。
-function buildJournalSaveInstr({ payload, saveDir, fileName }) {
+//   呼び出し側は同じ `savePath` を stage2 へ渡し、agent 申告の path とは完全一致でのみ突合する
+//   （確定値があるのに申告値を信用する理由がない）。
+// - `saveDir` + `fileName`（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
+//   shell 展開に依存し JS 側で解決できないため、shell に絶対パスを組み立てさせてから Write する。
+//   ファイル名は固定で、mktemp は使わない — テンプレート `payload-XXXXXX.json` は X 列が suffix の
+//   前にあるため BSD mktemp では展開されず、リテラル名のファイルを exit 0 で作る（一意性が silent に
+//   失われる）。呼び出し側は申告パスを requiredDirSuffix で pin する（絶対パスが JS 側で確定しない
+//   ため完全一致はできない）。
+function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
+  if (savePath != null && saveDir != null) {
+    throw new Error('journal-handoff: savePath と saveDir は同時に指定できません');
+  }
 
   const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
   const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
     + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
 
-  if (fileName != null) {
-    if (!saveDir) {
-      throw new Error('journal-handoff: fileName を渡す場合 saveDir は必須です');
+  if (savePath != null) {
+    // stage2 の bash コマンドへそのまま splice されるので、申告値に対するのと同じ決定論検証を
+    // 構築時点でも通す（絶対パス / 限定 charset / '..' 不可 / basename 契約）。
+    if (!validateJournalSavedPath(savePath)) {
+      throw new Error(`journal-handoff: invalid savePath: ${JSON.stringify(savePath)}`);
     }
-    if (!JOURNAL_PAYLOAD_BASENAME_RE.test(fileName)) {
-      throw new Error(`journal-handoff: invalid fileName: ${JSON.stringify(fileName)}`);
-    }
-    const payloadPath = `${saveDir}/${fileName}`;
     return `## Journal handoff payload の保存\n`
       + `1. **Write tool** を使い、下記 delimiter 内の JSON を **一字一句そのまま**\n`
-      + `\`${payloadPath}\` へ書き出せ。${verbatimRule}`
+      + `\`${savePath}\` へ書き出せ。${verbatimRule}`
       + `Bash は使うな。保存先は上記のパスで固定されており、一時ファイル名を作る必要はない。\n`
       + bodyBlock
-      + `2. 書き出しに成功したら {saved:true, path:"${payloadPath}"} を返せ。\n`
+      + `2. 書き出しに成功したら {saved:true, path:"${savePath}"} を返せ。\n`
       + `失敗した場合は throw せず {saved:false} を返せ。\n`;
   }
 
-  const mktempCmd = saveDir
-    ? `mkdir -p "${saveDir}" && mktemp "${saveDir}/payload-XXXXXX.json"`
-    : `mktemp "\${TMPDIR:-/tmp}/payload-XXXXXX.json"`;
+  if (!saveDir) throw new Error('journal-handoff: savePath か saveDir のどちらかが必要です');
+  if (!JOURNAL_PAYLOAD_BASENAME_RE.test(String(fileName ?? ''))) {
+    throw new Error(`journal-handoff: invalid fileName: ${JSON.stringify(fileName ?? null)}`);
+  }
+  const resolveCmd = `mkdir -p "${saveDir}" && printf '%s\\n' "${saveDir}/${fileName}"`;
 
   return `## Journal handoff payload の保存\n`
-    + `1. まず Bash で \`${mktempCmd}\` を実行し、\n`
+    + `1. まず Bash で \`${resolveCmd}\` を実行し、\n`
     + `出力された絶対パスを <PAYLOAD_FILE> とする。\n`
     + `2. 次に **Write tool** を使い、下記 delimiter 内の JSON を\n`
     + `**一字一句そのまま** <PAYLOAD_FILE> へ書き出せ。${verbatimRule}`
@@ -1231,17 +1240,21 @@ const telemetryHandoff = buildJournalHandoffPayload({
 // （logged/save_failed/log_failed）で返り値へ現れる。fail-open は維持（gate 判定には無影響）。
 let journalLogStatus = 'save_failed'
 try {
+  const journalPayloadPath = `${isoWt}/.devflow-tmp/payload-priterate-${PR}.json`
   const journalSaveRes = await trackedAgent(
     `## Objective\npr-iterate 終端の telemetry handoff payload を一時ファイルへ保存する。\n\n`
     + `## Instructions\n`
-    + buildJournalSaveInstr({ payload: telemetryHandoff, saveDir: `${isoWt}/.devflow-tmp`, fileName: `payload-priterate-${PR}.json` })
+    + buildJournalSaveInstr({ payload: telemetryHandoff, savePath: journalPayloadPath })
     + `\n## Output format\n{ "saved": boolean, "path": string }\n`
     + `\n## Tools\n使用可: Write のみ（保存先は指示で固定済み — Bash は不要）\n`
     + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
     + `\n## Token cap\n120 語以内。`,
     { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase: 'Iterate' },
   )
-  const journalSavedPath = journalSaveRes?.saved === true && validateJournalSavedPath(journalSaveRes.path, { requiredDirSuffix: '/.devflow-tmp' }) ? journalSaveRes.path : null
+  // 保存先は JS 側で確定しているので agent 申告の path は使わない（確定値があるのに申告値を信用する
+  // 理由がなく、suffix 一致で通すと別ディレクトリの同名ファイルが stage2 へ渡りうる）。agent が別の
+  // 場所へ書いていた場合は stage2 の jq 検証が落ちて log_failed になり、欠落は観測可能なまま。
+  const journalSavedPath = journalSaveRes?.saved === true ? journalPayloadPath : null
 
   if (journalSavedPath) {
     // stage1 は成功済み。stage2 が throw（schema 不一致・proxy 実行失敗等）すると catch へ
