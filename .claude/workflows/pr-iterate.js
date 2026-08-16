@@ -130,8 +130,9 @@ const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
 //   書けない環境（skills repo の自己改変ガードは worktree 配下も含めて deny する）では
 //   `mktemp "<worktree>/…"` が EPERM になり、agent が別ディレクトリへ退避して保存先固定の検証に
 //   落ちる。Write tool は同じ場所へ書けるので（isolation probe が同経路）、パスを固定して渡す。
-//   呼び出し側は同じ `savePath` を stage2 へ渡し、agent 申告の path とは完全一致でのみ突合する
-//   （確定値があるのに申告値を信用する理由がない）。
+//   呼び出し側は agent 申告の path を使わず、この `savePath` をそのまま stage2 へ渡す（確定値が
+//   あるのに申告値を信用する理由がない）。agent が別の場所へ書いていた場合は stage2 の jq 検証が
+//   落ちて log_failed になり、欠落は観測可能なまま。
 // - `saveDir` + `fileName`（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
 //   shell 展開に依存し JS 側で解決できないため、shell に絶対パスを組み立てさせてから Write する。
 //   ファイル名は固定で、mktemp は使わない — テンプレート `payload-XXXXXX.json` は X 列が suffix の
