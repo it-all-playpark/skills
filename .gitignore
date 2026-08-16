@@ -60,15 +60,11 @@ hunk-review
 
 # --- external skills (auto-managed) ---
 agent-browser
-fastify-best-practices
 find-skills
 gsc
 gws-calendar-agenda
-neon-postgres
 pricing-strategy
-prisma-cli
 remotion-best-practices
-vercel-react-best-practices
 # --- end external skills ---
 
 # veridelta run records (redgreen-verify.sh verdict_cmd hook output)
