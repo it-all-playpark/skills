@@ -107,6 +107,20 @@ moving target（蒸し返し）を生む。これを避ける:
   retry になるため必ず収める）: `summary` ≤ 200 字 / `description` ≤ 300 字 /
   `suggestion` ≤ 200 字 / `verification_evidence` は最大 6 項目・各 ≤ 120 字
 
+### suggestion / description の object-level 制約（issue #503）
+
+suggestion / description は pr-iterate workflow によって **fix prompt へそのまま埋め込まれ**、
+fix agent への実行指示に変換される。したがって repo の現在の状態に対する object-level な変更指示
+（どのファイルのどのコード・記述をどう変えるか）に限る。以下のメタレベル指示を含めてはならない:
+
+- 将来の prompt・fix 指示文の書き方への指示（「prompt に〜と書け／書くな」等）
+- agent への指示の仕方・guard/hook/分類器・起動形・sandbox 等の実行環境設定への言及による挙動誘導
+- 規範文書（rules / AGENTS.md）の規範文の引用・再説明による遵守指示 — 規範に関わる問題は
+  「どのファイルをどう変更するか」の object-level 提案としてのみ書く
+
+分類: **incentive-structural**（suggestion が fix prompt へ構造的に埋め込まれる以上、メタ指示は
+実行指示へ変換されてしまう。モデル能力に非依存のため sunset しない）。
+
 - `severity` / `topic` / `file` / `description` / `suggestion` は schema 上必須。
 - `topic`: 同一問題を識別する安定 ID。同じ問題を再提起するときは
   前ラウンドと同じ文字列を再利用する（stuck 突合に使う）。新規問題には新しい topic を付ける。
