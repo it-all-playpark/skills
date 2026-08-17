@@ -1236,7 +1236,11 @@ function isGatingMode(mode) {
 // 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
 // surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
 // evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み。
-// issue #471, epic #390 Phase 6 で evalseal/2（機械導出 verdict）へ移行済み）。
+// issue #471, epic #390 Phase 6 で evalseal/2（機械導出 verdict）へ移行済み。issue #495 で
+// obligation/evidence の prompt 埋め込みを撤去し、danger-grep / test proxy が確定時点で worktree 内
+// gitignored `.devflow-tmp/` へ書く実行証跡ファイルを evalseal-seal.mjs が --risk-file/--test-file/
+// --context-json で直接読む方式へ移行 — obligation/evidence bundle を構築する builder 関数は
+// dev-flow.js 側にもう存在せず、本モジュールは missing-reason enum 等の非 builder 定義のみを持つ）。
 // effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
 // post-summary（comment-prepare/comment-observe + subagent の bare gh choreography。issue #466）へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
@@ -1245,36 +1249,6 @@ const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectd
 // 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
 // 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
 const TRUST_KILL_SWITCH = false;
-
-// EvalSeal (evalseal/2) obligation の asserted 区画（evaluator 収束スナップショット等の agent
-// 判断）を構築する pure function。issue #471 で verdict/reasonCode 引数を撤去し asserted-only
-// 化した — outcome.verdict は evalseal-seal.mjs が evidence bundle から機械導出するため、
-// obligation は digest のみに寄与する asserted 区画（{evidence, context}）に閉じる（AC-2）。
-// evidence は文字列配列必須（非配列・非文字列要素は throw）。
-// context は plain object のみ許可（配列・null・非 object は throw）、未指定は空 object。
-function buildEvalsealObligation({ evidence, context } = {}) {
-  if (!Array.isArray(evidence) || evidence.some((e) => typeof e !== 'string')) {
-    throw new Error('trust-wiring: evidence は文字列配列が必要');
-  }
-
-  const safeContext = context === undefined ? {} : context;
-  if (safeContext === null || typeof safeContext !== 'object' || Array.isArray(safeContext)) {
-    throw new Error('trust-wiring: context は plain object が必要');
-  }
-
-  return { asserted: { evidence, context: safeContext } };
-}
-
-// EvalSeal (evalseal/2) evidence bundle を構築する pure function（issue #471）。
-// diff-risk-classify.sh の risk 判定 raw object と test green 判定を素通しで包むだけ
-// （検証・導出は evalseal-seal.mjs 側の責務のため throw しない）。risk 未指定は null、
-// testGreen が boolean でなければ null（no_tests・未実行等を機械導出不能として扱わせる）。
-function buildEvalsealEvidenceBundle({ risk, testGreen } = {}) {
-  return {
-    risk: risk ?? null,
-    test: { green: typeof testGreen === 'boolean' ? testGreen : null },
-  };
-}
 
 // EvalSeal receipt 欠落理由の closed enum（issue #471 AC-6）。out-of-enum は telemetry 出力側
 // （dev-flow.js）で 'unknown' に正規化する。
@@ -3993,6 +3967,9 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `それでも失敗するなら tests:"failed" とし失敗要約を summary に入れて即座に StructuredOutput で報告せよ。\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_FALLBACK_CONVENTION
+  + `\n証跡保存: StructuredOutput で返すのと同一内容の JSON（tests/green/summary）を **Write tool** で `
+  + `\`${WT}/.devflow-tmp/trust-test-latest.json\` へ保存せよ（.devflow-tmp が無ければ Write が作る。`
+  + `保存失敗しても test 結果報告は行え）。\n`
   + EPOCH_INSTRUCTION
 
 const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${depth}\` を実行し、`
@@ -4622,7 +4599,7 @@ async function execSecurityFloorPhase(state) {
     `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
     + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。`
     + `失敗時に ok:true を生成してはならない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --working-tree origin/${BASE}`,
+    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --working-tree --out ${WT}/.devflow-tmp/trust-risk-eval.json origin/${BASE}`,
     { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
   ), 'Security floor(danger-grep)')
   const dangerHits = risk.ok === true ? [...new Set(secHitsOf(risk).map((h) => h.class))] : []
@@ -5194,26 +5171,17 @@ phase('Evaluate')
 state = await execEvaluatePhase(state)
 if (EVALSEAL_MODE !== 'off' && state.runEval) {
   try {
-    const evalObligation = buildEvalsealObligation({
-      evidence: state.ledger.items.filter((it) => it.checked && typeof it.evidence === 'string').map((it) => `${it.id}: ${it.evidence}`.slice(0, 300)),
-      context: { issue: ISSUE, eval_iters: state.evalIters },
-    })
-    const evalEvidenceBundle = buildEvalsealEvidenceBundle({ risk: state.risk, testGreen: state.val?.green ?? null })
+    const evalContextJson = JSON.stringify({ issue: ISSUE, eval_iters: state.evalIters })
     const trustSealEval = await trackedAgent(
       `## Objective\ncd ${WT} で作業し EvalSeal (evalseal/2) receipt を生成する。\n\n`
       + `## Instructions\n`
-      + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
-      + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-obligation-eval.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
-      + `<<<TRUST_OBLIGATION_EVAL_BEGIN>>>\n${JSON.stringify(evalObligation)}\n<<<TRUST_OBLIGATION_EVAL_END>>>\n\n`
-      + `3. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-evidence-eval.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
-      + `<<<TRUST_EVIDENCE_EVAL_BEGIN>>>\n${JSON.stringify(evalEvidenceBundle)}\n<<<TRUST_EVIDENCE_EVAL_END>>>\n\n`
-      + `4. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-eval.json --evidence-file ${WT}/.devflow-tmp/trust-evidence-eval.json\`\n`
+      + `次のコマンドをそのまま実行し stdout の JSON 1 行をそのまま返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --risk-file ${WT}/.devflow-tmp/trust-risk-eval.json --test-file ${WT}/.devflow-tmp/trust-test-latest.json --context-json '${evalContextJson}'\`\n`
       + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
-      + `\n## Tools\n使用可: Bash, Write, Read\n`
-      + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Tools\n使用可: Bash, Read\n`
+      + `\n## Boundary\nファイルを変更しない。git 書き込み操作禁止。\n`
       + `\n## Token cap\n150 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-eval', phase: 'Evaluate' },
+      { agentType: 'dev-runner-haiku-ro', schema: TRUSTSEAL, label: 'trust-seal-eval', phase: 'Evaluate' },
     )
     if (trustSealEval?.ok === true && trustSealEval.mode !== 'off' && trustSealEval.receipt && trustSealEval.envelope) {
       state.trustReceipts.push({ stage: 'evaluate', receipt: trustSealEval.receipt, envelope: trustSealEval.envelope, invalidated: false, invalidated_reason: null })
@@ -5574,13 +5542,10 @@ if (EVALSEAL_MODE !== 'off' && (iterate?.fixes_applied ?? 0) > 0 && state.trustR
         }
 
         // trust-seal-final 自体は Merge tier phase（danger-grep-final 算出後）へ移設した
-        // （issue #471 — riskFinal の実測 risk 出力を evidence bundle に含めるため）。ここでは
-        // obligation の asserted 区画のみを組み立てて state.pendingFinalSeal に保持する。
+        // （issue #471 — riskFinal の実測 risk 出力ファイルを --risk-file で渡すため）。ここでは
+        // --context-json 用の context のみを state.pendingFinalSeal に保持する。
         state.pendingFinalSeal = {
-          obligation: buildEvalsealObligation({
-            evidence: [`final_reconcile=${finalReconcile}`, `final_test_green=${finalTestGreen}`, `final_ac_reconcile=${finalAcReconcile}`],
-            context: { issue: ISSUE, fixes_applied: iterate?.fixes_applied ?? 0 },
-          }),
+          context: { issue: ISSUE, fixes_applied: iterate?.fixes_applied ?? 0 },
         }
       }
     }
@@ -5616,7 +5581,7 @@ if (reuseSecFloor) {
   riskFinal = need(await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
     + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --out ${WT}/.devflow-tmp/trust-risk-final.json origin/${BASE}`,
     { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
   ), 'Merge tier(danger-grep-final)')
   changed = need(await trackedAgent(
@@ -5638,25 +5603,20 @@ if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${risk
 // ある（issue #471 architecture_decisions）。
 if (state.pendingFinalSeal && EVALSEAL_MODE !== 'off') {
   try {
-    const finalEvidenceBundle = buildEvalsealEvidenceBundle({
-      risk: riskFinal,
-      testGreen: finalTestGreen === true ? true : finalTestGreen === false ? false : null,
-    })
+    const finalRiskFile = reuseSecFloor
+      ? `${WT}/.devflow-tmp/trust-risk-eval.json`
+      : `${WT}/.devflow-tmp/trust-risk-final.json`
+    const finalContextJson = JSON.stringify(state.pendingFinalSeal.context)
     const trustSealFinal = await trackedAgent(
       `## Objective\ncd ${WT} で作業し Final PR HEAD に対する EvalSeal (evalseal/2) receipt を生成する。\n\n`
       + `## Instructions\n`
-      + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
-      + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-obligation-final.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
-      + `<<<TRUST_OBLIGATION_FINAL_BEGIN>>>\n${JSON.stringify(state.pendingFinalSeal.obligation)}\n<<<TRUST_OBLIGATION_FINAL_END>>>\n\n`
-      + `3. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-evidence-final.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
-      + `<<<TRUST_EVIDENCE_FINAL_BEGIN>>>\n${JSON.stringify(finalEvidenceBundle)}\n<<<TRUST_EVIDENCE_FINAL_END>>>\n\n`
-      + `4. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --stage final --quality-model ${QUALITY_MODEL} --obligation-file ${WT}/.devflow-tmp/trust-obligation-final.json --evidence-file ${WT}/.devflow-tmp/trust-evidence-final.json\`\n`
+      + `次のコマンドをそのまま実行し stdout の JSON 1 行をそのまま返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --stage final --quality-model ${QUALITY_MODEL} --risk-file ${finalRiskFile} --test-file ${WT}/.devflow-tmp/trust-test-latest.json --context-json '${finalContextJson}'\`\n`
       + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
-      + `\n## Tools\n使用可: Bash, Write, Read\n`
-      + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Tools\n使用可: Bash, Read\n`
+      + `\n## Boundary\nファイルを変更しない。git 書き込み操作禁止。\n`
       + `\n## Token cap\n150 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-final', phase: 'Merge tier' },
+      { agentType: 'dev-runner-haiku-ro', schema: TRUSTSEAL, label: 'trust-seal-final', phase: 'Merge tier' },
     )
     if (trustSealFinal?.ok === true && trustSealFinal.mode !== 'off' && trustSealFinal.receipt && trustSealFinal.envelope) {
       state.trustReceipts.push({ stage: 'final', receipt: trustSealFinal.receipt, envelope: trustSealFinal.envelope, invalidated: false, invalidated_reason: null })

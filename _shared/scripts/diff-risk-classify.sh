@@ -6,10 +6,14 @@
 # to stdout. Called directly from workflow JS. Ungameable critical floor -- severity is
 # ALWAYS "critical" and cannot be lowered by any flag or input.
 #
-# Usage: diff-risk-classify.sh [--working-tree] <base-ref>
+# Usage: diff-risk-classify.sh [--working-tree] [--out <path>] <base-ref>
 #   --working-tree  Classify worktree changes (staged + untracked) instead of committed
 #                   diff. Uses merge-base($BASE, HEAD) as anchor so BASE-ahead commits
 #                   from other branches do not bleed into the result.
+#   --out <path>    Best-effort duplicate the stdout JSON (success or error) to <path>
+#                   too (mkdir -p parent first). Write failures never change stdout
+#                   content or exit code -- dev-flow trust layer (issue #495) uses this
+#                   to leave an execution-trace file in a worktree-local gitignored dir.
 # Output: {"ok":true,"hits":[{file, class, severity:"critical", pattern?}]} on success
 #         (stdout). "pattern" is only present for class:"test-weakening" hits (issue
 #         #361/#362 spike). {"ok":false,"hits":[],"error": "...", "exit_code": N} on
@@ -23,10 +27,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../_lib/common.sh
 source "$SCRIPT_DIR/../../_lib/common.sh"
 
+OUT_PATH=""
+
+# Print $1 (a complete JSON line) to stdout, and best-effort duplicate the same
+# bytes to $OUT_PATH when set. File-write failures (unwritable dir, mkdir -p
+# failure, etc.) are swallowed -- they must never change stdout content or the
+# process exit code (see --out doc above).
+emit_json() {
+    local json="$1"
+    printf '%s\n' "$json"
+    if [[ -n "$OUT_PATH" ]]; then
+        set +e
+        mkdir -p "$(dirname "$OUT_PATH")" 2>/dev/null && printf '%s\n' "$json" > "$OUT_PATH" 2>/dev/null
+        set -e
+    fi
+}
+
 die_json() {
     local msg="$1"
     local code="${2:-1}"
-    printf '{"ok":false,"hits":[],"error":%s,"exit_code":%s}\n' "$(json_str "$msg")" "$code"
+    emit_json "$(printf '{"ok":false,"hits":[],"error":%s,"exit_code":%s}' "$(json_str "$msg")" "$code")"
     exit "$code"
 }
 
@@ -43,6 +63,13 @@ while [[ "${1:-}" == --* ]]; do
         --working-tree)
             MODE="working-tree"
             shift
+            ;;
+        --out)
+            if [[ $# -lt 2 ]]; then
+                die_json "--out requires a value" 2
+            fi
+            OUT_PATH="$2"
+            shift 2
             ;;
         *)
             die_json "unknown flag: $1" 2
@@ -144,7 +171,7 @@ else
 fi
 
 if [[ -z "$files" ]]; then
-    printf '%s\n' '{"ok":true,"hits":[]}'
+    emit_json '{"ok":true,"hits":[]}'
     exit 0
 fi
 
@@ -309,7 +336,7 @@ done <<< "$files"
 hits="${hits%$'\n'}"
 
 if [[ -z "$hits" ]]; then
-    printf '%s\n' '{"ok":true,"hits":[]}'
+    emit_json '{"ok":true,"hits":[]}'
     exit 0
 fi
 
@@ -317,8 +344,9 @@ if has_jq; then
     # Use jq to build the array deterministically (compact output, no spaces).
     # "pattern" (3rd tab field) is only included when non-empty -- the 7 legacy
     # classes carry an empty 3rd field and therefore emit no "pattern" key.
-    printf '%s\n' "$hits" | \
-        jq -c -R -n '{ok:true,hits:[inputs | split("\t") | {file:.[0], class:.[1], severity:"critical"} + (if (.[2] // "") != "" then {pattern:.[2]} else {} end)]}'
+    json_out="$(printf '%s\n' "$hits" | \
+        jq -c -R -n '{ok:true,hits:[inputs | split("\t") | {file:.[0], class:.[1], severity:"critical"} + (if (.[2] // "") != "" then {pattern:.[2]} else {} end)]}')"
+    emit_json "$json_out"
 else
     # Fallback: build JSON array with json_escape. Same pattern-optional rule as
     # the jq branch above.
@@ -340,7 +368,7 @@ else
         result="${result}${obj}"
     done <<< "$hits"
     result="${result}]}"
-    printf '%s\n' "$result"
+    emit_json "$result"
 fi
 
 exit 0

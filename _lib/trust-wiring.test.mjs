@@ -1,13 +1,13 @@
 // issue #411 (epic #390 Phase 3): trust-wiring.mjs の配線用 canonical テスト。
-// issue #471 (epic #390 Phase 6) で buildEvalsealObligation を asserted-only 化し、
-// buildEvalsealEvidenceBundle / TRUST_EVALSEAL_MISSING_REASONS を追加。
+// issue #471 (epic #390 Phase 6) で TRUST_EVALSEAL_MISSING_REASONS を追加。
+// issue #495 で evidence 供給を prompt 埋め込みから実行証跡ファイル参照方式へ移行し、
+// buildEvalsealObligation / buildEvalsealEvidenceBundle（旧 obligation/evidence bundle
+// builder。dev-flow.js 側の呼び出し元が消えたため canonical からも撤去）のテストを削除した。
 //
 // (a) TRUST_LAYER_CONFIG のキー/値が trust-mode.mjs の TRUST_LAYERS/TRUST_MODES、
 //     trust-telemetry.mjs の TELEMETRY_LAYERS/TELEMETRY_MODES と一致すること
 //     （trust-telemetry.mjs が Phase 1 で「両定数の一致は Phase 2 の配線 test で担保する」
 //     と宣言していた検証を本 test で担保する）。
-// (b) buildEvalsealObligation の型 throw（asserted-only。verdict/reasonCode 引数は無い）。
-// (b2) buildEvalsealEvidenceBundle の素通し変換（throw しない）。
 // (b3) TRUST_EVALSEAL_MISSING_REASONS の closed enum 内容。
 // (c) effectiveTrustVerdict の 空/全 invalidated → 'inconclusive'・配列末尾優先。
 // (d) formatTrustReceiptsSummary が invalidated 無し入力で trust-telemetry.mjs の
@@ -19,8 +19,6 @@ import assert from 'node:assert/strict';
 import {
   TRUST_LAYER_CONFIG,
   TRUST_KILL_SWITCH,
-  buildEvalsealObligation,
-  buildEvalsealEvidenceBundle,
   TRUST_EVALSEAL_MISSING_REASONS,
   effectiveTrustVerdict,
   formatTrustReceiptsSummary,
@@ -56,70 +54,6 @@ test('TRUST_LAYER_CONFIG の値は全て trust-telemetry.mjs の TELEMETRY_MODES
 
 test('TRUST_KILL_SWITCH は false（workflow 側 kill switch の既定）', () => {
   assert.equal(TRUST_KILL_SWITCH, false);
-});
-
-// ---- (b) buildEvalsealObligation（asserted-only。issue #471） ----
-
-test('buildEvalsealObligation: 正常系（asserted 区画のみを返す。context 未指定は空 object）', () => {
-  const o = buildEvalsealObligation({ evidence: ['a', 'b'] });
-  assert.deepEqual(o, { asserted: { evidence: ['a', 'b'], context: {} } });
-});
-
-test('buildEvalsealObligation: 返り値に verdict/reason_code キーが存在しない（AC-2: derived 区画への外部入力経路が無いことの構造的裏付け）', () => {
-  const o = buildEvalsealObligation({ evidence: [] });
-  assert.equal('verdict' in o, false);
-  assert.equal('reason_code' in o, false);
-  assert.deepEqual(Object.keys(o), ['asserted']);
-});
-
-test('buildEvalsealObligation: evidence が非配列は throw', () => {
-  assert.throws(() => buildEvalsealObligation({ evidence: 'not-array' }));
-});
-
-test('buildEvalsealObligation: evidence 未指定は throw', () => {
-  assert.throws(() => buildEvalsealObligation({}));
-});
-
-test('buildEvalsealObligation: evidence に非文字列要素があると throw', () => {
-  assert.throws(() => buildEvalsealObligation({ evidence: ['ok', 123] }));
-});
-
-test('buildEvalsealObligation: context に配列を渡すと throw（plain object のみ許可）', () => {
-  assert.throws(() => buildEvalsealObligation({ evidence: [], context: ['x'] }));
-});
-
-test('buildEvalsealObligation: context に null を渡すと throw', () => {
-  assert.throws(() => buildEvalsealObligation({ evidence: [], context: null }));
-});
-
-test('buildEvalsealObligation: context に plain object を渡すと asserted.context にそのまま反映される', () => {
-  const ctx = { foo: 'bar' };
-  const o = buildEvalsealObligation({ evidence: [], context: ctx });
-  assert.deepEqual(o.asserted.context, ctx);
-});
-
-// ---- (b2) buildEvalsealEvidenceBundle ----
-
-test('buildEvalsealEvidenceBundle: risk/testGreen をそのまま bundle へ包む', () => {
-  const risk = { ok: true, hits: [] };
-  const b = buildEvalsealEvidenceBundle({ risk, testGreen: true });
-  assert.deepEqual(b, { risk, test: { green: true } });
-});
-
-test('buildEvalsealEvidenceBundle: risk 未指定は null', () => {
-  const b = buildEvalsealEvidenceBundle({ testGreen: false });
-  assert.equal(b.risk, null);
-  assert.equal(b.test.green, false);
-});
-
-test('buildEvalsealEvidenceBundle: testGreen が非 boolean（null/undefined/文字列）は green:null', () => {
-  assert.equal(buildEvalsealEvidenceBundle({ testGreen: null }).test.green, null);
-  assert.equal(buildEvalsealEvidenceBundle({}).test.green, null);
-  assert.equal(buildEvalsealEvidenceBundle({ testGreen: 'true' }).test.green, null);
-});
-
-test('buildEvalsealEvidenceBundle: 引数省略でも throw しない', () => {
-  assert.doesNotThrow(() => buildEvalsealEvidenceBundle());
 });
 
 // ---- (b3) TRUST_EVALSEAL_MISSING_REASONS ----

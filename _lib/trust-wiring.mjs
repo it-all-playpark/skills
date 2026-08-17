@@ -11,7 +11,11 @@
 // 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
 // surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
 // evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み。
-// issue #471, epic #390 Phase 6 で evalseal/2（機械導出 verdict）へ移行済み）。
+// issue #471, epic #390 Phase 6 で evalseal/2（機械導出 verdict）へ移行済み。issue #495 で
+// obligation/evidence の prompt 埋め込みを撤去し、danger-grep / test proxy が確定時点で worktree 内
+// gitignored `.devflow-tmp/` へ書く実行証跡ファイルを evalseal-seal.mjs が --risk-file/--test-file/
+// --context-json で直接読む方式へ移行 — obligation/evidence bundle を構築する builder 関数は
+// dev-flow.js 側にもう存在せず、本モジュールは missing-reason enum 等の非 builder 定義のみを持つ）。
 // effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
 // post-summary（comment-prepare/comment-observe + subagent の bare gh choreography。issue #466）へ配線済み）。
 // sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
@@ -20,36 +24,6 @@ export const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', 
 // 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
 // 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
 export const TRUST_KILL_SWITCH = false;
-
-// EvalSeal (evalseal/2) obligation の asserted 区画（evaluator 収束スナップショット等の agent
-// 判断）を構築する pure function。issue #471 で verdict/reasonCode 引数を撤去し asserted-only
-// 化した — outcome.verdict は evalseal-seal.mjs が evidence bundle から機械導出するため、
-// obligation は digest のみに寄与する asserted 区画（{evidence, context}）に閉じる（AC-2）。
-// evidence は文字列配列必須（非配列・非文字列要素は throw）。
-// context は plain object のみ許可（配列・null・非 object は throw）、未指定は空 object。
-export function buildEvalsealObligation({ evidence, context } = {}) {
-  if (!Array.isArray(evidence) || evidence.some((e) => typeof e !== 'string')) {
-    throw new Error('trust-wiring: evidence は文字列配列が必要');
-  }
-
-  const safeContext = context === undefined ? {} : context;
-  if (safeContext === null || typeof safeContext !== 'object' || Array.isArray(safeContext)) {
-    throw new Error('trust-wiring: context は plain object が必要');
-  }
-
-  return { asserted: { evidence, context: safeContext } };
-}
-
-// EvalSeal (evalseal/2) evidence bundle を構築する pure function（issue #471）。
-// diff-risk-classify.sh の risk 判定 raw object と test green 判定を素通しで包むだけ
-// （検証・導出は evalseal-seal.mjs 側の責務のため throw しない）。risk 未指定は null、
-// testGreen が boolean でなければ null（no_tests・未実行等を機械導出不能として扱わせる）。
-export function buildEvalsealEvidenceBundle({ risk, testGreen } = {}) {
-  return {
-    risk: risk ?? null,
-    test: { green: typeof testGreen === 'boolean' ? testGreen : null },
-  };
-}
 
 // EvalSeal receipt 欠落理由の closed enum（issue #471 AC-6）。out-of-enum は telemetry 出力側
 // （dev-flow.js）で 'unknown' に正規化する。
