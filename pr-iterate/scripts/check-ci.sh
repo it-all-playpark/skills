@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-ci.sh - Classify PR CI status from a `gh pr checks` snapshot.
-# Usage: check-ci.sh --checks-json <file> [--fetch-error <file>]
+# Usage: check-ci.sh --checks-data <string> [--fetch-error-data <string>]
 #                    [--attempt N] [--max-attempts K] [--poll-seconds M]
 #
 # Exits 0 when CI status is determined (passed/failed/pending/no_checks).
@@ -9,13 +9,25 @@
 # CI state is reported via stdout JSON so the caller can treat pending != failure.
 #
 # PURE TRANSFORM — this script performs no network I/O and no wall-clock waiting.
-# It reads a snapshot the caller already fetched and reduces it to the output
-# contract below. The caller owns fetching and sleeping:
+# It reduces a snapshot string the caller already fetched to the output
+# contract below. The caller owns fetching, sleeping, and relaying the
+# snapshot as argv data (two bare, single-statement commands — no file relay,
+# no redirection, no pipes):
 #
-#   gh pr checks <pr> --repo <owner/repo> --json name,state,bucket \
-#     > $TMPDIR/ci-checks-<n>.json 2> $TMPDIR/ci-err-<n>.txt
-#   check-ci.sh --checks-json $TMPDIR/ci-checks-<n>.json \
-#     --fetch-error $TMPDIR/ci-err-<n>.txt --attempt <n> --max-attempts <k> --poll-seconds <m>
+#   gh pr checks <pr> --repo <owner/repo> --json name,state,bucket
+#   check-ci.sh --checks-data '<that stdout, verbatim>' \
+#     --fetch-error-data '<that stderr, verbatim, if the gh call failed>' \
+#     --attempt <n> --max-attempts <k> --poll-seconds <m>
+#
+# This script trusts that the caller transcribes `gh`'s stdout/stderr
+# verbatim into --checks-data/--fetch-error-data — it has no way to verify
+# the transcription against the original `gh` output. --json is kept to the
+# minimal fields (name,state,bucket) specifically to keep the transcribed
+# payload small, which keeps the transcription-corruption surface small.
+# Quote breakage or partial transcription during the caller's argv relay is
+# not silently swallowed: a corrupted --checks-data value fails to parse as a
+# JSON array and falls into the same "error" path as a genuine fetch failure
+# (fail-safe), so it can never read as a false "passed".
 #
 # issue #488: the fetch used to live inside this script — first as curl+REST
 # (authenticated only via a GH_TOKEN/GITHUB_TOKEN env var, so private repos
@@ -26,6 +38,13 @@
 # fetch therefore belongs to the caller, which runs `gh` directly; `gh`
 # authenticates from its own credential store, so private repo CI state is read
 # correctly with no token plumbed across the workflow/agent boundary.
+#
+# issue #499: the snapshot used to be relayed through $TMPDIR files
+# (--checks-json <file> / --fetch-error <file>, written via shell redirection
+# from the caller's `gh` invocation). It is now relayed as argv data instead,
+# so the caller's whole interaction is two single statements (the `gh` call,
+# then this script) with no redirection, pipe, or compound command in
+# between.
 #
 # Verdict derivation is a pure function of the `bucket` field in
 # `gh pr checks --json ...`'s output (pass/fail/pending/skipping/cancel);
@@ -40,8 +59,8 @@
 # gate on it either: `gh pr checks` exits 8 while checks are pending and exits
 # 1 when any check has failed, so treating a non-zero exit as a fetch failure
 # would misclassify pending/failed runs as "error" (the bug class fixed by
-# c7ada02). A snapshot is only treated as failed when the --checks-json file
-# does not parse as a JSON array and --fetch-error does not indicate there were
+# c7ada02). A snapshot is only treated as failed when --checks-data does not
+# parse as a JSON array and --fetch-error-data does not indicate there were
 # no checks to report.
 #
 # Bounded-wait accounting (the caller polls; this script only reports it):
@@ -81,15 +100,16 @@ source "$SCRIPT_DIR/../../_lib/common.sh"
 
 require_cmd jq
 
-CHECKS_FILE=""
-FETCH_ERR_FILE=""
+CHECKS_DATA=""
+HAVE_CHECKS_DATA=0
+FETCH_ERR_DATA=""
 ATTEMPT=1
 MAX_ATTEMPTS=1
 POLL_SECONDS=15
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --checks-json) CHECKS_FILE="$2"; shift 2 ;;
-        --fetch-error) FETCH_ERR_FILE="$2"; shift 2 ;;
+        --checks-data) CHECKS_DATA="$2"; HAVE_CHECKS_DATA=1; shift 2 ;;
+        --fetch-error-data) FETCH_ERR_DATA="$2"; shift 2 ;;
         --attempt) ATTEMPT="$2"; shift 2 ;;
         --max-attempts) MAX_ATTEMPTS="$2"; shift 2 ;;
         --poll-seconds) POLL_SECONDS="$2"; shift 2 ;;
@@ -101,8 +121,7 @@ done
 POLL_MIN=5
 WAIT_MAX=1800
 ATTEMPTS_MAX=120
-[[ -n "$CHECKS_FILE" ]] || die_json "--checks-json <file> required" 1
-[[ -f "$CHECKS_FILE" ]] || die_json "--checks-json file not found: $CHECKS_FILE" 1
+(( HAVE_CHECKS_DATA == 1 )) || die_json "--checks-data <string> required" 1
 [[ "$ATTEMPT" =~ ^[0-9]+$ ]] || die_json "Invalid --attempt: $ATTEMPT. Must be an integer >= 1" 1
 (( ATTEMPT >= 1 )) || die_json "Invalid --attempt: $ATTEMPT. Must be an integer >= 1" 1
 [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ ]] || die_json "Invalid --max-attempts: $MAX_ATTEMPTS. Must be an integer 1-${ATTEMPTS_MAX}" 1
@@ -129,30 +148,24 @@ epoch_field() {
     fi
 }
 
-# read_snapshot - loads $CHECKS_FILE into CHECKS_JSON. A file that does not
-# parse as a JSON array is a failed fetch, except when --fetch-error indicates
-# gh had no checks to report (which is a legitimate empty result).
+# read_snapshot - validates $CHECKS_DATA into CHECKS_JSON. A value that does
+# not parse as a JSON array is a failed fetch, except when --fetch-error-data
+# indicates gh had no checks to report (which is a legitimate empty result).
 read_snapshot() {
     CHECKS_JSON="[]"
     FETCH_ERR=""
-    local raw err
-    raw="$(cat "$CHECKS_FILE" 2>/dev/null || true)"
-    if printf '%s' "$raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
-        CHECKS_JSON="$raw"
+    if printf '%s' "$CHECKS_DATA" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        CHECKS_JSON="$CHECKS_DATA"
         return 0
     fi
-    err=""
-    if [[ -n "$FETCH_ERR_FILE" && -f "$FETCH_ERR_FILE" ]]; then
-        err="$(cat "$FETCH_ERR_FILE" 2>/dev/null || true)"
-    fi
-    if printf '%s' "$err" | grep -qi 'no checks reported'; then
+    if printf '%s' "$FETCH_ERR_DATA" | grep -qi 'no checks reported'; then
         CHECKS_JSON="[]"
         return 0
     fi
-    if [[ -n "$err" ]]; then
-        FETCH_ERR="gh pr checks: $(printf '%s' "$err" | head -3 | tr '\n' ' ')"
+    if [[ -n "$FETCH_ERR_DATA" ]]; then
+        FETCH_ERR="gh pr checks: $(printf '%s' "$FETCH_ERR_DATA" | head -3 | tr '\n' ' ')"
     else
-        FETCH_ERR="gh pr checks: snapshot $CHECKS_FILE is not a JSON array"
+        FETCH_ERR="gh pr checks: snapshot data is not a JSON array"
     fi
     return 1
 }

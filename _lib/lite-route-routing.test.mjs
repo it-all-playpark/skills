@@ -342,3 +342,69 @@ test('[lite-route][D] danger-grep hit（micro でも runEval 強制）: lite を
     `danger-grep hit ケース: workflow('pr-iterate') が 1 回呼ばれるべきだが ${workflowCalls.length} 回だった`,
   );
 });
+
+// ============================================================
+// (E) ci-check-lite: --checks-data argv 渡し + try/catch 包含（issue #499 F3）
+// ============================================================
+
+test('[lite-route][E] ci-check-lite prompt が --checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const ciCheckLiteBlockMatch = src.match(/const ciLite = await failOpenAgent\(([\s\S]*?)label: 'ci-check-lite'[\s\S]*?\)\n/);
+  assert.ok(ciCheckLiteBlockMatch, 'ci-check-lite の failOpenAgent 呼び出しブロックが見つかるべき');
+  const block = ciCheckLiteBlockMatch[1];
+  assert.ok(block.includes('--checks-data'), 'ci-check-lite prompt に --checks-data が含まれるべき');
+  assert.ok(!block.includes('--checks-json'), 'ci-check-lite prompt に旧 --checks-json が残っているべきでない');
+  assert.ok(!block.includes('$TMPDIR/ci-checks'), 'ci-check-lite prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
+  assert.ok(!/[>]\s*\$TMPDIR/.test(block), 'ci-check-lite prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
+});
+
+test('[lite-route][E] ci-check-lite は trackedAgent を直接使わず try/catch で throw を吸収する failOpenAgent 経由で呼ばれる', () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  assert.ok(
+    /const ciLite = await failOpenAgent\(/.test(src),
+    'ci-check-lite は failOpenAgent 経由で呼ばれるべき（trackedAgent 直呼びは throw で run 全体を落とす）',
+  );
+  const failOpenMatch = src.match(/async function failOpenAgent\([\s\S]*?\n\}/);
+  assert.ok(failOpenMatch, 'dev-flow.js に failOpenAgent 関数定義が存在するべき');
+  assert.ok(/try\s*\{/.test(failOpenMatch[0]) && /catch\s*\(/.test(failOpenMatch[0]), 'failOpenAgent は try/catch で trackedAgent の throw を包むべき');
+});
+
+test('[lite-route][E] failOpenAgent は trackedAgent が throw しても null を返す(コンテキストへ抽出して直接検証)', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const failOpenMatch = src.match(/async function failOpenAgent\([\s\S]*?\n\}/);
+  assert.ok(failOpenMatch, 'failOpenAgent 関数定義が source に存在するべき');
+
+  const calls = [];
+  const sandbox = {
+    log: (msg) => calls.push(msg),
+    trackedAgent: async () => { throw new Error('boom'); },
+    console,
+  };
+  const ctx = vm.createContext(sandbox);
+  const wrapped = `(${failOpenMatch[0]})`;
+  const fn = vm.runInContext(wrapped, ctx);
+  const out = await fn('prompt', { label: 'test-proxy' });
+  assert.equal(out, null, 'failOpenAgent は throw を吸収して null を返すべき');
+  assert.ok(calls.some((m) => String(m).includes('test-proxy')), 'failOpenAgent は警告 log を出すべき');
+});
+
+test('[lite-route][E] ci-check-lite が throw しても lite 経路は full pr-iterate へ fail-open 委譲する', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls, workflowCalls } = makeLiteRouteSandbox(makeCleanMicroReq());
+  // ci-check-lite の agentStub を throw するものへ差し替える
+  const baseAgent = ctx.agent;
+  ctx.agent = async (prompt, agentOpts) => {
+    if ((agentOpts?.label ?? '') === 'ci-check-lite') {
+      throw new Error('exec-proxy 例外（StructuredOutput 未返却）');
+    }
+    return baseAgent(prompt, agentOpts);
+  };
+  const err = await runDevFlowInSandbox(src, ctx);
+  failOnStructuralCrash(err);
+  assert.equal(err, null, `ci-check-lite が throw しても run 全体が例外終了してはならないが error が発生: ${err?.name}: ${err?.message}`);
+  assert.equal(
+    workflowCalls.length,
+    1,
+    `ci-check-lite throw ケース: workflow('pr-iterate') へ fail-open 委譲されるべきだが ${workflowCalls.length} 回呼ばれた`,
+  );
+});

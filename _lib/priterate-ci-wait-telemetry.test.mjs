@@ -144,10 +144,10 @@ test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci.sh 
     ciCheck1.prompt.includes('gh pr checks 5') && ciCheck1.prompt.includes('--json name,state,bucket'),
     `ci-check#1 の prompt に bare gh pr checks fetch が含まれるべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
   );
-  // check-ci.sh は fetch 済み snapshot に対する純変換として呼ばれる。
+  // check-ci.sh は fetch 済み snapshot に対する純変換として呼ばれる（issue #499: argv データ渡し）。
   assert.ok(
-    ciCheck1.prompt.includes('check-ci.sh --checks-json'),
-    `ci-check#1 の prompt が check-ci.sh を --checks-json 入力の純変換として呼ぶべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+    ciCheck1.prompt.includes('check-ci.sh --checks-data'),
+    `ci-check#1 の prompt が check-ci.sh を --checks-data 入力の純変換として呼ぶべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
   );
   // bounded wait は呼び出し側が持つ: 3 attempts × 45s = ceiling 90s。
   assert.ok(
