@@ -5195,8 +5195,8 @@ if (EVALSEAL_MODE !== 'off' && state.runEval) {
       + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --risk-file ${WT}/.devflow-tmp/trust-risk-eval.json --test-file ${WT}/.devflow-tmp/trust-test-latest.json --context-json '${evalContextJson}'\`\n`
       + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
       + `\n## Tools\n使用可: Bash, Read\n`
-      + `\n## Boundary\n上記コマンドの実行以外に何もするな（スクリプトは worktree の tree snapshot を取るため`
-      + `index を触る。それ以外のファイル編集・commit/push/checkout は禁止）。\n`
+      + `\n## Boundary\n上記コマンドの実行以外に何もするな（スクリプトは worktree 全体の tree OID 算出のため`
+      + `git object を書く。実 index・working tree は変更しない。それ以外のファイル編集・commit/push/checkout は禁止）。\n`
       + `\n## Token cap\n150 語以内で完結すること。`,
       { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-eval', phase: 'Evaluate' },
     )
