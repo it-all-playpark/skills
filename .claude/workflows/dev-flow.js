@@ -3921,6 +3921,11 @@ const resolvedBase = resolveBase(BASE_ARG, baseProbe) // 解決不能は throw�
 BASE = resolvedBase.base
 log(`base: origin/${BASE}（source: ${resolvedBase.source}）`)
 
+// worktree 再利用時の stale 証跡除去を手順 3 に含める（専用 agent は置かない — trust 層は
+// EvalSeal off/micro path で agent 呼び出しゼロを保つ非干渉ガードがあり、Setup に無条件の
+// trust-* 呼び出しを足すとこれを破るため）。前 run の trust-test-latest.json が残ると、当該 run の
+// test 書き込みが失敗した際に evalseal-seal.mjs が古い green/red を silent に拾って実際の test 結果と
+// 食い違う receipt を出しうる。除去しておけば「ファイル不在 → seal が ok:false」の安全側へ倒れる。
 const branch = `feature/issue-${ISSUE}`
 const setup = need(await trackedAgent(
   `git worktree を 1 つ作って絶対パスを返せ。手順:\n`
@@ -3928,8 +3933,10 @@ const setup = need(await trackedAgent(
   + `2. worktree dir \`<repo>/.claude/worktrees/df-${ISSUE}\` が既に存在すれば再利用、無ければ\n`
   + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
   + `   （branch が既に存在する場合は -b を外して既存 branch を checkout）\n`
-  + `3. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
-  + `4. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
+  + `3. 再利用した場合のみ、その worktree 直下で \`rm -f .devflow-tmp/trust-test-latest.json\` を実行する`
+  + `（前 run が残した証跡ファイルの持ち越しを防ぐ。存在しなくてもよい。他のファイルは消すな）\n`
+  + `4. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
+  + `5. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
   { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
 ), 'Setup(worktree)')
 WT = setup.worktree
@@ -3969,6 +3976,7 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + '\n' + TURBOPACK_FALLBACK_CONVENTION
   + `\n証跡保存: StructuredOutput で返すのと同一内容の JSON（tests/green/summary）を **Write tool** で `
   + `\`${WT}/.devflow-tmp/trust-test-latest.json\` へ保存せよ（.devflow-tmp が無ければ Write が作る。`
+  + `既存の場合は先に Read tool で読んでから Write tool で上書きせよ（Write tool は未 Read の既存ファイルを上書きできず、この test 実行は毎 iteration 別セッションの subagent が担当するため前回分は未 Read 状態にある。Read 失敗時も Write は必ず試み、Read の成否は結果報告に混ぜるな）。`
   + `保存失敗しても test 結果報告は行え）。\n`
   + EPOCH_INSTRUCTION
 
