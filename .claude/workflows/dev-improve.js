@@ -400,7 +400,7 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
   const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
     + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
-  // issue #482 の isolationProbePrompt と同じ冪等化パターン: Write tool は同一セッション内で
+  // 冪等化: Write tool は同一セッション内で
   // 未 Read の既存ファイルを上書きできない。savePath / saveDir とも保存先ファイル名は run を
   // またいで固定（worktree 再利用・TMPDIR 永続時は前 run の payload が残り得る）なので、
   // 上書き前に Read を試みる一手順を必須にする。Read の成否は saved の判定に混ぜない

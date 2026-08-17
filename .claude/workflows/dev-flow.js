@@ -313,7 +313,7 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
   const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
     + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
-  // issue #482 の isolationProbePrompt と同じ冪等化パターン: Write tool は同一セッション内で
+  // 冪等化: Write tool は同一セッション内で
   // 未 Read の既存ファイルを上書きできない。savePath / saveDir とも保存先ファイル名は run を
   // またいで固定（worktree 再利用・TMPDIR 永続時は前 run の payload が残り得る）なので、
   // 上書き前に Read を試みる一手順を必須にする。Read の成否は saved の判定に混ぜない
@@ -2987,6 +2987,10 @@ const ISOLATION_PROBE = {
   type: 'object', required: ['written'],
   properties: { written: { type: 'boolean' }, error: { type: 'string' } },
 }
+const ISOLATION_CLEANUP = {
+  type: 'object', required: ['cleaned'],
+  properties: { cleaned: { type: 'boolean' }, error: { type: 'string' } },
+}
 const REQ = {
   type: 'object',
   required: ['summary', 'acceptance_criteria', 'breaking_change', 'breaking_keyword_scan', 'issue_number', 'issue_title'],
@@ -3611,6 +3615,8 @@ function classifyLiteReview(review) {
 // 共有チェックアウトへの書き込みとして拒否される。放置すると Implement/Evaluate まで数十 agent
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
+// isolationCleanupPrompt: probe の直前に run 専用 scratch `.devflow-tmp/`（gitignored）を除去させる
+//   prompt を組み立てる純関数（前 run の残置物を持ち越さない）。
 // isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
 //   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
@@ -3627,18 +3633,30 @@ function classifyLiteReview(review) {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 //
-// issue #482: 前 run が残した stale な `.devflow-tmp/.isolation-probe`（gitignored）が存在すると、
-// Write tool の「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」挙動により isolation が
-// 正常でも written:false → fail-closed abort してしまうため、prompt に Read-then-Write の冪等化手順を
-// 追加し、throw メッセージにも stale artifact の可能性と復旧手順を追記した。
+// 前 run が残した stale な `.devflow-tmp/.isolation-probe` が存在すると、Write tool の
+// 「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」挙動により isolation が正常でも
+// written:false → fail-closed abort する（issue #482）。この残置物の除去は probe 実行前の
+// isolationCleanupPrompt が担い（除去対象は worktree 内 gitignored の `.devflow-tmp/` に限定）、
+// probe prompt 自体は Write 1 回だけの最小契約に保つ（issue #493）。
+//
+// 不変条件: 本ファイルが生成する prompt / メッセージは、実行制御の名称（sandbox・permission・
+// excludedCommands・guard 等）を「だからこの経路を使え」という形の理由として述べない。
+// 転写契約に判断余地を持ち込ませないための規範であり、`.claude/rules/dev-flow.md` の exec-proxy 節が
+// 正典。canonical と 2 つの inline 生成区間の双方を _lib/isolation-control-reason.test.mjs が pin する。
+
+function isolationCleanupPrompt(worktree) {
+  return `worktree ${worktree} の run 専用 scratch ディレクトリ \`.devflow-tmp\`（gitignored）を除去せよ。手順:\n`
+    + `1. \`git -C ${worktree} clean -fdx -- .devflow-tmp\` を 1 回だけ実行する`
+    + `（\`.devflow-tmp\` が存在しない場合もこのコマンドは成功する）\n`
+    + `2. 成功したら {"cleaned": true} を返せ。\n`
+    + `コマンドがエラーを返した場合は、例外を投げずに `
+    + `{"cleaned": false, "error": "<エラーメッセージ全文>"} を返せ。\n`
+    + `\`.devflow-tmp\` 以外のパスには触れるな。`;
+}
 
 function isolationProbePrompt(worktree) {
   return `worktree ${worktree} 直下に Write tool で \`.devflow-tmp/.isolation-probe\` というファイルを`
-    + `内容 "ok" で書き込め。\`.devflow-tmp/.isolation-probe\` が既に存在する場合は、`
-    + `先に Read tool で同ファイルを読んでから Write tool で上書きせよ`
-    + `（Write tool は既存ファイルを未 Read のまま上書きできない）。`
-    + `Read が失敗しても Write は必ず試み、Write の結果のみで written を報告せよ`
-    + `（Read の成否を written に混ぜない）。`
+    + `内容 "ok" で書き込め。`
     + `成功したら {"written": true} を返せ。`
     + `Write tool がエラー・拒否を返した場合は、例外を投げずに `
     + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
@@ -3647,15 +3665,10 @@ function isolationProbePrompt(worktree) {
 function isolationFailureMessage({ worktree, branch, startRef, workflowName, workflowArgs, targetPath, error }) {
   const wt = targetPath || worktree;
   const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
-  const staleProbePath = `${worktree}/.devflow-tmp/.isolation-probe`;
   return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
     + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
-    + `別の原因として、前 run が残した stale な probe artifact（\`${staleProbePath}\`）の可能性もあります。`
-    + `Read tool で \`${staleProbePath}\` を読み、存在するか確認してください。`
-    + `存在する場合、\`rm\` や \`git clean\` は sandbox・permission で拒否されることがあるため`
-    + `（issue #480 実測）、同一セッションで Read tool により \`${staleProbePath}\` を読んだ上で`
-    + `Write tool で上書きする代替手順を推奨します。\n`
-    + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
+    + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください`
+    + `（新しい worktree には前 run の残置物が無いため、残置物が原因だった場合も同時に解消します）:\n`
     + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
     + `     （branch ${branch} がローカルに既存なら -b と起点を外して \`git worktree add ${wt} ${branch}\`、`
     + `さらに他 worktree で checkout 済みなら \`git worktree add --force ${wt} ${branch}\`、`
@@ -3921,13 +3934,6 @@ const resolvedBase = resolveBase(BASE_ARG, baseProbe) // 解決不能は throw�
 BASE = resolvedBase.base
 log(`base: origin/${BASE}（source: ${resolvedBase.source}）`)
 
-// worktree 再利用時の stale 証跡無効化を手順 3 に含める（専用 agent は置かない — trust 層は
-// EvalSeal off/micro path で agent 呼び出しゼロを保つ非干渉ガードがあり、Setup に無条件の
-// trust-* 呼び出しを足すとこれを破るため）。前 run の trust-*.json が残ると、当該 run の証跡書き込みが
-// 失敗した際に evalseal-seal.mjs が古い green/red・古い risk を silent に拾い、実際の test/diff と
-// 食い違う receipt を出しうる。無効値へ上書きしておけば「読取が JSON parse に失敗 → seal が ok:false」
-// の安全側へ倒れる。除去に rm/git clean を使わないのは、本 repo を含む環境で Bash の削除が拒否される
-// ため（issue #480 実測。isolation-probe の stale 復旧手順と同じ Read-then-Write 方式に揃える）。
 const branch = `feature/issue-${ISSUE}`
 const setup = need(await trackedAgent(
   `git worktree を 1 つ作って絶対パスを返せ。手順:\n`
@@ -3935,19 +3941,25 @@ const setup = need(await trackedAgent(
   + `2. worktree dir \`<repo>/.claude/worktrees/df-${ISSUE}\` が既に存在すれば再利用、無ければ\n`
   + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
   + `   （branch が既に存在する場合は -b を外して既存 branch を checkout）\n`
-  + `3. 再利用した場合のみ、その worktree 直下の \`.devflow-tmp/trust-test-latest.json\` `
-  + `\`.devflow-tmp/trust-risk-eval.json\` \`.devflow-tmp/trust-risk-final.json\` について、`
-  + `**存在するものだけ** Read tool で読んでから Write tool で内容 \`stale\` の 1 語へ上書きせよ`
-  + `（前 run の証跡が持ち越されないようにする。JSON として不正な値にすることで、以降の読取が`
-  + `安全側に倒れる。存在しないファイルは新規作成するな。他のファイルは触るな）\n`
-  + `4. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
-  + `5. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
+  + `3. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
+  + `4. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
   { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
 ), 'Setup(worktree)')
 WT = setup.worktree
 REPO = setup.repo ?? null
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
 log(`worktree: ${WT} (branch ${setup.branch})`)
+
+// isolation cleanup（issue #493）: worktree 再利用時に前 run の run 専用 scratch を持ち越さない。
+// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、stale な probe artifact（issue #482 —
+// 残っていると isolation が正常でも probe が written:false に倒れる）と前 run の trust 証跡
+// （trust-test-latest.json / trust-risk-*.json）の双方を一度に消す。後者が残ると、当該 run の証跡
+// 書き込みが失敗した際に evalseal-seal.mjs が古い green/red・古い risk を silent に拾い、実際の
+// test/diff と食い違う receipt を出しうるため、run 開始時に消えていることが前提条件になる。
+// fail-open: 失敗しても run は継続する（stale artifact が残っていれば直後の probe が written:false
+// で fail-closed に倒れ、復旧手順（worktree 作り直し）は同一）。
+const isoClean = await trackedAgent(isolationCleanupPrompt(WT), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
+if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 
 // isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。
 // 失敗（written:false）は bg-isolation guard を強く示唆するため即中断（fail-closed）。

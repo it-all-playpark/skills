@@ -3,7 +3,8 @@ name: dev-runner-haiku
 description: |
   Write/Skill-capable exec-proxy for dev-flow deterministic operations that
   require filesystem mutation or Skill invocation: git worktree creation,
-  deps install, test execution, redgreen verification, reconcile-sync,
+  run-scratch cleanup (.devflow-tmp), deps install, test execution,
+  redgreen verification, reconcile-sync,
   danger-grep with evidence-file output, ui-verify server start/teardown,
   journal writes, and PR comment posting
   (post-review / post-summary). Returns verbatim stdout of the delegated
