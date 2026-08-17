@@ -3962,7 +3962,7 @@ log(`worktree: ${WT} (branch ${setup.branch})`)
 // test/diff と食い違う receipt を出しうるため、run 開始時に消えていることが前提条件になる。
 // fail-open: 失敗しても run は継続する（stale artifact が残っていれば直後の probe が written:false
 // で fail-closed に倒れ、復旧手順（worktree 作り直し）は同一）。
-const isoClean = await trackedAgent(isolationCleanupPrompt(WT, '.devflow-tmp'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
+const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
 if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 
 // isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。
