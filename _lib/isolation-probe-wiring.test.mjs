@@ -55,3 +55,51 @@ test('isolation probe は worktree 作成後・deps install より前（Setup ph
   assert.ok(setupIdx < probeIdx, 'isolation probe は worktree 作成より後に配置されるべき');
   assert.ok(probeIdx < depsIdx, 'isolation probe は deps install より前に配置されるべき（早期検知の目的）');
 });
+
+// ── issue #493: stale 残置物の除去（cleanup）を probe の直前に置く ─────────────
+
+test('isolation cleanup agent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
+  assert.match(
+    src,
+    /const isoClean = await failOpenAgent\(isolationCleanupPrompt\(WT,\s*'\.devflow-tmp'\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_CLEANUP,\s*label:\s*'isolation-cleanup',\s*phase:\s*'Setup'\s*\}\)/,
+    'isolation cleanup の failOpenAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
+  );
+});
+
+test('ISOLATION_CLEANUP schema が cleaned(boolean, required) を持つ', () => {
+  const match = src.match(/const ISOLATION_CLEANUP = \{[\s\S]*?\n\}/);
+  assert.ok(match, 'ISOLATION_CLEANUP schema 宣言が見つからない');
+  assert.match(match[0], /required:\s*\['cleaned'\]/);
+  assert.match(match[0], /cleaned:\s*\{\s*type:\s*'boolean'\s*\}/);
+});
+
+test('isolation cleanup の失敗は fail-open（log のみ・throw しない）', () => {
+  assert.match(
+    src,
+    /if\s*\(!isoClean\s*\|\|\s*isoClean\.cleaned\s*!==\s*true\)\s*log\(/,
+    'cleanup 失敗時の fail-open log 分岐が見つからない',
+  );
+  // 窓は cleanup 呼び出し 〜 probe 呼び出しの直前まで（probe 側の fail-closed throw を巻き込まない）
+  const idx = src.indexOf("const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp')");
+  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT)');
+  const nearby = src.slice(idx, probeIdx);
+  assert.doesNotMatch(nearby, /throw new Error/, 'cleanup 失敗で throw してはならない（fail-open）');
+});
+
+test('isolation cleanup は worktree 作成後・probe より前に配置されている', () => {
+  const setupIdx = src.indexOf(`, 'Setup(worktree)')`);
+  const cleanIdx = src.indexOf("const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp')");
+  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT)');
+  assert.notStrictEqual(cleanIdx, -1, 'isolation cleanup 呼び出しが見つからない');
+  assert.ok(setupIdx < cleanIdx, 'cleanup は worktree 作成より後に配置されるべき');
+  assert.ok(cleanIdx < probeIdx, 'cleanup は probe より前に配置されるべき（stale 残置物を probe 前に除去する）');
+});
+
+test('Setup の worktree prompt は trust 証跡を stale へ上書きさせる手順を含まない（cleanup へ移譲済み）', () => {
+  const setupIdx = src.indexOf('`git worktree を 1 つ作って絶対パスを返せ。手順:');
+  assert.notStrictEqual(setupIdx, -1, 'Setup の worktree prompt が見つからない');
+  const prompt = src.slice(setupIdx, src.indexOf(`, 'Setup(worktree)')`, setupIdx));
+  assert.doesNotMatch(prompt, /trust-test-latest\.json/);
+  assert.doesNotMatch(prompt, /trust-risk-/);
+  assert.doesNotMatch(prompt, /内容 \\`stale\\`/);
+});

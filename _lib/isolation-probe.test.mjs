@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { isolationProbePrompt, isolationFailureMessage } from './isolation-probe.mjs';
+import { isolationCleanupPrompt, isolationProbePrompt, isolationFailureMessage } from './isolation-probe.mjs';
 
 // ── isolationProbePrompt ────────────────────────────────────────────────────
 
@@ -134,36 +134,67 @@ test('isolationFailureMessage: bg-isolation guard の可能性に言及する', 
   assert.match(msg, /bg-isolation guard/);
 });
 
-// ── issue #482: stale probe artifact による恒久 fail-closed の解消（冪等化） ─────
+// ── issue #493: stale 残置物の除去は cleanup へ分離し probe prompt を最小契約に戻す ─────
+//
+// issue #482 は「stale な .devflow-tmp/.isolation-probe があると Write が拒否され written:false →
+// fail-closed abort する」問題に対し probe prompt 側の Read-then-Write 冪等化で対処していた。
+// issue #493 で除去自体を probe 実行前の cleanup（gitignored な .devflow-tmp/ 限定の git clean）へ
+// 移したため、probe prompt からは冪等化手順を落とす。#482 の再発が起きないこと（cleanup 実行後に
+// stale artifact が残らないこと）は _lib/isolation-stale-cleanup.integration.test.mjs が実 git で検証する。
 
-test('isolationProbePrompt: 既存ファイル時は Read tool で先に読んでから Write する冪等化指示を含む', () => {
+test('isolationProbePrompt: Read-then-Write 冪等化手順を含まない（cleanup へ分離した）', () => {
   const prompt = isolationProbePrompt('/path/to/worktree');
-  assert.match(prompt, /Read tool/);
-  assert.match(prompt, /既に存在する場合/);
+  assert.doesNotMatch(prompt, /Read tool/);
+  assert.doesNotMatch(prompt, /既に存在する場合/);
+  assert.doesNotMatch(prompt, /Read が失敗しても/);
 });
 
-test('isolationProbePrompt: written は Write の成否のみで報告させ Read の成否を混ぜない指示を含む', () => {
+test('isolationProbePrompt: Write は 1 回だけの最小契約になっている', () => {
   const prompt = isolationProbePrompt('/path/to/worktree');
-  assert.match(prompt, /Read が失敗しても Write は必ず試み/);
-  assert.match(prompt, /Write の結果のみで written を報告/);
+  // Write tool への言及は「書き込め」と「エラー・拒否を返した場合」の 2 箇所のみ（手順分岐なし）
+  assert.strictEqual((prompt.match(/Write tool/g) || []).length, 2);
+  assert.match(prompt, /内容 "ok" で書き込め/);
 });
 
-test('isolationFailureMessage: stale な probe artifact の可能性とフルパスに言及する', () => {
-  const msg = isolationFailureMessage({
-    worktree: '/repo/.claude/worktrees/df-482', branch: 'feature/issue-482', startRef: 'origin/main',
-    workflowName: 'dev-flow', workflowArgs: '482', error: 'EPERM: denied',
-  });
-  assert.match(msg, /stale/);
-  assert.match(msg, /\/repo\/\.claude\/worktrees\/df-482\/\.devflow-tmp\/\.isolation-probe/);
+test('isolationCleanupPrompt: worktree 直下の .devflow-tmp を git clean で除去させる', () => {
+  const prompt = isolationCleanupPrompt('/repo/.claude/worktrees/df-493', '.devflow-tmp');
+  assert.match(prompt, /git -C \/repo\/\.claude\/worktrees\/df-493 clean -fdx -- \.devflow-tmp/);
+  assert.match(prompt, /gitignored/);
 });
 
-test('isolationFailureMessage: rm / git clean が sandbox・permission で不可な場合の Read→Write 上書き代替手順を含む', () => {
+test('isolationCleanupPrompt: 除去対象を target に限定する指示を含む', () => {
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
+  assert.match(prompt, /`\.devflow-tmp` 以外のパスには触れるな/);
+});
+
+// nested 起動（dev-flow → workflow('pr-iterate')）では worktree が実行中 run のものになるため、
+// pr-iterate は probe artifact 単体に絞れる必要がある（.devflow-tmp 全体を消すと当該 run の trust
+// 証跡を run 途中で失う）。target は verbatim で使われ、関数側が範囲を広げないことを pin する。
+test('isolationCleanupPrompt: target は verbatim で使われる（呼び出し元が範囲を決める）', () => {
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp/.isolation-probe');
+  assert.match(prompt, /git -C \/wt clean -fdx -- \.devflow-tmp\/\.isolation-probe/);
+  assert.match(prompt, /`\.devflow-tmp\/\.isolation-probe` 以外のパスには触れるな/);
+  // `.devflow-tmp` 全体を対象にする記述へ勝手に広げない
+  assert.doesNotMatch(prompt, /clean -fdx -- \.devflow-tmp\s/);
+});
+
+test('isolationCleanupPrompt: 存在しない場合も成功する旨を明示する（no-op 冪等）', () => {
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
+  assert.match(prompt, /存在しない場合もこのコマンドは成功する/);
+});
+
+test('isolationCleanupPrompt: 失敗時は例外を投げず cleaned:false + error で報告させる', () => {
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
+  assert.match(prompt, /"cleaned": true/);
+  assert.match(prompt, /"cleaned": false/);
+  assert.match(prompt, /例外を投げずに/);
+  assert.match(prompt, /"error"/);
+});
+
+test('isolationFailureMessage: 新しい worktree を作れば残置物起因のケースも解消する旨を案内する', () => {
   const msg = isolationFailureMessage({
-    worktree: '/repo/.claude/worktrees/df-482', branch: 'feature/issue-482', startRef: 'origin/main',
-    workflowName: 'dev-flow', workflowArgs: '482', error: 'EPERM: denied',
+    worktree: '/repo/.claude/worktrees/df-493', branch: 'feature/issue-493', startRef: 'origin/main',
+    workflowName: 'dev-flow', workflowArgs: '493', error: '',
   });
-  assert.match(msg, /rm/);
-  assert.match(msg, /git clean/);
-  assert.match(msg, /Read tool/);
-  assert.match(msg, /Write tool/);
+  assert.match(msg, /新しい worktree には前 run の残置物が無い/);
 });

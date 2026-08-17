@@ -100,6 +100,56 @@ test('isolation probe は review loop（for (i = 1; i <= MAX; i++)）進入よ�
   assert.ok(probeIdx < loopIdx, 'isolation probe は review loop（fix stage 手前）より前に配置されるべき');
 });
 
+// ── issue #493: stale 残置物の除去（cleanup）を probe の直前・Iterate 進入前に置く ────
+
+test('isolation cleanup failOpenAgent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
+  assert.match(
+    src,
+    /const isoClean = await failOpenAgent\(isolationCleanupPrompt\(isoWt,\s*'\.devflow-tmp\/\.isolation-probe'\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_CLEANUP,\s*label:\s*'isolation-cleanup',\s*phase:\s*'Iterate'\s*\}\)/,
+    'isolation cleanup の failOpenAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
+  );
+});
+
+// nested 起動（dev-flow → workflow('pr-iterate')）では isoWt が実行中 dev-flow run の worktree
+// 自身になるため、`.devflow-tmp` 全体を消すと当該 run が既に書いた trust 証跡を run 途中で失う。
+// pr-iterate 側の除去範囲は probe artifact 単体であることを pin する。
+test('pr-iterate の cleanup 対象は probe artifact 単体（.devflow-tmp 全体を消さない）', () => {
+  const idx = src.indexOf('const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
+  assert.notStrictEqual(idx, -1, 'isolation cleanup 呼び出しが見つからない');
+  const call = src.slice(idx, src.indexOf('\n', idx));
+  assert.match(call, /isolationCleanupPrompt\(isoWt, '\.devflow-tmp\/\.isolation-probe'\)/);
+  assert.doesNotMatch(call, /isolationCleanupPrompt\(isoWt, '\.devflow-tmp'\)/);
+});
+
+test('ISOLATION_CLEANUP schema が cleaned(boolean, required) を持つ', () => {
+  const match = src.match(/const ISOLATION_CLEANUP = \{[\s\S]*?\n\}/);
+  assert.ok(match, 'ISOLATION_CLEANUP schema 宣言が見つからない');
+  assert.match(match[0], /required:\s*\['cleaned'\]/);
+  assert.match(match[0], /cleaned:\s*\{\s*type:\s*'boolean'\s*\}/);
+});
+
+test('isolation cleanup は probe より前・review loop 進入より前に配置されている', () => {
+  const cleanIdx = src.indexOf('const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
+  const probeIdx = src.indexOf('await failOpenAgent(isolationProbePrompt(');
+  const loopIdx = src.indexOf('for (i = 1; i <= MAX; i++)');
+  assert.notStrictEqual(cleanIdx, -1, 'isolation cleanup 呼び出しが見つからない');
+  assert.ok(cleanIdx < probeIdx, 'cleanup は probe より前に配置されるべき（stale 残置物を probe 前に除去する）');
+  assert.ok(probeIdx < loopIdx, 'cleanup/probe はいずれも review loop より前に配置されるべき');
+});
+
+test('isolation cleanup の失敗は fail-open（log のみ・throw しない）', () => {
+  assert.match(
+    src,
+    /if\s*\(!isoClean\s*\|\|\s*isoClean\.cleaned\s*!==\s*true\)\s*log\(/,
+    'cleanup 失敗時の fail-open log 分岐が見つからない',
+  );
+  // 窓は cleanup 呼び出し 〜 probe 呼び出しの直前まで（probe 側の fail-closed throw を巻き込まない）
+  const idx = src.indexOf('const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
+  const probeIdx = src.indexOf('const isoProbe = await failOpenAgent(isolationProbePrompt(');
+  const nearby = src.slice(idx, probeIdx);
+  assert.doesNotMatch(nearby, /throw new Error/, 'cleanup 失敗で throw してはならない（fail-open）');
+});
+
 // ---- (b) VM 実行検証 ----
 // priterate-journal-log.test.mjs の makeSandbox/runPrIterateCapture パターンを流用。
 

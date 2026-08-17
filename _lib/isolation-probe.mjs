@@ -4,6 +4,12 @@
 // 共有チェックアウトへの書き込みとして拒否される。放置すると Implement/Evaluate まで数十 agent
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
+// isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
+//   純関数（前 run の残置物を持ち越さない）。除去範囲 target は呼び出し元が明示的に渡す必須引数:
+//   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
+//   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
+//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた trust 証跡を run 途中で
+//   消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 // isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
 //   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
@@ -20,18 +26,30 @@
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 //
-// issue #482: 前 run が残した stale な `.devflow-tmp/.isolation-probe`（gitignored）が存在すると、
-// Write tool の「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」挙動により isolation が
-// 正常でも written:false → fail-closed abort してしまうため、prompt に Read-then-Write の冪等化手順を
-// 追加し、throw メッセージにも stale artifact の可能性と復旧手順を追記した。
+// 前 run が残した stale な `.devflow-tmp/.isolation-probe` が存在すると、Write tool の
+// 「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」挙動により isolation が正常でも
+// written:false → fail-closed abort する（issue #482）。この残置物の除去は probe 実行前の
+// isolationCleanupPrompt が担い（除去対象は worktree 内 gitignored の `.devflow-tmp/` に限定）、
+// probe prompt 自体は Write 1 回だけの最小契約に保つ（issue #493）。
+//
+// 不変条件: 本ファイルが生成する prompt / メッセージは、実行制御の名称（sandbox・permission・
+// excludedCommands・guard 等）を「だからこの経路を使え」という形の理由として述べない。
+// 転写契約に判断余地を持ち込ませないための規範であり、`.claude/rules/dev-flow.md` の exec-proxy 節が
+// 正典。canonical と 2 つの inline 生成区間の双方を _lib/isolation-control-reason.test.mjs が pin する。
+
+export function isolationCleanupPrompt(worktree, target) {
+  return `worktree ${worktree} の gitignored な作業用パス \`${target}\` を除去せよ。手順:\n`
+    + `1. \`git -C ${worktree} clean -fdx -- ${target}\` を 1 回だけ実行する`
+    + `（\`${target}\` が存在しない場合もこのコマンドは成功する）\n`
+    + `2. 成功したら {"cleaned": true} を返せ。\n`
+    + `コマンドがエラーを返した場合は、例外を投げずに `
+    + `{"cleaned": false, "error": "<エラーメッセージ全文>"} を返せ。\n`
+    + `\`${target}\` 以外のパスには触れるな。`;
+}
 
 export function isolationProbePrompt(worktree) {
   return `worktree ${worktree} 直下に Write tool で \`.devflow-tmp/.isolation-probe\` というファイルを`
-    + `内容 "ok" で書き込め。\`.devflow-tmp/.isolation-probe\` が既に存在する場合は、`
-    + `先に Read tool で同ファイルを読んでから Write tool で上書きせよ`
-    + `（Write tool は既存ファイルを未 Read のまま上書きできない）。`
-    + `Read が失敗しても Write は必ず試み、Write の結果のみで written を報告せよ`
-    + `（Read の成否を written に混ぜない）。`
+    + `内容 "ok" で書き込め。`
     + `成功したら {"written": true} を返せ。`
     + `Write tool がエラー・拒否を返した場合は、例外を投げずに `
     + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
@@ -40,15 +58,10 @@ export function isolationProbePrompt(worktree) {
 export function isolationFailureMessage({ worktree, branch, startRef, workflowName, workflowArgs, targetPath, error }) {
   const wt = targetPath || worktree;
   const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
-  const staleProbePath = `${worktree}/.devflow-tmp/.isolation-probe`;
   return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
     + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
-    + `別の原因として、前 run が残した stale な probe artifact（\`${staleProbePath}\`）の可能性もあります。`
-    + `Read tool で \`${staleProbePath}\` を読み、存在するか確認してください。`
-    + `存在する場合、\`rm\` や \`git clean\` は sandbox・permission で拒否されることがあるため`
-    + `（issue #480 実測）、同一セッションで Read tool により \`${staleProbePath}\` を読んだ上で`
-    + `Write tool で上書きする代替手順を推奨します。\n`
-    + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください:\n`
+    + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください`
+    + `（新しい worktree には前 run の残置物が無いため、残置物が原因だった場合も同時に解消します）:\n`
     + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
     + `     （branch ${branch} がローカルに既存なら -b と起点を外して \`git worktree add ${wt} ${branch}\`、`
     + `さらに他 worktree で checkout 済みなら \`git worktree add --force ${wt} ${branch}\`、`
