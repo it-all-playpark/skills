@@ -57,7 +57,8 @@ function assertNoControlReason(text, label) {
 // ---- canonical（関数出力） ----
 
 const CANONICAL_SAMPLES = [
-  ['isolationCleanupPrompt', isolationCleanupPrompt('/repo/.claude/worktrees/df-1')],
+  ['isolationCleanupPrompt(dir)', isolationCleanupPrompt('/repo/.claude/worktrees/df-1', '.devflow-tmp')],
+  ['isolationCleanupPrompt(file)', isolationCleanupPrompt('/repo', '.devflow-tmp/.isolation-probe')],
   ['isolationProbePrompt', isolationProbePrompt('/repo/.claude/worktrees/df-1')],
   // error は呼び出し元が受け取った probe error を verbatim 転写する引数であり、
   // 関数側の記述ではない。関数自身の文言だけを検査するため空文字で構築する。

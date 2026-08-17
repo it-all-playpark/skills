@@ -3615,8 +3615,12 @@ function classifyLiteReview(review) {
 // 共有チェックアウトへの書き込みとして拒否される。放置すると Implement/Evaluate まで数十 agent
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
-// isolationCleanupPrompt: probe の直前に run 専用 scratch `.devflow-tmp/`（gitignored）を除去させる
-//   prompt を組み立てる純関数（前 run の残置物を持ち越さない）。
+// isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
+//   純関数（前 run の残置物を持ち越さない）。除去範囲 target は呼び出し元が明示的に渡す必須引数:
+//   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
+//   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
+//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた trust 証跡を run 途中で
+//   消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 // isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
 //   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
@@ -3644,14 +3648,14 @@ function classifyLiteReview(review) {
 // 転写契約に判断余地を持ち込ませないための規範であり、`.claude/rules/dev-flow.md` の exec-proxy 節が
 // 正典。canonical と 2 つの inline 生成区間の双方を _lib/isolation-control-reason.test.mjs が pin する。
 
-function isolationCleanupPrompt(worktree) {
-  return `worktree ${worktree} の run 専用 scratch ディレクトリ \`.devflow-tmp\`（gitignored）を除去せよ。手順:\n`
-    + `1. \`git -C ${worktree} clean -fdx -- .devflow-tmp\` を 1 回だけ実行する`
-    + `（\`.devflow-tmp\` が存在しない場合もこのコマンドは成功する）\n`
+function isolationCleanupPrompt(worktree, target) {
+  return `worktree ${worktree} の gitignored な作業用パス \`${target}\` を除去せよ。手順:\n`
+    + `1. \`git -C ${worktree} clean -fdx -- ${target}\` を 1 回だけ実行する`
+    + `（\`${target}\` が存在しない場合もこのコマンドは成功する）\n`
     + `2. 成功したら {"cleaned": true} を返せ。\n`
     + `コマンドがエラーを返した場合は、例外を投げずに `
     + `{"cleaned": false, "error": "<エラーメッセージ全文>"} を返せ。\n`
-    + `\`.devflow-tmp\` 以外のパスには触れるな。`;
+    + `\`${target}\` 以外のパスには触れるな。`;
 }
 
 function isolationProbePrompt(worktree) {
@@ -3958,7 +3962,7 @@ log(`worktree: ${WT} (branch ${setup.branch})`)
 // test/diff と食い違う receipt を出しうるため、run 開始時に消えていることが前提条件になる。
 // fail-open: 失敗しても run は継続する（stale artifact が残っていれば直後の probe が written:false
 // で fail-closed に倒れ、復旧手順（worktree 作り直し）は同一）。
-const isoClean = await trackedAgent(isolationCleanupPrompt(WT), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
+const isoClean = await trackedAgent(isolationCleanupPrompt(WT, '.devflow-tmp'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
 if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 
 // isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。

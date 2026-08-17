@@ -22,9 +22,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isolationCleanupPrompt } from './isolation-probe.mjs';
 
-// prompt 内の `git -C <wt> clean -fdx -- .devflow-tmp` を取り出す（drift 防止）。
-function cleanupCommandFor(worktree) {
-  const prompt = isolationCleanupPrompt(worktree);
+// prompt 内の `git -C <wt> clean -fdx -- <target>` を取り出す（drift 防止）。
+function cleanupCommandFor(worktree, target = '.devflow-tmp') {
+  const prompt = isolationCleanupPrompt(worktree, target);
   const m = prompt.match(/`(git -C [^`]+)`/);
   assert.ok(m, `isolationCleanupPrompt の出力から git コマンドを抽出できない:\n${prompt}`);
   return m[1].split(' ');
@@ -97,6 +97,39 @@ test('[stale-cleanup] .devflow-tmp の外（tracked / 他 untracked / 他 gitign
     assert.ok(existsSync(join(dir, 'untracked.txt')), '.devflow-tmp 外の untracked が消えている');
     assert.ok(existsSync(join(dir, 'other-ignored.txt')), '.devflow-tmp 外の gitignored が消えている');
     assert.ok(!existsSync(join(dir, '.devflow-tmp')), '.devflow-tmp/ は除去されるべき');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// pr-iterate（nested 起動時は実行中 dev-flow run の worktree が対象）が使う file 単位の target。
+// probe artifact だけを消し、当該 run が既に書いた trust 証跡は run 途中で失わないこと。
+test('[stale-cleanup] target を probe artifact 単体に絞ると同じ .devflow-tmp 内の trust 証跡は残る', () => {
+  const dir = makeRepo();
+  try {
+    placeStaleArtifacts(dir);
+    const [cmd, ...args] = cleanupCommandFor(dir, '.devflow-tmp/.isolation-probe');
+    execFileSync(cmd, args, { encoding: 'utf8' });
+
+    assert.ok(
+      !existsSync(join(dir, '.devflow-tmp', '.isolation-probe')),
+      'probe artifact は除去されるべき',
+    );
+    assert.ok(
+      existsSync(join(dir, '.devflow-tmp', 'trust-test-latest.json')),
+      '同じ .devflow-tmp 配下の trust 証跡まで消えている（nested run の証跡喪失）',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('[stale-cleanup] probe artifact 単体 target も不在時は成功する（no-op 冪等）', () => {
+  const dir = makeRepo();
+  try {
+    const [cmd, ...args] = cleanupCommandFor(dir, '.devflow-tmp/.isolation-probe');
+    execFileSync(cmd, args, { encoding: 'utf8' });
+    assert.ok(!existsSync(join(dir, '.devflow-tmp')));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

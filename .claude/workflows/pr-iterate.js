@@ -845,8 +845,12 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 // 共有チェックアウトへの書き込みとして拒否される。放置すると Implement/Evaluate まで数十 agent
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
-// isolationCleanupPrompt: probe の直前に run 専用 scratch `.devflow-tmp/`（gitignored）を除去させる
-//   prompt を組み立てる純関数（前 run の残置物を持ち越さない）。
+// isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
+//   純関数（前 run の残置物を持ち越さない）。除去範囲 target は呼び出し元が明示的に渡す必須引数:
+//   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
+//   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
+//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた trust 証跡を run 途中で
+//   消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 // isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
 //   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
@@ -874,14 +878,14 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 // 転写契約に判断余地を持ち込ませないための規範であり、`.claude/rules/dev-flow.md` の exec-proxy 節が
 // 正典。canonical と 2 つの inline 生成区間の双方を _lib/isolation-control-reason.test.mjs が pin する。
 
-function isolationCleanupPrompt(worktree) {
-  return `worktree ${worktree} の run 専用 scratch ディレクトリ \`.devflow-tmp\`（gitignored）を除去せよ。手順:\n`
-    + `1. \`git -C ${worktree} clean -fdx -- .devflow-tmp\` を 1 回だけ実行する`
-    + `（\`.devflow-tmp\` が存在しない場合もこのコマンドは成功する）\n`
+function isolationCleanupPrompt(worktree, target) {
+  return `worktree ${worktree} の gitignored な作業用パス \`${target}\` を除去せよ。手順:\n`
+    + `1. \`git -C ${worktree} clean -fdx -- ${target}\` を 1 回だけ実行する`
+    + `（\`${target}\` が存在しない場合もこのコマンドは成功する）\n`
     + `2. 成功したら {"cleaned": true} を返せ。\n`
     + `コマンドがエラーを返した場合は、例外を投げずに `
     + `{"cleaned": false, "error": "<エラーメッセージ全文>"} を返せ。\n`
-    + `\`.devflow-tmp\` 以外のパスには触れるな。`;
+    + `\`${target}\` 以外のパスには触れるな。`;
 }
 
 function isolationProbePrompt(worktree) {
@@ -930,11 +934,14 @@ if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=
 // とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
 // （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
 const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claude/worktrees/pr-${PR}`
-// isolation cleanup（issue #493）: probe の直前に run 専用 scratch（worktree 内 gitignored の
-// `.devflow-tmp/`）を除去し、前 run が残した stale な probe artifact を持ち越さない（issue #482 —
-// 残っていると isolation が正常でも probe が written:false に倒れる）。fail-open: 失敗しても run は
-// 継続する（残っていれば直後の probe が written:false で fail-closed に倒れ、復旧手順は同一）。
-const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
+// isolation cleanup（issue #493）: probe の直前に前 run が残した stale な probe artifact を除去する
+// （残っていると isolation が正常でも probe が written:false に倒れる — issue #482）。
+// 除去範囲は `.devflow-tmp/.isolation-probe` のみに絞る: nested 起動（dev-flow → workflow('pr-iterate')）
+// では isoWt が実行中の dev-flow worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が既に
+// 書いた trust 証跡（trust-risk-eval.json 等）を run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
+// 時点である dev-flow Setup 側の責務。fail-open: 失敗しても run は継続する（残っていれば直後の
+// probe が written:false で fail-closed に倒れ、復旧手順は同一）。
+const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, '.devflow-tmp/.isolation-probe'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
 if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 const isoProbe = await failOpenAgent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
 if (isoProbe && isoProbe.written === false) {

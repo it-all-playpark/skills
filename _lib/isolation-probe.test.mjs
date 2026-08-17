@@ -157,23 +157,34 @@ test('isolationProbePrompt: Write は 1 回だけの最小契約になってい�
 });
 
 test('isolationCleanupPrompt: worktree 直下の .devflow-tmp を git clean で除去させる', () => {
-  const prompt = isolationCleanupPrompt('/repo/.claude/worktrees/df-493');
+  const prompt = isolationCleanupPrompt('/repo/.claude/worktrees/df-493', '.devflow-tmp');
   assert.match(prompt, /git -C \/repo\/\.claude\/worktrees\/df-493 clean -fdx -- \.devflow-tmp/);
   assert.match(prompt, /gitignored/);
 });
 
-test('isolationCleanupPrompt: 除去対象を .devflow-tmp に限定する指示を含む', () => {
-  const prompt = isolationCleanupPrompt('/wt');
+test('isolationCleanupPrompt: 除去対象を target に限定する指示を含む', () => {
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
   assert.match(prompt, /`\.devflow-tmp` 以外のパスには触れるな/);
 });
 
+// nested 起動（dev-flow → workflow('pr-iterate')）では worktree が実行中 run のものになるため、
+// pr-iterate は probe artifact 単体に絞れる必要がある（.devflow-tmp 全体を消すと当該 run の trust
+// 証跡を run 途中で失う）。target は verbatim で使われ、関数側が範囲を広げないことを pin する。
+test('isolationCleanupPrompt: target は verbatim で使われる（呼び出し元が範囲を決める）', () => {
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp/.isolation-probe');
+  assert.match(prompt, /git -C \/wt clean -fdx -- \.devflow-tmp\/\.isolation-probe/);
+  assert.match(prompt, /`\.devflow-tmp\/\.isolation-probe` 以外のパスには触れるな/);
+  // `.devflow-tmp` 全体を対象にする記述へ勝手に広げない
+  assert.doesNotMatch(prompt, /clean -fdx -- \.devflow-tmp\s/);
+});
+
 test('isolationCleanupPrompt: 存在しない場合も成功する旨を明示する（no-op 冪等）', () => {
-  const prompt = isolationCleanupPrompt('/wt');
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
   assert.match(prompt, /存在しない場合もこのコマンドは成功する/);
 });
 
 test('isolationCleanupPrompt: 失敗時は例外を投げず cleaned:false + error で報告させる', () => {
-  const prompt = isolationCleanupPrompt('/wt');
+  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
   assert.match(prompt, /"cleaned": true/);
   assert.match(prompt, /"cleaned": false/);
   assert.match(prompt, /例外を投げずに/);
