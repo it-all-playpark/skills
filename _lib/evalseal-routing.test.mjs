@@ -1,11 +1,15 @@
 // issue #411 (epic #390 Phase 3) F3: EvalSeal shadow wiring routing test。
 // issue #471 (epic #390 Phase 6) で evalseal/2（機械導出 verdict）への移行に合わせて更新。
+// issue #495 で evidence 供給を「workflow が結論値 JSON literal を prompt 埋め込み → subagent に
+// ファイル化させる」方式から「danger-grep / test の各 exec-proxy が確定時点で worktree 内
+// gitignored `.devflow-tmp/` へ書いた実行証跡ファイルを evalseal-seal.mjs の --risk-file/--test-file/
+// --context-json が直接読む」方式へ置換したことに合わせて更新（(b)/(d)/(i) 参照）。
 //
 // Phase 1 の _lib/trust-noninterference.test.mjs（「配線ゼロ」を固定する非干渉 guard）は、
 // 本 task で意図どおり配線 routing test に置換される（同 test ファイル冒頭のコメント参照）。
 // 本ファイルは dev-flow.js への EvalSeal (evalseal/2) shadow 配線
-// （Evaluate 後 seal(--evidence-file 付き) / Final reconcile 失効+asserted 組立 / Merge tier での
-// trust-seal-final(riskFinal 由来 evidence bundle) / classifyMergeTier trustGate / summary /
+// （Evaluate 後 seal(--risk-file/--test-file 付き) / Final reconcile 失効+context 保持 / Merge tier での
+// trust-seal-final(riskFinal 由来証跡ファイル参照) / classifyMergeTier trustGate / summary /
 // telemetry(trust_evalseal_missing_reason) / return）が意図どおり行われ、shadow/off で既存挙動が
 // 変化しないことを実測する。
 //
@@ -19,7 +23,8 @@
 //       post-summary prompt に 'Trust receipts' 無し + return に trust_evalseal_mode /
 //       trust_evalseal_missing_reason 無し（AC-6 off 経路）
 //   (b) repo=allowlist + runEval + trust-seal-eval ok:true → 'trust-seal-eval' が 1 回 +
-//       prompt に --evidence-file / trust-evidence-eval.json Write 指示あり +
+//       prompt に --risk-file/trust-risk-eval.json・--test-file/trust-test-latest.json・
+//       --context-json（証跡ファイル参照のみ、Write 指示なし）+
 //       journal-log telemetry の trust_receipts[0].verdict/record_integrity==='advisory' +
 //       trust_evalseal_missing_reason 無し + post-summary prompt に 'Trust receipts (shadow)' +
 //       merge_tier/reasons が (a) と同一（shadow 非干渉）
@@ -31,8 +36,9 @@
 //   (d) fixes_applied>0 + finalReconcile reverified + trust-check-final が
 //       check.verdict:'inconclusive'/reason_code:'DIGEST_MISMATCH' → evaluate entry が
 //       telemetry 上 invalidated:true + 'trust-seal-final' が 'reconcile-sync' より後・
-//       'danger-grep-final' 系より後に呼ばれ prompt に --evidence-file / trust-evidence-final.json
-//       Write 指示あり + trust_receipts 2 件（AC-4）
+//       'danger-grep-final' 系より後に呼ばれ prompt に --risk-file/trust-risk-final.json・
+//       --test-file/trust-test-latest.json・--context-json（証跡ファイル参照）あり +
+//       trust_receipts 2 件（AC-4）
 //   (e) micro path（runEval=false）→ trust-* 呼び出しゼロ + trust_evalseal_missing_reason='eval_skipped'
 //   (f) (a) と (b) の calls から 'trust-' 始まり label を除いた列が完全一致（AC-6 実測）
 //   (g) 旧 noninterference test の残存 pin: pr-iterate.js / dev-improve.js /
@@ -49,6 +55,13 @@
 //        handoff/return の 2 箇所に同一文字列で存在し、stage スコープ定義（evalsealStageReceipts）
 //        が 1 箇所のみ、旧 layer 合算述語（state.trustReceipts.length===0 の gating 版）がコード上に
 //        残っていないこと
+//   (i) issue #495 AC3: dev-flow.js ソースの静的 literal-pin — trust-seal-eval/trust-seal-final の
+//       trackedAgent 呼び出し区間に (1) delimiter 文字列('TRUST_OBLIGATION'/'TRUST_EVIDENCE')・
+//       'Write tool' 指示が現れない、(2) JSON.stringify( の引数が数値 context 変数のみで
+//       evalObligation/evalEvidenceBundle/buildEvalseal* 識別子が dev-flow.js 全体から消えている、
+//       (3) --risk-file/--test-file で .devflow-tmp 配下パスを参照している、(4) template 内の ${}
+//       補間が WT/BASE/ISSUE/QUALITY_MODEL/context JSON/risk-file 選択式の許可リストに閉じている
+//       （state.risk/state.val/riskFinal/finalTestGreen/finalReconcile を補間しない）ことを assert する
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -270,7 +283,7 @@ test('[evalseal] (a) repo が allowlist 不一致 → EVALSEAL_MODE=off → trus
 // summary に 'Trust receipts (shadow)' + merge_tier/reasons が (a) と同一（shadow 非干渉）
 // ============================================================
 
-test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1回(--evidence-file付き) + telemetry advisory + summary 追記 + merge_tier 不変', async () => {
+test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1回(--risk-file/--test-file付き) + telemetry advisory + summary 追記 + merge_tier 不変', async () => {
   const evalEnvelope = sampleEnvelope({ stage: 'evaluate' });
   const { ctx: ctxA } = makeSandbox({ repo: null });
   const { result: resultA } = await runDevFlowCapture(devFlowSrc, ctxA);
@@ -287,8 +300,11 @@ test('[evalseal] (b) repo=allowlist + trust-seal-eval ok → trust-seal-eval 1�
 
   const sealCalls = calls.filter((c) => c.label === 'trust-seal-eval');
   assert.equal(sealCalls.length, 1, `(b) 'trust-seal-eval' はちょうど 1 回呼ばれるはずだが ${sealCalls.length} 回だった`);
-  assert.ok(sealCalls[0].prompt.includes('--evidence-file'), "(b) trust-seal-eval prompt に '--evidence-file' が含まれるはず");
-  assert.ok(sealCalls[0].prompt.includes('trust-evidence-eval.json'), "(b) trust-seal-eval prompt に 'trust-evidence-eval.json' への Write 指示が含まれるはず");
+  assert.ok(sealCalls[0].prompt.includes('--risk-file'), "(b) trust-seal-eval prompt に '--risk-file' が含まれるはず");
+  assert.ok(sealCalls[0].prompt.includes('trust-risk-eval.json'), "(b) trust-seal-eval prompt に 'trust-risk-eval.json'（実行証跡ファイル参照）が含まれるはず");
+  assert.ok(sealCalls[0].prompt.includes('--test-file'), "(b) trust-seal-eval prompt に '--test-file' が含まれるはず");
+  assert.ok(sealCalls[0].prompt.includes('trust-test-latest.json'), "(b) trust-seal-eval prompt に 'trust-test-latest.json'（実行証跡ファイル参照）が含まれるはず");
+  assert.ok(sealCalls[0].prompt.includes('--context-json'), "(b) trust-seal-eval prompt に '--context-json' が含まれるはず");
 
   const journalCall = calls.find((c) => c.label === 'journal-save');
   const payload = extractTelemetryPayload(journalCall?.prompt);
@@ -386,7 +402,7 @@ test("[evalseal] (c4) trust-seal-eval responder が throw → missing_reason='ag
 // --evidence-file 付き + trust_receipts 2 件
 // ============================================================
 
-test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → evaluate entry invalidated:true + trust-seal-final(Merge tier, --evidence-file付き)が reconcile-sync より後 + trust_receipts 2件", async () => {
+test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → evaluate entry invalidated:true + trust-seal-final(Merge tier, --risk-file/--test-file付き)が reconcile-sync より後 + trust_receipts 2件", async () => {
   const finalEnvelope = sampleEnvelope({ stage: 'final', receiptId: 'r-final', revisionDigest: 'digest-final' });
   const { ctx, calls } = makeSandbox({
     repo: ALLOWLISTED_REPO,
@@ -412,8 +428,15 @@ test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → eva
   assert.ok(idxSealFinal > idxCheckFinal, "(d) 'trust-seal-final' は 'trust-check-final' より後であるべき（Final reconcile → Merge tier の順）");
 
   const sealFinalCall = calls[idxSealFinal];
-  assert.ok(sealFinalCall.prompt.includes('--evidence-file'), "(d) trust-seal-final prompt に '--evidence-file' が含まれるはず");
-  assert.ok(sealFinalCall.prompt.includes('trust-evidence-final.json'), "(d) trust-seal-final prompt に 'trust-evidence-final.json' への Write 指示が含まれるはず");
+  assert.ok(sealFinalCall.prompt.includes('--risk-file'), "(d) trust-seal-final prompt に '--risk-file' が含まれるはず");
+  // createResponder は diff-gate/diff-hash 系ラベルへ一律 {hash:'H', empty:false} を返すため、
+  // diff-hash-secfloor と diff-hash-merge が同一 hash になり diff-hash reuse（issue #377）が成立する。
+  // reuseSecFloor=true のため --risk-file は Security floor の trust-risk-eval.json を再利用する
+  // （architecture_decisions: tree OID byte 一致が前提の再利用なので証跡としても等価）。
+  assert.ok(sealFinalCall.prompt.includes('trust-risk-eval.json'), "(d) trust-seal-final prompt に 'trust-risk-eval.json'（diff-hash reuse により Security floor 証跡を再利用）が含まれるはず");
+  assert.ok(sealFinalCall.prompt.includes('--test-file'), "(d) trust-seal-final prompt に '--test-file' が含まれるはず");
+  assert.ok(sealFinalCall.prompt.includes('trust-test-latest.json'), "(d) trust-seal-final prompt に 'trust-test-latest.json'（実行証跡ファイル参照）が含まれるはず");
+  assert.ok(sealFinalCall.prompt.includes('--context-json'), "(d) trust-seal-final prompt に '--context-json' が含まれるはず");
   assert.ok(sealFinalCall.prompt.includes('--tree-source head'), "(d) trust-seal-final prompt に '--tree-source head' が含まれるはず");
 
   const journalCall = calls.find((c) => c.label === 'journal-save');
@@ -435,7 +458,7 @@ test("[evalseal] (d) fixes_applied>0 + trust-check-final DIGEST_MISMATCH → eva
 // (e) micro path（runEval=false）→ trust-* 呼び出しゼロ + trust_evalseal_missing_reason='eval_skipped'
 // ============================================================
 
-test("[evalseal] (e) micro path（runEval=false）→ trust-* 呼び出しゼロ + missing_reason='eval_skipped'（repo=allowlist でも obligation 実体が無いため seal しない）", async () => {
+test("[evalseal] (e) micro path（runEval=false）→ trust-* 呼び出しゼロ + missing_reason='eval_skipped'（repo=allowlist でも Evaluate phase 自体が skip されるため trust-seal-eval を呼ばない）", async () => {
   const { ctx, calls } = makeSandbox({ repo: ALLOWLISTED_REPO, req: MICRO_REQ });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'e');
@@ -604,4 +627,79 @@ test('[evalseal] (h3) dev-flow.js ソースに evalsealStageReceipts スコー�
   const staleRe = /\.\.\.\(EVALSEAL_MODE !== 'off' && state\.trustReceipts\.length === 0/g;
   const staleMatches = devFlowSrc.match(staleRe) ?? [];
   assert.equal(staleMatches.length, 0, `旧 layer 合算 gating 述語（state.trustReceipts.length===0）がコード上に残ってはならないが ${staleMatches.length} 箇所見つかった`);
+});
+
+// ============================================================
+// (i) issue #495 AC3: trust-seal-eval / trust-seal-final prompt の静的 literal-pin。
+// obligation/evidence を prompt に JSON literal 埋め込みする経路（delimiter・Write tool 指示・
+// evalObligation/evalEvidenceBundle/buildEvalseal* 識別子）が dev-flow.js から構造的に消えており、
+// 代わりに実行証跡ファイルパス（--risk-file/--test-file、.devflow-tmp 配下）のみを prompt が
+// 参照していることを、prompt 文字列を実行せず静的に固定する。
+// ============================================================
+
+function sliceBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.ok(start !== -1, `開始マーカーが見つからない: "${startMarker}"`);
+  assert.ok(end !== -1, `終了マーカーが見つからない: "${endMarker}"`);
+  assert.ok(start < end, `開始マーカーが終了マーカーより後にある: "${startMarker}" / "${endMarker}"`);
+  return source.slice(start, end);
+}
+
+const evalSealRegion = sliceBetween(devFlowSrc, 'const evalContextJson = JSON.stringify(', 'if (trustSealEval?.ok === true');
+const finalSealRegion = sliceBetween(devFlowSrc, 'const finalRiskFile = reuseSecFloor', 'if (trustSealFinal?.ok === true');
+
+test("[evalseal] (i) trust-seal-eval/trust-seal-final 区間に 'TRUST_OBLIGATION'/'TRUST_EVIDENCE' delimiter・'Write tool' 指示・'mkdir -p' が現れない", () => {
+  for (const [name, region] of [['trust-seal-eval', evalSealRegion], ['trust-seal-final', finalSealRegion]]) {
+    for (const forbidden of ['TRUST_OBLIGATION', 'TRUST_EVIDENCE', 'Write tool', 'mkdir -p']) {
+      assert.ok(!region.includes(forbidden), `(i) ${name} 区間に禁止文字列 '${forbidden}' が含まれてはならない`);
+    }
+  }
+});
+
+test('[evalseal] (i) dev-flow.js 全体から evalObligation/evalEvidenceBundle/buildEvalseal* 識別子・--obligation-file/--evidence-file フラグが消えている', () => {
+  for (const forbidden of ['evalObligation', 'evalEvidenceBundle', 'buildEvalsealObligation', 'buildEvalsealEvidenceBundle', '--obligation-file', '--evidence-file']) {
+    assert.ok(!devFlowSrc.includes(forbidden), `(i) dev-flow.js に禁止識別子/フラグ '${forbidden}' が残っている`);
+  }
+});
+
+test('[evalseal] (i) trust-seal-eval/trust-seal-final の JSON.stringify( 引数は数値 context 変数のみ（結論値 literal を含まない）', () => {
+  assert.ok(
+    evalSealRegion.includes('JSON.stringify({ issue: ISSUE, eval_iters: state.evalIters })'),
+    "(i) trust-seal-eval 区間の JSON.stringify( 引数は { issue: ISSUE, eval_iters: state.evalIters } のみのはず",
+  );
+  assert.ok(
+    finalSealRegion.includes('JSON.stringify(state.pendingFinalSeal.context)'),
+    '(i) trust-seal-final 区間の JSON.stringify( 引数は state.pendingFinalSeal.context のみのはず',
+  );
+});
+
+test('[evalseal] (i) trust-seal-eval/trust-seal-final は --risk-file/--test-file で .devflow-tmp 配下の実行証跡ファイルを参照する', () => {
+  for (const [name, region] of [['trust-seal-eval', evalSealRegion], ['trust-seal-final', finalSealRegion]]) {
+    assert.ok(region.includes('--risk-file'), `(i) ${name} 区間に '--risk-file' が含まれるはず`);
+    assert.ok(region.includes('--test-file'), `(i) ${name} 区間に '--test-file' が含まれるはず`);
+    assert.ok(region.includes('.devflow-tmp/'), `(i) ${name} 区間で .devflow-tmp 配下のパスを参照するはず`);
+  }
+});
+
+test('[evalseal] (i) trust-seal-eval/trust-seal-final の template 内 ${} 補間は許可リストに閉じている（結論値 state 変数を補間しない）', () => {
+  const interpRe = /\$\{([^}]*)\}/g;
+  const evalAllowed = new Set(['WT', 'BASE', 'ISSUE', 'QUALITY_MODEL', 'evalContextJson']);
+  const finalAllowed = new Set(['WT', 'BASE', 'ISSUE', 'QUALITY_MODEL', 'finalRiskFile', 'finalContextJson']);
+  const forbiddenIdentRe = /^(state\.risk|state\.val|riskFinal|finalTestGreen|finalReconcile)$/;
+
+  for (const [name, region, allowed] of [
+    ['trust-seal-eval', evalSealRegion, evalAllowed],
+    ['trust-seal-final', finalSealRegion, finalAllowed],
+  ]) {
+    let m;
+    let count = 0;
+    while ((m = interpRe.exec(region)) !== null) {
+      count += 1;
+      const ident = m[1].trim();
+      assert.ok(!forbiddenIdentRe.test(ident), `(i) ${name} 区間の \${${ident}} は結論値 state 変数を補間しており禁止`);
+      assert.ok(allowed.has(ident), `(i) ${name} 区間の \${${ident}} は許可リスト外（許可: ${[...allowed].join(', ')}）`);
+    }
+    assert.ok(count > 0, `(i) ${name} 区間に \${} 補間が 1 つも見つからなかった（region 切り出しミスの可能性）`);
+  }
 });

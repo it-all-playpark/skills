@@ -332,12 +332,12 @@ test('[W5] dev-flow.js: RISK schema と diff-risk-classify 呼び出しが存在
   assert.ok(src.includes("required: ['ok', 'hits']"), 'RISK schema が ok error channel を必須にすること');
   assert.ok(src.includes('diff-risk-classify.sh'), 'diff-risk-classify.sh を呼ぶこと');
   assert.ok(
-    src.includes('diff-risk-classify.sh --working-tree origin/${' + 'BASE}'),
-    'Security floor は --working-tree モードで呼ぶこと',
+    src.includes('diff-risk-classify.sh --working-tree --out ${' + 'WT}/.devflow-tmp/trust-risk-eval.json origin/${' + 'BASE}'),
+    'Security floor は --working-tree モードで呼び、--out で実行証跡ファイルを書き出すこと（issue #495）',
   );
   assert.ok(
-    src.includes('diff-risk-classify.sh origin/${' + 'BASE}'),
-    'Merge tier はフラグなし（commit 後三点 diff）で呼ぶこと',
+    src.includes('diff-risk-classify.sh --out ${' + 'WT}/.devflow-tmp/trust-risk-final.json origin/${' + 'BASE}'),
+    'Merge tier はフラグ無し三点 diff に --out での実行証跡ファイル書き出しを追加すること（issue #495）',
   );
   assert.ok(src.includes('--untracked-files=all'), 'porcelain は -uall で untracked dir を展開すること');
 });
