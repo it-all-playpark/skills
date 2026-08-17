@@ -286,7 +286,12 @@ function runSeal(args, mode) {
   // evidence_bundle_digest は risk/test 両ファイルの raw byte から決定論導出する
   // （実行証跡ファイル由来であることをテストで再計算検証できる形。issue #495）。
   const evidence_bundle_digest = sha256Hex(`${riskResult.raw}\n${testResult.raw}`);
-  const bundle = { risk: riskResult.parsed, test: { green: testResult.parsed.green } };
+  // test file の tests==='no_tests' は green の報告値に関わらず inconclusive へ倒す
+  // （テスト未実行の pass/fail receipt を防ぐ。旧経路 dev-flow.js:5437 の no_tests→null 正規化を復元）。
+  const bundle = {
+    risk: riskResult.parsed,
+    test: { green: testResult.parsed.tests === 'no_tests' ? null : testResult.parsed.green },
+  };
   const { verdict, reason_code } = deriveOutcome(bundle);
 
   // obligation は外部入力を受けず、2 ファイルの sha256 参照文字列 + --context-json の

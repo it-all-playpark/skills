@@ -321,6 +321,26 @@ test('green===null は inconclusive receipt', () => {
   assert.equal(out.receipt.outcome.reason_code, 'EVIDENCE_NOT_DERIVED');
 });
 
+test('tests:no_tests かつ green:true (報告値の不整合) でも pass にはならず inconclusive receipt', () => {
+  const repo = initRepo();
+  const out = runScript(
+    sealArgs(repo, { riskFile: writeTempJson(CLEAN_RISK), testFile: writeTempJson({ tests: 'no_tests', green: true }) })
+  );
+
+  assert.equal(out.receipt.outcome.verdict, 'inconclusive');
+  assert.equal(out.receipt.outcome.reason_code, 'EVIDENCE_NOT_DERIVED');
+});
+
+test('tests:no_tests かつ green:false (報告値の不整合) でも fail にはならず inconclusive receipt', () => {
+  const repo = initRepo();
+  const out = runScript(
+    sealArgs(repo, { riskFile: writeTempJson(CLEAN_RISK), testFile: writeTempJson({ tests: 'no_tests', green: false }) })
+  );
+
+  assert.equal(out.receipt.outcome.verdict, 'inconclusive');
+  assert.equal(out.receipt.outcome.reason_code, 'EVIDENCE_NOT_DERIVED');
+});
+
 // ---- (i) 旧引数の完全撤去 ----
 
 test('(i) --obligation-file は unknown argument として usage + exit 1（legacy fallback なし）', () => {
