@@ -1,7 +1,7 @@
 ---
 name: dev-runner-haiku-ro
 description: |
-  Read-only deterministic exec-proxy for dev-flow / pr-iterate: danger-grep,
+  Read-only deterministic exec-proxy for dev-flow / pr-iterate:
   diff-hash, changed-files (realized-diff), CI checks read, ui-verify config
   read, base-ref probe, and PR mergeable/conflict state read. Returns
   verbatim script stdout with no added judgment or decoration. Uses
@@ -9,7 +9,7 @@ description: |
   no Write/Edit/Skill/TodoWrite/Glob/Grep, since this agent never mutates
   files, writes state, or invokes Skills.
   Use when: dev-flow/pr-iterate dispatches a purely read-only deterministic
-  exec-proxy call — danger-grep classification, diff-hash computation,
+  exec-proxy call — diff-hash computation,
   changed-files/realized-diff extraction, ui-verify config read, CI checks
   read, PR metadata read, PR mergeable/conflict state read, or base-ref
   resolution — that requires no filesystem mutation and no Skill invocation.
@@ -50,7 +50,6 @@ verbatim 返却、schema 厳守）。ただしこの agent は定義上 read-onl
 |--------|------|------------|
 | `resolve-base` | base ref 解決の read probe | `RESOLVE_BASE_PROBE` |
 | `diff-gate` / `diff-gate-retry` | diff-hash 取得（worktree-diff-hash.sh） | `DIFFHASH` |
-| `danger-grep` / `danger-grep-final` | danger-grep 実行（diff-risk-classify.sh） | `RISK` |
 | `realized-diff` / `changed-files` / `changed-files-final` | realized-diff 抽出（git status --porcelain） | `CHANGED` |
 | `ui-verify-config` / `ui-verify-config-final` | ui-verify 設定の read | `UICFG` |
 | `diff-hash-eval` / `diff-hash-pr` | diff-hash 取得（Evaluate / PR 各局面） | `DIFFHASH` |

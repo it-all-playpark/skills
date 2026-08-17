@@ -3921,11 +3921,13 @@ const resolvedBase = resolveBase(BASE_ARG, baseProbe) // 解決不能は throw�
 BASE = resolvedBase.base
 log(`base: origin/${BASE}（source: ${resolvedBase.source}）`)
 
-// worktree 再利用時の stale 証跡除去を手順 3 に含める（専用 agent は置かない — trust 層は
+// worktree 再利用時の stale 証跡無効化を手順 3 に含める（専用 agent は置かない — trust 層は
 // EvalSeal off/micro path で agent 呼び出しゼロを保つ非干渉ガードがあり、Setup に無条件の
-// trust-* 呼び出しを足すとこれを破るため）。前 run の trust-test-latest.json が残ると、当該 run の
-// test 書き込みが失敗した際に evalseal-seal.mjs が古い green/red を silent に拾って実際の test 結果と
-// 食い違う receipt を出しうる。除去しておけば「ファイル不在 → seal が ok:false」の安全側へ倒れる。
+// trust-* 呼び出しを足すとこれを破るため）。前 run の trust-*.json が残ると、当該 run の証跡書き込みが
+// 失敗した際に evalseal-seal.mjs が古い green/red・古い risk を silent に拾い、実際の test/diff と
+// 食い違う receipt を出しうる。無効値へ上書きしておけば「読取が JSON parse に失敗 → seal が ok:false」
+// の安全側へ倒れる。除去に rm/git clean を使わないのは、本 repo を含む環境で Bash の削除が拒否される
+// ため（issue #480 実測。isolation-probe の stale 復旧手順と同じ Read-then-Write 方式に揃える）。
 const branch = `feature/issue-${ISSUE}`
 const setup = need(await trackedAgent(
   `git worktree を 1 つ作って絶対パスを返せ。手順:\n`
@@ -3933,8 +3935,11 @@ const setup = need(await trackedAgent(
   + `2. worktree dir \`<repo>/.claude/worktrees/df-${ISSUE}\` が既に存在すれば再利用、無ければ\n`
   + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
   + `   （branch が既に存在する場合は -b を外して既存 branch を checkout）\n`
-  + `3. 再利用した場合のみ、その worktree 直下で \`rm -f .devflow-tmp/trust-test-latest.json\` を実行する`
-  + `（前 run が残した証跡ファイルの持ち越しを防ぐ。存在しなくてもよい。他のファイルは消すな）\n`
+  + `3. 再利用した場合のみ、その worktree 直下の \`.devflow-tmp/trust-test-latest.json\` `
+  + `\`.devflow-tmp/trust-risk-eval.json\` \`.devflow-tmp/trust-risk-final.json\` について、`
+  + `**存在するものだけ** Read tool で読んでから Write tool で内容 \`stale\` の 1 語へ上書きせよ`
+  + `（前 run の証跡が持ち越されないようにする。JSON として不正な値にすることで、以降の読取が`
+  + `安全側に倒れる。存在しないファイルは新規作成するな。他のファイルは触るな）\n`
   + `4. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
   + `5. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
   { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
@@ -4608,7 +4613,10 @@ async function execSecurityFloorPhase(state) {
     + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。`
     + `失敗時に ok:true を生成してはならない）:\n`
     + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --working-tree --out ${WT}/.devflow-tmp/trust-risk-eval.json origin/${BASE}`,
-    { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
+    // --out で証跡ファイルを書くため read-only 専任の -ro ではなく書き込み可の haiku が担う
+    // （-ro の「ファイル変更を行わない」契約を実態に合わせて緩めるのではなく、書き込みを伴う
+    //  呼び出し側を書き込み可の agent へ寄せる方向で解消する）。
+    { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
   ), 'Security floor(danger-grep)')
   const dangerHits = risk.ok === true ? [...new Set(secHitsOf(risk).map((h) => h.class))] : []
   ledger = reconcileDanger(ledger, risk)
@@ -5187,9 +5195,10 @@ if (EVALSEAL_MODE !== 'off' && state.runEval) {
       + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --risk-file ${WT}/.devflow-tmp/trust-risk-eval.json --test-file ${WT}/.devflow-tmp/trust-test-latest.json --context-json '${evalContextJson}'\`\n`
       + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
       + `\n## Tools\n使用可: Bash, Read\n`
-      + `\n## Boundary\nファイルを変更しない。git 書き込み操作禁止。\n`
+      + `\n## Boundary\n上記コマンドの実行以外に何もするな（スクリプトは worktree の tree snapshot を取るため`
+      + `index を触る。それ以外のファイル編集・commit/push/checkout は禁止）。\n`
       + `\n## Token cap\n150 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku-ro', schema: TRUSTSEAL, label: 'trust-seal-eval', phase: 'Evaluate' },
+      { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-eval', phase: 'Evaluate' },
     )
     if (trustSealEval?.ok === true && trustSealEval.mode !== 'off' && trustSealEval.receipt && trustSealEval.envelope) {
       state.trustReceipts.push({ stage: 'evaluate', receipt: trustSealEval.receipt, envelope: trustSealEval.envelope, invalidated: false, invalidated_reason: null })
@@ -5590,7 +5599,8 @@ if (reuseSecFloor) {
     `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
     + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
     + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --out ${WT}/.devflow-tmp/trust-risk-final.json origin/${BASE}`,
-    { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
+    // danger-grep と同じ理由（--out の証跡書き込み）で書き込み可の haiku が担う
+    { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
   ), 'Merge tier(danger-grep-final)')
   changed = need(await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
