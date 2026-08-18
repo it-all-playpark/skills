@@ -91,6 +91,15 @@ export function checkForbiddenTokens(src, label) {
   if (/^\s*import[\s{(]/m.test(stripped)) {
     throw new Error(`${label}: canonical contains 'import' statement (forbidden in inline)`);
   }
+  // Dynamic import does not have to start a line (`const m = await import('x')`,
+  // `return import('x')`). The line-anchored statement check above misses those forms, and
+  // the harness rejects any workflow script containing an import expression at PARSE time
+  // (`SyntaxError: import() is not available in workflow scripts`) -- i.e. one such line
+  // inlined into dev-flow.js makes the whole workflow unlaunchable, not just degraded.
+  // Unanchored like the require() check below.
+  if (/\bimport\s*\(/.test(stripped)) {
+    throw new Error(`${label}: canonical contains dynamic 'import()' call (forbidden in inline)`);
+  }
   if (/\brequire\s*\(/.test(stripped)) {
     throw new Error(`${label}: canonical contains 'require()' call (forbidden in inline)`);
   }

@@ -183,6 +183,34 @@ test('checkForbiddenTokens: code-level import statement errors', () => {
   assert.throws(() => checkForbiddenTokens(src, 'test'), /import/i);
 });
 
+// Dynamic import is not necessarily line-initial. Each of these forms would previously slip
+// past the line-anchored statement check, get inlined verbatim into .claude/workflows/*.js,
+// and make that workflow unlaunchable (the harness rejects import expressions at parse time).
+test('checkForbiddenTokens: mid-line `await import()` in code errors', () => {
+  const src = `export function f() {\n  const m = await import('node:fs');\n  return m;\n}\n`;
+  assert.throws(() => checkForbiddenTokens(src, 'test'), /import/i);
+});
+
+test('checkForbiddenTokens: assigned dynamic import in code errors', () => {
+  const src = `export const p = import('node:fs');\n`;
+  assert.throws(() => checkForbiddenTokens(src, 'test'), /import/i);
+});
+
+test('checkForbiddenTokens: returned dynamic import in code errors', () => {
+  const src = `export function g() { return import('node:fs'); }\n`;
+  assert.throws(() => checkForbiddenTokens(src, 'test'), /import/i);
+});
+
+test('checkForbiddenTokens: comment-only dynamic import does NOT error', () => {
+  const src = `// import('node:fs') は parse 時に拒否される\nexport const X = 1;\n`;
+  assert.doesNotThrow(() => checkForbiddenTokens(src, 'test'));
+});
+
+test('checkForbiddenTokens: the bare word "import" in code does NOT error (no false positive)', () => {
+  const src = `export const MSG = 'import 式は使えない';\n`;
+  assert.doesNotThrow(() => checkForbiddenTokens(src, 'test'));
+});
+
 test('checkForbiddenTokens: require() in code errors', () => {
   const src = `const m = require('mod');\nexport const X = 1;\n`;
   assert.throws(() => checkForbiddenTokens(src, 'test'), /require/i);
