@@ -40,7 +40,8 @@ fi
 mapfile -t BATS_FILES < <(
     find "$REPO_ROOT" \
         -type d \( -name ".git" -o -name "node_modules" -o -name ".serena" \
-                -o -name ".system" -o -name ".agents" \) -prune -o \
+                -o -name ".system" -o -name ".agents" \
+                -o -path "*/.claude/worktrees" \) -prune -o \
         -type f -name "*.bats" -print | sort
 )
 
