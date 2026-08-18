@@ -14,14 +14,27 @@ setup() {
     cp "$BATS_TEST_DIRNAME/run-all-bats.sh" "$FIXTURE/tests/"
 }
 
+# Fixture .bats content is written via printf (not a heredoc with a literal
+# `@test` line) so that naive line-scanning `bats` implementations (some
+# apt-packaged versions) don't mistake these fixture strings for real test
+# definitions in *this* file, which causes spurious "duplicate test name"
+# errors across the three tests below (each of which writes an "ok"/"leak"
+# fixture). Building the `@` via a variable keeps `@test` from ever
+# appearing at the start of a line in this source file.
+AT='@'
+
+write_ok_fixture() {
+    printf '%stest "ok" { true; }\n' "$AT" > "$1"
+}
+
+write_leak_fixture() {
+    printf '%stest "leak" { false; }\n' "$AT" > "$1"
+}
+
 @test "worktree 配下の .bats は discovery から除外される" {
-    cat > "$FIXTURE/sample.bats" <<'EOF'
-@test "ok" { true; }
-EOF
+    write_ok_fixture "$FIXTURE/sample.bats"
     mkdir -p "$FIXTURE/.claude/worktrees/df-999"
-    cat > "$FIXTURE/.claude/worktrees/df-999/leak.bats" <<'EOF'
-@test "leak" { false; }
-EOF
+    write_leak_fixture "$FIXTURE/.claude/worktrees/df-999/leak.bats"
 
     run bash "$FIXTURE/tests/run-all-bats.sh"
 
@@ -31,18 +44,14 @@ EOF
 }
 
 @test "worktree の有無で discovery 件数が変わらない" {
-    cat > "$FIXTURE/sample.bats" <<'EOF'
-@test "ok" { true; }
-EOF
+    write_ok_fixture "$FIXTURE/sample.bats"
 
     run bash "$FIXTURE/tests/run-all-bats.sh"
     [ "$status" -eq 0 ]
     first_count_line="$(echo "$output" | grep "Discovered .* file(s)")"
 
     mkdir -p "$FIXTURE/.claude/worktrees/df-999"
-    cat > "$FIXTURE/.claude/worktrees/df-999/leak.bats" <<'EOF'
-@test "leak" { false; }
-EOF
+    write_leak_fixture "$FIXTURE/.claude/worktrees/df-999/leak.bats"
 
     run bash "$FIXTURE/tests/run-all-bats.sh"
     [ "$status" -eq 0 ]
@@ -52,9 +61,7 @@ EOF
 }
 
 @test "worktree checkout 内から実行しても自身のテストは discovery される" {
-    cat > "$FIXTURE/sample.bats" <<'EOF'
-@test "ok" { true; }
-EOF
+    write_ok_fixture "$FIXTURE/sample.bats"
     echo "gitdir: /nonexistent" > "$FIXTURE/.git"
 
     run bash "$FIXTURE/tests/run-all-bats.sh"
