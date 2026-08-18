@@ -217,6 +217,12 @@ schema 検証のみを行い、LLM 判断は介在しない。
 $SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --canary ~/.claude/logs/dev-flow-canary/<timestamp>.json
 ```
 
+`--canary` を省略した場合でも、環境変数 `DEVFLOW_CANARY_LOG_DIR`（既定
+`$HOME/.claude/logs/dev-flow-canary`）配下の `canary-*.json` をファイル名 sort
+で最新 1 件自動発見して取り込む。`--canary` を明示指定した場合は常に自動発見
+より優先される。対象ディレクトリが存在しない、または report が 0 件の場合は
+従来どおり no-op（`checks.canary` キー無し・exit 0・score 不変）。
+
 ### 出力: `checks.canary`
 
 | status | 意味 |
@@ -230,6 +236,22 @@ capability ごとの `pass` / `fail` / `unsupported` の意味:
 - `fail`: capability API は存在するが実行が失敗した（harness regression の可能性）
 - `unsupported`: capability API 自体が存在しない（harness が対応していない）
 
+### `checks.canary.version_drift`（harness 更新検知）
+
+`checks.canary.status == ok` のときのみ、現在の harness version（`claude
+--version` の verbatim stdout）と report の `claude_code_version` を単純文字列
+比較し、`checks.canary.version_drift` を出力する。
+
+| status | 意味 |
+|--------|------|
+| `drift` | 現在の harness version と report の `claude_code_version` が不一致。`issues[]` に `severity: "warn"` で「/dev-flow-canary の再実行を推奨」の advisory issue を追加する |
+| `match` | 一致。追加 issue なし |
+| `skipped` | `claude` コマンド不在・実行失敗・空出力、または report 側 `claude_code_version` が `unknown` の場合。harness version が取得できないことを drift の証拠として扱わない fail-open |
+
+なぜ: harness 更新時の再評価トリガ（下記）は canary 再実行を人間の記憶に依存
+しており、drift 検知が無いと bridge sunset 再評価が黙って止まる（issue #511
+の動機）。
+
 ### score への非影響（advisory）
 
 canary check は **health score の計算に一切影響しない**。`ci-checks` proxy
@@ -240,6 +262,7 @@ canary の fail/unsupported/report 取り込み失敗のいずれも score・mer
 `issues[]` に `severity: "info"` で
 「canary: bridge (exec-proxy/inline generator) removal NOT possible —
 direct fs/shell/import unsupported」を追加するのみで、gate は緩めない。
+`version_drift` も同様に score に一切影響しない（advisory issue の追加のみ）。
 
 ### harness 更新時の再評価トリガ
 

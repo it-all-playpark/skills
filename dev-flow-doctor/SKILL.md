@@ -54,7 +54,7 @@ actionable improvement recommendations.
 | `--fix` | false | Auto-apply safe fixes (worktree cleanup only) |
 | `--compare` | - | Path to baseline snapshot to compare against (AC4). Adds `baseline_compare` to checks + max -15 penalty |
 | `--update-baseline` | - | Regenerate baseline snapshot at the given path (AC2). Delegates to `baseline-snapshot.sh`; emits warning if journal is empty |
-| `--canary` | - | Path to a `/dev-flow-canary` report JSON to validate and surface. Advisory only — never affects the health score (fail-open, mirrors ci-checks precedent). Adds `checks.canary` (`ok`/`unavailable`) |
+| `--canary` | - | Path to a `/dev-flow-canary` report JSON to validate and surface. If omitted, auto-discovers the latest `canary-*.json` under `DEVFLOW_CANARY_LOG_DIR` (default `~/.claude/logs/dev-flow-canary`); an explicit `--canary` always wins. Advisory only — never affects the health score (fail-open, mirrors ci-checks precedent). Adds `checks.canary` (`ok`/`unavailable`) plus `version_drift` (`drift`/`match`/`skipped`) warning when the harness version differs from the report |
 
 ## Diagnostic Scopes
 
