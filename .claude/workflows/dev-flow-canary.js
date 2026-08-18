@@ -80,15 +80,26 @@ function probeRequireModule(moduleId, capLabel) {
   }
 }
 
-async function probeDirectImport() {
-  try {
-    await import('node:fs')
-    return { status: 'pass', detail: "await import('node:fs') 成功 — dynamic import 対応" }
-  } catch (e) {
+// harness は dynamic import 式を含む workflow script を **parse 時に** 拒否する
+// (`SyntaxError: import() is not available in workflow scripts` で workflow 全体が起動不能。
+// 2026-08-18 実測。2026-08-04 の canary は runtime throw で `unsupported` を返せていた)。
+// したがって probe 本体に import 式を書けない — 書いた瞬間 canary 自身が起動不能になり、
+// direct_import だけでなく全 capability が観測不能になる。probe は globalThis に露出した
+// module ローダの有無だけを見る (probePauseResume と同じ idiom)。
+function probeDirectImport() {
+  const candidates = ['dynamicImport', 'importModule', 'loadModule']
+  const present = candidates.filter((name) => typeof globalThis[name] === 'function')
+  if (typeof globalThis.import === 'function') present.push('import')
+  if (present.length > 0) {
     return {
-      status: 'unsupported',
-      detail: `await import() が未対応（${e?.message ?? String(e)}）— harness が dynamic import callback を提供していない可能性`,
+      status: 'pass',
+      detail: `dynamic import API present (${present.join(', ')}) — workflow から module ロード可能`,
     }
+  }
+  return {
+    status: 'unsupported',
+    detail:
+      'dynamic import 不可: import 式は parse 時に拒否され script 全体が起動不能になり、globalThis にも module ローダ相当の関数は無い。解禁検知は import 式 1 行を workflow に足して起動できるかで行う',
   }
 }
 
@@ -214,7 +225,7 @@ phase('Probe')
 log('dev-flow-canary: harness capability probe を開始（read-only, repo/git/GitHub state 不変）')
 
 const direct = probeDirectCapabilities()
-const directImport = await probeDirectImport()
+const directImport = probeDirectImport()
 
 const versionProbe = await agent(
   versionProbePrompt(),
