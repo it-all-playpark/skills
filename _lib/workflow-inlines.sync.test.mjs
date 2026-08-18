@@ -11,7 +11,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { scanMarkers, transformCanonical } from '../tools/sync-inlines.mjs';
+import { scanMarkers, transformCanonical, stripComments } from '../tools/sync-inlines.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const wfDir = join(repoRoot, '.claude', 'workflows');
@@ -75,4 +75,33 @@ for (const wfFile of wfFiles) {
       );
     });
   }
+}
+
+// -----------------------------------------------------------------------------
+// Launchability invariant: no workflow may contain a dynamic import expression.
+//
+// The harness rejects such a script at PARSE time
+// (`SyntaxError: import() is not available in workflow scripts`), so a single
+// occurrence makes the whole workflow unlaunchable -- every phase, not just the
+// code path holding the expression. dev-flow-canary.js shipped one for a month
+// (fixed in #509) because it is self-contained: the generator's forbidden-token
+// check only ever sees _lib canonicals, never the workflow files themselves.
+// This lint closes that gap by scanning every workflow, generated or hand-written.
+//
+// Comments are stripped first, so prose about import() (including the comment this
+// very invariant left in dev-flow-canary.js) does not trip the check.
+// -----------------------------------------------------------------------------
+for (const wfFile of wfFiles) {
+  test(`${wfFile}: contains no dynamic import expression (workflow stays launchable)`, () => {
+    const stripped = stripComments(readFileSync(join(wfDir, wfFile), 'utf8'));
+    const offenders = stripped
+      .split('\n')
+      .map((line, i) => ({ line, no: i + 1 }))
+      .filter(({ line }) => /\bimport\s*\(/.test(line) || /^\s*import[\s{]/.test(line));
+    assert.deepEqual(
+      offenders.map(({ no, line }) => `${no}: ${line.trim()}`),
+      [],
+      `${wfFile}: import 式は harness の構文チェックで拒否され workflow 全体が起動不能になります`,
+    );
+  });
 }
