@@ -22,11 +22,15 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { forceTrustShadow } from './test-helpers/trust-layer-src.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-const devFlowSrc = readFileSync(devFlowPath, 'utf8');
+// 出荷時 config は全 layer 'off'（_lib/trust-wiring.mjs）。本ファイルは shadow 時の配線が
+// 意図どおり動くことを検証するため source を shadow へ強制する。出荷 config が off であること
+// 自体は _lib/trust-layers-off.test.mjs が pin する。
+const devFlowSrc = forceTrustShadow(readFileSync(devFlowPath, 'utf8'));
 
 // runDevFlowCapture: effectdelta-routing.test.mjs と同型のローカル copy（{result, error} を返す）。
 async function runDevFlowCapture(src, ctx) {
