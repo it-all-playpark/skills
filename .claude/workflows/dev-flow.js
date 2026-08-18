@@ -1234,17 +1234,27 @@ function isGatingMode(mode) {
 //
 // TRUST_LAYER_CONFIG は repo 定数。QUALITY_MODEL（_lib/quality-model.mjs）と同じ
 // 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
-// surfaceproof: 'shadow'（issue #410, epic #390 Phase 2 — dev-flow.js の Analyze phase へ配線済み）。
-// evalseal: 'shadow'（issue #411, epic #390 Phase 3 — dev-flow.js の Evaluate/Final reconcile へ配線済み。
-// issue #471, epic #390 Phase 6 で evalseal/2（機械導出 verdict）へ移行済み。issue #495 で
-// obligation/evidence の prompt 埋め込みを撤去し、danger-grep / test proxy が確定時点で worktree 内
-// gitignored `.devflow-tmp/` へ書く実行証跡ファイルを evalseal-seal.mjs が --risk-file/--test-file/
-// --context-json で直接読む方式へ移行 — obligation/evidence bundle を構築する builder 関数は
-// dev-flow.js 側にもう存在せず、本モジュールは missing-reason enum 等の非 builder 定義のみを持つ）。
-// effectdelta: 'shadow'（issue #412, epic #390 Phase 4 — dev-flow.js の PR phase（pr-observe）・
-// post-summary（comment-prepare/comment-observe + subagent の bare gh choreography。issue #466）へ配線済み）。
-// sunset: epic #390 Phase 5 の 2x2x2 dogfood 後に advisory/blocking へ昇格を検討する。
-const TRUST_LAYER_CONFIG = { surfaceproof: 'shadow', evalseal: 'shadow', effectdelta: 'shadow' };
+// 配線先（mode に関わらず存置）: surfaceproof = dev-flow.js の Analyze phase、
+// evalseal = Evaluate / Final reconcile、effectdelta = PR phase（pr-observe）・post-summary
+// （comment-prepare/comment-observe）。'off' では各 call site が丸ごと skip され追加 agent 呼出しは 0 件。
+//
+// 全 layer 'off'。shadow は「既存 gate を変えない（AC-11/AC-15）」を保証するが、
+// **run を壊さないことは保証しない** — shadow 固定のまま run abort と telemetry 全損が実測された:
+//   - trust-*.json の stale 上書きが safety classifier に [Logging/Audit Tampering] と判定され
+//     Setup が null を返して run abort（2026-08-17, issue #503, wf_3f47928a-ba2）。
+//   - trust-seal-eval のブロックが同 run の journal-log まで連鎖ブロックし、
+//     完走した run の telemetry が journal に 1 件も残らなかった（2026-08-04, issue #485）。
+// trust layer の call site は監査証跡の上書き・自己封緘・receipt 自己発行を行うため、
+// 挙動が改ざん者と同型になり classifier と構造的に衝突する。gate 非改変では相殺できない
+// run 単位のコストなので、観測を続ける前提が成立するまで実行しない。
+//
+// 再開条件（この 3 つが揃うまで 'shadow' へ戻さない。1 つでも欠けたら off のまま）:
+//   1. call site が監査改ざんと同型でない形に再設計されている（証跡の破壊的上書きをしない）。
+//   2. trust 由来の classifier ブロックが run abort / telemetry 欠落へ波及しない
+//      （journal-log への連鎖遮断が実測で確認できている）。
+//   3. off 期間の完走率を分母として、shadow 復帰後の完走率が有意に劣後しないと確認できる。
+// 撤去（コード削除）判断は off 期間の実測後に別 issue で行う。
+const TRUST_LAYER_CONFIG = { surfaceproof: 'off', evalseal: 'off', effectdelta: 'off' };
 
 // 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
 // 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
