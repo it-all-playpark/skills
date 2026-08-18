@@ -38,6 +38,12 @@ setup() {
     echo '{}' > "$SKILL_CONFIG_PATH"
     export SKILL_CONFIG_PATH
 
+    # canary 自動発見用の隔離 dir（issue #511）。実機 HOME の
+    # ~/.claude/logs/dev-flow-canary/ から (14) 等を隔離する。
+    CANARY_LOG_DIR_OVERRIDE="$BATS_TEST_TMPDIR/canary-logs"
+    mkdir -p "$CANARY_LOG_DIR_OVERRIDE"
+    export DEVFLOW_CANARY_LOG_DIR="$CANARY_LOG_DIR_OVERRIDE"
+
     # 1 日前の相対タイムスタンプ (macOS -v / GNU -d 両対応)
     TS="$(date -u -v-1d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
         || date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)"
@@ -291,12 +297,14 @@ EOF
 
 # 9 capability を全部指定 status で埋めた canary report を $1 に書き出す。
 # direct_fs/direct_shell/direct_import の status だけ個別に上書き可能。
+# $5 (任意): claude_code_version を上書き（既定は "2.1.80" — 既存テストのシグネチャ・
+# アサートは変えない）。
 write_canary_report() {
-    local out="$1" fs_status="${2:-pass}" shell_status="${3:-pass}" import_status="${4:-pass}"
+    local out="$1" fs_status="${2:-pass}" shell_status="${3:-pass}" import_status="${4:-pass}" ccv_val="${5:-2.1.80}"
     cat > "$out" <<EOF
 {
   "canary_version": "1.0.0",
-  "claude_code_version": "2.1.80",
+  "claude_code_version": "${ccv_val}",
   "timestamp_utc": "2026-07-13T00:00:00Z",
   "capabilities": [
     {"id": "agent_schema", "status": "pass", "detail": "ok"},
@@ -488,4 +496,142 @@ EOF
     local vdelta_warn_found
     vdelta_warn_found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("vdelta")))] | length')
     [ "$vdelta_warn_found" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# canary version drift + auto-discovery (issue #511)
+# ---------------------------------------------------------------------------
+
+# 実行可能な `claude` shim を $FAKE_BIN に置く。$1 = --version の stdout
+# （空文字なら exit 1 で失敗させる = version 取得不能ケース）。
+write_claude_shim() {
+    local out="$1"
+    if [[ -z "$out" ]]; then
+        cat > "${FAKE_BIN}/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    else
+        cat > "${FAKE_BIN}/claude" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "${out}"
+EOF
+    fi
+    chmod +x "${FAKE_BIN}/claude"
+}
+
+@test "(20) drift あり: report と現在 harness version が不一致 -> version_drift.status=drift + warn issue、score は非影響" {
+    CANARY="$BATS_TEST_TMPDIR/canary-drift.json"
+    write_canary_report "$CANARY" pass pass pass "1.0.0 (Claude Code)"
+    write_claude_shim "9.9.9 (Claude Code)"
+
+    run bash -c "cd '${REPO}' && PATH='${FAKE_BIN}:${PATH}' '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local st
+    st=$(printf '%s\n' "$output" | jq -r '.checks.canary.version_drift.status')
+    [ "$st" = "drift" ]
+
+    local warn_found
+    warn_found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("drift")))] | length')
+    [ "$warn_found" -ge 1 ]
+
+    local score_with_canary score_without_canary
+    score_with_canary=$(printf '%s\n' "$output" | jq '.score')
+
+    run bash -c "cd '${REPO}' && PATH='${FAKE_BIN}:${PATH}' '${SCRIPT}' --scope config"
+    [ "$status" -eq 0 ]
+    score_without_canary=$(printf '%s\n' "$output" | jq '.score')
+
+    [ "$score_with_canary" -eq "$score_without_canary" ]
+}
+
+@test "(21) drift なし: report と現在 harness version が一致 -> version_drift.status=match、drift warn 無し" {
+    CANARY="$BATS_TEST_TMPDIR/canary-nodrift.json"
+    write_canary_report "$CANARY" pass pass pass "5.5.5 (Claude Code)"
+    write_claude_shim "5.5.5 (Claude Code)"
+
+    run bash -c "cd '${REPO}' && PATH='${FAKE_BIN}:${PATH}' '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local st
+    st=$(printf '%s\n' "$output" | jq -r '.checks.canary.version_drift.status')
+    [ "$st" = "match" ]
+
+    local warn_found
+    warn_found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("drift")))] | length')
+    [ "$warn_found" -eq 0 ]
+}
+
+@test "(22) report 不在: --canary 未指定・自動発見 dir も空 -> exit 0、checks.canary 無し、score 不変" {
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local has_canary
+    has_canary=$(printf '%s\n' "$output" | jq '.checks | has("canary")')
+    [ "$has_canary" = "false" ]
+
+    local score_without_report score_baseline
+    score_without_report=$(printf '%s\n' "$output" | jq '.score')
+
+    run bash -c "cd '${REPO}' && '${SCRIPT}' --scope config"
+    [ "$status" -eq 0 ]
+    score_baseline=$(printf '%s\n' "$output" | jq '.score')
+
+    [ "$score_without_report" -eq "$score_baseline" ]
+}
+
+@test "(23) version 取得不能: claude コマンド失敗 -> version_drift.status=skipped、drift warn 無し、exit 0" {
+    CANARY="$BATS_TEST_TMPDIR/canary-noversion.json"
+    write_canary_report "$CANARY"
+    write_claude_shim ""
+
+    run bash -c "cd '${REPO}' && PATH='${FAKE_BIN}:${PATH}' '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local canary_st
+    canary_st=$(printf '%s\n' "$output" | jq -r '.checks.canary.status')
+    [ "$canary_st" = "ok" ]
+
+    local drift_st
+    drift_st=$(printf '%s\n' "$output" | jq -r '.checks.canary.version_drift.status')
+    [ "$drift_st" = "skipped" ]
+
+    local warn_found
+    warn_found=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("drift")))] | length')
+    [ "$warn_found" -eq 0 ]
+}
+
+@test "(24) 自動発見: --canary 未指定でも DEVFLOW_CANARY_LOG_DIR の最新 report を拾う（ファイル名 sort で最新選択）" {
+    write_canary_report "${DEVFLOW_CANARY_LOG_DIR}/canary-1000000000.json" pass pass pass "AAA"
+    write_canary_report "${DEVFLOW_CANARY_LOG_DIR}/canary-2000000000.json" pass pass pass "BBB"
+    write_claude_shim ""
+
+    run bash -c "cd '${REPO}' && PATH='${FAKE_BIN}:${PATH}' '${SCRIPT}' --scope config"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local ccv
+    ccv=$(printf '%s\n' "$output" | jq -r '.checks.canary.claude_code_version')
+    [ "$ccv" = "BBB" ]
+}
+
+@test "(25) 明示優先: 自動発見 dir に report があっても --canary 明示指定が優先される" {
+    write_canary_report "${DEVFLOW_CANARY_LOG_DIR}/canary-1000000000.json" pass pass pass "AAA"
+    write_canary_report "${DEVFLOW_CANARY_LOG_DIR}/canary-2000000000.json" pass pass pass "BBB"
+    CANARY="$BATS_TEST_TMPDIR/canary-explicit.json"
+    write_canary_report "$CANARY" pass pass pass "CCC"
+    write_claude_shim ""
+
+    run bash -c "cd '${REPO}' && PATH='${FAKE_BIN}:${PATH}' '${SCRIPT}' --scope config --canary '${CANARY}'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local ccv
+    ccv=$(printf '%s\n' "$output" | jq -r '.checks.canary.claude_code_version')
+    [ "$ccv" = "CCC" ]
 }

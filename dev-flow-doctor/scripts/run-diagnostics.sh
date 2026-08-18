@@ -17,6 +17,15 @@ set -euo pipefail
 # score — mirrors the ci-checks proxy precedent (AGENTS.md exec-proxy 失敗
 # ポリシー表). Validation failure / missing script -> checks.canary =
 # {status:"unavailable", reason} + warn issue, continues (no die).
+#
+# --canary auto-discovery + version drift (issue #511): when --canary is
+# omitted, the newest canary-*.json under DEVFLOW_CANARY_LOG_DIR (default
+# $HOME/.claude/logs/dev-flow-canary) is used; 0 reports found is a no-op
+# (checks.canary absent, same as before). On a successful validation,
+# checks.canary.version_drift compares the report's claude_code_version
+# against the current `claude --version` output — advisory warn on
+# mismatch, never touches SCORE. Unavailable current version or report
+# version ("unknown"/missing) -> version_drift.status="skipped" (fail-open).
 
 SCRIPT_DIR_RD="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR_RD/../../_lib/common.sh"
@@ -595,7 +604,13 @@ run_baseline_compare_check() {
 # mirrors the ci-checks exec-proxy failure policy in AGENTS.md).
 run_canary_check() {
   if [[ -z "$CANARY_PATH" ]]; then
-    return
+    local canary_log_dir="${DEVFLOW_CANARY_LOG_DIR:-$HOME/.claude/logs/dev-flow-canary}"
+    if [[ -d "$canary_log_dir" ]]; then
+      CANARY_PATH="$(find "$canary_log_dir" -maxdepth 1 -type f -name 'canary-*.json' 2>/dev/null | sort | tail -n 1)"
+    fi
+    if [[ -z "$CANARY_PATH" ]]; then
+      return   # fail-open: report 0 件 -> checks.canary 無し・issue 無し・score 不変
+    fi
   fi
 
   local validate_sh="$SCRIPT_DIR_RD/validate-canary-report.sh"
@@ -646,6 +661,20 @@ run_canary_check() {
       unsupported_ids: $unsupported_ids,
       bridge_sunset: $bridge_sunset
     }')
+
+  # Version drift (issue #511): advisory only — never touches SCORE.
+  local current_version=""
+  if command -v claude >/dev/null 2>&1; then
+    current_version="$(claude --version 2>/dev/null || true)"
+  fi
+  if [[ -z "$current_version" || -z "$ccv" || "$ccv" == "unknown" || "$ccv" == "null" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq '.canary.version_drift = {status:"skipped", reason:"harness version unavailable or report version unknown"}')
+  elif [[ "$current_version" != "$ccv" ]]; then
+    CHECKS=$(echo "$CHECKS" | jq --arg cur "$current_version" --arg rep "$ccv" '.canary.version_drift = {status:"drift", current:$cur, report:$rep}')
+    add_issue "warn" "canary: harness version drift — report=${ccv} current=${current_version}. /dev-flow-canary の再実行を推奨（bridge sunset 再評価が stale）"
+  else
+    CHECKS=$(echo "$CHECKS" | jq --arg cur "$current_version" '.canary.version_drift = {status:"match", current:$cur, report:$cur}')
+  fi
 
   # Informational only: never touches SCORE. fail>0 OR unsupported includes
   # direct_fs/direct_shell/direct_import -> bridge removal is NOT possible.
