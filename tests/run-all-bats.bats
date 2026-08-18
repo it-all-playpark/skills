@@ -61,10 +61,12 @@ write_leak_fixture() {
 }
 
 @test "worktree checkout 内から実行しても自身のテストは discovery される" {
-    write_ok_fixture "$FIXTURE/sample.bats"
-    echo "gitdir: /nonexistent" > "$FIXTURE/.git"
+    WT_FIXTURE="$BATS_TEST_TMPDIR/main/.claude/worktrees/df-1"
+    mkdir -p "$WT_FIXTURE/tests"
+    cp "$BATS_TEST_DIRNAME/run-all-bats.sh" "$WT_FIXTURE/tests/"
+    write_ok_fixture "$WT_FIXTURE/sample.bats"
 
-    run bash "$FIXTURE/tests/run-all-bats.sh"
+    run bash "$WT_FIXTURE/tests/run-all-bats.sh"
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Discovered 1 .bats file(s)"* ]]
