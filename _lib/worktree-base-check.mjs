@@ -72,6 +72,16 @@ export function checkWorktreeBase({ issue, base, probe }) {
     };
   }
 
+  const pushedBranchUpstream = 'origin/feature/issue-' + issue;
+
+  if (probe.upstream === pushedBranchUpstream) {
+    return {
+      status: 'match_pushed',
+      logLine: 'worktree-base-check: 既存 worktree の upstream が ' + pushedBranchUpstream
+        + '（PR 作成済み、git push -u で書き換え済み）— 起点不一致ではなく再利用可',
+    };
+  }
+
   if (probe.upstream === '') {
     throw new Error(
       'dev-flow: 既存 worktree の起点を判定できなかった（upstream tracking 未設定）'

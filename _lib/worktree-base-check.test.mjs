@@ -55,6 +55,17 @@ test('checkWorktreeBase: 一致（upstream origin/dev, base dev）→ status mat
   assert.match(res.logLine, /worktree-base-check/);
 });
 
+test('checkWorktreeBase: upstream が origin/feature/issue-<issue>（PR 作成済み push -u 済み）→ status match_pushed（throw しない）', () => {
+  const res = checkWorktreeBase({
+    issue: 517,
+    base: 'dev',
+    probe: { ok: true, worktree_exists: true, upstream: 'origin/feature/issue-517' },
+  });
+  assert.equal(res.status, 'match_pushed');
+  assert.match(res.logLine, /worktree-base-check/);
+  assert.match(res.logLine, /origin\/feature\/issue-517/);
+});
+
 test('checkWorktreeBase: 不一致（origin/main vs base dev）→ throw（origin/main と origin/dev と復旧手順を含む）', () => {
   assert.throws(
     () => checkWorktreeBase({
