@@ -67,6 +67,7 @@ function makeCountingSandbox(opts) {
 
     // Setup
     if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    if (label === 'worktree-base-check') return { ok: true, worktree_exists: false, upstream: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
 
     // Analyze（shape:'standard', acceptance_criteria 4 件, estimated_change_file_count:3）

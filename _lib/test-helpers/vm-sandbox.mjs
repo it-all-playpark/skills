@@ -59,6 +59,12 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     if (result === undefined && label === 'issue-meta') {
       return { ok: true, number: 1, title: 'stub-issue-title' };
     }
+    if (result === undefined && label === 'worktree-base-check') {
+      // issue #517: 既存 worktree 起点検証 probe のデフォルト応答。呼び出し側 responder が
+      // 明示的に 'worktree-base-check' を扱わない限り、未存在（新規作成経路）を返し
+      // checkWorktreeBase の fail-closed throw で Setup 以降の call chain を壊さない。
+      return { ok: true, worktree_exists: false, upstream: '' };
+    }
     return result === undefined ? null : result;
   };
 

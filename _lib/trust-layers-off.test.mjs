@@ -50,6 +50,7 @@ const STANDARD_REQ = {
 
 function responder({ label, agentType }) {
   if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+  if (label === 'worktree-base-check') return { ok: true, worktree_exists: false, upstream: '' };
   if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-410', repo: ALLOWLISTED_REPO };
   if (label.startsWith('analyze')) return STANDARD_REQ;
   if (agentType === 'dev-planner') {
