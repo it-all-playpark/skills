@@ -39,6 +39,7 @@ function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1,
   return function ({ label, agentType }) {
     if (Object.prototype.hasOwnProperty.call(overrides, label)) return overrides[label];
     if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    if (label === 'worktree-base-check') return { ok: true, worktree_exists: false, upstream: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label === 'issue-meta') return issueMetaRes;
     if (label.startsWith('contract-probe')) return null; // fail-open (whitelist 検証不合格扱い) — 既定は sonnet fallback

@@ -65,6 +65,10 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'resolve-base') {
       return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
     }
+    // Setup(worktree-base-check): 既存 worktree 起点検証 probe（issue #517）— 給電対象ではない
+    if (label === 'worktree-base-check') {
+      return { ok: true, worktree_exists: false, upstream: '' };
+    }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     }

@@ -57,6 +57,7 @@ function makeSandbox({ implementerFn, plannerFn } = {}) {
     calls.push(entry);
 
     if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    if (label === 'worktree-base-check') return { ok: true, worktree_exists: false, upstream: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label.startsWith('analyze')) return STANDARD_ANALYZE_REQ;
     if (agentType === 'dev-planner') {

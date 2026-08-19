@@ -163,6 +163,7 @@ function createResponder({ repo = null, req = STANDARD_REQ, overrides = {} } = {
       return v;
     }
     if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
+    if (label === 'worktree-base-check') return { ok: true, worktree_exists: false, upstream: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-411', ...(repo ? { repo } : {}) };
     if (label.startsWith('analyze')) return req;
     if (agentType === 'dev-planner') {
