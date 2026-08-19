@@ -43,6 +43,26 @@ test('worktreeBaseProbePrompt: Output format / Tools / Boundary / Token cap セ�
   assert.match(prompt, /## Token cap/);
 });
 
+test('worktreeBaseProbePrompt: ネストした command substitution $( を含まない（worktree-isolation guard 拒否の再発 pin, issue #519 review）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.doesNotMatch(prompt, /\$\(/);
+});
+
+test('worktreeBaseProbePrompt: 複合 if 文（if [ ... ]）を含まない（worktree-isolation guard 拒否の再発 pin, issue #519 review）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.doesNotMatch(prompt, /if \[/);
+});
+
+test('worktreeBaseProbePrompt: test -d を独立コマンドとして含む', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.match(prompt, /`test -d "<WTD>"`/);
+});
+
+test('worktreeBaseProbePrompt: git -C ... rev-parse ... @{upstream} を独立コマンドとして含む（git -C 単体は guard を通過する形の pin）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.match(prompt, /`git -C "<WTD>" rev-parse --abbrev-ref --symbolic-full-name @\{upstream\}`/);
+});
+
 // ── checkWorktreeBase: 一致・不一致・判定不能 ────────────────────────────────
 
 test('checkWorktreeBase: 一致（upstream origin/dev, base dev）→ status match', () => {

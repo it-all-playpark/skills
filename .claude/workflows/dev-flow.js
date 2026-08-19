@@ -225,23 +225,32 @@ const WORKTREE_BASE_PROBE = {
 };
 
 function worktreeBaseProbePrompt(issue) {
-  const cmd = 'ROOT=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)"); '
-    + 'WTD="$ROOT/.claude/worktrees/df-' + issue + '"; '
-    + 'if [ ! -d "$WTD" ]; then printf \'{"ok":true,"worktree_exists":false,"upstream":""}\\n\'; '
-    + 'else UP=$(git -C "$WTD" rev-parse --abbrev-ref --symbolic-full-name @{upstream} 2>/dev/null || true); '
-    + 'printf \'{"ok":true,"worktree_exists":true,"upstream":"%s"}\\n\' "$UP"; fi';
-  return 'リポジトリルートで次のコマンドをそのまま実行し、stdout の JSON 1 行をそのまま **verbatim** で返せ'
-    + '（判定や脚色をしない。要約・整形・追加コメントは付けない）:\n\n'
-    + cmd
-    + '\n\n'
+  // issue #519 review: 入れ子 $() + 複合 if を含む単一スクリプトは worktree-isolation guard に
+  // 拒否され得る（git -C 単体は通過）。guard が検証できる独立コマンド列（test -d / git -C）に分割し、
+  // 各コマンドの結果から agent 自身が JSON を組み立てる形へ変更する。
+  const wtdSuffix = '.claude/worktrees/df-' + issue;
+  return 'リポジトリルートで以下の手順を **この順で** 実行し、各コマンドの結果から JSON を組み立てて返せ'
+    + '（各コマンドの stdout は **verbatim** に扱い、要約・脚色をしない。判定は下記の組み立てルールのみに従う）:\n\n'
+    + '1. 次を実行する: `git rev-parse --path-format=absolute --git-common-dir`\n'
+    + '   出力（例: `/path/to/repo/.git`）の末尾の `/.git` を除いた文字列を ROOT とする。\n'
+    + '   WTD = `${ROOT}/' + wtdSuffix + '`\n\n'
+    + '2. 次を実行する（<WTD> は手順1で求めた絶対パスに置換する）: `test -d "<WTD>"`\n'
+    + '   exit code が 0 なら worktree_exists=true、0 以外なら worktree_exists=false とする。\n\n'
+    + '3. worktree_exists=true の場合のみ、次を実行する（<WTD> は同じ絶対パス）: '
+    + '`git -C "<WTD>" rev-parse --abbrev-ref --symbolic-full-name @{upstream}`\n'
+    + '   成功（exit code 0）した場合 stdout の1行を upstream とする。失敗（exit code 非0。upstream 未設定等）'
+    + 'した場合は upstream を空文字列 "" とする。worktree_exists=false の場合は手順3を実行せず'
+    + ' upstream を空文字列 "" とする。\n\n'
     + '## Output format\n'
-    + 'stdout の JSON 1 行のみ。それ以外の文字列を出力しない。\n\n'
+    + '次の1行 JSON のみを返す（前後に説明文を付けない）: '
+    + '{"ok":true,"worktree_exists":<bool>,"upstream":"<string>"}\n\n'
     + '## Tools\n'
-    + '使用可: Bash（git rev-parse 等の読み取り専用コマンドのみ）。禁止: Write, Edit（ファイル変更禁止）、'
+    + '使用可: Bash（手順1〜3の git rev-parse / test -d / git -C rev-parse の読み取り専用コマンドのみ、'
+    + '上記以外のコマンドは実行しない）。禁止: Write, Edit（ファイル変更禁止）、'
     + 'git push / git fetch --prune 等の書き込み・変更系コマンド。\n\n'
     + '## Boundary\n'
-    + 'ファイル変更・git 設定変更・commit・push を一切行わない。読み取り系 git コマンド'
-    + '（git rev-parse）のみ実行する。\n\n'
+    + 'ファイル変更・git 設定変更・commit・push を一切行わない。手順1〜3の読み取り系 git/test コマンド'
+    + '（bare 単文、パイプ・リダイレクト・複合コマンドなし）のみ実行する。\n\n'
     + '## Token cap\n'
     + '80 語以内で応答せよ（JSON 本体以外の説明を付けない）。';
 }
