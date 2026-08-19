@@ -960,7 +960,7 @@ let lgtm = false
 let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
 let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
-let fixNullRetries = 0  // fix agent が null（schema 不一致・技術的失敗）で 1 回 retry した累積回数。issue #347
+let fixNullRetries = 0  // fix agent が null または throw（schema 不一致・StructuredOutput 契約違反等の技術的失敗）で 1 回 retry した累積回数。issue #347 / #520
 let reviewNullRetries = 0  // review agent が throw または null で schema-retry した累積回数。issue #437
 let fixUncommittedRecovered = 0  // fix が applied:true なのに未コミット変更が残っており ensure-committed が commit+push で回収した回数（issue #437）
 let totalCiWaitSeconds = 0  // ci-check の attempt ループの累積待機秒数（全 ci-check ラウンド合算。issue #324）
@@ -971,18 +971,28 @@ let lastCiEpoch = null
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
 
-// fix agent が null（schema 不一致/技術的失敗）の場合のみ、同一 findings で 1 回だけ再試行する。
+// fix agent が throw（StructuredOutput 契約違反等の harness 例外）または null（schema 不一致/技術的
+// 失敗）の場合のみ、同一 findings で 1 回だけ再試行する（callReviewAgent と同一契約。issue #437 / #520）。
 // applied:false（agent の明示判断による修正不能）は retry しない — stuck 検出等の incentive-structural
 // 機構は不変。retry は iteration ごと最大 1 回で有限（review#N-contract-retry :604-614 と同パターン、
 // MAX 非消費）。issue #347
 async function callFixAgent(prompt, i) {
-  let fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' })
+  let fix = null
+  try {
+    fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate' })
+  } catch (e) {
+    log(`⚠️ fix#${i} が例外を投げた（StructuredOutput 契約違反等）: ${e?.message ?? e}`)
+  }
   let retried = false
   if (fix == null) {
     retried = true
     fixNullRetries++
     log(`⚠️ fix#${i} が null（schema 不一致/技術的失敗）— 同一 findings で 1 回だけ再試行する（fix-null-retry）`)
-    fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}-retry`, phase: 'Iterate' })
+    try {
+      fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}-retry`, phase: 'Iterate' })
+    } catch (e) {
+      log(`⚠️ fix#${i}-retry も例外: ${e?.message ?? e}`)
+    }
   }
   return { fix, retried }
 }
