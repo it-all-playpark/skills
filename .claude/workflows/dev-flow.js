@@ -1,5 +1,5 @@
 export const meta = {
-  name: 'dev-flow',
+  name: 'dev-flow-run',
   description: 'Issue から LGTM まで: 分析(shape判定)→計画→実装(並列/直列)→test green→評価→PR→pr-iterate→merge tier。micro/standard/complex で plan-review・evaluate の深さを切替(complex: plan上限8/eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
   phases: [
     { title: 'Setup' },
@@ -3980,7 +3980,7 @@ if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完
 // probe agent 自体が落ちた場合（written が取れない）は診断不能なだけなので fail-open で続行する。
 const isoProbe = await trackedAgent(isolationProbePrompt(WT), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
 if (isoProbe && isoProbe.written === false) {
-  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow', workflowArgs: ISSUE, targetPath: WT, error: isoProbe.error }))
+  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: ISSUE, targetPath: WT, error: isoProbe.error }))
 }
 if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 
