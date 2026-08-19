@@ -66,12 +66,13 @@ bats が見つからない環境でも `tests/run-all-bats.sh` は exit 0 を返
 
 ### dev-flow / pr-iterate / dev-improve
 
-`dev-flow` は Claude Code の **dynamic workflow** (`.claude/workflows/dev-flow.js`) として実装する。
-orchestration (phase 遷移 / 各ループ / 並列実装の fan-out) は workflow script が JS で保持し、
-中間 state は script 変数に持つ (外部 state JSON は持たない)。
+`/dev-flow` は skill wrapper (`dev-flow/SKILL.md`) が isolation preflight（worktree 作成 →
+`EnterWorktree`）を行い、orchestration 本体は dynamic workflow `dev-flow-run`
+(`.claude/workflows/dev-flow.js`) が持つ。phase 遷移 / 各ループ / 並列実装の fan-out は
+workflow script が JS で保持し、中間 state は script 変数に持つ (外部 state JSON は持たない)。
 
 ```
-/dev-flow <issue>   → Setup → Analyze(shape 判定) → Plan
+/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan
                       → Implement(serial/parallel) → Validate(test green)
                       → Evaluate → PR → workflow('pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier

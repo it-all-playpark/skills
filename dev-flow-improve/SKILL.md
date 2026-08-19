@@ -28,6 +28,8 @@ dev-flow 自己改善ループの起動 skill。orchestration の実体は dynam
    返り値: `{ issues_filed, candidates_found, reconcile, backlog_added, backpressure_skipped }`
 3. **起票 issue を dev-flow で順次実装**: `issues_filed` の各番号について、返却順に
    **1 件ずつ直列に** Skill tool で `dev-flow` を起動する（並列禁止 — worktree / CI 競合回避）。
+   dev-flow skill（wrapper）が issue ごとに preflight を行う — 直列実行では issue ごとに
+   df-<N> worktree が切り替わる（wrapper が `EnterWorktree({path})` で切替える）。
    - dev-flow が `needs_clarification` を返した場合: headless/cron 文脈では人間に即答できない。
      該当 issue に状況が記録されていることを確認し、その issue は保留のまま次へ進む
      （worktree は保持される。次に人間がセッションで再起動する）。

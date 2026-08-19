@@ -7,6 +7,7 @@ paths:
   - "tools/**"
   - "dev-flow-doctor/**"
   - "dev-flow-improve/**"
+  - "dev-flow/**"
 ---
 
 # dev-flow / dev-improve 内部仕様
@@ -19,12 +20,16 @@ dev-flow は **Claude 専用**（workflow 依存）であり、cross-vendor port
 
 ## dev-flow (dynamic workflow)
 
-`dev-flow` は Claude Code の **dynamic workflow** (`.claude/workflows/dev-flow.js`) として実装する。
-orchestration (phase 遷移 / plan-review・evaluate・pr-iterate の各ループ / 並列実装の fan-out) は
-workflow script が JS で保持し、中間 state は script 変数に持つ (外部 state JSON は持たない)。
+`/dev-flow <issue>` は skill wrapper (`dev-flow/SKILL.md`) が isolation preflight
+（base 解決 → `<repo>/.claude/worktrees/df-<N>` への `git worktree add` による worktree 作成・再利用 →
+`EnterWorktree({path})`）を行ってから dynamic workflow `Workflow({ name: 'dev-flow-run' })`
+(`.claude/workflows/dev-flow.js`) を起動する。orchestration (phase 遷移 / plan-review・evaluate・
+pr-iterate の各ループ / 並列実装の fan-out) は workflow script が JS で保持し、中間 state は script
+変数に持つ (外部 state JSON は持たない)。workflow の `meta.name` は `dev-flow-run` だが、telemetry
+handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件、静的テストで pin 済み）。
 
 ```
-/dev-flow <issue>   → Setup → Analyze(shape 判定) → Plan
+/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan
                       → Implement(serial/parallel) → Validate(test green)
                       → Evaluate → PR → workflow('pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
