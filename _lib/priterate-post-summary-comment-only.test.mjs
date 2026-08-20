@@ -1,15 +1,9 @@
-// F1: pr-iterate の終端 post-summary 投稿を `gh pr comment` 単一に統一する回帰ピン（issue #524）
+// pr-iterate の終端 post-summary 投稿が `gh pr comment` 単一経路であることを pin する（issue #524）
 //
-// 背景: pr-iterate.js の終端では terminalReviewAction({status, lastDecision, blockingCount})
-// （'approve'|'request-changes'|'comment' を返す純粋関数）の返り値で post-summary agent への
-// prompt を分岐しており、'approve' のとき prompt に `gh pr review ${PR} --approve --body-file
-// <BODY_FILE>`、'request-changes' のとき `gh pr review ${PR} --request-changes --body-file
-// <BODY_FILE>` という literal 指示が入る。この approve 指示が safety classifier に
-// self-approval として blocked され、終端サマリーが PR に投稿されない silent data loss になる
-// （failOpenAgent 経由のため run 自体は lgtm 完走する）。
-//
-// 本テストは修正後の期待挙動（全終端で `gh pr comment` 単一、`gh pr review` を一切含めない）を
-// 先に pin する。F2 の修正が入るまでケース 1・2・5 は red になる。
+// 不変条件: 終端 status × lastDecision のどの組合せでも、post-summary agent への prompt に
+// `gh pr review` の literal を含めない。含めると safety classifier に self-approval として
+// blocked され、failOpenAgent 経由のため run は lgtm で完走したまま終端サマリーだけが PR に
+// 残らない silent data loss になる（fail-open は維持したうえで原因側を断つ）。
 //
 // vm sandbox パターンは _lib/priterate-review-contract-routing.test.mjs と同一構造。
 
