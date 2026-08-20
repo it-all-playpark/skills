@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isolationCleanupPrompt } from './isolation-probe.mjs';
+import { isolationCleanupPrompt, isolationProbePrompt } from './isolation-probe.mjs';
 
 // prompt 内の `git -C <wt> clean -fdx -- <target>` を取り出す（drift 防止）。
 function cleanupCommandFor(worktree, target = '.devflow-tmp') {
@@ -28,6 +28,15 @@ function cleanupCommandFor(worktree, target = '.devflow-tmp') {
   const m = prompt.match(/`(git -C [^`]+)`/);
   assert.ok(m, `isolationCleanupPrompt の出力から git コマンドを抽出できない:\n${prompt}`);
   return m[1].split(' ');
+}
+
+// prompt 内の probe 対象絶対パス（`` `<worktree>/.devflow-tmp/.isolation-probe-<token>` ``）を
+// 取り出す（drift 防止。cleanupCommandFor と同スタイル）。
+function probePathFor(worktree, token) {
+  const prompt = isolationProbePrompt(worktree, token);
+  const m = prompt.match(/`([^`]*\.isolation-probe-[^`]+)`/);
+  assert.ok(m, `isolationProbePrompt の出力から probe パスを抽出できない:\n${prompt}`);
+  return m[1];
 }
 
 function makeRepo() {
@@ -143,6 +152,28 @@ test('[stale-cleanup] .devflow-tmp が無い新規 worktree でも成功する�
     execFileSync(cmd, args, { encoding: 'utf8' });
     execFileSync(cmd, args, { encoding: 'utf8' });
     assert.ok(!existsSync(join(dir, '.devflow-tmp')));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// issue #521: probe 対象パスを run 毎に一意な token 付きにしたことで、cleanup を実行しなくても
+// （= 前 run の stale 残置物が cleanup 失敗により残っていても）probe 自体は成立することを検証する。
+test('[stale-cleanup] stale 残置物（token 付き旧 run 分・legacy 無 token 分）が存在しても cleanup 不実行で probe が成立する', () => {
+  const dir = makeRepo();
+  try {
+    mkdirSync(join(dir, '.devflow-tmp'), { recursive: true });
+    writeFileSync(join(dir, '.devflow-tmp', '.isolation-probe-1000'), 'ok'); // 前 run の token 付き残置物
+    writeFileSync(join(dir, '.devflow-tmp', '.isolation-probe'), 'ok'); // legacy（無 token）残置物
+
+    // cleanup は実行しない（blocked/skip されたケースを模す）。
+    const probePath = probePathFor(dir, '2000');
+    assert.notEqual(probePath, join(dir, '.devflow-tmp', '.isolation-probe-1000'));
+    assert.notEqual(probePath, join(dir, '.devflow-tmp', '.isolation-probe'));
+    assert.ok(!existsSync(probePath), '前提: 今回 run の probe パスはまだ存在しない');
+
+    writeFileSync(probePath, 'ok');
+    assert.ok(existsSync(probePath), '今回 run の probe パスへの新規書き込みが成立するべき');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

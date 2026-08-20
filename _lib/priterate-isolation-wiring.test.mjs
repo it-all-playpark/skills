@@ -39,13 +39,34 @@ test('ISOLATION_PROBE schema が written(boolean, required) を持つ', () => {
   assert.match(match[0], /written:\s*\{\s*type:\s*'boolean'\s*\}/);
 });
 
-test('isolation probe failOpenAgent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
+test('isolation probe failOpenAgent 呼び出しが agentType/schema/label/phase 込みで存在する（issue #521: dev-runner-haiku-wo へ切替・isoToken を渡す）', () => {
   // issue #499: fail-open 規定の exec-proxy は trackedAgent を throw-safe に包む failOpenAgent 経由へ移行。
   assert.match(
     src,
-    /await failOpenAgent\(isolationProbePrompt\([^)]*\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Iterate'\s*\}\)/,
-    'isolation probe の failOpenAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
+    /await failOpenAgent\(isolationProbePrompt\(isoWt,\s*isoToken\),\s*\{\s*agentType:\s*'dev-runner-haiku-wo',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Iterate'\s*\}\)/,
+    'isolation probe の failOpenAgent() 呼び出しが期待する agentType(dev-runner-haiku-wo)/schema/label/phase かつ isoToken 引数込みで見つからない',
   );
+});
+
+test('isoToken が prMeta?.epoch（fail-open で PR へ fallback）から算出される（issue #521）', () => {
+  assert.match(
+    src,
+    /const isoToken = String\(prMeta\?\.epoch \?\? PR\)/,
+    'const isoToken = String(prMeta?.epoch ?? PR) の宣言が見つからない',
+  );
+});
+
+test('PR_META schema に optional epoch(number) が追加されている（issue #521）', () => {
+  const match = src.match(/const PR_META = \{[\s\S]*?\n\}/);
+  assert.ok(match, 'PR_META schema 宣言が見つからない');
+  assert.match(match[0], /epoch:\s*\{\s*type:\s*'number'\s*\}/, 'PR_META.properties.epoch(number) が見つからない');
+  assert.doesNotMatch(match[0], /required:\s*\[[^\]]*'epoch'[^\]]*\]/, 'epoch は required に含めてはならない（fail-open な optional フィールド）');
+});
+
+test('pr-meta probe prompt に `date +%s` による epoch 取得指示が含まれる（issue #521）', () => {
+  const match = src.match(/const prMeta = await failOpenAgent\(\s*`([\s\S]*?)`,/);
+  assert.ok(match, 'pr-meta probe prompt テンプレートが見つからない');
+  assert.match(match[1], /date \+%s/, 'pr-meta prompt に `date +%s` 指示が見つからない');
 });
 
 test('probe が written:false を返した場合に isolationFailureMessage で throw する分岐が存在する', () => {
@@ -162,7 +183,7 @@ function makeSandbox({ isolationProbeResult, journalResult }) {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
 
-    if (label === 'isolation-probe' && agentType === 'dev-runner-haiku') {
+    if (label === 'isolation-probe' && agentType === 'dev-runner-haiku-wo') {
       isolationProbeCallCount += 1;
       return isolationProbeResult;
     }
