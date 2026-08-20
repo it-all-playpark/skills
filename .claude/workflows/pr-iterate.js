@@ -673,6 +673,10 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 
 /**
  * 終端レビューアクションを決定する純粋関数（AC-2）。
+ *
+ * 返り値は投稿経路の決定には使わない — 終端サマリーの投稿は `gh pr comment` 単一経路に固定されており
+ * （issue #524: formal review 指示は self-approval として blocked され silent data loss になる）、
+ * 本関数の返り値は参考 log / telemetry 用途に限る。
  * @param {object} opts
  * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'
  * @param {string|null} opts.lastDecision - 'approve'|'request-changes'|'comment'|null
@@ -1342,35 +1346,19 @@ const summaryBody = buildTerminalSummaryBody({
 })
 const terminalBlockingCount = (history[history.length - 1]?.blocking ?? []).length
 const termAction = terminalReviewAction({ status, lastDecision: lastReview?.decision ?? null, blockingCount: terminalBlockingCount })
+log(`終端サマリーは comment として投稿する（参考: 旧 formal review action=${termAction}。formal review は投稿しない — issue #524）`)
 
 if (POST_TERMINAL_SUMMARY) {
-  let summaryInstructions
-  if (termAction === 'approve') {
-    summaryInstructions = `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
-      + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
-      + `2. 自分自身の PR である場合（または --approve が "Cannot approve your own pull request" エラーになる場合）は、\n`
-      + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
-      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --approve --body-file <BODY_FILE>\` を試みる。\n`
-      + `   失敗した場合（"Cannot approve your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
-      + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-      + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
-  } else if (termAction === 'request-changes') {
-    summaryInstructions = `保存した <BODY_FILE> を使って以下の手順で投稿せよ：\n`
-      + `1. self-PR 検出: \`gh pr view ${PR} --json author -q .author.login\` の出力と \`gh api user -q .login\` の出力を比較する。\n`
-      + `2. 自分自身の PR である場合（または --request-changes が "Can not request changes on your own pull request" エラーになる場合）は、\n`
-      + `   \`gh pr comment ${PR} --body-file <BODY_FILE>\` でコメント投稿にフォールバックする。\n`
-      + `3. 自分自身の PR でない場合は \`gh pr review ${PR} --request-changes --body-file <BODY_FILE>\` を試みる。\n`
-      + `   失敗した場合（"Can not request changes on your own pull request" 等）は \`gh pr comment ${PR} --body-file <BODY_FILE>\` にフォールバックする。\n`
-      + `4. 投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-      + `5. 投稿失敗時でも posted:false を返し throw しないこと。\n`
-  } else {
-    summaryInstructions = `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
-      + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-      + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-  }
+  // formal review（`gh` の `pr review --approve`/`--request-changes` サブコマンド）指示は
+  // post-summary prompt に含めない — approve 指示が safety classifier に self-approval として
+  // blocked され、fail-open のため終端サマリが silent に欠落する（issue #524）。
+  // 投稿は `gh pr comment` 単一経路のみを使う。
+  const summaryInstructions = `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
+    + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+    + `投稿失敗時でも posted:false を返し throw しないこと。\n`
 
   const summaryPost = await failOpenAgent(
-    `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}、action: ${termAction}）。\n\n`
+    `## Objective\nPR #${PR} に pr-iterate の終端サマリーコメントを投稿する（status: ${status}）。\n\n`
     + bodySaveInstr(summaryBody, 'pr-iterate', 'PR_ITERATE')
     + `## Instructions\n`
     + summaryInstructions
