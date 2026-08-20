@@ -3738,13 +3738,25 @@ function classifyLiteReview(review) {
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
 // isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
-//   純関数（前 run の残置物を持ち越さない）。除去範囲 target は呼び出し元が明示的に渡す必須引数:
-//   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
+//   純関数（trust 証跡等を run 間で持ち越さない衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
+//   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
 //   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
 //   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた trust 証跡を run 途中で
 //   消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
-// isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
-//   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
+//   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
+// isolationProbePrompt: probe 専用 agent（Write tool のみ）へ渡す prompt を組み立てる純関数
+//   （worktree 直下の run 毎に一意なパスへ Write tool で実際に書き込ませ、成否を {written, error} で
+//   verbatim 報告させる）。token は呼び出し元が渡す必須引数: probe 対象パスに run 毎の一意な token
+//   を含めることで、cleanup が blocked/skip されて前 run の残置物が残っていても probe が成立する
+//   （成立が cleanup の成功に依存しない — issue #521）。cleanup は trust 証跡の持ち越し防止等の
+//   衛生目的で独立に残る。
+// isolationErrorKind: probe の error 文字列を既知シグネチャで分類する純関数。written:false の原因が
+//   「isolation 不成立」なのか「その他の書き込み失敗（上書き拒否等）」なのかを isolationFailureMessage
+//   が出し分けるための判別根拠にする。
+//   「File has not been read yet. Read it first before writing to it.」は Write tool の
+//   「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」エラー文言そのもの（issue #482
+//   で実測）。token による一意化後もこのシグネチャが出る場合は同一 run 内の再実行など probe パス
+//   自体が既存ファイルだったケースであり、isolation 不成立とは別原因として区別する。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
 //   （branch/起点 ref/workflow 名・args を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
 //   呼び出し元（dev-flow.js / pr-iterate.js）ごとに workflow 名・再実行 args・回避手順で提示する
@@ -3758,12 +3770,6 @@ function classifyLiteReview(review) {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
-//
-// 前 run が残した stale な `.devflow-tmp/.isolation-probe` が存在すると、Write tool の
-// 「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」挙動により isolation が正常でも
-// written:false → fail-closed abort する（issue #482）。この残置物の除去は probe 実行前の
-// isolationCleanupPrompt が担い（除去対象は worktree 内 gitignored の `.devflow-tmp/` に限定）、
-// probe prompt 自体は Write 1 回だけの最小契約に保つ（issue #493）。
 //
 // 不変条件: 本ファイルが生成する prompt / メッセージは、実行制御の名称（sandbox・permission・
 // excludedCommands・guard 等）を「だからこの経路を使え」という形の理由として述べない。
@@ -3780,19 +3786,38 @@ function isolationCleanupPrompt(worktree, target) {
     + `\`${target}\` 以外のパスには触れるな。`;
 }
 
-function isolationProbePrompt(worktree) {
-  return `worktree ${worktree} 直下に Write tool で \`.devflow-tmp/.isolation-probe\` というファイルを`
-    + `内容 "ok" で書き込め。`
+function isolationProbePrompt(worktree, token) {
+  const tok = String(token).replace(/[^A-Za-z0-9._-]/g, '-');
+  const path = `${worktree}/.devflow-tmp/.isolation-probe-${tok}`;
+  return `Objective: 絶対パス \`${path}\` へ Write tool で内容 "ok" を書き込み、結果を verbatim 報告せよ。\n`
+    + `Tools: 使用可: Write のみ。他の tool は使用禁止。\n`
+    + `Boundary: \`${path}\` 以外のパスに書き込むな。Write tool がエラー・拒否を返した場合、`
+    + `他の手段でファイルを作成しようと試みるな — 1 回の Write の結果をそのまま報告せよ。\n`
     + `成功したら {"written": true} を返せ。`
     + `Write tool がエラー・拒否を返した場合は、例外を投げずに `
     + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
 }
 
+function isolationErrorKind(error) {
+  const text = String(error ?? '');
+  if (/has not been read/i.test(text)) return 'overwrite_refused';
+  if (/parent bg session hasn'?t isolated|bg.?isolation/i.test(text)) return 'isolation';
+  return 'unknown';
+}
+
 function isolationFailureMessage({ worktree, branch, startRef, workflowName, workflowArgs, targetPath, error }) {
   const wt = targetPath || worktree;
   const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
-  return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
-    + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
+  const kind = isolationErrorKind(error);
+  const heading = kind === 'overwrite_refused'
+    ? `${workflowName}: isolation probe 書き込み失敗 — 既存 probe ファイルの上書き拒否`
+      + `（isolation 不成立とは別原因。前 run の残置物が同名パスに残っている可能性）`
+    : kind === 'isolation'
+      ? `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
+        + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）`
+      : `${workflowName}: isolation probe 書き込み失敗 — 原因を特定できず`
+        + `（isolation 不成立の可能性を含む）`;
+  return `${heading}。\n`
     + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください`
     + `（新しい worktree には前 run の残置物が無いため、残置物が原因だった場合も同時に解消します）:\n`
     + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
@@ -4088,20 +4113,25 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 log(`worktree: ${WT} (branch ${setup.branch})`)
 
 // isolation cleanup（issue #493）: worktree 再利用時に前 run の run 専用 scratch を持ち越さない。
-// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、stale な probe artifact（issue #482 —
-// 残っていると isolation が正常でも probe が written:false に倒れる）と前 run の trust 証跡
+// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の probe artifact と trust 証跡
 // （trust-test-latest.json / trust-risk-*.json）の双方を一度に消す。後者が残ると、当該 run の証跡
 // 書き込みが失敗した際に evalseal-seal.mjs が古い green/red・古い risk を silent に拾い、実際の
 // test/diff と食い違う receipt を出しうるため、run 開始時に消えていることが前提条件になる。
-// fail-open: 失敗しても run は継続する（stale artifact が残っていれば直後の probe が written:false
-// で fail-closed に倒れ、復旧手順（worktree 作り直し）は同一）。
+// probe 成立自体はこの cleanup の成功に依存しない（issue #521 — probe 対象パスは run 毎の一意な
+// token を含むため、cleanup が blocked/skip されて前 run の残置物が残っていても衝突しない）。
+// fail-open: 失敗しても run は継続する。
 const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
 if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 
 // isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。
 // 失敗（written:false）は bg-isolation guard を強く示唆するため即中断（fail-closed）。
 // probe agent 自体が落ちた場合（written が取れない）は診断不能なだけなので fail-open で続行する。
-const isoProbe = await trackedAgent(isolationProbePrompt(WT), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
+// isoToken: probe 対象パスを run 毎に一意にする（issue #521）。probe 対象パスは run 毎に一意
+// （前 run の残置物と同名衝突しない）。clockMarks#start は probe より前の Setup 冒頭で確保済みで
+// PR phase の RUN_ID と同一算出式（fail-open で null の場合は ISSUE へ fallback）。fallback 時
+// のみ一意性が退化するが、直前の cleanup（fail-open）と isolationErrorKind による原因別報告が補償する。
+const isoToken = String(clockMarks?.start ?? ISSUE)
+const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
 if (isoProbe && isoProbe.written === false) {
   throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: ISSUE, targetPath: WT, error: isoProbe.error }))
 }

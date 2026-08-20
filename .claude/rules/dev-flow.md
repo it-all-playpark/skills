@@ -77,17 +77,30 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   isolate しないまま dev-flow / pr-iterate を起動すると、harness の bg-isolation guard が
   subagent の Write/Edit を共有 checkout への書き込みとして拒否する。dev-flow は Setup phase
   直後（deps install より前の早期検知）、pr-iterate は review loop 進入前（fix stage 不到達の
-  保証）に probe を配置する。probe は worktree 直下 `.devflow-tmp/.isolation-probe` への Write
-  で isolation 成立を検証し、`written:false` は fail-closed（確定回避手順つき throw: 1. 書き込みに
-  失敗した cwd とは別の worktree を `git worktree add`、2. `EnterWorktree({path})`、
-  3. Workflow 再実行）、probe 自体の失敗（null）は
-  fail-open（警告 log のみ）で扱う（issue #449）。canonical は `_lib/isolation-probe.mjs` の
-  `isolationCleanupPrompt` / `isolationProbePrompt` / `isolationFailureMessage` を
+  保証）に probe を配置する。probe は worktree 直下 `.devflow-tmp/.isolation-probe-<token>`
+  （token は run 毎に一意 — dev-flow は Setup 冒頭 `clockProbe('start')` の epoch（fallback:
+  issue 番号）、pr-iterate は pr-meta probe に追加した `date +%s` の epoch（fallback: PR 番号）。
+  `Date.now()` / `Math.random()` は canonical の generator 制約上使わない）への Write で
+  isolation 成立を検証する。**一意パス化により probe の成立は直前 cleanup の成功に依存しない**
+  （cleanup が blocked/skip でも前 run の残置物と同名衝突しないため）。probe agent は
+  tools を `[Write]` のみに絞った専任 agent `dev-runner-haiku-wo`
+  （model: haiku, effort: low, maxTurns: 5）— Write 以外の経路（Bash リダイレクト等）では
+  ファイルを作れないため、「implementer と同じ Write tool 経路の検証」という probe の意味が
+  harness レベルで保証される。`written:false` は fail-closed（確定回避手順つき throw）で、
+  throw メッセージは決定論の error 文字列分類（`isolationErrorKind`: `overwrite_refused`
+  / `isolation` / `unknown`）で「isolation 不成立」と「その他の書き込み失敗（前 run の残置物への
+  上書き拒否等）」を区別して報告する — fail-closed（throw）自体は全分類で不変。回避手順は
+  1. 書き込みに失敗した cwd とは別の worktree を `git worktree add`、2. `EnterWorktree({path})`、
+  3. Workflow 再実行。probe 自体の失敗（null）は fail-open（警告 log のみ）で扱う（issue #449）。
+  canonical は `_lib/isolation-probe.mjs` の `isolationCleanupPrompt` / `isolationProbePrompt`
+  （token 引数必須。関数側にデフォルトを置かず呼び出し元が明示的に渡す） / `isolationFailureMessage` を
   dev-flow.js・pr-iterate.js 双方へ inline 生成して流用する（両 workflow で同一の文言・手順を
   使うためのもので、片側専用の canonical 関数は追加しない）。
-  probe の直前には cleanup を置く: worktree 内 gitignored の作業用パスを
-  `git clean -fdx -- <target>` で除去し、前 run が残した probe artifact（残っていると Write tool の
-  未 Read 上書き拒否により isolation 正常でも `written:false` に倒れる — issue #482）を消す。
+  probe の直前には cleanup を引き続き置く: worktree 内 gitignored の作業用パスを
+  `git clean -fdx -- <target>` で除去する。**probe が cleanup 非依存になったことで cleanup の役割は
+  「probe を通すため」ではなく「前 run の trust 証跡等の持ち越し防止（衛生）」に変わった**——
+  token fallback が退化（例: dev-flow で clock#start が fail-open null かつ同一 worktree 再利用）
+  して前 run と同名パスに衝突した場合の補償としてのみ probe 成立に効く。
   **除去範囲 target は呼び出し元が明示的に渡す**（関数側にデフォルトを置かない）:
   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を対象にし、前 run の trust 証跡
   （`trust-test-latest.json` / `trust-risk-*.json`。残ると当該 run の証跡書き込み失敗時に
@@ -95,7 +108,8 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `.devflow-tmp/.isolation-probe` のみを対象にする — nested 起動（dev-flow → `workflow('pr-iterate')`）
   では probe 対象が実行中 dev-flow run の worktree 自身になり、`.devflow-tmp` 全体を消すと
   当該 run が既に書いた trust 証跡を run 途中で失うため。cleanup は fail-open
-  （失敗しても残置物があれば直後の probe が fail-closed に倒れ、復旧手順は worktree 作り直しで同一）。
+  （失敗しても一意パス化により直後の probe は通常どおり成立する。token fallback 退化時のみ復旧手順は
+  worktree 作り直しで同一）。
   probe prompt / throw メッセージは、実行制御の名称（sandbox・permission・excludedCommands・guard 等）を
   「だからこの経路を使え」という形の理由として述べない — exec-proxy 節の規範と同一で、canonical と
   2 つの inline 生成区間の双方を `_lib/isolation-control-reason.test.mjs` が pin する（issue #493）。
@@ -174,8 +188,8 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   nested 起動時は同じ counts が pr-iterate 側 journal entry にも記録されるため、journal を skill 横断で
   単純合計すると二重計上になる（集計時は dev-flow entry のみを使う）。by_type は agentType 別の
   起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-planner / plan-reviewer / implementer /
-  evaluator / pr-reviewer / dev-runner / dev-runner-haiku / dev-runner-haiku-ro / ui-verifier の 9 種、agentType 欠落は
-  'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
+  evaluator / pr-reviewer / dev-runner / dev-runner-haiku / dev-runner-haiku-ro / dev-runner-haiku-wo /
+  ui-verifier の 10 種、agentType 欠落は 'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで
   usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric（issue #445）。
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
@@ -293,8 +307,8 @@ collision / 生成後 syntax）を 1 コマンドで validate-then-write する�
 - 表現: `tools/sync-inlines.mjs` + マーカー区間そのもの
 - 再評価トリガ: Claude Code（harness）更新毎に loader の ESM import 可否を再検証し、解禁されたらマーカー区間を `import` 文に置換して generator・統合 sync test ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics.sh --canary` で行う。
 
-**exec-proxy も harness-capability-bound な橋**（同じ harness 機能依存軸）。workflow runtime に fs / exec が無いという harness 制約への対応として、決定論スクリプトの実行を dev-runner(-haiku/-haiku-ro) subagent に委譲し stdout を verbatim で返させるパターン（diff-hash / danger-grep / realized-diff / journal / test 実行など 10 箇所超）。least privilege のため capability 別に 3 agent へ分離する（issue #323）: read-only 決定論 proxy（diff-hash / changed-files(realized-diff) / CI checks read / ui-verify config read / base-ref probe）は `dev-runner-haiku-ro`（tools: `[Bash, Read]` のみ）、書き込み・Skill 呼び出しを伴う決定論 proxy（worktree 作成 / deps / test 実行 / redgreen / reconcile-sync / danger-grep(-final)（`--out` で risk 証跡ファイルを書く） / trust-seal-eval（`--tree-source working` は worktree 全体の tree OID 算出のため git object を書く。実 index・working tree は変更しない） / ui-verify server・teardown / journal 書き込み / PR コメント投稿（post-review / post-summary））は `dev-runner-haiku`（tools: `[Bash, Read, Write, Skill]`。Write は投稿本文の verbatim 一時ファイル保存に必要）、判断寄り（fix/analyze/commit+PR）は `dev-runner`（sonnet）が担う。全 exec-proxy agent の frontmatter には有限の `maxTurns` を設定する（dev-runner-haiku-ro: 10 / dev-runner-haiku: 25 / dev-runner: 50）。maxTurns の agent frontmatter サポートは Claude Code CHANGELOG 上で確認できる最小バージョンとして `2.1.78`（"Added `effort`, `maxTurns`, and `disallowedTools` frontmatter support for plugin-shipped agents" — https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md）を根拠とする。ただし CHANGELOG の文言は "plugin-shipped agents" 限定であり、本 repo の `.claude/agents/*.md`（project-level custom subagent、非 plugin 配布）に対しても同一に runtime honor されるかは一次情報で確認できていない（要 sunset path 的な再検証: 次回 major リリース時に docs/CHANGELOG で project-level agent への適用有無を再確認する）。
-- 表現: dev-runner(-haiku/-haiku-ro) verbatim 転写プロンプト群
+**exec-proxy も harness-capability-bound な橋**（同じ harness 機能依存軸）。workflow runtime に fs / exec が無いという harness 制約への対応として、決定論スクリプトの実行を dev-runner(-haiku/-haiku-ro/-haiku-wo) subagent に委譲し stdout を verbatim で返させるパターン（diff-hash / danger-grep / realized-diff / journal / test 実行など 10 箇所超）。least privilege のため capability 別に 4 agent へ分離する（issue #323, #521）: read-only 決定論 proxy（diff-hash / changed-files(realized-diff) / CI checks read / ui-verify config read / base-ref probe）は `dev-runner-haiku-ro`（tools: `[Bash, Read]` のみ）、書き込み・Skill 呼び出しを伴う決定論 proxy（worktree 作成 / deps / test 実行 / redgreen / reconcile-sync / danger-grep(-final)（`--out` で risk 証跡ファイルを書く） / trust-seal-eval（`--tree-source working` は worktree 全体の tree OID 算出のため git object を書く。実 index・working tree は変更しない） / ui-verify server・teardown / journal 書き込み / PR コメント投稿（post-review / post-summary））は `dev-runner-haiku`（tools: `[Bash, Read, Write, Skill]`。Write は投稿本文の verbatim 一時ファイル保存に必要）、Write のみで完結する isolation probe 専任 proxy は `dev-runner-haiku-wo`（tools: `[Write]` のみ。Bash 等の代替手段を harness レベルで遮断し probe の意味を保証する）、判断寄り（fix/analyze/commit+PR）は `dev-runner`（sonnet）が担う。全 exec-proxy agent の frontmatter には有限の `maxTurns` を設定する（dev-runner-haiku-ro: 10 / dev-runner-haiku: 25 / dev-runner-haiku-wo: 5 / dev-runner: 50）。maxTurns の agent frontmatter サポートは Claude Code CHANGELOG 上で確認できる最小バージョンとして `2.1.78`（"Added `effort`, `maxTurns`, and `disallowedTools` frontmatter support for plugin-shipped agents" — https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md）を根拠とする。ただし CHANGELOG の文言は "plugin-shipped agents" 限定であり、本 repo の `.claude/agents/*.md`（project-level custom subagent、非 plugin 配布）に対しても同一に runtime honor されるかは一次情報で確認できていない（要 sunset path 的な再検証: 次回 major リリース時に docs/CHANGELOG で project-level agent への適用有無を再確認する）。
+- 表現: dev-runner(-haiku/-haiku-ro/-haiku-wo) verbatim 転写プロンプト群
 - 再評価トリガ: harness が workflow への直接 exec（または fs/exec API）を解禁した時点で、当該プロンプト群を直接実行に置換して exec-proxy ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics.sh --canary` で行う。
 
 > exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない。GitHub I/O は
@@ -361,7 +375,7 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | issue-labels（`gh issue view --json labels` による empty-diff gate の cross-repo lazy ラベル probe。dhGate.empty===true 時のみ実行） | null / `ok:false` / schema 不一致 / throw | fail-safe（非 cross-repo 扱いで既存 empty-diff fail-closed 経路（差し戻し1回→再度空なら throw）を維持） | ラベル不明を人間の opt-in 成立と同一視しない（issue #432）。成果物は worktree/外部 repo に残存するため破壊的ではなく、throw メッセージにラベル付与のヒントを追記して人間の再実行を促す |
 | commit-ensure（subagent の bare git 単文シーケンス（`git status --porcelain` 空判定 → `git add -A` → `git commit` → `git push`（失敗時 `git push -u origin HEAD`）→ 再 `git status --porcelain` → `git rev-list "@{u}"..HEAD --count`）による決定論検証 — fix 適用直後の未コミット変更検証 + commit/push 回収。pr-iterate AC-3） | null / schema 不一致 / agent throw / dirty なのに committed・pushed が true でない | fail-safe（terminal='fix_failed' で人間へエスカレーション） | fix agent の self-report（applied:true）を commit 済みと同一視しない（incentive-structural: 完了宣言を当事者に self-judge させず決定論 git 検証で突合）。未コミット/未 push のまま次 iteration へ進むと再 review が stale な PR diff を見る（issue #437） |
 | worktree-dirty（subagent の bare `git status --porcelain` 単文 — pr-iterate 非 lgtm 終端時の作業ツリー dirty 検出。pr-iterate AC-2） | null / schema 不一致 / agent throw | fail-open（worktree_dirty='unknown' + 警告 log のみ。status・gate 判定へ影響しない） | advisory な終端観測 telemetry（'dirty'/'clean'/'unknown' の 3 値）。probe 失敗で run を落とすと異常終端の素通し（issue #437 が直す問題）を再生産する |
-| isolation-cleanup（subagent の bare `git -C <worktree> clean -fdx -- <target>` 単文 — probe 直前の残置物除去。target は dev-flow Setup が `.devflow-tmp` 全体、pr-iterate が `.devflow-tmp/.isolation-probe` 単体） | `cleaned:false` / null / schema 不一致 / agent throw | fail-open（警告 log のみ。gate・merge tier・security floor へ影響しない） | 除去に失敗して stale な probe artifact が残れば直後の probe が `written:false` で fail-closed に倒れ、復旧手順（worktree 作り直し）も同一。cleanup 自体を fail-closed にすると、除去対象が無い正常系（新規 worktree）と区別できない失敗で run を落とす（issue #493） |
+| isolation-cleanup（subagent の bare `git -C <worktree> clean -fdx -- <target>` 単文 — probe 直前の残置物除去。target は dev-flow Setup が `.devflow-tmp` 全体、pr-iterate が `.devflow-tmp/.isolation-probe` 単体） | `cleaned:false` / null / schema 不一致 / agent throw | fail-open（警告 log のみ。gate・merge tier・security floor へ影響しない） | probe 対象パスが run 毎に一意なため、除去に失敗しても probe は前 run の残置物と衝突せず成立する（cleanup 成功への依存を切った — issue #521）。cleanup 自体を fail-closed にすると、除去対象が無い正常系（新規 worktree）と区別できない失敗で run を落とす（issue #493） |
 | cross-repo-artifacts（`_shared/scripts/cross-repo-artifacts.sh` による worktree 外 working tree の dirty 検証。cross-repo ラベル検出時のみ実行） | null / `ok:false` / schema 不一致 / found=0 | fail-safe（handoff 不成立で既存 empty-diff fail-closed 経路へフォールスルー。ラベルのみで gate を skip しない） | 決定論的証拠（dirty working tree）なしに gate を skip すると軸A invariant（決定論ゲートを LLM/ラベルで緩めない）に反する（issue #432） |
 
 ## dev-improve (self-improvement loop)

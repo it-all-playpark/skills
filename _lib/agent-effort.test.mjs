@@ -45,6 +45,29 @@ function readAgent(name) {
   return readFileSync(filePath, 'utf8');
 }
 
+/**
+ * Extract the `tools` list from the YAML frontmatter of an agent .md source string.
+ *
+ * Strategy:
+ *   1. Extract the frontmatter block between the first `---\n` ... `\n---` delimiters.
+ *   2. Within that block only, match the `tools:` block and collect each `  - <item>` line
+ *      until a non-list line (or end of block) is reached.
+ *
+ * @param {string} src - Full file contents
+ * @returns {string[]|null} The tools list, or null if not found
+ */
+function frontmatterTools(src) {
+  const fmMatch = src.match(/^---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return null;
+  const fmBlock = fmMatch[1];
+  const toolsMatch = fmBlock.match(/^tools:\n((?:^ {2}- .+\n?)+)/m);
+  if (!toolsMatch) return null;
+  return toolsMatch[1]
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => line.replace(/^ {2}- /, '').trim());
+}
+
 // Table-driven: expected effort for each of the 6 dev-flow agents
 const EXPECTED = {
   'dev-planner': 'high',
@@ -53,6 +76,7 @@ const EXPECTED = {
   'pr-reviewer': 'high',
   'implementer': 'high',
   'dev-runner': 'high',
+  'dev-runner-haiku-wo': 'low',
 };
 
 for (const [name, want] of Object.entries(EXPECTED)) {
@@ -78,4 +102,25 @@ test('[agent-effort][negative] frontmatterEffort extracts "max" from synthetic s
     'max',
     `frontmatterEffort should return 'max' for synthetic source, got: ${got}`,
   );
+});
+
+// Static pin (AC-3, issue #521): dev-runner-haiku-wo must have `tools` limited to
+// exactly `[Write]` — no Bash/Read/Edit/Skill. This is a harness-level guarantee
+// that the isolation probe cannot succeed through any Bash-redirect fallback path;
+// prompt-only prohibition is not deterministic enough (an LLM can still improvise
+// a Bash workaround if Bash is available).
+test('[agent-effort][tools-pin] .claude/agents/dev-runner-haiku-wo.md: tools should be exactly [Write]', () => {
+  const src = readAgent('dev-runner-haiku-wo');
+  const got = frontmatterTools(src);
+  assert.deepEqual(
+    got,
+    ['Write'],
+    `Expected .claude/agents/dev-runner-haiku-wo.md tools to be exactly [Write], but got: ${JSON.stringify(got)}`,
+  );
+  for (const forbidden of ['Bash', 'Read', 'Skill', 'Edit']) {
+    assert.ok(
+      !got.includes(forbidden),
+      `dev-runner-haiku-wo.md tools must not include "${forbidden}" (Bash fallback would defeat the isolation probe's purpose)`,
+    );
+  }
 });

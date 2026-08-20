@@ -23,6 +23,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { isolationCleanupPrompt, isolationProbePrompt, isolationFailureMessage } from './isolation-probe.mjs';
+// isolationErrorKind は prompt/メッセージ文字列を生成しないため（純粋な分類関数）、
+// このファイルの検査対象（FORBIDDEN スキャン）には含めない。
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -59,16 +61,26 @@ function assertNoControlReason(text, label) {
 const CANONICAL_SAMPLES = [
   ['isolationCleanupPrompt(dir)', isolationCleanupPrompt('/repo/.claude/worktrees/df-1', '.devflow-tmp')],
   ['isolationCleanupPrompt(file)', isolationCleanupPrompt('/repo', '.devflow-tmp/.isolation-probe')],
-  ['isolationProbePrompt', isolationProbePrompt('/repo/.claude/worktrees/df-1')],
+  ['isolationProbePrompt', isolationProbePrompt('/repo/.claude/worktrees/df-1', '1787000000')],
   // error は呼び出し元が受け取った probe error を verbatim 転写する引数であり、
-  // 関数側の記述ではない。関数自身の文言だけを検査するため空文字で構築する。
-  ['isolationFailureMessage(dev-flow)', isolationFailureMessage({
+  // 関数側の記述ではない。関数自身の文言だけを検査するため、kind を切り替えるのに必要な
+  // 最小限の分類シグネチャ以外は空文字で構築する。
+  ['isolationFailureMessage(dev-flow, unknown)', isolationFailureMessage({
     worktree: '/repo/.claude/worktrees/df-1', branch: 'feature/issue-1', startRef: 'origin/main',
     workflowName: 'dev-flow', workflowArgs: '1', error: '',
   })],
-  ['isolationFailureMessage(pr-iterate)', isolationFailureMessage({
+  ['isolationFailureMessage(pr-iterate, unknown)', isolationFailureMessage({
     worktree: '/repo', branch: 'feature/issue-1', startRef: 'origin/feature/issue-1',
     workflowName: 'pr-iterate', workflowArgs: '1', targetPath: '/repo/.claude/worktrees/pr-1', error: '',
+  })],
+  ['isolationFailureMessage(dev-flow, isolation)', isolationFailureMessage({
+    worktree: '/repo/.claude/worktrees/df-1', branch: 'feature/issue-1', startRef: 'origin/main',
+    workflowName: 'dev-flow', workflowArgs: '1', error: "parent bg session hasn't isolated",
+  })],
+  ['isolationFailureMessage(dev-flow, overwrite_refused)', isolationFailureMessage({
+    worktree: '/repo/.claude/worktrees/df-1', branch: 'feature/issue-1', startRef: 'origin/main',
+    workflowName: 'dev-flow', workflowArgs: '1',
+    error: 'File has not been read yet. Read it first before writing to it.',
   })],
 ];
 

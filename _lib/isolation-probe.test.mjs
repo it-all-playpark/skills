@@ -1,22 +1,77 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { isolationCleanupPrompt, isolationProbePrompt, isolationFailureMessage } from './isolation-probe.mjs';
+import { isolationCleanupPrompt, isolationProbePrompt, isolationErrorKind, isolationFailureMessage } from './isolation-probe.mjs';
 
 // ── isolationProbePrompt ────────────────────────────────────────────────────
 
-test('isolationProbePrompt: worktree パスと probe ファイル名・成功/失敗の verbatim 報告指示を含む', () => {
-  const prompt = isolationProbePrompt('/path/to/worktree');
-  assert.match(prompt, /\/path\/to\/worktree/);
-  assert.match(prompt, /\.devflow-tmp\/\.isolation-probe/);
-  assert.match(prompt, /Write tool/);
-  assert.match(prompt, /"written": true/);
-  assert.match(prompt, /"written": false/);
+test('isolationProbePrompt: token がファイル名に入り、絶対パスとして明示される', () => {
+  const prompt = isolationProbePrompt('/path/to/worktree', '1787000000');
+  assert.match(prompt, /\/path\/to\/worktree\/\.devflow-tmp\/\.isolation-probe-1787000000/);
 });
 
-test('isolationProbePrompt: 失敗時は例外を投げず error フィールドで報告させる指示を含む', () => {
-  const prompt = isolationProbePrompt('/some/wt');
+test('isolationProbePrompt: 異なる token は異なる probe パスを生成する', () => {
+  const a = isolationProbePrompt('/path/to/worktree', '1000');
+  const b = isolationProbePrompt('/path/to/worktree', '2000');
+  assert.match(a, /\.isolation-probe-1000/);
+  assert.match(b, /\.isolation-probe-2000/);
+  assert.doesNotMatch(a, /\.isolation-probe-2000/);
+  assert.doesNotMatch(b, /\.isolation-probe-1000/);
+});
+
+test('isolationProbePrompt: token 中の記号は "-" に正規化される', () => {
+  const prompt = isolationProbePrompt('/wt', 'pr/455:2000');
+  assert.match(prompt, /\.isolation-probe-pr-455-2000/);
+});
+
+test('isolationProbePrompt: Tools を Write のみに限定する指示を含む', () => {
+  const prompt = isolationProbePrompt('/wt', '1000');
+  assert.match(prompt, /使用可: Write のみ。他の tool は使用禁止/);
+});
+
+test('isolationProbePrompt: Write 失敗時に他の手段で作成しようと試みるなという Boundary を含む', () => {
+  const prompt = isolationProbePrompt('/wt', '1000');
+  assert.match(prompt, /他の手段でファイルを作成しようと試みるな/);
+});
+
+test('isolationProbePrompt: 成功/失敗の verbatim 報告指示を含む', () => {
+  const prompt = isolationProbePrompt('/wt', '1000');
+  assert.match(prompt, /"written": true/);
+  assert.match(prompt, /"written": false/);
   assert.match(prompt, /例外を投げずに/);
   assert.match(prompt, /"error"/);
+});
+
+test('isolationProbePrompt: Write tool 以外の言及がない（Bash 等のフォールバック手段を示唆しない）', () => {
+  const prompt = isolationProbePrompt('/wt', '1000');
+  assert.doesNotMatch(prompt, /Bash/);
+  assert.doesNotMatch(prompt, /Read tool/);
+});
+
+// ── isolationErrorKind ──────────────────────────────────────────────────────
+
+test('isolationErrorKind: Write tool の未 Read 上書き拒否シグネチャは overwrite_refused', () => {
+  assert.equal(
+    isolationErrorKind('File has not been read yet. Read it first before writing to it.'),
+    'overwrite_refused',
+  );
+});
+
+test('isolationErrorKind: bg-isolation guard シグネチャは isolation', () => {
+  assert.equal(isolationErrorKind("parent bg session hasn't isolated"), 'isolation');
+  assert.equal(isolationErrorKind('parent bg session hasnt isolated'), 'isolation');
+});
+
+test('isolationErrorKind: 空/undefined/その他は unknown', () => {
+  assert.equal(isolationErrorKind(''), 'unknown');
+  assert.equal(isolationErrorKind(undefined), 'unknown');
+  assert.equal(isolationErrorKind('some other error'), 'unknown');
+});
+
+test('isolationErrorKind: 両方にマッチしうる場合は overwrite_refused を優先する', () => {
+  assert.equal(
+    isolationErrorKind('File has not been read yet. Read it first before writing to it. (bg-isolation guard)'),
+    'overwrite_refused',
+  );
 });
 
 // ── isolationFailureMessage ─────────────────────────────────────────────────
@@ -24,7 +79,7 @@ test('isolationProbePrompt: 失敗時は例外を投げず error フィールド
 test('isolationFailureMessage: worktree/branch/startRef/workflow 名/args を含む復旧手順を返す', () => {
   const msg = isolationFailureMessage({
     worktree: '/repo/.claude/worktrees/df-123', branch: 'feature/issue-123', startRef: 'origin/main',
-    workflowName: 'dev-flow', workflowArgs: '123', error: 'Permission denied',
+    workflowName: 'dev-flow', workflowArgs: '123', error: 'some other error',
   });
   assert.match(msg, /\/repo\/\.claude\/worktrees\/df-123/);
   assert.match(msg, /feature\/issue-123/);
@@ -32,25 +87,54 @@ test('isolationFailureMessage: worktree/branch/startRef/workflow 名/args を含
   assert.match(msg, /Workflow\(\{ name: "dev-flow", args: "123" \}\)/);
 });
 
-test('isolationFailureMessage: workflow 名/args は呼び出し元ごとに切り替わる（pr-iterate）', () => {
+test('isolationFailureMessage: kind=isolation の見出しは bg-isolation guard に言及する', () => {
   const msg = isolationFailureMessage({
     worktree: '/repo', branch: 'feature/issue-1', startRef: 'origin/main',
-    workflowName: 'pr-iterate', workflowArgs: '455', error: '',
+    workflowName: 'pr-iterate', workflowArgs: '455', error: "parent bg session hasn't isolated",
   });
   assert.match(msg, /^pr-iterate: worktree isolation エラー/);
+  assert.match(msg, /implementer が \/repo に書き込めません/);
+  assert.match(msg, /bg-isolation guard の可能性/);
   assert.match(msg, /pr-iterate を再起動してください/);
   assert.match(msg, /Workflow\(\{ name: "pr-iterate", args: "455" \}\)/);
 });
 
-test('isolationFailureMessage: git worktree add / EnterWorktree / Workflow 再実行の3手順を番号付きで含む', () => {
+test('isolationFailureMessage: kind=overwrite_refused の見出しは上書き拒否・別原因を明示する', () => {
   const msg = isolationFailureMessage({
-    worktree: '/repo/.claude/worktrees/df-1', branch: 'feature/issue-1', startRef: 'origin/dev',
-    workflowName: 'dev-flow', workflowArgs: '1', error: 'err',
+    worktree: '/repo', branch: 'feature/issue-1', startRef: 'origin/main',
+    workflowName: 'dev-flow', workflowArgs: '1',
+    error: 'File has not been read yet. Read it first before writing to it.',
   });
-  assert.match(msg, /1\. git worktree add -b feature\/issue-1/);
-  assert.match(msg, /2\. EnterWorktree\(/);
-  assert.match(msg, /3\. Workflow\(/);
+  assert.match(msg, /^dev-flow: isolation probe 書き込み失敗 — 既存 probe ファイルの上書き拒否/);
+  assert.match(msg, /isolation 不成立とは別原因/);
+  assert.match(msg, /前 run の残置物が同名パスに残っている可能性/);
 });
+
+test('isolationFailureMessage: kind=unknown の見出しは原因不明として fail-closed する', () => {
+  const msg = isolationFailureMessage({
+    worktree: '/repo', branch: 'feature/issue-1', startRef: 'origin/main',
+    workflowName: 'dev-flow', workflowArgs: '1', error: '',
+  });
+  assert.match(msg, /^dev-flow: isolation probe 書き込み失敗 — 原因を特定できず/);
+  assert.match(msg, /isolation 不成立の可能性を含む/);
+});
+
+for (const [label, error] of [
+  ['isolation', "parent bg session hasn't isolated"],
+  ['overwrite_refused', 'File has not been read yet. Read it first before writing to it.'],
+  ['unknown', 'some other error'],
+]) {
+  test(`isolationFailureMessage: kind=${label} でも復旧 3 手順を番号付きで含む`, () => {
+    const msg = isolationFailureMessage({
+      worktree: '/repo/.claude/worktrees/df-1', branch: 'feature/issue-1', startRef: 'origin/dev',
+      workflowName: 'dev-flow', workflowArgs: '1', error,
+    });
+    assert.match(msg, /1\. git worktree add -b feature\/issue-1/);
+    assert.match(msg, /2\. EnterWorktree\(/);
+    assert.match(msg, /3\. Workflow\(/);
+    assert.match(msg, /新しい worktree には前 run の残置物が無い/);
+  });
+}
 
 test('isolationFailureMessage: EnterWorktree の path は .claude/worktrees/ 以降の相対パスに変換される', () => {
   const msg = isolationFailureMessage({
@@ -72,7 +156,7 @@ test('isolationFailureMessage: .claude/worktrees/ を含まない worktree パ�
 test('isolationFailureMessage: targetPath 指定時は worktree（書き込み失敗先）と異なる先を回避手順に提示する', () => {
   const msg = isolationFailureMessage({
     worktree: '/repo', branch: 'feature/issue-455', startRef: 'origin/main',
-    workflowName: 'pr-iterate', workflowArgs: '455', error: '',
+    workflowName: 'pr-iterate', workflowArgs: '455', error: "parent bg session hasn't isolated",
     targetPath: '/repo/.claude/worktrees/pr-455',
   });
   assert.match(msg, /implementer が \/repo に書き込めません/);
@@ -127,33 +211,19 @@ test('isolationFailureMessage: error が空文字なら probe error 行を含ま
   assert.doesNotMatch(msg, /probe error:/);
 });
 
-test('isolationFailureMessage: bg-isolation guard の可能性に言及する', () => {
-  const msg = isolationFailureMessage({
-    worktree: '/wt', branch: 'b', startRef: 'origin/main', workflowName: 'dev-flow', workflowArgs: '1', error: '',
-  });
-  assert.match(msg, /bg-isolation guard/);
-});
-
 // ── issue #493: stale 残置物の除去は cleanup へ分離し probe prompt を最小契約に戻す ─────
 //
 // issue #482 は「stale な .devflow-tmp/.isolation-probe があると Write が拒否され written:false →
 // fail-closed abort する」問題に対し probe prompt 側の Read-then-Write 冪等化で対処していた。
 // issue #493 で除去自体を probe 実行前の cleanup（gitignored な .devflow-tmp/ 限定の git clean）へ
-// 移したため、probe prompt からは冪等化手順を落とす。#482 の再発が起きないこと（cleanup 実行後に
-// stale artifact が残らないこと）は _lib/isolation-stale-cleanup.integration.test.mjs が実 git で検証する。
+// 移したため、probe prompt からは冪等化手順を落とす。issue #521 でさらに probe 対象パスを run 毎に
+// 一意な token 付きにし、成立自体を cleanup 成功に依存させない（#482 の再発を構造的に防ぐ）。
 
 test('isolationProbePrompt: Read-then-Write 冪等化手順を含まない（cleanup へ分離した）', () => {
-  const prompt = isolationProbePrompt('/path/to/worktree');
+  const prompt = isolationProbePrompt('/path/to/worktree', '1000');
   assert.doesNotMatch(prompt, /Read tool/);
   assert.doesNotMatch(prompt, /既に存在する場合/);
   assert.doesNotMatch(prompt, /Read が失敗しても/);
-});
-
-test('isolationProbePrompt: Write は 1 回だけの最小契約になっている', () => {
-  const prompt = isolationProbePrompt('/path/to/worktree');
-  // Write tool への言及は「書き込め」と「エラー・拒否を返した場合」の 2 箇所のみ（手順分岐なし）
-  assert.strictEqual((prompt.match(/Write tool/g) || []).length, 2);
-  assert.match(prompt, /内容 "ok" で書き込め/);
 });
 
 test('isolationCleanupPrompt: worktree 直下の .devflow-tmp を git clean で除去させる', () => {
@@ -189,12 +259,4 @@ test('isolationCleanupPrompt: 失敗時は例外を投げず cleaned:false + err
   assert.match(prompt, /"cleaned": false/);
   assert.match(prompt, /例外を投げずに/);
   assert.match(prompt, /"error"/);
-});
-
-test('isolationFailureMessage: 新しい worktree を作れば残置物起因のケースも解消する旨を案内する', () => {
-  const msg = isolationFailureMessage({
-    worktree: '/repo/.claude/worktrees/df-493', branch: 'feature/issue-493', startRef: 'origin/main',
-    workflowName: 'dev-flow', workflowArgs: '493', error: '',
-  });
-  assert.match(msg, /新しい worktree には前 run の残置物が無い/);
 });

@@ -830,10 +830,10 @@ phase('Iterate')
 // head_ref/base_ref/cwd は isolation probe（issue #449）の失敗メッセージ・probe 対象パス解決にも使う。
 const PR_META = {
   type: 'object', required: ['url'],
-  properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' } },
+  properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' }, epoch: { type: 'number' } },
 }
 const prMeta = await failOpenAgent(
-  `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
+  `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと。epoch のみコマンド失敗時は省略可）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n- \`date +%s\` → epoch(現在時刻の epoch 秒整数。isolation probe 対象パスの run 毎一意化用)\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string, "epoch": number }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
   { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
 )
 const REPO = repoFromGithubUrl(prMeta?.url)
@@ -846,13 +846,25 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
 // isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
-//   純関数（前 run の残置物を持ち越さない）。除去範囲 target は呼び出し元が明示的に渡す必須引数:
-//   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
+//   純関数（trust 証跡等を run 間で持ち越さない衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
+//   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
 //   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
 //   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた trust 証跡を run 途中で
 //   消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
-// isolationProbePrompt: dev-runner-haiku へ渡す probe prompt を組み立てる純関数
-//   （worktree 直下に Write tool で実際に書き込ませ、成否を {written, error} で verbatim 報告させる）。
+//   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
+// isolationProbePrompt: probe 専用 agent（Write tool のみ）へ渡す prompt を組み立てる純関数
+//   （worktree 直下の run 毎に一意なパスへ Write tool で実際に書き込ませ、成否を {written, error} で
+//   verbatim 報告させる）。token は呼び出し元が渡す必須引数: probe 対象パスに run 毎の一意な token
+//   を含めることで、cleanup が blocked/skip されて前 run の残置物が残っていても probe が成立する
+//   （成立が cleanup の成功に依存しない — issue #521）。cleanup は trust 証跡の持ち越し防止等の
+//   衛生目的で独立に残る。
+// isolationErrorKind: probe の error 文字列を既知シグネチャで分類する純関数。written:false の原因が
+//   「isolation 不成立」なのか「その他の書き込み失敗（上書き拒否等）」なのかを isolationFailureMessage
+//   が出し分けるための判別根拠にする。
+//   「File has not been read yet. Read it first before writing to it.」は Write tool の
+//   「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」エラー文言そのもの（issue #482
+//   で実測）。token による一意化後もこのシグネチャが出る場合は同一 run 内の再実行など probe パス
+//   自体が既存ファイルだったケースであり、isolation 不成立とは別原因として区別する。
 // isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
 //   （branch/起点 ref/workflow 名・args を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
 //   呼び出し元（dev-flow.js / pr-iterate.js）ごとに workflow 名・再実行 args・回避手順で提示する
@@ -866,12 +878,6 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
-//
-// 前 run が残した stale な `.devflow-tmp/.isolation-probe` が存在すると、Write tool の
-// 「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」挙動により isolation が正常でも
-// written:false → fail-closed abort する（issue #482）。この残置物の除去は probe 実行前の
-// isolationCleanupPrompt が担い（除去対象は worktree 内 gitignored の `.devflow-tmp/` に限定）、
-// probe prompt 自体は Write 1 回だけの最小契約に保つ（issue #493）。
 //
 // 不変条件: 本ファイルが生成する prompt / メッセージは、実行制御の名称（sandbox・permission・
 // excludedCommands・guard 等）を「だからこの経路を使え」という形の理由として述べない。
@@ -888,19 +894,38 @@ function isolationCleanupPrompt(worktree, target) {
     + `\`${target}\` 以外のパスには触れるな。`;
 }
 
-function isolationProbePrompt(worktree) {
-  return `worktree ${worktree} 直下に Write tool で \`.devflow-tmp/.isolation-probe\` というファイルを`
-    + `内容 "ok" で書き込め。`
+function isolationProbePrompt(worktree, token) {
+  const tok = String(token).replace(/[^A-Za-z0-9._-]/g, '-');
+  const path = `${worktree}/.devflow-tmp/.isolation-probe-${tok}`;
+  return `Objective: 絶対パス \`${path}\` へ Write tool で内容 "ok" を書き込み、結果を verbatim 報告せよ。\n`
+    + `Tools: 使用可: Write のみ。他の tool は使用禁止。\n`
+    + `Boundary: \`${path}\` 以外のパスに書き込むな。Write tool がエラー・拒否を返した場合、`
+    + `他の手段でファイルを作成しようと試みるな — 1 回の Write の結果をそのまま報告せよ。\n`
     + `成功したら {"written": true} を返せ。`
     + `Write tool がエラー・拒否を返した場合は、例外を投げずに `
     + `{"written": false, "error": "<エラーメッセージ全文>"} を返せ。`;
 }
 
+function isolationErrorKind(error) {
+  const text = String(error ?? '');
+  if (/has not been read/i.test(text)) return 'overwrite_refused';
+  if (/parent bg session hasn'?t isolated|bg.?isolation/i.test(text)) return 'isolation';
+  return 'unknown';
+}
+
 function isolationFailureMessage({ worktree, branch, startRef, workflowName, workflowArgs, targetPath, error }) {
   const wt = targetPath || worktree;
   const relWt = wt.includes('.claude/worktrees/') ? wt.slice(wt.indexOf('.claude/worktrees/')) : wt;
-  return `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
-    + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）。\n`
+  const kind = isolationErrorKind(error);
+  const heading = kind === 'overwrite_refused'
+    ? `${workflowName}: isolation probe 書き込み失敗 — 既存 probe ファイルの上書き拒否`
+      + `（isolation 不成立とは別原因。前 run の残置物が同名パスに残っている可能性）`
+    : kind === 'isolation'
+      ? `${workflowName}: worktree isolation エラー — implementer が ${worktree} に書き込めません`
+        + `（bg-isolation guard の可能性: 呼び出し元セッションの cwd がこの worktree へ isolate されていない）`
+      : `${workflowName}: isolation probe 書き込み失敗 — 原因を特定できず`
+        + `（isolation 不成立の可能性を含む）`;
+  return `${heading}。\n`
     + `対処: 呼び出し元セッションで以下を実行してから ${workflowName} を再起動してください`
     + `（新しい worktree には前 run の残置物が無いため、残置物が原因だった場合も同時に解消します）:\n`
     + `  1. git worktree add -b ${branch} ${wt} ${startRef}\n`
@@ -943,7 +968,13 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // probe が written:false で fail-closed に倒れ、復旧手順は同一）。
 const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, '.devflow-tmp/.isolation-probe'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
 if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
-const isoProbe = await failOpenAgent(isolationProbePrompt(isoWt), { agentType: 'dev-runner-haiku', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
+// isoToken: probe 対象パスを run 毎に一意にする（issue #521）。pr-meta probe（fail-open）が
+// 取得した epoch を使い、取得できなければ PR 番号へ fallback する。nested 起動（dev-flow →
+// workflow('pr-iterate')）時、probe ファイルは実行中 dev-flow run の worktree の
+// `.devflow-tmp/.isolation-probe-<token>` に書かれるが一意名のため dev-flow 側 trust 証跡・probe
+// ファイルと衝突しない。
+const isoToken = String(prMeta?.epoch ?? PR)
+const isoProbe = await failOpenAgent(isolationProbePrompt(isoWt, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
 if (isoProbe && isoProbe.written === false) {
   throw new Error(isolationFailureMessage({
     // startRef は PR の head（base ではない）— pr-iterate は既存 PR の変更を含む worktree を

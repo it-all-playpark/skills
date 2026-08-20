@@ -12,12 +12,18 @@ import { dirname, join } from 'node:path';
 const devFlowPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
-test('isolation probe agent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
+test('isolation probe agent 呼び出しが agentType/schema/label/phase 込みで存在する（issue #521: dev-runner-haiku-wo へ切替・isoToken を渡す）', () => {
   assert.match(
     src,
-    /const isoProbe = await trackedAgent\(isolationProbePrompt\(WT\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Setup'\s*\}\)/,
-    'isolation probe の trackedAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
+    /const isoProbe = await trackedAgent\(isolationProbePrompt\(WT,\s*isoToken\),\s*\{\s*agentType:\s*'dev-runner-haiku-wo',\s*schema:\s*ISOLATION_PROBE,\s*label:\s*'isolation-probe',\s*phase:\s*'Setup'\s*\}\)/,
+    'isolation probe の trackedAgent() 呼び出しが期待する agentType(dev-runner-haiku-wo)/schema/label/phase かつ isoToken 引数込みで見つからない',
   );
+});
+
+test('isoToken が clockMarks?.start（fail-open で ISSUE へ fallback）から Date.now/Math.random 非依存で算出される（issue #521）', () => {
+  const match = src.match(/const isoToken = String\(clockMarks\?\.start \?\? ISSUE\)[^\n]*/);
+  assert.ok(match, 'const isoToken = String(clockMarks?.start ?? ISSUE) の宣言が見つからない');
+  assert.doesNotMatch(match[0], /Date\.now|Math\.random/, 'isoToken 宣言行に Date.now/Math.random が含まれてはならない（workflow script の制約違反）');
 });
 
 test('probe が written:false を返した場合に isolationFailureMessage で throw する分岐が存在する（workflowName: dev-flow-run を明示）', () => {
@@ -47,7 +53,7 @@ test('ISOLATION_PROBE schema が written(boolean, required) を持つ', () => {
 
 test('isolation probe は worktree 作成後・deps install より前（Setup phase 内）に配置されている', () => {
   const setupIdx = src.indexOf(`, 'Setup(worktree)')`);
-  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT)');
+  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken)');
   const depsIdx = src.indexOf('const depsRes = await trackedAgent(setupDepsPrompt(WT)');
   assert.notStrictEqual(setupIdx, -1, 'worktree 作成 need() 呼び出しが見つからない');
   assert.notStrictEqual(probeIdx, -1, 'isolation probe 呼び出しが見つからない');
@@ -81,7 +87,7 @@ test('isolation cleanup の失敗は fail-open（log のみ・throw しない）
   );
   // 窓は cleanup 呼び出し 〜 probe 呼び出しの直前まで（probe 側の fail-closed throw を巻き込まない）
   const idx = src.indexOf("const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp')");
-  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT)');
+  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken)');
   const nearby = src.slice(idx, probeIdx);
   assert.doesNotMatch(nearby, /throw new Error/, 'cleanup 失敗で throw してはならない（fail-open）');
 });
@@ -89,7 +95,7 @@ test('isolation cleanup の失敗は fail-open（log のみ・throw しない）
 test('isolation cleanup は worktree 作成後・probe より前に配置されている', () => {
   const setupIdx = src.indexOf(`, 'Setup(worktree)')`);
   const cleanIdx = src.indexOf("const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp')");
-  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT)');
+  const probeIdx = src.indexOf('const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken)');
   assert.notStrictEqual(cleanIdx, -1, 'isolation cleanup 呼び出しが見つからない');
   assert.ok(setupIdx < cleanIdx, 'cleanup は worktree 作成より後に配置されるべき');
   assert.ok(cleanIdx < probeIdx, 'cleanup は probe より前に配置されるべき（stale 残置物を probe 前に除去する）');
