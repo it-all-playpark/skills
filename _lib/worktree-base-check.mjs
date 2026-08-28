@@ -16,6 +16,13 @@
 // git -C 単体を含め絶対パス引数を持つコマンドを「too complex to verify that it stays inside
 // the worktree」で拒否する）、パス引数が構造的に存在しない手順へ置き換えた。
 //
+// issue #533 review: `git worktree remove` を経ず手動削除された stale worktree（本 repo で
+// 再発実績あり）は `git worktree list --porcelain` に branch 行付き・`prunable` 属性行付きで
+// 列挙され続ける。`prunable` 行の有無を見ずに一致ブロックを worktree_exists=true と判定すると、
+// 実在しない worktree を再利用経路へ進めてしまい後段（EnterWorktree 等）で不可解に失敗する。
+// そのため一致ブロックに `prunable` 行があれば worktree_exists=false として扱う（他候補も無ければ
+// 新規作成経路へ）。
+//
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
@@ -48,13 +55,17 @@ export function worktreeBaseProbePrompt(issue) {
     + '分かれる（git は main worktree を必ず先頭に出す）。先頭ブロックの worktree パスを ROOT とする。\n'
     + '   WTD_IN = `${ROOT}/' + wtdInSuffix + '`\n'
     + '   WTD_EXT = `${ROOT}' + wtdExtSuffix + '`\n'
-    + '   worktree パスが WTD_IN に一致するブロックがあれば WTD=WTD_IN、worktree_exists=true とする。'
-    + '無ければ WTD_EXT に一致するブロックを探し、あれば WTD=WTD_EXT、worktree_exists=true とする'
-    + '（WTD_IN が常に先勝ちする決定論的な優先順位である）。どちらも無ければ worktree_exists=false、'
-    + 'upstream_remote=""、upstream_merge="" とし、手順2〜3 は実行せず Output format へ進む。\n'
-    + '   一致したブロックに `branch refs/heads/<name>` 行が無い場合（detached HEAD）も同様に'
-    + ' upstream_remote=""、upstream_merge="" とし、手順2〜3 は実行しない。あれば `refs/heads/` を'
-    + '除いた名前を BR とする。\n\n'
+    + '   worktree パスが WTD_IN に一致するブロックを探す。見つかり、かつそのブロックに `prunable`'
+    + ' で始まる行が **無ければ** WTD=WTD_IN、worktree_exists=true とする。見つからない、または'
+    + '見つかっても `prunable` 行がある場合（正規の削除手順を経ず手動でディレクトリ削除された stale'
+    + ' worktree — git のメタデータ上は残るが実体が無い）は WTD_IN には無いものとして扱い、WTD_EXT'
+    + 'に一致するブロックを同じ基準（`prunable` 行が無いこと）で探し、あれば WTD=WTD_EXT、'
+    + 'worktree_exists=true とする（WTD_IN が常に先勝ちする決定論的な優先順位である）。どちらも'
+    + '無い、またはどちらも `prunable` 行付きの場合は worktree_exists=false、upstream_remote=""、'
+    + 'upstream_merge="" とし、手順2〜3 は実行せず Output format へ進む。\n'
+    + '   （`prunable` 行が無い）一致したブロックに `branch refs/heads/<name>` 行が無い場合'
+    + '（detached HEAD）も同様に upstream_remote=""、upstream_merge="" とし、手順2〜3 は実行しない。'
+    + 'あれば `refs/heads/` を除いた名前を BR とする。\n\n'
     + '2. 次を実行する（<BR> は手順1で求めた branch 名に置換する。branch 設定は worktree 間で共有される'
     + ' `.git/config` にあるため -C は不要）: `git config --get branch.<BR>.remote`\n'
     + '   成功（exit code 0）した場合 stdout の1行を upstream_remote とする。失敗（exit code 非0）した'

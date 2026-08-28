@@ -51,6 +51,12 @@ test('worktreeBaseProbePrompt: WTD_IN が常に先勝ちする旨の文言を含
   assert.match(prompt, /先勝ち/);
 });
 
+test('worktreeBaseProbePrompt: prunable 行付きブロックは worktree_exists=false として扱う旨の文言を含む（stale worktree 誤判定 pin, issue #533 review）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.match(prompt, /`prunable`/);
+  assert.match(prompt, /worktree_exists=false/);
+});
+
 test('worktreeBaseProbePrompt: verbatim を含む', () => {
   const prompt = worktreeBaseProbePrompt(517);
   assert.match(prompt, /verbatim/);
