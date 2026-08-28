@@ -46,7 +46,12 @@ function resolvePositiveIntArg(args, name) {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-const JOURNAL_PENDING_DIR = '${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending';
+// stage2 が Write tool へ渡す最終書き込み先。shell 展開ではなく Write tool 側の `~` 展開に
+// 依存する（stage2 は shell を一切使わない — buildJournalLogInstr のコメント参照）。
+// 副作用として CLAUDE_JOURNAL_DIR による書き込み先の差し替えは効かない。同 env を読むのは
+// dev-flow-doctor / dev-improve の解析スクリプトとその test harness だけで、書き込み側の
+// production 経路では設定されないため、読み手（Stop hook）との不一致は生じない。
+const JOURNAL_PENDING_DIR = '~/.claude/journal/pending';
 
 function buildJournalHandoffPayload({
   skill,
@@ -75,18 +80,38 @@ function buildJournalHandoffPayload({
   return JSON.stringify(payload);
 }
 
-// buildJournalFinalizeCommand({ prefix, id }): returns a single-line bash command that
-// validates a payload file (already written verbatim to disk elsewhere, e.g. by the Write
-// tool per buildJournalSaveInstr) via `jq -e` BEFORE ever touching pending/, then performs
-// the same stable-effect-ID naming + mktemp/mv atomic write as the previous heredoc-based
-// command: partial JSON can never be visible under a *.json name (tmp is dot-prefixed and
-// non-.json until the atomic `mv -f`, and lives in the same pending/ filesystem so the mv is
-// atomic), and re-running with an identical payload reproduces the same final filename
-// (idempotent overwrite, no duplicate entries). `<PAYLOAD_FILE>` is a literal placeholder —
-// the caller (buildJournalLogInstr) must substitute it with a real, validated file path
-// before running the command. A jq parse failure (malformed JSON) short-circuits the `&&`
-// chain so nothing is ever written under pending/.
-function buildJournalFinalizeCommand({ prefix, id }) {
+// journalEffectId(payload): stable 16-hex effect ID derived from the payload string in pure JS.
+// 以前は stage2 の shell が `shasum -a 256 | cut -c1-16` で算出していたが、その算出には変数代入と
+// コマンド置換が必要で、それが worktree 分離ガードの拒否要因だった（issue #526）。JS 側で先に
+// 確定させることで stage2 の書き込み先が prompt 構築時点で定まり、stage2 から shell を完全に外せる。
+//
+// 幅は従来と同じ 64bit（16 hex）で、衝突時の影響も従来と同じ「別 payload の entry を上書きする」
+// クラスに留まる。暗号学的強度は不要 — 用途は同一 payload の再実行で同一ファイル名を再現する
+// 冪等命名だけで、内容の真正性検証には使わない。BigInt を避けて 32bit 2 本（seed 違いの FNV-1a）に
+// 分けているのは、workflow runtime が制限付き JS sandbox であり、inline 生成先とテストで同一挙動を
+// 保証する必要があるため。
+function fnv1a32(str, seed) {
+  let h = seed >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    // 上位バイトも混ぜる: payload は日本語を含みうるので下位バイトだけでは区別が落ちる。
+    h = Math.imul(h ^ (c & 0xff), 0x01000193) >>> 0;
+    h = Math.imul(h ^ (c >>> 8), 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+function journalEffectId(payload) {
+  const s = String(payload ?? '');
+  const lo = fnv1a32(s, 0x811c9dc5);
+  const hi = fnv1a32(s, 0x811c9dc5 ^ 0x9e3779b9);
+  return hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0');
+}
+
+// buildJournalPendingPath({ prefix, id, effectId }): stage2 が Write tool へ渡す最終パス。
+// prefix / id は Write tool のパスへ splice されるので、shell へ渡していた頃と同じ決定論検証を
+// 残す（パス要素の混入は書き込み先の乗っ取りに直結するため、経路が shell でなくなっても緩めない）。
+function buildJournalPendingPath({ prefix, id, effectId }) {
   const safePrefix = String(prefix ?? '').trim();
   const safeId = String(id ?? '').trim();
   if (!/^[a-z][a-z0-9-]*$/.test(safePrefix)) {
@@ -95,8 +120,10 @@ function buildJournalFinalizeCommand({ prefix, id }) {
   if (!/^[1-9][0-9]*$/.test(safeId)) {
     throw new Error(`journal-handoff: invalid id: ${JSON.stringify(id)}`);
   }
-
-  return `jq -e . "<PAYLOAD_FILE>" >/dev/null && mkdir -p ${JOURNAL_PENDING_DIR} && __jh_tmp=$(mktemp "${JOURNAL_PENDING_DIR}/.${safePrefix}-${safeId}.XXXXXX") && cp "<PAYLOAD_FILE>" "$__jh_tmp" && __jh_id=$(shasum -a 256 "$__jh_tmp" | cut -c1-16) && mv -f "$__jh_tmp" "${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-\${__jh_id}.json"`;
+  if (!/^[0-9a-f]{16}$/.test(String(effectId ?? ''))) {
+    throw new Error(`journal-handoff: invalid effectId: ${JSON.stringify(effectId ?? null)}`);
+  }
+  return `${JOURNAL_PENDING_DIR}/${safePrefix}-${safeId}-effect-${effectId}.json`;
 }
 
 const JOURNAL_LOG_STATUSES = ['logged', 'save_failed', 'log_failed'];
@@ -158,7 +185,7 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
     + `Read が失敗しても Write は必ず試み、Read の成否を saved の判定に混ぜないこと。\n`;
 
   if (savePath != null) {
-    // stage2 の bash コマンドへそのまま splice されるので、申告値に対するのと同じ決定論検証を
+    // stage2 の Read tool パスへそのまま splice されるので、申告値に対するのと同じ決定論検証を
     // 構築時点でも通す（絶対パス / 限定 charset / '..' 不可 / basename 契約）。
     if (!validateJournalSavedPath(savePath)) {
       throw new Error(`journal-handoff: invalid savePath: ${JSON.stringify(savePath)}`);
@@ -191,7 +218,7 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
 }
 
 // validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard for any
-// path that gets spliced into the stage2 bash command (buildJournalLogInstr) — both the
+// path that gets spliced into the stage2 instruction (buildJournalLogInstr) — both the
 // JS-constructed `savePath` (checked at build time) and the path an agent claims to have saved
 // to in `saveDir` mode. Rejects anything that is not a plain absolute path built from a
 // restricted charset, contains '..', or whose basename violates the payload basename contract
@@ -212,24 +239,42 @@ function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   return true;
 }
 
-// buildJournalLogInstr({ prefix, id, payloadPath }): stage2 instruction string. Takes only a
-// file path — never the payload body — so conclusion values structurally cannot appear in this
-// prompt. Splices payloadPath into buildJournalFinalizeCommand's `<PAYLOAD_FILE>` placeholder
-// and instructs the agent to run it as-is, failing open (logged:false, no throw) on any error
-// including jq parse failures. payloadPath is re-validated here rather than trusting the caller
-// to have done it: the value is spliced into a bash command, so the guard must not depend on
-// call-site discipline that a future caller can forget.
-function buildJournalLogInstr({ prefix, id, payloadPath }) {
+// buildJournalLogInstr({ prefix, id, payloadPath, payload }): stage2 instruction string.
+// prompt には payload 本文を載せない — 載るのは 2 つのファイルパスだけで、結論値は構造的に
+// この prompt へ現れない（payload は書き込み先ファイル名の effect ID 算出にのみ使う）。
+//
+// stage2 が shell を一切使わないのは必須の性質で、緩めると issue #526 が再発する: 従来の
+// 単行 finalize コマンドは redirect・変数代入・コマンド置換・パイプを含み、EnterWorktree 済み
+// セッションの worktree 分離ガードに `too complex to verify that it stays inside the worktree`
+// で拒否されていた。dev-flow / pr-iterate は常にその分離セッションから走るため、stage2 が
+// shell に依存する限りテレメトリは記録されない。Write tool は同じセッションから pending/ へ
+// 書けることが実測で確認されており（stage1 と isolation probe が同経路）、`~` も Write tool
+// 側で展開される。
+//
+// 代償: `jq -e` による事前検証と mktemp→mv の atomic 公開が無くなる。壊れた JSON や
+// （他セッションの Stop hook と競合した場合の）部分書き込みは pending/ に現れうるが、Stop hook
+// 側が malformed/ へ隔離し replay runbook で回収できるため、silent loss ではなく観測可能な
+// 劣化に留まる。shell を残して「ガードに拒否され 8 日間 1 件も記録されない」状態に戻すより、
+// この劣化を受け入れる方が telemetry の可用性は高い。
+//
+// payloadPath は呼び出し側の検証を信用せずここでも再検証する（Write tool のパスへ splice される
+// 値なので、将来の呼び出し側が検証を忘れても崩れないようにする）。
+function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
   if (!validateJournalSavedPath(payloadPath)) {
     throw new Error(`journal-handoff: invalid payloadPath: ${JSON.stringify(payloadPath ?? null)}`);
   }
-  const finalizeCmd = buildJournalFinalizeCommand({ prefix, id })
-    .split('<PAYLOAD_FILE>')
-    .join(payloadPath);
+  if (typeof payload !== 'string' || payload === '') {
+    throw new Error(`journal-handoff: payload is required for effect ID derivation`);
+  }
+  const pendingPath = buildJournalPendingPath({ prefix, id, effectId: journalEffectId(payload) });
 
   return `## Journal pending への書き出し\n`
-    + `次のコマンドをそのまま実行せよ: \`${finalizeCmd}\`\n`
-    + `jq の parse error を含め失敗しても throw せず logged:false を返すこと。\n`;
+    + `1. **Read tool** で \`${payloadPath}\` を読め。\n`
+    + `2. 読み取った内容を **一字一句そのまま**、**Write tool** で \`${pendingPath}\` へ書け。\n`
+    + `再整形・pretty-print・truncate は禁止する。**Bash は使うな** — 書き込みは Write tool のみで行う。\n`
+    + `${pendingPath} が既に存在する場合は、先に **Read tool** で読んでから Write tool で上書きせよ\n`
+    + `（Write tool は既存ファイルを未 Read のまま上書きできない）。\n`
+    + `3. 書き込みに成功したら {logged:true} を返せ。どの手順で失敗しても throw せず {logged:false} を返せ。\n`;
 }
 
 function repoFromGithubUrl(url) {
@@ -1423,9 +1468,9 @@ try {
     const journalPost = await trackedAgent(
       `## Objective\npr-iterate 終端 status の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
       + `## Instructions\n`
-      + buildJournalLogInstr({ prefix: 'priterate', id: PR, payloadPath: journalSavedPath })
+      + buildJournalLogInstr({ prefix: 'priterate', id: PR, payloadPath: journalSavedPath, payload: telemetryHandoff })
       + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-      + `\n## Tools\n使用可: Bash のみ\n`
+      + `\n## Tools\n使用可: Read, Write のみ\n`
       + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
       + `\n## Token cap\n100 語以内で完結すること。`,
       { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Iterate' },

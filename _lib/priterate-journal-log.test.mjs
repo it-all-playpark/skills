@@ -173,12 +173,12 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-save→jou
 
   // journal-log (stage2) は pending handoff コマンド（ファイルパスのみ）を扱い、結論値
   // リテラル（outcome 等）を含まない。
-  // journal-handoff.mjs (issue #412 F3: atomic mktemp/mv write) は最終ファイル名に
-  // stable effect-ID（payload sha256 先頭16hex）を含むため、旧 `priterate-5-` 直後の
-  // 固定 timestamp 前提ではなく `-effect-` サフィックス付きの新命名を確認する。
+  // journal-handoff.mjs は最終ファイル名に stable effect-ID（payload 由来の 16hex）を含む。
+  // issue #526 で stage2 から shell を外したため、pending パスは shell 展開式ではなく
+  // Write tool が展開する `~` 形になっている。
   const capturedLogPrompt = getCapturedLogPrompt();
   assert.ok(
-    typeof capturedLogPrompt === 'string' && capturedLogPrompt.includes('${CLAUDE_JOURNAL_DIR:-$HOME/.claude/journal}/pending/priterate-5-effect-'),
+    typeof capturedLogPrompt === 'string' && capturedLogPrompt.includes('~/.claude/journal/pending/priterate-5-effect-'),
     `journal-log prompt に pending パスが含まれるべきだが含まれない。prompt=${capturedLogPrompt}`,
   );
   assert.ok(
@@ -284,9 +284,8 @@ test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場�
 
 // issue #499 F4: stage1（journal-save）が throw した場合は journal-log(stage2) が呼ばれる前に
 // 外側 catch へ抜けるため、journalLogStatus は初期値 'save_failed' のまま run が継続する（fail-open）。
-// buildJournalFinalizeCommand（&& 連結を含む単行コマンド）自体は変更しない — isolate 済みセッション
-// でこのコマンドが実行拒否されうるが、その場合も journal-log が呼ばれずに済み journal_log_status は
-// 正しく 'save_failed'（or stage2 throw 時は 'log_failed'）として観測可能なまま run に影響しない。
+// stage2 が何らかの理由で失敗した場合も journal_log_status は 'log_failed'、stage1 で落ちた
+// 場合は 'save_failed' として観測可能なまま run に影響しない（どの段で落ちたかが返り値に残る）。
 test('[journal-log] stage1 の journal-save(agent) が throw した場合 journal-log(stage2) は呼ばれず result.journal_log_status は save_failed のまま run 完走する（fail-open）', async () => {
   const journalSaveResult = new Error('agent({schema}): subagent completed without calling StructuredOutput');
   const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox({ logged: true, summary: 'ok' }, journalSaveResult);
