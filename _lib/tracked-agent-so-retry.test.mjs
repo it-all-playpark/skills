@@ -66,6 +66,38 @@ test('[tracked-agent-so-retry] (a) worktree-base-check が 1 回目 StructuredOu
   assert.equal(wtBaseCalls.length, 2, 'worktree-base-check の呼び出し回数がちょうど 2 件ではない');
 });
 
+// ── (a2) 未 opt-in call site は StructuredOutput 契約違反でもリトライしない ──
+// worktree-base-check は opts.retryOnContractViolation:true の opt-in call site だが、
+// 直後の 'worktree' label（dev-flow.js:4226）は opt-in していない。同じ契約違反メッセージでも
+// opt-in していない call site は即座に throw を伝播すること（issue #533 review）を検証する —
+// これが無いと journal テストの sentinel 差し替えだけで trackedAgent の opt-in gate 行
+// （`if (!opts?.retryOnContractViolation) throw e;`）を削除しても全テスト green のまま通ってしまう。
+
+test('[tracked-agent-so-retry] (a2) 未 opt-in call site（worktree label）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する', async () => {
+  let worktreeCallCount = 0;
+  const responder = baseFixedResponses({
+    'worktree-base-check': () => (
+      { ok: true, worktree_exists: false, upstream_remote: '', upstream_merge: '' }
+    ),
+    worktree: () => {
+      worktreeCallCount += 1;
+      throw new Error(CONTRACT_VIOLATION_MSG);
+    },
+  });
+  const { ctx, calls } = makeRecordingSandbox(responder);
+  const err = await runDevFlowInSandbox(devFlowSrc, ctx);
+
+  assert.ok(err, '未 opt-in call site の契約違反 throw で run がエラーなく完走した');
+  assert.match(String(err?.message ?? err), /without calling StructuredOutput/);
+
+  const worktreeCalls = calls.filter((c) => c.label === 'worktree');
+  assert.equal(
+    worktreeCalls.length,
+    1,
+    `worktree の呼び出し回数が 1 件ではない（未 opt-in call site なのにリトライされた: ${worktreeCallCount} 回）`,
+  );
+});
+
 // ── (b) 契約違反以外はリトライしない（fail-closed 維持） ────────────────────
 
 test('[tracked-agent-so-retry] (b) worktree-base-check が契約違反以外の throw → リトライせず即伝播', async () => {
