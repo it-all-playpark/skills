@@ -361,7 +361,9 @@ test('[journal-log] AC#4: journal-save が saved:false を返す場合 journal-l
 // 場合、失敗したのは stage2 なので log_failed でなければならない。save_failed に落ちると
 // 「payload の保存に失敗した」という誤った診断を telemetry 利用側へ伝えることになる。
 test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場合 result.journal_log_status は log_failed（save_failed に誤帰属しない）', async () => {
-  const journalResult = new Error('agent({schema}): subagent completed without calling StructuredOutput');
+  // issue #527: trackedAgent は 'without calling StructuredOutput' を含む throw を 1 回リトライする
+  // ため、本テスト（call count=1 の想定）はそれと衝突しない別メッセージの proxy 実行失敗で代替する。
+  const journalResult = new Error('exec-proxy 実行失敗: EPERM');
   const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox(ANALYZE_REQ, journalResult);
 
   const { result, error } = await runDevFlowCapture(src, ctx);
