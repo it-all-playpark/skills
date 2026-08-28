@@ -210,6 +210,10 @@ function resolveBase(baseArg, probe) {
 // checkWorktreeBase: probe を元に既存 worktree の起点一致を決定論的に判定する純関数
 //   （未存在→素通り / upstream 一致→再利用可 / upstream 空・不一致・probe 不正→throw、fail-closed）。
 //
+// 2候補制の不変条件（issue #528）: worktree 候補は 既定=repo 内 `.claude/worktrees/df-<issue>` /
+// write deny repo 向け退避先=repo 外 sibling `<repo>-wt/df-<issue>` の2つ。探索順は常に
+// repo 内が先勝ち（決定論）で、既定動作（repo 内 worktree）はこの優先順により不変。
+//
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
@@ -228,28 +232,36 @@ function worktreeBaseProbePrompt(issue) {
   // issue #519 review: 入れ子 $() + 複合 if を含む単一スクリプトは worktree-isolation guard に
   // 拒否され得る（git -C 単体は通過）。guard が検証できる独立コマンド列（test -d / git -C）に分割し、
   // 各コマンドの結果から agent 自身が JSON を組み立てる形へ変更する。
-  const wtdSuffix = '.claude/worktrees/df-' + issue;
+  // issue #528: worktree 候補を repo 内(WTD_IN)/repo 外(WTD_EXT)の2つに拡張。探索は WTD_IN が
+  // 常に先勝ちする決定論的順序（既定動作＝repo 内 worktree を不変に保つ）。
+  const wtdInSuffix = '.claude/worktrees/df-' + issue;
+  const wtdExtSuffix = '-wt/df-' + issue;
   return 'リポジトリルートで以下の手順を **この順で** 実行し、各コマンドの結果から JSON を組み立てて返せ'
     + '（各コマンドの stdout は **verbatim** に扱い、要約・脚色をしない。判定は下記の組み立てルールのみに従う）:\n\n'
     + '1. 次を実行する: `git rev-parse --path-format=absolute --git-common-dir`\n'
     + '   出力（例: `/path/to/repo/.git`）の末尾の `/.git` を除いた文字列を ROOT とする。\n'
-    + '   WTD = `${ROOT}/' + wtdSuffix + '`\n\n'
-    + '2. 次を実行する（<WTD> は手順1で求めた絶対パスに置換する）: `test -d "<WTD>"`\n'
-    + '   exit code が 0 なら worktree_exists=true、0 以外なら worktree_exists=false とする。\n\n'
-    + '3. worktree_exists=true の場合のみ、次を実行する（<WTD> は同じ絶対パス）: '
+    + '   WTD_IN = `${ROOT}/' + wtdInSuffix + '`\n'
+    + '   WTD_EXT = `${ROOT}' + wtdExtSuffix + '`\n\n'
+    + '2. 次を実行する（<WTD_IN> は手順1で求めた絶対パスに置換する）: `test -d "<WTD_IN>"`\n'
+    + '   exit code が 0 なら WTD=WTD_IN、worktree_exists=true とし、手順3 を skip して手順4 へ進む。\n\n'
+    + '3. 手順2 で WTD_IN が存在しなかった場合のみ、次を実行する（<WTD_EXT> は手順1で求めた絶対パスに'
+    + '置換する）: `test -d "<WTD_EXT>"`\n'
+    + '   exit code が 0 なら WTD=WTD_EXT、worktree_exists=true とする。0 以外なら worktree_exists=false'
+    + 'とする（WTD_IN・WTD_EXT のいずれも存在しない場合）。WTD_IN が常に先勝ちする決定論的な優先順位である。\n\n'
+    + '4. worktree_exists=true の場合のみ、次を実行する（<WTD> は手順2または3で確定した WTD の絶対パス）: '
     + '`git -C "<WTD>" rev-parse --abbrev-ref --symbolic-full-name @{upstream}`\n'
     + '   成功（exit code 0）した場合 stdout の1行を upstream とする。失敗（exit code 非0。upstream 未設定等）'
-    + 'した場合は upstream を空文字列 "" とする。worktree_exists=false の場合は手順3を実行せず'
+    + 'した場合は upstream を空文字列 "" とする。worktree_exists=false の場合は手順4を実行せず'
     + ' upstream を空文字列 "" とする。\n\n'
     + '## Output format\n'
     + '次の1行 JSON のみを返す（前後に説明文を付けない）: '
     + '{"ok":true,"worktree_exists":<bool>,"upstream":"<string>"}\n\n'
     + '## Tools\n'
-    + '使用可: Bash（手順1〜3の git rev-parse / test -d / git -C rev-parse の読み取り専用コマンドのみ、'
-    + '上記以外のコマンドは実行しない）。禁止: Write, Edit（ファイル変更禁止）、'
+    + '使用可: Bash（手順1〜4の git rev-parse / test -d（WTD_IN・WTD_EXT の最大2回分）/ git -C rev-parse の'
+    + '読み取り専用コマンドのみ、上記以外のコマンドは実行しない）。禁止: Write, Edit（ファイル変更禁止）、'
     + 'git push / git fetch --prune 等の書き込み・変更系コマンド。\n\n'
     + '## Boundary\n'
-    + 'ファイル変更・git 設定変更・commit・push を一切行わない。手順1〜3の読み取り系 git/test コマンド'
+    + 'ファイル変更・git 設定変更・commit・push を一切行わない。手順1〜4の読み取り系 git/test コマンド'
     + '（bare 単文、パイプ・リダイレクト・複合コマンドなし）のみ実行する。\n\n'
     + '## Token cap\n'
     + '80 語以内で応答せよ（JSON 本体以外の説明を付けない）。';
@@ -257,7 +269,8 @@ function worktreeBaseProbePrompt(issue) {
 
 const RECOVERY_STEPS = 'このいずれかで復旧して再実行せよ: '
   + '(1) `git worktree remove .claude/worktrees/df-<issue>`'
-  + '（失敗時は --force）で当該 worktree を削除して dev-flow を再実行する'
+  + '（repo 外配置の場合は `<repo>-wt/df-<issue>`。失敗時は --force）'
+  + 'で当該 worktree を削除して dev-flow を再実行する'
   + '（origin/<base> 起点で作り直される）、'
   + '(2) 既存 worktree の起点を意図しているなら --base を明示して一致させて再実行する。';
 
@@ -3811,6 +3824,10 @@ function classifyLiteReview(review) {
 //   dev-flow は未実装 issue の作業を base から始めるため `origin/<base>`、pr-iterate は既存 PR の
 //   head を再現する必要があるため `origin/<head_ref>` を渡す（base 起点だと PR の変更を含まない
 //   worktree を提示してしまう — issue #455 レビュー指摘）。
+//   EnterWorktree へ提示する worktree 先は 2 レイアウトをサポートする: repo 内 `.claude/worktrees/df-<N>`
+//   は `.claude/worktrees/` 以降の相対パスへ変換して提示し、それ以外（repo 外 `<repo>-wt/df-<N>`。
+//   issue #528）は絶対パスのまま pass-through する。後者は偶発的 fallback ではなく正規経路 —
+//   EnterWorktree は絶対パスでも成立する（issue #449 実測）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -4145,11 +4162,17 @@ const branch = `feature/issue-${ISSUE}`
 const setup = need(await trackedAgent(
   `git worktree を 1 つ作って絶対パスを返せ。手順:\n`
   + `1. リポジトリルートで \`git fetch origin\`\n`
-  + `2. worktree dir \`<repo>/.claude/worktrees/df-${ISSUE}\` が既に存在すれば再利用、無ければ\n`
+  + `2. worktree dir の候補は 2 つ — 既定 \`<repo>/.claude/worktrees/df-${ISSUE}\`、repo 外 \`<repo>-wt/df-${ISSUE}\`\n`
+  + `   （<repo> は sibling ディレクトリ。例: \`/path/to/repo\` に対し \`/path/to/repo-wt/df-${ISSUE}\`）。\n`
+  + `   既定候補が存在すればそれを再利用する。既定候補が無ければ repo 外候補を確認し、存在すれば\n`
+  + `   それを再利用する（両方存在する場合は既定候補を優先）。\n`
+  + `3. どちらも存在しなければ\n`
   + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
-  + `   （branch が既に存在する場合は -b を外して既存 branch を checkout）\n`
-  + `3. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
-  + `4. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
+  + `   を実行する。これが \`Operation not permitted\` / permission 系エラーで失敗した場合のみ\n`
+  + `   \`git worktree add -b ${branch} <repo>-wt/df-${ISSUE} origin/${BASE}\` で repo 外へ作成する\n`
+  + `   （branch が既に存在する場合はいずれも -b を外して既存 branch を checkout）\n`
+  + `4. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
+  + `5. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
   { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
 ), 'Setup(worktree)')
 WT = setup.worktree

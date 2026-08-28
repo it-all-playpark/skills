@@ -153,6 +153,16 @@ test('isolationFailureMessage: .claude/worktrees/ を含まない worktree パ�
   assert.match(msg, /EnterWorktree\(\{ path: "\/tmp\/some-other-wt" \}\)/);
 });
 
+test('isolationFailureMessage: repo 外 <repo>-wt/df-<N> レイアウトは絶対パスのまま EnterWorktree/git worktree add に提示される（issue #528）', () => {
+  const msg = isolationFailureMessage({
+    worktree: '/Users/x/ghq/github.com/o/r-wt/df-528', branch: 'feature/issue-528', startRef: 'origin/main',
+    workflowName: 'dev-flow-run', workflowArgs: '528', targetPath: '/Users/x/ghq/github.com/o/r-wt/df-528', error: '',
+  });
+  assert.match(msg, /EnterWorktree\(\{ path: "\/Users\/x\/ghq\/github\.com\/o\/r-wt\/df-528" \}\)/);
+  assert.match(msg, /git worktree add -b feature\/issue-528 \/Users\/x\/ghq\/github\.com\/o\/r-wt\/df-528 origin\/main/);
+  assert.doesNotMatch(msg, /path: "\.claude\/worktrees/);
+});
+
 test('isolationFailureMessage: targetPath 指定時は worktree（書き込み失敗先）と異なる先を回避手順に提示する', () => {
   const msg = isolationFailureMessage({
     worktree: '/repo', branch: 'feature/issue-455', startRef: 'origin/main',

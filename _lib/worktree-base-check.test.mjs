@@ -53,14 +53,29 @@ test('worktreeBaseProbePrompt: 複合 if 文（if [ ... ]）を含まない（wo
   assert.doesNotMatch(prompt, /if \[/);
 });
 
-test('worktreeBaseProbePrompt: test -d を独立コマンドとして含む', () => {
+test('worktreeBaseProbePrompt: test -d を repo 内候補について独立コマンドとして含む（issue #528: 2候補化）', () => {
   const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /`test -d "<WTD>"`/);
+  assert.match(prompt, /`test -d "<WTD_IN>"`/);
+});
+
+test('worktreeBaseProbePrompt: test -d を repo 外候補について独立コマンドとして含む（issue #528: 2候補化）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.match(prompt, /`test -d "<WTD_EXT>"`/);
 });
 
 test('worktreeBaseProbePrompt: git -C ... rev-parse ... @{upstream} を独立コマンドとして含む（git -C 単体は guard を通過する形の pin）', () => {
   const prompt = worktreeBaseProbePrompt(517);
   assert.match(prompt, /`git -C "<WTD>" rev-parse --abbrev-ref --symbolic-full-name @\{upstream\}`/);
+});
+
+test('worktreeBaseProbePrompt: repo 外候補 <repo>-wt/df-517 を含む（issue #528: 2候補化）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.match(prompt, /-wt\/df-517/);
+});
+
+test('worktreeBaseProbePrompt: repo 内候補 .claude/worktrees/df-517 を引き続き含む（issue #528: 2候補化, 既定動作の維持）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.match(prompt, /\.claude\/worktrees\/df-517/);
 });
 
 // ── checkWorktreeBase: 一致・不一致・判定不能 ────────────────────────────────
@@ -103,6 +118,20 @@ test('checkWorktreeBase: 不一致（origin/main vs base dev）→ throw（origi
   );
 });
 
+test('checkWorktreeBase: 不一致 → throw メッセージが repo 外配置の削除パス（-wt/df-）を含む（issue #528: 2候補化）', () => {
+  assert.throws(
+    () => checkWorktreeBase({
+      issue: 517,
+      base: 'dev',
+      probe: { ok: true, worktree_exists: true, upstream: 'origin/main' },
+    }),
+    (err) => {
+      assert.match(err.message, /-wt\/df-/);
+      return true;
+    },
+  );
+});
+
 test('checkWorktreeBase: 判定不能（upstream 空文字列）→ throw + 復旧手順', () => {
   assert.throws(
     () => checkWorktreeBase({
@@ -113,6 +142,20 @@ test('checkWorktreeBase: 判定不能（upstream 空文字列）→ throw + 復�
     (err) => {
       assert.match(err.message, /git worktree remove/);
       assert.match(err.message, /--base/);
+      return true;
+    },
+  );
+});
+
+test('checkWorktreeBase: 判定不能（upstream 空文字列）→ throw メッセージが repo 外配置の削除パス（-wt/df-）を含む（issue #528: 2候補化）', () => {
+  assert.throws(
+    () => checkWorktreeBase({
+      issue: 517,
+      base: 'dev',
+      probe: { ok: true, worktree_exists: true, upstream: '' },
+    }),
+    (err) => {
+      assert.match(err.message, /-wt\/df-/);
       return true;
     },
   );
@@ -162,6 +205,23 @@ test('checkWorktreeBase: worktree_exists:false → status no_worktree（throw �
   });
   assert.equal(res.status, 'no_worktree');
   assert.match(res.logLine, /worktree-base-check/);
+});
+
+// ── checkWorktreeBase / prompt: repo 外配置ケース（issue #528: 2候補化） ────────
+
+test('checkWorktreeBase: repo 外 worktree で取得された想定の probe → status match（位置非依存）', () => {
+  const res = checkWorktreeBase({
+    issue: 517,
+    base: 'dev',
+    probe: { ok: true, worktree_exists: true, upstream: 'origin/dev' },
+  });
+  assert.equal(res.status, 'match');
+});
+
+test('worktreeBaseProbePrompt: WTD_EXT 由来の git -C "<WTD>" upstream 手順が残る（repo 外配置でも同一手順を使う pin）', () => {
+  const prompt = worktreeBaseProbePrompt(517);
+  assert.match(prompt, /`git -C "<WTD>" rev-parse --abbrev-ref --symbolic-full-name @\{upstream\}`/);
+  assert.match(prompt, /`test -d "<WTD_EXT>"`/);
 });
 
 // ── checkWorktreeBase: base にスラッシュ含み ────────────────────────────────
