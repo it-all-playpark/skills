@@ -329,8 +329,8 @@ cmd_log() {
         esac
     fi
     if [[ -n "$guard_id" ]]; then
-        if ! [[ "$guard_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
-            echo "journal log: dropping invalid --guard-id: $guard_id (must match ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$)" >&2
+        if ! [[ "$guard_id" =~ ^[a-z][a-z0-9-]{0,39}(,[a-z][a-z0-9-]{0,39}){0,15}$ ]]; then
+            echo "journal log: dropping invalid --guard-id: $guard_id (must match ^[a-z][a-z0-9-]{0,39}(,[a-z][a-z0-9-]{0,39}){0,15}$)" >&2
             guard_id=""
         fi
     fi

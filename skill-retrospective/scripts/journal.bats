@@ -1289,6 +1289,23 @@ JSON
     [ "$guard_id" = "sandbox-deny" ]
 }
 
+# ---------------------------------------------------------------------------
+# (h) comma 結合値（複数 guard 発火時の送り側フォーマット） -> telemetry.guard_id にそのまま記録される
+#     (issue #532: 送り側 dev-flow.js は guard_id を unique・sort して comma 結合した文字列を渡す)
+# ---------------------------------------------------------------------------
+@test "--guard-id: comma-joined multi-guard value recorded as telemetry.guard_id string" {
+    run "$SCRIPT" log dev-flow success --guard-id 'inline-edit-guard,sandbox-deny'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    guard_id=$(jq -r '.telemetry.guard_id' "$entry_file")
+    [ "$guard_id" = "inline-edit-guard,sandbox-deny" ]
+    guard_id_type=$(jq -r '.telemetry.guard_id | type' "$entry_file")
+    [ "$guard_id_type" = "string" ]
+}
+
 # ===========================================================================
 # --subagent-invocations flag (issue #445)
 # ===========================================================================
