@@ -1,18 +1,18 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import os from 'node:os';
 
 import {
   JOURNAL_LOG_STATUSES,
-  buildJournalFinalizeCommand,
   buildJournalHandoffPayload,
   buildJournalLogInstr,
+  buildJournalPendingPath,
   buildJournalSaveInstr,
   classifyJournalLogStatus,
+  journalEffectId,
   repoFromGithubUrl,
   validateJournalSavedPath,
 } from './journal-handoff.mjs';
@@ -39,9 +39,8 @@ const EDGE_CASE_PAYLOAD = JSON.stringify({
   },
 });
 
-// AC-1/AC-2: run the generated finalize command for real through bash, with
-// CLAUDE_JOURNAL_DIR pointed at a scratch dir, to verify jq validation + stable-effect-ID
-// naming + atomic write behavior (not just the literal command string).
+// AC-1/AC-2: exercise the stage2 naming + verbatim-copy contract against a scratch journal dir
+// (not just the literal instruction string).
 function withScratchJournalDir(fn) {
   const dir = mkdtempSync(join(os.tmpdir(), 'journal-handoff-'));
   try {
@@ -58,15 +57,21 @@ function writeTempPayloadFile(content) {
   return { dir, file };
 }
 
-// Simulates the agent step: buildJournalFinalizeCommand returns a command containing the
-// literal placeholder `<PAYLOAD_FILE>`; the caller substitutes it with a real path (in
-// production this is done by the agent per buildJournalHandoffInstr's instructions).
-function runFinalize({ prefix, id, payloadFile, journalDir }) {
-  const cmd = buildJournalFinalizeCommand({ prefix, id }).split('<PAYLOAD_FILE>').join(payloadFile);
-  execFileSync('bash', ['-c', cmd], {
-    env: { ...process.env, CLAUDE_JOURNAL_DIR: journalDir },
-    encoding: 'utf8',
-  });
+const PENDING_PREFIX = '~/.claude/journal/pending/';
+
+// Simulates the agent step described by buildJournalLogInstr: Read the payload file, then Write
+// its content verbatim to the JS-determined pending path. stage2 carries no shell any more, so
+// what is under test is the naming contract (stable effect ID derived from the payload) plus the
+// verbatim copy. The `~` prefix — expanded by the Write tool in production — is rebased onto a
+// scratch dir so the test never touches the real journal.
+function simulateStage2({ prefix, id, payloadFile, journalDir }) {
+  const payload = readFileSync(payloadFile, 'utf8');
+  const pendingPath = buildJournalPendingPath({ prefix, id, effectId: journalEffectId(payload) });
+  assert.ok(pendingPath.startsWith(PENDING_PREFIX), `pending パスの接頭辞が変わっている: ${pendingPath}`);
+  const rebased = join(journalDir, 'pending', pendingPath.slice(PENDING_PREFIX.length));
+  mkdirSync(dirname(rebased), { recursive: true });
+  writeFileSync(rebased, payload, 'utf8');
+  return rebased;
 }
 
 function listPending(journalDir) {
@@ -179,7 +184,7 @@ test('buildJournalSaveInstr instructs a Read-before-overwrite idempotency step f
   assert.ok(/Read tool[\s\S]*Write tool/.test(saveDirInstr), 'Read の指示は Write の指示より前に現れるべき');
 });
 
-// payloadPath は finalize command へ splice されるため、呼び出し側の検証規律に依存せず
+// payloadPath は stage2 の Read tool パスへ splice されるため、呼び出し側の検証規律に依存せず
 // buildJournalLogInstr 自身でも同じ決定論検証を通す（将来の呼び出し側が検証を忘れても
 // 未検証 splice が復活しない）。
 test('buildJournalLogInstr throws when payloadPath violates the payload path contract', () => {
@@ -200,8 +205,8 @@ test('buildJournalLogInstr throws when payloadPath violates the payload path con
   }
 });
 
-test('buildJournalLogInstr accepts a contract-conforming payloadPath and splices it into the finalize command', () => {
-  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 494, payloadPath: SAVE_PATH });
+test('buildJournalLogInstr accepts a contract-conforming payloadPath and splices it into the stage2 instruction', () => {
+  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 494, payloadPath: SAVE_PATH, payload: '{"skill":"dev-flow"}' });
   assert.ok(instr.includes(SAVE_PATH));
   assert.ok(!instr.includes('<PAYLOAD_FILE>'));
 });
@@ -334,19 +339,60 @@ test('validateJournalSavedPath rejects non-string input', () => {
 
 // ---- buildJournalLogInstr (stage2) ----
 
-test('buildJournalLogInstr leaves no <PAYLOAD_FILE> placeholder and embeds the real path plus the pending dir', () => {
-  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath: '/wt/.devflow-tmp/payload-abc123.json' });
+test('buildJournalLogInstr embeds the source payload path and the JS-determined pending path, and keeps the fail-open contract', () => {
+  const payloadPath = '/wt/.devflow-tmp/payload-abc123.json';
+  const payload = '{"skill":"dev-flow","outcome":"success"}';
+  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath, payload });
   assert.ok(!instr.includes('<PAYLOAD_FILE>'));
-  assert.ok(instr.includes('/wt/.devflow-tmp/payload-abc123.json'));
-  assert.ok(instr.includes('pending'));
+  assert.ok(instr.includes(payloadPath));
+  assert.ok(instr.includes(buildJournalPendingPath({ prefix: 'devflow', id: 433, effectId: journalEffectId(payload) })));
   assert.ok(instr.includes('logged:false'));
 });
 
-test('buildJournalLogInstr embeds exactly buildJournalFinalizeCommand with the placeholder substituted', () => {
+// issue #526 regression pin: stage2 の指示に shell 構文が 1 つでも戻ると、EnterWorktree 済み
+// セッションの worktree 分離ガードに `too complex to verify that it stays inside the worktree`
+// で拒否され、dev-flow / pr-iterate のテレメトリが再び全損する（2026-08-20〜28 の実害）。
+// 「Write tool のみで書く」という stage2 の性質を、生成文字列の側から機械的に固定する。
+test('buildJournalLogInstr (issue #526) emits no shell constructs — stage2 writes through the Write tool only', () => {
+  const instr = buildJournalLogInstr({
+    prefix: 'devflow',
+    id: 526,
+    payloadPath: '/wt/.devflow-tmp/payload-abc123.json',
+    payload: EDGE_CASE_PAYLOAD,
+  });
+  for (const shellToken of ['$(', '&&', '||', '>/dev/null', '${', '|', 'mktemp', 'shasum', 'mkdir ', 'mv ', 'cp ', 'jq ']) {
+    assert.ok(
+      !instr.includes(shellToken),
+      `stage2 の指示に shell 構文 '${shellToken}' が含まれている: ${instr}`,
+    );
+  }
+  assert.ok(instr.includes('Write tool'));
+  assert.ok(instr.includes('Read tool'));
+});
+
+// stage2 は payload 本文を prompt に載せない（結論値がこの prompt へ構造的に現れない）。
+// payload を引数に取るのは書き込み先ファイル名の effect ID 算出のためだけである。
+test('buildJournalLogInstr never embeds the payload body in the stage2 prompt', () => {
+  const instr = buildJournalLogInstr({
+    prefix: 'devflow',
+    id: 433,
+    payloadPath: '/wt/.devflow-tmp/payload-abc123.json',
+    payload: EDGE_CASE_PAYLOAD,
+  });
+  assert.ok(!instr.includes(EDGE_CASE_PAYLOAD));
+  assert.ok(!instr.includes('"outcome":"success"'));
+  assert.ok(!instr.includes('日本語テスト名の検証'));
+});
+
+test('buildJournalLogInstr throws when payload is missing or not a string', () => {
   const payloadPath = '/wt/.devflow-tmp/payload-abc123.json';
-  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath });
-  const expectedCmd = buildJournalFinalizeCommand({ prefix: 'devflow', id: 433 }).split('<PAYLOAD_FILE>').join(payloadPath);
-  assert.ok(instr.includes(expectedCmd));
+  for (const bad of [undefined, null, '', 42, {}]) {
+    assert.throws(
+      () => buildJournalLogInstr({ prefix: 'devflow', id: 433, payloadPath, payload: bad }),
+      /payload is required/,
+      `payload=${JSON.stringify(bad ?? null)} は reject されるべき`,
+    );
+  }
 });
 
 // ---- classifyJournalLogStatus ----
@@ -371,24 +417,41 @@ test('classifyJournalLogStatus returns log_failed when saved is true but logged 
   assert.equal(classifyJournalLogStatus({ saved: true, logged: null }), 'log_failed');
 });
 
-// ---- buildJournalFinalizeCommand ----
+// ---- journalEffectId / buildJournalPendingPath ----
 
-test('buildJournalFinalizeCommand rejects unsafe filename parts', () => {
-  assert.throws(
-    () => buildJournalFinalizeCommand({ prefix: 'bad/prefix', id: 251 }),
-    /invalid prefix/,
-  );
-  assert.throws(
-    () => buildJournalFinalizeCommand({ prefix: 'priterate', id: '251;rm' }),
-    /invalid id/,
+test('buildJournalPendingPath rejects unsafe path parts', () => {
+  const effectId = journalEffectId('{}');
+  assert.throws(() => buildJournalPendingPath({ prefix: 'bad/prefix', id: 251, effectId }), /invalid prefix/);
+  assert.throws(() => buildJournalPendingPath({ prefix: 'priterate', id: '251;rm', effectId }), /invalid id/);
+  assert.throws(() => buildJournalPendingPath({ prefix: 'devflow', id: 251, effectId: '../escape' }), /invalid effectId/);
+  assert.throws(() => buildJournalPendingPath({ prefix: 'devflow', id: 251, effectId: 'ABCDEF0123456789' }), /invalid effectId/);
+});
+
+test('buildJournalPendingPath builds the pending path under the tilde journal dir', () => {
+  const effectId = journalEffectId('{"skill":"dev-flow"}');
+  assert.equal(
+    buildJournalPendingPath({ prefix: 'devflow', id: 526, effectId }),
+    `~/.claude/journal/pending/devflow-526-effect-${effectId}.json`,
   );
 });
 
-test('AC-1/AC-2: executing the finalize command against a real payload file produces exactly one valid-JSON effect file matching the payload', () => {
+test('journalEffectId is deterministic, 16 lowercase hex, and separates payloads that differ only in a high byte', () => {
+  assert.match(journalEffectId(EDGE_CASE_PAYLOAD), /^[0-9a-f]{16}$/);
+  assert.equal(journalEffectId(EDGE_CASE_PAYLOAD), journalEffectId(EDGE_CASE_PAYLOAD));
+  assert.notEqual(
+    journalEffectId('{"skill":"dev-flow","outcome":"success"}'),
+    journalEffectId('{"skill":"dev-flow","outcome":"failure"}'),
+  );
+  // 'あ'(U+3042) と 'B'(U+0042) は下位バイトが同一。下位バイトだけを混ぜる実装だと衝突するため、
+  // 日本語を含む payload の識別が落ちていないことをここで固定する。
+  assert.notEqual(journalEffectId('あ'), journalEffectId('B'));
+});
+
+test('AC-1/AC-2: the stage2 copy against a real payload file produces exactly one valid-JSON effect file matching the payload', () => {
   withScratchJournalDir((journalDir) => {
     const { dir, file } = writeTempPayloadFile(EDGE_CASE_PAYLOAD);
     try {
-      runFinalize({ prefix: 'devflow', id: 433, payloadFile: file, journalDir });
+      simulateStage2({ prefix: 'devflow', id: 433, payloadFile: file, journalDir });
 
       const files = listPending(journalDir);
       assert.equal(files.length, 1);
@@ -402,14 +465,14 @@ test('AC-1/AC-2: executing the finalize command against a real payload file prod
   });
 });
 
-test('AC-1/AC-2: re-running the finalize command with an identical payload file does not create a duplicate entry (idempotent overwrite)', () => {
+test('AC-1/AC-2: re-running stage2 with an identical payload file does not create a duplicate entry (idempotent overwrite)', () => {
   withScratchJournalDir((journalDir) => {
     const payload = '{"skill":"dev-flow","outcome":"success","issue":412}';
     const { dir, file } = writeTempPayloadFile(payload);
     try {
-      runFinalize({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
+      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
       const firstListing = listPending(journalDir);
-      runFinalize({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
+      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: file, journalDir });
       const secondListing = listPending(journalDir);
 
       assert.equal(firstListing.length, 1);
@@ -427,8 +490,8 @@ test('AC-1/AC-2: a different payload for the same prefix/id produces a distinct 
     const a = writeTempPayloadFile('{"skill":"dev-flow","outcome":"success"}');
     const b = writeTempPayloadFile('{"skill":"dev-flow","outcome":"failure"}');
     try {
-      runFinalize({ prefix: 'devflow', id: 412, payloadFile: a.file, journalDir });
-      runFinalize({ prefix: 'devflow', id: 412, payloadFile: b.file, journalDir });
+      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: a.file, journalDir });
+      simulateStage2({ prefix: 'devflow', id: 412, payloadFile: b.file, journalDir });
 
       const files = listPending(journalDir).sort();
       assert.equal(files.length, 2);
@@ -440,11 +503,11 @@ test('AC-1/AC-2: a different payload for the same prefix/id produces a distinct 
   });
 });
 
-test('AC-1/AC-2: no dot-prefixed temp file remains after execution (atomic mv leaves no partial JSON)', () => {
+test('AC-1/AC-2: stage2 writes a single plain *.json entry (no dot-prefixed or non-json leftovers)', () => {
   withScratchJournalDir((journalDir) => {
     const { dir, file } = writeTempPayloadFile('{"skill":"pr-iterate","outcome":"success"}');
     try {
-      runFinalize({ prefix: 'priterate', id: 99, payloadFile: file, journalDir });
+      simulateStage2({ prefix: 'priterate', id: 99, payloadFile: file, journalDir });
 
       const files = listPending(journalDir);
       assert.ok(files.every((f) => !f.startsWith('.')));
@@ -455,50 +518,21 @@ test('AC-1/AC-2: no dot-prefixed temp file remains after execution (atomic mv le
   });
 });
 
-// issue #499 F4 (AC3): buildJournalFinalizeCommand's first operation is `jq -e . "<PAYLOAD_FILE>"`;
-// the `&&` chain guarantees pending/ is never touched if that leading check fails or the command
-// itself is rejected outright (e.g. by an isolate-session guard). この不変条件を「PAYLOAD_FILE が
-// 存在しない」ケースで実測する — isolate 済みセッションではこのコマンド自体が実行拒否されうるが、
-// その場合も logged が true にならず log_failed として観測可能なまま run に影響しない
-// (issue #499 AC3 選択肢B: コマンドは変更せず fail-open 挙動をテストで pin する)。
-test('AC3 (issue #499): a nonexistent PAYLOAD_FILE fails the leading jq -e check and the && short-circuit leaves pending/ untouched', () => {
-  withScratchJournalDir((journalDir) => {
-    const missingPayloadFile = join(journalDir, 'does-not-exist-payload.json');
-    let threw = false;
-    try {
-      runFinalize({ prefix: 'devflow', id: 499, payloadFile: missingPayloadFile, journalDir });
-    } catch (err) {
-      threw = true;
-      assert.notEqual(err.status, 0);
-    }
-    assert.ok(threw, 'expected the finalize command to fail (non-zero exit) when PAYLOAD_FILE does not exist');
-
-    const files = listPending(journalDir);
-    assert.equal(files.length, 0, '&& 短絡により pending/ には何も書き込まれないはず');
+// issue #526: `jq -e` による pending/ 書き込み前の JSON 検証は shell と一緒に無くなった。
+// 壊れた payload は pending/ に届いたうえで Stop hook（stop-devflow-telemetry.sh）が
+// malformed/ へ隔離し、replay runbook で回収する経路に移った。ここで固定するのは
+// 「stage2 が失敗しても throw せず logged:false を返す」という fail-open 契約のみで、
+// 呼び出し側はこれを log_failed として観測できる（classifyJournalLogStatus のテスト参照）。
+test('AC3 (issue #526): the stage2 instruction keeps the fail-open contract — never throw, report logged:false', () => {
+  const instr = buildJournalLogInstr({
+    prefix: 'devflow',
+    id: 526,
+    payloadPath: '/wt/.devflow-tmp/payload-abc123.json',
+    payload: '{"skill":"dev-flow","outcome":"success"}',
   });
-});
-
-test('AC-1: a malformed JSON payload (devflow-411-style extra closing brace) fails jq -e validation and writes nothing to pending/', () => {
-  withScratchJournalDir((journalDir) => {
-    // Mirrors the devflow-411 malformed-park incident shape: an extra `}` mid-structure.
-    const malformed = '{"skill":"dev-flow","outcome":"success","telemetry":{"vdelta_verdicts":[{"ac":"AC-1"}]}}}';
-    const { dir, file } = writeTempPayloadFile(malformed);
-    try {
-      let threw = false;
-      try {
-        runFinalize({ prefix: 'devflow', id: 411, payloadFile: file, journalDir });
-      } catch (err) {
-        threw = true;
-        assert.notEqual(err.status, 0);
-      }
-      assert.ok(threw, 'expected the finalize command to fail (non-zero exit) on malformed JSON');
-
-      const files = listPending(journalDir);
-      assert.equal(files.filter((f) => f.endsWith('.json')).length, 0);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  assert.match(instr, /throw せず/);
+  assert.ok(instr.includes('{logged:false}'));
+  assert.ok(instr.includes('{logged:true}'));
 });
 
 // ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----
@@ -539,9 +573,16 @@ test('workflows construct journal handoff instructions through the canonical Wri
     (devFlow.match(/buildJournalSaveInstr\(\{ payload[^}]*savePath: journalPayloadPath \}\)/g) ?? []).length,
     2,
   );
+  // issue #526: stage2 は書き込み先ファイル名の effect ID 算出のため payload を受け取る。
+  // 渡し忘れると buildJournalLogInstr が throw して telemetry が丸ごと落ちるため、
+  // 両 call site が payload を渡していることを pin する。
   assert.equal(
-    (devFlow.match(/buildJournalLogInstr\(\{ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath \}\)/g) ?? []).length,
-    2, // Merge tier success handoff + writeFailureTelemetry
+    (devFlow.match(/buildJournalLogInstr\(\{ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath, payload: telemetryHandoff \}\)/g) ?? []).length,
+    1, // Merge tier success handoff
+  );
+  assert.equal(
+    (devFlow.match(/buildJournalLogInstr\(\{ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath, payload \}\)/g) ?? []).length,
+    1, // writeFailureTelemetry
   );
   assert.ok(!devFlow.includes('buildFailureJournalInstr'));
   // pr-iterate.js: Iterate telemetry handoff uses the 2-stage split, worktree-scoped saveDir.
@@ -555,7 +596,7 @@ test('workflows construct journal handoff instructions through the canonical Wri
   );
   assert.ok(!prIterate.includes('validateJournalSavedPath(journalSaveRes.path'));
   assert.equal(
-    (prIterate.match(/buildJournalLogInstr\(\{ prefix: 'priterate'/g) ?? []).length,
+    (prIterate.match(/buildJournalLogInstr\(\{ prefix: 'priterate', id: PR, payloadPath: journalSavedPath, payload: telemetryHandoff \}\)/g) ?? []).length,
     1,
   );
   // dev-improve.js: run 専用 worktree を持たないため saveDir は TMPDIR 配下の固定サブディレクトリ。
