@@ -923,6 +923,10 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 //   dev-flow は未実装 issue の作業を base から始めるため `origin/<base>`、pr-iterate は既存 PR の
 //   head を再現する必要があるため `origin/<head_ref>` を渡す（base 起点だと PR の変更を含まない
 //   worktree を提示してしまう — issue #455 レビュー指摘）。
+//   EnterWorktree へ提示する worktree 先は 2 レイアウトをサポートする: repo 内 `.claude/worktrees/df-<N>`
+//   は `.claude/worktrees/` 以降の相対パスへ変換して提示し、それ以外（repo 外 `<repo>-wt/df-<N>`。
+//   issue #528）は絶対パスのまま pass-through する。後者は偶発的 fallback ではなく正規経路 —
+//   EnterWorktree は絶対パスでも成立する（issue #449 実測）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
