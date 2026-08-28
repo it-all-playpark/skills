@@ -80,6 +80,7 @@ cmd_log() {
     local vdelta_verdicts="" vdelta_fail_open="" redgreen_deny="" testsurf_hits=""
     local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
     local subagent_invocations=""
+    local guard_id=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -138,6 +139,7 @@ cmd_log() {
             --merge-tier-reasons) merge_tier_reasons="$2"; shift 2 ;;
             --route) route="$2"; shift 2 ;;
             --subagent-invocations) subagent_invocations="$2"; shift 2 ;;
+            --guard-id) guard_id="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -153,7 +155,7 @@ cmd_log() {
     # Validate error category
     if [[ -n "$error_category" ]]; then
         case "$error_category" in
-            lint|test|build|runtime|config|env|merge|type-check|needs_clarification|empty_diff|cross_repo) ;;
+            lint|test|build|runtime|config|env|merge|type-check|needs_clarification|empty_diff|cross_repo|guard_blocked) ;;
             *) die_json "Invalid error category: $error_category" 1 ;;
         esac
     fi
@@ -326,6 +328,12 @@ cmd_log() {
                 ;;
         esac
     fi
+    if [[ -n "$guard_id" ]]; then
+        if ! [[ "$guard_id" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
+            echo "journal log: dropping invalid --guard-id: $guard_id (must match ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$)" >&2
+            guard_id=""
+        fi
+    fi
 
     ensure_journal_dir
 
@@ -493,6 +501,10 @@ cmd_log() {
     fi
     if [[ -n "$route" ]]; then
         telemetry=$(echo "$telemetry" | jq --arg v "$route" '. + {route: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$guard_id" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$guard_id" '. + {guard_id: $v}')
         has_telemetry=true
     fi
     if [[ -n "$subagent_invocations" ]]; then
@@ -870,6 +882,7 @@ Examples:
   journal.sh log dev-flow success --trust-evalseal-missing-reason agent_throw  # receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
   journal.sh log dev-flow success --trust-effectdelta-pr-missing-reason gh_failed  # PR stage receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
   journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
+  journal.sh log dev-flow success --error-category guard_blocked --guard-id sandbox-deny  # guard/hook 由来 BLOCKED の telemetry (guard_id は fail-open; dotfiles Stop hook 転送配線は dotfiles 側 PR)
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff

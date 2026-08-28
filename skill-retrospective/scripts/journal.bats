@@ -704,6 +704,53 @@ JSON
 }
 
 # ===========================================================================
+# Tests for new error category: guard_blocked (issue #530)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test (a): --error-category guard_blocked で success が exit 0 で記録される
+# ---------------------------------------------------------------------------
+@test "success with guard_blocked category exits 0 and records entry" {
+    run "$SCRIPT" log dev-flow success \
+        --error-category guard_blocked
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "guard_blocked" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (b): --error-category guard_blocked で failure が exit 0 で記録される
+# ---------------------------------------------------------------------------
+@test "failure with guard_blocked category exits 0 and records entry" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category guard_blocked \
+        --error-msg 'guard blocked the run'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "guard_blocked" ]
+    outcome=$(jq -r '.outcome' "$entry_file")
+    [ "$outcome" = "failure" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test (c): 未知カテゴリは guard_blocked 追加後も引き続き die_json で拒否される
+# ---------------------------------------------------------------------------
+@test "partial with bogus category still exits non-zero after guard_blocked addition" {
+    run "$SCRIPT" log dev-flow partial \
+        --error-category bogus \
+        --error-msg 'x'
+    [ "$status" -ne 0 ]
+}
+
+# ===========================================================================
 # Tests for --repo / --pr-number (issue #309)
 # ===========================================================================
 
@@ -1170,6 +1217,76 @@ JSON
         has_key=$(jq --arg k "$key" '.telemetry | has($k)' "$entry_file")
         [ "$has_key" = "false" ]
     done
+}
+
+# ===========================================================================
+# --guard-id flag (issue #530)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (d) 正常値 -> telemetry.guard_id が文字列として記録される
+# ---------------------------------------------------------------------------
+@test "--guard-id: valid value recorded as telemetry.guard_id string" {
+    run "$SCRIPT" log dev-flow success --guard-id sandbox-deny
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    guard_id=$(jq -r '.telemetry.guard_id' "$entry_file")
+    [ "$guard_id" = "sandbox-deny" ]
+    guard_id_type=$(jq -r '.telemetry.guard_id | type' "$entry_file")
+    [ "$guard_id_type" = "string" ]
+}
+
+# ---------------------------------------------------------------------------
+# (e) 不正値（スペース混入）-> guard_id キーのみ drop、他 telemetry キーは無事
+# ---------------------------------------------------------------------------
+@test "--guard-id: value with spaces is dropped, other telemetry keys unaffected" {
+    run "$SCRIPT" log dev-flow success --guard-id 'bad value with spaces' --merge-tier REVIEW
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_guard_id=$(jq '.telemetry | has("guard_id")' "$entry_file")
+    [ "$has_guard_id" = "false" ]
+    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
+    [ "$merge_tier" = "REVIEW" ]
+}
+
+# ---------------------------------------------------------------------------
+# (f) メタ文字混入 -> guard_id キーのみ drop、単独指定なら telemetry キー自体が無い
+# ---------------------------------------------------------------------------
+@test "--guard-id: shell metacharacters dropped, entry still recorded" {
+    run "$SCRIPT" log dev-flow success --guard-id '$(rm -rf x)'
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
+    [ "$has_telemetry" = "false" ]
+}
+
+# ---------------------------------------------------------------------------
+# (g) 滞留 payload 同形状の統合ケース: guard_blocked + guard_id + merge_tier + route が共存
+# ---------------------------------------------------------------------------
+@test "--guard-id: coexists with --error-category guard_blocked and other telemetry flags" {
+    run "$SCRIPT" log dev-flow success \
+        --error-category guard_blocked \
+        --guard-id sandbox-deny \
+        --merge-tier HOLD \
+        --route full
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "guard_blocked" ]
+    guard_id=$(jq -r '.telemetry.guard_id' "$entry_file")
+    [ "$guard_id" = "sandbox-deny" ]
 }
 
 # ===========================================================================
