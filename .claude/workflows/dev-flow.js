@@ -6202,6 +6202,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     eval_staleness: evalStaleness,
     ...(state.evalResult?.verdict ? { eval_verdict: state.evalResult.verdict } : {}),
     ...(iterate?.status ? { iterate_status: iterate.status } : {}),
+    ...(iterate?.fixes_applied != null ? { iterate_rounds: iterate?.iterations ?? 0, fixes_applied: iterate.fixes_applied } : {}),
     ui_verify: state.uiVerifyStatus,
     ...(state.uiVerifyMode ? { ui_verify_mode: state.uiVerifyMode } : {}),
     final_reconcile: finalReconcile,

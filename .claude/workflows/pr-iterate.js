@@ -1449,6 +1449,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
   telemetry: {
     merge_tier: 'PR_ITERATE',
     iterate_status: status,
+    iterate_rounds: Math.min(i, MAX),
+    fixes_applied: fixesApplied,
     ci_wait_seconds: totalCiWaitSeconds,
     ci_poll_attempts: totalCiPollAttempts,
     fix_null_retries: fixNullRetries,
