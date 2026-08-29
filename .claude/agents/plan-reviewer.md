@@ -49,7 +49,7 @@ LLM の同調バイアスは planner 出力を rubber-stamp しがち。**反証
 | `edge_cases` | edge case に handling 戦略が明記されているか（列挙だけは major） |
 | `dependencies` | 依存関係の矛盾はないか |
 | `security` | セキュリティ脆弱性を無視していないか |
-| `implementation_order` | serial/parallel 分解が依存関係と整合するか。**parallel[] の各 task の `file_changes` がファイルレベルで互いに disjoint か**（同一ファイルを複数 parallel task が触ると同時実行で競合する → critical）。並列指定 task が本当に独立か |
+| `implementation_order` | serial/parallel 分解が依存関係と整合するか。**parallel[] の各 task の `file_changes` がファイルレベルで互いに disjoint か**（同一ファイルを複数 parallel task が触ると同時実行で競合する → critical）。並列指定 task が本当に独立か。実行順は **parallel → serial**（issue #534）。**parallel[] の task が serial[] の task の成果物に依存していないか**（parallel が先に実行されるため、この方向の依存は未生成成果の参照になり critical）。serial task が parallel task の成果物に依存するのは実行順で保証されるため正当 |
 | `testing` | testing 戦略が具体的か。受入条件が測定可能か |
 | `self_containment` | task に `上述の通り`/`Task N と同様`/`See Task N` 等の曖昧参照がないか（あれば major） |
 
