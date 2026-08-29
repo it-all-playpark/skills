@@ -1099,6 +1099,12 @@ function classifyMergeableState(meta) {
 //   が non-null を渡す設計）— 未指定/null = 挙動完全不変（regression なし）。non-null かつ
 //   blocking===true かつ verdict!=='pass' のとき HOLD reason を追記する（inconclusive も成功
 //   扱いしない）。verdict が closed enum 外は throw（後方互換 scaffolding 禁止規約）。
+// s.evalVerdictFail (optional boolean): true の場合、evaluate phase が verdict=fail のまま PR へ
+//   進んだ事実を開示する専用 reason を HOLD/AUTO/REVIEW 全分岐の reasons に追記する
+//   （keywordAloneDisclosure と同型 — issue #536）。未解消 findings は ledger/HOLD 条件が別途
+//   担保するため tier 判定値は変えない（可視化のみ）。未指定/null/false = reason 追加なし、
+//   tier 判定値も従来と完全同一（regression なし）。boolean 以外は明示 error
+//   （後方互換 scaffolding 禁止規約）。
 function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -1112,6 +1118,9 @@ function classifyMergeTier(s) {
   if (s.trustGate != null && !['pass', 'fail', 'inconclusive'].includes(s.trustGate.verdict)) {
     throw new Error('classifyMergeTier: invalid trustGate: ' + s.trustGate.verdict);
   }
+  if (s.evalVerdictFail != null && typeof s.evalVerdictFail !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid evalVerdictFail: ' + s.evalVerdictFail);
+  }
   const reasons = [];
   if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
   if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
@@ -1121,6 +1130,9 @@ function classifyMergeTier(s) {
   }
   const keywordAloneDisclosure = (s.breakingKeyword && !s.breakingStructured)
     ? 'breaking keyword hit（issue title/body 決定論 scan）— 構造化判定 breaking_change=false のため HOLD 不採用（可視化のみ。issue #364）'
+    : null;
+  const evalFailDisclosure = s.evalVerdictFail === true
+    ? 'evaluator verdict=fail のまま PR へ進行 — 未解消 findings は ledger/HOLD 条件が別途担保するため tier 判定は不変（可視化のみ。issue #536）'
     : null;
   if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
   if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
@@ -1139,6 +1151,7 @@ function classifyMergeTier(s) {
   }
   if (reasons.length) {
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
+    if (evalFailDisclosure) reasons.push(evalFailDisclosure);
     return { tier: 'HOLD', reasons };
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
@@ -1147,10 +1160,12 @@ function classifyMergeTier(s) {
     // evalSkipped は optional（未指定 = falsy = 開示なし）。tier 判定値は変更しない（ゲート境界不変）。
     if (s.evalSkipped === true) autoReasons.push('AC は未検証（micro eval skip）— evaluator 0 回のため acceptance_criteria の充足は判定していない');
     if (keywordAloneDisclosure) autoReasons.push(keywordAloneDisclosure);
+    if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
     return { tier: 'AUTO', reasons: autoReasons };
   }
   const reviewReasons = ['標準 — 人間が LGTM して merge'];
   if (keywordAloneDisclosure) reviewReasons.push(keywordAloneDisclosure);
+  if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);
   return { tier: 'REVIEW', reasons: reviewReasons };
 }
 // ==== END inline: _lib/merge-tier.mjs ====
@@ -6013,6 +6028,7 @@ const mergeTier = classifyMergeTier({
   testsurfUncleared: state.ledger.items.filter((it) => it.source === 'seed' && it.dimension === 'test-integrity' && !it.checked).map((it) => it.id),
   mergeableState,
   trustGate: isGatingMode(EVALSEAL_MODE) ? { blocking: true, verdict: effectiveTrustVerdict(state.trustReceipts) } : null,
+  evalVerdictFail: state.evalResult?.verdict === 'fail',
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 

@@ -893,3 +893,64 @@ test('classifyMergeTier: trustGate.verdict が out-of-enum → throw', () => {
     trustGate: { blocking: true, verdict: 'bogus' },
   }), /invalid trustGate/);
 });
+
+// ---- issue #536: evalVerdictFail 開示専用 reason（keywordAloneDisclosure 同型）----
+
+test('classifyMergeTier: evalVerdictFail:true + 収束済み standard → REVIEW かつ開示 reason を含む', () => {
+  const r = classifyMergeTier({
+    iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0,
+    evalVerdictFail: true,
+  });
+  assert.equal(r.tier, 'REVIEW');
+  assert.ok(r.reasons.some((x) => x.includes('evaluator verdict=fail')), `reasons に開示文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: evalVerdictFail 未指定/null/false は既存挙動と完全一致（pin）', () => {
+  const baseInput = {
+    iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0,
+  };
+  const withoutFlag = classifyMergeTier({ ...baseInput });
+  assert.deepEqual(withoutFlag, { tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'] });
+
+  const withNull = classifyMergeTier({ ...baseInput, evalVerdictFail: null });
+  assert.deepEqual(withNull, withoutFlag);
+
+  const withFalse = classifyMergeTier({ ...baseInput, evalVerdictFail: false });
+  assert.deepEqual(withFalse, withoutFlag);
+});
+
+test('classifyMergeTier: evalVerdictFail に非 boolean(\'fail\'/1/{}) → throw', () => {
+  const baseInput = {
+    iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0,
+  };
+  for (const bad of ['fail', 1, {}]) {
+    assert.throws(
+      () => classifyMergeTier({ ...baseInput, evalVerdictFail: bad }),
+      /classifyMergeTier: invalid evalVerdictFail/,
+      `evalVerdictFail=${JSON.stringify(bad)} は throw すべき`,
+    );
+  }
+});
+
+test('classifyMergeTier: evalVerdictFail:true + HOLD 条件(unsatisfiedAc:true) → HOLD のまま開示 reason が追記される', () => {
+  const r = classifyMergeTier({
+    iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0,
+    unsatisfiedAc: true, evalVerdictFail: true,
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.reasons.some((x) => x.includes('evaluator verdict=fail')), `HOLD reasons に開示文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: evalVerdictFail:true + micro AUTO 条件 → AUTO のまま開示 reason が追記される', () => {
+  const r = classifyMergeTier({
+    iterateStatus: 'lgtm', shape: 'micro', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0,
+    evalVerdictFail: true,
+  });
+  assert.equal(r.tier, 'AUTO');
+  assert.ok(r.reasons.some((x) => x.includes('evaluator verdict=fail')), `AUTO reasons に開示文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+});
