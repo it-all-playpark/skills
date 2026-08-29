@@ -355,10 +355,28 @@ const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判�
 
 // run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
 // trackedAgent() 経由で呼び、SUBAGENT_COUNTS へ計上する（issue #445。dev-flow.js と同型）。
+// StructuredOutput 契約違反（subagent が StructuredOutput を呼ばず完了 — 一過性のモデル逸脱）に
+// 限定して同一 prompt で 1 回だけリトライする（issue #527）。それ以外の throw は従来どおり
+// 伝播させる（fail-closed 維持）。retry も実 agent() 起動なので SUBAGENT_COUNTS へ再計上する。
+// issue #533 review: リトライは `opts.retryOnContractViolation === true` の opt-in call site
+// 限定（既定はリトライしない）。commit・push・journal 追記・PR コメント投稿等の副作用を伴う
+// call site を無差別リトライすると、副作用完了後に StructuredOutput 未達で終わった agent を
+// 同一 prompt で再実行して二重 push・journal 二重追記・重複コメントを起こし得るため、副作用の
+// ない読み取り専用 probe 系 call site（dev-flow.js の resolve-base / worktree-base-check 等）
+// のみで有効化する。pr-iterate.js の call site（fix / review / commit-ensure / journal-save /
+// journal-log 等）はいずれも副作用を伴うため opt-in しない（dev-flow.js と同型実装のみ共有）。
 const SUBAGENT_COUNTS = {};
 async function trackedAgent(prompt, opts) {
   recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
-  return agent(prompt, opts);
+  try {
+    return await agent(prompt, opts);
+  } catch (e) {
+    if (!opts?.retryOnContractViolation) throw e;
+    if (!String(e?.message ?? e).includes('without calling StructuredOutput')) throw e;
+    log(`⚠️ ${opts?.label ?? 'agent'} が StructuredOutput 契約違反で失敗 — 同一 prompt で 1 回だけリトライ（issue #527）`);
+    recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
+    return agent(prompt, opts);
+  }
 }
 
 // fail-open 規定の exec-proxy 呼び出し用ラッパ（issue #499）。trackedAgent が throw した場合

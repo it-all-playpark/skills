@@ -98,25 +98,32 @@ for (const { name, path } of TARGETS) {
   const sanitizedSrc = neutralizeRegexLiterals(rawSrc);
   const strippedSrc = stripComments(sanitizedSrc);
 
-  test(`${name}: bare agent( 呼び出しは trackedAgent wrapper 内の 1 箇所のみ`, () => {
+  test(`${name}: bare agent( 呼び出しは trackedAgent wrapper 内の 2 箇所のみ（issue #527: 契約違反リトライで初回 + リトライの 2 箇所）`, () => {
     const bareAgentCallRe = /(?<![A-Za-z0-9_$])agent\s*\(/g;
     const matches = [...strippedSrc.matchAll(bareAgentCallRe)];
     assert.equal(
       matches.length,
-      1,
-      `bare agent( の総出現数が 1 件ではない（${matches.length} 件）。新規 agent() call site は ` +
+      2,
+      `bare agent( の総出現数が 2 件ではない（${matches.length} 件）。新規 agent() call site は ` +
       `trackedAgent() 経由で呼ぶこと`,
     );
   });
 
-  test(`${name}: 唯一残る bare agent( は trackedAgent wrapper の return agent(...) 行`, () => {
+  test(`${name}: 残る bare agent( 呼び出しはすべて trackedAgent wrapper 本体の内側にある（issue #527）`, () => {
+    const wrapperMarker = 'async function trackedAgent(prompt, opts) {';
+    const wrapperStart = strippedSrc.indexOf(wrapperMarker);
+    assert.ok(wrapperStart !== -1, 'trackedAgent wrapper 定義が見つからない');
+    const nextFnIdx = strippedSrc.indexOf('async function', wrapperStart + wrapperMarker.length);
+    const wrapperEnd = nextFnIdx === -1 ? strippedSrc.length : nextFnIdx;
+
     const bareAgentCallRe = /(?<![A-Za-z0-9_$])agent\s*\(/g;
-    const match = bareAgentCallRe.exec(strippedSrc);
-    assert.ok(match, 'bare agent( の一致が見つからない');
-    const lineStart = strippedSrc.lastIndexOf('\n', match.index) + 1;
-    const lineEnd = strippedSrc.indexOf('\n', match.index);
-    const line = strippedSrc.slice(lineStart, lineEnd === -1 ? strippedSrc.length : lineEnd).trim();
-    assert.equal(line, 'return agent(prompt, opts);');
+    const matches = [...strippedSrc.matchAll(bareAgentCallRe)];
+    for (const m of matches) {
+      assert.ok(
+        m.index >= wrapperStart && m.index < wrapperEnd,
+        `bare agent( 呼び出し（index ${m.index}）が trackedAgent wrapper 本体の外にある — call site は trackedAgent() 経由で呼ぶこと`,
+      );
+    }
   });
 
   test(`${name}: 成功 telemetry handoff に subagent_invocations キーが存在する`, () => {

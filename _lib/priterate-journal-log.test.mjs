@@ -262,7 +262,11 @@ test('[journal-log] journal-save が saved:false を返す場合 journal-log(sta
 // stage 帰属テスト: stage1 成功 → stage2 が throw した場合、失敗したのは stage2 なので
 // log_failed でなければならない（save_failed に落ちると誤った診断を telemetry 利用側へ伝える）。
 test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場合 result.journal_log_status は log_failed（save_failed に誤帰属しない）', async () => {
-  const journalResult = new Error('agent({schema}): subagent completed without calling StructuredOutput');
+  // issue #527/#533: trackedAgent のリトライは `opts.retryOnContractViolation === true` の
+  // opt-in call site 限定で、journal-save/journal-log の call site はいずれも opt-in していない
+  // ため 'without calling StructuredOutput' を含む throw でもリトライされない。ここでは
+  // 意図を明確にするため exec-proxy 実行失敗を示す別メッセージ（call count=1 想定に影響しない）を使う。
+  const journalResult = new Error('exec-proxy 実行失敗: EPERM');
   const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox(journalResult);
 
   const { result, error } = await runPrIterateCapture(src, ctx);
@@ -287,7 +291,11 @@ test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場�
 // stage2 が何らかの理由で失敗した場合も journal_log_status は 'log_failed'、stage1 で落ちた
 // 場合は 'save_failed' として観測可能なまま run に影響しない（どの段で落ちたかが返り値に残る）。
 test('[journal-log] stage1 の journal-save(agent) が throw した場合 journal-log(stage2) は呼ばれず result.journal_log_status は save_failed のまま run 完走する（fail-open）', async () => {
-  const journalSaveResult = new Error('agent({schema}): subagent completed without calling StructuredOutput');
+  // issue #527/#533: trackedAgent のリトライは `opts.retryOnContractViolation === true` の
+  // opt-in call site 限定で、journal-save/journal-log の call site はいずれも opt-in していない
+  // ため 'without calling StructuredOutput' を含む throw でもリトライされない。ここでは
+  // 意図を明確にするため exec-proxy 実行失敗を示す別メッセージ（call count=1 想定に影響しない）を使う。
+  const journalSaveResult = new Error('exec-proxy 実行失敗: EPERM');
   const { ctx, getJournalCallCount, getJournalSaveCallCount } = makeSandbox({ logged: true, summary: 'ok' }, journalSaveResult);
 
   const { result, error } = await runPrIterateCapture(src, ctx);

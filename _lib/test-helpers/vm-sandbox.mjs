@@ -63,7 +63,8 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
       // issue #517: 既存 worktree 起点検証 probe のデフォルト応答。呼び出し側 responder が
       // 明示的に 'worktree-base-check' を扱わない限り、未存在（新規作成経路）を返し
       // checkWorktreeBase の fail-closed throw で Setup 以降の call chain を壊さない。
-      return { ok: true, worktree_exists: false, upstream: '' };
+      // issue #527: probe schema を upstream_remote/upstream_merge に分割。
+      return { ok: true, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     }
     return result === undefined ? null : result;
   };
