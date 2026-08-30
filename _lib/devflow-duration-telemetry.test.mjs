@@ -3,10 +3,15 @@
 // (repo precedent はテストごとの helper 複製)、agentStub に専用 clock# probe 分岐と
 // 給電（feedClockMark）対象 label への optional epoch 付与を追加する。
 //
-// issue #443: 専用 clock probe は clockProbe('start') / clockProbe('end') の 2 回のみに削減され、
+// issue #443: 専用 clock probe は当初 clockProbe('start') / clockProbe('end') の 2 回のみに削減され、
 // 残り 9 mark（analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/pr_end/
 // iterate_end/final_end）は隣接する既存 exec-proxy / agent 応答の optional `epoch` フィールドから
 // feedClockMark() 経由で給電される（recordClockMark の fail-open 契約は不変）。
+//
+// issue #550 F1/F3（2 段更新の最終段）: clockProbe('start') は F1 で、clockProbe('end') は F3 で
+// それぞれ廃止された。専用 clock probe は 0 回になり、start mark は Setup 冒頭の setup-base probe
+// の optional epoch、end mark は Merge tier 末尾の post-summary 応答の optional epoch から
+// feedClockMark() 経由で給電される。
 //
 // epochMode='ok'   : clock# probe と、給電対象の各 stub 応答が epoch を単調増加で返す
 //                     → journal-log prompt に duration_seconds/phase_durations が現れる。
@@ -52,22 +57,24 @@ function makeSandbox(analyzeReq, epochMode) {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
 
-    // clock#start / clock#end（issue #443）: 専用 clock probe はこの 2 回のみが呼ばれるはず。
-    // 残り 9 mark は feedClockMark() が隣接応答の epoch から給電するため、この分岐に到達するのは
-    // start/end だけである（AC-1: ここで記録した回数がちょうど 2 であることをテストで検証する）。
+    // clock#*（issue #443 / #550 F1+F3）: 専用 clock probe は 0 回になった
+    // （clock#start は F1 で、clock#end は F3 で撤去済み — start mark は setup-base probe
+    // （issue #550 案1: resolve-base + worktree-base-check 統合 probe）、end mark は post-summary
+    // 応答の optional epoch からそれぞれ給電される）。この分岐は防御的に残すが到達しないはずで、
+    // AC-1 は getClockCalls() が常に空配列であることを検証する。
     if (label.startsWith('clock#')) {
       clockCalls.push(label);
       if (epochMode === 'fail') return null;
       epoch += 10;
       return { ok: true, epoch };
     }
-    // Setup(resolve-base): base 解決 probe（issue #298）— 給電対象ではない
-    if (label === 'resolve-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
-    }
-    // Setup(worktree-base-check): 既存 worktree 起点検証 probe（issue #517）— 給電対象ではない
-    if (label === 'worktree-base-check') {
-      return { ok: true, worktree_exists: false, upstream: '' };
+    // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #298, #517, #550 案1）。
+    // start mark の給電元（専用 clock#start probe は廃止、epoch は optional）。
+    if (label === 'setup-base') {
+      return withEpoch({
+        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
+        worktree_exists: false, upstream_remote: '', upstream_merge: '',
+      });
     }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
@@ -136,9 +143,11 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'changed-files') {
       return { files: ['src/foo.ts'] };
     }
-    // post-summary: posted:true 固定
-    if (label === 'post-summary' && agentType === 'dev-runner') {
-      return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    // post-summary（issue #550 F3）: posted:true 固定 + end mark の給電元
+    // （専用 clock#end probe 撤去に伴い、post-summary 応答の optional epoch から
+    // feedClockMark('end', ...) へ給電される）。
+    if (label === 'post-summary') {
+      return withEpoch({ posted: true, method: 'gh pr comment', url: 'http://x' });
     }
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。prompt を捕捉し
     // saved:true を返して journal-log (stage2) へ進めさせる。
@@ -258,7 +267,7 @@ const ANALYZE_REQ = {
 
 const src = readFileSync(devFlowPath, 'utf8');
 
-test('[duration-telemetry] epochMode=ok: clock# 専用 probe はちょうど 2 回（start/end）起動し、journal-log prompt に duration_seconds/phase_durations が含まれる（final キーは fixes_applied=0 の Final reconcile skip で欠落する）', async () => {
+test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、journal-log prompt に duration_seconds/phase_durations が含まれる（final キーは fixes_applied=0 の Final reconcile skip で欠落する）', async () => {
   const { ctx, getJournalPrompts, getClockCalls } = makeSandbox(ANALYZE_REQ, 'ok');
 
   const { result, error } = await runDevFlowCapture(src, ctx);
@@ -268,17 +277,14 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe はちょうど 2 �
   }
   assert.ok(result !== null && result !== undefined, `workflow は正常 return するべきだが null/undefined だった（error: ${error?.name}: ${error?.message}）`);
 
-  // AC-1: clock# 専用 subagent 起動が phase 境界の start/end の 2 箇所のみであることの決定論検証。
+  // AC-1（issue #550 F1+F3 最終更新）: 専用 clock probe（label が 'clock#' で始まる subagent 起動）は
+  // 0 件であること。start mark は setup-base probe、end mark は post-summary 応答の optional epoch
+  // からそれぞれ feedClockMark() 経由で給電される（専用 probe 呼び出しなし）。
   const clockCalls = getClockCalls();
   assert.equal(
     clockCalls.length,
-    2,
-    `専用 clock probe の起動はちょうど 2 回（clock#start / clock#end）であるべきだが ${clockCalls.length} 回だった: ${JSON.stringify(clockCalls)}`,
-  );
-  assert.deepEqual(
-    clockCalls,
-    ['clock#start', 'clock#end'],
-    `専用 clock probe の起動順は ['clock#start', 'clock#end'] であるべきだが ${JSON.stringify(clockCalls)} だった`,
+    0,
+    `専用 clock probe（label が 'clock#' で始まる起動）は 0 件であるべきだが ${clockCalls.length} 回だった: ${JSON.stringify(clockCalls)}`,
   );
 
   const capturedPrompt = getJournalPrompts()[0] ?? '';
@@ -324,12 +330,13 @@ test('[duration-telemetry] epochMode=fail: clock# 専用 probe は null を返�
     `clock probe / 給電元 stub 全滅でも result.merge_tier は 'HOLD'|'REVIEW'|'AUTO' のいずれかであるべきだが '${result?.merge_tier}' だった`,
   );
 
-  // 専用 clock probe の起動回数自体は epoch 給電の成否に関わらず不変（構造的に start/end の 2 回）。
+  // 専用 clock probe の起動回数自体は epoch 給電の成否に関わらず不変（構造的に 0 件。
+  // issue #550 F1+F3 最終更新）。
   const clockCalls = getClockCalls();
   assert.equal(
     clockCalls.length,
-    2,
-    `epochMode=fail でも専用 clock probe の起動はちょうど 2 回であるべきだが ${clockCalls.length} 回だった: ${JSON.stringify(clockCalls)}`,
+    0,
+    `epochMode=fail でも専用 clock probe（label が 'clock#' で始まる起動）は 0 件であるべきだが ${clockCalls.length} 回だった: ${JSON.stringify(clockCalls)}`,
   );
 
   const capturedPrompt = getJournalPrompts()[0] ?? '';

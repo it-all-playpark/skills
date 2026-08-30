@@ -359,18 +359,22 @@ test('[W5] dev-flow.js: merge tier 算出と return フィールドが存在', (
   assert.ok(src.includes("phase('Merge tier')"), 'Merge tier phase があること');
 });
 
-// ---- 7. issue #443: clock epoch 給電 prompt の退行検出 --------------------------------------
+// ---- 7. issue #443 / #550 F1+F3: clock epoch 給電 prompt の退行検出 -----------------------------
 //
-// 専用 clock probe（dev-runner-haiku-ro の clockProbe() 呼び出し）は Setup 冒頭の start と
-// Merge tier 末尾の end の 2 回のみに削減され、残り 9 mark は隣接する既存 exec-proxy / agent
-// 応答の optional epoch フィールドから feedClockMark() 経由で給電される。給電元 prompt は
-// 末尾に EPOCH_INSTRUCTION（`date +%s` を 1 回実行し epoch として返せという指示）を追記して
-// いる。この指示が silent に prompt から失われる退行を検出するため:
+// 専用 clock probe（dev-runner-haiku-ro の clockProbe() 呼び出し）は issue #550 F1 で
+// clockProbe('start') が、issue #550 F3 で clockProbe('end') がそれぞれ撤去され、専用 clock probe
+// は 0 回になった。start mark は Setup 冒頭の setup-base probe の optional epoch、end mark は
+// Merge tier 末尾の post-summary 応答の optional epoch から、それぞれ feedClockMark() 経由で
+// 給電される。残り 9 mark も隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから
+// feedClockMark() 経由で給電される。
+// 給電元 prompt は末尾に EPOCH_INSTRUCTION（`date +%s` を 1 回実行し epoch として返せという
+// 指示）を追記している。この指示が silent に prompt から失われる退行を検出するため:
 //   (a) EPOCH_INSTRUCTION 自体の定義が `date +%s` を実行する指示であること
 //   (b) 給電対象 prompt 定義（PLANNER_HANDOFF_RULE / STAGING_CONVENTION / VALIDATE_TEST_PROMPT /
 //       reviewPromptLite / contractProbePrompt）の近傍に EPOCH_INSTRUCTION 参照が存在すること
-//   (c) 専用 clock probe の呼び出し（clockProbe('...')）が clockProbe('start' / clockProbe('end')
-//       の 2 箇所のみであること（AC-1 の静的検出）
+//   (c) post-summary（end mark の給電元）の prompt 組み立てに EPOCH_INSTRUCTION が注入されていること
+//   (d) clockProbe( の呼び出しが dev-flow.js に 0 箇所であること（AC-1 の静的検出。F1+F3 の
+//       2 段更新の最終段）
 // をソース文字列 assert で保証する。
 
 test('[epoch-instruction] dev-flow.js: EPOCH_INSTRUCTION の定義自体が `date +%s` を実行する指示を含む', () => {
@@ -402,6 +406,8 @@ const EPOCH_FED_PROMPT_ANCHORS = [
   ['VALIDATE_TEST_PROMPT', /^\s*const VALIDATE_TEST_PROMPT\b/, 15],
   ['reviewPromptLite', /^\s*const reviewPromptLite\b/, 10],
   ['contractProbePrompt', /^\s*const contractProbePrompt\b/, 20],
+  // post-summary（issue #550 F3 — 専用 clock#end probe 撤去に伴う end mark 給電元）
+  ['summaryPost', /^const summaryPost = await trackedAgent\(/, 15],
 ];
 
 for (const [name, anchorPattern, windowLines] of EPOCH_FED_PROMPT_ANCHORS) {
@@ -416,17 +422,14 @@ for (const [name, anchorPattern, windowLines] of EPOCH_FED_PROMPT_ANCHORS) {
   });
 }
 
-test("[epoch-instruction] dev-flow.js: clockProbe(' の呼び出しは clockProbe('start' と clockProbe('end' の 2 箇所のみ", () => {
+test("[epoch-instruction] dev-flow.js: clockProbe( の呼び出しは 0 箇所", () => {
+  // issue #550 F1 で clockProbe('start')、F3 で clockProbe('end') がそれぞれ撤去され、
+  // 専用 clock probe の呼び出しは 0 箇所になった（2 段更新の最終段）。
   const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-  const clockProbeCalls = [...src.matchAll(/clockProbe\('[^']*'/g)].map((m) => m[0]);
+  const clockProbeCalls = [...src.matchAll(/clockProbe\(/g)].map((m) => m[0]);
   assert.equal(
     clockProbeCalls.length,
-    2,
-    `clockProbe(' の呼び出しはちょうど 2 箇所であるべきだが ${clockProbeCalls.length} 箇所だった: ${JSON.stringify(clockProbeCalls)}`,
-  );
-  assert.deepEqual(
-    [...clockProbeCalls].sort(),
-    ["clockProbe('end'", "clockProbe('start'"],
-    `clockProbe(' の呼び出しは clockProbe('start' / clockProbe('end') の 2 種のみであるべきだが ${JSON.stringify(clockProbeCalls)} だった`,
+    0,
+    `clockProbe( の呼び出しは 0 箇所であるべきだが ${clockProbeCalls.length} 箇所だった: ${JSON.stringify(clockProbeCalls)}`,
   );
 });

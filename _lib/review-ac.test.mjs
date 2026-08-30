@@ -114,13 +114,13 @@ test('[review-ac] dev-flow lite route の reviewPromptLite が acceptanceCriteri
   );
 });
 
-test('[review-ac] dev-flow の nested pr-iterate 起動 3 箇所すべてが acceptance_criteria を渡す', () => {
-  const launches = devFlowSrc.match(/workflow\('pr-iterate', \{[^}]*\}\)/g) ?? [];
+test('[review-ac] dev-flow の nested pr-iterate 起動 3 箇所すべてが同一の PR_ITERATE_ARGS を渡し、acceptance_criteria を含む（issue #550 案3: 呼び出し箇所を1本の変数組み立てへ統合）', () => {
+  const launches = devFlowSrc.match(/workflow\('pr-iterate', PR_ITERATE_ARGS\)/g) ?? [];
   assert.equal(launches.length, 3, `nested 起動は 3 箇所のはずだが ${launches.length} 箇所だった`);
-  for (const l of launches) {
-    assert.ok(
-      l.includes('acceptance_criteria:'),
-      `nested 起動が acceptance_criteria を渡していない: ${l}`,
-    );
-  }
+  const argsDecl = devFlowSrc.match(/const PR_ITERATE_ARGS = \{[\s\S]*?\n\}/);
+  assert.ok(argsDecl, 'PR_ITERATE_ARGS の組み立てブロックが見つかるべき');
+  assert.ok(
+    argsDecl[0].includes('acceptance_criteria:'),
+    `PR_ITERATE_ARGS が acceptance_criteria を渡していない: ${argsDecl[0]}`,
+  );
 });

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
 
 const devFlowPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
@@ -108,4 +109,76 @@ test('Setup の worktree prompt は trust 証跡を stale へ上書きさせる�
   assert.doesNotMatch(prompt, /trust-test-latest\.json/);
   assert.doesNotMatch(prompt, /trust-risk-/);
   assert.doesNotMatch(prompt, /内容 \\`stale\\`/);
+});
+
+// ── issue #550 案1+案2: isoToken の epoch 供給元が setup-base（resolve-base + worktree-base-check
+// 統合 probe）に一本化されていることを VM sandbox 実行で pin する。
+// AC「案1+案2を両方採用する場合: epoch の供給元が統合後の probe に一本化されており、isoToken が
+// run 毎に一意であることをテストで pin する（供給元が二重化・不定にならないこと）」に対応。
+
+function findIsolationProbeCall(calls) {
+  return calls.find((c) => c.label === 'isolation-probe');
+}
+
+test('[isoToken 給電] setup-base probe が epoch:1234 を返すとき、isolation-probe prompt に .isolation-probe-1234 が含まれる', async () => {
+  const responder = ({ label }) => {
+    if (label === 'setup-base') {
+      return {
+        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
+        worktree_exists: false, upstream_remote: '', upstream_merge: '', epoch: 1234,
+      };
+    }
+    if (label === 'worktree') {
+      return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
+    }
+    return undefined;
+  };
+  const { ctx, calls } = makeRecordingSandbox(responder);
+  await runDevFlowInSandbox(src, ctx);
+
+  const probeCall = findIsolationProbeCall(calls);
+  assert.ok(probeCall, 'isolation-probe の agent() 呼び出しが記録されていない');
+  assert.match(
+    probeCall.prompt,
+    /\.isolation-probe-1234/,
+    `isolation-probe prompt に .isolation-probe-1234 が含まれるべきだが含まれていなかった: ${probeCall.prompt}`,
+  );
+});
+
+test('[isoToken 給電 fallback] setup-base probe が epoch を欠く（fail-open）とき、isolation-probe prompt は ISSUE（.isolation-probe-1）へ fallback する', async () => {
+  const responder = ({ label }) => {
+    if (label === 'setup-base') {
+      return {
+        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
+        worktree_exists: false, upstream_remote: '', upstream_merge: '',
+      };
+    }
+    if (label === 'worktree') {
+      return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
+    }
+    return undefined;
+  };
+  const { ctx, calls } = makeRecordingSandbox(responder);
+  await runDevFlowInSandbox(src, ctx);
+
+  const probeCall = findIsolationProbeCall(calls);
+  assert.ok(probeCall, 'isolation-probe の agent() 呼び出しが記録されていない');
+  assert.match(
+    probeCall.prompt,
+    /\.isolation-probe-1(?!\d)/,
+    `epoch 欠落時は isolation-probe prompt が ISSUE（1）へ fallback するべきだが含まれていなかった: ${probeCall.prompt}`,
+  );
+});
+
+// ── issue #550 案1+案2: epoch 供給元の一本化を静的ソース pin で保証する ──
+// feedClockMark('start', ...) の呼び出しが dev-flow.js に 1 箇所のみであることを検証する。
+// 2 箇所以上あると start mark の epoch 供給元が二重化・不定になり得るため、静的に 1 箇所へ固定する。
+
+test("[epoch 供給元一本化] dev-flow.js に feedClockMark('start', の呼び出しが 1 箇所のみ存在する", () => {
+  const startMarkCalls = [...src.matchAll(/feedClockMark\('start',/g)];
+  assert.equal(
+    startMarkCalls.length,
+    1,
+    `feedClockMark('start', の呼び出しはちょうど 1 箇所であるべきだが ${startMarkCalls.length} 箇所だった`,
+  );
 });

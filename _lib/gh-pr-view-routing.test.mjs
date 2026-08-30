@@ -46,11 +46,8 @@ function createResponder(prMetaResponse) {
   return function (prompt, opts) {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
-    if (label === 'resolve-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
-    }
-    if (label === 'worktree-base-check') {
-      return { ok: true, worktree_exists: false, upstream: '' };
+    if (label === 'setup-base') {
+      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-405' };

@@ -37,8 +37,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label === 'diff-hash-eval') return { hash: evalHash, empty: false };
     if (label === 'diff-hash-pr') return { hash: prHash, empty: false };
-    if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
-    if (label === 'worktree-base-check') return { ok: true, worktree_exists: false, upstream: '' };
+    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
     if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };

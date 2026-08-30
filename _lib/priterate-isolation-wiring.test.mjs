@@ -64,7 +64,9 @@ test('PR_META schema に optional epoch(number) が追加されている（issue
 });
 
 test('pr-meta probe prompt に `date +%s` による epoch 取得指示が含まれる（issue #521）', () => {
-  const match = src.match(/const prMeta = await failOpenAgent\(\s*`([\s\S]*?)`,/);
+  // issue #550 案3: nested 起動時は pr-meta probe 自体を起動しないため、この失敗 (fail-open) 分岐は
+  // 単体起動（NESTED=null）の else ブロック内にある。呼び出し形自体は不変（prMeta = await failOpenAgent(...)）。
+  const match = src.match(/prMeta = await failOpenAgent\(\s*`([\s\S]*?)`,/);
   assert.ok(match, 'pr-meta probe prompt テンプレートが見つからない');
   assert.match(match[1], /date \+%s/, 'pr-meta prompt に `date +%s` 指示が見つからない');
 });
@@ -124,9 +126,11 @@ test('isolation probe は review loop（for (i = 1; i <= MAX; i++)）進入よ�
 // ── issue #493: stale 残置物の除去（cleanup）を probe の直前・Iterate 進入前に置く ────
 
 test('isolation cleanup failOpenAgent 呼び出しが agentType/schema/label/phase 込みで存在する', () => {
+  // issue #550 案3: nested 起動時は isoClean = null のまま skip する if (!NESTED) 分岐に包まれるため
+  // 先頭の宣言キーワードは const ではなくなった（呼び出し形自体・agentType/schema/label/phase は不変）。
   assert.match(
     src,
-    /const isoClean = await failOpenAgent\(isolationCleanupPrompt\(isoWt,\s*'\.devflow-tmp\/\.isolation-probe'\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_CLEANUP,\s*label:\s*'isolation-cleanup',\s*phase:\s*'Iterate'\s*\}\)/,
+    /isoClean = await failOpenAgent\(isolationCleanupPrompt\(isoWt,\s*'\.devflow-tmp\/\.isolation-probe'\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_CLEANUP,\s*label:\s*'isolation-cleanup',\s*phase:\s*'Iterate'\s*\}\)/,
     'isolation cleanup の failOpenAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
   );
 });
@@ -135,7 +139,7 @@ test('isolation cleanup failOpenAgent 呼び出しが agentType/schema/label/pha
 // 自身になるため、`.devflow-tmp` 全体を消すと当該 run が既に書いた trust 証跡を run 途中で失う。
 // pr-iterate 側の除去範囲は probe artifact 単体であることを pin する。
 test('pr-iterate の cleanup 対象は probe artifact 単体（.devflow-tmp 全体を消さない）', () => {
-  const idx = src.indexOf('const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
+  const idx = src.indexOf('isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
   assert.notStrictEqual(idx, -1, 'isolation cleanup 呼び出しが見つからない');
   const call = src.slice(idx, src.indexOf('\n', idx));
   assert.match(call, /isolationCleanupPrompt\(isoWt, '\.devflow-tmp\/\.isolation-probe'\)/);
@@ -150,7 +154,7 @@ test('ISOLATION_CLEANUP schema が cleaned(boolean, required) を持つ', () => 
 });
 
 test('isolation cleanup は probe より前・review loop 進入より前に配置されている', () => {
-  const cleanIdx = src.indexOf('const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
+  const cleanIdx = src.indexOf('isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
   const probeIdx = src.indexOf('await failOpenAgent(isolationProbePrompt(');
   const loopIdx = src.indexOf('for (i = 1; i <= MAX; i++)');
   assert.notStrictEqual(cleanIdx, -1, 'isolation cleanup 呼び出しが見つからない');
@@ -165,7 +169,7 @@ test('isolation cleanup の失敗は fail-open（log のみ・throw しない）
     'cleanup 失敗時の fail-open log 分岐が見つからない',
   );
   // 窓は cleanup 呼び出し 〜 probe 呼び出しの直前まで（probe 側の fail-closed throw を巻き込まない）
-  const idx = src.indexOf('const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
+  const idx = src.indexOf('isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
   const probeIdx = src.indexOf('const isoProbe = await failOpenAgent(isolationProbePrompt(');
   const nearby = src.slice(idx, probeIdx);
   assert.doesNotMatch(nearby, /throw new Error/, 'cleanup 失敗で throw してはならない（fail-open）');
