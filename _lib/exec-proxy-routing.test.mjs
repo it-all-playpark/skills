@@ -142,7 +142,7 @@ test("[exec-proxy-routing] dev-flow.js label 'clock#' routes to agentType:'dev-r
 
 // ---- (b) dev-flow.js: write/Skill exec-proxy labels stay on dev-runner-haiku ----
 
-// danger-grep(-final) は issue #550 で --out 証跡書き込みを撤去し read-only 化された
+// danger-grep(-final) は issue #544 で --out 証跡書き込みを撤去し read-only 化された
 // （Security floor の danger-grep は統合スクリプト secfloor-classify.sh 経由の単一呼び出しに
 // 変わったが、label・agentType は不変）。read-only 専任の dev-runner-haiku-ro へ戻る
 // （READ_ONLY_LABELS で検証済み）。

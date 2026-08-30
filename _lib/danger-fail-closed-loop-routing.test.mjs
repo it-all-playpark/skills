@@ -26,7 +26,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 /**
  * danger-fail-closed 専用の VM sandbox を組む。
- * label 'danger-grep'（Security floor。issue #550 統合呼び出し）は dangerGrepResponse を
+ * label 'danger-grep'（Security floor。issue #544 統合呼び出し）は dangerGrepResponse を
  * risk フィールドに包んで返し、label 'danger-grep-final'（Merge tier。統合対象外）は
  * dangerGrepResponse をそのまま返す。evaluator 呼び出し回数と journal-log に渡された
  * prompt を捕捉する。
@@ -68,7 +68,7 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // Security floor: label 'danger-grep' は issue #550 で統合呼び出しへ変わった
+    // Security floor: label 'danger-grep' は issue #544 で統合呼び出しへ変わった
     // （secfloor-classify.sh 経由の {risk, files, struct, diffhash} 応答）。dangerGrepResponse
     // を risk フィールドに包んで返す（fail-closed / clean を切り替え可能）。
     if (label === 'danger-grep') {

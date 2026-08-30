@@ -22,7 +22,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 /**
  * testsurf 専用の VM sandbox を組む。
- * label 'danger-grep'（Security floor。issue #550 統合呼び出し）は riskResponse を risk
+ * label 'danger-grep'（Security floor。issue #544 統合呼び出し）は riskResponse を risk
  * フィールドへ包んで返し、label 'danger-grep-final'（Merge tier。統合対象外）は riskResponse を
  * そのまま返す。evaluator 呼び出し回数・evaluator prompt・journal-log prompt を捕捉する。
  *
@@ -58,7 +58,7 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // label 'danger-grep'（Security floor。issue #550 統合呼び出し）は riskResponse を risk
+    // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は riskResponse を risk
     // フィールドに包んで返す。label 'danger-grep-final'（Merge tier。統合対象外）は
     // riskResponse をそのまま返す。
     if (label === 'danger-grep') {

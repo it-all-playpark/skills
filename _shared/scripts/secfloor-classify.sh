@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# secfloor-classify.sh - dev-flow Security floor 統合 composition wrapper (issue #550, P1).
+# secfloor-classify.sh - dev-flow Security floor 統合 composition wrapper (issue #544, P1).
 #
 # Purpose: dev-flow の Security floor phase が今まで個別に取得していた 4 exec-proxy
 # (danger-grep / realized-diff / structural-classify / diff-hash-secfloor) 相当の情報を

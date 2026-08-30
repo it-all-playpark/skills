@@ -43,7 +43,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label.startsWith('analyze')) return analyzeReq;
     if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    // label 'danger-grep'（issue #550 統合呼び出し）: risk/files を 1 応答で返す。
+    // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
     if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };

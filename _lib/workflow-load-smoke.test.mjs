@@ -327,7 +327,7 @@ test('[triage] dev-flow.js: 最終 return に shape: SHAPE が含まれる', () 
 // ---- 6. W5: danger-grep 配線 + merge tier --------------------------------------------------
 
 // issue #495 の trust-layer 証跡書き込み（--out）は #549 の call site 撤去、
-// issue #550 の Security floor 4→1 統合を経て撤去済み。Security floor 側の danger-grep は
+// issue #544 の Security floor 4→1 統合を経て撤去済み。Security floor 側の danger-grep は
 // secfloor-classify.sh 経由の統合呼び出し（label 'danger-grep'）になり diff-risk-classify.sh を
 // 直接は呼ばない（統合スクリプト内部から --working-tree 付きで呼ばれる）。Merge tier の
 // danger-grep-final はフラグ無し三点 diff のまま diff-risk-classify.sh を直接呼び、--out は
@@ -341,7 +341,7 @@ test('[W5] dev-flow.js: RISK schema と Merge tier の diff-risk-classify 呼び
     src.includes('bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${' + 'BASE}'),
     'Merge tier の danger-grep-final はフラグ無し三点 diff で diff-risk-classify.sh を呼ぶこと',
   );
-  assert.ok(!src.includes('--out'), '証跡書き込み --out は撤去済みであること（issue #550 AC1）');
+  assert.ok(!src.includes('--out'), '証跡書き込み --out は撤去済みであること（issue #544 AC1）');
   assert.ok(!src.includes('--working-tree'), 'dev-flow.js 自体は --working-tree を直接指定しない（secfloor-classify.sh 内部の呼び出しに委譲）');
 });
 

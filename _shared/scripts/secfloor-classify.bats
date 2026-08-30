@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for _shared/scripts/secfloor-classify.sh (issue #550, P1)
+# Tests for _shared/scripts/secfloor-classify.sh (issue #544, P1)
 #
 # Strategy: mktemp -d の隔離 git fixture repo を worktree-path として扱い、
 # secfloor-classify.sh を実行して JSON 出力の各フィールド (risk/files/struct/diffhash)

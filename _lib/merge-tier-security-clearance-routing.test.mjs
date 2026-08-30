@@ -58,7 +58,7 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // Security floor（Evaluate 前）の danger-grep（issue #550 統合呼び出し。dangerGrepPre を
+    // Security floor（Evaluate 前）の danger-grep（issue #544 統合呼び出し。dangerGrepPre を
     // risk フィールドへ包む。diffhash は Merge tier 側（'H_MERGE'）と意図的に異なる値にして
     // reuse を発火させない — シナリオが pre/final の乖離を前提にしているため）。
     if (label === 'danger-grep') {

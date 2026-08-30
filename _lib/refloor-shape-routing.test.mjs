@@ -84,7 +84,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // Security floor: label 'danger-grep'（issue #550 統合呼び出し）は risk/files を 1 応答で
+    // Security floor: label 'danger-grep'（issue #544 統合呼び出し）は risk/files を 1 応答で
     // 返す。files は可変ファイル数（旧 realized-diff 相当。null なら agent drop 相当）。
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
@@ -285,7 +285,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     // refloor が発火しない（EFFECTIVE_SHAPE が standard のまま止まる）ため明示的に宣言する。
     if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 't1', file_changes: ['a', 'b', 'c', 'd', 'e', 'f'] }], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    // (a) label 'danger-grep'（issue #550 統合呼び出し）: 6 ファイル返す
+    // (a) label 'danger-grep'（issue #544 統合呼び出し）: 6 ファイル返す
     // → standard+6件 → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: ['a', 'b', 'c', 'd', 'e', 'f'], struct: null, diffhash: null };
@@ -436,7 +436,7 @@ test('[refloor][struct] dev-flow.js に EFFECTIVE_SHAPE 定数定義が存在す
   );
 });
 
-test('[refloor][struct] dev-flow.js に realized-diff 相当（統合呼び出しの files フィールド）を持つ danger-grep label が存在する（issue #550 統合後は専用 label は消滅）', () => {
+test('[refloor][struct] dev-flow.js に realized-diff 相当（統合呼び出しの files フィールド）を持つ danger-grep label が存在する（issue #544 統合後は専用 label は消滅）', () => {
   const src = readFileSync(devFlowPath, 'utf8');
   assert.ok(
     src.includes("label: 'danger-grep'"),
@@ -506,7 +506,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // (D) label 'danger-grep'（issue #550 統合呼び出し）は risk は正常のまま files を null で返す
+    // (D) label 'danger-grep'（issue #544 統合呼び出し）は risk は正常のまま files を null で返す
     // （旧 realized-diff の agent drop 相当）→ ?? [] を使うと 0 に潰れ runEval=false になるバグ再現。
     // risk と files は per-field 独立のため、files 欠落が risk（fail-closed 判定）へ波及しないこと
     // も同時に確認する。

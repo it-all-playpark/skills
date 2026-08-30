@@ -115,7 +115,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
     if (label.startsWith('ci-check')) {
       return { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 };
     }
-    // Security floor: label 'danger-grep'（issue #550 統合呼び出し）。risk.hits は dangerHits で
+    // Security floor: label 'danger-grep'（issue #544 統合呼び出し）。risk.hits は dangerHits で
     // 可変。files（旧 realized-diff。issue #376 F3 fix — 未stub だと realizedCount が NaN になり
     // refloorShape が fail-safe で complex へ raise、EFFECTIVE_SHAPE!=='micro' となって
     // state.runEval が強制 true になり LITE ゲートを常に無効化してしまうため、clean シナリオでは

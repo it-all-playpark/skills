@@ -1,10 +1,10 @@
 // Guard test: structural-classify (struct フィールド) の fail-open / i===1 gating / realizedCount
-// exclusion / schema fail-open tolerance (issue #350, task F2; issue #550 S2 で統合呼び出し経由へ更新)。
+// exclusion / schema fail-open tolerance (issue #350, task F2; issue #544 S2 で統合呼び出し経由へ更新)。
 //
 // Background:
 //   dev-flow.js の Security floor phase はもともと F1 の決定論 script
 //   `_shared/scripts/structural-classify.sh` を専用 label 'structural-classify' の
-//   dev-runner-haiku-ro exec-proxy 経由で個別に呼んでいたが、issue #550 (S1) で
+//   dev-runner-haiku-ro exec-proxy 経由で個別に呼んでいたが、issue #544 (S1) で
 //   danger-grep(risk) / realized-diff(files) / structural-classify(struct) / diff-hash-secfloor(hash)
 //   の 4 呼び出しが統合スクリプト `_shared/scripts/secfloor-classify.sh` 経由の単一呼び出し
 //   （label 'danger-grep' 据え置き）へ集約された。struct 分類データはその応答の `struct` フィールド

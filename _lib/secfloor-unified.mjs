@@ -1,5 +1,5 @@
 // parseSecfloorFields: dev-flow Security floor が使う統合 exec-proxy
-// (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #550, S1)。
+// (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #544, S1)。
 //
 // 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":...} の 1 JSON object を返すが、
 // 各フィールドはそれぞれ別のフィールド別失敗ポリシーを持つ (下記)。本関数は「1 フィールドの不正が

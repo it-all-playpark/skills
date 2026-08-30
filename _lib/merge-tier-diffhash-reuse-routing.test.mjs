@@ -2,7 +2,7 @@
 // Merge tier 間の diff-hash 一致による danger-grep-final / changed-files 再利用（issue #377）。
 //
 // Security floor phase（execSecurityFloorPhase）は danger-grep 成功時（risk.ok===true）かつ
-// files（旧 realized-diff）成功時のみ、統合呼び出し（issue #550, label 'danger-grep' 据え置き）の
+// files（旧 realized-diff）成功時のみ、統合呼び出し（issue #544, label 'danger-grep' 据え置き）の
 // diffhash フィールドから tree OID を捕捉し state.secDiffHash に保持する。Merge tier phase 冒頭は
 // state.secDiffHash != null のときのみ label 'diff-hash-merge' で再度 tree OID を捕捉し、両ハッシュが
 // 文字列完全一致する場合のみ danger-grep-final /
@@ -105,7 +105,7 @@ function createResponder(overrides = {}) {
       return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
     }
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    // label 'danger-grep'（Security floor。issue #550 統合呼び出し）は
+    // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は
     // {risk, files, struct, diffhash} を 1 応答で返す。diffhash は既定で secfloor/merge 同一
     // ハッシュ（再利用が発火する）。不一致にしたいテストは override で個別に上書きする。
     if (label === 'danger-grep') {

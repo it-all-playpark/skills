@@ -45,7 +45,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * refloor-shape-routing.test.mjs の makeCountingSandbox と同型。
  * 相違点: calls 配列に { label, agentType, prompt } を記録する（prompt も記録するよう拡張）。
  *
- * porcelain 統合（F3, issue #219）後、さらに issue #550 (S1) で danger-grep(risk) /
+ * porcelain 統合（F3, issue #219）後、さらに issue #544 (S1) で danger-grep(risk) /
  * realized-diff(files) / structural-classify(struct) / diff-hash-secfloor(hash) の 4 呼び出しが
  * secfloor-classify.sh 経由の単一呼び出し（label 'danger-grep' 据え置き）へ統合された。
  * files（旧 realized-diff・declared-path-check スナップショット）はその応答の files フィールドで得る。
@@ -90,7 +90,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // label 'danger-grep'（issue #550 統合呼び出し）は risk/files を 1 応答で返す
+    // label 'danger-grep'（issue #544 統合呼び出し）は risk/files を 1 応答で返す
     // （files は旧 realized-diff 相当のスナップショット）。
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
@@ -392,7 +392,7 @@ test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣�
 
 // ============================================================
 // (E) porcelain 取得 1 回ピン:
-//     - label 'danger-grep'（issue #550 統合呼び出し）が 1 回だけ呼ばれる
+//     - label 'danger-grep'（issue #544 統合呼び出し）が 1 回だけ呼ばれる
 //       （refloor + declared-path 監査の両方が同一応答の files フィールドを参照）
 //     - danger-grep が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
 //       （= refloor と宣言外監査が同一スナップショットを参照している実証）
@@ -422,7 +422,7 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  // porcelain 呼び出し 1 回ピン（issue #550 統合後は label 'danger-grep' が唯一の呼び出し）
+  // porcelain 呼び出し 1 回ピン（issue #544 統合後は label 'danger-grep' が唯一の呼び出し）
   const dangerGrepCalls = calls.filter((c) => c.label === 'danger-grep');
   assert.equal(
     dangerGrepCalls.length,

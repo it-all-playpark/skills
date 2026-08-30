@@ -3399,7 +3399,7 @@ const DIFFHASH = {
   properties: { hash: { type: 'string' }, empty: { type: 'boolean' }, epoch: { type: 'number' } },
 }
 // SECFLOOR: Security floor 統合 exec-proxy (`_shared/scripts/secfloor-classify.sh`) の応答 schema
-// (issue #550, S1)。required は空 — 部分的スキーマ不一致で応答全体を reject せず、per-field 検証
+// (issue #544, S1)。required は空 — 部分的スキーマ不一致で応答全体を reject せず、per-field 検証
 // (parseSecfloorFields) へ流す（1 フィールドの型崩れが正常フィールドまで巻き込むのを防ぐ。ambiguity 2）。
 const SECFLOOR = {
   type: 'object',
@@ -3414,7 +3414,7 @@ const SECFLOOR = {
 // secfloor-unified-schema-end: SECFLOOR 直後に parseSecfloorFields の inline 区間を続ける（anchor 用の一意行）。
 // ==== BEGIN inline: _lib/secfloor-unified.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // parseSecfloorFields: dev-flow Security floor が使う統合 exec-proxy
-// (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #550, S1)。
+// (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #544, S1)。
 //
 // 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":...} の 1 JSON object を返すが、
 // 各フィールドはそれぞれ別のフィールド別失敗ポリシーを持つ (下記)。本関数は「1 フィールドの不正が
@@ -4777,7 +4777,7 @@ async function execSecurityFloorPhase(state) {
   for (const seed of seedSecurityLedger()) {
     ledger = appendItem(ledger, seed).ledger
   }
-  // Security floor 統合 exec-proxy (issue #550, S1): danger-grep(risk) / realized-diff(files) /
+  // Security floor 統合 exec-proxy (issue #544, S1): danger-grep(risk) / realized-diff(files) /
   // structural-classify(struct) / diff-hash-secfloor(hash) の 4 呼び出しを secfloor-classify.sh の
   // 1 本へ統合する。label は 'danger-grep' を据え置く（AC1: agentType の dev-runner-haiku-ro 復帰と
   // telemetry label 連続性のため）。throw（StructuredOutput 未返却・proxy 実行失敗等）は

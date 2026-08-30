@@ -69,7 +69,7 @@ function createResponder(dropLabels) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // label 'danger-grep'（issue #550 統合呼び出し）: clean（security path ではないことを保証）+
+    // label 'danger-grep'（issue #544 統合呼び出し）: clean（security path ではないことを保証）+
     // files 1 件（旧 realized-diff 相当 → refloor で micro 維持）。
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
