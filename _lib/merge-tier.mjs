@@ -197,6 +197,10 @@ export function classifyMergeableState(meta) {
 //   が non-null を渡す設計）— 未指定/null = 挙動完全不変（regression なし）。non-null かつ
 //   blocking===true かつ verdict!=='pass' のとき HOLD reason を追記する（inconclusive も成功
 //   扱いしない）。verdict が closed enum 外は throw（後方互換 scaffolding 禁止規約）。
+//   issue #507 で trust-layer 生産側（call site / exec-proxy）は撤去済みのため、live 呼び出しは
+//   常に null を給電し、この HOLD 分岐は現在到達不能。blocking 昇格（rules/dev-flow.md の
+//   sunset path）時の将来接続点として意図的に存置する。経路の存続は
+//   _lib/trust-kernel-invariant.test.mjs が pin する。
 // s.evalVerdictFail (optional boolean): true の場合、evaluate phase が verdict=fail のまま PR へ
 //   進んだ事実を開示する専用 reason を HOLD/AUTO/REVIEW 全分岐の reasons に追記する
 //   （keywordAloneDisclosure と同型 — issue #536）。未解消 findings は ledger/HOLD 条件が別途

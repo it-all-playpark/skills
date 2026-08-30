@@ -1070,6 +1070,10 @@ function classifyMergeableState(meta) {
 //   が non-null を渡す設計）— 未指定/null = 挙動完全不変（regression なし）。non-null かつ
 //   blocking===true かつ verdict!=='pass' のとき HOLD reason を追記する（inconclusive も成功
 //   扱いしない）。verdict が closed enum 外は throw（後方互換 scaffolding 禁止規約）。
+//   issue #507 で trust-layer 生産側（call site / exec-proxy）は撤去済みのため、live 呼び出しは
+//   常に null を給電し、この HOLD 分岐は現在到達不能。blocking 昇格（rules/dev-flow.md の
+//   sunset path）時の将来接続点として意図的に存置する。経路の存続は
+//   _lib/trust-kernel-invariant.test.mjs が pin する。
 // s.evalVerdictFail (optional boolean): true の場合、evaluate phase が verdict=fail のまま PR へ
 //   進んだ事実を開示する専用 reason を HOLD/AUTO/REVIEW 全分岐の reasons に追記する
 //   （keywordAloneDisclosure と同型 — issue #536）。未解消 findings は ledger/HOLD 条件が別途
@@ -3711,18 +3715,20 @@ function classifyLiteReview(review) {
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
 // isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
-//   純関数（trust 証跡等を run 間で持ち越さない衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
+//   純関数（前 run の probe artifact（.isolation-probe-<token>）や run 専用 scratch を持ち越さない
+//   衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
 //   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
 //   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
-//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた trust 証跡を run 途中で
-//   消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
+//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた run 専用 scratch
+//   （journal payload payload-devflow-*.json / ui-verify state / 一時 body ファイル等の
+//   .devflow-tmp 配下生成物）を run 途中で消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 //   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
 // isolationProbePrompt: probe 専用 agent（Write tool のみ）へ渡す prompt を組み立てる純関数
 //   （worktree 直下の run 毎に一意なパスへ Write tool で実際に書き込ませ、成否を {written, error} で
 //   verbatim 報告させる）。token は呼び出し元が渡す必須引数: probe 対象パスに run 毎の一意な token
 //   を含めることで、cleanup が blocked/skip されて前 run の残置物が残っていても probe が成立する
-//   （成立が cleanup の成功に依存しない — issue #521）。cleanup は trust 証跡の持ち越し防止等の
-//   衛生目的で独立に残る。
+//   （成立が cleanup の成功に依存しない — issue #521）。cleanup は前 run 残置物の持ち越し防止
+//   （run 間衛生）の目的で独立に残る。
 // isolationErrorKind: probe の error 文字列を既知シグネチャで分類する純関数。written:false の原因が
 //   「isolation 不成立」なのか「その他の書き込み失敗（上書き拒否等）」なのかを isolationFailureMessage
 //   が出し分けるための判別根拠にする。
@@ -4114,10 +4120,13 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 log(`worktree: ${WT} (branch ${setup.branch})`)
 
 // isolation cleanup（issue #493）: worktree 再利用時に前 run の run 専用 scratch を持ち越さない。
-// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の probe artifact 等の証跡を
-// 一度に消す（前 run の証跡持ち越し防止 — run 間衛生）。
+// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の残置物（probe artifact
+// `.isolation-probe-*` / journal payload / ui-verify state 等の .devflow-tmp 配下生成物）を
+// 一度に消す（run 間衛生）。
 // probe 成立自体はこの cleanup の成功に依存しない（issue #521 — probe 対象パスは run 毎の一意な
 // token を含むため、cleanup が blocked/skip されて前 run の残置物が残っていても衝突しない）。
+// token fallback が退化（setup-base probe の epoch が fail-open で null 等）した場合の補償として
+// のみ probe 成立に効く（issue #482/#521）。
 // fail-open: 失敗しても run は継続する。
 const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
 if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
@@ -4157,10 +4166,6 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `それでも失敗するなら tests:"failed" とし失敗要約を summary に入れて即座に StructuredOutput で報告せよ。\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_FALLBACK_CONVENTION
-  + `\n証跡保存: StructuredOutput で返すのと同一内容の JSON（tests/green/summary）を **Write tool** で `
-  + `\`${WT}/.devflow-tmp/trust-test-latest.json\` へ保存せよ（.devflow-tmp が無ければ Write が作る。`
-  + `既存の場合は先に Read tool で読んでから Write tool で上書きせよ（Write tool は未 Read の既存ファイルを上書きできず、この test 実行は毎 iteration 別セッションの subagent が担当するため前回分は未 Read 状態にある。Read 失敗時も Write は必ず試み、Read の成否は結果報告に混ぜるな）。`
-  + `保存失敗しても test 結果報告は行え）。\n`
   + EPOCH_INSTRUCTION
 
 // Security floor（ui-verify-config）と Final reconcile（ui-verify-config-final）が共有する
@@ -4292,8 +4297,7 @@ const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・re
 //   iteration 経過で relax / critical は常にブロック / 上限到達でも throw せず Evaluate へ委譲。
 // ============================================================
 // contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電するため、
-// 以降の shape 判定・SurfaceProof shadow probe の時間が plan 区間へ付け替わる（相対比較・分布
-// 用途のため許容。issue #443）。
+// 以降の shape 判定の時間が plan 区間へ付け替わる（相対比較・分布用途のため許容。issue #443）。
 feedClockMark('analyze_end', maxEpochRes([contractRes, issueMetaRes]))
 phase('Plan')
 let plan = null
@@ -5602,8 +5606,8 @@ if (reuseSecFloor) {
   ), 'Merge tier(danger-grep-final)')
   // changed-files 再利用（issue #542）: Final reconcile が同一 worktree・同一 tree に対して
   // 完全に同じコマンド（`git diff --name-only origin/BASE...HEAD`）を既に実行している。
-  // Final reconcile と Merge tier の間で tree を変える処理は無い（trust 系は gitignored な
-  // .devflow-tmp のみ書く）ため、結果は byte 一致する。取得失敗・未実行（null）は従来どおり再実行。
+  // Final reconcile と Merge tier の間で tree を変える処理は無い（journal payload 等の書き込みは
+  // gitignored な .devflow-tmp 配下に留まる）ため、結果は byte 一致する。取得失敗・未実行（null）は従来どおり再実行。
   if (changedFilesFinal != null) {
     changed = { files: changedFilesFinal }
     log('Merge tier: Final reconcile の changed-files-final を再利用（同一 tree — changed-files 再実行を skip）')
@@ -5757,12 +5761,8 @@ const summaryBody = buildDevflowSummaryBody({
   finalAcReconcile,
   liteReview: state.liteReview ?? null,
 })
-// EffectDelta (epic #390 Phase 4, issue #412, issue #466 で gh choreography を subagent へ移管):
-// shadow 時は effectdelta-github.sh の comment-prepare（marker/effect_id 導出 + posted body 組み立て）
-// → 投稿前後の PR コメント一覧を subagent の bare `gh api` で取得 → comment-observe（readback 分類）
-// の choreography で投稿し、script 不在・実行不可・posted!==true の場合は gh pr comment への
-// 無条件 fallback を prompt 内に明記する（AC-9）。off 経路は既存 prompt を byte 単位で不変に保つ
-// （AC-15 非干渉）。
+// 終端サマリーコメント投稿: bodySaveInstr で body を一時ファイルへ保存し
+// gh pr comment --body-file で投稿する。投稿失敗は posted:false で fail-open。
 const summaryPost = await trackedAgent(
   `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
   + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')

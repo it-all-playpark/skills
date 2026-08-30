@@ -1018,18 +1018,20 @@ if (NESTED) {
 // 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
 //
 // isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
-//   純関数（trust 証跡等を run 間で持ち越さない衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
+//   純関数（前 run の probe artifact（.isolation-probe-<token>）や run 専用 scratch を持ち越さない
+//   衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
 //   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
 //   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
-//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた trust 証跡を run 途中で
-//   消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
+//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた run 専用 scratch
+//   （journal payload payload-devflow-*.json / ui-verify state / 一時 body ファイル等の
+//   .devflow-tmp 配下生成物）を run 途中で消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 //   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
 // isolationProbePrompt: probe 専用 agent（Write tool のみ）へ渡す prompt を組み立てる純関数
 //   （worktree 直下の run 毎に一意なパスへ Write tool で実際に書き込ませ、成否を {written, error} で
 //   verbatim 報告させる）。token は呼び出し元が渡す必須引数: probe 対象パスに run 毎の一意な token
 //   を含めることで、cleanup が blocked/skip されて前 run の残置物が残っていても probe が成立する
-//   （成立が cleanup の成功に依存しない — issue #521）。cleanup は trust 証跡の持ち越し防止等の
-//   衛生目的で独立に残る。
+//   （成立が cleanup の成功に依存しない — issue #521）。cleanup は前 run 残置物の持ち越し防止
+//   （run 間衛生）の目的で独立に残る。
 // isolationErrorKind: probe の error 文字列を既知シグネチャで分類する純関数。written:false の原因が
 //   「isolation 不成立」なのか「その他の書き込み失敗（上書き拒否等）」なのかを isolationFailureMessage
 //   が出し分けるための判別根拠にする。
@@ -1139,7 +1141,8 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // （残っていると isolation が正常でも probe が written:false に倒れる — issue #482）。
 // 除去範囲は `.devflow-tmp/.isolation-probe` のみに絞る: nested 起動（dev-flow → workflow('pr-iterate')）
 // では isoWt が実行中の dev-flow worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が既に
-// 書いた trust 証跡（trust-risk-eval.json 等）を run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
+// 書いた run 専用 scratch（journal payload / 一時 body ファイル等の .devflow-tmp 配下生成物）を
+// run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
 // 時点である dev-flow Setup 側の責務。fail-open: 失敗しても run は継続する（残っていれば直後の
 // probe が written:false で fail-closed に倒れ、復旧手順は同一）。
 // nested 起動時は skip する（issue #550 案3。skip 理由は上の pr-meta 分岐で log 済み — dev-flow
@@ -1152,8 +1155,8 @@ if (!NESTED) {
 // isoToken: probe 対象パスを run 毎に一意にする（issue #521）。pr-meta probe（fail-open）が
 // 取得した epoch を使い、取得できなければ PR 番号へ fallback する。nested 起動（dev-flow →
 // workflow('pr-iterate')）時、probe ファイルは実行中 dev-flow run の worktree の
-// `.devflow-tmp/.isolation-probe-<token>` に書かれるが一意名のため dev-flow 側 trust 証跡・probe
-// ファイルと衝突しない。
+// `.devflow-tmp/.isolation-probe-<token>` に書かれるが一意名のため dev-flow 側の .devflow-tmp
+// 配下生成物・probe ファイルと衝突しない。
 const isoToken = String(prMeta?.epoch ?? PR)
 const isoProbe = await failOpenAgent(isolationProbePrompt(isoWt, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Iterate' })
 if (isoProbe && isoProbe.written === false) {
