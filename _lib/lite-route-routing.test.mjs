@@ -30,6 +30,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { ciCheckPrompt } from './ci-check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -350,15 +351,23 @@ test('[lite-route][D] danger-grep hit（micro でも runEval 強制）: lite を
 // (E) ci-check-lite: --checks-data argv 渡し + try/catch 包含（issue #499 F3）
 // ============================================================
 
+// prompt 本文は canonical `_lib/ci-check.mjs` にあり両 workflow へ inline 生成される（issue #543）。
+// source scan ではなく **生成される文字列そのもの** を検査し、呼び出し側が canonical を使っている
+// ことを別途 pin する（独自 prompt を書き始める退行の検出）。
 test('[lite-route][E] ci-check-lite prompt が --checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', () => {
+  const prompt = ciCheckPrompt({ pr: 123, repo: 'owner/name' });
+  assert.ok(prompt.includes('--checks-data'), 'ci-check-lite prompt に --checks-data が含まれるべき');
+  assert.ok(!prompt.includes('--checks-json'), 'ci-check-lite prompt に旧 --checks-json が残っているべきでない');
+  assert.ok(!prompt.includes('$TMPDIR/ci-checks'), 'ci-check-lite prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
+  assert.ok(!/[>]\s*\$TMPDIR/.test(prompt), 'ci-check-lite prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
+
   const src = readFileSync(devFlowPath, 'utf8');
   const ciCheckLiteBlockMatch = src.match(/const ciLite = await failOpenAgent\(([\s\S]*?)label: 'ci-check-lite'[\s\S]*?\)\n/);
   assert.ok(ciCheckLiteBlockMatch, 'ci-check-lite の failOpenAgent 呼び出しブロックが見つかるべき');
-  const block = ciCheckLiteBlockMatch[1];
-  assert.ok(block.includes('--checks-data'), 'ci-check-lite prompt に --checks-data が含まれるべき');
-  assert.ok(!block.includes('--checks-json'), 'ci-check-lite prompt に旧 --checks-json が残っているべきでない');
-  assert.ok(!block.includes('$TMPDIR/ci-checks'), 'ci-check-lite prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
-  assert.ok(!/[>]\s*\$TMPDIR/.test(block), 'ci-check-lite prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
+  assert.ok(
+    ciCheckLiteBlockMatch[1].includes('ciCheckPrompt('),
+    'ci-check-lite の呼び出し側は canonical の ciCheckPrompt() を使うべき（独自 prompt を書かない）',
+  );
 });
 
 test('[lite-route][E] ci-check-lite は trackedAgent を直接使わず try/catch で throw を吸収する failOpenAgent 経由で呼ばれる', () => {
