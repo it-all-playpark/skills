@@ -102,7 +102,7 @@ test('isolation cleanup は worktree 作成後・probe より前に配置され�
   assert.ok(cleanIdx < probeIdx, 'cleanup は probe より前に配置されるべき（stale 残置物を probe 前に除去する）');
 });
 
-test('Setup の worktree prompt は trust 証跡を stale へ上書きさせる手順を含まない（cleanup へ移譲済み）', () => {
+test('Setup の worktree prompt は trust-test-latest.json / trust-risk-*.json の書込手順を含まない（負 pin、cleanup へ移譲済み）', () => {
   const setupIdx = src.indexOf('`git worktree を 1 つ作って絶対パスを返せ。手順:');
   assert.notStrictEqual(setupIdx, -1, 'Setup の worktree prompt が見つからない');
   const prompt = src.slice(setupIdx, src.indexOf(`, 'Setup(worktree)')`, setupIdx));

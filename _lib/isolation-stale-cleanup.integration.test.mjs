@@ -55,7 +55,7 @@ function makeRepo() {
 function placeStaleArtifacts(dir) {
   mkdirSync(join(dir, '.devflow-tmp'), { recursive: true });
   writeFileSync(join(dir, '.devflow-tmp', '.isolation-probe'), 'ok');
-  writeFileSync(join(dir, '.devflow-tmp', 'trust-test-latest.json'), '{"tests":"green"}');
+  writeFileSync(join(dir, '.devflow-tmp', 'stale-run-scratch.json'), '{"tests":"green"}');
 }
 
 test('[stale-cleanup] 事前配置した stale probe artifact が cleanup で除去される（#482 の再発なし）', () => {
@@ -77,15 +77,15 @@ test('[stale-cleanup] 事前配置した stale probe artifact が cleanup で除
   }
 });
 
-test('[stale-cleanup] 前 run の trust 証跡（.devflow-tmp 配下）も同時に除去される', () => {
+test('[stale-cleanup] 前 run の run 専用 scratch（.devflow-tmp 配下）も同時に除去される', () => {
   const dir = makeRepo();
   try {
     placeStaleArtifacts(dir);
     const [cmd, ...args] = cleanupCommandFor(dir);
     execFileSync(cmd, args, { encoding: 'utf8' });
     assert.ok(
-      !existsSync(join(dir, '.devflow-tmp', 'trust-test-latest.json')),
-      '前 run の trust 証跡が .devflow-tmp 配下に残っている',
+      !existsSync(join(dir, '.devflow-tmp', 'stale-run-scratch.json')),
+      '前 run の run 専用 scratch が .devflow-tmp 配下に残っている',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -112,8 +112,8 @@ test('[stale-cleanup] .devflow-tmp の外（tracked / 他 untracked / 他 gitign
 });
 
 // pr-iterate（nested 起動時は実行中 dev-flow run の worktree が対象）が使う file 単位の target。
-// probe artifact だけを消し、当該 run が既に書いた trust 証跡は run 途中で失わないこと。
-test('[stale-cleanup] target を probe artifact 単体に絞ると同じ .devflow-tmp 内の trust 証跡は残る', () => {
+// probe artifact だけを消し、当該 run が既に書いた run 専用 scratch は run 途中で失わないこと。
+test('[stale-cleanup] target を probe artifact 単体に絞ると同じ .devflow-tmp 内の run 専用 scratch は残る', () => {
   const dir = makeRepo();
   try {
     placeStaleArtifacts(dir);
@@ -125,8 +125,8 @@ test('[stale-cleanup] target を probe artifact 単体に絞ると同じ .devflo
       'probe artifact は除去されるべき',
     );
     assert.ok(
-      existsSync(join(dir, '.devflow-tmp', 'trust-test-latest.json')),
-      '同じ .devflow-tmp 配下の trust 証跡まで消えている（nested run の証跡喪失）',
+      existsSync(join(dir, '.devflow-tmp', 'stale-run-scratch.json')),
+      '同じ .devflow-tmp 配下の run 専用 scratch まで消えている（nested run の scratch 喪失）',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
