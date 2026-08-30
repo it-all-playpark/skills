@@ -4150,14 +4150,12 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
     + CONTEXT7_BEST_PRACTICE_CONVENTION
 }
 
-// 計画の serial → 順次、parallel → 同時。drop（throw→null）を可視化して返す。
+// 計画の parallel → 同時に先行実行、serial → その後に配列順で順次実行（issue #534: serial は
+// parallel の成果物に依存し得るため parallel-first。逆方向 — parallel が serial 成果へ依存 — は
+// plan-reviewer が critical で reject する。issue #332 の pipeline() 移行時もこの順序を維持すること）。
+// serial/parallel とも throw→null は fail-open で吸収し drop を可視化して返す。
 async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   const results = []
-  for (const t of (plan.serial ?? [])) {
-    const r = await trackedAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
-      { agentType: 'implementer', schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
-    if (r) results.push(r)
-  }
   const par = (plan.parallel ?? []).map((t) => () =>
     trackedAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
       { agentType: 'implementer', schema: IMPL, label: `${tag}:par:${t.id}`, phase: 'Implement' }))
@@ -4166,6 +4164,14 @@ async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   const dropped = parResults.length - ok.length
   if (dropped) log(`⚠️ ${tag}: parallel implementer ${dropped} 件が失敗(null) — 要確認`)
   results.push(...ok)
+  let serialDropped = 0
+  for (const t of (plan.serial ?? [])) {
+    const r = await failOpenAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
+      { agentType: 'implementer', schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
+    if (r) results.push(r)
+    else serialDropped++
+  }
+  if (serialDropped) log(`⚠️ ${tag}: serial implementer ${serialDropped} 件が失敗(null) — 要確認`)
   return results
 }
 

@@ -63,6 +63,8 @@ Issue 要件から、implementer がそのまま着手できる**具体的・sel
 - **serial**: 先行 task の成果物に依存する task（schema → API → UI のような層状依存）。
   配列の順序が実行順序になる
 - **parallel**: 互いに独立で同時実装できる task（別モジュール・別ファイル群で衝突しない）
+- **実行順序**: workflow は **parallel 群を先に同時実行**し、その後 serial 列を配列順に実行する（issue #534）。
+  serial task は parallel task の成果物に依存してよい。parallel task が serial task の成果物に依存する計画は立てるな（実行時点で未生成のため BLOCKED になる）。
 
 迷ったら serial に倒す（並列実行は worktree isolation で行われ、衝突すると手戻りが大きい）。
 
