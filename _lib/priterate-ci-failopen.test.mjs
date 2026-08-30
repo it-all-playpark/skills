@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { ciCheckPrompt } from './ci-check.mjs';
 import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -142,22 +143,41 @@ test('[failopen-b] ci-check#1 が null(schema 未返却) -> status=ci_error', as
   assert.equal(result?.status, 'ci_error', `ci-check#1 null 時は status=ci_error であるべきだが '${result?.status}' だった`);
 });
 
-// ---- (c) source scan: prompt が argv データ渡し形 ----
+// ---- (c) prompt が argv データ渡し形 ----
+// prompt 本文は canonical `_lib/ci-check.mjs` にあり両 workflow へ inline 生成される（issue #543）。
+// source scan ではなく **生成される文字列そのもの** を検査する（agent が実際に受け取る内容を直接見る）。
+// 呼び出し側が canonical を使わず独自 prompt を書き始める退行は、後段の call-site 検証で捕まえる。
 test('[failopen-c] ci-check prompt が --checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', () => {
+  const prompt = ciCheckPrompt({ pr: 123, repo: 'owner/name' });
+  assert.ok(prompt.includes('--checks-data'), 'ci-check prompt に --checks-data が含まれるべき');
+  assert.ok(!prompt.includes('--checks-json'), 'ci-check prompt に旧 --checks-json が残っているべきでない');
+  assert.ok(!prompt.includes('$TMPDIR/ci-checks'), 'ci-check prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
+  assert.ok(!/[>]\s*\$TMPDIR/.test(prompt), 'ci-check prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
+
+  // call-site 検証: pr-iterate は独自 prompt を書かず canonical を呼ぶ
   const ciCheckBlockMatch = src.match(/const ci = await failOpenAgent\(([\s\S]*?)\{ agentType: 'dev-runner-haiku-ro'[\s\S]*?label: `ci-check#\$\{i\}`/);
   assert.ok(ciCheckBlockMatch, 'ci-check#i の trackedAgent 呼び出しブロックが見つかるべき');
-  const block = ciCheckBlockMatch[1];
-  assert.ok(block.includes('--checks-data'), 'ci-check prompt に --checks-data が含まれるべき');
-  assert.ok(!block.includes('--checks-json'), 'ci-check prompt に旧 --checks-json が残っているべきでない');
-  assert.ok(!block.includes('$TMPDIR/ci-checks'), 'ci-check prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
-  assert.ok(!/[>]\s*\$TMPDIR/.test(block), 'ci-check prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
+  assert.ok(
+    ciCheckBlockMatch[1].includes('ciCheckPrompt('),
+    'ci-check の呼び出し側は canonical の ciCheckPrompt() を使うべき（独自 prompt を書かない）',
+  );
 });
 
 // ---- (d) hygiene: guard/sandbox 語が prompt 文字列に含まれない ----
 test('[failopen-d] ci-check / post-summary / journal 系 prompt に guard/sandbox 系の語が含まれない', () => {
   const forbidden = ['guard', 'sandbox', 'ガード', 'サンドボックス'];
+
+  // ci-check の prompt 本文は canonical へ移った（issue #543）ため、呼び出し側ブロックを走査しても
+  // 空振りする。生成される文字列そのものを検査する。
+  const ciPrompt = ciCheckPrompt({ pr: 123, repo: 'owner/name' }).toLowerCase();
+  for (const word of forbidden) {
+    assert.ok(
+      !ciPrompt.includes(word.toLowerCase()),
+      `ci-check prompt に禁止語 '${word}' が含まれているべきでない`,
+    );
+  }
+
   const sections = [
-    { name: 'ci-check', re: /const ci = await failOpenAgent\(([\s\S]*?)label: `ci-check#\$\{i\}`[\s\S]*?\)\n/ },
     { name: 'post-summary', re: /const summaryPost = await failOpenAgent\(([\s\S]*?)label: `post-summary`[\s\S]*?\)\n/ },
     { name: 'journal-save', re: /const journalSaveRes = await trackedAgent\(([\s\S]*?)label: 'journal-save'[\s\S]*?\)\n/ },
     { name: 'journal-log', re: /const journalPost = await trackedAgent\(([\s\S]*?)label: 'journal-log'[\s\S]*?\)\n/ },
