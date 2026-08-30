@@ -2,9 +2,10 @@
 // Merge tier 間の diff-hash 一致による danger-grep-final / changed-files 再利用（issue #377）。
 //
 // Security floor phase（execSecurityFloorPhase）は danger-grep 成功時（risk.ok===true）かつ
-// realized-diff 成功時のみ label 'diff-hash-secfloor' で tree OID を捕捉し state.secDiffHash に
-// 保持する。Merge tier phase 冒頭は state.secDiffHash != null のときのみ label 'diff-hash-merge'
-// で再度 tree OID を捕捉し、両ハッシュが文字列完全一致する場合のみ danger-grep-final /
+// files（旧 realized-diff）成功時のみ、統合呼び出し（issue #544, label 'danger-grep' 据え置き）の
+// diffhash フィールドから tree OID を捕捉し state.secDiffHash に保持する。Merge tier phase 冒頭は
+// state.secDiffHash != null のときのみ label 'diff-hash-merge' で再度 tree OID を捕捉し、両ハッシュが
+// 文字列完全一致する場合のみ danger-grep-final /
 // changed-files の再実行を skip して Security floor の risk/realized を再利用する
 // （reuseSecFloor）。不一致・取得失敗・Security floor 側 fail-closed のときは現行どおり再実行し、
 // security floor の fail-closed 性は一切変えない。
@@ -104,9 +105,13 @@ function createResponder(overrides = {}) {
       return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
     }
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (label === 'danger-grep') return { ok: true, hits: [] };
+    // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は
+    // {risk, files, struct, diffhash} を 1 応答で返す。diffhash は既定で secfloor/merge 同一
+    // ハッシュ（再利用が発火する）。不一致にしたいテストは override で個別に上書きする。
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'SAMEHASH', empty: false } };
+    }
     if (label === 'danger-grep-final') return { ok: true, hits: [] };
-    if (label === 'realized-diff') return { files: ['src/x.ts'] };
     if (agentType === 'evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [],
@@ -120,9 +125,8 @@ function createResponder(overrides = {}) {
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/x.ts'] };
-    // diff-hash-secfloor / diff-hash-merge は既定で同一ハッシュ（再利用が発火する）。
-    // 不一致にしたいテストは override で個別に上書きする。
-    if (label === 'diff-hash-secfloor') return { hash: 'SAMEHASH', empty: false };
+    // diff-hash-merge（Merge tier。統合対象外）は既定で secfloor 側と同一ハッシュ
+    // （再利用が発火する）。不一致にしたいテストは override で個別に上書きする。
     if (label === 'diff-hash-merge') return { hash: 'SAMEHASH', empty: false };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
@@ -168,7 +172,7 @@ test('[diffhash-reuse] (1) 完全一致 → danger-grep-final/changed-files は�
 test("[diffhash-reuse] (2) hash 不一致 → 'danger-grep-final'/'changed-files' が再実行される", async () => {
   const { ctx, calls } = makeSandbox({
     overrides: {
-      'diff-hash-secfloor': { hash: 'A', empty: false },
+      'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'A', empty: false } },
       'diff-hash-merge': { hash: 'B', empty: false },
     },
   });
@@ -204,7 +208,7 @@ test("[diffhash-reuse] (3) diff-hash-merge が null（取得失敗） → 再実
 test("[diffhash-reuse] (4) Security floor fail-closed → 'diff-hash-merge' は呼ばれず 'danger-grep-final' が呼ばれ merge_tier HOLD（fail-closed 維持）", async () => {
   const { ctx, calls } = makeSandbox({
     overrides: {
-      'danger-grep': { ok: false, hits: [], error: 'sec floor stub fail' },
+      'danger-grep': { risk: { ok: false, hits: [], error: 'sec floor stub fail' }, files: null, struct: null, diffhash: null },
       'danger-grep-final': { ok: false, hits: [], error: 'merge tier stub fail' },
     },
   });
@@ -224,7 +228,12 @@ test("[diffhash-reuse] (4) Security floor fail-closed → 'diff-hash-merge' は�
 test("[diffhash-reuse] (5) hash 一致 + Security floor で danger hit → 再利用で 'danger-grep-final' 不発だが hit が残り merge_tier HOLD", async () => {
   const { ctx, calls } = makeSandbox({
     overrides: {
-      'danger-grep': { ok: true, hits: [{ class: 'config', file: 'src/x.ts', pattern: 'p' }] },
+      'danger-grep': {
+        risk: { ok: true, hits: [{ class: 'config', file: 'src/x.ts', pattern: 'p' }] },
+        files: ['src/x.ts'],
+        struct: null,
+        diffhash: { hash: 'SAMEHASH', empty: false },
+      },
     },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);

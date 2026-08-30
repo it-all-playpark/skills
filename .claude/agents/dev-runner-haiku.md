@@ -5,19 +5,18 @@ description: |
   require filesystem mutation or Skill invocation: git worktree creation,
   run-scratch cleanup (.devflow-tmp), deps install, test execution,
   redgreen verification, reconcile-sync,
-  danger-grep with evidence-file output, ui-verify server start/teardown,
+  ui-verify server start/teardown,
   journal writes, and PR comment posting
   (post-review / post-summary). Returns verbatim stdout of the delegated
   script with no added judgment or decoration. Uses model:haiku
-  (frontmatter-fixed) to reduce cost. Read-only proxies (diff-hash,
-  changed-files/realized-diff, CI checks read) are routed to
+  (frontmatter-fixed) to reduce cost. Read-only proxies (danger-grep(-final),
+  diff-hash, changed-files/realized-diff, CI checks read) are routed to
   dev-runner-haiku-ro instead, which has no Write/Edit/Skill/TodoWrite/
   Glob/Grep.
   Use when: dev-flow workflow dispatches a deterministic exec-proxy call
   that mutates the worktree or invokes a Skill — worktree setup, deps
   install, test execution (Setup / Validate), redgreen, reconcile-sync,
-  danger-grep writing its risk evidence file, ui-verify server/teardown,
-  journal writes, or PR comment posting.
+  ui-verify server/teardown, journal writes, or PR comment posting.
 model: haiku
 effort: low
 tools:
@@ -71,7 +70,6 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 | Evaluate | redgreen 検証（AC ごとの再実行） | 各 schema |
 | Final reconcile | reconcile-sync（worktree を PR 最終 HEAD へ同期）・test 再実行 | `{...}` / `{tests, green, summary}` |
 | Validate / Evaluate | ui-verify server 起動・teardown（Skill 呼び出し） | `{...}` |
-| Security floor / Merge tier | danger-grep / danger-grep-final（diff-risk-classify.sh — `--out` で risk 証跡ファイルを書く） | `RISK` |
 | Evaluate / Merge tier | journal 書き込み等その他決定論スクリプト | 各 schema |
 | Iterate / Merge tier | PR コメント投稿（post-review#i / post-summary — 確定済み本文の verbatim 転写 + gh pr comment/review 実行） | `{posted, method, url}` |
 

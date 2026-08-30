@@ -326,20 +326,23 @@ test('[triage] dev-flow.js: 最終 return に shape: SHAPE が含まれる', () 
 
 // ---- 6. W5: danger-grep 配線 + merge tier --------------------------------------------------
 
-test('[W5] dev-flow.js: RISK schema と diff-risk-classify 呼び出しが存在', () => {
+// issue #495 の trust-layer 証跡書き込み（--out）は #549 の call site 撤去、
+// issue #544 の Security floor 4→1 統合を経て撤去済み。Security floor 側の danger-grep は
+// secfloor-classify.sh 経由の統合呼び出し（label 'danger-grep'）になり diff-risk-classify.sh を
+// 直接は呼ばない（統合スクリプト内部から --working-tree 付きで呼ばれる）。Merge tier の
+// danger-grep-final はフラグ無し三点 diff のまま diff-risk-classify.sh を直接呼び、--out は
+// 使わない。
+test('[W5] dev-flow.js: RISK schema と Merge tier の diff-risk-classify 呼び出しが存在し、--out は使わない', () => {
   const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
   assert.ok(src.includes('const RISK ='), 'RISK schema があること');
   assert.ok(src.includes("required: ['ok', 'hits']"), 'RISK schema が ok error channel を必須にすること');
-  assert.ok(src.includes('diff-risk-classify.sh'), 'diff-risk-classify.sh を呼ぶこと');
+  assert.ok(src.includes('diff-risk-classify.sh'), '（Merge tier の danger-grep-final 経由で）diff-risk-classify.sh を呼ぶこと');
   assert.ok(
-    src.includes('diff-risk-classify.sh --working-tree --out ${' + 'WT}/.devflow-tmp/trust-risk-eval.json origin/${' + 'BASE}'),
-    'Security floor は --working-tree モードで呼び、--out で実行証跡ファイルを書き出すこと（issue #495）',
+    src.includes('bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${' + 'BASE}'),
+    'Merge tier の danger-grep-final はフラグ無し三点 diff で diff-risk-classify.sh を呼ぶこと',
   );
-  assert.ok(
-    src.includes('diff-risk-classify.sh --out ${' + 'WT}/.devflow-tmp/trust-risk-final.json origin/${' + 'BASE}'),
-    'Merge tier はフラグ無し三点 diff に --out での実行証跡ファイル書き出しを追加すること（issue #495）',
-  );
-  assert.ok(src.includes('--untracked-files=all'), 'porcelain は -uall で untracked dir を展開すること');
+  assert.ok(!src.includes('--out'), '証跡書き込み --out は撤去済みであること（issue #544 AC1）');
+  assert.ok(!src.includes('--working-tree'), 'dev-flow.js 自体は --working-tree を直接指定しない（secfloor-classify.sh 内部の呼び出しに委譲）');
 });
 
 test('[W5] dev-flow.js: 常時 SEC seed と runEval gate が存在', () => {

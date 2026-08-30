@@ -58,9 +58,11 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // Security floor（Evaluate 前）の danger-grep
+    // Security floor（Evaluate 前）の danger-grep（issue #544 統合呼び出し。dangerGrepPre を
+    // risk フィールドへ包む。diffhash は Merge tier 側（'H_MERGE'）と意図的に異なる値にして
+    // reuse を発火させない — シナリオが pre/final の乖離を前提にしているため）。
     if (label === 'danger-grep') {
-      return dangerGrepPre;
+      return { risk: dangerGrepPre, files: ['src/foo.ts'], struct: null, diffhash: { hash: 'H', empty: false } };
     }
     // Merge tier の最終 danger-grep
     if (label === 'danger-grep-final') {
@@ -81,12 +83,6 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     }
     if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
-    }
-    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
-      return { files: ['src/foo.ts'] };
-    }
-    if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
-      return { files: ['src/foo.ts'] };
     }
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 16, committed: true };

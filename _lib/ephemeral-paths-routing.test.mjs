@@ -45,7 +45,10 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * refloor-shape-routing.test.mjs の makeCountingSandbox と同型。
  * 相違点: calls 配列に { label, agentType, prompt } を記録する（prompt も記録するよう拡張）。
  *
- * porcelain 統合（F3）後: declared-path-check stub は削除。realized-diff が唯一のスナップショット。
+ * porcelain 統合（F3, issue #219）後、さらに issue #544 (S1) で danger-grep(risk) /
+ * realized-diff(files) / structural-classify(struct) / diff-hash-secfloor(hash) の 4 呼び出しが
+ * secfloor-classify.sh 経由の単一呼び出し（label 'danger-grep' 据え置き）へ統合された。
+ * files（旧 realized-diff・declared-path-check スナップショット）はその応答の files フィールドで得る。
  *
  * F2 新挙動対応: dev-planner stub の file_changes を declaredFiles で差し替え可能にする。
  * refloor count は宣言済み変更のみで数えるため、refloor を発火させたいシナリオ（A/B）では
@@ -53,7 +56,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * 省略時（デフォルト []）は従来どおり全て宣言外になる（C/D/E の宣言外監査シナリオ用）。
  *
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
- * @param {string[]} realizedFiles - realized-diff stub が返すファイル一覧
+ * @param {string[]} realizedFiles - label 'danger-grep' stub が files フィールドとして返すファイル一覧
  * @param {string[]} [declaredFiles] - dev-planner stub が file_changes として宣言するファイル一覧
  * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
  */
@@ -87,11 +90,13 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    if (label.startsWith('danger-grep')) {
-      return { ok: true, hits: [] };
+    // label 'danger-grep'（issue #544 統合呼び出し）は risk/files を 1 応答で返す
+    // （files は旧 realized-diff 相当のスナップショット）。
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
     }
-    if (label === 'realized-diff') {
-      return { files: realizedFiles };
+    if (label === 'danger-grep-final') {
+      return { ok: true, hits: [] };
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
@@ -387,13 +392,13 @@ test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣�
 
 // ============================================================
 // (E) porcelain 取得 1 回ピン:
-//     - realized-diff が 1 回だけ呼ばれる（refloor + declared-path-check 両方が参照）
-//     - declared-path-check が 0 回（統合後は realized スナップショットを再利用）
-//     - realized-diff が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
-//       （= declared-path-check が realized.files と同一スナップショットを参照している実証）
+//     - label 'danger-grep'（issue #544 統合呼び出し）が 1 回だけ呼ばれる
+//       （refloor + declared-path 監査の両方が同一応答の files フィールドを参照）
+//     - danger-grep が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
+//       （= refloor と宣言外監査が同一スナップショットを参照している実証）
 // ============================================================
 
-test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: realized-diff=1 / declared-path-check=0 / 宣言外ファイル→evaluator prompt に出現', async () => {
+test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 / 宣言外ファイル→evaluator prompt に出現', async () => {
   const standardReq = {
     summary: 's',
     acceptance_criteria: ['a', 'b', 'c', 'd'],
@@ -417,29 +422,21 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: realized-diff=
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  // porcelain 呼び出し 1 回ピン
-  const realizedDiffCalls = calls.filter((c) => c.label === 'realized-diff');
+  // porcelain 呼び出し 1 回ピン（issue #544 統合後は label 'danger-grep' が唯一の呼び出し）
+  const dangerGrepCalls = calls.filter((c) => c.label === 'danger-grep');
   assert.equal(
-    realizedDiffCalls.length,
+    dangerGrepCalls.length,
     1,
-    '(E) realized-diff は 1 回のはずだが ' + realizedDiffCalls.length + ' 回だった',
+    '(E) danger-grep は 1 回のはずだが ' + dangerGrepCalls.length + ' 回だった',
   );
 
-  const declaredPathCheckCalls = calls.filter((c) => c.label === 'declared-path-check');
-  assert.equal(
-    declaredPathCheckCalls.length,
-    0,
-    '(E) declared-path-check は 0 回のはずだが ' + declaredPathCheckCalls.length + ' 回だった'
-      + ' (porcelain 統合後は realized スナップショットを再利用)',
-  );
-
-  // realized-diff が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
+  // danger-grep が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
   const eval1Call = calls.find((c) => c.label === 'eval#1');
   assert.ok(eval1Call != null, '(E) evaluator eval#1 が呼ばれていない');
   assert.ok(
     eval1Call.prompt.includes('宣言外変更'),
     '(E) evaluator prompt に "宣言外変更" が含まれるはずだが見つからなかった'
-      + ' (realized-diff と declared-path-check が同一スナップショットを参照している実証)',
+      + ' (refloor と宣言外監査が同一スナップショットを参照している実証)',
   );
   assert.ok(
     eval1Call.prompt.includes('undeclared-file.ts'),
