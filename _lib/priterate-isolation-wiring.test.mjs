@@ -136,7 +136,7 @@ test('isolation cleanup failOpenAgent 呼び出しが agentType/schema/label/pha
 });
 
 // nested 起動（dev-flow → workflow('pr-iterate')）では isoWt が実行中 dev-flow run の worktree
-// 自身になるため、`.devflow-tmp` 全体を消すと当該 run が既に書いた trust 証跡を run 途中で失う。
+// 自身になるため、`.devflow-tmp` 全体を消すと当該 run が既に書いた run 専用 scratch（journal payload 等）を run 途中で失う。
 // pr-iterate 側の除去範囲は probe artifact 単体であることを pin する。
 test('pr-iterate の cleanup 対象は probe artifact 単体（.devflow-tmp 全体を消さない）', () => {
   const idx = src.indexOf('isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
