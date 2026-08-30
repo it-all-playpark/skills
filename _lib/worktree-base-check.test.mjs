@@ -1,95 +1,11 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { checkWorktreeBase, worktreeBaseProbePrompt, WORKTREE_BASE_PROBE } from './worktree-base-check.mjs';
+import { checkWorktreeBase } from './worktree-base-check.mjs';
 
-// ── WORKTREE_BASE_PROBE ─────────────────────────────────────────────────────
-
-test('WORKTREE_BASE_PROBE: required が期待通り（issue #527: upstream_remote/upstream_merge 分割）', () => {
-  assert.deepEqual(WORKTREE_BASE_PROBE.required, ['ok', 'worktree_exists', 'upstream_remote', 'upstream_merge']);
-});
-
-// ── worktreeBaseProbePrompt ──────────────────────────────────────────────────
-
-test('worktreeBaseProbePrompt: git worktree list --porcelain を含む（issue #527: パス引数ゼロ構成）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /`git worktree list --porcelain`/);
-});
-
-test('worktreeBaseProbePrompt: git config --get branch. を含む（issue #527: パス引数ゼロ構成）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /`git config --get branch\.<BR>\.remote`/);
-  assert.match(prompt, /`git config --get branch\.<BR>\.merge`/);
-});
-
-test('worktreeBaseProbePrompt: git -C の実行コマンドを含まない（worktree-isolation guard 拒否の再発 pin, issue #527）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.doesNotMatch(prompt, /`git -C /);
-});
-
-test('worktreeBaseProbePrompt: test -d の実行コマンドを含まない（worktree-isolation guard 拒否の再発 pin, issue #527）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.doesNotMatch(prompt, /`test -d/);
-});
-
-test('worktreeBaseProbePrompt: @{upstream} を含まない（issue #527: git config --get へ置換）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.doesNotMatch(prompt, /@\{upstream\}/);
-});
-
-test('worktreeBaseProbePrompt: .claude/worktrees/df-517 を含む', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /\.claude\/worktrees\/df-517/);
-});
-
-test('worktreeBaseProbePrompt: repo 外候補 <repo>-wt/df-517 を含む（issue #528: 2候補化）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /-wt\/df-517/);
-});
-
-test('worktreeBaseProbePrompt: WTD_IN が常に先勝ちする旨の文言を含む（issue #528 不変条件）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /先勝ち/);
-});
-
-test('worktreeBaseProbePrompt: prunable 行付きブロックは worktree_exists=false として扱う旨の文言を含む（stale worktree 誤判定 pin, issue #533 review）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /`prunable`/);
-  assert.match(prompt, /worktree_exists=false/);
-});
-
-test('worktreeBaseProbePrompt: verbatim を含む', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /verbatim/);
-});
-
-test('worktreeBaseProbePrompt: Output format / Tools / Boundary / Token cap セクションを含む', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /## Output format/);
-  assert.match(prompt, /## Tools/);
-  assert.match(prompt, /## Boundary/);
-  assert.match(prompt, /## Token cap/);
-});
-
-test('worktreeBaseProbePrompt: Output format が upstream_remote/upstream_merge を含む新 JSON 形式である', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /\{"ok":true,"worktree_exists":<bool>,"upstream_remote":"<string>","upstream_merge":"<string>"\}/);
-});
-
-test('worktreeBaseProbePrompt: ネストした command substitution $( を含まない（worktree-isolation guard 拒否の再発 pin, issue #519 review）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.doesNotMatch(prompt, /\$\(/);
-});
-
-test('worktreeBaseProbePrompt: 複合 if 文（if [ ... ]）を含まない（worktree-isolation guard 拒否の再発 pin, issue #519 review）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.doesNotMatch(prompt, /if \[/);
-});
-
-test('worktreeBaseProbePrompt: Tools セクションが git -C・test を禁止する旨を明示する（issue #527）', () => {
-  const prompt = worktreeBaseProbePrompt(517);
-  assert.match(prompt, /`git -C`/);
-  assert.match(prompt, /`test`/);
-});
+// WORKTREE_BASE_PROBE / worktreeBaseProbePrompt は issue #550 案1 で resolve-base.mjs の
+// SETUP_BASE_PROBE / setupBaseProbePrompt へ統合された（_lib/resolve-base.test.mjs 側でテストする）。
+// checkWorktreeBase は probe object の worktree_exists/upstream_remote/upstream_merge フィールドのみ
+// を読む決定論関数であり、統合後も無変更のため以下のテストは全て有効。
 
 // ── checkWorktreeBase: 一致・不一致・判定不能（新 probe shape: upstream_remote/upstream_merge） ──
 

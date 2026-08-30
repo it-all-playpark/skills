@@ -112,7 +112,7 @@ function assertAgentTypeOnLine(line, label, expectedAgentType, source) {
 // ---- (a) dev-flow.js: read-only exec-proxy labels → dev-runner-haiku-ro ----
 
 const READ_ONLY_LABELS = [
-  'resolve-base',
+  'setup-base',
   'diff-gate',
   'diff-gate-retry',
   'danger-grep',
@@ -134,11 +134,9 @@ for (const label of READ_ONLY_LABELS) {
   });
 }
 
-// clock# probe (issue #371 F2): duration telemetry の時刻取得 exec-proxy も read-only（Bash `date +%s` のみ）。
-test("[exec-proxy-routing] dev-flow.js label 'clock#' routes to agentType:'dev-runner-haiku-ro'", () => {
-  const line = findLineByLabelPrefix(devFlowSrc, 'clock#');
-  assertAgentTypeOnLine(line, 'clock#', 'dev-runner-haiku-ro', 'dev-flow.js');
-});
+// clock# probe は issue #550 F1+F3 で専用 clock probe 呼び出し自体が撤去され（0 call site）、
+// このラベルの routing テストは対象消滅により削除した（devflow-duration-telemetry.test.mjs /
+// workflow-load-smoke.test.mjs §7 が 0 件を pin する）。
 
 // ---- (b) dev-flow.js: write/Skill exec-proxy labels stay on dev-runner-haiku ----
 

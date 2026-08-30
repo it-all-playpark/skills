@@ -1,8 +1,10 @@
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
-// I/O なし・Date.now/Math.random 不使用。専用 clock probe（dev-runner-haiku-ro）は start/end の
-// 2 回のみ。残り 9 mark（analyze_start/analyze_end/plan_end/implement_end/validate_end/
-// evaluate_end/pr_end/iterate_end/final_end）は phase 境界に隣接する既存 exec-proxy / agent 応答の
-// optional epoch フィールドから recordClockMark へ給電する（fail-open — 給電元失敗は当該 mark null →
+// I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
+// start は Setup 冒頭の setup-base probe（resolve-base + worktree-base-check 統合 exec-proxy）の
+// optional epoch、end は Merge tier 末尾の post-summary 応答の optional epoch から給電し、
+// 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
+// pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
+// フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
 // 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
@@ -36,29 +38,6 @@ export const CLOCK_PHASE_ENDS = [
   ['iterate', 'iterate_end'],
   ['final', 'final_end'],
 ];
-
-/**
- * exec-proxy（dev-runner-haiku-ro）向けの現在時刻取得 prompt を返す。
- */
-export function clockProbePrompt() {
-  return '## Objective\n'
-    + '現在時刻の epoch 秒を取得する。\n'
-    + '\n'
-    + '## Instructions\n'
-    + '`date +%s` を実行し、出力の整数を epoch として返せ。成功なら ok:true。失敗しても throw せず ok:false を返すこと。\n'
-    + '\n'
-    + '## Output format\n'
-    + '{ "ok": boolean, "epoch": number }\n'
-    + '\n'
-    + '## Tools\n'
-    + '使用可: Bash のみ\n'
-    + '\n'
-    + '## Boundary\n'
-    + 'ファイル変更禁止。git 操作禁止。\n'
-    + '\n'
-    + '## Token cap\n'
-    + '30 語以内で完結すること。';
-}
 
 // marks から number 値のみを取り出す内部ヘルパー（null/undefined/非数値/NaN は null 扱い）。
 function readMark(marks, name) {

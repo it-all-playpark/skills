@@ -355,6 +355,20 @@ const ACCEPTANCE_CRITERIA = args?.acceptance_criteria
 const MAX = args?.max_iterations == null
   ? 10
   : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
+// NESTED: dev-flow が workflow('pr-iterate') を nested 起動する際に渡す呼び出し元情報（issue #550
+// 案3）。cwd/head_ref は必須（欠落は明示 throw。legacy fallback や他形式の受理はしない）、repo/epoch は
+// optional。単体起動（/pr-iterate <pr>）は未指定のため NESTED=null。
+const NESTED = args?.nested == null
+  ? null
+  : (() => {
+      const n = args.nested
+      if (typeof n !== 'object' || n === null
+        || typeof n.cwd !== 'string' || n.cwd.trim() === ''
+        || typeof n.head_ref !== 'string' || n.head_ref.trim() === '') {
+        throw new Error(`pr-iterate: args.nested が不正形です（cwd/head_ref は非空文字列が必須）: ${JSON.stringify(n)}`)
+      }
+      return n
+    })()
 const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション（issue #126）
 
 // run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
@@ -976,12 +990,26 @@ const PR_META = {
   type: 'object', required: ['url'],
   properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' }, epoch: { type: 'number' } },
 }
-const prMeta = await failOpenAgent(
-  `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと。epoch のみコマンド失敗時は省略可）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n- \`date +%s\` → epoch(現在時刻の epoch 秒整数。isolation probe 対象パスの run 毎一意化用)\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string, "epoch": number }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
-  { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
-)
-const REPO = repoFromGithubUrl(prMeta?.url)
-if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
+// nested 起動（dev-flow → workflow('pr-iterate')）では pr-meta probe を起動しない（issue #550
+// 案3）。根拠: cwd/head_ref/repo/epoch は dev-flow が Setup/PR phase で既に確定済みの値として
+// args.nested に保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
+let prMeta
+let REPO
+if (NESTED) {
+  prMeta = {
+    url: '', head_ref: NESTED.head_ref, base_ref: '', cwd: NESTED.cwd,
+    ...(Number.isFinite(NESTED.epoch) ? { epoch: NESTED.epoch } : {}),
+  }
+  REPO = NESTED.repo ?? null
+  log('nested 起動 — pr-meta / isolation-cleanup を skip（dev-flow Setup 側の .devflow-tmp cleanup が run 間衛生を担保）')
+} else {
+  prMeta = await failOpenAgent(
+    `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと。epoch のみコマンド失敗時は省略可）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n- \`date +%s\` → epoch(現在時刻の epoch 秒整数。isolation probe 対象パスの run 毎一意化用)\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string, "epoch": number }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
+    { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
+  )
+  REPO = repoFromGithubUrl(prMeta?.url)
+  if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
+}
 // ==== BEGIN inline: _lib/isolation-probe.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Isolation probe: dev-flow の Setup phase 完了直後に bg-isolation guard を早期検知する純関数群
 // （bg job から dev-flow を起動する際、呼び出し元セッションが自身の cwd を worktree へ isolate
@@ -1114,8 +1142,13 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // 書いた trust 証跡（trust-risk-eval.json 等）を run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
 // 時点である dev-flow Setup 側の責務。fail-open: 失敗しても run は継続する（残っていれば直後の
 // probe が written:false で fail-closed に倒れ、復旧手順は同一）。
-const isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, '.devflow-tmp/.isolation-probe'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
-if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
+// nested 起動時は skip する（issue #550 案3。skip 理由は上の pr-meta 分岐で log 済み — dev-flow
+// Setup が run 開始時に .devflow-tmp 全体を cleanup 済みのため重複起動が不要）。
+let isoClean = null
+if (!NESTED) {
+  isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, '.devflow-tmp/.isolation-probe'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
+  if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
+}
 // isoToken: probe 対象パスを run 毎に一意にする（issue #521）。pr-meta probe（fail-open）が
 // 取得した epoch を使い、取得できなければ PR 番号へ fallback する。nested 起動（dev-flow →
 // workflow('pr-iterate')）時、probe ファイルは実行中 dev-flow run の worktree の

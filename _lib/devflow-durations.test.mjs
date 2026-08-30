@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   CLOCK_MARK_ORDER,
   CLOCK_PHASE_ENDS,
-  clockProbePrompt,
   recordClockMark,
   computeDurations,
   epochResOf,
@@ -39,14 +38,6 @@ test('CLOCK_PHASE_ENDS は 8 phase の [key, endMark] 配列', () => {
     ['iterate', 'iterate_end'],
     ['final', 'final_end'],
   ]);
-});
-
-test('clockProbePrompt は文字列を返す', () => {
-  const prompt = clockProbePrompt();
-  assert.equal(typeof prompt, 'string');
-  assert.match(prompt, /date \+%s/);
-  assert.match(prompt, /ok/);
-  assert.match(prompt, /epoch/);
 });
 
 // ---- (1) computeDurations: 全 mark 単調増加（10刻み） ----

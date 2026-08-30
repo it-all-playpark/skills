@@ -110,8 +110,12 @@ function resolvePositiveIntArg(args, name) {
 // ==== BEGIN inline: _lib/resolve-base.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Resolve Base: dev-flow の Setup phase 冒頭で BASE branch を確定する純関数群（issue #298）。
 // normalizeBaseArg: args.base を正規化する（未指定は null、非文字列は throw）。
-// RESOLVE_BASE_PROBE: exec-proxy（dev-runner-haiku）が返す origin refs probe の schema。
-// resolveBasePrompt: dev-runner-haiku へ渡す verbatim 転写 prompt を組み立てる純関数。
+// SETUP_BASE_PROBE: exec-proxy（dev-runner-haiku-ro）が返す統合 probe の schema（issue #550 案1）
+//   — resolve-base（issue #298）と worktree-base-check（issue #517）の 2 probe を 1 回の
+//   exec-proxy 呼び出しへ統合したもの。resolveBase() と checkWorktreeBase()
+//   （_lib/worktree-base-check.mjs）はそれぞれ probe object の自分のフィールドしか読まないため、
+//   単一の統合 probe object を両関数へそのまま渡せる。
+// setupBaseProbePrompt: dev-runner-haiku-ro へ渡す verbatim 転写 prompt を組み立てる純関数。
 // resolveBase: probe を元に BASE を決定論的に解決する純関数
 //   （明示指定→存在検証 / 未指定→origin/dev→origin/HEAD フォールバック / 解決不能→throw）。
 //
@@ -137,37 +141,95 @@ function normalizeBaseArg(raw) {
   throw new Error('dev-flow: args.base は非空文字列で指定せよ（受信: ' + JSON.stringify(raw) + '）');
 }
 
-const RESOLVE_BASE_PROBE = {
+const SETUP_BASE_PROBE = {
   type: 'object',
-  required: ['ok', 'default_branch', 'dev_exists', 'requested_exists'],
+  required: [
+    'ok', 'default_branch', 'dev_exists', 'requested_exists',
+    'worktree_exists', 'upstream_remote', 'upstream_merge',
+  ],
   properties: {
     ok: { type: 'boolean' },
     default_branch: { type: 'string' },
     dev_exists: { type: 'boolean' },
     requested_exists: { type: 'boolean' },
+    worktree_exists: { type: 'boolean' },
+    upstream_remote: { type: 'string' },
+    upstream_merge: { type: 'string' },
+    epoch: { type: 'number' },
   },
 };
 
-function resolveBasePrompt(baseArg) {
+function setupBaseProbePrompt(baseArg, issue) {
   const req = typeof baseArg === 'string' ? baseArg : '';
-  const cmd = 'REQ="' + req + '"; '
+  // 手順A（issue #298）: base 解決情報の取得。パス引数を含まない複合ワンライナーのため guard-safe
+  // （worktree-isolation guard が拒否するのは絶対パス引数を持つコマンドであり、複合構文そのものでは
+  // ない）。DB/DEV/REQE の値は printf で JSON 化せず echo で保持し、Output format の最終 JSON は
+  // 手順B/C の結果と合わせて agent が組み立てる。
+  const stepACmd = 'REQ="' + req + '"; '
     + 'DB=$(git ls-remote --symref origin HEAD 2>/dev/null | awk \'/^ref:/{sub("refs/heads/","",$2); print $2; exit}\'); '
     + 'DEV=false; git ls-remote --exit-code --heads origin "refs/heads/dev" >/dev/null 2>&1 && DEV=true; '
     + 'REQE=false; if [ -n "$REQ" ]; then git ls-remote --exit-code --heads origin "refs/heads/$REQ" >/dev/null 2>&1 && REQE=true; fi; '
-    + 'printf \'{"ok":true,"default_branch":"%s","dev_exists":%s,"requested_exists":%s}\\n\' "$DB" "$DEV" "$REQE"';
-  return 'リポジトリルートで次のコマンドをそのまま実行し、stdout の JSON 1 行をそのまま **verbatim** で返せ'
-    + '（判定や脚色をしない。要約・整形・追加コメントは付けない）:\n\n'
-    + cmd
-    + '\n\n'
+    + 'echo "DB=$DB DEV=$DEV REQE=$REQE"';
+
+  // 手順B（issue #517, #527, #528, #533）: 既存 worktree の起点検証。
+  // issue #527: worktree-isolation guard は絶対パス引数を持つコマンド（git -C 単体を含む）を
+  // 「too complex to verify that it stays inside the worktree」で拒否する実測があり、パス引数を
+  // 一切持たないコマンド列（git worktree list --porcelain / git config --get branch.<name>.*）へ
+  // 置換し、guard が検証すべきパス引数が構造的に存在しない状態にする。
+  // issue #528: worktree 候補は repo 内(WTD_IN)/repo 外(WTD_EXT)の2つ。探索は WTD_IN が
+  // 常に先勝ちする決定論的順序（既定動作＝repo 内 worktree を不変に保つ）。
+  const wtdInSuffix = '.claude/worktrees/df-' + issue;
+  const wtdExtSuffix = '-wt/df-' + issue;
+  const stepBInstructions = '1. 次を実行する: `git worktree list --porcelain`\n'
+    + '   出力は worktree ごとのブロック（`worktree <絶対パス>` 行、`branch refs/heads/<name>` 行等）に'
+    + '分かれる（git は main worktree を必ず先頭に出す）。先頭ブロックの worktree パスを ROOT とする。\n'
+    + '   WTD_IN = `${ROOT}/' + wtdInSuffix + '`\n'
+    + '   WTD_EXT = `${ROOT}' + wtdExtSuffix + '`\n'
+    + '   worktree パスが WTD_IN に一致するブロックを探す。見つかり、かつそのブロックに `prunable`'
+    + ' で始まる行が **無ければ** WTD=WTD_IN、worktree_exists=true とする。見つからない、または'
+    + '見つかっても `prunable` 行がある場合（正規の削除手順を経ず手動でディレクトリ削除された stale'
+    + ' worktree — git のメタデータ上は残るが実体が無い）は WTD_IN には無いものとして扱い、WTD_EXT'
+    + 'に一致するブロックを同じ基準（`prunable` 行が無いこと）で探し、あれば WTD=WTD_EXT、'
+    + 'worktree_exists=true とする（WTD_IN が常に先勝ちする決定論的な優先順位である）。どちらも'
+    + '無い、またはどちらも `prunable` 行付きの場合は worktree_exists=false、upstream_remote=""、'
+    + 'upstream_merge="" とし、以降の手順B の続き（2〜3）は実行せず 手順C へ進む。\n'
+    + '   （`prunable` 行が無い）一致したブロックに `branch refs/heads/<name>` 行が無い場合'
+    + '（detached HEAD）も同様に upstream_remote=""、upstream_merge="" とし、手順2〜3 は実行しない。'
+    + 'あれば `refs/heads/` を除いた名前を BR とする。\n\n'
+    + '2. 次を実行する（<BR> は手順1で求めた branch 名に置換する。branch 設定は worktree 間で共有される'
+    + ' `.git/config` にあるため -C は不要）: `git config --get branch.<BR>.remote`\n'
+    + '   成功（exit code 0）した場合 stdout の1行を upstream_remote とする。失敗（exit code 非0）した'
+    + '場合は upstream_remote を空文字列 "" とする。\n\n'
+    + '3. 次を実行する（<BR> は手順1で求めた branch 名に置換する）: `git config --get branch.<BR>.merge`\n'
+    + '   成功（exit code 0）した場合 stdout の1行を upstream_merge とする。失敗（exit code 非0）した'
+    + '場合は upstream_merge を空文字列 "" とする。';
+
+  return 'リポジトリルートで以下の手順を **この順で** 実行し、各コマンドの結果から JSON を組み立てて返せ'
+    + '（各コマンドの stdout は **verbatim** に扱い、要約・脚色をしない。判定は下記の組み立てルールのみに従う）:\n\n'
+    + '## 手順A: base 解決情報の取得（issue #298）\n'
+    + '次のコマンドをそのまま実行する:\n\n' + stepACmd + '\n\n'
+    + 'stdout の `DB=<default_branch> DEV=<true|false> REQE=<true|false>` から'
+    + ' default_branch / dev_exists / requested_exists を得る。\n\n'
+    + '## 手順B: 既存 worktree 起点検証（issue #517, #527, #528, #533）\n'
+    + stepBInstructions + '\n\n'
+    + '## 手順C: epoch 取得\n'
+    + '次を実行する: `date +%s`\n'
+    + '成功（exit code 0）した場合 stdout の値を epoch とする。失敗した場合は epoch キーを省略する'
+    + '（fail-open。base 解決・worktree 起点検証の判定には一切影響しない）。\n\n'
     + '## Output format\n'
-    + 'stdout の JSON 1 行のみ。それ以外の文字列を出力しない。\n\n'
+    + '次の1行 JSON のみを返す（前後に説明文を付けない）: '
+    + '{"ok":true,"default_branch":"<string>","dev_exists":<bool>,"requested_exists":<bool>,'
+    + '"worktree_exists":<bool>,"upstream_remote":"<string>","upstream_merge":"<string>",'
+    + '"epoch":<number, 省略可>}\n\n'
     + '## Tools\n'
-    + '使用可: Bash（git ls-remote 等の読み取り専用コマンドのみ）。禁止: Write, Edit（ファイル変更禁止）、'
-    + 'git push / git fetch --prune 等の書き込み・変更系コマンド。\n\n'
+    + '使用可: Bash（手順A の複合ワンライナー1回、手順B の `git worktree list --porcelain` 1回と'
+    + ' `git config --get` 最大2回の読み取り専用 bare 単文、手順C の `date +%s` 1回）。'
+    + '手順B/C はパイプ・リダイレクト・複合コマンド・変数代入・`git -C`・`test` を使わない。'
+    + '禁止: Write, Edit（ファイル変更禁止）、git push / git fetch --prune 等の書き込み・変更系コマンド。\n\n'
     + '## Boundary\n'
-    + 'ファイル変更・git 設定変更・commit・push を一切行わない。読み取り系 git コマンド（git ls-remote）のみ実行する。\n\n'
+    + 'ファイル変更・git 設定変更・commit・push を一切行わない。手順A〜C の読み取り専用コマンドのみ実行する。\n\n'
     + '## Token cap\n'
-    + '80 語以内で応答せよ（JSON 本体以外の説明を付けない）。';
+    + '120 語以内で応答せよ（JSON 本体以外の説明を付けない）。';
 }
 
 function resolveBase(baseArg, probe) {
@@ -205,92 +267,22 @@ function resolveBase(baseArg, probe) {
 // ==== BEGIN inline: _lib/worktree-base-check.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Worktree Base Check: dev-flow の Setup phase で既存 worktree の起点(base)一致を検証する純関数群
 // （issue #517、resolve-base.mjs（issue #298）と同型のパターン）。
-// WORKTREE_BASE_PROBE: exec-proxy（dev-runner-haiku-ro）が返す worktree 存在/upstream probe の schema。
-// worktreeBaseProbePrompt: dev-runner-haiku-ro へ渡す verbatim 転写 prompt を組み立てる純関数。
+// probe 供給元は issue #550 案1 で resolve-base.mjs の SETUP_BASE_PROBE / setupBaseProbePrompt
+// （resolve-base + worktree-base-check 統合 exec-proxy、1 回の呼び出し）に一本化された。
+// checkWorktreeBase は probe object の worktree_exists/upstream_remote/upstream_merge フィールドのみ
+// を読むため、統合 probe object をそのまま渡せる（本ファイル独自の schema/prompt は持たない）。
 // checkWorktreeBase: probe を元に既存 worktree の起点一致を決定論的に判定する純関数
 //   （未存在→素通り / upstream 一致→再利用可 / upstream 空・不一致・probe 不正→throw、fail-closed）。
 //
 // 2候補制の不変条件（issue #528）: worktree 候補は 既定=repo 内 `.claude/worktrees/df-<issue>` /
 // write deny repo 向け退避先=repo 外 sibling `<repo>-wt/df-<issue>` の2つ。探索順は常に
 // repo 内が先勝ち（決定論）で、既定動作（repo 内 worktree）はこの優先順により不変。
-//
-// issue #527: probe prompt は絶対パス引数を一切持たないコマンド構成
-// （git worktree list --porcelain / git config --get branch.<name>.*）を採る。
-// issue #519 review 時点の「複合 if を避ければ git -C 単体は guard を通過する」という前提は
-// 現環境で成立しない実測があり（EnterWorktree 済みセッションの worktree-isolation guard は
-// git -C 単体を含め絶対パス引数を持つコマンドを「too complex to verify that it stays inside
-// the worktree」で拒否する）、パス引数が構造的に存在しない手順へ置き換えた。
-//
-// issue #533 review: `git worktree remove` を経ず手動削除された stale worktree（本 repo で
-// 再発実績あり）は `git worktree list --porcelain` に branch 行付き・`prunable` 属性行付きで
-// 列挙され続ける。`prunable` 行の有無を見ずに一致ブロックを worktree_exists=true と判定すると、
-// 実在しない worktree を再利用経路へ進めてしまい後段（EnterWorktree 等）で不可解に失敗する。
-// そのため一致ブロックに `prunable` 行があれば worktree_exists=false として扱う（他候補も無ければ
-// 新規作成経路へ）。
+// probe（`git worktree list --porcelain` の探索・`prunable` 判定を含む）の具体手順は
+// resolve-base.mjs の setupBaseProbePrompt 手順B へ移設した（issue #550 案1）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
-
-const WORKTREE_BASE_PROBE = {
-  type: 'object',
-  required: ['ok', 'worktree_exists', 'upstream_remote', 'upstream_merge'],
-  properties: {
-    ok: { type: 'boolean' },
-    worktree_exists: { type: 'boolean' },
-    upstream_remote: { type: 'string' },
-    upstream_merge: { type: 'string' },
-  },
-};
-
-function worktreeBaseProbePrompt(issue) {
-  // issue #527: worktree-isolation guard は絶対パス引数を持つコマンド（git -C 単体を含む）を
-  // 「too complex to verify that it stays inside the worktree」で拒否する実測があり、issue #519
-  // review の「git -C 単体は通過」前提は現環境で成立しない。パス引数を一切持たないコマンド列
-  // （git worktree list --porcelain / git config --get branch.<name>.*）へ置換し、guard が
-  // 検証すべきパス引数が構造的に存在しない状態にする。
-  // issue #528: worktree 候補は repo 内(WTD_IN)/repo 外(WTD_EXT)の2つ。探索は WTD_IN が
-  // 常に先勝ちする決定論的順序（既定動作＝repo 内 worktree を不変に保つ）。
-  const wtdInSuffix = '.claude/worktrees/df-' + issue;
-  const wtdExtSuffix = '-wt/df-' + issue;
-  return 'リポジトリルートで以下の手順を **この順で** 実行し、各コマンドの結果から JSON を組み立てて返せ'
-    + '（各コマンドの stdout は **verbatim** に扱い、要約・脚色をしない。判定は下記の組み立てルールのみに従う）:\n\n'
-    + '1. 次を実行する: `git worktree list --porcelain`\n'
-    + '   出力は worktree ごとのブロック（`worktree <絶対パス>` 行、`branch refs/heads/<name>` 行等）に'
-    + '分かれる（git は main worktree を必ず先頭に出す）。先頭ブロックの worktree パスを ROOT とする。\n'
-    + '   WTD_IN = `${ROOT}/' + wtdInSuffix + '`\n'
-    + '   WTD_EXT = `${ROOT}' + wtdExtSuffix + '`\n'
-    + '   worktree パスが WTD_IN に一致するブロックを探す。見つかり、かつそのブロックに `prunable`'
-    + ' で始まる行が **無ければ** WTD=WTD_IN、worktree_exists=true とする。見つからない、または'
-    + '見つかっても `prunable` 行がある場合（正規の削除手順を経ず手動でディレクトリ削除された stale'
-    + ' worktree — git のメタデータ上は残るが実体が無い）は WTD_IN には無いものとして扱い、WTD_EXT'
-    + 'に一致するブロックを同じ基準（`prunable` 行が無いこと）で探し、あれば WTD=WTD_EXT、'
-    + 'worktree_exists=true とする（WTD_IN が常に先勝ちする決定論的な優先順位である）。どちらも'
-    + '無い、またはどちらも `prunable` 行付きの場合は worktree_exists=false、upstream_remote=""、'
-    + 'upstream_merge="" とし、手順2〜3 は実行せず Output format へ進む。\n'
-    + '   （`prunable` 行が無い）一致したブロックに `branch refs/heads/<name>` 行が無い場合'
-    + '（detached HEAD）も同様に upstream_remote=""、upstream_merge="" とし、手順2〜3 は実行しない。'
-    + 'あれば `refs/heads/` を除いた名前を BR とする。\n\n'
-    + '2. 次を実行する（<BR> は手順1で求めた branch 名に置換する。branch 設定は worktree 間で共有される'
-    + ' `.git/config` にあるため -C は不要）: `git config --get branch.<BR>.remote`\n'
-    + '   成功（exit code 0）した場合 stdout の1行を upstream_remote とする。失敗（exit code 非0）した'
-    + '場合は upstream_remote を空文字列 "" とする。\n\n'
-    + '3. 次を実行する（<BR> は手順1で求めた branch 名に置換する）: `git config --get branch.<BR>.merge`\n'
-    + '   成功（exit code 0）した場合 stdout の1行を upstream_merge とする。失敗（exit code 非0）した'
-    + '場合は upstream_merge を空文字列 "" とする。\n\n'
-    + '## Output format\n'
-    + '次の1行 JSON のみを返す（前後に説明文を付けない）: '
-    + '{"ok":true,"worktree_exists":<bool>,"upstream_remote":"<string>","upstream_merge":"<string>"}\n\n'
-    + '## Tools\n'
-    + '使用可: Bash（`git worktree list --porcelain` 1回と `git config --get` 最大2回の読み取り専用'
-    + ' bare 単文のみ。パイプ・リダイレクト・複合コマンド・変数代入・`git -C`・`test` は使わない）。'
-    + '禁止: Write, Edit（ファイル変更禁止）、git push / git fetch --prune 等の書き込み・変更系コマンド。\n\n'
-    + '## Boundary\n'
-    + 'ファイル変更・git 設定変更・commit・push を一切行わない。手順1〜3の読み取り専用 bare 単文'
-    + '（パイプ・リダイレクト・複合コマンド・変数代入なし）のみ実行する。\n\n'
-    + '## Token cap\n'
-    + '80 語以内で応答せよ（JSON 本体以外の説明を付けない）。';
-}
 
 const RECOVERY_STEPS = 'このいずれかで復旧して再実行せよ: '
   + '(1) `git worktree remove .claude/worktrees/df-<issue>`'
@@ -669,10 +661,12 @@ function mergeSubagentCounts(counts, byType) {
 
 // ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
-// I/O なし・Date.now/Math.random 不使用。専用 clock probe（dev-runner-haiku-ro）は start/end の
-// 2 回のみ。残り 9 mark（analyze_start/analyze_end/plan_end/implement_end/validate_end/
-// evaluate_end/pr_end/iterate_end/final_end）は phase 境界に隣接する既存 exec-proxy / agent 応答の
-// optional epoch フィールドから recordClockMark へ給電する（fail-open — 給電元失敗は当該 mark null →
+// I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
+// start は Setup 冒頭の setup-base probe（resolve-base + worktree-base-check 統合 exec-proxy）の
+// optional epoch、end は Merge tier 末尾の post-summary 応答の optional epoch から給電し、
+// 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
+// pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
+// フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
 // 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
@@ -706,29 +700,6 @@ const CLOCK_PHASE_ENDS = [
   ['iterate', 'iterate_end'],
   ['final', 'final_end'],
 ];
-
-/**
- * exec-proxy（dev-runner-haiku-ro）向けの現在時刻取得 prompt を返す。
- */
-function clockProbePrompt() {
-  return '## Objective\n'
-    + '現在時刻の epoch 秒を取得する。\n'
-    + '\n'
-    + '## Instructions\n'
-    + '`date +%s` を実行し、出力の整数を epoch として返せ。成功なら ok:true。失敗しても throw せず ok:false を返すこと。\n'
-    + '\n'
-    + '## Output format\n'
-    + '{ "ok": boolean, "epoch": number }\n'
-    + '\n'
-    + '## Tools\n'
-    + '使用可: Bash のみ\n'
-    + '\n'
-    + '## Boundary\n'
-    + 'ファイル変更禁止。git 操作禁止。\n'
-    + '\n'
-    + '## Token cap\n'
-    + '30 語以内で完結すること。';
-}
 
 // marks から number 値のみを取り出す内部ヘルパー（null/undefined/非数値/NaN は null 扱い）。
 function readMark(marks, name) {
@@ -3496,7 +3467,6 @@ const CROSSREPO_ARTIFACTS = {
   type: 'object', required: ['ok'],
   properties: { ok: { type: 'boolean' }, found: { type: 'number' }, artifacts: { type: 'array' }, error: { type: 'string' } },
 }
-const CLOCK = { type: 'object', required: ['ok', 'epoch'], properties: { ok: { type: 'boolean' }, epoch: { type: 'number' } } }
 const UICFG = { type: 'object', required: ['found'], properties: { found: { type: 'boolean' }, config: { type: ['object', 'null'] } } }
 const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { type: 'boolean' }, phase: { type: 'string', enum: ['install', 'start', 'ready'] }, port: { type: ['number', 'string'] }, pid: { type: ['number', 'string'] }, error: { type: 'string' }, log: { type: 'string' } } }
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
@@ -3520,6 +3490,21 @@ const JOURNAL_SAVE_RESULT = {
   properties: {
     saved: { type: 'boolean' },
     path: { type: 'string' },
+  },
+}
+
+// POST_RESULT_END: 専用 clock#end probe 撤去（issue #550 F3）に伴い、Merge tier 末尾の
+// post-summary 応答から end mark を給電するための POST_RESULT 拡張 schema（optional epoch 追加）。
+// POST_RESULT 自体（他 workflow と共有する canonical、_lib/workflow-post-helpers.mjs）は変更せず、
+// この呼び出し専用のローカル拡張として dev-flow.js にのみ置く。
+const POST_RESULT_END = {
+  type: 'object',
+  required: ['posted'],
+  properties: {
+    posted: { type: 'boolean' },
+    method: { type: 'string' },
+    url: { type: 'string' },
+    epoch: { type: 'number' },
   },
 }
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -4073,20 +4058,8 @@ function countPlanDrops(plan, results) {
 //  並列は同一 worktree 内で「file_changes が disjoint な」task のみ。plan-reviewer が検証する。）
 // ============================================================
 const clockMarks = {}
-// 専用 probe は start/end の 2 回のみ。残り 9 mark は feedClockMark が隣接 proxy/agent 応答の
-// optional epoch から給電する（fail-open 不変。issue #443）。
-async function clockProbe(name, phaseName) {
-  // clock probe は advisory telemetry（duration 集計のみ）のため fail-open で扱う --
-  // agent() throw（issue #359 で実在確認済みの EPERM 等の proxy 実行失敗・StructuredOutput 未返却）
-  // を run 即死にせず recordClockMark(marks, name, null) 相当の欠落記録に落とす
-  // （structural-classify の try 包み precedent と同型）。
-  let res = null
-  try {
-    res = await trackedAgent(clockProbePrompt(), { agentType: 'dev-runner-haiku-ro', schema: CLOCK, label: `clock#${name}`, phase: phaseName })
-  } catch (e) { log(`⚠️ clock#${name} 呼び出しが例外 — duration telemetry は当該区間を欠落させる（fail-open）`) }
-  const warn = recordClockMark(clockMarks, name, res)
-  if (warn) log(warn)
-}
+// 専用 clock probe は issue #550 F3 で 0 回になった。全 11 mark（start/end 含む）は feedClockMark が
+// 隣接 proxy/agent 応答の optional epoch から給電する（fail-open 不変。issue #443）。
 
 // feedClockMark（issue #443）: 専用 clock probe を経由せず、隣接する既存 exec-proxy/agent 応答の
 // optional epoch から mark を給電する。epochResOf/maxEpochRes は _lib/devflow-durations.mjs の
@@ -4095,30 +4068,27 @@ async function clockProbe(name, phaseName) {
 function feedClockMark(name, res) { const warn = recordClockMark(clockMarks, name, res); if (warn) log(warn) }
 
 phase('Setup')
-await clockProbe('start', 'Setup')
 
-// base 解決（issue #298）: 明示指定→origin 存在検証 / 未指定→origin/dev→origin/HEAD。
-// 解決不能は Setup で明示 error（設定ミスを danger-grep fail-closed の SEC 誤 HOLD にしない）。
-// danger-grep 実行時失敗の fail-closed ポリシー自体は不変（W7 軸A security floor）。
-const baseProbe = await trackedAgent(
-  resolveBasePrompt(BASE_ARG),
-  { agentType: 'dev-runner-haiku-ro', schema: RESOLVE_BASE_PROBE, label: 'resolve-base', phase: 'Setup', retryOnContractViolation: true },
+// Setup 統合 probe（issue #550 案1）: base 解決（issue #298）と既存 worktree 起点検証（issue #517）を
+// 単一 exec-proxy 呼び出しへ統合する。resolveBase() / checkWorktreeBase() はそれぞれ probe object の
+// 自分のフィールドしか読まないため、同一の統合 probe object をそのまま両関数へ渡せる（判定関数自体は
+// 無変更）。解決不能・起点不一致は Setup で明示 error（設定ミスを danger-grep fail-closed の SEC 誤
+// HOLD にしない）。danger-grep 実行時失敗の fail-closed ポリシー自体は不変（W7 軸A security floor）。
+// worktree 起点検証は既存 worktree 再利用時、branch の upstream tracking が origin/$BASE と一致しない・
+// 判定不能なら fail-closed で abort する（base 不一致のまま再利用され PR diff に base 間差分が丸ごと
+// 乗るのを防ぐ。#516 preflight との二重防御）。worktree 未存在（新規作成経路）は素通り。
+const setupProbe = await trackedAgent(
+  setupBaseProbePrompt(BASE_ARG, ISSUE),
+  { agentType: 'dev-runner-haiku-ro', schema: SETUP_BASE_PROBE, label: 'setup-base', phase: 'Setup', retryOnContractViolation: true },
 )
-const resolvedBase = resolveBase(BASE_ARG, baseProbe) // 解決不能は throw（workflow abort、danger-grep 以降へ到達しない）
+// 専用 clock#start probe は issue #550 F1 で廃止 — start mark は Setup 統合 probe の optional
+// epoch から給電する（専用 clock probe を 1 回削減）。probe が throw する場合は従来どおり run abort。
+feedClockMark('start', epochResOf(setupProbe))
+const resolvedBase = resolveBase(BASE_ARG, setupProbe) // 解決不能は throw（workflow abort、danger-grep 以降へ到達しない）
 BASE = resolvedBase.base
 log(`base: origin/${BASE}（source: ${resolvedBase.source}）`)
 
-// worktree 起点検証（issue #517）: 既存 worktree 再利用時、branch の upstream tracking が
-// origin/$BASE と一致しない・判定不能なら fail-closed で abort する（base 不一致のまま再利用され
-// PR diff に base 間差分が丸ごと乗るのを防ぐ。#516 preflight との二重防御）。worktree 未存在
-// （新規作成経路）は素通り。probe は読み取り専用の名前比較のみで fetch 不要。
-// issue #527: probe prompt は絶対パス引数を持たないコマンド構成（git worktree list --porcelain /
-// git config --get）で guard-safe（worktree-isolation guard が拒否する絶対パス引数付きコマンドを含まない）。
-const wtBaseProbe = await trackedAgent(
-  worktreeBaseProbePrompt(ISSUE),
-  { agentType: 'dev-runner-haiku-ro', schema: WORKTREE_BASE_PROBE, label: 'worktree-base-check', phase: 'Setup', retryOnContractViolation: true },
-)
-const wtBase = checkWorktreeBase({ issue: ISSUE, base: BASE, probe: wtBaseProbe }) // 不一致/判定不能は throw（workflow abort）
+const wtBase = checkWorktreeBase({ issue: ISSUE, base: BASE, probe: setupProbe }) // 不一致/判定不能は throw（workflow abort）
 log(wtBase.logLine)
 
 const branch = `feature/issue-${ISSUE}`
@@ -5372,6 +5342,21 @@ log(`PR created: ${pr.pr_url}`)
 
 feedClockMark('pr_end', epochResOf(pr))
 
+// nested 起動時に dev-flow が pr-iterate へ渡す context（issue #550 案3）。pr-iterate 側はこれを
+// 受けて pr-meta probe / isolation-cleanup を skip する — cwd/head_ref/repo/epoch は dev-flow が
+// 既に確定済みの値として保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
+// epoch は pr（commit+PR dev-runner 応答）の epoch を渡す（dev-flow 自身の isolation-probe token
+// である Setup 冒頭 setup-base probe の epoch とは別時刻のため、probe パス
+// `.devflow-tmp/.isolation-probe-<token>` が衝突しない）。
+const PR_ITERATE_ARGS = {
+  pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria,
+  nested: {
+    cwd: WT, head_ref: state.setup.branch,
+    ...(REPO ? { repo: REPO } : {}),
+    ...(Number.isFinite(pr?.epoch) ? { epoch: pr.epoch } : {}),
+  },
+}
+
 // ============================================================
 // PR phase 経路分岐（issue #376 F3）: clean-micro（LITE）は pr-reviewer 1-pass レビュー +
 // CI gate のみで完結させ、フル pr-iterate（review ⇄ fix loop, 上限10）を起動しない
@@ -5406,7 +5391,7 @@ if (LITE) {
   const liteOutcome = classifyLiteReview(reviewLite)
   if (liteOutcome.escalate) {
     log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
-    iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria })
+    iterate = await workflow('pr-iterate', PR_ITERATE_ARGS)
     route = 'full'
     iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
   } else {
@@ -5422,13 +5407,13 @@ if (LITE) {
       log(`lite 経路: clean review + CI ${ciLite.status} — lgtm 終端（フル pr-iterate 起動なし）`)
     } else {
       log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
-      iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria })
+      iterate = await workflow('pr-iterate', PR_ITERATE_ARGS)
       route = 'full'
       iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
     }
   }
 } else {
-  iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria })
+  iterate = await workflow('pr-iterate', PR_ITERATE_ARGS)
   route = 'full'
   iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
 }
@@ -5785,11 +5770,12 @@ const summaryPost = await trackedAgent(
   + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
   + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
   + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-  + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+  + `\n## Output format\n{ "posted": boolean, "method": string, "url": string, "epoch": number }\n`
   + `\n## Tools\n使用可: Bash, Write\n`
   + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+  + EPOCH_INSTRUCTION
   + `\n## Token cap\n200 語以内で完結すること。`,
-  { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
+  { agentType: 'dev-runner-haiku', schema: POST_RESULT_END, label: 'post-summary', phase: 'Merge tier' },
 )
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
@@ -5801,7 +5787,9 @@ if (!summaryPost?.posted) {
 // 失敗は log 警告のみで workflow は継続（telemetry 欠損 > ワークフロー中断）。
 // need() で包まない — null 容認が必須。
 // ============================================================
-await clockProbe('end', 'Merge tier')
+// 専用 clock#end probe は issue #550 F3 で廃止 — end mark は上記 post-summary 応答の optional
+// epoch から給電する（専用 clock probe を 0 回に削減）。
+feedClockMark('end', epochResOf(summaryPost))
 const durations = computeDurations(clockMarks)
 const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'dev-flow',
