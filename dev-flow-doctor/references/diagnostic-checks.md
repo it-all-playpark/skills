@@ -291,8 +291,8 @@ EffectDelta）を dev-flow journal telemetry から run_id 単位で消費し、
 - `invalidated: true` の receipt は verdict/reason_code 集計から除外し
   `invalidated_count` に別掲する（pr-iterate fix 後の stale SHA 失効等）。
 - 同一 run 内で同一 layer×stage の receipt が複数存在する場合、非 invalidated
-  の配列末尾優先で採用する（`_lib/trust-wiring.mjs` の `effectiveTrustVerdict`
-  と同一規則）。
+  の配列末尾優先で採用する（effective verdict 規則: `invalidated: true` の
+  receipt は除外し、残った同一 layer×stage の中で配列末尾を優先する）。
 
 ### 集計 block
 
@@ -362,9 +362,9 @@ observer timeout（observer 側タイムアウト）— を CI bats（
 ### rollback
 
 本セクションが対象とする変更は dev-flow-doctor（消費側）の
-`trust-receipts-report.sh` および本ドキュメントのみ。producer 側
-（`_lib/trust-wiring.mjs` の `TRUST_LAYER_CONFIG` / EvalSeal・EffectDelta
-shadow 実行そのもの）は不変（W7 sunset path の一部として別途 Phase 5
-calibration を経て昇格判断される）。rollback する場合は doctor 消費コード
+`trust-receipts-report.sh` および本ドキュメントのみ。producer 側の
+trust-layer call site（EvalSeal・EffectDelta shadow 実行、`TRUST_LAYER_CONFIG`
+を含む）は撤去済みで、本レポートは過去 run の journal telemetry を読むのみ
+（新規 trust receipt は生成されない）。rollback する場合は doctor 消費コード
 （`trust-receipts-report.sh` とこのドキュメントセクション）を revert すれば
-足り、producer 側の telemetry 出力・shadow 実行には影響しない。
+足り、過去 telemetry の読み取り以外への影響はない。

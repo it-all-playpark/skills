@@ -674,7 +674,7 @@ function mergeSubagentCounts(counts, byType) {
 // evaluate_end/pr_end/iterate_end/final_end）は phase 境界に隣接する既存 exec-proxy / agent 応答の
 // optional epoch フィールドから recordClockMark へ給電する（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため shape 判定・surfaceproof shadow の時間が plan 区間へ付け替わる — phase_durations は
+// 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -1354,264 +1354,6 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
 }
 // ==== END inline: _lib/gate-policy.mjs ====
 
-// ==== BEGIN inline: _lib/trust-mode.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// issue #409 (epic #390 Phase 1): trust-layer protocol kernel — layer 別 mode
-// (off/shadow/advisory/blocking) と全体 kill switch を解決する純粋関数群。
-//
-// Phase 0 spec (claudedocs/2026-07-20-issue-390-phase0-child-decomposition-and-shadow-boundary.md
-// §3「Shadow opt-in 境界決定」) の決定を実装する:
-//   - repoSlug は allowlist（TRUST_SHADOW_REPO_SLUG）に厳密一致（===）する場合のみ非 off を許可。
-//     null / undefined / 別 repo / fork / 大文字小文字違いは全て fail-closed で off。
-//   - killSwitch===true は allowlist 一致・configuredMode に関わらず全 layer を強制 off。
-//   - repoSlug の取得（git remote get-url / GITHUB_REPOSITORY 読み取り）は adapter の責務
-//     （Phase 2+）であり、本モジュールは文字列注入のみ受ける（他モジュール非依存・import なし）。
-
-const TRUST_LAYERS = ['surfaceproof', 'evalseal', 'effectdelta'];
-
-const TRUST_MODES = ['off', 'shadow', 'advisory', 'blocking'];
-
-const DEFAULT_TRUST_MODE = 'off';
-
-const TRUST_SHADOW_REPO_SLUG = 'it-all-playpark/skills';
-
-// layer 別の trust mode を解決する純粋関数。
-//
-// 優先順位:
-//   (a) layer が TRUST_LAYERS 外 → throw
-//   (b) configuredMode が null/undefined/空文字 → DEFAULT_TRUST_MODE、TRUST_MODES 外 → throw
-//   (c) killSwitch === true → 'off'（全 layer 無効化）
-//   (d) repoSlug が TRUST_SHADOW_REPO_SLUG と厳密一致しない → 'off'（fail-closed allowlist）
-//   (e) 一致した場合のみ configuredMode をそのまま返す
-function resolveLayerMode({ layer, configuredMode, repoSlug, killSwitch }) {
-  if (!TRUST_LAYERS.includes(layer)) {
-    throw new Error(
-      `trust-mode: 未知の layer "${layer}"（許可: ${TRUST_LAYERS.join(', ')}）`,
-    );
-  }
-
-  const mode = configuredMode == null || configuredMode === '' ? DEFAULT_TRUST_MODE : configuredMode;
-  if (!TRUST_MODES.includes(mode)) {
-    throw new Error(
-      `trust-mode: 未知の configuredMode "${configuredMode}"（許可: ${TRUST_MODES.join(', ')}）`,
-    );
-  }
-
-  if (killSwitch === true) return 'off';
-  if (repoSlug !== TRUST_SHADOW_REPO_SLUG) return 'off';
-  return mode;
-}
-
-// TRUST_LAYERS 全てについて resolveLayerMode を適用し {surfaceproof, evalseal, effectdelta}
-// を返す純粋関数。config は各 layer キーを持つ部分 object（未指定は DEFAULT_TRUST_MODE）。
-// config 内の未知 key は closed（throw）。
-function resolveAllLayerModes({ config, repoSlug, killSwitch }) {
-  const safeConfig = config ?? {};
-  for (const key of Object.keys(safeConfig)) {
-    if (!TRUST_LAYERS.includes(key)) {
-      throw new Error(
-        `trust-mode: 未知の config key "${key}"（許可: ${TRUST_LAYERS.join(', ')}）`,
-      );
-    }
-  }
-
-  const result = {};
-  for (const layer of TRUST_LAYERS) {
-    result[layer] = resolveLayerMode({
-      layer,
-      configuredMode: safeConfig[layer],
-      repoSlug,
-      killSwitch,
-    });
-  }
-  return result;
-}
-
-// mode が既存 gate を変更する（gating）かどうかを判定する純粋関数。
-// blocking のときのみ true。shadow/advisory/off は既存 gate を一切変えない
-// （epic #390 AC-11 / AC-15 非緩和）。TRUST_MODES 外は throw。
-function isGatingMode(mode) {
-  if (!TRUST_MODES.includes(mode)) {
-    throw new Error(
-      `trust-mode: 未知の mode "${mode}"（許可: ${TRUST_MODES.join(', ')}）`,
-    );
-  }
-  return mode === 'blocking';
-}
-// ==== END inline: _lib/trust-mode.mjs ====
-
-// ==== BEGIN inline: _lib/trust-wiring.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// issue #411 (epic #390 Phase 3): trust 配線用 canonical モジュール。
-//
-// tools/sync-inlines.mjs の canonical 制約により import / require / Date.now / Math.random
-// を一切含めない（トップレベル export const / export function のみ。export default /
-// export { } 禁止）。trust-mode.mjs / trust-telemetry.mjs は import せず、layer 名・mode 値・
-// summary formatter を self-containment のためローカルで重複定義する（trust-telemetry.mjs が
-// Phase 1 で宣言した precedent に従う）。両定数の一致は本ファイル隣接の
-// _lib/trust-wiring.test.mjs（cross-import して比較する側）で担保する。
-//
-// TRUST_LAYER_CONFIG は repo 定数。QUALITY_MODEL（_lib/quality-model.mjs）と同じ
-// 「_lib 1 行変更 + tools/sync-inlines.mjs --write で切替」パターン。
-// 配線先（mode に関わらず存置）: surfaceproof = dev-flow.js の Analyze phase、
-// evalseal = Evaluate / Final reconcile、effectdelta = PR phase（pr-observe）・post-summary
-// （comment-prepare/comment-observe）。'off' では各 call site が丸ごと skip され追加 agent 呼出しは 0 件。
-//
-// 全 layer 'off'。shadow は「既存 gate を変えない（AC-11/AC-15）」を保証するが、
-// **run を壊さないことは保証しない** — shadow 固定のまま run abort と telemetry 全損が実測された:
-//   - trust-*.json の stale 上書きが safety classifier に [Logging/Audit Tampering] と判定され
-//     Setup が null を返して run abort（2026-08-17, issue #503, wf_3f47928a-ba2）。
-//   - trust-seal-eval のブロックが同 run の journal-log まで連鎖ブロックし、
-//     完走した run の telemetry が journal に 1 件も残らなかった（2026-08-04, issue #485）。
-// trust layer の call site は監査証跡の上書き・自己封緘・receipt 自己発行を行うため、
-// 挙動が改ざん者と同型になり classifier と構造的に衝突する。gate 非改変では相殺できない
-// run 単位のコストなので、観測を続ける前提が成立するまで実行しない。
-//
-// 再開条件（この 3 つが揃うまで 'shadow' へ戻さない。1 つでも欠けたら off のまま）:
-//   1. call site が監査改ざんと同型でない形に再設計されている（証跡の破壊的上書きをしない）。
-//   2. trust 由来の classifier ブロックが run abort / telemetry 欠落へ波及しない
-//      （journal-log への連鎖遮断が実測で確認できている）。
-//   3. off 期間の完走率を分母として、shadow 復帰後の完走率が有意に劣後しないと確認できる。
-// 撤去（コード削除）判断は off 期間の実測後に別 issue で行う。
-const TRUST_LAYER_CONFIG = { surfaceproof: 'off', evalseal: 'off', effectdelta: 'off' };
-
-// 全 layer 強制 off の workflow 側 kill switch。script 側は env TRUST_KILL_SWITCH で
-// 独立に持つ（二重防御。git remote から独立に repoSlug を再解決する fail-closed と同型）。
-const TRUST_KILL_SWITCH = false;
-
-// EvalSeal receipt 欠落理由の closed enum（issue #471 AC-6）。out-of-enum は telemetry 出力側
-// （dev-flow.js）で 'unknown' に正規化する。
-const TRUST_EVALSEAL_MISSING_REASONS = ['eval_skipped', 'agent_throw', 'agent_null', 'seal_error', 'mode_off', 'unknown'];
-
-// EffectDelta PR stage receipt 欠落理由の closed enum（issue #476 D-3）。EvalSeal と共通化せず
-// 独立定義する — 送り側（dev-flow.js の trust-effectdelta-pr probe）の実分岐が catch（throw）と
-// mode==='off' に加え、agent fallback 形 {ok:false,error} の error 文字列由来の 3 分類
-// （gh_failed/script_error/agent_error）と成功条件未達（schema_invalid）を持つため。
-// out-of-enum は telemetry 出力側（dev-flow.js）で 'unknown' に正規化する。
-const TRUST_EFFECTDELTA_PR_MISSING_REASONS = [
-  'agent_throw',
-  'agent_null',
-  'mode_off',
-  'gh_failed',
-  'script_error',
-  'agent_error',
-  'schema_invalid',
-  'unknown',
-];
-
-// gh/GitHub API 由来の失敗を示す決定論 regex（上流原因を優先するため script 系より先に判定する）。
-const EFFECTDELTA_GH_FAILURE_RE = /(^|[^a-z])gh([^a-z]|$)|github|http[ _-]?[45][0-9][0-9]|rate ?limit|auth/i;
-
-// pr-observe / effectdelta-github.sh 等の決定論スクリプト実行系失敗を示す regex。
-const EFFECTDELTA_SCRIPT_FAILURE_RE = /pr-observe|effectdelta-github|exit +[1-9]|stdout|json/i;
-
-// trust-effectdelta-pr probe の非 throw 欠落ケースを分類する pure function（issue #476）。
-// 呼び出し側（dev-flow.js）が try/catch で throw を 'agent_throw' に振り分けた残余（非 throw の
-// res）だけを受け取る前提。判定順は上流原因優先: (a) res が null/undefined → 'agent_null'、
-// (b) res.mode === 'off' → 'mode_off'、(c) res.ok === false かつ error が文字列のとき gh 系 regex
-// 優先で gh_failed → script 系 regex で script_error → 非マッチ/非文字列は agent_error、
-// (d) res.ok === true（receipt/envelope 欠落等で成功条件を満たさなかった場合にのみ到達）→
-// 'schema_invalid'、(e) それ以外の未知形状 → 'unknown'。
-function classifyEffectdeltaPrMissing(res) {
-  if (res === null || res === undefined) {
-    return 'agent_null';
-  }
-  if (res.mode === 'off') {
-    return 'mode_off';
-  }
-  if (res.ok === false) {
-    if (typeof res.error === 'string') {
-      if (EFFECTDELTA_GH_FAILURE_RE.test(res.error)) {
-        return 'gh_failed';
-      }
-      if (EFFECTDELTA_SCRIPT_FAILURE_RE.test(res.error)) {
-        return 'script_error';
-      }
-    }
-    return 'agent_error';
-  }
-  if (res.ok === true) {
-    return 'schema_invalid';
-  }
-  return 'unknown';
-}
-
-// log 専用の redacted hint を返す pure function（issue #476 AC-3）。raw error は telemetry /
-// receipt / PR summary のどこにも保存せず、workflow log 行にのみこの出力を使う想定。
-// 非文字列は ''、文字列は先頭行のみ抽出し、URL を '<url>'、16 文字以上の token 様文字列を
-// '<token>' に置換した上で 120 文字に truncate する。
-function redactEffectdeltaError(error) {
-  if (typeof error !== 'string') {
-    return '';
-  }
-  const firstLine = error.split('\n')[0];
-  const redacted = firstLine
-    .replace(/https?:\/\/\S+/g, '<url>')
-    .replace(/[A-Za-z0-9_-]{16,}/g, '<token>');
-  return redacted.slice(0, 120);
-}
-
-// EffectDelta PR stage receipt 欠落理由を PR summary へ追記するブロックを構築する pure
-// function（issue #476）。呼び出し側（dev-flow.js）が EFFECTDELTA_MODE!=='off' 判定・
-// out-of-enum の 'unknown' 正規化を行った上で reason を渡す前提。reason が非文字列・空文字の
-// 場合は追記しない意図で '' を返す。
-function formatEffectdeltaPrMissingSummary(reason) {
-  if (typeof reason !== 'string' || reason === '') {
-    return '';
-  }
-  return `### Trust receipts (shadow) — missing\n\n- effectdelta [shadow]: INCONCLUSIVE (missing_reason=${reason}) stage=pr`;
-}
-
-// [{ envelope: {verdict,...}, invalidated: boolean, stage: 'evaluate'|'final' }] から、
-// invalidated でない最新（配列末尾優先）entry の envelope.verdict を返す。
-// 全滅/空配列/非配列は 'inconclusive' を返す（受領物なし = 成功扱いしない）。
-function effectiveTrustVerdict(receiptEntries) {
-  if (!Array.isArray(receiptEntries)) return 'inconclusive';
-  for (let i = receiptEntries.length - 1; i >= 0; i -= 1) {
-    const entry = receiptEntries[i];
-    if (entry && entry.invalidated !== true) {
-      return entry.envelope?.verdict ?? 'inconclusive';
-    }
-  }
-  return 'inconclusive';
-}
-
-// verdict → PR summary 上の STATUS 表記への写像（_lib/trust-telemetry.mjs の
-// formatTrustSummary と同一写像をローカルで重複定義）。
-const VERDICT_STATUS = {
-  pass: 'VERIFIED',
-  fail: 'HOLD',
-  inconclusive: 'INCONCLUSIVE',
-};
-
-// _lib/trust-telemetry.mjs の formatTrustSummary の import-free 複製 + invalidated 拡張。
-// 空配列、または全 envelope が mode==='off' の場合は空文字を返す（既存 summary を
-// byte 互換に保つ UX 決定を踏襲）。invalidated===true の entry には行末に
-// ` [invalidated]` を付ける（旧 receipt 失効の可視化）。invalidated フィールドを
-// 含まない入力では formatTrustSummary と文字列完全一致する（cross-check test で担保）。
-function formatTrustReceiptsSummary(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) {
-    return '';
-  }
-  const active = entries.filter((env) => env.mode !== 'off');
-  if (active.length === 0) {
-    return '';
-  }
-
-  const lines = ['### Trust receipts (shadow)', ''];
-  const detailLines = ['<details><summary>digests</summary>', ''];
-
-  for (const env of active) {
-    const status = VERDICT_STATUS[env.verdict];
-    const suffix = env.invalidated === true ? ' [invalidated]' : '';
-    lines.push(`- ${env.layer} [${env.mode}]: ${status} (${env.reason_code}) subject=${env.subject_kind}:${env.subject_identity}${suffix}`);
-    detailLines.push(`- ${env.layer}: receipt_id=${env.receipt_id} revision_digest=${env.revision_digest}`);
-  }
-
-  detailLines.push('', '</details>');
-
-  return [...lines, '', ...detailLines].join('\n');
-}
-// ==== END inline: _lib/trust-wiring.mjs ====
-
 // ==== BEGIN inline: _lib/block-routing.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // block-routing: BLOCKED task result の block_class 判定・決定論スクラブ・振り分けを行う純関数群。
 // guard/hook 由来の BLOCKED（block_class:'guard_blocked'）を approach_mismatch の replan ループ
@@ -1763,7 +1505,7 @@ function vdeltaDenies(verdict) {
 
 // vdeltaVerdictDigest: raw verdict（テスト名・anchors・run_id・transitions 配列本体等を含み得る）を
 // telemetry に安全に載せられる閉じた 4 キー scalar digest へ還元する（issue #433 方式 B）。
-// trust_receipts と同じ redaction 原則: 生の verdict フィールドは一切保持しない。
+// redaction 原則: 生の verdict フィールドは一切保持しない。
 function vdeltaVerdictDigest(verdict) {
   const status = vdeltaDenies(verdict).status;
 
@@ -3391,16 +3133,6 @@ const ISSUE_META = {
     epoch: { type: 'number' },
   },
 }
-// issue #410 (#390 Phase 2): SurfaceProof shadow probe 用スキーマ。
-const SURFACEPROOF_SHADOW = {
-  type: 'object',
-  required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    result: { type: 'object' },
-    error: { type: 'string' },
-  },
-}
 const TASK = {
   type: 'object', required: ['id', 'desc'],
   properties: {
@@ -3692,46 +3424,6 @@ const PR_META = {
     mergeable: { type: ['string', 'null'] },
     mergeStateStatus: { type: ['string', 'null'] },
     error: { type: 'string' },
-  },
-}
-// TRUSTSEAL: _shared/scripts/evalseal-seal.mjs exec-proxy の stdout JSON（epic #390 Phase 3, issue #411）。
-// seal 呼び出しは receipt/envelope、check 呼び出しは check を返す（同一 schema で共用）。
-const TRUSTSEAL = {
-  type: 'object', required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    mode: { type: 'string' },
-    stage: { type: 'string' },
-    receipt: { type: 'object' },
-    envelope: { type: 'object' },
-    check: { type: 'object' },
-    error: { type: 'string' },
-  },
-}
-// EFFECTDELTA_OPS: effectdelta-github.sh の stdout に最終的に現れる op はこの 2 値のみ
-// （pr-observe 成功 = CLI pr-classify の passthrough、comment-observe / comment 系 kill switch =
-// 'comment-ensure' へ上書き）。CLI 内部 op（comment-classify / derive-comment-id）は途中で上書き
-// され表に出ないため enum に含めない（issue #480）。
-const EFFECTDELTA_OPS = ['pr-classify', 'comment-ensure'];
-// EFFECTDELTA_OBS: _shared/scripts/effectdelta-github.sh exec-proxy の stdout JSON
-// （epic #390 Phase 4, issue #412）。pr-observe / comment-prepare・comment-observe（+ gh pr comment
-// fallback。issue #466）で共用するため posted/url/method（comment 系）と
-// observation/effect_id/receipt/envelope（両系）を同一 schema に併記する。
-// mode/op は issue #480 で TRUST_MODES / EFFECTDELTA_OPS の closed enum に制約する
-// （実運用で観測された mode:"pr-observe" 等の契約違反 payload を弾くため）。
-const EFFECTDELTA_OBS = {
-  type: 'object', required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    mode: { type: 'string', enum: TRUST_MODES },
-    op: { type: 'string', enum: EFFECTDELTA_OPS },
-    posted: { type: 'boolean' },
-    url: { type: 'string' },
-    method: { type: 'string' },
-    effect_id: { type: 'string' },
-    observation: { type: 'object' },
-    receipt: { type: 'object' },
-    envelope: { type: 'object' },
   },
 }
 
@@ -4366,10 +4058,8 @@ if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の re
 log(`worktree: ${WT} (branch ${setup.branch})`)
 
 // isolation cleanup（issue #493）: worktree 再利用時に前 run の run 専用 scratch を持ち越さない。
-// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の probe artifact と trust 証跡
-// （trust-test-latest.json / trust-risk-*.json）の双方を一度に消す。後者が残ると、当該 run の証跡
-// 書き込みが失敗した際に evalseal-seal.mjs が古い green/red・古い risk を silent に拾い、実際の
-// test/diff と食い違う receipt を出しうるため、run 開始時に消えていることが前提条件になる。
+// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の probe artifact 等の証跡を
+// 一度に消す（前 run の証跡持ち越し防止 — run 間衛生）。
 // probe 成立自体はこの cleanup の成功に依存しない（issue #521 — probe 対象パスは run 毎の一意な
 // token を含むため、cleanup が blocked/skip されて前 run の残置物が残っていても衝突しない）。
 // fail-open: 失敗しても run は継続する。
@@ -4380,9 +4070,9 @@ if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完
 // 失敗（written:false）は bg-isolation guard を強く示唆するため即中断（fail-closed）。
 // probe agent 自体が落ちた場合（written が取れない）は診断不能なだけなので fail-open で続行する。
 // isoToken: probe 対象パスを run 毎に一意にする（issue #521）。probe 対象パスは run 毎に一意
-// （前 run の残置物と同名衝突しない）。clockMarks#start は probe より前の Setup 冒頭で確保済みで
-// PR phase の RUN_ID と同一算出式（fail-open で null の場合は ISSUE へ fallback）。fallback 時
-// のみ一意性が退化するが、直前の cleanup（fail-open）と isolationErrorKind による原因別報告が補償する。
+// （前 run の残置物と同名衝突しない）。clockMarks#start は probe より前の Setup 冒頭で確保済みの
+// epoch（fail-open で null の場合は ISSUE へ fallback）。fallback 時のみ一意性が退化するが、
+// 直前の cleanup（fail-open）と isolationErrorKind による原因別報告が補償する。
 const isoToken = String(clockMarks?.start ?? ISSUE)
 const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
 if (isoProbe && isoProbe.written === false) {
@@ -4533,56 +4223,6 @@ if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUI
   }
 }
 
-// ============================================================
-// SurfaceProof shadow probe (issue #410, #390 Phase 2): skills repo 自身でのみ shadow 実行。
-// req/shape/needs_clarification 判定には一切反映しない — telemetry 記録専用の追加 call site
-// （AC-11/AC-15: shadow/off で既存 merge tier・return status・後続 gate は一切変えない）。
-// mode 解決は EvalSeal（issue #411）と同じ trust-wiring.mjs の TRUST_LAYER_CONFIG /
-// TRUST_KILL_SWITCH を単一の真実源として使う（kill switch は _lib 定数 — QUALITY_MODEL と
-// 同じ「1行変更 + tools/sync-inlines.mjs --write」パターンで切替。実行時の env probe は
-// 不要になった）。repoSlug は Setup で解決済みの REPO を再利用する（他 repo・off では
-// 追加 agent 呼出し 0 件のまま）。
-// ============================================================
-const SURFACEPROOF_MODE = resolveLayerMode({ layer: 'surfaceproof', configuredMode: TRUST_LAYER_CONFIG.surfaceproof, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
-let trustSurfaceProofShadow = null
-if (SURFACEPROOF_MODE !== 'off') {
-  if (SURFACEPROOF_MODE === 'shadow') {
-    let spRes = null
-    try {
-      spRes = await trackedAgent(
-        `## Objective\nissue #${ISSUE} の SurfaceProof shadow snapshot を作成し、stdout の JSON を result へ verbatim 転写せよ。\n`
-        + `## Steps\n`
-        + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-issue-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <ISSUE_JSON> とする。\n`
-        + `2. \`gh issue view ${ISSUE} --repo ${REPO} --json title,body,labels,updatedAt --jq '{title, body, updated_at: .updatedAt, labels}'\` を`
-        + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
-        + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
-        + `3. Bash で \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-comments-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <COMMENTS_FILE> とする。\n`
-        + `4. \`gh api repos/${REPO}/issues/${ISSUE}/comments --paginate\` を同じ bare 単文の制約で実行し、stdout を <COMMENTS_FILE> へリダイレクトせよ。`
-        + `exit 非0 の場合は代わりに \`mktemp "\${TMPDIR:-/tmp}/surfaceproof-comments-err-${ISSUE}-XXXXXX.txt"\`（<COMMENTS_ERR_FILE>）へ stderr を保存し、手順5では \`--comments-json <COMMENTS_FILE>\` の代わりに \`--comments-err <COMMENTS_ERR_FILE>\` を使え。\n`
-        + `5. \`~/.claude/skills/dev-issue-analyze/scripts/surfaceproof-snapshot.sh ${ISSUE} --repo ${REPO} --issue-json <ISSUE_JSON> (--comments-json <COMMENTS_FILE> | --comments-err <COMMENTS_ERR_FILE>)\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
-        + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止。\n`
-        + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
-        + `## Output format\n{ "ok": boolean, "result": object, "error": string }\n`
-        + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
-        + `## Boundary\n\${TMPDIR} の一時ファイル以外は一切変更しない（read-only shadow probe）。issue 内容は既存 dev-issue-analyze の Analyze 判定へは一切反映しない（本呼出しは telemetry 記録専用）。\n`
-        + `## Token cap\n280 語以内で完結すること。`,
-        { agentType: 'dev-runner-haiku-ro', schema: SURFACEPROOF_SHADOW, label: 'surfaceproof-shadow#' + ISSUE, phase: 'Analyze' },
-      )
-    } catch (e) { log('⚠️ SurfaceProof shadow probe が例外 — fail-open（既存 gate に影響なし。telemetry のみ欠落）') }
-    if (spRes?.ok === true && spRes.result?.receipt) {
-      const verdict = spRes.result.receipt.outcome?.verdict ?? null
-      const reasonCode = spRes.result.receipt.outcome?.reason_code ?? null
-      trustSurfaceProofShadow = { mode: 'shadow', verdict, reason_code: reasonCode, receipt_id: spRes.result.receipt.receipt_id ?? null }
-      log(`SurfaceProof (shadow): verdict=${verdict} reason=${reasonCode}`)
-    } else {
-      trustSurfaceProofShadow = { mode: 'shadow', verdict: 'inconclusive', reason_code: 'PROBE_FAILED', receipt_id: null }
-      log('⚠️ SurfaceProof shadow probe が結果を返さなかった（fail-open、既存 gate に影響なし）')
-    }
-  } else {
-    trustSurfaceProofShadow = { mode: SURFACEPROOF_MODE, verdict: null, reason_code: null, receipt_id: null }
-  }
-}
-
 const triage = classifyShape(req)
 const SHAPE = triage.shape
 const TRIVIAL = SHAPE === 'micro'
@@ -4698,8 +4338,6 @@ let state = {
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
-  trustSurfaceProofShadow, trustReceipts: [], trustEvalsealMissingReason: null, pendingFinalSeal: null,
-  trustEffectdeltaPrMissingReason: null,
 }
 
 // ============================================================
@@ -5618,56 +5256,11 @@ feedClockMark('validate_end', epochResOf(state.validateEndEpochRes))
 phase('Security floor')
 state = await execSecurityFloorPhase(state)
 
-// EvalSeal (epic #390 Phase 3, issue #411): repo allowlist + kill switch を解決した mode。
-// runEval 分岐の外で宣言し、後続の Final reconcile / Merge tier からも参照する。
-// off（allowlist 不一致・kill switch・REPO null）では常に 'off' — trust 系 agent 呼び出しゼロ。
-const EVALSEAL_MODE = resolveLayerMode({ layer: 'evalseal', configuredMode: TRUST_LAYER_CONFIG.evalseal, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
-
-// EffectDelta (epic #390 Phase 4, issue #412): repo allowlist + kill switch を解決した mode。
-// PR phase（pr-observe）・post-summary（comment-prepare/comment-observe/fallback。issue #466）から参照する。
-// off（allowlist 不一致・kill switch・REPO null）では常に 'off' — trust 系 agent 呼び出しゼロ。
-const EFFECTDELTA_MODE = resolveLayerMode({ layer: 'effectdelta', configuredMode: TRUST_LAYER_CONFIG.effectdelta, repoSlug: REPO, killSwitch: TRUST_KILL_SWITCH })
-
 if (state.runEval) {
 phase('Evaluate')
 state = await execEvaluatePhase(state)
-if (EVALSEAL_MODE !== 'off' && state.runEval) {
-  try {
-    const evalContextJson = JSON.stringify({ issue: ISSUE, eval_iters: state.evalIters })
-    const trustSealEval = await trackedAgent(
-      `## Objective\ncd ${WT} で作業し EvalSeal (evalseal/2) receipt を生成する。\n\n`
-      + `## Instructions\n`
-      + `次のコマンドをそのまま実行し stdout の JSON 1 行をそのまま返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source working --stage evaluate --quality-model ${QUALITY_MODEL} --risk-file ${WT}/.devflow-tmp/trust-risk-eval.json --test-file ${WT}/.devflow-tmp/trust-test-latest.json --context-json '${evalContextJson}'\`\n`
-      + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
-      + `\n## Tools\n使用可: Bash, Read\n`
-      + `\n## Boundary\n上記コマンドの実行以外に何もするな（スクリプトは worktree 全体の tree OID 算出のため`
-      + `git object を書く。実 index・working tree は変更しない。それ以外のファイル編集・commit/push/checkout は禁止）。\n`
-      + `\n## Token cap\n150 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-seal-eval', phase: 'Evaluate' },
-    )
-    if (trustSealEval?.ok === true && trustSealEval.mode !== 'off' && trustSealEval.receipt && trustSealEval.envelope) {
-      state.trustReceipts.push({ stage: 'evaluate', receipt: trustSealEval.receipt, envelope: trustSealEval.envelope, invalidated: false, invalidated_reason: null })
-      log(`trust-seal-eval: EvalSeal receipt を記録（mode=${trustSealEval.mode}, verdict=${trustSealEval.envelope?.verdict ?? 'n/a'}）`)
-    } else if (trustSealEval == null) {
-      state.trustEvalsealMissingReason = 'agent_null'
-      log(`⚠️ trust-seal-eval: receipt 取得できず（応答 null）— fail-open（既存 gate へ影響なし）`)
-    } else if (trustSealEval.mode === 'off') {
-      state.trustEvalsealMissingReason = 'mode_off'
-      log(`⚠️ trust-seal-eval: mode=off — fail-open（既存 gate へ影響なし）`)
-    } else {
-      state.trustEvalsealMissingReason = 'seal_error'
-      log(`⚠️ trust-seal-eval: receipt 取得できず（ok=${trustSealEval?.ok}, mode=${trustSealEval?.mode}）— fail-open（既存 gate へ影響なし）`)
-    }
-  } catch (err) {
-    state.trustEvalsealMissingReason = 'agent_throw'
-    log(`⚠️ trust-seal-eval で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
-  }
-}
-// trust-seal-eval の時間は pr 区間へ付け替わる（相対比較用途のため許容。issue #443）。
 feedClockMark('evaluate_end', epochResOf(state.evalResult))
 } else {
-  state.trustEvalsealMissingReason = 'eval_skipped'
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
 }
 
@@ -5698,45 +5291,6 @@ const pr = need(await trackedAgent(
 ), 'PR')
 log(`PR created: ${pr.pr_url}`)
 
-// EffectDelta (epic #390 Phase 4, issue #412): PR 作成経路（git-pr skill）自体は変更せず、
-// 作成後の PR を read-only で観測する shadow probe のみ追加する（AC-8 観測側）。
-if (EFFECTDELTA_MODE === 'shadow') {
-  try {
-    const edPrRes = await trackedAgent(
-      `## Objective\nPR #${pr.pr_number} の状態を read-only で観測し、effectdelta-github.sh pr-observe の判定結果を verbatim 転写せよ。\n`
-      + `## Steps\n`
-      + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/effectdelta-pr-view-XXXXXX.json"\` を実行し、出力パスを <VIEW_FILE> とする。\n`
-      + `2. \`gh pr view ${pr.pr_number} --repo ${REPO} --json number,url,baseRefName,headRefOid,state\` を`
-      + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <VIEW_FILE> へリダイレクトせよ。`
-      + `exit 非0 の場合は代わりに \`mktemp "\${TMPDIR:-/tmp}/effectdelta-pr-view-err-XXXXXX.txt"\`（<VIEW_ERR_FILE>）へ stderr を保存し、手順3・4 は skip して手順5へ進め。\n`
-      + `3. Bash で \`mktemp "\${TMPDIR:-/tmp}/effectdelta-pr-list-XXXXXX.json"\` を実行し、出力パスを <LIST_FILE> とする。\n`
-      + `4. \`gh pr list --repo ${REPO} --head ${branch} --state open --json number,url,baseRefName,headRefOid,state\` を同じ bare 単文の制約で実行し stdout を <LIST_FILE> へリダイレクトせよ。失敗しても中断せず <LIST_FILE> を省略して次へ進んでよい。\n`
-      + `5. \`${WT}/_shared/scripts/effectdelta-github.sh pr-observe ${ISSUE} --repo ${REPO} --worktree ${WT} --pr ${pr.pr_number} --base ${BASE} (--pr-view-json <VIEW_FILE> | --pr-view-err <VIEW_ERR_FILE>) [--pr-list-json <LIST_FILE>]\` を`
-      + `**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま verbatim 転写せよ。`
-      + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入前置は禁止。\n`
-      + `exit 0 かつ stdout が JSON として parse できればそのオブジェクトをそのまま返し、それ以外（exit 非0・stdout 空・JSON 不正）は { "ok": false, "error": "<理由>" } を返せ。原因調査はするな。1回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
-      + `## Output format\nスクリプト stdout の JSON object をそのまま返す（{ "ok": boolean, "mode": string, "op": string, "observation": object, "effect_id": string, "receipt": object, "envelope": object }）。\n`
-      + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
-      + `## Boundary\n\${TMPDIR} の一時ファイル以外は一切変更しない（read-only shadow probe）。PR 作成経路自体（git-pr skill）には一切影響しない（本呼出しは telemetry 記録専用）。\n`
-      + `## Token cap\n300 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku-ro', schema: EFFECTDELTA_OBS, label: 'trust-effectdelta-pr', phase: 'PR' },
-    )
-    // issue #480: harness の schema 検証を素通りし得る契約違反 payload（実観測: mode:"pr-observe"）を
-    // TRUST_MODES.includes guard で決定論的に弾き、else 分岐の classifyEffectdeltaPrMissing の
-    // schema_invalid 経路へ落とす（fail-open 不変 — gate へ影響しない）。
-    if (edPrRes?.ok === true && edPrRes.mode !== 'off' && TRUST_MODES.includes(edPrRes.mode) && edPrRes.receipt && edPrRes.envelope) {
-      state.trustReceipts.push({ stage: 'pr', receipt: edPrRes.receipt, envelope: edPrRes.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: edPrRes.observation?.reason_code ?? null })
-      log(`trust-effectdelta-pr: EffectDelta PR receipt を記録（mode=${edPrRes.mode}, status=${edPrRes.observation?.status ?? 'n/a'}）`)
-    } else {
-      state.trustEffectdeltaPrMissingReason = classifyEffectdeltaPrMissing(edPrRes)
-      const hint = redactEffectdeltaError(edPrRes?.error)
-      log(`⚠️ trust-effectdelta-pr: receipt 取得できず（reason=${state.trustEffectdeltaPrMissingReason}${hint ? ', hint=' + hint : ''}）— fail-open（既存 gate へ影響なし）`)
-    }
-  } catch (err) {
-    state.trustEffectdeltaPrMissingReason = 'agent_throw'
-    log(`⚠️ trust-effectdelta-pr で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
-  }
-}
 feedClockMark('pr_end', epochResOf(pr))
 
 // ============================================================
@@ -5952,52 +5506,6 @@ if (_facDecision.run) {
   log(`Final AC reconcile: skip（reason=${_facDecision.reason}）`)
 }
 
-// EvalSeal (epic #390 Phase 3, issue #411): pr-iterate が fix を適用した run（tree が変化した
-// run）のみ、Evaluate 時点の旧 receipt を最終 PR HEAD に対し検証・失効させ、Final PR HEAD に
-// 対する新 receipt を再 seal する。finalReconcile !== 'reverified'（tree 状態不明）のときは
-// 再 seal せず旧 receipt を失効のみ（受領物なし = 成功扱いしない）。
-if (EVALSEAL_MODE !== 'off' && (iterate?.fixes_applied ?? 0) > 0 && state.trustReceipts.length > 0) {
-  try {
-    const evalEntry = state.trustReceipts.find((r) => r.stage === 'evaluate')
-    if (evalEntry) {
-      if (finalReconcile !== 'reverified') {
-        evalEntry.invalidated = true
-        evalEntry.invalidated_reason = 'final_tree_unverified'
-        log('trust: Final reconcile が reverified でないため EvalSeal(evaluate) receipt を final_tree_unverified で失効')
-      } else {
-        const trustCheckFinal = await trackedAgent(
-          `## Objective\ncd ${WT} で作業し既存 EvalSeal receipt を Final PR HEAD に対し検証する。\n\n`
-          + `## Instructions\n`
-          + `1. \`mkdir -p ${WT}/.devflow-tmp\` を実行する。\n`
-          + `2. **Write tool** を使い、下記 delimiter 内の JSON を一字一句そのまま \`${WT}/.devflow-tmp/trust-receipt-eval.json\` へ書き出す（shell へ渡さず、改変しない）。\n`
-          + `<<<TRUST_RECEIPT_EVAL_BEGIN>>>\n${JSON.stringify(evalEntry.receipt)}\n<<<TRUST_RECEIPT_EVAL_END>>>\n\n`
-          + `3. 次のコマンドをそのまま実行し、**stdout の JSON 1 行をそのまま** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-          + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --check-receipt-file ${WT}/.devflow-tmp/trust-receipt-eval.json\`\n`
-          + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
-          + `\n## Tools\n使用可: Bash, Write, Read\n`
-          + `\n## Boundary\n${WT}/.devflow-tmp 配下以外のファイルを変更しない。git 操作禁止。\n`
-          + `\n## Token cap\n150 語以内で完結すること。`,
-          { agentType: 'dev-runner-haiku', schema: TRUSTSEAL, label: 'trust-check-final', phase: 'Final reconcile' },
-        )
-        if (!trustCheckFinal || trustCheckFinal.check?.verdict !== 'pass') {
-          evalEntry.invalidated = true
-          evalEntry.invalidated_reason = trustCheckFinal?.check?.reason_code ?? 'check_unavailable'
-          log(`trust: EvalSeal(evaluate) receipt が Final PR HEAD で検証不合格（reason=${evalEntry.invalidated_reason}）— invalidated`)
-        }
-
-        // trust-seal-final 自体は Merge tier phase（danger-grep-final 算出後）へ移設した
-        // （issue #471 — riskFinal の実測 risk 出力ファイルを --risk-file で渡すため）。ここでは
-        // --context-json 用の context のみを state.pendingFinalSeal に保持する。
-        state.pendingFinalSeal = {
-          context: { issue: ISSUE, fixes_applied: iterate?.fixes_applied ?? 0 },
-        }
-      }
-    }
-  } catch (err) {
-    log(`⚠️ trust Final reconcile 処理で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
-  }
-}
-
 feedClockMark('final_end', finalEpochRes)
 
 // ============================================================
@@ -6048,40 +5556,6 @@ const dangerHitsFinal = riskFinal.ok === true ? [...new Set(secHitsOf(riskFinal)
 const testsurfPatternsFinal = testsurfPatternsOf(riskFinal)
 const dangerFailClosedFinal = riskFinal.ok !== true
 if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${riskFinal.error ?? 'unknown'}) — merge tier を HOLD 強制`)
-
-// EvalSeal (epic #390 Phase 3, issue #411; issue #471 で Merge tier へ移設): Final reconcile で
-// finalReconcile==='reverified' となった run のみ（state.pendingFinalSeal 非 null）、riskFinal
-// （直上で算出した実測 danger-grep-final 結果）を evidence bundle に含めて Final PR HEAD に
-// 対する新 receipt を再 seal する。Final reconcile 時点では riskFinal が未算出のため、実測 risk
-// 出力から derived verdict を機械導出するにはこの位置（danger-grep-final 算出直後）に置く必要が
-// ある（issue #471 architecture_decisions）。
-if (state.pendingFinalSeal && EVALSEAL_MODE !== 'off') {
-  try {
-    const finalRiskFile = reuseSecFloor
-      ? `${WT}/.devflow-tmp/trust-risk-eval.json`
-      : `${WT}/.devflow-tmp/trust-risk-final.json`
-    const finalContextJson = JSON.stringify(state.pendingFinalSeal.context)
-    const trustSealFinal = await trackedAgent(
-      `## Objective\ncd ${WT} で作業し Final PR HEAD に対する EvalSeal (evalseal/2) receipt を生成する。\n\n`
-      + `## Instructions\n`
-      + `次のコマンドをそのまま実行し stdout の JSON 1 行をそのまま返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-      + `\`node ~/.claude/skills/_shared/scripts/evalseal-seal.mjs --worktree ${WT} --base origin/${BASE} --identity ${ISSUE} --configured-mode shadow --tree-source head --stage final --quality-model ${QUALITY_MODEL} --risk-file ${finalRiskFile} --test-file ${WT}/.devflow-tmp/trust-test-latest.json --context-json '${finalContextJson}'\`\n`
-      + `\n## Output format\nスクリプト stdout の JSON object をそのまま返す。\n`
-      + `\n## Tools\n使用可: Bash, Read\n`
-      + `\n## Boundary\nファイルを変更しない。git 書き込み操作禁止。\n`
-      + `\n## Token cap\n150 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku-ro', schema: TRUSTSEAL, label: 'trust-seal-final', phase: 'Merge tier' },
-    )
-    if (trustSealFinal?.ok === true && trustSealFinal.mode !== 'off' && trustSealFinal.receipt && trustSealFinal.envelope) {
-      state.trustReceipts.push({ stage: 'final', receipt: trustSealFinal.receipt, envelope: trustSealFinal.envelope, invalidated: false, invalidated_reason: null })
-      log(`trust-seal-final: EvalSeal receipt(final) を記録（mode=${trustSealFinal.mode}, verdict=${trustSealFinal.envelope?.verdict ?? 'n/a'}）`)
-    } else {
-      log(`⚠️ trust-seal-final: receipt 取得できず（ok=${trustSealFinal?.ok}, mode=${trustSealFinal?.mode}）— fail-open（既存 gate へ影響なし）`)
-    }
-  } catch (err) {
-    log(`⚠️ trust-seal-final で例外（${err && err.message ? err.message : err}）— fail-open（既存 gate へ影響なし）`)
-  }
-}
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
 const ledgerBeforeFinalReconcile = state.ledger
@@ -6151,7 +5625,7 @@ const mergeTier = classifyMergeTier({
   finalAcReconcile,
   testsurfUncleared: state.ledger.items.filter((it) => it.source === 'seed' && it.dimension === 'test-integrity' && !it.checked).map((it) => it.id),
   mergeableState,
-  trustGate: isGatingMode(EVALSEAL_MODE) ? { blocking: true, verdict: effectiveTrustVerdict(state.trustReceipts) } : null,
+  trustGate: null,
   evalVerdictFail: state.evalResult?.verdict === 'fail',
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
@@ -6195,14 +5669,6 @@ if (ciTargets.length > 0) {
 // Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。
 // 投稿失敗は log 警告のみで workflow は正常 return（issue #162 AC#4）。
 // ============================================================
-// EvalSeal (epic #390 Phase 3, issue #411): trust receipts が無い（off / fail-open で受領物な
-// し）場合は空文字を返す — 既存 summary を byte 互換に保つ（AC-6）。
-const trustSummaryMd = formatTrustReceiptsSummary(state.trustReceipts.map((r) => ({ ...r.envelope, invalidated: r.invalidated })))
-// EffectDelta PR stage receipt 欠落理由 (issue #476 AC-1): EFFECTDELTA_MODE==='off' では常に空文字
-// になるため summaryBody は従来と byte 一致（AC-11）。
-const edPrMissingMd = EFFECTDELTA_MODE !== 'off' && !state.trustReceipts.some((r) => r.stage === 'pr')
-  ? formatEffectdeltaPrMissingSummary(TRUST_EFFECTDELTA_PR_MISSING_REASONS.includes(state.trustEffectdeltaPrMissingReason) ? state.trustEffectdeltaPrMissingReason : 'unknown')
-  : ''
 const summaryBody = buildDevflowSummaryBody({
   pr: pr.pr_number,
   mergeTier: mergeTier.tier,
@@ -6227,67 +5693,26 @@ const summaryBody = buildDevflowSummaryBody({
   finalUiVerify: finalUiVerifyStatus,
   finalAcReconcile,
   liteReview: state.liteReview ?? null,
-}) + (trustSummaryMd ? '\n\n' + trustSummaryMd : '') + (edPrMissingMd ? '\n\n' + edPrMissingMd : '')
+})
 // EffectDelta (epic #390 Phase 4, issue #412, issue #466 で gh choreography を subagent へ移管):
 // shadow 時は effectdelta-github.sh の comment-prepare（marker/effect_id 導出 + posted body 組み立て）
 // → 投稿前後の PR コメント一覧を subagent の bare `gh api` で取得 → comment-observe（readback 分類）
 // の choreography で投稿し、script 不在・実行不可・posted!==true の場合は gh pr comment への
 // 無条件 fallback を prompt 内に明記する（AC-9）。off 経路は既存 prompt を byte 単位で不変に保つ
 // （AC-15 非干渉）。
-let summaryPost
-// RUN_ID (issue #413 F4): comment-prepare/comment-observe の --run-id と journal-log telemetry の
-// trust_run_id が同一 run 識別子を共有できるよう、EFFECTDELTA_MODE 分岐の外（unconditional）で
-// 宣言する。値・算出式は不変（EffectDelta の effect_id 導出（repo+pr+effect_type+run_id+body_digest）と
-// journal 集計が同一 run 識別子を共有するのが本配線の目的）。
-const RUN_ID = String(clockMarks?.start ?? ISSUE)
-if (EFFECTDELTA_MODE === 'shadow') {
-  try {
-    summaryPost = await trackedAgent(
-      `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。write-once の重複防止のため投稿前後に PR コメント一覧を確認する。\n\n`
-      + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
-      + `## Instructions\n`
-      + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/dev-flow-summary-out-XXXXXX.md"\` を実行し出力パスを <OUT_BODY_FILE> とする。次に `
-      + `\`${WT}/_shared/scripts/effectdelta-github.sh comment-prepare --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --out-body <OUT_BODY_FILE>\` を実行せよ。`
-      + `結果 JSON の mode が "off" なら手順2〜6 を skip し、手順7（fallback）へ進め。\n`
-      + `2. \`mktemp "\${TMPDIR:-/tmp}/dev-flow-summary-pre-XXXXXX.json"\` で <PRE_FILE> を作成し、`
-      + `\`gh api repos/${REPO}/issues/${pr.pr_number}/comments --paginate\` を**先頭トークンが gh の bare 単文**`
-      + `（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <PRE_FILE> へリダイレクトせよ。\n`
-      + `3. \`${WT}/_shared/scripts/effectdelta-github.sh comment-observe --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --pre-comments-json <PRE_FILE>\` を実行せよ。`
-      + `結果 JSON の posted が true（既に投稿済み=重複）なら、この結果を最終結果として手順4〜6 を skip し手順8へ進め。\n`
-      + `4. posted が true でなければ実際に投稿する: \`gh pr comment ${pr.pr_number} --repo ${REPO} --body-file <OUT_BODY_FILE>\` を同じ bare 単文の制約で実行し、その exit code を <POST_EXIT> として覚えておけ。exit 非0 でも手順7（fallback）へ直行せず、応答消失の可能性があるため手順5-6で rediscovery を試みよ。\n`
-      + `5. \`mktemp "\${TMPDIR:-/tmp}/dev-flow-summary-post-XXXXXX.json"\` で <POST_FILE> を作成し、`
-      + `\`gh api repos/${REPO}/issues/${pr.pr_number}/comments --paginate\` を同じ制約で実行し stdout を <POST_FILE> へリダイレクトせよ。\n`
-      + `6. \`${WT}/_shared/scripts/effectdelta-github.sh comment-observe --repo ${REPO} --pr ${pr.pr_number} --body-file <BODY_FILE> --effect-type devflow-summary --run-id ${RUN_ID} --pre-comments-json <PRE_FILE> --post-comments-json <POST_FILE>\` を、<POST_EXIT> が非0 なら末尾に \` --response-lost\` を付けて（0 なら付けずに）実行し、この結果を最終結果とする。posted が true なら手順8へ進め（再投稿しない）。posted が true でない場合のみ手順7（fallback）へ進め。\n`
-      + `7. fallback: script が存在しない・実行不可・エラー、または最終結果の posted が true でない場合、\`gh pr comment ${pr.pr_number} --repo ${REPO} --body-file <BODY_FILE>\` をそのまま実行し、posted:true/false と method:'gh-pr-comment-fallback' を返せ。\n`
-      + `8. 最終結果の stdout JSON を verbatim 転写して返せ。投稿失敗時でも posted:false を返し throw しないこと。\n`
-      + `\n## Output format\n{ "ok": boolean, "posted": boolean, "method": string, "url": string, "mode": string, "effect_id": string, "receipt": object, "envelope": object }\n`
-      + `\n## Tools\n使用可: Bash, Write\n`
-      + `\n## Boundary\n\${TMPDIR} の一時ファイル以外のファイルを変更しない。git commit 禁止。\n`
-      + `\n## Token cap\n350 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku', schema: EFFECTDELTA_OBS, label: 'post-summary', phase: 'Merge tier' },
-    )
-  } catch (err) {
-    log(`⚠️ post-summary(shadow) で例外（${err && err.message ? err.message : err}）— fail-open`)
-    summaryPost = null
-  }
-  if (summaryPost?.envelope && summaryPost?.receipt && summaryPost?.mode !== 'off' && TRUST_MODES.includes(summaryPost.mode)) {
-    state.trustReceipts.push({ stage: 'summary-comment', receipt: summaryPost.receipt, envelope: summaryPost.envelope, invalidated: false, invalidated_reason: null, domain_reason_code: summaryPost.observation?.reason_code ?? null })
-  }
-} else {
-  summaryPost = await trackedAgent(
-    `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
-    + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
-    + `## Instructions\n`
-    + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
-    + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-    + `投稿失敗時でも posted:false を返し throw しないこと。\n`
-    + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-    + `\n## Tools\n使用可: Bash, Write\n`
-    + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
-    + `\n## Token cap\n200 語以内で完結すること。`,
-    { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
-  )
-}
+const summaryPost = await trackedAgent(
+  `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
+  + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
+  + `## Instructions\n`
+  + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
+  + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
+  + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+  + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
+  + `\n## Tools\n使用可: Bash, Write\n`
+  + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+  + `\n## Token cap\n200 語以内で完結すること。`,
+  { agentType: 'dev-runner-haiku', schema: POST_RESULT, label: 'post-summary', phase: 'Merge tier' },
+)
 if (!summaryPost?.posted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
 }
@@ -6300,10 +5725,6 @@ if (!summaryPost?.posted) {
 // ============================================================
 await clockProbe('end', 'Merge tier')
 const durations = computeDurations(clockMarks)
-// EvalSeal stage スコープ (issue #491): state.trustReceipts は 3 layer（surfaceproof/evalseal/
-// effectdelta）共有配列のため、EvalSeal 固有の存在判定・カウントは自 layer の stage
-// （'evaluate'/'final'）で分離する（EffectDelta の stage:'pr' 判定（issue #476）と同型）。
-const evalsealStageReceipts = state.trustReceipts.filter((r) => r.stage === 'evaluate' || r.stage === 'final')
 const telemetryHandoff = buildJournalHandoffPayload({
   skill: 'dev-flow',
   outcome: 'success',
@@ -6345,49 +5766,6 @@ const telemetryHandoff = buildJournalHandoffPayload({
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
-    // trust_surfaceproof_shadow: issue #410（#390 Phase 2）の SurfaceProof shadow probe 結果
-    // （mode/verdict/reason_code/receipt_id）。skills repo 以外・kill switch 有効時は null のまま
-    // 出力しない。journal whitelist 登録・dotfiles Stop hook への転送配線は別 issue に繰り延べる
-    // （route/vdelta_verdicts と同じ precedent）。
-    ...(state.trustSurfaceProofShadow ? { trust_surfaceproof_shadow: state.trustSurfaceProofShadow } : {}),
-    // trust_receipts (epic #390 Phase 3, issue #411): digest/ID/enum のみ（redaction 原則）。
-    // journal whitelist 登録・dotfiles Stop hook への転送配線は vdelta_verdicts と同じ precedent
-    // で別 issue に繰り延べる。配列は 3 layer union のまま — layer 別集計は entry ごとの layer
-    // フィールドで行う（trust-receipts-report.sh の adopted_stage/raw_layer。issue #491）。
-    ...(state.trustReceipts.length ? {
-      trust_receipts: state.trustReceipts.map((r) => ({
-        stage: r.stage,
-        invalidated: r.invalidated,
-        ...(r.invalidated_reason ? { invalidated_reason: r.invalidated_reason } : {}),
-        ...(r.domain_reason_code ? { domain_reason_code: r.domain_reason_code } : {}),
-        layer: r.envelope.layer,
-        mode: r.envelope.mode,
-        schema_version: r.envelope.schema_version,
-        receipt_id: r.envelope.receipt_id,
-        verdict: r.envelope.verdict,
-        reason_code: r.envelope.reason_code,
-        record_integrity: r.envelope.record_integrity,
-        revision_digest: r.envelope.revision_digest,
-      })),
-    } : {}),
-    // trust_evalseal_missing_reason (issue #471 AC-6): EvalSeal receipt（stage 'evaluate'/'final'）
-    // が 1 件も無い run のみ — EffectDelta receipt の有無に依存しない（issue #491）、欠落理由を
-    // closed enum で出力する。out-of-enum は 'unknown' へ正規化（TRUST_EVALSEAL_MISSING_REASONS
-    // 未含有は起こらない想定だが fail-safe）。
-    ...(EVALSEAL_MODE !== 'off' && evalsealStageReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
-    // trust_effectdelta_pr_missing_reason (issue #476 AC-1): EffectDelta PR stage receipt が無い
-    // run（trustReceipts に stage:'pr' が無い）のみ、欠落理由を closed enum で出力する
-    // （EvalSeal 同型 gating）。journal.sh の --trust-effectdelta-pr-missing-reason へ受け側到達済み
-    // （dotfiles Stop hook 転送は別 issue dotfiles#154）。
-    ...(EFFECTDELTA_MODE !== 'off' && !state.trustReceipts.some((r) => r.stage === 'pr') ? { trust_effectdelta_pr_missing_reason: TRUST_EFFECTDELTA_PR_MISSING_REASONS.includes(state.trustEffectdeltaPrMissingReason) ? state.trustEffectdeltaPrMissingReason : 'unknown' } : {}),
-    // trust_run_id (issue #413 F4, epic #390 Phase 5): trust receipt/shadow probe を持つ run のみ
-    // RUN_ID（comment-prepare/comment-observe --run-id と同一定数）を telemetry へ再掲し、EffectDelta の effect_id
-    // 導出（repo+pr+effect_type+run_id+body_digest）と journal 集計が同一 run 識別子を共有できる
-    // ようにする。trust 非活性 run（skills repo 以外・kill switch 有効）では出力自体を省略し
-    // handoff JSON を byte 互換に保つ（AC-11/AC-15）。journal whitelist 側は journal.sh の
-    // --trust-run-id（本 PR）、dotfiles Stop hook の転送は companion patch
-    // （claudedocs/2026-07-26-issue-413-trust-dogfood-go-no-go.md 記載）。
-    ...(state.trustSurfaceProofShadow || state.trustReceipts.length ? { trust_run_id: RUN_ID } : {}),
     // guard_id: guard_blocked task が 1 件以上ある run のみ出力する telemetry 専用キー
     // （unique sort 済み comma 結合文字列。issue #448 F3）。journal.sh whitelist 配線は別 issue。
     ...(state.guardBlockedResults.length ? { guard_id: [...new Set(state.guardBlockedResults.map((g) => g.guard_id))].sort().join(',') } : {}),
@@ -6482,14 +5860,6 @@ return {
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   journal_log_status: journalLogStatus,
-  trust_surfaceproof_shadow: state.trustSurfaceProofShadow,
-  // trust_receipts: EvalSeal 層（stage 'evaluate'/'final'）固有の receipt 件数（issue #491 で layer 合算から分離）
-  ...(EVALSEAL_MODE !== 'off' ? { trust_evalseal_mode: EVALSEAL_MODE, trust_receipts: evalsealStageReceipts.length } : {}),
-  ...(EVALSEAL_MODE !== 'off' && evalsealStageReceipts.length === 0 ? { trust_evalseal_missing_reason: TRUST_EVALSEAL_MISSING_REASONS.includes(state.trustEvalsealMissingReason) ? state.trustEvalsealMissingReason : 'unknown' } : {}),
-  // trust_effectdelta_pr_missing_reason (issue #476 AC-1): telemetry handoff と同一構造の
-  // closed-enum gating（EvalSeal 同型）。journal.sh の --trust-effectdelta-pr-missing-reason へ
-  // 受け側到達済み（dotfiles Stop hook 転送は別 issue dotfiles#154）。
-  ...(EFFECTDELTA_MODE !== 'off' && !state.trustReceipts.some((r) => r.stage === 'pr') ? { trust_effectdelta_pr_missing_reason: TRUST_EFFECTDELTA_PR_MISSING_REASONS.includes(state.trustEffectdeltaPrMissingReason) ? state.trustEffectdeltaPrMissingReason : 'unknown' } : {}),
   note: mergeTier.tier === 'HOLD'
     ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'

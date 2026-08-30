@@ -21,6 +21,7 @@ import {
   syncRepo,
   collectTopLevelDeclNames,
   insertMarkerPair,
+  removeMarkerPair,
 } from './sync-inlines.mjs';
 
 const SCRIPT_PATH = join(dirname(fileURLToPath(import.meta.url)), 'sync-inlines.mjs');
@@ -716,4 +717,80 @@ test('--add exits 1 and leaves workflow unchanged when canonical contains a forb
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// removeMarkerPair(wfSrc, source, wfLabel): unit tests (issue #507)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('removeMarkerPair removes only the targeted region; other regions and hand-written code are byte-unchanged', () => {
+  const markerBeginA = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEndA = `// ==== END inline: _lib/fake.mjs ====`;
+  const markerBeginB = `// ==== BEGIN inline: _lib/fake2.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEndB = `// ==== END inline: _lib/fake2.mjs ====`;
+  const wfSrc = [
+    `// header hand-written`,
+    `const before = 1;`,
+    markerBeginA,
+    `const A = 1;`,
+    markerEndA,
+    `const between = 2;`,
+    markerBeginB,
+    `const B = 2;`,
+    markerEndB,
+    `const after = 3;`,
+  ].join('\n') + '\n';
+
+  const result = removeMarkerPair(wfSrc, '_lib/fake.mjs', 'wf.js');
+
+  assert.ok(!result.includes('BEGIN inline: _lib/fake.mjs'), 'removed region BEGIN marker must be gone');
+  assert.ok(!result.includes('END inline: _lib/fake.mjs'), 'removed region END marker must be gone');
+  assert.ok(!result.includes('const A = 1;'), 'removed region body must be gone');
+
+  // Other region and hand-written lines must be byte-unchanged (still present verbatim).
+  assert.ok(result.includes('// header hand-written'));
+  assert.ok(result.includes('const before = 1;'));
+  assert.ok(result.includes('const between = 2;'));
+  assert.ok(result.includes(markerBeginB));
+  assert.ok(result.includes('const B = 2;'));
+  assert.ok(result.includes(markerEndB));
+  assert.ok(result.includes('const after = 3;'));
+
+  const expected = [
+    `// header hand-written`,
+    `const before = 1;`,
+    `const between = 2;`,
+    markerBeginB,
+    `const B = 2;`,
+    markerEndB,
+    `const after = 3;`,
+  ].join('\n') + '\n';
+  assert.equal(result, expected);
+});
+
+test('removeMarkerPair throws when the target region does not exist', () => {
+  const wfSrc = `// header\nconst x = 1;\n`;
+  assert.throws(
+    () => removeMarkerPair(wfSrc, '_lib/does-not-exist.mjs', 'wf.js'),
+    /not found|no.*region|nothing to remove/i,
+  );
+});
+
+test('removeMarkerPair throws on a second removal of an already-removed region', () => {
+  const markerBegin = `// ==== BEGIN inline: _lib/fake.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====`;
+  const markerEnd = `// ==== END inline: _lib/fake.mjs ====`;
+  const wfSrc = `// header\n${markerBegin}\nconst A = 1;\n${markerEnd}\n// footer\n`;
+  const removedOnce = removeMarkerPair(wfSrc, '_lib/fake.mjs', 'wf.js');
+  assert.throws(
+    () => removeMarkerPair(removedOnce, '_lib/fake.mjs', 'wf.js'),
+    /not found|no.*region|nothing to remove/i,
+  );
+});
+
+test('removeMarkerPair round-trips with insertMarkerPair: insert then remove restores the original source', () => {
+  const original = `line1\nconst anchor = 1;\nline3\n`;
+  const inserted = insertMarkerPair(original, '_lib/foo.mjs', 'const anchor = 1;', 'wf.js');
+  assert.notEqual(inserted, original, 'sanity: insertMarkerPair must actually change the source');
+  const restored = removeMarkerPair(inserted, '_lib/foo.mjs', 'wf.js');
+  assert.equal(restored, original);
 });

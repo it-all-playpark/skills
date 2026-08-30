@@ -36,10 +36,11 @@
 # 0-run safety / presence-only denominator).
 #
 # Per (layer, stage) receipt de-duplication within a run: when >1 receipt shares
-# the same layer+stage, the last non-invalidated entry (array order) is adopted -
-# same rule as _lib/trust-wiring.mjs effectiveTrustVerdict. invalidated==true
-# receipts are excluded from verdict/reason_code distributions and counted
-# separately in invalidated_count.
+# the same layer+stage, the last non-invalidated entry (array order) is adopted
+# (effective verdict rule: invalidated==true receipts are excluded from
+# verdict/reason_code distributions and counted separately in
+# invalidated_count; among the remaining entries for a given layer+stage,
+# array-order last wins).
 #
 # Usage:
 #   trust-receipts-report.sh [--window <dur>] [--until <iso8601>] [--config <path>]

@@ -53,7 +53,7 @@ export function vdeltaDenies(verdict) {
 
 // vdeltaVerdictDigest: raw verdict（テスト名・anchors・run_id・transitions 配列本体等を含み得る）を
 // telemetry に安全に載せられる閉じた 4 キー scalar digest へ還元する（issue #433 方式 B）。
-// trust_receipts と同じ redaction 原則: 生の verdict フィールドは一切保持しない。
+// redaction 原則: 生の verdict フィールドは一切保持しない。
 export function vdeltaVerdictDigest(verdict) {
   const status = vdeltaDenies(verdict).status;
 

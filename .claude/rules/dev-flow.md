@@ -102,9 +102,9 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   token fallback が退化（例: dev-flow で clock#start が fail-open null かつ同一 worktree 再利用）
   して前 run と同名パスに衝突した場合の補償としてのみ probe 成立に効く。
   **除去範囲 target は呼び出し元が明示的に渡す**（関数側にデフォルトを置かない）:
-  dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を対象にし、前 run の trust 証跡
-  （`trust-test-latest.json` / `trust-risk-*.json`。残ると当該 run の証跡書き込み失敗時に
-  evalseal-seal.mjs が古い green/red を silent に拾う）も同時に消す。pr-iterate は
+  dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を対象にし、前 run の証跡
+  （`trust-test-latest.json` / `trust-risk-*.json` 等）の持ち越し防止（run 間衛生）も兼ねて
+  同時に消す。pr-iterate は
   `.devflow-tmp/.isolation-probe` のみを対象にする — nested 起動（dev-flow → `workflow('pr-iterate')`）
   では probe 対象が実行中 dev-flow run の worktree 自身になり、`.devflow-tmp` 全体を消すと
   当該 run が既に書いた trust 証跡を run 途中で失うため。cleanup は fail-open
@@ -138,7 +138,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
 - **telemetry**: dev-flow 完走時に workflow が telemetry handoff JSON（merge_tier / gate_policy / danger_hits / shape /
   shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
-  vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations / trust_surfaceproof_shadow /
+  vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
   merge_tier_reasons / route / subagent_invocations）を
   `~/.claude/journal/pending/` へ書き出し、
   dotfiles の Stop hook `claude-code/hooks/stop-devflow-telemetry.sh` が `journal.sh log dev-flow success --merge-tier ...`
@@ -157,7 +157,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   成功 handoff（`outcome:'success'` のまま）に `error_category:'guard_blocked'` と telemetry キー
   `guard_id`（発生した guard_id を unique・sort した上で comma 結合した文字列。各要素は
   pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。journal.sh 側の専用フラグ配線・dotfiles Stop hook
-  への転送配線は `trust_receipts` 等と同じ precedent に倣い別 issue で扱う — 本 issue（#448）は
+  への転送配線は route 等 8 キー（issue #430）と同じ precedent に倣い別 issue で扱う — 本 issue（#448）は
   handoff JSON への到達までを保証する（issue #448）。
   `final_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`）。
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
@@ -174,8 +174,8 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   起点で計算される。時刻は clock exec-proxy（dev-runner-haiku-ro が `date +%s` を実行）を start/end の 2 回のみ
   起動し、残り 9 mark は phase 境界に隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから
   給電する（fail-open 不変）。
-  **専用 probe 2 回分 + 給電元応答の完了タイミング依存の skew（contract 経路の analyze_end は shape 判定・
-  surfaceproof の時間が plan 区間へ付け替わる等）を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
+  **専用 probe 2 回分 + 給電元応答の完了タイミング依存の skew（contract 経路の analyze_end は shape 判定の
+  時間が plan 区間へ付け替わる等）を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
   Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。probe 失敗は fail-open（当該 mark null →
   対応する duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
   `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
@@ -200,22 +200,6 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
   する fail-open）に到達済み（issue #430）。dotfiles Stop hook 側の jq projection（送り側配線）は
   it-all-playpark/dotfiles#143 で扱う。
-  `trust_receipts` は EvalSeal/EffectDelta shadow 時のみ出力される receipt envelope 配列（stage/invalidated/receipt_id/verdict/record_integrity
-  等の digest・ID・closed enum のみ — redaction 原則で raw 本文・anchors 値は保存しない）。stage は EvalSeal の
-  `evaluate`/`final` に加え、EffectDelta（issue #412, epic #390 Phase 4）の `pr`（PR phase の read-only pr-observe
-  観測）/`summary-comment`（post-summary の comment-ensure 投稿）を含む。EffectDelta entry には任意で
-  `domain_reason_code`（DUPLICATE_EFFECT/WRONG_TARGET/RESPONSE_LOST 等、observation 由来の分類）が付き、
-  Phase 5 calibration での原因別集計に使う。journal whitelist 登録・
-  dotfiles Stop hook への転送配線は別 issue で扱う — 本 issue は handoff JSON への
-  到達と統合テストでの検証まで。
-  earned-autonomy 集計・calibration は **W6b へ繰り延べ**（W6 は enum 骨格と telemetry 蓄積開始のみ）。
-  `trust_surfaceproof_shadow`（issue #410, epic #390 Phase 2）は `{mode, verdict, reason_code, receipt_id}`
-  — Analyze phase で SurfaceProof adapter を shadow 実行した結果。REPO が `it-all-playpark/skills` と厳密一致
-  し kill switch（環境変数 `TRUST_KILL_SWITCH`）が無効な場合のみ shadow 実行され、それ以外の repo では
-  追加 agent 呼出し 0 件のまま出力自体が省略される（AC-11: shadow/off で既存 merge tier・agent 呼出回数・
-  return status は不変）。req/shape/needs_clarification 判定へは一切反映しない telemetry 専用キー。journal
-  whitelist 登録・dotfiles Stop hook への転送配線は別 issue に
-  繰り延べる（本 PR は handoff JSON への到達まで）。
 
 ### distrust 機構の正当化クラス (W7)
 
@@ -230,7 +214,7 @@ dev-flow の各「distrust 機構」（LLM/自動化の判定を信用しきら�
 |--------|-----------|---------|---------|
 | **incentive-structural**（永続・撤去禁止） | 敵対ループの勝利宣言を当事者に self-judge させない incentive 設計 + cold-context moving-target の抑制 | **非依存**（賢いモデルほどシャープな non-convergent nitpick を出すため逆に悪化） | frozen target（planSeen/evalSeen/blockSeen 累積）・既出 findings/feedback 累積・topic-stuck 検出 + relax + early-cutoff・critical-always-blocks + severity floor + append 単調性・hard cap（PLAN/EVAL/GREEN/BLOCK_MAX, last-resort safety net）・dev-improve IMPROVE_MAX + backpressure（ループが自分の提案量を自己増幅させない）・guard_blocked の replan 除外（guard/hook 由来 BLOCKED を「別アプローチ探索」ループに入れず blockedConcerns→evaluator focus へ直行 — guard 迂回手順の探索 incentive を絶つ。issue #448）・blocking_reason 決定論スクラバー（迂回コマンド列の replan/evaluator prompt への verbatim 伝播遮断。issue #448）・review-finding 決定論スクラバー（pr-iterate の blocking finding description/suggestion の fix prompt への verbatim 伝播遮断 — メタ指示が実行指示へ変換される経路を断つ。issue #503）・analyze provenance 突合（取得 issue 番号/title の決定論突合で REQ 捏造を反証可能化 — 取得成功の self-judge をさせない fail-closed。issue #451）|
 | **blast-radius**（永続） | 不可逆性 / accountability / liability / blast-radius。正確性ではなく当事者性で正当化するため frontier が人間を超えても残る | **非依存** | human merge（accountability/不可逆/values/novelty）・danger-grep on realized diff → security path 強制・seeded SEC + merge tiering HOLD（danger/breaking/不可逆）・pr-iterate critical/major-always-blocks（merge 直前の最終ゲート: この先は human merge のみで、ここで relax すると既知の critical/major が出荷される。修正コストは PR スコープに bounded）・Final reconcile（pr-iterate fix 適用後の最終 tree に対する決定論 test 再実行 + 既存 AC の one-shot 再検証（fail は critical AC-FINAL append・既存 checked は不変の append 単調） → red/unavailable で HOLD。merge 直前の最終ゲート）・dev-improve 自動 revert 禁止・sunset 昇格の issue→人間 merge 経由・仮説突合の決定論 oracle（hypothesis-check.sh — LLM に効果の self-judge をさせない）・TESTSURF seeding（test-weakening 決定論検出 + evaluator clearance、merge tier HOLD）・lite route の pr-reviewer 1-pass → critical/major findings 検出で `workflow('pr-iterate')` フル fix loop へ自動昇格（critical/major-always-blocks 不変。縮約経路でも merge 直前のゲートを維持）|
-| **capability-bound**（**sunset 対象**） | 現行 LLM judge の信頼性不足（ECE≈39% / FPR≈35%）。モデルが賢くなるほど縮む | **依存** | `gate_policy = llm-major-advisory`（LLM major を blocking にしない distrust）・ui-verify advisory 固定（UI 判定を blocking にしない distrust）・trust-layer 3 層（SurfaceProof / EvalSeal / EffectDelta。現在 off 固定）|
+| **capability-bound**（**sunset 対象**） | 現行 LLM judge の信頼性不足（ECE≈39% / FPR≈35%）。モデルが賢くなるほど縮む | **依存** | `gate_policy = llm-major-advisory`（LLM major を blocking にしない distrust）・ui-verify advisory 固定（UI 判定を blocking にしない distrust）・trust-layer 3 層（SurfaceProof / EvalSeal / EffectDelta。call site・exec-proxy は撤去済み — kernel 純関数 `_lib/trust-{schema,digest,mode,telemetry}.mjs` と `classifyMergeTier` の trustGate 経路のみ存置）|
 
 **capability-bound の sunset path（必須）**: パラメータ値で表現し再評価トリガを持たせる。
 `gate_policy` の sunset path —
@@ -248,12 +232,24 @@ redgreen vdelta deny の sunset path —
 - 主分類は incentive-structural（red→green 昇格の勝利宣言を test 変更込みで self-judge させないラベル精度保護）だが、**blocking ゲート化しない点**（deny-only 存置）は capability-bound。
 - 表現: 昇格条件の deny `&&` 節（deny-only）。
 - 再評価トリガ: veridelta が record_integrity を advisory から昇格（INV-10 解消）し W6b calibration が vdelta verdict の precision を実証した時点で blocking gate 化を再評価する。
-trust-layer（SurfaceProof / EvalSeal / EffectDelta）off 固定の sunset path —
-- 表現: `_lib/trust-wiring.mjs` の `TRUST_LAYER_CONFIG` 各 enum 値（'off' → 'shadow' → 'advisory' → 'blocking'）。現在は 3 層とも **'off'**。同一 harness evaluator の receipt は verifier 種別により常に `record_integrity='advisory'`（`resolveTrustLevel` の same-harness 経路 — これは incentive-structural 側で sunset しない）。
-- **sunset path は昇格の一方向ではない**。capability-bound の distrust は「実証されなければ撤去する」側のトリガも必須で、これが無いと機構は無期限に居座り §W7 冒頭の「将来の技術的負債」そのものになる。以下 2 方向を必ず併記する。
-- 復帰（off → shadow）トリガ: 3 条件すべて。(1) call site が監査証跡の破壊的上書き・自己封緘を行わない形へ再設計されている、(2) trust 由来の safety classifier ブロックが run abort / journal-log 連鎖ブロックへ波及しないことが実測で確認できている、(3) off 期間の完走率を分母として shadow 復帰後の完走率が有意に劣後しない。1 つでも欠けたら off のまま。
-- 昇格（shadow → advisory/blocking）トリガ: 復帰後に receipt 取得成功率・inconclusive 率が SLO（`dev-flow-doctor/scripts/trust-receipts-report.sh --slo`）を満たし、かつ **3 層の守備範囲が実失敗モードと突合できている**こと。SurfaceProof が検証するのは issue unit の「提示の完全性」であって「指示への遵守」ではない等、検出対象と実際に起きた失敗のズレを突合しないまま昇格させない。blocking 昇格時に `classifyMergeTier` の `trustGate`（実装済み・非 blocking では null）を活性化する。pinned verifier（agent write 圏外）実装までは 'trusted-environment' を主張しない。
-- 撤去トリガ: off 期間の実測で「trust layer 無しでも完走率・検出漏れが悪化しない」ことが確認できた時点で、`_lib/trust-*` / `_shared/scripts/{evalseal-*,effectdelta-github.sh}` / `dev-issue-analyze/scripts/surfaceproof-snapshot.sh` と各 call site を削除する別 issue を起票する。off のまま放置しない。
+trust-layer（SurfaceProof / EvalSeal / EffectDelta）call site 撤去後の sunset path —
+- **現状**: call site・exec-proxy（evalseal-seal.mjs / evalseal-verify.mjs / effectdelta-github.sh /
+  surfaceproof-snapshot.sh）は撤去済みで call site は 0 件。残置するのは kernel 純関数
+  `_lib/trust-{schema,digest,mode,telemetry}.mjs`（各 `.test.mjs` 込み）と、`classifyMergeTier`
+  （`_lib/merge-tier.mjs`）の trustGate 経路のみ。trustGate は未指定時 `null` を返し既存挙動と
+  完全一致する。
+- **復帰には call site の再設計・再実装が必要**（撤去済みの旧 call site は流用不可）。再実装 issue の
+  受入条件として以下 3 条件を維持する（1 つでも欠けたら復帰しない）:
+  (1) 監査証跡の破壊的上書き・自己封緘を行わない構造で再設計されている、
+  (2) trust 由来の safety classifier ブロックが run abort / journal-log 連鎖ブロックへ波及しないことが
+  実測で確認できている、
+  (3) call site 撤去期間の完走率を分母として、復帰後の完走率が有意に劣後しない。
+- **昇格（shadow → advisory/blocking）トリガ**: 復帰後に receipt 取得成功率・inconclusive 率が SLO
+  （`dev-flow-doctor/scripts/trust-receipts-report.sh --slo`）を満たし、かつ **3 層の守備範囲が実失敗
+  モードと突合できている**こと（SurfaceProof が検証するのは issue unit の「提示の完全性」であって
+  「指示への遵守」ではない等、検出対象と実際の失敗のズレを突合しないまま昇格させない）。blocking
+  昇格時に `classifyMergeTier` の trustGate を活性化する。pinned verifier（agent write 圏外）実装までは
+  'trusted-environment' を主張しない。
 - 逆に incentive-structural / blast-radius はモデル更新で撤去してはならない（§6 軸A 保持）。
 
 ### 指示の規範性 (prescription) の正当化クラス
@@ -307,7 +303,7 @@ collision / 生成後 syntax）を 1 コマンドで validate-then-write する�
 - 表現: `tools/sync-inlines.mjs` + マーカー区間そのもの
 - 再評価トリガ: Claude Code（harness）更新毎に loader の ESM import 可否を再検証し、解禁されたらマーカー区間を `import` 文に置換して generator・統合 sync test ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics.sh --canary` で行う。
 
-**exec-proxy も harness-capability-bound な橋**（同じ harness 機能依存軸）。workflow runtime に fs / exec が無いという harness 制約への対応として、決定論スクリプトの実行を dev-runner(-haiku/-haiku-ro/-haiku-wo) subagent に委譲し stdout を verbatim で返させるパターン（diff-hash / danger-grep / realized-diff / journal / test 実行など 10 箇所超）。least privilege のため capability 別に 4 agent へ分離する（issue #323, #521）: read-only 決定論 proxy（diff-hash / changed-files(realized-diff) / CI checks read / ui-verify config read / base-ref probe）は `dev-runner-haiku-ro`（tools: `[Bash, Read]` のみ）、書き込み・Skill 呼び出しを伴う決定論 proxy（worktree 作成 / deps / test 実行 / redgreen / reconcile-sync / danger-grep(-final)（`--out` で risk 証跡ファイルを書く） / trust-seal-eval（`--tree-source working` は worktree 全体の tree OID 算出のため git object を書く。実 index・working tree は変更しない） / ui-verify server・teardown / journal 書き込み / PR コメント投稿（post-review / post-summary））は `dev-runner-haiku`（tools: `[Bash, Read, Write, Skill]`。Write は投稿本文の verbatim 一時ファイル保存に必要）、Write のみで完結する isolation probe 専任 proxy は `dev-runner-haiku-wo`（tools: `[Write]` のみ。Bash 等の代替手段を harness レベルで遮断し probe の意味を保証する）、判断寄り（fix/analyze/commit+PR）は `dev-runner`（sonnet）が担う。全 exec-proxy agent の frontmatter には有限の `maxTurns` を設定する（dev-runner-haiku-ro: 10 / dev-runner-haiku: 25 / dev-runner-haiku-wo: 5 / dev-runner: 50）。maxTurns の agent frontmatter サポートは Claude Code CHANGELOG 上で確認できる最小バージョンとして `2.1.78`（"Added `effort`, `maxTurns`, and `disallowedTools` frontmatter support for plugin-shipped agents" — https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md）を根拠とする。ただし CHANGELOG の文言は "plugin-shipped agents" 限定であり、本 repo の `.claude/agents/*.md`（project-level custom subagent、非 plugin 配布）に対しても同一に runtime honor されるかは一次情報で確認できていない（要 sunset path 的な再検証: 次回 major リリース時に docs/CHANGELOG で project-level agent への適用有無を再確認する）。
+**exec-proxy も harness-capability-bound な橋**（同じ harness 機能依存軸）。workflow runtime に fs / exec が無いという harness 制約への対応として、決定論スクリプトの実行を dev-runner(-haiku/-haiku-ro/-haiku-wo) subagent に委譲し stdout を verbatim で返させるパターン（diff-hash / danger-grep / realized-diff / journal / test 実行など 10 箇所超）。least privilege のため capability 別に 4 agent へ分離する（issue #323, #521）: read-only 決定論 proxy（diff-hash / changed-files(realized-diff) / CI checks read / ui-verify config read / base-ref probe）は `dev-runner-haiku-ro`（tools: `[Bash, Read]` のみ）、書き込み・Skill 呼び出しを伴う決定論 proxy（worktree 作成 / deps / test 実行 / redgreen / reconcile-sync / danger-grep(-final)（`--out` で risk 証跡ファイルを書く） / ui-verify server・teardown / journal 書き込み / PR コメント投稿（post-review / post-summary））は `dev-runner-haiku`（tools: `[Bash, Read, Write, Skill]`。Write は投稿本文の verbatim 一時ファイル保存に必要）、Write のみで完結する isolation probe 専任 proxy は `dev-runner-haiku-wo`（tools: `[Write]` のみ。Bash 等の代替手段を harness レベルで遮断し probe の意味を保証する）、判断寄り（fix/analyze/commit+PR）は `dev-runner`（sonnet）が担う。全 exec-proxy agent の frontmatter には有限の `maxTurns` を設定する（dev-runner-haiku-ro: 10 / dev-runner-haiku: 25 / dev-runner-haiku-wo: 5 / dev-runner: 50）。maxTurns の agent frontmatter サポートは Claude Code CHANGELOG 上で確認できる最小バージョンとして `2.1.78`（"Added `effort`, `maxTurns`, and `disallowedTools` frontmatter support for plugin-shipped agents" — https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md）を根拠とする。ただし CHANGELOG の文言は "plugin-shipped agents" 限定であり、本 repo の `.claude/agents/*.md`（project-level custom subagent、非 plugin 配布）に対しても同一に runtime honor されるかは一次情報で確認できていない（要 sunset path 的な再検証: 次回 major リリース時に docs/CHANGELOG で project-level agent への適用有無を再確認する）。
 - 表現: dev-runner(-haiku/-haiku-ro/-haiku-wo) verbatim 転写プロンプト群
 - 再評価トリガ: harness が workflow への直接 exec（または fs/exec API）を解禁した時点で、当該プロンプト群を直接実行に置換して exec-proxy ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics.sh --canary` で行う。
 
@@ -366,12 +362,9 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | post-comment（pr-iterate post-review#i / post-summary、dev-flow post-summary — PR コメント投稿） | `posted:false` / `null` / schema 不一致 | fail-open（投稿失敗は警告 log のみ。merge tier 判定・ledger・gate に影響しない） | advisory な結果報告投稿。本文は workflow 側で確定済み文字列の verbatim 転写 + `gh` 実行のみで agent 側の要約・判断を含まない（dev-runner-haiku, issue #372） |
 | journal-handoff（journal-save（stage1: payload を worktree 内 gitignored `.devflow-tmp/` へ **Write tool のみ**で verbatim 永続化。保存先は workflow が絶対パスで固定し `savePath` で渡す — repo 配下への Bash 書き込みが deny される環境（skills repo の自己改変ガードは worktree 配下も含む）では `mktemp` が EPERM になり agent が別ディレクトリへ退避して保存先検証に落ちるため、shell に依存させない。agent 申告の path は使わず固定 `savePath` を stage2 へ渡す。worktree を持たない dev-improve のみ `saveDir` + `fileName` モードで、`${TMPDIR:-/tmp}` 配下の固定サブディレクトリを shell 展開で解決する）→ journal-log（stage2: 検証済みファイルパスのみを渡し、**Write tool のみ**で pending/ へ格納。書き込み先は `~/.claude/journal/pending/<prefix>-<id>-effect-<16hex>.json` で、effect ID は payload から JS 側で決まる。stage1 と同じく shell を一切使わない — 単行の複合コマンド（redirect・変数代入・コマンド置換・パイプ）は EnterWorktree 済みセッションで `too complex to verify that it stays inside the worktree` として拒否され、dev-flow / pr-iterate は常にその分離セッションから走るため、shell に依存すると telemetry が全損する（issue #526、2026-08-20〜28 に 8 日間の実害）。代償として `jq -e` の事前検証と mktemp→mv の atomic 公開は無く、壊れた JSON・部分書き込みは Stop hook の malformed/ 隔離 + replay runbook で回収する）の 2 段。canonical は `_lib/journal-handoff.mjs`） | `saved:false` / `validateJournalSavedPath` 不合格 / `logged:false` / `null` / schema 不一致 / agent throw | fail-open（telemetry が pending/ に届かなくても run は継続。gate・merge tier・ledger には一切影響しない）。ただし結果は返り値 `journal_log_status` の 3 値 closed enum（`logged` / `save_failed` / `log_failed`）に必ず現れる | telemetry は gate ではないので記録失敗で run を落とさない。一方で silent な欠落は dev-flow-doctor / dev-improve の分母を不定量に減らし、doctor 自身が使う journal が書かれないため検知もできない（issue #494）。fail-open を維持したまま欠落を呼び出し元から観測可能にする。stage2 が何らかの理由で失敗した場合も throw は呼び出し側の try/catch が吸収し run は継続する。返り値 `journal_log_status` には常に 3 値 enum のいずれかが現れ、この経路では `log_failed` が必ず観測される（テストで pin、issue #499 / #526） |
 | clock（`date +%s` 現在時刻 probe × 2/run（start/end）。残り 9 mark は隣接 proxy の optional epoch 給電で、給電元失敗時も同ポリシー（当該 mark 欠落）） | `null` / `ok:false` / schema 不一致 / agent throw（EPERM 等の proxy 実行失敗・StructuredOutput 未返却） | fail-open（当該 mark 欠落 → 対応する duration キー欠落、警告 log のみ。throw は try/catch で吸収） | advisory な duration telemetry の補助信号。失敗しても deterministic gate・merge tier 判定を一切変えない（軸A 不変） |
-| trust-seal（evalseal-seal.mjs による EvalSeal shadow receipt の seal / check。trust-seal-eval / trust-check-final / trust-seal-final） | null / ok:false / schema 不一致 / mode:off / agent throw | fail-open（receipt 無し・旧 receipt invalidated 扱いで続行、警告 log のみ。merge tier・security floor・gate 判定へ影響しない — shadow は isGatingMode=false で classifyMergeTier の trustGate が常に null） | advisory な trust-layer shadow dogfood の補助信号（epic #390 Phase 3）。receipt 生成失敗を fail と同一視せず、受領物なしは effectiveTrustVerdict が 'inconclusive' に倒す（成功扱いしない）。blocking 昇格は Phase 5 の calibration 実証後（軸A 不変） |
 | analyze-parse（analyze-issue.sh --contract --issue-json <file> 決定論 parse → REQ 転写。issue JSON は subagent の bare `gh issue view --json ...` 出力を $TMPDIR file 経由で渡すファイル入力化を採る） | throw / null / ok:false / schema 不一致 / eligible:false / whitelist 検証（buildReqFromContract）不合格 | fail-open（現行 sonnet analyze へ fallback — 挙動不変。DEPTH=standard のみ試行） | 高速化の補助経路であり品質ゲートではない。fallback 先が現行経路そのものなので失敗しても後退なし。light path は構造化 breaking 判定を行わない（keyword hit は eligibility で sonnet へ回し、残余は事後の danger-grep / merge tier が補償） |
 | analyze-provenance（`gh issue view --json number,title` による sonnet analyze 結果の決定論突合。Analyze phase、sonnet 経路のみ — contract 決定論 parse 採用時は不実行） | `null` / `ok:false` / schema 不一致 / agent throw / issue 番号・title 突合不一致 | fail-closed（needs_clarification で終端 — 捏造 REQ を Implement へ流さない） | analyze agent に「取得成功」を self-report させない（incentive-structural、issue #451）。probe が gh に到達できない状況は analyze 側も取得できていない状況そのものであり、捏造 REQ で進行する方が中断より高コスト。light path（analyze-issue.sh --contract）の fail-open fallback は不変 |
 | pr-meta（`gh pr view --json mergeable,mergeStateStatus` による base branch conflict 検出、dev-flow Merge tier phase） | `ok:false` / `null` / schema 不一致 / `mergeable=UNKNOWN` 継続 | fail-open（mergeableState='unknown' → conflict gate 不適用、警告 log のみ。definitive な CONFLICTING / mergeStateStatus=DIRTY のみ HOLD） | merge は全 tier 人間であり GitHub 自体が conflict merge を platform で hard-block するため、conflict signal を取りこぼしても実害ある merge は起こり得ない。`mergeable=UNKNOWN` は GitHub の mergeability background 計算中の transient 状態であり fail-safe(HOLD) にすると healthy PR を spurious HOLD する。既存 deterministic gate・security floor を一切緩めず、definitive conflict 検出時にのみ HOLD reason を追加する（軸A 不変） |
-| trust-surfaceproof-shadow（`surfaceproof-snapshot.sh --issue-json/--comments-json <file>` による SurfaceProof shadow probe、dev-flow Analyze phase。issue/comments は subagent の bare `gh` 単文出力を $TMPDIR file 経由で渡すファイル入力化。kill-switch probe も同一ポリシー） | `ok:false` / `null` / schema 不一致 / agent throw / receipt 欠落 | fail-open（`trust_surfaceproof_shadow` は `verdict:'inconclusive', reason_code:'PROBE_FAILED'` を記録、警告 log のみ。kill-switch probe 失敗は fail-safe で kill switch 有効相当＝shadow 実行自体を skip） | advisory な shadow dogfooding の観測信号（W7 capability-bound。AC-11/AC-15 非緩和）。req/shape/needs_clarification 判定・merge tier・既存 deterministic gate には一切反映しない — 失敗しても後退する既存ゲートが無い |
-| trust-effectdelta（effectdelta-github.sh pr-observe（read-only、ローカル `git -C <worktree> rev-parse` は不変） / comment-prepare・comment-observe — PR readback 観測・summary comment の write-once 投稿の準備とファイル入力による readback 分類。実 `gh api` / `gh pr comment` は post-summary subagent の bare 単文 choreography へ移管。pr-ensure subcommand は削除（write-once の gh choreography は純変換に分解不能、caller 不在のため）） | ok:false / null / schema 不一致 / posted:false / agent throw | fail-open（receipt 無しで続行・comment は subagent の bare `gh pr comment` 直接実行へ fallback、警告 log のみ。merge tier・security floor・gate 判定へ影響しない） | advisory な trust-layer shadow dogfood の補助信号（epic #390 Phase 4）。journal handoff は stable effect ID + atomic write で同秒/並列/再実行に耐性（AC-10）— gate ではなく handoff 耐久性の決定論改善 |
 | issue-labels（`gh issue view --json labels` による empty-diff gate の cross-repo lazy ラベル probe。dhGate.empty===true 時のみ実行） | null / `ok:false` / schema 不一致 / throw | fail-safe（非 cross-repo 扱いで既存 empty-diff fail-closed 経路（差し戻し1回→再度空なら throw）を維持） | ラベル不明を人間の opt-in 成立と同一視しない（issue #432）。成果物は worktree/外部 repo に残存するため破壊的ではなく、throw メッセージにラベル付与のヒントを追記して人間の再実行を促す |
 | commit-ensure（subagent の bare git 単文シーケンス（`git status --porcelain` 空判定 → `git add -A` → `git commit` → `git push`（失敗時 `git push -u origin HEAD`）→ 再 `git status --porcelain` → `git rev-list "@{u}"..HEAD --count`）による決定論検証 — fix 適用直後の未コミット変更検証 + commit/push 回収。pr-iterate AC-3） | null / schema 不一致 / agent throw / dirty なのに committed・pushed が true でない | fail-safe（terminal='fix_failed' で人間へエスカレーション） | fix agent の self-report（applied:true）を commit 済みと同一視しない（incentive-structural: 完了宣言を当事者に self-judge させず決定論 git 検証で突合）。未コミット/未 push のまま次 iteration へ進むと再 review が stale な PR diff を見る（issue #437） |
 | worktree-dirty（subagent の bare `git status --porcelain` 単文 — pr-iterate 非 lgtm 終端時の作業ツリー dirty 検出。pr-iterate AC-2） | null / schema 不一致 / agent throw | fail-open（worktree_dirty='unknown' + 警告 log のみ。status・gate 判定へ影響しない） | advisory な終端観測 telemetry（'dirty'/'clean'/'unknown' の 3 値）。probe 失敗で run を落とすと異常終端の素通し（issue #437 が直す問題）を再生産する |

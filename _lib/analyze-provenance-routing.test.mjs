@@ -76,7 +76,7 @@ function makeSandbox(opts) {
 
 async function run(ctx) {
   // runDevFlowInSandbox（共有ヘルパー）は error のみを返すため、return 値も欲しい本テストは
-  // 直接 vm 実行して {result, error} を捕捉する（surfaceproof-routing.test.mjs 等と同型）。
+  // 直接 vm 実行して {result, error} を捕捉する（他の *-routing.test.mjs と同型）。
   const stripped = src
     .replace(/^export\s+const\s+/gm, 'const ')
     .replace(/^export\s+function\s+/gm, 'function ');
