@@ -589,9 +589,7 @@ function mdCell(v) {
 // ==== END inline: _lib/md-cell.mjs ====
 
 // ==== BEGIN inline: _lib/pr-comment-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// buildTerminalSummaryBody / terminalReviewAction: pr-iterate の終端サマリー
-// markdown 生成、および終端 review action（approve/request-changes/comment）
-// を決定する純粋関数。
+// buildTerminalSummaryBody: pr-iterate の終端サマリー markdown を生成する純粋関数。
 // I/O なし、gh なし、Date.now() 非決定性なし。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -732,24 +730,6 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
   lines.push(`<!-- pr-iterate:${status}:${iterations} -->`);
 
   return lines.join('\n');
-}
-
-/**
- * 終端レビューアクションを決定する純粋関数（AC-2）。
- *
- * 返り値は投稿経路の決定には使わない — 終端サマリーの投稿は `gh pr comment` 単一経路に固定されており
- * （issue #524: formal review 指示は self-approval として blocked され silent data loss になる）、
- * 本関数の返り値は参考 log / telemetry 用途に限る。
- * @param {object} opts
- * @param {string} opts.status - 'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'
- * @param {string|null} opts.lastDecision - 'approve'|'request-changes'|'comment'|null
- * @param {number} opts.blockingCount - 終端時点の blocking finding 総数
- * @returns {'approve'|'request-changes'|'comment'}
- */
-function terminalReviewAction({ status, lastDecision, blockingCount }) {
-  if (status === 'lgtm' && lastDecision === 'approve') return 'approve';
-  if (blockingCount > 0 && lastDecision === 'request-changes') return 'request-changes';
-  return 'comment';
 }
 // ==== END inline: _lib/pr-comment-format.mjs ====
 
@@ -1411,9 +1391,7 @@ const summaryBody = buildTerminalSummaryBody({
   ciWaitSeconds: totalCiWaitSeconds,
   ciPollAttempts: totalCiPollAttempts,
 })
-const terminalBlockingCount = (history[history.length - 1]?.blocking ?? []).length
-const termAction = terminalReviewAction({ status, lastDecision: lastReview?.decision ?? null, blockingCount: terminalBlockingCount })
-log(`終端サマリーは comment として投稿する（参考: 旧 formal review action=${termAction}。formal review は投稿しない — issue #524）`)
+log('終端サマリーは comment として投稿する（formal review は投稿しない — issue #524）')
 
 if (POST_TERMINAL_SUMMARY) {
   // formal review（`gh` の `pr review --approve`/`--request-changes` サブコマンド）指示は

@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { buildTerminalSummaryBody, terminalReviewAction } from './pr-comment-format.mjs';
+import { buildTerminalSummaryBody } from './pr-comment-format.mjs';
 import { mdCell } from './md-cell.mjs';
 globalThis.mdCell = mdCell;
 
@@ -493,53 +493,4 @@ test('buildTerminalSummaryBody: ciWaitSeconds/ciPollAttempts 省略時は **CI �
     history: [],
   });
   assert.ok(!body.includes('**CI 待機**'), 'ciWaitSeconds/ciPollAttempts 省略時は **CI 待機** 行を含まない');
-});
-
-// --- terminalReviewAction (AC-2) ---------------------------------------------
-
-test('terminalReviewAction: status=lgtm, lastDecision=approve -> approve', () => {
-  const action = terminalReviewAction({ status: 'lgtm', lastDecision: 'approve', blockingCount: 0 });
-  assert.equal(action, 'approve', 'lgtm + approve は approve');
-});
-
-test('terminalReviewAction: status=lgtm, lastDecision=comment -> comment（approve でない lgtm）', () => {
-  const action = terminalReviewAction({ status: 'lgtm', lastDecision: 'comment', blockingCount: 0 });
-  assert.equal(action, 'comment', 'lgtm でも approve でなければ comment');
-});
-
-test('terminalReviewAction: status=stuck, lastDecision=request-changes, blockingCount=2 -> request-changes', () => {
-  const action = terminalReviewAction({ status: 'stuck', lastDecision: 'request-changes', blockingCount: 2 });
-  assert.equal(action, 'request-changes', 'blocking>0 + request-changes は request-changes');
-});
-
-test('terminalReviewAction: status=max_reached, lastDecision=request-changes, blockingCount=1 -> request-changes', () => {
-  const action = terminalReviewAction({ status: 'max_reached', lastDecision: 'request-changes', blockingCount: 1 });
-  assert.equal(action, 'request-changes', 'blocking>0 + request-changes は request-changes');
-});
-
-test('terminalReviewAction: status=review_contract_error, lastDecision=approve, blockingCount=3 -> comment（approve だが lgtm でない）', () => {
-  const action = terminalReviewAction({ status: 'review_contract_error', lastDecision: 'approve', blockingCount: 3 });
-  assert.equal(action, 'comment', '(a)(b) いずれにも非該当のため comment に落ちる（承認・変更要求を捏造しない）');
-});
-
-test('terminalReviewAction: status=ci_pending, lastDecision=comment, blockingCount=0 -> comment', () => {
-  const action = terminalReviewAction({ status: 'ci_pending', lastDecision: 'comment', blockingCount: 0 });
-  assert.equal(action, 'comment');
-});
-
-test('terminalReviewAction: status=fix_failed, lastDecision=request-changes, blockingCount=0 -> comment（blocking 0 で非該当）', () => {
-  const action = terminalReviewAction({ status: 'fix_failed', lastDecision: 'request-changes', blockingCount: 0 });
-  assert.equal(action, 'comment', 'blockingCount=0 だと (b) 非該当のため comment');
-});
-
-test('terminalReviewAction: lastDecision=null -> comment', () => {
-  const action = terminalReviewAction({ status: 'lgtm', lastDecision: null, blockingCount: 0 });
-  assert.equal(action, 'comment', 'lastDecision null は (a)(b) 非該当で comment');
-});
-
-test('terminalReviewAction: 決定性（同入力 -> 同出力）', () => {
-  const input = { status: 'stuck', lastDecision: 'request-changes', blockingCount: 5 };
-  const first = terminalReviewAction(input);
-  const second = terminalReviewAction(input);
-  assert.equal(first, second, '同入力 -> 同出力');
 });

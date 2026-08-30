@@ -321,13 +321,44 @@ test("[final-reconcile] (h) calls 順序: Merge tier の 'danger-grep-final'/'ch
 
   const idxSync = calls.findIndex((c) => c.label === 'reconcile-sync');
   const idxDangerFinal = calls.findIndex((c) => c.label === 'danger-grep-final');
+  // Merge tier が使う changed files には 2 経路がある（issue #542）:
+  //   (1) Final reconcile の 'changed-files-final' を再利用する（取得できた場合）
+  //   (2) Merge tier が自前で 'changed-files' を発行する（再利用不可の場合 — テスト (i) が担当）
+  // AC-5 が守るのは「reconcile-sync より後の tree を対象にすること」であって呼び出しラベルでは
+  // ないため、実際に採用された側の取得呼び出しが reconcile-sync より後であることを検証する。
+  const idxChangedFinal = calls.findIndex((c) => c.label === 'changed-files-final');
   const idxChanged = calls.findIndex((c) => c.label === 'changed-files');
+  const idxChangedUsed = idxChangedFinal >= 0 ? idxChangedFinal : idxChanged;
 
   assert.ok(idxSync >= 0, "(h) 'reconcile-sync' の呼び出しが見つからない");
   assert.ok(idxDangerFinal >= 0, "(h) 'danger-grep-final' の呼び出しが見つからない");
-  assert.ok(idxChanged >= 0, "(h) 'changed-files' の呼び出しが見つからない");
+  assert.ok(idxChangedUsed >= 0, "(h) Merge tier が使う changed files の取得呼び出し（'changed-files-final' の再利用元、または 'changed-files'）が見つからない");
   assert.ok(idxDangerFinal > idxSync, "(h) 'danger-grep-final' は 'reconcile-sync' より後であるべき（Final reconcile 完了後の tree を対象にする、AC-5）");
-  assert.ok(idxChanged > idxSync, "(h) 'changed-files'（Merge tier）は 'reconcile-sync' より後であるべき（AC-5）");
+  assert.ok(idxChangedUsed > idxSync, "(h) Merge tier が使う changed files は 'reconcile-sync' より後に取得されるべき（AC-5）");
+});
+
+// ============================================================
+// (h2) changed-files 重複排除: changed-files-final を取得できた run では
+//      Merge tier が 'changed-files' を再発行しない（issue #542）
+// ============================================================
+
+test("[final-reconcile] (h2) changed-files-final 取得済みの run では Merge tier の 'changed-files' を再発行しない", async () => {
+  const { ctx, calls } = makeSandbox({ fixesApplied: 1 });
+  const { error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'h2');
+
+  const changedFinalCalls = calls.filter((c) => c.label === 'changed-files-final');
+  const changedCalls = calls.filter((c) => c.label === 'changed-files');
+
+  assert.equal(
+    changedFinalCalls.length, 1,
+    `(h2) 前提: 'changed-files-final' は 1 回呼ばれるはずだが ${changedFinalCalls.length} 回だった`,
+  );
+  assert.equal(
+    changedCalls.length, 0,
+    `(h2) 'changed-files-final' を再利用するため Merge tier の 'changed-files' は 0 回のはずだが`
+      + ` ${changedCalls.length} 回発行された（同一 tree・同一コマンドの二度打ち）`,
+  );
 });
 
 // ============================================================

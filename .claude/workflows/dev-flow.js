@@ -4312,6 +4312,13 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `保存失敗しても test 結果報告は行え）。\n`
   + EPOCH_INSTRUCTION
 
+// Security floor（ui-verify-config）と Final reconcile（ui-verify-config-final）が共有する
+// ui_verify config 読み取り prompt（issue #542）。WT 確定後（Setup 完了後）に配置し、
+// 両 phase が同一 byte 列を共有する（VALIDATE_TEST_PROMPT と同じ drift 防止の意図）。
+const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
+  + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
+  + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`
+
 const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${depth}\` を実行し、`
   + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
   + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
@@ -4493,29 +4500,27 @@ let planVerdict = null
 const planSeen = makeSeenTracker(PLAN_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #123）
 let planConcerns = []      // 収束時に残った未解消 findings（Evaluate の focus_areas へ）
 let planIters = 0            // plan iteration カウンタ（telemetry 用）
-function soloPlanPrompt(label) {
+function soloPlanPrompt() {
   return `cd ${WT} で作業。issue 要件に基づき実装計画を立てよ。\n`
     + `requirements: ${JSON.stringify(req)}\n`
     + `testing: ${TESTING}\n`
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`
     + PLANNER_HANDOFF_RULE
 }
-if (TRIVIAL) {
+// micro（triviality gate）と standard は Plan phase では同一経路 — plan 1 発・plan-reviewer 0 回。
+// label と log 文言のみ shape 別に分ける（label は routing test 群が `label === 'plan#standard'` 等で
+// 参照しており、telemetry 上も経路の識別子として機能するため両方を厳密に維持する）。
+if (TRIVIAL || PLAN_SOLO) {
+  const soloLabel = TRIVIAL ? 'plan#trivial' : 'plan#standard'
   plan = need(await trackedAgent(
-    soloPlanPrompt('plan#trivial'),
-    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#trivial', phase: 'Plan' },
-  ), 'Plan(planner#trivial)')
-  plan = applyDisjoint(plan, 'plan#trivial')
+    soloPlanPrompt(),
+    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: soloLabel, phase: 'Plan' },
+  ), TRIVIAL ? 'Plan(planner#trivial)' : 'Plan(planner#standard)')
+  plan = applyDisjoint(plan, soloLabel)
   planIters = 1
-  log('triviality gate: plan-review ループを skip(reviewer 0 回起動)')
-} else if (PLAN_SOLO) {
-  plan = need(await trackedAgent(
-    soloPlanPrompt('plan#standard'),
-    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: 'plan#standard', phase: 'Plan' },
-  ), 'Plan(planner#standard)')
-  plan = applyDisjoint(plan, 'plan#standard')
-  planIters = 1
-  log('standard 経路: plan 1発（plan-reviewer 0 回起動）')
+  log(TRIVIAL
+    ? 'triviality gate: plan-review ループを skip(reviewer 0 回起動)'
+    : 'standard 経路: plan 1発（plan-reviewer 0 回起動）')
 } else {
 for (let i = 1; i <= PLAN_MAX; i++) {
   planIters = i
@@ -5018,9 +5023,7 @@ async function execSecurityFloorPhase(state) {
     let rawCfg = null
     try {
       rawCfg = await trackedAgent(
-        `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
-        + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
-        + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
+        UI_VERIFY_CONFIG_PROMPT,
         { agentType: 'dev-runner-haiku-ro', schema: UICFG, label: 'ui-verify-config', phase: 'Security floor' })
     } catch (e) {
       uiVerifyStatus = 'setup_failed'
@@ -5745,6 +5748,10 @@ let finalReconcile = 'skipped'   // 'skipped'|'reverified'|'unavailable'
 let finalTestGreen = null        // true|false|null（null = 未実行/no_tests/取得不能）
 let finalUiVerifyStatus = null   // 'passed'|'findings'|'failed_open'|'setup_failed'|null
 let finalUiVerifyResult = null   // ui-verifier の raw checks（issue #331 final-ac-reconcile prompt 用）
+// changed-files-final の raw files。Merge tier が同一 tree・同一コマンドの changed-files を
+// 再実行せず再利用するために持ち越す（issue #542）。null は「Final reconcile 未実行 or 取得失敗」で、
+// その場合 Merge tier は従来どおり自前で changed-files を発行する。
+let changedFilesFinal = null
 // final_end の clock 給電（issue #443）候補。fixes_applied=0 の skip run は null のまま
 // （キー欠落 — 従来は probe 往復分の微小値が入っていたが、より正確な欠落表現になる意図的変更）。
 let finalEpochRes = null
@@ -5782,6 +5789,9 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
       if (!changedFinal?.files) {
         log('⚠️ Final reconcile: changed-files-final 取得失敗 — UI 再判定・宣言外再監査を skip（fail-open。test gate は維持）')
       } else {
+        // Merge tier へ持ち越す（issue #542）。ephemeral 除去前の raw を渡す — Merge tier の
+        // changed-files は元々 filter せず raw を使うため、加工すると挙動が変わる。
+        changedFilesFinal = changedFinal.files
         const filesFinal = filterEphemeralPaths(changedFinal.files)
         // Step4 宣言外パス再監査（advisory）: Security floor 時点の undeclared に無い新規分のみ集約 1 item
         const planAllTasksF = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
@@ -5796,9 +5806,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
           let rawCfgF = null
           try {
             rawCfgF = await trackedAgent(
-              `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
-              + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
-              + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`,
+              UI_VERIFY_CONFIG_PROMPT,
               { agentType: 'dev-runner-haiku-ro', schema: UICFG, label: 'ui-verify-config-final', phase: 'Final reconcile' })
           } catch (e) { finalUiVerifyStatus = 'setup_failed'; log(`⚠️ Final reconcile: ui-verify-config-final 例外 (${e && e.message ? e.message : e}) — setup_failed で skip（fail-open）`) }
           if (rawCfgF?.found === true && rawCfgF.config) {
@@ -5940,11 +5948,20 @@ if (reuseSecFloor) {
     // danger-grep と同じ理由（--out の証跡書き込み）で書き込み可の haiku が担う
     { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
   ), 'Merge tier(danger-grep-final)')
-  changed = need(await trackedAgent(
-    `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
-    + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
-    { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
-  ), 'Merge tier(changed-files)')
+  // changed-files 再利用（issue #542）: Final reconcile が同一 worktree・同一 tree に対して
+  // 完全に同じコマンド（`git diff --name-only origin/BASE...HEAD`）を既に実行している。
+  // Final reconcile と Merge tier の間で tree を変える処理は無い（trust 系は gitignored な
+  // .devflow-tmp のみ書く）ため、結果は byte 一致する。取得失敗・未実行（null）は従来どおり再実行。
+  if (changedFilesFinal != null) {
+    changed = { files: changedFilesFinal }
+    log('Merge tier: Final reconcile の changed-files-final を再利用（同一 tree — changed-files 再実行を skip）')
+  } else {
+    changed = need(await trackedAgent(
+      `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
+      + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+      { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
+    ), 'Merge tier(changed-files)')
+  }
 }
 const dangerHitsFinal = riskFinal.ok === true ? [...new Set(secHitsOf(riskFinal).map((h) => h.class))] : []
 const testsurfPatternsFinal = testsurfPatternsOf(riskFinal)
