@@ -3150,6 +3150,46 @@ function ciCheckPrompt({ pr, repo }) {
     + `JSON のみ。1 行以内。`;
 }
 // ==== END inline: _lib/ci-check.mjs ====
+// ==== BEGIN inline: _lib/review-ac.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// review-ac: pr-reviewer の prompt へ issue の acceptance criteria を注入するブロックを組み立てる。
+// I/O なし、gh なし、Date.now() 非決定性なし。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証する。
+//
+// なぜ必要か: pr-reviewer は「PR の title/body（git-pr が生成した宣言意図）と実 diff の照合」しか
+// しておらず、issue の AC を渡されていなかった。evaluator（requirements/AC 忠実性）と
+// pr-reviewer（commit 後 PR の品質 + CI）は評価軸が直交しており統合すべきではないが、
+// pr-reviewer が AC を「見ないまま approve する」状態は縮められる。
+// 実測（journal 145 run）で lgtm 後の merge tier HOLD 理由の最頻値は「AC 未達」8 件 —
+// pr-reviewer が approve したものを evaluator 系ゲートが止めている。
+//
+// ゲート境界は変えない（本ブロックは pr-reviewer への **入力の追加のみ**）。AC 未達を blocking に
+// する判定は既存の merge tier HOLD が引き続き担う。
+//
+// dev-flow lite route（pr-review-lite）と pr-iterate（review#i）の双方が同一文言を使うため
+// canonical 化する（片側だけ直すと 2 経路で reviewer の見るものが食い違う）。
+
+/**
+ * acceptance criteria ブロックを組み立てる純粋関数。
+ *
+ * @param {unknown} acceptanceCriteria - issue の AC 配列。未指定 / 非配列 / 空配列 / 全要素が
+ *   空文字のときは空文字を返す（fail-open — 単体起動の /pr-iterate は issue context を持たない）。
+ * @returns {string} prompt へ連結するブロック（末尾改行つき）。注入しない場合は空文字。
+ */
+function acceptanceCriteriaBlock(acceptanceCriteria) {
+  if (!Array.isArray(acceptanceCriteria)) return '';
+  const items = acceptanceCriteria
+    .filter((a) => typeof a === 'string')
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0);
+  if (items.length === 0) return '';
+  const numbered = items.map((a, idx) => `${idx + 1}. ${a}`).join('\n');
+  return `issue の受入条件（acceptance criteria）:\n${numbered}\n`
+    + `diff がこれらを満たしているかも判定に含めよ。未達があれば issue として報告せよ`
+    + `（severity は他の finding と同じ基準で付ける。AC 未達であることだけを理由に critical へ引き上げない）。\n`;
+}
+// ==== END inline: _lib/review-ac.mjs ====
 
 function applyDisjoint(p, label) {
   const { plan: np, demoted } = enforceDisjointParallel(p);
@@ -5723,7 +5763,8 @@ if (LITE) {
   const reviewPromptLite = `cd ${WT} で作業。PR #${pr.pr_number} を批判的にレビューせよ。`
     + `gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は`
-    + `verification_evidence に 1 項目 1 文の配列で列挙せよ。`
+    + `verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
+    + acceptanceCriteriaBlock(req.acceptance_criteria)
     + EPOCH_INSTRUCTION
   const reviewLite = await trackedAgent(
     reviewPromptLite,
@@ -5732,7 +5773,7 @@ if (LITE) {
   const liteOutcome = classifyLiteReview(reviewLite)
   if (liteOutcome.escalate) {
     log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
-    iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
+    iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria })
     route = 'full'
     iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
   } else {
@@ -5748,13 +5789,13 @@ if (LITE) {
       log(`lite 経路: clean review + CI ${ciLite.status} — lgtm 終端（フル pr-iterate 起動なし）`)
     } else {
       log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
-      iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
+      iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria })
       route = 'full'
       iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
     }
   }
 } else {
-  iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false })
+  iterate = await workflow('pr-iterate', { pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria })
   route = 'full'
   iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
 }
