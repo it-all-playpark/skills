@@ -3398,6 +3398,92 @@ const DIFFHASH = {
   type: 'object', required: ['hash', 'empty'],
   properties: { hash: { type: 'string' }, empty: { type: 'boolean' }, epoch: { type: 'number' } },
 }
+// SECFLOOR: Security floor 統合 exec-proxy (`_shared/scripts/secfloor-classify.sh`) の応答 schema
+// (issue #550, S1)。required は空 — 部分的スキーマ不一致で応答全体を reject せず、per-field 検証
+// (parseSecfloorFields) へ流す（1 フィールドの型崩れが正常フィールドまで巻き込むのを防ぐ。ambiguity 2）。
+const SECFLOOR = {
+  type: 'object',
+  required: [],
+  properties: {
+    risk: { type: 'object' },
+    files: { type: ['array', 'null'] },
+    struct: { type: ['object', 'null'] },
+    diffhash: { type: ['object', 'null'] },
+  },
+}
+// secfloor-unified-schema-end: SECFLOOR 直後に parseSecfloorFields の inline 区間を続ける（anchor 用の一意行）。
+// ==== BEGIN inline: _lib/secfloor-unified.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// parseSecfloorFields: dev-flow Security floor が使う統合 exec-proxy
+// (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #550, S1)。
+//
+// 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":...} の 1 JSON object を返すが、
+// 各フィールドはそれぞれ別のフィールド別失敗ポリシーを持つ (下記)。本関数は「1 フィールドの不正が
+// 他フィールドの判定に影響しない」ことを保証するため、各フィールドを完全に独立して検証する。
+//
+// フィールド別失敗ポリシー:
+//   risk   - fail-closed。unified?.risk が object かつ typeof ok==='boolean' かつ
+//            Array.isArray(hits) のときのみそのまま採用。それ以外は
+//            {ok:false, hits:[], error:'secfloor unified proxy unavailable (fail-closed)'} を合成
+//            (null は返さない -- hits フィールド欠落を clean と同一視しない fail-closed が要件。
+//            security floor の reconcileDanger/reconcileTestsurf は risk.ok!==true を fail-closed
+//            として扱い、全 SEC/TESTSURF seed を unchecked に倒す)。
+//   files  - fail-safe。Array.isArray(unified?.files) かつ全要素が string のときのみ採用。
+//            それ以外は null (呼び出し側の realizedCount が NaN になり complex floor 安全弁へ
+//            流れる。空配列 [] は正常な 0 件の realized diff として null と区別して維持する)。
+//   struct - fail-open。unified?.struct が object かつ struct.ok===true かつ
+//            typeof struct.available==='boolean' かつ format_only/structural (structural は
+//            省略可、省略時は [] 扱い) が配列のときのみ採用。それ以外は null。
+//   hash   - fail-open。typeof unified?.diffhash?.hash==='string' のときのみその文字列を採用。
+//            それ以外は null。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+function parseRiskField(unified) {
+  const risk = unified?.risk;
+  if (risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits)) {
+    return risk;
+  }
+  return { ok: false, hits: [], error: 'secfloor unified proxy unavailable (fail-closed)' };
+}
+
+function parseFilesField(unified) {
+  const files = unified?.files;
+  if (Array.isArray(files) && files.every((f) => typeof f === 'string')) {
+    return files;
+  }
+  return null;
+}
+
+function parseStructField(unified) {
+  const struct = unified?.struct;
+  if (
+    struct != null
+    && typeof struct === 'object'
+    && struct.ok === true
+    && typeof struct.available === 'boolean'
+    && Array.isArray(struct.format_only)
+    && Array.isArray(struct.structural ?? [])
+  ) {
+    return struct;
+  }
+  return null;
+}
+
+function parseHashField(unified) {
+  const hash = unified?.diffhash?.hash;
+  return typeof hash === 'string' ? hash : null;
+}
+
+function parseSecfloorFields(unified) {
+  return {
+    risk: parseRiskField(unified),
+    files: parseFilesField(unified),
+    struct: parseStructField(unified),
+    hash: parseHashField(unified),
+  };
+}
+// ==== END inline: _lib/secfloor-unified.mjs ====
 // ISSUE_LABELS: `gh issue view --json labels` の read-only exec-proxy 結果（issue #432、empty-diff gate の
 // cross-repo lazy probe 用）。required は 'ok' のみ（fail-safe: schema 不一致・ok:false は非 cross-repo 扱い）。
 const ISSUE_LABELS = {
@@ -4691,16 +4777,25 @@ async function execSecurityFloorPhase(state) {
   for (const seed of seedSecurityLedger()) {
     ledger = appendItem(ledger, seed).ledger
   }
-  const risk = need(await trackedAgent(
-    `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
-    + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。`
-    + `失敗時に ok:true を生成してはならない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --working-tree --out ${WT}/.devflow-tmp/trust-risk-eval.json origin/${BASE}`,
-    // --out で証跡ファイルを書くため read-only 専任の -ro ではなく書き込み可の haiku が担う
-    // （-ro の「ファイル変更を行わない」契約を実態に合わせて緩めるのではなく、書き込みを伴う
-    //  呼び出し側を書き込み可の agent へ寄せる方向で解消する）。
-    { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep', phase: 'Security floor' },
-  ), 'Security floor(danger-grep)')
+  // Security floor 統合 exec-proxy (issue #550, S1): danger-grep(risk) / realized-diff(files) /
+  // structural-classify(struct) / diff-hash-secfloor(hash) の 4 呼び出しを secfloor-classify.sh の
+  // 1 本へ統合する。label は 'danger-grep' を据え置く（AC1: agentType の dev-runner-haiku-ro 復帰と
+  // telemetry label 連続性のため）。throw（StructuredOutput 未返却・proxy 実行失敗等）は
+  // structural-classify の try 包み precedent と同型で吸収し、unified=null として
+  // parseSecfloorFields の per-field フォールバック（risk fail-closed 支配）へ倒す。need() は撤去 —
+  // null で run abort させず fail-closed HOLD へ倒す。
+  let unified = null
+  try {
+    unified = await trackedAgent(
+      `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
+      + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら `
+      + `{"risk":{"ok":false,"hits":[],"error":"..."},"files":null,"struct":null,"diffhash":null} で返せ。`
+      + `失敗時に risk.ok:true を生成してはならない）:\n`
+      + `bash ~/.claude/skills/_shared/scripts/secfloor-classify.sh ${WT} origin/${BASE}`,
+      { agentType: 'dev-runner-haiku-ro', schema: SECFLOOR, label: 'danger-grep', phase: 'Security floor' },
+    )
+  } catch (e) { log(`⚠️ secfloor-classify 呼び出しが例外 — unified=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
+  const { risk, files, struct, hash } = parseSecfloorFields(unified)
   const dangerHits = risk.ok === true ? [...new Set(secHitsOf(risk).map((h) => h.class))] : []
   ledger = reconcileDanger(ledger, risk)
   ledger = reconcileTestsurf(ledger, risk)
@@ -4709,34 +4804,18 @@ async function execSecurityFloorPhase(state) {
     + `SEC blocking 未 checked ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件`)
   log(`testsurf: ${testsurfPatterns.length ? 'HIT ' + testsurfPatterns.join(',') : 'clean'}`)
   // Step F2: realized diff のファイル数を取得して re-floor を算出する
-  // realized が null（agent drop／skip）のときは NaN を refloorShape へ渡し complex 安全弁へ流す。
-  // ?? [] は取得失敗と空 diff（正常な 0 ファイル）を同じ 0 に潰すため使わない。
+  // files が null（統合 proxy の files フィールド欠落／型不正）のときは NaN を refloorShape へ渡し
+  // complex 安全弁へ流す。files:[] は取得成功かつ正常な 0 ファイルとして null と区別する（fail-safe。
+  // parseSecfloorFields が既に検証済みのため ?? [] で潰さない）。
   // 注: この時点で implementer はコミットしていない（git add / commit 禁止）ため、
-  //     --working-tree モード（worktree 変更を merge-base 基点の二点 diff + untracked -uall で分類）
-  //     を使う。commit 後の三点 diff（origin/${BASE}...HEAD）は HEAD==origin/BASE で空を返すため
-  //     Merge tier 側はフラグなしのまま（通常の三点 diff が正しい）。
-  const realized = await trackedAgent(
-    `cd ${WT} で作業。\`git -C ${WT} status --porcelain --untracked-files=all\` を実行し、`
-    + `変更ファイル一覧を取得せよ（ステージ済み・未ステージどちらも含む）。`
-    + `各行の先頭2文字はステータスコードなので除去し、パス部分のみ取り出すこと。`
-    + `リネームは -> の右側（新ファイル名）を使え。空白行は除く。`
-    + `結果を {"files": ["path1", ...]} 形式で返せ。`,
-    { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'realized-diff', phase: 'Security floor' },
-  )
+  //     secfloor-classify.sh は `git status --porcelain --untracked-files=all` を直接パースする。
+  const realized = files == null ? null : { files }
   // structural-classify (issue #350): difftastic による structural / format_only 機械分類。
-  // advisory な diff 前処理 (diff-hash と同型) のため need() で包まず fail-open で扱う --
-  // struct が null / ok:false / available:false / schema 不一致でも formatOnlySet を空にし、
-  // realizedCount・evaluator prompt とも現行動作 (全ファイル精査扱い) と完全一致させる。
-  let struct = null
-  try {
-    struct = await trackedAgent(
-      `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら ok:false/error で返せ）:\n`
-      + `bash ~/.claude/skills/_shared/scripts/structural-classify.sh ${WT} origin/${BASE}`,
-      { agentType: 'dev-runner-haiku-ro', schema: STRUCT, label: 'structural-classify', phase: 'Security floor' },
-    )
-  } catch (e) { log(`⚠️ structural-classify 呼び出しが例外 — 分類なしで続行（fail-open）`) }
-  const structOk = struct?.ok === true && struct.available === true && Array.isArray(struct.format_only) && Array.isArray(struct.structural ?? [])
-  const formatOnlySet = new Set(structOk ? struct.format_only : [])
+  // parseSecfloorFields が struct.ok===true && available boolean && format_only/structural 配列形を
+  // 検証済み（fail-open: 不正/欠落は struct=null）。formatOnlySet はそのまま struct?.format_only を
+  // 使えばよい（difft 未インストール時も secfloor-classify.sh 契約上 format_only は空配列のため、
+  // realizedCount・evaluator prompt とも現行動作 (全ファイル精査扱い) と完全一致する）。
+  const formatOnlySet = new Set(struct?.format_only ?? [])
   if (struct?.ok === true && struct.available === false) log('structural-classify: difft 未インストール — 分類 skip（現行動作 fallback）')
   // null → NaN 安全弁（realized?.files ? realized.files.length : NaN のパターンを継承）
   // ephemeral ファイルを除外してから count する（evaluator.staged.md / fm_*.txt / .devflow-tmp/ を除く）
@@ -4836,14 +4915,14 @@ async function execSecurityFloorPhase(state) {
   state.uiTouched = uiTouched
   state.uiVerifyStatus = uiVerifyStatus
   state.undeclared = undeclared
-  state.diffClassification = structOk ? { structural: struct.structural ?? [], format_only: struct.format_only } : null
+  state.diffClassification = struct ? { structural: struct.structural ?? [], format_only: struct.format_only } : null
   // diff-hash reuse (issue #377): danger-grep が成功し realized-diff が取れた場合のみ、
   // Merge tier での danger-grep-final/changed-files 再実行を tree OID 完全一致時に skip できる
-  // よう diff-hash を捕捉しておく。fail-open — need() で包まない。取得失敗時は null のまま
+  // よう diff-hash を捕捉しておく。fail-open な条件は不変（この gating 条件を満たさないときは
+  // secfloor-classify.sh が diffhash を取得していても再利用しない）。取得失敗時は null のまま
   // Merge tier 側で必ず再実行させる（Security floor の fail-closed 性は変えない）。
-  if (risk.ok === true && Array.isArray(realized?.files)) {
-    const dh = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-secfloor', phase: 'Security floor' })
-    state.secDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
+  if (risk.ok === true && Array.isArray(files)) {
+    state.secDiffHash = hash
     if (state.secDiffHash == null) log('⚠️ diff-hash-secfloor: hash 取得失敗 — Merge tier での再利用は skip（fail-open、danger-grep-final は再実行）')
   } else {
     state.secDiffHash = null
@@ -5533,9 +5612,8 @@ if (reuseSecFloor) {
   riskFinal = need(await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
     + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh --out ${WT}/.devflow-tmp/trust-risk-final.json origin/${BASE}`,
-    // danger-grep と同じ理由（--out の証跡書き込み）で書き込み可の haiku が担う
-    { agentType: 'dev-runner-haiku', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
+    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+    { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
   ), 'Merge tier(danger-grep-final)')
   // changed-files 再利用（issue #542）: Final reconcile が同一 worktree・同一 tree に対して
   // 完全に同じコマンド（`git diff --name-only origin/BASE...HEAD`）を既に実行している。

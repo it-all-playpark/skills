@@ -26,9 +26,10 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 /**
  * danger-fail-closed 専用の VM sandbox を組む。
- * danger-grep 系（label が 'danger-grep' で始まる。'danger-grep' と 'danger-grep-final' の両方にマッチ）
- * の応答を引数 dangerGrepResponse で切り替え可能にし、evaluator 呼び出し回数と
- * journal-log に渡された prompt を捕捉する。
+ * label 'danger-grep'（Security floor。issue #550 統合呼び出し）は dangerGrepResponse を
+ * risk フィールドに包んで返し、label 'danger-grep-final'（Merge tier。統合対象外）は
+ * dangerGrepResponse をそのまま返す。evaluator 呼び出し回数と journal-log に渡された
+ * prompt を捕捉する。
  *
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {object} dangerGrepResponse - danger-grep / danger-grep-final stub が返すレスポンス
@@ -67,10 +68,14 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる。
-    // 'danger-grep' と 'danger-grep-final' の両方をこの分岐でカバーする）
-    // → 引数 dangerGrepResponse をそのまま返す（fail-closed / clean を切り替え可能）
-    if (label.startsWith('danger-grep')) {
+    // Security floor: label 'danger-grep' は issue #550 で統合呼び出しへ変わった
+    // （secfloor-classify.sh 経由の {risk, files, struct, diffhash} 応答）。dangerGrepResponse
+    // を risk フィールドに包んで返す（fail-closed / clean を切り替え可能）。
+    if (label === 'danger-grep') {
+      return { risk: dangerGrepResponse, files: ['src/foo.ts'], struct: null, diffhash: null };
+    }
+    // Merge tier: label 'danger-grep-final' は統合対象外（旧 RISK schema のまま）。
+    if (label === 'danger-grep-final') {
       return dangerGrepResponse;
     }
     // Validate: test runner（label が 'test' で始まる）
@@ -85,14 +90,6 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
     if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
-    }
-    // realized-diff（Security floor）: dev-runner-haiku, label='realized-diff', CHANGED schema
-    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
-      return { files: ['src/foo.ts'] };
-    }
-    // declared-path-check（旧経路。現行は realized-diff に統合済みだが念のため残す）
-    if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
-      return { files: ['src/foo.ts'] };
     }
     // PR: label が 'pr' で始まる
     if (label.startsWith('pr')) {
@@ -222,7 +219,7 @@ const ANALYZE_REQ_COMPLEX = {
 };
 
 // danger-grep fail-closed stub（risk.ok !== true）。evidence 文字列は evidence 判別用。
-const DANGER_FAIL_CLOSED = { ok: false, error: 'stub fail-closed' };
+const DANGER_FAIL_CLOSED = { ok: false, hits: [], error: 'stub fail-closed' };
 
 // danger-grep clean stub（正常系の回帰対照用）。
 const DANGER_CLEAN = { ok: true, hits: [] };

@@ -62,7 +62,13 @@ function makeResponder(journalPrompts) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    if (label.startsWith('danger-grep')) {
+    // label 'danger-grep'（Security floor。issue #550 統合呼び出し）は
+    // {risk, files, struct, diffhash} を返す。label 'danger-grep-final'（Merge tier。統合対象外）
+    // は旧 RISK schema のまま。
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
+    }
+    if (label === 'danger-grep-final') {
       return { ok: true, hits: [] };
     }
     if (label.startsWith('test')) {

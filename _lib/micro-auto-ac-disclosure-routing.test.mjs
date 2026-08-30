@@ -67,9 +67,10 @@ function makeSandbox(analyzeReq, opts) {
     // micro Evaluate 強制（issue #272 F2）が誤発火しないようにする。
     if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['docs/a.md'], test_plan: '' }], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
-    if (label === 'realized-diff') return { files: realizedFiles };
-    if (label === 'declared-path-check') return { files: [] };
+    // label 'danger-grep'（issue #550 統合呼び出し）: risk/files を 1 応答で返す
+    // （files は旧 realized-diff 相当）。
+    if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
+    if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (label === 'changed-files') return { files: changedFiles };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };

@@ -115,13 +115,12 @@ const READ_ONLY_LABELS = [
   'resolve-base',
   'diff-gate',
   'diff-gate-retry',
-  'realized-diff',
-  'structural-classify',
+  'danger-grep',
+  'danger-grep-final',
   'ui-verify-config',
   'ui-verify-config-final',
   'diff-hash-eval',
   'diff-hash-pr',
-  'diff-hash-secfloor',
   'diff-hash-merge',
   'changed-files',
   'changed-files-final',
@@ -143,15 +142,10 @@ test("[exec-proxy-routing] dev-flow.js label 'clock#' routes to agentType:'dev-r
 
 // ---- (b) dev-flow.js: write/Skill exec-proxy labels stay on dev-runner-haiku ----
 
-// danger-grep(-final) は diff-risk-classify.sh --out で証跡ファイルを書くため、read-only 専任の
-// -ro ではなく書き込み可の dev-runner-haiku が担う（-ro の read-only 契約を実態に合わせて
-// 緩めるのではなく、書き込みを伴う呼び出し側を書き込み可の agent へ寄せる）。
-for (const label of ['danger-grep', 'danger-grep-final']) {
-  test(`[exec-proxy-routing] dev-flow.js label '${label}' routes to agentType:'dev-runner-haiku'（--out 書き込みあり）`, () => {
-    const line = findLineByExactLabel(devFlowSrc, label);
-    assertAgentTypeOnLine(line, label, 'dev-runner-haiku', 'dev-flow.js');
-  });
-}
+// danger-grep(-final) は issue #550 で --out 証跡書き込みを撤去し read-only 化された
+// （Security floor の danger-grep は統合スクリプト secfloor-classify.sh 経由の単一呼び出しに
+// 変わったが、label・agentType は不変）。read-only 専任の dev-runner-haiku-ro へ戻る
+// （READ_ONLY_LABELS で検証済み）。
 
 test("[exec-proxy-routing] dev-flow.js label 'worktree' stays on agentType:'dev-runner-haiku'", () => {
   const line = findLineByExactLabel(devFlowSrc, 'worktree');

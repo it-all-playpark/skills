@@ -69,15 +69,15 @@ function createResponder(dropLabels) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // danger-grep: clean（security path ではないことを保証）
-    if (label.startsWith('danger-grep')) {
+    // label 'danger-grep'（issue #550 統合呼び出し）: clean（security path ではないことを保証）+
+    // files 1 件（旧 realized-diff 相当 → refloor で micro 維持）。
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
+    }
+    if (label === 'danger-grep-final') {
       return { ok: true, hits: [] };
     }
-    // realized-diff: 1 ファイル → refloor で micro 維持
-    if (label === 'realized-diff') {
-      return { files: ['src/foo.ts'] };
-    }
-    if (label === 'declared-path-check' || label === 'changed-files') {
+    if (label === 'changed-files') {
       return { files: [] };
     }
     // Validate: 一発 green（green-fix を発火させない）

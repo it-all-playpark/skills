@@ -877,94 +877,16 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# [OUT] --out <path> flag (issue #495 dev-flow trust layer: exec-proxy が確定時点
-# の証跡を worktree gitignored 領域へ二重出力する)
+# [OUT] --out flag removed (issue #544): unknown-flag rejection path covers it,
+# no legacy fallback / silent-ignore is provided.
 # ---------------------------------------------------------------------------
 
-@test "OUT-1 --out: 成功時 stdout と書き込みファイルが byte 一致" {
-    mkdir -p "$REPO/src"
-    printf 'function requireAuth(user) { return user.isAuthenticated; }\n' \
-        > "$REPO/src/auth.ts"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
+@test "OUT-1 --out は撤去済みで unknown flag として ok:false + 非0 exit で拒否される" {
     OUTDIR="$(mktemp -d)"
-    OUTFILE="$OUTDIR/nested/dir/out.json"
+    OUTFILE="$OUTDIR/out.json"
     run bash -c "cd '$REPO' && '$SCRIPT' --out '$OUTFILE' '$BASE'"
-    [ "$status" -eq 0 ]
-    [ -f "$OUTFILE" ]
-    STDOUT_CONTENT="$(printf '%s\n' "$output")"
-    FILE_CONTENT="$(cat "$OUTFILE")"
-    [ "$STDOUT_CONTENT" = "$FILE_CONTENT" ]
-    printf '%s\n' "$FILE_CONTENT" | jq -e '[.hits[] | select(.class == "auth")] | length > 0'
-    rm -rf "$OUTDIR"
-}
-
-@test "OUT-2 --out: die_json 経路 (invalid base ref) でも stdout と同一内容が書き込まれる" {
-    OUTDIR="$(mktemp -d)"
-    OUTFILE="$OUTDIR/err.json"
-    run bash -c "cd '$REPO' && '$SCRIPT' --out '$OUTFILE' does-not-exist"
     [ "$status" -ne 0 ]
-    [ -f "$OUTFILE" ]
-    printf '%s\n' "$output" | jq -e '.ok == false and (.error | test("invalid base ref"))'
-    STDOUT_CONTENT="$(printf '%s\n' "$output")"
-    FILE_CONTENT="$(cat "$OUTFILE")"
-    [ "$STDOUT_CONTENT" = "$FILE_CONTENT" ]
-    rm -rf "$OUTDIR"
-}
-
-@test "OUT-3 --out: 書込不能ディレクトリでも stdout・exit code は不変 (best-effort)" {
-    mkdir -p "$REPO/src"
-    printf 'function requireAuth(user) { return user.isAuthenticated; }\n' \
-        > "$REPO/src/auth.ts"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    # $REPO/blocked はファイルなので mkdir -p "$REPO/blocked/sub" は失敗する
-    printf 'not a dir\n' > "$REPO/blocked"
-    OUTFILE="$REPO/blocked/sub/out.json"
-    run bash -c "cd '$REPO' && '$SCRIPT' --out '$OUTFILE' '$BASE'"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"class":"auth"'* ]]
     [ ! -e "$OUTFILE" ]
-}
-
-@test "OUT-4 --out 未指定: 従来どおりの挙動 (file 書き込みなし・stdout のみ)" {
-    printf 'hello world\n' > "$REPO/README.md"
-    git -C "$REPO" add -A
-    git -C "$REPO" commit -q -m change
-    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
-    [ "$status" -eq 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
-}
-
-@test "OUT-5 --out と --working-tree 併用: 出力ファイルへも working-tree hit が書かれる" {
-    mkdir -p "$REPO/src"
-    printf 'export function getUser(id) {\n  return db.find(id);\n}\n' \
-        > "$REPO/src/api.ts"
-    OUTDIR="$(mktemp -d)"
-    OUTFILE="$OUTDIR/wt.json"
-    run bash -c "cd '$REPO' && '$SCRIPT' --working-tree --out '$OUTFILE' '$BASE'"
-    [ "$status" -eq 0 ]
-    [ -f "$OUTFILE" ]
-    [[ "$output" == *'"class":"public-api"'* ]]
-    FILE_CONTENT="$(cat "$OUTFILE")"
-    printf '%s\n' "$FILE_CONTENT" | jq -e '[.hits[] | select(.class == "public-api")] | length > 0'
-    rm -rf "$OUTDIR"
-}
-
-@test "OUT-6 unknown flag 拒否は --out 追加後も維持される" {
-    run bash -c "cd '$REPO' && '$SCRIPT' --bogus '$BASE'"
-    [ "$status" -ne 0 ]
     printf '%s\n' "$output" | jq -e '.ok == false and (.error | test("unknown flag"))'
-}
-
-@test "OUT-7 --out 値欠落 (直後に引数なし) -> die_json エラー" {
-    run bash -c "cd '$REPO' && '$SCRIPT' --out"
-    [ "$status" -ne 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == false'
-}
-
-@test "OUT-8 --out 値欠落 (次が base-ref しか無い) -> die_json エラー (base-ref 不足)" {
-    run bash -c "cd '$REPO' && '$SCRIPT' --out '$BASE'"
-    [ "$status" -ne 0 ]
-    printf '%s\n' "$output" | jq -e '.ok == false'
+    rm -rf "$OUTDIR"
 }

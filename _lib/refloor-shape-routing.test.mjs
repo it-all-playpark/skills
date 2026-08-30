@@ -84,17 +84,14 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
-    if (label.startsWith('danger-grep')) {
+    // Security floor: label 'danger-grep'（issue #550 統合呼び出し）は risk/files を 1 応答で
+    // 返す。files は可変ファイル数（旧 realized-diff 相当。null なら agent drop 相当）。
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
+    }
+    // Merge tier: label 'danger-grep-final'（統合対象外）
+    if (label === 'danger-grep-final') {
       return { ok: true, hits: [] };
-    }
-    // (a) realized-diff: label レベルで分離。可変ファイル数を返す
-    if (label === 'realized-diff') {
-      return { files: realizedFiles };
-    }
-    // (a) declared-path-check: label レベルで分離。{files:[]} を返し衝突を排除する
-    if (label === 'declared-path-check') {
-      return { files: [] };
     }
     // Validate: test runner（label が 'test' で始まる）
     if (label.startsWith('test')) {
@@ -288,15 +285,12 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     // refloor が発火しない（EFFECTIVE_SHAPE が standard のまま止まる）ため明示的に宣言する。
     if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 't1', file_changes: ['a', 'b', 'c', 'd', 'e', 'f'] }], parallel: [] };
     if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
-    // (a) realized-diff: 6 ファイル返す → standard+6件 → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX
-    if (label === 'realized-diff') {
-      return { files: ['a', 'b', 'c', 'd', 'e', 'f'] };
+    // (a) label 'danger-grep'（issue #550 統合呼び出し）: 6 ファイル返す
+    // → standard+6件 → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: [] }, files: ['a', 'b', 'c', 'd', 'e', 'f'], struct: null, diffhash: null };
     }
-    // (a) declared-path-check: {files:[]} で衝突を排除
-    if (label === 'declared-path-check') {
-      return { files: [] };
-    }
+    if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (agentType === 'evaluator') {
       evaluatorCallCount += 1;
@@ -442,11 +436,15 @@ test('[refloor][struct] dev-flow.js に EFFECTIVE_SHAPE 定数定義が存在す
   );
 });
 
-test('[refloor][struct] dev-flow.js に realized-diff label が存在する', () => {
+test('[refloor][struct] dev-flow.js に realized-diff 相当（統合呼び出しの files フィールド）を持つ danger-grep label が存在する（issue #550 統合後は専用 label は消滅）', () => {
   const src = readFileSync(devFlowPath, 'utf8');
   assert.ok(
-    src.includes("label: 'realized-diff'"),
-    "dev-flow.js に `label: 'realized-diff'` が存在すること",
+    src.includes("label: 'danger-grep'"),
+    "dev-flow.js に `label: 'danger-grep'`（統合呼び出し。files フィールドが旧 realized-diff 相当）が存在すること",
+  );
+  assert.ok(
+    !src.includes("label: 'realized-diff'"),
+    "dev-flow.js に専用 label 'realized-diff' が残っていないこと（4→1 統合済み）",
   );
 });
 
@@ -508,15 +506,15 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    if (label.startsWith('danger-grep')) {
+    // (D) label 'danger-grep'（issue #550 統合呼び出し）は risk は正常のまま files を null で返す
+    // （旧 realized-diff の agent drop 相当）→ ?? [] を使うと 0 に潰れ runEval=false になるバグ再現。
+    // risk と files は per-field 独立のため、files 欠落が risk（fail-closed 判定）へ波及しないこと
+    // も同時に確認する。
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: [] }, files: null, struct: null, diffhash: null };
+    }
+    if (label === 'danger-grep-final') {
       return { ok: true, hits: [] };
-    }
-    // (D) realized-diff を null で返す → ?? [] を使うと 0 に潰れ runEval=false になるバグ再現
-    if (label === 'realized-diff') {
-      return null; // agent drop 相当
-    }
-    if (label === 'declared-path-check') {
-      return { files: [] };
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };

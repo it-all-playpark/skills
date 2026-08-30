@@ -115,16 +115,16 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
     if (label.startsWith('ci-check')) {
       return { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 };
     }
-    // Security floor: danger-grep
-    if (label.startsWith('danger-grep')) {
-      return { ok: true, hits: dangerHits };
-    }
-    // Security floor: realized-diff（issue #376 F3 fix — 未stub だと realizedCount が NaN になり
+    // Security floor: label 'danger-grep'（issue #550 統合呼び出し）。risk.hits は dangerHits で
+    // 可変。files（旧 realized-diff。issue #376 F3 fix — 未stub だと realizedCount が NaN になり
     // refloorShape が fail-safe で complex へ raise、EFFECTIVE_SHAPE!=='micro' となって
     // state.runEval が強制 true になり LITE ゲートを常に無効化してしまうため、clean シナリオでは
-    // realized 変更なしを明示的に返す）。
-    if (label === 'realized-diff') {
-      return { files: [] };
+    // realized 変更なしを明示的に返す）は [] 固定。
+    if (label === 'danger-grep') {
+      return { risk: { ok: true, hits: dangerHits }, files: [], struct: null, diffhash: null };
+    }
+    if (label === 'danger-grep-final') {
+      return { ok: true, hits: dangerHits };
     }
     // Validate: test runner
     if (label.startsWith('test')) {

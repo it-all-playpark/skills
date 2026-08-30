@@ -22,8 +22,9 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 /**
  * testsurf 専用の VM sandbox を組む。
- * danger-grep 系（label が 'danger-grep' で始まる。Security floor / Merge tier 両方）の応答を
- * riskResponse で切り替え可能にし、evaluator 呼び出し回数・evaluator prompt・journal-log prompt を捕捉する。
+ * label 'danger-grep'（Security floor。issue #550 統合呼び出し）は riskResponse を risk
+ * フィールドへ包んで返し、label 'danger-grep-final'（Merge tier。統合対象外）は riskResponse を
+ * そのまま返す。evaluator 呼び出し回数・evaluator prompt・journal-log prompt を捕捉する。
  *
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {object} riskResponse - danger-grep / danger-grep-final stub が返すレスポンス
@@ -57,7 +58,13 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (agentType === 'plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    if (label.startsWith('danger-grep')) {
+    // label 'danger-grep'（Security floor。issue #550 統合呼び出し）は riskResponse を risk
+    // フィールドに包んで返す。label 'danger-grep-final'（Merge tier。統合対象外）は
+    // riskResponse をそのまま返す。
+    if (label === 'danger-grep') {
+      return { risk: riskResponse, files: ['_lib/foo.test.mjs'], struct: null, diffhash: null };
+    }
+    if (label === 'danger-grep-final') {
       return riskResponse;
     }
     if (label.startsWith('test')) {
@@ -70,12 +77,6 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     }
     if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
-    }
-    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
-      return { files: ['_lib/foo.test.mjs'] };
-    }
-    if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
-      return { files: ['_lib/foo.test.mjs'] };
     }
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
