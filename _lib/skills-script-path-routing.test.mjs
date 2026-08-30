@@ -2,19 +2,12 @@
 // Pin test: skills 内部 script のパス解決を固定する（issue #484 task F1）。
 //
 // `.claude/workflows/dev-flow.js` は、skills リポジトリ（it-all-playpark/skills）内部にのみ
-// 存在する script 群（analyze-issue.sh / surfaceproof-snapshot.sh / journal.sh）を
+// 存在する script 群（analyze-issue.sh / journal.sh）を
 // `${WT}/...`（WT=対象repoのworktree）相対で subagent prompt / journal handoff payload に
 // 埋め込んでいた。対象 repo が skills 自身でない場合（例: veridelta）にこれらの script は WT 配下に
 // 存在せず Exit 127 で落ちる。修正後の期待状態は、既存 precedent（L4339 の
 // `~/.claude/skills/_shared/scripts/cross-repo-artifacts.sh`）と同じ skills 実体固定パス
 // `~/.claude/skills/...` を使うことである。この test は修正後の期待状態を先に固定する。
-//
-// effectdelta-github.sh は本ファイルの対象外（意図的に WT 相対のまま）: (1) TRUST_SHADOW_REPO_SLUG
-// ガードにより repoSlug==='it-all-playpark/skills' の場合しか到達せず WT に script が必ず存在する
-// ため元々 Exit 127 のバグではない、(2) 既存の committed pin test _lib/effectdelta-routing.test.mjs
-// の test (ii) が installed パス（~/.claude/skills/...）不使用を明示的に assert している
-// （issue #412: skills 自身の run では worktree 内の in-flight 版 script を dogfood する設計）。
-// 本ファイルで effectdelta の固定パスを重複 assert すると pin の二重管理になるため行わない。
 //
 // .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
 // よって既存 *-routing.test.mjs 群と同じ戦略（source-as-string assert）で検証する。
@@ -63,12 +56,6 @@ test('[skills-script-path-routing] (a) dev-flow.js に `${WT}/skill-retrospectiv
 
 test('[skills-script-path-routing] (b) analyze-issue.sh が skills 実体固定パスで1回存在する', () => {
   const needle = '~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh';
-  const count = countOccurrences(src, needle);
-  assert.equal(count, 1, `固定パス '${needle}' の出現回数が期待(1)と異なる: ${count}`);
-});
-
-test('[skills-script-path-routing] (b) surfaceproof-snapshot.sh が skills 実体固定パスで1回存在する', () => {
-  const needle = '~/.claude/skills/dev-issue-analyze/scripts/surfaceproof-snapshot.sh';
   const count = countOccurrences(src, needle);
   assert.equal(count, 1, `固定パス '${needle}' の出現回数が期待(1)と異なる: ${count}`);
 });

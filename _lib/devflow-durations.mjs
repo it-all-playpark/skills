@@ -4,7 +4,7 @@
 // evaluate_end/pr_end/iterate_end/final_end）は phase 境界に隣接する既存 exec-proxy / agent 応答の
 // optional epoch フィールドから recordClockMark へ給電する（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため shape 判定・surfaceproof shadow の時間が plan 区間へ付け替わる — phase_durations は
+// 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。

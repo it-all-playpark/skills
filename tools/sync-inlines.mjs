@@ -3,6 +3,7 @@
 // Inline-sync generator: rewrites BEGIN/END inline marker zones in workflow files.
 // Usage: node tools/sync-inlines.mjs [--write|--check] [--root <dir>]
 //    or: node tools/sync-inlines.mjs --add <canonical> --into <workflow> --after <anchor> [--root <dir>]
+//    or: node tools/sync-inlines.mjs --remove <canonical> --from <workflow> [--root <dir>]
 //
 // Named exports (pure functions):
 //   stripComments(src)              - remove JS comments for forbidden-token scanning
@@ -13,6 +14,11 @@
 //                                   - insert a new BEGIN/END marker pair after a unique
 //                                     literal anchor line; rejects anchors inside an
 //                                     existing inline region (nested markers)
+//   removeMarkerPair(wfSrc, source, wfLabel)
+//                                   - remove an existing BEGIN/END marker pair (and its
+//                                     body) for `source`; the mirror image of
+//                                     insertMarkerPair. Throws if the region does not
+//                                     exist (0 matches).
 //   syncRepo(root, {write})         - orchestrate all workflow files
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
@@ -299,6 +305,52 @@ export function insertMarkerPair(wfSrc, source, anchor, wfLabel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// removeMarkerPair(wfSrc, source, wfLabel): remove an existing BEGIN/END inline
+// marker pair (and its body) for `source`, the mirror-image operation of
+// insertMarkerPair. Used to retire an inline region entirely (e.g. when the
+// canonical it inlines is being deleted).
+//
+// Rules:
+//   - Exactly one BEGIN/END pair matching `source` must exist (via scanMarkers);
+//     0 matches throws (nothing to remove). scanMarkers itself already rejects
+//     >1 BEGIN of the same source within one file ("duplicate inline"), so that
+//     case surfaces as a scanMarkers error rather than being re-checked here.
+//   - Removes the BEGIN line through the END line, inclusive. No other region
+//     or hand-written line is touched.
+//   - If the removal leaves 3+ consecutive blank lines at the seam, they are
+//     collapsed to a single blank line (cosmetic only; scoped to the seam so
+//     unrelated blank-line runs elsewhere in the file are left untouched).
+//
+// Returns: new wfSrc string with the marker pair (and body) removed.
+// ─────────────────────────────────────────────────────────────────────────────
+export function removeMarkerPair(wfSrc, source, wfLabel) {
+  const markers = scanMarkers(wfSrc, wfLabel);
+  const matches = markers.filter(m => m.source === source);
+  if (matches.length === 0) {
+    throw new Error(`${wfLabel}: no inline region found for '${source}' — nothing to remove`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`${wfLabel}: multiple inline regions found for '${source}' (${matches.length}) — expected exactly 1`);
+  }
+  const { beginLine, endLine } = matches[0];
+  const lines = wfSrc.split('\n');
+  lines.splice(beginLine, endLine - beginLine + 1);
+
+  // Collapse a 3+ blank-line run left exactly at the removal seam to a single
+  // blank line. Scoped to the seam only: it does not scan or touch blank-line
+  // runs elsewhere in the file.
+  let seamStart = beginLine;
+  while (seamStart > 0 && lines[seamStart - 1] === '') seamStart--;
+  let seamEnd = beginLine;
+  while (seamEnd < lines.length && lines[seamEnd] === '') seamEnd++;
+  if (seamEnd - seamStart >= 3) {
+    lines.splice(seamStart, seamEnd - seamStart, '');
+  }
+
+  return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // syncWorkflowSource(root, wfFile, wfSrc): fill all BEGIN/END inline regions in a
 // single workflow file source against canonicals under root/_lib, running the
 // full validation pipeline (forbidden tokens -> transform -> decl collisions ->
@@ -410,7 +462,8 @@ const isMain = (() => {
 })();
 
 const USAGE = 'Usage: sync-inlines.mjs [--write|--check] [--root <dir>]\n' +
-  '   or: sync-inlines.mjs --add <canonical> --into <workflow> --after <anchor> [--root <dir>]\n';
+  '   or: sync-inlines.mjs --add <canonical> --into <workflow> --after <anchor> [--root <dir>]\n' +
+  '   or: sync-inlines.mjs --remove <canonical> --from <workflow> [--root <dir>]\n';
 
 if (isMain) {
   const args = process.argv.slice(2);
@@ -420,6 +473,8 @@ if (isMain) {
   let add = null;
   let into = null;
   let after = null;
+  let remove = null;
+  let from = null;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--write') { write = true; }
@@ -428,6 +483,8 @@ if (isMain) {
     else if (args[i] === '--add' && i + 1 < args.length) { add = args[++i]; }
     else if (args[i] === '--into' && i + 1 < args.length) { into = args[++i]; }
     else if (args[i] === '--after' && i + 1 < args.length) { after = args[++i]; }
+    else if (args[i] === '--remove' && i + 1 < args.length) { remove = args[++i]; }
+    else if (args[i] === '--from' && i + 1 < args.length) { from = args[++i]; }
     else {
       process.stderr.write(`Unknown flag: ${args[i]}\n${USAGE}`);
       process.exit(2);
@@ -435,6 +492,12 @@ if (isMain) {
   }
 
   const addMode = add !== null || into !== null || after !== null;
+  const removeMode = remove !== null || from !== null;
+
+  if (addMode && removeMode) {
+    process.stderr.write(`--add and --remove cannot be combined.\n${USAGE}`);
+    process.exit(2);
+  }
 
   if (addMode) {
     if (write || check) {
@@ -458,6 +521,27 @@ if (isMain) {
     }
     if (into.includes('/')) {
       process.stderr.write(`--into must be a bare workflow file name (no '/'): ${into}\n${USAGE}`);
+      process.exit(2);
+    }
+  } else if (removeMode) {
+    if (write || check) {
+      process.stderr.write(`--remove cannot be combined with --write/--check.\n${USAGE}`);
+      process.exit(2);
+    }
+    if (remove === null || from === null) {
+      process.stderr.write(`--remove requires --from.\n${USAGE}`);
+      process.exit(2);
+    }
+    if (!remove.startsWith('_lib/') || !remove.endsWith('.mjs')) {
+      process.stderr.write(`--remove canonical must be a repo-root-relative path starting with '_lib/' and ending with '.mjs': ${remove}\n${USAGE}`);
+      process.exit(2);
+    }
+    if (remove.split('/').includes('..')) {
+      process.stderr.write(`--remove canonical must not contain '..' path segments: ${remove}\n${USAGE}`);
+      process.exit(2);
+    }
+    if (from.includes('/')) {
+      process.stderr.write(`--from must be a bare workflow file name (no '/'): ${from}\n${USAGE}`);
       process.exit(2);
     }
   } else if (write === check) {  // both true (xor false) means either both set or neither
@@ -484,6 +568,16 @@ if (isMain) {
       const { newSrc } = syncWorkflowSource(root, into, inserted);
       writeFileSync(wfPath, newSrc, 'utf8');
       process.stdout.write(`added: ${into} (${add})\n`);
+    } else if (removeMode) {
+      const wfPath = join(root, '.claude', 'workflows', from);
+      if (!existsSync(wfPath)) {
+        throw new Error(`workflow '${from}' not found at '${wfPath}'`);
+      }
+      const wfSrc = readFileSync(wfPath, 'utf8');
+      const removed = removeMarkerPair(wfSrc, remove, from);
+      const { newSrc } = syncWorkflowSource(root, from, removed);
+      writeFileSync(wfPath, newSrc, 'utf8');
+      process.stdout.write(`removed: ${from} (${remove})\n`);
     } else {
       const { results } = syncRepo(root, { write });
       if (check) {

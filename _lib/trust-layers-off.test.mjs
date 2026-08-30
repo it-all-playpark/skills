@@ -1,182 +1,114 @@
-// trust-layer 3 層（SurfaceProof / EvalSeal / EffectDelta）の出荷時 off invariant。
+// trust-layer call site 撤去（issue #507）の静的 invariant。
 //
-// *-routing.test.mjs 群は forceTrustShadow で source を shadow へ強制してから配線を検証する
-// （off のまま放置して配線が腐ると復帰時に無検証のコードが動き出すため）。本ファイルはその対の
-// invariant — **出荷 config では allowlist repo であっても trust call site が 1 つも実行されない**
-// — を実測で pin する。片方だけでは「配線は生きているが出荷時に走っている」あるいは
-// 「出荷時は走らないが配線が腐っている」を見逃す。
-//
-// off の理由・復帰条件は _lib/trust-wiring.mjs のコメントと
-// .claude/rules/dev-flow.md の「trust-layer off 固定の sunset path」が正典。
+// 撤去前（issue #448/#493 期）は「off だから call site が実行されない」ことを実測で pin していたが、
+// call site 自体を撤去した現在は「call site が存在しない」ことを機械的に検証する方が正確かつ安価
+// （sandbox VM 実行不要）。call site は監査改ざん同型の safety classifier 衝突により撤去済みで、
+// 復帰は再設計 issue（`.claude/rules/dev-flow.md` の trust-layer sunset path の 3 条件）経由のみ —
+// このテストは中途半端な call site 再追加を機械的に拒否する（誤って個別ファイルを復元しても、
+// dev-flow.js からの参照 or telemetry トークン or inline 区間のいずれかで red になる）。
 //
 // テストケース:
-//   (a) canonical `_lib/trust-wiring.mjs` の TRUST_LAYER_CONFIG が 3 層とも 'off'
-//   (b) 生成物 `.claude/workflows/dev-flow.js` の inline も 3 層とも 'off'（sync 漏れ検出）
-//   (c) 出荷 source + repo=allowlist で run → trust 系 label の呼び出しが 1 件も無い
-//   (d) 同 run の journal telemetry に trust_* キーが 1 つも現れない
+//   (a) dev-flow.js 全文（コメント含む）に trust call site 由来パターンが 0 件
+//   (b) .claude/workflows/ 配下の inline 生成区間に trust-mode.mjs / trust-wiring.mjs が無い
+//   (c) dev-flow.js 全文に trust telemetry トークンが 0 件
+//   (d) call-site 専用の成果物（exec-proxy スクリプト・call-site ヘルパ・routing test・専用 fixture）が
+//       いずれも存在しない
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
-import { readTrustLayerConfig } from './test-helpers/trust-layer-src.mjs';
-import { TRUST_LAYER_CONFIG } from './trust-wiring.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-// 出荷そのままの source（forceTrustShadow を通さない — 本ファイルの検証対象が出荷 config のため）
-const shippedSrc = readFileSync(devFlowPath, 'utf8');
-
-const ALLOWLISTED_REPO = 'it-all-playpark/skills';
-const TRUST_LAYERS = ['surfaceproof', 'evalseal', 'effectdelta'];
-
-// trust 由来の agent label 接頭辞（dev-flow.js の trust call site が使う label 空間）
-const TRUST_LABEL_PREFIXES = ['surfaceproof-shadow', 'trust-'];
-
-const STANDARD_REQ = {
-  summary: 's',
-  acceptance_criteria: ['a', 'b'],
-  issue_type: 'fix',
-  scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
-  issue_number: 410,
-  issue_title: 'stub-issue-title',
-};
-
-function responder({ label, agentType }) {
-  if (label === 'resolve-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false };
-  if (label === 'worktree-base-check') return { ok: true, worktree_exists: false, upstream: '' };
-  if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-410', repo: ALLOWLISTED_REPO };
-  if (label.startsWith('analyze')) return STANDARD_REQ;
-  if (agentType === 'dev-planner') {
-    return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
-  }
-  if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-  if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
-  if (label === 'realized-diff') return { files: ['src/x.ts'] };
-  if (agentType === 'evaluator') {
-    return {
-      verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
-      ac_results: STANDARD_REQ.acceptance_criteria.map((_, i) => ({
-        ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok',
-      })),
-      security_clearance: [], concern_resolutions: [],
-    };
-  }
-  if (agentType === 'pr-reviewer') return { decision: 'approve', issues: [] };
-  if (label.startsWith('ci-check')) return { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 };
-  if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-  if (label === 'changed-files') return { files: ['src/x.ts'] };
-  if (label === 'changed-files-final') return { files: [] };
-  if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-  if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
-  if (label === 'gh-pr-view') return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' };
-  if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-  if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-  if (label === 'journal-log') return { logged: true, summary: 'ok' };
-  if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
-  if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
-  if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
-  if (label === 'issue-meta') return { ok: true, number: 410, title: 'stub-issue-title' };
-  return null;
-}
-
-async function runShipped() {
-  const { ctx, calls } = makeRecordingSandbox(responder, {
-    workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 0 }),
-    args: '410',
-  });
-  const stripped = shippedSrc
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  try {
-    await vm.runInContext(`(async () => {\n${stripped}\n})();`, ctx, { filename: '.claude/workflows/dev-flow.js' });
-  } catch (e) {
-    if (e && (e.name === 'ReferenceError' || e.name === 'SyntaxError')) {
-      assert.fail(`dev-flow.js が sandbox でクラッシュ: ${e.name}: ${e.message}`);
-    }
-  }
-  return calls;
-}
-
-function extractTelemetryPayload(prompt) {
-  if (typeof prompt !== 'string') return null;
-  const m = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n(\{[\s\S]*?\})\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
-  if (!m) return null;
-  try {
-    return JSON.parse(m[1]);
-  } catch {
-    return null;
-  }
-}
+const workflowsDir = join(repoRoot, '.claude', 'workflows');
+const devFlowPath = join(workflowsDir, 'dev-flow.js');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
-// (a) canonical が全 layer 'off'
+// (a) dev-flow.js 全文に call site パターンが無い
 // ============================================================
 
-test('[trust-off] (a) _lib/trust-wiring.mjs の TRUST_LAYER_CONFIG は 3 層とも off', () => {
-  assert.deepEqual(Object.keys(TRUST_LAYER_CONFIG).sort(), [...TRUST_LAYERS].sort());
-  for (const layer of TRUST_LAYERS) {
-    assert.equal(
-      TRUST_LAYER_CONFIG[layer], 'off',
-      `(a) ${layer} は 'off' であること（復帰条件は _lib/trust-wiring.mjs のコメント参照。`
-      + '満たさないまま shadow へ戻さない）',
+test('[trust-layers-off] (a) dev-flow.js に trust call site 由来パターンが0件', () => {
+  const pattern = /surfaceproof-shadow|trust-seal|trust-effectdelta/;
+  assert.equal(
+    pattern.test(devFlowSrc), false,
+    '(a) dev-flow.js に trust 由来の call site（label/コメント含む）が残っている',
+  );
+});
+
+// ============================================================
+// (b) inline 生成区間に trust-mode / trust-wiring が無い
+// ============================================================
+
+test('[trust-layers-off] (b) .claude/workflows/ 配下に trust-mode.mjs / trust-wiring.mjs の inline 区間が無い', () => {
+  const workflowFiles = readdirSync(workflowsDir).filter((f) => f.endsWith('.js'));
+  assert.ok(workflowFiles.length > 0, '(b) .claude/workflows/ 配下に *.js が見つからない');
+
+  for (const file of workflowFiles) {
+    const src = readFileSync(join(workflowsDir, file), 'utf8');
+    assert.ok(
+      !src.includes('// ==== BEGIN inline: _lib/trust-mode.mjs'),
+      `(b) ${file} に _lib/trust-mode.mjs の inline 区間が残っている`,
+    );
+    assert.ok(
+      !src.includes('// ==== BEGIN inline: _lib/trust-wiring.mjs'),
+      `(b) ${file} に _lib/trust-wiring.mjs の inline 区間が残っている`,
     );
   }
 });
 
 // ============================================================
-// (b) 生成物 dev-flow.js の inline も全 layer 'off'
+// (c) dev-flow.js 全文に telemetry トークンが無い
 // ============================================================
 
-test('[trust-off] (b) dev-flow.js の inline TRUST_LAYER_CONFIG も 3 層とも off', () => {
-  const modes = readTrustLayerConfig(shippedSrc);
-  assert.deepEqual(
-    modes, { surfaceproof: 'off', evalseal: 'off', effectdelta: 'off' },
-    '(b) canonical を変えて tools/sync-inlines.mjs --write を忘れるとここで落ちる',
+test('[trust-layers-off] (c) dev-flow.js に trust telemetry トークンが0件', () => {
+  const pattern = /trust_surfaceproof_shadow|trust_evalseal|trust_effectdelta_pr|trust_run_id|trust_receipts:/;
+  assert.equal(
+    pattern.test(devFlowSrc), false,
+    '(c) dev-flow.js に trust telemetry トークンが残っている',
   );
 });
 
 // ============================================================
-// (c) 出荷 source + allowlist repo → trust 系 agent 呼び出しゼロ
+// (d) call-site 成果物が存在しない
 // ============================================================
 
-test('[trust-off] (c) 出荷 config では allowlist repo でも trust 系 agent が 1 件も呼ばれない', async () => {
-  const calls = await runShipped();
+const REMOVED_PATHS = [
+  '_lib/trust-wiring.mjs',
+  '_lib/trust-wiring.test.mjs',
+  '_lib/trust-surfaceproof.mjs',
+  '_lib/trust-surfaceproof.test.mjs',
+  '_lib/trust-surfaceproof-cli.mjs',
+  '_lib/trust-surfaceproof-cli.test.mjs',
+  '_lib/trust-surfaceproof-fixtures.test.mjs',
+  '_lib/trust-effectdelta.mjs',
+  '_lib/trust-effectdelta.test.mjs',
+  '_lib/trust-effectdelta-cli.mjs',
+  '_lib/trust-effectdelta-cli.test.mjs',
+  '_lib/test-helpers/trust-layer-src.mjs',
+  '_lib/surfaceproof-routing.test.mjs',
+  '_lib/evalseal-routing.test.mjs',
+  '_lib/effectdelta-routing.test.mjs',
+  '_lib/effectdelta-obs-schema-routing.test.mjs',
+  '_lib/trust-runid-routing.test.mjs',
+  '_lib/fixtures/trust/surfaceproof',
+  '_shared/scripts/evalseal-seal.mjs',
+  '_shared/scripts/evalseal-seal.test.mjs',
+  '_shared/scripts/evalseal-verify.mjs',
+  '_shared/scripts/evalseal-verify.test.mjs',
+  '_shared/scripts/effectdelta-github.sh',
+  '_shared/scripts/effectdelta-github.bats',
+  'dev-issue-analyze/scripts/surfaceproof-snapshot.sh',
+  'dev-issue-analyze/scripts/surfaceproof-snapshot.bats',
+];
 
-  const trustCalls = calls.filter((c) => TRUST_LABEL_PREFIXES.some((p) => c.label.startsWith(p)));
-  assert.deepEqual(
-    trustCalls.map((c) => c.label), [],
-    '(c) trust 系 label の呼び出しが存在してはならない（off の call site は丸ごと skip される）',
-  );
-
-  // run 自体は完走している（trust ゼロが「run が早期に落ちただけ」でないことの positive control）
-  assert.ok(
-    calls.some((c) => c.label === 'journal-save'),
-    '(c) journal-save まで到達していること — 到達前に落ちていると trust ゼロは無意味',
-  );
-});
-
-// ============================================================
-// (d) telemetry に trust_* キーが現れない
-// ============================================================
-
-test('[trust-off] (d) 出荷 config の run では journal telemetry に trust_* キーが無い', async () => {
-  const calls = await runShipped();
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall, '(d) journal-save の呼び出しが存在すること');
-
-  const payload = extractTelemetryPayload(journalCall.prompt);
-  assert.ok(payload, '(d) journal-save prompt から telemetry payload を JSON.parse できること');
-
-  const trustKeys = Object.keys(payload.telemetry ?? {}).filter((k) => k.startsWith('trust_'));
-  assert.deepEqual(
-    trustKeys, [],
-    '(d) telemetry に trust_* キーが現れてはならない（off では receipt も missing-reason も記録しない）',
-  );
-});
+for (const relPath of REMOVED_PATHS) {
+  test(`[trust-layers-off] (d) ${relPath} は存在しない`, () => {
+    assert.equal(
+      existsSync(join(repoRoot, relPath)), false,
+      `(d) 撤去済み call-site 成果物 ${relPath} が存在している`,
+    );
+  });
+}
