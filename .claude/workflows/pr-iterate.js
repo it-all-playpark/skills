@@ -1023,7 +1023,7 @@ if (NESTED) {
 //   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
 //   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
 //   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた run 専用 scratch
-//   （journal payload payload-devflow-*.json / ui-verify state / 一時 body ファイル等の
+//   （journal payload payload-devflow-*.json / ui-verify state 等の
 //   .devflow-tmp 配下生成物）を run 途中で消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 //   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
 // isolationProbePrompt: probe 専用 agent（Write tool のみ）へ渡す prompt を組み立てる純関数
@@ -1141,7 +1141,7 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // （残っていると isolation が正常でも probe が written:false に倒れる — issue #482）。
 // 除去範囲は `.devflow-tmp/.isolation-probe` のみに絞る: nested 起動（dev-flow → workflow('pr-iterate')）
 // では isoWt が実行中の dev-flow worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が既に
-// 書いた run 専用 scratch（journal payload / 一時 body ファイル等の .devflow-tmp 配下生成物）を
+// 書いた run 専用 scratch（journal payload 等の .devflow-tmp 配下生成物）を
 // run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
 // 時点である dev-flow Setup 側の責務。fail-open: 失敗しても run は継続する（残っていれば直後の
 // probe が written:false で fail-closed に倒れ、復旧手順は同一）。

@@ -106,12 +106,12 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   同一 worktree 再利用）して前 run と同名パスに衝突した場合の補償としてのみ probe 成立に効く。
   **除去範囲 target は呼び出し元が明示的に渡す**（関数側にデフォルトを置かない）:
   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を対象にし、前 run の
-  run 専用 scratch（journal payload / ui-verify state / 一時 body ファイル等）の持ち越し防止
+  run 専用 scratch（journal payload / ui-verify state 等）の持ち越し防止
   （run 間衛生）も兼ねて同時に消す。pr-iterate は単体起動時のみ
   `.devflow-tmp/.isolation-probe` を対象に cleanup を実行する — nested 起動（dev-flow →
   `workflow('pr-iterate')`）では probe 対象が実行中 dev-flow run の worktree 自身になり、
-  `.devflow-tmp` 全体を消すと当該 run が既に書いた run 専用 scratch（journal payload /
-  一時 body ファイル等の `.devflow-tmp` 配下生成物）を run 途中で失うため、
+  `.devflow-tmp` 全体を消すと当該 run が既に書いた run 専用 scratch（journal payload 等の
+  `.devflow-tmp` 配下生成物）を run 途中で失うため、
   isolation-cleanup 自体の呼び出しを skip する（dev-flow Setup 側の `.devflow-tmp` 全体 cleanup が
   同一 worktree の run 間衛生を既に担保済みのため、nested run でも二重に走らせる必要がない）。
   isolation-probe（Write 検証本体）は nested でも skip しない。cleanup は fail-open
