@@ -4175,6 +4175,15 @@ async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   return results
 }
 
+// countPlanDrops(plan, results): runImplement が落とした task 数（計画 task 数 − 返却結果数）。
+// runImplement 自身に数えさせず呼び出し側で算出するのは、runImplement が
+// _lib/implement-order-failopen.test.mjs で関数単体として VM に切り出され評価されるため
+// （module スコープの変数を関数内から参照すると当該テストで ReferenceError になる）。
+function countPlanDrops(plan, results) {
+  const planned = (plan.serial ?? []).length + (plan.parallel ?? []).length
+  return Math.max(0, planned - results.length)
+}
+
 // ============================================================
 // Phase Setup: 単一 worktree + branch を作る。全 agent が同じパスで作業し成果を集約する。
 // （isolation:'worktree' は使わない — 各 agent が別 worktree になり並列実装の成果が分散するため。
@@ -4569,6 +4578,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
 let state = {
   req, plan, setup, planVerdict, planConcerns, planIters,
   implResults: null, concerns: [], blockedConcerns: [], guardBlockedResults: [],
+  implDroppedCount: 0,
   val: null, greenFixCount: 0, greenFixIterations: [],
   ledger: null, risk: null, dangerHits: [], realized: null,
   realizedNonEphemeral: null, realizedCount: NaN, refloor: null,
@@ -4607,6 +4617,11 @@ async function execImplementPhase(state) {
   const { req } = state
   let plan = state.plan
   let implResults = await runImplement(req, plan, null, 'impl')
+  // drop 件数を Evaluate 強制条件へ積む（issue #540）。task が落ちた run は「計画した実装範囲」が
+  // 実際には欠けているが、残った task の diff が非空なら empty-diff gate も refloor も素通りするため、
+  // micro では evaluator 0 回のまま AC 未検証で PR に到達しうる。greenFixCount と同型で state に載せる。
+  // extractGuardBlocked より前に数える（filter 後だと BLOCKED 除去分を drop と誤認する）。
+  state.implDroppedCount += countPlanDrops(plan, implResults)
   let blockedConcerns = []
   {
     const gb = extractGuardBlocked(implResults)
@@ -4647,6 +4662,7 @@ async function execImplementPhase(state) {
     //   同 task_id の新結果は新結果優先、
     //   旧 BLOCKED/NEEDS_CONTEXT は保持しない（stale BLOCKED で b+1 の再発火を防ぐ）
     const retryResults = await runImplement(req, plan, null, `reimpl-blocked#${b}`)
+    state.implDroppedCount += countPlanDrops(plan, retryResults)
     const retryIds = new Set(retryResults.map((r) => r && r.task_id).filter(Boolean))
     implResults = [...implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS') && !retryIds.has(r.task_id)), ...retryResults]
     {
@@ -4687,6 +4703,7 @@ async function execImplementPhase(state) {
         'reimpl-context',
         req2,
       )
+      state.implDroppedCount += countPlanDrops(retryPlan, retryResults)
       implResults = [...implResults.filter((r) => !ids.has(r.task_id)), ...retryResults]
     }
     const stillNeeds = (implResults).filter((r) => r && r.status === 'NEEDS_CONTEXT')
@@ -5018,7 +5035,7 @@ async function execSecurityFloorPhase(state) {
     }
   }
   const uiTouched = uiVerifyConfig != null
-  const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || testsurfPatterns.length > 0 || state.greenFixCount > 0 || undeclared.length > 0 || uiTouched
+  const runEval = EFFECTIVE_SHAPE !== 'micro' || dangerHits.length > 0 || testsurfPatterns.length > 0 || state.greenFixCount > 0 || state.implDroppedCount > 0 || undeclared.length > 0 || uiTouched
   if (TRIVIAL && dangerHits.length > 0) {
     log(`⚠️ micro だが danger hit(${dangerHits.join(',')}) → Evaluate を実行（security path 強制）`)
   }
@@ -5028,6 +5045,9 @@ async function execSecurityFloorPhase(state) {
 
   if (TRIVIAL && state.greenFixCount > 0) {
     log(`⚠️ micro だが green-fix ${state.greenFixCount} 回 → Evaluate を実行（テスト弱体化監査 強制）`)
+  }
+  if (TRIVIAL && state.implDroppedCount > 0) {
+    log(`⚠️ micro だが implementer drop ${state.implDroppedCount} 件 → Evaluate を実行（未実装範囲の AC 検証 強制）`)
   }
   if (EFFECTIVE_SHAPE === 'micro' && undeclared.length > 0) {
     log(`⚠️ micro だが宣言外変更 ${undeclared.length} 件 → Evaluate を実行（宣言外監査 強制）`)
