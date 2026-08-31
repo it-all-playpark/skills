@@ -1022,10 +1022,13 @@ if (NESTED) {
 //   衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
 //   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
 //   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
-//   `.devflow-tmp/.isolation-probe` だけに絞る（当該 run が既に書いた run 専用 scratch
-//   （journal payload payload-devflow-*.json / ui-verify state 等の
+//   `ISOLATION_PROBE_CLEANUP_GLOB`（`.devflow-tmp/.isolation-probe*`）だけに絞る（当該 run が既に
+//   書いた run 専用 scratch（journal payload payload-devflow-*.json / ui-verify state 等の
 //   .devflow-tmp 配下生成物）を run 途中で消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
 //   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
+//   probe ファイル名（token 付き `.isolation-probe-<token>`）と `ISOLATION_PROBE_CLEANUP_GLOB` は
+//   対応させて保つこと（git pathspec の前方一致は自動で辿らないため、drift すると cleanup が
+//   0 件しか消せなくなる — issue #555）。
 // isolationProbePrompt: probe 専用 agent（Write tool のみ）へ渡す prompt を組み立てる純関数
 //   （worktree 直下の run 毎に一意なパスへ Write tool で実際に書き込ませ、成否を {written, error} で
 //   verbatim 報告させる）。token は呼び出し元が渡す必須引数: probe 対象パスに run 毎の一意な token
@@ -1061,6 +1064,13 @@ if (NESTED) {
 // excludedCommands・guard 等）を「だからこの経路を使え」という形の理由として述べない。
 // 転写契約に判断余地を持ち込ませないための規範であり、`.claude/rules/dev-flow.md` の exec-proxy 節が
 // 正典。canonical と 2 つの inline 生成区間の双方を _lib/isolation-control-reason.test.mjs が pin する。
+
+// probe が実際に書くパスは token 付き `.devflow-tmp/.isolation-probe-<token>`（isolationProbePrompt
+// 参照）。前方一致 + `*` にするのは、token 形に加え issue #521 以前の legacy 無 token 残置物
+// `.devflow-tmp/.isolation-probe` も cleanup の衛生対象にするため（`-` を含まない
+// `.isolation-probe*` にすることで両方にマッチする。`.isolation-probe-*` にすると legacy 形を
+// 取りこぼす）。
+const ISOLATION_PROBE_CLEANUP_GLOB = '.devflow-tmp/.isolation-probe*';
 
 function isolationCleanupPrompt(worktree, target) {
   return `worktree ${worktree} の gitignored な作業用パス \`${target}\` を除去せよ。手順:\n`
@@ -1139,7 +1149,8 @@ if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=
 const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claude/worktrees/pr-${PR}`
 // isolation cleanup（issue #493）: probe の直前に前 run が残した stale な probe artifact を除去する
 // （残っていると isolation が正常でも probe が written:false に倒れる — issue #482）。
-// 除去範囲は `.devflow-tmp/.isolation-probe` のみに絞る: nested 起動（dev-flow → workflow('pr-iterate')）
+// 除去範囲は ISOLATION_PROBE_CLEANUP_GLOB（`.devflow-tmp/.isolation-probe*` — probe artifact の
+// token 形・legacy 形のみ）に絞る: nested 起動（dev-flow → workflow('pr-iterate')）
 // では isoWt が実行中の dev-flow worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が既に
 // 書いた run 専用 scratch（journal payload 等の .devflow-tmp 配下生成物）を
 // run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
@@ -1149,7 +1160,7 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // Setup が run 開始時に .devflow-tmp 全体を cleanup 済みのため重複起動が不要）。
 let isoClean = null
 if (!NESTED) {
-  isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, '.devflow-tmp/.isolation-probe'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
+  isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, ISOLATION_PROBE_CLEANUP_GLOB), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
   if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 }
 // isoToken: probe 対象パスを run 毎に一意にする（issue #521）。pr-meta probe（fail-open）が

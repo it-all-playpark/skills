@@ -1,6 +1,27 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { isolationCleanupPrompt, isolationProbePrompt, isolationErrorKind, isolationFailureMessage } from './isolation-probe.mjs';
+import {
+  isolationCleanupPrompt,
+  isolationProbePrompt,
+  isolationErrorKind,
+  isolationFailureMessage,
+  ISOLATION_PROBE_CLEANUP_GLOB,
+} from './isolation-probe.mjs';
+
+// glob→RegExp 変換: `*` 以外の正規表現メタ文字をエスケープし `*` を `[^/]*` に変換する。
+// probe token は isolationProbePrompt 内で `[^A-Za-z0-9._-]` を `-` に正規化済みのため `/` を
+// 含まず、この変換は git pathspec wildmatch と本 pattern において等価。
+function globToRegExp(glob) {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
+  return new RegExp(`^${escaped}$`);
+}
+
+// isolationProbePrompt の出力から backtick 括りの probe 絶対パスを抽出する。
+function probePathFrom(prompt) {
+  const m = prompt.match(/`([^`]*\.isolation-probe-[^`]+)`/);
+  assert.ok(m, `isolationProbePrompt の出力から probe パスを抽出できない:\n${prompt}`);
+  return m[1];
+}
 
 // ── isolationProbePrompt ────────────────────────────────────────────────────
 
@@ -269,4 +290,32 @@ test('isolationCleanupPrompt: 失敗時は例外を投げず cleaned:false + err
   assert.match(prompt, /"cleaned": false/);
   assert.match(prompt, /例外を投げずに/);
   assert.match(prompt, /"error"/);
+});
+
+// ── ISOLATION_PROBE_CLEANUP_GLOB: probe 生成パス vs cleanup glob の意味論マッチ (issue #555) ──
+//
+// pr-iterate の isolation-cleanup は probe が実際に書くパス（.isolation-probe-<token>）を
+// 除去できる target を使わねばならない。文字列一致 pin ではなく、isolationProbePrompt の
+// 出力から抽出した実パスに対する glob マッチ判定で検証する。
+
+test('ISOLATION_PROBE_CLEANUP_GLOB: isolationProbePrompt(token 形) が生成する相対パスにマッチする', () => {
+  const worktree = '/wt';
+  const prompt = isolationProbePrompt(worktree, '1787000000');
+  const absPath = probePathFrom(prompt);
+  assert.ok(absPath.startsWith(`${worktree}/`), `probe path が worktree 配下でない: ${absPath}`);
+  const relPath = absPath.slice(worktree.length + 1);
+  assert.match(relPath, globToRegExp(ISOLATION_PROBE_CLEANUP_GLOB));
+});
+
+test('ISOLATION_PROBE_CLEANUP_GLOB: legacy 無 token 形 .devflow-tmp/.isolation-probe にもマッチする', () => {
+  assert.match('.devflow-tmp/.isolation-probe', globToRegExp(ISOLATION_PROBE_CLEANUP_GLOB));
+});
+
+test('ISOLATION_PROBE_CLEANUP_GLOB: 記号入り token（正規化後）の生成パスにもマッチする', () => {
+  const worktree = '/wt';
+  const prompt = isolationProbePrompt(worktree, 'pr/455:2000');
+  const absPath = probePathFrom(prompt);
+  const relPath = absPath.slice(worktree.length + 1);
+  assert.equal(relPath, '.devflow-tmp/.isolation-probe-pr-455-2000');
+  assert.match(relPath, globToRegExp(ISOLATION_PROBE_CLEANUP_GLOB));
 });

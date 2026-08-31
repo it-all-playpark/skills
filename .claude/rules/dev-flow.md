@@ -108,7 +108,10 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を対象にし、前 run の
   run 専用 scratch（journal payload / ui-verify state 等）の持ち越し防止
   （run 間衛生）も兼ねて同時に消す。pr-iterate は単体起動時のみ
-  `.devflow-tmp/.isolation-probe` を対象に cleanup を実行する — nested 起動（dev-flow →
+  canonical `_lib/isolation-probe.mjs` の exported 定数 `ISOLATION_PROBE_CLEANUP_GLOB`
+  （`.devflow-tmp/.isolation-probe*`。probe の token 形ファイル名 `.isolation-probe-<token>` と
+  issue #521 以前の legacy 無 token 形の両方にマッチする — issue #555）を対象に cleanup を
+  実行する — nested 起動（dev-flow →
   `workflow('pr-iterate')`）では probe 対象が実行中 dev-flow run の worktree 自身になり、
   `.devflow-tmp` 全体を消すと当該 run が既に書いた run 専用 scratch（journal payload 等の
   `.devflow-tmp` 配下生成物）を run 途中で失うため、
@@ -377,7 +380,7 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | issue-labels（`gh issue view --json labels` による empty-diff gate の cross-repo lazy ラベル probe。dhGate.empty===true 時のみ実行） | null / `ok:false` / schema 不一致 / throw | fail-safe（非 cross-repo 扱いで既存 empty-diff fail-closed 経路（差し戻し1回→再度空なら throw）を維持） | ラベル不明を人間の opt-in 成立と同一視しない（issue #432）。成果物は worktree/外部 repo に残存するため破壊的ではなく、throw メッセージにラベル付与のヒントを追記して人間の再実行を促す |
 | commit-ensure（subagent の bare git 単文シーケンス（`git status --porcelain` 空判定 → `git add -A` → `git commit` → `git push`（失敗時 `git push -u origin HEAD`）→ 再 `git status --porcelain` → `git rev-list "@{u}"..HEAD --count`）による決定論検証 — fix 適用直後の未コミット変更検証 + commit/push 回収。pr-iterate AC-3） | null / schema 不一致 / agent throw / dirty なのに committed・pushed が true でない | fail-safe（terminal='fix_failed' で人間へエスカレーション） | fix agent の self-report（applied:true）を commit 済みと同一視しない（incentive-structural: 完了宣言を当事者に self-judge させず決定論 git 検証で突合）。未コミット/未 push のまま次 iteration へ進むと再 review が stale な PR diff を見る（issue #437） |
 | worktree-dirty（subagent の bare `git status --porcelain` 単文 — pr-iterate 非 lgtm 終端時の作業ツリー dirty 検出。pr-iterate AC-2） | null / schema 不一致 / agent throw | fail-open（worktree_dirty='unknown' + 警告 log のみ。status・gate 判定へ影響しない） | advisory な終端観測 telemetry（'dirty'/'clean'/'unknown' の 3 値）。probe 失敗で run を落とすと異常終端の素通し（issue #437 が直す問題）を再生産する |
-| isolation-cleanup（subagent の bare `git -C <worktree> clean -fdx -- <target>` 単文 — probe 直前の残置物除去。target は dev-flow Setup が `.devflow-tmp` 全体、pr-iterate が単体起動時のみ `.devflow-tmp/.isolation-probe` 単体。nested 起動（dev-flow → `workflow('pr-iterate')`）では pr-iterate 側の呼び出し自体を skip する — dev-flow Setup 側の `.devflow-tmp` 全体 cleanup が同一 worktree の run 間衛生を既に担保済みのため） | `cleaned:false` / null / schema 不一致 / agent throw | fail-open（警告 log のみ。gate・merge tier・security floor へ影響しない） | probe 対象パスが run 毎に一意なため、除去に失敗しても probe は前 run の残置物と衝突せず成立する（cleanup 成功への依存を切った — issue #521）。cleanup 自体を fail-closed にすると、除去対象が無い正常系（新規 worktree）と区別できない失敗で run を落とす（issue #493） |
+| isolation-cleanup（subagent の bare `git -C <worktree> clean -fdx -- <target>` 単文 — probe 直前の残置物除去。target は dev-flow Setup が `.devflow-tmp` 全体、pr-iterate が単体起動時のみ canonical `_lib/isolation-probe.mjs` の exported 定数 `ISOLATION_PROBE_CLEANUP_GLOB`（`.devflow-tmp/.isolation-probe*` — probe の token 形・legacy 無 token 形の両方にマッチ、issue #555）単体。nested 起動（dev-flow → `workflow('pr-iterate')`）では pr-iterate 側の呼び出し自体を skip する — dev-flow Setup 側の `.devflow-tmp` 全体 cleanup が同一 worktree の run 間衛生を既に担保済みのため） | `cleaned:false` / null / schema 不一致 / agent throw | fail-open（警告 log のみ。gate・merge tier・security floor へ影響しない） | probe 対象パスが run 毎に一意なため、除去に失敗しても probe は前 run の残置物と衝突せず成立する（cleanup 成功への依存を切った — issue #521）。cleanup 自体を fail-closed にすると、除去対象が無い正常系（新規 worktree）と区別できない失敗で run を落とす（issue #493） |
 | cross-repo-artifacts（`_shared/scripts/cross-repo-artifacts.sh` による worktree 外 working tree の dirty 検証。cross-repo ラベル検出時のみ実行） | null / `ok:false` / schema 不一致 / found=0 | fail-safe（handoff 不成立で既存 empty-diff fail-closed 経路へフォールスルー。ラベルのみで gate を skip しない） | 決定論的証拠（dirty working tree）なしに gate を skip すると軸A invariant（決定論ゲートを LLM/ラベルで緩めない）に反する（issue #432） |
 
 ## dev-improve (self-improvement loop)

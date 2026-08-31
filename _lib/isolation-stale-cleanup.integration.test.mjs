@@ -1,8 +1,11 @@
 // isolation-stale-cleanup.integration.test.mjs
 //
-// issue #482 の再発（前 run が残した stale な `.devflow-tmp/.isolation-probe` により isolation が
-// 正常でも probe が written:false → fail-closed abort する）が、probe prompt の Read-then-Write
-// 冪等化を外しても起きないことを実 git リポジトリで検証する統合テスト（issue #493 AC-3）。
+// issue #482 の再発（前 run が残した stale な `.devflow-tmp/.isolation-probe*`（legacy 無 token 形・
+// token 付き形）により isolation が正常でも probe が written:false → fail-closed abort する）が、
+// probe prompt の Read-then-Write 冪等化を外しても起きないことを実 git リポジトリで検証する統合
+// テスト（issue #493 AC-3）。target は `ISOLATION_PROBE_CLEANUP_GLOB`（`.devflow-tmp/.isolation-probe*`）
+// を使い、probe が実際に書く token 形パスに前方一致でマッチすることを実 git pathspec wildmatch で
+// 検証する（issue #555）。
 //
 // 検証するのは isolationCleanupPrompt が指示する実コマンドそのもの。prompt から backtick で
 // 括られたコマンドを取り出して実行するため、prompt とテストの間にコマンド文字列の drift が起きない。
@@ -20,7 +23,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isolationCleanupPrompt, isolationProbePrompt } from './isolation-probe.mjs';
+import { isolationCleanupPrompt, isolationProbePrompt, ISOLATION_PROBE_CLEANUP_GLOB } from './isolation-probe.mjs';
 
 // prompt 内の `git -C <wt> clean -fdx -- <target>` を取り出す（drift 防止）。
 function cleanupCommandFor(worktree, target = '.devflow-tmp') {
@@ -55,6 +58,7 @@ function makeRepo() {
 function placeStaleArtifacts(dir) {
   mkdirSync(join(dir, '.devflow-tmp'), { recursive: true });
   writeFileSync(join(dir, '.devflow-tmp', '.isolation-probe'), 'ok');
+  writeFileSync(join(dir, '.devflow-tmp', '.isolation-probe-1000'), 'ok');
   writeFileSync(join(dir, '.devflow-tmp', 'stale-run-scratch.json'), '{"tests":"green"}');
 }
 
@@ -111,18 +115,26 @@ test('[stale-cleanup] .devflow-tmp の外（tracked / 他 untracked / 他 gitign
   }
 });
 
-// pr-iterate（nested 起動時は実行中 dev-flow run の worktree が対象）が使う file 単位の target。
-// probe artifact だけを消し、当該 run が既に書いた run 専用 scratch は run 途中で失わないこと。
-test('[stale-cleanup] target を probe artifact 単体に絞ると同じ .devflow-tmp 内の run 専用 scratch は残る', () => {
+// pr-iterate（nested 起動時は実行中 dev-flow run の worktree が対象）が使う glob target
+// （ISOLATION_PROBE_CLEANUP_GLOB = `.devflow-tmp/.isolation-probe*`）。probe が実際に書く
+// token 形（.isolation-probe-<token>）と legacy 無 token 形（.isolation-probe）の両方を除去し、
+// 当該 run が既に書いた run 専用 scratch は run 途中で失わないこと。execFileSync は shell を
+// 経由せず git へ pathspec を直接渡すため、本テストは git pathspec wildmatch そのものを実測する
+// （issue #555 の核心）。
+test('[stale-cleanup] glob target で token 形・legacy 形の両 probe artifact が除去され run 専用 scratch は残る', () => {
   const dir = makeRepo();
   try {
     placeStaleArtifacts(dir);
-    const [cmd, ...args] = cleanupCommandFor(dir, '.devflow-tmp/.isolation-probe');
+    const [cmd, ...args] = cleanupCommandFor(dir, ISOLATION_PROBE_CLEANUP_GLOB);
     execFileSync(cmd, args, { encoding: 'utf8' });
 
     assert.ok(
+      !existsSync(join(dir, '.devflow-tmp', '.isolation-probe-1000')),
+      'token 形 probe artifact は除去されるべき',
+    );
+    assert.ok(
       !existsSync(join(dir, '.devflow-tmp', '.isolation-probe')),
-      'probe artifact は除去されるべき',
+      'legacy 無 token 形 probe artifact は除去されるべき',
     );
     assert.ok(
       existsSync(join(dir, '.devflow-tmp', 'stale-run-scratch.json')),
@@ -133,10 +145,10 @@ test('[stale-cleanup] target を probe artifact 単体に絞ると同じ .devflo
   }
 });
 
-test('[stale-cleanup] probe artifact 単体 target も不在時は成功する（no-op 冪等）', () => {
+test('[stale-cleanup] glob target も不在時は成功する（no-op 冪等）', () => {
   const dir = makeRepo();
   try {
-    const [cmd, ...args] = cleanupCommandFor(dir, '.devflow-tmp/.isolation-probe');
+    const [cmd, ...args] = cleanupCommandFor(dir, ISOLATION_PROBE_CLEANUP_GLOB);
     execFileSync(cmd, args, { encoding: 'utf8' });
     assert.ok(!existsSync(join(dir, '.devflow-tmp')));
   } finally {
