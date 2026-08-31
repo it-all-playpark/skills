@@ -1,4 +1,4 @@
-# dev-flow Pipeline Atlas
+# i dev-flow Pipeline Atlas
 
 GitHub issue から LGTM までを 10 phase で駆動する `dev-flow` の実処理を図で示す。
 すべて実装ソース（`.claude/workflows/dev-flow.js` / `.claude/workflows/pr-iterate.js` /
@@ -27,28 +27,29 @@ wrapper skill が worktree を用意して `EnterWorktree` した上で、dynami
 起動する。phase 遷移とループは workflow script が JS で保持し、中間 state は外部 JSON ではなく
 script 変数に持つ。
 
+まず概観を示し、続いて 10 phase を 1 phase 1 図で展開する。
+
 ### 1.1 概観
 
 ```mermaid
 flowchart TD
-    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>base 解決 → worktree add/再利用 → EnterWorktree"]
+    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>base 解決 → worktree → EnterWorktree"]
     PF --> W["Workflow: dev-flow-run"]
-
-    W --> S["1. Setup<br/>base 解決 / worktree / isolation probe / deps"]
-    S --> A["2. Analyze<br/>要件・AC 抽出 → classifyShape"]
-    A --> P["3. Plan<br/>shape 別に plan ⇄ plan-reviewer"]
-    P --> I["4. Implement<br/>parallel → serial"]
-    I --> V["5. Validate<br/>test green + empty-diff gate"]
-    V --> SF["6. Security floor<br/>danger-grep / refloor / runEval 判定"]
-    SF --> E["7. Evaluate<br/>micro path は skip"]
-    E --> R["8. PR<br/>commit → PR → lite / full 分岐"]
-    R --> FR["9. Final reconcile<br/>fixes_applied が 1 以上のときのみ"]
-    FR --> MT["10. Merge tier<br/>HOLD / REVIEW / AUTO"]
+    W --> S["1. Setup"]
+    S --> A["2. Analyze"]
+    A --> P["3. Plan"]
+    P --> I["4. Implement"]
+    I --> V["5. Validate"]
+    V --> SF["6. Security floor"]
+    SF --> E["7. Evaluate"]
+    E --> R["8. PR"]
+    R --> FR["9. Final reconcile"]
+    FR --> MT["10. Merge tier"]
     MT --> HU["merge は常に人間"]
 
-    S -.->|"base 解決不能 / 起点不一致 / probe written:false"| AB["throw<br/>workflow abort"]
+    S -.->|"fail-closed"| AB["throw / workflow abort"]
     V -.->|"空 diff が 2 回連続"| AB
-    A -.->|"AC 空 / 曖昧 / provenance 不合格"| NC["status: needs_clarification<br/>worktree は保持"]
+    A -.->|"AC 空 / 曖昧 / provenance 不合格"| NC["needs_clarification<br/>worktree は保持"]
     I -.->|"NEEDS_CONTEXT 解消不能"| NC
     SF -.->|"risk 欠落・実行不能"| FC["fail-closed<br/>merge tier HOLD 強制"]
 ```
@@ -56,166 +57,195 @@ flowchart TD
 破線は正常系から外れる経路。`needs_clarification` は worktree を保持したまま返るので、
 人間が確認して再起動すれば同じ worktree が再利用される。
 
-### 1.2 Setup / Analyze / Plan
+### 1.2 Setup
 
-Setup のゲート（base 解決・worktree 起点検証・isolation probe）はいずれも fail-closed で、
-通らなければ run 自体が中断する。前 2 つは `setup-base` という単一 probe に統合されており、
-1 回の exec-proxy 応答を `resolveBase` と `checkWorktreeBase` がそれぞれ自分のフィールドだけ読む。
+3 つのゲート（base 解決・worktree 起点検証・isolation probe）はいずれも fail-closed で、
+通らなければ run 自体が中断する。
 
 ```mermaid
 flowchart TD
-    WF["Workflow: dev-flow-run"] --> SETUP
+    IN["Workflow 起動"] --> S1["setup-base<br/>統合 probe・1 呼び出し"]
+    S1 --> S3["worktree 作成 / 再利用"]
+    S3 --> S4["isolation cleanup<br/>fail-open"]
+    S4 --> S5["isolation probe<br/>Write tool で書けるか"]
+    S5 --> S6["deps install<br/>fail-open"]
+    S6 --> OUT["Analyze へ"]
 
-    subgraph SETUP["Phase: Setup"]
-        S1["setup-base（統合 probe・1 呼び出し）<br/>A: base 解決（明示→origin 検証 / 未指定→origin/dev→origin/HEAD）<br/>B: 既存 worktree の upstream が origin/BASE と一致するか<br/>C: epoch（clock start mark を給電・省略可）"]
-        S3["worktree 作成/再利用<br/>repo 内 .claude/worktrees/df-N → 不可なら repo 外 repo-wt/df-N"]
-        S4["isolation cleanup<br/>.devflow-tmp を git clean（fail-open）"]
-        S5["isolation probe<br/>dev-runner-haiku-wo が Write tool で書けるか"]
-        S6["deps install（fail-open）"]
-        S1 --> S3 --> S4 --> S5 --> S6
-    end
-
-    S1 -.->|"base 解決不能 / worktree 起点不一致"| ABORT["throw / workflow abort"]
-    S5 -.->|"written:false"| ABORT
-
-    SETUP --> ANA
-
-    subgraph ANA["Phase: Analyze"]
-        A0{"DEPTH が standard ?"}
-        A1["contract probe<br/>analyze-issue.sh --contract を決定論 parse"]
-        A2["analyze（dev-runner）<br/>要件・AC・issue_type・見積ファイル数・breaking"]
-        A3{"provenance 検証 OK ?"}
-        A4{"AC 空 or ambiguities が 2 超 ?"}
-        A5["classifyShape<br/>micro / standard / complex + safety floor"]
-        A0 -->|yes| A1
-        A0 -->|no| A2
-        A1 -->|"ok かつ whitelist 合格"| A3
-        A1 -->|"失敗（fail-open）"| A2
-        A2 --> A3
-        A3 -->|no| NC["status: needs_clarification<br/>worktree は保持"]
-        A3 -->|yes| A4
-        A4 -->|yes| NC
-        A4 -->|no| A5
-    end
-
-    ANA --> PLAN
-
-    subgraph PLAN["Phase: Plan"]
-        P0{"shape"}
-        P1["plan 1 発<br/>plan-reviewer 0 回（triviality gate）"]
-        P2["plan 1 発<br/>plan-reviewer 0 回"]
-        P3["dev-planner ⇄ plan-reviewer ループ<br/>PLAN_MAX / PLAN_STUCK で early-cutoff"]
-        P0 -->|micro| P1
-        P0 -->|standard| P2
-        P0 -->|complex| P3
-    end
+    S1 -.->|"base 解決不能<br/>worktree 起点不一致"| AB["throw / abort"]
+    S5 -.->|"written:false"| AB
 ```
 
-### 1.3 Implement / Validate / Security floor / Evaluate
+`setup-base` は 1 回の exec-proxy 応答で 3 つの情報を返す統合 probe。
 
-Implement は **parallel を先に fan-out してから serial** を流す。`parallel` に置けるのは
-file_changes が互いに disjoint な task のみで、plan-reviewer が検証する。
+- **A: base 解決** — 明示指定なら origin に存在するか検証、未指定なら `origin/dev` → `origin/HEAD` の順
+- **B: worktree 起点検証** — 既存 worktree の upstream が `origin/BASE` と一致するか
+- **C: epoch** — clock の start mark を給電する（省略可・fail-open）
+
+A と B は `resolveBase` / `checkWorktreeBase` がそれぞれ自分のフィールドだけを読む。
+worktree は repo 内 `.claude/worktrees/df-N` を優先し、書き込めない場合のみ repo 外
+`repo-wt/df-N` へ退避する。
+
+### 1.3 Analyze
 
 ```mermaid
 flowchart TD
-    subgraph IMP["Phase: Implement"]
-        I1["parallel task を fan-out<br/>file_changes は disjoint / 単一 worktree"]
-        I2["serial task を直列実行（依存あり）"]
-        I3{"status"}
-        I1 --> I2 --> I3
-        I3 -->|BLOCKED| I4["別アプローチで再計画<br/>BLOCK_MAX"] --> I1
-        I3 -->|NEEDS_CONTEXT| I5["comprehensive 再分析 → 再試行"]
-        I5 -->|"解消不能"| NC["status: needs_clarification"]
-    end
-
-    IMP --> VAL
-
-    subgraph VAL["Phase: Validate"]
-        V1["test 実行（dev-runner-haiku）"]
-        V2{"green ?"}
-        V3["green-fix（implementer）<br/>テスト弱体化は禁止"]
-        V4["empty-diff gate<br/>working tree が origin/BASE と一致か"]
-        V1 --> V2
-        V2 -->|no| V3 --> V1
-        V2 -->|"yes / no_tests / GREEN_MAX 到達"| V4
-        V4 -->|"空 diff"| V5["cross-repo probe → 差し戻し 1 回<br/>再度空なら throw"]
-    end
-
-    VAL --> SEC
-
-    subgraph SEC["Phase: Security floor"]
-        C1["secfloor-classify.sh（統合 exec-proxy・1 呼び出し）<br/>risk / files / struct / diffhash を一括取得<br/>label は danger-grep 据え置き（telemetry 連続性）"]
-        C2["refloorShape（files）<br/>raise-only で EFFECTIVE_SHAPE 確定"]
-        C3["format_only を count から除外（struct）"]
-        C4["ui-verify config（UI パス touch 時のみ・別 proxy）"]
-        C5{"runEval ?<br/>EFFECTIVE_SHAPE が micro 以外<br/>or danger hit / testsurf / 宣言外変更<br/>/ green-fix / implementer drop / UI touch"}
-        C1 --> C2 --> C3 --> C4 --> C5
-        C1 -.->|"risk 欠落・実行不能"| CFC["fail-closed<br/>SEC seed を全 unchecked → merge tier HOLD"]
-    end
-
-    C5 -->|false| PRP["micro path: Evaluate skip<br/>evaluator 0 回"]
-    C5 -->|true| EVAL
-
-    subgraph EVAL["Phase: Evaluate"]
-        E1["evaluator<br/>standard は 1 パス / complex は EVAL_MAX まで"]
-        E2{"verdict"}
-        E3["design 差し戻し: replan + reimpl<br/>DESIGN_REPLAN_MAX"]
-        E4["impl fix（implementer）<br/>未解消 critical を最優先"]
-        E5["Evaluate 完了<br/>AC evidence と未解消 critical を merge tier へ引き渡す"]
-        E1 --> E2
-        E2 -->|"fail: design"| E3 --> E1
-        E2 -->|"fail: impl"| E4 --> E1
-        E2 -->|pass| E5
-    end
-
-    EVAL --> PRP
+    IN["Setup 完了"] --> A0{"DEPTH が standard ?"}
+    A0 -->|yes| A1["contract probe<br/>決定論 parse"]
+    A0 -->|no| A2["analyze<br/>dev-runner"]
+    A1 -->|"ok かつ whitelist 合格"| A3
+    A1 -->|"失敗（fail-open）"| A2
+    A2 --> A3{"provenance 検証 OK ?"}
+    A3 -->|no| NC["needs_clarification<br/>worktree は保持"]
+    A3 -->|yes| A4{"AC 空 or<br/>ambiguities が 2 超 ?"}
+    A4 -->|yes| NC
+    A4 -->|no| A5["classifyShape"]
+    A5 --> OUT["Plan へ"]
 ```
 
-### 1.4 PR / pr-iterate / Final reconcile / Merge tier
+contract 経路は `analyze-issue.sh --contract` の出力を決定論 parse する高速経路で、
+失敗しても sonnet の analyze へ fail-open で落ちる。provenance 検証は analyze 結果が
+実際の issue 取得に基づくことを突き合わせる fail-closed のゲートで、捏造した要件を
+Implement へ流さないためにある。
+
+### 1.4 Plan
 
 ```mermaid
 flowchart TD
-    PRP["Evaluate 完了 / micro path"] --> PR
+    IN["shape 確定"] --> P0{"shape"}
+    P0 -->|micro| P1["plan 1 発<br/>plan-reviewer 0 回"]
+    P0 -->|standard| P2["plan 1 発<br/>plan-reviewer 0 回"]
+    P0 -->|complex| P3["dev-planner ⇄ plan-reviewer<br/>PLAN_MAX / PLAN_STUCK"]
+    P1 --> OUT["Implement へ"]
+    P2 --> OUT
+    P3 --> OUT
+```
 
-    subgraph PR["Phase: PR"]
-        R1["diff-hash 比較<br/>Evaluate 時点と不一致なら stale-eval"]
-        R2["git-commit → git-pr（dev-runner）"]
-        R4{"LITE ?<br/>micro かつ runEval=false かつ danger clean"}
-        R1 --> R2 --> R4
-    end
+計画は `{serial, parallel}` に分解される。`parallel` に置けるのは file_changes が互いに
+disjoint な task のみで、plan-reviewer がそれを検証する。
 
+### 1.5 Implement
+
+parallel を先に fan-out してから serial を流す。並列は単一 worktree 内で行い、
+issue 分割も integration branch も使わない。
+
+```mermaid
+flowchart TD
+    IN["plan 確定"] --> I1["parallel task を fan-out<br/>file_changes は disjoint"]
+    I1 --> I2["serial task を直列実行"]
+    I2 --> I3{"status"}
+    I3 -->|OK| OUT["Validate へ"]
+    I3 -->|BLOCKED| I4["別アプローチで再計画<br/>BLOCK_MAX"]
+    I4 --> I1
+    I3 -->|NEEDS_CONTEXT| I5["comprehensive 再分析"]
+    I5 -->|"解消"| I1
+    I5 -->|"解消不能"| NC["needs_clarification"]
+```
+
+### 1.6 Validate
+
+```mermaid
+flowchart TD
+    IN["実装完了"] --> V1["test 実行"]
+    V1 --> V2{"green ?"}
+    V2 -->|no| V3["green-fix<br/>テスト弱体化は禁止"]
+    V3 --> V1
+    V2 -->|"yes / no_tests<br/>GREEN_MAX 到達"| V4{"empty-diff gate<br/>origin/BASE と一致 ?"}
+    V4 -->|"差分あり"| OUT["Security floor へ"]
+    V4 -->|"空 diff"| V5["cross-repo probe<br/>差し戻し 1 回"]
+    V5 -->|"差分あり"| OUT
+    V5 -->|"再度空"| AB["throw / abort"]
+```
+
+format / lint はこの phase の責務外で、test の結果だけを見る。
+`GREEN_MAX` 到達時は red のまま次へ進むが、未解消の状態は merge tier が HOLD で受け止める。
+
+### 1.7 Security floor
+
+```mermaid
+flowchart TD
+    IN["test green"] --> C1["secfloor-classify.sh<br/>統合 exec-proxy・1 呼び出し"]
+    C1 --> C2["refloorShape<br/>EFFECTIVE_SHAPE 確定"]
+    C2 --> C3["format_only を count から除外"]
+    C3 --> C4["ui-verify config<br/>UI touch 時のみ"]
+    C4 --> C5{"runEval ?"}
+    C5 -->|true| OUT["Evaluate へ"]
+    C5 -->|false| SKIP["micro path<br/>evaluator 0 回"]
+
+    C1 -.->|"risk 欠落・実行不能"| FC["fail-closed<br/>SEC 全 unchecked → HOLD"]
+```
+
+`secfloor-classify.sh` は risk（danger-grep）/ files（realized diff）/ struct（structural 分類）/
+diffhash を 1 回で返す。フィールドごとに失敗セマンティクスが分かれており、**risk の欠落だけは
+fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒す（軸A invariant）。
+
+`runEval` が true になる条件は次のいずれか。
+
+- `EFFECTIVE_SHAPE` が micro 以外
+- danger-grep hit / test-weakening 検出 / plan 宣言外の変更
+- green-fix が発生した / implementer が task を落とした / UI パスを touch した
+
+### 1.8 Evaluate
+
+```mermaid
+flowchart TD
+    IN["runEval=true"] --> E1["evaluator<br/>standard=1 パス / complex=EVAL_MAX"]
+    E1 --> E2{"verdict"}
+    E2 -->|"fail: design"| E3["replan + reimpl<br/>DESIGN_REPLAN_MAX"]
+    E3 --> E1
+    E2 -->|"fail: impl"| E4["impl fix<br/>未解消 critical を最優先"]
+    E4 --> E1
+    E2 -->|pass| OUT["PR へ"]
+```
+
+standard は 1 パスのみで差し戻さない。未解消の critical は merge tier の HOLD が担保する。
+
+### 1.9 PR
+
+```mermaid
+flowchart TD
+    IN["Evaluate 完了 / micro path"] --> R1["diff-hash 比較<br/>不一致なら stale-eval"]
+    R1 --> R2["git-commit → git-pr"]
+    R2 --> R4{"LITE ?<br/>micro かつ runEval=false<br/>かつ danger clean"}
     R4 -->|yes| LITE["lite route<br/>pr-reviewer 1-pass → ci-check"]
-    R4 -->|no| FULL["workflow: pr-iterate<br/>review ⇄ fix ループ<br/>AC と nested context（cwd / head_ref / repo / epoch）を渡す"]
-    LITE -->|"clean かつ CI passed / no_checks"| LGTM["status: lgtm<br/>fixes_applied=0"]
-    LITE -->|"blocking finding or CI not green"| FULL
-    FULL --> LGTM2["status + fixes_applied"]
-
-    LGTM --> FR
-    LGTM2 --> FR
-
-    subgraph FR["Phase: Final reconcile"]
-        F0{"fixes_applied が 1 以上 ?"}
-        F1["worktree を PR 最終 HEAD へ ff-sync"]
-        F2["test suite 再実行"]
-        F3["changed-files-final で UI touch / 宣言外を再判定<br/>必要時 ui-verify 再実行<br/>結果は Merge tier へ持ち越して再実行を skip"]
-        F4["final AC reconcile"]
-        F0 -->|no| FSKIP["skipped（agent 呼び出しゼロ）"]
-        F0 -->|yes| F1 --> F2 --> F3 --> F4
-    end
-
-    FR --> MT
-
-    subgraph MT["Phase: Merge tier"]
-        M0["diff-hash-merge<br/>Security floor の tree OID と一致すれば<br/>danger-grep-final / changed-files を skip"]
-        M1["gh pr view で mergeable / mergeStateStatus"]
-        M2["classifyMergeTier"]
-        M3["終端サマリを PR へ投稿<br/>応答の epoch が clock end mark を給電"]
-        M4["journal telemetry 記録"]
-        M0 --> M1 --> M2 --> M3 --> M4
-    end
-
-    MT --> HUMAN["merge は常に人間<br/>全 tier で例外なし"]
+    R4 -->|no| FULL["workflow: pr-iterate"]
+    LITE -->|"clean かつ CI green"| OUT["Final reconcile へ"]
+    LITE -->|"blocking finding<br/>CI 非 green"| FULL
+    FULL --> OUT
 ```
+
+nested 起動する `pr-iterate` には issue の acceptance criteria と
+nested context（cwd / head_ref / repo / epoch）を渡す。
+
+### 1.10 Final reconcile
+
+```mermaid
+flowchart TD
+    IN["pr-iterate 終端"] --> F0{"fixes_applied が 1 以上 ?"}
+    F0 -->|no| FSKIP["skipped<br/>agent 呼び出しゼロ"]
+    F0 -->|yes| F1["worktree を PR 最終 HEAD へ ff-sync"]
+    F1 --> F2["test suite 再実行"]
+    F2 --> F3["changed-files-final で<br/>UI touch / 宣言外を再判定"]
+    F3 --> F4["final AC reconcile"]
+    FSKIP --> OUT["Merge tier へ"]
+    F4 --> OUT
+```
+
+`changed-files-final` の結果は Merge tier へ持ち越され、同一 tree に対する再実行を skip する。
+
+### 1.11 Merge tier
+
+```mermaid
+flowchart TD
+    IN["Final reconcile 完了"] --> M0["diff-hash-merge"]
+    M0 --> M1["gh pr view で mergeable"]
+    M1 --> M2["classifyMergeTier"]
+    M2 --> M3["終端サマリを PR へ投稿"]
+    M3 --> M4["journal telemetry 記録"]
+    M4 --> HU["merge は常に人間"]
+```
+
+`diff-hash-merge` が Security floor 時点の tree OID と一致すれば、`danger-grep-final` と
+`changed-files` の再実行を skip する。tier の判定ロジックは [4. merge tier 判定](#4-merge-tier-判定) を参照。
 
 ---
 
