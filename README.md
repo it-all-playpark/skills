@@ -248,6 +248,10 @@ config = load_skill_config("ga-analyzer")
 > `dev-flow` の判断系 leaf (計画/レビュー/実装/評価) は subagent (`.claude/agents/`) として実装。
 > 最終 PR レビューは `pr-iterate` workflow (`/pr-iterate <pr>` で単体起動も可)。
 
+📊 **[dev-flow Pipeline Atlas](docs/dev-flow-atlas.md)** — 10 phase のパイプライン・shape 判定・
+`pr-iterate` ループ・merge tier 判定を mermaid 図で示した実装ベースの索引。
+規約の正典は [`.claude/rules/dev-flow.md`](.claude/rules/dev-flow.md)。
+
 ### Git操作
 
 | スキル | 説明 |
