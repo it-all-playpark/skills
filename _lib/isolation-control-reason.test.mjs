@@ -22,7 +22,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { isolationCleanupPrompt, isolationProbePrompt, isolationFailureMessage } from './isolation-probe.mjs';
+import {
+  isolationCleanupPrompt,
+  isolationProbePrompt,
+  isolationFailureMessage,
+  ISOLATION_PROBE_CLEANUP_GLOB,
+} from './isolation-probe.mjs';
 // isolationErrorKind は prompt/メッセージ文字列を生成しないため（純粋な分類関数）、
 // このファイルの検査対象（FORBIDDEN スキャン）には含めない。
 
@@ -60,7 +65,7 @@ function assertNoControlReason(text, label) {
 
 const CANONICAL_SAMPLES = [
   ['isolationCleanupPrompt(dir)', isolationCleanupPrompt('/repo/.claude/worktrees/df-1', '.devflow-tmp')],
-  ['isolationCleanupPrompt(file)', isolationCleanupPrompt('/repo', '.devflow-tmp/.isolation-probe')],
+  ['isolationCleanupPrompt(probe-glob)', isolationCleanupPrompt('/repo', ISOLATION_PROBE_CLEANUP_GLOB)],
   ['isolationProbePrompt', isolationProbePrompt('/repo/.claude/worktrees/df-1', '1787000000')],
   // error は呼び出し元が受け取った probe error を verbatim 転写する引数であり、
   // 関数側の記述ではない。関数自身の文言だけを検査するため、kind を切り替えるのに必要な

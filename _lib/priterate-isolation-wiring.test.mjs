@@ -130,20 +130,22 @@ test('isolation cleanup failOpenAgent 呼び出しが agentType/schema/label/pha
   // 先頭の宣言キーワードは const ではなくなった（呼び出し形自体・agentType/schema/label/phase は不変）。
   assert.match(
     src,
-    /isoClean = await failOpenAgent\(isolationCleanupPrompt\(isoWt,\s*'\.devflow-tmp\/\.isolation-probe'\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_CLEANUP,\s*label:\s*'isolation-cleanup',\s*phase:\s*'Iterate'\s*\}\)/,
+    /isoClean = await failOpenAgent\(isolationCleanupPrompt\(isoWt,\s*ISOLATION_PROBE_CLEANUP_GLOB\),\s*\{\s*agentType:\s*'dev-runner-haiku',\s*schema:\s*ISOLATION_CLEANUP,\s*label:\s*'isolation-cleanup',\s*phase:\s*'Iterate'\s*\}\)/,
     'isolation cleanup の failOpenAgent() 呼び出しが期待する agentType/schema/label/phase で見つからない',
   );
 });
 
 // nested 起動（dev-flow → workflow('pr-iterate')）では isoWt が実行中 dev-flow run の worktree
 // 自身になるため、`.devflow-tmp` 全体を消すと当該 run が既に書いた run 専用 scratch（journal payload 等）を run 途中で失う。
-// pr-iterate 側の除去範囲は probe artifact 単体であることを pin する。
-test('pr-iterate の cleanup 対象は probe artifact 単体（.devflow-tmp 全体を消さない）', () => {
+// pr-iterate 側の除去範囲は canonical の exported 定数 ISOLATION_PROBE_CLEANUP_GLOB（自由文字列リテラルではない）
+// であり、`.devflow-tmp` 全体ではないことを pin する（issue #555）。
+test('pr-iterate の cleanup 対象は ISOLATION_PROBE_CLEANUP_GLOB 定数参照（自由文字列リテラルでも .devflow-tmp 全体でもない）', () => {
   const idx = src.indexOf('isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt');
   assert.notStrictEqual(idx, -1, 'isolation cleanup 呼び出しが見つからない');
   const call = src.slice(idx, src.indexOf('\n', idx));
-  assert.match(call, /isolationCleanupPrompt\(isoWt, '\.devflow-tmp\/\.isolation-probe'\)/);
+  assert.match(call, /isolationCleanupPrompt\(isoWt, ISOLATION_PROBE_CLEANUP_GLOB\)/);
   assert.doesNotMatch(call, /isolationCleanupPrompt\(isoWt, '\.devflow-tmp'\)/);
+  assert.doesNotMatch(call, /isolationCleanupPrompt\(isoWt, '[^)]*'\)/, 'cleanup target に自由文字列リテラルを渡してはならない（定数参照必須 — issue #555 AC-1）');
 });
 
 test('ISOLATION_CLEANUP schema が cleaned(boolean, required) を持つ', () => {
