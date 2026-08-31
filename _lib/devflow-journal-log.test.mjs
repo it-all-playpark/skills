@@ -381,3 +381,29 @@ test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場�
     `stage2 throw 時 result.journal_log_status は 'log_failed' のはずだが '${result?.journal_log_status}' だった`,
   );
 });
+
+test('[journal-log] source pin: dev-flow.js の 2 call site（writeFailureTelemetry / Merge tier）が inline 区間外で runJournalHandoff を呼び、logLabel が現行値のまま（choreography の手写しが残っていない）', () => {
+  const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
+  assert.ok(anchor >= 0, 'journal-handoff inline END marker が見つからない');
+
+  assert.ok(
+    src.indexOf("logLabel: 'journal-log-failure',", anchor) > anchor,
+    "writeFailureTelemetry の call site の logLabel が現行値 'journal-log-failure' でない",
+  );
+  assert.ok(
+    src.indexOf("logLabel: 'journal-log',", anchor) > anchor,
+    "Merge tier の call site の logLabel が現行値 'journal-log' でない",
+  );
+
+  let callSiteCount = 0;
+  let searchFrom = anchor;
+  for (;;) {
+    const idx = src.indexOf('runJournalHandoff({', searchFrom);
+    if (idx === -1) break;
+    callSiteCount += 1;
+    searchFrom = idx + 1;
+  }
+  assert.ok(callSiteCount >= 2, `inline 区間より後（call site）に runJournalHandoff 呼び出しが 2 回以上無い（実際 ${callSiteCount} 回）`);
+
+  assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
+});

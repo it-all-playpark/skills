@@ -323,26 +323,12 @@ test('[journal-log] stage1 の journal-save(agent) が throw した場合 journa
   );
 });
 
-// issue #499 F4: pr-iterate.js のソース構造 pin — journal-log(stage2) の trackedAgent 呼び出しは
-// try ブロック内にあり、かつその直前で journalLogStatus が 'log_failed' へ preset されていること
-// （『stage2 throw が save_failed と誤報告されない』不変条件の pin。preset が無いと stage2 throw時に
-// 初期値 'save_failed' のまま返ってしまい、失敗した段（stage2）と観測される段（stage1 相当）が
-// 食い違う）。
-test('[journal-log] source pin: journal-log(stage2) 呼び出しは try ブロック内にあり、直前で journalLogStatus が log_failed へ preset されている', () => {
-  const tryIdx = src.indexOf('let journalLogStatus = \'save_failed\'');
-  assert.ok(tryIdx >= 0, 'journalLogStatus の初期化行が見つからない');
-
-  const presetIdx = src.indexOf("journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })", tryIdx);
-  assert.ok(presetIdx > tryIdx, 'stage2 呼び出し前の log_failed preset 行が見つからない');
-
-  const stage2CallIdx = src.indexOf("agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log'", presetIdx);
-  assert.ok(stage2CallIdx > presetIdx, 'log_failed preset の後に journal-log(stage2) の trackedAgent 呼び出しが続くべき');
-
-  // preset と stage2 呼び出しの間が try ブロックの開始（`try {`）より後、かつ対応する `} catch (e) {`
-  // より前にあることを、直近の try/catch トークンで確認する。
-  const tryBlockOpenIdx = src.lastIndexOf('try {', presetIdx);
-  assert.ok(tryBlockOpenIdx >= 0 && tryBlockOpenIdx < presetIdx, 'log_failed preset は try ブロック内にあるべき');
-
-  const catchIdx = src.indexOf('} catch (e) {', stage2CallIdx);
-  assert.ok(catchIdx > stage2CallIdx, 'journal-log(stage2) 呼び出しの後に対応する catch 節が続くべき');
+test('[journal-log] source pin: 終端の journal handoff は inline 区間外の call site が runJournalHandoff を呼び、logLabel は journal-log のまま（choreography の手写しが残っていない）', () => {
+  const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
+  assert.ok(anchor >= 0, 'journal-handoff inline END marker が見つからない');
+  const callIdx = src.indexOf('runJournalHandoff({', anchor);
+  assert.ok(callIdx > anchor, 'inline 区間より後（call site）に runJournalHandoff 呼び出しが無い');
+  const labelIdx = src.indexOf("logLabel: 'journal-log',", callIdx);
+  assert.ok(labelIdx > callIdx, "call site の logLabel が現行値 'journal-log' でない");
+  assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
 });

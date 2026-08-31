@@ -19,6 +19,7 @@ const EXPECTED_CAPABILITY_IDS = [
   'agent_schema',
   'model_routing',
   'effort_routing',
+  'agent_opts_effort_accepted',
   'parallel_fanout',
   'nested_workflow',
   'pause_resume',
@@ -37,6 +38,9 @@ function defaultAgentReturn(label) {
   }
   if (label === 'canary:model-report') {
     return { model_id: 'claude-haiku-4-5' };
+  }
+  if (label === 'canary:effort-opts') {
+    return { ok: true, token: 'EFFORT-OPTS' };
   }
   if (label.startsWith('canary:par:')) {
     const token = label.slice('canary:par:'.length);
@@ -150,7 +154,7 @@ function findCap(report, id) {
 // 1. Happy path
 // ============================================================
 
-test('[canary] happy path: 9 capability が全て enum 内・agent/model/parallel/nested=pass・direct系/pause/effort=unsupported', async () => {
+test('[canary] happy path: 10 capability が全て enum 内・agent/model/parallel/nested/opts受理=pass・direct系/pause/effort=unsupported', async () => {
   const src = readFileSync(canaryPath, 'utf8');
   const { ctx } = makeCanarySandbox();
   const { result, error } = await runCanaryInSandbox(src, ctx);
@@ -160,11 +164,11 @@ test('[canary] happy path: 9 capability が全て enum 内・agent/model/paralle
 
   const report = result;
 
-  assert.equal(report.canary_version, '1.0.0');
+  assert.equal(report.canary_version, '1.1.0');
   assert.equal(report.claude_code_version, '2.1.99');
 
   assert.ok(Array.isArray(report.capabilities));
-  assert.equal(report.capabilities.length, 9, 'capabilities は正確に9件であること');
+  assert.equal(report.capabilities.length, 10, 'capabilities は正確に10件であること');
 
   // report.capabilities は vm sandbox（別 realm）内で生成された配列のため、.map()/.sort() を
   // そのまま呼ぶと結果が sandbox realm の Array のままになり、deepStrictEqual が
@@ -172,7 +176,7 @@ test('[canary] happy path: 9 capability が全て enum 内・agent/model/paralle
   // host realm の配列へ変換してから比較する。
   const actualIds = Array.from(report.capabilities, (c) => c.id).sort();
   const expectedIds = Array.from(EXPECTED_CAPABILITY_IDS).sort();
-  assert.deepEqual(actualIds, expectedIds, 'capability id set が期待の9個と一致すること');
+  assert.deepEqual(actualIds, expectedIds, 'capability id set が期待の10個と一致すること');
 
   for (const c of report.capabilities) {
     assert.ok(['pass', 'fail', 'unsupported'].includes(c.status), `id=${c.id} の status が enum 内であること (got ${c.status})`);
@@ -188,6 +192,10 @@ test('[canary] happy path: 9 capability が全て enum 内・agent/model/paralle
   assert.equal(findCap(report, 'direct_shell').status, 'unsupported');
   assert.equal(findCap(report, 'direct_import').status, 'unsupported');
   assert.equal(findCap(report, 'pause_resume').status, 'unsupported');
+
+  const optsAccepted = findCap(report, 'agent_opts_effort_accepted');
+  assert.equal(optsAccepted.status, 'pass');
+  assert.match(optsAccepted.detail, /受理されたことしか判定できない/);
 
   assert.equal(report.bridge_sunset.exec_proxy_removable, false);
   assert.equal(report.bridge_sunset.inline_generator_removable, false);
@@ -265,6 +273,35 @@ test('[canary] model-report が非haiku model_id を返すと model_routing=fail
   assertNoStructuralError(error);
   assert.ok(result);
   assert.equal(findCap(result, 'model_routing').status, 'fail');
+});
+
+// ============================================================
+// 4b. agent() が opts.effort 指定で throw する → agent_opts_effort_accepted=unsupported
+// ============================================================
+
+test('[canary] agent() が opts.effort 指定で throw する場合 agent_opts_effort_accepted=unsupported かつ他 capability・report 生成に影響しない', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx } = makeCanarySandbox({
+    agentOverrides: {
+      'canary:effort-opts': () => { throw new Error('unknown option: effort'); },
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result, 'opts probe が throw しても report が return されること');
+
+  const report = result;
+  assert.equal(findCap(report, 'agent_opts_effort_accepted').status, 'unsupported');
+  assert.match(findCap(report, 'agent_opts_effort_accepted').detail, /throw/);
+
+  // 他 capability は happy path 相当のまま
+  assert.equal(findCap(report, 'agent_schema').status, 'pass');
+  assert.equal(findCap(report, 'model_routing').status, 'pass');
+  assert.equal(findCap(report, 'parallel_fanout').status, 'pass');
+  assert.equal(findCap(report, 'nested_workflow').status, 'pass');
+  assert.equal(report.report_path, '/home/u/.claude/logs/dev-flow-canary/canary-1.json');
+  assert.equal(report.capabilities.length, 10);
 });
 
 // ============================================================

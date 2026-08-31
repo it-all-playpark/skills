@@ -7,7 +7,7 @@ set -euo pipefail
 #
 # canary report schema (canonical, shared with dev-flow-canary workflow):
 #   {
-#     "canary_version": "1.0.0",
+#     "canary_version": "1.1.0",
 #     "claude_code_version": "<string|'unknown'>",
 #     "timestamp_utc": "<ISO8601|'unknown'>",
 #     "capabilities": [ {"id": "<id>", "status": "pass|fail|unsupported", "detail": "<string>"} ],
@@ -16,9 +16,9 @@ set -euo pipefail
 #     "report_path": "<string|null>"
 #   }
 #
-# capabilities の id は正確に次の 9 個 (過不足・未知 id は schema violation):
-#   agent_schema, model_routing, effort_routing, parallel_fanout, nested_workflow,
-#   pause_resume, direct_fs, direct_shell, direct_import
+# capabilities の id は正確に次の 10 個 (過不足・未知 id は schema violation):
+#   agent_schema, model_routing, effort_routing, agent_opts_effort_accepted, parallel_fanout,
+#   nested_workflow, pause_resume, direct_fs, direct_shell, direct_import
 #
 # Exit 0: valid. Summary JSON on stdout:
 #   {"ok":true,"canary_version":...,"claude_code_version":...,
@@ -26,13 +26,13 @@ set -euo pipefail
 #    "failed_ids":[...],"unsupported_ids":[...],"bridge_sunset":{...}}
 # Exit 2: invalid. {"ok":false,"error":"<reason>"} on stdout.
 #
-# canary_version is a const ("1.0.0") — no legacy fallback / version branching
+# canary_version is a const ("1.1.0") — no legacy fallback / version branching
 # is accepted (repo convention: 後方互換 scaffolding を作らない).
 
 SCRIPT_DIR_VCR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR_VCR/../../_lib/common.sh"
 
-EXPECTED_CAPABILITY_IDS='["agent_schema","model_routing","effort_routing","parallel_fanout","nested_workflow","pause_resume","direct_fs","direct_shell","direct_import"]'
+EXPECTED_CAPABILITY_IDS='["agent_schema","model_routing","effort_routing","agent_opts_effort_accepted","parallel_fanout","nested_workflow","pause_resume","direct_fs","direct_shell","direct_import"]'
 
 # Emit {"ok":false,"error":...} to stdout and exit 2 (invalid report — distinct
 # from die_json's stderr + arbitrary exit code, per this script's contract).
@@ -74,8 +74,8 @@ done
 
 # canary_version const check (no backward-compat fallback)
 CANARY_VERSION="$(echo "$REPORT" | jq -r '.canary_version')"
-if [[ "$CANARY_VERSION" != "1.0.0" ]]; then
-  fail "unsupported canary_version: ${CANARY_VERSION} (must be exactly \"1.0.0\")"
+if [[ "$CANARY_VERSION" != "1.1.0" ]]; then
+  fail "unsupported canary_version: ${CANARY_VERSION} (must be exactly \"1.1.0\")"
 fi
 
 # capabilities must be an array
@@ -83,11 +83,11 @@ if ! echo "$REPORT" | jq -e '.capabilities | type == "array"' >/dev/null 2>&1; t
   fail "capabilities must be an array"
 fi
 
-# capability id set must match exactly the 9 expected ids (no more, no fewer, no unknown)
+# capability id set must match exactly the 10 expected ids (no more, no fewer, no unknown)
 ACTUAL_IDS_SORTED="$(echo "$REPORT" | jq -c '[.capabilities[].id] | sort')"
 EXPECTED_IDS_SORTED="$(echo "$EXPECTED_CAPABILITY_IDS" | jq -c 'sort')"
 if [[ "$ACTUAL_IDS_SORTED" != "$EXPECTED_IDS_SORTED" ]]; then
-  fail "capabilities id set mismatch (expected exactly these 9: agent_schema, model_routing, effort_routing, parallel_fanout, nested_workflow, pause_resume, direct_fs, direct_shell, direct_import)"
+  fail "capabilities id set mismatch (expected exactly these 10: agent_schema, model_routing, effort_routing, agent_opts_effort_accepted, parallel_fanout, nested_workflow, pause_resume, direct_fs, direct_shell, direct_import)"
 fi
 
 # capability.status enum check

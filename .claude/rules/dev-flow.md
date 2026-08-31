@@ -51,7 +51,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
 **micro lite route**: `TRIVIAL && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ contract 準拠かつ danger clean）を満たす run は、PR phase で plan 1 発 → implementer → targeted test → PR → pr-reviewer 1-pass の縮約経路（lite route、判断系 agent 呼び出し ≤10）を通る。lite の pr-reviewer 1-pass が `review==null || blocking.length>0`（critical/major finding あり）を検出した場合のみ `workflow('pr-iterate')` フル loop へ自動昇格し、以降は通常の review⇄fix 経路で処理する。danger-grep hit で `runEval=true` になったケースは lite ゲート条件を満たさないため lite に入らず、micro であっても現行の security path（Evaluate 強制実行）へ強制昇格する（軸A invariant 不変）。
 
 - **判断系 leaf は subagent** (`.claude/agents/{dev-planner,plan-reviewer,implementer,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
-  workflow の `agent()` には effort 引数が無いため、effort は subagent frontmatter で固定する。
+  workflow の `agent()` opts には effort が記載されているが、本 harness での適用可否は未検証（dev-flow-canary の opts 受理 probe — capability id `agent_opts_effort_accepted` — で再判定する。probe は受理されたことしか判定できない）。それまで effort は subagent frontmatter で固定する。
   model は frontmatter を既定としつつ `agent()` の `opts.model` で per-call override できる —
   品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer、frontmatter 既定 opus）は
   `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で一括指定する（tools/sync-inlines.mjs で

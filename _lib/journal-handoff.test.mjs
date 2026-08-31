@@ -14,6 +14,7 @@ import {
   classifyJournalLogStatus,
   journalEffectId,
   repoFromGithubUrl,
+  runJournalHandoff,
   validateJournalSavedPath,
 } from './journal-handoff.mjs';
 
@@ -535,70 +536,224 @@ test('AC3 (issue #526): the stage2 instruction keeps the fail-open contract — 
   assert.ok(instr.includes('{logged:true}'));
 });
 
+// ---- runJournalHandoff (F2/AC5/AC7: deps-injected 2-stage choreography) ----
+
+const HANDOFF_SAVE_PATH = '/wt/.devflow-tmp/payload-devflow-556.json';
+const HANDOFF_PAYLOAD = '{"skill":"dev-flow","outcome":"success"}';
+const HANDOFF_SAVE_SCHEMA = { type: 'object', properties: { saved: { type: 'boolean' } } };
+const HANDOFF_LOG_SCHEMA = { type: 'object', properties: { logged: { type: 'boolean' } } };
+
+function makeStubAgent(responders) {
+  const calls = [];
+  const agent = async (prompt, opts) => {
+    calls.push({ prompt, opts });
+    const responder = responders[opts.label];
+    if (!responder) throw new Error(`unexpected label: ${opts.label}`);
+    return responder({ prompt, opts });
+  };
+  return { agent, calls };
+}
+
+function makeStubLog() {
+  const messages = [];
+  return { log: (msg) => messages.push(msg), messages };
+}
+
+test('runJournalHandoff (happy path) saves then logs and returns logged, calling agent twice with the expected labels/agentType/phase', async () => {
+  const { agent, calls } = makeStubAgent({
+    'journal-save': async () => ({ saved: true, path: HANDOFF_SAVE_PATH }),
+    'journal-log-failure': async () => ({ logged: true, summary: 'ok' }),
+  });
+  const { log } = makeStubLog();
+
+  const status = await runJournalHandoff({
+    agent,
+    log,
+    saveSchema: HANDOFF_SAVE_SCHEMA,
+    logSchema: HANDOFF_LOG_SCHEMA,
+    payload: HANDOFF_PAYLOAD,
+    savePath: HANDOFF_SAVE_PATH,
+    prefix: 'devflow',
+    id: 556,
+    subject: 'dev-flow 失敗',
+    logLabel: 'journal-log-failure',
+    phase: 'Setup',
+  });
+
+  assert.equal(status, 'logged');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].opts.label, 'journal-save');
+  assert.equal(calls[0].opts.agentType, 'dev-runner-haiku');
+  assert.equal(calls[0].opts.phase, 'Setup');
+  assert.equal(calls[0].opts.schema, HANDOFF_SAVE_SCHEMA);
+  assert.equal(calls[1].opts.label, 'journal-log-failure');
+  assert.equal(calls[1].opts.agentType, 'dev-runner-haiku');
+  assert.equal(calls[1].opts.phase, 'Setup');
+  assert.equal(calls[1].opts.schema, HANDOFF_LOG_SCHEMA);
+
+  assert.ok(calls[0].prompt.includes(HANDOFF_PAYLOAD));
+  assert.ok(calls[0].prompt.includes(HANDOFF_SAVE_PATH));
+
+  const pendingPath = buildJournalPendingPath({ prefix: 'devflow', id: 556, effectId: journalEffectId(HANDOFF_PAYLOAD) });
+  assert.ok(calls[1].prompt.includes(pendingPath));
+});
+
+test('runJournalHandoff returns save_failed and never calls stage2 when stage1 reports saved:false', async () => {
+  const { agent, calls } = makeStubAgent({
+    'journal-save': async () => ({ saved: false }),
+    'journal-log-failure': async () => { throw new Error('stage2 should not be called'); },
+  });
+  const { log } = makeStubLog();
+
+  const status = await runJournalHandoff({
+    agent,
+    log,
+    saveSchema: HANDOFF_SAVE_SCHEMA,
+    logSchema: HANDOFF_LOG_SCHEMA,
+    payload: HANDOFF_PAYLOAD,
+    savePath: HANDOFF_SAVE_PATH,
+    prefix: 'devflow',
+    id: 556,
+    subject: 'dev-flow 失敗',
+    logLabel: 'journal-log-failure',
+    phase: 'Setup',
+  });
+
+  assert.equal(status, 'save_failed');
+  assert.equal(calls.length, 1);
+});
+
+test('runJournalHandoff returns log_failed and warns via the log dep when stage2 reports logged:false', async () => {
+  const { agent } = makeStubAgent({
+    'journal-save': async () => ({ saved: true, path: HANDOFF_SAVE_PATH }),
+    'journal-log-failure': async () => ({ logged: false }),
+  });
+  const { log, messages } = makeStubLog();
+
+  const status = await runJournalHandoff({
+    agent,
+    log,
+    saveSchema: HANDOFF_SAVE_SCHEMA,
+    logSchema: HANDOFF_LOG_SCHEMA,
+    payload: HANDOFF_PAYLOAD,
+    savePath: HANDOFF_SAVE_PATH,
+    prefix: 'devflow',
+    id: 556,
+    subject: 'dev-flow 失敗',
+    logLabel: 'journal-log-failure',
+    phase: 'Setup',
+  });
+
+  assert.equal(status, 'log_failed');
+  assert.ok(messages.length >= 1, 'log dep should have been called with a warning');
+});
+
+// AC7 順序 pin: stage2 呼び出し直前に journalLogStatus を log_failed へ倒す preset が
+// canonical 側で保証されていることを、stage2 responder が throw するケースで固定する。
+// preset が無いと catch 節で 'save_failed'（初期値）のまま返ってしまい、実際の失敗段
+// （stage2）と観測 status が食い違う（issue #499）。
+test('runJournalHandoff (AC7 order pin) returns log_failed — not save_failed — when stage2 responder throws, and the throw never escapes', async () => {
+  const { agent, calls } = makeStubAgent({
+    'journal-save': async () => ({ saved: true, path: HANDOFF_SAVE_PATH }),
+    'journal-log-failure': async () => { throw new Error('stage2 boom'); },
+  });
+  const { log } = makeStubLog();
+
+  const status = await runJournalHandoff({
+    agent,
+    log,
+    saveSchema: HANDOFF_SAVE_SCHEMA,
+    logSchema: HANDOFF_LOG_SCHEMA,
+    payload: HANDOFF_PAYLOAD,
+    savePath: HANDOFF_SAVE_PATH,
+    prefix: 'devflow',
+    id: 556,
+    subject: 'dev-flow 失敗',
+    logLabel: 'journal-log-failure',
+    phase: 'Setup',
+  });
+
+  assert.equal(status, 'log_failed');
+  assert.equal(calls.length, 2);
+});
+
+test('runJournalHandoff returns save_failed and never calls stage2 when stage1 responder throws', async () => {
+  const { agent, calls } = makeStubAgent({
+    'journal-save': async () => { throw new Error('stage1 boom'); },
+    'journal-log-failure': async () => { throw new Error('stage2 should not be called'); },
+  });
+  const { log } = makeStubLog();
+
+  const status = await runJournalHandoff({
+    agent,
+    log,
+    saveSchema: HANDOFF_SAVE_SCHEMA,
+    logSchema: HANDOFF_LOG_SCHEMA,
+    payload: HANDOFF_PAYLOAD,
+    savePath: HANDOFF_SAVE_PATH,
+    prefix: 'devflow',
+    id: 556,
+    subject: 'dev-flow 失敗',
+    logLabel: 'journal-log-failure',
+    phase: 'Setup',
+  });
+
+  assert.equal(status, 'save_failed');
+  assert.equal(calls.length, 1);
+});
+
 // ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----
 //
-// issue #494 F3: all payload-carrying journal handoff call sites — the 3 telemetry sites
-// (dev-flow.js Merge tier, pr-iterate.js Iterate, dev-improve.js File) and dev-flow.js's
-// writeFailureTelemetry (outcome:'failure'/'partial') — migrate to the 2-stage
-// buildJournalSaveInstr + buildJournalLogInstr split, so the payload body is carried as a file
-// on disk and the finalize prompt takes only a path, regardless of outcome. dev-flow /
-// pr-iterate use the `savePath` mode: the payload file sits under the worktree's gitignored
-// `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`, pr-iterate: `${isoWt}/.devflow-tmp`) at a
-// path the workflow fixes itself, so the agent-reported path is never used. This test
-// pins that neither workflow references the removed single-stage buildJournalHandoffInstr /
-// buildFailureJournalInstr names.
+// issue #494 F3 / #556 F4: all payload-carrying journal handoff call sites — the 3
+// telemetry sites (dev-flow.js Merge tier, pr-iterate.js Iterate, dev-improve.js File) and
+// dev-flow.js's writeFailureTelemetry (outcome:'failure'/'partial') — carry the payload body
+// as a file on disk and the finalize prompt takes only a path, regardless of outcome.
+// dev-flow.js's writeFailureTelemetry / Merge tier and pr-iterate.js's Iterate terminus
+// route through the canonical `runJournalHandoff` choreography (_lib/journal-handoff.mjs,
+// issue #556) rather than repeating the 2-stage buildJournalSaveInstr + buildJournalLogInstr
+// choreography inline; dev-improve.js (no per-run worktree) keeps the inline saveDir+fileName
+// mode this function does not support. dev-flow / pr-iterate use the `savePath` mode: the
+// payload file sits under the worktree's gitignored `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`,
+// pr-iterate: `${isoWt}/.devflow-tmp`) at a path the workflow fixes itself, so the
+// agent-reported path is never used. This test pins that neither workflow references the
+// removed single-stage buildJournalHandoffInstr / buildFailureJournalInstr names.
 
 test('workflows construct journal handoff instructions through the canonical Write-tool-verbatim helpers', () => {
   const devFlow = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
   const prIterate = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 
-  // dev-flow.js: Merge tier telemetry handoff uses the 2-stage split, worktree-scoped saveDir.
+  // dev-flow.js: writeFailureTelemetry and the Merge tier success path both route through the
+  // canonical runJournalHandoff with the worktree-scoped savePath fixed by the workflow itself
+  // (agent-reported path never used — enforced inside the canonical, not per call site).
   assert.equal(
-    (devFlow.match(/const journalPayloadPath = `\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}\.json`/g) ?? []).length,
-    1,
-  );
-  // dev-flow.js: writeFailureTelemetry (needs_clarification/cross_repo/empty_diff) also uses the
-  // 2-stage split with the same worktree-scoped saveDir — no local single-stage helper remains.
-  assert.equal(
-    (devFlow.match(/const journalPayloadPath = `\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}-failure\.json`/g) ?? []).length,
-    1,
-  );
-  // 申告パスは使わず JS 側の確定パスを使う（suffix 一致だと別ディレクトリの同名ファイルが通る）。
-  assert.equal(
-    (devFlow.match(/journalSaveRes\?\.saved === true \? journalPayloadPath : null/g) ?? []).length,
-    2,
-  );
-  assert.ok(!devFlow.includes('validateJournalSavedPath(journalSaveRes.path'));
-  assert.equal(
-    (devFlow.match(/buildJournalSaveInstr\(\{ payload[^}]*savePath: journalPayloadPath \}\)/g) ?? []).length,
-    2,
-  );
-  // issue #526: stage2 は書き込み先ファイル名の effect ID 算出のため payload を受け取る。
-  // 渡し忘れると buildJournalLogInstr が throw して telemetry が丸ごと落ちるため、
-  // 両 call site が payload を渡していることを pin する。
-  assert.equal(
-    (devFlow.match(/buildJournalLogInstr\(\{ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath, payload: telemetryHandoff \}\)/g) ?? []).length,
+    (devFlow.match(/savePath: `\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}\.json`/g) ?? []).length,
     1, // Merge tier success handoff
   );
   assert.equal(
-    (devFlow.match(/buildJournalLogInstr\(\{ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath, payload \}\)/g) ?? []).length,
+    (devFlow.match(/savePath: `\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}-failure\.json`/g) ?? []).length,
     1, // writeFailureTelemetry
   );
+  assert.equal(
+    (devFlow.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length,
+    2,
+  );
+  // logLabel は現行値のまま維持されている（issue #556 AC6）。
+  assert.ok(devFlow.includes("logLabel: 'journal-log',"));
+  assert.ok(devFlow.includes("logLabel: 'journal-log-failure',"));
+  assert.ok(!devFlow.includes('validateJournalSavedPath(journalSaveRes.path'));
   assert.ok(!devFlow.includes('buildFailureJournalInstr'));
-  // pr-iterate.js: Iterate telemetry handoff uses the 2-stage split, worktree-scoped saveDir.
+  // pr-iterate.js: Iterate telemetry handoff routes through the same canonical, worktree-scoped
+  // savePath, logLabel 現行値維持。
   assert.equal(
-    (prIterate.match(/const journalPayloadPath = `\$\{isoWt\}\/\.devflow-tmp\/payload-priterate-\$\{PR\}\.json`/g) ?? []).length,
+    (prIterate.match(/savePath: `\$\{isoWt\}\/\.devflow-tmp\/payload-priterate-\$\{PR\}\.json`/g) ?? []).length,
     1,
   );
   assert.equal(
-    (prIterate.match(/journalSaveRes\?\.saved === true \? journalPayloadPath : null/g) ?? []).length,
+    (prIterate.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length,
     1,
   );
+  assert.ok(prIterate.includes("logLabel: 'journal-log',"));
   assert.ok(!prIterate.includes('validateJournalSavedPath(journalSaveRes.path'));
-  assert.equal(
-    (prIterate.match(/buildJournalLogInstr\(\{ prefix: 'priterate', id: PR, payloadPath: journalSavedPath, payload: telemetryHandoff \}\)/g) ?? []).length,
-    1,
-  );
   // dev-improve.js: run 専用 worktree を持たないため saveDir は TMPDIR 配下の固定サブディレクトリ。
   // 他 2 経路と同じディレクトリ固定の防御を保つため requiredDirSuffix で pin されていること。
   const devImprove = readFileSync(join(repoRoot, '.claude/workflows/dev-improve.js'), 'utf8');

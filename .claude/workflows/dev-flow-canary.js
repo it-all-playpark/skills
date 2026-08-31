@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-canary',
-  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/nested workflow/model・effort routing/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は dev-flow-doctor run-diagnostics.sh --canary で取り込む',
+  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/nested workflow/model・effort routing（agent() opts の effort 受理 probe を含む）/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は dev-flow-doctor run-diagnostics.sh --canary で取り込む',
   phases: [
     { title: 'Probe' },
     { title: 'Agents' },
@@ -266,6 +266,24 @@ const effortRouting = modelReport?.effort_visible === true
   ? { status: 'pass', detail: `effort=${modelReport.effort}` }
   : { status: 'unsupported', detail: 'effort は subagent の system prompt から観測不能 — frontmatter effort の適用は runtime 非公開' }
 
+// agent() opts 受理 probe（issue #556）: opts に effort:'low' を渡し throw の有無だけを見る。
+// 受理されたことしか判定できない — 実際に effort が適用されたかは runtime 非公開で未検証
+// （effort_routing が unsupported のとおり）。適用可否の再判定はこの probe の結果と
+// effort_routing を併読して行う。
+let agentOptsEffortAccepted
+try {
+  const optsProbe = await agent(
+    echoPrompt('EFFORT-OPTS'),
+    { agentType: 'dev-runner-haiku-ro', schema: ECHO, label: 'canary:effort-opts', phase: 'Agents', effort: 'low' },
+  )
+  agentOptsEffortAccepted = {
+    status: 'pass',
+    detail: `agent() opts の effort:'low' が throw されず受理された（応答: ${JSON.stringify(optsProbe)}）。受理されたことしか判定できない — effort が実際に適用されたかは未検証（runtime 非公開）`,
+  }
+} catch (e) {
+  agentOptsEffortAccepted = { status: 'unsupported', detail: `agent() が opts.effort 指定で throw: ${e?.message ?? String(e)} — opts 経由の effort 指定は現 harness で受理されない` }
+}
+
 const parTokens = ['A', 'B']
 const parThunks = parTokens.map((t) => () => agent(
   echoPrompt(t),
@@ -309,6 +327,7 @@ const capabilities = [
   { id: 'agent_schema', ...agentSchema },
   { id: 'model_routing', ...modelRouting },
   { id: 'effort_routing', ...effortRouting },
+  { id: 'agent_opts_effort_accepted', ...agentOptsEffortAccepted },
   { id: 'parallel_fanout', ...parallelFanout },
   { id: 'nested_workflow', ...nestedWorkflow },
   { id: 'pause_resume', ...direct.pause_resume },
@@ -322,7 +341,7 @@ const inlineGeneratorRemovable = directImport.status === 'pass'
 const bridgeVerdict = (execProxyRemovable && inlineGeneratorRemovable) ? 'reevaluate-bridges' : 'keep-bridges'
 
 const report = {
-  canary_version: '1.0.0',
+  canary_version: '1.1.0',
   claude_code_version: claudeCodeVersion,
   timestamp_utc: timestampUtc,
   capabilities,

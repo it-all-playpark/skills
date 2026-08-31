@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ciCheckPrompt } from './ci-check.mjs';
+import { buildJournalSaveInstr, buildJournalLogInstr } from './journal-handoff.mjs';
 import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -179,8 +180,6 @@ test('[failopen-d] ci-check / post-summary / journal 系 prompt に guard/sandbo
 
   const sections = [
     { name: 'post-summary', re: /const summaryPost = await failOpenAgent\(([\s\S]*?)label: `post-summary`[\s\S]*?\)\n/ },
-    { name: 'journal-save', re: /const journalSaveRes = await trackedAgent\(([\s\S]*?)label: 'journal-save'[\s\S]*?\)\n/ },
-    { name: 'journal-log', re: /const journalPost = await trackedAgent\(([\s\S]*?)label: 'journal-log'[\s\S]*?\)\n/ },
   ];
   for (const { name, re } of sections) {
     const m = src.match(re);
@@ -188,6 +187,25 @@ test('[failopen-d] ci-check / post-summary / journal 系 prompt に guard/sandbo
     const block = m[1].toLowerCase();
     for (const word of forbidden) {
       assert.ok(!block.includes(word.toLowerCase()), `${name} prompt に禁止語 '${word}' が含まれているべきでない`);
+    }
+  }
+
+  // journal-save / journal-log の prompt 本文は canonical へ移った（_lib/journal-handoff.mjs
+  // runJournalHandoff、issue #556）ため、呼び出し側（pr-iterate.js）ブロックを走査しても空振りする。
+  // canonical のビルダーが生成する文字列そのものを検査する。
+  const journalSaveInstr = buildJournalSaveInstr({
+    payload: '{"skill":"pr-iterate"}',
+    savePath: '/tmp/priterate/.devflow-tmp/payload-priterate-5.json',
+  }).toLowerCase();
+  const journalLogInstr = buildJournalLogInstr({
+    prefix: 'priterate',
+    id: 5,
+    payloadPath: '/tmp/priterate/.devflow-tmp/payload-priterate-5.json',
+    payload: '{"skill":"pr-iterate"}',
+  }).toLowerCase();
+  for (const [name, instr] of [['journal-save', journalSaveInstr], ['journal-log', journalLogInstr]]) {
+    for (const word of forbidden) {
+      assert.ok(!instr.includes(word.toLowerCase()), `${name} prompt に禁止語 '${word}' が含まれているべきでない`);
     }
   }
 });
