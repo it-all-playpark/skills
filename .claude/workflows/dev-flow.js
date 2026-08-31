@@ -20,7 +20,9 @@ export const meta = {
 // ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // 品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）の model override。
 // frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
-// effort は agent() opts に存在しないため frontmatter（high）固定。
+// effort は agent() opts に記載されているが、本 harness での適用可否は未検証（受理と適用は別）。
+// dev-flow-canary の opts 受理 probe（capability id: agent_opts_effort_accepted）で再判定する。
+// それまで effort は frontmatter（high）固定のまま。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -589,6 +591,62 @@ function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
     + `${pendingPath} が既に存在する場合は、先に **Read tool** で読んでから Write tool で上書きせよ\n`
     + `（Write tool は既存ファイルを未 Read のまま上書きできない）。\n`
     + `3. 書き込みに成功したら {logged:true} を返せ。どの手順で失敗しても throw せず {logged:false} を返せ。\n`;
+}
+
+// journal handoff choreography（issue #494/#499/#556）: journal-save（stage1）→ journal-log（stage2）の
+// 2 段 agent 呼び出しと journal_log_status の帰属を canonical 化する。dev-flow.js の
+// writeFailureTelemetry / Merge tier 成功 path、pr-iterate.js の終端の 3 call site が使う。
+// 順序不変条件: stage2 呼び出しの直前に journalLogStatus を log_failed へ倒す — stage2 が throw
+// すると catch へ抜けて再代入が走らないため、preset が無いと stage2 の失敗が save_failed として
+// 誤帰属される（issue #499）。fail-open: 例外は内部で吸収し、3 値 closed enum
+// （logged / save_failed / log_failed）のいずれかを必ず返す。gate・merge tier には影響しない。
+// deps 注入: agent は呼び出し側の trackedAgent（subagent_invocations 計上のため）、
+// saveSchema/logSchema は workflow 側定義の JOURNAL_SAVE_RESULT / JOURNAL_RESULT を渡す。
+// savePath は呼び出し側 JS が絶対パスで確定して渡す（agent 申告の path は使わない — 申告値を
+// 信用すると別ディレクトリの同名ファイルが stage2 へ渡りうる）。dev-improve の saveDir+fileName
+// モードは対象外（本関数は savePath モード専用）。
+// agent は destructure 時に `runAgent` へ alias する（`agent(` という bare 呼び出しリテラルを
+// 本体コードへ残さないため）。dev-flow.js / pr-iterate.js の静的検証
+// _lib/subagent-invocations-routing.test.mjs は「bare agent( 呼び出しは trackedAgent wrapper
+// 内の 2 箇所のみ」を pin しており、本関数が inline 生成される両ワークフローで `agent(` リテラルが
+// 増えると誤検出する。呼び出し側の deps 注入契約（キー名 `agent`）は変えない。
+async function runJournalHandoff({ agent: runAgent, log, saveSchema, logSchema, payload, savePath, prefix, id, subject, logLabel, phase }) {
+  let journalLogStatus = 'save_failed'
+  try {
+    const journalSaveRes = await runAgent(
+      `## Objective\n${subject}の telemetry handoff payload を一時ファイルへ保存する。\n\n`
+      + `## Instructions\n`
+      + buildJournalSaveInstr({ payload, savePath })
+      + `\n## Output format\n{ "saved": boolean, "path": string }\n`
+      + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
+      + `冪等上書きに必要）\n`
+      + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
+      + `\n## Token cap\n120 語以内。`,
+      { agentType: 'dev-runner-haiku', schema: saveSchema, label: 'journal-save', phase },
+    )
+    const journalSavedPath = journalSaveRes?.saved === true ? savePath : null
+    if (journalSavedPath) {
+      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
+      const journalPost = await runAgent(
+        `## Objective\n${subject}の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
+        + `## Instructions\n`
+        + buildJournalLogInstr({ prefix, id, payloadPath: journalSavedPath, payload })
+        + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
+        + `\n## Tools\n使用可: Read, Write のみ\n`
+        + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
+        + `\n## Token cap\n100 語以内で完結すること。`,
+        { agentType: 'dev-runner-haiku', schema: logSchema, label: logLabel, phase },
+      )
+      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: journalPost?.logged === true })
+      if (!journalPost?.logged) log(`⚠️ ${logLabel} の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
+    } else {
+      journalLogStatus = classifyJournalLogStatus({ saved: false })
+      log('⚠️ journal-save 失敗（fail-open）— telemetry 記録漏れの可能性')
+    }
+  } catch (e) {
+    log(`⚠️ journal handoff 失敗（fail-open）: ${e?.message ?? e}`)
+  }
+  return journalLogStatus
 }
 
 function repoFromGithubUrl(url) {
@@ -2935,13 +2993,8 @@ if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue�
 
 // ---- failure telemetry helper（issue #225, 2-stage handoff issue #494 F3）----
 // 4 つの経路（needs_clarification×3・cross-repo graceful 終了。empty-diff throw 直前でも呼ぶが
-// throw のため呼び出し元へ status を戻さない）で呼ばれる。成功経路（Merge tier）と同じ
-// journal-save（stage1: 結論値を含む payload を worktree 内 gitignored 領域へ verbatim 永続化）→
-// journal-log（stage2: 検証済みファイルパスのみを finalize command へ渡す）の 2 段構成を踏襲する。
-// payload 本文はディスク上のデータとして運び、pending/ へ書き出す prompt 自体はパスのみを持つ。
-// 戻り値は journal_log_status の 3 値 closed enum
-// （logged/save_failed/log_failed）。fail-open は維持（gate・merge tier には無影響。呼び出し元は
-// null/例外容認で先へ進む）。
+// throw のため呼び出し元へ status を戻さない）で呼ばれる。choreography 本体は canonical
+// _lib/journal-handoff.mjs の runJournalHandoff（issue #556）。
 // outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す（issue #432）。
 async function writeFailureTelemetry({ error_category, error_msg, telemetry, phase, outcome = 'failure' }) {
   const payload = buildJournalHandoffPayload({
@@ -2955,48 +3008,19 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     error_msg,
     telemetry,
   })
-  let journalLogStatus = 'save_failed'
-  try {
-    const journalPayloadPath = `${WT}/.devflow-tmp/payload-devflow-${ISSUE}-failure.json`
-    const journalSaveRes = await trackedAgent(
-      `## Objective\ndev-flow 失敗の telemetry handoff payload を一時ファイルへ保存する。\n\n`
-      + `## Instructions\n`
-      + buildJournalSaveInstr({ payload, savePath: journalPayloadPath })
-      + `\n## Output format\n{ "saved": boolean, "path": string }\n`
-      + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
-      + `冪等上書きに必要）\n`
-      + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
-      + `\n## Token cap\n120 語以内。`,
-      { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase },
-    )
-    // 保存先は JS 側で確定しているので agent 申告の path は使わない（Merge tier 側と同じ理由）。
-    const journalSavedPath = journalSaveRes?.saved === true ? journalPayloadPath : null
-
-    if (journalSavedPath) {
-      // stage1 は成功済み。stage2 が throw（schema 不一致・proxy 実行失敗等）すると catch へ
-      // 抜けて代入が走らないため、呼び出し前に log_failed へ倒しておく。こうしないと stage2 の
-      // 失敗が save_failed として報告され、観測した status が実際の失敗段と食い違う。
-      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
-      const journalPost = await trackedAgent(
-        `## Objective\ndev-flow 失敗の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
-        + `## Instructions\n`
-        + buildJournalLogInstr({ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath, payload })
-        + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-        + `\n## Tools\n使用可: Read, Write のみ\n`
-        + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
-        + `\n## Token cap\n100 語以内で完結すること。`,
-        { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log-failure', phase },
-      )
-      journalLogStatus = classifyJournalLogStatus({ saved: true, logged: journalPost?.logged === true })
-      if (!journalPost?.logged) log('⚠️ journal-log(failure) の記録に失敗 — workflow は継続')
-    } else {
-      journalLogStatus = classifyJournalLogStatus({ saved: false })
-      log('⚠️ journal-save(failure) 失敗（fail-open）— telemetry 記録漏れの可能性')
-    }
-  } catch (e) {
-    log(`⚠️ journal handoff(failure) 失敗（fail-open）: ${e?.message ?? e}`)
-  }
-  return journalLogStatus
+  return await runJournalHandoff({
+    agent: trackedAgent,
+    log,
+    saveSchema: JOURNAL_SAVE_RESULT,
+    logSchema: JOURNAL_RESULT,
+    payload,
+    savePath: `${WT}/.devflow-tmp/payload-devflow-${ISSUE}-failure.json`,
+    prefix: 'devflow',
+    id: ISSUE,
+    subject: 'dev-flow 失敗',
+    logLabel: 'journal-log-failure',
+    phase,
+  })
 }
 
 
@@ -3306,7 +3330,8 @@ const PRURL = {
     epoch: { type: 'number' },
   },
 }
-// pr-reviewer レビュースキーマ（pr-iterate.js の REVIEW と同型。issue #376 F3: lite 経路の
+// pr-reviewer レビュースキーマ（pr-iterate.js の REVIEW に optional `epoch`（phase duration 給電用）を
+// 加えた拡張 — epoch 以外のフィールドは同一で、同型ではない。issue #376 F3: lite 経路の
 // pr-review-lite 1-pass にもこのスキーマを使う）。
 const REVIEW = {
   type: 'object',
@@ -5847,56 +5872,22 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.guardBlockedResults.length ? { guard_id: [...new Set(state.guardBlockedResults.map((g) => g.guard_id))].sort().join(',') } : {}),
   },
 })
-// journal handoff（issue #494）: journal-save（payload をファイルへ verbatim 永続化）→
-// journal-log（検証済みファイルパスを finalize command で pending/ へ格納）の 2 段構成。
-// payload 本文はディスク上のデータとして運び、pending/ へ書き出す prompt 自体はパスのみを
-// 持つ。journal_log_status は 3 値 closed enum
+// journal handoff（issue #494）: choreography 本体は canonical _lib/journal-handoff.mjs の
+// runJournalHandoff（issue #556）。journal_log_status は 3 値 closed enum
 // （logged/save_failed/log_failed）で返り値へ現れる。fail-open は維持（gate・merge tier には無影響）。
-let journalLogStatus = 'save_failed'
-try {
-  const journalPayloadPath = `${WT}/.devflow-tmp/payload-devflow-${ISSUE}.json`
-  const journalSaveRes = await trackedAgent(
-    `## Objective\ndev-flow 完走の telemetry handoff payload を一時ファイルへ保存する。\n\n`
-    + `## Instructions\n`
-    + buildJournalSaveInstr({ payload: telemetryHandoff, savePath: journalPayloadPath })
-    + `\n## Output format\n{ "saved": boolean, "path": string }\n`
-    + `\n## Tools\n使用可: Write, Read（保存先は指示で固定済み — Bash は不要。Read は既存 payload の\n`
-    + `冪等上書きに必要）\n`
-    + `\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n`
-    + `\n## Token cap\n120 語以内。`,
-    { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase: 'Merge tier' },
-  )
-  // 保存先は JS 側で確定しているので agent 申告の path は使わない（確定値があるのに申告値を信用する
-  // 理由がなく、suffix 一致で通すと別ディレクトリの同名ファイルが stage2 へ渡りうる）。agent が別の
-  // 場所へ書いていた場合は stage2 の jq 検証が落ちて log_failed になり、欠落は観測可能なまま。
-  const journalSavedPath = journalSaveRes?.saved === true ? journalPayloadPath : null
-
-  if (journalSavedPath) {
-    // stage1 は成功済み。stage2 が throw（schema 不一致・proxy 実行失敗等）すると catch へ
-    // 抜けて代入が走らないため、呼び出し前に log_failed へ倒しておく。こうしないと stage2 の
-    // 失敗が save_failed として報告され、観測した status が実際の失敗段と食い違う。
-    journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
-    const journalPost = await trackedAgent(
-      `## Objective\ndev-flow 完走の telemetry handoff を ~/.claude/journal/pending/ に書き出す（Stop hook が journal へ flush する）。\n\n`
-      + `## Instructions\n`
-      + buildJournalLogInstr({ prefix: 'devflow', id: ISSUE, payloadPath: journalSavedPath, payload: telemetryHandoff })
-      + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
-      + `\n## Tools\n使用可: Read, Write のみ\n`
-      + `\n## Boundary\n~/.claude/journal 以外のファイルを変更しない。git 操作禁止。\n`
-      + `\n## Token cap\n100 語以内で完結すること。`,
-      { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'Merge tier' },
-    )
-    journalLogStatus = classifyJournalLogStatus({ saved: true, logged: journalPost?.logged === true })
-    if (!journalPost?.logged) {
-      log(`⚠️ journal-log の記録に失敗しました（logged=${journalPost?.logged ?? 'null'}）。ワークフローは継続します。`)
-    }
-  } else {
-    journalLogStatus = classifyJournalLogStatus({ saved: false })
-    log('⚠️ journal-save 失敗（fail-open）— telemetry 記録漏れの可能性')
-  }
-} catch (e) {
-  log(`⚠️ journal handoff 失敗（fail-open）: ${e?.message ?? e}`)
-}
+const journalLogStatus = await runJournalHandoff({
+  agent: trackedAgent,
+  log,
+  saveSchema: JOURNAL_SAVE_RESULT,
+  logSchema: JOURNAL_RESULT,
+  payload: telemetryHandoff,
+  savePath: `${WT}/.devflow-tmp/payload-devflow-${ISSUE}.json`,
+  prefix: 'devflow',
+  id: ISSUE,
+  subject: 'dev-flow 完走',
+  logLabel: 'journal-log',
+  phase: 'Merge tier',
+})
 
 
 

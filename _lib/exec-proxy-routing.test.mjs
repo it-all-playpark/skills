@@ -52,6 +52,17 @@ function findLineByExactLabel(source, labelLiteral) {
   for (const line of lines) {
     if (re.test(line)) return line;
   }
+  // Fallback: labels routed through the runJournalHandoff canonical (_lib/journal-handoff.mjs,
+  // issue #556) are passed as a `logLabel` call-site param and the agent() dispatch line inside
+  // the shared canonical body references it dynamically (`label: logLabel`) rather than as a
+  // literal string, so the literal never appears next to `agentType:` on one line. Confirm the
+  // literal is actually wired as a `logLabel` value at a call site, then return the canonical's
+  // stage2 dispatch line, which carries the fixed (non-dynamic) agentType.
+  const logLabelRe = new RegExp(`logLabel:\\s*'${escaped}'`);
+  if (logLabelRe.test(source)) {
+    const dynLabelLine = lines.find((line) => /label:\s*logLabel/.test(line));
+    if (dynLabelLine) return dynLabelLine;
+  }
   return null;
 }
 

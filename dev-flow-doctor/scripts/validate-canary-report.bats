@@ -1,28 +1,29 @@
 #!/usr/bin/env bats
 # Tests for dev-flow-doctor/scripts/validate-canary-report.sh
 #
-# canary report スキーマ (canary_version "1.0.0") の決定論 validate:
+# canary report スキーマ (canary_version "1.1.0") の決定論 validate:
 # - required keys (canary_version / claude_code_version / capabilities / bridge_sunset)
-# - canary_version は "1.0.0" const 固定（後方互換 fallback なし）
-# - capabilities の id 集合は 9 個ちょうど（過不足・未知 id は schema violation）
+# - canary_version は "1.1.0" const 固定（後方互換 fallback なし）
+# - capabilities の id 集合は 10 個ちょうど（過不足・未知 id は schema violation）
 # - capability.status / bridge_sunset.verdict の enum チェック
 # を検証し、valid なら summary JSON（counts/failed_ids/unsupported_ids/bridge_sunset）を
 # stdout + exit 0、invalid なら {"ok":false,"error":...} を stdout + exit 2 で返す。
 
 SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/validate-canary-report.sh"
 
-# 9 capability id 全部を "pass" で埋めた valid report を $1 に書き出す。
+# 10 capability id 全部を "pass" で埋めた valid report を $1 に書き出す。
 write_valid_report() {
     local out="$1"
     cat > "$out" <<'EOF'
 {
-  "canary_version": "1.0.0",
+  "canary_version": "1.1.0",
   "claude_code_version": "2.1.80",
   "timestamp_utc": "2026-07-13T00:00:00Z",
   "capabilities": [
     {"id": "agent_schema", "status": "pass", "detail": "ok"},
     {"id": "model_routing", "status": "pass", "detail": "ok"},
     {"id": "effort_routing", "status": "pass", "detail": "ok"},
+    {"id": "agent_opts_effort_accepted", "status": "pass", "detail": "ok"},
     {"id": "parallel_fanout", "status": "pass", "detail": "ok"},
     {"id": "nested_workflow", "status": "pass", "detail": "ok"},
     {"id": "pause_resume", "status": "pass", "detail": "ok"},
@@ -41,7 +42,7 @@ write_valid_report() {
 EOF
 }
 
-@test "(1) 9 capability 全部 pass の valid fixture: exit 0 + ok:true + counts 正確" {
+@test "(1) 10 capability 全部 pass の valid fixture: exit 0 + ok:true + counts 正確" {
     REPORT="$BATS_TEST_TMPDIR/valid.json"
     write_valid_report "$REPORT"
 
@@ -49,9 +50,9 @@ EOF
 
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true' >/dev/null
-    echo "$output" | jq -e '.canary_version == "1.0.0"' >/dev/null
+    echo "$output" | jq -e '.canary_version == "1.1.0"' >/dev/null
     echo "$output" | jq -e '.claude_code_version == "2.1.80"' >/dev/null
-    echo "$output" | jq -e '.counts.pass == 9 and .counts.fail == 0 and .counts.unsupported == 0' >/dev/null
+    echo "$output" | jq -e '.counts.pass == 10 and .counts.fail == 0 and .counts.unsupported == 0' >/dev/null
     echo "$output" | jq -e '.failed_ids == [] and .unsupported_ids == []' >/dev/null
     echo "$output" | jq -e '.bridge_sunset.verdict == "keep-bridges"' >/dev/null
 }
@@ -149,7 +150,7 @@ EOF
 
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == true' >/dev/null
-    echo "$output" | jq -e '.counts.pass == 6 and .counts.fail == 2 and .counts.unsupported == 1' >/dev/null
+    echo "$output" | jq -e '.counts.pass == 7 and .counts.fail == 2 and .counts.unsupported == 1' >/dev/null
     echo "$output" | jq -e '(.failed_ids | sort) == ["agent_schema","model_routing"]' >/dev/null
     echo "$output" | jq -e '(.unsupported_ids | sort) == ["effort_routing"]' >/dev/null
 }
