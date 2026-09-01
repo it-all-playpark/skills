@@ -201,12 +201,17 @@ Check 8 は **dev-flow pipeline の telemetry 健全性** に特化している�
 ## Canary intake (issue #325)
 
 `/dev-flow-canary` は harness capability を read-only に検証する専用 workflow
-（`schema付きagent` / `parallel or pipeline` / `nested workflow 1段` /
-`model/effort routing` / `pause/resume` / `direct fs/shell/import`）で、
-production の `dev-flow` / `pr-iterate` とは独立に動作する。実行結果は
-repository 外の `~/.claude/logs/dev-flow-canary/` 配下に構造化 JSON
-（canary report）として書き出される（**repository・git state・GitHub state を
-一切変更しない**）。
+（`schema付きagent` / `parallel fan-out` / `pipeline fan-out + failure semantics` /
+`nested workflow 1段` / `model/effort routing` / `pause/resume` /
+`direct fs/shell/import`）で、production の `dev-flow` / `pr-iterate` とは独立に
+動作する。実行結果は repository 外の `~/.claude/logs/dev-flow-canary/` 配下に
+構造化 JSON（canary report）として書き出される（**repository・git state・GitHub
+state を一切変更しない**）。canary_version は 1.2.0。capability id は以下 12 個
+（順序は report の `capabilities` 配列に対応）:
+`agent_schema` / `model_routing` / `effort_routing` /
+`agent_opts_effort_accepted` / `parallel_fanout` / `pipeline_fanout` /
+`pipeline_failure_semantics` / `nested_workflow` / `pause_resume` /
+`direct_fs` / `direct_shell` / `direct_import`。
 
 dev-flow-doctor はこの canary report を `run-diagnostics.sh --canary <path>`
 で取り込む。取り込みは決定論スクリプト `validate-canary-report.sh` による
@@ -235,6 +240,20 @@ capability ごとの `pass` / `fail` / `unsupported` の意味:
 - `pass`: harness capability が期待通り動作した
 - `fail`: capability API は存在するが実行が失敗した（harness regression の可能性）
 - `unsupported`: capability API 自体が存在しない（harness が対応していない）
+
+`pipeline_fanout` / `pipeline_failure_semantics`（issue #560）は `pipeline(items,
+callback)` の availability を `typeof pipeline === 'undefined'` ガードで判定する
+（未定義でも bare 参照によるエラーで canary 全体を止めない）。
+
+- `pipeline_fanout`: 入力 `['A','B']` に対する結果が入力順に対応するかを検証する。
+  `pass` は順序一致、`fail` は順序ずれ・欠落・callback throw、`unsupported` は
+  pipeline 未定義。
+- `pipeline_failure_semantics`: (a) item が `null` を返す場合 (b) callback が
+  throw する場合の 2 条件について harness の実挙動を**観測して記録するだけ**の
+  capability。`pass` は両条件の観測完了（挙動の適否ではなく観測完了を意味する —
+  実際の挙動は `detail` が正典であり、issue #332 の AC-1 判断はこの `detail` を
+  読んで行う）、`unsupported` は pipeline 未定義。harness 仕様が未知のため
+  規範的な `fail` 判定は持たない。
 
 ### `checks.canary.version_drift`（harness 更新検知）
 

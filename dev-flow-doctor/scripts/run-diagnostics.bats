@@ -295,7 +295,7 @@ EOF
 # section. Must never affect score (fail-open advisory, ci-checks precedent).
 # ---------------------------------------------------------------------------
 
-# 10 capability を全部指定 status で埋めた canary report を $1 に書き出す。
+# 12 capability を全部指定 status で埋めた canary report を $1 に書き出す。
 # direct_fs/direct_shell/direct_import の status だけ個別に上書き可能。
 # $5 (任意): claude_code_version を上書き（既定は "2.1.80" — 既存テストのシグネチャ・
 # アサートは変えない）。
@@ -303,7 +303,7 @@ write_canary_report() {
     local out="$1" fs_status="${2:-pass}" shell_status="${3:-pass}" import_status="${4:-pass}" ccv_val="${5:-2.1.80}"
     cat > "$out" <<EOF
 {
-  "canary_version": "1.1.0",
+  "canary_version": "1.2.0",
   "claude_code_version": "${ccv_val}",
   "timestamp_utc": "2026-07-13T00:00:00Z",
   "capabilities": [
@@ -312,6 +312,8 @@ write_canary_report() {
     {"id": "effort_routing", "status": "pass", "detail": "ok"},
     {"id": "agent_opts_effort_accepted", "status": "pass", "detail": "ok"},
     {"id": "parallel_fanout", "status": "pass", "detail": "ok"},
+    {"id": "pipeline_fanout", "status": "pass", "detail": "ok"},
+    {"id": "pipeline_failure_semantics", "status": "pass", "detail": "ok"},
     {"id": "nested_workflow", "status": "pass", "detail": "ok"},
     {"id": "pause_resume", "status": "pass", "detail": "ok"},
     {"id": "direct_fs", "status": "${fs_status}", "detail": "probe"},
@@ -347,7 +349,7 @@ EOF
 
     local pass_count
     pass_count=$(printf '%s\n' "$output" | jq '.checks.canary.counts.pass')
-    [ "$pass_count" -eq 10 ]
+    [ "$pass_count" -eq 12 ]
 }
 
 @test "(12) --canary あり/なしで score が同一（score 非影響の assert）" {

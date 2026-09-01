@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-canary',
-  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/nested workflow/model・effort routing（agent() opts の effort 受理 probe を含む）/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は dev-flow-doctor run-diagnostics.sh --canary で取り込む',
+  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/pipeline/nested workflow/model・effort routing（agent() opts の effort 受理 probe を含む）/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は dev-flow-doctor run-diagnostics.sh --canary で取り込む',
   phases: [
     { title: 'Probe' },
     { title: 'Agents' },
@@ -297,6 +297,55 @@ const parallelFanout = parallelOk
   ? { status: 'pass', detail: `parallel([A,B]) 結果一致: ${JSON.stringify(parResults)}` }
   : { status: 'fail', detail: `parallel() 結果不一致/欠落: ${JSON.stringify(parResults)}` }
 
+// pipeline() probe（issue #560 — #332 AC-1 の判断材料。read-only、observation のみ）
+let pipelineFanout
+let pipelineFailureSemantics
+if (typeof pipeline === 'undefined') {
+  pipelineFanout = { status: 'unsupported', detail: 'pipeline は workflow runtime に定義されていない（typeof pipeline === \'undefined\'）— fan-out probe 不能。bare 参照は ReferenceError で canary 全体が落ちるため typeof ガードのみで判定' }
+  pipelineFailureSemantics = { status: 'unsupported', detail: 'pipeline 未定義のため null item / callback throw の failure semantics は観測不能' }
+} else {
+  // fan-out: 入力 ['A','B'] と結果の入力順対応（agent 呼び出し 2 回）
+  try {
+    const pipeTokens = ['A', 'B']
+    const pipeResults = await pipeline(pipeTokens, (t) => agent(
+      echoPrompt(t),
+      { agentType: 'dev-runner-haiku-ro', schema: ECHO, label: `canary:pipe:${t}`, phase: 'Agents' },
+    ))
+    const pipeOk = Array.isArray(pipeResults)
+      && pipeResults.length === pipeTokens.length
+      && pipeTokens.every((t, i) => pipeResults[i]?.ok === true && pipeResults[i]?.token === t)
+    pipelineFanout = pipeOk
+      ? { status: 'pass', detail: `pipeline(['A','B'], cb) の結果が入力順に対応: ${JSON.stringify(pipeResults)}` }
+      : { status: 'fail', detail: `pipeline() 結果の順序ずれ/欠落: ${JSON.stringify(pipeResults)}` }
+  } catch (e) {
+    pipelineFanout = { status: 'fail', detail: `pipeline() が happy-path fan-out で throw: ${e?.message ?? String(e)}` }
+  }
+  // failure semantics: (a) item が null を返す（agent 1 回） (b) callback が throw（agent 0 回）
+  let nullDetail
+  try {
+    const nullResults = await pipeline(['N'], async (t) => {
+      await agent(
+        echoPrompt(t),
+        { agentType: 'dev-runner-haiku-ro', schema: ECHO, label: 'canary:pipe:null', phase: 'Agents' },
+      )
+      return null
+    })
+    nullDetail = `null item: pipeline() は reject せず resolve — 結果=${JSON.stringify(nullResults)}`
+  } catch (e) {
+    nullDetail = `null item: pipeline() が reject — ${e?.message ?? String(e)}`
+  }
+  let throwDetail
+  try {
+    const throwResults = await pipeline(['T'], () => {
+      throw new Error('canary-pipe-throw')
+    })
+    throwDetail = `callback throw: pipeline() は reject せず resolve — 結果=${JSON.stringify(throwResults)}`
+  } catch (e) {
+    throwDetail = `callback throw: pipeline() が reject — ${e?.message ?? String(e)}`
+  }
+  pipelineFailureSemantics = { status: 'pass', detail: `両条件を観測（canary は abort していない）。${nullDetail} / ${throwDetail}` }
+}
+
 // ============================================================
 // Phase: Nested
 // ============================================================
@@ -329,6 +378,8 @@ const capabilities = [
   { id: 'effort_routing', ...effortRouting },
   { id: 'agent_opts_effort_accepted', ...agentOptsEffortAccepted },
   { id: 'parallel_fanout', ...parallelFanout },
+  { id: 'pipeline_fanout', ...pipelineFanout },
+  { id: 'pipeline_failure_semantics', ...pipelineFailureSemantics },
   { id: 'nested_workflow', ...nestedWorkflow },
   { id: 'pause_resume', ...direct.pause_resume },
   { id: 'direct_fs', ...direct.direct_fs },
@@ -341,7 +392,7 @@ const inlineGeneratorRemovable = directImport.status === 'pass'
 const bridgeVerdict = (execProxyRemovable && inlineGeneratorRemovable) ? 'reevaluate-bridges' : 'keep-bridges'
 
 const report = {
-  canary_version: '1.1.0',
+  canary_version: '1.2.0',
   claude_code_version: claudeCodeVersion,
   timestamp_utc: timestampUtc,
   capabilities,

@@ -21,6 +21,8 @@ const EXPECTED_CAPABILITY_IDS = [
   'effort_routing',
   'agent_opts_effort_accepted',
   'parallel_fanout',
+  'pipeline_fanout',
+  'pipeline_failure_semantics',
   'nested_workflow',
   'pause_resume',
   'direct_fs',
@@ -44,6 +46,13 @@ function defaultAgentReturn(label) {
   }
   if (label.startsWith('canary:par:')) {
     const token = label.slice('canary:par:'.length);
+    return { ok: true, token };
+  }
+  if (label === 'canary:pipe:null') {
+    return { ok: true, token: 'N' };
+  }
+  if (label.startsWith('canary:pipe:')) {
+    const token = label.slice('canary:pipe:'.length);
     return { ok: true, token };
   }
   if (label === 'canary:report-write') {
@@ -75,12 +84,20 @@ function makeAgentStub(overrideMap = {}) {
  * @param {object} opts
  * @param {object} [opts.agentOverrides] - label -> 返り値（または (prompt,opts)=>値 の関数）
  * @param {Function} [opts.workflowImpl] - workflow() stub（既定は nested child の happy-path）
+ * @param {Function} [opts.pipelineImpl] - pipeline() stub（既定は逐次 for-loop 実装）
+ * @param {boolean} [opts.omitPipeline] - true の場合 sandbox に pipeline キー自体を入れない（typeof undefined 経路の検証用）
  */
-function makeCanarySandbox({ agentOverrides = {}, workflowImpl } = {}) {
+function makeCanarySandbox({ agentOverrides = {}, workflowImpl, pipelineImpl, omitPipeline = false } = {}) {
   const { stub: agentStub, calls } = makeAgentStub(agentOverrides);
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
   const defaultWorkflow = async () => ({ child_ok: true, echo: 'canary-nested-probe' });
   const workflowStub = workflowImpl ?? defaultWorkflow;
+  const defaultPipeline = async (items, cb) => {
+    const out = [];
+    for (const it of items) out.push(await cb(it));
+    return out;
+  };
+  const pipelineStub = pipelineImpl ?? defaultPipeline;
 
   const sandbox = {
     phase: () => {},
@@ -105,6 +122,9 @@ function makeCanarySandbox({ agentOverrides = {}, workflowImpl } = {}) {
     Set,
     Date,
   };
+  if (!omitPipeline) {
+    sandbox.pipeline = pipelineStub;
+  }
 
   const ctx = vm.createContext(sandbox);
   return { ctx, calls };
@@ -164,11 +184,11 @@ test('[canary] happy path: 10 capability が全て enum 内・agent/model/parall
 
   const report = result;
 
-  assert.equal(report.canary_version, '1.1.0');
+  assert.equal(report.canary_version, '1.2.0');
   assert.equal(report.claude_code_version, '2.1.99');
 
   assert.ok(Array.isArray(report.capabilities));
-  assert.equal(report.capabilities.length, 10, 'capabilities は正確に10件であること');
+  assert.equal(report.capabilities.length, 12, 'capabilities は正確に12件であること');
 
   // report.capabilities は vm sandbox（別 realm）内で生成された配列のため、.map()/.sort() を
   // そのまま呼ぶと結果が sandbox realm の Array のままになり、deepStrictEqual が
@@ -176,7 +196,7 @@ test('[canary] happy path: 10 capability が全て enum 内・agent/model/parall
   // host realm の配列へ変換してから比較する。
   const actualIds = Array.from(report.capabilities, (c) => c.id).sort();
   const expectedIds = Array.from(EXPECTED_CAPABILITY_IDS).sort();
-  assert.deepEqual(actualIds, expectedIds, 'capability id set が期待の10個と一致すること');
+  assert.deepEqual(actualIds, expectedIds, 'capability id set が期待の12個と一致すること');
 
   for (const c of report.capabilities) {
     assert.ok(['pass', 'fail', 'unsupported'].includes(c.status), `id=${c.id} の status が enum 内であること (got ${c.status})`);
@@ -186,6 +206,10 @@ test('[canary] happy path: 10 capability が全て enum 内・agent/model/parall
   assert.equal(findCap(report, 'agent_schema').status, 'pass');
   assert.equal(findCap(report, 'model_routing').status, 'pass');
   assert.equal(findCap(report, 'parallel_fanout').status, 'pass');
+  assert.equal(findCap(report, 'pipeline_fanout').status, 'pass');
+  assert.equal(findCap(report, 'pipeline_failure_semantics').status, 'pass');
+  assert.match(findCap(report, 'pipeline_failure_semantics').detail, /null item/);
+  assert.match(findCap(report, 'pipeline_failure_semantics').detail, /callback throw/);
   assert.equal(findCap(report, 'nested_workflow').status, 'pass');
   assert.equal(findCap(report, 'effort_routing').status, 'unsupported');
   assert.equal(findCap(report, 'direct_fs').status, 'unsupported');
@@ -301,7 +325,107 @@ test('[canary] agent() が opts.effort 指定で throw する場合 agent_opts_e
   assert.equal(findCap(report, 'parallel_fanout').status, 'pass');
   assert.equal(findCap(report, 'nested_workflow').status, 'pass');
   assert.equal(report.report_path, '/home/u/.claude/logs/dev-flow-canary/canary-1.json');
-  assert.equal(report.capabilities.length, 10);
+  assert.equal(report.capabilities.length, 12);
+});
+
+// ============================================================
+// 4c. pipeline 未定義（omitPipeline） → pipeline_fanout/pipeline_failure_semantics=unsupported、
+//     bare 参照 ReferenceError は起きず他 capability は happy path 相当のまま（AC-2 pin）
+// ============================================================
+
+test('[canary] pipeline が未定義の場合 pipeline_fanout/pipeline_failure_semantics=unsupported かつ他 capability・report 生成に影響しない', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx } = makeCanarySandbox({ omitPipeline: true });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result, 'pipeline 未定義でも report が return されること（ReferenceError で落ちない）');
+
+  const report = result;
+  assert.equal(findCap(report, 'pipeline_fanout').status, 'unsupported');
+  assert.equal(findCap(report, 'pipeline_failure_semantics').status, 'unsupported');
+
+  // 他 10 capability は happy path 相当のまま
+  assert.equal(findCap(report, 'agent_schema').status, 'pass');
+  assert.equal(findCap(report, 'model_routing').status, 'pass');
+  assert.equal(findCap(report, 'parallel_fanout').status, 'pass');
+  assert.equal(findCap(report, 'nested_workflow').status, 'pass');
+  assert.equal(findCap(report, 'agent_opts_effort_accepted').status, 'pass');
+  assert.equal(findCap(report, 'effort_routing').status, 'unsupported');
+  assert.equal(findCap(report, 'direct_fs').status, 'unsupported');
+  assert.equal(findCap(report, 'direct_shell').status, 'unsupported');
+  assert.equal(findCap(report, 'direct_import').status, 'unsupported');
+  assert.equal(findCap(report, 'pause_resume').status, 'unsupported');
+
+  assert.equal(report.capabilities.length, 12, 'capabilities は正確に12件であること');
+});
+
+// ============================================================
+// 4d. pipeline() が結果を順序反転で返す → pipeline_fanout=fail
+// ============================================================
+
+test('[canary] pipeline() の結果順序がずれる場合 pipeline_fanout=fail', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx } = makeCanarySandbox({
+    pipelineImpl: async (items, cb) => {
+      const out = [];
+      for (const it of items) out.push(await cb(it));
+      return out.reverse();
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+  assert.equal(findCap(result, 'pipeline_fanout').status, 'fail');
+});
+
+// ============================================================
+// 4e. pipeline probe の agent 呼び出し budget（AC-10 pin）
+// ============================================================
+
+test('[canary] pipeline probe の agent 呼び出しは canary:pipe:A / canary:pipe:B / canary:pipe:null の3件のみで、全て dev-runner-haiku-ro', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx, calls } = makeCanarySandbox();
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+
+  const pipeCalls = calls.filter((c) => c.label.startsWith('canary:pipe:'));
+  const pipeLabels = pipeCalls.map((c) => c.label).sort();
+  assert.deepEqual(
+    pipeLabels,
+    ['canary:pipe:A', 'canary:pipe:B', 'canary:pipe:null'].sort(),
+    'pipeline probe の agent 呼び出しは A/B/null の3件ちょうどであること（throw probe は agent を呼ばない）',
+  );
+  for (const c of pipeCalls) {
+    assert.equal(c.agentType, 'dev-runner-haiku-ro', `label=${c.label} の agentType が dev-runner-haiku-ro であること`);
+  }
+});
+
+// ============================================================
+// 4f. pipeline() が callback の throw をそのまま reject として伝播する（既定 stub と同一挙動）場合、
+//     pipeline_failure_semantics の detail に reject 観測が verbatim 記録される
+// ============================================================
+
+test('[canary] pipeline() が callback throw を reject として伝播する場合 pipeline_failure_semantics=pass かつ detail に reject 観測が記録される', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx } = makeCanarySandbox({
+    pipelineImpl: async (items, cb) => {
+      const out = [];
+      for (const it of items) out.push(await cb(it));
+      return out;
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+
+  const cap = findCap(result, 'pipeline_failure_semantics');
+  assert.equal(cap.status, 'pass');
+  assert.match(cap.detail, /callback throw: pipeline\(\) が reject/);
 });
 
 // ============================================================
