@@ -36,7 +36,7 @@ const EXPECTED_CAPABILITY_IDS = [
 
 function defaultAgentReturn(label) {
   if (label === 'canary:version') {
-    return { ok: true, version: '2.1.99', timestamp_utc: '2026-07-13T00:00:00Z' };
+    return { ok: true, version: '2.1.99', timestamp_utc: '2026-07-13T00:00:00Z', epoch: '1756700000' };
   }
   if (label === 'canary:model-report') {
     return { model_id: 'claude-haiku-4-5' };
@@ -56,7 +56,7 @@ function defaultAgentReturn(label) {
     return { ok: true, token };
   }
   if (label === 'canary:report-write') {
-    return { ok: true, path: '/home/u/.claude/logs/dev-flow-canary/canary-1.json' };
+    return { ok: true, path: '/home/u/.claude/logs/dev-flow-canary/canary-1756700000.json' };
   }
   return null;
 }
@@ -229,7 +229,7 @@ test('[canary] happy path: 10 capability が全て enum 内・agent/model/parall
     'capability report only — bridge 撤去は別 issue + human review でのみ実施',
   );
 
-  assert.equal(report.report_path, '/home/u/.claude/logs/dev-flow-canary/canary-1.json');
+  assert.equal(report.report_path, '/home/u/.claude/logs/dev-flow-canary/canary-1756700000.json');
 });
 
 // ============================================================
@@ -324,7 +324,7 @@ test('[canary] agent() が opts.effort 指定で throw する場合 agent_opts_e
   assert.equal(findCap(report, 'model_routing').status, 'pass');
   assert.equal(findCap(report, 'parallel_fanout').status, 'pass');
   assert.equal(findCap(report, 'nested_workflow').status, 'pass');
-  assert.equal(report.report_path, '/home/u/.claude/logs/dev-flow-canary/canary-1.json');
+  assert.equal(report.report_path, '/home/u/.claude/logs/dev-flow-canary/canary-1756700000.json');
   assert.equal(report.capabilities.length, 12);
 });
 
@@ -429,6 +429,147 @@ test('[canary] pipeline() が callback throw を reject として伝播する場
 });
 
 // ============================================================
+// 4g. epoch 欠落 → report-write agent を起動せず write skip（report_path=null, throw なし）
+// ============================================================
+
+test('[canary] version probe が epoch を返さない場合 report-write agent は起動されず report_path=null（write skip, throw なし）', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx, calls } = makeCanarySandbox({
+    agentOverrides: {
+      'canary:version': { ok: true, version: '2.1.99', timestamp_utc: '2026-07-13T00:00:00Z' },
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result, 'epoch 欠落でも report が return されること（throw しない）');
+
+  const report = result;
+  assert.equal(report.claude_code_version, '2.1.99');
+  assert.equal(report.report_path, null);
+
+  const writeCalls = calls.filter((c) => c.label === 'canary:report-write');
+  assert.equal(writeCalls.length, 0, 'epoch 無効時は report-write agent が起動されないこと');
+});
+
+// ============================================================
+// 4h. epoch 非数字 → 同上（write skip）
+// ============================================================
+
+test('[canary] version probe の epoch が非数字の場合 report-write agent は起動されず report_path=null（write skip）', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx, calls } = makeCanarySandbox({
+    agentOverrides: {
+      'canary:version': { ok: true, version: '2.1.99', timestamp_utc: '2026-07-13T00:00:00Z', epoch: 'abc' },
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+
+  const report = result;
+  assert.equal(report.report_path, null);
+
+  const writeCalls = calls.filter((c) => c.label === 'canary:report-write');
+  assert.equal(writeCalls.length, 0, 'epoch 非数字時は report-write agent が起動されないこと');
+});
+
+// ============================================================
+// 4i. timestamp_utc のみ欠落（epoch は有効） → 書き出しは実行され timestamp_utc='unknown'
+// ============================================================
+
+test('[canary] timestamp_utc のみ欠落しepochが有効な場合、書き出しは実行され timestamp_utc=unknown で report_path が期待パスになる', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx, calls } = makeCanarySandbox({
+    agentOverrides: {
+      'canary:version': { ok: true, version: '2.1.99', epoch: '1756700000' },
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+
+  const report = result;
+  assert.equal(report.timestamp_utc, 'unknown');
+  assert.equal(report.report_path, '/home/u/.claude/logs/dev-flow-canary/canary-1756700000.json');
+
+  const writeCalls = calls.filter((c) => c.label === 'canary:report-write');
+  assert.equal(writeCalls.length, 1, 'epoch 有効時は report-write agent が1回起動されること');
+});
+
+// ============================================================
+// 4j. report-write agent の申告 path が期待 suffix と不一致 → report_path=null
+// ============================================================
+
+test('[canary] report-write agent の申告 path が期待 suffix と不一致の場合 report_path=null', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx } = makeCanarySandbox({
+    agentOverrides: {
+      'canary:report-write': { ok: true, path: '/tmp/evil.json' },
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+  assert.equal(result.report_path, null);
+});
+
+// ============================================================
+// 4k. report-write prompt の検証（Write tool 指示・禁止構文不在・固定パス verbatim・report_path:null 埋め込み）
+// ============================================================
+
+test('[canary] report-write prompt が Write tool のみを指示し、禁止構文（$( / && / << / bash code fence）を含まず、固定パスと report_path:null が verbatim で埋め込まれる', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  let capturedPrompt = null;
+  const { ctx } = makeCanarySandbox({
+    agentOverrides: {
+      'canary:report-write': (prompt) => {
+        capturedPrompt = prompt;
+        return { ok: true, path: '/home/u/.claude/logs/dev-flow-canary/canary-1756700000.json' };
+      },
+    },
+  });
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+  assert.equal(typeof capturedPrompt, 'string', 'report-write prompt が捕捉されていること');
+
+  assert.ok(
+    capturedPrompt.includes('~/.claude/logs/dev-flow-canary/canary-1756700000.json'),
+    'prompt に固定パスが verbatim で含まれること',
+  );
+  assert.ok(!capturedPrompt.includes('$('), 'prompt にコマンド置換 $( が含まれないこと');
+  assert.ok(!capturedPrompt.includes(' && '), 'prompt に複合コマンド && が含まれないこと');
+  assert.ok(!capturedPrompt.includes('<<'), 'prompt に heredoc << が含まれないこと');
+  assert.ok(!capturedPrompt.includes('```bash'), 'prompt に bash code fence が含まれないこと');
+  assert.match(capturedPrompt, /Write/, 'prompt が Write tool を指示すること');
+  assert.ok(
+    capturedPrompt.includes('"report_path": null'),
+    'prompt に埋め込む JSON 本文に report_path:null が含まれること',
+  );
+});
+
+// ============================================================
+// 4l. version probe agent の呼び出し数（epoch 相乗りで agent 数不変の pin）
+// ============================================================
+
+test('[canary] happy path で canary:version label の agent 呼び出しは正確に1件のみ（epoch 相乗りで専用 agent が増えないこと）', async () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  const { ctx, calls } = makeCanarySandbox();
+  const { result, error } = await runCanaryInSandbox(src, ctx);
+
+  assertNoStructuralError(error);
+  assert.ok(result);
+
+  const versionCalls = calls.filter((c) => c.label === 'canary:version');
+  assert.equal(versionCalls.length, 1, 'canary:version label の agent 呼び出しは1件のみであること');
+});
+
+// ============================================================
 // 5. source lint（read-only 保証 / agentType 制限 / top-level require 不在）
 // ============================================================
 
@@ -462,4 +603,13 @@ test('[canary][lint] module top-level に Date.now() initializer が存在しな
   const lines = src.split('\n');
   const violations = lines.filter((l) => /^(?:const|let|var)\s+\S+\s*=.*\bDate\.now\s*\(/.test(l));
   assert.deepEqual(violations, [], 'module top-level に Date.now() initializer が存在しないこと');
+});
+
+test('[canary][lint] report 書き出しの heredoc/command-substitution 方式（禁止構文）が source に再混入していない', () => {
+  const src = readFileSync(canaryPath, 'utf8');
+  assert.ok(!src.includes('buildCanaryReportWriteCommand'), 'buildCanaryReportWriteCommand が source に存在しないこと');
+  assert.ok(!/<<'?CANARY_EOF/.test(src), 'CANARY_EOF heredoc マーカーが source に存在しないこと');
+  assert.ok(!/cat >/.test(src), 'cat > が source に存在しないこと');
+  assert.ok(!/mkdir -p/.test(src), 'mkdir -p が source に存在しないこと');
+  assert.ok(!/\$\(date/.test(src), '$(date コマンド置換が source に存在しないこと');
 });

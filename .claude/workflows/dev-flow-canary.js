@@ -15,7 +15,7 @@ export const meta = {
 //
 // read-only 保証（AC1）: このファイルには mutating な git 操作（commit・push・add・worktree 作成等）・gh コマンドを一切含めない。
 // 全 probe / model-report / parallel echo は dev-runner-haiku-ro（read-only exec-proxy）へ委譲し、
-// report 書き出しのみ dev-runner-haiku（repo 外 ~/.claude/logs への書き込み）を使う。
+// report 書き出しのみ dev-runner-haiku の Write tool（repo 外 ~/.claude/logs への単一ファイル書き込み）を使う。
 
 // ---- Schemas ----------------------------------------------------------------------------------
 
@@ -25,6 +25,7 @@ const VERSION_PROBE = {
     ok: { type: 'boolean' },
     version: { type: 'string' },
     timestamp_utc: { type: 'string' },
+    epoch: { type: 'string' },
   },
   required: ['ok', 'version'],
 }
@@ -131,14 +132,16 @@ function probeDirectCapabilities() {
 function versionProbePrompt() {
   return [
     '## Objective',
-    'Claude Code の CLI version 文字列と現在時刻（UTC）を取得する。',
+    'Claude Code の CLI version 文字列・現在時刻（UTC）・現在時刻の UNIX epoch 秒を取得する。',
     '',
     '## Output format',
-    'JSON: {"ok": boolean, "version": string, "timestamp_utc": string}。'
-    + ' version は `claude --version` の生出力、timestamp_utc は `date -u +%Y-%m-%dT%H:%M:%SZ` の生出力を verbatim で入れる。',
+    'JSON: {"ok": boolean, "version": string, "timestamp_utc": string, "epoch": string}。'
+    + ' version は `claude --version` の生出力、timestamp_utc は `date -u +%Y-%m-%dT%H:%M:%SZ` の生出力、'
+    + ' epoch は `date +%s` の生出力を、それぞれ verbatim で入れる。',
     '',
     '## Tools',
-    '実行してよいコマンドは次の2つのみ: `claude --version` と `date -u +%Y-%m-%dT%H:%M:%SZ`。他のコマンドは一切実行しない。',
+    '実行してよいコマンドは次の3つのみ: `claude --version`・`date -u +%Y-%m-%dT%H:%M:%SZ`・`date +%s`。'
+    + ' それぞれ独立した単文として実行する（&& 等での連結禁止）。他のコマンドは一切実行しない。',
     '',
     '## Boundary',
     'ファイル書き込み・git 操作・gh コマンドは禁止。read-only probe のみ。',
@@ -189,31 +192,26 @@ function echoPrompt(token) {
   ].join('\n')
 }
 
-function buildCanaryReportWriteCommand(report) {
+function reportWritePrompt(report, targetPath) {
   const json = JSON.stringify(report, null, 2)
-  return `mkdir -p ~/.claude/logs/dev-flow-canary && cat > ~/.claude/logs/dev-flow-canary/canary-$(date +%s).json <<'CANARY_EOF'\n${json}\nCANARY_EOF`
-}
-
-function reportWritePrompt(report) {
-  const cmd = buildCanaryReportWriteCommand(report)
   return [
     '## Objective',
-    '下記 Bash コマンドをそのまま実行し、書き込んだファイルの絶対パスを報告する。',
+    `下記 JSON 内容を Write tool で ${targetPath} へ単一ファイルとして書き込み、Write tool が報告した絶対パス（~ 展開後）を返す。`,
     '',
     '## Output format',
-    'JSON: {"ok": boolean, "path": string}。path は書き込み先の絶対パス（~ を展開した実パス）。',
+    'JSON: {"ok": boolean, "path": string}。path は Write tool が書き込んだファイルの絶対パス（~ を展開した実パス）。',
     '',
     '## Tools',
-    'Bash のみ。下記コマンド以外は実行しない:',
-    '```bash',
-    cmd,
-    '```',
+    'Write tool のみ。Bash・他 tool は使用禁止（親ディレクトリは Write tool が自動作成するため mkdir 不要）。',
     '',
     '## Boundary',
-    'このコマンド以外のファイル書き込み・git/gh 操作は一切禁止。repo 内には何も書かない（書き込み先は repo 外 ~/.claude/logs/dev-flow-canary/ のみ）。',
+    `指定パス（${targetPath}）以外への書き込み・repo 内への書き込み・git/gh 操作は一切禁止。`,
     '',
     '## Token cap',
     '出力は schema フィールドのみ。',
+    '',
+    '## 書き込み内容（verbatim）',
+    json,
   ].join('\n')
 }
 
@@ -239,6 +237,14 @@ const timestampUtc = (versionProbe && versionProbe.ok !== false && typeof versio
   : 'unknown'
 if (claudeCodeVersion === 'unknown') {
   log('⚠️ version probe が null/ok:false — claude_code_version=unknown（fail-open、throw しない）')
+}
+
+const epochStr = (versionProbe && versionProbe.ok !== false && versionProbe.epoch != null)
+  ? String(versionProbe.epoch).trim()
+  : ''
+const epochValid = /^\d+$/.test(epochStr)
+if (!epochValid) {
+  log('⚠️ version probe から epoch を取得できず canary report の書き出しを skip（fail-open） — report_path=null')
 }
 
 // ============================================================
@@ -405,15 +411,24 @@ const report = {
   report_path: null,
 }
 
-const writeResult = await agent(
-  reportWritePrompt(report),
-  { agentType: 'dev-runner-haiku', schema: WRITE_RESULT, label: 'canary:report-write', phase: 'Report' },
-)
-report.report_path = (writeResult && writeResult.ok !== false && typeof writeResult.path === 'string')
-  ? writeResult.path
-  : null
-if (report.report_path === null) {
-  log('⚠️ canary report の書き出しに失敗（fail-open） — report_path=null。dev-flow-doctor --canary への手動取り込みは今回不可')
+if (epochValid) {
+  const targetPath = '~/.claude/logs/dev-flow-canary/canary-' + epochStr + '.json'
+  const writeResult = await agent(
+    reportWritePrompt(report, targetPath),
+    { agentType: 'dev-runner-haiku', schema: WRITE_RESULT, label: 'canary:report-write', phase: 'Report' },
+  )
+  const expectedSuffix = '/.claude/logs/dev-flow-canary/canary-' + epochStr + '.json'
+  report.report_path = (writeResult && writeResult.ok === true && typeof writeResult.path === 'string' && writeResult.path.endsWith(expectedSuffix))
+    ? writeResult.path
+    : null
+  if (report.report_path === null) {
+    const suffixNote = (writeResult && typeof writeResult.path === 'string' && !writeResult.path.endsWith(expectedSuffix))
+      ? `申告 path が期待 suffix (${expectedSuffix}) と不一致: ${writeResult.path}`
+      : `write agent 応答: ${JSON.stringify(writeResult)}`
+    log(`⚠️ canary report の書き出しに失敗（fail-open） — report_path=null。${suffixNote}。dev-flow-doctor --canary への手動取り込みは今回不可`)
+  }
+} else {
+  report.report_path = null
 }
 
 const passCount = capabilities.filter((c) => c.status === 'pass').length
