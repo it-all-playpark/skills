@@ -109,6 +109,7 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
+    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
     args: '1',
@@ -393,6 +394,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
+    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     args: '1',
     console,

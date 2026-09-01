@@ -17,6 +17,13 @@ export const meta = {
   ],
 }
 
+// runImplement の parallel fan-out は pipeline() に依存する（issue #332）。pipeline() を持たない
+// runtime では fan-out が黙って壊れる（parallel() への fallback / dual-path は作らない）ため、
+// load 時に fail-fast する。
+if (typeof pipeline === 'undefined') {
+  throw new Error('dev-flow-run requires Claude Code >= 2.1.207: pipeline() is not available in this workflow runtime')
+}
+
 // ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // 品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）の model override。
 // frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
@@ -4061,19 +4068,26 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
     + CONTEXT7_BEST_PRACTICE_CONVENTION
 }
 
-// 計画の parallel → 同時に先行実行、serial → その後に配列順で順次実行（issue #534: serial は
+// 計画の parallel → pipeline() で先行 fan-out、serial → その後に配列順で順次実行（issue #534: serial は
 // parallel の成果物に依存し得るため parallel-first。逆方向 — parallel が serial 成果へ依存 — は
-// plan-reviewer が critical で reject する。issue #332 の pipeline() 移行時もこの順序を維持すること）。
-// serial/parallel とも throw→null は fail-open で吸収し drop を可視化して返す。
+// plan-reviewer が critical で reject する。この順序は不変）。
+// parallel 側は pipeline()、serial 側は failOpenAgent 経由。両者とも callback の throw / null return は
+// reject にならず per-item null に落ちる — pipeline() は canary 実測契約（Claude Code 2.1.252 で実測、
+// issue #325/#560 canary）による harness-native の fail-open、failOpenAgent は明示 try/catch による
+// fail-open。drop は可視化して返す。
+// 最小バージョン: Claude Code >= 2.1.207（pipeline() 提供。canary 実測 pass は 2.1.252）。
 async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   const results = []
-  const par = (plan.parallel ?? []).map((t) => () =>
+  const parTasks = plan.parallel ?? []
+  const parResults = await pipeline(parTasks, (t) =>
     trackedAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
       { agentType: 'implementer', schema: IMPL, label: `${tag}:par:${t.id}`, phase: 'Implement' }))
-  const parResults = await parallel(par)
   const ok = parResults.filter(Boolean)
   const dropped = parResults.length - ok.length
-  if (dropped) log(`⚠️ ${tag}: parallel implementer ${dropped} 件が失敗(null) — 要確認`)
+  if (dropped) {
+    const droppedIds = parTasks.filter((_, i) => !parResults[i]).map((t) => t.id)
+    log(`⚠️ ${tag}: parallel implementer ${dropped} 件が失敗(null) — 要確認 (dropped: ${droppedIds.join(', ')})`)
+  }
   results.push(...ok)
   let serialDropped = 0
   for (const t of (plan.serial ?? [])) {

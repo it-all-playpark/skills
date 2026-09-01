@@ -91,6 +91,7 @@ function makeSandbox(prMetaResponse) {
     return result === undefined ? null : result;
   };
   const parallel = async (fns) => Promise.all((fns || []).map((f) => f()));
+  const pipeline = async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } }));
   const workflow = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
 
   const sandbox = {
@@ -98,6 +99,7 @@ function makeSandbox(prMetaResponse) {
     log: () => {},
     agent,
     parallel,
+    pipeline,
     workflow,
     args: '405',
     console, JSON, Math, String, Number, Boolean, Array, Object, Error, RegExp, Promise, Symbol, Map, Set, Date,

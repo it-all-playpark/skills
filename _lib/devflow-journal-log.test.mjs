@@ -147,6 +147,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
+    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
     // 引数（ISSUE 解決用）
     args: '1',

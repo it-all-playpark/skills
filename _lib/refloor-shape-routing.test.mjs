@@ -135,6 +135,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     log: () => {},
     agent: agentStub,
     parallel: parallelStub,
+    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
     args: '1',
@@ -330,6 +331,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     log: () => {},
     agent: agentStubWithFailFirst,
     parallel: parallelStub,
+    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     args: '1',
     console,
@@ -545,6 +547,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     log: () => {},
     agent: agentStubNullRealized,
     parallel: parallelStub,
+    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     args: '1',
     console,
