@@ -84,6 +84,7 @@ moving target（蒸し返し）を生む。これを避ける:
 ```json
 {
   "decision": "approve",
+  "confidence": 0.8,
   "issues": [
     {"severity": "major", "topic": "input-validation-missing::src/foo.ts",
      "file": "src/foo.ts", "line": 42,
@@ -135,6 +136,22 @@ decision 判定:
 - critical / major が 1 件もない → **`approve`**（= LGTM）
 - critical or major がある → **`request-changes`**
 - 判断に迷う指摘のみ（minor 中心で blocking でない）→ **`comment`**
+
+### confidence の判定基準（省略可・任意。issue #561, #154 スコープ3）
+
+`confidence`: この decision 自体がどの程度確かかの自己申告 `[0,1]`（0=当てずっぽう、1=決定論的証拠で
+確実）。
+
+- **根拠**: `verification_evidence` の実測度合い（テスト実行・diff 照合を実際に行えたか）、PR diff
+  全体を読めた範囲、CI 結果を確認できたかどうかを根拠に付ける。
+- **decision と独立に付ける**: `approve` でも証拠が弱ければ低 confidence はあり得るし、
+  `request-changes` でも高 confidence はあり得る。decision の強気/弱気の調整に confidence を使わない。
+- **乱発しない**: 根拠なき 1.0 や一律固定値を禁止。迷うなら省略してよい（省略時は `null` として
+  記録される）。
+- **記録専用**: この値は merge tier / gate 判定には一切使われず、calibration 用の記録専用
+  （issue #561、#154 スコープ3）。
+- 指示の規範性クラス（`.claude/rules/dev-flow.md` の prescription 分類規約）: フィールドの意味定義は
+  **contract**、過大申告の抑制（乱発禁止）は **incentive-structural**。
 
 ## 文体ルール（日本語主体）
 

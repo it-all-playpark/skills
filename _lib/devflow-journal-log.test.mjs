@@ -30,7 +30,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * @param {object} journalResult - journal-log stub が返すレスポンス（ログ成功/失敗を切り替え）
  * @returns {{ ctx: vm.Context, getJournalCallCount: () => number, getJournalPrompts: () => string[] }}
  */
-function makeSandbox(analyzeReq, journalResult, journalSaveResult) {
+function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOverrides) {
   // journal-log (stage2) 呼び出しカウンタ
   let journalCallCount = 0;
   // journal-save (stage1) 呼び出しカウンタ・実際の telemetry payload はここに載る
@@ -87,6 +87,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult) {
           { ac_index: 3, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
         ],
         security_clearance: [],
+        ...(evaluatorOverrides ?? {}),
       };
     }
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
@@ -406,4 +407,42 @@ test('[journal-log] source pin: dev-flow.js の 2 call site（writeFailureTeleme
   assert.ok(callSiteCount >= 2, `inline 区間より後（call site）に runJournalHandoff 呼び出しが 2 回以上無い（実際 ${callSiteCount} 回）`);
 
   assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
+});
+
+// issue #561 AC-3: evaluator が confidence を返すケース/省略するケースの両方で run が abort せず、
+// journal-save (stage1) の handoff payload に eval_confidence が正しく現れること。
+test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は journal-save prompt に "eval_confidence":0.8 が現れる', async () => {
+  const journalResult = { logged: true, summary: 'ok' };
+  const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult, undefined, { confidence: 0.8 });
+
+  const { result, error } = await runDevFlowCapture(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+  assert.ok(result != null, 'evaluator confidence あり run は abort してはならない');
+
+  const savePrompt = getJournalPrompts()[0] ?? '';
+  assert.ok(
+    savePrompt.includes('"eval_confidence":0.8'),
+    `journal-save prompt に '"eval_confidence":0.8' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt}`,
+  );
+});
+
+test('[journal-log] issue #561: evaluator が confidence を省略する run は abort せず journal-save prompt に "eval_confidence":null が現れる', async () => {
+  const journalResult = { logged: true, summary: 'ok' };
+  const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult);
+
+  const { result, error } = await runDevFlowCapture(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+  assert.ok(result != null, 'evaluator confidence 省略 run は abort してはならない（optional 契約）');
+
+  const savePrompt = getJournalPrompts()[0] ?? '';
+  assert.ok(
+    savePrompt.includes('"eval_confidence":null'),
+    `journal-save prompt に '"eval_confidence":null' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt}`,
+  );
 });

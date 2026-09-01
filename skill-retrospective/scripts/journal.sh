@@ -81,6 +81,7 @@ cmd_log() {
     local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
     local subagent_invocations=""
     local guard_id=""
+    local eval_confidence="" review_confidence="" review_decision=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -140,6 +141,9 @@ cmd_log() {
             --route) route="$2"; shift 2 ;;
             --subagent-invocations) subagent_invocations="$2"; shift 2 ;;
             --guard-id) guard_id="$2"; shift 2 ;;
+            --eval-confidence) eval_confidence="$2"; shift 2 ;;
+            --review-confidence) review_confidence="$2"; shift 2 ;;
+            --review-decision) review_decision="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -335,6 +339,36 @@ cmd_log() {
         fi
     fi
 
+    # Validate --eval-confidence / --review-confidence (issue #561; same fail-open
+    # drop-and-warn precedent as the 8 telemetry flags above — a single bad
+    # confidence value must not lose the whole entry). Accepts a JSON number in
+    # [0,1] or the literal string "null" (recorded as JSON null; agent ran but
+    # did not return a confidence).
+    if [[ -n "$eval_confidence" ]]; then
+        if ! echo "$eval_confidence" | jq -e '(type == "number" and . >= 0 and . <= 1) or type == "null"' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --eval-confidence: $eval_confidence (must be a number in [0,1] or null)" >&2
+            eval_confidence=""
+        fi
+    fi
+    if [[ -n "$review_confidence" ]]; then
+        if ! echo "$review_confidence" | jq -e '(type == "number" and . >= 0 and . <= 1) or type == "null"' >/dev/null 2>&1; then
+            echo "journal log: dropping invalid --review-confidence: $review_confidence (must be a number in [0,1] or null)" >&2
+            review_confidence=""
+        fi
+    fi
+
+    # Validate --review-decision (closed 3-value enum; fail-open drop-and-warn
+    # like --route above)
+    if [[ -n "$review_decision" ]]; then
+        case "$review_decision" in
+            approve|request-changes|comment) ;;
+            *)
+                echo "journal log: dropping invalid --review-decision: $review_decision (must be approve|request-changes|comment)" >&2
+                review_decision=""
+                ;;
+        esac
+    fi
+
     ensure_journal_dir
 
     local now
@@ -509,6 +543,18 @@ cmd_log() {
     fi
     if [[ -n "$subagent_invocations" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson v "$subagent_invocations" '. + {subagent_invocations: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$eval_confidence" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$eval_confidence" '. + {eval_confidence: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$review_confidence" ]]; then
+        telemetry=$(echo "$telemetry" | jq --argjson v "$review_confidence" '. + {review_confidence: $v}')
+        has_telemetry=true
+    fi
+    if [[ -n "$review_decision" ]]; then
+        telemetry=$(echo "$telemetry" | jq --arg v "$review_decision" '. + {review_decision: $v}')
         has_telemetry=true
     fi
     if [[ "$has_telemetry" == true ]]; then
@@ -883,6 +929,8 @@ Examples:
   journal.sh log dev-flow success --trust-effectdelta-pr-missing-reason gh_failed  # PR stage receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
   journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
   journal.sh log dev-flow success --error-category guard_blocked --guard-id sandbox-deny  # guard/hook 由来 BLOCKED の telemetry (guard_id は fail-open; dotfiles Stop hook 転送配線は dotfiles 側 PR)
+  journal.sh log dev-flow success --eval-confidence 0.85  # evaluator の verdict 判定確信度 [0,1] または null (fail-open drop-and-warn)
+  journal.sh log pr-iterate success --review-confidence 0.6 --review-decision approve  # reviewer の確信度と decision (review-decision は approve|request-changes|comment の closed enum, fail-open)
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff

@@ -3285,6 +3285,7 @@ const EVAL = {
         properties: { id: { type: 'string' }, resolved: { type: 'boolean' }, evidence: { type: 'string' } },
       },
     },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
     epoch: { type: 'number' },
   },
 }
@@ -3355,6 +3356,7 @@ const REVIEW = {
     },
     summary: { type: 'string', maxLength: 200 },
     verification_evidence: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 120 } },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
     epoch: { type: 'number' },
   },
 }
@@ -5440,6 +5442,7 @@ if (LITE) {
     )
     if (ciLite != null && (ciLite.status === 'passed' || ciLite.status === 'no_checks')) {
       state.liteReview = { decision: reviewLite?.decision ?? null, ci: ciLite.status, summary: reviewLite?.summary ?? null }
+      state.liteReviewConfidence = reviewLite?.confidence ?? null
       iterate = { status: 'lgtm', fixes_applied: 0 }
       route = 'lite'
       iterateEpochRes = maxEpochRes([reviewLite, ciLite])
@@ -5847,6 +5850,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     eval_iter: state.evalIters,
     eval_staleness: evalStaleness,
     ...(state.evalResult?.verdict ? { eval_verdict: state.evalResult.verdict } : {}),
+    ...(state.evalResult ? { eval_confidence: state.evalResult.confidence ?? null } : {}),
     ...(iterate?.status ? { iterate_status: iterate.status } : {}),
     ...(iterate?.fixes_applied != null ? { iterate_rounds: iterate?.iterations ?? 0, fixes_applied: iterate.fixes_applied } : {}),
     ui_verify: state.uiVerifyStatus,
@@ -5862,6 +5866,10 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // route: PR phase 経路識別子（'lite'|'full'。issue #376 AC-5）。常時出力。journal.sh の
     // --route フラグに到達済み（issue #430）。送り側の jq projection は it-all-playpark/dotfiles#143。
     route,
+    // review_confidence/review_decision: lite route（pr-review-lite が dev-flow 内で実行された場合）
+    // のみ出力する。full route の dev-flow entry にはキー自体を出さない（実値は同 run の nested
+    // pr-iterate entry 側に記録 — 二重計上防止。issue #561）。
+    ...(route === 'lite' && state.liteReview ? { review_confidence: state.liteReviewConfidence ?? null, ...(state.liteReview.decision ? { review_decision: state.liteReview.decision } : {}) } : {}),
     // subagent_invocations: run あたりの subagent (agent()) 起動数 {total, by_type}。
     // 常時出力（issue #445）。nested pr-iterate 分は上記 mergeSubagentCounts で合算済み。
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),

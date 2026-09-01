@@ -1021,6 +1021,7 @@ const REVIEW = {
     summary: { type: 'string', maxLength: 200 },
     // 検証根拠の箇条書き（1 項目 1 文）。summary は結論 1-2 文に留める（issue #242）
     verification_evidence: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 120 } },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
   },
 }
 
@@ -1611,6 +1612,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
     fix_null_retries: fixNullRetries,
     review_null_retries: reviewNullRetries,
     fix_uncommitted_recovered: fixUncommittedRecovered,
+    review_confidence: lastReview ? (lastReview.confidence ?? null) : null,
+    ...(lastReview?.decision ? { review_decision: lastReview.decision } : {}),
     ...(worktreeDirty != null ? { worktree_dirty: worktreeDirty } : {}),
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
   },

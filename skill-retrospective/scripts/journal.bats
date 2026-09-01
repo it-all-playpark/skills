@@ -1500,3 +1500,167 @@ JSON
     has_key=$(jq '.telemetry | has("trust_effectdelta_pr_missing_reason")' "$entry_file")
     [ "$has_key" = "false" ]
 }
+
+# ===========================================================================
+# --eval-confidence / --review-confidence / --review-decision (issue #561)
+# ===========================================================================
+
+# (a) --eval-confidence 0.85 -> telemetry.eval_confidence は number 0.85
+@test "--eval-confidence: valid number is recorded as telemetry.eval_confidence number" {
+    run "$SCRIPT" log dev-flow success --eval-confidence 0.85
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    value=$(jq -r '.telemetry.eval_confidence' "$entry_file")
+    type=$(jq -r '.telemetry.eval_confidence | type' "$entry_file")
+    [ "$value" = "0.85" ]
+    [ "$type" = "number" ]
+}
+
+# (b) --eval-confidence null -> telemetry.eval_confidence は JSON null（キーは存在する）
+@test "--eval-confidence: literal null is recorded as telemetry.eval_confidence null (key present)" {
+    run "$SCRIPT" log dev-flow success --eval-confidence null
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
+    [ "$has_key" = "true" ]
+    type=$(jq -r '.telemetry.eval_confidence | type' "$entry_file")
+    [ "$type" = "null" ]
+}
+
+# (c) 範囲外の値 (1.5) は drop-and-warn: stderr に警告、entry は書かれ、telemetry にキーが無い
+@test "--eval-confidence: out-of-range value is dropped with warning, entry still recorded" {
+    run "$SCRIPT" log dev-flow success --eval-confidence 1.5
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"dropping invalid --eval-confidence"* ]]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+# (d) 非数の値 (abc) は drop-and-warn
+@test "--eval-confidence: non-numeric value is dropped with warning, entry still recorded" {
+    run "$SCRIPT" log dev-flow success --eval-confidence abc
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"dropping invalid --eval-confidence"* ]]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+# (e) 境界値 0 は正しく受理される (falsy 事故で落ちないこと)
+@test "--eval-confidence: boundary value 0 is accepted (not dropped by falsy bug)" {
+    run "$SCRIPT" log dev-flow success --eval-confidence 0
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
+    [ "$has_key" = "true" ]
+    value=$(jq -r '.telemetry.eval_confidence' "$entry_file")
+    [ "$value" = "0" ]
+}
+
+# (e-2) 境界値 1 は正しく受理される
+@test "--eval-confidence: boundary value 1 is accepted" {
+    run "$SCRIPT" log dev-flow success --eval-confidence 1
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    value=$(jq -r '.telemetry.eval_confidence' "$entry_file")
+    [ "$value" = "1" ]
+}
+
+# (f) フラグ未指定なら telemetry に eval_confidence キーが無い
+@test "--eval-confidence: not specified -> no telemetry key" {
+    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+# (g) --review-confidence 0.6 と --review-decision approve が telemetry に記録される
+@test "--review-confidence and --review-decision: valid values recorded" {
+    run "$SCRIPT" log dev-flow success --review-confidence 0.6 --review-decision approve
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    review_confidence=$(jq -r '.telemetry.review_confidence' "$entry_file")
+    review_decision=$(jq -r '.telemetry.review_decision' "$entry_file")
+    [ "$review_confidence" = "0.6" ]
+    [ "$review_decision" = "approve" ]
+}
+
+# (g-2) --review-confidence の範囲外・null も eval-confidence と同じ挙動をとる
+@test "--review-confidence: literal null is recorded as null (key present)" {
+    run "$SCRIPT" log dev-flow success --review-confidence null
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("review_confidence")' "$entry_file")
+    [ "$has_key" = "true" ]
+    type=$(jq -r '.telemetry.review_confidence | type' "$entry_file")
+    [ "$type" = "null" ]
+}
+
+@test "--review-confidence: out-of-range value is dropped with warning" {
+    run "$SCRIPT" log dev-flow success --review-confidence -0.1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"dropping invalid --review-confidence"* ]]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("review_confidence")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+# (h) --review-decision が enum 外 (lgtm) の場合は drop-and-warn
+@test "--review-decision: out-of-enum value is dropped with warning, entry still recorded" {
+    run "$SCRIPT" log dev-flow success --review-decision lgtm
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"dropping invalid --review-decision"* ]]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    has_key=$(jq '.telemetry | has("review_decision")' "$entry_file")
+    [ "$has_key" = "false" ]
+}
+
+# (i) --review-decision の残り2つの enum 値 (request-changes / comment) も受理される
+@test "--review-decision: request-changes and comment are accepted" {
+    run "$SCRIPT" log dev-flow success --review-decision request-changes
+    [ "$status" -eq 0 ]
+    entry_file=$(latest_entry)
+    value=$(jq -r '.telemetry.review_decision' "$entry_file")
+    [ "$value" = "request-changes" ]
+
+    run "$SCRIPT" log dev-flow success --review-decision comment
+    [ "$status" -eq 0 ]
+    entry_file=$(latest_entry)
+    value=$(jq -r '.telemetry.review_decision' "$entry_file")
+    [ "$value" = "comment" ]
+}

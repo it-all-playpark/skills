@@ -211,6 +211,17 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
   する fail-open）に到達済み（issue #430）。dotfiles Stop hook 側の jq projection（送り側配線）は
   it-all-playpark/dotfiles#143 で扱う。
+  `eval_confidence` / `review_confidence` は `[0,1]` または `null`（evaluator / pr-reviewer の verdict
+  自己申告 confidence）。agent が実行されたが confidence を返さない run は `null` を記録し、
+  agent 自体が実行されない run（micro の Evaluate skip 等）はキー自体が handoff から欠落する
+  （`null` とキー欠落を区別し、doctor 側の記録率分母は `has()` で判定する）。full route の
+  dev-flow entry は `review_confidence` キーを持たない（review は nested `workflow('pr-iterate')`
+  側で行われるため）— 実値は同 run の pr-iterate entry 側に記録される（`subagent_invocations` の
+  二重計上防止と同じ理由）。`review_decision`（`approve`/`request-changes`/`comment`）は
+  confidence と verdict の突合用に併記する。いずれも記録専用で、merge tier / ledger /
+  security floor / gate_policy のいずれの判定入力にもならない（軸A 非抵触、#154 の calibration
+  原資料）。dotfiles Stop hook 側の送り側配線（jq projection・cmd_args 転送）は本 issue（#561）で
+  同時に行う。
 
 ### distrust 機構の正当化クラス (W7)
 

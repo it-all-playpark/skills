@@ -1062,3 +1062,124 @@ EOF
     [ "$fail_open" -eq 1 ]
     [ "$total" -eq 2 ]
 }
+
+# ---------------------------------------------------------------------------
+# Test 38: distributions.confidence.eval -- 0.9/pass + 0.5/fail + null/pass ->
+#          total=3, recorded=2, rate~=0.667, mean_by_verdict.pass==0.9,
+#          mean_by_verdict.fail==0.5.
+# ---------------------------------------------------------------------------
+@test "confidence.eval: records rate and mean_by_verdict from eval_confidence/eval_verdict" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":0.9,"eval_verdict":"pass"}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":0.5,"eval_verdict":"fail"}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":null,"eval_verdict":"pass"}' 3
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.total')
+    recorded=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.recorded')
+    rate=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.rate')
+    mean_pass=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.mean_by_verdict.pass')
+    mean_fail=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.mean_by_verdict.fail')
+
+    [ "$total" -eq 3 ]
+    [ "$recorded" -eq 2 ]
+    awk -v r="$rate" 'BEGIN { d = r - 0.6666666666666666; if (d < 0) d = -d; exit !(d < 0.0001) }'
+    [ "$mean_pass" = "0.9" ]
+    [ "$mean_fail" = "0.5" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 39: distributions.confidence.review -- review_confidence must exclude
+#          full-route dev-flow entries (key absent by producer design, issue
+#          #561) from the denominator, while counting the lite-route dev-flow
+#          entry and the pr-iterate entry that both carry review_confidence.
+# ---------------------------------------------------------------------------
+@test "confidence.review: full-route dev-flow entry (no review_confidence key) excluded from denominator" {
+    # full-route dev-flow entry: has iterate_status, no review_confidence key.
+    write_devflow_entry "df-full.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "full1"
+
+    # lite-route dev-flow entry: has review_confidence, no iterate_status key.
+    write_devflow_entry "df-lite.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"review_confidence":0.8,"review_decision":"approve"}' "lite1"
+
+    # pr-iterate entry carrying both iterate_status and review_confidence.
+    cat > "${CLAUDE_JOURNAL_DIR}/pi-conf.json" <<EOF
+{
+  "version": "1.0.0",
+  "id": "priterate-conf1",
+  "timestamp": "${TS}",
+  "skill": "pr-iterate",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": { "merge_tier": "PR_ITERATE", "iterate_status": "lgtm", "review_confidence": 0.6, "review_decision": "approve" }
+}
+EOF
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.confidence.review.total')
+    recorded=$(printf '%s\n' "$output" | jq '.distributions.confidence.review.recorded')
+    mean_approve=$(printf '%s\n' "$output" | jq '.distributions.confidence.review.mean_by_decision.approve')
+
+    [ "$total" -eq 2 ]
+    [ "$recorded" -eq 2 ]
+    awk -v m="$mean_approve" 'BEGIN { d = m - 0.7; if (d < 0) d = -d; exit !(d < 0.0001) }'
+}
+
+# ---------------------------------------------------------------------------
+# Test 40: distributions.confidence -- no entry in the journal carries an
+#          eval_confidence/review_confidence key -> {total:0, recorded:0,
+#          rate:null, mean_by_*:{}} for both eval and review, exit 0, valid
+#          JSON (AC-7: safe reporting with 0 matching runs).
+# ---------------------------------------------------------------------------
+@test "confidence: no confidence-bearing entries -> total/recorded 0, rate null, mean_by_* empty" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    eval_total=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.total')
+    eval_recorded=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.recorded')
+    eval_rate=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.rate')
+    eval_means=$(printf '%s\n' "$output" | jq -c '.distributions.confidence.eval.mean_by_verdict')
+
+    review_total=$(printf '%s\n' "$output" | jq '.distributions.confidence.review.total')
+    review_recorded=$(printf '%s\n' "$output" | jq '.distributions.confidence.review.recorded')
+    review_rate=$(printf '%s\n' "$output" | jq '.distributions.confidence.review.rate')
+    review_means=$(printf '%s\n' "$output" | jq -c '.distributions.confidence.review.mean_by_decision')
+
+    [ "$eval_total" -eq 0 ]
+    [ "$eval_recorded" -eq 0 ]
+    [ "$eval_rate" = "null" ]
+    [ "$eval_means" = "{}" ]
+
+    [ "$review_total" -eq 0 ]
+    [ "$review_recorded" -eq 0 ]
+    [ "$review_rate" = "null" ]
+    [ "$review_means" = "{}" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 41: distributions.confidence -- a boundary value of 0 is still a JSON
+#          number and must be counted into recorded (not treated as falsy/
+#          absent).
+# ---------------------------------------------------------------------------
+@test "confidence: boundary value 0 is counted into recorded, not treated as falsy" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":0,"eval_verdict":"pass"}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.total')
+    recorded=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.recorded')
+    mean_pass=$(printf '%s\n' "$output" | jq '.distributions.confidence.eval.mean_by_verdict.pass')
+
+    [ "$total" -eq 1 ]
+    [ "$recorded" -eq 1 ]
+    [ "$mean_pass" = "0" ]
+}
