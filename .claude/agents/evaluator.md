@@ -163,6 +163,7 @@ concern_resolutions 契約:
 ```json
 {
   "verdict": "pass",
+  "confidence": 0.8,
   "feedback": [
     {"severity": "major", "topic": "input-validation-missing::create-user",
      "description": "src/user.ts の create-user が email 形式を検証していない（plan F1 に入力検証が記載済みだが実装で漏れ）",
@@ -189,6 +190,23 @@ concern_resolutions 契約:
   ]
 }
 ```
+
+### confidence の判定基準（省略可・任意。issue #561, #154 スコープ3）
+
+`confidence`: この verdict 自体がどの程度確かかの自己申告 `[0,1]`（0=当てずっぽう、1=決定論的証拠で
+確実）。
+
+- **根拠**: `ac_results` の `test-verified` 割合（`verified_by:'test'` が多いほど高く、`inspection`
+  のみなら下げる）、diff・テスト結果を実際に確認できた範囲、未解消 concern や判断に使えなかった
+  情報の有無を根拠に付ける。
+- **verdict と独立に付ける**: `pass` でも証拠が弱ければ低 confidence はあり得るし、`fail` でも
+  高 confidence はあり得る。verdict の強気/弱気の調整に confidence を使わない。
+- **乱発しない**: 根拠なき 1.0 や一律固定値を禁止。迷うなら省略してよい（省略時は `null` として
+  記録される）。
+- **記録専用**: この値は merge tier / gate 判定には一切使われず、calibration 用の記録専用
+  （issue #561、#154 スコープ3）。
+- 指示の規範性クラス（`.claude/rules/dev-flow.md` の prescription 分類規約）: フィールドの意味定義は
+  **contract**、過大申告の抑制（乱発禁止）は **incentive-structural**。
 
 ## 原則
 

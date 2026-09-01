@@ -26,6 +26,17 @@
 #                       transcribes status, it does not re-derive it;
 #                       flattened over per-AC .telemetry.vdelta_verdicts[];
 #                       denominator = .skill == "dev-flow" entries)
+#                     confidence (eval / review 記録率 + verdict/decision 別平均 --
+#                       eval.total = DEVFLOW_ENTRIES のうち has("eval_confidence")
+#                       の entry 数、review.total = DEVFLOW_ENTRIES + ITERATE_ENTRIES
+#                       を連結したうち has("review_confidence") の entry 数。
+#                       full route の dev-flow entry は review_confidence キー自体を
+#                       出さない設計 (issue #561) のため review の分母は二重計上・
+#                       希釈されない。recorded は値が number 型の entry 数。
+#                       mean_by_verdict / mean_by_decision は confidence が number の
+#                       entry のみを eval_verdict / review_decision // "unknown" で
+#                       group し平均。該当 entry 0 件は {total:0,recorded:0,rate:null,
+#                       mean_by_*:{}} を返す。詳細は下記 CONFIDENCE_DIST コメント参照)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring /
 #                      vdelta_unhealthy
 #
@@ -327,6 +338,74 @@ VDELTA_VERDICT_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
 ')
 
 # ----------------------------------------------------------------------------
+# confidence: eval_confidence / review_confidence 記録率 + verdict/decision 別平均
+#
+# 分母定義 (重要):
+#   eval.total   = DEVFLOW_ENTRIES のうち (.telemetry | has("eval_confidence")) の
+#                  entry 数。micro の Evaluate skip run は producer 側がキー自体を
+#                  出力しないため、キー欠落として自然に分母から除外される。
+#   review.total = DEVFLOW_ENTRIES と ITERATE_ENTRIES を連結したうち
+#                  (.telemetry | has("review_confidence")) の entry 数。
+#                  full route の dev-flow entry は producer 側が review_confidence
+#                  キー自体を出さない設計 (issue #561) -- 実値は同 run の pr-iterate
+#                  entry 側にのみ記録される -- のため、full route 分の二重計上や
+#                  分母希釈は起きない (lite route の dev-flow entry のみキーを持つ)。
+#   recorded     = 値が number 型の entry 数 (JSON null は total に入るが recorded
+#                  には入らない。confidence==0 は number 型なので recorded に入る)。
+#   rate         = recorded / total。total==0 のときは null (ゼロ除算を避ける)。
+#   mean_by_verdict / mean_by_decision は confidence が number 型の entry のみを
+#   それぞれ .telemetry.eval_verdict // "unknown" (eval側) /
+#   .telemetry.review_decision // "unknown" (review側) で group_by して平均する。
+#   該当 entry が 0 件のときは mean_by_* は {} (キー無し) を返す -- group_by([]) は
+#   空配列になるため null 参照・ゼロ除算エラーは起きない (AC-7 の
+#   「該当 run 0 件でも安全に報告」)。
+# ----------------------------------------------------------------------------
+
+# ARG_MAX-safe: DEVFLOW_ENTRIES/ITERATE_ENTRIES can be large (see load_journal_entries
+# header comment above), so they are piped via stdin (jq -s slurps the two JSON
+# values) rather than passed as --argjson command-line arguments.
+CONFIDENCE_DIST=$(printf '%s\n%s\n' "$DEVFLOW_ENTRIES" "$ITERATE_ENTRIES" | jq -cs '
+  .[0] as $devflow |
+  .[1] as $iterate |
+  def conf_stats(entries; key; group_key):
+    (entries | map(select(.telemetry | has(key)))) as $withkey |
+    ($withkey | length) as $total |
+    ($withkey | map(select(.telemetry[key] | type == "number"))) as $recorded_entries |
+    ($recorded_entries | length) as $recorded |
+    ($recorded_entries | group_by(.telemetry[group_key] // "unknown")) as $groups |
+    {
+      total: $total,
+      recorded: $recorded,
+      rate: (if $total == 0 then null else ($recorded / $total) end),
+      means: (
+        if ($groups | length) == 0 then {}
+        else
+          ($groups | map({
+            key: ((.[0].telemetry[group_key]) // "unknown"),
+            value: ((map(.telemetry[key]) | add) / length)
+          }) | from_entries)
+        end
+      )
+    };
+  (conf_stats($devflow; "eval_confidence"; "eval_verdict")) as $eval_stats |
+  (conf_stats($devflow + $iterate; "review_confidence"; "review_decision")) as $review_stats |
+  {
+    eval: {
+      total: $eval_stats.total,
+      recorded: $eval_stats.recorded,
+      rate: $eval_stats.rate,
+      mean_by_verdict: $eval_stats.means
+    },
+    review: {
+      total: $review_stats.total,
+      recorded: $review_stats.recorded,
+      rate: $review_stats.rate,
+      mean_by_decision: $review_stats.means
+    }
+  }
+  ')
+
+# ----------------------------------------------------------------------------
 # Nested run normalization
 #
 # dev-flow can invoke pr-iterate as a nested workflow call (workflow('pr-iterate')).
@@ -438,6 +517,7 @@ DISTRIBUTIONS=$(jq -n \
   --argjson iterate_status "$ITERATE_STATUS_DIST" \
   --argjson duration_seconds_by_shape "$DURATION_BY_SHAPE" \
   --argjson vdelta_verdict "$VDELTA_VERDICT_DIST" \
+  --argjson confidence "$CONFIDENCE_DIST" \
   '{
     shape: $shape,
     merge_tier: $merge_tier,
@@ -446,7 +526,8 @@ DISTRIBUTIONS=$(jq -n \
     gate_policy: $gate_policy,
     iterate_status: $iterate_status,
     duration_seconds_by_shape: $duration_seconds_by_shape,
-    vdelta_verdict: $vdelta_verdict
+    vdelta_verdict: $vdelta_verdict,
+    confidence: $confidence
   }')
 
 # ----------------------------------------------------------------------------
