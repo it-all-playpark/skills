@@ -107,6 +107,7 @@ function makeSandbox(analyzeReq, evaluatorResponse, redgreenResponseFor) {
     log: (m) => logs.push(String(m)),
     agent: agentStub,
     parallel: parallelStub,
+    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
     args: '1',
     console,

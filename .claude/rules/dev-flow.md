@@ -66,7 +66,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   dev-runner-haiku / dev-runner-haiku-ro は `effort: low`（issue #323 の A/B 実測 —
   claudedocs/2026-07-12-issue-323-exec-proxy-effort-ab.md。mechanical exec-proxy は
   low が high に schema 成功率で劣後しないことを実測）。
-- **1 issue = 1 PR**。並列実装は単一 worktree 内で file-disjoint な task を `parallel()` で fan-out する
+- **1 issue = 1 PR**。並列実装は単一 worktree 内で file-disjoint な task を `pipeline()` で fan-out する
   (旧 child-split / DAG / integration branch / batch loop は廃止)。
 - **merge は手動** (LGTM 後にユーザーが merge)。
 - worktree の後片付けは `_shared/scripts/worktree-teardown.sh <worktree-path>` を使う

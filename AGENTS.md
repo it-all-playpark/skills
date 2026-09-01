@@ -85,7 +85,7 @@ workflow script が JS で保持し、中間 state は script 変数に持つ (�
 - **merge は常に人間** (LGTM 後にユーザーが merge)。全 tier で例外なし。
 - **軸A invariant** — deterministic oracle / seed / critical アイテムは全 `gate_policy` で blocking。
   security floor・決定論ゲートを policy で緩めない。
-- **1 issue = 1 PR**。並列実装は単一 worktree 内で file-disjoint な task を `parallel()` で fan-out する。
+- **1 issue = 1 PR**。並列実装は単一 worktree 内で file-disjoint な task を `pipeline()` で fan-out する。
 - **後方互換 scaffolding を作らない** — out-of-enum 値は明示 error (legacy fallback / version 分岐なし)。
 - `.claude/workflows/*.js` の `// ==== BEGIN inline: <path> ====` 〜 `// ==== END inline: <path> ====`
   区間は**生成物であり直接編集禁止**。編集は `_lib` の canonical 側で行い
@@ -114,7 +114,7 @@ dev-flow 本体 (`.claude/workflows/` / `.claude/agents/` / `_lib/` / `tools/`) 
 ### 並列実装は task 単位 (issue 分割しない)
 
 1 issue 内で並列実装できる箇所は、計画段階で `{serial, parallel}` に分解し、単一 worktree 内で
-`parallel()` を使って fan-out する。parallel に置く task は file_changes が互いに disjoint であること
+`pipeline()` を使って fan-out する。parallel に置く task は file_changes が互いに disjoint であること
 (plan-reviewer が検証)。依存があるものは serial に置く。任意 DAG / 複数 issue 分割は使わない。
 
 ### Subagent dispatch — 必須 5 要素

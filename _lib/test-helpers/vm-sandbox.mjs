@@ -76,6 +76,20 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
   // parallel() stub: runImplement が parallel(par) を呼ぶため（par が空なら []）
   const parallel = async (fns) => Promise.all((fns || []).map((f) => f()));
 
+  // pipeline() stub: canary 実測契約（Claude Code 2.1.252、
+  // report ~/.claude/logs/dev-flow-canary/canary-1788235573.json）準拠。
+  // (1) 結果配列は入力順に対応（results[i] ↔ items[i]）
+  // (2) callback が throw しても pipeline 全体は reject せず当該 item の結果を null にする
+  // (3) callback が null/undefined を返した item は null になる
+  const pipeline = async (items, cb) => Promise.all((items || []).map(async (item, i) => {
+    try {
+      const r = await cb(item, i);
+      return r === undefined ? null : r;
+    } catch {
+      return null;
+    }
+  }));
+
   const sandbox = {
     // control fns
     phase: () => {},
@@ -85,6 +99,7 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     // agent stub
     agent,
     parallel,
+    pipeline,
     // JS 組み込み
     ...JS_GLOBALS,
     // caller の上書き（args 等）
