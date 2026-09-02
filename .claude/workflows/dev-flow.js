@@ -1894,13 +1894,27 @@ function buildReqFromContract(contract, issueNumber) {
 // の方がコストが低い。analyze agent に「取得成功」を self-report させる incentive を与えないため、
 // 判定は本関数のような決定論突合のみに委ねる。
 //
+// comment_count 突合（PR #578）: probe（`gh issue view --json number,title,comments`）が
+// comments 配列の要素数を comment_count として報告している場合のみ、REQ 側の comment_count
+// （dev-issue-analyze skill 出力を sonnet analyze agent が verbatim 転写した値）と突合する。
+// probe が comment_count を報告していない（ISSUE_META.comment_count は非 required — number/title と
+// 同じ precedent）場合は判定不能のため skip する（既存 fixture・呼び出し側との後方互換）。これは
+// issue #573 が直した「sonnet analyze 経路が comments を読まないまま Implement へ進み、comment に
+// よる訂正が黙って落ちる」バグの再発防止で、agent に「comments を読んだ」ことを self-report させず
+// probe の機械的カウントと突合する（W7 分類: incentive-structural、既存の analyze provenance 突合と
+// 同じ設計）。
+//
 // 判定順（最初に落ちた項目の reason を返す）:
 //   1. probe が null/非object または probe.ok !== true            → 'probe_failed'
 //   2. Number(probe.number) !== Number(issueNumber)                 → 'probe_issue_mismatch'
 //   3. probe.title が非空 string でない（trim 後空含む）           → 'probe_title_empty'
 //   4. Number(req?.issue_number) !== Number(issueNumber)             → 'req_issue_mismatch'
 //   5. norm(req?.issue_title) !== norm(probe.title)                  → 'title_mismatch'
-//   6. 全合格                                                        → ok:true
+//   6. probe.comment_count が有限数値のとき、req?.comment_count が
+//      有限数値でない                                                → 'req_comment_count_invalid'
+//   7. probe.comment_count が有限数値のとき、
+//      Number(req.comment_count) !== Number(probe.comment_count)     → 'comment_count_mismatch'
+//   8. 全合格                                                        → ok:true
 //
 // norm は trim + 連続空白の単一空白畳み込みのみ（case・記号は保持 — 過剰正規化は反証力を落とす）。
 function verifyAnalyzeProvenance(req, probe, issueNumber) {
@@ -1943,6 +1957,24 @@ function verifyAnalyzeProvenance(req, probe, issueNumber) {
       ok: false,
       reason: 'title_mismatch',
       detail: `req.issue_title(${JSON.stringify(req?.issue_title)}) が probe.title(${JSON.stringify(probe.title)}) と不一致`,
+    }
+  }
+
+  if (typeof probe.comment_count === 'number' && Number.isFinite(probe.comment_count)) {
+    if (typeof req?.comment_count !== 'number' || !Number.isFinite(req.comment_count)) {
+      return {
+        ok: false,
+        reason: 'req_comment_count_invalid',
+        detail: `req.comment_count(${JSON.stringify(req?.comment_count)}) が数値でない（probe.comment_count=${probe.comment_count}）`,
+      }
+    }
+
+    if (Number(req.comment_count) !== Number(probe.comment_count)) {
+      return {
+        ok: false,
+        reason: 'comment_count_mismatch',
+        detail: `req.comment_count(${req.comment_count}) が probe.comment_count(${probe.comment_count}) と不一致 — comments 取得漏れの疑い（PR #578）`,
+      }
     }
   }
 
@@ -3114,6 +3146,7 @@ const REQ = {
     ambiguities: { type: 'array', items: { type: 'string' } },
     comment_overrides: { type: 'array', items: { type: 'string' } },
     comment_conflicts: { type: 'array', items: { type: 'string' } },
+    comment_count: { type: 'number' },
     breaking_change: { type: 'boolean' },
     breaking_keyword_scan: { type: 'boolean' },
     breaking_evidence: { type: 'string' },
@@ -3132,6 +3165,9 @@ const CONTRACT = {
   },
 }
 // issue #451: analyze 結果の決定論 provenance 突合（gh issue view の exec-proxy）用スキーマ。
+// comment_count は PR #578 review で追加: sonnet analyze 経路が comments を落とした状態で
+// REQ を返しても検知できなかったため、probe 側の実測 comment 数として持たせ
+// verifyAnalyzeProvenance で REQ.comment_count（skill 出力 verbatim）と突合する。
 const ISSUE_META = {
   type: 'object',
   required: ['ok'],
@@ -3139,6 +3175,7 @@ const ISSUE_META = {
     ok: { type: 'boolean' },
     number: { type: 'number' },
     title: { type: 'string' },
+    comment_count: { type: 'number' },
     error: { type: 'string' },
     epoch: { type: 'number' },
   },
@@ -4240,6 +4277,7 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `issue の comments（取得 JSON の comments 配列 / skill 出力の comments）を created_at 順に body と同じ要件入力として読め。comment が body の記述を明示的に訂正・上書きしている（例: 『訂正』『前倒し』『X ではなく Y』）場合は comment 側を採用し、採用した訂正を comment_overrides:string[] に『body: <旧記述> → comment: <新記述>（<author>, <created_at>）』の形で列挙せよ。body と comment が食い違うがどちらが有効か comment から確定できない場合は黙ってどちらも採用せず comment_conflicts:string[] に同形式で列挙せよ。comments が無ければ両方とも空配列。`
   + `受入条件の見出しは \`受け入れ基準\` / \`受け入れ条件\` / \`受入基準\` / \`受入条件\` / \`Acceptance Criteria\` 等の表記ゆれを全て AC として扱え。AC 相当の見出し・項目が issue に 1 つも無い場合は acceptance_criteria を推測で埋めず、ambiguities にその旨を入れて返せ。`
   + `さらに、skill の JSON 出力に含まれる breaking_keyword_scan (boolean) をそのまま verbatim で breaking_keyword_scan として返せ（全 depth の出力に含まれる。自分で再判定・変更するな）。`
+  + `さらに、skill の JSON 出力に含まれる comment_count (number) をそのまま verbatim で comment_count として返せ（全 depth の出力に含まれる。自分で数え直す・変更するな。PR #578: 実際に取得した comments 件数の決定論突合に使う）。`
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
   + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
 
@@ -4310,9 +4348,10 @@ if (!req) {
   // issue #451: analyze 結果の決定論 provenance 突合（fail-closed — 取得成功を self-report させない）
   try {
     issueMetaRes = await trackedAgent(
-      `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>, "epoch": <date +%s の出力(optional)>} の形で返せ`
-      + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。title は一字一句 verbatim で転写せよ）:\n`
-      + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json number,title\n`
+      `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>, "comment_count": <comments 配列の要素数>, "epoch": <date +%s の出力(optional)>} の形で返せ`
+      + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。title は一字一句 verbatim で転写せよ。`
+      + `comment_count は取得した comments 配列の長さを \`jq '.comments | length'\` 等で機械的に算出した値のみを返せ — 自己申告・推測は禁止。PR #578: sonnet analyze 経路が comments を読み落としたまま進む再発防止の決定論突合に使う）:\n`
+      + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json number,title,comments\n`
       + EPOCH_INSTRUCTION,
       { agentType: 'dev-runner-haiku-ro', schema: ISSUE_META, label: 'issue-meta', phase: 'Analyze' },
     )

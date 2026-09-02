@@ -2,6 +2,9 @@
 // issue #573: dev-flow.js の Analyze phase が issue の comments を要件入力に含め、
 // body/comment の矛盾（comment_conflicts）を fail-closed で needs_clarification に
 // 落とす配線を VM sandbox で検証する。source pin (a)-(d) と routing T1-T4。
+// PR #578: sonnet analyze 経路が comments 取得を落としても検知できない問題を、
+// issue-meta probe の comment_count 実測と REQ.comment_count（skill 出力 verbatim）の
+// 決定論突合で塞ぐ配線を source pin (e)-(g) と routing T5-T6 で検証する。
 //
 // テストケース:
 //   (a)-(d): source-as-string pin（contractProbePrompt の --json / analyzePrompt の規約文言 /
@@ -10,6 +13,12 @@
 //   T2: comment_overrides のみ非空（comment_conflicts 空） → implementer 呼び出し >= 1
 //   T3: 両キーとも無い（既存 FULL_REQ 相当） → implementer 呼び出し >= 1（既存挙動不変）
 //   T4: comment_conflicts が空白のみの要素 → implementer 呼び出し >= 1（空文字は矛盾扱いしない）
+//   (e)-(g): source-as-string pin（issue-meta probe の gh --json に comments が追加 /
+//            ISSUE_META・REQ 両 schema に comment_count が追加）
+//   T5: issueMetaRes.comment_count と req.comment_count が不一致 → needs_clarification
+//       かつ implementer 0 件（comments 取得漏れの検出。PR #578）
+//   T6: issueMetaRes.comment_count と req.comment_count が一致 → implementer 呼び出し >= 1
+//       （既存挙動不変）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -53,6 +62,25 @@ test('[analyze-comments-routing] (c) REQ schema に comment_overrides / comment_
 
 test('[analyze-comments-routing] (d) ac_heading_near_miss が dev-flow.js に含まれる（fallback 時の警告 log 可視化）', () => {
   assert.ok(src.includes('ac_heading_near_miss'), 'dev-flow.js に ac_heading_near_miss への言及がない');
+});
+
+test('[analyze-comments-routing] (e) issue-meta probe の gh --json に comments が追加されている', () => {
+  assert.ok(
+    src.includes('--json number,title,comments'),
+    'issue-meta probe の gh issue view --json フィールドに comments が含まれていない',
+  );
+});
+
+test('[analyze-comments-routing] (f) ISSUE_META schema に comment_count が追加されている', () => {
+  const m = src.match(/const ISSUE_META = \{[\s\S]*?\n\}/);
+  assert.ok(m, 'ISSUE_META schema 定義が見つからない');
+  assert.ok(m[0].includes('comment_count'), 'ISSUE_META schema に comment_count が無い');
+});
+
+test('[analyze-comments-routing] (g) REQ schema に comment_count が追加されている', () => {
+  const m = src.match(/const REQ = \{[\s\S]*?\n\}/);
+  assert.ok(m, 'REQ schema 定義が見つからない');
+  assert.ok(m[0].includes('comment_count'), 'REQ schema に comment_count が無い');
 });
 
 // ============================================================
@@ -177,4 +205,28 @@ test('[analyze-comments-routing] T4: comment_conflicts が空白のみの要素 
   assert.equal(error, null, `T4: run が throw してはならないが: ${error?.message}`);
   const implCalls = calls.filter((c) => c.agentType === 'implementer');
   assert.ok(implCalls.length >= 1, `T4: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
+});
+
+test('[analyze-comments-routing] T5: req.comment_count と issueMetaRes.comment_count が不一致 → needs_clarification かつ implementer 0 件（PR #578: comments 取得漏れの検出）', async () => {
+  const req = { ...FULL_REQ, comment_count: 0 };
+  const issueMetaRes = { ok: true, number: 1, title: 'stub-issue-title', comment_count: 3 };
+  const { ctx, calls } = makeSandbox({ req, issueMetaRes });
+  const { result, error } = await run(ctx);
+  assertNoCrash(error, 'T5');
+  assert.equal(error, null, `T5: run が throw してはならないが: ${error?.message}`);
+  assert.equal(result?.status, 'needs_clarification', `T5: status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
+  assert.equal(result?.source, 'analyze', `T5: source は analyze のはずだが ${JSON.stringify(result?.source)}`);
+  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  assert.equal(implCalls.length, 0, `T5: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
+});
+
+test('[analyze-comments-routing] T6: req.comment_count と issueMetaRes.comment_count が一致 → implementer 呼び出し >= 1（既存挙動不変）', async () => {
+  const req = { ...FULL_REQ, comment_count: 2 };
+  const issueMetaRes = { ok: true, number: 1, title: 'stub-issue-title', comment_count: 2 };
+  const { ctx, calls } = makeSandbox({ req, issueMetaRes });
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'T6');
+  assert.equal(error, null, `T6: run が throw してはならないが: ${error?.message}`);
+  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  assert.ok(implCalls.length >= 1, `T6: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
 });

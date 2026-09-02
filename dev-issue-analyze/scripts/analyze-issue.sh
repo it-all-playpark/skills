@@ -96,22 +96,33 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # Ineligible/unparseable => eligible:false + ineligible_reason (exit 0; caller falls back to
 # the existing sonnet(dev-runner) analyze path — this is a fail-open speed optimization only).
 
-# Line-anchored regex matching a markdown heading whose text (after optional trailing
-# ':'/'：') is EXACTLY one of the accepted AC-heading forms (case-insensitive) — not
-# a substring match, so sibling headings like "受け入れ基準外" or "受け入れ基準の補足"
-# (or "受け入れ条件外" etc.) do not match and their content is never folded into the
-# AC section (issue #388 review; forms extended in issue #573).
+# Line-anchored regex matching a markdown heading whose text CONTAINS one of the
+# accepted AC-heading forms (case-insensitive), mirroring _lib/scripts/ac-lint.sh's
+# HEADING_RE exactly: same alternation set (受け入れ基準|受け入れ条件|Acceptance
+# Criteria|完了条件, "受入基準"/"受入条件" without け/え are deliberately NOT accepted
+# — ac-lint.sh rejects them) and the same "trailing text after the match is not
+# required to end the line" tolerance (e.g. "受け入れ基準（Acceptance Criteria）"
+# annotations match, and so does a substring like "受け入れ基準外" — same as
+# ac-lint.sh). This fast-path eligibility check MUST agree with ac-lint.sh's real
+# contract gate, or the two silently diverge: before this alignment, "## 完了条件"
+# was silently non-eligible here while ac-lint.sh accepted it as t1, and conversely
+# "受入基準"/"受入条件" were accepted here while ac-lint.sh rejects them (issue #573
+# review). The PR #388 rationale of excluding substring matches like "受け入れ基準外"
+# no longer applies — ac-lint.sh never made that distinction either; see
+# extract_ac_section below for how the *section body* is still correctly bounded at
+# the *next heading of any kind* regardless of this looser heading match.
 # NOTE: implemented with grep -E (not awk ==) — macOS's bundled awk (one true awk
 # 20200816) has a confirmed locale-dependent bug where `==` between two non-identical
 # multibyte Japanese strings (e.g. "受け入れ基準外" vs "受け入れ基準") spuriously
 # returns true, so awk string-equality cannot be trusted for this comparison here.
-AC_HEADING_LINE_RE='^#{1,6}[[:space:]]+(acceptance criteria|受け入れ基準|受け入れ条件|受入基準|受入条件)[[:space:]]*[:：]?[[:space:]]*$'
+AC_HEADING_LINE_RE='^#{1,6}[[:space:]]+(acceptance criteria|受け入れ基準|受け入れ条件|完了条件)'
 HEADING_LINE_RE='^#{1,6}[[:space:]]+'
 # Near-miss detector: any fence-external heading line that CONTAINS one of these
-# fragments but does not match AC_HEADING_LINE_RE exactly (e.g. "受け入れ基準外",
-# "受入れ要件") is surfaced via ac_heading_near_miss so an AC-like heading in a
-# non-accepted form is never silently dropped (issue #573).
-AC_NEAR_MISS_RE='受け入れ|受入|acceptance'
+# fragments but does not match AC_HEADING_LINE_RE (e.g. "受入れ要件", "完了基準")
+# is surfaced via ac_heading_near_miss so an AC-like heading in a non-accepted form
+# is never silently dropped (issue #573; 完了条件|完了基準 added so a common
+# near-miss variant of the 完了条件 accepted form is also surfaced).
+AC_NEAR_MISS_RE='受け入れ|受入|acceptance|完了条件|完了基準'
 # Fenced code block delimiter: ``` or ~~~ (>=3 chars), optionally indented up to 3 spaces
 # per CommonMark. Used to toggle fence state so lines inside a fenced code block (e.g. a
 # `# comment` in a shell snippet) are never mistaken for markdown headings (issue #388 review).
@@ -144,14 +155,23 @@ collect_ac_near_miss() {
 }
 
 # Extracts the body lines that fall under the AC heading (heading line itself excluded,
-# section ends at the next heading of any level or EOF). Empty when no AC heading found.
+# section ends at the FIRST subsequent heading of ANY level or EOF — matching
+# ac-lint.sh's section-boundary rule: it only scans for the first matching heading
+# line, then bounds the section at the very next heading regardless of whether that
+# next heading itself also happens to look AC-like). Empty when no AC heading found.
+# Once the (first) AC heading has been found, `found` latches so a later heading that
+# also matches AC_HEADING_LINE_RE (e.g. a second, unrelated AC-like heading further
+# down the body) does not re-open extraction — this is what keeps a sibling heading
+# like "受け入れ基準の補足" from merging its content into the real AC section even
+# though AC_HEADING_LINE_RE's substring match would otherwise match it too (issue #388
+# review; re-verified after the substring-match alignment in issue #573).
 # Tracks fenced-code-block state so heading detection is skipped for lines inside a fence
 # (a `# comment` line inside a ```code block``` in the AC section must not be treated as a
 # heading and prematurely close the AC section).
 # NOTE: reads via a here-string / `read` loop (not a pipe) for the same SIGPIPE-safety
 # reason as breaking_keyword_scan above.
 extract_ac_section() {
-    local body="$1" skip=false in_fence=false line
+    local body="$1" skip=false found=false in_fence=false line
     while IFS= read -r line || [[ -n "$line" ]]; do
         if is_fence_line "$line"; then
             [[ "$in_fence" == true ]] && in_fence=false || in_fence=true
@@ -159,7 +179,12 @@ extract_ac_section() {
             continue
         fi
         if [[ "$in_fence" != true ]] && is_heading_line "$line"; then
-            if is_ac_heading_line "$line"; then skip=true; else skip=false; fi
+            if [[ "$found" == true ]]; then
+                skip=false
+            elif is_ac_heading_line "$line"; then
+                found=true
+                skip=true
+            fi
             continue
         fi
         if [[ "$skip" == true ]]; then printf '%s\n' "$line"; fi
@@ -168,9 +193,10 @@ extract_ac_section() {
 }
 
 # Returns the body with the AC heading + its section removed (everything else preserved).
-# Same fence-tracking as extract_ac_section (issue #388 review).
+# Same first-match-latches boundary rule and fence-tracking as extract_ac_section
+# (issue #388 review; re-verified after issue #573's substring-match alignment).
 extract_non_ac_body() {
-    local body="$1" skip=false in_fence=false line
+    local body="$1" skip=false found=false in_fence=false line
     while IFS= read -r line || [[ -n "$line" ]]; do
         if is_fence_line "$line"; then
             [[ "$in_fence" == true ]] && in_fence=false || in_fence=true
@@ -179,7 +205,13 @@ extract_non_ac_body() {
             continue
         fi
         if [[ "$in_fence" != true ]] && is_heading_line "$line"; then
-            if is_ac_heading_line "$line"; then skip=true; continue; else skip=false; fi
+            if [[ "$found" == true ]]; then
+                skip=false
+            elif is_ac_heading_line "$line"; then
+                found=true
+                skip=true
+                continue
+            fi
         fi
         if [[ "$skip" == true ]]; then continue; fi
         printf '%s\n' "$line"
