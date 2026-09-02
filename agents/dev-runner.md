@@ -45,7 +45,7 @@ spawn prompt に「実行する Skill / コマンド」「作業 worktree の絶
 
 | 指示 | 実行 | 返す |
 |------|------|------|
-| issue 分析 | `Skill: dev-issue-analyze <n> --depth <d>` | `{summary, issue_type, acceptance_criteria, scope}` |
+| issue 分析 | `Skill: dev-issue-analyze <n> --depth <d>` | `{summary, issue_type, acceptance_criteria, scope, comment_overrides, comment_conflicts}` |
 | test green 確認 | プロジェクトのテストコマンド（npm test / pytest / cargo test 等）を実行 | `{tests, green, summary}` |
 | commit + PR | `Skill: git-commit --all --worktree <wt>` → `Skill: git-pr <n> ...` | `{pr_url, pr_number, committed}` |
 | PR fix | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |

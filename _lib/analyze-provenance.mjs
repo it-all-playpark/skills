@@ -12,13 +12,27 @@
 // の方がコストが低い。analyze agent に「取得成功」を self-report させる incentive を与えないため、
 // 判定は本関数のような決定論突合のみに委ねる。
 //
+// comment_count 突合（PR #578）: probe（`gh issue view --json number,title,comments`）が
+// comments 配列の要素数を comment_count として報告している場合のみ、REQ 側の comment_count
+// （dev-issue-analyze skill 出力を sonnet analyze agent が verbatim 転写した値）と突合する。
+// probe が comment_count を報告していない（ISSUE_META.comment_count は非 required — number/title と
+// 同じ precedent）場合は判定不能のため skip する（既存 fixture・呼び出し側との後方互換）。これは
+// issue #573 が直した「sonnet analyze 経路が comments を読まないまま Implement へ進み、comment に
+// よる訂正が黙って落ちる」バグの再発防止で、agent に「comments を読んだ」ことを self-report させず
+// probe の機械的カウントと突合する（W7 分類: incentive-structural、既存の analyze provenance 突合と
+// 同じ設計）。
+//
 // 判定順（最初に落ちた項目の reason を返す）:
 //   1. probe が null/非object または probe.ok !== true            → 'probe_failed'
 //   2. Number(probe.number) !== Number(issueNumber)                 → 'probe_issue_mismatch'
 //   3. probe.title が非空 string でない（trim 後空含む）           → 'probe_title_empty'
 //   4. Number(req?.issue_number) !== Number(issueNumber)             → 'req_issue_mismatch'
 //   5. norm(req?.issue_title) !== norm(probe.title)                  → 'title_mismatch'
-//   6. 全合格                                                        → ok:true
+//   6. probe.comment_count が有限数値のとき、req?.comment_count が
+//      有限数値でない                                                → 'req_comment_count_invalid'
+//   7. probe.comment_count が有限数値のとき、
+//      Number(req.comment_count) !== Number(probe.comment_count)     → 'comment_count_mismatch'
+//   8. 全合格                                                        → ok:true
 //
 // norm は trim + 連続空白の単一空白畳み込みのみ（case・記号は保持 — 過剰正規化は反証力を落とす）。
 export function verifyAnalyzeProvenance(req, probe, issueNumber) {
@@ -61,6 +75,24 @@ export function verifyAnalyzeProvenance(req, probe, issueNumber) {
       ok: false,
       reason: 'title_mismatch',
       detail: `req.issue_title(${JSON.stringify(req?.issue_title)}) が probe.title(${JSON.stringify(probe.title)}) と不一致`,
+    }
+  }
+
+  if (typeof probe.comment_count === 'number' && Number.isFinite(probe.comment_count)) {
+    if (typeof req?.comment_count !== 'number' || !Number.isFinite(req.comment_count)) {
+      return {
+        ok: false,
+        reason: 'req_comment_count_invalid',
+        detail: `req.comment_count(${JSON.stringify(req?.comment_count)}) が数値でない（probe.comment_count=${probe.comment_count}）`,
+      }
+    }
+
+    if (Number(req.comment_count) !== Number(probe.comment_count)) {
+      return {
+        ok: false,
+        reason: 'comment_count_mismatch',
+        detail: `req.comment_count(${req.comment_count}) が probe.comment_count(${probe.comment_count}) と不一致 — comments 取得漏れの疑い（PR #578）`,
+      }
     }
   }
 

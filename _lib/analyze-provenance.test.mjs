@@ -134,3 +134,54 @@ test('[analyze-provenance] (6b) issueNumber が string \'451\' でも Number 突
   assert.equal(result.ok, true);
   assert.equal(result.reason, null);
 });
+
+// (7) comment_count 突合（PR #578）: probe が comment_count を報告している場合のみ検証する
+test('[analyze-provenance] (7a) probe.comment_count 未設定 → 突合 skip（後方互換）で全合格', () => {
+  const result = verifyAnalyzeProvenance(baseReq(), baseProbe(), 451);
+  assert.equal(result.ok, true);
+});
+
+test('[analyze-provenance] (7b) probe.comment_count 有り・req.comment_count 一致 → 全合格', () => {
+  const result = verifyAnalyzeProvenance(
+    baseReq({ comment_count: 2 }),
+    baseProbe({ comment_count: 2 }),
+    451,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, null);
+});
+
+test('[analyze-provenance] (7c) probe.comment_count 有り・req.comment_count 欠落 → req_comment_count_invalid', () => {
+  const result = verifyAnalyzeProvenance(baseReq(), baseProbe({ comment_count: 2 }), 451);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'req_comment_count_invalid');
+});
+
+test('[analyze-provenance] (7d) probe.comment_count 有り・req.comment_count が数値でない → req_comment_count_invalid', () => {
+  const result = verifyAnalyzeProvenance(
+    baseReq({ comment_count: 'two' }),
+    baseProbe({ comment_count: 2 }),
+    451,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'req_comment_count_invalid');
+});
+
+test('[analyze-provenance] (7e) probe.comment_count と req.comment_count が不一致 → comment_count_mismatch（comments 取得漏れの検出）', () => {
+  const result = verifyAnalyzeProvenance(
+    baseReq({ comment_count: 0 }),
+    baseProbe({ comment_count: 3 }),
+    451,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'comment_count_mismatch');
+});
+
+test('[analyze-provenance] (7f) probe.comment_count が 0 のとき req.comment_count も 0 なら全合格（0 は有効な一致値）', () => {
+  const result = verifyAnalyzeProvenance(
+    baseReq({ comment_count: 0 }),
+    baseProbe({ comment_count: 0 }),
+    451,
+  );
+  assert.equal(result.ok, true);
+});

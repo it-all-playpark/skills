@@ -22,10 +22,10 @@ setup() {
 }
 
 make_fixture() {
-    # make_fixture <path> <title> <body> [labels_json]
-    local path="$1" title="$2" body="$3" labels="${4:-[]}"
-    jq -n --arg title "$title" --arg body "$body" --argjson labels "$labels" \
-        '{title: $title, state: "open", body: $body, labels: $labels, assignees: [], milestone: null}' \
+    # make_fixture <path> <title> <body> [labels_json] [comments_json]
+    local path="$1" title="$2" body="$3" labels="${4:-[]}" comments="${5:-[]}"
+    jq -n --arg title "$title" --arg body "$body" --argjson labels "$labels" --argjson comments "$comments" \
+        '{title: $title, state: "open", body: $body, labels: $labels, assignees: [], milestone: null, comments: $comments}' \
         > "$path"
 }
 
@@ -351,18 +351,21 @@ Just prose, no other files mentioned."
 }
 
 # ---------------------------------------------------------------------------
-# (u) AC heading match must be EXACT, not substring: a sibling heading whose
-#     text merely CONTAINS "受け入れ基準" (e.g. "受け入れ基準外") must NOT be
-#     treated as the AC heading (PR #388 review finding, major #1).
+# (u) AC heading match mirrors ac-lint.sh's HEADING_RE (substring, not exact-line):
+#     a sibling heading whose text merely CONTAINS "受け入れ基準" (e.g. "受け入れ
+#     基準外") IS treated as the AC heading here, same as ac-lint.sh's real
+#     contract gate (verified empirically: ac-lint.sh returns verdict=t2 for this
+#     exact fixture) — the PR #388 exact-match rationale is superseded by the
+#     issue #573 review finding that the two must agree or silently diverge.
 # ---------------------------------------------------------------------------
-@test "contract mode: 受け入れ基準外 heading (substring, not AC) -> not eligible" {
+@test "contract mode: 受け入れ基準外 heading (substring) -> eligible, matches ac-lint" {
     FIXTURE="$FIXTURE_DIR/contract-ac-gaiku.json"
     make_fixture "$FIXTURE" "feat: something" "## 受け入れ基準外
 
-- this must not be treated as an AC item"
+- this is now treated as an AC item, same as ac-lint.sh"
     run "$SCRIPT" 24 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found"'
+    echo "$output" | jq -e '.contract == "t2" and .eligible == true'
 }
 
 # ---------------------------------------------------------------------------
@@ -476,4 +479,217 @@ some code
     run "$SCRIPT" 32 --issue-json "$FIXTURE_DIR/does-not-exist.json" --depth minimal
     [ "$status" -ne 0 ]
     echo "$output" | jq -e '.status == "error"'
+}
+
+# ===========================================================================
+# comments / AC heading near-miss (issue #573)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (aa1) contract mode: comments present -> ineligible (comment/body reconciliation
+#       requires sonnet analyze; comment_count reported)
+# ---------------------------------------------------------------------------
+@test "contract mode: comments present -> ineligible, comment_count reported" {
+    FIXTURE="$FIXTURE_DIR/contract-comments.json"
+    make_fixture "$FIXTURE" "feat: add button" "## Acceptance Criteria
+
+- [ ] item one" '[]' '[{"author":{"login":"alice"},"createdAt":"2026-01-01T00:00:00Z","body":"訂正: 30 箇所"},{"author":{"login":"bob"},"createdAt":"2026-01-02T00:00:00Z","body":"了解"}]'
+    run "$SCRIPT" 33 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "t1" and .eligible == false and .comment_count == 2 and (.ineligible_reason | startswith("comments present (2)"))'
+}
+
+# ---------------------------------------------------------------------------
+# (aa2) contract mode: 受け入れ条件 heading + checkbox + fix: prefix, no comments
+#       -> eligible, comment_count 0, ac_heading_near_miss empty
+# ---------------------------------------------------------------------------
+@test "contract mode: 受け入れ条件 heading -> eligible, no comments" {
+    FIXTURE="$FIXTURE_DIR/contract-ukeire-jouken.json"
+    make_fixture "$FIXTURE" "fix: correct typo" "## 受け入れ条件
+
+- [ ] item one"
+    run "$SCRIPT" 34 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "t1" and .eligible == true and .comment_count == 0 and .ac_heading_near_miss == []'
+}
+
+# ---------------------------------------------------------------------------
+# (aa3) contract mode: 受入条件 heading (without け/え — NOT an accepted form,
+#       same as ac-lint.sh which also rejects it; verified empirically: ac-lint.sh
+#       returns heading_found=false/non_compliant for this exact fixture) + plain
+#       bullets -> ineligible, reported as near-miss (issue #573 review: this used
+#       to be silently accepted here while ac-lint.sh disagreed)
+# ---------------------------------------------------------------------------
+@test "contract mode: 受入条件 heading (no け/え, out of accepted forms) -> near-miss reported" {
+    FIXTURE="$FIXTURE_DIR/contract-ukeire-jouken2.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受入条件
+
+- plain item"
+    run "$SCRIPT" 35 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found" and .ac_heading_near_miss == ["## 受入条件"]'
+}
+
+# ---------------------------------------------------------------------------
+# (aa4) contract mode: 受入れ要件 heading (not an accepted form) + checkbox
+#       -> contract none, ineligible, reported as near-miss
+# ---------------------------------------------------------------------------
+@test "contract mode: 受入れ要件 heading (out of accepted forms) -> near-miss reported" {
+    FIXTURE="$FIXTURE_DIR/contract-ukeire-youken.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受入れ要件
+
+- [ ] item one"
+    run "$SCRIPT" 36 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found" and .ac_heading_near_miss == ["## 受入れ要件"]'
+}
+
+# ---------------------------------------------------------------------------
+# (aa5) contract mode: 受け入れ基準外 heading -> NOT a near-miss (it is now an
+#       accepted AC heading itself, same as ac-lint.sh; see test (u) above).
+#       collect_ac_near_miss must not double-report an already-accepted heading.
+# ---------------------------------------------------------------------------
+@test "contract mode: 受け入れ基準外 heading -> accepted heading, not double-reported as near-miss" {
+    FIXTURE="$FIXTURE_DIR/contract-ac-gaiku-nearmiss.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受け入れ基準外
+
+- this is now treated as an AC item, same as ac-lint.sh"
+    run "$SCRIPT" 37 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ac_heading_near_miss == [] and .contract == "t2" and .eligible == true'
+}
+
+# ---------------------------------------------------------------------------
+# (aa6) contract mode: '#' comment inside fenced code block ("# acceptance notes")
+#       is not treated as a near-miss heading
+# ---------------------------------------------------------------------------
+@test "contract mode: fenced '# acceptance notes' line is not a near-miss" {
+    FIXTURE="$FIXTURE_DIR/contract-fence-nearmiss.json"
+    make_fixture "$FIXTURE" "feat: something" '## Acceptance Criteria
+
+- [ ] item one
+
+```
+# acceptance notes
+some code
+```'
+    run "$SCRIPT" 38 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ac_heading_near_miss == []'
+}
+
+# ---------------------------------------------------------------------------
+# (aa7) standard depth: comments -> comment_count + comments[] populated
+# ---------------------------------------------------------------------------
+@test "standard depth: comments populated in output" {
+    FIXTURE="$FIXTURE_DIR/standard-comments.json"
+    make_fixture "$FIXTURE" "Add a button" "${AC_STUB}Just a UI tweak, nothing else." '[]' '[{"author":{"login":"alice"},"createdAt":"2026-01-01T00:00:00Z","body":"訂正: 30 箇所"}]'
+    run "$SCRIPT" 39 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.comment_count == 1 and .comments[0].author == "alice" and .comments[0].created_at == "2026-01-01T00:00:00Z" and .comments[0].body == "訂正: 30 箇所"'
+}
+
+# ---------------------------------------------------------------------------
+# (aa8) standard depth: no AC lines in body -> acceptance_criteria empty,
+#       warnings include the empty-AC message and the near-miss heading text
+# ---------------------------------------------------------------------------
+@test "standard depth: no AC lines -> warnings report empty AC and near-miss heading" {
+    FIXTURE="$FIXTURE_DIR/standard-no-ac.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受入れ要件
+
+Just prose, no checkbox or numbered items here."
+    run "$SCRIPT" 40 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.acceptance_criteria == [] and (.warnings | any(startswith("acceptance_criteria is empty"))) and (.warnings | any(contains("受入れ要件")))'
+}
+
+# ---------------------------------------------------------------------------
+# (aa9) standard depth: AC present, no near-miss heading -> warnings empty
+# ---------------------------------------------------------------------------
+@test "standard depth: AC present, no near-miss -> warnings empty" {
+    FIXTURE="$FIXTURE_DIR/standard-warnings-empty.json"
+    make_fixture "$FIXTURE" "Add a button" "${AC_STUB}Just a UI tweak, nothing else."
+    run "$SCRIPT" 41 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.warnings == []'
+}
+
+# ---------------------------------------------------------------------------
+# (aa10) minimal depth: comment_count reflects comments length
+# ---------------------------------------------------------------------------
+@test "minimal depth: comment_count reflects comments length" {
+    FIXTURE="$FIXTURE_DIR/minimal-comments.json"
+    make_fixture "$FIXTURE" "Add a button" "Just a UI tweak, nothing else." '[]' '[{"author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z","body":"1"},{"author":{"login":"b"},"createdAt":"2026-01-02T00:00:00Z","body":"2"},{"author":{"login":"c"},"createdAt":"2026-01-03T00:00:00Z","body":"3"}]'
+    run "$SCRIPT" 42 --issue-json "$FIXTURE" --depth minimal
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.comment_count == 3'
+}
+
+# ---------------------------------------------------------------------------
+# (aa11) fixture with no "comments" key at all (legacy shape) -> comment_count 0,
+#        contract mode remains eligible
+# ---------------------------------------------------------------------------
+@test "fixture without comments key -> comment_count 0, contract eligible" {
+    FIXTURE="$FIXTURE_DIR/contract-no-comments-key.json"
+    jq -n --arg title "feat: add button" --arg body "## Acceptance Criteria
+
+- [ ] item one" \
+        '{title: $title, state: "open", body: $body, labels: [], assignees: [], milestone: null} | del(.comments)' \
+        > "$FIXTURE"
+    run "$SCRIPT" 43 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.eligible == true and .comment_count == 0'
+}
+
+# ===========================================================================
+# ac-lint.sh HEADING_RE alignment (PR #578 review of #573's contract)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (ab1) contract mode: 完了条件 heading + checkbox -> t1 eligible. Regression
+#       fixture for the review finding: ac-lint.sh accepts "## 完了条件" as an
+#       AC heading (verified empirically: verdict=t1) but AC_HEADING_LINE_RE
+#       did not include it before this fix, silently failing AC3.
+# ---------------------------------------------------------------------------
+@test "contract mode: 完了条件 heading + checkbox -> t1 eligible, matches ac-lint" {
+    FIXTURE="$FIXTURE_DIR/contract-kanryo-jouken.json"
+    make_fixture "$FIXTURE" "feat: something" "## 完了条件
+
+- [ ] item one"
+    run "$SCRIPT" 44 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "t1" and .eligible == true'
+}
+
+# ---------------------------------------------------------------------------
+# (ab2) contract mode: orchestrator-rescue-inserted heading with a trailing
+#       parenthesized annotation ("## 受け入れ基準（Acceptance Criteria）") ->
+#       t1 eligible. Regression fixture for the review finding: ac-lint.sh
+#       accepts this heading (trailing text is not required to end the line;
+#       verified empirically: verdict=t1) but the previous exact-end-anchored
+#       AC_HEADING_LINE_RE rejected it, silently failing AC3.
+# ---------------------------------------------------------------------------
+@test "contract mode: 受け入れ基準（Acceptance Criteria） heading -> t1 eligible, matches ac-lint" {
+    FIXTURE="$FIXTURE_DIR/contract-rescue-heading.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受け入れ基準（Acceptance Criteria）
+
+- [ ] item one"
+    run "$SCRIPT" 45 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "t1" and .eligible == true'
+}
+
+# ---------------------------------------------------------------------------
+# (ab3) contract mode: 完了基準 heading (not an accepted form — only 完了条件
+#       is, same as ac-lint.sh) -> ineligible, reported as near-miss via the
+#       AC_NEAR_MISS_RE 完了条件|完了基準 addition.
+# ---------------------------------------------------------------------------
+@test "contract mode: 完了基準 heading (out of accepted forms) -> near-miss reported" {
+    FIXTURE="$FIXTURE_DIR/contract-kanryo-kijun.json"
+    make_fixture "$FIXTURE" "feat: something" "## 完了基準
+
+- [ ] item one"
+    run "$SCRIPT" 46 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found" and .ac_heading_near_miss == ["## 完了基準"]'
 }

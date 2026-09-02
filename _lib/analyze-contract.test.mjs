@@ -17,6 +17,7 @@ function baseContract(overrides = {}) {
     acceptance_criteria: ['AC1: parse t1/t2 contracts', 'AC2: fallback preserved'],
     scope: '本文スコープ全文（AC 節除く）',
     breaking_keyword_scan: false,
+    comment_count: 0,
     ...overrides,
   };
 }
@@ -146,6 +147,26 @@ test('[analyze-contract] title 空文字 → null', () => {
 // scope が string でない → null
 test('[analyze-contract] scope が string でない → null', () => {
   assert.equal(buildReqFromContract(baseContract({ scope: null }), 374), null);
+});
+
+// comment_count 厳格チェック（issue #573）: 整数 0 のみ合格、それ以外は null
+test('[analyze-contract] comment_count 欠落 → null', () => {
+  const contract = baseContract();
+  delete contract.comment_count;
+  assert.equal(buildReqFromContract(contract, 374), null);
+});
+
+test('[analyze-contract] comment_count: 1 → null', () => {
+  assert.equal(buildReqFromContract(baseContract({ comment_count: 1 }), 374), null);
+});
+
+test("[analyze-contract] comment_count: '0'（string）→ null", () => {
+  assert.equal(buildReqFromContract(baseContract({ comment_count: '0' }), 374), null);
+});
+
+test('[analyze-contract] comment_count: 0 → 採用（req !== null）', () => {
+  const req = buildReqFromContract(baseContract({ comment_count: 0 }), 374);
+  assert.ok(req !== null);
 });
 
 // ---- classifyShape 結合検証（dev-flow.js と同一の _lib/triviality.mjs を import）----
