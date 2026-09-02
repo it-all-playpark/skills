@@ -29,7 +29,7 @@ function makeSandbox(journalResult, journalSaveResult) {
     }
 
     // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       return { status: 'passed', failed_checks: [] };
     }
 
@@ -186,8 +186,8 @@ test('[journal-log] journalResult={logged:true} で完走 → journal-save→jou
     `journal-log prompt に結論値リテラル '"outcome":"success"' が含まれるべきではないが含まれていた。prompt=${capturedLogPrompt}`,
   );
   assert.ok(
-    typeof capturedLogPrompt === 'string' && !capturedLogPrompt.includes('journal.sh log pr-iterate'),
-    `journal-log prompt は direct journal.sh 実行ではなく pending handoff であるべき。prompt=${capturedLogPrompt}`,
+    typeof capturedLogPrompt === 'string' && !capturedLogPrompt.includes('journal log pr-iterate'),
+    `journal-log prompt は direct journal 実行ではなく pending handoff であるべき。prompt=${capturedLogPrompt}`,
   );
 
   assert.equal(

@@ -5,9 +5,8 @@
 // 存在する script 群（analyze-issue.sh / journal.sh）を
 // `${WT}/...`（WT=対象repoのworktree）相対で subagent prompt / journal handoff payload に
 // 埋め込んでいた。対象 repo が skills 自身でない場合（例: veridelta）にこれらの script は WT 配下に
-// 存在せず Exit 127 で落ちる。修正後の期待状態は、既存 precedent（L4339 の
-// `~/.claude/skills/_shared/scripts/cross-repo-artifacts.sh`）と同じ skills 実体固定パス
-// `~/.claude/skills/...` を使うことである。この test は修正後の期待状態を先に固定する。
+// 存在せず Exit 127 で落ちる。修正後の期待状態は plugin bin/ の bare 名（issue #569）を使うこと
+// である。この test は修正後の期待状態を固定する。
 //
 // .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
 // よって既存 *-routing.test.mjs 群と同じ戦略（source-as-string assert）で検証する。
@@ -54,16 +53,16 @@ test('[skills-script-path-routing] (a) dev-flow.js に `${WT}/skill-retrospectiv
 
 // ---- (b) 固定パス存在（出現回数込み）----
 
-test('[skills-script-path-routing] (b) analyze-issue.sh が skills 実体固定パスで1回存在する', () => {
-  const needle = '~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh';
+test('[skills-script-path-routing] (b) analyze-issue が bare 名で1回存在する', () => {
+  const needle = 'analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract';
   const count = countOccurrences(src, needle);
-  assert.equal(count, 1, `固定パス '${needle}' の出現回数が期待(1)と異なる: ${count}`);
+  assert.equal(count, 1, `bare 名呼び出し '${needle}' の出現回数が期待(1)と異なる: ${count}`);
 });
 
-test('[skills-script-path-routing] (b) journal.sh が skills 実体固定パスで2回存在する', () => {
-  const needle = '~/.claude/skills/skill-retrospective/scripts/journal.sh';
+test("[skills-script-path-routing] (b) journal_sh が bare 名 'journal' で2回存在する", () => {
+  const needle = "journal_sh: 'journal'";
   const count = countOccurrences(src, needle);
-  assert.equal(count, 2, `固定パス '${needle}' の出現回数が期待(2)と異なる: ${count}`);
+  assert.equal(count, 2, `bare 名 '${needle}' の出現回数が期待(2)と異なる: ${count}`);
 });
 
 // ---- (c) 負の対照（誤爆防止）: 対象repo自身のファイルを指す WT 相対パスは修正対象外 ----

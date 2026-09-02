@@ -336,10 +336,10 @@ test('[W5] dev-flow.js: RISK schema と Merge tier の diff-risk-classify 呼び
   const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
   assert.ok(src.includes('const RISK ='), 'RISK schema があること');
   assert.ok(src.includes("required: ['ok', 'hits']"), 'RISK schema が ok error channel を必須にすること');
-  assert.ok(src.includes('diff-risk-classify.sh'), '（Merge tier の danger-grep-final 経由で）diff-risk-classify.sh を呼ぶこと');
+  assert.ok(src.includes('diff-risk-classify origin/'), '（Merge tier の danger-grep-final 経由で）diff-risk-classify を呼ぶこと');
   assert.ok(
-    src.includes('bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${' + 'BASE}'),
-    'Merge tier の danger-grep-final はフラグ無し三点 diff で diff-risk-classify.sh を呼ぶこと',
+    src.includes('diff-risk-classify origin/${' + 'BASE}'),
+    'Merge tier の danger-grep-final はフラグ無し三点 diff で diff-risk-classify を呼ぶこと',
   );
   assert.ok(!src.includes('--out'), '証跡書き込み --out は撤去済みであること（issue #544 AC1）');
   assert.ok(!src.includes('--working-tree'), 'dev-flow.js 自体は --working-tree を直接指定しない（secfloor-classify.sh 内部の呼び出しに委譲）');

@@ -42,7 +42,7 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
     }
 
     // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       ciRound += 1;
       if (ciStub) return ciStub(ciRound);
       return { status: 'passed', failed_checks: [] };

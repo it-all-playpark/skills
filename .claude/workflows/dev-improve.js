@@ -760,9 +760,9 @@ for (const it of pendingIssues) {
   reconcile.checked++
   const check = await agent(
     `## Objective\nissue #${it.number} の改善仮説を telemetry 実測と突合する。\n\n`
-    + `## Instructions\nインストール済み skills の**固定パス**で次のコマンドをそのまま実行し、stdout JSON をそのまま返せ:\n`
-    + `\`bash ~/.claude/skills/dev-flow-improve/scripts/hypothesis-check.sh --metric ${it.hyp.metric} --since ${since} --target ${it.hyp.target} --min-runs ${it.hyp.min_runs}\`\n`
-    + `必ずリテラルの \`~/.claude/skills/...\` 絶対パス形で起動せよ（worktree 相対パス禁止）。\n`
+    + `## Instructions\n次のコマンドを**この形のまま**（bare 名を先頭トークンとする単文で）実行し、stdout JSON をそのまま返せ:\n`
+    + `\`hypothesis-check --metric ${it.hyp.metric} --since ${since} --target ${it.hyp.target} --min-runs ${it.hyp.min_runs}\`\n`
+    + `cd 前置・bash 前置・パス付与をせずこの形のまま起動せよ（worktree 相対パス禁止）。\n`
     + `コマンド失敗時は throw せず ok:false を返すこと。\n`
     + `\n## Output format\n{ "ok": boolean, "metric": string, "value": number, "runs": number, "verdict": "confirmed"|"not_confirmed"|"insufficient_data" }\n`
     + `\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。`,
@@ -850,7 +850,7 @@ const MINER_COMMON = `\n## Output format（共通 candidate schema）\n`
   + `candidates 配列で返す（最大 3 件、ゼロ件可）。各要素:\n`
   + `{source, title, evidence[], acceptance_criteria[], body_notes?, target_paths?, expected_metric_delta{metric,current,target,min_runs}, risk}\n`
   + `- evidence: journal entry id / PR 番号 / anomaly type と実測値への具体的参照（非空文字列の配列）。**根拠を示せない候補は返すな**（evidence 空は決定論で棄却される）。\n`
-  + `- expected_metric_delta.metric は次の enum から選ぶ: ${METRIC_NAMES.join(' / ')}。**current は必ず突合 oracle 自身で実測せよ**: \`bash ~/.claude/skills/dev-flow-improve/scripts/hypothesis-check.sh --metric <metric> --since <30日前のISO UTC> --target 0 --min-runs 1\` を実行し、その value を current に使う（doctor の集計値は分母定義が異なるため current に使わない）。target は改善後の期待値、min_runs は突合に必要な最小 run 数（3〜10 程度）。\n`
+  + `- expected_metric_delta.metric は次の enum から選ぶ: ${METRIC_NAMES.join(' / ')}。**current は必ず突合 oracle 自身で実測せよ**: \`hypothesis-check --metric <metric> --since <30日前のISO UTC> --target 0 --min-runs 1\` を実行し、その value を current に使う（doctor の集計値は分母定義が異なるため current に使わない）。target は改善後の期待値、min_runs は突合に必要な最小 run 数（3〜10 程度）。\n`
   + `- acceptance_criteria: 実装 PR の受入条件（検証可能な形で 2〜5 件）。\n`
   + `- target_paths: 変更が想定されるファイル/ディレクトリの repo 相対 path。\n`
   + `- risk: low / medium / high。\n`
@@ -862,7 +862,7 @@ const MINERS = [
   {
     key: 'doctor-anomaly',
     prompt: `## Objective\ndev-flow-doctor の telemetry 分布・anomaly から dev-flow の改善候補を掘る（source: "doctor-anomaly"）。\n\n`
-      + `## Instructions\n1. \`bash ~/.claude/skills/dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh --window 30d\` を実行し JSON を得る（必ずこのリテラル固定パス形で起動）。\n`
+      + `## Instructions\n1. \`analyze-dev-flow-telemetry --window 30d\` を実行し JSON を得る（必ずこの形のまま起動）。\n`
       + `2. anomalies（cap_pinned / iterate_unhealthy / micro_nonfiring）と distributions の歪みを読み、dev-flow の仕組み側の改善候補に翻訳する。\n`
       + `3. 各候補の evidence に anomaly type と実測数値を引用する。`
       + MINER_COMMON,
@@ -985,7 +985,7 @@ for (const c of winners) {
     + bodySaveInstr(body, 'dev-improve-issue', 'DEV_IMPROVE')
     + `## Instructions\n`
     + `1. \`gh label create self-improve --color 1D76DB --description "dev-improve self-improvement" --force\` を実行（既存でも成功する）。\n`
-    + `2. 保存した <BODY_FILE> に対し次を実行: \`bash ~/.claude/skills/_lib/scripts/ac-lint.sh <BODY_FILE>\`（journal.sh と同じリテラル固定パス形）。\n`
+    + `2. 保存した <BODY_FILE> に対し次を実行: \`ac-lint <BODY_FILE>\`（bare 名を先頭トークンとする単文）。\n`
     + `   exit code 3（stdout JSON の verdict が non_compliant）の場合は issue を作成せず、throw もせず created:false を返せ（lint の stdout JSON は url フィールドではなく応答テキストにも含めず created:false のみ返す）。\n`
     + `   exit 0（verdict が t1 または t2）なら次 step へ進め。lint スクリプト自体が実行不能（not found 等の exit 1 / コマンド失敗）の場合は fail-open — 警告として扱い issue 作成を続行せよ。\n`
     + `3. 保存した <BODY_FILE> で issue を作成: \`gh issue create --title <TITLE> --label self-improve --body-file <BODY_FILE>\`\n`
@@ -1071,8 +1071,8 @@ try {
     journalLogStatus = classifyJournalLogStatus({ saved: true, logged: false })
     const journalRes = await agent(
       `## Objective\ndev-improve サイクルの telemetry を journal に記録する。\n\n`
-      + `## Instructions\n次のコマンドをそのまま実行せよ（リテラル固定パス形）:\n`
-      + `\`bash ~/.claude/skills/skill-retrospective/scripts/journal.sh log dev-improve "$(jq -r .outcome '${savedPath}')" --telemetry-json "$(jq -c .telemetry '${savedPath}')"\`\n`
+      + `## Instructions\n次のコマンドをそのまま実行せよ（bare 名を先頭トークンとする形）:\n`
+      + `\`journal log dev-improve "$(jq -r .outcome '${savedPath}')" --telemetry-json "$(jq -c .telemetry '${savedPath}')"\`\n`
       + `exit 0 なら logged:true、失敗しても throw せず logged:false を返すこと。\n`
       + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
       + `\n## Tools\n使用可: Bash, Read, Skill\n\n## Boundary\n~/.claude/journal 以外のファイル変更禁止。git 操作禁止。\n\n## Token cap\n50 語以内。`,

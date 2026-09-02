@@ -57,7 +57,7 @@ test('[context7-best-practice] 定数定義に必要キーワードが全て含�
   const defRegion = src.slice(indices[0], indices[1]);
 
   const requiredKeywords = [
-    'detect-stack.sh',
+    'detect-stack .',
     'frameworks',
     'context7',
     'fail-open',

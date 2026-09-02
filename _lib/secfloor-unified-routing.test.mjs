@@ -113,14 +113,14 @@ test('[secfloor-unified-routing][A5] execSecurityFloorPhase の統合呼び出�
   );
 });
 
-test('[secfloor-unified-routing][A6] 統合呼び出しの prompt が secfloor-classify.sh を参照する', () => {
+test('[secfloor-unified-routing][A6] 統合呼び出しの prompt が secfloor-classify を参照する', () => {
   const fnStart = devFlowSrc.indexOf('async function execSecurityFloorPhase(state)');
   assert.ok(fnStart !== -1);
   const nextFnIdx = devFlowSrc.indexOf('\nasync function ', fnStart + 1);
   const fnBody = devFlowSrc.slice(fnStart, nextFnIdx === -1 ? devFlowSrc.length : nextFnIdx);
   assert.ok(
-    fnBody.includes('secfloor-classify.sh'),
-    'execSecurityFloorPhase の統合呼び出し prompt が secfloor-classify.sh を参照していない',
+    fnBody.includes('secfloor-classify ${WT} origin/${BASE}'),
+    'execSecurityFloorPhase の統合呼び出し prompt が secfloor-classify を参照していない',
   );
 });
 

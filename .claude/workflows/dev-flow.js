@@ -2950,7 +2950,7 @@ function ciCheckPrompt({ pr, repo }) {
     + `1. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
-    + `2. \`bash ~/.claude/skills/pr-iterate/scripts/check-ci.sh --checks-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
+    + `2. \`check-ci --checks-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
     + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>' `
     + `--attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
     + `を単文で実行し、stdout の JSON を読め。\n`
@@ -3043,8 +3043,8 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     outcome,
     issue: Number(ISSUE),
     repo: REPO,
-    // skills 実体固定（WT は対象 repo — issue #484）。tilde は Stop hook の [[ -x ]] では展開されず FALLBACK_JOURNAL で解決される（fail-open）
-    journal_sh: '~/.claude/skills/skill-retrospective/scripts/journal.sh',
+    // plugin bin/ の bare 名（issue #569）。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
+    journal_sh: 'journal',
     error_category,
     error_msg,
     telemetry,
@@ -3642,7 +3642,7 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 
 function setupDepsPrompt(worktree) {
   return `cd ${worktree} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/ensure-worktree-deps.sh --path ${worktree} --lockfile-only --skip-custom\n`
+    + `ensure-worktree-deps --path ${worktree} --lockfile-only --skip-custom\n`
     + `全手順の最後に Bash で \`date +%s\` を 1 回実行し、出力の整数を epoch フィールドとして返せ。`
     + `取得に失敗した場合は epoch を省略してよい（deps 処理の status 判定には一切影響させるな）。`;
 }
@@ -4080,8 +4080,8 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
 // MCP tool 配線は follow-up issue で扱う。
 const CONTEXT7_BEST_PRACTICE_CONVENTION = `framework best-practice 参照規約（条件付き — 無条件に発動しない）: `
   + `自分の task が対象 repo で使われている framework（React/Next.js/Fastify/Remotion/Prisma/Neon 等）の API に`
-  + `触る場合のみ、まず \`~/.claude/skills/_lib/scripts/detect-stack.sh .\` を worktree 直下で bare 形`
-  + `（スクリプトパスが先頭トークン）で 1 回実行し、出力 JSON の frameworks に該当 framework が含まれる場合のみ`
+  + `触る場合のみ、まず \`detect-stack .\` を worktree 直下で bare 形`
+  + `（bare 名が先頭トークン。cd 前置・bash 前置なし）で 1 回実行し、出力 JSON の frameworks に該当 framework が含まれる場合のみ`
   + `context7 (MCP) で該当 library の最新 docs を必要箇所に限って引いてよい。frameworks が空、または task が`
   + `framework API に触らない場合は context7 を呼ぶな（コストと出力揺れの抑制）。context7 tool が利用できない`
   + `環境では fail-open で通常どおり実装を続行せよ（docs 参照は必須ではない）。\n`
@@ -4283,10 +4283,10 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
 
 // contract probe prompt（issue #374, issue #466 で --issue-json ファイル入力化）:
 // DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。issue 本体は subagent の bare
-// `gh issue view` で $TMPDIR file へ取得し、analyze-issue.sh --contract の stdout JSON を
+// `gh issue view` で $TMPDIR file へ取得し、analyze-issue --contract の stdout JSON を
 // verbatim 転写させるだけの read-only exec-proxy（結果の判断は buildReqFromContract 側の
 // whitelist 検証が担う）。
-// script パスは skills 実体固定（~/.claude/skills）— WT は対象 repo の worktree であり skills 内部 script が存在しない（issue #484）
+// script は plugin bin/ の bare 名で呼ぶ（issue #569）— WT は対象 repo の worktree であり skills 内部 script が存在しない（issue #484）
 const contractProbePrompt = `## Objective\n`
   + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
   + `## Steps\n`
@@ -4295,7 +4295,7 @@ const contractProbePrompt = `## Objective\n`
   // comments を含めるのは body と comment の突合に必要なため（issue #573）。
   + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
   + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
-  + `3. \`~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+  + `3. \`analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**bare 名を先頭トークンとする単文**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
   + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止。\n`
   + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
   + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
@@ -4311,7 +4311,7 @@ const contractProbePrompt = `## Objective\n`
 phase('Analyze')
 feedClockMark('analyze_start', epochResOf(depsRes))
 // 決定論 parse 降格経路（issue #374）: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
-// analyze-issue.sh --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
+// analyze-issue --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
 // fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ
 // フォールバックする（analyzePrompt・REQ・need()・needs_clarification 判定・classifyShape 呼び出しは不変）。
 let req = null
@@ -4746,7 +4746,7 @@ async function execValidatePhase(state) {
   // Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
   // realized-diff / refloorShape / declared-path-check が自然に実行される（issue #219 fix）。
   const dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/worktree-diff-hash.sh ${WT} origin/${BASE}`
+    + `worktree-diff-hash ${WT} origin/${BASE}`
   state.dhPrompt = dhPrompt
 
   // ============================================================
@@ -4780,7 +4780,7 @@ async function execValidatePhase(state) {
         if (candidatePaths.length > 0) {
           const artifactsRes = await trackedAgent(
             `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
-            + `bash ~/.claude/skills/_shared/scripts/cross-repo-artifacts.sh ${WT} ${candidatePaths.map((p) => `'${p}'`).join(' ')}`,
+            + `cross-repo-artifacts ${WT} ${candidatePaths.map((p) => `'${p}'`).join(' ')}`,
             { agentType: 'dev-runner-haiku-ro', schema: CROSSREPO_ARTIFACTS, label: 'cross-repo-artifacts', phase: 'Validate' },
           )
           const summary = summarizeCrossRepoArtifacts(artifactsRes)
@@ -4875,7 +4875,7 @@ async function execSecurityFloorPhase(state) {
       + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら `
       + `{"risk":{"ok":false,"hits":[],"error":"..."},"files":null,"struct":null,"diffhash":null} で返せ。`
       + `失敗時に risk.ok:true を生成してはならない）:\n`
-      + `bash ~/.claude/skills/_shared/scripts/secfloor-classify.sh ${WT} origin/${BASE}`,
+      + `secfloor-classify ${WT} origin/${BASE}`,
       { agentType: 'dev-runner-haiku-ro', schema: SECFLOOR, label: 'danger-grep', phase: 'Security floor' },
     )
   } catch (e) { log(`⚠️ secfloor-classify 呼び出しが例外 — unified=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
@@ -5039,7 +5039,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
     const srv = await trackedAgent(
       `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
       + `（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
-      + `bash ~/.claude/skills/_shared/scripts/ui-verify-server.sh start `
+      + `ui-verify-server start `
       + `--dir '${srvDir}' --port ${reqPort} --state-dir '${stateDir}' `
       + `--ready-path '${cfg.ready_path}' --install-cmd '${cfg.install_command}' --dev-cmd '${cfg.dev_command}'`
       + (envFileArgs ? ` ${envFileArgs}` : ''),
@@ -5089,7 +5089,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
   } finally {
     const stop = await trackedAgent(
       `cd ${WT} で作業。以下を順に実行せよ。各手順は失敗しても次へ進め（|| true）:\n`
-      + `1. \`bash ~/.claude/skills/_shared/scripts/ui-verify-server.sh stop --state-dir '${stateDir}'\`（PID 無しでも ok の idempotent 停止）\n`
+      + `1. \`ui-verify-server stop --state-dir '${stateDir}'\`（PID 無しでも ok の idempotent 停止）\n`
       + `2. \`agent-browser close --session '${session}'\`（コマンド不在なら \`npx agent-browser close --session '${session}'\`。失敗しても続行）\n`
       + `3. dev サーバー・agent-browser daemon の残留プロセスを pgrep 等で確認せよ（該当あれば leftover に列挙）\n`
       + `4. \`rm -rf '${stateDir}'\`\n`
@@ -5296,7 +5296,7 @@ async function execEvaluatePhase(state) {
           && Array.isArray(r.impl_files) && r.impl_files.length) {
         const rg = await trackedAgent(
           `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
-          + `bash ~/.claude/skills/_shared/scripts/redgreen-verify.sh ${WT} `
+          + `redgreen-verify ${WT} `
           + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
           { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
         if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })
@@ -5712,7 +5712,7 @@ if (reuseSecFloor) {
   riskFinal = need(await trackedAgent(
     `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
     + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-    + `bash ~/.claude/skills/_shared/scripts/diff-risk-classify.sh origin/${BASE}`,
+    + `diff-risk-classify origin/${BASE}`,
     { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
   ), 'Merge tier(danger-grep-final)')
   // changed-files 再利用（issue #542）: Final reconcile が同一 worktree・同一 tree に対して
@@ -5908,8 +5908,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
   issue: Number(ISSUE),
   repo: repoFromGithubUrl(pr.pr_url) ?? REPO,
   pr_number: Number(pr.pr_number),
-  // skills 実体固定（WT は対象 repo — issue #484）。tilde は Stop hook の [[ -x ]] では展開されず FALLBACK_JOURNAL で解決される（fail-open）
-  journal_sh: '~/.claude/skills/skill-retrospective/scripts/journal.sh',
+  // plugin bin/ の bare 名（issue #569）。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
+  journal_sh: 'journal',
   ...(state.guardBlockedResults.length ? { error_category: 'guard_blocked' } : {}),
   telemetry: {
     merge_tier: mergeTier.tier,
