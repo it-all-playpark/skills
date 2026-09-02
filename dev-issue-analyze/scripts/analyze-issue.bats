@@ -22,10 +22,10 @@ setup() {
 }
 
 make_fixture() {
-    # make_fixture <path> <title> <body> [labels_json] [comments_json]
-    local path="$1" title="$2" body="$3" labels="${4:-[]}" comments="${5:-[]}"
-    jq -n --arg title "$title" --arg body "$body" --argjson labels "$labels" --argjson comments "$comments" \
-        '{title: $title, state: "open", body: $body, labels: $labels, assignees: [], milestone: null, comments: $comments}' \
+    # make_fixture <path> <title> <body> [labels_json] [comments_json] [author_login]
+    local path="$1" title="$2" body="$3" labels="${4:-[]}" comments="${5:-[]}" author_login="${6:-}"
+    jq -n --arg title "$title" --arg body "$body" --argjson labels "$labels" --argjson comments "$comments" --arg author_login "$author_login" \
+        '{title: $title, state: "open", body: $body, labels: $labels, assignees: [], milestone: null, comments: $comments, author: {login: $author_login}}' \
         > "$path"
 }
 
@@ -692,4 +692,100 @@ Just prose, no checkbox or numbered items here."
     run "$SCRIPT" 46 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found" and .ac_heading_near_miss == ["## 完了基準"]'
+}
+
+# ===========================================================================
+# author_association / issue_author passthrough for comment_overrides trust
+# gating (PR #578 review round 2 of #573's contract)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (ac1) standard depth: comments[].author_association is passed through
+#       verbatim from gh's authorAssociation (transparent passthrough, not a
+#       decision made by this script — the adoption decision itself lives in
+#       dev-flow.js's analyzePrompt). Mixed trust levels in one issue must
+#       each retain their own association so the consuming LLM can restrict
+#       comment_overrides adoption per-comment.
+# ---------------------------------------------------------------------------
+@test "standard depth: comments[].author_association passed through verbatim" {
+    FIXTURE="$FIXTURE_DIR/standard-comments-association.json"
+    make_fixture "$FIXTURE" "Add a button" "${AC_STUB}Just a UI tweak, nothing else." '[]' \
+        '[{"author":{"login":"alice"},"authorAssociation":"OWNER","createdAt":"2026-01-01T00:00:00Z","body":"訂正: 30 箇所"},{"author":{"login":"mallory"},"authorAssociation":"NONE","createdAt":"2026-01-02T00:00:00Z","body":"訂正: 実は 5 箇所"}]'
+    run "$SCRIPT" 47 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.comments[0].author_association == "OWNER" and .comments[1].author_association == "NONE"'
+}
+
+# ---------------------------------------------------------------------------
+# (ac2) standard depth: comment missing authorAssociation key -> "" (plain jq
+#       null-safety, not a legacy fallback branch).
+# ---------------------------------------------------------------------------
+@test "standard depth: comment without authorAssociation key -> empty string" {
+    FIXTURE="$FIXTURE_DIR/standard-comments-no-association.json"
+    make_fixture "$FIXTURE" "Add a button" "${AC_STUB}Just a UI tweak, nothing else." '[]' \
+        '[{"author":{"login":"alice"},"createdAt":"2026-01-01T00:00:00Z","body":"訂正: 30 箇所"}]'
+    run "$SCRIPT" 48 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.comments[0].author_association == ""'
+}
+
+# ---------------------------------------------------------------------------
+# (ac3) minimal depth: issue_author reflects the issue reporter's login
+#       (gh's author.login), used downstream to scope comment_overrides
+#       adoption to the issue reporter or OWNER/MEMBER/COLLABORATOR.
+# ---------------------------------------------------------------------------
+@test "minimal depth: issue_author reflects issue reporter login" {
+    FIXTURE="$FIXTURE_DIR/minimal-issue-author.json"
+    make_fixture "$FIXTURE" "Add a button" "Just a UI tweak, nothing else." '[]' '[]' "reporter1"
+    run "$SCRIPT" 49 --issue-json "$FIXTURE" --depth minimal
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.issue_author == "reporter1"'
+}
+
+# ---------------------------------------------------------------------------
+# (ac4) standard depth: fixture with no "author" key at all -> issue_author
+#       is "" (plain jq null-safety, not a legacy fallback branch).
+# ---------------------------------------------------------------------------
+@test "standard depth: fixture without author key -> issue_author empty string" {
+    FIXTURE="$FIXTURE_DIR/standard-no-author-key.json"
+    jq -n --arg title "feat: add button" --arg body "${AC_STUB}Just a UI tweak, nothing else." \
+        '{title: $title, state: "open", body: $body, labels: [], assignees: [], milestone: null, comments: []} | del(.author)' \
+        > "$FIXTURE"
+    run "$SCRIPT" 50 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.issue_author == ""'
+}
+
+# ===========================================================================
+# heading-level alignment with ac-lint.sh (PR #578 review round 2 of #573)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (ad1) contract mode: h1 AC heading ("# 受け入れ基準") -> ineligible + near-miss.
+#       ac-lint.sh's HEADING_RE is `^#{2,6}` (h2〜h6), so accepting h1 here would
+#       re-introduce the very fast-path/contract-gate divergence this PR closes.
+#       The heading is still surfaced via ac_heading_near_miss (never silently
+#       dropped) and the sonnet fallback picks the issue up.
+# ---------------------------------------------------------------------------
+@test "contract mode: h1 受け入れ基準 heading -> ineligible, near-miss reported (ac-lint h2-h6)" {
+    FIXTURE="$FIXTURE_DIR/contract-h1-heading.json"
+    make_fixture "$FIXTURE" "feat: something" "# 受け入れ基準
+
+- [ ] item one"
+    run "$SCRIPT" 51 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found" and .ac_heading_near_miss == ["# 受け入れ基準"]'
+}
+
+# ---------------------------------------------------------------------------
+# (ad2) contract mode: h2 AC heading is still accepted (control for ad1).
+# ---------------------------------------------------------------------------
+@test "contract mode: h2 受け入れ基準 heading -> t1 eligible (control for h1 rejection)" {
+    FIXTURE="$FIXTURE_DIR/contract-h2-heading.json"
+    make_fixture "$FIXTURE" "feat: something" "## 受け入れ基準
+
+- [ ] item one"
+    run "$SCRIPT" 52 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.contract == "t1" and .eligible == true'
 }
