@@ -23,6 +23,13 @@ bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを err
 npx skills experimental_install      # tracked の skills-lock.json から一括復元 (per-skill install)
 ```
 
+Claude Code 限定の代替 (marketplace 経由 install):
+
+```
+/plugin marketplace add it-all-playpark/skills
+/plugin install playpark-skills@playpark
+```
+
 新規スキル作成は `/skill-creator` を使用。共有処理は `_shared/` か `_lib/` に配置。
 
 ## Code style

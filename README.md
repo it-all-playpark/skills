@@ -18,6 +18,28 @@ git clone https://github.com/it-all-playpark/skills.git ~/.claude/skills
 /sns-announce article.mdx # Generate social media posts
 ```
 
+### Install as a Claude Code plugin
+
+Claude Code では marketplace 経由でも導入できます。
+
+```
+/plugin marketplace add it-all-playpark/skills
+/plugin install playpark-skills@playpark
+```
+
+skills（フラット構造）と `agents/` 配下の 11 agent が plugin として認識されます。plugin の
+subagent は plugin root の `agents/` からのみ読み込まれるため、agent 定義の実体は `agents/`
+に置き、`.claude/agents` はそこへの symlink にしてあります（定義は 1 箇所だけで、コピーの
+同期は不要）。
+
+この向きは意図的です。symlink は `core.symlinks=false` の環境（Developer Mode 無効の Windows 等）
+では中身がパス文字列の通常ファイルとして checkout されるため、`agents/` 側を symlink にすると
+plugin install が skill だけ読み込んで **agent が 0 件のまま成功したように見える**。実体を
+`agents/` に置けば、そうした環境で影響を受けるのは `.claude/agents`（本 repo で dev-flow を
+開発する場合のみ使う）だけで済みます。`tests/plugin-manifest.bats` がこの向きを pin します。
+
+従来の clone + symlink 方式（Codex / Antigravity など cross-vendor 向け）はそのまま併存して使えます。
+
 For Codex or other agents, symlink to the appropriate directory:
 
 ```bash
