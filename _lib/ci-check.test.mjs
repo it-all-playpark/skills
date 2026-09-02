@@ -89,3 +89,11 @@ test('[ci-check] prompt は read-only 契約（Write/Edit/commit/push 禁止）�
   assert.ok(p.includes('禁止: Write, Edit, git commit, git push'));
   assert.ok(p.includes('読み取り専用'));
 });
+
+test('ciCheckPrompt: check-ci を plugin bin/ の bare 名（先頭トークン）で呼び、skills 絶対パスと bash 前置を含まない（issue #569）', () => {
+  const p = ciCheckPrompt({ pr: 123, repo: 'owner/name' });
+  assert.ok(p.includes('`check-ci --checks-data'), 'bare 名 check-ci --checks-data を含む');
+  assert.ok(!p.includes('check-ci.sh'), '拡張子付き名を含まない');
+  assert.ok(!p.includes(['~/.claude', 'skills/'].join('/')), 'skills 絶対パスを含まない');
+  assert.ok(!p.includes('bash check-ci'), 'bash 前置を付けない');
+});

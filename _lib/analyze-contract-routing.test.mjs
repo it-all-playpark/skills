@@ -93,17 +93,17 @@ test("[analyze-contract-routing] (d) \"DEPTH === 'standard'\" ガードが存在
 // script を --issue-json 付きで呼ぶ 2 段階 choreography になった。
 
 test('[analyze-contract-routing] (e) contract probe prompt に cd 前置禁止の bare 形指示が含まれる', () => {
-  const idx = src.indexOf('analyze-issue.sh ${ISSUE} --issue-json');
-  assert.ok(idx !== -1, "'analyze-issue.sh ${ISSUE} --issue-json' 実行コマンドが prompt 内に見つからない");
+  const idx = src.indexOf('analyze-issue ${ISSUE} --issue-json');
+  assert.ok(idx !== -1, "'analyze-issue ${ISSUE} --issue-json' 実行コマンドが prompt 内に見つからない");
   const window = src.slice(Math.max(0, idx - 100), idx + 500);
   assert.match(window, /cd 前置/, `cd 前置禁止の文言が見つからない。window: ${window}`);
 });
 
-test('[analyze-contract-routing] (e) script 呼び出しが skills 実体固定パス先頭トークンの bare 形である', () => {
+test('[analyze-contract-routing] (e) script 呼び出しが plugin bin/ の bare 名先頭トークン形である', () => {
   assert.match(
     src,
-    /~\/\.claude\/skills\/dev-issue-analyze\/scripts\/analyze-issue\.sh \$\{ISSUE\} --issue-json <ISSUE_JSON> --contract/,
-    '~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract という絶対パス先頭トークン形式が見つからない',
+    /`analyze-issue \$\{ISSUE\} --issue-json <ISSUE_JSON> --contract/,
+    'analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract という bare 名先頭トークン形式が見つからない',
   );
 });
 

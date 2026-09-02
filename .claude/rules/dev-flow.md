@@ -301,6 +301,17 @@ W7 の distrust 機構と同様「将来の技術的負債」**（モデルが�
 QUALITY_MODEL 向け 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）の現状分類は
 `claudedocs/2026-07-27-issue-424-prescription-inventory.md` を参照。実際の指示削減は別 issue で扱う。
 
+### exec-proxy script の起動形（plugin bin/ の bare 名）
+
+workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plugin root `bin/` の bare 名
+（`secfloor-classify` / `check-ci` / `journal` 等、拡張子なし）を**先頭トークン**にする。`~/.claude/skills/...`
+の絶対パスも `bash ` 前置も書かない（plugin install 環境では skills が plugin root 配下に入り絶対パスが
+破綻する。`bin/` は plugin enable 中 Bash tool の PATH に載り、dotfiles 側 `sandbox.excludedCommands` は
+先頭トークン＝bare 名で登録される — it-all-playpark/dotfiles#177 と対で運用。片側だけ変えると dev-flow が
+止まる）。`bin/<name>` は本体へ `exec bash` する 3 行 wrapper で、本体と隣接 `*.bats` は移動しない。
+登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する（18 本）。
+`journal_sh` payload の `'journal'` は Stop hook の `[[ -x ]]` を通らず FALLBACK_JOURNAL に倒れる（fail-open、意図どおり）。
+
 ### inline 生成区間（_lib → workflows の sync generator）
 
 `.claude/workflows/*.js` 内の `// ==== BEGIN inline: <path> ... ====` 〜 `// ==== END inline: <path> ====`

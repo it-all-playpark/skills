@@ -204,7 +204,7 @@ function makeSandbox({ isolationProbeResult, journalResult }) {
       return { applied: true, files: [], summary: 'fixed' };
     }
 
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       return { status: 'passed', failed_checks: [] };
     }
 

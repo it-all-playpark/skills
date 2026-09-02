@@ -7,11 +7,12 @@ import { setupDepsPrompt, summarizeDepsResult } from './setup-deps.mjs';
 test('setupDepsPrompt: worktree パス・スクリプト名・フラグ・verbatim 指示を含む', () => {
   const prompt = setupDepsPrompt('/path/to/worktree');
   assert.match(prompt, /\/path\/to\/worktree/);
-  assert.match(prompt, /ensure-worktree-deps\.sh/);
+  assert.match(prompt, /(^|\n)ensure-worktree-deps --path /);
   assert.match(prompt, /--lockfile-only/);
   assert.match(prompt, /--skip-custom/);
   assert.match(prompt, /verbatim/);
-  assert.match(prompt, /~\/\.claude\/skills\//);
+  assert.ok(!prompt.includes(['~/.claude', 'skills/'].join('/')), 'prompt に skills 絶対パスを含めない（issue #569）');
+  assert.ok(!/\bbash ensure-worktree-deps/.test(prompt), 'bash 前置を付けない（bare 名が先頭トークン）');
 });
 
 test('setupDepsPrompt: cd で worktree に移動する指示を含む', () => {

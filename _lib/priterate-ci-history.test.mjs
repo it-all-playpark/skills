@@ -36,7 +36,7 @@ function makeSandbox() {
     }
 
     // ci-check: 1 回目は failed、2 回目は passed
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       ciCallCount += 1;
       if (ciCallCount === 1) {
         return {

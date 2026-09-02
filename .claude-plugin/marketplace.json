@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "playpark-skills",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "70+ production-ready skills and 11 dev-flow agents for AI coding agents, by playpark LLC",
       "source": "./",
       "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" }

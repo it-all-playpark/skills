@@ -31,7 +31,7 @@ function makeSandbox({ ciResponses }) {
     }
 
     // ci-check: 呼び出し順に ciResponses を消費する
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       const idx = ciCallCount;
       ciCallCount += 1;
       return ciResponses[idx] ?? ciResponses[ciResponses.length - 1];
@@ -127,7 +127,7 @@ async function runPrIterateCapture(src, ctx) {
 
 const src = readFileSync(prIteratePath, 'utf8');
 
-test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci.sh 純変換で配線される（AC-1配線）', async () => {
+test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci 純変換で配線される（AC-1配線）', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
   });
@@ -144,10 +144,10 @@ test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci.sh 
     ciCheck1.prompt.includes('gh pr checks 5') && ciCheck1.prompt.includes('--json name,state,bucket'),
     `ci-check#1 の prompt に bare gh pr checks fetch が含まれるべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
   );
-  // check-ci.sh は fetch 済み snapshot に対する純変換として呼ばれる（issue #499: argv データ渡し）。
+  // check-ci は fetch 済み snapshot に対する純変換として呼ばれる（issue #499: argv データ渡し）。
   assert.ok(
-    ciCheck1.prompt.includes('check-ci.sh --checks-data'),
-    `ci-check#1 の prompt が check-ci.sh を --checks-data 入力の純変換として呼ぶべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+    ciCheck1.prompt.includes('check-ci --checks-data'),
+    `ci-check#1 の prompt が check-ci を --checks-data 入力の純変換として呼ぶべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
   );
   // bounded wait は呼び出し側が持つ: 3 attempts × 45s = ceiling 90s。
   assert.ok(

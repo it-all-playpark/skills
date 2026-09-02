@@ -2,8 +2,8 @@
 # plugin-manifest.bats - Regression tests for .claude-plugin/{plugin,marketplace}.json.
 #
 # Pins the invariants required by issue #568: the repo is distributed as a
-# single Claude Code plugin, skills stay flat at repo root, and the
-# "workflows" key is never added (reserved for #569).
+# single Claude Code plugin, skills stay flat at repo root, and
+# the "workflows" key explicitly lists ./.claude/workflows (#569).
 #
 # Agent definitions live in the plugin-root agents/ directory as REAL FILES,
 # with .claude/agents as a symlink pointing back at it. Both halves matter:
@@ -63,10 +63,23 @@ CANONICAL_AGENTS_DIR="$REPO_ROOT/.claude/agents"
     [ "$output" = "false" ]
 }
 
-@test "plugin.json に workflows キーが存在しない（invariant pin）" {
-    run jq -r 'has("workflows")' "$PLUGIN_JSON"
+@test "plugin.json の workflows は [\"./.claude/workflows\"] に完全一致する" {
+    run jq -c '.workflows' "$PLUGIN_JSON"
     [ "$status" -eq 0 ]
-    [ "$output" = "false" ]
+    [ "$output" = '["./.claude/workflows"]' ]
+}
+
+@test "plugin.json の workflows が指すディレクトリに dev-flow.js / pr-iterate.js / dev-improve.js が存在する" {
+    [ -f "$REPO_ROOT/.claude/workflows/dev-flow.js" ]
+    [ -f "$REPO_ROOT/.claude/workflows/pr-iterate.js" ]
+    [ -f "$REPO_ROOT/.claude/workflows/dev-improve.js" ]
+}
+
+@test "plugin.json の version は 0.1.0 より上（0.2.0 以上）" {
+    run jq -r '.version' "$PLUGIN_JSON"
+    [ "$status" -eq 0 ]
+    [ "$output" != "0.1.0" ]
+    [[ "$output" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
 @test "marketplace.json の name は playpark" {

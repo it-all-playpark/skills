@@ -31,7 +31,7 @@ function makeSandbox({ ciResponses }) {
     }
 
     // ci-check: 呼び出し順に ciResponses を消費する
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       const idx = ciCallCount;
       ciCallCount += 1;
       return ciResponses[idx] ?? ciResponses[ciResponses.length - 1];

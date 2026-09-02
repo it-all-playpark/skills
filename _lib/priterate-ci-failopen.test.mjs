@@ -92,7 +92,7 @@ function buildAgentStub({ ciStub, agentCalls }) {
     if (agentType === 'pr-reviewer') {
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
-    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
       return ciStub(label);
     }
     if (label.startsWith('fix#')) {

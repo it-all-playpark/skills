@@ -96,7 +96,7 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
     if (agentType === 'pr-reviewer') {
       return reviewerStub(label);
     }
-    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci.sh')) {
+    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
       return ciStub ? ciStub(label) : { status: 'passed', failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
@@ -130,7 +130,7 @@ test('[AC-1] comment decision + minor 1 件のみ(blocking 0件) -> fix# 起動�
   assertNoSandboxCrash(error);
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
 
-  const ciCalls = agentCalls.filter((c) => c.prompt.includes('check-ci.sh'));
+  const ciCalls = agentCalls.filter((c) => c.prompt.includes('check-ci --checks-data'));
   assert.ok(ciCalls.length > 0, 'ci-check（check-ci.sh）が呼ばれるべき');
 
   const fixCalls = agentCalls.filter((c) => c.label.startsWith('fix#'));
@@ -149,7 +149,7 @@ test('[AC-2] request-changes decision + issues:[](blocking 0件) -> fix# 起動�
   assertNoSandboxCrash(error);
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
 
-  const ciCalls = agentCalls.filter((c) => c.prompt.includes('check-ci.sh'));
+  const ciCalls = agentCalls.filter((c) => c.prompt.includes('check-ci --checks-data'));
   assert.ok(ciCalls.length > 0, 'ci-check（check-ci.sh）が呼ばれるべき');
 
   const fixCalls = agentCalls.filter((c) => c.label.startsWith('fix#'));
@@ -208,7 +208,7 @@ test('[AC-4] approve+major が retry 後も再発 -> review_contract_error で�
   const fixCalls = agentCalls.filter((c) => c.label.startsWith('fix#'));
   assert.equal(fixCalls.length, 0, `fix# は 0 回であるべきだが ${fixCalls.length} 回だった`);
 
-  const ciCalls = agentCalls.filter((c) => c.prompt.includes('check-ci.sh'));
+  const ciCalls = agentCalls.filter((c) => c.prompt.includes('check-ci --checks-data'));
   assert.equal(ciCalls.length, 0, `ci-check は 0 回であるべきだが ${ciCalls.length} 回だった`);
 
   assert.equal(result?.status, 'review_contract_error', `result.status は review_contract_error であるべきだが '${result?.status}' だった`);
