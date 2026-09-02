@@ -312,6 +312,15 @@ workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plug
 登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する（18 本）。
 `journal_sh` payload の `'journal'` は Stop hook の `[[ -x ]]` を通らず FALLBACK_JOURNAL に倒れる（fail-open、意図どおり）。
 
+plugin version を上げた直後の解決確認は、**update 後に起動し直した Claude Code セッション内**で
+`command -v <bare 名>` を実行する。PATH には
+`~/.claude/plugins/cache/<owner>/<plugin>/<version>/bin` が **version 込み**でセッション起動時に焼かれるため、
+既存セッションは update 後も旧 version の `bin/` を指したまま解決に失敗する。一方
+`~/.claude/workflows/*.js` は live に読まれるので、更新前に起動したセッションは
+「bare 名を呼ぶ workflow × 旧 version を指す PATH」という壊れた組み合わせになる。
+ユーザーの素のシェルには plugin の `bin/` がそもそも載らないため、そこでの `command -v` は常に失敗する
+（欠陥ではない）。skill/command メニューに `/dev-flow` が出ることも PATH が正しい証拠にはならない。
+
 ### inline 生成区間（_lib → workflows の sync generator）
 
 `.claude/workflows/*.js` 内の `// ==== BEGIN inline: <path> ... ====` 〜 `// ==== END inline: <path> ====`
