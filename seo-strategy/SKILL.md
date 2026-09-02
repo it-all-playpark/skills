@@ -95,14 +95,16 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
 
 3b. **GSC データ分離取得**: KPI精度と記事マッチングのため、GSCは **pages-only** と **queries-only** を個別取得し統合する
 
+   `<gsc-skill-dir>` は外部 skill `gsc`（skills-lock.json 管理、本 repo には含まれない）の install 先ディレクトリ。利用可能な skill 一覧から gsc の場所を解決して置き換えること。
+
    ```bash
    # Pages-only（記事レベルメトリクス + KPI算出用）
-   source .env 2>/dev/null && python ~/.claude/skills/gsc/scripts/gsc_query.py search-analytics \
+   source .env 2>/dev/null && python <gsc-skill-dir>/scripts/gsc_query.py search-analytics \
      --site "<GSC_SITE>" --days 28 --dimensions page --limit 500 \
      > claudedocs/gsc-report-pages-YYYYMMDD.json
 
    # Queries-only（クエリクラスタリング用）
-   source .env 2>/dev/null && python ~/.claude/skills/gsc/scripts/gsc_query.py search-analytics \
+   source .env 2>/dev/null && python <gsc-skill-dir>/scripts/gsc_query.py search-analytics \
      --site "<GSC_SITE>" --days 28 --dimensions query --limit 500 \
      > claudedocs/gsc-report-queries-YYYYMMDD.json
 
@@ -125,7 +127,7 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
 
 4. **データ分析**: `scripts/strategy_analyzer.py` を実行
    ```bash
-   python ~/.claude/skills/seo-strategy/scripts/strategy_analyzer.py \
+   python scripts/strategy_analyzer.py \
      --ga-report <GA_PATH> --gsc-report <GSC_COMBINED_PATH> --trends-report <TRENDS_PATH> \
      --ga-prev-report <PREV_GA_PATH> \
      --config .claude/seo-config.json --blog-dir content/blog \

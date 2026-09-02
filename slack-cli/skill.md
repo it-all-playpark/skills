@@ -16,7 +16,7 @@ Interact with Slack workspace using the `slack` CLI tool (v0.1.0).
 ## Prerequisites
 
 - `slack` CLI installed (located at `~/.local/share/mise/installs/rust/1.94.0/bin/slack`)
-- Workspace configuration in `~/.claude/skills/slack-cli/workspaces.json`
+- Workspace configuration in `workspaces.json` (in this skill's directory, next to this skill.md)
 - Optional: `SLACK_TEAM_ID` for Enterprise Grid workspaces
 
 ## Execution Protocol (MUST follow for every command)
@@ -26,7 +26,7 @@ Never run `slack` without `--token` -- the CLI falls back to `SLACK_BOT_TOKEN` w
 
 ### Steps (execute in order before every command)
 
-1. Read `~/.claude/skills/slack-cli/workspaces.json`
+1. Read `workspaces.json` in this skill's directory (resolve from this skill.md's location)
 2. Determine workspace: use `--workspace <name>` arg if provided, otherwise use `default` field
 3. Look up the workspace entry and resolve `token_env` to get the env var name
 4. Build the command with `--token "$<token_env>"` and optionally `--team-id <team_id>`
@@ -46,7 +46,7 @@ slack --token "$SLACK_BOT_TOKEN_MY_COMPANY" post-message --channel-id C123 --tex
 
 ## Workspace Configuration
 
-Config file: `~/.claude/skills/slack-cli/workspaces.json`. Details: [Config Schema & Setup](references/config.md)
+Config file: `workspaces.json` in this skill's directory. Details: [Config Schema & Setup](references/config.md)
 
 ## Global Options
 

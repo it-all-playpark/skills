@@ -14,8 +14,10 @@ Refresh `seed/**` caches in batch.
 ## Usage
 
 ```bash
-python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N]
+python3 scripts/refresh_seed_cache.py [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N]
 ```
+
+パスは本 skill ディレクトリ基準。実行時は本 SKILL.md のロード元ディレクトリを前置した絶対パスに解決して呼ぶこと。
 
 ## Args
 
@@ -48,13 +50,13 @@ per-seed で除外を無効化するには `manifest.json` に `"includeTests": 
 
 ```bash
 # default: seed/*, branch=main
-python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py
+python3 scripts/refresh_seed_cache.py
 
 # dry-run only
-python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py --dry-run
+python3 scripts/refresh_seed_cache.py --dry-run
 
 # force refresh
-python3 ~/.claude/skills/seed-refresh/scripts/refresh_seed_cache.py --force
+python3 scripts/refresh_seed_cache.py --force
 ```
 
 ## Journal Logging
