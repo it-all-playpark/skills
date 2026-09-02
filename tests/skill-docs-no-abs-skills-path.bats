@@ -3,6 +3,12 @@
 # 絶対パス記述を残さない（plugin install 形態に依存しない表現にするため）。
 # git grep で tracked ファイルのみを検査し、repo root の gitignored な外部 skill
 # symlink（gsc 等）を構造的に対象外にする。
+#
+# bug-hunt / code-audit-team / incident-response の allowed-tools は例外。
+# #574 レビュー指摘: ${CLAUDE_PLUGIN_ROOT} は plugin 実行時のみ展開され、現行の
+# symlink dual distribution（#139）では未展開のまま何にも一致せず script 事前許可
+# が失われる。plugin manifest 導入で layout が確定するまで ~/.claude/skills/ 併記
+# を残す（有効化は #568/#571 系で追跡）。
 
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
@@ -18,6 +24,9 @@ setup() {
         ':(exclude)dev-flow-improve/' \
         ':(exclude)dev-issue-analyze/' \
         ':(exclude)pr-iterate/' \
+        ':(exclude)bug-hunt/' \
+        ':(exclude)code-audit-team/' \
+        ':(exclude)incident-response/' \
         ':(exclude).claude/'
     echo "$output"
     [ "$status" -ne 0 ]
