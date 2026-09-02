@@ -15,8 +15,6 @@ allowed-tools:
   - Skill
   - Bash(${CLAUDE_PLUGIN_ROOT}/incident-response/scripts/*)
   - Bash(${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/*)
-  - Bash(~/.claude/skills/incident-response/scripts/*)
-  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 ---
 
 # Incident Response
