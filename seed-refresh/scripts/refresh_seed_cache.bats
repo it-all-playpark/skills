@@ -26,6 +26,10 @@ setup() {
     EXPORT_EMIT_TOKENS=1
     export EXPORT_EXIT_CODE EXPORT_EMIT_TOKENS
 
+    COMMIT_CALLS_LOG="$BATS_TEST_TMPDIR/commit_calls.log"
+    rm -f "$COMMIT_CALLS_LOG"
+    export COMMIT_CALLS_LOG
+
     cat > "$HOME/.claude/skills/repo-export/scripts/export_repo.py" << 'EOF'
 #!/usr/bin/env python3
 import os
@@ -53,8 +57,13 @@ EOF
 
     cat > "$HOME/.claude/skills/repo-commit/scripts/export_commit.py" << 'EOF'
 #!/usr/bin/env python3
+import os
 import sys
+
 args = sys.argv[1:]
+with open(os.environ["COMMIT_CALLS_LOG"], "a") as f:
+    f.write(" ".join(args) + "\n")
+
 out = None
 for i, a in enumerate(args):
     if a == "-o" and i + 1 < len(args):
@@ -125,20 +134,20 @@ EOF
 EOF
 }
 
-@test "export command does not include --compress" {
+@test "export command does not include --compress (--with-export)" {
     # Live smoke on octocat/Hello-World (F3, see
     # .devflow-tmp/repomix-format-verification.md) showed compression did not
     # reduce tokens for that repo, so --compress was removed from the export
     # command per the plan's fallback rule.
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
     [ "$status" -eq 0 ]
     [ -f "$EXPORT_CALLS_LOG" ]
     run grep -c -- "--compress" "$EXPORT_CALLS_LOG"
     [ "$output" -eq 0 ]
 }
 
-@test "manifest records exportTokens/exportTokensRaw/exportTokenReductionPct and updates exportedAt" {
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+@test "manifest records exportTokens/exportTokensRaw/exportTokenReductionPct and updates exportedAt (--with-export)" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
     [ "$status" -eq 0 ]
 
     tokens=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['exportTokens'])")
@@ -152,10 +161,10 @@ EOF
     [ "$exported_at" != "2020-01-01T00:00:00Z" ]
 }
 
-@test "missing TOKENS lines: no token keys written, status stays refreshed, warning printed" {
+@test "missing TOKENS lines: no token keys written, status stays refreshed, warning printed (--with-export)" {
     EXPORT_EMIT_TOKENS=0
     export EXPORT_EMIT_TOKENS
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
     [ "$status" -eq 0 ]
     [[ "$output" == *"refreshed"* ]]
     [[ "$output" == *"token_metrics_unavailable"* ]]
@@ -168,15 +177,15 @@ EOF
     [ "$has_reduction" = "False" ]
 }
 
-@test "export command failure yields status=error" {
+@test "export command failure yields status=error (--with-export)" {
     EXPORT_EXIT_CODE=1
     export EXPORT_EXIT_CODE
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
     [[ "$output" == *"[error]"* ]]
 }
 
-@test "--dry-run leaves manifest unchanged" {
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --dry-run
+@test "--dry-run leaves manifest unchanged (--with-export)" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --dry-run --with-export
     [ "$status" -eq 0 ]
     exported_at=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['exportedAt'])")
     [ "$exported_at" = "2020-01-01T00:00:00Z" ]
@@ -185,15 +194,15 @@ EOF
     [ ! -f "$EXPORT_CALLS_LOG" ]
 }
 
-@test "default: exported.md export passes seed default tests-exclusion --ignore" {
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+@test "default: exported.md export passes seed default tests-exclusion --ignore (--with-export)" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
     [ "$status" -eq 0 ]
     [ -f "$EXPORT_CALLS_LOG" ]
     run grep -qF -- "--ignore **/[Tt]ests/**,**/*.test.*,**/*.spec.*,**/__tests__/**,**/testdata/**,**/__snapshots__/**,**/fixtures/**" "$EXPORT_CALLS_LOG"
     [ "$status" -eq 0 ]
 }
 
-@test "opt-out: manifest includeTests=true disables the default --ignore" {
+@test "opt-out: manifest includeTests=true disables the default --ignore (--with-export)" {
     cat > "$MANIFEST" << 'EOF'
 {
   "source": "https://github.com/owner/repo",
@@ -201,13 +210,13 @@ EOF
   "includeTests": true
 }
 EOF
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
     [ "$status" -eq 0 ]
     run grep -c -- "--ignore" "$EXPORT_CALLS_LOG"
     [ "$output" -eq 0 ]
 }
 
-@test "includeTests=false explicit: default --ignore still applied" {
+@test "includeTests=false explicit: default --ignore still applied (--with-export)" {
     cat > "$MANIFEST" << 'EOF'
 {
   "source": "https://github.com/owner/repo",
@@ -215,14 +224,80 @@ EOF
   "includeTests": false
 }
 EOF
-    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
     [ "$status" -eq 0 ]
     [ -f "$EXPORT_CALLS_LOG" ]
     run grep -qF -- "--ignore **/[Tt]ests/**,**/*.test.*,**/*.spec.*,**/__tests__/**,**/testdata/**,**/__snapshots__/**,**/fixtures/**" "$EXPORT_CALLS_LOG"
     [ "$status" -eq 0 ]
 }
 
-@test "invalid includeTests type yields status=error, no export invoked, exit 2" {
+@test "invalid includeTests type yields status=error, no export invoked, exit 2 (--with-export)" {
+    cat > "$MANIFEST" << 'EOF'
+{
+  "source": "https://github.com/owner/repo",
+  "exportedAt": "2020-01-01T00:00:00Z",
+  "includeTests": "yes"
+}
+EOF
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"[error]"* ]]
+    [[ "$output" == *"invalid_includeTests"* ]]
+    [ ! -f "$EXPORT_CALLS_LOG" ]
+}
+
+@test "default (no --with-export): export_repo.py not invoked, commits/issues/pr written, exportedAt updated" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    [ "$status" -eq 0 ]
+    [ ! -f "$EXPORT_CALLS_LOG" ]
+    [ -f "$SEED_DIR/commits.md" ]
+    [ -f "$SEED_DIR/issues.md" ]
+    [ -f "$SEED_DIR/pr-summary.md" ]
+    [ ! -f "$SEED_DIR/exported.md" ]
+    exported_at=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['exportedAt'])")
+    [ "$exported_at" != "2020-01-01T00:00:00Z" ]
+    [[ "$output" == *"[refreshed]"* ]]
+}
+
+@test "default (no --with-export): existing export token keys preserved and no token warning" {
+    cat > "$MANIFEST" << 'EOF'
+{
+  "source": "https://github.com/owner/repo",
+  "exportedAt": "2020-01-01T00:00:00Z",
+  "exportTokens": 123,
+  "exportTokensRaw": 456,
+  "exportTokenReductionPct": 73.0
+}
+EOF
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    [ "$status" -eq 0 ]
+
+    tokens=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['exportTokens'])")
+    tokens_raw=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['exportTokensRaw'])")
+    reduction=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['exportTokenReductionPct'])")
+    [ "$tokens" = "123" ]
+    [ "$tokens_raw" = "456" ]
+    [ "$reduction" = "73.0" ]
+    [[ "$output" != *"token_metrics_unavailable"* ]]
+}
+
+@test "commit export receives --since 45d by default" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main
+    [ "$status" -eq 0 ]
+    run grep -qF -- "--since 45d" "$COMMIT_CALLS_LOG"
+    [ "$status" -eq 0 ]
+}
+
+@test "--commit-since 30d overrides the commit --since value" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --commit-since 30d
+    [ "$status" -eq 0 ]
+    run grep -qF -- "--since 30d" "$COMMIT_CALLS_LOG"
+    [ "$status" -eq 0 ]
+    run grep -qF -- "--since 45d" "$COMMIT_CALLS_LOG"
+    [ "$status" -eq 1 ]
+}
+
+@test "invalid includeTests without --with-export still yields status=error, exit 2, nothing invoked (fail-closed regardless of export)" {
     cat > "$MANIFEST" << 'EOF'
 {
   "source": "https://github.com/owner/repo",
@@ -235,4 +310,12 @@ EOF
     [[ "$output" == *"[error]"* ]]
     [[ "$output" == *"invalid_includeTests"* ]]
     [ ! -f "$EXPORT_CALLS_LOG" ]
+    [ ! -f "$COMMIT_CALLS_LOG" ]
+}
+
+@test "--with-export: export_repo.py invoked and exported.md written" {
+    run python3 "$SCRIPT" --seed "$SEED_DIR" --branch main --with-export
+    [ "$status" -eq 0 ]
+    [ -f "$EXPORT_CALLS_LOG" ]
+    [ -f "$SEED_DIR/exported.md" ]
 }

@@ -169,29 +169,40 @@ def resolve_export_ignore(manifest: dict[str, Any]) -> tuple[str | None, str | N
 
 
 def refresh_seed(
-    seed_dir: Path, repo_url: str, branch: str, ignore: str | None
+    seed_dir: Path,
+    repo_url: str,
+    branch: str,
+    ignore: str | None,
+    *,
+    with_export: bool,
+    commit_since: str,
 ) -> tuple[bool, str | None, dict[str, int]]:
     exported_path = seed_dir / EXPORT_FILE
     commits_path = seed_dir / COMMIT_FILE
     issues_path = seed_dir / ISSUE_FILE
     pr_path = seed_dir / PR_FILE
 
-    export_cmd = [
-        "python3", str(REPO_EXPORT_SCRIPT), repo_url, "-o", str(exported_path), "-b", branch,
-    ]
-    if ignore:
-        export_cmd.extend(["--ignore", ignore])
     other_commands = [
-        ["python3", str(REPO_COMMIT_SCRIPT), repo_url, "-o", str(commits_path), "--limit", "50"],
+        [
+            "python3", str(REPO_COMMIT_SCRIPT), repo_url, "-o", str(commits_path),
+            "--limit", "50", "--since", commit_since,
+        ],
         ["python3", str(REPO_ISSUE_SCRIPT), repo_url, "-o", str(issues_path), "--state", "all", "--limit", "30"],
         ["python3", str(REPO_PR_SCRIPT), repo_url, "-o", str(pr_path), "--state", "merged", "--limit", "30"],
     ]
 
-    export_res = run(export_cmd)
-    if export_res.returncode != 0:
-        stderr = export_res.stderr.strip() or "command_failed"
-        return False, stderr, {}
-    token_info = parse_token_lines(export_res.stdout)
+    token_info: dict[str, int] = {}
+    if with_export:
+        export_cmd = [
+            "python3", str(REPO_EXPORT_SCRIPT), repo_url, "-o", str(exported_path), "-b", branch,
+        ]
+        if ignore:
+            export_cmd.extend(["--ignore", ignore])
+        export_res = run(export_cmd)
+        if export_res.returncode != 0:
+            stderr = export_res.stderr.strip() or "command_failed"
+            return False, stderr, {}
+        token_info = parse_token_lines(export_res.stdout)
 
     for cmd in other_commands:
         res = run(cmd)
@@ -222,6 +233,14 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="Refresh without date comparison")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be refreshed without updating files")
     parser.add_argument("--limit", type=int, default=0, help="Max seed directories to process (0 = no limit)")
+    parser.add_argument(
+        "--with-export", action="store_true",
+        help="Also regenerate exported.md via export_repo.py (default: skip, commits/issues/pr only)",
+    )
+    parser.add_argument(
+        "--commit-since", default="45d",
+        help="Passed to export_commit.py --since (YYYY-MM-DD, ISO 8601, or Nd; default: 45d)",
+    )
     args = parser.parse_args()
 
     missing = check_dependencies()
@@ -272,6 +291,9 @@ def main() -> int:
             results.append(result)
             continue
 
+        # includeTests validation is fail-closed regardless of --with-export:
+        # an invalid manifest value errors the seed out before any export
+        # command runs, even on a run that would not touch exported.md.
         ignore, ignore_err = resolve_export_ignore(manifest)
         if ignore_err:
             result.status = "error"
@@ -315,7 +337,10 @@ def main() -> int:
             results.append(result)
             continue
 
-        ok, refresh_err, token_info = refresh_seed(seed_dir, repo_url, branch_checked or args.branch, ignore)
+        ok, refresh_err, token_info = refresh_seed(
+            seed_dir, repo_url, branch_checked or args.branch, ignore,
+            with_export=args.with_export, commit_since=args.commit_since,
+        )
         if not ok:
             result.status = "error"
             result.reason = refresh_err
@@ -325,27 +350,31 @@ def main() -> int:
         now = datetime.now(timezone.utc)
         manifest["exportedAt"] = to_zulu(now)
 
-        tokens = token_info.get("tokens")
-        tokens_raw = token_info.get("tokensRaw")
-        if tokens is not None:
-            manifest["exportTokens"] = tokens
-        else:
-            manifest.pop("exportTokens", None)
-        if tokens_raw is not None:
-            manifest["exportTokensRaw"] = tokens_raw
-        else:
-            manifest.pop("exportTokensRaw", None)
-        if tokens is not None and tokens_raw is not None and tokens_raw > 0:
-            manifest["exportTokenReductionPct"] = round((1 - tokens / tokens_raw) * 100, 1)
-        else:
-            manifest.pop("exportTokenReductionPct", None)
-        # --compress is intentionally not passed (live smoke on
-        # octocat/Hello-World showed no token reduction for that repo, see
-        # .devflow-tmp/repomix-format-verification.md), so tokens_raw is
-        # expected to always be absent here. Only warn when the baseline
-        # `tokens` metric itself is unavailable.
-        if tokens is None:
-            print("  warning: token_metrics_unavailable")
+        if args.with_export:
+            tokens = token_info.get("tokens")
+            tokens_raw = token_info.get("tokensRaw")
+            if tokens is not None:
+                manifest["exportTokens"] = tokens
+            else:
+                manifest.pop("exportTokens", None)
+            if tokens_raw is not None:
+                manifest["exportTokensRaw"] = tokens_raw
+            else:
+                manifest.pop("exportTokensRaw", None)
+            if tokens is not None and tokens_raw is not None and tokens_raw > 0:
+                manifest["exportTokenReductionPct"] = round((1 - tokens / tokens_raw) * 100, 1)
+            else:
+                manifest.pop("exportTokenReductionPct", None)
+            # --compress is intentionally not passed (live smoke on
+            # octocat/Hello-World showed no token reduction for that repo, see
+            # .devflow-tmp/repomix-format-verification.md), so tokens_raw is
+            # expected to always be absent here. Only warn when the baseline
+            # `tokens` metric itself is unavailable.
+            if tokens is None:
+                print("  warning: token_metrics_unavailable")
+        # else: exported.md was not regenerated, so existing exportTokens*
+        # keys (if any) are left untouched — they still describe the last
+        # real export.
 
         save_manifest(manifest_path, manifest)
 
@@ -371,7 +400,8 @@ def main() -> int:
             print(f"  exportedAt: {r.exported_at}")
 
     print(
-        f"\nSummary: total={total}, refreshed={refreshed}, skipped={skipped}, errors={errors}, dry_run={args.dry_run}"
+        f"\nSummary: total={total}, refreshed={refreshed}, skipped={skipped}, errors={errors}, "
+        f"dry_run={args.dry_run}, with_export={args.with_export}"
     )
 
     return 0 if errors == 0 else 2

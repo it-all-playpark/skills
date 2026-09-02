@@ -5,7 +5,7 @@ description: |
   Use when: (1) user wants to extract commit history for documentation,
   (2) needs commit context for understanding development timeline,
   (3) keywords like "export commits", "commit history", "changelog".
-  Accepts args: GITHUB_URL [-o output.md] [--limit N] [--since DATE] [--author AUTHOR]
+  Accepts args: GITHUB_URL [-o output.md] [--limit N] [--since DATE|Nd] [--author AUTHOR] [--no-merges] [--files]
 context: fork
 model: haiku
 effort: low
@@ -28,9 +28,11 @@ Export GitHub Commit history to a Markdown file.
 | `<url>` | GitHub URL (`https://github.com/owner/repo`) or `owner/repo` format |
 | `-o, --output` | Output file path (default: `commits.md`) |
 | `--limit` | Maximum number of commits to export (default: 100) |
-| `--since` | Only commits after this date (YYYY-MM-DD) |
+| `--since` | Only commits after this date: `YYYY-MM-DD` / ISO 8601 / `Nd`（例 `45d`）。committer date 基準（GitHub API `since=` と同一） |
 | `--author` | Filter by author username |
 | `--branch` | Branch to export commits from (default: default branch) |
+| `--no-merges` | Exclude merge commits (parents が 2 以上の commit)。除外後は `--limit` 未満の件数になり得る |
+| `--files` | Each commit に変更ファイル一覧を出力（commit 1件ごとに追加 API 呼び出し） |
 
 ### Examples
 
@@ -43,6 +45,9 @@ Export GitHub Commit history to a Markdown file.
 
 # Export to seed directory
 /repo-commit user/repo -o seed/project-name/commits.md --branch main
+
+# Slice-selection input: recent non-merge commits with changed files
+/repo-commit user/repo --since 45d --no-merges --files -o seed/project/commits.md
 ```
 
 ## Execution
@@ -70,12 +75,15 @@ Total Commits: 50
 - **SHA**: abc1234
 - **Author**: username
 - **Date**: 2026-01-15
-- **Files Changed**: 5
+- **Files**: src/a.ts, src/b.ts
 
 Full commit message body here...
 
 ---
 ```
+
+`- **Files**:` は `--files` 指定時のみ出力される（未指定時はこの行なし）。`--no-merges` 指定時は
+`Total Commits:` が `--limit` より少なくなり得る（除外後の件数であり over-fetch はしない）。
 
 ## Requirements
 
