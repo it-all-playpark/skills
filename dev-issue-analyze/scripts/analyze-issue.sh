@@ -2,7 +2,7 @@
 # analyze-issue.sh - Parse a pre-fetched GitHub issue JSON file
 #
 # Pure transform: takes the file path passed via --issue-json (verbatim stdout
-# of `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state`,
+# of `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state,comments`,
 # fetched by the caller) and emits the analysis JSON. Performs no GitHub CLI or
 # network I/O itself.
 
@@ -49,7 +49,7 @@ done
 [[ -r "$ISSUE_JSON_FILE" ]] || die_json "--issue-json file not found or unreadable: $ISSUE_JSON_FILE"
 
 # Load pre-fetched issue JSON (verbatim stdout of
-# `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state`).
+# `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state,comments`).
 ISSUE_JSON=$(cat "$ISSUE_JSON_FILE")
 
 # Extract fields
@@ -58,6 +58,13 @@ STATE=$(echo "$ISSUE_JSON" | jq -r '.state // "unknown"')
 BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
 LABELS=$(echo "$ISSUE_JSON" | jq -c '[.labels[].name] // []')
 MILESTONE=$(echo "$ISSUE_JSON" | jq -r '.milestone.title // null')
+
+# issue comments (fixture / gh output missing "comments" -> 0 件扱い, not a legacy
+# fallback branch: `.comments // []` is plain jq null-safety). Comments are part of
+# the requirement-extraction input alongside body (issue #573); capped at 50 items,
+# body kept in full for downstream (sonnet) reconciliation.
+COMMENT_COUNT=$(echo "$ISSUE_JSON" | jq -r '(.comments // []) | length')
+COMMENTS_JSON=$(echo "$ISSUE_JSON" | jq -c '[(.comments // [])[:50][] | {author: (.author.login // ""), created_at: (.createdAt // ""), body: (.body // "")}]')
 
 # Detect type from labels
 detect_type() {
@@ -90,15 +97,21 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # the existing sonnet(dev-runner) analyze path — this is a fail-open speed optimization only).
 
 # Line-anchored regex matching a markdown heading whose text (after optional trailing
-# ':'/'：') is EXACTLY "acceptance criteria" (case-insensitive) or "受け入れ基準" — not
+# ':'/'：') is EXACTLY one of the accepted AC-heading forms (case-insensitive) — not
 # a substring match, so sibling headings like "受け入れ基準外" or "受け入れ基準の補足"
-# do not match and their content is never folded into the AC section (issue #388 review).
+# (or "受け入れ条件外" etc.) do not match and their content is never folded into the
+# AC section (issue #388 review; forms extended in issue #573).
 # NOTE: implemented with grep -E (not awk ==) — macOS's bundled awk (one true awk
 # 20200816) has a confirmed locale-dependent bug where `==` between two non-identical
 # multibyte Japanese strings (e.g. "受け入れ基準外" vs "受け入れ基準") spuriously
 # returns true, so awk string-equality cannot be trusted for this comparison here.
-AC_HEADING_LINE_RE='^#{1,6}[[:space:]]+(acceptance criteria|受け入れ基準)[[:space:]]*[:：]?[[:space:]]*$'
+AC_HEADING_LINE_RE='^#{1,6}[[:space:]]+(acceptance criteria|受け入れ基準|受け入れ条件|受入基準|受入条件)[[:space:]]*[:：]?[[:space:]]*$'
 HEADING_LINE_RE='^#{1,6}[[:space:]]+'
+# Near-miss detector: any fence-external heading line that CONTAINS one of these
+# fragments but does not match AC_HEADING_LINE_RE exactly (e.g. "受け入れ基準外",
+# "受入れ要件") is surfaced via ac_heading_near_miss so an AC-like heading in a
+# non-accepted form is never silently dropped (issue #573).
+AC_NEAR_MISS_RE='受け入れ|受入|acceptance'
 # Fenced code block delimiter: ``` or ~~~ (>=3 chars), optionally indented up to 3 spaces
 # per CommonMark. Used to toggle fence state so lines inside a fenced code block (e.g. a
 # `# comment` in a shell snippet) are never mistaken for markdown headings (issue #388 review).
@@ -107,6 +120,28 @@ FENCE_LINE_RE='^[[:space:]]{0,3}(```+|~~~+)'
 is_ac_heading_line() { grep -qiE "$AC_HEADING_LINE_RE" <<<"$1"; }
 is_heading_line() { grep -qE "$HEADING_LINE_RE" <<<"$1"; }
 is_fence_line() { grep -qE "$FENCE_LINE_RE" <<<"$1"; }
+
+# Emits (verbatim, one per line) every fence-external heading line that looks
+# AC-like (matches AC_NEAR_MISS_RE) but is NOT an accepted AC heading form
+# (does not match is_ac_heading_line). Used to surface heading typos / unaccepted
+# wording (e.g. "## 受入れ要件") and sibling headings (e.g. "## 受け入れ基準外")
+# instead of silently treating them as "AC heading not found" with no trace
+# (issue #573). Same fence-tracking as extract_ac_section.
+collect_ac_near_miss() {
+    local body="$1" in_fence=false line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if is_fence_line "$line"; then
+            [[ "$in_fence" == true ]] && in_fence=false || in_fence=true
+            continue
+        fi
+        if [[ "$in_fence" != true ]] && is_heading_line "$line"; then
+            if grep -qiE "$AC_NEAR_MISS_RE" <<<"$line" && ! is_ac_heading_line "$line"; then
+                printf '%s\n' "$line"
+            fi
+        fi
+    done <<<"$body"
+    return 0
+}
 
 # Extracts the body lines that fall under the AC heading (heading line itself excluded,
 # section ends at the next heading of any level or EOF). Empty when no AC heading found.
@@ -210,6 +245,14 @@ run_contract_mode() {
         fi
     fi
 
+    # Comments present -> the decision-tree light path cannot judge body/comment
+    # semantic reconciliation, so fall back to the sonnet(dev-runner) analyze path
+    # rather than silently building the REQ from body alone (issue #573).
+    if [[ "$eligible" == true && "$COMMENT_COUNT" -gt 0 ]]; then
+        eligible=false
+        ineligible_reason="comments present ($COMMENT_COUNT) — body/comment reconciliation requires sonnet analyze"
+    fi
+
     # issue_type: conventional-commit title prefix (e.g. `feat:`, `fix(scope)!:`) takes
     # precedence; falls back to label-based detect_type when the title has no such prefix.
     local title_type="" title_bang="false" issue_type
@@ -270,6 +313,8 @@ run_contract_mode() {
         --argjson breaking_keyword_scan "$BREAKING_KEYWORD_SCAN" \
         --argjson has_file_count "$([[ "$scope_files_count" -gt 0 ]] && echo true || echo false)" \
         --argjson file_count "$scope_files_count" \
+        --argjson comment_count "$COMMENT_COUNT" \
+        --argjson ac_heading_near_miss "$NEAR_MISS_JSON" \
         '
         {
           contract: $contract,
@@ -279,12 +324,20 @@ run_contract_mode() {
           issue_type: $issue_type,
           acceptance_criteria: $acceptance_criteria,
           scope: $scope,
-          breaking_keyword_scan: $breaking_keyword_scan
+          breaking_keyword_scan: $breaking_keyword_scan,
+          comment_count: $comment_count,
+          ac_heading_near_miss: $ac_heading_near_miss
         }
         + (if $eligible then {} else {ineligible_reason: $ineligible_reason} end)
         + (if $has_file_count then {estimated_change_file_count: $file_count} else {} end)
         '
 }
+
+# AC heading near-miss detection (applies to all depths, computed once ahead of the
+# contract-mode dispatch): fence-external headings that look AC-like but do not match
+# an accepted heading form, verbatim, capped at 10 (issue #573).
+NEAR_MISS_JSON=$(collect_ac_near_miss "$BODY" | head -10 | json_array || true)
+[[ -z "$NEAR_MISS_JSON" ]] && NEAR_MISS_JSON="[]"
 
 if [[ "$CONTRACT_MODE" == true ]]; then
     run_contract_mode
@@ -293,7 +346,7 @@ fi
 
 # Minimal output
 if [[ "$DEPTH" == "minimal" ]]; then
-    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE"),\"breaking_keyword_scan\":$BREAKING_KEYWORD_SCAN}"
+    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE"),\"breaking_keyword_scan\":$BREAKING_KEYWORD_SCAN,\"comment_count\":$COMMENT_COUNT}"
     exit 0
 fi
 
@@ -314,6 +367,23 @@ extract_requirements() {
 AC=$(extract_ac "$BODY")
 REQUIREMENTS=$(extract_requirements "$BODY")
 
+# Warnings (standard/comprehensive only): surfaces an empty acceptance_criteria
+# extraction and any AC-like heading that doesn't match an accepted form, so
+# AC 0 件 never silently degrades to an empty array with no trace (issue #573).
+# NOTE: here-string / `|| true` accumulation, same SIGPIPE-safety rationale as
+# breaking_keyword_scan above.
+WARNINGS_LIST=""
+if [[ "$AC" == "[]" ]]; then
+    WARNINGS_LIST+="acceptance_criteria is empty (no checkbox/numbered items found in body)"$'\n'
+fi
+NEAR_MISS_LINES_RAW=$(echo "$NEAR_MISS_JSON" | jq -r '.[]' 2>/dev/null || true)
+while IFS= read -r nm_line || [[ -n "$nm_line" ]]; do
+    [[ -z "$nm_line" ]] && continue
+    WARNINGS_LIST+="AC heading near-miss (not an accepted form): $nm_line"$'\n'
+done <<<"$NEAR_MISS_LINES_RAW"
+WARNINGS_JSON=$({ printf '%s' "$WARNINGS_LIST" | grep -v '^[[:space:]]*$' || true; } | json_array || true)
+[[ -z "$WARNINGS_JSON" ]] && WARNINGS_JSON="[]"
+
 # Standard output
 if [[ "$DEPTH" == "standard" ]]; then
     cat <<JSONEOF
@@ -327,6 +397,10 @@ if [[ "$DEPTH" == "standard" ]]; then
   "acceptance_criteria": $AC,
   "requirements": $REQUIREMENTS,
   "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
+  "comment_count": $COMMENT_COUNT,
+  "comments": $COMMENTS_JSON,
+  "ac_heading_near_miss": $NEAR_MISS_JSON,
+  "warnings": $WARNINGS_JSON,
   "body_preview": $(head -c 500 <<<"$BODY" | jq -Rs .)
 }
 JSONEOF
@@ -350,6 +424,10 @@ cat <<JSONEOF
   "requirements": $REQUIREMENTS,
   "affected_files": $AFFECTED_FILES,
   "components": $COMPONENTS,
+  "comment_count": $COMMENT_COUNT,
+  "comments": $COMMENTS_JSON,
+  "ac_heading_near_miss": $NEAR_MISS_JSON,
+  "warnings": $WARNINGS_JSON,
   "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
   "body_full": $(printf '%s' "$BODY" | jq -Rs .)
 }

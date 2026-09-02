@@ -16,6 +16,7 @@
 //   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
 //   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
 //   - contract.scope が string
+//   - contract.comment_count === 0（整数厳格。comments がある issue は body/comment 突合のため sonnet analyze へ回す。issue #573）
 //
 // 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
 // `shape` キーは出力しない（classifyShape の複数 floor 安全則をそのまま働かせるため）。
@@ -34,6 +35,7 @@ export function buildReqFromContract(contract, issueNumber) {
   if (!contract.acceptance_criteria.every((ac) => typeof ac === 'string' && ac.length > 0)) return null
 
   if (contract.breaking_keyword_scan !== false) return null
+  if (contract.comment_count !== 0) return null
   if (typeof contract.scope !== 'string') return null
 
   const req = {

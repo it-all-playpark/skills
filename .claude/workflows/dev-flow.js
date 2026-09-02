@@ -1841,6 +1841,7 @@ function refloorShape(estimatedShape, realizedCount) {
 //   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
 //   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
 //   - contract.scope が string
+//   - contract.comment_count === 0（整数厳格。comments がある issue は body/comment 突合のため sonnet analyze へ回す。issue #573）
 //
 // 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
 // `shape` キーは出力しない（classifyShape の複数 floor 安全則をそのまま働かせるため）。
@@ -1859,6 +1860,7 @@ function buildReqFromContract(contract, issueNumber) {
   if (!contract.acceptance_criteria.every((ac) => typeof ac === 'string' && ac.length > 0)) return null
 
   if (contract.breaking_keyword_scan !== false) return null
+  if (contract.comment_count !== 0) return null
   if (typeof contract.scope !== 'string') return null
 
   const req = {
@@ -3110,6 +3112,8 @@ const REQ = {
     estimated_change_file_count: { type: 'number' },
     shape: { type: 'string', enum: ['micro', 'standard', 'complex'] },
     ambiguities: { type: 'array', items: { type: 'string' } },
+    comment_overrides: { type: 'array', items: { type: 'string' } },
+    comment_conflicts: { type: 'array', items: { type: 'string' } },
     breaking_change: { type: 'boolean' },
     breaking_keyword_scan: { type: 'boolean' },
     breaking_evidence: { type: 'string' },
@@ -4233,6 +4237,8 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=1〜2 ファイルの軽微変更（AC 4 個以内）、standard=3〜5 ファイル程度の通常実装、complex=6 ファイル以上・破壊的変更・設計判断を要する。定義に最も合致する shape をそのまま返せ（安全側の floor は決定論ロジックが別途担保するため、迷っても大きめに倒すな）。`
   + `受入条件（acceptance_criteria）は独立に検証可能な最小単位へ統合して列挙せよ（同義の言い換え・手段の重複で個数を水増ししない。1〜2 ファイルの軽微変更なら通常 4 個以内に収まる）。`
   + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`
+  + `issue の comments（取得 JSON の comments 配列 / skill 出力の comments）を created_at 順に body と同じ要件入力として読め。comment が body の記述を明示的に訂正・上書きしている（例: 『訂正』『前倒し』『X ではなく Y』）場合は comment 側を採用し、採用した訂正を comment_overrides:string[] に『body: <旧記述> → comment: <新記述>（<author>, <created_at>）』の形で列挙せよ。body と comment が食い違うがどちらが有効か comment から確定できない場合は黙ってどちらも採用せず comment_conflicts:string[] に同形式で列挙せよ。comments が無ければ両方とも空配列。`
+  + `受入条件の見出しは \`受け入れ基準\` / \`受け入れ条件\` / \`受入基準\` / \`受入条件\` / \`Acceptance Criteria\` 等の表記ゆれを全て AC として扱え。AC 相当の見出し・項目が issue に 1 つも無い場合は acceptance_criteria を推測で埋めず、ambiguities にその旨を入れて返せ。`
   + `さらに、skill の JSON 出力に含まれる breaking_keyword_scan (boolean) をそのまま verbatim で breaking_keyword_scan として返せ（全 depth の出力に含まれる。自分で再判定・変更するな）。`
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
   + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
@@ -4247,7 +4253,8 @@ const contractProbePrompt = `## Objective\n`
   + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
   + `## Steps\n`
   + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/analyze-contract-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <ISSUE_JSON> とする。\n`
-  + `2. \`gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json body,title,labels,assignees,milestone,state\` を`
+  + `2. \`gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json body,title,labels,assignees,milestone,state,comments\` を`
+  // comments を含めるのは body と comment の突合に必要なため（issue #573）。
   + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
   + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
   + `3. \`~/.claude/skills/dev-issue-analyze/scripts/analyze-issue.sh ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**絶対パスを先頭トークンとする bare 形**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
@@ -4287,6 +4294,7 @@ if (DEPTH === 'standard') {
     if (req) {
       log('analyze: 決定論 parse 採用（contract=' + c.contract + '）— sonnet analyze skip')
     } else {
+      if (Array.isArray(c?.ac_heading_near_miss) && c.ac_heading_near_miss.length) log('⚠️ analyze: AC 見出しの表記ゆれ候補が許容表記に一致しない（' + c.ac_heading_near_miss.join(' / ') + '）— sonnet analyze で拾えなければ needs_clarification になる（issue #573）')
       log('analyze: contract 非準拠（' + (c?.ineligible_reason || 'whitelist 検証不合格') + '）— sonnet fallback')
     }
   } else if (contractRes != null) {
@@ -4315,6 +4323,18 @@ if (!req) {
     const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 取得検証不合格（${prov.reason}）で中断（source=analyze_provenance）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
     return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（${prov.reason}）: ${prov.detail}`], journal_log_status: journalLogStatus, note: 'analyze 結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
   }
+}
+
+// issue #573: issue body と comment の矛盾は黙って片方を採用せず人間へ返す（fail-closed）。
+// comment が body を明示訂正した override は採用済みとして log で可視化のみ（REQ にも残る）。
+const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
+const commentOverrides = strList(req.comment_overrides)
+const commentConflicts = strList(req.comment_conflicts)
+if (commentOverrides.length) log(`analyze: comment による body 訂正を採用（${commentOverrides.length} 件）: ${commentOverrides.join(' | ')}`)
+if (commentConflicts.length) {
+  log(`⚠️ analyze: issue body と comment が矛盾（${commentConflicts.length} 件）— needs_clarification で中断（issue #573）`)
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: body/comment 矛盾 ${commentConflicts.length} 件で中断（source=analyze_comment_conflict）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+  return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: commentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573）。worktree は保持済みで再利用される' }
 }
 
 const ambiguities = req.ambiguities ?? []
