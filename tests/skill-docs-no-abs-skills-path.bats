@@ -8,7 +8,8 @@
 # #574 レビュー指摘: ${CLAUDE_PLUGIN_ROOT} は plugin 実行時のみ展開され、現行の
 # symlink dual distribution（#139）では未展開のまま何にも一致せず script 事前許可
 # が失われる。plugin manifest 導入で layout が確定するまで ~/.claude/skills/ 併記
-# を残す（有効化は #568/#571 系で追跡）。
+# を残す。この exclude の撤去は #576 で追跡する（frontmatter allowed-tools での
+# ${CLAUDE_PLUGIN_ROOT} 展開可否が #567 で未実測のため、実測が sunset の前提）。
 
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
