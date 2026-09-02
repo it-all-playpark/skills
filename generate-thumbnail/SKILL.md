@@ -16,8 +16,10 @@ model: haiku
 Generate blog thumbnail from MDX frontmatter via Codex CLI built-in `image_gen` tool (gpt-image-2). API キー不要、Codex サブスクリプションの usage limit を消費する。
 
 ```bash
-~/.claude/skills/generate-thumbnail/scripts/generate_thumbnail.sh <mdx-path> [--optimize]
+scripts/generate_thumbnail.sh <mdx-path> [--optimize]
 ```
+
+パスは本 skill ディレクトリ基準。実行時は本 SKILL.md のロード元ディレクトリを前置した絶対パスに解決して呼ぶこと。
 
 Options: `--optimize` converts to WebP and deletes original PNG.
 
@@ -53,7 +55,7 @@ Requires: `codex` CLI（ログイン済み）, `python3`, `jq`. `--optimize` 使
 1. プロンプトファイルを作成（例: `.claude/brand-prompt.md`）
 2. project `skill-config.json` で `brand_prompt_path` を設定
 
-未設定時は `~/.claude/skills/generate-thumbnail/prompts/default-brand-prompt.md` を使用。
+未設定時は `prompts/default-brand-prompt.md`（本 skill ディレクトリ内）を使用。
 
 ## 動作の補足
 

@@ -29,8 +29,8 @@
 - `gh` authenticated (`gh auth status`)
 - `python3`
 - `repomix`（export_repo.py が内部で使用。未インストール時は npx で自動取得）
-- 既存グローバルスキル:
-  - `~/.claude/skills/repo-export/scripts/export_repo.py`
-  - `~/.claude/skills/repo-commit/scripts/export_commit.py`
-  - `~/.claude/skills/repo-issue/scripts/export_issue.py`
-  - `~/.claude/skills/repo-pr/scripts/export_pr.py`
+- 同 repo 内の skill（本 skill ディレクトリの sibling として解決）:
+  - `../repo-export/scripts/export_repo.py`
+  - `../repo-commit/scripts/export_commit.py`
+  - `../repo-issue/scripts/export_issue.py`
+  - `../repo-pr/scripts/export_pr.py`

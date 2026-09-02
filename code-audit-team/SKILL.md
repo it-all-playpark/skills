@@ -12,6 +12,8 @@ effort: max
 allowed-tools:
   - Task
   - Skill
+  - Bash(${CLAUDE_PLUGIN_ROOT}/code-audit-team/scripts/*)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/*)
   - Bash(~/.claude/skills/code-audit-team/scripts/*)
   - Bash(~/.claude/skills/skill-retrospective/scripts/*)
 ---

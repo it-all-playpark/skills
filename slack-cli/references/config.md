@@ -1,6 +1,6 @@
 # Workspace Configuration
 
-Workspaces are defined in `~/.claude/skills/slack-cli/workspaces.json` (copy from `workspaces.example.json`):
+Workspaces are defined in `workspaces.json` in the slack-cli skill directory (copy from `workspaces.example.json` in the same directory):
 
 ```json
 {
@@ -30,7 +30,8 @@ Workspaces are defined in `~/.claude/skills/slack-cli/workspaces.json` (copy fro
 ## Setup
 
 ```bash
-cp ~/.claude/skills/slack-cli/workspaces.example.json ~/.claude/skills/slack-cli/workspaces.json
+# Run in the slack-cli skill directory (where this file's parent skill.md lives)
+cp workspaces.example.json workspaces.json
 # Edit workspaces.json with your actual workspace settings
 ```
 

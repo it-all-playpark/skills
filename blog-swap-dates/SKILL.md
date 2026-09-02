@@ -89,8 +89,10 @@ Zernio API（旧Late）に既存スケジュールがある場合、手動変更
 
 ## Shared Resources
 
-- `~/.claude/skills/_shared/scripts/find-articles.sh` - 記事検索スクリプト
-- `~/.claude/skills/_shared/references/file-patterns.md` - ファイルパス規則
+（パスは本 skill ディレクトリ基準の sibling 相対）
+
+- `../_shared/scripts/find-articles.sh` - 記事検索スクリプト
+- `../_shared/references/file-patterns.md` - ファイルパス規則
 
 ## Error Handling
 
