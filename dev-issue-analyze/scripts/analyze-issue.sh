@@ -69,17 +69,31 @@ MILESTONE=$(echo "$ISSUE_JSON" | jq -r '.milestone.title // null')
 # "unknown reporter" with a JSON null of some other origin.
 ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.author.login // ""')
 
-# issue comments (fixture / gh output missing "comments" -> 0 件扱い, not a legacy
-# fallback branch: `.comments // []` is plain jq null-safety). Comments are part of
-# the requirement-extraction input alongside body (issue #573); capped at 50 items,
-# body kept in full for downstream (sonnet) reconciliation. author_association is
-# passed through verbatim (gh's authorAssociation, e.g. OWNER/MEMBER/COLLABORATOR/NONE)
-# so the consuming LLM (dev-flow.js analyzePrompt) can restrict comment_overrides
-# adoption to trusted posters instead of any commenter (issue #573 review on PR #578:
-# without this, an arbitrary external comment on this PUBLIC repo could silently
-# override requirements extracted from the issue body).
-COMMENT_COUNT=$(echo "$ISSUE_JSON" | jq -r '(.comments // []) | length')
-COMMENTS_JSON=$(echo "$ISSUE_JSON" | jq -c '[(.comments // [])[:50][] | {author: (.author.login // ""), author_association: (.authorAssociation // ""), created_at: (.createdAt // ""), body: (.body // "")}]')
+# Fail closed when the fetched issue JSON has no well-typed "comments" array. This is
+# NOT the same case as "issue has zero comments" — gh's `--json ...,comments` always
+# emits `"comments":[]` for a comment-free issue, so a missing/wrong-typed key means the
+# caller's `gh issue view --json ...` fetch omitted the `comments` field (or produced a
+# malformed shape), not that there genuinely are none. Previously `(.comments // [])`
+# treated that ambiguous case as comment_count=0 and let the --contract fast path stay
+# eligible:true with nothing to reconcile against the body — silently reproducing the
+# exact failure mode issue #573 fixed (missed comment-based corrections), because a
+# probe agent that drops `comments` from its `--json` field list would never be caught
+# (PR #578 review). Fail closed instead: die_json (exit non-zero) so the caller's fetch
+# contract violation surfaces immediately rather than degrading silently.
+echo "$ISSUE_JSON" | jq -e 'has("comments") and (.comments | type == "array")' >/dev/null \
+    || die_json "issue JSON missing required \"comments\" array field (fetch must include --json ...,comments)"
+
+# issue comments. Comments are part of the requirement-extraction input alongside body
+# (issue #573); capped at 50 items, body kept in full for downstream (sonnet)
+# reconciliation. author_association is passed through verbatim (gh's authorAssociation,
+# e.g. OWNER/MEMBER/COLLABORATOR/NONE) so the consuming LLM (dev-flow.js analyzePrompt)
+# can restrict comment_overrides adoption to trusted posters instead of any commenter
+# (issue #573 review on PR #578: without this, an arbitrary external comment on this
+# PUBLIC repo could silently override requirements extracted from the issue body).
+# `.comments` (not `.comments // []`) is safe here: the guard above already proved the
+# key exists and is an array (possibly empty).
+COMMENT_COUNT=$(echo "$ISSUE_JSON" | jq -r '.comments | length')
+COMMENTS_JSON=$(echo "$ISSUE_JSON" | jq -c '[.comments[:50][] | {author: (.author.login // ""), author_association: (.authorAssociation // ""), created_at: (.createdAt // ""), body: (.body // "")}]')
 
 # Detect type from labels
 detect_type() {

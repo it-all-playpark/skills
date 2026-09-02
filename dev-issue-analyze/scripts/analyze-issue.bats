@@ -626,10 +626,14 @@ Just prose, no checkbox or numbered items here."
 }
 
 # ---------------------------------------------------------------------------
-# (aa11) fixture with no "comments" key at all (legacy shape) -> comment_count 0,
-#        contract mode remains eligible
+# (aa11) fixture with no "comments" key at all -> fetch-contract violation,
+#        fails closed with a non-zero exit / error JSON rather than silently
+#        degrading to comment_count 0 (PR #578 review of #573/#578: a probe
+#        agent that drops "comments" from its `--json` field list must not be
+#        able to slip an eligible:true --contract result through with nothing
+#        to reconcile against the body).
 # ---------------------------------------------------------------------------
-@test "fixture without comments key -> comment_count 0, contract eligible" {
+@test "fixture without comments key -> exit non-zero, error" {
     FIXTURE="$FIXTURE_DIR/contract-no-comments-key.json"
     jq -n --arg title "feat: add button" --arg body "## Acceptance Criteria
 
@@ -637,8 +641,8 @@ Just prose, no checkbox or numbered items here."
         '{title: $title, state: "open", body: $body, labels: [], assignees: [], milestone: null} | del(.comments)' \
         > "$FIXTURE"
     run "$SCRIPT" 43 --issue-json "$FIXTURE" --contract
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.eligible == true and .comment_count == 0'
+    [ "$status" -ne 0 ]
+    echo "$output" | jq -e '.status == "error" and (.error | contains("comments"))'
 }
 
 # ===========================================================================
