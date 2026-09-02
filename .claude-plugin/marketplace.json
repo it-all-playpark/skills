@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "playpark",
+  "description": "playpark LLC marketplace: production skills and dev-flow agents from it-all-playpark/skills",
+  "owner": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" },
+  "plugins": [
+    {
+      "name": "playpark-skills",
+      "version": "0.1.0",
+      "description": "70+ production-ready skills and 11 dev-flow agents for AI coding agents, by playpark LLC",
+      "source": "./",
+      "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" }
+    }
+  ]
+}

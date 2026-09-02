@@ -18,6 +18,17 @@ git clone https://github.com/it-all-playpark/skills.git ~/.claude/skills
 /sns-announce article.mdx # Generate social media posts
 ```
 
+### Install as a Claude Code plugin
+
+Claude Code では marketplace 経由でも導入できます。
+
+```
+/plugin marketplace add it-all-playpark/skills
+/plugin install playpark-skills@playpark
+```
+
+skills（フラット構造）と `.claude/agents/` の11 agentが plugin として認識されます。従来の clone + symlink 方式（Codex / Antigravity など cross-vendor 向け）はそのまま併存して使えます。
+
 For Codex or other agents, symlink to the appropriate directory:
 
 ```bash
