@@ -2,6 +2,7 @@
 description: dev-flow / pr-iterate / dev-improve の内部仕様（phase 経路・shape 判定・distrust 正当化クラス W7・指示規範性 (prescription) の正当化クラス・inline 生成区間・exec-proxy 失敗ポリシー・telemetry キー）
 paths:
   - ".claude/workflows/**"
+  - "agents/**"
   - ".claude/agents/**"
   - "_lib/**"
   - "tools/**"

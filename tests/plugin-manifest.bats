@@ -1,19 +1,25 @@
 #!/usr/bin/env bats
 # plugin-manifest.bats - Regression tests for .claude-plugin/{plugin,marketplace}.json.
 #
-# Pins the invariants required by issue #568: repo is distributed as a
-# single Claude Code plugin, skills stay flat at repo root, agents are
-# loaded from the plugin-root agents/ directory — a symlink to the canonical
-# .claude/agents/, so the agent definitions exist exactly once (`claude
-# plugin details` confirmed both that a plugin.json "agents" key pointing at
-# .claude/agents/ loads 0 agents, and that the agents -> .claude/agents
-# symlink loads all 11) — and the "workflows" key is never added
-# (reserved for #569).
+# Pins the invariants required by issue #568: the repo is distributed as a
+# single Claude Code plugin, skills stay flat at repo root, and the
+# "workflows" key is never added (reserved for #569).
 #
-# agents/ must stay a symlink, not a copy: a byte-identical mirror silently
-# drifts the moment one side is edited alone, and .claude/agents/ has to stay
-# the real directory because the repo's own dev-flow Task/Agent calls resolve
-# against it.
+# Agent definitions live in the plugin-root agents/ directory as REAL FILES,
+# with .claude/agents as a symlink pointing back at it. Both halves matter:
+#
+#   - plugin subagents are only ever loaded from plugin-root agents/. A
+#     plugin.json "agents" key is not a substitute (measured: Agents (0)).
+#   - agents/ must be the real directory, not the symlink. git checks out a
+#     mode-120000 entry as a plain text file wherever symlinks are
+#     unavailable (Windows without Developer Mode, core.symlinks=false), so
+#     putting the symlink on agents/ makes a consumer's install silently
+#     degrade to Agents (0) while skills still load — measured, not
+#     theoretical. With this direction the same environment only loses
+#     .claude/agents, which affects developing this repo, never consuming it.
+#   - keeping .claude/agents as a symlink (rather than a copy) means the
+#     definitions exist exactly once; a mirror drifts the moment one side is
+#     edited alone.
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 PLUGIN_JSON="$REPO_ROOT/.claude-plugin/plugin.json"
@@ -52,11 +58,6 @@ CANONICAL_AGENTS_DIR="$REPO_ROOT/.claude/agents"
 }
 
 @test "plugin.json に agents キーが存在しない（plugin-root agents/ ディレクトリ規約を使う）" {
-    # `claude --plugin-dir . plugin details playpark-skills` の実測により、
-    # plugin.json の "agents" キーに .claude/agents/*.md へのパスを列挙しても
-    # Agents (0) にしかならないことを確認済み（issue の想定と異なる実挙動）。
-    # 実際に読み込まれるのは plugin root の agents/ ディレクトリ規約のみ
-    # (実測: agents/ を追加した状態で Agents (11) を確認)。
     run jq -r 'has("agents")' "$PLUGIN_JSON"
     [ "$status" -eq 0 ]
     [ "$output" = "false" ]
@@ -99,24 +100,51 @@ CANONICAL_AGENTS_DIR="$REPO_ROOT/.claude/agents"
     [ "$plugin_version" = "$marketplace_version" ]
 }
 
-@test "plugin root の agents は .claude/agents への symlink である（実体の二重化を防ぐ）" {
-    [ -L "$PLUGIN_AGENTS_DIR" ]
-    run readlink "$PLUGIN_AGENTS_DIR"
+@test "plugin root の agents は実ファイルのディレクトリである（symlink にしない）" {
+    # symlink にすると core.symlinks=false の環境で plain file に化け、
+    # consumer の install が Agents (0) に silent degrade する
+    [ -d "$PLUGIN_AGENTS_DIR" ]
+    [ ! -L "$PLUGIN_AGENTS_DIR" ]
+    run git -C "$REPO_ROOT" ls-files -s agents
     [ "$status" -eq 0 ]
-    [ "$output" = ".claude/agents" ]
+    [ -n "$output" ]
+    [[ "$output" != *"120000 "* ]]
 }
 
-@test "agents は git 上も symlink (mode 120000) として記録されている" {
-    run git -C "$REPO_ROOT" ls-files -s agents
+@test ".claude/agents は ../agents への symlink で、git 上も mode 120000 である" {
+    [ -L "$CANONICAL_AGENTS_DIR" ]
+    run readlink "$CANONICAL_AGENTS_DIR"
+    [ "$status" -eq 0 ]
+    [ "$output" = "../agents" ]
+    run git -C "$REPO_ROOT" ls-files -s .claude/agents
     [ "$status" -eq 0 ]
     [[ "$output" == 120000\ * ]]
 }
 
-@test "agents/ 経由で *.md が 11 件解決でき、.claude/agents/ と一致する" {
-    [ -d "$PLUGIN_AGENTS_DIR" ]
+@test ".claude/agents 経由で agents/*.md が解決でき、同一集合である" {
     listed="$(cd "$PLUGIN_AGENTS_DIR" && /bin/ls -1 *.md | sort)"
-    actual="$(cd "$CANONICAL_AGENTS_DIR" && /bin/ls -1 *.md | sort)"
-    count="$(echo "$listed" | wc -l | tr -d ' ')"
-    [ "$count" = "11" ]
-    [ "$listed" = "$actual" ]
+    via_symlink="$(cd "$CANONICAL_AGENTS_DIR" && /bin/ls -1 *.md | sort)"
+    [ -n "$listed" ]
+    [ "$listed" = "$via_symlink" ]
+}
+
+@test "manifest の description が謳う agent 数は実際の agents/*.md 件数と一致する" {
+    # description に数を書く以上、agent 追加時に silent drift させない
+    actual="$(cd "$PLUGIN_AGENTS_DIR" && /bin/ls -1 *.md | wc -l | tr -d ' ')"
+    for desc in "$(jq -r '.description' "$PLUGIN_JSON")" \
+                "$(jq -r '.description' "$MARKETPLACE_JSON")" \
+                "$(jq -r '.plugins[0].description' "$MARKETPLACE_JSON")"; do
+        claimed="$(echo "$desc" | grep -oE '[0-9]+ dev-flow agents' | grep -oE '^[0-9]+' || true)"
+        if [ -n "$claimed" ]; then
+            [ "$claimed" = "$actual" ]
+        fi
+    done
+}
+
+@test "claude CLI が plugin から agent を実際に読み込める（実挙動の pin）" {
+    command -v claude >/dev/null 2>&1 || skip "claude CLI not available"
+    actual="$(cd "$PLUGIN_AGENTS_DIR" && /bin/ls -1 *.md | wc -l | tr -d ' ')"
+    run claude --plugin-dir "$REPO_ROOT" plugin details playpark-skills
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Agents ($actual)"* ]]
 }

@@ -1,8 +1,7 @@
 # Claude Code / Serena / Codex
 .claude/*
-# Track subagent definitions (.claude/agents/*.md — dev-planner / implementer / evaluator 等)
-!.claude/agents/
-!.claude/agents/**
+# Track the .claude/agents -> ../agents symlink (定義の実体は plugin root の agents/)
+!.claude/agents
 # Track dynamic workflow definitions (dev-flow / pr-iterate are Claude workflows)
 !.claude/workflows/
 !.claude/workflows/**
