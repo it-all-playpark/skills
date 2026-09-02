@@ -5,18 +5,5 @@
   "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" },
   "repository": "https://github.com/it-all-playpark/skills",
   "license": "MIT",
-  "skills": ["./"],
-  "agents": [
-    "./.claude/agents/dev-planner.md",
-    "./.claude/agents/dev-runner-haiku-ro.md",
-    "./.claude/agents/dev-runner-haiku-wo.md",
-    "./.claude/agents/dev-runner-haiku.md",
-    "./.claude/agents/dev-runner.md",
-    "./.claude/agents/evaluator.md",
-    "./.claude/agents/implementer.md",
-    "./.claude/agents/improve-miner.md",
-    "./.claude/agents/plan-reviewer.md",
-    "./.claude/agents/pr-reviewer.md",
-    "./.claude/agents/ui-verifier.md"
-  ]
+  "skills": ["./"]
 }
