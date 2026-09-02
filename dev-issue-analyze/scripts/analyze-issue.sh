@@ -49,7 +49,7 @@ done
 [[ -r "$ISSUE_JSON_FILE" ]] || die_json "--issue-json file not found or unreadable: $ISSUE_JSON_FILE"
 
 # Load pre-fetched issue JSON (verbatim stdout of
-# `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state,comments`).
+# `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state,comments,author`).
 ISSUE_JSON=$(cat "$ISSUE_JSON_FILE")
 
 # Extract fields
@@ -58,13 +58,42 @@ STATE=$(echo "$ISSUE_JSON" | jq -r '.state // "unknown"')
 BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
 LABELS=$(echo "$ISSUE_JSON" | jq -c '[.labels[].name] // []')
 MILESTONE=$(echo "$ISSUE_JSON" | jq -r '.milestone.title // null')
+# Issue reporter login (fixture / gh output missing "author" -> "" 扱い, plain jq
+# null-safety, not a legacy fallback branch). Used downstream (dev-flow.js analyzePrompt)
+# as one of the trust signals for comment_overrides adoption alongside author_association
+# (issue #573 review on PR #578): an issue's own reporter may correct their own request
+# in a follow-up comment even without elevated repo permissions.
+# Emitted with json_escape (NOT json_str): json_str maps an empty string to JSON
+# `null` (correct for milestone, where "absent" is the meaning), but issue_author
+# must stay a string so the consumer compares login-to-login and never conflates
+# "unknown reporter" with a JSON null of some other origin.
+ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.author.login // ""')
 
-# issue comments (fixture / gh output missing "comments" -> 0 件扱い, not a legacy
-# fallback branch: `.comments // []` is plain jq null-safety). Comments are part of
-# the requirement-extraction input alongside body (issue #573); capped at 50 items,
-# body kept in full for downstream (sonnet) reconciliation.
-COMMENT_COUNT=$(echo "$ISSUE_JSON" | jq -r '(.comments // []) | length')
-COMMENTS_JSON=$(echo "$ISSUE_JSON" | jq -c '[(.comments // [])[:50][] | {author: (.author.login // ""), created_at: (.createdAt // ""), body: (.body // "")}]')
+# Fail closed when the fetched issue JSON has no well-typed "comments" array. This is
+# NOT the same case as "issue has zero comments" — gh's `--json ...,comments` always
+# emits `"comments":[]` for a comment-free issue, so a missing/wrong-typed key means the
+# caller's `gh issue view --json ...` fetch omitted the `comments` field (or produced a
+# malformed shape), not that there genuinely are none. Previously `(.comments // [])`
+# treated that ambiguous case as comment_count=0 and let the --contract fast path stay
+# eligible:true with nothing to reconcile against the body — silently reproducing the
+# exact failure mode issue #573 fixed (missed comment-based corrections), because a
+# probe agent that drops `comments` from its `--json` field list would never be caught
+# (PR #578 review). Fail closed instead: die_json (exit non-zero) so the caller's fetch
+# contract violation surfaces immediately rather than degrading silently.
+echo "$ISSUE_JSON" | jq -e 'has("comments") and (.comments | type == "array")' >/dev/null \
+    || die_json "issue JSON missing required \"comments\" array field (fetch must include --json ...,comments)"
+
+# issue comments. Comments are part of the requirement-extraction input alongside body
+# (issue #573); capped at 50 items, body kept in full for downstream (sonnet)
+# reconciliation. author_association is passed through verbatim (gh's authorAssociation,
+# e.g. OWNER/MEMBER/COLLABORATOR/NONE) so the consuming LLM (dev-flow.js analyzePrompt)
+# can restrict comment_overrides adoption to trusted posters instead of any commenter
+# (issue #573 review on PR #578: without this, an arbitrary external comment on this
+# PUBLIC repo could silently override requirements extracted from the issue body).
+# `.comments` (not `.comments // []`) is safe here: the guard above already proved the
+# key exists and is an array (possibly empty).
+COMMENT_COUNT=$(echo "$ISSUE_JSON" | jq -r '.comments | length')
+COMMENTS_JSON=$(echo "$ISSUE_JSON" | jq -c '[.comments[:50][] | {author: (.author.login // ""), author_association: (.authorAssociation // ""), created_at: (.createdAt // ""), body: (.body // "")}]')
 
 # Detect type from labels
 detect_type() {
@@ -103,7 +132,11 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # — ac-lint.sh rejects them) and the same "trailing text after the match is not
 # required to end the line" tolerance (e.g. "受け入れ基準（Acceptance Criteria）"
 # annotations match, and so does a substring like "受け入れ基準外" — same as
-# ac-lint.sh). This fast-path eligibility check MUST agree with ac-lint.sh's real
+# ac-lint.sh), and the same heading-level range `#{2,6}` — an h1 `# 受け入れ基準`
+# is NOT an AC heading here because ac-lint.sh (HEADING_RE, h2〜h6) does not accept
+# it either; such a heading is surfaced via ac_heading_near_miss and handled by the
+# sonnet fallback rather than silently dropped.
+# This fast-path eligibility check MUST agree with ac-lint.sh's real
 # contract gate, or the two silently diverge: before this alignment, "## 完了条件"
 # was silently non-eligible here while ac-lint.sh accepted it as t1, and conversely
 # "受入基準"/"受入条件" were accepted here while ac-lint.sh rejects them (issue #573
@@ -115,7 +148,7 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # 20200816) has a confirmed locale-dependent bug where `==` between two non-identical
 # multibyte Japanese strings (e.g. "受け入れ基準外" vs "受け入れ基準") spuriously
 # returns true, so awk string-equality cannot be trusted for this comparison here.
-AC_HEADING_LINE_RE='^#{1,6}[[:space:]]+(acceptance criteria|受け入れ基準|受け入れ条件|完了条件)'
+AC_HEADING_LINE_RE='^#{2,6}[[:space:]]+(acceptance criteria|受け入れ基準|受け入れ条件|完了条件)'
 HEADING_LINE_RE='^#{1,6}[[:space:]]+'
 # Near-miss detector: any fence-external heading line that CONTAINS one of these
 # fragments but does not match AC_HEADING_LINE_RE (e.g. "受入れ要件", "完了基準")
@@ -378,7 +411,7 @@ fi
 
 # Minimal output
 if [[ "$DEPTH" == "minimal" ]]; then
-    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE"),\"breaking_keyword_scan\":$BREAKING_KEYWORD_SCAN,\"comment_count\":$COMMENT_COUNT}"
+    echo "{\"issue_number\":$ISSUE_NUMBER,\"title\":$(json_str "$TITLE"),\"type\":\"$TYPE\",\"state\":\"$STATE\",\"labels\":$LABELS,\"milestone\":$(json_str "$MILESTONE"),\"breaking_keyword_scan\":$BREAKING_KEYWORD_SCAN,\"comment_count\":$COMMENT_COUNT,\"issue_author\":$(json_escape "$ISSUE_AUTHOR")}"
     exit 0
 fi
 
@@ -431,6 +464,7 @@ if [[ "$DEPTH" == "standard" ]]; then
   "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
   "comment_count": $COMMENT_COUNT,
   "comments": $COMMENTS_JSON,
+  "issue_author": $(json_escape "$ISSUE_AUTHOR"),
   "ac_heading_near_miss": $NEAR_MISS_JSON,
   "warnings": $WARNINGS_JSON,
   "body_preview": $(head -c 500 <<<"$BODY" | jq -Rs .)
@@ -458,6 +492,7 @@ cat <<JSONEOF
   "components": $COMPONENTS,
   "comment_count": $COMMENT_COUNT,
   "comments": $COMMENTS_JSON,
+  "issue_author": $(json_escape "$ISSUE_AUTHOR"),
   "ac_heading_near_miss": $NEAR_MISS_JSON,
   "warnings": $WARNINGS_JSON,
   "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,

@@ -15,7 +15,7 @@ Fetch and parse GitHub issue for implementation planning.
 Two steps: fetch the issue JSON with `gh`, then run the pure-transform script against that file.
 
 ```bash
-gh issue view <issue-number> --json body,title,labels,assignees,milestone,state,comments > $TMPDIR/issue-<issue-number>.json
+gh issue view <issue-number> --json body,title,labels,assignees,milestone,state,comments,author > $TMPDIR/issue-<issue-number>.json
 $SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> --issue-json $TMPDIR/issue-<issue-number>.json [--depth LEVEL|--contract]
 ```
 
@@ -29,9 +29,17 @@ $SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> --issue-js
 
 | Level | Output |
 |-------|--------|
-| `minimal` | title, type, labels, state, breaking_keyword_scan, comment_count |
-| `standard` | + AC, requirements, body preview, comments[{author,created_at,body}], ac_heading_near_miss, warnings |
+| `minimal` | title, type, labels, state, breaking_keyword_scan, comment_count, issue_author |
+| `standard` | + AC, requirements, body preview, comments[{author,author_association,created_at,body}], issue_author, ac_heading_near_miss, warnings |
 | `comprehensive` | + affected files, components |
+
+`author_association` は `gh` の `authorAssociation`（`OWNER`/`MEMBER`/`COLLABORATOR`/`NONE` 等）を
+verbatim 転写する。`issue_author` は issue 報告者の login（`gh` の `author.login`）。両方とも
+dev-flow.js の analyzePrompt が `comment_overrides` の採用可否判定（issue 報告者本人 または
+OWNER/MEMBER/COLLABORATOR に限定）に使う決定論入力で、本 repo が public であるため任意の外部
+コメントで要件を上書きさせない fail-closed の一部（issue #573 review on PR #578）。
+`author` / `author_association` / `issue_author` は取得できない場合も文字列 `""` を返す（`null` にしない）。
+空文字列は「不明」であって一致ではないため、override 採用の判定材料にはならない。
 
 `breaking_keyword_scan` is a **決定論的な keyword scan** (`breaking\|incompatible\|migration\|破壊的\|非互換`、
 title + body 全文、大文字小文字無視) が全 depth の JSON に含まれる。dev-flow の shape floor / merge tier HOLD の
@@ -39,9 +47,13 @@ breaking 判定入力の一つ（`req.breaking_change`（LLM 構造化判定）�
 
 ## Contract Mode (`--contract`)
 
-T1/T2 契約準拠 issue の決定論 parse。T1 = AC 見出し（`## 受け入れ基準` / `受け入れ条件` / `受入基準` /
-`受入条件` / `Acceptance Criteria` 等、h1〜h6）+ checkbox 項目 1 件以上。T2 = 同見出し + 素の箇条書き
-（`- `/`* `/番号付き）1 件以上。
+T1/T2 契約準拠 issue の決定論 parse。T1 = AC 見出し（`## 受け入れ基準` / `受け入れ条件` /
+`Acceptance Criteria` / `完了条件`、h2〜h6）+ checkbox 項目 1 件以上。T2 = 同見出し + 素の箇条書き
+（`- `/`* `/番号付き）1 件以上。`受入基準` / `受入条件`（「け」「え」を欠く表記）は AC_HEADING_LINE_RE の
+許容表記に含まれない。h1（`# 受け入れ基準`）も `ac-lint.sh` の HEADING_RE が h2〜h6 のみを
+受理するため AC 見出しとして扱わない（いずれも `ac-lint.sh` との整合、issue #573 review on PR #578） —
+一致しない場合は `ac_heading_near_miss` として near-miss 報告され、sonnet analyze へ fallback する
+（下記 Eligibility 参照）。
 
 出力 JSON:
 
@@ -85,7 +97,8 @@ realized diff / merge tier が補償する（意図的な設計判断）。
   "components": ["AuthService"],
   "breaking_keyword_scan": false,
   "comment_count": 2,
-  "comments": [{"author": "alice", "created_at": "2026-01-01T00:00:00Z", "body": "訂正: 30 箇所"}],
+  "comments": [{"author": "alice", "author_association": "NONE", "created_at": "2026-01-01T00:00:00Z", "body": "訂正: 30 箇所"}],
+  "issue_author": "reporter-login",
   "ac_heading_near_miss": ["## 受入れ要件"],
   "warnings": ["acceptance_criteria is empty (no checkbox/numbered items found in body)"],
   "ambiguities": ["確信を持って AC 化できなかった点"]
