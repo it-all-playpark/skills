@@ -1,9 +1,9 @@
 ---
 name: seed-refresh
 description: |
-  Bulk refresh seed cache files (`seed/**/exported.md`, `commits.md`, `issues.md`, `pr-summary.md`) by checking repository updates after `manifest.json.exportedAt`.
+  Bulk refresh seed cache files (`seed/**/commits.md`, `issues.md`, `pr-summary.md`。`--with-export` 指定時は `exported.md` も) by checking repository updates after `manifest.json.exportedAt`.
   Use when: (1) seed cache is stale, (2) user asks to refresh/update seed files in batch, (3) keywords like "seed更新", "再取得", "exportedAt以降", "main branch更新".
-  Accepts args: [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N]
+  Accepts args: [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N] [--with-export] [--commit-since 45d]
 model: haiku
 ---
 
@@ -14,7 +14,7 @@ Refresh `seed/**` caches in batch.
 ## Usage
 
 ```bash
-python3 scripts/refresh_seed_cache.py [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N]
+python3 scripts/refresh_seed_cache.py [--seed DIR] [--branch main] [--force] [--dry-run] [--limit N] [--with-export] [--commit-since 45d]
 ```
 
 パスは本 skill ディレクトリ基準。実行時は本 SKILL.md のロード元ディレクトリを前置した絶対パスに解決して呼ぶこと。
@@ -28,11 +28,13 @@ python3 scripts/refresh_seed_cache.py [--seed DIR] [--branch main] [--force] [--
 | `--force` | false | コミット日時に関係なく強制更新 |
 | `--dry-run` | false | プレビューのみ |
 | `--limit` | all | 処理件数制限 |
+| `--with-export` | false | `exported.md` を repomix で再生成する（既定 false。19MB 級の再生成コストを既定で払わないため opt-in） |
+| `--commit-since` | `45d` | `export_commit.py --since` に渡す値（committer date 基準） |
 
 ## Workflow
 
 ```
-manifest.json 読込 → exportedAt 比較 → 更新あり → 4ファイル再取得 → exportedAt + トークン計測を manifest 更新
+manifest.json 読込 → exportedAt 比較 → 更新あり → 3ファイル再取得（--with-export で exported.md も） → exportedAt + トークン計測（--with-export のみ）を manifest 更新
 ```
 
 Details: [Algorithm Detail](references/algorithm-detail.md)
@@ -45,6 +47,7 @@ Details: [Algorithm Detail](references/algorithm-detail.md)
 
 per-seed で除外を無効化するには `manifest.json` に `"includeTests": true` を設定する。
 `includeTests` が boolean 以外の値の場合、当該 seed は error（reason: `invalid_includeTests`）になる。
+`includeTests` の型検証は `--with-export` の有無によらず行う（不正値は当該 seed が error）。
 
 ## Examples
 
@@ -57,6 +60,12 @@ python3 scripts/refresh_seed_cache.py --dry-run
 
 # force refresh
 python3 scripts/refresh_seed_cache.py --force
+
+# also regenerate exported.md
+python3 scripts/refresh_seed_cache.py --with-export
+
+# widen the commit lookback window
+python3 scripts/refresh_seed_cache.py --commit-since 30d
 ```
 
 ## Journal Logging
