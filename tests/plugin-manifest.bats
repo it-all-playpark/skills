@@ -3,11 +3,17 @@
 #
 # Pins the invariants required by issue #568: repo is distributed as a
 # single Claude Code plugin, skills stay flat at repo root, agents are
-# loaded from the plugin-root agents/ directory (a byte-identical mirror of
-# .claude/agents/ maintained by tools/sync-agents.sh — `claude plugin
-# details` confirmed a plugin.json "agents" key pointing at .claude/agents/
-# loads 0 agents, see PR #575 review), and the "workflows" key is never
-# added (reserved for #569).
+# loaded from the plugin-root agents/ directory — a symlink to the canonical
+# .claude/agents/, so the agent definitions exist exactly once (`claude
+# plugin details` confirmed both that a plugin.json "agents" key pointing at
+# .claude/agents/ loads 0 agents, and that the agents -> .claude/agents
+# symlink loads all 11) — and the "workflows" key is never added
+# (reserved for #569).
+#
+# agents/ must stay a symlink, not a copy: a byte-identical mirror silently
+# drifts the moment one side is edited alone, and .claude/agents/ has to stay
+# the real directory because the repo's own dev-flow Task/Agent calls resolve
+# against it.
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 PLUGIN_JSON="$REPO_ROOT/.claude-plugin/plugin.json"
@@ -93,19 +99,24 @@ CANONICAL_AGENTS_DIR="$REPO_ROOT/.claude/agents"
     [ "$plugin_version" = "$marketplace_version" ]
 }
 
-@test "plugin root の agents/ ディレクトリが存在し、*.md が 11 件ある" {
-    [ -d "$PLUGIN_AGENTS_DIR" ]
-    count="$(cd "$PLUGIN_AGENTS_DIR" && /bin/ls -1 *.md | wc -l | tr -d ' ')"
-    [ "$count" = "11" ]
+@test "plugin root の agents は .claude/agents への symlink である（実体の二重化を防ぐ）" {
+    [ -L "$PLUGIN_AGENTS_DIR" ]
+    run readlink "$PLUGIN_AGENTS_DIR"
+    [ "$status" -eq 0 ]
+    [ "$output" = ".claude/agents" ]
 }
 
-@test "plugin root の agents/*.md は .claude/agents/*.md とファイル名が完全一致する（drift 検知）" {
+@test "agents は git 上も symlink (mode 120000) として記録されている" {
+    run git -C "$REPO_ROOT" ls-files -s agents
+    [ "$status" -eq 0 ]
+    [[ "$output" == 120000\ * ]]
+}
+
+@test "agents/ 経由で *.md が 11 件解決でき、.claude/agents/ と一致する" {
+    [ -d "$PLUGIN_AGENTS_DIR" ]
     listed="$(cd "$PLUGIN_AGENTS_DIR" && /bin/ls -1 *.md | sort)"
     actual="$(cd "$CANONICAL_AGENTS_DIR" && /bin/ls -1 *.md | sort)"
+    count="$(echo "$listed" | wc -l | tr -d ' ')"
+    [ "$count" = "11" ]
     [ "$listed" = "$actual" ]
-}
-
-@test "plugin root の agents/*.md は .claude/agents/*.md と内容が byte-identical（tools/sync-agents.sh --check）" {
-    run "$REPO_ROOT/tools/sync-agents.sh" --check
-    [ "$status" -eq 0 ]
 }

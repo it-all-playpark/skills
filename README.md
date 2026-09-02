@@ -27,9 +27,10 @@ Claude Code では marketplace 経由でも導入できます。
 /plugin install playpark-skills@playpark
 ```
 
-skills（フラット構造）と `agents/` 配下の11 agentが plugin として認識されます。`agents/` は
-`.claude/agents/`（dev-flow 本体が参照する canonical 側）を `tools/sync-agents.sh --write` で
-同期したミラーです（`--check` で drift を検知、`tests/plugin-manifest.bats` で pin）。
+skills（フラット構造）と `agents/` 配下の 11 agent が plugin として認識されます。plugin の
+subagent は plugin root の `agents/` からのみ読み込まれるため、`agents` は canonical な
+`.claude/agents/`（dev-flow 本体が参照する側）への symlink にしてあります。定義の実体は
+1 箇所だけで、コピーの同期は不要です（`tests/plugin-manifest.bats` で symlink を pin）。
 従来の clone + symlink 方式（Codex / Antigravity など cross-vendor 向け）はそのまま併存して使えます。
 
 For Codex or other agents, symlink to the appropriate directory:
