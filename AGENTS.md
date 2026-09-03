@@ -19,8 +19,9 @@ apt-get install bats          # Ubuntu / Debian
 bash tests/run-all-bats.sh           # ローカル開発 (bats 未インストール時は graceful skip)
 bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを error 扱い)
 
-# 外部スキル (.agents/skills/ — gitignored) の復元 (新規マシンのセットアップ時)
-npx skills experimental_install      # tracked の skills-lock.json から一括復元 (per-skill install)
+# 外部スキル (plugins/playpark-skills/.agents/skills/ — gitignored) の復元 (新規マシンのセットアップ時)
+# lockfile と実体は plugin 配下にあるため、CWD を plugin ディレクトリに移して実行する
+cd plugins/playpark-skills && npx skills experimental_install   # tracked の skills-lock.json から一括復元
 ```
 
 Claude Code 限定の代替 (marketplace 経由 install。3 plugin 構成 — 詳細は README.md):

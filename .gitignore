@@ -14,8 +14,8 @@ plugins/*/.claude/settings.local.json
 .serena/
 .system/
 
-# External agent skills
-.agents/
+# External agent skills（実体は plugin 配下。plugin 外を指す symlink は plugin install に拒否されるため）
+plugins/playpark-skills/.agents/
 
 # Credentials & secrets
 client_secret.json
