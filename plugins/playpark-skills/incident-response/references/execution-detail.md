@@ -36,7 +36,7 @@ config-analyst → incident-lead:
 - `--max-turns` limits total team turns
 - Early shutdown for analysts with no findings (typically config-analyst)
 - Leader dynamically reallocates turn budget
-- Check budget: `scripts/incident-state.sh check-budget`
+- Check budget: `incident-response-state check-budget`
 
 ## State Management
 
@@ -44,22 +44,22 @@ State persisted in `$CWD/.claude/incident-state.json`. When `--repo-path` is spe
 
 ```bash
 # Initialize
-scripts/incident-state.sh init "<symptom>" [--since <datetime>]
+incident-response-state init "<symptom>" [--since <datetime>]
 
 # Add timeline event
-scripts/incident-state.sh add-timeline "<time>" "<event>" "<source>" "<severity>"
+incident-response-state add-timeline "<time>" "<event>" "<source>" "<severity>"
 
 # Update investigation line status
-scripts/incident-state.sh update-line <line> <status>
+incident-response-state update-line <line> <status>
 
 # Increment turn counter
-scripts/incident-state.sh increment-turns [count]
+incident-response-state increment-turns [count]
 
 # Check turn budget
-scripts/incident-state.sh check-budget
+incident-response-state check-budget
 
 # Read current state
-scripts/incident-state.sh read
+incident-response-state read
 ```
 
 ## Output Format

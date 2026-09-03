@@ -113,7 +113,7 @@ Is this aligned with the current architecture patterns?"
 When an auditor records a finding triggered by cross-domain communication:
 
 ```bash
-audit-state.sh add-finding \
+code-audit-team-state add-finding \
   --domain <receiving-auditor-domain> \
   --severity <assessed-severity> \
   --location "<location>" \
@@ -123,5 +123,5 @@ audit-state.sh add-finding \
   --cross-domain
 
 # Link to the original finding
-audit-state.sh add-cross-ref --finding <new-finding-id> --ref <original-finding-id>
+code-audit-team-state add-cross-ref --finding <new-finding-id> --ref <original-finding-id>
 ```

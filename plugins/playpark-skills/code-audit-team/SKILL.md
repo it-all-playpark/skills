@@ -12,8 +12,8 @@ effort: max
 allowed-tools:
   - Task
   - Skill
-  - Bash(${CLAUDE_PLUGIN_ROOT}/code-audit-team/scripts/*)
-  - Bash(${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/*)
+  - Bash(code-audit-team-state *)
+  - Bash(journal *)
 ---
 
 # Code Audit Team
@@ -101,8 +101,8 @@ code-audit-team-state add-finding \
 
 ## Phase 3: Synthesize (audit-lead)
 
-1. Collect all findings: `audit-state.sh read`
-2. Detect hotspots: `audit-state.sh detect-hotspots`
+1. Collect all findings: `code-audit-team-state read`
+2. Detect hotspots: `code-audit-team-state detect-hotspots`
 3. Deduplicate overlapping findings on same location
 4. Correlate cross-domain findings
 5. Score: `severity x cross_multiplier / fixability`
@@ -155,20 +155,20 @@ State persisted in `$CWD/.claude/audit-state.json`.
 
 ```bash
 # Initialize
-audit-state.sh init --target <target> --scope <scope> --focus <focus>
+code-audit-team-state init --target <target> --scope <scope> --focus <focus>
 
 # Add finding
-audit-state.sh add-finding --domain <domain> --severity <sev> \
+code-audit-team-state add-finding --domain <domain> --severity <sev> \
   --location <loc> --title <title> --description <desc> --evidence <ev>
 
 # Add cross-domain reference
-audit-state.sh add-cross-ref --finding <id> --ref <other-id>
+code-audit-team-state add-cross-ref --finding <id> --ref <other-id>
 
 # Detect hotspots (same location, multiple domains)
-audit-state.sh detect-hotspots
+code-audit-team-state detect-hotspots
 
 # Read current state
-audit-state.sh read
+code-audit-team-state read
 ```
 
 ## Error Handling

@@ -38,7 +38,7 @@ Use TaskUpdate with `owner` to assign hypothesis tasks to investigators.
 - Receive investigator messages automatically (no polling needed)
 - Use SendMessage for redirection instructions
 - Update TaskList as hypotheses are added/rejected
-- Monitor budget via hunt-state.sh check-budget
+- Monitor budget via bug-hunt-state check-budget
 
 ### 6. Shutdown
 
