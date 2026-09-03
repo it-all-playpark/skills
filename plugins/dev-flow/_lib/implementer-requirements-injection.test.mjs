@@ -150,7 +150,7 @@ function makeCountingSandbox() {
         issue_title: 'stub-issue-title',
       };
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return {
         summary: 'PLAN_SUMMARY_SENTINEL',
         architecture_decisions: [{ decision: 'ARCH_DECISION_SENTINEL', rationale: 'r' }],
@@ -159,7 +159,7 @@ function makeCountingSandbox() {
         parallel: [{ id: 'T2', desc: 'impl2', file_changes: ['src/b.ts'], test_plan: 'none', depends_on: [] }],
       };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
@@ -174,7 +174,7 @@ function makeCountingSandbox() {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -191,7 +191,7 @@ function makeCountingSandbox() {
     if (label === 'changed-files') {
       return { files: ['src/a.ts', 'src/b.ts'] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'done', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -270,7 +270,7 @@ test('[requirements-injection] routing: implementer 呼び出しが 2 件以上�
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
 
   assert.ok(
     implCalls.length >= 2,
@@ -287,7 +287,7 @@ test('[requirements-injection] routing: :serial: と :par: の両 label の impl
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   const serialCalls = implCalls.filter((c) => c.label.includes(':serial:'));
   const parCalls = implCalls.filter((c) => c.label.includes(':par:'));
 
@@ -312,7 +312,7 @@ test('[requirements-injection] routing: 全 implementer call の prompt に 5 �
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
 
   assert.ok(
     implCalls.length >= 1,

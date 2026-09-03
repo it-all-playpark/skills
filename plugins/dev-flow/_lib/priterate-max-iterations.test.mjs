@@ -123,7 +123,7 @@ test('[max-iterations] max_iterations="3" を渡すと上限 3 で max_reached �
     const agentType = opts?.agentType ?? '';
     agentCalls.push({ label, agentType });
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       reviewCallCount += 1;
       // topic を毎回ユニークにして REVIEW_STUCK=2 の stuck 検出を回避
       return {
@@ -179,10 +179,10 @@ test('[max-iterations] args={pr:"5"}（max_iterations 未指定）で approve �
     const agentType = opts?.agentType ?? '';
     agentCalls.push({ label, agentType });
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       return { status: 'passed', failed_checks: [] };
     }
     if (label.startsWith('post-')) {
@@ -220,10 +220,10 @@ test('[max-iterations] args="5"（bare string、max_iterations なし）で appr
     const agentType = opts?.agentType ?? '';
     agentCalls.push({ label, agentType });
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       return { status: 'passed', failed_checks: [] };
     }
     if (label.startsWith('post-')) {

@@ -100,10 +100,10 @@ function createResponder(overrides = {}) {
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-377' };
     if (label.startsWith('analyze')) return STANDARD_REQ;
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は
     // {risk, files, struct, diffhash} を 1 応答で返す。diffhash は既定で secfloor/merge 同一
     // ハッシュ（再利用が発火する）。不一致にしたいテストは override で個別に上書きする。
@@ -111,7 +111,7 @@ function createResponder(overrides = {}) {
       return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'SAMEHASH', empty: false } };
     }
     if (label === 'danger-grep-final') return { ok: true, hits: [] };
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [],
         feedback_level: 'implementation',
@@ -131,7 +131,7 @@ function createResponder(overrides = {}) {
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (label === 'issue-meta') return { ok: true, number: 377, title: 'stub-issue-title' };
     return null;

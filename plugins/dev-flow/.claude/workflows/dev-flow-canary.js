@@ -16,6 +16,10 @@ export const meta = {
 // read-only 保証（AC1）: このファイルには mutating な git 操作（commit・push・add・worktree 作成等）・gh コマンドを一切含めない。
 // 全 probe / model-report / parallel echo は dev-runner-haiku-ro（read-only exec-proxy）へ委譲し、
 // report 書き出しのみ dev-runner-haiku の Write tool（repo 外 ~/.claude/logs への単一ファイル書き込み）を使う。
+//
+// agentType は `dev-flow:` 付きの namespaced id を直接書く。他 3 workflow は _lib/agent-namespace.mjs の
+// nsAgentOpts() を inline して付与するが、canary は上記のとおり inline bridge 非依存を保つため
+// 共有ヘルパを使わない（bridge が壊れたときに canary も道連れで観測不能になるのを避ける）。
 
 // ---- Schemas ----------------------------------------------------------------------------------
 
@@ -227,7 +231,7 @@ const directImport = probeDirectImport()
 
 const versionProbe = await agent(
   versionProbePrompt(),
-  { agentType: 'dev-runner-haiku-ro', schema: VERSION_PROBE, label: 'canary:version', phase: 'Probe' },
+  { agentType: 'dev-flow:dev-runner-haiku-ro', schema: VERSION_PROBE, label: 'canary:version', phase: 'Probe' },
 )
 const claudeCodeVersion = (versionProbe && versionProbe.ok !== false && typeof versionProbe.version === 'string')
   ? versionProbe.version
@@ -256,7 +260,7 @@ log('agent schema / model routing / effort routing / parallel fanout を probe �
 
 const modelReport = await agent(
   modelReportPrompt(),
-  { agentType: 'dev-runner-haiku-ro', schema: MODEL_REPORT, label: 'canary:model-report', phase: 'Agents' },
+  { agentType: 'dev-flow:dev-runner-haiku-ro', schema: MODEL_REPORT, label: 'canary:model-report', phase: 'Agents' },
 )
 
 const agentSchema = (modelReport != null && typeof modelReport.model_id === 'string')
@@ -280,7 +284,7 @@ let agentOptsEffortAccepted
 try {
   const optsProbe = await agent(
     echoPrompt('EFFORT-OPTS'),
-    { agentType: 'dev-runner-haiku-ro', schema: ECHO, label: 'canary:effort-opts', phase: 'Agents', effort: 'low' },
+    { agentType: 'dev-flow:dev-runner-haiku-ro', schema: ECHO, label: 'canary:effort-opts', phase: 'Agents', effort: 'low' },
   )
   agentOptsEffortAccepted = {
     status: 'pass',
@@ -293,7 +297,7 @@ try {
 const parTokens = ['A', 'B']
 const parThunks = parTokens.map((t) => () => agent(
   echoPrompt(t),
-  { agentType: 'dev-runner-haiku-ro', schema: ECHO, label: `canary:par:${t}`, phase: 'Agents' },
+  { agentType: 'dev-flow:dev-runner-haiku-ro', schema: ECHO, label: `canary:par:${t}`, phase: 'Agents' },
 ))
 const parResults = await parallel(parThunks)
 const parallelOk = Array.isArray(parResults)
@@ -315,7 +319,7 @@ if (typeof pipeline === 'undefined') {
     const pipeTokens = ['A', 'B']
     const pipeResults = await pipeline(pipeTokens, (t) => agent(
       echoPrompt(t),
-      { agentType: 'dev-runner-haiku-ro', schema: ECHO, label: `canary:pipe:${t}`, phase: 'Agents' },
+      { agentType: 'dev-flow:dev-runner-haiku-ro', schema: ECHO, label: `canary:pipe:${t}`, phase: 'Agents' },
     ))
     const pipeOk = Array.isArray(pipeResults)
       && pipeResults.length === pipeTokens.length
@@ -332,7 +336,7 @@ if (typeof pipeline === 'undefined') {
     const nullResults = await pipeline(['N'], async (t) => {
       await agent(
         echoPrompt(t),
-        { agentType: 'dev-runner-haiku-ro', schema: ECHO, label: 'canary:pipe:null', phase: 'Agents' },
+        { agentType: 'dev-flow:dev-runner-haiku-ro', schema: ECHO, label: 'canary:pipe:null', phase: 'Agents' },
       )
       return null
     })
@@ -415,7 +419,7 @@ if (epochValid) {
   const targetPath = '~/.claude/logs/dev-flow-canary/canary-' + epochStr + '.json'
   const writeResult = await agent(
     reportWritePrompt(report, targetPath),
-    { agentType: 'dev-runner-haiku', schema: WRITE_RESULT, label: 'canary:report-write', phase: 'Report' },
+    { agentType: 'dev-flow:dev-runner-haiku', schema: WRITE_RESULT, label: 'canary:report-write', phase: 'Report' },
   )
   const expectedSuffix = '/.claude/logs/dev-flow-canary/canary-' + epochStr + '.json'
   report.report_path = (writeResult && writeResult.ok === true && typeof writeResult.path === 'string' && writeResult.path.endsWith(expectedSuffix))

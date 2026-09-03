@@ -64,8 +64,8 @@ function makeSandbox(analyzeReq, opts) {
     if (label.startsWith('analyze')) return analyzeReq;
     // file_changes は既定 realizedFiles（docs/a.md）と一致させ、宣言外扱いによる
     // micro Evaluate 強制（issue #272 F2）が誤発火しないようにする。
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['docs/a.md'], test_plan: '' }], parallel: [] };
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['docs/a.md'], test_plan: '' }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す
     // （files は旧 realized-diff 相当）。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
@@ -75,12 +75,12 @@ function makeSandbox(analyzeReq, opts) {
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
     if (label.startsWith('diff-gate')) return { hash: 'H', empty: false };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (agentType === 'evaluator') return {
+    if (agentType === 'dev-flow:evaluator') return {
       verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
       ac_results: [], security_clearance: [],
     };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
@@ -180,7 +180,7 @@ test('[micro-auto-ac-disclosure] (C) micro AUTO run → evaluator が 0 件（AC
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.strictEqual(
     evaluatorCalls.length, 0,
     `(C) micro AUTO run では evaluator は 0 件のはずだが ${evaluatorCalls.length} 件`

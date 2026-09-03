@@ -53,10 +53,10 @@ function makeResponder(journalPrompts) {
     if (label.startsWith('analyze')) {
       return ANALYZE_REQ;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は
@@ -71,7 +71,7 @@ function makeResponder(journalPrompts) {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -87,7 +87,7 @@ function makeResponder(journalPrompts) {
         security_clearance: [],
       };
     }
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false };
     }
     if (label.startsWith('pr')) {
@@ -100,14 +100,14 @@ function makeResponder(journalPrompts) {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
       journalPrompts.push(prompt);
       return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -209,7 +209,7 @@ test('[subagent-invocations] nested pr-iterate の subagent_invocations（total=
   // 計上されていない（trackedAgent は呼び出し前に計上するが、journal-log 呼び出しはこの後）ため、
   // calls 配列中 journalIdx より前（= payload 構築時点までに実際に起きた own 呼び出し）のみを数える。
   const ownDevRunnerHaikuCount = calls
-    .filter((c, idx) => idx < journalIdx && c.agentType === 'dev-runner-haiku')
+    .filter((c, idx) => idx < journalIdx && c.agentType === 'dev-flow:dev-runner-haiku')
     .length;
   assert.equal(
     inv.by_type['dev-runner-haiku'],

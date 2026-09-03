@@ -58,6 +58,13 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
 
 **micro lite route**: `TRIVIAL && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ contract 準拠かつ danger clean）を満たす run は、PR phase で plan 1 発 → implementer → targeted test → PR → pr-reviewer 1-pass の縮約経路（lite route、判断系 agent 呼び出し ≤10）を通る。lite の pr-reviewer 1-pass が `review==null || blocking.length>0`（critical/major finding あり）を検出した場合のみ `workflow('pr-iterate')` フル loop へ自動昇格し、以降は通常の review⇄fix 経路で処理する。danger-grep hit で `runEval=true` になったケースは lite ゲート条件を満たさないため lite に入らず、micro であっても現行の security path（Evaluate 強制実行）へ強制昇格する（軸A invariant 不変）。
 
+- **`agent()` へ渡す agentType は plugin namespace 必須** — subagent の実体は plugin 配下
+  (`plugins/dev-flow/agents/`) にあり、harness は `dev-flow:<name>` の namespaced id でしか解決しない
+  (bare 名は `agent type '<name>' not found` で run 全体が起動直後に abort する)。workflow 本体・
+  `subagent_invocations` の by_type キー・agent 名を静的検査する routing test は論理名 (bare) を保持し、
+  namespace は `agent()` を呼ぶ直前の `nsAgentOpts()` (canonical `_lib/agent-namespace.mjs`。dev-flow.js /
+  pr-iterate.js / dev-improve.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
+  (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
 - **判断系 leaf は subagent** (`.claude/agents/{dev-planner,plan-reviewer,implementer,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
   workflow の `agent()` opts には effort が記載されているが、本 harness での適用可否は未検証（dev-flow-canary の opts 受理 probe — capability id `agent_opts_effort_accepted` — で再判定する。probe は受理されたことしか判定できない）。それまで effort は subagent frontmatter で固定する。
   model は frontmatter を既定としつつ `agent()` の `opts.model` で per-call override できる —

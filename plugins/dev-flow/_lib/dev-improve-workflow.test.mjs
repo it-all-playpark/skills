@@ -22,6 +22,7 @@ test('dev-improve.js: meta name と 4 phase', () => {
 test('dev-improve.js: 必要な canonical が inline されている', () => {
   const sources = scanMarkers(src, 'dev-improve.js').map((m) => m.source).sort();
   assert.deepEqual(sources, [
+    '_lib/agent-namespace.mjs',
     '_lib/improve-hypothesis.mjs',
     '_lib/improve-rank.mjs',
     '_lib/journal-handoff.mjs',

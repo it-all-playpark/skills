@@ -36,13 +36,13 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
     const agentType = opts?.agentType ?? '';
 
     // pr-reviewer: ラウンドをカウントしてシナリオ別の返り値を返す
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       reviewRound += 1;
       return reviewerStub(reviewRound);
     }
 
     // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       ciRound += 1;
       if (ciStub) return ciStub(ciRound);
       return { status: 'passed', failed_checks: [] };

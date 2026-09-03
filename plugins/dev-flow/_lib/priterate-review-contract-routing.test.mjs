@@ -93,10 +93,10 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
     const promptStr = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
     agentCalls.push({ label, agentType, prompt: promptStr });
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return reviewerStub(label);
     }
-    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
       return ciStub ? ciStub(label) : { status: 'passed', failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
@@ -174,7 +174,7 @@ test('[AC-3] approve+major の1回だけ再reviewで矛盾解消(request-changes
   assertNoSandboxCrash(error);
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
 
-  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(reviewerCalls.length, 3, `pr-reviewer 呼び出しは 3 回（review#1 + retry + review#2）であるべきだが ${reviewerCalls.length} 回だった。labels: ${reviewerCalls.map((c) => c.label).join(', ')}`);
   assert.ok(reviewerCalls.some((c) => c.label === 'review#1'), 'review#1 が呼ばれるべき');
   assert.ok(reviewerCalls.some((c) => c.label === 'review#1-contract-retry'), 'review#1-contract-retry が呼ばれるべき');
@@ -202,7 +202,7 @@ test('[AC-4] approve+major が retry 後も再発 -> review_contract_error で�
   assertNoSandboxCrash(error);
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
 
-  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(reviewerCalls.length, 2, `pr-reviewer 呼び出しは 2 回のみ（review#1 + retry、無限ループしない）であるべきだが ${reviewerCalls.length} 回だった`);
 
   const fixCalls = agentCalls.filter((c) => c.label.startsWith('fix#'));

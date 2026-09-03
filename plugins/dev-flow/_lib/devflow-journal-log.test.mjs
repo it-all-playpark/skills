@@ -56,11 +56,11 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       return analyzeReq;
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -73,7 +73,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator stub（最小 pass レスポンス）
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -91,7 +91,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       };
     }
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false };
     }
     // PR: label が 'pr' で始まる
@@ -104,26 +104,26 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       return { files: ['src/foo.ts'] };
     }
     // post-summary（dev-runner-haiku）: posted:true 固定
-    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
+    if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
     // 返して journal-log (stage2) へ進めさせる。
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
       journalSaveCallCount += 1;
       journalPrompts.push(prompt);
       return journalSaveResult ?? { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
     // journal-log (stage2): 呼び出しカウンタをインクリメントし journalResult を返す。
     // journalResult が Error なら throw する（schema 不一致・proxy 実行失敗の再現）。
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       journalCallCount += 1;
       journalLogPrompts.push(prompt);
       if (journalResult instanceof Error) throw journalResult;
       return journalResult;
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

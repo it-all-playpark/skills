@@ -84,10 +84,10 @@ function makeCountingSandbox(opts) {
     }
 
     // Plan
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: [], test_plan: '' }], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
 
@@ -131,7 +131,7 @@ function makeCountingSandbox(opts) {
 
     // Validate: green-fix（implementer + green-fix label prefix）
     // GF_CONCERN_MARKER を concerns に含め、テスト 4・5 の pin を支える
-    if (agentType === 'implementer' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:implementer' && label.startsWith('green-fix')) {
       return {
         status: 'DONE',
         task_id: 't',
@@ -142,12 +142,12 @@ function makeCountingSandbox(opts) {
     }
 
     // implementer（通常）
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
 
     // Evaluate
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,

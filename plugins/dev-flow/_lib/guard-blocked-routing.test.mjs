@@ -59,11 +59,11 @@ function makeSandbox({ implementerFn, plannerFn } = {}) {
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label.startsWith('analyze')) return STANDARD_ANALYZE_REQ;
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       if (plannerFn) return plannerFn(label, opts);
       return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -71,7 +71,7 @@ function makeSandbox({ implementerFn, plannerFn } = {}) {
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
         ac_results: STANDARD_ANALYZE_REQ.acceptance_criteria.map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
@@ -81,10 +81,10 @@ function makeSandbox({ implementerFn, plannerFn } = {}) {
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') return { logged: true, summary: 'ok' };
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return null;
-    if (agentType === 'implementer') return implementerFn(label, opts);
+    if (agentType === 'dev-flow:implementer') return implementerFn(label, opts);
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
@@ -150,21 +150,21 @@ test('[guard-blocked-routing] guard_blocked task: replan 0回・blockSeen非登�
     `guard_blocked task は replan-blocked を発火しないはずだが ${replanCalls.length} 回発火した`);
 
   // (a) 全 planner prompt に approach_mismatch findings が現れない（blockSeen 非登録の検証）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
   for (const c of plannerCalls) {
     assert.ok(!c.prompt.includes('"dimension":"approach_mismatch"'),
       `planner prompt(label=${c.label}) に approach_mismatch findings が混入している: ${c.prompt.slice(0, 300)}`);
   }
 
   // (a) evaluator prompt の focus_areas に guard_blocked(<task_id>) 接頭辞の concern が到達する
-  const evalCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evalCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(evalCalls.length >= 1, 'evaluator 呼び出しが 1 回以上あるはず');
   assert.ok(evalCalls[0].prompt.includes('guard_blocked(T1)[guard=inline-edit-guard]'),
     `evaluator prompt に guard_blocked(T1) 接頭辞の concern が含まれるべきだが:\n${evalCalls[0].prompt.slice(0, 800)}`);
 
   // (b) blocking_reason が注入される 2 下流（replan prompt / evaluator prompt）に迂回語彙が一切現れない
   //     （AC-5: replan/evaluator prompt への注入点をスクラバーが無害化することの検証）
-  const injectionCalls = calls.filter((c) => c.agentType === 'dev-planner' || c.agentType === 'evaluator');
+  const injectionCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner' || c.agentType === 'dev-flow:evaluator');
   assert.ok(injectionCalls.length >= 1, 'dev-planner/evaluator の呼び出しが 1 回以上あるはず');
   for (const c of injectionCalls) {
     assert.equal(EVASION_VOCAB_RE.test(c.prompt), false,
@@ -173,7 +173,7 @@ test('[guard-blocked-routing] guard_blocked task: replan 0回・blockSeen非登�
 
   // (c) journal handoff payload に error_category:guard_blocked と guard_id が到達する
   // issue #494: 実際の telemetry payload は journal-save (stage1) の prompt に載る
-  const journalCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  const journalCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(journalCalls.length, 1, `journal-save(success) は 1 回のはずだが ${journalCalls.length} 回だった`);
   const journalPrompt = journalCalls[0].prompt;
   assert.ok(journalPrompt.includes('"error_category":"guard_blocked"'),
@@ -233,7 +233,7 @@ test('[guard-blocked-routing] guard_blocked/approach_mismatch 混在: approach �
   const findingCount = (replanCalls[0].prompt.match(/"dimension":"approach_mismatch"/g) || []).length;
   assert.equal(findingCount, 1,
     `replan-blocked#1 prompt の approach_mismatch findings は T2 の 1 件のみのはずだが ${findingCount} 件だった:\n${replanCalls[0].prompt.slice(0, 800)}`);
-  const injectionCalls = calls.filter((c) => c.agentType === 'dev-planner' || c.agentType === 'evaluator');
+  const injectionCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner' || c.agentType === 'dev-flow:evaluator');
   for (const c of injectionCalls) {
     assert.equal(EVASION_VOCAB_RE.test(c.prompt), false,
       `prompt(label=${c.label}, agentType=${c.agentType}) に迂回語彙が混入している: ${c.prompt.slice(0, 400)}`);

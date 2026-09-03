@@ -38,7 +38,9 @@ const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 // AC-1 判断系スコープ（再ピン定義）。dev-runner-haiku / dev-runner-haiku-ro は含めない。
-const JUDGEMENT_AGENT_TYPES = new Set(['dev-planner', 'implementer', 'dev-runner', 'pr-reviewer']);
+const JUDGEMENT_AGENT_TYPES = new Set([
+  'dev-flow:dev-planner', 'dev-flow:implementer', 'dev-flow:dev-runner', 'dev-flow:pr-reviewer',
+]);
 
 // clean-micro-lite が成立する analyzeReq: shape='micro' floor（count<=2, ac<=4）・
 // breaking_change:false・issue_type は enum 内。
@@ -94,15 +96,15 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
       return analyzeReq;
     }
     // Plan
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // lite pr-review（F3 で追加予定。agentType 判定を label より先に置き、
     // 'pr-review-lite' 等 label.startsWith('pr') とも一致するラベルの誤マッチを避ける）
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return reviewOverride;
     }
     // lite CI gate（issue #376 F3 fix — 未stub だと ciLite が null のまま非 green 扱いになり、
@@ -129,7 +131,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -149,7 +151,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
       return { files: ['src/foo.ts'] };
     }
     // implementer
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）
@@ -260,7 +262,7 @@ test('[lite-route][B] clean-micro-lite: pr-reviewer 呼び出しが 1 回のみ�
   const err = await runDevFlowInSandbox(src, ctx);
   failOnStructuralCrash(err);
 
-  const reviewerCalls = calls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(
     reviewerCalls.length,
     1,
@@ -294,7 +296,7 @@ test('[lite-route][C] lite review が critical finding を返す → workflow(\'
   const err = await runDevFlowInSandbox(src, ctx);
   failOnStructuralCrash(err);
 
-  const reviewerCalls = calls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(
     reviewerCalls.length,
     1,
@@ -324,7 +326,7 @@ test('[lite-route][D] danger-grep hit（micro でも runEval 強制）: lite を
 
   // AC-3 軸A invariant: danger hit時は security path（通常の Evaluate 強制実行等）が
   // 現行どおり働くこと。Evaluate 系（evaluator agentType）の呼び出しが現れる。
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `danger-grep hit（micro）: Evaluate（evaluator 呼び出し）が security path 強制で発生するはずだが `
@@ -332,7 +334,7 @@ test('[lite-route][D] danger-grep hit（micro でも runEval 強制）: lite を
   );
   // danger hit 時は lite ゲート条件 `!state.runEval` が false になり lite に入らない
   // （lite の pr-reviewer 呼び出しは発生しない — 現行 workflow('pr-iterate') フル経路のみ）。
-  const reviewerCalls = calls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(
     reviewerCalls.length,
     0,

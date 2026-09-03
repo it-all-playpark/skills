@@ -56,7 +56,7 @@ function createResponder() {
       };
     }
     // Plan: dev-planner（1 task を serial に置く）
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return {
         summary: 'p',
         serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }],
@@ -64,7 +64,7 @@ function createResponder() {
       };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / danger-grep 系
@@ -76,7 +76,7 @@ function createResponder() {
       return { tests: 'passed', green: true, summary: '' };
     }
     // Evaluate: evaluator（concern_resolutions で CONCERN-1 を解消。CONCERN-99/ENV-* は無視される想定）
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -110,11 +110,11 @@ function createResponder() {
       return { hash: 'H', empty: false };
     }
     // post-summary（dev-runner-haiku）
-    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
+    if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // implementer（本経路の main call。concerns に既知 4 パターン系 ×3 + 非該当 ×1）
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',

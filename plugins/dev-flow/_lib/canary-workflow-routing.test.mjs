@@ -400,7 +400,7 @@ test('[canary] pipeline probe の agent 呼び出しは canary:pipe:A / canary:p
     'pipeline probe の agent 呼び出しは A/B/null の3件ちょうどであること（throw probe は agent を呼ばない）',
   );
   for (const c of pipeCalls) {
-    assert.equal(c.agentType, 'dev-runner-haiku-ro', `label=${c.label} の agentType が dev-runner-haiku-ro であること`);
+    assert.equal(c.agentType, 'dev-flow:dev-runner-haiku-ro', `label=${c.label} の agentType が dev-flow:dev-runner-haiku-ro であること`);
   }
 });
 
@@ -579,13 +579,15 @@ test('[canary][lint] mutating git/gh コマンドが source に存在しない',
   assert.ok(!/\bgh (pr|issue|api)/.test(src), 'gh pr/issue/api コマンドが含まれないこと');
 });
 
-test('[canary][lint] agentType は dev-runner-haiku-ro / dev-runner-haiku のみ', () => {
+test('[canary][lint] agentType は dev-flow:dev-runner-haiku-ro / dev-flow:dev-runner-haiku のみ', () => {
   const src = readFileSync(canaryPath, 'utf8');
   const matches = [...src.matchAll(/agentType:\s*'([^']+)'/g)].map((m) => m[1]);
   assert.ok(matches.length > 0, '少なくとも1つの agentType 指定があること');
   for (const at of matches) {
+    // canary は inline bridge 非依存（self-contained）のため nsAgentOpts() を使わず
+    // namespaced id を直接書く。bare 名は harness が解決できず run が abort する。
     assert.ok(
-      at === 'dev-runner-haiku-ro' || at === 'dev-runner-haiku',
+      at === 'dev-flow:dev-runner-haiku-ro' || at === 'dev-flow:dev-runner-haiku',
       `想定外の agentType が使われている: ${at}`,
     );
   }

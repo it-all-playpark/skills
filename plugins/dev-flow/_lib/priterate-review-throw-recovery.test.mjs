@@ -83,10 +83,10 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, agentCalls }) {
     const promptStr = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
     agentCalls.push({ label, agentType, prompt: promptStr });
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return reviewerStub(label);
     }
-    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
       return ciStub ? ciStub(label) : { status: 'passed', failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
@@ -124,7 +124,7 @@ test('[T1] review#1 throw -> review#1-schema-retry 成功 -> pr-reviewer 2回、
   assertNoSandboxCrash(error);
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
 
-  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(reviewerCalls.length, 2, `pr-reviewer 呼び出しは 2 回（review#1 + schema-retry）であるべきだが ${reviewerCalls.length} 回だった`);
   assert.ok(reviewerCalls.some((c) => c.label === 'review#1'), 'review#1 が呼ばれるべき');
   assert.ok(reviewerCalls.some((c) => c.label === 'review#1-schema-retry'), 'review#1-schema-retry が呼ばれるべき');
@@ -148,7 +148,7 @@ test('[T2] review#1 throw -> review#1-schema-retry も throw -> error null、pr-
   assertNoSandboxCrash(error);
   assert.equal(error, null, `run 全体が例外終了してはならないが error が発生: ${error?.name}: ${error?.message}`);
 
-  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(reviewerCalls.length, 2, `pr-reviewer 呼び出しはちょうど 2 回（無限ループしない）であるべきだが ${reviewerCalls.length} 回だった`);
 
   const fixCalls = agentCalls.filter((c) => c.label.startsWith('fix#'));
@@ -176,7 +176,7 @@ test('[T3] review#1 が null を2回返す(throwでなくnull) -> T2 と同じ g
   assertNoSandboxCrash(error);
   assert.equal(error, null, `run 全体が例外終了してはならないが error が発生: ${error?.name}: ${error?.message}`);
 
-  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(reviewerCalls.length, 2, `pr-reviewer 呼び出しはちょうど 2 回（無限ループしない）であるべきだが ${reviewerCalls.length} 回だった`);
 
   assert.equal(result?.status, 'review_contract_error', `result.status は review_contract_error であるべきだが '${result?.status}' だった`);
@@ -199,7 +199,7 @@ test('[T4] review#1 contract mismatch -> review#1-contract-retry throw -> schema
   assertNoSandboxCrash(error);
   assert.equal(error, null, `run 全体が例外終了してはならないが error が発生: ${error?.name}: ${error?.message}`);
 
-  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(reviewerCalls.length, 3, `pr-reviewer 呼び出しは 3 回（review#1 + contract-retry + contract-retry-schema-retry）であるべきだが ${reviewerCalls.length} 回だった`);
 
   assert.equal(result?.status, 'review_contract_error', `result.status は review_contract_error であるべきだが '${result?.status}' だった`);

@@ -31,12 +31,12 @@ function makeSandbox() {
     agentCalls.push({ label, agentType, prompt: typeof prompt === 'string' ? prompt : JSON.stringify(prompt) });
 
     // pr-reviewer: 常に approve
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
 
     // ci-check: 1 回目は failed、2 回目は passed
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       ciCallCount += 1;
       if (ciCallCount === 1) {
         return {

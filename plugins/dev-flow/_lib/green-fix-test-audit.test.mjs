@@ -46,11 +46,11 @@ function createResponder() {
       };
     }
     // Plan: dev-planner
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / danger-grep 系
@@ -67,7 +67,7 @@ function createResponder() {
       return { tests: 'passed', green: true, summary: '' };
     }
     // Evaluate: evaluator
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -88,10 +88,10 @@ function createResponder() {
     }
     // implementer（green-fix も含む）
     // green-fix 経路の実装: files / summary を返す（issue #179 変更内容 2 の検証用）
-    if (agentType === 'implementer' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:implementer' && label.startsWith('green-fix')) {
       return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'typo修正: 期待値が古いAPIを参照していた', concerns: [] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

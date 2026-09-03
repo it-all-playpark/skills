@@ -21,6 +21,44 @@ export const meta = {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const QUALITY_MODEL = 'fable'
 // ==== END inline: _lib/quality-model.mjs ====
+// ==== BEGIN inline: _lib/agent-namespace.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow の subagent 実体は plugin 配下（plugins/dev-flow/agents/）にあり、harness からは
+// `dev-flow:<name>` の namespaced id でしか解決できない。bare 名を agent() へ渡すと
+// `agent type '<name>' not found` で throw し run 全体が abort する。
+//
+// workflow 本体・telemetry・routing test は agent の論理名（bare）を保持し、namespace は
+// agent() を呼ぶ直前のこの 1 箇所でのみ付与する。namespace は harness 境界の事情であって
+// dev-flow のドメイン語彙ではないため、論理名側へ染み出させない（subagent_invocations の
+// 集計キーと、agent 名を静的検査する routing test 群が論理名を前提にしている）。
+//
+// fail-closed: agentType 欠落・非文字列・既に ':' を含む入力はいずれも throw する。
+// 二重付与（`dev-flow:dev-flow:x`）を実行時まで持ち越すと agent not found と同じ症状を
+// 別の原因で再発させるため、呼び出し側の誤用をここで止める。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+const AGENT_NAMESPACE = 'dev-flow:'
+
+/**
+ * agent() へ渡す opts の agentType へ plugin namespace を付与した新しい opts を返す。
+ *
+ * @param {{agentType: string} & Record<string, unknown>} opts - agentType が bare 論理名の opts
+ * @returns {Record<string, unknown>} agentType を namespaced id へ置換した複製
+ */
+function nsAgentOpts(opts) {
+  const bare = opts == null ? undefined : opts.agentType
+  if (typeof bare !== 'string' || bare.trim() === '') {
+    throw new Error('nsAgentOpts: opts.agentType が必要（受信: ' + JSON.stringify(bare) + '）')
+  }
+  if (bare.indexOf(':') !== -1) {
+    throw new Error(
+      'nsAgentOpts: agentType は bare な論理名で渡す（namespace はここで付与する。受信: '
+      + JSON.stringify(bare) + '）',
+    )
+  }
+  return { ...opts, agentType: AGENT_NAMESPACE + bare }
+}
+// ==== END inline: _lib/agent-namespace.mjs ====
 
 // ==== BEGIN inline: _lib/improve-hypothesis.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // _lib/improve-hypothesis.mjs
@@ -733,7 +771,7 @@ const closedList = await agent(
   + `コマンド失敗時（label 不存在含む）は throw せず ok:false, issues:[] を返すこと。\n`
   + `\n## Output format\n{ "ok": boolean, "issues": [{number, title, body, closedAt, stateReason}] }\n`
   + `\n## Tools\n使用可: Bash のみ\n\n## Boundary\n読み取り専用。ファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ返す。`,
-  { agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-closed', phase: 'Reconcile' },
+  nsAgentOpts({ agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-closed', phase: 'Reconcile' }),
 )
 
 const pendingIssues = []
@@ -768,7 +806,7 @@ for (const it of pendingIssues) {
     + `コマンド失敗時は throw せず ok:false を返すこと。\n`
     + `\n## Output format\n{ "ok": boolean, "metric": string, "value": number, "runs": number, "verdict": "confirmed"|"not_confirmed"|"insufficient_data" }\n`
     + `\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。`,
-    { agentType: 'dev-runner-haiku-ro', schema: HYP_CHECK, label: `hyp-check#${it.number}`, phase: 'Reconcile' },
+    nsAgentOpts({ agentType: 'dev-runner-haiku-ro', schema: HYP_CHECK, label: `hyp-check#${it.number}`, phase: 'Reconcile' }),
   )
   if (!check?.ok || !check.verdict) {
     reconcile.unavailable++
@@ -799,7 +837,7 @@ for (const it of pendingIssues) {
     + `成功時 posted:true。失敗時も throw せず posted:false。\n`
     + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
     + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
-    { agentType: 'dev-runner', schema: POST_RESULT, label: `hyp-update#${it.number}`, phase: 'Reconcile' },
+    nsAgentOpts({ agentType: 'dev-runner', schema: POST_RESULT, label: `hyp-update#${it.number}`, phase: 'Reconcile' }),
   )
   if (!editRes?.posted) log(`⚠️ Reconcile: #${it.number} body 更新の投稿に失敗（fail-open）`)
 
@@ -819,7 +857,7 @@ for (const it of pendingIssues) {
     + `成功時 posted:true。失敗時も throw せず posted:false。\n`
     + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
     + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
-    { agentType: 'dev-runner', schema: POST_RESULT, label: `hyp-note#${it.number}`, phase: 'Reconcile' },
+    nsAgentOpts({ agentType: 'dev-runner', schema: POST_RESULT, label: `hyp-note#${it.number}`, phase: 'Reconcile' }),
   )
   if (!noteRes?.posted) log(`⚠️ Reconcile: #${it.number} 突合コメントの投稿に失敗（fail-open）`)
 
@@ -898,7 +936,7 @@ const MINERS = [
 ]
 
 const minerResults = await parallel(MINERS.map((m) => () =>
-  agent(m.prompt, { agentType: 'improve-miner', schema: CANDIDATES, label: `mine:${m.key}`, phase: 'Mine' })
+  agent(m.prompt, nsAgentOpts({ agentType: 'improve-miner', schema: CANDIDATES, label: `mine:${m.key}`, phase: 'Mine' }))
 ))
 const mined = minerResults.filter(Boolean).flatMap((r) => r.candidates)
 if (minerResults.some((r) => r == null)) log('⚠️ Mine: 一部 miner が結果を返さず（fail-open）— 残りのソースで続行')
@@ -922,7 +960,7 @@ const openList = await agent(
   + `コマンド失敗時は throw せず ok:false, issues:[] を返すこと。\n`
   + `\n## Output format\n{ "ok": boolean, "issues": [{number, title}] }\n`
   + `\n## Tools\n使用可: Bash のみ\n\n## Boundary\n読み取り専用。\n\n## Token cap\nJSON のみ。`,
-  { agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-open', phase: 'Rank' },
+  nsAgentOpts({ agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-open', phase: 'Rank' }),
 )
 // fail-closed: open 数不明のまま issue 化しない（backpressure は人間の merge ペースに同期する
 // incentive-structural cap — 取得失敗で緩めない）
@@ -936,7 +974,7 @@ const backlogList = await agent(
   + `コマンド失敗時は throw せず ok:false, issues:[] を返すこと。\n`
   + `\n## Output format\n{ "ok": boolean, "issues": [{number, title, body}] }\n`
   + `\n## Tools\n使用可: Bash のみ\n\n## Boundary\n読み取り専用。\n\n## Token cap\nJSON のみ。`,
-  { agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-backlog', phase: 'Rank' },
+  nsAgentOpts({ agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-backlog', phase: 'Rank' }),
 )
 const backlogIssue = (backlogList?.ok && backlogList.issues.length > 0) ? backlogList.issues[0] : null
 
@@ -960,7 +998,7 @@ if (fresh.length > 0) {
     + `既存 open issue と実質同一の候補は duplicate_of_existing: true にせよ（score も返す）。全候補に同点を付けない。\n`
     + `\n## Output format\n{ "scores": [{ "index": number, "score": number, "duplicate_of_existing": boolean, "rationale": string }] }\n`
     + `\n## Tools\n使用可: Read, Grep, Glob, Bash（読み取りのみ）\n\n## Boundary\n読み取り専用。\n\n## Token cap\nrationale は各 30 語以内。`,
-    { agentType: 'improve-miner', model: QUALITY_MODEL, schema: RANKING, label: 'rank-judge', phase: 'Rank' },
+    nsAgentOpts({ agentType: 'improve-miner', model: QUALITY_MODEL, schema: RANKING, label: 'rank-judge', phase: 'Rank' }),
   )
   // judge は gate ではない（絞り込みのみ）— null でも決定論 tie-break で続行（fail-open）
   if (judge == null) log('⚠️ Rank: rank-judge が結果を返さず — score 0 扱いで決定論 tie-break のみで続行')
@@ -995,7 +1033,7 @@ for (const c of winners) {
     + `4. 出力 URL 末尾の issue 番号を number に入れ created:true を返す。失敗時は throw せず created:false。\n`
     + `\n## Output format\n{ "created": boolean, "number": number, "url": string }\n`
     + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。issue 作成は 1 件のみ。\n\n## Token cap\n100 語以内。`,
-    { agentType: 'dev-runner', schema: ISSUE_CREATED, label: `file-issue#${filed.length + 1}`, phase: 'File' },
+    nsAgentOpts({ agentType: 'dev-runner', schema: ISSUE_CREATED, label: `file-issue#${filed.length + 1}`, phase: 'File' }),
   )
   if (created?.created && Number.isInteger(created.number)) {
     filed.push(created.number)
@@ -1026,7 +1064,7 @@ if (losers.length > 0) {
       + `成功時 created:true と issue 番号を返す。失敗時は throw せず created:false。\n`
       + `\n## Output format\n{ "created": boolean, "number": number, "url": string }\n`
       + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
-      { agentType: 'dev-runner', schema: ISSUE_CREATED, label: 'backlog-append', phase: 'File' },
+      nsAgentOpts({ agentType: 'dev-runner', schema: ISSUE_CREATED, label: 'backlog-append', phase: 'File' }),
     )
     if (res?.created) backlogAdded = newLosers.length
     else log('⚠️ File: backlog 更新失敗（fail-open）')
@@ -1062,7 +1100,7 @@ try {
     + buildJournalSaveInstr({ payload: improveHandoff, saveDir: '${TMPDIR:-/tmp}/dev-improve', fileName: 'payload-dev-improve.json' })
     + `\n## Output format\n{ "saved": boolean, "path": string }\n`
     + `\n## Tools\n使用可: Bash, Write, Read（Read は既存 payload の冪等上書きに必要）\n\n## Boundary\n作成した一時ファイル以外のファイルを変更しない。git 操作禁止。\n\n## Token cap\n120 語以内。`,
-    { agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase: 'File' },
+    nsAgentOpts({ agentType: 'dev-runner-haiku', schema: JOURNAL_SAVE_RESULT, label: 'journal-save', phase: 'File' }),
   )
   const savedPath = saveRes?.saved === true && validateJournalSavedPath(saveRes.path, { requiredDirSuffix: '/dev-improve' }) ? saveRes.path : null
 
@@ -1078,7 +1116,7 @@ try {
       + `exit 0 なら logged:true、失敗しても throw せず logged:false を返すこと。\n`
       + `\n## Output format\n{ "logged": boolean, "summary": string }\n`
       + `\n## Tools\n使用可: Bash, Read, Skill\n\n## Boundary\n~/.claude/journal 以外のファイル変更禁止。git 操作禁止。\n\n## Token cap\n50 語以内。`,
-      { agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'File' },
+      nsAgentOpts({ agentType: 'dev-runner-haiku', schema: JOURNAL_RESULT, label: 'journal-log', phase: 'File' }),
     )
     journalLogStatus = classifyJournalLogStatus({ saved: true, logged: journalRes?.logged === true })
     if (!journalRes?.logged) log('⚠️ journal-log 失敗（fail-open）— telemetry 記録漏れの可能性')

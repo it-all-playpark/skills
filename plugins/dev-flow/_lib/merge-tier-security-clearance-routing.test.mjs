@@ -49,10 +49,10 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor（Evaluate 前）の danger-grep（issue #544 統合呼び出し。dangerGrepPre を
@@ -69,16 +69,16 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // one-shot security clearance（Merge tier）。agentType==='evaluator' だが label で区別する。
-    if (agentType === 'evaluator' && label === 'security-clearance-final') {
+    if (agentType === 'dev-flow:evaluator' && label === 'security-clearance-final') {
       clearanceCalls.push({ prompt });
       return clearanceResponse;
     }
     // Evaluate 本体（label='eval#N'）
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       evalCalls.push({ label, agentType });
       return evaluatorResponse;
     }
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
     }
     if (label.startsWith('pr')) {
@@ -90,19 +90,19 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (label === 'ci-checks') {
       return { ok: false, error: 'stub: no checks' };
     }
-    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
+    if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       summaryPrompts.push(prompt);
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
       journalPrompts.push(prompt);
       return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-hash-merge のみ別ハッシュを返す（issue #377 diff-hash reuse）。本 test はシナリオごとに

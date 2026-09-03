@@ -52,11 +52,11 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
       return analyzeReq;
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -69,11 +69,11 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator stub が引数 evaluatorResponse を返す
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return evaluatorResponse;
     }
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
     }
     // PR: label が 'pr' で始まる
@@ -91,7 +91,7 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
       return { posted: true, method: 'gh pr comment', url: 'http://x/1' };
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -367,10 +367,10 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       if (label.startsWith('analyze')) {
         return complexAnalyzeReq;
       }
-      if (agentType === 'dev-planner') {
+      if (agentType === 'dev-flow:dev-planner') {
         return { summary: 'p', serial: [], parallel: [] };
       }
-      if (agentType === 'plan-reviewer') {
+      if (agentType === 'dev-flow:plan-reviewer') {
         return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
       }
       if (label.startsWith('danger-grep')) {
@@ -379,7 +379,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       if (label.startsWith('test')) {
         return { tests: 'no_tests', green: true, summary: '' };
       }
-      if (agentType === 'evaluator') {
+      if (agentType === 'dev-flow:evaluator') {
         evaluatorCallCount++;
         if (evaluatorCallCount === 1) {
           // iteration 1: critical を出す（差し戻しを起こす）
@@ -427,7 +427,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
           ],
         };
       }
-      if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+      if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
         return { red: false, green: false, reason: 'stub' };
       }
       if (label.startsWith('pr')) {
@@ -439,7 +439,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       if (label === 'post-summary') {
         return { posted: true, method: 'gh pr comment', url: 'http://x/1' };
       }
-      if (agentType === 'implementer') {
+      if (agentType === 'dev-flow:implementer') {
         return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
       }
       // diff-gate / diff-hash（issue #215）: need() による throw の回避

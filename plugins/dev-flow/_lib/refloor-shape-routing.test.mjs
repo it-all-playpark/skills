@@ -74,11 +74,11 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
     // declaredFiles を file_changes として宣言する（省略時は realizedFiles 全件 = 宣言外なし）。
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 't1', file_changes: declaredFiles }], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor: label 'danger-grep'（issue #544 統合呼び出し）は risk/files を 1 応答で
@@ -95,7 +95,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -115,7 +115,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
       return { files: changedFiles };
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -221,7 +221,7 @@ test('[refloor] (A) micro 見積もり + realized 6 files → evaluator >= 1 回
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `(A) micro + realized 6 files: evaluator は >= 1 回呼ばれるべきだが ${evaluatorCalls.length} 回`
@@ -280,8 +280,8 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     // (B) は「全件宣言」シナリオ（realized の 6 ファイルを file_changes に宣言）。
     // 宣言外のままだと diffDeclaredPaths が全件を宣言外扱いし declared count=0 に潰れ、
     // refloor が発火しない（EFFECTIVE_SHAPE が standard のまま止まる）ため明示的に宣言する。
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 't1', file_changes: ['a', 'b', 'c', 'd', 'e', 'f'] }], parallel: [] };
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 't1', file_changes: ['a', 'b', 'c', 'd', 'e', 'f'] }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // (a) label 'danger-grep'（issue #544 統合呼び出し）: 6 ファイル返す
     // → standard+6件 → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX
     if (label === 'danger-grep') {
@@ -289,7 +289,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     }
     if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       evaluatorCallCount += 1;
       if (evaluatorCallCount === 1) {
         // 1 回目: fail → 差し戻しを発生させる（feedback_level='implementation' で design churn 打ち切り非対象）
@@ -315,7 +315,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
         critical_resolutions: [{ id: 'EVAL-1-test-issue', resolved: true, evidence: 'test-issue fixed and verified in tests' }],
       };
     }
-    if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -395,7 +395,7 @@ test('[refloor] (C) micro 見積もり + realized 1 file → evaluator 0 回（r
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(
     evaluatorCalls.length,
     0,
@@ -491,14 +491,14 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (label.startsWith('analyze')) {
       return microReq;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return {
         serial: [{ task_id: 't1', title: 'task', file_changes: ['src/foo.ts'], description: 'd', acceptance: ['a'] }],
         parallel: [],
         summary: 's',
       };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // (D) label 'danger-grep'（issue #544 統合呼び出し）は risk は正常のまま files を null で返す
@@ -514,7 +514,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -531,7 +531,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (label === 'changed-files') {
       return { files: ['src/foo.ts'] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -575,7 +575,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `(D) realized-diff=null: evaluator は >= 1 回呼ばれるべきだが ${evaluatorCalls.length} 回`

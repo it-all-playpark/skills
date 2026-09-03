@@ -59,11 +59,11 @@ function createResponder() {
     // file_changes は realized-diff stub（['src/foo.ts']）と一致させて宣言済みにする。
     // 宣言外扱いで micro Evaluate 強制（issue #272 F2）が誤発火すると、このテストが
     // 検証したい「green-fix 経由の Evaluate 強制」の pin が意味を失うため。
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // danger-grep: 空（danger path ではない）
@@ -87,7 +87,7 @@ function createResponder() {
       return { tests: 'passed', green: true, summary: '' };
     }
     // Evaluate: evaluator
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -103,10 +103,10 @@ function createResponder() {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
     // implementer（green-fix も含む）
-    if (agentType === 'implementer' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:implementer' && label.startsWith('green-fix')) {
       return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'typo修正', concerns: [] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -166,7 +166,7 @@ test('[green-fix-micro-eval] sanity: micro shape で green-fix が 1 回発生�
 
 test('[green-fix-micro-eval] micro + green-fix 発生時に evaluator が 1 回以上呼ばれること', async () => {
   await ensureSharedRun();
-  const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `micro + green-fix 発生時: evaluator は 1 回以上呼ばれるべきだが ${evaluatorCalls.length} 回だった`
@@ -180,7 +180,7 @@ test('[green-fix-micro-eval] micro + green-fix 発生時に evaluator が 1 回�
 
 test('[green-fix-micro-eval] micro + green-fix 発生時に evaluator の prompt に「テスト弱体化」が含まれること', async () => {
   await ensureSharedRun();
-  const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `evaluator が呼ばれていない (全 agentTypes: ${sharedCalls.map((c) => c.agentType).join(', ')})`,

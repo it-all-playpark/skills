@@ -53,13 +53,13 @@ function createResponder(prMetaResponse) {
       return { worktree: '/tmp/wt', branch: 'feature/issue-405' };
     }
     if (label.startsWith('analyze')) return STANDARD_REQ;
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [],
         feedback_level: 'implementation',
@@ -75,7 +75,7 @@ function createResponder(prMetaResponse) {
     if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (agentType === 'implementer') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
     // gh-pr-view (issue #405): シナリオ別の応答
     if (label === 'gh-pr-view') return prMetaResponse;
     if (label === 'issue-meta') return { ok: true, number: 405, title: 'stub-issue-title' };
@@ -148,7 +148,7 @@ test('[gh-pr-view][1] dispatch: agentType=dev-runner-haiku-ro, phase=Merge tier,
   const ghCalls = calls.filter((c) => c.label === 'gh-pr-view');
   assert.equal(ghCalls.length, 1, `label==='gh-pr-view' の呼び出しはちょうど 1 回のはずだが ${ghCalls.length} 回だった`);
   const c = ghCalls[0];
-  assert.equal(c.agentType, 'dev-runner-haiku-ro', `gh-pr-view の agentType は 'dev-runner-haiku-ro' のはずだが '${c.agentType}' だった`);
+  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku-ro', `gh-pr-view の agentType は 'dev-flow:dev-runner-haiku-ro' のはずだが '${c.agentType}' だった`);
   assert.equal(c.phase, 'Merge tier', `gh-pr-view の phase は 'Merge tier' のはずだが '${c.phase}' だった`);
   assert.ok(c.schema != null, 'gh-pr-view の schema (PR_META) が undefined/null になっている');
   // c.schema は vm sandbox（別 realm）内で生成された配列を含むため、assert/strict の

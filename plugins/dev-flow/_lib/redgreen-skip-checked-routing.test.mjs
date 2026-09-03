@@ -53,10 +53,10 @@ function makeSandbox(analyzeReq, evaluatorResponses, redgreenResponseFor) {
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
@@ -65,12 +65,12 @@ function makeSandbox(analyzeReq, evaluatorResponses, redgreenResponseFor) {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       evalCalls.push({ label, agentType });
       const idx = Math.min(evalCalls.length - 1, evaluatorResponses.length - 1);
       return evaluatorResponses[idx];
     }
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen:AC-')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen:AC-')) {
       const m = label.match(/^redgreen:AC-(\d+)$/);
       const acIndex = m ? Number(m[1]) - 1 : 0;
       acCallCounts[acIndex] = (acCallCounts[acIndex] ?? 0) + 1;
@@ -78,10 +78,10 @@ function makeSandbox(analyzeReq, evaluatorResponses, redgreenResponseFor) {
       redgreenCalls.push({ acIndex, callNumber });
       return redgreenResponseFor(acIndex, callNumber);
     }
-    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['_lib/foo.test.mjs'] };
     }
-    if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label === 'declared-path-check') {
       return { files: ['_lib/foo.test.mjs'] };
     }
     if (label.startsWith('pr')) {
@@ -90,18 +90,18 @@ function makeSandbox(analyzeReq, evaluatorResponses, redgreenResponseFor) {
     if (label === 'changed-files') {
       return { files: ['_lib/foo.test.mjs'] };
     }
-    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
+    if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
       journalPrompts.push(prompt);
       return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
