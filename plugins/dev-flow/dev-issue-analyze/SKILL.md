@@ -16,7 +16,7 @@ Two steps: fetch the issue JSON with `gh`, then run the pure-transform script ag
 
 ```bash
 gh issue view <issue-number> --json body,title,labels,assignees,milestone,state,comments,author > $TMPDIR/issue-<issue-number>.json
-$SKILLS_DIR/dev-issue-analyze/scripts/analyze-issue.sh <issue-number> --issue-json $TMPDIR/issue-<issue-number>.json [--depth LEVEL|--contract]
+analyze-issue <issue-number> --issue-json $TMPDIR/issue-<issue-number>.json [--depth LEVEL|--contract]
 ```
 
 ## Options

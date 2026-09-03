@@ -129,7 +129,7 @@ When `--lang` is omitted, write this body in Japanese.
 After the body file is written, run the shared AC contract lint against it:
 
 ```bash
-bash $SKILLS_DIR/_lib/scripts/ac-lint.sh /tmp/github-issue-orchestrator-body.md
+ac-lint /tmp/github-issue-orchestrator-body.md
 ```
 
 The script returns a single-line JSON `{"ok":true,"verdict":"t1|t2|non_compliant",...}` on
@@ -152,7 +152,7 @@ abort することはない。
 Run:
 
 ```bash
-python3 $SKILLS_DIR/github-issue-orchestrator/scripts/create_issue.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/github-issue-orchestrator/scripts/create_issue.py \
   --title "$TITLE" \
   --body-file /tmp/github-issue-orchestrator-body.md \
   [--repo owner/repo] \

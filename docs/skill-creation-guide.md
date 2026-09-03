@@ -139,7 +139,8 @@ Step 1 → Step 2 → Step 3
 
 ## Step N: Title
 
-具体的な手順。スクリプト呼び出しは `$SKILLS_DIR/skill-name/scripts/` を使用。
+具体的な手順。スクリプト呼び出しは `${CLAUDE_PLUGIN_ROOT}/skill-name/scripts/` を使用
+（bin/ に bare 名がある決定論スクリプトはそちらを優先する）。
 
 ## References
 
@@ -198,8 +199,8 @@ apt-get install bats
 決定論的処理（LLM に任せるべきでない処理）はスクリプトに抽出する。
 
 ```bash
-# スクリプト呼び出しパターン
-$SKILLS_DIR/skill-name/scripts/script-name.sh [args]
+# スクリプト呼び出しパターン（bin/ に bare 名がある決定論スクリプトはそちらを優先する）
+${CLAUDE_PLUGIN_ROOT}/skill-name/scripts/script-name.sh [args]
 ```
 
 ### スクリプト化すべき処理

@@ -73,7 +73,7 @@ moving target（蒸し返し）を生む。これを避ける:
   別観点の上乗せ（言い換え major の捻り出し）は禁止。
 - 同一問題を再提起する場合は**既出と同じ `topic` 文字列を再利用**する
   （orchestrator が `topic` で stuck を突合し、反復したら人間にエスカレーションする）。
-  topic 命名は共有辞書（`_shared/references/stuck-topic-dictionary.md`）に従う。
+  topic 命名は共有辞書（`${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md`）に従う。
 - 既出指摘に対応済みで新規の重大問題が無ければ、迷わず `approve` を出す。
 
 これは**ゲートの緩和ではない**: 本物の新規 critical/major は依然として必ず報告する。
@@ -126,7 +126,7 @@ fix agent への実行指示に変換される。したがって repo の現在�
 - `topic`: 同一問題を識別する安定 ID。同じ問題を再提起するときは
   前ラウンドと同じ文字列を再利用する（stuck 突合に使う）。新規問題には新しい topic を付ける。
   topic 付与手順:
-  1. repo root を `git rev-parse --show-toplevel` で解決し、`_shared/references/stuck-topic-dictionary.md`（topic 共有辞書）を Read する
+  1. `${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md`（topic 共有辞書）を Read する
   2. 辞書の problem-class enum に該当クラスがあれば**必ず**その enum 値を使う（自由作文しない）
   3. 詳細の特定が必要なら `<problem-class>::<詳細>` 形式。`<詳細>` はファイルパス・関数名等の安定識別子（kebab-case / path 表記。形容文を書かない）
   4. 該当クラスが無い場合のみ新語を kebab-case 英小文字で作る

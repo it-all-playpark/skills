@@ -67,7 +67,7 @@ LLM の同調バイアスは planner 出力を rubber-stamp しがち。**反証
 
 ### topic 命名（共有辞書。issue #207）
 
-- topic は repo root の `_shared/references/stuck-topic-dictionary.md`（topic 共有辞書）を Read して付ける
+- topic は `${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md`（topic 共有辞書）を Read して付ける
 - 辞書の problem-class enum に該当するクラスがあれば**必ず**その enum 値を使う（自由作文しない）
 - 詳細の特定が必要なら `<problem-class>::<詳細>` 形式。`<詳細>` はファイルパス・関数名・AC index 等の安定識別子（kebab-case / path 表記。形容文を書かない）
 - 該当クラスが無い場合のみ新語を kebab-case 英小文字で作る
@@ -86,7 +86,7 @@ critical/major が無く実装着手に足る品質なら `pass`。
 
 - 既出 findings は planner が**対応済みの前提**で読む。解消されていれば蒸し返さない。
 - **新規の critical/major のみ報告**する。既出論点の言い換え・新観点の上乗せ（moving target）は禁止。
-- 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。topic 命名は共有辞書（`_shared/references/stuck-topic-dictionary.md`）に従う。
+- 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。topic 命名は共有辞書（`${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md`）に従う。
 - 既出指摘に対応済みで新規の重大問題が無ければ、迷わず `pass` を出す。
 
 ## 収束は orchestrator が最終判断する（issue #123）

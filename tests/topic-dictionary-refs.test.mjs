@@ -69,7 +69,7 @@ test('辞書本文に必須 problem-class が全て含まれる', () => {
 
 // (4) 各 agent .md ファイルが辞書パスを参照している
 // 注: この subtest 群は後続 task (F2/F3/F4) 完了まで red になる設計
-const DICT_REF = '_shared/references/stuck-topic-dictionary.md';
+const DICT_REF = '${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md';
 const AGENTS = [
   'plugins/dev-flow/.claude/agents/plan-reviewer.md',
   'plugins/dev-flow/.claude/agents/evaluator.md',

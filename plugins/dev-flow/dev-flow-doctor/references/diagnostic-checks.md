@@ -127,10 +127,10 @@ workflow 化された dev-flow が実際に記録する telemetry 値のみを�
 
 ```bash
 # Full (既定 window 30d, skill-config.json で上書き可能)
-$SKILLS_DIR/dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh --window 30d
+analyze-dev-flow-telemetry --window 30d
 
 # run-diagnostics 経由
-$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --scope telemetry --window 7d
+${CLAUDE_PLUGIN_ROOT}/dev-flow-doctor/scripts/run-diagnostics.sh --scope telemetry --window 7d
 ```
 
 ### 分布集計
@@ -219,7 +219,7 @@ schema 検証のみを行い、LLM 判断は介在しない。
 
 ```bash
 # canary を実行した後、生成された report を doctor に取り込む
-$SKILLS_DIR/dev-flow-doctor/scripts/run-diagnostics.sh --canary ~/.claude/logs/dev-flow-canary/<timestamp>.json
+${CLAUDE_PLUGIN_ROOT}/dev-flow-doctor/scripts/run-diagnostics.sh --canary ~/.claude/logs/dev-flow-canary/<timestamp>.json
 ```
 
 `--canary` を省略した場合でも、環境変数 `DEVFLOW_CANARY_LOG_DIR`（既定

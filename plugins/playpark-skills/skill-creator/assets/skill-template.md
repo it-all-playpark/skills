@@ -34,7 +34,8 @@ Step 1 → Step 2 → Step 3
 
 ## Step 1: TODO
 
-具体的な手順。スクリプト呼び出しは `$SKILLS_DIR/{{skill_name}}/scripts/` を使用。
+具体的な手順。スクリプト呼び出しは `${CLAUDE_PLUGIN_ROOT}/{{skill_name}}/scripts/` を使用
+（bin/ に bare 名がある決定論スクリプトはそちらを優先する）。
 
 ## Journal Logging
 
