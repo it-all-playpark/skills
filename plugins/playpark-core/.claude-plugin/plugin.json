@@ -1,0 +1,9 @@
+{
+  "name": "playpark-core",
+  "version": "0.3.0",
+  "description": "Shared base for playpark plugins: _lib/common.sh, skill-retrospective journal telemetry, bin/journal",
+  "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" },
+  "repository": "https://github.com/it-all-playpark/skills",
+  "license": "MIT",
+  "skills": ["./"]
+}

@@ -5,13 +5,20 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
-const DICT_PATH = path.join(REPO_ROOT, '_shared', 'references', 'stuck-topic-dictionary.md');
+const DICT_PATH = path.join(
+  REPO_ROOT,
+  'plugins',
+  'dev-flow',
+  '_shared',
+  'references',
+  'stuck-topic-dictionary.md',
+);
 
 // (1) 辞書ファイルが存在し読める
 test('stuck-topic-dictionary.md が存在し読める', () => {
   assert.doesNotThrow(
     () => accessSync(DICT_PATH),
-    '_shared/references/stuck-topic-dictionary.md が存在しない',
+    'plugins/dev-flow/_shared/references/stuck-topic-dictionary.md が存在しない',
   );
   const content = readFileSync(DICT_PATH, 'utf-8');
   assert.ok(content.length > 0, 'ファイルが空である');
@@ -64,9 +71,9 @@ test('辞書本文に必須 problem-class が全て含まれる', () => {
 // 注: この subtest 群は後続 task (F2/F3/F4) 完了まで red になる設計
 const DICT_REF = '_shared/references/stuck-topic-dictionary.md';
 const AGENTS = [
-  '.claude/agents/plan-reviewer.md',
-  '.claude/agents/evaluator.md',
-  '.claude/agents/pr-reviewer.md',
+  'plugins/dev-flow/.claude/agents/plan-reviewer.md',
+  'plugins/dev-flow/.claude/agents/evaluator.md',
+  'plugins/dev-flow/.claude/agents/pr-reviewer.md',
 ];
 
 for (const agentRelPath of AGENTS) {

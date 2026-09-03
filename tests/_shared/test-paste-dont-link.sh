@@ -10,7 +10,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-DISPATCH_MD="$REPO_ROOT/_shared/references/subagent-dispatch.md"
+DISPATCH_MD="$REPO_ROOT/plugins/playpark-core/_shared/references/subagent-dispatch.md"
 
 FAIL_COUNT=0
 PASS_COUNT=0

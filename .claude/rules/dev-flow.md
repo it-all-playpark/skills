@@ -1,14 +1,11 @@
 ---
 description: dev-flow / pr-iterate / dev-improve の内部仕様（phase 経路・shape 判定・distrust 正当化クラス W7・指示規範性 (prescription) の正当化クラス・inline 生成区間・exec-proxy 失敗ポリシー・telemetry キー）
 paths:
-  - ".claude/workflows/**"
-  - "agents/**"
-  - ".claude/agents/**"
-  - "_lib/**"
+  - "plugins/dev-flow/.claude/workflows/**"
+  - "plugins/dev-flow/agents/**"
+  - "plugins/dev-flow/.claude/agents/**"
+  - "plugins/dev-flow/_lib/**"
   - "tools/**"
-  - "dev-flow-doctor/**"
-  - "dev-flow-improve/**"
-  - "dev-flow/**"
 ---
 
 # dev-flow / dev-improve 内部仕様
@@ -19,11 +16,14 @@ paths:
 dev-flow は **Claude 専用**（workflow 依存）であり、cross-vendor portability を放棄する唯一の例外扱い
 のため、本ファイルは `AGENTS.md`（agents.md 標準の cross-vendor 文書）から分離して配置している。
 
+本文中の `.claude/workflows/` / `agents/` / `_lib/` / `_shared/` は `plugins/dev-flow/` を root とする
+plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
+
 ## dev-flow (dynamic workflow)
 
 `/dev-flow <issue>` は skill wrapper (`dev-flow/SKILL.md`) が isolation preflight
 （base 解決 → `<repo>/.claude/worktrees/df-<N>` への `git worktree add` による worktree 作成・再利用 →
-`EnterWorktree({path})`）を行ってから dynamic workflow `Workflow({ name: 'dev-flow-run' })`
+`EnterWorktree({path})`）を行ってから dynamic workflow `Workflow({ name: 'dev-flow:dev-flow-run' })`
 (`.claude/workflows/dev-flow.js`) を起動する。orchestration (phase 遷移 / plan-review・evaluate・
 pr-iterate の各ループ / 並列実装の fan-out) は workflow script が JS で保持し、中間 state は script
 変数に持つ (外部 state JSON は持たない)。workflow の `meta.name` は `dev-flow-run` だが、telemetry
@@ -36,6 +36,9 @@ handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続�
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
 ```
+
+`/pr-iterate <pr>` を単体起動する際の Workflow 名は `dev-flow:pr-iterate`（namespaced 名。bare 名
+`pr-iterate` へのフォールバックは無い）。
 
 Merge tier を pr-iterate の後に置くのは、fix 適用後の最終 tree に対して danger-grep 再実行・danger 再 reconcile を行い、merge 判定を最新の PR 内容に基づかせるため。pr-iterate が fix を適用した run では Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite を一発再実行する（red / 再検証不能は merge tier HOLD。fixes_applied=0 は agent 呼び出しゼロで skip）。
 
@@ -309,7 +312,8 @@ workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plug
 破綻する。`bin/` は plugin enable 中 Bash tool の PATH に載り、dotfiles 側 `sandbox.excludedCommands` は
 先頭トークン＝bare 名で登録される — it-all-playpark/dotfiles#177 と対で運用。片側だけ変えると dev-flow が
 止まる）。`bin/<name>` は本体へ `exec bash` する 3 行 wrapper で、本体と隣接 `*.bats` は移動しない。
-登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する（18 本）。
+登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する
+（core `journal` 1 本 + dev-flow 17 本）。
 `journal_sh` payload の `'journal'` は Stop hook の `[[ -x ]]` を通らず FALLBACK_JOURNAL に倒れる（fail-open、意図どおり）。
 
 plugin version を上げた直後の解決確認は、**update 後に起動し直した Claude Code セッション内**で
@@ -336,6 +340,8 @@ collision / 生成後 syntax）を 1 コマンドで validate-then-write する�
 不変のままになる。marker 行を Edit/Write で直接書くことは pretool-inline-edit-guard が deny する。
 **git plumbing（hash-object/update-index/checkout-index 等）による迂回は禁止** — 迂回すると guard
 の存在理由（生成物の手編集が次回 `--write` で黙って消失する事故防止）が破られる。
+
+sync-inlines の既定 root は `plugins/dev-flow`（`--root` で上書き可）。
 
 **canonical の構造制約**: ESM import / require / Date.now / Math.random を含めない（generator がコメント除去後のコードを走査して error）。
 **ファイル全体が inline 可能**であること（export は行頭接頭辞除去のみで verbatim 注入。export default / export { } は不可）。
@@ -424,7 +430,7 @@ skill（週次 launchd: `dev-flow-improve/scripts/install-schedule.sh --install`
 設計: `claudedocs/2026-07-13-dev-improve-loop-design.md`。
 
 ```
-/dev-flow-improve → Workflow('dev-improve')
+/dev-flow-improve → Workflow('dev-flow:dev-improve')
                       Reconcile(仮説突合) → Mine(4ソース並列) → Rank(dedup+cut) → File(issue化)
                     → 起票 issue ごとに Skill('dev-flow') を直列実行 → 人間 merge
 ```
@@ -444,8 +450,9 @@ skill（週次 launchd: `dev-flow-improve/scripts/install-schedule.sh --install`
 - **telemetry**: 完走時に `journal.sh log dev-improve success --telemetry-json '{...}'` を直接呼ぶ
   （candidates_found / issues_filed / hypotheses_* / backlog_added / backpressure_skipped）。
   dev-flow-doctor がループ自体の不調も診断できる。
-- **自己改変 floor**: 候補の target_paths が dev-flow 本体（`.claude/workflows/` / `_lib/` /
-  `.claude/agents/` / `tools/`）に触れる場合、issue AC に `/dev-flow-canary` 実行を自動追記。
-  コード変更は既存 merge tier ロジックで REVIEW 以上になるが、`.claude/agents/*.md` のみの
+- **自己改変 floor**: 候補の target_paths が dev-flow 本体（`plugins/dev-flow/.claude/workflows/` /
+  `plugins/dev-flow/_lib/` / `plugins/dev-flow/agents/` / `plugins/dev-flow/.claude/agents/` /
+  `tools/`）に触れる場合、issue AC に `/dev-flow-canary` 実行を自動追記。
+  コード変更は既存 merge tier ロジックで REVIEW 以上になるが、`plugins/dev-flow/agents/*.md` のみの
   変更は docs 扱いで micro AUTO 推奨になり得る（design §4-3 の REVIEW floor は未実装 —
   follow-up。human merge が最終 gate である invariant は不変）。

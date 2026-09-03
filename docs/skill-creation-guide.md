@@ -218,16 +218,25 @@ $SKILLS_DIR/skill-name/scripts/script-name.sh [args]
 
 ## 共有リソース
 
-```
-_shared/
-├── references/      # 共有ドキュメント
-└── scripts/         # 共有スクリプト
+新規 skill は `plugins/playpark-skills/<name>/` に作る。共有リソースは plugin 内の
+`_shared/` / `_lib/` に置く。plugin を跨ぐ共有（`_lib/common.sh` 等）は playpark-core
+plugin が持ち、他 plugin からは PATH 上の `bin/journal` を起点にした locator
+（`_CORE_BIN="$(command -v journal)" && source "$(dirname "$_CORE_BIN")/../_lib/common.sh"`）
+経由で参照する。plugin root は version+hash 付き cache パスなので相対 `../` は plugin
+境界を跨げない。
 
-_lib/
-├── common.sh        # 共有 bash ユーティリティ
-├── config.py        # 共有 Python 設定
-├── scripts/         # 共有インフラスクリプト
-└── templates/       # 共有テンプレート
+```
+plugins/playpark-core/            # 共有基盤 plugin
+├── _shared/references/           # 共有ドキュメント
+└── _lib/
+    ├── common.sh                 # 共有 bash ユーティリティ（locator 経由で参照）
+    └── infra/                    # 共有インフラスクリプト
+
+plugins/playpark-skills/          # 個人用スキル plugin
+├── _shared/scripts/              # スキル共通スクリプト
+└── _lib/
+    ├── config.py                 # 共有 Python 設定
+    └── templates/                # 共有テンプレート
 ```
 
 ## Skill / Agent / Command の使い分け
@@ -350,7 +359,7 @@ Task(
 
 ### 参照
 
-- **詳細規約・呼び出しテンプレート・失敗モード**: [`_shared/references/subagent-dispatch.md`](../_shared/references/subagent-dispatch.md)
+- **詳細規約・呼び出しテンプレート・失敗モード**: [`plugins/playpark-core/_shared/references/subagent-dispatch.md`](../plugins/playpark-core/_shared/references/subagent-dispatch.md)
 - **チェックリスト**: 新規 skill で `Task` / `Agent` を呼ぶ前に 5要素 + routing を確認すること
 
 ## skill-config.json
@@ -371,5 +380,7 @@ Task(
 
 **プロジェクト**: `$git_root/skill-config.json` > `$git_root/.claude/skill-config.json`
 
-スクリプトからは `_lib/common.sh` の `load_skill_config` / `merge_config` を使用。
+スクリプトからは playpark-core の `_lib/common.sh` を locator（PATH 上の `bin/journal` を
+アンカーに `source "$(dirname "$(command -v journal)")/../_lib/common.sh"`）経由で source し、
+`load_skill_config` / `merge_config` を使用。
 LLM からは Read ツールで `skill-config.json` を直接読み取る。

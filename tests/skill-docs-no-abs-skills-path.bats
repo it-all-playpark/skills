@@ -13,12 +13,19 @@ setup() {
         -e '~/.claude/skills/' \
         -e '$HOME/.claude/skills/' \
         -- '*SKILL.md' '*skill.md' '*references/*.md' \
-        ':(exclude)dev-flow/' \
-        ':(exclude)dev-flow-doctor/' \
-        ':(exclude)dev-flow-improve/' \
-        ':(exclude)dev-issue-analyze/' \
-        ':(exclude)pr-iterate/' \
+        ':(exclude)plugins/dev-flow/' \
         ':(exclude).claude/'
+    echo "$output"
+    [ "$status" -ne 0 ]
+}
+
+@test "skill script(*.sh/*.py)に~/.claude/skills絶対パス参照が残っていない" {
+    run git -C "$REPO_ROOT" grep -nIF \
+        -e '~/.claude/skills/' \
+        -e '$HOME/.claude/skills/' \
+        -e '${HOME}/.claude/skills/' \
+        -e 'Path.home() / ".claude/skills' \
+        -- '*.sh' '*.py' ':(exclude)tests/'
     echo "$output"
     [ "$status" -ne 0 ]
 }

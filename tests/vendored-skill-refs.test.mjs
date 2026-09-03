@@ -7,9 +7,17 @@ import path from 'node:path';
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const SKILLS_LOCK_PATH = path.join(REPO_ROOT, 'skills-lock.json');
 const GITIGNORE_PATH = path.join(REPO_ROOT, '.gitignore');
-const REMOTION_VIDEO_SKILL_PATH = path.join(REPO_ROOT, 'remotion-video', 'SKILL.md');
+const REMOTION_VIDEO_SKILL_PATH = path.join(
+  REPO_ROOT,
+  'plugins',
+  'playpark-skills',
+  'remotion-video',
+  'SKILL.md',
+);
 const REMOTION_VIDEO_GUIDE_PATH = path.join(
   REPO_ROOT,
+  'plugins',
+  'playpark-skills',
   'remotion-video',
   'references',
   'implementation-guide.md',
@@ -71,7 +79,7 @@ test('.gitignore の external skills ブロックに remotion-best-practices 行
   assert.ok(blockMatch, '.gitignore に external skills ブロックが見つからない');
   const blockLines = blockMatch[1].split('\n');
   assert.ok(
-    blockLines.includes('remotion-best-practices'),
-    'external skills ブロックに "remotion-best-practices" 行が存在しない',
+    blockLines.includes('plugins/playpark-skills/remotion-best-practices'),
+    'external skills ブロックに "plugins/playpark-skills/remotion-best-practices" 行が存在しない',
   );
 });

@@ -1,14 +1,28 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "playpark",
-  "description": "playpark LLC marketplace: production skills and dev-flow agents from it-all-playpark/skills",
+  "description": "playpark LLC marketplace: playpark-core (shared base), dev-flow (issue-to-LGTM workflows + 11 dev-flow agents), playpark-skills (personal skills)",
   "owner": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" },
   "plugins": [
     {
+      "name": "playpark-core",
+      "version": "0.3.0",
+      "description": "Shared base for playpark plugins: _lib/common.sh, skill-retrospective journal telemetry, bin/journal",
+      "source": "./plugins/playpark-core",
+      "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" }
+    },
+    {
+      "name": "dev-flow",
+      "version": "0.3.0",
+      "description": "dev-flow: issue-to-LGTM dynamic workflows (dev-flow-run / pr-iterate / dev-improve / canary), 8 skills and 11 dev-flow agents, by playpark LLC",
+      "source": "./plugins/dev-flow",
+      "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" }
+    },
+    {
       "name": "playpark-skills",
-      "version": "0.2.0",
-      "description": "70+ production-ready skills and 11 dev-flow agents for AI coding agents, by playpark LLC",
-      "source": "./",
+      "version": "0.3.0",
+      "description": "playpark LLC personal skills: blog / sns / seo / media / ops utilities (requires playpark-core)",
+      "source": "./plugins/playpark-skills",
       "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" }
     }
   ]

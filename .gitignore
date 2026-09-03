@@ -58,12 +58,12 @@ __pycache__/
 hunk-review
 
 # --- external skills (auto-managed) ---
-agent-browser
-find-skills
-gsc
-gws-calendar-agenda
-pricing-strategy
-remotion-best-practices
+plugins/playpark-skills/agent-browser
+plugins/playpark-skills/find-skills
+plugins/playpark-skills/gsc
+plugins/playpark-skills/gws-calendar-agenda
+plugins/playpark-skills/pricing-strategy
+plugins/playpark-skills/remotion-best-practices
 # --- end external skills ---
 
 # veridelta run records (redgreen-verify.sh verdict_cmd hook output)
