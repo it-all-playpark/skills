@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-canary',
-  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/pipeline/nested workflow/model・effort routing（agent() opts の effort 受理 probe を含む）/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は dev-flow-doctor run-diagnostics.sh --canary で取り込む',
+  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/pipeline/nested workflow/model・effort routing（agent() opts の effort 受理 probe を含む）/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は dev-flow-doctor run-diagnostics --canary で取り込む',
   phases: [
     { title: 'Probe' },
     { title: 'Agents' },

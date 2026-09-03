@@ -129,10 +129,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log memory-cli success \
+journal log memory-cli success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log memory-cli failure \
+journal log memory-cli failure \
   --error-category <category> --error-msg "<message>"
 ```

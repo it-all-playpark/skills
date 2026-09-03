@@ -140,10 +140,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-to-sheet success \
+journal log biz-card-to-sheet success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-to-sheet failure \
+journal log biz-card-to-sheet failure \
   --error-category <category> --error-msg "<message>"
 ```

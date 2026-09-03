@@ -110,10 +110,10 @@ journal entries by timestamp to reconstruct per-phase timing.
 **Detection**: Verify all workflow skills have journal logging instrumented.
 
 **Method**:
-1. List all skills in `$SKILLS_DIR` with SKILL.md
+1. Glob `**/SKILL.md` で全 plugin の skill を列挙する
 2. Filter to workflow/orchestration skills (has `allowed-tools` or calls other skills)
 3. Check for `## Journal Logging` section in SKILL.md
-4. Check for `journal.sh` references
+4. Check for `journal log` references
 
 **Output**: Coverage percentage and list of unlogged skills.
 Should be run periodically (weekly recommended) to catch newly added skills.

@@ -90,7 +90,7 @@ hunt-lead executes:
 ### Initialize State
 
 ```bash
-$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh init \
+bug-hunt-state init \
   --target "<issue or description>" \
   --max-hypotheses N --max-turns N \
   --repo-path <path>
@@ -111,12 +111,12 @@ hunt-lead dynamic adjustments:
 
 ```bash
 # Add hypothesis
-$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh add-hypothesis \
+bug-hunt-state add-hypothesis \
   --id "h3" --description "Race condition in session handler" \
   --category "state" --assigned-to "investigator-1"
 
 # Update hypothesis
-$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh update-hypothesis \
+bug-hunt-state update-hypothesis \
   --id "h1" --status "rejected" \
   --reason "Session store uses Redis, no memory leak"
 ```
@@ -126,7 +126,7 @@ $SKILLS_DIR/bug-hunt/scripts/hunt-state.sh update-hypothesis \
 Increment turns_used after each investigator message:
 
 ```bash
-$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh increment-turn --repo-path <path>
+bug-hunt-state increment-turn --repo-path <path>
 ```
 
 ### Convergence Conditions
@@ -138,7 +138,7 @@ $SKILLS_DIR/bug-hunt/scripts/hunt-state.sh increment-turn --repo-path <path>
 ### Budget Check
 
 ```bash
-$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh check-budget --repo-path <path>
+bug-hunt-state check-budget --repo-path <path>
 ```
 
 ## Phase 3: Converge
@@ -161,7 +161,7 @@ State persisted in `$CWD/.claude/bug-hunt-state.json`. See [team-lifecycle.md](r
 
 ```bash
 # Read current state
-$SKILLS_DIR/bug-hunt/scripts/hunt-state.sh read --repo-path <path>
+bug-hunt-state read --repo-path <path>
 ```
 
 ## Output Format
@@ -204,11 +204,11 @@ $SKILLS_DIR/bug-hunt/scripts/hunt-state.sh read --repo-path <path>
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log bug-hunt success \
+journal log bug-hunt success \
   --issue $ISSUE --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log bug-hunt failure \
+journal log bug-hunt failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```
 

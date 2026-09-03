@@ -50,7 +50,7 @@ Subagent を呼ぶ場合は [`plugins/playpark-core/_shared/references/subagent-
 ## Step 2: init_skill.py 実行
 
 ```bash
-$SKILLS_DIR/skill-creator/scripts/init_skill.py <skill-name>
+skill-creator-init <skill-name>
 ```
 
 これにより `skill-creator/assets/skill-template.md` をコピーして `<skill-name>/SKILL.md` と `scripts/`, `references/` ディレクトリを生成する。
@@ -88,7 +88,7 @@ head -30 <skill-name>/SKILL.md | yq -e '.name, .description'
 ## Journal Logging
 
 ```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log skill-creator success --skill <name>
+journal log skill-creator success --skill <name>
 ```
 
 ## References

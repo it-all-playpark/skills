@@ -66,7 +66,7 @@ When `--focus` restricts domains, only spawn required auditors.
 
 ```bash
 # Initialize audit state
-$SKILLS_DIR/code-audit-team/scripts/audit-state.sh init \
+code-audit-team-state init \
   --target "$TARGET" --scope "$SCOPE" --focus "$FOCUS"
 ```
 
@@ -76,8 +76,8 @@ Then use TeamCreate, TaskCreate, and spawn auditors via Task tool.
 
 Each auditor:
 1. Read assigned files using Read/Grep tools
-2. Apply domain-specific criteria from `$SKILLS_DIR/_lib/analysis-domains.md`
-3. Record findings via `audit-state.sh add-finding`
+2. Apply domain-specific criteria from `${CLAUDE_PLUGIN_ROOT}/_lib/analysis-domains.md`
+3. Record findings via `code-audit-team-state add-finding`
 4. Send cross-domain queries via SendMessage
 
 ### Cross-Domain Communication
@@ -91,7 +91,7 @@ The receiving auditor investigates and records any new findings with `cross_doma
 ### Recording Findings
 
 ```bash
-$SKILLS_DIR/code-audit-team/scripts/audit-state.sh add-finding \
+code-audit-team-state add-finding \
   --domain security --severity critical \
   --location "src/auth/jwt.ts:45" \
   --title "JWT signature bypass" \
@@ -192,11 +192,11 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log code-audit-team success \
+journal log code-audit-team success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log code-audit-team failure \
+journal log code-audit-team failure \
   --error-category <category> --error-msg "<message>"
 ```
 

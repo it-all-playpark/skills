@@ -71,6 +71,6 @@ Scripts: `load-config.sh`, `detect-media.sh <path> [--type T]`, `extract-thumbna
 ## Journal Logging
 
 ```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce success --duration-turns $TURNS
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log video-announce failure --error-category <cat> --error-msg "<msg>"
+journal log video-announce success --duration-turns $TURNS
+journal log video-announce failure --error-category <cat> --error-msg "<msg>"
 ```

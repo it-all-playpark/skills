@@ -55,7 +55,7 @@ Export GitHub Commit history to a Markdown file.
 Run the export script:
 
 ```bash
-python3 $SKILLS_DIR/repo-commit/scripts/export_commit.py <url> [options]
+repo-commit <url> [options]
 ```
 
 ## Output Format
@@ -96,10 +96,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-commit success \
+journal log repo-commit success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-commit failure \
+journal log repo-commit failure \
   --error-category <category> --error-msg "<message>"
 ```

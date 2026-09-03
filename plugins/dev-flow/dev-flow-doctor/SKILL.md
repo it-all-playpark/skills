@@ -152,28 +152,30 @@ plan_iter: max 7, cap 8, at_cap_count 0
 
 ### `scripts/run-diagnostics.sh`
 
+bin/ の bare 名 `run-diagnostics` で呼ぶ（plugin enable 中は PATH に載る）。
+
 Deterministic diagnostic data collection and health score calculation.
 
 ```bash
 # Full diagnostics (includes telemetry check)
-./scripts/run-diagnostics.sh --window 30d
+run-diagnostics --window 30d
 
 # Dev-flow telemetry only
-./scripts/run-diagnostics.sh --scope telemetry --window 7d
+run-diagnostics --scope telemetry --window 7d
 
 # Legacy scopes
-./scripts/run-diagnostics.sh --scope journal
-./scripts/run-diagnostics.sh --scope worktrees
-./scripts/run-diagnostics.sh --scope config
+run-diagnostics --scope journal
+run-diagnostics --scope worktrees
+run-diagnostics --scope config
 
 # Baseline comparison (AC4) — adds baseline_compare check + regression penalty
-./scripts/run-diagnostics.sh --scope telemetry --compare .claude/dev-flow-doctor-baseline-pre-79.json
+run-diagnostics --scope telemetry --compare .claude/dev-flow-doctor-baseline-pre-79.json
 
 # Regenerate baseline (AC2) — delegates to baseline-snapshot.sh
-./scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d
+run-diagnostics --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d
 
 # Canary report intake (issue #325) — advisory, never affects score
-./scripts/run-diagnostics.sh --scope config --canary ~/.claude/logs/dev-flow-canary/latest.json
+run-diagnostics --scope config --canary ~/.claude/logs/dev-flow-canary/latest.json
 ```
 
 Output: JSON with `score`, `rating`, `checks` (including `dev_flow_telemetry`,

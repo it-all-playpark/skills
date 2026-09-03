@@ -32,7 +32,7 @@ model: haiku
 ### Step 1: 記事の特定
 
 ```bash
-bash $SKILLS_DIR/_shared/scripts/find-articles.sh <identifier>
+blog-find-articles <identifier>
 ```
 
 複数マッチ時はユーザーに選択を求める。
@@ -40,13 +40,13 @@ bash $SKILLS_DIR/_shared/scripts/find-articles.sh <identifier>
 ### Step 2: Dry-run確認（推奨）
 
 ```bash
-bash $SKILLS_DIR/blog-swap-dates/scripts/swap-dates.sh <path1> <path2> --dry-run
+blog-swap-dates <path1> <path2> --dry-run
 ```
 
 ### Step 3: 実行
 
 ```bash
-bash $SKILLS_DIR/blog-swap-dates/scripts/swap-dates.sh <path1> <path2>
+blog-swap-dates <path1> <path2>
 ```
 
 ### Step 4: ビルド検証
@@ -123,10 +123,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-swap-dates success \
+journal log blog-swap-dates success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-swap-dates failure \
+journal log blog-swap-dates failure \
   --error-category <category> --error-msg "<message>"
 ```

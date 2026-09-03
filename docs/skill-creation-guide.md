@@ -140,7 +140,9 @@ Step 1 → Step 2 → Step 3
 ## Step N: Title
 
 具体的な手順。スクリプト呼び出しは `${CLAUDE_PLUGIN_ROOT}/skill-name/scripts/` を使用
-（bin/ に bare 名がある決定論スクリプトはそちらを優先する）。
+（bin/ に bare 名がある決定論スクリプトはそちらを優先する）。`references/*.md` からの呼び出しは
+`${CLAUDE_PLUGIN_ROOT}` が展開されず素読みされるため、必ず bin/ の bare 名
+（`<skill>-<action>`、`plugins/playpark-skills/bin/` に 3 行 exec wrapper を追加）を使う。
 
 ## References
 
@@ -202,6 +204,9 @@ apt-get install bats
 # スクリプト呼び出しパターン（bin/ に bare 名がある決定論スクリプトはそちらを優先する）
 ${CLAUDE_PLUGIN_ROOT}/skill-name/scripts/script-name.sh [args]
 ```
+
+`references/*.md` からの呼び出しは `${CLAUDE_PLUGIN_ROOT}` が展開されないため、必ず bin/ の bare 名
+（`<skill>-<action>`、`plugins/playpark-skills/bin/` に 3 行 exec wrapper を追加）を使う。
 
 ### スクリプト化すべき処理
 

@@ -80,6 +80,6 @@ npx remotion render src/index.ts VideoName out/video.gif --image-format=png # GI
 ## Journal Logging
 
 ```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log remotion-video success --duration-turns $TURNS
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log remotion-video failure --error-category <cat> --error-msg "<msg>"
+journal log remotion-video success --duration-turns $TURNS
+journal log remotion-video failure --error-category <cat> --error-msg "<msg>"
 ```

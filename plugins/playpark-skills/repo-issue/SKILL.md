@@ -49,7 +49,7 @@ Export GitHub Issue information to a Markdown file.
 Run the export script:
 
 ```bash
-python3 $SKILLS_DIR/repo-issue/scripts/export_issue.py <url> [options]
+repo-issue <url> [options]
 ```
 
 ## Output Format
@@ -90,10 +90,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-issue success \
+journal log repo-issue success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-issue failure \
+journal log repo-issue failure \
   --error-category <category> --error-msg "<message>"
 ```

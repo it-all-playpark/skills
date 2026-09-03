@@ -25,7 +25,7 @@ YouTube動画からサビ等の指定区間を.opusファイルとして切り�
 ### extract.sh
 
 ```bash
-$SKILLS_DIR/yt-chorus-extract/scripts/extract.sh <youtube-url> --start <MM:SS> [options]
+yt-chorus-extract <youtube-url> --start <MM:SS> [options]
 ```
 
 ## Options
@@ -57,10 +57,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log yt-chorus-extract success \
+journal log yt-chorus-extract success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log yt-chorus-extract failure \
+journal log yt-chorus-extract failure \
   --error-category <category> --error-msg "<message>"
 ```

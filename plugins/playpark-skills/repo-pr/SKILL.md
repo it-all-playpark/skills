@@ -48,7 +48,7 @@ Export GitHub Pull Request information to a Markdown file.
 Run the export script:
 
 ```bash
-python3 $SKILLS_DIR/repo-pr/scripts/export_pr.py <url> [options]
+repo-pr <url> [options]
 ```
 
 ## Output Format
@@ -88,10 +88,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-pr success \
+journal log repo-pr success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-pr failure \
+journal log repo-pr failure \
   --error-category <category> --error-msg "<message>"
 ```

@@ -50,10 +50,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log claude-zombie-kill success \
+journal log claude-zombie-kill success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log claude-zombie-kill failure \
+journal log claude-zombie-kill failure \
   --error-category <category> --error-msg "<message>"
 ```

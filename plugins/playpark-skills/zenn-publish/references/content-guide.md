@@ -2,7 +2,7 @@
 
 Zenn向けクロスポスト記事の書き方・テンプレート・変換ルール。
 
-**差別化方針は `$SKILLS_DIR/blog-cross-post/references/cross-post-strategy.md` に従う。**
+**差別化方針は `../../blog-cross-post/references/cross-post-strategy.md`（blog-cross-post skill の references）に従う。**
 
 ## Zenn読者の特性
 

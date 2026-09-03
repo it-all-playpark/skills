@@ -128,10 +128,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seed-context success \
+journal log seed-context success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seed-context failure \
+journal log seed-context failure \
   --error-category <category> --error-msg "<message>"
 ```

@@ -57,7 +57,7 @@ Export GitHub repository contents to a single Markdown file.
 Run the export script:
 
 ```bash
-python3 $SKILLS_DIR/repo-export/scripts/export_repo.py <url> [options]
+repo-export <url> [options]
 ```
 
 ## Output Format
@@ -122,10 +122,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-export success \
+journal log repo-export success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log repo-export failure \
+journal log repo-export failure \
   --error-category <category> --error-msg "<message>"
 ```
