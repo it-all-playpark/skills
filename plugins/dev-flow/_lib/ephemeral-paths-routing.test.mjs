@@ -78,13 +78,13 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       const serial = declaredFiles.length
         ? [{ id: 't1', desc: 'stub task', file_changes: declaredFiles, test_plan: '', depends_on: [] }]
         : [];
       return { summary: 'p', serial, parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // label 'danger-grep'（issue #544 統合呼び出し）は risk/files を 1 応答で返す
@@ -98,7 +98,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -115,7 +115,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     if (label === 'changed-files') {
       return { files: ['src/foo.ts'] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -220,7 +220,7 @@ test('[ephemeral-paths-routing] (A) micro + realized ephemeral 3 件 non-ephemer
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(
     evaluatorCalls.length,
     0,
@@ -277,7 +277,7 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     '(B) micro + 宣言済み non-ephemeral 6 件: evaluator は >= 1 回のはずだが ' + evaluatorCalls.length + ' 回'
@@ -378,7 +378,7 @@ test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣�
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  const evalCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evalCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   for (const c of evalCalls) {
     assert.ok(
       !c.prompt.includes('宣言外変更'),
@@ -482,7 +482,7 @@ test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → sh
       + ' (declared count=0 → refloorShape(micro,0) → micro のまま、refloor は不発)',
   );
 
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     '(F) micro + 宣言外 non-ephemeral 1 件: evaluator は >= 1 回のはずだが ' + evaluatorCalls.length + ' 回'

@@ -35,17 +35,17 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFail
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
     if (label === 'declared-path-check') return { files: [] };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80,
         feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [],
@@ -55,8 +55,8 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFail
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。成功経路・
     // failure 経路（writeFailureTelemetry）の両方が同じ label を使うため共通スタブでよい。
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') return { logged: true, summary: 'ok' };
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { logged: true, summary: 'ok' };
     // journal-log-failure (stage2): 既定は null を返す（null 容認設計を確認するため）。
     // journalLogFailureResult でケースごとに上書き可能。
     if (label === 'journal-log-failure') return journalLogFailureResult !== undefined ? journalLogFailureResult : null;
@@ -64,7 +64,7 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFail
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       const fn = implementerFn ?? (() => ({
         status: 'DONE', task_id: 'T1', files: [], summary: '', concerns: [],
         blocking_reason: null, missing_context: null,
@@ -138,7 +138,7 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-save→journal-
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(saveCalls.length, 1,
     `(1) journal-save は 1 回のはずだが ${saveCalls.length} 回だった (labels: ${calls.map((c) => c.label).join(', ')})`);
 
@@ -150,7 +150,7 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-save→journal-
   assert.ok(!savePrompt.includes('"pr_number"'),
     `(1) failure 経路は PR 作成前のため journal-save prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
 
-  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-runner-haiku');
+  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(logCalls.length, 1,
     `(1) journal-log-failure は 1 回のはずだが ${logCalls.length} 回だった`);
   const logPrompt = logCalls[0]?.prompt ?? '';
@@ -200,7 +200,7 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(saveCalls.length, 1,
     `(2) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
 
@@ -212,7 +212,7 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
   assert.ok(!savePrompt.includes('"pr_number"'),
     `(2) failure 経路は PR 作成前のため journal-save prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
 
-  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-runner-haiku');
+  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(logCalls.length, 1,
     `(2) journal-log-failure は 1 回のはずだが ${logCalls.length} 回だった`);
   const logPrompt = logCalls[0]?.prompt ?? '';
@@ -252,7 +252,7 @@ test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前
   assert.ok(typeof error?.message === 'string' && error.message.includes('empty-diff gate'),
     `(3) error.message に 'empty-diff gate' を含むべきだが: ${error?.message}`);
 
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(saveCalls.length, 1,
     `(3) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
 
@@ -264,7 +264,7 @@ test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前
   assert.ok(!savePrompt.includes('"pr_number"'),
     `(3) failure 経路は PR 作成前のため journal-save prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
 
-  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-runner-haiku');
+  const logCalls = calls.filter((c) => c.label === 'journal-log-failure' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(logCalls.length, 1,
     `(3) journal-log-failure は 1 回のはずだが ${logCalls.length} 回だった`);
   const logPrompt = logCalls[0]?.prompt ?? '';
@@ -304,7 +304,7 @@ test('[failure-telemetry] (4) 完走経路: journal-log-failure が 0 回・jour
   // issue #494: 実際の telemetry payload（outcome 等の結論値）は journal-save (stage1) の prompt
   // に載る。journal-log (stage2) はファイルパスのみを扱い payload literal を含まない。
   const successCalls = calls.filter(
-    (c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku',
+    (c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku',
   );
   assert.equal(successCalls.length, 1,
     `(4) journal-save(success) は 1 回のはずだが ${successCalls.length} 回だった`);

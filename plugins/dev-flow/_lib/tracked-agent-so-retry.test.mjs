@@ -189,12 +189,14 @@ for (const [name, path] of [
 
     assert.match(body, /without calling StructuredOutput/, `${name} の trackedAgent 本体に契約違反判定文字列が無い`);
 
-    const agentCallRe = /agent\(prompt, opts\)/g;
+    // agentType の namespace 付与は nsAgentOpts()（_lib/agent-namespace.mjs）が担うため、
+    // trackedAgent 本体の呼び出し形は agent(prompt, nsAgentOpts(opts)) で固定する。
+    const agentCallRe = /agent\(prompt, nsAgentOpts\(opts\)\)/g;
     const matches = [...body.matchAll(agentCallRe)];
     assert.equal(
       matches.length,
       2,
-      `${name} の trackedAgent 本体に agent(prompt, opts) 呼び出しが 2 箇所存在しない（${matches.length} 件）`,
+      `${name} の trackedAgent 本体に agent(prompt, nsAgentOpts(opts)) 呼び出しが 2 箇所存在しない（${matches.length} 件）`,
     );
   });
 }

@@ -199,14 +199,14 @@ test('[test-helpers] runDevFlowInSandbox: 実際の dev-flow.js ソースを Ref
   const responder = ({ label, agentType }) => {
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return { summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src', estimated_change_file_count: 1, shape: 'micro' };
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [], parallel: [] };
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
-    if (agentType === 'evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
+    if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') return { files: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     return null;
   };

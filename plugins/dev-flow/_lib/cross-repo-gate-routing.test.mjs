@@ -41,21 +41,21 @@ function makeCountingSandbox(analyzeReq, config) {
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
     if (label === 'declared-path-check') return { files: [] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
-    if (agentType === 'evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
+    if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log-failure') return null;
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') return { logged: true, summary: 'ok' };
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { logged: true, summary: 'ok' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 'T1', files: implementerFiles, summary: '', concerns: [], blocking_reason: null, missing_context: null };
     }
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
@@ -125,7 +125,7 @@ test('[cross-repo-gate] (1) label=cross-repo かつ found>=1 → graceful 終了
 
   // issue #494 F3: 結論値リテラル（error_category 等）は journal-save (stage1) の prompt に載る。
   // journal-log-failure (stage2) はファイルパスのみを扱い payload literal を含まない。
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.strictEqual(saveCalls.length, 1, `(1) journal-save は 1 回のはずだが ${saveCalls.length} 回`);
   const savePrompt = saveCalls[0]?.prompt ?? '';
   assert.ok(savePrompt.includes('cross_repo'), `(1) journal-save prompt に 'cross_repo' を含むべきだが:\n${savePrompt.slice(0, 500)}`);
@@ -154,7 +154,7 @@ test('[cross-repo-gate] (2) label=cross-repo だが found=0 → 既存 fail-clos
   assert.ok(reimplCalls.length >= 1, `(2) reimpl-empty-diff は >= 1 件のはずだが ${reimplCalls.length} 件`);
 
   // issue #494 F3: 結論値リテラル（error_category 等）は journal-save (stage1) の prompt に載る。
-  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-runner-haiku');
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.strictEqual(saveCalls.length, 1, `(2) journal-save は 1 回のはずだが ${saveCalls.length} 回`);
   const savePrompt = saveCalls[0]?.prompt ?? '';
   assert.ok(savePrompt.includes('"error_category":"empty_diff"'), `(2) journal-save prompt に empty_diff を含むべきだが:\n${savePrompt.slice(0, 500)}`);

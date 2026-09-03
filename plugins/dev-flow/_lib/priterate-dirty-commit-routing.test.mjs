@@ -93,10 +93,10 @@ function buildAgentStub({ reviewerStub, ciStub, fixStub, commitEnsureStub, dirty
     const promptStr = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
     agentCalls.push({ label, agentType, prompt: promptStr });
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return reviewerStub(label);
     }
-    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
       return ciStub ? ciStub(label) : { status: 'passed', failed_checks: [] };
     }
     if (label.startsWith('fix#')) {
@@ -201,7 +201,7 @@ test('[D3][AC-3 fail-safe] commit-ensure が null -> status:fix_failed、review#
   assertNoSandboxCrash(error);
   if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
 
-  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'pr-reviewer');
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.equal(reviewerCalls.length, 1, `pr-reviewer 呼び出しは 1 回であるべきだが ${reviewerCalls.length} 回だった`);
   assert.equal(result?.status, 'fix_failed', `result.status は fix_failed であるべきだが '${result?.status}' だった`);
 });

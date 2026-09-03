@@ -44,11 +44,11 @@ function responder({ label, agentType }) {
     };
   }
   // Plan: dev-planner
-  if (agentType === 'dev-planner') {
+  if (agentType === 'dev-flow:dev-planner') {
     return { summary: 'p', serial: [], parallel: [] };
   }
   // Plan reviewer
-  if (agentType === 'plan-reviewer') {
+  if (agentType === 'dev-flow:plan-reviewer') {
     return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
   }
   // Security floor / danger-grep 系
@@ -61,7 +61,7 @@ function responder({ label, agentType }) {
     return { tests: 'passed', green: true, summary: '' };
   }
   // Evaluate: evaluator
-  if (agentType === 'evaluator') {
+  if (agentType === 'dev-flow:evaluator') {
     return {
       verdict: 'pass',
       total: 100,
@@ -81,7 +81,7 @@ function responder({ label, agentType }) {
     return { pr_url: 'http://x', pr_number: 1, committed: true };
   }
   // implementer
-  if (agentType === 'implementer') {
+  if (agentType === 'dev-flow:implementer') {
     return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
   }
   // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -142,7 +142,7 @@ test('[green-fix-no-audit] sanity: label が green-fix で始まる call が 0 �
 
 test('[green-fix-no-audit] AC#2: green-fix 0 回経路では evaluator の prompt に「テスト弱体化」が含まれないこと', async () => {
   await ensureSharedRun();
-  const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'dev-flow:evaluator');
 
   // evaluator が 1 回以上呼ばれていないと負の検証が無意味になる
   assert.ok(

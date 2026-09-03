@@ -97,11 +97,11 @@ function makeSandbox(analyzeReq, epochMode) {
     }
     // Plan: dev-planner（plan_end の給電元）。serial に 1 task 持たせ Implement phase を発火させる
     // （implement_end の給電元となる implementer 呼び出しを発生させるため）。
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return withEpoch({ summary: 'p', serial: [{ id: 'F1', desc: 'd', file_changes: ['a.ts'] }], parallel: [] });
     }
     // Plan reviewer（standard 経路では呼ばれない想定だが、呼ばれた場合に備え epoch を給電）
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return withEpoch({ verdict: 'pass', findings: [], summary: 'ok' });
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -114,7 +114,7 @@ function makeSandbox(analyzeReq, epochMode) {
       return withEpoch({ tests: 'no_tests', green: true, summary: '' });
     }
     // Evaluate: evaluator stub（evaluate_end の給電元）
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return withEpoch({
         verdict: 'pass',
         total: 100,
@@ -131,7 +131,7 @@ function makeSandbox(analyzeReq, epochMode) {
       });
     }
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false };
     }
     // PR: label が 'pr' で始まる（pr_end の給電元）
@@ -151,16 +151,16 @@ function makeSandbox(analyzeReq, epochMode) {
     }
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。prompt を捕捉し
     // saved:true を返して journal-log (stage2) へ進めさせる。
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
       journalPrompts.push(prompt);
       return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
     // journal-log (stage2): logged:true を返す
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
     // implementer（implement_end の給電元）
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return withEpoch({ status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] });
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避（validate_end の給電元候補）

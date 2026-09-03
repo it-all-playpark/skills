@@ -40,17 +40,17 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
     if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
-    if (agentType === 'evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
+    if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
-    if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
     // 返して journal-log (stage2) へ進めさせる。
@@ -137,7 +137,7 @@ test('[empty-diff] (C) diff-gate empty:true / diff-gate-retry empty:true → thr
   const { error } = await runDevFlowInSandbox(src, ctx);
   assert.ok(error !== null, '(C) 両方 empty:true なら workflow が throw すべきだが error が null だった');
   assert.ok(typeof error?.message === 'string' && error.message.includes('empty-diff gate'), `(C) error.message に 'empty-diff gate' を含むべきだが: ${error?.message}`);
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.strictEqual(evaluatorCalls.length, 0, `(C) evaluator は 0 件のはずだが ${evaluatorCalls.length} 件（fail-fast であること）`);
 });
 
@@ -179,7 +179,7 @@ test('[empty-diff] (F) empty-diff gate retry 後に validate 再実行 → test#
   const retryTestCalls = calls.filter((c) => c.label.startsWith('test#retry'));
   assert.ok(retryTestCalls.length >= 1, `(F) test#retry >= 1 件のはずだが ${retryTestCalls.length} 件（validate 再実行確認）`);
   // evaluator も通常通り呼ばれること
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(evaluatorCalls.length >= 1, `(F) evaluator >= 1 件のはずだが ${evaluatorCalls.length} 件（evaluate phase が実行されること）`);
   if (error) assert.fail(`(F) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(F) return object を返すべき');

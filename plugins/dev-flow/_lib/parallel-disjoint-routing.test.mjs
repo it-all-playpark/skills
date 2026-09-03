@@ -53,11 +53,11 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
       return analyzeReq;
     }
     // Plan: dev-planner（衝突 / 非衝突 plan を注入）
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return plannerPlan;
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -69,7 +69,7 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -89,7 +89,7 @@ function makeCountingSandbox(analyzeReq, plannerPlan) {
       return { files: ['src/foo.ts'] };
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -207,7 +207,7 @@ test('[parallel-disjoint-routing] 衝突 plan: P2 が :par: で呼ばれず :ser
     `dev-flow.js が予期せずエラーで終了: ${err}`,
   );
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   const implLabels = implCalls.map((c) => c.label);
 
   // P2 が :par:P2 で呼ばれていないこと（衝突 task が parallel fan-out されない）
@@ -259,7 +259,7 @@ test('[parallel-disjoint-routing] 非衝突 plan: P1/P2 が共に :par: で呼�
     `dev-flow.js が予期せずエラーで終了: ${err}`,
   );
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   const implLabels = implCalls.map((c) => c.label);
 
   // P1/P2 が共に :par: で呼ばれること（降格が起きない）
@@ -333,11 +333,11 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     if (label.startsWith('analyze')) {
       return complexReq;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       // Evaluate replan で衝突 plan を返す（初期 plan も同じで ok）
       return conflictPlan;
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
@@ -346,7 +346,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       evaluatorCallCount += 1;
       if (evaluatorCallCount === 1) {
         // 1 回目: design レベルの問題を指摘して replan を要求
@@ -378,7 +378,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     if (label === 'changed-files') {
       return { files: ['src/foo.ts'] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -435,7 +435,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     `evaluator は 2 回で収束するべき（design replan → critical_resolutions 解消）。実際: ${evaluatorCallCount} 回`,
   );
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   const implLabels = implCalls.map((c) => c.label);
 
   // reimpl（Evaluate replan 後の実装）で P2 が :par:P2 で呼ばれていないこと

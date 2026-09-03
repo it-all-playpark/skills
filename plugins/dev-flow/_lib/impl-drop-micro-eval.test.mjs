@@ -53,7 +53,7 @@ function createResponder(dropLabels) {
     }
     // Plan: parallel 2 task + serial 1 task。file_changes は realized-diff stub と一致させ
     // 宣言外検出（issue #272 F2）を発火させない（runEval の要因を drop だけに絞るため）。
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return {
         summary: 'p',
         serial: [{ id: 'T3', desc: 't3', file_changes: ['src/foo.ts'], test_plan: '' }],
@@ -63,7 +63,7 @@ function createResponder(dropLabels) {
         ],
       };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // label 'danger-grep'（issue #544 統合呼び出し）: clean（security path ではないことを保証）+
@@ -81,7 +81,7 @@ function createResponder(dropLabels) {
     if (label.startsWith('test')) {
       return { tests: 'passed', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -96,7 +96,7 @@ function createResponder(dropLabels) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
     // implementer: dropLabels に一致するものだけ null（= drop）を返す
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       if (dropLabels.includes(label)) return null;
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
@@ -160,7 +160,7 @@ test('[impl-drop-micro-eval] sanity: drop 対象の implementer call が実際�
 
 test('[impl-drop-micro-eval] micro + implementer drop 発生時に evaluator が 1 回以上呼ばれること', async () => {
   await ensureDropRun();
-  const evaluatorCalls = dropRun.calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = dropRun.calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `micro + implementer drop 発生時: evaluator は 1 回以上呼ばれるべきだが ${evaluatorCalls.length} 回だった`
@@ -175,7 +175,7 @@ test('[impl-drop-micro-eval] micro + implementer drop 発生時に evaluator が
 
 test('[impl-drop-micro-eval] drop が無い micro run では evaluator が呼ばれないこと（現行挙動の維持）', async () => {
   await ensureCleanRun();
-  const evaluatorCalls = cleanRun.calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = cleanRun.calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(
     evaluatorCalls.length,
     0,

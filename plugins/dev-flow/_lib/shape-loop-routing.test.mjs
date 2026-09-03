@@ -47,11 +47,11 @@ function makeCountingSandbox(analyzeReq) {
       return analyzeReq;
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -63,7 +63,7 @@ function makeCountingSandbox(analyzeReq) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -83,7 +83,7 @@ function makeCountingSandbox(analyzeReq) {
       return { files: ['src/foo.ts'] };
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -183,8 +183,8 @@ test('[shape-loop] SHAPE=standard: plan-reviewer 呼び出し 0 回・evaluator 
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${err.name}: ${err.message}`);
   }
 
-  const reviewerCalls = calls.filter((c) => c.agentType === 'plan-reviewer');
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:plan-reviewer');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
 
   // AC#7 主検証: standard では plan-reviewer を呼ばない（PLAN_SOLO 経路）
   assert.equal(
@@ -223,7 +223,7 @@ test('[shape-loop] SHAPE=complex: plan-reviewer 呼び出し >= 1（制御群）
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${err.name}: ${err.message}`);
   }
 
-  const reviewerCalls = calls.filter((c) => c.agentType === 'plan-reviewer');
+  const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:plan-reviewer');
 
   // 制御群: complex では plan-reviewer が起動する経路（>= 1）
   // standard の 0 と対比し「standard のみ reviewer をスキップする」経路を pin する

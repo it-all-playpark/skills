@@ -61,11 +61,11 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
     }
     // Plan: dev-planner（plan#trivial / plan#standard / plan#N / replan 系）
     // implementer を起動させるため serial 1 件を必ず返す
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 'T1', desc: 'task' }], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -77,7 +77,7 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -97,7 +97,7 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
       return { files: [] };
     }
     // Implementer: 注入した implementerFn(callIndex) を使う
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       const result = implementerFn(implementerCallIndex);
       implementerCallIndex++;
       return result;
@@ -327,7 +327,7 @@ test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-planner 0 �
   }
 
   // agentType==='dev-planner' の呼び出し 0 回
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
   assert.equal(
     plannerCalls.length,
     0,
@@ -398,7 +398,7 @@ test('[needs-clarification] T3: 正常 path（DONE）→ analyze/planner/evaluat
   );
 
   // dev-planner ちょうど 1 回（standard 経路なので plan#standard の 1 回のみ）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
   assert.equal(
     plannerCalls.length,
     1,
@@ -406,7 +406,7 @@ test('[needs-clarification] T3: 正常 path（DONE）→ analyze/planner/evaluat
   );
 
   // evaluator ちょうど 1 回
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(
     evaluatorCalls.length,
     1,
@@ -480,7 +480,7 @@ test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-plan
   );
 
   // dev-planner 3 回（初回 plan#standard + replan-blocked#1 + replan-blocked#2）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
   assert.equal(
     plannerCalls.length,
     3,
@@ -632,7 +632,7 @@ test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarifica
   );
 
   // dev-planner 0 回（曖昧ゲートで Plan 前に return）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
   assert.equal(
     plannerCalls.length,
     0,
@@ -700,7 +700,7 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
   );
 
   // dev-planner 1 回（standard 経路で Plan まで進んだ）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-planner');
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
   assert.equal(
     plannerCalls.length,
     1,

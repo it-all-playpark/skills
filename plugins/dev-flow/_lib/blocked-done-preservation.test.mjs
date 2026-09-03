@@ -37,7 +37,7 @@ function makeSandbox(analyzeReq) {
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       plannerCalls.push({ label, prompt });
       if (label === 'plan#standard') {
         return {
@@ -59,10 +59,10 @@ function makeSandbox(analyzeReq) {
       }
       return { summary: 'p', serial: [], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       if (label === 'impl:serial:T1') {
         return {
           status: 'DONE',
@@ -108,7 +108,7 @@ function makeSandbox(analyzeReq) {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       evalPrompts.push(prompt);
       return {
         verdict: 'pass',
@@ -126,10 +126,10 @@ function makeSandbox(analyzeReq) {
         critical_resolutions: [],
       };
     }
-    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['src/a.ts'] };
     }
-    if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label === 'declared-path-check') {
       return { files: ['src/a.ts'] };
     }
     if (label.startsWith('redgreen')) {

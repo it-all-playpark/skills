@@ -89,10 +89,10 @@ function buildAgentStub({ ciStub, agentCalls }) {
     const promptStr = typeof prompt === 'string' ? prompt : JSON.stringify(prompt);
     agentCalls.push({ label, agentType, prompt: promptStr });
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
-    if (agentType === 'dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && promptStr.includes('check-ci --checks-data')) {
       return ciStub(label);
     }
     if (label.startsWith('fix#')) {

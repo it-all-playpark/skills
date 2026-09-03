@@ -24,12 +24,12 @@ function makeSandbox(journalResult, journalSaveResult) {
     const agentType = opts?.agentType ?? '';
 
     // pr-reviewer: 1 round で LGTM へ
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
 
     // CI チェック: agentType 'dev-runner-haiku-ro' かつ prompt に 'check-ci.sh' を含む
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       return { status: 'passed', failed_checks: [] };
     }
 
@@ -40,23 +40,23 @@ function makeSandbox(journalResult, journalSaveResult) {
 
     // pr-meta: repo probe（F3。issue #309）
     // cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる。
-    if (label === 'pr-meta' && agentType === 'dev-runner-haiku-ro') {
+    if (label === 'pr-meta' && agentType === 'dev-flow:dev-runner-haiku-ro') {
       return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
     }
 
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
     // 返して journal-log (stage2) へ進めさせる。journalSaveResult が Error なら throw する
     // （stage1 の proxy 実行失敗・schema 不一致の再現。issue #499 F4）。
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
       journalSaveCallCount += 1;
       capturedPrompt = typeof prompt === 'string' ? prompt : null;
       if (journalSaveResult instanceof Error) throw journalSaveResult;
       return journalSaveResult ?? { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
 
-    // journal-log (stage2): label === 'journal-log' && agentType === 'dev-runner-haiku'
+    // journal-log (stage2): label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku'
     // journalResult が Error なら throw する（schema 不一致・proxy 実行失敗の再現）。
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       journalCallCount += 1;
       capturedLogPrompt = typeof prompt === 'string' ? prompt : null;
       if (journalResult instanceof Error) throw journalResult;

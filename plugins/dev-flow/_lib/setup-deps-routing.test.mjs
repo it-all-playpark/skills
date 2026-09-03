@@ -95,14 +95,14 @@ function makeCountingSandbox(depsResponse) {
         issue_title: 'stub-issue-title',
       };
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return {
         summary: 'p',
         serial: [{ id: 'T1', desc: 'impl', file_changes: ['src/a.ts'], test_plan: 'none', depends_on: [] }],
         parallel: [],
       };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
@@ -117,7 +117,7 @@ function makeCountingSandbox(depsResponse) {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -134,7 +134,7 @@ function makeCountingSandbox(depsResponse) {
     if (label === 'changed-files') {
       return { files: ['src/a.ts'] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'done', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -214,7 +214,7 @@ test('[setup-deps-routing] (a) worktree-deps failed → workflow 完走 & implem
   const { error } = await runDevFlowInSandbox(src, ctx);
   assertNoCrash(error);
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(
@@ -230,7 +230,7 @@ test('[setup-deps-routing] (b) worktree-deps no_dependencies → implementer pro
   const { error } = await runDevFlowInSandbox(src, ctx);
   assertNoCrash(error);
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(
@@ -246,7 +246,7 @@ test('[setup-deps-routing] (c) worktree-deps null（drop 相当）→ fail-open 
   const { error } = await runDevFlowInSandbox(src, ctx);
   assertNoCrash(error);
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(

@@ -49,10 +49,10 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は riskResponse を risk
@@ -67,12 +67,12 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       evalCalls.push({ label, agentType });
       evalPrompts.push(prompt);
       return evaluatorResponse;
     }
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
     }
     if (label.startsWith('pr')) {
@@ -81,18 +81,18 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (label === 'changed-files') {
       return { files: ['_lib/foo.test.mjs'] };
     }
-    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
+    if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
-    if (label === 'journal-save' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-save' && agentType === 'dev-flow:dev-runner-haiku') {
       journalPrompts.push(prompt);
       return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     }
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };

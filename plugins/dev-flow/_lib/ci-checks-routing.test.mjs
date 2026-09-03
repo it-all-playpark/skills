@@ -54,7 +54,7 @@ function createResponder({ concerns, ciChecksResponse }) {
     }
     // Plan: dev-planner（1 task を serial に置く — task 0 件だと implementer が呼ばれず
     // concerns が classifyConcerns に到達しない）
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return {
         summary: 'p',
         serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }],
@@ -62,7 +62,7 @@ function createResponder({ concerns, ciChecksResponse }) {
       };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / danger-grep 系（danger-grep, danger-grep-final）
@@ -75,7 +75,7 @@ function createResponder({ concerns, ciChecksResponse }) {
     }
     // Evaluate: evaluator。item_updates フィールドは契約に存在しないため使わない
     // （AC の checkItem は ac_results の satisfied:true 経由のみ）
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -110,7 +110,7 @@ function createResponder({ concerns, ciChecksResponse }) {
       return ciChecksResponse;
     }
     // implementer（本経路の main call。concerns はシナリオ別）
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',

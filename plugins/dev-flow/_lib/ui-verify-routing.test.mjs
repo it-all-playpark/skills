@@ -70,16 +70,16 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [{ id: 't1', file_changes: decl }], parallel: [] };
     }
-    if (agentType === 'plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す
     // （files は旧 realized-diff 相当）。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
     if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [],
         feedback_level: 'implementation', ac_results: [], security_clearance: [],
@@ -87,7 +87,7 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: chg };
-    if (agentType === 'implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
@@ -204,7 +204,7 @@ test('[ui-verify] (a) UI touch だが config 無し → ui-verify-server 不発 
     !calls.some((c) => c.label === 'ui-verify-server'),
     '(a) config found:false なら ui-verify-server は呼ばれないはず',
   );
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(
     evaluatorCalls.length,
     0,
@@ -235,7 +235,7 @@ test('[ui-verify] (b) 非 UI ファイルのみ → ui-verify-config が一切�
     !calls.some((c) => c.label && c.label.startsWith('ui-verify')),
     '(b) 非 UI ファイルのみでは ui-verify* label が一切呼ばれないはず（0 オーバーヘッド）',
   );
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(evaluatorCalls.length, 0, `(b) evaluator は 0 回のはずだが ${evaluatorCalls.length} 回`);
   assert.ok(returned !== null, '(b) workflow は return object を返すべきだが null だった');
   assert.equal(returned?.ui_verify, 'skipped', `(b) returned.ui_verify は 'skipped' のはずだが ${JSON.stringify(returned?.ui_verify)}`);
@@ -264,7 +264,7 @@ test('[ui-verify] (c) micro + UI touch + 有効 config → Evaluate 強制 + smo
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  const evaluatorCalls = calls.filter((c) => c.agentType === 'evaluator');
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `(c) micro + UI touch + config あり: evaluator は >= 1 回のはずだが ${evaluatorCalls.length} 回 (AC-5)`,

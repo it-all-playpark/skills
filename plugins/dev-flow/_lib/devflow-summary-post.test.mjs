@@ -50,11 +50,11 @@ function makeSandbox(analyzeReq, postResult) {
       return analyzeReq;
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -67,7 +67,7 @@ function makeSandbox(analyzeReq, postResult) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator stub（最小 pass レスポンス）
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -84,7 +84,7 @@ function makeSandbox(analyzeReq, postResult) {
       };
     }
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false };
     }
     // PR: label が 'pr' で始まる
@@ -97,12 +97,12 @@ function makeSandbox(analyzeReq, postResult) {
       return { files: ['src/foo.ts'] };
     }
     // post-summary（dev-runner-haiku）: 呼び出しカウンタをインクリメントし postResult を返す
-    if (label === 'post-summary' && agentType === 'dev-runner-haiku') {
+    if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       postSummaryCallCount += 1;
       return postResult;
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

@@ -9,7 +9,7 @@
 //   (1) dev-flow.js に識別子 'STAGING_CONVENTION' がちょうど 5 回出現する
 //       （定義 1 + implPrompt/green-fix#i/green-fix#retry-vi/fix#i の 4 usage）
 //   (2) STAGING_CONVENTION 定義（source 全体）に '.devflow-tmp' / 'fm_*.txt' / 'staged' が含まれる
-//   (3) routing: micro または standard 経路で sandbox 実行し、agentType === 'implementer' の
+//   (3) routing: micro または standard 経路で sandbox 実行し、agentType === 'dev-flow:implementer' の
 //       呼び出しが >= 1 件あること
 //   (4) routing: 全 implementer call の prompt に '.devflow-tmp' と 'TMPDIR' と 'staged' が含まれる
 // を assert する。
@@ -104,14 +104,14 @@ function makeCountingSandbox() {
         issue_title: 'stub-issue-title',
       };
     }
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return {
         summary: 'p',
         serial: [{ id: 'T1', desc: 'impl', file_changes: ['src/a.ts'], test_plan: 'none', depends_on: [] }],
         parallel: [],
       };
     }
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
@@ -126,7 +126,7 @@ function makeCountingSandbox() {
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass',
         total: 100,
@@ -143,7 +143,7 @@ function makeCountingSandbox() {
     if (label === 'changed-files') {
       return { files: ['src/a.ts'] };
     }
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'done', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -220,7 +220,7 @@ test('[staging-convention] routing: implementer prompt 全件に規約トーク�
     assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
   }
 
-  const implCalls = calls.filter((c) => c.agentType === 'implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
 
   assert.ok(
     implCalls.length >= 1,

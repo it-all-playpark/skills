@@ -47,11 +47,11 @@ function makeSandbox(analyzeReq, responses) {
       return analyzeReq;
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       return { summary: 'p', serial: [], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -64,21 +64,21 @@ function makeSandbox(analyzeReq, responses) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator stub が呼び出し回数を記録し、responses 配列に応じた応答を返す
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       evalCalls.push({ label, agentType });
       const idx = Math.min(evalCalls.length - 1, responses.length - 1);
       return responses[idx];
     }
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
     }
     // realized-diff（Security floor）: dev-runner-haiku, label='realized-diff', CHANGED schema
-    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['src/foo.ts'] };
     }
     // declared-path-check（Validate）: dev-runner-haiku, label='declared-path-check', CHANGED schema
-    if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label === 'declared-path-check') {
       return { files: ['src/foo.ts'] };
     }
     // PR: label が 'pr' で始まる
@@ -91,7 +91,7 @@ function makeSandbox(analyzeReq, responses) {
       return { files: ['src/foo.ts'] };
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

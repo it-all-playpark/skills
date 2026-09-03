@@ -189,12 +189,12 @@ function makeSandbox({ isolationProbeResult, journalResult }) {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
 
-    if (label === 'isolation-probe' && agentType === 'dev-runner-haiku-wo') {
+    if (label === 'isolation-probe' && agentType === 'dev-flow:dev-runner-haiku-wo') {
       isolationProbeCallCount += 1;
       return isolationProbeResult;
     }
 
-    if (agentType === 'pr-reviewer') {
+    if (agentType === 'dev-flow:pr-reviewer') {
       reviewerCallCount += 1;
       return { decision: 'approve', issues: [], summary: 'ok' };
     }
@@ -204,7 +204,7 @@ function makeSandbox({ isolationProbeResult, journalResult }) {
       return { applied: true, files: [], summary: 'fixed' };
     }
 
-    if (agentType === 'dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && typeof prompt === 'string' && prompt.includes('check-ci --checks-data')) {
       return { status: 'passed', failed_checks: [] };
     }
 
@@ -212,11 +212,11 @@ function makeSandbox({ isolationProbeResult, journalResult }) {
       return { posted: true, method: 'gh', url: 'http://x' };
     }
 
-    if (label === 'pr-meta' && agentType === 'dev-runner-haiku-ro') {
+    if (label === 'pr-meta' && agentType === 'dev-flow:dev-runner-haiku-ro') {
       return { url: 'https://github.com/acme/skills/pull/5', head_ref: 'feature/x', base_ref: 'main', cwd: '/tmp/wt' };
     }
 
-    if (label === 'journal-log' && agentType === 'dev-runner-haiku') {
+    if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return journalResult ?? { logged: true, summary: 'ok' };
     }
 

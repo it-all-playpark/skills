@@ -50,7 +50,7 @@ function makeSandbox(analyzeReq) {
       return analyzeReq;
     }
     // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-planner') {
+    if (agentType === 'dev-flow:dev-planner') {
       // replan#N ラベル（Evaluate phase の design replan）だけを replanCalls に記録する
       // plan#... や replan-blocked#N は混入させない
       if (/^replan#\d+$/.test(label)) {
@@ -59,7 +59,7 @@ function makeSandbox(analyzeReq) {
       return { summary: 'p', serial: [], parallel: [] };
     }
     // Plan reviewer
-    if (agentType === 'plan-reviewer') {
+    if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
@@ -72,7 +72,7 @@ function makeSandbox(analyzeReq) {
       return { tests: 'no_tests', green: true, summary: '' };
     }
     // Evaluate: evaluator stub が呼び出し回数を記録し、callIndex に応じた異なる topic を生成する
-    if (agentType === 'evaluator') {
+    if (agentType === 'dev-flow:evaluator') {
       const callIndex = evalCalls.length;
       evalCalls.push({ label, agentType, callIndex });
       // 毎回異なる topic を生成（paraphrase 模倣 = evalSeen の stuck 検出が発火しない）
@@ -99,15 +99,15 @@ function makeSandbox(analyzeReq) {
       };
     }
     // redgreen-verify は呼ばれないはずだが念のため（verified_by:'inspection' で回避）
-    if (agentType === 'dev-runner-haiku' && label.startsWith('redgreen')) {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen')) {
       return { red: false, green: false, reason: 'stub' };
     }
     // realized-diff（Security floor）: dev-runner-haiku, label='realized-diff', CHANGED schema
-    if (agentType === 'dev-runner-haiku-ro' && label === 'realized-diff') {
+    if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['src/foo.ts'] };
     }
     // declared-path-check（Validate）: dev-runner-haiku, label='declared-path-check', CHANGED schema
-    if (agentType === 'dev-runner-haiku' && label === 'declared-path-check') {
+    if (agentType === 'dev-flow:dev-runner-haiku' && label === 'declared-path-check') {
       return { files: ['src/foo.ts'] };
     }
     // PR: label が 'pr' で始まる
@@ -120,7 +120,7 @@ function makeSandbox(analyzeReq) {
       return { files: ['src/foo.ts'] };
     }
     // implementer その他
-    if (agentType === 'implementer') {
+    if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
