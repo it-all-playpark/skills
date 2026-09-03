@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
-const SKILLS_LOCK_PATH = path.join(REPO_ROOT, 'skills-lock.json');
+const SKILLS_LOCK_PATH = path.join(REPO_ROOT, 'plugins', 'playpark-skills', 'skills-lock.json');
 const GITIGNORE_PATH = path.join(REPO_ROOT, '.gitignore');
 const REMOTION_VIDEO_SKILL_PATH = path.join(
   REPO_ROOT,

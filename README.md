@@ -91,13 +91,27 @@ ln -sf <repo>/plugins/playpark-skills ~/.<tool>/skills
 
 ### External Skills Integration (skills.sh)
 
-[skills.sh](https://skills.sh) で取得した外部スキルは `.agents/skills/` に配置し、シンボリックリンクで統合できます。
+[skills.sh](https://skills.sh) で取得した外部スキルは `plugins/playpark-skills/.agents/skills/` に
+配置し、`plugins/playpark-skills/` 直下へのシンボリックリンクで統合します。
 
 ```bash
+# 復元（新規マシン）: lockfile と実体は plugin 配下にあるので CWD を移して実行する
+cd plugins/playpark-skills && npx skills experimental_install
+
 # Automated symlink management
 plugins/playpark-core/_lib/infra/link-agent-skills.sh    # Create symlinks + update .gitignore
 plugins/playpark-core/_lib/infra/unlink-agent-skills.sh  # Remove symlinks
 ```
+
+実体を repo root の `.agents/` ではなく plugin 配下に置くのは、`claude plugin install`
+（mode: link）が **plugin ディレクトリの外を指す top-level entry を見つけると install 自体を
+拒否する**ためです。root に実体を置くと symlink が plugin の外へ脱出してこのガードに引っかかり、
+`playpark-skills` が install できなくなります。実体を plugin 配下に移せば symlink が plugin 内で
+完結し、実体は 1 箇所のまま（コピーによる二重管理なし）install が通ります。
+
+なお `.agents/` は `.gitignore` されているため、外部スキルは plugin に同梱されません。GitHub
+marketplace 経由の `/plugin install playpark-skills@playpark` では入らないので、必要なら上の
+復元コマンドを別途実行してください。
 
 ## 設定（skill-config.json）
 
@@ -460,7 +474,7 @@ config = load_skill_config("ga-analyzer")
 | `suica-to-csv` | モバイルSuica明細PDFをマネーフォワード経費CSVに変換 |
 | `agent-browser` | ブラウザ自動操作（ページ操作/スクレイピング/テスト） 🔗 |
 
-> 🔗 = skills.sh 由来の外部スキル（`.agents/skills/` からシンボリックリンク）
+> 🔗 = skills.sh 由来の外部スキル（`plugins/playpark-skills/.agents/skills/` からシンボリックリンク。gitignored のため plugin には同梱されない）
 
 ## 使い方
 
@@ -508,14 +522,15 @@ skills/
 │       │   ├── scripts/                  # 実行スクリプト
 │       │   ├── references/               # 参照ドキュメント
 │       │   └── assets/                   # アセット
-│       └── <skill-name> -> ../../.agents/skills/<name>  # 外部スキル（symlink）
-├── .agents/skills/                       # 外部スキル実体（gitignored）
+│       ├── <skill-name> -> .agents/skills/<name>  # 外部スキル（symlink・gitignored）
+│       ├── .agents/skills/               # 外部スキル実体（gitignored）
+│       └── skills-lock.json              # 外部スキルの lockfile（tracked）
 ├── tools/                                 # sync-inlines.mjs 等 repo 全体ツール
 ├── tests/                                 # bats / vitest ランナーと横断テスト
 ├── docs/                                  # dev-flow-atlas.md 等ドキュメント
 ├── .claude/rules/                         # dev-flow.md（正典）
 ├── .claude-plugin/marketplace.json        # 3 plugin の登録
-├── .gitignore                             # 外部スキルsymlinkを自動管理
+├── .gitignore                             # 外部スキルsymlink・実体を自動管理
 └── README.md
 ```
 
