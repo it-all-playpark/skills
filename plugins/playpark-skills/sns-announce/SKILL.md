@@ -135,10 +135,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log sns-announce success \
+journal log sns-announce success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log sns-announce failure \
+journal log sns-announce failure \
   --error-category <category> --error-msg "<message>"
 ```

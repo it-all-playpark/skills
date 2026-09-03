@@ -28,7 +28,7 @@ blog-cross-post出力をQiitaに**限定共有**として投稿。
 ## Init
 
 ```bash
-bash $SKILLS_DIR/qiita-publish/scripts/publish.sh <file-path> [--public]
+qiita-publish <file-path> [--public]
 ```
 
 ## References
@@ -42,10 +42,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log qiita-publish success \
+journal log qiita-publish success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log qiita-publish failure \
+journal log qiita-publish failure \
   --error-category <category> --error-msg "<message>"
 ```

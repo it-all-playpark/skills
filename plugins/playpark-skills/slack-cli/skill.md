@@ -112,10 +112,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log slack-cli success \
+journal log slack-cli success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log slack-cli failure \
+journal log slack-cli failure \
   --error-category <category> --error-msg "<message>"
 ```

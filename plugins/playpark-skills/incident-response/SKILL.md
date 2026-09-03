@@ -67,7 +67,7 @@ State persisted in `$CWD/.claude/incident-state.json`. Script commands and outpu
 
 ## Journal Logging
 
-`$SKILLS_DIR/skill-retrospective/scripts/journal.sh log incident-response {success|failure} [--context "lines=..."] [--error-category runtime --error-msg "..."]`
+`journal log incident-response {success|failure} [--context "lines=..."] [--error-category runtime --error-msg "..."]`
 
 ## References
 

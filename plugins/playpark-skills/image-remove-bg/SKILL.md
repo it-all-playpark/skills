@@ -58,10 +58,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-remove-bg success \
+journal log image-remove-bg success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-remove-bg failure \
+journal log image-remove-bg failure \
   --error-category <category> --error-msg "<message>"
 ```

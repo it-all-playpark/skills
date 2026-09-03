@@ -9,7 +9,7 @@ Journal entries are stored at `~/.claude/journal/`:
 ls ~/.claude/journal/*.json | wc -l
 
 # Read entries since date
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh query \
+journal query \
   --since "2026-02-01" --skill dev-kickoff
 ```
 
@@ -49,13 +49,8 @@ For each failure entry:
 
 For each detected pattern:
 
-```bash
-# Read the affected skill's SKILL.md
-SKILL_PATH=$SKILLS_DIR/${SKILL_NAME}/SKILL.md
-
-# Check if the skill already handles this case
-grep -c "${ERROR_PATTERN}" "$SKILL_PATH"
-```
+1. Glob `**/<skill_name>/SKILL.md` で対象 skill の SKILL.md を特定する（skill は複数 plugin root に跨るため単一パス変数は使わない）
+2. Grep `<error_pattern>` を同ファイルに対して実行し、既に扱われているか確認する
 
 Determine gap type:
 - **Missing instruction**: Skill doesn't mention the prerequisite/step

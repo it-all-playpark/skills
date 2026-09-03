@@ -63,10 +63,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-resize success \
+journal log image-resize success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-resize failure \
+journal log image-resize failure \
   --error-category <category> --error-msg "<message>"
 ```

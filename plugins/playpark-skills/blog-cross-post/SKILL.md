@@ -93,7 +93,7 @@ Zennで伸びる記事は「コードを貼って終わり」ではなく、**�
 ## Init
 
 ```bash
-bash $SKILLS_DIR/blog-cross-post/scripts/resolve-source.sh <slug-or-path>
+blog-cross-post-resolve-source <slug-or-path>
 ```
 
 ## Workflow
@@ -155,8 +155,8 @@ bash $SKILLS_DIR/blog-cross-post/scripts/resolve-source.sh <slug-or-path>
 ## References
 
 - `references/cross-post-strategy.md` - 差別化方針・コア版設計原則・共通変換ルール
-- `$SKILLS_DIR/zenn-publish/references/content-guide.md` - Zennテンプレート・変換ルール・SEO
-- `$SKILLS_DIR/qiita-publish/references/content-guide.md` - Qiitaテンプレート・変換ルール・SEO
+- `${CLAUDE_PLUGIN_ROOT}/zenn-publish/references/content-guide.md` - Zennテンプレート・変換ルール・SEO
+- `${CLAUDE_PLUGIN_ROOT}/qiita-publish/references/content-guide.md` - Qiitaテンプレート・変換ルール・SEO
 
 ## Journal Logging
 
@@ -164,10 +164,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-cross-post success \
+journal log blog-cross-post success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log blog-cross-post failure \
+journal log blog-cross-post failure \
   --error-category <category> --error-msg "<message>"
 ```

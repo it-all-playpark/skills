@@ -90,10 +90,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log session-load success \
+journal log session-load success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log session-load failure \
+journal log session-load failure \
   --error-category <category> --error-msg "<message>"
 ```

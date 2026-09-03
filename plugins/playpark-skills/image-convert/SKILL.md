@@ -71,10 +71,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-convert success \
+journal log image-convert success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log image-convert failure \
+journal log image-convert failure \
   --error-category <category> --error-msg "<message>"
 ```

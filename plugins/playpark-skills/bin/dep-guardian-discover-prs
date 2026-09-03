@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec bash "$(dirname "$0")/../dep-guardian/scripts/discover-prs.sh" "$@"

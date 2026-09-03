@@ -158,8 +158,8 @@ dev-flow-doctor/scripts/compare-baseline.sh --rolling --window <N>d [--config <p
 ### run-diagnostics.sh integration
 
 ```
-dev-flow-doctor/scripts/run-diagnostics.sh --compare <baseline-path>
-dev-flow-doctor/scripts/run-diagnostics.sh --update-baseline <path>
+run-diagnostics --compare <baseline-path>
+run-diagnostics --update-baseline <path>
 ```
 
 - `--compare <path>`: 既存 7 scopes に加えて `checks.baseline_compare` セクションを追加。
@@ -237,7 +237,7 @@ jobs:
 - baseline (template) の `glue_errors.count: 0` と current の `0` を比較 → 常に "no regression" で pass
 - これは **structural pipeline check**（snapshot → compare の連鎖が壊れていないことを確認）
 - 実 regression 検知はローカル開発で `.claude/dev-flow-doctor-baseline-pre-79.json` を populate した状態で行う
-- baseline 再生成: `./dev-flow-doctor/scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d`
+- baseline 再生成: `run-diagnostics --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d`
 
 ### weekly snapshot artifact パターン
 
@@ -270,7 +270,7 @@ health score に最大 **-15** の penalty を加算する:
 長期間運用で baseline が古くなった場合の更新手順:
 
 1. 直近 30 日の安定状態を確認（PR や incident が落ち着いた時期）
-2. `./dev-flow-doctor/scripts/run-diagnostics.sh --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d`
+2. `run-diagnostics --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d`
 3. 出力された JSON を目視確認（`glue_errors.count` / `per_skill[*].failure_rate`）
 4. 大きく変動している場合は backup を残してから上書き
 5. `templates/baseline-pre-79.example.json` は schema 進化時にのみ更新

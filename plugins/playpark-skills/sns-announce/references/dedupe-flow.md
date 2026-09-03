@@ -1,13 +1,12 @@
 # Dedupe Pre-Query Flow
 
-Uses `$SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts`:
+Zernio API（`ZERNIO_API_KEY` 必須）に予約済みプラットフォームを事前照会し、未予約分だけ生成する。
 
 ```bash
 # Step 1: Extract date from article metadata
 DATE="2026-01-20"  # from frontmatter
 
-# Step 2: Query Zernio API for scheduled platforms
-npx tsx $SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date $DATE --platforms x,linkedin,googlebusiness,facebook,bluesky,threads
+# Step 2: Query Zernio API for scheduled platforms (returns JSON: {date, needed[], scheduled[]})
 
 # Output: { "date": "2026-01-20", "needed": ["x", "facebook"], "scheduled": ["linkedin", "googlebusiness", "bluesky", "threads"] }
 
@@ -21,14 +20,11 @@ Requires `ZERNIO_API_KEY` environment variable (global).
 
 ```bash
 # Load config
-$SKILLS_DIR/sns-announce/scripts/load-config.sh [project-root]
+sns-announce-load-config [project-root]
 
 # Extract metadata (for file input)
-$SKILLS_DIR/sns-announce/scripts/extract-metadata.sh <file> --base-url URL
+sns-announce-extract-metadata <file> --base-url URL
 
 # Get optimal posting time
-$SKILLS_DIR/sns-announce/scripts/get-posting-time.sh <platform> [--date YYYY-MM-DD]
-
-# Check scheduled platforms (for --dedupe optimization)
-$SKILLS_DIR/sns-dedupe/scripts/check-scheduled.ts --date YYYY-MM-DD --platforms LIST
+sns-announce-get-posting-time <platform> [--date YYYY-MM-DD]
 ```

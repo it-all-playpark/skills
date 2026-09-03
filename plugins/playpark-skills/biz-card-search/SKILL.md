@@ -66,10 +66,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-search success \
+journal log biz-card-search success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log biz-card-search failure \
+journal log biz-card-search failure \
   --error-category <category> --error-msg "<message>"
 ```

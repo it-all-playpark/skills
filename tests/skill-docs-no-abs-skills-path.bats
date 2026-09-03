@@ -22,19 +22,29 @@ setup() {
 
 # $SKILLS_DIR は _lib/common.sh を source した script の中でだけ定義される（core plugin root）。
 # SKILL.md / references の実行例は agent の素の Bash shell で走るため未定義に展開され、
-# symlink 撤去後は解決先も無い。journal は core bin/ の bare 名、それ以外は
+# symlink 撤去後は解決先も無い。journal は core bin/ の bare 名、skill 内スクリプトは
+# 各 plugin bin/ の bare 名（`<skill>-<action>`）、SKILL.md 内のドキュメント参照のみ
 # ${CLAUDE_PLUGIN_ROOT} 相対で書く。
-#
-# playpark-skills 配下（約20 skill / 約40行）は #571 以前からの規約で同じ形が残っており、
-# 一括置換は #585 に切り出してある。#585 が入ったら下の pathspec 限定を外して全 plugin を
-# 対象にする。ここでは dev-flow / playpark-core と skill-creator の template を pin する。
-@test "dev-flow/playpark-core のSKILL.md/referencesに\$SKILLS_DIR 実行例が残っていない" {
+@test "全pluginのSKILL.md/referencesに\$SKILLS_DIR 実行例が残っていない" {
     run git -C "$REPO_ROOT" grep -nIF \
         -e '$SKILLS_DIR/' \
         -e '${SKILLS_DIR}/' \
-        -- 'plugins/dev-flow/*SKILL.md' 'plugins/dev-flow/*references/*.md' \
-           'plugins/playpark-core/*SKILL.md' \
-           'plugins/playpark-skills/skill-creator/assets/skill-template.md'
+        -- '*SKILL.md' '*skill.md' '*references/*.md' \
+           'plugins/playpark-skills/skill-creator/assets/skill-template.md' \
+           ':(exclude).claude/'
+    echo "$output"
+    [ "$status" -ne 0 ]
+}
+
+# references/*.md は Read tool で素読みされるため ${CLAUDE_PLUGIN_ROOT} が展開されない
+# （skills#567 実測）。references からの script 呼び出しは bin/ の bare 名で書く。
+# SKILL.md / agents/*.md は content として展開されるので対象外。
+@test "全pluginのreferencesに\${CLAUDE_PLUGIN_ROOT} 参照が残っていない" {
+    run git -C "$REPO_ROOT" grep -nIF \
+        -e '${CLAUDE_PLUGIN_ROOT}' \
+        -e '$CLAUDE_PLUGIN_ROOT' \
+        -- '*references/*.md' \
+           ':(exclude).claude/'
     echo "$output"
     [ "$status" -ne 0 ]
 }

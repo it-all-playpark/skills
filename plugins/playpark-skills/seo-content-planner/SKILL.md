@@ -101,10 +101,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-content-planner success \
+journal log seo-content-planner success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log seo-content-planner failure \
+journal log seo-content-planner failure \
   --error-category <category> --error-msg "<message>"
 ```

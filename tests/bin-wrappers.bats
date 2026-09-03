@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Invariant (#571): bin/ exec ラッパーは playpark-core (journal 1本) と
-# dev-flow (17本) に分割される。plugin install 環境では skills が
+# dev-flow (18本) に分割される。plugin install 環境では skills が
 # plugin root 配下に入るため、絶対パス runtime 依存を断つ。
 #
 # 分割後もラッパーは plugin 境界を跨がない: 3 行目の target は
@@ -43,12 +43,42 @@ diff-risk-classify
 ensure-worktree-deps
 hypothesis-check
 redgreen-verify
+run-diagnostics
 secfloor-classify
 structural-classify
 ui-verify-server
 veridelta-archive
 worktree-diff-hash
 worktree-teardown
+EOF
+}
+
+skills_expected_names() {
+    cat <<'EOF'
+bgm-normalize-audio
+bgm-process
+blog-cross-post-resolve-source
+blog-find-articles
+blog-mv-date
+blog-swap-dates
+bug-hunt-state
+code-audit-team-state
+dep-guardian-classify-pr
+dep-guardian-discover-prs
+dep-guardian-merge-prs
+dep-guardian-test-pr
+qiita-publish
+repo-commit
+repo-export
+repo-issue
+repo-pr
+skill-creator-init
+sns-announce-extract-metadata
+sns-announce-get-posting-time
+sns-announce-load-config
+video-announce-extract-thumbnail
+yt-chorus-extract
+zenn-publish
 EOF
 }
 
@@ -70,8 +100,39 @@ target_for() {
         analyze-issue) echo "dev-issue-analyze/scripts/analyze-issue.sh" ;;
         hypothesis-check) echo "dev-flow-improve/scripts/hypothesis-check.sh" ;;
         analyze-dev-flow-telemetry) echo "dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh" ;;
+        run-diagnostics) echo "dev-flow-doctor/scripts/run-diagnostics.sh" ;;
         detect-stack) echo "_lib/scripts/detect-stack.sh" ;;
         ac-lint) echo "_lib/scripts/ac-lint.sh" ;;
+        *) echo "" ;;
+    esac
+}
+
+skills_target_for() {
+    case "$1" in
+        bgm-process) echo "bash bgm/scripts/process-bgm.sh" ;;
+        bgm-normalize-audio) echo "bash bgm/scripts/normalize-audio.sh" ;;
+        blog-cross-post-resolve-source) echo "bash blog-cross-post/scripts/resolve-source.sh" ;;
+        blog-find-articles) echo "bash _shared/scripts/find-articles.sh" ;;
+        blog-mv-date) echo "bash blog-mv-date/scripts/move-date.sh" ;;
+        blog-swap-dates) echo "bash blog-swap-dates/scripts/swap-dates.sh" ;;
+        bug-hunt-state) echo "bash bug-hunt/scripts/hunt-state.sh" ;;
+        code-audit-team-state) echo "bash code-audit-team/scripts/audit-state.sh" ;;
+        dep-guardian-discover-prs) echo "bash dep-guardian/scripts/discover-prs.sh" ;;
+        dep-guardian-classify-pr) echo "bash dep-guardian/scripts/classify-pr.sh" ;;
+        dep-guardian-test-pr) echo "bash dep-guardian/scripts/test-pr.sh" ;;
+        dep-guardian-merge-prs) echo "bash dep-guardian/scripts/merge-prs.sh" ;;
+        qiita-publish) echo "bash qiita-publish/scripts/publish.sh" ;;
+        zenn-publish) echo "bash zenn-publish/scripts/publish.sh" ;;
+        repo-commit) echo "python3 repo-commit/scripts/export_commit.py" ;;
+        repo-export) echo "python3 repo-export/scripts/export_repo.py" ;;
+        repo-issue) echo "python3 repo-issue/scripts/export_issue.py" ;;
+        repo-pr) echo "python3 repo-pr/scripts/export_pr.py" ;;
+        skill-creator-init) echo "python3 skill-creator/scripts/init_skill.py" ;;
+        sns-announce-load-config) echo "bash sns-announce/scripts/load-config.sh" ;;
+        sns-announce-extract-metadata) echo "bash sns-announce/scripts/extract-metadata.sh" ;;
+        sns-announce-get-posting-time) echo "bash sns-announce/scripts/get-posting-time.sh" ;;
+        video-announce-extract-thumbnail) echo "bash video-announce/scripts/extract-thumbnail.sh" ;;
+        yt-chorus-extract) echo "bash yt-chorus-extract/scripts/extract.sh" ;;
         *) echo "" ;;
     esac
 }
@@ -82,7 +143,7 @@ target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象17本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象18本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]
@@ -168,6 +229,67 @@ target_for() {
             esac
         done <<< "$names"
     done
+
+    while IFS= read -r name; do
+        target_pair="$(skills_target_for "$name")"
+        [ -n "$target_pair" ]
+        target="${target_pair#* }"
+        case "$target" in
+            *../*)
+                echo "plugin boundary crossed: plugins/playpark-skills/bin/$name -> $target"
+                return 1
+                ;;
+        esac
+    done <<< "$(skills_expected_names)"
+}
+
+@test "plugins/playpark-skills/bin の entry は対象24本と完全一致する" {
+    expected="$(skills_expected_names)"
+    actual="$(/bin/ls -1 "$REPO_ROOT/plugins/playpark-skills/bin" | sort)"
+    [ "$actual" = "$expected" ]
+}
+
+@test "skills: 全wrapperがgit index上でexecutable(100755)である" {
+    while IFS= read -r name; do
+        run git -C "$REPO_ROOT" ls-files -s "plugins/playpark-skills/bin/$name"
+        [ "$status" -eq 0 ]
+        case "$output" in
+            100755\ *) : ;;
+            *)
+                echo "not executable in index: plugins/playpark-skills/bin/$name -> $output"
+                return 1
+                ;;
+        esac
+    done <<< "$(skills_expected_names)"
+}
+
+@test "skills: 全wrapperの本文が3行exec形式(interp対応)に一致し対象ファイルが存在しbash -nが通る" {
+    plugin_root="$REPO_ROOT/plugins/playpark-skills"
+    while IFS= read -r name; do
+        target_pair="$(skills_target_for "$name")"
+        [ -n "$target_pair" ]
+        interp="${target_pair%% *}"
+        target="${target_pair#* }"
+        file="$plugin_root/bin/$name"
+        [ -f "$file" ]
+
+        line1=$(sed -n '1p' "$file")
+        [ "$line1" = "#!/usr/bin/env bash" ]
+
+        line3=$(sed -n '3p' "$file")
+        expected_line3="exec $interp \"\$(dirname \"\$0\")/../$target\" \"\$@\""
+        [ "$line3" = "$expected_line3" ]
+
+        [ -f "$plugin_root/$target" ]
+
+        run bash -n "$file"
+        [ "$status" -eq 0 ]
+    done <<< "$(skills_expected_names)"
+}
+
+@test "blog-find-articlesがbin経由bare名で機能透過する(引数なしはusageエラー)" {
+    run bash "$REPO_ROOT/plugins/playpark-skills/bin/blog-find-articles"
+    [ "$status" -ne 0 ]
 }
 
 @test "detect-stackがbin経由bare名で機能透過する" {

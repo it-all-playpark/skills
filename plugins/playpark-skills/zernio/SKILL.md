@@ -142,10 +142,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log zernio success \
+journal log zernio success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log zernio failure \
+journal log zernio failure \
   --error-category <category> --error-msg "<message>"
 ```

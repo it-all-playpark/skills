@@ -54,10 +54,10 @@ description: |
 
 ```bash
 # BGM処理 + ミキシング
-$SKILLS_DIR/bgm/scripts/process-bgm.sh <bgm> <voiceover> <output> [duration] [volume] [fade]
+bgm-process <bgm> <voiceover> <output> [duration] [volume] [fade]
 
 # ラウドネス正規化
-$SKILLS_DIR/bgm/scripts/normalize-audio.sh <input> [output]
+bgm-normalize-audio <input> [output]
 ```
 
 FFmpeg の詳細オプション: [FFmpeg ガイド](references/ffmpeg-guide.md)
@@ -79,10 +79,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log bgm success \
+journal log bgm success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log bgm failure \
+journal log bgm failure \
   --error-category <category> --error-msg "<message>"
 ```

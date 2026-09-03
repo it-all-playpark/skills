@@ -322,9 +322,11 @@ workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plug
 の絶対パスも `bash ` 前置も書かない（plugin install 環境では skills が plugin root 配下に入り絶対パスが
 破綻する。`bin/` は plugin enable 中 Bash tool の PATH に載り、dotfiles 側 `sandbox.excludedCommands` は
 先頭トークン＝bare 名で登録される — it-all-playpark/dotfiles#177 と対で運用。片側だけ変えると dev-flow が
-止まる）。`bin/<name>` は本体へ `exec bash` する 3 行 wrapper で、本体と隣接 `*.bats` は移動しない。
+止まる）。`bin/<name>` は本体へ `exec bash` する 3 行 wrapper（.py 本体は `exec python3`）で、
+本体と隣接 `*.bats` は移動しない。
 登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する
-（core `journal` 1 本 + dev-flow 17 本）。
+（core `journal` 1 本 + dev-flow 18 本 + playpark-skills 24 本。playpark-skills は
+`<skill>-<action>` 命名で `tests/bin-wrappers.bats` が pin）。
 `journal_sh` payload の `'journal'` は Stop hook の `[[ -x ]]` を通らず FALLBACK_JOURNAL に倒れる（fail-open、意図どおり）。
 
 plugin version を上げた直後の解決確認は、**update 後に起動し直した Claude Code セッション内**で

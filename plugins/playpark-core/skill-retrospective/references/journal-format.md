@@ -4,17 +4,17 @@ Skills log via helper script:
 
 ```bash
 # Log success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log <skill> success \
+journal log <skill> success \
   [--issue N] [--duration-turns N] [--context "key=value"]
 
 # Log failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log <skill> failure \
+journal log <skill> failure \
   --error-category <cat> --error-msg "message" \
   [--error-phase "phase_name"] \
   [--recovery "what was done"] [--recovery-turns N]
 
 # Log partial (completed with issues)
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log <skill> partial \
+journal log <skill> partial \
   --error-category <cat> --error-msg "message" \
   --recovery "workaround applied" --recovery-turns N
 ```

@@ -13,12 +13,12 @@ video-announce ワークフローの詳細実装ガイド。
 
 ```bash
 # Instagram用
-$SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
+video-announce-extract-thumbnail <video-path> \
   --offset-ms <thumbOffset> \
   --output <output.dir>/thumbnails/instagram/<slug>.jpg
 
 # YouTube用
-$SKILLS_DIR/video-announce/scripts/extract-thumbnail.sh <video-path> \
+video-announce-extract-thumbnail <video-path> \
   --offset-ms <thumbOffset> \
   --output <output.dir>/thumbnails/youtube/<slug>.jpg
 ```

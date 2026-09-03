@@ -69,10 +69,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log generate-thumbnail success \
+journal log generate-thumbnail success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log generate-thumbnail failure \
+journal log generate-thumbnail failure \
   --error-category <category> --error-msg "<message>"
 ```

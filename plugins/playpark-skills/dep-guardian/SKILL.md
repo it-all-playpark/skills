@@ -41,7 +41,7 @@ Triage, test, and batch-merge dependency update PRs.
 ## Phase 1: Discover
 
 ```bash
-$SKILLS_DIR/dep-guardian/scripts/discover-prs.sh [--label LABEL]
+dep-guardian-discover-prs [--label LABEL]
 # Output: {"status":"ok","label":"dependencies","count":N,"prs":[...]}
 ```
 
@@ -50,7 +50,7 @@ $SKILLS_DIR/dep-guardian/scripts/discover-prs.sh [--label LABEL]
 For each PR from Phase 1:
 
 ```bash
-$SKILLS_DIR/dep-guardian/scripts/classify-pr.sh --title "PR_TITLE" --body "PR_BODY" [--is-dev-dep]
+dep-guardian-classify-pr --title "PR_TITLE" --body "PR_BODY" [--is-dev-dep]
 # Output: {"risk":"patch|minor|major|breaking","package":"name","from":"x.y.z","to":"a.b.c","is_dev_dep":bool}
 ```
 
@@ -74,7 +74,7 @@ Within same risk level: devDependencies first, then alphabetical.
 For each PR (in risk order):
 
 ```bash
-$SKILLS_DIR/dep-guardian/scripts/test-pr.sh <pr-number>
+dep-guardian-test-pr <pr-number>
 # Output: {"pr":N,"build":"pass|fail|skipped","test":"pass|fail|skipped","typecheck":"pass|fail|skipped","overall":"pass|fail","errors":[...]}
 ```
 
@@ -113,7 +113,7 @@ LLM generates a markdown summary table:
 ## Phase 6: Merge (if --auto-merge)
 
 ```bash
-$SKILLS_DIR/dep-guardian/scripts/merge-prs.sh <pr-numbers-comma-separated> [--dry-run]
+dep-guardian-merge-prs <pr-numbers-comma-separated> [--dry-run]
 # Output: {"merged":[...],"skipped":[...],"errors":[...],"dry_run":bool}
 ```
 
@@ -136,7 +136,7 @@ Safety checks (enforced by script):
 On completion, log to skill-retrospective:
 
 ```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dep-guardian success \
+journal log dep-guardian success \
   --context "analyzed=$TOTAL,merged=$MERGED,skipped=$SKIPPED"
 ```
 

@@ -72,10 +72,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log trends-analyzer success \
+journal log trends-analyzer success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log trends-analyzer failure \
+journal log trends-analyzer failure \
   --error-category <category> --error-msg "<message>"
 ```

@@ -38,10 +38,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log get-publish-date success \
+journal log get-publish-date success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log get-publish-date failure \
+journal log get-publish-date failure \
   --error-category <category> --error-msg "<message>"
 ```
