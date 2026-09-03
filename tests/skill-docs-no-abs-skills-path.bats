@@ -30,6 +30,7 @@ setup() {
         -e '$SKILLS_DIR/' \
         -e '${SKILLS_DIR}/' \
         -- '*SKILL.md' '*skill.md' '*references/*.md' \
+           'plugins/playpark-skills/skill-creator/assets/skill-template.md' \
            ':(exclude).claude/'
     echo "$output"
     [ "$status" -ne 0 ]
