@@ -147,10 +147,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-issue-analyze success \
+journal log dev-issue-analyze success \
   --issue $ISSUE --duration-turns $TURNS
 
 # On failure (issue not found, API error, etc.)
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-issue-analyze failure \
+journal log dev-issue-analyze failure \
   --issue $ISSUE --error-category <category> --error-msg "<message>"
 ```

@@ -41,10 +41,10 @@ Step 1 → Step 2 → Step 3
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log {{skill_name}} success
+journal log {{skill_name}} success
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log {{skill_name}} failure \
+journal log {{skill_name}} failure \
   --error-category <category> --error-msg "<message>"
 ```
 

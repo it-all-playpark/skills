@@ -5,6 +5,10 @@ paths:
   - "plugins/dev-flow/agents/**"
   - "plugins/dev-flow/.claude/agents/**"
   - "plugins/dev-flow/_lib/**"
+  - "plugins/dev-flow/_shared/**"
+  - "plugins/dev-flow/dev-flow/**"
+  - "plugins/dev-flow/dev-flow-doctor/**"
+  - "plugins/dev-flow/dev-flow-improve/**"
   - "tools/**"
 ---
 

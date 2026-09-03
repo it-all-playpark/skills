@@ -47,7 +47,11 @@ Use skills in Claude Code:
    settings.json で行います。`extraKnownMarketplaces` に command source（本 repo の絶対パス）を
    `"mode": "link"` で登録し、`enabledPlugins` に `playpark-core` / `dev-flow` /
    `playpark-skills` の 3 件を並べます（マシン固有パスを本 repo の git 管理ファイルに持ち込まない
-   ため。登録手順は起票済みの dotfiles issue を参照）。
+   ため。登録手順は [it-all-playpark/dotfiles#179](https://github.com/it-all-playpark/dotfiles/issues/179) を参照）。
+
+   同 issue の適用までは、dotfiles の Stop hook が `$HOME/.claude/skills/skill-retrospective/scripts/journal.sh`
+   を参照したままになります。本 repo の merge 時点で repo root の `skill-retrospective/` は無くなるため、
+   hook-capture / track-skill が失敗し journal telemetry が黙って落ちます（dev-flow の分母が減る）。
 
 3. **個別 install**: command source（link mode）の plugin は `dependencies` が自動解決されないため、
    3 plugin を個別に `/plugin install` してください。
@@ -485,7 +489,7 @@ skills/
 │   │   │   └── references/subagent-dispatch.md  # Subagent dispatch 必須5要素
 │   │   ├── bin/journal                   # core bare 名 wrapper（1本）
 │   │   └── skill-retrospective/          # 唯一の skill
-│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（5 skills, 11 agents）
+│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 11 agents）
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）
 │   │   │   └── agents -> ../agents       # symlink（plugin subagent 読み込み用）
@@ -494,7 +498,8 @@ skills/
 │   │   ├── _shared/scripts/              # dev-flow 共通スクリプト
 │   │   ├── bin/                          # dev-flow bare 名 wrapper（17本）
 │   │   └── dev-flow/, dev-flow-doctor/, dev-flow-improve/, dev-issue-analyze/,
-│   │       github-issue-orchestrator/（SKILL.md 5本）, pr-iterate/（workflow のみ・SKILL.md 無し）
+│   │       git-commit/, git-pr/, github-issue-orchestrator/（SKILL.md 7本）,
+│   │       pr-iterate/（workflow のみ・SKILL.md 無し）
 │   └── playpark-skills/                  # 個人用スキル plugin（dependencies: playpark-core）
 │       ├── _lib/config.py                # Python共通設定ローダー
 │       ├── _shared/                      # スキル共通ユーティリティ・schemas・templates

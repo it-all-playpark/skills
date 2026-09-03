@@ -352,10 +352,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow-doctor success \
+journal log dev-flow-doctor success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log dev-flow-doctor failure \
+journal log dev-flow-doctor failure \
   --error-category <category> --error-msg "<message>"
 ```

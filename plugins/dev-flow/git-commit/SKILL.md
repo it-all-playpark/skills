@@ -30,7 +30,7 @@ Analyze staged changes and create Conventional Commits with adaptive model selec
 ## Step 2: Analyze Changes
 
 ```bash
-$SKILLS_DIR/commit/scripts/analyze-changes.sh [--worktree <path>]
+${CLAUDE_PLUGIN_ROOT}/git-commit/scripts/analyze-changes.sh [--worktree <path>]
 ```
 
 **Output**: JSON with metrics, score (0-8), recommended model, suggested scope
@@ -86,10 +86,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log git-commit success \
+journal log git-commit success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log git-commit failure \
+journal log git-commit failure \
   --error-category <category> --error-msg "<message>"
 ```

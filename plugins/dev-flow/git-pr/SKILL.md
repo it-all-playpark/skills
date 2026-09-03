@@ -45,7 +45,7 @@ git push -u origin "$BRANCH_NAME"
 ### Step 3: Create PR
 
 ```bash
-$SKILLS_DIR/create-pr/scripts/create-pr.sh <issue-number> [options]
+${CLAUDE_PLUGIN_ROOT}/git-pr/scripts/create-pr.sh <issue-number> [options]
 ```
 
 **Output**: JSON with `pr_url`, `title`, `branch`, `base`, `worktree`
@@ -125,10 +125,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log git-pr success \
+journal log git-pr success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log git-pr failure \
+journal log git-pr failure \
   --error-category <category> --error-msg "<message>"
 ```

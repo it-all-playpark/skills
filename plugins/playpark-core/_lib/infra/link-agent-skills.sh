@@ -132,6 +132,20 @@ while IFS= read -r entry; do
   fi
 done < <(get_managed_entries)
 
+# 3b. 旧配置（repo root 直下）の symlink を掃除する
+#     3 の掃除は .gitignore の managed entries しか見ないため、plugins/playpark-skills/
+#     へ移行する前に root 直下に作られた symlink は残り、merge 後に untracked として
+#     git status に現れる。readlink が厳密に `.agents/skills/<basename>` の相対パスの
+#     ものだけを消す（nix store 等の絶対パスを指す手動リンクは対象外）。
+for link in "$REPO_ROOT"/*; do
+  [[ -L "$link" ]] || continue
+  name="$(basename "$link")"
+  if [[ "$(readlink "$link")" == ".agents/skills/$name" ]]; then
+    rm "$link"
+    echo "removed legacy root symlink: $link"
+  fi
+done
+
 # 4. .gitignore の managed セクションを更新
 managed_entries=()
 for name in "${created[@]}"; do

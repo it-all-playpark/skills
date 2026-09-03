@@ -1,7 +1,7 @@
 # Claude Code / Serena / Codex
 .claude/*
-# Track the .claude/agents -> ../agents symlink (定義の実体は plugin root の agents/)
-!.claude/agents
+# plugin 配下の local 設定（.claude/* は root 固定パターンなので届かない）
+plugins/*/.claude/settings.local.json
 # Track dynamic workflow definitions (dev-flow / pr-iterate are Claude workflows)
 !.claude/workflows/
 !.claude/workflows/**

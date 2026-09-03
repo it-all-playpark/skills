@@ -6,7 +6,7 @@ Analyze journal entries for both `failure` AND `partial` outcomes:
 
 ```bash
 # Include both failure and partial outcomes
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 200 | \
+journal query --skill dev-flow --limit 200 | \
   jq '[.[] | select(.outcome == "failure" or .outcome == "partial")] |
     group_by(.error.phase // "unknown") |
     map({phase: .[0].error.phase // "unknown", count: length, outcomes: (group_by(.outcome) | map({outcome: .[0].outcome, count: length}))}) |
@@ -26,7 +26,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limi
 ## Check 3: Error Category Distribution
 
 ```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.by_category'
+journal stats | jq '.by_category'
 ```
 
 | Category Dominance | Recommendation |
@@ -71,7 +71,7 @@ fi
 ## Check 5: Average Recovery Turns
 
 ```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats | jq '.avg_recovery_turns'
+journal stats | jq '.avg_recovery_turns'
 ```
 
 | Value | Health | Recommendation |
@@ -86,9 +86,9 @@ Compare recent success rate (last 7 days) vs overall:
 
 ```bash
 # Recent
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats --since 7d
+journal stats --since 7d
 # Overall
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh stats
+journal stats
 ```
 
 | Trend | Meaning |
@@ -102,7 +102,7 @@ $SKILLS_DIR/skill-retrospective/scripts/journal.sh stats
 Identify executions with unusually high turn counts:
 
 ```bash
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh query --skill dev-flow --limit 200 | \
+journal query --skill dev-flow --limit 200 | \
   jq '(map(.duration_turns) | add / length) as $avg |
     { average_turns: $avg,
       outliers: [.[] | select(.duration_turns > ($avg * 3))] |

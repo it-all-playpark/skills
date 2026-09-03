@@ -198,10 +198,10 @@ On completion, log execution to skill-retrospective journal:
 
 ```bash
 # On success
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log github-issue-orchestrator success \
+journal log github-issue-orchestrator success \
   --duration-turns $TURNS
 
 # On failure
-$SKILLS_DIR/skill-retrospective/scripts/journal.sh log github-issue-orchestrator failure \
+journal log github-issue-orchestrator failure \
   --error-category <category> --error-msg "<message>"
 ```
