@@ -5,6 +5,9 @@
 //    or: node tools/sync-inlines.mjs --add <canonical> --into <workflow> --after <anchor> [--root <dir>]
 //    or: node tools/sync-inlines.mjs --remove <canonical> --from <workflow> [--root <dir>]
 //
+// root は plugin root（`_lib/` と `.claude/workflows/` を直下に持つ dir）。既定は
+// `<repo>/plugins/dev-flow`。
+//
 // Named exports (pure functions):
 //   stripComments(src)              - remove JS comments for forbidden-token scanning
 //   checkForbiddenTokens(src, lbl)  - error if import/require/Date.now/Math.random in code
@@ -550,7 +553,7 @@ if (isMain) {
   }
 
   if (root === null) {
-    root = join(dirname(fileURLToPath(import.meta.url)), '..');
+    root = join(dirname(fileURLToPath(import.meta.url)), '..', 'plugins', 'dev-flow');
   }
 
   try {

@@ -23,14 +23,22 @@ bash tests/run-all-bats.sh --strict  # CI 用 (bats 未インストールを err
 npx skills experimental_install      # tracked の skills-lock.json から一括復元 (per-skill install)
 ```
 
-Claude Code 限定の代替 (marketplace 経由 install):
+Claude Code 限定の代替 (marketplace 経由 install。3 plugin 構成 — 詳細は README.md):
 
 ```
 /plugin marketplace add it-all-playpark/skills
-/plugin install playpark-skills@playpark
+/plugin install playpark-core@playpark    # 共有基盤（dev-flow / playpark-skills が dependencies で要求）
+/plugin install dev-flow@playpark         # issue-to-LGTM ワークフロー
+/plugin install playpark-skills@playpark  # 個人用スキル一式（任意）
 ```
 
-新規スキル作成は `/skill-creator` を使用。共有処理は `_shared/` か `_lib/` に配置。
+自分用に本 repo を clone して開発する場合は link mode を使う (symlink 撤去 → dotfiles
+`extraKnownMarketplaces` に `"mode": "link"` で登録 → 3 plugin 個別 install。手順詳細は
+README.md の「自分用インストール（link mode）」節)。
+
+新規スキル作成は `/skill-creator` を使用。新規 skill は `plugins/playpark-skills/<name>/` に作る。
+共有処理は plugin 内の `_shared/` か `_lib/` に配置し、plugin を跨ぐ共有は playpark-core
+(`_lib/common.sh` は locator経由、実行物は `bin/` の bare 名) を使う。
 
 ## Code style
 
@@ -39,7 +47,9 @@ Claude Code 限定の代替 (marketplace 経由 install):
 - **Progressive Disclosure** — SKILL.md は概要、詳細は `references/` に分離
 - **Namespace 命名** — `dev-*`, `blog-*`, `git-*`, `sns-*` 等でグループ化
 - **既存パターンに従う** — 新規スキルは同カテゴリの既存スキルを参考にする
-- **共有処理は `_shared/` か `_lib/`** — スキル間で重複するロジックは共有化
+- **共有処理は plugin 内の `_shared/` か `_lib/`** — スキル間で重複するロジックは共有化。
+  plugin を跨ぐ共有は playpark-core（`_lib/common.sh` は PATH 上の `bin/journal` 経由の
+  locator で解決。実行物は `bin/` の bare 名で呼ぶ）
 - **後方互換 scaffolding を作らない** — schema 変更で legacy fallback / version enum / dual-path を入れない。新形式のみ受理
 - **「なぜ」は残し「経緯」は書かない** — 判別基準は「次にこのファイルを触る agent の判断を変えるか」。
   不変条件・sunset トリガ・fail-closed の理由は残す (理由なきルールは圧力下で合理化して破られる)。
@@ -69,21 +79,25 @@ bash tests/run-all-bats.sh --strict      # CI 用 (bats なしを error 扱い)
 bats が見つからない環境でも `tests/run-all-bats.sh` は exit 0 を返すため、
 ローカル開発を阻害しない。CI からは `--strict` を渡して bats のインストール漏れを検出する。
 
+`skill-name/scripts/foo.bats` のように単体 `bats` を直接呼ぶ場合は、cross-plugin の
+`_lib/common.sh` locator が解決できるよう `PATH="<repo>/plugins/playpark-core/bin:<repo>/plugins/dev-flow/bin:$PATH"`
+を前置すること（`tests/run-all-bats.sh` はこの前置を自動で行う）。
+
 ## Architectural guardrails
 
 ### dev-flow / pr-iterate / dev-improve
 
 `/dev-flow` は skill wrapper (`dev-flow/SKILL.md`) が isolation preflight（worktree 作成 →
 `EnterWorktree`）を行い、orchestration 本体は dynamic workflow `dev-flow-run`
-(`.claude/workflows/dev-flow.js`) が持つ。phase 遷移 / 各ループ / 並列実装の fan-out は
-workflow script が JS で保持し、中間 state は script 変数に持つ (外部 state JSON は持たない)。
+(`plugins/dev-flow/.claude/workflows/dev-flow.js`) が持つ。phase 遷移 / 各ループ / 並列実装の
+fan-out は workflow script が JS で保持し、中間 state は script 変数に持つ (外部 state JSON は持たない)。
 
 ```
 /dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan
                       → Implement(serial/parallel) → Validate(test green)
-                      → Evaluate → PR → workflow('pr-iterate')
+                      → Evaluate → PR → workflow('dev-flow:pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
-/pr-iterate <pr>    → review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
+/pr-iterate <pr>    → Workflow('dev-flow:pr-iterate') で review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
 /dev-flow-improve   → Reconcile → Mine → Rank → File → 起票 issue ごとに dev-flow 直列実行
 ```
 
@@ -94,9 +108,10 @@ workflow script が JS で保持し、中間 state は script 変数に持つ (�
   security floor・決定論ゲートを policy で緩めない。
 - **1 issue = 1 PR**。並列実装は単一 worktree 内で file-disjoint な task を `pipeline()` で fan-out する。
 - **後方互換 scaffolding を作らない** — out-of-enum 値は明示 error (legacy fallback / version 分岐なし)。
-- `.claude/workflows/*.js` の `// ==== BEGIN inline: <path> ====` 〜 `// ==== END inline: <path> ====`
-  区間は**生成物であり直接編集禁止**。編集は `_lib` の canonical 側で行い
-  `tools/sync-inlines.mjs --write` で再生成する（先頭トークン=スクリプトパスの bare 形。sandbox
+- `plugins/dev-flow/.claude/workflows/*.js` の `// ==== BEGIN inline: <path> ====` 〜
+  `// ==== END inline: <path> ====` 区間は**生成物であり直接編集禁止**。編集は `_lib` の
+  canonical 側で行い `tools/sync-inlines.mjs --write`（repo root、既定 root は
+  `plugins/dev-flow`）で再生成する（先頭トークン=スクリプトパスの bare 形。sandbox
   excludedCommands は先頭トークンでマッチするため node 前置は付けない）。
 - Claude 専用 (workflow 依存)。cross-vendor portability は dev-flow / pr-iterate のみ放棄する例外扱い。
 
@@ -104,7 +119,8 @@ workflow script が JS で保持し、中間 state は script 変数に持つ (�
 gate_policy enum / telemetry キー一覧 / W7 distrust 正当化クラスと sunset path / 指示規範性 (prescription) の正当化クラス / inline 生成区間の制約 /
 exec-proxy の失敗ポリシー表 / dev-improve のループ設計）は
 [`.claude/rules/dev-flow.md`](.claude/rules/dev-flow.md) を参照。
-dev-flow 本体 (`.claude/workflows/` / `.claude/agents/` / `_lib/` / `tools/`) を触るときに自動で読み込まれる。
+dev-flow 本体 (`plugins/dev-flow/.claude/workflows/` / `plugins/dev-flow/agents/` /
+`plugins/dev-flow/_lib/` / `tools/`) を触るときに自動で読み込まれる。
 
 ### 設計原則 (要約)
 
@@ -134,7 +150,7 @@ Skill が `Task` / `Agent` tool 経由で subagent を呼び出す場合、以�
 4. **Boundary** — 触ってはいけないファイル / commit 禁止 / ネットワーク禁止 等
 5. **Token cap** — 計測可能な上限
 
-詳細: [`_shared/references/subagent-dispatch.md`](_shared/references/subagent-dispatch.md)
+詳細: [`plugins/playpark-core/_shared/references/subagent-dispatch.md`](plugins/playpark-core/_shared/references/subagent-dispatch.md)
 
 ## Commit / PR conventions
 

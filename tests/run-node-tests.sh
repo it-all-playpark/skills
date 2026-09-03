@@ -29,6 +29,10 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# plugin install 時と同じ bin/ 解決環境を再現する（cross-plugin の _lib/common.sh
+# locator が PATH 上の bin/journal をアンカーに解決するため、単体実行でも前置が必要）。
+export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
+
 STRICT=false
 if [[ "${1:-}" == "--strict" ]]; then
     STRICT=true

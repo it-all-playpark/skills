@@ -1,0 +1,10 @@
+{
+  "name": "playpark-skills",
+  "version": "0.3.0",
+  "description": "playpark LLC personal skills: blog / sns / seo / media / ops utilities (requires playpark-core)",
+  "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" },
+  "repository": "https://github.com/it-all-playpark/skills",
+  "license": "MIT",
+  "skills": ["./"],
+  "dependencies": ["playpark-core"]
+}

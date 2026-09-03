@@ -1,7 +1,8 @@
 # i dev-flow Pipeline Atlas
 
 GitHub issue から LGTM までを 10 phase で駆動する `dev-flow` の実処理を図で示す。
-すべて実装ソース（`.claude/workflows/dev-flow.js` / `.claude/workflows/pr-iterate.js` /
+すべて実装ソース（`plugins/dev-flow/.claude/workflows/dev-flow.js` /
+`plugins/dev-flow/.claude/workflows/pr-iterate.js` /
 `.claude/rules/dev-flow.md`）から起こしたもので、要約や理想形ではない。
 
 規約・設計判断の正典は [`.claude/rules/dev-flow.md`](../.claude/rules/dev-flow.md)。
@@ -423,7 +424,7 @@ tier は動かない。
 
 <!-- atlas:loop-constants:end -->
 
-この表の値は `_lib/atlas-constants.test.mjs` が実装ソースと照合する。
+この表の値は `plugins/dev-flow/_lib/atlas-constants.test.mjs` が実装ソースと照合する。
 ソース側の定数を変えたらこの表も更新しないと CI が落ちる。
 
 pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterations` で上書きできるため
@@ -444,7 +445,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | `dev-runner-haiku-wo` | isolation probe 専任（Write のみ） | haiku / low |
 
 model は subagent の frontmatter を既定としつつ `agent()` の `opts.model` で per-call override する。
-品質ゲート系 4 agent の model だけは `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で一括指定し、
+品質ゲート系 4 agent の model だけは `plugins/dev-flow/_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で一括指定し、
 `tools/sync-inlines.mjs` が workflow へ inline 生成する。
 
 effort は subagent の frontmatter で固定している。harness 同梱の `workflow-authoring` リファレンスは
@@ -460,5 +461,6 @@ dev-flow は Workflow に依存するため **Claude 専用**で、cross-vendor 
 唯一の例外扱いである。
 
 本ドキュメントは実装ソースから起こした図であり、仕様書ではない。
-dev-flow 本体（`.claude/workflows/` / `.claude/agents/` / `_lib/` / `tools/`）を変更したら、
+dev-flow 本体（`plugins/dev-flow/.claude/workflows/` / `plugins/dev-flow/.claude/agents/` /
+`plugins/dev-flow/_lib/` / `tools/`）を変更したら、
 この図も同じ PR で更新すること。変更の経緯は git log を参照。

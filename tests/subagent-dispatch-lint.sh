@@ -56,7 +56,7 @@ check_file_contains "$GUIDE" "general-purpose" "routing table: general-purpose"
 check_file_contains "$GUIDE" "code-reviewer" "routing table: code-reviewer"
 
 # 2. _shared/references/subagent-dispatch.md
-REF="$REPO_ROOT/_shared/references/subagent-dispatch.md"
+REF="$REPO_ROOT/plugins/playpark-core/_shared/references/subagent-dispatch.md"
 echo ""
 echo "[2] _shared/references/subagent-dispatch.md の必須要素"
 check_file_contains "$REF" "必須5要素" "必須5要素セクション存在"
@@ -69,7 +69,7 @@ check_file_contains "$REF" "Routing Rules" "Routing Rules セクション存在"
 check_file_contains "$REF" "チェックリスト" "チェックリスト存在"
 
 # 3. skill-creator/assets/skill-template.md
-TEMPLATE="$REPO_ROOT/skill-creator/assets/skill-template.md"
+TEMPLATE="$REPO_ROOT/plugins/playpark-skills/skill-creator/assets/skill-template.md"
 echo ""
 echo "[3] skill-creator/assets/skill-template.md の必須要素"
 check_file_contains "$TEMPLATE" "Subagent Dispatch Rules" "Subagent Dispatch Rules セクション存在"
