@@ -13,8 +13,8 @@ description: |
   trust receipts, SLO, Go/No-Go
   Accepts args: [--scope full|journal|worktrees|config|telemetry|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>] [--canary <path>]
 allowed-tools:
-  - Bash(~/.claude/skills/dev-flow-doctor/scripts/*)
-  - Bash(~/.claude/skills/skill-retrospective/scripts/*)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/dev-flow-doctor/scripts/*)
+  - Bash(journal *)
 ---
 
 # dev-flow-doctor

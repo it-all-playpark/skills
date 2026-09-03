@@ -77,10 +77,12 @@ dev-flow を開発する場合のみ使う）だけで済みます。`tests/plug
 
 従来の clone + symlink 方式（Codex / Antigravity など cross-vendor 向け）はそのまま併存して使えます。
 
-For Codex or other agents, symlink to the appropriate directory:
+For Codex or other agents, symlink to the appropriate directory. `~/.claude/skills` は
+上の手順 1 で撤去するため、リンク元は本 repo の clone 配下を直接指します:
 
 ```bash
-ln -sf ~/.claude/skills ~/.<tool>/skills
+# <repo> は本 repo の clone 先（例: ~/ghq/github.com/it-all-playpark/skills）
+ln -sf <repo>/plugins/playpark-skills ~/.<tool>/skills
 ```
 
 ### External Skills Integration (skills.sh)

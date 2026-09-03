@@ -99,8 +99,8 @@ Generator-Verifier ループ（implementer → evaluator）で worker が返す 
 必須フィールド: `status`, `task_id`。任意: `files`, `summary`, `concerns`,
 `blocking_reason`, `missing_context`。
 
-正典は `.claude/workflows/dev-flow.js` の `IMPL` schema と
-[`.claude/agents/implementer.md`](../../.claude/agents/implementer.md)。
+正典は `plugins/dev-flow/.claude/workflows/dev-flow.js` の `IMPL` schema と
+[`plugins/dev-flow/agents/implementer.md`](../../../dev-flow/agents/implementer.md)。
 
 ## Subagent Routing Rules
 

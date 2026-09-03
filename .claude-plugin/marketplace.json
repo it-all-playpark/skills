@@ -14,7 +14,7 @@
     {
       "name": "dev-flow",
       "version": "0.3.0",
-      "description": "dev-flow: issue-to-LGTM dynamic workflows (dev-flow-run / pr-iterate / dev-improve / canary), 8 skills and 11 dev-flow agents, by playpark LLC",
+      "description": "dev-flow: issue-to-LGTM dynamic workflows (dev-flow-run / pr-iterate / dev-improve / canary), 7 skills and 11 dev-flow agents, by playpark LLC",
       "source": "./plugins/dev-flow",
       "author": { "name": "playpark LLC", "url": "https://www.playpark.co.jp/" }
     },

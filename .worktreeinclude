@@ -10,4 +10,4 @@
 .claude/settings.local.json
 
 # Claude Code agent definitions (required for dev-flow の subagent 群)
-agents/**
+plugins/dev-flow/agents/**

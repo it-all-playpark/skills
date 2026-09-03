@@ -16,7 +16,7 @@ description: |
 # dev-flow-improve
 
 dev-flow 自己改善ループの起動 skill。orchestration の実体は dynamic workflow
-`dev-improve`（`.claude/workflows/dev-improve.js`）が持つ。本 skill は
+`dev-improve`（`plugins/dev-flow/.claude/workflows/dev-improve.js`）が持つ。本 skill は
 (1) workflow 起動、(2) 起票 issue への dev-flow 実行、(3) サマリ報告のみを行う。
 設計: `claudedocs/2026-07-13-dev-improve-loop-design.md` / W7 分類は AGENTS.md 参照。
 
@@ -24,7 +24,8 @@ dev-flow 自己改善ループの起動 skill。orchestration の実体は dynam
 
 1. **現在時刻を取得**（workflow は Date API 禁止のため args で渡す）:
    Bash で `date -u +%Y-%m-%dT%H:%M:%SZ` を実行し `<TODAY>` とする。
-2. **Workflow tool で dev-improve を起動**: `{ name: 'dev-improve', args: { today: '<TODAY>' } }`
+2. **Workflow tool で dev-improve を起動**: `{ name: 'dev-flow:dev-improve', args: { today: '<TODAY>' } }`
+   （plugin 由来の workflow は namespaced 名でしか解決しない — bare `dev-improve` では起動不能）
    返り値: `{ issues_filed, candidates_found, reconcile, backlog_added, backpressure_skipped }`
 3. **起票 issue を dev-flow で順次実装**: `issues_filed` の各番号について、返却順に
    **1 件ずつ直列に** Skill tool で `dev-flow` を起動する（並列禁止 — worktree / CI 競合回避）。

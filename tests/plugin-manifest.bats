@@ -205,6 +205,28 @@ plugin_json_path() {
     done
 }
 
+@test "tracked な SKILL.md は全て plugins/ 配下にある（どの plugin にも属さない skill を作らない）" {
+    # plugins/ 外に取り残された skill は plugin install 環境で解決できず、
+    # それを呼ぶ workflow phase（例: PR phase の Skill: git-commit / git-pr）が壊れる。
+    run git -C "$REPO_ROOT" ls-files -- '*SKILL.md' ':(exclude)plugins/'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "各 manifest の description が謳う skill 数は実際の SKILL.md 件数と一致する" {
+    for name in "${PLUGIN_NAMES[@]}"; do
+        actual="$(git -C "$REPO_ROOT" ls-files -- "plugins/$name/*SKILL.md" | wc -l | tr -d ' ')"
+        pj="$(plugin_json_path "$name")"
+        for desc in "$(jq -r '.description' "$pj")" \
+                    "$(jq -r --arg n "$name" '.plugins[] | select(.name==$n) | .description' "$MARKETPLACE_JSON")"; do
+            claimed="$(echo "$desc" | grep -oE '[0-9]+ skills' | grep -oE '^[0-9]+' || true)"
+            if [ -n "$claimed" ]; then
+                [ "$claimed" = "$actual" ]
+            fi
+        done
+    done
+}
+
 @test "claude CLI が dev-flow plugin から agent を実際に読み込める（実挙動の pin）" {
     command -v claude >/dev/null 2>&1 || skip "claude CLI not available"
     real_dir="$REPO_ROOT/plugins/dev-flow/agents"
