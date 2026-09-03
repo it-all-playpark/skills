@@ -9,6 +9,6 @@
   },
   "devDependencies": {
     "vdelta": "^0.10.0",
-    "vitest": "^4"
+    "vitest": "^5.0.0"
   }
 }
