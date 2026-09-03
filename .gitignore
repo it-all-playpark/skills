@@ -57,14 +57,6 @@ __pycache__/
 # hunk 同梱スキルへの symlink（dotfiles の home-manager activation が nix store へ貼る）
 hunk-review
 
-# --- external skills (auto-managed) ---
-plugins/playpark-skills/agent-browser
-plugins/playpark-skills/find-skills
-plugins/playpark-skills/gsc
-plugins/playpark-skills/gws-calendar-agenda
-plugins/playpark-skills/pricing-strategy
-plugins/playpark-skills/remotion-best-practices
-# --- end external skills ---
 
 # veridelta run records (redgreen-verify.sh verdict_cmd hook output)
 .veridelta/
@@ -74,3 +66,12 @@ plugins/playpark-skills/remotion-best-practices
 
 # dev-flow ephemeral handoff files (must not be committed via git-commit --all)
 .devflow-tmp/
+
+# --- external skills (auto-managed) ---
+plugins/playpark-skills/agent-browser
+plugins/playpark-skills/find-skills
+plugins/playpark-skills/gsc
+plugins/playpark-skills/gws-calendar-agenda
+plugins/playpark-skills/pricing-strategy
+plugins/playpark-skills/remotion-best-practices
+# --- end external skills ---

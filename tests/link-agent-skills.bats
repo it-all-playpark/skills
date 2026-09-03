@@ -87,3 +87,25 @@ run_link() {
     run grep -qx 'plugins/playpark-skills/alpha' "$FIXTURE/.gitignore"
     [ "$status" -eq 0 ]
 }
+
+@test "commit 済み .gitignore に対して実行しても .gitignore が変化しない" {
+    # write_managed_section は managed セクションを常にファイル末尾へ append する。
+    # commit 済みの位置がそれと違うと、clean clone でスクリプトを 1 回走らせただけで
+    # git status が汚れる（「git status を汚さないようにする」という目的と矛盾する）。
+    # 実リポジトリの .gitignore をそのまま fixture に持ち込んで pin する。
+    REAL_GITIGNORE="$BATS_TEST_DIRNAME/../.gitignore"
+    cp "$REAL_GITIGNORE" "$FIXTURE/.gitignore"
+
+    # 外部スキルの実体は gitignored なので CI には存在しない。
+    # managed セクションのエントリ名から fixture を組み立てて同じ状態を再現する。
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        mkdir -p "$FIXTURE/plugins/playpark-skills/.agents/skills/$(basename "$entry")"
+    done < <(awk '/^# --- external skills \(auto-managed\) ---$/{f=1;next} /^# --- end external skills ---$/{f=0} f && !/^#/ && NF' "$REAL_GITIGNORE")
+
+    run_link
+    [ "$status" -eq 0 ]
+
+    run diff "$REAL_GITIGNORE" "$FIXTURE/.gitignore"
+    [ "$status" -eq 0 ]
+}
