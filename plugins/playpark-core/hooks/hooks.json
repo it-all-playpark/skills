@@ -59,18 +59,6 @@
           }
         ]
       }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "rm -f \"/tmp/claude-skill-ctx-${CLAUDE_CODE_SESSION_ID:-unknown}\" 2>/dev/null || true",
-            "timeout": 1
-          }
-        ]
-      }
     ]
   }
 }

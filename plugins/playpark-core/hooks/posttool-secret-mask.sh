@@ -123,14 +123,10 @@ mask_text() {
 
     # Generic env-style fallback (specific 済みは (?!\[REDACTED:) で除外)
     # keyword は underscore 区切りに依存しない (PGPASSWORD 等も捕捉)。行頭 whitespace 許容。
-    # ただし KEY は3文字と短く MONKEY/DONKEY/TURKEY/HOCKEY/JOCKEY/WHISKEY 等の一般語の
-    # 部分文字列に頻繁に現れるため、それら一般語の直後に限り負の後読みで除外する
-    # (APIKEY/PRIVATEKEY 等の正当な連結 KEY 名は許容したまま誤検知のみ回避する)。
-    s/(^|[\s])([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSPHRASE|CREDENTIAL|BEARER|SALT)[A-Z0-9_]*|[A-Z0-9_]*(?<!MON)(?<!DON)(?<!TUR)(?<!HOC)(?<!JOC)(?<!WHIS)KEY(?:_[A-Z0-9]+)*)=(?!\[REDACTED:)([^\s\r\n]{16,})($|[\s])/$1$2=[REDACTED:ENV_SECRET]$4/gm;
+    s/(^|[\s])([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSPHRASE|CREDENTIAL|BEARER|SALT)[A-Z0-9_]*)=(?!\[REDACTED:)([^\s\r\n]{16,})($|[\s])/$1$2=[REDACTED:ENV_SECRET]$4/gm;
 
     # 小文字/camelCase env 名 (apikey=, password=, access_token= 等; = 区切り・16+ 非空白値)
-    # KEY は上の generic fallback と同様、一般語 (monkey 等) の直後のみ負の後読みで除外する。
-    s/(^|[\s])([A-Za-z0-9_]*(?i:token|secret|password|passphrase|credential|bearer|salt)[A-Za-z0-9_]*|[A-Za-z0-9_]*(?<!(?i:mon))(?<!(?i:don))(?<!(?i:tur))(?<!(?i:hoc))(?<!(?i:joc))(?<!(?i:whis))(?i:key)[A-Za-z0-9_]*)=(?!\[REDACTED:)([^\s\r\n]{16,})($|[\s])/$1$2=[REDACTED:ENV_SECRET]$4/gm;
+    s/(^|[\s])([A-Za-z0-9_]*(?i:token|key|secret|password|passphrase|credential|bearer|salt)[A-Za-z0-9_]*)=(?!\[REDACTED:)([^\s\r\n]{16,})($|[\s])/$1$2=[REDACTED:ENV_SECRET]$4/gm;
 
     # JSON/quoted inline ("apiKey":"value" 形式; keyword 名 + 12+ 値)
     s/("(?:[A-Za-z0-9_]*(?i:token|key|secret|password|credential|bearer|salt)[A-Za-z0-9_]*)"\s*:\s*")(?!\[REDACTED:)[^"\r\n]{12,}"/${1}[REDACTED:JSON_SECRET]"/g;

@@ -4,9 +4,8 @@
 #
 # Invariants pinned here:
 #   - 3 plugin すべてに hooks/hooks.json が存在し valid JSON である。
-#   - hooks.json 内の全 command は ${CLAUDE_PLUGIN_ROOT} 経由で参照するか、
-#     UserPromptSubmit の一時ファイル掃除コマンドである（dotfiles 由来の絶対パス
-#     $HOME/.claude/hooks・~/.claude/skills・$HOME/.claude/skills・ghq/github.com
+#   - hooks.json 内の全 command は ${CLAUDE_PLUGIN_ROOT} 経由で参照する（dotfiles 由来の
+#     絶対パス $HOME/.claude/hooks・~/.claude/skills・$HOME/.claude/skills・ghq/github.com
 #     を含む command は 0 件）。
 #   - ${CLAUDE_PLUGIN_ROOT}/<rel> で参照される全ファイルが実在し実行可能である。
 #     git index 上 tracked なファイルに限り mode 100755 も確認する（新規 hook は
@@ -62,13 +61,12 @@ PLUGIN_NAMES=(dev-flow playpark-core playpark-skills)
 
 # --- 2. command 内容: PLUGIN_ROOT 経由 or 既知の一時ファイル掃除のみ --------
 
-@test "全 command は \${CLAUDE_PLUGIN_ROOT} を含むか UserPromptSubmit の一時ファイル掃除コマンドである" {
+@test "全 command は \${CLAUDE_PLUGIN_ROOT} を含む" {
     for name in "${PLUGIN_NAMES[@]}"; do
         while IFS= read -r cmd; do
             [ -z "$cmd" ] && continue
             case "$cmd" in
                 *'${CLAUDE_PLUGIN_ROOT}'*) ;;
-                'rm -f "/tmp/claude-skill-ctx-'*) ;;
                 *)
                     echo "unexpected command in $name: $cmd"
                     return 1
@@ -206,7 +204,7 @@ PLUGIN_NAMES=(dev-flow playpark-core playpark-skills)
     [[ "$hooks_line" == *"PreToolUse"* ]]
 }
 
-@test "claude CLI: playpark-core plugin の Hooks 行に全 4 event が含まれる" {
+@test "claude CLI: playpark-core plugin の Hooks 行に全 3 event が含まれる" {
     command -v claude >/dev/null 2>&1 || skip "claude CLI not available"
     run claude --plugin-dir "$REPO_ROOT/plugins/playpark-core" plugin details playpark-core
     [ "$status" -eq 0 ]
@@ -216,7 +214,6 @@ PLUGIN_NAMES=(dev-flow playpark-core playpark-skills)
     [[ "$hooks_line" == *"PreToolUse"* ]]
     [[ "$hooks_line" == *"PostToolUse"* ]]
     [[ "$hooks_line" == *"PostToolUseFailure"* ]]
-    [[ "$hooks_line" == *"UserPromptSubmit"* ]]
 }
 
 @test "claude CLI: playpark-skills plugin の Hooks 行に SessionStart が含まれる" {

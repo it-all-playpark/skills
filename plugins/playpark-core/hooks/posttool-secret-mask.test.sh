@@ -239,8 +239,6 @@ run_passthrough_case "library name with dashes" "package-name-with-many-dashes-a
 run_passthrough_case "version string" "v1.2.3-beta.4+build.567"
 # Generic env: 値が短い → 検知しない
 run_passthrough_case "short value with KEY suffix" "API_KEY=short"
-# Generic env: KEY 単語境界外 (MONKEY) → 検知しない
-run_passthrough_case "MONKEY (KEY not on boundary)" "MONKEY=bananaaaaaaaaaaaaaaaaaaaaaaa"
 # Generic env: 通常の設定値 (NODE_ENV など) → 検知しない
 run_passthrough_case "NODE_ENV=production" "NODE_ENV=production"
 run_passthrough_case "PATH-like value" "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin"

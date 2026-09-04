@@ -357,6 +357,8 @@ collision / 生成後 syntax）を 1 コマンドで validate-then-write する�
 不変のままになる。marker 行を Edit/Write で直接書くことは pretool-inline-edit-guard が deny する。
 inline-edit-guard / inline-commit-gate は `plugins/dev-flow/hooks/hooks.json` の PreToolUse hook で、
 plugin が有効なセッションでは dotfiles 設定に依存せず発火する。
+dev-flow plugin を disable すると edit 時（inline-edit-guard）と commit 時（inline-commit-gate）の
+2 層が同時に失われ、その間 skills repo の inline 区間は無防備になる。
 **git plumbing（hash-object/update-index/checkout-index 等）による迂回は禁止** — 迂回すると guard
 の存在理由（生成物の手編集が次回 `--write` で黙って消失する事故防止）が破られる。
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env bats
-# Tests for the journal.sh-backed hooks (hook-capture / track-skill) and the
-# UserPromptSubmit state-file cleanup, invoked via the hooks.json commands
-# exactly as Claude Code would run them.
+# Tests for the journal.sh-backed hooks (hook-capture / track-skill),
+# invoked via the hooks.json commands exactly as Claude Code would run them.
 
 setup() {
   PLUGIN_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
@@ -11,8 +10,8 @@ setup() {
   SID="bats-$$"
 
   # /tmp write probe: this sandbox denies writes directly under /tmp, but
-  # CI (ubuntu) allows it. track-skill / UserPromptSubmit only make sense
-  # against a real /tmp state file, so skip them when the probe fails.
+  # CI (ubuntu) allows it. track-skill only makes sense against a real
+  # /tmp state file, so skip it when the probe fails.
   TMP_OK=0
   if touch "/tmp/.claude-skill-ctx-probe-$$" 2>/dev/null; then
     TMP_OK=1
@@ -65,15 +64,4 @@ run_hook_cmd() {
   [ -f "/tmp/claude-skill-ctx-${SID}" ]
   run cat "/tmp/claude-skill-ctx-${SID}"
   [ "$output" = "foo" ]
-}
-
-@test "UserPromptSubmit command removes the session state file" {
-  [ "$TMP_OK" = 1 ] || skip "/tmp not writable in this sandbox"
-
-  touch "/tmp/claude-skill-ctx-${SID}"
-  cmd=$(jq -r '.hooks.UserPromptSubmit[0].hooks[0].command' "$HOOKS_JSON")
-  run env CLAUDE_CODE_SESSION_ID="$SID" bash -c "$cmd"
-  [ "$status" -eq 0 ]
-
-  [ ! -f "/tmp/claude-skill-ctx-${SID}" ]
 }
