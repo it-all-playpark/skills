@@ -16,6 +16,7 @@
 //   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
 //   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
 //   - contract.scope が string
+//   - contract.scope_truncated が boolean（issue #596: 切断事実を REQ へ運ぶ。旧形式は fail-open で sonnet へ）
 //   - contract.comment_count === 0（整数厳格。comments がある issue は body/comment 突合のため sonnet analyze へ回す。issue #573）
 //
 // 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
@@ -37,12 +38,14 @@ export function buildReqFromContract(contract, issueNumber) {
   if (contract.breaking_keyword_scan !== false) return null
   if (contract.comment_count !== 0) return null
   if (typeof contract.scope !== 'string') return null
+  if (typeof contract.scope_truncated !== 'boolean') return null
 
   const req = {
     summary: `Issue #${issueNumber}: ${contract.title}`,
     issue_type: contract.issue_type,
     acceptance_criteria: contract.acceptance_criteria.slice(0, 20),
     scope: contract.scope,
+    scope_truncated: contract.scope_truncated,
     breaking_change: false,
     breaking_keyword_scan: false,
     breaking_evidence: '',
@@ -50,6 +53,9 @@ export function buildReqFromContract(contract, issueNumber) {
   }
   if (Number.isInteger(contract.estimated_change_file_count) && contract.estimated_change_file_count > 0) {
     req.estimated_change_file_count = contract.estimated_change_file_count
+  }
+  if (Number.isInteger(contract.scope_total_chars) && contract.scope_total_chars >= 0) {
+    req.scope_total_chars = contract.scope_total_chars
   }
   return req
 }

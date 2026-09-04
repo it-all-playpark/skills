@@ -416,7 +416,7 @@ Update dev-issue-analyze/scripts/analyze-issue.sh and dev-issue-analyze/scripts/
 #     JSON. 200 lines x 30 chars (~6000 bytes incl. newlines) reproduces the
 #     multi-write pattern that a single large single-line body does not.
 # ---------------------------------------------------------------------------
-@test "contract mode: multi-line non-AC scope over 4000 bytes -> exit 0, eligible" {
+@test "contract mode: multi-line non-AC scope over 4000 bytes -> exit 0, scope truncated -> ineligible" {
     LINES=""
     for i in $(seq 1 200); do
         LINES="${LINES}line-${i}-xxxxxxxxxxxxxxxxxxxx"$'\n'
@@ -431,7 +431,10 @@ ${LINES}"
     make_fixture "$FIXTURE" "feat: large scope" "$BODY"
     run "$SCRIPT" 27 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.contract == "t1" and .eligible == true'
+    # scope > 4000 bytes -> scope_truncated true -> ineligible (falls back to
+    # sonnet analyze, which reads the full body; issue #598 review on PR #598).
+    # This test's purpose remains the SIGPIPE regression: exit 0 + valid JSON.
+    echo "$output" | jq -e '.contract == "t1" and .eligible == false and .ineligible_reason == "scope truncated"'
 }
 
 # ---------------------------------------------------------------------------
@@ -792,4 +795,184 @@ Just prose, no checkbox or numbered items here."
     run "$SCRIPT" 52 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.contract == "t1" and .eligible == true'
+}
+
+# ===========================================================================
+# scope / body_preview 切断の非 silent 化 (issue #596)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# (ae1) contract mode: non-AC body over 4000 chars -> scope_truncated true,
+#       marker appended, and a spec written at the very end of the body is
+#       cut out of the returned scope (the failure mode issue #596 fixes).
+# ---------------------------------------------------------------------------
+@test "contract mode: non-AC body over 4000 chars -> scope_truncated true, marker appended, spec at the end is cut" {
+    LINES=""
+    for i in $(seq 1 150); do
+        LINES="${LINES}line-${i}-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"$'\n'
+    done
+    BODY="## Acceptance Criteria
+
+- [ ] item one
+
+## Scope
+${LINES}DECISION: use the marker approach"
+    FIXTURE="$FIXTURE_DIR/scope-truncated-596.json"
+    make_fixture "$FIXTURE" "feat: large scope with decision" "$BODY"
+    run "$SCRIPT" 53 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    # scope_truncated:true now makes the contract path ineligible (falls back
+    # to sonnet analyze, which reads the full body instead of building a REQ
+    # from an excerpt that may be missing a spec written past the cut — issue
+    # #598 review on PR #598). The excerpt/marker fields are still asserted
+    # here because they remain part of the contract output contract even when
+    # ineligible (dev-flow.js's whitelist check reads scope_truncated off the
+    # sonnet-path REQ, not off this ineligible contract-mode output).
+    echo "$output" | jq -e '
+        .scope_truncated == true and
+        (.scope_total_chars > 4000) and
+        (.scope | contains("[TRUNCATED: scope shows the first 4000 of ")) and
+        (.scope | endswith("before raising ambiguities]")) and
+        ((.scope | split("\n[TRUNCATED")[0] | length) == 4000) and
+        ((.scope | contains("DECISION:")) | not) and
+        (.eligible == false) and
+        (.ineligible_reason == "scope truncated")
+    '
+}
+
+# ---------------------------------------------------------------------------
+# (ae2) contract mode: non-AC body under 4000 chars -> scope_truncated false,
+#       no marker appended, scope_total_chars matches the returned scope length.
+# ---------------------------------------------------------------------------
+@test "contract mode: non-AC body under 4000 chars -> scope_truncated false, no marker" {
+    BODY="## Acceptance Criteria
+
+- [ ] item one
+
+## Scope
+Update a few files, nothing large here."
+    FIXTURE="$FIXTURE_DIR/scope-not-truncated-596.json"
+    make_fixture "$FIXTURE" "feat: small scope" "$BODY"
+    run "$SCRIPT" 54 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.scope_truncated == false and (.scope | contains("[TRUNCATED") | not) and (.scope_total_chars == (.scope | length))'
+}
+
+# ---------------------------------------------------------------------------
+# (ae3) contract mode: exactly 4000 non-AC chars -> not truncated (`>`
+#       boundary judgment, not `>=`).
+# ---------------------------------------------------------------------------
+@test "contract mode: exactly 4000 non-AC chars -> not truncated (boundary)" {
+    PAD="$(printf '%*s' 3991 '')"
+    PAD="${PAD// /y}"
+    BODY="## Acceptance Criteria
+
+- [ ] item one
+
+## Scope
+${PAD}"
+    FIXTURE="$FIXTURE_DIR/scope-boundary-596.json"
+    make_fixture "$FIXTURE" "feat: boundary scope" "$BODY"
+    run "$SCRIPT" 55 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.scope_truncated == false and .scope_total_chars == 4000'
+}
+
+# ---------------------------------------------------------------------------
+# (ae4) contract mode: the appended truncation marker itself must not inflate
+#       estimated_change_file_count (marker text must contain no `.ext`
+#       tokens, and scope_files_count must be counted on the pre-marker
+#       excerpt).
+# ---------------------------------------------------------------------------
+@test "contract mode: marker does not inflate estimated_change_file_count" {
+    PAD="$(printf '%*s' 4500 '')"
+    PAD="${PAD// /q}"
+    BODY="## Acceptance Criteria
+
+- [ ] item one
+
+## Scope
+src/a.ts and src/b.ts are affected.
+${PAD}"
+    FIXTURE="$FIXTURE_DIR/scope-file-count-596.json"
+    make_fixture "$FIXTURE" "feat: touch two files" "$BODY"
+    run "$SCRIPT" 56 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.scope_truncated == true and .estimated_change_file_count == 2'
+}
+
+# ---------------------------------------------------------------------------
+# (ae5) standard depth: body over 500 chars -> body_preview_truncated true,
+#       marker appended, body_total_chars reflects the real length, and a
+#       warnings[] entry is emitted.
+# ---------------------------------------------------------------------------
+@test "standard depth: body over 500 chars -> body_preview_truncated true + marker + body_total_chars + warnings entry" {
+    PAD="$(printf '%*s' 700 '')"
+    PAD="${PAD// /z}"
+    BODY="${AC_STUB}${PAD}"
+    BODY_LEN=${#BODY}
+    FIXTURE="$FIXTURE_DIR/body-preview-truncated-596.json"
+    make_fixture "$FIXTURE" "feat: long body" "$BODY"
+    run "$SCRIPT" 57 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --argjson body_len "$BODY_LEN" '
+        .body_preview_truncated == true and
+        .body_total_chars == $body_len and
+        (.body_preview | contains("[TRUNCATED: body_preview shows the first 500 of ")) and
+        ((.body_preview | split("\n[TRUNCATED")[0] | length) == 500) and
+        (.warnings | any(startswith("body_preview truncated:")))
+    '
+}
+
+# ---------------------------------------------------------------------------
+# (ae6) standard depth: body under 500 chars -> body_preview_truncated false,
+#       body_preview equals the full body verbatim, no warnings entry.
+# ---------------------------------------------------------------------------
+@test "standard depth: body under 500 chars -> body_preview_truncated false, body_preview == body" {
+    BODY="${AC_STUB}Short body under 500 chars."
+    FIXTURE="$FIXTURE_DIR/body-preview-not-truncated-596.json"
+    make_fixture "$FIXTURE" "feat: short body" "$BODY"
+    run "$SCRIPT" 58 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --arg body "$BODY" '
+        .body_preview == $body and
+        .body_preview_truncated == false and
+        ((.warnings | any(startswith("body_preview truncated:"))) | not)
+    '
+}
+
+# ---------------------------------------------------------------------------
+# (ae7) standard depth: scope / scope_truncated / scope_total_chars are
+#       present at standard depth too (not contract-mode only), and a
+#       warnings[] entry is emitted when scope is truncated.
+# ---------------------------------------------------------------------------
+@test "standard depth: scope / scope_truncated / scope_total_chars present; >4000 non-AC body -> scope_truncated true + warnings entry" {
+    PAD="$(printf '%*s' 4500 '')"
+    PAD="${PAD// /w}"
+    BODY="${AC_STUB}${PAD}"
+    FIXTURE="$FIXTURE_DIR/standard-scope-truncated-596.json"
+    make_fixture "$FIXTURE" "feat: long scope standard" "$BODY"
+    run "$SCRIPT" 59 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '
+        .scope_truncated == true and
+        (.scope | contains("[TRUNCATED: scope shows")) and
+        (.warnings | any(startswith("scope truncated:")))
+    '
+}
+
+# ---------------------------------------------------------------------------
+# (ae8) comprehensive depth: scope_truncated / body_preview_truncated keys
+#       are present and boolean (short body -> both false), scope is a string.
+# ---------------------------------------------------------------------------
+@test "comprehensive depth: scope_truncated / body_preview_truncated keys present and boolean" {
+    FIXTURE="$FIXTURE_DIR/comprehensive-truncation-keys-596.json"
+    make_fixture "$FIXTURE" "Add a button" "${COMPREHENSIVE_STUB}Just a UI tweak, nothing else."
+    run "$SCRIPT" 60 --issue-json "$FIXTURE" --depth comprehensive
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '
+        (.scope_truncated == false) and
+        (.body_preview_truncated == false) and
+        (.scope | type == "string")
+    '
 }
