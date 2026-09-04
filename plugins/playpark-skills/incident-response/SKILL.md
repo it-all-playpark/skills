@@ -13,8 +13,8 @@ effort: max
 allowed-tools:
   - Task
   - Skill
-  - Bash(${CLAUDE_PLUGIN_ROOT}/incident-response/scripts/*)
-  - Bash(${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/*)
+  - Bash(incident-response-state *)
+  - Bash(journal *)
 ---
 
 # Incident Response
@@ -37,7 +37,7 @@ Phase 1: Triage → Phase 2: Parallel Investigation → Phase 3: Root Cause → 
 
 ## Phase 1: Triage
 
-incident-lead: classify symptom (what/when/severity), build timeline, decide lines to launch, initialize state (`scripts/incident-state.sh init "$SYMPTOM" --since "$SINCE"`), create TaskList entries.
+incident-lead: classify symptom (what/when/severity), build timeline, decide lines to launch, initialize state (`incident-response-state init "$SYMPTOM" --since "$SINCE"`), create TaskList entries.
 
 Scope hints: `--deploy-ref` narrows code-analyst to that diff; unknown log paths trigger log-analyst exploration first; no config tool means config-analyst focuses on git diff of config files.
 
@@ -55,7 +55,7 @@ Details: [Execution Detail](references/execution-detail.md)
 
 ## Phase 3: Root Cause Determination
 
-incident-lead merges findings into timeline (`scripts/incident-state.sh add-timeline`), builds causal chain, determines root cause with confidence (High/Medium/Low).
+incident-lead merges findings into timeline (`incident-response-state add-timeline`), builds causal chain, determines root cause with confidence (High/Medium/Low).
 
 ## Phase 4: Resolution Plan
 

@@ -67,6 +67,7 @@ dep-guardian-classify-pr
 dep-guardian-discover-prs
 dep-guardian-merge-prs
 dep-guardian-test-pr
+incident-response-state
 qiita-publish
 repo-commit
 repo-export
@@ -117,6 +118,7 @@ skills_target_for() {
         blog-swap-dates) echo "bash blog-swap-dates/scripts/swap-dates.sh" ;;
         bug-hunt-state) echo "bash bug-hunt/scripts/hunt-state.sh" ;;
         code-audit-team-state) echo "bash code-audit-team/scripts/audit-state.sh" ;;
+        incident-response-state) echo "bash incident-response/scripts/incident-state.sh" ;;
         dep-guardian-discover-prs) echo "bash dep-guardian/scripts/discover-prs.sh" ;;
         dep-guardian-classify-pr) echo "bash dep-guardian/scripts/classify-pr.sh" ;;
         dep-guardian-test-pr) echo "bash dep-guardian/scripts/test-pr.sh" ;;
@@ -243,7 +245,7 @@ skills_target_for() {
     done <<< "$(skills_expected_names)"
 }
 
-@test "plugins/playpark-skills/bin の entry は対象24本と完全一致する" {
+@test "plugins/playpark-skills/bin の entry は対象25本と完全一致する" {
     expected="$(skills_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/playpark-skills/bin" | sort)"
     [ "$actual" = "$expected" ]
@@ -290,6 +292,13 @@ skills_target_for() {
 @test "blog-find-articlesがbin経由bare名で機能透過する(引数なしはusageエラー)" {
     run bash "$REPO_ROOT/plugins/playpark-skills/bin/blog-find-articles"
     [ "$status" -ne 0 ]
+}
+
+@test "incident-response-stateがbin経由bare名で機能透過する(引数なしはusageエラー)" {
+    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$PATH"
+    run bash "$REPO_ROOT/plugins/playpark-skills/bin/incident-response-state"
+    [ "$status" -eq 1 ]
+    echo "$output" | grep -q 'Usage:'
 }
 
 @test "detect-stackがbin経由bare名で機能透過する" {

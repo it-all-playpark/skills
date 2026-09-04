@@ -125,7 +125,7 @@ Deprioritize: <what to stop investigating>
 
 ### Turn Budget Management
 
-incident-lead monitors budget via `incident-state.sh check-budget`:
+incident-lead monitors budget via `incident-response-state check-budget`:
 
 | Budget Used | Action |
 |-------------|--------|
@@ -158,7 +158,7 @@ incident-lead monitors budget via `incident-state.sh check-budget`:
 ```
 1. incident-lead sends: SendMessage type="shutdown_request" to analyst
 2. Analyst approves: SendMessage type="shutdown_response" approve=true
-3. incident-lead updates: incident-state.sh update-line <line> shutdown
+3. incident-lead updates: incident-response-state update-line <line> shutdown
 ```
 
 ## Teardown
@@ -167,5 +167,5 @@ After Phase 4 (Resolution Plan) completes:
 
 1. Send shutdown_request to all remaining analysts
 2. Wait for confirmations
-3. Update state: `incident-state.sh update-line <line> completed`
+3. Update state: `incident-response-state update-line <line> completed`
 4. TeamDelete to clean up

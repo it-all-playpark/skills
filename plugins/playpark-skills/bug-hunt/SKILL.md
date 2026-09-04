@@ -13,8 +13,8 @@ effort: max
 allowed-tools:
   - Task
   - Skill
-  - Bash(${CLAUDE_PLUGIN_ROOT}/bug-hunt/scripts/*)
-  - Bash(${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/*)
+  - Bash(bug-hunt-state *)
+  - Bash(journal *)
 ---
 
 # Bug Hunt
