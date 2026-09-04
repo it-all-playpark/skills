@@ -31,7 +31,7 @@ fail() {
 # --------------------------------------------------------------------------
 
 make_tmpdir() {
-  mktemp -d "$TMPDIR/stop-devflow-test.XXXXXX"
+  mktemp -d "${TMPDIR:-/tmp}/stop-devflow-test.XXXXXX"
 }
 
 # Build a minimal handoff JSON and write it to a file.
