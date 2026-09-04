@@ -49,9 +49,15 @@ Use skills in Claude Code:
    `playpark-skills` の 3 件を並べます（マシン固有パスを本 repo の git 管理ファイルに持ち込まない
    ため。登録手順は [it-all-playpark/dotfiles#179](https://github.com/it-all-playpark/dotfiles/issues/179) を参照）。
 
-   同 issue の適用までは、dotfiles の Stop hook が `$HOME/.claude/skills/skill-retrospective/scripts/journal.sh`
-   を参照したままになります。本 repo の merge 時点で repo root の `skill-retrospective/` は無くなるため、
-   hook-capture / track-skill が失敗し journal telemetry が黙って落ちます（dev-flow の分母が減る）。
+   dev-flow 専用 hook（`stop-devflow-telemetry.sh` / `pretool-inline-edit-guard.sh` /
+   `pretool-bash-inline-commit-gate.sh`）は `plugins/dev-flow/hooks/hooks.json`、全 skill 共通
+   hook（journal hook-capture・track-skill / `validate-skill-frontmatter.sh` /
+   `posttool-secret-mask.sh` / `pretool-context-guard.sh`）は `plugins/playpark-core/hooks/hooks.json`、
+   zombie-kill の SessionStart 起動は `plugins/playpark-skills/hooks/hooks.json` から、それぞれ
+   `${CLAUDE_PLUGIN_ROOT}` 経由で発火します。dotfiles 側の同 entry 削除は
+   [it-all-playpark/dotfiles#185](https://github.com/it-all-playpark/dotfiles/issues/185) を参照。
+   並存期間（dotfiles 側 entry が残っている間）は hook-capture が二重記録されます
+   （同 issue の適用で解消）。
 
 3. **個別 install**: command source（link mode）の plugin は `dependencies` が自動解決されないため、
    3 plugin を個別に `/plugin install` してください。
@@ -570,8 +576,8 @@ dev-flow の redgreen 判定フックにdogfooding導入している（`.claude/
   `vitest` 1007 tests passed（総件数一致を確認済み）。
 - **記録範囲**: vdelta の verdict（`vdelta compare --report json` の出力）は dev-flow
   telemetry handoff の pending JSON（`~/.claude/journal/pending/`）に書き出されるところまでが
-  本 issue の記録範囲。journal 本体（`journal.sh log`）への反映は dotfiles 側 Stop hook
-  （`stop-devflow-telemetry.sh`）の jq whitelist 拡張が必要なため別 issue とする。
+  本 issue の記録範囲。journal 本体（`journal.sh log`）への反映は dev-flow plugin の Stop hook
+  （`plugins/dev-flow/hooks/stop-devflow-telemetry.sh`）の jq whitelist 拡張が必要なため別 issue とする。
 
 ## About playpark LLC
 

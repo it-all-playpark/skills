@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pretool-inline-edit-guard.sh\"",
+            "timeout": 5,
+            "statusMessage": "inline 生成区間ガードチェック中..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pretool-bash-inline-commit-gate.sh\"",
+            "timeout": 30,
+            "statusMessage": "inline 同期チェック中..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-devflow-telemetry.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

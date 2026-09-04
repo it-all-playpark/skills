@@ -166,8 +166,9 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
   merge_tier_reasons / route / subagent_invocations）を
   `~/.claude/journal/pending/` へ書き出し、
-  dotfiles の Stop hook `claude-code/hooks/stop-devflow-telemetry.sh` が `journal.sh log dev-flow success --merge-tier ...`
-  へ毎回自動 flush する（issue #203）。flush 失敗は `~/.claude/logs/stop-devflow-telemetry.log` に記録され pending file が
+  dev-flow plugin の Stop hook `plugins/dev-flow/hooks/stop-devflow-telemetry.sh`
+  （`hooks/hooks.json` から `${CLAUDE_PLUGIN_ROOT}` 経由で発火）が
+  `journal.sh log dev-flow success --merge-tier ...` へ毎回自動 flush する（issue #203）。flush 失敗は `~/.claude/logs/stop-devflow-telemetry.log` に記録され pending file が
   残るため記録漏れに気づける。journal.sh の telemetry フラグは未指定なら telemetry キー無し。calibration の原資料。
   `ui_verify` は `skipped`/`passed`/`findings`/`failed_open`/`setup_failed` の 5 値（`setup_failed` は dev-flow-doctor の検出対象）。
   `eval_staleness` は `none`/`hash_mismatch`/`iterate_incomplete`/`iterate_fixed` の 4 値（Evaluate 時点と PR tree の乖離原因を区別する。issue #288）。
@@ -181,7 +182,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   safety classifier block / bg-isolation 等）が Implement phase で 1 件以上発生した run は、
   成功 handoff（`outcome:'success'` のまま）に `error_category:'guard_blocked'` と telemetry キー
   `guard_id`（発生した guard_id を unique・sort した上で comma 結合した文字列。各要素は
-  pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。journal.sh 側の専用フラグ配線・dotfiles Stop hook
+  pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。journal.sh 側の専用フラグ配線・dev-flow plugin Stop hook
   への転送配線は route 等 8 キー（issue #430）と同じ precedent に倣い別 issue で扱う — 本 issue（#448）は
   handoff JSON への到達までを保証する（issue #448）。
   `final_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`）。
@@ -219,12 +220,12 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで
   usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric（issue #445）。
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
-  dotfiles Stop hook 側の jq projection（送り側配線）は route 等 8 キー（issue #430 → it-all-playpark/dotfiles#143）
+  dev-flow plugin Stop hook 側の jq projection（送り側配線）は route 等 8 キー（issue #430 → it-all-playpark/dotfiles#143）
   と同じ precedent で別 issue に繰り延べる。gate・merge tier・ledger・shape 判定には一切影響しない telemetry
   専用キー（軸A invariant 非抵触）。
   testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
   merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
-  する fail-open）に到達済み（issue #430）。dotfiles Stop hook 側の jq projection（送り側配線）は
+  する fail-open）に到達済み（issue #430）。dev-flow plugin Stop hook 側の jq projection（送り側配線）は
   it-all-playpark/dotfiles#143 で扱う。
   `eval_confidence` / `review_confidence` は `[0,1]` または `null`（evaluator / pr-reviewer の verdict
   自己申告 confidence）。agent が実行されたが confidence を返さない run は `null` を記録し、
@@ -235,7 +236,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   二重計上防止と同じ理由）。`review_decision`（`approve`/`request-changes`/`comment`）は
   confidence と verdict の突合用に併記する。いずれも記録専用で、merge tier / ledger /
   security floor / gate_policy のいずれの判定入力にもならない（軸A 非抵触、#154 の calibration
-  原資料）。dotfiles Stop hook 側の送り側配線（jq projection・cmd_args 転送）は本 issue（#561）で
+  原資料）。dev-flow plugin Stop hook 側の送り側配線（jq projection・cmd_args 転送）は本 issue（#561）で
   同時に行う。
 
 ### distrust 機構の正当化クラス (W7)
@@ -327,7 +328,10 @@ workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plug
 登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する
 （core `journal` 1 本 + dev-flow 18 本 + playpark-skills 24 本。playpark-skills は
 `<skill>-<action>` 命名で `tests/bin-wrappers.bats` が pin）。
-`journal_sh` payload の `'journal'` は Stop hook の `[[ -x ]]` を通らず FALLBACK_JOURNAL に倒れる（fail-open、意図どおり）。
+`journal_sh` payload の `'journal'`（bare 名）は Stop hook が `command -v` で PATH 上の playpark-core
+`bin/journal` に解決する。解決順は payload path → payload bare 名 → `command -v journal` → 隣接
+`plugins/playpark-core/skill-retrospective/scripts/journal.sh`（repo checkout / link mode 用）。
+いずれも無ければ `no-journal-sh` を log に残し pending を戻す（fail-open）。
 
 plugin version を上げた直後の解決確認は、**update 後に起動し直した Claude Code セッション内**で
 `command -v <bare 名>` を実行する。PATH には
@@ -351,6 +355,8 @@ plugin version を上げた直後の解決確認は、**update 後に起動し�
 付けない）。marker ペアの挿入と canonical 本文の充填・全検証（forbidden tokens / duplicate / decl
 collision / 生成後 syntax）を 1 コマンドで validate-then-write するため、途中失敗時も対象ファイルは
 不変のままになる。marker 行を Edit/Write で直接書くことは pretool-inline-edit-guard が deny する。
+inline-edit-guard / inline-commit-gate は `plugins/dev-flow/hooks/hooks.json` の PreToolUse hook で、
+plugin が有効なセッションでは dotfiles 設定に依存せず発火する。
 **git plumbing（hash-object/update-index/checkout-index 等）による迂回は禁止** — 迂回すると guard
 の存在理由（生成物の手編集が次回 `--write` で黙って消失する事故防止）が破られる。
 
