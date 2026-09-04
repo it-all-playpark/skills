@@ -65,6 +65,24 @@ test('[staging-convention] dev-flow.js に "staged" への言及が含まれる'
   );
 });
 
+// (2b) .devflow-tmp/ の後始末を指示しない（isEphemeralPath が realized-diff から除外するため不要）。
+// 削除を指示すると implementer が一時 dir の削除コマンドを組み立て、実行制御に弾かれて turn を失う。
+// 定義本体のみを検査する（コメント行は規範そのものの説明を含みうるため対象外）。
+test('[staging-convention] STAGING_CONVENTION 定義が一時ファイルの削除を指示しない', () => {
+  const defStart = src.indexOf('const STAGING_CONVENTION');
+  assert.ok(defStart !== -1, 'STAGING_CONVENTION の定義が見つからない');
+  const defEnd = src.indexOf('EPOCH_INSTRUCTION', defStart);
+  assert.ok(defEnd !== -1, 'STAGING_CONVENTION 定義の終端が見つからない');
+  const def = src.slice(defStart, defEnd);
+
+  for (const forbidden of ['削除せよ', '削除する', '完了前に削除']) {
+    assert.ok(
+      !def.includes(forbidden),
+      `STAGING_CONVENTION 定義に削除指示 "${forbidden}" が含まれている（.devflow-tmp/ は realized-diff から除外済みで後始末は不要）`,
+    );
+  }
+});
+
 // ============================================================
 // Part 2: behavioral routing pin（VM sandbox）
 // ephemeral-paths-routing.test.mjs の makeCountingSandbox / runDevFlowInSandbox と同型。

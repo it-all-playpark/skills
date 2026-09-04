@@ -4074,10 +4074,12 @@ const EPOCH_INSTRUCTION = '作業完了後、最後に Bash で `date +%s` を 1
 // `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、refloor 誤発火・
 // 宣言外変更 concern の原因になる（issue #216）。agent 定義ファイル（.claude/agents/implementer.md）は
 // sandbox write-deny のため、workflow が全 implementer spawn prompt に決定論的に注入する。
+// .devflow-tmp/ 配下は isEphemeralPath が realized-diff から除外するため後始末は不要で、削除を
+// 指示すると agent が一時 dir の削除コマンドを組み立てて実行制御に弾かれる分だけ turn を失う。
 const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
   + `一時ファイル・handoff ファイル（staging 用 markdown、断片テキスト等）は worktree 内に作るな。`
   + `mktemp "\${TMPDIR:-/tmp}/implementer-XXXXXX" で worktree 外の $TMPDIR に置くのが原則。`
-  + `worktree 内が不可避な場合は .devflow-tmp/ 配下のみに置き、task 完了前に削除せよ。`
+  + `worktree 内が不可避な場合は .devflow-tmp/ 配下のみに置け（ephemeral として realized-diff から除外されるため、後始末は不要）。`
   + `worktree 直下に *.staged.* / fm_*.txt のような一時ファイルを残すことは禁止`
   + `（git status に混入し realized-diff の refloor 誤発火・宣言外変更 concern の原因になる）。\n`
   + EPOCH_INSTRUCTION
