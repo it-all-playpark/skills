@@ -281,7 +281,9 @@ User triggers /command
 8. **「毎回確定実行」したい挙動は skill ではなく hook で実装**:
    format / test / secret 検査のように LLM の判断を介さず必ず走らせたい処理は、
    skill 化すると呼び出し漏れが起きる。hook での実装を検討すること。
-   hook 実装は dotfiles repo の `claude-code/hooks/` を参照
+   hook 実装は各 plugin の `hooks/hooks.json`（`${CLAUDE_PLUGIN_ROOT}` 経由で `hooks/*.sh` を起動。
+   例: plugins/playpark-core/hooks/）を参照。マシン固有の hook（通知・ブランチ保護等）のみ
+   dotfiles repo の `claude-code/hooks/`
 9. **後方互換 scaffolding を作らない**:
    内製スキルは外部公開ライブラリではなく本 repo 内で完結するため、schema 変更や
    dispatch 仕様変更時の **legacy fallback / version enum / dual-path 実装は禁止**。

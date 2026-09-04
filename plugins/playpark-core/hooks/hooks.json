@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/journal.sh\" track-skill",
+            "timeout": 3
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/validate-skill-frontmatter.sh\"",
+            "if": "Write(*/SKILL.md)",
+            "timeout": 5,
+            "statusMessage": "SKILL.md frontmatter バリデーション中..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pretool-context-guard.sh\"",
+            "timeout": 5,
+            "statusMessage": "コンテキスト浪費チェック中..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/posttool-secret-mask.sh\"",
+            "timeout": 5,
+            "statusMessage": "出力内の秘匿情報マスク中..."
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/journal.sh\" hook-capture",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
