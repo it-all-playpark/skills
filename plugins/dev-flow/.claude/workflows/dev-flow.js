@@ -4440,28 +4440,37 @@ let ambiguities = req.ambiguities ?? []
 // 再実行後もなお曖昧なら下の needs_clarification へ進む）。
 if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
   log(`⚠️ analyze: scope 切断 + ambiguities 超過（${ambiguities.length} > ${AMBIGUITY_MAX}）— depth comprehensive で analyze を再実行し切断域を含む全文を確認する（issue #598 review on PR #598）`)
-  req = need(await trackedAgent(
+  // issue #598 review on PR #598 (major): 補助的な 1 回再実行の失敗（agent throw / StructuredOutput
+  // 未返却等）で run 全体を落とさない — need() ではなく failOpenAgent で null に落とし、null なら
+  // 警告 log のみで初回 req/ambiguities を保持したまま下の needs_clarification 判定へ進む
+  // （本 PR 以前の graceful 挙動を維持。切断ヒントは req.scope_truncated が不変のため下流で維持される）。
+  const retryReq = await failOpenAgent(
     analyzePrompt('comprehensive'),
     { agentType: 'dev-runner', schema: REQ, label: `analyze-retrunc#${ISSUE}`, phase: 'Analyze' },
-  ), 'Analyze(retry-scope-truncated)')
-  ambiguities = req.ambiguities ?? []
+  )
+  if (retryReq == null) {
+    log(`⚠️ analyze: scope 切断再実行が失敗（agent throw/null）— 初回 req/ambiguities を保持して needs_clarification 判定へ進む（issue #598 review on PR #598）`)
+  } else {
+    req = retryReq
+    ambiguities = req.ambiguities ?? []
 
-  // issue #598 review on PR #598: 再実行で差し替えた req は取得検証（issue #451）・comment 矛盾判定（issue #573）を
-  // 再適用していないと、2 回目の sonnet 出力が取得検証なしで Implement へ流れてしまう（fail-closed の抜け穴）。
-  // 初回 analyze で ambiguities>AMBIGUITY_MAX まで到達している時点で issueMetaRes probe は既に成功済み
-  // （probe 失敗なら初回 verifyAnalyzeProvenance で既に needs_clarification 終端している）ため、
-  // 同一 probe（issue metadata は run 内で不変）で再検証する。
-  const provRetry = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
-  if (provRetry.ok !== true) {
-    log(`⚠️ analyze: 再実行後の取得検証不合格（${provRetry.reason}）— REQ を採用せず needs_clarification で中断（issue #451 / #598）`)
-    const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の取得検証不合格（${provRetry.reason}）で中断（source=analyze_provenance_retry）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
-    return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（scope 切断対応の再実行後、${provRetry.reason}）: ${provRetry.detail}`], journal_log_status: journalLogStatus, note: 'analyze 再実行（scope 切断対応）の結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451 / #598）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
-  }
-  const retryCommentConflicts = strList(req.comment_conflicts)
-  if (retryCommentConflicts.length) {
-    log(`⚠️ analyze: 再実行後も issue body と comment が矛盾（${retryCommentConflicts.length} 件）— needs_clarification で中断（issue #573 / #598）`)
-    const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の body/comment 矛盾 ${retryCommentConflicts.length} 件で中断（source=analyze_comment_conflict_retry）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
-    return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: retryCommentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない（scope 切断対応の再実行後）。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573 / #598）。worktree は保持済みで再利用される' }
+    // issue #598 review on PR #598: 再実行で差し替えた req は取得検証（issue #451）・comment 矛盾判定（issue #573）を
+    // 再適用していないと、2 回目の sonnet 出力が取得検証なしで Implement へ流れてしまう（fail-closed の抜け穴）。
+    // 初回 analyze で ambiguities>AMBIGUITY_MAX まで到達している時点で issueMetaRes probe は既に成功済み
+    // （probe 失敗なら初回 verifyAnalyzeProvenance で既に needs_clarification 終端している）ため、
+    // 同一 probe（issue metadata は run 内で不変）で再検証する。
+    const provRetry = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
+    if (provRetry.ok !== true) {
+      log(`⚠️ analyze: 再実行後の取得検証不合格（${provRetry.reason}）— REQ を採用せず needs_clarification で中断（issue #451 / #598）`)
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の取得検証不合格（${provRetry.reason}）で中断（source=analyze_provenance_retry）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+      return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（scope 切断対応の再実行後、${provRetry.reason}）: ${provRetry.detail}`], journal_log_status: journalLogStatus, note: 'analyze 再実行（scope 切断対応）の結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451 / #598）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
+    }
+    const retryCommentConflicts = strList(req.comment_conflicts)
+    if (retryCommentConflicts.length) {
+      log(`⚠️ analyze: 再実行後も issue body と comment が矛盾（${retryCommentConflicts.length} 件）— needs_clarification で中断（issue #573 / #598）`)
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の body/comment 矛盾 ${retryCommentConflicts.length} 件で中断（source=analyze_comment_conflict_retry）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+      return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: retryCommentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない（scope 切断対応の再実行後）。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573 / #598）。worktree は保持済みで再利用される' }
+    }
   }
 }
 if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUITY_MAX) {

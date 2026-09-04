@@ -24,6 +24,10 @@
 //   T8: T6 と同じ再実行経路だが、2 回目（analyze-retrunc#）の REQ が comment_conflicts 非空
 //       → comment 矛盾判定（issue #573）を再実行後の REQ にも適用し needs_clarification で中断、
 //       implementer 呼び出し 0 件（issue #598 review on PR #598）
+//   T9: T6 と同じ再実行経路だが、2 回目（analyze-retrunc#）の agent が throw（StructuredOutput
+//       未返却等）→ run 全体を落とさず（error===null）、初回 req/ambiguities を保持したまま
+//       needs_clarification（切断ヒント付き）へ進む、implementer 呼び出し 0 件
+//       （issue #598 review on PR #598 major 指摘の修正確認）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -359,4 +363,50 @@ test('[analyze-scope-truncation-routing] T8: 再実行後（analyze-retrunc#）�
   assert.equal(retryCalls.length, 1, `T8: depth comprehensive 再実行（analyze-retrunc# label）は 1 件のはずだが ${retryCalls.length} 件`);
   const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
   assert.equal(implCalls.length, 0, `T8: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
+});
+
+test('[analyze-scope-truncation-routing] T9: 再実行（analyze-retrunc#）の agent が throw → run を落とさず初回 req/ambiguities を保持して needs_clarification（切断ヒント付き）、implementer 0 件', async () => {
+  const firstReq = { ...FULL_REQ, scope_truncated: true, scope_total_chars: 5120, ambiguities: ['a', 'b', 'c'] };
+  const responder = function ({ label, agentType }) {
+    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
+    if (label.startsWith('contract-probe')) return null;
+    if (label.startsWith('analyze-retrunc')) throw new Error('agent finished without calling StructuredOutput');
+    if (label.startsWith('analyze')) return firstReq;
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
+    if (label === 'realized-diff') return { files: ['src/a.ts'] };
+    if (label === 'declared-path-check') return { files: [] };
+    if (label === 'changed-files') return { files: ['src/a.ts'] };
+    if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
+    if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (agentType === 'dev-flow:evaluator') {
+      return {
+        verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
+        ac_results: (firstReq.acceptance_criteria ?? []).map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
+        security_clearance: [],
+      };
+    }
+    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+    if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    if (label === 'journal-log') return { logged: true, summary: 'ok' };
+    if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    return null;
+  };
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: '1' });
+  const { result, error } = await run(ctx);
+  assertNoCrash(error, 'T9');
+  assert.equal(error, null, `T9: retrunc agent の throw で run 全体が abort してはならないが: ${error?.message}`);
+  assert.equal(result?.status, 'needs_clarification', `T9: status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
+  assert.equal(result?.source, 'analyze', `T9: source は analyze のはずだが ${JSON.stringify(result?.source)}`);
+  assert.equal(result?.missing_context?.length, 4, `T9: missing_context は 4 件（切断ヒント + ambiguities 3件）のはずだが ${JSON.stringify(result?.missing_context)}`);
+  assert.ok(result.missing_context[0].includes('scope が切断'), `T9: missing_context[0] に "scope が切断" が含まれない: ${result.missing_context[0]}`);
+  const retryCalls = calls.filter((c) => c.label.startsWith('analyze-retrunc#'));
+  assert.equal(retryCalls.length, 1, `T9: depth comprehensive 再実行（analyze-retrunc# label）は 1 件のはずだが ${retryCalls.length} 件`);
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  assert.equal(implCalls.length, 0, `T9: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });
