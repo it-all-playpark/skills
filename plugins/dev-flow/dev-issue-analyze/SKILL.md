@@ -30,7 +30,7 @@ analyze-issue <issue-number> --issue-json $TMPDIR/issue-<issue-number>.json [--d
 | Level | Output |
 |-------|--------|
 | `minimal` | title, type, labels, state, breaking_keyword_scan, comment_count, issue_author |
-| `standard` | + AC, requirements, body preview, comments[{author,author_association,created_at,body}], issue_author, ac_heading_near_miss, warnings |
+| `standard` | + AC, requirements, scope, scope_truncated, scope_total_chars, body_preview, body_preview_truncated, body_total_chars, comments[{author,author_association,created_at,body}], issue_author, ac_heading_near_miss, warnings |
 | `comprehensive` | + affected files, components |
 
 `author_association` は `gh` の `authorAssociation`（`OWNER`/`MEMBER`/`COLLABORATOR`/`NONE` 等）を
@@ -66,7 +66,9 @@ T1/T2 契約準拠 issue の決定論 parse。T1 = AC 見出し（`## 受け入�
 | `title` | issue title |
 | `issue_type` | `feat`/`fix`/`docs`/`refactor`/`chore`/`test`/`perf`/`ci`（title prefix → label fallback） |
 | `acceptance_criteria` | marker 除去済み、最大 20 件 |
-| `scope` | AC 節を除く body 全文 head -c 4000 |
+| `scope` | AC 節を除く body の先頭 4000 字。超過時は末尾に `[TRUNCATED: scope shows the first 4000 of N chars ...]` マーカーを付加（silent に切らない。issue #596） |
+| `scope_truncated` | boolean、常時出力。`scope` がマーカー付きで切断されたか |
+| `scope_total_chars` | 整数、常時出力。AC 節を除く body の総文字数（切断前の実サイズ） |
 | `estimated_change_file_count` | スコープ節のファイルパス数。導出不能時はキー省略（dev-flow 側 classifyShape の complex floor 安全則がそのまま働く） |
 | `breaking_keyword_scan` | 決定論 keyword scan の結果 |
 | `comment_count` | issue comments 件数（常時出力） |
@@ -101,11 +103,23 @@ realized diff / merge tier が補償する（意図的な設計判断）。
   "issue_author": "reporter-login",
   "ac_heading_near_miss": ["## 受入れ要件"],
   "warnings": ["acceptance_criteria is empty (no checkbox/numbered items found in body)"],
+  "body_preview": "...",
+  "body_preview_truncated": false,
+  "body_total_chars": 320,
+  "scope": "...",
+  "scope_truncated": false,
+  "scope_total_chars": 280,
   "ambiguities": ["確信を持って AC 化できなかった点"]
 }
 ```
 
 `ambiguities` は dev-flow の Analyze phase が要求する任意フィールド。issue から確信を持って受入条件化できなかった重要な曖昧点のみ列挙する（推測で安全に埋められる軽微な点は含めない）。dev-flow は `acceptance_criteria` が空、または `ambiguities` が閾値（2 件）を超えると `status: 'needs_clarification'` で早期 return し、呼び出し元セッションが AskUserQuestion で人間に確認する。
+
+`scope` / `body_preview` の 4000 字 / 500 字上限は context 予算の意図的な設計で、値自体は変えない。以前はこの切断が
+silent で、issue 末尾に書かれた確定仕様が抜粋の外へ落ち、それを読めない analyze が `needs_clarification` を返し
+続ける事故があった（issue #596）。人間が回答を追記するほど末尾に押し出されて悪化する。切断時は必ず本文末尾へ
+`[TRUNCATED: ...]` マーカーを付け、`scope_truncated` / `body_preview_truncated` boolean と `scope_total_chars` /
+`body_total_chars` を常時出力する — マーカー文字列を見ない下流（boolean だけを見る決定論ゲート）にも切断の事実が届く。
 
 issue comments は body と同じく要件抽出の入力。comment が body を明示的に訂正している場合は comment 側を採用し
 `comment_overrides` に列挙、どちらが有効か確定できない矛盾は `comment_conflicts` に列挙する（dev-flow は

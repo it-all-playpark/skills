@@ -16,6 +16,7 @@ function baseContract(overrides = {}) {
     issue_type: 'feat',
     acceptance_criteria: ['AC1: parse t1/t2 contracts', 'AC2: fallback preserved'],
     scope: '本文スコープ全文（AC 節除く）',
+    scope_truncated: false,
     breaking_keyword_scan: false,
     comment_count: 0,
     ...overrides,
@@ -34,6 +35,51 @@ test('[analyze-contract] (1) eligible t1 正常系 → REQ 全キー検証', () 
   assert.equal(req.breaking_keyword_scan, false);
   assert.equal(req.breaking_evidence, '');
   assert.deepEqual(req.ambiguities, []);
+  assert.equal(req.scope_truncated, false);
+});
+
+// (11) scope_truncated 厳格チェック（issue #596）
+test('[analyze-contract] (11a) scope_truncated 欠落 → null', () => {
+  const contract = baseContract();
+  delete contract.scope_truncated;
+  assert.equal(buildReqFromContract(contract, 374), null);
+});
+
+test("[analyze-contract] (11b) scope_truncated: 'false'（string）→ null", () => {
+  assert.equal(buildReqFromContract(baseContract({ scope_truncated: 'false' }), 374), null);
+});
+
+test('[analyze-contract] (11c) scope_truncated: true → req.scope_truncated === true', () => {
+  const req = buildReqFromContract(baseContract({ scope_truncated: true }), 374);
+  assert.ok(req !== null);
+  assert.equal(req.scope_truncated, true);
+});
+
+test('[analyze-contract] (11d) scope_truncated: false → req.scope_truncated === false', () => {
+  const req = buildReqFromContract(baseContract({ scope_truncated: false }), 374);
+  assert.ok(req !== null);
+  assert.equal(req.scope_truncated, false);
+});
+
+// (12) scope_total_chars: 存在時は転写、欠落/非整数/負値はキー省略
+test('[analyze-contract] (12a) scope_total_chars: 5120 は転写される', () => {
+  const req = buildReqFromContract(baseContract({ scope_total_chars: 5120 }), 374);
+  assert.equal(req.scope_total_chars, 5120);
+});
+
+test('[analyze-contract] (12b) scope_total_chars 欠落はキー省略', () => {
+  const req = buildReqFromContract(baseContract(), 374);
+  assert.ok(!('scope_total_chars' in req));
+});
+
+test('[analyze-contract] (12c) scope_total_chars 非整数はキー省略', () => {
+  const req = buildReqFromContract(baseContract({ scope_total_chars: 2.5 }), 374);
+  assert.ok(!('scope_total_chars' in req));
+});
+
+test('[analyze-contract] (12d) scope_total_chars 負値はキー省略', () => {
+  const req = buildReqFromContract(baseContract({ scope_total_chars: -1 }), 374);
+  assert.ok(!('scope_total_chars' in req));
 });
 
 // (2) estimated_change_file_count: 存在時は転写、欠落/0/非整数/負値はキー省略

@@ -354,16 +354,6 @@ run_contract_mode() {
         ineligible_reason="breaking_keyword_scan true"
     fi
 
-    local scope_full scope scope_files_count
-    # NOTE: no pipe into `head -c` here — for multi-line non-AC bodies over 4000 bytes,
-    # `head -c` early-exits after reading its byte quota and SIGPIPEs the upstream
-    # extract_non_ac_body writer (printf), which under set -o pipefail kills the whole
-    # script (exit 141) before the JSON is emitted, violating the "exit 0 + JSON" contract
-    # (issue #388 review). Capture full output first, then substring in bash (no pipe).
-    scope_full="$(extract_non_ac_body "$BODY")"
-    scope="${scope_full:0:4000}"
-    scope_files_count=$({ grep -oE "[a-zA-Z0-9_/-]+\\.($FILE_EXT_PATTERN)" <<<"$scope" || true; } | sort -u | grep -c '^.' || true)
-
     local ac_items_json
     ac_items_json=$(printf '%s\n' "$ac_items" | grep -v '^[[:space:]]*$' | head -20 | json_array || true)
     [[ -z "$ac_items_json" ]] && ac_items_json="[]"
@@ -376,10 +366,12 @@ run_contract_mode() {
         --arg title "$TITLE" \
         --arg issue_type "$issue_type" \
         --argjson acceptance_criteria "$ac_items_json" \
-        --arg scope "$scope" \
+        --arg scope "$SCOPE" \
+        --argjson scope_truncated "$SCOPE_TRUNCATED" \
+        --argjson scope_total_chars "$SCOPE_TOTAL_CHARS" \
         --argjson breaking_keyword_scan "$BREAKING_KEYWORD_SCAN" \
-        --argjson has_file_count "$([[ "$scope_files_count" -gt 0 ]] && echo true || echo false)" \
-        --argjson file_count "$scope_files_count" \
+        --argjson has_file_count "$([[ "$SCOPE_FILES_COUNT" -gt 0 ]] && echo true || echo false)" \
+        --argjson file_count "$SCOPE_FILES_COUNT" \
         --argjson comment_count "$COMMENT_COUNT" \
         --argjson ac_heading_near_miss "$NEAR_MISS_JSON" \
         '
@@ -391,6 +383,8 @@ run_contract_mode() {
           issue_type: $issue_type,
           acceptance_criteria: $acceptance_criteria,
           scope: $scope,
+          scope_truncated: $scope_truncated,
+          scope_total_chars: $scope_total_chars,
           breaking_keyword_scan: $breaking_keyword_scan,
           comment_count: $comment_count,
           ac_heading_near_miss: $ac_heading_near_miss
@@ -405,6 +399,58 @@ run_contract_mode() {
 # an accepted heading form, verbatim, capped at 10 (issue #573).
 NEAR_MISS_JSON=$(collect_ac_near_miss "$BODY" | head -10 | json_array || true)
 [[ -z "$NEAR_MISS_JSON" ]] && NEAR_MISS_JSON="[]"
+
+# ============================================================
+# scope / body_preview truncation (issue #596)
+# ============================================================
+# Both `scope` (contract mode + standard/comprehensive depth) and
+# `body_preview` (standard/comprehensive depth) are capped for context-budget
+# reasons. The caps themselves (4000 / 500) are an intentional design choice
+# and are NOT changed here. What issue #596 fixes is that the truncation used
+# to be silent: a spec written at the end of a long body could be cut with no
+# trace, and analyze subagents (and humans debugging a repeated
+# needs_clarification) had no way to tell "absent from excerpt" apart from
+# "absent from issue". Every truncation now appends an explicit marker to the
+# returned string AND emits a boolean + total-char-count pair so downstream
+# consumers that only look at booleans (e.g. dev-flow.js's needs_clarification
+# gate) still see the fact even if they never render the string.
+SCOPE_MAX_CHARS=4000
+BODY_PREVIEW_MAX_CHARS=500
+# NOTE: the marker text must never contain a token matching FILE_EXT_PATTERN
+# (e.g. no bare ".sh"/".ts" mentions) — it is appended to $SCOPE before that
+# string is re-scanned by classifyShape-adjacent logic downstream, and
+# scope_files_count below is computed from the pre-marker excerpt specifically
+# to keep the marker itself out of that count either way.
+truncation_marker() {
+    # truncation_marker <label> <shown> <total> <suffix-after-chars>
+    printf '\n[TRUNCATED: %s shows the first %s of %s chars%s; the remainder was NOT included. Do not treat anything absent from this excerpt as unspecified — read the full body from the fetched issue JSON before raising ambiguities]' "$1" "$2" "$3" "$4"
+}
+SCOPE=""; SCOPE_TRUNCATED=false; SCOPE_TOTAL_CHARS=0; SCOPE_FILES_COUNT=0
+if [[ "$CONTRACT_MODE" == true || "$DEPTH" != minimal ]]; then
+    # NOTE: no pipe into `head -c` here — for multi-line non-AC bodies over
+    # 4000 bytes, `head -c` early-exits after reading its byte quota and
+    # SIGPIPEs the upstream extract_non_ac_body writer (printf), which under
+    # set -o pipefail kills the whole script (issue #388 review). Capture full
+    # output first, then substring in bash (no pipe).
+    SCOPE_FULL="$(extract_non_ac_body "$BODY")"
+    SCOPE_TOTAL_CHARS=${#SCOPE_FULL}
+    SCOPE="${SCOPE_FULL:0:$SCOPE_MAX_CHARS}"
+    SCOPE_FILES_COUNT=$({ grep -oE "[a-zA-Z0-9_/-]+\\.($FILE_EXT_PATTERN)" <<<"$SCOPE" || true; } | sort -u | grep -c '^.' || true)
+    if (( SCOPE_TOTAL_CHARS > SCOPE_MAX_CHARS )); then
+        SCOPE_TRUNCATED=true
+        SCOPE+="$(truncation_marker scope "$SCOPE_MAX_CHARS" "$SCOPE_TOTAL_CHARS" " of the issue body (AC section excluded)")"
+    fi
+fi
+BODY_TOTAL_CHARS=${#BODY}
+# Character-unit substring (bash), not the old `head -c 500` (byte-unit): a
+# byte cut can split a multibyte character mid-sequence (U+FFFD corruption)
+# and was inconsistent with $SCOPE's character-unit cut above.
+BODY_PREVIEW="${BODY:0:$BODY_PREVIEW_MAX_CHARS}"
+BODY_PREVIEW_TRUNCATED=false
+if (( BODY_TOTAL_CHARS > BODY_PREVIEW_MAX_CHARS )); then
+    BODY_PREVIEW_TRUNCATED=true
+    BODY_PREVIEW+="$(truncation_marker body_preview "$BODY_PREVIEW_MAX_CHARS" "$BODY_TOTAL_CHARS" "")"
+fi
 
 if [[ "$CONTRACT_MODE" == true ]]; then
     run_contract_mode
@@ -443,6 +489,12 @@ WARNINGS_LIST=""
 if [[ "$AC" == "[]" ]]; then
     WARNINGS_LIST+="acceptance_criteria is empty (no checkbox/numbered items found in body)"$'\n'
 fi
+if [[ "$SCOPE_TRUNCATED" == true ]]; then
+    WARNINGS_LIST+="scope truncated: showing first ${SCOPE_MAX_CHARS} of ${SCOPE_TOTAL_CHARS} chars (AC section excluded) — read the full body from the fetched issue JSON"$'\n'
+fi
+if [[ "$BODY_PREVIEW_TRUNCATED" == true ]]; then
+    WARNINGS_LIST+="body_preview truncated: showing first ${BODY_PREVIEW_MAX_CHARS} of ${BODY_TOTAL_CHARS} chars — read the full body from the fetched issue JSON"$'\n'
+fi
 NEAR_MISS_LINES_RAW=$(echo "$NEAR_MISS_JSON" | jq -r '.[]' 2>/dev/null || true)
 while IFS= read -r nm_line || [[ -n "$nm_line" ]]; do
     [[ -z "$nm_line" ]] && continue
@@ -469,7 +521,12 @@ if [[ "$DEPTH" == "standard" ]]; then
   "issue_author": $(json_escape "$ISSUE_AUTHOR"),
   "ac_heading_near_miss": $NEAR_MISS_JSON,
   "warnings": $WARNINGS_JSON,
-  "body_preview": $(head -c 500 <<<"$BODY" | jq -Rs .)
+  "body_preview": $(printf '%s' "$BODY_PREVIEW" | jq -Rs .),
+  "body_preview_truncated": $BODY_PREVIEW_TRUNCATED,
+  "body_total_chars": $BODY_TOTAL_CHARS,
+  "scope": $(printf '%s' "$SCOPE" | jq -Rs .),
+  "scope_truncated": $SCOPE_TRUNCATED,
+  "scope_total_chars": $SCOPE_TOTAL_CHARS
 }
 JSONEOF
     exit 0
@@ -498,6 +555,11 @@ cat <<JSONEOF
   "ac_heading_near_miss": $NEAR_MISS_JSON,
   "warnings": $WARNINGS_JSON,
   "breaking_keyword_scan": $BREAKING_KEYWORD_SCAN,
-  "body_full": $(printf '%s' "$BODY" | jq -Rs .)
+  "body_full": $(printf '%s' "$BODY" | jq -Rs .),
+  "body_preview_truncated": $BODY_PREVIEW_TRUNCATED,
+  "body_total_chars": $BODY_TOTAL_CHARS,
+  "scope": $(printf '%s' "$SCOPE" | jq -Rs .),
+  "scope_truncated": $SCOPE_TRUNCATED,
+  "scope_total_chars": $SCOPE_TOTAL_CHARS
 }
 JSONEOF

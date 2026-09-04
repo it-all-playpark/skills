@@ -1879,6 +1879,7 @@ function refloorShape(estimatedShape, realizedCount) {
 //   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
 //   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
 //   - contract.scope が string
+//   - contract.scope_truncated が boolean（issue #596: 切断事実を REQ へ運ぶ。旧形式は fail-open で sonnet へ）
 //   - contract.comment_count === 0（整数厳格。comments がある issue は body/comment 突合のため sonnet analyze へ回す。issue #573）
 //
 // 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
@@ -1900,12 +1901,14 @@ function buildReqFromContract(contract, issueNumber) {
   if (contract.breaking_keyword_scan !== false) return null
   if (contract.comment_count !== 0) return null
   if (typeof contract.scope !== 'string') return null
+  if (typeof contract.scope_truncated !== 'boolean') return null
 
   const req = {
     summary: `Issue #${issueNumber}: ${contract.title}`,
     issue_type: contract.issue_type,
     acceptance_criteria: contract.acceptance_criteria.slice(0, 20),
     scope: contract.scope,
+    scope_truncated: contract.scope_truncated,
     breaking_change: false,
     breaking_keyword_scan: false,
     breaking_evidence: '',
@@ -1913,6 +1916,9 @@ function buildReqFromContract(contract, issueNumber) {
   }
   if (Number.isInteger(contract.estimated_change_file_count) && contract.estimated_change_file_count > 0) {
     req.estimated_change_file_count = contract.estimated_change_file_count
+  }
+  if (Number.isInteger(contract.scope_total_chars) && contract.scope_total_chars >= 0) {
+    req.scope_total_chars = contract.scope_total_chars
   }
   return req
 }
@@ -3179,6 +3185,8 @@ const REQ = {
     issue_type: { type: 'string' },
     acceptance_criteria: { type: 'array', items: { type: 'string' } },
     scope: { type: 'string' },
+    scope_truncated: { type: 'boolean' },
+    scope_total_chars: { type: 'number' },
     estimated_change_file_count: { type: 'number' },
     shape: { type: 'string', enum: ['micro', 'standard', 'complex'] },
     ambiguities: { type: 'array', items: { type: 'string' } },
@@ -4320,6 +4328,11 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `さらに、skill の JSON 出力に含まれる comment_count (number) をそのまま verbatim で comment_count として返せ（全 depth の出力に含まれる。自分で数え直す・変更するな。PR #578: 実際に取得した comments 件数の決定論突合に使う）。`
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
   + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
+  // issue #596: skill 出力の scope / body_preview は上限付き抜粋。切断は末尾マーカー + boolean で非 silent 化されており、
+  // ここで「抜粋に無い = issue に無い」の推論を禁じる。規範性クラス: contract（scope_truncated / body_preview_truncated /
+  // [TRUNCATED: ...] マーカーの意味定義 = analyze-issue.sh 出力との入出力契約）+ incentive-structural（抜粋のみが context に
+  // ある構造分断で欠落判定に傾く。#572 で 3 run 空振り実測）。sunset 対象ではない。
+  + `さらに、skill の JSON 出力の scope / body_preview は上限付きの抜粋である。scope_truncated または body_preview_truncated が true（抜粋末尾に [TRUNCATED: ...] マーカーがある）の場合は、取得した issue JSON ファイル（$TMPDIR/issue-${ISSUE}.json）の body 全文を Read してから要件抽出せよ。抜粋に無いことを根拠に ambiguities を立ててはならない（全文を読んだ上で本当に未記載の点のみ挙げよ）。scope は skill 出力の scope をマーカー含め verbatim で、scope_truncated は skill 出力の boolean を verbatim で返せ（自分で再判定・除去するな）。`
 
 // contract probe prompt（issue #374, issue #466 で --issue-json ファイル入力化）:
 // DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。issue 本体は subagent の bare
@@ -4404,6 +4417,9 @@ if (!req) {
   }
 }
 
+// issue #596: scope 切断は経路（contract / sonnet）を問わず log に出す — journal だけでは切断が見えず人間が切り分けられなかった。
+if (req.scope_truncated === true) log(`⚠️ analyze: scope が 4000 字で切断（AC 節除く全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）— 切断位置以降の記述は analyze に届かない可能性がある（issue #596）`)
+
 // issue #573: issue body と comment の矛盾は黙って片方を採用せず人間へ返す（fail-closed）。
 // comment が body を明示訂正した override は採用済みとして log で可視化のみ（REQ にも残る）。
 const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
@@ -4420,15 +4436,19 @@ const ambiguities = req.ambiguities ?? []
 if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUITY_MAX) {
   log(`⚠️ analyze: 要件が曖昧（AC 空=${(req.acceptance_criteria ?? []).length === 0} / ambiguities=${ambiguities.length} > AMBIGUITY_MAX=${AMBIGUITY_MAX}）— needs_clarification で中断`)
   const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: 'analyze: 要件が曖昧（AC 空 or ambiguities 超過）で中断（source=analyze）', telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+  const scopeTruncHint = req.scope_truncated === true
+    ? [`issue body（AC 節除く）が 4000 字を超え scope が切断されている（全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）。切断位置以降に書かれた回答・仕様は analyze に届いていない可能性がある — 回答は body 冒頭に置くか body を短くしてから /dev-flow を再起動すること（issue #596）`]
+    : []
+  const baseMissingContext = (req.acceptance_criteria ?? []).length === 0
+    ? (ambiguities.length ? ambiguities : ['acceptance_criteria が空 — issue から受入条件を抽出できなかった'])
+    : ambiguities
   return {
     status: 'needs_clarification',
     source: 'analyze',
     issue: ISSUE,
     worktree: WT,
     branch: setup.branch,
-    missing_context: (req.acceptance_criteria ?? []).length === 0
-      ? (ambiguities.length ? ambiguities : ['acceptance_criteria が空 — issue から受入条件を抽出できなかった'])
-      : ambiguities,
+    missing_context: scopeTruncHint.length ? scopeTruncHint.concat(baseMissingContext) : baseMissingContext,
     journal_log_status: journalLogStatus,
     note: '要件が曖昧なため中断。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue を更新して /dev-flow を再起動すること。worktree は保持済みで再利用される',
   }
