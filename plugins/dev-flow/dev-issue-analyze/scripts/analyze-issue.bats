@@ -416,7 +416,7 @@ Update dev-issue-analyze/scripts/analyze-issue.sh and dev-issue-analyze/scripts/
 #     JSON. 200 lines x 30 chars (~6000 bytes incl. newlines) reproduces the
 #     multi-write pattern that a single large single-line body does not.
 # ---------------------------------------------------------------------------
-@test "contract mode: multi-line non-AC scope over 4000 bytes -> exit 0, eligible" {
+@test "contract mode: multi-line non-AC scope over 4000 bytes -> exit 0, scope truncated -> ineligible" {
     LINES=""
     for i in $(seq 1 200); do
         LINES="${LINES}line-${i}-xxxxxxxxxxxxxxxxxxxx"$'\n'
@@ -431,7 +431,10 @@ ${LINES}"
     make_fixture "$FIXTURE" "feat: large scope" "$BODY"
     run "$SCRIPT" 27 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.contract == "t1" and .eligible == true'
+    # scope > 4000 bytes -> scope_truncated true -> ineligible (falls back to
+    # sonnet analyze, which reads the full body; issue #598 review on PR #598).
+    # This test's purpose remains the SIGPIPE regression: exit 0 + valid JSON.
+    echo "$output" | jq -e '.contract == "t1" and .eligible == false and .ineligible_reason == "scope truncated"'
 }
 
 # ---------------------------------------------------------------------------
@@ -818,6 +821,13 @@ ${LINES}DECISION: use the marker approach"
     make_fixture "$FIXTURE" "feat: large scope with decision" "$BODY"
     run "$SCRIPT" 53 --issue-json "$FIXTURE" --contract
     [ "$status" -eq 0 ]
+    # scope_truncated:true now makes the contract path ineligible (falls back
+    # to sonnet analyze, which reads the full body instead of building a REQ
+    # from an excerpt that may be missing a spec written past the cut — issue
+    # #598 review on PR #598). The excerpt/marker fields are still asserted
+    # here because they remain part of the contract output contract even when
+    # ineligible (dev-flow.js's whitelist check reads scope_truncated off the
+    # sonnet-path REQ, not off this ineligible contract-mode output).
     echo "$output" | jq -e '
         .scope_truncated == true and
         (.scope_total_chars > 4000) and
@@ -825,7 +835,8 @@ ${LINES}DECISION: use the marker approach"
         (.scope | endswith("before raising ambiguities]")) and
         ((.scope | split("\n[TRUNCATED")[0] | length) == 4000) and
         ((.scope | contains("DECISION:")) | not) and
-        (.eligible == true)
+        (.eligible == false) and
+        (.ineligible_reason == "scope truncated")
     '
 }
 

@@ -1,6 +1,6 @@
 // _lib/analyze-scope-truncation-routing.test.mjs
 // issue #596: dev-flow workflow 側で「scope 切断」を analyze subagent と人間の両方へ伝搬させる配線を
-// VM sandbox で検証する。source pin (a)-(c) と routing T1-T5。
+// VM sandbox で検証する。source pin (a)-(c) と routing T1-T6。
 //
 // テストケース:
 //   (a)-(c): source-as-string pin（REQ schema の scope_truncated / analyzePrompt の切断規約文言 /
@@ -9,9 +9,15 @@
 //       切断ヒント、implementer 呼び出し 0 件
 //   T2: scope_truncated:false + ambiguities 超過 → needs_clarification（既存挙動不変、ヒント無し）
 //   T3: scope_truncated:true + ambiguities 空 → implementer 呼び出し >= 1（切断だけでは中断しない）
-//   T4: contract 経路採用（scope_truncated:true が verbatim で採用） → analyze# label 呼び出し 0 件、
-//       implementer >= 1、dev-planner prompt に [TRUNCATED: scope shows が含まれる
+//   T4: contract 経路で scope_truncated:true（analyze-issue.sh が ineligible にする実際の出力形）
+//       → whitelist 不合格で sonnet fallback（analyze# label 呼び出し 1 件以上。issue #598 review on PR #598
+//       により反転 — 旧 T4 は eligible:true+scope_truncated:true の verbatim 採用を検証していたが、
+//       run_contract_mode が SCOPE_TRUNCATED=true 時に常に eligible=false を返すよう変更されたため
+//       この組み合わせは実際には到達しない）
 //   T5: contract 経路で scope_truncated 欠落 → whitelist 不合格で sonnet fallback（analyze# 呼び出し 1 回以上）
+//   T6: scope_truncated:true + 1 回目 ambiguities 超過 → depth comprehensive で analyze 再実行
+//       （label analyze-retrunc#）→ 2 回目 ambiguities 空 → needs_clarification に落ちず
+//       implementer 呼び出し >= 1（issue #598 review on PR #598）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -174,9 +180,9 @@ test('[analyze-scope-truncation-routing] T3: scope_truncated:true + ambiguities 
   assert.ok(implCalls.length >= 1, `T3: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
 });
 
-test('[analyze-scope-truncation-routing] T4: contract 経路採用（scope_truncated:true 検証済み） → analyze# 呼び出し 0 件、implementer >= 1、dev-planner prompt に [TRUNCATED: scope shows が含まれる', async () => {
+test('[analyze-scope-truncation-routing] T4: contract 経路で scope_truncated:true（analyze-issue.sh の実出力形。eligible:false, ineligible_reason:"scope truncated"）→ whitelist 不合格で sonnet fallback（analyze# 呼び出し 1 件以上）', async () => {
   const contractProbeRes = {
-    contract: 't1', eligible: true, issue_number: 1, title: 'stub-issue-title', issue_type: 'feat',
+    contract: 't1', eligible: false, ineligible_reason: 'scope truncated', issue_number: 1, title: 'stub-issue-title', issue_type: 'feat',
     acceptance_criteria: ['a', 'b', 'c'],
     scope: 'x\n[TRUNCATED: scope shows the first 4000 of 5000 chars of the issue body (AC section excluded); the remainder was NOT included. Do not treat anything absent from this excerpt as unspecified — read the full body from the fetched issue JSON before raising ambiguities]',
     scope_truncated: true,
@@ -191,15 +197,7 @@ test('[analyze-scope-truncation-routing] T4: contract 経路採用（scope_trunc
   assertNoCrash(error, 'T4');
   assert.equal(error, null, `T4: run が throw してはならないが: ${error?.message}`);
   const analyzeCalls = calls.filter((c) => c.label.startsWith('analyze#'));
-  assert.equal(analyzeCalls.length, 0, `T4: analyze# label 呼び出しは 0 件のはずだが ${analyzeCalls.length} 件`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
-  assert.ok(implCalls.length >= 1, `T4: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
-  assert.ok(plannerCalls.length >= 1, 'T4: dev-planner 呼び出しが見つからない');
-  assert.ok(
-    plannerCalls.some((c) => c.prompt.includes('[TRUNCATED: scope shows')),
-    'T4: dev-planner への prompt に切断マーカーが含まれていない',
-  );
+  assert.ok(analyzeCalls.length >= 1, `T4: analyze# label 呼び出しは 1 件以上のはずだが ${analyzeCalls.length} 件`);
 });
 
 test('[analyze-scope-truncation-routing] T5: contract 経路で scope_truncated 欠落 → whitelist 不合格で sonnet fallback（analyze# 呼び出し 1 件以上）', async () => {
@@ -218,4 +216,50 @@ test('[analyze-scope-truncation-routing] T5: contract 経路で scope_truncated 
   assert.equal(error, null, `T5: run が throw してはならないが: ${error?.message}`);
   const analyzeCalls = calls.filter((c) => c.label.startsWith('analyze#'));
   assert.ok(analyzeCalls.length >= 1, `T5: analyze# label 呼び出しは 1 件以上のはずだが ${analyzeCalls.length} 件`);
+});
+
+test('[analyze-scope-truncation-routing] T6: scope_truncated:true + 1回目 ambiguities 超過 → depth comprehensive で再実行（analyze-retrunc#）→ 2回目 ambiguities 空 → implementer 呼び出し >= 1', async () => {
+  const firstReq = { ...FULL_REQ, scope_truncated: true, scope_total_chars: 5120, ambiguities: ['a', 'b', 'c'] };
+  const secondReq = { ...FULL_REQ, scope_truncated: true, scope_total_chars: 5120, ambiguities: [] };
+  const responder = function ({ label, agentType }) {
+    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
+    if (label.startsWith('contract-probe')) return null;  // sonnet fallback（DEPTH===standard の contract probe を非採用にする）
+    if (label.startsWith('analyze-retrunc')) return secondReq;
+    if (label.startsWith('analyze')) return firstReq;
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
+    if (label === 'realized-diff') return { files: ['src/a.ts'] };
+    if (label === 'declared-path-check') return { files: [] };
+    if (label === 'changed-files') return { files: ['src/a.ts'] };
+    if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
+    if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (agentType === 'dev-flow:evaluator') {
+      return {
+        verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
+        ac_results: (secondReq.acceptance_criteria ?? []).map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
+        security_clearance: [],
+      };
+    }
+    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+    if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    if (label === 'journal-log') return { logged: true, summary: 'ok' };
+    if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    return null;
+  };
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: '1' });
+  const { result, error } = await run(ctx);
+  assertNoCrash(error, 'T6');
+  assert.equal(error, null, `T6: run が throw してはならないが: ${error?.message}`);
+  assert.notEqual(result?.status, 'needs_clarification', `T6: 再実行後に ambiguities が空になったので needs_clarification へ落ちてはならないが status=${JSON.stringify(result?.status)}`);
+  const firstAnalyzeCalls = calls.filter((c) => c.label.startsWith('analyze#'));
+  assert.ok(firstAnalyzeCalls.length >= 1, `T6: 1 回目の analyze# label 呼び出しは 1 件以上のはずだが ${firstAnalyzeCalls.length} 件`);
+  const retryCalls = calls.filter((c) => c.label.startsWith('analyze-retrunc#'));
+  assert.equal(retryCalls.length, 1, `T6: depth comprehensive 再実行（analyze-retrunc# label）は 1 件のはずだが ${retryCalls.length} 件`);
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  assert.ok(implCalls.length >= 1, `T6: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
 });

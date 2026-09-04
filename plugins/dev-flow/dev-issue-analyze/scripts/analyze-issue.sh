@@ -320,6 +320,18 @@ run_contract_mode() {
         ineligible_reason="comments present ($COMMENT_COUNT) — body/comment reconciliation requires sonnet analyze"
     fi
 
+    # scope truncated -> a spec written past the 4000-char cap can be silently
+    # cut out of the contract-mode `scope` excerpt. The light path has no way
+    # to notice this (it never reads the full body), so fall back to sonnet
+    # analyze, which reads the full body when scope_truncated is set
+    # (analyzePrompt) instead of building a REQ from a possibly-incomplete
+    # excerpt (issue #598 review on PR #598, reverses issue #596's original
+    # contract-eligible-with-truncation-marker approach).
+    if [[ "$eligible" == true && "$SCOPE_TRUNCATED" == true ]]; then
+        eligible=false
+        ineligible_reason="scope truncated"
+    fi
+
     # issue_type: conventional-commit title prefix (e.g. `feat:`, `fix(scope)!:`) takes
     # precedence; falls back to label-based detect_type when the title has no such prefix.
     local title_type="" title_bang="false" issue_type

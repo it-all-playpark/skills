@@ -4432,7 +4432,20 @@ if (commentConflicts.length) {
   return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: commentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573）。worktree は保持済みで再利用される' }
 }
 
-const ambiguities = req.ambiguities ?? []
+let ambiguities = req.ambiguities ?? []
+// issue #598 review on PR #598: scope 切断域を根拠に sonnet が ambiguities を生成する実際の失敗経路は
+// analyzePrompt の文言のみに依存し決定論の防御が無かった。scope_truncated===true かつ ambiguities が
+// 閾値超過のときのみ、depth comprehensive（body_full 付き — 切断されない全文が skill 出力に直接含まれる）
+// で analyze を 1 回だけ再実行し、切断域を実際に読んだ上での再判定を試みる（無限ループ防止のため 1 回のみ。
+// 再実行後もなお曖昧なら下の needs_clarification へ進む）。
+if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
+  log(`⚠️ analyze: scope 切断 + ambiguities 超過（${ambiguities.length} > ${AMBIGUITY_MAX}）— depth comprehensive で analyze を再実行し切断域を含む全文を確認する（issue #598 review on PR #598）`)
+  req = need(await trackedAgent(
+    analyzePrompt('comprehensive'),
+    { agentType: 'dev-runner', schema: REQ, label: `analyze-retrunc#${ISSUE}`, phase: 'Analyze' },
+  ), 'Analyze(retry-scope-truncated)')
+  ambiguities = req.ambiguities ?? []
+}
 if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUITY_MAX) {
   log(`⚠️ analyze: 要件が曖昧（AC 空=${(req.acceptance_criteria ?? []).length === 0} / ambiguities=${ambiguities.length} > AMBIGUITY_MAX=${AMBIGUITY_MAX}）— needs_clarification で中断`)
   const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: 'analyze: 要件が曖昧（AC 空 or ambiguities 超過）で中断（source=analyze）', telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
