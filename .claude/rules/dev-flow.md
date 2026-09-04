@@ -326,7 +326,7 @@ workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plug
 止まる）。`bin/<name>` は本体へ `exec bash` する 3 行 wrapper（.py 本体は `exec python3`）で、
 本体と隣接 `*.bats` は移動しない。
 登録名の集合は `tests/bin-wrappers.bats` と `_lib/bin-bare-name-routing.test.mjs` が pin する
-（core `journal` 1 本 + dev-flow 18 本 + playpark-skills 24 本。playpark-skills は
+（core `journal` 1 本 + dev-flow 22 本 + playpark-skills 24 本。playpark-skills は
 `<skill>-<action>` 命名で `tests/bin-wrappers.bats` が pin）。
 `journal_sh` payload の `'journal'`（bare 名）は Stop hook が `command -v` で PATH 上の playpark-core
 `bin/journal` に解決する。解決順は payload path → payload bare 名 → `command -v journal` → 隣接
@@ -371,11 +371,11 @@ sync-inlines の既定 root は `plugins/dev-flow`（`--root` で上書き可）
 
 **この generator は harness-capability-bound な橋**（W7 表の capability-bound クラスとは別の軸: LLM judge 能力依存ではなく harness 機能依存）。workflow loader が ESM import 不可という harness 制約への対応として存在する。
 - 表現: `tools/sync-inlines.mjs` + マーカー区間そのもの
-- 再評価トリガ: Claude Code（harness）更新毎に loader の ESM import 可否を再検証し、解禁されたらマーカー区間を `import` 文に置換して generator・統合 sync test ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics.sh --canary` で行う。
+- 再評価トリガ: Claude Code（harness）更新毎に loader の ESM import 可否を再検証し、解禁されたらマーカー区間を `import` 文に置換して generator・統合 sync test ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics --canary` で行う。
 
 **exec-proxy も harness-capability-bound な橋**（同じ harness 機能依存軸）。workflow runtime に fs / exec が無いという harness 制約への対応として、決定論スクリプトの実行を dev-runner(-haiku/-haiku-ro/-haiku-wo) subagent に委譲し stdout を verbatim で返させるパターン（diff-hash / danger-grep / realized-diff / journal / test 実行など 10 箇所超）。least privilege のため capability 別に 4 agent へ分離する（issue #323, #521）: read-only 決定論 proxy（diff-hash / changed-files(realized-diff) / CI checks read / ui-verify config read / setup-base probe（resolve-base + worktree-base-check + epoch 統合） / danger-grep(-final)（issue #544 で `--out` 証跡書き込みを撤去し read-only 化。Security floor の danger-grep は secfloor-classify.sh への統合呼び出しに変わったが label・agentType は不変））は `dev-runner-haiku-ro`（tools: `[Bash, Read]` のみ）、書き込み・Skill 呼び出しを伴う決定論 proxy（worktree 作成 / deps / test 実行 / redgreen / reconcile-sync / ui-verify server・teardown / journal 書き込み / PR コメント投稿（post-review / post-summary））は `dev-runner-haiku`（tools: `[Bash, Read, Write, Skill]`。Write は投稿本文の verbatim 一時ファイル保存に必要）、Write のみで完結する isolation probe 専任 proxy は `dev-runner-haiku-wo`（tools: `[Write]` のみ。Bash 等の代替手段を harness レベルで遮断し probe の意味を保証する）、判断寄り（fix/analyze/commit+PR）は `dev-runner`（sonnet）が担う。全 exec-proxy agent の frontmatter には有限の `maxTurns` を設定する（dev-runner-haiku-ro: 10 / dev-runner-haiku: 25 / dev-runner-haiku-wo: 5 / dev-runner: 50）。maxTurns の agent frontmatter サポートは Claude Code CHANGELOG 上で確認できる最小バージョンとして `2.1.78`（"Added `effort`, `maxTurns`, and `disallowedTools` frontmatter support for plugin-shipped agents" — https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md）を根拠とする。ただし CHANGELOG の文言は "plugin-shipped agents" 限定であり、本 repo の `.claude/agents/*.md`（project-level custom subagent、非 plugin 配布）に対しても同一に runtime honor されるかは一次情報で確認できていない（要 sunset path 的な再検証: 次回 major リリース時に docs/CHANGELOG で project-level agent への適用有無を再確認する）。
 - 表現: dev-runner(-haiku/-haiku-ro/-haiku-wo) verbatim 転写プロンプト群
-- 再評価トリガ: harness が workflow への直接 exec（または fs/exec API）を解禁した時点で、当該プロンプト群を直接実行に置換して exec-proxy ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics.sh --canary` で行う。
+- 再評価トリガ: harness が workflow への直接 exec（または fs/exec API）を解禁した時点で、当該プロンプト群を直接実行に置換して exec-proxy ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics --canary` で行う。
 
 > exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない。GitHub I/O は
 > subagent の Bash で「先頭トークンが gh または git の bare 単文」（--repo/-C で cwd 非依存化、

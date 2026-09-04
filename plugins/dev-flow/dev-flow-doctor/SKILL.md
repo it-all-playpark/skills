@@ -13,7 +13,12 @@ description: |
   trust receipts, SLO, Go/No-Go
   Accepts args: [--scope full|journal|worktrees|config|telemetry|feedback] [--window 7d|30d] [--fix] [--compare <path>] [--update-baseline <path>] [--canary <path>]
 allowed-tools:
-  - Bash(${CLAUDE_PLUGIN_ROOT}/dev-flow-doctor/scripts/*)
+  - Bash(run-diagnostics *)
+  - Bash(analyze-dev-flow-telemetry *)
+  - Bash(baseline-snapshot *)
+  - Bash(compare-baseline *)
+  - Bash(validate-canary-report *)
+  - Bash(trust-receipts-report *)
   - Bash(journal *)
 ---
 
@@ -150,9 +155,10 @@ plan_iter: max 7, cap 8, at_cap_count 0
 
 ## Scripts
 
-### `scripts/run-diagnostics.sh`
+各スクリプトは `plugins/dev-flow/bin/` の bare 名（拡張子なし・`bash` 前置なし）で呼ぶ。
+plugin enable 中は PATH に載る。実体は `scripts/<name>.sh`。
 
-bin/ の bare 名 `run-diagnostics` で呼ぶ（plugin enable 中は PATH に載る）。
+### `run-diagnostics`
 
 Deterministic diagnostic data collection and health score calculation.
 
@@ -171,7 +177,7 @@ run-diagnostics --scope config
 # Baseline comparison (AC4) — adds baseline_compare check + regression penalty
 run-diagnostics --scope telemetry --compare .claude/dev-flow-doctor-baseline-pre-79.json
 
-# Regenerate baseline (AC2) — delegates to baseline-snapshot.sh
+# Regenerate baseline (AC2) — delegates to baseline-snapshot
 run-diagnostics --update-baseline .claude/dev-flow-doctor-baseline-pre-79.json --window 30d
 
 # Canary report intake (issue #325) — advisory, never affects score
@@ -182,24 +188,24 @@ Output: JSON with `score`, `rating`, `checks` (including `dev_flow_telemetry`,
 `baseline_compare` when `--compare` is used, and `canary` when `--canary` is used),
 and `issues` fields.
 
-### `scripts/baseline-snapshot.sh`
+### `baseline-snapshot`
 
 Aggregate journal entries into a snapshot JSON (issue #83 AC2). Single-purpose:
 generate snapshot, write to stdout or `--out <path>`. Does NOT accept
-`--update-baseline` (ownership belongs to `run-diagnostics.sh`).
+`--update-baseline` (ownership belongs to `run-diagnostics`).
 
 ```bash
-./scripts/baseline-snapshot.sh --window 30d [--until <iso>] [--out <path>] [--include-non-family]
+baseline-snapshot --window 30d [--until <iso>] [--out <path>] [--include-non-family]
 ```
 
-### `scripts/compare-baseline.sh`
+### `compare-baseline`
 
 Deterministic baseline vs current comparison (issue #83 AC3). Exit codes:
 0 = no regression, 1 = regression detected, 2 = corrupt baseline / window mismatch / IO.
 
 ```bash
-./scripts/compare-baseline.sh --baseline <path> [--current <path>]   # stdin if --current omitted
-./scripts/compare-baseline.sh --rolling --window 7d                  # rolling: [now-2N,now-N) vs [now-N,now)
+compare-baseline --baseline <path> [--current <path>]   # stdin if --current omitted
+compare-baseline --rolling --window 7d                  # rolling: [now-2N,now-N) vs [now-N,now)
 ```
 
 Rolling mode (issue #88) compares two auto-generated journal windows via
@@ -210,15 +216,15 @@ and exits 0 (advisory) instead of alerting on small-N noise.
 
 Detail: [`references/baseline-comparison.md`](references/baseline-comparison.md).
 
-### `scripts/validate-canary-report.sh`
+### `validate-canary-report`
 
 Deterministic schema validation for a `/dev-flow-canary` report JSON
 (canary_version `"1.0.0"` const, 9 capability ids, `bridge_sunset` verdict
-enum). Called by `run-diagnostics.sh --canary <path>`; can also be invoked
+enum). Called by `run-diagnostics --canary <path>`; can also be invoked
 directly.
 
 ```bash
-./scripts/validate-canary-report.sh ~/.claude/logs/dev-flow-canary/latest.json
+validate-canary-report ~/.claude/logs/dev-flow-canary/latest.json
 ```
 
 Exit 0 + `{"ok":true,...,"counts":{...},"failed_ids":[...],"unsupported_ids":[...],"bridge_sunset":{...}}`
@@ -227,15 +233,15 @@ violation (missing keys, non-const `canary_version`, unknown/missing
 capability ids, invalid `status`/`verdict` enum values). No legacy fallback —
 out-of-spec reports are rejected outright.
 
-### `scripts/analyze-dev-flow-telemetry.sh`
+### `analyze-dev-flow-telemetry`
 
 Dev-flow telemetry distribution + anomaly analysis. Called by
-`run-diagnostics.sh --scope full|telemetry`, but can also be invoked directly
+`run-diagnostics --scope full|telemetry`, but can also be invoked directly
 for standalone diagnosis.
 
 ```bash
-./scripts/analyze-dev-flow-telemetry.sh --window 30d
-./scripts/analyze-dev-flow-telemetry.sh --window 7d --config /path/to/skill-config.json
+analyze-dev-flow-telemetry --window 30d
+analyze-dev-flow-telemetry --window 7d --config /path/to/skill-config.json
 ```
 
 Output JSON schema:
@@ -270,7 +276,7 @@ repo/pr_number 欠落や timestamp parse 不能で統合できず 1 run のま�
 数、`status_conflicts` は親子で status が乖離したペア数、
 `join_window_seconds` は統合判定に使った timestamp 近接ウィンドウ（秒）。
 
-### `scripts/trust-receipts-report.sh`
+### `trust-receipts-report`
 
 Real trust receipt (SurfaceProof/EvalSeal/EffectDelta) consumption report
 (issue #413, epic #390 Phase 5, AC-13). Aggregates dev-flow journal telemetry
@@ -281,9 +287,9 @@ reason_code) / `missing_receipt` / `inconclusive` / `effect_mismatch`
 — and reports safely (rate `null`) when 0 matching runs exist.
 
 ```bash
-./scripts/trust-receipts-report.sh --window 30d
-./scripts/trust-receipts-report.sh --window 30d --slo          # adds Go/No-Go verdict
-./scripts/trust-receipts-report.sh --matrix path/to/fixtures    # 2x2x2 dogfood comparison
+trust-receipts-report --window 30d
+trust-receipts-report --window 30d --slo          # adds Go/No-Go verdict
+trust-receipts-report --matrix path/to/fixtures    # 2x2x2 dogfood comparison
 ```
 
 `--slo` checks the initial SLO hypothesis (`receipt_success_min: 0.99`,

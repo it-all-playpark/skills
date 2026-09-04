@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Invariant (#571): bin/ exec ラッパーは playpark-core (journal 1本) と
-# dev-flow (18本) に分割される。plugin install 環境では skills が
+# dev-flow (22本) に分割される。plugin install 環境では skills が
 # plugin root 配下に入るため、絶対パス runtime 依存を断つ。
 #
 # 分割後もラッパーは plugin 境界を跨がない: 3 行目の target は
@@ -35,7 +35,9 @@ devflow_expected_names() {
 ac-lint
 analyze-dev-flow-telemetry
 analyze-issue
+baseline-snapshot
 check-ci
+compare-baseline
 cross-repo-artifacts
 detect-and-install
 detect-stack
@@ -46,7 +48,9 @@ redgreen-verify
 run-diagnostics
 secfloor-classify
 structural-classify
+trust-receipts-report
 ui-verify-server
+validate-canary-report
 veridelta-archive
 worktree-diff-hash
 worktree-teardown
@@ -102,6 +106,10 @@ target_for() {
         hypothesis-check) echo "dev-flow-improve/scripts/hypothesis-check.sh" ;;
         analyze-dev-flow-telemetry) echo "dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh" ;;
         run-diagnostics) echo "dev-flow-doctor/scripts/run-diagnostics.sh" ;;
+        baseline-snapshot) echo "dev-flow-doctor/scripts/baseline-snapshot.sh" ;;
+        compare-baseline) echo "dev-flow-doctor/scripts/compare-baseline.sh" ;;
+        validate-canary-report) echo "dev-flow-doctor/scripts/validate-canary-report.sh" ;;
+        trust-receipts-report) echo "dev-flow-doctor/scripts/trust-receipts-report.sh" ;;
         detect-stack) echo "_lib/scripts/detect-stack.sh" ;;
         ac-lint) echo "_lib/scripts/ac-lint.sh" ;;
         *) echo "" ;;
@@ -145,7 +153,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象18本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象22本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]
@@ -325,4 +333,32 @@ skills_target_for() {
     run bash "$REPO_ROOT/plugins/dev-flow/bin/ac-lint"
     [ "$status" -eq 1 ]
     echo "$output" | jq -e '.ok == false'
+}
+
+@test "validate-canary-reportがbin経由bare名でエラー経路を透過する(引数なし)" {
+    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
+    run bash "$REPO_ROOT/plugins/dev-flow/bin/validate-canary-report"
+    [ "$status" -eq 2 ]
+    echo "$output" | jq -e '.ok == false'
+}
+
+@test "compare-baselineがbin経由bare名でエラー経路を透過する(引数なし)" {
+    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
+    run bash "$REPO_ROOT/plugins/dev-flow/bin/compare-baseline"
+    [ "$status" -eq 2 ]
+    echo "$output" | jq -e '.error | test("--baseline is required")'
+}
+
+@test "trust-receipts-reportがbin経由bare名でエラー経路を透過する(不明引数)" {
+    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
+    run bash "$REPO_ROOT/plugins/dev-flow/bin/trust-receipts-report" --bogus
+    [ "$status" -eq 1 ]
+    echo "$output" | jq -e '.status == "error"'
+}
+
+@test "baseline-snapshotがbin経由bare名で引数を透過する(--help)" {
+    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
+    run bash "$REPO_ROOT/plugins/dev-flow/bin/baseline-snapshot" --help
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q 'Usage'
 }
