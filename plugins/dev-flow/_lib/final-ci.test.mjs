@@ -172,7 +172,25 @@ test('finalCiVerdict: expectedSha と headRefOid の大文字小文字違いは�
 
 // --- (j) SKIPPED/NEUTRAL は success、未知 conclusion は failure ---
 
-test('finalCiVerdict: conclusion SKIPPED/NEUTRAL は success 扱い', () => {
+test('finalCiVerdict: 真の SUCCESS が1件でもあれば SKIPPED/NEUTRAL 混在は success 扱い', () => {
+  const meta = {
+    ok: true,
+    headRefOid: SHA_A,
+    statusCheckRollup: [
+      checkRun('a', 'COMPLETED', 'SKIPPED'),
+      checkRun('b', 'COMPLETED', 'NEUTRAL'),
+      checkRun('c', 'COMPLETED', 'SUCCESS'),
+    ],
+  };
+  const result = finalCiVerdict({ expectedSha: SHA_A, meta });
+  assert.equal(result.verified, true);
+  assert.equal(result.reason, 'ok');
+});
+
+// issue #600 レビュー指摘: 全 SKIPPED/NEUTRAL（真の SUCCESS が1件も無い）は「test が1件も
+// 実行されていない」ことを意味するため no-checks へ倒す（draft PR で test job が条件付き skip
+// される場合等に、CI 委譲が誤って ci_verified へ昇格することを防ぐ）。
+test('finalCiVerdict: 全 SKIPPED/NEUTRAL（真の SUCCESS 0件）は no-checks/human_judgment', () => {
   const meta = {
     ok: true,
     headRefOid: SHA_A,
@@ -182,8 +200,10 @@ test('finalCiVerdict: conclusion SKIPPED/NEUTRAL は success 扱い', () => {
     ],
   };
   const result = finalCiVerdict({ expectedSha: SHA_A, meta });
-  assert.equal(result.verified, true);
-  assert.equal(result.reason, 'ok');
+  assert.equal(result.verified, false);
+  assert.equal(result.reason, 'no-checks');
+  assert.equal(result.kind, FINAL_CI_KIND_HUMAN);
+  assert.deepEqual(result.checkNames, ['a', 'b']);
 });
 
 test('finalCiVerdict: 未知 conclusion WHATEVER は failure（fail-closed）', () => {

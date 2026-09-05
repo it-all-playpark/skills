@@ -29,6 +29,9 @@
 //       + 'ui-verify-config-final' 不発
 //   (j) fixes=1 + test#final throw(EPERM) → error===null（run 完走）+ unavailable + HOLD +
 //       reasons に 'Final reconcile 再検証不能'（AC-4 throw fail-safe）
+//   (k) fixes=1 + test#final null + changed-files-final が UI ファイルを返し有効 config →
+//       'changed-files-final'/'ui-verify-*-final' は test#final の成否に依らず sync 成功時に
+//       実行される（issue #600 レビュー指摘: Step3〜5 は test#final の else 枝の外へ出す）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -220,7 +223,7 @@ test("[final-reconcile] (c) fixes=1 + test#final red → merge_tier HOLD + reaso
 // ============================================================
 
 test("[final-reconcile] (d) fixes=1 + test#final null → final_reconcile unavailable + HOLD", async () => {
-  const { ctx } = makeSandbox({
+  const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
     overrides: { 'test#final': null },
   });
@@ -234,6 +237,9 @@ test("[final-reconcile] (d) fixes=1 + test#final null → final_reconcile unavai
     (result?.merge_tier_reasons ?? []).some((r) => r.includes('Final reconcile 再検証不能')),
     `(d) merge_tier_reasons に 'Final reconcile 再検証不能' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
   );
+  // issue #600 レビュー指摘: Step3（changed-files-final）は test#final の成否に依らず
+  // sync 成功時に実行されるはず（test#final null でも宣言外再監査は skip しない）。
+  assert.ok(calls.some((c) => c.label === 'changed-files-final'), "(d) test#final が null でも 'changed-files-final' は呼ばれるはず");
 });
 
 // ============================================================
@@ -382,7 +388,7 @@ test('[final-reconcile] (i) fixes=1 + changed-files-final null → reverified �
 // ============================================================
 
 test("[final-reconcile] (j) fixes=1 + test#final throw(EPERM) → run 完走 + final_reconcile unavailable + HOLD", async () => {
-  const { ctx } = makeSandbox({
+  const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
     overrides: {
       'test#final': () => { throw new Error('EPERM: operation not permitted (vitest node_modules/.vite-temp)'); },
@@ -398,4 +404,34 @@ test("[final-reconcile] (j) fixes=1 + test#final throw(EPERM) → run 完走 + f
     (result?.merge_tier_reasons ?? []).some((r) => r.includes('Final reconcile 再検証不能')),
     `(j) merge_tier_reasons に 'Final reconcile 再検証不能' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
   );
+  // issue #600 レビュー指摘: test#final の throw でも Step3 は skip しない。
+  assert.ok(calls.some((c) => c.label === 'changed-files-final'), "(j) test#final が throw しても 'changed-files-final' は呼ばれるはず");
+});
+
+// ============================================================
+// (k) fixes=1 + test#final null + UI touch + 有効 config → ui-verify-*-final は
+//     test#final の成否に依らず実行される（issue #600 レビュー指摘）
+// ============================================================
+
+test("[final-reconcile] (k) fixes=1 + test#final null + UI touch + 有効 config → ui-verify-*-final が test#final の成否に依らず呼ばれる", async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: {
+      'test#final': null,
+      'changed-files-final': { files: ['src/components/A.tsx'] },
+      'ui-verify-config-final': { found: true, config: VALID_CFG },
+      'ui-verify-server-final': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+      'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'k');
+  assert.ok(result !== null, '(k) workflow は return object を返すべきだが null だった');
+
+  assert.equal(result?.final_reconcile, 'unavailable', `(k) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  for (const l of ['changed-files-final', 'ui-verify-config-final', 'ui-verify-server-final', 'ui-verify-final', 'ui-verify-teardown-final']) {
+    assert.ok(calls.some((c) => c.label === l), `(k) test#final が null でも label==='${l}' が呼ばれるはず`);
+  }
+  assert.equal(result?.final_ui_verify, 'passed', `(k) final_ui_verify は 'passed' のはずだが ${JSON.stringify(result?.final_ui_verify)}`);
 });

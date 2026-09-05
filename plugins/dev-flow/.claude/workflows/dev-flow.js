@@ -3031,9 +3031,11 @@ function isSha40(value) {
 // statusCheckRollup の 1 要素を { name, state } に正規化する。
 // 不正な形（object でない / __typename 不明 / name 欠落）は null を返し呼び出し側で 'invalid' に倒す。
 //
-// SKIPPED / NEUTRAL を pass に含めるのは pr-iterate/scripts/check-ci.sh の is_passed（pass|skipping）と
-// 同一規則にするため（repo 間で判定が食い違わないようにする）。未知 conclusion / state は failure に
-// 倒す（fail-closed）。
+// state は 'success'（真の SUCCESS）/ 'skipped'（SKIPPED・NEUTRAL — pr-iterate/scripts/check-ci.sh の
+// is_passed（pass|skipping）と同様に blocking 扱いはしないが、真の SUCCESS とは区別する）/ 'pending' /
+// 'failure' の4値。finalCiVerdict は 'success' が 1 件も無い rollup（全 'skipped'）を「test が1件も
+// 実行されていない」と見なし 'no-checks' へ倒す（全 SKIPPED/NEUTRAL の draft PR skip 等が ci_verified
+// へ誤昇格しないようにするため）。未知 conclusion / state は failure に倒す（fail-closed）。
 function normalizeCheck(item) {
   if (!item || typeof item !== 'object') return null;
   const typename = item.__typename;
@@ -3045,8 +3047,11 @@ function normalizeCheck(item) {
       return { name, state: 'pending' };
     }
     const conclusion = String(item.conclusion ?? '').toUpperCase();
-    if (conclusion === 'SUCCESS' || conclusion === 'NEUTRAL' || conclusion === 'SKIPPED') {
+    if (conclusion === 'SUCCESS') {
       return { name, state: 'success' };
+    }
+    if (conclusion === 'NEUTRAL' || conclusion === 'SKIPPED') {
+      return { name, state: 'skipped' };
     }
     return { name, state: 'failure' };
   }
@@ -3147,6 +3152,14 @@ function finalCiVerdict({ expectedSha, meta }) {
   const pendings = normalized.filter((c) => c.state === 'pending').map((c) => c.name);
   if (pendings.length > 0) {
     return { verified: false, reason: 'pending', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: pendings, headRefOid: meta.headRefOid };
+  }
+
+  // ここまでで failure/pending は無い（success と skipped のみ）。real SUCCESS が 1 件も無い
+  // （全 SKIPPED/NEUTRAL）rollup は「test が1件も実行されていない」ことを意味するため、
+  // 昇格させず 'no-checks' へ倒す（例: draft PR で test job が条件付き skip される場合）。
+  const hasRealSuccess = normalized.some((c) => c.state === 'success');
+  if (!hasRealSuccess) {
+    return { verified: false, reason: 'no-checks', kind: FINAL_CI_KIND_HUMAN, checkNames: normalized.map((c) => c.name), headRefOid: meta.headRefOid };
   }
 
   return {
@@ -5939,46 +5952,50 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
       finalReconcile = 'reverified'
       finalTestGreen = ft.tests === 'no_tests' ? null : ft.green === true
       log(`Final reconcile: test#final tests=${ft.tests} green=${ft.green}`)
-      // Step3 最終 changed-files（fail-open）
-      const changedFinal = await trackedAgent(
-        `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
-        + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
-        { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files-final', phase: 'Final reconcile' })
-      if (!changedFinal?.files) {
-        log('⚠️ Final reconcile: changed-files-final 取得失敗 — UI 再判定・宣言外再監査を skip（fail-open。test gate は維持）')
-      } else {
-        // Merge tier へ持ち越す（issue #542）。ephemeral 除去前の raw を渡す — Merge tier の
-        // changed-files は元々 filter せず raw を使うため、加工すると挙動が変わる。
-        changedFilesFinal = changedFinal.files
-        const filesFinal = filterEphemeralPaths(changedFinal.files)
-        // Step4 宣言外パス再監査（advisory）: Security floor 時点の undeclared に無い新規分のみ集約 1 item
-        const planAllTasksF = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
-        const undeclaredFinal = diffDeclaredPaths(planAllTasksF, filesFinal)
-        const newUndeclared = undeclaredFinal.filter((p) => !(state.undeclared ?? []).includes(p))
-        if (newUndeclared.length > 0) {
-          state.ledger = appendItem(state.ledger, { id: 'CONCERN-FINAL', text: `pr-iterate fix 後に plan 宣言外の変更 ${newUndeclared.length} 件: ${newUndeclared.join(', ')}`.slice(0, 500), dimension: 'concern', severity: 'major', source: 'concern', check: { kind: 'inspection' } }).ledger
-          log(`Final reconcile: fix 由来の宣言外変更 ${newUndeclared.length} 件 → CONCERN-FINAL（advisory）へ注入`)
-        }
-        // Step5 UI 再検証（AC-4。fail-open・advisory）
-        if (filesFinal.some((f) => isUiPath(f))) {
-          let rawCfgF = null
-          try {
-            rawCfgF = await trackedAgent(
-              UI_VERIFY_CONFIG_PROMPT,
-              { agentType: 'dev-runner-haiku-ro', schema: UICFG, label: 'ui-verify-config-final', phase: 'Final reconcile' })
-          } catch (e) { finalUiVerifyStatus = 'setup_failed'; log(`⚠️ Final reconcile: ui-verify-config-final 例外 (${e && e.message ? e.message : e}) — setup_failed で skip（fail-open）`) }
-          if (rawCfgF?.found === true && rawCfgF.config) {
-            const vF = validateUiVerifyConfig(rawCfgF.config)
-            if (!vF.ok) { finalUiVerifyStatus = 'setup_failed'; log(`⚠️ Final reconcile: ui_verify config 不正 (${vF.error}) — setup_failed で skip（fail-open）`) }
-            else {
-              const rF = await runUiVerifyFlow({ cfg: vF.config, ledger: state.ledger, phaseName: 'Final reconcile', labelSuffix: '-final', idPrefix: 'UI-FINAL', effectiveShape: state.EFFECTIVE_SHAPE, acceptanceCriteria: req.acceptance_criteria ?? [] })
-              state.ledger = rF.ledger
-              finalUiVerifyStatus = rF.status
-              finalUiVerifyResult = rF.result ?? null
-              log(`Final reconcile: ui-verify-final ${rF.status}（mode=${rF.mode ?? 'n/a'}）`)
-            }
-          } else if (finalUiVerifyStatus == null) { log('Final reconcile: UI パス touch だが ui_verify config 無し — 再検証 skip（opt-in）') }
-        }
+    }
+    // Step3〜5（changed-files-final / 宣言外パス再監査 / UI 再検証）は sync 成功のみに依存する
+    // （test#final の成否に依存しない）。ci-final 委譲で finalReconcile が unavailable→ci_verified
+    // へ昇格する run でも、その CI 委譲は test gate の代替であって宣言外監査・UI 再検証の代替ではない
+    // ため、test#final が null/red でも sync 成功時は必ず実行する（issue #600 レビュー指摘）。
+    // Step3 最終 changed-files（fail-open）
+    const changedFinal = await trackedAgent(
+      `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
+      + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+      { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files-final', phase: 'Final reconcile' })
+    if (!changedFinal?.files) {
+      log('⚠️ Final reconcile: changed-files-final 取得失敗 — UI 再判定・宣言外再監査を skip（fail-open。test gate は維持）')
+    } else {
+      // Merge tier へ持ち越す（issue #542）。ephemeral 除去前の raw を渡す — Merge tier の
+      // changed-files は元々 filter せず raw を使うため、加工すると挙動が変わる。
+      changedFilesFinal = changedFinal.files
+      const filesFinal = filterEphemeralPaths(changedFinal.files)
+      // Step4 宣言外パス再監査（advisory）: Security floor 時点の undeclared に無い新規分のみ集約 1 item
+      const planAllTasksF = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
+      const undeclaredFinal = diffDeclaredPaths(planAllTasksF, filesFinal)
+      const newUndeclared = undeclaredFinal.filter((p) => !(state.undeclared ?? []).includes(p))
+      if (newUndeclared.length > 0) {
+        state.ledger = appendItem(state.ledger, { id: 'CONCERN-FINAL', text: `pr-iterate fix 後に plan 宣言外の変更 ${newUndeclared.length} 件: ${newUndeclared.join(', ')}`.slice(0, 500), dimension: 'concern', severity: 'major', source: 'concern', check: { kind: 'inspection' } }).ledger
+        log(`Final reconcile: fix 由来の宣言外変更 ${newUndeclared.length} 件 → CONCERN-FINAL（advisory）へ注入`)
+      }
+      // Step5 UI 再検証（AC-4。fail-open・advisory）
+      if (filesFinal.some((f) => isUiPath(f))) {
+        let rawCfgF = null
+        try {
+          rawCfgF = await trackedAgent(
+            UI_VERIFY_CONFIG_PROMPT,
+            { agentType: 'dev-runner-haiku-ro', schema: UICFG, label: 'ui-verify-config-final', phase: 'Final reconcile' })
+        } catch (e) { finalUiVerifyStatus = 'setup_failed'; log(`⚠️ Final reconcile: ui-verify-config-final 例外 (${e && e.message ? e.message : e}) — setup_failed で skip（fail-open）`) }
+        if (rawCfgF?.found === true && rawCfgF.config) {
+          const vF = validateUiVerifyConfig(rawCfgF.config)
+          if (!vF.ok) { finalUiVerifyStatus = 'setup_failed'; log(`⚠️ Final reconcile: ui_verify config 不正 (${vF.error}) — setup_failed で skip（fail-open）`) }
+          else {
+            const rF = await runUiVerifyFlow({ cfg: vF.config, ledger: state.ledger, phaseName: 'Final reconcile', labelSuffix: '-final', idPrefix: 'UI-FINAL', effectiveShape: state.EFFECTIVE_SHAPE, acceptanceCriteria: req.acceptance_criteria ?? [] })
+            state.ledger = rF.ledger
+            finalUiVerifyStatus = rF.status
+            finalUiVerifyResult = rF.result ?? null
+            log(`Final reconcile: ui-verify-final ${rF.status}（mode=${rF.mode ?? 'n/a'}）`)
+          }
+        } else if (finalUiVerifyStatus == null) { log('Final reconcile: UI パス touch だが ui_verify config 無し — 再検証 skip（opt-in）') }
       }
     }
   }

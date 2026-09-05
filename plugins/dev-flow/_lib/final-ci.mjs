@@ -45,9 +45,11 @@ function isSha40(value) {
 // statusCheckRollup の 1 要素を { name, state } に正規化する。
 // 不正な形（object でない / __typename 不明 / name 欠落）は null を返し呼び出し側で 'invalid' に倒す。
 //
-// SKIPPED / NEUTRAL を pass に含めるのは pr-iterate/scripts/check-ci.sh の is_passed（pass|skipping）と
-// 同一規則にするため（repo 間で判定が食い違わないようにする）。未知 conclusion / state は failure に
-// 倒す（fail-closed）。
+// state は 'success'（真の SUCCESS）/ 'skipped'（SKIPPED・NEUTRAL — pr-iterate/scripts/check-ci.sh の
+// is_passed（pass|skipping）と同様に blocking 扱いはしないが、真の SUCCESS とは区別する）/ 'pending' /
+// 'failure' の4値。finalCiVerdict は 'success' が 1 件も無い rollup（全 'skipped'）を「test が1件も
+// 実行されていない」と見なし 'no-checks' へ倒す（全 SKIPPED/NEUTRAL の draft PR skip 等が ci_verified
+// へ誤昇格しないようにするため）。未知 conclusion / state は failure に倒す（fail-closed）。
 function normalizeCheck(item) {
   if (!item || typeof item !== 'object') return null;
   const typename = item.__typename;
@@ -59,8 +61,11 @@ function normalizeCheck(item) {
       return { name, state: 'pending' };
     }
     const conclusion = String(item.conclusion ?? '').toUpperCase();
-    if (conclusion === 'SUCCESS' || conclusion === 'NEUTRAL' || conclusion === 'SKIPPED') {
+    if (conclusion === 'SUCCESS') {
       return { name, state: 'success' };
+    }
+    if (conclusion === 'NEUTRAL' || conclusion === 'SKIPPED') {
+      return { name, state: 'skipped' };
     }
     return { name, state: 'failure' };
   }
@@ -161,6 +166,14 @@ export function finalCiVerdict({ expectedSha, meta }) {
   const pendings = normalized.filter((c) => c.state === 'pending').map((c) => c.name);
   if (pendings.length > 0) {
     return { verified: false, reason: 'pending', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: pendings, headRefOid: meta.headRefOid };
+  }
+
+  // ここまでで failure/pending は無い（success と skipped のみ）。real SUCCESS が 1 件も無い
+  // （全 SKIPPED/NEUTRAL）rollup は「test が1件も実行されていない」ことを意味するため、
+  // 昇格させず 'no-checks' へ倒す（例: draft PR で test job が条件付き skip される場合）。
+  const hasRealSuccess = normalized.some((c) => c.state === 'success');
+  if (!hasRealSuccess) {
+    return { verified: false, reason: 'no-checks', kind: FINAL_CI_KIND_HUMAN, checkNames: normalized.map((c) => c.name), headRefOid: meta.headRefOid };
   }
 
   return {
