@@ -44,7 +44,7 @@ handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続�
 `/pr-iterate <pr>` を単体起動する際の Workflow 名は `dev-flow:pr-iterate`（namespaced 名。bare 名
 `pr-iterate` へのフォールバックは無い）。
 
-Merge tier を pr-iterate の後に置くのは、fix 適用後の最終 tree に対して danger-grep 再実行・danger 再 reconcile を行い、merge 判定を最新の PR 内容に基づかせるため。pr-iterate が fix を適用した run では Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite を一発再実行する（red / 再検証不能は merge tier HOLD。fixes_applied=0 は agent 呼び出しゼロで skip）。
+Merge tier を pr-iterate の後に置くのは、fix 適用後の最終 tree に対して danger-grep 再実行・danger 再 reconcile を行い、merge 判定を最新の PR 内容に基づかせるため。pr-iterate が fix を適用した run では Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite を一発再実行する（red / 再検証不能は merge tier HOLD。fixes_applied=0 は agent 呼び出しゼロで skip）。再検証不能時は PR head sha に pin した CI check の決定論判定で代替し、成立しなければ HOLD を維持する。
 
 shape ごとの経路（3 tier）:
 
@@ -185,9 +185,9 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。journal.sh 側の専用フラグ配線・dev-flow plugin Stop hook
   への転送配線は route 等 8 キー（issue #430）と同じ precedent に倣い別 issue で扱う — 本 issue（#448）は
   handoff JSON への到達までを保証する（issue #448）。
-  `final_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`）。
+  `final_reconcile` は `skipped`/`reverified`/`unavailable`/`ci_verified` の 4 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`、`unavailable` のうちローカル再検証は不能だが PR head sha に pin した CI check 全 success を決定論確認できた場合のみ `ci_verified` — issue #599）。
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
-  `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ）。
+  `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ。`ci_verified` はローカル test を再実行していないため出力されない）。
   `final_ui_verify` は final UI 再検証実行時のみ出力（`ui_verify` と同語彙: `skipped`/`passed`/`findings`/`failed_open`/`setup_failed`）。
   `testsurf_hits` は test-weakening pattern 名の配列（常時出力、hit 無しは空配列）。
   `redgreen_deny` は `{ac, reasons}` の配列（deny 発生時のみ出力）。
@@ -207,6 +207,14 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   対応する duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
   `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
   （`lite`|`full` の 2 値 enum）。
+  run 返り値（telemetry ではない）には加えて `merge_tier_hold_reasons`（`[{reason, kind}]`。
+  `kind` は `deterministic_recheck`（決定論再チェックで解消しうる HOLD。Final reconcile
+  unavailable の CI 不成立理由のうち pending / fetch-failed / invalid）と `human_judgment`
+  （人間判断が必須な HOLD。sha-mismatch / failure / no-checks / no-expected-sha および
+  既存の他 HOLD 理由は全て human_judgment）の 2 値 closed enum）と `merge_tier_hold_kind`
+  （集約値。human_judgment が 1 件でもあれば `human_judgment`、全件 deterministic_recheck なら
+  `deterministic_recheck`、tier が HOLD でなければ `null`）が乗る。呼び出し元はこの 2 フィールドで
+  「解消を待てば済む HOLD」と「人間確認が要る HOLD」を区別する。
   `subagent_invocations` は `{total, by_type}` の object（常時出力）。total は run 全体の agent() 起動数で、
   workflow 内の counting wrapper（trackedAgent — 全 call site を wrapper 経由に置換し、bare `agent(` 残存ゼロは
   `_lib/subagent-invocations-routing.test.mjs` が CI 保証）が計上する。nested `workflow('pr-iterate')` の起動分は
@@ -424,7 +432,8 @@ exec-proxy の失敗ポリシーは、決定論ゲートの性質ごとに明示
 | ci-checks（`gh pr checks`） | `null` / `ok:false` / schema 不一致 / 該当 check 不在（env_key ごとの check-name regex 不一致） / pending | fail-open（対象 ENV item（turbopack-sandbox / bats-sandbox）据え置き、警告 log のみ） | advisory な環境ノート auto-close の補助信号。判定は envChecksGreen（決定論）のみで LLM に委ねず、失敗しても deterministic gate・merge tier 判定を変えない（軸A 不変） |
 | ci-check（pr-iterate CI gate / dev-flow `ci-check-lite`。`gh pr checks` → `check-ci.sh` の argv 転写 2 単文） | `null` / schema 不一致 / agent throw（StructuredOutput 未返却・proxy 実行失敗） | fail-open（throw/null は呼び出し側で吸収。pr-iterate では `status:'error'` を合成して既存の terminal `ci_error` へ流し人間へエスカレーション — run は abort しない。dev-flow `ci-check-lite` では full `pr-iterate` への委譲へ fallback） | CI 状態不明を green と同一視しない（軸A 不変）まま、exec-proxy の実行失敗が run 全体を落とす経路（issue #499、PR #498 で 9 回中 5 回 abort 実測）を除去する |
 | validate-test（test#i / test#retry-i） | agent throw（EPERM 等の proxy 実行失敗・StructuredOutput 未返却） | fail-safe（当該 iteration を合成 red として green-fix ループ継続。GREEN_MAX 到達で Evaluate へ委譲） | test proxy の実行失敗を run 即死にしない（issue #359）。red を green と同一視しない（軸A 決定論ゲート）。null→need() の中断経路は不変 |
-| final-reconcile（reconcile-sync / test#final） | `null` / `ok:false` / schema 不一致 / 非 fast-forward / test#final throw | fail-safe（`final_reconcile=unavailable` → merge tier HOLD） | fix 適用後の最終 tree の test 状態不明を green と同一視しない（軸A 決定論ゲート）。throw も unavailable へ吸収（issue #359）。同様に changed-files-final / ui-verify-config-final は fail-open（UI 再判定・宣言外再監査 skip + 警告 log のみ。test gate は緩めない） |
+| final-reconcile（reconcile-sync / test#final） | `null` / `ok:false` / schema 不一致 / 非 fast-forward / test#final throw | fail-safe（`final_reconcile=unavailable` → merge tier HOLD。unavailable 時は ci-final 行の CI 委譲を試みる） | fix 適用後の最終 tree の test 状態不明を green と同一視しない（軸A 決定論ゲート）。throw も unavailable へ吸収（issue #359）。同様に changed-files-final / ui-verify-config-final は fail-open（UI 再判定・宣言外再監査 skip + 警告 log のみ。test gate は緩めない） |
+| ci-final（`gh pr view --json headRefOid,statusCheckRollup` による Final reconcile unavailable 時の CI 委譲。reconcile-sync 成功時の head sha を期待値として finalCiVerdict が決定論判定） | `null` / `ok:false` / schema 不一致 / agent throw / headRefOid ≠ 期待 sha / pending / failure / check 0 件 / 期待 sha 無し（sync 失敗時は probe 自体を起動しない） | fail-closed（`final_reconcile=unavailable` 維持 → merge tier HOLD。sha 一致かつ全 success のときのみ `ci_verified` へ昇格） | 最終 tree の test 状態不明を green と同一視しない（軸A 決定論ゲート）まま、CI が同一 sha で同じ suite を回した証拠を人間に手で再実行させない（issue #599）。判定は純関数のみで LLM に委ねない。ENV auto-close の ci-checks（fail-open・tier 不変）とは別経路で、こちらは tier を変えるため sha pin を必須にする |
 | final-ac-reconcile（targeted evaluator による既存 AC の最終 tree 再検証） | `null` / schema 不一致 / ac_index 欠落・重複・範囲外 / evidence 空 | fail-safe（`final_ac_reconcile=unavailable` → merge tier HOLD） | fix 適用後の最終 tree での AC 充足不明を satisfied と同一視しない（軸A 決定論検証。fail は既存 AC を uncheck せず critical AC-FINAL-n append — append 単調性・critical-always-blocks 維持） |
 | structural-classify（difft による構造変化/フォーマットのみ分類。Security floor では secfloor-unified の struct フィールド経由 — danger-grep と同一の統合呼び出し） | `null` / `ok:false` / `available:false`（difft 未インストール） / schema 不一致 | fail-open（format_only 除外なし・全ファイル精査の現行動作。警告 log のみ） | advisory な diff 前処理の補助信号。失敗しても refloorShape の raise-only・danger-grep・宣言外検出の deterministic gate を一切緩めない |
 | vdelta-verdict（redgreen R1↔R2 の deny-only ラベル精度保護） | `verdict null / 不正 JSON / transitions 欠落` | fail-open（deny せず現行の deterministic 昇格判定のまま。fail_open 発生は telemetry `vdelta_fail_open` で可視化） | advisory な昇格ラベル精度の補助信号（INV-10: record_integrity=advisory 恒久）。失敗しても red&&green の決定論ゲート自体は緩めない。comparability≠exact は abstain（並列 stream 混入の誤 deny 防止） |

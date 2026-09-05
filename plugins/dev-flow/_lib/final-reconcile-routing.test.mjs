@@ -166,7 +166,7 @@ test('[final-reconcile] (a) fixes_applied=0 → 新規 agent 呼び出しゼロ 
   assertNoCrash(error, 'a');
   assert.ok(result !== null, '(a) workflow は return object を返すべきだが null だった');
 
-  const finalLabels = ['reconcile-sync', 'test#final', 'changed-files-final', 'ui-verify-config-final', 'ui-verify-server-final', 'ui-verify-final', 'ui-verify-teardown-final'];
+  const finalLabels = ['reconcile-sync', 'test#final', 'changed-files-final', 'ui-verify-config-final', 'ui-verify-server-final', 'ui-verify-final', 'ui-verify-teardown-final', 'ci-final'];
   for (const l of finalLabels) {
     assert.ok(!calls.some((c) => c.label === l), `(a) fixes_applied=0 では label==='${l}' の呼び出しが存在してはならない`);
   }

@@ -146,6 +146,63 @@ test('shouldRunFinalAcReconcile: finalTestGreen=true → run:true', () => {
   assert.deepEqual(result, { run: true, reason: 'ok' });
 });
 
+// ---- (2b) shouldRunFinalAcReconcile: finalReconcile='ci_verified' (issue #599) ----
+
+test('shouldRunFinalAcReconcile: finalReconcile=ci_verified + finalTestGreen=null → run:true', () => {
+  const result = shouldRunFinalAcReconcile({
+    fixesApplied: 1,
+    finalReconcile: 'ci_verified',
+    finalTestGreen: null,
+    runEval: true,
+    acCount: 2,
+  });
+  assert.deepEqual(result, { run: true, reason: 'ok' });
+});
+
+test('shouldRunFinalAcReconcile: finalReconcile=ci_verified + finalTestGreen=false → final_test_red（判定順5が引き続き効く）', () => {
+  const result = shouldRunFinalAcReconcile({
+    fixesApplied: 1,
+    finalReconcile: 'ci_verified',
+    finalTestGreen: false,
+    runEval: true,
+    acCount: 2,
+  });
+  assert.deepEqual(result, { run: false, reason: 'final_test_red' });
+});
+
+test('shouldRunFinalAcReconcile: finalReconcile=unavailable → final_test_unavailable 不変（ci_verified 追加後も回帰なし）', () => {
+  const result = shouldRunFinalAcReconcile({
+    fixesApplied: 1,
+    finalReconcile: 'unavailable',
+    finalTestGreen: null,
+    runEval: true,
+    acCount: 2,
+  });
+  assert.deepEqual(result, { run: false, reason: 'final_test_unavailable' });
+});
+
+test('shouldRunFinalAcReconcile: finalReconcile=ci_verified でも fixesApplied=0 → no_fixes（判定順が先）', () => {
+  const result = shouldRunFinalAcReconcile({
+    fixesApplied: 0,
+    finalReconcile: 'ci_verified',
+    finalTestGreen: null,
+    runEval: true,
+    acCount: 2,
+  });
+  assert.deepEqual(result, { run: false, reason: 'no_fixes' });
+});
+
+test('shouldRunFinalAcReconcile: finalReconcile=ci_verified でも runEval=false → eval_skipped（判定順が先）', () => {
+  const result = shouldRunFinalAcReconcile({
+    fixesApplied: 1,
+    finalReconcile: 'ci_verified',
+    finalTestGreen: null,
+    runEval: false,
+    acCount: 2,
+  });
+  assert.deepEqual(result, { run: false, reason: 'eval_skipped' });
+});
+
 // ---- (3) validateFinalAcResults ----
 
 test('validateFinalAcResults: 正常 2 件（順不同入力が sort されて返る + unsatisfiedIndexes 抽出）', () => {

@@ -1096,7 +1096,25 @@ function isDocsOrTestOnly(files) {
 // 'reverified': 最終 tree に対して sync + test 再実行を行った。
 // 'unavailable': worktree sync 失敗 / test agent null・schema 不一致等で再検証結果を取得できなかった
 //   （fail-safe。HOLD へ倒す）。
-const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
+// 'ci_verified': ローカル再検証は不能だったが、PR head sha に pin した CI check（finalCiVerdict、
+//   _lib/final-ci.mjs）が sha 一致かつ全 success で最終 tree の test 状態を検証済みとして扱う
+//   （issue #599）。
+const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_verified'];
+
+// merge tier HOLD 理由の分類（issue #599）。'deterministic_recheck': 決定論的な再チェック
+// （CI 完了待ち・再取得等）で解消しうる。'human_judgment': 決定論的手段では解消できず人間確認が
+// 必須。_lib/final-ci.mjs の FINAL_CI_KIND_* と同値。canonical は import 不可のため重複定義し、
+// 同値性は _lib/final-ci-routing.test.mjs が pin する。
+const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
+
+// HOLD 理由配列（[{ reason, kind }]）から代表 kind を集約する純関数。
+// いずれかが 'human_judgment' なら 'human_judgment'（human 判断が 1 件でもあれば全体を human 扱いにする
+// fail-closed 側の集約）。全件 'deterministic_recheck' ならそのまま。空/非配列は null（HOLD 以外）。
+function aggregateHoldKind(holdReasons) {
+  if (!Array.isArray(holdReasons) || holdReasons.length === 0) return null;
+  if (holdReasons.some((r) => r.kind === 'human_judgment')) return 'human_judgment';
+  return 'deterministic_recheck';
+}
 
 // gh pr view --json mergeable,mergeStateStatus の生出力を 3 値 enum に写像する pure 関数。
 // 'conflicting': base branch と conflict（mergeable=CONFLICTING もしくは mergeStateStatus=DIRTY）。
@@ -1183,6 +1201,22 @@ function classifyMergeableState(meta) {
 //   担保するため tier 判定値は変えない（可視化のみ）。未指定/null/false = reason 追加なし、
 //   tier 判定値も従来と完全同一（regression なし）。boolean 以外は明示 error
 //   （後方互換 scaffolding 禁止規約）。
+// s.finalCi (optional { verified: boolean, reason: string, kind: string|null, checkNames: string[],
+//   headRefOid: string|null }): finalCiVerdict（_lib/final-ci.mjs）の返り値そのもの（issue #599）。
+//   s.finalReconcile === 'unavailable' のとき、ローカル再検証は不能だったが PR head sha に pin した
+//   CI check で代替検証できたかを表す。finalCi が無ければ従来どおりの「人間確認必須」文言のまま
+//   HOLD reason を追記する。finalCi があれば reason に CI 委譲の不成立理由（reason/checkNames）を
+//   追記し、kind（finalCi.kind ?? 'human_judgment'）に応じて「決定論再チェックで解消しうる」か
+//   「人間確認必須」かを文言で区別する。s.finalReconcile === 'ci_verified' のときは HOLD reason を
+//   一切積まず、代わりに ciVerifiedDisclosure（HOLD/AUTO/REVIEW 全分岐共通の可視化行）のみ追記する
+//   （tier 判定値は変えない）。検証: finalCi.verified が boolean でなければ throw。finalCi.kind が
+//   HOLD_REASON_KINDS 外なら throw。finalReconcile==='ci_verified' なのに finalCi.verified!==true
+//   なら throw（証拠なしに ci_verified を名乗らせない fail-closed）。未指定(undefined/null) = 従来と
+//   完全同一挙動（regression なし）。
+// 返り値: { tier, reasons, holdReasons, holdKind }（issue #599 で holdReasons/holdKind を追加）。
+//   reasons は従来どおり string[]（HOLD 時は blocking 文言 + 可視化行、AUTO/REVIEW 時は従来文言 +
+//   可視化行）。holdReasons は HOLD 時のみ blocking 文言の [{ reason, kind }]（可視化行は含めない）、
+//   AUTO/REVIEW 時は []。holdKind は aggregateHoldKind(holdReasons)（HOLD 以外は null）。
 function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -1199,12 +1233,23 @@ function classifyMergeTier(s) {
   if (s.evalVerdictFail != null && typeof s.evalVerdictFail !== 'boolean') {
     throw new Error('classifyMergeTier: invalid evalVerdictFail: ' + s.evalVerdictFail);
   }
-  const reasons = [];
-  if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
-  if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
+  if (s.finalCi != null && typeof s.finalCi.verified !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid finalCi');
+  }
+  if (s.finalCi != null && s.finalCi.kind != null && !HOLD_REASON_KINDS.includes(s.finalCi.kind)) {
+    throw new Error('classifyMergeTier: invalid finalCi.kind: ' + s.finalCi.kind);
+  }
+  if (s.finalReconcile === 'ci_verified' && (s.finalCi == null || s.finalCi.verified !== true)) {
+    throw new Error('classifyMergeTier: finalReconcile=ci_verified requires finalCi.verified===true');
+  }
+  // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
+  const blockingReasons = [];
+  const pushBlocking = (reason, kind) => blockingReasons.push({ reason, kind });
+  if (!s.converged) pushBlocking('ledger 未収束（未 checked blocking 残）', 'human_judgment');
+  if (s.unresolvedDanger) pushBlocking('danger-grep hit 未解消（security 要確認）', 'human_judgment');
   if (s.breakingStructured) {
-    reasons.push('breaking/migration 検出（analyze 構造化判定 breaking_change=true'
-      + (s.breakingKeyword ? ' + issue title/body keyword scan hit' : '') + '）');
+    pushBlocking('breaking/migration 検出（analyze 構造化判定 breaking_change=true'
+      + (s.breakingKeyword ? ' + issue title/body keyword scan hit' : '') + '）', 'human_judgment');
   }
   const keywordAloneDisclosure = (s.breakingKeyword && !s.breakingStructured)
     ? 'breaking keyword hit（issue title/body 決定論 scan）— 構造化判定 breaking_change=false のため HOLD 不採用（可視化のみ。issue #364）'
@@ -1212,25 +1257,42 @@ function classifyMergeTier(s) {
   const evalFailDisclosure = s.evalVerdictFail === true
     ? 'evaluator verdict=fail のまま PR へ進行 — 未解消 findings は ledger/HOLD 条件が別途担保するため tier 判定は不変（可視化のみ。issue #536）'
     : null;
-  if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
-  if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
-  if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
-  if (s.finalReconcile === 'unavailable') reasons.push('Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須');
-  if (s.finalTestGreen === false) reasons.push('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）');
-  if (s.finalAcReconcile === 'unavailable') reasons.push('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）');
-  if (s.iterateStatus !== 'lgtm') reasons.push(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`);
-  if (s.evalStaleness === 'hash_mismatch') reasons.push('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）');
+  const ciVerifiedDisclosure = s.finalReconcile === 'ci_verified'
+    ? 'Final reconcile はローカル再検証不能だったが PR head sha ' + s.finalCi.headRefOid
+      + ' の CI check 全 success を決定論確認（final_reconcile=ci_verified: ' + s.finalCi.checkNames.join(', ')
+      + '）— test gate は CI 委譲で充足（issue #599）'
+    : null;
+  if (s.escalateCount > 0) pushBlocking(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`, 'human_judgment');
+  if (s.unsatisfiedAc) pushBlocking('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）', 'human_judgment');
+  if (s.dangerFailClosed === true) pushBlocking('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');
+  if (s.finalReconcile === 'unavailable') {
+    if (s.finalCi == null) {
+      pushBlocking('Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須', 'human_judgment');
+    } else {
+      const kind = s.finalCi.kind ?? 'human_judgment';
+      const reason = 'Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— CI 委譲も不成立（reason=' + s.finalCi.reason
+        + (s.finalCi.checkNames.length ? ': ' + s.finalCi.checkNames.join(', ') : '') + '）— '
+        + (kind === 'deterministic_recheck' ? '決定論再チェック（CI 完了待ち / 再取得）で解消しうる' : '人間確認必須');
+      pushBlocking(reason, kind);
+    }
+  }
+  if (s.finalTestGreen === false) pushBlocking('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）', 'human_judgment');
+  if (s.finalAcReconcile === 'unavailable') pushBlocking('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）', 'human_judgment');
+  if (s.iterateStatus !== 'lgtm') pushBlocking(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`, 'human_judgment');
+  if (s.evalStaleness === 'hash_mismatch') pushBlocking('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）', 'human_judgment');
   if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
-    reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
+    pushBlocking(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`, 'human_judgment');
   }
-  if (s.mergeableState === 'conflicting') reasons.push('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）');
+  if (s.mergeableState === 'conflicting') pushBlocking('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）', 'human_judgment');
   if (s.trustGate != null && s.trustGate.blocking === true && s.trustGate.verdict !== 'pass') {
-    reasons.push(`EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`);
+    pushBlocking(`EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`, 'human_judgment');
   }
-  if (reasons.length) {
+  if (blockingReasons.length) {
+    const reasons = blockingReasons.map((r) => r.reason);
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) reasons.push(evalFailDisclosure);
-    return { tier: 'HOLD', reasons };
+    if (ciVerifiedDisclosure) reasons.push(ciVerifiedDisclosure);
+    return { tier: 'HOLD', reasons, holdReasons: blockingReasons, holdKind: aggregateHoldKind(blockingReasons) };
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
@@ -1239,12 +1301,14 @@ function classifyMergeTier(s) {
     if (s.evalSkipped === true) autoReasons.push('AC は未検証（micro eval skip）— evaluator 0 回のため acceptance_criteria の充足は判定していない');
     if (keywordAloneDisclosure) autoReasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
-    return { tier: 'AUTO', reasons: autoReasons };
+    if (ciVerifiedDisclosure) autoReasons.push(ciVerifiedDisclosure);
+    return { tier: 'AUTO', reasons: autoReasons, holdReasons: [], holdKind: null };
   }
   const reviewReasons = ['標準 — 人間が LGTM して merge'];
   if (keywordAloneDisclosure) reviewReasons.push(keywordAloneDisclosure);
   if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);
-  return { tier: 'REVIEW', reasons: reviewReasons };
+  if (ciVerifiedDisclosure) reviewReasons.push(ciVerifiedDisclosure);
+  return { tier: 'REVIEW', reasons: reviewReasons, holdReasons: [], holdKind: null };
 }
 // ==== END inline: _lib/merge-tier.mjs ====
 
@@ -1266,7 +1330,9 @@ const FINAL_AC_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 //   1. fixesApplied が数値でない/<=0        → no_fixes
 //   2. runEval !== true                      → eval_skipped（micro path は Evaluate 0 回）
 //   3. acCount が正整数でない                → no_ac（AC 0 件で agent を起動しない）
-//   4. finalReconcile !== 'reverified'       → final_test_unavailable
+//   4. finalReconcile が 'reverified' でも 'ci_verified' でもない
+//      → final_test_unavailable（ci_verified は sync 成功 = worktree が PR 最終 HEAD、かつ
+//        CI で test 状態検証済みのため reverified と同様に AC 再検証へ進む。issue #599）
 //   5. finalTestGreen === false              → final_test_red
 //   6. それ以外（true または null=no_tests） → run:true
 function shouldRunFinalAcReconcile({ fixesApplied, finalReconcile, finalTestGreen, runEval, acCount }) {
@@ -1279,7 +1345,7 @@ function shouldRunFinalAcReconcile({ fixesApplied, finalReconcile, finalTestGree
   if (!(Number.isInteger(acCount) && acCount > 0)) {
     return { run: false, reason: 'no_ac' };
   }
-  if (finalReconcile !== 'reverified') {
+  if (finalReconcile !== 'reverified' && finalReconcile !== 'ci_verified') {
     return { run: false, reason: 'final_test_unavailable' };
   }
   if (finalTestGreen === false) {
@@ -2343,7 +2409,7 @@ function mdCell(v) {
  * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
- * @param {string|null|undefined} opts.finalReconcile - Final reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #320）
+ * @param {string|null|undefined} opts.finalReconcile - Final reconcile 結果（'skipped'|'reverified'|'unavailable'|'ci_verified'。issue #320, #599）
  * @param {boolean|null|undefined} opts.finalTestGreen - Final reconcile 時の test green フラグ（issue #320）
  * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
  * @param {string|null|undefined} opts.finalAcReconcile - Final AC reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #331）
@@ -2380,7 +2446,7 @@ function buildDevflowSummaryBody({
     throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
   }
 
-  const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
+  const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_verified'];
   if (finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(finalReconcile)) {
     throw new Error('buildDevflowSummaryBody: invalid finalReconcile: ' + finalReconcile);
   }
@@ -2511,7 +2577,7 @@ function buildDevflowSummaryBody({
 
   // 5c. Final reconcile 結果行（issue #320。null/undefined/'skipped' では出力しない）
   if (finalReconcile != null && finalReconcile !== 'skipped') {
-    const t = finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
+    const t = finalReconcile === 'ci_verified' ? '✅ CI 委譲（PR head sha 一致・check 全 success）' : finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
     lines.push(`- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ${finalReconcile} — final test: ${t}` + (finalUiVerify != null ? `, final ui-verify: ${finalUiVerify}` : '') + (finalAcReconcile != null ? `, final AC: ${finalAcReconcile}` : ''));
     if (finalAcReconcile === 'reverified') {
       lines.push('- ✅ AC は最終 PR tree で再検証済み（Final AC reconcile — AC テーブルは final snapshot）');
@@ -2917,6 +2983,181 @@ function envChecksGreen(checks, envKey) {
   return { green: false, reason: 'not-pass', checkNames };
 }
 // ==== END inline: _lib/ci-checks.mjs ====
+// ==== BEGIN inline: _lib/final-ci.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow Final reconcile phase: `finalReconcile === 'unavailable'` になったとき、PR head sha に
+// pin した CI check を決定論的に判定する純関数群。判断は一切 LLM に委ねない
+// （agent は verbatim 転写のみで、pass/fail の分岐は本ファイルの finalCiVerdict が行う）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証する。
+
+// HOLD 理由の分類（呼び出し元が「決定論チェックで解消しうる」か「人間判断が必須」かを区別するために使う）。
+// merge-tier.mjs 側にも同値の HOLD_REASON_KINDS を独立定義する（canonical は ESM import 禁止のため
+// module 間で定数を共有できない）。同値性は serial task の routing test が両方 import して pin する。
+const FINAL_CI_KIND_DETERMINISTIC = 'deterministic_recheck';
+const FINAL_CI_KIND_HUMAN = 'human_judgment';
+
+// finalCiVerdict が返す reason の closed enum。
+const FINAL_CI_REASONS = [
+  'ok',
+  'no-expected-sha',
+  'fetch-failed',
+  'invalid',
+  'sha-mismatch',
+  'no-checks',
+  'pending',
+  'failure',
+];
+
+// gh pr view --json headRefOid,statusCheckRollup の exec-proxy 応答の agent() schema。
+const FINAL_CI_META = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    headRefOid: { type: ['string', 'null'] },
+    statusCheckRollup: { type: 'array', items: { type: 'object' } },
+    error: { type: 'string' },
+    epoch: { type: 'number' },
+  },
+};
+
+const SHA40_RE = /^[0-9a-f]{40}$/i;
+
+function isSha40(value) {
+  return typeof value === 'string' && SHA40_RE.test(value);
+}
+
+// statusCheckRollup の 1 要素を { name, state } に正規化する。
+// 不正な形（object でない / __typename 不明 / name 欠落）は null を返し呼び出し側で 'invalid' に倒す。
+//
+// SKIPPED / NEUTRAL を pass に含めるのは pr-iterate/scripts/check-ci.sh の is_passed（pass|skipping）と
+// 同一規則にするため（repo 間で判定が食い違わないようにする）。未知 conclusion / state は failure に
+// 倒す（fail-closed）。
+function normalizeCheck(item) {
+  if (!item || typeof item !== 'object') return null;
+  const typename = item.__typename;
+  if (typename === 'CheckRun') {
+    const name = item.name;
+    if (typeof name !== 'string' || name.length === 0) return null;
+    const status = String(item.status ?? '').toUpperCase();
+    if (status !== 'COMPLETED') {
+      return { name, state: 'pending' };
+    }
+    const conclusion = String(item.conclusion ?? '').toUpperCase();
+    if (conclusion === 'SUCCESS' || conclusion === 'NEUTRAL' || conclusion === 'SKIPPED') {
+      return { name, state: 'success' };
+    }
+    return { name, state: 'failure' };
+  }
+  if (typename === 'StatusContext') {
+    const name = item.context;
+    if (typeof name !== 'string' || name.length === 0) return null;
+    const state = String(item.state ?? '').toUpperCase();
+    if (state === 'SUCCESS') return { name, state: 'success' };
+    if (state === 'PENDING' || state === 'EXPECTED') return { name, state: 'pending' };
+    return { name, state: 'failure' };
+  }
+  return null;
+}
+
+/**
+ * ci-final exec-proxy へ渡す prompt を組み立てる純粋関数。
+ * gh pr view を bare 単文で 1 回実行し、headRefOid と statusCheckRollup を verbatim で
+ * 包んで返させるだけ（判定はさせない）。
+ *
+ * @param {object} opts
+ * @param {number|string} opts.pr - 対象 PR 番号
+ * @param {string|null} opts.repo - owner/name。null / 空なら --repo を付けない
+ * @returns {string}
+ */
+function finalCiPrompt({ pr, repo }) {
+  const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid,statusCheckRollup`;
+  return `## Objective\n`
+    + `PR #${pr} の head sha と CI check 一覧を取得し、JSON をそのまま返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n\n`
+    + `## Steps\n`
+    + `1. \`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結は使わない）。\n`
+    + `2. stdout が空、JSON として不正、またはコマンドが実行できなかった場合は `
+    + `\`{"ok": false, "error": "<stderr の要約>"}\` を返せ。失敗時に ok:true を生成してはならない。`
+    + `原因調査はするな。再試行禁止。\n`
+    + `3. それ以外は stdout の JSON object から headRefOid と statusCheckRollup を取り出し、`
+    + `\`{"ok": true, "headRefOid": <string>, "statusCheckRollup": <array を一字一句そのまま>}\` `
+    + `に包んで返せ。要約・整形・省略禁止。\n\n`
+    + `## Output format\n`
+    + `{"ok": true, "headRefOid": string, "statusCheckRollup": array} または {"ok": false, "error": string}\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内（statusCheckRollup を除く）。`;
+}
+
+/**
+ * PR head sha に pin した CI check の決定論判定。LLM 判定を一切含まない純関数。
+ * 入力 meta を mutate しない。
+ *
+ * @param {object} opts
+ * @param {string} opts.expectedSha - reconcile-sync 成功時の head sha（40hex 必須）
+ * @param {object|null} opts.meta - ci-final exec-proxy の応答（FINAL_CI_META 形）
+ * @returns {{verified: boolean, reason: string, kind: string|null, checkNames: string[], headRefOid: string|null}}
+ */
+function finalCiVerdict({ expectedSha, meta }) {
+  if (!isSha40(expectedSha)) {
+    return { verified: false, reason: 'no-expected-sha', kind: FINAL_CI_KIND_HUMAN, checkNames: [], headRefOid: null };
+  }
+
+  if (meta === null || meta === undefined || meta.ok !== true) {
+    return { verified: false, reason: 'fetch-failed', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: [], headRefOid: null };
+  }
+
+  if (!isSha40(meta.headRefOid)) {
+    return { verified: false, reason: 'invalid', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: [], headRefOid: null };
+  }
+
+  if (meta.headRefOid.toLowerCase() !== expectedSha.toLowerCase()) {
+    return { verified: false, reason: 'sha-mismatch', kind: FINAL_CI_KIND_HUMAN, checkNames: [], headRefOid: meta.headRefOid };
+  }
+
+  if (!Array.isArray(meta.statusCheckRollup)) {
+    return { verified: false, reason: 'invalid', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: [], headRefOid: meta.headRefOid };
+  }
+
+  const normalized = [];
+  for (const item of meta.statusCheckRollup) {
+    const n = normalizeCheck(item);
+    if (n === null) {
+      return { verified: false, reason: 'invalid', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: [], headRefOid: meta.headRefOid };
+    }
+    normalized.push(n);
+  }
+
+  if (normalized.length === 0) {
+    return { verified: false, reason: 'no-checks', kind: FINAL_CI_KIND_HUMAN, checkNames: [], headRefOid: meta.headRefOid };
+  }
+
+  const failures = normalized.filter((c) => c.state === 'failure').map((c) => c.name);
+  if (failures.length > 0) {
+    return { verified: false, reason: 'failure', kind: FINAL_CI_KIND_HUMAN, checkNames: failures, headRefOid: meta.headRefOid };
+  }
+
+  const pendings = normalized.filter((c) => c.state === 'pending').map((c) => c.name);
+  if (pendings.length > 0) {
+    return { verified: false, reason: 'pending', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: pendings, headRefOid: meta.headRefOid };
+  }
+
+  return {
+    verified: true,
+    reason: 'ok',
+    kind: null,
+    checkNames: normalized.map((c) => c.name),
+    headRefOid: meta.headRefOid,
+  };
+}
+// ==== END inline: _lib/final-ci.mjs ====
 // ==== BEGIN inline: _lib/ci-check.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // ci-check: pr-iterate の CI gate（`ci-check#i`）と dev-flow lite route の `ci-check-lite` が
 // 共有する CI ステータス取得の契約 — attempt ループ定数 / StructuredOutput schema / prompt 本文。
@@ -5669,6 +5910,8 @@ let changedFilesFinal = null
 // final_end の clock 給電（issue #443）候補。fixes_applied=0 の skip run は null のまま
 // （キー欠落 — 従来は probe 往復分の微小値が入っていたが、より正確な欠落表現になる意図的変更）。
 let finalEpochRes = null
+let finalSyncHead = null   // reconcile-sync 成功時の HEAD sha（40hex）。ci-final の期待 sha（issue #599）
+let finalCi = null   // finalCiVerdict の結果。finalReconcile が unavailable/ci_verified のときのみ non-null
 if ((iterate?.fixes_applied ?? 0) > 0) {
   // Step1 sync（fail-safe）
   const sync = await trackedAgent(
@@ -5682,6 +5925,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     finalReconcile = 'unavailable'
     log(`⚠️ Final reconcile: worktree を PR 最終 HEAD へ同期できず（${sync?.error ?? 'null'}）— unavailable（fail-safe → merge tier HOLD）`)
   } else {
+    finalSyncHead = typeof sync.head === 'string' ? sync.head : null
     // Step2 test 一発再実行（fail-safe。green-fix ループなし — red は修正せず HOLD）
     let ft = null
     try {
@@ -5740,6 +5984,35 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
   }
 } else {
   log('Final reconcile: fixes_applied=0 — skip（zero-overhead。新規 agent 呼び出しなし）')
+}
+
+// ============================================================
+// CI 委譲（issue #599）: Final reconcile が unavailable のとき、reconcile-sync 成功時の head sha に
+// pin した PR の CI check を dev-runner-haiku-ro で 1 回読み、finalCiVerdict（決定論）が sha 一致かつ
+// 全 success を返したときのみ finalReconcile を 'ci_verified' へ昇格する。期待 sha が無い（sync 失敗）
+// 場合は probe を起動しない。取得失敗 / pending / failure / sha 不一致 / check 0 件は unavailable 維持
+// （fail-closed → merge tier HOLD）。判定は finalCiVerdict のみ — LLM に判定させない。
+// ============================================================
+if (finalReconcile === 'unavailable') {
+  let ciMeta = null
+  if (typeof finalSyncHead === 'string' && /^[0-9a-f]{40}$/i.test(finalSyncHead)) {
+    try {
+      ciMeta = await trackedAgent(
+        finalCiPrompt({ pr: pr.pr_number, repo: REPO }),
+        { agentType: 'dev-runner-haiku-ro', schema: FINAL_CI_META, label: 'ci-final', phase: 'Final reconcile' })
+    } catch (e) {
+      log(`⚠️ ci-final: 取得が throw（${e && e.message ? e.message : e}）— null 扱い（fail-closed → unavailable 維持）`)
+    }
+  } else {
+    log('ci-final: reconcile-sync の head sha が無いため CI 委譲を試みない（fail-closed → unavailable 維持）')
+  }
+  finalCi = finalCiVerdict({ expectedSha: finalSyncHead, meta: ciMeta })
+  if (finalCi.verified) {
+    finalReconcile = 'ci_verified'
+    log(`ci-final: PR head sha ${finalCi.headRefOid} の CI check 全 success（${finalCi.checkNames.join(', ')}）— final_reconcile=ci_verified（test gate は CI 委譲で充足）`)
+  } else {
+    log(`⚠️ ci-final: CI 委譲不成立（reason=${finalCi.reason}${finalCi.checkNames.length ? ': ' + finalCi.checkNames.join(', ') : ''}）— unavailable 維持（fail-closed → merge tier HOLD）`)
+  }
 }
 
 // ============================================================
@@ -5905,6 +6178,7 @@ const mergeTier = classifyMergeTier({
   mergeableState,
   trustGate: null,
   evalVerdictFail: state.evalResult?.verdict === 'fail',
+  finalCi,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
@@ -6097,6 +6371,8 @@ return {
   ledger_converged: isConvergedUnderPolicy(state.ledger, GATE_POLICY),
   merge_tier: mergeTier.tier,
   merge_tier_reasons: mergeTier.reasons,
+  merge_tier_hold_reasons: mergeTier.holdReasons,
+  merge_tier_hold_kind: mergeTier.holdKind,
   danger_hits: dangerHitsFinal,
   danger_fail_closed: dangerFailClosedFinal,
   testsurf_hits: testsurfPatternsFinal,
@@ -6109,7 +6385,7 @@ return {
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   journal_log_status: journalLogStatus,
   note: mergeTier.tier === 'HOLD'
-    ? `HOLD: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
+    ? `HOLD（${mergeTier.holdKind === 'deterministic_recheck' ? '決定論再チェックで解消しうる — CI 完了 / 再取得後に再確認' : '人間判断必須'}）: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'
     ? 'AUTO 推奨（低リスク）。最終判断と merge は人間が行ってください'
     : 'REVIEW: 人間が LGTM を確認して merge してください',

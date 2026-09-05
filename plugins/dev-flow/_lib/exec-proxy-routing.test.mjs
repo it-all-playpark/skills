@@ -136,6 +136,7 @@ const READ_ONLY_LABELS = [
   'changed-files',
   'changed-files-final',
   'ci-checks',
+  'ci-final',
 ];
 
 for (const label of READ_ONLY_LABELS) {

@@ -15,7 +15,9 @@ export const FINAL_AC_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'
 //   1. fixesApplied が数値でない/<=0        → no_fixes
 //   2. runEval !== true                      → eval_skipped（micro path は Evaluate 0 回）
 //   3. acCount が正整数でない                → no_ac（AC 0 件で agent を起動しない）
-//   4. finalReconcile !== 'reverified'       → final_test_unavailable
+//   4. finalReconcile が 'reverified' でも 'ci_verified' でもない
+//      → final_test_unavailable（ci_verified は sync 成功 = worktree が PR 最終 HEAD、かつ
+//        CI で test 状態検証済みのため reverified と同様に AC 再検証へ進む。issue #599）
 //   5. finalTestGreen === false              → final_test_red
 //   6. それ以外（true または null=no_tests） → run:true
 export function shouldRunFinalAcReconcile({ fixesApplied, finalReconcile, finalTestGreen, runEval, acCount }) {
@@ -28,7 +30,7 @@ export function shouldRunFinalAcReconcile({ fixesApplied, finalReconcile, finalT
   if (!(Number.isInteger(acCount) && acCount > 0)) {
     return { run: false, reason: 'no_ac' };
   }
-  if (finalReconcile !== 'reverified') {
+  if (finalReconcile !== 'reverified' && finalReconcile !== 'ci_verified') {
     return { run: false, reason: 'final_test_unavailable' };
   }
   if (finalTestGreen === false) {
