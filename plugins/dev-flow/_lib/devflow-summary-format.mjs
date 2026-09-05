@@ -28,7 +28,7 @@
  * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
- * @param {string|null|undefined} opts.finalReconcile - Final reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #320）
+ * @param {string|null|undefined} opts.finalReconcile - Final reconcile 結果（'skipped'|'reverified'|'unavailable'|'ci_verified'。issue #320, #599）
  * @param {boolean|null|undefined} opts.finalTestGreen - Final reconcile 時の test green フラグ（issue #320）
  * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
  * @param {string|null|undefined} opts.finalAcReconcile - Final AC reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #331）
@@ -65,7 +65,7 @@ export function buildDevflowSummaryBody({
     throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
   }
 
-  const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
+  const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_verified'];
   if (finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(finalReconcile)) {
     throw new Error('buildDevflowSummaryBody: invalid finalReconcile: ' + finalReconcile);
   }
@@ -196,7 +196,7 @@ export function buildDevflowSummaryBody({
 
   // 5c. Final reconcile 結果行（issue #320。null/undefined/'skipped' では出力しない）
   if (finalReconcile != null && finalReconcile !== 'skipped') {
-    const t = finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
+    const t = finalReconcile === 'ci_verified' ? '✅ CI 委譲（PR head sha 一致・check 全 success）' : finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
     lines.push(`- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ${finalReconcile} — final test: ${t}` + (finalUiVerify != null ? `, final ui-verify: ${finalUiVerify}` : '') + (finalAcReconcile != null ? `, final AC: ${finalAcReconcile}` : ''));
     if (finalAcReconcile === 'reverified') {
       lines.push('- ✅ AC は最終 PR tree で再検証済み（Final AC reconcile — AC テーブルは final snapshot）');

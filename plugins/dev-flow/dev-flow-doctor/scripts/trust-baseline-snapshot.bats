@@ -12,9 +12,13 @@
 #   4. effect_failure_rate     - iterate_status が fix_failed|stuck の割合
 #
 # Fixture journal (dev-flow-doctor/tests/fixtures/trust-baseline/*.json) は
-# committed static entries -- 全 16 件、2026-01-10 〜 2026-01-25 の timestamp。
+# committed static entries -- 全 17 件、2026-01-10 〜 2026-01-25 の timestamp。
 # --until 2026-02-01T00:00:00Z --window 30d で since=2026-01-02T00:00:00Z
 # となり、全 fixture が window に入る（"now" 非依存で決定論）。
+#
+# entry 17 (final_reconcile=="ci_verified"、他 telemetry キーなし) は
+# checks.local_reverify_unavailable（final_reconcile in [unavailable, ci_verified]）
+# 用の追加 fixture（issue #600 レビュー指摘）。
 
 SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/trust-baseline-snapshot.sh"
 FIXTURES="$(cd "$(dirname "$BATS_TEST_FILENAME")/../tests/fixtures/trust-baseline" && pwd)"
@@ -56,7 +60,7 @@ teardown() {
     done
 
     total=$(printf '%s\n' "$output" | jq '.total_runs')
-    [ "$total" -eq 16 ]
+    [ "$total" -eq 17 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -72,10 +76,10 @@ teardown() {
     [ "$count" -eq 3 ]
 
     denom=$(printf '%s\n' "$output" | jq '.false_completion_proxy.denominator')
-    [ "$denom" -eq 16 ]
+    [ "$denom" -eq 17 ]
 
     rate=$(printf '%s\n' "$output" | jq '.false_completion_proxy.rate')
-    [ "$rate" = "0.1875" ]
+    [ "$rate" = "0.17647058823529413" ]
 
     # entry 5 has eval_verdict=="fail" -- must NOT be counted even though it
     # also has final_ac_reconcile=="unavailable" and testsurf_hits nonempty.
@@ -100,13 +104,15 @@ teardown() {
     [ "$status" -eq 0 ]
 
     # Distinct runs hitting >=1 of 4 conditions: staleness(7) + reconcile(8) +
-    # vdelta(9) + ui(10,11) = 5 runs.
+    # vdelta(9) + ui(10,11) = 5 runs. entry 17 (final_reconcile=="ci_verified") does
+    # NOT count towards this top-level hit set (is_reconcile_unavailable is strict
+    # "unavailable"-only) -- it only affects checks.local_reverify_unavailable below.
     count=$(printf '%s\n' "$output" | jq '.inconclusive_events.count')
     [ "$count" -eq 5 ]
     denom=$(printf '%s\n' "$output" | jq '.inconclusive_events.denominator')
-    [ "$denom" -eq 16 ]
+    [ "$denom" -eq 17 ]
     rate=$(printf '%s\n' "$output" | jq '.inconclusive_events.rate')
-    [ "$rate" = "0.3125" ]
+    [ "$rate" = "0.29411764705882354" ]
 
     stale_count=$(printf '%s\n' "$output" | jq '.inconclusive_events.checks.eval_staleness_inconclusive.count')
     [ "$stale_count" -eq 1 ]
@@ -116,7 +122,17 @@ teardown() {
     reconcile_count=$(printf '%s\n' "$output" | jq '.inconclusive_events.checks.final_reconcile_unavailable.count')
     [ "$reconcile_count" -eq 1 ]
     reconcile_denom=$(printf '%s\n' "$output" | jq '.inconclusive_events.checks.final_reconcile_unavailable.denominator')
-    [ "$reconcile_denom" -eq 5 ]
+    [ "$reconcile_denom" -eq 6 ]
+
+    # issue #600 レビュー指摘: local_reverify_unavailable は final_reconcile in
+    # [unavailable, ci_verified] を hits に含める -- entry 8 (unavailable) + entry 17
+    # (ci_verified) = 2。denominator は final_reconcile_unavailable と同じ population(6)。
+    local_reverify_count=$(printf '%s\n' "$output" | jq '.inconclusive_events.checks.local_reverify_unavailable.count')
+    [ "$local_reverify_count" -eq 2 ]
+    local_reverify_denom=$(printf '%s\n' "$output" | jq '.inconclusive_events.checks.local_reverify_unavailable.denominator')
+    [ "$local_reverify_denom" -eq 6 ]
+    local_reverify_rate=$(printf '%s\n' "$output" | jq '.inconclusive_events.checks.local_reverify_unavailable.rate')
+    [ "$local_reverify_rate" = "0.3333333333333333" ]
 
     vdelta_count=$(printf '%s\n' "$output" | jq '.inconclusive_events.checks.vdelta_fail_open_positive.count')
     [ "$vdelta_count" -eq 1 ]

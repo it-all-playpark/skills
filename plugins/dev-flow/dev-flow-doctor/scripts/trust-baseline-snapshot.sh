@@ -24,7 +24,17 @@
 #      .telemetry.vdelta_fail_open > 0, or
 #      .telemetry.ui_verify in [failed_open, setup_failed].
 #      denominator = total_runs. Per-check sub-stats use presence-only
-#      denominators (same rationale as above).
+#      denominators (same rationale as above). checks.local_reverify_unavailable
+#      additionally counts .telemetry.final_reconcile in ["unavailable",
+#      "ci_verified"] as a local-reverify-unavailable event: "ci_verified"
+#      means the CI-delegation substitute (issue #599) confirmed the PR head
+#      sha's CI checks, but the worktree-local test suite was never re-run —
+#      counting only literal "unavailable" would make runs that get promoted
+#      to "ci_verified" silently exit the checks.final_reconcile_unavailable
+#      denominator/numerator, understating the true local-reverify-unavailable
+#      rate the moment CI delegation kicks in. checks.final_reconcile_unavailable
+#      is kept as strict "unavailable"-only for continuity with pre-issue-599
+#      snapshots.
 #   3. phase_latency - per-phase (analyze/plan/implement/validate/evaluate/
 #      pr/iterate/final) count/p50/p95 over .telemetry.phase_durations.<phase>,
 #      plus overall count/p50/p95 over .telemetry.duration_seconds. Only
@@ -288,6 +298,7 @@ FALSE_COMPLETION_PROXY=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson total "$TOTAL
 INCONCLUSIVE_EVENTS=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson total "$TOTAL_RUNS" '
   def is_stale: (.telemetry.eval_staleness // null) as $v | ($v == "hash_mismatch" or $v == "iterate_incomplete");
   def is_reconcile_unavailable: (.telemetry.final_reconcile // null) == "unavailable";
+  def is_local_reverify_unavailable: (.telemetry.final_reconcile // null) as $v | ($v == "unavailable" or $v == "ci_verified");
   def is_vdelta_fail_open: ((.telemetry.vdelta_fail_open // null) | type) == "number" and (.telemetry.vdelta_fail_open > 0);
   def is_ui_inconclusive: (.telemetry.ui_verify // null) as $v | ($v == "failed_open" or $v == "setup_failed");
 
@@ -299,6 +310,7 @@ INCONCLUSIVE_EVENTS=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson total "$TOTAL_RU
 
   ([.[] | select((.telemetry.final_reconcile // null) != null)]) as $reconcile_pop |
   ([.[] | select(is_reconcile_unavailable and ((.telemetry.final_reconcile // null) != null))]) as $reconcile_hits |
+  ([.[] | select(is_local_reverify_unavailable and ((.telemetry.final_reconcile // null) != null))]) as $local_reverify_hits |
 
   ([.[] | select(((.telemetry.vdelta_fail_open // null) | type) == "number")]) as $vdelta_pop |
   ([.[] | select(is_vdelta_fail_open)]) as $vdelta_hits |
@@ -320,6 +332,11 @@ INCONCLUSIVE_EVENTS=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson total "$TOTAL_RU
         denominator: ($reconcile_pop | length),
         count: ($reconcile_hits | length),
         rate: (if ($reconcile_pop | length) > 0 then (($reconcile_hits | length) / ($reconcile_pop | length)) else null end)
+      },
+      local_reverify_unavailable: {
+        denominator: ($reconcile_pop | length),
+        count: ($local_reverify_hits | length),
+        rate: (if ($reconcile_pop | length) > 0 then (($local_reverify_hits | length) / ($reconcile_pop | length)) else null end)
       },
       vdelta_fail_open_positive: {
         denominator: ($vdelta_pop | length),

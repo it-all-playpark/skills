@@ -120,7 +120,25 @@ export function isDocsOrTestOnly(files) {
 // 'reverified': 最終 tree に対して sync + test 再実行を行った。
 // 'unavailable': worktree sync 失敗 / test agent null・schema 不一致等で再検証結果を取得できなかった
 //   （fail-safe。HOLD へ倒す）。
-const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
+// 'ci_verified': ローカル再検証は不能だったが、PR head sha に pin した CI check（finalCiVerdict、
+//   _lib/final-ci.mjs）が sha 一致かつ全 success で最終 tree の test 状態を検証済みとして扱う
+//   （issue #599）。
+const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_verified'];
+
+// merge tier HOLD 理由の分類（issue #599）。'deterministic_recheck': 決定論的な再チェック
+// （CI 完了待ち・再取得等）で解消しうる。'human_judgment': 決定論的手段では解消できず人間確認が
+// 必須。_lib/final-ci.mjs の FINAL_CI_KIND_* と同値。canonical は import 不可のため重複定義し、
+// 同値性は _lib/final-ci-routing.test.mjs が pin する。
+export const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
+
+// HOLD 理由配列（[{ reason, kind }]）から代表 kind を集約する純関数。
+// いずれかが 'human_judgment' なら 'human_judgment'（human 判断が 1 件でもあれば全体を human 扱いにする
+// fail-closed 側の集約）。全件 'deterministic_recheck' ならそのまま。空/非配列は null（HOLD 以外）。
+export function aggregateHoldKind(holdReasons) {
+  if (!Array.isArray(holdReasons) || holdReasons.length === 0) return null;
+  if (holdReasons.some((r) => r.kind === 'human_judgment')) return 'human_judgment';
+  return 'deterministic_recheck';
+}
 
 // gh pr view --json mergeable,mergeStateStatus の生出力を 3 値 enum に写像する pure 関数。
 // 'conflicting': base branch と conflict（mergeable=CONFLICTING もしくは mergeStateStatus=DIRTY）。
@@ -207,6 +225,22 @@ export function classifyMergeableState(meta) {
 //   担保するため tier 判定値は変えない（可視化のみ）。未指定/null/false = reason 追加なし、
 //   tier 判定値も従来と完全同一（regression なし）。boolean 以外は明示 error
 //   （後方互換 scaffolding 禁止規約）。
+// s.finalCi (optional { verified: boolean, reason: string, kind: string|null, checkNames: string[],
+//   headRefOid: string|null }): finalCiVerdict（_lib/final-ci.mjs）の返り値そのもの（issue #599）。
+//   s.finalReconcile === 'unavailable' のとき、ローカル再検証は不能だったが PR head sha に pin した
+//   CI check で代替検証できたかを表す。finalCi が無ければ従来どおりの「人間確認必須」文言のまま
+//   HOLD reason を追記する。finalCi があれば reason に CI 委譲の不成立理由（reason/checkNames）を
+//   追記し、kind（finalCi.kind ?? 'human_judgment'）に応じて「決定論再チェックで解消しうる」か
+//   「人間確認必須」かを文言で区別する。s.finalReconcile === 'ci_verified' のときは HOLD reason を
+//   一切積まず、代わりに ciVerifiedDisclosure（HOLD/AUTO/REVIEW 全分岐共通の可視化行）のみ追記する
+//   （tier 判定値は変えない）。検証: finalCi.verified が boolean でなければ throw。finalCi.kind が
+//   HOLD_REASON_KINDS 外なら throw。finalReconcile==='ci_verified' なのに finalCi.verified!==true
+//   なら throw（証拠なしに ci_verified を名乗らせない fail-closed）。未指定(undefined/null) = 従来と
+//   完全同一挙動（regression なし）。
+// 返り値: { tier, reasons, holdReasons, holdKind }（issue #599 で holdReasons/holdKind を追加）。
+//   reasons は従来どおり string[]（HOLD 時は blocking 文言 + 可視化行、AUTO/REVIEW 時は従来文言 +
+//   可視化行）。holdReasons は HOLD 時のみ blocking 文言の [{ reason, kind }]（可視化行は含めない）、
+//   AUTO/REVIEW 時は []。holdKind は aggregateHoldKind(holdReasons)（HOLD 以外は null）。
 export function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -223,12 +257,23 @@ export function classifyMergeTier(s) {
   if (s.evalVerdictFail != null && typeof s.evalVerdictFail !== 'boolean') {
     throw new Error('classifyMergeTier: invalid evalVerdictFail: ' + s.evalVerdictFail);
   }
-  const reasons = [];
-  if (!s.converged) reasons.push('ledger 未収束（未 checked blocking 残）');
-  if (s.unresolvedDanger) reasons.push('danger-grep hit 未解消（security 要確認）');
+  if (s.finalCi != null && typeof s.finalCi.verified !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid finalCi');
+  }
+  if (s.finalCi != null && s.finalCi.kind != null && !HOLD_REASON_KINDS.includes(s.finalCi.kind)) {
+    throw new Error('classifyMergeTier: invalid finalCi.kind: ' + s.finalCi.kind);
+  }
+  if (s.finalReconcile === 'ci_verified' && (s.finalCi == null || s.finalCi.verified !== true)) {
+    throw new Error('classifyMergeTier: finalReconcile=ci_verified requires finalCi.verified===true');
+  }
+  // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
+  const blockingReasons = [];
+  const pushBlocking = (reason, kind) => blockingReasons.push({ reason, kind });
+  if (!s.converged) pushBlocking('ledger 未収束（未 checked blocking 残）', 'human_judgment');
+  if (s.unresolvedDanger) pushBlocking('danger-grep hit 未解消（security 要確認）', 'human_judgment');
   if (s.breakingStructured) {
-    reasons.push('breaking/migration 検出（analyze 構造化判定 breaking_change=true'
-      + (s.breakingKeyword ? ' + issue title/body keyword scan hit' : '') + '）');
+    pushBlocking('breaking/migration 検出（analyze 構造化判定 breaking_change=true'
+      + (s.breakingKeyword ? ' + issue title/body keyword scan hit' : '') + '）', 'human_judgment');
   }
   const keywordAloneDisclosure = (s.breakingKeyword && !s.breakingStructured)
     ? 'breaking keyword hit（issue title/body 決定論 scan）— 構造化判定 breaking_change=false のため HOLD 不採用（可視化のみ。issue #364）'
@@ -236,25 +281,42 @@ export function classifyMergeTier(s) {
   const evalFailDisclosure = s.evalVerdictFail === true
     ? 'evaluator verdict=fail のまま PR へ進行 — 未解消 findings は ledger/HOLD 条件が別途担保するため tier 判定は不変（可視化のみ。issue #536）'
     : null;
-  if (s.escalateCount > 0) reasons.push(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`);
-  if (s.unsatisfiedAc) reasons.push('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）');
-  if (s.dangerFailClosed === true) reasons.push('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須');
-  if (s.finalReconcile === 'unavailable') reasons.push('Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須');
-  if (s.finalTestGreen === false) reasons.push('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）');
-  if (s.finalAcReconcile === 'unavailable') reasons.push('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）');
-  if (s.iterateStatus !== 'lgtm') reasons.push(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`);
-  if (s.evalStaleness === 'hash_mismatch') reasons.push('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）');
+  const ciVerifiedDisclosure = s.finalReconcile === 'ci_verified'
+    ? 'Final reconcile はローカル再検証不能だったが PR head sha ' + s.finalCi.headRefOid
+      + ' の CI check 全 success を決定論確認（final_reconcile=ci_verified: ' + s.finalCi.checkNames.join(', ')
+      + '）— test gate は CI 委譲で充足（issue #599）'
+    : null;
+  if (s.escalateCount > 0) pushBlocking(`ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`, 'human_judgment');
+  if (s.unsatisfiedAc) pushBlocking('AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）', 'human_judgment');
+  if (s.dangerFailClosed === true) pushBlocking('danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');
+  if (s.finalReconcile === 'unavailable') {
+    if (s.finalCi == null) {
+      pushBlocking('Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須', 'human_judgment');
+    } else {
+      const kind = s.finalCi.kind ?? 'human_judgment';
+      const reason = 'Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— CI 委譲も不成立（reason=' + s.finalCi.reason
+        + (s.finalCi.checkNames.length ? ': ' + s.finalCi.checkNames.join(', ') : '') + '）— '
+        + (kind === 'deterministic_recheck' ? '決定論再チェック（CI 完了待ち / 再取得）で解消しうる' : '人間確認必須');
+      pushBlocking(reason, kind);
+    }
+  }
+  if (s.finalTestGreen === false) pushBlocking('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）', 'human_judgment');
+  if (s.finalAcReconcile === 'unavailable') pushBlocking('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）', 'human_judgment');
+  if (s.iterateStatus !== 'lgtm') pushBlocking(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`, 'human_judgment');
+  if (s.evalStaleness === 'hash_mismatch') pushBlocking('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）', 'human_judgment');
   if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
-    reasons.push(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`);
+    pushBlocking(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`, 'human_judgment');
   }
-  if (s.mergeableState === 'conflicting') reasons.push('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）');
+  if (s.mergeableState === 'conflicting') pushBlocking('base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）', 'human_judgment');
   if (s.trustGate != null && s.trustGate.blocking === true && s.trustGate.verdict !== 'pass') {
-    reasons.push(`EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`);
+    pushBlocking(`EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`, 'human_judgment');
   }
-  if (reasons.length) {
+  if (blockingReasons.length) {
+    const reasons = blockingReasons.map((r) => r.reason);
     if (keywordAloneDisclosure) reasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) reasons.push(evalFailDisclosure);
-    return { tier: 'HOLD', reasons };
+    if (ciVerifiedDisclosure) reasons.push(ciVerifiedDisclosure);
+    return { tier: 'HOLD', reasons, holdReasons: blockingReasons, holdKind: aggregateHoldKind(blockingReasons) };
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
@@ -263,10 +325,12 @@ export function classifyMergeTier(s) {
     if (s.evalSkipped === true) autoReasons.push('AC は未検証（micro eval skip）— evaluator 0 回のため acceptance_criteria の充足は判定していない');
     if (keywordAloneDisclosure) autoReasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
-    return { tier: 'AUTO', reasons: autoReasons };
+    if (ciVerifiedDisclosure) autoReasons.push(ciVerifiedDisclosure);
+    return { tier: 'AUTO', reasons: autoReasons, holdReasons: [], holdKind: null };
   }
   const reviewReasons = ['標準 — 人間が LGTM して merge'];
   if (keywordAloneDisclosure) reviewReasons.push(keywordAloneDisclosure);
   if (evalFailDisclosure) reviewReasons.push(evalFailDisclosure);
-  return { tier: 'REVIEW', reasons: reviewReasons };
+  if (ciVerifiedDisclosure) reviewReasons.push(ciVerifiedDisclosure);
+  return { tier: 'REVIEW', reasons: reviewReasons, holdReasons: [], holdKind: null };
 }

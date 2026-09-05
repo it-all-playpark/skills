@@ -1322,6 +1322,48 @@ test('finalReconcile=bogus -> out-of-enum は validation error', () => {
   }, /invalid finalReconcile/);
 });
 
+// ─── finalReconcile='ci_verified' 表示 (issue #599) ──────────────────────────
+
+test('finalReconcile=ci_verified, finalTestGreen=null -> 「Final reconcile」行に「ci_verified」と「CI 委譲」を含み「不明」を含まない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    finalReconcile: 'ci_verified',
+    finalTestGreen: null,
+  });
+  const lines = body.split('\n');
+  const line = lines.find(l => l.startsWith('- Final reconcile'));
+  assert.ok(line, 'Final reconcile 行を含む');
+  assert.ok(line.includes('ci_verified'), 'finalReconcile 値を含む');
+  assert.ok(line.includes('CI 委譲'), 'ci_verified 時は CI 委譲文言を含む');
+  assert.ok(!line.includes('不明'), 'ci_verified 時は不明を含まない');
+});
+
+test('finalReconcile=ci_verified + finalAcReconcile=reverified -> 「, final AC: reverified」と再検証済み注記を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    finalReconcile: 'ci_verified',
+    finalTestGreen: null,
+    finalAcReconcile: 'reverified',
+    acResults: [
+      { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
+    ],
+  });
+  const lines = body.split('\n');
+  const line = lines.find(l => l.startsWith('- Final reconcile'));
+  assert.ok(line, 'Final reconcile 行を含む');
+  assert.ok(line.includes(', final AC: reverified'), 'final AC 部分を含む');
+  assert.ok(body.includes('✅ AC は最終 PR tree で再検証済み'), '再検証済み注記を含む');
+});
+
+test('finalReconcile=bogus2 -> out-of-enum は不変（ci_verified 追加後も回帰なし）', () => {
+  assert.throws(() => {
+    buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      finalReconcile: 'bogus2',
+    });
+  }, /invalid finalReconcile/);
+});
+
 // ─── Final AC reconcile 表示 (issue #331) ────────────────────────────────────
 
 test('finalReconcile=reverified, finalAcReconcile=reverified -> 「, final AC: reverified」と再検証済み注記を含む', () => {
