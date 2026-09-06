@@ -183,8 +183,9 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   safety classifier block / bg-isolation 等）が Implement phase で 1 件以上発生した run は、
   成功 handoff（`outcome:'success'` のまま）に `error_category:'guard_blocked'` と telemetry キー
   `guard_id`（発生した guard_id を unique・sort した上で comma 結合した文字列。各要素は
-  pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。guard_id は Stop hook の passthrough 経路
-  （後述「telemetry キー」節の二経路転送の不変条件を参照）で journal に到達する（issue #448）。
+  pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。guard_id は `PER_KEY_TELEMETRY_KEYS` に含まれ、
+  Stop hook の per-key flag `--guard-id` で journal に到達する（passthrough 経路ではない。
+  後述「telemetry キー」節の二経路転送の不変条件を参照。issue #448）。
   `final_reconcile` は `skipped`/`reverified`/`unavailable`/`ci_verified` の 4 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`、`unavailable` のうちローカル再検証は不能だが PR head sha に pin した CI check 全 success を決定論確認できた場合のみ `ci_verified` — issue #599）。
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ。`ci_verified` はローカル test を再実行していないため出力されない）。
