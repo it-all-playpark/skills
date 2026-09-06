@@ -211,9 +211,10 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `commit_unensured` の 3 値 closed enum。`iterate_status:'fix_failed'` の run では必ず存在し、
   それ以外の終端ではキー自体が欠落する。fix agent の null（1 回 retry 後も null）/
   applied:false（agent の明示判断）/ commit 保証失敗を区別する）。
-  `terminal_path`（pr-iterate entry のみ。`ci`|`review` の 2 値。最終 iteration が CI-failed 分岐で
-  終端したか review-findings 分岐で終端したかを表す。lgtm・max_reached・review_contract_error は
-  `review`、CI stuck は `ci`）。
+  `terminal_path`（pr-iterate entry のみ。`ci`|`review` の 2 値。各 iteration 冒頭で `review` に戻し
+  CI-failed 分岐に入った時点で `ci` へ上書きするため、**最終 iteration が CI-failed 分岐に入ったか**を表す。
+  CI-failed のまま MAX に達した run は `max_reached` でも `ci` になる。`ci_error` / `ci_pending` は
+  CI-failed 分岐より前で break するため CI 起因でも `review`）。
   `quality_model_config`（dev-flow / pr-iterate 両 entry、成功・失敗とも記録。`_lib/quality-model.mjs`
   の `QUALITY_MODEL` **設定値**。agent() は agentType しか観測できず frontmatter 由来の実モデルは
   workflow から取得できないため、キー名で設定値であることを明示する）。
@@ -250,9 +251,11 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   ログ）、それ以外は `.telemetry` から同配列のキーを除いた残りを `--telemetry-json` で丸ごと
   journal.sh へ渡す。**新規 telemetry キーは workflow の handoff に載せるだけで journal に到達し、
   hook の変更は不要**。per-key flag を新設するときは `PER_KEY_TELEMETRY_KEYS` にも必ず足す
-  （journal.sh は `--telemetry-json` を per-key flag より先にマージするため、除外し忘れると
-  drop 済みの契約違反値が passthrough から到達して fail-closed が迂回される。test.sh が
-  `.telemetry.<key>` 参照と配列の一致を静的に pin する）。gate・merge tier・ledger・shape 判定には
+  （journal.sh のマージ順は flag ごとに前後が混在し — `merge_tier`〜`ci_poll_attempts` の 12 flag は
+  `--telemetry-json` より前、`trust_*` 以降は後 — 前にマージされる側では drop 済みの契約違反値を
+  passthrough が上書き復活させ fail-closed が迂回される。除外が唯一の一貫した防御。test.sh は
+  jq projection ブロック内の `.telemetry.<key>` / `has("<key>")` 参照と配列の一致を静的に pin する
+  — hook 全文を grep するとコメント文字列だけで pass するため対象を projection に限定している）。gate・merge tier・ledger・shape 判定には
   一切影響しない telemetry 専用キー（軸A invariant 非抵触）。
   testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
   merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop

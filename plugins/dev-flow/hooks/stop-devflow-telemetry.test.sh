@@ -2608,8 +2608,27 @@ make_full_telemetry_handoff() {
 #           参照が両方向で一致する（除外漏れ・配列の孤立要素を検出する）
 # --------------------------------------------------------------------------
 {
-  mapfile -t array_keys < <(sed -n '/^PER_KEY_TELEMETRY_KEYS=(/,/^)/p' "$HOOK" | tr -s ' \n' '\n' | grep -E '^[a-z_]+$')
-  mapfile -t referenced_keys < <(grep -oE '\.telemetry\.[a-z_]+' "$HOOK" | sed 's/^\.telemetry\.//' | sort -u)
+  # 配列読み込みに mapfile（bash 4+）を使わない — AC7 が規定する起動形
+  # `bash plugins/dev-flow/hooks/stop-devflow-telemetry.test.sh` は macOS 標準の
+  # /bin/bash 3.2 で解決されうるため。
+  array_keys=()
+  while IFS= read -r k; do
+    [[ -n $k ]] && array_keys+=("$k")
+  done < <(sed -n '/^PER_KEY_TELEMETRY_KEYS=(/,/^)/p' "$HOOK" | tr -s ' \n' '\n' | grep -E '^[a-z_]+$')
+
+  # 参照の抽出は jq projection ブロックに限定する。hook 全文を grep すると、コメントに
+  # `.telemetry.<key>` と書いてあるだけで pass してしまい、静的 pin がコメント文字列に依存する。
+  # projection 内の per-key 抽出には `.telemetry.<key>` 形式と、null-safe な `has("<key>")` 形式
+  # （eval_confidence / review_confidence）の 2 通りがあるため両方を拾う。
+  referenced_keys=()
+  while IFS= read -r k; do
+    [[ -n $k ]] && referenced_keys+=("$k")
+  done < <(
+    sed -n "/^  if ! parsed=/,/^  }' --argjson perkey/p" "$HOOK" \
+      | grep -oE '\.telemetry\.[a-z_]+|has\("[a-z_]+"\)' \
+      | sed -e 's/^\.telemetry\.//' -e 's/^has("//' -e 's/")$//' \
+      | sort -u
+  )
 
   if [[ ${#array_keys[@]} -gt 0 ]]; then
     pass "pg_array_nonempty"

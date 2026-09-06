@@ -55,9 +55,10 @@ LOG_FILE="${HOME}/.claude/logs/stop-devflow-telemetry.log"
 
 # per-key flag（型/enum 検証つき）で journal.sh へ転送する telemetry キー。ここに無いキーは全て
 # --telemetry-json で丸ごと passthrough する（skills#601）。新規 telemetry キーを足すときに本 hook の
-# 変更は不要。per-key flag を新設するときは必ずこの配列にも足すこと — journal.sh は --telemetry-json を
-# per-key flag より先にマージするため、除外し忘れると per-key で drop した契約違反値が passthrough 側から
-# 到達し fail-closed が迂回される（test.sh の静的検証が `.telemetry.<key>` 参照との一致を pin する）。
+# 変更は不要。per-key flag を新設するときは必ずこの配列にも足すこと — journal.sh のマージ順は flag ごとに
+# 前後が混在し（merge_tier〜ci_poll_attempts の 12 flag は --telemetry-json より前、trust_* 以降は後）、
+# 前にマージされる側では per-key で drop した契約違反値を passthrough が上書き復活させ fail-closed が
+# 迂回される。除外が唯一の一貫した防御（test.sh の静的検証が jq projection 内の参照との一致を pin する）。
 PER_KEY_TELEMETRY_KEYS=(
   merge_tier gate_policy danger_hits shape shape_refloored plan_iter eval_iter
   eval_verdict iterate_status eval_staleness ci_wait_seconds ci_poll_attempts
@@ -449,8 +450,8 @@ for f in "${PENDING_DIR}"/*.json; do
   fi
 
   # --- confidence telemetry (skills#561) ---
-  # eval_confidence / review_confidence（projection 上は .telemetry.eval_confidence /
-  # .telemetry.review_confidence、"has" 経由の null-safe 抽出）は記録専用の optional [0,1] 値。
+  # eval_confidence / review_confidence（projection では has("<key>") 経由で null-safe に抽出する）は
+  # 記録専用の optional [0,1] 値。
   # 他の optional キーと異なり "null" 文字列を drop しない — agent が実行されたが confidence を
   # 返さなかった run（キーあり値 null）を journal.sh 側で JSON null として記録する契約
   # （AC-3）を守るため。キー欠落（agent 自体が非実行）のときだけ非空判定で drop される。
