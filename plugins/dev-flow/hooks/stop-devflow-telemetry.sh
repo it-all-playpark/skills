@@ -24,6 +24,8 @@
 # journal.sh の解決順: payload path → payload bare 名(command -v) → command -v journal
 #   → 隣接 playpark-core（skills#572）
 #
+# telemetry キーは per-key（enum 検証）と passthrough の二経路。PER_KEY_TELEMETRY_KEYS を参照（skills#601）。
+#
 # stdout: なし
 # stderr: なし（ログは $HOME/.claude/logs/stop-devflow-telemetry.log へ）
 # 終了コード: 常に 0（Stop を絶対にブロックしない）
@@ -50,6 +52,22 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # repo checkout / link mode: dev-flow plugin root の隣に playpark-core がある
 SIBLING_JOURNAL="${HOOK_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
 LOG_FILE="${HOME}/.claude/logs/stop-devflow-telemetry.log"
+
+# per-key flag（型/enum 検証つき）で journal.sh へ転送する telemetry キー。ここに無いキーは全て
+# --telemetry-json で丸ごと passthrough する（skills#601）。新規 telemetry キーを足すときに本 hook の
+# 変更は不要。per-key flag を新設するときは必ずこの配列にも足すこと — journal.sh は --telemetry-json を
+# per-key flag より先にマージするため、除外し忘れると per-key で drop した契約違反値が passthrough 側から
+# 到達し fail-closed が迂回される（test.sh の静的検証が `.telemetry.<key>` 参照との一致を pin する）。
+PER_KEY_TELEMETRY_KEYS=(
+  merge_tier gate_policy danger_hits shape shape_refloored plan_iter eval_iter
+  eval_verdict iterate_status eval_staleness ci_wait_seconds ci_poll_attempts
+  trust_run_id trust_receipts trust_surfaceproof_shadow trust_evalseal_missing_reason
+  trust_effectdelta_pr_missing_reason
+  vdelta_verdicts vdelta_fail_open redgreen_deny testsurf_hits duration_seconds
+  phase_durations merge_tier_reasons route guard_id
+  eval_confidence review_confidence review_decision
+)
+per_key_keys_json=$(printf '%s\n' "${PER_KEY_TELEMETRY_KEYS[@]}" | jq -R . | jq -sc .)
 
 # Process each *.json in pending dir
 for f in "${PENDING_DIR}"/*.json; do
@@ -141,15 +159,8 @@ for f in "${PENDING_DIR}"/*.json; do
     eval_confidence: ((.telemetry // {}) | if has("eval_confidence") then (.eval_confidence | tojson) else null end),
     review_confidence: ((.telemetry // {}) | if has("review_confidence") then (.review_confidence | tojson) else null end),
     review_decision: .telemetry.review_decision,
-    passthrough_telemetry: ((.telemetry // {}) | {
-      iterate_rounds,
-      fixes_applied,
-      fix_null_retries,
-      review_null_retries,
-      fix_uncommitted_recovered,
-      subagent_invocations
-    } | with_entries(select(.value != null)))
-  }' "$claimed" 2>/dev/null); then
+    passthrough_telemetry: ((.telemetry // {}) | with_entries(select((.value != null) and ((.key as $k | $perkey | index($k)) == null))))
+  }' --argjson perkey "$per_key_keys_json" "$claimed" 2>/dev/null); then
     # JSON parse error
     mkdir -p "${PENDING_DIR}/malformed"
     mv "$claimed" "${PENDING_DIR}/malformed/$(basename "$f")"
@@ -438,8 +449,9 @@ for f in "${PENDING_DIR}"/*.json; do
   fi
 
   # --- confidence telemetry (skills#561) ---
-  # eval_confidence / review_confidence は記録専用の optional [0,1] 値。他の optional
-  # キーと異なり "null" 文字列を drop しない — agent が実行されたが confidence を
+  # eval_confidence / review_confidence（projection 上は .telemetry.eval_confidence /
+  # .telemetry.review_confidence、"has" 経由の null-safe 抽出）は記録専用の optional [0,1] 値。
+  # 他の optional キーと異なり "null" 文字列を drop しない — agent が実行されたが confidence を
   # 返さなかった run（キーあり値 null）を journal.sh 側で JSON null として記録する契約
   # （AC-3）を守るため。キー欠落（agent 自体が非実行）のときだけ非空判定で drop される。
   if [[ -n $eval_confidence ]]; then
@@ -461,12 +473,15 @@ for f in "${PENDING_DIR}"/*.json; do
     esac
   fi
 
-  # --- passthrough telemetry (skills#535) ---
+  # --- passthrough telemetry (skills#535 / skills#601) ---
   # journal.sh の汎用 --telemetry-json 口（任意 JSON object を telemetry へマージ）へ載せる。
-  # この projection は固定キー列挙なので、per-key フラグを持たないキーは列挙漏れすると
-  # エラーも出さずに落ちる（実測: fix_null_retries / review_null_retries /
-  # fix_uncommitted_recovered / subagent_invocations が payload に存在したまま journal に
-  # 到達していなかった）。新規キーは per-key フラグではなくこのリストへ足すこと。
+  # telemetry キーは二経路: (a) enum/型検証が要るキーは per-key flag（fail-closed: 契約違反は
+  # drop + trust-key-dropped / telemetry-key-dropped ログ）、(b) それ以外は `.telemetry` から
+  # PER_KEY_TELEMETRY_KEYS を除いた残り（null 値除外）をここで --telemetry-json により丸ごと渡す。
+  # 新規 telemetry キーは (b) 経路で自動的に到達するため本 hook の変更は不要（実測: 過去
+  # fix_null_retries / review_null_retries / fix_uncommitted_recovered / subagent_invocations が
+  # 固定キー列挙の列挙漏れでエラーも出さず journal に到達していなかった。skills#601 で
+  # PER_KEY_TELEMETRY_KEYS 除外方式の passthrough に切り替え、列挙漏れの構造そのものを廃止した）。
   if [[ -n $passthrough_telemetry_json && $passthrough_telemetry_json != "{}" ]]; then
     cmd_args+=(--telemetry-json "$passthrough_telemetry_json")
   fi

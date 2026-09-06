@@ -17,6 +17,17 @@ export const meta = {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const QUALITY_MODEL = 'fable'
 // ==== END inline: _lib/quality-model.mjs ====
+// ==== BEGIN inline: _lib/plugin-version.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// dev-flow plugin の version 定数。telemetry キー plugin_version の値として journal entry に記録する
+// （issue #601）。workflow script では ${CLAUDE_PLUGIN_ROOT} が展開されず fs も使えないため、
+// plugin.json を読む代わりに定数で持つ。plugin.json の version と一致することは
+// _lib/plugin-version.sync.test.mjs が CI で pin する — plugin.json を上げるときは本ファイルも上げて
+// tools/sync-inlines.mjs --write を実行する。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+const PLUGIN_VERSION = '0.3.0'
+// ==== END inline: _lib/plugin-version.mjs ====
 // ==== BEGIN inline: _lib/agent-namespace.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // dev-flow の subagent 実体は plugin 配下（plugins/dev-flow/agents/）にあり、harness からは
 // `dev-flow:<name>` の namespaced id でしか解決できない。bare 名を agent() へ渡すと
@@ -1282,6 +1293,8 @@ let lastReview = null
 let lgtm = false
 let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
+let terminalPath = 'review'  // 最終 iteration の終端経路 'ci' | 'review'（issue #601）。各 iteration 冒頭で review に戻し、CI-failed 分岐で ci に上書きする
+let fixTerminalReason = null  // fix_failed の 3 分岐 'null_after_retry' | 'applied_false' | 'commit_unensured'（issue #601）。fix_failed 以外は null
 let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
 let fixNullRetries = 0  // fix agent が null または throw（schema 不一致・StructuredOutput 契約違反等の技術的失敗）で 1 回 retry した累積回数。issue #347 / #520
 let reviewNullRetries = 0  // review agent が throw または null で schema-retry した累積回数。issue #437
@@ -1368,6 +1381,7 @@ async function ensureFixCommitted(i) {
 }
 
 for (i = 1; i <= MAX; i++) {
+  terminalPath = 'review'
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
   const reviewPrompt = `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
@@ -1483,6 +1497,8 @@ for (i = 1; i <= MAX; i++) {
             suggestion: 'CI を green にする',
           }]
 
+      terminalPath = 'ci'
+
       // Register CI findings into reviewSeen exactly like the existing blocking loop so that
       // repeated identical CI failures (same ci::<name> topic) trigger REVIEW_STUCK escalation.
       for (const x of ciFindings) reviewSeen.register(x)
@@ -1512,6 +1528,7 @@ for (i = 1; i <= MAX; i++) {
       if (retried) ciRound.fix_retried = true
 
       if (fix == null || fix.applied !== true) {
+        fixTerminalReason = fix == null ? 'null_after_retry' : 'applied_false'
         terminal = 'fix_failed'
         log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}${retried ? '（retry 後も null）' : ''}。`
           + `無言で再レビューを繰り返さず人間へエスカレーション`)
@@ -1519,6 +1536,7 @@ for (i = 1; i <= MAX; i++) {
       }
 
       if (!(await ensureFixCommitted(i))) {
+        fixTerminalReason = 'commit_unensured'
         terminal = 'fix_failed'
         log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
         break
@@ -1564,6 +1582,7 @@ for (i = 1; i <= MAX; i++) {
 
     // fix の applied:false を検出して人間へエスカレーション（無言で MAX 回燃やさない。issue #126）。
     if (fix == null || fix.applied !== true) {
+      fixTerminalReason = fix == null ? 'null_after_retry' : 'applied_false'
       terminal = 'fix_failed'
       log(`⚠️ fix#${i} が適用されず（applied=${fix?.applied ?? 'null'}）— ${fix?.summary ?? '理由不明'}${retried ? '（retry 後も null）' : ''}。`
         + `無言で再レビューを繰り返さず人間へエスカレーション`)
@@ -1571,6 +1590,7 @@ for (i = 1; i <= MAX; i++) {
     }
 
     if (!(await ensureFixCommitted(i))) {
+      fixTerminalReason = 'commit_unensured'
       terminal = 'fix_failed'
       log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
       break
@@ -1654,6 +1674,11 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(lastReview?.decision ? { review_decision: lastReview.decision } : {}),
     ...(worktreeDirty != null ? { worktree_dirty: worktreeDirty } : {}),
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
+    terminal_path: terminalPath,
+    ...(fixTerminalReason ? { fix_terminal_reason: fixTerminalReason } : {}),
+    quality_model_config: QUALITY_MODEL,  // 実行時モデルではなく _lib/quality-model.mjs の設定値（issue #601）
+    plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs の定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
+    iterate_history: history,  // round ごとの {iteration, decision, summary, blocking, minor}（issue #601）
   },
 })
 // journal handoff（issue #494）: choreography 本体は canonical _lib/journal-handoff.mjs の
@@ -1686,6 +1711,8 @@ return {
   review_null_retries: reviewNullRetries,
   worktree_dirty: worktreeDirty,
   fix_uncommitted_recovered: fixUncommittedRecovered,
+  terminal_path: terminalPath,
+  fix_terminal_reason: fixTerminalReason,
   history,
   subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
   journal_log_status: journalLogStatus,
