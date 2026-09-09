@@ -2535,6 +2535,344 @@ make_full_telemetry_handoff() {
 }
 
 # --------------------------------------------------------------------------
+# Test P-F (AC1 回帰): hook が明示列挙しない新規 telemetry キー（fix_terminal_reason /
+#           terminal_path / quality_model_config / plugin_version / iterate_history）が
+#           passthrough 経由で journal entry へ到達する（skills#601）
+# --------------------------------------------------------------------------
+{
+  if [[ "$(grep -c 'fix_terminal_reason' "$HOOK")" -eq 0 ]]; then
+    pass "pf_hook_has_no_fix_terminal_reason_literal"
+  else
+    fail "pf_hook_has_no_fix_terminal_reason_literal" "hook should not hardcode fix_terminal_reason — it must reach journal via passthrough only"
+  fi
+  if [[ "$(grep -c 'iterate_history' "$HOOK")" -eq 0 ]]; then
+    pass "pf_hook_has_no_iterate_history_literal"
+  else
+    fail "pf_hook_has_no_iterate_history_literal" "hook should not hardcode iterate_history — it must reach journal via passthrough only"
+  fi
+
+  tmpd=$(make_tmpdir)
+  mkdir -p "${tmpd}/journal/pending"
+  capture="${tmpd}/capture.txt"
+  stub="${tmpd}/journal.sh"
+  make_stub_journal "$stub" "$capture" 0
+
+  make_trust_handoff "${tmpd}/journal/pending/pf.json" "$stub" \
+    '.telemetry += {
+      fix_terminal_reason: "applied_false",
+      terminal_path: "ci",
+      quality_model_config: "fable",
+      plugin_version: "0.3.0",
+      iterate_history: [{iteration: 1, decision: "request-changes", summary: "ng", blocking: [{severity: "major", topic: "t1"}], minor: []}]
+    }'
+
+  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+  captured=$(cat "$capture" 2>/dev/null || echo "")
+  if echo "$captured" | grep -q -- '--telemetry-json'; then
+    pass "pf_telemetry_json_present"
+  else
+    fail "pf_telemetry_json_present" "expected --telemetry-json. got: ${captured}"
+  fi
+
+  passthrough_json=$(printf '%s' "$captured" | sed -n 's/.*--telemetry-json //p')
+  if echo "$passthrough_json" | jq -e '
+      .fix_terminal_reason == "applied_false" and
+      .terminal_path == "ci" and
+      .quality_model_config == "fable" and
+      .plugin_version == "0.3.0" and
+      .iterate_history[0].decision == "request-changes" and
+      .iterate_history[0].blocking[0].topic == "t1"
+    ' >/dev/null 2>&1; then
+    pass "pf_new_keys_reach_passthrough"
+  else
+    fail "pf_new_keys_reach_passthrough" "expected new keys in passthrough JSON. got: ${passthrough_json}"
+  fi
+
+  if echo "$captured" | grep -q -- "--merge-tier REVIEW"; then
+    pass "pf_base_entry_preserved"
+  else
+    fail "pf_base_entry_preserved" "base telemetry must still be logged. got: ${captured}"
+  fi
+  if [[ ! -f "${tmpd}/journal/pending/pf.json" ]]; then
+    pass "pf_pending_removed"
+  else
+    fail "pf_pending_removed" "pending file should be removed after success"
+  fi
+
+  rm -rf "$tmpd"
+}
+
+# --------------------------------------------------------------------------
+# Test P-G (静的検証): PER_KEY_TELEMETRY_KEYS 配列と hook 内 `.telemetry.<key>`
+#           参照が両方向で一致する（除外漏れ・配列の孤立要素を検出する）
+# --------------------------------------------------------------------------
+{
+  # 配列読み込みに mapfile（bash 4+）を使わない — AC7 が規定する起動形
+  # `bash plugins/dev-flow/hooks/stop-devflow-telemetry.test.sh` は macOS 標準の
+  # /bin/bash 3.2 で解決されうるため。
+  array_keys=()
+  while IFS= read -r k; do
+    [[ -n $k ]] && array_keys+=("$k")
+  done < <(sed -n '/^PER_KEY_TELEMETRY_KEYS=(/,/^)/p' "$HOOK" | tr -s ' \n' '\n' | grep -E '^[a-z_]+$')
+
+  # 参照の抽出は jq projection ブロックに限定する。hook 全文を grep すると、コメントに
+  # `.telemetry.<key>` と書いてあるだけで pass してしまい、静的 pin がコメント文字列に依存する。
+  # projection 内の per-key 抽出には `.telemetry.<key>` 形式と、null-safe な `has("<key>")` 形式
+  # （eval_confidence / review_confidence）の 2 通りがあるため両方を拾う。
+  referenced_keys=()
+  while IFS= read -r k; do
+    [[ -n $k ]] && referenced_keys+=("$k")
+  done < <(
+    sed -n "/^  if ! parsed=/,/^  }' --argjson perkey/p" "$HOOK" \
+      | grep -oE '\.telemetry\.[a-z_]+|has\("[a-z_]+"\)' \
+      | sed -e 's/^\.telemetry\.//' -e 's/^has("//' -e 's/")$//' \
+      | sort -u
+  )
+
+  if [[ ${#array_keys[@]} -gt 0 ]]; then
+    pass "pg_array_nonempty"
+  else
+    fail "pg_array_nonempty" "PER_KEY_TELEMETRY_KEYS array not found or empty in ${HOOK}"
+  fi
+
+  missing_from_array=()
+  for k in "${referenced_keys[@]}"; do
+    found=0
+    for a in "${array_keys[@]}"; do
+      [[ $a == "$k" ]] && found=1 && break
+    done
+    [[ $found -eq 0 ]] && missing_from_array+=("$k")
+  done
+  if [[ ${#missing_from_array[@]} -eq 0 ]]; then
+    pass "pg_all_referenced_keys_in_array"
+  else
+    fail "pg_all_referenced_keys_in_array" "keys referenced via .telemetry.<key> but missing from PER_KEY_TELEMETRY_KEYS: ${missing_from_array[*]}"
+  fi
+
+  missing_from_hook=()
+  for a in "${array_keys[@]}"; do
+    found=0
+    for k in "${referenced_keys[@]}"; do
+      [[ $a == "$k" ]] && found=1 && break
+    done
+    [[ $found -eq 0 ]] && missing_from_hook+=("$a")
+  done
+  if [[ ${#missing_from_hook[@]} -eq 0 ]]; then
+    pass "pg_all_array_keys_referenced"
+  else
+    fail "pg_all_array_keys_referenced" "keys in PER_KEY_TELEMETRY_KEYS but never referenced via .telemetry.<key>: ${missing_from_hook[*]}"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Test P-H (除外の動作): per-key キー（trust_run_id / route / eval_confidence /
+#           review_decision / guard_id）は passthrough から除外され、per-key flag
+#           側にのみ現れる。per-key でないキー（subagent_invocations / terminal_path）
+#           は passthrough に残る
+# --------------------------------------------------------------------------
+{
+  tmpd=$(make_tmpdir)
+  mkdir -p "${tmpd}/journal/pending"
+  capture="${tmpd}/capture.txt"
+  stub="${tmpd}/journal.sh"
+  make_stub_journal "$stub" "$capture" 0
+
+  make_trust_handoff "${tmpd}/journal/pending/ph.json" "$stub" \
+    '.telemetry += {
+      trust_run_id: "r1",
+      route: "lite",
+      eval_confidence: 0.5,
+      review_decision: "approve",
+      guard_id: "g",
+      subagent_invocations: {total: 1, by_type: {x: 1}},
+      terminal_path: "review"
+    }'
+
+  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+  captured=$(cat "$capture" 2>/dev/null || echo "")
+  passthrough_json=$(printf '%s' "$captured" | sed -n 's/.*--telemetry-json //p')
+
+  if echo "$passthrough_json" | jq -e '
+      (has("merge_tier") | not) and
+      (has("trust_run_id") | not) and
+      (has("route") | not) and
+      (has("eval_confidence") | not) and
+      (has("review_decision") | not) and
+      (has("guard_id") | not) and
+      (.subagent_invocations.total == 1) and
+      (.terminal_path == "review")
+    ' >/dev/null 2>&1; then
+    pass "ph_perkey_keys_excluded_others_kept"
+  else
+    fail "ph_perkey_keys_excluded_others_kept" "expected per-key keys excluded, others kept. got: ${passthrough_json}"
+  fi
+
+  if echo "$captured" | grep -q -- "--trust-run-id r1" &&
+    echo "$captured" | grep -q -- "--route lite" &&
+    echo "$captured" | grep -q -- "--guard-id g"; then
+    pass "ph_perkey_flags_still_forwarded"
+  else
+    fail "ph_perkey_flags_still_forwarded" "expected per-key flags forwarded. got: ${captured}"
+  fi
+
+  rm -rf "$tmpd"
+}
+
+# --------------------------------------------------------------------------
+# Test P-I (現行挙動 pin): .telemetry が非 object（文字列）→ per-key 行が jq エラー
+#           となり、既存の malformed 経路（pending/malformed/ + malformed-json ログ）
+#           へ落ちる。passthrough 側に type ガードは置かない（到達不能な dead code
+#           になるため）
+# --------------------------------------------------------------------------
+{
+  tmpd=$(make_tmpdir)
+  mkdir -p "${tmpd}/journal/pending"
+  capture="${tmpd}/capture.txt"
+  stub="${tmpd}/journal.sh"
+  make_stub_journal "$stub" "$capture" 0
+
+  make_trust_handoff "${tmpd}/journal/pending/pi.json" "$stub" '.telemetry = "oops"'
+
+  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+  if [[ $RUN_EXIT -eq 0 ]]; then
+    pass "pi_exits_0"
+  else
+    fail "pi_exits_0" "hook must always exit 0, got ${RUN_EXIT}"
+  fi
+  if [[ ! -f $capture ]]; then
+    pass "pi_stub_not_called"
+  else
+    fail "pi_stub_not_called" "stub should not be called when telemetry is non-object. got: $(cat "$capture")"
+  fi
+  if [[ -f "${tmpd}/journal/pending/malformed/pi.json" ]]; then
+    pass "pi_moved_to_malformed"
+  else
+    fail "pi_moved_to_malformed" "expected file moved to pending/malformed/pi.json"
+  fi
+  if grep -q "malformed-json" "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null; then
+    pass "pi_malformed_logged"
+  else
+    fail "pi_malformed_logged" "expected malformed-json entry in log"
+  fi
+
+  rm -rf "$tmpd"
+}
+
+# --------------------------------------------------------------------------
+# Test P-J (AC6 fail-closed 不変): out-of-enum / 空文字の trust・enum キーは
+#           passthrough 経由でも journal に到達しない（per-key で drop されたキーが
+#           passthrough から漏れて fail-closed を迂回することを禁止する）
+# --------------------------------------------------------------------------
+{
+  tmpd=$(make_tmpdir)
+  mkdir -p "${tmpd}/journal/pending"
+  capture="${tmpd}/capture.txt"
+  stub="${tmpd}/journal.sh"
+  make_stub_journal "$stub" "$capture" 0
+
+  make_trust_handoff "${tmpd}/journal/pending/pj.json" "$stub" \
+    '.telemetry += {
+      trust_evalseal_missing_reason: "bogus",
+      trust_effectdelta_pr_missing_reason: "",
+      route: "bogus",
+      terminal_path: "ci"
+    }'
+
+  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+  captured=$(cat "$capture" 2>/dev/null || echo "")
+  if echo "$captured" | grep -q -- "--trust-evalseal-missing-reason" ||
+    echo "$captured" | grep -q -- "--trust-effectdelta-pr-missing-reason" ||
+    echo "$captured" | grep -q -- "--route"; then
+    fail "pj_perkey_flags_not_forwarded" "out-of-enum values must not be forwarded via per-key flags. got: ${captured}"
+  else
+    pass "pj_perkey_flags_not_forwarded"
+  fi
+
+  if grep -q "trust-key-dropped: trust_evalseal_missing_reason" "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null &&
+    grep -q "telemetry-key-dropped: route" "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null; then
+    pass "pj_drops_logged"
+  else
+    fail "pj_drops_logged" "expected trust-key-dropped/telemetry-key-dropped log lines"
+  fi
+
+  passthrough_json=$(printf '%s' "$captured" | sed -n 's/.*--telemetry-json //p')
+  if echo "$passthrough_json" | jq -e '
+      (has("trust_evalseal_missing_reason") | not) and
+      (has("trust_effectdelta_pr_missing_reason") | not) and
+      (has("route") | not) and
+      (.terminal_path == "ci")
+    ' >/dev/null 2>&1; then
+    pass "pj_dropped_keys_absent_from_passthrough"
+  else
+    fail "pj_dropped_keys_absent_from_passthrough" "dropped per-key values must not leak via passthrough. got: ${passthrough_json}"
+  fi
+
+  if echo "$captured" | grep -q -- "--merge-tier REVIEW"; then
+    pass "pj_base_entry_preserved"
+  else
+    fail "pj_base_entry_preserved" "base telemetry must still be logged. got: ${captured}"
+  fi
+
+  rm -rf "$tmpd"
+}
+
+# --------------------------------------------------------------------------
+# Test P-K (integration): 実 journal.sh が --telemetry-json を受理する環境で、
+#          fix_terminal_reason / terminal_path / plugin_version /
+#          quality_model_config / iterate_history が journal entry へ到達し、
+#          per-key で drop された trust_evalseal_missing_reason は到達しない
+#          ことを確認する。未配置 / 未対応の環境では skip。
+# --------------------------------------------------------------------------
+{
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  if [[ ! -x $REAL_JOURNAL ]]; then
+    echo "  (skip: real journal.sh not found — integration test skipped)"
+  elif ! grep -q -- '--telemetry-json' "$REAL_JOURNAL"; then
+    echo "  (skip: real journal.sh does not support --telemetry-json — 受け側未対応)"
+  else
+    tmpd=$(make_tmpdir)
+    mkdir -p "${tmpd}/journal/pending"
+
+    make_trust_handoff "${tmpd}/journal/pending/pk.json" "$REAL_JOURNAL" \
+      '.telemetry += {
+        fix_terminal_reason: "commit_unensured",
+        terminal_path: "review",
+        plugin_version: "0.3.0",
+        quality_model_config: "fable",
+        iterate_history: [{iteration: 1, decision: "request-changes", summary: "ng", blocking: [{severity: "major", topic: "t1"}], minor: []}],
+        trust_evalseal_missing_reason: "bogus"
+      }'
+
+    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
+    if [[ -z $entry ]]; then
+      fail "pk_entry_written" "no journal entry created. hook output: ${RUN_OUT}"
+    else
+      pass "pk_entry_written"
+      if [[ $(jq -r '.telemetry.fix_terminal_reason' "$entry") == "commit_unensured" ]] &&
+        [[ $(jq -r '.telemetry.terminal_path' "$entry") == "review" ]] &&
+        [[ $(jq -r '.telemetry.plugin_version' "$entry") == "0.3.0" ]] &&
+        [[ $(jq -r '.telemetry.quality_model_config' "$entry") == "fable" ]] &&
+        [[ $(jq -r '.telemetry.iterate_history[0].decision' "$entry") == "request-changes" ]] &&
+        [[ $(jq -r '.telemetry.iterate_history[0].blocking[0].topic' "$entry") == "t1" ]] &&
+        [[ $(jq -r '.telemetry | has("trust_evalseal_missing_reason")' "$entry") == "false" ]] &&
+        [[ $(jq -r '.telemetry.merge_tier' "$entry") == "REVIEW" ]]; then
+        pass "pk_persisted_correctly"
+      else
+        fail "pk_persisted_correctly" "telemetry mismatch in entry: $(jq -c '.telemetry' "$entry")"
+      fi
+    fi
+
+    rm -rf "$tmpd"
+  fi
+}
+
+# --------------------------------------------------------------------------
 # Summary
 # --------------------------------------------------------------------------
 echo ""

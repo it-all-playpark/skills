@@ -74,6 +74,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `_lib/quality-model.mjs` の 1 行を `'opus'` に変更し `tools/sync-inlines.mjs --write` を実行 —
   先頭トークン=スクリプトパスの bare 形。shebang + 実行bit 付与済みで、sandbox excludedCommands は
   先頭トークンでマッチするため node/cd/bash 前置は付けない）。
+  `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。
   品質ゲート系 4 agent は `effort: high`
@@ -182,9 +183,9 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   safety classifier block / bg-isolation 等）が Implement phase で 1 件以上発生した run は、
   成功 handoff（`outcome:'success'` のまま）に `error_category:'guard_blocked'` と telemetry キー
   `guard_id`（発生した guard_id を unique・sort した上で comma 結合した文字列。各要素は
-  pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。journal.sh 側の専用フラグ配線・dev-flow plugin Stop hook
-  への転送配線は route 等 8 キー（issue #430）と同じ precedent に倣い別 issue で扱う — 本 issue（#448）は
-  handoff JSON への到達までを保証する（issue #448）。
+  pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。guard_id は `PER_KEY_TELEMETRY_KEYS` に含まれ、
+  Stop hook の per-key flag `--guard-id` で journal に到達する（passthrough 経路ではない。
+  後述「telemetry キー」節の二経路転送の不変条件を参照。issue #448）。
   `final_reconcile` は `skipped`/`reverified`/`unavailable`/`ci_verified` の 4 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`、`unavailable` のうちローカル再検証は不能だが PR head sha に pin した CI check 全 success を決定論確認できた場合のみ `ci_verified` — issue #599）。
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ。`ci_verified` はローカル test を再実行していないため出力されない）。
@@ -207,6 +208,23 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   対応する duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
   `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
   （`lite`|`full` の 2 値 enum）。
+  `fix_terminal_reason`（pr-iterate entry のみ。`null_after_retry` / `applied_false` /
+  `commit_unensured` の 3 値 closed enum。`iterate_status:'fix_failed'` の run では必ず存在し、
+  それ以外の終端ではキー自体が欠落する。fix agent の null（1 回 retry 後も null）/
+  applied:false（agent の明示判断）/ commit 保証失敗を区別する）。
+  `terminal_path`（pr-iterate entry のみ。`ci`|`review` の 2 値。各 iteration 冒頭で `review` に戻し
+  CI-failed 分岐に入った時点で `ci` へ上書きするため、**最終 iteration が CI-failed 分岐に入ったか**を表す。
+  CI-failed のまま MAX に達した run は `max_reached` でも `ci` になる。`ci_error` / `ci_pending` は
+  CI-failed 分岐より前で break するため CI 起因でも `review`）。
+  `quality_model_config`（dev-flow / pr-iterate 両 entry、成功・失敗とも記録。`_lib/quality-model.mjs`
+  の `QUALITY_MODEL` **設定値**。agent() は agentType しか観測できず frontmatter 由来の実モデルは
+  workflow から取得できないため、キー名で設定値であることを明示する）。
+  `plugin_version`（同上両 entry。`_lib/plugin-version.mjs` の `PLUGIN_VERSION` 定数。workflow では
+  `${CLAUDE_PLUGIN_ROOT}` が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
+  が `plugins/dev-flow/.claude-plugin/plugin.json` の version と一致することを pin する。plugin.json
+  を上げるときは canonical も上げて `tools/sync-inlines.mjs --write` を実行する）。
+  `iterate_history`（pr-iterate entry のみ。round ごとの `{iteration, decision, summary, blocking, minor}`
+  配列。CI-failed round の blocking は synthetic な `ci::<check>` topic の finding）。
   run 返り値（telemetry ではない）には加えて `merge_tier_hold_reasons`（`[{reason, kind}]`。
   `kind` は `deterministic_recheck`（決定論再チェックで解消しうる HOLD。Final reconcile
   unavailable の CI 不成立理由のうち pending / fetch-failed / invalid）と `human_judgment`
@@ -228,13 +246,21 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで
   usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric（issue #445）。
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
-  dev-flow plugin Stop hook 側の jq projection（送り側配線）は route 等 8 キー（issue #430 → it-all-playpark/dotfiles#143）
-  と同じ precedent で別 issue に繰り延べる。gate・merge tier・ledger・shape 判定には一切影響しない telemetry
-  専用キー（軸A invariant 非抵触）。
+  `plugins/dev-flow/hooks/stop-devflow-telemetry.sh` は telemetry を二経路で転送する。enum/型検証が
+  必要なキー（hook 内 `PER_KEY_TELEMETRY_KEYS` に列挙。trust 系・route・review_decision 等）は
+  per-key flag で fail-closed（契約違反は drop + `trust-key-dropped` / `telemetry-key-dropped`
+  ログ）、それ以外は `.telemetry` から同配列のキーを除いた残りを `--telemetry-json` で丸ごと
+  journal.sh へ渡す。**新規 telemetry キーは workflow の handoff に載せるだけで journal に到達し、
+  hook の変更は不要**。per-key flag を新設するときは `PER_KEY_TELEMETRY_KEYS` にも必ず足す
+  （journal.sh のマージ順は flag ごとに前後が混在し — `merge_tier`〜`ci_poll_attempts` の 12 flag は
+  `--telemetry-json` より前、`trust_*` 以降は後 — 前にマージされる側では drop 済みの契約違反値を
+  passthrough が上書き復活させ fail-closed が迂回される。除外が唯一の一貫した防御。test.sh は
+  jq projection ブロック内の `.telemetry.<key>` / `has("<key>")` 参照と配列の一致を静的に pin する
+  — hook 全文を grep するとコメント文字列だけで pass するため対象を projection に限定している）。gate・merge tier・ledger・shape 判定には
+  一切影響しない telemetry 専用キー（軸A invariant 非抵触）。
   testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
   merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
-  する fail-open）に到達済み（issue #430）。dev-flow plugin Stop hook 側の jq projection（送り側配線）は
-  it-all-playpark/dotfiles#143 で扱う。
+  する fail-open）に到達済み（issue #430）。
   `eval_confidence` / `review_confidence` は `[0,1]` または `null`（evaluator / pr-reviewer の verdict
   自己申告 confidence）。agent が実行されたが confidence を返さない run は `null` を記録し、
   agent 自体が実行されない run（micro の Evaluate skip 等）はキー自体が handoff から欠落する
