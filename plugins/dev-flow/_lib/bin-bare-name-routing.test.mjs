@@ -105,7 +105,8 @@ for (const needle of DEV_FLOW_NEEDLES) {
   });
 }
 
-test("[bin-bare-name-routing][AC2] dev-flow.js の journal_sh: 'journal' がちょうど2回存在する", () => {
+test("[bin-bare-name-routing][AC2] dev-flow.js の journal_sh: 'journal' がちょうど3回存在する", () => {
+  // 3 call sites: Merge tier success handoff / writeFailureTelemetry / top-level abort handoff（issue #607）。
   const needle = "journal_sh: 'journal'";
   let count = 0;
   let idx = 0;
@@ -115,7 +116,7 @@ test("[bin-bare-name-routing][AC2] dev-flow.js の journal_sh: 'journal' がち�
     count += 1;
     idx += needle.length;
   }
-  assert.equal(count, 2, `journal_sh: 'journal' の出現回数が期待(2)と異なる: ${count}`);
+  assert.equal(count, 3, `journal_sh: 'journal' の出現回数が期待(3)と異なる: ${count}`);
 });
 
 test("[bin-bare-name-routing][AC2] pr-iterate.js が '`check-ci --checks-data' を含む", () => {

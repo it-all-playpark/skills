@@ -115,6 +115,7 @@ function buildJournalHandoffPayload({
   telemetry,
   error_category,
   error_msg,
+  error_phase,
 }) {
   if (!skill) throw new Error('journal-handoff: skill is required');
   if (!outcome) throw new Error('journal-handoff: outcome is required');
@@ -128,6 +129,7 @@ function buildJournalHandoffPayload({
   if (telemetry != null) payload.telemetry = telemetry;
   if (error_category) payload.error_category = error_category;
   if (error_msg) payload.error_msg = error_msg;
+  if (error_phase) payload.error_phase = String(error_phase);
   return JSON.stringify(payload);
 }
 
@@ -268,22 +270,31 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
+// tilde は dev-flow の WT 未確定 abort 経路（Setup の setup-base / worktree 段で throw し、
+// worktree パスがまだ確定していない）専用。prefix を `~/.claude/journal/` に固定するのは、
+// validateJournalSavedPath が dev-improve の saveDir モードで agent 申告値の検証にも使われるため
+// — `~/` 全般を通すと、その injection guard まで一緒に広がってしまう。
+const JOURNAL_TILDE_PREFIX = '~/.claude/journal/';
+
 // validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard for any
 // path that gets spliced into the stage2 instruction (buildJournalLogInstr) — both the
 // JS-constructed `savePath` (checked at build time) and the path an agent claims to have saved
 // to in `saveDir` mode. Rejects anything that is not a plain absolute path built from a
 // restricted charset, contains '..', or whose basename violates the payload basename contract
 // (JOURNAL_PAYLOAD_BASENAME_RE). requiredDirSuffix optionally pins the containing directory
-// (e.g. '/.devflow-tmp').
+// (e.g. '/.devflow-tmp'). A path rooted at the fixed JOURNAL_TILDE_PREFIX is also accepted (see
+// comment above) and is checked against the same charset/'..'/basename/requiredDirSuffix rules
+// after stripping the leading `~`.
 function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   if (typeof path !== 'string' || path === '') return false;
-  if (!path.startsWith('/')) return false;
-  if (!/^[A-Za-z0-9._\/-]+$/.test(path)) return false;
-  if (path.includes('..')) return false;
+  const abs = path.startsWith(JOURNAL_TILDE_PREFIX) ? path.slice(1) : path;
+  if (!abs.startsWith('/')) return false;
+  if (!/^[A-Za-z0-9._\/-]+$/.test(abs)) return false;
+  if (abs.includes('..')) return false;
 
-  const idx = path.lastIndexOf('/');
-  const dirPart = idx === 0 ? '/' : path.slice(0, idx);
-  const basePart = path.slice(idx + 1);
+  const idx = abs.lastIndexOf('/');
+  const dirPart = idx === 0 ? '/' : abs.slice(0, idx);
+  const basePart = abs.slice(idx + 1);
   if (!JOURNAL_PAYLOAD_BASENAME_RE.test(basePart)) return false;
   if (requiredDirSuffix && !dirPart.endsWith(requiredDirSuffix)) return false;
 
@@ -328,9 +339,10 @@ function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
     + `3. 書き込みに成功したら {logged:true} を返せ。どの手順で失敗しても throw せず {logged:false} を返せ。\n`;
 }
 
-// journal handoff choreography（issue #494/#499/#556）: journal-save（stage1）→ journal-log（stage2）の
+// journal handoff choreography（issue #494/#499/#556/#607）: journal-save（stage1）→ journal-log（stage2）の
 // 2 段 agent 呼び出しと journal_log_status の帰属を canonical 化する。dev-flow.js の
-// writeFailureTelemetry / Merge tier 成功 path、pr-iterate.js の終端の 3 call site が使う。
+// writeFailureTelemetry / Merge tier 成功 path / top-level abort catch、pr-iterate.js の
+// 終端 / top-level abort catch の 5 call site が使う。
 // 順序不変条件: stage2 呼び出しの直前に journalLogStatus を log_failed へ倒す — stage2 が throw
 // すると catch へ抜けて再代入が走らないため、preset が無いと stage2 の失敗が save_failed として
 // 誤帰属される（issue #499）。fail-open: 例外は内部で吸収し、3 値 closed enum
@@ -382,6 +394,38 @@ async function runJournalHandoff({ agent: runAgent, log, saveSchema, logSchema, 
     log(`⚠️ journal handoff 失敗（fail-open）: ${e?.message ?? e}`)
   }
   return journalLogStatus
+}
+
+const ABORT_ERROR_CATEGORY = 'abort';
+const ABORT_ERROR_MSG_MAX = 500;
+
+// buildAbortErrorMsg({ phase, label, error }): abort entry の error_msg 単一形
+// `abort@<phase>/<label>: <message>`。phase/label 欠落は '?'。message は改行・連続空白を
+// 1 個の半角スペースへ正規化し、500 字（全体）で切る。
+function buildAbortErrorMsg({ phase, label, error }) {
+  const raw = error && typeof error === 'object' && 'message' in error ? error.message : error;
+  const msg = String(raw ?? 'unknown error').replace(/\s+/g, ' ').trim() || 'unknown error';
+  return `abort@${phase || '?'}/${label || '?'}: ${msg}`.slice(0, ABORT_ERROR_MSG_MAX);
+}
+
+// buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label,
+// error, telemetry }): abort entry の唯一の組み立て口（dev-flow.js / pr-iterate.js の
+// top-level catch が使う）。outcome:'failure' + error_category:'abort' + error_phase +
+// telemetry.abort_phase/abort_label に固定する（legacy fallback / version 分岐なし）。
+function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label, error, telemetry }) {
+  return buildJournalHandoffPayload({
+    skill,
+    outcome: 'failure',
+    args,
+    issue,
+    repo,
+    pr_number,
+    journal_sh,
+    error_category: ABORT_ERROR_CATEGORY,
+    error_msg: buildAbortErrorMsg({ phase, label, error }),
+    error_phase: phase || undefined,
+    telemetry: { ...(telemetry ?? {}), abort_phase: phase ?? null, abort_label: label ?? null },
+  });
 }
 
 function repoFromGithubUrl(url) {
@@ -491,7 +535,14 @@ const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判�
 // のみで有効化する。pr-iterate.js の call site（fix / review / commit-ensure / journal-save /
 // journal-log 等）はいずれも副作用を伴うため opt-in しない（dev-flow.js と同型実装のみ共有）。
 const SUBAGENT_COUNTS = {};
+// ABORT_CTX（issue #607）: top-level abort handoff が catch から参照する「直前に何が起きていたか」の
+// 可変 state。pr-iterate は単一 phase（'Iterate'）固定のため phase は書き換えない。label は
+// trackedAgent が呼ばれるたびに最新化し、iterate_rounds は review⇄fix loop の各 iteration 冒頭で
+// 更新する（dev-flow.js の ABORT_CTX と同趣旨。issue #445 型注記と同じく try 内 const/let は catch から
+// 見えないため、try 外のこの object へ写す）。
+const ABORT_CTX = { phase: 'Iterate', label: null, iterate_rounds: 0 }
 async function trackedAgent(prompt, opts) {
+  ABORT_CTX.phase = opts?.phase ?? ABORT_CTX.phase; ABORT_CTX.label = opts?.label ?? null;
   recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
   try {
     return await agent(prompt, nsAgentOpts(opts));
@@ -1251,6 +1302,7 @@ const isoWt = prMeta?.cwd || '.'
 // throw するため、その run の telemetry は決定論的に save_failed になる（fail-open なので run は
 // 継続する）。原因が pr-meta probe 側にあることを追えるよう fallback 発生を明示する。
 if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=. で継続します（telemetry は save_failed になります）')
+try {
 // isoTargetPath: 回避手順で提示する新規 worktree 先。isoWt（書き込みに失敗した共有 checkout の cwd）
 // とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
 // （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
@@ -1382,6 +1434,7 @@ async function ensureFixCommitted(i) {
 
 for (i = 1; i <= MAX; i++) {
   terminalPath = 'review'
+  ABORT_CTX.iterate_rounds = i
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
   const reviewPrompt = `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
@@ -1717,4 +1770,38 @@ return {
   subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
   journal_log_status: journalLogStatus,
   ...(lastCiEpoch != null ? { end_epoch: lastCiEpoch } : {}),
+}
+} catch (e) {
+  // top-level abort handoff（issue #607）: 終端 handoff 到達前の throw（isolation probe fail-closed 等）でも
+  // journal entry を 1 件残す。表現は buildAbortHandoffPayload の単一形。fail-open で元の例外を必ず rethrow する。
+  try {
+    const abortPayload = buildAbortHandoffPayload({
+      skill: 'pr-iterate', args: `pr=${PR}`, repo: REPO, pr_number: Number(PR),
+      phase: ABORT_CTX.phase, label: ABORT_CTX.label, error: e,
+      telemetry: {
+        merge_tier: 'PR_ITERATE',
+        iterate_rounds: ABORT_CTX.iterate_rounds,
+        subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
+        quality_model_config: QUALITY_MODEL,
+        plugin_version: PLUGIN_VERSION,
+      },
+    })
+    const abortLogStatus = await runJournalHandoff({
+      agent: trackedAgent,
+      log,
+      saveSchema: JOURNAL_SAVE_RESULT,
+      logSchema: JOURNAL_RESULT,
+      payload: abortPayload,
+      savePath: `${isoWt}/.devflow-tmp/payload-priterate-${PR}-abort.json`,
+      prefix: 'priterate',
+      id: PR,
+      subject: 'pr-iterate abort',
+      logLabel: 'journal-log-abort',
+      phase: 'Iterate',
+    })
+    log(`⚠️ pr-iterate abort（${ABORT_CTX.label ?? '?'}）— abort telemetry handoff: ${abortLogStatus}`)
+  } catch (handoffErr) {
+    log(`⚠️ abort telemetry handoff 自体が失敗（fail-open）: ${handoffErr?.message ?? handoffErr}`)
+  }
+  throw e
 }

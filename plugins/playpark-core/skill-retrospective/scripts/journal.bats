@@ -1664,3 +1664,57 @@ JSON
     value=$(jq -r '.telemetry.review_decision' "$entry_file")
     [ "$value" = "comment" ]
 }
+
+# ===========================================================================
+# Tests for new error category: abort (issue #607)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# --error-category abort と --error-phase が exit 0 で記録される
+# ---------------------------------------------------------------------------
+@test "failure with abort category and --error-phase exits 0 and records entry" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category abort \
+        --error-msg "abort@Evaluate/eval#1: evaluator boom" \
+        --error-phase Evaluate
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    outcome=$(jq -r '.outcome' "$entry_file")
+    [ "$outcome" = "failure" ]
+
+    error_category=$(jq -r '.error.category' "$entry_file")
+    [ "$error_category" = "abort" ]
+
+    error_message=$(jq -r '.error.message' "$entry_file")
+    [ "$error_message" = "abort@Evaluate/eval#1: evaluator boom" ]
+
+    error_phase=$(jq -r '.error.phase' "$entry_file")
+    [ "$error_phase" = "Evaluate" ]
+}
+
+# ---------------------------------------------------------------------------
+# stats --source skill の by_category が abort entry を集計できる
+# (doctor の run-diagnostics.sh はこの集計を error_categories の入力に使う)
+# ---------------------------------------------------------------------------
+@test "stats counts abort entries under by_category (doctor aggregation input)" {
+    run "$SCRIPT" log dev-flow failure \
+        --error-category abort \
+        --error-msg "abort@Evaluate/eval#1: evaluator boom" \
+        --error-phase Evaluate
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" log dev-flow success
+    [ "$status" -eq 0 ]
+
+    run "$SCRIPT" stats --source skill
+    [ "$status" -eq 0 ]
+
+    by_category_abort=$(echo "$output" | jq -r '.by_category[] | select(.category == "abort") | .count')
+    [ "$by_category_abort" = "1" ]
+
+    failure_count=$(echo "$output" | jq -r '.failure')
+    [ "$failure_count" = "1" ]
+}

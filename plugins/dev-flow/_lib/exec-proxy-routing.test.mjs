@@ -207,6 +207,11 @@ test("[exec-proxy-routing] dev-flow.js label 'journal-log-failure' stays on agen
   assertAgentTypeOnLine(line, 'journal-log-failure', 'dev-runner-haiku', 'dev-flow.js');
 });
 
+test("[exec-proxy-routing] dev-flow.js label 'journal-log-abort' stays on agentType:'dev-runner-haiku'", () => {
+  const line = findLineByExactLabel(devFlowSrc, 'journal-log-abort');
+  assertAgentTypeOnLine(line, 'journal-log-abort', 'dev-runner-haiku', 'dev-flow.js');
+});
+
 // Guard against the 'dev-runner-haiku' → 'dev-runner-haiku-ro' prefix-match footgun:
 // every write/Skill-tier line asserted above must end the agentType string exactly at
 // 'dev-runner-haiku' (immediately followed by a closing quote), not '-ro'.
@@ -222,6 +227,7 @@ test("[exec-proxy-routing] dev-flow.js write/Skill-tier labels do NOT match 'dev
     { label: 'reconcile-sync', find: findLineByExactLabel },
     { label: 'journal-log', find: findLineByExactLabel },
     { label: 'journal-log-failure', find: findLineByExactLabel },
+    { label: 'journal-log-abort', find: findLineByExactLabel },
   ];
   for (const { label, find } of WRITE_TIER_LABELS) {
     const line = find(devFlowSrc, label);

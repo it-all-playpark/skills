@@ -59,10 +59,11 @@ test('[skills-script-path-routing] (b) analyze-issue が bare 名で1回存在�
   assert.equal(count, 1, `bare 名呼び出し '${needle}' の出現回数が期待(1)と異なる: ${count}`);
 });
 
-test("[skills-script-path-routing] (b) journal_sh が bare 名 'journal' で2回存在する", () => {
+test("[skills-script-path-routing] (b) journal_sh が bare 名 'journal' で3回存在する", () => {
+  // 3 call sites: Merge tier success handoff / writeFailureTelemetry / top-level abort handoff（issue #607）。
   const needle = "journal_sh: 'journal'";
   const count = countOccurrences(src, needle);
-  assert.equal(count, 2, `bare 名 '${needle}' の出現回数が期待(2)と異なる: ${count}`);
+  assert.equal(count, 3, `bare 名 '${needle}' の出現回数が期待(3)と異なる: ${count}`);
 });
 
 // ---- (c) 負の対照（誤爆防止）: 対象repo自身のファイルを指す WT 相対パスは修正対象外 ----

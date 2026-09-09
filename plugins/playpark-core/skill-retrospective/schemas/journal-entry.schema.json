@@ -90,7 +90,8 @@
             "merge",
             "type-check",
             "needs_clarification",
-            "empty_diff"
+            "empty_diff",
+            "abort"
           ],
           "description": "Error classification category"
         }

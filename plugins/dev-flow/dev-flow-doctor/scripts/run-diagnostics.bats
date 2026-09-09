@@ -74,6 +74,29 @@ write_devflow_entry() {
 EOF
 }
 
+# Write one dev-flow abort journal entry (outcome=failure, error.category=abort).
+# Mimics the top-level try/catch abort handoff (buildAbortHandoffPayload,
+# issue #607): a run that throws before reaching the normal success handoff
+# still records exactly one journal entry carrying whatever telemetry had
+# already been determined (e.g. shape) at abort time.
+# $1 = filename, $2 = phase, $3 = label, $4 = telemetry JSON (compact),
+# $5 = optional id override
+write_abort_entry() {
+    local fname="$1" phase="$2" label="$3" telemetry="$4" id="${5:-$RANDOM}"
+    cat > "${CLAUDE_JOURNAL_DIR}/${fname}" <<EOF
+{
+  "version": "1.0.0",
+  "id": "devflow-${id}",
+  "timestamp": "${TS}",
+  "skill": "dev-flow",
+  "outcome": "failure",
+  "source": "skill",
+  "error": { "category": "abort", "message": "abort@${phase}/${label}: boom", "phase": "${phase}" },
+  "telemetry": ${telemetry}
+}
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # (1) stat 非数値出力 regression
 #     fake stat が "ERR" という文字列を出力するケースで死なないこと
@@ -637,4 +660,41 @@ EOF
     local ccv
     ccv=$(printf '%s\n' "$output" | jq -r '.checks.canary.claude_code_version')
     [ "$ccv" = "CCC" ]
+}
+
+# ---------------------------------------------------------------------------
+# (26) abort entry: checks.journal.failure に計上され failure_distribution が
+#      error.phase で集計される（issue #607 abort handoff entry の pin）。
+#      journal.sh がハーネス内で解決されない場合（bare `journal` が PATH に
+#      無く run-diagnostics.sh 冒頭の resolution 自体が失敗する等）は明示 skip
+#      する -- silent pass にはしない。dev_flow_telemetry 側の集計は
+#      journal.sh 解決状態に依存しないため無条件で assert する。
+# ---------------------------------------------------------------------------
+@test "(26) abort entry: checks.journal.failure に計上され failure_distribution が error.phase で集計される" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 2
+    write_abort_entry "e3-abort.json" "Evaluate" "eval#1" \
+        '{"shape":"standard","plan_iter":1,"eval_iter":1,"abort_phase":"Evaluate","abort_label":"eval#1"}' 3
+
+    run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope full --window 30d"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    local journal_status
+    journal_status=$(printf '%s\n' "$output" | jq -r '.checks.journal.status // "present"')
+    if [ "$journal_status" = "skipped" ]; then
+        skip "journal.sh not resolvable in harness"
+    fi
+
+    local journal_failure
+    journal_failure=$(printf '%s\n' "$output" | jq '.checks.journal.failure')
+    [ "$journal_failure" -eq 1 ]
+
+    local phase_count
+    phase_count=$(printf '%s\n' "$output" | jq '[.checks.journal.failure_distribution[] | select(.phase == "Evaluate")][0].count')
+    [ "$phase_count" -eq 1 ]
+
+    local total
+    total=$(printf '%s\n' "$output" | jq '.checks.dev_flow_telemetry.total_dev_flow_runs')
+    [ "$total" -eq 3 ]
 }

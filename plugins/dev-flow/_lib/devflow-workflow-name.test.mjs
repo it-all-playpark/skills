@@ -41,13 +41,14 @@ test('[workflow-name] dev-flow.js: 旧 meta 名 name: \'dev-flow\', が残存し
   );
 });
 
-// (c) telemetry の skill: 'dev-flow' はちょうど2箇所（不変条件）
-test('[workflow-name] dev-flow.js: skill: \'dev-flow\', の telemetry キーがちょうど2箇所存在する（不変条件）', () => {
+// (c) telemetry の skill: 'dev-flow' はちょうど3箇所（不変条件）
+// 3 call sites: Merge tier success handoff / writeFailureTelemetry / top-level abort handoff（issue #607）。
+test('[workflow-name] dev-flow.js: skill: \'dev-flow\', の telemetry キーがちょうど3箇所存在する（不変条件）', () => {
   const matches = devFlowSrc.match(/skill: 'dev-flow',/g) || [];
   assert.equal(
     matches.length,
-    2,
-    `dev-flow.js の skill: 'dev-flow', 出現回数は 2 であるべき（実測: ${matches.length}）。telemetry 集計の連続性のため変更禁止`,
+    3,
+    `dev-flow.js の skill: 'dev-flow', 出現回数は 3 であるべき（実測: ${matches.length}）。telemetry 集計の連続性のため変更禁止`,
   );
 });
 

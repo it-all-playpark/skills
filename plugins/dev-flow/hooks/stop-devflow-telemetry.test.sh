@@ -860,6 +860,91 @@ STUB_EOF
 }
 
 # --------------------------------------------------------------------------
+# Test 9i: abort payload（top-level error_phase）→ --error-phase として転送され、
+#          telemetry.abort_phase / abort_label は --telemetry-json passthrough で到達する
+# --------------------------------------------------------------------------
+{
+  tmpd=$(make_tmpdir)
+  mkdir -p "${tmpd}/journal/pending"
+  capture="${tmpd}/capture.txt"
+  stub="${tmpd}/journal.sh"
+  make_stub_journal "$stub" "$capture" 0
+
+  jq -n --arg js "$stub" \
+    '{
+      skill: "dev-flow",
+      outcome: "failure",
+      issue: 607,
+      repo: "it-all-playpark/skills",
+      journal_sh: $js,
+      error_category: "abort",
+      error_msg: "abort@Evaluate/eval#1: evaluator boom",
+      error_phase: "Evaluate",
+      telemetry: {
+        gate_policy: "llm-major-advisory",
+        shape: "standard",
+        plan_iter: 1,
+        eval_iter: 1,
+        abort_phase: "Evaluate",
+        abort_label: "eval#1"
+      }
+    }' >"${tmpd}/journal/pending/abortrun.json"
+
+  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+  if [[ -f $capture ]]; then
+    captured=$(cat "$capture")
+    if echo "$captured" | grep -q "log dev-flow failure"; then
+      pass "abort_skill_outcome"
+    else
+      fail "abort_skill_outcome" "expected 'log dev-flow failure'. got: ${captured}"
+    fi
+    if echo "$captured" | grep -q -- "--error-category abort"; then
+      pass "abort_error_category"
+    else
+      fail "abort_error_category" "--error-category abort not found. got: ${captured}"
+    fi
+    if echo "$captured" | grep -q -- "--error-msg"; then
+      pass "abort_error_msg"
+    else
+      fail "abort_error_msg" "--error-msg not found. got: ${captured}"
+    fi
+    if echo "$captured" | grep -q -- "--error-phase Evaluate"; then
+      pass "abort_error_phase"
+    else
+      fail "abort_error_phase" "--error-phase Evaluate not found. got: ${captured}"
+    fi
+    if echo "$captured" | grep -q -- "--shape standard"; then
+      pass "abort_shape"
+    else
+      fail "abort_shape" "--shape standard not found. got: ${captured}"
+    fi
+    if echo "$captured" | grep -q -- "--telemetry-json"; then
+      pass "abort_telemetry_json_present"
+    else
+      fail "abort_telemetry_json_present" "--telemetry-json not found. got: ${captured}"
+    fi
+
+    passthrough_json=$(printf '%s' "$captured" | sed -n 's/.*--telemetry-json //p')
+    if echo "$passthrough_json" | jq -e '.abort_phase == "Evaluate" and .abort_label == "eval#1"' >/dev/null 2>&1; then
+      pass "abort_telemetry_passthrough_fields"
+    else
+      fail "abort_telemetry_passthrough_fields" "expected abort_phase/abort_label in passthrough JSON. got: ${passthrough_json}"
+    fi
+  else
+    fail "abort_stub_called" "capture file not created (stub not called)"
+  fi
+
+  if [[ ! -f "${tmpd}/journal/pending/abortrun.json" ]]; then
+    pass "abort_pending_removed"
+  else
+    fail "abort_pending_removed" "pending file should be removed after successful processing"
+  fi
+
+  rm -rf "$tmpd"
+}
+
+# --------------------------------------------------------------------------
 # Test 10: stdout must be empty (hook prints nothing to stdout)
 # --------------------------------------------------------------------------
 {

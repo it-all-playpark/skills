@@ -14,6 +14,7 @@ Classification taxonomy for skill execution failures.
 | `env` | Environment setup issues | Missing deps, wrong Node version, .env missing | dev-flow (Setup) |
 | `merge` | Git merge conflicts | Branch conflicts, rebase failures | dev-flow (PR) |
 | `type-check` | Type system errors | TypeScript strict errors, mypy violations | dev-flow (Validate), dev-runner |
+| `abort` | Workflow run aborted before its normal terminus (uncaught throw) | need() fail-closed, isolation probe, evaluator/agent exception | dev-flow / pr-iterate (top-level catch) |
 
 ## Classification Decision Tree
 
@@ -49,6 +50,7 @@ Error occurred
 | `lint` | Low | No - fixable with auto-format |
 | `runtime` | Medium-High | Depends on scope |
 | `config` | Medium | Usually fixable with correct values |
+| `abort` | High | Yes - run did not reach its terminus; PR summary / merge tier not produced |
 
 ## Pattern Indicators
 

@@ -23,6 +23,7 @@ export function buildJournalHandoffPayload({
   telemetry,
   error_category,
   error_msg,
+  error_phase,
 }) {
   if (!skill) throw new Error('journal-handoff: skill is required');
   if (!outcome) throw new Error('journal-handoff: outcome is required');
@@ -36,6 +37,7 @@ export function buildJournalHandoffPayload({
   if (telemetry != null) payload.telemetry = telemetry;
   if (error_category) payload.error_category = error_category;
   if (error_msg) payload.error_msg = error_msg;
+  if (error_phase) payload.error_phase = String(error_phase);
   return JSON.stringify(payload);
 }
 
@@ -176,22 +178,31 @@ export function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) 
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
+// tilde は dev-flow の WT 未確定 abort 経路（Setup の setup-base / worktree 段で throw し、
+// worktree パスがまだ確定していない）専用。prefix を `~/.claude/journal/` に固定するのは、
+// validateJournalSavedPath が dev-improve の saveDir モードで agent 申告値の検証にも使われるため
+// — `~/` 全般を通すと、その injection guard まで一緒に広がってしまう。
+const JOURNAL_TILDE_PREFIX = '~/.claude/journal/';
+
 // validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard for any
 // path that gets spliced into the stage2 instruction (buildJournalLogInstr) — both the
 // JS-constructed `savePath` (checked at build time) and the path an agent claims to have saved
 // to in `saveDir` mode. Rejects anything that is not a plain absolute path built from a
 // restricted charset, contains '..', or whose basename violates the payload basename contract
 // (JOURNAL_PAYLOAD_BASENAME_RE). requiredDirSuffix optionally pins the containing directory
-// (e.g. '/.devflow-tmp').
+// (e.g. '/.devflow-tmp'). A path rooted at the fixed JOURNAL_TILDE_PREFIX is also accepted (see
+// comment above) and is checked against the same charset/'..'/basename/requiredDirSuffix rules
+// after stripping the leading `~`.
 export function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   if (typeof path !== 'string' || path === '') return false;
-  if (!path.startsWith('/')) return false;
-  if (!/^[A-Za-z0-9._\/-]+$/.test(path)) return false;
-  if (path.includes('..')) return false;
+  const abs = path.startsWith(JOURNAL_TILDE_PREFIX) ? path.slice(1) : path;
+  if (!abs.startsWith('/')) return false;
+  if (!/^[A-Za-z0-9._\/-]+$/.test(abs)) return false;
+  if (abs.includes('..')) return false;
 
-  const idx = path.lastIndexOf('/');
-  const dirPart = idx === 0 ? '/' : path.slice(0, idx);
-  const basePart = path.slice(idx + 1);
+  const idx = abs.lastIndexOf('/');
+  const dirPart = idx === 0 ? '/' : abs.slice(0, idx);
+  const basePart = abs.slice(idx + 1);
   if (!JOURNAL_PAYLOAD_BASENAME_RE.test(basePart)) return false;
   if (requiredDirSuffix && !dirPart.endsWith(requiredDirSuffix)) return false;
 
@@ -236,9 +247,10 @@ export function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
     + `3. 書き込みに成功したら {logged:true} を返せ。どの手順で失敗しても throw せず {logged:false} を返せ。\n`;
 }
 
-// journal handoff choreography（issue #494/#499/#556）: journal-save（stage1）→ journal-log（stage2）の
+// journal handoff choreography（issue #494/#499/#556/#607）: journal-save（stage1）→ journal-log（stage2）の
 // 2 段 agent 呼び出しと journal_log_status の帰属を canonical 化する。dev-flow.js の
-// writeFailureTelemetry / Merge tier 成功 path、pr-iterate.js の終端の 3 call site が使う。
+// writeFailureTelemetry / Merge tier 成功 path / top-level abort catch、pr-iterate.js の
+// 終端 / top-level abort catch の 5 call site が使う。
 // 順序不変条件: stage2 呼び出しの直前に journalLogStatus を log_failed へ倒す — stage2 が throw
 // すると catch へ抜けて再代入が走らないため、preset が無いと stage2 の失敗が save_failed として
 // 誤帰属される（issue #499）。fail-open: 例外は内部で吸収し、3 値 closed enum
@@ -290,6 +302,38 @@ export async function runJournalHandoff({ agent: runAgent, log, saveSchema, logS
     log(`⚠️ journal handoff 失敗（fail-open）: ${e?.message ?? e}`)
   }
   return journalLogStatus
+}
+
+export const ABORT_ERROR_CATEGORY = 'abort';
+const ABORT_ERROR_MSG_MAX = 500;
+
+// buildAbortErrorMsg({ phase, label, error }): abort entry の error_msg 単一形
+// `abort@<phase>/<label>: <message>`。phase/label 欠落は '?'。message は改行・連続空白を
+// 1 個の半角スペースへ正規化し、500 字（全体）で切る。
+export function buildAbortErrorMsg({ phase, label, error }) {
+  const raw = error && typeof error === 'object' && 'message' in error ? error.message : error;
+  const msg = String(raw ?? 'unknown error').replace(/\s+/g, ' ').trim() || 'unknown error';
+  return `abort@${phase || '?'}/${label || '?'}: ${msg}`.slice(0, ABORT_ERROR_MSG_MAX);
+}
+
+// buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label,
+// error, telemetry }): abort entry の唯一の組み立て口（dev-flow.js / pr-iterate.js の
+// top-level catch が使う）。outcome:'failure' + error_category:'abort' + error_phase +
+// telemetry.abort_phase/abort_label に固定する（legacy fallback / version 分岐なし）。
+export function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label, error, telemetry }) {
+  return buildJournalHandoffPayload({
+    skill,
+    outcome: 'failure',
+    args,
+    issue,
+    repo,
+    pr_number,
+    journal_sh,
+    error_category: ABORT_ERROR_CATEGORY,
+    error_msg: buildAbortErrorMsg({ phase, label, error }),
+    error_phase: phase || undefined,
+    telemetry: { ...(telemetry ?? {}), abort_phase: phase ?? null, abort_label: label ?? null },
+  });
 }
 
 export function repoFromGithubUrl(url) {
