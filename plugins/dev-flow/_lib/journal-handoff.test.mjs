@@ -6,7 +6,10 @@ import { dirname, join } from 'node:path';
 import os from 'node:os';
 
 import {
+  ABORT_ERROR_CATEGORY,
   JOURNAL_LOG_STATUSES,
+  buildAbortErrorMsg,
+  buildAbortHandoffPayload,
   buildJournalHandoffPayload,
   buildJournalLogInstr,
   buildJournalPendingPath,
@@ -123,6 +126,35 @@ test('buildJournalHandoffPayload omits repo/pr_number when not provided', () => 
 
   assert.ok(!payload.includes('"repo"'));
   assert.ok(!payload.includes('"pr_number"'));
+});
+
+// issue #607: error_phase is the top-level counterpart to telemetry.abort_phase, feeding
+// journal.sh's existing --error-phase flag (journal `.error.phase`) so run-diagnostics'
+// failure_distribution can group abort entries by phase.
+test('buildJournalHandoffPayload includes error_phase immediately after error_msg when provided', () => {
+  const payload = buildJournalHandoffPayload({
+    skill: 'dev-flow',
+    outcome: 'failure',
+    error_category: 'abort',
+    error_msg: 'abort@Plan/plan#1: boom',
+    error_phase: 'Plan',
+  });
+
+  assert.equal(
+    payload,
+    '{"skill":"dev-flow","outcome":"failure","error_category":"abort","error_msg":"abort@Plan/plan#1: boom","error_phase":"Plan"}',
+  );
+});
+
+test('buildJournalHandoffPayload omits error_phase when not provided', () => {
+  const payload = buildJournalHandoffPayload({
+    skill: 'dev-flow',
+    outcome: 'failure',
+    error_category: 'empty_diff',
+    error_msg: 'no changes',
+  });
+
+  assert.ok(!payload.includes('"error_phase"'));
 });
 
 test('repoFromGithubUrl parses owner/name from GitHub pull request and repo URLs', () => {
@@ -250,6 +282,22 @@ test('buildJournalSaveInstr throws when savePath violates the payload path contr
   }
 });
 
+// issue #607: WT-unconfirmed abort path retargets savePath to a tilde path under
+// ~/.claude/journal/ — buildJournalSaveInstr must accept it (via validateJournalSavedPath) and
+// splice it verbatim, not throw.
+test('buildJournalSaveInstr (savePath) accepts a tilde savePath under ~/.claude/journal/', () => {
+  const savePath = '~/.claude/journal/abort-payload/payload-devflow-1-abort.json';
+  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', savePath });
+  assert.ok(instr.includes(savePath));
+});
+
+test('buildJournalSaveInstr (savePath) still throws for a tilde savePath outside ~/.claude/journal/', () => {
+  assert.throws(
+    () => buildJournalSaveInstr({ payload: '{}', savePath: '~/x/payload-1.json' }),
+    /invalid savePath/,
+  );
+});
+
 test('buildJournalSaveInstr throws when both savePath and saveDir are given', () => {
   assert.throws(
     () => buildJournalSaveInstr({ payload: '{}', savePath: SAVE_PATH, saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' }),
@@ -338,6 +386,32 @@ test('validateJournalSavedPath rejects non-string input', () => {
   assert.equal(validateJournalSavedPath(42, {}), false);
 });
 
+// issue #607: dev-flow's WT-unconfirmed abort path (Setup's setup-base / worktree agent) has no
+// worktree savePath yet, so the abort catch retargets savePath to
+// `~/.claude/journal/abort-payload/...`. validateJournalSavedPath must accept that tilde-rooted
+// path (rebasing it onto the same absolute-path/charset/'..'/basename checks as `/`-rooted paths)
+// while continuing to reject anything outside the fixed `~/.claude/journal/` prefix — the same
+// function also guards dev-improve's saveDir-mode agent-reported path, so widening tilde
+// acceptance to `~/` in general would widen that injection guard too.
+test('validateJournalSavedPath accepts a tilde path rooted at ~/.claude/journal/', () => {
+  assert.equal(
+    validateJournalSavedPath('~/.claude/journal/abort-payload/payload-devflow-607-abort.json'),
+    true,
+  );
+});
+
+test('validateJournalSavedPath rejects tilde paths outside the ~/.claude/journal/ prefix', () => {
+  assert.equal(validateJournalSavedPath('~/x/.devflow-tmp/payload-1.json'), false);
+  assert.equal(validateJournalSavedPath('~/.claude/journalx/payload-1.json'), false);
+  assert.equal(validateJournalSavedPath('~/.claude/journal/../evil/payload-1.json'), false);
+});
+
+test('validateJournalSavedPath applies requiredDirSuffix to tilde paths the same as absolute paths', () => {
+  const path = '~/.claude/journal/abort-payload/payload-devflow-607-abort.json';
+  assert.equal(validateJournalSavedPath(path, { requiredDirSuffix: '/abort-payload' }), true);
+  assert.equal(validateJournalSavedPath(path, { requiredDirSuffix: '/.devflow-tmp' }), false);
+});
+
 // ---- buildJournalLogInstr (stage2) ----
 
 test('buildJournalLogInstr embeds the source payload path and the JS-determined pending path, and keeps the fail-open contract', () => {
@@ -383,6 +457,15 @@ test('buildJournalLogInstr never embeds the payload body in the stage2 prompt', 
   assert.ok(!instr.includes(EDGE_CASE_PAYLOAD));
   assert.ok(!instr.includes('"outcome":"success"'));
   assert.ok(!instr.includes('日本語テスト名の検証'));
+});
+
+// issue #607: the WT-unconfirmed abort path's payloadPath is a tilde path under
+// ~/.claude/journal/ — buildJournalLogInstr must accept it and splice it verbatim into the Read
+// instruction (same as any other validateJournalSavedPath-accepted path).
+test('buildJournalLogInstr splices a tilde payloadPath under ~/.claude/journal/ into the Read instruction', () => {
+  const payloadPath = '~/.claude/journal/abort-payload/payload-devflow-1-abort.json';
+  const instr = buildJournalLogInstr({ prefix: 'devflow', id: 1, payloadPath, payload: '{"ok":true}' });
+  assert.ok(instr.includes(payloadPath));
 });
 
 test('buildJournalLogInstr throws when payload is missing or not a string', () => {
@@ -702,6 +785,98 @@ test('runJournalHandoff returns save_failed and never calls stage2 when stage1 r
   assert.equal(calls.length, 1);
 });
 
+// ---- buildAbortErrorMsg / buildAbortHandoffPayload (issue #607) ----
+
+test('ABORT_ERROR_CATEGORY is the fixed abort error_category value', () => {
+  assert.equal(ABORT_ERROR_CATEGORY, 'abort');
+});
+
+test('buildAbortErrorMsg formats abort@<phase>/<label>: <message> from an Error', () => {
+  assert.equal(
+    buildAbortErrorMsg({ phase: 'Plan', label: 'plan#1', error: new Error('planner boom') }),
+    'abort@Plan/plan#1: planner boom',
+  );
+});
+
+test('buildAbortErrorMsg falls back to ? for missing phase/label', () => {
+  assert.equal(
+    buildAbortErrorMsg({ phase: null, label: null, error: new Error('boom') }),
+    'abort@?/?: boom',
+  );
+});
+
+test('buildAbortErrorMsg accepts a plain string error', () => {
+  assert.equal(
+    buildAbortErrorMsg({ phase: 'Evaluate', label: 'eval#1', error: 'plain string boom' }),
+    'abort@Evaluate/eval#1: plain string boom',
+  );
+});
+
+test('buildAbortErrorMsg falls back to "unknown error" when error is undefined', () => {
+  assert.equal(
+    buildAbortErrorMsg({ phase: 'Setup', label: 'setup-base', error: undefined }),
+    'abort@Setup/setup-base: unknown error',
+  );
+});
+
+test('buildAbortErrorMsg normalizes newlines/whitespace in the message to single spaces', () => {
+  assert.equal(
+    buildAbortErrorMsg({ phase: 'Plan', label: 'plan#1', error: new Error('line1\n\nline2\tline3') }),
+    'abort@Plan/plan#1: line1 line2 line3',
+  );
+});
+
+test('buildAbortErrorMsg truncates a 600-char message to 500 chars total', () => {
+  const longMsg = 'x'.repeat(600);
+  const result = buildAbortErrorMsg({ phase: 'Plan', label: 'plan#1', error: new Error(longMsg) });
+  assert.equal(result.length, 500);
+  assert.equal(result, `abort@Plan/plan#1: ${longMsg}`.slice(0, 500));
+});
+
+test('buildAbortHandoffPayload sets outcome:failure, error_category:abort, error_phase, and telemetry.abort_phase/abort_label', () => {
+  const payload = JSON.parse(buildAbortHandoffPayload({
+    skill: 'dev-flow',
+    issue: '607',
+    phase: 'Evaluate',
+    label: 'eval#1',
+    error: new Error('evaluator boom'),
+    telemetry: { shape: 'complex' },
+  }));
+
+  assert.equal(payload.outcome, 'failure');
+  assert.equal(payload.error_category, 'abort');
+  assert.equal(payload.error_phase, 'Evaluate');
+  assert.equal(payload.error_msg, 'abort@Evaluate/eval#1: evaluator boom');
+  assert.equal(payload.telemetry.abort_phase, 'Evaluate');
+  assert.equal(payload.telemetry.abort_label, 'eval#1');
+  assert.equal(payload.telemetry.shape, 'complex');
+  assert.equal(payload.issue, 607);
+});
+
+test('buildAbortHandoffPayload Number-izes issue and pr_number', () => {
+  const payload = JSON.parse(buildAbortHandoffPayload({
+    skill: 'pr-iterate',
+    issue: '451',
+    pr_number: '12',
+    phase: 'Iterate',
+    label: 'fix#1',
+    error: new Error('boom'),
+  }));
+
+  assert.equal(payload.issue, 451);
+  assert.equal(payload.pr_number, 12);
+});
+
+test('buildAbortHandoffPayload sets telemetry.abort_phase/abort_label to null when phase/label are absent even without other telemetry', () => {
+  const payload = JSON.parse(buildAbortHandoffPayload({
+    skill: 'dev-flow',
+    error: new Error('boom'),
+  }));
+
+  assert.equal(payload.telemetry.abort_phase, null);
+  assert.equal(payload.telemetry.abort_label, null);
+});
+
 // ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----
 //
 // issue #494 F3 / #556 F4: all payload-carrying journal handoff call sites — the 3
@@ -735,13 +910,24 @@ test('workflows construct journal handoff instructions through the canonical Wri
   );
   assert.equal(
     (devFlow.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length,
-    2,
+    3,
   );
   // logLabel は現行値のまま維持されている（issue #556 AC6）。
   assert.ok(devFlow.includes("logLabel: 'journal-log',"));
   assert.ok(devFlow.includes("logLabel: 'journal-log-failure',"));
   assert.ok(!devFlow.includes('validateJournalSavedPath(journalSaveRes.path'));
   assert.ok(!devFlow.includes('buildFailureJournalInstr'));
+  // top-level abort handoff（issue #607）: WT 確定済みの savePath と WT 未確定時の tilde 退避先の
+  // 両方を pin する。
+  assert.equal(
+    (devFlow.match(/`\$\{WT\}\/\.devflow-tmp\/payload-devflow-\$\{ISSUE\}-abort\.json`/g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (devFlow.match(/`~\/\.claude\/journal\/abort-payload\/payload-devflow-\$\{ISSUE\}-abort\.json`/g) ?? []).length,
+    1,
+  );
+  assert.ok(devFlow.includes("logLabel: 'journal-log-abort',"));
   // pr-iterate.js: Iterate telemetry handoff routes through the same canonical, worktree-scoped
   // savePath, logLabel 現行値維持。
   assert.equal(
@@ -750,10 +936,17 @@ test('workflows construct journal handoff instructions through the canonical Wri
   );
   assert.equal(
     (prIterate.match(/(?<!function )runJournalHandoff\(\{/g) ?? []).length,
-    1,
+    2,
   );
   assert.ok(prIterate.includes("logLabel: 'journal-log',"));
   assert.ok(!prIterate.includes('validateJournalSavedPath(journalSaveRes.path'));
+  // top-level abort handoff（issue #607）: pr-iterate にも同種の穴があった（handoff は終端 1 箇所のみで
+  // isolation probe の fail-closed throw 等で全損）ため同機構で塞いだ。
+  assert.equal(
+    (prIterate.match(/`\$\{isoWt\}\/\.devflow-tmp\/payload-priterate-\$\{PR\}-abort\.json`/g) ?? []).length,
+    1,
+  );
+  assert.ok(prIterate.includes("logLabel: 'journal-log-abort',"));
   // dev-improve.js: run 専用 worktree を持たないため saveDir は TMPDIR 配下の固定サブディレクトリ。
   // 他 2 経路と同じディレクトリ固定の防御を保つため requiredDirSuffix で pin されていること。
   const devImprove = readFileSync(join(repoRoot, '.claude/workflows/dev-improve.js'), 'utf8');

@@ -159,7 +159,7 @@ cmd_log() {
     # Validate error category
     if [[ -n "$error_category" ]]; then
         case "$error_category" in
-            lint|test|build|runtime|config|env|merge|type-check|needs_clarification|empty_diff|cross_repo|guard_blocked) ;;
+            lint|test|build|runtime|config|env|merge|type-check|needs_clarification|empty_diff|cross_repo|guard_blocked|abort) ;;
             *) die_json "Invalid error category: $error_category" 1 ;;
         esac
     fi
@@ -929,6 +929,7 @@ Examples:
   journal.sh log dev-flow success --trust-effectdelta-pr-missing-reason gh_failed  # PR stage receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
   journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
   journal.sh log dev-flow success --error-category guard_blocked --guard-id sandbox-deny  # guard/hook 由来 BLOCKED の telemetry (guard_id は fail-open; dotfiles Stop hook 転送配線は dotfiles 側 PR)
+  journal.sh log dev-flow failure --error-category abort --error-msg "abort@Evaluate/eval#1: ..." --error-phase Evaluate  # run abort telemetry (issue #607)
   journal.sh log dev-flow success --eval-confidence 0.85  # evaluator の verdict 判定確信度 [0,1] または null (fail-open drop-and-warn)
   journal.sh log pr-iterate success --review-confidence 0.6 --review-decision approve  # reviewer の確信度と decision (review-decision は approve|request-changes|comment の closed enum, fail-open)
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"

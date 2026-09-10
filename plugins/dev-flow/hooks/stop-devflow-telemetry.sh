@@ -15,7 +15,8 @@
 #   注: outcome=failure かつ error_category/error_msg を欠く payload は journal.sh 契約
 #   （outcome != success で両キー必須）で journal-failed → pending/ に残り続ける。
 #   再投入前に payload へ error_category（enum: lint|test|build|runtime|config|env|merge|
-#   type-check|needs_clarification|empty_diff）と error_msg を手で追記すること。
+#   type-check|needs_clarification|empty_diff|cross_repo|guard_blocked|abort）と error_msg を
+#   手で追記すること。
 #
 # 無効化:
 #   - 環境変数 CLAUDE_DEVFLOW_TELEMETRY_HOOK=0（escape hatch）
@@ -108,6 +109,7 @@ for f in "${PENDING_DIR}"/*.json; do
   trust_effectdelta_pr_missing_reason=""
   error_category=""
   error_msg=""
+  error_phase=""
   vdelta_verdicts_json=""
   vdelta_fail_open=""
   redgreen_deny_json=""
@@ -131,6 +133,7 @@ for f in "${PENDING_DIR}"/*.json; do
     pr_number: .pr_number,
     error_category: .error_category,
     error_msg: .error_msg,
+    error_phase: .error_phase,
     merge_tier: .telemetry.merge_tier,
     gate_policy: .telemetry.gate_policy,
     danger_hits: (.telemetry.danger_hits // []),
@@ -200,6 +203,7 @@ for f in "${PENDING_DIR}"/*.json; do
   pr_number=$(echo "$parsed" | jq -r '.pr_number // empty')
   error_category=$(echo "$parsed" | jq -r '.error_category // empty')
   error_msg=$(echo "$parsed" | jq -r '.error_msg // empty')
+  error_phase=$(echo "$parsed" | jq -r '.error_phase // empty')
   ci_wait_seconds=$(echo "$parsed" | jq -r '.ci_wait_seconds // empty')
   ci_poll_attempts=$(echo "$parsed" | jq -r '.ci_poll_attempts // empty')
   trust_run_id=$(echo "$parsed" | jq -r '.trust_run_id // empty')
@@ -294,6 +298,9 @@ for f in "${PENDING_DIR}"/*.json; do
   fi
   if [[ -n $error_msg && $error_msg != "null" ]]; then
     cmd_args+=(--error-msg "$error_msg")
+  fi
+  if [[ -n $error_phase && $error_phase != "null" ]]; then
+    cmd_args+=(--error-phase "$error_phase")
   fi
 
   # --- trust telemetry (epic #390 Phase 5 / issue #413) ---

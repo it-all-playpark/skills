@@ -186,6 +186,22 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   pattern `^[a-z][a-z0-9-]{0,39}$`）が付く。guard_id は `PER_KEY_TELEMETRY_KEYS` に含まれ、
   Stop hook の per-key flag `--guard-id` で journal に到達する（passthrough 経路ではない。
   後述「telemetry キー」節の二経路転送の不変条件を参照。issue #448）。
+  run が journal handoff 到達前に throw で abort した場合、dev-flow.js / pr-iterate.js の
+  top-level try/catch が `outcome:'failure'` + `error_category:'abort'` +
+  `error_msg:'abort@<phase>/<label>: <message>'`（500 字まで）+ `error_phase`（journal の
+  `.error.phase`。run-diagnostics の failure_distribution に乗る）+ telemetry `abort_phase` /
+  `abort_label`（passthrough 経路）と、その時点で確定していた telemetry（shape / plan_iter /
+  eval_iter / gate_policy / subagent_invocations 等）を記録し、元の例外を rethrow する
+  （fail-open: handoff 失敗は run 終了を妨げない。終端サマリ・Merge tier は実行しない —
+  判定前提が揃わないため）。abort entry の組み立て口は `_lib/journal-handoff.mjs` の
+  `buildAbortHandoffPayload` のみ（legacy fallback / version 分岐なし）。dev-flow の WT 未確定
+  abort（Setup の setup-base / worktree 段）は payload を `~/.claude/journal/abort-payload/` へ
+  退避する（validateJournalSavedPath は `~/.claude/journal/` prefix のみ tilde 受理）。
+  empty_diff 経路は writeFailureTelemetry が先に記録済みなので abort entry を二重記録しない。
+  nested pr-iterate が abort した run は pr-iterate と dev-flow の abort entry が 1 件ずつ残る
+  （成功 run の 2 entry と同じ二重計上規則 — 集計は dev-flow entry のみ使う）。pr-iterate にも
+  同種の穴があった（handoff は終端 1 箇所のみで isolation probe の fail-closed throw 等で全損）
+  ため同機構で塞いだ（issue #607）。
   `final_reconcile` は `skipped`/`reverified`/`unavailable`/`ci_verified` の 4 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致等は `unavailable`、`unavailable` のうちローカル再検証は不能だが PR head sha に pin した CI check 全 success を決定論確認できた場合のみ `ci_verified` — issue #599）。
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ。`ci_verified` はローカル test を再実行していないため出力されない）。

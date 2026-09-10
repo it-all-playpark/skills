@@ -111,6 +111,29 @@ write_hook_entry() {
 EOF
 }
 
+# Write one dev-flow abort journal entry (outcome=failure, error.category=abort).
+# Mimics the top-level try/catch abort handoff (buildAbortHandoffPayload,
+# issue #607): a run that throws before reaching the normal success handoff
+# still records exactly one journal entry carrying whatever telemetry had
+# already been determined (e.g. shape) at abort time.
+# $1 = filename, $2 = phase, $3 = label, $4 = telemetry JSON (compact),
+# $5 = optional id override
+write_abort_entry() {
+    local fname="$1" phase="$2" label="$3" telemetry="$4" id="${5:-$RANDOM}"
+    cat > "${CLAUDE_JOURNAL_DIR}/${fname}" <<EOF
+{
+  "version": "1.0.0",
+  "id": "devflow-${id}",
+  "timestamp": "${TS}",
+  "skill": "dev-flow",
+  "outcome": "failure",
+  "source": "skill",
+  "error": { "category": "abort", "message": "abort@${phase}/${label}: boom", "phase": "${phase}" },
+  "telemetry": ${telemetry}
+}
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # Test 1: empty journal -> exit 0, valid JSON, total_dev_flow_runs==0,
 #         micro_nonfiring severity=skipped
@@ -1182,4 +1205,30 @@ EOF
     [ "$total" -eq 1 ]
     [ "$recorded" -eq 1 ]
     [ "$mean_pass" = "0" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 42: abort entry (outcome=failure, error.category=abort) is counted as
+#          a dev-flow run and its shape is aggregated -- pins that the
+#          skill=="dev-flow" && source=="skill" filter does not exclude on
+#          outcome (issue #607 abort handoff entries must be aggregated).
+# ---------------------------------------------------------------------------
+@test "abort entry (outcome=failure, error.category=abort) is counted as a dev-flow run and its shape is aggregated" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 2
+    write_abort_entry "e3-abort.json" "Evaluate" "eval#1" \
+        '{"shape":"standard","plan_iter":1,"eval_iter":1,"abort_phase":"Evaluate","abort_label":"eval#1"}' 3
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    total=$(printf '%s\n' "$output" | jq '.total_dev_flow_runs')
+    [ "$total" -eq 3 ]
+
+    standard=$(printf '%s\n' "$output" | jq '.distributions.shape.standard')
+    [ "$standard" -eq 3 ]
+
+    unknown=$(printf '%s\n' "$output" | jq '.distributions.shape.unknown')
+    [ "$unknown" -eq 0 ]
 }
