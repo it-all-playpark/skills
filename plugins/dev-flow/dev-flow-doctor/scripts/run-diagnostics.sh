@@ -156,7 +156,7 @@ run_journal_checks() {
     if length == 0 then []
     else
       group_by(.error.phase // "unknown") |
-      map({phase: .[0].error.phase // "unknown", count: length}) |
+      map({phase: (.[0].error.phase // "unknown"), count: length}) |
       sort_by(-.count)
     end
   ' 2>/dev/null || echo "[]")
