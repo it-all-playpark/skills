@@ -179,7 +179,30 @@ test('[eval-concern-resolutions] AC-1/3: eval#1 prompt の未解消 concern 一�
   );
 });
 
-test('[eval-concern-resolutions] AC-2: post-summary prompt に環境ノートと件数 3 が現れ、要対応テーブルに ENV/Turbopack 行が無い', async () => {
+// issue #603: post-summary は環境ノートの件数（グループ数）のみを常時可視で表示し、パターン別の
+// dedup 件数・checked 状態・evidence 全文は journal telemetry `resolved_evidence.env_notes[]`
+// （journal-save prompt の JOURNAL_HANDOFF_BODY payload）側に移された。post-summary 側の表形式
+// アサートは資料的に古くなったため、件数行の存在確認 + journal 側での dedup 件数検証に置き換える。
+function extractResolvedEvidence(calls) {
+  const journalSave = calls.find((c) => c.label === 'journal-save');
+  assert.ok(
+    journalSave != null,
+    `label === 'journal-save' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
+  );
+  const beginIdx = journalSave.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_BEGIN>>>');
+  const endIdx = journalSave.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>');
+  assert.ok(beginIdx >= 0 && endIdx > beginIdx, 'journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない');
+  const payloadStr = journalSave.prompt.slice(beginIdx + '<<<JOURNAL_HANDOFF_BODY_BEGIN>>>'.length, endIdx).trim();
+  let payload;
+  try {
+    payload = JSON.parse(payloadStr);
+  } catch (e) {
+    assert.fail(`journal-save payload が JSON.parse できない: ${e.message}\n${payloadStr}`);
+  }
+  return payload.telemetry?.resolved_evidence ?? null;
+}
+
+test('[eval-concern-resolutions] AC-2: post-summary prompt に環境ノート件数行が現れ、要対応テーブルに ENV/Turbopack 行が無く、dedup 件数 3 は journal telemetry resolved_evidence.env_notes 側で確認できる', async () => {
   await ensureSharedRun();
   const post = sharedCalls.find((c) => c.label === 'post-summary');
   assert.ok(
@@ -191,8 +214,8 @@ test('[eval-concern-resolutions] AC-2: post-summary prompt に環境ノートと
     `post-summary の prompt に「環境ノート」が含まれていない`,
   );
   assert.ok(
-    /\|\s*turbopack-sandbox\s*\|\s*3\s*\|/.test(post.prompt),
-    `post-summary の prompt の環境ノートテーブルに件数 3 の dedup 行が見つからない。\nprompt 抜粋:\n${post.prompt.slice(post.prompt.indexOf('環境ノート') - 50, post.prompt.indexOf('環境ノート') + 500)}`,
+    post.prompt.includes('🏗 環境ノート 1 件'),
+    `post-summary の prompt に環境ノートのグループ件数行（1 件 = turbopack-sandbox パターン 1 グループ）が見つからない。\nprompt 抜粋:\n${post.prompt.slice(post.prompt.indexOf('環境ノート') - 50, post.prompt.indexOf('環境ノート') + 500)}`,
   );
   const actionSection = post.prompt.slice(
     post.prompt.indexOf('### ⚠️ 要対応'),
@@ -201,6 +224,21 @@ test('[eval-concern-resolutions] AC-2: post-summary prompt に環境ノートと
   assert.ok(
     !/ENV-|turbopack/i.test(actionSection),
     `要対応セクションに ENV- / turbopack 行が残っている（環境ノートへ隔離されるべき）:\n${actionSection}`,
+  );
+
+  // dedup 件数 3（TURBOPACK_CONCERNS 相当 3 件の implementer concerns が同一 env_key に集約された件数）は
+  // post-summary から journal telemetry resolved_evidence.env_notes[].env_count へ移った（issue #603）。
+  const re = extractResolvedEvidence(sharedCalls);
+  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
+  const note = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');
+  assert.ok(
+    note != null,
+    `resolved_evidence.env_notes に turbopack-sandbox が無い: ${JSON.stringify(re.env_notes)}`,
+  );
+  assert.equal(
+    note.env_count,
+    3,
+    `resolved_evidence.env_notes[turbopack-sandbox].env_count は 3 のはずが ${note.env_count}`,
   );
 });
 

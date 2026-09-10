@@ -2451,7 +2451,7 @@ function mdCell(v) {
  *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
  *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
  *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296。checked な environment item は環境ノートで ✅ CI確認済 と表示される（issue #297））
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
@@ -2807,89 +2807,29 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 7. 折りたたみブロック群（AC-3）
-
-  // 解消済み ledger
+  // 7. 解消済み証跡の件数行（issue #603）。全文 evidence は journal telemetry `resolved_evidence`
+  // （canonical _lib/resolved-evidence.mjs、同一の選別述語）へ移した。ここでは件数だけを常時可視で出す。
+  // 未解消・未 clear の item は上記「要対応」セクションに従来どおり全文で出る（AC2 / AC5）。
   const resolvedItems = [
     ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: '必須（blocking）' })),
     ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: '助言（advisory）' })),
   ];
-  if (resolvedItems.length > 0) {
-    const n = resolvedItems.length;
-    lines.push('');
-    lines.push(`<details><summary>✅ Goal Ledger 解消済み ${n} 件</summary>`);
-    lines.push('');
-    lines.push('| 区分 | 観点 | 内容 | 根拠 |');
-    lines.push('|---|---|---|---|');
-    for (const item of resolvedItems) {
-      const dimension = item.dimension != null ? item.dimension : '—';
-      const content = mdCell(item.text);
-      const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${item._lane} | ${dimension} | ${content} | ${evidence} |`);
-    }
-    lines.push('');
-    lines.push('</details>');
-  }
-
-  // 環境ノート（issue #296: sandbox 環境事象 — 折りたたみ表示、人間の対応は通常不要）
-  if (envItems.length > 0) {
-    const n = envItems.length;
-    lines.push('');
-    lines.push(`<details><summary>🏗 環境ノート ${n} 件（sandbox 環境事象 — 人間の対応は通常不要）</summary>`);
-    lines.push('');
-    lines.push('| 状態 | パターン (env_key) | 件数 | 内容 | 根拠 |');
-    lines.push('|---|---|---|---|---|');
-    for (const item of envItems) {
-      const status = item.checked === true ? '✅ CI確認済' : '—';
-      const pattern = item.env_key != null ? item.env_key : '—';
-      const envCount = typeof item.env_count === 'number' ? String(item.env_count) : '1';
-      const content = mdCell(item.text);
-      const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${status} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
-    }
-    lines.push('');
-    lines.push('</details>');
-  }
-
-  // satisfied AC
+  const countLines = [];
+  if (resolvedItems.length > 0) countLines.push(`- ✅ Goal Ledger 解消済み ${resolvedItems.length} 件`);
+  if (envItems.length > 0) countLines.push(`- 🏗 環境ノート ${envItems.length} 件（sandbox 環境事象 — 人間の対応は通常不要）`);
   if (acArr) {
-    const satisfiedAC = acArr.filter(a => a.satisfied === true);
-    const s = satisfiedAC.length;
+    const s = acArr.filter(a => a.satisfied === true).length;
     const t = acArr.length;
-    if (s > 0) {
-      lines.push('');
-      lines.push(`<details><summary>✅ 受け入れ基準 (AC) ${s}/${t} 達成</summary>`);
-      lines.push('');
-      lines.push('| AC | 検証 | 根拠 |');
-      lines.push('|---|---|---|');
-      for (const ac of satisfiedAC) {
-        const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
-        const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
-        lines.push(`| AC#${ac.ac_index + 1} | ${verifiedBy} | ${evidenceCell} |`);
-      }
-      lines.push('');
-      lines.push('</details>');
-    }
+    if (s > 0) countLines.push(`- ✅ 受け入れ基準 (AC) ${s}/${t} 達成`);
   }
-
-  // cleared security clearance
   if (securityClearance.length > 0) {
-    const cleared = securityClearance.filter(sc => sc.cleared === true);
-    const c = cleared.length;
-    const ct = securityClearance.length;
-    if (c > 0) {
-      lines.push('');
-      lines.push(`<details><summary>✅ セキュリティ確認 (Security clearance) ${c}/${ct} 済</summary>`);
-      lines.push('');
-      lines.push('| danger class | 根拠 |');
-      lines.push('|---|---|');
-      for (const sc of cleared) {
-        const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
-        lines.push(`| ${sc.danger_class} | ${evidenceCell} |`);
-      }
-      lines.push('');
-      lines.push('</details>');
-    }
+    const c = securityClearance.filter(sc => sc.cleared === true).length;
+    if (c > 0) countLines.push(`- ✅ セキュリティ確認 (Security clearance) ${c}/${securityClearance.length} 済`);
+  }
+  if (countLines.length > 0) {
+    lines.push('');
+    lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
+    for (const l of countLines) lines.push(l);
   }
 
   // 8b. lite レビュー統合セクション（issue #392 AC-6）
@@ -2916,6 +2856,159 @@ function buildDevflowSummaryBody({
   return lines.join('\n');
 }
 // ==== END inline: _lib/devflow-summary-format.mjs ====
+// ==== BEGIN inline: _lib/resolved-evidence.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// buildResolvedEvidence: 終端サマリーから件数表示に縮約される「解消済み証跡」の
+// journal telemetry payload を組み立てる純関数。I/O なし、非決定性なし。
+// 入力を mutate しない。同入力 -> 同出力。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+// 1 フィールド（text / evidence）の初期上限文字数
+const RESOLVED_EVIDENCE_FIELD_CAP = 1000;
+// JSON.stringify(result).length の上限
+const RESOLVED_EVIDENCE_MAX_CHARS = 16000;
+
+/**
+ * 値を文字列化し、上限 n 文字で切り詰める。null/undefined はそのまま null を返す。
+ * @param {*} v
+ * @param {number} n
+ * @returns {{value: string|null, truncated: boolean}}
+ */
+function capText(v, n) {
+  if (v == null) return { value: null, truncated: false };
+  const s = String(v);
+  if (s.length > n) {
+    return { value: s.slice(0, n), truncated: true };
+  }
+  return { value: s, truncated: false };
+}
+
+/**
+ * 4 配列（ledger_resolved / env_notes / ac_satisfied / security_cleared）を
+ * cap 文字数 n で構築する。
+ * @param {Array} blockArr
+ * @param {Array} advArr
+ * @param {Array} acArr
+ * @param {number} n
+ * @returns {{cap_chars: number, truncated: boolean, ledger_resolved: Array, env_notes: Array, ac_satisfied: Array, security_cleared: Array}}
+ */
+function buildAtCap(blockArr, advArr, acArr, n) {
+  let truncated = false;
+
+  const ledgerResolved = [];
+  for (const it of blockArr) {
+    if (it.checked !== true) continue;
+    const text = capText(it.text, n);
+    const evidence = capText(it.evidence, n);
+    if (text.truncated || evidence.truncated) truncated = true;
+    ledgerResolved.push({
+      id: it.id,
+      lane: 'blocking',
+      dimension: it.dimension != null ? it.dimension : null,
+      text: text.value,
+      evidence: evidence.value,
+    });
+  }
+  for (const it of advArr) {
+    if (it.checked !== true) continue;
+    if (it.escalate === true) continue;
+    if (it.dimension === 'environment') continue;
+    const text = capText(it.text, n);
+    const evidence = capText(it.evidence, n);
+    if (text.truncated || evidence.truncated) truncated = true;
+    ledgerResolved.push({
+      id: it.id,
+      lane: 'advisory',
+      dimension: it.dimension != null ? it.dimension : null,
+      text: text.value,
+      evidence: evidence.value,
+    });
+  }
+
+  const envNotes = [];
+  for (const it of advArr) {
+    if (it.dimension !== 'environment') continue;
+    const text = capText(it.text, n);
+    const evidence = capText(it.evidence, n);
+    if (text.truncated || evidence.truncated) truncated = true;
+    envNotes.push({
+      id: it.id,
+      env_key: it.env_key != null ? it.env_key : null,
+      env_count: typeof it.env_count === 'number' ? it.env_count : 1,
+      checked: it.checked === true,
+      text: text.value,
+      evidence: evidence.value,
+    });
+  }
+
+  const acSatisfied = [];
+  for (const a of acArr) {
+    if (!a || a.satisfied !== true) continue;
+    const evidence = capText(a.evidence, n);
+    if (evidence.truncated) truncated = true;
+    acSatisfied.push({
+      ac_index: a.ac_index,
+      verified_by: a.verified_by != null ? a.verified_by : 'inspection',
+      evidence: evidence.value,
+    });
+  }
+
+  const securityCleared = [];
+  for (const it of blockArr) {
+    if (it.source !== 'seed' || it.dimension !== 'security' || it.floor !== true || it.checked !== true) continue;
+    const evidence = capText(it.evidence, n);
+    if (evidence.truncated) truncated = true;
+    securityCleared.push({
+      danger_class: it.danger_class,
+      evidence: evidence.value,
+    });
+  }
+
+  return {
+    cap_chars: n,
+    truncated,
+    ledger_resolved: ledgerResolved,
+    env_notes: envNotes,
+    ac_satisfied: acSatisfied,
+    security_cleared: securityCleared,
+  };
+}
+
+/**
+ * 終端サマリーの「解消済み証跡」journal telemetry payload を組み立てる。
+ * 4 配列すべて空なら null を返す（呼び出し側はキー自体を省く）。
+ * @param {object} opts
+ * @param {Array} opts.blockingItems - ledger item 配列（{id,text,severity,checked,dimension,evidence,source,floor,danger_class,escalate,env_key,env_count}）
+ * @param {Array} opts.advisoryItems - 同上
+ * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
+ * @returns {object|null}
+ */
+function buildResolvedEvidence({ blockingItems, advisoryItems, acResults }) {
+  const blockArr = blockingItems || [];
+  const advArr = advisoryItems || [];
+  const acArr = acResults || [];
+
+  let n = RESOLVED_EVIDENCE_FIELD_CAP;
+  let result = buildAtCap(blockArr, advArr, acArr, n);
+
+  while (JSON.stringify(result).length > RESOLVED_EVIDENCE_MAX_CHARS && n > 0) {
+    n = Math.floor(n / 2);
+    result = buildAtCap(blockArr, advArr, acArr, n);
+  }
+
+  if (
+    result.ledger_resolved.length === 0 &&
+    result.env_notes.length === 0 &&
+    result.ac_satisfied.length === 0 &&
+    result.security_cleared.length === 0
+  ) {
+    return null;
+  }
+
+  return result;
+}
+// ==== END inline: _lib/resolved-evidence.mjs ====
 
 // ==== BEGIN inline: _lib/stuck-detector.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // dev-flow.js の planSeen/blockSeen/evalSeen と pr-iterate.js の reviewSeen が共有する
@@ -6348,6 +6441,16 @@ if (ciTargets.length > 0) {
 // Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。
 // 投稿失敗は log 警告のみで workflow は正常 return（issue #162 AC#4）。
 // ============================================================
+// issue #603: 終端サマリーが件数のみ表示する解消済み証跡（Goal Ledger 解消済み / 環境ノート / 達成 AC /
+// cleared security）の全文は journal telemetry `resolved_evidence` に載せる（canonical _lib/resolved-evidence.mjs、
+// summary-format と同一の選別述語・決定論 cap）。表示・記録専用で merge tier / ledger / gate には一切影響しない
+// （classifyMergeTier の後に置く。軸A 不変）。acResults は summary と同じ snapshot を使う。
+const summaryAcResults = finalAcReconcile === 'reverified' ? state.finalAcResults : (state.evalResult?.ac_results ?? null)
+const resolvedEvidence = buildResolvedEvidence({
+  blockingItems: policyBlockingItems(state.ledger, GATE_POLICY),
+  advisoryItems: policyAdvisoryItems(state.ledger, GATE_POLICY),
+  acResults: summaryAcResults,
+})
 const summaryBody = buildDevflowSummaryBody({
   pr: pr.pr_number,
   mergeTier: mergeTier.tier,
@@ -6356,7 +6459,7 @@ const summaryBody = buildDevflowSummaryBody({
   blockingItems: policyBlockingItems(state.ledger, GATE_POLICY),
   advisoryItems: policyAdvisoryItems(state.ledger, GATE_POLICY),
   ledgerConverged: isConvergedUnderPolicy(state.ledger, GATE_POLICY),
-  acResults: finalAcReconcile === 'reverified' ? state.finalAcResults : (state.evalResult?.ac_results ?? null),
+  acResults: summaryAcResults,
   planConcerns: state.planConcerns ?? [],
   dangerHits: dangerHitsFinal,
   testsurfHits: testsurfPatternsFinal,
@@ -6452,6 +6555,9 @@ const telemetryHandoff = buildJournalHandoffPayload({
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     quality_model_config: QUALITY_MODEL,  // 品質ゲート 4 agent の model 設定値（実行時モデルではない。issue #601）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs 定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
+    // resolved_evidence: 終端サマリーから外した解消済み証跡の全文（issue #603）。4 配列すべて空なら省く。
+    // passthrough 経路で journal に到達（hook 変更不要）。gate / merge tier / ledger の入力にはならない。
+    ...(resolvedEvidence ? { resolved_evidence: resolvedEvidence } : {}),
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
     // guard_id: guard_blocked task が 1 件以上ある run のみ出力する telemetry 専用キー

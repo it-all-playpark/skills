@@ -165,7 +165,7 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
   vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
-  merge_tier_reasons / route / subagent_invocations）を
+  merge_tier_reasons / route / subagent_invocations / resolved_evidence）を
   `~/.claude/journal/pending/` へ書き出し、
   dev-flow plugin の Stop hook `plugins/dev-flow/hooks/stop-devflow-telemetry.sh`
   （`hooks/hooks.json` から `${CLAUDE_PLUGIN_ROOT}` 経由で発火）が
@@ -277,6 +277,13 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
   merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
   する fail-open）に到達済み（issue #430）。
+  `resolved_evidence` は終端サマリーが件数のみ表示する解消済み証跡の全文
+  `{cap_chars, truncated, ledger_resolved[], env_notes[], ac_satisfied[], security_cleared[]}`（4 配列
+  すべて空ならキー欠落）。text/evidence は 1 フィールド 1000 字 cap、総量が 16000 字以下になるまで
+  cap を半減する決定論 cap — journal-save stage1 は payload を prompt 経由で LLM が転記する経路であり、
+  肥大した payload は転記破損で run の telemetry 全体を失うため。canonical `_lib/resolved-evidence.mjs`
+  （summary-format と同一の選別述語）、passthrough 経路で journal 到達（hook 変更不要）。表示・記録専用で
+  merge tier / ledger / gate_policy の判定入力にはならない（issue #603）。
   `eval_confidence` / `review_confidence` は `[0,1]` または `null`（evaluator / pr-reviewer の verdict
   自己申告 confidence）。agent が実行されたが confidence を返さない run は `null` を記録し、
   agent 自体が実行されない run（micro の Evaluate skip 等）はキー自体が handoff から欠落する

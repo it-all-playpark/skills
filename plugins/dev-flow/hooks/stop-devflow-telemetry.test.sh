@@ -2958,6 +2958,116 @@ make_full_telemetry_handoff() {
 }
 
 # --------------------------------------------------------------------------
+# Shared payload for Test P-L / P-M: resolved_evidence object (skills#603).
+# Mirrors _lib/resolved-evidence.mjs buildResolvedEvidence() output contract.
+# --------------------------------------------------------------------------
+RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
+   cap_chars: 1000, truncated: false,
+   ledger_resolved: ([range(0;21)] | map({id: ("EVAL-1-topic-" + (tostring)), lane: "blocking", dimension: "quality", text: ("item " + tostring), evidence: ("e|`\n" + ([range(0;200)] | map("x") | join("")))})),
+   env_notes: [{id: "ENV-1", env_key: "bats-sandbox", env_count: 2, checked: true, text: "t", evidence: "CI で確認済み"}],
+   ac_satisfied: ([range(0;8)] | map({ac_index: ., verified_by: "inspection", evidence: ("ac ok " + tostring)})),
+   security_cleared: [{danger_class: "config", evidence: "safe"}, {danger_class: "network", evidence: "safe"}, {danger_class: "secrets", evidence: "safe"}]
+ } }'
+
+# --------------------------------------------------------------------------
+# Test P-L (stub 経路): 新規 telemetry キー resolved_evidence（object）が hook に
+#           ハードコードされず、passthrough 経由で journal.sh へ欠損なく到達する
+#           （skills#603。hook 本体は変更しない）
+# --------------------------------------------------------------------------
+{
+  if [[ "$(grep -c 'resolved_evidence' "$HOOK")" -eq 0 ]]; then
+    pass "passthrough_resolved_evidence_hook_has_no_literal"
+  else
+    fail "passthrough_resolved_evidence_hook_has_no_literal" "hook should not hardcode resolved_evidence — it must reach journal via passthrough only"
+  fi
+
+  tmpd=$(make_tmpdir)
+  mkdir -p "${tmpd}/journal/pending"
+  capture="${tmpd}/capture.txt"
+  stub="${tmpd}/journal.sh"
+  make_stub_journal "$stub" "$capture" 0
+
+  make_trust_handoff "${tmpd}/journal/pending/pl.json" "$stub" "$RESOLVED_EVIDENCE_FILTER"
+
+  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+  captured=$(cat "$capture" 2>/dev/null || echo "")
+  if echo "$captured" | grep -q -- '--telemetry-json'; then
+    pass "passthrough_resolved_evidence_telemetry_json_present"
+  else
+    fail "passthrough_resolved_evidence_telemetry_json_present" "expected --telemetry-json. got: ${captured}"
+  fi
+
+  passthrough_json=$(printf '%s' "$captured" | sed -n 's/.*--telemetry-json //p')
+  if echo "$passthrough_json" | jq -e '
+      (.resolved_evidence.ledger_resolved | length) == 21 and
+      (.resolved_evidence.ac_satisfied[7].ac_index == 7) and
+      (.resolved_evidence.security_cleared | length) == 3 and
+      (.resolved_evidence.env_notes[0].checked == true) and
+      (.resolved_evidence.ledger_resolved[0].evidence | startswith("e|`\n")) and
+      ((.resolved_evidence | tojson | length) > 5000)
+    ' >/dev/null 2>&1; then
+    pass "passthrough_resolved_evidence_object_intact"
+  else
+    fail "passthrough_resolved_evidence_object_intact" "expected 21-item resolved_evidence object intact in passthrough JSON. got (truncated): $(echo "$passthrough_json" | head -c 300)"
+  fi
+
+  if echo "$captured" | grep -q -- "--merge-tier REVIEW"; then
+    pass "passthrough_resolved_evidence_base_entry_preserved"
+  else
+    fail "passthrough_resolved_evidence_base_entry_preserved" "base telemetry must still be logged. got: ${captured}"
+  fi
+  if [[ ! -f "${tmpd}/journal/pending/pl.json" ]]; then
+    pass "passthrough_resolved_evidence_pending_removed"
+  else
+    fail "passthrough_resolved_evidence_pending_removed" "pending file should be removed after success"
+  fi
+
+  rm -rf "$tmpd"
+}
+
+# --------------------------------------------------------------------------
+# Test P-M (integration): 実 journal.sh が --telemetry-json を受理する環境で、
+#          resolved_evidence が journal entry へ欠損なく永続化され、per-key で
+#          drop される trust_evalseal_missing_reason は不変で到達しないことを
+#          確認する。未配置 / 未対応の環境では skip。
+# --------------------------------------------------------------------------
+{
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  if [[ ! -x $REAL_JOURNAL ]]; then
+    echo "  (skip: real journal.sh not found — integration test skipped)"
+  elif ! grep -q -- '--telemetry-json' "$REAL_JOURNAL"; then
+    echo "  (skip: real journal.sh does not support --telemetry-json — 受け側未対応)"
+  else
+    tmpd=$(make_tmpdir)
+    mkdir -p "${tmpd}/journal/pending"
+
+    make_trust_handoff "${tmpd}/journal/pending/pm.json" "$REAL_JOURNAL" \
+      "${RESOLVED_EVIDENCE_FILTER} | .telemetry += {trust_evalseal_missing_reason: \"bogus\"}"
+
+    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
+    if [[ -z $entry ]]; then
+      fail "integration_resolved_evidence_entry_written" "no journal entry created. hook output: ${RUN_OUT}"
+    else
+      pass "integration_resolved_evidence_entry_written"
+      if [[ $(jq -r '.telemetry.resolved_evidence.ledger_resolved | length' "$entry") == "21" ]] &&
+        [[ $(jq -r '.telemetry.resolved_evidence.security_cleared[0].danger_class' "$entry") == "config" ]] &&
+        [[ $(jq -r '.telemetry.resolved_evidence.ledger_resolved[0].evidence | startswith("e|`\n")' "$entry") == "true" ]] &&
+        [[ $(jq -r '.telemetry | has("trust_evalseal_missing_reason")' "$entry") == "false" ]] &&
+        [[ $(jq -r '.telemetry.merge_tier' "$entry") == "REVIEW" ]]; then
+        pass "integration_resolved_evidence_persisted"
+      else
+        fail "integration_resolved_evidence_persisted" "resolved_evidence mismatch in entry: $(jq -c '.telemetry.resolved_evidence | {cap: .cap_chars, ledger_len: (.ledger_resolved | length)}' "$entry")"
+      fi
+    fi
+
+    rm -rf "$tmpd"
+  fi
+}
+
+# --------------------------------------------------------------------------
 # Summary
 # --------------------------------------------------------------------------
 echo ""
