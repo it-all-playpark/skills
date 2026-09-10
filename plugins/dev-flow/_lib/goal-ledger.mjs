@@ -1,9 +1,11 @@
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
-// item = { id, text, dimension, severity, source, checked, evidence, check, floor }
+// item = { id, text, dimension, severity, source, checked, evidence, check, floor, triaged, triaged_evidence }
 //   severity: 'critical' | 'major' | 'minor'
 //   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep' | 'concern' | 'analyze' | 'implement'
 //   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
 //   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
+//   triaged:  boolean | undefined  (表示専用。checked とは独立。gate/収束/merge tier には不使用)
+//   triaged_evidence: string | null | undefined  (triaged:true のときの根拠)
 //
 // lane 分類（blocking/advisory）は _lib/gate-policy.mjs の gateLane(item, policy) に一本化。
 // 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
@@ -43,6 +45,16 @@ export function checkItem(ledger, id, evidence) {
   if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
   const items = ledger.items.slice();
   items[idx] = { ...items[idx], checked: true, evidence: evidence ?? null };
+  return { ...ledger, items };
+}
+
+// triaged: evaluator が「再検証済み・対応不要」と判断した item に付ける表示専用フラグ（issue #614）。
+// checked / evidence は変えない（ゲート・収束・merge tier・lane 分類の入力にならない）。
+export function triageItem(ledger, id, evidence) {
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  const items = ledger.items.slice();
+  items[idx] = { ...items[idx], triaged: true, triaged_evidence: evidence ?? null };
   return { ...ledger, items };
 }
 

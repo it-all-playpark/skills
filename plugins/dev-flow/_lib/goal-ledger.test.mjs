@@ -2,7 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
   makeLedger, topicKey, canAppend, appendItem,
-  checkItem, nextRound, setCheck,
+  checkItem, nextRound, setCheck, triageItem,
 } from './goal-ledger.mjs';
 import { gateLane, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 
@@ -78,6 +78,33 @@ test('appendItem: check は shallow-clone され caller mutation の影響を受
   const { ledger } = appendItem(makeLedger(), { id: 'A', text: 'x', dimension: 'd', severity: 'major', source: 'ac', check });
   check.kind = 'deterministic';                       // caller が後から変更
   assert.equal(ledger.items[0].check.kind, 'inspection'); // ledger 側は不変
+});
+
+// issue #614: triaged は表示専用で checked/evidence を変えない
+test('triageItem: triaged + triaged_evidence を付け checked/evidence は不変', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  const l2 = triageItem(ledger, 'A', 'why');
+  assert.equal(l2.items[0].triaged, true);
+  assert.equal(l2.items[0].triaged_evidence, 'why');
+  assert.equal(l2.items[0].checked, false);
+  assert.equal(l2.items[0].evidence, null);
+});
+test('triageItem: 未知 id は throw', () => {
+  assert.throws(() => triageItem(makeLedger(), 'X', 'e'), /未知の item id/);
+});
+test('triageItem: 元 ledger を mutate しない', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  triageItem(ledger, 'A', 'why');
+  assert.equal(ledger.items[0].triaged, undefined);
+});
+test('triageItem 後の checkItem は checked:true になり triaged も残る', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  const l2 = triageItem(ledger, 'A', 'why');
+  const l3 = checkItem(l2, 'A', 'evidence text');
+  assert.equal(l3.items[0].checked, true);
+  assert.equal(l3.items[0].evidence, 'evidence text');
+  assert.equal(l3.items[0].triaged, true);
+  assert.equal(l3.items[0].triaged_evidence, 'why');
 });
 
 // issue #444: deterministic 昇格 + checked 済み item への再昇格操作は ledger 上の no-op である

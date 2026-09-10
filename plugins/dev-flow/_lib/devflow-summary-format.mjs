@@ -15,7 +15,8 @@
  *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
  *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
  *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count,triaged,triaged_evidence}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））。
+ *   advisory lane かつ `triaged:true` かつ `triaged_evidence` 非空の item は状態列 `🔹 トリアージ済み`・内容列に triaged_evidence を表示する（表示のみ。checked/ゲート不変。blocking lane では無視。issue #614）
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns。blockingItems/advisoryItems 内の
@@ -242,6 +243,9 @@ export function buildDevflowSummaryBody({
   const uncheckedBlocking = blockArr.filter(it => it.checked !== true);
   const uncheckedAdvisory = advArr.filter(it => it.checked !== true && it.dimension !== 'environment');
   const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true && it.dimension !== 'environment');
+  // triaged: evaluator が「再検証済み・対応不要」と判断した advisory item の表示専用フラグ
+  // （checked は false のまま・ゲート不変。issue #614）。evidence 非空文字列のときのみ有効。
+  const isTriaged = (it) => it.triaged === true && typeof it.triaged_evidence === 'string' && it.triaged_evidence.length > 0;
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
   // Plan 未解消 concerns は Plan phase 収束時のスナップショット（更新されない）だが、CONCERN-*
@@ -249,10 +253,11 @@ export function buildDevflowSummaryBody({
   // 更新される。dev-flow.js は planConcerns の文字列を無加工で CONCERN-* の text に seed するため、
   // text 完全一致で「ledger 上 checked 済み」を判定できる（issue #611）。同一 text が checked と
   // unchecked の両方にある場合は unchecked を優先し表示を残す（fail-safe。見落とし防止）。
+  // triaged は表の行に `🔹 トリアージ済み` として残るため箇条書きから除外する（issue #614）。
   const concernLedgerItems = [...blockArr, ...advArr].filter(it => it.dimension === 'concern');
-  const resolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true).map(it => it.text));
-  const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true).map(it => it.text));
-  const concerns = (planConcerns || []).filter(c => !(resolvedConcernTexts.has(c) && !unresolvedConcernTexts.has(c)));
+  const settledConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true || isTriaged(it)).map(it => it.text));
+  const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true && !isTriaged(it)).map(it => it.text));
+  const concerns = (planConcerns || []).filter(c => !(settledConcernTexts.has(c) && !unresolvedConcernTexts.has(c)));
 
   const hasActionItems = uncheckedBlocking.length > 0
     || uncheckedAdvisory.length > 0
@@ -273,6 +278,7 @@ export function buildDevflowSummaryBody({
       ...uncheckedAdvisory.map(it => ({
         ...it,
         _lane: it.escalate ? '要判断（advisory ESCALATE）' : '助言（advisory）',
+        _triaged: it.escalate !== true && isTriaged(it),
       })),
       ...escalatedChecked.map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _forceVisible: true })),
     ];
@@ -283,11 +289,12 @@ export function buildDevflowSummaryBody({
       lines.push('| 状態 | 区分 | 観点 | 内容 |');
       lines.push('|---|---|---|---|');
       for (const item of ledgerActionItems) {
-        const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : '❌ 未解消';
+        const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : item._triaged ? '🔹 トリアージ済み' : '❌ 未解消';
         const dimension = item.dimension != null ? item.dimension : '—';
         let content = mdCell(item.text);
-        if (item.evidence) {
-          content += ': ' + mdCell(item.evidence);
+        const contentEvidence = item._triaged ? item.triaged_evidence : item.evidence;
+        if (contentEvidence) {
+          content += ': ' + mdCell(contentEvidence);
         }
         if (item.escalate_reason) {
           content += `（理由: ${mdCell(item.escalate_reason)}）`;

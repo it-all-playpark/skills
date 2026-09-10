@@ -5,7 +5,7 @@
 //     分類され、eval#1 prompt の「未解消 concern 一覧」（CONCERN-* のみ対象）に現れない。
 //   - 同一パターン key の concern は 1 件の ENV item に dedup され、発生件数が注記される。
 //   - 非該当の concern は従来どおり CONCERN-* として要対応に残る。
-//   - evaluator の concern_resolutions で resolved:true かつ evidence 付きの CONCERN-* は
+//   - evaluator の concern_resolutions で resolution:'resolved' かつ evidence 付きの CONCERN-* は
 //     checked になり要対応から消える。ENV-*/不明 id への指定は無視される。
 //
 // AC-5 は gate-policy.mjs の gateLane を直接呼び出す純関数ユニットとして固定する
@@ -91,9 +91,10 @@ function createResponder() {
         ],
         security_clearance: [],
         concern_resolutions: [
-          { id: 'CONCERN-1', resolved: true, evidence: 'src/x.ts:10 で検証追加' },
-          { id: 'CONCERN-99', resolved: true, evidence: 'x' },
-          { id: 'ENV-TURBOPACK-SANDBOX', resolved: true, evidence: 'x' },
+          { id: 'CONCERN-1', resolution: 'resolved', evidence: 'src/x.ts:10 で検証追加' },
+          { id: 'CONCERN-2', resolution: 'triaged', evidence: 'lib/y.ts:20 の shorthand 判定は未変更。advisory で実害なし、修正不要と判断' },
+          { id: 'CONCERN-99', resolution: 'resolved', evidence: 'x' },
+          { id: 'ENV-TURBOPACK-SANDBOX', resolution: 'resolved', evidence: 'x' },
         ],
       };
     }
@@ -125,6 +126,7 @@ function createResponder() {
           'next build 実行時に TurbopackInternalError が再発した（再現性あり）',
           'CI と異なり sandbox では next build が TurbopackInternalError を吐く',
           'CONCERN マーカー: ORDER BY 検証が未実装',
+          'CONCERN マーカー: shorthand 判定の重複が残る',
         ],
       };
     }
@@ -285,4 +287,44 @@ test('[eval-concern-resolutions][AC-5] 両 item が unchecked のまま isConver
     source: 'concern', check: { kind: 'inspection' },
   }).ledger;
   assert.equal(isConvergedUnderPolicy(ledger, DEFAULT_GATE_POLICY), true);
+});
+
+// ============================================================
+// issue #614: triaged resolution の routing 回帰
+// ============================================================
+
+test('[eval-concern-resolutions][#614] CONCERN-2 は triaged として post-summary の要対応表に「🔹 トリアージ済み」+ evidence で現れ、見出し「### ⚠️ 要対応」が出る', async () => {
+  await ensureSharedRun();
+  const post = sharedCalls.find((c) => c.label === 'post-summary');
+  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
+  const actionSection = post.prompt.slice(
+    post.prompt.indexOf('### ⚠️ 要対応'),
+    post.prompt.indexOf('環境ノート') > -1 ? post.prompt.indexOf('環境ノート') : undefined,
+  );
+  assert.ok(
+    post.prompt.includes('### ⚠️ 要対応'),
+    `post-summary の prompt に「### ⚠️ 要対応」見出しが無い`,
+  );
+  assert.ok(
+    actionSection.includes('🔹 トリアージ済み'),
+    `要対応セクションに「🔹 トリアージ済み」が無い:\n${actionSection}`,
+  );
+  assert.ok(
+    actionSection.includes('shorthand 判定は未変更'),
+    `要対応セクションに CONCERN-2 の triaged evidence が無い:\n${actionSection}`,
+  );
+  assert.ok(
+    !/CONCERN-2[^\n]*❌ 未解消/.test(actionSection),
+    `CONCERN-2 が ❌ 未解消 として出ている（triaged 反映漏れ）:\n${actionSection}`,
+  );
+});
+
+test('[eval-concern-resolutions][#614] triaged は ledger 収束を変えない（post-summary の at-a-glance に「✅ 収束」が出る）', async () => {
+  await ensureSharedRun();
+  const post = sharedCalls.find((c) => c.label === 'post-summary');
+  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
+  assert.ok(
+    post.prompt.includes('✅ 収束'),
+    `post-summary の prompt に「✅ 収束」が無い（triaged が checked 扱いされ収束判定を変えている可能性）:\nprompt(先頭1500):\n${post.prompt.slice(0, 1500)}`,
+  );
 });
