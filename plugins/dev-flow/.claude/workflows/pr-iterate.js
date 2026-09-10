@@ -851,7 +851,7 @@ const STATUS_HEADLINE = {
   'stuck': '⚠️ STUCK — 人間レビューへエスカレーション',
   'fix_failed': '⚠️ 自動修正失敗 — 人間へエスカレーション',
   'max_reached': '⚠️ 反復上限到達',
-  'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
+  'ci_error': '⚠️ CI エラー — CI ステータスを確定できなかった（proxy が結果を返さなかった）。`gh pr checks <PR>` で実状態を確認すること。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
   'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision/blocking 矛盾の再発、または reviewer が StructuredOutput 契約違反で結果を返さず。人間へエスカレーション',
 };
@@ -876,7 +876,7 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 
   lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
   lines.push('');
-  lines.push(`### ${STATUS_HEADLINE[status] ?? status}`);
+  lines.push(`### ${(STATUS_HEADLINE[status] ?? status).replace('<PR>', String(pr))}`);
   lines.push('');
 
   lines.push('| 終了状態 | 反復回数 | 最終判定 |');
@@ -1009,10 +1009,19 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 
 // Bounded wait for pending CI: CI_MAX_ATTEMPTS 回を CI_POLL_SECONDS 間隔で試すので
 // ceiling は (CI_MAX_ATTEMPTS-1)*CI_POLL_SECONDS = 90 秒。
-// agent は fetch / classify / sleep でそれぞれ 1 Bash turn を消費するため最悪 3+3+2 = 8 tool call。
-// 調整時は (attempt 数 × 2) - 1 が dev-runner-haiku-ro の maxTurns (10) を超えないこと。
+// agent は各 attempt で gh fetch + check-ci、attempt 間で sleep、最後に StructuredOutput で
+// それぞれ 1 turn を消費する。turn 会計:
+//   必要 turn = CI_MAX_ATTEMPTS * 2        // 各 attempt の gh fetch + check-ci
+//             + (CI_MAX_ATTEMPTS - 1)      // attempt 間の sleep
+//             + 1                          // StructuredOutput
+//             + CI_TURN_MARGIN             // 実測マージン
+// これが dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
+// 実読して pin する）。turn 不足だと StructuredOutput 未達 → 空応答 → fail-open で ci_error に
+// 落ち、benign な ci_pending として報告できなくなる（issue #621）。
 const CI_MAX_ATTEMPTS = 3;
 const CI_POLL_SECONDS = 45;
+// 実測マージン。文書化 worst case 8 tool call に対し実測 10 で StructuredOutput 未達だった差分に基づく。
+const CI_TURN_MARGIN = 3;
 
 // CI gate schema — the gate lost in eb8aa7e (issue #133) を復元したもの。
 // dev-runner-haiku-ro が bare `gh pr checks` で CI snapshot を取得し、
@@ -1021,7 +1030,7 @@ const CI_POLL_SECONDS = 45;
 // 持ってはならないため（issue #488）。
 // failed_checks の要素は script 出力と一致する {name, bucket, state}
 // （conclusion は bucket-field migration で削除。issue #133 / ci::bats-fabricated-schema）。
-// status:'error' は gh fetch 自体の失敗（auth/network）を意味し、即座に人間へエスカレーションする。
+// status:'error' は check-ci が gh fetch 失敗を分類した値。workflow 側は proxy の空応答（turn 上限到達等）も fail-open で同じ 'error' に合成するため、受け手は原因を 1 つに断定できない（issue #621）。即座に人間へエスカレーションする。
 const CI_STATUS = {
   type: 'object',
   required: ['status'],
@@ -1522,10 +1531,10 @@ for (i = 1; i <= MAX; i++) {
 
       break
     } else if (ciEff.status === 'error') {
-      // Real gh API error (auth failure, network error, etc.) — do not misinterpret as CI failure.
-      // Surface to human immediately; retrying a fix on a non-existent bug would waste cycles.
+      // status:'error' は check-ci の gh fetch 失敗分類か、proxy の空応答（turn 上限到達等）の fail-open 合成。
+      // 原因を 1 つに断定できないので CI failure と誤解釈せず、実状態の確認手順を添えて人間へ渡す（issue #621）。
       terminal = 'ci_error'
-      log(`⚠️ CI check returned error — gh API failed (auth/network). 人間へエスカレーション`)
+      log(`⚠️ CI check returned error — CI ステータスを確定できなかった（proxy が結果を返さなかった）。gh pr checks ${PR} で実状態を確認すること。人間へエスカレーション`)
       break
     } else if (ciEff.status === 'pending') {
       terminal = 'ci_pending'

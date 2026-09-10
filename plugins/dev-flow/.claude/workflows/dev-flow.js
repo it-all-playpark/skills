@@ -3429,10 +3429,19 @@ function finalCiVerdict({ expectedSha, meta }) {
 
 // Bounded wait for pending CI: CI_MAX_ATTEMPTS 回を CI_POLL_SECONDS 間隔で試すので
 // ceiling は (CI_MAX_ATTEMPTS-1)*CI_POLL_SECONDS = 90 秒。
-// agent は fetch / classify / sleep でそれぞれ 1 Bash turn を消費するため最悪 3+3+2 = 8 tool call。
-// 調整時は (attempt 数 × 2) - 1 が dev-runner-haiku-ro の maxTurns (10) を超えないこと。
+// agent は各 attempt で gh fetch + check-ci、attempt 間で sleep、最後に StructuredOutput で
+// それぞれ 1 turn を消費する。turn 会計:
+//   必要 turn = CI_MAX_ATTEMPTS * 2        // 各 attempt の gh fetch + check-ci
+//             + (CI_MAX_ATTEMPTS - 1)      // attempt 間の sleep
+//             + 1                          // StructuredOutput
+//             + CI_TURN_MARGIN             // 実測マージン
+// これが dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
+// 実読して pin する）。turn 不足だと StructuredOutput 未達 → 空応答 → fail-open で ci_error に
+// 落ち、benign な ci_pending として報告できなくなる（issue #621）。
 const CI_MAX_ATTEMPTS = 3;
 const CI_POLL_SECONDS = 45;
+// 実測マージン。文書化 worst case 8 tool call に対し実測 10 で StructuredOutput 未達だった差分に基づく。
+const CI_TURN_MARGIN = 3;
 
 // CI gate schema — the gate lost in eb8aa7e (issue #133) を復元したもの。
 // dev-runner-haiku-ro が bare `gh pr checks` で CI snapshot を取得し、
@@ -3441,7 +3450,7 @@ const CI_POLL_SECONDS = 45;
 // 持ってはならないため（issue #488）。
 // failed_checks の要素は script 出力と一致する {name, bucket, state}
 // （conclusion は bucket-field migration で削除。issue #133 / ci::bats-fabricated-schema）。
-// status:'error' は gh fetch 自体の失敗（auth/network）を意味し、即座に人間へエスカレーションする。
+// status:'error' は check-ci が gh fetch 失敗を分類した値。workflow 側は proxy の空応答（turn 上限到達等）も fail-open で同じ 'error' に合成するため、受け手は原因を 1 つに断定できない（issue #621）。即座に人間へエスカレーションする。
 const CI_STATUS = {
   type: 'object',
   required: ['status'],

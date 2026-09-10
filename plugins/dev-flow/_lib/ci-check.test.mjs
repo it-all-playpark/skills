@@ -1,8 +1,8 @@
 // _lib/ci-check.mjs（ci-check の定数 / schema / prompt の canonical）の単体テスト。
 //
 // 守っている不変条件:
-//   - attempt ループが dev-runner-haiku-ro の maxTurns (10) を超えない
-//     （(attempt 数 × 2) - 1 <= 10。超えると CI gate が maxTurns 打ち切りで壊れる）
+//   - attempt ループの必要 turn（attempt×2 + sleep + StructuredOutput + CI_TURN_MARGIN）が
+//     dev-runner-haiku-ro の maxTurns を超えない（agent md を実読して pin。issue #621）
 //   - CI_STATUS の status enum は closed（'error' が欠けると gh fetch 失敗を green と誤認しうる）
 //   - prompt が決定論的で、repo 指定の有無で --repo フラグが正しく出し分けられる
 //
@@ -11,19 +11,37 @@
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { CI_MAX_ATTEMPTS, CI_POLL_SECONDS, CI_STATUS, ciCheckPrompt } from './ci-check.mjs';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { CI_MAX_ATTEMPTS, CI_POLL_SECONDS, CI_TURN_MARGIN, CI_STATUS, ciCheckPrompt } from './ci-check.mjs';
 
 // ============================================================
 // 定数
 // ============================================================
 
-test('[ci-check] attempt ループが dev-runner-haiku-ro の maxTurns (10) を超えない', () => {
-  // fetch / classify / sleep がそれぞれ 1 turn を消費する。最終 attempt に sleep は無い。
-  const worstCaseTurns = (CI_MAX_ATTEMPTS * 2) - 1;
-  assert.ok(
-    worstCaseTurns <= 10,
-    `(attempt 数 × 2) - 1 = ${worstCaseTurns} は dev-runner-haiku-ro の maxTurns (10) を超えてはならない`,
-  );
+// turn 会計の純関数（式は _lib/ci-check.mjs のコメントと一致させる）
+function requiredTurns(attempts, margin) {
+  return attempts * 2 + (attempts - 1) + 1 + margin;
+}
+function readMaxTurns() {
+  const p = join(dirname(fileURLToPath(import.meta.url)), '..', 'agents', 'dev-runner-haiku-ro.md');
+  const src = readFileSync(p, 'utf8');
+  const m = src.match(/^maxTurns:\s*(\d+)\s*$/m);
+  assert.ok(m, `${p} の frontmatter に maxTurns が無い`);
+  return Number(m[1]);
+}
+
+test('[ci-check] 必要 turn（attempt×2 + sleep + StructuredOutput + margin）が dev-runner-haiku-ro の maxTurns を超えない', () => {
+  const maxTurns = readMaxTurns();
+  const need = requiredTurns(CI_MAX_ATTEMPTS, CI_TURN_MARGIN);
+  assert.ok(need <= maxTurns, `必要 turn ${need} が maxTurns ${maxTurns} を超えている`);
+  // 検出力の pin: 式の入力を差し替えると不成立になること（ソース定数は変えない）
+  assert.ok(requiredTurns(6, CI_TURN_MARGIN) > maxTurns, 'CI_MAX_ATTEMPTS=6 相当で invariant 違反を検出できていない');
+});
+
+test('[ci-check] CI_TURN_MARGIN は 3（実測: 文書化 worst case 8 に対し 10 tool call で StructuredOutput 未達）', () => {
+  assert.equal(CI_TURN_MARGIN, 3);
 });
 
 test('[ci-check] pending 待機の ceiling が 90 秒である', () => {

@@ -68,6 +68,9 @@ test('buildTerminalSummaryBody: ci_error -> ⚠️ CI エラー 見出しが出�
   });
   assert.ok(body.includes('⚠️ CI エラー'), 'ci_error 見出しを含む');
   assert.ok(body.includes('エスカレーション'), '人間エスカレーションへの言及');
+  assert.ok(!body.includes('auth/network'), 'ci_error 見出しは原因を auth/network と断定しない（issue #621）');
+  assert.ok(body.includes('CI ステータスを確定できなかった'), '確定できなかった旨を含む');
+  assert.ok(body.includes('gh pr checks 12'), '実 PR 番号入りの gh pr checks 確認手順を含む');
 });
 
 test('buildTerminalSummaryBody: ci_pending -> ⏳ CI 未完了 見出しが出る', () => {

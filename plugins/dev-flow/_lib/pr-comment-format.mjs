@@ -44,7 +44,7 @@ const STATUS_HEADLINE = {
   'stuck': '⚠️ STUCK — 人間レビューへエスカレーション',
   'fix_failed': '⚠️ 自動修正失敗 — 人間へエスカレーション',
   'max_reached': '⚠️ 反復上限到達',
-  'ci_error': '⚠️ CI エラー — gh API 失敗（auth/network）。人間へエスカレーション',
+  'ci_error': '⚠️ CI エラー — CI ステータスを確定できなかった（proxy が結果を返さなかった）。`gh pr checks <PR>` で実状態を確認すること。人間へエスカレーション',
   'ci_pending': '⏳ CI 未完了 — checks pending。人間/CI 完了待ちへエスカレーション',
   'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision/blocking 矛盾の再発、または reviewer が StructuredOutput 契約違反で結果を返さず。人間へエスカレーション',
 };
@@ -69,7 +69,7 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
 
   lines.push(`## PR #${pr} — pr-iterate 終了レポート`);
   lines.push('');
-  lines.push(`### ${STATUS_HEADLINE[status] ?? status}`);
+  lines.push(`### ${(STATUS_HEADLINE[status] ?? status).replace('<PR>', String(pr))}`);
   lines.push('');
 
   lines.push('| 終了状態 | 反復回数 | 最終判定 |');
