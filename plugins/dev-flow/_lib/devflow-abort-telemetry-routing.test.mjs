@@ -21,6 +21,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 function makeSandbox({
   analyzeReq, implementerFn, diffGateConfig, throwAt, journalSaveThrows, journalLogAbortResult,
+  workflowThrows,
 } = {}) {
   const calls = [];
   let implementerCallIndex = 0;
@@ -80,7 +81,10 @@ function makeSandbox({
   };
 
   const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
+  const workflowStub = async () => {
+    if (workflowThrows) throw workflowThrows;
+    return { status: 'lgtm', iterations: 1, fixes_applied: 0 };
+  };
 
   const sandbox = {
     phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
@@ -297,25 +301,52 @@ test('[abort-telemetry] (6) 完走経路: journal-log-abort が 0 回・journal-
 });
 
 // ============================================================
-// (7) 静的 pin
+// (7) nested pr-iterate（workflow('dev-flow:pr-iterate')）が throw
 // ============================================================
-test('[abort-telemetry] (7) 静的 pin: ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow', () => {
+test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entry の abort_label は直前 trackedAgent でなく pr-iterate を指す', async () => {
+  const { ctx, calls } = makeSandbox({
+    analyzeReq: { ...STANDARD_ANALYZE_REQ, acceptance_criteria: ['ac1', 'ac2', 'ac3'] },
+    workflowThrows: new Error('pr-iterate boom'),
+  });
+  const { error } = await runDevFlowInSandbox(src, ctx);
+
+  assert.ok(error !== null, '(7) nested workflow throw で dev-flow run が abort すべきだが error が null だった');
+  assert.ok(String(error?.message ?? '').includes('pr-iterate boom'),
+    `(7) error.message に 'pr-iterate boom' を含むべきだが: ${error?.message}`);
+
+  const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
+  assert.equal(saveCalls.length, 1, `(7) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
+
+  const savePrompt = saveCalls[0]?.prompt ?? '';
+  for (const key of [
+    '"abort_phase":"PR"', '"abort_label":"pr-iterate"',
+    '"error_msg":"abort@PR/pr-iterate: pr-iterate boom"', '"error_phase":"PR"',
+  ]) {
+    assert.ok(savePrompt.includes(key),
+      `(7) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった（直前 trackedAgent の label が abort_label に残っている可能性）。prompt:\n${savePrompt.slice(0, 800)}`);
+  }
+});
+
+// ============================================================
+// (8) 静的 pin
+// ============================================================
+test('[abort-telemetry] (8) 静的 pin: ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow', () => {
   assert.equal((src.match(/const ABORT_CTX = \{/g) ?? []).length, 1,
-    `(7) 'const ABORT_CTX = {' は 1 回のみのはずだが ${(src.match(/const ABORT_CTX = \{/g) ?? []).length} 回だった`);
+    `(8) 'const ABORT_CTX = {' は 1 回のみのはずだが ${(src.match(/const ABORT_CTX = \{/g) ?? []).length} 回だった`);
 
   assert.match(src, /phase\('Setup'\)\n\s*try \{/,
-    `(7) phase('Setup') の直後に 'try {' が続くべきだが見つからなかった`);
+    `(8) phase('Setup') の直後に 'try {' が続くべきだが見つからなかった`);
 
   const wftIdx = src.indexOf('async function writeFailureTelemetry(');
-  assert.ok(wftIdx >= 0, `(7) writeFailureTelemetry の定義が見つからなかった`);
+  assert.ok(wftIdx >= 0, `(8) writeFailureTelemetry の定義が見つからなかった`);
   const wftEndIdx = src.indexOf('\n}\n', wftIdx);
   const wftBody = src.slice(wftIdx, wftEndIdx >= 0 ? wftEndIdx : undefined);
   assert.ok(wftBody.includes('ABORT_CTX.failure_recorded = true'),
-    `(7) writeFailureTelemetry 本体内に 'ABORT_CTX.failure_recorded = true' が含まれるべきだが含まれていなかった`);
+    `(8) writeFailureTelemetry 本体内に 'ABORT_CTX.failure_recorded = true' が含まれるべきだが含まれていなかった`);
 
   const lastCatchIdx = src.lastIndexOf('} catch (e) {');
-  assert.ok(lastCatchIdx >= 0, `(7) 末尾の '} catch (e) {' ブロックが見つからなかった`);
+  assert.ok(lastCatchIdx >= 0, `(8) 末尾の '} catch (e) {' ブロックが見つからなかった`);
   const tailBlock = src.slice(lastCatchIdx);
   assert.ok(tailBlock.includes('throw e'),
-    `(7) 最終 '} catch (e) {' ブロック内に 'throw e' が含まれるべきだが含まれていなかった`);
+    `(8) 最終 '} catch (e) {' ブロック内に 'throw e' が含まれるべきだが含まれていなかった`);
 });

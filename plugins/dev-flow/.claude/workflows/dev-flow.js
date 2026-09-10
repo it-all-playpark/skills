@@ -5927,6 +5927,7 @@ if (LITE) {
   const liteOutcome = classifyLiteReview(reviewLite)
   if (liteOutcome.escalate) {
     log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
+    ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
     iterate = await workflow('dev-flow:pr-iterate', PR_ITERATE_ARGS)
     route = 'full'
     iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
@@ -5944,12 +5945,14 @@ if (LITE) {
       log(`lite 経路: clean review + CI ${ciLite.status} — lgtm 終端（フル pr-iterate 起動なし）`)
     } else {
       log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
+      ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
       iterate = await workflow('dev-flow:pr-iterate', PR_ITERATE_ARGS)
       route = 'full'
       iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
     }
   }
 } else {
+  ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
   iterate = await workflow('dev-flow:pr-iterate', PR_ITERATE_ARGS)
   route = 'full'
   iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
