@@ -5748,7 +5748,8 @@ async function execEvaluatePhase(state) {
     // ループ終了後ではなく各 evaluator 呼び出し前にここで取ることで、
     // redgreen-verify.sh の restore 失敗等 evaluator 呼び出し後の tree 変化を検出可能にする。
     {
-      const _dhPreEval = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate' })
+      // throw は failOpenAgent で吸収（issue #605）。read-only probe のため契約違反リトライ opt-in
+      const _dhPreEval = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate', retryOnContractViolation: true })
       if (_dhPreEval && typeof _dhPreEval.hash === 'string') {
         evalDiffHash = _dhPreEval.hash
       } else {
@@ -5999,7 +6000,8 @@ feedClockMark('evaluate_end', epochResOf(state.evalResult))
 // micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
 let evalStaleness = 'none'
 if (state.evalDiffHash != null) {
-  const dhPr = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR' })
+  // throw は failOpenAgent で吸収（issue #605）。read-only probe のため契約違反リトライ opt-in
+  const dhPr = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR', retryOnContractViolation: true })
   const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
   if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
   if (prDiffHash != null && state.evalDiffHash !== prDiffHash) {
@@ -6303,8 +6305,10 @@ let riskFinal
 let changed
 let mergeDiffHash = null
 if (state.secDiffHash != null) {
-  const dh = await trackedAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-merge', phase: 'Merge tier' })
+  // throw は failOpenAgent で吸収（issue #605）。read-only probe のため契約違反リトライ opt-in
+  const dh = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-merge', phase: 'Merge tier', retryOnContractViolation: true })
   mergeDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
+  if (mergeDiffHash == null) log('⚠️ diff-hash-merge の取得に失敗 — Security floor 結果の再利用は skip し danger-grep-final / changed-files を再実行（fail-safe）')
 }
 const reuseSecFloor = state.secDiffHash != null && mergeDiffHash != null && state.secDiffHash === mergeDiffHash
 if (reuseSecFloor) {
