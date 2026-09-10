@@ -391,3 +391,79 @@ test('[resolved-evidence-routing] (d) VM: 解消済み無し（ac_results:[]）�
     'telemetry.resolved_evidence キーは省かれるべきだが存在した',
   );
 });
+
+// ============================================================
+// (e) VM: 実 run 形状（ac_index が acceptance_criteria の範囲内）の payload 回帰
+// ============================================================
+
+// (c) は ac_index を範囲外（100 オフセット）にして ledger 上の AC-1..4 を unchecked に留め、
+// ledger_resolved を EVAL-* 21 件だけに絞っている。しかし実 run の evaluator は
+// acceptance_criteria の範囲内の ac_index を返すため、dev-flow.js の AC ループ
+// (`else if (r.satisfied) ledger = checkItem(ledger, acId, ...)`) が AC-1..4 を checked にし、
+// gate policy llm-major-advisory 下で severity:'major' の AC item は advisory lane に入る。
+// buildResolvedEvidence の advisory 述語は dimension:'ac' を除外しないため、実 run の
+// ledger_resolved は 21 + 4 = 25 件になり、同じ AC evidence が ac_satisfied にも載る（二重計上）。
+// (c) だけでは payload サイズ回帰ガードが実 run より小さい形状でしか検証されないため、
+// 実 run 形状での件数と 16000 字上限を pin する。advisory 述語から dimension:'ac' を
+// 除外する等でこの二重計上を変える場合、本 test が先に red になる。
+const AC_RESULTS_INRANGE = Array.from({ length: 4 }, (_, i) => ({
+  ac_index: i,
+  satisfied: true,
+  verified_by: 'inspection',
+  evidence: EVID(300 + i),
+}));
+
+test('[resolved-evidence-routing] (e) VM: ac_index 範囲内の実 run 形状では ledger_resolved が 21+AC 4 件 = 25 件になり、payload は JSON.parse 可能・16000 字以下・merge_tier 一致', async () => {
+  const journalResult = { logged: true, summary: 'ok' };
+  const { ctx, getJournalPrompts, getPostSummaryPrompts } = makeSandbox(ANALYZE_REQ, journalResult, undefined, {
+    feedback: CRITICAL_FEEDBACK,
+    critical_resolutions: CRITICAL_RESOLUTIONS,
+    ac_results: AC_RESULTS_INRANGE,
+  });
+
+  const { result, error } = await runDevFlowCapture(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+  assert.ok(result != null, 'run が abort してはならない');
+
+  const savePrompt = getJournalPrompts()[0] ?? '';
+  const beginIdx = savePrompt.indexOf('<<<JOURNAL_HANDOFF_BODY_BEGIN>>>');
+  const endIdx = savePrompt.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>');
+  assert.ok(beginIdx >= 0 && endIdx > beginIdx, 'journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない');
+  const payloadStr = savePrompt.slice(beginIdx + '<<<JOURNAL_HANDOFF_BODY_BEGIN>>>'.length, endIdx).trim();
+
+  let payload;
+  try {
+    payload = JSON.parse(payloadStr);
+  } catch (e) {
+    assert.fail(`journal-save payload が JSON.parse できない: ${e.message}\n${payloadStr}`);
+  }
+
+  const re = payload.telemetry.resolved_evidence;
+  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
+  assert.equal(
+    re.ledger_resolved.length,
+    25,
+    `実 run 形状の ledger_resolved.length は 21(EVAL-*) + 4(AC-*) = 25 のはずだが ${re.ledger_resolved.length}`,
+  );
+  for (let i = 1; i <= 4; i += 1) {
+    const acEntry = re.ledger_resolved.find((it) => it.id === `AC-${i}`);
+    assert.ok(acEntry != null, `ledger_resolved に AC-${i} が無い: ${re.ledger_resolved.map((it) => it.id).join(',')}`);
+    assert.equal(acEntry.lane, 'advisory', `AC-${i} は advisory lane のはずだが ${acEntry.lane}`);
+    assert.equal(acEntry.dimension, 'ac', `AC-${i} の dimension は 'ac' のはずだが ${acEntry.dimension}`);
+  }
+  assert.equal(re.ac_satisfied.length, 4, `ac_satisfied.length は 4 のはずだが ${re.ac_satisfied.length}`);
+  assert.ok(
+    JSON.stringify(re).length <= 16000,
+    `実 run 形状でも resolved_evidence の JSON.stringify 長は 16000 字以下のはずだが ${JSON.stringify(re).length}`,
+  );
+  assert.equal(payload.telemetry.merge_tier, result.merge_tier, 'telemetry.merge_tier が result.merge_tier と一致しない');
+
+  const postSummaryPrompt = getPostSummaryPrompts()[0] ?? '';
+  assert.ok(
+    postSummaryPrompt.includes('✅ Goal Ledger 解消済み 25 件'),
+    `post-summary prompt に '✅ Goal Ledger 解消済み 25 件' が含まれるべきだが含まれていなかった`,
+  );
+});
