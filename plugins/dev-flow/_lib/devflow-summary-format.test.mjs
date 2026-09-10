@@ -1,5 +1,8 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { mdCell } from './md-cell.mjs';
 import { buildDevflowSummaryBody } from './devflow-summary-format.mjs';
 
@@ -1567,4 +1570,211 @@ test('決定性: liteReview 込み入力でも 2回呼んで byte 完全一致',
   const body1 = buildDevflowSummaryBody(input);
   const body2 = buildDevflowSummaryBody(input);
   assert.equal(body1, body2, 'liteReview 込みでも byte 完全一致');
+});
+
+// ─── pr-iterate 未解消の指摘 (issue #602) ─────────────────────────────────────
+
+const F_A = { severity: 'critical', topic: 'null-deref', file: 'src/a.js', line: 12, description: 'null 参照の可能性', suggestion: 'optional chain にする' };
+const F_B = { severity: 'major', topic: 'missing-test', file: 'src/b.js', description: 'テスト欠落', suggestion: 'b.test.mjs を追加' };
+const F_CI = { severity: 'critical', topic: 'ci::lint', description: 'CI check failed: lint (failure)', suggestion: 'CI を green にする' };
+const HIST_2 = [
+  { iteration: 1, decision: 'request-changes', summary: 'r1', blocking: [F_A, F_B], minor: [] },
+  { iteration: 2, decision: 'request-changes', summary: 'r2', blocking: [F_B], minor: [] },
+];
+
+test('iterateStatus=lgtm -> history/iterations 込みでも 3 引数省略時の出力と byte 完全一致（AC1）', () => {
+  const withLgtm = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'lgtm',
+    iterateHistory: HIST_2,
+    iterateIterations: 2,
+  });
+  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
+  assert.equal(withLgtm, omitted, 'lgtm 終端は 3 引数省略時と byte 完全一致');
+});
+
+test('iterateStatus=lgtm -> 「pr-iterate 未解消の指摘」を含まない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'lgtm',
+    iterateHistory: HIST_2,
+    iterateIterations: 2,
+  });
+  assert.ok(!body.includes('pr-iterate 未解消の指摘'), 'lgtm では未解消セクションを含まない');
+});
+
+test('iterateStatus=fix_failed -> 見出し・severity・file・指摘・提案を含み、解消済み round の finding は含まない（AC2, AC3）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: HIST_2,
+    iterateIterations: 2,
+  });
+  assert.ok(body.includes('### 🔁 pr-iterate 未解消の指摘（1 件 — status: fix_failed、最終反復 2 の review 時点）'), '見出し行を含む');
+  assert.ok(body.includes('🟠 major — `src/b.js`'), 'severity+file 行を含む');
+  assert.ok(body.includes('   - 指摘: テスト欠落'), '指摘行を含む');
+  assert.ok(body.includes('   - 提案: b.test.mjs を追加'), '提案行を含む');
+  assert.ok(!body.includes('null 参照の可能性'), '解消済み round(1) の finding は含まない');
+});
+
+test('iterateStatus=stuck -> line 付き finding が `file:line` 形式で描画される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'stuck',
+    iterateHistory: [{ iteration: 1, decision: 'request-changes', summary: 'r1', blocking: [F_A], minor: [] }],
+    iterateIterations: 1,
+  });
+  assert.ok(body.includes('🔴 critical — `src/a.js:12`'), 'line 付き finding 行を含む');
+});
+
+test('iterateStatus=fix_failed + file 欠落の CI synthetic finding -> 「場所指定なし」で描画される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: [{ iteration: 1, decision: 'approve', summary: 'ok', blocking: [F_CI], minor: [] }],
+    iterateIterations: 1,
+  });
+  assert.ok(body.includes('🔴 critical — 場所指定なし'), 'file 欠落は場所指定なしで描画される');
+  assert.ok(body.includes('CI check failed: lint (failure)'), 'CI synthetic finding の description を含む');
+});
+
+test('iterateStatus=ci_pending + 末尾 round が終端 round でない -> 「pr-iterate 未解消の指摘」を含まない（AC3）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'ci_pending',
+    iterateHistory: HIST_2,
+    iterateIterations: 3,
+  });
+  assert.ok(!body.includes('pr-iterate 未解消の指摘'), '末尾 round の iteration が iterations と不一致なら省略する');
+});
+
+test('iterateIterations=null -> 末尾 round を終端 round として採用する', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: HIST_2,
+    iterateIterations: null,
+  });
+  assert.ok(body.includes('pr-iterate 未解消の指摘'), 'iterations 不明時は末尾 round を採用してセクションを描画する');
+  assert.ok(body.includes('（1 件'), '末尾 round(iteration 2) の blocking 1 件を反映する');
+});
+
+test('iterateHistory が undefined/null/[] -> いずれも 3 引数省略時と byte 完全一致（AC4）', () => {
+  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
+  for (const hist of [undefined, null, []]) {
+    const body = buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      iterateStatus: 'fix_failed',
+      iterateHistory: hist,
+      iterateIterations: 1,
+    });
+    assert.equal(body, omitted, `iterateHistory=${JSON.stringify(hist)} は省略時と byte 完全一致`);
+  }
+});
+
+test('終端 round の blocking が空 -> セクション自体を省略し省略時と byte 完全一致', () => {
+  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: [{ iteration: 1, decision: 'approve', summary: 'ok', blocking: [], minor: [] }],
+    iterateIterations: 1,
+  });
+  assert.equal(body, omitted, '終端 round の blocking が空なら省略時と byte 完全一致');
+});
+
+test('iterateStatus 未指定/null -> history 込みでも「pr-iterate 未解消の指摘」を含まない', () => {
+  for (const status of [undefined, null]) {
+    const body = buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      iterateStatus: status,
+      iterateHistory: HIST_2,
+    });
+    assert.ok(!body.includes('pr-iterate 未解消の指摘'), `iterateStatus=${status} ではセクションを含まない`);
+  }
+});
+
+test('配置: 見出しは「要対応事項なし」より後・「Goal Ledger: item なし」より前で、前後に空行を伴う', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: HIST_2,
+    iterateIterations: 2,
+  });
+  const lines = body.split('\n');
+  const noneIdx = lines.findIndex(l => l.includes('### ✅ 要対応事項なし'));
+  const headingIdx = lines.findIndex(l => l.includes('### 🔁 pr-iterate 未解消の指摘'));
+  const ledgerIdx = lines.findIndex(l => l.includes('Goal Ledger: item なし'));
+  assert.ok(noneIdx >= 0, '要対応事項なし見出しが存在する');
+  assert.ok(headingIdx >= 0, '未解消の指摘見出しが存在する');
+  assert.ok(ledgerIdx >= 0, 'Goal Ledger 空状態行が存在する');
+  assert.ok(headingIdx > noneIdx, '見出しは要対応事項なしより後');
+  assert.ok(headingIdx < ledgerIdx, '見出しは Goal Ledger より前');
+  assert.equal(lines[headingIdx - 1], '', '見出し直前が空行');
+  assert.equal(lines[headingIdx + 1], '', '見出し直後が空行');
+  assert.equal(lines[ledgerIdx - 1], '', 'Goal Ledger 空状態行の直前が空行');
+});
+
+test('既存セクション不変: 新セクションを取り除いた行配列が省略時の行配列と一致する（AC5）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: HIST_2,
+    iterateIterations: 2,
+  });
+  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
+  const lines = body.split('\n');
+  const headingIdx = lines.findIndex(l => l.includes('### 🔁 pr-iterate 未解消の指摘'));
+  assert.ok(headingIdx >= 0, '見出しが存在する');
+  // ブロックは headingIdx-1 の空行から始まり、見出し・空行・findings 行（'N. ' / '   - ' 始まり）が続く。
+  let end = headingIdx + 1; // heading 直後の空行
+  while (end < lines.length && (/^\d+\. /.test(lines[end]) || /^   - /.test(lines[end]) || lines[end] === '')) {
+    if (lines[end] === '' && end > headingIdx + 1) {
+      // 空行が続いた場合、次の行が findings 継続でなければブロック終端とみなして直前で止める
+      const next = lines[end + 1];
+      if (!(next != null && (/^\d+\. /.test(next) || /^   - /.test(next)))) break;
+    }
+    end++;
+  }
+  const stripped = [...lines.slice(0, headingIdx - 1), ...lines.slice(end)];
+  const omittedLines = omitted.split('\n');
+  assert.deepEqual(stripped, omittedLines, '新セクション除去後は省略時の出力と一致する');
+});
+
+test('決定性: pr-iterate 未解消セクション込みで 2回呼んで byte 完全一致', () => {
+  const input = {
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: HIST_2,
+    iterateIterations: 2,
+  };
+  const body1 = buildDevflowSummaryBody(input);
+  const body2 = buildDevflowSummaryBody(input);
+  assert.equal(body1, body2, 'pr-iterate 未解消セクション込みでも byte 完全一致');
+});
+
+test('description に | と改行を含む finding -> mdCell でエスケープされる', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: [{
+      iteration: 1,
+      decision: 'approve',
+      summary: 'ok',
+      blocking: [{ severity: 'minor', topic: 't', file: 'x.js', description: 'a|b\nc', suggestion: null }],
+      minor: [],
+    }],
+    iterateIterations: 1,
+  });
+  assert.ok(body.includes('   - 指摘: a\\|b<br>c'), 'description が mdCell でエスケープされる');
+});
+
+test('呼び出し側配線の静的 pin: dev-flow.js の buildDevflowSummaryBody 呼び出しが iterateStatus/iterateHistory/iterateIterations を渡す', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = join(here, '..');
+  const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+  const src = readFileSync(devFlowPath, 'utf8');
+  assert.ok(src.includes('iterateStatus: iterate?.status ?? null,'), 'iterateStatus 配線行を含む');
+  assert.ok(src.includes('iterateHistory: iterate?.history ?? null,'), 'iterateHistory 配線行を含む');
+  assert.ok(src.includes('iterateIterations: iterate?.iterations ?? null,'), 'iterateIterations 配線行を含む');
 });

@@ -33,6 +33,9 @@
  * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
  * @param {string|null|undefined} opts.finalAcReconcile - Final AC reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #331）
  * @param {{decision:string|null, ci:string, summary:string|null}|null|undefined} [opts.liteReview] - dev-flow lite 経路の pr-review-lite 結果。非 null の場合のみ「lite レビュー」セクションを描画する（issue #392 AC-6）
+ * @param {string|null|undefined} [opts.iterateStatus] - pr-iterate 終端 status（'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'。非 'lgtm' のときのみ未解消指摘セクションを描画する。issue #602）
+ * @param {Array<{iteration:number,decision:string,summary:string,blocking:Array<{severity,topic,file,line,description,suggestion}>,minor:Array}>|null|undefined} [opts.iterateHistory] - pr-iterate の round 履歴（issue #602）
+ * @param {number|null|undefined} [opts.iterateIterations] - pr-iterate 返り値 iterations。history 末尾 round の iteration と一致するときのみその round を終端 round とみなす（ci_error/ci_pending/review_contract_error は終端 round を history に push しないため）。null なら末尾 round を採用（issue #602）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -59,6 +62,9 @@ export function buildDevflowSummaryBody({
   finalUiVerify,
   finalAcReconcile,
   liteReview,
+  iterateStatus,
+  iterateHistory,
+  iterateIterations,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -309,6 +315,39 @@ export function buildDevflowSummaryBody({
       lines.push('**Plan 未解消 concerns**:');
       for (const concern of concerns) {
         lines.push(`- ${concern}`);
+      }
+    }
+  }
+
+  // 6b. pr-iterate 未解消の指摘（issue #602）。iterateStatus が非 'lgtm' のときのみ描画する。
+  // 出すのは終端 round（history 末尾かつ iteration === iterateIterations）の blocking findings のみ。
+  // ci_error / ci_pending / review_contract_error は終端 round を history に push しないため、
+  // 末尾 round の iteration が iterateIterations と一致しなければ「未解消なし」として省略する
+  // （末尾 round の findings は fix → 再 review 済み）。lgtm / history 空 / findings 空では 1 行も
+  // 追加しない（LGTM 終端との byte 一致を保つ regression 要件）。
+  if (iterateStatus != null && iterateStatus !== 'lgtm') {
+    const hist = Array.isArray(iterateHistory) ? iterateHistory : [];
+    const lastRound = hist.length > 0 ? hist[hist.length - 1] : null;
+    const isTerminalRound = lastRound != null
+      && (typeof iterateIterations !== 'number' || lastRound.iteration === iterateIterations);
+    const unresolved = isTerminalRound && Array.isArray(lastRound.blocking) ? lastRound.blocking : [];
+    if (unresolved.length > 0) {
+      const SEV_LABEL_LOCAL = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
+      lines.push('');
+      lines.push(`### 🔁 pr-iterate 未解消の指摘（${unresolved.length} 件 — status: ${iterateStatus}、最終反復 ${lastRound.iteration} の review 時点）`);
+      lines.push('');
+      let idx = 1;
+      for (const f of unresolved) {
+        const sev = SEV_LABEL_LOCAL[f.severity] ?? String(f.severity ?? '不明');
+        const loc = (f.file != null && f.file !== '')
+          ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+          : '場所指定なし';
+        lines.push(`${idx}. ${sev} — ${loc}`);
+        lines.push(`   - 指摘: ${mdCell(f.description)}`);
+        if (f.suggestion != null && f.suggestion !== '') {
+          lines.push(`   - 提案: ${mdCell(f.suggestion)}`);
+        }
+        idx++;
       }
     }
   }
