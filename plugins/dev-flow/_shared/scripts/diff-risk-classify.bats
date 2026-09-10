@@ -213,6 +213,149 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
+# [EXEC-1] exec-sink NEGATIVE: JS 匿名関数式 function({ ... }) は hit しない
+# (Function\( alternative 削除 + case-sensitive 化の pin, issue #616)
+# ---------------------------------------------------------------------------
+@test "[EXEC-1] exec-sink NEGATIVE: export default function 内の匿名関数式は exec-sink に hit しない" {
+    mkdir -p "$REPO/src"
+    printf 'export default function make() {\n  return function({ a, b }) {\n    return a + b;\n  };\n}\n' \
+        > "$REPO/src/factory.mjs"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.ok == true and ([.hits[] | select(.class == "exec-sink")] | length == 0)'
+}
+
+@test "[EXEC-1] exec-sink NEGATIVE: arrow 関数内の匿名関数式は hits 全体が [] になる" {
+    mkdir -p "$REPO/src"
+    printf 'const make = () => {\n  return function({ label, agentType }) {\n    return label + agentType;\n  };\n};\n' \
+        > "$REPO/src/factory2.mjs"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
+}
+
+# ---------------------------------------------------------------------------
+# [EXEC-2] exec-sink NEGATIVE: 識別子末尾一致 myEval( / respawn( / reexec( は
+# hit しない (語境界 pin, issue #616)
+# ---------------------------------------------------------------------------
+@test "[EXEC-2] exec-sink NEGATIVE: 識別子末尾一致は exec-sink に hit しない" {
+    mkdir -p "$REPO/src"
+    printf 'const y = myEval(1);\nrespawn(x);\nreexec(cmd);\nconst z = doExecSync(1);\n' \
+        > "$REPO/src/ident.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.ok == true and .hits == []'
+}
+
+# ---------------------------------------------------------------------------
+# [EXEC-3] exec-sink POSITIVE: 既存 sink 群が引き続き hit する (回帰 pin, issue #616)
+# ---------------------------------------------------------------------------
+@test "[EXEC-3a] exec-sink POSITIVE: new Function は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf "const f = new Function('x', 'return x');\n" > "$REPO/src/a.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3b] exec-sink POSITIVE: child_process は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'const cp = require("child_process");\n' > "$REPO/src/b.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3c] exec-sink POSITIVE: execSync( は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'const out = execSync("ls");\n' > "$REPO/src/c.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3d] exec-sink POSITIVE: spawn( は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'const p = spawn("ls");\n' > "$REPO/src/d.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3e] exec-sink POSITIVE: deserialize は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'const obj = deserialize(buf);\n' > "$REPO/src/e.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3f] exec-sink POSITIVE: Marshal.load は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'obj = Marshal.load(data)\n' > "$REPO/src/f.rb"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3g] exec-sink POSITIVE: pickle.loads は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'obj = pickle.loads(data)\n' > "$REPO/src/g.py"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3h] exec-sink POSITIVE: yaml.load( は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'cfg = yaml.load(stream)\n' > "$REPO/src/h.py"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+@test "[EXEC-3i] exec-sink POSITIVE: execFile( は引き続き hit する" {
+    mkdir -p "$REPO/src"
+    printf 'execFile("bin", [], cb);\n' > "$REPO/src/i.js"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m change
+    run bash -c "cd '$REPO' && '$SCRIPT' '$BASE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"class":"exec-sink"'* ]]
+    printf '%s\n' "$output" | jq -e '[.hits[] | select(.class == "exec-sink")] | length > 0'
+}
+
+# ---------------------------------------------------------------------------
 # 13. dependency POSITIVE
 # ---------------------------------------------------------------------------
 @test "dependency POSITIVE: package.json に dependencies 変更 -> class dependency を返す" {
