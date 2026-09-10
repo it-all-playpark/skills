@@ -22,11 +22,14 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
   ].join('\n'),
   concern_resolutions: [
     'concern_resolutions 契約:',
-    '- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolved, evidence}] で全件判定して返す。',
+    '- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolution, evidence}] で全件判定して返す。',
     '- id は渡された item の id をそのまま返す。',
-    '- resolved:true は具体的 evidence 必須（file:line / テスト名 / diff 内容）。未解消なら resolved:false。',
+    '- resolution は resolved / triaged / unresolved の 3 値 enum（必須）。旧 resolved:true/false（boolean キー）は受理されず error になる。',
+    '- resolved = 実コードで解消を確認。具体的 evidence 必須（file:line / テスト名 / diff 内容）。',
+    '- triaged = 再検証済みだが対応不要と判断（advisory かつ実害なし等）。判断根拠の evidence 必須。evidence の無い triaged は unresolved と同一に扱われる。',
+    '- unresolved = 未解消（据え置き）。',
     '- 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。',
-    '- concern は advisory であり収束を block しない。解消済み concern を resolved:true にすると終端サマリーの要対応から除外される。',
+    '- concern は advisory であり収束を block しない。resolved は終端サマリーの要対応から除外され、triaged は要対応に「トリアージ済み」として残る（ゲート・merge tier・収束判定には影響しない）。',
   ].join('\n'),
   // testsurf_clearance は final_ac_reconcile と同様 prompt 注入のみで配送する（evaluator.md へ
   // mirror しない）。.claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification
@@ -52,4 +55,26 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- satisfied:true / false のいずれでも非空 evidence 必須（file:line / テスト名 / 実行結果）。index 不完全・evidence 欠落は出力全体が unavailable 扱いとなり merge tier が HOLD になる。',
     '- UI に関する AC は渡された final UI raw checks を根拠に判定する。final UI 検証が failed_open / setup_failed / 未実行の場合、inspection のみで satisfied:true にせず satisfied:false として理由を evidence に書く。',
   ].join('\n'),
+}
+
+// concern_resolutions[].resolution の closed enum（issue #614）。out-of-enum / 旧 boolean キー resolved は
+// 明示 error（legacy fallback / dual-path なし）。triaged は表示専用で ledger の checked を変えない。
+export const CONCERN_RESOLUTIONS = ['resolved', 'triaged', 'unresolved']
+
+// evaluator が返した concern_resolutions[] の 1 要素を検証し {id, resolution, evidence} に正規化する純関数。
+// evidence は string 以外なら null（有無の判定は呼び出し側）。不正形は throw（silent 無視しない）。
+export function normalizeConcernResolution(cr) {
+  if (!cr || typeof cr !== 'object' || Array.isArray(cr)) {
+    throw new Error('normalizeConcernResolution: concern_resolutions[] の要素は object 必須')
+  }
+  if (Object.prototype.hasOwnProperty.call(cr, 'resolved')) {
+    throw new Error(`normalizeConcernResolution: 旧 boolean キー resolved は受理しない（resolution enum ${JSON.stringify(CONCERN_RESOLUTIONS)} を使う）: ${JSON.stringify(cr)}`)
+  }
+  if (typeof cr.id !== 'string' || cr.id.length === 0) {
+    throw new Error(`normalizeConcernResolution: id は非空 string 必須: ${JSON.stringify(cr)}`)
+  }
+  if (!CONCERN_RESOLUTIONS.includes(cr.resolution)) {
+    throw new Error(`normalizeConcernResolution: resolution '${cr.resolution}' is out-of-enum (expected one of ${JSON.stringify(CONCERN_RESOLUTIONS)}): ${JSON.stringify(cr)}`)
+  }
+  return { id: cr.id, resolution: cr.resolution, evidence: typeof cr.evidence === 'string' ? cr.evidence : null }
 }

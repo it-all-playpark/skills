@@ -110,11 +110,14 @@ const EVALUATOR_OPERATIONAL_CONTRACT = {
   ].join('\n'),
   concern_resolutions: [
     'concern_resolutions 契約:',
-    '- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolved, evidence}] で全件判定して返す。',
+    '- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolution, evidence}] で全件判定して返す。',
     '- id は渡された item の id をそのまま返す。',
-    '- resolved:true は具体的 evidence 必須（file:line / テスト名 / diff 内容）。未解消なら resolved:false。',
+    '- resolution は resolved / triaged / unresolved の 3 値 enum（必須）。旧 resolved:true/false（boolean キー）は受理されず error になる。',
+    '- resolved = 実コードで解消を確認。具体的 evidence 必須（file:line / テスト名 / diff 内容）。',
+    '- triaged = 再検証済みだが対応不要と判断（advisory かつ実害なし等）。判断根拠の evidence 必須。evidence の無い triaged は unresolved と同一に扱われる。',
+    '- unresolved = 未解消（据え置き）。',
     '- 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。',
-    '- concern は advisory であり収束を block しない。解消済み concern を resolved:true にすると終端サマリーの要対応から除外される。',
+    '- concern は advisory であり収束を block しない。resolved は終端サマリーの要対応から除外され、triaged は要対応に「トリアージ済み」として残る（ゲート・merge tier・収束判定には影響しない）。',
   ].join('\n'),
   // testsurf_clearance は final_ac_reconcile と同様 prompt 注入のみで配送する（evaluator.md へ
   // mirror しない）。.claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification
@@ -140,6 +143,28 @@ const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- satisfied:true / false のいずれでも非空 evidence 必須（file:line / テスト名 / 実行結果）。index 不完全・evidence 欠落は出力全体が unavailable 扱いとなり merge tier が HOLD になる。',
     '- UI に関する AC は渡された final UI raw checks を根拠に判定する。final UI 検証が failed_open / setup_failed / 未実行の場合、inspection のみで satisfied:true にせず satisfied:false として理由を evidence に書く。',
   ].join('\n'),
+}
+
+// concern_resolutions[].resolution の closed enum（issue #614）。out-of-enum / 旧 boolean キー resolved は
+// 明示 error（legacy fallback / dual-path なし）。triaged は表示専用で ledger の checked を変えない。
+const CONCERN_RESOLUTIONS = ['resolved', 'triaged', 'unresolved']
+
+// evaluator が返した concern_resolutions[] の 1 要素を検証し {id, resolution, evidence} に正規化する純関数。
+// evidence は string 以外なら null（有無の判定は呼び出し側）。不正形は throw（silent 無視しない）。
+function normalizeConcernResolution(cr) {
+  if (!cr || typeof cr !== 'object' || Array.isArray(cr)) {
+    throw new Error('normalizeConcernResolution: concern_resolutions[] の要素は object 必須')
+  }
+  if (Object.prototype.hasOwnProperty.call(cr, 'resolved')) {
+    throw new Error(`normalizeConcernResolution: 旧 boolean キー resolved は受理しない（resolution enum ${JSON.stringify(CONCERN_RESOLUTIONS)} を使う）: ${JSON.stringify(cr)}`)
+  }
+  if (typeof cr.id !== 'string' || cr.id.length === 0) {
+    throw new Error(`normalizeConcernResolution: id は非空 string 必須: ${JSON.stringify(cr)}`)
+  }
+  if (!CONCERN_RESOLUTIONS.includes(cr.resolution)) {
+    throw new Error(`normalizeConcernResolution: resolution '${cr.resolution}' is out-of-enum (expected one of ${JSON.stringify(CONCERN_RESOLUTIONS)}): ${JSON.stringify(cr)}`)
+  }
+  return { id: cr.id, resolution: cr.resolution, evidence: typeof cr.evidence === 'string' ? cr.evidence : null }
 }
 // ==== END inline: _lib/evaluator-contract.mjs ====
 
@@ -968,11 +993,13 @@ function computeDurations(marks) {
 
 // ==== BEGIN inline: _lib/goal-ledger.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
-// item = { id, text, dimension, severity, source, checked, evidence, check, floor }
+// item = { id, text, dimension, severity, source, checked, evidence, check, floor, triaged, triaged_evidence }
 //   severity: 'critical' | 'major' | 'minor'
 //   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep' | 'concern' | 'analyze' | 'implement'
 //   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
 //   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
+//   triaged:  boolean | undefined  (表示専用。checked とは独立。gate/収束/merge tier には不使用)
+//   triaged_evidence: string | null | undefined  (triaged:true のときの根拠)
 //
 // lane 分類（blocking/advisory）は _lib/gate-policy.mjs の gateLane(item, policy) に一本化。
 // 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
@@ -1012,6 +1039,16 @@ function checkItem(ledger, id, evidence) {
   if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
   const items = ledger.items.slice();
   items[idx] = { ...items[idx], checked: true, evidence: evidence ?? null };
+  return { ...ledger, items };
+}
+
+// triaged: evaluator が「再検証済み・対応不要」と判断した item に付ける表示専用フラグ（issue #614）。
+// checked / evidence は変えない（ゲート・収束・merge tier・lane 分類の入力にならない）。
+function triageItem(ledger, id, evidence) {
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  const items = ledger.items.slice();
+  items[idx] = { ...items[idx], triaged: true, triaged_evidence: evidence ?? null };
   return { ...ledger, items };
 }
 
@@ -2451,7 +2488,8 @@ function mdCell(v) {
  *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
  *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
  *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count,triaged,triaged_evidence}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））。
+ *   advisory lane かつ `triaged:true` かつ `triaged_evidence` 非空の item は状態列 `🔹 トリアージ済み`・内容列に triaged_evidence を表示する（表示のみ。checked/ゲート不変。blocking lane では無視。issue #614）
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns。blockingItems/advisoryItems 内の
@@ -2678,6 +2716,9 @@ function buildDevflowSummaryBody({
   const uncheckedBlocking = blockArr.filter(it => it.checked !== true);
   const uncheckedAdvisory = advArr.filter(it => it.checked !== true && it.dimension !== 'environment');
   const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true && it.dimension !== 'environment');
+  // triaged: evaluator が「再検証済み・対応不要」と判断した advisory item の表示専用フラグ
+  // （checked は false のまま・ゲート不変。issue #614）。evidence 非空文字列のときのみ有効。
+  const isTriaged = (it) => it.triaged === true && typeof it.triaged_evidence === 'string' && it.triaged_evidence.length > 0;
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
   // Plan 未解消 concerns は Plan phase 収束時のスナップショット（更新されない）だが、CONCERN-*
@@ -2685,10 +2726,11 @@ function buildDevflowSummaryBody({
   // 更新される。dev-flow.js は planConcerns の文字列を無加工で CONCERN-* の text に seed するため、
   // text 完全一致で「ledger 上 checked 済み」を判定できる（issue #611）。同一 text が checked と
   // unchecked の両方にある場合は unchecked を優先し表示を残す（fail-safe。見落とし防止）。
+  // triaged は表の行に `🔹 トリアージ済み` として残るため箇条書きから除外する（issue #614）。
   const concernLedgerItems = [...blockArr, ...advArr].filter(it => it.dimension === 'concern');
-  const resolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true).map(it => it.text));
-  const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true).map(it => it.text));
-  const concerns = (planConcerns || []).filter(c => !(resolvedConcernTexts.has(c) && !unresolvedConcernTexts.has(c)));
+  const settledConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true || isTriaged(it)).map(it => it.text));
+  const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true && !isTriaged(it)).map(it => it.text));
+  const concerns = (planConcerns || []).filter(c => !(settledConcernTexts.has(c) && !unresolvedConcernTexts.has(c)));
 
   const hasActionItems = uncheckedBlocking.length > 0
     || uncheckedAdvisory.length > 0
@@ -2709,6 +2751,7 @@ function buildDevflowSummaryBody({
       ...uncheckedAdvisory.map(it => ({
         ...it,
         _lane: it.escalate ? '要判断（advisory ESCALATE）' : '助言（advisory）',
+        _triaged: it.escalate !== true && isTriaged(it),
       })),
       ...escalatedChecked.map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _forceVisible: true })),
     ];
@@ -2719,11 +2762,12 @@ function buildDevflowSummaryBody({
       lines.push('| 状態 | 区分 | 観点 | 内容 |');
       lines.push('|---|---|---|---|');
       for (const item of ledgerActionItems) {
-        const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : '❌ 未解消';
+        const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : item._triaged ? '🔹 トリアージ済み' : '❌ 未解消';
         const dimension = item.dimension != null ? item.dimension : '—';
         let content = mdCell(item.text);
-        if (item.evidence) {
-          content += ': ' + mdCell(item.evidence);
+        const contentEvidence = item._triaged ? item.triaged_evidence : item.evidence;
+        if (contentEvidence) {
+          content += ': ' + mdCell(contentEvidence);
         }
         if (item.escalate_reason) {
           content += `（理由: ${mdCell(item.escalate_reason)}）`;
@@ -3827,8 +3871,12 @@ const EVAL = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'resolved'],
-        properties: { id: { type: 'string' }, resolved: { type: 'boolean' }, evidence: { type: 'string' } },
+        required: ['id', 'resolution'],
+        properties: {
+          id: { type: 'string' },
+          resolution: { type: 'string', enum: ['resolved', 'triaged', 'unresolved'] },
+          evidence: { type: 'string' },
+        },
       },
     },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
@@ -5831,17 +5879,25 @@ async function execEvaluatePhase(state) {
         log(`${cr.id}: evaluator が解消確認 → checked`)
       }
     }
-    // CONCERN-* は evaluator の concern_resolutions（resolve-with-evidence）でのみ解消する（issue #296）。
-    // ガード: source==='concern' かつ dimension==='concern'（ENV-*/UI-* を除外）かつ未 checked。SEC/AC/不明 id は自動的に無視。
+    // CONCERN-* は evaluator の concern_resolutions でのみ状態更新する（issue #296, #614）。
+    // resolution enum: resolved（evidence 付きで checked）/ triaged（再検証済み・対応不要。表示専用フラグのみ付け
+    // checked は不変 — ゲート・merge tier・収束判定に影響しない）/ unresolved（据え置き）。
+    // 旧 boolean キー resolved / out-of-enum は normalizeConcernResolution が明示 error（silent 無視・fallback なし）。
+    // ガード: source==='concern' かつ dimension==='concern'（ENV-*/UI-* を除外）かつ未 checked。SEC/AC/不明 id は無視。
     for (const cr of (ev.concern_resolutions ?? [])) {
-      if (!cr || typeof cr.id !== 'string') continue
-      const item = ledger.items.find((it) => it.id === cr.id
+      const norm = normalizeConcernResolution(cr)
+      const item = ledger.items.find((it) => it.id === norm.id
         && it.source === 'concern' && it.dimension === 'concern' && !it.checked)
       if (!item) continue
-      if (cr.resolved === true && typeof cr.evidence === 'string' && cr.evidence.length > 0) {
-        ledger = checkItem(ledger, cr.id, `concern resolved: ${cr.evidence}`)
-        log(`${cr.id}: evaluator が解消確認 → checked`)
+      const hasEvidence = typeof norm.evidence === 'string' && norm.evidence.length > 0
+      if (norm.resolution === 'resolved' && hasEvidence) {
+        ledger = checkItem(ledger, norm.id, `concern resolved: ${norm.evidence}`)
+        log(`${norm.id}: evaluator が解消確認 → checked`)
+      } else if (norm.resolution === 'triaged' && hasEvidence) {
+        ledger = triageItem(ledger, norm.id, norm.evidence)
+        log(`${norm.id}: evaluator がトリアージ済み（対応不要）と判定 → 表示のみ更新（checked 不変）`)
       }
+      // unresolved / evidence 欠落は据え置き（triaged で evidence 無しは unresolved と同一扱い。issue #614 AC2）
     }
     // W4: evaluator の per-AC 判定を ledger に反映。test 実証できる AC は red→green を
     // dev-runner-haiku で決定論検証し、取れたら deterministic 昇格(blocking)。

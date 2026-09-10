@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { EVALUATOR_OPERATIONAL_CONTRACT } from './evaluator-contract.mjs';
+import { EVALUATOR_OPERATIONAL_CONTRACT, CONCERN_RESOLUTIONS, normalizeConcernResolution } from './evaluator-contract.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -89,6 +89,57 @@ test('[evaluator-contract] dev-flow.js inlines and uses the canonical testsurf_c
 
 test('[evaluator-contract] evaluator.md output example does not include schema-less score field', () => {
   assert.ok(!evaluatorMd.includes('"score"'), 'EVAL schema に無い score を evaluator.md の例に載せない');
+});
+
+test('[evaluator-contract] CONCERN_RESOLUTIONS is the closed 3-value enum', () => {
+  assert.deepEqual(CONCERN_RESOLUTIONS, ['resolved', 'triaged', 'unresolved']);
+});
+
+test('[evaluator-contract] concern_resolutions contract mentions all 3 resolution values and {id, resolution, evidence}, not the legacy {id, resolved, evidence}', () => {
+  const contract = EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions;
+  for (const value of CONCERN_RESOLUTIONS) {
+    assert.ok(contract.includes(value), `concern_resolutions 契約に '${value}' の説明が必要です`);
+  }
+  assert.ok(contract.includes('{id, resolution, evidence}'));
+  assert.ok(!contract.includes('{id, resolved, evidence}'));
+});
+
+test('[normalizeConcernResolution] normalizes a well-formed triaged item', () => {
+  const result = normalizeConcernResolution({ id: 'CONCERN-1', resolution: 'triaged', evidence: 'e' });
+  assert.deepEqual(result, { id: 'CONCERN-1', resolution: 'triaged', evidence: 'e' });
+});
+
+test('[normalizeConcernResolution] missing evidence normalizes to null', () => {
+  const result = normalizeConcernResolution({ id: 'CONCERN-1', resolution: 'unresolved' });
+  assert.deepEqual(result, { id: 'CONCERN-1', resolution: 'unresolved', evidence: null });
+});
+
+test('[normalizeConcernResolution] legacy boolean key resolved throws', () => {
+  assert.throws(
+    () => normalizeConcernResolution({ id: 'CONCERN-1', resolved: true, evidence: 'e' }),
+    /resolved/,
+  );
+});
+
+test('[normalizeConcernResolution] out-of-enum resolution throws', () => {
+  assert.throws(
+    () => normalizeConcernResolution({ id: 'CONCERN-1', resolution: 'maybe', evidence: 'e' }),
+    /out-of-enum/,
+  );
+});
+
+test('[normalizeConcernResolution] missing id throws', () => {
+  assert.throws(
+    () => normalizeConcernResolution({ resolution: 'resolved', evidence: 'e' }),
+  );
+});
+
+test('[normalizeConcernResolution] null input throws', () => {
+  assert.throws(() => normalizeConcernResolution(null));
+});
+
+test('[normalizeConcernResolution] array input throws', () => {
+  assert.throws(() => normalizeConcernResolution(['CONCERN-1', 'resolved', 'e']));
 });
 
 test('[schema] dev-flow VERDICT.findings enforces stable stuck-detection fields', () => {

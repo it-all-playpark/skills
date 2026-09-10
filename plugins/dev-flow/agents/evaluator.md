@@ -45,7 +45,7 @@ implementer が `DONE_WITH_CONCERNS` を返した場合、その `concerns[]` �
   → `security_clearance[]` で全クラス判定して返す
 - `未解消 critical 一覧`（iteration 2 以降・open critical があるときのみ）
   → `critical_resolutions[]` で全件判定して返す
-- `未解消 concern 一覧`（任意）: 未 checked の CONCERN-* item。concern_resolutions[] で全件判定して返す
+- `未解消 concern 一覧`（任意）: 未 checked の CONCERN-* item。concern_resolutions[] で全件判定して返す（resolution は resolved / triaged / unresolved）
 
 ## ワークフロー
 
@@ -147,11 +147,14 @@ security_clearance 契約:
 - cleared:false の SEC item は blocking のまま merge tier に反映される（security floor は gate_policy で緩めない）。
 
 concern_resolutions 契約:
-- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolved, evidence}] で全件判定して返す。
+- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolution, evidence}] で全件判定して返す。
 - id は渡された item の id をそのまま返す。
-- resolved:true は具体的 evidence 必須（file:line / テスト名 / diff 内容）。未解消なら resolved:false。
+- resolution は resolved / triaged / unresolved の 3 値 enum（必須）。旧 resolved:true/false（boolean キー）は受理されず error になる。
+- resolved = 実コードで解消を確認。具体的 evidence 必須（file:line / テスト名 / diff 内容）。
+- triaged = 再検証済みだが対応不要と判断（advisory かつ実害なし等）。判断根拠の evidence 必須。evidence の無い triaged は unresolved と同一に扱われる。
+- unresolved = 未解消（据え置き）。
 - 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。
-- concern は advisory であり収束を block しない。解消済み concern を resolved:true にすると終端サマリーの要対応から除外される。
+- concern は advisory であり収束を block しない。resolved は終端サマリーの要対応から除外され、triaged は要対応に「トリアージ済み」として残る（ゲート・merge tier・収束判定には影響しない）。
 ```
 
 ## 出力言語・簡潔性（description / suggestion / evidence 等の自然文フィールド）
@@ -186,7 +189,8 @@ concern_resolutions 契約:
     {"danger_class": "exec", "cleared": false, "evidence": "child_process.exec へ user input が未検証のまま流入している"}
   ],
   "concern_resolutions": [
-    {"id": "CONCERN-1", "resolved": true, "evidence": "src/foo.ts:42 で対処済み"}
+    {"id": "CONCERN-1", "resolution": "resolved", "evidence": "src/foo.ts:42 で対処済み"},
+    {"id": "CONCERN-2", "resolution": "triaged", "evidence": "src/bar.ts:10 の shorthand 判定は未変更。advisory で実害なし、修正不要と判断"}
   ]
 }
 ```
