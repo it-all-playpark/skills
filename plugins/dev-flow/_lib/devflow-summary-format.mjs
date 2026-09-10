@@ -15,7 +15,7 @@
  *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
  *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
  *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は env_key/env_count を任意付帯し「環境ノート」に折りたたみ表示される。issue #296。checked な environment item は環境ノートで ✅ CI確認済 と表示される（issue #297））
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
@@ -371,89 +371,29 @@ export function buildDevflowSummaryBody({
     }
   }
 
-  // 7. 折りたたみブロック群（AC-3）
-
-  // 解消済み ledger
+  // 7. 解消済み証跡の件数行（issue #603）。全文 evidence は journal telemetry `resolved_evidence`
+  // （canonical _lib/resolved-evidence.mjs、同一の選別述語）へ移した。ここでは件数だけを常時可視で出す。
+  // 未解消・未 clear の item は上記「要対応」セクションに従来どおり全文で出る（AC2 / AC5）。
   const resolvedItems = [
     ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: '必須（blocking）' })),
     ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: '助言（advisory）' })),
   ];
-  if (resolvedItems.length > 0) {
-    const n = resolvedItems.length;
-    lines.push('');
-    lines.push(`<details><summary>✅ Goal Ledger 解消済み ${n} 件</summary>`);
-    lines.push('');
-    lines.push('| 区分 | 観点 | 内容 | 根拠 |');
-    lines.push('|---|---|---|---|');
-    for (const item of resolvedItems) {
-      const dimension = item.dimension != null ? item.dimension : '—';
-      const content = mdCell(item.text);
-      const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${item._lane} | ${dimension} | ${content} | ${evidence} |`);
-    }
-    lines.push('');
-    lines.push('</details>');
-  }
-
-  // 環境ノート（issue #296: sandbox 環境事象 — 折りたたみ表示、人間の対応は通常不要）
-  if (envItems.length > 0) {
-    const n = envItems.length;
-    lines.push('');
-    lines.push(`<details><summary>🏗 環境ノート ${n} 件（sandbox 環境事象 — 人間の対応は通常不要）</summary>`);
-    lines.push('');
-    lines.push('| 状態 | パターン (env_key) | 件数 | 内容 | 根拠 |');
-    lines.push('|---|---|---|---|---|');
-    for (const item of envItems) {
-      const status = item.checked === true ? '✅ CI確認済' : '—';
-      const pattern = item.env_key != null ? item.env_key : '—';
-      const envCount = typeof item.env_count === 'number' ? String(item.env_count) : '1';
-      const content = mdCell(item.text);
-      const evidence = item.evidence ? mdCell(item.evidence) : '—';
-      lines.push(`| ${status} | ${pattern} | ${envCount} | ${content} | ${evidence} |`);
-    }
-    lines.push('');
-    lines.push('</details>');
-  }
-
-  // satisfied AC
+  const countLines = [];
+  if (resolvedItems.length > 0) countLines.push(`- ✅ Goal Ledger 解消済み ${resolvedItems.length} 件`);
+  if (envItems.length > 0) countLines.push(`- 🏗 環境ノート ${envItems.length} 件（sandbox 環境事象 — 人間の対応は通常不要）`);
   if (acArr) {
-    const satisfiedAC = acArr.filter(a => a.satisfied === true);
-    const s = satisfiedAC.length;
+    const s = acArr.filter(a => a.satisfied === true).length;
     const t = acArr.length;
-    if (s > 0) {
-      lines.push('');
-      lines.push(`<details><summary>✅ 受け入れ基準 (AC) ${s}/${t} 達成</summary>`);
-      lines.push('');
-      lines.push('| AC | 検証 | 根拠 |');
-      lines.push('|---|---|---|');
-      for (const ac of satisfiedAC) {
-        const verifiedBy = ac.verified_by != null ? ac.verified_by : 'inspection';
-        const evidenceCell = ac.evidence ? mdCell(ac.evidence) : '—';
-        lines.push(`| AC#${ac.ac_index + 1} | ${verifiedBy} | ${evidenceCell} |`);
-      }
-      lines.push('');
-      lines.push('</details>');
-    }
+    if (s > 0) countLines.push(`- ✅ 受け入れ基準 (AC) ${s}/${t} 達成`);
   }
-
-  // cleared security clearance
   if (securityClearance.length > 0) {
-    const cleared = securityClearance.filter(sc => sc.cleared === true);
-    const c = cleared.length;
-    const ct = securityClearance.length;
-    if (c > 0) {
-      lines.push('');
-      lines.push(`<details><summary>✅ セキュリティ確認 (Security clearance) ${c}/${ct} 済</summary>`);
-      lines.push('');
-      lines.push('| danger class | 根拠 |');
-      lines.push('|---|---|');
-      for (const sc of cleared) {
-        const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
-        lines.push(`| ${sc.danger_class} | ${evidenceCell} |`);
-      }
-      lines.push('');
-      lines.push('</details>');
-    }
+    const c = securityClearance.filter(sc => sc.cleared === true).length;
+    if (c > 0) countLines.push(`- ✅ セキュリティ確認 (Security clearance) ${c}/${securityClearance.length} 済`);
+  }
+  if (countLines.length > 0) {
+    lines.push('');
+    lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
+    for (const l of countLines) lines.push(l);
   }
 
   // 8b. lite レビュー統合セクション（issue #392 AC-6）
