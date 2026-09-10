@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripComments } from '../../../tools/sync-inlines.mjs';
+import { neutralizeRegexLiterals } from './test-helpers/source-scan.mjs';
 
 // dev-flow.js 内の全 agent() 呼び出しが trackedAgent() 経由になっているかを静的検証する
 // routing test（issue #445）。wrapper（`async function trackedAgent(prompt, opts) { ...
@@ -16,74 +17,8 @@ import { stripComments } from '../../../tools/sync-inlines.mjs';
 // 文中の "agent()" 言及まで生き残ってしまう）。本テストはその既知の限界を
 // 迂回するため、stripComments に通す前に regex literal 本文をプレースホルダへ
 // 置換する neutralizeRegexLiterals を通す（tools/sync-inlines.mjs 本体は変更しない
-// — 生成区間ガード対象外の read-only 検証ロジックとしてテスト側にのみ実装する）。
-function neutralizeRegexLiterals(src) {
-  let out = '';
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const ch = src[i];
-    // 文字列・テンプレートリテラルはクオート対応を崩さないよう素通しする
-    if (ch === '"' || ch === "'" || ch === '`') {
-      const quote = ch;
-      out += ch;
-      i++;
-      while (i < n) {
-        const c = src[i];
-        out += c;
-        if (c === '\\') {
-          i++;
-          if (i < n) { out += src[i]; i++; }
-        } else if (c === quote) {
-          i++;
-          break;
-        } else {
-          i++;
-        }
-      }
-      continue;
-    }
-    // line comment はそのまま素通し（stripComments が後段で除去する）
-    if (ch === '/' && src[i + 1] === '/') {
-      while (i < n && src[i] !== '\n') { out += src[i]; i++; }
-      continue;
-    }
-    // block comment もそのまま素通し
-    if (ch === '/' && src[i + 1] === '*') {
-      out += '/*';
-      i += 2;
-      while (i + 1 < n && !(src[i] === '*' && src[i + 1] === '/')) { out += src[i]; i++; }
-      if (i + 1 < n) { out += '*/'; i += 2; }
-      continue;
-    }
-    // regex literal 候補: '/' が直前トークンから見て式開始位置にある場合のみ対象化する
-    if (ch === '/') {
-      const prevTrim = out.replace(/\s+$/, '');
-      const prevChar = prevTrim.slice(-1);
-      const isRegexOpenerContext = prevChar === '' || '([{,:=!&|?;'.includes(prevChar) || /return$/.test(prevTrim);
-      if (isRegexOpenerContext) {
-        let j = i + 1;
-        let inClass = false;
-        while (j < n) {
-          const c = src[j];
-          if (c === '\\') { j += 2; continue; }
-          if (c === '\n') break; // regex literal は改行を跨がない
-          if (c === '[') { inClass = true; j++; continue; }
-          if (c === ']') { inClass = false; j++; continue; }
-          if (c === '/' && !inClass) { j++; break; }
-          j++;
-        }
-        while (j < n && /[a-z]/i.test(src[j])) j++;
-        out += '_'.repeat(j - i);
-        i = j;
-        continue;
-      }
-    }
-    out += ch;
-    i++;
-  }
-  return out;
-}
+// — 生成区間ガード対象外の read-only 検証ロジックとして test-helpers/source-scan.mjs に
+// 実装する）。
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
