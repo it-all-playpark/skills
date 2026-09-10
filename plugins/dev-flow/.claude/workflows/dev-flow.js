@@ -3995,13 +3995,20 @@ const DIFFHASH = {
   properties: { hash: { type: 'string' }, empty: { type: 'boolean' }, epoch: { type: 'number' } },
 }
 // SECFLOOR: Security floor 統合 exec-proxy (`_shared/scripts/secfloor-classify.sh`) の応答 schema
-// (issue #544, S1)。required は空 — 部分的スキーマ不一致で応答全体を reject せず、per-field 検証
-// (parseSecfloorFields) へ流す（1 フィールドの型崩れが正常フィールドまで巻き込むのを防ぐ。ambiguity 2）。
+// (issue #544, S1)。`risk` のみ required（ok:boolean / hits:array 必須、issue #617）— risk は
+// fail-closed フィールドなので、proxy が payload をネストする等の形状不一致を schema 契約違反として
+// 検知し retryOnContractViolation の再試行機会を与える（required:[] だと契約違反にならず一発で
+// fail-closed に倒れ、診断もできない）。files / struct / diffhash は required にしない（fail-safe /
+// fail-open のまま per-field 検証 parseSecfloorFields へ流す）。
 const SECFLOOR = {
   type: 'object',
-  required: [],
+  required: ['risk'],
   properties: {
-    risk: { type: 'object' },
+    risk: {
+      type: 'object',
+      required: ['ok', 'hits'],
+      properties: { ok: { type: 'boolean' }, hits: { type: 'array' } },
+    },
     files: { type: ['array', 'null'] },
     struct: { type: ['object', 'null'] },
     diffhash: { type: ['object', 'null'] },
@@ -4035,10 +4042,18 @@ const SECFLOOR = {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-function parseRiskField(unified) {
+// risk フィールドが契約通りの形か (issue #617)。fail-closed に倒れた 2 原因
+// ---- (a) proxy が契約外形状を返した (top-level risk 欠落) / (b) proxy が契約通りの形で
+// ok:false を報告した (secfloor-classify.sh 自体の失敗) ---- を呼び出し側が区別するための述語。
+// parseRiskField の採用条件そのもので、両者が drift しないよう単一定義を共有する。
+function isWellFormedRiskField(unified) {
   const risk = unified?.risk;
-  if (risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits)) {
-    return risk;
+  return risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits);
+}
+
+function parseRiskField(unified) {
+  if (isWellFormedRiskField(unified)) {
+    return unified.risk;
   }
   return { ok: false, hits: [], error: 'secfloor unified proxy unavailable (fail-closed)' };
 }
@@ -4542,6 +4557,18 @@ function crossRepoReturnNote(artifacts) {
 // call site を無差別リトライすると、副作用完了後に StructuredOutput 未達で終わった agent を
 // 同一 prompt で再実行して二重 push・journal 二重追記・重複コメントを起こし得るため、副作用の
 // ない読み取り専用 probe 系 call site（resolve-base / worktree-base-check 等）のみで有効化する。
+// secfloorTopLevelKeys: Security floor 統合 proxy が契約外形状を返して risk fail-closed へ倒れたとき、
+// 診断用に応答の top-level キー一覧を文字列化する（issue #617。値は log 専用で判定に使わない）。
+// 形状が契約通りで proxy 自身が ok:false を報告したケースでは top-level キーは正常な並びになり
+// 診断価値がないため、呼び出し側は isWellFormedRiskField で 2 原因を出し分けて risk.error を出す。
+function secfloorTopLevelKeys(unified) {
+  if (unified == null) return 'null'
+  if (Array.isArray(unified)) return 'array'
+  if (typeof unified !== 'object') return typeof unified
+  const keys = Object.keys(unified)
+  return keys.length ? keys.join(',') : '(none)'
+}
+
 const SUBAGENT_COUNTS = {};
 // abort telemetry context（issue #607）: run が throw で abort したとき top-level catch が journal handoff に載せる
 // 「どこで落ちたか」を trackedAgent が毎回記録する（need() の throw は直前 agent の null 返却が原因なので同じ
@@ -5478,7 +5505,9 @@ async function execSecurityFloorPhase(state) {
   // telemetry label 連続性のため）。throw（StructuredOutput 未返却・proxy 実行失敗等）は
   // structural-classify の try 包み precedent と同型で吸収し、unified=null として
   // parseSecfloorFields の per-field フォールバック（risk fail-closed 支配）へ倒す。need() は撤去 —
-  // null で run abort させず fail-closed HOLD へ倒す。
+  // null で run abort させず fail-closed HOLD へ倒す。StructuredOutput 契約違反（schema 不一致で
+  // StructuredOutput が完了しない場合を含む）は read-only probe のため retryOnContractViolation で
+  // 同一 prompt を 1 回だけリトライする（issue #617）。
   let unified = null
   try {
     unified = await trackedAgent(
@@ -5487,10 +5516,17 @@ async function execSecurityFloorPhase(state) {
       + `{"risk":{"ok":false,"hits":[],"error":"..."},"files":null,"struct":null,"diffhash":null} で返せ。`
       + `失敗時に risk.ok:true を生成してはならない）:\n`
       + `secfloor-classify ${WT} origin/${BASE}`,
-      { agentType: 'dev-runner-haiku-ro', schema: SECFLOOR, label: 'danger-grep', phase: 'Security floor' },
+      { agentType: 'dev-runner-haiku-ro', schema: SECFLOOR, label: 'danger-grep', phase: 'Security floor', retryOnContractViolation: true },
     )
   } catch (e) { log(`⚠️ secfloor-classify 呼び出しが例外 — unified=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
   const { risk, files, struct, hash } = parseSecfloorFields(unified)
+  // fail-closed の 2 原因を出し分ける（issue #617）。形状不一致は top-level キー一覧が、
+  // proxy 自身の失敗報告（形状は契約通り）は risk.error が診断値になる。
+  if (risk.ok !== true) {
+    log(isWellFormedRiskField(unified)
+      ? `⚠️ secfloor proxy が失敗を報告した（error: ${risk.error ?? 'unknown'}）— risk fail-closed へ倒す`
+      : `⚠️ secfloor proxy が契約外形状を返した（top-level keys: ${secfloorTopLevelKeys(unified)}）— risk fail-closed へ倒す`)
+  }
   const dangerHits = risk.ok === true ? [...new Set(secHitsOf(risk).map((h) => h.class))] : []
   ledger = reconcileDanger(ledger, risk)
   ledger = reconcileTestsurf(ledger, risk)

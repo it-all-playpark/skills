@@ -73,21 +73,27 @@ test('[structural-classify-routing] realizedCount computation excludes format_on
   );
 });
 
-// ---- (6) SECFLOOR schema fail-open/fail-safe tolerance: required is [] (no field required) ----
+// ---- (6) SECFLOOR schema: required:['risk'] (struct/files/diffhash stay optional) ----
 //
 // struct はもはや専用スキーマを持たず、統合スキーマ SECFLOOR の一部として応答される。
-// SECFLOOR は required:[] で応答全体を reject しない（1 フィールドの型崩れが正常フィールド
-// まで巻き込むのを防ぐ。ambiguity 2 の解決。struct の可否は SECFLOOR ではなく
-// parseStructField 側の JS レベル検証が担う）。
+// SECFLOOR は required:['risk']（risk は fail-closed フィールドなので schema 契約で形状不一致を
+// 契約違反にする。issue #617）。struct / files / diffhash は required に含めず、SECFLOOR に対して
+// fail-open / fail-safe を維持する（可否は SECFLOOR ではなく parseStructField 等の JS レベル検証
+// が担う）。
 
-test("[structural-classify-routing] SECFLOOR schema requires no field (struct を含む全フィールドがスキーマレベルでは任意)", () => {
+test("[structural-classify-routing] SECFLOOR schema requires only 'risk' (struct/files/diffhash はスキーマレベルでは任意)", () => {
   const idx = devFlowSrc.indexOf('const SECFLOOR');
   assert.ok(idx !== -1, 'Could not find SECFLOOR schema definition in dev-flow.js');
-  const window = devFlowSrc.slice(idx, idx + 300);
+  const window = devFlowSrc.slice(idx, idx + 600);
   assert.match(
     window,
-    /required:\s*\[\s*\]/,
-    `SECFLOOR schema 'required' should be [] (fail-open/fail-safe tolerance for all fields), got window: ${window}`,
+    /required:\s*\[\s*'risk'\s*\]/,
+    `SECFLOOR schema 'required' should be ['risk'], got window: ${window}`,
+  );
+  assert.doesNotMatch(
+    window,
+    /required:\s*\[[^\]]*'struct'/,
+    `SECFLOOR schema 'required' should not include 'struct', got window: ${window}`,
   );
   assert.match(window, /struct:\s*\{\s*type:\s*\[\s*'object',\s*'null'\s*\]\s*\}/, 'SECFLOOR schema should type struct as object|null');
 });
