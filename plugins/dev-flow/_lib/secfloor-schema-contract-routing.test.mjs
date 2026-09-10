@@ -216,10 +216,36 @@ test('[secfloor-schema-contract][AC5-source] execSecurityFloorPhase logs top-lev
   const nextFnIdx = devFlowSrc.indexOf('\nasync function ', fnStart + 1);
   const fnBody = devFlowSrc.slice(fnStart, nextFnIdx === -1 ? devFlowSrc.length : nextFnIdx);
 
-  assert.match(fnBody, /if\s*\(\s*risk\.ok\s*!==\s*true\s*\)\s*log\(/, 'risk.ok!==true 条件の log( 呼び出しが見つからない');
+  assert.match(fnBody, /if\s*\(\s*risk\.ok\s*!==\s*true\s*\)\s*\{/, 'risk.ok!==true 条件の log 分岐が見つからない');
   assert.match(fnBody, /契約外形状/, 'log 文字列に「契約外形状」が含まれない');
   assert.match(fnBody, /top-level keys:/, 'log 文字列に "top-level keys:" が含まれない');
   assert.match(fnBody, /secfloorTopLevelKeys\(unified\)/, 'log 呼び出しが secfloorTopLevelKeys(unified) を使っていない');
+});
+
+// fail-closed の原因は 2 つある（形状不一致 / proxy 自身の失敗報告）。両者を同一文言で出すと、
+// 後者では「契約外形状」と言いながら正常な top-level キー一覧が並び、かつ真の原因である
+// risk.error がどこにも出ない。出し分けを source レベルで pin する。
+test('[secfloor-schema-contract][AC5-source] fail-closed log distinguishes malformed shape from proxy-reported failure', () => {
+  const fnStart = devFlowSrc.indexOf('async function execSecurityFloorPhase(state)');
+  const nextFnIdx = devFlowSrc.indexOf('\nasync function ', fnStart + 1);
+  const fnBody = devFlowSrc.slice(fnStart, nextFnIdx === -1 ? devFlowSrc.length : nextFnIdx);
+
+  assert.match(fnBody, /isWellFormedRiskField\(unified\)/, 'log 分岐が isWellFormedRiskField(unified) で 2 原因を判別していない');
+  assert.match(fnBody, /失敗を報告した/, 'proxy 自身の失敗報告を表す log 文言が見つからない');
+  assert.match(fnBody, /risk\.error\s*\?\?/, 'proxy 失敗報告の log が risk.error を出力していない');
+});
+
+// 述語は parseRiskField の採用条件そのもの。二重定義になると log 分岐と実際の
+// fail-closed 判定が drift するため、canonical に単一定義であることを pin する。
+test('[secfloor-schema-contract][AC5-source] isWellFormedRiskField is the single predicate shared with parseRiskField', () => {
+  const defs = devFlowSrc.match(/function isWellFormedRiskField\(unified\) \{/g) ?? [];
+  assert.equal(defs.length, 1, `isWellFormedRiskField の定義は 1 箇所であるべき (found ${defs.length})`);
+
+  const idx = devFlowSrc.indexOf('function parseRiskField(unified) {');
+  assert.ok(idx !== -1, 'parseRiskField の定義が見つからない');
+  const endIdx = devFlowSrc.indexOf('\n}', idx);
+  const parseRiskSrc = devFlowSrc.slice(idx, endIdx + 2);
+  assert.match(parseRiskSrc, /isWellFormedRiskField\(unified\)/, 'parseRiskField が述語を共有していない（条件式の複製）');
 });
 
 test('[secfloor-schema-contract][AC5-behavior] secfloorTopLevelKeys extracted from dev-flow.js behaves for null/undefined/object/empty/primitive/array', () => {

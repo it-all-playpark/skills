@@ -24,10 +24,18 @@
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-function parseRiskField(unified) {
+// risk フィールドが契約通りの形か (issue #617)。fail-closed に倒れた 2 原因
+// ---- (a) proxy が契約外形状を返した (top-level risk 欠落) / (b) proxy が契約通りの形で
+// ok:false を報告した (secfloor-classify.sh 自体の失敗) ---- を呼び出し側が区別するための述語。
+// parseRiskField の採用条件そのもので、両者が drift しないよう単一定義を共有する。
+export function isWellFormedRiskField(unified) {
   const risk = unified?.risk;
-  if (risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits)) {
-    return risk;
+  return risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits);
+}
+
+function parseRiskField(unified) {
+  if (isWellFormedRiskField(unified)) {
+    return unified.risk;
   }
   return { ok: false, hits: [], error: 'secfloor unified proxy unavailable (fail-closed)' };
 }

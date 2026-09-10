@@ -37,7 +37,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { parseSecfloorFields } from './secfloor-unified.mjs';
+import { parseSecfloorFields, isWellFormedRiskField } from './secfloor-unified.mjs';
 import { reconcileDanger, seedSecurityLedger, classifyMergeTier } from './merge-tier.mjs';
 import { policyBlockingItems, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
@@ -249,4 +249,40 @@ test('[secfloor-unified-routing][B-f] risk.ok:false 時、reconcileTestsurf は�
   const after = reconcileTestsurf(ledger, risk);
   assert.deepEqual(after, before, 'risk.ok!==true 時、reconcileTestsurf は ledger を一切 touch しないはず（既存据え置き）');
   assert.equal(after.items.length, before.items.length, '新規 TESTSURF seed が発生してはならない');
+});
+
+// ---- isWellFormedRiskField: fail-closed の 2 原因を呼び出し側が区別するための述語 (issue #617) ----
+//
+// risk.ok!==true には (a) 形状不一致（top-level risk 欠落 → parseRiskField が合成）と
+// (b) proxy が契約通りの形で ok:false を報告（secfloor-classify.sh 自体の失敗）の 2 通りがある。
+// 述語は「採用されたか合成されたか」を返し、診断 log の文言・出力値の出し分けに使う。
+
+test('[secfloor-unified-routing][W-a] isWellFormedRiskField は契約通りの risk を true と判定する（ok:false でも形状は正しい）', () => {
+  assert.equal(isWellFormedRiskField({ risk: { ok: true, hits: [] } }), true);
+  assert.equal(isWellFormedRiskField({ risk: { ok: false, hits: [], error: 'boom' } }), true,
+    'proxy が契約通りの形で失敗を報告したケースは「形状は正しい」と判定されるべき');
+});
+
+test('[secfloor-unified-routing][W-b] isWellFormedRiskField は形状不一致を false と判定する', () => {
+  assert.equal(isWellFormedRiskField(null), false);
+  assert.equal(isWellFormedRiskField(undefined), false);
+  assert.equal(isWellFormedRiskField({}), false, 'top-level risk 欠落');
+  assert.equal(isWellFormedRiskField({ struct: { risk: { ok: true, hits: [] } } }), false,
+    'payload が struct にネストされた #614 実測形状は false であるべき');
+  assert.equal(isWellFormedRiskField({ risk: { ok: 'true', hits: [] } }), false, 'ok が boolean でない');
+  assert.equal(isWellFormedRiskField({ risk: { ok: true } }), false, 'hits 欠落');
+  assert.equal(isWellFormedRiskField({ risk: { ok: true, hits: 'x' } }), false, 'hits が配列でない');
+});
+
+test('[secfloor-unified-routing][W-c] 述語 true のとき parseRiskField は proxy の risk をそのまま採用する（error も保持）', () => {
+  const reported = { ok: false, hits: [], error: 'secfloor-classify.sh exited 2' };
+  const { risk } = parseSecfloorFields({ risk: reported });
+  assert.equal(risk.error, 'secfloor-classify.sh exited 2',
+    '契約通りの失敗報告では proxy の error がそのまま残り、診断値として log できるべき');
+});
+
+test('[secfloor-unified-routing][W-d] 述語 false のとき parseRiskField は fail-closed を合成する', () => {
+  const { risk } = parseSecfloorFields({ struct: { risk: { ok: true, hits: [] } } });
+  assert.equal(risk.ok, false);
+  assert.equal(risk.error, 'secfloor unified proxy unavailable (fail-closed)');
 });

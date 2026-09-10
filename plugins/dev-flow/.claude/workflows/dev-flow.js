@@ -4042,10 +4042,18 @@ const SECFLOOR = {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-function parseRiskField(unified) {
+// risk フィールドが契約通りの形か (issue #617)。fail-closed に倒れた 2 原因
+// ---- (a) proxy が契約外形状を返した (top-level risk 欠落) / (b) proxy が契約通りの形で
+// ok:false を報告した (secfloor-classify.sh 自体の失敗) ---- を呼び出し側が区別するための述語。
+// parseRiskField の採用条件そのもので、両者が drift しないよう単一定義を共有する。
+function isWellFormedRiskField(unified) {
   const risk = unified?.risk;
-  if (risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits)) {
-    return risk;
+  return risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits);
+}
+
+function parseRiskField(unified) {
+  if (isWellFormedRiskField(unified)) {
+    return unified.risk;
   }
   return { ok: false, hits: [], error: 'secfloor unified proxy unavailable (fail-closed)' };
 }
@@ -4551,6 +4559,8 @@ function crossRepoReturnNote(artifacts) {
 // ない読み取り専用 probe 系 call site（resolve-base / worktree-base-check 等）のみで有効化する。
 // secfloorTopLevelKeys: Security floor 統合 proxy が契約外形状を返して risk fail-closed へ倒れたとき、
 // 診断用に応答の top-level キー一覧を文字列化する（issue #617。値は log 専用で判定に使わない）。
+// 形状が契約通りで proxy 自身が ok:false を報告したケースでは top-level キーは正常な並びになり
+// 診断価値がないため、呼び出し側は isWellFormedRiskField で 2 原因を出し分けて risk.error を出す。
 function secfloorTopLevelKeys(unified) {
   if (unified == null) return 'null'
   if (Array.isArray(unified)) return 'array'
@@ -5510,7 +5520,13 @@ async function execSecurityFloorPhase(state) {
     )
   } catch (e) { log(`⚠️ secfloor-classify 呼び出しが例外 — unified=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
   const { risk, files, struct, hash } = parseSecfloorFields(unified)
-  if (risk.ok !== true) log(`⚠️ secfloor proxy が契約外形状を返した（top-level keys: ${secfloorTopLevelKeys(unified)}）— risk fail-closed へ倒す`)
+  // fail-closed の 2 原因を出し分ける（issue #617）。形状不一致は top-level キー一覧が、
+  // proxy 自身の失敗報告（形状は契約通り）は risk.error が診断値になる。
+  if (risk.ok !== true) {
+    log(isWellFormedRiskField(unified)
+      ? `⚠️ secfloor proxy が失敗を報告した（error: ${risk.error ?? 'unknown'}）— risk fail-closed へ倒す`
+      : `⚠️ secfloor proxy が契約外形状を返した（top-level keys: ${secfloorTopLevelKeys(unified)}）— risk fail-closed へ倒す`)
+  }
   const dangerHits = risk.ok === true ? [...new Set(secHitsOf(risk).map((h) => h.class))] : []
   ledger = reconcileDanger(ledger, risk)
   ledger = reconcileTestsurf(ledger, risk)
