@@ -260,7 +260,12 @@ while IFS= read -r file; do
     fi
 
     # 6. exec-sink
-    if echo "$added" | grep -Eiq 'eval\(|child_process|exec(Sync|File)?\(|spawn\(|pickle\.loads|yaml\.load\(|Function\(|new Function|deserialize|Marshal\.load'; then
+    # Case-sensitive (-E, not -Ei) on purpose: with -i the JS keyword `function(` matched the
+    # former `Function\(` alternative and every anonymous function expression tripped the
+    # critical floor (issue #616). `new Function` still catches the real sink. eval/exec/spawn
+    # carry a left word boundary so identifier suffixes (myEval( / respawn() do not match,
+    # matching the crypto-class idiom above.
+    if echo "$added" | grep -Eq '(^|[^[:alnum:]_])eval\(|child_process|(^|[^[:alnum:]_])exec(Sync|File)?\(|(^|[^[:alnum:]_])spawn\(|pickle\.loads|yaml\.load\(|new Function|deserialize|Marshal\.load'; then
         hits="${hits}${file}"$'\t'"exec-sink"$'\n'
     fi
 
