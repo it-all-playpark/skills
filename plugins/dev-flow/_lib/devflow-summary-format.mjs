@@ -18,7 +18,9 @@
  * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
- * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns
+ * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns。blockingItems/advisoryItems 内の
+ *   dimension:'concern' かつ checked:true な item と text 完全一致するものは解消済みとして表示から
+ *   除外する（issue #611）
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
  * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
@@ -242,7 +244,15 @@ export function buildDevflowSummaryBody({
   const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true && it.dimension !== 'environment');
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
-  const concerns = planConcerns || [];
+  // Plan 未解消 concerns は Plan phase 収束時のスナップショット（更新されない）だが、CONCERN-*
+  // ledger item（dimension:'concern'）は evaluator の concern_resolutions で checked/evidence
+  // 更新される。dev-flow.js は planConcerns の文字列を無加工で CONCERN-* の text に seed するため、
+  // text 完全一致で「ledger 上 checked 済み」を判定できる（issue #611）。同一 text が checked と
+  // unchecked の両方にある場合は unchecked を優先し表示を残す（fail-safe。見落とし防止）。
+  const concernLedgerItems = [...blockArr, ...advArr].filter(it => it.dimension === 'concern');
+  const resolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true).map(it => it.text));
+  const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true).map(it => it.text));
+  const concerns = (planConcerns || []).filter(c => !(resolvedConcernTexts.has(c) && !unresolvedConcernTexts.has(c)));
 
   const hasActionItems = uncheckedBlocking.length > 0
     || uncheckedAdvisory.length > 0

@@ -779,6 +779,121 @@ test('planConcerns 空 -> 「Plan 未解消 concerns」見出しを含まない'
   assert.ok(!body.includes('Plan 未解消 concerns'), 'plan concerns 見出しを含まない');
 });
 
+// ─── Plan concerns の ledger 突合による解消済み除外 (issue #611) ────────────────
+
+// CONCERN-* ledger item ヘルパー。dev-flow.js は planConcerns の文字列を無加工で text にして
+// {id:'CONCERN-<i>', text, dimension:'concern', severity:'major', source:'concern'} を seed し、
+// evaluator の concern_resolutions で checked/evidence を更新する（本ファイル冒頭コメント参照）。
+function concernItem(text, { checked = false, evidence = null } = {}) {
+  return {
+    id: 'CONCERN-1',
+    text,
+    dimension: 'concern',
+    severity: 'major',
+    source: 'concern',
+    checked,
+    evidence,
+  };
+}
+
+test('issue #611 AC1: advisoryItems に checked:true の concern item がある planConcern は「Plan 未解消 concerns」に出ない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    planConcerns: ['[plan:major] topicA: descA'],
+    advisoryItems: [
+      concernItem('[plan:major] topicA: descA', { checked: true, evidence: 'concern resolved: verified' }),
+    ],
+  });
+  assert.ok(!body.includes('- [plan:major] topicA: descA'), '解消済み concern 行を含まない');
+  assert.ok(!body.includes('Plan 未解消 concerns'), 'plan concerns 見出しを含まない');
+});
+
+test('issue #611 AC1: blockingItems 側（llm-major-blocking 相当）の checked concern も除外される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    gatePolicy: 'llm-major-blocking',
+    planConcerns: ['[plan:major] topicA: descA'],
+    blockingItems: [
+      concernItem('[plan:major] topicA: descA', { checked: true, evidence: 'concern resolved: verified' }),
+    ],
+  });
+  assert.ok(!body.includes('- [plan:major] topicA: descA'), '解消済み concern 行を含まない（blocking 側）');
+  assert.ok(!body.includes('Plan 未解消 concerns'), 'plan concerns 見出しを含まない');
+});
+
+test('issue #611 AC2: 未解消 concern は現行と同一の詳細度で残る（byte 一致）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    planConcerns: ['[plan:major] A: a', '[plan:major] B: b'],
+    advisoryItems: [
+      concernItem('[plan:major] A: a', { checked: true, evidence: 'concern resolved: verified' }),
+      concernItem('[plan:major] B: b', { checked: false }),
+    ],
+  });
+  const start = body.indexOf('**Plan 未解消 concerns**:');
+  assert.ok(start >= 0, 'Plan 未解消 concerns 見出しを含む');
+  const rest = body.slice(start);
+  const end = rest.indexOf('\n\n');
+  const section = end >= 0 ? rest.slice(0, end) : rest;
+  assert.equal(section, '**Plan 未解消 concerns**:\n- [plan:major] B: b', '未解消 concern のみ byte 一致で残る');
+});
+
+test('issue #611: ledger に対応 item が無い planConcern は従来どおり表示（micro 等の未 seed ケース）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    planConcerns: ['orphan concern'],
+    advisoryItems: [],
+    blockingItems: [],
+  });
+  assert.ok(body.includes('- orphan concern'), '対応 ledger item が無い concern は表示される');
+});
+
+test('issue #611: 全 concern 解消かつ他の未解消なしなら「### ✅ 要対応事項なし」', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    planConcerns: ['[plan:major] only: one'],
+    advisoryItems: [
+      concernItem('[plan:major] only: one', { checked: true, evidence: 'concern resolved: verified' }),
+    ],
+  });
+  assert.ok(body.includes('### ✅ 要対応事項なし'), '要対応事項なしを含む');
+  assert.ok(!body.includes('### ⚠️ 要対応'), '⚠️ 要対応を含まない');
+});
+
+test('issue #611: 同一 text の concern item が checked と unchecked の両方にあるときは表示を残す（unchecked 優先）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    planConcerns: ['[plan:major] dup: d'],
+    advisoryItems: [
+      { ...concernItem('[plan:major] dup: d', { checked: true, evidence: 'concern resolved: verified' }), id: 'CONCERN-1' },
+      { ...concernItem('[plan:major] dup: d', { checked: false }), id: 'CONCERN-2' },
+    ],
+  });
+  assert.ok(body.includes('- [plan:major] dup: d'), '同一 text が unchecked 側にも残っている場合は表示を残す');
+});
+
+test("issue #611: dimension が 'concern' 以外（例 'environment'）の checked item とは突き合わせない", () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    planConcerns: ['[plan:major] E: e'],
+    advisoryItems: [
+      { id: 'ENV-X', text: '[plan:major] E: e', dimension: 'environment', checked: true, severity: 'minor', source: 'concern' },
+    ],
+  });
+  assert.ok(body.includes('- [plan:major] E: e'), 'dimension 不一致の checked item とは突き合わせず表示が残る');
+});
+
+test('issue #611: 解消済み concern を除外しても「解消済み証跡」件数行（✅ Goal Ledger 解消済み N 件）は変わらない', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    planConcerns: ['[plan:major] topicA: descA'],
+    advisoryItems: [
+      concernItem('[plan:major] topicA: descA', { checked: true, evidence: 'concern resolved: verified' }),
+    ],
+  });
+  assert.ok(body.includes('- ✅ Goal Ledger 解消済み 1 件'), '解消済み件数行は変わらない');
+});
+
 // ─── undefined が文字列に含まれない ──────────────────────────────────────────
 
 test('undefined が文字列に展開されない', () => {
