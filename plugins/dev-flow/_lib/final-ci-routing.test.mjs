@@ -23,6 +23,13 @@
 //   (k) FINAL_CI_KIND_* と HOLD_REASON_KINDS の同値性
 //   (l) dev-flow.js の ci-final 呼び出し周辺・finalCiPrompt 出力に禁止語が含まれない
 //   (m) note の文言が hold_kind に応じて変わる
+//   (n) test#final tests:'error'（起動失敗）+ sha 一致 + 全 success → ci_verified + REVIEW + final_test_green null
+//       + reasons に 'final test red' 不含 + final-ac-reconcile 起動（issue #619）
+//   (o) tests:'error' + 1 件 pending → unavailable + HOLD + reason=pending（fail-closed 維持）
+//   (p) tests:'error' + 1 件 failure → unavailable + HOLD + reason=failure
+//   (q) tests:'error' + sha 不一致 → unavailable + HOLD + reason=sha-mismatch
+//   (r) tests:'failed'（本物の red）+ sha 一致 + 全 success → reverified + HOLD + 'final test red' + ci-final 不発
+//       （CI 委譲の発火条件を reverified+red へ広げない）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -148,6 +155,9 @@ function makeSandbox({ overrides = {}, fixesApplied = 0 } = {}) {
 
 // unavailable を作るための共通 override: test#final が null（Final reconcile がローカル再検証不能）。
 const UNAVAILABLE_BASE = { 'test#final': null };
+
+// tests:'error' = テストが 1 件も実行されなかった起動失敗（issue #619）。unavailable 経路に乗る。
+const ERROR_BASE = { 'test#final': { tests: 'error', green: false, summary: 'pnpm: command not found — テストは 1 件も実行されていない' } };
 
 // ============================================================
 // (a) sha 一致 + 全 success → ci_verified + merge_tier REVIEW
@@ -478,4 +488,126 @@ test("[final-ci] (m2) note は human_judgment の HOLD で '人間判断必須' 
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'm2-b');
   assert.ok(result?.note?.includes('人間判断必須'), `(m2) note に '人間判断必須' が含まれるはずだが ${JSON.stringify(result?.note)}`);
+});
+
+// ============================================================
+// (n) test#final tests:'error'（起動失敗）+ sha 一致 + 全 success → ci_verified + REVIEW
+//     + final_test_green null + 'final test red' 不含 + final-ac-reconcile 起動（issue #619）
+// ============================================================
+
+test("[final-ci] (n) test#final tests:'error' + sha 一致 + 全 success → ci_verified + REVIEW + final_test_green null + 'final test red' 不含 + final-ac-reconcile 起動", async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: { ...ERROR_BASE, 'ci-final': { ok: true, headRefOid: SHA40, statusCheckRollup: ROLLUP_OK } },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'n');
+  assert.equal(error, null, `(n) error は null のはずだが ${error?.message}`);
+  assert.ok(result !== null, '(n) workflow は return object を返すべきだが null だった');
+
+  assert.equal(result?.final_reconcile, 'ci_verified', `(n) final_reconcile は 'ci_verified' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.merge_tier, 'REVIEW', `(n) merge_tier は REVIEW のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.equal(result?.final_test_green, null, `(n) final_test_green は null のはずだが ${JSON.stringify(result?.final_test_green)}`);
+  assert.ok(
+    !(result?.merge_tier_reasons ?? []).some((r) => r.includes('final test red')),
+    `(n) merge_tier_reasons に 'final test red' を含んではならないが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  assert.ok(Array.isArray(result?.merge_tier_hold_reasons) && result.merge_tier_hold_reasons.length === 0, `(n) merge_tier_hold_reasons は空配列のはずだが ${JSON.stringify(result?.merge_tier_hold_reasons)}`);
+  assert.equal(result?.merge_tier_hold_kind, null, `(n) merge_tier_hold_kind は null のはずだが ${JSON.stringify(result?.merge_tier_hold_kind)}`);
+  assert.equal(calls.filter((c) => c.label === 'ci-final').length, 1, "(n) 'ci-final' は 1 回呼ばれるはず");
+  assert.ok(calls.some((c) => c.label === 'final-ac-reconcile'), "(n) ci_verified では 'final-ac-reconcile' が起動し AC が最終 tree で再検証されるはず");
+});
+
+// ============================================================
+// (o)/(p)/(q) tests:'error' + CI が pending / failure / sha 不一致 → unavailable のまま HOLD（fail-closed 維持）
+// ============================================================
+
+test("[final-ci] (o) tests:'error' + 1 件 pending → unavailable + HOLD + reason=pending（fail-closed 維持）", async () => {
+  const { ctx } = makeSandbox({
+    fixesApplied: 1,
+    overrides: {
+      ...ERROR_BASE,
+      'ci-final': {
+        ok: true, headRefOid: SHA40,
+        statusCheckRollup: [{ __typename: 'CheckRun', name: 'build', status: 'IN_PROGRESS' }],
+      },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'o');
+  assert.ok(result !== null, '(o) workflow は return object を返すべきだが null だった');
+  assert.equal(result?.final_reconcile, 'unavailable', `(o) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(o) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok(
+    (result?.merge_tier_reasons ?? []).some((r) => r.includes('reason=pending')),
+    `(o) merge_tier_reasons に 'reason=pending' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  assert.equal(result?.merge_tier_hold_kind, 'deterministic_recheck', `(o) merge_tier_hold_kind は 'deterministic_recheck' のはずだが ${JSON.stringify(result?.merge_tier_hold_kind)}`);
+  assert.equal(result?.final_test_green, null, `(o) final_test_green は null のはずだが ${JSON.stringify(result?.final_test_green)}`);
+});
+
+test("[final-ci] (p) tests:'error' + 1 件 failure → unavailable + HOLD + reason=failure", async () => {
+  const { ctx } = makeSandbox({
+    fixesApplied: 1,
+    overrides: {
+      ...ERROR_BASE,
+      'ci-final': {
+        ok: true, headRefOid: SHA40,
+        statusCheckRollup: [{ __typename: 'CheckRun', name: 'build', status: 'COMPLETED', conclusion: 'FAILURE' }],
+      },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'p');
+  assert.ok(result !== null, '(p) workflow は return object を返すべきだが null だった');
+  assert.equal(result?.final_reconcile, 'unavailable', `(p) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(p) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok(
+    (result?.merge_tier_reasons ?? []).some((r) => r.includes('reason=failure')),
+    `(p) merge_tier_reasons に 'reason=failure' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  assert.equal(result?.merge_tier_hold_kind, 'human_judgment', `(p) merge_tier_hold_kind は 'human_judgment' のはずだが ${JSON.stringify(result?.merge_tier_hold_kind)}`);
+});
+
+test("[final-ci] (q) tests:'error' + sha 不一致 → unavailable + HOLD + reason=sha-mismatch", async () => {
+  const { ctx } = makeSandbox({
+    fixesApplied: 1,
+    overrides: {
+      ...ERROR_BASE,
+      'ci-final': { ok: true, headRefOid: SHA40_B, statusCheckRollup: ROLLUP_OK },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'q');
+  assert.ok(result !== null, '(q) workflow は return object を返すべきだが null だった');
+  assert.equal(result?.final_reconcile, 'unavailable', `(q) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(q) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok(
+    (result?.merge_tier_reasons ?? []).some((r) => r.includes('reason=sha-mismatch')),
+    `(q) merge_tier_reasons に 'reason=sha-mismatch' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  assert.equal(result?.merge_tier_hold_kind, 'human_judgment', `(q) merge_tier_hold_kind は 'human_judgment' のはずだが ${JSON.stringify(result?.merge_tier_hold_kind)}`);
+});
+
+// ============================================================
+// (r) tests:'failed'（本物の red）+ CI 全 success → reverified + HOLD + 'final test red' + 'ci-final' 不発
+//     （委譲条件を広げない回帰）
+// ============================================================
+
+test("[final-ci] (r) test#final tests:'failed'（本物の red）+ CI 全 success → reverified + HOLD + 'final test red' + 'ci-final' 不発（委譲条件を広げない）", async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: {
+      'test#final': { tests: 'failed', green: false, summary: '3 tests failed' },
+      'ci-final': { ok: true, headRefOid: SHA40, statusCheckRollup: ROLLUP_OK },
+    },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'r');
+  assert.ok(result !== null, '(r) workflow は return object を返すべきだが null だった');
+  assert.equal(result?.final_reconcile, 'reverified', `(r) final_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.final_test_green, false, `(r) final_test_green は false のはずだが ${JSON.stringify(result?.final_test_green)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(r) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok((result?.merge_tier_reasons ?? []).some((r) => r.includes('final test red')), `(r) merge_tier_reasons に 'final test red' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`);
+  assert.ok(!calls.some((c) => c.label === 'ci-final'), "(r) reverified 経路では 'ci-final' が呼ばれないはず");
 });
