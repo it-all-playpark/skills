@@ -21,6 +21,15 @@ function extractValidateTestPrompt() {
   return src.slice(start, end);
 }
 
+// GREEN は VALIDATE_TEST_PROMPT の応答 schema（Validate の test#i と Final reconcile の test#final が共有）。
+function extractGreenSchema() {
+  const start = src.indexOf('const GREEN = {');
+  assert.notStrictEqual(start, -1, 'const GREEN の宣言が見つからない');
+  const end = src.indexOf('\nconst ', start + 1);
+  assert.notStrictEqual(end, -1, 'GREEN 定義ブロックの終端（次の const 宣言）が見つからない');
+  return src.slice(start, end);
+}
+
 test('VALIDATE_TEST_PROMPT は絶対パスを先頭トークンとする bare 形での test 実行規約を含む', () => {
   const block = extractValidateTestPrompt();
   assert.match(block, /絶対パスを先頭トークンとする bare 形/, 'bare 形実行規約の文言が見つからない');
@@ -56,4 +65,28 @@ test('VALIDATE_TEST_PROMPT は「証跡保存」という語を含まない', ()
 test('VALIDATE_TEST_PROMPT は Write tool による JSON 保存指示を含まない', () => {
   const block = extractValidateTestPrompt();
   assert.doesNotMatch(block, /Write tool/, 'Write tool への言及が残っている（証跡保存ブロックの除去漏れ）');
+});
+
+test("GREEN schema の tests enum は passed|failed|no_tests|error の 4 値（issue #619: 環境起因の起動失敗を 'error' で分離）", () => {
+  const block = extractGreenSchema();
+  assert.match(
+    block,
+    /tests:\s*\{\s*type:\s*'string',\s*enum:\s*\['passed',\s*'failed',\s*'no_tests',\s*'error'\]\s*\}/,
+    "GREEN.properties.tests.enum が ['passed', 'failed', 'no_tests', 'error'] になっていない",
+  );
+});
+
+test('VALIDATE_TEST_PROMPT は「1 件も実行されなかった起動失敗 → tests:"error"」と「実行された上での失敗 → tests:"failed"」を区別する（issue #619）', () => {
+  const block = extractValidateTestPrompt();
+  assert.match(block, /1 件も実行されなかった起動失敗/, '起動失敗（1 件も実行されず）の分岐文言が見つからない');
+  assert.match(block, /tests:"error"/, 'tests:"error" への言及が見つからない');
+  assert.match(block, /実行された上で/, 'テストが実行された上での失敗の分岐文言が見つからない');
+  assert.match(block, /tests:"failed"/, 'tests:"failed" への言及が見つからない');
+  // 起動失敗 → error の分岐が failed → の分岐より前に書かれていること（順序で 2 分岐の意図を固定）
+  assert.ok(block.indexOf('tests:"error"') < block.indexOf('tests:"failed"'), 'tests:"error" の分岐は tests:"failed" の分岐より前に置く');
+});
+
+test('VALIDATE_TEST_PROMPT は起動失敗を tests:"failed" に潰す旧文言を含まない（issue #619）', () => {
+  const block = extractValidateTestPrompt();
+  assert.doesNotMatch(block, /それでも失敗するなら tests:"failed"/, '起動失敗を tests:"failed" に潰す旧文言が残っている');
 });

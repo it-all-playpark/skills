@@ -32,6 +32,11 @@
 //   (k) fixes=1 + test#final null + changed-files-final が UI ファイルを返し有効 config →
 //       'changed-files-final'/'ui-verify-*-final' は test#final の成否に依らず sync 成功時に
 //       実行される（issue #600 レビュー指摘: Step3〜5 は test#final の else 枝の外へ出す）
+//   (l) fixes=1 + test#final tests:'error'（起動失敗・1 件も実行されず）→ final_reconcile==='unavailable'
+//       + final_test_green が return に現れない（null）+ HOLD + reasons に 'Final reconcile 再検証不能'
+//       + 'final test red' を含まない + changed-files-final は呼ばれる（issue #619）
+//   (m) fixes=1 + test#final tests:'failed'（本物の red）→ final_reconcile==='reverified' + final_test_green===false
+//       + HOLD + reasons に 'final test red'（issue #619 回帰: 'error' 分離後も failed 経路は不変）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -434,4 +439,59 @@ test("[final-reconcile] (k) fixes=1 + test#final null + UI touch + 有効 config
     assert.ok(calls.some((c) => c.label === l), `(k) test#final が null でも label==='${l}' が呼ばれるはず`);
   }
   assert.equal(result?.final_ui_verify, 'passed', `(k) final_ui_verify は 'passed' のはずだが ${JSON.stringify(result?.final_ui_verify)}`);
+});
+
+// ============================================================
+// (l) fixes=1 + test#final tests:'error'（起動失敗） → unavailable + final_test_green null + HOLD
+//     （'final test red' を含まない）（issue #619）
+// ============================================================
+
+test("[final-reconcile] (l) fixes=1 + test#final tests:'error'（起動失敗）→ unavailable + final_test_green null + HOLD（'final test red' を含まない）", async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: { 'test#final': { tests: 'error', green: false, summary: 'pnpm: command not found — テストは 1 件も実行されていない' } },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'l');
+  assert.equal(error, null, `(l) run 全体が abort してはならないが error が発生: ${error?.message}`);
+  assert.ok(result !== null, '(l) workflow は return object を返すべきだが null だった');
+
+  assert.ok(calls.some((c) => c.label === 'test#final'), "(l) 'test#final' が呼ばれるはず");
+  assert.equal(result?.final_reconcile, 'unavailable', `(l) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.final_test_green, null, `(l) final_test_green は null のはずだが ${JSON.stringify(result?.final_test_green)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(l) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok(
+    (result?.merge_tier_reasons ?? []).some((r) => r.includes('Final reconcile 再検証不能')),
+    `(l) merge_tier_reasons に 'Final reconcile 再検証不能' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  assert.ok(
+    !(result?.merge_tier_reasons ?? []).some((r) => r.includes('final test red')),
+    `(l) 起動失敗は本物の red ではないため merge_tier_reasons に 'final test red' を含んではならないが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  // Step3（changed-files-final）は test#final の成否に依らず sync 成功時に実行される（issue #600）
+  assert.ok(calls.some((c) => c.label === 'changed-files-final'), "(l) tests:'error' でも 'changed-files-final' は呼ばれるはず");
+});
+
+// ============================================================
+// (m) fixes=1 + test#final tests:'failed'（本物の red） → reverified + final_test_green false + HOLD
+//     （回帰: 'error' 分離後も failed 経路は不変, issue #619）
+// ============================================================
+
+test("[final-reconcile] (m) fixes=1 + test#final tests:'failed'（本物の red）→ reverified + final_test_green false + HOLD + 'final test red'（回帰）", async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: { 'test#final': { tests: 'failed', green: false, summary: '3 tests failed' } },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'm');
+  assert.ok(result !== null, '(m) workflow は return object を返すべきだが null だった');
+
+  assert.equal(result?.final_reconcile, 'reverified', `(m) final_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.final_test_green, false, `(m) final_test_green は false のはずだが ${JSON.stringify(result?.final_test_green)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(m) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok(
+    (result?.merge_tier_reasons ?? []).some((r) => r.includes('final test red')),
+    `(m) merge_tier_reasons に 'final test red' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  assert.ok(!calls.some((c) => c.label === 'ci-final'), "(m) 本物の red（reverified 経路）では CI 委譲 'ci-final' を起動してはならない（fail-closed 維持）");
 });

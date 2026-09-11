@@ -3798,7 +3798,7 @@ const IMPL = {
 const GREEN = {
   type: 'object', required: ['tests', 'green'],
   properties: {
-    tests: { type: 'string', enum: ['passed', 'failed', 'no_tests'] },
+    tests: { type: 'string', enum: ['passed', 'failed', 'no_tests', 'error'] },
     green: { type: 'boolean' },
     summary: { type: 'string' },
     epoch: { type: 'number' },
@@ -4840,6 +4840,7 @@ log(deps.logLine)
 // 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
 // issue #359: sandbox 除外は先頭トークン一致のため、bare 形（絶対パス先頭トークン・前置禁止）優先実行 +
 // EPERM 起動失敗時は原因調査せず即時報告する文言へ更新。
+// issue #619: 起動失敗（1 件も実行されず）は tests:"error"、実行された上での失敗は tests:"failed" に分離する（Final reconcile で error → unavailable → CI 委譲）。
 const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し green かどうか判定せよ。\n`
   + `test 実行コマンドの規約: repo に実行可能な test スクリプト（tests/run-*.sh 等）があればそれを優先し、`
   + `\`${WT}/tests/run-tests.sh\` のように**絶対パスを先頭トークンとする bare 形**で実行せよ。`
@@ -4847,7 +4848,9 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `（理由: 先頭トークン一致で sandbox 除外が外れるため）。`
   + `実行可能な test スクリプトが repo に無い場合のみ npm test / pytest / cargo test 等へフォールバックせよ。\n`
   + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな: bare 形の実行経路を 1 回だけ試し、`
-  + `それでも失敗するなら tests:"failed" とし失敗要約を summary に入れて即座に StructuredOutput で報告せよ。\n`
+  + `それでも失敗するなら即座に StructuredOutput で報告せよ。報告時の tests の値は次の 2 分岐で決める:\n`
+  + `- テストスイートが 1 件も実行されなかった起動失敗（EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、失敗要約を summary に入れる\n`
+  + `- テストが実行された上で 1 件以上失敗 → tests:"failed"、green:false、失敗要約を summary に入れる\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_FALLBACK_CONVENTION
   + EPOCH_INSTRUCTION
@@ -6229,7 +6232,7 @@ if (state.runEval && evalStaleness === 'none') {
 // ============================================================
 phase('Final reconcile')
 let finalReconcile = 'skipped'   // 'skipped'|'reverified'|'unavailable'
-let finalTestGreen = null        // true|false|null（null = 未実行/no_tests/取得不能）
+let finalTestGreen = null        // true|false|null（null = 未実行/no_tests/取得不能/tests:error の起動失敗）
 let finalUiVerifyStatus = null   // 'passed'|'findings'|'failed_open'|'setup_failed'|null
 let finalUiVerifyResult = null   // ui-verifier の raw checks（issue #331 final-ac-reconcile prompt 用）
 // changed-files-final の raw files。Merge tier が同一 tree・同一コマンドの changed-files を
@@ -6264,6 +6267,14 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     }
     finalEpochRes = maxEpochRes([sync, ft])
     if (!ft) { finalReconcile = 'unavailable'; log('⚠️ Final reconcile: test#final が null — unavailable（fail-safe → merge tier HOLD）') }
+    else if (ft.tests === 'error') {
+      // テストが 1 件も実行されなかった起動失敗（issue #619）。本物の red（tests:'failed'）ではないので
+      // reverified + finalTestGreen=false に潰さず unavailable に載せる。finalTestGreen は null 据え置き。
+      // unavailable は下流の ci-final（PR head sha pin + check 全 success の決定論判定）で ci_verified へ
+      // 昇格しうる。CI が pending / failure / sha 不一致なら従来どおり fail-closed で merge tier HOLD。
+      finalReconcile = 'unavailable'
+      log(`⚠️ Final reconcile: test#final tests=error（テストが 1 件も実行されなかった起動失敗: ${String(ft.summary ?? '').slice(0, 200)}）— unavailable（ローカル再検証不能 → ci-final の CI 委譲を試みる）`)
+    }
     else {
       finalReconcile = 'reverified'
       finalTestGreen = ft.tests === 'no_tests' ? null : ft.green === true
