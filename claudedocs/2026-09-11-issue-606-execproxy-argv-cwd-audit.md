@@ -84,9 +84,9 @@ F2（`dev-flow.js` の `dhPrompt`）で ci-check と同水準に揃えた契約�
 | dev-flow.js:6315 | ui-verify-config-final | dev-runner-haiku-ro | UI_VERIFY_CONFIG_PROMPT（同上） | A | ui-verify-config と同一 prompt |
 | dev-flow.js:6348 | ci-final | dev-runner-haiku-ro | `gh pr view ${pr}${repo?' --repo '+repo:''} --json headRefOid,statusCheckRollup`（finalCiPrompt） | B | cd 明示なし。REPO null 時 --repo 無しで cwd 依存 |
 | dev-flow.js:6423 | diff-hash-merge | dev-runner-haiku-ro | `worktree-diff-hash ${WT} origin/${BASE}`（dhPrompt, failOpenAgent） | A | 同一 prompt |
-| dev-flow.js:6437 | danger-grep-final | dev-runner-haiku-ro | `diff-risk-classify origin/${BASE}` | B | `diff-risk-classify.sh` Usage は `[--working-tree] <base-ref>` のみ（worktree path 引数を取らない設計）。cd 明示もなし。cwd の git repo に依存 |
+| dev-flow.js:6437 | danger-grep-final | dev-runner-haiku-ro | `diff-risk-classify origin/${BASE}` | B | `diff-risk-classify.sh` Usage は `[--working-tree] <base-ref>` のみ（worktree path 引数を取らない設計）。cd 明示あり（`cd ${WT} で作業。`）。--repo / path 引数なしで cd 指示に依存 |
 | dev-flow.js:6450 | changed-files | dev-runner-haiku-ro | `git -C ${WT} diff --name-only origin/${BASE}...HEAD` | A | `-C ${WT}` 明示 |
-| dev-flow.js:6504 | gh-pr-view | dev-runner-haiku-ro | `gh pr view ${pr.pr_number} --json mergeable,mergeStateStatus` | B | `--repo` 無し。cd 明示もなし |
+| dev-flow.js:6504 | gh-pr-view | dev-runner-haiku-ro | `gh pr view ${pr.pr_number} --json mergeable,mergeStateStatus` | B | cd 明示あり（`cd ${WT} で作業。`）。--repo / path 引数なしで cd 指示に依存 |
 | dev-flow.js:6551 | ci-checks | dev-runner-haiku-ro | `` `gh pr checks ${pr.pr_number}${REPO?' --repo '+REPO:''} --json name,bucket` `` | A | prompt 文中に「`--repo` で cwd 非依存化しているため cd は不要」と明記。この時点で REPO は Setup で確定済み |
 | dev-flow.js:6624 | post-summary | dev-runner-haiku | `mktemp` → Write BODY_FILE → `gh pr comment ${pr.pr_number} --body-file <BODY_FILE>` | B | `--repo` 無し。cd 明示もなし |
 
@@ -121,9 +121,10 @@ F2（`dev-flow.js` の `dhPrompt`）で ci-check と同水準に揃えた契約�
 label を列挙する（issue の起票はしていない — 記録のみ）:
 
 - **cd 指示あり（`cd ${WT} で作業。` 等）で成立している箇所**: `analyze#`, `issue-meta`,
-  `analyze-retrunc#`, `analyze-retry#`, `issue-labels`, `pr#`（dev-flow.js）
+  `analyze-retrunc#`, `analyze-retry#`, `issue-labels`, `pr#`, `danger-grep-final`,
+  `gh-pr-view`（dev-flow.js）
 - **cd 指示・path 引数のいずれも無く、exec-proxy 呼び出し元の起動時 cwd に暗黙依存している箇所**:
-  `contract-probe#`, `ci-check-lite`, `ci-final`, `danger-grep-final`, `gh-pr-view`, `post-summary`
+  `contract-probe#`, `ci-check-lite`, `ci-final`, `post-summary`
   （dev-flow.js）、`fix#`, `fix#-retry`, `ci-check#`, `post-summary`（pr-iterate.js）— 後者のグループは
   cd 指示も無いため、契約の「呼び出し側 cd 指示への追従」対象にすら該当せず、cwd 依存の根本解消には
   `--repo` 常時付与（gh 系）または `git -C <path>` 化（`gh pr checkout` 系は該当スクリプトなし）を要する
