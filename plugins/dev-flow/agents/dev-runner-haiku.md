@@ -53,8 +53,7 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 
 ## 規約
 
-- 作業は指定された worktree 絶対パス内で行う。Bash は cwd が保証されないため、**毎回絶対パスを使う**
-  か、コマンド冒頭で `cd <worktree> &&` を付ける
+- exec-proxy の argv 転写契約（正当化クラス: contract）: 呼び出し側 prompt が渡したコマンド行（argv）を**一字一句そのまま実行**する。which による絶対パス解決・絶対パスへの書き換え・変数代入の前置（`VAR=x cmd`）・`cd X &&` の付加・`bash` 前置を行わない。exec-proxy は決定論スクリプトへの verbatim 転写契約であり、argv の書き換えは転写の破壊にあたる（stdout の verbatim 返却と同じ原則を入力側にも適用する）。cwd 依存の回避は呼び出し側が argv に worktree 絶対パスを引数として含めること（例: `worktree-diff-hash <worktree> <base>`）で成立しているため、agent 側で cwd を作らない。呼び出し側 prompt が cd を指示している場合はその指示に従う（禁止するのは agent 自身の判断による前置）
 - `Skill: <name> <args>` と指示されたら、その Skill を実際に呼ぶ（テキストで真似ない）
 - 出力は呼び出し側が指定した schema に厳密に従う。余分なフィールドを足さない
 - worktree 外のファイルを変更しない
