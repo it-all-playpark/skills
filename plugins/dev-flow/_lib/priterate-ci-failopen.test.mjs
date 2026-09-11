@@ -228,3 +228,15 @@ test('[failopen-e] failOpenAgent は trackedAgent が throw しても null を�
   assert.equal(out, null, 'failOpenAgent は throw を吸収して null を返すべき');
   assert.ok(calls.some((m) => String(m).includes('test-proxy')), 'failOpenAgent は警告 log を出すべき');
 });
+
+// ---- (f) ci_error の log 文言が原因を断定せず gh pr checks の確認手順を含む（issue #621） ----
+test('[failopen-f] pr-iterate.js の ci_error log は auth/network を断定せず gh pr checks 確認手順を含む', () => {
+  // inline 区間（pr-comment-format / ci-check の生成コピー）ではなく、CI gate 本体の log() 呼び出し行のみを対象にする
+  const logLines = src.split('\n').filter((l) => /^\s*log\(`/.test(l) && l.includes('CI check returned error'));
+  assert.equal(logLines.length, 1, `ci_error の log 行がちょうど 1 行あるべき: ${JSON.stringify(logLines)}`);
+  const line = logLines[0];
+  assert.ok(!line.includes('auth/network'), 'log は原因を auth/network と断定しない');
+  assert.ok(!line.includes('gh API failed'), 'log は gh API 失敗と断定しない');
+  assert.ok(line.includes('CI ステータスを確定できなかった'), '確定できなかった旨を含む');
+  assert.ok(line.includes('gh pr checks ${PR}'), '実 PR 番号を埋めた gh pr checks 確認手順を含む');
+});

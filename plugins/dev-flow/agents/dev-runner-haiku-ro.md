@@ -18,7 +18,7 @@ effort: low
 tools:
   - Bash
   - Read
-maxTurns: 10
+maxTurns: 15
 ---
 
 # dev-runner-haiku-ro
