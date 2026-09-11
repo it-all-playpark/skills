@@ -5395,7 +5395,9 @@ async function execValidatePhase(state) {
   // （evalDiffHash != null ガードで micro は skip）。
   // Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
   // realized-diff / refloorShape / declared-path-check が自然に実行される（issue #219 fix）。
-  const dhPrompt = `cd ${WT} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+  const dhPrompt = `次のコマンドを **先頭トークンが worktree-diff-hash の bare 単文** で 1 回だけ実行し、**stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）。`
+    + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
+    + `（exec-proxy は決定論スクリプトへの verbatim 転写契約であり、argv の書き換えは転写の破壊にあたる。第 1 引数で worktree 絶対パスを渡しているため cd は不要）:\n`
     + `worktree-diff-hash ${WT} origin/${BASE}`
   state.dhPrompt = dhPrompt
 
