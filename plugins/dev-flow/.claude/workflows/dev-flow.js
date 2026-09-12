@@ -17,7 +17,7 @@ export const meta = {
   ],
 }
 
-// runImplement の parallel fan-out は pipeline() に依存する（issue #332）。pipeline() を持たない
+// runImplement の parallel fan-out は pipeline に依存する。pipeline を持たない
 // runtime では fan-out が黙って壊れる（parallel() への fallback / dual-path は作らない）ため、
 // load 時に fail-fast する。
 if (typeof pipeline === 'undefined') {
@@ -3714,34 +3714,34 @@ function applyDisjoint(p, label) {
 // ---- args ----
 const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE_ARG = normalizeBaseArg(args?.base) // 明示指定（string）or null（未指定）。非文字列は即 throw
-let BASE // Setup(resolve-base) で確定。明示指定→検証、未指定→origin/dev→origin/HEAD の順に解決（issue #298）
+let BASE // Setup(resolve-base) で確定。明示指定→検証、未指定→origin/dev→origin/HEAD の順に解決
 let REPO = null // Setup で解決（owner/name）。解決不能なら telemetry の repo を省略（fail-open）
 const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
 const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
-const PLAN_MAX = 8         // 計画レビュー上限（収束モデルにより happy path は数回で抜ける。issue #123）
-const PLAN_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（moving target 打ち切り。issue #123）
-const PLAN_RELAX_FROM = 2  // この iteration 以降は critical 無しなら収束を許容（issue #123）
-const EVAL_MAX = 10        // 評価差し戻し上限（収束モデルにより happy path は数回で抜ける。issue #125）
-const EVAL_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（design churn 打ち切り。issue #125）
+const PLAN_MAX = 8         // 計画レビュー上限（収束モデルにより happy path は数回で抜ける）
+const PLAN_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（moving target 打ち切り）
+const PLAN_RELAX_FROM = 2  // この iteration 以降は critical 無しなら収束を許容
+const EVAL_MAX = 10        // 評価差し戻し上限（収束モデルにより happy path は数回で抜ける）
+const EVAL_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（design churn 打ち切り）
 const GREEN_MAX = 3   // test green までの実装差し戻し上限
 const BLOCK_MAX = 2   // BLOCKED 由来の再計画上限
-const DESIGN_REPLAN_MAX = 2  // design 差し戻し(replan+reimpl)の決定論上限。topic fingerprint 非依存の last-resort hard cap（incentive-structural、issue #175。paraphrase で stuck 検出が漏れても総回数で打ち切る。BLOCK_MAX と同思想）
+const DESIGN_REPLAN_MAX = 2  // design 差し戻し(replan+reimpl)の決定論上限。topic fingerprint 非依存の last-resort hard cap（incentive-structural。paraphrase で stuck 検出が漏れても総回数で打ち切る。BLOCK_MAX と同思想）
 const AMBIGUITY_MAX = 2  // ambiguities がこの件数を超えたら needs_clarification で人間へ
 if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue）')
 
-// ---- failure telemetry helper（issue #225, 2-stage handoff issue #494 F3）----
+// ---- failure telemetry helper（2-stage handoff）----
 // 4 つの経路（needs_clarification×3・cross-repo graceful 終了。empty-diff throw 直前でも呼ぶが
 // throw のため呼び出し元へ status を戻さない）で呼ばれる。choreography 本体は canonical
-// _lib/journal-handoff.mjs の runJournalHandoff（issue #556）。
-// outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す（issue #432）。
+// _lib/journal-handoff.mjs の runJournalHandoff。
+// outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す。
 async function writeFailureTelemetry({ error_category, error_msg, telemetry, phase, outcome = 'failure' }) {
   const payload = buildJournalHandoffPayload({
     skill: 'dev-flow',
     outcome,
     issue: Number(ISSUE),
     repo: REPO,
-    // plugin bin/ の bare 名（issue #569）。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
+    // plugin bin/ の bare 名。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
     journal_sh: 'journal',
     error_category,
     error_msg,
@@ -3770,7 +3770,7 @@ function need(result, what) {
   return result
 }
 
-// ---- Plan 収束モデル（issue #123）----
+// ---- Plan 収束モデル----
 // cold start の plan-reviewer は moving target を生む（毎回 fresh context で新しい観点の major を
 // 捻り出し、major 1 件で revise 確定 → 上限まで収束しない）。orchestrator 側で収束を判断する:
 //   1. 既出 findings を planner/reviewer に渡し「対応済み・新規 critical/major のみ」を強制（蒸し返し抑制）
@@ -3793,15 +3793,15 @@ function findingsToConcerns(rev) {
     (f) => `[plan:${f?.severity ?? '?'}] ${f?.topic ?? ''}: ${f?.description ?? ''}`)
 }
 
-// ---- Evaluate 収束モデル（issue #125）----
+// ---- Evaluate 収束モデル----
 // Evaluate ループは Plan ループと同型の cold start moving target を抱える。evaluator は毎回 fresh
 // context で full diff を再評価するため、別観点を上乗せし続けて収束しない。さらに design 差し戻しは
-// replan + 全 task 再実装を走らせるため、1 反復のコストが Plan/Review より桁違いに高い（#123 が潰した
+// replan + 全 task 再実装を走らせるため、1 反復のコストが Plan/Review より桁違いに高い（が潰した
 // 抽象的な Plan 空間の moving target をループへ戻す）。Plan と同じ部品を Evaluate に適用する:
 //   1. 既出 feedback を evaluator に渡し「対応済み・新規 critical/major のみ」を強制（蒸し返し抑制）
 //   2. 同一 topic が EVAL_STUCK 回出たら stuck と判定（fingerprint を JS 側で突合）
 //   3. stuck かつ design パスが反復するなら replan+reimpl を繰り返さず早期打ち切り（コスト保護）
-//   4. critical は常にブロック（品質ゲートは後退させない。#123 と同一原則）
+// 4. critical は常にブロック（品質ゲートは後退させない。と同一原則）
 //   5. stuck/上限到達でも throw せず現状で PR へ進む（後段は review のみ、merge は手動 = human review 委譲）
 // feedback に critical が含まれるか。critical は常にブロック（収束を許さない）。
 function evalHasCritical(ev) {
@@ -3822,6 +3822,7 @@ const DEPS = {
     error: { type: 'string' },
     custom: { type: 'object' },
     epoch: { type: 'number' },
+    frameworks: { type: 'array', items: { type: 'string' } },
   },
 }
 const ISOLATION_PROBE = {
@@ -3865,8 +3866,8 @@ const CONTRACT = {
     epoch: { type: 'number' },
   },
 }
-// issue #451: analyze 結果の決定論 provenance 突合（gh issue view の exec-proxy）用スキーマ。
-// comment_count は PR #578 review で追加: sonnet analyze 経路が comments を落とした状態で
+// analyze 結果の決定論 provenance 突合（gh issue view の exec-proxy）用スキーマ。
+// comment_count は PR review で追加: sonnet analyze 経路が comments を落とした状態で
 // REQ を返しても検知できなかったため、probe 側の実測 comment 数として持たせ
 // verifyAnalyzeProvenance で REQ.comment_count（skill 出力 verbatim）と突合する。
 const ISSUE_META = {
@@ -4085,7 +4086,7 @@ const PRURL = {
   },
 }
 // pr-reviewer レビュースキーマ（pr-iterate.js の REVIEW に optional `epoch`（phase duration 給電用）を
-// 加えた拡張 — epoch 以外のフィールドは同一で、同型ではない。issue #376 F3: lite 経路の
+// 加えた拡張 — epoch 以外のフィールドは同一で、同型ではない。lite 経路の
 // pr-review-lite 1-pass にもこのスキーマを使う）。
 const REVIEW = {
   type: 'object',
@@ -4138,7 +4139,7 @@ const CHANGED = {
   type: 'object', required: ['files'],
   properties: { files: { type: 'array', items: { type: 'string' } } },
 }
-// STRUCT: difftastic による structural / format_only 分類の結果 (issue #350)。required は 'ok' のみ
+// STRUCT: difftastic による structural / format_only 分類の結果。required は 'ok' のみ
 // (fail-open 耐性 -- 'available' 欠落や schema 不一致でも呼び出し元は formatOnlySet を空にして続行する)。
 const STRUCT = {
   type: 'object', required: ['ok'],
@@ -4153,19 +4154,19 @@ const DIFFHASH = {
   type: 'object', required: ['hash', 'empty'],
   properties: { hash: { type: 'string' }, empty: { type: 'boolean' }, epoch: { type: 'number' } },
 }
-// TREE_DIFF_LINES: `git -C <WT> diff --numstat <eval> <pr>` の stdout 各行を verbatim 転写した read-only exec-proxy 応答（issue #631）。
+// TREE_DIFF_LINES: `git -C <WT> diff --numstat <eval> <pr>` の stdout 各行を verbatim 転写した read-only exec-proxy 応答。
 // required は 'ok' のみ（fail-open: ok:false / schema 不一致 / null は staleDiffFiles=null）。
 const TREE_DIFF_LINES = {
   type: 'object', required: ['ok'],
   properties: { ok: { type: 'boolean' }, lines: { type: 'array', items: { type: 'string' } }, error: { type: 'string' } },
 }
-// TREE_OID: `git -C <WT> rev-parse <sha>^{tree}` の stdout（tree OID 1 行）を verbatim 転写した read-only exec-proxy 応答（issue #631）。
+// TREE_OID: `git -C <WT> rev-parse <sha>^{tree}` の stdout（tree OID 1 行）を verbatim 転写した read-only exec-proxy 応答。
 const TREE_OID = {
   type: 'object', required: ['ok'],
   properties: { ok: { type: 'boolean' }, tree: { type: ['string', 'null'] }, error: { type: 'string' } },
 }
-// SECFLOOR: Security floor 統合 exec-proxy (`_shared/scripts/secfloor-classify.sh`) の応答 schema
-// (issue #544, S1)。`risk` のみ required（ok:boolean / hits:array 必須、issue #617）— risk は
+// SECFLOOR: Security floor 統合 exec-proxy (`_shared/scripts/secfloor-classify.sh`) の応答 schema。
+// `risk` のみ required（ok:boolean / hits:array 必須）— risk は
 // fail-closed フィールドなので、proxy が payload をネストする等の形状不一致を schema 契約違反として
 // 検知し retryOnContractViolation の再試行機会を与える（required:[] だと契約違反にならず一発で
 // fail-closed に倒れ、診断もできない）。files / struct / diffhash は required にしない（fail-safe /
@@ -4265,13 +4266,13 @@ function parseSecfloorFields(unified) {
   };
 }
 // ==== END inline: _lib/secfloor-unified.mjs ====
-// ISSUE_LABELS: `gh issue view --json labels` の read-only exec-proxy 結果（issue #432、empty-diff gate の
+// ISSUE_LABELS: `gh issue view --json labels` の read-only exec-proxy 結果（empty-diff gate の
 // cross-repo lazy probe 用）。required は 'ok' のみ（fail-safe: schema 不一致・ok:false は非 cross-repo 扱い）。
 const ISSUE_LABELS = {
   type: 'object', required: ['ok'],
   properties: { ok: { type: 'boolean' }, labels: { type: 'array', items: { type: 'string' } }, error: { type: 'string' } },
 }
-// CROSSREPO_ARTIFACTS: `_shared/scripts/cross-repo-artifacts.sh` の read-only exec-proxy 結果（issue #432）。
+// CROSSREPO_ARTIFACTS: `_shared/scripts/cross-repo-artifacts.sh` の read-only exec-proxy 結果。
 // required は 'ok' のみ（fail-safe: schema 不一致・ok:false は handoff 不成立扱い）。
 const CROSSREPO_ARTIFACTS = {
   type: 'object', required: ['ok'],
@@ -4282,7 +4283,7 @@ const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { t
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
 const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' }, epoch: { type: 'number' } } }
-// PR_META: gh pr view --json mergeable,mergeStateStatus,headRefOid の read-only exec-proxy 結果 (issue #405, #631)。
+// PR_META: gh pr view --json mergeable,mergeStateStatus,headRefOid の read-only exec-proxy 結果。
 const PR_META = {
   type: 'object', required: ['ok'],
   properties: {
@@ -4294,7 +4295,7 @@ const PR_META = {
   },
 }
 
-// journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う（issue #494）。
+// journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う。
 const JOURNAL_SAVE_RESULT = {
   type: 'object',
   required: ['saved'],
@@ -4304,7 +4305,7 @@ const JOURNAL_SAVE_RESULT = {
   },
 }
 
-// POST_RESULT_END: 専用 clock#end probe 撤去（issue #550 F3）に伴い、Merge tier 末尾の
+// POST_RESULT_END: 専用 clock#end probe 撤去に伴い、Merge tier 末尾の
 // post-summary 応答から end mark を給電するための POST_RESULT 拡張 schema（optional epoch 追加）。
 // POST_RESULT 自体（他 workflow と共有する canonical、_lib/workflow-post-helpers.mjs）は変更せず、
 // この呼び出し専用のローカル拡張として dev-flow.js にのみ置く。
@@ -4364,7 +4365,7 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 
 // ==== BEGIN inline: _lib/setup-deps.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Setup Deps: dev-flow の Setup phase で worktree 確定直後に依存インストールを試みる
-// fail-open exec-proxy 向けの純関数群（issue #120 の ensure-worktree-deps.sh を接続する）。
+// fail-open exec-proxy 向けの純関数群（ensure-worktree-deps と detect-stack を 1 回の exec-proxy で実行する）。
 // setupDepsPrompt: dev-runner-haiku へ渡す verbatim 転写 prompt を組み立てる。
 // summarizeDepsResult: exec-proxy から返る JSON を { outcome, logLine, implNote } へ正規化する。
 //
@@ -4373,8 +4374,12 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
 function setupDepsPrompt(worktree) {
-  return `cd ${worktree} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+  return `cd ${worktree} で作業。次の 2 コマンドを順に実行せよ（各コマンドは bare 名を先頭トークンとする単文）:\n`
     + `ensure-worktree-deps --path ${worktree} --lockfile-only --skip-custom\n`
+    + `detect-stack ${worktree}\n`
+    + `1 つ目の stdout の JSON 1 行を **そのまま verbatim** で返し（判定や脚色をしない）、`
+    + `2 つ目の stdout JSON の frameworks 配列を、その object に frameworks フィールドとして追加せよ`
+    + `（2 つ目が失敗した / JSON でない場合は frameworks を省略する）。\n`
     + `全手順の最後に Bash で \`date +%s\` を 1 回実行し、出力の整数を epoch フィールドとして返せ。`
     + `取得に失敗した場合は epoch を省略してよい（deps 処理の status 判定には一切影響させるな）。`;
 }
@@ -4469,6 +4474,16 @@ function summarizeDepsResult(res) {
     logLine: `⚠️ Setup(deps): 未知の status "${status}" — 依存インストール結果を確認できなかった（fail-open で続行）`,
     implNote: warningImplNote(`exec-proxy が未知の status "${status}" を返した`),
   };
+}
+
+// worktree-deps 応答から detect-stack の frameworks を取り出す。欠落・不正は [] （fail-open: 注入判定の入力であり gate 入力ではない）
+function extractFrameworks(res) {
+  if (typeof res !== 'object' || res === null || Array.isArray(res) || !Array.isArray(res.frameworks)) return [];
+  return res.frameworks.filter((f) => typeof f === 'string');
+}
+
+function hasNextJs(frameworks) {
+  return Array.isArray(frameworks) && frameworks.includes('next');
 }
 // ==== END inline: _lib/setup-deps.mjs ====
 
@@ -4719,17 +4734,17 @@ function crossRepoReturnNote(artifacts) {
 // ---- helpers ----
 
 // run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
-// trackedAgent() 経由で呼び、SUBAGENT_COUNTS へ計上する（issue #445）。
+// trackedAgent 経由で呼び、SUBAGENT_COUNTS へ計上する。
 // StructuredOutput 契約違反（subagent が StructuredOutput を呼ばず完了 — 一過性のモデル逸脱）に
-// 限定して同一 prompt で 1 回だけリトライする（issue #527）。それ以外の throw は従来どおり
+// 限定して同一 prompt で 1 回だけリトライする。それ以外の throw はそのまま
 // 伝播させる（fail-closed 維持）。retry も実 agent() 起動なので SUBAGENT_COUNTS へ再計上する。
-// issue #533 review: リトライは `opts.retryOnContractViolation === true` の opt-in call site
+// review: リトライは `opts.retryOnContractViolation === true` の opt-in call site
 // 限定（既定はリトライしない）。commit・push・journal 追記・PR コメント投稿等の副作用を伴う
 // call site を無差別リトライすると、副作用完了後に StructuredOutput 未達で終わった agent を
 // 同一 prompt で再実行して二重 push・journal 二重追記・重複コメントを起こし得るため、副作用の
 // ない読み取り専用 probe 系 call site（resolve-base / worktree-base-check 等）のみで有効化する。
 // secfloorTopLevelKeys: Security floor 統合 proxy が契約外形状を返して risk fail-closed へ倒れたとき、
-// 診断用に応答の top-level キー一覧を文字列化する（issue #617。値は log 専用で判定に使わない）。
+// 診断用に応答の top-level キー一覧を文字列化する（値は log 専用で判定に使わない）。
 // 形状が契約通りで proxy 自身が ok:false を報告したケースでは top-level キーは正常な並びになり
 // 診断価値がないため、呼び出し側は isWellFormedRiskField で 2 原因を出し分けて risk.error を出す。
 function secfloorTopLevelKeys(unified) {
@@ -4741,7 +4756,7 @@ function secfloorTopLevelKeys(unified) {
 }
 
 const SUBAGENT_COUNTS = {};
-// abort telemetry context（issue #607）: run が throw で abort したとき top-level catch が journal handoff に載せる
+// abort telemetry context: run が throw で abort したとき top-level catch が journal handoff に載せる
 // 「どこで落ちたか」を trackedAgent が毎回記録する（need() の throw は直前 agent の null 返却が原因なので同じ
 // label を指す）。shape/plan_iter/eval_iter は確定時点で代入する — try ブロック内の const/let は catch から
 // 見えないため、この可変 context に写す。failure_recorded は writeFailureTelemetry 後の throw（empty_diff）で
@@ -4761,7 +4776,7 @@ async function trackedAgent(prompt, opts) {
   }
 }
 
-// fail-open 規定の exec-proxy 呼び出し用ラッパ（issue #499。pr-iterate.js と同型）。trackedAgent が
+// fail-open 規定の exec-proxy 呼び出し用ラッパ（pr-iterate.js と同型）。trackedAgent が
 // throw した場合（isolation guard 等による StructuredOutput 未返却）も run 全体を落とさず null に
 // 落とす。throw と schema 不一致（既存の null 返却）を呼び出し側で同一の fail-open 経路へ合流させる。
 async function failOpenAgent(prompt, opts) {
@@ -4774,9 +4789,10 @@ async function failOpenAgent(prompt, opts) {
 }
 
 let WT // Setup で確定
-let DEPS_NOTE = '' // Setup(deps) で確定。install 失敗/未確認時のみ非空（fail-open。issue #291）
+let DEPS_NOTE = '' // Setup(deps) で確定。install 失敗/未確認時のみ非空（fail-open）
+let TURBOPACK_NOTE = '' // Setup(stack) で確定。対象 repo が Next.js のときのみ Turbopack fallback 規約の本文、それ以外は空文字
 
-// clock 給電（issue #443）: 専用 clock probe を start/end の 2 回のみに削減し、残り 9 mark は
+// clock 給電: 専用 clock probe を start/end の 2 回のみに削減し、残り 9 mark は
 // 隣接する既存 exec-proxy/agent 応答の optional epoch から給電する。決定論 proxy が隣接しない
 // 境界（plan_end/implement_end/evaluate_end/pr_end 等）は、対象 prompt 末尾へこの 1 文を注入し
 // date +%s の実測値を返させる（fail-open — 取得失敗は epoch 省略、mark null に落ちるのみで
@@ -4785,7 +4801,7 @@ const EPOCH_INSTRUCTION = '作業完了後、最後に Bash で `date +%s` を 1
 
 // implementer への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を残すと
 // `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、refloor 誤発火・
-// 宣言外変更 concern の原因になる（issue #216）。agent 定義ファイル（.claude/agents/implementer.md）は
+// 宣言外変更 concern の原因になる。agent 定義ファイル（.claude/agents/implementer.md）は
 // sandbox write-deny のため、workflow が全 implementer spawn prompt に決定論的に注入する。
 // .devflow-tmp/ 配下は isEphemeralPath が realized-diff から除外するため後始末は不要で、削除を
 // 指示すると agent が一時 dir の削除コマンドを組み立てて実行制御に弾かれる分だけ turn を失う。
@@ -4798,19 +4814,18 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
   + EPOCH_INSTRUCTION
 
 // dev-planner への handoff 配置規約。plan が一時/handoff ファイルの残置を明示指示すると
-// 実装後の realized diff に残り、refloor 誤発火・宣言外変更 concern の原因になる（issue #272 原因(3)）。
+// 実装後の realized diff に残り、refloor 誤発火・宣言外変更 concern の原因になる。
 // agent 定義ファイル（.claude/agents/dev-planner.md）は sandbox write-deny のため、
 // 上記 implementer 向け規約と同型で workflow が全 dev-planner spawn prompt に決定論的に注入する。
 const PLANNER_HANDOFF_RULE = '計画規約: task が一時/handoff ファイルの残置を指示する場合は .devflow-tmp/ 配下のパスを指定せよ（realized diff から ephemeral として除外される）。恒久成果物でないファイルを file_changes に含めるな。\n'
   + EPOCH_INSTRUCTION
 
-// Next.js/Turbopack 固有の build 検証規約（issue #292）。sandbox 内で `next build`（Turbopack）が
-// process 生成・ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する
-// 既知事象がある。implementer が git stash 等の対照実験を毎回再発明するのを防ぐため、非 Turbopack
-// fallback（`next build --webpack`）で build 検証してよい旨を規約化する。agent 定義ファイル
-// （.claude/agents/*.md）は sandbox write-deny のため、既存の一時ファイル配置規約と同型で workflow が
-// implementer/evaluator/dev-runner 向け prompt に決定論的に注入する。
-const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証規約（Next.js プロジェクト以外 — Vite 等 — には適用しない）: `
+// Next.js/Turbopack 固有の build 検証規約。sandbox 内では `next build`（Turbopack）が process 生成・
+// ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する。implementer が対照実験を
+// 毎回再発明しないよう、非 Turbopack fallback（`next build --webpack`）で build 検証してよい旨を規約化する。
+// agent 定義ファイル（.claude/agents/*.md）は sandbox write-deny のため workflow が prompt に注入する。
+// 注入可否は Setup(stack) が detect-stack の frameworks で決定論的に決める — 本定数を prompt に直接連結しない。
+const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証規約: `
   + `sandbox 内で \`next build\`（Turbopack）が TurbopackInternalError / os error 1（process 生成・ポートバインド制限）で失敗した場合、`
   + `sandbox 環境依存の既知事象の可能性が高い。git stash 等の対照実験を再発明せず、`
   + `\`next build --webpack\` 等の非 Turbopack fallback で build 検証してよい。`
@@ -4818,30 +4833,9 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `の旨を自分の出力（implementer は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
-// framework best-practice 参照規約（issue #497）。旧: Analyze phase で vendored SKILL.md
-// （react-best-practices 等）を無条件 Read していたが、常時 stale なコピーを読ませる固定コストの
-// 割に効果が薄いため撤去し、Implement phase で「対象 repo が実際に使っている framework の API に
-// 触る task のときだけ」context7 (MCP) で最新 docs を引く条件付き参照へ置換する。
-// `_lib/scripts/detect-stack.sh` が「呼ぶかどうか」の決定論的門番（frameworks 配列を返すのみ）。
-// agent 定義ファイル（.claude/agents/implementer.md）は sandbox write-deny かつ本 issue の AC で
-// 編集禁止のため、他の staging/build 検証規約と同型で workflow が
-// spawn prompt へ注入する。注入先は implementer spawn prompt の全 3 箇所（implPrompt /
-// green-fix#i / fix#i）のみ — test prompt（dev-runner）と evaluator prompt には注入しない。
-// evaluator が判定するのは diff であって docs ではなく、test prompt は実装判断を伴わないため。
-// 現行 implementer.md の tools は閉じた列挙（Read/Write/Edit/Bash/Grep/Glob/Skill）で MCP tool を
-// 含まないため、現行構成では context7 は静的に利用不可であり規約内の fail-open 節が常用される。
-// MCP tool 配線は follow-up issue で扱う。
-const CONTEXT7_BEST_PRACTICE_CONVENTION = `framework best-practice 参照規約（条件付き — 無条件に発動しない）: `
-  + `自分の task が対象 repo で使われている framework（React/Next.js/Fastify/Remotion/Prisma/Neon 等）の API に`
-  + `触る場合のみ、まず \`detect-stack .\` を worktree 直下で bare 形`
-  + `（bare 名が先頭トークン。cd 前置・bash 前置なし）で 1 回実行し、出力 JSON の frameworks に該当 framework が含まれる場合のみ`
-  + `context7 (MCP) で該当 library の最新 docs を必要箇所に限って引いてよい。frameworks が空、または task が`
-  + `framework API に触らない場合は context7 を呼ぶな（コストと出力揺れの抑制）。context7 tool が利用できない`
-  + `環境では fail-open で通常どおり実装を続行せよ（docs 参照は必須ではない）。\n`
-
 function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
   // AC・plan contract（summary / architecture_decisions / edge_cases）を全 implementer spawn prompt に注入する。
-  // evaluator が AC ベースで採点するため implementer と採点軸を共有する（issue #224）。
+  // evaluator が AC ベースで採点するため implementer と採点軸を共有する。
   // 注入は contract 粒度に留め line-level 詳細は含めない。req / plan は明示 param で受け取る
   // （呼び出し元 runImplement が呼び出し時点の req/plan を渡す。replan 時は最新 plan が注入される）。
   const archDecisions = plan?.architecture_decisions ?? []
@@ -4858,16 +4852,15 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
     + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
     + STAGING_CONVENTION
     + DEPS_NOTE
-    + TURBOPACK_FALLBACK_CONVENTION
-    + CONTEXT7_BEST_PRACTICE_CONVENTION
+    + TURBOPACK_NOTE
 }
 
-// 計画の parallel → pipeline() で先行 fan-out、serial → その後に配列順で順次実行（issue #534: serial は
+// 計画の parallel → pipeline で先行 fan-out、serial → その後に配列順で順次実行（serial は
 // parallel の成果物に依存し得るため parallel-first。逆方向 — parallel が serial 成果へ依存 — は
 // plan-reviewer が critical で reject する。この順序は不変）。
 // parallel 側は pipeline()、serial 側は failOpenAgent 経由。両者とも callback の throw / null return は
 // reject にならず per-item null に落ちる — pipeline() は canary 実測契約（Claude Code 2.1.252 で実測、
-// issue #325/#560 canary）による harness-native の fail-open、failOpenAgent は明示 try/catch による
+// canary）による harness-native の fail-open、failOpenAgent は明示 try/catch による
 // fail-open。drop は可視化して返す。
 // 最小バージョン: Claude Code >= 2.1.207（pipeline() 提供。canary 実測 pass は 2.1.252）。
 async function runImplement(req, plan, fixFeedback, tag, extraContext) {
@@ -4909,10 +4902,10 @@ function countPlanDrops(plan, results) {
 //  並列は同一 worktree 内で「file_changes が disjoint な」task のみ。plan-reviewer が検証する。）
 // ============================================================
 const clockMarks = {}
-// 専用 clock probe は issue #550 F3 で 0 回になった。全 11 mark（start/end 含む）は feedClockMark が
-// 隣接 proxy/agent 応答の optional epoch から給電する（fail-open 不変。issue #443）。
+// 専用 clock probe の呼び出しは 0 回になった。全 11 mark（start/end 含む）は feedClockMark が
+// 隣接 proxy/agent 応答の optional epoch から給電する（fail-open 不変）。
 
-// feedClockMark（issue #443）: 専用 clock probe を経由せず、隣接する既存 exec-proxy/agent 応答の
+// feedClockMark: 専用 clock probe を経由せず、隣接する既存 exec-proxy/agent 応答の
 // optional epoch から mark を給電する。epochResOf/maxEpochRes は _lib/devflow-durations.mjs の
 // canonical から inline 生成済み（本ファイル冒頭）。recordClockMark の fail-open 契約
 // （null/不一致→mark null+警告）はそのまま踏襲する。
@@ -4921,20 +4914,20 @@ function feedClockMark(name, res) { const warn = recordClockMark(clockMarks, nam
 phase('Setup')
 try {
 
-// Setup 統合 probe（issue #550 案1）: base 解決（issue #298）と既存 worktree 起点検証（issue #517）を
+// Setup 統合 probe: base 解決と既存 worktree 起点検証を
 // 単一 exec-proxy 呼び出しへ統合する。resolveBase() / checkWorktreeBase() はそれぞれ probe object の
 // 自分のフィールドしか読まないため、同一の統合 probe object をそのまま両関数へ渡せる（判定関数自体は
 // 無変更）。解決不能・起点不一致は Setup で明示 error（設定ミスを danger-grep fail-closed の SEC 誤
 // HOLD にしない）。danger-grep 実行時失敗の fail-closed ポリシー自体は不変（W7 軸A security floor）。
 // worktree 起点検証は既存 worktree 再利用時、branch の upstream tracking が origin/$BASE と一致しない・
 // 判定不能なら fail-closed で abort する（base 不一致のまま再利用され PR diff に base 間差分が丸ごと
-// 乗るのを防ぐ。#516 preflight との二重防御）。worktree 未存在（新規作成経路）は素通り。
+// 乗るのを防ぐ。preflight との二重防御）。worktree 未存在（新規作成経路）は素通り。
 const setupProbe = await trackedAgent(
   setupBaseProbePrompt(BASE_ARG, ISSUE),
   { agentType: 'dev-runner-haiku-ro', schema: SETUP_BASE_PROBE, label: 'setup-base', phase: 'Setup', retryOnContractViolation: true },
 )
-// 専用 clock#start probe は issue #550 F1 で廃止 — start mark は Setup 統合 probe の optional
-// epoch から給電する（専用 clock probe を 1 回削減）。probe が throw する場合は従来どおり run abort。
+// start mark は専用の clock probe を持たず、Setup 統合 probe の optional
+// epoch から feedClockMark で給電する。probe が throw する場合はそのまま run abort する。
 feedClockMark('start', epochResOf(setupProbe))
 const resolvedBase = resolveBase(BASE_ARG, setupProbe) // 解決不能は throw（workflow abort、danger-grep 以降へ到達しない）
 BASE = resolvedBase.base
@@ -4965,14 +4958,14 @@ REPO = setup.repo ?? null
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
 log(`worktree: ${WT} (branch ${setup.branch})`)
 
-// isolation cleanup（issue #493）: worktree 再利用時に前 run の run 専用 scratch を持ち越さない。
+// isolation cleanup: worktree 再利用時に前 run の run 専用 scratch を持ち越さない。
 // 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の残置物（probe artifact
 // `.isolation-probe-*` / journal payload / ui-verify state 等の .devflow-tmp 配下生成物）を
 // 一度に消す（run 間衛生）。
-// probe 成立自体はこの cleanup の成功に依存しない（issue #521 — probe 対象パスは run 毎の一意な
+// probe 成立自体はこの cleanup の成功に依存しない（— probe 対象パスは run 毎の一意な
 // token を含むため、cleanup が blocked/skip されて前 run の残置物が残っていても衝突しない）。
 // token fallback が退化（setup-base probe の epoch が fail-open で null 等）した場合の補償として
-// のみ probe 成立に効く（issue #482/#521）。
+// のみ probe 成立に効く。
 // fail-open: 失敗しても run は継続する。
 const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
 if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
@@ -4980,7 +4973,7 @@ if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完
 // isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。
 // 失敗（written:false）は bg-isolation guard を強く示唆するため即中断（fail-closed）。
 // probe agent 自体が落ちた場合（written が取れない）は診断不能なだけなので fail-open で続行する。
-// isoToken: probe 対象パスを run 毎に一意にする（issue #521）。probe 対象パスは run 毎に一意
+// isoToken: probe 対象パスを run 毎に一意にする。probe 対象パスは run 毎に一意
 // （前 run の残置物と同名衝突しない）。clockMarks#start は probe より前の Setup 冒頭で確保済みの
 // epoch（fail-open で null の場合は ISSUE へ fallback）。fallback 時のみ一意性が退化するが、
 // 直前の cleanup（fail-open）と isolationErrorKind による原因別報告が補償する。
@@ -4991,18 +4984,26 @@ if (isoProbe && isoProbe.written === false) {
 }
 if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 
-// deps install（issue #291）: lockfile がある repo では Setup 完了時点で node_modules を整備する。
+// deps install: lockfile がある repo では Setup 完了時点で node_modules を整備する。
 // fail-open — 失敗/null でも workflow は継続し、警告 log + DEPS_NOTE 経由で implementer へ伝える。need() で包まない。
 const depsRes = await trackedAgent(setupDepsPrompt(WT), { agentType: 'dev-runner-haiku', schema: DEPS, label: 'worktree-deps', phase: 'Setup' })
 const deps = summarizeDepsResult(depsRes)
 DEPS_NOTE = deps.implNote ?? ''
 log(deps.logLine)
 
-// Validate / Final reconcile 共有の test 実行 prompt（issue #320）。WT 確定後（Setup 完了後）に
+// stack 判定は worktree-deps 応答に相乗りした detect-stack の frameworks を使う（決定論。LLM に適用可否を判定させない）。
+// 応答欠落・frameworks 欠落は [] = 注入なし（fail-open: 規約は advisory であり gate 入力ではない）。
+const stackFrameworks = extractFrameworks(depsRes)
+TURBOPACK_NOTE = hasNextJs(stackFrameworks) ? TURBOPACK_FALLBACK_CONVENTION : ''
+log(hasNextJs(stackFrameworks)
+  ? 'Setup(stack): Next.js 検出 — Turbopack fallback 規約を implementer / evaluator / test prompt へ注入'
+  : `Setup(stack): Next.js 非検出（frameworks=${JSON.stringify(stackFrameworks)}）— Turbopack fallback 規約は注入しない`)
+
+// Validate / Final reconcile 共有の test 実行 prompt。WT 確定後（Setup 完了後）に
 // 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
-// issue #359: sandbox 除外は先頭トークン一致のため、bare 形（絶対パス先頭トークン・前置禁止）優先実行 +
+// sandbox 除外は先頭トークン一致のため、bare 形（絶対パス先頭トークン・前置禁止）優先実行 +
 // EPERM 起動失敗時は原因調査せず即時報告する文言へ更新。
-// issue #619: 起動失敗（1 件も実行されず）は tests:"error"、実行された上での失敗は tests:"failed" に分離する（Final reconcile で error → unavailable → CI 委譲）。
+// 起動失敗（1 件も実行されず）は tests:"error"、実行された上での失敗は tests:"failed" に分離する（Final reconcile で error → unavailable → CI 委譲）。
 const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し green かどうか判定せよ。\n`
   + `test 実行コマンドの規約: repo に実行可能な test スクリプト（tests/run-*.sh 等）があればそれを優先し、`
   + `\`${WT}/tests/run-tests.sh\` のように**絶対パスを先頭トークンとする bare 形**で実行せよ。`
@@ -5014,11 +5015,11 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `- テストスイートが 1 件も実行されなかった起動失敗（EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、失敗要約を summary に入れる\n`
   + `- テストが実行された上で 1 件以上失敗 → tests:"failed"、green:false、失敗要約を summary に入れる\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
-  + '\n' + TURBOPACK_FALLBACK_CONVENTION
+  + '\n' + TURBOPACK_NOTE
   + EPOCH_INSTRUCTION
 
 // Security floor（ui-verify-config）と Final reconcile（ui-verify-config-final）が共有する
-// ui_verify config 読み取り prompt（issue #542）。WT 確定後（Setup 完了後）に配置し、
+// ui_verify config 読み取り prompt。WT 確定後（Setup 完了後）に配置し、
 // 両 phase が同一 byte 列を共有する（VALIDATE_TEST_PROMPT と同じ drift 防止の意図）。
 const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json と ${WT}/.claude/skill-config.json を Read で確認し（前者優先）、`
   + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
@@ -5037,24 +5038,24 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `さらに、skill の JSON 出力に含まれる comment_count (number) をそのまま verbatim で comment_count として返せ（全 depth の出力に含まれる。自分で数え直す・変更するな。PR #578: 実際に取得した comments 件数の決定論突合に使う）。`
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
   + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
-  // issue #596: skill 出力の scope / body_preview は上限付き抜粋。切断は末尾マーカー + boolean で非 silent 化されており、
+  // skill 出力の scope / body_preview は上限付き抜粋。切断は末尾マーカー + boolean で非 silent 化されており、
   // ここで「抜粋に無い = issue に無い」の推論を禁じる。規範性クラス: contract（scope_truncated / body_preview_truncated /
   // [TRUNCATED: ...] マーカーの意味定義 = analyze-issue.sh 出力との入出力契約）+ incentive-structural（抜粋のみが context に
-  // ある構造分断で欠落判定に傾く。#572 で 3 run 空振り実測）。sunset 対象ではない。
+  // ある構造分断で欠落判定に傾く。で 3 run 空振り実測）。sunset 対象ではない。
   + `さらに、skill の JSON 出力の scope / body_preview は上限付きの抜粋である。scope_truncated または body_preview_truncated が true（抜粋末尾に [TRUNCATED: ...] マーカーがある）の場合は、取得した issue JSON ファイル（$TMPDIR/issue-${ISSUE}.json）の body 全文を Read してから要件抽出せよ。抜粋に無いことを根拠に ambiguities を立ててはならない（全文を読んだ上で本当に未記載の点のみ挙げよ）。scope は skill 出力の scope をマーカー含め verbatim で、scope_truncated は skill 出力の boolean を verbatim で返せ（自分で再判定・除去するな）。`
 
-// contract probe prompt（issue #374, issue #466 で --issue-json ファイル入力化）:
+// contract probe prompt（で --issue-json ファイル入力化）:
 // DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。issue 本体は subagent の bare
 // `gh issue view` で $TMPDIR file へ取得し、analyze-issue --contract の stdout JSON を
 // verbatim 転写させるだけの read-only exec-proxy（結果の判断は buildReqFromContract 側の
 // whitelist 検証が担う）。
-// script は plugin bin/ の bare 名で呼ぶ（issue #569）— WT は対象 repo の worktree であり skills 内部 script が存在しない（issue #484）
+// script は plugin bin/ の bare 名で呼ぶ— WT は対象 repo の worktree であり skills 内部 script が存在しない
 const contractProbePrompt = `## Objective\n`
   + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
   + `## Steps\n`
   + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/analyze-contract-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <ISSUE_JSON> とする。\n`
   + `2. \`gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json body,title,labels,assignees,milestone,state,comments\` を`
-  // comments を含めるのは body と comment の突合に必要なため（issue #573）。
+  // comments を含めるのは body と comment の突合に必要なため。
   + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
   + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
   + `3. \`analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**bare 名を先頭トークンとする単文**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
@@ -5072,12 +5073,12 @@ const contractProbePrompt = `## Objective\n`
 // ============================================================
 phase('Analyze')
 feedClockMark('analyze_start', epochResOf(depsRes))
-// 決定論 parse 降格経路（issue #374）: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
+// 決定論 parse 降格経路: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
 // analyze-issue --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
 // fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ
 // フォールバックする（analyzePrompt・REQ・need()・needs_clarification 判定・classifyShape 呼び出しは不変）。
 let req = null
-// analyze_end の clock 給電（issue #443）用に hoist。contract 経路採用時は contractRes、
+// analyze_end の clock 給電用に hoist。contract 経路採用時は contractRes、
 // sonnet 経路採用時は issueMetaRes の epoch から給電する（maxEpochRes が両者から最大を採る）。
 let contractRes = null
 let issueMetaRes = null
@@ -5107,7 +5108,7 @@ if (!req) {
     { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
   ), 'Analyze')
 
-  // issue #451: analyze 結果の決定論 provenance 突合（fail-closed — 取得成功を self-report させない）
+  // analyze 結果の決定論 provenance 突合（fail-closed — 取得成功を self-report させない）
   try {
     issueMetaRes = await trackedAgent(
       `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>, "comment_count": <comments 配列の要素数>, "epoch": <date +%s の出力(optional)>} の形で返せ`
@@ -5126,10 +5127,10 @@ if (!req) {
   }
 }
 
-// issue #596: scope 切断は経路（contract / sonnet）を問わず log に出す — journal だけでは切断が見えず人間が切り分けられなかった。
+// scope 切断は経路（contract / sonnet）を問わず log に出す — journal だけでは切断が見えず人間が切り分けられなかった。
 if (req.scope_truncated === true) log(`⚠️ analyze: scope が 4000 字で切断（AC 節除く全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）— 切断位置以降の記述は analyze に届かない可能性がある（issue #596）`)
 
-// issue #573: issue body と comment の矛盾は黙って片方を採用せず人間へ返す（fail-closed）。
+// issue body と comment の矛盾は黙って片方を採用せず人間へ返す（fail-closed）。
 // comment が body を明示訂正した override は採用済みとして log で可視化のみ（REQ にも残る）。
 const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
 const commentOverrides = strList(req.comment_overrides)
@@ -5142,14 +5143,14 @@ if (commentConflicts.length) {
 }
 
 let ambiguities = req.ambiguities ?? []
-// issue #598 review on PR #598: scope 切断域を根拠に sonnet が ambiguities を生成する実際の失敗経路は
+// review on PR scope 切断域を根拠に sonnet が ambiguities を生成する実際の失敗経路は
 // analyzePrompt の文言のみに依存し決定論の防御が無かった。scope_truncated===true かつ ambiguities が
 // 閾値超過のときのみ、depth comprehensive（body_full 付き — 切断されない全文が skill 出力に直接含まれる）
 // で analyze を 1 回だけ再実行し、切断域を実際に読んだ上での再判定を試みる（無限ループ防止のため 1 回のみ。
 // 再実行後もなお曖昧なら下の needs_clarification へ進む）。
 if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
   log(`⚠️ analyze: scope 切断 + ambiguities 超過（${ambiguities.length} > ${AMBIGUITY_MAX}）— depth comprehensive で analyze を再実行し切断域を含む全文を確認する（issue #598 review on PR #598）`)
-  // issue #598 review on PR #598 (major): 補助的な 1 回再実行の失敗（agent throw / StructuredOutput
+  // review on PR (major): 補助的な 1 回再実行の失敗（agent throw / StructuredOutput
   // 未返却等）で run 全体を落とさない — need() ではなく failOpenAgent で null に落とし、null なら
   // 警告 log のみで初回 req/ambiguities を保持したまま下の needs_clarification 判定へ進む
   // （本 PR 以前の graceful 挙動を維持。切断ヒントは req.scope_truncated が不変のため下流で維持される）。
@@ -5163,7 +5164,7 @@ if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
     req = retryReq
     ambiguities = req.ambiguities ?? []
 
-    // issue #598 review on PR #598: 再実行で差し替えた req は取得検証（issue #451）・comment 矛盾判定（issue #573）を
+    // review on PR 再実行で差し替えた req は取得検証・comment 矛盾判定を
     // 再適用していないと、2 回目の sonnet 出力が取得検証なしで Implement へ流れてしまう（fail-closed の抜け穴）。
     // 初回 analyze で ambiguities>AMBIGUITY_MAX まで到達している時点で issueMetaRes probe は既に成功済み
     // （probe 失敗なら初回 verifyAnalyzeProvenance で既に needs_clarification 終端している）ため、
@@ -5212,17 +5213,17 @@ const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・re
 
 // ============================================================
 // Phase Plan: dev-planner ⇄ plan-reviewer ループ。
-// 収束は planConverged() が判断する（issue #123。基準は同関数上のコメント参照）:
+// 収束は planConverged が判断する（基準は同関数上のコメント参照）:
 //   既出 findings 累積で cold start を補償 / 同一 topic 反復で stuck 打ち切り /
 //   iteration 経過で relax / critical は常にブロック / 上限到達でも throw せず Evaluate へ委譲。
 // ============================================================
 // contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電するため、
-// 以降の shape 判定の時間が plan 区間へ付け替わる（相対比較・分布用途のため許容。issue #443）。
+// 以降の shape 判定の時間が plan 区間へ付け替わる（相対比較・分布用途のため許容）。
 feedClockMark('analyze_end', maxEpochRes([contractRes, issueMetaRes]))
 phase('Plan')
 let plan = null
 let planVerdict = null
-const planSeen = makeSeenTracker(PLAN_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #123）
+const planSeen = makeSeenTracker(PLAN_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
 let planConcerns = []      // 収束時に残った未解消 findings（Evaluate の focus_areas へ）
 let planIters = 0            // plan iteration カウンタ（telemetry 用）
 function soloPlanPrompt() {
@@ -5327,7 +5328,7 @@ let state = {
 // extractGuardBlocked: implResults から guard_blocked task を partitionBlocked で抽出し、
 // implResults から除去（stale BLOCKED の再発火防止・replan 対象にしない・blockSeen 非登録）。
 // concerns はスクラブ済み文字列、digests は task_id/guard_id/block_class のみの薄い記録
-// （state.guardBlockedResults 用 — 終端サマリーからの task 欠落補償）。issue #448
+// （state.guardBlockedResults 用 — 終端サマリーからの task 欠落補償）
 // ============================================================
 function extractGuardBlocked(results) {
   const { guardBlocked } = partitionBlocked(results)
@@ -5342,13 +5343,13 @@ function extractGuardBlocked(results) {
 // ============================================================
 // Phase Implement: 実装 → BLOCKED があれば別アプローチで再計画して再実装（上限 BLOCK_MAX）
 // guard_blocked（hook deny / classifier block 等）は replan ループから遮断し blockedConcerns へ
-// 直行させる（extractGuardBlocked。issue #448、W7 incentive-structural）。
+// 直行させる（extractGuardBlocked、W7 incentive-structural）。
 // ============================================================
 async function execImplementPhase(state) {
   const { req } = state
   let plan = state.plan
   let implResults = await runImplement(req, plan, null, 'impl')
-  // drop 件数を Evaluate 強制条件へ積む（issue #540）。task が落ちた run は「計画した実装範囲」が
+  // drop 件数を Evaluate 強制条件へ積む。task が落ちた run は「計画した実装範囲」が
   // 実際には欠けているが、残った task の diff が非空なら empty-diff gate も refloor も素通りするため、
   // micro では evaluator 0 回のまま AC 未検証で PR に到達しうる。greenFixCount と同型で state に載せる。
   // extractGuardBlocked より前に数える（filter 後だと BLOCKED 除去分を drop と誤認する）。
@@ -5361,7 +5362,7 @@ async function execImplementPhase(state) {
     state.guardBlockedResults.push(...gb.digests)
   }
   // blockFindings 累積 & アプローチ回帰禁止。planSeen と同型の frozen target
-  // （incentive-structural — W7 分類。capability 非依存・撤去禁止）。issue #188
+  // （incentive-structural — W7 分類。capability 非依存・撤去禁止）
   const blockSeen = makeSeenTracker(Infinity)  // stuck 検出は使わず累積のみ（hard cap は BLOCK_MAX）
   for (let b = 1; b <= BLOCK_MAX; b++) {
     const blocked = implResults.filter((r) => r && r.status === 'BLOCKED')
@@ -5388,10 +5389,10 @@ async function execImplementPhase(state) {
       { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan-blocked#${b}`, phase: 'Implement' },
     ), `Implement(replan#${b})`)
     plan = applyDisjoint(plan, `replan-blocked#${b}`)
-    // 再実装結果と旧 DONE のマージ保持:
-    //   旧 DONE/DONE_WITH_CONCERNS は保持（concerns の Evaluate 伝搬維持）、
+    // 再実装結果と直前の DONE のマージ保持:
+    //   直前の DONE/DONE_WITH_CONCERNS は保持（concerns の Evaluate 伝搬維持）、
     //   同 task_id の新結果は新結果優先、
-    //   旧 BLOCKED/NEEDS_CONTEXT は保持しない（stale BLOCKED で b+1 の再発火を防ぐ）
+    //   直前の BLOCKED/NEEDS_CONTEXT は保持しない（stale BLOCKED で b+1 の再発火を防ぐ）
     const retryResults = await runImplement(req, plan, null, `reimpl-blocked#${b}`)
     state.implDroppedCount += countPlanDrops(plan, retryResults)
     const retryIds = new Set(retryResults.map((r) => r && r.task_id).filter(Boolean))
@@ -5471,7 +5472,7 @@ async function execImplementPhase(state) {
 
 // ============================================================
 // Phase Validate: test green を確認し、green でなければ implementer に差し戻し（上限 GREEN_MAX）。
-// tests:'error'（起動失敗）は差し戻さず即 break（issue #627）
+// tests:'error'（起動失敗）は差し戻さず即 break
 // （format/lint は hook 責務でここでは扱わない）
 // ============================================================
 async function execValidatePhase(state) {
@@ -5482,10 +5483,10 @@ async function execValidatePhase(state) {
   let greenFixCount = 0
   /** @type {Array<{files: string[], summary: string}>} */
   const greenFixIterations = []
-  // validate_end の clock 給電（issue #443）候補。test#i/diff-gate/diff-gate-retry/test#retry-i の
+  // validate_end の clock 給電候補。test#i/diff-gate/diff-gate-retry/test#retry-i の
   // 応答（いずれも Validate 内で境界に隣接する）を集め、maxEpochRes で最後に完了したものを採る。
   const validateEpochCandidates = []
-  // 本経路（label=''）と empty-diff retry 経路（label='retry'）を統合した Validate ループ（issue #223）。
+  // 本経路（label=''）と empty-diff retry 経路（label='retry'）を統合した Validate ループ。
   // 2 複製のプロンプト空白 drift を根治し、両経路の挙動を 1 箇所で管理する。
   async function runValidateLoop(label) {
     const isRetry = label === 'retry'
@@ -5511,10 +5512,10 @@ async function execValidatePhase(state) {
       }
       if (v.green || v.tests === 'no_tests') break
       if (v.tests === 'error') {
-        // 起動失敗（テストが 1 件も実行されていない。issue #627）。環境失敗はコード修正で解消しないため
+        // 起動失敗（テストが 1 件も実行されていない）。環境失敗はコード修正で解消しないため
         // green-fix（implementer）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
         // まま返し、Evaluate → Final reconcile の error → unavailable → ci-final（CI 委譲）経路に委ねる。
-        // tests:'failed'（実行された上での red）は従来どおり green-fix を回す。
+        // tests:'failed'（実行された上での red）はそのまま green-fix を回す。
         log(`⚠️ ${phaseName}: tests=error（起動失敗: ${String(v.summary ?? '').slice(0, 200)}）— green-fix をスキップ（環境失敗はコード修正で解消しない。Final reconcile の CI 委譲へ）`)
         break
       }
@@ -5533,11 +5534,10 @@ async function execValidatePhase(state) {
         + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
         + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}`
         + '\n' + STAGING_CONVENTION
-        + TURBOPACK_FALLBACK_CONVENTION
-        + CONTEXT7_BEST_PRACTICE_CONVENTION,
+        + TURBOPACK_NOTE,
         { agentType: 'implementer', schema: IMPL, label: isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`, phase: phaseName },
       )
-      // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一。issue #223）
+      // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一）
       if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)
       greenFixCount += 1
       greenFixIterations.push({ files: gfResult?.files ?? [], summary: gfResult?.summary ?? '' })
@@ -5562,11 +5562,11 @@ async function execValidatePhase(state) {
   }
   pushGreenFixAudit(greenFixIterations)
 
-  // diff-gate/diff-hash 共通 prompt（issue #215）。worktree-diff-hash.sh のコントラクトに依存。
+  // diff-gate/diff-hash 共通 prompt。worktree-diff-hash.sh のコントラクトに依存。
   // Security floor より前に定義し state.dhPrompt に保持: PR/Evaluate phase でも参照するため
   // （evalDiffHash != null ガードで micro は skip）。
   // Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
-  // realized-diff / refloorShape / declared-path-check が自然に実行される（issue #219 fix）。
+  // realized-diff / refloorShape / declared-path-check が自然に実行される（fix）。
   const dhPrompt = `次のコマンドを **先頭トークンが worktree-diff-hash の bare 単文** で 1 回だけ実行し、**stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
     + `（exec-proxy は決定論スクリプトへの verbatim 転写契約であり、argv の書き換えは転写の破壊にあたる。第 1 引数で worktree 絶対パスを渡しているため cd は不要）:\n`
@@ -5574,9 +5574,9 @@ async function execValidatePhase(state) {
   state.dhPrompt = dhPrompt
 
   // ============================================================
-  // empty-diff gate（issue #215）: Security floor phase の直前。
+  // empty-diff gate: Security floor phase の直前。
   // Security floor より前に置くことで retry 後の実体に対して danger-grep / realized-diff /
-  // refloorShape / declared-path-check が正しく実行される（issue #219 major fix）。
+  // refloorShape / declared-path-check が正しく実行される（major fix）。
   // 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
   // ============================================================
   {
@@ -5587,7 +5587,7 @@ async function execValidatePhase(state) {
     validateEpochCandidates.push(dhGate)
     if (dhGate.empty === true) {
       log('⚠️ empty-diff gate: working tree が origin/' + BASE + ' と内容一致（空 diff）— cross-repo 判定を試行（issue #432）')
-      // cross-repo lazy probe（issue #432）: dhGate.empty===true の場合のみ実行するため通常経路の
+      // cross-repo lazy probe: dhGate.empty===true の場合のみ実行するため通常経路の
       // agent 呼び出しは増えない。人間の明示 opt-in（cross-repo ラベル）+ implementer 申告ファイルの
       // うち worktree 外 working tree が実際に dirty という決定論的証拠が揃った場合のみ graceful 終了へ
       // 倒す。ラベル無し・証拠ゼロは既存の fail-closed 経路（差し戻し1回→再度空ならthrow）を維持する。
@@ -5654,12 +5654,12 @@ async function execValidatePhase(state) {
         throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）。'
           + '修正対象が別リポジトリにある cross-repo issue の場合は issue に cross-repo ラベルを付けて /dev-flow を再実行せよ（issue #432）')
       }
-      // empty-diff gate 後の Validate 再実行（issue #219）。
+      // empty-diff gate 後の Validate 再実行。
       // 差し戻し前の Validate は空 tree に対して走っており val.green が trivially green になっている。
       // 差し戻しで書かれたコードが GREEN_MAX ループ・テスト弱体化監査を素通りするのを防ぎ、
       // summary/telemetry の testGreen 値の誤表示を防ぐためにここで再計測する。
       // retry 中の green-fix は loop 終了後に pushGreenFixAudit で focus_areas へ注入する（eval#1 より前）。
-      // runValidateLoop('retry') が GREEN_MAX ループ・テスト弱体化監査注入・concerns 伝搬を担う（issue #223）。
+      // runValidateLoop('retry') が GREEN_MAX ループ・テスト弱体化監査注入・concerns 伝搬を担う。
       const gfIterCountBeforeRetry = greenFixIterations.length
       val = await runValidateLoop('retry')
       validateEpochCandidates.push(val)
@@ -5685,15 +5685,15 @@ async function execSecurityFloorPhase(state) {
   for (const seed of seedSecurityLedger()) {
     ledger = appendItem(ledger, seed).ledger
   }
-  // Security floor 統合 exec-proxy (issue #544, S1): danger-grep(risk) / realized-diff(files) /
+  // Security floor 統合 exec-proxy : danger-grep(risk) / realized-diff(files) /
   // structural-classify(struct) / diff-hash-secfloor(hash) の 4 呼び出しを secfloor-classify.sh の
-  // 1 本へ統合する。label は 'danger-grep' を据え置く（AC1: agentType の dev-runner-haiku-ro 復帰と
+  // 1 本へ統合する。label は 'danger-grep' を据え置く（agentType の dev-runner-haiku-ro 復帰と
   // telemetry label 連続性のため）。throw（StructuredOutput 未返却・proxy 実行失敗等）は
   // structural-classify の try 包み precedent と同型で吸収し、unified=null として
   // parseSecfloorFields の per-field フォールバック（risk fail-closed 支配）へ倒す。need() は撤去 —
   // null で run abort させず fail-closed HOLD へ倒す。StructuredOutput 契約違反（schema 不一致で
   // StructuredOutput が完了しない場合を含む）は read-only probe のため retryOnContractViolation で
-  // 同一 prompt を 1 回だけリトライする（issue #617）。
+  // 同一 prompt を 1 回だけリトライする。
   let unified = null
   try {
     unified = await trackedAgent(
@@ -5706,7 +5706,7 @@ async function execSecurityFloorPhase(state) {
     )
   } catch (e) { log(`⚠️ secfloor-classify 呼び出しが例外 — unified=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
   const { risk, files, struct, hash } = parseSecfloorFields(unified)
-  // fail-closed の 2 原因を出し分ける（issue #617）。形状不一致は top-level キー一覧が、
+  // fail-closed の 2 原因を出し分ける。形状不一致は top-level キー一覧が、
   // proxy 自身の失敗報告（形状は契約通り）は risk.error が診断値になる。
   if (risk.ok !== true) {
     log(isWellFormedRiskField(unified)
@@ -5727,7 +5727,7 @@ async function execSecurityFloorPhase(state) {
   // 注: この時点で implementer はコミットしていない（git add / commit 禁止）ため、
   //     secfloor-classify.sh は `git status --porcelain --untracked-files=all` を直接パースする。
   const realized = files == null ? null : { files }
-  // structural-classify (issue #350): difftastic による structural / format_only 機械分類。
+  // structural-classify : difftastic による structural / format_only 機械分類。
   // parseSecfloorFields が struct.ok===true && available boolean && format_only/structural 配列形を
   // 検証済み（fail-open: 不正/欠落は struct=null）。formatOnlySet はそのまま struct?.format_only を
   // 使えばよい（difft 未インストール時も secfloor-classify.sh 契約上 format_only は空配列のため、
@@ -5738,11 +5738,11 @@ async function execSecurityFloorPhase(state) {
   // ephemeral ファイルを除外してから count する（evaluator.staged.md / fm_*.txt / .devflow-tmp/ を除く）
   const realizedNonEphemeral = realized?.files ? filterEphemeralPaths(realized.files) : null
   if (realized?.files && realizedNonEphemeral && realizedNonEphemeral.length !== realized.files.length) log(`realized-diff: ephemeral ${realized.files.length - realizedNonEphemeral.length} 件を file count から除外`)
-  // 宣言外 non-ephemeral 変更は refloor の size 信号にせず、Evaluate 強制 + concern 監査で扱う（issue #272 原因(3)）
+  // 宣言外 non-ephemeral 変更は refloor の size 信号にせず、Evaluate 強制 + concern 監査で扱う
   const planAllTasks = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
   const undeclared = realizedNonEphemeral ? diffDeclaredPaths(planAllTasks, realizedNonEphemeral) : []
   // declaredFiles = realized 変更のうち宣言済みのもの（undeclared を filter で除外。二重減算を避ける）。
-  // その中で format_only（difftastic 分類）なファイルはさらに refloor count から除外する（issue #350 AC3）。
+  // その中で format_only（difftastic 分類）なファイルはさらに refloor count から除外する。
   const declaredFiles = realizedNonEphemeral ? realizedNonEphemeral.filter((f) => !undeclared.includes(f)) : null
   const formatOnlyExcluded = declaredFiles ? declaredFiles.filter((f) => formatOnlySet.has(f)).length : 0
   const realizedCount = declaredFiles ? declaredFiles.length - formatOnlyExcluded : NaN
@@ -5752,7 +5752,7 @@ async function execSecurityFloorPhase(state) {
   const EFFECTIVE_SHAPE = refloor.shape
   const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
   if (refloor.refloored) log(`⚠️ re-floor: 見積もり ${SHAPE} → realized ${realizedCount} file(s) で ${EFFECTIVE_SHAPE} へ昇格 (raise-only)`)
-  // ui-verify: UI パス touch 時のみ opt-in で ui_verify config を確認する（0 オーバーヘッド原則。issue #285）。
+  // ui-verify: UI パス touch 時のみ opt-in で ui_verify config を確認する（0 オーバーヘッド原則）。
   // config 読み取りは workflow に fs が無いため dev-runner-haiku-ro exec-proxy に委譲する。
   // null / found:false / schema invalid は全て uiTouched=false へ倒す fail-open 設計。need() で包まない。
   let uiVerifyConfig = null
@@ -5802,8 +5802,8 @@ async function execSecurityFloorPhase(state) {
   // 宣言外変更を concerns へ注入する（evaluator focus_areas 経由で重点監査）。
   // ============================================================
   {
-    // porcelain 統合（F3）: 旧 declared-path-check の agent 呼び出しを削除し、
-    // Security floor で既に算出済みの undeclared（宣言ベース count と同一算出）を再利用する（1 回に統合）。
+    // declared-path-check は独立 agent 呼び出しを持たず、Security floor で既に算出済みの
+    // undeclared（宣言ベース count と同一算出）を再利用する（1 回に統合）。
     if (undeclared.length > 0) {
       if (runEval) {
         state.concerns.push(`宣言外変更 ${undeclared.length} 件が plan の file_changes に無い。意図的か確認: ${undeclared.join(', ')}`)
@@ -5833,7 +5833,7 @@ async function execSecurityFloorPhase(state) {
   state.uiVerifyStatus = uiVerifyStatus
   state.undeclared = undeclared
   state.diffClassification = struct ? { structural: struct.structural ?? [], format_only: struct.format_only } : null
-  // diff-hash reuse (issue #377): danger-grep が成功し realized-diff が取れた場合のみ、
+  // diff-hash reuse : danger-grep が成功し realized-diff が取れた場合のみ、
   // Merge tier での danger-grep-final/changed-files 再実行を tree OID 完全一致時に skip できる
   // よう diff-hash を捕捉しておく。fail-open な条件は不変（この gating 条件を満たさないときは
   // secfloor-classify.sh が diffhash を取得していても再利用しない）。取得失敗時は null のまま
@@ -5848,7 +5848,7 @@ async function execSecurityFloorPhase(state) {
 }
 
 // ============================================================
-// ui-verify: agent-browser による実ブラウザ UI 検証（opt-in, fail-open）。issue #285。
+// ui-verify: agent-browser による実ブラウザ UI 検証（opt-in, fail-open）。
 // 呼び出し元で uiTouched が確定している場合のみ呼ばれる。
 // dev サーバー起動 → ui-verifier 検証 → teardown（try/finally で常に実行）の順。
 // teardown 保証は try/finally（呼び出し元）+ dev-runner-haiku の best-effort chain（二重防御）。
@@ -5940,12 +5940,12 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
 
 // ============================================================
 // Phase Evaluate: evaluator → fail なら design=再計画+再実装 / implementation=implementer 修正。
-// 収束は evalConverged() 相当のロジックがインライン判断する（issue #125。基準は EVAL 収束モデルの
+// 収束は evalConverged 相当のロジックがインライン判断する（基準は EVAL 収束モデルの
 // コメント参照）: 既出 feedback 累積で cold start を補償 / 同一 topic 反復で stuck 検出 /
 // stuck かつ design 反復なら早期打ち切り（コスト保護）/ critical は常にブロック /
 // stuck・上限到達でも throw せず現状で PR へ進む（human review 委譲）。
 // 初回は implement で出た concerns / 未解消 BLOCKED を focus_areas として重点監査させる。
-// 収束は isConvergedUnderPolicy のみで判定し ev.verdict は参照しない（issue #174）。
+// 収束は isConvergedUnderPolicy のみで判定し ev.verdict は参照しない。
 // ============================================================
 async function execEvaluatePhase(state) {
   const req = state.req
@@ -5960,7 +5960,7 @@ async function execEvaluatePhase(state) {
   let evalIters = 0            // eval iteration カウンタ（telemetry 用）
   let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
   let unsatisfiedAc = false
-  let evalDiffHash = null  // 最後の evaluator 呼び出し直前の diff hash（issue #215。PR 直前と突合し乖離で summary 警告）
+  let evalDiffHash = null  // 最後の evaluator 呼び出し直前の diff hash（PR 直前と突合し乖離で summary 警告）
   // Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
   // makeLedger で作り直さない(SEC seed を失わないため)。
   for (const [i, crit] of (req.acceptance_criteria ?? []).entries()) {
@@ -5987,7 +5987,7 @@ async function execEvaluatePhase(state) {
   if (cls.env.length) log(`concern 分類: 環境事象 ${cls.env.length} パターン（計 ${cls.env.reduce((a, g) => a + g.count, 0)} 件を dedup）/ 非環境 ${cls.concerns.length} 件`)
 
   // ============================================================
-  // ui-verify: agent-browser による実ブラウザ UI 検証（opt-in, fail-open）。issue #285。
+  // ui-verify: agent-browser による実ブラウザ UI 検証（opt-in, fail-open）。
   // Security floor で uiTouched が確定している場合のみ実行する。
   // dev サーバー起動 → ui-verifier 検証 → teardown（try/finally で常に実行）の順（runUiVerifyFlow に抽出。F3）。
   // ============================================================
@@ -6004,7 +6004,7 @@ async function execEvaluatePhase(state) {
   }
 
   log(`ledger 初期化: blocking ${policyBlockingItems(ledger, GATE_POLICY).length} / advisory ${policyAdvisoryItems(ledger, GATE_POLICY).length} 件`)
-  const evalSeen = makeSeenTracker(EVAL_STUCK)  // feedback 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #125）
+  const evalSeen = makeSeenTracker(EVAL_STUCK)  // feedback 累積 & stuck 検出（_lib/stuck-detector.mjs）
   for (let i = 1; i <= EVAL_PASSES; i++) {
     evalIters = i
     ABORT_CTX.eval_iter = i
@@ -6014,11 +6014,11 @@ async function execEvaluatePhase(state) {
     // _lib/evaluator-contract.test.mjs が read-only で検出する。
     const openEvalCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
     const openConcerns = ledger.items.filter((it) => it.source === 'concern' && it.dimension === 'concern' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
-    // evaluator 呼び出し直前の diff hash を取得・保持（issue #215/#219）。
+    // evaluator 呼び出し直前の diff hash を取得・保持。
     // ループ終了後ではなく各 evaluator 呼び出し前にここで取ることで、
     // redgreen-verify.sh の restore 失敗等 evaluator 呼び出し後の tree 変化を検出可能にする。
     {
-      // throw は failOpenAgent で吸収（issue #605）。read-only probe のため契約違反リトライ opt-in
+      // throw は failOpenAgent で吸収。read-only probe のため契約違反リトライ opt-in
       const _dhPreEval = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-eval', phase: 'Evaluate', retryOnContractViolation: true })
       if (_dhPreEval && typeof _dhPreEval.hash === 'string') {
         evalDiffHash = _dhPreEval.hash
@@ -6059,7 +6059,7 @@ async function execEvaluatePhase(state) {
           ? `未解消 concern 一覧:\n${JSON.stringify(openConcerns)}\n`
             + `${EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions}\n`
           : '')
-      + TURBOPACK_FALLBACK_CONVENTION
+      + TURBOPACK_NOTE
       + EPOCH_INSTRUCTION,
       { agentType: 'evaluator', model: QUALITY_MODEL, schema: EVAL, label: `eval#${i}`, phase: 'Evaluate' },
     ), `Evaluate(eval#${i})`)
@@ -6090,7 +6090,7 @@ async function execEvaluatePhase(state) {
     const escalateAppended = (ev.feedback ?? []).filter((f) => f && f.escalate === true).length
     if (escalateAppended > 0) log(`ESCALATE-TO-HUMAN feedback ${escalateAppended} 件を検出(issue #177。乱発ガードは W6b)`)
     // 未解消 EVAL-* critical は evaluator の critical_resolutions（resolve-with-evidence）でのみ解消する。
-    // 沈黙＝解消の自動 checkItem は廃止（issue #174。「新規のみ報告」指示と矛盾し偽解消を生むため）。
+    // 沈黙＝解消として自動で checkItem してはならない（「新規のみ報告」指示と矛盾し偽解消を生むため）。
     for (const cr of (ev.critical_resolutions ?? [])) {
       if (!cr || typeof cr.id !== 'string') continue
       const item = ledger.items.find((it) => it.id === cr.id
@@ -6101,10 +6101,10 @@ async function execEvaluatePhase(state) {
         log(`${cr.id}: evaluator が解消確認 → checked`)
       }
     }
-    // CONCERN-* は evaluator の concern_resolutions でのみ状態更新する（issue #296, #614）。
+    // CONCERN-* は evaluator の concern_resolutions でのみ状態更新する。
     // resolution enum: resolved（evidence 付きで checked）/ triaged（再検証済み・対応不要。表示専用フラグのみ付け
     // checked は不変 — ゲート・merge tier・収束判定に影響しない）/ unresolved（据え置き）。
-    // 旧 boolean キー resolved / out-of-enum は normalizeConcernResolution が明示 error（silent 無視・fallback なし）。
+    // boolean キー resolved や enum 外の値は normalizeConcernResolution が明示 error にする（silent 無視・fallback なし）。
     // ガード: source==='concern' かつ dimension==='concern'（ENV-*/UI-* を除外）かつ未 checked。SEC/AC/不明 id は無視。
     for (const cr of (ev.concern_resolutions ?? [])) {
       const norm = normalizeConcernResolution(cr)
@@ -6119,7 +6119,7 @@ async function execEvaluatePhase(state) {
         ledger = triageItem(ledger, norm.id, norm.evidence)
         log(`${norm.id}: evaluator がトリアージ済み（対応不要）と判定 → 表示のみ更新（checked 不変）`)
       }
-      // unresolved / evidence 欠落は据え置き（triaged で evidence 無しは unresolved と同一扱い。issue #614 AC2）
+      // unresolved / evidence 欠落は据え置き（triaged で evidence 無しは unresolved と同一扱い。AC2）
     }
     // W4: evaluator の per-AC 判定を ledger に反映。test 実証できる AC は red→green を
     // dev-runner-haiku で決定論検証し、取れたら deterministic 昇格(blocking)。
@@ -6128,7 +6128,7 @@ async function execEvaluatePhase(state) {
       const acId = `AC-${r.ac_index + 1}`
       const acItem = ledger.items.find((it) => it.id === acId)
       if (!acItem) continue   // 知らない AC は無視
-      // issue #444: 既に deterministic 昇格 + checked 済みの AC は redgreen-verify を再実行しない。
+      // 既に deterministic 昇格 + checked 済みの AC は redgreen-verify を再実行しない。
       // checkItem/setCheck は単調不可逆（uncheck 経路なし）のため再実行はゲート上の no-op であり、
       // skip は初回 iteration の evidence / telemetry entry をそのまま保持する（vdelta 追記もしない）。
       if (acItem.checked === true && acItem.check && acItem.check.kind === 'deterministic') {
@@ -6173,7 +6173,7 @@ async function execEvaluatePhase(state) {
         log(`${secId}: evaluator が安全確認 → checked`)
       }
     }
-    // issue #362: TESTSURF hit（test-weakening 決定論検出）を evaluator が evidence 付きで
+    // TESTSURF hit（test-weakening 決定論検出）を evaluator が evidence 付きで
     // 正当な変更と確認したら checkItem(resolve-with-evidence)。確認できなければ block 据え置き。
     for (const tc of (ev.testsurf_clearance ?? [])) {
       if (!tc || typeof tc.pattern !== 'string') continue
@@ -6232,8 +6232,7 @@ async function execEvaluatePhase(state) {
             ? `未解消 critical（最優先で修正せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
             : '')
         + STAGING_CONVENTION
-        + TURBOPACK_FALLBACK_CONVENTION
-        + CONTEXT7_BEST_PRACTICE_CONVENTION,
+        + TURBOPACK_NOTE,
         { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
     }
   }
@@ -6273,14 +6272,14 @@ feedClockMark('evaluate_end', epochResOf(state.evalResult))
 // ============================================================
 // Phase PR: git-commit + git-pr skill を dev-runner で実行し PR URL を取得。
 // ============================================================
-// PR 直前の diff hash を取得し、Evaluate 時点と突合（issue #215）。
+// PR 直前の diff hash を取得し、Evaluate 時点と突合。
 // 判定は hash 文字列の完全一致のみ（0/非0 二値。比率閾値なし）。
 // micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
 // eval_staleness は 5 値（none / hash_mismatch / hash_reconverged / iterate_incomplete /
-// iterate_fixed）。hash_reconverged への置換は Merge tier phase の gh-pr-view 直後で行う（issue #631）。
+// iterate_fixed）。hash_reconverged への置換は Merge tier phase の gh-pr-view 直後で行う。
 let evalStaleness = 'none'
 if (state.evalDiffHash != null) {
-  // throw は failOpenAgent で吸収（issue #605）。read-only probe のため契約違反リトライ opt-in
+  // throw は failOpenAgent で吸収。read-only probe のため契約違反リトライ opt-in
   const dhPr = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR', retryOnContractViolation: true })
   const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
   state.prDiffHash = prDiffHash
@@ -6288,7 +6287,7 @@ if (state.evalDiffHash != null) {
   if (prDiffHash != null && state.evalDiffHash !== prDiffHash) {
     evalStaleness = 'hash_mismatch'
     log('⚠️ Evaluate 時点と PR 直前の diff hash が不一致 — 終端サマリーに stale-eval 警告を付記する（issue #215/#288 hash_mismatch）')
-    // issue #631: 何が乖離したかを決定論取得する（tree OID は object DB に残る）。取得失敗は fail-open（staleDiffFiles=null）。
+    // 何が乖離したかを決定論取得する（tree OID は object DB に残る）。取得失敗は fail-open（staleDiffFiles=null）。
     const numstat = await failOpenAgent(
       `次のコマンドを **先頭トークンが git の bare 単文** で 1 回だけ実行し、stdout の各行を配列 lines に一字一句そのまま（要約・整形・並べ替え・件数制限をせず）入れて {"ok": true, "lines": [...]} で返せ`
       + `（stdout が空なら {"ok": true, "lines": []}。exit 非0・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。`
@@ -6319,7 +6318,7 @@ log(`PR created: ${pr.pr_url}`)
 
 feedClockMark('pr_end', epochResOf(pr))
 
-// nested 起動時に dev-flow が pr-iterate へ渡す context（issue #550 案3）。pr-iterate 側はこれを
+// nested 起動時に dev-flow が pr-iterate へ渡す context。pr-iterate 側はこれを
 // 受けて pr-meta probe / isolation-cleanup を skip する — cwd/head_ref/repo/epoch は dev-flow が
 // 既に確定済みの値として保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
 // epoch は pr（commit+PR dev-runner 応答）の epoch を渡す（dev-flow 自身の isolation-probe token
@@ -6335,23 +6334,23 @@ const PR_ITERATE_ARGS = {
 }
 
 // ============================================================
-// PR phase 経路分岐（issue #376 F3）: clean-micro（LITE）は pr-reviewer 1-pass レビュー +
-// CI gate のみで完結させ、フル pr-iterate（review ⇄ fix loop, 上限10）を起動しない
-// （AC-1）。LITE ゲート条件は「lite に入れない全条件」を集約する: TRIVIAL（micro shape）
+// PR phase 経路分岐: clean-micro（LITE）は pr-reviewer 1-pass レビュー +
+// CI gate のみで完結させ、フル pr-iterate（review ⇄ fix loop, 上限10）を起動しない。
+// LITE ゲート条件は「lite に入れない全条件」を集約する: TRIVIAL（micro shape）
 // かつ !state.runEval（Evaluate が強制実行されていない）かつ state.dangerHits が空
 // （danger-grep hit なし）。runEval を forced にする条件（danger hit / testsurf / 宣言外 /
 // green-fix / UI touch。いずれも軸A invariant 由来）が 1 つでも成立していれば lite から
-// 除外され、現行 workflow('pr-iterate') フル経路を通す（AC-3 軸A invariant 不変）。
+// 除外され、現行 workflow('pr-iterate') フル経路を通す（軸A invariant 不変）。
 // 注: workflow('pr-iterate') は「親 workflow の中の workflow()」= ネスト1段で合法。
 //     pr-iterate.js 内に workflow() を足すと2段になり throw するので入れないこと。
 // ============================================================
 const LITE = TRIVIAL && !state.runEval && state.dangerHits.length === 0
 let iterate
-// route: telemetry 用の経路識別子（'lite'|'full'。AC-5）。journal.sh の --route フラグに
-// 到達済み（issue #430。lite|full 以外は当該キーのみ drop の fail-open）。dotfiles Stop hook の
+// route: telemetry 用の経路識別子（'lite'|'full'）。journal.sh の --route フラグに
+// 到達済み（lite|full 以外は当該キーのみ drop の fail-open）。dotfiles Stop hook の
 // jq projection（送り側配線）は it-all-playpark/dotfiles#143。
 let route
-// iterate_end の clock 給電（issue #443）候補。branch ごとに設定する — lite clean 終端は
+// iterate_end の clock 給電候補。branch ごとに設定する — lite clean 終端は
 // reviewLite/ciLite の epoch、full・lite 昇格は workflow('pr-iterate') 返り値の end_epoch から。
 let iterateEpochRes = null
 if (LITE) {
@@ -6398,15 +6397,15 @@ if (LITE) {
   route = 'full'
   iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
 }
-// nested pr-iterate の subagent 起動数を run 合計へ合算する（issue #445）。pr-iterate が
+// nested pr-iterate の subagent 起動数を run 合計へ合算する。pr-iterate が
 // subagent_invocations を返さない run（lite 経路・未実装）は optional chain で no-op。
 if (iterate?.subagent_invocations?.by_type) mergeSubagentCounts(SUBAGENT_COUNTS, iterate.subagent_invocations.by_type)
 feedClockMark('iterate_end', iterateEpochRes)
 
-// pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある（issue #233）。
+// pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある。
 // runEval=false（micro path・eval 0 回）では「Evaluate が stale」という概念自体が成立しないため skip。
 // evalDiffHash の取得可否とは独立に判定する（hash 取得失敗でも eval は実行済みのため）。
-// 'none' からのみ昇格させる構造で hash_mismatch 優先を保証する（issue #288 AC-2）。
+// 'none' からのみ昇格させる構造で hash_mismatch 優先を保証する。
 if (state.runEval && evalStaleness === 'none') {
   if (iterate?.status != null && iterate.status !== 'lgtm') {
     evalStaleness = 'iterate_incomplete'
@@ -6420,22 +6419,22 @@ if (state.runEval && evalStaleness === 'none') {
 // ============================================================
 // Phase Final reconcile: pr-iterate が fix を適用した run（fixes_applied>0）のみ、
 // worktree を PR 最終 HEAD へ ff-sync → test suite 一発再実行 → 最終 changed-files から
-// UI touch / 宣言外パスを再判定 → 必要時 ui-verify 再実行を行う（issue #320）。
-// fixes_applied=0 は新規 agent 呼び出しゼロ（zero-overhead routing。AC-1）。
+// UI touch / 宣言外パスを再判定 → 必要時 ui-verify 再実行を行う。
+// fixes_applied=0 は新規 agent 呼び出しゼロ（zero-overhead routing）。
 // ============================================================
 phase('Final reconcile')
 let finalReconcile = 'skipped'   // 'skipped'|'reverified'|'unavailable'
 let finalTestGreen = null        // true|false|null（null = 未実行/no_tests/取得不能/tests:error の起動失敗）
 let finalUiVerifyStatus = null   // 'passed'|'findings'|'failed_open'|'setup_failed'|null
-let finalUiVerifyResult = null   // ui-verifier の raw checks（issue #331 final-ac-reconcile prompt 用）
+let finalUiVerifyResult = null   // ui-verifier の raw checks（final-ac-reconcile prompt 用）
 // changed-files-final の raw files。Merge tier が同一 tree・同一コマンドの changed-files を
-// 再実行せず再利用するために持ち越す（issue #542）。null は「Final reconcile 未実行 or 取得失敗」で、
-// その場合 Merge tier は従来どおり自前で changed-files を発行する。
+// 再実行せず再利用するために持ち越す。null は「Final reconcile 未実行 or 取得失敗」で、
+// その場合 Merge tier は自前で changed-files を発行する。
 let changedFilesFinal = null
-// final_end の clock 給電（issue #443）候補。fixes_applied=0 の skip run は null のまま
-// （キー欠落 — 従来は probe 往復分の微小値が入っていたが、より正確な欠落表現になる意図的変更）。
+// final_end の clock 給電候補。fixes_applied=0 の skip run は null のまま
+// （未計測をキー欠落として正しく表現するため、疑似的な微小値は入れない）。
 let finalEpochRes = null
-let finalSyncHead = null   // reconcile-sync 成功時の HEAD sha（40hex）。ci-final の期待 sha（issue #599）
+let finalSyncHead = null   // reconcile-sync 成功時の HEAD sha（40hex）。ci-final の期待 sha
 let finalCi = null   // finalCiVerdict の結果。finalReconcile が unavailable/ci_verified のときのみ non-null
 if ((iterate?.fixes_applied ?? 0) > 0) {
   // Step1 sync（fail-safe）
@@ -6461,10 +6460,10 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     finalEpochRes = maxEpochRes([sync, ft])
     if (!ft) { finalReconcile = 'unavailable'; log('⚠️ Final reconcile: test#final が null — unavailable（fail-safe → merge tier HOLD）') }
     else if (ft.tests === 'error') {
-      // テストが 1 件も実行されなかった起動失敗（issue #619）。本物の red（tests:'failed'）ではないので
+      // テストが 1 件も実行されなかった起動失敗。本物の red（tests:'failed'）ではないので
       // reverified + finalTestGreen=false に潰さず unavailable に載せる。finalTestGreen は null 据え置き。
       // unavailable は下流の ci-final（PR head sha pin + check 全 success の決定論判定）で ci_verified へ
-      // 昇格しうる。CI が pending / failure / sha 不一致なら従来どおり fail-closed で merge tier HOLD。
+      // 昇格しうる。CI が pending / failure / sha 不一致なら fail-closed で merge tier HOLD。
       finalReconcile = 'unavailable'
       log(`⚠️ Final reconcile: test#final tests=error（テストが 1 件も実行されなかった起動失敗: ${String(ft.summary ?? '').slice(0, 200)}）— unavailable（ローカル再検証不能 → ci-final の CI 委譲を試みる）`)
     }
@@ -6476,7 +6475,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     // Step3〜5（changed-files-final / 宣言外パス再監査 / UI 再検証）は sync 成功のみに依存する
     // （test#final の成否に依存しない）。ci-final 委譲で finalReconcile が unavailable→ci_verified
     // へ昇格する run でも、その CI 委譲は test gate の代替であって宣言外監査・UI 再検証の代替ではない
-    // ため、test#final が null/red でも sync 成功時は必ず実行する（issue #600 レビュー指摘）。
+    // ため、test#final が null/red でも sync 成功時は必ず実行する。
     // Step3 最終 changed-files（fail-open）
     const changedFinal = await trackedAgent(
       `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
@@ -6485,7 +6484,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     if (!changedFinal?.files) {
       log('⚠️ Final reconcile: changed-files-final 取得失敗 — UI 再判定・宣言外再監査を skip（fail-open。test gate は維持）')
     } else {
-      // Merge tier へ持ち越す（issue #542）。ephemeral 除去前の raw を渡す — Merge tier の
+      // Merge tier へ持ち越す。ephemeral 除去前の raw を渡す — Merge tier の
       // changed-files は元々 filter せず raw を使うため、加工すると挙動が変わる。
       changedFilesFinal = changedFinal.files
       const filesFinal = filterEphemeralPaths(changedFinal.files)
@@ -6497,7 +6496,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
         state.ledger = appendItem(state.ledger, { id: 'CONCERN-FINAL', text: `pr-iterate fix 後に plan 宣言外の変更 ${newUndeclared.length} 件: ${newUndeclared.join(', ')}`.slice(0, 500), dimension: 'concern', severity: 'major', source: 'concern', check: { kind: 'inspection' } }).ledger
         log(`Final reconcile: fix 由来の宣言外変更 ${newUndeclared.length} 件 → CONCERN-FINAL（advisory）へ注入`)
       }
-      // Step5 UI 再検証（AC-4。fail-open・advisory）
+      // Step5 UI 再検証（fail-open・advisory）
       if (filesFinal.some((f) => isUiPath(f))) {
         let rawCfgF = null
         try {
@@ -6524,7 +6523,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
 }
 
 // ============================================================
-// CI 委譲（issue #599）: Final reconcile が unavailable のとき、reconcile-sync 成功時の head sha に
+// CI 委譲: Final reconcile が unavailable のとき、reconcile-sync 成功時の head sha に
 // pin した PR の CI check を dev-runner-haiku-ro で 1 回読み、finalCiVerdict（決定論）が sha 一致かつ
 // 全 success を返したときのみ finalReconcile を 'ci_verified' へ昇格する。期待 sha が無い（sync 失敗）
 // 場合は probe を起動しない。取得失敗 / pending / failure / sha 不一致 / check 0 件は unavailable 維持
@@ -6553,7 +6552,7 @@ if (finalReconcile === 'unavailable') {
 }
 
 // ============================================================
-// Step6: targeted Final AC reconcile（issue #331）。fix 適用 run で final test が green/no_tests の場合のみ、
+// Step6: targeted Final AC reconcile。fix 適用 run で final test が green/no_tests の場合のみ、
 // Analyze で freeze した既存 AC を最終 PR tree に対し one-shot で再検証する。契約（EVALUATOR_OPERATIONAL_CONTRACT.
 // final_ac_reconcile）は evaluator.md へ mirror せず本 prompt 注入が唯一の配送経路（.claude/agents/ は書き込み禁止領域）。
 // ============================================================
@@ -6602,7 +6601,7 @@ feedClockMark('final_end', finalEpochRes)
 // merge は全 tier 人間。AUTO は推奨ラベルのみ(真 auto-merge は W6 earned-autonomy)。
 // ============================================================
 phase('Merge tier')
-// diff-hash reuse (issue #377): Security floor 時点の tree OID（state.secDiffHash）と Merge tier
+// diff-hash reuse : Security floor 時点の tree OID（state.secDiffHash）と Merge tier
 // 冒頭の tree OID が完全一致するときのみ danger-grep-final/changed-files の再実行を skip し、
 // Security floor の risk/realized をそのまま再利用する。secDiffHash が null（Security floor
 // 側 fail-closed・取得失敗）のときは diff-hash-merge 自体を呼ばない（無駄な proxy を発行しない）。
@@ -6610,7 +6609,7 @@ let riskFinal
 let changed
 let mergeDiffHash = null
 if (state.secDiffHash != null) {
-  // throw は failOpenAgent で吸収（issue #605）。read-only probe のため契約違反リトライ opt-in
+  // throw は failOpenAgent で吸収。read-only probe のため契約違反リトライ opt-in
   const dh = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-merge', phase: 'Merge tier', retryOnContractViolation: true })
   mergeDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
   if (mergeDiffHash == null) log('⚠️ diff-hash-merge の取得に失敗 — Security floor 結果の再利用は skip し danger-grep-final / changed-files を再実行（fail-safe）')
@@ -6627,10 +6626,10 @@ if (reuseSecFloor) {
     + `diff-risk-classify origin/${BASE}`,
     { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
   ), 'Merge tier(danger-grep-final)')
-  // changed-files 再利用（issue #542）: Final reconcile が同一 worktree・同一 tree に対して
+  // changed-files 再利用: Final reconcile が同一 worktree・同一 tree に対して
   // 完全に同じコマンド（`git diff --name-only origin/BASE...HEAD`）を既に実行している。
   // Final reconcile と Merge tier の間で tree を変える処理は無い（journal payload 等の書き込みは
-  // gitignored な .devflow-tmp 配下に留まる）ため、結果は byte 一致する。取得失敗・未実行（null）は従来どおり再実行。
+  // gitignored な .devflow-tmp 配下に留まる）ため、結果は byte 一致する。取得失敗・未実行（null）は再実行する。
   if (changedFilesFinal != null) {
     changed = { files: changedFilesFinal }
     log('Merge tier: Final reconcile の changed-files-final を再利用（同一 tree — changed-files 再実行を skip）')
@@ -6651,7 +6650,7 @@ if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${risk
 const ledgerBeforeFinalReconcile = state.ledger
 state.ledger = reconcileDanger(state.ledger, riskFinal)
 state.ledger = reconcileTestsurf(state.ledger, riskFinal)
-// one-shot security clearance (issue #299): Evaluate 時点 clean → 最終 danger-grep で新規 hit に
+// one-shot security clearance : Evaluate 時点 clean → 最終 danger-grep で新規 hit に
 // 転じた SEC class のみを対象に、evaluator へ 1 回だけ clearance を求める。cleared:true + 非空
 // evidence のみ checkItem。null / cleared:false / evidence 空は据え置き = HOLD（security floor は
 // 緩めない）。fail-closed 時は試みない。反復ループは作らない。
@@ -6683,12 +6682,12 @@ const unresolvedDanger = state.ledger.items.some(
 const breakingStructured = req.breaking_change === true
 const breakingKeyword = req.breaking_keyword_scan === true
 const escalateCount = policyAdvisoryItems(state.ledger, GATE_POLICY).filter((it) => it.escalate === true).length
-// base branch conflict 検出 (issue #405): gh pr view で mergeable/mergeStateStatus を read-only 取得し、
+// base branch conflict 検出 : gh pr view で mergeable/mergeStateStatus を read-only 取得し、
 // conflict 時は classifyMergeTier で無条件 HOLD。UNKNOWN/proxy 失敗は fail-open（definitive conflict のみ HOLD）。
 // label は 'gh-pr-view'（'pr' 始まりにしない — 既存 routing test 群が label.startsWith('pr') を
 // PR 作成 phase の呼び出し数カウントに使っており、'pr' 始まりの label を追加すると衝突するため。
 // lite-route-routing.test.mjs の同種コメント参照）。
-// headRefOid は hash_reconverged 判定の証人（issue #631）。gh 追加呼び出しなし
+// headRefOid は hash_reconverged 判定の証人。gh 追加呼び出しなし
 const prMeta = await trackedAgent(
   `cd ${WT} で作業。次を実行し **stdout の JSON object を** {"ok": true, "mergeable": <値>, "mergeStateStatus": <値>, "headRefOid": <値>} に包んで返せ`
   + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
@@ -6698,12 +6697,12 @@ const prMeta = await trackedAgent(
 const mergeableState = classifyMergeableState(prMeta)
 if (mergeableState === 'conflicting') log('gh-pr-view: base branch と conflict 検出 — merge tier を HOLD 強制')
 else if (mergeableState === 'unknown') log(`⚠️ gh-pr-view: mergeable 状態を確定できず（${prMeta?.error ?? 'null / UNKNOWN'}）— conflict gate は fail-open（HOLD しない。definitive CONFLICTING/DIRTY のみ HOLD）`)
-// issue #631: hash_mismatch の再収束判定。証人は PR head tree。3 条件 (i) evalStaleness==='hash_mismatch'
+// hash_mismatch の再収束判定。証人は PR head tree。3 条件 (i) evalStaleness==='hash_mismatch'
 // (ii) prHeadTreeOid===evalDiffHash (iii) mergeDiffHash===evalDiffHash がすべて成立するときのみ
 // hash_reconverged へ置換し HOLD を外す（gate が守る性質「merge 対象 tree = 評価済み tree」を merge 対象
 // そのもので決定論確認しているため gate_policy に依らない）。headRefOid 取得失敗・mergeDiffHash null
-// （#377 gating で未計算 / 取得失敗）・rev-parse 失敗はすべて hash_mismatch 維持（HOLD）。
-// iterate_* との優先順位（hash_mismatch は 'none' からのみ昇格、#288 AC-2）はここで変えない。
+// （gating で未計算 / 取得失敗）・rev-parse 失敗はすべて hash_mismatch 維持（HOLD）。
+// iterate_* との優先順位（hash_mismatch は 'none' からのみ昇格）はここで変えない。
 if (evalStaleness === 'hash_mismatch') {
   const headRefOid = (prMeta && prMeta.ok === true && typeof prMeta.headRefOid === 'string' && /^[0-9a-f]{40}$/i.test(prMeta.headRefOid)) ? prMeta.headRefOid : null
   if (headRefOid == null) {
@@ -6758,7 +6757,7 @@ const mergeTier = classifyMergeTier({
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
 // ============================================================
-// CI checks 委譲 auto-close (issue #297): CI_VERIFIABLE_ENV_KEYS の ENV item
+// CI checks 委譲 auto-close : CI_VERIFIABLE_ENV_KEYS の ENV item
 // （turbopack-sandbox / bats-sandbox）を env_key ごとの check-name regex（envChecksGreen）で
 // 機械的に checkItem する。
 // 判定は envChecksGreen（決定論）のみ — LLM に判定させない。取得失敗・pending・該当 check
@@ -6794,9 +6793,9 @@ if (ciTargets.length > 0) {
 
 // ============================================================
 // Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。
-// 投稿失敗は log 警告のみで workflow は正常 return（issue #162 AC#4）。
+// 投稿失敗は log 警告のみで workflow は正常 return（AC#4）。
 // ============================================================
-// issue #603: 終端サマリーが件数のみ表示する解消済み証跡（Goal Ledger 解消済み / 環境ノート / 達成 AC /
+// 終端サマリーが件数のみ表示する解消済み証跡（Goal Ledger 解消済み / 環境ノート / 達成 AC /
 // cleared security）の全文は journal telemetry `resolved_evidence` に載せる（canonical _lib/resolved-evidence.mjs、
 // summary-format と同一の選別述語・決定論 cap）。表示・記録専用で merge tier / ledger / gate には一切影響しない
 // （classifyMergeTier の後に置く。軸A 不変）。acResults は summary と同じ snapshot を使う。
@@ -6860,12 +6859,12 @@ if (!summaryPost?.posted) {
 
 // ============================================================
 // journal-log: dev-flow 完走の telemetry handoff を pending dir へ書き出す。
-// dotfiles の Stop hook (stop-devflow-telemetry.sh) が journal.sh log へ flush する（issue #203）。
+// dotfiles の Stop hook (stop-devflow-telemetry.sh) が journal.sh log へ flush する。
 // 失敗は log 警告のみで workflow は継続（telemetry 欠損 > ワークフロー中断）。
 // need() で包まない — null 容認が必須。
 // ============================================================
-// 専用 clock#end probe は issue #550 F3 で廃止 — end mark は上記 post-summary 応答の optional
-// epoch から給電する（専用 clock probe を 0 回に削減）。
+// end mark も専用 clock probe を持たず、上記 post-summary 応答の optional
+// epoch から feedClockMark で給電する（全 mark を隣接 exec-proxy/agent 応答から給電する設計）。
 feedClockMark('end', epochResOf(summaryPost))
 const durations = computeDurations(clockMarks)
 const telemetryHandoff = buildJournalHandoffPayload({
@@ -6874,7 +6873,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
   issue: Number(ISSUE),
   repo: repoFromGithubUrl(pr.pr_url) ?? REPO,
   pr_number: Number(pr.pr_number),
-  // plugin bin/ の bare 名（issue #569）。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
+  // plugin bin/ の bare 名。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
   journal_sh: 'journal',
   ...(state.guardBlockedResults.length ? { error_category: 'guard_blocked' } : {}),
   telemetry: {
@@ -6902,30 +6901,30 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
     ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
     ...(state.vdeltaVerdicts.length ? { vdelta_verdicts: state.vdeltaVerdicts } : {}),
-    // route: PR phase 経路識別子（'lite'|'full'。issue #376 AC-5）。常時出力。journal.sh の
-    // --route フラグに到達済み（issue #430）。送り側の jq projection は it-all-playpark/dotfiles#143。
+    // route: PR phase 経路識別子（'lite'|'full'）。常時出力。journal.sh の
+    // --route フラグに到達済み。送り側の jq projection は it-all-playpark/dotfiles#143。
     route,
     // review_confidence/review_decision: lite route（pr-review-lite が dev-flow 内で実行された場合）
     // のみ出力する。full route の dev-flow entry にはキー自体を出さない（実値は同 run の nested
-    // pr-iterate entry 側に記録 — 二重計上防止。issue #561）。
+    // pr-iterate entry 側に記録 — 二重計上防止）。
     ...(route === 'lite' && state.liteReview ? { review_confidence: state.liteReviewConfidence ?? null, ...(state.liteReview.decision ? { review_decision: state.liteReview.decision } : {}) } : {}),
     // subagent_invocations: run あたりの subagent (agent()) 起動数 {total, by_type}。
-    // 常時出力（issue #445）。nested pr-iterate 分は上記 mergeSubagentCounts で合算済み。
+    // 常時出力。nested pr-iterate 分は上記 mergeSubagentCounts で合算済み。
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
-    quality_model_config: QUALITY_MODEL,  // 品質ゲート 4 agent の model 設定値（実行時モデルではない。issue #601）
+    quality_model_config: QUALITY_MODEL,  // 品質ゲート 4 agent の model 設定値（実行時モデルではない）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs 定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
-    // resolved_evidence: 終端サマリーから外した解消済み証跡の全文（issue #603）。4 配列すべて空なら省く。
+    // resolved_evidence: 終端サマリーから外した解消済み証跡の全文。4 配列すべて空なら省く。
     // passthrough 経路で journal に到達（hook 変更不要）。gate / merge tier / ledger の入力にはならない。
     ...(resolvedEvidence ? { resolved_evidence: resolvedEvidence } : {}),
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
     // guard_id: guard_blocked task が 1 件以上ある run のみ出力する telemetry 専用キー
-    // （unique sort 済み comma 結合文字列。issue #448 F3）。journal.sh whitelist 配線は別 issue。
+    // （unique sort 済み comma 結合文字列）。journal.sh whitelist 配線は別 issue。
     ...(state.guardBlockedResults.length ? { guard_id: [...new Set(state.guardBlockedResults.map((g) => g.guard_id))].sort().join(',') } : {}),
   },
 })
-// journal handoff（issue #494）: choreography 本体は canonical _lib/journal-handoff.mjs の
-// runJournalHandoff（issue #556）。journal_log_status は 3 値 closed enum
+// journal handoff: choreography 本体は canonical _lib/journal-handoff.mjs の
+// runJournalHandoff。journal_log_status は 3 値 closed enum
 // （logged/save_failed/log_failed）で返り値へ現れる。fail-open は維持（gate・merge tier には無影響）。
 const journalLogStatus = await runJournalHandoff({
   agent: trackedAgent,
@@ -6988,7 +6987,7 @@ return {
     : 'REVIEW: 人間が LGTM を確認して merge してください',
 }
 } catch (e) {
-  // top-level abort handoff（issue #607）: handoff 到達前の throw（need() fail-closed / isolation probe /
+  // top-level abort handoff: handoff 到達前の throw（need fail-closed / isolation probe /
   // evaluator 例外等）でも journal entry を 1 件残す。表現は buildAbortHandoffPayload の単一形
   // （outcome:'failure' + error_category:'abort'）。fail-open: handoff の失敗は run の終了を妨げず、
   // 元の例外を必ず rethrow する（abort の意味論・resume 挙動は不変）。終端サマリ・Merge tier は実行しない。

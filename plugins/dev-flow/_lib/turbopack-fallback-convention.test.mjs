@@ -1,18 +1,23 @@
 // implementer.md / evaluator.md / dev-runner*.md は sandbox write-deny のため、Turbopack fallback
-// 規約は dev-flow.js が全 implementer/evaluator/dev-runner spawn prompt に注入する（issue #292）。
+// 規約は dev-flow.js が全 implementer/evaluator/dev-runner spawn prompt に注入する。
 //
-// 背景: sandbox 内で Next.js の `next build`（Turbopack）が process 生成・ポートバインド制限により
-//       TurbopackInternalError (os error 1) で決定的に失敗する既知事象がある。implementer が
-//       git stash 等の対照実験を毎回再発明するのを防ぐため、`next build --webpack` 等の非 Turbopack
-//       fallback で build 検証してよい旨を規約化する（Next.js 以外のプロジェクトには適用しない）。
+// Turbopack 規約は本文定数 TURBOPACK_FALLBACK_CONVENTION（定義 1 + Setup(stack) 確定用 let 変数
+// TURBOPACK_NOTE への代入 1 = 出現 2 回のみ）と、5 箇所の注入先が連結する TURBOPACK_NOTE
+// （let 宣言 1 + Setup 代入 1 + 注入 5 = 出現 7 回）に分離されている。注入可否は Setup(stack) が
+// worktree-deps 応答の frameworks（detect-stack 相乗り）で決定論的に決め、対象 repo が Next.js の
+// ときのみ TURBOPACK_NOTE に本文をセットする。
 //
 // このテストは:
-//   (1) dev-flow.js に識別子 'TURBOPACK_FALLBACK_CONVENTION' がちょうど 6 回出現する
-//       （定義 1 + implPrompt/test-prompt/green-fix/evaluator/fix#i の usage 5）
-//   (2) 定数定義の文字列に必要キーワードが全て含まれる
+//   (1) dev-flow.js に識別子 'TURBOPACK_FALLBACK_CONVENTION' がちょうど 2 回、
+//       'TURBOPACK_NOTE' がちょうど 7 回出現する
+//   (2) 定数定義の文字列に必要キーワードが全て含まれ、LLM に適用可否を判定させる文言（『適用しない』
+//       『Vite』）を含まない
 //   (3) 注入位置: implPrompt / Validate phase（test prompt・green-fix prompt）/
-//       Evaluate phase（evaluator prompt・fix#i prompt）の各区間に識別子が現れる
-//   (4) 定義が inline 生成区間外（最後の END inline マーカーより後）にあること
+//       Evaluate phase（evaluator prompt・fix#i prompt）の各区間に TURBOPACK_NOTE が現れ、
+//       TURBOPACK_FALLBACK_CONVENTION は現れない
+//   (4) 定義が inline 生成区間外（最後の END inline マーカーより後）にあり、
+//       Setup 代入が label:'worktree-deps' より後・VALIDATE_TEST_PROMPT 定義より前にあること
+//   (5) dev-flow.js に CONTEXT7_BEST_PRACTICE_CONVENTION / context7 の出現が 0 回であること
 // を assert する。
 
 import { test } from 'vitest';
@@ -26,35 +31,50 @@ const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
 
 const src = readFileSync(devFlowPath, 'utf8');
 
-const IDENT = 'TURBOPACK_FALLBACK_CONVENTION';
+const CONST_IDENT = 'TURBOPACK_FALLBACK_CONVENTION';
+const NOTE_IDENT = 'TURBOPACK_NOTE';
 
 // ============================================================
 // (1) 識別子出現数
 // ============================================================
 
-test('[turbopack-fallback] dev-flow.js に TURBOPACK_FALLBACK_CONVENTION がちょうど 6 回出現する', () => {
-  const count = src.split(IDENT).length - 1;
+test('[turbopack-fallback] dev-flow.js に TURBOPACK_FALLBACK_CONVENTION がちょうど 2 回出現する', () => {
+  const count = src.split(CONST_IDENT).length - 1;
   assert.equal(
     count,
-    6,
-    `dev-flow.js に ${IDENT} が ${count} 回出現（期待: 6 回 = 定義 1 + implPrompt/test-prompt/green-fix/evaluator/fix#i の usage 5）`,
+    2,
+    `dev-flow.js に ${CONST_IDENT} が ${count} 回出現（期待: 2 回 = 定義 1 + Setup(stack) 代入 1）`,
+  );
+});
+
+test('[turbopack-fallback] dev-flow.js に TURBOPACK_NOTE がちょうど 7 回出現する', () => {
+  const count = src.split(NOTE_IDENT).length - 1;
+  assert.equal(
+    count,
+    7,
+    `dev-flow.js に ${NOTE_IDENT} が ${count} 回出現（期待: 7 回 = let 宣言 1 + Setup 代入 1 + 注入 5）`,
   );
 });
 
 // ============================================================
-// (2) 定数定義に必要キーワードが含まれる
+// (2) 定数定義に必要キーワードが含まれ、適用除外文言を含まない
 // ============================================================
 
-test('[turbopack-fallback] 定数定義に必要キーワードが全て含まれる', () => {
+function constIndices() {
   const indices = [];
-  let idx = src.indexOf(IDENT);
+  let idx = src.indexOf(CONST_IDENT);
   while (idx !== -1) {
     indices.push(idx);
-    idx = src.indexOf(IDENT, idx + IDENT.length);
+    idx = src.indexOf(CONST_IDENT, idx + CONST_IDENT.length);
   }
-  assert.ok(indices.length >= 2, `${IDENT} の出現が定義+利用の最低 2 回に満たない（${indices.length} 回）`);
+  return indices;
+}
 
-  // 定義は最初の出現から次（最初の注入）の出現までの区間に閉じているはず
+test('[turbopack-fallback] 定数定義に必要キーワードが全て含まれ、適用除外文言を含まない', () => {
+  const indices = constIndices();
+  assert.equal(indices.length, 2, `${CONST_IDENT} の出現が定義+Setup代入の 2 回に一致しない（${indices.length} 回）`);
+
+  // 定義は最初の出現から次（Setup 代入）の出現までの区間に閉じているはず
   const defRegion = src.slice(indices[0], indices[1]);
 
   const requiredKeywords = [
@@ -62,7 +82,6 @@ test('[turbopack-fallback] 定数定義に必要キーワードが全て含ま�
     'os error 1',
     'next build --webpack',
     'Next.js',
-    'Vite',
     '断定',
     '実 CI',
     'コード欠陥',
@@ -74,6 +93,9 @@ test('[turbopack-fallback] 定数定義に必要キーワードが全て含ま�
       `TURBOPACK_FALLBACK_CONVENTION の定義にキーワード "${kw}" が含まれない`,
     );
   }
+
+  assert.ok(!defRegion.includes('適用しない'), '定義に LLM 判定文言「適用しない」が残っている');
+  assert.ok(!defRegion.includes('Vite'), '定義に LLM 判定文言中の「Vite」が残っている');
 });
 
 // ============================================================
@@ -89,44 +111,34 @@ function sliceBetween(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-test('[turbopack-fallback] implPrompt〜runImplement 区間に識別子が含まれる（implementer 初回実装 prompt）', () => {
+function countIn(region, ident) {
+  return region.split(ident).length - 1;
+}
+
+test('[turbopack-fallback] implPrompt〜runImplement 区間に TURBOPACK_NOTE が 1 回含まれ CONVENTION は含まれない', () => {
   const region = sliceBetween(src, 'function implPrompt', 'async function runImplement');
-  assert.ok(
-    region.includes(IDENT),
-    `implPrompt 定義区間に ${IDENT} が含まれない`,
-  );
+  assert.equal(countIn(region, NOTE_IDENT), 1, 'implPrompt 定義区間の TURBOPACK_NOTE 出現数が 1 でない');
+  assert.equal(countIn(region, CONST_IDENT), 0, 'implPrompt 定義区間に TURBOPACK_FALLBACK_CONVENTION が残っている');
 });
 
-test('[turbopack-fallback] VALIDATE_TEST_PROMPT〜execSecurityFloorPhase 区間に識別子が 2 回含まれる（test prompt + green-fix prompt）', () => {
-  // issue #320 (F4): test prompt は runValidateLoop と Final reconcile の test#final で共有するため
-  // module-scope const VALIDATE_TEST_PROMPT へ抽出済み（WT 確定後・execValidatePhase 定義より前に配置）。
-  // そのため識別子の物理的な出現位置は execValidatePhase 関数本体の外（VALIDATE_TEST_PROMPT 定義）+
-  // 内（green-fix prompt）の 2 箇所に分かれる。
+test('[turbopack-fallback] VALIDATE_TEST_PROMPT〜execSecurityFloorPhase 区間に TURBOPACK_NOTE が 2 回含まれ CONVENTION は含まれない', () => {
   const region = sliceBetween(src, 'const VALIDATE_TEST_PROMPT', 'async function execSecurityFloorPhase');
-  const count = region.split(IDENT).length - 1;
-  assert.equal(
-    count,
-    2,
-    `VALIDATE_TEST_PROMPT〜execSecurityFloorPhase 区間に ${IDENT} が ${count} 回出現（期待: 2 回 = test prompt(VALIDATE_TEST_PROMPT) + green-fix prompt）`,
-  );
+  assert.equal(countIn(region, NOTE_IDENT), 2, 'VALIDATE_TEST_PROMPT〜execSecurityFloorPhase 区間の TURBOPACK_NOTE 出現数が 2 でない（test prompt + green-fix prompt）');
+  assert.equal(countIn(region, CONST_IDENT), 0, 'VALIDATE_TEST_PROMPT〜execSecurityFloorPhase 区間に TURBOPACK_FALLBACK_CONVENTION が残っている');
 });
 
-test('[turbopack-fallback] execEvaluatePhase〜phase(Implement) 区間に識別子が 2 回含まれる（evaluator prompt + fix#i prompt）', () => {
+test('[turbopack-fallback] execEvaluatePhase〜phase(Implement) 区間に TURBOPACK_NOTE が 2 回含まれ CONVENTION は含まれない', () => {
   const region = sliceBetween(src, 'async function execEvaluatePhase', "phase('Implement')");
-  const count = region.split(IDENT).length - 1;
-  assert.equal(
-    count,
-    2,
-    `execEvaluatePhase 区間に ${IDENT} が ${count} 回出現（期待: 2 回 = evaluator prompt + fix#i prompt）`,
-  );
+  assert.equal(countIn(region, NOTE_IDENT), 2, 'execEvaluatePhase 区間の TURBOPACK_NOTE 出現数が 2 でない（evaluator prompt + fix#i prompt）');
+  assert.equal(countIn(region, CONST_IDENT), 0, 'execEvaluatePhase 区間に TURBOPACK_FALLBACK_CONVENTION が残っている');
 });
 
 // ============================================================
-// (4) 定義が inline 生成区間外にあること
+// (4) 定義が inline 生成区間外にあり、Setup 代入の位置が正しいこと
 // ============================================================
 
 test('[turbopack-fallback] 定数定義が inline 生成区間外（最後の END inline マーカーより後）にある', () => {
-  const defIndex = src.indexOf(IDENT);
+  const defIndex = src.indexOf(CONST_IDENT);
   const endMarker = '// ==== END inline:';
   let lastEndIdx = -1;
   let idx = src.indexOf(endMarker);
@@ -139,4 +151,25 @@ test('[turbopack-fallback] 定数定義が inline 生成区間外（最後の EN
     defIndex > lastEndIdx,
     `TURBOPACK_FALLBACK_CONVENTION の定義（index ${defIndex}）が最後の END inline マーカー（index ${lastEndIdx}）より前にある — inline 生成区間内への誤配置の疑い`,
   );
+});
+
+test('[turbopack-fallback] Setup(stack) 代入は label:\'worktree-deps\' より後・VALIDATE_TEST_PROMPT 定義より前にある', () => {
+  const indices = constIndices();
+  const setupAssignIdx = indices[1];
+  const worktreeDepsLabelIdx = src.indexOf("label: 'worktree-deps'");
+  const validateTestPromptIdx = src.indexOf('const VALIDATE_TEST_PROMPT');
+  assert.notEqual(worktreeDepsLabelIdx, -1, "label: 'worktree-deps' が見つからない");
+  assert.notEqual(validateTestPromptIdx, -1, 'const VALIDATE_TEST_PROMPT が見つからない');
+  assert.ok(setupAssignIdx > worktreeDepsLabelIdx, 'Setup(stack) 代入が label:\'worktree-deps\' より前にある');
+  assert.ok(setupAssignIdx < validateTestPromptIdx, 'Setup(stack) 代入が const VALIDATE_TEST_PROMPT より後にある');
+});
+
+// ============================================================
+// (5) CONTEXT7 が完全に削除されていること
+// ============================================================
+
+test('[turbopack-fallback] dev-flow.js に CONTEXT7_BEST_PRACTICE_CONVENTION / context7 の出現が 0 回', () => {
+  assert.equal(src.split('CONTEXT7_BEST_PRACTICE_CONVENTION').length - 1, 0, 'CONTEXT7_BEST_PRACTICE_CONVENTION が残っている');
+  const context7Count = (src.match(/context7/gi) ?? []).length;
+  assert.equal(context7Count, 0, `context7 の出現が ${context7Count} 回残っている（大文字小文字区別なし）`);
 });
