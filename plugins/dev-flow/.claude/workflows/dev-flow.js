@@ -2498,8 +2498,8 @@ function mdCell(v) {
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
  * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
- * @param {boolean|null|undefined} opts.testGreen - test green フラグ
- * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）
+ * @param {boolean|null|undefined} opts.testGreen - test green フラグ（at-a-glance 表では finalReconcile が 'ci_verified'/'reverified' のとき最終状態を優先。issue #625）
+ * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）（at-a-glance 表では iterate_fixed+lgtm+finalAcReconcile=reverified の fail を '✅ pass (fix 後 LGTM)' と表示。issue #625）
  * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'（issue #288）
  * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
@@ -2597,19 +2597,34 @@ function buildDevflowSummaryBody({
   // 2. at-a-glance テーブル
   const tierCell = `${TIER_EMOJI[mergeTier] ?? ''} **${mergeTier}**`;
   const shapeCell = shape != null ? shape : '不明';
+  // at-a-glance は最終状態を出す（issue #625）。Final reconcile が最終 tree の test 状態を確定させた
+  // 場合はそれを優先し、Validate 時点の testGreen は finalReconcile が 'skipped'/'unavailable'/null
+  // （= 最終 tree の再検証が行われていない）のときだけ使う。経過は 5c の Final reconcile 行に残る。
   let testCell;
-  if (testGreen == null) {
+  if (finalReconcile === 'ci_verified') {
+    testCell = '✅ green (CI)';
+  } else if (finalReconcile === 'reverified') {
+    testCell = finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
+  } else if (testGreen == null) {
     testCell = '不明';
   } else if (testGreen === true) {
     testCell = '✅ green';
   } else {
     testCell = '❌ red';
   }
+  // evaluator verdict=fail でも、pr-iterate が fix を適用して LGTM 終端し（iterate_fixed + lgtm）、
+  // AC が最終 tree で再検証済み（finalAcReconcile=reverified）なら最終状態は pass。4 条件 AND。
+  // 表示のみ — merge tier / HOLD reasons / telemetry の eval_verdict は fix 前 verdict のまま不変。
   let evalCell;
   if (evalVerdict == null) {
     evalCell = '不明';
   } else if (evalVerdict === 'pass') {
     evalCell = '✅ pass';
+  } else if (
+    evalVerdict === 'fail' && evalStaleness === 'iterate_fixed'
+    && iterateStatus === 'lgtm' && finalAcReconcile === 'reverified'
+  ) {
+    evalCell = '✅ pass (fix 後 LGTM)';
   } else {
     evalCell = `❌ ${evalVerdict}`;
   }
