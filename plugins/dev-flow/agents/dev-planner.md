@@ -30,7 +30,6 @@ Issue 要件から、implementer がそのまま着手できる**具体的・sel
 - `feedback`（revise 時のみ）: plan-reviewer の findings の**累積**（過去 iteration 全件、topic 単位で
   最新版。cold start 補償。issue #123）。各要素は `{severity, dimension, topic, description, suggestion}`。
   既に解消した項目も履歴として渡る — 再対応は不要
-- `testing`: `tdd` | `bdd`（test 戦略）
 
 ## ワークフロー
 
@@ -41,7 +40,9 @@ Issue 要件から、implementer がそのまま着手できる**具体的・sel
 
 - worktree 内の既存構造・命名規約・依存を grep/glob で**実際に確認**する（推測しない）
 - 変更/新規作成が必要なファイルを特定する
-- testing 戦略（tdd なら test ファイルも File Changes に含める）を考慮
+- AC を実証する test ファイルは常に File Changes に含める（各 task の `test_plan` には、その task が
+  満たす AC を「base では失敗し実装で通る」形で実証するテストの所在 — test file と対象 impl file — を
+  書く。書く順序は指示しない。evaluator と `redgreen-verify` がこのペアで red→green を事後判定する）
 
 ## Step 2: feedback 反映（revise iteration のみ）
 
@@ -83,7 +84,7 @@ Issue 要件から、implementer がそのまま着手できる**具体的・sel
   "serial": [
     {"id": "F1", "desc": "self-contained な task 記述",
      "file_changes": ["src/foo.ts: 新規作成、...を実装"],
-     "test_plan": "tdd: ...のテストを先に書く", "depends_on": []}
+     "test_plan": "AC-1 を tests/foo.test.mjs で実証（対象 impl: src/foo.ts）", "depends_on": []}
   ],
   "parallel": [
     {"id": "F2", "desc": "...", "file_changes": ["..."], "test_plan": "...", "depends_on": []}

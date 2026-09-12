@@ -3716,7 +3716,6 @@ const ISSUE = resolvePositiveIntArg(args, 'issue')
 const BASE_ARG = normalizeBaseArg(args?.base) // 明示指定（string）or null（未指定）。非文字列は即 throw
 let BASE // Setup(resolve-base) で確定。明示指定→検証、未指定→origin/dev→origin/HEAD の順に解決（issue #298）
 let REPO = null // Setup で解決（owner/name）。解決不能なら telemetry の repo を省略（fail-open）
-const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
 const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
 const PLAN_MAX = 8         // 計画レビュー上限（収束モデルにより happy path は数回で抜ける。issue #123）
@@ -4804,6 +4803,13 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
 const PLANNER_HANDOFF_RULE = '計画規約: task が一時/handoff ファイルの残置を指示する場合は .devflow-tmp/ 配下のパスを指定せよ（realized diff から ephemeral として除外される）。恒久成果物でないファイルを file_changes に含めるな。\n'
   + EPOCH_INSTRUCTION
 
+// AC テスト契約（contract クラス）。merge tier の deterministic 昇格は evaluator の ac_results
+// {test_files, impl_files} を redgreen-verify が「impl を退避して red、戻して green」で事後判定する。
+// 判定は最終ツリーの性質のみで、テストと実装を書いた順序は見ない。よって planner / implementer に
+// 課すのは順序（tdd/bdd）ではなく「AC ごとに red→green で実証できるテストが残っていること」。
+const AC_TEST_CONTRACT = 'AC テスト契約: 自分の task が満たす受入条件（AC）ごとに、base では失敗し自分の実装で通るテストを残せ。テストと実装を書く順序は問わない。docs / 設定のみで AC に紐づくテストが成立しない task は、その旨を summary に書け。\n'
+const PLANNER_TEST_PLAN_RULE = 'test_plan 規約: 各 task の test_plan には、その task が満たす AC を「base では失敗し実装で通る」形で実証するテストの所在（test file と対象 impl file）を書け。AC を実証する test ファイルは file_changes に含めよ。書く順序は指示しない。\n'
+
 // Next.js/Turbopack 固有の build 検証規約（issue #292）。sandbox 内で `next build`（Turbopack）が
 // process 生成・ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する
 // 既知事象がある。implementer が git stash 等の対照実験を毎回再発明するのを防ぐため、非 Turbopack
@@ -4847,8 +4853,9 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
   const archDecisions = plan?.architecture_decisions ?? []
   const edgeCases = plan?.edge_cases ?? []
   return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
-    + `次の task を ${TESTING} 戦略で実装せよ。共有 worktree のため自分の task の file_changes 以外は触るな。`
+    + `次の task を実装せよ。共有 worktree のため自分の task の file_changes 以外は触るな。`
     + `git add / commit はするな。\n`
+    + AC_TEST_CONTRACT
     + `task: ${JSON.stringify(t)}\n`
     + `requirements（issue 受入条件。evaluator はこの AC を採点軸にする — 自 task に関係する AC を満たすこと）:\n${JSON.stringify(req?.acceptance_criteria ?? [])}\n`
     + `plan summary: ${JSON.stringify(plan?.summary ?? '')}\n`
@@ -5228,7 +5235,7 @@ let planIters = 0            // plan iteration カウンタ（telemetry 用）
 function soloPlanPrompt() {
   return `cd ${WT} で作業。issue 要件に基づき実装計画を立てよ。\n`
     + `requirements: ${JSON.stringify(req)}\n`
-    + `testing: ${TESTING}\n`
+    + PLANNER_TEST_PLAN_RULE
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`
     + PLANNER_HANDOFF_RULE
 }
@@ -5255,7 +5262,7 @@ for (let i = 1; i <= PLAN_MAX; i++) {
   plan = need(await trackedAgent(
     `cd ${WT} で作業。issue 要件と${prior.length ? 'レビュー指摘' : '初回計画'}に基づき実装計画を立てよ。\n`
     + `requirements: ${JSON.stringify(req)}\n`
-    + `testing: ${TESTING}\n`
+    + PLANNER_TEST_PLAN_RULE
     + (prior.length
         ? `これまでの plan-reviewer findings（過去 iteration 全件の累積。既に解消した項目は再対応不要。`
           + `同じ topic が繰り返し残るなら同じ直し方をやめてアプローチを変えよ）:\n${JSON.stringify(prior)}\n`
