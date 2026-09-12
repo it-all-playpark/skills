@@ -152,9 +152,10 @@ concern_resolutions 契約:
 - resolution は resolved / triaged / unresolved の 3 値 enum（必須）。旧 resolved:true/false（boolean キー）は受理されず error になる。
 - resolved = 実コードで解消を確認。具体的 evidence 必須（file:line / テスト名 / diff 内容）。
 - triaged = 再検証済みだが対応不要と判断（advisory かつ実害なし等）。判断根拠の evidence 必須。evidence の無い triaged は unresolved と同一に扱われる。
+- 人間の作業（apply 前の手動検証・オペレータ確認依頼等）を含むものは triaged にしない。unresolved にするか、環境事象なら ENV note に載せる（triaged は「人間の対応不要」を意味し、要対応から外れる）。
 - unresolved = 未解消（据え置き）。
 - 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。
-- concern は advisory であり収束を block しない。resolved は終端サマリーの要対応から除外され、triaged は要対応に「トリアージ済み」として残る（ゲート・merge tier・収束判定には影響しない）。
+- concern は advisory であり収束を block しない。resolved は終端サマリーの要対応から除外され、triaged も要対応から除外されて要対応直後の折りたたみ「🔹 トリアージ済み N 件」に判断根拠を全文で残す（人間が誤トリアージを検算する。ゲート・merge tier・収束判定には影響しない）。
 ```
 
 ## 出力言語・簡潔性（description / suggestion / evidence 等の自然文フィールド）

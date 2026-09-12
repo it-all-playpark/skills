@@ -185,6 +185,17 @@ test('[eval-concern-resolutions] AC-1/3: eval#1 prompt の未解消 concern 一�
 // dedup 件数・checked 状態・evidence 全文は journal telemetry `resolved_evidence.env_notes[]`
 // （journal-save prompt の JOURNAL_HANDOFF_BODY payload）側に移された。post-summary 側の表形式
 // アサートは資料的に古くなったため、件数行の存在確認 + journal 側での dedup 件数検証に置き換える。
+// 要対応セクションの開始位置。⚠️ 要対応 / ✅ 要対応事項なし のどちらの見出しでもよい（issue #626 で
+// triaged のみの run は ✅ 側になった）。見つからなければ assert.fail（indexOf -1 の slice で vacuous pass させない）。
+function actionSectionOf(prompt) {
+  const warn = prompt.indexOf('### ⚠️ 要対応');
+  const none = prompt.indexOf('### ✅ 要対応事項なし');
+  const start = warn >= 0 ? warn : none;
+  assert.ok(start >= 0, `post-summary prompt に要対応見出しが無い:\n${prompt.slice(0, 2000)}`);
+  const envIdx = prompt.indexOf('環境ノート');
+  return prompt.slice(start, envIdx > -1 ? envIdx : undefined);
+}
+
 function extractResolvedEvidence(calls) {
   const journalSave = calls.find((c) => c.label === 'journal-save');
   assert.ok(
@@ -219,10 +230,7 @@ test('[eval-concern-resolutions] AC-2: post-summary prompt に環境ノート件
     post.prompt.includes('🏗 環境ノート 1 件'),
     `post-summary の prompt に環境ノートのグループ件数行（1 件 = turbopack-sandbox パターン 1 グループ）が見つからない。\nprompt 抜粋:\n${post.prompt.slice(post.prompt.indexOf('環境ノート') - 50, post.prompt.indexOf('環境ノート') + 500)}`,
   );
-  const actionSection = post.prompt.slice(
-    post.prompt.indexOf('### ⚠️ 要対応'),
-    post.prompt.indexOf('環境ノート') > -1 ? post.prompt.indexOf('環境ノート') : undefined,
-  );
+  const actionSection = actionSectionOf(post.prompt);
   assert.ok(
     !/ENV-|turbopack/i.test(actionSection),
     `要対応セクションに ENV- / turbopack 行が残っている（環境ノートへ隔離されるべき）:\n${actionSection}`,
@@ -248,10 +256,7 @@ test('[eval-concern-resolutions] AC-4: CONCERN-1 は evaluator の concern_resol
   await ensureSharedRun();
   const post = sharedCalls.find((c) => c.label === 'post-summary');
   assert.ok(post != null);
-  const actionSection = post.prompt.slice(
-    post.prompt.indexOf('### ⚠️ 要対応'),
-    post.prompt.indexOf('環境ノート') > -1 ? post.prompt.indexOf('環境ノート') : undefined,
-  );
+  const actionSection = actionSectionOf(post.prompt);
   assert.ok(
     !/\bCONCERN-1\b/.test(actionSection),
     `CONCERN-1 は resolved:true + evidence 付きで返されているため要対応から消えているべき:\n${actionSection}`,
@@ -293,29 +298,41 @@ test('[eval-concern-resolutions][AC-5] 両 item が unchecked のまま isConver
 // issue #614: triaged resolution の routing 回帰
 // ============================================================
 
-test('[eval-concern-resolutions][#614] CONCERN-2 は triaged として post-summary の要対応表に「🔹 トリアージ済み」+ evidence で現れ、見出し「### ⚠️ 要対応」が出る', async () => {
+test('[eval-concern-resolutions][#626] CONCERN-2 は triaged として要対応から外れ「### ✅ 要対応事項なし（トリアージ済み 1 件）」+ <details> 全文で現れる', async () => {
   await ensureSharedRun();
   const post = sharedCalls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  const actionSection = post.prompt.slice(
-    post.prompt.indexOf('### ⚠️ 要対応'),
-    post.prompt.indexOf('環境ノート') > -1 ? post.prompt.indexOf('環境ノート') : undefined,
+  assert.ok(
+    post.prompt.includes('### ✅ 要対応事項なし（トリアージ済み 1 件）'),
+    `post-summary の prompt に「### ✅ 要対応事項なし（トリアージ済み 1 件）」見出しが無い:\nprompt(先頭2000):\n${post.prompt.slice(0, 2000)}`,
   );
   assert.ok(
-    post.prompt.includes('### ⚠️ 要対応'),
-    `post-summary の prompt に「### ⚠️ 要対応」見出しが無い`,
+    !post.prompt.includes('### ⚠️ 要対応'),
+    `CONCERN-2 が triaged advisory のみのため「### ⚠️ 要対応」は出ないはず:\nprompt(先頭2000):\n${post.prompt.slice(0, 2000)}`,
   );
   assert.ok(
-    actionSection.includes('🔹 トリアージ済み'),
-    `要対応セクションに「🔹 トリアージ済み」が無い:\n${actionSection}`,
+    post.prompt.includes('<details><summary>🔹 トリアージ済み 1 件（evaluator 判断 — 誤トリアージ検算用）</summary>'),
+    `post-summary の prompt に triaged <details> の summary 見出しが無い`,
+  );
+  const detailsStart = post.prompt.indexOf('<details>');
+  const detailsEnd = post.prompt.indexOf('</details>');
+  assert.ok(detailsStart >= 0 && detailsEnd > detailsStart, 'post-summary の prompt に <details>...</details> ブロックが見つからない');
+  const d = post.prompt.slice(detailsStart, detailsEnd);
+  assert.ok(
+    d.includes('shorthand 判定の重複が残る'),
+    `<details> ブロックに CONCERN-2 の item text が無い:\n${d}`,
   );
   assert.ok(
-    actionSection.includes('shorthand 判定は未変更'),
-    `要対応セクションに CONCERN-2 の triaged evidence が無い:\n${actionSection}`,
+    d.includes('lib/y.ts:20 の shorthand 判定は未変更。advisory で実害なし、修正不要と判断'),
+    `<details> ブロックに CONCERN-2 の triaged_evidence 全文が無い:\n${d}`,
   );
   assert.ok(
-    !/CONCERN-2[^\n]*❌ 未解消/.test(actionSection),
-    `CONCERN-2 が ❌ 未解消 として出ている（triaged 反映漏れ）:\n${actionSection}`,
+    !/CONCERN-1|ORDER BY|ENV-|turbopack/i.test(d),
+    `<details> ブロックに resolved（CONCERN-1）/ ENV 由来の内容が混ざっている:\n${d}`,
+  );
+  assert.ok(
+    !/shorthand 判定[^\n]*❌ 未解消/.test(post.prompt),
+    `CONCERN-2 が ❌ 未解消 として要対応に残っている（triaged 除外漏れ）`,
   );
 });
 
