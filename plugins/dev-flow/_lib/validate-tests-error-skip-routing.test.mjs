@@ -1,0 +1,309 @@
+// validate-tests-error-skip-routing: VM sandbox routing test for dev-flow の Validate phase
+// （issue #627 F1）。TDD red として作成: `runValidateLoop` の break 条件に `tests:'error'`
+// （dev-runner-haiku 自己申告の起動失敗）が含まれることを label 列で pin する。実装
+// （dev-flow.js への `if (v.tests === 'error') { ...; break }` 追加）は F2 で行う。
+//
+// 現状（F1 時点）の break 条件は `if (v.green || v.tests === 'no_tests') break` のみのため、
+// `tests:'error'` でも green-fix（implementer）が GREEN_MAX=3 回まで回ってしまう欠陥がある。
+// 本ファイルはこの欠陥を pin し、F2 実装後に green へ転じることを確認するためのハーネス。
+//
+// ハーネス: makeRecordingSandbox（_lib/test-helpers/vm-sandbox.mjs）。run 返り値
+// （test_green 等）も見るため final-reconcile-routing.test.mjs と同型のローカル
+// runDevFlowCapture（{result, error} を返す）を持つ。
+//
+// テストケース:
+//   (0) crash guard: 3 シナリオとも error が ReferenceError / SyntaxError でないこと
+//   (1) AC1 本経路 error: test#1 で green-fix 0 回・test#2 なし・eval#1 到達（F1 時点で red）
+//   (2) AC2 本経路 failed: test#1 → green-fix#1 → test#2 の順で存在・green-fix#2 は無し
+//   (3) AC3 retry 経路 error: test#retry-1 で green-fix#retry 0 回・test#retry-2 なし・eval#1 到達
+//       （F1 時点で red）
+//   (4) AC4 状態保持: result.test_green===false かつ merge_tier_reasons に 'tests=error' を含まない
+//   (5) 専用 log: 'tests=error' + 'green-fix をスキップ' を含む log が出る（F1 時点で red）。
+//       GREEN_MAX 到達 log（'回試行しても test green にならず'）は出ない
+//   (6) 構造 pin（静的）: runValidateLoop 本体で `v.tests === 'error'` の判定が
+//       green-fix#retry-i 呼び出しより前に出現する（F1 時点で red）
+
+import { test } from 'vitest';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..');
+const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
+
+// ============================================================
+// runDevFlowCapture: strip + wrap + vm 実行し {result, error} を返す
+// （final-reconcile-routing.test.mjs と同型のローカル copy）
+// ============================================================
+async function runDevFlowCapture(src, ctx) {
+  const stripped = src
+    .replace(/^export\s+const\s+/gm, 'const ')
+    .replace(/^export\s+function\s+/gm, 'function ');
+  const wrapped = `(async () => {\n${stripped}\n})();`;
+
+  let caughtError = null;
+  let resolvedResult = null;
+  try {
+    const p = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
+    if (p && typeof p.then === 'function') {
+      resolvedResult = await p.catch((e) => {
+        caughtError = e;
+        return null;
+      });
+    }
+  } catch (e) {
+    caughtError = e;
+  }
+  return { result: resolvedResult, error: caughtError };
+}
+
+// ============================================================
+// responder factory
+// ============================================================
+
+function createResponder({ mode, gateEmpty }) {
+  let mainCount = 0;
+  let retryCount = 0;
+  return function ({ label, agentType }) {
+    if (label === 'setup-base') {
+      return {
+        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
+        worktree_exists: false, upstream_remote: '', upstream_merge: '',
+      };
+    }
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-627' };
+    if (label.startsWith('analyze')) {
+      return {
+        summary: 's',
+        acceptance_criteria: ['a', 'b', 'c', 'd'],
+        issue_type: 'fix',
+        scope: 'src',
+        estimated_change_file_count: 3,
+        shape: 'standard',
+        issue_number: 627,
+        issue_title: 'stub-issue-title',
+      };
+    }
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
+    if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: !!gateEmpty };
+    if (label === 'diff-gate-retry') return { hash: 'H', empty: false };
+    if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (label.startsWith('test')) {
+      const isRetryLabel = label.startsWith('test#retry');
+      if (mode === 'error-main') {
+        if (!isRetryLabel) {
+          mainCount += 1;
+          return { tests: 'error', green: false, summary: 'pnpm install failed: invalid peer certificate — テストは 1 件も実行されていない' };
+        }
+        return { tests: 'passed', green: true, summary: '' };
+      }
+      if (mode === 'failed-main') {
+        if (!isRetryLabel) {
+          mainCount += 1;
+          if (mainCount === 1) return { tests: 'failed', green: false, summary: 'assert mismatch' };
+          return { tests: 'passed', green: true, summary: '' };
+        }
+        return { tests: 'passed', green: true, summary: '' };
+      }
+      if (mode === 'error-retry') {
+        if (!isRetryLabel) {
+          // 本経路は空 tree で trivially green
+          return { tests: 'passed', green: true, summary: '' };
+        }
+        retryCount += 1;
+        return { tests: 'error', green: false, summary: 'pnpm install failed: invalid peer certificate' };
+      }
+      return { tests: 'passed', green: true, summary: '' };
+    }
+    if (agentType === 'dev-flow:implementer' && label.startsWith('green-fix')) {
+      return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'fix', concerns: [] };
+    }
+    if (agentType === 'dev-flow:implementer') {
+      return { status: 'DONE', task_id: 't', files: ['src/foo.ts'], summary: '', concerns: [] };
+    }
+    if (agentType === 'dev-flow:evaluator') {
+      return {
+        verdict: 'pass', total: 100, threshold: 80, feedback: [],
+        feedback_level: 'implementation', ac_results: [], security_clearance: [],
+      };
+    }
+    if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') {
+      return { files: ['src/foo.ts'] };
+    }
+    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+    if (label === 'issue-meta') return { ok: true, number: 627, title: 'stub-issue-title' };
+    // それ以外（issue-labels 含む）→ null（非 cross-repo 扱い → 差し戻し1回 → retry 経路へ）
+    return null;
+  };
+}
+
+// ============================================================
+// シナリオごとに 1 回だけ実行してキャッシュする
+// ============================================================
+
+const scenarioCache = new Map();
+
+async function runScenario({ mode, gateEmpty }) {
+  const key = `${mode}:${!!gateEmpty}`;
+  if (scenarioCache.has(key)) return scenarioCache.get(key);
+  const logs = [];
+  const { ctx, calls } = makeRecordingSandbox(createResponder({ mode, gateEmpty }), {
+    log: (m) => logs.push(String(m)),
+    args: '627',
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  const out = { calls, logs, result, error };
+  scenarioCache.set(key, out);
+  return out;
+}
+
+function labelsOf(calls) {
+  return calls.map((c) => c.label).join(', ');
+}
+
+// ============================================================
+// (0) crash guard
+// ============================================================
+
+test('[validate-tests-error-skip] (0) crash guard: 3 シナリオとも ReferenceError / SyntaxError を throw しない', async () => {
+  const scenarios = [
+    { mode: 'error-main', gateEmpty: false },
+    { mode: 'failed-main', gateEmpty: false },
+    { mode: 'error-retry', gateEmpty: true },
+  ];
+  for (const s of scenarios) {
+    const { error } = await runScenario(s);
+    if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+      assert.fail(`[${s.mode}] dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+    }
+  }
+});
+
+// ============================================================
+// (1) AC1 本経路 error
+// ============================================================
+
+test("[validate-tests-error-skip] (1) AC1: 本経路 tests:'error' で green-fix 0 回・test#2 なし・eval#1 到達", async () => {
+  const { calls } = await runScenario({ mode: 'error-main', gateEmpty: false });
+  const labels = labelsOf(calls);
+  assert.ok(calls.some((c) => c.label === 'test#1'), `test#1 が見つからない (labels: ${labels})`);
+  const greenFixCalls = calls.filter((c) => c.label.startsWith('green-fix'));
+  assert.equal(greenFixCalls.length, 0, `green-fix は 0 回のはずだが ${greenFixCalls.length} 回だった (labels: ${labels})`);
+  assert.equal(calls.some((c) => c.label === 'test#2'), false, `test#2 は起動されないはずだが起動された (labels: ${labels})`);
+  assert.ok(calls.some((c) => c.label === 'eval#1'), `eval#1 に到達するはずだが到達しない (labels: ${labels})`);
+});
+
+// ============================================================
+// (2) AC2 本経路 failed（従来どおり）
+// ============================================================
+
+test("[validate-tests-error-skip] (2) AC2: 本経路 tests:'failed' は test#1 → green-fix#1 → test#2 の順で進み green-fix#2 は無い", async () => {
+  const { calls } = await runScenario({ mode: 'failed-main', gateEmpty: false });
+  const labels = calls.map((c) => c.label);
+  const idxTest1 = labels.indexOf('test#1');
+  const idxGf1 = labels.indexOf('green-fix#1');
+  const idxTest2 = labels.indexOf('test#2');
+  const labelsStr = labels.join(', ');
+  assert.ok(idxTest1 !== -1, `test#1 が見つからない (labels: ${labelsStr})`);
+  assert.ok(idxGf1 !== -1, `green-fix#1 が見つからない (labels: ${labelsStr})`);
+  assert.ok(idxTest2 !== -1, `test#2 が見つからない (labels: ${labelsStr})`);
+  assert.ok(idxTest1 < idxGf1 && idxGf1 < idxTest2, `順序が test#1 < green-fix#1 < test#2 でない (labels: ${labelsStr})`);
+  assert.equal(labels.includes('green-fix#2'), false, `green-fix#2 は存在しないはずだが存在した (labels: ${labelsStr})`);
+});
+
+// ============================================================
+// (3) AC3 retry 経路 error
+// ============================================================
+
+test("[validate-tests-error-skip] (3) AC3: retry 経路 tests:'error' でも AC1 と同じ挙動（green-fix#retry 0 回・test#retry-2 なし・eval#1 到達）", async () => {
+  const { calls } = await runScenario({ mode: 'error-retry', gateEmpty: true });
+  const labels = labelsOf(calls);
+  assert.ok(calls.some((c) => c.label === 'diff-gate-retry'), `retry 経路に入っていない: diff-gate-retry が見つからない (labels: ${labels})`);
+  assert.ok(calls.some((c) => c.label === 'test#retry-1'), `test#retry-1 が見つからない (labels: ${labels})`);
+  const greenFixRetryCalls = calls.filter((c) => c.label.startsWith('green-fix#retry'));
+  assert.equal(greenFixRetryCalls.length, 0, `green-fix#retry は 0 回のはずだが ${greenFixRetryCalls.length} 回だった (labels: ${labels})`);
+  assert.equal(calls.some((c) => c.label === 'test#retry-2'), false, `test#retry-2 は起動されないはずだが起動された (labels: ${labels})`);
+  assert.ok(calls.some((c) => c.label === 'eval#1'), `eval#1 に到達するはずだが到達しない (labels: ${labels})`);
+});
+
+// ============================================================
+// (4) AC4 状態保持
+// ============================================================
+
+test("[validate-tests-error-skip] (4) AC4: tests:'error' で break した run の result.test_green===false かつ merge_tier_reasons に 'tests=error' を含まない", async () => {
+  const { result, calls } = await runScenario({ mode: 'error-main', gateEmpty: false });
+  assert.ok(result !== null, `result が null (labels: ${labelsOf(calls)})`);
+  assert.equal(result.test_green, false, `test_green は false のはずだが ${JSON.stringify(result.test_green)} (labels: ${labelsOf(calls)})`);
+  const reasons = result.merge_tier_reasons ?? [];
+  assert.ok(
+    !reasons.some((r) => String(r).includes('tests=error')),
+    `merge_tier_reasons に 'tests=error' を含んではならないが含んでいた: ${JSON.stringify(reasons)} (labels: ${labelsOf(calls)})`,
+  );
+});
+
+// ============================================================
+// (5) 専用 log
+// ============================================================
+
+test("[validate-tests-error-skip] (5) 専用 log: 本経路 error で 'tests=error' + 'green-fix をスキップ' を含む log が出る（GREEN_MAX 到達 log は出ない）", async () => {
+  const { logs, calls } = await runScenario({ mode: 'error-main', gateEmpty: false });
+  assert.ok(
+    logs.some((l) => l.includes('tests=error') && l.includes('green-fix をスキップ')),
+    `専用 log（'tests=error' かつ 'green-fix をスキップ' を含む）が見つからない (logs: ${JSON.stringify(logs)}) (labels: ${labelsOf(calls)})`,
+  );
+  assert.equal(
+    logs.some((l) => l.includes('回試行しても test green にならず')),
+    false,
+    `GREEN_MAX 到達 log が出てはならないが出た (logs: ${JSON.stringify(logs)})`,
+  );
+});
+
+test("[validate-tests-error-skip] (5) 専用 log: retry 経路 error でも同じ 2 条件を満たす", async () => {
+  const { logs, calls } = await runScenario({ mode: 'error-retry', gateEmpty: true });
+  assert.ok(
+    logs.some((l) => l.includes('tests=error') && l.includes('green-fix をスキップ')),
+    `専用 log（'tests=error' かつ 'green-fix をスキップ' を含む）が見つからない (logs: ${JSON.stringify(logs)}) (labels: ${labelsOf(calls)})`,
+  );
+  assert.equal(
+    logs.some((l) => l.includes('回試行しても test green にならず')),
+    false,
+    `GREEN_MAX 到達 log が出てはならないが出た (logs: ${JSON.stringify(logs)})`,
+  );
+});
+
+// ============================================================
+// (6) 構造 pin（静的）
+// ============================================================
+
+test("[validate-tests-error-skip][struct] (6) runValidateLoop 内で v.tests === 'error' の判定が green-fix#retry-i 呼び出しより前に出現する", () => {
+  const startIdx = devFlowSrc.indexOf('async function runValidateLoop(');
+  assert.ok(startIdx !== -1, "dev-flow.js に 'async function runValidateLoop(' が見つからない");
+  const returnIdx = devFlowSrc.indexOf('return v', startIdx);
+  assert.ok(returnIdx !== -1, "runValidateLoop 内に 'return v' が見つからない");
+  const region = devFlowSrc.slice(startIdx, returnIdx);
+
+  const errorCheckIdx = region.indexOf("v.tests === 'error'");
+  assert.ok(
+    errorCheckIdx !== -1,
+    "runValidateLoop 区間内に \"v.tests === 'error'\" が見つからない（F2 未実装）",
+  );
+
+  const gfRetryLabelIdx = region.indexOf('label: isRetry ? `green-fix#retry-${i}`');
+  assert.ok(
+    gfRetryLabelIdx !== -1,
+    "runValidateLoop 区間内に 'label: isRetry ? `green-fix#retry-${i}`' が見つからない",
+  );
+
+  assert.ok(
+    errorCheckIdx < gfRetryLabelIdx,
+    `\"v.tests === 'error'\" の判定は green-fix#retry-i 呼び出しより前に無ければならない`
+      + ` (errorCheckIdx=${errorCheckIdx}, gfRetryLabelIdx=${gfRetryLabelIdx})`,
+  );
+});

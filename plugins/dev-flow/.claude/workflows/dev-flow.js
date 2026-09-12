@@ -5344,7 +5344,8 @@ async function execImplementPhase(state) {
 }
 
 // ============================================================
-// Phase Validate: test green を確認し、green でなければ implementer に差し戻し（上限 GREEN_MAX）
+// Phase Validate: test green を確認し、green でなければ implementer に差し戻し（上限 GREEN_MAX）。
+// tests:'error'（起動失敗）は差し戻さず即 break（issue #627）
 // （format/lint は hook 責務でここでは扱わない）
 // ============================================================
 async function execValidatePhase(state) {
@@ -5383,6 +5384,14 @@ async function execValidatePhase(state) {
         log(`validate iteration ${i}: tests=${v.tests} green=${v.green}`)
       }
       if (v.green || v.tests === 'no_tests') break
+      if (v.tests === 'error') {
+        // 起動失敗（テストが 1 件も実行されていない。issue #627）。環境失敗はコード修正で解消しないため
+        // green-fix（implementer）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
+        // まま返し、Evaluate → Final reconcile の error → unavailable → ci-final（CI 委譲）経路に委ねる。
+        // tests:'failed'（実行された上での red）は従来どおり green-fix を回す。
+        log(`⚠️ ${phaseName}: tests=error（起動失敗: ${String(v.summary ?? '').slice(0, 200)}）— green-fix をスキップ（環境失敗はコード修正で解消しない。Final reconcile の CI 委譲へ）`)
+        break
+      }
       if (i === GREEN_MAX) {
         if (isRetry) {
           log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
