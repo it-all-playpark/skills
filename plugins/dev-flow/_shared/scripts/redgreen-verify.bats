@@ -1,13 +1,14 @@
 #!/usr/bin/env bats
 # redgreen-verify.sh: impl を退避して test が red→green に転じるか判定する。
 # untracked 新規ファイル・tracked-modified ファイルの両シナリオをカバーする。
+# 共有 stash スタックに触れない不変条件(G1/G2/G6)も pin する。
 
 setup() {
   SCRIPT="$BATS_TEST_DIRNAME/redgreen-verify.sh"
   REPO="$(mktemp -d)"
   cd "$REPO"
   git init -q && git config user.email t@t && git config user.name t
-  # base commit(空でも良いが git stash が機能するためダミーを入れる)
+  # base commit(G1/G2 の事前 stash 素材にも使う .gitkeep を含める)
   echo "# placeholder" > .gitkeep
   git add .gitkeep && git commit -q -m base
 }
@@ -339,4 +340,125 @@ EOF
   [[ "$output" == *'"red":true'* ]]
   [[ "$output" == *'"green":true'* ]]
   [[ "$output" != *'"verdict"'* ]]
+}
+
+# -----------------------------------------------------------------------
+# G1〜G6: issue #630 AC1〜AC6 の pin。共有 stash スタックへの読み書きを
+# 撤廃する実装変更(F2)を先取りして red/green を固定する回帰・仕様テスト。
+# -----------------------------------------------------------------------
+
+@test "G1: 事前 stash があっても tracked-modified impl の redgreen が共有 stash スタックに触れない" {
+  echo "export const ok = false;" > "$REPO/impl.mjs"
+  git -C "$REPO" add impl.mjs && git -C "$REPO" commit -q -m "add impl base"
+  # 別セッション相当の stash を 1 本積む(tracked ファイルの削除)。push 後 worktree は HEAD に戻る
+  rm "$REPO/.gitkeep"
+  git -C "$REPO" stash push -q -m "other-session" -- .gitkeep
+  [ -f "$REPO/.gitkeep" ]
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  before_n="$(git -C "$REPO" stash list | wc -l | tr -d ' ')"
+  before_sha="$(git -C "$REPO" rev-parse 'stash@{0}')"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ "$(git -C "$REPO" stash list | wc -l | tr -d ' ')" = "$before_n" ]
+  [ "$(git -C "$REPO" rev-parse 'stash@{0}')" = "$before_sha" ]
+  [ -f "$REPO/.gitkeep" ]
+  grep -q "true" "$REPO/impl.mjs"
+}
+
+@test "G2: HEAD と同一内容の tracked impl のみは exit 2・no impl changed vs HEAD・テスト未実行・tree 不変" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  git -C "$REPO" add impl.mjs && git -C "$REPO" commit -q -m "add impl"
+  rm "$REPO/.gitkeep"
+  git -C "$REPO" stash push -q -m "other-session" -- .gitkeep
+  make_test
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+  before_status="$(git -C "$REPO" status --porcelain)"
+  before_n="$(git -C "$REPO" stash list | wc -l | tr -d ' ')"
+  before_sha="$(git -C "$REPO" rev-parse 'stash@{0}')"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"reason":"no impl changed vs HEAD'* ]]
+  [ ! -f "$REPO/calls.log" ]
+  [ "$(git -C "$REPO" status --porcelain)" = "$before_status" ]
+  [ "$(git -C "$REPO" stash list | wc -l | tr -d ' ')" = "$before_n" ]
+  [ "$(git -C "$REPO" rev-parse 'stash@{0}')" = "$before_sha" ]
+  [ -f "$REPO/.gitkeep" ]
+}
+
+@test "G3: 変更あり tracked impl + 無変更 tracked impl の混在で変更ありのみ base 化され tree(mode 含む)が不変" {
+  echo "export const ok = false;" > "$REPO/impl.mjs"
+  echo "export const other = 1;" > "$REPO/other.mjs"
+  git -C "$REPO" add impl.mjs other.mjs && git -C "$REPO" commit -q -m "add impls"
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  chmod +x "$REPO/impl.mjs"
+  make_test
+  before_status="$(git -C "$REPO" status --porcelain)"
+  before_summary="$(git -C "$REPO" diff HEAD --summary)"
+  [[ "$before_summary" == *"mode change"* ]]
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs,other.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ "$(git -C "$REPO" status --porcelain)" = "$before_status" ]
+  [ "$(git -C "$REPO" diff HEAD --summary)" = "$before_summary" ]
+  [ -x "$REPO/impl.mjs" ]
+  grep -q "other = 1" "$REPO/other.mjs"
+}
+
+@test "G4: git add 済み未 commit の新規 impl は untracked と同様に red→green、終了後もファイルと index 登録が残る" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  git -C "$REPO" add impl.mjs
+  make_test
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ -f "$REPO/impl.mjs" ]
+  grep -q "true" "$REPO/impl.mjs"
+  git -C "$REPO" ls-files --error-unmatch impl.mjs
+  [ "$(git -C "$REPO" diff --cached --name-only)" = "impl.mjs" ]
+}
+
+@test "G5: worktree から削除した tracked impl は exit 2・impl file not found・テスト未実行" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  git -C "$REPO" add impl.mjs && git -C "$REPO" commit -q -m "add impl"
+  rm "$REPO/impl.mjs"
+  make_test
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'impl file not found: impl.mjs'* ]]
+  [ ! -f "$REPO/calls.log" ]
+  [ ! -f "$REPO/impl.mjs" ]
+}
+
+@test "G5b: 削除済み tracked impl と存在する untracked impl の同時申告で untracked impl が消失しない" {
+  echo "export const gone = 1;" > "$REPO/gone.mjs"
+  git -C "$REPO" add gone.mjs && git -C "$REPO" commit -q -m "add gone"
+  rm "$REPO/gone.mjs"
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs,gone.mjs"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'impl file not found: gone.mjs'* ]]
+  [ -f "$REPO/impl.mjs" ]
+  grep -q "true" "$REPO/impl.mjs"
+}
+
+@test "G6: redgreen-verify.sh のコメント行を除いた行に git stash が出現しない" {
+  run bash -c "grep -v '^[[:space:]]*#' '$SCRIPT' | grep -c 'git stash'"
+  [ "$output" = "0" ]
 }
