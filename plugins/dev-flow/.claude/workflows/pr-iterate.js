@@ -1325,7 +1325,7 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
 // 時点である dev-flow Setup 側の責務。fail-open: 失敗しても run は継続する（残っていれば直後の
 // probe が written:false で fail-closed に倒れ、復旧手順は同一）。
-// nested 起動時は skip する（案3。skip 理由は上の pr-meta 分岐で log 済み — dev-flow
+// nested 起動時は skip する（skip 理由は上の pr-meta 分岐で log 済み — dev-flow
 // Setup が run 開始時に .devflow-tmp 全体を cleanup 済みのため重複起動が不要）。
 let isoClean = null
 if (!NESTED) {
@@ -1629,7 +1629,7 @@ for (i = 1; i <= MAX; i++) {
       break
     }
 
-    // minor は fix loop の対象外 — issuesText / fix agent プロンプトに一切含めない（AC-5）。
+    // minor は fix loop の対象外 — issuesText / fix agent プロンプトに一切含めない。
     // description/suggestion はメタ指示・迂回手順の verbatim 伝播遮断のため buildFixIssuesText で
     // スクラブしてから埋め込む（canonical は _lib/review-finding-scrub.mjs）。
     const issuesText = buildFixIssuesText(blocking)
@@ -1663,7 +1663,7 @@ for (i = 1; i <= MAX; i++) {
 const status = lgtm ? 'lgtm' : (terminal ?? 'max_reached')
 log(`pr-iterate 終端: status=${status}（iterations=${Math.min(i, MAX)}）`)
 
-// 異常終端時の worktree dirty 検出（AC-2）。advisory telemetry — 失敗は fail-open
+// 異常終端時の worktree dirty 検出。advisory telemetry — 失敗は fail-open
 // （'unknown' + 警告のみ。gate・status には影響しない）。lgtm 終端では probe しない（agent 呼び出し追加ゼロ）。
 let worktreeDirty = null  // 'dirty' | 'clean' | 'unknown' | null(=lgtm で未実施)
 if (status !== 'lgtm') {

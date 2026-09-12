@@ -7,8 +7,8 @@ exec-proxy script の起動形詳細、check-ci の argv 転写、maxTurns 計�
 ## exec-proxy script の起動形（plugin bin/ の bare 名）
 
 workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plugin root `bin/` の bare 名
-（`secfloor-classify` / `check-ci` / `journal` 等、拡張子なし）を**先頭トークン**にする。`~/.claude/skills/...`
-の絶対パスも `bash ` 前置も書かない（plugin install 環境では skills が plugin root 配下に入り絶対パスが
+（`secfloor-classify` / `check-ci` / `journal` 等、拡張子なし）を**先頭トークン**にする。skills 配下の
+絶対パスも `bash ` 前置も書かない（plugin install 環境では skills が plugin root 配下に入り絶対パスが
 破綻する。`bin/` は plugin enable 中 Bash tool の PATH に載り、dotfiles 側 `sandbox.excludedCommands` は
 先頭トークン＝bare 名で登録される。片側だけ変えると dev-flow が止まる）。`bin/<name>` は本体へ
 `exec bash` する 3 行 wrapper（.py 本体は `exec python3`）で、本体と隣接 `*.bats` は移動しない。

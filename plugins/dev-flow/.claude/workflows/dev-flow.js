@@ -3796,12 +3796,12 @@ function findingsToConcerns(rev) {
 // ---- Evaluate 収束モデル----
 // Evaluate ループは Plan ループと同型の cold start moving target を抱える。evaluator は毎回 fresh
 // context で full diff を再評価するため、別観点を上乗せし続けて収束しない。さらに design 差し戻しは
-// replan + 全 task 再実装を走らせるため、1 反復のコストが Plan/Review より桁違いに高い（が潰した
-// 抽象的な Plan 空間の moving target をループへ戻す）。Plan と同じ部品を Evaluate に適用する:
+// replan + 全 task 再実装を走らせるため、1 反復のコストが Plan/Review より桁違いに高い。
+// Plan と同じ部品を Evaluate に適用する:
 //   1. 既出 feedback を evaluator に渡し「対応済み・新規 critical/major のみ」を強制（蒸し返し抑制）
 //   2. 同一 topic が EVAL_STUCK 回出たら stuck と判定（fingerprint を JS 側で突合）
 //   3. stuck かつ design パスが反復するなら replan+reimpl を繰り返さず早期打ち切り（コスト保護）
-// 4. critical は常にブロック（品質ゲートは後退させない。と同一原則）
+//   4. critical は常にブロック（品質ゲートは後退させない、Plan 収束モデルと同一原則）
 //   5. stuck/上限到達でも throw せず現状で PR へ進む（後段は review のみ、merge は手動 = human review 委譲）
 // feedback に critical が含まれるか。critical は常にブロック（収束を許さない）。
 function evalHasCritical(ev) {
@@ -4962,7 +4962,7 @@ log(`worktree: ${WT} (branch ${setup.branch})`)
 // 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の残置物（probe artifact
 // `.isolation-probe-*` / journal payload / ui-verify state 等の .devflow-tmp 配下生成物）を
 // 一度に消す（run 間衛生）。
-// probe 成立自体はこの cleanup の成功に依存しない（— probe 対象パスは run 毎の一意な
+// probe 成立自体はこの cleanup の成功に依存しない（probe 対象パスは run 毎の一意な
 // token を含むため、cleanup が blocked/skip されて前 run の残置物が残っていても衝突しない）。
 // token fallback が退化（setup-base probe の epoch が fail-open で null 等）した場合の補償として
 // のみ probe 成立に効く。
@@ -5041,15 +5041,15 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   // skill 出力の scope / body_preview は上限付き抜粋。切断は末尾マーカー + boolean で非 silent 化されており、
   // ここで「抜粋に無い = issue に無い」の推論を禁じる。規範性クラス: contract（scope_truncated / body_preview_truncated /
   // [TRUNCATED: ...] マーカーの意味定義 = analyze-issue.sh 出力との入出力契約）+ incentive-structural（抜粋のみが context に
-  // ある構造分断で欠落判定に傾く。で 3 run 空振り実測）。sunset 対象ではない。
+  // ある構造分断で欠落判定に傾く傾向を 3 run 空振りで実測済み）。sunset 対象ではない。
   + `さらに、skill の JSON 出力の scope / body_preview は上限付きの抜粋である。scope_truncated または body_preview_truncated が true（抜粋末尾に [TRUNCATED: ...] マーカーがある）の場合は、取得した issue JSON ファイル（$TMPDIR/issue-${ISSUE}.json）の body 全文を Read してから要件抽出せよ。抜粋に無いことを根拠に ambiguities を立ててはならない（全文を読んだ上で本当に未記載の点のみ挙げよ）。scope は skill 出力の scope をマーカー含め verbatim で、scope_truncated は skill 出力の boolean を verbatim で返せ（自分で再判定・除去するな）。`
 
-// contract probe prompt（で --issue-json ファイル入力化）:
+// contract probe prompt（--issue-json ファイル入力化）:
 // DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。issue 本体は subagent の bare
 // `gh issue view` で $TMPDIR file へ取得し、analyze-issue --contract の stdout JSON を
 // verbatim 転写させるだけの read-only exec-proxy（結果の判断は buildReqFromContract 側の
 // whitelist 検証が担う）。
-// script は plugin bin/ の bare 名で呼ぶ— WT は対象 repo の worktree であり skills 内部 script が存在しない
+// script は plugin bin/ の bare 名で呼ぶ（WT は対象 repo の worktree であり skills 内部 script は存在しないため）。
 const contractProbePrompt = `## Objective\n`
   + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
   + `## Steps\n`
@@ -5143,14 +5143,14 @@ if (commentConflicts.length) {
 }
 
 let ambiguities = req.ambiguities ?? []
-// review on PR scope 切断域を根拠に sonnet が ambiguities を生成する実際の失敗経路は
+// PR レビュー指摘: scope 切断域を根拠に sonnet が ambiguities を生成する実際の失敗経路は
 // analyzePrompt の文言のみに依存し決定論の防御が無かった。scope_truncated===true かつ ambiguities が
 // 閾値超過のときのみ、depth comprehensive（body_full 付き — 切断されない全文が skill 出力に直接含まれる）
 // で analyze を 1 回だけ再実行し、切断域を実際に読んだ上での再判定を試みる（無限ループ防止のため 1 回のみ。
 // 再実行後もなお曖昧なら下の needs_clarification へ進む）。
 if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
   log(`⚠️ analyze: scope 切断 + ambiguities 超過（${ambiguities.length} > ${AMBIGUITY_MAX}）— depth comprehensive で analyze を再実行し切断域を含む全文を確認する（issue #598 review on PR #598）`)
-  // review on PR (major): 補助的な 1 回再実行の失敗（agent throw / StructuredOutput
+  // PR レビュー指摘（major）: 補助的な 1 回再実行の失敗（agent throw / StructuredOutput
   // 未返却等）で run 全体を落とさない — need() ではなく failOpenAgent で null に落とし、null なら
   // 警告 log のみで初回 req/ambiguities を保持したまま下の needs_clarification 判定へ進む
   // （本 PR 以前の graceful 挙動を維持。切断ヒントは req.scope_truncated が不変のため下流で維持される）。
@@ -5164,7 +5164,7 @@ if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
     req = retryReq
     ambiguities = req.ambiguities ?? []
 
-    // review on PR 再実行で差し替えた req は取得検証・comment 矛盾判定を
+    // PR レビュー指摘: 再実行で差し替えた req は取得検証・comment 矛盾判定を
     // 再適用していないと、2 回目の sonnet 出力が取得検証なしで Implement へ流れてしまう（fail-closed の抜け穴）。
     // 初回 analyze で ambiguities>AMBIGUITY_MAX まで到達している時点で issueMetaRes probe は既に成功済み
     // （probe 失敗なら初回 verifyAnalyzeProvenance で既に needs_clarification 終端している）ため、
@@ -5566,7 +5566,7 @@ async function execValidatePhase(state) {
   // Security floor より前に定義し state.dhPrompt に保持: PR/Evaluate phase でも参照するため
   // （evalDiffHash != null ガードで micro は skip）。
   // Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
-  // realized-diff / refloorShape / declared-path-check が自然に実行される（fix）。
+  // realized-diff / refloorShape / declared-path-check が自然に実行される。
   const dhPrompt = `次のコマンドを **先頭トークンが worktree-diff-hash の bare 単文** で 1 回だけ実行し、**stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
     + `（exec-proxy は決定論スクリプトへの verbatim 転写契約であり、argv の書き換えは転写の破壊にあたる。第 1 引数で worktree 絶対パスを渡しているため cd は不要）:\n`
@@ -5576,7 +5576,7 @@ async function execValidatePhase(state) {
   // ============================================================
   // empty-diff gate: Security floor phase の直前。
   // Security floor より前に置くことで retry 後の実体に対して danger-grep / realized-diff /
-  // refloorShape / declared-path-check が正しく実行される（major fix）。
+  // refloorShape / declared-path-check が正しく実行される。
   // 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
   // ============================================================
   {
@@ -5685,7 +5685,7 @@ async function execSecurityFloorPhase(state) {
   for (const seed of seedSecurityLedger()) {
     ledger = appendItem(ledger, seed).ledger
   }
-  // Security floor 統合 exec-proxy : danger-grep(risk) / realized-diff(files) /
+  // Security floor 統合 exec-proxy: danger-grep(risk) / realized-diff(files) /
   // structural-classify(struct) / diff-hash-secfloor(hash) の 4 呼び出しを secfloor-classify.sh の
   // 1 本へ統合する。label は 'danger-grep' を据え置く（agentType の dev-runner-haiku-ro 復帰と
   // telemetry label 連続性のため）。throw（StructuredOutput 未返却・proxy 実行失敗等）は
@@ -5727,7 +5727,7 @@ async function execSecurityFloorPhase(state) {
   // 注: この時点で implementer はコミットしていない（git add / commit 禁止）ため、
   //     secfloor-classify.sh は `git status --porcelain --untracked-files=all` を直接パースする。
   const realized = files == null ? null : { files }
-  // structural-classify : difftastic による structural / format_only 機械分類。
+  // structural-classify: difftastic による structural / format_only 機械分類。
   // parseSecfloorFields が struct.ok===true && available boolean && format_only/structural 配列形を
   // 検証済み（fail-open: 不正/欠落は struct=null）。formatOnlySet はそのまま struct?.format_only を
   // 使えばよい（difft 未インストール時も secfloor-classify.sh 契約上 format_only は空配列のため、
@@ -5833,7 +5833,7 @@ async function execSecurityFloorPhase(state) {
   state.uiVerifyStatus = uiVerifyStatus
   state.undeclared = undeclared
   state.diffClassification = struct ? { structural: struct.structural ?? [], format_only: struct.format_only } : null
-  // diff-hash reuse : danger-grep が成功し realized-diff が取れた場合のみ、
+  // diff-hash reuse: danger-grep が成功し realized-diff が取れた場合のみ、
   // Merge tier での danger-grep-final/changed-files 再実行を tree OID 完全一致時に skip できる
   // よう diff-hash を捕捉しておく。fail-open な条件は不変（この gating 条件を満たさないときは
   // secfloor-classify.sh が diffhash を取得していても再利用しない）。取得失敗時は null のまま
@@ -6601,7 +6601,7 @@ feedClockMark('final_end', finalEpochRes)
 // merge は全 tier 人間。AUTO は推奨ラベルのみ(真 auto-merge は W6 earned-autonomy)。
 // ============================================================
 phase('Merge tier')
-// diff-hash reuse : Security floor 時点の tree OID（state.secDiffHash）と Merge tier
+// diff-hash reuse: Security floor 時点の tree OID（state.secDiffHash）と Merge tier
 // 冒頭の tree OID が完全一致するときのみ danger-grep-final/changed-files の再実行を skip し、
 // Security floor の risk/realized をそのまま再利用する。secDiffHash が null（Security floor
 // 側 fail-closed・取得失敗）のときは diff-hash-merge 自体を呼ばない（無駄な proxy を発行しない）。
@@ -6650,7 +6650,7 @@ if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${risk
 const ledgerBeforeFinalReconcile = state.ledger
 state.ledger = reconcileDanger(state.ledger, riskFinal)
 state.ledger = reconcileTestsurf(state.ledger, riskFinal)
-// one-shot security clearance : Evaluate 時点 clean → 最終 danger-grep で新規 hit に
+// one-shot security clearance: Evaluate 時点 clean → 最終 danger-grep で新規 hit に
 // 転じた SEC class のみを対象に、evaluator へ 1 回だけ clearance を求める。cleared:true + 非空
 // evidence のみ checkItem。null / cleared:false / evidence 空は据え置き = HOLD（security floor は
 // 緩めない）。fail-closed 時は試みない。反復ループは作らない。
@@ -6682,7 +6682,7 @@ const unresolvedDanger = state.ledger.items.some(
 const breakingStructured = req.breaking_change === true
 const breakingKeyword = req.breaking_keyword_scan === true
 const escalateCount = policyAdvisoryItems(state.ledger, GATE_POLICY).filter((it) => it.escalate === true).length
-// base branch conflict 検出 : gh pr view で mergeable/mergeStateStatus を read-only 取得し、
+// base branch conflict 検出: gh pr view で mergeable/mergeStateStatus を read-only 取得し、
 // conflict 時は classifyMergeTier で無条件 HOLD。UNKNOWN/proxy 失敗は fail-open（definitive conflict のみ HOLD）。
 // label は 'gh-pr-view'（'pr' 始まりにしない — 既存 routing test 群が label.startsWith('pr') を
 // PR 作成 phase の呼び出し数カウントに使っており、'pr' 始まりの label を追加すると衝突するため。
@@ -6757,7 +6757,7 @@ const mergeTier = classifyMergeTier({
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
 // ============================================================
-// CI checks 委譲 auto-close : CI_VERIFIABLE_ENV_KEYS の ENV item
+// CI checks 委譲 auto-close: CI_VERIFIABLE_ENV_KEYS の ENV item
 // （turbopack-sandbox / bats-sandbox）を env_key ごとの check-name regex（envChecksGreen）で
 // 機械的に checkItem する。
 // 判定は envChecksGreen（決定論）のみ — LLM に判定させない。取得失敗・pending・該当 check
@@ -6793,7 +6793,7 @@ if (ciTargets.length > 0) {
 
 // ============================================================
 // Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。
-// 投稿失敗は log 警告のみで workflow は正常 return（AC#4）。
+// 投稿失敗は log 警告のみで workflow は正常 return する。
 // ============================================================
 // 終端サマリーが件数のみ表示する解消済み証跡（Goal Ledger 解消済み / 環境ノート / 達成 AC /
 // cleared security）の全文は journal telemetry `resolved_evidence` に載せる（canonical _lib/resolved-evidence.mjs、

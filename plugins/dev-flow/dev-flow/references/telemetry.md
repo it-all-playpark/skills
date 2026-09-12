@@ -11,7 +11,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   merge_tier_reasons / route / subagent_invocations / resolved_evidence）を
   `~/.claude/journal/pending/` へ書き出し、
   dev-flow plugin の Stop hook `plugins/dev-flow/hooks/stop-devflow-telemetry.sh`
-  （`hooks/hooks.json` から `${CLAUDE_PLUGIN_ROOT}` 経由で発火）が
+  （`hooks/hooks.json` から plugin root 変数経由で発火）が
   `journal.sh log dev-flow success --merge-tier ...` へ毎回自動 flush する。flush 失敗は
   `~/.claude/logs/stop-devflow-telemetry.log` に記録され pending file が残るため記録漏れに
   気づける。journal.sh の telemetry フラグは未指定なら telemetry キー無し。calibration の原資料。
@@ -80,7 +80,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   の `QUALITY_MODEL` **設定値**。agent() は agentType しか観測できず frontmatter 由来の実モデルは
   workflow から取得できないため、キー名で設定値であることを明示する）。
   `plugin_version`（同上両 entry。`_lib/plugin-version.mjs` の `PLUGIN_VERSION` 定数。workflow では
-  `${CLAUDE_PLUGIN_ROOT}` が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
+  plugin root 変数が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
   が `plugins/dev-flow/.claude-plugin/plugin.json` の version と一致することを pin する。plugin.json
   を上げるときは canonical も上げて `tools/sync-inlines.mjs --write` を実行する）。
   `iterate_history`（pr-iterate entry のみ。round ごとの `{iteration, decision, summary, blocking, minor}`
