@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mdCell } from './md-cell.mjs';
 import { buildDevflowSummaryBody } from './devflow-summary-format.mjs';
+import { classifyMergeTier } from './merge-tier.mjs';
 
 globalThis.mdCell = mdCell;
 
@@ -2123,4 +2124,229 @@ test('issue #614: triaged 表示を含む出力に <details> を含まない', (
     ],
   });
   assert.ok(!body.includes('<details>'), '<details> を含まない');
+});
+
+// ─── at-a-glance 表は最終状態を出す (issue #625) ───────────────────────────────────
+
+function glanceRow(body) {
+  const lines = body.split('\n');
+  const i = lines.indexOf('|---|---|---|---|---|---|---|');
+  assert.ok(i >= 0, 'at-a-glance 区切り行を含む');
+  return lines[i + 1];
+}
+function glanceCells(body) {
+  // 先頭/末尾の空セルを除いた 7 セル。[0]=tier [1]=shape [2]=テスト [3]=評価 [4]=台帳 [5]=AC [6]=危険検出
+  return glanceRow(body).split('|').slice(1, -1).map((s) => s.trim());
+}
+
+// AC1: finalReconcile='ci_verified' はテスト列を CI 表記へ統一する（testGreen の値に関わらず）。
+test('issue #625 AC1: finalReconcile=ci_verified かつ testGreen=false でも ✅ green (CI)', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'ci_verified', testGreen: false });
+  assert.equal(glanceCells(body)[2], '✅ green (CI)');
+});
+
+test('issue #625 AC1: finalReconcile=ci_verified かつ testGreen=true でも ✅ green (CI)', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'ci_verified', testGreen: true });
+  assert.equal(glanceCells(body)[2], '✅ green (CI)');
+});
+
+test('issue #625 AC1: finalReconcile=ci_verified かつ testGreen=null でも ✅ green (CI)', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'ci_verified', testGreen: null });
+  assert.equal(glanceCells(body)[2], '✅ green (CI)');
+});
+
+// AC2: finalReconcile='reverified' は finalTestGreen（最終 tree の再検証結果）を優先する。
+test('issue #625 AC2: finalReconcile=reverified, finalTestGreen=true, testGreen=false → ✅ green', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'reverified', finalTestGreen: true, testGreen: false });
+  assert.equal(glanceCells(body)[2], '✅ green');
+});
+
+test('issue #625 AC2: finalReconcile=reverified, finalTestGreen=false, testGreen=true → ❌ red', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'reverified', finalTestGreen: false, testGreen: true });
+  assert.equal(glanceCells(body)[2], '❌ red');
+});
+
+test('issue #625 AC2: finalReconcile=reverified, finalTestGreen=null → 不明（5c の Final reconcile 行と同じ表現）', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'reverified', finalTestGreen: null, testGreen: true });
+  assert.equal(glanceCells(body)[2], '不明');
+});
+
+test('issue #625 AC2: finalReconcile=skipped は testGreen そのまま', () => {
+  const bodyRed = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'skipped', testGreen: false });
+  assert.equal(glanceCells(bodyRed)[2], '❌ red');
+  const bodyGreen = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'skipped', testGreen: true });
+  assert.equal(glanceCells(bodyGreen)[2], '✅ green');
+});
+
+test('issue #625 AC2: finalReconcile=unavailable は testGreen そのまま（finalTestGreen=null でも影響しない）', () => {
+  const bodyRed = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'unavailable', finalTestGreen: null, testGreen: false });
+  assert.equal(glanceCells(bodyRed)[2], '❌ red');
+  const bodyGreen = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'unavailable', finalTestGreen: null, testGreen: true });
+  assert.equal(glanceCells(bodyGreen)[2], '✅ green');
+  const bodyUnknown = buildDevflowSummaryBody({ ...BASE_INPUT, finalReconcile: 'unavailable', finalTestGreen: null, testGreen: null });
+  assert.equal(glanceCells(bodyUnknown)[2], '不明');
+});
+
+test('issue #625: finalReconcile 未指定は既存挙動不変（testGreen=false → ❌ red）', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false });
+  assert.equal(glanceCells(body)[2], '❌ red');
+});
+
+// AC3: evalVerdict='fail' は evalStaleness/iterateStatus/finalAcReconcile の 4 条件 AND が
+// 揃ったときのみ「✅ pass (fix 後 LGTM)」に反転する。
+test('issue #625 AC3: 4 条件揃うと ✅ pass (fix 後 LGTM)', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalVerdict: 'fail',
+    evalStaleness: 'iterate_fixed',
+    iterateStatus: 'lgtm',
+    finalAcReconcile: 'reverified',
+    iterateFixesApplied: 1,
+  });
+  assert.equal(glanceCells(body)[3], '✅ pass (fix 後 LGTM)');
+});
+
+test('issue #625 AC3: 4 条件のいずれか 1 つでも欠けると ❌ fail のまま', () => {
+  const variants = [
+    { evalStaleness: 'none' },
+    { iterateStatus: 'fix_failed' },
+    { finalAcReconcile: 'skipped' },
+    { evalStaleness: 'iterate_incomplete' },
+    { iterateStatus: null },
+    { finalAcReconcile: null },
+    { finalAcReconcile: 'unavailable' },
+  ];
+  for (const override of variants) {
+    const body = buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      evalVerdict: 'fail',
+      evalStaleness: 'iterate_fixed',
+      iterateStatus: 'lgtm',
+      finalAcReconcile: 'reverified',
+      iterateFixesApplied: 1,
+      ...override,
+    });
+    assert.equal(glanceCells(body)[3], '❌ fail', `override=${JSON.stringify(override)}`);
+  }
+});
+
+test('issue #625 AC3: evalVerdict=pass は 4 条件の有無に関係なく ✅ pass', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalVerdict: 'pass',
+    evalStaleness: 'iterate_fixed',
+    iterateStatus: 'lgtm',
+    finalAcReconcile: 'reverified',
+  });
+  assert.equal(glanceCells(body)[3], '✅ pass');
+});
+
+test('issue #625: evalCell 反転後も iterate_fixed 注記行は残る（確定仕様1）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalVerdict: 'fail',
+    evalStaleness: 'iterate_fixed',
+    iterateStatus: 'lgtm',
+    finalAcReconcile: 'reverified',
+    iterateFixesApplied: 1,
+  });
+  assert.ok(body.includes('pr-iterate が 1 件の fix を適用して LGTM 終端'));
+});
+
+// 確定仕様5（理由欄は消さない）+ AC4（merge tier 不変・byte 一致）。
+test('issue #625 確定仕様5+AC4: merge tier は不変のまま at-a-glance 表示のみ最終状態を反映する', () => {
+  const tierInput = {
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    iterateStatus: 'lgtm', evalStaleness: 'iterate_fixed', evalVerdictFail: true,
+    finalReconcile: 'ci_verified', finalAcReconcile: 'reverified',
+    finalCi: { verified: true, reason: 'ok', kind: null, checkNames: ['Bats', 'Node'], headRefOid: 'a'.repeat(40) },
+  };
+  const r = classifyMergeTier(tierInput);
+  // 実装前（F1 時点）に実測した literal。merge-tier.mjs は F1〜F3 のいずれでも変更しないため
+  // この値は変更前後で不変であるはずのものを固定している。
+  assert.equal(r.tier, 'REVIEW');
+  assert.deepEqual(r.holdReasons, []);
+  assert.deepEqual(r.reasons, [
+    '標準 — 人間が LGTM して merge',
+    'evaluator verdict=fail のまま PR へ進行 — 未解消 findings は ledger/HOLD 条件が別途担保するため tier 判定は不変（可視化のみ。issue #536）',
+    'Final reconcile はローカル再検証不能だったが PR head sha ' + 'a'.repeat(40)
+      + ' の CI check 全 success を決定論確認（final_reconcile=ci_verified: Bats, Node）'
+      + '— test gate は CI 委譲で充足（issue #599）',
+  ]);
+
+  const frozenReasons = Object.freeze([...r.reasons]);
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: r.tier,
+    mergeTierReasons: frozenReasons,
+    testGreen: false,
+    evalVerdict: 'fail',
+    evalStaleness: 'iterate_fixed',
+    iterateFixesApplied: 1,
+    iterateStatus: 'lgtm',
+    finalReconcile: 'ci_verified',
+    finalTestGreen: null,
+    finalAcReconcile: 'reverified',
+    acResults: [{ ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' }],
+  });
+
+  assert.equal(glanceCells(body)[2], '✅ green (CI)');
+  assert.equal(glanceCells(body)[3], '✅ pass (fix 後 LGTM)');
+
+  const start = body.indexOf('**Merge tier 理由**:');
+  const end = body.indexOf('\n- Final reconcile (');
+  assert.equal(
+    body.slice(start, end),
+    '**Merge tier 理由**:\n' + frozenReasons.map((x) => '- ' + x).join('\n'),
+    '理由欄は byte そのまま echo される（消えない）',
+  );
+
+  assert.ok(body.includes('test gate は CI 委譲で充足（issue #599）'), 'ローカル未検証の事実は理由欄に残る');
+  assert.ok(body.includes('- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ci_verified — final test: ✅ CI 委譲（PR head sha 一致・check 全 success）, final AC: reverified'));
+  assert.ok(body.includes('- ✅ AC は最終 PR tree で再検証済み'));
+});
+
+test('issue #625: 決定性 — 確定仕様5+AC4 と同一入力で 2 回呼んでも byte 一致', () => {
+  const tierInput = {
+    shape: 'standard', converged: true, unresolvedDanger: false,
+    breakingStructured: false, breakingKeyword: false,
+    docsOrTestOnly: false, escalateCount: 0,
+    iterateStatus: 'lgtm', evalStaleness: 'iterate_fixed', evalVerdictFail: true,
+    finalReconcile: 'ci_verified', finalAcReconcile: 'reverified',
+    finalCi: { verified: true, reason: 'ok', kind: null, checkNames: ['Bats', 'Node'], headRefOid: 'a'.repeat(40) },
+  };
+  const r = classifyMergeTier(tierInput);
+  const frozenReasons = Object.freeze([...r.reasons]);
+  const input = {
+    ...BASE_INPUT,
+    mergeTier: r.tier,
+    mergeTierReasons: frozenReasons,
+    testGreen: false,
+    evalVerdict: 'fail',
+    evalStaleness: 'iterate_fixed',
+    iterateFixesApplied: 1,
+    iterateStatus: 'lgtm',
+    finalReconcile: 'ci_verified',
+    finalTestGreen: null,
+    finalAcReconcile: 'reverified',
+    acResults: [{ ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' }],
+  };
+  const body1 = buildDevflowSummaryBody(input);
+  const body2 = buildDevflowSummaryBody(input);
+  assert.equal(body1, body2);
+});
+
+test('issue #625: 既存表示の回帰なし — 未指定と null 明示は byte 一致', () => {
+  const bodyImplicit = buildDevflowSummaryBody({ ...BASE_INPUT });
+  const bodyExplicit = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    finalReconcile: null,
+    finalTestGreen: null,
+    finalAcReconcile: null,
+    iterateStatus: null,
+    evalStaleness: null,
+  });
+  assert.equal(bodyImplicit, bodyExplicit);
 });
