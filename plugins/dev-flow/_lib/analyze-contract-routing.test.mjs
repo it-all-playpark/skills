@@ -2,15 +2,15 @@
 // Guard test: Analyze phase の決定論 parse 降格経路 (contract probe → buildReqFromContract →
 // fail-open fallback) の配線 pin（issue #374 task F2）。
 //
-// probe label は 'contract-probe#' + ISSUE（'analyze-contract#' ではない）: 既存の
-// *-routing.test.mjs 群が label.startsWith('analyze') で sonnet analyze 呼び出し回数を厳密カウントして
-// いるため、'analyze' prefix と衝突する label にすると call count アサーションを大量に壊してしまう
-// （AC-2「既存の抽出結果・挙動が変わらない」に反する）。'contract-probe#' なら既存 responder の
-// どの分岐にもマッチせず null を返す → 本経路の fail-open ロジックがそのまま現行 analyze# fallback に
-// 委譲するため、既存テストの呼び出し回数・挙動は完全に不変となる。
+// issue #636 P3a: 旧版は dev-flow.js ソース文字列に対する readFileSync + regex/includes pin だった。
+// 本版は VM sandbox で agent() を mock し、実際に渡される contract-probe#1 / analyze#1 の
+// label・agentType・prompt トークン・fail-open 挙動・needs_clarification routing を検証する。
 //
-// .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
-// よって既存 *-routing.test.mjs と同じ戦略 (source-as-string assert) で検証する。
+// probe label は 'contract-probe#' + ISSUE（'analyze-contract#' ではない）: 既存の
+// *-routing.test.mjs 群が label.startsWith('analyze') で sonnet analyze 呼び出しを識別しているため、
+// 'analyze' prefix と衝突する label にすると既存テストの呼び出し回数・挙動を壊してしまう。
+// 'contract-probe#' なら既存 responder のどの分岐にもマッチせず null を返す → fail-open ロジックが
+// そのまま現行 analyze# fallback に委譲する。
 //
 // Run: npx vitest run _lib/analyze-contract-routing.test.mjs
 import { test } from 'vitest';
@@ -18,110 +18,193 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
-// ---- (a) label 'contract-probe#' と agentType 'dev-runner-haiku-ro' が Analyze phase に存在 ----
+const FULL_REQ = {
+  summary: 's',
+  acceptance_criteria: ['a', 'b'],
+  issue_type: 'fix',
+  scope: 'src',
+  scope_truncated: false,
+  estimated_change_file_count: 3,
+  shape: 'standard',
+  breaking_change: false,
+  breaking_keyword_scan: false,
+  ambiguities: [],
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
+};
+
+function baseResponder({ req = FULL_REQ, contractHandler } = {}) {
+  return function ({ label, agentType }) {
+    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
+    if (label.startsWith('contract-probe')) {
+      if (contractHandler) return contractHandler({ label, agentType });
+      return null; // fail-open（whitelist 不合格扱い）— sonnet fallback
+    }
+    if (label.startsWith('analyze')) return req;
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
+    if (label === 'realized-diff') return { files: ['src/a.ts'] };
+    if (label === 'declared-path-check') return { files: [] };
+    if (label === 'changed-files') return { files: ['src/a.ts'] };
+    if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
+    if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (agentType === 'dev-flow:evaluator') {
+      return {
+        verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
+        ac_results: (req.acceptance_criteria ?? []).map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
+        security_clearance: [],
+      };
+    }
+    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+    if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    if (label === 'journal-log') return { logged: true, summary: 'ok' };
+    if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    return null;
+  };
+}
+
+function makeSandbox(opts = {}, extra = {}) {
+  return makeRecordingSandbox(baseResponder(opts), { args: '1', ...extra });
+}
+
+async function run(ctx) {
+  const stripped = src
+    .replace(/^export\s+const\s+/gm, 'const ')
+    .replace(/^export\s+function\s+/gm, 'function ');
+  const wrapped = `(async () => {\n${stripped}\n})();`;
+  const vm = await import('node:vm');
+  let caughtError = null;
+  let resolvedResult = null;
+  try {
+    const promise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
+    if (promise && typeof promise.then === 'function') {
+      resolvedResult = await promise.catch((e) => { caughtError = e; return null; });
+    }
+  } catch (e) {
+    caughtError = e;
+  }
+  return { result: resolvedResult, error: caughtError };
+}
+
+function assertNoCrash(error, name) {
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`[${name}] dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+}
+
+// ---- (a) label 'contract-probe#1' と agentType 'dev-runner-haiku-ro'（namespaced: dev-flow:dev-runner-haiku-ro）----
 // contract probe は read-only 決定論 proxy（Write/Edit 禁止を prompt 自身が宣言）のため、
-// AGENTS.md の exec-proxy 分離規約に従い dev-runner-haiku-ro（tools: [Bash, Read] のみ）を
-// 使用する（PR #388 review, major #2）。
-
-test("[analyze-contract-routing] (a) label 'contract-probe#' が dev-flow.js に存在する", () => {
-  assert.ok(src.includes("'contract-probe#'"), "label 'contract-probe#' が見つからない");
-});
-
-test("[analyze-contract-routing] (a) 'contract-probe#' の agent() 呼び出しが agentType:'dev-runner-haiku-ro' を使う", () => {
-  const idx = src.indexOf("'contract-probe#'");
-  assert.ok(idx !== -1);
-  const window = src.slice(Math.max(0, idx - 200), idx + 300);
-  assert.match(
-    window,
-    /agentType:\s*'dev-runner-haiku-ro'/,
-    `'contract-probe#' 呼び出し周辺に agentType:'dev-runner-haiku-ro' が見つからない。window: ${window}`,
+// AGENTS.md の exec-proxy 分離規約に従い dev-runner-haiku-ro（tools: [Bash, Read] のみ）を使用する
+// （PR #388 review, major #2）。
+test("[analyze-contract-routing] (a) contract-probe#1 が agentType 'dev-flow:dev-runner-haiku-ro' で呼ばれる", async () => {
+  const { ctx, calls } = makeSandbox();
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'a');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  assert.ok(
+    calls.some((c) => c.label === 'contract-probe#1' && c.agentType === 'dev-flow:dev-runner-haiku-ro'),
+    "contract-probe#1 呼び出しが agentType 'dev-flow:dev-runner-haiku-ro' で見つからない",
   );
 });
 
-// ---- (b) probe は try/catch + non-need()（fail-open）----
+// ---- (b) contract-probe は fail-open（throw しても run は abort せず analyze# fallback へ進む）----
+test('[analyze-contract-routing] (b) contract-probe#1 が throw しても run は abort せず analyze#1 へ fallback する（fail-open）', async () => {
+  const { ctx, calls } = makeSandbox({ contractHandler: () => { throw new Error('boom'); } });
+  const { result, error } = await run(ctx);
+  assertNoCrash(error, 'b');
+  assert.equal(error, null, `contract-probe#1 の throw で run 全体が abort してはならないが: ${error?.message}`);
+  assert.ok(calls.some((c) => c.label === 'analyze#1'), 'analyze#1 へのフォールバック呼び出しが観測できない');
+  assert.equal(typeof result, 'object', 'run の結果は object のはず');
+  assert.ok(result !== null, 'run の結果は null であってはならない');
+});
 
-test('[analyze-contract-routing] (b) contract-probe は need() で包まれていない（fail-open）', () => {
-  const idx = src.indexOf("'contract-probe#'");
-  assert.ok(idx !== -1);
-  const before = src.slice(Math.max(0, idx - 300), idx);
-  assert.doesNotMatch(
-    before,
-    /need\(\s*await agent\(/,
-    'contract-probe は need() で包んではならない (fail-open policy)',
+// ---- (c) fallback の analyze#1 は agentType 'dev-flow:dev-runner'。needs_clarification 判定で
+//          中断した場合 plan#1 は呼ばれない ----
+test("[analyze-contract-routing] (c) fallback の analyze#1 は agentType 'dev-flow:dev-runner' で呼ばれる", async () => {
+  const { ctx, calls } = makeSandbox();
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'c-1');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  assert.ok(
+    calls.some((c) => c.label === 'analyze#1' && c.agentType === 'dev-flow:dev-runner'),
+    "analyze#1 呼び出しが agentType 'dev-flow:dev-runner' で見つからない",
   );
 });
 
-test('[analyze-contract-routing] (b) contract-probe は try/catch で包まれている', () => {
-  const idx = src.indexOf("'contract-probe#'");
-  assert.ok(idx !== -1);
-  const before = src.slice(Math.max(0, idx - 400), idx);
-  const after = src.slice(idx, idx + 600);
-  assert.match(before, /try\s*\{/, 'contract-probe の前に try { が見つからない');
-  assert.match(after, /\}\s*catch/, 'contract-probe の後に catch ブロックが見つからない');
+test('[analyze-contract-routing] (c) analyze#1 が要件曖昧（ambiguities 超過）を返すと needs_clarification で中断し plan#1 は呼ばれない', async () => {
+  const req = { ...FULL_REQ, ambiguities: ['a', 'b', 'c'] };
+  const { ctx, calls } = makeSandbox({ req });
+  const { result, error } = await run(ctx);
+  assertNoCrash(error, 'c-2');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  assert.equal(result?.status, 'needs_clarification', `status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
+  assert.ok(!calls.some((c) => c.label === 'plan#1'), 'needs_clarification で中断した場合 plan#1 は呼ばれてはならない');
 });
 
-// ---- (c) fallback の analyze# sonnet 呼び出しと needs_clarification 判定文字列が不変で存在 ----
-
-test("[analyze-contract-routing] (c) fallback の 'analyze#' + ISSUE (dev-runner) 呼び出しが存在する", () => {
-  assert.match(src, /label:\s*`analyze#\$\{ISSUE\}`/, "label: `analyze#${ISSUE}` が見つからない");
-  const idx = src.search(/label:\s*`analyze#\$\{ISSUE\}`/);
-  assert.ok(idx !== -1);
-  const window = src.slice(Math.max(0, idx - 200), idx + 100);
-  assert.match(window, /agentType:\s*'dev-runner'/, `analyze#\${ISSUE} 呼び出しは agentType:'dev-runner' のままであること。window: ${window}`);
+// ---- (d) DEPTH === 'standard' ガード: DEPTH がそれ以外なら contract-probe は 0 回 ----
+test("[analyze-contract-routing] (d) DEPTH !== 'standard' のとき contract-probe は呼ばれない", async () => {
+  const { ctx, calls } = makeSandbox({}, { args: { issue: '1', depth: 'light' } });
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'd');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const contractCalls = calls.filter((c) => c.label.startsWith('contract-probe'));
+  assert.equal(contractCalls.length, 0, `DEPTH!=='standard' のとき contract-probe は 0 回のはずだが ${contractCalls.length} 件`);
 });
 
-test('[analyze-contract-routing] (c) needs_clarification 判定文字列が不変', () => {
-  assert.ok(src.includes('needs_clarification で中断'), "'needs_clarification で中断' の log 文言が見つからない（既存挙動が変更された可能性）");
-  assert.ok(src.includes("status: 'needs_clarification'"), "status: 'needs_clarification' が見つからない");
-});
-
-// ---- (d) DEPTH === 'standard' ガードの存在 ----
-
-test("[analyze-contract-routing] (d) \"DEPTH === 'standard'\" ガードが存在する", () => {
-  assert.match(src, /DEPTH === 'standard'/, "DEPTH === 'standard' ガードが見つからない");
-});
-
-// ---- (e) bare 形実行指示（cd 前置禁止文言）が prompt に含まれる ----
+// ---- (e) script 呼び出しが plugin bin/ の bare 名先頭トークン形（cd 前置・bash 前置なし）である ----
 // issue #466: analyze-issue.sh は --issue-json ファイル入力の純変換へ改修されたため、
 // contract probe は事前に bare `gh issue view` で issue JSON を $TMPDIR file へ取得してから
 // script を --issue-json 付きで呼ぶ 2 段階 choreography になった。
-
-test('[analyze-contract-routing] (e) contract probe prompt に cd 前置禁止の bare 形指示が含まれる', () => {
-  const idx = src.indexOf('analyze-issue ${ISSUE} --issue-json');
-  assert.ok(idx !== -1, "'analyze-issue ${ISSUE} --issue-json' 実行コマンドが prompt 内に見つからない");
-  const window = src.slice(Math.max(0, idx - 100), idx + 500);
-  assert.match(window, /cd 前置/, `cd 前置禁止の文言が見つからない。window: ${window}`);
-});
-
-test('[analyze-contract-routing] (e) script 呼び出しが plugin bin/ の bare 名先頭トークン形である', () => {
-  assert.match(
-    src,
-    /`analyze-issue \$\{ISSUE\} --issue-json <ISSUE_JSON> --contract/,
-    'analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract という bare 名先頭トークン形式が見つからない',
+test('[analyze-contract-routing] (e) contract-probe#1 prompt が bare 名先頭トークン形の analyze-issue 呼び出しを含む', async () => {
+  const { ctx, calls } = makeSandbox();
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'e-1');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const call = calls.find((c) => c.label === 'contract-probe#1');
+  assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
+  assert.ok(
+    call.prompt.includes('analyze-issue 1 --issue-json <ISSUE_JSON> --contract'),
+    `bare 名先頭トークン形の analyze-issue 呼び出しが見つからない: ${call.prompt}`,
   );
+  assert.ok(!/\bbash analyze-issue/.test(call.prompt), "'bash analyze-issue' 前置形が含まれてはならない");
+  // 注: contractProbePrompt は cd 前置禁止を指示する自然文（「cd 前置」「cd X && script」等）を
+  // 含むため、'cd ' の単純な非包含チェックは成立しない（instructional text 自体が cd を語る）。
+  // 実質的なチェックは上の bare 名先頭トークン形の positive pin と bash 前置の negative pin で足りる。
+  assert.ok(!/^cd /m.test(call.prompt), '実行コマンド行が cd で始まってはならない（各行頭が cd で始まらないことを確認）');
 });
 
-test('[analyze-contract-routing] (e) contract probe prompt が issue JSON を bare `gh issue view` で先行取得する', () => {
-  const idx = src.indexOf("'contract-probe#'");
-  assert.ok(idx !== -1);
-  const window = src.slice(Math.max(0, idx - 200), idx + 2000);
-  assert.match(window, /gh issue view \$\{ISSUE\}/, `bare 'gh issue view \${ISSUE}' 実行指示が見つからない。window: ${window}`);
+test('[analyze-contract-routing] (e) contract-probe#1 prompt が bare `gh issue view` で issue JSON を先行取得する', async () => {
+  const { ctx, calls } = makeSandbox();
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'e-2');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const call = calls.find((c) => c.label === 'contract-probe#1');
+  assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
+  assert.ok(call.prompt.includes('gh issue view 1'), `bare 'gh issue view 1' 実行指示が見つからない: ${call.prompt}`);
 });
 
 // ---- (f) 分類器 trigger 文言（sandbox/excludedCommands 起動理由の説明）を含まない ----
 // issue #466 AC-1: prompt に sandbox / excludedCommands / 特定パス起動の理由を書いてはならない
-// （分類器 trigger）。前置禁止の指示自体は (e) で別途固定済み。
-
-test("[analyze-contract-routing] (f) contract probe prompt が 'sandbox'/'excludedCommands' を含まない", () => {
-  const idx = src.indexOf("'contract-probe#'");
-  assert.ok(idx !== -1);
-  const window = src.slice(idx, idx + 2500);
-  assert.doesNotMatch(window, /sandbox/, `contract probe prompt に 'sandbox' が含まれてはならない。window: ${window}`);
-  assert.doesNotMatch(window, /excludedCommands/, `contract probe prompt に 'excludedCommands' が含まれてはならない。window: ${window}`);
+// （分類器 trigger）。
+test("[analyze-contract-routing] (f) contract-probe#1 prompt が 'sandbox'/'excludedCommands' を含まない", async () => {
+  const { ctx, calls } = makeSandbox();
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'f');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const call = calls.find((c) => c.label === 'contract-probe#1');
+  assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
+  assert.ok(!/sandbox/.test(call.prompt), `contract-probe#1 prompt に 'sandbox' が含まれてはならない。prompt: ${call.prompt}`);
+  assert.ok(!/excludedCommands/.test(call.prompt), `contract-probe#1 prompt に 'excludedCommands' が含まれてはならない。prompt: ${call.prompt}`);
 });

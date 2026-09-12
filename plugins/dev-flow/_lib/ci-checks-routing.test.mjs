@@ -211,10 +211,6 @@ test('[ci-checks][AC-1][a] post-summary の環境ノートに件数行が現れ�
   const { calls } = sharedGreen;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');
@@ -256,10 +252,6 @@ test('[ci-checks][AC-2][b] ci-checks 失敗でも workflow は完走し(post-sum
     `label === 'post-summary' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})。workflow が完走していない可能性`,
   );
   assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない:\n${post.prompt.slice(0, 2000)}`,
-  );
-  assert.ok(
     !post.prompt.includes('CI で確認済み'),
     `ci-checks 失敗時は fail-open で ENV item を据え置くはずが「CI で確認済み」が現れている:\n${post.prompt.slice(0, 2000)}`,
   );
@@ -296,10 +288,6 @@ test('[ci-checks][AC-3][c] ENV-NPM-CACHE-EPERM env note が resolved_evidence �
   const { calls } = sharedAllowlist;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'npm-cache-eperm');
@@ -403,10 +391,6 @@ test('[ci-checks][AC-2][e] bats check pass で ENV-BATS-SANDBOX が auto-close �
   const { calls } = sharedBatsGreen;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'bats-sandbox');
@@ -454,10 +438,6 @@ test('[ci-checks][AC-3][f] bats/test 系 check が pending のとき ENV-BATS-SA
   const { calls } = sharedBatsPending;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'bats-sandbox');
@@ -502,10 +482,6 @@ test('[ci-checks][AC-4][g] turbopack-sandbox は auto-close、bats-sandbox は�
   const { calls } = sharedPerKey;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 2 件'),
-    `post-summary の prompt に環境ノートの件数行（turbopack-sandbox + bats-sandbox の 2 グループ）が見つからない:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const turbo = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');

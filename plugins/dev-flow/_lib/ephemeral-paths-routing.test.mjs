@@ -428,14 +428,11 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 
     '(E) danger-grep は 1 回のはずだが ' + dangerGrepCalls.length + ' 回だった',
   );
 
-  // danger-grep が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
+  // danger-grep が宣言外ファイルを返すと evaluator prompt に宣言外ファイル名が出現する
+  // （データ echo: refloor と宣言外監査が同一スナップショットを参照している実証。
+  // 「宣言外変更」という日本語文言そのものの pin は言い回し変更で落ちるため撤去した — issue #636 AC-1）
   const eval1Call = calls.find((c) => c.label === 'eval#1');
   assert.ok(eval1Call != null, '(E) evaluator eval#1 が呼ばれていない');
-  assert.ok(
-    eval1Call.prompt.includes('宣言外変更'),
-    '(E) evaluator prompt に "宣言外変更" が含まれるはずだが見つからなかった'
-      + ' (refloor と宣言外監査が同一スナップショットを参照している実証)',
-  );
   assert.ok(
     eval1Call.prompt.includes('undeclared-file.ts'),
     '(E) evaluator prompt に undeclared-file.ts が含まれるはずだが見つからなかった',
@@ -489,13 +486,11 @@ test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → sh
       + ' (undeclared.length>0 → runEval=true で micro でも Evaluate を強制)',
   );
 
+  // 宣言外は size 信号ではなく監査信号 — refloor には混ぜず Evaluate 強制 + concern 注入で扱う
+  // （データ echo で確認。「宣言外変更」という日本語文言そのものの pin は言い回し変更で落ちるため
+  // 撤去した — issue #636 AC-1）
   const eval1Call = calls.find((c) => c.label === 'eval#1');
   assert.ok(eval1Call != null, '(F) evaluator eval#1 が呼ばれていない');
-  assert.ok(
-    eval1Call.prompt.includes('宣言外変更'),
-    '(F) evaluator prompt に "宣言外変更" concern が含まれるはずだが見つからなかった'
-      + ' (宣言外は size 信号ではなく監査信号 — refloor には混ぜず Evaluate 強制 + concern 注入で扱う)',
-  );
   assert.ok(
     eval1Call.prompt.includes('leftover-handoff.md'),
     '(F) evaluator prompt に leftover-handoff.md が含まれるはずだが見つからなかった',

@@ -1,17 +1,16 @@
 // implementer.md は sandbox write-deny（issue #216 リトライで実証）のため、規約は dev-flow.js が
-// 全 implementer spawn prompt に注入する。本テストはその注入を source + routing の 2 層で pin する。
+// 全 implementer spawn prompt に注入する。本テストはその注入を source pin（否定側 1 件）+ VM 挙動
+// routing の 2 層で pin する（issue #636 AC-1: 「含まれる」側の自然言語文言 pin は VM 挙動へ置換済み）。
 //
 // 問題: implementer が evaluator.staged.md / fm_*.txt 等の一時ファイルを worktree 直下に残すと
 //       `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、
 //       micro→standard の refloor 誤発火や 30 件超の CONCERN スパムが起きる（issue #216）。
 //
 // このテストは:
-//   (1) dev-flow.js に識別子 'STAGING_CONVENTION' がちょうど 5 回出現する
-//       （定義 1 + implPrompt/green-fix#i/green-fix#retry-vi/fix#i の 4 usage）
-//   (2) STAGING_CONVENTION 定義（source 全体）に '.devflow-tmp' / 'fm_*.txt' / 'staged' が含まれる
-//   (3) routing: micro または standard 経路で sandbox 実行し、agentType === 'dev-flow:implementer' の
-//       呼び出しが >= 1 件あること
-//   (4) routing: 全 implementer call の prompt に '.devflow-tmp' と 'TMPDIR' と 'staged' が含まれる
+//   (2b) STAGING_CONVENTION 定義が一時ファイルの削除を指示しない（否定側 pin。AC-3 許可）
+//   (3) routing: 標準経路 implementer 呼び出し全件の prompt に規約トークンが含まれる
+//   (4) routing: green-fix#1（Validate red→green-fix 経路）の prompt にも規約トークンが含まれる
+//   (5) routing: fix#1（Evaluate implementation-level 差し戻し経路）の prompt にも規約トークンが含まれる
 // を assert する。
 // implementer.md は一切読まない（旧テストの readFileSync(implementerMdPath) は完全に廃止）。
 
@@ -20,7 +19,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
@@ -28,42 +27,8 @@ const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
-// Part 1: source pin
+// Part 1: source pin（否定側のみ）
 // ============================================================
-
-// (1) STAGING_CONVENTION が dev-flow.js にちょうど 4 回出現する（定義 1 + usage 3）
-// F2 (runValidateLoop 統合) 後: green-fix 本経路 + retry 経路が runValidateLoop 内の 1 行に統合
-// されたため旧 5 → 4 に変更（implPrompt/runValidateLoop-green-fix/fix の usage 3）。
-test('[staging-convention] dev-flow.js に STAGING_CONVENTION がちょうど 4 回出現する', () => {
-  const count = src.split('STAGING_CONVENTION').length - 1;
-  assert.equal(
-    count,
-    4,
-    `dev-flow.js に STAGING_CONVENTION が ${count} 回出現（期待: 4 回 = 定義 1 + implPrompt/runValidateLoop-green-fix/fix の usage 3）`,
-  );
-});
-
-// (2) 規約トークン '.devflow-tmp' / 'fm_*.txt' / 'staged' が source に存在する
-test('[staging-convention] dev-flow.js に ".devflow-tmp" が含まれる', () => {
-  assert.ok(
-    src.includes('.devflow-tmp'),
-    'dev-flow.js に ".devflow-tmp" が存在しない（STAGING_CONVENTION 定義に含まれるはず）',
-  );
-});
-
-test('[staging-convention] dev-flow.js に "fm_*.txt" への言及が含まれる', () => {
-  assert.ok(
-    src.includes('fm_*.txt') || src.includes('fm_'),
-    'dev-flow.js に "fm_*.txt" / "fm_" への言及が存在しない（STAGING_CONVENTION 定義に含まれるはず）',
-  );
-});
-
-test('[staging-convention] dev-flow.js に "staged" への言及が含まれる', () => {
-  assert.ok(
-    src.includes('staged'),
-    'dev-flow.js に "staged" が存在しない（STAGING_CONVENTION 定義に含まれるはず）',
-  );
-});
 
 // (2b) .devflow-tmp/ の後始末を指示しない（isEphemeralPath が realized-diff から除外するため不要）。
 // 削除を指示すると implementer が一時 dir の削除コマンドを組み立て、実行制御に弾かれて turn を失う。
@@ -84,179 +49,79 @@ test('[staging-convention] STAGING_CONVENTION 定義が一時ファイルの削�
 });
 
 // ============================================================
-// Part 2: behavioral routing pin（VM sandbox）
-// ephemeral-paths-routing.test.mjs の makeCountingSandbox / runDevFlowInSandbox と同型。
-// agent() stub が calls 配列に { label, agentType, prompt } を記録する。
+// Part 2: behavioral routing pin（VM sandbox、共有 helper 使用）
+// _lib/test-helpers/vm-sandbox.mjs の makeDevFlowSandbox / runWorkflowCapture を使う。
+// 規約トークン（'.devflow-tmp' / 'TMPDIR' / 'staged'）が実際に injected な prompt へ
+// verbatim 到達することを、標準経路・green-fix 経路・Evaluate fix 経路の 3 通りで検証する
+// （旧 (1) の「usage 3 箇所」source pin を挙動証拠で代替する）。
 // ============================================================
 
-/**
- * staging-convention routing 専用の VM sandbox を組む。
- * standard 経路で 1 回実行し、implementer prompt に規約トークンが含まれることを検証する。
- *
- * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
- */
-function makeCountingSandbox() {
-  const calls = [];
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType, prompt: String(prompt) });
-
-    // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #550 案1）
-    if (label === 'setup-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    }
-    if (label === 'worktree') {
-      return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    }
-    if (label.startsWith('analyze')) {
-      return {
-        summary: 's',
-        acceptance_criteria: ['a', 'b', 'c'],
-        issue_type: 'feat',
-        scope: 'src',
-        estimated_change_file_count: 3,
-        shape: 'standard',
-        issue_number: 1,
-        issue_title: 'stub-issue-title',
-      };
-    }
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        summary: 'p',
-        serial: [{ id: 'T1', desc: 'impl', file_changes: ['src/a.ts'], test_plan: 'none', depends_on: [] }],
-        parallel: [],
-      };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
-    if (label.startsWith('danger-grep')) {
-      return { ok: true, hits: [] };
-    }
-    if (label === 'realized-diff') {
-      return { files: ['src/a.ts', 'src/b.ts'] };
-    }
-    if (label === 'declared-path-check') {
-      return { files: [] };
-    }
-    if (label.startsWith('test')) {
-      return { tests: 'no_tests', green: true, summary: '' };
-    }
-    if (agentType === 'dev-flow:evaluator') {
-      return {
-        verdict: 'pass',
-        total: 100,
-        threshold: 80,
-        feedback: [],
-        feedback_level: 'implementation',
-        ac_results: [],
-        security_clearance: [],
-      };
-    }
-    if (label.startsWith('pr')) {
-      return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    if (label === 'changed-files') {
-      return { files: ['src/a.ts'] };
-    }
-    if (agentType === 'dev-flow:implementer') {
-      return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'done', concerns: [] };
-    }
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
-      return { hash: 'H', empty: false };
-    }
-    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    return null;
-  };
-
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-
-  const sandbox = {
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    args: '1',
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return { ctx, calls };
+function assertTokens(call, label) {
+  assert.ok(call != null, `label === '${label}' の call が見つからない`);
+  for (const token of ['.devflow-tmp', 'TMPDIR', 'staged']) {
+    assert.ok(
+      call.prompt.includes(token),
+      `${label} prompt に '${token}' が含まれない。STAGING_CONVENTION が注入されていない`,
+    );
+  }
 }
 
-/**
- * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * ephemeral-paths-routing.test.mjs の runDevFlowInSandbox と同型。
- */
-async function runDevFlowInSandbox(source, ctx) {
-  const stripped = source
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = '(async () => {\n' + stripped + '\n})();';
-
-  let caughtError = null;
-  let returned = null;
-  try {
-    const result = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (result && typeof result.then === 'function') {
-      returned = await result.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { error: caughtError, returned };
-}
-
-// (3) routing: implementer 呼び出しが >= 1 件あること
-// (4) routing: 全 implementer call の prompt に '.devflow-tmp' と 'TMPDIR' と 'staged' が含まれる
-test('[staging-convention] routing: implementer prompt 全件に規約トークンが含まれる', async () => {
-  const { ctx, calls } = makeCountingSandbox();
-  const { error } = await runDevFlowInSandbox(src, ctx);
-
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
-  }
+// (3) routing: 標準経路の implementer 呼び出し全件に規約トークンが含まれる
+test('[staging-convention] routing: 標準経路の implementer prompt 全件に規約トークンが含まれる', async () => {
+  const { ctx, calls } = makeDevFlowSandbox();
+  const { error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'staging-convention-standard');
 
   const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
-
   assert.ok(
     implCalls.length >= 1,
-    `implementer が呼ばれていない（0 件）。standard 経路で serial[T1] が実行されるはず`,
+    `implementer が呼ばれていない（0 件）。standard 経路で serial task が実行されるはず`,
   );
+  for (const c of implCalls) assertTokens(c, c.label);
+});
 
-  for (const c of implCalls) {
-    assert.ok(
-      c.prompt.includes('.devflow-tmp'),
-      `implementer prompt (label=${c.label}) に '.devflow-tmp' が含まれない。STAGING_CONVENTION が注入されていない`,
-    );
-    assert.ok(
-      c.prompt.includes('TMPDIR'),
-      `implementer prompt (label=${c.label}) に 'TMPDIR' が含まれない。STAGING_CONVENTION が注入されていない`,
-    );
-    assert.ok(
-      c.prompt.includes('staged'),
-      `implementer prompt (label=${c.label}) に 'staged' が含まれない。STAGING_CONVENTION が注入されていない`,
-    );
-  }
+// (4) routing: Validate red→green-fix 経路（green-fix#1）の prompt にも規約トークンが含まれる
+test('[staging-convention] routing: green-fix#1 prompt に規約トークンが含まれる', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: { 'test#1': { tests: 'failed', green: false, summary: 'assert mismatch' } },
+  });
+  const { error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'staging-convention-greenfix');
+
+  const gf1 = calls.find((c) => c.label === 'green-fix#1');
+  assertTokens(gf1, 'green-fix#1');
+});
+
+// (5) routing: Evaluate implementation-level 差し戻し経路（fix#1）の prompt にも規約トークンが含まれる
+// complex 経路（EVAL_PASSES=EVAL_MAX）に乗せ、eval#1 で critical 差し戻し→fix#1→eval#2 で収束させる
+// （eval-convergence.test.mjs AC#3 と同型のフィクスチャ）。
+test('[staging-convention] routing: fix#1（Evaluate implementation 差し戻し）prompt に規約トークンが含まれる', async () => {
+  const ac4 = [
+    { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+    { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+  ];
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: {
+      'analyze#1': {
+        summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'feat', scope: 'src',
+        estimated_change_file_count: 7, shape: 'complex', issue_number: 1,
+        issue_title: 'stub-issue-title',
+      },
+      'eval#1': {
+        verdict: 'fail', total: 5, threshold: 7,
+        feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],
+        feedback_level: 'implementation', ac_results: ac4, security_clearance: [],
+      },
+      'eval#2': {
+        verdict: 'pass', total: 9, threshold: 7, feedback: [], feedback_level: 'implementation',
+        ac_results: ac4, security_clearance: [],
+        critical_resolutions: [{ id: 'EVAL-1-X', resolved: true, evidence: 'src/x.ts で修正済み' }],
+      },
+    },
+  });
+  const { error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'staging-convention-fix');
+
+  const fix1 = calls.find((c) => c.label === 'fix#1');
+  assertTokens(fix1, 'fix#1');
 });

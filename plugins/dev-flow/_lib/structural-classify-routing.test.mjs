@@ -1,5 +1,6 @@
 // Guard test: structural-classify (struct フィールド) の fail-open / i===1 gating / realizedCount
-// exclusion / schema fail-open tolerance (issue #350, task F2; issue #544 S2 で統合呼び出し経由へ更新)。
+// exclusion / schema fail-open tolerance (issue #350, task F2; issue #544 S2 で統合呼び出し経由へ更新;
+// issue #636 で source regex 走査から共有 vm-sandbox.mjs による VM 挙動検証 + 純関数検証へ移行)。
 //
 // Background:
 //   dev-flow.js の Security floor phase はもともと F1 の決定論 script
@@ -13,8 +14,11 @@
 //   format_only・structural 非配列のいずれでも struct=null（呼び出し元は formatOnlySet を空にして
 //   現行動作 = 全ファイル structural 扱い相当へフォールバックする）。
 //
-//   .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
-//   よって _lib/exec-proxy-routing.test.mjs と同じ戦略 (source-as-string regex) で検証する。
+// routing / try-catch pin（label が dev-runner-haiku-ro へ routing される・try/catch で包まれる等）は
+// _lib/secfloor-unified-routing.test.mjs の [A1]/[A5] で検証済みのため、ここでは重複検証しない。
+// 本ファイルは (1) struct 専用の fail-open 純関数 parseSecfloorFields(unified).struct の挙動、
+// (2) evaluator prompt への diff_classification 注入が i===1 に限定されること、(3) formatOnlySet に
+// よる realizedCount 除外（shape_refloored への影響）を VM 挙動として検証する。
 //
 // Run: npx vitest run _lib/structural-classify-routing.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
@@ -25,85 +29,129 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+import { parseSecfloorFields } from './secfloor-unified.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
-// ---- (1)/(2)/(3) 統合後の struct フィールド抽出は execSecurityFloorPhase 側の
-//      parseSecfloorFields(unified) 呼び出し（try/catch で包まれ need() では包まれない、
-//      label 'danger-grep' が dev-runner-haiku-ro へ routing される）が担う。
-//      その routing / try-catch pin は _lib/secfloor-unified-routing.test.mjs の
-//      [A1]/[A5] で検証済みのため、ここでは重複検証しない。
-//      本ファイルでは struct フィールド専用の fail-open 純関数（parseStructField、
-//      dev-flow.js へ inline 生成済み）の存在と fail-open 条件のみを source pin する。
+// ---- (1) struct フィールドの fail-open 純関数検証（parseSecfloorFields(unified).struct） ----
 
-test('[structural-classify-routing] parseStructField (secfloor-unified.mjs から inline 生成) が dev-flow.js に存在し、struct.ok!==true / available 非boolean / structural・format_only 非配列を fail-open (null) で扱う', () => {
-  const idx = devFlowSrc.indexOf('function parseStructField(unified)');
-  assert.ok(idx !== -1, 'dev-flow.js に parseStructField(unified) の inline 生成関数が見つからない');
-  const endIdx = devFlowSrc.indexOf('\n}\n', idx);
-  assert.ok(endIdx !== -1, 'parseStructField 関数本体の終端が見つからない');
-  const body = devFlowSrc.slice(idx, endIdx);
-
-  assert.match(body, /struct\.ok === true/, 'parseStructField は struct.ok===true を要求すべき');
-  assert.match(body, /typeof struct\.available === 'boolean'/, 'parseStructField は typeof struct.available===\'boolean\' を要求すべき');
-  assert.match(body, /Array\.isArray\(struct\.format_only\)/, 'parseStructField は format_only の配列検証を行うべき');
-  assert.match(body, /return null/, 'parseStructField は検証不合格時に null を返す（fail-open）べき');
+test('[structural-classify-routing] parseSecfloorFields(unified).struct is non-null and preserves format_only for a well-formed struct payload', () => {
+  const unified = { risk: { ok: true, hits: [] }, struct: { ok: true, available: true, format_only: ['a'], structural: [] } };
+  const { struct } = parseSecfloorFields(unified);
+  assert.notEqual(struct, null);
+  assert.deepEqual(struct.format_only, ['a']);
 });
 
-// ---- (4) evaluator prompt injection is gated by i === 1 (same as focus_areas / ui_verification) ----
-
-test('[structural-classify-routing] diff_classification prompt injection is gated by i === 1', () => {
-  assert.match(
-    devFlowSrc,
-    /i === 1 && state\.diffClassification/,
-    'diff_classification injection into the evaluator prompt must be gated by "i === 1 && state.diffClassification" '
-    + '(iteration 2+ must not reuse a stale classification, per focus_areas/ui_verification precedent)',
-  );
+test('[structural-classify-routing] parseSecfloorFields(unified).struct is null (fail-open) for ok!==true / non-boolean available / non-array format_only / structural / null struct', () => {
+  const cases = [
+    { risk: { ok: true, hits: [] }, struct: { ok: false, available: true, format_only: [], structural: [] } },
+    { risk: { ok: true, hits: [] }, struct: { ok: true, available: 'yes', format_only: [], structural: [] } },
+    { risk: { ok: true, hits: [] }, struct: { ok: true, available: true, format_only: 'x', structural: [] } },
+    { risk: { ok: true, hits: [] }, struct: { ok: true, available: true, format_only: [], structural: 'x' } },
+    { risk: { ok: true, hits: [] }, struct: null },
+    { risk: { ok: true, hits: [] } },
+  ];
+  for (const unified of cases) {
+    const { struct } = parseSecfloorFields(unified);
+    assert.equal(struct, null, `fail-open (struct===null) が期待されるケースで struct=${JSON.stringify(struct)}: ${JSON.stringify(unified)}`);
+  }
 });
 
-// ---- (5) realizedCount excludes format_only files ----
-
-test('[structural-classify-routing] realizedCount computation excludes format_only files via formatOnlySet', () => {
-  assert.match(devFlowSrc, /formatOnlySet/, 'expected a formatOnlySet to be derived from the structural-classify result');
-  assert.match(
-    devFlowSrc,
-    /formatOnlyExcluded/,
-    'expected a formatOnlyExcluded count used to exclude format-only files from realizedCount and to log the exclusion',
-  );
-});
-
-// ---- (6) SECFLOOR schema: required:['risk'] (struct/files/diffhash stay optional) ----
+// ---- (2) diff_classification prompt injection is gated by i === 1 (VM 挙動) ----
 //
-// struct はもはや専用スキーマを持たず、統合スキーマ SECFLOOR の一部として応答される。
-// SECFLOOR は required:['risk']（risk は fail-closed フィールドなので schema 契約で形状不一致を
-// 契約違反にする。issue #617）。struct / files / diffhash は required に含めず、SECFLOOR に対して
-// fail-open / fail-safe を維持する（可否は SECFLOOR ではなく parseStructField 等の JS レベル検証
-// が担う）。
+// shape を complex にし（analyze estimated_change_file_count=12, acceptance_criteria 7 件）、
+// danger-grep が非空 struct.format_only を返す run で、eval#1 で verdict='fail'（critical feedback
+// 1 件）→ eval#2 で AC 全件 satisfied の 'pass' を返させる。eval#1 prompt にのみ
+// 'diff_classification' token が現れることを確認する。
 
-test("[structural-classify-routing] SECFLOOR schema requires only 'risk' (struct/files/diffhash はスキーマレベルでは任意)", () => {
-  const idx = devFlowSrc.indexOf('const SECFLOOR');
-  assert.ok(idx !== -1, 'Could not find SECFLOOR schema definition in dev-flow.js');
-  const window = devFlowSrc.slice(idx, idx + 600);
-  assert.match(
-    window,
-    /required:\s*\[\s*'risk'\s*\]/,
-    `SECFLOOR schema 'required' should be ['risk'], got window: ${window}`,
-  );
-  assert.doesNotMatch(
-    window,
-    /required:\s*\[[^\]]*'struct'/,
-    `SECFLOOR schema 'required' should not include 'struct', got window: ${window}`,
-  );
-  assert.match(window, /struct:\s*\{\s*type:\s*\[\s*'object',\s*'null'\s*\]\s*\}/, 'SECFLOOR schema should type struct as object|null');
+test('[structural-classify-routing] diff_classification prompt injection is gated by i === 1 (present in eval#1, absent in eval#2)', async () => {
+  const overrides = {
+    'analyze#1': () => ({
+      summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], issue_type: 'feat', scope: 'src',
+      estimated_change_file_count: 12, shape: 'complex', issue_number: 1, issue_title: 'stub-issue-title',
+    }),
+    'danger-grep': () => ({
+      risk: { ok: true, hits: [] },
+      files: ['src/x.ts', 'src/y.ts'],
+      struct: { ok: true, available: true, format_only: ['src/x.ts'], structural: ['src/y.ts'] },
+      diffhash: { hash: 'AAA', empty: false },
+    }),
+    'eval#1': () => ({
+      verdict: 'fail', total: 50, threshold: 80,
+      feedback: [{ severity: 'critical', dimension: 'x', text: 'bad', topic: 't1' }],
+      feedback_level: 'implementation',
+      ac_results: [{ ac_index: 0, satisfied: false, verified_by: 'inspection', evidence: 'no' }],
+      security_clearance: [], concern_resolutions: [],
+    }),
+    'eval#2': () => ({
+      verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
+      ac_results: Array.from({ length: 7 }, (_, idx) => ({ ac_index: idx, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
+      security_clearance: [], concern_resolutions: [],
+      critical_resolutions: [{ id: 'EVAL-1-t1', resolved: true, evidence: 'fixed' }],
+    }),
+  };
+  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'diff-classification-gating');
+  assert.equal(error, null);
+
+  const eval1 = calls.find((c) => c.label === 'eval#1');
+  const eval2 = calls.find((c) => c.label === 'eval#2');
+  assert.ok(eval1, "label 'eval#1' の呼び出しが見つからない");
+  assert.ok(eval2, "label 'eval#2' の呼び出しが見つからない（evaluator が 2 iteration 走っていない）");
+  assert.ok(eval1.prompt.includes('diff_classification'), 'eval#1（i===1）の prompt に diff_classification が注入されるべき');
+  assert.ok(!eval2.prompt.includes('diff_classification'), 'eval#2（i===2）の prompt は stale な classification を再利用してはならない');
 });
 
-// ---- (7) state.diffClassification is persisted for the i===1 evaluator prompt to consume ----
+// ---- (3) realizedCount computation excludes format_only files via formatOnlySet (VM 挙動) ----
+//
+// shape micro（estimated 1 file）で danger-grep files が 4 件、struct.format_only が 3 件のとき
+// realizedCount=1（micro のまま）→ shape_refloored:false。format_only を空にすると realizedCount=4
+// （standard へ raise）→ shape_refloored:true（refloorShape の閾値: count<=2 micro / count<=5 standard。
+// _lib/triviality.mjs 準拠）。plan の file_changes に全 4 ファイルを宣言し、宣言外除外の影響を排除する。
 
-test('[structural-classify-routing] state.diffClassification is assigned in execSecurityFloorPhase', () => {
-  assert.match(
-    devFlowSrc,
-    /state\.diffClassification\s*=/,
-    'expected state.diffClassification to be assigned so the Evaluate phase can read it',
-  );
+function formatOnlyOverrides(formatOnly) {
+  return {
+    'analyze#1': () => ({
+      summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src',
+      estimated_change_file_count: 1, shape: 'micro', issue_number: 1, issue_title: 'stub-issue-title',
+    }),
+    'plan#trivial': () => ({
+      summary: 'p',
+      serial: [{ id: 't1', desc: 'd', file_changes: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'], test_plan: 'tp', depends_on: [] }],
+      parallel: [],
+    }),
+    'danger-grep': () => ({
+      risk: { ok: true, hits: [] },
+      files: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'],
+      struct: { ok: true, available: true, format_only: formatOnly, structural: [] },
+      diffhash: { hash: 'AAA', empty: false },
+    }),
+  };
+}
+
+test('[structural-classify-routing] formatOnlySet excludes format-only files from realizedCount: 3-of-4 excluded stays micro (shape_refloored:false)', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: formatOnlyOverrides(['src/b.ts', 'src/c.ts', 'src/d.ts']) });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'formatOnlySet-3-of-4');
+  assert.equal(error, null);
+  assert.equal(result.effective_shape, 'micro');
+  assert.equal(result.shape_refloored, false);
+  const js = calls.find((c) => c.label === 'journal-save');
+  assert.ok(js.prompt.includes('"shape_refloored":false'));
+});
+
+test('[structural-classify-routing] formatOnlySet excludes format-only files from realizedCount: empty format_only counts all 4 files → raise to standard (shape_refloored:true)', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: formatOnlyOverrides([]) });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'formatOnlySet-empty');
+  assert.equal(error, null);
+  assert.equal(result.effective_shape, 'standard');
+  assert.equal(result.shape_refloored, true);
+  const js = calls.find((c) => c.label === 'journal-save');
+  assert.ok(js.prompt.includes('"shape_refloored":true'));
 });

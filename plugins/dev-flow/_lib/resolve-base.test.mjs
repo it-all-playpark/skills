@@ -1,3 +1,6 @@
+// issue #636 P2 pin 整理 (inventory 用):
+// (削除) L145 '先勝ち' — 唯一の assert だった test ごと削除
+// (縮小) L163 'epoch キーを省略する' + 'fail-open' — date +%s / epoch キー名 pin へ縮小
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
@@ -140,11 +143,6 @@ test('setupBaseProbePrompt: repo 外候補 <repo>-wt/df-517 を含む（issue #5
   assert.match(prompt, /-wt\/df-517/);
 });
 
-test('setupBaseProbePrompt: WTD_IN が常に先勝ちする旨の文言を含む（issue #528 不変条件）', () => {
-  const prompt = setupBaseProbePrompt(null, 517);
-  assert.match(prompt, /先勝ち/);
-});
-
 test('setupBaseProbePrompt: prunable 行付きブロックは worktree_exists=false として扱う旨の文言を含む（stale worktree 誤判定 pin, issue #533 review）', () => {
   const prompt = setupBaseProbePrompt(null, 517);
   assert.match(prompt, /`prunable`/);
@@ -160,8 +158,8 @@ test('setupBaseProbePrompt: date +%s による epoch 取得コマンドを含む
 
 test('setupBaseProbePrompt: epoch 省略可（fail-open）である旨の文言を含む', () => {
   const prompt = setupBaseProbePrompt(null, 517);
-  assert.match(prompt, /epoch キーを省略する/);
-  assert.match(prompt, /fail-open/);
+  assert.match(prompt, /date \+%s/);
+  assert.match(prompt, /epoch/);
 });
 
 // ── setupBaseProbePrompt: Output format / Tools / Boundary / Token cap ───────────────

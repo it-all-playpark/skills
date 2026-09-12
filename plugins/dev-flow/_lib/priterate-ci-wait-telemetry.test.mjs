@@ -194,12 +194,17 @@ test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_se
     `journal-log prompt に "ci_poll_attempts":5 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
   );
 
-  // 終端サマリー投稿（post-summary）の body にも CI 待機情報が反映される
+  // 終端サマリー投稿（post-summary）自体が行われたことは維持しつつ、本文の見出し文言ではなく
+  // routing（terminal_path）で CI 待機経路の反映を検証する（issue #636: 自然言語 pin の除去）。
+  // このシナリオは 2 回目の CI check で passed になり、review 経路のまま終端する
+  // （CI-failed 分岐は各 iteration 冒頭で 'review' に戻すため、直近 iteration が CI-failed で
+  // 終わっていない限り 'review' のまま — issue #601）。
   const postSummary = getAgentCalls().find((c) => c.label === 'post-summary');
   assert.ok(postSummary != null, 'label===post-summary の agent 呼び出しが存在するべき');
+  assert.equal(result?.terminal_path, 'review', `result.terminal_path は 'review' であるべきだが '${result?.terminal_path}' だった`);
   assert.ok(
-    postSummary.prompt.includes('CI 待機'),
-    `post-summary prompt に **CI 待機** 行が含まれるべき。prompt の先頭1000文字: ${postSummary.prompt.slice(0, 1000)}`,
+    journalCall.prompt.includes('"terminal_path":"review"'),
+    `journal-save prompt の telemetry JSON に "terminal_path":"review" が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
   );
 });
 

@@ -5,14 +5,16 @@
 //
 // このテストは:
 //   (a) worktree-deps が {status:'failed',...} を返す → workflow が throw せず完走し、
-//       implementer prompt 全件に『依存インストール警告』が含まれる
-//   (b) worktree-deps が {status:'no_dependencies'} を返す → implementer prompt に
-//       『依存インストール警告』が含まれない（no-op で既存挙動不変）
+//       implementer prompt 全件に canonical summarizeDepsResult().implNote が含まれる
+//   (b) worktree-deps が {status:'no_dependencies'} を返す → canonical implNote は null（no-op）。
+//       failed ケース由来の implNote（データ echo）が漏れ込んでいないことを負の証拠にする
 //   (c) worktree-deps が null を返す（schema 不一致 drop 相当）→ workflow が throw せず完走し
-//       （fail-open）、implementer prompt に『依存インストール警告』が含まれる
-//   (d) source pin: dev-flow.js に inline マーカーと label:'worktree-deps' の agent 呼び出しが存在する
+//       （fail-open）、implementer prompt に canonical summarizeDepsResult(null).implNote が含まれる
+//   (d) VM routing: 'worktree-deps' call が namespaced agentType 'dev-flow:dev-runner-haiku' で
+//       記録される（旧 source pin を挙動検証へ置換）
 //   (e) routing: 'worktree-deps' call が worktree call の後・analyze call の前に記録される
-// を assert する。
+// を assert する（implementer prompt への文言 pin は canonical export 由来の期待値に統一し、
+// 言い回し変更のみでは落ちないようにする。issue #636 AC-1）。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -20,41 +22,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { summarizeDepsResult } from './setup-deps.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
 
 const src = readFileSync(devFlowPath, 'utf8');
-
-// ============================================================
-// Part 1: source pin
-// ============================================================
-
-test('[setup-deps-routing] dev-flow.js に _lib/setup-deps.mjs の inline マーカーが存在する', () => {
-  assert.ok(
-    src.includes('// ==== BEGIN inline: _lib/setup-deps.mjs'),
-    'dev-flow.js に "// ==== BEGIN inline: _lib/setup-deps.mjs" マーカーが存在しない',
-  );
-  assert.ok(
-    src.includes('// ==== END inline: _lib/setup-deps.mjs ===='),
-    'dev-flow.js に "// ==== END inline: _lib/setup-deps.mjs ====" マーカーが存在しない',
-  );
-});
-
-test('[setup-deps-routing] dev-flow.js に label:\'worktree-deps\' の agent 呼び出しが存在する（agentType dev-runner-haiku）', () => {
-  assert.ok(
-    src.includes("label: 'worktree-deps'"),
-    'dev-flow.js に "label: \'worktree-deps\'" が存在しない',
-  );
-  const idx = src.indexOf("label: 'worktree-deps'");
-  // 呼び出し全体（1000 文字程度手前まで遡って agentType を探す）を確認
-  const windowStart = Math.max(0, idx - 1000);
-  const window = src.slice(windowStart, idx + 200);
-  assert.ok(
-    window.includes("agentType: 'dev-runner-haiku'"),
-    'label:\'worktree-deps\' の周辺に agentType: \'dev-runner-haiku\' が見つからない',
-  );
-});
 
 // ============================================================
 // Part 2: behavioral routing（VM sandbox）
@@ -203,13 +176,17 @@ function assertNoCrash(error) {
   }
 }
 
-// (a) worktree-deps が failed を返す → workflow 完走 + implementer prompt に警告注入
-test('[setup-deps-routing] (a) worktree-deps failed → workflow 完走 & implementer prompt 全件に依存インストール警告', async () => {
+// (a) worktree-deps が failed を返す → workflow 完走 + implementer prompt に canonical
+// summarizeDepsResult().implNote（言い回し変更で落ちない — canonical export 由来の期待値）が注入される
+test('[setup-deps-routing] (a) worktree-deps failed → workflow 完走 & implementer prompt 全件に summarizeDepsResult().implNote が含まれる', async () => {
   const depsResponse = {
     status: 'failed',
     path: '/tmp/wt',
     results: [{ ecosystem: 'node', pm: 'npm', status: 'failed', command: 'npm ci' }],
   };
+  const expectedNote = summarizeDepsResult(depsResponse).implNote;
+  assert.ok(typeof expectedNote === 'string' && expectedNote.length > 0, 'summarizeDepsResult(failed).implNote は非空文字列のはず');
+
   const { ctx, calls } = makeCountingSandbox(depsResponse);
   const { error } = await runDevFlowInSandbox(src, ctx);
   assertNoCrash(error);
@@ -218,15 +195,25 @@ test('[setup-deps-routing] (a) worktree-deps failed → workflow 完走 & implem
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(
-      c.prompt.includes('依存インストール警告'),
-      `implementer prompt (label=${c.label}) に '依存インストール警告' が含まれない`,
+      c.prompt.includes(expectedNote),
+      `implementer prompt (label=${c.label}) に summarizeDepsResult(failed).implNote が含まれない`,
     );
   }
 });
 
-// (b) worktree-deps が no_dependencies を返す → implementer prompt に警告なし（no-op）
-test('[setup-deps-routing] (b) worktree-deps no_dependencies → implementer prompt に依存インストール警告なし', async () => {
-  const { ctx, calls } = makeCountingSandbox({ status: 'no_dependencies' });
+// (b) worktree-deps が no_dependencies を返す → canonical implNote は null（no-op）。
+// 負の証拠として (a) の failed ケース由来 implNote（データ echo）が漏れ込んでいないことを確認する。
+test('[setup-deps-routing] (b) worktree-deps no_dependencies → canonical implNote:null で implementer prompt に依存警告が注入されない', async () => {
+  const noDepResponse = { status: 'no_dependencies' };
+  assert.equal(summarizeDepsResult(noDepResponse).implNote, null, 'summarizeDepsResult(no_dependencies).implNote は null のはず');
+
+  const failedNote = summarizeDepsResult({
+    status: 'failed',
+    path: '/tmp/wt',
+    results: [{ ecosystem: 'node', pm: 'npm', status: 'failed', command: 'npm ci' }],
+  }).implNote;
+
+  const { ctx, calls } = makeCountingSandbox(noDepResponse);
   const { error } = await runDevFlowInSandbox(src, ctx);
   assertNoCrash(error);
 
@@ -234,14 +221,18 @@ test('[setup-deps-routing] (b) worktree-deps no_dependencies → implementer pro
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(
-      !c.prompt.includes('依存インストール警告'),
-      `implementer prompt (label=${c.label}) に '依存インストール警告' が含まれてはいけない（no_dependencies）`,
+      !c.prompt.includes(failedNote),
+      `implementer prompt (label=${c.label}) に failed ケース由来の依存警告が含まれてはいけない（no_dependencies）`,
     );
   }
 });
 
-// (c) worktree-deps が null（schema 不一致 drop 相当）→ fail-open で完走 + 警告注入
-test('[setup-deps-routing] (c) worktree-deps null（drop 相当）→ fail-open で完走 & implementer prompt に依存インストール警告', async () => {
+// (c) worktree-deps が null（schema 不一致 drop 相当）→ fail-open で完走 + canonical
+// summarizeDepsResult(null).implNote（'unverified' 経路）が注入される
+test('[setup-deps-routing] (c) worktree-deps null（drop 相当）→ fail-open で完走 & implementer prompt に summarizeDepsResult(null).implNote が含まれる', async () => {
+  const expectedNote = summarizeDepsResult(null).implNote;
+  assert.ok(typeof expectedNote === 'string' && expectedNote.length > 0, 'summarizeDepsResult(null).implNote は非空文字列のはず');
+
   const { ctx, calls } = makeCountingSandbox(null);
   const { error } = await runDevFlowInSandbox(src, ctx);
   assertNoCrash(error);
@@ -250,10 +241,23 @@ test('[setup-deps-routing] (c) worktree-deps null（drop 相当）→ fail-open 
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(
-      c.prompt.includes('依存インストール警告'),
-      `implementer prompt (label=${c.label}) に '依存インストール警告' が含まれない（fail-open 経路）`,
+      c.prompt.includes(expectedNote),
+      `implementer prompt (label=${c.label}) に summarizeDepsResult(null).implNote が含まれない（fail-open 経路）`,
     );
   }
+});
+
+// (d) VM routing: worktree-deps call が namespaced agentType 'dev-flow:dev-runner-haiku' で
+// 呼ばれる（旧 source pin（inline マーカー + label 静的走査）を挙動検証へ置換。issue #636 AC-1）
+test("[setup-deps-routing] (d) worktree-deps call が label:'worktree-deps' + agentType:'dev-flow:dev-runner-haiku' で記録される", async () => {
+  const { ctx, calls } = makeCountingSandbox({ status: 'no_dependencies' });
+  const { error } = await runDevFlowInSandbox(src, ctx);
+  assertNoCrash(error);
+
+  assert.ok(
+    calls.some((c) => c.label === 'worktree-deps' && c.agentType === 'dev-flow:dev-runner-haiku'),
+    `calls に label:'worktree-deps' + agentType:'dev-flow:dev-runner-haiku' の呼び出しが無い: ${JSON.stringify(calls.map((c) => ({ label: c.label, agentType: c.agentType })))}`,
+  );
 });
 
 // (e) routing: worktree-deps call が worktree call の後・analyze call の前に記録される

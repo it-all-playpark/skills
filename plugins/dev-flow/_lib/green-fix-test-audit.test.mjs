@@ -8,7 +8,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
-import { TEST_WEAKENING } from './test-helpers/dev-flow-markers.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -147,45 +146,15 @@ test('[green-fix-audit] sanity: green-fix call が 1 回以上発生すること
 });
 
 // ============================================================
-// テスト 1（AC#3）: green-fix#1 の prompt に禁止文が含まれること
-// ============================================================
-
-test('[green-fix-audit] AC#3: green-fix#1 の prompt に禁止文「テストの期待値・assert を弱めて green にすることは禁止」が含まれること', async () => {
-  await ensureSharedRun();
-  const greenFix1 = sharedCalls.find((c) => c.label === 'green-fix#1');
-  assert.ok(
-    greenFix1 != null,
-    `label === 'green-fix#1' の call が見つからない (全 labels: ${sharedCalls.map((c) => c.label).join(', ')})`,
-  );
-  assert.ok(
-    greenFix1.prompt.includes('テストの期待値・assert を弱めて green にすることは禁止'),
-    `green-fix#1 の prompt に禁止文が含まれていない。\nprompt (先頭300文字):\n${greenFix1.prompt.slice(0, 300)}`,
-  );
-});
-
-// ============================================================
-// テスト 2（AC#1）: evaluator (eval#1) の prompt に「テスト弱体化」が含まれること
-// ============================================================
-
-test('[green-fix-audit] AC#1: eval#1 の prompt に「テスト弱体化」が含まれること（green-fix 発生時のテスト diff 重点監査 focus）', async () => {
-  await ensureSharedRun();
-  const eval1 = sharedCalls.find((c) => c.label === 'eval#1');
-  assert.ok(
-    eval1 != null,
-    `label === 'eval#1' の call が見つからない (全 labels: ${sharedCalls.map((c) => c.label).join(', ')})`,
-  );
-  assert.ok(
-    eval1.prompt.includes(TEST_WEAKENING),
-    `eval#1 の prompt に「テスト弱体化」が含まれていない。\nprompt (先頭300文字):\n${eval1.prompt.slice(0, 300)}`,
-  );
-});
-
-// ============================================================
-// テスト 6（AC#2 補完）: eval#1 の prompt に green-fix が変更したファイルと申告根拠が含まれること
+// テスト（AC#2 補完）: eval#1 の prompt に green-fix が変更したファイルと summary が含まれること
+// （データ echo: state→prompt の配線検証）。禁止文・「テスト弱体化」focus 語・「申告された根拠」の
+// 日本語文言の部分一致 pin は言い回し変更で落ちるため撤去した（issue #636 AC-1）。
+// 「テスト弱体化」focus が green-fix 0 回経路では注入されないことの負側 pin は
+// green-fix-no-audit.test.mjs が担う。
 // issue #179 変更内容 2: 「green-fix の agent() 返り値（files / summary）を orchestrator が JS 変数で保持して渡す」
 // ============================================================
 
-test('[green-fix-audit] AC#2: eval#1 の prompt に green-fix が変更したファイルと申告された根拠が含まれること', async () => {
+test('[green-fix-audit] eval#1 の prompt に green-fix が変更したファイル・summary が含まれること（state→prompt データ echo）', async () => {
   await ensureSharedRun();
   const eval1 = sharedCalls.find((c) => c.label === 'eval#1');
   assert.ok(
@@ -200,25 +169,8 @@ test('[green-fix-audit] AC#2: eval#1 の prompt に green-fix が変更したフ
       + `prompt (先頭600文字):\n${eval1.prompt.slice(0, 600)}`,
   );
   assert.ok(
-    eval1.prompt.includes('申告された根拠'),
-    `eval#1 の prompt に「申告された根拠」が含まれていない。\n`
-      + `prompt (先頭600文字):\n${eval1.prompt.slice(0, 600)}`,
-  );
-  assert.ok(
     eval1.prompt.includes('typo修正'),
     `eval#1 の prompt に green-fix の summary テキスト 'typo修正' が含まれていない。\n`
       + `prompt (先頭600文字):\n${eval1.prompt.slice(0, 600)}`,
-  );
-});
-
-// ============================================================
-// テスト 5: 構造テスト（正の対）— dev-flow.js ソースに禁止文が含まれること
-// ============================================================
-
-test('[green-fix-audit][struct] dev-flow.js ソースに文字列「テストの期待値・assert を弱めて green にすることは禁止」が含まれること', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes('テストの期待値・assert を弱めて green にすることは禁止'),
-    'dev-flow.js に禁止文「テストの期待値・assert を弱めて green にすることは禁止」が存在すること',
   );
 });

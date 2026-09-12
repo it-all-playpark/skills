@@ -1,139 +1,88 @@
-// dev-flow.js の meta.phases と実 phase() 呼び出しの整合性を source-string assertion で検証する。
-// empty-diff gate の phase ラベルが正しく 'Validate' であること、
-// declared-path-check の phase: 'Validate' ラベルが存在しない（F3 porcelain 統合済み）ことを保証する。
-//
-// パターン: workflow-load-smoke.test.mjs と同スタイル（readFileSync + regex + node:test）。
-
+// dev-flow.js の phase() 実呼び出し順と diff-gate 系の phase 配線を VM 挙動テストで検証する
+// （issue #636: meta.phases の title 一覧はソース regex 抽出でしか観測できず、実 phase() 呼び出し
+// 順のみが実挙動を担保するため source-regex による meta.phases title pin は削除した）。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeDevFlowSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
-// ---- (a) meta.phases の title 一覧と phase() 呼び出し出現順の一致検証 ----
+const EXPECTED_PHASES = [
+  'Setup',
+  'Analyze',
+  'Plan',
+  'Implement',
+  'Validate',
+  'Security floor',
+  'Evaluate',
+  'PR',
+  'Final reconcile',
+  'Merge tier',
+];
 
-test('meta.phases の title 一覧が実 phase() 呼び出し出現順と完全一致する（Security floor / Merge tier を含む）', () => {
-  // meta.phases 配列から { title: 'X' } を抽出（コメント行は除外）
-  const metaPhasesSection = src.match(/phases:\s*\[([\s\S]*?)\]/);
-  assert.ok(metaPhasesSection, 'meta.phases 配列が見つからない');
-
-  const phasesRaw = metaPhasesSection[1];
-  // コメント行を除去してから title を抽出
-  const phasesWithoutComments = phasesRaw.replace(/\/\/[^\n]*/g, '');
-  const titleMatches = [...phasesWithoutComments.matchAll(/\{\s*title:\s*'([^']+)'\s*\}/g)];
-  const metaTitles = titleMatches.map(m => m[1]);
-
-  // 期待する完全な phase 一覧（出現順。issue #320 で Final reconcile を PR と Merge tier の間に追加）
-  const expectedTitles = [
-    'Setup',
-    'Analyze',
-    'Plan',
-    'Implement',
-    'Validate',
-    'Security floor',
-    'Evaluate',
-    'PR',
-    'Final reconcile',
-    'Merge tier',
-  ];
-
-  assert.deepStrictEqual(
-    metaTitles,
-    expectedTitles,
-    `meta.phases の title 一覧が期待値と異なる。実際: ${JSON.stringify(metaTitles)}`,
-  );
+test('phase() 呼び出し順が既定 run（fixes_applied:0）で期待する 10 phase と完全一致する', async () => {
+  const { ctx, phases } = makeDevFlowSandbox();
+  const error = await runDevFlowInSandbox(src, ctx);
+  assert.equal(error, null, `既定 run はエラーなく完走するべき: ${error?.message}`);
+  assert.deepEqual(phases, EXPECTED_PHASES);
 });
 
-test('phase() 呼び出し出現順が期待する phase 名の列と一致する', () => {
-  // ソース中の phase('X') 呼び出しを出現順に抽出
-  const phaseCallMatches = [...src.matchAll(/^phase\('([^']+)'\)/gm)];
-  const phaseCallOrder = phaseCallMatches.map(m => m[1]);
+test("label 'diff-gate' の全 call が opts.phase === 'Validate' を持つ", async () => {
+  const { ctx, calls } = makeDevFlowSandbox();
+  await runDevFlowInSandbox(src, ctx);
 
-  const expectedOrder = [
-    'Setup',
-    'Analyze',
-    'Plan',
-    'Implement',
-    'Validate',
-    'Security floor',
-    'Evaluate',
-    'PR',
-    'Final reconcile',
-    'Merge tier',
-  ];
-
-  assert.deepStrictEqual(
-    phaseCallOrder,
-    expectedOrder,
-    `phase() 呼び出し順が期待値と異なる。実際: ${JSON.stringify(phaseCallOrder)}`,
-  );
-});
-
-// ---- (b) label: 'diff-gate' と 'diff-gate-retry' が phase: 'Validate' を持つこと ----
-
-test("label: 'diff-gate' を含む行が phase: 'Validate' を持つ", () => {
-  const lines = src.split('\n');
-  const diffGateLines = lines.filter(l => l.includes("label: 'diff-gate'"));
-  assert.ok(diffGateLines.length > 0, "label: 'diff-gate' を含む行が見つからない");
-
-  for (const line of diffGateLines) {
-    assert.ok(
-      line.includes("phase: 'Validate'"),
-      `label: 'diff-gate' を含む行が phase: 'Validate' を持たない: ${line.trim()}`,
-    );
+  const diffGateCalls = calls.filter((c) => c.label === 'diff-gate');
+  assert.ok(diffGateCalls.length > 0, "label 'diff-gate' の call が見つからない");
+  for (const call of diffGateCalls) {
+    assert.equal(call.opts.phase, 'Validate');
   }
 });
 
-test("label: 'diff-gate-retry' を含む行が phase: 'Validate' を持つ", () => {
-  const lines = src.split('\n');
-  const diffGateRetryLines = lines.filter(l => l.includes("label: 'diff-gate-retry'"));
-  assert.ok(diffGateRetryLines.length > 0, "label: 'diff-gate-retry' を含む行が見つからない");
+test("label 'diff-gate-retry' の call が opts.phase === 'Validate' を持つ（empty-diff で到達させる）", async () => {
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: { 'diff-gate': { hash: 'H', empty: true } },
+  });
+  await runDevFlowInSandbox(src, ctx);
 
-  for (const line of diffGateRetryLines) {
-    assert.ok(
-      line.includes("phase: 'Validate'"),
-      `label: 'diff-gate-retry' を含む行が phase: 'Validate' を持たない: ${line.trim()}`,
-    );
+  const retryCalls = calls.filter((c) => c.label === 'diff-gate-retry');
+  assert.ok(retryCalls.length > 0, "label 'diff-gate-retry' の call が見つからない");
+  for (const call of retryCalls) {
+    assert.equal(call.opts.phase, 'Validate');
   }
 });
 
-// ---- (c) error_category: 'empty_diff' の writeFailureTelemetry 呼び出しが phase: 'Validate' を持つ ----
+test('empty-diff gate（diff-gate / diff-gate-retry とも empty:true）で throw し、journal-save prompt に error_category:empty_diff / phase:Validate が乗る', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: {
+      'diff-gate': { hash: 'H', empty: true },
+      'diff-gate-retry': { hash: 'H', empty: true },
+      'issue-labels': null,
+    },
+  });
+  const error = await runDevFlowInSandbox(src, ctx);
 
-test("error_category: 'empty_diff' の writeFailureTelemetry 呼び出しが phase: 'Validate' を持つ", () => {
-  const lines = src.split('\n');
-  const emptyDiffTelemetryLines = lines.filter(
-    l => l.includes("error_category: 'empty_diff'") && l.includes('writeFailureTelemetry'),
-  );
-  assert.ok(
-    emptyDiffTelemetryLines.length > 0,
-    "error_category: 'empty_diff' を含む writeFailureTelemetry 呼び出しが見つからない",
-  );
+  assert.ok(error, 'empty-diff gate で throw するべき');
+  assert.match(error.message, /empty-diff gate/);
 
-  for (const line of emptyDiffTelemetryLines) {
-    assert.ok(
-      line.includes("phase: 'Validate'"),
-      `error_category: 'empty_diff' の writeFailureTelemetry が phase: 'Validate' を持たない: ${line.trim()}`,
-    );
+  const journalSaveCalls = calls.filter((c) => c.label?.startsWith('journal-save'));
+  assert.ok(journalSaveCalls.length > 0, "label 'journal-save*' の call が見つからない");
+  const matched = journalSaveCalls.some((c) => c.prompt.includes('"error_category":"empty_diff"'));
+  assert.ok(matched, 'journal-save prompt に "error_category":"empty_diff" を含む call が見つからない');
+  // writeFailureTelemetry は payload に "phase" キーを含めない（opts.phase のみで観測される）ため、
+  // opts.phase === 'Validate' を journal-save call 自体で確認する（payload 内 pin は行わない）。
+  for (const call of journalSaveCalls) {
+    assert.equal(call.opts.phase, 'Validate');
   }
 });
 
-// ---- (d) label: 'declared-path-check' がソースに存在しない（F3 porcelain 統合済み）----
-
-test("label: 'declared-path-check' がソースに存在しない（F3 porcelain 統合済みで agent 呼び出し削除済み）", () => {
-  // コメント行を除外した上で agent opts としての label: 'declared-path-check' 出現を確認
-  const lines = src.split('\n');
-  const labelDeclaredPathCheckLines = lines.filter(
-    l => !l.trimStart().startsWith('//') && l.includes("label: 'declared-path-check'"),
-  );
-
-  assert.deepStrictEqual(
-    labelDeclaredPathCheckLines,
-    [],
-    `label: 'declared-path-check' の agent 呼び出しがソースに存在する（F3 porcelain 統合で削除済みのはず）:\n${labelDeclaredPathCheckLines.join('\n')}`,
-  );
+test("全 run で calls に label 'declared-path-check' が存在しない（F3 porcelain 統合済み）", async () => {
+  const { ctx, calls } = makeDevFlowSandbox();
+  await runDevFlowInSandbox(src, ctx);
+  assert.ok(!calls.some((c) => c.label === 'declared-path-check'));
 });

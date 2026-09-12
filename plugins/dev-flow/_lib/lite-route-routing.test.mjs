@@ -31,7 +31,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { ciCheckPrompt } from './ci-check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -81,7 +80,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
   const agentStub = async (prompt, agentOpts) => {
     const label = agentOpts?.label ?? '';
     const agentType = agentOpts?.agentType ?? '';
-    calls.push({ label, agentType });
+    calls.push({ label, agentType, prompt: prompt ?? '' });
 
     // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #550 案1）
     if (label === 'setup-base') {
@@ -353,52 +352,20 @@ test('[lite-route][D] danger-grep hit（micro でも runEval 強制）: lite を
 // ============================================================
 
 // prompt 本文は canonical `_lib/ci-check.mjs` にあり両 workflow へ inline 生成される（issue #543）。
-// source scan ではなく **生成される文字列そのもの** を検査し、呼び出し側が canonical を使っている
-// ことを別途 pin する（独自 prompt を書き始める退行の検出）。
-test('[lite-route][E] ci-check-lite prompt が --checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', () => {
-  const prompt = ciCheckPrompt({ pr: 123, repo: 'owner/name' });
-  assert.ok(prompt.includes('--checks-data'), 'ci-check-lite prompt に --checks-data が含まれるべき');
-  assert.ok(!prompt.includes('--checks-json'), 'ci-check-lite prompt に旧 --checks-json が残っているべきでない');
-  assert.ok(!prompt.includes('$TMPDIR/ci-checks'), 'ci-check-lite prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
-  assert.ok(!/[>]\s*\$TMPDIR/.test(prompt), 'ci-check-lite prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
-
+// source scan ではなく lite 経路の VM run で実際に組み立てられた ci-check-lite prompt そのものを
+// 検査し、呼び出し側が canonical を使っていることを pin する（独自 prompt を書き始める退行の検出）。
+test('[lite-route][E] ci-check-lite prompt が --checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
-  const ciCheckLiteBlockMatch = src.match(/const ciLite = await failOpenAgent\(([\s\S]*?)label: 'ci-check-lite'[\s\S]*?\)\n/);
-  assert.ok(ciCheckLiteBlockMatch, 'ci-check-lite の failOpenAgent 呼び出しブロックが見つかるべき');
-  assert.ok(
-    ciCheckLiteBlockMatch[1].includes('ciCheckPrompt('),
-    'ci-check-lite の呼び出し側は canonical の ciCheckPrompt() を使うべき（独自 prompt を書かない）',
-  );
-});
+  const { ctx, calls } = makeLiteRouteSandbox(makeCleanMicroReq());
+  const err = await runDevFlowInSandbox(src, ctx);
+  failOnStructuralCrash(err);
 
-test('[lite-route][E] ci-check-lite は trackedAgent を直接使わず try/catch で throw を吸収する failOpenAgent 経由で呼ばれる', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    /const ciLite = await failOpenAgent\(/.test(src),
-    'ci-check-lite は failOpenAgent 経由で呼ばれるべき（trackedAgent 直呼びは throw で run 全体を落とす）',
-  );
-  const failOpenMatch = src.match(/async function failOpenAgent\([\s\S]*?\n\}/);
-  assert.ok(failOpenMatch, 'dev-flow.js に failOpenAgent 関数定義が存在するべき');
-  assert.ok(/try\s*\{/.test(failOpenMatch[0]) && /catch\s*\(/.test(failOpenMatch[0]), 'failOpenAgent は try/catch で trackedAgent の throw を包むべき');
-});
-
-test('[lite-route][E] failOpenAgent は trackedAgent が throw しても null を返す(コンテキストへ抽出して直接検証)', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  const failOpenMatch = src.match(/async function failOpenAgent\([\s\S]*?\n\}/);
-  assert.ok(failOpenMatch, 'failOpenAgent 関数定義が source に存在するべき');
-
-  const calls = [];
-  const sandbox = {
-    log: (msg) => calls.push(msg),
-    trackedAgent: async () => { throw new Error('boom'); },
-    console,
-  };
-  const ctx = vm.createContext(sandbox);
-  const wrapped = `(${failOpenMatch[0]})`;
-  const fn = vm.runInContext(wrapped, ctx);
-  const out = await fn('prompt', { label: 'test-proxy' });
-  assert.equal(out, null, 'failOpenAgent は throw を吸収して null を返すべき');
-  assert.ok(calls.some((m) => String(m).includes('test-proxy')), 'failOpenAgent は警告 log を出すべき');
+  const ciLiteCall = calls.find((c) => c.label === 'ci-check-lite');
+  assert.ok(ciLiteCall, "label 'ci-check-lite' の call が見つからない");
+  assert.ok(ciLiteCall.prompt.includes('--checks-data'), 'ci-check-lite prompt に --checks-data が含まれるべき');
+  assert.ok(!ciLiteCall.prompt.includes('--checks-json'), 'ci-check-lite prompt に旧 --checks-json が残っているべきでない');
+  assert.ok(!ciLiteCall.prompt.includes('$TMPDIR/ci-checks'), 'ci-check-lite prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
+  assert.ok(!/[>]\s*\$TMPDIR/.test(ciLiteCall.prompt), 'ci-check-lite prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
 });
 
 test('[lite-route][E] ci-check-lite が throw しても lite 経路は full pr-iterate へ fail-open 委譲する', async () => {

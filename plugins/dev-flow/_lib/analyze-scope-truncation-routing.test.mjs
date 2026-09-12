@@ -1,10 +1,16 @@
 // _lib/analyze-scope-truncation-routing.test.mjs
 // issue #596: dev-flow workflow 側で「scope 切断」を analyze subagent と人間の両方へ伝搬させる配線を
-// VM sandbox で検証する。source pin (a)-(c) と routing T1-T6。
+// VM sandbox で検証する。routing T1-T9。
+//
+// issue #636 P3a: 旧 (a)-(c) は dev-flow.js ソース文字列（readFileSync + block 抽出）に対する pin
+// だった。(a) REQ schema の scope_truncated 型宣言と (c) buildReqFromContract inline 区間の厳格
+// boolean チェックは calls[] からは観測できない schema/inline 整合であり、(c) の inline 整合は
+// workflow-inlines.sync.test.mjs が別途保証するため削除する。(b) は analyze#1 prompt に対する
+// トークン pin（scope_truncated / [TRUNCATED:）へ書き換え、ambiguities 禁止規約の自然文言 pin は
+// 削除する（言い回し変更のみで落ちるため）。
 //
 // テストケース:
-//   (a)-(c): source-as-string pin（REQ schema の scope_truncated / analyzePrompt の切断規約文言 /
-//            buildReqFromContract inline 区間の scope_truncated 厳格チェック）
+//   analyze#1 prompt に scope_truncated / [TRUNCATED: トークンへの言及がある
 //   T1: scope_truncated:true + ambiguities 超過 → needs_clarification かつ missing_context 先頭に
 //       切断ヒント、implementer 呼び出し 0 件
 //   T2: scope_truncated:false + ambiguities 超過 → needs_clarification（既存挙動不変、ヒント無し）
@@ -42,32 +48,18 @@ const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
-// source-as-string pin (a)-(c)
+// prompt token pin（VM run）
 // ============================================================
 
-test('[analyze-scope-truncation-routing] (a) REQ schema に scope_truncated (boolean) が追加されている', () => {
-  const m = src.match(/const REQ = \{[\s\S]*?\n\}/);
-  assert.ok(m, 'REQ schema 定義が見つからない');
-  assert.ok(m[0].includes("scope_truncated: { type: 'boolean' }"), 'REQ schema に scope_truncated: { type: \'boolean\' } が無い');
-});
-
-test('[analyze-scope-truncation-routing] (b) analyzePrompt に scope 切断時の全文読み取り規約・ambiguities 禁止・マーカー言及がある', () => {
-  const m = src.match(/const analyzePrompt = \(depth\) => `[\s\S]*?\n\nconst /);
-  assert.ok(m, 'analyzePrompt 定義ブロックが見つからない');
-  const block = m[0];
-  assert.ok(block.includes('scope_truncated'), 'analyzePrompt に scope_truncated への言及がない');
-  assert.ok(block.includes('抜粋に無いことを根拠に ambiguities を立ててはならない'), 'analyzePrompt に ambiguities 禁止規約が無い');
-  assert.ok(block.includes('[TRUNCATED:'), 'analyzePrompt に [TRUNCATED: マーカーへの言及がない');
-});
-
-test('[analyze-scope-truncation-routing] (c) buildReqFromContract inline 区間に scope_truncated の厳格 boolean チェックがある', () => {
-  const beginMarker = '// ==== BEGIN inline: _lib/analyze-contract.mjs';
-  const endMarker = '// ==== END inline: _lib/analyze-contract.mjs ====';
-  const beginIdx = src.indexOf(beginMarker);
-  const endIdx = src.indexOf(endMarker);
-  assert.ok(beginIdx !== -1 && endIdx !== -1 && beginIdx < endIdx, 'analyze-contract.mjs の inline 区間が見つからない');
-  const block = src.slice(beginIdx, endIdx);
-  assert.ok(block.includes("typeof contract.scope_truncated !== 'boolean'"), 'inline 区間に scope_truncated の厳格 boolean チェックが無い');
+test('[analyze-scope-truncation-routing] analyze#1 prompt に scope_truncated / [TRUNCATED: トークンへの言及がある', async () => {
+  const { ctx, calls } = makeSandbox({});
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'scope-truncated-token');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const call = calls.find((c) => c.label === 'analyze#1');
+  assert.ok(call, 'analyze#1 呼び出しが見つからない');
+  assert.ok(call.prompt.includes('scope_truncated'), 'analyze#1 prompt に scope_truncated への言及がない');
+  assert.ok(call.prompt.includes('[TRUNCATED:'), 'analyze#1 prompt に [TRUNCATED: マーカーへの言及がない');
 });
 
 // ============================================================

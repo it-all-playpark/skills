@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { EVALUATOR_OPERATIONAL_CONTRACT } from './evaluator-contract.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -299,11 +300,7 @@ test('[testsurf] (e) evaluator prompt に testsurf_focus と testsurf_clearance 
   assert.ok(prompts.length >= 1, 'evaluator は最低 1 回は呼ばれるべき');
   assert.ok(prompts[0].includes('testsurf_focus'), `evaluator prompt に 'testsurf_focus' が含まれるべきだが含まれていなかった`);
   assert.ok(
-    prompts[0].includes('testsurf_clearance 契約:'),
-    `evaluator prompt に 'testsurf_clearance 契約:' が含まれるべきだが含まれていなかった`,
-  );
-  assert.ok(
-    prompts[0].includes('cleared:false の TESTSURF item は blocking のまま merge tier HOLD に反映される。'),
-    `evaluator prompt に testsurf_clearance 契約の全文が verbatim 注入されているべきだが含まれていなかった`,
+    prompts[0].includes(EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance),
+    `evaluator prompt に EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance が verbatim 含まれるべきだが含まれていなかった`,
   );
 });

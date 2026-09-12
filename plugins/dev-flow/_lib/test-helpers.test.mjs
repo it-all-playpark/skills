@@ -14,8 +14,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-import { makeRecordingSandbox, runDevFlowInSandbox, JS_GLOBALS } from './test-helpers/vm-sandbox.mjs';
+import {
+  makeRecordingSandbox, runDevFlowInSandbox, JS_GLOBALS,
+  runWorkflowCapture, devFlowResponder, makeDevFlowSandbox, makePrIterateSandbox,
+} from './test-helpers/vm-sandbox.mjs';
 import { TEST_WEAKENING } from './test-helpers/dev-flow-markers.mjs';
+
+const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
 
 // ============================================================
 // makeRecordingSandbox: calls 記録 / responder 委譲
@@ -38,7 +43,9 @@ test('[test-helpers] makeRecordingSandbox: agent() 呼び出しが calls に記�
   await resultPromise;
 
   assert.equal(calls.length, 1, 'calls に 1 件記録されること');
-  assert.deepEqual(calls[0], { label: 'x', agentType: 'y', prompt: 'P' });
+  assert.equal(calls[0].label, 'x');
+  assert.equal(calls[0].agentType, 'y');
+  assert.equal(calls[0].prompt, 'P');
 });
 
 test('[test-helpers] makeRecordingSandbox: responder の返り値が agent() の返り値になること', async () => {
@@ -234,4 +241,151 @@ test('[test-helpers] TEST_WEAKENING: dev-flow.js ソースに含まれること�
     src.includes(TEST_WEAKENING),
     `dev-flow.js ソースに TEST_WEAKENING ('${TEST_WEAKENING}') が含まれること`,
   );
+});
+
+// ============================================================
+// (a) calls[].opts / calls[].schema の記録
+// ============================================================
+
+test('[test-helpers] (a) calls[0].opts.schema が agent() に渡した schema と同一参照であること、calls[0].opts.label が "x" であること', async () => {
+  const schema = { type: 'object', required: ['ok'] };
+  const { ctx, calls } = makeRecordingSandbox(() => ({ ok: true }));
+
+  const script = new vm.Script(`agent('P', { label: 'x', agentType: 'y', schema: SCHEMA })`);
+  // SCHEMA を ctx に注入して参照同一性を検証する
+  Object.assign(ctx, { SCHEMA: schema });
+  await script.runInContext(ctx);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.label, 'x');
+  assert.equal(calls[0].schema, schema, 'calls[0].schema は agent() に渡した schema と同一参照であること');
+  assert.equal(calls[0].opts.schema, schema, 'calls[0].opts.schema も同一参照であること');
+});
+
+// ============================================================
+// (b) logs/phases 既定記録・extraSandbox 上書き
+// ============================================================
+
+test('[test-helpers] (b) 既定の log/phase が logs/phases に記録されること', async () => {
+  const { ctx, logs, phases } = makeRecordingSandbox(() => null);
+
+  vm.runInContext(`log('hello')`, ctx);
+  vm.runInContext(`phase('Setup')`, ctx);
+
+  assert.deepEqual(logs, ['hello']);
+  assert.deepEqual(phases, ['Setup']);
+});
+
+test('[test-helpers] (b) extraSandbox.log を渡すとそれが使われ logs は空のままであること', async () => {
+  const seen = [];
+  const { ctx, logs } = makeRecordingSandbox(() => null, { log: (m) => seen.push(m) });
+
+  vm.runInContext(`log('hello')`, ctx);
+
+  assert.deepEqual(seen, ['hello']);
+  assert.deepEqual(logs, [], 'extraSandbox.log が使われた場合、既定 logs 配列には記録されないこと');
+});
+
+// ============================================================
+// (c) runWorkflowCapture: {result, error} を返す
+// ============================================================
+
+test('[test-helpers] (c) runWorkflowCapture: 最小ソースで {result, error:null} を返すこと', async () => {
+  const src = `export const X = 1;\nreturn { ok: 1 };\n`;
+  const { ctx } = makeRecordingSandbox(() => null);
+
+  const { result, error } = await runWorkflowCapture(src, ctx);
+
+  assert.equal(error, null);
+  // result は vm context 内で生成されたオブジェクト（別 realm）のため、
+  // deepEqual ではなく JSON round-trip 経由で構造のみ比較する。
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { ok: 1 });
+});
+
+test('[test-helpers] (c) runWorkflowCapture: throw するソースで error が非 null になること', async () => {
+  const src = `throw new Error('boom');\n`;
+  const { ctx } = makeRecordingSandbox(() => null);
+
+  const { result, error } = await runWorkflowCapture(src, ctx);
+
+  assert.equal(result, null);
+  assert.ok(error != null);
+  assert.equal(error.message, 'boom');
+});
+
+// ============================================================
+// (d) devFlowResponder: overrides の関数/値/null の 3 形、既定 'danger-grep' 形状
+// ============================================================
+
+test('[test-helpers] (d) devFlowResponder: overrides が関数の場合 {label,agentType,prompt,opts} で呼ばれその返り値が使われること', () => {
+  const received = [];
+  const responder = devFlowResponder({
+    'my-label': (ctxArg) => { received.push(ctxArg); return { custom: true }; },
+  });
+
+  const result = responder({ label: 'my-label', agentType: 'y', prompt: 'p', opts: { foo: 1 } });
+
+  assert.deepEqual(result, { custom: true });
+  assert.equal(received.length, 1);
+  assert.deepEqual(received[0], { label: 'my-label', agentType: 'y', prompt: 'p', opts: { foo: 1 } });
+});
+
+test('[test-helpers] (d) devFlowResponder: overrides が値の場合そのまま返ること', () => {
+  const responder = devFlowResponder({ 'my-label': { fixed: 1 } });
+  const result = responder({ label: 'my-label', agentType: 'y', prompt: 'p' });
+  assert.deepEqual(result, { fixed: 1 });
+});
+
+test('[test-helpers] (d) devFlowResponder: overrides が null の場合 null が返ること', () => {
+  const responder = devFlowResponder({ 'setup-base': null });
+  const result = responder({ label: 'setup-base', agentType: 'y', prompt: 'p' });
+  assert.equal(result, null);
+});
+
+test('[test-helpers] (d) devFlowResponder: 既定の "danger-grep" 応答が仕様どおりの形状であること', () => {
+  const responder = devFlowResponder();
+  const result = responder({ label: 'danger-grep', agentType: 'dev-runner-haiku-ro', prompt: 'p' });
+  assert.deepEqual(result, {
+    risk: { ok: true, hits: [] },
+    files: ['src/x.ts'],
+    struct: null,
+    diffhash: { hash: 'AAA', empty: false },
+  });
+});
+
+// ============================================================
+// (e) makeDevFlowSandbox: dev-flow.js 実 run smoke
+// ============================================================
+
+test('[test-helpers] (e) makeDevFlowSandbox: dev-flow.js 実 run が error===null かつ merge_tier が REVIEW/HOLD で完走すること', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx } = makeDevFlowSandbox({ issue: 636 });
+
+  const { result, error } = await runWorkflowCapture(src, ctx, '.claude/workflows/dev-flow.js');
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+  assert.equal(error, null, `error は null であるべきだが: ${error?.stack ?? error}`);
+  assert.ok(
+    result?.merge_tier === 'REVIEW' || result?.merge_tier === 'HOLD',
+    `merge_tier は 'REVIEW' か 'HOLD' であるべきだが '${result?.merge_tier}' だった`,
+  );
+});
+
+// ============================================================
+// (f) makePrIterateSandbox: pr-iterate.js 実 run smoke
+// ============================================================
+
+test('[test-helpers] (f) makePrIterateSandbox: pr-iterate.js 実 run（args "5"）が result.status==="lgtm" で完走すること', async () => {
+  const src = readFileSync(prIteratePath, 'utf8');
+  const { ctx } = makePrIterateSandbox({ args: '5' });
+
+  const { result, error } = await runWorkflowCapture(src, ctx, '.claude/workflows/pr-iterate.js');
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`pr-iterate.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+  assert.equal(error, null, `error は null であるべきだが: ${error?.stack ?? error}`);
+  assert.equal(result?.status, 'lgtm', `result.status は 'lgtm' であるべきだが '${result?.status}' だった`);
 });

@@ -1,92 +1,119 @@
-// VALIDATE_TEST_PROMPT の残存内容を pin する source-regex テスト（issue #553）。
-// dev-flow.js の VALIDATE_TEST_PROMPT 定義ブロックを readFileSync + slice して検査する
-// （既存 _lib/isolation-probe-wiring.test.mjs と同じ source-regex スタイル。VM sandbox は使わない）。
-// 本ファイルは負 assert 用に 'trust-test-latest' というリテラルを意図的に含む
-// （whitelist ベースの repo 全体 grep pin テスト（_lib/trust-residue-grep.test.mjs）の
-// whitelist にこのファイルが含まれることで、grep pin と本テストの負 assert が両立する）。
+// VALIDATE_TEST_PROMPT（Validate phase の test 実行 exec-proxy prompt）を VM run で実際に
+// test#1 へ渡る prompt として捕捉し、argv/token/データ echo/否定側で検証する（issue #636 P3b）。
+//
+// 旧版は dev-flow.js の VALIDATE_TEST_PROMPT 定義ブロックを readFileSync + slice して日本語の
+// 指示文・規約文を部分一致で pin していたが、言い回し変更のみで落ちる pin だったため置換した。
+// tests:'error' / tests:'failed' で green-fix ルーティングが分岐する挙動は
+// _lib/validate-tests-error-skip-routing.test.mjs が既に VM sandbox で担っているため、
+// 本ファイルでは重複させない。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
 
-const devFlowPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude/workflows/dev-flow.js');
-const src = readFileSync(devFlowPath, 'utf8');
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..');
+const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
-function extractValidateTestPrompt() {
-  const start = src.indexOf('const VALIDATE_TEST_PROMPT');
-  assert.notStrictEqual(start, -1, 'const VALIDATE_TEST_PROMPT の宣言が見つからない');
-  const end = src.indexOf('\nconst ', start);
-  assert.notStrictEqual(end, -1, 'VALIDATE_TEST_PROMPT 定義ブロックの終端（次の const 宣言）が見つからない');
-  return src.slice(start, end);
+function responder({ label, agentType }) {
+  if (label === 'setup-base') {
+    return {
+      ok: true, default_branch: 'main', dev_exists: false, requested_exists: false,
+      worktree_exists: false, upstream_remote: '', upstream_merge: '',
+    };
+  }
+  if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-553' };
+  if (label.startsWith('analyze')) {
+    return {
+      summary: 's',
+      acceptance_criteria: ['a', 'b'],
+      issue_type: 'fix',
+      scope: 'src',
+      estimated_change_file_count: 3,
+      shape: 'standard',
+      issue_number: 553,
+      issue_title: 'stub-issue-title',
+    };
+  }
+  if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [], parallel: [] };
+  if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+  if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
+  if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+  if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
+  if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+  if (agentType === 'dev-flow:evaluator') {
+    return {
+      verdict: 'pass', total: 100, threshold: 80, feedback: [],
+      feedback_level: 'implementation', ac_results: [], security_clearance: [],
+    };
+  }
+  if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') return { files: [] };
+  if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+  if (label === 'issue-meta') return { ok: true, number: 553, title: 'stub-issue-title' };
+  return null;
 }
 
-// GREEN は VALIDATE_TEST_PROMPT の応答 schema（Validate の test#i と Final reconcile の test#final が共有）。
-function extractGreenSchema() {
-  const start = src.indexOf('const GREEN = {');
-  assert.notStrictEqual(start, -1, 'const GREEN の宣言が見つからない');
-  const end = src.indexOf('\nconst ', start + 1);
-  assert.notStrictEqual(end, -1, 'GREEN 定義ブロックの終端（次の const 宣言）が見つからない');
-  return src.slice(start, end);
+let sharedCalls = null;
+let sharedError = null;
+
+async function ensureSharedRun() {
+  if (sharedCalls !== null) return;
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: '553' });
+  const error = await runDevFlowInSandbox(devFlowSrc, ctx);
+  sharedCalls = calls;
+  sharedError = error;
 }
 
-test('VALIDATE_TEST_PROMPT は絶対パスを先頭トークンとする bare 形での test 実行規約を含む', () => {
-  const block = extractValidateTestPrompt();
-  assert.match(block, /絶対パスを先頭トークンとする bare 形/, 'bare 形実行規約の文言が見つからない');
-  assert.match(block, /前置は禁止/, '前置禁止の文言が見つからない');
-});
-
-test('VALIDATE_TEST_PROMPT は format/lint がこの phase の責務外であることを明示する', () => {
-  const block = extractValidateTestPrompt();
-  assert.match(block, /format\/lint はこの phase の責務外/, 'format/lint 責務外の文言が見つからない');
-});
-
-test('VALIDATE_TEST_PROMPT は EPERM 時に 1 回だけ再試行して報告する規約を含む', () => {
-  const block = extractValidateTestPrompt();
-  assert.match(block, /EPERM/, 'EPERM への言及が見つからない');
-  assert.match(block, /1 回だけ試し/, '1 回だけ再試行する規約の文言が見つからない');
-});
-
-test('VALIDATE_TEST_PROMPT は末尾で EPOCH_INSTRUCTION を連結している', () => {
-  const block = extractValidateTestPrompt();
-  assert.match(block, /EPOCH_INSTRUCTION/, 'EPOCH_INSTRUCTION 参照が block 内に残っていない');
-});
-
-test('VALIDATE_TEST_PROMPT は trust-test-latest.json への証跡保存ブロックを含まない（issue #553: 読み手不在のため除去）', () => {
-  const block = extractValidateTestPrompt();
-  assert.doesNotMatch(block, /trust-test-latest/, 'trust-test-latest への言及が残っている（証跡保存ブロックの除去漏れ）');
-});
-
-test('VALIDATE_TEST_PROMPT は「証跡保存」という語を含まない', () => {
-  const block = extractValidateTestPrompt();
-  assert.doesNotMatch(block, /証跡保存/, '証跡保存という語が残っている（証跡保存ブロックの除去漏れ）');
-});
-
-test('VALIDATE_TEST_PROMPT は Write tool による JSON 保存指示を含まない', () => {
-  const block = extractValidateTestPrompt();
-  assert.doesNotMatch(block, /Write tool/, 'Write tool への言及が残っている（証跡保存ブロックの除去漏れ）');
-});
-
-test("GREEN schema の tests enum は passed|failed|no_tests|error の 4 値（issue #619: 環境起因の起動失敗を 'error' で分離）", () => {
-  const block = extractGreenSchema();
-  assert.match(
-    block,
-    /tests:\s*\{\s*type:\s*'string',\s*enum:\s*\['passed',\s*'failed',\s*'no_tests',\s*'error'\]\s*\}/,
-    "GREEN.properties.tests.enum が ['passed', 'failed', 'no_tests', 'error'] になっていない",
+function test1Prompt() {
+  const c = sharedCalls.find((x) => x.label === 'test#1');
+  assert.ok(
+    c != null,
+    `label === 'test#1' の call が見つからない (labels: ${sharedCalls.map((x) => x.label).join(', ')})`,
   );
+  assert.equal(
+    c.agentType,
+    'dev-flow:dev-runner-haiku',
+    `test#1 の agentType は 'dev-flow:dev-runner-haiku' のはずだが '${c.agentType}' だった`,
+  );
+  return c.prompt;
+}
+
+test('[validate-test-prompt] crash guard: dev-flow.js が sandbox で ReferenceError / SyntaxError を throw しない', async () => {
+  await ensureSharedRun();
+  if (sharedError && (sharedError.name === 'ReferenceError' || sharedError.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${sharedError.name}: ${sharedError.message}`);
+  }
 });
 
-test('VALIDATE_TEST_PROMPT は「1 件も実行されなかった起動失敗 → tests:"error"」と「実行された上での失敗 → tests:"failed"」を区別する（issue #619）', () => {
-  const block = extractValidateTestPrompt();
-  assert.match(block, /1 件も実行されなかった起動失敗/, '起動失敗（1 件も実行されず）の分岐文言が見つからない');
-  assert.match(block, /tests:"error"/, 'tests:"error" への言及が見つからない');
-  assert.match(block, /実行された上で/, 'テストが実行された上での失敗の分岐文言が見つからない');
-  assert.match(block, /tests:"failed"/, 'tests:"failed" への言及が見つからない');
-  // 起動失敗 → error の分岐が failed → の分岐より前に書かれていること（順序で 2 分岐の意図を固定）
-  assert.ok(block.indexOf('tests:"error"') < block.indexOf('tests:"failed"'), 'tests:"error" の分岐は tests:"failed" の分岐より前に置く');
+test('[validate-test-prompt] test#1 prompt は末尾に date +%s（EPOCH_INSTRUCTION の実体）を含む', async () => {
+  await ensureSharedRun();
+  const prompt = test1Prompt();
+  assert.ok(prompt.includes('date +%s'), 'test#1 prompt に "date +%s" が含まれていない');
 });
 
-test('VALIDATE_TEST_PROMPT は起動失敗を tests:"failed" に潰す旧文言を含まない（issue #619）', () => {
-  const block = extractValidateTestPrompt();
-  assert.doesNotMatch(block, /それでも失敗するなら tests:"failed"/, '起動失敗を tests:"failed" に潰す旧文言が残っている');
+test('[validate-test-prompt] test#1 prompt は trust-test-latest.json への証跡保存ブロックを含まない（issue #553）', async () => {
+  await ensureSharedRun();
+  const prompt = test1Prompt();
+  assert.ok(!prompt.includes('trust-test-latest'), 'test#1 prompt に trust-test-latest への言及が残っている（証跡保存ブロックの除去漏れ）');
+  assert.ok(!prompt.includes('証跡保存'), 'test#1 prompt に「証跡保存」という語が残っている（証跡保存ブロックの除去漏れ）');
+  assert.ok(!prompt.includes('Write tool'), 'test#1 prompt に Write tool による JSON 保存指示が残っている（証跡保存ブロックの除去漏れ）');
+});
+
+test('[validate-test-prompt] test#1 prompt は tests:"error" / tests:"failed" の両キーを含む（issue #619）', async () => {
+  await ensureSharedRun();
+  const prompt = test1Prompt();
+  assert.ok(prompt.includes('tests:"error"'), 'test#1 prompt に tests:"error" キーが含まれていない');
+  assert.ok(prompt.includes('tests:"failed"'), 'test#1 prompt に tests:"failed" キーが含まれていない');
+});
+
+test('[validate-test-prompt] test#1 prompt は起動失敗を tests:"failed" に潰す旧文言を含まない（issue #619）', async () => {
+  await ensureSharedRun();
+  const prompt = test1Prompt();
+  assert.ok(
+    !prompt.includes('それでも失敗するなら tests:"failed"'),
+    '起動失敗を tests:"failed" に潰す旧文言が test#1 prompt に残っている',
+  );
 });

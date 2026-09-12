@@ -242,12 +242,15 @@ test('[validate-unify] (1) crash guard: dev-flow.js が sandbox で ReferenceErr
 });
 
 // ============================================================
-// (2) 構造 pin — function runValidateLoop 出現回数 >= 1、
-//     テストスイートを実行し == 1（ちょうど 1）、禁止文 == 1（ちょうど 1）
-// NOTE: F2（runValidateLoop 抽出）前は RED（runValidateLoop 0 件、テストスイートを実行し 2 件）
+// (2) 構造 pin — function runValidateLoop 出現回数 >= 1
+// NOTE: F2（runValidateLoop 抽出）前は RED（runValidateLoop 0 件）。
+// 「テストスイートを実行し」「禁止文」の日本語プロンプト文言を回数で数える pin は
+// 言い回し変更のみで落ちるため撤去した（issue #636 AC-1）。単一化（重複排除）の実質は
+// 本経路・retry 経路の prompt が byte 一致することを VM 実行で検証するテスト (3) が
+// より強く保証する。
 // ============================================================
 
-test('[validate-unify] (2) 構造 pin: function runValidateLoop が 1 箇所以上・テストスイートを実行し がちょうど 1・禁止文がちょうど 1', () => {
+test('[validate-unify] (2) 構造 pin: function runValidateLoop が 1 箇所以上', () => {
   const src = readFileSync(devFlowPath, 'utf8');
 
   const runValidateLoopCount = (src.match(/function runValidateLoop/g) || []).length;
@@ -255,21 +258,6 @@ test('[validate-unify] (2) 構造 pin: function runValidateLoop が 1 箇所以�
     runValidateLoopCount >= 1,
     `dev-flow.js に 'function runValidateLoop' が ${runValidateLoopCount} 箇所（>= 1 が必要）。`
     + 'F2（runValidateLoop 抽出）が完了していない。',
-  );
-
-  const testSuiteCount = (src.match(/テストスイートを実行し/g) || []).length;
-  assert.strictEqual(
-    testSuiteCount,
-    1,
-    `dev-flow.js の 'テストスイートを実行し' がちょうど 1 箇所であるべきだが ${testSuiteCount} 箇所。`
-    + 'runValidateLoop に統合されると 1 箇所になる（現状は本経路・retry 経路で 2 箇所）。',
-  );
-
-  const forbiddenCount = (src.match(/テストの期待値・assert を弱めて green にすることは禁止/g) || []).length;
-  assert.strictEqual(
-    forbiddenCount,
-    1,
-    `dev-flow.js の禁止文 'テストの期待値・assert を弱めて green にすることは禁止' がちょうど 1 箇所であるべきだが ${forbiddenCount} 箇所。`,
   );
 });
 
@@ -346,14 +334,13 @@ test('[validate-unify] (4) concerns 伝搬同一 pin: eval#1 の prompt に GF_C
 });
 
 // ============================================================
-// (5) テスト弱体化監査注入 pin（gateEmpty:true で両経路発火）
-//   - eval#1 の prompt に 'テスト弱体化' が含まれること
-//   - eval#1 の prompt に 'src/foo.test.ts' が含まれること
-//   - eval#1 の prompt に '申告された根拠' が含まれること
-//   （pushGreenFixAudit が両経路分を注入）
+// (5) green-fix データ echo 注入 pin（gateEmpty:true で両経路発火）
+//   - eval#1 の prompt に 'src/foo.test.ts'（green-fix stub の files）が含まれること
+//   （pushGreenFixAudit が両経路分を注入。「テスト弱体化」focus 語・「申告された根拠」の日本語
+//    文言 pin は言い回し変更で落ちるため撤去した — issue #636 AC-1）
 // ============================================================
 
-test('[validate-unify] (5) テスト弱体化監査注入 pin: eval#1 の prompt に テスト弱体化・src/foo.test.ts・申告された根拠 が含まれること', async () => {
+test('[validate-unify] (5) green-fix データ echo 注入 pin: eval#1 の prompt に src/foo.test.ts が含まれること', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox({ gateEmpty: true, retryEmpty: false });
   const { error } = await runDevFlowInSandbox(src, ctx);
@@ -367,16 +354,8 @@ test('[validate-unify] (5) テスト弱体化監査注入 pin: eval#1 の prompt
     `label === 'eval#1' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
   );
   assert.ok(
-    eval1.prompt.includes('テスト弱体化'),
-    `eval#1 の prompt に 'テスト弱体化' が含まれていない。\nprompt（先頭600字）:\n${eval1.prompt.slice(0, 600)}`,
-  );
-  assert.ok(
     eval1.prompt.includes('src/foo.test.ts'),
     `eval#1 の prompt に 'src/foo.test.ts' が含まれていない。\nprompt（先頭600字）:\n${eval1.prompt.slice(0, 600)}`,
-  );
-  assert.ok(
-    eval1.prompt.includes('申告された根拠'),
-    `eval#1 の prompt に '申告された根拠' が含まれていない。\nprompt（先頭600字）:\n${eval1.prompt.slice(0, 600)}`,
   );
 });
 
