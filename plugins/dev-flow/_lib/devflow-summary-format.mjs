@@ -16,7 +16,8 @@
  *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
  *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す
  * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,env_key,env_count,triaged,triaged_evidence}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））。
- *   advisory lane かつ `triaged:true` かつ `triaged_evidence` 非空の item は状態列 `🔹 トリアージ済み`・内容列に triaged_evidence を表示する（表示のみ。checked/ゲート不変。blocking lane では無視。issue #614）
+ *   advisory lane かつ `triaged:true` かつ `triaged_evidence` 非空（escalate でない）の item は要対応表・要対応判定から除外し、
+ *   要対応セクション直後の `<details>`（🔹 トリアージ済み N 件）に 観点/内容/triaged_evidence を全文で出す（表示のみ。checked/ゲート不変。blocking lane では無視。issue #614, #626）
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
  * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns。blockingItems/advisoryItems 内の
@@ -256,11 +257,15 @@ export function buildDevflowSummaryBody({
   const advArr = advisoryItems || [];
   const envItems = advArr.filter(it => it.dimension === 'environment');
   const uncheckedBlocking = blockArr.filter(it => it.checked !== true);
-  const uncheckedAdvisory = advArr.filter(it => it.checked !== true && it.dimension !== 'environment');
   const escalatedChecked = advArr.filter(it => it.escalate === true && it.checked === true && it.dimension !== 'environment');
   // triaged: evaluator が「再検証済み・対応不要」と判断した advisory item の表示専用フラグ
   // （checked は false のまま・ゲート不変。issue #614）。evidence 非空文字列のときのみ有効。
   const isTriaged = (it) => it.triaged === true && typeof it.triaged_evidence === 'string' && it.triaged_evidence.length > 0;
+  // triaged advisory: 要対応表・hasActionItems から除外し、要対応セクション直後の <details> に全文で残す（issue #626）。
+  // escalate:true は要判断として要対応に残す（escalate 優先）。environment は環境ノート経路（除外）。blocking lane では triaged を無視する（#614 仕様 4 項）。
+  const isTriagedAdvisory = (it) => it.checked !== true && it.dimension !== 'environment' && it.escalate !== true && isTriaged(it);
+  const triagedAdvisory = advArr.filter(isTriagedAdvisory);
+  const uncheckedAdvisory = advArr.filter(it => it.checked !== true && it.dimension !== 'environment' && !isTriagedAdvisory(it));
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
   // Plan 未解消 concerns は Plan phase 収束時のスナップショット（更新されない）だが、CONCERN-*
@@ -268,7 +273,7 @@ export function buildDevflowSummaryBody({
   // 更新される。dev-flow.js は planConcerns の文字列を無加工で CONCERN-* の text に seed するため、
   // text 完全一致で「ledger 上 checked 済み」を判定できる（issue #611）。同一 text が checked と
   // unchecked の両方にある場合は unchecked を優先し表示を残す（fail-safe。見落とし防止）。
-  // triaged は表の行に `🔹 トリアージ済み` として残るため箇条書きから除外する（issue #614）。
+  // triaged は要対応直後の <details> に全文で残るため箇条書きから除外する（issue #614, #626）。
   const concernLedgerItems = [...blockArr, ...advArr].filter(it => it.dimension === 'concern');
   const settledConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true || isTriaged(it)).map(it => it.text));
   const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true && !isTriaged(it)).map(it => it.text));
@@ -283,7 +288,7 @@ export function buildDevflowSummaryBody({
 
   lines.push('');
   if (!hasActionItems) {
-    lines.push('### ✅ 要対応事項なし');
+    lines.push(triagedAdvisory.length > 0 ? `### ✅ 要対応事項なし（トリアージ済み ${triagedAdvisory.length} 件）` : '### ✅ 要対応事項なし');
   } else {
     lines.push('### ⚠️ 要対応');
 
@@ -293,7 +298,6 @@ export function buildDevflowSummaryBody({
       ...uncheckedAdvisory.map(it => ({
         ...it,
         _lane: it.escalate ? '要判断（advisory ESCALATE）' : '助言（advisory）',
-        _triaged: it.escalate !== true && isTriaged(it),
       })),
       ...escalatedChecked.map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _forceVisible: true })),
     ];
@@ -304,10 +308,10 @@ export function buildDevflowSummaryBody({
       lines.push('| 状態 | 区分 | 観点 | 内容 |');
       lines.push('|---|---|---|---|');
       for (const item of ledgerActionItems) {
-        const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : item._triaged ? '🔹 トリアージ済み' : '❌ 未解消';
+        const status = (item.checked === true && item.escalate) ? '⚠️ 要判断' : '❌ 未解消';
         const dimension = item.dimension != null ? item.dimension : '—';
         let content = mdCell(item.text);
-        const contentEvidence = item._triaged ? item.triaged_evidence : item.evidence;
+        const contentEvidence = item.evidence;
         if (contentEvidence) {
           content += ': ' + mdCell(contentEvidence);
         }
@@ -349,6 +353,23 @@ export function buildDevflowSummaryBody({
         lines.push(`- ${concern}`);
       }
     }
+  }
+
+  // 6a. トリアージ済み advisory の折りたたみ（issue #626）。要対応からは外すが、evaluator（LLM）判断の
+  // 誤トリアージ検算のため 観点 / 内容 / triaged_evidence を全文で残す（件数のみに落とさない）。
+  // <summary> 直後と </details> 直前の空行は GFM が details 内の table をレンダリングするために必須。
+  if (triagedAdvisory.length > 0) {
+    lines.push('');
+    lines.push(`<details><summary>🔹 トリアージ済み ${triagedAdvisory.length} 件（evaluator 判断 — 誤トリアージ検算用）</summary>`);
+    lines.push('');
+    lines.push('| 観点 | 内容 | トリアージ根拠 |');
+    lines.push('|---|---|---|');
+    for (const item of triagedAdvisory) {
+      const dimension = item.dimension != null ? item.dimension : '—';
+      lines.push(`| ${dimension} | ${mdCell(item.text)} | ${mdCell(item.triaged_evidence)} |`);
+    }
+    lines.push('');
+    lines.push('</details>');
   }
 
   // 6b. pr-iterate 未解消の指摘（issue #602）。iterateStatus が非 'lgtm' のときのみ描画する。

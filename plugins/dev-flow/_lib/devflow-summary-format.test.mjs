@@ -1985,9 +1985,9 @@ test('AC4 不変性 pin: 再帰 freeze した入力で throw せず、各 tier �
   }
 });
 
-// ─── triaged（issue #614） ──────────────────────────────────────────────────
+// ─── triaged（issue #614 → #626 で要対応から除外・折りたたみ化） ──────────────
 
-test('issue #614 AC4: advisory lane の triaged item は状態列「🔹 トリアージ済み」+ 内容列 evidence で表示される', () => {
+test('issue #626 AC1: 残る unchecked が triaged advisory 1 件のみなら件数付き見出しが出て「### ⚠️ 要対応」は出ない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     advisoryItems: [
@@ -1998,14 +1998,77 @@ test('issue #614 AC4: advisory lane の triaged item は状態列「🔹 トリ�
       },
     ],
   });
-  assert.ok(
-    body.includes('| 🔹 トリアージ済み | 助言（advisory） | concern | [plan:major] A: a: lib/y.ts:20 は未変更。advisory で実害なし |'),
-    'トリアージ済み行を含む',
-  );
-  assert.ok(!body.includes('❌ 未解消'), '同 item の行が ❌ 未解消 で出ていない');
+  assert.ok(body.includes('### ✅ 要対応事項なし（トリアージ済み 1 件）'), '件数付き見出しを含む');
+  assert.ok(!body.includes('### ⚠️ 要対応'), '要対応見出しを含まない');
+  assert.ok(!body.includes('🔹 トリアージ済み |'), '表の状態列に🔹は出ない');
 });
 
-test('issue #614 AC5: blocking lane の item は triaged が付いていても状態列・内容列が triaged 無し版と byte 一致する', () => {
+test('issue #626 AC2: triaged advisory は <details> に 観点/内容/triaged_evidence が全文で残る', () => {
+  const evidence = 'tofu validate は registry.opentofu.org が sandbox で Forbidden のため未実施（apply 前にオペレータが実施）';
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        ...concernItem('[plan:major] A: a'),
+        triaged: true,
+        triaged_evidence: evidence,
+      },
+    ],
+  });
+  assert.ok(body.includes('<details><summary>🔹 トリアージ済み 1 件（evaluator 判断 — 誤トリアージ検算用）</summary>'), 'details summary を含む');
+  assert.ok(body.includes('</details>'), 'details 終端を含む');
+  const detailsStart = body.indexOf('<details>');
+  const detailsEnd = body.indexOf('</details>') + '</details>'.length;
+  const detailsRegion = body.slice(detailsStart, detailsEnd);
+  assert.ok(detailsRegion.includes(`| concern | [plan:major] A: a | ${evidence} |`), 'details 内テーブルに全文が残る');
+});
+
+test('issue #626 AC2: text/triaged_evidence の | と改行は details 内テーブルで \\| / <br> にエスケープされ全文が残る', () => {
+  const text = '[plan:major] esc|A: a\nline2';
+  const evidence = 'evidence|with|pipes\nand newline';
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        ...concernItem(text),
+        triaged: true,
+        triaged_evidence: evidence,
+      },
+    ],
+  });
+  const detailsStart = body.indexOf('<details>');
+  const detailsEnd = body.indexOf('</details>') + '</details>'.length;
+  const detailsRegion = body.slice(detailsStart, detailsEnd);
+  assert.ok(detailsRegion.includes(mdCell(text)), 'text がエスケープされて全文残る');
+  assert.ok(detailsRegion.includes(mdCell(evidence)), 'evidence がエスケープされて全文残る');
+});
+
+test('issue #626 AC3: triaged advisory と本物の未解消 advisory が混在する場合、要対応表には未解消のみ、<details> には triaged のみが出る', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        ...concernItem('[plan:major] A: a'),
+        triaged: true,
+        triaged_evidence: 'lib/y.ts:20 は未変更。advisory で実害なし',
+      },
+      concernItem('[plan:major] B: b', { id: 'CONCERN-2' }),
+    ],
+  });
+  assert.ok(body.includes('### ⚠️ 要対応'), '要対応見出しを含む');
+  const tableStart = body.indexOf('### ⚠️ 要対応');
+  const detailsStart = body.indexOf('<details>');
+  const actionTable = body.slice(tableStart, detailsStart);
+  assert.ok(actionTable.includes('| ❌ 未解消 | 助言（advisory） | concern | [plan:major] B: b |'), '未解消行を含む');
+  assert.ok(!actionTable.includes('[plan:major] A: a'), '要対応表に triaged text を含まない');
+  const detailsEnd = body.indexOf('</details>') + '</details>'.length;
+  const detailsRegion = body.slice(detailsStart, detailsEnd);
+  assert.ok(detailsRegion.includes('[plan:major] A: a'), 'details に triaged text を含む');
+  assert.ok(!detailsRegion.includes('B: b'), 'details に非 triaged text を含まない');
+  assert.ok(body.includes('<summary>🔹 トリアージ済み 1 件'), 'summary はトリアージ済み1件');
+});
+
+test('issue #614 AC5 (#626 AC4): blocking lane の item は triaged が付いていても状態列・内容列が triaged 無し版と byte 一致し、<details> も出ない', () => {
   const triagedItem = {
     ...concernItem('[plan:major] A: a'),
     triaged: true,
@@ -2025,24 +2088,27 @@ test('issue #614 AC5: blocking lane の item は triaged が付いていても�
   assert.equal(bodyTriaged, bodyPlain, 'triaged の有無で blocking lane の出力が byte 一致する');
   assert.ok(bodyTriaged.includes('❌ 未解消'), 'blocking lane は ❌ 未解消 のまま');
   assert.ok(!bodyTriaged.includes('🔹'), 'blocking lane に 🔹 は出ない');
+  assert.ok(!bodyTriaged.includes('<details>'), 'blocking lane の triaged では details も出ない');
 });
 
-test('issue #614 AC6: 残る unchecked が triaged advisory 1 件のみでも「### ⚠️ 要対応」見出しが出る', () => {
+test('issue #626: triaged advisory 2 件 -> 見出し・summary・details テーブル行数が 2 件で一致する', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     advisoryItems: [
-      {
-        ...concernItem('[plan:major] A: a'),
-        triaged: true,
-        triaged_evidence: 'lib/y.ts:20 は未変更。advisory で実害なし',
-      },
+      { ...concernItem('[plan:major] A: a', { id: 'CONCERN-1' }), triaged: true, triaged_evidence: 'evidence A' },
+      { ...concernItem('[plan:major] B: b', { id: 'CONCERN-2' }), triaged: true, triaged_evidence: 'evidence B' },
     ],
   });
-  assert.ok(body.includes('### ⚠️ 要対応'), '⚠️ 要対応 見出しを含む');
-  assert.ok(!body.includes('### ✅ 要対応事項なし'), '要対応事項なし見出しを含まない');
+  assert.ok(body.includes('### ✅ 要対応事項なし（トリアージ済み 2 件）'), '件数2件の見出し');
+  assert.ok(body.includes('<summary>🔹 トリアージ済み 2 件'), '件数2件のsummary');
+  const detailsStart = body.indexOf('<details>');
+  const detailsEnd = body.indexOf('</details>') + '</details>'.length;
+  const detailsRegion = body.slice(detailsStart, detailsEnd);
+  const rowCount = (detailsRegion.match(/\| concern \|/g) || []).length;
+  assert.equal(rowCount, 2, 'details テーブルの行数が2件');
 });
 
-test('issue #614 AC2: triaged_evidence が空文字/null/未定義の advisory item は ❌ 未解消 のままで 🔹 を含まない', () => {
+test('issue #614 AC2: triaged_evidence が空文字/null/未定義の advisory item は ❌ 未解消 のままで 🔹・<details> を含まない', () => {
   for (const [label, triaged_evidence] of [['空文字', ''], ['null', null], ['未定義', undefined]]) {
     const item = {
       ...concernItem(`[plan:major] evidence-${label}: x`, { id: `CONCERN-${label}` }),
@@ -2055,10 +2121,11 @@ test('issue #614 AC2: triaged_evidence が空文字/null/未定義の advisory i
     });
     assert.ok(body.includes('❌ 未解消'), `${label}: ❌ 未解消 のまま`);
     assert.ok(!body.includes('🔹'), `${label}: 🔹 を含まない`);
+    assert.ok(!body.includes('<details>'), `${label}: <details> を含まない`);
   }
 });
 
-test('issue #614: escalate:true の advisory item は triaged が付いていても ❌ 未解消（escalate 優先）', () => {
+test('issue #614: escalate:true の advisory item は triaged が付いていても ❌ 未解消（escalate 優先）で <details> も出ない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     advisoryItems: [
@@ -2067,9 +2134,11 @@ test('issue #614: escalate:true の advisory item は triaged が付いていて
   });
   assert.ok(body.includes('❌ 未解消'), 'escalate item は ❌ 未解消 のまま');
   assert.ok(!body.includes('🔹'), 'escalate item に 🔹 は出ない');
+  assert.ok(!body.includes('<details>'), 'escalate item は details に入らない');
+  assert.ok(body.includes('### ⚠️ 要対応'), '要対応見出しは出る');
 });
 
-test('issue #614: Plan concerns 突合で triaged item も除外され、表に🔹トリアージ済み行が残る', () => {
+test('issue #614, #626: Plan concerns 突合で triaged item も除外され、details に全文が残る', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     planConcerns: ['[plan:major] A: a'],
@@ -2081,9 +2150,12 @@ test('issue #614: Plan concerns 突合で triaged item も除外され、表に�
       },
     ],
   });
-  assert.ok(!body.includes('Plan 未解消 concerns'), 'Plan 未解消 concerns 見出しを含まない');
   assert.ok(!body.includes('- [plan:major] A: a'), '箇条書き行を含まない');
-  assert.ok(body.includes('🔹 トリアージ済み'), '表に🔹トリアージ済み行が残る');
+  assert.ok(!body.includes('Plan 未解消 concerns'), 'Plan 未解消 concerns 見出しを含まない');
+  const detailsStart = body.indexOf('<details>');
+  const detailsEnd = body.indexOf('</details>') + '</details>'.length;
+  const detailsRegion = body.slice(detailsStart, detailsEnd);
+  assert.ok(detailsRegion.includes('[plan:major] A: a'), 'details に text が残る');
 });
 
 test('issue #614: 同 text が triaged item と unchecked 非 triaged item の両方にある場合は箇条書きが残る（fail-safe）', () => {
@@ -2112,7 +2184,7 @@ test('issue #614: triaged item は「✅ Goal Ledger 解消済み」件数に含
   assert.ok(!body.includes('✅ Goal Ledger 解消済み'), 'triaged item は解消済み件数に含まれない');
 });
 
-test('issue #614: triaged 表示を含む出力に <details> を含まない', () => {
+test('issue #626: triaged 表示を含む出力は <details>/</details> がちょうど1回ずつ出現する', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     advisoryItems: [
@@ -2123,7 +2195,48 @@ test('issue #614: triaged 表示を含む出力に <details> を含まない', (
       },
     ],
   });
-  assert.ok(!body.includes('<details>'), '<details> を含まない');
+  const openCount = (body.match(/<details>/g) || []).length;
+  const closeCount = (body.match(/<\/details>/g) || []).length;
+  assert.equal(openCount, 1, '<details> はちょうど1回');
+  assert.equal(closeCount, 1, '</details> はちょうど1回');
+});
+
+test('issue #626: 配置は 要対応事項なし(トリアージ済み件数) < <details> < pr-iterate 未解消の指摘 の順で、details の前後に空行がある', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      {
+        ...concernItem('[plan:major] A: a'),
+        triaged: true,
+        triaged_evidence: 'lib/y.ts:20 は未変更。advisory で実害なし',
+      },
+    ],
+    iterateStatus: 'fix_failed',
+    iterateHistory: HIST_2,
+    iterateIterations: 2,
+  });
+  const lines = body.split('\n');
+  const headingIdx = lines.indexOf('### ✅ 要対応事項なし（トリアージ済み 1 件）');
+  const detailsIdx = lines.findIndex((l) => l.startsWith('<details>'));
+  const iterateIdx = lines.findIndex((l) => l.startsWith('### 🔁 pr-iterate 未解消の指摘'));
+  assert.ok(headingIdx >= 0 && detailsIdx > headingIdx, '見出し < details');
+  assert.ok(iterateIdx > detailsIdx, 'details < pr-iterate 未解消の指摘');
+  assert.equal(lines[detailsIdx - 1], '', 'details 直前は空行');
+  const detailsCloseIdx = lines.findIndex((l) => l === '</details>');
+  assert.equal(lines[detailsCloseIdx + 1], '', 'details 直後は空行');
+});
+
+test('issue #626: dimension:environment の triaged item は環境ノート経路のまま（件数のみ、details なし）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'ENV-X', text: 't', dimension: 'environment', severity: 'minor', checked: false, triaged: true, triaged_evidence: 'e' },
+    ],
+  });
+  assert.ok(body.includes('### ✅ 要対応事項なし'), '要対応事項なし見出し');
+  assert.ok(!body.includes('（トリアージ済み'), '件数サフィックスは付かない');
+  assert.ok(!body.includes('<details>'), 'details は出ない');
+  assert.ok(body.includes('🏗 環境ノート 1 件'), '環境ノート件数行を含む');
 });
 
 // ─── at-a-glance 表は最終状態を出す (issue #625) ───────────────────────────────────

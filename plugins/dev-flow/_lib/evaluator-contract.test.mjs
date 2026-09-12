@@ -104,6 +104,15 @@ test('[evaluator-contract] concern_resolutions contract mentions all 3 resolutio
   assert.ok(!contract.includes('{id, resolved, evidence}'));
 });
 
+test('[evaluator-contract][#626] concern_resolutions 契約は「人間の作業を含むものは triaged にしない」を含み、旧「要対応に「トリアージ済み」として残る」を含まない', () => {
+  const contract = EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions;
+  assert.ok(contract.includes('人間の作業（apply 前の手動検証・オペレータ確認依頼等）を含むものは triaged にしない'));
+  assert.ok(contract.includes('triaged も要対応から除外され'));
+  assert.ok(!contract.includes('triaged は要対応に「トリアージ済み」として残る'));
+  assert.ok(evaluatorMd.includes('人間の作業（apply 前の手動検証・オペレータ確認依頼等）を含むものは triaged にしない'));
+  assert.ok(!evaluatorMd.includes('triaged は要対応に「トリアージ済み」として残る'));
+});
+
 test('[normalizeConcernResolution] normalizes a well-formed triaged item', () => {
   const result = normalizeConcernResolution({ id: 'CONCERN-1', resolution: 'triaged', evidence: 'e' });
   assert.deepEqual(result, { id: 'CONCERN-1', resolution: 'triaged', evidence: 'e' });
