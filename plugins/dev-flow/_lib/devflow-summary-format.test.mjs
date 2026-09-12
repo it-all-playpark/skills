@@ -1117,6 +1117,130 @@ test('evalStaleness=bogus -> out-of-enum は validation error', () => {
   }, /invalid evalStaleness/);
 });
 
+// ─── issue #631 ────────────────────────────────────────────────────────────
+
+function make12StaleDiffFiles() {
+  return Array.from({ length: 12 }, (_, i) => ({
+    path: `docs/f${String(i + 1).padStart(2, '0')}.md`,
+    insertions: 0,
+    deletions: 10,
+  }));
+}
+
+test('evalStaleness=hash_mismatch + staleDiffFiles 12件 -> 両 short hash・差分12件・先頭10件+他2件を含み、警告行直後が差分行・その次が空行', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: '7d79f517' + 'a'.repeat(32),
+    prDiffHash: 'be8e7f58' + 'b'.repeat(32),
+    staleDiffFiles: make12StaleDiffFiles(),
+  });
+  const lines = body.split('\n');
+  assert.ok(body.includes('eval 7d79f517 / PR 直前 be8e7f58'), 'short hash を含む');
+  assert.ok(body.includes('差分 12 件'), '件数を含む');
+  assert.ok(body.includes('docs/f01.md (+0/-10)'), '先頭ファイルを含む');
+  assert.ok(body.includes('docs/f10.md (+0/-10)'), '10件目を含む');
+  assert.ok(!body.includes('docs/f11.md'), '11件目は含まない');
+  assert.ok(!body.includes('docs/f12.md'), '12件目は含まない');
+  assert.ok(body.includes('他 2 件'), '残数を含む');
+  assert.ok(body.includes('Evaluate は古い tree に対して実行された'), '既存文字列を含む');
+  const warnIdx = lines.findIndex(l => l.includes('Evaluate は古い tree に対して実行された'));
+  assert.ok(lines[warnIdx].startsWith('> ⚠️'), '警告行は ⚠️ blockquote');
+  assert.ok(lines[warnIdx + 1].startsWith('> '), '差分行は警告行の直後で blockquote 継続');
+  assert.equal(lines[warnIdx + 2], '', 'その次は空行');
+});
+
+test('evalStaleness=hash_mismatch + staleDiffFiles=null -> 両 hash 全文と手動確認コマンドを含む', () => {
+  const evalFull = '7d79f517' + 'a'.repeat(32);
+  const prFull = 'be8e7f58' + 'b'.repeat(32);
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: evalFull,
+    prDiffHash: prFull,
+    staleDiffFiles: null,
+  });
+  assert.ok(body.includes(evalFull), 'eval hash 全文を含む');
+  assert.ok(body.includes(prFull), 'PR hash 全文を含む');
+  assert.ok(body.includes(`git diff --stat ${evalFull} ${prFull}`), '手動確認コマンドを含む');
+  assert.ok(body.includes('手動確認'), '手動確認文言を含む');
+});
+
+test('evalStaleness=hash_mismatch + staleDiffFiles=[] -> 差分 0 件を含む', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: '7d79f517' + 'a'.repeat(32),
+    prDiffHash: 'be8e7f58' + 'b'.repeat(32),
+    staleDiffFiles: [],
+  });
+  assert.ok(body.includes('差分 0 件'), '0 件表記を含む');
+});
+
+test('evalStaleness=hash_reconverged -> ℹ️ 行に PR head short hash を含み、⚠️ 警告・stale 文言は出ず一時差分件数を含む', () => {
+  const sameHash = '7d79f517' + 'a'.repeat(32);
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalStaleness: 'hash_reconverged',
+    evalDiffHash: sameHash,
+    prDiffHash: 'be8e7f58' + 'b'.repeat(32),
+    prHeadTreeOid: sameHash,
+    staleDiffFiles: [
+      { path: 'docs/a.md', insertions: 1, deletions: 0 },
+      { path: 'docs/b.md', insertions: 0, deletions: 1 },
+    ],
+  });
+  const lines = body.split('\n');
+  const infoIdx = lines.findIndex(l => l.includes('PR head tree は評価済み tree と一致'));
+  assert.ok(infoIdx >= 0, 'ℹ️ 行が存在する');
+  assert.ok(lines[infoIdx].startsWith('> ℹ️'), 'ℹ️ blockquote で始まる');
+  assert.ok(lines[infoIdx].includes('PR head 7d79f517'), 'PR head short hash を含む');
+  assert.ok(!body.includes('Evaluate は古い tree に対して実行された'), 'hash_mismatch 警告は出ない');
+  const tableRowIdx = lines.findIndex(l => l.startsWith('| ') && l.includes('\u{1F537} **REVIEW**'));
+  const gatePolicyIdx = lines.findIndex(l => l.startsWith('gate_policy:'));
+  const noWarnInRange = lines.slice(tableRowIdx + 1, gatePolicyIdx).every(l => !l.startsWith('> ⚠️'));
+  assert.ok(noWarnInRange, '2b 節の範囲に ⚠️ 行が無い');
+  assert.ok(body.includes('一時差分 2 件'), '一時差分件数を含む');
+});
+
+test('evalStaleness=hash_reconverged -> 警告行が at-a-glance テーブルより後・gate_policy 行より前、テーブル末尾との間に空行がある', () => {
+  const sameHash = '7d79f517' + 'a'.repeat(32);
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    evalStaleness: 'hash_reconverged',
+    evalDiffHash: sameHash,
+    prDiffHash: 'be8e7f58' + 'b'.repeat(32),
+    prHeadTreeOid: sameHash,
+    staleDiffFiles: [{ path: 'docs/a.md', insertions: 1, deletions: 0 }],
+  });
+  const lines = body.split('\n');
+  const tableRowIdx = lines.findIndex(l => l.startsWith('| ') && l.includes('\u{1F537} **REVIEW**'));
+  const infoIdx = lines.findIndex(l => l.includes('PR head tree は評価済み tree と一致'));
+  const gatePolicyIdx = lines.findIndex(l => l.startsWith('gate_policy:'));
+  assert.ok(tableRowIdx >= 0 && infoIdx >= 0 && gatePolicyIdx >= 0, '各行が存在する');
+  assert.ok(infoIdx > tableRowIdx, 'ℹ️ 行はテーブル行より後');
+  assert.ok(infoIdx < gatePolicyIdx, 'ℹ️ 行は gate_policy 行より前');
+  assert.equal(lines[tableRowIdx + 1], '', 'テーブル直後は空行');
+});
+
+test('evalStaleness=bogus は hash_reconverged 追加後も invalid throw を維持する', () => {
+  assert.throws(() => {
+    buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      evalStaleness: 'bogus',
+    });
+  }, /invalid evalStaleness/);
+});
+
+test('evalStaleness=hash_reconverged は enum 検証で throw しない', () => {
+  assert.doesNotThrow(() => {
+    buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      evalStaleness: 'hash_reconverged',
+    });
+  });
+});
+
 // ─── ui-verify 結果表示 (issue #285) ─────────────────────────────────────────
 
 test('uiVerify=findings, uiVerifyMode=scenario -> ui-verify 結果行が出る', () => {

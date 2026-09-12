@@ -242,9 +242,42 @@ latest_entry() {
     [ "$eval_staleness" = "none" ]
 }
 
+@test "--eval-staleness hash_reconverged recorded as string" {
+    run "$SCRIPT" log dev-flow success --eval-staleness hash_reconverged
+    [ "$status" -eq 0 ]
+
+    entry_file=$(latest_entry)
+    [ -n "$entry_file" ]
+
+    eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
+    [ "$eval_staleness" = "hash_reconverged" ]
+
+    eval_staleness_type=$(jq '.telemetry.eval_staleness | type' "$entry_file")
+    [ "$eval_staleness_type" = '"string"' ]
+}
+
+@test "--eval-staleness accepts all 5 enum values" {
+    for value in none hash_mismatch hash_reconverged iterate_incomplete iterate_fixed; do
+        run "$SCRIPT" log dev-flow success --eval-staleness "$value"
+        [ "$status" -eq 0 ]
+
+        entry_file=$(latest_entry)
+        [ -n "$entry_file" ]
+
+        eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
+        [ "$eval_staleness" = "$value" ]
+    done
+}
+
 @test "--eval-staleness bogus exits non-zero (out-of-enum rejection)" {
     run "$SCRIPT" log dev-flow success --eval-staleness bogus
     [ "$status" -ne 0 ]
+}
+
+@test "--eval-staleness bogus error message includes hash_reconverged (enum list updated)" {
+    run "$SCRIPT" log dev-flow success --eval-staleness bogus
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"hash_reconverged"* ]]
 }
 
 @test "no --eval-staleness and no other telemetry -> no telemetry key" {

@@ -10,7 +10,8 @@
 //
 //   (1) dispatch pin: label==='gh-pr-view' の呼び出しが agentType:'dev-runner-haiku-ro'・
 //       phase:'Merge tier'・schema（PR_META: required ['ok'], properties.mergeable/mergeStateStatus/
-//       error）・prompt に `gh pr view <pr番号> --json mergeable,mergeStateStatus` を含むことを検証する。
+//       error/headRefOid）・prompt に `gh pr view <pr番号> --json mergeable,mergeStateStatus,headRefOid`
+//       を含むことを検証する（headRefOid は hash_reconverged 判定の証人、issue #631）。
 //   (2) conflicting(mergeable=CONFLICTING) → merge_tier HOLD、reasons に conflict 文言。
 //   (3) conflicting(mergeStateStatus=DIRTY, mergeable 未設定) → merge_tier HOLD。
 //   (4) clean(mergeable=MERGEABLE) → merge_tier は conflict 起因で HOLD にならない（no-op）。
@@ -160,8 +161,12 @@ test('[gh-pr-view][1] dispatch: agentType=dev-runner-haiku-ro, phase=Merge tier,
     `PR_META.properties に mergeable/mergeStateStatus/error が揃っていない: ${JSON.stringify(Object.keys(c.schema.properties ?? {}))}`,
   );
   assert.ok(
-    c.prompt.includes('gh pr view 405 --json mergeable,mergeStateStatus'),
-    `gh-pr-view の prompt に gh pr view コマンドが含まれていない:\n${c.prompt}`,
+    'headRefOid' in c.schema.properties,
+    `PR_META.properties に headRefOid が無い（issue #631）: ${JSON.stringify(Object.keys(c.schema.properties ?? {}))}`,
+  );
+  assert.ok(
+    c.prompt.includes('gh pr view 405 --json mergeable,mergeStateStatus,headRefOid'),
+    `gh-pr-view の prompt に headRefOid を含む gh pr view コマンドが含まれていない（issue #631）:\n${c.prompt}`,
   );
 });
 
