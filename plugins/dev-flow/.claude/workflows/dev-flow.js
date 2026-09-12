@@ -1200,6 +1200,9 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_veri
 // 同値性は _lib/final-ci-routing.test.mjs が pin する。
 const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
 
+// eval_staleness の閉じた enum（issue #288 の 4 値 + issue #631 の hash_reconverged）。
+const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
+
 // HOLD 理由配列（[{ reason, kind }]）から代表 kind を集約する純関数。
 // いずれかが 'human_judgment' なら 'human_judgment'（human 判断が 1 件でもあれば全体を human 扱いにする
 // fail-closed 側の集約）。全件 'deterministic_recheck' ならそのまま。空/非配列は null（HOLD 以外）。
@@ -1256,10 +1259,22 @@ function classifyMergeableState(meta) {
 //   決定論的 HOLD（fail-safe、allowlist しない厳格判定）。blast-radius クラス（issue #319）—
 //   merge 直前の最終ゲートが LGTM 未到達のまま AUTO/REVIEW を出すと既知の指摘が未解消のまま
 //   出荷されるため、gate_policy で緩和しない（軸A 不変）。
-// s.evalStaleness (string): 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'
-//   （issue #288 の 4 値）。'hash_mismatch' のみ HOLD 追加（Evaluate 対象 tree と PR tree の
-//   乖離）。'iterate_incomplete' は iterateStatus !== 'lgtm' と必ず同時発生するため個別条件に
-//   しない。'none'/'iterate_fixed' は tier に影響しない。
+// s.evalStaleness (string): 'none'|'hash_mismatch'|'hash_reconverged'|'iterate_incomplete'|
+//   'iterate_fixed'（issue #288 の 4 値 + issue #631 の hash_reconverged。EVAL_STALENESS_VALUES）。
+//   'hash_mismatch' のみ HOLD 追加（Evaluate 対象 tree と PR tree の乖離）。'hash_reconverged' は
+//   PR 直前に一時乖離したが PR head tree === 評価済み tree === merge 対象 tree を決定論確認済み
+//   （issue #631）— HOLD しない。gate が守る性質「merge 対象 tree = 評価済み tree」を merge 対象
+//   そのもので確認しているため gate_policy に依らない（'none' と reasons/holdReasons/holdKind が
+//   完全一致する no-op）。'iterate_incomplete' は iterateStatus !== 'lgtm' と必ず同時発生するため
+//   個別条件にしない。'none'/'iterate_fixed'/'hash_reconverged' は tier に影響しない。
+//   'hash_mismatch' は iterate_* より優先（'none' からのみ昇格、#288 AC-2）。
+// s.evalDiffHash / s.prDiffHash (string|null): 'hash_mismatch' HOLD reason に載せる評価済み tree /
+//   PR 直前 tree の hash（short 8 桁で表示。null は「不明」表記）。
+// s.staleDiffFiles (Array<{path,insertions,deletions}>|null|undefined): 'hash_mismatch' HOLD reason
+//   に載せる差分ファイル一覧（tree-diff-stat.mjs の解析結果）。配列なら先頭 10 件 + 件数 + 「他 N 件」
+//   （0 件時は「numstat 空」注記）、null/undefined は取得失敗として両 hash 全文 + 手動確認コマンドを出す。
+// s.prHeadTreeOid (string|null|undefined): 与えられれば 'hash_mismatch' HOLD reason に PR head tree
+//   の short hash を追記する（issue #631）。
 // s.finalAcReconcile (optional 'skipped'|'reverified'|'unavailable'): Final AC reconcile phase
 //   （issue #331）の実行結果。fix 適用 run での既存 AC の最終 PR tree に対する再検証結果。
 //   'unavailable' のみ専用 HOLD reason を追記する（軸A 決定論ゲート、gate_policy に依らず不変）。
@@ -1335,6 +1350,9 @@ function classifyMergeTier(s) {
   if (s.finalReconcile === 'ci_verified' && (s.finalCi == null || s.finalCi.verified !== true)) {
     throw new Error('classifyMergeTier: finalReconcile=ci_verified requires finalCi.verified===true');
   }
+  if (s.evalStaleness != null && !EVAL_STALENESS_VALUES.includes(s.evalStaleness)) {
+    throw new Error('classifyMergeTier: invalid evalStaleness: ' + s.evalStaleness);
+  }
   // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
   const blockingReasons = [];
   const pushBlocking = (reason, kind) => blockingReasons.push({ reason, kind });
@@ -1372,7 +1390,26 @@ function classifyMergeTier(s) {
   if (s.finalTestGreen === false) pushBlocking('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）', 'human_judgment');
   if (s.finalAcReconcile === 'unavailable') pushBlocking('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）', 'human_judgment');
   if (s.iterateStatus !== 'lgtm') pushBlocking(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`, 'human_judgment');
-  if (s.evalStaleness === 'hash_mismatch') pushBlocking('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）', 'human_judgment');
+  if (s.evalStaleness === 'hash_mismatch') {
+    const short8 = (h) => (typeof h === 'string' && h.length > 0) ? h.slice(0, 8) : '不明';
+    if (Array.isArray(s.staleDiffFiles)) {
+      const n = s.staleDiffFiles.length;
+      const head = s.staleDiffFiles.slice(0, 10)
+        .map((f) => `${f.path} (+${f.insertions}/-${f.deletions})`).join(', ');
+      const list = n === 0 ? '（numstat 空 — mode/permission のみの変更等）' : head;
+      const rest = n > 10 ? ` 他 ${n - 10} 件` : '';
+      const prHeadPart = typeof s.prHeadTreeOid === 'string' ? ' / PR head ' + short8(s.prHeadTreeOid) : '';
+      pushBlocking(
+        `Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch: eval ${short8(s.evalDiffHash)} / PR 直前 ${short8(s.prDiffHash)}${prHeadPart}）— 差分 ${n} 件: ${list}${rest} — 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）`,
+        'human_judgment',
+      );
+    } else {
+      pushBlocking(
+        `Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch: eval ${s.evalDiffHash ?? '不明'} / PR 直前 ${s.prDiffHash ?? '不明'}）— 差分ファイル一覧の取得に失敗。\`git diff --stat ${s.evalDiffHash ?? '<eval>'} ${s.prDiffHash ?? '<pr>'}\` を手動確認 — 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）`,
+        'human_judgment',
+      );
+    }
+  }
   if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
     pushBlocking(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`, 'human_judgment');
   }
@@ -2470,6 +2507,54 @@ function mdCell(v) {
   return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 }
 // ==== END inline: _lib/md-cell.mjs ====
+// ==== BEGIN inline: _lib/tree-diff-stat.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// tree-diff-stat: `git diff --numstat A B` の stdout 行配列を解析する純粋関数。
+// I/O なし、非決定性なし。同入力 -> byte 一致。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+const TREE_DIFF_STAT_MAX_FILES = 50;
+
+/**
+ * `git diff --numstat A B` の stdout 各行を解析する。
+ * 各行は `<insertions>\t<deletions>\t<path>` 形式。binary 差分は insertions/deletions が
+ * `-` になり 0 として扱う。50 件で打ち切り、超過分は truncated: true で示す。
+ * @param {string[]} lines
+ * @returns {{ files: Array<{path: string, insertions: number, deletions: number}>, truncated: boolean }}
+ */
+function parseTreeDiffStat(lines) {
+  if (!Array.isArray(lines)) return { files: [], truncated: false };
+
+  const files = [];
+  let truncated = false;
+
+  for (const line of lines) {
+    if (typeof line !== 'string') continue;
+    if (line.trim() === '') continue;
+
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+
+    const [rawInsertions, rawDeletions, ...rest] = parts;
+    let path = rest.join('\t');
+    path = path.replace(/\r$/, '');
+    if (path === '') continue;
+
+    if (files.length >= TREE_DIFF_STAT_MAX_FILES) {
+      truncated = true;
+      continue;
+    }
+
+    const insertions = rawInsertions === '-' ? 0 : (Number.parseInt(rawInsertions, 10) || 0);
+    const deletions = rawDeletions === '-' ? 0 : (Number.parseInt(rawDeletions, 10) || 0);
+
+    files.push({ path, insertions, deletions });
+  }
+
+  return { files, truncated };
+}
+// ==== END inline: _lib/tree-diff-stat.mjs ====
 
 // ==== BEGIN inline: _lib/devflow-summary-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // buildDevflowSummaryBody: dev-flow の終端サマリー markdown を生成する純粋関数。
@@ -2502,7 +2587,11 @@ function mdCell(v) {
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ（at-a-glance 表では finalReconcile が 'ci_verified'/'reverified' のとき最終状態を優先。issue #625）
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）（at-a-glance 表では iterate_fixed+lgtm+finalAcReconcile=reverified の fail を '✅ pass (fix 後 LGTM)' と表示。issue #625）
- * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'（issue #288）
+ * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'hash_reconverged'|'iterate_incomplete'|'iterate_fixed'（issue #288, #631）
+ * @param {string|null|undefined} [opts.evalDiffHash] - Evaluate 時点の tree diff hash（issue #631）
+ * @param {string|null|undefined} [opts.prDiffHash] - PR phase 直前の tree diff hash（issue #631）
+ * @param {Array<{path:string,insertions:number,deletions:number}>|null|undefined} [opts.staleDiffFiles] - hash_mismatch/hash_reconverged 時の eval→PR 直前の差分ファイル一覧。null は取得失敗（issue #631）
+ * @param {string|null|undefined} [opts.prHeadTreeOid] - PR head commit の tree OID（issue #631）
  * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
@@ -2532,6 +2621,10 @@ function buildDevflowSummaryBody({
   testGreen,
   evalVerdict,
   evalStaleness,
+  evalDiffHash,
+  prDiffHash,
+  staleDiffFiles,
+  prHeadTreeOid,
   iterateFixesApplied,
   uiVerify,
   uiVerifyMode,
@@ -2544,7 +2637,7 @@ function buildDevflowSummaryBody({
   iterateHistory,
   iterateIterations,
 }) {
-  const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
+  const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
     throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
   }
@@ -2650,16 +2743,36 @@ function buildDevflowSummaryBody({
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
 
-  // 2b. eval_staleness 警告（at-a-glance テーブル直後・gate_policy 行前。issue #288）
+  // 2b. eval_staleness 警告（at-a-glance テーブル直後・gate_policy 行前。issue #288, #631）
+  const short8 = (h) => (typeof h === 'string' && h.length > 0) ? h.slice(0, 8) : '不明';
+  const renderDiffFiles = (files) => {
+    if (files.length === 0) return '（numstat 空 — mode/permission のみの変更等）';
+    const shown = files.slice(0, 10).map((f) => `${f.path} (+${f.insertions}/-${f.deletions})`).join(', ');
+    const rest = files.length - 10;
+    return rest > 0 ? `${shown} 他 ${rest} 件` : shown;
+  };
   if (evalStaleness === 'hash_mismatch') {
-    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('> ⚠️ **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致: eval ' + short8(evalDiffHash) + ' / PR 直前 ' + short8(prDiffHash) + '。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    if (Array.isArray(staleDiffFiles)) {
+      lines.push('> 差分 ' + staleDiffFiles.length + ' 件: ' + renderDiffFiles(staleDiffFiles));
+    } else {
+      lines.push('> 差分ファイル一覧の取得に失敗 — `git diff --stat ' + (evalDiffHash ?? '<eval>') + ' ' + (prDiffHash ?? '<pr>') + '` を手動確認');
+    }
+    lines.push('');
+  } else if (evalStaleness === 'hash_reconverged') {
+    lines.push('> ℹ️ **PR 直前に tree が一時乖離したが PR head tree は評価済み tree と一致**（eval ' + short8(evalDiffHash) + ' / PR 直前 ' + short8(prDiffHash) + ' / PR head ' + short8(prHeadTreeOid) + '。merge 対象 tree = 評価済み tree を決定論確認済みのため HOLD しない — eval_staleness=hash_reconverged）');
+    if (Array.isArray(staleDiffFiles)) {
+      lines.push('> 一時差分 ' + staleDiffFiles.length + ' 件: ' + renderDiffFiles(staleDiffFiles));
+    } else {
+      lines.push('> 一時差分の一覧は取得失敗');
+    }
     lines.push('');
   } else if (evalStaleness === 'iterate_incomplete') {
-    lines.push('> \u26a0\ufe0f **pr-iterate が LGTM 以外で終端した**（fix 適用後の tree に対する再評価・LGTM が得られていない。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('> ⚠️ **pr-iterate が LGTM 以外で終端した**（fix 適用後の tree に対する再評価・LGTM が得られていない。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
     lines.push('');
   } else if (evalStaleness === 'iterate_fixed') {
     const fixCount = (typeof iterateFixesApplied === 'number' && iterateFixesApplied >= 0) ? String(iterateFixesApplied) : '不明';
-    lines.push('> \u2139\ufe0f **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
+    lines.push('> ℹ️ **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
     lines.push('');
   }
 
@@ -4040,6 +4153,17 @@ const DIFFHASH = {
   type: 'object', required: ['hash', 'empty'],
   properties: { hash: { type: 'string' }, empty: { type: 'boolean' }, epoch: { type: 'number' } },
 }
+// TREE_DIFF_LINES: `git -C <WT> diff --numstat <eval> <pr>` の stdout 各行を verbatim 転写した read-only exec-proxy 応答（issue #631）。
+// required は 'ok' のみ（fail-open: ok:false / schema 不一致 / null は staleDiffFiles=null）。
+const TREE_DIFF_LINES = {
+  type: 'object', required: ['ok'],
+  properties: { ok: { type: 'boolean' }, lines: { type: 'array', items: { type: 'string' } }, error: { type: 'string' } },
+}
+// TREE_OID: `git -C <WT> rev-parse <sha>^{tree}` の stdout（tree OID 1 行）を verbatim 転写した read-only exec-proxy 応答（issue #631）。
+const TREE_OID = {
+  type: 'object', required: ['ok'],
+  properties: { ok: { type: 'boolean' }, tree: { type: ['string', 'null'] }, error: { type: 'string' } },
+}
 // SECFLOOR: Security floor 統合 exec-proxy (`_shared/scripts/secfloor-classify.sh`) の応答 schema
 // (issue #544, S1)。`risk` のみ required（ok:boolean / hits:array 必須、issue #617）— risk は
 // fail-closed フィールドなので、proxy が payload をネストする等の形状不一致を schema 契約違反として
@@ -4158,13 +4282,14 @@ const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { t
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
 const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' }, epoch: { type: 'number' } } }
-// PR_META: gh pr view --json mergeable,mergeStateStatus の read-only exec-proxy 結果 (issue #405)。
+// PR_META: gh pr view --json mergeable,mergeStateStatus,headRefOid の read-only exec-proxy 結果 (issue #405, #631)。
 const PR_META = {
   type: 'object', required: ['ok'],
   properties: {
     ok: { type: 'boolean' },
     mergeable: { type: ['string', 'null'] },
     mergeStateStatus: { type: ['string', 'null'] },
+    headRefOid: { type: ['string', 'null'] },
     error: { type: 'string' },
   },
 }
@@ -5192,6 +5317,7 @@ let state = {
   EFFECTIVE_SHAPE: null, EVAL_PASSES: null, runEval: null,
   dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0,
   unsatisfiedAc: false, evalDiffHash: null, secDiffHash: null,
+  prDiffHash: null, staleDiffFiles: null, prHeadTreeOid: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
@@ -6150,15 +6276,34 @@ feedClockMark('evaluate_end', epochResOf(state.evalResult))
 // PR 直前の diff hash を取得し、Evaluate 時点と突合（issue #215）。
 // 判定は hash 文字列の完全一致のみ（0/非0 二値。比率閾値なし）。
 // micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
+// eval_staleness は 5 値（none / hash_mismatch / hash_reconverged / iterate_incomplete /
+// iterate_fixed）。hash_reconverged への置換は Merge tier phase の gh-pr-view 直後で行う（issue #631）。
 let evalStaleness = 'none'
 if (state.evalDiffHash != null) {
   // throw は failOpenAgent で吸収（issue #605）。read-only probe のため契約違反リトライ opt-in
   const dhPr = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-pr', phase: 'PR', retryOnContractViolation: true })
   const prDiffHash = (dhPr && typeof dhPr.hash === 'string') ? dhPr.hash : null
+  state.prDiffHash = prDiffHash
   if (prDiffHash == null) log('⚠️ diff-hash-pr の取得に失敗 — stale-eval 検出は skip（summary 警告は付けない）')
   if (prDiffHash != null && state.evalDiffHash !== prDiffHash) {
     evalStaleness = 'hash_mismatch'
     log('⚠️ Evaluate 時点と PR 直前の diff hash が不一致 — 終端サマリーに stale-eval 警告を付記する（issue #215/#288 hash_mismatch）')
+    // issue #631: 何が乖離したかを決定論取得する（tree OID は object DB に残る）。取得失敗は fail-open（staleDiffFiles=null）。
+    const numstat = await failOpenAgent(
+      `次のコマンドを **先頭トークンが git の bare 単文** で 1 回だけ実行し、stdout の各行を配列 lines に一字一句そのまま（要約・整形・並べ替え・件数制限をせず）入れて {"ok": true, "lines": [...]} で返せ`
+      + `（stdout が空なら {"ok": true, "lines": []}。exit 非0・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。`
+      + `cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクトは禁止。-C で worktree を渡しているため cd は不要）:\n`
+      + `git -C ${WT} diff --numstat ${state.evalDiffHash} ${prDiffHash}`,
+      { agentType: 'dev-runner-haiku-ro', schema: TREE_DIFF_LINES, label: 'tree-diff-numstat', phase: 'PR', retryOnContractViolation: true },
+    )
+    if (numstat && numstat.ok === true && Array.isArray(numstat.lines)) {
+      const parsed = parseTreeDiffStat(numstat.lines)
+      state.staleDiffFiles = parsed.files
+      log(`tree-diff-numstat: eval ${state.evalDiffHash.slice(0, 8)} → PR 直前 ${prDiffHash.slice(0, 8)} の差分 ${parsed.files.length} 件${parsed.truncated ? `（${TREE_DIFF_STAT_MAX_FILES} 件で打ち切り）` : ''}`)
+    } else {
+      state.staleDiffFiles = null
+      log(`⚠️ tree-diff-numstat の取得に失敗（${numstat?.error ?? 'null / schema 不一致'}）— HOLD 理由には両 hash 全文と手動確認手順を載せる（fail-open）`)
+    }
   }
 }
 phase('PR')
@@ -6543,15 +6688,47 @@ const escalateCount = policyAdvisoryItems(state.ledger, GATE_POLICY).filter((it)
 // label は 'gh-pr-view'（'pr' 始まりにしない — 既存 routing test 群が label.startsWith('pr') を
 // PR 作成 phase の呼び出し数カウントに使っており、'pr' 始まりの label を追加すると衝突するため。
 // lite-route-routing.test.mjs の同種コメント参照）。
+// headRefOid は hash_reconverged 判定の証人（issue #631）。gh 追加呼び出しなし
 const prMeta = await trackedAgent(
-  `cd ${WT} で作業。次を実行し **stdout の JSON object を** {"ok": true, "mergeable": <値>, "mergeStateStatus": <値>} に包んで返せ`
+  `cd ${WT} で作業。次を実行し **stdout の JSON object を** {"ok": true, "mergeable": <値>, "mergeStateStatus": <値>, "headRefOid": <値>} に包んで返せ`
   + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-  + `gh pr view ${pr.pr_number} --json mergeable,mergeStateStatus`,
+  + `gh pr view ${pr.pr_number} --json mergeable,mergeStateStatus,headRefOid`,
   { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'gh-pr-view', phase: 'Merge tier' },
 )
 const mergeableState = classifyMergeableState(prMeta)
 if (mergeableState === 'conflicting') log('gh-pr-view: base branch と conflict 検出 — merge tier を HOLD 強制')
 else if (mergeableState === 'unknown') log(`⚠️ gh-pr-view: mergeable 状態を確定できず（${prMeta?.error ?? 'null / UNKNOWN'}）— conflict gate は fail-open（HOLD しない。definitive CONFLICTING/DIRTY のみ HOLD）`)
+// issue #631: hash_mismatch の再収束判定。証人は PR head tree。3 条件 (i) evalStaleness==='hash_mismatch'
+// (ii) prHeadTreeOid===evalDiffHash (iii) mergeDiffHash===evalDiffHash がすべて成立するときのみ
+// hash_reconverged へ置換し HOLD を外す（gate が守る性質「merge 対象 tree = 評価済み tree」を merge 対象
+// そのもので決定論確認しているため gate_policy に依らない）。headRefOid 取得失敗・mergeDiffHash null
+// （#377 gating で未計算 / 取得失敗）・rev-parse 失敗はすべて hash_mismatch 維持（HOLD）。
+// iterate_* との優先順位（hash_mismatch は 'none' からのみ昇格、#288 AC-2）はここで変えない。
+if (evalStaleness === 'hash_mismatch') {
+  const headRefOid = (prMeta && prMeta.ok === true && typeof prMeta.headRefOid === 'string' && /^[0-9a-f]{40}$/i.test(prMeta.headRefOid)) ? prMeta.headRefOid : null
+  if (headRefOid == null) {
+    log('⚠️ hash_reconverged 判定: gh-pr-view から headRefOid を取得できず — hash_mismatch 維持（HOLD）')
+  } else if (mergeDiffHash == null) {
+    log('⚠️ hash_reconverged 判定: merge 対象 tree の hash が未計算/取得失敗（mergeDiffHash=null）— head-tree-oid probe は発行せず hash_mismatch 維持（HOLD）')
+  } else {
+    const headTree = await failOpenAgent(
+      `次のコマンドを **先頭トークンが git の bare 単文** で 1 回だけ実行し、stdout の 1 行（tree OID）を {"ok": true, "tree": "<stdout をそのまま>"} で返せ`
+      + `（exit 非0・stdout 空・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。fetch/pull はするな。`
+      + `cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結・パイプは禁止。-C で worktree を渡しているため cd は不要）:\n`
+      + `git -C ${WT} rev-parse ${headRefOid}^{tree}`,
+      { agentType: 'dev-runner-haiku-ro', schema: TREE_OID, label: 'head-tree-oid', phase: 'Merge tier', retryOnContractViolation: true },
+    )
+    state.prHeadTreeOid = (headTree && headTree.ok === true && typeof headTree.tree === 'string' && headTree.tree.trim() !== '') ? headTree.tree.trim() : null
+    if (state.prHeadTreeOid == null) {
+      log(`⚠️ hash_reconverged 判定: head-tree-oid の取得に失敗（${headTree?.error ?? 'null / schema 不一致'}）— hash_mismatch 維持（HOLD）`)
+    } else if (state.prHeadTreeOid === state.evalDiffHash && mergeDiffHash === state.evalDiffHash) {
+      evalStaleness = 'hash_reconverged'
+      log(`ℹ️ hash_reconverged: PR head tree ${state.prHeadTreeOid.slice(0, 8)} と merge 対象 tree が評価済み tree と一致 — PR 直前の乖離（${state.staleDiffFiles ? state.staleDiffFiles.length + ' 件' : '一覧取得失敗'}）は一時的。HOLD 理由から除外（issue #631）`)
+    } else {
+      log(`hash_reconverged 不成立（eval ${state.evalDiffHash.slice(0, 8)} / PR head ${state.prHeadTreeOid.slice(0, 8)} / merge 対象 ${mergeDiffHash.slice(0, 8)}）— hash_mismatch 維持（HOLD）`)
+    }
+  }
+}
 const mergeTier = classifyMergeTier({
   shape: state.EFFECTIVE_SHAPE,
   converged: isConvergedUnderPolicy(state.ledger, GATE_POLICY),
@@ -6567,6 +6744,10 @@ const mergeTier = classifyMergeTier({
   finalTestGreen,
   iterateStatus: iterate?.status ?? null,
   evalStaleness,
+  evalDiffHash: state.evalDiffHash,
+  prDiffHash: state.prDiffHash,
+  staleDiffFiles: state.staleDiffFiles,
+  prHeadTreeOid: state.prHeadTreeOid,
   finalAcReconcile,
   testsurfUncleared: state.ledger.items.filter((it) => it.source === 'seed' && it.dimension === 'test-integrity' && !it.checked).map((it) => it.id),
   mergeableState,
@@ -6641,6 +6822,10 @@ const summaryBody = buildDevflowSummaryBody({
   testGreen: state.val?.green ?? null,
   evalVerdict: state.evalResult?.verdict ?? null,
   evalStaleness,
+  evalDiffHash: state.evalDiffHash,
+  prDiffHash: state.prDiffHash,
+  staleDiffFiles: state.staleDiffFiles,
+  prHeadTreeOid: state.prHeadTreeOid,
   iterateFixesApplied: iterate?.fixes_applied ?? null,
   iterateStatus: iterate?.status ?? null,
   iterateHistory: iterate?.history ?? null,

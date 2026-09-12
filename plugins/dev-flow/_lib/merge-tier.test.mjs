@@ -13,6 +13,7 @@ import {
   classifyMergeableState,
   HOLD_REASON_KINDS,
   aggregateHoldKind,
+  EVAL_STALENESS_VALUES,
 } from './merge-tier.mjs';
 
 // ---- Task 1: DANGER_CLASSES + seedSecurityLedger ----
@@ -1127,4 +1128,130 @@ test('classifyMergeTier: finalCi 未指定の既存 HOLD/AUTO/REVIEW ケース�
   assert.equal(review.tier, 'REVIEW');
   assert.deepEqual(review.holdReasons, []);
   assert.equal(review.holdKind, null);
+});
+
+// ---- issue #631: EVAL_STALENESS_VALUES / hash_mismatch 差分埋め込み / hash_reconverged ----
+
+test('EVAL_STALENESS_VALUES は 5 値順で一致', () => {
+  assert.deepEqual(EVAL_STALENESS_VALUES, [
+    'none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed',
+  ]);
+});
+
+test('classifyMergeTier: hash_mismatch + staleDiffFiles 2件 → HOLD かつ reason に両 short hash と各 path と 差分件数 を含み 他 を含まない', () => {
+  const r = classifyMergeTier(baseCleanInput({
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: '7d79f517aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    prDiffHash: 'be8e7f58bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    staleDiffFiles: [
+      { path: 'docs/a.md', insertions: 0, deletions: 500 },
+      { path: 'docs/b.md', insertions: 0, deletions: 360 },
+    ],
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const hashReason = r.reasons.find((x) => /hash/i.test(x));
+  assert.ok(hashReason, `reasons に hash 関連文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
+  assert.ok(hashReason.includes('7d79f517'), `short hash(eval) を含むべきだが: ${hashReason}`);
+  assert.ok(hashReason.includes('be8e7f58'), `short hash(pr) を含むべきだが: ${hashReason}`);
+  assert.ok(hashReason.includes('docs/a.md (+0/-500)'), `path(a) を含むべきだが: ${hashReason}`);
+  assert.ok(hashReason.includes('docs/b.md (+0/-360)'), `path(b) を含むべきだが: ${hashReason}`);
+  assert.ok(hashReason.includes('差分 2 件'), `差分件数を含むべきだが: ${hashReason}`);
+  assert.ok(!hashReason.includes('他 '), `他 N 件 を含むべきでないが: ${hashReason}`);
+});
+
+test('classifyMergeTier: hash_mismatch + staleDiffFiles 12件 → 先頭10件を含み11/12件目を含まず 他 2件 を含む', () => {
+  const files = Array.from({ length: 12 }, (_, i) => ({ path: `docs/f${i}.md`, insertions: 1, deletions: 1 }));
+  const r = classifyMergeTier(baseCleanInput({
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: '1'.repeat(40),
+    prDiffHash: '2'.repeat(40),
+    staleDiffFiles: files,
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const hashReason = r.reasons.find((x) => /hash/i.test(x));
+  for (let i = 0; i < 10; i++) {
+    assert.ok(hashReason.includes(`docs/f${i}.md`), `先頭10件目 docs/f${i}.md を含むべきだが: ${hashReason}`);
+  }
+  assert.ok(!hashReason.includes('docs/f10.md'), `11件目は含まれないはずだが: ${hashReason}`);
+  assert.ok(!hashReason.includes('docs/f11.md'), `12件目は含まれないはずだが: ${hashReason}`);
+  assert.ok(hashReason.includes('他 2 件'), `'他 2 件' を含むべきだが: ${hashReason}`);
+});
+
+test('classifyMergeTier: hash_mismatch + staleDiffFiles:null → reason に両 hash 全文と git diff --stat コマンドと 手動確認 を含む', () => {
+  const evalFull = '3'.repeat(40);
+  const prFull = '4'.repeat(40);
+  const r = classifyMergeTier(baseCleanInput({
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: evalFull,
+    prDiffHash: prFull,
+    staleDiffFiles: null,
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const hashReason = r.reasons.find((x) => /hash/i.test(x));
+  assert.ok(hashReason.includes(evalFull), `eval hash 全文を含むべきだが: ${hashReason}`);
+  assert.ok(hashReason.includes(prFull), `pr hash 全文を含むべきだが: ${hashReason}`);
+  assert.ok(hashReason.includes(`git diff --stat ${evalFull} ${prFull}`), `git diff --stat コマンドを含むべきだが: ${hashReason}`);
+  assert.ok(hashReason.includes('手動確認'), `'手動確認' を含むべきだが: ${hashReason}`);
+});
+
+test('classifyMergeTier: hash_mismatch + staleDiffFiles:[] → HOLD かつ 差分 0 件 を含む', () => {
+  const r = classifyMergeTier(baseCleanInput({
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: '5'.repeat(40),
+    prDiffHash: '6'.repeat(40),
+    staleDiffFiles: [],
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const hashReason = r.reasons.find((x) => /hash/i.test(x));
+  assert.ok(hashReason.includes('差分 0 件'), `'差分 0 件' を含むべきだが: ${hashReason}`);
+});
+
+test('classifyMergeTier: hash_mismatch + prHeadTreeOid → reason に PR head + short hash を含む', () => {
+  const prHeadTreeOid = '7'.repeat(40);
+  const r = classifyMergeTier(baseCleanInput({
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: '8'.repeat(40),
+    prDiffHash: '9'.repeat(40),
+    prHeadTreeOid,
+    staleDiffFiles: [],
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const hashReason = r.reasons.find((x) => /hash/i.test(x));
+  assert.ok(hashReason.includes('PR head ' + prHeadTreeOid.slice(0, 8)), `'PR head <short>' を含むべきだが: ${hashReason}`);
+});
+
+test('classifyMergeTier: evalStaleness:"hash_reconverged" → 他入力が同じなら "none" と tier/reasons/holdReasons/holdKind が deepEqual（AUTO base）', () => {
+  const noneResult = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  const reconvergedResult = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'hash_reconverged' });
+  assert.deepEqual(reconvergedResult, noneResult);
+  assert.equal(reconvergedResult.tier, 'AUTO');
+  assert.deepEqual(reconvergedResult.holdReasons, []);
+});
+
+test('classifyMergeTier: evalStaleness:"hash_reconverged" → 他入力が同じなら "none" と deepEqual（standard base、REVIEW）', () => {
+  const noneResult = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  const reconvergedResult = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'hash_reconverged' });
+  assert.deepEqual(reconvergedResult, noneResult);
+  assert.equal(reconvergedResult.tier, 'REVIEW');
+});
+
+test('classifyMergeTier: evalStaleness:"hash_reconverged" + unsatisfiedAc:true → HOLD だが reasons に hash 由来文言なし', () => {
+  const r = classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'hash_reconverged', unsatisfiedAc: true,
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(!r.reasons.some((x) => /hash/i.test(x)), `hash 由来 reason を含むべきでないが: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: evalStaleness:"bogus"(out-of-enum) → throw', () => {
+  assert.throws(() => classifyMergeTier(baseCleanInput({ evalStaleness: 'bogus' })),
+    /invalid evalStaleness/);
+});
+
+test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来どおり)', () => {
+  const rUndefined = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm' });
+  assert.equal(rUndefined.tier, 'AUTO');
+
+  const rNull = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: null });
+  assert.equal(rNull.tier, 'AUTO');
 });

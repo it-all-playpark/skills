@@ -190,8 +190,8 @@ cmd_log() {
     fi
     if [[ -n "$eval_staleness" ]]; then
         case "$eval_staleness" in
-            none|hash_mismatch|iterate_incomplete|iterate_fixed) ;;
-            *) die_json "Invalid --eval-staleness: $eval_staleness. Must be none|hash_mismatch|iterate_incomplete|iterate_fixed" 1 ;;
+            none|hash_mismatch|hash_reconverged|iterate_incomplete|iterate_fixed) ;;
+            *) die_json "Invalid --eval-staleness: $eval_staleness. Must be none|hash_mismatch|hash_reconverged|iterate_incomplete|iterate_fixed" 1 ;;
         esac
     fi
     if [[ -n "$repo" ]] && ! [[ "$repo" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$ ]]; then

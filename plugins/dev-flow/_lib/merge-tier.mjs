@@ -131,6 +131,9 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_veri
 // 同値性は _lib/final-ci-routing.test.mjs が pin する。
 export const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
 
+// eval_staleness の閉じた enum（issue #288 の 4 値 + issue #631 の hash_reconverged）。
+export const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
+
 // HOLD 理由配列（[{ reason, kind }]）から代表 kind を集約する純関数。
 // いずれかが 'human_judgment' なら 'human_judgment'（human 判断が 1 件でもあれば全体を human 扱いにする
 // fail-closed 側の集約）。全件 'deterministic_recheck' ならそのまま。空/非配列は null（HOLD 以外）。
@@ -187,10 +190,22 @@ export function classifyMergeableState(meta) {
 //   決定論的 HOLD（fail-safe、allowlist しない厳格判定）。blast-radius クラス（issue #319）—
 //   merge 直前の最終ゲートが LGTM 未到達のまま AUTO/REVIEW を出すと既知の指摘が未解消のまま
 //   出荷されるため、gate_policy で緩和しない（軸A 不変）。
-// s.evalStaleness (string): 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'
-//   （issue #288 の 4 値）。'hash_mismatch' のみ HOLD 追加（Evaluate 対象 tree と PR tree の
-//   乖離）。'iterate_incomplete' は iterateStatus !== 'lgtm' と必ず同時発生するため個別条件に
-//   しない。'none'/'iterate_fixed' は tier に影響しない。
+// s.evalStaleness (string): 'none'|'hash_mismatch'|'hash_reconverged'|'iterate_incomplete'|
+//   'iterate_fixed'（issue #288 の 4 値 + issue #631 の hash_reconverged。EVAL_STALENESS_VALUES）。
+//   'hash_mismatch' のみ HOLD 追加（Evaluate 対象 tree と PR tree の乖離）。'hash_reconverged' は
+//   PR 直前に一時乖離したが PR head tree === 評価済み tree === merge 対象 tree を決定論確認済み
+//   （issue #631）— HOLD しない。gate が守る性質「merge 対象 tree = 評価済み tree」を merge 対象
+//   そのもので確認しているため gate_policy に依らない（'none' と reasons/holdReasons/holdKind が
+//   完全一致する no-op）。'iterate_incomplete' は iterateStatus !== 'lgtm' と必ず同時発生するため
+//   個別条件にしない。'none'/'iterate_fixed'/'hash_reconverged' は tier に影響しない。
+//   'hash_mismatch' は iterate_* より優先（'none' からのみ昇格、#288 AC-2）。
+// s.evalDiffHash / s.prDiffHash (string|null): 'hash_mismatch' HOLD reason に載せる評価済み tree /
+//   PR 直前 tree の hash（short 8 桁で表示。null は「不明」表記）。
+// s.staleDiffFiles (Array<{path,insertions,deletions}>|null|undefined): 'hash_mismatch' HOLD reason
+//   に載せる差分ファイル一覧（tree-diff-stat.mjs の解析結果）。配列なら先頭 10 件 + 件数 + 「他 N 件」
+//   （0 件時は「numstat 空」注記）、null/undefined は取得失敗として両 hash 全文 + 手動確認コマンドを出す。
+// s.prHeadTreeOid (string|null|undefined): 与えられれば 'hash_mismatch' HOLD reason に PR head tree
+//   の short hash を追記する（issue #631）。
 // s.finalAcReconcile (optional 'skipped'|'reverified'|'unavailable'): Final AC reconcile phase
 //   （issue #331）の実行結果。fix 適用 run での既存 AC の最終 PR tree に対する再検証結果。
 //   'unavailable' のみ専用 HOLD reason を追記する（軸A 決定論ゲート、gate_policy に依らず不変）。
@@ -266,6 +281,9 @@ export function classifyMergeTier(s) {
   if (s.finalReconcile === 'ci_verified' && (s.finalCi == null || s.finalCi.verified !== true)) {
     throw new Error('classifyMergeTier: finalReconcile=ci_verified requires finalCi.verified===true');
   }
+  if (s.evalStaleness != null && !EVAL_STALENESS_VALUES.includes(s.evalStaleness)) {
+    throw new Error('classifyMergeTier: invalid evalStaleness: ' + s.evalStaleness);
+  }
   // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
   const blockingReasons = [];
   const pushBlocking = (reason, kind) => blockingReasons.push({ reason, kind });
@@ -303,7 +321,26 @@ export function classifyMergeTier(s) {
   if (s.finalTestGreen === false) pushBlocking('final test red（pr-iterate fix 適用後の最終 tree でテスト失敗）', 'human_judgment');
   if (s.finalAcReconcile === 'unavailable') pushBlocking('Final AC reconcile 判定不能（最終 PR tree に対する AC 再検証結果を取得できず — agent null / schema 不一致 / index 欠落・重複・範囲外 / evidence 不足）— 人間確認必須（gate_policy に依らず不変）', 'human_judgment');
   if (s.iterateStatus !== 'lgtm') pushBlocking(`pr-iterate 非LGTM終端（status=${s.iterateStatus ?? 'null'}）— review⇄fix loop が LGTM 未到達のため人間確認必須（gate_policy に依らず不変）`, 'human_judgment');
-  if (s.evalStaleness === 'hash_mismatch') pushBlocking('Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch）— 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）', 'human_judgment');
+  if (s.evalStaleness === 'hash_mismatch') {
+    const short8 = (h) => (typeof h === 'string' && h.length > 0) ? h.slice(0, 8) : '不明';
+    if (Array.isArray(s.staleDiffFiles)) {
+      const n = s.staleDiffFiles.length;
+      const head = s.staleDiffFiles.slice(0, 10)
+        .map((f) => `${f.path} (+${f.insertions}/-${f.deletions})`).join(', ');
+      const list = n === 0 ? '（numstat 空 — mode/permission のみの変更等）' : head;
+      const rest = n > 10 ? ` 他 ${n - 10} 件` : '';
+      const prHeadPart = typeof s.prHeadTreeOid === 'string' ? ' / PR head ' + short8(s.prHeadTreeOid) : '';
+      pushBlocking(
+        `Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch: eval ${short8(s.evalDiffHash)} / PR 直前 ${short8(s.prDiffHash)}${prHeadPart}）— 差分 ${n} 件: ${list}${rest} — 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）`,
+        'human_judgment',
+      );
+    } else {
+      pushBlocking(
+        `Evaluate 時点と PR 直前の diff hash 不一致（eval_staleness=hash_mismatch: eval ${s.evalDiffHash ?? '不明'} / PR 直前 ${s.prDiffHash ?? '不明'}）— 差分ファイル一覧の取得に失敗。\`git diff --stat ${s.evalDiffHash ?? '<eval>'} ${s.prDiffHash ?? '<pr>'}\` を手動確認 — 評価済み tree と merge 対象 tree が乖離しており人間確認必須（gate_policy に依らず不変）`,
+        'human_judgment',
+      );
+    }
+  }
   if (Array.isArray(s.testsurfUncleared) && s.testsurfUncleared.length > 0) {
     pushBlocking(`test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`, 'human_judgment');
   }

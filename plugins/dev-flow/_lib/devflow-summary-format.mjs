@@ -28,7 +28,11 @@
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ（at-a-glance 表では finalReconcile が 'ci_verified'/'reverified' のとき最終状態を優先。issue #625）
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）（at-a-glance 表では iterate_fixed+lgtm+finalAcReconcile=reverified の fail を '✅ pass (fix 後 LGTM)' と表示。issue #625）
- * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'iterate_incomplete'|'iterate_fixed'（issue #288）
+ * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'hash_reconverged'|'iterate_incomplete'|'iterate_fixed'（issue #288, #631）
+ * @param {string|null|undefined} [opts.evalDiffHash] - Evaluate 時点の tree diff hash（issue #631）
+ * @param {string|null|undefined} [opts.prDiffHash] - PR phase 直前の tree diff hash（issue #631）
+ * @param {Array<{path:string,insertions:number,deletions:number}>|null|undefined} [opts.staleDiffFiles] - hash_mismatch/hash_reconverged 時の eval→PR 直前の差分ファイル一覧。null は取得失敗（issue #631）
+ * @param {string|null|undefined} [opts.prHeadTreeOid] - PR head commit の tree OID（issue #631）
  * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
  * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
  * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
@@ -58,6 +62,10 @@ export function buildDevflowSummaryBody({
   testGreen,
   evalVerdict,
   evalStaleness,
+  evalDiffHash,
+  prDiffHash,
+  staleDiffFiles,
+  prHeadTreeOid,
   iterateFixesApplied,
   uiVerify,
   uiVerifyMode,
@@ -70,7 +78,7 @@ export function buildDevflowSummaryBody({
   iterateHistory,
   iterateIterations,
 }) {
-  const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'iterate_incomplete', 'iterate_fixed'];
+  const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
     throw new Error('buildDevflowSummaryBody: invalid evalStaleness: ' + evalStaleness);
   }
@@ -176,16 +184,36 @@ export function buildDevflowSummaryBody({
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
 
-  // 2b. eval_staleness 警告（at-a-glance テーブル直後・gate_policy 行前。issue #288）
+  // 2b. eval_staleness 警告（at-a-glance テーブル直後・gate_policy 行前。issue #288, #631）
+  const short8 = (h) => (typeof h === 'string' && h.length > 0) ? h.slice(0, 8) : '不明';
+  const renderDiffFiles = (files) => {
+    if (files.length === 0) return '（numstat 空 — mode/permission のみの変更等）';
+    const shown = files.slice(0, 10).map((f) => `${f.path} (+${f.insertions}/-${f.deletions})`).join(', ');
+    const rest = files.length - 10;
+    return rest > 0 ? `${shown} 他 ${rest} 件` : shown;
+  };
   if (evalStaleness === 'hash_mismatch') {
-    lines.push('> \u26a0\ufe0f **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('> ⚠️ **Evaluate は古い tree に対して実行された**（Evaluate 時点と PR phase 直前の diff hash が不一致: eval ' + short8(evalDiffHash) + ' / PR 直前 ' + short8(prDiffHash) + '。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    if (Array.isArray(staleDiffFiles)) {
+      lines.push('> 差分 ' + staleDiffFiles.length + ' 件: ' + renderDiffFiles(staleDiffFiles));
+    } else {
+      lines.push('> 差分ファイル一覧の取得に失敗 — `git diff --stat ' + (evalDiffHash ?? '<eval>') + ' ' + (prDiffHash ?? '<pr>') + '` を手動確認');
+    }
+    lines.push('');
+  } else if (evalStaleness === 'hash_reconverged') {
+    lines.push('> ℹ️ **PR 直前に tree が一時乖離したが PR head tree は評価済み tree と一致**（eval ' + short8(evalDiffHash) + ' / PR 直前 ' + short8(prDiffHash) + ' / PR head ' + short8(prHeadTreeOid) + '。merge 対象 tree = 評価済み tree を決定論確認済みのため HOLD しない — eval_staleness=hash_reconverged）');
+    if (Array.isArray(staleDiffFiles)) {
+      lines.push('> 一時差分 ' + staleDiffFiles.length + ' 件: ' + renderDiffFiles(staleDiffFiles));
+    } else {
+      lines.push('> 一時差分の一覧は取得失敗');
+    }
     lines.push('');
   } else if (evalStaleness === 'iterate_incomplete') {
-    lines.push('> \u26a0\ufe0f **pr-iterate が LGTM 以外で終端した**（fix 適用後の tree に対する再評価・LGTM が得られていない。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
+    lines.push('> ⚠️ **pr-iterate が LGTM 以外で終端した**（fix 適用後の tree に対する再評価・LGTM が得られていない。eval/AC/security clearance の判定は現在の PR 内容を反映していない可能性がある）');
     lines.push('');
   } else if (evalStaleness === 'iterate_fixed') {
     const fixCount = (typeof iterateFixesApplied === 'number' && iterateFixesApplied >= 0) ? String(iterateFixesApplied) : '不明';
-    lines.push('> \u2139\ufe0f **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
+    lines.push('> ℹ️ **pr-iterate が ' + fixCount + ' 件の fix を適用して LGTM 終端**（fix 内容は pr-reviewer の再レビューで担保済み。下記の eval/AC テーブル・security clearance は fix 前 tree 基準）');
     lines.push('');
   }
 

@@ -137,6 +137,8 @@ const READ_ONLY_LABELS = [
   'changed-files-final',
   'ci-checks',
   'ci-final',
+  'tree-diff-numstat',
+  'head-tree-oid',
 ];
 
 for (const label of READ_ONLY_LABELS) {
