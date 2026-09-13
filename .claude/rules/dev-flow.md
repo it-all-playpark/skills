@@ -31,7 +31,8 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 (`.claude/workflows/dev-flow.js`) を起動する。orchestration (phase 遷移 / plan-review・evaluate・
 pr-iterate の各ループ / 並列実装の fan-out) は workflow script が JS で保持し、中間 state は script
 変数に持つ (外部 state JSON は持たない)。workflow の `meta.name` は `dev-flow-run` だが、telemetry
-handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件、静的テストで pin 済み）。
+handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件。`_lib/devflow-workflow-name.test.mjs` が
+VM 実行の journal-save prompt で pin）。
 
 ```
 /dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan
@@ -250,9 +251,11 @@ shape は Analyze phase で `classifyShape` が判定し、安全 floor を適�
   `deterministic_recheck`、tier が HOLD でなければ `null`）が乗る。呼び出し元はこの 2 フィールドで
   「解消を待てば済む HOLD」と「人間確認が要る HOLD」を区別する。
   `subagent_invocations` は `{total, by_type}` の object（常時出力）。total は run 全体の agent() 起動数で、
-  workflow 内の counting wrapper（trackedAgent — 全 call site を wrapper 経由に置換）が計上する。全 agent()
-  起動が counts に計上されること（total === 実起動数）を `_lib/subagent-invocations-routing.test.mjs` が
-  VM 実行で保証する。nested `workflow('pr-iterate')` の起動分は
+  workflow 内の counting wrapper（trackedAgent — 全 call site を wrapper 経由に置換）が計上する。
+  `_lib/subagent-invocations-routing.test.mjs` が 2 層で保証する: bare `agent(` 残存が wrapper 内 2 箇所のみ
+  であること（静的な否定 pin — 未到達 call site の計上漏れはこれでしか検出できない）と、主要経路
+  （`test-helpers/dev-flow-scenarios.mjs` の scenario 集合）の VM 実行で total === 観測起動数であること。
+  nested `workflow('pr-iterate')` の起動分は
   pr-iterate の返り値 `subagent_invocations` を dev-flow 側 counts へ合算する（lite route 非昇格時は pr-iterate
   呼び出し自体が無いため合算 0。単体起動の pr-iterate は自身の handoff に同キーを記録）。
   nested 起動時は同じ counts が pr-iterate 側 journal entry にも記録されるため、journal を skill 横断で

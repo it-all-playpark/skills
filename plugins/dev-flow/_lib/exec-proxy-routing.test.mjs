@@ -24,6 +24,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workflowDir = join(here, '..', '.claude', 'workflows');
@@ -57,6 +58,9 @@ const EXPECTED_DEV_FLOW = {
   'gh-pr-view': RO,
   'tree-diff-numstat': RO,
   'head-tree-oid': RO,
+  'issue-labels': RO,
+  'cross-repo-artifacts': RO,
+  'ci-check-lite': RO,
   // write/Skill tier
   'worktree': RW,
   'worktree-deps': RW,
@@ -101,92 +105,7 @@ function expectedFor(table, label) {
   return null;
 }
 
-// ============================================================
-// dev-flow.js scenarios: 各 label へ到達させる最小の override
-// ============================================================
-
-const UI_FILE = 'src/components/Foo.tsx';
-const VALID_UI_CFG = { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}', base_port: 4100, ready_path: '/', env_files: [] };
-const UI_OVERRIDES = {
-  'danger-grep': { risk: { ok: true, hits: [] }, files: [UI_FILE], struct: null, diffhash: { hash: 'AAA', empty: false } },
-  'changed-files': { files: [UI_FILE] },
-  'ui-verify-config': { found: true, config: VALID_UI_CFG },
-  'ui-verify-config-final': { found: true, config: VALID_UI_CFG },
-  'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1 },
-  'ui-verify-server-final': { ok: true, phase: 'ready', port: 4100, pid: 1 },
-  'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
-  'ui-verify-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
-  'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
-  'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
-};
-
-const DEV_FLOW_SCENARIOS = {
-  baseline: {},
-  // diff-gate が空 → diff-gate-retry
-  'diff-gate-retry': {
-    overrides: { 'diff-gate': { hash: 'H', empty: true }, 'diff-gate-retry': { hash: 'H2', empty: false } },
-  },
-  // eval hash と PR hash の不一致 → tree-diff-numstat / head-tree-oid（Merge tier は eval と一致で再収束）
-  'hash-mismatch': {
-    overrides: {
-      'diff-hash-pr': { hash: 'BBB', empty: false },
-      'tree-diff-numstat': { ok: true, files: ['docs/a.md (+0/-500)'] },
-      'head-tree-oid': { ok: true, tree: 'AAA' },
-    },
-  },
-  // Merge tier で diff-hash-merge が secfloor と不一致 → danger-grep-final / changed-files 再実行
-  'merge-rescan': { overrides: { 'diff-hash-merge': { hash: 'CCC', empty: false } } },
-  // pr-iterate が fix を適用 → Final reconcile 経路（reconcile-sync / test#final / *-final）+ UI 経路
-  'final-reconcile-ui': {
-    overrides: {
-      ...UI_OVERRIDES,
-      'reconcile-sync': { ok: true, head: 'deadbeef' },
-      'changed-files-final': { files: [UI_FILE] },
-      'ci-final': { ok: true, headRefOid: 'a'.repeat(40), statusCheckRollup: [] },
-    },
-    workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
-  },
-  // test#final が null（unavailable）→ reconcile-sync の head sha に pin した CI 委譲 ci-final（issue #599）
-  'final-ci': {
-    overrides: {
-      'reconcile-sync': { ok: true, head: 'a'.repeat(40) },
-      'test#final': null,
-      'ci-final': { ok: true, headRefOid: 'a'.repeat(40), statusCheckRollup: [] },
-    },
-    workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
-  },
-  // evaluator が test 実証 AC を返す → redgreen:AC-1
-  redgreen: {
-    overrides: {
-      'eval#1': {
-        verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
-        ac_results: [
-          { ac_index: 0, satisfied: true, verified_by: 'test', evidence: 'ok', test_files: ['t.test.mjs'], impl_files: ['src/x.ts'] },
-          { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-        ],
-        security_clearance: [], concern_resolutions: [],
-      },
-      'redgreen:AC-1': { verdict: null, ok: true },
-    },
-  },
-  // implementer が CI で検証可能な環境事象を concern に返す → ENV item → ci-checks
-  'ci-checks': {
-    overrides: {
-      'impl:serial:t1': {
-        status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's',
-        concerns: ['sandbox 内で next build が TurbopackInternalError で失敗した'],
-      },
-      'ci-checks': { ok: true, checks: [{ name: 'build', bucket: 'pass' }] },
-    },
-  },
-  // empty-diff で fail-fast → writeFailureTelemetry（journal-log-failure）
-  'empty-diff': {
-    overrides: { 'diff-gate': { hash: 'H', empty: true }, 'diff-gate-retry': { hash: 'H', empty: true }, 'issue-labels': null },
-    expectError: true,
-  },
-  // Plan で throw → top-level abort handoff（journal-log-abort）
-  abort: { overrides: { 'plan#standard': () => { throw new Error('injected'); } }, expectError: true },
-};
+// dev-flow.js scenarios は test-helpers/dev-flow-scenarios.mjs に共有定義（subagent-invocations-routing と共用）
 
 async function runDevFlowScenario(name) {
   const sc = DEV_FLOW_SCENARIOS[name];

@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 import { EVALUATOR_OPERATIONAL_CONTRACT, CONCERN_RESOLUTIONS, normalizeConcernResolution } from './evaluator-contract.mjs';
 
@@ -16,107 +15,30 @@ const prIterateSrc = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.j
 const evaluatorMd = readFileSync(join(repoRoot, '.claude/agents/evaluator.md'), 'utf8');
 
 // ============================================================
-// VM harness（final-ac-reconcile-routing.test.mjs の createResponder/makeSandbox パターンを踏襲）:
-// dev-flow.js が実際に agent() へ渡す prompt を捕捉し、canonical contract の verbatim 注入を検証する。
+// VM harness: 共有 vm-sandbox.mjs の makeDevFlowSandbox / runWorkflowCapture / assertNoCrash を使い、
+// dev-flow.js が実際に agent() へ渡す prompt を捕捉して canonical contract の verbatim 注入を検証する。
+// 既定 responder に無い Final reconcile 系の応答のみ overrides で補う。
 // ============================================================
 
-async function runDevFlowCapture(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
-
-function assertNoCrash(error, name) {
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail(`[${name}] dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
-  }
-}
-
-// standard に落ちる req（count=3 ≤ 5, ac.length=2 ≤ 6, type=fix → floor='standard'）
-const STANDARD_REQ = {
-  summary: 's',
-  acceptance_criteria: ['a', 'b'],
-  issue_type: 'fix',
-  scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
-  issue_number: 1,
-  issue_title: 'stub-issue-title',
+const FINAL_RECONCILE_DEFAULTS = {
+  'reconcile-sync': { ok: true, head: 'deadbeef' },
+  'changed-files-final': { files: [] },
+  'final-ac-reconcile': {
+    ac_results: [
+      { ac_index: 0, satisfied: true, evidence: 'e0', verified_by: 'inspection' },
+      { ac_index: 1, satisfied: true, evidence: 'e1', verified_by: 'inspection' },
+    ],
+  },
 };
 
-function createResponder(overrides = {}) {
-  return function ({ label, agentType, prompt }) {
-    if (Object.prototype.hasOwnProperty.call(overrides, label)) {
-      const v = overrides[label];
-      if (typeof v === 'function') return v({ prompt, agentType, label });
-      return v;
-    }
-    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: false, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    if (label.startsWith('analyze')) return STANDARD_REQ;
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'H', empty: false } };
-    if (label === 'danger-grep-final') return { ok: true, hits: [] };
-    if (label === 'final-ac-reconcile') {
-      return {
-        ac_results: [
-          { ac_index: 0, satisfied: true, evidence: 'e0', verified_by: 'inspection' },
-          { ac_index: 1, satisfied: true, evidence: 'e1', verified_by: 'inspection' },
-        ],
-      };
-    }
-    if (agentType === 'dev-flow:evaluator') {
-      return {
-        verdict: 'pass', total: 100, threshold: 80, feedback: [],
-        feedback_level: 'implementation',
-        ac_results: [
-          { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-          { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-        ],
-        security_clearance: [], concern_resolutions: [],
-      };
-    }
-    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/x.ts'] };
-    if (label === 'changed-files-final') return { files: [] };
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
-    if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
-    if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
-    if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
-    if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
-    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    return null;
-  };
-}
-
 function makeSandbox({ overrides = {}, fixesApplied = 0 } = {}) {
-  return makeRecordingSandbox(createResponder(overrides), {
+  return makeDevFlowSandbox({
+    overrides: { ...FINAL_RECONCILE_DEFAULTS, ...overrides },
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: fixesApplied }),
-    args: '1',
   });
 }
+
+const runDevFlowCapture = runWorkflowCapture;
 
 const evaluatorContractBlock = [
   EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions,
