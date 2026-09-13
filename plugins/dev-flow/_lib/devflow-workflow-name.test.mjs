@@ -5,9 +5,9 @@
 //       集計の連続性のため絶対に変更しない（不変条件）。
 //
 // このテストは:
-//   (a) meta.name === 'dev-flow-run' が存在すること（識別子の完全一致 pin。export const meta は
-//       VM 返り値に現れず観測不能なため source pin として残置する。issue #636 disposition class C）
-//   (b) 旧 meta 名 `name: 'dev-flow',`（完全一致文字列）が存在しないこと（同上）
+//   (a) meta.name === 'dev-flow-run'（`export const meta` はハーネスが読む pure literal で VM 返り値に
+//       現れないため、リテラル本体を vm で評価し declared name を観測する。issue #636）
+//   (b) 旧 meta 名 `name: 'dev-flow',`（完全一致文字列）が存在しないこと（否定 pin）
 //   (c) VM 挙動: success / empty-diff failure / abort の 3 run いずれも journal-save 系 prompt の
 //       telemetry JSON が `"skill":"dev-flow"` を含む（集計連続性 invariant を挙動で pin。
 //       abort run はさらに `"error_category":"abort"` も含む）
@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
 import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,12 +30,18 @@ const workflowDir = join(repoRoot, '.claude/workflows');
 const devFlowPath = join(workflowDir, 'dev-flow.js');
 const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
-// (a) 新 meta 名が存在する
+// (a) 新 meta 名: `export const meta = {...}` の pure literal をハーネスと同様に評価して観測する
+function loadWorkflowMeta(src) {
+  const start = src.indexOf('export const meta = {');
+  assert.ok(start >= 0, 'export const meta = { が見つからない');
+  const end = src.indexOf('\n}\n', start);
+  assert.ok(end > start, 'meta literal の終端が見つからない');
+  return vm.runInNewContext('(' + src.slice(start + 'export const meta = '.length, end + 2) + ')');
+}
+
 test('[workflow-name] dev-flow.js: meta.name が dev-flow-run である', () => {
-  assert.ok(
-    devFlowSrc.includes("name: 'dev-flow-run',"),
-    "dev-flow.js に name: 'dev-flow-run', が存在しない（meta.name の rename が未適用）",
-  );
+  const meta = loadWorkflowMeta(devFlowSrc);
+  assert.equal(meta.name, 'dev-flow-run', 'meta.name の rename が未適用');
 });
 
 // (b) 旧 meta 名が存在しない

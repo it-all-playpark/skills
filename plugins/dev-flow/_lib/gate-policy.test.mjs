@@ -1,8 +1,5 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import {
   GATE_POLICIES,
   DEFAULT_GATE_POLICY,
@@ -329,24 +326,6 @@ test('gateLane: source=concern は source=evaluator と同じ lane 分類にな�
   }
 });
 
-// ---- F3 structural: dev-flow.js の CONCERN append は source: 'concern' を使う ----
-
-// TDD red test: dev-flow.js が CONCERN append に source: 'evaluator' を誤用していると FAIL する。
-// F3 実装（source: 'evaluator' → source: 'concern' 変更）後に GREEN になる。
-test('dev-flow.js CONCERN append ブロックは source: "concern" を使い source: "evaluator" を使わない', () => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
-  const src = readFileSync(devFlowPath, 'utf8');
-  // CONCERN-${i + 1} の appendItem 呼び出しブロックを抽出（テンプレートリテラルのバッククォート含む）
-  const concernMatch = src.match(/`CONCERN-\$\{i \+ 1\}`[\s\S]{0,300}?\.ledger/);
-  assert.ok(concernMatch, 'CONCERN append ブロックが dev-flow.js に見つからない');
-  const block = concernMatch[0];
-  assert.ok(
-    !block.includes("source: 'evaluator'"),
-    `CONCERN append に source: 'evaluator' 誤用が残っている:\n${block}`,
-  );
-  assert.ok(
-    block.includes("source: 'concern'"),
-    `CONCERN append に source: 'concern' が設定されていない:\n${block}`,
-  );
-});
+// CONCERN append が source: 'concern' を使うことは eval-concern-resolutions-routing.test.mjs が
+// VM 挙動で検証する（source が 'evaluator' だと CONCERN-1 は evaluator prompt の未解消 concern 一覧に
+// 載らず concern_resolutions でも解消できない）。ソース文字列 pin は置かない（issue #636）。

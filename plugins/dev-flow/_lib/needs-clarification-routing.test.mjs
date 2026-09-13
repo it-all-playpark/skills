@@ -560,24 +560,8 @@ test('[needs-clarification] T5: 回復 path（1 回目 NEEDS_CONTEXT → 2 回�
   );
 });
 
-// ============================================================
-// T6: [struct] dev-flow.js ソースに 'ambiguities' 文字列と 'needs_clarification' 文字列が存在する
-//
-// T6 は TDD red: 現行 dev-flow.js にはこれらの文字列が存在しないため fail。
-// ============================================================
-test('[needs-clarification][struct] dev-flow.js に ambiguities と needs_clarification が存在する', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-
-  assert.ok(
-    src.includes('ambiguities'),
-    "dev-flow.js に 'ambiguities' 文字列が存在すること",
-  );
-
-  assert.ok(
-    src.includes('needs_clarification'),
-    "dev-flow.js に 'needs_clarification' 文字列が存在すること",
-  );
-});
+// T6（ambiguities / needs_clarification 文字列のソース pin）は T1/T2/T7 が返り値 needs_clarification と
+// missing_context===ambiguities を VM 挙動で検証するため削除した（issue #636）。
 
 // ============================================================
 // T7: ambiguities 3 件 + AC 非空 → needs_clarification + missing_context が ambiguities と一致 + dev-planner 0 回
@@ -716,22 +700,15 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
 });
 
 // ============================================================
-// T9: [struct] analyzePrompt(depth) 関数化のピンテスト
-//   (a) dev-flow.js ソースに 'analyzePrompt' 文字列が存在する（単一関数由来の構造確認）
+// T9: analyzePrompt(depth) 関数化の挙動ピン
 //   (b) NEEDS_CONTEXT retry シナリオで analyze 系 2 件の prompt が
 //       --depth 部分のみ異なり、depth 置換後は完全一致する
 //   (c) 1 件目は '--depth comprehensive' を含まず、2 件目のみ含む
-//
-// T9 は TDD red: 現行 dev-flow.js に analyzePrompt 関数がないため (a) が fail。
 // ============================================================
-test('[needs-clarification][struct] T9: analyzePrompt(depth) 関数化 — 2 経路の prompt が depth のみ異なる', async () => {
+test('[needs-clarification] T9: analyzePrompt(depth) 関数化 — 2 経路の prompt が depth のみ異なる', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
 
-  // (a) structural: 'analyzePrompt' 文字列が存在する
-  assert.ok(
-    src.includes('analyzePrompt'),
-    "T9(a): dev-flow.js に 'analyzePrompt' 文字列が存在すること（analyzePrompt(depth) 関数定義）",
-  );
+  // (a) の 'analyzePrompt' 文字列 pin は削除（issue #636）— (b)(c) の「depth 置換後に完全一致」が関数化の挙動証拠
 
   // (b)+(c) runtime: T1 と同じ sandbox で analyze 系 2 件を捕捉して prompt を比較
   const { ctx, calls } = makeCountingSandbox(

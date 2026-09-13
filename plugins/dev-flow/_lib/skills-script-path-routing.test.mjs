@@ -1,76 +1,81 @@
 // _lib/skills-script-path-routing.test.mjs
-// Pin test: skills 内部 script のパス解決を固定する（issue #484 task F1）。
+// skills 内部 script のパス解決を VM 挙動で固定する（issue #484 task F1、issue #636 で VM 化）。
 //
-// `.claude/workflows/dev-flow.js` は、skills リポジトリ（it-all-playpark/skills）内部にのみ
-// 存在する script 群（analyze-issue.sh / journal.sh）を
-// `${WT}/...`（WT=対象repoのworktree）相対で subagent prompt / journal handoff payload に
-// 埋め込んでいた。対象 repo が skills 自身でない場合（例: veridelta）にこれらの script は WT 配下に
-// 存在せず Exit 127 で落ちる。修正後の期待状態は plugin bin/ の bare 名（issue #569）を使うこと
-// である。この test は修正後の期待状態を固定する。
+// dev-flow.js はかつて skills リポジトリ内部にのみ存在する script 群（analyze-issue.sh /
+// journal.sh）を `${WT}/...`（WT=対象 repo の worktree）相対で subagent prompt / journal handoff
+// payload に埋め込んでいた。対象 repo が skills 自身でない場合これらは WT 配下に存在せず Exit 127
+// で落ちる。期待状態は plugin bin/ の bare 名（issue #569）を使うこと。
 //
-// .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
-// よって既存 *-routing.test.mjs 群と同じ戦略（source-as-string assert）で検証する。
-//
-// Run: npx vitest run _lib/skills-script-path-routing.test.mjs
+// 検証はすべて dev-flow.js を VM で実行し、agent() に実際に渡った prompt を観測する
+// （WT は既定 responder の '/tmp/wt'）:
+//   (a) どの agent() prompt にも `/tmp/wt/dev-issue-analyze/` `/tmp/wt/skill-retrospective/` が現れない
+//   (b) contract-probe の prompt に bare 名 `analyze-issue <ISSUE> --issue-json <ISSUE_JSON> --contract`
+//       が現れる。journal handoff payload の journal_sh は 3 call site（Merge tier success handoff /
+//       writeFailureTelemetry / top-level abort handoff、issue #607）すべてで bare 名 'journal'
+//   (c) 負の対照: 対象 repo 自身のテストランナー `/tmp/wt/tests/run-tests.sh` は WT 相対のまま
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-const src = readFileSync(devFlowPath, 'utf8');
+const devFlowSrc = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 
-function countOccurrences(haystack, needle) {
-  let count = 0;
-  let idx = 0;
-  while (true) {
-    idx = haystack.indexOf(needle, idx);
-    if (idx === -1) break;
-    count += 1;
-    idx += needle.length;
-  }
-  return count;
+// 3 call site に対応する run: success / empty-diff failure（writeFailureTelemetry）/ abort
+const RUNS = {
+  success: { overrides: {}, expectError: false },
+  'empty-diff': {
+    overrides: { 'diff-gate': { hash: 'H', empty: true }, 'diff-gate-retry': { hash: 'H', empty: true }, 'issue-labels': null },
+    expectError: true,
+  },
+  abort: { overrides: { 'plan#standard': () => { throw new Error('injected'); } }, expectError: true },
+};
+
+async function run(name) {
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: RUNS[name].overrides });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, name);
+  assert.equal(error !== null, RUNS[name].expectError, `${name} run の throw 有無が想定と異なる: ${error?.message}`);
+  return calls;
 }
 
 // ---- (a) 禁止パターン不在: WT 相対で skills 内部 script を呼んではならない ----
 
-test('[skills-script-path-routing] (a) dev-flow.js に `${WT}/dev-issue-analyze/` が残っていない', () => {
-  assert.ok(
-    !src.includes('${WT}/dev-issue-analyze/'),
-    'dev-flow.js に禁止パターン `${WT}/dev-issue-analyze/` が残っている（対象repoがskills以外だとExit 127）',
-  );
+test('[skills-script-path-routing] (a) どの agent() prompt にも `${WT}/dev-issue-analyze/` `${WT}/skill-retrospective/` が現れない', async () => {
+  const calls = await run('success');
+  for (const forbidden of ['/tmp/wt/dev-issue-analyze/', '/tmp/wt/skill-retrospective/']) {
+    const hit = calls.find((c) => c.prompt.includes(forbidden));
+    assert.ok(!hit, `${hit?.label} の prompt に禁止パターン ${forbidden} が含まれる（対象 repo が skills 以外だと Exit 127）`);
+  }
 });
 
-test('[skills-script-path-routing] (a) dev-flow.js に `${WT}/skill-retrospective/` が残っていない', () => {
-  assert.ok(
-    !src.includes('${WT}/skill-retrospective/'),
-    'dev-flow.js に禁止パターン `${WT}/skill-retrospective/` が残っている（対象repoがskills以外だとExit 127）',
-  );
+// ---- (b) bare 名で呼ぶ ----
+
+test('[skills-script-path-routing] (b) contract-probe は bare 名 analyze-issue を 1 回だけ指示する', async () => {
+  const calls = await run('success');
+  const probes = calls.filter((c) => c.label.startsWith('contract-probe'));
+  assert.equal(probes.length, 1, `contract-probe は 1 回のはずだが ${probes.length} 回`);
+  const needle = 'analyze-issue 1 --issue-json <ISSUE_JSON> --contract';
+  assert.ok(probes[0].prompt.includes(needle), `contract-probe prompt に bare 名呼び出し '${needle}' が無い`);
 });
 
-// ---- (b) 固定パス存在（出現回数込み）----
+for (const name of Object.keys(RUNS)) {
+  test(`[skills-script-path-routing] (b) ${name} run の journal handoff payload は journal_sh が bare 名 'journal'`, async () => {
+    const calls = await run(name);
+    const journalSave = calls.find((c) => c.label === 'journal-save');
+    assert.ok(journalSave, `${name} run に journal-save が無い`);
+    assert.ok(journalSave.prompt.includes('"journal_sh":"journal"'), `${name} run の payload に "journal_sh":"journal" が無い:\n${journalSave.prompt.slice(0, 800)}`);
+    assert.ok(!journalSave.prompt.includes('"journal_sh":"/tmp/wt/'), `${name} run の payload が journal_sh を WT 相対で渡している`);
+  });
+}
 
-test('[skills-script-path-routing] (b) analyze-issue が bare 名で1回存在する', () => {
-  const needle = 'analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract';
-  const count = countOccurrences(src, needle);
-  assert.equal(count, 1, `bare 名呼び出し '${needle}' の出現回数が期待(1)と異なる: ${count}`);
-});
+// ---- (c) 負の対照（誤爆防止）: 対象 repo 自身のファイルを指す WT 相対パスは修正対象外 ----
 
-test("[skills-script-path-routing] (b) journal_sh が bare 名 'journal' で3回存在する", () => {
-  // 3 call sites: Merge tier success handoff / writeFailureTelemetry / top-level abort handoff（issue #607）。
-  const needle = "journal_sh: 'journal'";
-  const count = countOccurrences(src, needle);
-  assert.equal(count, 3, `bare 名 '${needle}' の出現回数が期待(3)と異なる: ${count}`);
-});
-
-// ---- (c) 負の対照（誤爆防止）: 対象repo自身のファイルを指す WT 相対パスは修正対象外 ----
-
-test('[skills-script-path-routing] (c) `${WT}/tests/run-tests.sh`（対象repoのテストランナー）は残っている', () => {
-  assert.ok(
-    src.includes('${WT}/tests/run-tests.sh'),
-    '`${WT}/tests/run-tests.sh` が見つからない（修正対象外の WT 相対パスまで誤って書き換えた可能性）',
-  );
+test('[skills-script-path-routing] (c) test 実行 prompt は対象 repo のテストランナーを WT 絶対パスで指示する', async () => {
+  const calls = await run('success');
+  const t = calls.find((c) => c.label === 'test#1');
+  assert.ok(t, 'test#1 が無い');
+  assert.ok(t.prompt.includes('/tmp/wt/tests/run-tests.sh'), 'test#1 prompt に `${WT}/tests/run-tests.sh` が無い（修正対象外の WT 相対パスまで書き換えた可能性）');
 });

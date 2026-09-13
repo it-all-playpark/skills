@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -79,48 +80,98 @@ test('[bin-bare-name-routing][AC1] _lib/*.mjs に skills 絶対パスが 0 箇�
   }
 });
 
-// ---- [AC2] 各 call site が bare 名で配線されている ----
+// ---- [AC2] 各 call site が bare 名で配線されている（dev-flow.js / pr-iterate.js は VM 挙動で観測、issue #636）----
+//
+// dev-flow.js / pr-iterate.js を VM で実行し、agent() に実際に渡った prompt に bare 名 call site
+// （WT='/tmp/wt'・BASE='dev' で展開済み）が現れることを label ごとに確認する。到達させるための
+// scenario は label 単位の override で最小に絞る。
 
 const devFlowSrc = readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
 const devImproveSrc = readFileSync(join(workflowsDir, 'dev-improve.js'), 'utf8');
 
-const DEV_FLOW_NEEDLES = [
-  'ensure-worktree-deps --path ${worktree} --lockfile-only --skip-custom',
-  'worktree-diff-hash ${WT} origin/${BASE}',
-  'cross-repo-artifacts ${WT} ',
-  'secfloor-classify ${WT} origin/${BASE}',
-  'ui-verify-server start ',
-  'ui-verify-server stop --state-dir',
-  'redgreen-verify ${WT} ',
-  'diff-risk-classify origin/${BASE}',
-  '`check-ci --checks-data',
-  '`analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract',
-  '`detect-stack .',
+const UI_CFG = { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}', base_port: 4100, ready_path: '/', env_files: [] };
+const PASS_EVAL_TEST_AC = {
+  verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
+  ac_results: [
+    { ac_index: 0, satisfied: true, verified_by: 'test', evidence: 'ok', test_files: ['t.test.mjs'], impl_files: ['src/x.ts'] },
+    { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+  ],
+  security_clearance: [], concern_resolutions: [],
+};
+
+// [label prefix, 期待 needle（展開済み）, scenario overrides]
+const DEV_FLOW_CALL_SITES = [
+  ['worktree-deps', 'ensure-worktree-deps --path /tmp/wt --lockfile-only --skip-custom', {}],
+  ['diff-hash-eval', 'worktree-diff-hash /tmp/wt origin/dev', {}],
+  ['danger-grep', 'secfloor-classify /tmp/wt origin/dev', {}],
+  ['contract-probe#', '`analyze-issue 1 --issue-json <ISSUE_JSON> --contract', {}],
+  ['impl:', '`detect-stack .', {}],
+  ['danger-grep-final', 'diff-risk-classify origin/dev', { 'diff-hash-merge': { hash: 'CCC', empty: false } }],
+  ['redgreen:AC-1', 'redgreen-verify /tmp/wt ', { 'eval#1': PASS_EVAL_TEST_AC, 'redgreen:AC-1': { verdict: null, ok: true } }],
+  ['ui-verify-server', 'ui-verify-server start ', {
+    'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/components/Foo.tsx'], struct: null, diffhash: { hash: 'AAA', empty: false } },
+    'ui-verify-config': { found: true, config: UI_CFG },
+    'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1 },
+    'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+    'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
+  }],
+  ['ui-verify-teardown', 'ui-verify-server stop --state-dir', null], // ui-verify-server と同じ scenario
+  ['cross-repo-artifacts', 'cross-repo-artifacts /tmp/wt ', {
+    'diff-gate': { hash: 'EMPTY', empty: true },
+    'issue-labels': { ok: true, labels: ['cross-repo'] },
+    'impl:serial:t1': { status: 'DONE', task_id: 't1', files: ['/tmp/other-repo/bar.ts'], summary: 's', concerns: [] },
+    'cross-repo-artifacts': { ok: true, found: 1, artifacts: [{ path: '/tmp/other-repo/bar.ts', exists: true, repo_root: '/tmp/other-repo', dirty: true }] },
+  }],
 ];
 
-for (const needle of DEV_FLOW_NEEDLES) {
-  test(`[bin-bare-name-routing][AC2] dev-flow.js が '${needle}' を含む`, () => {
-    assert.ok(devFlowSrc.includes(needle), `dev-flow.js に bare 名 call site '${needle}' が見つからない`);
+const runCache = new Map();
+async function callsFor(overrides) {
+  const key = JSON.stringify(Object.keys(overrides));
+  if (!runCache.has(key)) {
+    const { ctx, calls } = makeDevFlowSandbox({ overrides });
+    const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+    assertNoCrash(error, key);
+    runCache.set(key, calls);
+  }
+  return runCache.get(key);
+}
+
+let lastOverrides = {};
+for (const [labelPrefix, needle, overrides] of DEV_FLOW_CALL_SITES) {
+  if (overrides !== null) lastOverrides = overrides;
+  const scenario = lastOverrides;
+  test(`[bin-bare-name-routing][AC2] dev-flow.js の '${labelPrefix}' prompt が bare 名 '${needle}' を含む`, async () => {
+    const calls = await callsFor(scenario);
+    const hit = calls.filter((c) => c.label.startsWith(labelPrefix));
+    assert.ok(hit.length >= 1, `label '${labelPrefix}' の call が観測されない（scenario の到達条件を見直す）`);
+    assert.ok(hit.some((c) => c.prompt.includes(needle)), `'${labelPrefix}' の prompt に bare 名 call site '${needle}' が無い:\n${hit[0].prompt.slice(0, 600)}`);
   });
 }
 
-test("[bin-bare-name-routing][AC2] dev-flow.js の journal_sh: 'journal' がちょうど3回存在する", () => {
-  // 3 call sites: Merge tier success handoff / writeFailureTelemetry / top-level abort handoff（issue #607）。
-  const needle = "journal_sh: 'journal'";
-  let count = 0;
-  let idx = 0;
-  while (true) {
-    idx = devFlowSrc.indexOf(needle, idx);
-    if (idx === -1) break;
-    count += 1;
-    idx += needle.length;
+test("[bin-bare-name-routing][AC2] dev-flow.js の journal handoff payload は journal_sh:'journal'（3 call site: success / writeFailureTelemetry / abort）", async () => {
+  const runs = {
+    success: {},
+    failure: { 'diff-gate': { hash: 'H', empty: true }, 'diff-gate-retry': { hash: 'H', empty: true }, 'issue-labels': null },
+    abort: { 'plan#standard': () => { throw new Error('injected'); } },
+  };
+  for (const [name, overrides] of Object.entries(runs)) {
+    const { ctx, calls } = makeDevFlowSandbox({ overrides });
+    const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+    assertNoCrash(error, name);
+    const save = calls.find((c) => c.label === 'journal-save');
+    assert.ok(save, `${name} run に journal-save が無い`);
+    assert.ok(save.prompt.includes('"journal_sh":"journal"'), `${name} run の payload に "journal_sh":"journal" が無い`);
   }
-  assert.equal(count, 3, `journal_sh: 'journal' の出現回数が期待(3)と異なる: ${count}`);
 });
 
-test("[bin-bare-name-routing][AC2] pr-iterate.js が '`check-ci --checks-data' を含む", () => {
-  assert.ok(prIterateSrc.includes('`check-ci --checks-data'), "pr-iterate.js に bare 名 call site '`check-ci --checks-data' が見つからない");
+test("[bin-bare-name-routing][AC2] pr-iterate.js の ci-check prompt が bare 名 '`check-ci --checks-data' を含む", async () => {
+  const { ctx, calls } = makePrIterateSandbox();
+  const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  assertNoCrash(error, 'pr-iterate');
+  const ci = calls.find((c) => c.label.startsWith('ci-check'));
+  assert.ok(ci, 'pr-iterate.js で ci-check が観測されない');
+  assert.ok(ci.prompt.includes('`check-ci --checks-data'), `ci-check prompt に bare 名 call site が無い:\n${ci.prompt.slice(0, 600)}`);
 });
 
 const DEV_IMPROVE_NEEDLES = [
