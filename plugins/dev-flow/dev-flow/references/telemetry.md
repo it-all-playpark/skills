@@ -8,7 +8,9 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
   vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
-  merge_tier_reasons / route / subagent_invocations / resolved_evidence）を
+  merge_tier_reasons / route / subagent_invocations / resolved_evidence /
+  shape_reason / estimated_file_count / realized_file_count / realized_file_count_raw / ac_count /
+  analyze_path / analyze_ineligible_reason）を
   `~/.claude/journal/pending/` へ書き出し、
   dev-flow plugin の Stop hook `plugins/dev-flow/hooks/stop-devflow-telemetry.sh`
   （`hooks/hooks.json` から plugin root 変数経由で発火）が
@@ -106,6 +108,25 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで
   usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric。
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
+  **shape 判定 / analyze 経路の根拠（成功 handoff のみ・passthrough 経路・gate / merge tier / ledger の
+  入力にはしない。dev-flow-doctor の「shape 較正」が読む）**:
+  `shape_reason` は `classifyShape` が返す `reason` 文字列（`estimated N file(s), M AC, type=… → floor=…` の
+  閾値判定 / `LLM raised A→B` / それ以外は safe floor の種別 — doctor はこの prefix で 3 分類する）。
+  `estimated_file_count` は analyze の `estimated_change_file_count`（欠落時 `null`。Stop hook の passthrough は
+  null 値を落とすため journal ではキー欠落として現れる — doctor は欠落と null を同一に扱う）。
+  `ac_count` は `acceptance_criteria.length`。
+  `realized_file_count` は Security floor で `refloorShape` に渡した数 — **ephemeral / 宣言外パス / format-only
+  を除外した後**の realized diff（取得不能 NaN は `null`）。`realized_file_count_raw` は ephemeral 除外のみの
+  realized diff 総数。両方載せるのは、宣言外・format-only の除外で refloor 入力が閾値内に収まり raise が
+  不発になった run（raw は閾値超・count は閾値内）を doctor が「取りこぼし」として数えるため —
+  count だけでは閾値超かつ `shape_refloored=false` は構造上 0 件になり見えない。
+  refloor は Security floor 時点の working tree を見るので、pr-iterate fix / base merge / 手動 commit で
+  後から膨らんだ PR の changedFiles とは一致しない（journal から PR の最終規模は復元できない）。
+  `analyze_path` は `contract`（`analyze-issue.sh --contract` の決定論 parse 採用）/ `sonnet` の 2 値。
+  `analyze_ineligible_reason` は light path 不採用のときのみ出力（採用時はキー欠落）。`analyze-issue.sh` が
+  返した `ineligible_reason` を verbatim で載せ、probe が例外 / 失敗 / eligible だが whitelist 不合格 /
+  DEPTH が standard 以外で未試行、の workflow 側理由はそれぞれ `contract probe exception` /
+  `contract probe failed` / `whitelist rejected` / `contract not attempted (depth=<DEPTH>)` の固定文字列。
 
 ## Stop hook の二経路転送
 
