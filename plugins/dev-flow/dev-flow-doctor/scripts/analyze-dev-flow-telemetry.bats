@@ -1232,3 +1232,104 @@ EOF
     unknown=$(printf '%s\n' "$output" | jq '.distributions.shape.unknown')
     [ "$unknown" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# shape_calibration (issue #640): shape 判定 / analyze 経路の根拠キーの分布と
+# realized 不一致。旧 entry（キー欠落）は unknown / unmeasured に落ち、die しない。
+# ---------------------------------------------------------------------------
+@test "shape_calibration: shape_reason_kind classifies safe_floor / llm_raise / threshold / unknown" {
+    write_devflow_entry "e1.json" '{"shape":"complex","shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex"}' 1
+    write_devflow_entry "e2.json" '{"shape":"complex","shape_reason":"LLM raised standard→complex"}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard"}' 3
+    write_devflow_entry "e4.json" '{"shape":"complex","shape_reason":"breaking change detected (analyze structured breaking_change=true) → floor=complex"}' 4
+    write_devflow_entry "e5.json" '{"shape":"standard"}' 5
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    cal=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration')
+    [ "$(echo "$cal" | jq '.shape_reason_kind.safe_floor')" -eq 2 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind.llm_raise')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind.threshold')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind.unknown')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.complex.safe_floor')" -eq 2 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.standard.threshold')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.by_shape.complex')" -eq 3 ]
+    [ "$(echo "$cal" | jq '.by_shape.standard')" -eq 2 ]
+}
+
+@test "shape_calibration: realized_mismatch uses realized_file_count_raw (missed_refloor / overestimated / unmeasured)" {
+    # standard のまま raw 6 で refloor 不発 → missed_refloor（除外後 count は閾値内）
+    write_devflow_entry "e1.json" '{"shape":"standard","shape_refloored":false,"realized_file_count":5,"realized_file_count_raw":6}' 1 "acme/skills" 11
+    # complex へ refloor 済みで raw 6 → 不一致ではない
+    write_devflow_entry "e2.json" '{"shape":"complex","shape_refloored":true,"realized_file_count":6,"realized_file_count_raw":6}' 2
+    # complex で raw 3 → overestimated
+    write_devflow_entry "e3.json" '{"shape":"complex","shape_refloored":false,"realized_file_count":3,"realized_file_count_raw":3}' 3 "acme/skills" 13
+    # standard で raw 2 → overestimated（micro 相当）
+    write_devflow_entry "e4.json" '{"shape":"standard","shape_refloored":false,"realized_file_count":2,"realized_file_count_raw":2}' 4
+    # 旧 entry（raw 欠落）→ unmeasured
+    write_devflow_entry "e5.json" '{"shape":"standard","shape_refloored":false}' 5
+    # micro で raw 2 → 一致
+    write_devflow_entry "e6.json" '{"shape":"micro","shape_refloored":false,"realized_file_count":2,"realized_file_count_raw":2}' 6
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    rm_json=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration.realized_mismatch')
+    [ "$(echo "$rm_json" | jq '.measured')" -eq 5 ]
+    [ "$(echo "$rm_json" | jq '.unmeasured')" -eq 1 ]
+    [ "$(echo "$rm_json" | jq '.missed_refloor')" -eq 1 ]
+    [ "$(echo "$rm_json" | jq -r '.missed_refloor_samples[0].pr_number')" = "11" ]
+    [ "$(echo "$rm_json" | jq -r '.missed_refloor_samples[0].realized_file_count_raw')" = "6" ]
+    [ "$(echo "$rm_json" | jq '.overestimated')" -eq 2 ]
+    [ "$(echo "$rm_json" | jq '.thresholds.standard_max_files')" -eq 5 ]
+}
+
+@test "shape_calibration: analyze_path ratio and analyze_ineligible_reason buckets (sonnet entries only)" {
+    write_devflow_entry "e1.json" '{"shape":"standard","analyze_path":"contract"}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"AC heading not found"}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"comments present (3) — body/comment reconciliation requires sonnet analyze"}' 3
+    write_devflow_entry "e4.json" "{\"shape\":\"standard\",\"analyze_path\":\"sonnet\",\"analyze_ineligible_reason\":\"issue_type 'question' not in {feat,fix,docs,refactor,chore,test,perf,ci}\"}" 4
+    write_devflow_entry "e5.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"contract not attempted (depth=comprehensive)"}' 5
+    write_devflow_entry "e6.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"something new"}' 6
+    write_devflow_entry "e7.json" '{"shape":"standard","analyze_path":"sonnet"}' 7
+    write_devflow_entry "e8.json" '{"shape":"standard"}' 8
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    cal=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration')
+    [ "$(echo "$cal" | jq '.analyze_path.contract')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.analyze_path.sonnet')" -eq 6 ]
+    [ "$(echo "$cal" | jq '.analyze_path.unknown')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.ac_heading_not_found')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.comments_present')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.issue_type')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.depth_not_standard')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.other')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.unknown')" -eq 1 ]
+    # contract 採用 entry と analyze_path 欠落 entry は ineligible 分布の分母に入らない
+    [ "$(echo "$cal" | jq '[.analyze_ineligible_reason[]] | add')" -eq 6 ]
+}
+
+@test "micro_nonfiring: warn detail carries shape_reason_kind / analyze_path / overestimated from shape_calibration" {
+    echo '{"dev-flow-doctor":{"thresholds":{"micro_min_runs":2}}}' > "$SKILL_CONFIG_PATH"
+    write_devflow_entry "e1.json" '{"shape":"complex","shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","analyze_path":"sonnet","realized_file_count_raw":2,"shape_refloored":false}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","analyze_path":"contract","realized_file_count_raw":3,"shape_refloored":false}' 2
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    anomaly=$(printf '%s\n' "$output" | jq -c '.anomalies[] | select(.type == "micro_nonfiring")')
+    [ "$(echo "$anomaly" | jq -r '.severity')" = "warn" ]
+    [ "$(echo "$anomaly" | jq '.detail.shape_reason_kind.safe_floor')" -eq 1 ]
+    [ "$(echo "$anomaly" | jq '.detail.shape_reason_kind.threshold')" -eq 1 ]
+    [ "$(echo "$anomaly" | jq '.detail.analyze_path.contract')" -eq 1 ]
+    [ "$(echo "$anomaly" | jq '.detail.analyze_path.sonnet')" -eq 1 ]
+    [ "$(echo "$anomaly" | jq '.detail.overestimated')" -eq 1 ]
+}
+
+@test "shape_calibration: zero dev-flow entries -> all-zero block, no error" {
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    cal=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration')
+    [ "$(echo "$cal" | jq '.by_shape.micro + .by_shape.standard + .by_shape.complex + .by_shape.unknown')" -eq 0 ]
+    [ "$(echo "$cal" | jq '.realized_mismatch.measured')" -eq 0 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason | length')" -eq 0 ]
+}

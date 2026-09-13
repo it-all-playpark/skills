@@ -3067,6 +3067,67 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
   fi
 }
 
+
+# --------------------------------------------------------------------------
+# Test S-A (integration, issue #640): shape 判定 / analyze 経路の根拠 7 キー
+#          （shape_reason / estimated_file_count / realized_file_count /
+#          realized_file_count_raw / ac_count / analyze_path /
+#          analyze_ineligible_reason）は per-key 配線無しで passthrough
+#          （--telemetry-json）により実 journal entry の telemetry へ到達する。
+#          null 値（estimated_file_count 欠落）は passthrough が落とすので
+#          entry ではキー欠落になる（doctor は欠落と null を同一に扱う契約）。
+# --------------------------------------------------------------------------
+{
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  if [[ ! -x $REAL_JOURNAL ]]; then
+    echo "  (skip: real journal.sh not found — integration test skipped)"
+  else
+    tmpd=$(make_tmpdir)
+    mkdir -p "${tmpd}/journal/pending"
+
+    make_trust_handoff "${tmpd}/journal/pending/shapecal.json" "$REAL_JOURNAL" \
+      '.telemetry += {shape_reason: "estimated 3 file(s), 2 AC, type=fix → floor=standard", estimated_file_count: 3, realized_file_count: 1, realized_file_count_raw: 6, ac_count: 2, analyze_path: "sonnet", analyze_ineligible_reason: "comments present (2) — body/comment reconciliation requires sonnet analyze"}'
+
+    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
+    if [[ -z $entry ]]; then
+      fail "integration_shape_calibration_entry_written" "no journal entry created. hook output: ${RUN_OUT}"
+    else
+      pass "integration_shape_calibration_entry_written"
+      if jq -e '.telemetry.shape_reason == "estimated 3 file(s), 2 AC, type=fix → floor=standard"
+                and .telemetry.estimated_file_count == 3
+                and .telemetry.realized_file_count == 1
+                and .telemetry.realized_file_count_raw == 6
+                and .telemetry.ac_count == 2
+                and .telemetry.analyze_path == "sonnet"
+                and (.telemetry.analyze_ineligible_reason | startswith("comments present"))
+                and .telemetry.merge_tier == "REVIEW"' "$entry" >/dev/null 2>&1; then
+        pass "integration_shape_calibration_keys_persisted"
+      else
+        fail "integration_shape_calibration_keys_persisted" "keys missing/altered in entry: $(jq -c '.telemetry' "$entry")"
+      fi
+    fi
+
+    rm -rf "$tmpd"
+
+    # null の estimated_file_count はキー欠落として到達する（passthrough の null 除外）
+    tmpd=$(make_tmpdir)
+    mkdir -p "${tmpd}/journal/pending"
+    make_trust_handoff "${tmpd}/journal/pending/shapenull.json" "$REAL_JOURNAL" \
+      '.telemetry += {shape_reason: "estimated_change_file_count missing or invalid → safe floor=complex", estimated_file_count: null, ac_count: 2, analyze_path: "contract"}'
+    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
+    if [[ -n $entry ]] && jq -e '(.telemetry | has("estimated_file_count") | not)
+                                 and .telemetry.analyze_path == "contract"
+                                 and (.telemetry | has("analyze_ineligible_reason") | not)' "$entry" >/dev/null 2>&1; then
+      pass "integration_shape_calibration_null_dropped"
+    else
+      fail "integration_shape_calibration_null_dropped" "expected estimated_file_count absent / analyze_path=contract. entry: $(jq -c '.telemetry' "$entry" 2>/dev/null)"
+    fi
+    rm -rf "$tmpd"
+  fi
+}
 # --------------------------------------------------------------------------
 # Summary
 # --------------------------------------------------------------------------

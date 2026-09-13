@@ -510,6 +510,95 @@ ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c --argjson window "$NESTED_
   }
 ')
 
+# shape_calibration: shape 判定と analyze 経路の根拠キー（shape_reason /
+# estimated_file_count / realized_file_count / realized_file_count_raw / ac_count /
+# analyze_path / analyze_ineligible_reason — dev-flow.js の成功 handoff が passthrough で
+# 記録する）から、判定根拠の分布と realized との不一致を出す。閾値は classifyShape /
+# refloorShape（_lib/triviality.mjs）と同じ file 境界（micro <=2 / standard <=5）。
+# 較正判断のための report-only — gate / merge tier / score には影響しない。
+#
+# realized_mismatch の判定は realized_file_count_raw（ephemeral 除外のみの realized diff
+# 総数）を使う。refloorShape に渡る realized_file_count は宣言外パスと format-only を除外した
+# 後の数なので、それで比較すると「閾値超なのに shape_refloored=false」は構造上 0 件になり
+# 取りこぼしが見えない。raw が無い旧 entry（キー欠落）は unmeasured に数える。
+#   missed_refloor : raw が shape の上限を超えるのに shape_refloored=false（除外で refloor 不発）
+#   overestimated  : raw が shape の下位 tier の上限以下（standard で <=2、complex で <=5）
+#   注: refloor は Security floor 時点の working tree を見る。pr-iterate fix / merge で後から
+#   膨らんだ PR はここには現れない（journal の realized は PR の最終 changedFiles ではない）。
+SHAPE_FILE_MAX_MICRO=2
+SHAPE_FILE_MAX_STANDARD=5
+SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
+  --argjson micro_max "$SHAPE_FILE_MAX_MICRO" \
+  --argjson standard_max "$SHAPE_FILE_MAX_STANDARD" \
+  '
+  def reason_kind:
+    (.telemetry.shape_reason) as $r
+    | if ($r | type) != "string" or $r == "" then "unknown"
+      elif ($r | startswith("LLM raised")) then "llm_raise"
+      elif ($r | startswith("estimated ")) then "threshold"
+      else "safe_floor" end;
+  # analyze-issue.sh / dev-flow.js が返す自由文字列を prefix で閉じたバケットへ正規化する
+  def ineligible_bucket:
+    (.telemetry.analyze_ineligible_reason) as $r
+    | if ($r | type) != "string" or $r == "" then "unknown"
+      elif ($r | startswith("AC heading not found")) then "ac_heading_not_found"
+      elif ($r | startswith("AC heading found but no items")) then "ac_no_items"
+      elif ($r | startswith("comments present")) then "comments_present"
+      elif ($r | startswith("scope truncated")) then "scope_truncated"
+      elif ($r | startswith("issue_type")) then "issue_type"
+      elif ($r | startswith("breaking")) then "breaking"
+      elif ($r | startswith("contract not attempted")) then "depth_not_standard"
+      elif ($r | startswith("contract probe")) then "probe_failed"
+      elif ($r | startswith("whitelist rejected")) then "whitelist_rejected"
+      else "other" end;
+  def upper($s): if $s == "micro" then $micro_max elif $s == "standard" then $standard_max else null end;
+  def lower_tier_max($s): if $s == "standard" then $micro_max elif $s == "complex" then $standard_max else null end;
+  def raw: .telemetry.realized_file_count_raw;
+  def has_raw: (raw | type) == "number";
+  def sample: { issue: (.context.issue // null), repo: (.context.repo // null), pr_number: (.context.pr_number // null),
+                shape: .telemetry.shape, shape_refloored: (.telemetry.shape_refloored // null),
+                realized_file_count_raw: raw, realized_file_count: (.telemetry.realized_file_count // null),
+                estimated_file_count: (.telemetry.estimated_file_count // null) };
+  ([.[] | select(has_raw and (upper(.telemetry.shape) != null) and (raw > upper(.telemetry.shape)) and (.telemetry.shape_refloored != true))]) as $missed |
+  ([.[] | select(has_raw and (lower_tier_max(.telemetry.shape) != null) and (raw <= lower_tier_max(.telemetry.shape)))]) as $over |
+  {
+    by_shape: {
+      micro: ([.[] | select(.telemetry.shape == "micro")] | length),
+      standard: ([.[] | select(.telemetry.shape == "standard")] | length),
+      complex: ([.[] | select(.telemetry.shape == "complex")] | length),
+      unknown: ([.[] | select((.telemetry.shape // "unknown") as $v | ($v != "micro" and $v != "standard" and $v != "complex"))] | length)
+    },
+    shape_reason_kind: {
+      safe_floor: ([.[] | select(reason_kind == "safe_floor")] | length),
+      llm_raise: ([.[] | select(reason_kind == "llm_raise")] | length),
+      threshold: ([.[] | select(reason_kind == "threshold")] | length),
+      unknown: ([.[] | select(reason_kind == "unknown")] | length)
+    },
+    shape_reason_kind_by_shape: (
+      reduce (.[] | {shape: (.telemetry.shape // "unknown"), kind: reason_kind}) as $e ({};
+        .[$e.shape][$e.kind] = ((.[$e.shape][$e.kind] // 0) + 1))
+    ),
+    realized_mismatch: {
+      thresholds: { micro_max_files: $micro_max, standard_max_files: $standard_max },
+      measured: ([.[] | select(has_raw)] | length),
+      unmeasured: ([.[] | select(has_raw | not)] | length),
+      missed_refloor: ($missed | length),
+      missed_refloor_samples: ($missed | map(sample) | .[0:10]),
+      overestimated: ($over | length),
+      overestimated_samples: ($over | map(sample) | .[0:10])
+    },
+    analyze_path: {
+      contract: ([.[] | select(.telemetry.analyze_path == "contract")] | length),
+      sonnet: ([.[] | select(.telemetry.analyze_path == "sonnet")] | length),
+      unknown: ([.[] | select((.telemetry.analyze_path // "unknown") as $v | ($v != "contract" and $v != "sonnet"))] | length)
+    },
+    analyze_ineligible_reason: (
+      reduce (.[] | select(.telemetry.analyze_path == "sonnet") | ineligible_bucket) as $b ({};
+        .[$b] = ((.[$b] // 0) + 1))
+    )
+  }
+')
+
 DISTRIBUTIONS=$(jq -n \
   --argjson shape "$SHAPE_DIST" \
   --argjson merge_tier "$MERGE_TIER_DIST" \
@@ -520,6 +609,7 @@ DISTRIBUTIONS=$(jq -n \
   --argjson duration_seconds_by_shape "$DURATION_BY_SHAPE" \
   --argjson vdelta_verdict "$VDELTA_VERDICT_DIST" \
   --argjson confidence "$CONFIDENCE_DIST" \
+  --argjson shape_calibration "$SHAPE_CALIBRATION" \
   '{
     shape: $shape,
     merge_tier: $merge_tier,
@@ -529,7 +619,8 @@ DISTRIBUTIONS=$(jq -n \
     iterate_status: $iterate_status,
     duration_seconds_by_shape: $duration_seconds_by_shape,
     vdelta_verdict: $vdelta_verdict,
-    confidence: $confidence
+    confidence: $confidence,
+    shape_calibration: $shape_calibration
   }')
 
 # ----------------------------------------------------------------------------
@@ -607,11 +698,20 @@ if [[ "$TOTAL_DEV_FLOW_RUNS" -lt "$MICRO_MIN_RUNS" ]]; then
 else
   MICRO_COUNT=$(echo "$SHAPE_DIST" | jq '.micro')
   if [[ "$MICRO_COUNT" -eq 0 ]]; then
+    # 根拠を shape_calibration から併記する: 非 micro の run が safe floor / LLM raise / 閾値の
+    # どれで micro を外れたか（reason_kind）と analyze 経路の比率。切り分け無しの
+    # 「micro 0 件」だけでは判定ロジックの見直し先が決まらない。
     MICRO_NONFIRING=$(jq -n --argjson min_runs "$MICRO_MIN_RUNS" --argjson total "$TOTAL_DEV_FLOW_RUNS" \
+      --argjson cal "$SHAPE_CALIBRATION" \
       '[{
         type: "micro_nonfiring",
         severity: "warn",
-        detail: { total_dev_flow_runs: $total, micro_min_runs: $min_runs, micro_count: 0 }
+        detail: {
+          total_dev_flow_runs: $total, micro_min_runs: $min_runs, micro_count: 0,
+          shape_reason_kind: $cal.shape_reason_kind,
+          analyze_path: $cal.analyze_path,
+          overestimated: $cal.realized_mismatch.overestimated
+        }
       }]')
   else
     MICRO_NONFIRING='[]'

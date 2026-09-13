@@ -5064,19 +5064,31 @@ let req = null
 // sonnet 経路採用時は issueMetaRes の epoch から給電する（maxEpochRes が両者から最大を採る）。
 let contractRes = null
 let issueMetaRes = null
+// analyze 経路の telemetry: ANALYZE_PATH は 'contract' | 'sonnet' の 2 値。
+// ANALYZE_INELIGIBLE_REASON は light path 不採用の理由文字列（採用時は null のままキー欠落）。
+// analyze-issue.sh が返す ineligible_reason をそのまま載せ、probe 自体が失敗した／DEPTH 外で
+// 試行しなかった場合は workflow 側の理由を載せる（light path 拡大の AC を書くために、
+// どの不採用理由が支配的かを journal だけで数えられる必要がある）。
+let ANALYZE_PATH = 'sonnet'
+let ANALYZE_INELIGIBLE_REASON = `contract not attempted (depth=${DEPTH})`
 if (DEPTH === 'standard') {
+  ANALYZE_INELIGIBLE_REASON = 'contract probe exception'
   try {
     contractRes = await trackedAgent(
       contractProbePrompt,
       { agentType: 'dev-runner-haiku-ro', schema: CONTRACT, label: 'contract-probe#' + ISSUE, phase: 'Analyze' },
     )
+    ANALYZE_INELIGIBLE_REASON = 'contract probe failed'
   } catch (e) { log(`⚠️ analyze-contract 呼び出しが例外 — sonnet fallback（fail-open）`) }
   if (contractRes?.ok === true && contractRes.result) {
     const c = contractRes.result
     req = buildReqFromContract(c, ISSUE)
     if (req) {
+      ANALYZE_PATH = 'contract'
+      ANALYZE_INELIGIBLE_REASON = null
       log('analyze: 決定論 parse 採用（contract=' + c.contract + '）— sonnet analyze skip')
     } else {
+      ANALYZE_INELIGIBLE_REASON = (typeof c?.ineligible_reason === 'string' && c.ineligible_reason) ? c.ineligible_reason : 'whitelist rejected'
       if (Array.isArray(c?.ac_heading_near_miss) && c.ac_heading_near_miss.length) log('⚠️ analyze: AC 見出しの表記ゆれ候補が許容表記に一致しない（' + c.ac_heading_near_miss.join(' / ') + '）— sonnet analyze で拾えなければ needs_clarification になる（issue #573）')
       log('analyze: contract 非準拠（' + (c?.ineligible_reason || 'whitelist 検証不合格') + '）— sonnet fallback')
     }
@@ -6871,6 +6883,22 @@ const telemetryHandoff = buildJournalHandoffPayload({
     danger_fail_closed: dangerFailClosedFinal,
     shape: state.EFFECTIVE_SHAPE,
     shape_refloored: state.refloor.refloored,
+    // shape 判定 / analyze 経路の根拠。passthrough 経路で journal へ到達し、
+    // gate / merge tier / ledger の判定入力にはならない。doctor の「shape 較正」が読む。
+    // - realized_file_count: refloorShape に渡した数（宣言外パス・format-only を除外した後。
+    //   NaN = realized diff 取得不能 → null）
+    // - realized_file_count_raw: ephemeral 除外のみの realized diff 総数。refloor が除外で不発に
+    //   なった run（raw は閾値超・count は閾値内）を doctor が見分けるために両方載せる
+    // - estimated_file_count: 欠落時 null（Stop hook の passthrough は null を落とすので journal では
+    //   キー欠落として現れる。doctor は欠落と null を同一に扱う）
+    // - analyze_ineligible_reason: contract 経路採用時はキー欠落
+    shape_reason: triage.reason,
+    estimated_file_count: typeof state.req.estimated_change_file_count === 'number' ? state.req.estimated_change_file_count : null,
+    realized_file_count: Number.isFinite(state.realizedCount) ? state.realizedCount : null,
+    realized_file_count_raw: Array.isArray(state.realizedNonEphemeral) ? state.realizedNonEphemeral.length : null,
+    ac_count: Array.isArray(state.req.acceptance_criteria) ? state.req.acceptance_criteria.length : 0,
+    analyze_path: ANALYZE_PATH,
+    ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}),
     plan_iter: state.planIters,
     eval_iter: state.evalIters,
     eval_staleness: evalStaleness,

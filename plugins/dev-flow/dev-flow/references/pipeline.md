@@ -45,8 +45,11 @@ shape ごとの経路（3 tier）:
 
 shape は Analyze phase で `classifyShape` が判定し、安全 floor を適用する（`estimated_change_file_count`
 欠落・`acceptance_criteria` 欠落・out-of-enum `issue_type`・breaking 検出 → complex floor）。実装後は
-realized diff のファイル数で `refloorShape` が再判定（EFFECTIVE_SHAPE、raise-only）。danger-grep hit が
-あれば micro でも Evaluate を強制実行（security path）。
+realized diff のファイル数で `refloorShape` が再判定（EFFECTIVE_SHAPE、raise-only）。refloor に渡す数は
+Security floor 時点（PR 前）の working tree から ephemeral・宣言外パス・format-only を除外したもの
+（宣言外は size 信号にせず Evaluate 強制 + concern 監査で扱う）。除外前後の数は telemetry
+`realized_file_count_raw` / `realized_file_count` に記録され、doctor の shape 較正が除外による refloor
+不発を数える。danger-grep hit があれば micro でも Evaluate を強制実行（security path）。
 
 **micro lite route**: `TRIVIAL && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
 contract 準拠かつ danger clean）を満たす run は、PR phase で plan 1 発 → implementer → targeted test →
