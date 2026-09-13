@@ -76,6 +76,10 @@ isolation probe が fail-closed abort する。
 ## needs_clarification の扱い
 
 `dev-flow-run` が `needs_clarification` を返した場合、AskUserQuestion で人間に確認したうえで、
-**同じ worktree を保持したまま**手順4（`Workflow({ name: 'dev-flow:dev-flow-run', args: { issue, setup } })`）
-のみを再実行する。`setup` は手順2 で得た object をそのまま再利用してよく、`dev-flow-prerun` の
-再実行は不要。
+**同じ worktree を保持したまま手順2 から**やり直す（`dev-flow-prerun` を同じ `--worktree` で
+再実行 → 新しい stdout JSON を `setup` として手順4 を起動。手順3 は既に入っているので不要）。
+前回の `setup` object を使い回してはならない: isolation probe の token は `setup.epoch` 固定で、
+run 内に前回 probe ファイルの cleanup が無いため、同じ epoch で再起動すると Write-only agent が
+既存の `.devflow-tmp/.isolation-probe-<epoch>` へ上書きを試みて `written:false` → fail-closed
+abort する。`dev-flow-prerun` は再利用経路で `.devflow-tmp` を clean し新しい `epoch` を返すので
+衝突しない。

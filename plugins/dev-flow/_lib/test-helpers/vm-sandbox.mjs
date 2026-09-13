@@ -64,7 +64,7 @@ export function devFlowArgs(issue = 1, setupOverrides = {}) {
   return {
     issue: n,
     setup: {
-      ok: true, issue: Number(n), base: 'main', base_source: 'origin/dev',
+      ok: true, issue: Number(n), base: 'main', base_source: 'origin/HEAD',
       worktree: '/tmp/wt', branch: `feature/issue-${n}`, head: 'a'.repeat(40),
       worktree_status: 'created', clean: { ok: true },
       deps: { ok: true, note: '' }, stack: { frameworks: [] }, epoch: 1000,
@@ -104,17 +104,6 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     const result = responder({ label, agentType, prompt: p, opts: opts ?? {} });
     if (result === undefined && label === 'issue-meta') {
       return { ok: true, number: 1, title: 'stub-issue-title' };
-    }
-    if (result === undefined && label === 'setup-base') {
-      // issue #550 案1+案2: resolve-base + worktree-base-check 統合 probe のデフォルト応答。
-      // 呼び出し側 responder が明示的に 'setup-base' を扱わない限り、base 解決は main、
-      // worktree は未存在（新規作成経路）を返し checkWorktreeBase の fail-closed throw で
-      // Setup 以降の call chain を壊さない（旧 worktree-base-check default の統合後継）。
-      // epoch は start mark の給電元（issue #550 F1/F2）のため既定でも供給する。
-      return {
-        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
-        worktree_exists: false, upstream_remote: '', upstream_merge: '', epoch: 1000,
-      };
     }
     return result === undefined ? null : result;
   };
@@ -262,16 +251,9 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
       const v = overrides[label];
       return typeof v === 'function' ? v(callCtx) : v;
     }
-    if (label === 'setup-base') {
-      return {
-        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
-        worktree_exists: false, upstream_remote: '', upstream_merge: '', epoch: 1000,
-      };
-    }
-    if (label === 'worktree') return { worktree: '/tmp/wt', branch: `feature/issue-${issue}` };
-    if (label === 'isolation-cleanup') return { cleaned: true };
+    // Setup phase の subagent は isolation-probe のみ（base / worktree / deps / cleanup は
+    // dev-flow-prerun が run 前に済ませ args.setup で渡る — devFlowArgs 参照）
     if (label === 'isolation-probe') return { written: true };
-    if (label === 'worktree-deps') return null;
     if (label.startsWith('analyze')) {
       return {
         summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',

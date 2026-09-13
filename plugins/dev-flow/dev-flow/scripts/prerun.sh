@@ -337,7 +337,9 @@ summarize_deps() {
 
 if [[ "$SEG2_OK" == true ]]; then
     DEPS_RAW="$("$PLUGIN_ROOT/_shared/scripts/ensure-worktree-deps.sh" --path "$WT" --lockfile-only --skip-custom 2>/dev/null)" || DEPS_RAW=""
-    deps_json="$(summarize_deps "$DEPS_RAW")"
+    # jq フィルタ自体が応答不正で落ちても段4 だけ ok:false に留める（set -e で script 全体を巻き込まない）
+    deps_json="$(summarize_deps "$DEPS_RAW")" \
+        || deps_json='{"ok":false,"note":"依存インストール結果を確認できなかった（ensure-worktree-deps 応答不正）"}'
 else
     deps_json='{"ok":false,"note":"skipped: worktree unavailable"}'
 fi
@@ -348,8 +350,9 @@ fi
 
 if [[ "$SEG2_OK" == true ]]; then
     STACK_ERR_FILE="$(mktemp "${TMPDIR:-/tmp}/dev-flow-prerun-stack.XXXXXX")"
-    if STACK_RAW="$("$PLUGIN_ROOT/_lib/scripts/detect-stack.sh" "$WT" 2>"$STACK_ERR_FILE")" && printf '%s' "$STACK_RAW" | jq -e . >/dev/null 2>&1; then
-        FRAMEWORKS_JSON="$(printf '%s' "$STACK_RAW" | jq -c '[ (.frameworks // [])[] | select(type == "string") ]')"
+    if STACK_RAW="$("$PLUGIN_ROOT/_lib/scripts/detect-stack.sh" "$WT" 2>"$STACK_ERR_FILE")" \
+        && printf '%s' "$STACK_RAW" | jq -e 'type == "object"' >/dev/null 2>&1; then
+        FRAMEWORKS_JSON="$(printf '%s' "$STACK_RAW" | jq -c '[ (.frameworks | if type == "array" then . else [] end)[] | select(type == "string") ]')"
         stack_json="$(jq -n --argjson f "$FRAMEWORKS_JSON" '{frameworks: $f}')"
     else
         STACK_ERR_CONTENT="$(cat "$STACK_ERR_FILE" 2>/dev/null || true)"

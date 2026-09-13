@@ -137,8 +137,9 @@ issue comments は body と同じく要件抽出の入力。comment が body を
 
 ## Tech Stack & Best Practice Context
 
-Analyze では stack 検出も best-practice 読み込みも行わない。stack 検出は Setup の worktree-deps に相乗
-りした detect-stack が担い、Next.js 検出時のみ Turbopack fallback 規約を注入する。
+Analyze では stack 検出も best-practice 読み込みも行わない。stack 検出は run 前に wrapper skill が
+実行する `dev-flow-prerun`（detect-stack を内包し `args.setup.stack.frameworks` で渡る）が担い、
+Next.js 検出時のみ Turbopack fallback 規約を注入する。
 
 ## Examples
 

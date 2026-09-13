@@ -103,6 +103,25 @@ test('[devflow-skill-wrapper] args.setup 転記と unwritable 退避分岐を明
   );
 });
 
+// (k) needs_clarification 再起動で前回 setup を使い回す記述が無い
+//     isolation probe の token は setup.epoch 固定で run 内に前回 probe の cleanup が無い。
+//     同じ setup で再起動すると Write-only agent が既存 probe ファイルへの上書きで written:false →
+//     fail-closed abort する。再起動は dev-flow-prerun を再実行して新 epoch を得る経路のみ許す。
+test('[devflow-skill-wrapper] needs_clarification 再起動で setup を再利用してよいと書かない', () => {
+  const section = src.slice(src.indexOf('## needs_clarification'));
+  assert.ok(section.length > 0, 'dev-flow/SKILL.md に `## needs_clarification` 節が無い');
+  for (const banned of ['そのまま再利用してよく', '再実行は不要']) {
+    assert.ok(
+      !section.includes(banned),
+      `dev-flow/SKILL.md needs_clarification 節に「${banned}」が残存している（前回 setup の使い回しは probe token 衝突で abort する。dev-flow-prerun を再実行して新 epoch を渡すこと）`,
+    );
+  }
+  assert.ok(
+    section.includes('dev-flow-prerun') && section.includes('epoch'),
+    'dev-flow/SKILL.md needs_clarification 節に dev-flow-prerun 再実行（新 epoch）の指示が無い',
+  );
+});
+
 // (j) args.base を渡す旧形式が残存していない（base は dev-flow-prerun が解決する）
 test('[devflow-skill-wrapper] Workflow args に旧形式 base を渡さない', () => {
   assert.ok(
