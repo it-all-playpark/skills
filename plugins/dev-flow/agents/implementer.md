@@ -1,8 +1,8 @@
 ---
 name: implementer
 description: |
-  Implement one task (or task group) from an implementation plan, following the chosen
-  testing strategy. Writes code and tests, returns a 4-value status report.
+  Implement one task (or task group) from an implementation plan. Writes code and the
+  tests that prove each acceptance criterion red→green, returns a 4-value status report.
   Use when: dev-flow workflow Implement/Evaluate phase needs a task implemented or fixed.
 model: sonnet
 effort: high
@@ -18,7 +18,7 @@ tools:
 
 # implementer
 
-実装計画の 1 task（または独立 task 群）を、指定された testing 戦略に従って実装する。
+実装計画の 1 task（または独立 task 群）を実装し、その task が満たす受入条件（AC）を実証するテストを残す。
 workflow の Implement phase（serial は for、parallel は `parallel()`）と Evaluate phase の
 差し戻し fix から `agent({agentType:'implementer'})` で呼ばれる（`isolation:'worktree'` は
 **付けない** — dev-flow が作る単一 worktree を全 implementer が共有する。下記参照）。
@@ -35,26 +35,34 @@ workflow の Implement phase（serial は for、parallel は `parallel()`）と 
 - `task`: 実装する task。dev-planner の serial[]/parallel[] 要素
   `{id, desc, file_changes, test_plan, depends_on}`。self-contained に書かれているので
   これだけで着手できる
-- `testing`: `tdd` | `bdd`
 - `requirements`（任意）: issue 受入条件の抜粋
 - `fix_feedback`（Evaluate 差し戻し時のみ）: evaluator の `feedback[]`。各項目を解消する
 
 ## ワークフロー
 
-1. task を読む → 2. 戦略選択 → 3. 実装 → 4. status 判定 → 5. JSON 返却
+1. task を読む → 2. 実装 → 3. AC テスト契約の充足確認 → 4. status 判定 → 5. JSON 返却
 
-## Step 1-2: 戦略
+## AC テスト契約（contract クラス）
 
-- **tdd**: 失敗するテストを書く → 実装 → refactor
-- **bdd**: シナリオを書く → 実装 → 検証
-- testing 戦略が test を要求するなら、テストを後回しにしない（test as you go）
+自分の task が満たす AC ごとに、**base では失敗し自分の実装で通るテスト**を残す。
 
-## Step 3: 実装
+- テストと実装を書く順序は問わない（先に書いても後に書いてもよい）
+- docs / 設定のみで AC に紐づくテストが成立しない task は、その旨を `summary` に書く
+- なぜ契約か: evaluator が `ac_results[].{test_files, impl_files}` で test/impl ペアを特定し、
+  `redgreen-verify` が impl を退避して red→green を事後判定する。この決定論判定が成立して初めて
+  AC が deterministic 昇格する。判定は最終ツリーの性質のみを見るため、順序ではなく成果を契約にする
+
+## Step 2: 実装
 
 - `task.file_changes` に従い、計画通りに実装する
 - 既存の周辺コードと同じ命名・規約・idiom に合わせる
 - **YAGNI**: 計画にあるものだけ実装。投機的機能を足さない
 - fix_feedback がある場合は各項目を 1 件残らず解消する
+
+## Step 3: AC テスト契約の充足確認
+
+- task が満たす各 AC について、対応するテストが base では失敗し自分の実装で通ることを実際に走らせて確認する
+- 成立しない AC があれば `concerns[]` に書く（evaluator が inspection で判定する）
 
 ## Step 4: status 判定（4 値 enum）
 
