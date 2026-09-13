@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
-import { TEST_WEAKENING } from './test-helpers/dev-flow-markers.mjs';
+import { greenFixAuditEcho } from './test-helpers/dev-flow-markers.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -178,17 +178,18 @@ test('[green-fix-micro-eval] micro + green-fix 発生時に evaluator が 1 回�
 // 主検証 2: micro + green-fix 発生時に evaluator の prompt に「テスト弱体化」focus が含まれること
 // ============================================================
 
-test('[green-fix-micro-eval] micro + green-fix 発生時に evaluator の prompt に「テスト弱体化」が含まれること', async () => {
+test('[green-fix-micro-eval] micro + green-fix 発生時に evaluator の prompt に green-fix 監査 concern（files / summary の echo）が注入されること', async () => {
   await ensureSharedRun();
   const evaluatorCalls = sharedCalls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.ok(
     evaluatorCalls.length >= 1,
     `evaluator が呼ばれていない (全 agentTypes: ${sharedCalls.map((c) => c.agentType).join(', ')})`,
   );
-  const withFocus = evaluatorCalls.filter((c) => c.prompt.includes(TEST_WEAKENING));
+  const echo = greenFixAuditEcho(1, 'typo修正');
+  const withFocus = evaluatorCalls.filter((c) => c.prompt.includes(echo) && c.prompt.includes('src/foo.test.ts'));
   assert.ok(
     withFocus.length >= 1,
-    `micro + green-fix 発生時: evaluator の prompt に「テスト弱体化」が含まれるべきだが含まれていない`
+    `micro + green-fix 発生時: evaluator の prompt に green-fix 監査 concern（'${echo}' と変更ファイル src/foo.test.ts の echo）が含まれるべきだが含まれていない`
       + `\nevaluator prompt (先頭600文字):\n${evaluatorCalls[0]?.prompt.slice(0, 600) ?? ''}`,
   );
 });

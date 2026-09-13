@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
-import { TEST_WEAKENING } from './test-helpers/dev-flow-markers.mjs';
+import { greenFixAuditEcho } from './test-helpers/dev-flow-markers.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -151,8 +151,8 @@ test('[green-fix-no-audit] AC#2: green-fix 0 回経路では evaluator の promp
       + ` (全 agentTypes: ${sharedCalls.map((c) => c.agentType).join(', ')})`,
   );
 
-  // green-fix なし経路では evaluator prompt にテスト弱体化 focus が注入されないこと
-  const withAuditFocus = evaluatorCalls.filter((c) => c.prompt.includes(TEST_WEAKENING));
+  // green-fix なし経路では evaluator prompt に green-fix 監査 concern（summary echo）が注入されないこと
+  const withAuditFocus = evaluatorCalls.filter((c) => c.prompt.includes(greenFixAuditEcho(1, '')));
   assert.equal(
     withAuditFocus.length,
     0,

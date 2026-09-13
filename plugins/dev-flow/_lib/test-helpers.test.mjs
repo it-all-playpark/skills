@@ -18,7 +18,7 @@ import {
   makeRecordingSandbox, runDevFlowInSandbox, JS_GLOBALS,
   runWorkflowCapture, devFlowResponder, makeDevFlowSandbox, makePrIterateSandbox,
 } from './test-helpers/vm-sandbox.mjs';
-import { TEST_WEAKENING } from './test-helpers/dev-flow-markers.mjs';
+import { greenFixAuditEcho } from './test-helpers/dev-flow-markers.mjs';
 
 const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
 
@@ -227,20 +227,12 @@ test('[test-helpers] runDevFlowInSandbox: 実際の dev-flow.js ソースを Ref
 });
 
 // ============================================================
-// TEST_WEAKENING: 非空 + dev-flow.js source 包含の pin
+// greenFixAuditEcho: green-fix 監査 concern の構造 echo（`[#n] <summary>`）
 // ============================================================
 
-test('[test-helpers] TEST_WEAKENING: 空文字でないこと', () => {
-  assert.ok(typeof TEST_WEAKENING === 'string', 'TEST_WEAKENING は string 型であること');
-  assert.ok(TEST_WEAKENING.length > 0, 'TEST_WEAKENING は空文字でないこと');
-});
-
-test('[test-helpers] TEST_WEAKENING: dev-flow.js ソースに含まれること（canonical source との pin）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes(TEST_WEAKENING),
-    `dev-flow.js ソースに TEST_WEAKENING ('${TEST_WEAKENING}') が含まれること`,
-  );
+test('[test-helpers] greenFixAuditEcho: 番号付き echo 文字列を返すこと', () => {
+  assert.equal(greenFixAuditEcho(1, 'typo修正'), '[#1] typo修正');
+  assert.equal(greenFixAuditEcho(2, ''), '[#2] ');
 });
 
 // ============================================================

@@ -193,32 +193,6 @@ test('[abort-telemetry] (3) lgtm 完走経路: journal-log-abort が 0 回・jou
     `(3) lgtm 完走では result.journal_log_status は 'logged' のはずだが ${JSON.stringify(result?.journal_log_status)} だった`);
 });
 
-// ============================================================
-// (4) 静的 pin
-// ============================================================
-test('[abort-telemetry] (4) 静的 pin: ABORT_CTX 宣言 / try 開始位置 / iterate_rounds 反映 / 末尾 catch+rethrow', () => {
-  assert.equal((src.match(/const ABORT_CTX = \{/g) ?? []).length, 1,
-    `(4) 'const ABORT_CTX = {' は 1 回のみのはずだが ${(src.match(/const ABORT_CTX = \{/g) ?? []).length} 回だった`);
-
-  const cwdLogIdx = src.indexOf("if (!prMeta?.cwd) log(");
-  assert.ok(cwdLogIdx >= 0, `(4) isoWt 確定直後の cwd 警告 log 行が見つからなかった`);
-  const cwdLogLineEnd = src.indexOf('\n', cwdLogIdx);
-  const tryIdx = src.indexOf('try {', cwdLogIdx);
-  assert.ok(tryIdx >= 0, `(4) cwd 警告 log 行以降に 'try {' が見つからなかった`);
-  assert.ok(tryIdx - cwdLogLineEnd <= 2,
-    `(4) 'try {' は cwd 警告 log 行の直後（2 行以内）にあるべきだが、離れた位置にあった（cwdLogLineEnd=${cwdLogLineEnd}, tryIdx=${tryIdx}）`);
-
-  const isolationInlineEndIdx = src.indexOf('// ==== END inline: _lib/isolation-probe.mjs ====');
-  assert.ok(isolationInlineEndIdx >= 0, `(4) isolation-probe.mjs inline END marker が見つからなかった`);
-  assert.ok(isolationInlineEndIdx < tryIdx,
-    `(4) isolation-probe.mjs の inline 区間は try の外にあるべき（END marker index=${isolationInlineEndIdx} < try index=${tryIdx}）`);
-
-  assert.ok(src.includes('ABORT_CTX.iterate_rounds = i'),
-    `(4) ループ内で 'ABORT_CTX.iterate_rounds = i' の反映が見つからなかった`);
-
-  const lastCatchIdx = src.lastIndexOf('} catch (e) {');
-  assert.ok(lastCatchIdx >= 0, `(4) 末尾の '} catch (e) {' ブロックが見つからなかった`);
-  const tailBlock = src.slice(lastCatchIdx);
-  assert.ok(tailBlock.includes('throw e'),
-    `(4) 最終 '} catch (e) {' ブロック内に 'throw e' が含まれるべきだが含まれていなかった`);
-});
+// (4) ABORT_CTX 宣言 / try 開始位置 / iterate_rounds 反映 / 末尾 catch+rethrow の静的 pin は撤去した（issue #636）。
+// isolation probe 段の abort と rethrow は (1)(2) が VM 挙動で担保する。ループ内の call site は全て例外を
+// 吸収するため iterate_rounds の abort 反映は現行コードでは観測経路が無い。

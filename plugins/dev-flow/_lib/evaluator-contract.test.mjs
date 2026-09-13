@@ -288,12 +288,12 @@ test('[evaluator-contract] concern_resolutions contract mentions all 3 resolutio
   assert.ok(!contract.includes('{id, resolved, evidence}'));
 });
 
-test('[evaluator-contract][#626] concern_resolutions 契約は「人間の作業を含むものは triaged にしない」を含み、旧「要対応に「トリアージ済み」として残る」を含まない', () => {
+// #626 で撤回した旧仕様の文言が契約・evaluator.md に残っていないことだけを pin する（否定側のみ。
+// 新仕様の言い回しは変えられるべきなので肯定側の文言 pin は置かない — issue #636 AC-1。
+// 契約と evaluator.md の同期は上の verbatim mirror テストが担保する）。
+test('[evaluator-contract][#626] concern_resolutions 契約と evaluator.md に旧「要対応に「トリアージ済み」として残る」が残っていない', () => {
   const contract = EVALUATOR_OPERATIONAL_CONTRACT.concern_resolutions;
-  assert.ok(contract.includes('人間の作業（apply 前の手動検証・オペレータ確認依頼等）を含むものは triaged にしない'));
-  assert.ok(contract.includes('triaged も要対応から除外され'));
   assert.ok(!contract.includes('triaged は要対応に「トリアージ済み」として残る'));
-  assert.ok(evaluatorMd.includes('人間の作業（apply 前の手動検証・オペレータ確認依頼等）を含むものは triaged にしない'));
   assert.ok(!evaluatorMd.includes('triaged は要対応に「トリアージ済み」として残る'));
 });
 

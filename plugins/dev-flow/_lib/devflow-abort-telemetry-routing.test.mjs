@@ -327,26 +327,5 @@ test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entr
   }
 });
 
-// ============================================================
-// (8) 静的 pin
-// ============================================================
-test('[abort-telemetry] (8) 静的 pin: ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow', () => {
-  assert.equal((src.match(/const ABORT_CTX = \{/g) ?? []).length, 1,
-    `(8) 'const ABORT_CTX = {' は 1 回のみのはずだが ${(src.match(/const ABORT_CTX = \{/g) ?? []).length} 回だった`);
-
-  assert.match(src, /phase\('Setup'\)\n\s*try \{/,
-    `(8) phase('Setup') の直後に 'try {' が続くべきだが見つからなかった`);
-
-  const wftIdx = src.indexOf('async function writeFailureTelemetry(');
-  assert.ok(wftIdx >= 0, `(8) writeFailureTelemetry の定義が見つからなかった`);
-  const wftEndIdx = src.indexOf('\n}\n', wftIdx);
-  const wftBody = src.slice(wftIdx, wftEndIdx >= 0 ? wftEndIdx : undefined);
-  assert.ok(wftBody.includes('ABORT_CTX.failure_recorded = true'),
-    `(8) writeFailureTelemetry 本体内に 'ABORT_CTX.failure_recorded = true' が含まれるべきだが含まれていなかった`);
-
-  const lastCatchIdx = src.lastIndexOf('} catch (e) {');
-  assert.ok(lastCatchIdx >= 0, `(8) 末尾の '} catch (e) {' ブロックが見つからなかった`);
-  const tailBlock = src.slice(lastCatchIdx);
-  assert.ok(tailBlock.includes('throw e'),
-    `(8) 最終 '} catch (e) {' ブロック内に 'throw e' が含まれるべきだが含まれていなかった`);
-});
+// (8) ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow の静的 pin は撤去した（issue #636）。
+// Setup 段の abort は (3)、failure_recorded による二重記録防止は (5)、rethrow は (1)(4) が VM 挙動で担保する。

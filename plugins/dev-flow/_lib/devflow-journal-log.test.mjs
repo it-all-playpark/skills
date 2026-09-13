@@ -384,29 +384,12 @@ test('[journal-log] stage1 成功後に journal-log(stage2) が throw した場�
   );
 });
 
-test('[journal-log] source pin: dev-flow.js の 2 call site（writeFailureTelemetry / Merge tier）が inline 区間外で runJournalHandoff を呼び、logLabel が現行値のまま（choreography の手写しが残っていない）', () => {
+// inline 区間整合: journal handoff の choreography は canonical（_lib/journal-handoff.mjs）の inline 区間にのみ
+// 存在し、call site 側に手写しが残っていないこと（否定 pin）。call site の label（journal-log /
+// journal-log-failure）と 2 段 handoff の挙動は上の VM テストと exec-proxy-routing.test.mjs が観測する。
+test('[journal-log] inline 整合: dev-flow.js の inline 区間外に journal handoff choreography の手写しが残っていない', () => {
   const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
   assert.ok(anchor >= 0, 'journal-handoff inline END marker が見つからない');
-
-  assert.ok(
-    src.indexOf("logLabel: 'journal-log-failure',", anchor) > anchor,
-    "writeFailureTelemetry の call site の logLabel が現行値 'journal-log-failure' でない",
-  );
-  assert.ok(
-    src.indexOf("logLabel: 'journal-log',", anchor) > anchor,
-    "Merge tier の call site の logLabel が現行値 'journal-log' でない",
-  );
-
-  let callSiteCount = 0;
-  let searchFrom = anchor;
-  for (;;) {
-    const idx = src.indexOf('runJournalHandoff({', searchFrom);
-    if (idx === -1) break;
-    callSiteCount += 1;
-    searchFrom = idx + 1;
-  }
-  assert.ok(callSiteCount >= 2, `inline 区間より後（call site）に runJournalHandoff 呼び出しが 2 回以上無い（実際 ${callSiteCount} 回）`);
-
   assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
 });
 

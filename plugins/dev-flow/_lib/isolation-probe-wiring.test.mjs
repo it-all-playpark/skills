@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, makeDevFlowSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const devFlowPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
@@ -175,15 +175,28 @@ test('[isoToken 給電 fallback] setup-base probe が epoch を欠く（fail-ope
   );
 });
 
-// ── issue #550 案1+案2: epoch 供給元の一本化を静的ソース pin で保証する ──
-// feedClockMark('start', ...) の呼び出しが dev-flow.js に 1 箇所のみであることを検証する。
-// 2 箇所以上あると start mark の epoch 供給元が二重化・不定になり得るため、静的に 1 箇所へ固定する。
+// ── issue #550 案1+案2: start mark の epoch 供給元は setup-base probe（VM 挙動で観測）──
+// setup-base の epoch と post-summary の epoch の差が duration_seconds として telemetry に現れることで、
+// start mark が setup-base probe の epoch から給電されていることを検証する（issue #636: 「feedClockMark('start'
+// の呼び出しが 1 箇所」というソース pin から置換。別の給電元が start を上書きすれば差が変わり落ちる）。
 
-test("[epoch 供給元一本化] dev-flow.js に feedClockMark('start', の呼び出しが 1 箇所のみ存在する", () => {
-  const startMarkCalls = [...src.matchAll(/feedClockMark\('start',/g)];
-  assert.equal(
-    startMarkCalls.length,
-    1,
-    `feedClockMark('start', の呼び出しはちょうど 1 箇所であるべきだが ${startMarkCalls.length} 箇所だった`,
+test("[epoch 供給元] start mark は setup-base probe の epoch から給電され duration_seconds = post-summary.epoch - setup-base.epoch になる", async () => {
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: {
+      'setup-base': {
+        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
+        worktree_exists: false, upstream_remote: '', upstream_merge: '', epoch: 5000,
+      },
+      'worktree': { worktree: '/tmp/wt', branch: 'feature/issue-1', epoch: 7777 },
+      'post-summary': { posted: true, method: 'gh', url: 'http://x', epoch: 5300 },
+    },
+  });
+  const { error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'epoch-source');
+  const save = calls.find((c) => c.label === 'journal-save');
+  assert.ok(save, 'journal-save が呼ばれていない');
+  assert.ok(
+    save.prompt.includes('"duration_seconds":300'),
+    `duration_seconds は setup-base(5000)→post-summary(5300) の 300 のはず（worktree の epoch 7777 を start に使っていない）:\n${save.prompt.slice(0, 900)}`,
   );
 });
