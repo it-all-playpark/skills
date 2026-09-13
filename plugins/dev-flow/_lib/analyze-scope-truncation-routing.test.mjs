@@ -40,7 +40,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -114,7 +114,7 @@ function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1,
 }
 
 function makeSandbox(opts) {
-  const { ctx, calls } = makeRecordingSandbox(createResponder(opts), { args: '1' });
+  const { ctx, calls } = makeRecordingSandbox(createResponder(opts), { args: devFlowArgs('1') });
   return { ctx, calls };
 }
 
@@ -253,7 +253,7 @@ test('[analyze-scope-truncation-routing] T6: scope_truncated:true + 1回目 ambi
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
-  const { ctx, calls } = makeRecordingSandbox(responder, { args: '1' });
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
   const { result, error } = await run(ctx);
   assertNoCrash(error, 'T6');
   assert.equal(error, null, `T6: run が throw してはならないが: ${error?.message}`);
@@ -299,7 +299,7 @@ test('[analyze-scope-truncation-routing] T7: 再実行後（analyze-retrunc#）�
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
-  const { ctx, calls } = makeRecordingSandbox(responder, { args: '1' });
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
   const { result, error } = await run(ctx);
   assertNoCrash(error, 'T7');
   assert.equal(error, null, `T7: run が throw してはならないが: ${error?.message}`);
@@ -344,7 +344,7 @@ test('[analyze-scope-truncation-routing] T8: 再実行後（analyze-retrunc#）�
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
-  const { ctx, calls } = makeRecordingSandbox(responder, { args: '1' });
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
   const { result, error } = await run(ctx);
   assertNoCrash(error, 'T8');
   assert.equal(error, null, `T8: run が throw してはならないが: ${error?.message}`);
@@ -389,7 +389,7 @@ test('[analyze-scope-truncation-routing] T9: 再実行（analyze-retrunc#）の 
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
-  const { ctx, calls } = makeRecordingSandbox(responder, { args: '1' });
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
   const { result, error } = await run(ctx);
   assertNoCrash(error, 'T9');
   assert.equal(error, null, `T9: retrunc agent の throw で run 全体が abort してはならないが: ${error?.message}`);

@@ -110,11 +110,7 @@ async function runDevFlowThrow(config, label) {
 // EXPECTED_DEV_FLOW: label → { config, policy, reason, extra? }
 // ============================================================
 const EXPECTED_DEV_FLOW = {
-  'setup-base': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。base/worktree起点が確定しないままPR diffに基点差分が乗るため throw をそのまま abort させる' },
-  worktree: { config: DF_B1, policy: 'abort', reason: 'need()包み。worktree未確定のまま以降のImplementへ進めない致命契約' },
-  'isolation-cleanup': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。cleanup失敗はprobe成立に影響しないfail-open設計' },
   'isolation-probe': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。bg-isolation検知はfail-closed設計で回避手順を提示するthrowを伝播させる' },
-  'worktree-deps': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。deps install結果不明のまま以降の実装を進めるべきでない' },
   "contract-probe#1": { config: DF_B1, policy: 'continue', reason: 'try/catchでthrowを吸収しsonnet analyzeへfallbackする既存のfail-open経路' },
   'analyze#1': { config: DF_B1, policy: 'abort', reason: 'need()包み。REQ取得不能のまま実装を進めない致命契約' },
   'issue-meta': {
@@ -288,10 +284,10 @@ test('dev-flow.js: 本ファイルの baseline + DEV_FLOW_SCENARIOS 全 scenario
 });
 
 // ── 参照 sanity（走査ズレ検出）────────────────────────────────────
-test("dev-flow.js baseline（B1）に 'setup-base' / 'plan#standard' / 'post-summary' が含まれる（走査ズレ検出）", async () => {
+test("dev-flow.js baseline（B1）に 'isolation-probe' / 'plan#standard' / 'post-summary' が含まれる（走査ズレ検出）", async () => {
   const { calls } = await runDevFlowBaseline(DF_B1);
   const labels = calls.map((c) => c.label);
-  assert.ok(labels.includes('setup-base'), "baseline に 'setup-base' が無い");
+  assert.ok(labels.includes('isolation-probe'), "baseline に 'isolation-probe' が無い");
   // shape='standard' の既定 baseline では PLAN_SOLO 経路のため label は 'plan#standard'
   // （'plan#${i}' ループ形は complex shape でのみ到達し本 baseline では観測されない）。
   assert.ok(labels.includes('plan#standard'), "baseline に 'plan#standard' が無い");

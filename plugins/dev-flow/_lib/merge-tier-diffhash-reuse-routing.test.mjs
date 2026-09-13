@@ -34,7 +34,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -143,7 +143,7 @@ function makeSandbox({ overrides = {} } = {}) {
   // diff-hash reuse ロジックの検証に専念できる（final-reconcile-routing.test.mjs のケース(a)と同型）。
   return makeRecordingSandbox(createResponder(overrides), {
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 0 }),
-    args: '377',
+    args: devFlowArgs('377'),
   });
 }
 

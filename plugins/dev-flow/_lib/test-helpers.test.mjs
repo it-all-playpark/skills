@@ -17,6 +17,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 import {
   makeRecordingSandbox, runDevFlowInSandbox, JS_GLOBALS,
   runWorkflowCapture, devFlowResponder, makeDevFlowSandbox, makePrIterateSandbox,
+  devFlowArgs,
 } from './test-helpers/vm-sandbox.mjs';
 import { greenFixAuditEcho } from './test-helpers/dev-flow-markers.mjs';
 
@@ -109,15 +110,45 @@ test('[test-helpers] makeRecordingSandbox: ctx に control fns (phase/log/workfl
   const wfType = vm.runInContext(`typeof workflow`, ctx);
   assert.equal(wfType, 'function');
 
-  // args は文字列
+  // args は {issue, setup} object 形
   const argsType = vm.runInContext(`typeof args`, ctx);
-  assert.equal(argsType, 'string');
+  assert.equal(argsType, 'object');
+  const argsIssue = vm.runInContext(`args.issue`, ctx);
+  assert.equal(argsIssue, '1');
+  const setupOk = vm.runInContext(`args.setup.ok`, ctx);
+  assert.equal(setupOk, true);
+  const setupWorktree = vm.runInContext(`args.setup.worktree`, ctx);
+  assert.equal(setupWorktree, '/tmp/wt');
 });
 
 test('[test-helpers] makeRecordingSandbox: extraSandbox で上書きできること', () => {
-  const { ctx } = makeRecordingSandbox(() => null, { args: '999' });
-  const result = vm.runInContext(`args`, ctx);
+  const { ctx } = makeRecordingSandbox(() => null, { args: devFlowArgs('999') });
+  const result = vm.runInContext(`args.issue`, ctx);
   assert.equal(result, '999');
+});
+
+// ============================================================
+// devFlowArgs: dev-flow.js 用 args の既定形（{issue, setup}）
+// ============================================================
+
+test('[test-helpers] devFlowArgs: 既定で issue:"1", setup.repo キー無し, setup.epoch===1000 であること', () => {
+  const args = devFlowArgs();
+  assert.equal(args.issue, '1');
+  assert.equal(Object.prototype.hasOwnProperty.call(args.setup, 'repo'), false, 'setup.repo キーが無いこと');
+  assert.equal(args.setup.epoch, 1000);
+});
+
+test('[test-helpers] devFlowArgs: overrides で issue:"7", setup.branch/repo/epoch が上書きされること', () => {
+  const args = devFlowArgs(7, { repo: 'acme/skills', epoch: 1234 });
+  assert.equal(args.issue, '7');
+  assert.equal(args.setup.branch, 'feature/issue-7');
+  assert.equal(args.setup.repo, 'acme/skills');
+  assert.equal(args.setup.epoch, 1234);
+});
+
+test('[test-helpers] devFlowArgs: devFlowArgs("999") の args.issue が "999" であること', () => {
+  const args = devFlowArgs('999');
+  assert.equal(args.issue, '999');
 });
 
 // ============================================================

@@ -387,7 +387,7 @@ test('validateJournalSavedPath rejects non-string input', () => {
   assert.equal(validateJournalSavedPath(42, {}), false);
 });
 
-// issue #607: dev-flow's WT-unconfirmed abort path (Setup's setup-base / worktree agent) has no
+// issue #607: dev-flow's WT-unconfirmed abort path (Setup's args.setup validation via prerun-setup) has no
 // worktree savePath yet, so the abort catch retargets savePath to
 // `~/.claude/journal/abort-payload/...`. validateJournalSavedPath must accept that tilde-rooted
 // path (rebasing it onto the same absolute-path/charset/'..'/basename checks as `/`-rooted paths)
@@ -814,8 +814,8 @@ test('buildAbortErrorMsg accepts a plain string error', () => {
 
 test('buildAbortErrorMsg falls back to "unknown error" when error is undefined', () => {
   assert.equal(
-    buildAbortErrorMsg({ phase: 'Setup', label: 'setup-base', error: undefined }),
-    'abort@Setup/setup-base: unknown error',
+    buildAbortErrorMsg({ phase: 'Setup', label: 'prerun-setup', error: undefined }),
+    'abort@Setup/prerun-setup: unknown error',
   );
 });
 

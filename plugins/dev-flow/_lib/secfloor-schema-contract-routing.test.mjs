@@ -122,7 +122,7 @@ test("[secfloor-schema-contract][AC2] label 'danger-grep' call site has retryOnC
   assert.equal(call.opts.retryOnContractViolation, true);
   assert.equal(call.agentType, 'dev-flow:dev-runner-haiku-ro');
   assert.ok(
-    call.prompt.includes('secfloor-classify /tmp/wt origin/dev'),
+    call.prompt.includes('secfloor-classify /tmp/wt origin/main'),
     `danger-grep prompt に secfloor-classify の argv token が無い: ${call.prompt}`,
   );
 });

@@ -42,11 +42,11 @@ test('[devflow-skill-wrapper] EnterWorktree を含む', () => {
   );
 });
 
-// (d) git worktree add と df- を含む（preflight 手順2 + 命名規約）
-test('[devflow-skill-wrapper] git worktree add と df- 命名規約を含む', () => {
+// (d) dev-flow-prerun と df- を含む（preflight 手順2 + 命名規約）
+test('[devflow-skill-wrapper] dev-flow-prerun と df- 命名規約を含む', () => {
   assert.ok(
-    src.includes('git worktree add'),
-    'dev-flow/SKILL.md に `git worktree add` が含まれない（preflight 手順2）',
+    src.includes('dev-flow-prerun'),
+    'dev-flow/SKILL.md に `dev-flow-prerun` が含まれない（preflight 手順2）',
   );
   assert.ok(
     src.includes('df-'),
@@ -76,5 +76,56 @@ test('[devflow-skill-wrapper] namespaced 名 dev-flow:dev-flow-run で起動す�
   assert.ok(
     src.includes("name: 'dev-flow:dev-flow-run'"),
     'dev-flow/SKILL.md に namespaced 起動記述 `name: \'dev-flow:dev-flow-run\'` が見つからない',
+  );
+});
+
+// (h) 自前の git worktree add 記述が残存していない（worktree 作成は dev-flow-prerun に吸収済み）
+test('[devflow-skill-wrapper] git worktree add を含まない（prerun に吸収済み）', () => {
+  assert.ok(
+    !src.includes('git worktree add'),
+    'dev-flow/SKILL.md に `git worktree add` が残存している（worktree 作成は dev-flow-prerun に一本化すること）',
+  );
+});
+
+// (i) args.setup 転記と unwritable 退避分岐を明記する
+test('[devflow-skill-wrapper] args.setup 転記と unwritable 退避分岐を明記する', () => {
+  assert.ok(
+    src.includes('setup:'),
+    'dev-flow/SKILL.md に `args.setup` への転記記述（`setup:`）が見つからない',
+  );
+  assert.ok(
+    src.includes('unwritable'),
+    'dev-flow/SKILL.md に worktree_status:"unwritable" の退避分岐が見つからない',
+  );
+  assert.ok(
+    src.includes('--worktree'),
+    'dev-flow/SKILL.md に `--worktree` オプションの記述が見つからない',
+  );
+});
+
+// (k) needs_clarification 再起動で前回 setup を使い回す記述が無い
+//     isolation probe の token は setup.epoch 固定で run 内に前回 probe の cleanup が無い。
+//     同じ setup で再起動すると Write-only agent が既存 probe ファイルへの上書きで written:false →
+//     fail-closed abort する。再起動は dev-flow-prerun を再実行して新 epoch を得る経路のみ許す。
+test('[devflow-skill-wrapper] needs_clarification 再起動で setup を再利用してよいと書かない', () => {
+  const section = src.slice(src.indexOf('## needs_clarification'));
+  assert.ok(section.length > 0, 'dev-flow/SKILL.md に `## needs_clarification` 節が無い');
+  for (const banned of ['そのまま再利用してよく', '再実行は不要']) {
+    assert.ok(
+      !section.includes(banned),
+      `dev-flow/SKILL.md needs_clarification 節に「${banned}」が残存している（前回 setup の使い回しは probe token 衝突で abort する。dev-flow-prerun を再実行して新 epoch を渡すこと）`,
+    );
+  }
+  assert.ok(
+    section.includes('dev-flow-prerun') && section.includes('epoch'),
+    'dev-flow/SKILL.md needs_clarification 節に dev-flow-prerun 再実行（新 epoch）の指示が無い',
+  );
+});
+
+// (j) args.base を渡す旧形式が残存していない（base は dev-flow-prerun が解決する）
+test('[devflow-skill-wrapper] Workflow args に旧形式 base を渡さない', () => {
+  assert.ok(
+    !src.includes("base: '<base>'"),
+    'dev-flow/SKILL.md に旧形式 `args: { issue: <N>, base: \'<base>\' }` が残存している（base は dev-flow-prerun が解決するので渡さない）',
   );
 });

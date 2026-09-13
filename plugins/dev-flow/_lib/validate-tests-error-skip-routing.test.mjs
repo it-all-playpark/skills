@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -156,7 +156,7 @@ async function runScenario({ mode, gateEmpty }) {
   const logs = [];
   const { ctx, calls } = makeRecordingSandbox(createResponder({ mode, gateEmpty }), {
     log: (m) => logs.push(String(m)),
-    args: '627',
+    args: devFlowArgs('627'),
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   const out = { calls, logs, result, error };

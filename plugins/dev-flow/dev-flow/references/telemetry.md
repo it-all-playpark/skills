@@ -39,7 +39,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   （fail-open: handoff 失敗は run 終了を妨げない。終端サマリ・Merge tier は実行しない —
   判定前提が揃わないため）。abort entry の組み立て口は `_lib/journal-handoff.mjs` の
   `buildAbortHandoffPayload` のみ（legacy fallback / version 分岐なし）。dev-flow の WT 未確定
-  abort（Setup の setup-base / worktree 段）は payload を `~/.claude/journal/abort-payload/` へ
+  abort（Setup の args.setup 検証（prerun-setup）段）は payload を `~/.claude/journal/abort-payload/` へ
   退避する（validateJournalSavedPath は `~/.claude/journal/` prefix のみ tilde 受理）。
   empty_diff 経路は writeFailureTelemetry が先に記録済みなので abort entry を二重記録しない。
   nested pr-iterate が abort した run は pr-iterate と dev-flow の abort entry が 1 件ずつ残る
@@ -58,8 +58,8 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `phase_durations` は analyze / plan / implement / validate / evaluate / pr / iterate / final の 8 phase の秒数 object。
   各 phase は開始〜終了の全体時間（plan-review loop / evaluate 差し戻し loop 等の内部反復を含む）。evaluate 区間は
   Security floor を含む。micro path（Evaluate skip）では evaluate キー自体が欠落し pr は直近 mark（validate_end）
-  起点で計算される。時刻は専用 clock probe を起動せず、start は Setup 冒頭の setup-base probe（resolve-base +
-  worktree-base-check 統合 exec-proxy、label 'setup-base'）の optional epoch、end は Merge tier 末尾の
+  起点で計算される。時刻は専用 clock probe を起動せず、start は wrapper（dev-flow-prerun、top-level
+  Bash）が渡す `args.setup.epoch`（`date +%s`。必須キーのため fallback 経路は無い）、end は Merge tier 末尾の
   post-summary 応答の optional epoch から給電し、残り 9 mark は phase 境界に隣接する既存 exec-proxy / agent
   応答の optional epoch フィールドから給電する（fail-open 不変）。
   **給電元応答の完了タイミング依存の skew（contract 経路の analyze_end は shape 判定の

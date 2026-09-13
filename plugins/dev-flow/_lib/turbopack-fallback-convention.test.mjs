@@ -1,7 +1,7 @@
 // implementer.md / evaluator.md / dev-runner*.md は sandbox write-deny のため、Turbopack fallback
 // 規約は dev-flow.js が全 implementer/evaluator/dev-runner spawn prompt に注入する（issue #292）。
 //
-// 注入可否は Setup(stack) が worktree-deps 応答に相乗りした detect-stack の frameworks で決定論的に決め、
+// 注入可否は Setup が args.setup.stack.frameworks（prerun の detect-stack）で決定論的に決め、
 // 対象 repo が Next.js（frameworks に 'next'）のときのみ TURBOPACK_NOTE に本文をセットする（issue #635。
 // LLM に適用可否を判定させない）。Next.js 判定そのものと標準 3 経路（implementer / test / evaluator）の
 // 注入有無は turbopack-stack-gate-routing.test.mjs が担う。
@@ -21,14 +21,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
 const TOKENS = ['TurbopackInternalError', 'next build --webpack'];
-const NEXT_DEPS = { status: 'installed', frameworks: ['next'] };
-const REACT_DEPS = { status: 'installed', frameworks: ['react'] };
+const NEXT_FRAMEWORKS = ['next'];
+const REACT_FRAMEWORKS = ['react'];
 
 function assertTokens(call, label, expected) {
   assert.ok(call != null, `label === '${label}' の call が見つからない`);
@@ -64,8 +64,8 @@ const EVAL_FIX = {
   },
 };
 
-async function run(overrides, name) {
-  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+async function run(overrides, frameworks, name) {
+  const { ctx, calls } = makeDevFlowSandbox({ overrides, extra: { args: devFlowArgs(1, { stack: { frameworks } }) } });
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, name);
   return calls;
@@ -73,7 +73,7 @@ async function run(overrides, name) {
 
 // (1) Next.js 検出・標準経路
 test('[turbopack-fallback] Next.js 検出: implementer / test#1 / eval#1 の prompt に規約トークンが含まれる', async () => {
-  const calls = await run({ 'worktree-deps': NEXT_DEPS }, 'next-standard');
+  const calls = await run({}, NEXT_FRAMEWORKS, 'next-standard');
   for (const label of ['impl:serial:t1', 'test#1', 'eval#1']) {
     assertTokens(calls.find((c) => c.label === label), label, true);
   }
@@ -81,17 +81,17 @@ test('[turbopack-fallback] Next.js 検出: implementer / test#1 / eval#1 の pro
 
 // (2)(2') Validate red→green-fix 経路
 test('[turbopack-fallback] green-fix#1 prompt: Next.js 検出時は規約トークンが含まれ、非検出時は含まれない', async () => {
-  const next = await run({ 'worktree-deps': NEXT_DEPS, ...GREEN_FIX }, 'next-greenfix');
+  const next = await run(GREEN_FIX, NEXT_FRAMEWORKS, 'next-greenfix');
   assertTokens(next.find((c) => c.label === 'green-fix#1'), 'green-fix#1', true);
-  const react = await run({ 'worktree-deps': REACT_DEPS, ...GREEN_FIX }, 'react-greenfix');
+  const react = await run(GREEN_FIX, REACT_FRAMEWORKS, 'react-greenfix');
   assertTokens(react.find((c) => c.label === 'green-fix#1'), 'green-fix#1', false);
 });
 
 // (3)(3') Evaluate implementation 差し戻し経路
 test('[turbopack-fallback] fix#1 prompt: Next.js 検出時は規約トークンが含まれ、非検出時は含まれない', async () => {
-  const next = await run({ 'worktree-deps': NEXT_DEPS, ...EVAL_FIX }, 'next-fix');
+  const next = await run(EVAL_FIX, NEXT_FRAMEWORKS, 'next-fix');
   assertTokens(next.find((c) => c.label === 'fix#1'), 'fix#1', true);
-  const react = await run({ 'worktree-deps': REACT_DEPS, ...EVAL_FIX }, 'react-fix');
+  const react = await run(EVAL_FIX, REACT_FRAMEWORKS, 'react-fix');
   assertTokens(react.find((c) => c.label === 'fix#1'), 'fix#1', false);
 });
 

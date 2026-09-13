@@ -270,7 +270,7 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
-// tilde は dev-flow の WT 未確定 abort 経路（Setup の setup-base / worktree 段で throw し、
+// tilde は dev-flow の WT 未確定 abort 経路（Setup の args.setup 検証（prerun-setup）で throw し、
 // worktree パスがまだ確定していない）専用。prefix を `~/.claude/journal/` に固定するのは、
 // validateJournalSavedPath が dev-improve の saveDir モードで agent 申告値の検証にも使われるため
 // — `~/` 全般を通すと、その injection guard まで一緒に広がってしまう。

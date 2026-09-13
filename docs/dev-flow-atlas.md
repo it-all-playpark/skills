@@ -34,8 +34,8 @@ script 変数に持つ。
 
 ```mermaid
 flowchart TD
-    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>base 解決 → worktree → EnterWorktree"]
-    PF --> W["Workflow: dev-flow-run"]
+    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>dev-flow-prerun（base → worktree → clean → deps → stack）<br/>→ EnterWorktree"]
+    PF --> W["Workflow: dev-flow-run<br/>args.setup = prerun の JSON"]
     W --> S["1. Setup"]
     S --> A["2. Analyze"]
     A --> P["3. Plan"]
@@ -56,35 +56,36 @@ flowchart TD
 ```
 
 破線は正常系から外れる経路。`needs_clarification` は worktree を保持したまま返るので、
-人間が確認して再起動すれば同じ worktree が再利用される。
+人間が確認して `dev-flow-prerun` から再起動すれば同じ worktree が再利用される（`setup` は
+再取得する — 前回の epoch を使い回すと isolation probe のファイル名が衝突して abort する）。
 
 ### 1.2 Setup
 
-3 つのゲート（base 解決・worktree 起点検証・isolation probe）はいずれも fail-closed で、
-通らなければ run 自体が中断する。
+決定論処理（base 解決・worktree 作成/再利用と起点検証・`.devflow-tmp` clean・deps install・
+stack 検出）は run 前に wrapper skill が top-level の Bash 1 コマンド `dev-flow-prerun` で済ませ、
+その stdout JSON を `args.setup` として渡す。Setup phase で subagent を spawn するのは
+isolation probe の 1 回だけ。
 
 ```mermaid
 flowchart TD
-    IN["Workflow 起動"] --> S1["setup-base<br/>統合 probe・1 呼び出し"]
-    S1 --> S3["worktree 作成 / 再利用"]
-    S3 --> S4["isolation cleanup<br/>fail-open"]
-    S4 --> S5["isolation probe<br/>Write tool で書けるか"]
-    S5 --> S6["deps install<br/>fail-open"]
-    S6 --> OUT["Analyze へ"]
+    PR["wrapper: dev-flow-prerun<br/>base → worktree → clean → deps → stack<br/>JSON 1 行を args.setup へ"] --> IN["Workflow 起動"]
+    IN --> S1["validatePrerunSetup(args.setup)<br/>純関数・spawn なし"]
+    S1 --> S5["isolation probe<br/>Write tool で書けるか<br/>token = setup.epoch"]
+    S5 --> OUT["Analyze へ"]
 
-    S1 -.->|"base 解決不能<br/>worktree 起点不一致"| AB["throw / abort"]
+    PR -.->|"ok:false"| STOP["wrapper が停止し人間へ報告"]
+    S1 -.->|"setup 欠落 / ok:false<br/>必須キー欠落"| AB["throw / abort"]
     S5 -.->|"written:false"| AB
 ```
 
-`setup-base` は 1 回の exec-proxy 応答で 3 つの情報を返す統合 probe。
-
-- **A: base 解決** — 明示指定なら origin に存在するか検証、未指定なら `origin/dev` → `origin/HEAD` の順
-- **B: worktree 起点検証** — 既存 worktree の upstream が `origin/BASE` と一致するか
-- **C: epoch** — clock の start mark を給電する（省略可・fail-open）
-
-A と B は `resolveBase` / `checkWorktreeBase` がそれぞれ自分のフィールドだけを読む。
-worktree は repo 内 `.claude/worktrees/df-N` を優先し、書き込めない場合のみ repo 外
-`repo-wt/df-N` へ退避する。
+`dev-flow-prerun` の各段は独立に `ok:false` を報告し後続段を巻き込まない。base は明示指定なら
+origin に存在するか検証、未指定なら `origin/dev` → `origin/HEAD` の順。既存 worktree は upstream が
+`origin/BASE` と一致するか検証する。`args.setup` が無い・`ok:false`・必須キー欠落は workflow が
+即 throw し、workflow 内 proxy への fallback は置かない（後方互換 scaffolding 禁止）。
+worktree は repo 内 `.claude/worktrees/df-N` を優先し、書き込めない
+（`worktree_status:"unwritable"`）場合のみ wrapper が repo 外 `repo-wt/df-N` で prerun を再実行する。
+isolation probe は wrapper で代替しない — subagent の Write 経路が通ることの検証であり、
+top-level の Bash では意味が変わる。
 
 ### 1.3 Analyze
 

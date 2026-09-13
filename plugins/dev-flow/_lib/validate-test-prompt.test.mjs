@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -61,7 +61,7 @@ let sharedError = null;
 
 async function ensureSharedRun() {
   if (sharedCalls !== null) return;
-  const { ctx, calls } = makeRecordingSandbox(responder, { args: '553' });
+  const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('553') });
   const error = await runDevFlowInSandbox(devFlowSrc, ctx);
   sharedCalls = calls;
   sharedError = error;

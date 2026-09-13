@@ -9,6 +9,8 @@
  *   - makeRecordingSandbox(responder, extraSandbox?): {ctx, calls, logs, phases} を返す
  *     （calls の各要素は {label, agentType, prompt, opts, schema}。opts は agent() に渡された
  *     opts をそのまま、schema は opts?.schema ?? null）
+ *   - devFlowArgs(issue?, setupOverrides?): dev-flow.js 用 args の既定形（{issue, setup}）を返す
+ *     （setup は dev-flow-prerun の stdout JSON と同形）
  *   - runDevFlowInSandbox(src, ctx): dev-flow.js ソースを strip して sandbox 実行する
  *   - runWorkflowCapture(src, ctx, filename?): strip + wrap + vm 実行し {result, error} を返す
  *     （dev-flow.js / pr-iterate.js 共用。filename 既定は '.claude/workflows/dev-flow.js'）
@@ -47,6 +49,31 @@ export const JS_GLOBALS = {
 };
 
 // ============================================================
+// devFlowArgs: dev-flow.js 用 args の既定形（{issue, setup}）
+// ============================================================
+
+/**
+ * dev-flow.js 用 args の既定形を返す。setup は dev-flow-prerun の stdout JSON と同形。
+ *
+ * @param {number|string} [issue=1]
+ * @param {Record<string, unknown>} [setupOverrides={}]
+ * @returns {{issue: string, setup: Record<string, unknown>}}
+ */
+export function devFlowArgs(issue = 1, setupOverrides = {}) {
+  const n = String(issue);
+  return {
+    issue: n,
+    setup: {
+      ok: true, issue: Number(n), base: 'main', base_source: 'origin/HEAD',
+      worktree: '/tmp/wt', branch: `feature/issue-${n}`, head: 'a'.repeat(40),
+      worktree_status: 'created', clean: { ok: true },
+      deps: { ok: true, note: '' }, stack: { frameworks: [] }, epoch: 1000, epoch_end: 1050,
+      ...setupOverrides,
+    },
+  };
+}
+
+// ============================================================
 // makeRecordingSandbox: 記録付き sandbox を生成する
 // ============================================================
 
@@ -78,17 +105,6 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     if (result === undefined && label === 'issue-meta') {
       return { ok: true, number: 1, title: 'stub-issue-title' };
     }
-    if (result === undefined && label === 'setup-base') {
-      // issue #550 案1+案2: resolve-base + worktree-base-check 統合 probe のデフォルト応答。
-      // 呼び出し側 responder が明示的に 'setup-base' を扱わない限り、base 解決は main、
-      // worktree は未存在（新規作成経路）を返し checkWorktreeBase の fail-closed throw で
-      // Setup 以降の call chain を壊さない（旧 worktree-base-check default の統合後継）。
-      // epoch は start mark の給電元（issue #550 F1/F2）のため既定でも供給する。
-      return {
-        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
-        worktree_exists: false, upstream_remote: '', upstream_merge: '', epoch: 1000,
-      };
-    }
     return result === undefined ? null : result;
   };
 
@@ -114,7 +130,7 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     phase: (t) => { phases.push(String(t)); },
     log: (m) => { logs.push(String(m)); },
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    args: '1',
+    args: devFlowArgs(1),
     // agent stub
     agent,
     parallel,
@@ -235,16 +251,9 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
       const v = overrides[label];
       return typeof v === 'function' ? v(callCtx) : v;
     }
-    if (label === 'setup-base') {
-      return {
-        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
-        worktree_exists: false, upstream_remote: '', upstream_merge: '', epoch: 1000,
-      };
-    }
-    if (label === 'worktree') return { worktree: '/tmp/wt', branch: `feature/issue-${issue}` };
-    if (label === 'isolation-cleanup') return { cleaned: true };
+    // Setup phase の subagent は isolation-probe のみ（base / worktree / deps / cleanup は
+    // dev-flow-prerun が run 前に済ませ args.setup で渡る — devFlowArgs 参照）
     if (label === 'isolation-probe') return { written: true };
-    if (label === 'worktree-deps') return null;
     if (label.startsWith('analyze')) {
       return {
         summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
@@ -346,7 +355,7 @@ export function prIterateResponder(overrides = {}) {
 export function makeDevFlowSandbox({ overrides = {}, issue = 1, workflow, extra = {} } = {}) {
   return makeRecordingSandbox(devFlowResponder(overrides, { issue }), {
     workflow: workflow ?? (async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 })),
-    args: String(issue),
+    args: devFlowArgs(issue),
     ...extra,
   });
 }

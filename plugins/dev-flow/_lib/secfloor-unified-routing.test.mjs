@@ -117,7 +117,7 @@ test('[secfloor-unified-routing][A6] 統合呼び出しの prompt が secfloor-c
   const { calls } = await defaultRun();
   const call = calls.find((c) => c.label === 'danger-grep');
   assert.ok(
-    call.prompt.includes('secfloor-classify /tmp/wt origin/dev'),
+    call.prompt.includes('secfloor-classify /tmp/wt origin/main'),
     'execSecurityFloorPhase の統合呼び出し prompt が secfloor-classify の argv token を含んでいない',
   );
 });

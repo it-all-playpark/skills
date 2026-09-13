@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -106,7 +107,7 @@ function makeCountingSandbox(analyzeReq) {
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
-    args: '1',
+    args: devFlowArgs('1'),
     // JS 組み込み（makeWorkflowSandbox と同一セット）
     console,
     JSON,

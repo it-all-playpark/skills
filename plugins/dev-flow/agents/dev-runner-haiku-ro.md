@@ -3,7 +3,7 @@ name: dev-runner-haiku-ro
 description: |
   Read-only deterministic exec-proxy for dev-flow / pr-iterate:
   diff-hash, changed-files (realized-diff), CI checks read, ui-verify config
-  read, base-ref probe, and PR mergeable/conflict state read. Returns
+  read, and PR mergeable/conflict state read. Returns
   verbatim script stdout with no added judgment or decoration. Uses
   model:haiku (frontmatter-fixed) with tools limited to Bash and Read only —
   no Write/Edit/Skill/TodoWrite/Glob/Grep, since this agent never mutates
@@ -11,8 +11,8 @@ description: |
   Use when: dev-flow/pr-iterate dispatches a purely read-only deterministic
   exec-proxy call — diff-hash computation,
   changed-files/realized-diff extraction, ui-verify config read, CI checks
-  read, PR metadata read, PR mergeable/conflict state read, or base-ref
-  resolution — that requires no filesystem mutation and no Skill invocation.
+  read, PR metadata read, or PR mergeable/conflict state read — that
+  requires no filesystem mutation and no Skill invocation.
 model: haiku
 effort: low
 tools:
@@ -46,7 +46,6 @@ TodoWrite/Glob/Grep は持たない）。
 
 | ラベル | 操作 | 返す schema |
 |--------|------|------------|
-| `resolve-base` | base ref 解決の read probe | `RESOLVE_BASE_PROBE` |
 | `diff-gate` / `diff-gate-retry` | diff-hash 取得（worktree-diff-hash.sh） | `DIFFHASH` |
 | `realized-diff` / `changed-files` / `changed-files-final` | realized-diff 抽出（git status --porcelain） | `CHANGED` |
 | `ui-verify-config` / `ui-verify-config-final` | ui-verify 設定の read | `UICFG` |

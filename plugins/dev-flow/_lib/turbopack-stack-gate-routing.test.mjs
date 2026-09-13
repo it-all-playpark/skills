@@ -1,16 +1,15 @@
-// Setup(stack) routing test: dev-flow.js の Setup phase に配線された worktree-deps exec-proxy の
-// 応答（detect-stack 相乗りの frameworks 配列）に基づき、Turbopack fallback 規約
-// （TURBOPACK_NOTE 経由）が implementer / evaluator / test prompt へ注入されるか否かを
-// VM sandbox で pin する。green-fix-concerns-routing.test.mjs の makeRecordingSandbox /
-// runDevFlowInSandbox パターンをコピーし、label === 'worktree-deps' への応答だけを
-// テストケースごとに差し替える。
+// Setup(stack) routing test: dev-flow.js の Setup phase が読む args.setup.stack.frameworks
+// （dev-flow-prerun の detect-stack 出力）に基づき、Turbopack fallback 規約（TURBOPACK_NOTE 経由）が
+// implementer / evaluator / test prompt へ注入されるか否かを VM sandbox で pin する。
+// green-fix-concerns-routing.test.mjs の makeRecordingSandbox / runDevFlowInSandbox パターンをコピーし、
+// args.setup.stack.frameworks だけをテストケースごとに差し替える。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -18,20 +17,8 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 const src = readFileSync(devFlowPath, 'utf8');
 
-/**
- * @param {*} depsResponse worktree-deps call への応答（null 可）
- */
-function createResponder(depsResponse) {
+function createResponder() {
   return function ({ label, agentType }) {
-    if (label === 'setup-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    }
-    if (label === 'worktree') {
-      return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    }
-    if (label === 'worktree-deps') {
-      return depsResponse;
-    }
     if (label.startsWith('analyze')) {
       return {
         summary: 's',
@@ -88,8 +75,8 @@ function createResponder(depsResponse) {
   };
 }
 
-async function run(depsResponse) {
-  const { ctx, calls } = makeRecordingSandbox(createResponder(depsResponse));
+async function run(frameworks) {
+  const { ctx, calls } = makeRecordingSandbox(createResponder(), { args: devFlowArgs(1, { stack: { frameworks } }) });
   const error = await runDevFlowInSandbox(src, ctx);
   return { error, calls };
 }
@@ -110,7 +97,7 @@ function groupPrompts(calls) {
 
 // (a) frameworks: ['next'] → 注入あり
 test('[turbopack-stack-gate] (a) frameworks:["next"] → run 完走 & implementer/evaluator/test prompt に Turbopack 規約が注入される', async () => {
-  const { error, calls } = await run({ status: 'no_dependencies', frameworks: ['next'] });
+  const { error, calls } = await run(['next']);
   assertNoCrash(error);
   assert.equal(error, null, `run が完走しない: ${error?.message}`);
 
@@ -128,7 +115,7 @@ test('[turbopack-stack-gate] (a) frameworks:["next"] → run 完走 & implemente
 
 // (b) frameworks: ['react']（Vite 相当）→ 注入なし
 test('[turbopack-stack-gate] (b) frameworks:["react"] → implementer/evaluator/test prompt に Turbopack 規約が注入されない', async () => {
-  const { error, calls } = await run({ status: 'no_dependencies', frameworks: ['react'] });
+  const { error, calls } = await run(['react']);
   assertNoCrash(error);
   assert.equal(error, null, `run が完走しない: ${error?.message}`);
 
@@ -144,25 +131,10 @@ test('[turbopack-stack-gate] (b) frameworks:["react"] → implementer/evaluator/
   }
 });
 
-// (c) frameworks 欠落 / null → 注入なし
-test('[turbopack-stack-gate] (c) worktree-deps 応答 { status: "no_dependencies" }（frameworks 欠落）→ 注入されない', async () => {
-  const { error, calls } = await run({ status: 'no_dependencies' });
-  assertNoCrash(error);
-  assert.equal(error, null, `run が完走しない: ${error?.message}`);
-
-  const { implCalls, evalCalls, testCalls } = groupPrompts(calls);
-  assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
-  assert.ok(evalCalls.length >= 1, 'evaluator が呼ばれていない');
-  assert.ok(testCalls.length >= 1, 'test runner が呼ばれていない');
-
-  for (const c of [...implCalls, ...evalCalls, ...testCalls]) {
-    assert.ok(!c.prompt.includes('Turbopack'), `prompt (label=${c.label}) に 'Turbopack' が含まれてはいけない`);
-    assert.ok(!/context7/i.test(c.prompt), `prompt (label=${c.label}) に 'context7' が含まれてはいけない`);
-  }
-});
-
-test('[turbopack-stack-gate] (c) worktree-deps 応答 null → 注入されない（fail-open）', async () => {
-  const { error, calls } = await run(null);
+// (c) frameworks: [] → 注入されない（frameworks 欠落は validatePrerunSetup が throw するため
+// fail-open ケースは存在しない。空配列が Next.js 非検出の唯一の負ケース）
+test('[turbopack-stack-gate] (c) frameworks:[] → 注入されない', async () => {
+  const { error, calls } = await run([]);
   assertNoCrash(error);
   assert.equal(error, null, `run が完走しない: ${error?.message}`);
 
@@ -178,14 +150,13 @@ test('[turbopack-stack-gate] (c) worktree-deps 応答 null → 注入されな�
 });
 
 // (d) 全 case で dev-planner prompt にも Turbopack / context7 が含まれない
-for (const [name, depsResponse] of [
-  ['next', { status: 'no_dependencies', frameworks: ['next'] }],
-  ['react', { status: 'no_dependencies', frameworks: ['react'] }],
-  ['missing', { status: 'no_dependencies' }],
-  ['null', null],
+for (const [name, frameworks] of [
+  ['next', ['next']],
+  ['react', ['react']],
+  ['empty', []],
 ]) {
   test(`[turbopack-stack-gate] (d) frameworks=${name} → dev-planner prompt に Turbopack/context7 が含まれない`, async () => {
-    const { error, calls } = await run(depsResponse);
+    const { error, calls } = await run(frameworks);
     assertNoCrash(error);
     const { plannerCalls } = groupPrompts(calls);
     for (const c of plannerCalls) {
