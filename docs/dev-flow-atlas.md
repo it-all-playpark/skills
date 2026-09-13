@@ -206,7 +206,7 @@ standard は 1 パスのみで差し戻さない。未解消の critical は mer
 ```mermaid
 flowchart TD
     IN["Evaluate 完了 / micro path"] --> R1["diff-hash 比較<br/>不一致なら stale-eval"]
-    R1 --> R2["git-commit → git-pr"]
+    R1 --> R2["pr-artifacts で commit message / PR body 確定<br/>haiku が verbatim 転写 + git commit / push / gh pr create"]
     R2 --> R4{"LITE ?<br/>micro かつ runEval=false<br/>かつ danger clean"}
     R4 -->|yes| LITE["lite route<br/>pr-reviewer 1-pass → ci-check"]
     R4 -->|no| FULL["workflow: pr-iterate"]

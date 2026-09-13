@@ -751,7 +751,7 @@ function buildFixIssuesText(blocking) {
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証する。
 //
-// なぜ必要か: pr-reviewer は「PR の title/body（git-pr が生成した宣言意図）と実 diff の照合」しか
+// なぜ必要か: pr-reviewer は「PR の title/body（buildPrBody が AC / plan から確定した宣言意図）と実 diff の照合」しか
 // しておらず、issue の AC を渡されていなかった。evaluator（requirements/AC 忠実性）と
 // pr-reviewer（commit 後 PR の品質 + CI）は評価軸が直交しており統合すべきではないが、
 // pr-reviewer が AC を「見ないまま approve する」状態は縮められる。
