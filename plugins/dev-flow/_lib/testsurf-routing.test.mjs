@@ -13,6 +13,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { EVALUATOR_OPERATIONAL_CONTRACT } from './evaluator-contract.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -23,11 +25,11 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 /**
  * testsurf 専用の VM sandbox を組む。
  * label 'danger-grep'（Security floor。issue #544 統合呼び出し）は riskResponse を risk
- * フィールドへ包んで返し、label 'danger-grep-final'（Merge tier。統合対象外）は riskResponse を
+ * フィールドへ包んで返し、label 'merge-tier-facts'（Merge tier 統合呼び出し）は riskResponse を risk サブ結果に包んで
  * そのまま返す。evaluator 呼び出し回数・evaluator prompt・journal-log prompt を捕捉する。
  *
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
- * @param {object} riskResponse - danger-grep / danger-grep-final stub が返すレスポンス
+ * @param {object} riskResponse - danger-grep / merge-tier-facts(risk) stub が返すレスポンス
  * @param {object} evaluatorResponse - evaluator stub が返すレスポンス（全 iteration で同一を返す）
  * @returns {{ ctx: vm.Context, counters: object }}
  */
@@ -56,13 +58,13 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は riskResponse を risk
-    // フィールドに包んで返す。label 'danger-grep-final'（Merge tier。統合対象外）は
-    // riskResponse をそのまま返す。
+    // フィールドに包んで返す。label 'merge-tier-facts'（Merge tier 統合呼び出し）は
+    // riskResponse を risk サブ結果に包んで返す。
     if (label === 'danger-grep') {
       return { risk: riskResponse, files: ['_lib/foo.test.mjs'], struct: null, diffhash: null };
     }
-    if (label === 'danger-grep-final') {
-      return riskResponse;
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ risk: riskResponse, files: ['_lib/foo.test.mjs'] });
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
@@ -77,9 +79,6 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     }
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    if (label === 'changed-files') {
-      return { files: ['_lib/foo.test.mjs'] };
     }
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
@@ -110,7 +109,7 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
-    args: '1',
+    args: devFlowArgs('1'),
     console,
     JSON,
     Math,
@@ -299,11 +298,7 @@ test('[testsurf] (e) evaluator prompt に testsurf_focus と testsurf_clearance 
   assert.ok(prompts.length >= 1, 'evaluator は最低 1 回は呼ばれるべき');
   assert.ok(prompts[0].includes('testsurf_focus'), `evaluator prompt に 'testsurf_focus' が含まれるべきだが含まれていなかった`);
   assert.ok(
-    prompts[0].includes('testsurf_clearance 契約:'),
-    `evaluator prompt に 'testsurf_clearance 契約:' が含まれるべきだが含まれていなかった`,
-  );
-  assert.ok(
-    prompts[0].includes('cleared:false の TESTSURF item は blocking のまま merge tier HOLD に反映される。'),
-    `evaluator prompt に testsurf_clearance 契約の全文が verbatim 注入されているべきだが含まれていなかった`,
+    prompts[0].includes(EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance),
+    `evaluator prompt に EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance が verbatim 含まれるべきだが含まれていなかった`,
   );
 });

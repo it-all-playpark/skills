@@ -3,8 +3,9 @@
 //
 // Background:
 //   .claude/workflows/dev-flow.js uses runtime-injected globals and cannot be imported
-//   as an ESM module. Validation uses source-as-string regex — same strategy as
-//   _lib/agent-effort.test.mjs.
+//   as an ESM module. Phase → agentType checks run dev-flow.js in the VM sandbox and
+//   observe the {label, agentType, opts} actually passed to agent() (issue #636: replaced the
+//   former source-as-string regex scan).
 //
 //   Model selection is controlled via agent frontmatter (agentType switching), NOT via
 //   opts.model in agent() calls. This aligns with AGENTS.md which states:
@@ -20,7 +21,7 @@
 //
 // Guarantee scope:
 //   These tests verify:
-//     (a) which agentType each phase uses in dev-flow.js source
+//     (a) which agentType each phase dispatches at runtime (VM-observed agent() calls)
 //     (b) which model each agent definition declares in its frontmatter
 //   Runtime model selection is fully determined by the frontmatter: when agentType is
 //   'dev-runner-haiku', Claude Code loads dev-runner-haiku.md which declares model:haiku.
@@ -35,6 +36,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -42,92 +44,53 @@ const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const devRunnerPath = join(repoRoot, '.claude', 'agents', 'dev-runner.md');
 const devRunnerHaikuPath = join(repoRoot, '.claude', 'agents', 'dev-runner-haiku.md');
 
-const src = readFileSync(devFlowPath, 'utf8');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 const devRunnerFrontmatter = readFileSync(devRunnerPath, 'utf8');
 const devRunnerHaikuFrontmatter = readFileSync(devRunnerHaikuPath, 'utf8');
 
-/**
- * Find the agent() option line in dev-flow.js that matches the given schema and label pattern.
- * Returns the matching line or null.
- */
-function findAgentCallLine(source, schemaName, labelPattern) {
-  const lines = source.split('\n');
-  for (const line of lines) {
-    if (line.includes(`schema: ${schemaName}`) && labelPattern.test(line)) {
-      return line;
-    }
-  }
-  return null;
+let sharedCalls = null;
+async function calls() {
+  if (sharedCalls) return sharedCalls;
+  const { ctx, calls: c } = makeDevFlowSandbox();
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'dev-runner-model');
+  assert.equal(error, null, `dev-flow.js の既定 run が throw した: ${error?.message}`);
+  sharedCalls = c;
+  return c;
 }
 
-// ---- Phase → agentType checks (dev-flow.js source) ----
+function findCall(all, labelPattern) {
+  return all.find((c) => labelPattern.test(c.label)) ?? null;
+}
+
+// ---- Phase → agentType checks (VM-observed dispatch) ----
 
 // (1) Setup uses dev-runner-haiku
-test("[dev-runner-model] Setup (schema:SETUP) uses agentType:'dev-runner-haiku'", () => {
-  const line = findAgentCallLine(src, 'SETUP', /label:\s*'worktree'/);
-  assert.ok(
-    line !== null,
-    "Could not find Setup agent() call (schema:SETUP, label:'worktree') in dev-flow.js",
-  );
-  assert.match(
-    line,
-    /agentType:\s*'dev-runner-haiku'/,
-    `Setup phase should use agentType:'dev-runner-haiku', but found: ${line}`,
-  );
+test("[dev-runner-model] Setup (label:'isolation-probe') dispatches agentType:'dev-runner-haiku-wo'", async () => {
+  const c = findCall(await calls(), /^isolation-probe$/);
+  assert.ok(c, "Setup の agent() 呼び出し（label:'isolation-probe'）が観測されない");
+  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku-wo', `Setup phase should use dev-runner-haiku-wo, but found: ${c.agentType}`);
 });
 
 // (2) Validate uses dev-runner-haiku
-// F2 (runValidateLoop 統合) 後: label は ternary に抽象化されるため
-// /label:`test#/ の代わりに schema:GREEN 行で test# の存在を確認する。
-test("[dev-runner-model] Validate (schema:GREEN) uses agentType:'dev-runner-haiku'", () => {
-  const line = findAgentCallLine(src, 'GREEN', /test#/);
-  assert.ok(
-    line !== null,
-    "Could not find Validate agent() call (schema:GREEN, containing test#) in dev-flow.js",
-  );
-  assert.match(
-    line,
-    /agentType:\s*'dev-runner-haiku'/,
-    `Validate phase should use agentType:'dev-runner-haiku', but found: ${line}`,
-  );
+test("[dev-runner-model] Validate (label:'test#1') dispatches agentType:'dev-runner-haiku'", async () => {
+  const c = findCall(await calls(), /^test#1$/);
+  assert.ok(c, "Validate の agent() 呼び出し（label:'test#1'）が観測されない");
+  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku', `Validate phase should use dev-runner-haiku, but found: ${c.agentType}`);
 });
 
 // (3) Analyze uses dev-runner (not dev-runner-haiku)
-test("[dev-runner-model] Analyze (schema:REQ) uses agentType:'dev-runner'", () => {
-  const line = findAgentCallLine(src, 'REQ', /label:\s*`analyze#/);
-  assert.ok(
-    line !== null,
-    "Could not find Analyze agent() call (schema:REQ, label:`analyze#...`) in dev-flow.js",
-  );
-  assert.match(
-    line,
-    /agentType:\s*'dev-runner'/,
-    `Analyze phase should use agentType:'dev-runner', but found: ${line}`,
-  );
-  assert.doesNotMatch(
-    line,
-    /agentType:\s*'dev-runner-haiku'/,
-    `Analyze phase should NOT use agentType:'dev-runner-haiku', but found: ${line}`,
-  );
+test("[dev-runner-model] Analyze (label:'analyze#…') dispatches agentType:'dev-runner'", async () => {
+  const c = findCall(await calls(), /^analyze#/);
+  assert.ok(c, "Analyze の agent() 呼び出し（label:'analyze#…'）が観測されない");
+  assert.equal(c.agentType, 'dev-flow:dev-runner', `Analyze phase should use dev-runner (not haiku), but found: ${c.agentType}`);
 });
 
 // (4) PR uses dev-runner (not dev-runner-haiku)
-test("[dev-runner-model] PR (schema:PRURL) uses agentType:'dev-runner'", () => {
-  const line = findAgentCallLine(src, 'PRURL', /label:\s*`pr#/);
-  assert.ok(
-    line !== null,
-    "Could not find PR agent() call (schema:PRURL, label:`pr#...`) in dev-flow.js",
-  );
-  assert.match(
-    line,
-    /agentType:\s*'dev-runner'/,
-    `PR phase should use agentType:'dev-runner', but found: ${line}`,
-  );
-  assert.doesNotMatch(
-    line,
-    /agentType:\s*'dev-runner-haiku'/,
-    `PR phase should NOT use agentType:'dev-runner-haiku', but found: ${line}`,
-  );
+test("[dev-runner-model] PR (label:'pr#…') dispatches agentType:'dev-runner'", async () => {
+  const c = findCall(await calls(), /^pr#/);
+  assert.ok(c, "PR の agent() 呼び出し（label:'pr#…'）が観測されない");
+  assert.equal(c.agentType, 'dev-flow:dev-runner', `PR phase should use dev-runner (not haiku), but found: ${c.agentType}`);
 });
 
 // ---- Frontmatter model checks (agent definition files) ----
@@ -166,17 +129,10 @@ test('[dev-runner-model] dev-runner.md frontmatter declares model:sonnet', () =>
   );
 });
 
-// (7) No opts.model override in agent() calls — model is fully controlled by frontmatter
-test('[dev-runner-model] No opts.model key in any dev-runner agent() call in dev-flow.js', () => {
-  const lines = src.split('\n');
-  const violations = lines.filter(
-    (line) =>
-      line.includes("agentType: 'dev-runner") &&
-      /model:\s*'(haiku|sonnet|opus)'/.test(line),
-  );
-  assert.deepEqual(
-    violations,
-    [],
-    `Found agent() calls with opts.model (should use agentType switching instead):\n${violations.join('\n')}`,
-  );
+// (7) No opts.model override in dev-runner agent() calls — model is fully controlled by frontmatter
+test('[dev-runner-model] No opts.model in any dev-runner* agent() dispatch in dev-flow.js', async () => {
+  const violations = (await calls())
+    .filter((c) => c.agentType.startsWith('dev-flow:dev-runner') && c.opts?.model !== undefined)
+    .map((c) => `${c.label}: model=${JSON.stringify(c.opts.model)}`);
+  assert.deepEqual(violations, [], `Found dev-runner agent() dispatches with opts.model (should use agentType switching instead):\n${violations.join('\n')}`);
 });

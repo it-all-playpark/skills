@@ -1,8 +1,5 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import {
   DANGER_CLASSES,
   seedSecurityLedger,
@@ -698,22 +695,8 @@ test('classifyMergeTier: iterateStatus:lgtm + evalStaleness:iterate_fixed → ti
   assert.equal(rReview.tier, 'REVIEW');
 });
 
-// (g) AC-5 配線検証: dev-flow.js の classifyMergeTier 呼び出し箇所に iterateStatus / evalStaleness が
-// 配線されていることを source assert で確認する(配線漏れ回帰の検出)。
-test('dev-flow.js: classifyMergeTier 呼び出しに iterateStatus / evalStaleness が配線されている(配線漏れ回帰防止)', () => {
-  const devFlowPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude/workflows/dev-flow.js');
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes("iterateStatus: iterate?.status ?? null"),
-    'dev-flow.js に iterateStatus: iterate?.status ?? null の配線が見つからない',
-  );
-  const callMatch = src.match(/classifyMergeTier\(\{[^}]*\}/s);
-  assert.ok(callMatch, 'dev-flow.js に classifyMergeTier(...) 呼び出しが見つからない');
-  assert.ok(
-    /evalStaleness,/.test(callMatch[0]),
-    `classifyMergeTier 呼び出し引数に evalStaleness, が見つからない: ${callMatch[0]}`,
-  );
-});
+// (g) dev-flow.js 側の iterateStatus / evalStaleness 配線は plan-iterate-wiring-routing.test.mjs が
+// VM 挙動（fix_failed → HOLD / iterate_incomplete）で検証する（issue #636）。
 
 // ---- issue #362: testsurfUncleared ----
 

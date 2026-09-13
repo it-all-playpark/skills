@@ -1,19 +1,20 @@
 // Issue #550 (S2): Security floor 統合 exec-proxy (danger-grep / realized-diff /
 // structural-classify / diff-hash-secfloor の 4→1 統合) の routing / 挙動 pin。
 //
-// (A) source pin（dev-flow.js の raw ソースを regex で検証。exec-proxy-routing.test.mjs /
-//     structural-classify-routing.test.mjs と同じ戦略）:
-//   1. label 'danger-grep'（Security floor 側）は agentType:'dev-runner-haiku-ro' かつ schema: SECFLOOR
-//   2. dev-flow.js に label 'realized-diff' / 'structural-classify' / 'diff-hash-secfloor' が
-//      存在しない（4→1 の削減を source count で実測 — AC2）
-//   3. dev-flow.js に '--out' 文字列が存在しない（AC1）
-//   4. label 'danger-grep-final' は agentType:'dev-runner-haiku-ro'（AC1）
-//   5. 統合呼び出し（execSecurityFloorPhase 内の trackedAgent）が try/catch で包まれている
-//      （need() では包まれていない）
-//   6. 統合呼び出しの prompt が secfloor-classify.sh を参照する
+// (A) 挙動 pin（issue #636: dev-flow.js の raw ソース regex 走査から、共有 vm-sandbox.mjs
+//     （agent() mock）による VM 挙動検証へ移行）:
+//   A1. label 'danger-grep'（Security floor）は VM 内で agentType:'dev-flow:dev-runner-haiku-ro'
+//       として観測され、opts.schema（clone）は required:['risk']
+//   A2. 既定 run の calls に label 'realized-diff' / 'structural-classify' / 'diff-hash-secfloor'
+//       が 0 件（4→1 の統合を run 全体の呼び出し集合で実測）
+//   A3. 既定 run の全 calls の prompt に '--out' 文字列が含まれない（証跡書き込み撤去。AC1）
+//   A4. label 'merge-tier-facts'（Merge tier）は agentType:'dev-flow:dev-runner-haiku-ro'
+//   A5. 統合呼び出しは try/catch で包まれ need() では包まれない —
+//       契約違反ではない単なる throw（'without calling StructuredOutput' を含まないメッセージ）で
+//       run が abort せず継続することを VM で確認する（retry 対象外の throw 経路）
+//   A6. 統合呼び出しの prompt が secfloor-classify を参照する（argv token）
 //
-// (B) 挙動 pin（AC3/AC4/軸A。_lib canonical を直接 import して検証。
-//     eval-concern-resolutions-routing.test.mjs の import 方式に倣う）:
+// (B) 挙動 pin（AC3/AC4/軸A。_lib canonical を直接 import して検証。不変）:
 //   (a) unified=null（agent drop 相当）→ parseSecfloorFields → risk.ok===false →
 //       seedSecurityLedger 済み ledger に reconcileDanger を適用すると SEC seed 全件
 //       unchecked（fail-closed）で、classifyMergeTier 相当の判定が HOLD になる
@@ -43,84 +44,80 @@ import { policyBlockingItems, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
 import { secHitsOf, reconcileTestsurf } from './testsurf.mjs';
 import { refloorShape } from './triviality.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
-function findLineByExactLabel(source, labelLiteral) {
-  const escaped = labelLiteral.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`label:\\s*'${escaped}'`);
-  const lines = source.split('\n');
-  for (const line of lines) {
-    if (re.test(line)) return line;
-  }
-  return null;
+async function defaultRun() {
+  const { ctx, calls, logs } = makeDevFlowSandbox({});
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'secfloor-unified-routing-default-run');
+  return { result, error, calls, logs };
 }
 
 // ============================================================
-// (A) source pin
+// (A) VM 挙動 pin
 // ============================================================
 
-test("[secfloor-unified-routing][A1] label 'danger-grep'（Security floor）は agentType:'dev-runner-haiku-ro' かつ schema:SECFLOOR", () => {
-  const line = findLineByExactLabel(devFlowSrc, 'danger-grep');
-  assert.ok(line !== null, "label 'danger-grep' の agent() call が見つからない");
-  assert.match(line, /agentType:\s*'dev-runner-haiku-ro'/, `danger-grep は dev-runner-haiku-ro へ routing されるべきだが: ${line}`);
-  assert.match(line, /schema:\s*SECFLOOR/, `danger-grep は schema:SECFLOOR を使うべきだが: ${line}`);
+test("[secfloor-unified-routing][A1] label 'danger-grep'（Security floor）は agentType:'dev-flow:dev-runner-haiku-ro' かつ opts.schema.required===['risk']", async () => {
+  const { calls } = await defaultRun();
+  const call = calls.find((c) => c.label === 'danger-grep');
+  assert.ok(call, "label 'danger-grep' の agent() call が見つからない");
+  assert.equal(call.agentType, 'dev-flow:dev-runner-haiku-ro');
+  const schema = JSON.parse(JSON.stringify(call.opts.schema));
+  assert.deepEqual(schema.required, ['risk']);
 });
 
-test("[secfloor-unified-routing][A2] dev-flow.js に label 'realized-diff' / 'structural-classify' / 'diff-hash-secfloor' が存在しない（4→1 統合。AC2）", () => {
+test("[secfloor-unified-routing][A2] 既定 run に label 'realized-diff' / 'structural-classify' / 'diff-hash-secfloor' が存在しない（4→1 統合。AC2）", async () => {
+  const { calls } = await defaultRun();
   for (const label of ['realized-diff', 'structural-classify', 'diff-hash-secfloor']) {
-    const line = findLineByExactLabel(devFlowSrc, label);
-    assert.equal(line, null, `label '${label}' は統合により消滅しているはずだが見つかった: ${line}`);
+    const count = calls.filter((c) => c.label === label).length;
+    assert.equal(count, 0, `label '${label}' は統合により消滅しているはずだが ${count} 件見つかった`);
   }
 });
 
-test("[secfloor-unified-routing][A3] dev-flow.js に '--out' 文字列が存在しない（AC1: 証跡書き込み撤去）", () => {
+test("[secfloor-unified-routing][A3] 既定 run の全 calls の prompt に '--out' 文字列が含まれない（AC1: 証跡書き込み撤去）", async () => {
+  const { calls } = await defaultRun();
+  for (const call of calls) {
+    assert.ok(!call.prompt.includes('--out'), `label '${call.label}' の prompt に '--out' が残っている`);
+  }
+});
+
+test("[secfloor-unified-routing][A4] label 'merge-tier-facts'（Merge tier）は agentType:'dev-flow:dev-runner-haiku-ro'（AC1: agentType 復帰）", async () => {
+  // Merge tier の danger-grep 再判定は merge-tier-facts の risk サブ結果で行う。reuse（secDiffHash===mergeDiffHash）
+  // が発火しても spawn 自体は 1 回発生する（pr / checks 等の他サブ結果に必要）。
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: { 'merge-tier-facts': () => mergeTierFacts({ hash: 'BBB' }) },
+  });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'A4-merge-tier-facts');
+  const call = calls.find((c) => c.label === 'merge-tier-facts');
+  assert.ok(call, "label 'merge-tier-facts' の agent() call が見つからない");
+  assert.equal(call.agentType, 'dev-flow:dev-runner-haiku-ro');
+});
+
+test('[secfloor-unified-routing][A5] 統合呼び出しは try/catch で包まれ need() では包まれない（契約違反ではない throw でも run は abort しない）', async () => {
+  const overrides = {
+    'danger-grep': () => { throw new Error('boom'); },
+  };
+  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'A5-plain-throw');
+  assert.equal(error, null, 'need() で包まれていたら run は throw で abort するはずだが、継続している');
+  const dgCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dgCalls.length, 1, '契約違反メッセージでないため retry されない');
+  assert.ok(result, 'run は最後まで完走し結果を返す');
+});
+
+test('[secfloor-unified-routing][A6] 統合呼び出しの prompt が secfloor-classify を argv token として参照する', async () => {
+  const { calls } = await defaultRun();
+  const call = calls.find((c) => c.label === 'danger-grep');
   assert.ok(
-    !devFlowSrc.includes('--out'),
-    "dev-flow.js に '--out' が残っている（trust-layer call site 撤去後の証跡書き込みは撤去済みのはず）",
-  );
-});
-
-test("[secfloor-unified-routing][A4] label 'danger-grep-final'（Merge tier）は agentType:'dev-runner-haiku-ro'（AC1: agentType 復帰）", () => {
-  const line = findLineByExactLabel(devFlowSrc, 'danger-grep-final');
-  assert.ok(line !== null, "label 'danger-grep-final' の agent() call が見つからない");
-  assert.match(line, /agentType:\s*'dev-runner-haiku-ro'/, `danger-grep-final は dev-runner-haiku-ro へ routing されるべきだが: ${line}`);
-});
-
-test('[secfloor-unified-routing][A5] execSecurityFloorPhase の統合呼び出しは try/catch で包まれ need() では包まれない', () => {
-  const fnStart = devFlowSrc.indexOf('async function execSecurityFloorPhase(state)');
-  assert.ok(fnStart !== -1, 'execSecurityFloorPhase 関数定義が見つからない');
-  const nextFnIdx = devFlowSrc.indexOf('\nasync function ', fnStart + 1);
-  const fnBody = devFlowSrc.slice(fnStart, nextFnIdx === -1 ? devFlowSrc.length : nextFnIdx);
-
-  const callIdx = fnBody.indexOf('unified = await trackedAgent(');
-  assert.ok(callIdx !== -1, 'execSecurityFloorPhase 本体内に unified = await trackedAgent( が見つからない');
-  const labelIdx = fnBody.indexOf("label: 'danger-grep'", callIdx);
-  assert.ok(labelIdx !== -1, "unified 呼び出し内に label: 'danger-grep' が見つからない");
-
-  const before = fnBody.slice(Math.max(0, callIdx - 400), callIdx);
-  const after = fnBody.slice(labelIdx, labelIdx + 200);
-
-  assert.match(before, /try\s*\{/, 'unified 呼び出し前に try { が無い（throw を吸収する契約が崩れている）');
-  assert.match(after, /\}\s*catch/, 'unified 呼び出し後に catch が無い（throw を吸収する契約が崩れている）');
-  assert.doesNotMatch(
-    before,
-    /need\(\s*$/,
-    'unified 呼び出し直前が need( で終わっている（null で run abort させず fail-closed HOLD へ倒す契約に反する）',
-  );
-});
-
-test('[secfloor-unified-routing][A6] 統合呼び出しの prompt が secfloor-classify を参照する', () => {
-  const fnStart = devFlowSrc.indexOf('async function execSecurityFloorPhase(state)');
-  assert.ok(fnStart !== -1);
-  const nextFnIdx = devFlowSrc.indexOf('\nasync function ', fnStart + 1);
-  const fnBody = devFlowSrc.slice(fnStart, nextFnIdx === -1 ? devFlowSrc.length : nextFnIdx);
-  assert.ok(
-    fnBody.includes('secfloor-classify ${WT} origin/${BASE}'),
-    'execSecurityFloorPhase の統合呼び出し prompt が secfloor-classify を参照していない',
+    call.prompt.includes('secfloor-classify /tmp/wt origin/main'),
+    'execSecurityFloorPhase の統合呼び出し prompt が secfloor-classify の argv token を含んでいない',
   );
 });
 

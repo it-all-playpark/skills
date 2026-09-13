@@ -1,11 +1,16 @@
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
 // I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
-// start は Setup 冒頭の setup-base probe（resolve-base + worktree-base-check 統合 exec-proxy）の
-// optional epoch、end は Merge tier 末尾の post-summary 応答の optional epoch から給電し、
-// 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
-// pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
+// start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s、deps install 前）、
+// analyze_start は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack 完了後、
+// prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の optional
+// epoch から給電し、残り 9 mark（analyze_end/plan_end/implement_end/validate_end/evaluate_end/
+// pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
-// 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
+// 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
+// 数分かかりうる）を analyze の phase_durations に付け替えないため — start〜analyze_start の
+// 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
+// 残差（duration_seconds − Σphase_durations）に留める。
+// contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
 // 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //

@@ -323,12 +323,11 @@ test('[journal-log] stage1 の journal-save(agent) が throw した場合 journa
   );
 });
 
-test('[journal-log] source pin: 終端の journal handoff は inline 区間外の call site が runJournalHandoff を呼び、logLabel は journal-log のまま（choreography の手写しが残っていない）', () => {
+// inline 区間整合: journal handoff の choreography は canonical（_lib/journal-handoff.mjs）の inline 区間にのみ
+// 存在し、call site 側に手写しが残っていないこと（否定 pin）。call site の label（journal-log）と 2 段
+// handoff の挙動は上の VM テストと exec-proxy-routing.test.mjs が観測する。
+test('[journal-log] inline 整合: pr-iterate.js の inline 区間外に journal handoff choreography の手写しが残っていない', () => {
   const anchor = src.indexOf('==== END inline: _lib/journal-handoff.mjs ====');
   assert.ok(anchor >= 0, 'journal-handoff inline END marker が見つからない');
-  const callIdx = src.indexOf('runJournalHandoff({', anchor);
-  assert.ok(callIdx > anchor, 'inline 区間より後（call site）に runJournalHandoff 呼び出しが無い');
-  const labelIdx = src.indexOf("logLabel: 'journal-log',", callIdx);
-  assert.ok(labelIdx > callIdx, "call site の logLabel が現行値 'journal-log' でない");
   assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
 });

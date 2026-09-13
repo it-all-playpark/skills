@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -21,7 +22,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 function makeSandbox({
   analyzeReq, implementerFn, diffGateConfig, throwAt, journalSaveThrows, journalLogAbortResult,
-  workflowThrows,
+  workflowThrows, args,
 } = {}) {
   const calls = [];
   let implementerCallIndex = 0;
@@ -34,8 +35,6 @@ function makeSandbox({
 
     if (throwAt && label === throwAt.label) throw throwAt.error;
 
-    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label === 'issue-meta') return { ok: true, number: 1, title: analyzeReq?.issue_title ?? 'stub-issue-title' };
     if (label.startsWith('analyze')) return analyzeReq;
     if (agentType === 'dev-flow:dev-planner') {
@@ -89,7 +88,7 @@ function makeSandbox({
   const sandbox = {
     phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: workflowStub, args: '1',
+    workflow: workflowStub, args: args ?? devFlowArgs('1'),
     console, JSON, Math, String, Number, Boolean, Array, Object, Error,
     RegExp, Promise, Symbol, Map, Set, Date,
   };
@@ -213,14 +212,14 @@ test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 �
 // ============================================================
 // (3) Setup（WT 未確定）で worktree agent が throw
 // ============================================================
-test('[abort-telemetry] (3) Setup で worktree agent が throw → WT 未確定のため tilde savePath へ退避し shape キー欠落', async () => {
+test('[abort-telemetry] (3) Setup で args.setup.ok が false → WT 未確定のため tilde savePath へ退避し shape キー欠落', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: STANDARD_ANALYZE_REQ,
-    throwAt: { label: 'worktree', error: new Error('worktree boom') },
+    args: devFlowArgs(1, { ok: false, base_error: 'prerun boom' }),
   });
   const { error } = await runDevFlowInSandbox(src, ctx);
 
-  assert.ok(error !== null, '(3) worktree agent throw で workflow が abort すべきだが error が null だった');
+  assert.ok(error !== null, '(3) args.setup.ok:false で workflow が abort すべきだが error が null だった');
 
   const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(saveCalls.length, 1, `(3) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
@@ -228,7 +227,7 @@ test('[abort-telemetry] (3) Setup で worktree agent が throw → WT 未確定�
   const savePrompt = saveCalls[0]?.prompt ?? '';
   assert.ok(savePrompt.includes('~/.claude/journal/abort-payload/payload-devflow-1-abort.json'),
     `(3) journal-save prompt に tilde savePath が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
-  assert.ok(savePrompt.includes('abort@Setup/worktree: worktree boom'),
+  assert.ok(savePrompt.includes('abort@Setup/prerun-setup: dev-flow: args.setup.ok が true でない'),
     `(3) journal-save prompt に error_msg が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(!savePrompt.includes('"shape"'),
     `(3) shape 未確定のため journal-save prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
@@ -327,26 +326,5 @@ test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entr
   }
 });
 
-// ============================================================
-// (8) 静的 pin
-// ============================================================
-test('[abort-telemetry] (8) 静的 pin: ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow', () => {
-  assert.equal((src.match(/const ABORT_CTX = \{/g) ?? []).length, 1,
-    `(8) 'const ABORT_CTX = {' は 1 回のみのはずだが ${(src.match(/const ABORT_CTX = \{/g) ?? []).length} 回だった`);
-
-  assert.match(src, /phase\('Setup'\)\n\s*try \{/,
-    `(8) phase('Setup') の直後に 'try {' が続くべきだが見つからなかった`);
-
-  const wftIdx = src.indexOf('async function writeFailureTelemetry(');
-  assert.ok(wftIdx >= 0, `(8) writeFailureTelemetry の定義が見つからなかった`);
-  const wftEndIdx = src.indexOf('\n}\n', wftIdx);
-  const wftBody = src.slice(wftIdx, wftEndIdx >= 0 ? wftEndIdx : undefined);
-  assert.ok(wftBody.includes('ABORT_CTX.failure_recorded = true'),
-    `(8) writeFailureTelemetry 本体内に 'ABORT_CTX.failure_recorded = true' が含まれるべきだが含まれていなかった`);
-
-  const lastCatchIdx = src.lastIndexOf('} catch (e) {');
-  assert.ok(lastCatchIdx >= 0, `(8) 末尾の '} catch (e) {' ブロックが見つからなかった`);
-  const tailBlock = src.slice(lastCatchIdx);
-  assert.ok(tailBlock.includes('throw e'),
-    `(8) 最終 '} catch (e) {' ブロック内に 'throw e' が含まれるべきだが含まれていなかった`);
-});
+// (8) ABORT_CTX 宣言 / try 開始位置 / failure_recorded / 末尾 catch+rethrow の静的 pin は撤去した（issue #636）。
+// Setup 段の abort は (3)、failure_recorded による二重記録防止は (5)、rethrow は (1)(4) が VM 挙動で担保する。

@@ -1,12 +1,15 @@
 // issue #603 F2: dev-flow.js 側の resolved_evidence 配線を検証するテスト。
-// (a) buildJournalHandoffPayload の anchor 間 static 配線 pin
-// (b) AC4 static pin — merge tier 判定〜resolvedEvidence〜summaryBody〜journal handoff の順序
-//     が不変で、resolvedEvidence 以降に merge tier / ledger を書き換えるトークンが無いこと
+// (b) VM: calls 上で post-summary の呼び出しが journal-save より前（配線順序の挙動証拠）+
+//     journal-save prompt JSON の merge_tier が result.merge_tier と一致 + resolved_evidence の
+//     text/evidence フィールドが 1000 字で cap されること
 // (c) VM: PR #595 相当（ledger 21 件 critical resolved + AC 4 件 satisfied）の payload サイズ回帰
 // (d) VM: 解消済みが無い run では telemetry.resolved_evidence キー自体が省かれること
+// (e) VM: 実 run 形状（ac_index が acceptance_criteria の範囲内）の payload 回帰
 //
 // makeSandbox / runDevFlowCapture は _lib/devflow-journal-log.test.mjs と同型のものを
-// このファイルへ丸ごと複製し self-contained にする（post-summary prompt capture を追加）。
+// このファイルへ丸ごと複製し self-contained にする（post-summary prompt capture + calls 順序
+// tracking を追加）。ソース anchor 間の静的走査（旧 (a)(b)）は挙動検証（VM の calls 順序 /
+// 返り値・payload 一致 / cap 検証）へ置換した（issue #636 AC-1/AC-4）。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -14,12 +17,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-const resolvedEvidencePath = join(here, 'resolved-evidence.mjs');
-const summaryFormatPath = join(here, 'devflow-summary-format.mjs');
 
 // ---- VM sandbox helpers（devflow-journal-log.test.mjs の makeSandbox / runDevFlowCapture と同型。
 // post-summary prompt capture を追加）----
@@ -36,10 +38,13 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
   const journalPrompts = [];
   const journalLogPrompts = [];
   const postSummaryPrompts = [];
+  // calls: 呼び出し順序を pin するための label 記録配列（issue #636 AC-1 の VM 挙動検証用）
+  const calls = [];
 
   const agentStub = async (prompt, opts) => {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
+    calls.push({ label, agentType });
 
     if (label === 'setup-base') {
       return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
@@ -129,7 +134,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
-    args: '1',
+    args: devFlowArgs('1'),
     console,
     JSON,
     Math,
@@ -155,6 +160,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     getJournalPrompts: () => journalPrompts,
     getJournalLogPrompts: () => journalLogPrompts,
     getPostSummaryPrompts: () => postSummaryPrompts,
+    getCalls: () => calls,
   };
 }
 
@@ -199,60 +205,60 @@ const ANALYZE_REQ = {
 const src = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
-// (a) 配線 static（anchor 間）
+// (b) VM: 呼び出し順序 + merge_tier 一致 + resolved_evidence の 1000 字 cap
 // ============================================================
-test('[resolved-evidence-routing] (a) buildJournalHandoffPayload({ ... outcome: \'success\' ... }) 〜 subject: \'dev-flow 完走\' の anchor 間に resolved_evidence: resolvedEvidence が現れる', () => {
-  let idx = 0;
-  const occurrences = [];
-  for (;;) {
-    const i = src.indexOf("buildJournalHandoffPayload({", idx);
-    if (i === -1) break;
-    occurrences.push(i);
-    idx = i + 1;
+
+// 1000 字 cap の実証用: 1 件のみの critical resolution に 1500 字の evidence を与え、
+// buildAtCap の初期 cap（1000）でちょうど truncate されることを検証する（他配列を空に保ち
+// 16000 字上限による cap 半減が発火しない規模に収める）。
+const LONG_EVIDENCE = 'E'.repeat(1500);
+
+test('[resolved-evidence-routing] (b) VM: calls 順序（post-summary < journal-save）+ journal-save payload の merge_tier 一致 + resolved_evidence の 1000 字 cap', async () => {
+  const journalResult = { logged: true, summary: 'ok' };
+  const { ctx, getJournalPrompts, getCalls } = makeSandbox(ANALYZE_REQ, journalResult, undefined, {
+    feedback: [{ severity: 'critical', topic: 'topic-00', dimension: 'quality', description: 'd' }],
+    critical_resolutions: [{ id: 'EVAL-1-topic-00', resolved: true, evidence: LONG_EVIDENCE }],
+    ac_results: [],
+  });
+
+  const { result, error } = await runDevFlowCapture(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
-  assert.ok(occurrences.length > 0, 'buildJournalHandoffPayload({ の出現が見つからない');
+  assert.ok(result != null, 'run が abort してはならない');
 
-  const start = occurrences.find((i) => src.slice(i, i + 200).includes("outcome: 'success'"));
-  assert.ok(start != null, "outcome: 'success' を直後 200 字に含む buildJournalHandoffPayload({ 出現が見つからない");
-
-  const end = src.indexOf("subject: 'dev-flow 完走'", start);
-  assert.ok(end > start, "subject: 'dev-flow 完走' が start より後に見つからない");
-
-  const window = src.slice(start, end);
+  // 呼び出し順序: post-summary（終端サマリー投稿）は journal-save（telemetry payload 保存）より前
+  const calls = getCalls();
+  const postSummaryIdx = calls.findIndex((c) => c.label === 'post-summary');
+  const journalSaveIdx = calls.findIndex((c) => c.label === 'journal-save');
+  assert.ok(postSummaryIdx >= 0, "calls に 'post-summary' が存在しない");
+  assert.ok(journalSaveIdx >= 0, "calls に 'journal-save' が存在しない");
   assert.ok(
-    window.includes('resolved_evidence: resolvedEvidence'),
-    'success handoff の telemetry object に resolved_evidence: resolvedEvidence が無い',
+    postSummaryIdx < journalSaveIdx,
+    `(b) post-summary(idx=${postSummaryIdx}) は journal-save(idx=${journalSaveIdx}) より前に呼ばれるべき`,
   );
-});
 
-// ============================================================
-// (b) AC4 static pin
-// ============================================================
-test('[resolved-evidence-routing] (b) AC4: merge tier 判定 → resolvedEvidence → summaryBody → journal handoff の順序が不変で、resolvedEvidence 以降に merge tier / ledger 書き換えトークンが無い', () => {
-  const i1 = src.indexOf('const mergeTier = classifyMergeTier(');
-  const i2 = src.indexOf('const resolvedEvidence = buildResolvedEvidence(');
-  const i3 = src.indexOf('const summaryBody = buildDevflowSummaryBody(');
-  // 'journal_log_status: journalLogStatus' は Analyze phase の needs_clarification 等の他 return
-  // object にも現れるため、i3 以降（Merge tier の journal handoff return object）から探索する。
-  const i4 = src.indexOf('journal_log_status: journalLogStatus', i3);
+  const savePrompt = getJournalPrompts()[0] ?? '';
+  const beginIdx = savePrompt.indexOf('<<<JOURNAL_HANDOFF_BODY_BEGIN>>>');
+  const endIdx = savePrompt.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>');
+  assert.ok(beginIdx >= 0 && endIdx > beginIdx, 'journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない');
+  const payloadStr = savePrompt.slice(beginIdx + '<<<JOURNAL_HANDOFF_BODY_BEGIN>>>'.length, endIdx).trim();
 
-  assert.ok(i1 >= 0, 'const mergeTier = classifyMergeTier( が見つからない');
-  assert.ok(i2 >= 0, 'const resolvedEvidence = buildResolvedEvidence( が見つからない');
-  assert.ok(i3 >= 0, 'const summaryBody = buildDevflowSummaryBody( が見つからない');
-  assert.ok(i4 >= 0, "i3 以降に journal_log_status: journalLogStatus が見つからない");
-  assert.ok(i1 < i2 && i2 < i3 && i3 < i4, `順序が不変でない: i1=${i1} i2=${i2} i3=${i3} i4=${i4}`);
-
-  const slice = src.slice(i2, i4);
-  for (const tok of ['classifyMergeTier(', 'mergeTier =', 'mergeTier.tier =', 'state.ledger =']) {
-    assert.ok(!slice.includes(tok), `resolvedEvidence 以降〜journal handoff 手前に禁止トークン '${tok}' が現れている`);
+  let payload;
+  try {
+    payload = JSON.parse(payloadStr);
+  } catch (e) {
+    assert.fail(`journal-save payload が JSON.parse できない: ${e.message}\n${payloadStr}`);
   }
 
-  const resolvedEvidenceSrc = readFileSync(resolvedEvidencePath, 'utf8');
-  const summaryFormatSrc = readFileSync(summaryFormatPath, 'utf8');
-  for (const tok of ['classifyMergeTier', 'checkItem(', 'appendItem(', 'setCheck(']) {
-    assert.ok(!resolvedEvidenceSrc.includes(tok), `_lib/resolved-evidence.mjs に禁止トークン '${tok}' が含まれている`);
-    assert.ok(!summaryFormatSrc.includes(tok), `_lib/devflow-summary-format.mjs に禁止トークン '${tok}' が含まれている`);
-  }
+  assert.equal(payload.telemetry.merge_tier, result.merge_tier, 'telemetry.merge_tier が result.merge_tier と一致しない');
+
+  const re = payload.telemetry.resolved_evidence;
+  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
+  const item = re.ledger_resolved.find((it) => it.id === 'EVAL-1-topic-00');
+  assert.ok(item != null, "ledger_resolved に 'EVAL-1-topic-00' が無い");
+  assert.equal(item.evidence.length, 1000, `(b) evidence は 1000 字で cap されるべきだが ${item.evidence.length} 字だった`);
+  assert.equal(re.truncated, true, '(b) 1500 字の evidence を 1000 字 cap した場合 truncated===true のはず');
 });
 
 // ============================================================
@@ -336,11 +342,9 @@ test('[resolved-evidence-routing] (c) VM: ledger 21 件 critical resolved + AC 4
   assert.ok(ev7.includes('\n'), `ledger_resolved[7].evidence に改行が含まれない: ${JSON.stringify(ev7)}`);
   assert.equal(payload.telemetry.merge_tier, result.merge_tier, 'telemetry.merge_tier が result.merge_tier と一致しない');
 
+  // 件数（21 件）そのものは上の re.ledger_resolved.length===21 assertion が担う（journal telemetry
+  // 側の routing）。post-summary prompt 側は marker と否定側 pin のみを検証する（issue #636 AC-1）。
   const postSummaryPrompt = getPostSummaryPrompts()[0] ?? '';
-  assert.ok(
-    postSummaryPrompt.includes('✅ Goal Ledger 解消済み 21 件'),
-    `post-summary prompt に '✅ Goal Ledger 解消済み 21 件' が含まれるべきだが含まれていなかった`,
-  );
   assert.ok(
     postSummaryPrompt.includes(`<!-- dev-flow:${result.merge_tier} -->`),
     `post-summary prompt に '<!-- dev-flow:${result.merge_tier} -->' が含まれるべきだが含まれていなかった`,
@@ -461,9 +465,5 @@ test('[resolved-evidence-routing] (e) VM: ac_index 範囲内の実 run 形状で
   );
   assert.equal(payload.telemetry.merge_tier, result.merge_tier, 'telemetry.merge_tier が result.merge_tier と一致しない');
 
-  const postSummaryPrompt = getPostSummaryPrompts()[0] ?? '';
-  assert.ok(
-    postSummaryPrompt.includes('✅ Goal Ledger 解消済み 25 件'),
-    `post-summary prompt に '✅ Goal Ledger 解消済み 25 件' が含まれるべきだが含まれていなかった`,
-  );
+  // 件数（25 件）そのものは上の re.ledger_resolved.length===25 assertion が担う（issue #636 AC-1）。
 });

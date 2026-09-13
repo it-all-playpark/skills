@@ -6,7 +6,11 @@
 // (2) execSecurityFloorPhase の統合呼び出しに retryOnContractViolation:true を付け、契約違反時に
 //     trackedAgent の 1 回リトライ機会を与える。
 // (3) retry 後も不正形（もしくは throw）なら risk fail-closed に維持され、fail-closed 時は
-//     proxy 応答の top-level キー一覧を含む診断 log が出ることを pin する。
+//     danger-grep call の回数・run の継続・merge_tier HOLD・journal-save prompt への
+//     telemetry 反映という「挙動」で検証する（issue #636: ソース regex pin から VM 挙動 pin へ移行）。
+//
+// harness は共有 vm-sandbox.mjs（makeDevFlowSandbox/runWorkflowCapture）を使う。VM 内の既定値は
+// WT='/tmp/wt', BASE='dev'（devFlowResponder の setup-base 既定応答 dev_exists:true による解決）。
 //
 // Run: npx vitest run _lib/secfloor-schema-contract-routing.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
@@ -17,10 +21,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { parseSecfloorFields } from './secfloor-unified.mjs';
+import { parseSecfloorFields, isWellFormedRiskField } from './secfloor-unified.mjs';
 import { reconcileDanger, seedSecurityLedger, classifyMergeTier } from './merge-tier.mjs';
 import { policyBlockingItems, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -29,18 +34,8 @@ const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
 // ---- helpers ----
 
-function extractSecfloorSchema() {
-  const idx = devFlowSrc.indexOf('const SECFLOOR = {');
-  assert.ok(idx !== -1, 'const SECFLOOR = { が見つからない');
-  const bodyStart = idx + 'const SECFLOOR = '.length;
-  const closeIdx = devFlowSrc.indexOf('\n}', bodyStart);
-  assert.ok(closeIdx !== -1, 'SECFLOOR schema の終端 (行頭 }) が見つからない');
-  const literal = devFlowSrc.slice(bodyStart, closeIdx + 2);
-  // eslint-disable-next-line no-new-func
-  return new Function(`return ${literal}`)();
-}
-
 // 最小 JSON-schema チェッカ: type / required / properties(再帰) のみサポート。
+// 入力は VM 実行で観測した danger-grep call の opts.schema（deep clone）— ソース regex 抽出はしない。
 function checkSchema(schema, value, path = '$') {
   if (schema.type) {
     const types = Array.isArray(schema.type) ? schema.type : [schema.type];
@@ -70,6 +65,21 @@ function checkSchema(schema, value, path = '$') {
   return { ok: true };
 }
 
+// 既定 run（override 無し）の danger-grep call を取得する。opts（schema・agentType・
+// retryOnContractViolation・prompt）はすべてこの call から読む — ソース抽出はしない。
+async function dangerGrepCallFromDefaultRun() {
+  const { ctx, calls } = makeDevFlowSandbox({});
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'default-run');
+  const call = calls.find((c) => c.label === 'danger-grep');
+  assert.ok(call, "既定 run に label 'danger-grep' の呼び出しが見つからない");
+  return call;
+}
+
+function cloneSchema(call) {
+  return JSON.parse(JSON.stringify(call.opts.schema));
+}
+
 // secfloor-unified-routing.test.mjs の reconcileAndClassify と同じ実装
 function reconcileAndClassify(risk) {
   let ledger = makeLedger();
@@ -83,11 +93,12 @@ function reconcileAndClassify(risk) {
 }
 
 // ============================================================
-// AC1: SECFLOOR schema shape
+// AC1: SECFLOOR schema shape（VM 内で観測した opts.schema の構造）
 // ============================================================
 
-test('[secfloor-schema-contract][AC1] SECFLOOR requires risk (ok:boolean, hits:array); struct/files/diffhash stay optional', () => {
-  const schema = extractSecfloorSchema();
+test('[secfloor-schema-contract][AC1] SECFLOOR requires risk (ok:boolean, hits:array); struct/files/diffhash stay optional', async () => {
+  const call = await dangerGrepCallFromDefaultRun();
+  const schema = cloneSchema(call);
   assert.deepEqual(schema.required, ['risk']);
   assert.equal(schema.properties.risk.type, 'object');
   assert.deepEqual(schema.properties.risk.required, ['ok', 'hits']);
@@ -106,20 +117,23 @@ test('[secfloor-schema-contract][AC1] SECFLOOR requires risk (ok:boolean, hits:a
 // AC2: retryOnContractViolation:true on the danger-grep call site
 // ============================================================
 
-test("[secfloor-schema-contract][AC2] label 'danger-grep' call site has retryOnContractViolation:true and schema:SECFLOOR", () => {
-  const lines = devFlowSrc.split('\n');
-  const line = lines.find((l) => /label:\s*'danger-grep'/.test(l) && !/label:\s*'danger-grep-final'/.test(l));
-  assert.ok(line, "label 'danger-grep' の行が見つからない");
-  assert.match(line, /retryOnContractViolation:\s*true/, `danger-grep 行に retryOnContractViolation:true が無い: ${line}`);
-  assert.match(line, /schema:\s*SECFLOOR/, `danger-grep 行に schema:SECFLOOR が無い: ${line}`);
+test("[secfloor-schema-contract][AC2] label 'danger-grep' call site has retryOnContractViolation:true, agentType dev-runner-haiku-ro, and secfloor-classify prompt token", async () => {
+  const call = await dangerGrepCallFromDefaultRun();
+  assert.equal(call.opts.retryOnContractViolation, true);
+  assert.equal(call.agentType, 'dev-flow:dev-runner-haiku-ro');
+  assert.ok(
+    call.prompt.includes('secfloor-classify /tmp/wt origin/main'),
+    `danger-grep prompt に secfloor-classify の argv token が無い: ${call.prompt}`,
+  );
 });
 
 // ============================================================
-// AC3: nested payload rejected by schema contract
+// AC3: nested payload rejected by schema contract（checkSchema は不変ロジック、入力元だけ VM 由来へ）
 // ============================================================
 
-test('[secfloor-schema-contract][AC3] nested {struct:{risk:...}} response fails schema (missing top-level risk)', () => {
-  const schema = extractSecfloorSchema();
+test('[secfloor-schema-contract][AC3] nested {struct:{risk:...}} response fails schema (missing top-level risk)', async () => {
+  const call = await dangerGrepCallFromDefaultRun();
+  const schema = cloneSchema(call);
 
   const nested = checkSchema(schema, { struct: { risk: { ok: true, hits: [] } } });
   assert.equal(nested.ok, false);
@@ -142,37 +156,37 @@ test('[secfloor-schema-contract][AC3] nested {struct:{risk:...}} response fails 
 
 // ============================================================
 // AC4: retry-then-still-invalid keeps risk fail-closed / all SEC seeds unchecked / HOLD
+//
+// merge_tier=HOLD を実際に成立させるには、Security floor（label 'danger-grep'）と Merge tier
+// （label 'merge-tier-facts' の risk サブ結果）の両方が fail-closed である必要がある — Merge tier は自分の
+// tree に対して danger-grep を独立に再判定し、それが clean を返すと ledger は
+// reconcile され直して converge してしまう（Security floor 側の fail-closed は Merge tier の
+// 判定に自動継承されない）。したがって merge-tier-facts の risk も一貫して失敗するよう override する。
 // ============================================================
 
-async function callWithOneRetry(agentCall) {
-  let unified;
-  let callCount = 0;
-  const invoke = async () => {
-    callCount += 1;
-    return agentCall(callCount);
-  };
-  try {
-    unified = await invoke();
-  } catch (e) {
-    if (!String(e?.message ?? e).includes('without calling StructuredOutput')) throw e;
-    try {
-      unified = await invoke();
-    } catch (_e2) {
-      unified = null;
-    }
-  }
-  return { risk: parseSecfloorFields(unified).risk, callCount };
-}
-
 test('[secfloor-schema-contract][AC4] retry after two StructuredOutput throws keeps risk fail-closed and all SEC seeds unchecked / HOLD', async () => {
-  const agentCall = async () => { throw new Error('Agent completed without calling StructuredOutput'); };
-  const { risk, callCount } = await callWithOneRetry(agentCall);
+  const overrides = {
+    'danger-grep': () => { throw new Error('Agent completed without calling StructuredOutput'); },
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
+  };
+  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'AC4-throw-twice');
+  assert.equal(error, null, 'run は abort しない（fail-closed へ倒れて継続する）');
 
-  assert.equal(risk.ok, false);
-  assert.equal(risk.error, 'secfloor unified proxy unavailable (fail-closed)');
-  assert.deepEqual(risk.hits, []);
-  assert.equal(callCount, 2, 'retry 機会があるので 2 回呼ばれるはず');
+  const dgCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dgCalls.length, 2, 'retry 機会があるので 2 回呼ばれるはず');
 
+  assert.equal(result.merge_tier, 'HOLD');
+  assert.equal(result.danger_fail_closed, true);
+
+  const js = calls.find((c) => c.label === 'journal-save');
+  assert.ok(js, "label 'journal-save' の呼び出しが見つからない");
+  assert.ok(js.prompt.includes('"danger_fail_closed":true'), 'journal-save prompt に danger_fail_closed:true telemetry が無い');
+
+  // 純関数レベルでも同じ fail-closed 状態が再現できることを確認する（AC4 の意図: risk fail-closed
+  // → 全 SEC seed unchecked → HOLD）
+  const { risk } = parseSecfloorFields(null);
   const { secItems, converged, tier } = reconcileAndClassify(risk);
   assert.ok(secItems.length > 0);
   for (const it of secItems) {
@@ -184,83 +198,80 @@ test('[secfloor-schema-contract][AC4] retry after two StructuredOutput throws ke
 });
 
 test('[secfloor-schema-contract][AC4] retry after throw then a nested (schema-invalid-shaped) response also keeps risk fail-closed / HOLD', async () => {
-  let callCount = 0;
-  const agentCall = async () => {
-    callCount += 1;
-    if (callCount === 1) throw new Error('Agent completed without calling StructuredOutput');
-    return { struct: { risk: { ok: true, hits: [{ file: 'a', class: 'exec-sink', severity: 'critical' }] } } };
+  let n = 0;
+  const overrides = {
+    'danger-grep': () => {
+      n += 1;
+      if (n === 1) throw new Error('Agent completed without calling StructuredOutput');
+      return { struct: { risk: { ok: true, hits: [{ file: 'a', class: 'exec-sink', severity: 'critical' }] } } };
+    },
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
   };
-  const { risk, callCount: finalCount } = await callWithOneRetry(agentCall);
+  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'AC4-throw-then-nested');
+  assert.equal(error, null);
 
-  assert.equal(risk.ok, false);
-  assert.equal(risk.error, 'secfloor unified proxy unavailable (fail-closed)');
-  assert.deepEqual(risk.hits, []);
-  assert.equal(finalCount, 2);
+  const dgCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dgCalls.length, 2);
+  assert.equal(result.merge_tier, 'HOLD');
+  assert.equal(result.danger_fail_closed, true);
+});
 
-  const { secItems, converged, tier } = reconcileAndClassify(risk);
-  for (const it of secItems) {
-    assert.notEqual(it.checked, true);
-    assert.equal(it.fail_closed, true);
+test('[secfloor-schema-contract][AC4] a well-formed contract failure (ok:false, no StructuredOutput-violation message) is not retried', async () => {
+  const overrides = {
+    'danger-grep': () => ({ risk: { ok: false, hits: [], error: 'boom' } }),
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
+  };
+  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'AC4-contract-ok-false');
+  assert.equal(error, null);
+
+  const dgCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dgCalls.length, 1, '契約通りの ok:false 応答は契約違反ではないため retry されない');
+  assert.equal(result.merge_tier, 'HOLD');
+  assert.equal(result.danger_fail_closed, true);
+});
+
+// ============================================================
+// AC5: isWellFormedRiskField / parseSecfloorFields の risk 採用条件は同一である（fixture 集合による
+// 純関数の同値性検証）。加えて、fail-closed 挙動が実際に log へ現れること（label 識別子のみを
+// assert し、文言は pin しない）を VM run（上記 AC4 throw-twice ケース）で確認する。
+// ============================================================
+
+test('[secfloor-schema-contract][AC5] isWellFormedRiskField and parseSecfloorFields(...).risk share the same well-formed / fail-closed-default condition', () => {
+  const FAIL_CLOSED_ERROR = 'secfloor unified proxy unavailable (fail-closed)';
+  const fixtures = [
+    null,
+    {},
+    { risk: null },
+    { risk: { ok: true } },
+    { risk: { ok: true, hits: [] } },
+    { risk: { ok: 'yes', hits: [] } },
+    { struct: { risk: { ok: true, hits: [] } } },
+  ];
+  for (const fx of fixtures) {
+    const wellFormed = isWellFormedRiskField(fx);
+    const { risk } = parseSecfloorFields(fx);
+    const parsedAsFailClosedDefault = risk.ok === false
+      && risk.error === FAIL_CLOSED_ERROR
+      && Array.isArray(risk.hits) && risk.hits.length === 0;
+    assert.equal(
+      wellFormed, !parsedAsFailClosedDefault,
+      `fixture ${JSON.stringify(fx)}: isWellFormedRiskField=${wellFormed} と parseSecfloorFields の`
+      + ` fail-closed 既定合成状態(${parsedAsFailClosedDefault})が矛盾している`,
+    );
   }
-  assert.equal(converged, false);
-  assert.equal(tier, 'HOLD');
 });
 
-// ============================================================
-// AC5: fail-closed diagnostic log with top-level keys
-// ============================================================
-
-test('[secfloor-schema-contract][AC5-source] execSecurityFloorPhase logs top-level keys when risk.ok !== true', () => {
-  const fnStart = devFlowSrc.indexOf('async function execSecurityFloorPhase(state)');
-  assert.ok(fnStart !== -1);
-  const nextFnIdx = devFlowSrc.indexOf('\nasync function ', fnStart + 1);
-  const fnBody = devFlowSrc.slice(fnStart, nextFnIdx === -1 ? devFlowSrc.length : nextFnIdx);
-
-  assert.match(fnBody, /if\s*\(\s*risk\.ok\s*!==\s*true\s*\)\s*\{/, 'risk.ok!==true 条件の log 分岐が見つからない');
-  assert.match(fnBody, /契約外形状/, 'log 文字列に「契約外形状」が含まれない');
-  assert.match(fnBody, /top-level keys:/, 'log 文字列に "top-level keys:" が含まれない');
-  assert.match(fnBody, /secfloorTopLevelKeys\(unified\)/, 'log 呼び出しが secfloorTopLevelKeys(unified) を使っていない');
-});
-
-// fail-closed の原因は 2 つある（形状不一致 / proxy 自身の失敗報告）。両者を同一文言で出すと、
-// 後者では「契約外形状」と言いながら正常な top-level キー一覧が並び、かつ真の原因である
-// risk.error がどこにも出ない。出し分けを source レベルで pin する。
-test('[secfloor-schema-contract][AC5-source] fail-closed log distinguishes malformed shape from proxy-reported failure', () => {
-  const fnStart = devFlowSrc.indexOf('async function execSecurityFloorPhase(state)');
-  const nextFnIdx = devFlowSrc.indexOf('\nasync function ', fnStart + 1);
-  const fnBody = devFlowSrc.slice(fnStart, nextFnIdx === -1 ? devFlowSrc.length : nextFnIdx);
-
-  assert.match(fnBody, /isWellFormedRiskField\(unified\)/, 'log 分岐が isWellFormedRiskField(unified) で 2 原因を判別していない');
-  assert.match(fnBody, /失敗を報告した/, 'proxy 自身の失敗報告を表す log 文言が見つからない');
-  assert.match(fnBody, /risk\.error\s*\?\?/, 'proxy 失敗報告の log が risk.error を出力していない');
-});
-
-// 述語は parseRiskField の採用条件そのもの。二重定義になると log 分岐と実際の
-// fail-closed 判定が drift するため、canonical に単一定義であることを pin する。
-test('[secfloor-schema-contract][AC5-source] isWellFormedRiskField is the single predicate shared with parseRiskField', () => {
-  const defs = devFlowSrc.match(/function isWellFormedRiskField\(unified\) \{/g) ?? [];
-  assert.equal(defs.length, 1, `isWellFormedRiskField の定義は 1 箇所であるべき (found ${defs.length})`);
-
-  const idx = devFlowSrc.indexOf('function parseRiskField(unified) {');
-  assert.ok(idx !== -1, 'parseRiskField の定義が見つからない');
-  const endIdx = devFlowSrc.indexOf('\n}', idx);
-  const parseRiskSrc = devFlowSrc.slice(idx, endIdx + 2);
-  assert.match(parseRiskSrc, /isWellFormedRiskField\(unified\)/, 'parseRiskField が述語を共有していない（条件式の複製）');
-});
-
-test('[secfloor-schema-contract][AC5-behavior] secfloorTopLevelKeys extracted from dev-flow.js behaves for null/undefined/object/empty/primitive/array', () => {
-  const idx = devFlowSrc.indexOf('function secfloorTopLevelKeys(unified) {');
-  assert.ok(idx !== -1, 'secfloorTopLevelKeys(unified) 関数定義が見つからない');
-  const endIdx = devFlowSrc.indexOf('\n}', idx);
-  assert.ok(endIdx !== -1, 'secfloorTopLevelKeys 関数本体の終端が見つからない');
-  const fnSrc = devFlowSrc.slice(idx, endIdx + 2);
-  // eslint-disable-next-line no-new-func
-  const secfloorTopLevelKeys = new Function(`return ${fnSrc}`)();
-
-  assert.equal(secfloorTopLevelKeys(null), 'null');
-  assert.equal(secfloorTopLevelKeys(undefined), 'null');
-  assert.equal(secfloorTopLevelKeys({ struct: { risk: {} }, files: [] }), 'struct,files');
-  assert.equal(secfloorTopLevelKeys({}), '(none)');
-  assert.equal(secfloorTopLevelKeys('str'), 'string');
-  assert.equal(secfloorTopLevelKeys([1]), 'array');
+test('[secfloor-schema-contract][AC5] fail-closed path is observable in logs by label identifier only (wording not pinned)', async () => {
+  const overrides = {
+    'danger-grep': () => { throw new Error('Agent completed without calling StructuredOutput'); },
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
+  };
+  const { ctx, logs } = makeDevFlowSandbox({ overrides });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'AC5-log-observability');
+  assert.ok(logs.some((l) => l.includes('danger-grep')), 'fail-closed 経路の log に danger-grep 識別子が現れない');
 });

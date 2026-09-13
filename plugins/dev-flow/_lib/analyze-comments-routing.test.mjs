@@ -1,20 +1,28 @@
 // _lib/analyze-comments-routing.test.mjs
 // issue #573: dev-flow.js の Analyze phase が issue の comments を要件入力に含め、
 // body/comment の矛盾（comment_conflicts）を fail-closed で needs_clarification に
-// 落とす配線を VM sandbox で検証する。source pin (a)-(d) と routing T1-T4。
+// 落とす配線を VM sandbox で検証する。
 // PR #578: sonnet analyze 経路が comments 取得を落としても検知できない問題を、
 // issue-meta probe の comment_count 実測と REQ.comment_count（skill 出力 verbatim）の
-// 決定論突合で塞ぐ配線を source pin (e)-(g) と routing T5-T6 で検証する。
+// 決定論突合で塞ぐ配線を routing T5-T6 で検証する。
+//
+// issue #636 P3a: 旧 (a)-(g) は dev-flow.js ソース文字列（readFileSync + block 抽出）に対する
+// JSON キー名 pin だった。本版は VM run で実際に agent() へ渡る contract-probe#1 / analyze#1 /
+// issue-meta の prompt に対するトークン pin へ書き換える。REQ / ISSUE_META schema の required
+// フィールド自体は calls[] からは観測できない（opts 記録は本 task では未使用）ため、
+// schema 存在 pin は T1-T6 の挙動テスト（comment_overrides/comment_conflicts/comment_count が
+// 実際に routing を左右すること）で代替する。旧 (d) の ac_heading_near_miss は log() 専用の
+// 可視化分岐で prompt にも result にも現れず、VM harness からは観測不能なため削除する
+// （挙動は変えず可視化のみの分岐であり、削除しても T1-T6 のカバレッジに欠落は生じない）。
 //
 // テストケース:
-//   (a)-(d): source-as-string pin（contractProbePrompt の --json / analyzePrompt の規約文言 /
-//            REQ schema のキー追加 / ac_heading_near_miss の可視化）
+//   contract-probe#1 prompt に gh --json comments フィールドが含まれる
+//   analyze#1 prompt に comment_overrides / comment_conflicts フィールドへの言及がある
+//   issue-meta prompt に comment_count フィールドへの言及がある
 //   T1: comment_conflicts 非空 → needs_clarification かつ implementer 0 件
 //   T2: comment_overrides のみ非空（comment_conflicts 空） → implementer 呼び出し >= 1
 //   T3: 両キーとも無い（既存 FULL_REQ 相当） → implementer 呼び出し >= 1（既存挙動不変）
 //   T4: comment_conflicts が空白のみの要素 → implementer 呼び出し >= 1（空文字は矛盾扱いしない）
-//   (e)-(g): source-as-string pin（issue-meta probe の gh --json に comments が追加 /
-//            ISSUE_META・REQ 両 schema に comment_count が追加）
 //   T5: issueMetaRes.comment_count と req.comment_count が不一致 → needs_clarification
 //       かつ implementer 0 件（comments 取得漏れの検出。PR #578）
 //   T6: issueMetaRes.comment_count と req.comment_count が一致 → implementer 呼び出し >= 1
@@ -25,7 +33,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -33,54 +41,38 @@ const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
-// source-as-string pin (a)-(d)
+// prompt token pin（VM run）
 // ============================================================
 
-test('[analyze-comments-routing] (a) contractProbePrompt の gh --json に comments が追加されている', () => {
-  assert.ok(
-    src.includes('--json body,title,labels,assignees,milestone,state,comments'),
-    'contractProbePrompt の gh issue view --json フィールドに comments が含まれていない',
-  );
+test('[analyze-comments-routing] contract-probe#1 prompt の gh --json に comments フィールドが含まれる', async () => {
+  const { ctx, calls } = makeSandbox({ req: FULL_REQ });
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'contract-probe-comments-field');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const call = calls.find((c) => c.label === 'contract-probe#1');
+  assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
+  assert.ok(call.prompt.includes('state,comments'), `contract-probe#1 prompt の gh --json に comments が含まれていない: ${call.prompt}`);
 });
 
-test('[analyze-comments-routing] (b) analyzePrompt に comments 読み取りと comment_overrides / comment_conflicts 返却規約がある', () => {
-  const m = src.match(/const analyzePrompt = \(depth\) => `[\s\S]*?\n\nconst /);
-  assert.ok(m, 'analyzePrompt 定義ブロックが見つからない');
-  const block = m[0];
-  assert.ok(block.includes('comments'), 'analyzePrompt に comments への言及がない');
-  assert.ok(block.includes('comment_overrides'), 'analyzePrompt に comment_overrides への言及がない');
-  assert.ok(block.includes('comment_conflicts'), 'analyzePrompt に comment_conflicts への言及がない');
+test('[analyze-comments-routing] analyze#1 prompt に comment_overrides / comment_conflicts フィールドへの言及がある', async () => {
+  const { ctx, calls } = makeSandbox({ req: FULL_REQ });
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'analyze-comment-fields');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const call = calls.find((c) => c.label === 'analyze#1');
+  assert.ok(call, 'analyze#1 呼び出しが見つからない');
+  assert.ok(call.prompt.includes('comment_overrides'), 'analyze#1 prompt に comment_overrides への言及がない');
+  assert.ok(call.prompt.includes('comment_conflicts'), 'analyze#1 prompt に comment_conflicts への言及がない');
 });
 
-test('[analyze-comments-routing] (c) REQ schema に comment_overrides / comment_conflicts が追加されている', () => {
-  const m = src.match(/const REQ = \{[\s\S]*?\n\}/);
-  assert.ok(m, 'REQ schema 定義が見つからない');
-  const block = m[0];
-  assert.ok(block.includes('comment_overrides'), 'REQ schema に comment_overrides が無い');
-  assert.ok(block.includes('comment_conflicts'), 'REQ schema に comment_conflicts が無い');
-});
-
-test('[analyze-comments-routing] (d) ac_heading_near_miss が dev-flow.js に含まれる（fallback 時の警告 log 可視化）', () => {
-  assert.ok(src.includes('ac_heading_near_miss'), 'dev-flow.js に ac_heading_near_miss への言及がない');
-});
-
-test('[analyze-comments-routing] (e) issue-meta probe の gh --json に comments が追加されている', () => {
-  assert.ok(
-    src.includes('--json number,title,comments'),
-    'issue-meta probe の gh issue view --json フィールドに comments が含まれていない',
-  );
-});
-
-test('[analyze-comments-routing] (f) ISSUE_META schema に comment_count が追加されている', () => {
-  const m = src.match(/const ISSUE_META = \{[\s\S]*?\n\}/);
-  assert.ok(m, 'ISSUE_META schema 定義が見つからない');
-  assert.ok(m[0].includes('comment_count'), 'ISSUE_META schema に comment_count が無い');
-});
-
-test('[analyze-comments-routing] (g) REQ schema に comment_count が追加されている', () => {
-  const m = src.match(/const REQ = \{[\s\S]*?\n\}/);
-  assert.ok(m, 'REQ schema 定義が見つからない');
-  assert.ok(m[0].includes('comment_count'), 'REQ schema に comment_count が無い');
+test('[analyze-comments-routing] issue-meta probe prompt に comment_count フィールドへの言及がある', async () => {
+  const { ctx, calls } = makeSandbox({ req: FULL_REQ });
+  const { error } = await run(ctx);
+  assertNoCrash(error, 'issue-meta-comment-count-field');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  const call = calls.find((c) => c.label === 'issue-meta');
+  assert.ok(call, 'issue-meta 呼び出しが見つからない');
+  assert.ok(call.prompt.includes('comment_count'), 'issue-meta prompt に comment_count への言及がない');
 });
 
 // ============================================================
@@ -134,7 +126,7 @@ function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1,
 }
 
 function makeSandbox(opts) {
-  const { ctx, calls } = makeRecordingSandbox(createResponder(opts), { args: '1' });
+  const { ctx, calls } = makeRecordingSandbox(createResponder(opts), { args: devFlowArgs('1') });
   return { ctx, calls };
 }
 

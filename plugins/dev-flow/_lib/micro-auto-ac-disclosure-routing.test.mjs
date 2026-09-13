@@ -1,9 +1,11 @@
 // micro AUTO run で classifyMergeTier に evalSkipped:true が渡り、
 // merge_tier_reasons に AC未検証文言が含まれることを VM sandbox で検証する（issue #233）。
+// post-summary prompt 本文への転記は devflow-summary-format.test.mjs（純関数出力テスト）が担うため
+// ここでは扱わない（issue #636 AC-1）。
 // _lib/green-fix-micro-eval.test.mjs の VM sandbox パターン（makeCountingSandbox / runDevFlowInSandbox）を踏襲。
 //
 // テスト構成:
-//   (A) micro AUTO run → merge_tier===AUTO かつ reasons に AC未検証文言 かつ post-summary にも文言 かつ evaluator 0 件
+//   (A) micro AUTO run → merge_tier===AUTO かつ reasons に AC未検証文言 かつ evaluator 0 件
 //   (B) standard shape run → merge_tier===REVIEW かつ文言なし（evaluator が走るので開示不要）
 //   (C) micro AUTO run で evaluator が 0 件であること（開示文言の前提確認）
 
@@ -13,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -69,8 +72,7 @@ function makeSandbox(analyzeReq, opts) {
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す
     // （files は旧 realized-diff 相当）。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
-    if (label === 'danger-grep-final') return { ok: true, hits: [] };
-    if (label === 'changed-files') return { files: changedFiles };
+    if (label === 'merge-tier-facts') return mergeTierFacts({ files: changedFiles });
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
     if (label.startsWith('diff-gate')) return { hash: 'H', empty: false };
@@ -89,7 +91,7 @@ function makeSandbox(analyzeReq, opts) {
   const sandbox = {
     phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: async () => iterateResult, args: '1',
+    workflow: async () => iterateResult, args: devFlowArgs('1'),
     console, JSON, Math, String, Number, Boolean, Array, Object, Error, RegExp, Promise, Symbol, Map, Set, Date,
   };
   const ctx = vm.createContext(sandbox);
@@ -135,12 +137,8 @@ test('[micro-auto-ac-disclosure] (A) micro AUTO run → merge_tier===AUTO かつ
     returned.merge_tier_reasons.some((r) => r.includes('AC は未検証（micro eval skip）')),
     `(A) merge_tier_reasons に AC未検証文言を含むべきだが: ${JSON.stringify(returned.merge_tier_reasons)}`,
   );
-  const postSummary = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummary !== undefined, '(A) post-summary 呼び出しが存在すべき');
-  assert.ok(
-    postSummary.prompt.includes('AC は未検証（micro eval skip）'),
-    `(A) post-summary prompt に AC未検証文言を含むべきだが: ${postSummary.prompt.slice(0, 500)}`,
-  );
+  // post-summary prompt 本文への同文言の転記は devflow-summary-format.test.mjs（純関数出力テスト）が
+  // 担う。ここでは返り値 routing（merge_tier_reasons）のみを検証する。
 });
 
 // ============================================================

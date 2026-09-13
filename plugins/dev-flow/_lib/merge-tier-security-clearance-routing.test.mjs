@@ -6,7 +6,7 @@
 // _lib/danger-fail-closed-loop-routing.test.mjs の VM sandbox パターン（node:vm で
 // .claude/workflows/dev-flow.js を読み込み、agent() を label/agentType で stub）を踏襲する。
 // 本テストは Security floor（Evaluate 前, label:'danger-grep'）と Merge tier（label:
-// 'danger-grep-final'）に**別々**の danger-grep レスポンスを注入できるようにし、
+// 'merge-tier-facts' の risk サブ結果）に**別々**の danger-grep レスポンスを注入できるようにし、
 // 'security-clearance-final' の呼び出し回数・prompt、'journal-log'/'post-summary' の
 // prompt（merge_tier / summary body）を捕捉する。
 
@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -26,7 +27,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 /**
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {object} dangerGrepPre - Security floor（Evaluate 前, label:'danger-grep'）の stub レスポンス
- * @param {object} dangerGrepFinal - Merge tier（label:'danger-grep-final'）の stub レスポンス
+ * @param {object} dangerGrepFinal - Merge tier（label:'merge-tier-facts' の risk サブ結果）の stub レスポンス
  * @param {object} evaluatorResponse - Evaluate 本体（label:'eval#N'）の stub レスポンス（全 iteration 同一）
  * @param {object|null} clearanceResponse - 'security-clearance-final' の stub レスポンス（null 可）
  */
@@ -61,9 +62,12 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (label === 'danger-grep') {
       return { risk: dangerGrepPre, files: ['src/foo.ts'], struct: null, diffhash: { hash: 'H', empty: false } };
     }
-    // Merge tier の最終 danger-grep
-    if (label === 'danger-grep-final') {
-      return dangerGrepFinal;
+    // Merge tier の最終 danger-grep は merge-tier-facts の risk サブ結果。diffhash は Security floor 側（'H'）と
+    // 意図的に異なる値（'H_MERGE'）にして reuse を発火させない — 本 test はシナリオごとに Security floor と
+    // Merge tier で異なる danger-grep 応答を注入するため、両段の diff-hash を同一にすると reuse が発火し
+    // facts の risk が使われなくなってシナリオの前提（pre/final の乖離）が壊れる。
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ hash: 'H_MERGE', risk: dangerGrepFinal, files: ['src/foo.ts'] });
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
@@ -84,12 +88,6 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 16, committed: true };
     }
-    if (label === 'changed-files') {
-      return { files: ['src/foo.ts'] };
-    }
-    if (label === 'ci-checks') {
-      return { ok: false, error: 'stub: no checks' };
-    }
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       summaryPrompts.push(prompt);
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
@@ -105,11 +103,6 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
-    // diff-hash-merge のみ別ハッシュを返す（issue #377 diff-hash reuse）。本 test はシナリオごとに
-    // Security floor（danger-grep）と Merge tier（danger-grep-final）で意図的に異なる応答を注入する
-    // ため、両段の diff-hash を同一にすると reuse が発火し danger-grep-final が呼ばれなくなって
-    // シナリオの前提（pre/final の乖離）が壊れる。
-    if (label === 'diff-hash-merge') return { hash: 'H_MERGE', empty: false };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'issue-meta') return { ok: true, number: 16, title: 'stub-issue-title' };
     return null;
@@ -125,7 +118,7 @@ function makeSandbox(analyzeReq, dangerGrepPre, dangerGrepFinal, evaluatorRespon
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
-    args: '16',
+    args: devFlowArgs('16'),
     console,
     JSON,
     Math,
@@ -253,9 +246,23 @@ test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+ev
     !summaryPrompts[0].includes('❌ 未確認 | config'),
     `post-summary body に未確認 clearance テーブル行 '❌ 未確認 | config' が含まれてはならない。body:\n${summaryPrompts[0]}`,
   );
+  // clearance 解消の返り値 routing 側の証拠: post-summary prompt の tier marker が REVIEW
+  // （HOLD ではない）+ journal-save prompt の telemetry JSON に danger_hits と merge_tier:REVIEW
   assert.ok(
-    summaryPrompts[0].includes('セキュリティ確認 (Security clearance) 1/1 済'),
-    `post-summary body に 'セキュリティ確認 (Security clearance) 1/1 済' が含まれるべき。body:\n${summaryPrompts[0]}`,
+    summaryPrompts[0].includes('<!-- dev-flow:REVIEW -->'),
+    `post-summary prompt に '<!-- dev-flow:REVIEW -->' marker が含まれるべき。body:\n${summaryPrompts[0]}`,
+  );
+  assert.ok(
+    !summaryPrompts[0].includes('<!-- dev-flow:HOLD -->'),
+    `post-summary prompt に '<!-- dev-flow:HOLD -->' marker が含まれてはならない。body:\n${summaryPrompts[0]}`,
+  );
+  assert.ok(
+    journalPrompts[0].includes('"danger_hits"'),
+    `journal-save prompt に telemetry JSON の 'danger_hits' キーが含まれるべき。prompt:\n${journalPrompts[0]}`,
+  );
+  assert.ok(
+    journalPrompts[0].includes(`"merge_tier":"${result?.merge_tier}"`),
+    `journal-save prompt の telemetry JSON の merge_tier は返り値 '${result?.merge_tier}' と一致するべき。prompt:\n${journalPrompts[0]}`,
   );
 });
 
@@ -298,10 +305,10 @@ test('[merge-tier-sec-clearance] シナリオ3: clearance null — HOLD かつ w
 });
 
 // ============================================================
-// シナリオ 4: danger-grep-final が fail-closed → one-shot clearance を試みず、
+// シナリオ 4: merge-tier-facts の risk が fail-closed → one-shot clearance を試みず、
 // 全 SEC seed unchecked で HOLD を強制する（security floor 不変）。
 // ============================================================
-test('[merge-tier-sec-clearance] シナリオ4: danger-grep-final fail-closed — clearance は呼ばれず HOLD 強制', async () => {
+test('[merge-tier-sec-clearance] シナリオ4: merge-tier-facts risk fail-closed — clearance は呼ばれず HOLD 強制', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
   const clearanceResponse = {
     security_clearance: [{ danger_class: 'config', cleared: true, evidence: 'should not be called' }],
@@ -313,12 +320,12 @@ test('[merge-tier-sec-clearance] シナリオ4: danger-grep-final fail-closed �
   assert.equal(
     counters.clearanceCalls(),
     0,
-    `danger-grep-final が fail-closed の場合 security-clearance-final は呼ばれないはずだが ${counters.clearanceCalls()} 回呼ばれた`,
+    `merge-tier-facts の risk が fail-closed の場合 security-clearance-final は呼ばれないはずだが ${counters.clearanceCalls()} 回呼ばれた`,
   );
   assert.equal(
     result?.merge_tier,
     'HOLD',
-    `danger-grep-final fail-closed の場合、merge tier は HOLD を強制すべきだが '${result?.merge_tier}' だった`,
+    `merge-tier-facts risk fail-closed の場合、merge tier は HOLD を強制すべきだが '${result?.merge_tier}' だった`,
   );
 });
 

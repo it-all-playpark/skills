@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { acceptanceCriteriaBlock } from './review-ac.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -86,41 +87,81 @@ test('[review-ac] AC 未達を理由に critical へ引き上げないことを 
 });
 
 // ============================================================
-// 配線 pin: 両経路が注入している
+// 配線: 両経路が注入している（VM 挙動で観測。issue #636 でソース regex から置換）
 // ============================================================
 
-test('[review-ac] pr-iterate の review prompt が acceptanceCriteriaBlock を注入する', () => {
-  const m = prIterateSrc.match(/const reviewPrompt = ([\s\S]*?)\n  const review = await callReviewAgent/);
-  assert.ok(m, 'reviewPrompt の組み立てブロックが見つかるべき');
-  assert.ok(
-    m[1].includes('acceptanceCriteriaBlock('),
-    'pr-iterate の reviewPrompt は acceptanceCriteriaBlock() を注入すべき',
-  );
+const AC = ['AC_SENTINEL_A', 'AC_SENTINEL_B'];
+const STANDARD_REQ = {
+  summary: 's', acceptance_criteria: AC, issue_type: 'fix', scope: 'src',
+  estimated_change_file_count: 3, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
+};
+// clean-micro-lite が成立する req（lite-route-routing.test.mjs と同型）
+const LITE_REQ = {
+  summary: 'clean micro fix', acceptance_criteria: AC, issue_type: 'fix', scope: 'src',
+  estimated_change_file_count: 1, breaking_change: false, breaking_keyword_scan: false,
+  issue_number: 1, issue_title: 'stub-issue-title',
+};
+const LITE_OVERRIDES = {
+  'plan#micro': { summary: 'p', serial: [], parallel: [] },
+  'danger-grep': { risk: { ok: true, hits: [] }, files: [], struct: null, diffhash: null },
+};
+const BLOCKING_REVIEW = { decision: 'request_changes', issues: [{ severity: 'major', topic: 't', file: 'a.js', line: 1, description: 'd', suggestion: null }], summary: 'ng' };
+
+function makeWorkflowRecorder() {
+  const launches = [];
+  const workflow = async (name, args) => {
+    launches.push({ name, args });
+    return { status: 'lgtm', iterations: 1, fixes_applied: 0 };
+  };
+  return { workflow, launches };
+}
+
+test('[review-ac] pr-iterate: args.acceptance_criteria を review prompt に注入する', async () => {
+  const { ctx, calls } = makePrIterateSandbox({ args: { pr: '5', acceptance_criteria: AC } });
+  const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  assertNoCrash(error, 'pr-iterate-ac');
+  const review = calls.find((c) => c.label === 'review#1');
+  assert.ok(review, 'review#1 が dispatch されていない');
+  assert.ok(review.prompt.includes('1. AC_SENTINEL_A') && review.prompt.includes('2. AC_SENTINEL_B'), `review#1 prompt に採番済み AC が注入されていない:\n${review.prompt.slice(-600)}`);
 });
 
-test('[review-ac] pr-iterate は acceptance_criteria を workflow args から受け取る', () => {
-  assert.ok(
-    /const ACCEPTANCE_CRITERIA = args\?\.acceptance_criteria/.test(prIterateSrc),
-    'pr-iterate は args.acceptance_criteria を読むべき',
-  );
+test('[review-ac] pr-iterate 単体起動（AC なし）: review prompt に AC ブロックを注入しない（fail-open）', async () => {
+  const { ctx, calls } = makePrIterateSandbox();
+  const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  assertNoCrash(error, 'pr-iterate-noac');
+  const review = calls.find((c) => c.label === 'review#1');
+  assert.ok(review, 'review#1 が dispatch されていない');
+  assert.ok(!review.prompt.includes('acceptance criteria'), '単体起動なのに review#1 prompt に AC ブロックが注入されている');
 });
 
-test('[review-ac] dev-flow lite route の reviewPromptLite が acceptanceCriteriaBlock を注入する', () => {
-  const m = devFlowSrc.match(/const reviewPromptLite = ([\s\S]*?)\n  const reviewLite = await trackedAgent/);
-  assert.ok(m, 'reviewPromptLite の組み立てブロックが見つかるべき');
-  assert.ok(
-    m[1].includes('acceptanceCriteriaBlock('),
-    'dev-flow lite route の reviewPromptLite は acceptanceCriteriaBlock() を注入すべき',
-  );
+test('[review-ac] dev-flow lite route: pr-review-lite prompt に analyze の AC を注入する', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: { 'analyze#1': LITE_REQ, ...LITE_OVERRIDES } });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'lite-ac');
+  const lite = calls.find((c) => c.label === 'pr-review-lite');
+  assert.ok(lite, `pr-review-lite が dispatch されていない（lite route 不成立）: ${calls.map((c) => c.label).join(', ')}`);
+  assert.ok(lite.prompt.includes('1. AC_SENTINEL_A') && lite.prompt.includes('2. AC_SENTINEL_B'), 'pr-review-lite prompt に採番済み AC が注入されていない');
 });
 
-test('[review-ac] dev-flow の nested pr-iterate 起動 3 箇所すべてが同一の PR_ITERATE_ARGS を渡し、acceptance_criteria を含む（issue #550 案3: 呼び出し箇所を1本の変数組み立てへ統合）', () => {
-  const launches = devFlowSrc.match(/workflow\('dev-flow:pr-iterate', PR_ITERATE_ARGS\)/g) ?? [];
-  assert.equal(launches.length, 3, `nested 起動は 3 箇所のはずだが ${launches.length} 箇所だった`);
-  const argsDecl = devFlowSrc.match(/const PR_ITERATE_ARGS = \{[\s\S]*?\n\}/);
-  assert.ok(argsDecl, 'PR_ITERATE_ARGS の組み立てブロックが見つかるべき');
-  assert.ok(
-    argsDecl[0].includes('acceptance_criteria:'),
-    `PR_ITERATE_ARGS が acceptance_criteria を渡していない: ${argsDecl[0]}`,
-  );
-});
+// nested pr-iterate 起動は 3 経路（full route / lite の review escalate / lite の CI 非 green）あり、
+// いずれも同一の args（acceptance_criteria を含む）で起動する（issue #550 案3: 1 本の変数組み立てへ統合）。
+const NESTED_LAUNCH_SCENARIOS = {
+  'full route': { 'analyze#1': STANDARD_REQ },
+  'lite review escalate': { 'analyze#1': LITE_REQ, ...LITE_OVERRIDES, 'pr-review-lite': BLOCKING_REVIEW },
+  'lite CI 非 green': { 'analyze#1': LITE_REQ, ...LITE_OVERRIDES, 'ci-check-lite': { status: 'failed', failed_checks: ['build'], waited_seconds: 0, poll_attempts: 1 } },
+};
+
+for (const [name, overrides] of Object.entries(NESTED_LAUNCH_SCENARIOS)) {
+  test(`[review-ac] dev-flow nested pr-iterate 起動（${name}）が acceptance_criteria を args で渡す`, async () => {
+    const { workflow, launches } = makeWorkflowRecorder();
+    const { ctx, calls } = makeDevFlowSandbox({ overrides, workflow });
+    const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+    assertNoCrash(error, name);
+    const wentLite = calls.some((c) => c.label === 'pr-review-lite');
+    assert.equal(wentLite, name.startsWith('lite'), `${name}: lite route の通過有無が想定と異なる（pr-review-lite ${wentLite ? 'あり' : 'なし'}）`);
+    const nested = launches.filter((l) => l.name === 'dev-flow:pr-iterate');
+    assert.equal(nested.length, 1, `${name}: nested pr-iterate は 1 回起動されるはずだが ${nested.length} 回`);
+    assert.equal(JSON.stringify(nested[0].args?.acceptance_criteria), JSON.stringify(AC), `${name}: nested 起動 args の acceptance_criteria が analyze の AC と一致しない: ${JSON.stringify(nested[0].args)}`);
+    assert.equal(nested[0].args?.post_terminal_summary, false);
+  });
+}

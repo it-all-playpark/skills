@@ -2,8 +2,7 @@
 name: dev-runner-haiku
 description: |
   Write/Skill-capable exec-proxy for dev-flow deterministic operations that
-  require filesystem mutation or Skill invocation: git worktree creation,
-  run-scratch cleanup (.devflow-tmp), deps install, test execution,
+  require filesystem mutation or Skill invocation: test execution,
   redgreen verification, reconcile-sync,
   ui-verify server start/teardown,
   journal writes, and PR comment posting
@@ -14,9 +13,10 @@ description: |
   dev-runner-haiku-ro instead, which has no Write/Edit/Skill/TodoWrite/
   Glob/Grep.
   Use when: dev-flow workflow dispatches a deterministic exec-proxy call
-  that mutates the worktree or invokes a Skill — worktree setup, deps
-  install, test execution (Setup / Validate), redgreen, reconcile-sync,
-  ui-verify server/teardown, journal writes, or PR comment posting.
+  that mutates the worktree or invokes a Skill — test execution (Validate),
+  redgreen, reconcile-sync, ui-verify server/teardown, journal writes, or
+  PR comment posting. Setup-time work (base / worktree / deps / cleanup)
+  is done by dev-flow-prerun before the run, not by this agent.
 model: haiku
 effort: low
 tools:
@@ -35,8 +35,10 @@ maxTurns: 25
 
 読み取り専用の exec-proxy（danger-grep / diff-hash / changed-files
 (realized-diff) / CI checks read 等）は `dev-runner-haiku-ro`
-（tools: `[Bash, Read]` のみ）へ分離済み。このagentは worktree 作成・deps
-install・test 実行・redgreen 検証・reconcile-sync・ui-verify server の
+（tools: `[Bash, Read]` のみ）へ分離済み。Setup 前の決定論処理（base 解決・
+worktree 作成・deps install・`.devflow-tmp` cleanup）は wrapper skill が run 前に
+`dev-flow-prerun` で済ませるため、このagentは担当しない。このagentは
+test 実行・redgreen 検証・reconcile-sync・ui-verify server の
 起動/teardown・journal 書き込み・PR コメント投稿（post-review#i /
 post-summary）など、**ファイル変更または Skill 呼び出しを伴う**決定論操作を
 専任する。`tools` は `Bash` / `Read` / `Write` / `Skill` のみ（Edit/Glob/
@@ -64,7 +66,6 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 
 | フェーズ | 操作 | 返す schema |
 |---------|------|------------|
-| Setup | git worktree 作成 / 再利用・deps install | `{worktree, branch}` / `{...}` |
 | Validate | テストスイート実行・green 判定 | `{tests, green, summary}` |
 | Evaluate | redgreen 検証（AC ごとの再実行） | 各 schema |
 | Final reconcile | reconcile-sync（worktree を PR 最終 HEAD へ同期）・test 再実行 | `{...}` / `{tests, green, summary}` |
@@ -74,7 +75,7 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 
 read-only な決定論 proxy（danger-grep / diff-hash / changed-files
 (realized-diff) / ui-verify config read / CI checks read / PR metadata
-read / base-ref probe）は `dev-runner-haiku-ro` が担当する。
+read）は `dev-runner-haiku-ro` が担当する。
 
 ## Boundary
 

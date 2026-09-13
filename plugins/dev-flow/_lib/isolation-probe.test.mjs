@@ -1,3 +1,11 @@
+// issue #636 P2 pin 整理 (inventory 用):
+// (置換) L49 '使用可: Write のみ。他の tool は使用禁止' — /\bWrite\b/ の tool 名 pin へ置換
+// (削除) L54 '他の手段でファイルを作成しようと試みるな' — test ごと削除（言い回し pin、代替なし）
+// (削除) L61 '例外を投げずに' — 同 test の "written": true/false, "error" pin は残置
+// (削除) L268 '`.devflow-tmp` 以外のパスには触れるな' — 唯一の assert だった test ごと削除
+// (削除) L277 '`.devflow-tmp/.isolation-probe` 以外のパスには触れるな' — 同 test の git -C clean match / 否定側 pin は残置
+// (削除) L284 '存在しない場合もこのコマンドは成功する' — 唯一の assert だった test ごと削除
+// (削除) L291 '例外を投げずに' — 同 test の "cleaned": true/false, "error" pin は残置
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
@@ -46,19 +54,13 @@ test('isolationProbePrompt: token 中の記号は "-" に正規化される', ()
 
 test('isolationProbePrompt: Tools を Write のみに限定する指示を含む', () => {
   const prompt = isolationProbePrompt('/wt', '1000');
-  assert.match(prompt, /使用可: Write のみ。他の tool は使用禁止/);
-});
-
-test('isolationProbePrompt: Write 失敗時に他の手段で作成しようと試みるなという Boundary を含む', () => {
-  const prompt = isolationProbePrompt('/wt', '1000');
-  assert.match(prompt, /他の手段でファイルを作成しようと試みるな/);
+  assert.match(prompt, /\bWrite\b/);
 });
 
 test('isolationProbePrompt: 成功/失敗の verbatim 報告指示を含む', () => {
   const prompt = isolationProbePrompt('/wt', '1000');
   assert.match(prompt, /"written": true/);
   assert.match(prompt, /"written": false/);
-  assert.match(prompt, /例外を投げずに/);
   assert.match(prompt, /"error"/);
 });
 
@@ -263,32 +265,20 @@ test('isolationCleanupPrompt: worktree 直下の .devflow-tmp を git clean で�
   assert.match(prompt, /gitignored/);
 });
 
-test('isolationCleanupPrompt: 除去対象を target に限定する指示を含む', () => {
-  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
-  assert.match(prompt, /`\.devflow-tmp` 以外のパスには触れるな/);
-});
-
 // nested 起動（dev-flow → workflow('pr-iterate')）では worktree が実行中 run のものになるため、
 // pr-iterate は probe artifact 単体に絞れる必要がある（.devflow-tmp 全体を消すと当該 run の trust
 // 証跡を run 途中で失う）。target は verbatim で使われ、関数側が範囲を広げないことを pin する。
 test('isolationCleanupPrompt: target は verbatim で使われる（呼び出し元が範囲を決める）', () => {
   const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp/.isolation-probe');
   assert.match(prompt, /git -C \/wt clean -fdx -- \.devflow-tmp\/\.isolation-probe/);
-  assert.match(prompt, /`\.devflow-tmp\/\.isolation-probe` 以外のパスには触れるな/);
   // `.devflow-tmp` 全体を対象にする記述へ勝手に広げない
   assert.doesNotMatch(prompt, /clean -fdx -- \.devflow-tmp\s/);
-});
-
-test('isolationCleanupPrompt: 存在しない場合も成功する旨を明示する（no-op 冪等）', () => {
-  const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
-  assert.match(prompt, /存在しない場合もこのコマンドは成功する/);
 });
 
 test('isolationCleanupPrompt: 失敗時は例外を投げず cleaned:false + error で報告させる', () => {
   const prompt = isolationCleanupPrompt('/wt', '.devflow-tmp');
   assert.match(prompt, /"cleaned": true/);
   assert.match(prompt, /"cleaned": false/);
-  assert.match(prompt, /例外を投げずに/);
   assert.match(prompt, /"error"/);
 });
 

@@ -67,6 +67,18 @@ function makeSandbox() {
       return { dirty: false, committed: false, pushed: false };
     }
 
+    // pr-meta: cwd は実 run では常に worktree の絶対パス。journal-save の保存先はここから組み立てられる
+    // （cwd が無いと savePath が相対パスになり buildJournalSaveInstr が throw し journal-save 自体が
+    // 呼ばれない — issue #636 で journal-save prompt を検証するために追加）。
+    if (label === 'pr-meta') {
+      return { url: 'https://github.com/acme/skills/pull/5', cwd: '/tmp/wt' };
+    }
+
+    // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
+    if (label === 'journal-save') {
+      return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-priterate-5.json' };
+    }
+
     return null;
   };
 
@@ -148,15 +160,28 @@ test('[ci-history] CI-failed ラウンドが per-round 投稿なしで終端レ�
     `label==='post-review#1' の agent 呼び出しは issue #392 AC-1 により存在しないはずだが見つかった。呼び出しラベル一覧: ${agentCalls.map((c) => c.label).join(', ')}`,
   );
 
-  // (2) post-summary の prompt に '反復履歴' と '| 1 |' と '| 2 |' が含まれる
+  // (2) post-summary の prompt に '| 1 |' と '| 2 |'（iter 1/2 の反復履歴テーブル行 — データ echo）が含まれる。
+  // 見出し文言そのもの（旧'反復履歴'）は自然言語 pin のため削除し、代わりに journal-save prompt の
+  // telemetry JSON に history の構造 ('iterate_history' キー) とデータ echo（CI-failed round の
+  // synthetic topic 'ci::bats' — responder が返した check 名 'bats' を含む）が転記されていることを検証する
+  // （issue #636）。
   const postSummary = agentCalls.find((c) => c.label === 'post-summary');
   assert.ok(
     postSummary != null,
     `label==='post-summary' の agent 呼び出しが存在するべきだが見つからなかった。呼び出しラベル一覧: ${agentCalls.map((c) => c.label).join(', ')}`,
   );
+  const journalSave = agentCalls.find((c) => c.label === 'journal-save');
   assert.ok(
-    typeof postSummary.prompt === 'string' && postSummary.prompt.includes('反復履歴'),
-    `post-summary の prompt に '反復履歴' が含まれるべきだが含まれない。\nprompt の先頭500文字: ${String(postSummary?.prompt ?? '').slice(0, 500)}`,
+    journalSave != null,
+    `label==='journal-save' の agent 呼び出しが存在するべきだが見つからなかった。呼び出しラベル一覧: ${agentCalls.map((c) => c.label).join(', ')}`,
+  );
+  assert.ok(
+    typeof journalSave.prompt === 'string' && journalSave.prompt.includes('"iterate_history"'),
+    `journal-save prompt の telemetry JSON に "iterate_history" キーが含まれるべき。\nprompt の先頭1000文字: ${String(journalSave?.prompt ?? '').slice(0, 1000)}`,
+  );
+  assert.ok(
+    typeof journalSave.prompt === 'string' && journalSave.prompt.includes('"topic":"ci::bats"'),
+    `journal-save prompt の iterate_history に CI-failed round の synthetic topic "ci::bats"（responder が返した check 名 'bats'）が含まれるべき。\nprompt の先頭1500文字: ${String(journalSave?.prompt ?? '').slice(0, 1500)}`,
   );
   assert.ok(
     typeof postSummary.prompt === 'string' && postSummary.prompt.includes('| 1 |'),

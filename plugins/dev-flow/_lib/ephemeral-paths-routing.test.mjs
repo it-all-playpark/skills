@@ -14,7 +14,7 @@
 //       (non-ephemeral 6 件を dev-planner stub の file_changes に宣言させ、宣言外 0 件にする
 //        → declared count=6 → refloorShape('micro', 6) → complex → 正しく refloor する側の pin)
 //   (C) standard 見積もり + realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
-//       → evaluator#1 の prompt に '宣言外変更' が 2 回出現 かつ u1.ts/u2.ts/u3.ts が全部その item 内に含まれる
+//       → evaluator#1 の prompt に集約パス列が 2 回出現（focus_areas + CONCERN-1）かつ u1.ts/u2.ts/u3.ts が全部その item 内に含まれる
 //       (porcelain 統合後: realized-diff スナップショットが declared-path-check と同一参照。
 //        standard は refloor に関わらず常に Evaluate を実行するため、宣言外監査の挙動は F2 前後で不変。
 //        issue #296 (F4) 以降: focus_areas の raw dump に加え、CONCERN-* item は未解消 concern 一覧
@@ -33,6 +33,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -134,7 +135,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    args: '1',
+    args: devFlowArgs('1'),
     console,
     JSON,
     Math,
@@ -299,11 +300,11 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
 
 // ============================================================
 // (C) standard 見積もり + realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
-//     → eval#1 の prompt に '宣言外変更' が 1 回だけ / u1.ts/u2.ts/u3.ts が全部含まれる
+//     → eval#1 の prompt に集約パス列が 2 回（focus_areas + CONCERN-1）/ u1.ts/u2.ts/u3.ts が全部含まれる
 //     (porcelain 統合後: realized-diff スナップショットが declared-path-check と同一参照)
 // ============================================================
 
-test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 → evaluator prompt に "宣言外変更" 2 回（focus_areas + 未解消 concern 一覧） + 全パス含む', async () => {
+test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 → evaluator prompt に集約パス列が 2 回（focus_areas + 未解消 concern 一覧 CONCERN-1） + 全パス含む', async () => {
   const standardReq = {
     summary: 's',
     acceptance_criteria: ['a', 'b', 'c', 'd'],
@@ -333,13 +334,18 @@ test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 →
 
   const prompt1 = eval1Call.prompt;
 
-  const matchCount = (prompt1.match(/宣言外変更/g) || []).length;
+  // 宣言外 3 件は 1 item に集約され、focus_areas と未解消 concern 一覧（CONCERN-1）の 2 箇所に載る
+  // （issue #296）。文言ではなく、集約されたパス列（構造トークン）の出現回数と ledger id で観測する。
+  const pathList = realizedFiles.join(', ');
+  const matchCount = prompt1.split(pathList).length - 1;
   assert.equal(
     matchCount,
     2,
-    '(C) evaluator eval#1 prompt の "宣言外変更" 出現回数は 2 回のはずだが ' + matchCount + ' 回だった'
+    '(C) evaluator eval#1 prompt の宣言外パス列 "' + pathList + '" の出現回数は 2 回のはずだが ' + matchCount + ' 回だった'
       + ' (1 item に集約された上で focus_areas + 未解消 concern 一覧の2箇所に載る。issue #296)',
   );
+  assert.ok(prompt1.includes('CONCERN-1'), '(C) 宣言外 concern が CONCERN-1 として未解消 concern 一覧に載っていない');
+  assert.ok(!prompt1.includes('CONCERN-2'), '(C) 宣言外 3 件が 1 item に集約されず複数 CONCERN になっている');
 
   for (const p of ['u1.ts', 'u2.ts', 'u3.ts']) {
     assert.ok(
@@ -428,14 +434,11 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 
     '(E) danger-grep は 1 回のはずだが ' + dangerGrepCalls.length + ' 回だった',
   );
 
-  // danger-grep が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
+  // danger-grep が宣言外ファイルを返すと evaluator prompt に宣言外ファイル名が出現する
+  // （データ echo: refloor と宣言外監査が同一スナップショットを参照している実証。
+  // 「宣言外変更」という日本語文言そのものの pin は言い回し変更で落ちるため撤去した — issue #636 AC-1）
   const eval1Call = calls.find((c) => c.label === 'eval#1');
   assert.ok(eval1Call != null, '(E) evaluator eval#1 が呼ばれていない');
-  assert.ok(
-    eval1Call.prompt.includes('宣言外変更'),
-    '(E) evaluator prompt に "宣言外変更" が含まれるはずだが見つからなかった'
-      + ' (refloor と宣言外監査が同一スナップショットを参照している実証)',
-  );
   assert.ok(
     eval1Call.prompt.includes('undeclared-file.ts'),
     '(E) evaluator prompt に undeclared-file.ts が含まれるはずだが見つからなかった',
@@ -489,13 +492,11 @@ test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → sh
       + ' (undeclared.length>0 → runEval=true で micro でも Evaluate を強制)',
   );
 
+  // 宣言外は size 信号ではなく監査信号 — refloor には混ぜず Evaluate 強制 + concern 注入で扱う
+  // （データ echo で確認。「宣言外変更」という日本語文言そのものの pin は言い回し変更で落ちるため
+  // 撤去した — issue #636 AC-1）
   const eval1Call = calls.find((c) => c.label === 'eval#1');
   assert.ok(eval1Call != null, '(F) evaluator eval#1 が呼ばれていない');
-  assert.ok(
-    eval1Call.prompt.includes('宣言外変更'),
-    '(F) evaluator prompt に "宣言外変更" concern が含まれるはずだが見つからなかった'
-      + ' (宣言外は size 信号ではなく監査信号 — refloor には混ぜず Evaluate 強制 + concern 注入で扱う)',
-  );
   assert.ok(
     eval1Call.prompt.includes('leftover-handoff.md'),
     '(F) evaluator prompt に leftover-handoff.md が含まれるはずだが見つからなかった',

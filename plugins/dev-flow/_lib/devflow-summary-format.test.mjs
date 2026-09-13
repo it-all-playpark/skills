@@ -1,8 +1,5 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { mdCell } from './md-cell.mjs';
 import { buildDevflowSummaryBody } from './devflow-summary-format.mjs';
 import { classifyMergeTier } from './merge-tier.mjs';
@@ -2001,15 +1998,8 @@ test('description に | と改行を含む finding -> mdCell でエスケープ�
   assert.ok(body.includes('   - 指摘: a\\|b<br>c'), 'description が mdCell でエスケープされる');
 });
 
-test('呼び出し側配線の静的 pin: dev-flow.js の buildDevflowSummaryBody 呼び出しが iterateStatus/iterateHistory/iterateIterations を渡す', () => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const repoRoot = join(here, '..');
-  const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(src.includes('iterateStatus: iterate?.status ?? null,'), 'iterateStatus 配線行を含む');
-  assert.ok(src.includes('iterateHistory: iterate?.history ?? null,'), 'iterateHistory 配線行を含む');
-  assert.ok(src.includes('iterateIterations: iterate?.iterations ?? null,'), 'iterateIterations 配線行を含む');
-});
+// 呼び出し側（dev-flow.js）の iterateStatus / iterateHistory / iterateIterations 配線は
+// plan-iterate-wiring-routing.test.mjs (a) が VM 挙動で検証する（issue #636）。
 
 // ─── 解消済み証跡の件数縮約 (issue #603) ─────────────────────────────────────
 

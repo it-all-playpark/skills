@@ -4,11 +4,12 @@
 // Security floor phase（execSecurityFloorPhase）は danger-grep 成功時（risk.ok===true）かつ
 // files（旧 realized-diff）成功時のみ、統合呼び出し（issue #544, label 'danger-grep' 据え置き）の
 // diffhash フィールドから tree OID を捕捉し state.secDiffHash に保持する。Merge tier phase 冒頭は
-// state.secDiffHash != null のときのみ label 'diff-hash-merge' で再度 tree OID を捕捉し、両ハッシュが
-// 文字列完全一致する場合のみ danger-grep-final /
-// changed-files の再実行を skip して Security floor の risk/realized を再利用する
-// （reuseSecFloor）。不一致・取得失敗・Security floor 側 fail-closed のときは現行どおり再実行し、
-// security floor の fail-closed 性は一切変えない。
+// label 'merge-tier-facts' の統合 exec-proxy（issue #637）を 1 回呼び、state.secDiffHash != null の
+// ときのみその diffhash サブ結果と比較し、両ハッシュが文字列完全一致する場合のみ facts の risk / changed
+// を使わず Security floor の risk/realized を再利用する（reuseSecFloor）。不一致・取得失敗・Security
+// floor 側 fail-closed のときは facts の risk / changed で再判定し、security floor の fail-closed 性は
+// 一切変えない。再利用の発火は「facts.risk に hit を仕込み、Security floor が clean なら REVIEW（再利用）/
+// facts の risk が使われれば HOLD」で観測する。
 //
 // ハーネスは _lib/ci-checks-routing.test.mjs の createResponder パターン（overrides の
 // hasOwnProperty 優先チェック）+ _lib/test-helpers/vm-sandbox.mjs の makeRecordingSandbox、
@@ -16,17 +17,16 @@
 // （{result, error} を返す vm 実行）を踏襲する。
 //
 // テストケース:
-//   (1) 再利用発火: danger-grep clean + realized valid + secfloor hash===merge hash →
-//       'danger-grep-final'/'changed-files'（Merge tier）は呼ばれず、'diff-hash-merge' は呼ばれ、
-//       workflow は完走し merge_tier が算出される
-//   (2) 不一致: secfloor='A' / merge='B' → 'danger-grep-final'/'changed-files' が呼ばれる
-//   (3) merge 側取得失敗: 'diff-hash-merge' が null → 再実行（'danger-grep-final' が呼ばれる）
+//   (1) 再利用発火: danger-grep clean + realized valid + secfloor hash===facts hash →
+//       facts.risk に hit があっても Security floor の clean risk が再利用され REVIEW、
+//       'merge-tier-facts' は 1 回だけ呼ばれ、workflow は完走する
+//   (2) 不一致: secfloor='A' / facts='B' → facts.risk（hit）で再判定され HOLD
+//   (3) facts 側 diffhash 取得失敗（ok:false）→ 再判定（facts.risk の hit で HOLD）
 //   (4) Security floor fail-closed: danger-grep が {ok:false,hits:[]} → secDiffHash null →
-//       'diff-hash-merge' は呼ばれず、'danger-grep-final' が呼ばれ、merge_tier が HOLD
+//       facts の diffhash は参照されず（reuse ログ無し）、facts.risk fail-closed で merge_tier が HOLD
 //       （fail-closed 維持）
 //   (5) 再利用発火 + Security floor hit: danger-grep が ok:true で危険クラス hit + 同一 hash →
-//       再利用で 'danger-grep-final' 不発だが riskFinal に hit が残り merge_tier HOLD
-//       （unresolvedDanger 維持）
+//       再利用で facts.risk（clean）は使われず hit が残り merge_tier HOLD（unresolvedDanger 維持）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -34,7 +34,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -85,6 +85,9 @@ const STANDARD_REQ = {
   issue_title: 'stub-issue-title',
 };
 
+// facts.risk に仕込む hit（再利用が発火しなければ SEC-CONFIG が unchecked に残り HOLD になる）
+const FACTS_RISK_HIT = { ok: true, hits: [{ class: 'config', file: 'src/x.ts', pattern: 'p' }] };
+
 // ============================================================
 // responder factory: ci-checks-routing.test.mjs / final-reconcile-routing.test.mjs の
 // createResponder パターンを踏襲。overrides は label 単位（関数なら
@@ -110,7 +113,6 @@ function createResponder(overrides = {}) {
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'SAMEHASH', empty: false } };
     }
-    if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [],
@@ -123,12 +125,11 @@ function createResponder(overrides = {}) {
       };
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/x.ts'] };
-    // diff-hash-merge（Merge tier。統合対象外）は既定で secfloor 側と同一ハッシュ
-    // （再利用が発火する）。不一致にしたいテストは override で個別に上書きする。
-    if (label === 'diff-hash-merge') return { hash: 'SAMEHASH', empty: false };
+    // merge-tier-facts（Merge tier 統合呼び出し）は既定で secfloor 側と同一ハッシュ（再利用が発火する）
+    // かつ risk に hit を仕込む — 再利用が発火すれば hit は使われず REVIEW、facts の risk が使われれば HOLD
+    // になるため、再利用の発火有無を merge_tier で観測できる。不一致にしたいテストは override で上書きする。
+    if (label === 'merge-tier-facts') return mergeTierFacts({ hash: 'SAMEHASH', risk: FACTS_RISK_HIT, files: ['src/x.ts'] });
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
@@ -143,88 +144,89 @@ function makeSandbox({ overrides = {} } = {}) {
   // diff-hash reuse ロジックの検証に専念できる（final-reconcile-routing.test.mjs のケース(a)と同型）。
   return makeRecordingSandbox(createResponder(overrides), {
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 0 }),
-    args: '377',
+    args: devFlowArgs('377'),
   });
 }
 
 // ============================================================
-// (1) 再利用発火: 完全一致 → danger-grep-final/changed-files 再実行を skip
+// (1) 再利用発火: 完全一致 → facts.risk（hit）は使われず Security floor の clean risk を再利用
 // ============================================================
 
-test('[diffhash-reuse] (1) 完全一致 → danger-grep-final/changed-files は呼ばれず diff-hash-merge は呼ばれ、workflow 完走 + merge_tier 算出', async () => {
-  const { ctx, calls } = makeSandbox();
+test('[diffhash-reuse] (1) 完全一致 → facts.risk の hit は使われず（再利用）REVIEW、merge-tier-facts は 1 回、workflow 完走', async () => {
+  const { ctx, calls, logs } = makeSandbox();
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '1');
   assert.ok(result !== null, '(1) workflow は return object を返すべきだが null だった');
 
-  assert.ok(!calls.some((c) => c.label === 'danger-grep-final'), "(1) hash 完全一致時は 'danger-grep-final' が呼ばれてはならない");
-  assert.ok(!calls.some((c) => c.label === 'changed-files'), "(1) hash 完全一致時は 'changed-files'（Merge tier）が呼ばれてはならない");
-  assert.ok(calls.some((c) => c.label === 'diff-hash-merge'), "(1) 'diff-hash-merge' は呼ばれるはず（再利用可否の判定に必須）");
-  assert.ok(result?.merge_tier != null, `(1) merge_tier が算出されているはずだが ${JSON.stringify(result?.merge_tier)}`);
-  assert.equal(result?.merge_tier, 'REVIEW', `(1) danger clean + 収束済みなら merge_tier は REVIEW のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.equal(calls.filter((c) => c.label === 'merge-tier-facts').length, 1, "(1) 'merge-tier-facts' はちょうど 1 回呼ばれるはず（再利用可否の判定に必須）");
+  assert.ok(logs.some((l) => l.includes('diff-hash 一致') && l.includes('再利用')), '(1) 再利用発火の log が無い');
+  assert.equal(result?.merge_tier, 'REVIEW', `(1) danger clean（再利用）+ 収束済みなら merge_tier は REVIEW のはずだが ${JSON.stringify(result?.merge_tier)}（reasons: ${JSON.stringify(result?.merge_tier_reasons)}）`);
+  assert.equal(JSON.stringify(result?.danger_hits), JSON.stringify([]), '(1) 再利用時は facts.risk の hit が danger_hits に現れてはならない');
 });
 
 // ============================================================
-// (2) 不一致 → 再実行
+// (2) 不一致 → facts の risk で再判定
 // ============================================================
 
-test("[diffhash-reuse] (2) hash 不一致 → 'danger-grep-final'/'changed-files' が再実行される", async () => {
-  const { ctx, calls } = makeSandbox({
+test("[diffhash-reuse] (2) hash 不一致 → facts.risk（hit）で再判定され HOLD", async () => {
+  const { ctx, logs } = makeSandbox({
     overrides: {
       'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'A', empty: false } },
-      'diff-hash-merge': { hash: 'B', empty: false },
+      'merge-tier-facts': mergeTierFacts({ hash: 'B', risk: FACTS_RISK_HIT, files: ['src/x.ts'] }),
     },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '2');
   assert.ok(result !== null, '(2) workflow は return object を返すべきだが null だった');
 
-  assert.ok(calls.some((c) => c.label === 'danger-grep-final'), "(2) hash 不一致時は 'danger-grep-final' が再実行されるはず");
-  assert.ok(calls.some((c) => c.label === 'changed-files'), "(2) hash 不一致時は 'changed-files'（Merge tier）が再実行されるはず");
+  assert.ok(!logs.some((l) => l.includes('diff-hash 一致')), '(2) hash 不一致時に再利用 log が出てはならない');
+  assert.equal(result?.merge_tier, 'HOLD', `(2) hash 不一致時は facts.risk の hit で HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.equal(JSON.stringify(result?.danger_hits), JSON.stringify(['config']), '(2) facts.risk の hit が danger_hits に現れるはず');
 });
 
 // ============================================================
-// (3) merge 側取得失敗 → 再実行
+// (3) facts 側 diffhash 取得失敗 → 再判定
 // ============================================================
 
-test("[diffhash-reuse] (3) diff-hash-merge が null（取得失敗） → 再実行される", async () => {
-  const { ctx, calls } = makeSandbox({
-    overrides: { 'diff-hash-merge': null },
+test("[diffhash-reuse] (3) facts の diffhash が ok:false（取得失敗） → facts.risk で再判定される", async () => {
+  const { ctx, logs } = makeSandbox({
+    overrides: { 'merge-tier-facts': mergeTierFacts({ hash: null, risk: FACTS_RISK_HIT, files: ['src/x.ts'] }) },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '3');
   assert.ok(result !== null, '(3) workflow は return object を返すべきだが null だった');
 
-  assert.ok(calls.some((c) => c.label === 'diff-hash-merge'), "(3) 'diff-hash-merge' 自体は呼ばれるはず（secDiffHash は有効）");
-  assert.ok(calls.some((c) => c.label === 'danger-grep-final'), "(3) merge 側 hash 取得失敗時は 'danger-grep-final' が再実行されるはず");
-  assert.ok(calls.some((c) => c.label === 'changed-files'), "(3) merge 側 hash 取得失敗時は 'changed-files'（Merge tier）が再実行されるはず");
+  assert.ok(logs.some((l) => l.includes('diff-hash-merge の取得に失敗')), '(3) diffhash 取得失敗の fail-safe log が無い');
+  assert.equal(result?.merge_tier, 'HOLD', `(3) diffhash 取得失敗時は facts.risk の hit で HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.equal(JSON.stringify(result?.danger_hits), JSON.stringify(['config']), '(3) facts.risk の hit が danger_hits に現れるはず（再利用 skip）');
 });
 
 // ============================================================
-// (4) Security floor fail-closed → diff-hash-merge 不発 + danger-grep-final 再実行 + HOLD
+// (4) Security floor fail-closed → facts の diffhash 不参照 + facts.risk fail-closed + HOLD
 // ============================================================
 
-test("[diffhash-reuse] (4) Security floor fail-closed → 'diff-hash-merge' は呼ばれず 'danger-grep-final' が呼ばれ merge_tier HOLD（fail-closed 維持）", async () => {
-  const { ctx, calls } = makeSandbox({
+test("[diffhash-reuse] (4) Security floor fail-closed → 再利用 log 無し・facts.risk fail-closed で merge_tier HOLD（fail-closed 維持）", async () => {
+  const { ctx, calls, logs } = makeSandbox({
     overrides: {
       'danger-grep': { risk: { ok: false, hits: [], error: 'sec floor stub fail' }, files: null, struct: null, diffhash: null },
-      'danger-grep-final': { ok: false, hits: [], error: 'merge tier stub fail' },
+      'merge-tier-facts': mergeTierFacts({ risk: { ok: false, hits: [], error: 'merge tier stub fail' }, files: ['src/x.ts'] }),
     },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '4');
   assert.ok(result !== null, '(4) workflow は return object を返すべきだが null だった');
 
-  assert.ok(!calls.some((c) => c.label === 'diff-hash-merge'), "(4) Security floor fail-closed（secDiffHash null）のとき 'diff-hash-merge' は呼ばれないはず");
-  assert.ok(calls.some((c) => c.label === 'danger-grep-final'), "(4) 'danger-grep-final' は必ず再実行されるはず（security floor の fail-closed 性は緩めない）");
+  assert.ok(!logs.some((l) => l.includes('diff-hash 一致')), "(4) Security floor fail-closed（secDiffHash null）のとき再利用 log が出てはならない");
+  assert.ok(calls.some((c) => c.label === 'merge-tier-facts'), "(4) 'merge-tier-facts' は必ず呼ばれるはず（security floor の fail-closed 性は緩めない）");
   assert.equal(result?.merge_tier, 'HOLD', `(4) danger-grep が両段で fail-closed のため merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.equal(result?.danger_fail_closed, true, '(4) danger_fail_closed:true のはず');
 });
 
 // ============================================================
 // (5) 再利用発火 + Security floor hit → HOLD（unresolvedDanger 維持）
 // ============================================================
 
-test("[diffhash-reuse] (5) hash 一致 + Security floor で danger hit → 再利用で 'danger-grep-final' 不発だが hit が残り merge_tier HOLD", async () => {
+test("[diffhash-reuse] (5) hash 一致 + Security floor で danger hit → 再利用で facts.risk（clean）は使われず hit が残り merge_tier HOLD", async () => {
   const { ctx, calls } = makeSandbox({
     overrides: {
       'danger-grep': {
@@ -233,13 +235,14 @@ test("[diffhash-reuse] (5) hash 一致 + Security floor で danger hit → 再�
         struct: null,
         diffhash: { hash: 'SAMEHASH', empty: false },
       },
+      'merge-tier-facts': mergeTierFacts({ hash: 'SAMEHASH', risk: { ok: true, hits: [] }, files: ['src/x.ts'] }),
     },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '5');
   assert.ok(result !== null, '(5) workflow は return object を返すべきだが null だった');
 
-  assert.ok(!calls.some((c) => c.label === 'danger-grep-final'), "(5) hash 完全一致時は danger hit があっても 'danger-grep-final' が呼ばれてはならない（再利用）");
-  assert.ok(calls.some((c) => c.label === 'diff-hash-merge'), "(5) 'diff-hash-merge' は呼ばれるはず");
+  assert.ok(calls.some((c) => c.label === 'merge-tier-facts'), "(5) 'merge-tier-facts' は呼ばれるはず");
   assert.equal(result?.merge_tier, 'HOLD', `(5) 再利用した risk に未解消の danger hit が残るため merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.equal(JSON.stringify(result?.danger_hits), JSON.stringify(['config']), '(5) 再利用時は Security floor の hit が danger_hits に残るはず（facts の clean で上書きしない）');
 });

@@ -1,3 +1,6 @@
+// issue #636 P2 pin 整理 (inventory 用):
+// (削除) L211/L216 '既に存在する場合' — 同 test の Read tool includes / Read→Write 順序 pin は残置
+// (削除) L617 'throw せず' — 同 test の {logged:false}/{logged:true} JSON 値 pin は残置
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -208,12 +211,10 @@ test('buildJournalSaveInstr instructs Write tool usage and forbids passing the p
 test('buildJournalSaveInstr instructs a Read-before-overwrite idempotency step for both modes', () => {
   const savePathInstr = buildJournalSaveInstr({ payload: '{"ok":true}', savePath: SAVE_PATH });
   assert.ok(savePathInstr.includes('Read tool'));
-  assert.ok(savePathInstr.includes('既に存在する場合'));
   assert.ok(/Read tool[\s\S]*Write tool/.test(savePathInstr), 'Read の指示は Write の指示より前に現れるべき');
 
   const saveDirInstr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' });
   assert.ok(saveDirInstr.includes('Read tool'));
-  assert.ok(saveDirInstr.includes('既に存在する場合'));
   assert.ok(/Read tool[\s\S]*Write tool/.test(saveDirInstr), 'Read の指示は Write の指示より前に現れるべき');
 });
 
@@ -386,7 +387,7 @@ test('validateJournalSavedPath rejects non-string input', () => {
   assert.equal(validateJournalSavedPath(42, {}), false);
 });
 
-// issue #607: dev-flow's WT-unconfirmed abort path (Setup's setup-base / worktree agent) has no
+// issue #607: dev-flow's WT-unconfirmed abort path (Setup's args.setup validation via prerun-setup) has no
 // worktree savePath yet, so the abort catch retargets savePath to
 // `~/.claude/journal/abort-payload/...`. validateJournalSavedPath must accept that tilde-rooted
 // path (rebasing it onto the same absolute-path/charset/'..'/basename checks as `/`-rooted paths)
@@ -614,7 +615,6 @@ test('AC3 (issue #526): the stage2 instruction keeps the fail-open contract — 
     payloadPath: '/wt/.devflow-tmp/payload-abc123.json',
     payload: '{"skill":"dev-flow","outcome":"success"}',
   });
-  assert.match(instr, /throw せず/);
   assert.ok(instr.includes('{logged:false}'));
   assert.ok(instr.includes('{logged:true}'));
 });
@@ -814,8 +814,8 @@ test('buildAbortErrorMsg accepts a plain string error', () => {
 
 test('buildAbortErrorMsg falls back to "unknown error" when error is undefined', () => {
   assert.equal(
-    buildAbortErrorMsg({ phase: 'Setup', label: 'setup-base', error: undefined }),
-    'abort@Setup/setup-base: unknown error',
+    buildAbortErrorMsg({ phase: 'Setup', label: 'prerun-setup', error: undefined }),
+    'abort@Setup/prerun-setup: unknown error',
   );
 });
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Invariant (#571): bin/ exec ラッパーは playpark-core (journal 1本) と
-# dev-flow (22本) に分割される。plugin install 環境では skills が
+# dev-flow (24本) に分割される。plugin install 環境では skills が
 # plugin root 配下に入るため、絶対パス runtime 依存を断つ。
 #
 # 分割後もラッパーは plugin 境界を跨がない: 3 行目の target は
@@ -41,9 +41,11 @@ compare-baseline
 cross-repo-artifacts
 detect-and-install
 detect-stack
+dev-flow-prerun
 diff-risk-classify
 ensure-worktree-deps
 hypothesis-check
+merge-tier-facts
 redgreen-verify
 run-diagnostics
 secfloor-classify
@@ -95,6 +97,7 @@ target_for() {
         diff-risk-classify) echo "_shared/scripts/diff-risk-classify.sh" ;;
         ensure-worktree-deps) echo "_shared/scripts/ensure-worktree-deps.sh" ;;
         redgreen-verify) echo "_shared/scripts/redgreen-verify.sh" ;;
+        merge-tier-facts) echo "_shared/scripts/merge-tier-facts.sh" ;;
         secfloor-classify) echo "_shared/scripts/secfloor-classify.sh" ;;
         structural-classify) echo "_shared/scripts/structural-classify.sh" ;;
         ui-verify-server) echo "_shared/scripts/ui-verify-server.sh" ;;
@@ -111,6 +114,7 @@ target_for() {
         validate-canary-report) echo "dev-flow-doctor/scripts/validate-canary-report.sh" ;;
         trust-receipts-report) echo "dev-flow-doctor/scripts/trust-receipts-report.sh" ;;
         detect-stack) echo "_lib/scripts/detect-stack.sh" ;;
+        dev-flow-prerun) echo "dev-flow/scripts/prerun.sh" ;;
         ac-lint) echo "_lib/scripts/ac-lint.sh" ;;
         *) echo "" ;;
     esac
@@ -153,7 +157,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象22本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象24本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]

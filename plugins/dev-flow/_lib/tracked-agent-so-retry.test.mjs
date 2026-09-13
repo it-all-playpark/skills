@@ -2,201 +2,150 @@
 // dev-flow.js / pr-iterate.js の workflow ローカル関数 trackedAgent に対する、
 // StructuredOutput 契約違反限定の同一 prompt 1 回リトライ（issue #527 B-2）を検証する。
 //
-// makeRecordingSandbox/runDevFlowInSandbox（_lib/test-helpers/vm-sandbox.mjs）を使い、
-// dev-flow.js の Setup phase（setup-base → worktree）を VM sandbox で実行する
-// （issue #550 案1: resolve-base + worktree-base-check の 2 probe は単一 label 'setup-base' の
-// exec-proxy 呼び出しへ統合された。issue #550 F1: 専用 clock#start probe は廃止され、start mark は
-// setup-base probe の optional epoch から給電されるようになった）。'worktree' label の応答を
-// throw('TEST-STOP-SENTINEL') にして run を早期終端させ、'setup-base' 呼び出し回数で
-// リトライ挙動を検証する。
+// issue #641: Setup phase の 4 spawn（setup-base 含む）が撤去されたため、opt-in call site の
+// 駆動を残存する 'danger-grep'（Security floor、retryOnContractViolation:true・try/catch で
+// throw を吸収し run は継続する）に置換した。未 opt-in の対照は 'analyze#1'（need() 包み、throw は
+// そのまま伝播する）で取る。
 //
 // テストケース:
-//   (a) リトライ成功 — 1 回目 StructuredOutput 契約違反 throw、2 回目正常応答 → 後続へ進む
-//   (b) 契約違反以外は即 throw（リトライしない、fail-closed 維持）
-//   (c) リトライ 1 回で打ち切り（2 回目も契約違反なら rethrow）
-//   (d) null 応答はリトライ対象外（checkWorktreeBase の fail-closed throw が維持される）
-//   (e) source pin — dev-flow.js / pr-iterate.js 双方の trackedAgent 関数本体の同型性
+//   (a) リトライ成功 — danger-grep 1 回目 StructuredOutput 契約違反 throw、2 回目正常応答 → 後続へ進む
+//   (a2) 未 opt-in call site（analyze#1）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する
+//   (b) 契約違反以外は即 throw（リトライしない）が、danger-grep 自体は try/catch で吸収し run は継続する
+//   (c) リトライ 1 回で打ち切り（2 回目も契約違反なら rethrow、danger-grep の try/catch で吸収され run は継続）
+//   (d) null 応答はリトライ対象外（契約外形状として risk fail-closed へ倒れる）
+//   (e) pr-iterate.js — 未 opt-in call site（fix#1）の契約違反 throw は即伝播
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const prIteratePath = join(repoRoot, '.claude', 'workflows', 'pr-iterate.js');
 const devFlowSrc = readFileSync(devFlowPath, 'utf8');
+const prIterateSrc = readFileSync(prIteratePath, 'utf8');
 
 const CONTRACT_VIOLATION_MSG =
   "agent({schema}): subagent completed without calling StructuredOutput (after in-conversation nudge)";
 
-function baseFixedResponses(overrides) {
-  return function ({ label }) {
-    if (Object.prototype.hasOwnProperty.call(overrides, label)) {
-      const handler = overrides[label];
-      return typeof handler === 'function' ? handler() : handler;
-    }
-    if (label === 'setup-base') {
-      return {
-        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
-        worktree_exists: false, upstream_remote: '', upstream_merge: '',
-      };
-    }
-    if (label === 'worktree') throw new Error('TEST-STOP-SENTINEL');
-    return null;
-  };
-}
+const DANGER_GREP_OK = { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'AAA', empty: false } };
 
 // ── (a) リトライ成功 ─────────────────────────────────────────────────────
 
-test('[tracked-agent-so-retry] (a) setup-base が 1 回目 StructuredOutput 契約違反 → 2 回目成功で後続へ進む', async () => {
-  let setupBaseCallCount = 0;
-  const responder = baseFixedResponses({
-    'setup-base': () => {
-      setupBaseCallCount += 1;
-      if (setupBaseCallCount === 1) throw new Error(CONTRACT_VIOLATION_MSG);
-      return {
-        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
-        worktree_exists: false, upstream_remote: '', upstream_merge: '',
-      };
+test('[tracked-agent-so-retry] (a) danger-grep が 1 回目 StructuredOutput 契約違反 → 2 回目成功で後続へ進む', async () => {
+  let callCount = 0;
+  const { ctx, calls, logs } = makeDevFlowSandbox({
+    overrides: {
+      'danger-grep': () => {
+        callCount += 1;
+        if (callCount === 1) throw new Error(CONTRACT_VIOLATION_MSG);
+        return DANGER_GREP_OK;
+      },
     },
   });
-  const { ctx, calls } = makeRecordingSandbox(responder);
-  const err = await runDevFlowInSandbox(devFlowSrc, ctx);
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
 
-  assert.ok(err, 'run がエラーなく完走した（TEST-STOP-SENTINEL に到達していない）');
-  assert.match(String(err?.message ?? err), /TEST-STOP-SENTINEL/);
-
-  const setupBaseCalls = calls.filter((c) => c.label === 'setup-base');
-  assert.equal(setupBaseCalls.length, 2, 'setup-base の呼び出し回数がちょうど 2 件ではない');
-});
-
-// ── (a2) 未 opt-in call site は StructuredOutput 契約違反でもリトライしない ──
-// setup-base は opts.retryOnContractViolation:true の opt-in call site だが、
-// 直後の 'worktree' label は opt-in していない。同じ契約違反メッセージでも
-// opt-in していない call site は即座に throw を伝播すること（issue #533 review）を検証する —
-// これが無いと journal テストの sentinel 差し替えだけで trackedAgent の opt-in gate 行
-// （`if (!opts?.retryOnContractViolation) throw e;`）を削除しても全テスト green のまま通ってしまう。
-
-test('[tracked-agent-so-retry] (a2) 未 opt-in call site（worktree label）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する', async () => {
-  let worktreeCallCount = 0;
-  const responder = baseFixedResponses({
-    'setup-base': () => (
-      {
-        ok: true, default_branch: 'main', dev_exists: true, requested_exists: false,
-        worktree_exists: false, upstream_remote: '', upstream_merge: '',
-      }
-    ),
-    worktree: () => {
-      worktreeCallCount += 1;
-      throw new Error(CONTRACT_VIOLATION_MSG);
-    },
-  });
-  const { ctx, calls } = makeRecordingSandbox(responder);
-  const err = await runDevFlowInSandbox(devFlowSrc, ctx);
-
-  assert.ok(err, '未 opt-in call site の契約違反 throw で run がエラーなく完走した');
-  assert.match(String(err?.message ?? err), /without calling StructuredOutput/);
-
-  const worktreeCalls = calls.filter((c) => c.label === 'worktree');
-  assert.equal(
-    worktreeCalls.length,
-    1,
-    `worktree の呼び出し回数が 1 件ではない（未 opt-in call site なのにリトライされた: ${worktreeCallCount} 回）`,
+  assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
+  const dangerCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dangerCalls.length, 2, 'danger-grep の呼び出し回数がちょうど 2 件ではない');
+  assert.ok(
+    logs.some((l) => l.includes('契約違反で失敗 — 同一 prompt で 1 回だけリトライ')),
+    'リトライ log が出ていない',
   );
 });
 
-// ── (b) 契約違反以外はリトライしない（fail-closed 維持） ────────────────────
+// ── (a2) 未 opt-in call site は StructuredOutput 契約違反でもリトライしない ──
+// analyze#1 は opts.retryOnContractViolation を opt-in していない need() 包みの call site。
+// 同じ契約違反メッセージでも即座に throw を伝播すること（issue #533 review）を検証する。
 
-test('[tracked-agent-so-retry] (b) setup-base が契約違反以外の throw → リトライせず即伝播', async () => {
-  const responder = baseFixedResponses({
-    'setup-base': () => {
-      throw new Error('guard rejected this command');
+test('[tracked-agent-so-retry] (a2) 未 opt-in call site（analyze#1）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: {
+      'analyze#1': () => { throw new Error(CONTRACT_VIOLATION_MSG); },
     },
   });
-  const { ctx, calls } = makeRecordingSandbox(responder);
-  const err = await runDevFlowInSandbox(devFlowSrc, ctx);
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
 
-  assert.ok(err, '契約違反以外の throw で run がエラーなく完走した');
-  assert.match(String(err?.message ?? err), /guard rejected this command/);
+  assert.ok(error, '未 opt-in call site の契約違反 throw で run がエラーなく完走した');
+  assert.match(String(error?.message ?? error), /without calling StructuredOutput/);
 
-  const setupBaseCalls = calls.filter((c) => c.label === 'setup-base');
-  assert.equal(setupBaseCalls.length, 1, 'setup-base の呼び出し回数が 1 件ではない（リトライされてしまった）');
+  const analyzeCalls = calls.filter((c) => c.label === 'analyze#1');
+  assert.equal(
+    analyzeCalls.length,
+    1,
+    `analyze#1 の呼び出し回数が 1 件ではない（未 opt-in call site なのにリトライされた）`,
+  );
+});
+
+// ── (b) 契約違反以外はリトライしない。danger-grep の try/catch で吸収され run は継続する ──
+
+test('[tracked-agent-so-retry] (b) danger-grep が契約違反以外の throw → リトライせず即伝播するが try/catch で吸収され run は継続', async () => {
+  const { ctx, calls, logs } = makeDevFlowSandbox({
+    overrides: {
+      'danger-grep': () => { throw new Error('guard rejected this command'); },
+    },
+  });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+
+  assert.equal(error, null, 'danger-grep の throw は execSecurityFloorPhase の try/catch で吸収され run は継続するはず');
+  const dangerCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dangerCalls.length, 1, 'danger-grep の呼び出し回数が 1 件ではない（リトライされてしまった）');
+  assert.ok(
+    logs.some((l) => l.includes('secfloor-classify 呼び出しが例外')),
+    'secfloor-classify 呼び出しが例外 log が出ていない',
+  );
 });
 
 // ── (c) リトライ 1 回で打ち切り ──────────────────────────────────────────
 
-test('[tracked-agent-so-retry] (c) setup-base が 2 回とも契約違反 → 2 回で打ち切り rethrow', async () => {
-  const responder = baseFixedResponses({
-    'setup-base': () => {
-      throw new Error(CONTRACT_VIOLATION_MSG);
+test('[tracked-agent-so-retry] (c) danger-grep が 2 回とも契約違反 → 2 回で打ち切り、try/catch で吸収され run は継続', async () => {
+  const { ctx, calls, logs } = makeDevFlowSandbox({
+    overrides: {
+      'danger-grep': () => { throw new Error(CONTRACT_VIOLATION_MSG); },
     },
   });
-  const { ctx, calls } = makeRecordingSandbox(responder);
-  const err = await runDevFlowInSandbox(devFlowSrc, ctx);
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
 
-  assert.ok(err, '2 回連続契約違反でも run がエラーなく完走した');
-  assert.match(String(err?.message ?? err), /without calling StructuredOutput/);
-
-  const setupBaseCalls = calls.filter((c) => c.label === 'setup-base');
-  assert.equal(setupBaseCalls.length, 2, 'setup-base の呼び出し回数がちょうど 2 件ではない（無限リトライ or 打ち切り漏れ）');
+  assert.equal(error, null, '2 回連続契約違反でも danger-grep の try/catch で吸収され run は継続するはず');
+  const dangerCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dangerCalls.length, 2, 'danger-grep の呼び出し回数がちょうど 2 件ではない（無限リトライ or 打ち切り漏れ）');
+  assert.ok(logs.some((l) => l.includes('呼び出しが例外')), '呼び出しが例外 log が出ていない');
 });
 
-// ── (d) null 応答はリトライしない（resolveBase の fail-closed throw 維持） ──
-// issue #550 案1: 統合後は resolveBase が checkWorktreeBase より先に同一 probe を消費するため、
-// probe null は resolveBase の fail-closed throw（'base 解決に失敗'）で先に検出される
-// （checkWorktreeBase の '起点を確認できなかった' 側には到達しない — 同一 probe object の
-// null/不正は両関数へ同時に伝播するため、消費順が先の resolveBase が代表して throw する）。
+// ── (d) null 応答はリトライ対象外（契約外形状として risk fail-closed へ倒れる） ──
 
-test('[tracked-agent-so-retry] (d) setup-base が null → リトライせず resolveBase の fail-closed throw が発火する', async () => {
-  const responder = baseFixedResponses({
-    'setup-base': () => null,
+test('[tracked-agent-so-retry] (d) danger-grep が null → リトライせず契約外形状として risk fail-closed へ倒れる', async () => {
+  const { ctx, calls, logs } = makeDevFlowSandbox({
+    overrides: { 'danger-grep': null },
   });
-  const { ctx, calls } = makeRecordingSandbox(responder);
-  const err = await runDevFlowInSandbox(devFlowSrc, ctx);
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
 
-  assert.ok(err, 'setup-base null 応答で run がエラーなく完走した');
-  assert.match(String(err?.message ?? err), /base 解決に失敗/);
-
-  const setupBaseCalls = calls.filter((c) => c.label === 'setup-base');
-  assert.equal(setupBaseCalls.length, 1, 'setup-base の呼び出し回数が 1 件ではない（null 応答なのにリトライされた）');
+  assert.equal(error, null, 'danger-grep null 応答で run が throw してはならない');
+  const dangerCalls = calls.filter((c) => c.label === 'danger-grep');
+  assert.equal(dangerCalls.length, 1, 'danger-grep の呼び出し回数が 1 件ではない（null 応答なのにリトライされた）');
+  assert.ok(logs.some((l) => l.includes('契約外形状')), '契約外形状 log が出ていない');
 });
 
-// ── (e) source pin: 両 workflow の trackedAgent 同型性 ──────────────────
+// ── (e) pr-iterate.js の trackedAgent も同じ契約（未 opt-in call site は契約違反でも同一 label で再呼び出ししない）──
+// pr-iterate.js には現在 retryOnContractViolation を opt-in した call site が無く、全 call site が
+// 例外を catch するため伝播では観測できない。fix#1（未 opt-in）を契約違反で throw させ、trackedAgent が
+// 同一 label で再呼び出しせず（fix#1 は 1 回）、契約違反リトライの log も出ないことで観測する
+// （issue #636 でソース pin から置換。opt-in call site が増えたら (a) と同型のテストを足す）。
 
-function extractTrackedAgentBody(src) {
-  const marker = 'async function trackedAgent(prompt, opts) {';
-  const start = src.indexOf(marker);
-  assert.ok(start !== -1, 'trackedAgent 定義（async function trackedAgent(prompt, opts) {）が見つからない');
-  const searchFrom = start + marker.length;
-  const nextFnIdx = src.indexOf('async function', searchFrom);
-  const nextSectionIdx = src.indexOf('// ----', searchFrom);
-  const candidates = [nextFnIdx, nextSectionIdx].filter((i) => i !== -1);
-  const end = candidates.length > 0 ? Math.min(...candidates) : src.length;
-  return src.slice(start, end);
-}
-
-for (const [name, path] of [
-  ['dev-flow.js', devFlowPath],
-  ['pr-iterate.js', prIteratePath],
-]) {
-  test(`[tracked-agent-so-retry] (e) ${name}: trackedAgent 本体に StructuredOutput 契約違反リトライ実装が存在する`, () => {
-    const src = readFileSync(path, 'utf8');
-    const body = extractTrackedAgentBody(src);
-
-    assert.match(body, /without calling StructuredOutput/, `${name} の trackedAgent 本体に契約違反判定文字列が無い`);
-
-    // agentType の namespace 付与は nsAgentOpts()（_lib/agent-namespace.mjs）が担うため、
-    // trackedAgent 本体の呼び出し形は agent(prompt, nsAgentOpts(opts)) で固定する。
-    const agentCallRe = /agent\(prompt, nsAgentOpts\(opts\)\)/g;
-    const matches = [...body.matchAll(agentCallRe)];
-    assert.equal(
-      matches.length,
-      2,
-      `${name} の trackedAgent 本体に agent(prompt, nsAgentOpts(opts)) 呼び出しが 2 箇所存在しない（${matches.length} 件）`,
-    );
+test('[tracked-agent-so-retry] (e) pr-iterate.js: 未 opt-in の fix#1 が契約違反で throw → 同一 label の再呼び出し無し・リトライ log 無し', async () => {
+  const { ctx, calls, logs } = makePrIterateSandbox({
+    overrides: {
+      'review#1': { decision: 'request_changes', issues: [{ severity: 'major', topic: 't', file: 'a.js', line: 1, description: 'd', suggestion: null }], summary: 'ng' },
+      'fix#1': () => { throw new Error(CONTRACT_VIOLATION_MSG); },
+    },
   });
-}
+  const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  assert.equal(error, null, `fix#1 の throw は callFixAgent が吸収するはずだが run が throw した: ${error?.message}`);
+  assert.equal(calls.filter((c) => c.label === 'fix#1').length, 1, 'fix#1 が同一 label で再呼び出しされた（未 opt-in call site でリトライが発火している）');
+  assert.equal(calls.filter((c) => c.label === 'fix#1-retry').length, 1, 'fix-null-retry（別 label）は 1 回走るはず');
+  assert.ok(!logs.some((l) => l.includes('契約違反で失敗 — 同一 prompt で 1 回だけリトライ')), '未 opt-in call site なのに契約違反リトライの log が出ている');
+});

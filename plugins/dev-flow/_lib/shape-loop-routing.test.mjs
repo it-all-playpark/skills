@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -106,7 +107,7 @@ function makeCountingSandbox(analyzeReq) {
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
-    args: '1',
+    args: devFlowArgs('1'),
     // JS 組み込み（makeWorkflowSandbox と同一セット）
     console,
     JSON,
@@ -233,76 +234,13 @@ test('[shape-loop] SHAPE=complex: plan-reviewer 呼び出し >= 1（制御群）
   );
 });
 
-// ============================================================
-// B. 構造テスト（正負ペア + 正規表現、脆い multiline literal 禁止）
-// ============================================================
-
-test('[shape-loop][struct] dev-flow.js に PLAN_SOLO 定数定義が存在する', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes('const PLAN_SOLO ='),
-    'dev-flow.js に `const PLAN_SOLO =` が存在すること',
-  );
-});
-
-test('[shape-loop][struct] plan#standard と plan#trivial が両方存在する（正の対）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes('plan#standard'),
-    'dev-flow.js に standard 専用 planner label `plan#standard` が存在すること',
-  );
-  assert.ok(
-    src.includes('plan#trivial'),
-    'dev-flow.js に micro 経路 planner label `plan#trivial` が存在すること（micro 経路温存）',
-  );
-});
-
-test('[shape-loop][struct] EVAL ループヘッダが EVAL_PASSES 変数経由である（正規表現）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  const evalPassesLoop = /for\s*\(\s*let\s+i\s*=\s*1\s*;\s*i\s*<=\s*EVAL_PASSES/.test(src);
-  assert.ok(
-    evalPassesLoop,
-    'dev-flow.js の Evaluate ループが `for (let i = 1; i <= EVAL_PASSES ...` 形式であること',
-  );
-});
-
-test('[shape-loop][struct] EVAL ループに EVAL_MAX 直書きヘッダが存在しない（正規表現・負）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  // EVAL_MAX 直書きのループヘッダが消えていること（定義行 `const EVAL_MAX = 10` 自体は残る）
-  const evalMaxLoop = /for\s*\(\s*let\s+i\s*=\s*1\s*;\s*i\s*<=\s*EVAL_MAX/.test(src);
-  assert.ok(
-    !evalMaxLoop,
-    'dev-flow.js の Evaluate ループヘッダに `i <= EVAL_MAX` 直書き形式が存在しないこと（EVAL_PASSES 変数経由であること）',
-  );
-});
-
-test('[shape-loop][struct] dev-flow.js に EVAL_PASSES 定数定義が存在する', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes('const EVAL_PASSES ='),
-    'dev-flow.js に `const EVAL_PASSES =` が存在すること',
-  );
-});
-
-// ============================================================
-// C. F1: EVAL_MAX→EVAL_PASSES cap-check 一本化の構造テスト（負/正ペア）
-// ============================================================
-
-test('[shape-loop][struct][F1] cap-check が i===EVAL_MAX ではなく i===EVAL_PASSES であること（負テスト）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  // `const EVAL_MAX = 10` は `===` を含まないため誤検出しない
-  const hasEvalMaxBreak = /i\s*===\s*EVAL_MAX/.test(src);
-  assert.ok(
-    !hasEvalMaxBreak,
-    'dev-flow.js に `i === EVAL_MAX` を break 条件とする箇所が存在しないこと（EVAL_PASSES に一本化されていること）',
-  );
-});
-
-test('[shape-loop][struct][F1] cap-check に `if (i === EVAL_PASSES)` が存在すること（正テスト）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  const hasEvalPassesCap = /if\s*\(\s*i\s*===\s*EVAL_PASSES\s*\)/.test(src);
-  assert.ok(
-    hasEvalPassesCap,
-    'dev-flow.js に `if (i === EVAL_PASSES)` cap-check が存在すること',
-  );
-});
+// PLAN_SOLO / plan#standard / plan#trivial / EVAL_PASSES 定数の存在および EVAL ループが
+// EVAL_MAX 直書きでなく EVAL_PASSES 変数経由であることを個別に静的 pin していた section B/C
+// （旧: 構造テスト・F1 cap-check テスト）は削除する（issue #636）。これらが検証したかった
+// 実体（standard は plan-reviewer 0 回・evaluator ちょうど 1 回で止まる／complex は
+// plan-reviewer が起動する）は、上の A. 振る舞いカウント検証で VM 実行により既に挙動として
+// 保証済み（EVAL_PASSES が EVAL_MAX に固定されたままだったり cap-check が機能しなければ、
+// standard の evaluatorCalls.length は 1 ではなく複数になり A のアサートが落ちる）。
+// EVAL_PASSES を動的に EVAL_MAX まで引き上げる re-floor 経路の挙動は
+// `_lib/refloor-shape-routing.test.mjs` の (B) が standard + realized 6 files で
+// evaluator >= 2 回（full loop 化）を VM 実行で検証済み。

@@ -8,7 +8,9 @@
 //   (a) 残置 kernel 4 モジュール + 各テスト、fixtures、dev-flow-doctor の trust receipts レポート/
 //       fixture が存在する
 //   (b) classifyMergeTier の trustGate 経路が生きており、未指定時の出力が trustGate:null と完全一致する
-//   (c) dev-flow.js が classifyMergeTier( を呼び、trustGate: null を明示給電し続けている
+//   (c) dev-flow.js の VM 実行結果 result.merge_tier が、trustGate 未指定の純関数呼び出しと一致する
+//       （trustGate:null 明示給電が実際の run で trustGate 未指定と同一に振る舞うことの挙動証拠。
+//       ソース文字列 'trustGate: null' の pin は言い回し変更で落ちるため撤去した。issue #636 AC-1）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -16,6 +18,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { classifyMergeTier } from './merge-tier.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -112,19 +115,35 @@ test('[trust-kernel-invariant] (b) trustGate の verdict が enum 外なら thro
 });
 
 // ============================================================
-// (c) dev-flow.js が classifyMergeTier( を呼び trustGate: null を給電する
+// (c) dev-flow.js の実 run（VM 挙動）が、trustGate 未指定の classifyMergeTier 呼び出しと
+//     同一の merge_tier を返す（trustGate: null 明示給電＝未指定と同一挙動、が実際に使われている証拠）。
+//     標準経路（converged, shape:'standard', docsOrTestOnly:false, danger clean, pr-iterate lgtm）を
+//     makeDevFlowSandbox() の既定 responder で再現する。
 // ============================================================
 
-test('[trust-kernel-invariant] (c) dev-flow.js に classifyMergeTier( 呼び出しがある', () => {
-  assert.ok(
-    devFlowSrc.includes('classifyMergeTier('),
-    '(c) dev-flow.js から classifyMergeTier( の呼び出しが見つからない',
-  );
-});
+test('[trust-kernel-invariant] (c) 標準経路の VM 実行結果 merge_tier が trustGate 未指定の純関数呼び出しと一致する', async () => {
+  const { ctx } = makeDevFlowSandbox();
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'trust-kernel-invariant-c');
 
-test('[trust-kernel-invariant] (c) dev-flow.js に trustGate: null の明示給電がある', () => {
-  assert.ok(
-    devFlowSrc.includes('trustGate: null'),
-    '(c) dev-flow.js が classifyMergeTier へ trustGate: null を明示給電していない（S3完了後に green）',
+  assert.ok(result != null, '(c) VM run が result を返さなかった');
+  assert.equal(result.merge_tier, 'REVIEW', `(c) 標準経路の merge_tier は 'REVIEW' のはずが '${result.merge_tier}' だった`);
+
+  // dev-flow.js の実 call site（trustGate: null）と同じ状態を、trustGate を一切指定せず純関数へ渡す。
+  const expected = classifyMergeTier({
+    shape: 'standard',
+    converged: true,
+    unresolvedDanger: false,
+    breakingStructured: false,
+    breakingKeyword: false,
+    docsOrTestOnly: false,
+    escalateCount: 0,
+    iterateStatus: 'lgtm',
+  });
+
+  assert.equal(
+    result.merge_tier,
+    expected.tier,
+    `(c) VM run の merge_tier ('${result.merge_tier}') が trustGate 未指定の純関数呼び出し結果 ('${expected.tier}') と一致しない`,
   );
 });

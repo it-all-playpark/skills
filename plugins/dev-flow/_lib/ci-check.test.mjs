@@ -9,6 +9,10 @@
 // prompt 本文が dev-flow.js / pr-iterate.js の inline 区間と全文一致することは
 // _lib/workflow-inlines.sync.test.mjs（sync-inlines --check 相当）が保証するため、ここでは扱わない。
 
+// issue #636 P2 pin 整理 (inventory 用):
+// (置換) L100 '次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ' — String(CI_MAX_ATTEMPTS) 数値 token へ置換
+// (置換) L102 '最大 ${...} 秒' — String((CI_MAX_ATTEMPTS-1)*CI_POLL_SECONDS) 数値 token へ置換
+// (削除) L105-109 test 全体（'禁止: Write, Edit, git commit, git push' / '読み取り専用'）— 言い回し pin、代替なし
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -97,15 +101,9 @@ test('[ci-check] pr が文字列でも同じ prompt になる（dev-flow は num
 
 test('[ci-check] prompt に attempt ループ定数が展開されている', () => {
   const p = ciCheckPrompt({ pr: 1, repo: null });
-  assert.ok(p.includes(`次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ`), 'max-attempts が展開されていない');
+  assert.ok(p.includes(String(CI_MAX_ATTEMPTS)), 'max-attempts が展開されていない');
   assert.ok(p.includes(`--poll-seconds ${CI_POLL_SECONDS}`), 'poll-seconds が展開されていない');
-  assert.ok(p.includes(`最大 ${(CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS} 秒`), 'ceiling が展開されていない');
-});
-
-test('[ci-check] prompt は read-only 契約（Write/Edit/commit/push 禁止）を明示する', () => {
-  const p = ciCheckPrompt({ pr: 1, repo: null });
-  assert.ok(p.includes('禁止: Write, Edit, git commit, git push'));
-  assert.ok(p.includes('読み取り専用'));
+  assert.ok(p.includes(String((CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS)), 'ceiling が展開されていない');
 });
 
 test('ciCheckPrompt: check-ci を plugin bin/ の bare 名（先頭トークン）で呼び、skills 絶対パスと bash 前置を含まない（issue #569）', () => {

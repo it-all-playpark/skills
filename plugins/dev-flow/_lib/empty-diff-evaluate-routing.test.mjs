@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -44,12 +45,11 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
-    if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
     if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/foo.ts'] };
+    if (label === 'merge-tier-facts') return mergeTierFacts({ files: ['src/foo.ts'] });
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
@@ -63,7 +63,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
   const sandbox = {
     phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: async () => iterateResult, args: '1',
+    workflow: async () => iterateResult, args: devFlowArgs('1'),
     console, JSON, Math, String, Number, Boolean, Array, Object, Error, RegExp, Promise, Symbol, Map, Set, Date,
   };
   const ctx = vm.createContext(sandbox);
@@ -150,23 +150,21 @@ test('[empty-diff] (D) eval hash AAA != PR hash BBB → eval_staleness===hash_mi
   if (error) assert.fail(`(D) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(D) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'hash_mismatch', `(D) eval hash 不一致なら eval_staleness==='hash_mismatch' のはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummaryCall !== undefined, '(D) post-summary の agent 呼び出しが存在すべき');
-  assert.ok(postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(D) post-summary prompt に stale 警告を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
+  assert.strictEqual(returned?.merge_tier, 'HOLD', `(D) eval hash 不一致なら merge_tier==='HOLD' のはずだが ${JSON.stringify(returned?.merge_tier)}`);
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall !== undefined, '(D) journal-save の agent 呼び出しが存在すべき');
+  assert.ok(journalCall?.prompt?.includes('"eval_staleness":"hash_mismatch"'), `(D) journal-save prompt に "eval_staleness":"hash_mismatch" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
 });
 
 // (E) 両 hash 'AAA' 一致 → eval_staleness==='none'・post-summary に stale 警告なし（誤検知なし）
 test('[empty-diff] (E) eval hash AAA == PR hash AAA → eval_staleness===none・post-summary に stale 警告なし', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false, evalHash: 'AAA', prHash: 'AAA' });
+  const { ctx } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false, evalHash: 'AAA', prHash: 'AAA' });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
   if (error) assert.fail(`(E) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(E) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'none', `(E) hash 一致なら eval_staleness==='none' のはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummaryCall !== undefined, '(E) post-summary の agent 呼び出しが存在すべき');
-  assert.ok(!postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(E) hash 一致時は post-summary prompt に stale 警告を含むべきでない`);
 });
 
 // (F) diff-gate empty:true / diff-gate-retry empty:false → test#retry >= 1・evaluator が呼ばれること（issue #219）
@@ -221,10 +219,9 @@ test('[empty-diff] (H) 両 hash 一致 + fixes_applied=2 → eval_staleness===it
   if (error) assert.fail(`(H) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(H) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'iterate_fixed', `(H) fixes_applied=2 なら eval_staleness==='iterate_fixed' のはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummaryCall !== undefined, '(H) post-summary の agent 呼び出しが存在すべき');
-  assert.ok(postSummaryCall?.prompt?.includes('件の fix を適用して LGTM 終端'), `(H) post-summary prompt に fix 件数の情報行を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
-  assert.ok(!postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(H) iterate_fixed のみなら post-summary prompt に ⚠️ stale 警告を含むべきでない`);
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall !== undefined, '(H) journal-save の agent 呼び出しが存在すべき');
+  assert.ok(journalCall?.prompt?.includes('"fixes_applied":2'), `(H) journal-save prompt に "fixes_applied":2 を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
 });
 
 // (I) 両 hash 一致 + status='stuck' → eval_staleness==='iterate_incomplete'（status !== 'lgtm' 側の分岐、AC-3）
@@ -241,9 +238,9 @@ test('[empty-diff] (I) 両 hash 一致 + status=stuck → eval_staleness===itera
   if (error) assert.fail(`(I) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(I) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'iterate_incomplete', `(I) status=stuck なら eval_staleness==='iterate_incomplete' のはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummaryCall !== undefined, '(I) post-summary の agent 呼び出しが存在すべき');
-  assert.ok(postSummaryCall?.prompt?.includes('pr-iterate が LGTM 以外で終端した'), `(I) post-summary prompt に stale 警告を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall !== undefined, '(I) journal-save の agent 呼び出しが存在すべき');
+  assert.ok(journalCall?.prompt?.includes('"iterate_status":"stuck"'), `(I) journal-save prompt に "iterate_status":"stuck" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
 });
 
 // (K) empty-diff gate retry 経路の phase タグが 'Validate'（'Security floor' でない）こと（issue #253）
@@ -271,7 +268,7 @@ test('[empty-diff] (K) retry 経路の test#retry / green-fix#retry call の pha
 // (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_staleness==='none'（誤検知なし）
 test('[empty-diff] (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_staleness===none（誤検知なし）', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
+  const { ctx } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
     prHash: 'AAA',
@@ -282,9 +279,6 @@ test('[empty-diff] (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_
   if (error) assert.fail(`(J) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(J) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'none', `(J) status=lgtm + fixes_applied=0 なら eval_staleness==='none' のはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummaryCall !== undefined, '(J) post-summary の agent 呼び出しが存在すべき');
-  assert.ok(!postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(J) hash 一致 + lgtm + no-fix 時は post-summary prompt に stale 警告を含むべきでない`);
 });
 
 // (L) 経路A(hash 不一致) + 経路B(iterate fix あり) 同時発生 → hash_mismatch が優先される（AC-2 precedence ピン）
@@ -301,9 +295,10 @@ test('[empty-diff] (L) hash 不一致 + iterate fix 同時発生 → eval_stalen
   if (error) assert.fail(`(L) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(L) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'hash_mismatch', `(L) hash 不一致 + iterate fix 同時発生でも hash_mismatch が優先されるはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummaryCall !== undefined, '(L) post-summary の agent 呼び出しが存在すべき');
-  assert.ok(postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), `(L) post-summary prompt に ⚠️ hash 警告を含むべきだが: ${postSummaryCall?.prompt?.slice(0, 300)}`);
+  assert.strictEqual(returned?.merge_tier, 'HOLD', `(L) hash_mismatch が優先されるなら merge_tier==='HOLD' のはずだが ${JSON.stringify(returned?.merge_tier)}`);
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall !== undefined, '(L) journal-save の agent 呼び出しが存在すべき');
+  assert.ok(journalCall?.prompt?.includes('"eval_staleness":"hash_mismatch"'), `(L) journal-save prompt に "eval_staleness":"hash_mismatch" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
 });
 
 // (M) micro path（runEval=false）で iterate fix があっても stale 関連の行が一切出ない（AC-4）
@@ -319,7 +314,7 @@ test('[empty-diff] (M) micro path（runEval=false）+ iterate fix あり → eva
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
-  const { ctx, calls } = makeCountingSandbox(MICRO_REQ, {
+  const { ctx } = makeCountingSandbox(MICRO_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
     prHash: 'AAA',
@@ -330,11 +325,6 @@ test('[empty-diff] (M) micro path（runEval=false）+ iterate fix あり → eva
   if (error) assert.fail(`(M) 想定外エラー: ${error.message}`);
   assert.ok(returned !== null, '(M) return object を返すべき');
   assert.strictEqual(returned?.eval_staleness, 'none', `(M) runEval=false なら iterate fix があっても eval_staleness==='none' のはずだが ${JSON.stringify(returned?.eval_staleness)}`);
-  const postSummaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummaryCall !== undefined, '(M) post-summary の agent 呼び出しが存在すべき');
-  assert.ok(!postSummaryCall?.prompt?.includes('Evaluate は古い tree に対して実行された'), '(M) runEval=false 時は post-summary prompt に ⚠️ hash 警告を含むべきでない');
-  assert.ok(!postSummaryCall?.prompt?.includes('pr-iterate が LGTM 以外で終端した'), '(M) runEval=false 時は post-summary prompt に iterate_incomplete 警告を含むべきでない');
-  assert.ok(!postSummaryCall?.prompt?.includes('件の fix を適用して LGTM 終端'), '(M) runEval=false 時は post-summary prompt に iterate_fixed 情報行を含むべきでない');
 });
 
 // (N) telemetry handoff に eval_staleness が到達すること（AC-5）
@@ -364,4 +354,38 @@ test('[empty-diff] (N) journal-log の telemetry handoff payload に eval_stalen
   const journalCall2 = sbox2.calls.find((c) => c.label === 'journal-save');
   assert.ok(journalCall2 !== undefined, '(N) journal-save の agent 呼び出しが存在すべき（none ケース）');
   assert.ok(journalCall2?.prompt?.includes('"eval_staleness":"none"'), `(N) journal-save prompt に "eval_staleness":"none" を含むべきだが: ${journalCall2?.prompt?.slice(0, 500)}`);
+});
+
+// (P) iterate_status ごとの merge_tier routing（reviewer 指摘の代替ケース）
+test('[empty-diff] (P-1) iterate status=max_reached → merge_tier===HOLD かつ journal-save prompt が "iterate_status":"max_reached" を含む', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
+    gateEmpty: false,
+    evalHash: 'AAA',
+    prHash: 'AAA',
+    iterateResult: { status: 'max_reached', iterations: 10, fixes_applied: 2 },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(P-1) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(P-1) return object を返すべき');
+  assert.strictEqual(returned?.merge_tier, 'HOLD', `(P-1) status=max_reached なら merge_tier==='HOLD' のはずだが ${JSON.stringify(returned?.merge_tier)}`);
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall !== undefined, '(P-1) journal-save の agent 呼び出しが存在すべき');
+  assert.ok(journalCall?.prompt?.includes('"iterate_status":"max_reached"'), `(P-1) journal-save prompt に "iterate_status":"max_reached" を含むべきだが: ${journalCall?.prompt?.slice(0, 500)}`);
+});
+
+test('[empty-diff] (P-2) status=lgtm + fixes_applied=0 + hash 一致 → merge_tier===REVIEW', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx } = makeCountingSandbox(STANDARD_REQ, {
+    gateEmpty: false,
+    evalHash: 'AAA',
+    prHash: 'AAA',
+    iterateResult: { status: 'lgtm', iterations: 1, fixes_applied: 0 },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
+  if (error) assert.fail(`(P-2) 想定外エラー: ${error.message}`);
+  assert.ok(returned !== null, '(P-2) return object を返すべき');
+  assert.strictEqual(returned?.merge_tier, 'REVIEW', `(P-2) status=lgtm + hash 一致なら merge_tier==='REVIEW' のはずだが ${JSON.stringify(returned?.merge_tier)}`);
 });

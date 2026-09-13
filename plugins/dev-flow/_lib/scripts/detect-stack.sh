@@ -3,8 +3,8 @@
 # Usage: detect-stack.sh [project-dir]
 # Output: JSON {"frameworks": [...]} — framework 名のみ
 #
-# なぜ framework 検出を残すか: Implement phase で implementer が context7 を
-# 呼ぶかどうかを判定する決定論的門番 (issue #497)。vendored skill への
+# なぜ framework 検出を残すか: dev-flow の Setup phase が Next.js 固有の build 検証規約を
+# prompt へ注入するか否かを決める決定論的門番。vendored skill への
 # マッピング (best_practice_skills / rules_paths) は出力しない。
 
 set -euo pipefail

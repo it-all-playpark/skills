@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -27,12 +28,12 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 /**
  * danger-fail-closed 専用の VM sandbox を組む。
  * label 'danger-grep'（Security floor。issue #544 統合呼び出し）は dangerGrepResponse を
- * risk フィールドに包んで返し、label 'danger-grep-final'（Merge tier。統合対象外）は
+ * risk フィールドに包んで返し、label 'merge-tier-facts'（Merge tier 統合呼び出し）は risk サブ結果に包んで
  * dangerGrepResponse をそのまま返す。evaluator 呼び出し回数と journal-log に渡された
  * prompt を捕捉する。
  *
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
- * @param {object} dangerGrepResponse - danger-grep / danger-grep-final stub が返すレスポンス
+ * @param {object} dangerGrepResponse - danger-grep / merge-tier-facts(risk) stub が返すレスポンス
  * @param {object} evaluatorResponse - evaluator stub が返すレスポンス（全 iteration で同一を返す）
  * @returns {{ ctx: vm.Context, counters: { evaluatorCalls: () => number, journalPrompts: () => string[] } }}
  */
@@ -71,9 +72,10 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     if (label === 'danger-grep') {
       return { risk: dangerGrepResponse, files: ['src/foo.ts'], struct: null, diffhash: null };
     }
-    // Merge tier: label 'danger-grep-final' は統合対象外（旧 RISK schema のまま）。
-    if (label === 'danger-grep-final') {
-      return dangerGrepResponse;
+    // Merge tier: label 'merge-tier-facts'（統合呼び出し）は dangerGrepResponse を risk サブ結果に包んで返す。
+    // changed は docs/test-only でないファイル（AUTO 除外。HOLD 要因を danger のみに絞る）
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ risk: dangerGrepResponse, files: ['src/foo.ts'] });
     }
     // Validate: test runner（label が 'test' で始まる）
     if (label.startsWith('test')) {
@@ -91,11 +93,6 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     // PR: label が 'pr' で始まる
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    // Merge tier: changed-files
-    // → docs/test-only でないファイルを返す（AUTO 除外。HOLD 要因を danger のみに絞る）
-    if (label === 'changed-files') {
-      return { files: ['src/foo.ts'] };
     }
     // post-summary（dev-runner-haiku）: posted:true 固定
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
@@ -139,7 +136,7 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
     // 引数（ISSUE 解決用）
-    args: '1',
+    args: devFlowArgs('1'),
     // JS 組み込み（merge-tier-unsatisfied-ac.test.mjs / eval-convergence.test.mjs と同一セット）
     console,
     JSON,
@@ -266,7 +263,7 @@ test('[danger-fail-closed] AC#2: danger-grep fail-closed 時、merge tier は HO
   assert.equal(
     result?.merge_tier,
     'HOLD',
-    `danger-grep fail-closed（Merge tier phase の danger-grep-final も fail-closed）の場合、`
+    `danger-grep fail-closed（Merge tier phase の merge-tier-facts risk も fail-closed）の場合、`
     + `merge tier 算出は fail-closed SEC seed を unchecked のまま含めて HOLD を強制すべきだが '${result?.merge_tier}' だった`,
   );
 });

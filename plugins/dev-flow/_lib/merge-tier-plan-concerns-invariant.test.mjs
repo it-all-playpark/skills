@@ -82,28 +82,8 @@ test('静的 pin: merge-tier.mjs ソースに "planConcerns" 文字列が出現�
   assert.ok(!src.includes('planConcerns'), 'merge-tier.mjs は planConcerns を参照してはならない');
 });
 
-// ─── 3. 静的 pin: dev-flow.js の classifyMergeTier 呼び出しブロックに planConcerns が無く、
-//        tier 確定（classifyMergeTier 呼び出し）が summary 描画（buildDevflowSummaryBody 呼び出し）より前 ───
-
-test('静的 pin: dev-flow.js の classifyMergeTier({...}) 呼び出しブロックに planConcerns が出現せず、buildDevflowSummaryBody 呼び出しより前に位置する', () => {
-  const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
-
-  const mergeTierCallMarker = 'const mergeTier = classifyMergeTier({';
-  const summaryCallMarker = 'const summaryBody = buildDevflowSummaryBody({';
-
-  const mergeTierIdx = src.indexOf(mergeTierCallMarker);
-  const summaryIdx = src.indexOf(summaryCallMarker);
-
-  assert.ok(mergeTierIdx >= 0, 'dev-flow.js に classifyMergeTier 呼び出しが見つかるべき');
-  assert.ok(summaryIdx >= 0, 'dev-flow.js に buildDevflowSummaryBody 呼び出しが見つかるべき');
-  assert.ok(mergeTierIdx < summaryIdx, 'classifyMergeTier 呼び出しは buildDevflowSummaryBody 呼び出しより前に位置するべき（tier 確定後に summary を描画する順序）');
-
-  const closeIdx = src.indexOf('})', mergeTierIdx + mergeTierCallMarker.length);
-  assert.ok(closeIdx >= 0, 'classifyMergeTier 呼び出しブロックの閉じ "})" が見つかるべき');
-
-  const callBlock = src.slice(mergeTierIdx, closeIdx);
-  assert.ok(!callBlock.includes('planConcerns'), 'dev-flow.js の classifyMergeTier({...}) 呼び出しブロックに planConcerns を渡してはならない');
-});
+// ─── 3. dev-flow.js 側（planConcerns が merge tier に波及しない）は plan-iterate-wiring-routing.test.mjs (b)
+//        が VM 挙動で検証する: plan-reviewer が revise で収束し CONCERN-* が seed されても merge_tier は既定と同じ ───
 
 // ─── 4. summary 表示側 pin: tier 行・marker は planConcerns の有無で不変 ────
 

@@ -1,91 +1,123 @@
 // _lib/analyze-prompt-calibration.test.mjs
-// Pin test: analyzePrompt の bias 撤去 + shape 定義境界一致 + AC 粒度ガイダンス、
-// PLANNER_HANDOFF_RULE の全 planner spawn prompt への注入を dev-flow.js のソース文字列に対して固定する。
-// (issue #272 — plan-reviewer 指摘 logic-bug::analyze-prompt-micro-definition 対応)
+// issue #636 P3a: analyzePrompt / PLANNER_HANDOFF_RULE の配線検証を、dev-flow.js ソース文字列への
+// readFileSync + includes pin（旧版）から、VM sandbox で agent() を mock し実際に渡された
+// analyze#1 / plan#1 prompt に対するトークン pin・否定側 pin へ書き換えたもの
+// （issue #272 / #278 の意図はそのまま維持: bias 撤去・shape 境界一致・breaking 構造化判定の配線）。
 //
-// VM 実行不要: readFileSync でソース文字列を assert するだけの静的 pin テスト。
-import { test } from 'vitest';
+// shape=complex（Plan phase が review loop に入り 1 回目の dev-planner 呼び出しが label 'plan#1' に
+// なる経路）に乗せるため、estimated_change_file_count を 5 超にして floor=complex を強制する
+// （classifyShape は req.shape を raise-only にしか使わないため floor=complex は req.shape に依存しない）。
+import { test, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const wfPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-const src = readFileSync(wfPath, 'utf8');
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, '..');
+const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
+const src = readFileSync(devFlowPath, 'utf8');
 
-function countOccurrences(haystack, needle) {
-  if (needle === '') return 0;
-  let count = 0;
-  let idx = 0;
-  while ((idx = haystack.indexOf(needle, idx)) !== -1) {
-    count++;
-    idx += needle.length;
-  }
-  return count;
+const REQ = {
+  summary: 's',
+  acceptance_criteria: ['a', 'b'],
+  issue_type: 'feat',
+  scope: 'src',
+  scope_truncated: false,
+  estimated_change_file_count: 8, // count > 5 → classifyShape floor = complex
+  breaking_change: false,
+  breaking_keyword_scan: false,
+  breaking_evidence: '',
+  ambiguities: [],
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
+};
+
+function createResponder() {
+  return function ({ label, agentType }) {
+    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
+    if (label.startsWith('contract-probe')) return null; // fail-open → sonnet fallback（analyze#1）
+    if (label.startsWith('analyze')) return REQ;
+    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
+    if (label === 'realized-diff') return { files: ['src/a.ts'] };
+    if (label === 'declared-path-check') return { files: [] };
+    if (label === 'changed-files') return { files: ['src/a.ts'] };
+    if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
+    if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (agentType === 'dev-flow:evaluator') {
+      return {
+        verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
+        ac_results: REQ.acceptance_criteria.map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
+        security_clearance: [],
+      };
+    }
+    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+    if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    if (label === 'journal-log') return { logged: true, summary: 'ok' };
+    if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    return null;
+  };
 }
 
-// (a) 「迷えば大きめ」が 0 回出現（bias 文言の完全撤去）
-test('analyzePrompt: 「迷えば大きめ」が 0 回出現', () => {
-  assert.equal(countOccurrences(src, '迷えば大きめ'), 0);
+let calls;
+let runError;
+let analyzeCall;
+let planCall;
+
+beforeAll(async () => {
+  const sandbox = makeRecordingSandbox(createResponder(), { args: devFlowArgs('1') });
+  runError = await runDevFlowInSandbox(src, sandbox.ctx);
+  calls = sandbox.calls;
+  analyzeCall = calls.find((c) => c.label === 'analyze#1');
+  planCall = calls.find((c) => c.label === 'plan#1');
 });
 
-// (b) 「安全側=complex 寄り」が出現しない
-test('analyzePrompt: 「安全側=complex 寄り」が出現しない', () => {
-  assert.ok(!src.includes('安全側=complex 寄り'));
+test('run: dev-flow.js が sandbox で throw しない', () => {
+  assert.equal(runError, null, `run が throw してはならないが: ${runError?.message}`);
 });
 
-// (c) 「micro=1〜2 ファイル」が存在（決定論 floor との境界一致 pin）
-test('analyzePrompt: 「micro=1〜2 ファイル」が存在', () => {
-  assert.ok(src.includes('micro=1〜2 ファイル'));
+test("run: analyze#1 と plan#1 の呼び出しが両方観測できる（shape=complex 経路の前提）", () => {
+  assert.ok(analyzeCall, 'analyze#1 呼び出しが見つからない');
+  assert.ok(planCall, "plan#1 呼び出しが見つからない（shape=complex の review loop 1 回目）");
 });
 
-// (d) 「単一ファイル軽微変更」が出現しない（旧定義の残置なし）
-test('analyzePrompt: 「単一ファイル軽微変更」が出現しない', () => {
-  assert.ok(!src.includes('単一ファイル軽微変更'));
+// (a) 旧 bias 文言が analyze#1 prompt に含まれない（否定側 pin。issue #272）
+test('analyze#1 prompt: 「安全側=complex 寄り」を含まない', () => {
+  assert.ok(!analyzeCall.prompt.includes('安全側=complex 寄り'));
 });
 
-// (e) 「AC 4 個以内」が存在（classifyShape ac<=4 との一致 pin）
-test('analyzePrompt: 「AC 4 個以内」が存在', () => {
-  assert.ok(src.includes('AC 4 個以内'));
+test('analyze#1 prompt: 「単一ファイル軽微変更」を含まない', () => {
+  assert.ok(!analyzeCall.prompt.includes('単一ファイル軽微変更'));
 });
 
-// (f) 「最小単位へ統合」が存在（AC 粒度ガイダンス pin）
-test('analyzePrompt: 「最小単位へ統合」が存在', () => {
-  assert.ok(src.includes('最小単位へ統合'));
+// (b) breaking 判定は構造化フィールド（breaking_keyword_scan / breaking_evidence）を通す配線に
+// なっている（issue #278）。identifier token pin — 文言そのものは pin しない。
+test('analyze#1 prompt: breaking_keyword_scan フィールドへの言及がある', () => {
+  assert.ok(analyzeCall.prompt.includes('breaking_keyword_scan'));
 });
 
-// (g) 「大きめに倒すな」が存在（anti-bias pin）
-test('analyzePrompt: 「大きめに倒すな」が存在', () => {
-  assert.ok(src.includes('大きめに倒すな'));
+test('analyze#1 prompt: breaking_evidence フィールドへの言及がある', () => {
+  assert.ok(analyzeCall.prompt.includes('breaking_evidence'));
 });
 
-// (h) 「.devflow-tmp/ 配下のパスを指定せよ」が存在し、
-//     PLANNER_HANDOFF_RULE 参照が 4 箇所以上（planner spawn 全系統への注入 pin）
-test('PLANNER_HANDOFF_RULE: 「.devflow-tmp/ 配下のパスを指定せよ」が存在', () => {
-  assert.ok(src.includes('.devflow-tmp/ 配下のパスを指定せよ'));
+// (c) PLANNER_HANDOFF_RULE が planner spawn prompt へ注入されている（一時ファイル配置規約のパス token）
+test("plan#1 prompt: PLANNER_HANDOFF_RULE 注入（'.devflow-tmp/' パス token）が含まれる", () => {
+  assert.ok(planCall.prompt.includes('.devflow-tmp/'));
 });
 
-test('PLANNER_HANDOFF_RULE: dev-flow.js 内の参照が 4 箇所以上', () => {
-  const refCount = countOccurrences(src, 'PLANNER_HANDOFF_RULE');
-  assert.ok(refCount >= 4, `PLANNER_HANDOFF_RULE 参照は ${refCount} 箇所（4 箇所以上が必要）`);
+// (d) isBreakingText（旧 LLM 自由文 regex 実装）への参照が analyze#1 / plan#1 のいずれの prompt にも
+// 残っていない（issue #278 の置換が完了していることの確認）
+test('analyze#1 prompt: isBreakingText への参照が無い', () => {
+  assert.ok(!analyzeCall.prompt.includes('isBreakingText'));
 });
 
-// issue #278: breaking 判定を LLM 自由文 (scope/summary への regex) から、analyze REQ の
-// 構造化 breaking_change フィールド + issue 本文への決定論 keyword scan の OR へ置換した pin。
-
-// (i) 「breaking_keyword_scan」が analyzePrompt と REQ schema の両方に存在する（3 箇所以上）
-test('breaking_keyword_scan: dev-flow.js 内の参照が 3 箇所以上（analyzePrompt + REQ schema）', () => {
-  const refCount = countOccurrences(src, 'breaking_keyword_scan');
-  assert.ok(refCount >= 3, `breaking_keyword_scan 参照は ${refCount} 箇所（3 箇所以上が必要）`);
-});
-
-// (j) 「breaking_evidence」が存在する
-test('breaking_evidence: dev-flow.js 内に存在', () => {
-  assert.ok(src.includes('breaking_evidence'));
-});
-
-// (k) isBreakingText（旧 LLM 自由文 regex 実装）の参照が 0 件
-test('isBreakingText: dev-flow.js 内の参照が 0 件', () => {
-  assert.equal(countOccurrences(src, 'isBreakingText'), 0);
+test('plan#1 prompt: isBreakingText への参照が無い', () => {
+  assert.ok(!planCall.prompt.includes('isBreakingText'));
 });

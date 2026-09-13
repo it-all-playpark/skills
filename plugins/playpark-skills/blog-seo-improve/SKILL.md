@@ -79,6 +79,19 @@ skill-config.json から設定を取得。`gsc_site` と `ga_property_id` が未
 - meta description: CTA強化、具体的ベネフィット明示
 - `seo-strategy` のクラスタキーワードとの整合性維持
 
+**文字数チェック（必須・title/description生成のたびに実行）**:
+
+生成した title / description は、書き込み前に必ず文字数を検証する（基準は `__tests__/blog-seo-refresh-df600.test.ts` の `TITLE_MAX`=60 / `DESCRIPTION_MAX`=150 と同一 — JS文字列の `.length`、全角文字も1文字としてカウント）。
+
+| 対象 | 上限 |
+|------|------|
+| title | 60文字 |
+| description | 150文字 |
+
+1. 生成直後に文字数を数える
+2. 超過していたら、キーワードと訴求ポイントを維持したまま1回だけ短縮を試みる（末尾の装飾表現や重複表現を削る。キーワード自体は削らない）
+3. 再チェックしてまだ超過している場合は書き込みを中止せず、Step 5 のレポートに `⚠️ 文字数超過` として超過分（何文字オーバーか）を明示する。超過を黙って完了報告しない
+
 **Bounce率改善**:
 - 冒頭セクション: 結論先出し、読者の課題に即座に応答
 - 見出し構成: スキャナビリティ向上、H2/H3の最適化
@@ -105,7 +118,8 @@ Date: {date}
 - CTR: 1.2% (impressions: 340)
 
 **After**:
-- Title: "Claude Code完全ガイド：5分で始める実践的な使い方【2026年版】"
+- Title: "Claude Code完全ガイド：5分で始める実践的な使い方【2026年版】" (28/60文字)
+- Description: "..." (142/150文字)
 - Expected CTR improvement: +0.5-1.0%
 
 **Diff**:
@@ -113,6 +127,9 @@ Date: {date}
 - title: "Claude Codeの使い方"
 + title: "Claude Code完全ガイド：5分で始める実践的な使い方【2026年版】"
 \`\`\`
+
+<!-- 文字数超過が残った場合のみ追記 -->
+⚠️ **文字数超過**: title 71/60文字（11文字オーバー）— 短縮を試みたが上限内に収まらなかったため手動修正が必要
 ```
 
 ## Preconditions

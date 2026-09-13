@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 import { gateLane, isConvergedUnderPolicy, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem, checkItem } from './goal-ledger.mjs';
 
@@ -65,8 +65,8 @@ function createResponder({ concerns, ciChecksResponse }) {
     if (agentType === 'dev-flow:plan-reviewer') {
       return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
-    // Security floor / danger-grep 系（danger-grep, danger-grep-final）
-    if (label.startsWith('danger-grep')) {
+    // Security floor / danger-grep 系
+    if (label === 'danger-grep') {
       return { ok: true, hits: [] };
     }
     // Validate: test runner（test#0 等）
@@ -89,9 +89,13 @@ function createResponder({ concerns, ciChecksResponse }) {
         concern_resolutions: [],
       };
     }
-    // realized-diff / declared-path-check / changed-files → files: [] で undeclared を発生させない
-    if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') {
+    // realized-diff / declared-path-check → files: [] で undeclared を発生させない
+    if (label === 'realized-diff' || label === 'declared-path-check') {
       return { files: [] };
+    }
+    // merge-tier-facts（dev-runner-haiku-ro）: checks サブ結果はシナリオ別の応答（{ok,checks} 形 → サブ結果へ写す）
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ files: [], checks: ciChecksResponse?.ok === true ? ciChecksResponse.checks : null });
     }
     // PR 系
     if (label.startsWith('pr')) {
@@ -104,10 +108,6 @@ function createResponder({ concerns, ciChecksResponse }) {
     // post-summary（dev-runner-haiku）
     if (label === 'post-summary') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    }
-    // ci-checks（dev-runner-haiku）: シナリオ別の応答
-    if (label === 'ci-checks') {
-      return ciChecksResponse;
     }
     // implementer（本経路の main call。concerns はシナリオ別）
     if (agentType === 'dev-flow:implementer') {
@@ -192,18 +192,19 @@ test('[ci-checks][a] crash guard: green auto-close シナリオが sandbox で�
   assertNoCrash(sharedGreen.err, 'a-green');
 });
 
-test('[ci-checks][AC-1][a] ci-checks 呼び出しが発生し gh pr checks コマンドを prompt に含む', async () => {
+test('[ci-checks][AC-1][a] merge-tier-facts 呼び出しが 1 回発生し gh pr checks コマンドを prompt に含む（checks 専用 spawn は発行しない）', async () => {
   await ensureGreenRun();
   const { calls } = sharedGreen;
-  const ciCall = calls.find((c) => c.label === 'ci-checks');
-  assert.ok(
-    ciCall != null,
-    `label === 'ci-checks' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
+  const factCalls = calls.filter((c) => c.label === 'merge-tier-facts');
+  assert.equal(
+    factCalls.length, 1,
+    `label === 'merge-tier-facts' の call は 1 件のはず (全 labels: ${calls.map((c) => c.label).join(', ')})`,
   );
   assert.ok(
-    ciCall.prompt.includes('gh pr checks 1 --json name,bucket'),
-    `ci-checks の prompt に gh pr checks コマンドが含まれていない:\n${ciCall.prompt}`,
+    factCalls[0].prompt.includes('gh pr checks 1 --json name,bucket'),
+    `merge-tier-facts の prompt に gh pr checks コマンドが含まれていない:\n${factCalls[0].prompt}`,
   );
+  assert.equal(calls.filter((c) => c.label === 'ci-checks').length, 0, 'checks 専用の exec-proxy spawn は発行しない');
 });
 
 test('[ci-checks][AC-1][a] post-summary の環境ノートに件数行が現れ、journal telemetry resolved_evidence の turbopack-sandbox env note が checked:true・CI で確認済み（check名列挙）になる', async () => {
@@ -211,10 +212,6 @@ test('[ci-checks][AC-1][a] post-summary の環境ノートに件数行が現れ�
   const { calls } = sharedGreen;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');
@@ -256,10 +253,6 @@ test('[ci-checks][AC-2][b] ci-checks 失敗でも workflow は完走し(post-sum
     `label === 'post-summary' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})。workflow が完走していない可能性`,
   );
   assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない:\n${post.prompt.slice(0, 2000)}`,
-  );
-  assert.ok(
     !post.prompt.includes('CI で確認済み'),
     `ci-checks 失敗時は fail-open で ENV item を据え置くはずが「CI で確認済み」が現れている:\n${post.prompt.slice(0, 2000)}`,
   );
@@ -291,15 +284,11 @@ test('[ci-checks][c] crash guard: allowlist 外シナリオが sandbox でクラ
   assertNoCrash(sharedAllowlist.err, 'c-allowlist');
 });
 
-test('[ci-checks][AC-3][c] ENV-NPM-CACHE-EPERM env note が resolved_evidence に存在し(positive assert)、checked:false・CI で確認済みを含まず、ci-checks は未呼出', async () => {
+test('[ci-checks][AC-3][c] ENV-NPM-CACHE-EPERM env note が resolved_evidence に存在し(positive assert)、checked:false・CI で確認済みを含まず、merge-tier-facts 以外の checks spawn は発生しない', async () => {
   await ensureAllowlistRun();
   const { calls } = sharedAllowlist;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'npm-cache-eperm');
@@ -316,8 +305,9 @@ test('[ci-checks][AC-3][c] ENV-NPM-CACHE-EPERM env note が resolved_evidence �
   assert.equal(
     ciCalls.length,
     0,
-    `label === 'ci-checks' の call は 0 件のはずが ${ciCalls.length} 件発生している（allowlist 外 ENV item のみのため exec-proxy を発行すべきでない）`,
+    `label === 'ci-checks' の call は 0 件のはずが ${ciCalls.length} 件発生している（checks は merge-tier-facts の 1 spawn に含まれ、専用 spawn は発行しない）`,
   );
+  assert.equal(calls.filter((c) => c.label === 'merge-tier-facts').length, 1, 'merge-tier-facts は allowlist 外 ENV item のみでも 1 回（Merge tier の他の事実取得に必要）');
 });
 
 // ============================================================
@@ -403,10 +393,6 @@ test('[ci-checks][AC-2][e] bats check pass で ENV-BATS-SANDBOX が auto-close �
   const { calls } = sharedBatsGreen;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'bats-sandbox');
@@ -454,10 +440,6 @@ test('[ci-checks][AC-3][f] bats/test 系 check が pending のとき ENV-BATS-SA
   const { calls } = sharedBatsPending;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 1 件'),
-    `post-summary の prompt に環境ノートの件数行が含まれていない（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const note = re.env_notes.find((n) => n.env_key === 'bats-sandbox');
@@ -502,10 +484,6 @@ test('[ci-checks][AC-4][g] turbopack-sandbox は auto-close、bats-sandbox は�
   const { calls } = sharedPerKey;
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  assert.ok(
-    post.prompt.includes('🏗 環境ノート 2 件'),
-    `post-summary の prompt に環境ノートの件数行（turbopack-sandbox + bats-sandbox の 2 グループ）が見つからない:\n${post.prompt.slice(0, 2000)}`,
-  );
   const re = extractResolvedEvidence(calls);
   assert.ok(re != null, 'telemetry.resolved_evidence が無い');
   const turbo = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');

@@ -11,6 +11,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { EVALUATOR_OPERATIONAL_CONTRACT } from './evaluator-contract.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -28,6 +30,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  */
 function makeSandbox(analyzeReq, responses) {
   const evalCalls = [];
+  const evalPrompts = [];
 
   // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
   const agentStub = async (prompt, opts) => {
@@ -66,6 +69,7 @@ function makeSandbox(analyzeReq, responses) {
     // Evaluate: evaluator stub が呼び出し回数を記録し、responses 配列に応じた応答を返す
     if (agentType === 'dev-flow:evaluator') {
       evalCalls.push({ label, agentType });
+      evalPrompts.push(prompt);
       const idx = Math.min(evalCalls.length - 1, responses.length - 1);
       return responses[idx];
     }
@@ -85,10 +89,10 @@ function makeSandbox(analyzeReq, responses) {
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
-    // Merge tier: changed-files
+    // Merge tier: merge-tier-facts（changed）
     // → docs/test-only でないファイルを返す（AUTO 除外。HOLD 要因を絞る）
-    if (label === 'changed-files') {
-      return { files: ['src/foo.ts'] };
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ files: ['src/foo.ts'] });
     }
     // implementer その他
     if (agentType === 'dev-flow:implementer') {
@@ -117,7 +121,7 @@ function makeSandbox(analyzeReq, responses) {
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
     // 引数（ISSUE 解決用）
-    args: '1',
+    args: devFlowArgs('1'),
     // JS 組み込み（shape-loop-routing.test.mjs と同一セット）
     console,
     JSON,
@@ -137,7 +141,13 @@ function makeSandbox(analyzeReq, responses) {
   };
 
   const ctx = vm.createContext(sandbox);
-  return { ctx, counters: { evaluatorCalls: () => evalCalls.length } };
+  return {
+    ctx,
+    counters: {
+      evaluatorCalls: () => evalCalls.length,
+      evaluatorPrompts: () => evalPrompts,
+    },
+  };
 }
 
 /**
@@ -383,23 +393,82 @@ test('[eval-convergence] AC#3: critical_resolutions {resolved:true, evidence} �
   );
 });
 
-test('[eval-convergence] contract: 収束契約は dev-flow.js prompt が唯一の operative contract（issue #174。evaluator.md は sandbox 保護で workflow から編集不可）', () => {
+// バグ1（verdict AND 条件）・バグ2（沈黙=解消の自動 checkItem）が存在しないことは、上記
+// AC#1〜AC#3（verdict と収束の独立、critical_resolutions のみで解消）が VM 挙動として既に
+// 検証済みのためここでは重複させない。
+//
+// critical_resolutions 契約は「未解消 critical 一覧」（前 iteration の critical feedback）または
+// 「既出 feedback」（priorFeedback）が prompt に渡る場合にのみ注入される（dev-flow.js の実装。
+// runValidateLoop 同様、初回 eval#1 には prior state が無いため注入されない）。そのため
+// AC#3 と同じ 2 iteration フィクスチャ（1 回目 critical → 2 回目解消）を使い、注入が実際に
+// 起きる eval#2 の prompt で検証する。
+test('[eval-convergence] contract: eval#2 prompt に EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions が verbatim 含まれる（issue #174。収束契約は dev-flow.js prompt が唯一の operative contract。evaluator.md は sandbox 保護で workflow から編集不可）', async () => {
+  const analyzeReq = {
+    summary: 's',
+    acceptance_criteria: ['a', 'b', 'c', 'd'],
+    issue_type: 'feat',
+    scope: 'src',
+    estimated_change_file_count: 7,
+    shape: 'complex',
+    issue_number: 1,
+    issue_title: 'stub-issue-title',
+  };
+
+  const ac4 = [
+    { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+    { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+    { ac_index: 2, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+    { ac_index: 3, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+  ];
+
+  const firstResponse = {
+    verdict: 'fail',
+    total: 5,
+    threshold: 7,
+    feedback: [
+      { severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' },
+    ],
+    feedback_level: 'implementation',
+    ac_results: ac4,
+    security_clearance: [],
+  };
+
+  const secondResponse = {
+    verdict: 'pass',
+    total: 9,
+    threshold: 7,
+    feedback: [],
+    feedback_level: 'implementation',
+    ac_results: ac4,
+    security_clearance: [],
+    critical_resolutions: [
+      { id: 'EVAL-1-X', resolved: true, evidence: 'src/foo.ts の入力検証を追加し test で確認' },
+    ],
+  };
+
   const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, counters } = makeSandbox(analyzeReq, [firstResponse, secondResponse]);
+  const { error } = await runDevFlowCapture(src, ctx);
+
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+
+  const prompts = counters.evaluatorPrompts();
+  assert.equal(prompts.length, 2, `evaluator は 2 回呼ばれるはずだが ${prompts.length} 回だった`);
+  assert.ok(
+    prompts[1].includes(EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions),
+    'eval#2 の prompt に EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions が verbatim 含まれていない',
+  );
+  assert.ok(
+    prompts[1].includes('critical_resolutions'),
+    'eval#2 の prompt に critical_resolutions キーが含まれていない',
+  );
+
+  // evaluator.md 側: 同期文言（issue #227 で同期済み）— critical_resolutions / security_clearance の
+  // 出力契約が記載され、「新規のみ報告」指示が維持され、沈黙=解消の旧記述が存在しないこと。
+  // evaluator.md は agent 定義文書であり agent() prompt ではないため AC-1 対象外（現状維持）。
   const agentMd = readFileSync(new URL('../.claude/agents/evaluator.md', import.meta.url), 'utf8');
-  // (1) verdict AND 条件が収束判定に存在しない（バグ1 の静的 pin）
-  assert.ok(!src.includes("&& ev.verdict === 'pass'"));
-  // (2) 沈黙=解消の自動 checkItem が存在しない（バグ2 の静的 pin）
-  assert.ok(!src.includes('liveCriticalKeys'));
-  assert.ok(!src.includes('解消とみなし checkItem'));
-  // (3) workflow prompt に critical_resolutions の操作的契約が存在する
-  assert.ok(src.includes('critical_resolutions が解消判定の唯一の経路'));
-  assert.ok(src.includes('既出 critical の解消状況は feedback ではなく critical_resolutions で返す'));
-  assert.ok(src.includes('未解消 critical 一覧'));
-  assert.ok(src.includes('verdict は収束判定に使われない'));
-  // (4) EVAL schema に critical_resolutions フィールドが存在する
-  assert.ok(src.includes('critical_resolutions: {'));
-  // (5) evaluator.md 側: 同期文言（issue #227 で同期済み）— critical_resolutions / security_clearance の
-  //     出力契約が記載され、「新規のみ報告」指示が維持され、沈黙=解消の旧記述が存在しないこと。
   assert.ok(agentMd.includes('critical_resolutions'), 'evaluator.md に critical_resolutions 契約が記載されていること（issue #227）');
   assert.ok(agentMd.includes('security_clearance'), 'evaluator.md に security_clearance 契約が記載されていること（issue #227）');
   assert.ok(agentMd.includes('新規の critical/major のみ報告'));

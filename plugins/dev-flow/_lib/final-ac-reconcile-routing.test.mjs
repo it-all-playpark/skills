@@ -16,9 +16,10 @@
 //   (r3) fixes=1 + ac_results:null → unavailable + HOLD + reasons に 'Final AC reconcile 判定不能'
 //   (r4) fixes=1 + ac_results で ac_index 重複 → unavailable + HOLD
 //   (r5) fixes=1 + ac_index:1 が satisfied:false → reverified + HOLD + reasons に 'AC 未達'
-//        + post-summary prompt に 'AC-FINAL-2' + result.final_unsatisfied_ac===true
+//        + result.final_unsatisfied_ac===true + critical AC-FINAL-2 append が reasons の
+//        'ledger 未収束' に反映 + journal-save prompt に final_ac_reconcile:reverified
 //   (r6) fixes=1 + test#final red → 'final-ac-reconcile' 不発 + skipped + HOLD（'final test red'）
-//        + post-summary prompt に 'AC 判定は stale'
+//        + journal-save prompt に final_ac_reconcile:skipped
 //   (r7) acceptance_criteria:[] + fixes=1 → Analyze needs_clarification で早期終了 →
 //        'final-ac-reconcile' 不発（agent 浪費ゼロの実証。acCount===0 の skip 判定自体は
 //        _lib/final-ac-reconcile.test.mjs の shouldRunFinalAcReconcile 単体テストが決定論的に担保）
@@ -29,7 +30,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -120,10 +121,9 @@ function createResponder(overrides = {}) {
       };
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/x.ts'] };
+    if (label === 'merge-tier-facts') return mergeTierFacts({ files: ['src/x.ts'] });
     if (label === 'changed-files-final') return { files: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
     if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
@@ -139,7 +139,7 @@ function createResponder(overrides = {}) {
 function makeSandbox({ overrides = {}, fixesApplied = 0 } = {}) {
   return makeRecordingSandbox(createResponder(overrides), {
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: fixesApplied }),
-    args: '331',
+    args: devFlowArgs('331'),
   });
 }
 
@@ -257,9 +257,16 @@ test("[final-ac-reconcile] (r5) fixes=1 + AC-2 不成立 → reverified + HOLD +
   );
   assert.equal(result?.final_unsatisfied_ac, true, `(r5) final_unsatisfied_ac は true のはずだが ${JSON.stringify(result?.final_unsatisfied_ac)}`);
 
-  const summaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(summaryCall, "(r5) 'post-summary' の呼び出しが存在すること");
-  assert.ok(summaryCall.prompt.includes('[final-reconcile 不成立]'), "(r5) post-summary prompt に '[final-reconcile 不成立]' が含まれること（critical append の実証）");
+  // critical append の実証: AC-FINAL-2 ledger item（critical, unchecked）が classifyMergeTier の
+  // convergence 判定に反映され 'ledger 未収束（未 checked blocking 残）' reason として返り値に現れる
+  // + journal-save prompt に埋め込まれる telemetry JSON（final_ac_reconcile:reverified）で検証する
+  assert.ok(
+    (result?.merge_tier_reasons ?? []).some((r) => r.includes('ledger 未収束')),
+    `(r5) merge_tier_reasons に 'ledger 未収束' を含む要素（critical AC-FINAL append の証拠）が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall, "(r5) 'journal-save' の呼び出しが存在すること");
+  assert.ok(journalCall.prompt.includes('"final_ac_reconcile":"reverified"'), '(r5) journal-save prompt に final_ac_reconcile:reverified の telemetry JSON が含まれること');
 });
 
 // ============================================================
@@ -284,9 +291,12 @@ test("[final-ac-reconcile] (r6) fixes=1 + test#final red → final-ac-reconcile 
     `(r6) merge_tier_reasons に 'final test red' が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
   );
 
-  const summaryCall = calls.find((c) => c.label === 'post-summary');
-  assert.ok(summaryCall, "(r6) 'post-summary' の呼び出しが存在すること");
-  assert.ok(summaryCall.prompt.includes('AC 判定は stale'), "(r6) post-summary prompt に 'AC 判定は stale' が含まれること");
+  // AC 判定が stale であることの証拠: final test red により final-ac-reconcile 自体が不発
+  // （skipped）のまま journal-save prompt に埋め込まれる telemetry JSON に反映される
+  // + 返り値 merge_tier===HOLD（上で確認済み）
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall, "(r6) 'journal-save' の呼び出しが存在すること");
+  assert.ok(journalCall.prompt.includes('"final_ac_reconcile":"skipped"'), '(r6) journal-save prompt に final_ac_reconcile:skipped の telemetry JSON が含まれること');
 });
 
 // ============================================================
