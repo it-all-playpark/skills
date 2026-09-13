@@ -172,6 +172,23 @@ setup() {
     [ -n "$epoch_line" ] && [ -n "$deps_line" ] && [ "$epoch_line" -lt "$deps_line" ]
 }
 
+# ---- (6d) epoch_end は deps install / detect-stack 完了後（epoch 以降）で採る ----
+
+@test "(6d) epoch_end は epoch 以上かつ deps/stack 完了後の時刻" {
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '(.epoch_end | type) == "number" and (.epoch_end == (.epoch_end | floor))'
+    echo "$output" | jq -e '.epoch_end >= .epoch'
+    # 静的 pin: epoch_end の採取行が deps install / detect-stack より後にある
+    epoch_end_line="$(grep -n '^epoch_end="\$(date +%s)"' "$SCRIPT" | head -1 | cut -d: -f1)"
+    deps_line="$(grep -n 'ensure-worktree-deps.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
+    stack_line="$(grep -n 'detect-stack.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
+    [ -n "$epoch_end_line" ] && [ -n "$deps_line" ] && [ -n "$stack_line" ]
+    [ "$epoch_end_line" -gt "$deps_line" ]
+    [ "$epoch_end_line" -gt "$stack_line" ]
+}
+
 # ---- (7) push -u 後は origin/feature/issue-N も一致扱い ----
 
 @test "(7) push -u 後の upstream (origin/feature/issue-1) は一致扱い" {

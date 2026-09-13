@@ -26,6 +26,7 @@ function validRaw(overrides = {}) {
     deps: { ok: true, note: 'npm:installed' },
     stack: { frameworks: ['next', 'react'] },
     epoch: 1787000000,
+    epoch_end: 1787000060,
     ...overrides,
   };
 }
@@ -43,6 +44,7 @@ test('validatePrerunSetup: 正常な setup は各値をそのまま返し framew
   assert.deepEqual(result.deps, { ok: true, note: 'npm:installed' });
   assert.deepEqual(result.frameworks, ['next', 'react']);
   assert.equal(result.epoch, 1787000000);
+  assert.equal(result.epoch_end, 1787000060);
 });
 
 // ── validatePrerunSetup: raw 自体が欠落/非object/配列 ───────────────────────
@@ -127,6 +129,22 @@ test('validatePrerunSetup: epoch が文字列("1000")は「必須キーが欠落
   assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch/);
 });
 
+test('validatePrerunSetup: epoch_end が 0 は「必須キーが欠落/型不正: epoch_end」で throw する', () => {
+  const raw = validRaw({ epoch_end: 0 });
+  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch_end/);
+});
+
+test('validatePrerunSetup: epoch_end 欠落は「必須キーが欠落/型不正: epoch_end」で throw する', () => {
+  const raw = validRaw();
+  delete raw.epoch_end;
+  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch_end/);
+});
+
+test('validatePrerunSetup: epoch_end が非整数(12.5)は「必須キーが欠落/型不正: epoch_end」で throw する', () => {
+  const raw = validRaw({ epoch_end: 12.5 });
+  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch_end/);
+});
+
 // ── validatePrerunSetup: issue 一致（stale setup の持ち込み防止） ──────────────
 
 test('validatePrerunSetup: issue 欠落/非整数は必須キー欠落として throw', () => {
@@ -170,7 +188,7 @@ test('validatePrerunSetup: 未知キーがあっても throw しない', () => {
 // ── PRERUN_SETUP_REQUIRED ───────────────────────────────────────────────────
 
 test('PRERUN_SETUP_REQUIRED: 必須キー一覧を定義する', () => {
-  assert.deepEqual(PRERUN_SETUP_REQUIRED, ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch']);
+  assert.deepEqual(PRERUN_SETUP_REQUIRED, ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch', 'epoch_end']);
 });
 
 // ── rejectLegacyBaseArg ──────────────────────────────────────────────────────

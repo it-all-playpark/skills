@@ -378,6 +378,16 @@ else
 fi
 
 # ============================================================================
+# epoch_end: deps install / detect-stack 完了後の時刻 (Analyze 開始マークの給電元)
+# ============================================================================
+
+# analyze_start は「isolation-probe 直前」の時刻であるべきで、epoch（deps install 前）を
+# 使うと deps install + wrapper turn + probe spawn が丸ごと analyze の phase_durations に
+# 付け替わる。epoch_end はここ（deps/stack 完了後）で採り、Setup の決定論処理時間は
+# どの phase にも属さない残差（duration_seconds − Σphase_durations）に留める。
+epoch_end="$(date +%s)"
+
+# ============================================================================
 # Output
 # ============================================================================
 
@@ -417,6 +427,7 @@ jq -n \
     --argjson deps "$deps_json" \
     --argjson stack "$stack_json" \
     --argjson epoch "$epoch" \
+    --argjson epoch_end "$epoch_end" \
     '
     {ok: $ok, issue: $issue}
     + (if $have_repo then {repo: $repo} else {} end)
@@ -425,7 +436,7 @@ jq -n \
     + (if $have_head then {head: $head} else {} end)
     + (if $have_worktree_error then {worktree_error: $worktree_error} else {} end)
     + {worktree_status: $worktree_status, worktree_removed: $worktree_removed}
-    + {clean: $clean, deps: $deps, stack: $stack, epoch: $epoch}
+    + {clean: $clean, deps: $deps, stack: $stack, epoch: $epoch, epoch_end: $epoch_end}
     '
 
 exit 0

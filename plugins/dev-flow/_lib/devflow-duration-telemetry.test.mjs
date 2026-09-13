@@ -45,7 +45,10 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 function makeSandbox(analyzeReq, epochMode) {
   const journalPrompts = [];
   const clockCalls = []; // clock# probe の起動 label を発火順に記録（AC-1 の決定論検証用）
-  let epoch = 1000;
+  // devFlowArgs（vm-sandbox.mjs）の args.setup.epoch_end=1050 より後から単調増加させる
+  // （analyze_start は PRERUN.epoch_end から給電されるため、それ以降の給電値が analyze_start
+  // より小さいと phase_durations.analyze が負の diff で欠落する）。
+  let epoch = 1050;
 
   // 給電対象 stub 応答へ epoch を単調増加で付与する（fail モードでは何もしない = epoch 省略）。
   function withEpoch(obj) {
@@ -281,9 +284,10 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、j
   }
   assert.ok(result !== null && result !== undefined, `workflow は正常 return するべきだが null/undefined だった（error: ${error?.name}: ${error?.message}）`);
 
-  // start / analyze_start は args.setup.epoch（dev-flow-prerun）から給電されるので、epoch 給電が
-  // 成立するモードでは fail-open 警告が出てはならない。isolation-probe（Write-only agent、epoch なし）
-  // から給電すると毎 run 警告 + null になる regression を pin する。
+  // start は args.setup.epoch、analyze_start は args.setup.epoch_end（いずれも dev-flow-prerun 応答）
+  // から給電されるので、epoch 給電が成立するモードでは fail-open 警告が出てはならない。
+  // isolation-probe（Write-only agent、epoch なし）から給電すると毎 run 警告 + null になる
+  // regression を pin する。
   const clockWarnings = getLogLines().filter((l) => /clock#(start|analyze_start)/.test(l));
   assert.deepEqual(
     clockWarnings,
@@ -312,7 +316,7 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、j
   );
   assert.ok(
     /"analyze":\d+/.test(capturedPrompt),
-    `journal-log prompt の phase_durations に "analyze":<number> が含まれるべきだが含まれていなかった（analyze_start は args.setup.epoch、analyze_end は issue-meta から給電される）。prompt:\n${capturedPrompt}`,
+    `journal-log prompt の phase_durations に "analyze":<number> が含まれるべきだが含まれていなかった（analyze_start は args.setup.epoch_end、analyze_end は issue-meta から給電される）。prompt:\n${capturedPrompt}`,
   );
   assert.ok(
     /"implement":\d+/.test(capturedPrompt),

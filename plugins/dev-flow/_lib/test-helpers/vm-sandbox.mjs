@@ -67,7 +67,7 @@ export function devFlowArgs(issue = 1, setupOverrides = {}) {
       ok: true, issue: Number(n), base: 'main', base_source: 'origin/HEAD',
       worktree: '/tmp/wt', branch: `feature/issue-${n}`, head: 'a'.repeat(40),
       worktree_status: 'created', clean: { ok: true },
-      deps: { ok: true, note: '' }, stack: { frameworks: [] }, epoch: 1000,
+      deps: { ok: true, note: '' }, stack: { frameworks: [] }, epoch: 1000, epoch_end: 1050,
       ...setupOverrides,
     },
   };

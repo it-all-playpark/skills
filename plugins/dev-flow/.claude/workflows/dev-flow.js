@@ -211,7 +211,7 @@ function resolvePositiveIntArg(args, name) {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch'];
+const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch', 'epoch_end'];
 
 const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
@@ -271,6 +271,10 @@ function validatePrerunSetup(raw, issue) {
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
+  // epoch_end は deps install / detect-stack 完了後（prerun.sh 末尾）で採る第2の時刻。
+  // analyze_start はここから給電する（epoch から給電すると deps install 等の Setup 決定論処理
+  // 時間が丸ごと analyze の phase_durations に付け替わるため）。
+  if (!(Number.isInteger(raw.epoch_end) && raw.epoch_end > 0)) fail('epoch_end', raw.epoch_end);
 
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
   const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
@@ -285,6 +289,7 @@ function validatePrerunSetup(raw, issue) {
     deps: { ok: raw.deps.ok, note: raw.deps.note },
     frameworks,
     epoch: raw.epoch,
+    epoch_end: raw.epoch_end,
   };
 }
 
@@ -721,14 +726,16 @@ function mergeSubagentCounts(counts, byType) {
 // ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
 // I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
-// start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s）、end は Merge tier
-// 末尾の post-summary 応答の optional epoch から給電し、
-// 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
-// pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
+// start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s、deps install 前）、
+// analyze_start は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack 完了後、
+// prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の optional
+// epoch から給電し、残り 9 mark（analyze_end/plan_end/implement_end/validate_end/evaluate_end/
+// pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
-// 対応 duration キー欠落）。analyze_start は start と同じ prerun epoch から給電する — Setup に
-// epoch を返せる exec-proxy が無く（isolation-probe は Write-only agent）、workflow は Date.now を
-// 使わないため、isolation-probe の spawn 1 回分は analyze 区間に含まれる（Setup 単独の区間は無い）。
+// 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
+// 数分かかりうる）を analyze の phase_durations に付け替えないため — start〜analyze_start の
+// 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
+// 残差（duration_seconds − Σphase_durations）に留める。
 // contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
 // 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
@@ -4661,7 +4668,7 @@ REPO = PRERUN.repo
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
 log(`base: origin/${BASE}（source: prerun）`)
 log(`worktree: ${WT} (branch ${PRERUN.branch}, head ${PRERUN.head.slice(0, 8)})`)
-// start mark は prerun の epoch（date +%s）から給電する。必須キーなので常に成立する。
+// start mark は prerun の epoch（deps install 前、date +%s）から給電する。必須キーなので常に成立する。
 feedClockMark('start', { ok: true, epoch: PRERUN.epoch })
 const deps = summarizePrerunDeps(PRERUN.deps)
 DEPS_NOTE = deps.implNote ?? ''
@@ -4753,10 +4760,11 @@ const contractProbePrompt = `## Objective\n`
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
 // ============================================================
 phase('Analyze')
-// analyze_start は start と同じ prerun epoch を給電する。Setup に epoch を返せる exec-proxy が
-// 無くなった（isolation-probe は Write-only agent で時計を持たず、workflow 自身は Date.now を
-// 使わない）ため、isolation-probe の spawn 1 回分は analyze 区間に計上される（devflow-durations.mjs 参照）。
-feedClockMark('analyze_start', { ok: true, epoch: PRERUN.epoch })
+// analyze_start は prerun の epoch_end（deps install / detect-stack 完了後、prerun.sh 末尾で採る）
+// から給電する。epoch（deps install 前）を使うと deps install の数分が analyze の phase_durations に
+// 付け替わるため区別する。isolation-probe の spawn 1 回分のみが analyze 区間に計上される
+// （devflow-durations.mjs 参照）。
+feedClockMark('analyze_start', { ok: true, epoch: PRERUN.epoch_end })
 // 決定論 parse 降格経路: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
 // analyze-issue --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
 // fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ

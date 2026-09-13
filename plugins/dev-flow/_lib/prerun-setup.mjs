@@ -18,7 +18,7 @@
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-export const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch'];
+export const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch', 'epoch_end'];
 
 export const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
@@ -78,6 +78,10 @@ export function validatePrerunSetup(raw, issue) {
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
+  // epoch_end は deps install / detect-stack 完了後（prerun.sh 末尾）で採る第2の時刻。
+  // analyze_start はここから給電する（epoch から給電すると deps install 等の Setup 決定論処理
+  // 時間が丸ごと analyze の phase_durations に付け替わるため）。
+  if (!(Number.isInteger(raw.epoch_end) && raw.epoch_end > 0)) fail('epoch_end', raw.epoch_end);
 
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
   const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
@@ -92,6 +96,7 @@ export function validatePrerunSetup(raw, issue) {
     deps: { ok: raw.deps.ok, note: raw.deps.note },
     frameworks,
     epoch: raw.epoch,
+    epoch_end: raw.epoch_end,
   };
 }
 
