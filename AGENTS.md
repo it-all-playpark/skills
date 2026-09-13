@@ -116,12 +116,11 @@ fan-out は workflow script が JS で保持し、中間 state は script 変数
   excludedCommands は先頭トークンでマッチするため node 前置は付けない）。
 - Claude 専用 (workflow 依存)。cross-vendor portability は dev-flow / pr-iterate のみ放棄する例外扱い。
 
-**内部仕様の詳細**（shape 判定と 3 tier 経路 / micro lite route / subagent の model・effort 割り当て /
-gate_policy enum / telemetry キー一覧 / W7 distrust 正当化クラスと sunset path / 指示規範性 (prescription) の正当化クラス / inline 生成区間の制約 /
-exec-proxy の失敗ポリシー表 / dev-improve のループ設計）は
-[`.claude/rules/dev-flow.md`](.claude/rules/dev-flow.md) を参照。
-dev-flow 本体 (`plugins/dev-flow/.claude/workflows/` / `plugins/dev-flow/agents/` /
-`plugins/dev-flow/_lib/` / `tools/`) を触るときに自動で読み込まれる。
+不変条件（fail-closed の理由・sunset トリガ・起動形の制約）は
+[`.claude/rules/dev-flow.md`](.claude/rules/dev-flow.md) を参照。dev-flow 本体
+(`plugins/dev-flow/.claude/workflows/` / `plugins/dev-flow/agents/` / `plugins/dev-flow/_lib/` /
+`tools/`) を触るときに自動で読み込まれる。経路・enum・telemetry キー一覧・W7 表・失敗ポリシー表・
+inline 生成・dev-improve の詳細は `plugins/dev-flow/dev-flow/references/` を参照。
 
 ### 設計原則 (要約)
 

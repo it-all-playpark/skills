@@ -499,15 +499,15 @@ function mergeSubagentCounts(counts, byType) {
 // args 正規化: 単体 /pr-iterate <pr> でも dev-flow からの workflow('pr-iterate', {pr}) でも受ける
 const PR = resolvePositiveIntArg(args, 'pr')
 const POST_TERMINAL_SUMMARY = args?.post_terminal_summary !== false
-// issue の受入条件（issue #541）。dev-flow が nested 起動時に渡す。単体起動（/pr-iterate <pr>）は
+// issue の受入条件。dev-flow が nested 起動時に渡す。単体起動（/pr-iterate <pr>）は
 // issue context を持たないため未指定になり、acceptanceCriteriaBlock が空文字を返して
-// 従来どおり AC 無しでレビューする（fail-open — AC 取得のために gh 呼び出しを増やさない）。
+// AC 無しでレビューする（fail-open — AC 取得のために gh 呼び出しを増やさない）。
 const ACCEPTANCE_CRITERIA = args?.acceptance_criteria
 const MAX = args?.max_iterations == null
   ? 10
   : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
-// NESTED: dev-flow が workflow('pr-iterate') を nested 起動する際に渡す呼び出し元情報（issue #550
-// 案3）。cwd/head_ref は必須（欠落は明示 throw。legacy fallback や他形式の受理はしない）、repo/epoch は
+// NESTED: dev-flow が workflow('pr-iterate') を nested 起動する際に渡す呼び出し元情報。
+// cwd/head_ref は必須（欠落は明示 throw。legacy fallback や他形式の受理はしない）、repo/epoch は
 // optional。単体起動（/pr-iterate <pr>）は未指定のため NESTED=null。
 const NESTED = args?.nested == null
   ? null
@@ -520,14 +520,14 @@ const NESTED = args?.nested == null
       }
       return n
     })()
-const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション（issue #126）
+const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション
 
 // run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
-// trackedAgent() 経由で呼び、SUBAGENT_COUNTS へ計上する（issue #445。dev-flow.js と同型）。
+// trackedAgent 経由で呼び、SUBAGENT_COUNTS へ計上する（dev-flow.js と同型）。
 // StructuredOutput 契約違反（subagent が StructuredOutput を呼ばず完了 — 一過性のモデル逸脱）に
-// 限定して同一 prompt で 1 回だけリトライする（issue #527）。それ以外の throw は従来どおり
+// 限定して同一 prompt で 1 回だけリトライする。それ以外の throw はそのまま
 // 伝播させる（fail-closed 維持）。retry も実 agent() 起動なので SUBAGENT_COUNTS へ再計上する。
-// issue #533 review: リトライは `opts.retryOnContractViolation === true` の opt-in call site
+// review: リトライは `opts.retryOnContractViolation === true` の opt-in call site
 // 限定（既定はリトライしない）。commit・push・journal 追記・PR コメント投稿等の副作用を伴う
 // call site を無差別リトライすると、副作用完了後に StructuredOutput 未達で終わった agent を
 // 同一 prompt で再実行して二重 push・journal 二重追記・重複コメントを起こし得るため、副作用の
@@ -535,10 +535,10 @@ const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判�
 // のみで有効化する。pr-iterate.js の call site（fix / review / commit-ensure / journal-save /
 // journal-log 等）はいずれも副作用を伴うため opt-in しない（dev-flow.js と同型実装のみ共有）。
 const SUBAGENT_COUNTS = {};
-// ABORT_CTX（issue #607）: top-level abort handoff が catch から参照する「直前に何が起きていたか」の
+// ABORT_CTX: top-level abort handoff が catch から参照する「直前に何が起きていたか」の
 // 可変 state。pr-iterate は単一 phase（'Iterate'）固定のため phase は書き換えない。label は
 // trackedAgent が呼ばれるたびに最新化し、iterate_rounds は review⇄fix loop の各 iteration 冒頭で
-// 更新する（dev-flow.js の ABORT_CTX と同趣旨。issue #445 型注記と同じく try 内 const/let は catch から
+// 更新する（dev-flow.js の ABORT_CTX と同趣旨。型注記と同じく try 内 const/let は catch から
 // 見えないため、try 外のこの object へ写す）。
 const ABORT_CTX = { phase: 'Iterate', label: null, iterate_rounds: 0 }
 async function trackedAgent(prompt, opts) {
@@ -555,7 +555,7 @@ async function trackedAgent(prompt, opts) {
   }
 }
 
-// fail-open 規定の exec-proxy 呼び出し用ラッパ（issue #499）。trackedAgent が throw した場合
+// fail-open 規定の exec-proxy 呼び出し用ラッパ。trackedAgent が throw した場合
 // （isolation guard 等による StructuredOutput 未返却）も run 全体を落とさず null に落とす。
 // throw と schema 不一致（既存の null 返却）を呼び出し側で同一の fail-open 経路へ合流させる。
 async function failOpenAgent(prompt, opts) {
@@ -567,7 +567,7 @@ async function failOpenAgent(prompt, opts) {
   }
 }
 
-// ---- Review de-churn モデル（issue #126。#123 Plan ループ収束モデルの Review 版を inline 複製）----
+// ---- Review de-churn モデル（Plan ループ収束モデルの Review 版を inline 複製）----
 // cold start の pr-reviewer は moving target を生む（毎回 fresh context で全 PR diff を再レビューし、
 // Adversarial Opener の「能動的に探せ」指示と相まって、安定コードに新しい主観的 major を捻り出しうる）。
 // orchestrator 側で churn だけを殺す（ゲートは堅いまま）:
@@ -576,10 +576,10 @@ async function failOpenAgent(prompt, opts) {
 //   3. fix の applied:false を検出したら status:'fix_failed' で即座に人間へエスカレーション
 //      （無言で MAX 回燃やさない。現状この返り値は捨てられていた）
 //   4. critical/major は常にブロック（**relax は入れない** = ゲート後退なし）。
-//      #123 の PLAN_RELAX_FROM 相当は移植しない — Review は main にマージされる実コードの最後のゲートで
+//      Plan ループ収束モデルの PLAN_RELAX_FROM 相当は移植しない — Review は main にマージされる実コードの最後のゲートで
 //      merge は手動。「N 回回ったから major 残ったまま approve」は既知の major 出荷になり実害が大きい。
 //   5. lgtm / stuck / fix_failed / max_reached は throw せず status で返し、終端理由を log() で可視化。
-// loader 制約（ESM import 不可）への対応として、stuck 検出は _lib/stuck-detector.mjs を canonical とし tools/sync-inlines.mjs で inline 生成する（手書き複製は廃止。issue #208）。
+// loader 制約（ESM import 不可）への対応として、stuck 検出は _lib/stuck-detector.mjs を canonical とし tools/sync-inlines.mjs で inline 生成する（本ファイルに手書き複製は持たない）。
 
 // ==== BEGIN inline: _lib/stuck-detector.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // dev-flow.js の planSeen/blockSeen/evalSeen と pr-iterate.js の reviewSeen が共有する
@@ -1095,7 +1095,7 @@ function ciCheckPrompt({ pr, repo }) {
 }
 // ==== END inline: _lib/ci-check.mjs ====
 
-// journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う（issue #494）。
+// journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う。
 const JOURNAL_SAVE_RESULT = {
   type: 'object',
   required: ['saved'],
@@ -1117,7 +1117,7 @@ const REVIEW = {
         required: ['severity', 'topic', 'file', 'description', 'suggestion'],
         properties: {
           severity: { type: 'string', enum: ['critical', 'major', 'minor'] },
-          // 同一問題の再出現を orchestrator が stuck 突合するための安定 ID（issue #126）。
+          // 同一問題の再出現を orchestrator が stuck 突合するための安定 ID。
           // 既出指摘を再提起する場合は前ラウンドと同じ文字列を必ず再利用する。
           topic: { type: 'string' },
           file: { type: 'string' },
@@ -1128,7 +1128,7 @@ const REVIEW = {
       },
     },
     summary: { type: 'string', maxLength: 200 },
-    // 検証根拠の箇条書き（1 項目 1 文）。summary は結論 1-2 文に留める（issue #242）
+    // 検証根拠の箇条書き（1 項目 1 文）。summary は結論 1-2 文に留める
     verification_evidence: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 120 } },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
   },
@@ -1145,21 +1145,21 @@ const FIX = {
 }
 
 
-// issue #437: 終端 dirty 検出（AC-2）と fix 適用後 commit 保証（AC-3）の exec-proxy スキーマ。
+// 終端 dirty 検出と fix 適用後 commit 保証の exec-proxy スキーマ。
 const DIRTY_STATUS = { type: 'object', required: ['dirty'], properties: { dirty: { type: 'boolean' }, files: { type: 'number' } } }
 const COMMIT_ENSURE = { type: 'object', required: ['dirty'], properties: { dirty: { type: 'boolean' }, committed: { type: 'boolean' }, pushed: { type: 'boolean' } } }
 
 phase('Iterate')
 
-// repo (owner/name) probe: PR の base repo URL から owner/name を導出する（telemetry の repo 解決用。issue #309）。
+// repo (owner/name) probe: PR の base repo URL から owner/name を導出する（telemetry の repo 解決用）。
 // fail-open — probe 失敗/null でも repo を省略するだけで workflow は継続する。
-// head_ref/base_ref/cwd は isolation probe（issue #449）の失敗メッセージ・probe 対象パス解決にも使う。
+// head_ref/base_ref/cwd は isolation probe の失敗メッセージ・probe 対象パス解決にも使う。
 const PR_META = {
   type: 'object', required: ['url'],
   properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' }, epoch: { type: 'number' } },
 }
-// nested 起動（dev-flow → workflow('pr-iterate')）では pr-meta probe を起動しない（issue #550
-// 案3）。根拠: cwd/head_ref/repo/epoch は dev-flow が Setup/PR phase で既に確定済みの値として
+// nested 起動（dev-flow → workflow('pr-iterate')）では pr-meta probe を起動しない。
+// 根拠: cwd/head_ref/repo/epoch は dev-flow が Setup/PR phase で既に確定済みの値として
 // args.nested に保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
 let prMeta
 let REPO
@@ -1296,7 +1296,7 @@ function isolationFailureMessage({ worktree, branch, startRef, workflowName, wor
 
 // isolation probe: bg 起動セッションが cwd を worktree へ isolate していないと fix stage の
 // Write/Edit tool 呼び出しが harness の bg-isolation guard に拒否される。review loop（fix stage の
-// 手前）に進入する前に probe で早期検知する（issue #449。dev-flow.js Setup phase と同型パターン）。
+// 手前）に進入する前に probe で早期検知する（dev-flow.js Setup phase と同型パターン）。
 // 失敗（written:false）は fail-closed（即中断）、probe 自体の失敗（null）は fail-open（警告のみ）。
 const ISOLATION_PROBE = {
   type: 'object', required: ['written'],
@@ -1314,10 +1314,10 @@ if (!prMeta?.cwd) log('⚠️ pr-meta が cwd を返さなかったため isoWt=
 try {
 // isoTargetPath: 回避手順で提示する新規 worktree 先。isoWt（書き込みに失敗した共有 checkout の cwd）
 // とは別の孤立した先を提示する必要があるため、cwd 自体を git worktree add の対象にしない
-// （issue #455 レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
+// （レビュー指摘: 共有 checkout の cwd を worktree 作成先として提示するのは誤り）。
 const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claude/worktrees/pr-${PR}`
-// isolation cleanup（issue #493）: probe の直前に前 run が残した stale な probe artifact を除去する
-// （残っていると isolation が正常でも probe が written:false に倒れる — issue #482）。
+// isolation cleanup: probe の直前に前 run が残した stale な probe artifact を除去する
+// （残っていると isolation が正常でも probe が written:false に倒れる）。
 // 除去範囲は ISOLATION_PROBE_CLEANUP_GLOB（`.devflow-tmp/.isolation-probe*` — probe artifact の
 // token 形・legacy 形のみ）に絞る: nested 起動（dev-flow → workflow('pr-iterate')）
 // では isoWt が実行中の dev-flow worktree 自身になり、`.devflow-tmp` 全体を消すと当該 run が既に
@@ -1325,14 +1325,14 @@ const isoTargetPath = `${isoWt.replace(/\/\.claude\/worktrees\/.*$/, '')}/.claud
 // run 途中で失う。`.devflow-tmp` 全体の除去は run 開始
 // 時点である dev-flow Setup 側の責務。fail-open: 失敗しても run は継続する（残っていれば直後の
 // probe が written:false で fail-closed に倒れ、復旧手順は同一）。
-// nested 起動時は skip する（issue #550 案3。skip 理由は上の pr-meta 分岐で log 済み — dev-flow
+// nested 起動時は skip する（skip 理由は上の pr-meta 分岐で log 済み — dev-flow
 // Setup が run 開始時に .devflow-tmp 全体を cleanup 済みのため重複起動が不要）。
 let isoClean = null
 if (!NESTED) {
   isoClean = await failOpenAgent(isolationCleanupPrompt(isoWt, ISOLATION_PROBE_CLEANUP_GLOB), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Iterate' })
   if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
 }
-// isoToken: probe 対象パスを run 毎に一意にする（issue #521）。pr-meta probe（fail-open）が
+// isoToken: probe 対象パスを run 毎に一意にする。pr-meta probe（fail-open）が
 // 取得した epoch を使い、取得できなければ PR 番号へ fallback する。nested 起動（dev-flow →
 // workflow('pr-iterate')）時、probe ファイルは実行中 dev-flow run の worktree の
 // `.devflow-tmp/.isolation-probe-<token>` に書かれるが一意名のため dev-flow 側の .devflow-tmp
@@ -1342,8 +1342,7 @@ const isoProbe = await failOpenAgent(isolationProbePrompt(isoWt, isoToken), { ag
 if (isoProbe && isoProbe.written === false) {
   throw new Error(isolationFailureMessage({
     // startRef は PR の head（base ではない）— pr-iterate は既存 PR の変更を含む worktree を
-    // 再現させる必要がある。base 起点だと fix 対象の diff を持たない worktree を提示してしまう
-    // （issue #455 レビュー指摘）。
+    // 再現させる必要がある。base 起点だと fix 対象の diff を持たない worktree を提示してしまう。
     worktree: isoWt, branch: prMeta?.head_ref || '?', startRef: `origin/${prMeta?.head_ref || '?'}`,
     workflowName: 'pr-iterate', workflowArgs: PR, targetPath: isoTargetPath, error: isoProbe.error,
   }))
@@ -1354,25 +1353,25 @@ let lastReview = null
 let lgtm = false
 let i = 0
 let terminal = null              // 早期終端理由（stuck / fix_failed）。null なら lgtm / max_reached で判定
-let terminalPath = 'review'  // 最終 iteration の終端経路 'ci' | 'review'（issue #601）。各 iteration 冒頭で review に戻し、CI-failed 分岐で ci に上書きする
-let fixTerminalReason = null  // fix_failed の 3 分岐 'null_after_retry' | 'applied_false' | 'commit_unensured'（issue #601）。fix_failed 以外は null
-let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う。issue #233）
-let fixNullRetries = 0  // fix agent が null または throw（schema 不一致・StructuredOutput 契約違反等の技術的失敗）で 1 回 retry した累積回数。issue #347 / #520
-let reviewNullRetries = 0  // review agent が throw または null で schema-retry した累積回数。issue #437
-let fixUncommittedRecovered = 0  // fix が applied:true なのに未コミット変更が残っており ensure-committed が commit+push で回収した回数（issue #437）
-let totalCiWaitSeconds = 0  // ci-check の attempt ループの累積待機秒数（全 ci-check ラウンド合算。issue #324）
+let terminalPath = 'review'  // 最終 iteration の終端経路 'ci' | 'review'。各 iteration 冒頭で review に戻し、CI-failed 分岐で ci に上書きする
+let fixTerminalReason = null  // fix_failed の 3 分岐 'null_after_retry' | 'applied_false' | 'commit_unensured'。fix_failed 以外は null
+let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale-eval 警告の判定に使う）
+let fixNullRetries = 0  // fix agent が null または throw（schema 不一致・StructuredOutput 契約違反等の技術的失敗）で 1 回 retry した累積回数
+let reviewNullRetries = 0  // review agent が throw または null で schema-retry した累積回数
+let fixUncommittedRecovered = 0  // fix が applied:true なのに未コミット変更が残っており ensure-committed が commit+push で回収した回数
+let totalCiWaitSeconds = 0  // ci-check の attempt ループの累積待機秒数（全 ci-check ラウンド合算）
 let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
-// 直近の ci-check#i 応答が返した epoch（issue #443）。dev-flow の iterate_end 給電元として返り値
+// 直近の ci-check#i 応答が返した epoch。dev-flow の iterate_end 給電元として返り値
 // end_epoch に載せる。応答が epoch を欠く/非数値なら更新せず、直前の値（または null）を保持する（fail-open）。
 let lastCiEpoch = null
-const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs。issue #126）
+const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
 
 // fix agent が throw（StructuredOutput 契約違反等の harness 例外）または null（schema 不一致/技術的
-// 失敗）の場合のみ、同一 findings で 1 回だけ再試行する（callReviewAgent と同一契約。issue #437 / #520）。
+// 失敗）の場合のみ、同一 findings で 1 回だけ再試行する（callReviewAgent と同一契約）。
 // applied:false（agent の明示判断による修正不能）は retry しない — stuck 検出等の incentive-structural
 // 機構は不変。retry は iteration ごと最大 1 回で有限（review#N-contract-retry :604-614 と同パターン、
-// MAX 非消費）。issue #347
+// MAX 非消費）
 async function callFixAgent(prompt, i) {
   let fix = null
   try {
@@ -1395,7 +1394,7 @@ async function callFixAgent(prompt, i) {
 }
 
 // review agent の throw（StructuredOutput 契約違反等の harness 例外）と null（schema 不一致）を
-// 同一の契約失敗として扱い、呼び出しごと最大 1 回だけ同一 prompt で再試行する（issue #437）。
+// 同一の契約失敗として扱い、呼び出しごと最大 1 回だけ同一 prompt で再試行する。
 // retry 後も失敗なら null を返し、呼び出し側が status:'review_contract_error' で graceful に終了する。
 async function callReviewAgent(prompt, label) {
   let review = null
@@ -1416,7 +1415,7 @@ async function callReviewAgent(prompt, label) {
   return review
 }
 
-// fix 適用直後の commit 保証（AC-3, issue #437）。fix agent の self-report（applied:true）を信用せず
+// fix 適用直後の commit 保証。fix agent の self-report（applied:true）を信用せず
 // 決定論スクリプトで worktree の未コミット変更を検証し、dirty なら commit+push で回収する。
 // 失敗ポリシー: fail-safe — null/schema 不一致/回収失敗（dirty なのに committed&&pushed でない）は
 // false を返し、呼び出し側が terminal='fix_failed' で人間へエスカレーションする
@@ -1466,7 +1465,7 @@ for (i = 1; i <= MAX; i++) {
   let outcome = classifyReviewRoute(review)
 
   // contract mismatch（approve だが blocking あり）: 同一 iteration 内で 1 回だけ再 review する。
-  // MAX は消費しない — 有限性は「iteration ごと最大 1 回」で担保する（issue #321）。
+  // MAX は消費しない — 有限性は「iteration ごと最大 1 回」で担保する。
   if (outcome.route === 'contract_mismatch') {
     log(`⚠️ iteration ${i}: review contract mismatch — decision=approve だが blocking ${outcome.blocking.length} 件。1 回だけ再 review する`)
     const rereview = await callReviewAgent(
@@ -1501,8 +1500,8 @@ for (i = 1; i <= MAX; i++) {
   }
 
   if (outcome.route === 'ci_gate') {
-    // CI gate — restores the gate lost in eb8aa7e (issue #133)。blocking 0 件の comment/request-changes も
-    // ここへ合流する（AC-1/AC-2、issue #321）。lgtm 確定時の投稿のみ decision で分岐する（approve でなければ捏造しない）。
+    // CI gate — restores the gate lost in eb8aa7e。blocking 0 件の comment/request-changes も
+    // ここへ合流する。lgtm 確定時の投稿のみ decision で分岐する（approve でなければ捏造しない）。
     // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
     // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
     const ci = await failOpenAgent(
@@ -1532,7 +1531,7 @@ for (i = 1; i <= MAX; i++) {
       break
     } else if (ciEff.status === 'error') {
       // status:'error' は check-ci の gh fetch 失敗分類か、proxy の空応答（turn 上限到達等）の fail-open 合成。
-      // 原因を 1 つに断定できないので CI failure と誤解釈せず、実状態の確認手順を添えて人間へ渡す（issue #621）。
+      // 原因を 1 つに断定できないので CI failure と誤解釈せず、実状態の確認手順を添えて人間へ渡す。
       terminal = 'ci_error'
       log(`⚠️ CI check returned error — CI ステータスを確定できなかった（proxy が結果を返さなかった）。gh pr checks ${PR} で実状態を確認すること。人間へエスカレーション`)
       break
@@ -1612,7 +1611,7 @@ for (i = 1; i <= MAX; i++) {
     // outcome.route === 'fix_loop'（blocking あり、decision は request-changes/comment。approve はここへ来ない）
     const blocking = outcome.blocking
 
-    // blocking findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint。issue #126）
+    // blocking findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
     for (const x of blocking) reviewSeen.register(x)
     const stuckTopics = reviewSeen.stuckTopics()
     log(`iteration ${i}: ${effReview.decision} — blocking ${blocking.length} 件`
@@ -1630,19 +1629,19 @@ for (i = 1; i <= MAX; i++) {
       break
     }
 
-    // minor は fix loop の対象外 — issuesText / fix agent プロンプトに一切含めない（AC-5、issue #321）。
+    // minor は fix loop の対象外 — issuesText / fix agent プロンプトに一切含めない。
     // description/suggestion はメタ指示・迂回手順の verbatim 伝播遮断のため buildFixIssuesText で
-    // スクラブしてから埋め込む（issue #503。canonical は _lib/review-finding-scrub.mjs）。
+    // スクラブしてから埋め込む（canonical は _lib/review-finding-scrub.mjs）。
     const issuesText = buildFixIssuesText(blocking)
 
-    // fix は dev-runner agent に直接指示する（旧 pr-fix skill は issue #116 で削除）。
+    // fix は dev-runner agent に直接指示する（専用の pr-fix skill は持たない）。
     const fixPrompt = `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
       + `(2) 下記の指摘を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
       + `解消すべき指摘:\n${issuesText}`
     const { fix, retried } = await callFixAgent(fixPrompt, i)
     if (retried) round.fix_retried = true
 
-    // fix の applied:false を検出して人間へエスカレーション（無言で MAX 回燃やさない。issue #126）。
+    // fix の applied:false を検出して人間へエスカレーション（無言で MAX 回燃やさない）。
     if (fix == null || fix.applied !== true) {
       fixTerminalReason = fix == null ? 'null_after_retry' : 'applied_false'
       terminal = 'fix_failed'
@@ -1664,7 +1663,7 @@ for (i = 1; i <= MAX; i++) {
 const status = lgtm ? 'lgtm' : (terminal ?? 'max_reached')
 log(`pr-iterate 終端: status=${status}（iterations=${Math.min(i, MAX)}）`)
 
-// 異常終端時の worktree dirty 検出（AC-2, issue #437）。advisory telemetry — 失敗は fail-open
+// 異常終端時の worktree dirty 検出。advisory telemetry — 失敗は fail-open
 // （'unknown' + 警告のみ。gate・status には影響しない）。lgtm 終端では probe しない（agent 呼び出し追加ゼロ）。
 let worktreeDirty = null  // 'dirty' | 'clean' | 'unknown' | null(=lgtm で未実施)
 if (status !== 'lgtm') {
@@ -1694,7 +1693,7 @@ log('終端サマリーは comment として投稿する（formal review は投�
 if (POST_TERMINAL_SUMMARY) {
   // formal review（`gh` の `pr review --approve`/`--request-changes` サブコマンド）指示は
   // post-summary prompt に含めない — approve 指示が safety classifier に self-approval として
-  // blocked され、fail-open のため終端サマリが silent に欠落する（issue #524）。
+  // blocked され、fail-open のため終端サマリが silent に欠落する。
   // 投稿は `gh pr comment` 単一経路のみを使う。
   const summaryInstructions = `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${PR} --body-file <BODY_FILE>\`\n`
     + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
@@ -1738,13 +1737,13 @@ const telemetryHandoff = buildJournalHandoffPayload({
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     terminal_path: terminalPath,
     ...(fixTerminalReason ? { fix_terminal_reason: fixTerminalReason } : {}),
-    quality_model_config: QUALITY_MODEL,  // 実行時モデルではなく _lib/quality-model.mjs の設定値（issue #601）
+    quality_model_config: QUALITY_MODEL,  // 実行時モデルではなく _lib/quality-model.mjs の設定値
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs の定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
-    iterate_history: history,  // round ごとの {iteration, decision, summary, blocking, minor}（issue #601）
+    iterate_history: history,  // round ごとの {iteration, decision, summary, blocking, minor}
   },
 })
-// journal handoff（issue #494）: choreography 本体は canonical _lib/journal-handoff.mjs の
-// runJournalHandoff（issue #556）。journal_log_status は 3 値 closed enum
+// journal handoff: choreography 本体は canonical _lib/journal-handoff.mjs の
+// runJournalHandoff。journal_log_status は 3 値 closed enum
 // （logged/save_failed/log_failed）で返り値へ現れる。fail-open は維持（gate 判定には無影響）。
 const journalLogStatus = await runJournalHandoff({
   agent: trackedAgent,
@@ -1781,7 +1780,7 @@ return {
   ...(lastCiEpoch != null ? { end_epoch: lastCiEpoch } : {}),
 }
 } catch (e) {
-  // top-level abort handoff（issue #607）: 終端 handoff 到達前の throw（isolation probe fail-closed 等）でも
+  // top-level abort handoff: 終端 handoff 到達前の throw（isolation probe fail-closed 等）でも
   // journal entry を 1 件残す。表現は buildAbortHandoffPayload の単一形。fail-open で元の例外を必ず rethrow する。
   try {
     const abortPayload = buildAbortHandoffPayload({

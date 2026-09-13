@@ -1,5 +1,5 @@
 // Setup Deps: dev-flow の Setup phase で worktree 確定直後に依存インストールを試みる
-// fail-open exec-proxy 向けの純関数群（issue #120 の ensure-worktree-deps.sh を接続する）。
+// fail-open exec-proxy 向けの純関数群（ensure-worktree-deps と detect-stack を 1 回の exec-proxy で実行する）。
 // setupDepsPrompt: dev-runner-haiku へ渡す verbatim 転写 prompt を組み立てる。
 // summarizeDepsResult: exec-proxy から返る JSON を { outcome, logLine, implNote } へ正規化する。
 //
@@ -8,8 +8,12 @@
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
 export function setupDepsPrompt(worktree) {
-  return `cd ${worktree} で作業。次を実行し **stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）:\n`
+  return `cd ${worktree} で作業。次の 2 コマンドを順に実行せよ（各コマンドは bare 名を先頭トークンとする単文）:\n`
     + `ensure-worktree-deps --path ${worktree} --lockfile-only --skip-custom\n`
+    + `detect-stack ${worktree}\n`
+    + `1 つ目の stdout の JSON 1 行を **そのまま verbatim** で返し（判定や脚色をしない）、`
+    + `2 つ目の stdout JSON の frameworks 配列を、その object に frameworks フィールドとして追加せよ`
+    + `（2 つ目が失敗した / JSON でない場合は frameworks を省略する）。\n`
     + `全手順の最後に Bash で \`date +%s\` を 1 回実行し、出力の整数を epoch フィールドとして返せ。`
     + `取得に失敗した場合は epoch を省略してよい（deps 処理の status 判定には一切影響させるな）。`;
 }
@@ -104,4 +108,14 @@ export function summarizeDepsResult(res) {
     logLine: `⚠️ Setup(deps): 未知の status "${status}" — 依存インストール結果を確認できなかった（fail-open で続行）`,
     implNote: warningImplNote(`exec-proxy が未知の status "${status}" を返した`),
   };
+}
+
+// worktree-deps 応答から detect-stack の frameworks を取り出す。欠落・不正は [] （fail-open: 注入判定の入力であり gate 入力ではない）
+export function extractFrameworks(res) {
+  if (typeof res !== 'object' || res === null || Array.isArray(res) || !Array.isArray(res.frameworks)) return [];
+  return res.frameworks.filter((f) => typeof f === 'string');
+}
+
+export function hasNextJs(frameworks) {
+  return Array.isArray(frameworks) && frameworks.includes('next');
 }

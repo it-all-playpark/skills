@@ -3,7 +3,7 @@
 // 特定パス起動の理由を書いてはならない」）の正当化を、外形的理由（「分類器に検知されるから」）
 // から実体的理由（exec-proxy prompt は決定論スクリプトへの verbatim 転写契約であり、起動形の
 // 正しさは excludedCommands という設定側の不変条件であること）へ書き換えたことを source-pin する
-// 静的テスト（tdd: テスト先行。issue #503 AC-1）。
+// 静的テスト。
 //
 // implementer-guard-blocked-contract.test.mjs の source-pin 方式を踏襲する。
 //
@@ -14,9 +14,8 @@
 //       と '**例外はない**'）が引き続き存在する（規範自体の緩和ではないことを pin）
 //   (d) 同段落に実体的正当化のアンカー語（'verbatim 転写' / '設定' / '一箇所'）が存在する
 //
-// 注意: ファイル内の行98・121 付近にある英語の 'safety classifier block'（guard_blocked enum の
-// 記述的列挙）は正当化ではないため、(a)(b) は段落単位のスコープに限定し、ファイル全体から
-// 'classifier' を禁止してはならない。
+// 注意: ファイル内の 'safety classifier block'（guard_blocked enum の記述的列挙）は正当化では
+// ないため、(a)(b) は段落単位のスコープに限定し、ファイル全体から 'classifier' を禁止してはならない。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -30,9 +29,9 @@ const rulesPath = join(REPO_ROOT, '.claude/rules/dev-flow.md');
 
 const src = readFileSync(rulesPath, 'utf8');
 
-// 対象段落（blockquote）を切り出す: 開始アンカーから、次の空 blockquote 行（"\n>\n"）まで。
-// 開始アンカー・終了境界はいずれも本 task で変更しない部分の固定文字列なので、書き換え後も
-// 安定して切り出せる。
+// 対象段落（blockquote）を切り出す: 開始アンカーから、次の空 blockquote 行（"\n>\n"）または
+// 段落終端（"\n\n"）のうち、開始アンカー以降で先に現れる方まで。開始アンカーは本 task で
+// 変更しない部分の固定文字列なので、書き換え後も安定して切り出せる。
 function extractExecProxyJustificationParagraph(text) {
   const startAnchor = '> exec-proxy スクリプトは認証付き network I/O';
   const startIdx = text.indexOf(startAnchor);
@@ -40,9 +39,11 @@ function extractExecProxyJustificationParagraph(text) {
     startIdx >= 0,
     'dev-flow.md に exec-proxy スクリプトの network I/O 制約段落の開始アンカーが見つからない',
   );
-  const blankBlockquoteSep = '\n>\n';
-  const endIdx = text.indexOf(blankBlockquoteSep, startIdx);
-  assert.ok(endIdx >= 0, '対象段落の終端（空 blockquote 行）が見つからない');
+  const blankBlockquoteIdx = text.indexOf('\n>\n', startIdx);
+  const blankLineIdx = text.indexOf('\n\n', startIdx);
+  const candidates = [blankBlockquoteIdx, blankLineIdx].filter((idx) => idx >= 0);
+  assert.ok(candidates.length > 0, '対象段落の終端（空 blockquote 行または空行）が見つからない');
+  const endIdx = Math.min(...candidates);
   return text.slice(startIdx, endIdx);
 }
 
@@ -110,21 +111,21 @@ test('[execproxy-justification] 対象段落に実体的正当化のアンカー
 });
 
 // ============================================================
-// W7 表: incentive-structural 行に review-finding 決定論スクラバーが追記されている
+// W7 表: incentive-structural 行に review-finding 決定論スクラバーが存在する
+// （移設先 references/justification-classes.md を pin する）
 // ============================================================
-test('[execproxy-justification] W7 incentive-structural 行に review-finding 決定論スクラバーが存在する', () => {
+test('[execproxy-justification] references/justification-classes.md の W7 incentive-structural 行に review-finding 決定論スクラバーが存在する', () => {
+  const justificationPath = join(here, '..', 'dev-flow', 'references', 'justification-classes.md');
+  const justificationSrc = readFileSync(justificationPath, 'utf8');
+  const incentiveLine = justificationSrc
+    .split('\n')
+    .find((line) => line.startsWith('| **incentive-structural**'));
   assert.ok(
-    src.includes('review-finding 決定論スクラバー'),
-    'W7 incentive-structural 表の代表機構列に "review-finding 決定論スクラバー" が存在しない',
+    incentiveLine,
+    'references/justification-classes.md に "| **incentive-structural**" で始まる行が見つからない',
   );
-});
-
-test('[execproxy-justification] review-finding 決定論スクラバーの記述が issue #503 を参照する', () => {
-  const idx = src.indexOf('review-finding 決定論スクラバー');
-  assert.ok(idx >= 0, 'review-finding 決定論スクラバーの記述が見つからない');
-  const nearby = src.slice(idx, idx + 300);
   assert.ok(
-    nearby.includes('issue #503'),
-    `review-finding 決定論スクラバーの記述に issue #503 の参照が存在しない:\n${nearby}`,
+    incentiveLine.includes('review-finding 決定論スクラバー'),
+    `W7 incentive-structural 表の代表機構列に "review-finding 決定論スクラバー" が存在しない: ${incentiveLine}`,
   );
 });

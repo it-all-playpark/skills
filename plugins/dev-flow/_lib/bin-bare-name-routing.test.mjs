@@ -96,7 +96,7 @@ const DEV_FLOW_NEEDLES = [
   'diff-risk-classify origin/${BASE}',
   '`check-ci --checks-data',
   '`analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract',
-  '`detect-stack .',
+  'detect-stack ${worktree}',
 ];
 
 for (const needle of DEV_FLOW_NEEDLES) {
