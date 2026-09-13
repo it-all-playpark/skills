@@ -4,8 +4,12 @@
 //       /tmp への書き込みが拒否されて失敗する。$TMPDIR 環境変数を参照する形式
 //       `mktemp "${TMPDIR:-/tmp}/..."` を使えばサンドボックスが許可した一時ディレクトリを使える。
 //
-// dev-flow.js / pr-iterate.js を VM で実行し、agent() に実際に渡った prompt を観測する:
-//   (a) どの agent() prompt にも `mktemp /tmp/` という古い形式が現れない
+// 検証は (a) の一部を dev-flow.js / pr-iterate.js 全文に対する静的否定 assert で、
+// 残りを両 workflow を VM で実行し agent() に実際に渡った prompt を観測することで行う:
+//   (a-static) devFlowSrc / prIterateSrc 全文のどこにも `mktemp /tmp/` という古い形式が現れない
+//       — success run 1 本の prompt 観測だけでは未到達分岐への再混入を検出できないため、
+//       VM 観測とは独立に全文走査で pin する
+//   (a-vm) success run で実際に agent() へ渡った prompt にも `mktemp /tmp/` が現れない
 //   (b) dev-flow.js の post-summary prompt に mktemp "${TMPDIR:-/tmp}/dev-flow-XXXXXX.md" が現れる
 //   (c) pr-iterate.js の post-summary prompt に mktemp "${TMPDIR:-/tmp}/pr-iterate-XXXXXX.md" が現れる
 
@@ -37,13 +41,22 @@ async function runPrIterate() {
   return calls;
 }
 
-// (a) 旧形式 `mktemp /tmp/` がどの prompt にも現れない
-test('[tmpdir] dev-flow.js: agent() prompt に `mktemp /tmp/` という旧形式が含まれない', async () => {
+// (a-static) 旧形式 `mktemp /tmp/` が devFlowSrc / prIterateSrc 全文のどこにも現れない
+// — success run 1 本の prompt 観測だけでは未到達分岐（abort 等）への再混入を検出できないため、
+// VM 観測とは独立に全文走査で pin する。
+test('[tmpdir] (a-static) devFlowSrc / prIterateSrc 全文に `mktemp /tmp/` という旧形式が無い', () => {
+  for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
+    assert.ok(!src.includes('mktemp /tmp/'), `${name} に \`mktemp /tmp/\` という旧形式が静的に残存している（TMPDIR フォールバック形式へ移行すること）`);
+  }
+});
+
+// (a-vm) 旧形式 `mktemp /tmp/` がどの prompt にも現れない
+test('[tmpdir] (a-vm) dev-flow.js: agent() prompt に `mktemp /tmp/` という旧形式が含まれない', async () => {
   const hit = (await runDevFlow()).find((c) => c.prompt.includes('mktemp /tmp/'));
   assert.ok(!hit, `${hit?.label} の prompt に \`mktemp /tmp/\` が残存している（TMPDIR フォールバック形式へ移行すること）`);
 });
 
-test('[tmpdir] pr-iterate.js: agent() prompt に `mktemp /tmp/` という旧形式が含まれない', async () => {
+test('[tmpdir] (a-vm) pr-iterate.js: agent() prompt に `mktemp /tmp/` という旧形式が含まれない', async () => {
   const hit = (await runPrIterate()).find((c) => c.prompt.includes('mktemp /tmp/'));
   assert.ok(!hit, `${hit?.label} の prompt に \`mktemp /tmp/\` が残存している（TMPDIR フォールバック形式へ移行すること）`);
 });

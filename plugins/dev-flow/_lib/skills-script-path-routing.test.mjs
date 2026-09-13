@@ -6,9 +6,14 @@
 // payload に埋め込んでいた。対象 repo が skills 自身でない場合これらは WT 配下に存在せず Exit 127
 // で落ちる。期待状態は plugin bin/ の bare 名（issue #569）を使うこと。
 //
-// 検証はすべて dev-flow.js を VM で実行し、agent() に実際に渡った prompt を観測する
+// 検証は (a) の一部を dev-flow.js / pr-iterate.js 全文に対する静的否定 assert で、
+// 残りを dev-flow.js を VM で実行し agent() に実際に渡った prompt を観測することで行う
 // （WT は既定 responder の '/tmp/wt'）:
-//   (a) どの agent() prompt にも `/tmp/wt/dev-issue-analyze/` `/tmp/wt/skill-retrospective/` が現れない
+//   (a-static) devFlowSrc / prIterateSrc 全文のどこにも `${WT}/dev-issue-analyze/`
+//       `${WT}/skill-retrospective/` という禁止パターン（テンプレートリテラル埋め込み）が無い
+//       — success run 1 本の prompt 観測だけでは未到達分岐（abort / empty-diff 等）への
+//       再混入を検出できないため、VM 観測とは独立に全文走査で pin する
+//   (a-vm) success run で実際に agent() へ渡った prompt にも同パターンが現れない
 //   (b) contract-probe の prompt に bare 名 `analyze-issue <ISSUE> --issue-json <ISSUE_JSON> --contract`
 //       が現れる。journal handoff payload の journal_sh は 3 call site（Merge tier success handoff /
 //       writeFailureTelemetry / top-level abort handoff、issue #607）すべてで bare 名 'journal'
@@ -21,7 +26,9 @@ import { dirname, join } from 'node:path';
 import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const devFlowSrc = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
+const workflowDir = join(here, '..', '.claude', 'workflows');
+const devFlowSrc = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+const prIterateSrc = readFileSync(join(workflowDir, 'pr-iterate.js'), 'utf8');
 
 // 3 call site に対応する run: success / empty-diff failure（writeFailureTelemetry）/ abort
 const RUNS = {
@@ -43,7 +50,18 @@ async function run(name) {
 
 // ---- (a) 禁止パターン不在: WT 相対で skills 内部 script を呼んではならない ----
 
-test('[skills-script-path-routing] (a) どの agent() prompt にも `${WT}/dev-issue-analyze/` `${WT}/skill-retrospective/` が現れない', async () => {
+// (a-static): success run 1 本の prompt 観測だけでは未到達分岐（abort / empty-diff 等）への
+// 再混入を検出できないため、devFlowSrc / prIterateSrc 全文に対する静的否定 assert を
+// VM 観測とは独立に並置する。
+test('[skills-script-path-routing] (a-static) devFlowSrc / prIterateSrc 全文に `${WT}/dev-issue-analyze/` `${WT}/skill-retrospective/` という禁止パターンが無い', () => {
+  for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
+    for (const forbidden of ['${WT}/dev-issue-analyze/', '${WT}/skill-retrospective/']) {
+      assert.ok(!src.includes(forbidden), `${name} に禁止パターン ${forbidden} が静的に含まれる（対象 repo が skills 以外だと Exit 127）`);
+    }
+  }
+});
+
+test('[skills-script-path-routing] (a-vm) どの agent() prompt にも `${WT}/dev-issue-analyze/` `${WT}/skill-retrospective/` が現れない', async () => {
   const calls = await run('success');
   for (const forbidden of ['/tmp/wt/dev-issue-analyze/', '/tmp/wt/skill-retrospective/']) {
     const hit = calls.find((c) => c.prompt.includes(forbidden));

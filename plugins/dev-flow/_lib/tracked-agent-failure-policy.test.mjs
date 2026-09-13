@@ -4,9 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
+import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 /**
- * tracked-agent-failure-policy.test.mjs — trackedAgent( 全出現の 3 分類強制（issue #605）を
+ * tracked-agent-failure-policy.test.mjs — trackedAgent( 呼び出しの 3 分類強制（issue #605）を
  * vm-sandbox 共有 harness による throw 注入マトリクスの挙動テストで検証する。
  *
  * dev-flow.js / pr-iterate.js の trackedAgent( call site は必ず以下いずれかに属する:
@@ -18,8 +19,13 @@ import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture } from './
  *
  * 各 label に対し実際に agent() を throw させて run を実行し、continue（error===null）/
  * abort（error!==null かつ abort handoff が発火）/ needs_clarification のいずれになるかを
- * EXPECTED テーブルと突合する。EXPECTED に無い label が観測されたら red にする
- * （新規 call site の分類強制を維持する）。
+ * EXPECTED テーブルと突合する。
+ *
+ * **カバレッジの範囲**: 「未分類 label 検出」test が観測する label は `DEV_FLOW_SCENARIOS`
+ * （`test-helpers/dev-flow-scenarios.mjs`）の全 scenario + 本ファイル固有の baseline 設定
+ * （DF_B1〜DF_B5 / DF_DANGER）が到達する範囲に限る — dev-flow.js 中の bare trackedAgent( 出現を
+ * 静的に全走査するわけではない。新しい scenario を dev-flow-scenarios.mjs に足せば新規 call site も
+ * ここへ到達し、EXPECTED_DEV_FLOW 未登録なら red になる（scenario 集合を経由した分類強制）。
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -69,6 +75,23 @@ const DF_B5 = {
 // throw だけでは Merge tier 側の再取得で「clean」に復元されてしまい HOLD を再現できない
 // （fail-closed が Security floor と Merge tier の両方で持続する現実的なシナリオとして構成する）。
 const DF_DANGER = { overrides: { 'danger-grep-final': { ok: false, hits: [], error: 'still down' } } };
+
+// ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing /
+// subagent-invocations-routing と同じ scenario 集合を参照し、到達する label の分類を強制する）──
+const DF_DIFF_GATE_RETRY = DEV_FLOW_SCENARIOS['diff-gate-retry'];
+const DF_HASH_MISMATCH = DEV_FLOW_SCENARIOS['hash-mismatch'];
+const DF_FINAL_RECONCILE_UI = DEV_FLOW_SCENARIOS['final-reconcile-ui'];
+const DF_REDGREEN = DEV_FLOW_SCENARIOS['redgreen'];
+const DF_CI_CHECKS = DEV_FLOW_SCENARIOS['ci-checks'];
+const DF_COMPLEX_FIX = DEV_FLOW_SCENARIOS['complex-fix'];
+const DF_GREEN_FIX = DEV_FLOW_SCENARIOS['green-fix'];
+const DF_LITE = DEV_FLOW_SCENARIOS['lite'];
+const DF_CROSS_REPO = DEV_FLOW_SCENARIOS['cross-repo'];
+// journal-log-abort は top-level abort catch 内でのみ呼ばれる — DEV_FLOW_SCENARIOS['abort'] の
+// トリガ throw message が THROW 定数と同じ 'injected' のため使うと自身の throw が吸収されたのか
+// 元の abort が伝播したのか区別できない。message を変えた専用 base で「元の error message が
+// そのまま残る（＝journal-log-abort 自身の throw は吸収された）」ことを検証する。
+const DF_JOURNAL_ABORT_BASE = { overrides: { 'plan#standard': () => { throw new Error('outer-trigger') } } };
 
 async function runDevFlowBaseline(config) {
   const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides: config.overrides, workflow: config.workflow });
@@ -149,6 +172,58 @@ const EXPECTED_DEV_FLOW = {
   'changed-files': { config: DF_B3, policy: 'abort', reason: 'need()包み。Merge tier changed-files取得不能のまま先へ進めない契約' },
   'ci-final': { config: DF_B4, policy: 'continue', reason: 'try/catchで吸収しunavailable維持（fail-closed）へ倒す既存経路' },
   'security-clearance-final': { config: DF_B5, policy: 'abort', reason: 'bare据え置き。security clearance不能をclearと同一視しない契約' },
+
+  // ── 以下は issue #605 review（PR #645）: DEV_FLOW_SCENARIOS 経由で新規到達する 30 label ──
+  'issue-labels': { config: DF_DIFF_GATE_RETRY, policy: 'abort', reason: 'bare据え置き。cross-repoラベル取得不能のままempty-diff判定を進めない' },
+  'reimpl-empty-diff:serial:t1': { config: DF_DIFF_GATE_RETRY, policy: 'continue', reason: 'failOpenAgent経由。empty-diff差し戻しのserial実装失敗はnullとしてdropし継続する' },
+  'diff-gate-retry': { config: DF_DIFF_GATE_RETRY, policy: 'abort', reason: 'need()包み。差し戻し後のdiff再取得不能のまま先へ進めない致命契約' },
+  'test#retry-1': {
+    config: DF_DIFF_GATE_RETRY,
+    policy: 'continue',
+    reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路（retry経路）',
+  },
+  'tree-diff-numstat': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。hash_mismatch時の差分一覧取得失敗はHOLD理由の可読性補助を欠くのみ' },
+  'head-tree-oid': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。tree再収束の決定論証拠取得失敗はhash_mismatch据え置きへ倒すのみ' },
+  'ui-verify-config': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（advisoryなUI検証）' },
+  'ui-verify-server': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
+  'ui-verify': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
+  'ui-verify-teardown': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる' },
+  'ui-verify-config-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（Final reconcile再検証）' },
+  'ui-verify-server-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
+  'ui-verify-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
+  'ui-verify-teardown-final': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる（Final reconcile）' },
+  'redgreen:AC-1': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
+  'ci-checks': { config: DF_CI_CHECKS, policy: 'abort', reason: 'bare据え置き。CI委譲auto-close呼び出し失敗のfail-open化は別issueの検討対象' },
+  'plan#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回計画取得不能のまま進めない致命契約' },
+  'review#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回レビュー取得不能のまま進めない致命契約' },
+  'plan#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ2周目計画取得不能のまま進めない致命契約' },
+  'review#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ2周目レビュー取得不能のまま進めない致命契約' },
+  'fix#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'bare据え置き。evaluator実装レベル指摘への修正呼び出しは吸収機構がない' },
+  'eval#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。2周目の評価取得不能のままPRへ進めない致命契約' },
+  'green-fix#1': { config: DF_GREEN_FIX, policy: 'abort', reason: 'bare据え置き。green-fix実装呼び出しはtry/catchで吸収されずrunを中断させる' },
+  'test#2': {
+    config: DF_GREEN_FIX,
+    policy: 'continue',
+    reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路',
+  },
+  'plan#trivial': { config: DF_LITE, policy: 'abort', reason: 'need()包み。micro shapeのplan取得不能のまま実装を進めない致命契約' },
+  'pr-review-lite': { config: DF_LITE, policy: 'abort', reason: 'bare据え置き。lite経路のレビュー呼び出し失敗は吸収機構がない' },
+  'ci-check-lite': { config: DF_LITE, policy: 'continue', reason: 'failOpenAgent経由。lite経路のCI状態取得失敗はフルpr-iterateへ委譲するのみ' },
+  'cross-repo-artifacts': { config: DF_CROSS_REPO, policy: 'abort', reason: 'bare据え置き。cross-repo成果物検証失敗のfail-open化は別issueの検討対象' },
+  'journal-log-failure': {
+    config: DF_CROSS_REPO,
+    policy: 'continue',
+    reason: 'runJournalHandoff内のtry/catchで吸収しlog_failedを返すfail-open経路（failure telemetry）',
+    extra: async ({ result }) => {
+      assert.equal(result?.status, 'cross_repo_artifact', "journal-log-failure throw 後の result.status が cross_repo_artifact でない");
+      assert.equal(result?.journal_log_status, 'log_failed', "journal-log-failure throw 時は journal_log_status が 'log_failed' になるべき");
+    },
+  },
+  'journal-log-abort': {
+    config: DF_JOURNAL_ABORT_BASE,
+    policy: 'continue-in-abort',
+    reason: 'runJournalHandoff内のtry/catchで吸収し元のabortエラーをそのまま再throwするfail-open経路',
+  },
 };
 
 for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
@@ -171,6 +246,15 @@ for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
       assert.equal(error, null, `label '${label}' は throw を吸収し needs_clarification で終端するべき: ${error?.message}`);
       assert.equal(result?.status, 'needs_clarification', `label '${label}' throw 後の result.status が needs_clarification でない: ${result?.status}`);
       assert.ok(!calls.some((c) => c.label?.startsWith('plan#')), `label '${label}' throw 後に plan# 系 call が呼ばれている（needs_clarification で中断されていない）`);
+    } else if (spec.policy === 'continue-in-abort') {
+      // journal-log-abort 専用: 呼び出し元は既に abort 中（config 自体が別要因で throw する）。
+      // このラベル自身の throw が「元の abort error」を上書きせず（runJournalHandoff の
+      // try/catch で吸収される）、config 側の throw message がそのまま表面化することを検証する。
+      assert.ok(error, `label '${label}' は abort 中の base 設定を前提とするため error が必要`);
+      assert.ok(
+        !/injected/.test(error.message),
+        `label '${label}' 自身の throw（'injected'）が abort error として表面化した（fail-open で吸収されるべき）: ${error.message}`,
+      );
     } else {
       assert.fail(`未知の policy: ${spec.policy}`);
     }
@@ -179,8 +263,12 @@ for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
 }
 
 // ── 未分類 label 検出（新規 call site の分類強制。issue #605）────────────
-test('dev-flow.js: 全 baseline で観測される label は EXPECTED_DEV_FLOW に登録されている', async () => {
-  const configs = [DF_B1, DF_B2, DF_B3, DF_B4, DF_B5, DF_DANGER];
+// configs は本ファイル固有の baseline（DF_B1〜DF_B5 / DF_DANGER）に加え、
+// DEV_FLOW_SCENARIOS（exec-proxy-routing / subagent-invocations-routing と共有する到達 scenario
+// 集合）の全 scenario を含める（issue #605 review, PR #645）。観測範囲はこの configs 集合が
+// 到達する label に限られる — dev-flow.js の bare trackedAgent( 出現を静的に全走査するわけではない。
+test('dev-flow.js: 本ファイルの baseline + DEV_FLOW_SCENARIOS 全 scenario で観測される label は EXPECTED_DEV_FLOW に登録されている', async () => {
+  const configs = [DF_B1, DF_B2, DF_B3, DF_B4, DF_B5, DF_DANGER, ...Object.values(DEV_FLOW_SCENARIOS)];
   const observed = new Set();
   for (const config of configs) {
     const { calls } = await runDevFlowBaseline(config);
