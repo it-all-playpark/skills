@@ -18,7 +18,7 @@
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-export const PRERUN_SETUP_REQUIRED = ['ok', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch'];
+export const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch'];
 
 export const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
@@ -63,6 +63,12 @@ export function validatePrerunSetup(raw, issue) {
     throw new Error(`dev-flow: args.setup の必須キーが欠落/型不正: ${key}（受信: ${stringifyForError(value)}）`);
   };
 
+  // wrapper は issue ごと・needs_clarification 再起動ごとに prerun を再実行する契約。別 issue の
+  // stale な setup を渡されると別 worktree / base で黙って走るので、issue 一致を fail-closed で検証する
+  if (!(Number.isInteger(raw.issue) && raw.issue > 0)) fail('issue', raw.issue);
+  if (raw.issue !== Number(issue)) {
+    throw new Error(`dev-flow: args.setup.issue (${raw.issue}) が起動 issue (${issue}) と一致しない — この issue 用に dev-flow-prerun を実行し直し、その stdout JSON を渡せ`);
+  }
   if (!isNonEmptyString(raw.base)) fail('base', raw.base);
   if (!isNonEmptyString(raw.worktree) || !raw.worktree.startsWith('/')) fail('worktree', raw.worktree);
   if (!isNonEmptyString(raw.head)) fail('head', raw.head);

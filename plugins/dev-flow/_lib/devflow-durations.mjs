@@ -5,7 +5,10 @@
 // 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
 // pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
-// 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
+// 対応 duration キー欠落）。analyze_start は start と同じ prerun epoch から給電する — Setup に
+// epoch を返せる exec-proxy が無く（isolation-probe は Write-only agent）、workflow は Date.now を
+// 使わないため、isolation-probe の spawn 1 回分は analyze 区間に含まれる（Setup 単独の区間は無い）。
+// contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
 // 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //

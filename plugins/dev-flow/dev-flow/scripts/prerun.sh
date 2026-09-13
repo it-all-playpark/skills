@@ -100,6 +100,11 @@ RECOVERY_STEPS_FOR() {
 # Segment 0: repo (owner/name) resolution — best-effort, independent of other segments
 # ============================================================================
 
+# epoch は run の clock mark `start`（duration_seconds の起点）と isolation-probe token の給電元。
+# 旧 Setup と同じく deps install より前（Setup 開始時点）で採る — 末尾で採ると npm ci 等の
+# 数分が duration_seconds から抜け、着手前後の journal 比較が同条件でなくなる
+epoch="$(date +%s)"
+
 repo=""
 ORIGIN_URL="$(git -C "$ROOT" remote get-url origin 2>/dev/null)" || ORIGIN_URL=""
 REPO_BODY=""
@@ -232,6 +237,10 @@ if [[ "$BASE_OK" == true ]]; then
         worktree_status="reused"
         if [[ -z "$BRANCH_FOUND" ]]; then
             worktree_error="既存 worktree の起点を判定できなかった（detached HEAD）。$(RECOVERY_STEPS_FOR "$WT" "$base")"
+        elif [[ "$BRANCH_FOUND" != "$BRANCH" ]]; then
+            # 出力の branch は feature/issue-<N> 固定で下流（pr-iterate の head_ref / fetch）が信頼する。
+            # 別 branch を checkout した worktree を ok:true で返すと存在しない branch を指すので fail-closed
+            worktree_error="既存 worktree の checkout branch が ${BRANCH} でない（実際: ${BRANCH_FOUND}）。$(RECOVERY_STEPS_FOR "$WT" "$base")"
         else
             if validate_upstream "$BRANCH_FOUND"; then
                 SEG2_CORE_OK=true
@@ -277,8 +286,13 @@ if [[ "$BASE_OK" == true ]]; then
             worktree_status="unwritable"
             worktree_error="$PROBE_ERR"
             if [[ "$CREATED_THIS_CALL" == true ]]; then
-                git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1 || true
-                worktree_removed=true
+                # wrapper は worktree_removed:true を見て repo 外パスで再実行する（二重 checkout 無しの前提）。
+                # remove に失敗したのに true を返すと再実行が「already checked out」で落ちるので実結果を載せる
+                if REMOVE_ERR="$(git -C "$ROOT" worktree remove --force "$WT" 2>&1)"; then
+                    worktree_removed=true
+                else
+                    worktree_error="${worktree_error}; worktree remove failed: ${REMOVE_ERR}"
+                fi
             fi
         fi
     fi
@@ -366,8 +380,6 @@ fi
 # ============================================================================
 # Output
 # ============================================================================
-
-epoch="$(date +%s)"
 
 if [[ "$BASE_OK" == true && "$SEG2_OK" == true ]]; then
     OK_JSON=true

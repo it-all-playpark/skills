@@ -9,8 +9,9 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 
 `/dev-flow <issue>` は skill wrapper (`dev-flow/SKILL.md`) が `dev-flow-prerun --issue <N>
 --worktree <path>`（top-level Bash、bare 形）で base 解決・worktree 作成/再利用・起点検証・
-書き込み probe・`.devflow-tmp` clean・deps install・framework 検出を 1 コマンドで行い、stdout
-JSON を `Workflow({ args: { issue, setup } })` の `args.setup` に渡してから `EnterWorktree` する。
+書き込み probe・`.devflow-tmp` clean・deps install・framework 検出を 1 コマンドで行い、
+`EnterWorktree({ path })` で worktree に入ってから stdout JSON を `Workflow({ args: { issue, setup } })`
+の `args.setup` に渡す（順序は EnterWorktree → Workflow。逆だと isolation probe が fail-closed abort する）。
 dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、subagent 起動は
 isolation-probe の 1 回のみ。orchestration (phase 遷移 / plan-review・evaluate・pr-iterate の
 各ループ / 並列実装の fan-out) は workflow script が JS で保持し、中間 state は script 変数に

@@ -187,9 +187,10 @@ function makeSandbox(analyzeReq, epochMode) {
     return { status: 'lgtm', fixes_applied: 0, end_epoch: epoch };
   };
 
+  const logLines = []; // recordClockMark の fail-open 警告（⚠️ clock#<mark>）を検出するため log を捕捉
   const sandbox = {
     phase: () => {},
-    log: () => {},
+    log: (msg) => { logLines.push(String(msg)); },
     agent: agentStub,
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
@@ -217,6 +218,7 @@ function makeSandbox(analyzeReq, epochMode) {
     ctx,
     getJournalPrompts: () => journalPrompts,
     getClockCalls: () => clockCalls,
+    getLogLines: () => logLines,
   };
 }
 
@@ -270,7 +272,7 @@ const ANALYZE_REQ = {
 const src = readFileSync(devFlowPath, 'utf8');
 
 test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、journal-log prompt に duration_seconds/phase_durations が含まれる（final キーは fixes_applied=0 の Final reconcile skip で欠落する）', async () => {
-  const { ctx, getJournalPrompts, getClockCalls } = makeSandbox(ANALYZE_REQ, 'ok');
+  const { ctx, getJournalPrompts, getClockCalls, getLogLines } = makeSandbox(ANALYZE_REQ, 'ok');
 
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -278,6 +280,16 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、j
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
   assert.ok(result !== null && result !== undefined, `workflow は正常 return するべきだが null/undefined だった（error: ${error?.name}: ${error?.message}）`);
+
+  // start / analyze_start は args.setup.epoch（dev-flow-prerun）から給電されるので、epoch 給電が
+  // 成立するモードでは fail-open 警告が出てはならない。isolation-probe（Write-only agent、epoch なし）
+  // から給電すると毎 run 警告 + null になる regression を pin する。
+  const clockWarnings = getLogLines().filter((l) => /clock#(start|analyze_start)/.test(l));
+  assert.deepEqual(
+    clockWarnings,
+    [],
+    `start / analyze_start の clock mark は prerun epoch から給電されるべきだが警告が出た: ${JSON.stringify(clockWarnings)}`,
+  );
 
   // AC-1（issue #550 F1+F3 最終更新）: 専用 clock probe（label が 'clock#' で始まる subagent 起動）は
   // 0 件であること。start mark は setup-base probe、end mark は post-summary 応答の optional epoch
@@ -300,7 +312,7 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、j
   );
   assert.ok(
     /"analyze":\d+/.test(capturedPrompt),
-    `journal-log prompt の phase_durations に "analyze":<number> が含まれるべきだが含まれていなかった（analyze_start は worktree-deps、analyze_end は issue-meta から給電される）。prompt:\n${capturedPrompt}`,
+    `journal-log prompt の phase_durations に "analyze":<number> が含まれるべきだが含まれていなかった（analyze_start は args.setup.epoch、analyze_end は issue-meta から給電される）。prompt:\n${capturedPrompt}`,
   );
   assert.ok(
     /"implement":\d+/.test(capturedPrompt),

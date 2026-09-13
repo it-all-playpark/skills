@@ -211,7 +211,7 @@ function resolvePositiveIntArg(args, name) {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-const PRERUN_SETUP_REQUIRED = ['ok', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch'];
+const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch'];
 
 const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
@@ -256,6 +256,12 @@ function validatePrerunSetup(raw, issue) {
     throw new Error(`dev-flow: args.setup の必須キーが欠落/型不正: ${key}（受信: ${stringifyForError(value)}）`);
   };
 
+  // wrapper は issue ごと・needs_clarification 再起動ごとに prerun を再実行する契約。別 issue の
+  // stale な setup を渡されると別 worktree / base で黙って走るので、issue 一致を fail-closed で検証する
+  if (!(Number.isInteger(raw.issue) && raw.issue > 0)) fail('issue', raw.issue);
+  if (raw.issue !== Number(issue)) {
+    throw new Error(`dev-flow: args.setup.issue (${raw.issue}) が起動 issue (${issue}) と一致しない — この issue 用に dev-flow-prerun を実行し直し、その stdout JSON を渡せ`);
+  }
   if (!isNonEmptyString(raw.base)) fail('base', raw.base);
   if (!isNonEmptyString(raw.worktree) || !raw.worktree.startsWith('/')) fail('worktree', raw.worktree);
   if (!isNonEmptyString(raw.head)) fail('head', raw.head);
@@ -720,7 +726,10 @@ function mergeSubagentCounts(counts, byType) {
 // 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
 // pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
-// 対応 duration キー欠落）。contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
+// 対応 duration キー欠落）。analyze_start は start と同じ prerun epoch から給電する — Setup に
+// epoch を返せる exec-proxy が無く（isolation-probe は Write-only agent）、workflow は Date.now を
+// 使わないため、isolation-probe の spawn 1 回分は analyze 区間に含まれる（Setup 単独の区間は無い）。
+// contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
 // 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
@@ -4744,7 +4753,10 @@ const contractProbePrompt = `## Objective\n`
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
 // ============================================================
 phase('Analyze')
-feedClockMark('analyze_start', epochResOf(isoProbe))
+// analyze_start は start と同じ prerun epoch を給電する。Setup に epoch を返せる exec-proxy が
+// 無くなった（isolation-probe は Write-only agent で時計を持たず、workflow 自身は Date.now を
+// 使わない）ため、isolation-probe の spawn 1 回分は analyze 区間に計上される（devflow-durations.mjs 参照）。
+feedClockMark('analyze_start', { ok: true, epoch: PRERUN.epoch })
 // 決定論 parse 降格経路: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
 // analyze-issue --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
 // fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ

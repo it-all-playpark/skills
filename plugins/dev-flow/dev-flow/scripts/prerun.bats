@@ -141,6 +141,37 @@ setup() {
     echo "$output" | jq -e '.worktree_error | test("git worktree remove")'
 }
 
+# ---- (6b) 既存 worktree が別 branch を checkout（起点は正しい）-> branch 不一致で fail-closed ----
+# 出力の branch は feature/issue-<N> 固定で下流（pr-iterate head_ref / fetch）が信頼するため、
+# 別 branch の worktree を ok:true で返してはならない
+
+@test "(6b) 既存worktreeのcheckout branchがfeature/issue-Nでない -> ok:false, worktree_errorに実branch" {
+    cd "$ROOT"
+    git worktree add -q --track -b other-branch "$WT" origin/dev
+
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false'
+    echo "$output" | jq -e '.worktree_status == "reused"'
+    echo "$output" | jq -e '.worktree_error | test("feature/issue-1")'
+    echo "$output" | jq -e '.worktree_error | test("other-branch")'
+}
+
+# ---- (6c) epoch は script 開始時点（deps install より前）で採る ----
+
+@test "(6c) epoch は script 開始時の時刻（出力直前ではない）" {
+    cd "$ROOT"
+    before="$(date +%s)"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    after="$(date +%s)"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --argjson b "$before" --argjson a "$after" '.epoch >= $b and .epoch <= $a'
+    # 静的 pin: epoch の採取行が deps install（ensure-worktree-deps）より前にある
+    epoch_line="$(grep -n '^epoch="\$(date +%s)"' "$SCRIPT" | head -1 | cut -d: -f1)"
+    deps_line="$(grep -n 'ensure-worktree-deps.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
+    [ -n "$epoch_line" ] && [ -n "$deps_line" ] && [ "$epoch_line" -lt "$deps_line" ]
+}
+
 # ---- (7) push -u 後は origin/feature/issue-N も一致扱い ----
 
 @test "(7) push -u 後の upstream (origin/feature/issue-1) は一致扱い" {

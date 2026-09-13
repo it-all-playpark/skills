@@ -127,6 +127,23 @@ test('validatePrerunSetup: epoch が文字列("1000")は「必須キーが欠落
   assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: epoch/);
 });
 
+// ── validatePrerunSetup: issue 一致（stale setup の持ち込み防止） ──────────────
+
+test('validatePrerunSetup: issue 欠落/非整数は必須キー欠落として throw', () => {
+  const raw = validRaw();
+  delete raw.issue;
+  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: issue/);
+  assert.throws(() => validatePrerunSetup(validRaw({ issue: '641' }), 641), /必須キーが欠落\/型不正: issue/);
+});
+
+test('validatePrerunSetup: 別 issue の setup は fail-closed で throw（再 prerun を案内）', () => {
+  assert.throws(() => validatePrerunSetup(validRaw({ issue: 640 }), 641), /args\.setup\.issue \(640\) が起動 issue \(641\) と一致しない/);
+});
+
+test('validatePrerunSetup: 起動 issue が文字列でも数値一致なら受理する', () => {
+  assert.doesNotThrow(() => validatePrerunSetup(validRaw(), '641'));
+});
+
 // ── validatePrerunSetup: 任意キー ───────────────────────────────────────────
 
 test('validatePrerunSetup: repo 欠落は null を返す', () => {
@@ -153,7 +170,7 @@ test('validatePrerunSetup: 未知キーがあっても throw しない', () => {
 // ── PRERUN_SETUP_REQUIRED ───────────────────────────────────────────────────
 
 test('PRERUN_SETUP_REQUIRED: 必須キー一覧を定義する', () => {
-  assert.deepEqual(PRERUN_SETUP_REQUIRED, ['ok', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch']);
+  assert.deepEqual(PRERUN_SETUP_REQUIRED, ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch']);
 });
 
 // ── rejectLegacyBaseArg ──────────────────────────────────────────────────────
