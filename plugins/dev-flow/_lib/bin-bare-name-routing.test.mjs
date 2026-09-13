@@ -5,7 +5,7 @@
 // AC1: 絶対パス literal が 0 箇所。
 // AC2: workflow が使う call site が bare 名で配線されている。
 // [first-token]: bash 前置の bare 名呼び出しや拡張子付き呼び出しの残存が無い。
-// [bin]: workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 22 本に分割一致する。
+// [bin]: workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 24 本に分割一致する。
 //
 // AC1 の検査文字列自体が禁止パターンの literal を含むと自己矛盾するため、
 // join() で組み立てる（_lib/*.mjs は本テストファイル自身も走査対象に含むため）。
@@ -52,6 +52,7 @@ const BARE = [
   'validate-canary-report',
   'trust-receipts-report',
   'dev-flow-prerun',
+  'merge-tier-facts',
 ];
 
 function listFiles(dir, ext) {
@@ -106,7 +107,7 @@ const DEV_FLOW_CALL_SITES = [
   ['diff-hash-eval', 'worktree-diff-hash /tmp/wt origin/main', {}],
   ['danger-grep', 'secfloor-classify /tmp/wt origin/main', {}],
   ['contract-probe#', '`analyze-issue 1 --issue-json <ISSUE_JSON> --contract', {}],
-  ['danger-grep-final', 'diff-risk-classify origin/main', { 'diff-hash-merge': { hash: 'CCC', empty: false } }],
+  ['merge-tier-facts', '`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data ', {}],
   ['redgreen:AC-1', 'redgreen-verify /tmp/wt ', { 'eval#1': PASS_EVAL_TEST_AC, 'redgreen:AC-1': { verdict: null, ok: true } }],
   ['ui-verify-server', 'ui-verify-server start ', {
     'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/components/Foo.tsx'], struct: null, diffhash: { hash: 'AAA', empty: false } },
@@ -205,12 +206,12 @@ for (const [name, src] of [
   });
 }
 
-// ---- [bin] workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 22 本に分割一致する ----
+// ---- [bin] workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 24 本に分割一致する ----
 
-test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 23 名に完全一致する', () => {
+test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 24 名に完全一致する', () => {
   const actual = readdirSync(binDir).sort();
   const expected = BARE.filter((name) => name !== 'journal').sort();
-  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 23 名と一致しない: actual=${JSON.stringify(actual)}`);
+  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 24 名と一致しない: actual=${JSON.stringify(actual)}`);
 });
 
 test("[bin-bare-name-routing][bin] plugins/playpark-core/bin は ['journal'] に完全一致する", () => {

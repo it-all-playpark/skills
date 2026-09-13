@@ -1,5 +1,5 @@
-// issue #405: Merge tier phase に追加した gh-pr-view exec-proxy 配線
-// （agent → classifyMergeableState → classifyMergeTier）の VM sandbox 統合テスト。
+// issue #405: Merge tier phase の gh pr view 配線（merge-tier-facts の pr サブ結果 →
+// classifyMergeableState → classifyMergeTier）の VM sandbox 統合テスト。
 //
 // _lib/merge-tier.test.mjs は classifyMergeableState / classifyMergeTier という pure 関数のみを
 // pin しており、dev-flow.js 側の実際の agent() dispatch（agentType/schema/label/phase）や
@@ -8,15 +8,15 @@
 // と同じ VM sandbox パターン（node:vm で .claude/workflows/dev-flow.js を読み込み、agent() を
 // label/agentType で stub）で以下を pin する:
 //
-//   (1) dispatch pin: label==='gh-pr-view' の呼び出しが agentType:'dev-runner-haiku-ro'・
-//       phase:'Merge tier'・schema（PR_META: required ['ok'], properties.mergeable/mergeStateStatus/
-//       error/headRefOid）・prompt に `gh pr view <pr番号> --json mergeable,mergeStateStatus,headRefOid`
-//       を含むことを検証する（headRefOid は hash_reconverged 判定の証人、issue #631）。
+//   (1) dispatch pin: label==='merge-tier-facts' の呼び出しが agentType:'dev-runner-haiku-ro'・
+//       phase:'Merge tier'・schema（MERGE_FACTS: required ['risk'], properties.pr）・prompt に
+//       `gh pr view <pr番号> --json mergeable,mergeStateStatus,headRefOid` を含むことを検証する
+//       （headRefOid は hash_reconverged 判定の証人、issue #631）。
 //   (2) conflicting(mergeable=CONFLICTING) → merge_tier HOLD、reasons に conflict 文言。
 //   (3) conflicting(mergeStateStatus=DIRTY, mergeable 未設定) → merge_tier HOLD。
 //   (4) clean(mergeable=MERGEABLE) → merge_tier は conflict 起因で HOLD にならない（no-op）。
-//   (5) unknown(ok:false / proxy 失敗) → fail-open、merge_tier は conflict 起因で HOLD にならない。
-//   (6) gh-pr-view は shape/danger 状態によらず Merge tier phase で必ず 1 回呼ばれる（無条件 dispatch）。
+//   (5) unknown(pr サブ結果 ok:false / 取得失敗) → fail-open、merge_tier は conflict 起因で HOLD にならない。
+//   (6) merge-tier-facts は shape/danger 状態によらず Merge tier phase で必ず 1 回呼ばれる（無条件 dispatch）。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -59,7 +59,7 @@ function createResponder(prMetaResponse) {
       return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
     }
     if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
+    if (label === 'danger-grep') return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (agentType === 'dev-flow:evaluator') {
       return {
@@ -69,17 +69,23 @@ function createResponder(prMetaResponse) {
         security_clearance: [], concern_resolutions: [],
       };
     }
-    if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') {
+    if (label === 'realized-diff' || label === 'declared-path-check') {
       return { files: ['src/x.ts'] };
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 405, committed: true };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
-    // gh-pr-view (issue #405): シナリオ別の応答
-    if (label === 'gh-pr-view') return prMetaResponse;
+    // merge-tier-facts の pr サブ結果 (issue #405): シナリオ別の応答。
+    // prMetaResponse は {ok, mergeable?, mergeStateStatus?, headRefOid?} 形（ok:false / null は取得失敗）を
+    // pr サブ結果へ写す。
+    if (label === 'merge-tier-facts') {
+      const pr = prMetaResponse?.ok === true
+        ? { mergeable: prMetaResponse.mergeable ?? null, mergeStateStatus: prMetaResponse.mergeStateStatus ?? null, headRefOid: prMetaResponse.headRefOid ?? null }
+        : null;
+      return mergeTierFacts({ pr, files: ['src/x.ts'] });
+    }
     if (label === 'issue-meta') return { ok: true, number: 405, title: 'stub-issue-title' };
     return null;
   };
@@ -142,33 +148,32 @@ function assertNoCrash(error, name) {
 // (1) dispatch pin
 // ============================================================
 
-test('[gh-pr-view][1] dispatch: agentType=dev-runner-haiku-ro, phase=Merge tier, schema(PR_META), prompt に gh pr view コマンドを含む', async () => {
+test('[gh-pr-view][1] dispatch: merge-tier-facts が agentType=dev-runner-haiku-ro, phase=Merge tier, schema(MERGE_FACTS), prompt に gh pr view コマンドを含む', async () => {
   const { ctx, calls } = makeSandbox({ ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' });
   const { error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '1');
 
-  const ghCalls = calls.filter((c) => c.label === 'gh-pr-view');
-  assert.equal(ghCalls.length, 1, `label==='gh-pr-view' の呼び出しはちょうど 1 回のはずだが ${ghCalls.length} 回だった`);
-  const c = ghCalls[0];
-  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku-ro', `gh-pr-view の agentType は 'dev-flow:dev-runner-haiku-ro' のはずだが '${c.agentType}' だった`);
-  assert.equal(c.phase, 'Merge tier', `gh-pr-view の phase は 'Merge tier' のはずだが '${c.phase}' だった`);
-  assert.ok(c.schema != null, 'gh-pr-view の schema (PR_META) が undefined/null になっている');
+  const factCalls = calls.filter((c) => c.label === 'merge-tier-facts');
+  assert.equal(factCalls.length, 1, `label==='merge-tier-facts' の呼び出しはちょうど 1 回のはずだが ${factCalls.length} 回だった`);
+  assert.equal(calls.filter((c) => c.label === 'gh-pr-view').length, 0, 'gh pr view 専用の exec-proxy spawn は発行しない');
+  const c = factCalls[0];
+  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku-ro', `merge-tier-facts の agentType は 'dev-flow:dev-runner-haiku-ro' のはずだが '${c.agentType}' だった`);
+  assert.equal(c.phase, 'Merge tier', `merge-tier-facts の phase は 'Merge tier' のはずだが '${c.phase}' だった`);
+  assert.ok(c.schema != null, 'merge-tier-facts の schema (MERGE_FACTS) が undefined/null になっている');
   // c.schema は vm sandbox（別 realm）内で生成された配列を含むため、assert/strict の
   // deepEqual は prototype 不一致で reference-equal 判定に落ちて誤 fail する
   // （values same but not reference-equal）。JSON.stringify での構造比較に落として realm 差異を吸収する。
-  assert.equal(JSON.stringify(c.schema.required), JSON.stringify(['ok']), `PR_META.required は ['ok'] のはずだが ${JSON.stringify(c.schema.required)}`);
+  assert.equal(JSON.stringify(c.schema.required), JSON.stringify(['risk']), `MERGE_FACTS.required は ['risk'] のはずだが ${JSON.stringify(c.schema.required)}`);
   assert.ok(
-    'mergeable' in c.schema.properties && 'mergeStateStatus' in c.schema.properties && 'error' in c.schema.properties,
-    `PR_META.properties に mergeable/mergeStateStatus/error が揃っていない: ${JSON.stringify(Object.keys(c.schema.properties ?? {}))}`,
+    'pr' in c.schema.properties && 'risk' in c.schema.properties && 'head_tree' in c.schema.properties,
+    `MERGE_FACTS.properties に pr/risk/head_tree が揃っていない: ${JSON.stringify(Object.keys(c.schema.properties ?? {}))}`,
   );
-  assert.ok(
-    'headRefOid' in c.schema.properties,
-    `PR_META.properties に headRefOid が無い（issue #631）: ${JSON.stringify(Object.keys(c.schema.properties ?? {}))}`,
-  );
+  assert.equal(JSON.stringify(c.schema.properties.pr.required), JSON.stringify(['ok']), 'pr サブ結果 schema の required は [ok]');
   assert.ok(
     c.prompt.includes('gh pr view 405 --json mergeable,mergeStateStatus,headRefOid'),
-    `gh-pr-view の prompt に headRefOid を含む gh pr view コマンドが含まれていない（issue #631）:\n${c.prompt}`,
+    `merge-tier-facts の prompt に headRefOid を含む gh pr view コマンドが含まれていない（issue #631）:\n${c.prompt}`,
   );
+  assert.ok(c.prompt.includes('--pr-view-data'), 'gh pr view の stdout を --pr-view-data で merge-tier-facts へ転写する指示が無い');
 });
 
 // ============================================================
@@ -219,7 +224,7 @@ test('[gh-pr-view][4] regression: mergeable=MERGEABLE(clean) → merge_tier は 
 // (5) unknown(ok:false / proxy 失敗) → fail-open no-op
 // ============================================================
 
-test('[gh-pr-view][5] fail-open: gh-pr-view が ok:false(proxy 失敗) → merge_tier は conflict 起因で HOLD にならない', async () => {
+test('[gh-pr-view][5] fail-open: pr サブ結果が ok:false(gh pr view 失敗) → merge_tier は conflict 起因で HOLD にならない', async () => {
   const { ctx } = makeSandbox({ ok: false, error: 'stub: gh pr view failed' });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '5-ok-false');
@@ -231,12 +236,29 @@ test('[gh-pr-view][5] fail-open: gh-pr-view が ok:false(proxy 失敗) → merge
   );
 });
 
-test('[gh-pr-view][5] fail-open: gh-pr-view が null(agent throw 等) → merge_tier は conflict 起因で HOLD にならない', async () => {
+test('[gh-pr-view][5] fail-open: pr サブ結果が null(取得失敗) → merge_tier は conflict 起因で HOLD にならない', async () => {
   const { ctx } = makeSandbox(null);
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, '5-null');
 
-  assert.equal(result?.merge_tier, 'REVIEW', `gh-pr-view が null の場合も fail-open のため merge_tier は REVIEW のはずだが '${result?.merge_tier}' だった（reasons: ${JSON.stringify(result?.merge_tier_reasons)}）`);
+  assert.equal(result?.merge_tier, 'REVIEW', `pr サブ結果が null の場合も fail-open のため merge_tier は REVIEW のはずだが '${result?.merge_tier}' だった（reasons: ${JSON.stringify(result?.merge_tier_reasons)}）`);
+});
+
+test('[gh-pr-view][5] merge-tier-facts 全体が null(agent throw 等) → conflict 起因ではなく risk fail-closed 起因で HOLD（pr は fail-open のまま）', async () => {
+  const { ctx, calls } = makeSandbox(null);
+  // responder を丸ごと null に差し替える: makeSandbox の agent は createResponder を都度呼ぶため、
+  // calls 記録後に label を見て null を返す wrapper を ctx.agent に上書きする
+  const origAgent = ctx.agent;
+  ctx.agent = async (prompt, opts) => (opts?.label === 'merge-tier-facts' ? (calls.push({ label: 'merge-tier-facts', agentType: opts.agentType, phase: opts.phase, schema: opts.schema, prompt }), null) : origAgent(prompt, opts));
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, '5-facts-null');
+
+  assert.equal(result?.merge_tier, 'HOLD', `facts 全体が null なら risk fail-closed で HOLD のはずだが '${result?.merge_tier}'`);
+  assert.equal(result?.danger_fail_closed, true, 'facts null は danger_fail_closed:true');
+  assert.ok(
+    !(result?.merge_tier_reasons ?? []).some((r) => r.includes('conflict')),
+    `pr 取得不能は fail-open のため conflict 文言は出ない: ${JSON.stringify(result?.merge_tier_reasons)}`,
+  );
 });
 
 // ============================================================

@@ -238,16 +238,16 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    IN["Final reconcile 完了"] --> M0["diff-hash-merge"]
-    M0 --> M1["gh pr view で mergeable"]
+    IN["Final reconcile 完了"] --> M0["merge-tier-facts<br/>(diff-hash / danger-grep / changed-files /<br/>gh pr view / head tree / gh pr checks を 1 spawn)"]
+    M0 --> M1["danger 再 reconcile<br/>one-shot security clearance"]
     M1 --> M2["classifyMergeTier"]
     M2 --> M3["終端サマリを PR へ投稿"]
     M3 --> M4["journal telemetry 記録"]
     M4 --> HU["merge は常に人間"]
 ```
 
-`diff-hash-merge` が Security floor 時点の tree OID と一致すれば、`danger-grep-final` と
-`changed-files` の再実行を skip する。tier の判定ロジックは [4. merge tier 判定](#4-merge-tier-判定) を参照。
+`merge-tier-facts` の diffhash が Security floor 時点の tree OID と一致すれば、facts の risk / changed
+を使わず Security floor の結果を再利用する。tier の判定ロジックは [4. merge tier 判定](#4-merge-tier-判定) を参照。
 
 ---
 

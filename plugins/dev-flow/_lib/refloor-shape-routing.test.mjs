@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -89,9 +89,9 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
     }
-    // Merge tier: label 'danger-grep-final'（統合対象外）
-    if (label === 'danger-grep-final') {
-      return { ok: true, hits: [] };
+    // Merge tier: label 'merge-tier-facts'（統合呼び出し。changed は可変ファイル数）
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ files: changedFiles });
     }
     // Validate: test runner（label が 'test' で始まる）
     if (label.startsWith('test')) {
@@ -112,10 +112,6 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     // PR: label が 'pr' で始まる
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    // Merge tier: changed-files
-    if (label === 'changed-files') {
-      return { files: changedFiles };
     }
     // implementer その他
     if (agentType === 'dev-flow:implementer') {
@@ -290,7 +286,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: ['a', 'b', 'c', 'd', 'e', 'f'], struct: null, diffhash: null };
     }
-    if (label === 'danger-grep-final') return { ok: true, hits: [] };
+    if (label === 'merge-tier-facts') return mergeTierFacts({ files: ['src/foo.ts'] });
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (agentType === 'dev-flow:evaluator') {
       evaluatorCallCount += 1;
@@ -320,7 +316,6 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     }
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/foo.ts'] };
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
@@ -471,8 +466,8 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: null, struct: null, diffhash: null };
     }
-    if (label === 'danger-grep-final') {
-      return { ok: true, hits: [] };
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ files: ['src/foo.ts'] });
     }
     if (label.startsWith('test')) {
       return { tests: 'no_tests', green: true, summary: '' };
@@ -490,9 +485,6 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     }
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    if (label === 'changed-files') {
-      return { files: ['src/foo.ts'] };
     }
     if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 /**
@@ -48,9 +48,6 @@ const DF_B2 = {
   workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
   overrides: { 'reconcile-sync': { ok: true, head: 'a'.repeat(40) } },
 };
-// B3: Security floor ↔ Merge tier の tree OID 再利用 miss（diff-hash-merge が Security floor と
-// 異なる hash を返す）— danger-grep-final / changed-files（Merge tier 版）を実際に呼ばせる。
-const DF_B3 = { overrides: { 'diff-hash-merge': { hash: 'BBB', empty: false } } };
 // B4: Final reconcile が unavailable（test#final tests:'error'）→ ci-final の CI 委譲へ到達する。
 const DF_B4 = {
   workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
@@ -59,22 +56,21 @@ const DF_B4 = {
     'test#final': { tests: 'error', summary: 'startup failed', green: false },
   },
 };
-// B5: Merge tier の danger-grep-final が新規 hit（auth）を報告 → one-shot security-clearance-final
-// へ到達する（reuse miss も併用し実際に danger-grep-final を呼ばせる）。
+// B5: Merge tier の merge-tier-facts が Security floor と異なる hash（reuse miss）かつ risk に新規 hit
+// （auth）を報告 → one-shot security-clearance-final へ到達する。
 const DF_B5 = {
   workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
   overrides: {
     'reconcile-sync': { ok: true, head: 'a'.repeat(40) },
     'test#final': { tests: 'passed', green: true, summary: '' },
-    'diff-hash-merge': { hash: 'BBB', empty: false },
-    'danger-grep-final': { ok: true, hits: [{ class: 'auth', file: 'src/x.ts' }] },
+    'merge-tier-facts': mergeTierFacts({ hash: 'BBB', risk: { ok: true, hits: [{ class: 'auth', file: 'src/x.ts' }] } }),
   },
 };
-// DANGER: danger-grep（Security floor）throw に加え、danger-grep-final（Merge tier）も fail-closed
+// DANGER: danger-grep（Security floor）throw に加え、merge-tier-facts（Merge tier）の risk も fail-closed
 // を返す複合 override。Merge tier は Security floor の結果を独立に再取得するため、danger-grep 単体の
 // throw だけでは Merge tier 側の再取得で「clean」に復元されてしまい HOLD を再現できない
 // （fail-closed が Security floor と Merge tier の両方で持続する現実的なシナリオとして構成する）。
-const DF_DANGER = { overrides: { 'danger-grep-final': { ok: false, hits: [], error: 'still down' } } };
+const DF_DANGER = { overrides: { 'merge-tier-facts': mergeTierFacts({ risk: { ok: false, hits: [], error: 'still down' } }) } };
 
 // ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing /
 // subagent-invocations-routing と同じ scenario 集合を参照し、到達する label の分類を強制する）──
@@ -134,15 +130,22 @@ const EXPECTED_DEV_FLOW = {
     policy: 'continue',
     reason: 'try/catchで吸収しunified=nullのper-fieldフォールバック（risk fail-closed）へ倒す',
     extra: async ({ result }) => {
-      assert.equal(result?.merge_tier, 'HOLD', 'danger-grep と danger-grep-final が共に fail-closed の場合 merge_tier は HOLD になるべき');
+      assert.equal(result?.merge_tier, 'HOLD', 'danger-grep と merge-tier-facts の risk が共に fail-closed の場合 merge_tier は HOLD になるべき');
     },
   },
   'diff-hash-eval': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。stale検出をskipするだけのadvisory信号' },
   'eval#1': { config: DF_B1, policy: 'abort', reason: 'need()包み。評価取得不能のままPRへ進めない致命契約' },
   'diff-hash-pr': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。stale検出をskipするだけのadvisory信号' },
   'pr#1': { config: DF_B1, policy: 'abort', reason: 'need()包み。PR作成失敗のまま継続しない致命契約' },
-  'diff-hash-merge': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。tree OID再利用判定をskipするだけのadvisory信号' },
-  'gh-pr-view': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。PR meta取得失敗のfail-open化は別issueの検討対象' },
+  'merge-tier-facts': {
+    config: DF_B1,
+    policy: 'continue',
+    reason: 'try/catchで吸収しfacts=nullのper-fieldフォールバック（risk fail-closed → HOLD、他はfail-open）へ倒す。abortは終端サマリとjournal entryを失うためHOLDで人間へ返す',
+    extra: async ({ result }) => {
+      assert.equal(result?.merge_tier, 'HOLD', 'merge-tier-facts throw は risk fail-closed で merge_tier HOLD になるべき');
+      assert.equal(result?.danger_fail_closed, true, 'merge-tier-facts throw は danger_fail_closed:true になるべき');
+    },
+  },
   'post-summary': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。投稿失敗の吸収整備は別issueの検討対象' },
   'journal-save': {
     config: DF_B1,
@@ -164,8 +167,6 @@ const EXPECTED_DEV_FLOW = {
   'test#final': { config: DF_B2, policy: 'continue', reason: 'try/catchで吸収しunavailable扱い（merge tier HOLD）へ倒すfail-safe経路' },
   'changed-files-final': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。最終changed-files取得失敗のfail-open化は別issueの検討対象' },
   'final-ac-reconcile': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。最終AC再検証不能のままmerge tierを確定しない契約' },
-  'danger-grep-final': { config: DF_B3, policy: 'abort', reason: 'need()包み。Merge tier最終dangerチェック不能のまま先へ進めない契約' },
-  'changed-files': { config: DF_B3, policy: 'abort', reason: 'need()包み。Merge tier changed-files取得不能のまま先へ進めない契約' },
   'ci-final': { config: DF_B4, policy: 'continue', reason: 'try/catchで吸収しunavailable維持（fail-closed）へ倒す既存経路' },
   'security-clearance-final': { config: DF_B5, policy: 'abort', reason: 'bare据え置き。security clearance不能をclearと同一視しない契約' },
 
@@ -179,7 +180,6 @@ const EXPECTED_DEV_FLOW = {
     reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路（retry経路）',
   },
   'tree-diff-numstat': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。hash_mismatch時の差分一覧取得失敗はHOLD理由の可読性補助を欠くのみ' },
-  'head-tree-oid': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。tree再収束の決定論証拠取得失敗はhash_mismatch据え置きへ倒すのみ' },
   'ui-verify-config': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（advisoryなUI検証）' },
   'ui-verify-server': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
   'ui-verify': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
@@ -189,7 +189,6 @@ const EXPECTED_DEV_FLOW = {
   'ui-verify-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
   'ui-verify-teardown-final': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる（Final reconcile）' },
   'redgreen:AC-1': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
-  'ci-checks': { config: DF_CI_CHECKS, policy: 'abort', reason: 'bare据え置き。CI委譲auto-close呼び出し失敗のfail-open化は別issueの検討対象' },
   'plan#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回計画取得不能のまま進めない致命契約' },
   'review#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回レビュー取得不能のまま進めない致命契約' },
   'plan#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ2周目計画取得不能のまま進めない致命契約' },
@@ -265,7 +264,7 @@ for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
 // 集合）の全 scenario を含める（issue #605 review, PR #645）。観測範囲はこの configs 集合が
 // 到達する label に限られる — dev-flow.js の bare trackedAgent( 出現を静的に全走査するわけではない。
 test('dev-flow.js: 本ファイルの baseline + DEV_FLOW_SCENARIOS 全 scenario で観測される label は EXPECTED_DEV_FLOW に登録されている', async () => {
-  const configs = [DF_B1, DF_B2, DF_B3, DF_B4, DF_B5, DF_DANGER, ...Object.values(DEV_FLOW_SCENARIOS)];
+  const configs = [DF_B1, DF_B2, DF_B4, DF_B5, DF_DANGER, ...Object.values(DEV_FLOW_SCENARIOS)];
   const observed = new Set();
   for (const config of configs) {
     const { calls } = await runDevFlowBaseline(config);

@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runWorkflowCapture, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 import { gateLane, isConvergedUnderPolicy, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
 
@@ -99,9 +99,10 @@ function createResponder() {
       };
     }
     // realized-diff / declared-path-check / changed-files → files: [] で undeclared を発生させない
-    if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') {
+    if (label === 'realized-diff' || label === 'declared-path-check') {
       return { files: [] };
     }
+    if (label === 'merge-tier-facts') return mergeTierFacts({ files: [] });
     // PR 系
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
@@ -350,7 +351,8 @@ function createSingleConcernResponder(concernResolutions) {
         concern_resolutions: concernResolutions,
       };
     }
-    if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') return { files: [] };
+    if (label === 'realized-diff' || label === 'declared-path-check') return { files: [] };
+    if (label === 'merge-tier-facts') return mergeTierFacts({ files: [] });
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') return { posted: true, method: 'gh pr comment', url: 'http://x' };

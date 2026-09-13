@@ -24,7 +24,7 @@
 //       final_ui_verify が設定される（AC-4）+ journal-log prompt に 'final_reconcile'（AC-6）
 //   (g) fixes=1 + 'ui-verify-final' が throw → teardown は呼ばれ workflow は完走、
 //       final_ui_verify==='failed_open'（AC-7 fail-open + teardown 保証）
-//   (h) calls 配列で 'danger-grep-final'/'changed-files'（Merge tier）が 'reconcile-sync' より後（AC-5）
+//   (h) calls 配列で 'merge-tier-facts'（Merge tier）が 'reconcile-sync' より後（AC-5）
 //   (i) fixes=1 + changed-files-final null → final_reconcile==='reverified' のまま（fail-open）
 //       + 'ui-verify-config-final' 不発
 //   (j) fixes=1 + test#final throw(EPERM) → error===null（run 完走）+ unavailable + HOLD +
@@ -44,7 +44,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -135,16 +135,13 @@ function createResponder(overrides = {}) {
       };
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/x.ts'] };
     if (label === 'changed-files-final') return { files: [] };
-    // diff-hash-merge のみ別ハッシュを返す（issue #377 diff-hash reuse）。この test 群は
+    // merge-tier-facts の diffhash のみ別ハッシュを返す（issue #377 diff-hash reuse）。この test 群は
     // fixes_applied>0（Final reconcile で tree が変化）を想定しており、Security floor 時点
-    // (diff-hash-secfloor) と Merge tier 時点 (diff-hash-merge) のハッシュ不一致が意味的に正しい。
-    // 一致させると reuse が発火し、以下の danger-grep-final/changed-files 呼び出し assertion
-    // （特に case (h)）が成立しなくなる。
-    if (label === 'diff-hash-merge') return { hash: 'H_MERGE', empty: false };
+    // (diff-hash-secfloor) と Merge tier 時点 (merge-tier-facts.diffhash) のハッシュ不一致が意味的に正しい。
+    // 一致させると reuse が発火し、Merge tier の risk / changed 再判定が facts を使わなくなる（特に case (h)）。
+    if (label === 'merge-tier-facts') return mergeTierFacts({ hash: 'H_MERGE', files: ['src/x.ts'] });
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
     if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
@@ -321,53 +318,53 @@ test("[final-reconcile] (g) 'ui-verify-final' throw → teardown 実行 + workfl
 });
 
 // ============================================================
-// (h) calls 順序: 'danger-grep-final'/'changed-files'（Merge tier）は 'reconcile-sync' より後（AC-5）
+// (h) calls 順序: 'merge-tier-facts'（Merge tier の danger-grep / changed-files 再判定）は 'reconcile-sync' より後（AC-5）
 // ============================================================
 
-test("[final-reconcile] (h) calls 順序: Merge tier の 'danger-grep-final'/'changed-files' は 'reconcile-sync' より後", async () => {
+test("[final-reconcile] (h) calls 順序: Merge tier の 'merge-tier-facts' は 'reconcile-sync' より後", async () => {
   const { ctx, calls } = makeSandbox({ fixesApplied: 1 });
   const { error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'h');
 
   const idxSync = calls.findIndex((c) => c.label === 'reconcile-sync');
-  const idxDangerFinal = calls.findIndex((c) => c.label === 'danger-grep-final');
+  const idxFacts = calls.findIndex((c) => c.label === 'merge-tier-facts');
   // Merge tier が使う changed files には 2 経路がある（issue #542）:
   //   (1) Final reconcile の 'changed-files-final' を再利用する（取得できた場合）
-  //   (2) Merge tier が自前で 'changed-files' を発行する（再利用不可の場合 — テスト (i) が担当）
+  //   (2) merge-tier-facts の changed サブ結果を使う（再利用不可の場合 — テスト (i) が担当）
   // AC-5 が守るのは「reconcile-sync より後の tree を対象にすること」であって呼び出しラベルでは
   // ないため、実際に採用された側の取得呼び出しが reconcile-sync より後であることを検証する。
   const idxChangedFinal = calls.findIndex((c) => c.label === 'changed-files-final');
-  const idxChanged = calls.findIndex((c) => c.label === 'changed-files');
-  const idxChangedUsed = idxChangedFinal >= 0 ? idxChangedFinal : idxChanged;
+  const idxChangedUsed = idxChangedFinal >= 0 ? idxChangedFinal : idxFacts;
 
   assert.ok(idxSync >= 0, "(h) 'reconcile-sync' の呼び出しが見つからない");
-  assert.ok(idxDangerFinal >= 0, "(h) 'danger-grep-final' の呼び出しが見つからない");
-  assert.ok(idxChangedUsed >= 0, "(h) Merge tier が使う changed files の取得呼び出し（'changed-files-final' の再利用元、または 'changed-files'）が見つからない");
-  assert.ok(idxDangerFinal > idxSync, "(h) 'danger-grep-final' は 'reconcile-sync' より後であるべき（Final reconcile 完了後の tree を対象にする、AC-5）");
+  assert.ok(idxFacts >= 0, "(h) 'merge-tier-facts' の呼び出しが見つからない");
+  assert.ok(idxChangedUsed >= 0, "(h) Merge tier が使う changed files の取得呼び出し（'changed-files-final' の再利用元、または 'merge-tier-facts'）が見つからない");
+  assert.ok(idxFacts > idxSync, "(h) 'merge-tier-facts' は 'reconcile-sync' より後であるべき（Final reconcile 完了後の tree を対象にする、AC-5）");
   assert.ok(idxChangedUsed > idxSync, "(h) Merge tier が使う changed files は 'reconcile-sync' より後に取得されるべき（AC-5）");
 });
 
 // ============================================================
-// (h2) changed-files 重複排除: changed-files-final を取得できた run では
-//      Merge tier が 'changed-files' を再発行しない（issue #542）
+// (h2) Merge tier の read-only 事実取得は 'merge-tier-facts' 1 spawn のみ
+//      （changed-files / danger-grep-final 等の個別 spawn を再発行しない）
 // ============================================================
 
-test("[final-reconcile] (h2) changed-files-final 取得済みの run では Merge tier の 'changed-files' を再発行しない", async () => {
+test("[final-reconcile] (h2) Merge tier の read-only 事実取得は 'merge-tier-facts' 1 回のみで個別 spawn を発行しない", async () => {
   const { ctx, calls } = makeSandbox({ fixesApplied: 1 });
   const { error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'h2');
 
   const changedFinalCalls = calls.filter((c) => c.label === 'changed-files-final');
-  const changedCalls = calls.filter((c) => c.label === 'changed-files');
+  const factCalls = calls.filter((c) => c.label === 'merge-tier-facts');
+  const mergeTierRo = calls.filter((c) => c.opts?.phase === 'Merge tier' && c.agentType === 'dev-flow:dev-runner-haiku-ro');
 
   assert.equal(
     changedFinalCalls.length, 1,
     `(h2) 前提: 'changed-files-final' は 1 回呼ばれるはずだが ${changedFinalCalls.length} 回だった`,
   );
+  assert.equal(factCalls.length, 1, `(h2) 'merge-tier-facts' は 1 回のはずだが ${factCalls.length} 回`);
   assert.equal(
-    changedCalls.length, 0,
-    `(h2) 'changed-files-final' を再利用するため Merge tier の 'changed-files' は 0 回のはずだが`
-      + ` ${changedCalls.length} 回発行された（同一 tree・同一コマンドの二度打ち）`,
+    mergeTierRo.length, 1,
+    `(h2) Merge tier の read-only exec-proxy は merge-tier-facts の 1 spawn のみのはずだが ${mergeTierRo.map((c) => c.label).join(', ')}`,
   );
 });
 

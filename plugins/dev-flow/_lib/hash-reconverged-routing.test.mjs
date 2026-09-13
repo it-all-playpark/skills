@@ -1,7 +1,8 @@
 // hash-reconverged-routing: VM sandbox routing test for dev-flow の hash_reconverged 判定
 // （issue #631）。hash_mismatch 検出直後（PR phase）の tree-diff-numstat probe と、Merge tier
-// phase の head-tree-oid probe + 3 条件（evalStaleness==='hash_mismatch' && prHeadTreeOid===
-// evalDiffHash && mergeDiffHash===evalDiffHash）による hash_reconverged への置換を検証する。
+// phase の merge-tier-facts（pr.headRefOid / head_tree / diffhash サブ結果）+ 3 条件
+// （evalStaleness==='hash_mismatch' && prHeadTreeOid===evalDiffHash && mergeDiffHash===evalDiffHash）
+// による hash_reconverged への置換を検証する。
 //
 // ハーネスは _lib/merge-tier-diffhash-reuse-routing.test.mjs の makeRecordingSandbox（共有
 // test-helpers/vm-sandbox.mjs）+ ローカル runDevFlowCapture / assertNoCrash / createResponder
@@ -9,19 +10,19 @@
 //
 // テストケース:
 //   (a) 既定（3 条件成立）→ hash_reconverged、merge_tier=REVIEW、hash_mismatch reason なし、
-//       tree-diff-numstat / head-tree-oid とも 1 回、post-summary prompt に「PR head tree は
-//       評価済み tree と一致」を含み「Evaluate は古い tree に対して実行された」を含まない
-//   (b) head-tree-oid が evalDiffHash と不一致（prHeadTreeOid!==evalDiffHash、mergeDiffHash
+//       tree-diff-numstat / merge-tier-facts とも 1 回、journal に eval_staleness=hash_reconverged
+//   (b) facts.head_tree が evalDiffHash と不一致（prHeadTreeOid!==evalDiffHash、mergeDiffHash
 //       ===evalDiffHash）→ hash_mismatch 維持・HOLD
-//   (c) diff-hash-merge が null（mergeDiffHash null）→ hash_mismatch 維持・HOLD・head-tree-oid
-//       は 0 回（zero-overhead）
-//   (d) gh-pr-view から headRefOid が取得できない → hash_mismatch 維持・HOLD・head-tree-oid 0 回
-//   (d') head-tree-oid 自体が取得失敗（null）→ hash_mismatch 維持・HOLD
+//   (c) facts.diffhash が取得失敗（mergeDiffHash null）→ hash_mismatch 維持・HOLD（head_tree が
+//       eval と一致していても mergeDiffHash null では再収束しない）
+//   (d) facts.pr に headRefOid が無い → hash_mismatch 維持・HOLD（head_tree が一致していても証人不在）
+//   (d') facts.head_tree 自体が取得失敗 → hash_mismatch 維持・HOLD
 //   (e) tree-diff-numstat が取得失敗しても hash_reconverged 判定は妨げられない。また (b) 相当の
 //       不一致 + numstat 失敗で HOLD reason に手動確認コマンドが載る
-//   (f) dispatch pin: tree-diff-numstat / head-tree-oid / gh-pr-view の agentType・prompt
-//   (g) hash 不一致なし（diff-hash-pr===diff-hash-eval）→ tree-diff-numstat / head-tree-oid とも
-//       0 回、eval_staleness='none'
+//   (f) dispatch pin: tree-diff-numstat / merge-tier-facts の agentType・prompt（gh pr view の
+//       headRefOid 込み --json、rev-parse は script 側なので prompt には現れない）
+//   (g) hash 不一致なし（diff-hash-pr===diff-hash-eval）→ tree-diff-numstat 0 回、eval_staleness='none'、
+//       merge-tier-facts は 1 回（Merge tier の他サブ結果に必要）
 //   (h) fixes_applied>0 でも 3 条件成立なら hash_reconverged（判定は 3 条件のみ）
 
 import { test } from 'vitest';
@@ -30,7 +31,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -86,7 +87,7 @@ const STANDARD_REQ = {
 // ============================================================
 // responder factory: merge-tier-diffhash-reuse-routing.test.mjs の createResponder を踏襲。
 // 既定で hash_mismatch を必ず発生させ（diff-hash-eval='AAA' / diff-hash-pr='BBB'）、
-// head-tree-oid / diff-hash-merge を eval と一致させて 3 条件成立（hash_reconverged）を既定にする。
+// merge-tier-facts の head_tree / diffhash を eval と一致させて 3 条件成立（hash_reconverged）を既定にする。
 // ============================================================
 function createResponder(overrides = {}) {
   return function ({ label, agentType, prompt }) {
@@ -105,7 +106,6 @@ function createResponder(overrides = {}) {
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'AAA', empty: false } };
     }
-    if (label === 'danger-grep-final') return { ok: true, hits: [] };
     if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [],
@@ -118,15 +118,11 @@ function createResponder(overrides = {}) {
       };
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/x.ts'] };
     if (label === 'diff-hash-eval') return { hash: 'AAA', empty: false };
     if (label === 'diff-hash-pr') return { hash: 'BBB', empty: false };
-    if (label === 'diff-hash-merge') return { hash: 'AAA', empty: false };
-    if (label === 'gh-pr-view') return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD_REF_OID };
+    if (label === 'merge-tier-facts') return mergeTierFacts({ hash: 'AAA', tree: 'AAA', files: ['src/x.ts'], pr: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD_REF_OID } });
     if (label === 'tree-diff-numstat') return { ok: true, lines: ['0\t500\tdocs/a.md', '0\t360\tdocs/b.md'] };
-    if (label === 'head-tree-oid') return { ok: true, tree: 'AAA' };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (label === 'ci-checks') return { ok: false, error: 'stub: no checks' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
@@ -147,7 +143,7 @@ function makeSandbox({ overrides = {}, workflow } = {}) {
 // (a) 既定（3 条件成立） → hash_reconverged
 // ============================================================
 
-test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_reconverged、merge_tier=REVIEW、hash_mismatch reason なし、probe 各1回、post-summary に再収束文言', async () => {
+test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_reconverged、merge_tier=REVIEW、hash_mismatch reason なし、probe 各1回、journal に再収束', async () => {
   const { ctx, calls } = makeSandbox();
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'a');
@@ -161,9 +157,10 @@ test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_recon
   );
 
   const numstatCalls = calls.filter((c) => c.label === 'tree-diff-numstat');
-  const headTreeCalls = calls.filter((c) => c.label === 'head-tree-oid');
+  const factCalls = calls.filter((c) => c.label === 'merge-tier-facts');
   assert.equal(numstatCalls.length, 1, `(a) tree-diff-numstat はちょうど 1 回のはずだが ${numstatCalls.length} 回`);
-  assert.equal(headTreeCalls.length, 1, `(a) head-tree-oid はちょうど 1 回のはずだが ${headTreeCalls.length} 回`);
+  assert.equal(factCalls.length, 1, `(a) merge-tier-facts はちょうど 1 回のはずだが ${factCalls.length} 回`);
+  assert.equal(calls.filter((c) => c.label === 'head-tree-oid').length, 0, '(a) head tree の取得は merge-tier-facts に含まれ、専用 spawn は発行しない');
 
   const postSummary = calls.find((c) => c.label === 'post-summary');
   assert.ok(postSummary != null, '(a) post-summary が呼ばれていない');
@@ -183,9 +180,9 @@ test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_recon
 // (b) prHeadTreeOid !== evalDiffHash → hash_mismatch 維持
 // ============================================================
 
-test('[hash-reconverged] (b) head-tree-oid が evalDiffHash と不一致 → hash_mismatch 維持・HOLD・両hashと差分ファイルを含む', async () => {
+test('[hash-reconverged] (b) facts.head_tree が evalDiffHash と不一致 → hash_mismatch 維持・HOLD・両hashと差分ファイルを含む', async () => {
   const { ctx, calls } = makeSandbox({
-    overrides: { 'head-tree-oid': { ok: true, tree: 'BBB' } },
+    overrides: { 'merge-tier-facts': mergeTierFacts({ hash: 'AAA', tree: 'BBB', files: ['src/x.ts'], pr: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD_REF_OID } }) },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'b');
@@ -199,16 +196,16 @@ test('[hash-reconverged] (b) head-tree-oid が evalDiffHash と不一致 → has
     `(b) merge_tier_reasons に hash_mismatch + docs/a.md (+0/-500) + AAA + BBB を含む要素が無い: ${JSON.stringify(reasons)}`,
   );
 
-  assert.equal(calls.filter((c) => c.label === 'head-tree-oid').length, 1, '(b) head-tree-oid は 1 回呼ばれるはず');
+  assert.equal(calls.filter((c) => c.label === 'merge-tier-facts').length, 1, '(b) merge-tier-facts は 1 回呼ばれるはず');
 });
 
 // ============================================================
-// (c) mergeDiffHash null → hash_mismatch 維持・head-tree-oid 0 回
+// (c) mergeDiffHash null → hash_mismatch 維持（head_tree が一致していても再収束しない）
 // ============================================================
 
-test('[hash-reconverged] (c) diff-hash-merge が null(mergeDiffHash null) → hash_mismatch 維持・HOLD・head-tree-oid は 0 回', async () => {
-  const { ctx, calls } = makeSandbox({
-    overrides: { 'diff-hash-merge': null },
+test('[hash-reconverged] (c) facts.diffhash が取得失敗(mergeDiffHash null) → head_tree が一致していても hash_mismatch 維持・HOLD', async () => {
+  const { ctx, logs } = makeSandbox({
+    overrides: { 'merge-tier-facts': mergeTierFacts({ hash: null, tree: 'AAA', files: ['src/x.ts'], pr: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD_REF_OID } }) },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'c');
@@ -216,16 +213,16 @@ test('[hash-reconverged] (c) diff-hash-merge が null(mergeDiffHash null) → ha
 
   assert.equal(result?.eval_staleness, 'hash_mismatch', `(c) eval_staleness は hash_mismatch のままのはずだが ${JSON.stringify(result?.eval_staleness)}`);
   assert.equal(result?.merge_tier, 'HOLD', `(c) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
-  assert.equal(calls.filter((c) => c.label === 'head-tree-oid').length, 0, '(c) mergeDiffHash が null のとき head-tree-oid は呼ばれてはならない（zero-overhead）');
+  assert.ok(logs.some((l) => l.includes('mergeDiffHash=null')), '(c) mergeDiffHash null で hash_mismatch 維持の log が無い');
 });
 
 // ============================================================
-// (d) headRefOid 欠落 → hash_mismatch 維持・head-tree-oid 0 回
+// (d) headRefOid 欠落 → hash_mismatch 維持（head_tree が一致していても証人不在）
 // ============================================================
 
-test('[hash-reconverged] (d) gh-pr-view に headRefOid が無い → hash_mismatch 維持・HOLD・head-tree-oid は 0 回', async () => {
-  const { ctx, calls } = makeSandbox({
-    overrides: { 'gh-pr-view': { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' } },
+test('[hash-reconverged] (d) facts.pr に headRefOid が無い → head_tree が一致していても hash_mismatch 維持・HOLD', async () => {
+  const { ctx, logs } = makeSandbox({
+    overrides: { 'merge-tier-facts': mergeTierFacts({ hash: 'AAA', tree: 'AAA', files: ['src/x.ts'], pr: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' } }) },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'd');
@@ -233,16 +230,16 @@ test('[hash-reconverged] (d) gh-pr-view に headRefOid が無い → hash_mismat
 
   assert.equal(result?.eval_staleness, 'hash_mismatch', `(d) eval_staleness は hash_mismatch のままのはずだが ${JSON.stringify(result?.eval_staleness)}`);
   assert.equal(result?.merge_tier, 'HOLD', `(d) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
-  assert.equal(calls.filter((c) => c.label === 'head-tree-oid').length, 0, '(d) headRefOid 欠落時は head-tree-oid は呼ばれてはならない');
+  assert.ok(logs.some((l) => l.includes('headRefOid を取得できず')), '(d) headRefOid 欠落の log が無い');
 });
 
 // ============================================================
-// (d') head-tree-oid 取得失敗（null） → hash_mismatch 維持
+// (d') head_tree 取得失敗 → hash_mismatch 維持
 // ============================================================
 
-test("[hash-reconverged] (d') head-tree-oid が null(取得失敗) → hash_mismatch 維持・HOLD", async () => {
+test("[hash-reconverged] (d') facts.head_tree が取得失敗 → hash_mismatch 維持・HOLD", async () => {
   const { ctx } = makeSandbox({
-    overrides: { 'head-tree-oid': null },
+    overrides: { 'merge-tier-facts': mergeTierFacts({ hash: 'AAA', tree: null, files: ['src/x.ts'], pr: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD_REF_OID } }) },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, "d'");
@@ -267,11 +264,11 @@ test('[hash-reconverged] (e) tree-diff-numstat が null でも 3 条件成立な
   assert.equal(result?.eval_staleness, 'hash_reconverged', `(e-1) eval_staleness は hash_reconverged のはずだが ${JSON.stringify(result?.eval_staleness)}`);
 });
 
-test('[hash-reconverged] (e) tree-diff-numstat が null + head-tree-oid 不一致 → HOLD reason に git diff --stat と手動確認を含む', async () => {
+test('[hash-reconverged] (e) tree-diff-numstat が null + facts.head_tree 不一致 → HOLD reason に git diff --stat と手動確認を含む', async () => {
   const { ctx } = makeSandbox({
     overrides: {
       'tree-diff-numstat': null,
-      'head-tree-oid': { ok: true, tree: 'BBB' },
+      'merge-tier-facts': mergeTierFacts({ hash: 'AAA', tree: 'BBB', files: ['src/x.ts'], pr: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD_REF_OID } }),
     },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
@@ -290,7 +287,7 @@ test('[hash-reconverged] (e) tree-diff-numstat が null + head-tree-oid 不一�
 // (f) dispatch pin
 // ============================================================
 
-test('[hash-reconverged] (f) dispatch pin: tree-diff-numstat / head-tree-oid / gh-pr-view の agentType・prompt', async () => {
+test('[hash-reconverged] (f) dispatch pin: tree-diff-numstat / merge-tier-facts の agentType・prompt', async () => {
   const { ctx, calls } = makeSandbox();
   const { error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'f');
@@ -303,27 +300,25 @@ test('[hash-reconverged] (f) dispatch pin: tree-diff-numstat / head-tree-oid / g
     `(f) tree-diff-numstat の prompt に --numstat / AAA / BBB が含まれていない:\n${numstatCall.prompt}`,
   );
 
-  const headTreeCall = calls.find((c) => c.label === 'head-tree-oid');
-  assert.ok(headTreeCall != null, '(f) head-tree-oid が呼ばれていない');
-  assert.equal(headTreeCall.agentType, 'dev-flow:dev-runner-haiku-ro', `(f) head-tree-oid の agentType が期待と不一致: ${headTreeCall.agentType}`);
+  const factCall = calls.find((c) => c.label === 'merge-tier-facts');
+  assert.ok(factCall != null, '(f) merge-tier-facts が呼ばれていない');
+  assert.equal(factCall.agentType, 'dev-flow:dev-runner-haiku-ro', `(f) merge-tier-facts の agentType が期待と不一致: ${factCall.agentType}`);
   assert.ok(
-    headTreeCall.prompt.includes('rev-parse') && headTreeCall.prompt.includes(HEAD_REF_OID),
-    `(f) head-tree-oid の prompt に rev-parse / ${HEAD_REF_OID} が含まれていない:\n${headTreeCall.prompt}`,
+    factCall.prompt.includes('--json mergeable,mergeStateStatus,headRefOid'),
+    `(f) merge-tier-facts の prompt に headRefOid 込みの gh pr view --json が含まれていない:\n${factCall.prompt}`,
   );
-
-  const ghPrViewCall = calls.find((c) => c.label === 'gh-pr-view');
-  assert.ok(ghPrViewCall != null, '(f) gh-pr-view が呼ばれていない');
   assert.ok(
-    ghPrViewCall.prompt.includes('--json mergeable,mergeStateStatus,headRefOid'),
-    `(f) gh-pr-view の prompt に headRefOid 込みの --json が含まれていない:\n${ghPrViewCall.prompt}`,
+    factCall.prompt.includes('`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data'),
+    `(f) merge-tier-facts の prompt に bare 名 call site が含まれていない:\n${factCall.prompt}`,
   );
+  assert.ok(!factCall.prompt.includes('rev-parse'), '(f) PR head tree の rev-parse は script 側で行うため prompt には現れない');
 });
 
 // ============================================================
 // (g) hash 不一致なし → probe 0 回・eval_staleness=none
 // ============================================================
 
-test('[hash-reconverged] (g) diff-hash-pr が diff-hash-eval と一致 → tree-diff-numstat/head-tree-oid とも 0 回、eval_staleness=none', async () => {
+test('[hash-reconverged] (g) diff-hash-pr が diff-hash-eval と一致 → tree-diff-numstat 0 回・merge-tier-facts 1 回、eval_staleness=none', async () => {
   const { ctx, calls } = makeSandbox({
     overrides: { 'diff-hash-pr': { hash: 'AAA', empty: false } },
   });
@@ -333,7 +328,7 @@ test('[hash-reconverged] (g) diff-hash-pr が diff-hash-eval と一致 → tree-
 
   assert.equal(result?.eval_staleness, 'none', `(g) eval_staleness は none のはずだが ${JSON.stringify(result?.eval_staleness)}`);
   assert.equal(calls.filter((c) => c.label === 'tree-diff-numstat').length, 0, '(g) hash 一致時は tree-diff-numstat が呼ばれてはならない');
-  assert.equal(calls.filter((c) => c.label === 'head-tree-oid').length, 0, '(g) hash 一致時は head-tree-oid が呼ばれてはならない');
+  assert.equal(calls.filter((c) => c.label === 'merge-tier-facts').length, 1, '(g) hash 一致時も merge-tier-facts は 1 回（Merge tier の他サブ結果に必要）');
 });
 
 // ============================================================

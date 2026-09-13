@@ -8,7 +8,7 @@
 //   A2. 既定 run の calls に label 'realized-diff' / 'structural-classify' / 'diff-hash-secfloor'
 //       が 0 件（4→1 の統合を run 全体の呼び出し集合で実測）
 //   A3. 既定 run の全 calls の prompt に '--out' 文字列が含まれない（証跡書き込み撤去。AC1）
-//   A4. label 'danger-grep-final'（Merge tier）は agentType:'dev-flow:dev-runner-haiku-ro'
+//   A4. label 'merge-tier-facts'（Merge tier）は agentType:'dev-flow:dev-runner-haiku-ro'
 //   A5. 統合呼び出しは try/catch で包まれ need() では包まれない —
 //       契約違反ではない単なる throw（'without calling StructuredOutput' を含まないメッセージ）で
 //       run が abort せず継続することを VM で確認する（retry 対象外の throw 経路）
@@ -44,7 +44,7 @@ import { policyBlockingItems, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
 import { secHitsOf, reconcileTestsurf } from './testsurf.mjs';
 import { refloorShape } from './triviality.mjs';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -86,17 +86,16 @@ test("[secfloor-unified-routing][A3] 既定 run の全 calls の prompt に '--o
   }
 });
 
-test("[secfloor-unified-routing][A4] label 'danger-grep-final'（Merge tier）は agentType:'dev-flow:dev-runner-haiku-ro'（AC1: agentType 復帰）", async () => {
-  // 既定 run は Security floor と Merge tier の tree OID が一致し diff-hash reuse（issue #377）で
-  // danger-grep-final 自体が skip される。再実行させるため diff-hash-merge を別 hash で応答させ
-  // reuse 条件（secDiffHash===mergeDiffHash）を崩す。
+test("[secfloor-unified-routing][A4] label 'merge-tier-facts'（Merge tier）は agentType:'dev-flow:dev-runner-haiku-ro'（AC1: agentType 復帰）", async () => {
+  // Merge tier の danger-grep 再判定は merge-tier-facts の risk サブ結果で行う。reuse（secDiffHash===mergeDiffHash）
+  // が発火しても spawn 自体は 1 回発生する（pr / checks 等の他サブ結果に必要）。
   const { ctx, calls } = makeDevFlowSandbox({
-    overrides: { 'diff-hash-merge': () => ({ hash: 'BBB', empty: false }) },
+    overrides: { 'merge-tier-facts': () => mergeTierFacts({ hash: 'BBB' }) },
   });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
-  assertNoCrash(error, 'A4-force-danger-grep-final');
-  const call = calls.find((c) => c.label === 'danger-grep-final');
-  assert.ok(call, "label 'danger-grep-final' の agent() call が見つからない");
+  assertNoCrash(error, 'A4-merge-tier-facts');
+  const call = calls.find((c) => c.label === 'merge-tier-facts');
+  assert.ok(call, "label 'merge-tier-facts' の agent() call が見つからない");
   assert.equal(call.agentType, 'dev-flow:dev-runner-haiku-ro');
 });
 

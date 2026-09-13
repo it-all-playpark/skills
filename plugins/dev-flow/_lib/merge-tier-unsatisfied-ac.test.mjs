@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -74,10 +74,10 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
-    // Merge tier: changed-files
+    // Merge tier: merge-tier-facts（changed）
     // → docs/test-only でないファイルを返す（AUTO 除外。HOLD 要因を AC のみに絞る）
-    if (label === 'changed-files') {
-      return { files: ['src/foo.ts'] };
+    if (label === 'merge-tier-facts') {
+      return mergeTierFacts({ files: ['src/foo.ts'] });
     }
     // implementer その他
     if (agentType === 'dev-flow:implementer') {
