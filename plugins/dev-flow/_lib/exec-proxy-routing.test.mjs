@@ -69,9 +69,10 @@ const EXPECTED_DEV_FLOW = {
   'post-summary': RW,
   // write-only probe
   'isolation-probe': WO,
+  // PR phase: 決定論本文（pr-artifacts）の verbatim 転写 + bare 単文 git/gh（issue #642）
+  'pr#*': RW,
   // 判断寄り
   'analyze#*': RUNNER,
-  'pr#*': RUNNER,
 };
 
 const EXPECTED_PR_ITERATE = {

@@ -1,5 +1,5 @@
 // Guard test: assert that Setup/Validate phases use dev-runner-haiku (model:haiku in frontmatter)
-// and Analyze/PR phases use dev-runner (model:sonnet in frontmatter).
+// and the Analyze phase uses dev-runner (model:sonnet in frontmatter).
 //
 // Background:
 //   .claude/workflows/dev-flow.js uses runtime-injected globals and cannot be imported
@@ -17,7 +17,7 @@
 //   Setup    → agentType: 'dev-runner-haiku'  (model:haiku in .claude/agents/dev-runner-haiku.md)
 //   Analyze  → agentType: 'dev-runner'         (model:sonnet in .claude/agents/dev-runner.md)
 //   Validate → agentType: 'dev-runner-haiku'  (model:haiku in .claude/agents/dev-runner-haiku.md)
-//   PR       → agentType: 'dev-runner'         (model:sonnet in .claude/agents/dev-runner.md)
+//   PR       → agentType: 'dev-runner-haiku'  (model:haiku in .claude/agents/dev-runner-haiku.md, issue #642)
 //
 // Guarantee scope:
 //   These tests verify:
@@ -86,11 +86,12 @@ test("[dev-runner-model] Analyze (label:'analyze#…') dispatches agentType:'dev
   assert.equal(c.agentType, 'dev-flow:dev-runner', `Analyze phase should use dev-runner (not haiku), but found: ${c.agentType}`);
 });
 
-// (4) PR uses dev-runner (not dev-runner-haiku)
-test("[dev-runner-model] PR (label:'pr#…') dispatches agentType:'dev-runner'", async () => {
+// (4) PR uses dev-runner-haiku (issue #642: commit message / PR body は workflow 側の純関数で確定し、
+//     agent は verbatim 転写 + bare 単文 git/gh のみを担う exec-proxy になった)
+test("[dev-runner-model] PR (label:'pr#…') dispatches agentType:'dev-runner-haiku'", async () => {
   const c = findCall(await calls(), /^pr#/);
   assert.ok(c, "PR の agent() 呼び出し（label:'pr#…'）が観測されない");
-  assert.equal(c.agentType, 'dev-flow:dev-runner', `PR phase should use dev-runner (not haiku), but found: ${c.agentType}`);
+  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku', `PR phase should use dev-runner-haiku (issue #642), but found: ${c.agentType}`);
 });
 
 // ---- Frontmatter model checks (agent definition files) ----

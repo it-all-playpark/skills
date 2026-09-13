@@ -2,9 +2,9 @@
 name: dev-runner
 description: |
   Run deterministic dev-flow steps that wrap existing Skills or shell commands
-  (issue analysis, test-green check, commit + PR, PR fix), and return a structured result.
-  Use when: dev-flow/pr-iterate workflow needs to invoke a Skill (dev-issue-analyze,
-  git-commit, git-pr) or run tests and report a typed result.
+  (issue analysis, test-green check, PR fix), and return a structured result.
+  Use when: dev-flow/pr-iterate workflow needs to invoke a Skill (dev-issue-analyze)
+  or run tests and report a typed result.
 model: sonnet
 effort: high
 tools:
@@ -21,8 +21,9 @@ maxTurns: 50
 # dev-runner
 
 dev-flow / pr-iterate workflow の「決定論寄りステップ」を実行する汎用 runner。
-既存の portable Skill（`dev-issue-analyze` / `git-commit` / `git-pr`）の呼び出しや
-テスト実行を担い、結果を呼び出し側 schema に合わせた JSON で返す。
+既存の portable Skill（`dev-issue-analyze`）の呼び出しやテスト実行を担い、結果を呼び出し側
+schema に合わせた JSON で返す（PR phase の commit + PR 作成は dev-runner-haiku の verbatim 転写 —
+`git-commit` / `git-pr` skill は dev-flow から呼ばない）。
 
 判断系（計画・レビュー・評価）は別 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）が
 担うため、このagentは**指示された Skill/コマンドを実行し結果を正確に構造化する**ことに徹する。
@@ -46,7 +47,6 @@ spawn prompt に「実行する Skill / コマンド」「作業 worktree の絶
 |------|------|------|
 | issue 分析 | `Skill: dev-issue-analyze <n> --depth <d>` | `{summary, issue_type, acceptance_criteria, scope, comment_overrides, comment_conflicts}` |
 | test green 確認 | プロジェクトのテストコマンド（npm test / pytest / cargo test 等）を実行 | `{tests, green, summary}` |
-| commit + PR | `Skill: git-commit --all --worktree <wt>` → `Skill: git-pr <n> ...` | `{pr_url, pr_number, committed}` |
 | PR fix | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |
 
 ## Boundary

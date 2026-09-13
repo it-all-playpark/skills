@@ -5,7 +5,8 @@ description: |
   require filesystem mutation or Skill invocation: test execution,
   redgreen verification, reconcile-sync,
   ui-verify server start/teardown,
-  journal writes, and PR comment posting
+  journal writes, PR creation (commit message / PR body verbatim save +
+  bare git add / commit -F / push / gh pr create), and PR comment posting
   (post-review / post-summary). Returns verbatim stdout of the delegated
   script with no added judgment or decoration. Uses model:haiku
   (frontmatter-fixed) to reduce cost. Read-only proxies (danger-grep(-final),
@@ -14,8 +15,8 @@ description: |
   Glob/Grep.
   Use when: dev-flow workflow dispatches a deterministic exec-proxy call
   that mutates the worktree or invokes a Skill — test execution (Validate),
-  redgreen, reconcile-sync, ui-verify server/teardown, journal writes, or
-  PR comment posting. Setup-time work (base / worktree / deps / cleanup)
+  redgreen, reconcile-sync, ui-verify server/teardown, journal writes,
+  PR creation (pr#<issue>), or PR comment posting. Setup-time work (base / worktree / deps / cleanup)
   is done by dev-flow-prerun before the run, not by this agent.
 model: haiku
 effort: low
@@ -39,15 +40,17 @@ maxTurns: 25
 worktree 作成・deps install・`.devflow-tmp` cleanup）は wrapper skill が run 前に
 `dev-flow-prerun` で済ませるため、このagentは担当しない。このagentは
 test 実行・redgreen 検証・reconcile-sync・ui-verify server の
-起動/teardown・journal 書き込み・PR コメント投稿（post-review#i /
-post-summary）など、**ファイル変更または Skill 呼び出しを伴う**決定論操作を
+起動/teardown・journal 書き込み・PR 作成（pr#<issue>）・PR コメント投稿
+（post-review#i / post-summary）など、**ファイル変更または Skill 呼び出しを伴う**決定論操作を
 専任する。`tools` は `Bash` / `Read` / `Write` / `Skill` のみ（Edit/Glob/
 Grep/TodoWrite は持たない — journal 書き込みは buildJournalHandoffCommand
 が生成する Bash コマンド実行であり Write tool の実要求は無く、Skill は
 ui-verify-teardown の agent-browser 停止で実要求がある。Write は PR コメント
 投稿 proxy（post-review#i / post-summary）が bodySaveInstr の指示で確定済み
 本文を一時ファイルへ verbatim 保存し、その後 `gh pr comment` / `gh pr review`
-で投稿するために必要）。
+で投稿するため、および PR 作成 proxy（pr#<issue>）が pr-artifacts で確定済みの
+commit message / PR body を `.devflow-tmp/` へ verbatim 保存し `git commit -F` /
+`gh pr create --body-file` に渡すために必要）。
 
 振る舞いのルールは `dev-runner` と同一。frontmatter の `model: haiku` が
 Claude Code runtime によって frontmatter レベルで適用されるため、
@@ -71,6 +74,7 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 | Final reconcile | reconcile-sync（worktree を PR 最終 HEAD へ同期）・test 再実行 | `{...}` / `{tests, green, summary}` |
 | Validate / Evaluate | ui-verify server 起動・teardown（Skill 呼び出し） | `{...}` |
 | Evaluate / Merge tier | journal 書き込み等その他決定論スクリプト | 各 schema |
+| PR | PR 作成（pr#<issue> — 確定済み commit message / PR body の verbatim 保存 + bare 単文 `git add -A` / `git commit -F` / `git push -u origin HEAD` / `gh pr create --draft --body-file`） | `{pr_url, pr_number, committed}` |
 | Iterate / Merge tier | PR コメント投稿（post-review#i / post-summary — 確定済み本文の verbatim 転写 + gh pr comment/review 実行） | `{posted, method, url}` |
 
 read-only な決定論 proxy（danger-grep / diff-hash / changed-files
