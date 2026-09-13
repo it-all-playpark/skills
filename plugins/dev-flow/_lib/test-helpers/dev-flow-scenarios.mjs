@@ -12,11 +12,13 @@
  *   expectError — run が throw で終端することを期待する scenario（abort / empty-diff）
  */
 
+import { mergeTierFacts } from './vm-sandbox.mjs';
+
 const UI_FILE = 'src/components/Foo.tsx';
 const VALID_UI_CFG = { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}', base_port: 4100, ready_path: '/', env_files: [] };
 const UI_OVERRIDES = {
   'danger-grep': { risk: { ok: true, hits: [] }, files: [UI_FILE], struct: null, diffhash: { hash: 'AAA', empty: false } },
-  'changed-files': { files: [UI_FILE] },
+  'merge-tier-facts': mergeTierFacts({ files: [UI_FILE] }),
   'ui-verify-config': { found: true, config: VALID_UI_CFG },
   'ui-verify-config-final': { found: true, config: VALID_UI_CFG },
   'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1 },
@@ -47,16 +49,16 @@ export const DEV_FLOW_SCENARIOS = {
   'diff-gate-retry': {
     overrides: { 'diff-gate': { hash: 'H', empty: true }, 'diff-gate-retry': { hash: 'H2', empty: false } },
   },
-  // eval hash と PR hash の不一致 → tree-diff-numstat / head-tree-oid（Merge tier は eval と一致で再収束）
+  // eval hash と PR hash の不一致 → tree-diff-numstat（Merge tier は merge-tier-facts の head_tree が eval と一致で再収束）
   'hash-mismatch': {
     overrides: {
       'diff-hash-pr': { hash: 'BBB', empty: false },
       'tree-diff-numstat': { ok: true, files: ['docs/a.md (+0/-500)'] },
-      'head-tree-oid': { ok: true, tree: 'AAA' },
+      'merge-tier-facts': mergeTierFacts({ tree: 'AAA' }),
     },
   },
-  // Merge tier で diff-hash-merge が secfloor と不一致 → danger-grep-final / changed-files 再実行
-  'merge-rescan': { overrides: { 'diff-hash-merge': { hash: 'CCC', empty: false } } },
+  // Merge tier で merge-tier-facts の diffhash が secfloor と不一致 → facts の risk / changed で再判定
+  'merge-rescan': { overrides: { 'merge-tier-facts': mergeTierFacts({ hash: 'CCC' }) } },
   // pr-iterate が fix を適用 → Final reconcile 経路（reconcile-sync / test#final / *-final）+ UI 経路
   'final-reconcile-ui': {
     overrides: {
@@ -90,14 +92,14 @@ export const DEV_FLOW_SCENARIOS = {
       'redgreen:AC-1': { verdict: null, ok: true },
     },
   },
-  // implementer が CI で検証可能な環境事象を concern に返す → ENV item → ci-checks
+  // implementer が CI で検証可能な環境事象を concern に返す → ENV item → merge-tier-facts の checks で CI 委譲
   'ci-checks': {
     overrides: {
       'impl:serial:t1': {
         status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's',
         concerns: ['sandbox 内で next build が TurbopackInternalError で失敗した'],
       },
-      'ci-checks': { ok: true, checks: [{ name: 'build', bucket: 'pass' }] },
+      'merge-tier-facts': mergeTierFacts({ checks: [{ name: 'build', bucket: 'pass' }] }),
     },
   },
   // complex: plan-reviewer loop（review#1 revise → review#2 pass）+ eval#1 critical → fix#1 → eval#2 pass

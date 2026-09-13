@@ -3979,27 +3979,6 @@ const REVIEW = {
     epoch: { type: 'number' },
   },
 }
-const RISK = {
-  type: 'object', required: ['ok', 'hits'],
-  properties: {
-    ok: { type: 'boolean' },
-    hits: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['file', 'class'],
-        properties: {
-          file: { type: 'string' },
-          class: { type: 'string' },
-          severity: { type: 'string' },
-          pattern: { type: 'string' },
-        },
-      },
-    },
-    error: { type: 'string' },
-    exit_code: { type: ['number', 'string'] },
-  },
-}
 const CHANGED = {
   type: 'object', required: ['files'],
   properties: { files: { type: 'array', items: { type: 'string' } } },
@@ -4024,11 +4003,6 @@ const DIFFHASH = {
 const TREE_DIFF_LINES = {
   type: 'object', required: ['ok'],
   properties: { ok: { type: 'boolean' }, lines: { type: 'array', items: { type: 'string' } }, error: { type: 'string' } },
-}
-// TREE_OID: `git -C <WT> rev-parse <sha>^{tree}` の stdout（tree OID 1 行）を verbatim 転写した read-only exec-proxy 応答。
-const TREE_OID = {
-  type: 'object', required: ['ok'],
-  properties: { ok: { type: 'boolean' }, tree: { type: ['string', 'null'] }, error: { type: 'string' } },
 }
 // SECFLOOR: Security floor 統合 exec-proxy (`_shared/scripts/secfloor-classify.sh`) の応答 schema。
 // `risk` のみ required（ok:boolean / hits:array 必須）— risk は
@@ -4148,17 +4122,176 @@ const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { t
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
 const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' }, epoch: { type: 'number' } } }
-// PR_META: gh pr view --json mergeable,mergeStateStatus,headRefOid の read-only exec-proxy 結果。
-const PR_META = {
+// MERGE_FACTS: Merge tier 統合 exec-proxy (`_shared/scripts/merge-tier-facts.sh`) の応答 schema。
+// Merge tier の read-only 事実 6 種（diffhash / risk / changed / pr / head_tree / checks）を 1 spawn で採り、
+// サブ結果は全て {ok, value, error?}。required は fail-closed の `risk` のみ — proxy が
+// payload をネストする等の形状不一致を schema 契約違反として検知し retryOnContractViolation の再試行機会を
+// 与える（required:[] だと契約違反にならず一発で fail-closed に倒れ、診断もできない）。
+// 他サブ結果は required にしない（fail-open のまま per-field 検証 parseMergeTierFacts へ流す）。
+const MERGE_FACT_SUB = {
   type: 'object', required: ['ok'],
+  properties: { ok: { type: 'boolean' }, value: { type: ['object', 'null'] }, error: { type: 'string' } },
+}
+const MERGE_FACTS = {
+  type: 'object',
+  required: ['risk'],
   properties: {
-    ok: { type: 'boolean' },
-    mergeable: { type: ['string', 'null'] },
-    mergeStateStatus: { type: ['string', 'null'] },
-    headRefOid: { type: ['string', 'null'] },
-    error: { type: 'string' },
+    diffhash: MERGE_FACT_SUB,
+    risk: MERGE_FACT_SUB,
+    changed: MERGE_FACT_SUB,
+    pr: MERGE_FACT_SUB,
+    head_tree: MERGE_FACT_SUB,
+    checks: MERGE_FACT_SUB,
+    epoch: { type: ['number', 'null'] },
   },
 }
+// merge-tier-facts-schema-end: MERGE_FACTS 直後に parseMergeTierFacts の inline 区間を続ける（anchor 用の一意行）。
+// ==== BEGIN inline: _lib/merge-tier-facts.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// parseMergeTierFacts: dev-flow Merge tier が使う統合 exec-proxy
+// (`_shared/scripts/merge-tier-facts.sh`) の応答をサブ結果ごとに独立に検証する純関数 (issue #637)。
+//
+// 統合スクリプトは {diffhash, risk, changed, pr, head_tree, checks, epoch} の 1 JSON object を返し、
+// サブ結果は全て {ok, value, error?} 形。本関数は「1 サブ結果の不正が他サブ結果の判定に影響しない」
+// ことを保証するため、各サブ結果を完全に独立して検証し、旧 6 spawn（diff-hash-merge /
+// danger-grep-final / changed-files / gh-pr-view / head-tree-oid / ci-checks）が個別に返していた
+// 形へ写す。呼び出し側の判定ロジック（reuseSecFloor / reconcileDanger / classifyMergeableState /
+// hash_reconverged / envChecksGreen）はこの写像の上で不変。
+//
+// サブ結果別失敗ポリシー（旧 spawn の fail-closed / fail-open 区別と同一）:
+//   mergeDiffHash - fail-open。diffhash.ok===true かつ value.hash が string のときのみ採用、それ以外 null
+//                   （null は「Security floor 結果の再利用不可 → danger-grep 再判定」と
+//                   「hash_reconverged 判定不能 → hash_mismatch 維持」に倒れる）。
+//   risk          - fail-closed。risk.ok===true かつ value が {ok:boolean, hits:array} のときのみ採用。
+//                   それ以外は {ok:false, hits:[], error} を合成（null は返さない — hits 欠落を clean と
+//                   同一視しない。呼び出し側は risk.ok!==true を dangerFailClosed として HOLD 強制）。
+//   changedFiles  - fail-safe。changed.ok===true かつ value.files が string[] のときのみ採用、それ以外 null
+//                   （null は isDocsOrTestOnly が false を返し AUTO 昇格しない安全側）。
+//   prMeta        - fail-open。pr.ok===true かつ value が object のときのみ {ok:true, mergeable,
+//                   mergeStateStatus, headRefOid}、それ以外 {ok:false, error}
+//                   （classifyMergeableState が 'unknown' → conflict gate は HOLD しない）。
+//   headTreeOid   - fail-open。head_tree.ok===true かつ value.tree が非空 string のときのみ trim して採用
+//                   （旧 head-tree-oid spawn と同じ受理条件。40hex 検証は script 側）、それ以外 null
+//                   （hash_mismatch 維持 = HOLD）。
+//   checks        - fail-open。checks.ok===true かつ value.checks が array のときのみ {ok:true, checks}、
+//                   それ以外 {ok:false, error}（ENV item 据え置き + 警告 log）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+
+// mergeTierFactsPrompt({ wt, base, pr, repo }): 統合 exec-proxy の prompt。
+// gh の 2 コマンドは subagent が bare 単文で実行し、stdout を argv で merge-tier-facts へ verbatim 転写する
+// （exec-proxy スクリプトは認証付き network I/O を内部に持たない契約。check-ci / finalCiPrompt と同型）。
+// base は origin/ 無しの branch 名を受け、prompt 側で origin/ を付ける（既存 call site と同じ）。
+function mergeTierFactsPrompt({ wt, base, pr, repo }) {
+  const repoArg = repo ? ' --repo ' + repo : '';
+  const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクトは禁止）';
+  return `## Objective\nPR #${pr} の Merge tier 判定に使う事実を取得し、merge-tier-facts の stdout JSON をそのまま返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push, git fetch, git pull\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。git mutation（commit/push/reset/fetch/pull 等）禁止。ファイルを変更しない\n\n`
+    + `## Steps\n`
+    + `1. \`gh pr view ${pr}${repoArg} --json mergeable,mergeStateStatus,headRefOid\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ${bare}。stdout を <PR_VIEW> とする。\n`
+    + `2. \`gh pr checks ${pr}${repoArg} --json name,bucket\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ${bare}。`
+    + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。stdout を <CHECKS> とする。\n`
+    + `3. \`merge-tier-facts --worktree ${wt} --base origin/${base} --pr-view-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
+    + `--checks-data '<手順2の stdout を一字一句そのまま。要約・整形・省略禁止>'\` を先頭トークンが merge-tier-facts の bare 単文で 1 回だけ実行せよ。`
+    + `手順 1 / 2 の stdout が空、またはコマンドが実行できなかった場合は当該オプション自体を省略せよ（値を捏造してはならない）。`
+    + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
+    + `（--worktree で worktree 絶対パスを渡しているため cd は不要）。\n`
+    + `4. 手順 3 の stdout の JSON 1 行を **そのまま** 返せ（判定・要約・整形・省略禁止）。`
+    + `手順 3 自体が実行できなかった、または stdout が JSON でない場合のみ \`{"risk":{"ok":false,"value":null,"error":"<stderr の要約>"}}\` を返せ。`
+    + `失敗時に ok:true を生成してはならない。原因調査はするな。再試行禁止。\n\n`
+    + `## Output format\n`
+    + `merge-tier-facts の stdout JSON（{diffhash, risk, changed, pr, head_tree, checks, epoch}。各サブ結果は {ok, value, error?}）\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内。`;
+}
+
+// サブ結果が契約通りの形か（{ok:boolean} を持つ object）。error は ok:false 時の診断値。
+function subOk(sub) {
+  return sub != null && typeof sub === 'object' && sub.ok === true;
+}
+
+function subError(sub, fallback) {
+  if (sub != null && typeof sub === 'object' && typeof sub.error === 'string' && sub.error !== '') return sub.error;
+  return fallback;
+}
+
+function parseMergeDiffHash(facts) {
+  const sub = facts?.diffhash;
+  const hash = subOk(sub) ? sub.value?.hash : null;
+  return typeof hash === 'string' && hash !== '' ? hash : null;
+}
+
+// risk サブ結果が契約通りの形か。fail-closed に倒れた 2 原因 — proxy が契約外形状を返した /
+// スクリプトが契約通りの形で ok:false を報告した — を呼び出し側が区別するための述語。
+function isWellFormedRiskFact(facts) {
+  const sub = facts?.risk;
+  if (!subOk(sub)) return false;
+  const v = sub.value;
+  return v != null && typeof v === 'object' && typeof v.ok === 'boolean' && Array.isArray(v.hits);
+}
+
+function parseRiskFact(facts) {
+  if (isWellFormedRiskFact(facts)) return facts.risk.value;
+  return { ok: false, hits: [], error: subError(facts?.risk, 'merge-tier-facts risk unavailable (fail-closed)') };
+}
+
+function parseChangedFiles(facts) {
+  const sub = facts?.changed;
+  const files = subOk(sub) ? sub.value?.files : null;
+  if (Array.isArray(files) && files.every((f) => typeof f === 'string')) return files;
+  return null;
+}
+
+function parsePrMeta(facts) {
+  const sub = facts?.pr;
+  if (subOk(sub) && sub.value != null && typeof sub.value === 'object') {
+    const v = sub.value;
+    return {
+      ok: true,
+      mergeable: typeof v.mergeable === 'string' ? v.mergeable : null,
+      mergeStateStatus: typeof v.mergeStateStatus === 'string' ? v.mergeStateStatus : null,
+      headRefOid: typeof v.headRefOid === 'string' ? v.headRefOid : null,
+    };
+  }
+  return { ok: false, error: subError(sub, 'merge-tier-facts pr unavailable') };
+}
+
+function parseHeadTreeOid(facts) {
+  const sub = facts?.head_tree;
+  const tree = subOk(sub) ? sub.value?.tree : null;
+  return typeof tree === 'string' && tree.trim() !== '' ? tree.trim() : null;
+}
+
+function parseChecks(facts) {
+  const sub = facts?.checks;
+  if (subOk(sub) && Array.isArray(sub.value?.checks)) return { ok: true, checks: sub.value.checks };
+  return { ok: false, error: subError(sub, 'merge-tier-facts checks unavailable') };
+}
+
+// 診断用: facts の top-level キー一覧（契約外形状のとき log に出す）
+function mergeTierFactsTopLevelKeys(facts) {
+  if (facts == null) return 'null';
+  if (typeof facts !== 'object') return typeof facts;
+  const keys = Object.keys(facts);
+  return keys.length ? keys.join(',') : '(none)';
+}
+
+function parseMergeTierFacts(facts) {
+  return {
+    mergeDiffHash: parseMergeDiffHash(facts),
+    risk: parseRiskFact(facts),
+    changedFiles: parseChangedFiles(facts),
+    prMeta: parsePrMeta(facts),
+    headTreeOid: parseHeadTreeOid(facts),
+    checks: parseChecks(facts),
+  };
+}
+// ==== END inline: _lib/merge-tier-facts.mjs ====
 
 // journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う。
 const JOURNAL_SAVE_RESULT = {
@@ -5532,7 +5665,7 @@ async function execSecurityFloorPhase(state) {
   // Merge tier 側で必ず再実行させる（Security floor の fail-closed 性は変えない）。
   if (risk.ok === true && Array.isArray(files)) {
     state.secDiffHash = hash
-    if (state.secDiffHash == null) log('⚠️ diff-hash-secfloor: hash 取得失敗 — Merge tier での再利用は skip（fail-open、danger-grep-final は再実行）')
+    if (state.secDiffHash == null) log('⚠️ diff-hash-secfloor: hash 取得失敗 — Merge tier での再利用は skip（fail-open、danger-grep-final は merge-tier-facts の risk で再判定）')
   } else {
     state.secDiffHash = null
   }
@@ -5968,7 +6101,7 @@ feedClockMark('evaluate_end', epochResOf(state.evalResult))
 // 判定は hash 文字列の完全一致のみ（0/非0 二値。比率閾値なし）。
 // micro path（runEval=false）は evalDiffHash が null のまま → 比較も警告も skip。
 // eval_staleness は 5 値（none / hash_mismatch / hash_reconverged / iterate_incomplete /
-// iterate_fixed）。hash_reconverged への置換は Merge tier phase の gh-pr-view 直後で行う。
+// iterate_fixed）。hash_reconverged への置換は Merge tier phase の merge-tier-facts（pr / head_tree サブ結果）取得後に行う。
 let evalStaleness = 'none'
 if (state.evalDiffHash != null) {
   // throw は failOpenAgent で吸収。read-only probe のため契約違反リトライ opt-in
@@ -6293,44 +6426,60 @@ feedClockMark('final_end', finalEpochRes)
 // merge は全 tier 人間。AUTO は推奨ラベルのみ(真 auto-merge は W6 earned-autonomy)。
 // ============================================================
 phase('Merge tier')
+// Merge tier 統合 exec-proxy: Merge tier が使う read-only 事実（diff-hash / danger-grep / changed-files /
+// gh pr view / PR head tree OID / gh pr checks）を label 'merge-tier-facts' の 1 spawn で採る。
+// subagent は gh pr view / gh pr checks を bare 単文で実行して stdout を argv で merge-tier-facts へ
+// verbatim 転写し、merge-tier-facts はローカル read-only git との純変換で 6 サブ結果を {ok,value,error}
+// で返す（exec-proxy スクリプトは認証付き network I/O を内部に持たない）。判定は全て JS 側 —
+// parseMergeTierFacts がサブ結果ごとに独立検証し、以降の reuseSecFloor / reconcileDanger /
+// classifyMergeableState / hash_reconverged / envChecksGreen はその値で判定する。throw / null / 契約外形状は
+// Security floor の統合呼び出しと同じく per-field フォールバック（risk fail-closed → dangerFailClosed で
+// HOLD 強制、他は fail-open）で続行し、run を abort しない（abort は終端サマリと journal entry を失う）。
+// 6 サブ結果は常に取得する（head_tree / checks を使うかどうかは spawn 費用が無いため JS の分岐が決める）。
+let mergeFacts = null
+try {
+  mergeFacts = await trackedAgent(
+    mergeTierFactsPrompt({ wt: WT, base: BASE, pr: pr.pr_number, repo: REPO }),
+    { agentType: 'dev-runner-haiku-ro', schema: MERGE_FACTS, label: 'merge-tier-facts', phase: 'Merge tier', retryOnContractViolation: true },
+  )
+} catch (e) { log(`⚠️ merge-tier-facts 呼び出しが例外 — facts=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
+const facts = parseMergeTierFacts(mergeFacts)
 // diff-hash reuse: Security floor 時点の tree OID（state.secDiffHash）と Merge tier
-// 冒頭の tree OID が完全一致するときのみ danger-grep-final/changed-files の再実行を skip し、
+// 冒頭の tree OID が完全一致するときのみ danger-grep-final/changed-files の再判定を skip し、
 // Security floor の risk/realized をそのまま再利用する。secDiffHash が null（Security floor
-// 側 fail-closed・取得失敗）のときは diff-hash-merge 自体を呼ばない（無駄な proxy を発行しない）。
+// 側 fail-closed・取得失敗）のときは merge 側 hash を参照しない（比較対象が無い hash は再利用にも
+// hash_reconverged 判定にも使わず、後者は mergeDiffHash=null で hash_mismatch 維持に倒れる）。
 let riskFinal
 let changed
 let mergeDiffHash = null
 if (state.secDiffHash != null) {
-  // throw は failOpenAgent で吸収。read-only probe のため契約違反リトライ opt-in
-  const dh = await failOpenAgent(state.dhPrompt, { agentType: 'dev-runner-haiku-ro', schema: DIFFHASH, label: 'diff-hash-merge', phase: 'Merge tier', retryOnContractViolation: true })
-  mergeDiffHash = (dh && typeof dh.hash === 'string') ? dh.hash : null
-  if (mergeDiffHash == null) log('⚠️ diff-hash-merge の取得に失敗 — Security floor 結果の再利用は skip し danger-grep-final / changed-files を再実行（fail-safe）')
+  mergeDiffHash = facts.mergeDiffHash
+  if (mergeDiffHash == null) log('⚠️ diff-hash-merge の取得に失敗 — Security floor 結果の再利用は skip し danger-grep-final / changed-files を再判定（fail-safe）')
 }
 const reuseSecFloor = state.secDiffHash != null && mergeDiffHash != null && state.secDiffHash === mergeDiffHash
 if (reuseSecFloor) {
-  log(`Merge tier: diff-hash 一致（${mergeDiffHash}）— Security floor の danger-grep/changed-files 結果を再利用（danger-grep-final/changed-files 再実行を skip）`)
+  log(`Merge tier: diff-hash 一致（${mergeDiffHash}）— Security floor の danger-grep/changed-files 結果を再利用（danger-grep-final/changed-files の再判定を skip）`)
   riskFinal = state.risk
   changed = { files: state.realized?.files ?? [] }
 } else {
-  riskFinal = need(await trackedAgent(
-    `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
-    + `（exit 非0・stdout 空・JSON 不正なら ok:false/hits:[]/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-    + `diff-risk-classify origin/${BASE}`,
-    { agentType: 'dev-runner-haiku-ro', schema: RISK, label: 'danger-grep-final', phase: 'Merge tier' },
-  ), 'Merge tier(danger-grep-final)')
+  riskFinal = facts.risk
+  // fail-closed の 2 原因を出し分ける。形状不一致は top-level キー一覧が、
+  // proxy 自身の失敗報告（形状は契約通り）は risk.error が診断値になる。
+  if (riskFinal.ok !== true) {
+    log(isWellFormedRiskFact(mergeFacts)
+      ? `⚠️ danger-grep-final: merge-tier-facts が失敗を報告した（error: ${riskFinal.error ?? 'unknown'}）— risk fail-closed へ倒す`
+      : `⚠️ danger-grep-final: merge-tier-facts が契約外形状を返した（top-level keys: ${mergeTierFactsTopLevelKeys(mergeFacts)}）— risk fail-closed へ倒す`)
+  }
   // changed-files 再利用: Final reconcile が同一 worktree・同一 tree に対して
   // 完全に同じコマンド（`git diff --name-only origin/BASE...HEAD`）を既に実行している。
   // Final reconcile と Merge tier の間で tree を変える処理は無い（journal payload 等の書き込みは
-  // gitignored な .devflow-tmp 配下に留まる）ため、結果は byte 一致する。取得失敗・未実行（null）は再実行する。
+  // gitignored な .devflow-tmp 配下に留まる）ため、結果は byte 一致する。未実行・取得失敗（null）は facts の値を使う。
   if (changedFilesFinal != null) {
     changed = { files: changedFilesFinal }
-    log('Merge tier: Final reconcile の changed-files-final を再利用（同一 tree — changed-files 再実行を skip）')
+    log('Merge tier: Final reconcile の changed-files-final を再利用（同一 tree）')
   } else {
-    changed = need(await trackedAgent(
-      `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
-      + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
-      { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files', phase: 'Merge tier' },
-    ), 'Merge tier(changed-files)')
+    changed = { files: facts.changedFiles }
+    if (facts.changedFiles == null) log('⚠️ changed-files の取得に失敗 — docs/test-only 判定は不成立扱い（AUTO 昇格しない安全側）')
   }
 }
 const dangerHitsFinal = riskFinal.ok === true ? [...new Set(secHitsOf(riskFinal).map((h) => h.class))] : []
@@ -6379,13 +6528,8 @@ const escalateCount = policyAdvisoryItems(state.ledger, GATE_POLICY).filter((it)
 // label は 'gh-pr-view'（'pr' 始まりにしない — 既存 routing test 群が label.startsWith('pr') を
 // PR 作成 phase の呼び出し数カウントに使っており、'pr' 始まりの label を追加すると衝突するため。
 // lite-route-routing.test.mjs の同種コメント参照）。
-// headRefOid は hash_reconverged 判定の証人。gh 追加呼び出しなし
-const prMeta = await trackedAgent(
-  `cd ${WT} で作業。次を実行し **stdout の JSON object を** {"ok": true, "mergeable": <値>, "mergeStateStatus": <値>, "headRefOid": <値>} に包んで返せ`
-  + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない）:\n`
-  + `gh pr view ${pr.pr_number} --json mergeable,mergeStateStatus,headRefOid`,
-  { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'gh-pr-view', phase: 'Merge tier' },
-)
+// headRefOid は hash_reconverged 判定の証人。値は merge-tier-facts の pr サブ結果（gh 追加呼び出しなし）
+const prMeta = facts.prMeta
 const mergeableState = classifyMergeableState(prMeta)
 if (mergeableState === 'conflicting') log('gh-pr-view: base branch と conflict 検出 — merge tier を HOLD 強制')
 else if (mergeableState === 'unknown') log(`⚠️ gh-pr-view: mergeable 状態を確定できず（${prMeta?.error ?? 'null / UNKNOWN'}）— conflict gate は fail-open（HOLD しない。definitive CONFLICTING/DIRTY のみ HOLD）`)
@@ -6402,16 +6546,10 @@ if (evalStaleness === 'hash_mismatch') {
   } else if (mergeDiffHash == null) {
     log('⚠️ hash_reconverged 判定: merge 対象 tree の hash が未計算/取得失敗（mergeDiffHash=null）— head-tree-oid probe は発行せず hash_mismatch 維持（HOLD）')
   } else {
-    const headTree = await failOpenAgent(
-      `次のコマンドを **先頭トークンが git の bare 単文** で 1 回だけ実行し、stdout の 1 行（tree OID）を {"ok": true, "tree": "<stdout をそのまま>"} で返せ`
-      + `（exit 非0・stdout 空・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。fetch/pull はするな。`
-      + `cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結・パイプは禁止。-C で worktree を渡しているため cd は不要）:\n`
-      + `git -C ${WT} rev-parse ${headRefOid}^{tree}`,
-      { agentType: 'dev-runner-haiku-ro', schema: TREE_OID, label: 'head-tree-oid', phase: 'Merge tier', retryOnContractViolation: true },
-    )
-    state.prHeadTreeOid = (headTree && headTree.ok === true && typeof headTree.tree === 'string' && headTree.tree.trim() !== '') ? headTree.tree.trim() : null
+    // PR head tree は merge-tier-facts の head_tree サブ結果（script が pr.headRefOid^{tree} を rev-parse 済み。fetch なし）
+    state.prHeadTreeOid = facts.headTreeOid
     if (state.prHeadTreeOid == null) {
-      log(`⚠️ hash_reconverged 判定: head-tree-oid の取得に失敗（${headTree?.error ?? 'null / schema 不一致'}）— hash_mismatch 維持（HOLD）`)
+      log(`⚠️ hash_reconverged 判定: head-tree-oid の取得に失敗（${mergeFacts?.head_tree?.error ?? 'null / schema 不一致'}）— hash_mismatch 維持（HOLD）`)
     } else if (state.prHeadTreeOid === state.evalDiffHash && mergeDiffHash === state.evalDiffHash) {
       evalStaleness = 'hash_reconverged'
       log(`ℹ️ hash_reconverged: PR head tree ${state.prHeadTreeOid.slice(0, 8)} と merge 対象 tree が評価済み tree と一致 — PR 直前の乖離（${state.staleDiffFiles ? state.staleDiffFiles.length + ' 件' : '一覧取得失敗'}）は一時的。HOLD 理由から除外（issue #631）`)
@@ -6459,15 +6597,8 @@ log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 const ciTargets = state.ledger.items.filter((it) =>
   it.dimension === 'environment' && it.checked !== true && CI_VERIFIABLE_ENV_KEYS.includes(it.env_key))
 if (ciTargets.length > 0) {
-  const ciChecks = await trackedAgent(
-    `\`gh pr checks ${pr.pr_number}${REPO ? ' --repo ' + REPO : ''} --json name,bucket\` を`
-    + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止。`
-    + `\`--repo\` で cwd 非依存化しているため cd は不要）で 1 回だけ実行し、`
-    + `**stdout の JSON array を** {"ok": true, "checks": <array>} に包んで返せ`
-    + `（gh pr checks は check 失敗時 exit 1・pending 時 exit 8 を返すが、stdout に JSON array が出ていれば ok:true とする。`
-    + `stdout が空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。原因調査はするな。再試行禁止）。`,
-    { agentType: 'dev-runner-haiku-ro', schema: CHECKS, label: 'ci-checks', phase: 'Merge tier' },
-  )
+  // checks は merge-tier-facts の checks サブ結果（gh pr checks --json name,bucket の stdout 転写。gh 追加呼び出しなし）
+  const ciChecks = facts.checks
   if (!ciChecks || ciChecks.ok !== true || !Array.isArray(ciChecks.checks)) {
     log(`⚠️ ci-checks: checks 取得失敗 (${ciChecks?.error ?? 'null/schema 不一致'}) — ENV item 据え置き（fail-open）`)
   } else {

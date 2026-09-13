@@ -25,7 +25,7 @@ import { parseSecfloorFields, isWellFormedRiskField } from './secfloor-unified.m
 import { reconcileDanger, seedSecurityLedger, classifyMergeTier } from './merge-tier.mjs';
 import { policyBlockingItems, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -158,16 +158,16 @@ test('[secfloor-schema-contract][AC3] nested {struct:{risk:...}} response fails 
 // AC4: retry-then-still-invalid keeps risk fail-closed / all SEC seeds unchecked / HOLD
 //
 // merge_tier=HOLD を実際に成立させるには、Security floor（label 'danger-grep'）と Merge tier
-// （label 'danger-grep-final'）の両方が fail-closed である必要がある — Merge tier は自分の
-// tree に対して danger-grep-final を独立に再実行し、それが clean を返すと ledger は
+// （label 'merge-tier-facts' の risk サブ結果）の両方が fail-closed である必要がある — Merge tier は自分の
+// tree に対して danger-grep を独立に再判定し、それが clean を返すと ledger は
 // reconcile され直して converge してしまう（Security floor 側の fail-closed は Merge tier の
-// 判定に自動継承されない）。したがって danger-grep-final も一貫して失敗するよう override する。
+// 判定に自動継承されない）。したがって merge-tier-facts の risk も一貫して失敗するよう override する。
 // ============================================================
 
 test('[secfloor-schema-contract][AC4] retry after two StructuredOutput throws keeps risk fail-closed and all SEC seeds unchecked / HOLD', async () => {
   const overrides = {
     'danger-grep': () => { throw new Error('Agent completed without calling StructuredOutput'); },
-    'danger-grep-final': () => ({ ok: false, hits: [], error: 'boom-final' }),
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
   };
   const { ctx, calls } = makeDevFlowSandbox({ overrides });
   const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
@@ -205,7 +205,7 @@ test('[secfloor-schema-contract][AC4] retry after throw then a nested (schema-in
       if (n === 1) throw new Error('Agent completed without calling StructuredOutput');
       return { struct: { risk: { ok: true, hits: [{ file: 'a', class: 'exec-sink', severity: 'critical' }] } } };
     },
-    'danger-grep-final': () => ({ ok: false, hits: [], error: 'boom-final' }),
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
   };
   const { ctx, calls } = makeDevFlowSandbox({ overrides });
   const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
@@ -221,7 +221,7 @@ test('[secfloor-schema-contract][AC4] retry after throw then a nested (schema-in
 test('[secfloor-schema-contract][AC4] a well-formed contract failure (ok:false, no StructuredOutput-violation message) is not retried', async () => {
   const overrides = {
     'danger-grep': () => ({ risk: { ok: false, hits: [], error: 'boom' } }),
-    'danger-grep-final': () => ({ ok: false, hits: [], error: 'boom-final' }),
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
   };
   const { ctx, calls } = makeDevFlowSandbox({ overrides });
   const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
@@ -268,7 +268,7 @@ test('[secfloor-schema-contract][AC5] isWellFormedRiskField and parseSecfloorFie
 test('[secfloor-schema-contract][AC5] fail-closed path is observable in logs by label identifier only (wording not pinned)', async () => {
   const overrides = {
     'danger-grep': () => { throw new Error('Agent completed without calling StructuredOutput'); },
-    'danger-grep-final': () => ({ ok: false, hits: [], error: 'boom-final' }),
+    'merge-tier-facts': () => mergeTierFacts({ risk: { ok: false, hits: [], error: 'boom-final' } }),
   };
   const { ctx, logs } = makeDevFlowSandbox({ overrides });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);

@@ -15,6 +15,7 @@
  *   - runWorkflowCapture(src, ctx, filename?): strip + wrap + vm 実行し {result, error} を返す
  *     （dev-flow.js / pr-iterate.js 共用。filename 既定は '.claude/workflows/dev-flow.js'）
  *   - assertNoCrash(error, name): error が ReferenceError/SyntaxError なら assert.fail する
+ *   - mergeTierFacts(overrides?): Merge tier 統合 exec-proxy（label 'merge-tier-facts'）の応答を組み立てる
  *   - devFlowResponder(overrides?, {issue?}?): dev-flow.js 標準経路（shape 'standard'）の既定 responder
  *   - prIterateResponder(overrides?): pr-iterate.js 単体起動の既定 responder
  *   - makeDevFlowSandbox({overrides?, issue?, workflow?, extra?}?): devFlowResponder を使った
@@ -232,6 +233,37 @@ export function assertNoCrash(error, name) {
 }
 
 // ============================================================
+// mergeTierFacts: Merge tier 統合 exec-proxy（label 'merge-tier-facts'）の応答を組み立てる
+// ============================================================
+
+/**
+ * merge-tier-facts の応答 {diffhash, risk, changed, pr, head_tree, checks, epoch} を返す。
+ * 各サブ結果は {ok:true, value} で、引数で個別に上書きできる。null を渡したサブ結果は
+ * {ok:false, value:null, error} になる（当該サブ結果だけ失敗させる）。
+ *
+ * @param {{hash?: string, risk?: object|null, files?: string[]|null, pr?: object|null,
+ *          tree?: string|null, checks?: object[]|null, epoch?: number}} [o]
+ */
+export function mergeTierFacts(o = {}) {
+  const sub = (v, err) => (v === null ? { ok: false, value: null, error: err } : { ok: true, value: v });
+  const hash = 'hash' in o ? o.hash : 'AAA';
+  const risk = 'risk' in o ? o.risk : { ok: true, hits: [] };
+  const files = 'files' in o ? o.files : ['src/x.ts'];
+  const pr = 'pr' in o ? o.pr : { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: 'a'.repeat(40) };
+  const tree = 'tree' in o ? o.tree : 'AAA';
+  const checks = 'checks' in o ? o.checks : null;
+  return {
+    diffhash: sub(hash === null ? null : { hash, empty: false, epoch: 1 }, 'stub: diffhash unavailable'),
+    risk: sub(risk, 'stub: risk unavailable'),
+    changed: sub(files === null ? null : { files }, 'stub: changed unavailable'),
+    pr: sub(pr, 'stub: pr unavailable'),
+    head_tree: sub(tree === null ? null : { tree }, 'stub: head_tree unavailable'),
+    checks: sub(checks === null ? null : { checks }, 'stub: no checks'),
+    epoch: o.epoch ?? 2000,
+  };
+}
+
+// ============================================================
 // devFlowResponder: dev-flow.js 標準経路（shape 'standard'）の既定 responder
 // ============================================================
 
@@ -277,7 +309,10 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'AAA', empty: false } };
     }
-    if (label === 'danger-grep-final') return { ok: true, hits: [] };
+    // label 'merge-tier-facts'（Merge tier。issue #637 統合呼び出し）は 6 サブ結果を {ok,value,error} で返す。
+    // diffhash は既定で danger-grep（Security floor）と同一ハッシュ 'AAA'（Security floor 結果の再利用が発火）。
+    // 不一致・失敗にしたいテストは override で個別に上書きする（mergeTierFacts() helper 参照）。
+    if (label === 'merge-tier-facts') return mergeTierFacts();
     if (agentType === 'dev-flow:evaluator') {
       return {
         verdict: 'pass', total: 100, threshold: 80, feedback: [],
@@ -291,11 +326,6 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'AAA', empty: false };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'changed-files') return { files: ['src/x.ts'] };
-    if (label === 'gh-pr-view') {
-      return { ok: true, mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: 'a'.repeat(40) };
-    }
-    if (label === 'ci-checks') return { ok: false, error: 'stub' };
     if (label === 'post-summary') return { posted: true, method: 'gh', url: 'http://x', epoch: 2000 };
     if (label.startsWith('journal-save')) return { saved: true };
     if (label.startsWith('journal-log')) return { logged: true, summary: 'ok' };
