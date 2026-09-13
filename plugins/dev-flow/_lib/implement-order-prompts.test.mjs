@@ -8,8 +8,7 @@
 // 実行時点で未生成の成果を参照して BLOCKED になる。この不変条件を agent プロンプトが
 // 正しく伝えているかを source string で pin する。
 //
-// パターン: _lib/devflow-phase-functions.test.mjs と同スタイル（readFileSync + regex +
-// node:assert/strict、VM sandbox は使わない source-string only）。
+// パターン: readFileSync + regex + node:assert/strict の source-string only（VM sandbox は使わない）。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';

@@ -4,11 +4,15 @@
 // (a) ci-check#i の agent stub が throw する harness ケースで run が throw せず完走し
 //     terminal が ci_error（status に反映）になること
 // (b) ci-check#i stub が null（schema 未返却）でも同様に ci_error 終端になること
-// (c) source scan で ci-check prompt に '--checks-data' が含まれ '--checks-json' /
-//     '$TMPDIR/ci-checks' / 'リダイレクト' が含まれないこと
-// (d) hygiene: ci-check / post-summary / journal 系 prompt 文字列に guard / sandbox /
+// (c) VM で実際に dispatch された ci-check prompt に '--checks-data' が含まれ '--checks-json' /
+//     '$TMPDIR/ci-checks' / 'リダイレクト' が含まれないこと（canonical ciCheckPrompt との一致で
+//     呼び出し側が独自 prompt を書いていないことも観測する）
+// (d) hygiene: 実際に dispatch された ci-check / post-summary / journal 系 prompt に guard / sandbox /
 //     ガード / サンドボックス が含まれないこと
-// (e) failOpenAgent を source から抽出し throw する stub で null が返ることの単体検証
+// (f) ci_error 終端の log が原因を auth/network と断定せず、実 PR 番号を埋めた gh pr checks 確認
+//     手順を含むこと（issue #621）
+// （issue #636: (c)(d)(f) のソース regex 走査と (e) の failOpenAgent ソース抽出を VM 観測へ置換。
+//   (e) は (a) が ci-check 経路で throw→null→ci_error を挙動として担保する）
 //
 // vm sandbox パターンは _lib/priterate-ci-wait-telemetry.test.mjs / priterate-review-throw-recovery.test.mjs
 // の makeSandbox / runPrIterate を踏襲する。
@@ -19,7 +23,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ciCheckPrompt } from './ci-check.mjs';
-import { buildJournalSaveInstr, buildJournalLogInstr } from './journal-handoff.mjs';
 import vm from 'node:vm';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -27,10 +30,10 @@ const repoRoot = join(here, '..');
 const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
 const src = readFileSync(prIteratePath, 'utf8');
 
-function makeSandbox(agentStub) {
+function makeSandbox(agentStub, logs = []) {
   const sandbox = {
     phase: () => {},
-    log: () => {},
+    log: (m) => { logs.push(String(m)); },
     agent: agentStub,
     parallel: async (fns) => Promise.all((fns || []).map((f) => f())),
     workflow: async () => ({ status: 'lgtm' }),
@@ -144,99 +147,52 @@ test('[failopen-b] ci-check#1 が null(schema 未返却) -> status=ci_error', as
   assert.equal(result?.status, 'ci_error', `ci-check#1 null 時は status=ci_error であるべきだが '${result?.status}' だった`);
 });
 
-// ---- (c) prompt が argv データ渡し形 ----
+// ---- (c) prompt が argv データ渡し形（実際に dispatch された prompt を観測）----
 // prompt 本文は canonical `_lib/ci-check.mjs` にあり両 workflow へ inline 生成される（issue #543）。
-// source scan ではなく **生成される文字列そのもの** を検査する（agent が実際に受け取る内容を直接見る）。
-// 呼び出し側が canonical を使わず独自 prompt を書き始める退行は、後段の call-site 検証で捕まえる。
-test('[failopen-c] ci-check prompt が --checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', () => {
-  const prompt = ciCheckPrompt({ pr: 123, repo: 'owner/name' });
-  assert.ok(prompt.includes('--checks-data'), 'ci-check prompt に --checks-data が含まれるべき');
-  assert.ok(!prompt.includes('--checks-json'), 'ci-check prompt に旧 --checks-json が残っているべきでない');
-  assert.ok(!prompt.includes('$TMPDIR/ci-checks'), 'ci-check prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
-  assert.ok(!/[>]\s*\$TMPDIR/.test(prompt), 'ci-check prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
-
-  // call-site 検証: pr-iterate は独自 prompt を書かず canonical を呼ぶ
-  const ciCheckBlockMatch = src.match(/const ci = await failOpenAgent\(([\s\S]*?)\{ agentType: 'dev-runner-haiku-ro'[\s\S]*?label: `ci-check#\$\{i\}`/);
-  assert.ok(ciCheckBlockMatch, 'ci-check#i の trackedAgent 呼び出しブロックが見つかるべき');
-  assert.ok(
-    ciCheckBlockMatch[1].includes('ciCheckPrompt('),
-    'ci-check の呼び出し側は canonical の ciCheckPrompt() を使うべき（独自 prompt を書かない）',
-  );
+// 呼び出し側が canonical を使わず独自 prompt を書き始める退行は、dispatch された prompt と canonical の
+// 生成文字列の完全一致で捕まえる。
+test('[failopen-c] dispatch された ci-check prompt が canonical ciCheckPrompt と一致し、--checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', async () => {
+  const agentCalls = [];
+  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', failed_checks: [] }), agentCalls }));
+  const { error } = await runPrIterate(ctx);
+  assertNoSandboxCrash(error);
+  const ci = agentCalls.find((c) => c.label === 'ci-check#1');
+  assert.ok(ci, 'ci-check#1 が dispatch されていない');
+  assert.equal(ci.prompt, ciCheckPrompt({ pr: 5, repo: 'acme/skills' }), 'ci-check の呼び出し側は canonical の ciCheckPrompt() をそのまま使うべき（独自 prompt を書かない）');
+  assert.ok(ci.prompt.includes('--checks-data'), 'ci-check prompt に --checks-data が含まれるべき');
+  assert.ok(!ci.prompt.includes('--checks-json'), 'ci-check prompt に旧 --checks-json が残っているべきでない');
+  assert.ok(!ci.prompt.includes('$TMPDIR/ci-checks'), 'ci-check prompt に $TMPDIR/ci-checks への言及が残っているべきでない');
+  assert.ok(!/[>]\s*\$TMPDIR/.test(ci.prompt), 'ci-check prompt に $TMPDIR へのリダイレクト構文が残っているべきでない');
 });
 
-// ---- (d) hygiene: guard/sandbox 語が prompt 文字列に含まれない ----
-test('[failopen-d] ci-check / post-summary / journal 系 prompt に guard/sandbox 系の語が含まれない', () => {
+// ---- (d) hygiene: guard/sandbox 語が dispatch された prompt に含まれない ----
+test('[failopen-d] dispatch された ci-check / post-summary / journal 系 prompt に guard/sandbox 系の語が含まれない', async () => {
   const forbidden = ['guard', 'sandbox', 'ガード', 'サンドボックス'];
-
-  // ci-check の prompt 本文は canonical へ移った（issue #543）ため、呼び出し側ブロックを走査しても
-  // 空振りする。生成される文字列そのものを検査する。
-  const ciPrompt = ciCheckPrompt({ pr: 123, repo: 'owner/name' }).toLowerCase();
-  for (const word of forbidden) {
-    assert.ok(
-      !ciPrompt.includes(word.toLowerCase()),
-      `ci-check prompt に禁止語 '${word}' が含まれているべきでない`,
-    );
-  }
-
-  const sections = [
-    { name: 'post-summary', re: /const summaryPost = await failOpenAgent\(([\s\S]*?)label: `post-summary`[\s\S]*?\)\n/ },
-  ];
-  for (const { name, re } of sections) {
-    const m = src.match(re);
-    assert.ok(m, `${name} の trackedAgent 呼び出しブロックが見つかるべき`);
-    const block = m[1].toLowerCase();
+  const agentCalls = [];
+  const ctx = makeSandbox(buildAgentStub({ ciStub: () => ({ status: 'passed', failed_checks: [] }), agentCalls }));
+  const { error } = await runPrIterate(ctx);
+  assertNoSandboxCrash(error);
+  for (const label of ['ci-check#1', 'post-summary', 'journal-save', 'journal-log']) {
+    const c = agentCalls.find((x) => x.label === label);
+    assert.ok(c, `${label} が dispatch されていない`);
+    const p = c.prompt.toLowerCase();
     for (const word of forbidden) {
-      assert.ok(!block.includes(word.toLowerCase()), `${name} prompt に禁止語 '${word}' が含まれているべきでない`);
+      assert.ok(!p.includes(word.toLowerCase()), `${label} prompt に禁止語 '${word}' が含まれているべきでない`);
     }
   }
-
-  // journal-save / journal-log の prompt 本文は canonical へ移った（_lib/journal-handoff.mjs
-  // runJournalHandoff、issue #556）ため、呼び出し側（pr-iterate.js）ブロックを走査しても空振りする。
-  // canonical のビルダーが生成する文字列そのものを検査する。
-  const journalSaveInstr = buildJournalSaveInstr({
-    payload: '{"skill":"pr-iterate"}',
-    savePath: '/tmp/priterate/.devflow-tmp/payload-priterate-5.json',
-  }).toLowerCase();
-  const journalLogInstr = buildJournalLogInstr({
-    prefix: 'priterate',
-    id: 5,
-    payloadPath: '/tmp/priterate/.devflow-tmp/payload-priterate-5.json',
-    payload: '{"skill":"pr-iterate"}',
-  }).toLowerCase();
-  for (const [name, instr] of [['journal-save', journalSaveInstr], ['journal-log', journalLogInstr]]) {
-    for (const word of forbidden) {
-      assert.ok(!instr.includes(word.toLowerCase()), `${name} prompt に禁止語 '${word}' が含まれているべきでない`);
-    }
-  }
-});
-
-// ---- (e) failOpenAgent 単体: throw する stub で null が返る ----
-test('[failopen-e] failOpenAgent は trackedAgent が throw しても null を返す(コンテキストへ抽出して直接検証)', async () => {
-  const failOpenMatch = src.match(/async function failOpenAgent\([\s\S]*?\n\}/);
-  assert.ok(failOpenMatch, 'failOpenAgent 関数定義が source に存在するべき');
-
-  const calls = [];
-  const sandbox = {
-    log: (msg) => calls.push(msg),
-    trackedAgent: async () => { throw new Error('boom'); },
-    console,
-  };
-  const ctx = vm.createContext(sandbox);
-  const wrapped = `(${failOpenMatch[0]})`;
-  const fn = vm.runInContext(wrapped, ctx);
-  const out = await fn('prompt', { label: 'test-proxy' });
-  assert.equal(out, null, 'failOpenAgent は throw を吸収して null を返すべき');
-  assert.ok(calls.some((m) => String(m).includes('test-proxy')), 'failOpenAgent は警告 log を出すべき');
 });
 
 // ---- (f) ci_error の log 文言が原因を断定せず gh pr checks の確認手順を含む（issue #621） ----
-test('[failopen-f] pr-iterate.js の ci_error log は auth/network を断定せず gh pr checks 確認手順を含む', () => {
-  // inline 区間（pr-comment-format / ci-check の生成コピー）ではなく、CI gate 本体の log() 呼び出し行のみを対象にする
-  const logLines = src.split('\n').filter((l) => /^\s*log\(`/.test(l) && l.includes('CI check returned error'));
-  assert.equal(logLines.length, 1, `ci_error の log 行がちょうど 1 行あるべき: ${JSON.stringify(logLines)}`);
-  const line = logLines[0];
+test('[failopen-f] ci_error 終端の log は auth/network を断定せず、実 PR 番号を埋めた gh pr checks 確認手順を含む', async () => {
+  const agentCalls = [];
+  const logs = [];
+  const ctx = makeSandbox(buildAgentStub({ ciStub: () => null, agentCalls }), logs);
+  const { result, error } = await runPrIterate(ctx);
+  assertNoSandboxCrash(error);
+  assert.equal(result?.status, 'ci_error');
+  const line = logs.find((l) => l.includes('CI check returned error'));
+  assert.ok(line, `ci_error の log が出ていない: ${JSON.stringify(logs.slice(-5))}`);
   assert.ok(!line.includes('auth/network'), 'log は原因を auth/network と断定しない');
   assert.ok(!line.includes('gh API failed'), 'log は gh API 失敗と断定しない');
-  assert.ok(line.includes('CI ステータスを確定できなかった'), '確定できなかった旨を含む');
-  assert.ok(line.includes('gh pr checks ${PR}'), '実 PR 番号を埋めた gh pr checks 確認手順を含む');
+  assert.ok(line.includes('gh pr checks 5'), '実 PR 番号を埋めた gh pr checks 確認手順を含む');
 });

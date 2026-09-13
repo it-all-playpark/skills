@@ -3,431 +3,418 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { stripComments } from '../../../tools/sync-inlines.mjs';
-import { neutralizeRegexLiterals, blankStringLiterals } from './test-helpers/source-scan.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
+import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 /**
- * tracked-agent-failure-policy.test.mjs — trackedAgent( 全出現の 3 分類強制（issue #605）
+ * tracked-agent-failure-policy.test.mjs — trackedAgent( 呼び出しの 3 分類強制（issue #605）を
+ * vm-sandbox 共有 harness による throw 注入マトリクスの挙動テストで検証する。
  *
- * dev-flow.js / pr-iterate.js の call site は必ず以下のいずれかに属する:
- *   1. need() 内                — 契約の null は中断（fail-closed。既存の need() throw 経路）。
- *   2. failOpenAgent wrapper 内 — trackedAgent の throw を吸収し null へ倒す（fail-open、issue #499/#605）。
- *   3. 明示 ALLOWLIST           — 上記いずれでもない bare `await trackedAgent(...)` 呼び出し。throw は
- *      run を abort させる。ALLOWLIST は「据え置き」の可視化そのものであり、各 entry は
- *      policy（'fail-safe' | 'fail-closed'）+ reason（20 字以上）を明示する。
+ * dev-flow.js / pr-iterate.js の trackedAgent( call site は必ず以下いずれかに属する:
+ *   1. need() 内                — throw は中断（run abort）。null も中断（既存 need() 契約）。
+ *   2. failOpenAgent wrapper 内 — throw を吸収し null へ倒す（fail-open、continue）。
+ *   3. ローカル try{}/pipeline() 包囲 — throw を吸収し継続する bare 呼び出し（fail-safe、continue）。
+ *   4. 上記いずれでもない bare 呼び出し — throw は吸収されず run 全体の安全網 try まで伝播し abort する
+ *      （fail-closed「据え置き」）。
  *
- * 'fail-safe' は「throw を吸収する try{}/pipeline() に call site が実際に包まれているか」を
- * 機械検証する（reason だけの自己申告を認めない）。dev-flow.js / pr-iterate.js には run 全体を
- * 保護する安全網 try（Setup 直後 〜 末尾 catch。throw を log して rethrow するのみで継続しない）が
- * 存在するため、この安全網に包まれているだけの occurrence は fail-safe とは判定しない
- * （TOP_LEVEL_TRY_MARKER で特定し除外する）。
+ * 各 label に対し実際に agent() を throw させて run を実行し、continue（error===null）/
+ * abort（error!==null かつ abort handoff が発火）/ needs_clarification のいずれになるかを
+ * EXPECTED テーブルと突合する。
  *
- * 新規 call site を追加するときは上記 3 択のいずれかを選ぶ: need() で包む / failOpenAgent 経由にする /
- * ALLOWLIST に policy と reason を登録する。ALLOWLIST に無い bare 出現はこのテストが red になり、
- * 失敗メッセージが未分類 key の一覧と 3 択を提示する。
- *
- * 'fail-closed（据え置き）' entry は「null は fail-open だが throw は未吸収」という既存動作を
- * 変えないまま可視化するためのもの。fail-open 化は本 issue（#605）のスコープ外で別 issue に送る。
+ * **カバレッジの範囲**: 「未分類 label 検出」test が観測する label は `DEV_FLOW_SCENARIOS`
+ * （`test-helpers/dev-flow-scenarios.mjs`）の全 scenario + 本ファイル固有の baseline 設定
+ * （DF_B1〜DF_B5 / DF_DANGER）が到達する範囲に限る — dev-flow.js 中の bare trackedAgent( 出現を
+ * 静的に全走査するわけではない。新しい scenario を dev-flow-scenarios.mjs に足せば新規 call site も
+ * ここへ到達し、EXPECTED_DEV_FLOW 未登録なら red になる（scenario 集合を経由した分類強制）。
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const DEV_FLOW_PATH = join(HERE, '..', '.claude', 'workflows', 'dev-flow.js');
+const PR_ITERATE_PATH = join(HERE, '..', '.claude', 'workflows', 'pr-iterate.js');
+const devFlowSrc = readFileSync(DEV_FLOW_PATH, 'utf8');
+const prIterateSrc = readFileSync(PR_ITERATE_PATH, 'utf8');
 
-// ── 構造検出ヘルパー ────────────────────────────────────────────────
+const THROW = () => { throw new Error('injected'); };
 
-// blanked（regex literal 中和 + コメント除去 + 文字列/テンプレート中身空白化済み）上で
-// openIdx の対応する閉じ括弧の index を返す（見つからなければ -1）。
-function findMatchingClose(str, openIdx, openCh, closeCh) {
-  let depth = 1;
-  let j = openIdx + 1;
-  while (j < str.length && depth > 0) {
-    if (str[j] === openCh) depth++;
-    else if (str[j] === closeCh) depth--;
-    j++;
-  }
-  return depth === 0 ? j - 1 : -1;
+// ============================================================
+// dev-flow.js baseline 設定
+// ============================================================
+// 各 label は到達に必要な前提が異なる。baseline ごとに最小限の override で到達経路を作る。
+
+// B1: 既定 run（fixes_applied:0、shape=standard）。最も多くの label がここで到達する。
+const DF_B1 = { overrides: {} };
+// B2: pr-iterate fix 適用後の Final reconcile 系（reconcile-sync 成功・test#final 既定 pass）。
+const DF_B2 = {
+  workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
+  overrides: { 'reconcile-sync': { ok: true, head: 'a'.repeat(40) } },
+};
+// B3: Security floor ↔ Merge tier の tree OID 再利用 miss（diff-hash-merge が Security floor と
+// 異なる hash を返す）— danger-grep-final / changed-files（Merge tier 版）を実際に呼ばせる。
+const DF_B3 = { overrides: { 'diff-hash-merge': { hash: 'BBB', empty: false } } };
+// B4: Final reconcile が unavailable（test#final tests:'error'）→ ci-final の CI 委譲へ到達する。
+const DF_B4 = {
+  workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
+  overrides: {
+    'reconcile-sync': { ok: true, head: 'a'.repeat(40) },
+    'test#final': { tests: 'error', summary: 'startup failed', green: false },
+  },
+};
+// B5: Merge tier の danger-grep-final が新規 hit（auth）を報告 → one-shot security-clearance-final
+// へ到達する（reuse miss も併用し実際に danger-grep-final を呼ばせる）。
+const DF_B5 = {
+  workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
+  overrides: {
+    'reconcile-sync': { ok: true, head: 'a'.repeat(40) },
+    'test#final': { tests: 'passed', green: true, summary: '' },
+    'diff-hash-merge': { hash: 'BBB', empty: false },
+    'danger-grep-final': { ok: true, hits: [{ class: 'auth', file: 'src/x.ts' }] },
+  },
+};
+// DANGER: danger-grep（Security floor）throw に加え、danger-grep-final（Merge tier）も fail-closed
+// を返す複合 override。Merge tier は Security floor の結果を独立に再取得するため、danger-grep 単体の
+// throw だけでは Merge tier 側の再取得で「clean」に復元されてしまい HOLD を再現できない
+// （fail-closed が Security floor と Merge tier の両方で持続する現実的なシナリオとして構成する）。
+const DF_DANGER = { overrides: { 'danger-grep-final': { ok: false, hits: [], error: 'still down' } } };
+
+// ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing /
+// subagent-invocations-routing と同じ scenario 集合を参照し、到達する label の分類を強制する）──
+const DF_DIFF_GATE_RETRY = DEV_FLOW_SCENARIOS['diff-gate-retry'];
+const DF_HASH_MISMATCH = DEV_FLOW_SCENARIOS['hash-mismatch'];
+const DF_FINAL_RECONCILE_UI = DEV_FLOW_SCENARIOS['final-reconcile-ui'];
+const DF_REDGREEN = DEV_FLOW_SCENARIOS['redgreen'];
+const DF_CI_CHECKS = DEV_FLOW_SCENARIOS['ci-checks'];
+const DF_COMPLEX_FIX = DEV_FLOW_SCENARIOS['complex-fix'];
+const DF_GREEN_FIX = DEV_FLOW_SCENARIOS['green-fix'];
+const DF_LITE = DEV_FLOW_SCENARIOS['lite'];
+const DF_CROSS_REPO = DEV_FLOW_SCENARIOS['cross-repo'];
+// journal-log-abort は top-level abort catch 内でのみ呼ばれる — DEV_FLOW_SCENARIOS['abort'] の
+// トリガ throw message が THROW 定数と同じ 'injected' のため使うと自身の throw が吸収されたのか
+// 元の abort が伝播したのか区別できない。message を変えた専用 base で「元の error message が
+// そのまま残る（＝journal-log-abort 自身の throw は吸収された）」ことを検証する。
+const DF_JOURNAL_ABORT_BASE = { overrides: { 'plan#standard': () => { throw new Error('outer-trigger') } } };
+
+async function runDevFlowBaseline(config) {
+  const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides: config.overrides, workflow: config.workflow });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  return { result, error, calls };
 }
 
-// index i が「i より前で最後に出現した pipeline( 呼び出し」の引数 span 内にあるかを判定する。
-function isWithinPipelineArgs(blanked, i) {
-  const marker = 'pipeline(';
-  let searchFrom = 0;
-  let lastSpan = null;
-  let idx;
-  while ((idx = blanked.indexOf(marker, searchFrom)) !== -1 && idx < i) {
-    const openParen = idx + marker.length - 1;
-    const closeParen = findMatchingClose(blanked, openParen, '(', ')');
-    lastSpan = closeParen === -1 ? null : [openParen, closeParen];
-    searchFrom = idx + marker.length;
-  }
-  if (!lastSpan) return false;
-  return i > lastSpan[0] && i < lastSpan[1];
+async function runDevFlowThrow(config, label) {
+  const overrides = { ...(config.overrides ?? {}), [label]: THROW };
+  const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides, workflow: config.workflow });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  return { result, error, calls };
 }
 
-// index i から blanked を後方走査し、直近の包囲ブロックが try{} かどうかを判定する。
-// - `}` で depth++、`{` で depth>0 なら depth-- / depth===0 ならブロックの opener とみなす。
-// - opener が run 全体の安全網 try（topLevelTryBraceIdx。throw を rethrow するのみで
-//   fail-safe な継続を提供しない）なら NG（try 包囲扱いしない）。
-// - opener 直前の非空白テキストが `try` で終われば OK。
-// - `finally` で終わる場合は NG（throw は伝播する — try 包囲に数えない）。
-// - `=>` または `function <name>(...)` の関数境界で終わる場合は NG（ここで走査を止める —
-//   ローカルな try に包まれないまま関数スコープを抜けたことが確定するため）。
-// - それ以外（if/for/while 等の透過的なブロック）は継続して外側を探索する。
-function isTryWrapped(blanked, i, topLevelTryBraceIdx) {
-  let depth = 0;
-  let j = i - 1;
-  while (j >= 0) {
-    const c = blanked[j];
-    if (c === '}') { depth++; j--; continue; }
-    if (c === '{') {
-      if (depth > 0) { depth--; j--; continue; }
-      if (j === topLevelTryBraceIdx) return false;
-      const before = blanked.slice(0, j).replace(/\s+$/, '');
-      if (/\btry\s*$/.test(before)) return true;
-      if (/\bfinally\s*$/.test(before)) return false;
-      if (/=>\s*$/.test(before)) return false;
-      if (/function\s*[A-Za-z0-9_$]*\s*\([^()]*\)\s*$/.test(before)) return false;
-      j--;
-      continue;
-    }
-    j--;
-  }
-  return false;
-}
-
-// 引数 span の label: 式テキストを抽出する。blankedSpan（string/template 中身が空白化済み・
-// 元 codeSpan と同長・同 index 対応）で label: キーの位置とその値の「トップレベルの , または
-// 閉じ } まで」を depth 追跡し、対応する index 範囲を codeSpan（raw テキスト、クオート等保持）から
-// 切り出す。shorthand property（`label,` — pr-iterate.js の callReviewAgent(prompt, label) 呼び出し）
-// は key テキストとして 'label' を返す。label が取れなければ null。
-function extractLabelKey(blankedSpan, codeSpan) {
-  const colonMatch = blankedSpan.match(/(?<![A-Za-z0-9_$])label\s*:/);
-  if (colonMatch) {
-    let start = colonMatch.index + colonMatch[0].length;
-    while (start < blankedSpan.length && /\s/.test(blankedSpan[start])) start++;
-    let depth = 0;
-    let end = start;
-    while (end < blankedSpan.length) {
-      const c = blankedSpan[end];
-      if (c === '(' || c === '[' || c === '{') { depth++; end++; continue; }
-      if (c === ')' || c === ']') { depth--; end++; continue; }
-      if (c === '}') {
-        if (depth === 0) break;
-        depth--; end++; continue;
-      }
-      if (c === ',' && depth === 0) break;
-      end++;
-    }
-    return codeSpan.slice(start, end).trim();
-  }
-  const shorthandMatch = blankedSpan.match(/(?<![A-Za-z0-9_$])label(?=\s*(?:,|\}))/);
-  if (shorthandMatch) return 'label';
-  return null;
-}
-
-// TARGET のソースを分類する: { need, wrapper, bare } の 3 バケツ。
-// bare は label key ごとにグルーピングし { count, occurrences:[{index, tryOk, pipelineOk}] } を持つ。
-function classify(rawSrc) {
-  const code = stripComments(neutralizeRegexLiterals(rawSrc));
-  const blanked = blankStringLiterals(code);
-  assert.equal(code.length, blanked.length, 'blankStringLiterals は入力長を保つ invariant を満たすこと');
-
-  const wrapperMarker = 'async function failOpenAgent(prompt, opts) {';
-  const wrapperStart = blanked.indexOf(wrapperMarker);
-  assert.ok(wrapperStart !== -1, 'failOpenAgent wrapper 定義が見つからない');
-  const wrapperOpenBrace = wrapperStart + wrapperMarker.length - 1;
-  const wrapperEnd = findMatchingClose(blanked, wrapperOpenBrace, '{', '}');
-  assert.ok(wrapperEnd !== -1, 'failOpenAgent wrapper の閉じ } が見つからない');
-
-  // run 全体の安全網 try（列頭=インデント無しの `try {`。throw を log して rethrow するのみで
-  // fail-safe な継続を提供しない — dev-flow.js/pr-iterate.js の abort-telemetry 用 top-level
-  // try/catch。他の全ローカル try はインデントされているため列頭マーカーで一意に特定できる）。
-  const topLevelTryMarker = '\ntry {\n';
-  const topLevelTryIdx = blanked.indexOf(topLevelTryMarker);
-  assert.ok(topLevelTryIdx !== -1, '列頭（非インデント）の安全網 try が見つからない');
-  const topLevelTryBraceIdx = topLevelTryIdx + topLevelTryMarker.indexOf('{');
-
-  const re = /(?<![A-Za-z0-9_$.])trackedAgent\s*\(/g;
-  let m;
-  const need = [];
-  const wrapper = [];
-  const bare = new Map(); // label key -> { occurrences: [{index, tryOk, pipelineOk}] }
-  const unlabeled = [];
-
-  while ((m = re.exec(blanked))) {
-    const i = m.index;
-    // trackedAgent 自身の function 宣言（`async function trackedAgent(prompt, opts) {`）は
-    // 呼び出し site ではないので分類対象から除外する。
-    const before20 = blanked.slice(Math.max(0, i - 20), i);
-    if (/function\s+$/.test(before20)) continue;
-
-    const before40 = blanked.slice(Math.max(0, i - 40), i).replace(/\s+/g, ' ');
-    if (/need\( ?await ?$/.test(before40)) { need.push(i); continue; }
-
-    if (i > wrapperOpenBrace && i < wrapperEnd) { wrapper.push(i); continue; }
-
-    const openIdx = blanked.indexOf('(', i);
-    const closeIdx = findMatchingClose(blanked, openIdx, '(', ')');
-    assert.ok(closeIdx !== -1, `trackedAgent( 呼び出し（index ${i}）の閉じ ) が見つからない`);
-    const argSpanCode = code.slice(openIdx + 1, closeIdx);
-    const argSpanBlanked = blanked.slice(openIdx + 1, closeIdx);
-    const label = extractLabelKey(argSpanBlanked, argSpanCode);
-    if (label == null) { unlabeled.push(i); continue; }
-
-    const tryOk = isTryWrapped(blanked, i, topLevelTryBraceIdx);
-    const pipelineOk = isWithinPipelineArgs(blanked, i);
-    if (!bare.has(label)) bare.set(label, { occurrences: [] });
-    bare.get(label).occurrences.push({ index: i, tryOk, pipelineOk });
-  }
-
-  assert.equal(unlabeled.length, 0, `label が取得できない trackedAgent( 出現が ${unlabeled.length} 件（index: ${unlabeled.join(', ')}）— need() で包む / failOpenAgent 経由にする / opts に label を追加すること`);
-
-  return { need, wrapper, bare };
-}
-
-// ── ALLOWLIST（issue #605）────────────────────────────────────────
-//
-// policy: 'fail-safe'   — try{}/pipeline() 包囲を機械検証する（分類が満たさなければテストが fail）。
-// policy: 'fail-closed' — reason（20 字以上）のみで根拠づける（機械検証は無し）。
-//   - 「意図的」= null 時に downstream が明示的に fail-closed へ倒す設計。
-//   - 「据え置き」= null は fail-open だが throw は未吸収（本 issue のスコープ外。reason に
-//     「別 issue で fail-open 化」を明記する）。
-
-const ALLOWLIST = {
-  'dev-flow.js': {
-    // ---- fail-safe（try 包囲）----
-    "'contract-probe#' + ISSUE": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し sonnet analyze へ fallback する既存の fail-open 経路（issue #374）',
-    },
-    "'issue-meta'": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し fail-closed（取得検証不能扱い）として続行する（issue #451）',
-    },
-    'isRetry ? `test#retry-${i}` : `test#${i}`': {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を red 扱いの合成 GREEN オブジェクトへ変換し継続する（issue #359）',
-    },
-    "'danger-grep'": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し unified=null → per-field fail-closed フォールバックへ倒す',
-    },
-    "'ui-verify-config'": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し setup_failed（fail-open な advisory gate）として skip する',
-    },
-    "'ui-verify-server' + labelSuffix": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し failed_open（advisory な UI 検証 gate）として継続する',
-    },
-    "'ui-verify' + labelSuffix": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し failed_open（advisory な UI 検証 gate）として継続する',
-    },
-    "'test#final'": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し null 扱い（unavailable → merge tier HOLD）で継続する（issue #359）',
-    },
-    "'ui-verify-config-final'": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し setup_failed（advisory・test gate は維持）として skip する',
-    },
-    "'ci-final'": {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し null 扱い（fail-closed → unavailable 維持）で継続する（issue #599）',
-    },
-    // ---- fail-safe（pipeline 包囲）----
-    '`${tag}:par:${t.id}`': {
-      policy: 'fail-safe',
-      reason: 'pipeline() の callback throw は harness-native の fail-open で per-item null に落ちる（issue #332）',
-    },
-
-    // ---- fail-closed（意図的）----
-    "'setup-base'": {
-      policy: 'fail-closed',
-      reason: 'base/worktree 起点が確定しないまま進むと PR diff に base 間差分が乗る。null は resolveBase の fail-closed throw と同側。契約違反は retryOnContractViolation で 1 回リトライ済み',
-    },
-    '`analyze-retry#${ISSUE}`': {
-      policy: 'fail-closed',
-      reason: '再分析不能のまま再実装させない。null は needs_clarification 中断で run は abort しない',
-    },
-    'isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`': {
-      policy: 'fail-closed',
-      reason: 'ファイル編集の副作用を伴う fix agent。throw 時は tree が部分変更の可能性があり黙って Evaluate へ進めない',
-    },
-    '`fix#${i}`': {
-      policy: 'fail-closed',
-      reason: '同上（Evaluate の implementation fix）。ファイル編集副作用があるため throw を黙って吸収しない',
-    },
-    "'issue-labels'": {
-      policy: 'fail-closed',
-      reason: 'empty-diff gate の cross-repo 判定材料。取得不能で gate を通過させない（issue #432）',
-    },
-    "'cross-repo-artifacts'": {
-      policy: 'fail-closed',
-      reason: 'empty-diff gate の cross-repo 判定材料。取得不能で gate を通過させない（issue #432）',
-    },
-    "'final-ac-reconcile'": {
-      policy: 'fail-closed',
-      reason: '最終 AC 再検証の結果不明のまま merge tier を確定しない（軸A 決定論検証、issue #331）',
-    },
-    "'security-clearance-final'": {
-      policy: 'fail-closed',
-      reason: 'W7 軸A: security clearance 不能を clear と同一視しない（security floor invariant）',
-    },
-
-    // ---- fail-closed（据え置き — null は fail-open/fail-safe だが throw は未吸収。
-    //      fail-open 化は issue #605 非スコープで別 issue へ送る）----
-    "'isolation-probe'": {
-      policy: 'fail-closed',
-      reason: 'bg-isolation 検知は fail-closed 設計（throw で回避手順を提示）。fail-open 化は別 issue の検討対象',
-    },
-    "'worktree-deps'": {
-      policy: 'fail-closed',
-      reason: 'deps install 結果不明のまま以降の実装を進めるべきでない。throw 吸収は別 issue の検討対象',
-    },
-    '`redgreen:AC-${r.ac_index + 1}`': {
-      policy: 'fail-closed',
-      reason: 'red→green 昇格判定の throw 吸収は未整備（据え置き）。fail-open 化は issue #605 の非スコープ',
-    },
-    "'pr-review-lite'": {
-      policy: 'fail-closed',
-      reason: 'lite route の pr-reviewer 1-pass。throw 吸収は未整備（据え置き）。別 issue で fail-open 化を検討',
-    },
-    "'reconcile-sync'": {
-      policy: 'fail-closed',
-      reason: 'Final reconcile の worktree 同期。throw 吸収は未整備（据え置き）。別 issue で fail-open 化を検討',
-    },
-    "'changed-files-final'": {
-      policy: 'fail-closed',
-      reason: 'Final reconcile の最終 changed-files 取得。throw 吸収は未整備（据え置き。別 issue の検討対象）',
-    },
-    "'ui-verify-teardown' + labelSuffix": {
-      policy: 'fail-closed',
-      reason: 'finally 内の呼び出しで try 包囲ではない（throw は伝播する）。teardown 失敗は手動確認の余地を残す設計として据え置き',
-    },
-    "'gh-pr-view'": {
-      policy: 'fail-closed',
-      reason: 'Merge tier の PR meta 取得。throw 吸収は未整備（据え置き）。別 issue で fail-open 化を検討',
-    },
-    "'ci-checks'": {
-      policy: 'fail-closed',
-      reason: 'ENV item auto-close の CI 状態取得。throw 吸収は未整備（据え置き）。別 issue で fail-open 化を検討',
-    },
-    "'post-summary'": {
-      policy: 'fail-closed',
-      reason: 'PR summary コメント投稿。throw 吸収は未整備（据え置き）。別 issue で fail-open 化を検討',
+// ============================================================
+// EXPECTED_DEV_FLOW: label → { config, policy, reason, extra? }
+// ============================================================
+const EXPECTED_DEV_FLOW = {
+  'setup-base': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。base/worktree起点が確定しないままPR diffに基点差分が乗るため throw をそのまま abort させる' },
+  worktree: { config: DF_B1, policy: 'abort', reason: 'need()包み。worktree未確定のまま以降のImplementへ進めない致命契約' },
+  'isolation-cleanup': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。cleanup失敗はprobe成立に影響しないfail-open設計' },
+  'isolation-probe': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。bg-isolation検知はfail-closed設計で回避手順を提示するthrowを伝播させる' },
+  'worktree-deps': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。deps install結果不明のまま以降の実装を進めるべきでない' },
+  "contract-probe#1": { config: DF_B1, policy: 'continue', reason: 'try/catchでthrowを吸収しsonnet analyzeへfallbackする既存のfail-open経路' },
+  'analyze#1': { config: DF_B1, policy: 'abort', reason: 'need()包み。REQ取得不能のまま実装を進めない致命契約' },
+  'issue-meta': {
+    config: DF_B1,
+    policy: 'needs_clarification',
+    reason: 'try/catchで吸収するがprovenance突合が不合格になりneeds_clarificationで中断する',
+  },
+  'plan#standard': { config: DF_B1, policy: 'abort', reason: 'need()包み。計画取得不能のまま実装を進めない致命契約' },
+  'impl:serial:t1': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。implementer失敗はnullとしてdropし継続する' },
+  'test#1': {
+    config: DF_B1,
+    policy: 'continue',
+    reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路',
+    extra: async ({ calls }) => {
+      assert.ok(calls.some((c) => c.label === 'green-fix#1'), "test#1 throw 後に label 'green-fix#1' の call が見つからない");
     },
   },
-  'pr-iterate.js': {
-    '`fix#${i}`': {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し fix=null（null-retry 経路）として継続する（issue #437/#520）',
+  'diff-gate': { config: DF_B1, policy: 'abort', reason: 'need()包み。empty-diff gate判定不能のまま先へ進めない致命契約' },
+  'danger-grep': {
+    config: DF_DANGER,
+    policy: 'continue',
+    reason: 'try/catchで吸収しunified=nullのper-fieldフォールバック（risk fail-closed）へ倒す',
+    extra: async ({ result }) => {
+      assert.equal(result?.merge_tier, 'HOLD', 'danger-grep と danger-grep-final が共に fail-closed の場合 merge_tier は HOLD になるべき');
     },
-    '`fix#${i}-retry`': {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し fix=null として継続する（issue #437/#520 の retry 経路）',
+  },
+  'diff-hash-eval': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。stale検出をskipするだけのadvisory信号' },
+  'eval#1': { config: DF_B1, policy: 'abort', reason: 'need()包み。評価取得不能のままPRへ進めない致命契約' },
+  'diff-hash-pr': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。stale検出をskipするだけのadvisory信号' },
+  'pr#1': { config: DF_B1, policy: 'abort', reason: 'need()包み。PR作成失敗のまま継続しない致命契約' },
+  'diff-hash-merge': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。tree OID再利用判定をskipするだけのadvisory信号' },
+  'gh-pr-view': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。PR meta取得失敗のfail-open化は別issueの検討対象' },
+  'post-summary': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。投稿失敗の吸収整備は別issueの検討対象' },
+  'journal-save': {
+    config: DF_B1,
+    policy: 'continue',
+    reason: 'runJournalHandoff内のtry/catchで吸収しsave_failedを返すfail-open経路',
+    extra: async ({ result }) => {
+      assert.equal(result?.journal_log_status, 'save_failed', "journal-save throw 時は journal_log_status が 'save_failed' になるべき");
     },
-    label: {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し review=null（schema-retry 経路）として継続する（issue #437）',
+  },
+  'journal-log': {
+    config: DF_B1,
+    policy: 'continue',
+    reason: 'runJournalHandoff内のtry/catchで吸収しlog_failedを返すfail-open経路',
+    extra: async ({ result }) => {
+      assert.equal(result?.journal_log_status, 'log_failed', "journal-log throw 時は journal_log_status が 'log_failed' になるべき");
     },
-    '`${label}-schema-retry`': {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し review=null として継続する（issue #437 の retry 経路）',
+  },
+  'reconcile-sync': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。worktree同期不能のままFinal reconcileを進めない' },
+  'test#final': { config: DF_B2, policy: 'continue', reason: 'try/catchで吸収しunavailable扱い（merge tier HOLD）へ倒すfail-safe経路' },
+  'changed-files-final': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。最終changed-files取得失敗のfail-open化は別issueの検討対象' },
+  'final-ac-reconcile': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。最終AC再検証不能のままmerge tierを確定しない契約' },
+  'danger-grep-final': { config: DF_B3, policy: 'abort', reason: 'need()包み。Merge tier最終dangerチェック不能のまま先へ進めない契約' },
+  'changed-files': { config: DF_B3, policy: 'abort', reason: 'need()包み。Merge tier changed-files取得不能のまま先へ進めない契約' },
+  'ci-final': { config: DF_B4, policy: 'continue', reason: 'try/catchで吸収しunavailable維持（fail-closed）へ倒す既存経路' },
+  'security-clearance-final': { config: DF_B5, policy: 'abort', reason: 'bare据え置き。security clearance不能をclearと同一視しない契約' },
+
+  // ── 以下は issue #605 review（PR #645）: DEV_FLOW_SCENARIOS 経由で新規到達する 30 label ──
+  'issue-labels': { config: DF_DIFF_GATE_RETRY, policy: 'abort', reason: 'bare据え置き。cross-repoラベル取得不能のままempty-diff判定を進めない' },
+  'reimpl-empty-diff:serial:t1': { config: DF_DIFF_GATE_RETRY, policy: 'continue', reason: 'failOpenAgent経由。empty-diff差し戻しのserial実装失敗はnullとしてdropし継続する' },
+  'diff-gate-retry': { config: DF_DIFF_GATE_RETRY, policy: 'abort', reason: 'need()包み。差し戻し後のdiff再取得不能のまま先へ進めない致命契約' },
+  'test#retry-1': {
+    config: DF_DIFF_GATE_RETRY,
+    policy: 'continue',
+    reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路（retry経路）',
+  },
+  'tree-diff-numstat': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。hash_mismatch時の差分一覧取得失敗はHOLD理由の可読性補助を欠くのみ' },
+  'head-tree-oid': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。tree再収束の決定論証拠取得失敗はhash_mismatch据え置きへ倒すのみ' },
+  'ui-verify-config': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（advisoryなUI検証）' },
+  'ui-verify-server': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
+  'ui-verify': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
+  'ui-verify-teardown': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる' },
+  'ui-verify-config-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（Final reconcile再検証）' },
+  'ui-verify-server-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
+  'ui-verify-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
+  'ui-verify-teardown-final': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる（Final reconcile）' },
+  'redgreen:AC-1': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
+  'ci-checks': { config: DF_CI_CHECKS, policy: 'abort', reason: 'bare据え置き。CI委譲auto-close呼び出し失敗のfail-open化は別issueの検討対象' },
+  'plan#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回計画取得不能のまま進めない致命契約' },
+  'review#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回レビュー取得不能のまま進めない致命契約' },
+  'plan#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ2周目計画取得不能のまま進めない致命契約' },
+  'review#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ2周目レビュー取得不能のまま進めない致命契約' },
+  'fix#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'bare据え置き。evaluator実装レベル指摘への修正呼び出しは吸収機構がない' },
+  'eval#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。2周目の評価取得不能のままPRへ進めない致命契約' },
+  'green-fix#1': { config: DF_GREEN_FIX, policy: 'abort', reason: 'bare据え置き。green-fix実装呼び出しはtry/catchで吸収されずrunを中断させる' },
+  'test#2': {
+    config: DF_GREEN_FIX,
+    policy: 'continue',
+    reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路',
+  },
+  'plan#trivial': { config: DF_LITE, policy: 'abort', reason: 'need()包み。micro shapeのplan取得不能のまま実装を進めない致命契約' },
+  'pr-review-lite': { config: DF_LITE, policy: 'abort', reason: 'bare据え置き。lite経路のレビュー呼び出し失敗は吸収機構がない' },
+  'ci-check-lite': { config: DF_LITE, policy: 'continue', reason: 'failOpenAgent経由。lite経路のCI状態取得失敗はフルpr-iterateへ委譲するのみ' },
+  'cross-repo-artifacts': { config: DF_CROSS_REPO, policy: 'abort', reason: 'bare据え置き。cross-repo成果物検証失敗のfail-open化は別issueの検討対象' },
+  'journal-log-failure': {
+    config: DF_CROSS_REPO,
+    policy: 'continue',
+    reason: 'runJournalHandoff内のtry/catchで吸収しlog_failedを返すfail-open経路（failure telemetry）',
+    extra: async ({ result }) => {
+      assert.equal(result?.status, 'cross_repo_artifact', "journal-log-failure throw 後の result.status が cross_repo_artifact でない");
+      assert.equal(result?.journal_log_status, 'log_failed', "journal-log-failure throw 時は journal_log_status が 'log_failed' になるべき");
     },
-    '`commit-ensure#${i}`': {
-      policy: 'fail-safe',
-      reason: 'try/catch で throw を吸収し ensured=null（fail-safe → fix_failed エスカレーション）で継続する',
-    },
+  },
+  'journal-log-abort': {
+    config: DF_JOURNAL_ABORT_BASE,
+    policy: 'continue-in-abort',
+    reason: 'runJournalHandoff内のtry/catchで吸収し元のabortエラーをそのまま再throwするfail-open経路',
   },
 };
 
-const POLICY_VALUES = new Set(['fail-safe', 'fail-closed']);
-
-// ── target 定義・分類・テスト ────────────────────────────────────
-
-const TARGETS = [
-  { name: 'dev-flow.js', path: join(HERE, '..', '.claude', 'workflows', 'dev-flow.js') },
-  { name: 'pr-iterate.js', path: join(HERE, '..', '.claude', 'workflows', 'pr-iterate.js') },
-];
-
-for (const { name, path } of TARGETS) {
-  const rawSrc = readFileSync(path, 'utf8');
-  const { need, wrapper, bare } = classify(rawSrc);
-  const allow = ALLOWLIST[name] ?? {};
-
-  test(`${name}: bare trackedAgent( 出現は全て ALLOWLIST に登録されている`, () => {
-    const missing = [...bare.keys()].filter((k) => !(k in allow));
-    assert.equal(
-      missing.length,
-      0,
-      `未分類の bare trackedAgent( 呼び出しが ${missing.length} 件: ${JSON.stringify(missing)}。\n` +
-      `新規 call site は以下いずれかで解消すること:\n` +
-      `  1. need(await trackedAgent(...)) で包む（契約 null は中断）\n` +
-      `  2. failOpenAgent(...) 経由にする（throw を fail-open で吸収）\n` +
-      `  3. このファイルの ALLOWLIST['${name}'] に { policy, reason } を明示登録する`,
-    );
-  });
-
-  test(`${name}: ALLOWLIST の各 entry は bare 出現とちょうど 1 件対応する（stale entry / 重複を検出）`, () => {
-    for (const [key, entry] of Object.entries(allow)) {
-      const occ = bare.get(key);
-      assert.ok(occ, `ALLOWLIST['${name}']['${key}'] に対応する bare 出現が無い（stale entry — 削除するか key を修正すること）`);
-      const expectedCount = entry.count ?? 1;
-      assert.equal(
-        occ.occurrences.length,
-        expectedCount,
-        `ALLOWLIST['${name}']['${key}'] の想定件数 ${expectedCount} に対し実際の出現が ${occ.occurrences.length} 件。` +
-        `重複 label なら entry に count を明示すること`,
+for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
+  test(`dev-flow.js: label '${label}' の agent throw は ${spec.policy}`, async () => {
+    assert.ok(spec.reason.length >= 20, `EXPECTED_DEV_FLOW['${label}'].reason が 20 字未満`);
+    const { result, error, calls } = await runDevFlowThrow(spec.config, label);
+    assert.ok(calls.some((c) => c.label === label), `label '${label}' が config で到達していない（throw 注入が空振り — config か EXPECTED の stale entry を見直す）`);
+    if (spec.policy === 'continue') {
+      assert.equal(error, null, `label '${label}' の throw は継続するべきだが run が abort した: ${error?.message}`);
+      assert.equal(typeof result, 'object', `label '${label}' 継続後の result が object でない`);
+    } else if (spec.policy === 'abort') {
+      assert.ok(error, `label '${label}' の throw は run を abort させるべきだが継続した`);
+      assert.match(error.message, /injected/, `label '${label}' の abort error message に 'injected' が含まれない: ${error?.message}`);
+      const thrownIdx = calls.findIndex((c) => c.label === label);
+      assert.ok(thrownIdx !== -1, `label '${label}' の call 自体が記録されていない`);
+      assert.ok(
+        calls.slice(thrownIdx + 1).some((c) => c.label?.startsWith('journal-')),
+        `label '${label}' の throw 後に abort handoff（label が 'journal-' で始まる call）が見つからない`,
       );
+    } else if (spec.policy === 'needs_clarification') {
+      assert.equal(error, null, `label '${label}' は throw を吸収し needs_clarification で終端するべき: ${error?.message}`);
+      assert.equal(result?.status, 'needs_clarification', `label '${label}' throw 後の result.status が needs_clarification でない: ${result?.status}`);
+      assert.ok(!calls.some((c) => c.label?.startsWith('plan#')), `label '${label}' throw 後に plan# 系 call が呼ばれている（needs_clarification で中断されていない）`);
+    } else if (spec.policy === 'continue-in-abort') {
+      // journal-log-abort 専用: 呼び出し元は既に abort 中（config 自体が別要因で throw する）。
+      // このラベル自身の throw が「元の abort error」を上書きせず（runJournalHandoff の
+      // try/catch で吸収される）、config 側の throw message がそのまま表面化することを検証する。
+      assert.ok(error, `label '${label}' は abort 中の base 設定を前提とするため error が必要`);
+      assert.ok(
+        !/injected/.test(error.message),
+        `label '${label}' 自身の throw（'injected'）が abort error として表面化した（fail-open で吸収されるべき）: ${error.message}`,
+      );
+    } else {
+      assert.fail(`未知の policy: ${spec.policy}`);
     }
-  });
-
-  test(`${name}: ALLOWLIST の policy は closed enum ('fail-safe' | 'fail-closed')`, () => {
-    for (const [key, entry] of Object.entries(allow)) {
-      assert.ok(POLICY_VALUES.has(entry.policy), `ALLOWLIST['${name}']['${key}'].policy が不正な値: ${entry.policy}`);
-    }
-  });
-
-  test(`${name}: ALLOWLIST の reason は 20 文字以上の非空文字列`, () => {
-    for (const [key, entry] of Object.entries(allow)) {
-      assert.equal(typeof entry.reason, 'string', `ALLOWLIST['${name}']['${key}'].reason が文字列でない`);
-      assert.ok(entry.reason.trim().length >= 20, `ALLOWLIST['${name}']['${key}'].reason が 20 字未満: ${JSON.stringify(entry.reason)}`);
-    }
-  });
-
-  test(`${name}: policy:'fail-safe' の entry は try{}/pipeline() 包囲を機械検証で満たす`, () => {
-    for (const [key, entry] of Object.entries(allow)) {
-      if (entry.policy !== 'fail-safe') continue;
-      const occ = bare.get(key);
-      assert.ok(occ, `ALLOWLIST['${name}']['${key}'] に対応する bare 出現が無い`);
-      for (const o of occ.occurrences) {
-        assert.ok(
-          o.tryOk || o.pipelineOk,
-          `ALLOWLIST['${name}']['${key}']（index ${o.index}）は policy:'fail-safe' だが try{}/pipeline() 包囲が機械検証で確認できない`,
-        );
-      }
-    }
+    if (spec.extra) await spec.extra({ result, error, calls });
   });
 }
 
-// ── 参照 sanity（走査ズレ検出）────────────────────────────────────
-
-test('dev-flow.js: need() 分類が 10 件以上・wrapper 分類がちょうど 1 件（走査ズレ検出）', () => {
-  const rawSrc = readFileSync(join(HERE, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
-  const { need, wrapper } = classify(rawSrc);
-  assert.ok(need.length >= 10, `need() 分類が ${need.length} 件（10 件以上を期待）`);
-  assert.equal(wrapper.length, 1, `wrapper 分類が ${wrapper.length} 件（1 件を期待）`);
+// ── 未分類 label 検出（新規 call site の分類強制。issue #605）────────────
+// configs は本ファイル固有の baseline（DF_B1〜DF_B5 / DF_DANGER）に加え、
+// DEV_FLOW_SCENARIOS（exec-proxy-routing / subagent-invocations-routing と共有する到達 scenario
+// 集合）の全 scenario を含める（issue #605 review, PR #645）。観測範囲はこの configs 集合が
+// 到達する label に限られる — dev-flow.js の bare trackedAgent( 出現を静的に全走査するわけではない。
+test('dev-flow.js: 本ファイルの baseline + DEV_FLOW_SCENARIOS 全 scenario で観測される label は EXPECTED_DEV_FLOW に登録されている', async () => {
+  const configs = [DF_B1, DF_B2, DF_B3, DF_B4, DF_B5, DF_DANGER, ...Object.values(DEV_FLOW_SCENARIOS)];
+  const observed = new Set();
+  for (const config of configs) {
+    const { calls } = await runDevFlowBaseline(config);
+    for (const c of calls) observed.add(c.label);
+  }
+  const missing = [...observed].filter((l) => !(l in EXPECTED_DEV_FLOW));
+  assert.equal(
+    missing.length,
+    0,
+    `未分類の label が ${missing.length} 件: ${JSON.stringify(missing)}。\n` +
+    `新規 call site は以下いずれかで解消すること:\n` +
+    `  1. need() で包む（契約 null/throw は run を中断）\n` +
+    `  2. failOpenAgent(...) 経由にする（throw を fail-open で吸収）\n` +
+    `  3. この EXPECTED_DEV_FLOW に policy と reason（20 字以上）を登録する`,
+  );
 });
 
-test('pr-iterate.js: wrapper 分類がちょうど 1 件（走査ズレ検出）', () => {
-  const rawSrc = readFileSync(join(HERE, '..', '.claude', 'workflows', 'pr-iterate.js'), 'utf8');
-  const { wrapper } = classify(rawSrc);
-  assert.equal(wrapper.length, 1, `wrapper 分類が ${wrapper.length} 件（1 件を期待）`);
+// ── 参照 sanity（走査ズレ検出）────────────────────────────────────
+test("dev-flow.js baseline（B1）に 'setup-base' / 'plan#standard' / 'post-summary' が含まれる（走査ズレ検出）", async () => {
+  const { calls } = await runDevFlowBaseline(DF_B1);
+  const labels = calls.map((c) => c.label);
+  assert.ok(labels.includes('setup-base'), "baseline に 'setup-base' が無い");
+  // shape='standard' の既定 baseline では PLAN_SOLO 経路のため label は 'plan#standard'
+  // （'plan#${i}' ループ形は complex shape でのみ到達し本 baseline では観測されない）。
+  assert.ok(labels.includes('plan#standard'), "baseline に 'plan#standard' が無い");
+  assert.ok(labels.includes('post-summary'), "baseline に 'post-summary' が無い");
+});
+
+// ============================================================
+// pr-iterate.js baseline 設定
+// ============================================================
+// B1: 既定 run（review#1 が approve を返し 1 round で lgtm）。
+const PR_B1 = { overrides: {} };
+// B2: review#1 が request-changes → fix#1 → commit-ensure#1 → review#2 が approve で lgtm。
+const PR_B2 = {
+  overrides: {
+    'review#1': () => ({ decision: 'request-changes', issues: [{ severity: 'critical', description: 'x', suggestion: 'y' }], summary: 'nope' }),
+    'review#2': { decision: 'approve', issues: [], summary: 'ok now' },
+  },
+};
+// B3: fix#1 が null → fix-null-retry（fix#1-retry）が applied を返して commit-ensure#1 → review#2 approve。
+const PR_B3 = {
+  overrides: {
+    ...PR_B2.overrides,
+    'fix#1': null,
+    'fix#1-retry': { applied: true, files: [], summary: 'fixed on retry' },
+  },
+};
+// B4: review#1 が null → schema-retry（review#1-schema-retry）が approve を返して lgtm。
+const PR_B4 = {
+  overrides: {
+    'review#1': null,
+    'review#1-schema-retry': { decision: 'approve', issues: [], summary: 'ok on schema retry' },
+  },
+};
+// B5: fix#1 / fix#1-retry とも null → fix_failed 終端 → worktree-dirty-check（非 lgtm 終端の advisory probe）。
+const PR_B5 = {
+  overrides: {
+    'review#1': PR_B2.overrides['review#1'],
+    'fix#1': null,
+    'fix#1-retry': null,
+    'worktree-dirty-check': { dirty: false, files: 0 },
+  },
+};
+
+async function runPrIterateBaseline(config) {
+  const { ctx, calls } = makePrIterateSandbox({ args: '5', overrides: config.overrides });
+  const { result, error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  return { result, error, calls };
+}
+
+async function runPrIterateThrow(config, label) {
+  const overrides = { ...(config.overrides ?? {}), [label]: THROW };
+  const { ctx, calls } = makePrIterateSandbox({ args: '5', overrides });
+  const { result, error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  return { result, error, calls };
+}
+
+// pr-iterate.js の全 bare trackedAgent( call site はローカル try/catch 包囲（issue #437/#520）。
+// failOpenAgent 経由の呼び出しと合わせ、throw 起因の abort は無い（need() 包みが 0 件のため）。
+const EXPECTED_PR_ITERATE = {
+  'pr-meta': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。cwd/epoch取得失敗はfallbackするadvisory信号' },
+  'isolation-cleanup': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。cleanup失敗はprobe成立に影響しないfail-open' },
+  'isolation-probe': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。probe自体の失敗はfail-open（診断できないだけ）' },
+  'review#1': { config: PR_B1, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しschema-retryへ倒すfail-safe経路' },
+  'ci-check#1': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはstatus:errorに合成しci_errorへ流す' },
+  'post-summary': { config: PR_B1, policy: 'continue', reason: 'failOpenAgent経由。投稿失敗はfail-openでgate判定に影響しない' },
+  'journal-save': { config: PR_B1, policy: 'continue', reason: 'runJournalHandoff内try/catchで吸収するfail-open経路' },
+  'journal-log': { config: PR_B1, policy: 'continue', reason: 'runJournalHandoff内try/catchで吸収するfail-open経路' },
+  'fix#1': { config: PR_B2, policy: 'continue', reason: 'callFixAgent内try/catchで吸収しnull-retryへ倒すfail-safe経路' },
+  'commit-ensure#1': { config: PR_B2, policy: 'continue', reason: 'try/catchで吸収しfix_failedエスカレーションへ倒すfail-safe経路' },
+  'review#2': { config: PR_B2, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しschema-retryへ倒すfail-safe経路' },
+  'ci-check#2': { config: PR_B2, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはstatus:errorに合成しci_errorへ流す' },
+  // ── issue #605 review（PR #645）: retry 系 / 非 lgtm 終端の call site ──
+  'fix#1-retry': { config: PR_B3, policy: 'continue', reason: 'callFixAgent内try/catchで吸収しnullとしてfix_failed終端へ倒すfail-safe経路（fix-null-retry）' },
+  'review#1-schema-retry': { config: PR_B4, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しnullとしてreview_contract_error終端へ倒すfail-safe経路' },
+  'worktree-dirty-check': { config: PR_B5, policy: 'continue', reason: 'failOpenAgent経由。非lgtm終端のdirty検出はadvisory telemetryでunknownへ倒すfail-open' },
+};
+
+for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
+  test(`pr-iterate.js: label '${label}' の agent throw は ${spec.policy}`, async () => {
+    assert.ok(spec.reason.length >= 20, `EXPECTED_PR_ITERATE['${label}'].reason が 20 字未満`);
+    const { result, error, calls } = await runPrIterateThrow(spec.config, label);
+    assert.ok(calls.some((c) => c.label === label), `label '${label}' が config で到達していない（throw 注入が空振り — config か EXPECTED の stale entry を見直す）`);
+    assert.equal(error, null, `label '${label}' の throw は継続するべきだが run が abort した: ${error?.message}`);
+    assert.equal(typeof result, 'object', `label '${label}' 継続後の result が object でない`);
+  });
+}
+
+test('pr-iterate.js: 全 baseline で観測される label は EXPECTED_PR_ITERATE に登録されている', async () => {
+  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5];
+  const observed = new Set();
+  for (const config of configs) {
+    const { calls } = await runPrIterateBaseline(config);
+    for (const c of calls) observed.add(c.label);
+  }
+  const missing = [...observed].filter((l) => !(l in EXPECTED_PR_ITERATE));
+  assert.equal(
+    missing.length,
+    0,
+    `未分類の label が ${missing.length} 件: ${JSON.stringify(missing)}。\n` +
+    `新規 call site は以下いずれかで解消すること:\n` +
+    `  1. need() で包む（契約 null/throw は run を中断）\n` +
+    `  2. failOpenAgent(...) 経由にする（throw を fail-open で吸収）\n` +
+    `  3. この EXPECTED_PR_ITERATE に policy と reason（20 字以上）を登録する`,
+  );
+});
+
+test("pr-iterate.js baseline に 'pr-meta' / 'isolation-probe' が含まれる（走査ズレ検出）", async () => {
+  const { calls } = await runPrIterateBaseline(PR_B1);
+  const labels = calls.map((c) => c.label);
+  assert.ok(labels.includes('pr-meta'), "baseline に 'pr-meta' が無い");
+  assert.ok(labels.includes('isolation-probe'), "baseline に 'isolation-probe' が無い");
+});
+
+// ── fail-closed（throw ではない）行: isolation-probe が written:false を返す ──
+test("pr-iterate.js: isolation-probe が {written:false} を返すと throw し message に isoWt（pr-meta の cwd）を含む", async () => {
+  const { ctx } = makePrIterateSandbox({ args: '5', overrides: { 'isolation-probe': { written: false, error: 'x' } } });
+  const { result, error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  assert.equal(result, null, 'isolation-probe written:false は run を abort させるべき');
+  assert.ok(error, 'isolation-probe written:false は throw するべき');
+  assert.ok(error.message.includes('/tmp/wt'), `throw message に isoWt（pr-meta の既定 cwd '/tmp/wt'）が含まれない: ${error.message}`);
 });
 
 // ── drift pin: dev-flow/references/exec-proxy.md の diff-hash 行 ↔ 実装 ──────
-
 test('dev-flow/references/exec-proxy.md の diff-hash 行の失敗検出セルに agent throw が明記されている', () => {
   const rulesPath = join(HERE, '..', 'dev-flow', 'references', 'exec-proxy.md');
   const rulesSrc = readFileSync(rulesPath, 'utf8');
@@ -440,12 +427,4 @@ test('dev-flow/references/exec-proxy.md の diff-hash 行の失敗検出セル�
     failureDetectionCell && failureDetectionCell.includes('agent throw'),
     `diff-hash 行の失敗検出セルに 'agent throw' が含まれない: ${JSON.stringify(failureDetectionCell)}`,
   );
-});
-
-test('dev-flow.js: diff-hash 3 箇所が failOpenAgent(state.dhPrompt 経由・trackedAgent(state.dhPrompt は 0 件（S1 実装の pin）', () => {
-  const rawSrc = readFileSync(join(HERE, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
-  const failOpenCount = (rawSrc.match(/failOpenAgent\(state\.dhPrompt/g) ?? []).length;
-  const bareTrackedCount = (rawSrc.match(/trackedAgent\(state\.dhPrompt/g) ?? []).length;
-  assert.equal(failOpenCount, 3, `failOpenAgent(state.dhPrompt 呼び出しが ${failOpenCount} 件（3 件を期待 — diff-hash-eval/pr/merge）`);
-  assert.equal(bareTrackedCount, 0, `bare trackedAgent(state.dhPrompt 呼び出しが ${bareTrackedCount} 件残存（0 件を期待 — failOpenAgent 経由に置換済みのはず）`);
 });

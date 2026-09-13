@@ -49,16 +49,18 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * @param {string[]} [changedFiles=['src/foo.ts']] - changed-files stub が返すファイル一覧（merge tier 判定に使用）
  * @param {string[]} [declaredFiles=realizedFiles] - dev-planner stub が file_changes として宣言するファイル一覧
  *   （省略時は realizedFiles を全件宣言 = 宣言外なし。宣言外監査シナリオ用に部分集合/空配列を渡せる）
- * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string}> }}
+ * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
  */
 function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo.ts'], declaredFiles = realizedFiles) {
   const calls = [];
 
   // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
+  // prompt も観測用に calls へ記録する（実行時に dev-flow.js が実際に組み立てた prompt を
+  // VM 挙動として検証できるようにするため。静的ソース走査の代替）。
   const agentStub = async (prompt, opts) => {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType });
+    calls.push({ label, agentType, prompt });
 
     // Setup(worktree)
     // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #550 案1）
@@ -415,44 +417,11 @@ test('[refloor] (C) micro 見積もり + realized 1 file → evaluator 0 回（r
   );
 });
 
-// ============================================================
-// 構造テスト: refloorShape が dev-flow.js に存在する
-// ============================================================
-test('[refloor][struct] dev-flow.js に refloorShape 関数定義が存在する', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes('function refloorShape('),
-    'dev-flow.js に `function refloorShape(` が存在すること',
-  );
-});
-
-test('[refloor][struct] dev-flow.js に EFFECTIVE_SHAPE 定数定義が存在する', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes('const EFFECTIVE_SHAPE ='),
-    'dev-flow.js に `const EFFECTIVE_SHAPE =` が存在すること',
-  );
-});
-
-test('[refloor][struct] dev-flow.js に realized-diff 相当（統合呼び出しの files フィールド）を持つ danger-grep label が存在する（issue #544 統合後は専用 label は消滅）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes("label: 'danger-grep'"),
-    "dev-flow.js に `label: 'danger-grep'`（統合呼び出し。files フィールドが旧 realized-diff 相当）が存在すること",
-  );
-  assert.ok(
-    !src.includes("label: 'realized-diff'"),
-    "dev-flow.js に専用 label 'realized-diff' が残っていないこと（4→1 統合済み）",
-  );
-});
-
-test('[refloor][struct] runEval が EFFECTIVE_SHAPE 基準になっている', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes("EFFECTIVE_SHAPE !== 'micro'"),
-    "dev-flow.js の runEval が `EFFECTIVE_SHAPE !== 'micro'` 基準であること",
-  );
-});
+// refloorShape / EFFECTIVE_SHAPE / danger-grep label / runEval の基準は、上の (A)〜(C) が
+// 実際に VM で dev-flow.js を実行し shape_refloored・effective_shape・evaluator 呼び出し回数を
+// 挙動として検証済み（label が変われば danger-grep 分岐に到達せず calls が想定外の分岐に落ちて
+// 上記アサートが落ちる）。関数名・定数名・label 文字列の存在だけを個別に pin する構造テストは
+// 冗長なため削除する（issue #636）。
 
 // ============================================================
 // (D) [refloor] realized-diff agent が null を返す（drop / skip）→ NaN → complex 安全弁
@@ -583,67 +552,25 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
   );
 });
 
-test('[refloor][struct] realized-diff の取得失敗を ?? [] で 0 に潰していない（NaN 経由で安全弁へ）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  // 誤ったパターン: (realized?.files ?? []).length は null を 0 に潰す
-  assert.ok(
-    !src.includes('(realized?.files ?? []).length'),
-    'dev-flow.js の realizedCount に `?? []` による null 潰しが残っている（NaN 経由に修正すること）',
-  );
-  // 正しいパターン: null → NaN で refloorShape の complex 安全弁へ流す
-  assert.ok(
-    src.includes('realized?.files ? realized.files.length : NaN'),
-    "dev-flow.js の realizedCount が `realized?.files ? realized.files.length : NaN` 形式であること",
-  );
-});
+// [refloor][struct] の "?? [] で 0 に潰していない" 静的 pin は削除する（issue #636）。
+// null→NaN の安全弁は上の (D) が VM 実行で挙動として検証済み（realized-diff が null を
+// 返すケースで evaluator >= 1 回が観測できる。`?? []` に潰れていれば evaluator 0 回で落ちる）。
+// また issue #544 の secfloor-classify.sh 統合後、dev-flow.js 側には
+// `realized?.files ? realized.files.length : NaN` という厳密一致の式はもはや存在せず
+// （実コードは `realized?.files ? filterEphemeralPaths(realized.files) : null` — issue #272 F2）、
+// このテストが green だったのは同一文字列がコメント（旧パターンの引用）に残っていたことに
+// 依存した false green だった。
 
-// ============================================================
-// (E) [struct] realized-diff は git status --porcelain を使い三点 diff を使わない
-//
-// Root cause: Security floor 時点で implementer はコミットしていない（git add/commit 禁止）。
-// 三点 diff `git diff --name-only origin/${BASE}...HEAD` は HEAD==origin/BASE で
-// 空を返し realizedCount=0 → re-floor が正常系で一切発動しない dead code になる。
-// git status --porcelain は未コミット変更（ステージ・未ステージ）を含むため正しい。
-//
-// このテストは VM sandbox の stub を経由せず raw ソーステキストを直接検証するため
-// stub バイパスによる false-green を防ぐ（stub 経路は (A)-(D) でカバー済み）。
-// ============================================================
-test('[refloor][struct] realized-diff は git status --porcelain を使う（三点 diff を使わない）', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-
-  // F2 ブロック（"Step F2"〜次の "Step " or end of Security floor）を抽出する
-  const f2Start = src.indexOf('Step F2');
-  assert.ok(f2Start !== -1, 'dev-flow.js に Step F2 コメントが存在すること');
-
-  // F2 ブロックの終端を次の "Step " コメントで anchor する（固定幅 800 は窓ズレ false-green リスクあり）
-  // 'Step F2' 自身を再ヒットしないよう開始 offset を 'Step F2'.length 分ずらす
-  const f2SearchFrom = f2Start + 'Step F2'.length;
-  const nextStepPos = src.indexOf('Step ', f2SearchFrom);
-  assert.ok(nextStepPos !== -1, 'Step F2 の後続 Step が存在すること（anchor 取得失敗 → 窓範囲が検証不能）');
-  const f2Excerpt = src.slice(f2Start, nextStepPos);
-
-  // 窓ズレ検出 assert: excerpt が realized-diff agent 呼び出しを実際に内包していることを正の anchor で保証する
-  // この assert が落ちたら窓が対象領域から外れている = 下の否定 assert が無意味化している兆候
-  assert.ok(
-    f2Excerpt.includes('realized-diff'),
-    'F2 excerpt が realized-diff agent 呼び出しを跨いでいること'
-      + '（窓ズレ検出: この assert が落ちたら窓が対象領域から外れている = 下の否定 assert が無意味化している兆候）',
-  );
-
-  // 正しいパターン: status --porcelain で未コミット変更を捕捉
-  assert.ok(
-    f2Excerpt.includes('status --porcelain'),
-    'F2 ブロックの realized-diff が `status --porcelain` を使うこと'
-      + ' (未コミット作業ツリーを参照するため。三点 diff は HEAD==origin/BASE で空を返す)',
-  );
-
-  // 誤ったパターン: 三点 diff は implementer 未コミット時に空を返す
-  assert.ok(
-    !f2Excerpt.includes('diff --name-only') || !f2Excerpt.includes('...HEAD'),
-    'F2 ブロックの realized-diff が三点 diff `diff --name-only origin/${BASE}...HEAD` を使っていないこと'
-      + ' (Security floor 時点で HEAD==origin/BASE のため diff が空になる)',
-  );
-});
+// [refloor][struct] "git status --porcelain を使う（三点 diff を使わない）" も削除する（issue #636）。
+// この検証対象の git コマンドは issue #544 の統合で `_shared/scripts/secfloor-classify.sh`
+// （dev-flow.js から見て外部スクリプト）内に移動済みで、dev-flow.js 側の該当箇所は
+// 「secfloor-classify.sh は git status --porcelain --untracked-files=all を直接パースする」という
+// コメント（実行されないプロース）のみが残る。実際の git コマンド選択（status --porcelain
+// であり三点 diff でないこと）は `_shared/scripts/secfloor-classify.bats` の
+// 「変更ファイルあり -> files に該当パスが載る（通常変更 + リネーム右側）」が実 git 実行で
+// 検証済み（コミット済み BASE_REF に対し未コミットの rename を検出できることを assert しており、
+// 三点 diff ではこの未コミット差分は観測できない）。dev-flow.js 側のコメント文字列を pin しても
+// 実行される git コマンドの正しさは保証できないため削除する。
 
 // ============================================================
 // [merge-tier] (D) micro 見積もり + realized 4 docs/test-only files + changed-files docs/test-only

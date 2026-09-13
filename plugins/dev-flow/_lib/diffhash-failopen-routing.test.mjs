@@ -169,19 +169,20 @@ test('[diffhash-failopen] (c) diff-hash-merge が契約違反で throw → run �
 });
 
 // ============================================================
-// (d) source pin: 3 箇所とも failOpenAgent + retryOnContractViolation: true、trackedAgent(state.dhPrompt は 0 件
+// (d) diff-hash 3 箇所が契約違反リトライ opt-in（opts.retryOnContractViolation: true）で dispatch される
+//     ことを VM の agent() 呼び出し opts で観測する（issue #636: ソース regex pin から置換）
 // ============================================================
 
-test('[diffhash-failopen] (d) source pin: diff-hash 3 箇所が failOpenAgent(state.dhPrompt, {..., retryOnContractViolation: true) で、trackedAgent(state.dhPrompt は残存しない', () => {
-  const re = /failOpenAgent\(state\.dhPrompt,\s*\{[^}]*label: '(diff-hash-eval|diff-hash-pr|diff-hash-merge)'[^}]*retryOnContractViolation: true/g;
-  const matches = [...devFlowSrc.matchAll(re)];
-  assert.equal(matches.length, 3, `(d) failOpenAgent(state.dhPrompt, ...retryOnContractViolation: true) の出現は 3 件のはずだが ${matches.length} 件`);
-
-  const labels = new Set(matches.map((m) => m[1]));
-  assert.deepEqual(labels, new Set(['diff-hash-eval', 'diff-hash-pr', 'diff-hash-merge']), `(d) label 集合が期待と不一致: ${JSON.stringify([...labels])}`);
-
-  const bareCount = (devFlowSrc.match(/trackedAgent\(state\.dhPrompt/g) || []).length;
-  assert.equal(bareCount, 0, `(d) trackedAgent(state.dhPrompt の裸呼び出しが残存している（${bareCount} 件）`);
+test('[diffhash-failopen] (d) diff-hash-eval / diff-hash-pr / diff-hash-merge の 3 dispatch すべてが retryOnContractViolation: true を持つ', async () => {
+  const { ctx, calls } = makeSandbox();
+  const err = await runDevFlowInSandbox(devFlowSrc, ctx);
+  assertNoCrash(err, 'd');
+  for (const label of ['diff-hash-eval', 'diff-hash-pr', 'diff-hash-merge']) {
+    const dispatches = calls.filter((c) => c.label === label);
+    assert.equal(dispatches.length, 1, `(d) ${label} は 1 回 dispatch されるはずだが ${dispatches.length} 回`);
+    assert.equal(dispatches[0].opts?.retryOnContractViolation, true, `(d) ${label} の opts.retryOnContractViolation が true でない: ${JSON.stringify(dispatches[0].opts)}`);
+    assert.equal(dispatches[0].agentType, 'dev-flow:dev-runner-haiku-ro', `(d) ${label} の agentType: ${dispatches[0].agentType}`);
+  }
 });
 
 // ============================================================

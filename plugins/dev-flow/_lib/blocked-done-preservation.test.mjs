@@ -1,5 +1,5 @@
 // blocked-done-preservation.test.mjs
-// AC#2: DONE×2+BLOCKED×1 → replan-blocked#1 プロンプトへの「適用済み」DONE 成果注入と
+// AC#2: DONE×2+BLOCKED×1 → replan-blocked#1 プロンプトへの DONE 成果（task id・files のデータ echo）注入と
 //       最終 implResults への DONE 結果（concerns 含む）マージ保持を VM sandbox で検証。
 //
 // このテストファイルは TDD red として作成された。
@@ -259,13 +259,16 @@ test('[blocked-done-preservation] AC#2: DONE成果の replan プロンプト注�
 
   const replanPrompt = replanBlocked1Call.prompt;
 
-  // (a) replan-blocked#1 prompt に '適用済み' が含まれる
-  // 現行実装では requirements/現計画/blockFindings のみ渡しており
-  // DONE 成果の「適用済み」セクションが無い → red
+  // (a) replan-blocked#1 prompt に DONE task（T2）の id・files がデータ echo として含まれる
+  // （T1 は (b) が担当。ここでは T2 側の id/files を確認し DONE 成果全体が注入されていることを補完する）
   assert.ok(
-    replanPrompt.includes('適用済み'),
-    '(a) replan-blocked#1 prompt に「適用済み」が含まれるべきだが見つからない。\n'
-      + '現行実装は requirements/現計画/blockFindings のみ渡しており DONE 成果のセクションがない。\n'
+    replanPrompt.includes('T2'),
+    '(a-id-T2) replan-blocked#1 prompt に DONE task id T2 が含まれるべき。\n'
+      + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
+  );
+  assert.ok(
+    replanPrompt.includes('src/b.ts'),
+    '(a-files) replan-blocked#1 prompt に DONE task files src/b.ts が含まれるべき。\n'
       + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
   );
 

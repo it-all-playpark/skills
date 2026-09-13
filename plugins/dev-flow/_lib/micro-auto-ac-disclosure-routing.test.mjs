@@ -1,9 +1,11 @@
 // micro AUTO run で classifyMergeTier に evalSkipped:true が渡り、
 // merge_tier_reasons に AC未検証文言が含まれることを VM sandbox で検証する（issue #233）。
+// post-summary prompt 本文への転記は devflow-summary-format.test.mjs（純関数出力テスト）が担うため
+// ここでは扱わない（issue #636 AC-1）。
 // _lib/green-fix-micro-eval.test.mjs の VM sandbox パターン（makeCountingSandbox / runDevFlowInSandbox）を踏襲。
 //
 // テスト構成:
-//   (A) micro AUTO run → merge_tier===AUTO かつ reasons に AC未検証文言 かつ post-summary にも文言 かつ evaluator 0 件
+//   (A) micro AUTO run → merge_tier===AUTO かつ reasons に AC未検証文言 かつ evaluator 0 件
 //   (B) standard shape run → merge_tier===REVIEW かつ文言なし（evaluator が走るので開示不要）
 //   (C) micro AUTO run で evaluator が 0 件であること（開示文言の前提確認）
 
@@ -135,12 +137,8 @@ test('[micro-auto-ac-disclosure] (A) micro AUTO run → merge_tier===AUTO かつ
     returned.merge_tier_reasons.some((r) => r.includes('AC は未検証（micro eval skip）')),
     `(A) merge_tier_reasons に AC未検証文言を含むべきだが: ${JSON.stringify(returned.merge_tier_reasons)}`,
   );
-  const postSummary = calls.find((c) => c.label === 'post-summary');
-  assert.ok(postSummary !== undefined, '(A) post-summary 呼び出しが存在すべき');
-  assert.ok(
-    postSummary.prompt.includes('AC は未検証（micro eval skip）'),
-    `(A) post-summary prompt に AC未検証文言を含むべきだが: ${postSummary.prompt.slice(0, 500)}`,
-  );
+  // post-summary prompt 本文への同文言の転記は devflow-summary-format.test.mjs（純関数出力テスト）が
+  // 担う。ここでは返り値 routing（merge_tier_reasons）のみを検証する。
 });
 
 // ============================================================

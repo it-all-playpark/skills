@@ -253,9 +253,23 @@ test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+ev
     !summaryPrompts[0].includes('❌ 未確認 | config'),
     `post-summary body に未確認 clearance テーブル行 '❌ 未確認 | config' が含まれてはならない。body:\n${summaryPrompts[0]}`,
   );
+  // clearance 解消の返り値 routing 側の証拠: post-summary prompt の tier marker が REVIEW
+  // （HOLD ではない）+ journal-save prompt の telemetry JSON に danger_hits と merge_tier:REVIEW
   assert.ok(
-    summaryPrompts[0].includes('セキュリティ確認 (Security clearance) 1/1 済'),
-    `post-summary body に 'セキュリティ確認 (Security clearance) 1/1 済' が含まれるべき。body:\n${summaryPrompts[0]}`,
+    summaryPrompts[0].includes('<!-- dev-flow:REVIEW -->'),
+    `post-summary prompt に '<!-- dev-flow:REVIEW -->' marker が含まれるべき。body:\n${summaryPrompts[0]}`,
+  );
+  assert.ok(
+    !summaryPrompts[0].includes('<!-- dev-flow:HOLD -->'),
+    `post-summary prompt に '<!-- dev-flow:HOLD -->' marker が含まれてはならない。body:\n${summaryPrompts[0]}`,
+  );
+  assert.ok(
+    journalPrompts[0].includes('"danger_hits"'),
+    `journal-save prompt に telemetry JSON の 'danger_hits' キーが含まれるべき。prompt:\n${journalPrompts[0]}`,
+  );
+  assert.ok(
+    journalPrompts[0].includes(`"merge_tier":"${result?.merge_tier}"`),
+    `journal-save prompt の telemetry JSON の merge_tier は返り値 '${result?.merge_tier}' と一致するべき。prompt:\n${journalPrompts[0]}`,
   );
 });
 

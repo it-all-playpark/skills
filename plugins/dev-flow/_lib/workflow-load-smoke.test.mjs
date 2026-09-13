@@ -17,6 +17,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { makeDevFlowSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -242,194 +244,60 @@ const x = await Promise.resolve('test');
   );
 });
 
-// ---- 4. REQ schema shape フィールド検証 ---------------------------------------------------
+// ---- 4/5/6 (旧): REQ schema shape / triage consume(classifyShape) / W5 danger-grep 配線 は
+// source-regex 走査だった（issue #636 で削除）。同じ挙動は shape-loop-routing.test.mjs /
+// refloor-shape-routing.test.mjs（shape enum の判定・EFFECTIVE_SHAPE の raise-only）と
+// secfloor-unified-routing.test.mjs / merge-tier 系ルーティングテスト（danger-grep 配線・
+// merge tier 算出）が VM 挙動として担う。
+
+// ---- 7. issue #443 / #550 F1+F3: clock epoch 給電 prompt の VM 挙動検証 --------------------
 //
-// dev-flow.js の REQ schema に shape enum フィールドが追加されていることを確認する。
-// shape は LLM が emit する optional フィールド（required に含めない）。
+// 専用 clock probe（dev-runner-haiku-ro の clockProbe() 呼び出し）は issue #550 F1/F3 で全廃され、
+// 各 mark は隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから feedClockMark()
+// 経由で給電される。給電元 prompt は末尾に EPOCH_INSTRUCTION（`date +%s` を 1 回実行し epoch と
+// して返せという指示）を追記している。この指示が silent に prompt から失われる退行を、実際に
+// 組み立てられた prompt を VM 実行で観測して検出する（source anchor 走査は行わない）。
 
-test('[schema] dev-flow.js: REQ schema は valid object である', () => {
-  const devFlowPath = join(workflowDir, 'dev-flow.js');
-  const rawSrc = readFileSync(devFlowPath, 'utf8');
-
-  assert.ok(rawSrc.includes('const REQ ='), 'REQ schema が dev-flow.js に定義されていること');
-  assert.ok(
-    rawSrc.includes("'object'") || rawSrc.includes('"object"'),
-    'REQ schema が type: object を持つこと',
-  );
-});
-
-test('[schema] dev-flow.js: REQ schema に shape enum プロパティが存在する', () => {
-  const devFlowPath = join(workflowDir, 'dev-flow.js');
-  const rawSrc = readFileSync(devFlowPath, 'utf8');
-
-  assert.ok(
-    rawSrc.includes("shape:") && rawSrc.includes("'micro'") && rawSrc.includes("'standard'") && rawSrc.includes("'complex'"),
-    "REQ schema に shape: { type: string, enum: ['micro', 'standard', 'complex'] } が存在すること",
-  );
-});
-
-test('[schema] dev-flow.js: shape は required 配列に含まれない（optional フィールド）', () => {
-  const devFlowPath = join(workflowDir, 'dev-flow.js');
-  const rawSrc = readFileSync(devFlowPath, 'utf8');
-
-  const reqMatch = rawSrc.match(/const REQ\s*=\s*\{[\s\S]*?required:\s*\[([^\]]*)\]/);
-  assert.ok(reqMatch, 'REQ schema の required 配列が取得できること');
-  const requiredContent = reqMatch[1];
-  assert.ok(
-    !requiredContent.includes('shape'),
-    'REQ schema の required に shape が含まれていないこと',
-  );
-});
-
-// ---- 5. triage consume: classifyShape を使い TRIVIAL = (SHAPE==='micro') にマップ --------
-//
-// triage consume が classifyTriviality ではなく classifyShape を使っていることを確認する。
-// TRIVIAL = (SHAPE === 'micro') の式で micro が trivial 経路にマップされていることを確認。
-
-test('[triage] dev-flow.js: classifyShape を triage consume に使用している', () => {
-  const devFlowPath = join(workflowDir, 'dev-flow.js');
-  const rawSrc = readFileSync(devFlowPath, 'utf8');
-
-  assert.ok(
-    rawSrc.includes('classifyShape(req)'),
-    'triage consume で classifyShape(req) を呼び出していること',
-  );
-  assert.ok(
-    !rawSrc.includes('classifyTriviality'),
-    'classifyTriviality は削除され残存しないこと',
-  );
-});
-
-test('[triage] dev-flow.js: SHAPE 変数と TRIVIAL = (SHAPE === micro) が定義されている', () => {
-  const devFlowPath = join(workflowDir, 'dev-flow.js');
-  const rawSrc = readFileSync(devFlowPath, 'utf8');
-
-  assert.ok(
-    rawSrc.includes('const SHAPE =') || rawSrc.includes('const SHAPE='),
-    'SHAPE 変数が定義されていること',
-  );
-  assert.ok(
-    rawSrc.includes("SHAPE === 'micro'"),
-    "TRIVIAL = (SHAPE === 'micro') でマッピングされていること",
-  );
-});
-
-test('[triage] dev-flow.js: 最終 return に shape: SHAPE が含まれる', () => {
-  const devFlowPath = join(workflowDir, 'dev-flow.js');
-  const rawSrc = readFileSync(devFlowPath, 'utf8');
-
-  assert.ok(
-    rawSrc.includes('shape: SHAPE'),
-    '最終 return オブジェクトに shape: SHAPE が含まれること',
-  );
-});
-
-// ---- 6. W5: danger-grep 配線 + merge tier --------------------------------------------------
-
-// issue #495 の trust-layer 証跡書き込み（--out）は #549 の call site 撤去、
-// issue #544 の Security floor 4→1 統合を経て撤去済み。Security floor 側の danger-grep は
-// secfloor-classify.sh 経由の統合呼び出し（label 'danger-grep'）になり diff-risk-classify.sh を
-// 直接は呼ばない（統合スクリプト内部から --working-tree 付きで呼ばれる）。Merge tier の
-// danger-grep-final はフラグ無し三点 diff のまま diff-risk-classify.sh を直接呼び、--out は
-// 使わない。
-test('[W5] dev-flow.js: RISK schema と Merge tier の diff-risk-classify 呼び出しが存在し、--out は使わない', () => {
+test('[epoch-instruction] 既定 run: 給電対象 call の prompt が date +%s 取得指示を含み、label が clock で始まる call は 0 件', async () => {
   const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-  assert.ok(src.includes('const RISK ='), 'RISK schema があること');
-  assert.ok(src.includes("required: ['ok', 'hits']"), 'RISK schema が ok error channel を必須にすること');
-  assert.ok(src.includes('diff-risk-classify origin/'), '（Merge tier の danger-grep-final 経由で）diff-risk-classify を呼ぶこと');
-  assert.ok(
-    src.includes('diff-risk-classify origin/${' + 'BASE}'),
-    'Merge tier の danger-grep-final はフラグ無し三点 diff で diff-risk-classify を呼ぶこと',
-  );
-  assert.ok(!src.includes('--out'), '証跡書き込み --out は撤去済みであること（issue #544 AC1）');
-  assert.ok(!src.includes('--working-tree'), 'dev-flow.js 自体は --working-tree を直接指定しない（secfloor-classify.sh 内部の呼び出しに委譲）');
-});
-
-test('[W5] dev-flow.js: 常時 SEC seed と runEval gate が存在', () => {
-  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-  assert.ok(src.includes('seedSecurityLedger('), 'SEC seed を積むこと');
-  assert.ok(src.includes('const runEval ='), 'runEval gate があること');
-  assert.ok(src.includes('reconcileDanger('), 'danger 反映を行うこと');
-});
-
-test('[W5] dev-flow.js: merge tier 算出と return フィールドが存在', () => {
-  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-  assert.ok(src.includes('classifyMergeTier('), 'classifyMergeTier を呼ぶこと');
-  assert.ok(src.includes('merge_tier:'), 'return に merge_tier があること');
-  assert.ok(src.includes("phase('Merge tier')"), 'Merge tier phase があること');
-});
-
-// ---- 7. issue #443 / #550 F1+F3: clock epoch 給電 prompt の退行検出 -----------------------------
-//
-// 専用 clock probe（dev-runner-haiku-ro の clockProbe() 呼び出し）は issue #550 F1 で
-// clockProbe('start') が、issue #550 F3 で clockProbe('end') がそれぞれ撤去され、専用 clock probe
-// は 0 回になった。start mark は Setup 冒頭の setup-base probe の optional epoch、end mark は
-// Merge tier 末尾の post-summary 応答の optional epoch から、それぞれ feedClockMark() 経由で
-// 給電される。残り 9 mark も隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから
-// feedClockMark() 経由で給電される。
-// 給電元 prompt は末尾に EPOCH_INSTRUCTION（`date +%s` を 1 回実行し epoch として返せという
-// 指示）を追記している。この指示が silent に prompt から失われる退行を検出するため:
-//   (a) EPOCH_INSTRUCTION 自体の定義が `date +%s` を実行する指示であること
-//   (b) 給電対象 prompt 定義（PLANNER_HANDOFF_RULE / STAGING_CONVENTION / VALIDATE_TEST_PROMPT /
-//       reviewPromptLite / contractProbePrompt）の近傍に EPOCH_INSTRUCTION 参照が存在すること
-//   (c) post-summary（end mark の給電元）の prompt 組み立てに EPOCH_INSTRUCTION が注入されていること
-//   (d) clockProbe( の呼び出しが dev-flow.js に 0 箇所であること（AC-1 の静的検出。F1+F3 の
-//       2 段更新の最終段）
-// をソース文字列 assert で保証する。
-
-test('[epoch-instruction] dev-flow.js: EPOCH_INSTRUCTION の定義自体が `date +%s` を実行する指示を含む', () => {
-  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-  const m = src.match(/const EPOCH_INSTRUCTION\s*=\s*'([^']*)'/);
-  assert.ok(m, 'EPOCH_INSTRUCTION の定義（`const EPOCH_INSTRUCTION = \'...\'`）が dev-flow.js に見つかること');
-  assert.ok(
-    m[1].includes('date +%s'),
-    `EPOCH_INSTRUCTION の定義に "date +%s" 指示が含まれるべきだが含まれていなかった: ${m[1]}`,
-  );
-});
-
-/**
- * src を行分割し、anchorPattern に最初にマッチした行から windowLines 行分を切り出して返す。
- * 見つからなければ null。
- */
-function sourceWindowAfterAnchor(src, anchorPattern, windowLines) {
-  const lines = src.split('\n');
-  const idx = lines.findIndex((l) => anchorPattern.test(l));
-  if (idx === -1) return null;
-  return lines.slice(idx, idx + windowLines).join('\n');
-}
-
-// [定数名/アンカー行に一致する正規表現, 切り出す行数] — 各 prompt 定義の近傍に
-// EPOCH_INSTRUCTION 参照（date +%s 給電指示）が存在することを検証する対象。
-const EPOCH_FED_PROMPT_ANCHORS = [
-  ['PLANNER_HANDOFF_RULE', /^\s*const PLANNER_HANDOFF_RULE\b/, 6],
-  ['STAGING_CONVENTION', /^\s*const STAGING_CONVENTION\b/, 10],
-  ['VALIDATE_TEST_PROMPT', /^\s*const VALIDATE_TEST_PROMPT\b/, 15],
-  ['reviewPromptLite', /^\s*const reviewPromptLite\b/, 10],
-  ['contractProbePrompt', /^\s*const contractProbePrompt\b/, 20],
-  // post-summary（issue #550 F3 — 専用 clock#end probe 撤去に伴う end mark 給電元）
-  ['summaryPost', /^const summaryPost = await trackedAgent\(/, 15],
-];
-
-for (const [name, anchorPattern, windowLines] of EPOCH_FED_PROMPT_ANCHORS) {
-  test(`[epoch-instruction] dev-flow.js: ${name} 定義の近傍に epoch 取得指示（EPOCH_INSTRUCTION）が含まれる`, () => {
-    const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-    const region = sourceWindowAfterAnchor(src, anchorPattern, windowLines);
-    assert.ok(region, `${name} の定義箇所（アンカー行）が dev-flow.js に見つかること`);
-    assert.ok(
-      region.includes('EPOCH_INSTRUCTION'),
-      `${name} の定義（近傍 ${windowLines} 行）に EPOCH_INSTRUCTION 参照が含まれるべきだが含まれていなかった:\n${region}`,
-    );
+  const { ctx, calls } = makeDevFlowSandbox({
+    overrides: {
+      'analyze#1': {
+        summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
+        estimated_change_file_count: 3, shape: 'complex', issue_number: 1,
+        issue_title: 'stub-issue-title',
+      },
+    },
   });
-}
+  const error = await runDevFlowInSandbox(src, ctx);
+  assert.equal(error, null, `既定 run はエラーなく完走するべき: ${error?.message}`);
 
-test("[epoch-instruction] dev-flow.js: clockProbe( の呼び出しは 0 箇所", () => {
-  // issue #550 F1 で clockProbe('start')、F3 で clockProbe('end') がそれぞれ撤去され、
-  // 専用 clock probe の呼び出しは 0 箇所になった（2 段更新の最終段）。
-  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-  const clockProbeCalls = [...src.matchAll(/clockProbe\(/g)].map((m) => m[0]);
+  const epochFedLabels = ['plan#1', 'test#1', 'impl:serial:t1', 'contract-probe#1', 'post-summary'];
+  for (const label of epochFedLabels) {
+    const call = calls.find((c) => c.label === label);
+    assert.ok(call, `label '${label}' の call が見つからない`);
+    assert.ok(
+      call.prompt.includes('date +%s'),
+      `label '${label}' の prompt に 'date +%s' 取得指示が含まれるべきだが含まれていなかった: ${call.prompt}`,
+    );
+  }
+
+  const clockLabelCalls = calls.filter((c) => c.label?.startsWith('clock'));
   assert.equal(
-    clockProbeCalls.length,
+    clockLabelCalls.length,
     0,
-    `clockProbe( の呼び出しは 0 箇所であるべきだが ${clockProbeCalls.length} 箇所だった: ${JSON.stringify(clockProbeCalls)}`,
+    `label が 'clock' で始まる call は 0 件であるべきだが ${clockLabelCalls.length} 件だった（専用 clock probe は撤去済み）`,
   );
+});
+
+// lite route（pr-review-lite）の reviewPromptLite も EPOCH_INSTRUCTION 給電対象（iterate_end mark の
+// 給電元）。complex 経路の既定 run では到達しないため DEV_FLOW_SCENARIOS.lite で別 run を回す。
+test('[epoch-instruction] lite route: pr-review-lite の prompt が date +%s 取得指示を含む', async () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: DEV_FLOW_SCENARIOS.lite.overrides });
+  const error = await runDevFlowInSandbox(src, ctx);
+  assert.equal(error, null, `lite run はエラーなく完走するべき: ${error?.message}`);
+  const lite = calls.find((c) => c.label === 'pr-review-lite');
+  assert.ok(lite, `label 'pr-review-lite' の call が見つからない（lite route 不成立）: ${calls.map((c) => c.label).join(', ')}`);
+  assert.ok(lite.prompt.includes('date +%s'), `pr-review-lite の prompt に 'date +%s' 取得指示が含まれるべきだが含まれていなかった`);
 });

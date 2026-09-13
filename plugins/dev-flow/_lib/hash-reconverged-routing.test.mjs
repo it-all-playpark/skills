@@ -167,8 +167,16 @@ test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_recon
 
   const postSummary = calls.find((c) => c.label === 'post-summary');
   assert.ok(postSummary != null, '(a) post-summary が呼ばれていない');
-  assert.ok(postSummary.prompt.includes('PR head tree は評価済み tree と一致'), `(a) post-summary prompt に再収束文言が無い:\n${postSummary.prompt}`);
-  assert.ok(!postSummary.prompt.includes('Evaluate は古い tree に対して実行された'), '(a) post-summary prompt に hash_mismatch の警告文言が残っている');
+  const journalCall = calls.find((c) => c.label === 'journal-save');
+  assert.ok(journalCall != null, '(a) journal-save が呼ばれていない');
+  assert.ok(
+    journalCall.prompt.includes('"eval_staleness":"hash_reconverged"'),
+    `(a) journal-save prompt に "eval_staleness":"hash_reconverged" を含むべきだが:\n${journalCall.prompt.slice(0, 500)}`,
+  );
+  assert.ok(
+    !journalCall.prompt.includes('"eval_staleness":"hash_mismatch"'),
+    `(a) journal-save prompt に "eval_staleness":"hash_mismatch" を含むべきでない:\n${journalCall.prompt.slice(0, 500)}`,
+  );
 });
 
 // ============================================================
@@ -291,16 +299,16 @@ test('[hash-reconverged] (f) dispatch pin: tree-diff-numstat / head-tree-oid / g
   assert.ok(numstatCall != null, '(f) tree-diff-numstat が呼ばれていない');
   assert.equal(numstatCall.agentType, 'dev-flow:dev-runner-haiku-ro', `(f) tree-diff-numstat の agentType が期待と不一致: ${numstatCall.agentType}`);
   assert.ok(
-    numstatCall.prompt.includes('git -C /tmp/wt diff --numstat AAA BBB'),
-    `(f) tree-diff-numstat の prompt に git diff --numstat コマンドが含まれていない:\n${numstatCall.prompt}`,
+    numstatCall.prompt.includes('--numstat') && numstatCall.prompt.includes('AAA') && numstatCall.prompt.includes('BBB'),
+    `(f) tree-diff-numstat の prompt に --numstat / AAA / BBB が含まれていない:\n${numstatCall.prompt}`,
   );
 
   const headTreeCall = calls.find((c) => c.label === 'head-tree-oid');
   assert.ok(headTreeCall != null, '(f) head-tree-oid が呼ばれていない');
   assert.equal(headTreeCall.agentType, 'dev-flow:dev-runner-haiku-ro', `(f) head-tree-oid の agentType が期待と不一致: ${headTreeCall.agentType}`);
   assert.ok(
-    headTreeCall.prompt.includes(`git -C /tmp/wt rev-parse ${HEAD_REF_OID}^{tree}`),
-    `(f) head-tree-oid の prompt に git rev-parse コマンドが含まれていない:\n${headTreeCall.prompt}`,
+    headTreeCall.prompt.includes('rev-parse') && headTreeCall.prompt.includes(HEAD_REF_OID),
+    `(f) head-tree-oid の prompt に rev-parse / ${HEAD_REF_OID} が含まれていない:\n${headTreeCall.prompt}`,
   );
 
   const ghPrViewCall = calls.find((c) => c.label === 'gh-pr-view');

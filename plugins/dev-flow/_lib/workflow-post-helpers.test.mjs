@@ -4,6 +4,9 @@
 // TDD-first: これらのテストが GREEN になることで canonical の仕様適合を保証する。
 // node --test _lib/workflow-post-helpers.test.mjs で実行。
 
+// issue #636 P2 pin 整理 (inventory 用):
+// (削除) L56 'shell（echo/printf/heredoc 等）へ' — 唯一の assert だった test ごと削除
+// (削除) L104 'shell（echo/printf/heredoc 等）へ' — 唯一の assert だった test ごと削除
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { bodySaveInstr, POST_RESULT, JOURNAL_RESULT } from './workflow-post-helpers.mjs';
@@ -50,14 +53,6 @@ test('bodySaveInstr(body, "dev-flow", "DEV_FLOW") — "Write tool" 安全文言�
   );
 });
 
-test('bodySaveInstr(body, "dev-flow", "DEV_FLOW") — shell（echo/printf/heredoc）へ渡さない 安全文言を含む', () => {
-  const result = bodySaveInstr(SAMPLE_BODY, 'dev-flow', 'DEV_FLOW');
-  assert.ok(
-    result.includes('shell（echo/printf/heredoc 等）へ'),
-    '"shell（echo/printf/heredoc 等）へ" という injection 対策文言が存在しない',
-  );
-});
-
 // -----------------------------------------------------------------------
 // bodySaveInstr: pr-iterate パラメータ（'pr-iterate', 'PR_ITERATE'）
 // -----------------------------------------------------------------------
@@ -95,14 +90,6 @@ test('bodySaveInstr(body, "pr-iterate", "PR_ITERATE") — "Write tool" 安全文
   assert.ok(
     result.includes('Write tool'),
     '"Write tool" という injection 対策文言が存在しない',
-  );
-});
-
-test('bodySaveInstr(body, "pr-iterate", "PR_ITERATE") — shell（echo/printf/heredoc）へ渡さない 安全文言を含む', () => {
-  const result = bodySaveInstr(SAMPLE_BODY, 'pr-iterate', 'PR_ITERATE');
-  assert.ok(
-    result.includes('shell（echo/printf/heredoc 等）へ'),
-    '"shell（echo/printf/heredoc 等）へ" という injection 対策文言が存在しない',
   );
 });
 

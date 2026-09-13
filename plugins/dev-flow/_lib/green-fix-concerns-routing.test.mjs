@@ -168,15 +168,6 @@ test('[green-fix-concerns] AC#3: eval#1 の prompt に GREEN_FIX_CONCERN_MARKER 
   );
 });
 
-// ============================================================
-// テスト 4（構造テスト・AC#2）: dev-flow.js ソースに対称パターンが含まれること
-// retry 経路 L1586 の `gfRetry` パターンとの対称性 pin
-// ============================================================
-
-test('[green-fix-concerns][struct] AC#2: dev-flow.js ソースに対称パターン「if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)」が含まれること', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-  assert.ok(
-    src.includes('if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)'),
-    'dev-flow.js に「if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)」が存在すること（retry 経路 gfRetry パターンとの対称性）',
-  );
-});
+// AC#2（本経路の gfResult.concerns → concerns 配列 push）はテスト 3 が VM 挙動として担保する
+// （push が無ければ eval#1 prompt に GREEN_FIX_CONCERN_MARKER が届かない）。retry 経路 gfRetry との
+// 対称性をソース文字列で pin する構造テストは削除した（issue #636）。

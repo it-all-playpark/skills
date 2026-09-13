@@ -1,17 +1,12 @@
 // _lib/diffhash-prompt-contract.test.mjs
-// Pin test: dhPrompt（diff-hash exec-proxy prompt）の bare 単文 / argv 転写契約を固定する
-// （issue #606 task F2）。
+// dhPrompt（diff-hash exec-proxy prompt。diff-hash-eval / diff-hash-pr / diff-hash-merge が共有する
+// state.dhPrompt）の argv 転写契約を、実際に agent() へ渡る prompt を VM run で捕捉して検証する
+// （issue #636 P3b）。
 //
-// dhPrompt は dev-runner-haiku-ro へ渡す prompt で、`worktree-diff-hash ${WT} origin/${BASE}` を
-// 実行させ stdout の JSON 1 行を verbatim で返させる。ci-check prompt（同ファイル内
-// `を gh を先頭トークンとする bare 単文で実行せよ`）と同水準の bare 単文 / argv 転写契約が
-// 入っていることをここで pin する。
-//
-// dhPrompt は `.claude/workflows/dev-flow.js` の inline 生成区間の外にある
-// （直前のマーカーは `// ==== END inline: _lib/cross-repo-gate.mjs ====`）ため直接編集する。
-//
-// .claude/workflows/*.js はランタイム注入 global を使うため ESM import できない。
-// よって既存 *-routing.test.mjs 群と同じ戦略（source-as-string assert）で検証する。
+// 旧版は dev-flow.js から dhPrompt のソース block を readFileSync + slice で抽出し、
+// 'bare 単文' / '先頭トークンが…' 等の日本語の指示文・規約文を部分一致で pin していた。
+// これらは言い回し変更のみで落ちる pin だったため、VM sandbox で実際に diff-hash* call に渡る
+// prompt を捕捉し、argv token（(a)）・否定側（(b)(c)）・agentType（(d)）で検証する形に置換した。
 //
 // Run: npx vitest run _lib/diffhash-prompt-contract.test.mjs
 import { test } from 'vitest';
@@ -19,102 +14,172 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
+import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-const src = readFileSync(devFlowPath, 'utf8');
+const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
-const start = src.indexOf('const dhPrompt = ');
-const end = src.indexOf('state.dhPrompt = dhPrompt', start);
+// ============================================================
+// runDevFlowCapture: strip + wrap + vm 実行し {result, error} を返す
+// （hash-reconverged-routing.test.mjs と同型のローカル copy）
+// ============================================================
+async function runDevFlowCapture(src, ctx) {
+  const stripped = src
+    .replace(/^export\s+const\s+/gm, 'const ')
+    .replace(/^export\s+function\s+/gm, 'function ');
+  const wrapped = `(async () => {\n${stripped}\n})();`;
 
-test('[diffhash-prompt-contract] dhPrompt ブロックの開始・終了マーカーが両方見つかる', () => {
-  assert.ok(start >= 0, '`const dhPrompt = ` が dev-flow.js に見つからない');
-  assert.ok(end >= 0, '`state.dhPrompt = dhPrompt` が dev-flow.js に見つからない');
+  let caughtError = null;
+  let resolvedResult = null;
+  try {
+    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
+    if (resultPromise && typeof resultPromise.then === 'function') {
+      resolvedResult = await resultPromise.catch((e) => {
+        caughtError = e;
+        return null;
+      });
+    }
+  } catch (e) {
+    caughtError = e;
+  }
+  return { result: resolvedResult, error: caughtError };
+}
+
+function assertNoCrash(error) {
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+}
+
+// standard に落ちる req（count=3 ≤ 5, ac.length=2 ≤ 6, type=fix → floor='standard'）
+const STANDARD_REQ = {
+  summary: 's',
+  acceptance_criteria: ['a', 'b'],
+  issue_type: 'fix',
+  scope: 'src',
+  estimated_change_file_count: 3,
+  shape: 'standard',
+  issue_number: 1,
+  issue_title: 'stub-issue-title',
+};
+
+// ============================================================
+// responder: hash-reconverged-routing.test.mjs の createResponder パターンを踏襲。
+// diff-hash-eval / diff-hash-pr / diff-hash-merge の 3 call を全て発火させるため、
+// danger-grep は diffhash フィールドを返し（state.secDiffHash を非 null にする）、
+// evaluator は AC 全 satisfied で 1 パス収束、test は常時 passed にする。
+// ============================================================
+function createResponder() {
+  return function ({ label, agentType }) {
+    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: false, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
+    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
+    if (label.startsWith('analyze')) return STANDARD_REQ;
+    if (agentType === 'dev-flow:dev-planner') {
+      return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
+    }
+    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
+    if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'H', empty: false } };
+    if (label === 'danger-grep-final') return { ok: true, hits: [] };
+    if (agentType === 'dev-flow:evaluator') {
+      return {
+        verdict: 'pass', total: 100, threshold: 80, feedback: [],
+        feedback_level: 'implementation',
+        ac_results: [
+          { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+          { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+        ],
+        security_clearance: [],
+      };
+    }
+    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
+    if (label === 'changed-files') return { files: ['src/x.ts'] };
+    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
+    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
+    if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
+    if (label === 'journal-log') return { logged: true, summary: 'ok' };
+    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
+    return null;
+  };
+}
+
+// ============================================================
+// 共有実行（全テストが同じ sandbox 実行結果を参照するため）
+// ============================================================
+
+let sharedCalls = null;
+let sharedError = null;
+
+async function ensureSharedRun() {
+  if (sharedCalls !== null) return;
+  const { ctx, calls } = makeRecordingSandbox(createResponder());
+  const { error } = await runDevFlowCapture(devFlowSrc, ctx);
+  sharedCalls = calls;
+  sharedError = error;
+}
+
+test('[diffhash-prompt-contract] crash guard: dev-flow.js が sandbox で ReferenceError / SyntaxError を throw しない', async () => {
+  await ensureSharedRun();
+  assertNoCrash(sharedError);
 });
 
-const block = src.slice(start, end);
-
-// ---- (a) bare 単文契約 ----
-
-test('[diffhash-prompt-contract] (a) block に "bare 単文" が含まれる', () => {
-  assert.ok(block.includes('bare 単文'), 'dhPrompt ブロックに "bare 単文" が見つからない');
-});
-
-test('[diffhash-prompt-contract] (a) block に "先頭トークンが worktree-diff-hash" が含まれる', () => {
+test('[diffhash-prompt-contract] sanity: label が diff-hash で始まる call が 1 回以上発生する', async () => {
+  await ensureSharedRun();
+  const diffHashCalls = sharedCalls.filter((c) => c.label.startsWith('diff-hash'));
   assert.ok(
-    block.includes('先頭トークンが worktree-diff-hash'),
-    'dhPrompt ブロックに "先頭トークンが worktree-diff-hash" が見つからない',
+    diffHashCalls.length >= 1,
+    `diff-hash* の call が 0 件だった (全 labels: ${sharedCalls.map((c) => c.label).join(', ')})`,
   );
 });
 
-// ---- (b) which による絶対パス解決の禁止 ----
-
-test('[diffhash-prompt-contract] (b) block に "which による絶対パス解決" が含まれる', () => {
-  assert.ok(
-    block.includes('which による絶対パス解決'),
-    'dhPrompt ブロックに "which による絶対パス解決" が見つからない',
-  );
+test('[diffhash-prompt-contract] (a) diff-hash* prompt は argv 行 "worktree-diff-hash /tmp/wt origin/main" を verbatim 含む', async () => {
+  await ensureSharedRun();
+  const diffHashCalls = sharedCalls.filter((c) => c.label.startsWith('diff-hash'));
+  assert.ok(diffHashCalls.length >= 1, 'diff-hash* call が見つからない');
+  for (const c of diffHashCalls) {
+    assert.ok(
+      c.prompt.includes('worktree-diff-hash /tmp/wt origin/main'),
+      `${c.label} の prompt に argv 行 "worktree-diff-hash /tmp/wt origin/main" が見つからない。\nprompt: ${c.prompt}`,
+    );
+  }
 });
 
-// ---- (c) 禁止する前置・連結パターン ----
-
-test('[diffhash-prompt-contract] (c) block に "cd 前置" が含まれる', () => {
-  assert.ok(block.includes('cd 前置'), 'dhPrompt ブロックに "cd 前置" が見つからない');
+test('[diffhash-prompt-contract] (b) diff-hash* prompt は旧 "cd /tmp/wt で作業" 前置を含まない', async () => {
+  await ensureSharedRun();
+  const diffHashCalls = sharedCalls.filter((c) => c.label.startsWith('diff-hash'));
+  assert.ok(diffHashCalls.length >= 1, 'diff-hash* call が見つからない');
+  for (const c of diffHashCalls) {
+    assert.ok(
+      !c.prompt.includes('cd /tmp/wt で作業'),
+      `${c.label} の prompt に旧 "cd /tmp/wt で作業" 前置が残っている`,
+    );
+  }
 });
 
-test('[diffhash-prompt-contract] (c) block に "環境変数代入前置" が含まれる', () => {
-  assert.ok(block.includes('環境変数代入前置'), 'dhPrompt ブロックに "環境変数代入前置" が見つからない');
+test('[diffhash-prompt-contract] (c) diff-hash* prompt は禁止語 sandbox / excludedCommands / permission / 迂回 を含まない', async () => {
+  await ensureSharedRun();
+  const diffHashCalls = sharedCalls.filter((c) => c.label.startsWith('diff-hash'));
+  assert.ok(diffHashCalls.length >= 1, 'diff-hash* call が見つからない');
+  for (const c of diffHashCalls) {
+    assert.doesNotMatch(c.prompt, /sandbox/i, `${c.label} の prompt に "sandbox" が含まれている`);
+    assert.doesNotMatch(c.prompt, /excludedCommands/i, `${c.label} の prompt に "excludedCommands" が含まれている`);
+    assert.doesNotMatch(c.prompt, /permission/i, `${c.label} の prompt に "permission" が含まれている`);
+    assert.doesNotMatch(c.prompt, /迂回/, `${c.label} の prompt に "迂回" が含まれている`);
+  }
 });
 
-test('[diffhash-prompt-contract] (c) block に "&& 連結" が含まれる', () => {
-  assert.ok(block.includes('&& 連結'), 'dhPrompt ブロックに "&& 連結" が見つからない');
-});
-
-// ---- (d) 理由: verbatim 転写の破壊 ----
-
-test('[diffhash-prompt-contract] (d) block に "転写の破壊" が含まれる', () => {
-  assert.ok(block.includes('転写の破壊'), 'dhPrompt ブロックに "転写の破壊" が見つからない');
-});
-
-// ---- (e) cd 不要の明示 ----
-
-test('[diffhash-prompt-contract] (e) block に "cd は不要" が含まれる', () => {
-  assert.ok(block.includes('cd は不要'), 'dhPrompt ブロックに "cd は不要" が見つからない');
-});
-
-// ---- (f) argv 行不変（byte 単位） ----
-
-test('[diffhash-prompt-contract] (f) argv 行 `worktree-diff-hash ${WT} origin/${BASE}` が不変に保たれている', () => {
-  assert.ok(
-    block.includes('worktree-diff-hash ${WT} origin/${BASE}'),
-    'dhPrompt ブロックに argv 行 `worktree-diff-hash ${WT} origin/${BASE}` が見つからない',
-  );
-});
-
-// ---- (g) 旧 cd 前置が不在 ----
-
-test('[diffhash-prompt-contract] (g) 旧 "cd ${WT} で作業" 前置が block から除去されている', () => {
-  assert.ok(
-    !block.includes('cd ${WT} で作業'),
-    'dhPrompt ブロックに旧 "cd ${WT} で作業" 前置が残っている',
-  );
-});
-
-// ---- (h) 禁止語（実行制御名を理由に書かない） ----
-
-test('[diffhash-prompt-contract] (h) block に禁止語 sandbox / excludedCommands / permission / 迂回 が含まれない', () => {
-  assert.doesNotMatch(block, /sandbox/i, 'dhPrompt ブロックに "sandbox" が含まれている');
-  assert.doesNotMatch(block, /excludedCommands/i, 'dhPrompt ブロックに "excludedCommands" が含まれている');
-  assert.doesNotMatch(block, /permission/i, 'dhPrompt ブロックに "permission" が含まれている');
-  assert.doesNotMatch(block, /迂回/, 'dhPrompt ブロックに "迂回" が含まれている');
-});
-
-// ---- (i) 同水準の対照: ci-check 契約文がまだ存在すること ----
-
-test('[diffhash-prompt-contract] (i) ci-check の bare 単文契約文が dev-flow.js に存在する（同水準の基準）', () => {
-  assert.ok(
-    src.includes('を gh を先頭トークンとする bare 単文で実行せよ'),
-    'dev-flow.js に ci-check の bare 単文契約文 "を gh を先頭トークンとする bare 単文で実行せよ" が見つからない',
-  );
+test('[diffhash-prompt-contract] (d) diff-hash* call の agentType は dev-flow:dev-runner-haiku-ro', async () => {
+  await ensureSharedRun();
+  const diffHashCalls = sharedCalls.filter((c) => c.label.startsWith('diff-hash'));
+  assert.ok(diffHashCalls.length >= 1, 'diff-hash* call が見つからない');
+  for (const c of diffHashCalls) {
+    assert.equal(
+      c.agentType,
+      'dev-flow:dev-runner-haiku-ro',
+      `${c.label} の agentType は 'dev-flow:dev-runner-haiku-ro' のはずだが '${c.agentType}' だった`,
+    );
+  }
 });
