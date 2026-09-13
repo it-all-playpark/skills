@@ -15,20 +15,21 @@
 //   (b) 契約違反以外は即 throw（リトライしない、fail-closed 維持）
 //   (c) リトライ 1 回で打ち切り（2 回目も契約違反なら rethrow）
 //   (d) null 応答はリトライ対象外（checkWorktreeBase の fail-closed throw が維持される）
-//   (e) source pin — dev-flow.js / pr-iterate.js 双方の trackedAgent 関数本体の同型性
+//   (e) pr-iterate.js — 未 opt-in call site（pr-meta）の契約違反 / 非契約違反 throw は即伝播
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
 const prIteratePath = join(repoRoot, '.claude', 'workflows', 'pr-iterate.js');
 const devFlowSrc = readFileSync(devFlowPath, 'utf8');
+const prIterateSrc = readFileSync(prIteratePath, 'utf8');
 
 const CONTRACT_VIOLATION_MSG =
   "agent({schema}): subagent completed without calling StructuredOutput (after in-conversation nudge)";
@@ -165,38 +166,22 @@ test('[tracked-agent-so-retry] (d) setup-base が null → リトライせず re
   assert.equal(setupBaseCalls.length, 1, 'setup-base の呼び出し回数が 1 件ではない（null 応答なのにリトライされた）');
 });
 
-// ── (e) source pin: 両 workflow の trackedAgent 同型性 ──────────────────
+// ── (e) pr-iterate.js の trackedAgent も同じ契約（未 opt-in call site は契約違反でも同一 label で再呼び出ししない）──
+// pr-iterate.js には現在 retryOnContractViolation を opt-in した call site が無く、全 call site が
+// 例外を catch するため伝播では観測できない。fix#1（未 opt-in）を契約違反で throw させ、trackedAgent が
+// 同一 label で再呼び出しせず（fix#1 は 1 回）、契約違反リトライの log も出ないことで観測する
+// （issue #636 でソース pin から置換。opt-in call site が増えたら (a) と同型のテストを足す）。
 
-function extractTrackedAgentBody(src) {
-  const marker = 'async function trackedAgent(prompt, opts) {';
-  const start = src.indexOf(marker);
-  assert.ok(start !== -1, 'trackedAgent 定義（async function trackedAgent(prompt, opts) {）が見つからない');
-  const searchFrom = start + marker.length;
-  const nextFnIdx = src.indexOf('async function', searchFrom);
-  const nextSectionIdx = src.indexOf('// ----', searchFrom);
-  const candidates = [nextFnIdx, nextSectionIdx].filter((i) => i !== -1);
-  const end = candidates.length > 0 ? Math.min(...candidates) : src.length;
-  return src.slice(start, end);
-}
-
-for (const [name, path] of [
-  ['dev-flow.js', devFlowPath],
-  ['pr-iterate.js', prIteratePath],
-]) {
-  test(`[tracked-agent-so-retry] (e) ${name}: trackedAgent 本体に StructuredOutput 契約違反リトライ実装が存在する`, () => {
-    const src = readFileSync(path, 'utf8');
-    const body = extractTrackedAgentBody(src);
-
-    assert.match(body, /without calling StructuredOutput/, `${name} の trackedAgent 本体に契約違反判定文字列が無い`);
-
-    // agentType の namespace 付与は nsAgentOpts()（_lib/agent-namespace.mjs）が担うため、
-    // trackedAgent 本体の呼び出し形は agent(prompt, nsAgentOpts(opts)) で固定する。
-    const agentCallRe = /agent\(prompt, nsAgentOpts\(opts\)\)/g;
-    const matches = [...body.matchAll(agentCallRe)];
-    assert.equal(
-      matches.length,
-      2,
-      `${name} の trackedAgent 本体に agent(prompt, nsAgentOpts(opts)) 呼び出しが 2 箇所存在しない（${matches.length} 件）`,
-    );
+test('[tracked-agent-so-retry] (e) pr-iterate.js: 未 opt-in の fix#1 が契約違反で throw → 同一 label の再呼び出し無し・リトライ log 無し', async () => {
+  const { ctx, calls, logs } = makePrIterateSandbox({
+    overrides: {
+      'review#1': { decision: 'request_changes', issues: [{ severity: 'major', topic: 't', file: 'a.js', line: 1, description: 'd', suggestion: null }], summary: 'ng' },
+      'fix#1': () => { throw new Error(CONTRACT_VIOLATION_MSG); },
+    },
   });
-}
+  const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  assert.equal(error, null, `fix#1 の throw は callFixAgent が吸収するはずだが run が throw した: ${error?.message}`);
+  assert.equal(calls.filter((c) => c.label === 'fix#1').length, 1, 'fix#1 が同一 label で再呼び出しされた（未 opt-in call site でリトライが発火している）');
+  assert.equal(calls.filter((c) => c.label === 'fix#1-retry').length, 1, 'fix-null-retry（別 label）は 1 回走るはず');
+  assert.ok(!logs.some((l) => l.includes('契約違反で失敗 — 同一 prompt で 1 回だけリトライ')), '未 opt-in call site なのに契約違反リトライの log が出ている');
+});

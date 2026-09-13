@@ -10,21 +10,15 @@
 //   telemetry の eval_iter は dev-flow.js の telemetry handoff オブジェクト（`eval_iter: evalIters`）に
 //   既存（line 2013 付近）。注入前後で比較するような追加実装は不要 — 既存テストの範囲外。
 //
-// このテストは:
-//   層 1 (source pin):
-//     implPrompt 区間（function implPrompt から async function runImplement まで）に以下が含まれる:
-//       (1) 'acceptance_criteria' が含まれる
-//       (2) 'plan?.summary' または 'plan.summary' が含まれる
-//       (3) 'architecture_decisions' が含まれる
-//       (4) 'edge_cases' が含まれる
-//       (5) 'requirements' ラベルが含まれる（implementer.md 宣言済み入力名との一致 = AC2 検証）
-//   層 2 (routing pin — VM sandbox):
+// このテストは dev-flow.js を VM で実行し（issue #636 で implPrompt 区間のソース pin を撤去）:
 //       (6) implementer 呼び出しが 2 件以上（serial T1 + parallel T2）
 //       (7) label に ':serial:' を含む implementer call が >= 1
 //       (8) label に ':par:' を含む implementer call が >= 1
 //       (9) 全 implementer call の prompt に 5 sentinel トークンが含まれる:
 //           'AC_SENTINEL_ONE' / 'AC_SENTINEL_TWO' / 'PLAN_SUMMARY_SENTINEL' /
 //           'ARCH_DECISION_SENTINEL' / 'EDGE_CASE_SENTINEL'
+//       (10) 全 implementer call の prompt に implementer.md 宣言済み入力名 'requirements' /
+//           'architecture_decisions' / 'edge_cases' のラベルが含まれる（AC2 = 入力名一致）
 // を assert する。
 
 import { test } from 'vitest';
@@ -38,75 +32,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
 
 const src = readFileSync(devFlowPath, 'utf8');
-
-// ============================================================
-// 層 1: source pin
-// implPrompt 区間を切り出して必要トークンを assert する
-// ============================================================
-
-// implPrompt 区間 = function implPrompt の開始から async function runImplement の開始まで
-const implPromptStart = src.indexOf('function implPrompt');
-const implPromptEnd = src.indexOf('async function runImplement');
-
-if (implPromptStart === -1) {
-  throw new Error('dev-flow.js に function implPrompt が見つからない');
-}
-if (implPromptEnd === -1) {
-  throw new Error('dev-flow.js に async function runImplement が見つからない');
-}
-
-const implPromptSection = src.slice(implPromptStart, implPromptEnd);
-
-if (!(implPromptEnd > implPromptStart)) {
-  throw new Error(
-    'implPrompt 区間の終端 anchor (async function runImplement) が開始 anchor (function implPrompt) より後に来ること。'
-    + '逆転すると区間が空になり以降の包含 assert が無意味化する（窓ズレ検出）',
-  );
-}
-if (!(implPromptSection.length > 100)) {
-  throw new Error(
-    'implPrompt 区間が十分な長さを持つこと（窓ズレ検出: 異常に短ければ anchor 取得が壊れている）。'
-    + `現在の長さ: ${implPromptSection.length}`,
-  );
-}
-
-test('[requirements-injection] implPrompt 区間に acceptance_criteria が含まれる', () => {
-  assert.ok(
-    implPromptSection.includes('acceptance_criteria'),
-    'implPrompt 区間に "acceptance_criteria" が存在しない。AC を implementer prompt に注入すること（issue #224）',
-  );
-});
-
-test('[requirements-injection] implPrompt 区間に plan.summary への参照が含まれる', () => {
-  const hasPlanSummary =
-    implPromptSection.includes('plan?.summary') || implPromptSection.includes('plan.summary');
-  assert.ok(
-    hasPlanSummary,
-    'implPrompt 区間に "plan?.summary" / "plan.summary" が存在しない。plan contract を implementer prompt に注入すること（issue #224）',
-  );
-});
-
-test('[requirements-injection] implPrompt 区間に architecture_decisions が含まれる', () => {
-  assert.ok(
-    implPromptSection.includes('architecture_decisions'),
-    'implPrompt 区間に "architecture_decisions" が存在しない。plan contract を implementer prompt に注入すること（issue #224）',
-  );
-});
-
-test('[requirements-injection] implPrompt 区間に edge_cases が含まれる', () => {
-  assert.ok(
-    implPromptSection.includes('edge_cases'),
-    'implPrompt 区間に "edge_cases" が存在しない。plan contract を implementer prompt に注入すること（issue #224）',
-  );
-});
-
-test('[requirements-injection] implPrompt 区間に requirements ラベルが含まれる（implementer.md AC2 = 入力名一致）', () => {
-  assert.ok(
-    implPromptSection.includes('requirements'),
-    'implPrompt 区間に "requirements" ラベルが存在しない。'
-    + 'implementer.md は requirements を宣言済み入力名として列挙しており、prompt のラベルと一致させること（AC2）',
-  );
-});
 
 // ============================================================
 // 層 2: routing pin（VM sandbox）
@@ -334,6 +259,21 @@ test('[requirements-injection] routing: 全 implementer call の prompt に 5 �
         `implementer prompt (label=${c.label}) に sentinel '${sentinel}' が含まれない。`
         + `AC・plan contract（summary / architecture_decisions / edge_cases）が注入されていない（issue #224）`,
       );
+    }
+  }
+});
+
+test('[requirements-injection] routing: 全 implementer call の prompt に implementer.md 宣言済み入力名のラベルが含まれる（AC2）', async () => {
+  const { ctx, calls } = makeCountingSandbox();
+  const { error } = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail('dev-flow.js が sandbox でクラッシュ: ' + error.name + ': ' + error.message);
+  }
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない（0 件）');
+  for (const c of implCalls) {
+    for (const key of ['requirements', 'architecture_decisions', 'edge_cases']) {
+      assert.ok(c.prompt.includes(key), `implementer prompt (label=${c.label}) に入力名ラベル '${key}' が無い（implementer.md の宣言済み入力名と一致させること）`);
     }
   }
 });

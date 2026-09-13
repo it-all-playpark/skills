@@ -241,25 +241,9 @@ test('[validate-unify] (1) crash guard: dev-flow.js が sandbox で ReferenceErr
   }
 });
 
-// ============================================================
-// (2) 構造 pin — function runValidateLoop 出現回数 >= 1
-// NOTE: F2（runValidateLoop 抽出）前は RED（runValidateLoop 0 件）。
-// 「テストスイートを実行し」「禁止文」の日本語プロンプト文言を回数で数える pin は
-// 言い回し変更のみで落ちるため撤去した（issue #636 AC-1）。単一化（重複排除）の実質は
-// 本経路・retry 経路の prompt が byte 一致することを VM 実行で検証するテスト (3) が
-// より強く保証する。
-// ============================================================
-
-test('[validate-unify] (2) 構造 pin: function runValidateLoop が 1 箇所以上', () => {
-  const src = readFileSync(devFlowPath, 'utf8');
-
-  const runValidateLoopCount = (src.match(/function runValidateLoop/g) || []).length;
-  assert.ok(
-    runValidateLoopCount >= 1,
-    `dev-flow.js に 'function runValidateLoop' が ${runValidateLoopCount} 箇所（>= 1 が必要）。`
-    + 'F2（runValidateLoop 抽出）が完了していない。',
-  );
-});
+// (2) 「function runValidateLoop が存在する」構造 pin は撤去した（issue #636）。単一化（重複排除）の
+// 実質は本経路・retry 経路の prompt が byte 一致することを VM 実行で検証する (3) が保証する。
+// 「テストスイートを実行し」「禁止文」の日本語プロンプト文言を回数で数える pin も同理由で撤去済み（AC-1）。
 
 // ============================================================
 // (3) プロンプト同一 pin（gateEmpty:true で retry 経路を発火）
@@ -396,7 +380,7 @@ test('[validate-unify] (6) GREEN_MAX ループ pin: test#retry ちょうど 3 �
 // NOTE: F2（VALIDATE_TEST_PROMPT 書き換え）前は RED（新文言が存在しない）
 // ============================================================
 
-test('[validate-unify] (7) 新文言 pin: test#1 prompt に bare 形優先実行・EPERM fail-safe の文言要素が含まれること', async () => {
+test('[validate-unify] (7) test#1 prompt に test スクリプト優先・EPERM fail-safe の識別トークンが含まれること', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox({ gateEmpty: false });
   const { error } = await runDevFlowInSandbox(src, ctx);
@@ -410,15 +394,13 @@ test('[validate-unify] (7) 新文言 pin: test#1 prompt に bare 形優先実行
     `label === 'test#1' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
   );
 
+  // 識別子・トークンのみ pin する（bare 形優先・前置禁止・原因調査禁止等の日本語文言は言い回しの
+  // 変更で落ちるため pin しない。issue #636 AC-1）
   const requiredPhrases = [
     'tests/run-',
-    '絶対パスを先頭トークンとする bare 形',
-    '前置は禁止',
-    '先頭トークン一致で sandbox 除外が外れる',
-    'フォールバック',
     'EPERM',
-    '原因調査をするな',
-    '即座に StructuredOutput',
+    'StructuredOutput',
+    'tests:"error"',
   ];
   for (const phrase of requiredPhrases) {
     assert.ok(

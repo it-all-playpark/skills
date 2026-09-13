@@ -1,13 +1,13 @@
 // implementer.md は sandbox write-deny（issue #216 リトライで実証）のため、規約は dev-flow.js が
-// 全 implementer spawn prompt に注入する。本テストはその注入を source pin（否定側 1 件）+ VM 挙動
-// routing の 2 層で pin する（issue #636 AC-1: 「含まれる」側の自然言語文言 pin は VM 挙動へ置換済み）。
+// 全 implementer spawn prompt に注入する。本テストはその注入を VM 挙動で pin する
+// （issue #636: 「含まれる」側の自然言語文言 pin と定義ソースの否定 pin をともに VM 挙動へ置換済み）。
 //
 // 問題: implementer が evaluator.staged.md / fm_*.txt 等の一時ファイルを worktree 直下に残すと
 //       `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、
 //       micro→standard の refloor 誤発火や 30 件超の CONCERN スパムが起きる（issue #216）。
 //
 // このテストは:
-//   (2b) STAGING_CONVENTION 定義が一時ファイルの削除を指示しない（否定側 pin。AC-3 許可）
+//   (2b) implementer prompt が一時ファイルの削除を指示しない（否定側 pin。AC-3 許可）
 //   (3) routing: 標準経路 implementer 呼び出し全件の prompt に規約トークンが含まれる
 //   (4) routing: green-fix#1（Validate red→green-fix 経路）の prompt にも規約トークンが含まれる
 //   (5) routing: fix#1（Evaluate implementation-level 差し戻し経路）の prompt にも規約トークンが含まれる
@@ -27,24 +27,22 @@ const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
-// Part 1: source pin（否定側のみ）
+// Part 1: 否定側 pin（VM 挙動）
 // ============================================================
 
 // (2b) .devflow-tmp/ の後始末を指示しない（isEphemeralPath が realized-diff から除外するため不要）。
 // 削除を指示すると implementer が一時 dir の削除コマンドを組み立て、実行制御に弾かれて turn を失う。
-// 定義本体のみを検査する（コメント行は規範そのものの説明を含みうるため対象外）。
-test('[staging-convention] STAGING_CONVENTION 定義が一時ファイルの削除を指示しない', () => {
-  const defStart = src.indexOf('const STAGING_CONVENTION');
-  assert.ok(defStart !== -1, 'STAGING_CONVENTION の定義が見つからない');
-  const defEnd = src.indexOf('EPOCH_INSTRUCTION', defStart);
-  assert.ok(defEnd !== -1, 'STAGING_CONVENTION 定義の終端が見つからない');
-  const def = src.slice(defStart, defEnd);
-
-  for (const forbidden of ['削除せよ', '削除する', '完了前に削除']) {
-    assert.ok(
-      !def.includes(forbidden),
-      `STAGING_CONVENTION 定義に削除指示 "${forbidden}" が含まれている（.devflow-tmp/ は realized-diff から除外済みで後始末は不要）`,
-    );
+// 実際に implementer へ渡る prompt 全件に削除指示が現れないことで観測する（issue #636 でソース pin から置換）。
+test('[staging-convention] implementer prompt が一時ファイルの削除を指示しない', async () => {
+  const { ctx, calls } = makeDevFlowSandbox();
+  const { error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, '2b');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
+  for (const c of implCalls) {
+    for (const forbidden of ['削除せよ', '削除する', '完了前に削除']) {
+      assert.ok(!c.prompt.includes(forbidden), `implementer prompt (label=${c.label}) に削除指示 "${forbidden}" が含まれている（.devflow-tmp/ は realized-diff から除外済みで後始末は不要）`);
+    }
   }
 });
 

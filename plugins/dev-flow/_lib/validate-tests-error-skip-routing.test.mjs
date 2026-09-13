@@ -278,32 +278,6 @@ test("[validate-tests-error-skip] (5) 専用 log: retry 経路 error でも同�
   );
 });
 
-// ============================================================
-// (6) 構造 pin（静的）
-// ============================================================
-
-test("[validate-tests-error-skip][struct] (6) runValidateLoop 内で v.tests === 'error' の判定が green-fix#retry-i 呼び出しより前に出現する", () => {
-  const startIdx = devFlowSrc.indexOf('async function runValidateLoop(');
-  assert.ok(startIdx !== -1, "dev-flow.js に 'async function runValidateLoop(' が見つからない");
-  const returnIdx = devFlowSrc.indexOf('return v', startIdx);
-  assert.ok(returnIdx !== -1, "runValidateLoop 内に 'return v' が見つからない");
-  const region = devFlowSrc.slice(startIdx, returnIdx);
-
-  const errorCheckIdx = region.indexOf("v.tests === 'error'");
-  assert.ok(
-    errorCheckIdx !== -1,
-    "runValidateLoop 区間内に \"v.tests === 'error'\" が見つからない（F2 未実装）",
-  );
-
-  const gfRetryLabelIdx = region.indexOf('label: isRetry ? `green-fix#retry-${i}`');
-  assert.ok(
-    gfRetryLabelIdx !== -1,
-    "runValidateLoop 区間内に 'label: isRetry ? `green-fix#retry-${i}`' が見つからない",
-  );
-
-  assert.ok(
-    errorCheckIdx < gfRetryLabelIdx,
-    `\"v.tests === 'error'\" の判定は green-fix#retry-i 呼び出しより前に無ければならない`
-      + ` (errorCheckIdx=${errorCheckIdx}, gfRetryLabelIdx=${gfRetryLabelIdx})`,
-  );
-});
+// (6) 「runValidateLoop 内で v.tests === 'error' の判定が green-fix#retry-i 呼び出しより前に出現する」
+// 静的 pin は撤去した（issue #636）。判定順の実質は (1)(3) が VM 実行で「tests:'error' で green-fix /
+// green-fix#retry が 0 回」として担保する。
