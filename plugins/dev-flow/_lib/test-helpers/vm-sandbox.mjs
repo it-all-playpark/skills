@@ -53,7 +53,7 @@ export const JS_GLOBALS = {
 /**
  * agent() 呼び出しを記録し、responder に委譲する VM sandbox を作る。
  *
- * @param {(opts: {label: string, agentType: string, prompt: string}) => unknown} responder
+ * @param {(call: {label: string, agentType: string, prompt: string, opts: Record<string, unknown>}) => unknown} responder
  *   各 agent() 呼び出しに対する応答を返す関数。undefined を返した場合は null に変換する。
  * @param {Record<string, unknown>} [extraSandbox={}]
  *   sandbox に追加注入するプロパティ（args 等を上書きする際に使う。log/phase もここで上書き可）。
@@ -74,7 +74,7 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     const agentType = opts?.agentType ?? '';
     const p = prompt ?? '';
     calls.push({ label, agentType, prompt: p, opts: opts ?? {}, schema: opts?.schema ?? null });
-    const result = responder({ label, agentType, prompt: p });
+    const result = responder({ label, agentType, prompt: p, opts: opts ?? {} });
     if (result === undefined && label === 'issue-meta') {
       return { ok: true, number: 1, title: 'stub-issue-title' };
     }

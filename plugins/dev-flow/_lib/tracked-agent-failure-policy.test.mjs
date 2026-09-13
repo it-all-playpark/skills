@@ -230,6 +230,7 @@ for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
   test(`dev-flow.js: label '${label}' の agent throw は ${spec.policy}`, async () => {
     assert.ok(spec.reason.length >= 20, `EXPECTED_DEV_FLOW['${label}'].reason が 20 字未満`);
     const { result, error, calls } = await runDevFlowThrow(spec.config, label);
+    assert.ok(calls.some((c) => c.label === label), `label '${label}' が config で到達していない（throw 注入が空振り — config か EXPECTED の stale entry を見直す）`);
     if (spec.policy === 'continue') {
       assert.equal(error, null, `label '${label}' の throw は継続するべきだが run が abort した: ${error?.message}`);
       assert.equal(typeof result, 'object', `label '${label}' 継続後の result が object でない`);
@@ -309,6 +310,30 @@ const PR_B2 = {
     'review#2': { decision: 'approve', issues: [], summary: 'ok now' },
   },
 };
+// B3: fix#1 が null → fix-null-retry（fix#1-retry）が applied を返して commit-ensure#1 → review#2 approve。
+const PR_B3 = {
+  overrides: {
+    ...PR_B2.overrides,
+    'fix#1': null,
+    'fix#1-retry': { applied: true, files: [], summary: 'fixed on retry' },
+  },
+};
+// B4: review#1 が null → schema-retry（review#1-schema-retry）が approve を返して lgtm。
+const PR_B4 = {
+  overrides: {
+    'review#1': null,
+    'review#1-schema-retry': { decision: 'approve', issues: [], summary: 'ok on schema retry' },
+  },
+};
+// B5: fix#1 / fix#1-retry とも null → fix_failed 終端 → worktree-dirty-check（非 lgtm 終端の advisory probe）。
+const PR_B5 = {
+  overrides: {
+    'review#1': PR_B2.overrides['review#1'],
+    'fix#1': null,
+    'fix#1-retry': null,
+    'worktree-dirty-check': { dirty: false, files: 0 },
+  },
+};
 
 async function runPrIterateBaseline(config) {
   const { ctx, calls } = makePrIterateSandbox({ args: '5', overrides: config.overrides });
@@ -338,19 +363,24 @@ const EXPECTED_PR_ITERATE = {
   'commit-ensure#1': { config: PR_B2, policy: 'continue', reason: 'try/catchで吸収しfix_failedエスカレーションへ倒すfail-safe経路' },
   'review#2': { config: PR_B2, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しschema-retryへ倒すfail-safe経路' },
   'ci-check#2': { config: PR_B2, policy: 'continue', reason: 'failOpenAgent経由。throw/nullはstatus:errorに合成しci_errorへ流す' },
+  // ── issue #605 review（PR #645）: retry 系 / 非 lgtm 終端の call site ──
+  'fix#1-retry': { config: PR_B3, policy: 'continue', reason: 'callFixAgent内try/catchで吸収しnullとしてfix_failed終端へ倒すfail-safe経路（fix-null-retry）' },
+  'review#1-schema-retry': { config: PR_B4, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しnullとしてreview_contract_error終端へ倒すfail-safe経路' },
+  'worktree-dirty-check': { config: PR_B5, policy: 'continue', reason: 'failOpenAgent経由。非lgtm終端のdirty検出はadvisory telemetryでunknownへ倒すfail-open' },
 };
 
 for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
   test(`pr-iterate.js: label '${label}' の agent throw は ${spec.policy}`, async () => {
     assert.ok(spec.reason.length >= 20, `EXPECTED_PR_ITERATE['${label}'].reason が 20 字未満`);
-    const { result, error } = await runPrIterateThrow(spec.config, label);
+    const { result, error, calls } = await runPrIterateThrow(spec.config, label);
+    assert.ok(calls.some((c) => c.label === label), `label '${label}' が config で到達していない（throw 注入が空振り — config か EXPECTED の stale entry を見直す）`);
     assert.equal(error, null, `label '${label}' の throw は継続するべきだが run が abort した: ${error?.message}`);
     assert.equal(typeof result, 'object', `label '${label}' 継続後の result が object でない`);
   });
 }
 
 test('pr-iterate.js: 全 baseline で観測される label は EXPECTED_PR_ITERATE に登録されている', async () => {
-  const configs = [PR_B1, PR_B2];
+  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5];
   const observed = new Set();
   for (const config of configs) {
     const { calls } = await runPrIterateBaseline(config);

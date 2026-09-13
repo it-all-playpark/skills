@@ -127,7 +127,8 @@ const DEV_FLOW_CALL_SITES = [
 
 const runCache = new Map();
 async function callsFor(overrides) {
-  const key = JSON.stringify(Object.keys(overrides));
+  // 値まで含めてキー化する（キー集合が同じで値だけ異なる scenario の誤共有を防ぐ。関数値は toString）
+  const key = JSON.stringify(overrides, (_k, v) => (typeof v === 'function' ? v.toString() : v));
   if (!runCache.has(key)) {
     const { ctx, calls } = makeDevFlowSandbox({ overrides });
     const { error } = await runWorkflowCapture(devFlowSrc, ctx);

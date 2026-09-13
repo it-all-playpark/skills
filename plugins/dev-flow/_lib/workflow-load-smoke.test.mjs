@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { makeDevFlowSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -287,4 +288,16 @@ test('[epoch-instruction] 既定 run: 給電対象 call の prompt が date +%s 
     0,
     `label が 'clock' で始まる call は 0 件であるべきだが ${clockLabelCalls.length} 件だった（専用 clock probe は撤去済み）`,
   );
+});
+
+// lite route（pr-review-lite）の reviewPromptLite も EPOCH_INSTRUCTION 給電対象（iterate_end mark の
+// 給電元）。complex 経路の既定 run では到達しないため DEV_FLOW_SCENARIOS.lite で別 run を回す。
+test('[epoch-instruction] lite route: pr-review-lite の prompt が date +%s 取得指示を含む', async () => {
+  const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: DEV_FLOW_SCENARIOS.lite.overrides });
+  const error = await runDevFlowInSandbox(src, ctx);
+  assert.equal(error, null, `lite run はエラーなく完走するべき: ${error?.message}`);
+  const lite = calls.find((c) => c.label === 'pr-review-lite');
+  assert.ok(lite, `label 'pr-review-lite' の call が見つからない（lite route 不成立）: ${calls.map((c) => c.label).join(', ')}`);
+  assert.ok(lite.prompt.includes('date +%s'), `pr-review-lite の prompt に 'date +%s' 取得指示が含まれるべきだが含まれていなかった`);
 });
