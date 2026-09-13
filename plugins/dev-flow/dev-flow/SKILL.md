@@ -2,9 +2,10 @@
 name: dev-flow
 description: |
   Runs the issue-to-LGTM dev-flow pipeline for a GitHub issue: performs isolation
-  preflight (base resolution, worktree creation, EnterWorktree) then launches the
-  dev-flow-run dynamic workflow (analyze → plan → implement → validate → evaluate →
-  PR → pr-iterate → merge tier). Merge is always human.
+  preflight (dev-flow-prerun: base resolution, worktree creation, deps install;
+  then EnterWorktree) then launches the dev-flow-run dynamic workflow
+  (analyze → plan → implement → validate → evaluate → PR → pr-iterate → merge
+  tier). Merge is always human.
   Use when: (1) user asks to implement a GitHub issue end-to-end,
   (2) /dev-flow <issue>, (3) keywords: dev-flow, issue実装, issue→PR, 自動実装.
 ---
@@ -24,33 +25,49 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
 
 ## Preflight 手順（issue ごとに 1-4 を実行）
 
-1. **base 解決**: `args.base` が明示されていれば `git ls-remote --heads origin <base>` で
-   origin に存在することを検証する（無ければ error で停止し人間に報告）。未指定なら
-   `origin/dev` が存在すれば `dev`、無ければ `origin/HEAD` の指す default branch を base とする
-   （`dev-flow-run` の Setup phase の resolve-base と同一の優先順位: 明示指定→検証 /
-   未指定→origin/dev→origin/HEAD）。
-2. **worktree 作成/再利用**: リポジトリルートで `git fetch origin` した後、worktree dir の候補は
-   2 つ — 既定 `<repo>/.claude/worktrees/df-<N>`、repo 外 `<repo>-wt/df-<N>`（`<repo>` の
-   sibling ディレクトリ。例: `/path/to/repo` に対し `/path/to/repo-wt/df-<N>`）。既定候補が
-   存在すればそれを再利用する。既定候補が無ければ repo 外候補を確認し、存在すればそれを
-   再利用する（両方存在する場合は既定候補を優先）。どちらも存在しなければ
-   `git worktree add -b feature/issue-<N> <repo>/.claude/worktrees/df-<N> origin/<base>`
-   を実行する。これが `Operation not permitted` / permission 系エラーで失敗した場合のみ
-   `git worktree add -b feature/issue-<N> <repo>-wt/df-<N> origin/<base>` で repo 外へ作成する
-   （対象 repo が書き込み不可の場合の退避先。branch `feature/issue-<N>` が既に存在する場合は
-   いずれも `-b` を外して既存 branch を checkout）。
-   **worktree ディレクトリ名は `df-<N>` 固定**（配置が既定/repo 外いずれでも共通） —
-   `dev-flow-run` の Setup phase が両候補を同じ優先順（既定→repo 外）で探索して再利用判定
-   するため、別名だと二重 worktree になる。
-3. **EnterWorktree**: `EnterWorktree({ path: '<選択した worktree の絶対パス>' })` を実行する。
-   手順2 で選ばれた worktree（既定配置・repo 外配置のいずれでも）の絶対パスを渡せば成立する。
+1. **worktree パスの決定**: worktree dir の候補は 2 つ — 既定 `<repo>/.claude/worktrees/df-<N>`、
+   repo 外 `<repo>-wt/df-<N>`（`<repo>` の sibling ディレクトリ。例: `/path/to/repo` に対し
+   `/path/to/repo-wt/df-<N>`）。既定候補が存在すればそれを使う。既定候補が無ければ repo 外候補が
+   存在すればそれを使う。どちらも存在しなければ既定候補を使う。**worktree ディレクトリ名は
+   `df-<N>` 固定**（配置が既定/repo 外いずれでも共通）。
+
+2. **prerun 実行**: リポジトリルート（launch dir）で Bash 1 コマンドとして
+   `dev-flow-prerun --issue <N> --worktree <手順1で決めた絶対パス>` を実行する（`args.base` を
+   明示する場合のみ `--base <ref>` を付ける）。前置形（`cd X && ...` / `VAR=x ...` /
+   `bash <path>` 等）は使わず、bare 名を先頭トークンにする。stdout の JSON 1 行をそのまま
+   保持する（`{ok, issue, base, worktree, worktree_status, deps, stack, epoch, ...}`）。
+   `dev-flow-prerun` は base 解決・worktree 作成/再利用・起点一致検証・worktree 直下への
+   書き込み probe・`.devflow-tmp` の clean・deps install・framework 検出を 1 コマンドで行う。
+
+   結果に応じて分岐する:
+
+   (a) `ok:true` → 手順3 へ進む。
+
+   (b) `worktree_status:"unwritable"`（`worktree_error` に `Permission denied` /
+   `Operation not permitted` 等の permission 文言が載る）: 対象 repo の checkout 先が
+   書き込み不可の場合の退避。`worktree_removed:true` なら、`--worktree <repo>-wt/df-<N>`
+   （repo 外候補）を付けて手順2 をもう一度だけ実行する（作成直後の worktree は
+   `dev-flow-prerun` が既に remove 済みなので二重 checkout にならない）。`worktree_removed:false`
+   （既存 worktree を再利用したが書けない）なら、そこで停止し `git worktree remove <path>` を
+   実行してから再実行するよう人間に報告する。
+
+   (c) それ以外の `ok:false`: `base_error` / `worktree_error` を verbatim で人間に報告して
+   停止する（fallback で worktree を自前作成しない）。
+
+   `deps.ok:false` / `clean.ok:false` / `stack.error` は advisory なので停止しない（Workflow
+   起動後、run 内で implementer への警告として渡る）。
+
+3. **EnterWorktree**: `EnterWorktree({ path: '<prerun 出力の worktree>' })` を実行する。
    bg 起動セッションからも成立する。
-4. **Workflow 起動**: `Workflow({ name: 'dev-flow:dev-flow-run', args: { issue: <N>, base: '<base>' } })`。
-   base は手順1で明示指定されていた場合のみ渡す（未指定なら `args: <N>` の bare 形でよい）。
+
+4. **Workflow 起動**: `Workflow({ name: 'dev-flow:dev-flow-run', args: { issue: <N>, setup: <手順2の
+   stdout JSON を parse した object> } })`。`setup` は加工・要約・キー削除をせずそのまま渡す。
+   `args.base` は渡さない（base は `dev-flow-prerun` が解決済みで、渡すと `dev-flow-run` が
+   即 throw する）。
 
 ## 直列複数 issue 実行時の worktree 切替
 
-複数 issue を直列に処理する場合は、**issue ごとに手順2-4 を繰り返し**、必ず
+複数 issue を直列に処理する場合は、**issue ごとに手順1-4 を繰り返し**、必ず
 `EnterWorktree({ path: '<選択した worktree の絶対パス>' })` で当該 issue の worktree（既定
 `<repo>/.claude/worktrees/df-<N>` または repo 外 `<repo>-wt/df-<N>`）へ切り替えてから手順4 の
 Workflow を起動する。前 issue の worktree に入ったまま次の issue の Workflow を起動すると、
@@ -59,5 +76,6 @@ isolation probe が fail-closed abort する。
 ## needs_clarification の扱い
 
 `dev-flow-run` が `needs_clarification` を返した場合、AskUserQuestion で人間に確認したうえで、
-**同じ worktree を保持したまま**手順4（`Workflow({ name: 'dev-flow:dev-flow-run', ... })`）のみを
-再実行する。worktree の作り直しは不要。
+**同じ worktree を保持したまま**手順4（`Workflow({ name: 'dev-flow:dev-flow-run', args: { issue, setup } })`）
+のみを再実行する。`setup` は手順2 で得た object をそのまま再利用してよく、`dev-flow-prerun` の
+再実行は不要。

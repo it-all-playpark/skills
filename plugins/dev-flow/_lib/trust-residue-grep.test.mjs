@@ -10,11 +10,9 @@
 // commit 前後どちらでも同じ検出結果になる。claudedocs/ を明示除外するのは、session ログ等の
 // ローカル生成物（gitignore 対象外）が将来これらの語を含んでも無関係な flake にしないため。
 //
-// whitelist 選定基準: 以下 3 ファイルはいずれも「書込の負 pin / 検索パターンそのもの」であり
-// 生産側の書き手ではないため許容する。
-//   - _lib/isolation-probe-wiring.test.mjs: Setup worktree prompt が
-//     trust-test-latest.json / trust-risk- を含まないことを assert.doesNotMatch で検査する
-//     負 assert 2 行が、リテラルとして両語を含む。
+// whitelist 選定基準: 以下 2 ファイルはいずれも「書込の負 pin / 検索パターンそのもの」であり
+// 生産側の書き手ではないため許容する（issue #641: Setup phase から worktree spawn が撤去され、
+// それを検査していた _lib/isolation-probe-wiring.test.mjs の負 pin テストは削除済み）。
 //   - _lib/validate-test-prompt.test.mjs: VALIDATE_TEST_PROMPT が trust-test-latest を
 //     含まないことを assert.doesNotMatch で検査する負 assert が、リテラルとして同語を含む。
 //   - _lib/trust-residue-grep.test.mjs: 本ファイル自身。検索パターン（正規表現リテラル）と
@@ -31,7 +29,6 @@ import { dirname, join } from 'node:path';
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const WHITELIST = [
-  '_lib/isolation-probe-wiring.test.mjs',
   '_lib/trust-residue-grep.test.mjs',
   '_lib/validate-test-prompt.test.mjs',
 ];

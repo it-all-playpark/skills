@@ -24,6 +24,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -102,7 +103,7 @@ function makeSandbox(prMetaResponse) {
     parallel,
     pipeline,
     workflow,
-    args: '405',
+    args: devFlowArgs('405'),
     console, JSON, Math, String, Number, Boolean, Array, Object, Error, RegExp, Promise, Symbol, Map, Set, Date,
   };
   const ctx = vm.createContext(sandbox);

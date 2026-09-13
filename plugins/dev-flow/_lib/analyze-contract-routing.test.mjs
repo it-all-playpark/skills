@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -76,7 +76,7 @@ function baseResponder({ req = FULL_REQ, contractHandler } = {}) {
 }
 
 function makeSandbox(opts = {}, extra = {}) {
-  return makeRecordingSandbox(baseResponder(opts), { args: '1', ...extra });
+  return makeRecordingSandbox(baseResponder(opts), { args: devFlowArgs('1'), ...extra });
 }
 
 async function run(ctx) {
@@ -155,7 +155,7 @@ test('[analyze-contract-routing] (c) analyze#1 が要件曖昧（ambiguities 超
 
 // ---- (d) DEPTH === 'standard' ガード: DEPTH がそれ以外なら contract-probe は 0 回 ----
 test("[analyze-contract-routing] (d) DEPTH !== 'standard' のとき contract-probe は呼ばれない", async () => {
-  const { ctx, calls } = makeSandbox({}, { args: { issue: '1', depth: 'light' } });
+  const { ctx, calls } = makeSandbox({}, { args: { ...devFlowArgs('1'), depth: 'light' } });
   const { error } = await run(ctx);
   assertNoCrash(error, 'd');
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);

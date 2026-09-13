@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -95,7 +95,7 @@ function makeSandbox({ overrides = {} } = {}) {
   const logs = [];
   const { ctx, calls } = makeRecordingSandbox(createResponder(overrides), {
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 0 }),
-    args: '605',
+    args: devFlowArgs('605'),
     log: (m) => logs.push(String(m)),
   });
   return { ctx, calls, logs };

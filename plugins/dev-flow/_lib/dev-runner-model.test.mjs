@@ -66,10 +66,10 @@ function findCall(all, labelPattern) {
 // ---- Phase → agentType checks (VM-observed dispatch) ----
 
 // (1) Setup uses dev-runner-haiku
-test("[dev-runner-model] Setup (label:'worktree') dispatches agentType:'dev-runner-haiku'", async () => {
-  const c = findCall(await calls(), /^worktree$/);
-  assert.ok(c, "Setup の agent() 呼び出し（label:'worktree'）が観測されない");
-  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku', `Setup phase should use dev-runner-haiku, but found: ${c.agentType}`);
+test("[dev-runner-model] Setup (label:'isolation-probe') dispatches agentType:'dev-runner-haiku-wo'", async () => {
+  const c = findCall(await calls(), /^isolation-probe$/);
+  assert.ok(c, "Setup の agent() 呼び出し（label:'isolation-probe'）が観測されない");
+  assert.equal(c.agentType, 'dev-flow:dev-runner-haiku-wo', `Setup phase should use dev-runner-haiku-wo, but found: ${c.agentType}`);
 });
 
 // (2) Validate uses dev-runner-haiku

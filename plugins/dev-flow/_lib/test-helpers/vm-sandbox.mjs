@@ -9,6 +9,8 @@
  *   - makeRecordingSandbox(responder, extraSandbox?): {ctx, calls, logs, phases} を返す
  *     （calls の各要素は {label, agentType, prompt, opts, schema}。opts は agent() に渡された
  *     opts をそのまま、schema は opts?.schema ?? null）
+ *   - devFlowArgs(issue?, setupOverrides?): dev-flow.js 用 args の既定形（{issue, setup}）を返す
+ *     （setup は dev-flow-prerun の stdout JSON と同形）
  *   - runDevFlowInSandbox(src, ctx): dev-flow.js ソースを strip して sandbox 実行する
  *   - runWorkflowCapture(src, ctx, filename?): strip + wrap + vm 実行し {result, error} を返す
  *     （dev-flow.js / pr-iterate.js 共用。filename 既定は '.claude/workflows/dev-flow.js'）
@@ -45,6 +47,31 @@ export const JS_GLOBALS = {
   Set,
   Date,
 };
+
+// ============================================================
+// devFlowArgs: dev-flow.js 用 args の既定形（{issue, setup}）
+// ============================================================
+
+/**
+ * dev-flow.js 用 args の既定形を返す。setup は dev-flow-prerun の stdout JSON と同形。
+ *
+ * @param {number|string} [issue=1]
+ * @param {Record<string, unknown>} [setupOverrides={}]
+ * @returns {{issue: string, setup: Record<string, unknown>}}
+ */
+export function devFlowArgs(issue = 1, setupOverrides = {}) {
+  const n = String(issue);
+  return {
+    issue: n,
+    setup: {
+      ok: true, issue: Number(n), base: 'main', base_source: 'origin/dev',
+      worktree: '/tmp/wt', branch: `feature/issue-${n}`, head: 'a'.repeat(40),
+      worktree_status: 'created', clean: { ok: true },
+      deps: { ok: true, note: '' }, stack: { frameworks: [] }, epoch: 1000,
+      ...setupOverrides,
+    },
+  };
+}
 
 // ============================================================
 // makeRecordingSandbox: 記録付き sandbox を生成する
@@ -114,7 +141,7 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     phase: (t) => { phases.push(String(t)); },
     log: (m) => { logs.push(String(m)); },
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    args: '1',
+    args: devFlowArgs(1),
     // agent stub
     agent,
     parallel,
@@ -346,7 +373,7 @@ export function prIterateResponder(overrides = {}) {
 export function makeDevFlowSandbox({ overrides = {}, issue = 1, workflow, extra = {} } = {}) {
   return makeRecordingSandbox(devFlowResponder(overrides, { issue }), {
     workflow: workflow ?? (async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 })),
-    args: String(issue),
+    args: devFlowArgs(issue),
     ...extra,
   });
 }

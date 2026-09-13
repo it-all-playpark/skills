@@ -39,7 +39,6 @@ const RUNNER = 'dev-flow:dev-runner';
 // label が固定文字列のものは完全一致、`#${i}` / suffix 付きのものは prefix 一致（末尾 '*'）
 const EXPECTED_DEV_FLOW = {
   // read-only tier
-  'setup-base': RO,
   'contract-probe#*': RO,
   'issue-meta': RO,
   'diff-gate': RO,
@@ -62,9 +61,6 @@ const EXPECTED_DEV_FLOW = {
   'cross-repo-artifacts': RO,
   'ci-check-lite': RO,
   // write/Skill tier
-  'worktree': RW,
-  'worktree-deps': RW,
-  'isolation-cleanup': RW,
   'test#*': RW,
   'test#final': RW,
   'ui-verify-server*': RW,

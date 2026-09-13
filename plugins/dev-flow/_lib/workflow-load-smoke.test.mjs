@@ -17,7 +17,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeDevFlowSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -109,7 +109,7 @@ function makeWorkflowSandbox(extraGlobals = {}) {
     parallel: async () => [],
     workflow: async () => null,
     // 引数（実 loader は args を注入する）
-    args: '1',
+    args: devFlowArgs('1'),
     // JS 組み込み（vm.createContext はデフォルトで提供しないため明示注入）
     console,
     JSON,

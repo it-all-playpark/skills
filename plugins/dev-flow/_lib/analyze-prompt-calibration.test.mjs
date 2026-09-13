@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -72,7 +72,7 @@ let analyzeCall;
 let planCall;
 
 beforeAll(async () => {
-  const sandbox = makeRecordingSandbox(createResponder(), { args: '1' });
+  const sandbox = makeRecordingSandbox(createResponder(), { args: devFlowArgs('1') });
   runError = await runDevFlowInSandbox(src, sandbox.ctx);
   calls = sandbox.calls;
   analyzeCall = calls.find((c) => c.label === 'analyze#1');

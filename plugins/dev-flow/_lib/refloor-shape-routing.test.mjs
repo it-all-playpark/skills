@@ -32,6 +32,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -140,7 +141,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
     // 引数（ISSUE 解決用）
-    args: '1',
+    args: devFlowArgs('1'),
     // JS 組み込み（makeWorkflowSandbox と同一セット）
     console,
     JSON,
@@ -335,7 +336,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    args: '1',
+    args: devFlowArgs('1'),
     console,
     JSON,
     Math,
@@ -450,13 +451,6 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     const agentType = opts?.agentType ?? '';
     calls.push({ label, agentType });
 
-    // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #550 案1）
-    if (label === 'setup-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    }
-    if (label === 'worktree') {
-      return { worktree: '/tmp/test-wt', branch: 'feature/issue-1' };
-    }
     if (label.startsWith('analyze')) {
       return microReq;
     }
@@ -518,7 +512,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    args: '1',
+    args: devFlowArgs('1', { worktree: '/tmp/test-wt' }),
     console,
     JSON,
     Math,

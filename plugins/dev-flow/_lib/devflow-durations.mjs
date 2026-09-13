@@ -1,7 +1,7 @@
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
 // I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
-// start は Setup 冒頭の setup-base probe（resolve-base + worktree-base-check 統合 exec-proxy）の
-// optional epoch、end は Merge tier 末尾の post-summary 応答の optional epoch から給電し、
+// start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s）、end は Merge tier
+// 末尾の post-summary 応答の optional epoch から給電し、
 // 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
 // pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →

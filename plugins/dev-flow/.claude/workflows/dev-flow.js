@@ -190,251 +190,120 @@ function resolvePositiveIntArg(args, name) {
   return s;
 }
 // ==== END inline: _lib/resolve-arg.mjs ====
-
-// ==== BEGIN inline: _lib/resolve-base.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Resolve Base: dev-flow の Setup phase 冒頭で BASE branch を確定する純関数群（issue #298）。
-// normalizeBaseArg: args.base を正規化する（未指定は null、非文字列は throw）。
-// SETUP_BASE_PROBE: exec-proxy（dev-runner-haiku-ro）が返す統合 probe の schema（issue #550 案1）
-//   — resolve-base（issue #298）と worktree-base-check（issue #517）の 2 probe を 1 回の
-//   exec-proxy 呼び出しへ統合したもの。resolveBase() と checkWorktreeBase()
-//   （_lib/worktree-base-check.mjs）はそれぞれ probe object の自分のフィールドしか読まないため、
-//   単一の統合 probe object を両関数へそのまま渡せる。
-// setupBaseProbePrompt: dev-runner-haiku-ro へ渡す verbatim 転写 prompt を組み立てる純関数。
-// resolveBase: probe を元に BASE を決定論的に解決する純関数
-//   （明示指定→存在検証 / 未指定→origin/dev→origin/HEAD フォールバック / 解決不能→throw）。
+// ==== BEGIN inline: _lib/prerun-setup.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// prerun setup: dev-flow.js の Setup phase が args.setup（dev-flow-prerun の stdout JSON）を
+// fail-closed に検証・要約するための純関数群。
+//
+// dev-flow-prerun（wrapper preflight の bare 名 launcher）が base 解決・worktree 作成/再利用・
+// .devflow-tmp の clean・deps install・framework 検出を行い、その結果を stdout JSON 1 行として
+// 返す。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
+// dev-flow.js 側はこれを唯一の入力源として検証する（workflow 内 fallback は持たない）。
+// validatePrerunSetup: args.setup を検証し、Setup phase が使う正規化済み値を返す純関数。
+//   raw が欠落/非 object/配列、raw.ok !== true、必須キー欠落/型不正のいずれも即 throw する
+//   （fallback を作らない — 後方互換 scaffolding 禁止）。
+// rejectLegacyBaseArg: 旧形式 args.base（base は dev-flow-prerun が解決し args.setup.base で渡る）
+//   を検出し即 throw する純関数。Setup phase の try 節に入る前（args 節）で呼ぶことを想定する。
+// summarizePrerunDeps: prerun の deps 結果（advisory）を implementer prompt 注入用の警告文と
+//   ログ行に要約する純関数。deps.ok:false でも top-level ok には影響しない（fail-open）。
+// hasNextJs: stack.frameworks に 'next' が含まれるかを判定する純関数。Turbopack 規約注入の判定に使う。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-const BASE_ARG_ALLOWLIST = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const PRERUN_SETUP_REQUIRED = ['ok', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch'];
 
-function normalizeBaseArg(raw) {
-  if (raw === null || raw === undefined) return null;
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    if (trimmed === '') return null;
-    if (!BASE_ARG_ALLOWLIST.test(trimmed)) {
-      throw new Error(
-        'dev-flow: args.base に使用できない文字が含まれる（受信: ' + JSON.stringify(trimmed) + '）。'
-        + '許可パターン: ' + BASE_ARG_ALLOWLIST.toString(),
-      );
-    }
-    return trimmed;
+const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function stringifyForError(value) {
+  if (value === undefined) return 'undefined';
+  try {
+    const repr = JSON.stringify(value);
+    return repr === undefined ? String(value) : repr;
+  } catch {
+    return String(value);
   }
-  throw new Error('dev-flow: args.base は非空文字列で指定せよ（受信: ' + JSON.stringify(raw) + '）');
 }
 
-const SETUP_BASE_PROBE = {
-  type: 'object',
-  required: [
-    'ok', 'default_branch', 'dev_exists', 'requested_exists',
-    'worktree_exists', 'upstream_remote', 'upstream_merge',
-  ],
-  properties: {
-    ok: { type: 'boolean' },
-    default_branch: { type: 'string' },
-    dev_exists: { type: 'boolean' },
-    requested_exists: { type: 'boolean' },
-    worktree_exists: { type: 'boolean' },
-    upstream_remote: { type: 'string' },
-    upstream_merge: { type: 'string' },
-    epoch: { type: 'number' },
-  },
-};
-
-function setupBaseProbePrompt(baseArg, issue) {
-  const req = typeof baseArg === 'string' ? baseArg : '';
-  // 手順A（issue #298）: base 解決情報の取得。パス引数を含まない複合ワンライナーのため guard-safe
-  // （worktree-isolation guard が拒否するのは絶対パス引数を持つコマンドであり、複合構文そのものでは
-  // ない）。DB/DEV/REQE の値は printf で JSON 化せず echo で保持し、Output format の最終 JSON は
-  // 手順B/C の結果と合わせて agent が組み立てる。
-  const stepACmd = 'REQ="' + req + '"; '
-    + 'DB=$(git ls-remote --symref origin HEAD 2>/dev/null | awk \'/^ref:/{sub("refs/heads/","",$2); print $2; exit}\'); '
-    + 'DEV=false; git ls-remote --exit-code --heads origin "refs/heads/dev" >/dev/null 2>&1 && DEV=true; '
-    + 'REQE=false; if [ -n "$REQ" ]; then git ls-remote --exit-code --heads origin "refs/heads/$REQ" >/dev/null 2>&1 && REQE=true; fi; '
-    + 'echo "DB=$DB DEV=$DEV REQE=$REQE"';
-
-  // 手順B（issue #517, #527, #528, #533）: 既存 worktree の起点検証。
-  // issue #527: worktree-isolation guard は絶対パス引数を持つコマンド（git -C 単体を含む）を
-  // 「too complex to verify that it stays inside the worktree」で拒否する実測があり、パス引数を
-  // 一切持たないコマンド列（git worktree list --porcelain / git config --get branch.<name>.*）へ
-  // 置換し、guard が検証すべきパス引数が構造的に存在しない状態にする。
-  // issue #528: worktree 候補は repo 内(WTD_IN)/repo 外(WTD_EXT)の2つ。探索は WTD_IN が
-  // 常に先勝ちする決定論的順序（既定動作＝repo 内 worktree を不変に保つ）。
-  const wtdInSuffix = '.claude/worktrees/df-' + issue;
-  const wtdExtSuffix = '-wt/df-' + issue;
-  const stepBInstructions = '1. 次を実行する: `git worktree list --porcelain`\n'
-    + '   出力は worktree ごとのブロック（`worktree <絶対パス>` 行、`branch refs/heads/<name>` 行等）に'
-    + '分かれる（git は main worktree を必ず先頭に出す）。先頭ブロックの worktree パスを ROOT とする。\n'
-    + '   WTD_IN = `${ROOT}/' + wtdInSuffix + '`\n'
-    + '   WTD_EXT = `${ROOT}' + wtdExtSuffix + '`\n'
-    + '   worktree パスが WTD_IN に一致するブロックを探す。見つかり、かつそのブロックに `prunable`'
-    + ' で始まる行が **無ければ** WTD=WTD_IN、worktree_exists=true とする。見つからない、または'
-    + '見つかっても `prunable` 行がある場合（正規の削除手順を経ず手動でディレクトリ削除された stale'
-    + ' worktree — git のメタデータ上は残るが実体が無い）は WTD_IN には無いものとして扱い、WTD_EXT'
-    + 'に一致するブロックを同じ基準（`prunable` 行が無いこと）で探し、あれば WTD=WTD_EXT、'
-    + 'worktree_exists=true とする（WTD_IN が常に先勝ちする決定論的な優先順位である）。どちらも'
-    + '無い、またはどちらも `prunable` 行付きの場合は worktree_exists=false、upstream_remote=""、'
-    + 'upstream_merge="" とし、以降の手順B の続き（2〜3）は実行せず 手順C へ進む。\n'
-    + '   （`prunable` 行が無い）一致したブロックに `branch refs/heads/<name>` 行が無い場合'
-    + '（detached HEAD）も同様に upstream_remote=""、upstream_merge="" とし、手順2〜3 は実行しない。'
-    + 'あれば `refs/heads/` を除いた名前を BR とする。\n\n'
-    + '2. 次を実行する（<BR> は手順1で求めた branch 名に置換する。branch 設定は worktree 間で共有される'
-    + ' `.git/config` にあるため -C は不要）: `git config --get branch.<BR>.remote`\n'
-    + '   成功（exit code 0）した場合 stdout の1行を upstream_remote とする。失敗（exit code 非0）した'
-    + '場合は upstream_remote を空文字列 "" とする。\n\n'
-    + '3. 次を実行する（<BR> は手順1で求めた branch 名に置換する）: `git config --get branch.<BR>.merge`\n'
-    + '   成功（exit code 0）した場合 stdout の1行を upstream_merge とする。失敗（exit code 非0）した'
-    + '場合は upstream_merge を空文字列 "" とする。';
-
-  return 'リポジトリルートで以下の手順を **この順で** 実行し、各コマンドの結果から JSON を組み立てて返せ'
-    + '（各コマンドの stdout は **verbatim** に扱い、要約・脚色をしない。判定は下記の組み立てルールのみに従う）:\n\n'
-    + '## 手順A: base 解決情報の取得（issue #298）\n'
-    + '次のコマンドをそのまま実行する:\n\n' + stepACmd + '\n\n'
-    + 'stdout の `DB=<default_branch> DEV=<true|false> REQE=<true|false>` から'
-    + ' default_branch / dev_exists / requested_exists を得る。\n\n'
-    + '## 手順B: 既存 worktree 起点検証（issue #517, #527, #528, #533）\n'
-    + stepBInstructions + '\n\n'
-    + '## 手順C: epoch 取得\n'
-    + '次を実行する: `date +%s`\n'
-    + '成功（exit code 0）した場合 stdout の値を epoch とする。失敗した場合は epoch キーを省略する'
-    + '（fail-open。base 解決・worktree 起点検証の判定には一切影響しない）。\n\n'
-    + '## Output format\n'
-    + '次の1行 JSON のみを返す（前後に説明文を付けない）: '
-    + '{"ok":true,"default_branch":"<string>","dev_exists":<bool>,"requested_exists":<bool>,'
-    + '"worktree_exists":<bool>,"upstream_remote":"<string>","upstream_merge":"<string>",'
-    + '"epoch":<number, 省略可>}\n\n'
-    + '## Tools\n'
-    + '使用可: Bash（手順A の複合ワンライナー1回、手順B の `git worktree list --porcelain` 1回と'
-    + ' `git config --get` 最大2回の読み取り専用 bare 単文、手順C の `date +%s` 1回）。'
-    + '手順B/C はパイプ・リダイレクト・複合コマンド・変数代入・`git -C`・`test` を使わない。'
-    + '禁止: Write, Edit（ファイル変更禁止）、git push / git fetch --prune 等の書き込み・変更系コマンド。\n\n'
-    + '## Boundary\n'
-    + 'ファイル変更・git 設定変更・commit・push を一切行わない。手順A〜C の読み取り専用コマンドのみ実行する。\n\n'
-    + '## Token cap\n'
-    + '120 語以内で応答せよ（JSON 本体以外の説明を付けない）。';
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function resolveBase(baseArg, probe) {
-  if (typeof probe !== 'object' || probe === null || Array.isArray(probe) || probe.ok !== true) {
+function rejectLegacyBaseArg(args) {
+  if (isPlainObject(args) && Object.prototype.hasOwnProperty.call(args, 'base')) {
+    throw new Error('dev-flow: args.base は受理しない — base は dev-flow-prerun [--base <ref>] が解決し args.setup.base で渡る');
+  }
+}
+
+function validatePrerunSetup(raw, issue) {
+  if (!isPlainObject(raw)) {
+    throw new Error(PRERUN_MISSING_MSG);
+  }
+
+  if (raw.ok !== true) {
     throw new Error(
-      'dev-flow: base 解決に失敗 — origin の refs を確認できなかった（exec-proxy 応答なし/不正）。'
-      + 'origin リモートとネットワークを確認して再実行せよ',
+      `dev-flow: args.setup.ok が true でない — dev-flow-prerun が失敗している`
+      + `（base_error: ${raw.base_error ?? '-'} / worktree_error: ${raw.worktree_error ?? '-'} / worktree_status: ${raw.worktree_status ?? '-'}）。`
+      + `SKILL.md の preflight に従い prerun の失敗を解消してから再実行せよ`,
     );
   }
 
-  if (baseArg !== null) {
-    if (probe.requested_exists === true) {
-      return { base: baseArg, source: 'explicit' };
-    }
-    throw new Error(
-      'dev-flow: 指定された base "origin/' + baseArg + '" が origin に存在しない — Setup で中断'
-      + '（設定ミス。danger-grep のセキュリティシグナルではない）。args.base を修正して再実行せよ',
-    );
-  }
+  const fail = (key, value) => {
+    throw new Error(`dev-flow: args.setup の必須キーが欠落/型不正: ${key}（受信: ${stringifyForError(value)}）`);
+  };
 
-  if (probe.dev_exists === true) {
-    return { base: 'dev', source: 'origin/dev' };
-  }
+  if (!isNonEmptyString(raw.base)) fail('base', raw.base);
+  if (!isNonEmptyString(raw.worktree) || !raw.worktree.startsWith('/')) fail('worktree', raw.worktree);
+  if (!isNonEmptyString(raw.head)) fail('head', raw.head);
+  if (!isPlainObject(raw.deps)) fail('deps', raw.deps);
+  if (typeof raw.deps.ok !== 'boolean') fail('deps.ok', raw.deps.ok);
+  if (typeof raw.deps.note !== 'string') fail('deps.note', raw.deps.note);
+  if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
+  if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
+  if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
 
-  if (typeof probe.default_branch === 'string' && probe.default_branch.trim() !== '') {
-    return { base: probe.default_branch.trim(), source: 'origin/HEAD' };
-  }
+  const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
+  const branch = isNonEmptyString(raw.branch) ? raw.branch : `feature/issue-${issue}`;
+  const frameworks = raw.stack.frameworks.filter((f) => typeof f === 'string');
 
-  throw new Error(
-    'dev-flow: base を解決できなかった — origin/dev が存在せず origin/HEAD の default branch も取得できなかった。'
-    + 'origin リモートの状態を確認し、args.base で明示指定して再実行せよ',
-  );
+  return {
+    base: raw.base.trim(),
+    worktree: raw.worktree,
+    branch,
+    head: raw.head,
+    repo,
+    deps: { ok: raw.deps.ok, note: raw.deps.note },
+    frameworks,
+    epoch: raw.epoch,
+  };
 }
-// ==== END inline: _lib/resolve-base.mjs ====
-// ==== BEGIN inline: _lib/worktree-base-check.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Worktree Base Check: dev-flow の Setup phase で既存 worktree の起点(base)一致を検証する純関数群
-// （issue #517、resolve-base.mjs（issue #298）と同型のパターン）。
-// probe 供給元は issue #550 案1 で resolve-base.mjs の SETUP_BASE_PROBE / setupBaseProbePrompt
-// （resolve-base + worktree-base-check 統合 exec-proxy、1 回の呼び出し）に一本化された。
-// checkWorktreeBase は probe object の worktree_exists/upstream_remote/upstream_merge フィールドのみ
-// を読むため、統合 probe object をそのまま渡せる（本ファイル独自の schema/prompt は持たない）。
-// checkWorktreeBase: probe を元に既存 worktree の起点一致を決定論的に判定する純関数
-//   （未存在→素通り / upstream 一致→再利用可 / upstream 空・不一致・probe 不正→throw、fail-closed）。
-//
-// 2候補制の不変条件（issue #528）: worktree 候補は 既定=repo 内 `.claude/worktrees/df-<issue>` /
-// write deny repo 向け退避先=repo 外 sibling `<repo>-wt/df-<issue>` の2つ。探索順は常に
-// repo 内が先勝ち（決定論）で、既定動作（repo 内 worktree）はこの優先順により不変。
-// probe（`git worktree list --porcelain` の探索・`prunable` 判定を含む）の具体手順は
-// resolve-base.mjs の setupBaseProbePrompt 手順B へ移設した（issue #550 案1）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-const RECOVERY_STEPS = 'このいずれかで復旧して再実行せよ: '
-  + '(1) `git worktree remove .claude/worktrees/df-<issue>`'
-  + '（repo 外配置の場合は `<repo>-wt/df-<issue>`。失敗時は --force）'
-  + 'で当該 worktree を削除して dev-flow を再実行する'
-  + '（origin/<base> 起点で作り直される）、'
-  + '(2) 既存 worktree の起点を意図しているなら --base を明示して一致させて再実行する。';
-
-function checkWorktreeBase({ issue, base, probe }) {
-  if (typeof probe !== 'object' || probe === null || Array.isArray(probe) || probe.ok !== true) {
-    throw new Error(
-      'dev-flow: 既存 worktree の起点を確認できなかった（exec-proxy 応答なし/不正）'
-      + ' — Setup で中断（fail-closed）。'
-      + RECOVERY_STEPS,
-    );
-  }
-
-  if (probe.worktree_exists === false) {
+function summarizePrerunDeps(deps) {
+  const note = deps && typeof deps.note === 'string' ? deps.note : '';
+  if (deps && deps.ok === true) {
     return {
-      status: 'no_worktree',
-      logLine: 'worktree-base-check: worktree 未存在 — 新規作成経路（検証 skip）',
+      outcome: 'ok',
+      logLine: 'Setup(deps): ' + (note ? `依存インストール完了 — ${note}` : 'lockfile なし / 依存なし — install skip'),
+      implNote: null,
     };
   }
-
-  // issue #527: probe は upstream_remote/upstream_merge を分割して返す（決定論合成は JS 側）。
-  const remote = typeof probe.upstream_remote === 'string' ? probe.upstream_remote.trim() : '';
-  const merge = typeof probe.upstream_merge === 'string' ? probe.upstream_merge.trim() : '';
-  const headsPrefix = 'refs/heads/';
-  const short = merge.startsWith(headsPrefix) ? merge.slice(headsPrefix.length) : merge;
-  const upstream = remote !== '' && short !== '' ? remote + '/' + short : '';
-
-  const expected = 'origin/' + base;
-
-  if (upstream === expected) {
-    return {
-      status: 'match',
-      logLine: 'worktree-base-check: 既存 worktree の起点 ' + expected + ' が一致 — 再利用可',
-    };
-  }
-
-  const pushedBranchUpstream = 'origin/feature/issue-' + issue;
-
-  if (upstream === pushedBranchUpstream) {
-    return {
-      status: 'match_pushed',
-      logLine: 'worktree-base-check: 既存 worktree の upstream が ' + pushedBranchUpstream
-        + '（PR 作成済み、git push -u で書き換え済み）— 起点不一致ではなく再利用可',
-    };
-  }
-
-  if (upstream === '') {
-    throw new Error(
-      'dev-flow: 既存 worktree の起点を判定できなかった（upstream tracking 未設定）'
-      + ' — Setup で中断（fail-closed）。'
-      + '期待する起点: ' + expected + '。'
-      + RECOVERY_STEPS,
-    );
-  }
-
-  throw new Error(
-    'dev-flow: 既存 worktree の起点が一致しない — Setup で中断（fail-closed）。'
-    + '実際の起点: ' + upstream + ' / 期待する起点: ' + expected + '。'
-    + 'PR diff に base 間差分が混入するのを防ぐための検証であり、danger-grep のセキュリティ'
-    + 'シグナルではなく設定不一致である。'
-    + RECOVERY_STEPS,
-  );
+  const msg = note || '依存インストール結果を確認できなかった';
+  return {
+    outcome: 'warn',
+    logLine: `⚠️ Setup(deps): ${msg}（fail-open で続行）`,
+    implNote: `依存インストール警告: ${msg}。この worktree では依存（node_modules 等）が未整備の可能性がある。自分の task の実装/テスト実行に必要なら worktree 直下で install コマンド（例: npm ci）を自分で実行してよい（lockfile は書き換えるな）。\n`,
+  };
 }
-// ==== END inline: _lib/worktree-base-check.mjs ====
+
+function hasNextJs(frameworks) {
+  return Array.isArray(frameworks) && frameworks.includes('next');
+}
+// ==== END inline: _lib/prerun-setup.mjs ====
+
 
 // ==== BEGIN inline: _lib/journal-handoff.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // Journal telemetry handoff helpers for workflow runtime.
@@ -617,7 +486,7 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
-// tilde は dev-flow の WT 未確定 abort 経路（Setup の setup-base / worktree 段で throw し、
+// tilde は dev-flow の WT 未確定 abort 経路（Setup の args.setup 検証（prerun-setup）で throw し、
 // worktree パスがまだ確定していない）専用。prefix を `~/.claude/journal/` に固定するのは、
 // validateJournalSavedPath が dev-improve の saveDir モードで agent 申告値の検証にも使われるため
 // — `~/` 全般を通すと、その injection guard まで一緒に広がってしまう。
@@ -846,8 +715,8 @@ function mergeSubagentCounts(counts, byType) {
 // ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
 // I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
-// start は Setup 冒頭の setup-base probe（resolve-base + worktree-base-check 統合 exec-proxy）の
-// optional epoch、end は Merge tier 末尾の post-summary 応答の optional epoch から給電し、
+// start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s）、end は Merge tier
+// 末尾の post-summary 応答の optional epoch から給電し、
 // 全 11 mark（start/analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/
 // pr_end/iterate_end/final_end/end）が隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
@@ -3713,9 +3582,9 @@ function applyDisjoint(p, label) {
 
 // ---- args ----
 const ISSUE = resolvePositiveIntArg(args, 'issue')
-const BASE_ARG = normalizeBaseArg(args?.base) // 明示指定（string）or null（未指定）。非文字列は即 throw
-let BASE // Setup(resolve-base) で確定。明示指定→検証、未指定→origin/dev→origin/HEAD の順に解決
-let REPO = null // Setup で解決（owner/name）。解決不能なら telemetry の repo を省略（fail-open）
+rejectLegacyBaseArg(args) // 旧形式 args.base は受理しない（base は dev-flow-prerun が解決し args.setup.base で渡る）
+let BASE // Setup で args.setup から確定
+let REPO = null // Setup で args.setup から確定。解決不能なら telemetry の repo を省略（fail-open）
 const TESTING = args?.testing ?? 'tdd'
 const DEPTH = args?.depth ?? 'standard'
 const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
@@ -3809,29 +3678,9 @@ function evalHasCritical(ev) {
 }
 
 // ---- schemas ----
-const SETUP = {
-  type: 'object', required: ['worktree', 'branch'],
-  properties: { worktree: { type: 'string' }, branch: { type: 'string' }, repo: { type: 'string' } },
-}
-const DEPS = {
-  type: 'object', required: ['status'],
-  properties: {
-    status: { type: 'string', enum: ['success', 'partial', 'failed', 'no_dependencies'] },
-    path: { type: 'string' },
-    results: { type: 'array' },
-    error: { type: 'string' },
-    custom: { type: 'object' },
-    epoch: { type: 'number' },
-    frameworks: { type: 'array', items: { type: 'string' } },
-  },
-}
 const ISOLATION_PROBE = {
   type: 'object', required: ['written'],
   properties: { written: { type: 'boolean' }, error: { type: 'string' } },
-}
-const ISOLATION_CLEANUP = {
-  type: 'object', required: ['cleaned'],
-  properties: { cleaned: { type: 'boolean' }, error: { type: 'string' } },
 }
 const REQ = {
   type: 'object',
@@ -4363,129 +4212,6 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 }
 // ==== END inline: _lib/workflow-post-helpers.mjs ====
 
-// ==== BEGIN inline: _lib/setup-deps.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Setup Deps: dev-flow の Setup phase で worktree 確定直後に依存インストールを試みる
-// fail-open exec-proxy 向けの純関数群（ensure-worktree-deps と detect-stack を 1 回の exec-proxy で実行する）。
-// setupDepsPrompt: dev-runner-haiku へ渡す verbatim 転写 prompt を組み立てる。
-// summarizeDepsResult: exec-proxy から返る JSON を { outcome, logLine, implNote } へ正規化する。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
-
-function setupDepsPrompt(worktree) {
-  return `cd ${worktree} で作業。次の 2 コマンドを順に実行せよ（各コマンドは bare 名を先頭トークンとする単文）:\n`
-    + `ensure-worktree-deps --path ${worktree} --lockfile-only --skip-custom\n`
-    + `detect-stack ${worktree}\n`
-    + `1 つ目の stdout の JSON 1 行を **そのまま verbatim** で返し（判定や脚色をしない）、`
-    + `2 つ目の stdout JSON の frameworks 配列を、その object に frameworks フィールドとして追加せよ`
-    + `（2 つ目が失敗した / JSON でない場合は frameworks を省略する）。\n`
-    + `全手順の最後に Bash で \`date +%s\` を 1 回実行し、出力の整数を epoch フィールドとして返せ。`
-    + `取得に失敗した場合は epoch を省略してよい（deps 処理の status 判定には一切影響させるな）。`;
-}
-
-function warningImplNote(detail) {
-  return `依存インストール警告: ${detail}。この worktree では依存（node_modules 等）が未整備の可能性がある。`
-    + `自分の task の実装/テスト実行に必要なら worktree 直下で install コマンド（例: npm ci）を自分で実行してよい（lockfile は書き換えるな）。\n`;
-}
-
-function describeResult(r) {
-  const ecosystem = r && typeof r.ecosystem === 'string' ? r.ecosystem : 'unknown';
-  const pm = r && typeof r.pm === 'string' ? r.pm : 'unknown';
-  const status = r && typeof r.status === 'string' ? r.status : 'unknown';
-  const command = r && typeof r.command === 'string' ? r.command : null;
-  return { ecosystem, pm, status, command };
-}
-
-function summarizeDepsResult(res) {
-  if (typeof res !== 'object' || res === null || Array.isArray(res) || typeof res.status !== 'string') {
-    return {
-      outcome: 'unverified',
-      logLine: '⚠️ Setup(deps): 依存インストール結果を確認できなかった（exec-proxy 応答なし/不正） — fail-open で続行',
-      implNote: warningImplNote('依存インストールの実行結果を確認できなかった（exec-proxy から有効な応答が得られなかった）'),
-    };
-  }
-
-  const status = res.status;
-
-  if (status === 'no_dependencies') {
-    return {
-      outcome: 'no_dependencies',
-      logLine: 'Setup(deps): lockfile なし — install skip (no-op)',
-      implNote: null,
-    };
-  }
-
-  if (status === 'success') {
-    const results = Array.isArray(res.results) ? res.results : [];
-    const failing = results.filter((r) => {
-      const d = describeResult(r);
-      return d.status === 'failed' || d.status === 'pm_not_found';
-    });
-
-    if (failing.length > 0) {
-      const details = failing
-        .map((r) => {
-          const d = describeResult(r);
-          return `${d.ecosystem}/${d.pm}${d.command ? ` (${d.command})` : ''}: ${d.status}`;
-        })
-        .join(', ');
-      return {
-        outcome: 'failed',
-        logLine: `⚠️ Setup(deps): 依存インストールに失敗した項目あり — ${details}（fail-open で続行）`,
-        implNote: warningImplNote(`依存インストールの一部に失敗した（${details}）`),
-      };
-    }
-
-    const summary = results.map((r) => {
-      const d = describeResult(r);
-      return `${d.pm}:${d.status}`;
-    }).join(', ');
-    return {
-      outcome: 'installed',
-      logLine: `Setup(deps): 依存インストール完了${summary ? ` — ${summary}` : ''}`,
-      implNote: null,
-    };
-  }
-
-  if (status === 'partial' || status === 'failed') {
-    const results = Array.isArray(res.results) ? res.results : [];
-    const failing = results.filter((r) => {
-      const d = describeResult(r);
-      return d.status === 'failed' || d.status === 'pm_not_found';
-    });
-    const details = failing
-      .map((r) => {
-        const d = describeResult(r);
-        return `${d.ecosystem}/${d.pm}${d.command ? ` (${d.command})` : ''}: ${d.status}`;
-      })
-      .join(', ');
-    const errorPart = typeof res.error === 'string' && res.error.length > 0 ? res.error : null;
-    const detail = [details, errorPart].filter(Boolean).join(' / ') || `status:${status}`;
-    return {
-      outcome: 'failed',
-      logLine: `⚠️ Setup(deps): 依存インストールが ${status} で終了 — ${detail}（fail-open で続行）`,
-      implNote: warningImplNote(`依存インストールが ${status} で終了した（${detail}）`),
-    };
-  }
-
-  return {
-    outcome: 'unverified',
-    logLine: `⚠️ Setup(deps): 未知の status "${status}" — 依存インストール結果を確認できなかった（fail-open で続行）`,
-    implNote: warningImplNote(`exec-proxy が未知の status "${status}" を返した`),
-  };
-}
-
-// worktree-deps 応答から detect-stack の frameworks を取り出す。欠落・不正は [] （fail-open: 注入判定の入力であり gate 入力ではない）
-function extractFrameworks(res) {
-  if (typeof res !== 'object' || res === null || Array.isArray(res) || !Array.isArray(res.frameworks)) return [];
-  return res.frameworks.filter((f) => typeof f === 'string');
-}
-
-function hasNextJs(frameworks) {
-  return Array.isArray(frameworks) && frameworks.includes('next');
-}
-// ==== END inline: _lib/setup-deps.mjs ====
 
 // ==== BEGIN inline: _lib/lite-route.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // dev-flow micro lite 経路の escalation 判定を行う canonical。issue #376。
@@ -4824,7 +4550,7 @@ const PLANNER_HANDOFF_RULE = '計画規約: task が一時/handoff ファイル�
 // ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する。implementer が対照実験を
 // 毎回再発明しないよう、非 Turbopack fallback（`next build --webpack`）で build 検証してよい旨を規約化する。
 // agent 定義ファイル（.claude/agents/*.md）は sandbox write-deny のため workflow が prompt に注入する。
-// 注入可否は Setup(stack) が detect-stack の frameworks で決定論的に決める — 本定数を prompt に直接連結しない。
+// 注入可否は Setup が args.setup.stack.frameworks（prerun の detect-stack）で決定論的に決める — 本定数を prompt に直接連結しない。
 const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証規約: `
   + `sandbox 内で \`next build\`（Turbopack）が TurbopackInternalError / os error 1（process 生成・ポートバインド制限）で失敗した場合、`
   + `sandbox 環境依存の既知事象の可能性が高い。git stash 等の対照実験を再発明せず、`
@@ -4914,90 +4640,36 @@ function feedClockMark(name, res) { const warn = recordClockMark(clockMarks, nam
 phase('Setup')
 try {
 
-// Setup 統合 probe: base 解決と既存 worktree 起点検証を
-// 単一 exec-proxy 呼び出しへ統合する。resolveBase() / checkWorktreeBase() はそれぞれ probe object の
-// 自分のフィールドしか読まないため、同一の統合 probe object をそのまま両関数へ渡せる（判定関数自体は
-// 無変更）。解決不能・起点不一致は Setup で明示 error（設定ミスを danger-grep fail-closed の SEC 誤
-// HOLD にしない）。danger-grep 実行時失敗の fail-closed ポリシー自体は不変（W7 軸A security floor）。
-// worktree 起点検証は既存 worktree 再利用時、branch の upstream tracking が origin/$BASE と一致しない・
-// 判定不能なら fail-closed で abort する（base 不一致のまま再利用され PR diff に base 間差分が丸ごと
-// 乗るのを防ぐ。preflight との二重防御）。worktree 未存在（新規作成経路）は素通り。
-const setupProbe = await trackedAgent(
-  setupBaseProbePrompt(BASE_ARG, ISSUE),
-  { agentType: 'dev-runner-haiku-ro', schema: SETUP_BASE_PROBE, label: 'setup-base', phase: 'Setup', retryOnContractViolation: true },
-)
-// start mark は専用の clock probe を持たず、Setup 統合 probe の optional
-// epoch から feedClockMark で給電する。probe が throw する場合はそのまま run abort する。
-feedClockMark('start', epochResOf(setupProbe))
-const resolvedBase = resolveBase(BASE_ARG, setupProbe) // 解決不能は throw（workflow abort、danger-grep 以降へ到達しない）
-BASE = resolvedBase.base
-log(`base: origin/${BASE}（source: ${resolvedBase.source}）`)
-
-const wtBase = checkWorktreeBase({ issue: ISSUE, base: BASE, probe: setupProbe }) // 不一致/判定不能は throw（workflow abort）
-log(wtBase.logLine)
-
-const branch = `feature/issue-${ISSUE}`
-const setup = need(await trackedAgent(
-  `git worktree を 1 つ作って絶対パスを返せ。手順:\n`
-  + `1. リポジトリルートで \`git fetch origin\`\n`
-  + `2. worktree dir の候補は 2 つ — 既定 \`<repo>/.claude/worktrees/df-${ISSUE}\`、repo 外 \`<repo>-wt/df-${ISSUE}\`\n`
-  + `   （<repo> は sibling ディレクトリ。例: \`/path/to/repo\` に対し \`/path/to/repo-wt/df-${ISSUE}\`）。\n`
-  + `   既定候補が存在すればそれを再利用する。既定候補が無ければ repo 外候補を確認し、存在すれば\n`
-  + `   それを再利用する（両方存在する場合は既定候補を優先）。\n`
-  + `3. どちらも存在しなければ\n`
-  + `   \`git worktree add -b ${branch} <repo>/.claude/worktrees/df-${ISSUE} origin/${BASE}\`\n`
-  + `   を実行する。これが \`Operation not permitted\` / permission 系エラーで失敗した場合のみ\n`
-  + `   \`git worktree add -b ${branch} <repo>-wt/df-${ISSUE} origin/${BASE}\` で repo 外へ作成する\n`
-  + `   （branch が既に存在する場合はいずれも -b を外して既存 branch を checkout）\n`
-  + `4. 作成/再利用した worktree の絶対パスと branch 名を返す\n`
-  + `5. リポジトリルートで \`gh repo view --json nameWithOwner -q .nameWithOwner\` を実行し、出力（owner/name 形式）を repo として返す（コマンド失敗時は repo を省略してよい）`,
-  { agentType: 'dev-runner-haiku', schema: SETUP, label: 'worktree', phase: 'Setup' },
-), 'Setup(worktree)')
-WT = setup.worktree
-REPO = setup.repo ?? null
+// Setup: 決定論処理（base 解決 / worktree 作成・起点検証 / .devflow-tmp clean / deps / detect-stack）は
+// wrapper skill の prerun（dev-flow-prerun、top-level Bash）が済ませ、結果を args.setup で受け取る。
+// 欠落・ok:false・型不正は fail-closed で即 throw（workflow 内 proxy への fallback は置かない）。
+// abort handoff（top-level catch）で phase/label を特定できるよう、agent 起動前に ABORT_CTX を先に埋める。
+ABORT_CTX.phase = 'Setup'; ABORT_CTX.label = 'prerun-setup'
+const PRERUN = validatePrerunSetup(args?.setup, ISSUE)
+BASE = PRERUN.base
+WT = PRERUN.worktree
+REPO = PRERUN.repo
 if (!REPO) log('⚠️ repo (owner/name) を解決できず — telemetry の repo は省略される')
-log(`worktree: ${WT} (branch ${setup.branch})`)
-
-// isolation cleanup: worktree 再利用時に前 run の run 専用 scratch を持ち越さない。
-// 対象は worktree 内 gitignored の `.devflow-tmp/` 全体で、前 run の残置物（probe artifact
-// `.isolation-probe-*` / journal payload / ui-verify state 等の .devflow-tmp 配下生成物）を
-// 一度に消す（run 間衛生）。
-// probe 成立自体はこの cleanup の成功に依存しない（probe 対象パスは run 毎の一意な
-// token を含むため、cleanup が blocked/skip されて前 run の残置物が残っていても衝突しない）。
-// token fallback が退化（setup-base probe の epoch が fail-open で null 等）した場合の補償として
-// のみ probe 成立に効く。
-// fail-open: 失敗しても run は継続する。
-const isoClean = await failOpenAgent(isolationCleanupPrompt(WT, '.devflow-tmp'), { agentType: 'dev-runner-haiku', schema: ISOLATION_CLEANUP, label: 'isolation-cleanup', phase: 'Setup' })
-if (!isoClean || isoClean.cleaned !== true) log(`⚠️ isolation cleanup が完了しなかった（fail-open で続行）: ${isoClean?.error ?? 'agent null'}`)
-
-// isolation probe: implementer と同じ Write tool 経路で実際に書き込めるか即座に確認する。
-// 失敗（written:false）は bg-isolation guard を強く示唆するため即中断（fail-closed）。
-// probe agent 自体が落ちた場合（written が取れない）は診断不能なだけなので fail-open で続行する。
-// isoToken: probe 対象パスを run 毎に一意にする。probe 対象パスは run 毎に一意
-// （前 run の残置物と同名衝突しない）。clockMarks#start は probe より前の Setup 冒頭で確保済みの
-// epoch（fail-open で null の場合は ISSUE へ fallback）。fallback 時のみ一意性が退化するが、
-// 直前の cleanup（fail-open）と isolationErrorKind による原因別報告が補償する。
-const isoToken = String(clockMarks?.start ?? ISSUE)
-const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
-if (isoProbe && isoProbe.written === false) {
-  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: ISSUE, targetPath: WT, error: isoProbe.error }))
-}
-if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
-
-// deps install: lockfile がある repo では Setup 完了時点で node_modules を整備する。
-// fail-open — 失敗/null でも workflow は継続し、警告 log + DEPS_NOTE 経由で implementer へ伝える。need() で包まない。
-const depsRes = await trackedAgent(setupDepsPrompt(WT), { agentType: 'dev-runner-haiku', schema: DEPS, label: 'worktree-deps', phase: 'Setup' })
-const deps = summarizeDepsResult(depsRes)
+log(`base: origin/${BASE}（source: prerun）`)
+log(`worktree: ${WT} (branch ${PRERUN.branch}, head ${PRERUN.head.slice(0, 8)})`)
+// start mark は prerun の epoch（date +%s）から給電する。必須キーなので常に成立する。
+feedClockMark('start', { ok: true, epoch: PRERUN.epoch })
+const deps = summarizePrerunDeps(PRERUN.deps)
 DEPS_NOTE = deps.implNote ?? ''
 log(deps.logLine)
-
-// stack 判定は worktree-deps 応答に相乗りした detect-stack の frameworks を使う（決定論。LLM に適用可否を判定させない）。
-// 応答欠落・frameworks 欠落は [] = 注入なし（fail-open: 規約は advisory であり gate 入力ではない）。
-const stackFrameworks = extractFrameworks(depsRes)
-TURBOPACK_NOTE = hasNextJs(stackFrameworks) ? TURBOPACK_FALLBACK_CONVENTION : ''
-log(hasNextJs(stackFrameworks)
+TURBOPACK_NOTE = hasNextJs(PRERUN.frameworks) ? TURBOPACK_FALLBACK_CONVENTION : ''
+log(hasNextJs(PRERUN.frameworks)
   ? 'Setup(stack): Next.js 検出 — Turbopack fallback 規約を implementer / evaluator / test prompt へ注入'
-  : `Setup(stack): Next.js 非検出（frameworks=${JSON.stringify(stackFrameworks)}）— Turbopack fallback 規約は注入しない`)
+  : `Setup(stack): Next.js 非検出（frameworks=${JSON.stringify(PRERUN.frameworks)}）— Turbopack fallback 規約は注入しない`)
+const branch = PRERUN.branch
+const setup = PRERUN
+// isolation probe（維持）: implementer と同じ Write tool 経路で書けるかを subagent で検証する。wrapper の Bash では意味が変わるため代替しない。
+const isoToken = String(PRERUN.epoch)
+const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
+if (isoProbe && isoProbe.written === false) {
+  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: `{ issue: ${ISSUE}, setup: <dev-flow-prerun --issue ${ISSUE} --worktree ${WT} の stdout JSON> }`, targetPath: WT, error: isoProbe.error }))
+}
+if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 
 // Validate / Final reconcile 共有の test 実行 prompt。WT 確定後（Setup 完了後）に
 // 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
@@ -5072,7 +4744,7 @@ const contractProbePrompt = `## Objective\n`
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
 // ============================================================
 phase('Analyze')
-feedClockMark('analyze_start', epochResOf(depsRes))
+feedClockMark('analyze_start', epochResOf(isoProbe))
 // 決定論 parse 降格経路: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
 // analyze-issue --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
 // fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ
@@ -6322,7 +5994,7 @@ feedClockMark('pr_end', epochResOf(pr))
 // 受けて pr-meta probe / isolation-cleanup を skip する — cwd/head_ref/repo/epoch は dev-flow が
 // 既に確定済みの値として保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
 // epoch は pr（commit+PR dev-runner 応答）の epoch を渡す（dev-flow 自身の isolation-probe token
-// である Setup 冒頭 setup-base probe の epoch とは別時刻のため、probe パス
+// である args.setup.epoch とは別時刻のため、probe パス
 // `.devflow-tmp/.isolation-probe-<token>` が衝突しない）。
 const PR_ITERATE_ARGS = {
   pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria,
@@ -6993,7 +6665,7 @@ return {
   // 元の例外を必ず rethrow する（abort の意味論・resume 挙動は不変）。終端サマリ・Merge tier は実行しない。
   if (!ABORT_CTX.failure_recorded) {
     try {
-      // WT 未確定（Setup の setup-base / worktree 段）の abort は journal 配下の固定パスへ退避する
+      // WT 未確定（Setup の args.setup 検証）の abort は journal 配下の固定パスへ退避する
       // （validateJournalSavedPath は `~/.claude/journal/` prefix のみ tilde を受理。Write/Read tool が `~` を展開する）。
       const abortSavePath = WT
         ? `${WT}/.devflow-tmp/payload-devflow-${ISSUE}-abort.json`
