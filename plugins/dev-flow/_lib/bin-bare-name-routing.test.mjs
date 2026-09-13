@@ -106,7 +106,7 @@ const DEV_FLOW_CALL_SITES = [
   ['diff-hash-eval', 'worktree-diff-hash /tmp/wt origin/dev', {}],
   ['danger-grep', 'secfloor-classify /tmp/wt origin/dev', {}],
   ['contract-probe#', '`analyze-issue 1 --issue-json <ISSUE_JSON> --contract', {}],
-  ['impl:', '`detect-stack .', {}],
+  ['worktree-deps', 'detect-stack /tmp/wt', {}],
   ['danger-grep-final', 'diff-risk-classify origin/dev', { 'diff-hash-merge': { hash: 'CCC', empty: false } }],
   ['redgreen:AC-1', 'redgreen-verify /tmp/wt ', { 'eval#1': PASS_EVAL_TEST_AC, 'redgreen:AC-1': { verdict: null, ok: true } }],
   ['ui-verify-server', 'ui-verify-server start ', {

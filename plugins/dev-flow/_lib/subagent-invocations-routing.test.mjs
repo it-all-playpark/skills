@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { stripComments } from '../../../tools/sync-inlines.mjs';
 import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
+import { neutralizeRegexLiterals } from './test-helpers/source-scan.mjs';
 
 /**
  * subagent-invocations-routing.test.mjs — 全 agent() 起動が subagent_invocations に計上される
@@ -50,62 +51,7 @@ function extractSubagentInvocations(prompt) {
 // ============================================================
 
 // stripComments（tools/sync-inlines.mjs）は regex literal を regex context として解釈しない既知の制約が
-// あり、dev-flow.js の regex literal 内クオート（例: `hasn'?t`）で以降のコメント除去が破綻する。
-// 前段で regex literal 本文を同長の `_` に置換して迂回する（文字列・コメントは素通し）。
-function neutralizeRegexLiterals(src) {
-  let out = '';
-  let i = 0;
-  const n = src.length;
-  while (i < n) {
-    const ch = src[i];
-    if (ch === '"' || ch === "'" || ch === '`') {
-      const quote = ch;
-      out += ch; i++;
-      while (i < n) {
-        const c = src[i];
-        out += c;
-        if (c === '\\') { i++; if (i < n) { out += src[i]; i++; } }
-        else if (c === quote) { i++; break; }
-        else i++;
-      }
-      continue;
-    }
-    if (ch === '/' && src[i + 1] === '/') {
-      while (i < n && src[i] !== '\n') { out += src[i]; i++; }
-      continue;
-    }
-    if (ch === '/' && src[i + 1] === '*') {
-      out += '/*'; i += 2;
-      while (i + 1 < n && !(src[i] === '*' && src[i + 1] === '/')) { out += src[i]; i++; }
-      if (i + 1 < n) { out += '*/'; i += 2; }
-      continue;
-    }
-    if (ch === '/') {
-      const prevTrim = out.replace(/\s+$/, '');
-      const prevChar = prevTrim.slice(-1);
-      const isRegexOpenerContext = prevChar === '' || '([{,:=!&|?;'.includes(prevChar) || /return$/.test(prevTrim);
-      if (isRegexOpenerContext) {
-        let j = i + 1;
-        let inClass = false;
-        while (j < n) {
-          const c = src[j];
-          if (c === '\\') { j += 2; continue; }
-          if (c === '\n') break;
-          if (c === '[') { inClass = true; j++; continue; }
-          if (c === ']') { inClass = false; j++; continue; }
-          if (c === '/' && !inClass) { j++; break; }
-          j++;
-        }
-        while (j < n && /[a-z]/i.test(src[j])) j++;
-        out += '_'.repeat(j - i);
-        i = j;
-        continue;
-      }
-    }
-    out += ch; i++;
-  }
-  return out;
-}
+// あるため、前段で test-helpers/source-scan.mjs の neutralizeRegexLiterals を通して迂回する。
 
 for (const [name, rawSrc] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
   test(`${name}: bare agent( 呼び出しは trackedAgent wrapper 内の 2 箇所のみ（wrapper 外の call site は計上漏れになるため禁止）`, () => {

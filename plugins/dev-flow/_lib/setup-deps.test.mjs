@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { setupDepsPrompt, summarizeDepsResult } from './setup-deps.mjs';
+import { setupDepsPrompt, summarizeDepsResult, extractFrameworks, hasNextJs } from './setup-deps.mjs';
 
 // ── setupDepsPrompt ─────────────────────────────────────────────────────────
 
@@ -24,6 +24,50 @@ test('setupDepsPrompt: epoch 取得のための date +%s 手順を含む', () =>
   const prompt = setupDepsPrompt('/some/wt');
   assert.match(prompt, /date \+%s/);
   assert.match(prompt, /epoch/);
+});
+
+test('setupDepsPrompt: detect-stack を worktree 引数付きで相乗り実行する指示を含み frameworks フィールドを言及する', () => {
+  const prompt = setupDepsPrompt('/some/wt');
+  assert.match(prompt, /\ndetect-stack \/some\/wt\n/);
+  assert.match(prompt, /frameworks/);
+  assert.ok(!/\bbash detect-stack/.test(prompt), 'bash 前置を付けない（bare 名が先頭トークン）');
+  assert.ok(!prompt.includes('detect-stack .'), 'worktree 引数を省略した相対形を使わない');
+});
+
+// ── extractFrameworks ────────────────────────────────────────────────────────
+
+test('extractFrameworks: null → []', () => {
+  assert.deepEqual(extractFrameworks(null), []);
+});
+
+test('extractFrameworks: { status: "success" }（frameworks 欠落） → []', () => {
+  assert.deepEqual(extractFrameworks({ status: 'success' }), []);
+});
+
+test('extractFrameworks: frameworks が配列でない → []', () => {
+  assert.deepEqual(extractFrameworks({ frameworks: 'next' }), []);
+});
+
+test('extractFrameworks: 非文字列要素は filter され、文字列のみ残る', () => {
+  assert.deepEqual(extractFrameworks({ frameworks: ['next', 1, null, 'react'] }), ['next', 'react']);
+});
+
+// ── hasNextJs ────────────────────────────────────────────────────────────────
+
+test('hasNextJs: ["next"] → true', () => {
+  assert.equal(hasNextJs(['next']), true);
+});
+
+test('hasNextJs: ["react"] → false', () => {
+  assert.equal(hasNextJs(['react']), false);
+});
+
+test('hasNextJs: [] → false', () => {
+  assert.equal(hasNextJs([]), false);
+});
+
+test('hasNextJs: undefined → false', () => {
+  assert.equal(hasNextJs(undefined), false);
 });
 
 // ── summarizeDepsResult ─────────────────────────────────────────────────────

@@ -414,12 +414,12 @@ test("pr-iterate.js: isolation-probe が {written:false} を返すと throw し 
   assert.ok(error.message.includes('/tmp/wt'), `throw message に isoWt（pr-meta の既定 cwd '/tmp/wt'）が含まれない: ${error.message}`);
 });
 
-// ── drift pin: .claude/rules/dev-flow.md の diff-hash 行 ↔ 実装 ──────
-test('.claude/rules/dev-flow.md の diff-hash 行の失敗検出セルに agent throw が明記されている（AC-4）', () => {
-  const rulesPath = join(HERE, '..', '..', '..', '.claude', 'rules', 'dev-flow.md');
+// ── drift pin: dev-flow/references/exec-proxy.md の diff-hash 行 ↔ 実装 ──────
+test('dev-flow/references/exec-proxy.md の diff-hash 行の失敗検出セルに agent throw が明記されている', () => {
+  const rulesPath = join(HERE, '..', 'dev-flow', 'references', 'exec-proxy.md');
   const rulesSrc = readFileSync(rulesPath, 'utf8');
   const diffHashLine = rulesSrc.split('\n').find((line) => line.startsWith('| diff-hash |'));
-  assert.ok(diffHashLine, '.claude/rules/dev-flow.md に `| diff-hash |` で始まる行が見つからない');
+  assert.ok(diffHashLine, 'dev-flow/references/exec-proxy.md に `| diff-hash |` で始まる行が見つからない');
   const cols = diffHashLine.split('|').map((c) => c.trim());
   // cols[0] は空文字（先頭 `|` の前）、cols[1] は 'diff-hash'、cols[2] が失敗検出セル
   const failureDetectionCell = cols[2];
