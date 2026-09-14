@@ -19,7 +19,7 @@ CONFIG=$(load_skill_config "generate-thumbnail")
 OUTPUT_DIR=$(echo "$CONFIG" | jq -r '.output_dir // "public/blog"')
 ASPECT_RATIO=$(echo "$CONFIG" | jq -r '.aspect_ratio // "16:9"')
 BRAND_PROMPT_PATH=$(echo "$CONFIG" | jq -r '.brand_prompt_path // ""')
-CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.4-mini"')
+CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.5"')
 CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 
 # ----------------------------------------------------------------------------
@@ -202,14 +202,30 @@ echo "   Output: $PNG_PATH"
 LOG_FILE="$(mktemp -t codex-thumb.XXXXXX.log)"
 trap 'rm -f "$LOG_FILE"' EXIT
 
-if ! "$CODEX_BIN" exec \
+CODEX_EXIT=0
+"$CODEX_BIN" exec \
     --skip-git-repo-check \
     "$CODEX_APPROVAL_FLAG" \
     -m "$CODEX_MODEL" \
     -c "model_reasoning_effort=$CODEX_EFFORT" \
     --json \
-    "$PROMPT" > "$LOG_FILE" 2>&1; then
-    err "codex exec failed (exit=$?). Last 30 lines of log:"
+    "$PROMPT" > "$LOG_FILE" 2>&1 || CODEX_EXIT=$?
+if [[ "$CODEX_EXIT" -ne 0 ]]; then
+    # ChatGPT アカウントの Codex は提供終了モデルを 400 invalid_request_error で拒否する。
+    # 既定値がスクリプト内に焼かれているため、モデル世代交代のたびにここへ落ちる。
+    # 症状は「codex exec failed」としか見えず sandbox / EPERM と誤診しやすいので明示する。
+    if grep -qiE "model .* is not supported|Model metadata for .* not found" "$LOG_FILE"; then
+        err "codex model '$CODEX_MODEL' is not available for this account."
+        if echo "$CONFIG" | jq -e '.codex_model' >/dev/null 2>&1; then
+            err "  skill-config.json の generate-thumbnail.codex_model を、利用可能なモデルに変更してください。"
+        else
+            err "  script の既定モデル ($CODEX_MODEL) が提供終了している可能性があります。"
+            err "  skill-config.json の generate-thumbnail.codex_model で利用可能なモデルを指定するか、script の既定値を更新してください。"
+        fi
+        err "  利用可能なモデル一覧: jq -r '.. | .slug? // empty' ~/.codex/models_cache.json | sort -u"
+        exit 1
+    fi
+    err "codex exec failed (exit=$CODEX_EXIT). Last 30 lines of log:"
     tail -n 30 "$LOG_FILE" >&2
     exit 1
 fi
