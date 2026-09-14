@@ -23,13 +23,16 @@ export function vdeltaDenies(verdict) {
     return { deny: false, reasons: [], status: 'fail_open' };
   }
 
+  // comparability を transitions より先に判定する。veridelta は比較不能（baseline-missing 等）を
+  // `comparability: none` + `transitions: null` で返すため、transitions を先に見ると正当な棄権が
+  // fail_open（= 配線故障）に混ざり、doctor が「壊れている」と「棄権した」を区別できなくなる。
+  if (parsed.comparability !== 'exact') {
+    return { deny: false, reasons: [], status: 'abstain' };
+  }
+
   const { transitions } = parsed;
   if (typeof transitions !== 'object' || transitions === null || Array.isArray(transitions)) {
     return { deny: false, reasons: [], status: 'fail_open' };
-  }
-
-  if (parsed.comparability !== 'exact') {
-    return { deny: false, reasons: [], status: 'abstain' };
   }
 
   const reasons = [];

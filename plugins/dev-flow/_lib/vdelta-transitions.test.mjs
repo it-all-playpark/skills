@@ -90,6 +90,19 @@ test('[vdeltaDenies] transitions 欠落 → fail_open', () => {
   assert.equal(res.status, 'fail_open');
 });
 
+test('[vdeltaDenies] veridelta の棄権形（comparability:none + transitions:null, baseline-missing）→ abstain（fail_open ではない）', () => {
+  const res = vdeltaDenies({
+    verdict: null,
+    comparability: 'none',
+    comparability_detail: { reason: 'baseline-missing', kind: 'determined' },
+    transitions: null,
+    verification_surface: null,
+  });
+  assert.equal(res.deny, false);
+  assert.equal(res.status, 'abstain');
+  assert.equal(vdeltaVerdictDigest({ comparability: 'none', transitions: null }).status, 'abstain');
+});
+
 test('[vdeltaDenies] transitions が非 object（string）→ fail_open', () => {
   const res = vdeltaDenies({ comparability: 'exact', transitions: 'not-an-object' });
   assert.equal(res.deny, false);
