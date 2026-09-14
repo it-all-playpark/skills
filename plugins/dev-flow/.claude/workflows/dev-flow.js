@@ -3629,7 +3629,12 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     journal_sh: 'journal',
     error_category,
     error_msg,
-    telemetry: { quality_model_config: QUALITY_MODEL, plugin_version: PLUGIN_VERSION, ...telemetry },
+    telemetry: {
+      quality_model_config: QUALITY_MODEL,
+      ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
+      plugin_version: PLUGIN_VERSION,
+      ...telemetry,
+    },
   })
   ABORT_CTX.failure_recorded = true
   return await runJournalHandoff({
@@ -4786,18 +4791,40 @@ const SUBAGENT_COUNTS = {};
 // 見えないため、この可変 context に写す。failure_recorded は writeFailureTelemetry 後の throw（empty_diff）で
 // abort entry を二重記録しないためのフラグ。
 const ABORT_CTX = { phase: null, label: null, shape: null, plan_iter: 0, eval_iter: 0, failure_recorded: false }
+// quality model fallback: `opts.model`（QUALITY_MODEL を渡す品質ゲート 4 agent の call site
+// のみ）付き呼び出しが null を返したら、model 指定を外して agent frontmatter の既定 model で同一 prompt・
+// 同一 label を 1 回だけ再試行し、以後この run は既定 model に sticky で切り替える。harness の agent() は
+// usage 上限（credit 切れ）・terminal API error・user skip のいずれでも throw せず null を返し、原因は
+// script から読めないため null だけを観測点にする（原因切り分けの probe は持たない）。fallback 先を定数で
+// 持たず「model を外す」で表現するのは frontmatter を唯一の既定にするため。resume では失敗 call 以降が
+// 全部 live 再実行される（null は cache されない）ため sticky を resume 越しに永続化しない。
+// `opts.model` 無しの call site（exec-proxy / implementer 等）は null でも再試行しない（既存の
+// fail-open / need() 経路のまま）。
+let QUALITY_FALLBACK = false
+let QUALITY_FALLBACK_LABEL = null
+const omitModel = ({ model, ...rest }) => rest
 async function trackedAgent(prompt, opts) {
   ABORT_CTX.phase = opts?.phase ?? ABORT_CTX.phase; ABORT_CTX.label = opts?.label ?? null;
-  recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
-  try {
-    return await agent(prompt, nsAgentOpts(opts));
-  } catch (e) {
-    if (!opts?.retryOnContractViolation) throw e;
-    if (!String(e?.message ?? e).includes('without calling StructuredOutput')) throw e;
-    log(`⚠️ ${opts?.label ?? 'agent'} が StructuredOutput 契約違反で失敗 — 同一 prompt で 1 回だけリトライ（issue #527）`);
-    recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
-    return agent(prompt, nsAgentOpts(opts));
+  const call = async (o) => {
+    recordSubagentInvocation(SUBAGENT_COUNTS, o?.agentType);
+    try {
+      return await agent(prompt, nsAgentOpts(o));
+    } catch (e) {
+      if (!o?.retryOnContractViolation) throw e;
+      if (!String(e?.message ?? e).includes('without calling StructuredOutput')) throw e;
+      log(`⚠️ ${o?.label ?? 'agent'} が StructuredOutput 契約違反で失敗 — 同一 prompt で 1 回だけリトライ（issue #527）`);
+      recordSubagentInvocation(SUBAGENT_COUNTS, o?.agentType);
+      return agent(prompt, nsAgentOpts(o));
+    }
+  };
+  const o = (QUALITY_FALLBACK && opts?.model) ? omitModel(opts) : opts;
+  let r = await call(o);
+  if (r == null && o?.model && !QUALITY_FALLBACK) {
+    log(`⚠️ ${o.label ?? 'agent'} が ${o.model} で null（credit 切れ / terminal API error / skip）— model 指定を外し frontmatter 既定で再試行。以後この run は既定 model。skip したなら再度 skip せよ`);
+    QUALITY_FALLBACK = true; QUALITY_FALLBACK_LABEL = o.label ?? null;
+    r = await call(omitModel(o));
   }
+  return r;
 }
 
 // fail-open 規定の exec-proxy 呼び出し用ラッパ（pr-iterate.js と同型）。trackedAgent が
@@ -6325,14 +6352,17 @@ feedClockMark('pr_end', epochResOf(pr))
 // epoch は pr（commit+PR dev-runner 応答）の epoch を渡す（dev-flow 自身の isolation-probe token
 // である args.setup.epoch とは別時刻のため、probe パス
 // `.devflow-tmp/.isolation-probe-<token>` が衝突しない）。
-const PR_ITERATE_ARGS = {
+// quality_fallback は dev-flow 側の run 単位 sticky を pr-iterate の初期値として引き渡す。
+// pr-review-lite（model 付き）は本 args の後に走り fallback を発火しうるため、起動時点の値を読む関数にする。
+const prIterateArgs = () => ({
   pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria,
   nested: {
     cwd: WT, head_ref: state.setup.branch,
     ...(REPO ? { repo: REPO } : {}),
     ...(Number.isFinite(pr?.epoch) ? { epoch: pr.epoch } : {}),
+    quality_fallback: QUALITY_FALLBACK,
   },
-}
+})
 
 // ============================================================
 // PR phase 経路分岐: clean-micro（LITE）は pr-reviewer 1-pass レビュー +
@@ -6369,7 +6399,7 @@ if (LITE) {
   if (liteOutcome.escalate) {
     log(`lite 経路: pr-review-lite が escalate（${reviewLite == null ? 'review=null' : 'blocking ' + liteOutcome.blocking.length + ' 件'}）— フル workflow('pr-iterate') へ委譲`)
     ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
-    iterate = await workflow('dev-flow:pr-iterate', PR_ITERATE_ARGS)
+    iterate = await workflow('dev-flow:pr-iterate', prIterateArgs())
     route = 'full'
     iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
   } else {
@@ -6387,14 +6417,14 @@ if (LITE) {
     } else {
       log(`lite 経路: CI が ${ciLite?.status ?? 'null'}（green でない）— フル workflow('pr-iterate') へ委譲`)
       ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
-      iterate = await workflow('dev-flow:pr-iterate', PR_ITERATE_ARGS)
+      iterate = await workflow('dev-flow:pr-iterate', prIterateArgs())
       route = 'full'
       iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
     }
   }
 } else {
   ABORT_CTX.phase = 'PR'; ABORT_CTX.label = 'pr-iterate'
-  iterate = await workflow('dev-flow:pr-iterate', PR_ITERATE_ARGS)
+  iterate = await workflow('dev-flow:pr-iterate', prIterateArgs())
   route = 'full'
   iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
 }
@@ -6927,6 +6957,10 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // 常時出力。nested pr-iterate 分は上記 mergeSubagentCounts で合算済み。
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     quality_model_config: QUALITY_MODEL,  // 品質ゲート 4 agent の model 設定値（実行時モデルではない）
+    // quality_model_fallback_label: 最初に model 指定を外して再試行した call の label。
+    // 未発生時はキー省略（null は passthrough で落ちる）。quality_model_config と合わせて
+    // 「純 QUALITY_MODEL / 途中から frontmatter 既定（どの label から）」を導出する。
+    ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs 定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
     // resolved_evidence: 終端サマリーから外した解消済み証跡の全文。4 配列すべて空なら省く。
     // passthrough 経路で journal に到達（hook 変更不要）。gate / merge tier / ledger の入力にはならない。
@@ -7024,6 +7058,7 @@ return {
           eval_iter: ABORT_CTX.eval_iter,
           subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
           quality_model_config: QUALITY_MODEL,
+          ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
           plugin_version: PLUGIN_VERSION,
         },
       })
