@@ -75,6 +75,13 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   `'opus'` に変更し `tools/sync-inlines.mjs --write` を実行 — 先頭トークン=スクリプトパスの bare 形。
   shebang + 実行bit 付与済みで、sandbox excludedCommands は先頭トークンでマッチするため
   node/cd/bash 前置は付けない）。
+  `opts.model` 付き call が null を返したら（harness の `agent()` は usage 上限・terminal API error・
+  user skip のいずれでも throw せず null を返し、原因は script から読めない）、workflow の
+  `trackedAgent` が model 指定を外して同一 prompt・同一 label で 1 回だけ再試行し、以後その run は
+  frontmatter 既定に sticky で切り替わる（fallback 先を定数で持たず frontmatter を唯一の既定にする。
+  `opts.model` 無しの call site は対象外）。nested `workflow('pr-iterate')` へは
+  `args.nested.quality_fallback`（boolean）で sticky を引き渡し、pr-iterate 側は初期値として読む。
+  発火の有無は telemetry `quality_model_fallback_label` で残す（telemetry.md）。
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。

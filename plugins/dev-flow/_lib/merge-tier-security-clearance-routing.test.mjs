@@ -288,6 +288,8 @@ test('[merge-tier-sec-clearance] シナリオ2: cleared:false — SEC-CONFIG unc
 
 // ============================================================
 // シナリオ 3: clearance が null を返す → SEC item unchecked のまま HOLD。workflow は完走する。
+// security-clearance-final は model 付き（QUALITY_MODEL）call site なので、null は trackedAgent の
+// quality model fallback で同一 label を model 無しで 1 回だけ再試行する（計 2 回、それ以上は増えない）。
 // ============================================================
 test('[merge-tier-sec-clearance] シナリオ3: clearance null — HOLD かつ workflow は完走する', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
@@ -295,7 +297,7 @@ test('[merge-tier-sec-clearance] シナリオ3: clearance null — HOLD かつ w
   const { result, error } = await runDevFlowCapture(src, ctx);
   assertNoCrash(error);
 
-  assert.equal(counters.clearanceCalls(), 1, `security-clearance-final は 1 回呼ばれるべきだが ${counters.clearanceCalls()} 回だった`);
+  assert.equal(counters.clearanceCalls(), 2, `security-clearance-final は model 付き 1 回 + fallback 1 回の計 2 回呼ばれるべきだが ${counters.clearanceCalls()} 回だった`);
   assert.equal(
     result?.merge_tier,
     'HOLD',

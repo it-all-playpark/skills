@@ -87,7 +87,7 @@ export function devFlowArgs(issue = 1, setupOverrides = {}) {
  *   sandbox に追加注入するプロパティ（args 等を上書きする際に使う。log/phase もここで上書き可）。
  * @returns {{
  *   ctx: vm.Context,
- *   calls: Array<{label: string, agentType: string, prompt: string, opts: Record<string, unknown>, schema: unknown}>,
+ *   calls: Array<{label: string, agentType: string, prompt: string, opts: Record<string, unknown>, schema: unknown, model: string|null}>,
  *   logs: string[],
  *   phases: string[],
  * }}
@@ -101,7 +101,8 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
     const p = prompt ?? '';
-    calls.push({ label, agentType, prompt: p, opts: opts ?? {}, schema: opts?.schema ?? null });
+    // model: opts.model（QUALITY_MODEL 付き call site の識別。fallback 後の再試行は model 欠落で記録される）
+    calls.push({ label, agentType, prompt: p, opts: opts ?? {}, schema: opts?.schema ?? null, model: opts?.model ?? null });
     const result = responder({ label, agentType, prompt: p, opts: opts ?? {} });
     if (result === undefined && label === 'issue-meta') {
       return { ok: true, number: 1, title: 'stub-issue-title' };

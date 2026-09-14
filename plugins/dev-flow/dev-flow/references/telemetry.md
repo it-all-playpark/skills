@@ -81,6 +81,14 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `quality_model_config`（dev-flow / pr-iterate 両 entry、成功・失敗とも記録。`_lib/quality-model.mjs`
   の `QUALITY_MODEL` **設定値**。agent() は agentType しか観測できず frontmatter 由来の実モデルは
   workflow から取得できないため、キー名で設定値であることを明示する）。
+  `quality_model_fallback_label`（dev-flow / pr-iterate 両 entry、成功・失敗・abort とも。`opts.model`
+  付き call が null を返して model 指定を外した再試行へ切り替えた**最初の call の label**（例
+  `plan#standard` / `eval#1` / `review#1`）。未発生時はキー自体を省く — null 値は passthrough で落ちる
+  ため「無し」はキー欠落で表す。`quality_model_config` と組み合わせて、run の品質ゲート agent が
+  純 `quality_model_config` / 途中から frontmatter 既定へ混在（どの label から）/ 純 frontmatter 既定
+  （`quality_model_config` が既定と同値）のどれかを導出する。nested pr-iterate は sticky を
+  `args.nested.quality_fallback` で継承するだけで自 run では発火しないためキーを持たない — 混在の
+  導出は親 dev-flow entry で行う（`subagent_invocations` と同じく集計は dev-flow entry のみを使う）。
   `plugin_version`（同上両 entry。`_lib/plugin-version.mjs` の `PLUGIN_VERSION` 定数。workflow では
   plugin root 変数が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
   が `plugins/dev-flow/.claude-plugin/plugin.json` の version と一致することを pin する。plugin.json
