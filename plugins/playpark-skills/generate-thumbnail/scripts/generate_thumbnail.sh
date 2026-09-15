@@ -13,17 +13,21 @@ SKILLS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 _CORE_BIN="$(command -v journal)" || { echo "playpark-core plugin (bin/journal) not on PATH" >&2; exit 127; }
 source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 
-require_cmds codex jq python3
+# The codex binary can be overridden (tests stub it; CI runners have no codex),
+# so the requirement check must look at the resolved binary, not the bare name.
+CODEX_BIN="${THUMBNAIL_CODEX_BIN:-codex}"
+require_cmd "$CODEX_BIN" "codex CLI not found: $CODEX_BIN"
+require_cmds jq python3
 
 CONFIG=$(load_skill_config "generate-thumbnail")
 OUTPUT_DIR=$(echo "$CONFIG" | jq -r '.output_dir // "public/blog"')
 ASPECT_RATIO=$(echo "$CONFIG" | jq -r '.aspect_ratio // "16:9"')
 BRAND_PROMPT_PATH=$(echo "$CONFIG" | jq -r '.brand_prompt_path // ""')
-CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.4-mini"')
+CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.5"')
 CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 
 # ----------------------------------------------------------------------------
-# Resolve the codex binary and the flags this build accepts.
+# Detect the flags this codex build accepts (binary resolved above via THUMBNAIL_CODEX_BIN).
 #
 # Two upstream changes matter here:
 #   1. built-in image_gen was broken in 0.140.0–0.144.3 (#28422): codex reported
@@ -33,8 +37,6 @@ CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 #      while KEEPING the workspace-write sandbox", so we detect which one this
 #      build accepts. Never use --dangerously-bypass-approvals-and-sandbox here:
 #      thumbnail generation has no need to escape the sandbox.
-#
-# Override the binary with THUMBNAIL_CODEX_BIN.
 # ----------------------------------------------------------------------------
 CODEX_IMAGE_GEN_FIXED="0.144.4"
 
@@ -43,7 +45,6 @@ ver_lt() {
     [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]
 }
 
-CODEX_BIN="${THUMBNAIL_CODEX_BIN:-codex}"
 CODEX_VERSION="$("$CODEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
 if [[ -n "$CODEX_VERSION" ]] \
@@ -202,14 +203,30 @@ echo "   Output: $PNG_PATH"
 LOG_FILE="$(mktemp -t codex-thumb.XXXXXX.log)"
 trap 'rm -f "$LOG_FILE"' EXIT
 
-if ! "$CODEX_BIN" exec \
+CODEX_EXIT=0
+"$CODEX_BIN" exec \
     --skip-git-repo-check \
     "$CODEX_APPROVAL_FLAG" \
     -m "$CODEX_MODEL" \
     -c "model_reasoning_effort=$CODEX_EFFORT" \
     --json \
-    "$PROMPT" > "$LOG_FILE" 2>&1; then
-    err "codex exec failed (exit=$?). Last 30 lines of log:"
+    "$PROMPT" > "$LOG_FILE" 2>&1 || CODEX_EXIT=$?
+if [[ "$CODEX_EXIT" -ne 0 ]]; then
+    # ChatGPT アカウントの Codex は提供終了モデルを 400 invalid_request_error で拒否する。
+    # 既定値がスクリプト内に焼かれているため、モデル世代交代のたびにここへ落ちる。
+    # 症状は「codex exec failed」としか見えず sandbox / EPERM と誤診しやすいので明示する。
+    if grep -qiE "model .* is not supported|Model metadata for .* not found" "$LOG_FILE"; then
+        err "codex model '$CODEX_MODEL' is not available for this account."
+        if echo "$CONFIG" | jq -e '.codex_model' >/dev/null 2>&1; then
+            err "  skill-config.json の generate-thumbnail.codex_model を、利用可能なモデルに変更してください。"
+        else
+            err "  script の既定モデル ($CODEX_MODEL) が提供終了している可能性があります。"
+            err "  skill-config.json の generate-thumbnail.codex_model で利用可能なモデルを指定するか、script の既定値を更新してください。"
+        fi
+        err "  利用可能なモデル一覧: jq -r '.. | .slug? // empty' ~/.codex/models_cache.json | sort -u"
+        exit 1
+    fi
+    err "codex exec failed (exit=$CODEX_EXIT). Last 30 lines of log:"
     tail -n 30 "$LOG_FILE" >&2
     exit 1
 fi
