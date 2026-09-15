@@ -2,6 +2,7 @@
 # red→green 実証: 実装だけ退避して base に戻し、test が red→green に転じるか決定論判定する。
 # untracked(新規)・tracked-modified いずれの impl ファイルにも対応する。
 # 使い方: redgreen-verify.sh <worktree> <test_files_csv> <impl_files_csv>
+# 受理する test_files glob: *.test.mjs / *.bats / *.test.ts / *.test.tsx
 # 出力(stdout, JSON 1行): {"red":bool,"green":bool,"reason":"..."}
 # exit 0 = 判定完了(red/green は JSON 参照) / exit 2 = 入力・分離エラー(= deterministic 昇格しないこと)
 set -uo pipefail
@@ -31,10 +32,11 @@ VDELTA_TESTCMD_RAN=false
 IFS=',' read -r -a TESTS <<< "$TEST_CSV"
 IFS=',' read -r -a IMPLS <<< "$IMPL_CSV"
 
-# 層2: runner glob で test_files を検証(*.test.mjs / *.bats 以外は拒否)
+# 層2: runner glob で test_files を検証(*.test.mjs / *.bats / *.test.ts / *.test.tsx 以外は拒否。
+# playwright の *.spec.ts は scope 外で拒否)
 for t in "${TESTS[@]}"; do
   case "$t" in
-    *.test.mjs|*.bats) : ;;
+    *.test.mjs|*.bats|*.test.ts|*.test.tsx) : ;;
     *) echo "{\"red\":false,\"green\":false,\"reason\":\"non-test file declared: $t\"}"; exit 2 ;;
   esac
 done
@@ -46,24 +48,24 @@ for t in "${TESTS[@]}"; do
 done
 
 run_tests() {
-  local rc=0 node_tests=() bats_tests=()
+  local rc=0 node_tests=() vitest_tests=() bats_tests=() cmd_tests=()
   for t in "${TESTS[@]}"; do
     case "$t" in
-      *.test.mjs) node_tests+=("$t") ;;
+      *.test.mjs) node_tests+=("$t"); cmd_tests+=("$t") ;;
+      *.test.ts|*.test.tsx) vitest_tests+=("$t"); cmd_tests+=("$t") ;;
       *.bats) bats_tests+=("$t") ;;
     esac
   done
-  if [ "${#node_tests[@]}" -gt 0 ]; then
-    if [ -n "$RG_TEST_CMD" ]; then
-      local _tc=()
-      read -r -a _tc <<< "$RG_TEST_CMD"
-      "${_tc[@]}" "${node_tests[@]}" >/dev/null 2>&1 || rc=1
-      # test_cmd(vdelta run) 経路を実行した事実を記録する(rc とは独立。
-      # red phase の失敗は期待値であり test_cmd 未実行を意味しない)。
-      VDELTA_TESTCMD_RAN=true
-    else
-      node --test "${node_tests[@]}" >/dev/null 2>&1 || rc=1
-    fi
+  if [ -n "$RG_TEST_CMD" ] && [ "${#cmd_tests[@]}" -gt 0 ]; then
+    local _tc=()
+    read -r -a _tc <<< "$RG_TEST_CMD"
+    "${_tc[@]}" "${cmd_tests[@]}" >/dev/null 2>&1 || rc=1
+    # test_cmd(vdelta run) 経路を実行した事実を記録する(rc とは独立。
+    # red phase の失敗は期待値であり test_cmd 未実行を意味しない)。
+    VDELTA_TESTCMD_RAN=true
+  else
+    if [ "${#node_tests[@]}" -gt 0 ]; then node --test "${node_tests[@]}" >/dev/null 2>&1 || rc=1; fi
+    if [ "${#vitest_tests[@]}" -gt 0 ]; then npx vitest run "${vitest_tests[@]}" >/dev/null 2>&1 || rc=1; fi
   fi
   if [ "${#bats_tests[@]}" -gt 0 ]; then bats "${bats_tests[@]}" >/dev/null 2>&1 || rc=1; fi
   return $rc
