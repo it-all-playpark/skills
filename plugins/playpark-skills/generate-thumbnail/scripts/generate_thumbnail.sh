@@ -13,7 +13,11 @@ SKILLS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 _CORE_BIN="$(command -v journal)" || { echo "playpark-core plugin (bin/journal) not on PATH" >&2; exit 127; }
 source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 
-require_cmds codex jq python3
+# The codex binary can be overridden (tests stub it; CI runners have no codex),
+# so the requirement check must look at the resolved binary, not the bare name.
+CODEX_BIN="${THUMBNAIL_CODEX_BIN:-codex}"
+require_cmd "$CODEX_BIN" "codex CLI not found: $CODEX_BIN"
+require_cmds jq python3
 
 CONFIG=$(load_skill_config "generate-thumbnail")
 OUTPUT_DIR=$(echo "$CONFIG" | jq -r '.output_dir // "public/blog"')
@@ -23,7 +27,7 @@ CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.5"')
 CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 
 # ----------------------------------------------------------------------------
-# Resolve the codex binary and the flags this build accepts.
+# Detect the flags this codex build accepts (binary resolved above via THUMBNAIL_CODEX_BIN).
 #
 # Two upstream changes matter here:
 #   1. built-in image_gen was broken in 0.140.0–0.144.3 (#28422): codex reported
@@ -33,8 +37,6 @@ CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 #      while KEEPING the workspace-write sandbox", so we detect which one this
 #      build accepts. Never use --dangerously-bypass-approvals-and-sandbox here:
 #      thumbnail generation has no need to escape the sandbox.
-#
-# Override the binary with THUMBNAIL_CODEX_BIN.
 # ----------------------------------------------------------------------------
 CODEX_IMAGE_GEN_FIXED="0.144.4"
 
@@ -43,7 +45,6 @@ ver_lt() {
     [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]
 }
 
-CODEX_BIN="${THUMBNAIL_CODEX_BIN:-codex}"
 CODEX_VERSION="$("$CODEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
 if [[ -n "$CODEX_VERSION" ]] \
