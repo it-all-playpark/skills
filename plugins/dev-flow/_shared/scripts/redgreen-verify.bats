@@ -602,3 +602,100 @@ EOF
   [[ "$output" == *'"green":true'* ]]
   [[ "$output" != *'"verdict"'* ]]
 }
+
+# -----------------------------------------------------------------------
+# I: testcmd_ran / headdiff (issue #654 AC-1/AC-2)
+# test_cmd 経路が走らなかった invocation で testcmd_ran:false と headdiff が
+# 常時出力されること、test_cmd 経路が走った invocation では headdiff が
+# 出力されないことを pin する。
+# -----------------------------------------------------------------------
+
+make_feature_bats() {
+  {
+    printf '%s\n' '#!/usr/bin/env bats'
+    printf '%s\n' '@test "impl exists" {'
+    printf '  [ -f "%s/impl.mjs" ]\n' "$REPO"
+    printf '%s\n' '}'
+  } > "$REPO/feature.bats"
+}
+
+@test "I1: bats-only, untracked feature.bats は testcmd_ran:false と headdiff new:1 を出力する" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_feature_bats
+
+  run bash "$SCRIPT" "$REPO" "feature.bats" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" == *'"testcmd_ran":false'* ]]
+  [[ "$output" == *'"headdiff":{"new":1,"modified":0,"unchanged":0,"total":1}'* ]]
+}
+
+@test "I2: HEAD にある feature.bats を worktree で変更すると headdiff modified:1" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_feature_bats
+  git -C "$REPO" add feature.bats && git -C "$REPO" commit -q -m "add feature.bats"
+  printf '%s\n' '# modified in worktree' >> "$REPO/feature.bats"
+
+  run bash "$SCRIPT" "$REPO" "feature.bats" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"headdiff":{"new":0,"modified":1,"unchanged":0,"total":1}'* ]]
+}
+
+@test "I3: HEAD と同一内容の feature.bats は headdiff unchanged:1" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_feature_bats
+  git -C "$REPO" add feature.bats && git -C "$REPO" commit -q -m "add feature.bats"
+
+  run bash "$SCRIPT" "$REPO" "feature.bats" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"headdiff":{"new":0,"modified":0,"unchanged":1,"total":1}'* ]]
+}
+
+@test "I4: test_cmd 経路が走った invocation は testcmd_ran:true で headdiff を出力しない" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"testcmd_ran":true'* ]]
+  [[ "$output" != *'"headdiff"'* ]]
+}
+
+@test "I5: test_cmd 経路に乗る test_files が bats と混在しても testcmd_ran:true で headdiff を出力しない" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  make_feature_bats
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs,feature.bats" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"testcmd_ran":true'* ]]
+  [[ "$output" != *'"headdiff"'* ]]
+}
+
+@test "I6: conf 無しの node --test 直接経路も testcmd_ran:false と headdiff を出力する(拡張子非依存)" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"testcmd_ran":false'* ]]
+  [[ "$output" == *'"headdiff":{"new":1,"modified":0,"unchanged":0,"total":1}'* ]]
+}
+
+@test "I7: exit 2 経路(入力エラー)の出力は testcmd_ran を含まない(不変)" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  git -C "$REPO" add impl.mjs && git -C "$REPO" commit -q -m "add impl"
+  make_test
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'"reason":"no impl changed vs HEAD'* ]]
+  [[ "$output" != *'"testcmd_ran"'* ]]
+}

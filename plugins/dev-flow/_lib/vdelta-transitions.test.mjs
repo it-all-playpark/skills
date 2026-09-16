@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
-import { vdeltaDenies, vdeltaVerdictDigest } from './vdelta-transitions.mjs';
+import { vdeltaDenies, vdeltaVerdictDigest, redgreenHeaddiffDigest } from './vdelta-transitions.mjs';
 
 const cleanVerdict = (over = {}) => ({
   comparability: 'exact',
@@ -227,4 +227,45 @@ test('[vdeltaVerdictDigest] null verdict → fail_open + fields null/0', () => {
     verification_surface: null,
     repaired_with_test_change: 0,
   });
+});
+
+test('[redgreenHeaddiffDigest] modified>0 → status test_modified・件数 verbatim', () => {
+  const digest = redgreenHeaddiffDigest({ new: 1, modified: 2, unchanged: 0, total: 3 });
+  assert.deepEqual(digest, { status: 'test_modified', new: 1, modified: 2, unchanged: 0, total: 3 });
+});
+
+test('[redgreenHeaddiffDigest] modified=0（new のみ）→ clean', () => {
+  const digest = redgreenHeaddiffDigest({ new: 2, modified: 0, unchanged: 1, total: 3 });
+  assert.deepEqual(digest, { status: 'clean', new: 2, modified: 0, unchanged: 1, total: 3 });
+});
+
+test('[redgreenHeaddiffDigest] 全 0 → clean', () => {
+  const digest = redgreenHeaddiffDigest({ new: 0, modified: 0, unchanged: 0, total: 0 });
+  assert.deepEqual(digest, { status: 'clean', new: 0, modified: 0, unchanged: 0, total: 0 });
+});
+
+test('[redgreenHeaddiffDigest] null / undefined / 配列 / 文字列 → fail_open + 全 0', () => {
+  const zero = { new: 0, modified: 0, unchanged: 0, total: 0 };
+  for (const input of [null, undefined, [1, 2], 'not-an-object']) {
+    const digest = redgreenHeaddiffDigest(input);
+    assert.deepEqual(digest, { status: 'fail_open', ...zero });
+  }
+});
+
+test('[redgreenHeaddiffDigest] 件数が負数・非整数・欠落 → fail_open + 全 0', () => {
+  const zero = { new: 0, modified: 0, unchanged: 0, total: 0 };
+  const bads = [
+    { new: -1, modified: 0, unchanged: 0, total: 0 },
+    { new: 0, modified: 1.5, unchanged: 0, total: 1 },
+    { new: 0, modified: 0, unchanged: 0 },
+  ];
+  for (const input of bads) {
+    const digest = redgreenHeaddiffDigest(input);
+    assert.deepEqual(digest, { status: 'fail_open', ...zero });
+  }
+});
+
+test('[redgreenHeaddiffDigest] 余分なキーは出力に漏れない（4 件数 + status の 5 キーのみ）', () => {
+  const digest = redgreenHeaddiffDigest({ new: 1, modified: 0, unchanged: 0, total: 1, extra: 'leak' });
+  assert.deepEqual(Object.keys(digest).sort(), ['modified', 'new', 'status', 'total', 'unchanged']);
 });

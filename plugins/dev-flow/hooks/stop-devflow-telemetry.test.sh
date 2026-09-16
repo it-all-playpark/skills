@@ -3067,6 +3067,49 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
   fi
 }
 
+# --------------------------------------------------------------------------
+# Test P-N (integration): 新規 telemetry キー vdelta_not_started（number）/
+#          redgreen_headdiff（array）が hook にハードコードされず、passthrough 経由で
+#          journal.sh へ欠損なく到達する（hook 本体・journal.sh は変更しない）
+# --------------------------------------------------------------------------
+{
+  if [[ "$(grep -c 'vdelta_not_started' "$HOOK")" -eq 0 ]] && [[ "$(grep -c 'redgreen_headdiff' "$HOOK")" -eq 0 ]]; then
+    pass "passthrough_redgreen_headdiff_hook_has_no_literal"
+  else
+    fail "passthrough_redgreen_headdiff_hook_has_no_literal" "hook should not hardcode vdelta_not_started/redgreen_headdiff — it must reach journal via passthrough only"
+  fi
+
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  if [[ ! -x $REAL_JOURNAL ]]; then
+    echo "  (skip: real journal.sh not found — integration test skipped)"
+  else
+    tmpd=$(make_tmpdir)
+    mkdir -p "${tmpd}/journal/pending"
+
+    make_trust_handoff "${tmpd}/journal/pending/pn.json" "$REAL_JOURNAL" \
+      '.telemetry += {vdelta_not_started: 2, vdelta_fail_open: 1, redgreen_headdiff: [{ac:"AC-1",status:"clean",new:1,modified:0,unchanged:0,total:1},{ac:"AC-2",status:"test_modified",new:0,modified:1,unchanged:0,total:1}]}'
+
+    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
+    if [[ -z $entry ]]; then
+      fail "integration_redgreen_headdiff_persisted" "no journal entry created. hook output: ${RUN_OUT}"
+    else
+      if [[ $(jq -r '.telemetry.vdelta_not_started' "$entry") == "2" ]] &&
+        [[ $(jq -r '.telemetry.vdelta_fail_open' "$entry") == "1" ]] &&
+        [[ $(jq -r '.telemetry.redgreen_headdiff | length' "$entry") == "2" ]] &&
+        [[ $(jq -r '.telemetry.redgreen_headdiff[1].status' "$entry") == "test_modified" ]] &&
+        [[ $(jq -r '.telemetry.merge_tier' "$entry") == "REVIEW" ]]; then
+        pass "integration_redgreen_headdiff_persisted"
+      else
+        fail "integration_redgreen_headdiff_persisted" "vdelta_not_started/redgreen_headdiff mismatch in entry: $(jq -c '.telemetry | {vdelta_not_started, vdelta_fail_open, redgreen_headdiff}' "$entry")"
+      fi
+    fi
+
+    rm -rf "$tmpd"
+  fi
+}
+
 
 # --------------------------------------------------------------------------
 # Test S-A (integration, issue #640): shape 判定 / analyze 経路の根拠 7 キー

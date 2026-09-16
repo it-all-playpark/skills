@@ -37,6 +37,12 @@
 #                       entry のみを eval_verdict / review_decision // "unknown" で
 #                       group し平均。該当 entry 0 件は {total:0,recorded:0,rate:null,
 #                       mean_by_*:{}} を返す。詳細は下記 CONFIDENCE_DIST コメント参照)
+#                     vdelta_verdict.not_started (test_cmd 経路が起動しなかった
+#                       invocation 数の合計。vdelta_verdicts[] にも total にも
+#                       含まれない分母外の別計上)
+#                     redgreen_headdiff (clean/test_modified/fail_open counts --
+#                       test_cmd 未起動 invocation の test_files を HEAD 基準で
+#                       三分類した per-AC digest。report-only)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring /
 #                      vdelta_unhealthy
 #
@@ -322,6 +328,10 @@ DURATION_BY_SHAPE=$(echo "$DEVFLOW_ENTRIES" | jq -c '
 # a .status outside the closed enum, are classified "fail_open" (malformed =
 # no usable signal); there is no dual-path fallback to the pre-#433 raw
 # {comparability, transitions, verification_surface} shape.
+#
+# not_started は test_cmd 経路が起動しなかった invocation の件数
+# (.telemetry.vdelta_not_started の合計) で、verdict が存在しないため
+# vdelta_verdicts[] にも total にも入らない。分母外の別計上。
 VDELTA_VERDICT_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
   def category:
     (.status) as $s
@@ -334,6 +344,27 @@ VDELTA_VERDICT_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
     clean: ([$cats[] | select(. == "clean")] | length),
     deny: ([$cats[] | select(. == "deny")] | length),
     abstain: ([$cats[] | select(. == "abstain")] | length),
+    fail_open: ([$cats[] | select(. == "fail_open")] | length),
+    total: ($cats | length),
+    not_started: ([.[] | (.telemetry.vdelta_not_started // 0) | if type == "number" then . else 0 end] | add // 0)
+  }
+')
+
+# redgreen_headdiff: per-AC .telemetry.redgreen_headdiff[] digest for
+# invocations where the test_cmd (vdelta run) path did not start. status is
+# a closed 3-value enum ("clean" | "test_modified" | "fail_open") already
+# computed by the producer (_lib/vdelta-transitions.mjs
+# redgreenHeaddiffDigest) at record time. The analyzer transcribes status
+# only; enum 外・欠落は fail_open に畳む。report-only -- does not gate
+# blocking / deterministic 昇格.
+REDGREEN_HEADDIFF_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
+  def category:
+    (.status) as $s
+    | if ($s == "clean" or $s == "test_modified" or $s == "fail_open") then $s else "fail_open" end;
+  ([.[] | .telemetry.redgreen_headdiff[]? ] | map(category)) as $cats |
+  {
+    clean: ([$cats[] | select(. == "clean")] | length),
+    test_modified: ([$cats[] | select(. == "test_modified")] | length),
     fail_open: ([$cats[] | select(. == "fail_open")] | length),
     total: ($cats | length)
   }
@@ -608,6 +639,7 @@ DISTRIBUTIONS=$(jq -n \
   --argjson iterate_status "$ITERATE_STATUS_DIST" \
   --argjson duration_seconds_by_shape "$DURATION_BY_SHAPE" \
   --argjson vdelta_verdict "$VDELTA_VERDICT_DIST" \
+  --argjson redgreen_headdiff "$REDGREEN_HEADDIFF_DIST" \
   --argjson confidence "$CONFIDENCE_DIST" \
   --argjson shape_calibration "$SHAPE_CALIBRATION" \
   '{
@@ -619,6 +651,7 @@ DISTRIBUTIONS=$(jq -n \
     iterate_status: $iterate_status,
     duration_seconds_by_shape: $duration_seconds_by_shape,
     vdelta_verdict: $vdelta_verdict,
+    redgreen_headdiff: $redgreen_headdiff,
     confidence: $confidence,
     shape_calibration: $shape_calibration
   }')
@@ -725,6 +758,8 @@ fi
 #     are placeholder values pending real-corpus calibration (see
 #     DEFAULT_VDELTA_UNHEALTHY_RATE above). report-only -- does not gate
 #     blocking / veridelta itself / journal schema.
+#     分母 total は test_cmd 経路が起動した verdict のみ。未起動
+#     (not_started) は verdict を持たないので分母に入らず detail で別計上する。
 VDELTA_UNHEALTHY=$(echo "$VDELTA_VERDICT_DIST" | jq -c \
   --argjson rate_threshold "$VDELTA_UNHEALTHY_RATE" \
   --argjson min_runs "$VDELTA_MIN_RUNS" \
@@ -736,7 +771,7 @@ VDELTA_UNHEALTHY=$(echo "$VDELTA_VERDICT_DIST" | jq -c \
       type: "vdelta_unhealthy",
       severity: "skipped",
       reason: "insufficient_data",
-      detail: { total: $total, vdelta_min_runs: $min_runs }
+      detail: { total: $total, not_started: .not_started, vdelta_min_runs: $min_runs }
     }]
   elif $total > 0 and (($low_info / $total) > $rate_threshold) then
     [{
@@ -747,6 +782,7 @@ VDELTA_UNHEALTHY=$(echo "$VDELTA_VERDICT_DIST" | jq -c \
         total: $total,
         abstain: .abstain,
         fail_open: .fail_open,
+        not_started: .not_started,
         low_info: $low_info,
         threshold: $rate_threshold,
         min_runs: $min_runs
