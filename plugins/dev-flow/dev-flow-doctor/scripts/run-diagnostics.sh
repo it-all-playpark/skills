@@ -502,9 +502,10 @@ run_telemetry_checks() {
         msg="micro shape不発火 (${WINDOW}): run数は十分だが micro が0件 — shape_reason 種別: ${reason_kinds}; analyze 経路: ${analyze_paths}; realized が下位 tier 相当の過大判定 ${overestimated} 件"
         ;;
       vdelta_unhealthy)
-        local rate_pct
+        local rate_pct not_started
         rate_pct=$(echo "$anomaly" | jq -r '(.rate * 100 | round)')
-        msg="vdelta verdict 低情報率が高い (${WINDOW}): ${rate_pct}% が abstain+fail_open"
+        not_started=$(echo "$anomaly" | jq -r '.detail.not_started // 0')
+        msg="vdelta verdict 低情報率が高い (${WINDOW}): ${rate_pct}% が abstain+fail_open（分母外の未起動 ${not_started} 件）"
         ;;
       *)
         msg="Anomaly detected (${WINDOW}): ${atype}"

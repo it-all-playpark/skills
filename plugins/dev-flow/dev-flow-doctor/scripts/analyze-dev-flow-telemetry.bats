@@ -939,12 +939,14 @@ EOF
     deny=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.deny')
     abstain=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.abstain')
     fail_open=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.fail_open')
+    not_started=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.not_started')
 
     [ "$total" -eq 0 ]
     [ "$clean" -eq 0 ]
     [ "$deny" -eq 0 ]
     [ "$abstain" -eq 0 ]
     [ "$fail_open" -eq 0 ]
+    [ "$not_started" -eq 0 ]
 
     severity=$(printf '%s\n' "$output" | jq -r '[.anomalies[] | select(.type=="vdelta_unhealthy")][0].severity')
     [ "$severity" = "skipped" ]
@@ -1087,7 +1089,109 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 38: distributions.confidence.eval -- 0.9/pass + 0.5/fail + null/pass ->
+# Test 38: distributions.vdelta_verdict.not_started -- .telemetry.vdelta_not_started
+#          across entries is summed into not_started, and does NOT count
+#          toward vdelta_verdicts[]-derived total (test_cmd 経路が起動した
+#          verdict のみが total の分母)。
+# ---------------------------------------------------------------------------
+@test "vdelta_verdict.not_started: vdelta_not_started は合計され total には入らない" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_not_started":2,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_not_started":3}' 2
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    not_started=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.not_started')
+    total=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.total')
+    clean=$(printf '%s\n' "$output" | jq '.distributions.vdelta_verdict.clean')
+
+    [ "$not_started" -eq 5 ]
+    [ "$total" -eq 1 ]
+    [ "$clean" -eq 1 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 39: vdelta_unhealthy -- not_started は rate の分母(vdelta_verdict.total)
+#          に入らず、anomaly detail.not_started に別計上される。5 件全て
+#          clean な corpus に vdelta_not_started:10 を足しても warn は出ない
+#          (rate は 0/5)。別 corpus (verdicts 無し + not_started のみ) では
+#          severity skipped の detail にも not_started が載る。
+# ---------------------------------------------------------------------------
+@test "vdelta_unhealthy: not_started は分母に入らず detail に載る" {
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_not_started":10,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-3","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-4","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-5","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    warn_count=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="vdelta_unhealthy" and .severity=="warn")] | length')
+    [ "$warn_count" -eq 0 ]
+
+    empty_count=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="vdelta_unhealthy")] | length')
+    [ "$empty_count" -eq 0 ]
+
+    rm -f "${CLAUDE_JOURNAL_DIR}"/*.json
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_not_started":4}' 2
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    severity=$(printf '%s\n' "$output" | jq -r '[.anomalies[] | select(.type=="vdelta_unhealthy")][0].severity')
+    [ "$severity" = "skipped" ]
+
+    detail_not_started=$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type=="vdelta_unhealthy")][0].detail.not_started')
+    [ "$detail_not_started" -eq 4 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 40: distributions.redgreen_headdiff -- per-AC .telemetry.redgreen_headdiff[]
+#          items are classified by their producer-computed status
+#          (clean/test_modified/enum-外はfail_open) and counted.
+# ---------------------------------------------------------------------------
+@test "redgreen_headdiff distribution: clean / test_modified / enum 外 を数える" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"redgreen_headdiff":[{"ac":"AC-1","status":"clean","new":1,"modified":0,"unchanged":0,"total":1},{"ac":"AC-2","status":"test_modified","new":0,"modified":1,"unchanged":0,"total":1},{"ac":"AC-3","status":"bogus","new":0,"modified":0,"unchanged":0,"total":0},{"ac":"AC-4","new":0,"modified":0,"unchanged":1,"total":1}]}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    clean=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.clean')
+    test_modified=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.test_modified')
+    fail_open=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.fail_open')
+    total=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.total')
+
+    [ "$clean" -eq 1 ]
+    [ "$test_modified" -eq 1 ]
+    [ "$fail_open" -eq 2 ]
+    [ "$total" -eq 4 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 41: distributions.redgreen_headdiff -- no redgreen_headdiff key in any
+#          entry -> all counts 0 (safe "no data").
+# ---------------------------------------------------------------------------
+@test "redgreen_headdiff distribution: キー無し -> 全 0" {
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    clean=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.clean')
+    test_modified=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.test_modified')
+    fail_open=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.fail_open')
+    total=$(printf '%s\n' "$output" | jq '.distributions.redgreen_headdiff.total')
+
+    [ "$clean" -eq 0 ]
+    [ "$test_modified" -eq 0 ]
+    [ "$fail_open" -eq 0 ]
+    [ "$total" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 42: distributions.confidence.eval -- 0.9/pass + 0.5/fail + null/pass ->
 #          total=3, recorded=2, rate~=0.667, mean_by_verdict.pass==0.9,
 #          mean_by_verdict.fail==0.5.
 # ---------------------------------------------------------------------------
@@ -1114,7 +1218,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 39: distributions.confidence.review -- review_confidence must exclude
+# Test 43: distributions.confidence.review -- review_confidence must exclude
 #          full-route dev-flow entries (key absent by producer design, issue
 #          #561) from the denominator, while counting the lite-route dev-flow
 #          entry and the pr-iterate entry that both carry review_confidence.
@@ -1153,7 +1257,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 40: distributions.confidence -- no entry in the journal carries an
+# Test 44: distributions.confidence -- no entry in the journal carries an
 #          eval_confidence/review_confidence key -> {total:0, recorded:0,
 #          rate:null, mean_by_*:{}} for both eval and review, exit 0, valid
 #          JSON (AC-7: safe reporting with 0 matching runs).
@@ -1187,7 +1291,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 41: distributions.confidence -- a boundary value of 0 is still a JSON
+# Test 45: distributions.confidence -- a boundary value of 0 is still a JSON
 #          number and must be counted into recorded (not treated as falsy/
 #          absent).
 # ---------------------------------------------------------------------------
@@ -1208,7 +1312,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 42: abort entry (outcome=failure, error.category=abort) is counted as
+# Test 46: abort entry (outcome=failure, error.category=abort) is counted as
 #          a dev-flow run and its shape is aggregated -- pins that the
 #          skill=="dev-flow" && source=="skill" filter does not exclude on
 #          outcome (issue #607 abort handoff entries must be aggregated).

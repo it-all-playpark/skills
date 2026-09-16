@@ -7,7 +7,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
 - **telemetry**: dev-flow 完走時に workflow が telemetry handoff JSON（merge_tier / gate_policy / danger_hits / shape /
   shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
-  vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
+  vdelta_fail_open / vdelta_verdicts / vdelta_not_started / redgreen_headdiff / duration_seconds / phase_durations /
   merge_tier_reasons / route / subagent_invocations / resolved_evidence /
   shape_reason / estimated_file_count / realized_file_count / realized_file_count_raw / ac_count /
   analyze_path / analyze_ineligible_reason）を
@@ -54,7 +54,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `final_ui_verify` は final UI 再検証実行時のみ出力（`ui_verify` と同語彙: `skipped`/`passed`/`findings`/`failed_open`/`setup_failed`）。
   `testsurf_hits` は test-weakening pattern 名の配列（常時出力、hit 無しは空配列）。
   `redgreen_deny` は `{ac, reasons}` の配列（deny 発生時のみ出力）。
-  `vdelta_fail_open` は fail_open 発生件数（>0 時のみ出力）。
+  `vdelta_fail_open` は test_cmd（vdelta run）経路が起動した redgreen invocation のうち verdict が欠落/不正だった件数（>0 時のみ出力）。`vdelta_not_started` は test_cmd 経路が起動しなかった redgreen invocation 数（>0 時のみ出力。bats 等 `redgreen.conf` の test_cmd に乗らない runner のみの AC で発生する。RunStore に run pair が無く verdict 不在が期待値なので `vdelta_fail_open` には数えない）。`redgreen_headdiff` は未起動 invocation の per-AC digest 配列（`{ac, status, new, modified, unchanged, total}` のみ。status は `clean`/`test_modified`/`fail_open` の閉じた enum。test_files のうち HEAD に存在し worktree と差分があるものが 1 件以上で `test_modified`、HEAD に無い新規 test は `new` に数え clean 扱い。redgreen-verify.sh が git 差分から決定論で算出し、runner の種類・拡張子に依存しない。記録専用 — deterministic 昇格・redgreen deny・merge tier の入力にはしない）。
   `vdelta_verdicts` は per-AC digest 配列（`{ac, status, comparability, verification_surface, repaired_with_test_change}` のみ。raw verdict・anchors・テスト名は redaction 原則で保存しない。単一キーへの上書き出力・dual-key 併記はしない）。
   `duration_seconds` は run 全体の wall-clock 秒（clock#start 〜 clock#end）。
   `phase_durations` は analyze / plan / implement / validate / evaluate / pr / iterate / final の 8 phase の秒数 object。
@@ -153,6 +153,8 @@ jq projection ブロック内の `.telemetry.<key>` / `has("<key>")` 参照と�
 testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
 merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
 する fail-open）に到達済み。
+`vdelta_not_started` / `redgreen_headdiff` は passthrough 経路（専用フラグ無し。doctor 側が enum 外
+status を fail_open に畳むため送り側検証を持たない）。
 `resolved_evidence` は終端サマリーが件数のみ表示する解消済み証跡の全文
 `{cap_chars, truncated, ledger_resolved[], env_notes[], ac_satisfied[], security_cleared[]}`（4 配列
 すべて空ならキー欠落）。text/evidence は 1 フィールド 1000 字 cap、総量が 16000 字以下になるまで

@@ -1612,6 +1612,7 @@ function buildApproachBlockFinding({ task_id, detail }) {
 // vdelta-transitions: redgreen R1↔R2 の veridelta verdict から deny-only チェックを判定する。
 // 用途: red&&green の決定論昇格を維持したまま、test 変更込みの「勝利宣言」を deny する
 // advisory シグナル（INV-10: record_integrity=advisory 恒久、blocking gate 化はしない）。
+// test_cmd 経路が走らなかった invocation 向けの redgreen headdiff digest も本ファイルで持つ。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -1690,6 +1691,24 @@ function vdeltaVerdictDigest(verdict) {
   const repaired_with_test_change = Array.isArray(repaired) ? repaired.length : 0;
 
   return { status, comparability, verification_surface, repaired_with_test_change };
+}
+
+// redgreenHeaddiffDigest: redgreen-verify.sh が test_cmd 経路の走らなかった invocation で返す
+// headdiff {new, modified, unchanged, total}（test_files の HEAD 基準三分類件数）を、telemetry に載せる
+// 閉じた digest へ還元する。status は clean / test_modified / fail_open の 3 値。
+// HEAD に存在する test を書き換えた（modified>0）場合だけ test_modified — 新規 test（new）は
+// 実装と同時に書かれるのが期待値なので改変扱いにしない。記録専用で deny / 昇格の入力にはしない。
+function redgreenHeaddiffDigest(headdiff) {
+  const zero = { new: 0, modified: 0, unchanged: 0, total: 0 };
+  if (typeof headdiff !== 'object' || headdiff === null || Array.isArray(headdiff)) {
+    return { status: 'fail_open', ...zero };
+  }
+  const isCount = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  const { new: n, modified, unchanged, total } = headdiff;
+  if (!isCount(n) || !isCount(modified) || !isCount(unchanged) || !isCount(total)) {
+    return { status: 'fail_open', ...zero };
+  }
+  return { status: modified > 0 ? 'test_modified' : 'clean', new: n, modified, unchanged, total };
 }
 // ==== END inline: _lib/vdelta-transitions.mjs ====
 
@@ -3944,7 +3963,10 @@ const SEC_CLEAR = {
 }
 const RG = {
   type: 'object', required: ['red', 'green'],
-  properties: { red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' }, verdict: {} },
+  properties: {
+    red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' }, verdict: {},
+    testcmd_ran: { type: 'boolean' }, headdiff: { type: 'object' },
+  },
 }
 const PRURL = {
   type: 'object', required: ['pr_url', 'pr_number'],
@@ -5343,6 +5365,7 @@ let state = {
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
   vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
+  vdeltaNotStarted: 0, redgreenHeaddiff: [],
 }
 
 // ============================================================
@@ -6165,7 +6188,15 @@ async function execEvaluatePhase(state) {
           { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
         if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })
         const denyRes = vdeltaDenies(rg ? rg.verdict : null)
-        if (rg && denyRes.status === 'fail_open') state.vdeltaFailOpen += 1
+        // test_cmd 経路が走っていない invocation（testcmd_ran:false）は RunStore に run pair が無く verdict 不在が
+        // 期待値。verdict 不正・欠落による fail_open とは分けて数え、test_files の HEAD 差分 digest を fallback
+        // 信号として記録する（記録専用 — deny・deterministic 昇格・merge tier の入力にはしない）。
+        if (rg && rg.testcmd_ran === false) {
+          state.vdeltaNotStarted += 1
+          state.redgreenHeaddiff.push({ ac: acId, ...redgreenHeaddiffDigest(rg.headdiff) })
+        } else if (rg && denyRes.status === 'fail_open') {
+          state.vdeltaFailOpen += 1
+        }
         if (rg && rg.red === true && rg.green === true && !denyRes.deny) {
           ledger = setCheck(ledger, acId, { kind: 'deterministic' })
           ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
@@ -6946,6 +6977,11 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
     ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
     ...(state.vdeltaVerdicts.length ? { vdelta_verdicts: state.vdeltaVerdicts } : {}),
+    // vdelta_not_started: test_cmd 経路が走らなかった redgreen invocation 数（verdict 不在が期待値なので
+    // vdelta_fail_open には数えない）。redgreen_headdiff: その invocation の test_files HEAD 差分 digest
+    // （per-AC、記録専用）。どちらも passthrough 経路で journal に到達する。
+    ...(state.vdeltaNotStarted > 0 ? { vdelta_not_started: state.vdeltaNotStarted } : {}),
+    ...(state.redgreenHeaddiff.length ? { redgreen_headdiff: state.redgreenHeaddiff } : {}),
     // route: PR phase 経路識別子（'lite'|'full'）。常時出力。journal.sh の
     // --route フラグに到達済み。送り側の jq projection は it-all-playpark/dotfiles#143。
     route,

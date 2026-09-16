@@ -3,7 +3,10 @@
 # untracked(新規)・tracked-modified いずれの impl ファイルにも対応する。
 # 使い方: redgreen-verify.sh <worktree> <test_files_csv> <impl_files_csv>
 # 受理する test_files glob: *.test.mjs / *.bats / *.test.ts / *.test.tsx
-# 出力(stdout, JSON 1行): {"red":bool,"green":bool,"reason":"..."}
+# 出力(stdout, JSON 1行): {"red":bool,"green":bool,"reason":"...","testcmd_ran":bool[,"headdiff":{new,modified,unchanged,total}][,"verdict":{...}]}
+# headdiff は test_cmd 経路が走らなかった invocation(testcmd_ran=false)でのみ付く。
+# test_files を HEAD 基準で new(HEAD に無い)/modified(HEAD にあり差分あり)/unchanged(HEAD と同一)
+# に三分類した件数で、runner の種類・拡張子に依存しない fallback 信号。red/green の判定には影響しない。
 # exit 0 = 判定完了(red/green は JSON 参照) / exit 2 = 入力・分離エラー(= deterministic 昇格しないこと)
 set -uo pipefail
 
@@ -176,7 +179,22 @@ TRACKED_SAVED=false
 # green 判定(復元後: test は通るべき)
 if run_tests; then GREEN=true; else GREEN=false; fi
 
-BASE_JSON="{\"red\":$RED,\"green\":$GREEN,\"reason\":\"ok\"}"
+# headdiff: test_cmd 経路が走らなかった invocation(VDELTA_TESTCMD_RAN=false)でのみ、
+# test_files を HEAD 基準で三分類する(拡張子非依存の fallback 信号。判定には使わない)。
+HEADDIFF_JSON=""
+if [ "$VDELTA_TESTCMD_RAN" = false ] && git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+  hd_new=0; hd_mod=0; hd_unch=0
+  for t in "${TESTS[@]}"; do
+    if git cat-file -e "HEAD:$t" >/dev/null 2>&1; then
+      if git diff --quiet HEAD -- "$t"; then hd_unch=$((hd_unch+1)); else hd_mod=$((hd_mod+1)); fi
+    else
+      hd_new=$((hd_new+1))
+    fi
+  done
+  HEADDIFF_JSON=",\"headdiff\":{\"new\":$hd_new,\"modified\":$hd_mod,\"unchanged\":$hd_unch,\"total\":${#TESTS[@]}}"
+fi
+
+BASE_JSON="{\"red\":$RED,\"green\":$GREEN,\"reason\":\"ok\",\"testcmd_ran\":$VDELTA_TESTCMD_RAN$HEADDIFF_JSON}"
 
 # post-green verdict フック(opt-in, fail-open): red/green 判定が確定した後にのみ走る。
 # 非ゼロ exit・空出力・不正 JSON・jq 不在のいずれでも BASE_JSON をそのまま返す。
