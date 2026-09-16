@@ -462,3 +462,143 @@ EOF
   run bash -c "grep -v '^[[:space:]]*#' '$SCRIPT' | grep -c 'git stash'"
   [ "$output" = "0" ]
 }
+
+# -----------------------------------------------------------------------
+# H: vitest 系 runner(issue #656)
+# *.test.ts / *.test.tsx を層2で受理し、test_cmd 未設定時は npx vitest run、
+# test_cmd 設定時は .test.mjs と同じ経路(1回起動)に振り分ける。
+# *.spec.ts(playwright)は引き続き exit 2。
+# -----------------------------------------------------------------------
+
+make_mock_npx() {
+  local impl_name="${1:-impl.ts}"
+  mkdir -p "$REPO/mockbin"
+  cat > "$REPO/mockbin/npx" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$REPO/vitest-calls.log"
+[ "\$1" = vitest ] && [ "\$2" = run ] || exit 99
+[ -f "$REPO/$impl_name" ]
+EOF
+  chmod +x "$REPO/mockbin/npx"
+}
+
+make_mock_runner_ts() {
+  cat > "$REPO/mock-runner.sh" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$REPO/calls.log"
+[ -f "$REPO/impl.ts" ]
+EOF
+  chmod +x "$REPO/mock-runner.sh"
+}
+
+@test "H1: *.test.ts / *.test.tsx が層2で受理され、test_cmd 未設定時は npx vitest run で red→green 判定される" {
+  echo "export const ok = true;" > "$REPO/impl.ts"
+  echo "// feature test" > "$REPO/feature.test.ts"
+  echo "// component test" > "$REPO/Component.test.tsx"
+  make_mock_npx
+
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts,Component.test.tsx" "impl.ts"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ -f "$REPO/vitest-calls.log" ]
+  [ "$(wc -l < "$REPO/vitest-calls.log" | tr -d ' ')" -eq 2 ]
+  [ "$(grep -c 'vitest run feature.test.ts Component.test.tsx' "$REPO/vitest-calls.log")" -eq 2 ]
+  [ -f "$REPO/impl.ts" ]
+  grep -q "true" "$REPO/impl.ts"
+}
+
+@test "H2: .test.mjs / .bats / vitest 系が混在した test_files で各 runner に振り分けられる" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  {
+    printf '%s\n' '#!/usr/bin/env bats'
+    printf '%s\n' '@test "impl exists" {'
+    printf '  [ -f "%s/impl.mjs" ]\n' "$REPO"
+    printf '%s\n' '}'
+  } > "$REPO/feature.bats"
+  echo "// feature test" > "$REPO/feature.test.ts"
+  make_mock_npx impl.mjs
+
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.mjs,feature.bats,feature.test.ts" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ -f "$REPO/vitest-calls.log" ]
+  [ "$(wc -l < "$REPO/vitest-calls.log" | tr -d ' ')" -eq 2 ]
+  grep -q "feature.test.ts" "$REPO/vitest-calls.log"
+  ! grep -q "test.mjs" "$REPO/vitest-calls.log"
+  ! grep -q ".bats" "$REPO/vitest-calls.log"
+}
+
+@test "H3: *.spec.ts (playwright) は引き続き exit 2" {
+  echo "export const ok = true;" > "$REPO/impl.ts"
+  echo "// spec test" > "$REPO/feature.spec.ts"
+
+  run bash "$SCRIPT" "$REPO" "feature.spec.ts" "impl.ts"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'non-test file declared: feature.spec.ts'* ]]
+}
+
+@test "H4: test_cmd 設定時、vitest 系は test_cmd 経路で実行され VDELTA_TESTCMD_RAN=true で verdict_cmd が起動する" {
+  echo "export const ok = true;" > "$REPO/impl.ts"
+  echo "// feature test" > "$REPO/feature.test.ts"
+  make_mock_runner_ts
+  make_mock_npx
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<EOF
+#!/usr/bin/env bash
+touch "$REPO/verdict-called"
+echo '{"comparability":"exact"}'
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  {
+    echo "test_cmd=bash ./mock-runner.sh"
+    echo "verdict_cmd=bash ./mock-verdict.sh"
+  } > "$REPO/.claude/redgreen.conf"
+
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" == *'"verdict"'* ]]
+  [[ "$output" == *'"comparability":"exact"'* ]]
+  [ -f "$REPO/verdict-called" ]
+  [ -f "$REPO/calls.log" ]
+  [ "$(grep -c 'feature.test.ts' "$REPO/calls.log")" -eq 2 ]
+  [ ! -f "$REPO/vitest-calls.log" ]
+}
+
+@test "H5: test_cmd 設定時、.test.mjs と vitest 系の混在は test_cmd 1 回の起動にまとめられる" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  echo "// feature test" > "$REPO/feature.test.ts"
+  make_mock_runner
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs,feature.test.ts" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [ "$(grep -c 'feature.test.mjs feature.test.ts' "$REPO/calls.log")" -eq 2 ]
+}
+
+@test "H6: test_cmd 未設定時の vitest 系では verdict_cmd が起動されない" {
+  echo "export const ok = true;" > "$REPO/impl.ts"
+  echo "// feature test" > "$REPO/feature.test.ts"
+  make_mock_npx
+  mkdir -p "$REPO/.claude"
+  cat > "$REPO/mock-verdict.sh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"comparability":"exact"}'
+EOF
+  chmod +x "$REPO/mock-verdict.sh"
+  echo "verdict_cmd=bash ./mock-verdict.sh" > "$REPO/.claude/redgreen.conf"
+
+  run env PATH="$REPO/mockbin:$PATH" bash "$SCRIPT" "$REPO" "feature.test.ts" "impl.ts"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"red":true'* ]]
+  [[ "$output" == *'"green":true'* ]]
+  [[ "$output" != *'"verdict"'* ]]
+}

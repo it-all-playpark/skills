@@ -124,7 +124,7 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 - `evidence`: 根拠（file:line / テスト名）。
 - `verified_by`: テストで実証できるなら `"test"`、コード精査でしか判断できないなら `"inspection"`。
 - `test_files` / `impl_files`（`verified_by==="test"` のみ）: その AC を実証するテストファイルと、それが検証する実装ファイルを worktree 相対パスで列挙。**自分で red→green 判定を主張しないこと** — orchestrator が dev-runner-haiku 経由で `redgreen-verify.sh` を走らせ決定論判定する。申告のみ行う。
-- test_files は repo の test discovery（`*.test.mjs` / `*.bats`）一致のものだけ。混在ファイルは挙げない。
+- test_files は repo の test discovery（`*.test.mjs` / `*.bats` / `*.test.ts` / `*.test.tsx`）一致のものだけ（`.tsx` の React コンポーネントテストを含む）。playwright の `*.spec.ts` / `*.spec.tsx` は redgreen が受理しないため挙げない。混在ファイルは挙げない。
 
 ## critical_resolutions / security_clearance / concern_resolutions 契約
 
