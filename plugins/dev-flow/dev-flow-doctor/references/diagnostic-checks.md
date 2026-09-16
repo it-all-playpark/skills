@@ -143,7 +143,7 @@ run-diagnostics --scope telemetry --window 7d
 | `gate_policy` | `skill == "dev-flow"` の entry | deterministic-only / llm-major-advisory / llm-major-blocking / llm-autonomous / unknown |
 | `iterate_status` | `.telemetry.iterate_status != null` の全 entry を正規化した normalized run（nested 実行の dev-flow×pr-iterate 親子ペアを 1 run に統合。raw_entries / unjoinable / status_conflicts を併記） | lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / review_contract_error / unknown |
 | `vdelta_verdict` | dev-flow telemetry の per-AC 配列 `vdelta_verdicts[].verdict`（veridelta フックの生 JSON: `{comparability, transitions, verification_surface}`） | `_lib/vdelta-transitions.mjs` の `vdeltaDenies()` と同一ロジックで clean / deny / abstain / fail_open に分類（`improved`/`unchanged`/`regressed`/`inconclusive` という schema は実 producer に存在しない）。0 件でも全キー 0 で安全に出力。集計は `skill == "dev-flow"` の構造化キーのみを対象とし、他 skill（調査系 journal 等）の文字列部分一致で誤カウントしない。`not_started`（`vdelta_not_started` の合計。test_cmd 経路未起動で verdict を持たない invocation。total には含めない） |
-| `redgreen_headdiff` | dev-flow telemetry の per-AC 配列 `redgreen_headdiff[]` | status を clean / test_modified / fail_open の閉じた 3 値で転記（producer 計算済み）。enum 外・欠落は fail_open |
+| `redgreen_headdiff` | dev-flow telemetry の per-AC 配列 `redgreen_headdiff[]` | status を clean / test_modified / fail_open の閉じた 3 値で転記（producer 計算済み）。enum 外・欠落は fail_open。各要素は `red`/`green`（impl_files red→green 実証結果）も保持しており、`status === 'test_modified' && red === true && green === true` で「test 改変を伴う red→green」の件のみを telemetry から絞り込める |
 
 欠落フィールドは `unknown` バケットへ計上する（fail-safe。die しない）。
 

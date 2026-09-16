@@ -6191,9 +6191,14 @@ async function execEvaluatePhase(state) {
         // test_cmd 経路が走っていない invocation（testcmd_ran:false）は RunStore に run pair が無く verdict 不在が
         // 期待値。verdict 不正・欠落による fail_open とは分けて数え、test_files の HEAD 差分 digest を fallback
         // 信号として記録する（記録専用 — deny・deterministic 昇格・merge tier の入力にはしない）。
+        // red/green は redgreen-verify.sh の impl_files 実証結果をそのまま複合させる — headdiff の
+        // status（test_files の HEAD 差分）だけでは「test 改変を伴う red→green」を telemetry 単体で
+        // 識別できない（status=test_modified は red=false でも同一に記録されるため）。
         if (rg && rg.testcmd_ran === false) {
           state.vdeltaNotStarted += 1
-          state.redgreenHeaddiff.push({ ac: acId, ...redgreenHeaddiffDigest(rg.headdiff) })
+          state.redgreenHeaddiff.push({
+            ac: acId, ...redgreenHeaddiffDigest(rg.headdiff), red: rg.red === true, green: rg.green === true,
+          })
         } else if (rg && denyRes.status === 'fail_open') {
           state.vdeltaFailOpen += 1
         }

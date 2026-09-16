@@ -226,7 +226,7 @@ test('[redgreen-headdiff] (a) testcmd_ran:false + headdiff clean(new>0) → 昇�
 
   const telemetry = extractTelemetry(counters.journalPrompts());
   assert.equal(telemetry.vdelta_not_started, 1);
-  assert.deepEqual(telemetry.redgreen_headdiff, [{ ac: 'AC-1', status: 'clean', new: 1, modified: 0, unchanged: 0, total: 1 }]);
+  assert.deepEqual(telemetry.redgreen_headdiff, [{ ac: 'AC-1', status: 'clean', new: 1, modified: 0, unchanged: 0, total: 1, red: true, green: true }]);
   assert.equal('vdelta_fail_open' in telemetry, false);
 });
 
@@ -248,7 +248,29 @@ test('[redgreen-headdiff] (b) testcmd_ran:false + headdiff modified>0 → 昇格
 
   const telemetry = extractTelemetry(counters.journalPrompts());
   assert.equal(telemetry.redgreen_headdiff[0].status, 'test_modified');
+  assert.equal(telemetry.redgreen_headdiff[0].red, true);
+  assert.equal(telemetry.redgreen_headdiff[0].green, true);
   assert.equal('redgreen_deny' in telemetry, false);
+});
+
+test('[redgreen-headdiff] (f) testcmd_ran:false + headdiff modified>0 + red:false（未成立）→ 未昇格 + redgreen_headdiff に test_modified と red:false が両方残り「test 改変を伴う red→green」ではないと telemetry 単体で識別できる', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, counters } = makeSandbox(
+    ANALYZE_REQ_1AC,
+    evalTestVerified(1),
+    () => ({ red: false, green: true, testcmd_ran: false, headdiff: { new: 0, modified: 1, unchanged: 0, total: 1 } }),
+  );
+  const { error } = await runDevFlowCapture(src, ctx);
+  assertNoCrash(error);
+
+  const logs = counters.logs();
+  assert.ok(
+    logs.some((l) => l.includes('AC-1: red→green 未成立')),
+    `red:false は昇格しないべきだが: ${JSON.stringify(logs.filter((l) => l.includes('AC-1')))}`,
+  );
+
+  const telemetry = extractTelemetry(counters.journalPrompts());
+  assert.deepEqual(telemetry.redgreen_headdiff, [{ ac: 'AC-1', status: 'test_modified', new: 0, modified: 1, unchanged: 0, total: 1, red: false, green: true }]);
 });
 
 test('[redgreen-headdiff] (c) testcmd_ran:true + verdict 無し → vdelta_fail_open=1、vdelta_not_started/redgreen_headdiff 無し', async () => {
@@ -279,7 +301,7 @@ test('[redgreen-headdiff] (d) testcmd_ran:false + headdiff 欠落 → vdelta_not
 
   const telemetry = extractTelemetry(counters.journalPrompts());
   assert.equal(telemetry.vdelta_not_started, 1);
-  assert.deepEqual(telemetry.redgreen_headdiff, [{ ac: 'AC-1', status: 'fail_open', new: 0, modified: 0, unchanged: 0, total: 0 }]);
+  assert.deepEqual(telemetry.redgreen_headdiff, [{ ac: 'AC-1', status: 'fail_open', new: 0, modified: 0, unchanged: 0, total: 0, red: true, green: true }]);
 });
 
 test('[redgreen-headdiff] (e) testcmd_ran 欠落 → vdelta_fail_open=1（既存挙動 pin）、vdelta_not_started 無し', async () => {
