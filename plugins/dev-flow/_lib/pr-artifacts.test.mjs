@@ -154,9 +154,10 @@ test('[pr-artifacts] PR body: 巨大 planner 出力でも PR_BODY_MAX_CHARS 以�
     test_plan: 'tp',
     depends_on: [],
   }));
-  const acs = Array.from({ length: 4 }, (_, i) => `AC${i}: ${'x'.repeat(200)}`);
-  const dangerHits = Array.from({ length: 20 }, (_, i) => ({ class: `class${i}`, file: `src/f${i}.ts` }));
-  const testsurfHits = Array.from({ length: 20 }, (_, i) => ({ pattern: `pat${i}`, file: `tests/t${i}.test.mjs` }));
+  const acs = Array.from({ length: 6 }, (_, i) => `AC${i}: ${'x'.repeat(300)}`);
+  const longPath = (i) => `plugins/dev-flow/some/very/deeply/nested/directory/structure/for/testing/clip/f${i}.ts`;
+  const dangerHits = Array.from({ length: 20 }, (_, i) => ({ class: `class${i}`, file: longPath(i) }));
+  const testsurfHits = Array.from({ length: 20 }, (_, i) => ({ pattern: `pat${i}`, file: longPath(i) }));
 
   const body = buildPrBody({
     issue: 642,
@@ -168,6 +169,7 @@ test('[pr-artifacts] PR body: 巨大 planner 出力でも PR_BODY_MAX_CHARS 以�
   });
 
   assert.ok(Array.from(body).length <= PR_BODY_MAX_CHARS, `body 長 ${Array.from(body).length} が上限超過:\n${body}`);
+  assert.ok(!body.includes(longPath(0)), '上限超過時は hit の file path が clip されている必要がある');
 
   const decisionLines = body.split('\n').filter((l) => l.startsWith('- ') && /決定\d+/.test(l));
   assert.ok(decisionLines.length <= 5, `設計判断 bullet は5件以下: ${decisionLines.length}`);

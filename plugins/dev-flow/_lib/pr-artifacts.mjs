@@ -106,6 +106,13 @@ export const PR_BODY_DECISIONS_MAX = 5;
 export const PR_BODY_DECISION_MAX = 120;
 export const PR_BODY_HIT_ITEMS_MAX = 5;
 export const PR_BODY_MAX_CHARS = 3500;
+// PR_BODY_MAX_CHARS 超過時に buildPrBody が決定論的に詰める順序と刻み（issue #665）:
+// 1. hit item の file path を PR_BODY_HIT_PATH_MAX まで clip
+// 2. それでも超過なら受入条件の clip 幅を PR_BODY_AC_MAX から PR_BODY_AC_SHRINK_STEP 刻みで
+//    PR_BODY_AC_MIN まで縮小
+export const PR_BODY_HIT_PATH_MAX = 80;
+export const PR_BODY_AC_MIN = 40;
+export const PR_BODY_AC_SHRINK_STEP = 20;
 export const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
 
 // plan.serial + plan.parallel の file_changes を component（path の dirname。無ければ '(root)'）ごとに
@@ -138,9 +145,9 @@ function changeSection(plan) {
   return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} component）` : shown.join('\n');
 }
 
-// `## 受入条件` セクション本文: index 順に `- [x]`/`- [ ]` + clip(ac)。checked 判定は acResults 優先、
-// 無ければ ledger.items の `AC-<i+1>`。
-function acceptanceSection(req, ledger, acResults) {
+// `## 受入条件` セクション本文: index 順に `- [x]`/`- [ ]` + clip(ac, acMax)。checked 判定は acResults
+// 優先、無ければ ledger.items の `AC-<i+1>`。acMax は PR_BODY_MAX_CHARS 超過時の詰め処理で縮小される。
+function acceptanceSection(req, ledger, acResults, acMax = PR_BODY_AC_MAX) {
   const acs = arr(req?.acceptance_criteria);
   if (acs.length === 0) return '（なし）';
   const items = arr(ledger?.items);
@@ -148,7 +155,7 @@ function acceptanceSection(req, ledger, acResults) {
   const lines = acs.map((ac, i) => {
     const fromResults = results.find((r) => r?.ac_index === i);
     const checked = fromResults ? fromResults.satisfied === true : items.find((x) => x?.id === `AC-${i + 1}`)?.checked === true;
-    return `- [${checked ? 'x' : ' '}] ${clip(str(ac).trim(), PR_BODY_AC_MAX)}`;
+    return `- [${checked ? 'x' : ' '}] ${clip(str(ac).trim(), acMax)}`;
   });
   return lines.join('\n');
 }
@@ -164,11 +171,12 @@ function decisionsSection(plan) {
 }
 
 // 1 種別（danger-grep / test-surface）分の hit 行。総数は維持しつつ列挙 item を
-// PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。
-function hitLine(label, hits, keyOf) {
+// PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。file path は pathMax で clip する
+// （PR_BODY_MAX_CHARS 超過時の詰め処理で有限値に絞られる。既定は無制限）。
+function hitLine(label, hits, keyOf, pathMax = Infinity) {
   const list = arr(hits);
   if (list.length === 0) return `- ${label}: なし`;
-  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => `${str(keyOf(h)) || 'unknown'}: \`${cell(h?.file) || '?'}\``);
+  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => `${str(keyOf(h)) || 'unknown'}: \`${clip(cell(h?.file) || '?', pathMax)}\``);
   const excess = list.length - shown.length;
   const items = excess > 0 ? [...shown, `他 ${excess} 件`] : shown;
   return `- ${label}: ${list.length} 件（${items.join('、')}）`;
@@ -178,23 +186,36 @@ function hitLine(label, hits, keyOf) {
 // Closes #<issue> の 6 セクション固定構成。各セクションは PR_BODY_* 定数で決定論 clip する
 // （issue #661。旧 `## 要約` 無制限 verbatim + `## 変更 task` table 構成を置き換え）。
 // acResults（[{ac_index, satisfied}]）が指定されればチェック判定に優先利用する。
+// 組み立て後の総長が PR_BODY_MAX_CHARS を超えたら (1) hit item の file path を
+// PR_BODY_HIT_PATH_MAX まで clip → (2) それでも超過なら受入条件 clip 幅を PR_BODY_AC_SHRINK_STEP
+// 刻みで PR_BODY_AC_MIN まで縮小、の順に決定論的に詰める（issue #665）。
 export function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits, acResults }) {
   let conclusionText = collapseWhitespace(plan?.summary);
   if (!conclusionText) conclusionText = collapseWhitespace(req?.issue_title);
   if (!conclusionText) conclusionText = `issue #${issue} の変更`;
   const conclusionLine = `**${clip(conclusionText, PR_BODY_SUMMARY_MAX)}**`;
 
-  const verify = `${hitLine('danger-grep', arr(dangerHits), (h) => h?.class)}\n${hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern)}`;
+  const assemble = (hitPathMax, acMax) => {
+    const verify = `${hitLine('danger-grep', arr(dangerHits), (h) => h?.class, hitPathMax)}\n${hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern, hitPathMax)}`;
+    const sections = [
+      conclusionLine,
+      `## 変更\n${changeSection(plan)}`,
+      `## 受入条件\n${acceptanceSection(req, ledger, acResults, acMax)}`,
+      `## 設計判断\n${decisionsSection(plan)}`,
+      `## 検証\n${verify}`,
+      `Closes #${issue}`,
+    ];
+    return sections.join('\n\n') + '\n';
+  };
 
-  const sections = [
-    conclusionLine,
-    `## 変更\n${changeSection(plan)}`,
-    `## 受入条件\n${acceptanceSection(req, ledger, acResults)}`,
-    `## 設計判断\n${decisionsSection(plan)}`,
-    `## 検証\n${verify}`,
-    `Closes #${issue}`,
-  ];
-  return sections.join('\n\n') + '\n';
+  let body = assemble(Infinity, PR_BODY_AC_MAX);
+  if (Array.from(body).length > PR_BODY_MAX_CHARS) {
+    body = assemble(PR_BODY_HIT_PATH_MAX, PR_BODY_AC_MAX);
+  }
+  for (let acMax = PR_BODY_AC_MAX - PR_BODY_AC_SHRINK_STEP; Array.from(body).length > PR_BODY_MAX_CHARS && acMax >= PR_BODY_AC_MIN; acMax -= PR_BODY_AC_SHRINK_STEP) {
+    body = assemble(PR_BODY_HIT_PATH_MAX, acMax);
+  }
+  return body;
 }
 
 // body 内に `Closes #<issue>` 行（行全体一致）が存在するか。
