@@ -13,6 +13,8 @@ plugins/*/.claude/settings.local.json
 # Legacy: skill-config.json は現在リポジトリルートに配置
 .serena/
 .system/
+# claude.ai から同期される Anthropic 公式スキルのキャッシュ（~/.claude/skills が本 repo への symlink のため混入する）
+synced/
 
 # External agent skills（実体は plugin 配下。plugin 外を指す symlink は plugin install に拒否されるため）
 plugins/playpark-skills/.agents/
