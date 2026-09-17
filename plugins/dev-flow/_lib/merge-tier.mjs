@@ -131,16 +131,30 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_veri
 // 同値性は _lib/final-ci-routing.test.mjs が pin する。
 export const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
 
-// HOLD 理由の閉じた code enum（issue #658）。summary 側（devflow-summary-format.mjs）の
-// 「現状/対応」写像キー。reason は自由文で将来変わりうるため、summary は reason の prefix 一致
-// ではなくこの安定 code で文言を写像する。out-of-enum/欠落時は summary が fail-safe（'—' /
-// '人が確認する'）に落とすだけで throw しない（表示専用フィールドのため）。
+// HOLD 理由の閉じた code enum（issue #658、issue #661 で pr_closes_missing 追加）。summary 側
+// （devflow-summary-format.mjs）の「現状/対応」写像キー。reason は自由文で将来変わりうるため、summary は
+// reason の prefix 一致ではなくこの安定 code で文言を写像する。out-of-enum/欠落時は summary が
+// fail-safe（'—' / '人が確認する'）に落とすだけで throw しない（表示専用フィールドのため）。
 export const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'trust_gate',
+  'mergeable_conflicting', 'trust_gate', 'pr_closes_missing',
 ];
+
+// PR body の Closes 行決定論検証（issue #661）の状態 enum。'verified': gh pr view --json body に
+// Closes #<issue> 行を確認済み。'reinjected': 欠落を検出し gh pr edit --body-file で再投入し確認済み。
+// 'missing': 欠落を検出し再投入も失敗（または再投入後も欠落）— fail-closed で HOLD 理由に載せる。
+// 'unverified': gh pr view 自体が失敗（fail-open、警告のみ）。canonical は `_lib/pr-artifacts.mjs`
+// の PR_CLOSES_STATUS_VALUES（同値性は merge-tier.test.mjs が pin する）。本ファイルでは top-level
+// named export を持たない — pr-artifacts.mjs と本ファイルは両方とも dev-flow.js へ inline されるため、
+// 同名 export const を重複宣言すると tools/sync-inlines.mjs の top-level declaration collision 検知に
+// 抵触する（validateInlineDeclCollisions は export 有無に関わらず column-0 の const/let/var/function/class
+// 宣言名を対象にする）。値は下記バリデーションに直接 literal で埋め込む（関数スコープ内 local const
+// なら column-0 top-level 宣言に該当しないため collision 対象外）。
+function isValidPrClosesStatus(v) {
+  return ['verified', 'reinjected', 'missing', 'unverified'].includes(v);
+}
 
 // eval_staleness の閉じた enum（issue #288 の 4 値 + issue #631 の hash_reconverged）。
 export const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
@@ -263,6 +277,12 @@ export function classifyMergeableState(meta) {
 //   HOLD_REASON_KINDS 外なら throw。finalReconcile==='ci_verified' なのに finalCi.verified!==true
 //   なら throw（証拠なしに ci_verified を名乗らせない fail-closed）。未指定(undefined/null) = 従来と
 //   完全同一挙動（regression なし）。
+// s.prClosesStatus (optional 'verified'|'reinjected'|'missing'|'unverified'): PR body の
+//   `Closes #<issue>` 行の決定論検証結果（issue #661、PR_CLOSES_STATUS_VALUES）。'missing'
+//   （欠落を検出し再投入も失敗）のときのみ専用 HOLD reason（deterministic_recheck）を追記する
+//   （gh pr edit --body-file の再投入で解消しうるため human_judgment ではない）。
+//   'verified'/'reinjected'/'unverified'/未指定は reason 追加なし（fail-open no-op、regression なし）。
+//   out-of-enum は明示 error（後方互換 scaffolding 禁止規約）。
 // 返り値: { tier, reasons, holdReasons, holdKind, disclosures }（issue #599 で holdReasons/holdKind、
 //   issue #658 で disclosures を追加）。
 //   reasons は従来どおり string[]（HOLD 時は blocking 文言 + 可視化行、AUTO/REVIEW 時は従来文言 +
@@ -300,6 +320,9 @@ export function classifyMergeTier(s) {
   }
   if (s.evalStaleness != null && !EVAL_STALENESS_VALUES.includes(s.evalStaleness)) {
     throw new Error('classifyMergeTier: invalid evalStaleness: ' + s.evalStaleness);
+  }
+  if (s.prClosesStatus != null && !isValidPrClosesStatus(s.prClosesStatus)) {
+    throw new Error('classifyMergeTier: invalid prClosesStatus: ' + s.prClosesStatus);
   }
   // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
   const blockingReasons = [];
@@ -364,6 +387,7 @@ export function classifyMergeTier(s) {
     pushBlocking('testsurf_uncleared', `test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`, 'human_judgment');
   }
   if (s.mergeableState === 'conflicting') pushBlocking('mergeable_conflicting', 'base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）', 'human_judgment');
+  if (s.prClosesStatus === 'missing') pushBlocking('pr_closes_missing', 'PR body に `Closes #<issue>` 行が無い（PR 作成後の決定論検証で欠落を検出し、本文の再投入も失敗）— merge しても issue が自動 close されないため本文の再投入が必要（決定論再チェックで解消しうる）', 'deterministic_recheck');
   if (s.trustGate != null && s.trustGate.blocking === true && s.trustGate.verdict !== 'pass') {
     pushBlocking('trust_gate', `EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`, 'human_judgment');
   }

@@ -121,6 +121,10 @@ export const DEV_FLOW_SCENARIOS = {
   },
   // Validate red → green-fix#1 → test#2 green
   'green-fix': { overrides: { 'test#1': { tests: 'failed', green: false, summary: 'assert mismatch' } } },
+  // PR body に Closes 行が無い → closes-reinject → closes-recheck（既定 responder で Closes 付き body。issue #661）
+  'closes-reinject': {
+    overrides: { 'closes-check': { ok: true, body: '**x**\n\n## 変更\n（なし）\n' } },
+  },
   // clean micro lite route（pr-review-lite + ci-check-lite で lgtm 終端、nested pr-iterate 起動なし）
   lite: {
     overrides: {

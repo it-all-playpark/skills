@@ -326,6 +326,10 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
       };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'AAA', empty: false };
+    // Closes 行の決定論検証 / 再投入 / AC checkbox 同期（issue #661）の既定応答。
+    // 既定 run は Closes 行付きの body を返し 'verified' に倒す。再投入・同期の gh pr edit も既定成功。
+    if (label === 'closes-check' || label === 'closes-recheck') return { ok: true, body: `Closes #${issue}\n` };
+    if (label === 'closes-reinject' || label === 'ac-checkbox-sync') return { edited: true };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'post-summary') return { posted: true, method: 'gh', url: 'http://x', epoch: 2000 };
     if (label.startsWith('journal-save')) return { saved: true };
