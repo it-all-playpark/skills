@@ -55,6 +55,10 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- 新規 finding の報告・feedback の付与・コード修正・追加検証 loop の要求は禁止（出力は ac_results のみが使われる）。',
     '- satisfied:true / false のいずれでも非空 evidence 必須（file:line / テスト名 / 実行結果）。index 不完全・evidence 欠落は出力全体が unavailable 扱いとなり merge tier が HOLD になる。',
     '- UI に関する AC は渡された final UI raw checks を根拠に判定する。final UI 検証が failed_open / setup_failed / 未実行の場合、inspection のみで satisfied:true にせず satisfied:false として理由を evidence に書く。',
+    '- prompt に「final 再評価対象 item 一覧」が渡された場合、各 item を fix 後の最終 PR tree で再検証し、item_resolutions:[{id, resolution, evidence}] で全件返す。resolution は resolved（指摘内容が最終 tree で解消されている — revert / 修正済み等）/ ci_delegated（ローカルでは実行不能だが PR CI が同等の検証を実行する — build / compose / e2e 等）/ unresolved の 3 値のみ。',
+    '- id は渡された id をそのまま返す。resolved / ci_delegated は具体的 evidence 必須（commit / file:line / 該当 CI check 名）。evidence のない resolved / ci_delegated は無視され未解消のまま表示される。',
+    '- item_resolutions は表示専用で checked / merge tier / HOLD 判定は変えない（ESCALATE は解消済みでも HOLD のまま人がマージ可否を判断する）。',
+    '- ac_results の契約（全 AC ちょうど 1 回・追加禁止）は item_resolutions の有無に関わらず不変。',
   ].join('\n'),
 }
 

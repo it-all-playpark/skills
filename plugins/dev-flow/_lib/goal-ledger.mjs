@@ -1,11 +1,15 @@
 // Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
-// item = { id, text, dimension, severity, source, checked, evidence, check, floor, triaged, triaged_evidence }
+// item = { id, text, dimension, severity, source, checked, evidence, check, floor, triaged, triaged_evidence,
+//          final_resolution, final_evidence }
 //   severity: 'critical' | 'major' | 'minor'
 //   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep' | 'concern' | 'analyze' | 'implement'
 //   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
 //   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
 //   triaged:  boolean | undefined  (表示専用。checked とは独立。gate/収束/merge tier には不使用)
 //   triaged_evidence: string | null | undefined  (triaged:true のときの根拠)
+//   final_resolution: 'resolved'|'ci_delegated'|'unresolved'|undefined（表示専用。Final AC reconcile
+//     時の fix 後 tree 再評価結果。checked とは独立で gate/収束/merge tier には不使用）
+//   final_evidence: string|null|undefined
 //
 // lane 分類（blocking/advisory）は _lib/gate-policy.mjs の gateLane(item, policy) に一本化。
 // 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
@@ -55,6 +59,19 @@ export function triageItem(ledger, id, evidence) {
   if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
   const items = ledger.items.slice();
   items[idx] = { ...items[idx], triaged: true, triaged_evidence: evidence ?? null };
+  return { ...ledger, items };
+}
+
+// final_resolution: Final AC reconcile evaluator が「fix 後の最終 tree で再検証した結果」を付ける
+// 表示専用フィールド（issue #658）。FINAL_ITEM_RESOLUTIONS は _lib/final-ac-reconcile.mjs
+// （canonical は import 不可のため重複定義）。checked / evidence / triaged は変えない（純粋関数）。
+export function setFinalResolution(ledger, id, resolution, evidence) {
+  // FINAL_ITEM_RESOLUTIONS は _lib/final-ac-reconcile.mjs（canonical は import 不可のため重複定義）
+  if (!['resolved', 'ci_delegated', 'unresolved'].includes(resolution)) throw new Error(`goal-ledger: 不正な final_resolution "${resolution}"`);
+  const idx = ledger.items.findIndex((it) => it.id === id);
+  if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
+  const items = ledger.items.slice();
+  items[idx] = { ...items[idx], final_resolution: resolution, final_evidence: evidence ?? null };
   return { ...ledger, items };
 }
 

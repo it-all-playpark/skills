@@ -2,7 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
   makeLedger, topicKey, canAppend, appendItem,
-  checkItem, nextRound, setCheck, triageItem,
+  checkItem, nextRound, setCheck, triageItem, setFinalResolution,
 } from './goal-ledger.mjs';
 import { gateLane, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 
@@ -124,6 +124,37 @@ test('U1: 昇格済み AC への再昇格は skip と同値（no-op 性）', () 
   const item2 = l2.items.find((i) => i.id === 'AC-1');
 
   assert.deepEqual(item2, item1); // skip == 再実行の同値性
+});
+
+// issue #658: final_resolution/final_evidence は表示専用で checked/evidence/triaged を変えない
+test('setFinalResolution: final_resolution + final_evidence を付け checked/evidence/triaged は不変', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  const triaged = triageItem(ledger, 'A', 'triage理由');
+  const l2 = setFinalResolution(triaged, 'A', 'resolved', 'commit abc123 で revert 済み');
+  assert.equal(l2.items[0].final_resolution, 'resolved');
+  assert.equal(l2.items[0].final_evidence, 'commit abc123 で revert 済み');
+  assert.equal(l2.items[0].checked, false);
+  assert.equal(l2.items[0].evidence, null);
+  assert.equal(l2.items[0].triaged, true);
+  assert.equal(l2.items[0].triaged_evidence, 'triage理由');
+});
+test('setFinalResolution: evidence 省略時は final_evidence が null に正規化される', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  const l2 = setFinalResolution(ledger, 'A', 'unresolved');
+  assert.equal(l2.items[0].final_resolution, 'unresolved');
+  assert.equal(l2.items[0].final_evidence, null);
+});
+test('setFinalResolution: 元 ledger を mutate しない', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  setFinalResolution(ledger, 'A', 'ci_delegated', 'CI check X で検証');
+  assert.equal(ledger.items[0].final_resolution, undefined);
+});
+test('setFinalResolution: 未知 id は throw', () => {
+  assert.throws(() => setFinalResolution(makeLedger(), 'X', 'resolved', 'e'), /未知の item id/);
+});
+test('setFinalResolution: enum 外 resolution は throw', () => {
+  const { ledger } = appendItem(makeLedger(), ac({ id: 'A' }));
+  assert.throws(() => setFinalResolution(ledger, 'A', 'partially', 'e'), /不正な final_resolution/);
 });
 
 test('U2: 単調不可逆性（checked を true→false に戻す経路が無い）', () => {

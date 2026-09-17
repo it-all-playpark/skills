@@ -33,7 +33,10 @@ Merge tier を pr-iterate の後に置くのは、fix 適用後の最終 tree �
 reconcile を行い、merge 判定を最新の PR 内容に基づかせるため。pr-iterate が fix を適用した run では
 Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite を一発再実行する（red / 再検証
 不能は merge tier HOLD。fixes_applied=0 は agent 呼び出しゼロで skip）。再検証不能時は PR head sha に
-pin した CI check の決定論判定で代替し、成立しなければ HOLD を維持する。
+pin した CI check の決定論判定で代替し、成立しなければ HOLD を維持する。final test が green/ci_verified
+のときは同じ targeted evaluator 呼び出し（Final AC reconcile）が既存 AC の最終 tree 再検証に加え、
+未解消 advisory / ESCALATE item の fix 後 tree 再評価（item_resolutions。表示専用・checked 不変）も
+回収し、終端サマリーの「現状 / 対応」列に反映する。
 
 shape ごとの経路（3 tier）:
 

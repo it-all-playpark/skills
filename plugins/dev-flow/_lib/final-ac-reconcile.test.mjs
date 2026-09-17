@@ -4,6 +4,8 @@ import {
   FINAL_AC_RECONCILE_VALUES,
   shouldRunFinalAcReconcile,
   validateFinalAcResults,
+  FINAL_ITEM_RESOLUTIONS,
+  validateFinalItemResolutions,
 } from './final-ac-reconcile.mjs';
 
 // ---- (1) FINAL_AC_RECONCILE_VALUES ----
@@ -407,4 +409,100 @@ test('validateFinalAcResults: 全件 satisfied:true → unsatisfiedIndexes は�
   );
   assert.equal(result.ok, true);
   assert.deepEqual(result.unsatisfiedIndexes, []);
+});
+
+// ---- (4) FINAL_ITEM_RESOLUTIONS / validateFinalItemResolutions (issue #658) ----
+
+test('FINAL_ITEM_RESOLUTIONS は resolved/ci_delegated/unresolved の 3 値配列', () => {
+  assert.deepEqual(FINAL_ITEM_RESOLUTIONS, ['resolved', 'ci_delegated', 'unresolved']);
+});
+
+test('validateFinalItemResolutions: null 入力 → accepted:[] rejected:[]', () => {
+  assert.deepEqual(validateFinalItemResolutions(null, ['A']), { accepted: [], rejected: [] });
+});
+test('validateFinalItemResolutions: undefined 入力 → accepted:[] rejected:[]', () => {
+  assert.deepEqual(validateFinalItemResolutions(undefined, ['A']), { accepted: [], rejected: [] });
+});
+test('validateFinalItemResolutions: 配列でない → not_array', () => {
+  assert.deepEqual(validateFinalItemResolutions({ id: 'A' }, ['A']), {
+    accepted: [],
+    rejected: [{ index: -1, reason: 'not_array' }],
+  });
+});
+test('validateFinalItemResolutions: 要素が object でない → invalid_item', () => {
+  const result = validateFinalItemResolutions(['not-an-object'], ['A']);
+  assert.deepEqual(result, { accepted: [], rejected: [{ index: 0, reason: 'invalid_item' }] });
+});
+test('validateFinalItemResolutions: 要素が null → invalid_item', () => {
+  const result = validateFinalItemResolutions([null], ['A']);
+  assert.deepEqual(result, { accepted: [], rejected: [{ index: 0, reason: 'invalid_item' }] });
+});
+test('validateFinalItemResolutions: 要素が配列 → invalid_item', () => {
+  const result = validateFinalItemResolutions([['A', 'resolved', 'e']], ['A']);
+  assert.deepEqual(result, { accepted: [], rejected: [{ index: 0, reason: 'invalid_item' }] });
+});
+test('validateFinalItemResolutions: 未知 id → unknown_id', () => {
+  const result = validateFinalItemResolutions(
+    [{ id: 'ESCALATE-9', resolution: 'resolved', evidence: 'commit abc' }],
+    ['ESCALATE-1'],
+  );
+  assert.deepEqual(result, { accepted: [], rejected: [{ index: 0, reason: 'unknown_id' }] });
+});
+test('validateFinalItemResolutions: 同 id 2 回目以降 → duplicate_id', () => {
+  const result = validateFinalItemResolutions(
+    [
+      { id: 'ESCALATE-1', resolution: 'resolved', evidence: 'commit abc' },
+      { id: 'ESCALATE-1', resolution: 'unresolved', evidence: null },
+    ],
+    ['ESCALATE-1'],
+  );
+  assert.deepEqual(result.accepted, [{ id: 'ESCALATE-1', resolution: 'resolved', evidence: 'commit abc' }]);
+  assert.deepEqual(result.rejected, [{ index: 1, reason: 'duplicate_id' }]);
+});
+test('validateFinalItemResolutions: enum 外 resolution → invalid_resolution', () => {
+  const result = validateFinalItemResolutions(
+    [{ id: 'A', resolution: 'partially', evidence: 'e' }],
+    ['A'],
+  );
+  assert.deepEqual(result, { accepted: [], rejected: [{ index: 0, reason: 'invalid_resolution' }] });
+});
+test('validateFinalItemResolutions: resolved で evidence 欠落 → empty_evidence', () => {
+  const result = validateFinalItemResolutions([{ id: 'A', resolution: 'resolved' }], ['A']);
+  assert.deepEqual(result, { accepted: [], rejected: [{ index: 0, reason: 'empty_evidence' }] });
+});
+test('validateFinalItemResolutions: ci_delegated で evidence 空白のみ → empty_evidence', () => {
+  const result = validateFinalItemResolutions(
+    [{ id: 'A', resolution: 'ci_delegated', evidence: '   ' }],
+    ['A'],
+  );
+  assert.deepEqual(result, { accepted: [], rejected: [{ index: 0, reason: 'empty_evidence' }] });
+});
+test('validateFinalItemResolutions: unresolved は evidence 任意（非 string は null に正規化）', () => {
+  const result = validateFinalItemResolutions([{ id: 'A', resolution: 'unresolved' }], ['A']);
+  assert.deepEqual(result, { accepted: [{ id: 'A', resolution: 'unresolved', evidence: null }], rejected: [] });
+});
+test('validateFinalItemResolutions: unresolved で evidence に非 string を渡しても null 正規化', () => {
+  const result = validateFinalItemResolutions([{ id: 'A', resolution: 'unresolved', evidence: 123 }], ['A']);
+  assert.deepEqual(result, { accepted: [{ id: 'A', resolution: 'unresolved', evidence: null }], rejected: [] });
+});
+test('validateFinalItemResolutions: accepted は入力順（複数件・混在）', () => {
+  const result = validateFinalItemResolutions(
+    [
+      { id: 'B', resolution: 'ci_delegated', evidence: 'PR CI の e2e check' },
+      { id: 'A', resolution: 'resolved', evidence: 'commit abc revert 済み' },
+      { id: 'C', resolution: 'unknown-enum', evidence: 'x' },
+    ],
+    ['A', 'B', 'C'],
+  );
+  assert.deepEqual(result.accepted, [
+    { id: 'B', resolution: 'ci_delegated', evidence: 'PR CI の e2e check' },
+    { id: 'A', resolution: 'resolved', evidence: 'commit abc revert 済み' },
+  ]);
+  assert.deepEqual(result.rejected, [{ index: 2, reason: 'invalid_resolution' }]);
+});
+test('validateFinalItemResolutions: 入力配列を mutate しない', () => {
+  const input = [{ id: 'A', resolution: 'resolved', evidence: 'e' }];
+  const inputCopy = JSON.parse(JSON.stringify(input));
+  validateFinalItemResolutions(input, ['A']);
+  assert.deepEqual(input, inputCopy);
 });
