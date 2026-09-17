@@ -78,6 +78,7 @@ const EXPECTED_DEV_FLOW = {
 const EXPECTED_PR_ITERATE = {
   'pr-meta': RO,
   'ci-check#*': RO,
+  'ci-wait#*': RO,
   'isolation-cleanup': RW,
   'isolation-probe': WO,
   'commit-ensure#*': RW,
@@ -112,6 +113,10 @@ async function runPrIterate() {
   const { ctx, calls } = makePrIterateSandbox({
     overrides: {
       'review#1': { decision: 'request_changes', issues: [{ severity: 'major', topic: 't', file: 'a.js', line: 1, description: 'd', suggestion: null }], summary: 'ng' },
+      // review#2 は approve（既定 responder）→ ci_gate に到達。ci-check#2 を pending にし、
+      // ci-wait#2-1 経由で ci-check#2.2 が passed になる script 側ループを踏ませる（issue #663）。
+      'ci-check#2': { status: 'pending', failed_checks: [] },
+      'ci-check#2.2': { status: 'passed', failed_checks: [] },
     },
   });
   const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');

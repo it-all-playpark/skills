@@ -308,13 +308,13 @@ flowchart TD
     LOOP --> REV["pr-reviewer が実 diff を宣言意図に照合<br/>issue の acceptance criteria も判定に含める"]
     REV --> D{"decision"}
 
-    D -->|approve| CI["ci-check<br/>gh pr checks → check-ci.sh でポーリング"]
+    D -->|approve| CI["ci-check 1 spawn = 1 判定<br/>gh pr checks → check-ci.sh<br/>pending なら script 側 ci-wait ループ（上限 CI_WAIT_CEILING_SECONDS）"]
     D -->|"request_changes / comment"| BL{"blocking findings あり ?"}
 
     CI --> CS{"status"}
     CS -->|"passed / no_checks"| LGTM["status: lgtm"]
     CS -->|error| ERR["status: ci_error<br/>gh API 失敗（auth / network）"]
-    CS -->|pending| PEND["status: ci_pending<br/>never auto-approve"]
+    CS -->|pending| PEND["status: ci_pending<br/>ceiling 到達・never auto-approve"]
     CS -->|failed| CIF["CI failure を findings 化"]
 
     CIF --> STK1{"同一 topic が反復 ?"}
@@ -422,6 +422,7 @@ tier は動かない。
 | `BLOCK_MAX` | 2 | BLOCKED 由来の再計画 |
 | `AMBIGUITY_MAX` | 2 | 超過で needs_clarification |
 | `REVIEW_STUCK` | 2 | pr-iterate の同一 topic 反復での stuck 判定 |
+| `CI_WAIT_CEILING_SECONDS` | 300 | pr-iterate の CI pending 待ち（script 側 ci-wait ループ）の nominal 総待機上限（秒） |
 
 <!-- atlas:loop-constants:end -->
 

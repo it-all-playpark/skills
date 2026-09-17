@@ -39,8 +39,9 @@ plugin version を上げた直後の解決確認は、**update 後に起動し�
 > exec-proxy prompt は決定論スクリプトへの verbatim 転写契約であり、起動形の正しさは
 > excludedCommands という設定側の不変条件である。設定の正当化は本ファイルと AGENTS.md に一箇所だけ
 > 置き、per-prompt で再説明しない（prompt 内の再説明は転写契約に判断余地を持ち込み、下流の prompt へ
-> 引用・増幅される）。**例外はない**。wall-clock polling を要するサイトも例外ではなく、fetch と sleep を
-> 呼び出し側（prompt の attempt ループ）へ置き、スクリプトは snapshot 1 枚に対する純変換に保つ
+> 引用・増幅される）。**例外はない**。wall-clock polling を要するサイトも例外ではなく、fetch は
+> exec-proxy の 1 spawn = 1 判定（`ci-check`）、sleep は workflow script 側のループが別 exec-proxy
+> （`ci-wait`: `sleep <秒>` の bare 単文）で行い、スクリプトは snapshot 1 枚に対する純変換に保つ
 > （`check-ci` が precedent）。
 >
 > `check-ci.sh` は入力方式を file 中継から argv データ渡しへ切り替えている: 呼び出し側 agent が
@@ -54,9 +55,12 @@ plugin version を上げた直後の解決確認は、**update 後に起動し�
 > 有効な JSON array としてパースできなくなるため `check-ci.sh` は non-array 経路の `status:'error'`
 > （fail-safe）に落ちる — 一部 check が欠落したまま有効な配列としてパースされる wrong-green にはならない。
 >
-> 呼び出し側ループは subagent の `maxTurns` を消費する（fetch / 純変換 / sleep / 最後の StructuredOutput がそれぞれ 1 turn）。
-> attempt 数を調整するときは `attempt 数 × 2 + (attempt 数 - 1) + 1 + CI_TURN_MARGIN` が当該 agent の `maxTurns` を超えないこと
-> （現行 `ci-check`: 3 attempts × 45s = 90s ceiling / 必要 12 turns、`dev-runner-haiku-ro` の maxTurns 15。`_lib/ci-check.test.mjs` が pin）。
+> polling ループを subagent 内に置いてはならない（issue #621/#663）。`ci-check` は 1 spawn = 1 判定
+> （gh fetch / 純変換 / StructuredOutput で 3 turn + CI_TURN_MARGIN = 6）、待機は pr-iterate.js の
+> script 側ループが `ci-wait` exec-proxy（`sleep 45` + StructuredOutput で 2 turn + CI_TURN_MARGIN = 5）
+> で挟む。総待機上限は `CI_WAIT_CEILING_SECONDS`=300（nominal。45 秒刻みで最大 6 wait・7 poll）、到達時は
+> `ci_pending` 終端（`ci_error` にしない）。どちらの spawn も `dev-runner-haiku-ro` の maxTurns 15 を
+> 超えない（`_lib/ci-check.test.mjs` が agent md を実読して pin）。
 
 exec-proxy と inline generator は harness-capability-bound な橋（W7 表の capability-bound クラスとは
 別の軸: LLM judge 能力依存ではなく harness 機能依存）。workflow runtime に fs / exec が無いという
@@ -95,6 +99,7 @@ teardown / journal 書き込み / PR コメント投稿（post-review / post-sum
 | ui-verify（`ui-verify-server.sh` / ui-verifier） | `ok:false` / `null` / schema 不一致 | fail-open（skip + telemetry `failed_open`。install 失敗のみ `setup_failed` で区別） | advisory な UI 検証の補助信号。失敗しても既存の deterministic gate を緩めない。teardown は workflow 側 try/finally + 冪等 stop で保証 |
 | ci-checks（`gh pr checks`。merge-tier-facts の checks サブ結果） | checks サブ結果 `ok:false` / schema 不一致 / 該当 check 不在（env_key ごとの check-name regex 不一致） / pending | fail-open（対象 ENV item（turbopack-sandbox / bats-sandbox）据え置き、警告 log のみ） | advisory な環境ノート auto-close の補助信号。判定は envChecksGreen（決定論）のみで LLM に委ねず、失敗しても deterministic gate・merge tier 判定を変えない（軸A 不変） |
 | ci-check（pr-iterate CI gate / dev-flow `ci-check-lite`。`gh pr checks` → `check-ci.sh` の argv 転写 2 単文） | `null` / schema 不一致 / agent throw（StructuredOutput 未返却・proxy 実行失敗） | fail-open（throw/null は呼び出し側で吸収。pr-iterate では `status:'error'` を合成して既存の terminal `ci_error` へ流し人間へエスカレーション — run は abort しない。dev-flow `ci-check-lite` では full `pr-iterate` への委譲へ fallback） | CI 状態不明を green と同一視しない（軸A 不変）まま、exec-proxy の実行失敗が run 全体を落とす経路を除去する |
+| ci-wait（pr-iterate CI gate の script 側 poll ループが挟む `sleep <秒>` の bare 単文） | `null` / schema 不一致 / agent throw | fail-open（返り値を読まず nominal に CI_POLL_SECONDS を積算して次の ci-check 再 spawn へ進む。spawn 回数は CI_MAX_POLLS で有界） | sleep の失敗で run を落とさず、待機会計を決定論（nominal）に保つ。実時間が経っていなければ次の判定も pending になるだけで、上限到達で ci_pending 終端する |
 | validate-test（test#i / test#retry-i） | agent throw（EPERM 等の proxy 実行失敗・StructuredOutput 未返却） / 応答 `tests:'error'`（テストが 1 件も実行されなかった起動失敗 — proxy 自身の申告） | throw は fail-safe（当該 iteration を合成 red `tests:'failed'` として green-fix ループ継続。GREEN_MAX 到達で Evaluate へ委譲）。`tests:'error'` は green-fix を起動せず即 break（`no_tests` と同じ扱い。`val` は `green:false, tests:'error'` のまま Evaluate へ進み、Final reconcile の error → unavailable → ci-final 委譲に委ねる。本経路・retry 経路とも同一） | test proxy の実行失敗を run 即死にしない。red を green と同一視しない（軸A 決定論ゲート）。null→need() の中断経路は不変。起動失敗（依存未解決・TLS 失敗等の環境要因）はコード修正で解消しないため implementer を回しても Validate 時間を浪費するだけで、CI 委譲（ci-final）が正規の救済経路。`tests:'failed'`（実行された上での red）は従来どおり green-fix の対象 |
 | final-reconcile（reconcile-sync / test#final） | `null` / `ok:false` / schema 不一致 / 非 fast-forward / test#final throw / test#final `tests:'error'`（起動失敗で 1 件も実行されず） | fail-safe（`final_reconcile=unavailable` → merge tier HOLD。unavailable 時は ci-final 行の CI 委譲を試みる） | fix 適用後の最終 tree の test 状態不明を green と同一視しない（軸A 決定論ゲート）。throw も unavailable へ吸収。同様に changed-files-final / ui-verify-config-final は fail-open（UI 再判定・宣言外再監査 skip + 警告 log のみ。test gate は緩めない）。`tests:'error'` を `reverified`+red に潰すと CI 全 green でも救済経路（ci-final）に乗らず偽 HOLD になるため unavailable へ載せる。本物の red（`tests:'failed'`）は従来どおり reverified + HOLD で CI 委譲の対象にしない |
 | ci-final（`gh pr view --json headRefOid,statusCheckRollup` による Final reconcile unavailable 時の CI 委譲。reconcile-sync 成功時の head sha を期待値として finalCiVerdict が決定論判定） | `null` / `ok:false` / schema 不一致 / agent throw / headRefOid ≠ 期待 sha / pending / failure / check 0 件 / 期待 sha 無し（sync 失敗時は probe 自体を起動しない） | fail-closed（`final_reconcile=unavailable` 維持 → merge tier HOLD。sha 一致かつ全 success のときのみ `ci_verified` へ昇格） | 最終 tree の test 状態不明を green と同一視しない（軸A 決定論ゲート）まま、CI が同一 sha で同じ suite を回した証拠を人間に手で再実行させない。判定は純関数のみで LLM に委ねない。ENV auto-close の ci-checks（fail-open・tier 不変）とは別経路で、こちらは tier を変えるため sha pin を必須にする |

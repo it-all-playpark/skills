@@ -53,6 +53,7 @@ TodoWrite/Glob/Grep は持たない）。
 | `ci-checks` | CI checks の read（gh pr checks） | `CHECKS` |
 | `pr-meta` | PR metadata の read（`gh pr view --json mergeable,mergeStateStatus` による base branch conflict 検出） | `PR_META` |
 | `ci-check#<n>` | CI checks の read（pr-iterate Iterate 局面） | `CI_STATUS` |
+| `ci-wait#<i>-<k>` | CI 完了待ちの sleep（`sleep <秒>` の bare 単文。pr-iterate Iterate 局面の script 側 poll ループ） | `CI_WAIT` |
 
 ## Boundary
 

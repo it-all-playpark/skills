@@ -3828,7 +3828,7 @@ function finalCiVerdict({ expectedSha, meta }) {
 // ==== END inline: _lib/final-ci.mjs ====
 // ==== BEGIN inline: _lib/ci-check.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // ci-check: pr-iterate の CI gate（`ci-check#i`）と dev-flow lite route の `ci-check-lite` が
-// 共有する CI ステータス取得の契約 — attempt ループ定数 / StructuredOutput schema / prompt 本文。
+// 共有する CI ステータス取得の契約 — 定数 / StructuredOutput schema / prompt 本文。
 // I/O なし、gh なし、Date.now() 非決定性なし。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -3841,19 +3841,15 @@ function finalCiVerdict({ expectedSha, meta }) {
 // REVIEW schema をここに含めないのは、両者が実際に異なるため（dev-flow 側のみ clock telemetry の
 // 給電元として optional `epoch` を持つ）。統合すると pr-iterate の受理 schema が変わる。
 
-// Bounded wait for pending CI: CI_MAX_ATTEMPTS 回を CI_POLL_SECONDS 間隔で試すので
-// ceiling は (CI_MAX_ATTEMPTS-1)*CI_POLL_SECONDS = 90 秒。
-// agent は各 attempt で gh fetch + check-ci、attempt 間で sleep、最後に StructuredOutput で
-// それぞれ 1 turn を消費する。turn 会計:
-//   必要 turn = CI_MAX_ATTEMPTS * 2        // 各 attempt の gh fetch + check-ci
-//             + (CI_MAX_ATTEMPTS - 1)      // attempt 間の sleep
-//             + 1                          // StructuredOutput
-//             + CI_TURN_MARGIN             // 実測マージン
-// これが dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
-// 実読して pin する）。turn 不足だと StructuredOutput 未達 → 空応答 → fail-open で ci_error に
-// 落ち、benign な ci_pending として報告できなくなる（issue #621）。
-const CI_MAX_ATTEMPTS = 3;
-const CI_POLL_SECONDS = 45;
+// ci-check は 1 spawn = 1 判定。必要 turn = 2（gh fetch + check-ci）+ 1（StructuredOutput）
+// + CI_TURN_MARGIN = 6。ci-wait は 1（sleep）+ 1（StructuredOutput）+ CI_TURN_MARGIN = 5。
+// どちらも dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
+// 実読して pin）。CI 待ちのループは workflow script 側（pr-iterate.js）が持ち、CI 所要時間は
+// turn 会計に影響しない（issue #663。旧: agent 内 attempt ループで ceiling 90 秒、attempt 増で
+// StructuredOutput 未達 → ci_error に化けた issue #621）。
+const CI_POLL_SECONDS = 45; // script 側 ci-wait ループの poll 間隔（秒）
+const CI_WAIT_CEILING_SECONDS = 300; // script 側ループの nominal 総待機上限（秒）
+const CI_MAX_POLLS = Math.floor(CI_WAIT_CEILING_SECONDS / CI_POLL_SECONDS) + 1; // ci-check spawn 回数の上限
 // 実測マージン。文書化 worst case 8 tool call に対し実測 10 で StructuredOutput 未達だった差分に基づく。
 const CI_TURN_MARGIN = 3;
 
@@ -3881,8 +3877,8 @@ const CI_STATUS = {
         },
       },
     },
-    // ci-check の attempt ループの累積待機秒数 / ポーリング（gh fetch）回数（issue #324）。
-    // 待機なし（1 attempt で確定）でも script は常に返す。
+    // check-ci.sh が常に出す accounting キー（1 spawn = 1 判定では常に 0 / 1）。
+    // workflow は読まず script 側で積算する（issue #663）。
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
     // dev-flow の clock telemetry（issue #443）が iterate_end の給電元として読む optional epoch。
@@ -3908,21 +3904,51 @@ function ciCheckPrompt({ pr, repo }) {
     + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
     + `- 実行するスクリプト以外のファイルを変更しない\n\n`
     + `## Steps\n`
-    + `attempt=1 から開始し、次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ:\n`
     + `1. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
     + `2. \`check-ci --checks-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
-    + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>' `
-    + `--attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
+    + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'\` `
     + `を単文で実行し、stdout の JSON を読め。\n`
-    + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を単文で実行し、attempt を 1 増やして 1 へ戻れ。`
-    + `\`"done"\` なら 4 へ進め。\n`
-    + `4. 最後に得た stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。\n`
-    + `CI pending 時は最大 ${(CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS} 秒（${CI_POLL_SECONDS} 秒間隔）待ってから確定する。\n\n`
+    + `3. その stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。`
+    + `1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
     + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
     + `"waited_seconds": number, "poll_attempts": number }\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内。`;
+}
+
+// ci-wait exec-proxy の応答 schema — script 側 ci-wait ループの 1 poll 分の sleep 完了報告。
+const CI_WAIT = {
+  type: 'object',
+  required: ['slept'],
+  properties: {
+    slept: { type: 'boolean' },
+    seconds: { type: 'number' },
+  },
+};
+
+/**
+ * ci-wait exec-proxy の prompt を組み立てる純粋関数。
+ *
+ * @param {object} opts
+ * @param {number} opts.seconds - sleep 秒数
+ * @returns {string} dev-runner-haiku-ro へ渡す prompt
+ */
+function ciWaitPrompt({ seconds }) {
+  return `## Objective\nCI 完了待ちのため ${seconds} 秒待機し、結果 JSON を返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push, gh\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。ファイル・git を変更しない\n\n`
+    + `## Steps\n`
+    + `1. \`sleep ${seconds}\` を sleep を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。\n`
+    + `2. 完了したら {"slept": true, "seconds": ${seconds}} を返せ。\n\n`
+    + `## Output format\n`
+    + `{ "slept": boolean, "seconds": number }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
