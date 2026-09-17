@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Invariant (#571): bin/ exec ラッパーは playpark-core (journal 1本) と
-# dev-flow (24本) に分割される。plugin install 環境では skills が
+# dev-flow (25本) に分割される。plugin install 環境では skills が
 # plugin root 配下に入るため、絶対パス runtime 依存を断つ。
 #
 # 分割後もラッパーは plugin 境界を跨がない: 3 行目の target は
@@ -37,6 +37,7 @@ analyze-dev-flow-telemetry
 analyze-issue
 baseline-snapshot
 check-ci
+ci-wait
 compare-baseline
 cross-repo-artifacts
 detect-and-install
@@ -105,6 +106,7 @@ target_for() {
         worktree-diff-hash) echo "_shared/scripts/worktree-diff-hash.sh" ;;
         worktree-teardown) echo "_shared/scripts/worktree-teardown.sh" ;;
         check-ci) echo "pr-iterate/scripts/check-ci.sh" ;;
+        ci-wait) echo "pr-iterate/scripts/ci-wait.sh" ;;
         analyze-issue) echo "dev-issue-analyze/scripts/analyze-issue.sh" ;;
         hypothesis-check) echo "dev-flow-improve/scripts/hypothesis-check.sh" ;;
         analyze-dev-flow-telemetry) echo "dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh" ;;
@@ -157,7 +159,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象24本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象25本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]
