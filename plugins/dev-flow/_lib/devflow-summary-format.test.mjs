@@ -2714,6 +2714,39 @@ test('issue #658: holdReasons が null で mergeTier=HOLD -> 従来の Merge tie
   assert.ok(!body.includes('### HOLD になった理由と現状'), 'HOLD 理由テーブルは出ない');
 });
 
+test('PR#662 レビュー: mergeable_conflicting 単独 HOLD でも結論行が「修正作業が必要です」になる（HOLD 理由テーブルの対応列と矛盾しない）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['base branch と conflict'],
+    holdReasons: [{ code: 'mergeable_conflicting', reason: 'base branch と conflict', kind: 'human_judgment' }],
+    holdKind: 'human_judgment',
+  });
+  assert.ok(
+    body.includes('**結論: 自動マージ対象外（HOLD）。修正作業が必要です。「要対応」の ❌ 項目を修正してから再 review してください**'),
+    '結論行は修正作業が必要です',
+  );
+  assert.ok(body.includes('| base branch と conflict | base branch と conflict | conflict を解消して push する |'), 'HOLD 理由テーブルの対応列');
+});
+
+test('issue #662: changedFiles に .github/workflows/ 配下のファイルが含まれる場合、あなたがやること に workflow 初回実行確認行が出る（finalReconcile 非依存）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'REVIEW',
+    changedFiles: ['plugins/dev-flow/_lib/foo.mjs', '.github/workflows/ci.yml'],
+    finalReconcile: null,
+  });
+  assert.ok(body.includes('マージ後: 対象 workflow の初回実行を確認する'), 'workflow 変更検知行が出る');
+
+  const bodyNoWorkflow = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'REVIEW',
+    changedFiles: ['plugins/dev-flow/_lib/foo.mjs'],
+    finalReconcile: null,
+  });
+  assert.ok(!bodyNoWorkflow.includes('マージ後: 対象 workflow の初回実行を確認する'), 'workflow 変更が無ければ出ない');
+});
+
 test('issue #658 AC-3: disclosures は Merge tier 理由から除外され「参考」セクションへ回る（1 行もなければ参考自体が出ない）', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,

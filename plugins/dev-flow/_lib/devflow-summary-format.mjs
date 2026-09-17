@@ -70,6 +70,10 @@ const POST_MERGE_CHECK = {
  * @param {string[]|null|undefined} [opts.disclosures] - 可視化のみで HOLD 判定に寄与しない理由行（breaking keyword hit 等）。
  *   非 HOLD tier では Merge tier 理由の箇条書きから除外し「参考」セクションへ回す（HOLD tier は従来どおり
  *   mergeTierReasons を無加工で列挙する。issue #658）
+ * @param {string[]|null|undefined} [opts.changedFiles] - 変更ファイルパス一覧。`.github/workflows/` 配下の変更が
+ *   含まれる場合、あなたがやること に「マージ後: 対象 workflow の初回実行を確認する」を追加する
+ *   （config danger class は .env / config/*.yml / secret 代入のみを判定し .github/workflows/*.yml に
+ *   一致しないため、workflow 変更は別途 changedFiles から直接検出する。issue #662）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -106,6 +110,7 @@ export function buildDevflowSummaryBody({
   holdReasons,
   holdKind,
   disclosures,
+  changedFiles,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -217,13 +222,19 @@ export function buildDevflowSummaryBody({
 
   // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
   // 要判断・助言は含めない — 人間の判断のみで済む項目は「修正」ではない）。
+  // holdReasons に conflict/final_test_red/iterate_non_lgtm の code があれば、他の指標が
+  // 空でも修正必須と判定する（PR #662 レビュー: mergeable_conflicting 単独 HOLD で
+  // 結論行「修正作業は不要です」と HOLD 理由テーブルの対応列「conflict を解消して push する」が
+  // 自己矛盾していた）。
+  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm'];
   const fixRequired = uncheckedBlocking.length > 0
     || unsatisfiedAC.length > 0
     || uncleared.length > 0
     || testsurfClearance.some(tc => !tc.cleared)
     || finalTestGreen === false
     || (iterateStatus != null && iterateStatus !== 'lgtm')
-    || concerns.length > 0;
+    || concerns.length > 0
+    || (Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code)));
 
   const lines = [];
 
@@ -384,6 +395,15 @@ export function buildDevflowSummaryBody({
     seenDangerClasses.add(cls);
     const msg = POST_MERGE_CHECK[cls] ?? `danger class "${cls}" の変更箇所の初回動作を確認する`;
     youDoLines.push(`${youDoN}. マージ後: ${msg}`);
+    youDoN++;
+  }
+  // 4d. workflow ファイル変更検知（issue #662 レビュー: config danger class は .github/workflows/*.yml
+  // に一致しないため、finalReconcile==='ci_verified' 以外の経路では workflow 変更を含んでいても
+  // 「対象 workflow の初回実行確認」が出なかった）。changedFiles から直接判定する。
+  const changedFilesArr = Array.isArray(changedFiles) ? changedFiles : [];
+  const hasWorkflowChange = changedFilesArr.some((f) => /^\.github\/workflows\//.test(f));
+  if (hasWorkflowChange) {
+    youDoLines.push(`${youDoN}. マージ後: 対象 workflow の初回実行を確認する`);
     youDoN++;
   }
   if (finalReconcile === 'ci_verified') {
