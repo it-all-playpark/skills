@@ -891,7 +891,7 @@ const STATUS_HEADLINE = {
  * @param {string} opts.lastSummary - 最終サマリーテキスト
  * @param {string[]} [opts.lastVerificationEvidence] - 最終検証根拠リスト（任意）
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
- * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。ci-check の attempt ループ待機分）
+ * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。pr-iterate.js の script 側 ci-wait ループの積算）
  * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
  * @returns {string}
  */
@@ -1019,7 +1019,7 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 // ==== END inline: _lib/workflow-post-helpers.mjs ====
 // ==== BEGIN inline: _lib/ci-check.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // ci-check: pr-iterate の CI gate（`ci-check#i`）と dev-flow lite route の `ci-check-lite` が
-// 共有する CI ステータス取得の契約 — attempt ループ定数 / StructuredOutput schema / prompt 本文。
+// 共有する CI ステータス取得の契約 — 定数 / StructuredOutput schema / prompt 本文。
 // I/O なし、gh なし、Date.now() 非決定性なし。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -1032,19 +1032,21 @@ function bodySaveInstr(body, tmpPrefix, delimName) {
 // REVIEW schema をここに含めないのは、両者が実際に異なるため（dev-flow 側のみ clock telemetry の
 // 給電元として optional `epoch` を持つ）。統合すると pr-iterate の受理 schema が変わる。
 
-// Bounded wait for pending CI: CI_MAX_ATTEMPTS 回を CI_POLL_SECONDS 間隔で試すので
-// ceiling は (CI_MAX_ATTEMPTS-1)*CI_POLL_SECONDS = 90 秒。
-// agent は各 attempt で gh fetch + check-ci、attempt 間で sleep、最後に StructuredOutput で
-// それぞれ 1 turn を消費する。turn 会計:
-//   必要 turn = CI_MAX_ATTEMPTS * 2        // 各 attempt の gh fetch + check-ci
-//             + (CI_MAX_ATTEMPTS - 1)      // attempt 間の sleep
-//             + 1                          // StructuredOutput
-//             + CI_TURN_MARGIN             // 実測マージン
-// これが dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
-// 実読して pin する）。turn 不足だと StructuredOutput 未達 → 空応答 → fail-open で ci_error に
-// 落ち、benign な ci_pending として報告できなくなる（issue #621）。
-const CI_MAX_ATTEMPTS = 3;
-const CI_POLL_SECONDS = 45;
+// ci-check は 1 spawn = 1 判定。必要 turn = 2（gh fetch + check-ci）+ 1（StructuredOutput）
+// + CI_TURN_MARGIN = 6。ci-wait は 1（ci-wait script 実行）+ 1（StructuredOutput）+ CI_TURN_MARGIN = 5。
+// どちらも dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
+// 実読して pin）。CI 待ちのループは workflow script 側（pr-iterate.js）が持ち、CI 所要時間は
+// turn 会計に影響しない（issue #663。旧: agent 内 attempt ループで ceiling 90 秒、attempt 増で
+// StructuredOutput 未達 → ci_error に化けた issue #621）。
+// ci-wait は bare `sleep <秒>` を直接呼ばない: Bash tool は「呼び出し全体が sleep <N>」の
+// 単文を N が数秒を超えると拒否するため、待たずに失敗して ci-wait は null を返し、待機会計が
+// 実時間から乖離する。`ci-wait <秒>`（pr-iterate/scripts/ci-wait.sh）は内部で短い sleep を
+// チェーンして同じ総待機時間を作る 1 本のスクリプトで、Bash 呼び出し全体は非 sleep 先頭トークンの
+// bare 単文になる。実待機が成立した証拠は stdout の `slept:true` のみで、pr-iterate.js は
+// それ以外（null / throw / slept:false）を積算せず即 ci_pending 終端にする。
+const CI_POLL_SECONDS = 45; // script 側 ci-wait ループの poll 間隔（秒）
+const CI_WAIT_CEILING_SECONDS = 300; // script 側ループの nominal 総待機上限（秒）
+const CI_MAX_POLLS = Math.floor(CI_WAIT_CEILING_SECONDS / CI_POLL_SECONDS) + 1; // ci-check spawn 回数の上限
 // 実測マージン。文書化 worst case 8 tool call に対し実測 10 で StructuredOutput 未達だった差分に基づく。
 const CI_TURN_MARGIN = 3;
 
@@ -1072,8 +1074,8 @@ const CI_STATUS = {
         },
       },
     },
-    // ci-check の attempt ループの累積待機秒数 / ポーリング（gh fetch）回数（issue #324）。
-    // 待機なし（1 attempt で確定）でも script は常に返す。
+    // check-ci.sh が常に出す accounting キー（1 spawn = 1 判定では常に 0 / 1）。
+    // workflow は読まず script 側で積算する（issue #663）。
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
     // dev-flow の clock telemetry（issue #443）が iterate_end の給電元として読む optional epoch。
@@ -1099,21 +1101,51 @@ function ciCheckPrompt({ pr, repo }) {
     + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n`
     + `- 実行するスクリプト以外のファイルを変更しない\n\n`
     + `## Steps\n`
-    + `attempt=1 から開始し、次を最大 ${CI_MAX_ATTEMPTS} 回繰り返せ:\n`
     + `1. \`gh pr checks ${pr}${repo ? ' --repo ' + repo : ''} --json name,state,bucket\` を gh を先頭トークンとする bare 単文で実行せよ`
     + `（リダイレクト・パイプ・複合コマンドは使わない）。`
     + `このコマンドの exit code を判定に使ってはならない（pending で 8、失敗ありで 1 を返す仕様であり、fetch 自体の成否とは無関係）。\n`
     + `2. \`check-ci --checks-data '<手順1の stdout を一字一句そのまま。要約・整形・省略禁止>' `
-    + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>' `
-    + `--attempt <attempt> --max-attempts ${CI_MAX_ATTEMPTS} --poll-seconds ${CI_POLL_SECONDS}\` `
+    + `--fetch-error-data '<手順1の stderr を一字一句そのまま。stderr が空なら本オプション自体を省略>'\` `
     + `を単文で実行し、stdout の JSON を読め。\n`
-    + `3. その JSON の \`next_action\` が \`"poll"\` なら \`sleep ${CI_POLL_SECONDS}\` を単文で実行し、attempt を 1 増やして 1 へ戻れ。`
-    + `\`"done"\` なら 4 へ進め。\n`
-    + `4. 最後に得た stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。\n`
-    + `CI pending 時は最大 ${(CI_MAX_ATTEMPTS - 1) * CI_POLL_SECONDS} 秒（${CI_POLL_SECONDS} 秒間隔）待ってから確定する。\n\n`
+    + `3. その stdout JSON（{status, failed_checks, waited_seconds, poll_attempts, ...}）をそのまま返せ。要約・加工するな。`
+    + `1 回の取得で判定を確定させ、待機や再取得は行うな。\n\n`
     + `## Output format\n`
     + `{ "status": "passed"|"failed"|"pending"|"no_checks"|"error", "failed_checks": [{name, bucket, state}, ...], `
     + `"waited_seconds": number, "poll_attempts": number }\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内。`;
+}
+
+// ci-wait exec-proxy の応答 schema — script 側 ci-wait ループの 1 poll 分の sleep 完了報告。
+const CI_WAIT = {
+  type: 'object',
+  required: ['slept'],
+  properties: {
+    slept: { type: 'boolean' },
+    seconds: { type: 'number' },
+  },
+};
+
+/**
+ * ci-wait exec-proxy の prompt を組み立てる純粋関数。
+ *
+ * @param {object} opts
+ * @param {number} opts.seconds - 待機秒数
+ * @returns {string} dev-runner-haiku-ro へ渡す prompt
+ */
+function ciWaitPrompt({ seconds }) {
+  return `## Objective\nCI 完了待ちのため ${seconds} 秒待機し、結果 JSON を返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push, gh\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。ファイル・git を変更しない\n\n`
+    + `## Steps\n`
+    + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。\n`
+    + `2. stdout の JSON（{"slept": boolean, "seconds": number}）をそのまま返せ。要約・加工するな。\n\n`
+    + `## Output format\n`
+    + `{ "slept": boolean, "seconds": number }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
     + `JSON のみ。1 行以内。`;
@@ -1384,8 +1416,8 @@ let fixesApplied = 0  // fix.applied===true の累積回数（dev-flow が stale
 let fixNullRetries = 0  // fix agent が null または throw（schema 不一致・StructuredOutput 契約違反等の技術的失敗）で 1 回 retry した累積回数
 let reviewNullRetries = 0  // review agent が throw または null で schema-retry した累積回数
 let fixUncommittedRecovered = 0  // fix が applied:true なのに未コミット変更が残っており ensure-committed が commit+push で回収した回数
-let totalCiWaitSeconds = 0  // ci-check の attempt ループの累積待機秒数（全 ci-check ラウンド合算）
-let totalCiPollAttempts = 0  // 同上の累積ポーリング（gh fetch）回数
+let totalCiWaitSeconds = 0  // script 側 ci-wait ループの累積待機秒数（全 ci-check ラウンド合算）
+let totalCiPollAttempts = 0  // 同上の累積ポーリング（ci-check spawn）回数
 // 直近の ci-check#i 応答が返した epoch。dev-flow の iterate_end 給電元として返り値
 // end_epoch に載せる。応答が epoch を欠く/非数値なら更新せず、直前の値（または null）を保持する（fail-open）。
 let lastCiEpoch = null
@@ -1529,22 +1561,51 @@ for (i = 1; i <= MAX; i++) {
     // ここへ合流する。lgtm 確定時の投稿のみ decision で分岐する（approve でなければ捏造しない）。
     // pr-reviewer may LGTM the code but CI must also be green before we declare lgtm.
     // no_checks is treated as passing (consistent with e4e2b92: repos without CI are fine).
-    const ci = await failOpenAgent(
-      ciCheckPrompt({ pr: PR, repo: REPO }),
-      { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
-    )
-
-    if (ci == null) {
-      log(`⚠️ ci-check#${i} が結果を返さず — fail-open で status=error（ci_error 終端）扱い`)
+    //
+    // ci-check は 1 spawn = 1 判定。pending なら script 側で ci-wait（ci-wait exec-proxy）を
+    // 挟んで再 spawn する。待機は nominal 積算（ci-wait 回数 × CI_POLL_SECONDS）で、次の wait を足すと
+    // CI_WAIT_CEILING_SECONDS を超える時点で打ち切り、最後の判定（pending）で ci_pending 終端へ流す
+    // （spawn 回数の上限 CI_MAX_POLLS は ceiling から導出した同値の guard。ループ条件を変えても
+    // exec-proxy.md の「spawn 回数は CI_MAX_POLLS で有界」が黙って崩れないよう明示する）。
+    // ci-wait の返り値は slept===true のときだけ加算する: null / throw / slept:false は実待機が
+    // 成立していない証拠であり、nominal に加算すると実待機ゼロのまま poll を消費し尽くして誤った
+    // ci_wait_seconds を報告する。待機失敗を検出した時点で即座に ci_pending 終端へ流す
+    // （直前 ci-check の pending 判定を維持したままループを抜ける）。
+    // waited_seconds / poll_attempts の値は check-ci accounting と同じ意味（(N-1)×M / N）だが積算主体は script。
+    let ci = null
+    let ciEff = null
+    let gateWaited = 0   // この gate の nominal 累積待機秒
+    let gatePolls = 0    // この gate の ci-check spawn 回数
+    for (;;) {
+      gatePolls += 1
+      const ciLabel = gatePolls === 1 ? `ci-check#${i}` : `ci-check#${i}.${gatePolls}`
+      ci = await failOpenAgent(
+        ciCheckPrompt({ pr: PR, repo: REPO }),
+        { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: ciLabel, phase: 'Iterate' },
+      )
+      if (ci == null) log(`⚠️ ${ciLabel} が結果を返さず — fail-open で status=error（ci_error 終端）扱い`)
+      ciEff = ci ?? { status: 'error', failed_checks: [] }
+      if (Number.isFinite(ci?.epoch)) lastCiEpoch = ci.epoch
+      if (ciEff.status !== 'pending') break
+      if (gateWaited + CI_POLL_SECONDS > CI_WAIT_CEILING_SECONDS || gatePolls >= CI_MAX_POLLS) {
+        log(`iteration ${i}: CI pending のまま待機上限 ${CI_WAIT_CEILING_SECONDS}s / poll 上限 ${CI_MAX_POLLS} 回に到達（累積 ${gateWaited}s / poll ${gatePolls} 回）— ci_pending で終端`)
+        break
+      }
+      const waitResult = await failOpenAgent(
+        ciWaitPrompt({ seconds: CI_POLL_SECONDS }),
+        { agentType: 'dev-runner-haiku-ro', schema: CI_WAIT, label: `ci-wait#${i}-${gatePolls}`, phase: 'Iterate' },
+      )
+      if (waitResult?.slept !== true) {
+        log(`⚠️ iteration ${i}: ci-wait#${i}-${gatePolls} が実待機を報告しなかった（${waitResult == null ? 'null/throw' : 'slept=false'}）— 実待機ゼロを nominal 加算で隠さず ci_pending で終端（累積 ${gateWaited}s / poll ${gatePolls} 回）`)
+        break
+      }
+      gateWaited += CI_POLL_SECONDS
+      log(`iteration ${i}: CI pending — ${CI_POLL_SECONDS}s 待機して再判定（累積 ${gateWaited}s / 上限 ${CI_WAIT_CEILING_SECONDS}s）`)
     }
-    const ciEff = ci ?? { status: 'error', failed_checks: [] }
-
-    // waited_seconds/poll_attempts は route（passed/pending/failed/error）に関わらず常に加算する。
-    totalCiWaitSeconds += Number(ciEff.waited_seconds ?? 0)
-    totalCiPollAttempts += Number(ciEff.poll_attempts ?? 0)
-    if (Number.isFinite(ci?.epoch)) lastCiEpoch = ci.epoch
-    log(`iteration ${i}: ci-check waited_seconds=${ciEff.waited_seconds ?? 0} poll_attempts=${ciEff.poll_attempts ?? 0}`
-      + `（累積 waited=${totalCiWaitSeconds}s poll=${totalCiPollAttempts}）`)
+    // waited/poll は route（passed/pending/failed/error）に関わらず常に加算する（script 側積算）。
+    totalCiWaitSeconds += gateWaited
+    totalCiPollAttempts += gatePolls
+    log(`iteration ${i}: ci-check waited_seconds=${gateWaited} poll_attempts=${gatePolls}（累積 waited=${totalCiWaitSeconds}s poll=${totalCiPollAttempts}）`)
 
     if (ciEff.status === 'passed' || ciEff.status === 'no_checks') {
       lgtm = true

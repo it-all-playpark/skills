@@ -2,7 +2,7 @@
 // AC-1: pending -> passed で pr-iterate が LGTM へ進む。
 // AC-7: waited_seconds/poll_attempts が journal telemetry handoff / 終端サマリー / return に反映される。
 // issue #488: fetch は subagent の bare `gh pr checks`、check-ci.sh はその snapshot に対する
-// 純変換。ポーリングは呼び出し側（prompt の attempt ループ）が持つ。
+// 純変換。ポーリングは pr-iterate.js の script 側 ci-wait ループが持つ（issue #663）。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -149,10 +149,18 @@ test('[ci-wait-telemetry] ci-check#1 の prompt が bare gh fetch + check-ci 純
     ciCheck1.prompt.includes('check-ci --checks-data'),
     `ci-check#1 の prompt が check-ci を --checks-data 入力の純変換として呼ぶべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
   );
-  // bounded wait は呼び出し側が持つ: 3 attempts × 45s = ceiling 90s。
+  // bounded wait は script 側が持つ（issue #663）: prompt に attempt ループ・sleep 指示が無いこと。
   assert.ok(
-    ciCheck1.prompt.includes('--max-attempts 3 --poll-seconds 45'),
-    `ci-check#1 の prompt に --max-attempts 3 --poll-seconds 45 が含まれるべき。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+    !ciCheck1.prompt.includes('--max-attempts'),
+    `ci-check#1 の prompt に --max-attempts が含まれるべきでない（ポーリングは script 側ループが持つ）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+  );
+  assert.ok(
+    !ciCheck1.prompt.includes('--poll-seconds'),
+    `ci-check#1 の prompt に --poll-seconds が含まれるべきでない（ポーリングは script 側ループが持つ）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
+  );
+  assert.ok(
+    !/\bsleep\b/i.test(ciCheck1.prompt),
+    `ci-check#1 の prompt に sleep 指示が含まれるべきでない（sleep は ci-wait 専用 exec-proxy が持つ）。\nprompt: ${ciCheck1.prompt.slice(0, 900)}`,
   );
   // script 内ポーリング（--wait-seconds）は撤去済み。復活は exec-proxy 内 network I/O の再導入を意味する。
   assert.ok(
@@ -178,20 +186,20 @@ test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_se
   assert.equal(result?.status, 'lgtm', `2 回目の CI check で passed になり LGTM へ進むべきだが '${result?.status}' だった`);
   assert.equal(result?.iterations, 2, `2 iteration（1回目 failed→fix、2回目 passed）で終端するべきだが ${result?.iterations} だった`);
 
-  // 累積: 30+10=40 / 3+2=5
-  assert.equal(result?.ci_wait_seconds, 40, `result.ci_wait_seconds は累積 40 であるべきだが ${result?.ci_wait_seconds} だった`);
-  assert.equal(result?.ci_poll_attempts, 5, `result.ci_poll_attempts は累積 5 であるべきだが ${result?.ci_poll_attempts} だった`);
+  // script 側積算: wait 0 回 / poll 2 回（agent 報告値は読まない。issue #663）。
+  assert.equal(result?.ci_wait_seconds, 0, `result.ci_wait_seconds は script 側積算で 0 であるべきだが ${result?.ci_wait_seconds} だった`);
+  assert.equal(result?.ci_poll_attempts, 2, `result.ci_poll_attempts は script 側積算で 2 であるべきだが ${result?.ci_poll_attempts} だった`);
 
   // journal-save (stage1, issue #494) の telemetry handoff prompt に累積値が反映される
   const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
   assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
   assert.ok(
-    journalCall.prompt.includes('"ci_wait_seconds":40'),
-    `journal-log prompt に "ci_wait_seconds":40 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
+    journalCall.prompt.includes('"ci_wait_seconds":0'),
+    `journal-log prompt に "ci_wait_seconds":0 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
   );
   assert.ok(
-    journalCall.prompt.includes('"ci_poll_attempts":5'),
-    `journal-log prompt に "ci_poll_attempts":5 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
+    journalCall.prompt.includes('"ci_poll_attempts":2'),
+    `journal-log prompt に "ci_poll_attempts":2 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
   );
 
   // 終端サマリー投稿（post-summary）自体が行われたことは維持しつつ、本文の見出し文言ではなく

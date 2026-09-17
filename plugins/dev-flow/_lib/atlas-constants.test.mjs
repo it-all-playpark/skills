@@ -35,6 +35,7 @@ const EXPECTED_SOURCE = {
   BLOCK_MAX: devFlowPath,
   AMBIGUITY_MAX: devFlowPath,
   REVIEW_STUCK: prIteratePath,
+  CI_WAIT_CEILING_SECONDS: prIteratePath,
 };
 
 function readAtlasTable() {

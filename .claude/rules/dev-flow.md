@@ -68,11 +68,16 @@ paths:
 > exec-proxy prompt は決定論スクリプトへの verbatim 転写契約であり、起動形の正しさは
 > excludedCommands という設定側の不変条件である。設定の正当化は本ファイルと AGENTS.md に一箇所だけ
 > 置き、per-prompt で再説明しない（prompt 内の再説明は転写契約に判断余地を持ち込み、下流の prompt へ
-> 引用・増幅される）。**例外はない**。wall-clock polling を要するサイトも例外ではなく、fetch と sleep を
-> 呼び出し側（prompt の attempt ループ）へ置き、スクリプトは snapshot 1 枚に対する純変換に保つ
+> 引用・増幅される）。**例外はない**。wall-clock polling を要するサイトも例外ではなく、fetch は
+> exec-proxy の 1 spawn = 1 判定（`ci-check`）、sleep は workflow script 側のループが別 exec-proxy
+> （`ci-wait`: `ci-wait <秒>` の bare 単文。Bash tool が数秒超の bare `sleep` を拒否するため、
+> 内部で短い sleep をチェーンする専用 script を挟む）で行い、スクリプトは snapshot 1 枚に対する純変換に保つ
 > （`check-ci` が precedent）。
 >
-> attempt ループは subagent の maxTurns を消費する: `attempt 数 × 2 + (attempt 数 - 1) + 1 + CI_TURN_MARGIN` が当該 agent の `maxTurns` を超えないこと
+> polling ループを subagent 内に置いてはならない（turn 会計が CI 所要時間に連動し、StructuredOutput
+> 未達で `ci_error` に化ける）。ループは workflow script 側に置き、総待機上限は
+> `CI_WAIT_CEILING_SECONDS`（`_lib/ci-check.mjs`）で持つ。1 spawn の必要 turn（ci-check:
+> 2 + 1 + CI_TURN_MARGIN、ci-wait: 1 + 1 + CI_TURN_MARGIN）が当該 agent の `maxTurns` を超えないこと
 
 - exec-proxy と inline generator は harness-capability-bound な橋。再評価トリガ: harness が直接 exec / ESM import を解禁した時点で撤去（`/dev-flow-canary` → `run-diagnostics --canary` で再検証）
 

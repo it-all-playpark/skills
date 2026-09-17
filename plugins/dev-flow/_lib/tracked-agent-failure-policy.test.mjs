@@ -329,6 +329,17 @@ const PR_B5 = {
     'worktree-dirty-check': { dirty: false, files: 0 },
   },
 };
+// B6: review#1 が approve（既定）→ ci_gate で ci-check#1 が pending → script 側 ci-wait ループが
+// ci-wait#1-1（slept:true）を挟んで ci-check#1.2 で passed になり lgtm。ci-wait の応答が
+// slept:true でなければループは即 ci_pending 終端するため、ci-check#1.2 へ到達させるには
+// ci-wait#1-1 に実待機成立の応答を与える必要がある。
+const PR_B6 = {
+  overrides: {
+    'ci-check#1': { status: 'pending', failed_checks: [] },
+    'ci-wait#1-1': { slept: true, seconds: 45 },
+    'ci-check#1.2': { status: 'passed', failed_checks: [] },
+  },
+};
 
 async function runPrIterateBaseline(config) {
   const { ctx, calls } = makePrIterateSandbox({ args: '5', overrides: config.overrides });
@@ -362,6 +373,9 @@ const EXPECTED_PR_ITERATE = {
   'fix#1-retry': { config: PR_B3, policy: 'continue', reason: 'callFixAgent内try/catchで吸収しnullとしてfix_failed終端へ倒すfail-safe経路（fix-null-retry）' },
   'review#1-schema-retry': { config: PR_B4, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しnullとしてreview_contract_error終端へ倒すfail-safe経路' },
   'worktree-dirty-check': { config: PR_B5, policy: 'continue', reason: 'failOpenAgent経由。非lgtm終端のdirty検出はadvisory telemetryでunknownへ倒すfail-open' },
+  // ── issue #663: CI gate の script 側 ci-wait ループ ──
+  'ci-wait#1-1': { config: PR_B6, policy: 'continue', reason: 'failOpenAgent経由。wait proxy の throw/null は slept:true 不成立として積算せず ci_pending 終端へ流す（run は abort しない）' },
+  'ci-check#1.2': { config: PR_B6, policy: 'continue', reason: 'failOpenAgent経由。再 poll の throw/null は status:error に合成し ci_error へ流す' },
 };
 
 for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
@@ -375,7 +389,7 @@ for (const [label, spec] of Object.entries(EXPECTED_PR_ITERATE)) {
 }
 
 test('pr-iterate.js: 全 baseline で観測される label は EXPECTED_PR_ITERATE に登録されている', async () => {
-  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5];
+  const configs = [PR_B1, PR_B2, PR_B3, PR_B4, PR_B5, PR_B6];
   const observed = new Set();
   for (const config of configs) {
     const { calls } = await runPrIterateBaseline(config);
