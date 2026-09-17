@@ -330,10 +330,13 @@ const PR_B5 = {
   },
 };
 // B6: review#1 が approve（既定）→ ci_gate で ci-check#1 が pending → script 側 ci-wait ループが
-// ci-wait#1-1 を挟んで ci-check#1.2 で passed になり lgtm（issue #663）。
+// ci-wait#1-1（slept:true）を挟んで ci-check#1.2 で passed になり lgtm。ci-wait の応答が
+// slept:true でなければループは即 ci_pending 終端するため、ci-check#1.2 へ到達させるには
+// ci-wait#1-1 に実待機成立の応答を与える必要がある。
 const PR_B6 = {
   overrides: {
     'ci-check#1': { status: 'pending', failed_checks: [] },
+    'ci-wait#1-1': { slept: true, seconds: 45 },
     'ci-check#1.2': { status: 'passed', failed_checks: [] },
   },
 };
@@ -371,7 +374,7 @@ const EXPECTED_PR_ITERATE = {
   'review#1-schema-retry': { config: PR_B4, policy: 'continue', reason: 'callReviewAgent内try/catchで吸収しnullとしてreview_contract_error終端へ倒すfail-safe経路' },
   'worktree-dirty-check': { config: PR_B5, policy: 'continue', reason: 'failOpenAgent経由。非lgtm終端のdirty検出はadvisory telemetryでunknownへ倒すfail-open' },
   // ── issue #663: CI gate の script 側 ci-wait ループ ──
-  'ci-wait#1-1': { config: PR_B6, policy: 'continue', reason: 'failOpenAgent経由。sleep proxy の throw/null は nominal 積算で続行し、次の ci-check 再 spawn へ進む fail-open' },
+  'ci-wait#1-1': { config: PR_B6, policy: 'continue', reason: 'failOpenAgent経由。wait proxy の throw/null は slept:true 不成立として積算せず ci_pending 終端へ流す（run は abort しない）' },
   'ci-check#1.2': { config: PR_B6, policy: 'continue', reason: 'failOpenAgent経由。再 poll の throw/null は status:error に合成し ci_error へ流す' },
 };
 

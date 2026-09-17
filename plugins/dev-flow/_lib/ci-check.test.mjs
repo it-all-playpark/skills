@@ -136,9 +136,10 @@ test('ciCheckPrompt: check-ci を plugin bin/ の bare 名（先頭トークン�
   assert.ok(!p.includes('bash check-ci'), 'bash 前置を付けない');
 });
 
-test('[ci-check] ciWaitPrompt は seconds を sleep の bare 単文として展開し、ci-check 識別語を含まない', () => {
+test('[ci-check] ciWaitPrompt は seconds を ci-wait の bare 単文として展開し、ci-check 識別語や bare sleep を含まない', () => {
   const w = ciWaitPrompt({ seconds: 45 });
-  assert.ok(w.includes('`sleep 45`'), 'sleep 45 を bare 単文として含む');
+  assert.ok(w.includes('`ci-wait 45`'), 'ci-wait 45 を bare 単文として含む');
+  assert.ok(!/`sleep \d+`/.test(w), 'bare sleep 単文を含まない');
   assert.ok(!w.includes('check-ci'), 'check-ci を含んではならない');
   assert.ok(!w.includes('--checks-data'), '--checks-data を含んではならない');
   assert.ok(!w.includes('gh pr checks'), 'gh pr checks を含んではならない');

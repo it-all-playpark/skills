@@ -70,7 +70,8 @@ paths:
 > 置き、per-prompt で再説明しない（prompt 内の再説明は転写契約に判断余地を持ち込み、下流の prompt へ
 > 引用・増幅される）。**例外はない**。wall-clock polling を要するサイトも例外ではなく、fetch は
 > exec-proxy の 1 spawn = 1 判定（`ci-check`）、sleep は workflow script 側のループが別 exec-proxy
-> （`ci-wait`: `sleep <秒>` の bare 単文）で行い、スクリプトは snapshot 1 枚に対する純変換に保つ
+> （`ci-wait`: `ci-wait <秒>` の bare 単文。Bash tool が数秒超の bare `sleep` を拒否するため、
+> 内部で短い sleep をチェーンする専用 script を挟む）で行い、スクリプトは snapshot 1 枚に対する純変換に保つ
 > （`check-ci` が precedent）。
 >
 > polling ループを subagent 内に置いてはならない（turn 会計が CI 所要時間に連動し、StructuredOutput

@@ -43,7 +43,7 @@ test('[ci-wait-loop] pending → passed: ci-check#1 が pending、ci-wait#1-1 �
   const wait1 = calls.find((c) => c.label === 'ci-wait#1-1');
   assert.ok(wait1 != null, "label==='ci-wait#1-1' の呼び出しが存在するべき");
   assert.equal(wait1.agentType, 'dev-flow:dev-runner-haiku-ro', `ci-wait#1-1 の agentType が想定と異なる: ${wait1.agentType}`);
-  assert.ok(wait1.prompt.includes('`sleep 45`'), `ci-wait#1-1 の prompt に \`sleep 45\` が含まれるべき。prompt: ${wait1.prompt.slice(0, 500)}`);
+  assert.ok(wait1.prompt.includes('`ci-wait 45`'), `ci-wait#1-1 の prompt に \`ci-wait 45\` が含まれるべき。prompt: ${wait1.prompt.slice(0, 500)}`);
   assert.ok(!wait1.prompt.includes('check-ci'), `ci-wait#1-1 の prompt に check-ci が含まれるべきでない。prompt: ${wait1.prompt.slice(0, 500)}`);
 
   const journalCall = calls.find((c) => c.label === 'journal-save');
@@ -75,20 +75,33 @@ test('[ci-wait-loop] ceiling: 常に pending なら ci-wait 6 回 / ci-check 7 �
   assert.equal(ciWaitCalls.length, 6, `ci-wait# 呼び出しは 6 回であるべきだが ${ciWaitCalls.length} 回だった`);
 });
 
-test('[ci-wait-loop] ci-wait が null / throw でも nominal 積算され有界で終端する', async () => {
+test('[ci-wait-loop] ci-wait が slept!==true（null/throw）なら nominal 加算せず即 ci_pending 終端する', async () => {
   const overrides = {
+    'ci-check#1': { status: 'pending', failed_checks: [] },
     'ci-wait#1-1': () => { throw new Error('injected'); },
   };
-  for (let k = 1; k <= 7; k++) {
-    overrides[k === 1 ? 'ci-check#1' : `ci-check#1.${k}`] = { status: 'pending', failed_checks: [] };
-  }
 
-  const { result, error } = await run(overrides);
+  const { result, error, calls } = await run(overrides);
 
   assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.equal(result?.status, 'ci_pending', `ceiling 到達で ci_pending 終端すべきだが '${result?.status}' だった`);
-  assert.equal(result?.ci_poll_attempts, 7, `ci_poll_attempts は 7 であるべきだが ${result?.ci_poll_attempts} だった`);
-  assert.equal(result?.ci_wait_seconds, 270, `ci_wait_seconds は 270 であるべきだが ${result?.ci_wait_seconds} だった`);
+  assert.equal(result?.status, 'ci_pending', `ci-wait 失敗で ci_pending 終端すべきだが '${result?.status}' だった`);
+  assert.equal(result?.ci_poll_attempts, 1, `ci_poll_attempts は 1（ci-check#1 のみで打ち切り）であるべきだが ${result?.ci_poll_attempts} だった`);
+  assert.equal(result?.ci_wait_seconds, 0, `ci_wait_seconds は 0（実待機不成立を nominal 加算で隠さない）であるべきだが ${result?.ci_wait_seconds} だった`);
+
+  const ciCheckCalls = calls.filter((c) => c.label.startsWith('ci-check#'));
+  assert.equal(ciCheckCalls.length, 1, `ci-check# 呼び出しは ci-wait 失敗直後に打ち切られ 1 回であるべきだが ${ciCheckCalls.length} 回だった`);
+});
+
+test('[ci-wait-loop] ci-wait が slept:false を明示的に返しても nominal 加算せず即 ci_pending 終端する', async () => {
+  const { result, error } = await run({
+    'ci-check#1': { status: 'pending', failed_checks: [] },
+    'ci-wait#1-1': { slept: false, seconds: 45 },
+  });
+
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.equal(result?.status, 'ci_pending', `slept:false で ci_pending 終端すべきだが '${result?.status}' だった`);
+  assert.equal(result?.ci_wait_seconds, 0, `ci_wait_seconds は 0 であるべきだが ${result?.ci_wait_seconds} だった`);
+  assert.equal(result?.ci_poll_attempts, 1, `ci_poll_attempts は 1 であるべきだが ${result?.ci_poll_attempts} だった`);
 });
 
 test('[ci-wait-loop] failed は待たずに即 fix loop へ（ci-wait 0 回）', async () => {

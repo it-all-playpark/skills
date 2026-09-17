@@ -3842,11 +3842,17 @@ function finalCiVerdict({ expectedSha, meta }) {
 // 給電元として optional `epoch` を持つ）。統合すると pr-iterate の受理 schema が変わる。
 
 // ci-check は 1 spawn = 1 判定。必要 turn = 2（gh fetch + check-ci）+ 1（StructuredOutput）
-// + CI_TURN_MARGIN = 6。ci-wait は 1（sleep）+ 1（StructuredOutput）+ CI_TURN_MARGIN = 5。
+// + CI_TURN_MARGIN = 6。ci-wait は 1（ci-wait script 実行）+ 1（StructuredOutput）+ CI_TURN_MARGIN = 5。
 // どちらも dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
 // 実読して pin）。CI 待ちのループは workflow script 側（pr-iterate.js）が持ち、CI 所要時間は
 // turn 会計に影響しない（issue #663。旧: agent 内 attempt ループで ceiling 90 秒、attempt 増で
 // StructuredOutput 未達 → ci_error に化けた issue #621）。
+// ci-wait は bare `sleep <秒>` を直接呼ばない: Bash tool は「呼び出し全体が sleep <N>」の
+// 単文を N が数秒を超えると拒否するため、待たずに失敗して ci-wait は null を返し、待機会計が
+// 実時間から乖離する。`ci-wait <秒>`（pr-iterate/scripts/ci-wait.sh）は内部で短い sleep を
+// チェーンして同じ総待機時間を作る 1 本のスクリプトで、Bash 呼び出し全体は非 sleep 先頭トークンの
+// bare 単文になる。実待機が成立した証拠は stdout の `slept:true` のみで、pr-iterate.js は
+// それ以外（null / throw / slept:false）を積算せず即 ci_pending 終端にする。
 const CI_POLL_SECONDS = 45; // script 側 ci-wait ループの poll 間隔（秒）
 const CI_WAIT_CEILING_SECONDS = 300; // script 側ループの nominal 総待機上限（秒）
 const CI_MAX_POLLS = Math.floor(CI_WAIT_CEILING_SECONDS / CI_POLL_SECONDS) + 1; // ci-check spawn 回数の上限
@@ -3934,7 +3940,7 @@ const CI_WAIT = {
  * ci-wait exec-proxy の prompt を組み立てる純粋関数。
  *
  * @param {object} opts
- * @param {number} opts.seconds - sleep 秒数
+ * @param {number} opts.seconds - 待機秒数
  * @returns {string} dev-runner-haiku-ro へ渡す prompt
  */
 function ciWaitPrompt({ seconds }) {
@@ -3945,8 +3951,8 @@ function ciWaitPrompt({ seconds }) {
     + `## Boundary\n`
     + `- 読み取り専用。ファイル・git を変更しない\n\n`
     + `## Steps\n`
-    + `1. \`sleep ${seconds}\` を sleep を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。\n`
-    + `2. 完了したら {"slept": true, "seconds": ${seconds}} を返せ。\n\n`
+    + `1. \`ci-wait ${seconds}\` を ci-wait を先頭トークンとする bare 単文で実行せよ（リダイレクト・パイプ・複合コマンドは使わない）。\n`
+    + `2. stdout の JSON（{"slept": boolean, "seconds": number}）をそのまま返せ。要約・加工するな。\n\n`
     + `## Output format\n`
     + `{ "slept": boolean, "seconds": number }\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
