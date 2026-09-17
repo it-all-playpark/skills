@@ -9,6 +9,7 @@ import {
   newlyUncheckedSecClasses,
   classifyMergeableState,
   HOLD_REASON_KINDS,
+  HOLD_REASON_CODES,
   aggregateHoldKind,
   EVAL_STALENESS_VALUES,
 } from './merge-tier.mjs';
@@ -899,7 +900,7 @@ test('classifyMergeTier: evalVerdictFail 未指定/null/false は既存挙動と
   };
   const withoutFlag = classifyMergeTier({ ...baseInput });
   assert.deepEqual(withoutFlag, {
-    tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'], holdReasons: [], holdKind: null,
+    tier: 'REVIEW', reasons: ['標準 — 人間が LGTM して merge'], holdReasons: [], holdKind: null, disclosures: [],
   });
 
   const withNull = classifyMergeTier({ ...baseInput, evalVerdictFail: null });
@@ -1237,4 +1238,193 @@ test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来
 
   const rNull = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: null });
   assert.equal(rNull.tier, 'AUTO');
+});
+
+// ---- issue #658: HOLD_REASON_CODES + holdReasons[].code + disclosures ----
+
+test('HOLD_REASON_CODES は 14 の閉じた enum と一致', () => {
+  assert.deepEqual(HOLD_REASON_CODES, [
+    'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
+    'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
+    'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
+    'mergeable_conflicting', 'trust_gate',
+  ]);
+});
+
+test('classifyMergeTier: holdReasons[].code — escalate', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', escalateCount: 2 });
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('ESCALATE-TO-HUMAN'));
+  assert.ok(item, `holdReasons に ESCALATE 由来要素を含むべきだが: ${JSON.stringify(r.holdReasons)}`);
+  assert.equal(item.code, 'escalate');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — ledger_unconverged', () => {
+  const r = classifyMergeTier({ ...standardBase(), converged: false, iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('収束'));
+  assert.ok(item);
+  assert.equal(item.code, 'ledger_unconverged');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — ac_unsatisfied', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAc: true });
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('AC 未達'));
+  assert.ok(item);
+  assert.equal(item.code, 'ac_unsatisfied');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — final_reconcile_unavailable (finalCi 未指定)', () => {
+  const r = classifyMergeTier(baseCleanInput({ finalReconcile: 'unavailable' }));
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('Final reconcile 再検証不能'));
+  assert.ok(item);
+  assert.equal(item.code, 'final_reconcile_unavailable');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — final_reconcile_unavailable (finalCi あり)', () => {
+  const r = classifyMergeTier(baseCleanInput({
+    finalReconcile: 'unavailable',
+    finalCi: { verified: false, reason: 'pending', kind: 'deterministic_recheck', checkNames: ['Bats'], headRefOid: 'c'.repeat(40) },
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('Final reconcile 再検証不能'));
+  assert.ok(item);
+  assert.equal(item.code, 'final_reconcile_unavailable');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — iterate_non_lgtm', () => {
+  const r = classifyMergeTier({ ...autoBase(), iterateStatus: 'stuck', evalStaleness: 'none' });
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('非LGTM終端'));
+  assert.ok(item);
+  assert.equal(item.code, 'iterate_non_lgtm');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — hash_mismatch', () => {
+  const r = classifyMergeTier(baseCleanInput({
+    evalStaleness: 'hash_mismatch',
+    evalDiffHash: 'a'.repeat(40),
+    prDiffHash: 'b'.repeat(40),
+    staleDiffFiles: [],
+  }));
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => /hash/i.test(x.reason));
+  assert.ok(item);
+  assert.equal(item.code, 'hash_mismatch');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — mergeable_conflicting', () => {
+  const r = classifyMergeTier(baseCleanInput({ mergeableState: 'conflicting' }));
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('conflict'));
+  assert.ok(item);
+  assert.equal(item.code, 'mergeable_conflicting');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons の全要素は {code, reason, kind} のちょうど3キー', () => {
+  const r = classifyMergeTier({
+    ...standardBase(), converged: false, iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAc: true,
+  });
+  assert.equal(r.tier, 'HOLD');
+  assert.ok(r.holdReasons.length >= 2);
+  for (const item of r.holdReasons) {
+    assert.deepEqual(Object.keys(item).sort(), ['code', 'kind', 'reason']);
+  }
+});
+
+// ---- disclosures（issue #658）: 可視化のみ項目は reasons と disclosures 両方に載る ----
+
+test('disclosures: breakingKeyword のみ(keyword-alone) → HOLD/AUTO/REVIEW いずれも disclosures に開示 1 件、reasons 末尾にも同文が残る', () => {
+  // HOLD（converged:false + keyword-alone）
+  const hold = classifyMergeTier({
+    ...standardBase(), converged: false, breakingKeyword: true, iterateStatus: 'lgtm', evalStaleness: 'none',
+  });
+  assert.equal(hold.tier, 'HOLD');
+  assert.equal(hold.disclosures.length, 1);
+  assert.ok(hold.disclosures[0].includes('breaking keyword hit'));
+  assert.equal(hold.reasons[hold.reasons.length - 1], hold.disclosures[0]);
+
+  // AUTO（micro + docs/test-only + keyword-alone）
+  const auto = classifyMergeTier({ ...autoBase(), breakingKeyword: true, iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(auto.tier, 'AUTO');
+  assert.equal(auto.disclosures.length, 1);
+  assert.ok(auto.disclosures[0].includes('breaking keyword hit'));
+  assert.equal(auto.reasons[auto.reasons.length - 1], auto.disclosures[0]);
+
+  // REVIEW（standard + keyword-alone）
+  const review = classifyMergeTier({ ...standardBase(), breakingKeyword: true, iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(review.tier, 'REVIEW');
+  assert.equal(review.disclosures.length, 1);
+  assert.ok(review.disclosures[0].includes('breaking keyword hit'));
+  assert.equal(review.reasons[review.reasons.length - 1], review.disclosures[0]);
+});
+
+test('disclosures: evalVerdictFail:true → HOLD/AUTO/REVIEW いずれも disclosures に開示 1 件、reasons 末尾にも同文が残る', () => {
+  const hold = classifyMergeTier({
+    ...standardBase(), unsatisfiedAc: true, evalVerdictFail: true, iterateStatus: 'lgtm', evalStaleness: 'none',
+  });
+  assert.equal(hold.tier, 'HOLD');
+  assert.equal(hold.disclosures.length, 1);
+  assert.ok(hold.disclosures[0].includes('evaluator verdict=fail'));
+  assert.equal(hold.reasons[hold.reasons.length - 1], hold.disclosures[0]);
+
+  const auto = classifyMergeTier({ ...autoBase(), evalVerdictFail: true, iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(auto.tier, 'AUTO');
+  assert.equal(auto.disclosures.length, 1);
+  assert.ok(auto.disclosures[0].includes('evaluator verdict=fail'));
+  assert.equal(auto.reasons[auto.reasons.length - 1], auto.disclosures[0]);
+
+  const review = classifyMergeTier({ ...standardBase(), evalVerdictFail: true, iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(review.tier, 'REVIEW');
+  assert.equal(review.disclosures.length, 1);
+  assert.ok(review.disclosures[0].includes('evaluator verdict=fail'));
+  assert.equal(review.reasons[review.reasons.length - 1], review.disclosures[0]);
+});
+
+test('disclosures: finalReconcile:"ci_verified" → HOLD/AUTO/REVIEW いずれも disclosures に開示 1 件、reasons 末尾にも同文が残る', () => {
+  const finalCi = { verified: true, reason: 'ok', kind: null, checkNames: ['Bats', 'Node'], headRefOid: 'a'.repeat(40) };
+
+  const hold = classifyMergeTier(baseCleanInput({ unsatisfiedAc: true, finalReconcile: 'ci_verified', finalCi }));
+  assert.equal(hold.tier, 'HOLD');
+  assert.equal(hold.disclosures.length, 1);
+  assert.ok(hold.disclosures[0].includes('ci_verified'));
+  assert.equal(hold.reasons[hold.reasons.length - 1], hold.disclosures[0]);
+
+  const auto = classifyMergeTier(baseCleanInput({
+    shape: 'micro', docsOrTestOnly: true, finalReconcile: 'ci_verified', finalCi,
+  }));
+  assert.equal(auto.tier, 'AUTO');
+  assert.equal(auto.disclosures.length, 1);
+  assert.ok(auto.disclosures[0].includes('ci_verified'));
+  assert.equal(auto.reasons[auto.reasons.length - 1], auto.disclosures[0]);
+
+  const review = classifyMergeTier(baseCleanInput({ finalReconcile: 'ci_verified', finalCi }));
+  assert.equal(review.tier, 'REVIEW');
+  assert.equal(review.disclosures.length, 1);
+  assert.ok(review.disclosures[0].includes('ci_verified'));
+  assert.equal(review.reasons[review.reasons.length - 1], review.disclosures[0]);
+});
+
+test('disclosures: 開示ゼロなら disclosures は []（HOLD/AUTO/REVIEW とも）', () => {
+  const hold = classifyMergeTier({ ...standardBase(), unsatisfiedAc: true, iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(hold.tier, 'HOLD');
+  assert.deepEqual(hold.disclosures, []);
+
+  const auto = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(auto.tier, 'AUTO');
+  assert.deepEqual(auto.disclosures, []);
+
+  const review = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(review.tier, 'REVIEW');
+  assert.deepEqual(review.disclosures, []);
 });

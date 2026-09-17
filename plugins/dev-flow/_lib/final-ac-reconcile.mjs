@@ -95,3 +95,58 @@ export function validateFinalAcResults(acResults, acCount) {
 
   return { ok: true, results, unsatisfiedIndexes };
 }
+
+// goal-ledger item の final_resolution の 3 値 enum（issue #658）。
+export const FINAL_ITEM_RESOLUTIONS = ['resolved', 'ci_delegated', 'unresolved'];
+
+// Final AC reconcile evaluator が返す item_resolutions[]（ESCALATE / advisory item の「fix 後 tree
+// での再評価結果」）を fail-open で要素ごとに検証する純粋関数。入力を mutate しない。
+//
+// ac_results（validateFinalAcResults）は fail-closed（1 件でも不正なら全体 unavailable）だが、
+// item_resolutions は表示専用（ledger の checked / merge tier / HOLD 判定を変えない）のため、
+// 不正な要素だけを reject して有効な要素は採用する fail-open にする。表示のための任意情報が
+// 1 件不正なだけで再評価結果全体を捨てる理由がない。
+//
+// 返り値 { accepted: Array<{id, resolution, evidence}>, rejected: Array<{index, reason}> }
+// accepted は入力順。
+export function validateFinalItemResolutions(resolutions, targetIds) {
+  if (resolutions === null || resolutions === undefined) {
+    return { accepted: [], rejected: [] };
+  }
+  if (!Array.isArray(resolutions)) {
+    return { accepted: [], rejected: [{ index: -1, reason: 'not_array' }] };
+  }
+
+  const accepted = [];
+  const rejected = [];
+  const seenIds = new Set();
+
+  resolutions.forEach((item, index) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      rejected.push({ index, reason: 'invalid_item' });
+      return;
+    }
+    const { id, resolution, evidence } = item;
+    if (typeof id !== 'string' || !targetIds.includes(id)) {
+      rejected.push({ index, reason: 'unknown_id' });
+      return;
+    }
+    if (seenIds.has(id)) {
+      rejected.push({ index, reason: 'duplicate_id' });
+      return;
+    }
+    seenIds.add(id);
+    if (!FINAL_ITEM_RESOLUTIONS.includes(resolution)) {
+      rejected.push({ index, reason: 'invalid_resolution' });
+      return;
+    }
+    const hasEvidence = typeof evidence === 'string' && evidence.trim().length > 0;
+    if ((resolution === 'resolved' || resolution === 'ci_delegated') && !hasEvidence) {
+      rejected.push({ index, reason: 'empty_evidence' });
+      return;
+    }
+    accepted.push({ id, resolution, evidence: hasEvidence ? evidence : null });
+  });
+
+  return { accepted, rejected };
+}

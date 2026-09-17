@@ -430,14 +430,14 @@ test('escalate advisory item の区分が「要判断（advisory ESCALATE）」'
   assert.ok(itemLine.includes('| 要判断（advisory ESCALATE） |'), '要判断（advisory ESCALATE）区分を含む');
 });
 
-test('ledger item に escalate_reason があれば「（理由: ...）」が後置される', () => {
+test('ledger item に escalate_reason があれば対応列に「要判断（...）」で反映される（issue #658）', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     advisoryItems: [
       { id: 'A1', text: 'escalated', severity: 'major', checked: false, dimension: 'quality', escalate: true, escalate_reason: 'needs human review' },
     ],
   });
-  assert.ok(body.includes('（理由: needs human review）'), 'escalate_reason を含む');
+  assert.ok(body.includes('要判断（needs human review）'), 'escalate_reason が対応列の要判断（...）に反映される');
 });
 
 test('未達 AC テーブルに | 状態 | AC | 検証 | 根拠 | ヘッダーを含む', () => {
@@ -1888,28 +1888,37 @@ test('iterateIterations=null -> 末尾 round を終端 round として採用す�
   assert.ok(body.includes('（1 件'), '末尾 round(iteration 2) の blocking 1 件を反映する');
 });
 
-test('iterateHistory が undefined/null/[] -> いずれも 3 引数省略時と byte 完全一致（AC4）', () => {
-  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
-  for (const hist of [undefined, null, []]) {
-    const body = buildDevflowSummaryBody({
-      ...BASE_INPUT,
-      iterateStatus: 'fix_failed',
-      iterateHistory: hist,
-      iterateIterations: 1,
-    });
-    assert.equal(body, omitted, `iterateHistory=${JSON.stringify(hist)} は省略時と byte 完全一致`);
-  }
+// issue #658: iterateStatus が非 'lgtm' であること自体が結論行・あなたがやること の fixRequired
+// 判定に寄与するため（未解消指摘セクションの有無に関わらず）、iterateStatus を伴う呼び出しはもはや
+// 「3 引数完全省略」の呼び出しとは byte 一致しない。history 表現の違い（undefined/null/[]/blocking
+// 空 round）が互いに同値であることを、同一 iterateStatus の呼び出し同士で検証する。
+test('iterateHistory が undefined/null/[] -> いずれも同一 iterateStatus の呼び出しで byte 完全一致（AC4）', () => {
+  const bodies = [undefined, null, []].map((hist) => buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: hist,
+    iterateIterations: 1,
+  }));
+  assert.equal(bodies[0], bodies[1], 'undefined と null が byte 完全一致');
+  assert.equal(bodies[1], bodies[2], 'null と [] が byte 完全一致');
+  assert.ok(!bodies[0].includes('pr-iterate 未解消の指摘'), '未解消指摘セクションを含まない');
 });
 
-test('終端 round の blocking が空 -> セクション自体を省略し省略時と byte 完全一致', () => {
-  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
+test('終端 round の blocking が空 -> セクション自体を省略し history 省略時と byte 完全一致', () => {
+  const withoutHistory = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: undefined,
+    iterateIterations: 1,
+  });
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     iterateStatus: 'fix_failed',
     iterateHistory: [{ iteration: 1, decision: 'approve', summary: 'ok', blocking: [], minor: [] }],
     iterateIterations: 1,
   });
-  assert.equal(body, omitted, '終端 round の blocking が空なら省略時と byte 完全一致');
+  assert.equal(body, withoutHistory, '終端 round の blocking が空なら history 省略時と byte 完全一致');
+  assert.ok(!body.includes('pr-iterate 未解消の指摘'), '未解消指摘セクションを含まない');
 });
 
 test('iterateStatus 未指定/null -> history 込みでも「pr-iterate 未解消の指摘」を含まない', () => {
@@ -1944,14 +1953,22 @@ test('配置: 見出しは「要対応事項なし」より後・「Goal Ledger:
   assert.equal(lines[ledgerIdx - 1], '', 'Goal Ledger 空状態行の直前が空行');
 });
 
-test('既存セクション不変: 新セクションを取り除いた行配列が省略時の行配列と一致する（AC5）', () => {
+test('既存セクション不変: 新セクションを取り除いた行配列が同一 iterateStatus・history なしの行配列と一致する（AC5）', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     iterateStatus: 'fix_failed',
     iterateHistory: HIST_2,
     iterateIterations: 2,
   });
-  const omitted = buildDevflowSummaryBody({ ...BASE_INPUT });
+  // issue #658: iterateStatus 自体が結論行・あなたがやること に寄与するため、比較基準は
+  // 「3 引数完全省略」ではなく「同一 iterateStatus・history なし」にする（AC5 の趣旨である
+  // 『未解消指摘セクションだけを増分として持つ』ことの検証は変わらない）。
+  const omitted = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    iterateStatus: 'fix_failed',
+    iterateHistory: undefined,
+    iterateIterations: 2,
+  });
   const lines = body.split('\n');
   const headingIdx = lines.findIndex(l => l.includes('### 🔁 pr-iterate 未解消の指摘'));
   assert.ok(headingIdx >= 0, '見出しが存在する');
@@ -2030,9 +2047,10 @@ test('AC2 golden pin: 要対応セクション全文は件数縮約後も pre-ch
     ],
     planConcerns: ['concern X'],
   });
-  // 実装変更前（<details> 全文表示版）の同入力出力から採取した literal。要対応セクションはこの
-  // task で 1 byte も変更しない対象なので、pre-change 出力と一致することが後退なしの証拠になる。
-  const expected = "### ⚠️ 要対応\n\n| 状態 | 区分 | 観点 | 内容 |\n|---|---|---|---|\n| ❌ 未解消 | 必須（blocking） | security | unchecked blocking text: ev-b1 |\n| ❌ 未解消 | 必須（blocking） | security | danger-grep detected XSS |\n| ⚠️ 要判断 | 要判断（advisory ESCALATE） | design | needs human（理由: preference） |\n\n| 状態 | AC | 検証 | 根拠 |\n|---|---|---|---|\n| ❌ 未達 | AC#1 | evaluator | failed evidence |\n\n| 状態 | danger class | 根拠 |\n|---|---|---|\n| ❌ 未確認 | XSS | — |\n\n**Plan 未解消 concerns**:\n- concern X\n\n\n";
+  // issue #658 で要対応表に「現状/対応」列が追加された。evidence/escalate_reason は内容列から
+  // 外れ、それぞれ現状/対応列に移った（現行実装から採取した literal。この配置・列構成が
+  // regression しないことを保証する）。
+  const expected = "### ⚠️ 要対応\n\n| 状態 | 区分 | 観点 | 内容 | 現状 | 対応 |\n|---|---|---|---|---|---|\n| ❌ 未解消 | 必須（blocking） | security | unchecked blocking text | ev-b1 | 修正が必要 |\n| ❌ 未解消 | 必須（blocking） | security | danger-grep detected XSS | 未解消 | 修正が必要 |\n| ⚠️ 要判断 | 要判断（advisory ESCALATE） | design | needs human | 未解消 | 要判断（preference） |\n\n| 状態 | AC | 検証 | 根拠 |\n|---|---|---|---|\n| ❌ 未達 | AC#1 | evaluator | failed evidence |\n\n| 状態 | danger class | 根拠 |\n|---|---|---|\n| ❌ 未確認 | XSS | — |\n\n**Plan 未解消 concerns**:\n- concern X\n\n\n";
   const start = body.indexOf('### ⚠️ 要対応');
   const end = body.indexOf('**解消済み証跡');
   assert.ok(start >= 0 && end > start, '要対応セクションと件数見出しの両方を含む');
@@ -2239,14 +2257,16 @@ test('issue #614 AC2: triaged_evidence が空文字/null/未定義の advisory i
   }
 });
 
-test('issue #614: escalate:true の advisory item は triaged が付いていても ❌ 未解消（escalate 優先）で <details> も出ない', () => {
+test('issue #614: escalate:true の advisory item は triaged が付いていても ⚠️ 要判断のまま（escalate 優先）で <details> も出ない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     advisoryItems: [
       { id: 'A1', text: 'escalated concern', severity: 'major', checked: false, dimension: 'quality', escalate: true, triaged: true, triaged_evidence: 'e' },
     ],
   });
-  assert.ok(body.includes('❌ 未解消'), 'escalate item は ❌ 未解消 のまま');
+  // issue #658: escalate 行は checked 有無に関わらず ⚠️ 要判断（未解消）/ ✅ 解消済み の2値。
+  // この item は final_resolution が無いため未解消 = ⚠️ 要判断（❌ 未解消 にはならない）。
+  assert.ok(body.includes('⚠️ 要判断'), 'escalate item は ⚠️ 要判断 のまま');
   assert.ok(!body.includes('🔹'), 'escalate item に 🔹 は出ない');
   assert.ok(!body.includes('<details>'), 'escalate item は details に入らない');
   assert.ok(body.includes('### ⚠️ 要対応'), '要対応見出しは出る');
@@ -2522,8 +2542,10 @@ test('issue #625 確定仕様5+AC4: merge tier は不変のまま at-a-glance �
   assert.equal(glanceCells(body)[2], '✅ green (CI)');
   assert.equal(glanceCells(body)[3], '✅ pass (fix 後 LGTM)');
 
+  // issue #658: Final reconcile 行は「参考」セクションへ移動したため、Merge tier 理由の直後には
+  // 隣接しなくなった。理由欄は次の空行までの範囲で byte そのまま echo されることのみを検証する。
   const start = body.indexOf('**Merge tier 理由**:');
-  const end = body.indexOf('\n- Final reconcile (');
+  const end = body.indexOf('\n\n', start);
   assert.equal(
     body.slice(start, end),
     '**Merge tier 理由**:\n' + frozenReasons.map((x) => '- ' + x).join('\n'),
@@ -2531,6 +2553,7 @@ test('issue #625 確定仕様5+AC4: merge tier は不変のまま at-a-glance �
   );
 
   assert.ok(body.includes('test gate は CI 委譲で充足（issue #599）'), 'ローカル未検証の事実は理由欄に残る');
+  assert.ok(body.includes('**参考（可視化のみ — merge tier 判定に不使用）**:'), '参考セクション見出しを含む');
   assert.ok(body.includes('- Final reconcile (pr-iterate fix 後の最終 tree 再検証): ci_verified — final test: ✅ CI 委譲（PR head sha 一致・check 全 success）, final AC: reverified'));
   assert.ok(body.includes('- ✅ AC は最終 PR tree で再検証済み'));
 });
@@ -2576,4 +2599,209 @@ test('issue #625: 既存表示の回帰なし — 未指定と null 明示は by
     evalStaleness: null,
   });
   assert.equal(bodyImplicit, bodyExplicit);
+});
+
+// ─── issue #658: 結論行 / あなたがやること / HOLD 理由と現状 / 要対応表の現状・対応列 / 参考 ───
+
+test('issue #658 AC-1: 結論行が見出し直後・at-a-glance 表より前にあり、HOLD+ESCALATE 全件解消で「修正作業は不要です」になる', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['legacy reason unused'],
+    holdReasons: [{ code: 'escalate', reason: 'ESCALATE-TO-HUMAN 項目 1 件', kind: 'human_judgment' }],
+    holdKind: 'human_judgment',
+    advisoryItems: [
+      { id: 'A1', text: 'needs escalation', severity: 'major', checked: true, dimension: 'design', escalate: true, final_resolution: 'resolved', final_evidence: 'verified in fix tree' },
+    ],
+    finalReconcile: 'ci_verified',
+  });
+  const headingIdx = body.indexOf('## dev-flow 終端サマリー');
+  const conclusionIdx = body.indexOf('**結論:');
+  const tableIdx = body.indexOf('| Merge tier |');
+  assert.ok(headingIdx === 0 && conclusionIdx > headingIdx && conclusionIdx < tableIdx, '結論行は見出し直後・at-a-glance 表より前');
+  assert.ok(body.includes('**結論: 自動マージ対象外（HOLD）。修正作業は不要です。人がマージ可否を判断してください**'), '結論行の全文');
+});
+
+test('issue #658 AC-2: HOLD+ESCALATE 全件解消 -> 要対応表の escalate 行が ✅ 解消済み / 対応 不要 になり見出しは要対応事項なしになる（final_evidence 空なら ⚠️ 要判断 のまま）', () => {
+  const resolvedItem = {
+    id: 'A1', text: 'needs escalation', severity: 'major', checked: true, dimension: 'design',
+    escalate: true, final_resolution: 'resolved', final_evidence: 'verified in fix tree',
+  };
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    holdReasons: [{ code: 'escalate', reason: 'ESCALATE-TO-HUMAN 項目 1 件', kind: 'human_judgment' }],
+    holdKind: 'human_judgment',
+    advisoryItems: [resolvedItem],
+    finalReconcile: 'ci_verified',
+  });
+  assert.ok(body.includes('### ✅ 要対応事項なし'), '見出しは要対応事項なし');
+  assert.ok(!body.includes('### ⚠️ 要対応'), '⚠️ 要対応見出しは出ない');
+  assert.ok(
+    body.includes('| ✅ 解消済み | 要判断（advisory ESCALATE） | design | needs escalation | fix 後 tree で確認: verified in fix tree | 不要 |'),
+    '解消済み escalate 行が現状/対応付きで表示される',
+  );
+
+  const bodyEmptyEvidence = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [{ ...resolvedItem, final_evidence: '' }],
+  });
+  assert.ok(bodyEmptyEvidence.includes('⚠️ 要判断'), 'final_evidence が空なら ⚠️ 要判断 のまま');
+  assert.ok(!bodyEmptyEvidence.includes('✅ 解消済み'), 'final_evidence が空なら解消済み表示にならない');
+});
+
+test('issue #658: final_resolution=ci_delegated は finalReconcile=ci_verified のときだけ解消扱いになる', () => {
+  const item = {
+    id: 'A1', text: 'ci delegated item', severity: 'major', checked: false, dimension: 'design',
+    escalate: true, final_resolution: 'ci_delegated', final_evidence: 'CI check X success',
+  };
+  for (const fr of ['reverified', null, 'unavailable']) {
+    const body = buildDevflowSummaryBody({ ...BASE_INPUT, advisoryItems: [item], finalReconcile: fr });
+    assert.ok(body.includes('⚠️ 要判断'), `finalReconcile=${fr} では未解消のまま`);
+    assert.ok(!body.includes('✅ 解消済み'), `finalReconcile=${fr} では解消済み表示にならない`);
+  }
+  const bodyVerified = buildDevflowSummaryBody({ ...BASE_INPUT, advisoryItems: [item], finalReconcile: 'ci_verified' });
+  assert.ok(bodyVerified.includes('✅ 解消済み'), 'finalReconcile=ci_verified のときだけ解消扱い');
+});
+
+test('issue #658: blocking lane の final_resolution は無視される（byte 一致）', () => {
+  const withResolution = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [{ id: 'B1', text: 'blocked', severity: 'critical', checked: false, dimension: 'security', final_resolution: 'resolved', final_evidence: 'should be ignored' }],
+  });
+  const withoutResolution = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [{ id: 'B1', text: 'blocked', severity: 'critical', checked: false, dimension: 'security' }],
+  });
+  assert.equal(withResolution, withoutResolution, 'blocking lane では final_resolution が無視され byte 一致');
+  assert.ok(withResolution.includes('❌ 未解消'), 'blocking item は ❌ 未解消 のまま');
+});
+
+test('issue #658 AC-3: HOLD 理由と現状テーブルに holdReasons の reason が verbatim で並び、code ごとの現状/対応が写像される（未知 code は fail-safe）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['legacy reason unused'],
+    holdReasons: [
+      { code: 'escalate', reason: 'ESCALATE-TO-HUMAN 項目 1 件', kind: 'human_judgment' },
+      { code: 'unknown_future_code', reason: 'some future reason', kind: 'human_judgment' },
+    ],
+    holdKind: 'human_judgment',
+    advisoryItems: [
+      { id: 'A1', text: 'needs escalation', severity: 'major', checked: true, dimension: 'design', escalate: true, final_resolution: 'resolved', final_evidence: 'verified' },
+    ],
+    finalReconcile: 'ci_verified',
+  });
+  assert.ok(body.includes('### HOLD になった理由と現状'), 'HOLD 理由テーブル見出しを含む');
+  assert.ok(body.includes('| 理由 | 現状 | 対応 |'), 'HOLD 理由テーブルヘッダーを含む');
+  assert.ok(
+    body.includes('| ESCALATE-TO-HUMAN 項目 1 件 | ESCALATE 1 件中 1 件は fix 後 tree で解消確認済み | 不要（マージ可否の判断のみ） |'),
+    'escalate 行の現状/対応を含む',
+  );
+  assert.ok(body.includes('| some future reason | — | 人が確認する |'), '未知 code は fail-safe 表示（throw しない）');
+  assert.ok(!body.includes('**Merge tier 理由**:'), 'holdReasons があるときは従来の箇条書きに落ちない');
+});
+
+test('issue #658: holdReasons が null で mergeTier=HOLD -> 従来の Merge tier 理由 箇条書きにフォールバックする（fail-safe）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['danger hit detected'],
+    holdReasons: null,
+  });
+  assert.ok(body.includes('**Merge tier 理由**:'), 'Merge tier 理由の箇条書きにフォールバックする');
+  assert.ok(body.includes('- danger hit detected'), '理由文字列を含む');
+  assert.ok(!body.includes('### HOLD になった理由と現状'), 'HOLD 理由テーブルは出ない');
+});
+
+test('issue #658 AC-3: disclosures は Merge tier 理由から除外され「参考」セクションへ回る（1 行もなければ参考自体が出ない）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'REVIEW',
+    mergeTierReasons: ['LLM judge advisory', 'breaking keyword hit (可視化のみ)'],
+    disclosures: ['breaking keyword hit (可視化のみ)'],
+  });
+  const reasonStart = body.indexOf('**Merge tier 理由**:');
+  const reasonEnd = body.indexOf('\n\n', reasonStart);
+  const reasonSection = body.slice(reasonStart, reasonEnd);
+  assert.ok(!reasonSection.includes('breaking keyword hit'), '可視化のみの理由は Merge tier 理由から除外される');
+  assert.ok(reasonSection.includes('LLM judge advisory'), 'HOLD 判定に寄与する理由は残る');
+  assert.ok(body.includes('**参考（可視化のみ — merge tier 判定に不使用）**:'), '参考セクション見出しを含む');
+  assert.ok(body.includes('- breaking keyword hit (可視化のみ)'), '参考セクションに disclosures が箇条書きで出る');
+
+  const bodyNoRef = buildDevflowSummaryBody({ ...BASE_INPUT });
+  assert.ok(!bodyNoRef.includes('**参考（可視化のみ'), 'disclosures/UI 検証/Final reconcile が無ければ参考セクション自体が出ない');
+});
+
+test('issue #658 AC-4: あなたがやること に danger class 由来のマージ後確認が入力順・重複除去で並び、未知 class は汎用文、ci_verified は追加行になる', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'REVIEW',
+    dangerHits: ['data-migration', 'dependency', 'data-migration', 'unknown-future-class'],
+    finalReconcile: 'ci_verified',
+  });
+  const youDoLines = body.split('\n').filter(l => l.includes('マージ後:'));
+  assert.equal(youDoLines.length, 4, 'data-migration / dependency / unknown-future-class / ci_verified 委譲行の計4行（重複除去）');
+  assert.ok(youDoLines[0].includes('migration を含む'), '1件目は data-migration の定型文（入力順）');
+  assert.ok(youDoLines[1].includes('依存関係の変更を含む'), '2件目は dependency の定型文');
+  assert.ok(youDoLines[2].includes('danger class "unknown-future-class" の変更箇所の初回動作を確認する'), '未知 class は汎用文');
+  assert.ok(youDoLines[3].includes('PR CI に委譲済み'), '4件目は ci_verified 追加行');
+});
+
+test('issue #658 AC-4: HOLD kind ごとに「あなたがやること」の定型文が切り替わる', () => {
+  const bodyFixRequired = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    blockingItems: [{ id: 'B1', text: 'blocked', severity: 'critical', checked: false, dimension: 'security' }],
+  });
+  assert.ok(bodyFixRequired.includes('下記「要対応」の ❌ 項目を修正して push する'), 'fixRequired=true の定型文');
+
+  const bodyDeterministic = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    holdKind: 'deterministic_recheck',
+  });
+  assert.ok(bodyDeterministic.includes('CI 完了 / 再取得を待って'), 'holdKind=deterministic_recheck の定型文');
+
+  const bodyHuman = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    holdKind: 'human_judgment',
+  });
+  assert.ok(bodyHuman.includes('下記「HOLD になった理由と現状」を確認し'), 'holdKind=human_judgment（fixRequired=false）の定型文');
+});
+
+test('issue #658 AC-5: 解消済み証跡セクションが要対応セクションより下にあり、fix 後解消確認の件数行が末尾に追加される', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [{ id: 'B1', text: 'resolved', severity: 'major', checked: true, dimension: 'quality' }],
+    advisoryItems: [
+      { id: 'A1', text: 'needs escalation', severity: 'major', checked: true, dimension: 'design', escalate: true, final_resolution: 'resolved', final_evidence: 'verified' },
+    ],
+  });
+  const actionIdx = body.indexOf('### ⚠️ 要対応');
+  const noneIdx = body.indexOf('### ✅ 要対応事項なし');
+  const headingIdx = actionIdx >= 0 ? actionIdx : noneIdx;
+  const resolvedIdx = body.indexOf('**解消済み証跡');
+  assert.ok(headingIdx >= 0 && resolvedIdx > headingIdx, '解消済み証跡セクションは要対応セクションより下にある');
+  assert.ok(body.includes('- ✅ fix 後 tree で解消確認 1 件（advisory / ESCALATE — checked は不変）'), 'fix 後解消確認の件数行を含む');
+});
+
+test('決定性: issue #658 の新フィールド込み入力でも 2回呼んで byte 完全一致', () => {
+  const input = {
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['legacy reason unused'],
+    holdReasons: [{ code: 'escalate', reason: 'ESCALATE-TO-HUMAN 項目 1 件', kind: 'human_judgment' }],
+    holdKind: 'human_judgment',
+    disclosures: ['breaking keyword hit (可視化のみ)'],
+    dangerHits: ['data-migration'],
+    advisoryItems: [
+      { id: 'A1', text: 'needs escalation', severity: 'major', checked: true, dimension: 'design', escalate: true, final_resolution: 'resolved', final_evidence: 'verified', escalate_description: 'detail text' },
+    ],
+    finalReconcile: 'ci_verified',
+  };
+  const body1 = buildDevflowSummaryBody(input);
+  const body2 = buildDevflowSummaryBody(input);
+  assert.equal(body1, body2);
 });

@@ -71,6 +71,14 @@ test('[evaluator-contract] evaluator.md does NOT mirror the final_ac_reconcile c
   );
 });
 
+// issue #658: final_ac_reconcile 契約に item_resolutions（ESCALATE/advisory item の fix 後 tree
+// 再評価。ci_delegated を含む 3 値 enum）が追加されていることを pin する。
+test('[evaluator-contract][#658] final_ac_reconcile 契約が item_resolutions と ci_delegated を含む', () => {
+  const contract = EVALUATOR_OPERATIONAL_CONTRACT.final_ac_reconcile;
+  assert.ok(contract.includes('item_resolutions'), 'final_ac_reconcile 契約に item_resolutions の説明が必要です');
+  assert.ok(contract.includes('ci_delegated'), 'final_ac_reconcile 契約に ci_delegated の説明が必要です');
+});
+
 // concern_resolutions 契約は openConcerns.length>0（implementer concerns がある）ときにのみ
 // eval#1 prompt へ注入される。standard shape の既定 responder は implementer concerns:[] を
 // 返すため、この test だけ overrides で implementer concerns を与える。
