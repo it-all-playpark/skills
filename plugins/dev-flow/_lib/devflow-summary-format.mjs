@@ -222,11 +222,11 @@ export function buildDevflowSummaryBody({
 
   // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
   // 要判断・助言は含めない — 人間の判断のみで済む項目は「修正」ではない）。
-  // holdReasons に conflict/final_test_red/iterate_non_lgtm の code があれば、他の指標が
-  // 空でも修正必須と判定する（PR #662 レビュー: mergeable_conflicting 単独 HOLD で
+  // holdReasons に conflict/final_test_red/iterate_non_lgtm/pr_closes_missing の code があれば、
+  // 他の指標が空でも修正必須と判定する（PR #662 レビュー: mergeable_conflicting 単独 HOLD で
   // 結論行「修正作業は不要です」と HOLD 理由テーブルの対応列「conflict を解消して push する」が
-  // 自己矛盾していた）。
-  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm'];
+  // 自己矛盾していた。pr_closes_missing も同型 — issue #661）。
+  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing'];
   const fixRequired = uncheckedBlocking.length > 0
     || unsatisfiedAC.length > 0
     || uncleared.length > 0
@@ -759,6 +759,11 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: 'base branch と conflict', action: 'conflict を解消して push する' };
     case 'trust_gate':
       return { current: 'EvalSeal receipt 非 pass', action: '人が確認する' };
+    case 'pr_closes_missing':
+      return {
+        current: 'PR body に Closes 行が無い（merge しても issue が自動 close されない）',
+        action: `\`gh pr edit ${ctx.pr} --body-file <本文ファイル>\` で Closes 行を含む本文を再投入する`,
+      };
     default:
       return { current: '—', action: '人が確認する' };
   }

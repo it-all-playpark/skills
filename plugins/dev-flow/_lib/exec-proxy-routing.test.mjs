@@ -71,6 +71,11 @@ const EXPECTED_DEV_FLOW = {
   'isolation-probe': WO,
   // PR phase: 決定論本文（pr-artifacts）の verbatim 転写 + bare 単文 git/gh（issue #642）
   'pr#*': RW,
+  // Closes 行の決定論検証（read-only probe）/ 再投入・AC checkbox 同期（write。issue #661）
+  'closes-check': RO,
+  'closes-recheck': RO,
+  'closes-reinject': RW,
+  'ac-checkbox-sync': RW,
   // 判断寄り
   'analyze#*': RUNNER,
 };

@@ -71,6 +71,8 @@ const DF_B5 = {
 // throw だけでは Merge tier 側の再取得で「clean」に復元されてしまい HOLD を再現できない
 // （fail-closed が Security floor と Merge tier の両方で持続する現実的なシナリオとして構成する）。
 const DF_DANGER = { overrides: { 'merge-tier-facts': mergeTierFacts({ risk: { ok: false, hits: [], error: 'still down' } }) } };
+// CLOSES: closes-check が Closes 行の無い body を返し closes-reinject へ到達させる。
+const DF_CLOSES = { overrides: { 'closes-check': { ok: true, body: 'no closes' } } };
 
 // ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing /
 // subagent-invocations-routing と同じ scenario 集合を参照し、到達する label の分類を強制する）──
@@ -169,6 +171,32 @@ const EXPECTED_DEV_FLOW = {
   'final-ac-reconcile': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。最終AC再検証不能のままmerge tierを確定しない契約' },
   'ci-final': { config: DF_B4, policy: 'continue', reason: 'try/catchで吸収しunavailable維持（fail-closed）へ倒す既存経路' },
   'security-clearance-final': { config: DF_B5, policy: 'abort', reason: 'bare据え置き。security clearance不能をclearと同一視しない契約' },
+  'closes-check': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。Closes行probeの失敗はunverified（警告のみ）へ倒し再投入も行わない' },
+  'closes-reinject': {
+    config: DF_CLOSES,
+    policy: 'continue',
+    reason: 'failOpenAgent経由。再投入失敗はmissingへ倒しmerge tierをHOLDにする決定論経路',
+    extra: async ({ result }) => {
+      assert.equal(result?.merge_tier, 'HOLD', 'closes-reinject throw で pr_closes_status=missing のため merge_tier は HOLD になるべき');
+      assert.equal(result?.pr_closes_status, 'missing', 'closes-reinject throw 後の pr_closes_status は missing になるべき');
+    },
+  },
+  'closes-recheck': {
+    config: DF_CLOSES,
+    policy: 'continue',
+    reason: 'failOpenAgent経由。再投入後の再確認probe失敗はunverifiedへ倒すfail-open経路',
+    extra: async ({ result }) => {
+      assert.equal(result?.pr_closes_status, 'unverified', 'closes-recheck throw 後の pr_closes_status は unverified になるべき');
+    },
+  },
+  'ac-checkbox-sync': {
+    config: DF_B2,
+    policy: 'continue',
+    reason: 'failOpenAgent経由。checkbox同期失敗は表示専用のためfalseで継続するfail-open経路',
+    extra: async ({ result }) => {
+      assert.equal(result?.pr_body_synced, false, 'ac-checkbox-sync throw 後の pr_body_synced は false になるべき');
+    },
+  },
 
   // ── 以下は issue #605 review（PR #645）: DEV_FLOW_SCENARIOS 経由で新規到達する 30 label ──
   'issue-labels': { config: DF_DIFF_GATE_RETRY, policy: 'abort', reason: 'bare据え置き。cross-repoラベル取得不能のままempty-diff判定を進めない' },
@@ -264,7 +292,7 @@ for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
 // 集合）の全 scenario を含める（issue #605 review, PR #645）。観測範囲はこの configs 集合が
 // 到達する label に限られる — dev-flow.js の bare trackedAgent( 出現を静的に全走査するわけではない。
 test('dev-flow.js: 本ファイルの baseline + DEV_FLOW_SCENARIOS 全 scenario で観測される label は EXPECTED_DEV_FLOW に登録されている', async () => {
-  const configs = [DF_B1, DF_B2, DF_B4, DF_B5, DF_DANGER, ...Object.values(DEV_FLOW_SCENARIOS)];
+  const configs = [DF_B1, DF_B2, DF_B4, DF_B5, DF_DANGER, DF_CLOSES, ...Object.values(DEV_FLOW_SCENARIOS)];
   const observed = new Set();
   for (const config of configs) {
     const { calls } = await runDevFlowBaseline(config);

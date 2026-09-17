@@ -13,6 +13,7 @@ import {
   aggregateHoldKind,
   EVAL_STALENESS_VALUES,
 } from './merge-tier.mjs';
+import { PR_CLOSES_STATUS_VALUES } from './pr-artifacts.mjs';
 
 // ---- Task 1: DANGER_CLASSES + seedSecurityLedger ----
 
@@ -1242,12 +1243,12 @@ test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来
 
 // ---- issue #658: HOLD_REASON_CODES + holdReasons[].code + disclosures ----
 
-test('HOLD_REASON_CODES は 14 の閉じた enum と一致', () => {
+test('HOLD_REASON_CODES は 15 の閉じた enum と一致', () => {
   assert.deepEqual(HOLD_REASON_CODES, [
     'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
     'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
     'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-    'mergeable_conflicting', 'trust_gate',
+    'mergeable_conflicting', 'trust_gate', 'pr_closes_missing',
   ]);
 });
 
@@ -1329,6 +1330,38 @@ test('classifyMergeTier: holdReasons[].code — mergeable_conflicting', () => {
   assert.ok(item);
   assert.equal(item.code, 'mergeable_conflicting');
   assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+// ---- issue #661: prClosesStatus / pr_closes_missing ----
+
+test('PR_CLOSES_STATUS_VALUES は 4 の閉じた enum と一致', () => {
+  assert.deepEqual(PR_CLOSES_STATUS_VALUES, ['verified', 'reinjected', 'missing', 'unverified']);
+});
+
+test('classifyMergeTier: prClosesStatus:"missing" → HOLD、holdReasons に pr_closes_missing（kind=deterministic_recheck）', () => {
+  const r = classifyMergeTier({
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', prClosesStatus: 'missing',
+  });
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.code === 'pr_closes_missing');
+  assert.ok(item, `holdReasons に pr_closes_missing を含むべきだが: ${JSON.stringify(r.holdReasons)}`);
+  assert.equal(item.kind, 'deterministic_recheck');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+  // 他に human_judgment 理由が無いため holdKind は deterministic_recheck（aggregateHoldKind 準拠）。
+  assert.equal(r.holdKind, 'deterministic_recheck');
+});
+
+test('classifyMergeTier: prClosesStatus が verified/reinjected/unverified/undefined → tier・reasons・holdReasons は未指定時と不変', () => {
+  const baseline = classifyMergeTier(baseCleanInput({}));
+  for (const status of ['verified', 'reinjected', 'unverified', undefined]) {
+    const r = classifyMergeTier(baseCleanInput({ prClosesStatus: status }));
+    assert.deepEqual(r, baseline, `prClosesStatus=${status} は未指定時と完全一致するべきだが: ${JSON.stringify(r)}`);
+  }
+});
+
+test('classifyMergeTier: prClosesStatus が out-of-enum → throw', () => {
+  assert.throws(() => classifyMergeTier(baseCleanInput({ prClosesStatus: 'bogus' })),
+    /invalid prClosesStatus/);
 });
 
 test('classifyMergeTier: holdReasons の全要素は {code, reason, kind} のちょうど3キー', () => {

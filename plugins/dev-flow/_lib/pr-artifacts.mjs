@@ -8,6 +8,12 @@
 // （agent 側の要約・判断を挟まない転写契約。pr-iterate の commit-ensure と同型）。
 // 同一入力 → 同一出力（決定論）。I/O なし。
 //
+// PR body は「結論1行 → 変更(component別) → 受入条件 checkbox → 設計判断(≤5件) → 検証 → Closes」の
+// 6 セクション固定構成で、各セクションを PR_BODY_* 定数で決定論 clip する（issue #661）。
+// Closes 行の存在検証（hasClosesLine / verifyPrBody / closesVerdict）と、`gh pr view --json body` /
+// `gh pr edit --body-file` の exec-proxy prompt（prBodyViewPrompt / prBodyEditPrompt）もここに置き、
+// 判定は本ファイルの純関数のみが行う（agent は verbatim 転写・bare 単文実行のみ）。
+//
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
@@ -21,6 +27,19 @@ function str(v) {
 
 function arr(v) {
   return Array.isArray(v) ? v : [];
+}
+
+// code point 単位で数え、超過時は先頭 max-1 文字 + '…' に切り詰める決定論 truncation。
+export function clip(s, max) {
+  const text = str(s);
+  const chars = Array.from(text);
+  if (chars.length <= max) return text;
+  return chars.slice(0, Math.max(0, max - 1)).join('') + '…';
+}
+
+// 改行・連続空白（タブ含む）を 1 空白に畳んで trim する。
+function collapseWhitespace(s) {
+  return str(s).replace(/\s+/g, ' ').trim();
 }
 
 // plan の file_changes（`path: 説明` 形も許容）から path 部分を取り出す。
@@ -78,44 +97,207 @@ function cell(v) {
   return str(v).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
-function taskRows(plan) {
-  const rows = [];
-  for (const [group, tasks] of [['serial', arr(plan?.serial)], ['parallel', arr(plan?.parallel)]]) {
-    for (const t of tasks) {
-      const files = arr(t?.file_changes).map((f) => `\`${cell(f)}\``).join(', ');
-      rows.push(`| ${cell(t?.id)} | ${group} | ${cell(t?.desc)} | ${files} |`);
+// PR body の上限定数（issue #661: planner 出力は無制限 verbatim ではなく決定論 clip で埋め込む）。
+export const PR_BODY_SUMMARY_MAX = 120;
+export const PR_BODY_CHANGE_BULLET_MAX = 140;
+export const PR_BODY_CHANGE_BULLETS_MAX = 6;
+export const PR_BODY_AC_MAX = 300;
+export const PR_BODY_DECISIONS_MAX = 5;
+export const PR_BODY_DECISION_MAX = 120;
+export const PR_BODY_HIT_ITEMS_MAX = 5;
+export const PR_BODY_MAX_CHARS = 3500;
+export const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
+
+// plan.serial + plan.parallel の file_changes を component（path の dirname。無ければ '(root)'）ごとに
+// 初出順でグループ化し、[{ component, files }] を返す（files は basename を初出順・重複排除）。
+function changeGroups(plan) {
+  const order = [];
+  const byComponent = new Map();
+  for (const p of planPaths(plan)) {
+    const idx = p.lastIndexOf('/');
+    const component = idx === -1 ? '(root)' : p.slice(0, idx);
+    const basename = idx === -1 ? p : p.slice(idx + 1);
+    if (!byComponent.has(component)) {
+      byComponent.set(component, []);
+      order.push(component);
     }
+    const files = byComponent.get(component);
+    if (!files.includes(basename)) files.push(basename);
   }
-  return rows;
+  return order.map((component) => ({ component, files: byComponent.get(component) }));
 }
 
-function hitLines(label, hits, keyOf) {
-  if (hits.length === 0) return `- ${label}: なし`;
-  const items = hits.map((h) => `${str(keyOf(h)) || 'unknown'}: \`${cell(h?.file) || '?'}\``);
-  return `- ${label}: ${hits.length} 件（${items.join('、')}）`;
+// `## 変更` セクション本文: component 別 bullet を PR_BODY_CHANGE_BULLETS_MAX 件まで、超過分は
+// `（他 N component）` 1 行で畳む。
+function changeSection(plan) {
+  const groups = changeGroups(plan);
+  if (groups.length === 0) return '（なし）';
+  const bullets = groups.map((g) => clip(`- \`${g.component}/\`: ${g.files.join(', ')}`, PR_BODY_CHANGE_BULLET_MAX));
+  const shown = bullets.slice(0, PR_BODY_CHANGE_BULLETS_MAX);
+  const excess = bullets.length - shown.length;
+  return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} component）` : shown.join('\n');
 }
 
-// PR body: 要約 / 受入条件（ledger の AC-n checked を反映した checkbox）/ 設計判断 / 変更 task /
-// 検証状況（danger-grep / test-surface hit）/ Closes #<issue> の固定セクション。
-export function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits }) {
+// `## 受入条件` セクション本文: index 順に `- [x]`/`- [ ]` + clip(ac)。checked 判定は acResults 優先、
+// 無ければ ledger.items の `AC-<i+1>`。
+function acceptanceSection(req, ledger, acResults) {
   const acs = arr(req?.acceptance_criteria);
+  if (acs.length === 0) return '（なし）';
   const items = arr(ledger?.items);
-  const acLines = acs.map((ac, i) => {
-    const it = items.find((x) => x?.id === `AC-${i + 1}`);
-    return `- [${it?.checked === true ? 'x' : ' '}] ${str(ac).trim()}`;
+  const results = arr(acResults);
+  const lines = acs.map((ac, i) => {
+    const fromResults = results.find((r) => r?.ac_index === i);
+    const checked = fromResults ? fromResults.satisfied === true : items.find((x) => x?.id === `AC-${i + 1}`)?.checked === true;
+    return `- [${checked ? 'x' : ' '}] ${clip(str(ac).trim(), PR_BODY_AC_MAX)}`;
   });
-  const decisions = arr(plan?.architecture_decisions).map(decisionLine).filter(Boolean).map((d) => `- ${d}`);
-  const rows = taskRows(plan);
-  const summary = str(plan?.summary).trim();
+  return lines.join('\n');
+}
+
+// `## 設計判断` セクション本文: 先頭 PR_BODY_DECISIONS_MAX 件を `- <decisionLine>` で clip、超過分は
+// `（他 N 件は plan 参照）` 1 行。
+function decisionsSection(plan) {
+  const all = arr(plan?.architecture_decisions).map(decisionLine).filter(Boolean);
+  if (all.length === 0) return '（なし）';
+  const shown = all.slice(0, PR_BODY_DECISIONS_MAX).map((d) => clip(`- ${d}`, PR_BODY_DECISION_MAX));
+  const excess = all.length - shown.length;
+  return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件は plan 参照）` : shown.join('\n');
+}
+
+// 1 種別（danger-grep / test-surface）分の hit 行。総数は維持しつつ列挙 item を
+// PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。
+function hitLine(label, hits, keyOf) {
+  const list = arr(hits);
+  if (list.length === 0) return `- ${label}: なし`;
+  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => `${str(keyOf(h)) || 'unknown'}: \`${cell(h?.file) || '?'}\``);
+  const excess = list.length - shown.length;
+  const items = excess > 0 ? [...shown, `他 ${excess} 件`] : shown;
+  return `- ${label}: ${list.length} 件（${items.join('、')}）`;
+}
+
+// PR body: 結論1行 / 変更(component別) / 受入条件(checkbox) / 設計判断(≤5件) / 検証(hit) /
+// Closes #<issue> の 6 セクション固定構成。各セクションは PR_BODY_* 定数で決定論 clip する
+// （issue #661。旧 `## 要約` 無制限 verbatim + `## 変更 task` table 構成を置き換え）。
+// acResults（[{ac_index, satisfied}]）が指定されればチェック判定に優先利用する。
+export function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits, acResults }) {
+  let conclusionText = collapseWhitespace(plan?.summary);
+  if (!conclusionText) conclusionText = collapseWhitespace(req?.issue_title);
+  if (!conclusionText) conclusionText = `issue #${issue} の変更`;
+  const conclusionLine = `**${clip(conclusionText, PR_BODY_SUMMARY_MAX)}**`;
+
+  const verify = `${hitLine('danger-grep', arr(dangerHits), (h) => h?.class)}\n${hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern)}`;
+
   const sections = [
-    `## 要約\n${summary || '（なし）'}`,
-    `## 受入条件\n${acLines.length ? acLines.join('\n') : '（なし）'}`,
-    `## 設計判断\n${decisions.length ? decisions.join('\n') : '（なし）'}`,
-    `## 変更 task\n${rows.length ? ['| id | group | 内容 | files |', '|---|---|---|---|', ...rows].join('\n') : '（なし）'}`,
-    `## 検証状況\n${hitLines('danger-grep', arr(dangerHits), (h) => h?.class)}\n${hitLines('test-surface', arr(testsurfHits), (h) => h?.pattern)}`,
+    conclusionLine,
+    `## 変更\n${changeSection(plan)}`,
+    `## 受入条件\n${acceptanceSection(req, ledger, acResults)}`,
+    `## 設計判断\n${decisionsSection(plan)}`,
+    `## 検証\n${verify}`,
     `Closes #${issue}`,
   ];
   return sections.join('\n\n') + '\n';
+}
+
+// body 内に `Closes #<issue>` 行（行全体一致）が存在するか。
+export function hasClosesLine(body, issue) {
+  const re = new RegExp(`^Closes #${Number(issue)}\\s*$`, 'm');
+  return re.test(str(body));
+}
+
+// PR body の構造検証: 結論行 / PR_BODY_HEADINGS の各見出し / Closes 行の存在を決定論的に判定する。
+export function verifyPrBody(body, issue) {
+  const s = str(body);
+  const missing = [];
+  const lines = s.split('\n');
+  const firstNonEmpty = lines.find((l) => l.trim() !== '');
+  if (!firstNonEmpty || !firstNonEmpty.trim().startsWith('**')) missing.push('結論');
+  for (const heading of PR_BODY_HEADINGS) {
+    const re = new RegExp(`^${heading}$`, 'm');
+    if (!re.test(s)) missing.push(heading);
+  }
+  const closes = hasClosesLine(s, issue);
+  if (!closes) missing.push('Closes');
+  return { ok: missing.length === 0, missing, closes, length: Array.from(s).length };
+}
+
+// gh pr view --json body の exec-proxy 応答から Closes 行の有無を判定する。取得失敗・body 非 string は
+// 'unknown'（fail-open。再投入しない）。
+export function closesVerdict({ view, issue }) {
+  if (view == null || view.ok !== true || typeof view.body !== 'string') return 'unknown';
+  return hasClosesLine(view.body, issue) ? 'present' : 'missing';
+}
+
+// PR phase / Final reconcile 後の Closes 検証・再投入で dev-flow.js が持つ状態の closed enum。
+export const PR_CLOSES_STATUS_VALUES = ['verified', 'reinjected', 'missing', 'unverified'];
+
+// gh pr view --json body の exec-proxy 応答の agent() schema。
+export const PR_BODY_VIEW = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    body: { type: ['string', 'null'] },
+    error: { type: 'string' },
+    epoch: { type: 'number' },
+  },
+};
+
+// gh pr edit --body-file の exec-proxy 応答の agent() schema。
+export const PR_BODY_EDIT = {
+  type: 'object',
+  required: ['edited'],
+  properties: {
+    edited: { type: 'boolean' },
+    error: { type: 'string' },
+    epoch: { type: 'number' },
+  },
+};
+
+// PR #<pr> の本文 (body) を読み取り専用で取得する exec-proxy 向け prompt（closes-check / closes-recheck
+// label で使う。final-ci.mjs の finalCiPrompt と同型）。
+export function prBodyViewPrompt({ pr, repo }) {
+  const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json body`;
+  return `## Objective\n`
+    + `PR #${pr} の本文 (body) を取得し、JSON をそのまま返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n\n`
+    + `## Steps\n`
+    + `1. \`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
+    + `2. stdout が空、JSON として不正、またはコマンドが実行できなかった場合は `
+    + `\`{"ok": false, "error": "<stderr の要約>"}\` を返せ。失敗時に ok:true を生成してはならない。`
+    + `原因調査はするな。再試行禁止。\n`
+    + `3. それ以外は stdout の JSON object から body を取り出し、`
+    + `\`{"ok": true, "body": <string を一字一句そのまま>}\` に包んで返せ。要約・整形・省略禁止。\n\n`
+    + `## Output format\n`
+    + `{"ok": true, "body": string} または {"ok": false, "error": string}\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内（body を除く）。`;
+}
+
+// PR #<pr> の本文を prBody の内容で上書きする exec-proxy 向け prompt（closes-reinject / ac-checkbox-sync
+// label で使う）。Write で bodyFile へ verbatim 保存させた後、bare 単文で gh pr edit する。
+export function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
+  const bodyFile = `${wt}/.devflow-tmp/${fileName}`;
+  const repoArg = repo ? ` --repo ${repo}` : '';
+  return `## Objective\n`
+    + `PR #${pr} の本文を渡された内容で上書きし、成否を返す。\n\n`
+    + `## 本文の保存\n`
+    + `**Write tool** を使い、下記 delimiter 内の本文を **一字一句そのまま**（要約・整形・追記・改変・shell 経由の書き出し禁止）`
+    + `\`${bodyFile}\` へ保存せよ。\n`
+    + `<<<PR_BODY_BEGIN>>>\n${prBody}<<<PR_BODY_END>>>\n\n`
+    + `## Steps\n以下を bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）:\n`
+    + `1. \`gh pr edit ${pr}${repoArg} --body-file ${bodyFile}\`\n`
+    + `2. 成功したら \`{"edited": true}\` を返せ。失敗しても throw せず `
+    + `\`{"edited": false, "error": "<stderr の要約>"}\` を返せ。\n\n`
+    + `## Output format\n{"edited": boolean, "error"?: string}\nprose 禁止。JSON のみ 1 行で返せ。\n\n`
+    + `## Tools\n使用可: Bash, Write\n\n`
+    + `## Boundary\n${bodyFile} 以外を書かない。git 操作禁止。本文の書き換え禁止。\n\n`
+    + `## Token cap\nJSON のみ。1 行以内。`;
 }
 
 // PR phase の dev-runner-haiku 向け prompt。commit message / PR body を delimiter 内に verbatim で

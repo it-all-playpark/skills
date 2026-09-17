@@ -2729,6 +2729,25 @@ test('PR#662 レビュー: mergeable_conflicting 単独 HOLD でも結論行が�
   assert.ok(body.includes('| base branch と conflict | base branch と conflict | conflict を解消して push する |'), 'HOLD 理由テーブルの対応列');
 });
 
+test('issue #661: pr_closes_missing 単独 HOLD で現状/対応表示と gh pr edit の再投入手順が出る（結論行は修正作業が必要）', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['PR body に `Closes #<issue>` 行が無い'],
+    holdReasons: [{ code: 'pr_closes_missing', reason: 'PR body に Closes 行が無い', kind: 'deterministic_recheck' }],
+    holdKind: 'deterministic_recheck',
+  });
+  assert.ok(
+    body.includes('PR body に Closes 行が無い（merge しても issue が自動 close されない）'),
+    '現状列に Closes 欠落の説明が出る',
+  );
+  assert.ok(
+    body.includes('`gh pr edit 42 --body-file <本文ファイル>` で Closes 行を含む本文を再投入する'),
+    '対応列に gh pr edit の再投入手順が出る（pr 番号は入力値）',
+  );
+  assert.ok(!body.includes('修正作業は不要'), '結論行は「修正作業は不要」ではない');
+});
+
 test('issue #662: changedFiles に .github/workflows/ 配下のファイルが含まれる場合、あなたがやること に workflow 初回実行確認行が出る（finalReconcile 非依存）', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,

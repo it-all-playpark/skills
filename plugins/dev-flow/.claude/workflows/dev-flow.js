@@ -1106,16 +1106,30 @@ const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_veri
 // 同値性は _lib/final-ci-routing.test.mjs が pin する。
 const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
 
-// HOLD 理由の閉じた code enum（issue #658）。summary 側（devflow-summary-format.mjs）の
-// 「現状/対応」写像キー。reason は自由文で将来変わりうるため、summary は reason の prefix 一致
-// ではなくこの安定 code で文言を写像する。out-of-enum/欠落時は summary が fail-safe（'—' /
-// '人が確認する'）に落とすだけで throw しない（表示専用フィールドのため）。
+// HOLD 理由の閉じた code enum（issue #658、issue #661 で pr_closes_missing 追加）。summary 側
+// （devflow-summary-format.mjs）の「現状/対応」写像キー。reason は自由文で将来変わりうるため、summary は
+// reason の prefix 一致ではなくこの安定 code で文言を写像する。out-of-enum/欠落時は summary が
+// fail-safe（'—' / '人が確認する'）に落とすだけで throw しない（表示専用フィールドのため）。
 const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'trust_gate',
+  'mergeable_conflicting', 'trust_gate', 'pr_closes_missing',
 ];
+
+// PR body の Closes 行決定論検証（issue #661）の状態 enum。'verified': gh pr view --json body に
+// Closes #<issue> 行を確認済み。'reinjected': 欠落を検出し gh pr edit --body-file で再投入し確認済み。
+// 'missing': 欠落を検出し再投入も失敗（または再投入後も欠落）— fail-closed で HOLD 理由に載せる。
+// 'unverified': gh pr view 自体が失敗（fail-open、警告のみ）。canonical は `_lib/pr-artifacts.mjs`
+// の PR_CLOSES_STATUS_VALUES（同値性は merge-tier.test.mjs が pin する）。本ファイルでは top-level
+// named export を持たない — pr-artifacts.mjs と本ファイルは両方とも dev-flow.js へ inline されるため、
+// 同名 export const を重複宣言すると tools/sync-inlines.mjs の top-level declaration collision 検知に
+// 抵触する（validateInlineDeclCollisions は export 有無に関わらず column-0 の const/let/var/function/class
+// 宣言名を対象にする）。値は下記バリデーションに直接 literal で埋め込む（関数スコープ内 local const
+// なら column-0 top-level 宣言に該当しないため collision 対象外）。
+function isValidPrClosesStatus(v) {
+  return ['verified', 'reinjected', 'missing', 'unverified'].includes(v);
+}
 
 // eval_staleness の閉じた enum（issue #288 の 4 値 + issue #631 の hash_reconverged）。
 const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
@@ -1238,6 +1252,12 @@ function classifyMergeableState(meta) {
 //   HOLD_REASON_KINDS 外なら throw。finalReconcile==='ci_verified' なのに finalCi.verified!==true
 //   なら throw（証拠なしに ci_verified を名乗らせない fail-closed）。未指定(undefined/null) = 従来と
 //   完全同一挙動（regression なし）。
+// s.prClosesStatus (optional 'verified'|'reinjected'|'missing'|'unverified'): PR body の
+//   `Closes #<issue>` 行の決定論検証結果（issue #661、PR_CLOSES_STATUS_VALUES）。'missing'
+//   （欠落を検出し再投入も失敗）のときのみ専用 HOLD reason（deterministic_recheck）を追記する
+//   （gh pr edit --body-file の再投入で解消しうるため human_judgment ではない）。
+//   'verified'/'reinjected'/'unverified'/未指定は reason 追加なし（fail-open no-op、regression なし）。
+//   out-of-enum は明示 error（後方互換 scaffolding 禁止規約）。
 // 返り値: { tier, reasons, holdReasons, holdKind, disclosures }（issue #599 で holdReasons/holdKind、
 //   issue #658 で disclosures を追加）。
 //   reasons は従来どおり string[]（HOLD 時は blocking 文言 + 可視化行、AUTO/REVIEW 時は従来文言 +
@@ -1275,6 +1295,9 @@ function classifyMergeTier(s) {
   }
   if (s.evalStaleness != null && !EVAL_STALENESS_VALUES.includes(s.evalStaleness)) {
     throw new Error('classifyMergeTier: invalid evalStaleness: ' + s.evalStaleness);
+  }
+  if (s.prClosesStatus != null && !isValidPrClosesStatus(s.prClosesStatus)) {
+    throw new Error('classifyMergeTier: invalid prClosesStatus: ' + s.prClosesStatus);
   }
   // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
   const blockingReasons = [];
@@ -1339,6 +1362,7 @@ function classifyMergeTier(s) {
     pushBlocking('testsurf_uncleared', `test-weakening 検出が未クリア（${s.testsurfUncleared.join(', ')}）: committed test の skip/削除/tautology 化の疑い。evaluator clearance か人間確認が必要`, 'human_judgment');
   }
   if (s.mergeableState === 'conflicting') pushBlocking('mergeable_conflicting', 'base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）', 'human_judgment');
+  if (s.prClosesStatus === 'missing') pushBlocking('pr_closes_missing', 'PR body に `Closes #<issue>` 行が無い（PR 作成後の決定論検証で欠落を検出し、本文の再投入も失敗）— merge しても issue が自動 close されないため本文の再投入が必要（決定論再チェックで解消しうる）', 'deterministic_recheck');
   if (s.trustGate != null && s.trustGate.blocking === true && s.trustGate.verdict !== 'pass') {
     pushBlocking('trust_gate', `EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`, 'human_judgment');
   }
@@ -2782,11 +2806,11 @@ function buildDevflowSummaryBody({
 
   // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
   // 要判断・助言は含めない — 人間の判断のみで済む項目は「修正」ではない）。
-  // holdReasons に conflict/final_test_red/iterate_non_lgtm の code があれば、他の指標が
-  // 空でも修正必須と判定する（PR #662 レビュー: mergeable_conflicting 単独 HOLD で
+  // holdReasons に conflict/final_test_red/iterate_non_lgtm/pr_closes_missing の code があれば、
+  // 他の指標が空でも修正必須と判定する（PR #662 レビュー: mergeable_conflicting 単独 HOLD で
   // 結論行「修正作業は不要です」と HOLD 理由テーブルの対応列「conflict を解消して push する」が
-  // 自己矛盾していた）。
-  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm'];
+  // 自己矛盾していた。pr_closes_missing も同型 — issue #661）。
+  const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing'];
   const fixRequired = uncheckedBlocking.length > 0
     || unsatisfiedAC.length > 0
     || uncleared.length > 0
@@ -3319,6 +3343,11 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: 'base branch と conflict', action: 'conflict を解消して push する' };
     case 'trust_gate':
       return { current: 'EvalSeal receipt 非 pass', action: '人が確認する' };
+    case 'pr_closes_missing':
+      return {
+        current: 'PR body に Closes 行が無い（merge しても issue が自動 close されない）',
+        action: `\`gh pr edit ${ctx.pr} --body-file <本文ファイル>\` で Closes 行を含む本文を再投入する`,
+      };
     default:
       return { current: '—', action: '人が確認する' };
   }
@@ -4733,6 +4762,12 @@ function parseMergeTierFacts(facts) {
 // （agent 側の要約・判断を挟まない転写契約。pr-iterate の commit-ensure と同型）。
 // 同一入力 → 同一出力（決定論）。I/O なし。
 //
+// PR body は「結論1行 → 変更(component別) → 受入条件 checkbox → 設計判断(≤5件) → 検証 → Closes」の
+// 6 セクション固定構成で、各セクションを PR_BODY_* 定数で決定論 clip する（issue #661）。
+// Closes 行の存在検証（hasClosesLine / verifyPrBody / closesVerdict）と、`gh pr view --json body` /
+// `gh pr edit --body-file` の exec-proxy prompt（prBodyViewPrompt / prBodyEditPrompt）もここに置き、
+// 判定は本ファイルの純関数のみが行う（agent は verbatim 転写・bare 単文実行のみ）。
+//
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
@@ -4746,6 +4781,19 @@ function str(v) {
 
 function arr(v) {
   return Array.isArray(v) ? v : [];
+}
+
+// code point 単位で数え、超過時は先頭 max-1 文字 + '…' に切り詰める決定論 truncation。
+function clip(s, max) {
+  const text = str(s);
+  const chars = Array.from(text);
+  if (chars.length <= max) return text;
+  return chars.slice(0, Math.max(0, max - 1)).join('') + '…';
+}
+
+// 改行・連続空白（タブ含む）を 1 空白に畳んで trim する。
+function collapseWhitespace(s) {
+  return str(s).replace(/\s+/g, ' ').trim();
 }
 
 // plan の file_changes（`path: 説明` 形も許容）から path 部分を取り出す。
@@ -4803,44 +4851,207 @@ function cell(v) {
   return str(v).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
-function taskRows(plan) {
-  const rows = [];
-  for (const [group, tasks] of [['serial', arr(plan?.serial)], ['parallel', arr(plan?.parallel)]]) {
-    for (const t of tasks) {
-      const files = arr(t?.file_changes).map((f) => `\`${cell(f)}\``).join(', ');
-      rows.push(`| ${cell(t?.id)} | ${group} | ${cell(t?.desc)} | ${files} |`);
+// PR body の上限定数（issue #661: planner 出力は無制限 verbatim ではなく決定論 clip で埋め込む）。
+const PR_BODY_SUMMARY_MAX = 120;
+const PR_BODY_CHANGE_BULLET_MAX = 140;
+const PR_BODY_CHANGE_BULLETS_MAX = 6;
+const PR_BODY_AC_MAX = 300;
+const PR_BODY_DECISIONS_MAX = 5;
+const PR_BODY_DECISION_MAX = 120;
+const PR_BODY_HIT_ITEMS_MAX = 5;
+const PR_BODY_MAX_CHARS = 3500;
+const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
+
+// plan.serial + plan.parallel の file_changes を component（path の dirname。無ければ '(root)'）ごとに
+// 初出順でグループ化し、[{ component, files }] を返す（files は basename を初出順・重複排除）。
+function changeGroups(plan) {
+  const order = [];
+  const byComponent = new Map();
+  for (const p of planPaths(plan)) {
+    const idx = p.lastIndexOf('/');
+    const component = idx === -1 ? '(root)' : p.slice(0, idx);
+    const basename = idx === -1 ? p : p.slice(idx + 1);
+    if (!byComponent.has(component)) {
+      byComponent.set(component, []);
+      order.push(component);
     }
+    const files = byComponent.get(component);
+    if (!files.includes(basename)) files.push(basename);
   }
-  return rows;
+  return order.map((component) => ({ component, files: byComponent.get(component) }));
 }
 
-function hitLines(label, hits, keyOf) {
-  if (hits.length === 0) return `- ${label}: なし`;
-  const items = hits.map((h) => `${str(keyOf(h)) || 'unknown'}: \`${cell(h?.file) || '?'}\``);
-  return `- ${label}: ${hits.length} 件（${items.join('、')}）`;
+// `## 変更` セクション本文: component 別 bullet を PR_BODY_CHANGE_BULLETS_MAX 件まで、超過分は
+// `（他 N component）` 1 行で畳む。
+function changeSection(plan) {
+  const groups = changeGroups(plan);
+  if (groups.length === 0) return '（なし）';
+  const bullets = groups.map((g) => clip(`- \`${g.component}/\`: ${g.files.join(', ')}`, PR_BODY_CHANGE_BULLET_MAX));
+  const shown = bullets.slice(0, PR_BODY_CHANGE_BULLETS_MAX);
+  const excess = bullets.length - shown.length;
+  return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} component）` : shown.join('\n');
 }
 
-// PR body: 要約 / 受入条件（ledger の AC-n checked を反映した checkbox）/ 設計判断 / 変更 task /
-// 検証状況（danger-grep / test-surface hit）/ Closes #<issue> の固定セクション。
-function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits }) {
+// `## 受入条件` セクション本文: index 順に `- [x]`/`- [ ]` + clip(ac)。checked 判定は acResults 優先、
+// 無ければ ledger.items の `AC-<i+1>`。
+function acceptanceSection(req, ledger, acResults) {
   const acs = arr(req?.acceptance_criteria);
+  if (acs.length === 0) return '（なし）';
   const items = arr(ledger?.items);
-  const acLines = acs.map((ac, i) => {
-    const it = items.find((x) => x?.id === `AC-${i + 1}`);
-    return `- [${it?.checked === true ? 'x' : ' '}] ${str(ac).trim()}`;
+  const results = arr(acResults);
+  const lines = acs.map((ac, i) => {
+    const fromResults = results.find((r) => r?.ac_index === i);
+    const checked = fromResults ? fromResults.satisfied === true : items.find((x) => x?.id === `AC-${i + 1}`)?.checked === true;
+    return `- [${checked ? 'x' : ' '}] ${clip(str(ac).trim(), PR_BODY_AC_MAX)}`;
   });
-  const decisions = arr(plan?.architecture_decisions).map(decisionLine).filter(Boolean).map((d) => `- ${d}`);
-  const rows = taskRows(plan);
-  const summary = str(plan?.summary).trim();
+  return lines.join('\n');
+}
+
+// `## 設計判断` セクション本文: 先頭 PR_BODY_DECISIONS_MAX 件を `- <decisionLine>` で clip、超過分は
+// `（他 N 件は plan 参照）` 1 行。
+function decisionsSection(plan) {
+  const all = arr(plan?.architecture_decisions).map(decisionLine).filter(Boolean);
+  if (all.length === 0) return '（なし）';
+  const shown = all.slice(0, PR_BODY_DECISIONS_MAX).map((d) => clip(`- ${d}`, PR_BODY_DECISION_MAX));
+  const excess = all.length - shown.length;
+  return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件は plan 参照）` : shown.join('\n');
+}
+
+// 1 種別（danger-grep / test-surface）分の hit 行。総数は維持しつつ列挙 item を
+// PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。
+function hitLine(label, hits, keyOf) {
+  const list = arr(hits);
+  if (list.length === 0) return `- ${label}: なし`;
+  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => `${str(keyOf(h)) || 'unknown'}: \`${cell(h?.file) || '?'}\``);
+  const excess = list.length - shown.length;
+  const items = excess > 0 ? [...shown, `他 ${excess} 件`] : shown;
+  return `- ${label}: ${list.length} 件（${items.join('、')}）`;
+}
+
+// PR body: 結論1行 / 変更(component別) / 受入条件(checkbox) / 設計判断(≤5件) / 検証(hit) /
+// Closes #<issue> の 6 セクション固定構成。各セクションは PR_BODY_* 定数で決定論 clip する
+// （issue #661。旧 `## 要約` 無制限 verbatim + `## 変更 task` table 構成を置き換え）。
+// acResults（[{ac_index, satisfied}]）が指定されればチェック判定に優先利用する。
+function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits, acResults }) {
+  let conclusionText = collapseWhitespace(plan?.summary);
+  if (!conclusionText) conclusionText = collapseWhitespace(req?.issue_title);
+  if (!conclusionText) conclusionText = `issue #${issue} の変更`;
+  const conclusionLine = `**${clip(conclusionText, PR_BODY_SUMMARY_MAX)}**`;
+
+  const verify = `${hitLine('danger-grep', arr(dangerHits), (h) => h?.class)}\n${hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern)}`;
+
   const sections = [
-    `## 要約\n${summary || '（なし）'}`,
-    `## 受入条件\n${acLines.length ? acLines.join('\n') : '（なし）'}`,
-    `## 設計判断\n${decisions.length ? decisions.join('\n') : '（なし）'}`,
-    `## 変更 task\n${rows.length ? ['| id | group | 内容 | files |', '|---|---|---|---|', ...rows].join('\n') : '（なし）'}`,
-    `## 検証状況\n${hitLines('danger-grep', arr(dangerHits), (h) => h?.class)}\n${hitLines('test-surface', arr(testsurfHits), (h) => h?.pattern)}`,
+    conclusionLine,
+    `## 変更\n${changeSection(plan)}`,
+    `## 受入条件\n${acceptanceSection(req, ledger, acResults)}`,
+    `## 設計判断\n${decisionsSection(plan)}`,
+    `## 検証\n${verify}`,
     `Closes #${issue}`,
   ];
   return sections.join('\n\n') + '\n';
+}
+
+// body 内に `Closes #<issue>` 行（行全体一致）が存在するか。
+function hasClosesLine(body, issue) {
+  const re = new RegExp(`^Closes #${Number(issue)}\\s*$`, 'm');
+  return re.test(str(body));
+}
+
+// PR body の構造検証: 結論行 / PR_BODY_HEADINGS の各見出し / Closes 行の存在を決定論的に判定する。
+function verifyPrBody(body, issue) {
+  const s = str(body);
+  const missing = [];
+  const lines = s.split('\n');
+  const firstNonEmpty = lines.find((l) => l.trim() !== '');
+  if (!firstNonEmpty || !firstNonEmpty.trim().startsWith('**')) missing.push('結論');
+  for (const heading of PR_BODY_HEADINGS) {
+    const re = new RegExp(`^${heading}$`, 'm');
+    if (!re.test(s)) missing.push(heading);
+  }
+  const closes = hasClosesLine(s, issue);
+  if (!closes) missing.push('Closes');
+  return { ok: missing.length === 0, missing, closes, length: Array.from(s).length };
+}
+
+// gh pr view --json body の exec-proxy 応答から Closes 行の有無を判定する。取得失敗・body 非 string は
+// 'unknown'（fail-open。再投入しない）。
+function closesVerdict({ view, issue }) {
+  if (view == null || view.ok !== true || typeof view.body !== 'string') return 'unknown';
+  return hasClosesLine(view.body, issue) ? 'present' : 'missing';
+}
+
+// PR phase / Final reconcile 後の Closes 検証・再投入で dev-flow.js が持つ状態の closed enum。
+const PR_CLOSES_STATUS_VALUES = ['verified', 'reinjected', 'missing', 'unverified'];
+
+// gh pr view --json body の exec-proxy 応答の agent() schema。
+const PR_BODY_VIEW = {
+  type: 'object',
+  required: ['ok'],
+  properties: {
+    ok: { type: 'boolean' },
+    body: { type: ['string', 'null'] },
+    error: { type: 'string' },
+    epoch: { type: 'number' },
+  },
+};
+
+// gh pr edit --body-file の exec-proxy 応答の agent() schema。
+const PR_BODY_EDIT = {
+  type: 'object',
+  required: ['edited'],
+  properties: {
+    edited: { type: 'boolean' },
+    error: { type: 'string' },
+    epoch: { type: 'number' },
+  },
+};
+
+// PR #<pr> の本文 (body) を読み取り専用で取得する exec-proxy 向け prompt（closes-check / closes-recheck
+// label で使う。final-ci.mjs の finalCiPrompt と同型）。
+function prBodyViewPrompt({ pr, repo }) {
+  const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json body`;
+  return `## Objective\n`
+    + `PR #${pr} の本文 (body) を取得し、JSON をそのまま返せ。\n\n`
+    + `## Tools\n`
+    + `- 使用可: Bash のみ\n`
+    + `- 禁止: Write, Edit, git commit, git push\n\n`
+    + `## Boundary\n`
+    + `- 読み取り専用。git mutation（commit/push/reset 等）禁止\n\n`
+    + `## Steps\n`
+    + `1. \`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
+    + `2. stdout が空、JSON として不正、またはコマンドが実行できなかった場合は `
+    + `\`{"ok": false, "error": "<stderr の要約>"}\` を返せ。失敗時に ok:true を生成してはならない。`
+    + `原因調査はするな。再試行禁止。\n`
+    + `3. それ以外は stdout の JSON object から body を取り出し、`
+    + `\`{"ok": true, "body": <string を一字一句そのまま>}\` に包んで返せ。要約・整形・省略禁止。\n\n`
+    + `## Output format\n`
+    + `{"ok": true, "body": string} または {"ok": false, "error": string}\n`
+    + `prose 禁止。JSON のみ返せ。\n\n`
+    + `## Token cap\n`
+    + `JSON のみ。1 行以内（body を除く）。`;
+}
+
+// PR #<pr> の本文を prBody の内容で上書きする exec-proxy 向け prompt（closes-reinject / ac-checkbox-sync
+// label で使う）。Write で bodyFile へ verbatim 保存させた後、bare 単文で gh pr edit する。
+function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
+  const bodyFile = `${wt}/.devflow-tmp/${fileName}`;
+  const repoArg = repo ? ` --repo ${repo}` : '';
+  return `## Objective\n`
+    + `PR #${pr} の本文を渡された内容で上書きし、成否を返す。\n\n`
+    + `## 本文の保存\n`
+    + `**Write tool** を使い、下記 delimiter 内の本文を **一字一句そのまま**（要約・整形・追記・改変・shell 経由の書き出し禁止）`
+    + `\`${bodyFile}\` へ保存せよ。\n`
+    + `<<<PR_BODY_BEGIN>>>\n${prBody}<<<PR_BODY_END>>>\n\n`
+    + `## Steps\n以下を bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）:\n`
+    + `1. \`gh pr edit ${pr}${repoArg} --body-file ${bodyFile}\`\n`
+    + `2. 成功したら \`{"edited": true}\` を返せ。失敗しても throw せず `
+    + `\`{"edited": false, "error": "<stderr の要約>"}\` を返せ。\n\n`
+    + `## Output format\n{"edited": boolean, "error"?: string}\nprose 禁止。JSON のみ 1 行で返せ。\n\n`
+    + `## Tools\n使用可: Bash, Write\n\n`
+    + `## Boundary\n${bodyFile} 以外を書かない。git 操作禁止。本文の書き換え禁止。\n\n`
+    + `## Token cap\nJSON のみ。1 行以内。`;
 }
 
 // PR phase の dev-runner-haiku 向け prompt。commit message / PR body を delimiter 内に verbatim で
@@ -6790,6 +7001,32 @@ log(`PR created: ${pr.pr_url}`)
 
 feedClockMark('pr_end', epochResOf(pr))
 
+// Closes 行の決定論検証 + 再投入。probe 失敗は 'unverified'（fail-open、警告のみ）、
+// 本文取得成功かつ Closes 欠落は同一の決定論本文（prBody）で gh pr edit 再投入、再投入失敗 /
+// 再投入後も欠落は 'missing'（classifyMergeTier が HOLD 理由 pr_closes_missing に載せる fail-closed）。
+let prClosesStatus = 'unverified'
+const closesView = await failOpenAgent(prBodyViewPrompt({ pr: pr.pr_number, repo: REPO }), { agentType: 'dev-runner-haiku-ro', schema: PR_BODY_VIEW, label: 'closes-check', phase: 'PR', retryOnContractViolation: true })
+const closesV1 = closesVerdict({ view: closesView, issue: ISSUE })
+if (closesV1 === 'present') {
+  prClosesStatus = 'verified'
+} else if (closesV1 === 'unknown') {
+  log('⚠️ closes-check: PR body を取得できず — Closes 行は未検証（fail-open。再投入は行わない）')
+} else {
+  log(`⚠️ closes-check: PR body に Closes #${ISSUE} が無い（exec-proxy の後半セクション欠落の疑い）— 決定論本文を gh pr edit で再投入する`)
+  const reinject = await failOpenAgent(prBodyEditPrompt({ wt: WT, pr: pr.pr_number, repo: REPO, prBody, fileName: 'pr-body-reinject.md' }), { agentType: 'dev-runner-haiku', schema: PR_BODY_EDIT, label: 'closes-reinject', phase: 'PR' })
+  if (reinject?.edited !== true) {
+    prClosesStatus = 'missing'
+    log('⚠️ closes-reinject: PR body の再投入に失敗 — Closes 行欠落のまま（merge tier HOLD 理由 pr_closes_missing に載せる）')
+  } else {
+    const closesView2 = await failOpenAgent(prBodyViewPrompt({ pr: pr.pr_number, repo: REPO }), { agentType: 'dev-runner-haiku-ro', schema: PR_BODY_VIEW, label: 'closes-recheck', phase: 'PR', retryOnContractViolation: true })
+    const closesV2 = closesVerdict({ view: closesView2, issue: ISSUE })
+    prClosesStatus = closesV2 === 'present' ? 'reinjected' : (closesV2 === 'missing' ? 'missing' : 'unverified')
+    log(prClosesStatus === 'reinjected'
+      ? 'closes-reinject: PR body を再投入し Closes 行を確認済み'
+      : `⚠️ closes-recheck: 再投入後も Closes 行の確認に失敗（pr_closes_status=${prClosesStatus}）`)
+  }
+}
+
 // nested 起動時に dev-flow が pr-iterate へ渡す context。pr-iterate 側はこれを
 // 受けて pr-meta probe / isolation-cleanup を skip する — cwd/head_ref/repo/epoch は dev-flow が
 // 既に確定済みの値として保持しており、pr-iterate 側での再取得は冗長な exec-proxy 呼び出しになる。
@@ -7079,6 +7316,16 @@ if (_facDecision.run) {
   log(`Final AC reconcile: skip（reason=${_facDecision.reason}）`)
 }
 
+// AC checkbox 同期: pr-iterate が fix を適用し lgtm 終端し Final AC reconcile が reverified の
+// ときのみ、最終 AC 結果で PR body を再生成して gh pr edit。表示専用のため失敗は fail-open。
+let prBodySynced = null
+if (iterate?.status === 'lgtm' && (iterate?.fixes_applied ?? 0) > 0 && finalAcReconcile === 'reverified') {
+  const prBodyFinal = buildPrBody({ issue: ISSUE, req, plan: state.plan, ledger: state.ledger, testsurfHits: state.testsurfHits, dangerHits: state.dangerHits, acResults: state.finalAcResults })
+  const sync = await failOpenAgent(prBodyEditPrompt({ wt: WT, pr: pr.pr_number, repo: REPO, prBody: prBodyFinal, fileName: 'pr-body-final.md' }), { agentType: 'dev-runner-haiku', schema: PR_BODY_EDIT, label: 'ac-checkbox-sync', phase: 'Final reconcile' })
+  prBodySynced = sync?.edited === true
+  log(prBodySynced ? 'ac-checkbox-sync: PR body の AC checkbox を Final AC reconcile 結果へ更新' : '⚠️ ac-checkbox-sync: PR body 更新に失敗（fail-open。checkbox は fix 前のまま）')
+}
+
 feedClockMark('final_end', finalEpochRes)
 
 // ============================================================
@@ -7243,6 +7490,7 @@ const mergeTier = classifyMergeTier({
   trustGate: null,
   evalVerdictFail: state.evalResult?.verdict === 'fail',
   finalCi,
+  prClosesStatus,
 })
 log(`merge tier: ${mergeTier.tier} — ${mergeTier.reasons.join(' / ')}`)
 
@@ -7400,6 +7648,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(finalTestGreen != null ? { final_test_green: finalTestGreen } : {}),
     ...(finalUiVerifyStatus ? { final_ui_verify: finalUiVerifyStatus } : {}),
     final_ac_reconcile: finalAcReconcile,
+    pr_closes_status: prClosesStatus,
+    ...(prBodySynced != null ? { pr_body_synced: prBodySynced } : {}),
     testsurf_hits: testsurfPatternsFinal,
     ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
     ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
@@ -7491,6 +7741,8 @@ return {
   final_ui_verify: finalUiVerifyStatus,
   final_ac_reconcile: finalAcReconcile,
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
+  pr_closes_status: prClosesStatus,
+  pr_body_synced: prBodySynced,
   journal_log_status: journalLogStatus,
   note: mergeTier.tier === 'HOLD'
     ? `HOLD（${mergeTier.holdKind === 'deterministic_recheck' ? '決定論再チェックで解消しうる — CI 完了 / 再取得後に再確認' : '人間判断必須'}）: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
