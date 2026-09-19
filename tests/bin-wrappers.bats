@@ -81,6 +81,7 @@ repo-export
 repo-issue
 repo-pr
 skill-creator-init
+sns-announce-check-length
 sns-announce-extract-metadata
 sns-announce-get-posting-time
 sns-announce-load-config
@@ -144,6 +145,7 @@ skills_target_for() {
         repo-issue) echo "python3 repo-issue/scripts/export_issue.py" ;;
         repo-pr) echo "python3 repo-pr/scripts/export_pr.py" ;;
         skill-creator-init) echo "python3 skill-creator/scripts/init_skill.py" ;;
+        sns-announce-check-length) echo "bash sns-announce/scripts/check-length.sh" ;;
         sns-announce-load-config) echo "bash sns-announce/scripts/load-config.sh" ;;
         sns-announce-extract-metadata) echo "bash sns-announce/scripts/extract-metadata.sh" ;;
         sns-announce-get-posting-time) echo "bash sns-announce/scripts/get-posting-time.sh" ;;
@@ -259,7 +261,7 @@ skills_target_for() {
     done <<< "$(skills_expected_names)"
 }
 
-@test "plugins/playpark-skills/bin の entry は対象25本と完全一致する" {
+@test "plugins/playpark-skills/bin の entry は対象26本と完全一致する" {
     expected="$(skills_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/playpark-skills/bin" | sort)"
     [ "$actual" = "$expected" ]
