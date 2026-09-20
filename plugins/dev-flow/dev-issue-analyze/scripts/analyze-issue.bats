@@ -976,3 +976,46 @@ ${PAD}"
         (.scope | type == "string")
     '
 }
+
+# ---------------------------------------------------------------------------
+# issue_body (issue #668): raw body (AC section included) capped at the scope
+# limit (4000 chars), same marker / boolean convention as scope. dev-flow.js
+# hands it to dev-implement-fable as the issue text.
+# ---------------------------------------------------------------------------
+@test "contract mode: issue_body is the raw body verbatim (AC section included) when under 4000 chars" {
+    FIXTURE="$FIXTURE_DIR/issue-body-short.json"
+    BODY="## 背景"$'\n'"Some context here."$'\n\n'"## 受け入れ基準"$'\n'"- [ ] AC one"$'\n'"- [ ] AC two"
+    make_fixture "$FIXTURE" "feat: add issue_body" "$BODY"
+    run "$SCRIPT" 668 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --arg body "$BODY" '
+        .issue_body == $body and
+        .issue_body_truncated == false and
+        (.issue_body | contains("## 受け入れ基準")) and
+        (.scope | contains("## 受け入れ基準") | not)
+    '
+}
+
+@test "contract mode: issue_body over 4000 chars -> truncated to 4000 + marker, issue_body_truncated true" {
+    FIXTURE="$FIXTURE_DIR/issue-body-long.json"
+    LONG=$(printf 'x%.0s' $(seq 1 4500))
+    BODY="## 背景"$'\n'"${LONG}"$'\n\n'"## 受け入れ基準"$'\n'"- [ ] AC one"$'\n'
+    make_fixture "$FIXTURE" "feat: add issue_body" "$BODY"
+    run "$SCRIPT" 668 --issue-json "$FIXTURE" --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --arg body "$BODY" '
+        .issue_body_truncated == true and
+        (.issue_body | startswith($body[0:4000])) and
+        (.issue_body | contains("[TRUNCATED: issue_body shows the first 4000 of")) and
+        (.issue_body | contains("## 受け入れ基準") | not)
+    '
+}
+
+@test "standard depth: issue_body / issue_body_truncated present (verbatim body under the cap)" {
+    FIXTURE="$FIXTURE_DIR/issue-body-standard.json"
+    BODY="${AC_STUB}Short body for standard depth."
+    make_fixture "$FIXTURE" "Add a button" "$BODY"
+    run "$SCRIPT" 668 --issue-json "$FIXTURE" --depth standard
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --arg body "$BODY" '.issue_body == $body and .issue_body_truncated == false'
+}

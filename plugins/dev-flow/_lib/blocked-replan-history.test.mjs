@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
@@ -168,7 +168,9 @@ test('[blocked-replan-history] case1: cumulative blockSeen', async () => {
     return { status: 'DONE', task_id: m ? m[1] : 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, captures } = makeSandbox(STANDARD_ANALYZE_REQ, implementerStubBlocked);
   const { error } = await runDevFlowCapture(src, ctx);
 
@@ -221,7 +223,7 @@ test('[blocked-replan-history] case2: all tasks DONE - no replan', async () => {
     return { status: 'DONE', task_id: m ? m[1] : 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, captures } = makeSandbox(STANDARD_ANALYZE_REQ, implementerStubDone);
   const { error } = await runDevFlowCapture(src, ctx);
 

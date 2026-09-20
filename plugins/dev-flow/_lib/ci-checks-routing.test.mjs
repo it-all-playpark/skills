@@ -15,14 +15,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 import { gateLane, isConvergedUnderPolicy, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem, checkItem } from './goal-ledger.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-const devFlowSrc = readFileSync(devFlowPath, 'utf8');
+// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+const devFlowSrc = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // ============================================================
 // responder factory: concerns と ci-checks 応答だけをシナリオ別に差し替える

@@ -57,5 +57,14 @@ export function buildReqFromContract(contract, issueNumber) {
   if (Number.isInteger(contract.scope_total_chars) && contract.scope_total_chars >= 0) {
     req.scope_total_chars = contract.scope_total_chars
   }
+  // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implement-fable へ issue 本文として
+  // 渡す。scope_total_chars と同じ optional copy（型が合うときだけキーを立てる。欠落は Fable prompt 側で
+  // 「本文なし・AC を正とする」に倒れる）。
+  if (typeof contract.issue_body === 'string') {
+    req.issue_body = contract.issue_body
+  }
+  if (typeof contract.issue_body_truncated === 'boolean') {
+    req.issue_body_truncated = contract.issue_body_truncated
+  }
   return req
 }

@@ -439,6 +439,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | `dev-planner` | 実装計画の立案 | `QUALITY_MODEL` / high |
 | `plan-reviewer` | 計画の devil's-advocate レビュー | `QUALITY_MODEL` / high |
 | `implementer` | task 実装・green-fix・evaluator fix | frontmatter / high |
+| `dev-implement-fable` | standard shape の plan+impl 統合実装（`IMPLEMENT_MODE='fable'` 時。dev-planner を置き換える） | fable / high |
 | `evaluator` | 実装品質ゲート | `QUALITY_MODEL` / high |
 | `pr-reviewer` | PR レビュー | `QUALITY_MODEL` / high |
 | `dev-runner` | Skill 呼び出し（analyze / commit / PR） | frontmatter / high |

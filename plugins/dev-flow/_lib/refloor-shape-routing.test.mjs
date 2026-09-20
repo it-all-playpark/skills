@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -210,7 +210,9 @@ test('[refloor] (A) micro 見積もり + realized 6 files → evaluator >= 1 回
     issue_title: 'stub-issue-title',
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   // realized-diff stub は 6 ファイルを返す → refloorShape('micro', 6) → complex → runEval=true
   const { ctx, calls } = makeCountingSandbox(microReq, ['a', 'b', 'c', 'd', 'e', 'f']);
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
@@ -350,7 +352,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
   };
 
   const ctx = vm.createContext(sandbox);
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { error } = await runDevFlowInSandbox(src, ctx);
 
   // ReferenceError / SyntaxError は構造的に壊れているので即 fail させる（shape-loop-routing.test.mjs:171 と同型）
@@ -383,7 +385,7 @@ test('[refloor] (C) micro 見積もり + realized 1 file → evaluator 0 回（r
     issue_title: 'stub-issue-title',
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   // realized-diff stub は 1 ファイルのみ → refloorShape('micro', 1) → micro（変化なし）→ runEval=false
   const { ctx, calls } = makeCountingSandbox(microReq, ['src/foo.ts']);
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
@@ -523,7 +525,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
   };
 
   const ctx = vm.createContext(sandbox);
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { error } = await runDevFlowInSandbox(src, ctx);
 
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
@@ -579,7 +581,7 @@ test('[merge-tier] (D) micro 見積もり + realized 4 docs/test-only + changed-
     issue_title: 'stub-issue-title',
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
   // realized-diff: 4 件（.md / docs/ / *test* にマッチ → isDocsOrTestOnly=true）
   // ephemeral filter（.devflow-tmp / .staged. / fm_*.txt）には掛からないパス
@@ -639,7 +641,7 @@ test('[merge-tier] (E) micro 見積もり + realized 1 docs file + changed-files
     issue_title: 'stub-issue-title',
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
   // realized-diff: 1 件（.md → isDocsOrTestOnly=true）
   // refloorShape('micro', 1): 1 ファイル → realizedFloor='micro' → EFFECTIVE_SHAPE='micro'（昇格なし）

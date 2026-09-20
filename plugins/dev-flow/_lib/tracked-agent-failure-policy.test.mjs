@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 /**
@@ -31,7 +31,9 @@ import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEV_FLOW_PATH = join(HERE, '..', '.claude', 'workflows', 'dev-flow.js');
 const PR_ITERATE_PATH = join(HERE, '..', '.claude', 'workflows', 'pr-iterate.js');
-const devFlowSrc = readFileSync(DEV_FLOW_PATH, 'utf8');
+// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+const devFlowSrc = withImplementMode(readFileSync(DEV_FLOW_PATH, 'utf8'), 'planner');
 const prIterateSrc = readFileSync(PR_ITERATE_PATH, 'utf8');
 
 const THROW = () => { throw new Error('injected'); };

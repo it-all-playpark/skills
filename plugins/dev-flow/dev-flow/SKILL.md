@@ -65,6 +65,15 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    `args.base` は渡さない（base は `dev-flow-prerun` が解決済みで、渡すと `dev-flow-run` が
    即 throw する）。
 
+## standard shape の Implement 経路（IMPLEMENT_MODE）
+
+standard shape は既定で `dev-implement-fable`（plan+impl 統合、fable / high）を Implement で 1 spawn し、
+dev-planner を起動しない（`plan_iter=0`）。切替は `plugins/dev-flow/_lib/implement-mode.mjs` の
+`IMPLEMENT_MODE`（`'fable' | 'planner'`）。ロールバックはこの 1 行を `'planner'` に戻して
+`tools/sync-inlines.mjs --write`（先頭トークン=スクリプトパスの bare 形）を実行するだけで、
+dev-planner 1 発 → implementer の経路に戻る。complex / micro は値に依らず不変。詳細は
+`references/pipeline.md` の shape 3 tier 表。
+
 ## 直列複数 issue 実行時の worktree 切替
 
 複数 issue を直列に処理する場合は、**issue ごとに手順1-4 を繰り返し**、必ず

@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runWorkflowCapture, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runWorkflowCapture, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 import { gateLane, isConvergedUnderPolicy, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
 
@@ -148,7 +148,9 @@ let sharedResult = null;
 
 async function ensureSharedRun() {
   if (sharedCalls !== null) return;
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeRecordingSandbox(createResponder());
   const { result, error } = await runWorkflowCapture(src, ctx);
   sharedCalls = calls;
@@ -368,7 +370,7 @@ function createSingleConcernResponder(concernResolutions) {
 }
 
 async function runSingleConcernScenario(concernResolutions) {
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx } = makeRecordingSandbox(createSingleConcernResponder(concernResolutions));
   return runWorkflowCapture(src, ctx);
 }
