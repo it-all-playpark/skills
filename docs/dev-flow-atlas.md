@@ -115,7 +115,7 @@ Implement へ流さないためにある。
 flowchart TD
     IN["shape 確定"] --> P0{"shape"}
     P0 -->|micro| P1["plan 1 発<br/>plan-reviewer 0 回"]
-    P0 -->|standard| P2["plan 1 発<br/>plan-reviewer 0 回"]
+    P0 -->|standard| P2["IMPLEMENT_MODE='fable'（既定）: dev-planner 0 回<br/>issue から単一 task の plan を合成（plan#fable-skip）<br/>'planner': plan 1 発・plan-reviewer 0 回"]
     P0 -->|complex| P3["dev-planner ⇄ plan-reviewer<br/>PLAN_MAX / PLAN_STUCK"]
     P1 --> OUT["Implement へ"]
     P2 --> OUT
@@ -287,7 +287,7 @@ flowchart TD
 | shape | Plan | Evaluate | merge tier |
 | --- | --- | --- | --- |
 | `micro` | plan 1 発・plan-reviewer 0 回（triviality gate で review loop を skip） | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
-| `standard` | plan 1 発・plan-reviewer 0 回 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保 | `REVIEW` |
+| `standard` | `IMPLEMENT_MODE='fable'`（既定、`_lib/implement-mode.mjs`）: dev-planner 0 回・issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable` を 1 spawn。`'planner'`: plan 1 発・plan-reviewer 0 回 → implementer | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保 | `REVIEW` |
 | `complex` | dev-planner ⇄ plan-reviewer loop（`PLAN_MAX` 上限、topic-stuck で early-cutoff） | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
 
 micro のうち `runEval=false` かつ danger clean のものだけが PR phase で **lite route** に入り、
