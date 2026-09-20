@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -175,7 +175,9 @@ test('[shape-loop] SHAPE=standard: plan-reviewer 呼び出し 0 回・evaluator 
     issue_title: 'stub-issue-title',
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+  // 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeCountingSandbox(standardReq);
   const err = await runDevFlowInSandbox(src, ctx);
 
@@ -216,7 +218,9 @@ test('[shape-loop] SHAPE=complex: plan-reviewer 呼び出し >= 1（制御群）
     issue_title: 'stub-issue-title',
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+  // 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeCountingSandbox(complexReq);
   const err = await runDevFlowInSandbox(src, ctx);
 

@@ -16,11 +16,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // ---- VM sandbox helper ----
 
@@ -227,7 +230,6 @@ function resolvedSecondIter() {
 // ============================================================
 
 test('[redgreen-skip] T1: deterministic 昇格 + checked 済み AC は iteration2 で redgreen 再起動されない', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const responses = [criticalFirstIter(), resolvedSecondIter()];
   const redgreenResponseFor = () => ({ red: true, green: true, verdict: CLEAN_VERDICT });
 
@@ -254,7 +256,6 @@ test('[redgreen-skip] T1: deterministic 昇格 + checked 済み AC は iteration
 });
 
 test('[redgreen-skip] T2: telemetry 固定 — skip 分は vdelta_verdicts に追記せず vdelta_fail_open/redgreen_deny も増えない', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const responses = [criticalFirstIter(), resolvedSecondIter()];
   const redgreenResponseFor = () => ({ red: true, green: true, verdict: CLEAN_VERDICT });
 
@@ -279,7 +280,6 @@ test('[redgreen-skip] T2: telemetry 固定 — skip 分は vdelta_verdicts に�
 });
 
 test('[redgreen-skip] T3: inspection 据え置き AC（checked だが kind!==deterministic）は従来どおり再実行される', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const responses = [criticalFirstIter(), resolvedSecondIter()];
   const redgreenResponseFor = (acIndex, callNumber) => (
     callNumber === 1 ? { red: false, green: true, reason: 'no red' } : { red: true, green: true }
@@ -303,7 +303,6 @@ test('[redgreen-skip] T3: inspection 据え置き AC（checked だが kind!==det
 });
 
 test('[redgreen-skip] T4: 未 checked AC は従来どおり起動される', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const firstIter = {
     verdict: 'needs_work',
     total: 60,

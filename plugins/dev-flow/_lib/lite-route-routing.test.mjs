@@ -31,11 +31,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // AC-1 判断系スコープ（再ピン定義）。dev-runner-haiku / dev-runner-haiku-ro は含めない。
 const JUDGEMENT_AGENT_TYPES = new Set([
@@ -228,7 +231,6 @@ function failOnStructuralCrash(err) {
 // ============================================================
 
 test('[lite-route][A] clean-micro-lite: 判断系 agent（dev-planner/implementer/dev-runner/pr-reviewer）呼び出しが 10 以下', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeLiteRouteSandbox(makeCleanMicroReq());
   const err = await runDevFlowInSandbox(src, ctx);
   failOnStructuralCrash(err);
@@ -255,7 +257,6 @@ test('[lite-route][A] clean-micro-lite: 判断系 agent（dev-planner/implemente
 // ============================================================
 
 test('[lite-route][B] clean-micro-lite: pr-reviewer 呼び出しが 1 回のみで workflow(\'pr-iterate\') は呼ばれない', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls, workflowCalls } = makeLiteRouteSandbox(makeCleanMicroReq(), {
     reviewOverride: { decision: 'approve', issues: [] },
   });
@@ -285,7 +286,6 @@ test('[lite-route][B] clean-micro-lite: pr-reviewer 呼び出しが 1 回のみ�
 // ============================================================
 
 test('[lite-route][C] lite review が critical finding を返す → workflow(\'pr-iterate\') へ escalate する', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const blockingReview = {
     decision: 'request-changes',
     issues: [{ severity: 'critical', description: 'security issue' }],
@@ -317,7 +317,6 @@ test('[lite-route][C] lite review が critical finding を返す → workflow(\'
 // ============================================================
 
 test('[lite-route][D] danger-grep hit（micro でも runEval 強制）: lite をバイパスし workflow(\'pr-iterate\') + Evaluate 系呼び出しが現れる（AC-3）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls, workflowCalls } = makeLiteRouteSandbox(makeCleanMicroReq(), {
     dangerHits: ['xss'],
   });
@@ -356,7 +355,6 @@ test('[lite-route][D] danger-grep hit（micro でも runEval 強制）: lite を
 // source scan ではなく lite 経路の VM run で実際に組み立てられた ci-check-lite prompt そのものを
 // 検査し、呼び出し側が canonical を使っていることを pin する（独自 prompt を書き始める退行の検出）。
 test('[lite-route][E] ci-check-lite prompt が --checks-data を使い --checks-json/$TMPDIR/ci-checks/リダイレクトを含まない', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeLiteRouteSandbox(makeCleanMicroReq());
   const err = await runDevFlowInSandbox(src, ctx);
   failOnStructuralCrash(err);
@@ -370,7 +368,6 @@ test('[lite-route][E] ci-check-lite prompt が --checks-data を使い --checks-
 });
 
 test('[lite-route][E] ci-check-lite が throw しても lite 経路は full pr-iterate へ fail-open 委譲する', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls, workflowCalls } = makeLiteRouteSandbox(makeCleanMicroReq());
   // ci-check-lite の agentStub を throw するものへ差し替える
   const baseAgent = ctx.agent;

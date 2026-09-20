@@ -30,12 +30,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { parseSecfloorFields } from './secfloor-unified.mjs';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-const devFlowSrc = readFileSync(devFlowPath, 'utf8');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const devFlowSrc = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // ---- (1) struct フィールドの fail-open 純関数検証（parseSecfloorFields(unified).struct） ----
 

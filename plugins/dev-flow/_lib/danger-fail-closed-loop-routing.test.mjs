@@ -17,11 +17,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // ---- VM sandbox helpers（merge-tier-unsatisfied-ac.test.mjs / eval-convergence.test.mjs をベースに拡張）----
 
@@ -236,7 +239,6 @@ const EVAL_RESPONSE_CLEAN = {
 };
 
 test('[danger-fail-closed] AC#1: danger-grep fail-closed でも evaluator はちょうど 1 回で収束する（EVAL_MAX=10 まで空回りしない）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, counters } = makeSandbox(ANALYZE_REQ_COMPLEX, DANGER_FAIL_CLOSED, EVAL_RESPONSE_CLEAN);
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -252,7 +254,6 @@ test('[danger-fail-closed] AC#1: danger-grep fail-closed でも evaluator はち
 });
 
 test('[danger-fail-closed] AC#2: danger-grep fail-closed 時、merge tier は HOLD になる（軸A invariant: security floor は緩めない）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx } = makeSandbox(ANALYZE_REQ_COMPLEX, DANGER_FAIL_CLOSED, EVAL_RESPONSE_CLEAN);
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -269,7 +270,6 @@ test('[danger-fail-closed] AC#2: danger-grep fail-closed 時、merge tier は HO
 });
 
 test('[danger-fail-closed] AC#4: return object と telemetry で danger_fail_closed（真偽値）と danger_hits（実 hit クラス）が別軸で判別できる', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, counters } = makeSandbox(ANALYZE_REQ_COMPLEX, DANGER_FAIL_CLOSED, EVAL_RESPONSE_CLEAN);
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -298,7 +298,6 @@ test('[danger-fail-closed] AC#4: return object と telemetry で danger_fail_clo
 });
 
 test('[danger-fail-closed] AC#5 regression: danger-grep clean 時は evaluator 1 回で収束し、merge tier は danger 起因で HOLD にならず danger_fail_closed:false になる', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, counters } = makeSandbox(ANALYZE_REQ_COMPLEX, DANGER_CLEAN, EVAL_RESPONSE_CLEAN);
   const { result, error } = await runDevFlowCapture(src, ctx);
 

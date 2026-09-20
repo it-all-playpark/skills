@@ -16,11 +16,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // ---- VM sandbox helpers ----
 
@@ -214,7 +217,6 @@ const EVAL_RESPONSE_CLEAN = {
 // clearance が cleared:true + 非空 evidence を返す → checked → HOLD 回避。
 // ============================================================
 test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+evidence で HOLD 回避し footer が一致する', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const clearanceResponse = {
     security_clearance: [{ danger_class: 'config', cleared: true, evidence: 'diff 精査: secret 平文なし' }],
   };
@@ -270,7 +272,6 @@ test('[merge-tier-sec-clearance] シナリオ1: PR#16 再現 — cleared:true+ev
 // シナリオ 2: clearance が cleared:false を返す → SEC item unchecked のまま HOLD。
 // ============================================================
 test('[merge-tier-sec-clearance] シナリオ2: cleared:false — SEC-CONFIG unchecked のまま HOLD になる', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const clearanceResponse = {
     security_clearance: [{ danger_class: 'config', cleared: false, evidence: '' }],
   };
@@ -292,7 +293,6 @@ test('[merge-tier-sec-clearance] シナリオ2: cleared:false — SEC-CONFIG unc
 // quality model fallback で同一 label を model 無しで 1 回だけ再試行する（計 2 回、それ以上は増えない）。
 // ============================================================
 test('[merge-tier-sec-clearance] シナリオ3: clearance null — HOLD かつ workflow は完走する', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, counters } = makeSandbox(ANALYZE_REQ, DANGER_CLEAN, DANGER_HIT_CONFIG, EVAL_RESPONSE_CLEAN, null);
   const { result, error } = await runDevFlowCapture(src, ctx);
   assertNoCrash(error);
@@ -311,7 +311,6 @@ test('[merge-tier-sec-clearance] シナリオ3: clearance null — HOLD かつ w
 // 全 SEC seed unchecked で HOLD を強制する（security floor 不変）。
 // ============================================================
 test('[merge-tier-sec-clearance] シナリオ4: merge-tier-facts risk fail-closed — clearance は呼ばれず HOLD 強制', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const clearanceResponse = {
     security_clearance: [{ danger_class: 'config', cleared: true, evidence: 'should not be called' }],
   };
@@ -335,7 +334,6 @@ test('[merge-tier-sec-clearance] シナリオ4: merge-tier-facts risk fail-close
 // シナリオ 5: 両方 clean（回帰） — clearance は呼ばれず、danger 起因の HOLD にならない。
 // ============================================================
 test('[merge-tier-sec-clearance] シナリオ5 regression: Evaluate 前・Merge tier 最終ともに clean — clearance 呼び出しなし、HOLD にならない', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, counters } = makeSandbox(ANALYZE_REQ, DANGER_CLEAN, DANGER_CLEAN, EVAL_RESPONSE_CLEAN, null);
   const { result, error } = await runDevFlowCapture(src, ctx);
   assertNoCrash(error);

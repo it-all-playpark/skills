@@ -36,7 +36,7 @@ implementer が `DONE_WITH_CONCERNS` を返した場合、その `concerns[]` �
 ## 入力
 
 - `requirements`: issue 受入条件
-- `plan`: dev-planner の計画。standard shape の `IMPLEMENT_MODE='fable'` 経路では issue から合成した
+- `plan`: dev-planner の計画。`IMPLEMENT_MODE='fable'` 経路（全 shape）では issue から合成した
   単一 task（`agent: dev-implement-fable`、`desc` = issue title、`test_plan` 空）で、参照すべき
   計画本文は無い — requirements（AC）と diff を直接突合する
 - `worktree`: diff/コード/テスト確認用パス
