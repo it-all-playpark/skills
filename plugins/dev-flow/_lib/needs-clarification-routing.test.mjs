@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -209,7 +209,9 @@ const standardReq = {
 // T1 は TDD red: 現行 dev-flow.js は needs_clarification を返さないため fail。
 // ============================================================
 test('[needs-clarification] T1: 常に NEEDS_CONTEXT → 再分析+needs_clarification を返し PR を起動しない', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     standardReq,
     () => ({
@@ -307,7 +309,7 @@ test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-planner 0 �
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeCountingSandbox(
     microReq,
     () => ({
@@ -370,7 +372,7 @@ test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-planner 0 �
 // T3 は現行挙動の pin（pass）。
 // ============================================================
 test('[needs-clarification] T3: 正常 path（DONE）→ analyze/planner/evaluator/pr 各 1 回・PR 完走', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     standardReq,
     () => ({
@@ -452,7 +454,7 @@ test('[needs-clarification] T3: 正常 path（DONE）→ analyze/planner/evaluat
 // T4 は現行挙動の pin（pass）。
 // ============================================================
 test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-planner 3 回・pr 1 回', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeCountingSandbox(
     standardReq,
     () => ({
@@ -505,7 +507,7 @@ test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-plan
 // T5 は TDD red: 現行 dev-flow.js は needs_clarification ルーティングを持たないため fail。
 // ============================================================
 test('[needs-clarification] T5: 回復 path（1 回目 NEEDS_CONTEXT → 2 回目 DONE）→ analyze 2 回・PR 完走', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     standardReq,
     (callIndex) => {
@@ -582,7 +584,7 @@ test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarifica
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeCountingSandbox(
     reqWithAmbiguities,
     () => ({
@@ -651,7 +653,7 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     reqWithBoundaryAmbiguities,
     () => ({
@@ -707,7 +709,7 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
 //   (c) 1 件目は '--depth comprehensive' を含まず、2 件目のみ含む
 // ============================================================
 test('[needs-clarification] T9: analyzePrompt(depth) 関数化 — 2 経路の prompt が depth のみ異なる', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
   // (a) の 'analyzePrompt' 文字列 pin は削除（issue #636）— (b)(c) の「depth 置換後に完全一致」が関数化の挙動証拠
 

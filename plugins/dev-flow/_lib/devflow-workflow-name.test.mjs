@@ -21,14 +21,16 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const workflowDir = join(repoRoot, '.claude/workflows');
 
 const devFlowPath = join(workflowDir, 'dev-flow.js');
-const devFlowSrc = readFileSync(devFlowPath, 'utf8');
+// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+const devFlowSrc = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // (a) 新 meta 名: `export const meta = {...}` の pure literal をハーネスと同様に評価して観測する
 function loadWorkflowMeta(src) {

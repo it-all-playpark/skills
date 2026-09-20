@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -103,7 +103,9 @@ const STANDARD_REQ = {
   issue_title: 'stub-issue-title',
 };
 
-const src = readFileSync(devFlowPath, 'utf8');
+// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // (1) diff-gate empty=true + cross-repo ラベル + found=1 → throw なし・reimpl-empty-diff 無し・
 //     status==='cross_repo_artifact'・journal-log-failure prompt に 'cross_repo' を含み 'empty_diff' を含まない

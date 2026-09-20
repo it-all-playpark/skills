@@ -75,6 +75,7 @@ const EXPECTED = {
   'evaluator': 'high',
   'pr-reviewer': 'high',
   'implementer': 'high',
+  'dev-implement-fable': 'high',
   'dev-runner': 'high',
   'dev-runner-haiku-wo': 'low',
 };

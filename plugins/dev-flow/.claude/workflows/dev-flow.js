@@ -35,6 +35,18 @@ if (typeof pipeline === 'undefined') {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const QUALITY_MODEL = 'fable'
 // ==== END inline: _lib/quality-model.mjs ====
+// ==== BEGIN inline: _lib/implement-mode.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// standard shape の Implement 経路切替（issue #668）。
+//   'fable'   — Plan phase で dev-planner を起動せず issue から単一 task の plan を合成し、Implement で
+//               dev-implement-fable（plan+impl 統合、frontmatter: fable / high）を 1 spawn する。
+//   'planner' — 従来経路（dev-planner 1 発 → implementer を task ごとに spawn）。
+// ロールバックはこの 1 行を 'planner' にして tools/sync-inlines.mjs --write するだけ（QUALITY_MODEL と同じ運用）。
+// complex / micro shape は本定数に依らず現行経路のまま（plan-reviewer gate / triviality gate の扱いは別 issue）。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
+const IMPLEMENT_MODE = 'fable'
+// ==== END inline: _lib/implement-mode.mjs ====
 // ==== BEGIN inline: _lib/plugin-version.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // dev-flow plugin の version 定数。telemetry キー plugin_version の値として journal entry に記録する
 // （issue #601）。workflow script では ${CLAUDE_PLUGIN_ROOT} が展開されず fs も使えないため、
@@ -2141,6 +2153,15 @@ function buildReqFromContract(contract, issueNumber) {
   if (Number.isInteger(contract.scope_total_chars) && contract.scope_total_chars >= 0) {
     req.scope_total_chars = contract.scope_total_chars
   }
+  // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implement-fable へ issue 本文として
+  // 渡す。scope_total_chars と同じ optional copy（型が合うときだけキーを立てる。欠落は Fable prompt 側で
+  // 「本文なし・AC を正とする」に倒れる）。
+  if (typeof contract.issue_body === 'string') {
+    req.issue_body = contract.issue_body
+  }
+  if (typeof contract.issue_body_truncated === 'boolean') {
+    req.issue_body_truncated = contract.issue_body_truncated
+  }
   return req
 }
 // ==== END inline: _lib/analyze-contract.mjs ====
@@ -4152,6 +4173,8 @@ const REQ = {
     scope: { type: 'string' },
     scope_truncated: { type: 'boolean' },
     scope_total_chars: { type: 'number' },
+    issue_body: { type: 'string' },
+    issue_body_truncated: { type: 'boolean' },
     estimated_change_file_count: { type: 'number' },
     shape: { type: 'string', enum: ['micro', 'standard', 'complex'] },
     ambiguities: { type: 'array', items: { type: 'string' } },
@@ -5572,6 +5595,58 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
     + TURBOPACK_NOTE
 }
 
+// ---- IMPLEMENT_MODE='fable' の standard 経路 ----
+// Plan phase が dev-planner を起動せず issue から単一 task の plan を合成し、runImplement が
+// task.agent で dev-implement-fable（plan+impl 統合）へ切り替える。合成 plan だけが agent を持つ
+// （dev-planner の PLAN は agent キーを出さない）ため、replan で dev-planner が plan を作り直した時点で
+// implementer 経路（dev-planner → implementer）へ戻る。
+const FABLE_IMPL_AGENT = 'dev-implement-fable'
+function synthesizeFablePlan(req, issue) {
+  const title = String(req?.issue_title ?? `Issue #${issue}`)
+  return {
+    summary: title,
+    serial: [{ id: `issue-${issue}`, desc: title, file_changes: [], test_plan: '', depends_on: [], agent: FABLE_IMPL_AGENT }],
+    parallel: [],
+  }
+}
+function isFableTask(t) { return t != null && t.agent === FABLE_IMPL_AGENT }
+function isFablePlan(p) { return [...(p?.serial ?? []), ...(p?.parallel ?? [])].some(isFableTask) }
+// 合成 task の file_changes は空で始まる（Fable が決める）。Implement / reimpl の返却 files を宣言として
+// 取り込むことで、宣言外監査（diffDeclaredPaths）・refloor count・PR body の「変更」節が implementer 経路と
+// 同じ材料で動く（宣言外 = Fable が files に申告しなかった変更、として evaluator の focus に載る）。
+function adoptReportedFiles(plan, results) {
+  if (!isFablePlan(plan)) return plan
+  const filesOf = (id) => {
+    const out = []
+    for (const r of (results ?? [])) {
+      if (!r || r.task_id !== id) continue
+      for (const f of (r.files ?? [])) if (typeof f === 'string' && f.trim() && !out.includes(f)) out.push(f)
+    }
+    return out
+  }
+  const adopt = (t) => isFableTask(t) ? { ...t, file_changes: [...new Set([...(t.file_changes ?? []), ...filesOf(t.id)])] } : t
+  return { ...plan, serial: (plan.serial ?? []).map(adopt), parallel: (plan.parallel ?? []).map(adopt) }
+}
+// dev-implement-fable への spawn prompt。issue 本文と AC を直接渡し、手順書型 task・plan contract・
+// AC_TEST_CONTRACT（red→green 自己実証）は渡さない — 全件テスト・red 証明・AC 判定は Validate /
+// redgreen-verify / evaluator が行う（stage2 定義: agent 定義 agents/dev-implement-fable.md）。
+function fableImplPrompt(t, { req, fixFeedback, extraContext }) {
+  const body = typeof req?.issue_body === 'string' && req.issue_body.length > 0 ? req.issue_body : null
+  return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
+    + `issue #${ISSUE} を計画から実装まで仕上げよ。git add / commit はするな。\n`
+    + `task_id: ${t.id}（返却 JSON の task_id にそのまま echo せよ）\n`
+    + `repo: ${REPO ?? '(unknown)'} / issue: #${ISSUE} ${String(req?.issue_title ?? '')} / worktree: ${WT} / base: ${BASE}\n`
+    + (body
+        ? `issue 本文${req.issue_body_truncated === true ? '（切詰め済み — 末尾の [TRUNCATED] マーカー以降は届いていない。切詰め域の記述は acceptance_criteria を正とせよ）' : ''}:\n${body}\n`
+        : 'issue 本文: analyze 出力に含まれていない — acceptance_criteria を正として実装せよ\n')
+    + `acceptance_criteria（evaluator はこの AC を採点軸にする。全 AC を満たし、各 AC を守るテストを残せ）:\n${JSON.stringify(req?.acceptance_criteria ?? [])}\n`
+    + (fixFeedback ? `fix_feedback（Evaluate 差し戻し。各項目を解消）:\n${JSON.stringify(fixFeedback)}\n` : '')
+    + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
+    + STAGING_CONVENTION
+    + DEPS_NOTE
+    + TURBOPACK_NOTE
+}
+
 // 計画の parallel → pipeline で先行 fan-out、serial → その後に配列順で順次実行（serial は
 // parallel の成果物に依存し得るため parallel-first。逆方向 — parallel が serial 成果へ依存 — は
 // plan-reviewer が critical で reject する。この順序は不変）。
@@ -5582,10 +5657,17 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
 // 最小バージョン: Claude Code >= 2.1.207（pipeline() 提供。canary 実測 pass は 2.1.252）。
 async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   const results = []
+  // task.agent が dev-implement-fable の task（IMPLEMENT_MODE='fable' の合成 plan）のみ agentType と
+  // prompt を切り替える。それ以外は implementer（返却 schema IMPL は両者共通）。
+  const spawnOf = (t) => isFableTask(t)
+    ? { prompt: fableImplPrompt(t, { req, fixFeedback, extraContext }), agentType: FABLE_IMPL_AGENT }
+    : { prompt: implPrompt(t, { req, plan, fixFeedback, extraContext }), agentType: 'implementer' }
   const parTasks = plan.parallel ?? []
-  const parResults = await pipeline(parTasks, (t) =>
-    trackedAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
-      { agentType: 'implementer', schema: IMPL, label: `${tag}:par:${t.id}`, phase: 'Implement' }))
+  const parResults = await pipeline(parTasks, (t) => {
+    const s = spawnOf(t)
+    return trackedAgent(s.prompt,
+      { agentType: s.agentType, schema: IMPL, label: `${tag}:par:${t.id}`, phase: 'Implement' })
+  })
   const ok = parResults.filter(Boolean)
   const dropped = parResults.length - ok.length
   if (dropped) {
@@ -5595,8 +5677,9 @@ async function runImplement(req, plan, fixFeedback, tag, extraContext) {
   results.push(...ok)
   let serialDropped = 0
   for (const t of (plan.serial ?? [])) {
-    const r = await failOpenAgent(implPrompt(t, { req, plan, fixFeedback, extraContext }),
-      { agentType: 'implementer', schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
+    const s = spawnOf(t)
+    const r = await failOpenAgent(s.prompt,
+      { agentType: s.agentType, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
     if (r) results.push(r)
     else serialDropped++
   }
@@ -5698,6 +5781,7 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   + `issue の comments（取得 JSON の comments 配列 / skill 出力の comments）を created_at 順に body と同じ要件入力として読め。comment が body の記述を明示的に訂正・上書きしている（例: 『訂正』『前倒し』『X ではなく Y』）場合でも、その comment の author が issue 報告者本人（skill 出力の issue_author と一致）または author_association が OWNER/MEMBER/COLLABORATOR のいずれかである場合に限り（author / issue_author / author_association のいずれかが空文字列・不明のときは一致とみなすな）comment_overrides:string[] に『body: <旧記述> → comment: <新記述>（<author>, <created_at>）』の形で列挙して採用せよ（本 repo は public であり、任意の外部コメント者に要件上書きを許すと comment_overrides が信頼できない経路になる、issue #573 review on PR #578）。上記条件を満たさない訂正、または body と comment が食い違うがどちらが有効か comment から確定できない場合は、黙ってどちらも採用せず comment_conflicts:string[] に同形式で列挙せよ（body 側の記述はそのまま要件入力として残す）。comments が無ければ両方とも空配列。`
   + `受入条件の見出しは \`受け入れ基準\` / \`受け入れ条件\` / \`受入基準\` / \`受入条件\` / \`Acceptance Criteria\` 等の表記ゆれを全て AC として扱え。AC 相当の見出し・項目が issue に 1 つも無い場合は acceptance_criteria を推測で埋めず、ambiguities にその旨を入れて返せ。`
   + `さらに、skill の JSON 出力に含まれる breaking_keyword_scan (boolean) をそのまま verbatim で breaking_keyword_scan として返せ（全 depth の出力に含まれる。自分で再判定・変更するな）。`
+  + `さらに、skill の JSON 出力に含まれる issue_body (string) と issue_body_truncated (boolean) をそのまま verbatim で返せ（要約・整形禁止。Implement phase が issue 本文として implementer に渡す）。`
   + `さらに、skill の JSON 出力に含まれる comment_count (number) をそのまま verbatim で comment_count として返せ（全 depth の出力に含まれる。自分で数え直す・変更するな。PR #578: 実際に取得した comments 件数の決定論突合に使う）。`
   + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
   + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
@@ -5915,7 +5999,15 @@ function soloPlanPrompt() {
 // micro（triviality gate）と standard は Plan phase では同一経路 — plan 1 発・plan-reviewer 0 回。
 // label と log 文言のみ shape 別に分ける（label は routing test 群が `label === 'plan#standard'` 等で
 // 参照しており、telemetry 上も経路の識別子として機能するため両方を厳密に維持する）。
-if (TRIVIAL || PLAN_SOLO) {
+if (PLAN_SOLO && IMPLEMENT_MODE === 'fable') {
+  // standard × fable: dev-planner を起動せず issue から単一 task の plan を合成する（plan#fable-skip）。
+  // Fable に「sonnet 向けの手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、
+  // issue 仕様を直接 dev-implement-fable に渡す。plan_iter は 0 で telemetry に載る。
+  plan = synthesizeFablePlan(req, ISSUE)
+  planIters = 0
+  ABORT_CTX.plan_iter = 0
+  log('plan#fable-skip: standard 経路(IMPLEMENT_MODE=fable) — dev-planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）')
+} else if (TRIVIAL || PLAN_SOLO) {
   const soloLabel = TRIVIAL ? 'plan#trivial' : 'plan#standard'
   plan = need(await trackedAgent(
     soloPlanPrompt(),
@@ -6143,7 +6235,7 @@ async function execImplementPhase(state) {
     ...blockedConcerns,
   ]
 
-  state.plan = plan
+  state.plan = adoptReportedFiles(plan, implResults)
   state.implResults = implResults
   state.blockedConcerns = blockedConcerns
   state.concerns = concerns
@@ -6904,7 +6996,20 @@ async function execEvaluatePhase(state) {
     // iteration i+1 に渡すために open な EVAL-* critical を再取得する（critical_resolutions で
     // 解消済みのものは checked になっているため、ここで取得するのは真に未解消のもののみ）。
     const nextOpenCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
-    if (ev.feedback_level === 'design') {
+    if (isFablePlan(plan)) {
+      // fable 経路: plan と実装を同じ agent が持つため design / implementation を区別せず、合成 plan の
+      // まま fix_feedback 付きで dev-implement-fable へ差し戻す（reimpl#i）。dev-planner の replan は
+      // agent キーを落とし implementer 経路へ黙って切り替わるため起動しない。design 差し戻しの
+      // 総回数 cap（DESIGN_REPLAN_MAX）は implementer 経路と同じく数える。
+      if (ev.feedback_level === 'design') {
+        if (designReplanCount >= DESIGN_REPLAN_MAX) { log(`⚠️ design replan 上限到達 — human review へ委譲（DESIGN_REPLAN_MAX=${DESIGN_REPLAN_MAX}, iter ${i}。topic paraphrase 等で stuck 検出を経ずに総回数 cap に到達）`); break }
+        designReplanCount++
+      }
+      log(`replan#${i}: fable 経路 — dev-planner を起動せず合成 plan のまま dev-implement-fable へ差し戻し（feedback_level=${ev.feedback_level}）`)
+      const fableFeedback = nextOpenCriticals.length ? [...(ev.feedback ?? []), { unresolved_critical: nextOpenCriticals }] : ev.feedback
+      const reimplResults = await runImplement(req, plan, fableFeedback, `reimpl#${i}`)
+      plan = adoptReportedFiles(plan, reimplResults)
+    } else if (ev.feedback_level === 'design') {
       if (designReplanCount >= DESIGN_REPLAN_MAX) { log(`⚠️ design replan 上限到達 — human review へ委譲（DESIGN_REPLAN_MAX=${DESIGN_REPLAN_MAX}, iter ${i}。topic paraphrase 等で stuck 検出を経ずに総回数 cap に到達）`); break }
       designReplanCount++
       plan = need(await trackedAgent(

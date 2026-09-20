@@ -381,6 +381,8 @@ run_contract_mode() {
         --arg scope "$SCOPE" \
         --argjson scope_truncated "$SCOPE_TRUNCATED" \
         --argjson scope_total_chars "$SCOPE_TOTAL_CHARS" \
+        --arg issue_body "$ISSUE_BODY" \
+        --argjson issue_body_truncated "$ISSUE_BODY_TRUNCATED" \
         --argjson breaking_keyword_scan "$BREAKING_KEYWORD_SCAN" \
         --argjson has_file_count "$([[ "$SCOPE_FILES_COUNT" -gt 0 ]] && echo true || echo false)" \
         --argjson file_count "$SCOPE_FILES_COUNT" \
@@ -397,6 +399,8 @@ run_contract_mode() {
           scope: $scope,
           scope_truncated: $scope_truncated,
           scope_total_chars: $scope_total_chars,
+          issue_body: $issue_body,
+          issue_body_truncated: $issue_body_truncated,
           breaking_keyword_scan: $breaking_keyword_scan,
           comment_count: $comment_count,
           ac_heading_near_miss: $ac_heading_near_miss
@@ -462,6 +466,17 @@ BODY_PREVIEW_TRUNCATED=false
 if (( BODY_TOTAL_CHARS > BODY_PREVIEW_MAX_CHARS )); then
     BODY_PREVIEW_TRUNCATED=true
     BODY_PREVIEW+="$(truncation_marker body_preview "$BODY_PREVIEW_MAX_CHARS" "$BODY_TOTAL_CHARS" "")"
+fi
+# issue_body (contract mode + standard/comprehensive depth): the raw body (AC section
+# INCLUDED, unlike `scope`) capped at SCOPE_MAX_CHARS with the same marker / boolean
+# convention as `scope`. dev-flow.js hands it to the plan+impl implementer
+# (dev-implement-fable, issue #668) as the issue text; the AC list travels separately,
+# so a truncated body still leaves the implementer with the full acceptance criteria.
+ISSUE_BODY="${BODY:0:$SCOPE_MAX_CHARS}"
+ISSUE_BODY_TRUNCATED=false
+if (( BODY_TOTAL_CHARS > SCOPE_MAX_CHARS )); then
+    ISSUE_BODY_TRUNCATED=true
+    ISSUE_BODY+="$(truncation_marker issue_body "$SCOPE_MAX_CHARS" "$BODY_TOTAL_CHARS" " of the issue body (AC section included)")"
 fi
 
 if [[ "$CONTRACT_MODE" == true ]]; then
@@ -538,7 +553,9 @@ if [[ "$DEPTH" == "standard" ]]; then
   "body_total_chars": $BODY_TOTAL_CHARS,
   "scope": $(printf '%s' "$SCOPE" | jq -Rs .),
   "scope_truncated": $SCOPE_TRUNCATED,
-  "scope_total_chars": $SCOPE_TOTAL_CHARS
+  "scope_total_chars": $SCOPE_TOTAL_CHARS,
+  "issue_body": $(printf '%s' "$ISSUE_BODY" | jq -Rs .),
+  "issue_body_truncated": $ISSUE_BODY_TRUNCATED
 }
 JSONEOF
     exit 0
@@ -572,6 +589,8 @@ cat <<JSONEOF
   "body_total_chars": $BODY_TOTAL_CHARS,
   "scope": $(printf '%s' "$SCOPE" | jq -Rs .),
   "scope_truncated": $SCOPE_TRUNCATED,
-  "scope_total_chars": $SCOPE_TOTAL_CHARS
+  "scope_total_chars": $SCOPE_TOTAL_CHARS,
+  "issue_body": $(printf '%s' "$ISSUE_BODY" | jq -Rs .),
+  "issue_body_truncated": $ISSUE_BODY_TRUNCATED
 }
 JSONEOF

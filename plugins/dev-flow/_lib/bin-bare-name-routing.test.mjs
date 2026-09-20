@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -89,7 +89,9 @@ test('[bin-bare-name-routing][AC1] _lib/*.mjs に skills 絶対パスが 0 箇�
 // （WT='/tmp/wt'・BASE='dev' で展開済み）が現れることを label ごとに確認する。到達させるための
 // scenario は label 単位の override で最小に絞る。
 
-const devFlowSrc = readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8');
+// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+const devFlowSrc = withImplementMode(readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8'), 'planner');
 const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
 const devImproveSrc = readFileSync(join(workflowsDir, 'dev-improve.js'), 'utf8');
 

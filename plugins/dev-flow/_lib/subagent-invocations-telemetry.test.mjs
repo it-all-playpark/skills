@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -109,6 +109,10 @@ function makeResponder(journalPrompts) {
     }
     if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    }
+    // IMPLEMENT_MODE='fable' の standard 経路（issue #668）: 合成 task issue-1 を echo する
+    if (agentType === 'dev-flow:dev-implement-fable') {
+      return { status: 'DONE', task_id: 'issue-1', files: ['src/foo.ts'], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
@@ -217,4 +221,30 @@ test('[subagent-invocations] nested pr-iterate の subagent_invocations（total=
     `by_type['dev-runner-haiku'] (${inv.by_type['dev-runner-haiku']}) は own run 実測回数 ` +
     `(${ownDevRunnerHaikuCount}) + nested の 2 と一致するべき`,
   );
+});
+
+// issue #668 AC-8: IMPLEMENT_MODE='fable' の standard run では by_type に dev-implement-fable が 1 で計上され、
+// dev-planner は載らず（0 回）、plan_iter は 0 で記録される。'planner' に戻すと dev-planner が 1・plan_iter 1 に戻る
+// （ロールバックの観測経路が journal だけで閉じることを pin する）。
+test('[subagent-invocations][#668] IMPLEMENT_MODE=fable: by_type に dev-implement-fable:1・dev-planner 無し・plan_iter 0（planner に戻すと従来値）', async () => {
+  const run = async (mode) => {
+    const journalPrompts = [];
+    const { ctx } = makeRecordingSandbox(makeResponder(journalPrompts));
+    const error = await runDevFlowInSandbox(withImplementMode(src, mode), ctx);
+    if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+      assert.fail(`dev-flow.js が sandbox でクラッシュ (mode=${mode}): ${error.name}: ${error.message}`);
+    }
+    const payload = parseJournalHandoffPayload(journalPrompts[0] ?? '');
+    return payload.telemetry;
+  };
+
+  const fable = await run('fable');
+  assert.equal(fable.subagent_invocations.by_type['dev-implement-fable'], 1, `fable: by_type['dev-implement-fable'] は 1 のはず: ${JSON.stringify(fable.subagent_invocations.by_type)}`);
+  assert.equal('dev-planner' in fable.subagent_invocations.by_type, false, `fable: by_type に dev-planner が載っている: ${JSON.stringify(fable.subagent_invocations.by_type)}`);
+  assert.equal(fable.plan_iter, 0, `fable: plan_iter は 0 のはずだが ${fable.plan_iter}`);
+
+  const planner = await run('planner');
+  assert.equal('dev-implement-fable' in planner.subagent_invocations.by_type, false, `planner: by_type に dev-implement-fable が載っている: ${JSON.stringify(planner.subagent_invocations.by_type)}`);
+  assert.equal(planner.subagent_invocations.by_type['dev-planner'], 1, `planner: by_type['dev-planner'] は 1 のはず`);
+  assert.equal(planner.plan_iter, 1, `planner: plan_iter は 1 のはずだが ${planner.plan_iter}`);
 });

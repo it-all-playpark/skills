@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -192,7 +192,9 @@ test('[parallel-disjoint-routing] 衝突 plan: P2 が :par: で呼ばれず :ser
     ],
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
+  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeCountingSandbox(standardReq, conflictPlan);
   const err = await runDevFlowInSandbox(src, ctx);
 
@@ -244,7 +246,7 @@ test('[parallel-disjoint-routing] 非衝突 plan: P1/P2 が共に :par: で呼�
     ],
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeCountingSandbox(standardReq, nonConflictPlan);
   const err = await runDevFlowInSandbox(src, ctx);
 
@@ -415,7 +417,7 @@ test('[parallel-disjoint-routing] Evaluate replan: design feedback 後の衝突 
     Date,
   };
 
-  const src = readFileSync(devFlowPath, 'utf8');
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const ctx = vm.createContext(sandbox);
   const err = await runDevFlowInSandbox(src, ctx);
 

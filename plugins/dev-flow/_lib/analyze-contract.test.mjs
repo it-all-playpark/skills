@@ -230,3 +230,25 @@ test('[analyze-contract][classifyShape統合] count:2 + AC<=4 → shape:\'micro\
   const { shape } = classifyShape(req);
   assert.equal(shape, 'micro');
 });
+
+// (12) issue_body / issue_body_truncated（issue #668）: optional copy（型が合うときだけキーを立てる）
+test('[analyze-contract] (12a) issue_body: string + issue_body_truncated: boolean → req へ verbatim copy', () => {
+  const req = buildReqFromContract(baseContract({ issue_body: '## 背景\n本文\n\n## 受け入れ基準\n- [ ] a', issue_body_truncated: true }), 668);
+  assert.ok(req !== null);
+  assert.equal(req.issue_body, '## 背景\n本文\n\n## 受け入れ基準\n- [ ] a');
+  assert.equal(req.issue_body_truncated, true);
+});
+
+test('[analyze-contract] (12b) issue_body 欠落 → キー無し（whitelist 不合格にはしない）', () => {
+  const req = buildReqFromContract(baseContract(), 668);
+  assert.ok(req !== null);
+  assert.equal('issue_body' in req, false);
+  assert.equal('issue_body_truncated' in req, false);
+});
+
+test('[analyze-contract] (12c) issue_body が非 string / issue_body_truncated が非 boolean → 当該キーだけ落とす', () => {
+  const req = buildReqFromContract(baseContract({ issue_body: 123, issue_body_truncated: 'true' }), 668);
+  assert.ok(req !== null);
+  assert.equal('issue_body' in req, false);
+  assert.equal('issue_body_truncated' in req, false);
+});

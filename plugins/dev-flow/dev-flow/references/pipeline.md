@@ -43,8 +43,18 @@ shape ごとの経路（3 tier）:
 | shape | Plan 経路 | Evaluate 経路 | merge tier |
 |-------|-----------|---------------|------------|
 | **micro** | plan 1 発・plan-reviewer 0 回（triviality gate で review loop skip） | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
-| **standard** | plan 1 発・plan-reviewer 0 回 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保） | REVIEW |
+| **standard** | `IMPLEMENT_MODE='fable'`（既定）: dev-planner 0 回・issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn。`'planner'`: plan 1 発・plan-reviewer 0 回 → implementer | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。refloor で complex 化した run の差し戻し（`reimpl#i`）は fable 経路では dev-planner を起動せず同じ `dev-implement-fable` へ `fix_feedback` 付きで流す | REVIEW |
 | **complex** | dev-planner ⇄ plan-reviewer の review loop（上限 PLAN_MAX=8、topic-stuck 検出で early-cutoff あり） | 差し戻し loop（上限 EVAL_MAX=10） | REVIEW、danger・breaking で HOLD |
+
+standard の Implement 経路は `_lib/implement-mode.mjs` の `IMPLEMENT_MODE`（`'fable' | 'planner'`）で切り替える
+（`QUALITY_MODEL` と同じ 1 行定数・inline 生成方式。complex / micro はこの値に依らず上表の経路）。
+`dev-implement-fable` は issue 本文（`req.issue_body`、analyze-issue.sh が 4000 字で切詰め）+ AC + `fix_feedback` を
+受け取り、`AC_TEST_CONTRACT`（red→green 自己実証）や手順書型 task は受け取らない — テスト全件・red 証明・AC 判定は
+Validate / redgreen-verify / evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL 返却の `files` を
+宣言として取り込む（宣言外監査・refloor count・PR body の材料は implementer 経路と同じ）。
+**ロールバック**: `_lib/implement-mode.mjs` の 1 行を `'planner'` に戻し `tools/sync-inlines.mjs --write`
+（bare 形）を実行するだけ。観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数・
+`dev-planner` 0）と既存の `plan_iter`（fable 経路は 0）で行い、新キーは足さない。
 
 shape は Analyze phase で `classifyShape` が判定し、安全 floor を適用する（`estimated_change_file_count`
 欠落・`acceptance_criteria` 欠落・out-of-enum `issue_type`・breaking 検出 → complex floor）。実装後は

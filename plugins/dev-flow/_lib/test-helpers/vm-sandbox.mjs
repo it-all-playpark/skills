@@ -180,6 +180,28 @@ export async function runDevFlowInSandbox(src, ctx) {
 }
 
 // ============================================================
+// withImplementMode: dev-flow.js の IMPLEMENT_MODE（_lib/implement-mode.mjs の inline 定数）を
+// テスト側で切り替える。inline 生成された定数行を書き換えるため、行が 1 箇所に見つからなければ
+// throw する（生成区間の形が変わったときに黙って既定値で走らないため）。
+// ============================================================
+
+/**
+ * dev-flow.js ソースの `const IMPLEMENT_MODE = '<x>'` を mode に書き換えた新しいソースを返す。
+ * standard shape の Implement 経路（'fable' | 'planner'）を両値で routing test するために使う。
+ *
+ * @param {string} src - dev-flow.js の raw ソース
+ * @param {'fable'|'planner'} mode
+ * @returns {string}
+ */
+export function withImplementMode(src, mode) {
+  if (mode !== 'fable' && mode !== 'planner') throw new Error(`withImplementMode: unknown mode ${JSON.stringify(mode)}`);
+  const re = /^const IMPLEMENT_MODE = '(fable|planner)'$/gm;
+  const matches = src.match(re) ?? [];
+  if (matches.length !== 1) throw new Error(`withImplementMode: IMPLEMENT_MODE 定数行が ${matches.length} 箇所（1 箇所のはず）`);
+  return src.replace(re, `const IMPLEMENT_MODE = '${mode}'`);
+}
+
+// ============================================================
 // runWorkflowCapture: strip + wrap + vm 実行し {result, error} を返す
 // （hash-reconverged-routing.test.mjs の runDevFlowCapture と同一ロジック。
 // dev-flow.js / pr-iterate.js 共用のため filename を引数化する）
@@ -305,6 +327,10 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
+    }
+    // IMPLEMENT_MODE='fable' の standard 経路（issue #668）: 合成 task `issue-<N>` を echo する
+    if (agentType === 'dev-flow:dev-implement-fable') {
+      return { status: 'DONE', task_id: `issue-${issue}`, files: ['src/x.ts'], summary: 's', concerns: [] };
     }
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (label === 'danger-grep') {

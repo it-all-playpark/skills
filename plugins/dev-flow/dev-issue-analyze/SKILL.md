@@ -30,7 +30,7 @@ analyze-issue <issue-number> --issue-json $TMPDIR/issue-<issue-number>.json [--d
 | Level | Output |
 |-------|--------|
 | `minimal` | title, type, labels, state, breaking_keyword_scan, comment_count, issue_author |
-| `standard` | + AC, requirements, scope, scope_truncated, scope_total_chars, body_preview, body_preview_truncated, body_total_chars, comments[{author,author_association,created_at,body}], issue_author, ac_heading_near_miss, warnings |
+| `standard` | + AC, requirements, scope, scope_truncated, scope_total_chars, issue_body, issue_body_truncated, body_preview, body_preview_truncated, body_total_chars, comments[{author,author_association,created_at,body}], issue_author, ac_heading_near_miss, warnings |
 | `comprehensive` | + affected files, components |
 
 `author_association` は `gh` の `authorAssociation`（`OWNER`/`MEMBER`/`COLLABORATOR`/`NONE` 等）を
@@ -69,6 +69,8 @@ T1/T2 契約準拠 issue の決定論 parse。T1 = AC 見出し（`## 受け入�
 | `scope` | AC 節を除く body の先頭 4000 字。超過時は末尾に `[TRUNCATED: scope shows the first 4000 of N chars ...]` マーカーを付加（silent に切らない。issue #596） |
 | `scope_truncated` | boolean、常時出力。`scope` がマーカー付きで切断されたか |
 | `scope_total_chars` | 整数、常時出力。AC 節を除く body の総文字数（切断前の実サイズ） |
+| `issue_body` | body 全文（AC 節を含む）の先頭 4000 字。超過時は `scope` と同じ `[TRUNCATED: issue_body ...]` マーカーを付加。dev-flow の Implement phase が plan+impl 統合 implementer（dev-implement-fable）へ issue 本文として渡す（issue #668） |
+| `issue_body_truncated` | boolean、常時出力。`issue_body` がマーカー付きで切断されたか |
 | `estimated_change_file_count` | スコープ節のファイルパス数。導出不能時はキー省略（dev-flow 側 classifyShape の complex floor 安全則がそのまま働く） |
 | `breaking_keyword_scan` | 決定論 keyword scan の結果 |
 | `comment_count` | issue comments 件数（常時出力） |
