@@ -99,7 +99,27 @@ Details: [Dedupe Flow & Scripts](references/dedupe-flow.md)
 
 See [Platform Guide](references/platform-guide.md) for detailed limits, audience, style, and templates per platform.
 
-**Quick reference**: X ~120字, LinkedIn 1,300, Google 1,500, Facebook 500推奨, Bluesky 300, Threads 500
+**Quick reference**: X 280（重み付き・下記）, LinkedIn 1,300, Google 1,500, Facebook 500推奨, Bluesky 300, Threads 500
+
+### Length Gate (MUST)
+
+X の上限 280 は**文字数ではなく重み付きカウント**: 東アジア幅 W/F の文字（漢字・かな・全角記号・絵文字の大半）=2、
+それ以外=1、URL は長さに関係なく一律 23。日本語本文なら実質 ~120字 + URL + ハッシュタグで 280 に届く。
+`wc -m` や `jq length` の値（codepoint 数）は当てにならない（JA 文は codepoint 数より大きくなる）。
+Bluesky は素の文字数で 300。
+
+生成した X / Bluesky 文は**出力を書く前に必ず**スクリプトで検証し、`over` が出たら本文（フック文）を削って再計測する。
+URL とハッシュタグは削らない:
+
+```bash
+# Zernio array / standard JSON をまとめて
+sns-announce-check-length post/blog/<date>-<slug>.json
+# 単文
+sns-announce-check-length --platform x "<text>"
+```
+
+出力は `<platform>\t<len>\t<limit>\t<ok|over>`、超過があれば exit 1。280 ちょうどは ok だが、目安は **270 以下**に収める
+（Zernio 側の差し替えや絵文字の幅判定ぶれの余地を残す）。
 
 ## Output Format
 

@@ -27,4 +27,7 @@ sns-announce-extract-metadata <file> --base-url URL
 
 # Get optimal posting time
 sns-announce-get-posting-time <platform> [--date YYYY-MM-DD]
+
+# Check X (weighted 280) / Bluesky (300) length before writing output
+sns-announce-check-length <zernio-array.json> | --platform x|bluesky "<text>"
 ```
