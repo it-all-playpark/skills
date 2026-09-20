@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -109,7 +109,9 @@ function createResponder(dropLabels) {
 }
 
 async function runScenario(dropLabels) {
-  const src = readFileSync(devFlowPath, 'utf8');
+  // IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+  // 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
   const { ctx, calls } = makeRecordingSandbox(createResponder(dropLabels));
   const err = await runDevFlowInSandbox(src, ctx);
   return { calls, err };

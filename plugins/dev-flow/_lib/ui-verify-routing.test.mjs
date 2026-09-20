@@ -30,11 +30,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // ---- VM sandbox helpers（refloor-shape-routing.test.mjs / ephemeral-paths-routing.test.mjs と同型）----
 
@@ -183,7 +186,6 @@ const VALID_CFG = {
 // ============================================================
 
 test('[ui-verify] (a) UI touch だが config 無し → ui-verify-server 不発 + evaluator 0 回', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
@@ -220,7 +222,6 @@ test('[ui-verify] (a) UI touch だが config 無し → ui-verify-server 不発 
 // ============================================================
 
 test('[ui-verify] (b) 非 UI ファイルのみ → ui-verify-config が一切呼ばれない（0 オーバーヘッド）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   // 'src/lib/util.ts' は isUiPath で false（非 UI segment の .ts）
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
@@ -248,7 +249,6 @@ test('[ui-verify] (b) 非 UI ファイルのみ → ui-verify-config が一切�
 // ============================================================
 
 test('[ui-verify] (c) micro + UI touch + 有効 config → Evaluate 強制 + smoke-only 固定 + teardown 実行', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
@@ -294,7 +294,6 @@ test('[ui-verify] (c) micro + UI touch + 有効 config → Evaluate 強制 + smo
 // ============================================================
 
 test('[ui-verify] (d) dev サーバー ready timeout → ui-verify 不発 + teardown 発火 + failed_open', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
@@ -330,7 +329,6 @@ test('[ui-verify] (d) dev サーバー ready timeout → ui-verify 不発 + tear
 // ============================================================
 
 test("[ui-verify] (e) install phase 失敗 → return.ui_verify==='setup_failed'", async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
@@ -362,7 +360,6 @@ test("[ui-verify] (e) install phase 失敗 → return.ui_verify==='setup_failed'
 // ============================================================
 
 test("[ui-verify] (f) ui-verifier が throw しても ui-verify-teardown は必ず呼ばれ、run 全体は続行する（try/catch/finally 保証）", async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
@@ -411,7 +408,6 @@ const standardReq = {
 };
 
 test('[ui-verify] (g) eval#1 prompt に ui_verification（ui-verifier raw result）が注入される', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: standardReq,
     realizedFiles: ['src/components/Foo.tsx'],

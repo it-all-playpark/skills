@@ -36,12 +36,13 @@ if (typeof pipeline === 'undefined') {
 const QUALITY_MODEL = 'fable'
 // ==== END inline: _lib/quality-model.mjs ====
 // ==== BEGIN inline: _lib/implement-mode.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// standard shape の Implement 経路切替（issue #668）。
+// Implement 経路切替（全 shape。issue #668 で standard、#670 で micro / complex に拡大）。
 //   'fable'   — Plan phase で dev-planner を起動せず issue から単一 task の plan を合成し、Implement で
 //               dev-implement-fable（plan+impl 統合、frontmatter: fable / high）を 1 spawn する。
 //   'planner' — 従来経路（dev-planner 1 発 → implementer を task ごとに spawn）。
 // ロールバックはこの 1 行を 'planner' にして tools/sync-inlines.mjs --write するだけ（QUALITY_MODEL と同じ運用）。
-// complex / micro shape は本定数に依らず現行経路のまま（plan-reviewer gate / triviality gate の扱いは別 issue）。
+// 'planner' 時の shape 別挙動: micro = plan#trivial 1 発、standard = plan#standard 1 発、
+// complex = dev-planner ⇄ plan-reviewer ループ（ロールバック経路として維持）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -5595,7 +5596,7 @@ function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
     + TURBOPACK_NOTE
 }
 
-// ---- IMPLEMENT_MODE='fable' の standard 経路 ----
+// ---- IMPLEMENT_MODE='fable' の経路（全 shape）----
 // Plan phase が dev-planner を起動せず issue から単一 task の plan を合成し、runImplement が
 // task.agent で dev-implement-fable（plan+impl 統合）へ切り替える。合成 plan だけが agent を持つ
 // （dev-planner の PLAN は agent キーを出さない）ため、replan で dev-planner が plan を作り直した時点で
@@ -5972,7 +5973,7 @@ const SHAPE = triage.shape
 ABORT_CTX.shape = SHAPE
 const TRIVIAL = SHAPE === 'micro'
 log(`shape: ${SHAPE} — ${triage.reason}`)
-const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // standard: plan 1発・reviewer 0回
+const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // planner モード時の standard: plan 1発・reviewer 0回（fable モードでは未使用）
 
 // ============================================================
 // Phase Plan: dev-planner ⇄ plan-reviewer ループ。
@@ -5996,17 +5997,18 @@ function soloPlanPrompt() {
     + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`
     + PLANNER_HANDOFF_RULE
 }
-// micro（triviality gate）と standard は Plan phase では同一経路 — plan 1 発・plan-reviewer 0 回。
-// label と log 文言のみ shape 別に分ける（label は routing test 群が `label === 'plan#standard'` 等で
-// 参照しており、telemetry 上も経路の識別子として機能するため両方を厳密に維持する）。
-if (PLAN_SOLO && IMPLEMENT_MODE === 'fable') {
-  // standard × fable: dev-planner を起動せず issue から単一 task の plan を合成する（plan#fable-skip）。
+// IMPLEMENT_MODE='planner' のとき micro（triviality gate）と standard は Plan phase では同一経路 —
+// plan 1 発・plan-reviewer 0 回。label と log 文言のみ shape 別に分ける（label は routing test 群が
+// `label === 'plan#standard'` 等で参照しており、telemetry 上も経路の識別子として機能するため両方を
+// 厳密に維持する）。
+if (IMPLEMENT_MODE === 'fable') {
+  // fable: shape に関わらず dev-planner を起動せず issue から単一 task の plan を合成する（plan#fable-skip）。
   // Fable に「sonnet 向けの手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、
   // issue 仕様を直接 dev-implement-fable に渡す。plan_iter は 0 で telemetry に載る。
   plan = synthesizeFablePlan(req, ISSUE)
   planIters = 0
   ABORT_CTX.plan_iter = 0
-  log('plan#fable-skip: standard 経路(IMPLEMENT_MODE=fable) — dev-planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）')
+  log(`plan#fable-skip: ${SHAPE} 経路(IMPLEMENT_MODE=fable) — dev-planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）`)
 } else if (TRIVIAL || PLAN_SOLO) {
   const soloLabel = TRIVIAL ? 'plan#trivial' : 'plan#standard'
   plan = need(await trackedAgent(

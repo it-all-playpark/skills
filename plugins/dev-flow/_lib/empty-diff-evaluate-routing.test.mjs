@@ -13,11 +13,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 function makeCountingSandbox(analyzeReq, diffHashConfig) {
   const calls = [];
@@ -101,7 +104,6 @@ const STANDARD_REQ = {
 
 // (A) diff-gate empty:false → reimpl-empty-diff 0 件・diff-gate-retry 0 件・正常完了
 test('[empty-diff] (A) diff-gate empty:false → reimpl-empty-diff 0 件・diff-gate-retry 0 件・正常完了', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
@@ -115,7 +117,6 @@ test('[empty-diff] (A) diff-gate empty:false → reimpl-empty-diff 0 件・diff-
 
 // (B) diff-gate empty:true / diff-gate-retry empty:false → reimpl-empty-diff >= 1・diff-gate-retry 1 件・正常完了
 test('[empty-diff] (B) diff-gate empty:true / diff-gate-retry empty:false → reimpl-empty-diff >= 1・diff-gate-retry 1 件・正常完了', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: false });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
@@ -132,7 +133,6 @@ test('[empty-diff] (B) diff-gate empty:true / diff-gate-retry empty:false → re
 
 // (C) diff-gate empty:true / diff-gate-retry empty:true → throw・evaluator 0 件（fail-fast）
 test('[empty-diff] (C) diff-gate empty:true / diff-gate-retry empty:true → throw し evaluator 0 件（fail-fast）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: true });
   const { error } = await runDevFlowInSandbox(src, ctx);
   assert.ok(error !== null, '(C) 両方 empty:true なら workflow が throw すべきだが error が null だった');
@@ -143,7 +143,6 @@ test('[empty-diff] (C) diff-gate empty:true / diff-gate-retry empty:true → thr
 
 // (D) eval hash AAA != PR hash BBB → eval_staleness==='hash_mismatch' かつ post-summary に stale 警告
 test('[empty-diff] (D) eval hash AAA != PR hash BBB → eval_staleness===hash_mismatch かつ post-summary に stale 警告', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false, evalHash: 'AAA', prHash: 'BBB' });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
@@ -158,7 +157,6 @@ test('[empty-diff] (D) eval hash AAA != PR hash BBB → eval_staleness===hash_mi
 
 // (E) 両 hash 'AAA' 一致 → eval_staleness==='none'・post-summary に stale 警告なし（誤検知なし）
 test('[empty-diff] (E) eval hash AAA == PR hash AAA → eval_staleness===none・post-summary に stale 警告なし', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false, evalHash: 'AAA', prHash: 'AAA' });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
@@ -169,7 +167,6 @@ test('[empty-diff] (E) eval hash AAA == PR hash AAA → eval_staleness===none・
 
 // (F) diff-gate empty:true / diff-gate-retry empty:false → test#retry >= 1・evaluator が呼ばれること（issue #219）
 test('[empty-diff] (F) empty-diff gate retry 後に validate 再実行 → test#retry >= 1 かつ evaluator が呼ばれること', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: false });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
@@ -187,7 +184,6 @@ test('[empty-diff] (F) empty-diff gate retry 後に validate 再実行 → test#
 // gate 移動により Security floor が retry 後に実行される → danger-grep は reimpl-empty-diff より後に呼ばれる invariant。
 // もし gate が Security floor の後にあれば danger-grep は reimpl-empty-diff より前に来る（旧バグ）。
 test('[empty-diff] (G) retry 後に danger-grep が reimpl-empty-diff より後に呼ばれること（Security floor が retry 後 tree を見る）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: false });
   const { error } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
@@ -207,7 +203,6 @@ test('[empty-diff] (G) retry 後に danger-grep が reimpl-empty-diff より後�
 // (H) 両 hash 一致 + fixes_applied=2 → eval_staleness==='iterate_fixed' かつ post-summary に情報行あり（⚠️ は出ない）
 // pr-iterate fix 適用由来の stale 検出ピン（issue #233/#288、AC-1: ℹ️ 格下げピン）
 test('[empty-diff] (H) 両 hash 一致 + fixes_applied=2 → eval_staleness===iterate_fixed + ℹ️ 情報行あり・⚠️ stale 警告なし', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
@@ -226,7 +221,6 @@ test('[empty-diff] (H) 両 hash 一致 + fixes_applied=2 → eval_staleness===it
 
 // (I) 両 hash 一致 + status='stuck' → eval_staleness==='iterate_incomplete'（status !== 'lgtm' 側の分岐、AC-3）
 test('[empty-diff] (I) 両 hash 一致 + status=stuck → eval_staleness===iterate_incomplete（status !== lgtm 由来）+ stale 警告あり', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
@@ -247,7 +241,6 @@ test('[empty-diff] (I) 両 hash 一致 + status=stuck → eval_staleness===itera
 // runValidateLoop('retry') は empty-diff gate 内（phase('Security floor') 呼び出し前）で実行されるため、
 // test#retry-N / green-fix#retry-N の agent 呼び出しに付く phase タグは 'Validate' が正しい。
 test('[empty-diff] (K) retry 経路の test#retry / green-fix#retry call の phase タグが Validate であること（issue #253）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, { gateEmpty: true, retryEmpty: false });
   const { error } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);
@@ -267,7 +260,6 @@ test('[empty-diff] (K) retry 経路の test#retry / green-fix#retry call の pha
 
 // (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_staleness==='none'（誤検知なし）
 test('[empty-diff] (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_staleness===none（誤検知なし）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
@@ -283,7 +275,6 @@ test('[empty-diff] (J) 両 hash 一致 + status=lgtm + fixes_applied=0 → eval_
 
 // (L) 経路A(hash 不一致) + 経路B(iterate fix あり) 同時発生 → hash_mismatch が優先される（AC-2 precedence ピン）
 test('[empty-diff] (L) hash 不一致 + iterate fix 同時発生 → eval_staleness===hash_mismatch が優先（iterate_fixed 情報行は出ない）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
@@ -303,7 +294,6 @@ test('[empty-diff] (L) hash 不一致 + iterate fix 同時発生 → eval_stalen
 
 // (M) micro path（runEval=false）で iterate fix があっても stale 関連の行が一切出ない（AC-4）
 test('[empty-diff] (M) micro path（runEval=false）+ iterate fix あり → eval_staleness===none・stale 行なし', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const MICRO_REQ = {
     summary: 's',
     acceptance_criteria: ['ac1'],
@@ -329,7 +319,6 @@ test('[empty-diff] (M) micro path（runEval=false）+ iterate fix あり → eva
 
 // (N) telemetry handoff に eval_staleness が到達すること（AC-5）
 test('[empty-diff] (N) journal-log の telemetry handoff payload に eval_staleness が含まれること', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
 
   // hash_mismatch ケース
   const sbox1 = makeCountingSandbox(STANDARD_REQ, { gateEmpty: false, evalHash: 'AAA', prHash: 'BBB' });
@@ -358,7 +347,6 @@ test('[empty-diff] (N) journal-log の telemetry handoff payload に eval_stalen
 
 // (P) iterate_status ごとの merge_tier routing（reviewer 指摘の代替ケース）
 test('[empty-diff] (P-1) iterate status=max_reached → merge_tier===HOLD かつ journal-save prompt が "iterate_status":"max_reached" を含む', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
@@ -376,7 +364,6 @@ test('[empty-diff] (P-1) iterate status=max_reached → merge_tier===HOLD かつ
 });
 
 test('[empty-diff] (P-2) status=lgtm + fixes_applied=0 + hash 一致 → merge_tier===REVIEW', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx } = makeCountingSandbox(STANDARD_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',

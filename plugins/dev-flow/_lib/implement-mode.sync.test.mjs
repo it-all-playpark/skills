@@ -1,5 +1,5 @@
 // _lib/implement-mode.sync.test.mjs
-// IMPLEMENT_MODE（standard shape の Implement 経路切替）が閉じた 2 値 enum であること、および
+// IMPLEMENT_MODE（Implement 経路切替、全 shape）が閉じた 2 値 enum であること、および
 // dev-flow.js に inline 生成区間として存在すること（手書き const への置換・区間削除の検出）を pin する。
 // 区間本文の byte 一致は _lib/workflow-inlines.sync.test.mjs が全区間について検証する。
 import { test } from 'vitest';

@@ -187,7 +187,7 @@ export async function runDevFlowInSandbox(src, ctx) {
 
 /**
  * dev-flow.js ソースの `const IMPLEMENT_MODE = '<x>'` を mode に書き換えた新しいソースを返す。
- * standard shape の Implement 経路（'fable' | 'planner'）を両値で routing test するために使う。
+ * Implement 経路（'fable' | 'planner'、全 shape）を両値で routing test するために使う。
  *
  * @param {string} src - dev-flow.js の raw ソース
  * @param {'fable'|'planner'} mode
@@ -328,7 +328,7 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     if (agentType === 'dev-flow:implementer') {
       return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
     }
-    // IMPLEMENT_MODE='fable' の standard 経路（issue #668）: 合成 task `issue-<N>` を echo する
+    // IMPLEMENT_MODE='fable' の経路（全 shape。issue #668 / #670）: 合成 task `issue-<N>` を echo する
     if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: `issue-${issue}`, files: ['src/x.ts'], summary: 's', concerns: [] };
     }

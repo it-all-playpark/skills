@@ -15,11 +15,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // micro shape 用の analyzeReq（acceptance_criteria あり・estimated_change_file_count: 1）
 const MICRO_REQ = {
@@ -121,7 +124,6 @@ async function runDevFlowInSandbox(src, ctx) {
 // ============================================================
 
 test('[micro-auto-ac-disclosure] (A) micro AUTO run → merge_tier===AUTO かつ AC未検証文言を含む', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeSandbox(MICRO_REQ, {
     realizedFiles: ['docs/a.md'],
     changedFiles: ['docs/a.md'],
@@ -146,7 +148,6 @@ test('[micro-auto-ac-disclosure] (A) micro AUTO run → merge_tier===AUTO かつ
 // ============================================================
 
 test('[micro-auto-ac-disclosure] (B) standard run → merge_tier===REVIEW かつ AC未検証文言なし', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeSandbox(STANDARD_REQ, {
     realizedFiles: ['src/foo.ts'],
     changedFiles: ['src/foo.ts'],
@@ -169,7 +170,6 @@ test('[micro-auto-ac-disclosure] (B) standard run → merge_tier===REVIEW かつ
 // ============================================================
 
 test('[micro-auto-ac-disclosure] (C) micro AUTO run → evaluator が 0 件（AC未検証開示の前提確認）', async () => {
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeSandbox(MICRO_REQ, {
     realizedFiles: ['docs/a.md'],
     changedFiles: ['docs/a.md'],

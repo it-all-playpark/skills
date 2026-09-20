@@ -33,11 +33,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
 
 // ---- VM sandbox helpers ----
 
@@ -213,7 +216,6 @@ test('[ephemeral-paths-routing] (A) micro + realized ephemeral 3 件 non-ephemer
   // evaluator 0 回の assert が壊れる。
   const declaredFiles = ['a.md', 'b.md'];
 
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(microReq, realizedFiles, declaredFiles);
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
 
@@ -270,7 +272,6 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
   // refloor が発火しない（この test の pin が壊れる）。
   const declaredFiles = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts'];
 
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(microReq, realizedFiles, declaredFiles);
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
 
@@ -321,7 +322,6 @@ test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 →
   // Evaluate を実行するため、宣言外監査の挙動は F2（refloor の declared-only 化）前後で不変。
   const realizedFiles = ['u1.ts', 'u2.ts', 'u3.ts'];
 
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(standardReq, realizedFiles);
   const { error } = await runDevFlowInSandbox(src, ctx);
 
@@ -376,7 +376,6 @@ test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣�
   // realized-diff が ephemeral のみを返す → filterEphemeralPaths 後 0 件 → 宣言外なし
   const realizedFiles = ['evaluator.staged.md'];
 
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(standardReq, realizedFiles);
   const { error } = await runDevFlowInSandbox(src, ctx);
 
@@ -418,7 +417,6 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 
   // 空のまま → diffDeclaredPaths で全て宣言外判定になる）
   const realizedFiles = ['undeclared-file.ts'];
 
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(standardReq, realizedFiles);
   const { error } = await runDevFlowInSandbox(src, ctx);
 
@@ -469,7 +467,6 @@ test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → sh
   // undeclared.length>0 により micro でも Evaluate を強制する）
   const realizedFiles = ['leftover-handoff.md'];
 
-  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(microReq, realizedFiles);
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
 

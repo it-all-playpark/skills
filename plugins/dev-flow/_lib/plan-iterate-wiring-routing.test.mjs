@@ -19,10 +19,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const devFlowSrc = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
+// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
+// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
+const devFlowSrc = withImplementMode(readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8'), 'planner');
 
 // ============================================================
 // (a) pr-iterate 非 LGTM 終端の配線

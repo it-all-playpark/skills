@@ -4,9 +4,9 @@ description: |
   Plan and implement a GitHub issue in one run inside the dev-flow pipeline: read the issue and
   codebase, decide the approach, write the code and the tests for each acceptance criterion, run
   only the tests you touched, and return the implementer status report. Replaces dev-planner +
-  implementer on standard-shape issues. Full-suite validation (Validate phase) and red→green proof
-  (redgreen-verify in Evaluate) are done by the pipeline, not by this agent.
-  Use when: dev-flow Implement phase, standard shape (stage 2 rollout).
+  implementer on every shape (micro / standard / complex). Full-suite validation (Validate phase)
+  and red→green proof (redgreen-verify in Evaluate) are done by the pipeline, not by this agent.
+  Use when: dev-flow Implement phase, any shape (IMPLEMENT_MODE='fable').
 model: fable
 effort: high
 tools:
