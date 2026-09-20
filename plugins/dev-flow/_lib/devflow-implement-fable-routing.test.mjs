@@ -148,6 +148,65 @@ test('[implement-fable] micro × fable: dev-planner 0 回・dev-implement-fable 
 });
 
 // ============================================================
+// AC-2 本番経路: micro × fable の LITE（clean）と refloor（realized 6 files）。
+// 既存の lite-route / refloor-shape routing test は planner 注入でロールバック経路のみを検証する
+// ため、fable 既定で micro が辿る LITE gate（pr-review-lite 1 回・workflow('pr-iterate') 0 回・
+// AUTO tier の AC 未検証開示）と adoptReportedFiles 由来の refloor はここで pin する。
+// ============================================================
+async function runMicroFable(overrides = {}) {
+  const workflowCalls = [];
+  const { ctx, calls, logs } = makeDevFlowSandbox({
+    overrides: { 'analyze#1': reqOf('micro'), ...overrides },
+    workflow: async (name, opts) => { workflowCalls.push({ name, opts }); return { status: 'lgtm', iterations: 1, fixes_applied: 0 }; },
+  });
+  const { result, error } = await runWorkflowCapture(withImplementMode(src, 'fable'), ctx);
+  assertNoCrash(error, 'micro/fable');
+  return { calls, logs, result, error, workflowCalls };
+}
+
+test('[implement-fable] micro × fable（clean, docs-only）: LITE 経路 — pr-review-lite 1 回・workflow(pr-iterate) 0 回・merge_tier AUTO に AC 未検証開示', async () => {
+  // AUTO は micro + docs/test-only + danger clean が条件（classifyMergeTier）。realized を docs のみにする
+  const DOCS = ['docs/x.md'];
+  const fableStub = ({ prompt }) => {
+    const m = prompt.match(/task_id: (\S+?)（/);
+    return { status: 'DONE', task_id: m ? m[1] : 'unknown', files: DOCS, summary: 's', concerns: [] };
+  };
+  const { calls, result, error, workflowCalls } = await runMicroFable({
+    'impl:serial:issue-1': fableStub,
+    'pr-review-lite': { decision: 'approve', issues: [], summary: 'ok' },
+    'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
+    'danger-grep': { risk: { ok: true, hits: [] }, files: DOCS, struct: null, diffhash: { hash: 'AAA', empty: false } },
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.deepEqual(byType(calls, FABLE).map((c) => c.label), ['impl:serial:issue-1'], 'dev-implement-fable は Implement で 1 回のはず');
+  assert.equal(byType(calls, 'dev-flow:evaluator').length, 0, 'clean micro は evaluator 0 回のはず');
+  const reviewers = byType(calls, 'dev-flow:pr-reviewer');
+  assert.equal(reviewers.length, 1, `pr-reviewer は lite 1 回のはず: ${reviewers.map((c) => c.label).join(', ')}`);
+  assert.ok(/lite/i.test(reviewers[0].label), `pr-reviewer の label が lite 経路でない: ${reviewers[0].label}`);
+  assert.equal(workflowCalls.length, 0, `clean micro で workflow('pr-iterate') が呼ばれた: ${workflowCalls.map((w) => w.name).join(', ')}`);
+  assert.equal(result?.merge_tier, 'AUTO', `merge_tier は AUTO のはず: ${result?.merge_tier} (${JSON.stringify(result?.merge_tier_reasons)})`);
+  assert.ok((result?.merge_tier_reasons ?? []).some((r) => r.includes('AC は未検証')), `AUTO の理由に AC 未検証開示が無い: ${JSON.stringify(result?.merge_tier_reasons)}`);
+  assert.equal(result?.shape_refloored, false, 'clean micro で refloor が発火した');
+});
+
+test('[implement-fable] micro × fable（realized 6 files）: adoptReportedFiles 由来の refloor が発火し evaluator が起動する（LITE を通らない）', async () => {
+  const SIX = ['a', 'b', 'c', 'd', 'e', 'f'];
+  const fableStub = ({ prompt }) => {
+    const m = prompt.match(/task_id: (\S+?)（/);
+    return { status: 'DONE', task_id: m ? m[1] : 'unknown', files: SIX, summary: 's', concerns: [] };
+  };
+  const { calls, result, error } = await runMicroFable({
+    'impl:serial:issue-1': fableStub,
+    'danger-grep': { risk: { ok: true, hits: [] }, files: SIX, struct: null, diffhash: { hash: 'AAA', empty: false } },
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.equal(result?.shape_refloored, true, `realized 6 files で refloor が発火していない: ${JSON.stringify({ shape: result?.shape, refloored: result?.shape_refloored })}`);
+  assert.ok(byType(calls, 'dev-flow:evaluator').length >= 1, 'refloor 後は evaluator が起動するはず');
+  assert.equal(byType(calls, 'dev-flow:pr-reviewer').filter((c) => /lite/i.test(c.label)).length, 0, 'refloor 後に lite review が走った');
+  assert.equal(byType(calls, PLANNER).length, 0, 'refloor 後も dev-planner は起動しないはず');
+});
+
+// ============================================================
 // AC-3: IMPLEMENT_MODE=planner のロールバック経路（micro/complex 不変）
 // ============================================================
 test('[implement-fable] complex × planner: dev-planner ⇄ plan-reviewer loop 起動・dev-implement-fable 0 回', async () => {
