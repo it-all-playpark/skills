@@ -12,12 +12,14 @@
 //     (b)  eval#1 が model 無しでも null → need() の throw で abort（再試行は 1 回で打ち切り）。
 //          abort handoff の payload にも quality_model_fallback_label が載る
 //     (c)  model 無し call（danger-grep）の null は再試行しない・fallback log も出ない
-//   pr-iterate.js
-//     (a)  review#1 が model 付きで null → 同一 label・model 無しで再試行して lgtm。schema-retry は走らない。
-//          journal-save payload に quality_model_fallback_label:"review#1" が載る
-//     (b)  review#1 が model 無しでも null → schema-retry（別 label・model 無し）→ review_contract_error
+//   pr-iterate.js（pr-reviewer は model override を渡さず frontmatter 既定で spawn するため、
+//   pr-iterate 内に fallback が発火する call site は無い）
+//     (a)  review#1（model 無し）が null → schema-retry（別 label・model 無し）で lgtm。fallback は発火せず
+//          journal-save payload に quality_model_fallback_label が無く review_model_config:"opus" が載る
+//     (b)  review#1 も schema-retry も null → review_contract_error（pr-reviewer 呼び出しは 2 回で打ち切り）
 //     (c)  model 無し call（fix#1）の null は fallback 対象外（fix-null-retry の別 label 経路のみ）
-//     (d)  nested.quality_fallback:true を初期 sticky として読み、初回から model 無しで呼ぶ
+//     (d)  nested.quality_fallback:true（evaluator 由来の sticky）は受理されるが pr-reviewer の挙動には影響しない
+//     (d0) nested.quality_fallback 未指定 / false でも pr-reviewer は model 無し
 //     (e)  nested.quality_fallback が boolean 以外なら起動時に throw
 
 import { test } from 'vitest';
@@ -102,14 +104,13 @@ test('[quality-model-fallback] dev-flow (a) eval#1 が model 付きで null → 
   );
   assert.ok(logs.some((l) => l.includes('eval#1') && l.includes(FALLBACK_LOG)), 'fallback log が出ていない');
 
-  // sticky: fallback 以後の品質ゲート call（agentType が品質ゲート 2 種）は全て model 無し
-  const qualityTypes = new Set(['dev-flow:evaluator', 'dev-flow:pr-reviewer']);
+  // sticky: fallback 以後の evaluator call は全て model 無し
   const afterIdx = calls.findIndex((c) => c.label === 'eval#1' && c.model === null);
-  const laterQuality = calls.slice(afterIdx + 1).filter((c) => qualityTypes.has(c.agentType));
-  assert.ok(laterQuality.length > 0, 'fallback 後に品質ゲート call が 1 件も無い（テスト前提が崩れている）');
-  assert.ok(laterQuality.every((c) => c.model === null), `fallback 後の品質ゲート call に model 付きが残っている: ${JSON.stringify(laterQuality.filter((c) => c.model !== null).map((c) => c.label))}`);
-  // それ以外の call site（exec-proxy / dev-implement-fable）は元々 model を渡さない
-  assert.ok(calls.every((c) => c.model === null || qualityTypes.has(c.agentType)), '品質ゲート以外の call site に model が付いている');
+  const laterEval = calls.slice(afterIdx + 1).filter((c) => c.agentType === 'dev-flow:evaluator');
+  assert.ok(laterEval.length > 0, 'fallback 後に evaluator call が 1 件も無い（テスト前提が崩れている）');
+  assert.ok(laterEval.every((c) => c.model === null), `fallback 後の evaluator call に model 付きが残っている: ${JSON.stringify(laterEval.filter((c) => c.model !== null).map((c) => c.label))}`);
+  // model を渡す call site は evaluator 系のみ。pr-reviewer（pr-review-lite）を含む他の call site は元々 model を渡さない
+  assert.ok(calls.every((c) => c.model === null || c.agentType === 'dev-flow:evaluator'), `evaluator 以外の call site に model が付いている: ${JSON.stringify(calls.filter((c) => c.model !== null && c.agentType !== 'dev-flow:evaluator').map((c) => c.label))}`);
 
   assertFallbackLabel(calls, 'eval#1', 'dev-flow (a)');
   assert.equal(nestedArgsSeen.length, 1, 'nested pr-iterate はちょうど 1 回起動されるはず');
@@ -160,11 +161,11 @@ test('[quality-model-fallback] dev-flow (c) model 無し call（danger-grep）�
   assertNoFallbackLabel(calls, 'dev-flow (c)');
 });
 
-// ── pr-iterate.js (a): review#1 が model 付きで null → 同一 label・model 無しで lgtm ──
+// ── pr-iterate.js (a): review#1（model 無し）が null → schema-retry（別 label）で lgtm。fallback は発火しない ──
 
-test('[quality-model-fallback] pr-iterate (a) review#1 が model 付きで null → model 無しで再試行して lgtm、schema-retry 無し、label が telemetry に載る', async () => {
+test('[quality-model-fallback] pr-iterate (a) review#1 が null → schema-retry（別 label・model 無し）で lgtm。fallback は発火せず review_model_config:"opus" が telemetry に載る', async () => {
   const { ctx, calls, logs } = makePrIterateSandbox({
-    overrides: { 'review#1': ({ opts }) => (opts.model ? null : APPROVE) },
+    overrides: { 'review#1': null, 'review#1-schema-retry': APPROVE },
   });
   const { result, error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
@@ -172,29 +173,34 @@ test('[quality-model-fallback] pr-iterate (a) review#1 が model 付きで null 
   const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.deepEqual(
     reviewerCalls.map((c) => [c.label, c.model]),
-    [['review#1', QUALITY_MODEL], ['review#1', null]],
-    'pr-reviewer は review#1（model 付き）→ review#1（model 無し）の 2 回のみで、schema-retry は走らないはず',
+    [['review#1', null], ['review#1-schema-retry', null]],
+    'pr-reviewer は model 無しの review#1 → schema-retry の 2 回のみで、同一 label の fallback 再試行は走らないはず',
   );
-  assert.equal(result?.review_null_retries, 0, 'fallback は callReviewAgent の schema-retry ではないので review_null_retries は増えない');
-  assert.ok(logs.some((l) => l.includes('review#1') && l.includes(FALLBACK_LOG)), 'fallback log が出ていない');
-  assertFallbackLabel(calls, 'review#1', 'pr-iterate (a)');
+  assert.ok(reviewerCalls.every((c) => !('model' in (c.opts ?? {}))), 'pr-reviewer の opts に model キー自体が無いはず（override 撤廃）');
+  assert.equal(result?.review_null_retries, 1, 'null に対する唯一の再試行は callReviewAgent の schema-retry（review_null_retries 1）');
+  assert.ok(!logs.some((l) => l.includes(FALLBACK_LOG)), 'pr-reviewer は model 無しなので fallback log は出ない');
+  assertNoFallbackLabel(calls, 'pr-iterate (a)');
+  const prompts = journalSavePrompts(calls);
+  assert.ok(prompts.some((p) => p.includes('"review_model_config":"opus"')), 'journal-save prompt に review_model_config:"opus" が無い');
+  assert.ok(prompts.some((p) => p.includes(`"quality_model_config":"${QUALITY_MODEL}"`)), 'quality_model_config は evaluator 設定値（QUALITY_MODEL）のまま載るはず');
 });
 
-// ── pr-iterate.js (b): model 無しでも null → schema-retry → review_contract_error ──
+// ── pr-iterate.js (b): review#1 も schema-retry も null → review_contract_error ──
 
-test('[quality-model-fallback] pr-iterate (b) review#1 が model 無しでも null → schema-retry（model 無し）→ review_contract_error', async () => {
-  const { ctx, calls } = makePrIterateSandbox({ overrides: { 'review#1': null, 'review#1-schema-retry': null } });
+test('[quality-model-fallback] pr-iterate (b) review#1 も schema-retry も null → review_contract_error（pr-reviewer 呼び出しは 2 回で打ち切り）', async () => {
+  const { ctx, calls, logs } = makePrIterateSandbox({ overrides: { 'review#1': null, 'review#1-schema-retry': null } });
   const { result, error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
   assert.equal(error, null, `graceful 終了のはずだが throw した: ${error?.message}`);
   assert.equal(result?.status, 'review_contract_error', `status は review_contract_error のはずだが ${result?.status}`);
   const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.deepEqual(
     reviewerCalls.map((c) => [c.label, c.model]),
-    [['review#1', QUALITY_MODEL], ['review#1', null], ['review#1-schema-retry', null]],
-    'fallback 1 回 → sticky のまま schema-retry 1 回の順で打ち切られるはず',
+    [['review#1', null], ['review#1-schema-retry', null]],
+    'review#1 → schema-retry の 2 回で打ち切られるはず（fallback の同一 label 再試行は無い）',
   );
   assert.equal(result?.review_null_retries, 1, 'schema-retry の計上（review_null_retries）は既存契約のまま 1');
-  assertFallbackLabel(calls, 'review#1', 'pr-iterate (b)');
+  assert.ok(!logs.some((l) => l.includes(FALLBACK_LOG)), 'pr-reviewer は model 無しなので fallback log は出ない');
+  assertNoFallbackLabel(calls, 'pr-iterate (b)');
 });
 
 // ── pr-iterate.js (c): model 無し call（fix#1）の null は fallback 対象外 ──
@@ -214,9 +220,9 @@ test('[quality-model-fallback] pr-iterate (c) model 無し call（fix#1）の nu
   assertNoFallbackLabel(calls, 'pr-iterate (c)');
 });
 
-// ── pr-iterate.js (d): nested.quality_fallback:true を初期 sticky として継承 ──
+// ── pr-iterate.js (d): nested.quality_fallback:true（evaluator 由来の sticky）は受理され、pr-reviewer の挙動には影響しない ──
 
-test('[quality-model-fallback] pr-iterate (d) nested.quality_fallback:true なら初回から model 無しで呼び、自 run では fallback を記録しない', async () => {
+test('[quality-model-fallback] pr-iterate (d) nested.quality_fallback:true は受理されるが pr-reviewer は元々 model 無しなので挙動は変わらず、自 run では fallback を記録しない', async () => {
   const { ctx, calls, logs } = makePrIterateSandbox({
     args: { pr: '7', post_terminal_summary: false, nested: { cwd: '/wt', head_ref: 'feature/issue-1', quality_fallback: true } },
   });
@@ -224,19 +230,19 @@ test('[quality-model-fallback] pr-iterate (d) nested.quality_fallback:true な�
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
   assert.equal(result?.status, 'lgtm');
   const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
-  assert.deepEqual(reviewerCalls.map((c) => [c.label, c.model]), [['review#1', null]], '継承 sticky なら review#1 は最初から model 無し 1 回のはず');
-  assert.ok(!logs.some((l) => l.includes(FALLBACK_LOG)), '継承時は自 run で fallback が発火していないので log は出ない');
-  // 発火したのは親 run なので label は親（dev-flow entry）が持つ。pr-iterate entry ではキー省略
+  assert.deepEqual(reviewerCalls.map((c) => [c.label, c.model]), [['review#1', null]], 'review#1 は model 無し 1 回のはず');
+  assert.ok(!logs.some((l) => l.includes(FALLBACK_LOG)), '自 run で fallback は発火しないので log は出ない');
+  // sticky を発火したのは親 run（evaluator）なので label は親（dev-flow entry）が持つ。pr-iterate entry ではキー省略
   assertNoFallbackLabel(calls, 'pr-iterate (d)');
 });
 
-test('[quality-model-fallback] pr-iterate (d0) nested.quality_fallback 未指定 / false は単体起動と同じく model 付きで呼ぶ', async () => {
+test('[quality-model-fallback] pr-iterate (d0) nested.quality_fallback 未指定 / false でも pr-reviewer は model 無しで呼ぶ（(d) と同一挙動）', async () => {
   for (const nested of [{ cwd: '/wt', head_ref: 'feature/issue-1' }, { cwd: '/wt', head_ref: 'feature/issue-1', quality_fallback: false }]) {
     const { ctx, calls } = makePrIterateSandbox({ args: { pr: '7', post_terminal_summary: false, nested } });
     const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
     assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
     const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
-    assert.deepEqual(reviewerCalls.map((c) => c.model), [QUALITY_MODEL], `nested=${JSON.stringify(nested)} で review#1 が model 付きで呼ばれていない`);
+    assert.deepEqual(reviewerCalls.map((c) => c.model), [null], `nested=${JSON.stringify(nested)} で review#1 に model が付いている`);
   }
 });
 

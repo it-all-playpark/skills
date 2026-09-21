@@ -18,7 +18,9 @@ export const meta = {
 }
 
 // ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// 品質ゲート系 2 agent（evaluator / pr-reviewer）の model override。
+// evaluator 専用の model override（eval#i / final-ac-reconcile / security-clearance-final の 3 call site）。
+// pr-reviewer には渡さない — pr-reviewer は agents/pr-reviewer.md の frontmatter（opus / high）で spawn し、
+// この定数を変えても影響しない（telemetry は quality_model_config = 本定数 / review_model_config = frontmatter 値で区別）。
 // frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
 // effort は agent() opts に記載されているが、本 harness での適用可否は未検証（受理と適用は別）。
 // dev-flow-canary の opts 受理 probe（capability id: agent_opts_effort_accepted）で再判定する。
@@ -4006,6 +4008,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     error_msg,
     telemetry: {
       quality_model_config: QUALITY_MODEL,
+      review_model_config: 'opus',
       ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
       plugin_version: PLUGIN_VERSION,
       ...telemetry,
@@ -5334,8 +5337,9 @@ const SUBAGENT_COUNTS = {};
 // 見えないため、この可変 context に写す。failure_recorded は writeFailureTelemetry 後の throw（empty_diff）で
 // abort entry を二重記録しないためのフラグ。
 const ABORT_CTX = { phase: null, label: null, shape: null, plan_iter: 0, eval_iter: 0, failure_recorded: false }
-// quality model fallback: `opts.model`（QUALITY_MODEL を渡す品質ゲート 4 agent の call site
-// のみ）付き呼び出しが null を返したら、model 指定を外して agent frontmatter の既定 model で同一 prompt・
+// quality model fallback: `opts.model`（QUALITY_MODEL を渡す evaluator 系 3 call site — eval#i /
+// final-ac-reconcile / security-clearance-final — のみ。pr-reviewer は model を渡さず frontmatter 既定で
+// spawn する）付き呼び出しが null を返したら、model 指定を外して agent frontmatter の既定 model で同一 prompt・
 // 同一 label を 1 回だけ再試行し、以後この run は既定 model に sticky で切り替える。harness の agent() は
 // usage 上限（credit 切れ）・terminal API error・user skip のいずれでも throw せず null を返し、原因は
 // script から読めないため null だけを観測点にする（原因切り分けの probe は持たない）。fallback 先を定数で
@@ -6901,7 +6905,7 @@ if (LITE) {
     + EPOCH_INSTRUCTION
   const reviewLite = await trackedAgent(
     reviewPromptLite,
-    { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: 'pr-review-lite', phase: 'PR' },
+    { agentType: 'pr-reviewer', schema: REVIEW, label: 'pr-review-lite', phase: 'PR' },
   )
   const liteOutcome = classifyLiteReview(reviewLite)
   if (liteOutcome.escalate) {
@@ -7496,8 +7500,9 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // subagent_invocations: run あたりの subagent (agent()) 起動数 {total, by_type}。
     // 常時出力。nested pr-iterate 分は上記 mergeSubagentCounts で合算済み。
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
-    quality_model_config: QUALITY_MODEL,  // 品質ゲート 4 agent の model 設定値（実行時モデルではない）
-    // quality_model_fallback_label: 最初に model 指定を外して再試行した call の label。
+    quality_model_config: QUALITY_MODEL,  // evaluator 系 3 call site（eval#i / final-ac-reconcile / security-clearance-final）の model 設定値（実行時モデルではない）
+    review_model_config: 'opus',  // pr-reviewer（pr-review-lite / nested pr-iterate の review#i）の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
+    // quality_model_fallback_label: 最初に model 指定を外して再試行した call の label（evaluator 系のみ発火）。
     // 未発生時はキー省略（null は passthrough で落ちる）。quality_model_config と合わせて
     // 「純 QUALITY_MODEL / 途中から frontmatter 既定（どの label から）」を導出する。
     ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
@@ -7600,6 +7605,7 @@ return {
           eval_iter: ABORT_CTX.eval_iter,
           subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
           quality_model_config: QUALITY_MODEL,
+          review_model_config: 'opus',
           ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
           plugin_version: PLUGIN_VERSION,
         },

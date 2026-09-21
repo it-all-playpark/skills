@@ -167,10 +167,10 @@ test('[T2] review#1 throw -> review#1-schema-retry も throw -> error null、pr-
 });
 
 // ---- T3: review#1 が null を返し続ける（throw ではなく null）-> T2 と同じ graceful 経路 ----
-// null は trackedAgent の quality model fallback（model 指定を外して同一 label で 1 回再試行）を先に
-// 通り、それでも null なら callReviewAgent の schema-retry（別 label）へ進む。pr-reviewer は
-// review#1 / review#1（model 無し）/ review#1-schema-retry の 3 回で打ち切られる。
-test('[T3] review#1 が null を返し続ける(throwでなくnull) -> fallback 1 回 + schema-retry 1 回で graceful 終了、status:review_contract_error', async () => {
+// pr-reviewer は model override を渡さないため trackedAgent の quality model fallback（`opts.model` 付き
+// call のみ）は通らず、null は callReviewAgent の schema-retry（別 label）だけで再試行される。
+// pr-reviewer は review#1 / review#1-schema-retry の 2 回で打ち切られる。
+test('[T3] review#1 が null を返し続ける(throwでなくnull) -> schema-retry 1 回で graceful 終了、status:review_contract_error', async () => {
   const agentCalls = [];
   const reviewerStub = () => null;
   const agentStub = buildAgentStub({ reviewerStub, agentCalls });
@@ -182,8 +182,8 @@ test('[T3] review#1 が null を返し続ける(throwでなくnull) -> fallback 
   const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
   assert.deepEqual(
     reviewerCalls.map((c) => c.label),
-    ['review#1', 'review#1', 'review#1-schema-retry'],
-    `pr-reviewer 呼び出しは review#1（fallback で同一 label 2 回）+ schema-retry の 3 回（無限ループしない）であるべきだが ${JSON.stringify(reviewerCalls.map((c) => c.label))} だった`,
+    ['review#1', 'review#1-schema-retry'],
+    `pr-reviewer 呼び出しは review#1 + schema-retry の 2 回（model fallback の同一 label 再試行は無い・無限ループしない）であるべきだが ${JSON.stringify(reviewerCalls.map((c) => c.label))} だった`,
   );
 
   assert.equal(result?.status, 'review_contract_error', `result.status は review_contract_error であるべきだが '${result?.status}' だった`);

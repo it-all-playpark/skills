@@ -2647,6 +2647,7 @@ make_full_telemetry_handoff() {
       fix_terminal_reason: "applied_false",
       terminal_path: "ci",
       quality_model_config: "fable",
+      review_model_config: "opus",
       plugin_version: "0.3.0",
       iterate_history: [{iteration: 1, decision: "request-changes", summary: "ng", blocking: [{severity: "major", topic: "t1"}], minor: []}]
     }'
@@ -2665,6 +2666,7 @@ make_full_telemetry_handoff() {
       .fix_terminal_reason == "applied_false" and
       .terminal_path == "ci" and
       .quality_model_config == "fable" and
+      .review_model_config == "opus" and
       .plugin_version == "0.3.0" and
       .iterate_history[0].decision == "request-changes" and
       .iterate_history[0].blocking[0].topic == "t1"
@@ -2928,6 +2930,7 @@ make_full_telemetry_handoff() {
         terminal_path: "review",
         plugin_version: "0.3.0",
         quality_model_config: "fable",
+        review_model_config: "opus",
         iterate_history: [{iteration: 1, decision: "request-changes", summary: "ng", blocking: [{severity: "major", topic: "t1"}], minor: []}],
         trust_evalseal_missing_reason: "bogus"
       }'
@@ -2943,6 +2946,7 @@ make_full_telemetry_handoff() {
         [[ $(jq -r '.telemetry.terminal_path' "$entry") == "review" ]] &&
         [[ $(jq -r '.telemetry.plugin_version' "$entry") == "0.3.0" ]] &&
         [[ $(jq -r '.telemetry.quality_model_config' "$entry") == "fable" ]] &&
+        [[ $(jq -r '.telemetry.review_model_config' "$entry") == "opus" ]] &&
         [[ $(jq -r '.telemetry.iterate_history[0].decision' "$entry") == "request-changes" ]] &&
         [[ $(jq -r '.telemetry.iterate_history[0].blocking[0].topic' "$entry") == "t1" ]] &&
         [[ $(jq -r '.telemetry | has("trust_evalseal_missing_reason")' "$entry") == "false" ]] &&
