@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { isRedgreenCall, redgreenBatchResponse } from './test-helpers/redgreen-batch.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -23,8 +24,8 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 /**
  * redgreen/vdelta 専用の VM sandbox を組む。
- * evaluator の ac_results に対応する redgreen-verify.sh 呼び出し（label が 'redgreen:AC-' で
- * 始まる）の応答を acIndex 別に切り替え可能にし、log() 出力・journal-log prompt を捕捉する。
+ * evaluator の ac_results に対応する redgreen-verify.sh バッチ呼び出し（label 'redgreen'、1 spawn に
+ * 全 AC ペア）の応答を acIndex 別に切り替え可能にし、log() 出力・journal-log prompt を捕捉する。
  *
  * @param {object} analyzeReq
  * @param {object} evaluatorResponse
@@ -34,6 +35,7 @@ function makeSandbox(analyzeReq, evaluatorResponse, redgreenResponseFor) {
   const logs = [];
   const journalPrompts = [];
   const evalCalls = [];
+  const redgreenCalls = [];
 
   const agentStub = async (prompt, opts) => {
     const label = opts?.label ?? '';
@@ -58,10 +60,9 @@ function makeSandbox(analyzeReq, evaluatorResponse, redgreenResponseFor) {
       evalCalls.push({ label, agentType });
       return evaluatorResponse;
     }
-    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen:AC-')) {
-      const m = label.match(/^redgreen:AC-(\d+)$/);
-      const acIndex = m ? Number(m[1]) - 1 : 0;
-      return redgreenResponseFor(acIndex);
+    if (isRedgreenCall(agentType, label)) {
+      redgreenCalls.push({ label, prompt });
+      return redgreenBatchResponse(prompt, evaluatorResponse.ac_results, (acIndex) => redgreenResponseFor(acIndex));
     }
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['_lib/foo.test.mjs'] };
@@ -127,6 +128,7 @@ function makeSandbox(analyzeReq, evaluatorResponse, redgreenResponseFor) {
     ctx,
     counters: {
       evaluatorCalls: () => evalCalls.length,
+      redgreenCalls: () => redgreenCalls,
       logs: () => logs,
       journalPrompts: () => journalPrompts,
     },
@@ -304,4 +306,48 @@ test('[redgreen-vdelta] (e) AC 2 件 → telemetry vdelta_verdicts が配列 2 �
   );
   const acs = payload.telemetry.vdelta_verdicts.map((v) => v.ac).sort();
   assert.deepEqual(acs, ['AC-1', 'AC-2']);
+});
+
+const ANALYZE_REQ_3AC = { ...ANALYZE_REQ_2AC, acceptance_criteria: ['a', 'b', 'c'] };
+
+test('[redgreen-batch] (f) test 実証 AC 3 件 → redgreen spawn は 1 回で prompt に 3 ペアが引数順に並び、results の index 突合で全 AC が昇格する', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  const { ctx, counters } = makeSandbox(ANALYZE_REQ_3AC, evalTestVerified(3), () => ({ red: true, green: true }));
+  const { error } = await runDevFlowCapture(src, ctx);
+  assertNoCrash(error);
+
+  const calls = counters.redgreenCalls();
+  assert.equal(calls.length, 1, `redgreen は AC 数に関わらず 1 iteration 1 spawn であるべきだが ${calls.length} 回: ${JSON.stringify(calls.map((c) => c.label))}`);
+  assert.ok(
+    calls[0].prompt.includes("redgreen-verify /tmp/wt 't0.test.mjs' 'impl0.mjs' 't1.test.mjs' 'impl1.mjs' 't2.test.mjs' 'impl2.mjs'"),
+    `prompt に 3 ペアが引数順で並ぶべきだが: ${calls[0].prompt}`,
+  );
+
+  const logs = counters.logs();
+  for (const ac of ['AC-1', 'AC-2', 'AC-3']) {
+    assert.ok(
+      logs.some((l) => l.includes(`${ac}: red→green 実証 → deterministic 昇格 + checked`)),
+      `${ac} が昇格するべきだが: ${JSON.stringify(logs.filter((l) => l.includes(ac)))}`,
+    );
+  }
+});
+
+test('[redgreen-batch] (g) results の欠落ペア（script 側の入力エラー等で index が返らない）は当該 AC だけ inspection 据え置きで他 AC は昇格する', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
+  // AC-2（ac_index 1）だけ results から落とす
+  const { ctx, counters } = makeSandbox(ANALYZE_REQ_3AC, evalTestVerified(3), (acIndex) => (acIndex === 1 ? null : { red: true, green: true }));
+  const { error } = await runDevFlowCapture(src, ctx);
+  assertNoCrash(error);
+
+  const logs = counters.logs();
+  assert.ok(logs.some((l) => l.includes('AC-1: red→green 実証 → deterministic 昇格 + checked')));
+  assert.ok(logs.some((l) => l.includes('AC-3: red→green 実証 → deterministic 昇格 + checked')));
+  assert.ok(
+    logs.some((l) => l.includes('AC-2: red→green 未成立(null)→ inspection 据え置き')),
+    `欠落ペアの AC-2 は inspection 据え置きであるべきだが: ${JSON.stringify(logs.filter((l) => l.includes('AC-2')))}`,
+  );
+  assert.ok(
+    logs.some((l) => l.includes('redgreen-verify の results が 2 件（期待 3 件）')),
+    `欠落は log で可視化されるべきだが: ${JSON.stringify(logs.filter((l) => l.includes('results')))}`,
+  );
 });

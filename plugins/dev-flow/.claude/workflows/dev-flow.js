@@ -4264,11 +4264,22 @@ const SEC_CLEAR = {
     },
   },
 }
+// redgreen-verify の出力契約: 全 AC ペアを 1 呼び出し（1 spawn）で判定し、results に引数順で返す。
+// root を object にするのは agent() schema の制約（root object 必須）— haiku proxy に配列を包み直させない。
 const RG = {
-  type: 'object', required: ['red', 'green'],
+  type: 'object', required: ['results'],
   properties: {
-    red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' }, verdict: {},
-    testcmd_ran: { type: 'boolean' }, headdiff: { type: 'object' },
+    results: {
+      type: 'array',
+      items: {
+        type: 'object', required: ['index', 'red', 'green'],
+        properties: {
+          index: { type: 'number' },
+          red: { type: 'boolean' }, green: { type: 'boolean' }, reason: { type: 'string' }, verdict: {},
+          testcmd_ran: { type: 'boolean' }, headdiff: { type: 'object' },
+        },
+      },
+    },
   },
 }
 const PRURL = {
@@ -6599,6 +6610,10 @@ async function execEvaluatePhase(state) {
     }
     // W4: evaluator の per-AC 判定を ledger に反映。test 実証できる AC は red→green を
     // dev-runner-haiku で決定論検証し、取れたら deterministic 昇格(blocking)。
+    // 対象 AC を先に集めて redgreen-verify を 1 spawn で呼ぶ（AC ごとに spawn しない）。
+    // redgreen-verify は worktree の impl を退避→復元するため AC 間の並列化は不可で、AC ごとに分けても
+    // spawn の固定コストと exec-proxy の失敗露出が AC 数倍になるだけで判定は何も変わらない。
+    const rgTargets = []
     for (const r of (ev.ac_results ?? [])) {
       if (!r || typeof r.ac_index !== 'number') continue
       const acId = `AC-${r.ac_index + 1}`
@@ -6613,42 +6628,56 @@ async function execEvaluatePhase(state) {
       }
       if (r.satisfied && r.verified_by === 'test' && Array.isArray(r.test_files) && r.test_files.length
           && Array.isArray(r.impl_files) && r.impl_files.length) {
-        const rg = await trackedAgent(
-          `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
-          + `redgreen-verify ${WT} `
-          + `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`,
-          { agentType: 'dev-runner-haiku', schema: RG, label: `redgreen:AC-${r.ac_index + 1}`, phase: 'Evaluate' })
-        if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })
-        const denyRes = vdeltaDenies(rg ? rg.verdict : null)
-        // test_cmd 経路が走っていない invocation（testcmd_ran:false）は RunStore に run pair が無く verdict 不在が
-        // 期待値。verdict 不正・欠落による fail_open とは分けて数え、test_files の HEAD 差分 digest を fallback
-        // 信号として記録する（記録専用 — deny・deterministic 昇格・merge tier の入力にはしない）。
-        // red/green は redgreen-verify.sh の impl_files 実証結果をそのまま複合させる — headdiff の
-        // status（test_files の HEAD 差分）だけでは「test 改変を伴う red→green」を telemetry 単体で
-        // 識別できない（status=test_modified は red=false でも同一に記録されるため）。
-        if (rg && rg.testcmd_ran === false) {
-          state.vdeltaNotStarted += 1
-          state.redgreenHeaddiff.push({
-            ac: acId, ...redgreenHeaddiffDigest(rg.headdiff), red: rg.red === true, green: rg.green === true,
-          })
-        } else if (rg && denyRes.status === 'fail_open') {
-          state.vdeltaFailOpen += 1
-        }
-        if (rg && rg.red === true && rg.green === true && !denyRes.deny) {
-          ledger = setCheck(ledger, acId, { kind: 'deterministic' })
-          ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
-          log(`AC-${r.ac_index + 1}: red→green 実証 → deterministic 昇格 + checked`)
-        } else {
-          if (r.satisfied) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
-          if (rg && rg.red === true && rg.green === true && denyRes.deny) {
-            state.redgreenDenies.push({ ac: acId, reasons: denyRes.reasons })
-            log(`AC-${r.ac_index + 1}: red→green 実証だが vdelta deny(${denyRes.reasons.join(', ')})→ deterministic 昇格せず inspection 据え置き`)
-          } else {
-            log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
-          }
-        }
+        rgTargets.push({ r, acId })
       } else if (r.satisfied) {
         ledger = checkItem(ledger, acId, r.evidence ?? 'inspection')
+      }
+    }
+    // 1 spawn に全ペアを渡す。返却の results[k].index は引数順 = rgTargets の添字。
+    // spawn 失敗・results 欠落は当該ペア null（fail-safe: inspection 据え置き。deterministic 昇格しない）。
+    let rgResults = []
+    if (rgTargets.length) {
+      const rgBatch = await trackedAgent(
+        `cd ${WT} で作業。次を実行して **stdout の JSON 1 行だけ** を verbatim で返せ(判定や脚色をしない):\n`
+        + `redgreen-verify ${WT} `
+        + rgTargets.map(({ r }) => `'${r.test_files.join(',')}' '${r.impl_files.join(',')}'`).join(' '),
+        { agentType: 'dev-runner-haiku', schema: RG, label: 'redgreen', phase: 'Evaluate' })
+      rgResults = (rgBatch && Array.isArray(rgBatch.results)) ? rgBatch.results : []
+      if (rgResults.length !== rgTargets.length) {
+        log(`⚠️ redgreen-verify の results が ${rgResults.length} 件（期待 ${rgTargets.length} 件）— 欠落ペアは inspection 据え置き`)
+      }
+    }
+    for (let k = 0; k < rgTargets.length; k++) {
+      const { r, acId } = rgTargets[k]
+      const rg = rgResults.find((x) => x && x.index === k) ?? null
+      if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })
+      const denyRes = vdeltaDenies(rg ? rg.verdict : null)
+      // test_cmd 経路が走っていない invocation（testcmd_ran:false）は RunStore に run pair が無く verdict 不在が
+      // 期待値。verdict 不正・欠落による fail_open とは分けて数え、test_files の HEAD 差分 digest を fallback
+      // 信号として記録する（記録専用 — deny・deterministic 昇格・merge tier の入力にはしない）。
+      // red/green は redgreen-verify.sh の impl_files 実証結果をそのまま複合させる — headdiff の
+      // status（test_files の HEAD 差分）だけでは「test 改変を伴う red→green」を telemetry 単体で
+      // 識別できない（status=test_modified は red=false でも同一に記録されるため）。
+      if (rg && rg.testcmd_ran === false) {
+        state.vdeltaNotStarted += 1
+        state.redgreenHeaddiff.push({
+          ac: acId, ...redgreenHeaddiffDigest(rg.headdiff), red: rg.red === true, green: rg.green === true,
+        })
+      } else if (rg && denyRes.status === 'fail_open') {
+        state.vdeltaFailOpen += 1
+      }
+      if (rg && rg.red === true && rg.green === true && !denyRes.deny) {
+        ledger = setCheck(ledger, acId, { kind: 'deterministic' })
+        ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
+        log(`AC-${r.ac_index + 1}: red→green 実証 → deterministic 昇格 + checked`)
+      } else {
+        if (r.satisfied) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
+        if (rg && rg.red === true && rg.green === true && denyRes.deny) {
+          state.redgreenDenies.push({ ac: acId, reasons: denyRes.reasons })
+          log(`AC-${r.ac_index + 1}: red→green 実証だが vdelta deny(${denyRes.reasons.join(', ')})→ deterministic 昇格せず inspection 据え置き`)
+        } else {
+          log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
+        }
       }
     }
     // W5: danger-grep hit の SEC item(critical 据え置き)を evaluator が evidence 付きで
