@@ -19,7 +19,7 @@
 #                           (stuck/fix_failed/max_reached/ci_error/review_contract_error)
 #                           の割合。分母 = iterate_status 非 null の dev-flow entries。lte
 #   micro_share             telemetry.shape == "micro" の割合。分母 = shape 非 null。gte
-#   cap_pinned_count        eval_iter >= 10 または plan_iter >= 8 の entry 数。lte
+#   cap_pinned_count        eval_iter >= 10 の entry 数。lte
 #
 # Output (stdout JSON):
 #   {"ok":true,"metric":...,"value":<num>,"runs":<int>,
@@ -124,7 +124,7 @@ case "$METRIC" in
   cap_pinned_count)
     RESULT=$(echo "$WINDOW" | jq '
       length as $runs
-      | ([.[] | select(((.telemetry.eval_iter // -1) >= 10) or ((.telemetry.plan_iter // -1) >= 8))]
+      | ([.[] | select((.telemetry.eval_iter // -1) >= 10)]
           | length) as $pinned
       | {runs: $runs, value: $pinned}')
     ;;

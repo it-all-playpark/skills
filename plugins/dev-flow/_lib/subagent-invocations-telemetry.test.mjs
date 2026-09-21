@@ -218,8 +218,8 @@ test('[subagent-invocations] nested pr-iterate の subagent_invocations（total=
 });
 
 // issue #668 / #673: standard run では by_type に dev-implement-fable が 1 で計上され、
-// planner 系 agent は載らず（0 回）、plan_iter は 0 で記録される（観測経路が journal だけで閉じることを pin する）。
-test('[subagent-invocations][#673] by_type に dev-implement-fable:1・planner 系 agent 無し・plan_iter 0', async () => {
+// planner 系 agent は載らない（0 回。観測経路が journal だけで閉じることを pin する）。
+test('[subagent-invocations][#673] by_type に dev-implement-fable:1・planner 系 agent 無し', async () => {
   const journalPrompts = [];
   const { ctx } = makeRecordingSandbox(makeResponder(journalPrompts));
   const error = await runDevFlowInSandbox(src, ctx);
@@ -231,5 +231,4 @@ test('[subagent-invocations][#673] by_type に dev-implement-fable:1・planner �
   for (const gone of ['dev-planner', 'plan-reviewer', 'implementer']) {
     assert.equal(gone in telemetry.subagent_invocations.by_type, false, `by_type に ${gone} が載っている: ${JSON.stringify(telemetry.subagent_invocations.by_type)}`);
   }
-  assert.equal(telemetry.plan_iter, 0, `plan_iter は 0 のはずだが ${telemetry.plan_iter}`);
 });

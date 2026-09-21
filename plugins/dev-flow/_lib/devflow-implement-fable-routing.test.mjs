@@ -4,7 +4,7 @@
 //
 //   AC-1: dev-flow.js に planner 経路のシンボル・PLAN/VERDICT schema・dev-planner / plan-reviewer /
 //         implementer の agentType 文字列が残っていない（静的 pin）
-//   AC-3: Plan phase は全 shape で合成 plan のみ（plan#fable-skip log・plan_iter 0）。Implement は
+//   AC-3: 全 shape で Analyze 直後に合成 plan のみ（implement#synth-plan log）。Implement は
 //         dev-implement-fable の単一 serial spawn（impl:serial:issue-<N>）で、parallel / pipeline を
 //         sandbox に置かなくても完走する。返却 null は implDroppedCount に 1 として計上される
 //   AC-5: Evaluate 差し戻し（reimpl#i、fix_feedback 付き）が dev-implement-fable に渡る
@@ -15,7 +15,7 @@
 //         pr.head_sha が空文字・欠落のときは nested に head_sha キー自体を含めない
 //   prompt: issue_body + acceptance_criteria + task_id + 配置規約を含み、AC テスト契約は含まない
 //
-// 責務外: telemetry の by_type / plan_iter は subagent-invocations-telemetry.test.mjs が pin する。
+// 責務外: telemetry の by_type は subagent-invocations-telemetry.test.mjs が pin する。
 // BLOCKED 再実装（reimpl-blocked#b）は blocked-replan-history.test.mjs / guard-blocked-routing.test.mjs。
 
 import { test } from 'vitest';
@@ -91,7 +91,7 @@ test('[implement-fable] AC-1 静的 pin: dev-flow.js に planner 経路のシン
 // AC-3: 全 shape で合成 plan → dev-implement-fable 1 spawn（parallel / pipeline なし）
 // ============================================================
 for (const shape of ['micro', 'standard', 'complex']) {
-  test(`[implement-fable] AC-3 ${shape}: planner 系 agent 0 回・dev-implement-fable 1 回（impl:serial:issue-1）・plan#fable-skip・sandbox に parallel/pipeline 不在で完走`, async () => {
+  test(`[implement-fable] AC-3 ${shape}: planner 系 agent 0 回・dev-implement-fable 1 回（impl:serial:issue-1）・implement#synth-plan・sandbox に parallel/pipeline 不在で完走`, async () => {
     const { calls, logs, error, ctx } = await runFlow(shape);
     assert.equal(error, null, `run が throw した: ${error?.message}`);
     assert.equal(typeof ctx.pipeline, 'undefined', 'sandbox に pipeline() が注入されている（削除済みのはず）');
@@ -100,18 +100,17 @@ for (const shape of ['micro', 'standard', 'complex']) {
     const fable = byType(calls, FABLE);
     assert.deepEqual(fable.map((c) => c.label), ['impl:serial:issue-1'], `dev-implement-fable は Implement で 1 回のはず: ${fable.map((c) => c.label).join(', ')}`);
     assert.equal(calls.filter((c) => c.label.includes(':par:')).length, 0, 'parallel fan-out の label（:par:）が観測された');
-    assert.ok(logs.some((l) => l.includes('plan#fable-skip')), 'plan#fable-skip の log が無い');
+    assert.ok(logs.some((l) => l.includes('implement#synth-plan')), 'implement#synth-plan の log が無い');
   });
 }
 
-test('[implement-fable] AC-3: journal handoff telemetry — plan_iter 0 / by_type.dev-implement-fable 1 / planner 系 agent 無し（complex）', async () => {
+test('[implement-fable] AC-3: journal handoff telemetry — by_type.dev-implement-fable 1 / planner 系 agent 無し（complex）', async () => {
   const journalPrompts = [];
   const { error } = await runFlow('complex', {
     'journal-save': ({ prompt }) => { journalPrompts.push(prompt); return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' }; },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
   const payload = parseJournalHandoffPayload(journalPrompts[0] ?? '');
-  assert.equal(payload.telemetry.plan_iter, 0, `plan_iter は 0 のはず: ${payload.telemetry.plan_iter}`);
   assert.equal(payload.telemetry.subagent_invocations.by_type['dev-implement-fable'], 1, `by_type['dev-implement-fable'] は 1 のはず: ${JSON.stringify(payload.telemetry.subagent_invocations.by_type)}`);
   for (const g of GONE_AGENTS) {
     assert.equal(g in payload.telemetry.subagent_invocations.by_type, false, `by_type に ${g} が載っている: ${JSON.stringify(payload.telemetry.subagent_invocations.by_type)}`);

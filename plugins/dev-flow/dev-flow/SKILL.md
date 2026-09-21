@@ -67,8 +67,8 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
 
 ## Implement 経路（全 shape で dev-implement-fable 一本）
 
-全 shape（micro / standard / complex）は Plan phase で issue から単一 task の plan を合成するだけ
-（planner 系 agent は起動しない、`plan_iter=0`）で、Implement で `dev-implement-fable`（plan+impl 統合、
+全 shape（micro / standard / complex）は Analyze 直後に issue から単一 task の plan を合成するだけ
+（Plan phase は持たず、planner 系 agent は起動しない）で、Implement で `dev-implement-fable`（plan+impl 統合、
 fable / high）を 1 spawn する。BLOCKED 再実装（`reimpl-blocked#b`）・Validate の green-fix・Evaluate の
 差し戻し（`reimpl#i`）も同じ agent への再 spawn。shape 判定は Evaluate の深さ・LITE gate・refloor の
 ために残る。詳細は `references/pipeline.md` の shape 3 tier 表。

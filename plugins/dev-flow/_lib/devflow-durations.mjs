@@ -3,7 +3,7 @@
 // start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s、deps install 前）、
 // analyze_start は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack 完了後、
 // prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の optional
-// epoch から給電し、残り 9 mark（analyze_end/plan_end/implement_end/validate_end/evaluate_end/
+// epoch から給電し、残り 8 mark（analyze_end/implement_end/validate_end/evaluate_end/
 // pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
@@ -11,7 +11,7 @@
 // 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
 // 残差（duration_seconds − Σphase_durations）に留める。
 // contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
+// 使うため shape 判定の時間が implement 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -22,7 +22,6 @@ export const CLOCK_MARK_ORDER = [
   'start',
   'analyze_start',
   'analyze_end',
-  'plan_end',
   'implement_end',
   'validate_end',
   'evaluate_end',
@@ -35,7 +34,6 @@ export const CLOCK_MARK_ORDER = [
 // phase キー → 終端 mark 名。
 export const CLOCK_PHASE_ENDS = [
   ['analyze', 'analyze_end'],
-  ['plan', 'plan_end'],
   ['implement', 'implement_end'],
   ['validate', 'validate_end'],
   ['evaluate', 'evaluate_end'],
@@ -107,7 +105,7 @@ export function maxEpochRes(list) {
 }
 
 /**
- * marks から duration_seconds（run 全体）と phase_durations（8 phase）を算出する。
+ * marks から duration_seconds（run 全体）と phase_durations（7 phase）を算出する。
  * @param {object} marks - CLOCK_MARK_ORDER の各 mark 名をキーに持つ object（値は epoch 秒 or null）
  * @returns {{duration_seconds: number|null, phase_durations: object}}
  */

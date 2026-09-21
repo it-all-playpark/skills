@@ -485,7 +485,7 @@ run_telemetry_checks() {
       cap_pinned)
         local count
         count=$(echo "$anomaly" | jq -r '.count // 0')
-        msg="Cap張り付き検出 (${WINDOW}): ${count}件が eval_iter/plan_iter cap に到達"
+        msg="Cap張り付き検出 (${WINDOW}): ${count}件が eval_iter cap に到達"
         ;;
       iterate_unhealthy)
         local rate_pct

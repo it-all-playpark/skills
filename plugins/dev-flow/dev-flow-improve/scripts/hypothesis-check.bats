@@ -16,7 +16,7 @@ teardown() {
 write_entry() {
     jq -n --arg ts "$2" --arg it "$3" --arg sh "$4" --argjson ei "${5:-1}" \
         '{version:"1.0.0", timestamp:$ts, skill:"dev-flow", outcome:"success",
-          telemetry:{iterate_status:$it, shape:$sh, eval_iter:$ei, plan_iter:1}}' \
+          telemetry:{iterate_status:$it, shape:$sh, eval_iter:$ei}}' \
         > "$CLAUDE_JOURNAL_DIR/$1"
 }
 

@@ -17,7 +17,6 @@ const BASE_INPUT = {
   advisoryItems: [],
   ledgerConverged: true,
   acResults: undefined,
-  planConcerns: [],
   dangerHits: [],
   shape: 'standard',
   testGreen: true,
@@ -285,22 +284,6 @@ test('常時可視 invariant: 未確認 clearance が details より前に出る
   }
 });
 
-test('常時可視 invariant: planConcerns が details より前に出る', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['concern X'],
-    blockingItems: [
-      { id: 'B1', text: 'b', severity: 'critical', checked: true, dimension: 'sec' },
-    ],
-  });
-  const countHeadingIdx = body.indexOf('**解消済み証跡');
-  const concernIdx = body.indexOf('concern X');
-  assert.ok(concernIdx >= 0, 'concern を含む');
-  if (countHeadingIdx >= 0) {
-    assert.ok(concernIdx < countHeadingIdx, 'concern が件数見出しより前');
-  }
-});
-
 // ─── 要対応セクション (AC-2) ──────────────────────────────────────────────────
 
 test('要対応ゼロ -> 「### ✅ 要対応事項なし」を含み「### ⚠️ 要対応」を含まない', () => {
@@ -316,7 +299,6 @@ test('要対応ゼロ -> 「### ✅ 要対応事項なし」を含み「### ⚠�
     acResults: [
       { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
     ],
-    planConcerns: [],
   });
   assert.ok(body.includes('### ✅ 要対応事項なし'), '要対応事項なしを含む');
   assert.ok(!body.includes('### ⚠️ 要対応'), '⚠️ 要対応を含まない');
@@ -736,7 +718,6 @@ test('決定性: 同入力 -> 2回呼んで byte 完全一致', () => {
       { ac_index: 0, satisfied: true, evidence: 'passed', verified_by: 'evaluator' },
       { ac_index: 1, satisfied: false, evidence: '', verified_by: undefined },
     ],
-    planConcerns: ['concern 1', 'concern 2'],
     dangerHits: ['SQL_INJECTION'],
     shape: 'complex',
     testGreen: true,
@@ -753,33 +734,13 @@ test('箇条書きは「- 」始まりで「・」を使わない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     mergeTierReasons: ['reason X'],
-    planConcerns: ['plan concern'],
   });
   assert.ok(!body.includes('・'), '「・」を使わない');
 });
 
-// ─── Plan concerns ────────────────────────────────────────────────────────────
+// ─── CONCERN-* ledger item ────────────────────────────────────────────────────
 
-test('planConcerns あり -> concern 文字列を含む', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['concern A', 'concern B'],
-  });
-  assert.ok(body.includes('concern A'), 'concern A を含む');
-  assert.ok(body.includes('concern B'), 'concern B を含む');
-});
-
-test('planConcerns 空 -> 「Plan 未解消 concerns」見出しを含まない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: [],
-  });
-  assert.ok(!body.includes('Plan 未解消 concerns'), 'plan concerns 見出しを含まない');
-});
-
-// ─── Plan concerns の ledger 突合による解消済み除外 (issue #611) ────────────────
-
-// CONCERN-* ledger item ヘルパー。dev-flow.js は planConcerns の文字列を無加工で text にして
+// CONCERN-* ledger item ヘルパー。dev-flow.js は implement concerns の文字列を無加工で text にして
 // {id:'CONCERN-<i>', text, dimension:'concern', severity:'major', source:'concern'} を seed し、
 // evaluator の concern_resolutions で checked/evidence を更新する（本ファイル冒頭コメント参照）。
 function concernItem(text, { checked = false, evidence = null, triaged, triaged_evidence, id = 'CONCERN-1' } = {}) {
@@ -797,102 +758,15 @@ function concernItem(text, { checked = false, evidence = null, triaged, triaged_
   return item;
 }
 
-test('issue #611 AC1: advisoryItems に checked:true の concern item がある planConcern は「Plan 未解消 concerns」に出ない', () => {
+test('checked:true の CONCERN-* item は「解消済み証跡」件数行（✅ Goal Ledger 解消済み N 件）に数えられる', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
-    planConcerns: ['[plan:major] topicA: descA'],
     advisoryItems: [
       concernItem('[plan:major] topicA: descA', { checked: true, evidence: 'concern resolved: verified' }),
     ],
   });
-  assert.ok(!body.includes('- [plan:major] topicA: descA'), '解消済み concern 行を含まない');
-  assert.ok(!body.includes('Plan 未解消 concerns'), 'plan concerns 見出しを含まない');
-});
-
-test('issue #611 AC1: blockingItems 側（llm-major-blocking 相当）の checked concern も除外される', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    gatePolicy: 'llm-major-blocking',
-    planConcerns: ['[plan:major] topicA: descA'],
-    blockingItems: [
-      concernItem('[plan:major] topicA: descA', { checked: true, evidence: 'concern resolved: verified' }),
-    ],
-  });
-  assert.ok(!body.includes('- [plan:major] topicA: descA'), '解消済み concern 行を含まない（blocking 側）');
-  assert.ok(!body.includes('Plan 未解消 concerns'), 'plan concerns 見出しを含まない');
-});
-
-test('issue #611 AC2: 未解消 concern は現行と同一の詳細度で残る（byte 一致）', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['[plan:major] A: a', '[plan:major] B: b'],
-    advisoryItems: [
-      concernItem('[plan:major] A: a', { checked: true, evidence: 'concern resolved: verified' }),
-      concernItem('[plan:major] B: b', { checked: false }),
-    ],
-  });
-  const start = body.indexOf('**Plan 未解消 concerns**:');
-  assert.ok(start >= 0, 'Plan 未解消 concerns 見出しを含む');
-  const rest = body.slice(start);
-  const end = rest.indexOf('\n\n');
-  const section = end >= 0 ? rest.slice(0, end) : rest;
-  assert.equal(section, '**Plan 未解消 concerns**:\n- [plan:major] B: b', '未解消 concern のみ byte 一致で残る');
-});
-
-test('issue #611: ledger に対応 item が無い planConcern は従来どおり表示（micro 等の未 seed ケース）', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['orphan concern'],
-    advisoryItems: [],
-    blockingItems: [],
-  });
-  assert.ok(body.includes('- orphan concern'), '対応 ledger item が無い concern は表示される');
-});
-
-test('issue #611: 全 concern 解消かつ他の未解消なしなら「### ✅ 要対応事項なし」', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['[plan:major] only: one'],
-    advisoryItems: [
-      concernItem('[plan:major] only: one', { checked: true, evidence: 'concern resolved: verified' }),
-    ],
-  });
+  assert.ok(body.includes('- ✅ Goal Ledger 解消済み 1 件'), '解消済み件数行を含む');
   assert.ok(body.includes('### ✅ 要対応事項なし'), '要対応事項なしを含む');
-  assert.ok(!body.includes('### ⚠️ 要対応'), '⚠️ 要対応を含まない');
-});
-
-test('issue #611: 同一 text の concern item が checked と unchecked の両方にあるときは表示を残す（unchecked 優先）', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['[plan:major] dup: d'],
-    advisoryItems: [
-      { ...concernItem('[plan:major] dup: d', { checked: true, evidence: 'concern resolved: verified' }), id: 'CONCERN-1' },
-      { ...concernItem('[plan:major] dup: d', { checked: false }), id: 'CONCERN-2' },
-    ],
-  });
-  assert.ok(body.includes('- [plan:major] dup: d'), '同一 text が unchecked 側にも残っている場合は表示を残す');
-});
-
-test("issue #611: dimension が 'concern' 以外（例 'environment'）の checked item とは突き合わせない", () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['[plan:major] E: e'],
-    advisoryItems: [
-      { id: 'ENV-X', text: '[plan:major] E: e', dimension: 'environment', checked: true, severity: 'minor', source: 'concern' },
-    ],
-  });
-  assert.ok(body.includes('- [plan:major] E: e'), 'dimension 不一致の checked item とは突き合わせず表示が残る');
-});
-
-test('issue #611: 解消済み concern を除外しても「解消済み証跡」件数行（✅ Goal Ledger 解消済み N 件）は変わらない', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['[plan:major] topicA: descA'],
-    advisoryItems: [
-      concernItem('[plan:major] topicA: descA', { checked: true, evidence: 'concern resolved: verified' }),
-    ],
-  });
-  assert.ok(body.includes('- ✅ Goal Ledger 解消済み 1 件'), '解消済み件数行は変わらない');
 });
 
 // ─── undefined が文字列に含まれない ──────────────────────────────────────────
@@ -972,27 +846,6 @@ test('要対応テーブルあり + securityClearance 空 -> Security clearance 
   const secIdx = lines.findIndex(l => l.includes('Security clearance: danger-grep clean'));
   assert.ok(secIdx >= 0, 'Security clearance 空状態行が存在する');
   assert.equal(lines[secIdx - 1], '', `Security clearance 空状態行の直前行（index ${secIdx - 1}）が空行`);
-});
-
-test('planConcerns あり + acResults 空 -> AC 空状態行の直前行が空行', () => {
-  // ケース(b): planConcerns が要対応セクションの最後の場合。
-  // blockingItems は非空（Goal Ledger 空状態行は出ない）、SEC seed item も非空（clearance 空状態行は出ない）。
-  // "- concern A" 直後に空行なしで AC 空状態行が push されると
-  // GFM の lazy continuation で bullet 内に視覚的に併合される。
-  // 直前行が空行であることを assert する。
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    blockingItems: [
-      { id: 'B1', text: 'unresolved', severity: 'critical', checked: false, dimension: 'security' },
-      secLedgerItem('SQL_INJECTION', { checked: true, evidence: 'ok' }),
-    ],
-    planConcerns: ['concern A'],
-    acResults: undefined,
-  });
-  const lines = body.split('\n');
-  const acIdx = lines.findIndex(l => l.includes('Acceptance Criteria: AC 判定なし'));
-  assert.ok(acIdx >= 0, 'AC 空状態行が存在する');
-  assert.equal(lines[acIdx - 1], '', `AC 空状態行の直前行（index ${acIdx - 1}）が空行`);
 });
 
 // ─── eval_staleness 4分岐 (issue #288) ───────────────────────────────────────
@@ -2045,12 +1898,11 @@ test('AC2 golden pin: 要対応セクション全文は件数縮約後も pre-ch
       { ac_index: 0, satisfied: false, evidence: 'failed evidence', verified_by: 'evaluator' },
       { ac_index: 1, satisfied: true, evidence: 'passed', verified_by: 'evaluator' },
     ],
-    planConcerns: ['concern X'],
   });
   // issue #658 で要対応表に「現状/対応」列が追加された。evidence/escalate_reason は内容列から
   // 外れ、それぞれ現状/対応列に移った（現行実装から採取した literal。この配置・列構成が
   // regression しないことを保証する）。
-  const expected = "### ⚠️ 要対応\n\n| 状態 | 区分 | 観点 | 内容 | 現状 | 対応 |\n|---|---|---|---|---|---|\n| ❌ 未解消 | 必須（blocking） | security | unchecked blocking text | ev-b1 | 修正が必要 |\n| ❌ 未解消 | 必須（blocking） | security | danger-grep detected XSS | 未解消 | 修正が必要 |\n| ⚠️ 要判断 | 要判断（advisory ESCALATE） | design | needs human | 未解消 | 要判断（preference） |\n\n| 状態 | AC | 検証 | 根拠 |\n|---|---|---|---|\n| ❌ 未達 | AC#1 | evaluator | failed evidence |\n\n| 状態 | danger class | 根拠 |\n|---|---|---|\n| ❌ 未確認 | XSS | — |\n\n**Plan 未解消 concerns**:\n- concern X\n\n\n";
+  const expected = "### ⚠️ 要対応\n\n| 状態 | 区分 | 観点 | 内容 | 現状 | 対応 |\n|---|---|---|---|---|---|\n| ❌ 未解消 | 必須（blocking） | security | unchecked blocking text | ev-b1 | 修正が必要 |\n| ❌ 未解消 | 必須（blocking） | security | danger-grep detected XSS | 未解消 | 修正が必要 |\n| ⚠️ 要判断 | 要判断（advisory ESCALATE） | design | needs human | 未解消 | 要判断（preference） |\n\n| 状態 | AC | 検証 | 根拠 |\n|---|---|---|---|\n| ❌ 未達 | AC#1 | evaluator | failed evidence |\n\n| 状態 | danger class | 根拠 |\n|---|---|---|\n| ❌ 未確認 | XSS | — |\n\n\n";
   const start = body.indexOf('### ⚠️ 要対応');
   const end = body.indexOf('**解消済み証跡');
   assert.ok(start >= 0 && end > start, '要対応セクションと件数見出しの両方を含む');
@@ -2272,10 +2124,9 @@ test('issue #614: escalate:true の advisory item は triaged が付いていて
   assert.ok(body.includes('### ⚠️ 要対応'), '要対応見出しは出る');
 });
 
-test('issue #614, #626: Plan concerns 突合で triaged item も除外され、details に全文が残る', () => {
+test('issue #614, #626: triaged item は箇条書きに出ず、details に全文が残る', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
-    planConcerns: ['[plan:major] A: a'],
     advisoryItems: [
       {
         ...concernItem('[plan:major] A: a'),
@@ -2285,23 +2136,10 @@ test('issue #614, #626: Plan concerns 突合で triaged item も除外され、d
     ],
   });
   assert.ok(!body.includes('- [plan:major] A: a'), '箇条書き行を含まない');
-  assert.ok(!body.includes('Plan 未解消 concerns'), 'Plan 未解消 concerns 見出しを含まない');
   const detailsStart = body.indexOf('<details>');
   const detailsEnd = body.indexOf('</details>') + '</details>'.length;
   const detailsRegion = body.slice(detailsStart, detailsEnd);
   assert.ok(detailsRegion.includes('[plan:major] A: a'), 'details に text が残る');
-});
-
-test('issue #614: 同 text が triaged item と unchecked 非 triaged item の両方にある場合は箇条書きが残る（fail-safe）', () => {
-  const body = buildDevflowSummaryBody({
-    ...BASE_INPUT,
-    planConcerns: ['[plan:major] dup: d'],
-    advisoryItems: [
-      { ...concernItem('[plan:major] dup: d', { id: 'CONCERN-1', triaged: true, triaged_evidence: 'e' }) },
-      { ...concernItem('[plan:major] dup: d', { id: 'CONCERN-2', checked: false }) },
-    ],
-  });
-  assert.ok(body.includes('- [plan:major] dup: d'), '未処理側が残っているため箇条書きを残す');
 });
 
 test('issue #614: triaged item は「✅ Goal Ledger 解消済み」件数に含まれない', () => {

@@ -32,7 +32,7 @@ paths:
 - `meta.name` は `dev-flow-run` でも telemetry handoff の `skill` は `'dev-flow'` 固定（集計連続性）
 - `/pr-iterate` の Workflow 名は `dev-flow:pr-iterate`（bare 名フォールバック無し）
 - `agent()` の agentType は `nsAgentOpts()` でのみ namespace 付与（bare 名は起動直後 abort）。routing test は論理名（bare）を保持。dev-flow-canary.js のみ namespaced id 直書き
-- 1 issue = 1 PR。Implement は全 shape で `dev-implement-fable`（plan+impl 統合）を単一 worktree に 1 spawn（Plan phase は issue から単一 task の plan を合成するのみ。planner ⇄ reviewer ループ・parallel fan-out・`pipeline()` は持たない）。BLOCKED 再実装・Validate green-fix・Evaluate 差し戻しも同じ agent。複数 issue 分割は使わない
+- 1 issue = 1 PR。Implement は全 shape で `dev-implement-fable`（plan+impl 統合）を単一 worktree に 1 spawn（Plan phase は持たず、Analyze 直後に issue から単一 task の plan を合成するのみ。planner ⇄ reviewer ループ・parallel fan-out・`pipeline()` は持たない）。BLOCKED 再実装・Validate green-fix・Evaluate 差し戻しも同じ agent。複数 issue 分割は使わない
 - merge は常に人間（全 tier）
 - 後方互換 scaffolding を作らない — out-of-enum は明示 error
 - worktree の後片付けは `worktree-teardown`（`git worktree remove` 直打ちは veridelta 証跡を失う）

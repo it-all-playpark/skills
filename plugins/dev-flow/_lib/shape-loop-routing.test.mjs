@@ -1,5 +1,5 @@
 // shape 別の Evaluate 深さを VM 実行の呼び出しカウントで pin する（string-pattern ではなく挙動）。
-// Plan phase は全 shape で合成 plan のみ（issue #673）— plan review ループは存在しない。
+// Plan phase は無く、全 shape で合成 plan のみ（issue #673 / #678）— plan review ループは存在しない。
 //   (A) standard: evaluator ちょうど 1 回（EVAL_PASSES=1）。evaluator が fail を返しても差し戻さない
 //   (B) complex: evaluator が fail → reimpl#1（dev-implement-fable）→ 2 回目 pass で収束（差し戻し loop）
 

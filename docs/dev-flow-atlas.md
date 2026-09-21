@@ -1,6 +1,6 @@
 # i dev-flow Pipeline Atlas
 
-GitHub issue から LGTM までを 10 phase で駆動する `dev-flow` の実処理を図で示す。
+GitHub issue から LGTM までを 9 phase で駆動する `dev-flow` の実処理を図で示す。
 すべて実装ソース（`plugins/dev-flow/.claude/workflows/dev-flow.js` /
 `plugins/dev-flow/.claude/workflows/pr-iterate.js` /
 `.claude/rules/dev-flow.md`）から起こしたもので、要約や理想形ではない。
@@ -28,7 +28,7 @@ wrapper skill が worktree を用意して `EnterWorktree` した上で、dynami
 起動する。phase 遷移とループは workflow script が JS で保持し、中間 state は外部 JSON ではなく
 script 変数に持つ。
 
-まず概観を示し、続いて 10 phase を 1 phase 1 図で展開する。
+まず概観を示し、続いて 9 phase を 1 phase 1 図で展開する。
 
 ### 1.1 概観
 
@@ -38,14 +38,13 @@ flowchart TD
     PF --> W["Workflow: dev-flow-run<br/>args.setup = prerun の JSON"]
     W --> S["1. Setup"]
     S --> A["2. Analyze"]
-    A --> P["3. Plan"]
-    P --> I["4. Implement"]
-    I --> V["5. Validate"]
-    V --> SF["6. Security floor"]
-    SF --> E["7. Evaluate"]
-    E --> R["8. PR"]
-    R --> FR["9. Final reconcile"]
-    FR --> MT["10. Merge tier"]
+    A --> I["3. Implement"]
+    I --> V["4. Validate"]
+    V --> SF["5. Security floor"]
+    SF --> E["6. Evaluate"]
+    E --> R["7. PR"]
+    R --> FR["8. Final reconcile"]
+    FR --> MT["9. Merge tier"]
     MT --> HU["merge は常に人間"]
 
     S -.->|"fail-closed"| AB["throw / workflow abort"]
@@ -101,7 +100,7 @@ flowchart TD
     A3 -->|yes| A4{"AC 空 or<br/>ambiguities が 2 超 ?"}
     A4 -->|yes| NC
     A4 -->|no| A5["classifyShape"]
-    A5 --> OUT["Plan へ"]
+    A5 --> OUT["Implement へ"]
 ```
 
 contract 経路は `analyze-issue.sh --contract` の出力を決定論 parse する高速経路で、
@@ -109,18 +108,11 @@ contract 経路は `analyze-issue.sh --contract` の出力を決定論 parse す
 実際の issue 取得に基づくことを突き合わせる fail-closed のゲートで、捏造した要件を
 Implement へ流さないためにある。
 
-### 1.4 Plan
+### 1.4 Implement
 
-```mermaid
-flowchart TD
-    IN["shape 確定"] --> PF["全 shape: planner 0 回<br/>issue から単一 task の plan を合成（plan#fable-skip、plan_iter=0）"]
-    PF --> OUT["Implement へ"]
-```
-
-Plan phase は shape に依存しない。shape 判定は Evaluate の深さ・LITE gate・refloor のために残る。
+Analyze 直後（shape 確定後）に issue から単一 task の plan を合成する（planner 0 回、
+`implement#synth-plan`。shape に依存しない — shape 判定は Evaluate の深さ・LITE gate・refloor のために残る）。
 合成 task の `file_changes` は空で始まり、Implement の返却 `files` を宣言として取り込む。
-
-### 1.5 Implement
 
 `dev-implement-fable`（plan+impl 統合）を単一 worktree に 1 spawn する。parallel fan-out・
 issue 分割・integration branch は使わない。
@@ -137,7 +129,7 @@ flowchart TD
     I5 -->|"解消不能"| NC["needs_clarification"]
 ```
 
-### 1.6 Validate
+### 1.5 Validate
 
 ```mermaid
 flowchart TD
@@ -155,7 +147,7 @@ flowchart TD
 format / lint はこの phase の責務外で、test の結果だけを見る。
 `GREEN_MAX` 到達時は red のまま次へ進むが、未解消の状態は merge tier が HOLD で受け止める。
 
-### 1.7 Security floor
+### 1.6 Security floor
 
 ```mermaid
 flowchart TD
@@ -180,7 +172,7 @@ fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒
 - danger-grep hit / test-weakening 検出 / plan 宣言外の変更
 - green-fix が発生した / dev-implement-fable が null を返して task を落とした / UI パスを touch した
 
-### 1.8 Evaluate
+### 1.7 Evaluate
 
 ```mermaid
 flowchart TD
@@ -195,7 +187,7 @@ flowchart TD
 
 standard は 1 パスのみで差し戻さない。未解消の critical は merge tier の HOLD が担保する。
 
-### 1.9 PR
+### 1.8 PR
 
 ```mermaid
 flowchart TD
@@ -212,7 +204,7 @@ flowchart TD
 nested 起動する `pr-iterate` には issue の acceptance criteria と
 nested context（cwd / head_ref / repo / epoch）を渡す。
 
-### 1.10 Final reconcile
+### 1.9 Final reconcile
 
 ```mermaid
 flowchart TD
@@ -228,7 +220,7 @@ flowchart TD
 
 `changed-files-final` の結果は Merge tier へ持ち越され、同一 tree に対する再実行を skip する。
 
-### 1.11 Merge tier
+### 1.10 Merge tier
 
 ```mermaid
 flowchart TD
@@ -278,9 +270,9 @@ flowchart TD
 
 ### 3 tier の経路差
 
-| shape | Plan | Evaluate | merge tier |
+| shape | Implement | Evaluate | merge tier |
 | --- | --- | --- | --- |
-| `micro` | issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
+| `micro` | Analyze 直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
 | `standard` | 同上 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保 | `REVIEW` |
 | `complex` | 同上 | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
 

@@ -3,7 +3,7 @@ name: dev-flow-doctor
 description: |
   Diagnose dev-flow pipeline health from skill-retrospective journal telemetry.
   Detects anomalies in dev-flow/pr-iterate distributions: cap張り付き
-  (eval_iter/plan_iter pinned at loop cap), iterate不調率 (pr-iterate
+  (eval_iter pinned at loop cap), iterate不調率 (pr-iterate
   stuck/fix_failed/max_reached/ci_error/review_contract_error rate on normalized
   runs, dedupe済み), micro不発火 (micro shape never selected
   despite sufficient run volume).
@@ -26,7 +26,7 @@ allowed-tools:
 
 Diagnose dev-flow pipeline health by reading `skill-retrospective` journal entries
 (`~/.claude/journal/*.json`). Surfaces `dev-flow` / `pr-iterate` telemetry
-distributions (shape, merge_tier, eval_iter, plan_iter, gate_policy, iterate_status)
+distributions (shape, merge_tier, eval_iter, gate_policy, iterate_status)
 and anomaly detections (cap張り付き, iterate不調率, micro不発火) — then generates
 actionable improvement recommendations.
 
@@ -35,7 +35,7 @@ actionable improvement recommendations.
 本 skill は **journal 駆動**である。静的な skill file scan ではなく、
 `skill-retrospective` が蓄積している `~/.claude/journal/*.json` を読み込み、
 `dev-flow` / `pr-iterate` が書き出す telemetry フィールド（`shape`, `merge_tier`,
-`eval_iter`, `plan_iter`, `gate_policy`, `danger_hits`, `iterate_status`）を
+`eval_iter`, `gate_policy`, `danger_hits`, `iterate_status`）を
 分布集計し、**anomaly 3 種**（cap張り付き / iterate不調率 / micro不発火）を判定する。
 `iterate_status` 分布は nested 実行（同一 PR に対する `dev-flow` 親 entry と
 `pr-iterate` 子 entry）を 1 run に正規化した normalized 分母で集計する。
@@ -69,7 +69,7 @@ actionable improvement recommendations.
 | `journal` | Legacy journal-based execution analysis (Check 1–7, dev-flow skill only) |
 | `worktrees` | Worktree state and cleanup |
 | `config` | Skill configuration validation |
-| `telemetry` | **Dev-flow telemetry health**: dev-flow/pr-iterate journal telemetry の分布集計（shape / merge_tier / eval_iter / plan_iter / gate_policy / iterate_status）+ shape 較正（`checks.shape_calibration`: shape_reason 種別 / realized 不一致 / analyze 経路。report-only）+ anomaly 3 種（cap張り付き / iterate不調率 / micro不発火） |
+| `telemetry` | **Dev-flow telemetry health**: dev-flow/pr-iterate journal telemetry の分布集計（shape / merge_tier / eval_iter / gate_policy / iterate_status）+ shape 較正（`checks.shape_calibration`: shape_reason 種別 / realized 不一致 / analyze 経路。report-only）+ anomaly 3 種（cap張り付き / iterate不調率 / micro不発火） |
 | `feedback` | **Removed in v2** (parallel-mode infrastructure deleted); returns explicit error |
 
 ## Workflow
@@ -86,7 +86,7 @@ actionable improvement recommendations.
 
 - Telemetry scope は `dev-flow` / `pr-iterate` の journal entry を直接 jq で集計する
   (see `scripts/analyze-dev-flow-telemetry.sh`)
-- 分布（shape / merge_tier / eval_iter / plan_iter / gate_policy）の分母は
+- 分布（shape / merge_tier / eval_iter / gate_policy）の分母は
   `.skill == "dev-flow"` の entry のみ。`iterate_status` の分母は
   `.telemetry.iterate_status` を持つ全 entry を repo+pr_number+timestamp 近接
   （`nested_join_window_seconds` 既定 600s）で nested 親子統合した normalized run。
@@ -96,7 +96,7 @@ actionable improvement recommendations.
 - `iterate_unhealthy` の判定では ci_error は非 lgtm 分子に含み、ci_pending は分母から除外する
   （effective_total = total - ci_pending）。この total/effective_total は normalized 母集団
 - 閾値・default window は `skill-config.json` の `"dev-flow-doctor"` 配下
-  (`thresholds.eval_iter_cap` / `plan_iter_cap` / `iterate_unhealthy_rate` /
+  (`thresholds.eval_iter_cap` / `iterate_unhealthy_rate` /
   `iterate_min_runs` / `micro_min_runs` / `nested_join_window_seconds`) で設定する
 
 ## Output Format
@@ -120,7 +120,6 @@ actionable improvement recommendations.
 | unknown | 0 | | unknown | 0 | | | |
 
 eval_iter: max 10, cap 10, at_cap_count 3
-plan_iter: max 7, cap 8, at_cap_count 0
 
 **iterate_status** distribution (raw entries 45 → normalized runs 41; joined_pairs 4, unjoinable 6, status_conflicts 0): lgtm 30, stuck 4, fix_failed 3, max_reached 1, ci_error 2, ci_pending 1, review_contract_error 0, unknown 0
 
@@ -128,11 +127,11 @@ plan_iter: max 7, cap 8, at_cap_count 0
 
 | type | severity | detail |
 |---|---|---|
-| `cap_pinned` | warn | 3 件が eval_iter/plan_iter cap に到達 |
+| `cap_pinned` | warn | 3 件が eval_iter cap に到達 |
 | `iterate_unhealthy` | warn | 非lgtm rate 21% (8/38) |
 | `micro_nonfiring` | skipped | insufficient_data (total_dev_flow_runs < micro_min_runs) |
 
-- `cap_pinned` → 該当 issue の plan/evaluate loop が収束していない。issue サイズ見直しを検討
+- `cap_pinned` → 該当 issue の evaluate loop が収束していない。issue サイズ見直しを検討
 - `iterate_unhealthy` (rate > 閾値 かつ run数 >= min_runs) → pr-reviewer feedback の質、または PR スコープの見直しが必要
 - `micro_nonfiring` (severity: warn, run数 >= min_runs だが micro 0件) → shape 判定ロジックの見直し。
   message に shape 較正の根拠（shape_reason 種別 / analyze 経路 / 過大判定件数）が併記されるので、
@@ -164,7 +163,7 @@ scope_truncated 3（light path 拡大の候補は最多バケット）。
 
 ### Recommended Actions
 
-- [ ] Investigate cap_pinned issues (eval_iter/plan_iter loop convergence)
+- [ ] Investigate cap_pinned issues (eval_iter loop convergence)
 - [ ] Review pr-iterate feedback quality (iterate_unhealthy)
 - [ ] Clean orphaned worktree directories
 
@@ -275,7 +274,6 @@ Output JSON schema:
     "shape": {"micro": 12, "standard": 24, "complex": 6, "unknown": 0},
     "merge_tier": {"AUTO": 5, "REVIEW": 30, "HOLD": 7, "unknown": 0},
     "eval_iter": {"max": 10, "cap": 10, "at_cap_count": 3},
-    "plan_iter": {"max": 7, "cap": 8, "at_cap_count": 0},
     "gate_policy": {"deterministic-only": 0, "llm-major-advisory": 40, "llm-major-blocking": 2, "llm-autonomous": 0, "unknown": 0},
     "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "ci_error": 2, "ci_pending": 1, "review_contract_error": 0, "unknown": 0, "total": 41, "raw_entries": 45, "normalization": {"joined_pairs": 4, "unjoinable": 6, "status_conflicts": 0, "join_window_seconds": 600}},
     "shape_calibration": {"by_shape": {"...": "..."}, "shape_reason_kind": {"safe_floor": 20, "llm_raise": 3, "threshold": 19, "unknown": 0}, "shape_reason_kind_by_shape": {"...": "..."}, "realized_mismatch": {"thresholds": {"micro_max_files": 2, "standard_max_files": 5}, "measured": 42, "unmeasured": 0, "missed_refloor": 1, "missed_refloor_samples": [], "overestimated": 4, "overestimated_samples": []}, "analyze_path": {"contract": 12, "sonnet": 30, "unknown": 0}, "analyze_ineligible_reason": {"comments_present": 18, "ac_heading_not_found": 9, "scope_truncated": 3}}
@@ -329,7 +327,7 @@ bats dev-flow-doctor/scripts/validate-canary-report.bats
 ```
 
 Fixture-based unit tests (相対日付生成、日付経過によるテスト崩壊なし) validate the
-shape/merge_tier/gate_policy/eval_iter/plan_iter/iterate_status distributions,
+shape/merge_tier/gate_policy/eval_iter/iterate_status distributions,
 the `.skill == "dev-flow"` vs `iterate_status`-only denominator split
 (pr-iterate standalone entries must not appear in `merge_tier`), and the 3
 anomaly detections (cap_pinned / iterate_unhealthy / micro_nonfiring including

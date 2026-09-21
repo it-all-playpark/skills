@@ -52,7 +52,6 @@ make_handoff() {
       danger_hits: [],
       shape: "standard",
       shape_refloored: false,
-      plan_iter: 1,
       eval_iter: 1
     }
   }')
@@ -176,7 +175,6 @@ STUB_EOF
         danger_hits: [],
         shape: "standard",
         shape_refloored: false,
-        plan_iter: 1,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -202,7 +200,6 @@ STUB_EOF
       echo "$captured" | grep -q -- "--danger-hits" &&
       echo "$captured" | grep -q -- "--shape standard" &&
       echo "$captured" | grep -q -- "--shape-refloored false" &&
-      echo "$captured" | grep -q -- "--plan-iter 1" &&
       echo "$captured" | grep -q -- "--eval-iter 1"; then
       pass "happy_path_stub_called_with_correct_args"
     else
@@ -256,7 +253,6 @@ STUB_EOF
         danger_hits: ["sql-injection"],
         shape: "micro",
         shape_refloored: true,
-        plan_iter: 2,
         eval_iter: 3,
         eval_verdict: "PASS",
         iterate_status: "converged",
@@ -346,7 +342,6 @@ STUB_EOF
         danger_hits: [],
         shape: "complex",
         shape_refloored: false,
-        plan_iter: 5,
         eval_iter: 4
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -420,7 +415,6 @@ STUB_EOF
         danger_hits: [],
         shape: "standard",
         shape_refloored: false,
-        plan_iter: 1,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -622,7 +616,6 @@ STUB_EOF
       error_msg: "analyze: 要件が曖昧で中断",
       telemetry: {
         gate_policy: "llm-major-advisory",
-        plan_iter: 0,
         eval_iter: 0
       }
     }' >"${tmpd}/journal/pending/failrun.json"
@@ -836,14 +829,13 @@ STUB_EOF
         danger_hits: [],
         shape: "standard",
         shape_refloored: false,
-        plan_iter: 1,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/regression.json"
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
-  expected='log dev-flow success --issue 203 --merge-tier REVIEW --gate-policy llm-major-advisory --danger-hits [] --shape standard --shape-refloored false --plan-iter 1 --eval-iter 1'
+  expected='log dev-flow success --issue 203 --merge-tier REVIEW --gate-policy llm-major-advisory --danger-hits [] --shape standard --shape-refloored false --eval-iter 1'
 
   if [[ -f $capture ]]; then
     captured=$(cat "$capture")
@@ -883,7 +875,6 @@ STUB_EOF
       telemetry: {
         gate_policy: "llm-major-advisory",
         shape: "standard",
-        plan_iter: 1,
         eval_iter: 1,
         abort_phase: "Evaluate",
         abort_label: "eval#1"
@@ -967,7 +958,6 @@ STUB_EOF
         danger_hits: [],
         shape: "standard",
         shape_refloored: false,
-        plan_iter: 1,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -1000,7 +990,6 @@ make_trust_handoff() {
       danger_hits: [],
       shape: "standard",
       shape_refloored: false,
-      plan_iter: 1,
       eval_iter: 1
     }
   }' | jq "$trust_filter" >"$outfile"
@@ -1222,7 +1211,6 @@ make_full_telemetry_handoff() {
       danger_hits: [],
       shape: "standard",
       shape_refloored: false,
-      plan_iter: 1,
       eval_iter: 1,
       vdelta_verdicts: [{"ac":1,"status":"promoted"}],
       vdelta_fail_open: 1,
@@ -1347,7 +1335,6 @@ make_full_telemetry_handoff() {
         danger_hits: [],
         shape: "standard",
         shape_refloored: false,
-        plan_iter: 1,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/legacy.json"

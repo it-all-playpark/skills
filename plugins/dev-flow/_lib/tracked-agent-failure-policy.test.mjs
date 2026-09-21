@@ -309,7 +309,7 @@ test("dev-flow.js baseline（B1）に 'isolation-probe' / 'impl:serial:issue-1' 
   const { calls } = await runDevFlowBaseline(DF_B1);
   const labels = calls.map((c) => c.label);
   assert.ok(labels.includes('isolation-probe'), "baseline に 'isolation-probe' が無い");
-  // Plan phase は合成 plan のみ（issue #673）— Implement の spawn label 'impl:serial:issue-1' で走査ズレを検出する。
+  // Plan phase は無く、合成 plan のみ（issue #673 / #678）— Implement の spawn label 'impl:serial:issue-1' で走査ズレを検出する。
   assert.ok(labels.includes('impl:serial:issue-1'), "baseline に 'impl:serial:issue-1' が無い");
   assert.ok(labels.includes('post-summary'), "baseline に 'post-summary' が無い");
 });

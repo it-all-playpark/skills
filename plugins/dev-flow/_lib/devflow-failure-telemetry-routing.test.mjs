@@ -169,7 +169,7 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-save→journal-
 
 // ============================================================
 // ケース (2): implement 経路（NEEDS_CONTEXT 解消不能 → needs_clarification）
-// - journal-save（stage1）が 1 回発生し prompt に shape/plan_iter を含む
+// - journal-save（stage1）が 1 回発生し prompt に shape/eval_iter を含む
 // - journal-log-failure（stage2）が logged:true を返すとき result.journal_log_status === 'logged'
 // - result.source === 'implement'
 // ============================================================
@@ -202,7 +202,7 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
     `(2) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
 
   const savePrompt = saveCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '"shape"', '"plan_iter"', '"repo":"acme/skills"']) {
+  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '"shape"', '"eval_iter"', '"repo":"acme/skills"']) {
     assert.ok(savePrompt.includes(key),
       `(2) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 500)}`);
   }

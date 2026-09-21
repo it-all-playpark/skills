@@ -94,7 +94,7 @@ bats が見つからない環境でも `tests/run-all-bats.sh` は exit 0 を返
 JS で保持し、中間 state は script 変数に持つ (外部 state JSON は持たない)。
 
 ```
-/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan(合成のみ)
+/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定)
                       → Implement(dev-implement-fable 1 spawn) → Validate(test green)
                       → Evaluate → PR → workflow('dev-flow:pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
@@ -136,7 +136,7 @@ inline 生成・dev-improve の詳細は `plugins/dev-flow/dev-flow/references/`
 
 ### 実装は 1 issue = 1 agent spawn (issue 分割しない)
 
-Plan phase は issue から単一 task の plan を合成するだけで、planner / plan-reviewer は起動しない。
+Plan phase は持たず、Analyze 直後に issue から単一 task の plan を合成するだけで、planner / plan-reviewer は起動しない。
 Implement は `dev-implement-fable` が issue 本文と AC を受け取り、計画から実装まで 1 spawn で仕上げる。
 BLOCKED 再実装・Validate green-fix・Evaluate 差し戻しも同じ agent への再 spawn。複数 issue 分割は使わない。
 

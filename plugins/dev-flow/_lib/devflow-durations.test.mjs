@@ -11,12 +11,11 @@ import {
 
 // ---- (0) constants ----
 
-test('CLOCK_MARK_ORDER は probe 発火順の 11 mark 配列', () => {
+test('CLOCK_MARK_ORDER は probe 発火順の 10 mark 配列', () => {
   assert.deepEqual(CLOCK_MARK_ORDER, [
     'start',
     'analyze_start',
     'analyze_end',
-    'plan_end',
     'implement_end',
     'validate_end',
     'evaluate_end',
@@ -27,10 +26,9 @@ test('CLOCK_MARK_ORDER は probe 発火順の 11 mark 配列', () => {
   ]);
 });
 
-test('CLOCK_PHASE_ENDS は 8 phase の [key, endMark] 配列', () => {
+test('CLOCK_PHASE_ENDS は 7 phase の [key, endMark] 配列', () => {
   assert.deepEqual(CLOCK_PHASE_ENDS, [
     ['analyze', 'analyze_end'],
-    ['plan', 'plan_end'],
     ['implement', 'implement_end'],
     ['validate', 'validate_end'],
     ['evaluate', 'evaluate_end'],
@@ -50,13 +48,12 @@ function buildMonotonicMarks(step = 10) {
   return marks;
 }
 
-test('computeDurations: 全 mark 単調増加 → duration_seconds=100, 8 phase 全て =10', () => {
+test('computeDurations: 全 mark 単調増加 → duration_seconds=90, 7 phase 全て =10', () => {
   const marks = buildMonotonicMarks(10);
   const result = computeDurations(marks);
-  assert.equal(result.duration_seconds, 100);
+  assert.equal(result.duration_seconds, 90);
   assert.deepEqual(result.phase_durations, {
     analyze: 10,
-    plan: 10,
     implement: 10,
     validate: 10,
     evaluate: 10,
@@ -84,12 +81,11 @@ test('computeDurations: evaluate_end のみ null → evaluate キー欠落, pr �
   const marks = buildMonotonicMarks(10);
   marks.evaluate_end = null;
   const result = computeDurations(marks);
-  assert.equal(result.duration_seconds, 100);
+  assert.equal(result.duration_seconds, 90);
   assert.ok(!('evaluate' in result.phase_durations));
-  // pr_end(index7)=70, validate_end(index5)=50 -> pr = 20
+  // pr_end(index6)=60, validate_end(index4)=40 -> pr = 20
   assert.equal(result.phase_durations.pr, 20);
   assert.equal(result.phase_durations.analyze, 10);
-  assert.equal(result.phase_durations.plan, 10);
   assert.equal(result.phase_durations.implement, 10);
   assert.equal(result.phase_durations.validate, 10);
   assert.equal(result.phase_durations.iterate, 10);
@@ -110,12 +106,25 @@ test('computeDurations: end - start が負 → duration_seconds=null', () => {
 
 test('computeDurations: phase 終端間で負差 → 当該キー省略', () => {
   const marks = buildMonotonicMarks(10);
-  // plan_end (index3=30) を implement_end(index4=40) より後ろにする -> implement phase 負差
-  marks.plan_end = 50;
+  // implement_end (index3=30) を validate_end(index4=40) より後ろにする -> validate phase 負差
+  marks.implement_end = 50;
   const result = computeDurations(marks);
-  assert.ok(!('implement' in result.phase_durations));
-  // plan phase: analyze_end(20) -> plan_end(50) = 30 (正常)
-  assert.equal(result.phase_durations.plan, 30);
+  assert.ok(!('validate' in result.phase_durations));
+  // implement phase: analyze_end(20) -> implement_end(50) = 30 (正常)
+  assert.equal(result.phase_durations.implement, 30);
+});
+
+// ---- (5b) issue #678: Plan phase 撤去後、phase_durations に plan キーは出ない ----
+
+test('computeDurations: marks に plan_end が紛れ込んでも phase_durations に plan キーは出ない（issue #678）', () => {
+  const marks = buildMonotonicMarks(10);
+  marks.plan_end = 25;
+  const result = computeDurations(marks);
+  assert.ok(!('plan' in result.phase_durations), `phase_durations に plan が含まれている: ${JSON.stringify(result.phase_durations)}`);
+  assert.ok(!CLOCK_PHASE_ENDS.some(([key]) => key === 'plan'), 'CLOCK_PHASE_ENDS に plan が残っている');
+  assert.ok(!CLOCK_MARK_ORDER.includes('plan_end'), 'CLOCK_MARK_ORDER に plan_end が残っている');
+  // implement は analyze_end(20) → implement_end(30) で plan_end を経由しない
+  assert.equal(result.phase_durations.implement, 10);
 });
 
 // ---- (6) recordClockMark ----
@@ -143,9 +152,9 @@ test('recordClockMark: {ok:false} → marks[name]=null + 警告文字列', () =>
 
 test('recordClockMark: {ok:true, epoch:"x"} → marks[name]=null + 警告文字列', () => {
   const marks = {};
-  const warn = recordClockMark(marks, 'plan_end', { ok: true, epoch: 'x' });
-  assert.equal(marks.plan_end, null);
-  assert.match(warn, /clock#plan_end/);
+  const warn = recordClockMark(marks, 'evaluate_end', { ok: true, epoch: 'x' });
+  assert.equal(marks.evaluate_end, null);
+  assert.match(warn, /clock#evaluate_end/);
 });
 
 test('recordClockMark: {ok:true, epoch:NaN} → marks[name]=null + 警告文字列', () => {
@@ -234,14 +243,14 @@ test('maxEpochRes: 非配列 → null', () => {
 
 test('recordClockMark(marks, name, epochResOf(null)) → mark null + 警告文字列（fail-open 不変）', () => {
   const marks = {};
-  const warn = recordClockMark(marks, 'plan_end', epochResOf(null));
-  assert.equal(marks.plan_end, null);
-  assert.match(warn, /clock#plan_end/);
+  const warn = recordClockMark(marks, 'pr_end', epochResOf(null));
+  assert.equal(marks.pr_end, null);
+  assert.match(warn, /clock#pr_end/);
 });
 
 // ---- (11) computeDurations の出力キー語彙は epochResOf/maxEpochRes 給電後も不変 ----
 
-test('computeDurations: epochResOf/maxEpochRes で給電した marks でも出力キーは duration_seconds + phase_durations（8 phase）のまま', () => {
+test('computeDurations: epochResOf/maxEpochRes で給電した marks でも出力キーは duration_seconds + phase_durations（7 phase）のまま', () => {
   const marks = {};
   CLOCK_MARK_ORDER.forEach((name, i) => {
     const res = epochResOf({ epoch: i * 10 });
@@ -255,7 +264,6 @@ test('computeDurations: epochResOf/maxEpochRes で給電した marks でも出�
     'final',
     'implement',
     'iterate',
-    'plan',
     'pr',
     'validate',
   ]);

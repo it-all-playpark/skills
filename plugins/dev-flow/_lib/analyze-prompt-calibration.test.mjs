@@ -6,7 +6,7 @@
 //
 // shape=complex に乗せるため estimated_change_file_count を 5 超にして floor=complex を強制する
 // （classifyShape は req.shape を raise-only にしか使わないため floor=complex は req.shape に依存しない）。
-// Plan phase は全 shape で合成 plan のみ（issue #673）— 実装 prompt は impl:serial:issue-1 で観測する。
+// Plan phase は無く、全 shape で合成 plan のみ（issue #673 / #678）— 実装 prompt は impl:serial:issue-1 で観測する。
 import { test, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

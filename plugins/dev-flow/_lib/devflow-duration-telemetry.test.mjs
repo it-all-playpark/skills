@@ -4,7 +4,7 @@
 // 給電（feedClockMark）対象 label への optional epoch 付与を追加する。
 //
 // issue #443: 専用 clock probe は当初 clockProbe('start') / clockProbe('end') の 2 回のみに削減され、
-// 残り 9 mark（analyze_start/analyze_end/plan_end/implement_end/validate_end/evaluate_end/pr_end/
+// 残り 8 mark（analyze_start/analyze_end/implement_end/validate_end/evaluate_end/pr_end/
 // iterate_end/final_end）は隣接する既存 exec-proxy / agent 応答の optional `epoch` フィールドから
 // feedClockMark() 経由で給電される（recordClockMark の fail-open 契約は不変）。
 //
@@ -99,8 +99,7 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'issue-meta') {
       return withEpoch({ ok: true, number: 1, title: 'stub-issue-title' });
     }
-    // Plan phase は合成 plan のみ（agent 起動なし。plan_end は給電元が無く null）。implement_end は
-    // dev-implement-fable 呼び出しの epoch から給電される。
+    // implement_end は dev-implement-fable 呼び出しの epoch から給電される。
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を発生させない（給電対象ではない）
     if (label.startsWith('danger-grep')) {

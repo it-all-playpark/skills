@@ -139,7 +139,7 @@ const STANDARD_ANALYZE_REQ = {
 // ============================================================
 // (1) Validate（need() で包まれた diff-gate proxy）で throw
 // ============================================================
-test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort entry 1 件（diff-gate / shape:complex / plan_iter:0 / eval_iter:0）', async () => {
+test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort entry 1 件（diff-gate / shape:complex / eval_iter:0）', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: COMPLEX_ANALYZE_REQ,
     throwAt: { label: 'diff-gate', error: new Error('proxy boom') },
@@ -158,7 +158,7 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
     '"skill":"dev-flow"', '"outcome":"failure"', '"error_category":"abort"',
     '"error_msg":"abort@Validate/diff-gate: proxy boom"', '"error_phase":"Validate"',
     '"abort_phase":"Validate"', '"abort_label":"diff-gate"', '"shape":"complex"',
-    '"plan_iter":0', '"eval_iter":0', '"subagent_invocations"', '"gate_policy"',
+    '"eval_iter":0', '"subagent_invocations"', '"gate_policy"',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
@@ -181,7 +181,7 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
 // ============================================================
 // (2) Evaluate で evaluator が throw
 // ============================================================
-test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard / plan_iter:0 / eval_iter:1）', async () => {
+test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard / eval_iter:1）', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: STANDARD_ANALYZE_REQ,
     throwAt: { label: 'eval#1', error: new Error('evaluator boom') },
@@ -198,7 +198,7 @@ test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 �
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
     '"error_msg":"abort@Evaluate/eval#1: evaluator boom"', '"error_phase":"Evaluate"',
-    '"shape":"standard"', '"plan_iter":0', '"eval_iter":1',
+    '"shape":"standard"', '"eval_iter":1',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(2) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
@@ -227,8 +227,8 @@ test('[abort-telemetry] (3) Setup で args.setup.ok が false → WT 未確定�
     `(3) journal-save prompt に error_msg が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(!savePrompt.includes('"shape"'),
     `(3) shape 未確定のため journal-save prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
-  assert.ok(savePrompt.includes('"plan_iter":0'),
-    `(3) journal-save prompt に '"plan_iter":0' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+  assert.ok(savePrompt.includes('"eval_iter":0'),
+    `(3) journal-save prompt に '"eval_iter":0' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
 });
 
 // ============================================================

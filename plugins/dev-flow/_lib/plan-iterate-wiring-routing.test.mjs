@@ -9,9 +9,6 @@
 //   (a) pr-iterate が fix_failed で終端 → merge_tier=HOLD / eval_staleness=iterate_incomplete /
 //       journal telemetry に iterate_status・iterate_rounds / post-summary に HOLD marker と
 //       history 末尾 round の file パス（iterateHistory・iterateIterations 配線）
-//
-// 旧 (b)（plan-reviewer の relax 収束と planConcerns の配線）は issue #673 で plan review ループごと
-// 削除した。plan_verdict は常に null、planConcerns は常に空で、merge tier は planConcerns を入力に持たない。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -49,7 +46,6 @@ test('[wiring] (a) pr-iterate fix_failed → HOLD / iterate_incomplete / telemet
     (result.merge_tier_reasons ?? []).some((r) => r.includes('fix_failed')),
     `(a) merge_tier_reasons に iterate status を含む理由が無い: ${JSON.stringify(result.merge_tier_reasons)}`,
   );
-  assert.equal(result.plan_verdict, null, '(a) plan review ループは存在しないため plan_verdict は null のはず');
 
   const journal = calls.find((c) => c.label === 'journal-save');
   assert.ok(journal, '(a) journal-save が呼ばれていない');
