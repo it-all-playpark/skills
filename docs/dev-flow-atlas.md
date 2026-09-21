@@ -14,8 +14,8 @@ GitHub issue から LGTM までを 10 phase で駆動する `dev-flow` の実処
 
 - **merge は常に人間。** LGTM 後にユーザーが merge する。AUTO tier も「推奨ラベル」であって
   自動 merge ではない。全 tier で例外なし
-- **1 issue = 1 PR。** 並列実装は単一 worktree 内で file-disjoint な task を fan-out する。
-  issue 分割も integration branch も使わない
+- **1 issue = 1 PR。** Implement は全 shape で `dev-implement-fable` を単一 worktree に 1 spawn する
+  （parallel fan-out は持たない）。issue 分割も integration branch も使わない
 - **軸A invariant。** 決定論オラクル・security floor・critical アイテムはどの `gate_policy` でも
   blocking。policy で緩めない
 - **後方互換 scaffolding を作らない。** enum 外の値は legacy fallback ではなく明示 error にする

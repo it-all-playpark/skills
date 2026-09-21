@@ -13,14 +13,14 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 `EnterWorktree({ path })` で worktree に入ってから stdout JSON を `Workflow({ args: { issue, setup } })`
 の `args.setup` に渡す（順序は EnterWorktree → Workflow。逆だと isolation probe が fail-closed abort する）。
 dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、subagent 起動は
-isolation-probe の 1 回のみ。orchestration (phase 遷移 / plan-review・evaluate・pr-iterate の
-各ループ / 並列実装の fan-out) は workflow script が JS で保持し、中間 state は script 変数に
+isolation-probe の 1 回のみ。orchestration (phase 遷移 / evaluate・pr-iterate の各ループ) は
+workflow script が JS で保持し、中間 state は script 変数に
 持つ (外部 state JSON は持たない)。workflow の `meta.name` は `dev-flow-run` だが、telemetry
 handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件、静的テストで pin 済み）。
 
 ```
-/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan
-                      → Implement(serial/parallel) → Validate(test green)
+/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan(合成のみ)
+                      → Implement(dev-implement-fable 1 spawn) → Validate(test green)
                       → Evaluate → PR → workflow('pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
