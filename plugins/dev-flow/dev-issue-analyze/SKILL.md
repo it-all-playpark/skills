@@ -3,7 +3,7 @@ name: dev-issue-analyze
 description: |
   Fetch and analyze GitHub issue for implementation planning.
   Use when: understanding issue requirements, extracting acceptance criteria, planning implementation.
-  Accepts args: <issue-number> [--depth minimal|standard|comprehensive]
+  Accepts args: <issue-number> [--repo owner/repo] [--depth minimal|standard|comprehensive]
 ---
 
 # Issue Analyze
@@ -12,25 +12,34 @@ Fetch and parse GitHub issue for implementation planning.
 
 ## Execution
 
-Two steps: fetch the issue JSON with `gh`, then run the pure-transform script against that file.
+One bare command. The script fetches the issue itself (`gh issue view <n> [--repo R] --json ...`
+in-process) and emits the analysis JSON on stdout. Do not fetch the issue beforehand and do not
+append a redirect, pipe, `cd`/`bash`/env prefix or `&&` chain to the command.
 
 ```bash
-gh issue view <issue-number> --json body,title,labels,assignees,milestone,state,comments,author > $TMPDIR/issue-<issue-number>.json
-analyze-issue <issue-number> --issue-json $TMPDIR/issue-<issue-number>.json [--depth LEVEL|--contract]
+analyze-issue <issue-number> [--repo <owner/repo>] [--depth LEVEL|--contract] [--dump-body "${TMPDIR:-/tmp}/issue-<issue-number>-body.md"]
 ```
+
+`--depth standard|comprehensive` で呼ぶときは `--dump-body <path>` を付ける。出力 JSON の
+`scope_truncated` / `body_preview_truncated` / `issue_body_truncated` のいずれかが true のときだけ
+script が body 全文を `<path>` へ書き出し、実際に書いた絶対パスを `body_dump_path` に返す
+（切断なしなら `body_dump_path: null`、ファイルは作らない）。切断時は `body_dump_path` のファイルを
+Read してから要件抽出する — issue の再取得はしない。
 
 ## Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--repo` | (cwd の repo) | `gh issue view --repo` へそのまま渡す `owner/repo`。dev-flow は `REPO` を渡して cwd 非依存にする |
 | `--depth` | `standard` | Analysis depth |
+| `--dump-body` | (none) | 切断時のみ body 全文を書き出すファイルパス（standard / comprehensive のみ有効） |
 
 ## Depth Levels
 
 | Level | Output |
 |-------|--------|
 | `minimal` | title, type, labels, state, breaking_keyword_scan, comment_count, issue_author |
-| `standard` | + AC, requirements, scope, scope_truncated, scope_total_chars, issue_body, issue_body_truncated, body_preview, body_preview_truncated, body_total_chars, comments[{author,author_association,created_at,body}], issue_author, ac_heading_near_miss, warnings |
+| `standard` | + AC, requirements, scope, scope_truncated, scope_total_chars, issue_body, issue_body_truncated, body_dump_path, body_preview, body_preview_truncated, body_total_chars, comments[{author,author_association,created_at,body}], issue_author, ac_heading_near_miss, warnings |
 | `comprehensive` | + affected files, components |
 
 `author_association` は `gh` の `authorAssociation`（`OWNER`/`MEMBER`/`COLLABORATOR`/`NONE` 等）を
@@ -111,6 +120,7 @@ realized diff / merge tier が補償する（意図的な設計判断）。
   "scope": "...",
   "scope_truncated": false,
   "scope_total_chars": 280,
+  "body_dump_path": null,
   "ambiguities": ["確信を持って AC 化できなかった点"]
 }
 ```
@@ -146,14 +156,10 @@ Next.js 検出時のみ Turbopack fallback 規約を注入する。
 ## Examples
 
 ```bash
-gh issue view 123 --json body,title,labels,assignees,milestone,state,comments > $TMPDIR/issue-123.json
-scripts/analyze-issue.sh 123 --issue-json $TMPDIR/issue-123.json
-
-gh issue view 45 --json body,title,labels,assignees,milestone,state,comments > $TMPDIR/issue-45.json
-scripts/analyze-issue.sh 45 --issue-json $TMPDIR/issue-45.json --depth minimal
-
-gh issue view 67 --json body,title,labels,assignees,milestone,state,comments > $TMPDIR/issue-67.json
-scripts/analyze-issue.sh 67 --issue-json $TMPDIR/issue-67.json --depth comprehensive
+analyze-issue 123 --repo acme/skills --dump-body "${TMPDIR:-/tmp}/issue-123-body.md"
+analyze-issue 45 --depth minimal
+analyze-issue 67 --repo acme/skills --depth comprehensive --dump-body "${TMPDIR:-/tmp}/issue-67-body.md"
+analyze-issue 89 --repo acme/skills --contract
 ```
 
 ## Journal Logging

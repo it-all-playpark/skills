@@ -5550,7 +5550,7 @@ const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json �
   + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
   + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`
 
-const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE} --depth ${depth}\` を実行し、`
+const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --depth ${depth}\` を実行し、`
   + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
   + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
   + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。過大にも過小にも倒さず実数を見積もれ。`
@@ -5568,31 +5568,29 @@ const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyz
   // ここで「抜粋に無い = issue に無い」の推論を禁じる。規範性クラス: contract（scope_truncated / body_preview_truncated /
   // [TRUNCATED: ...] マーカーの意味定義 = analyze-issue.sh 出力との入出力契約）+ incentive-structural（抜粋のみが context に
   // ある構造分断で欠落判定に傾く傾向を 3 run 空振りで実測済み）。sunset 対象ではない。
-  + `さらに、skill の JSON 出力の scope / body_preview は上限付きの抜粋である。scope_truncated または body_preview_truncated が true（抜粋末尾に [TRUNCATED: ...] マーカーがある）の場合は、取得した issue JSON ファイル（$TMPDIR/issue-${ISSUE}.json）の body 全文を Read してから要件抽出せよ。抜粋に無いことを根拠に ambiguities を立ててはならない（全文を読んだ上で本当に未記載の点のみ挙げよ）。scope は skill 出力の scope をマーカー含め verbatim で、scope_truncated は skill 出力の boolean を verbatim で返せ（自分で再判定・除去するな）。`
+  + `さらに、skill の JSON 出力の scope / body_preview は上限付きの抜粋である。scope_truncated または body_preview_truncated が true（抜粋末尾に [TRUNCATED: ...] マーカーがある）の場合は、skill 出力の body_dump_path が指すファイル（skill が \`--dump-body\` で書き出した body 全文）を Read してから要件抽出せよ（issue の再取得はするな）。抜粋に無いことを根拠に ambiguities を立ててはならない（全文を読んだ上で本当に未記載の点のみ挙げよ）。scope は skill 出力の scope をマーカー含め verbatim で、scope_truncated は skill 出力の boolean を verbatim で返せ（自分で再判定・除去するな）。`
 
-// contract probe prompt（--issue-json ファイル入力化）:
-// DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。issue 本体は subagent の bare
-// `gh issue view` で $TMPDIR file へ取得し、analyze-issue --contract の stdout JSON を
-// verbatim 転写させるだけの read-only exec-proxy（結果の判断は buildReqFromContract 側の
-// whitelist 検証が担う）。
+// contract probe prompt:
+// DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。analyze-issue が issue 本体の取得
+// （bare `gh issue view`）を内蔵しているため、probe は `analyze-issue N [--repo R] --contract` の
+// 1 単文を実行し stdout JSON を verbatim 転写するだけの read-only exec-proxy（結果の判断は
+// buildReqFromContract 側の whitelist 検証が担う）。subagent 側に「gh の stdout を file へ落として
+// script に渡す」取得段を置いてはならない（file へ落とす形の gh は bare 単文ではなく、取得が失敗する。
+// _lib/analyze-fetch-no-redirect.test.mjs が pin）。
 // script は plugin bin/ の bare 名で呼ぶ（WT は対象 repo の worktree であり skills 内部 script は存在しないため）。
 const contractProbePrompt = `## Objective\n`
   + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
   + `## Steps\n`
-  + `1. Bash で \`mktemp "\${TMPDIR:-/tmp}/analyze-contract-${ISSUE}-XXXXXX.json"\` を実行し、出力パスを <ISSUE_JSON> とする。\n`
-  + `2. \`gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json body,title,labels,assignees,milestone,state,comments\` を`
-  // comments を含めるのは body と comment の突合に必要なため。
-  + `**先頭トークンが gh の bare 単文**（cd 前置・\`bash\` 前置・環境変数代入前置・\`&&\` 連結は禁止）で実行し、stdout を <ISSUE_JSON> へリダイレクトせよ。`
-  + `exit 非0 なら即座に ok:false・error に理由を短く入れて返せ（原因調査・再試行禁止）。\n`
-  + `3. \`analyze-issue ${ISSUE} --issue-json <ISSUE_JSON> --contract\` を**bare 名を先頭トークンとする単文**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
-  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止。\n`
+  + `1. \`analyze-issue ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --contract\` を**bare 名を先頭トークンとする単文**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
+  + `issue の取得は script が内部で行う — 事前に gh を実行するな。`
+  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）・リダイレクト・\`&&\` 連結は禁止。\n`
   + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
   + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
-  + `4. ` + EPOCH_INSTRUCTION
+  + `2. ` + EPOCH_INSTRUCTION
   + `## Output format\n{ "ok": boolean, "result": object, "error": string, "epoch": number(optional) }\n`
   + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
-  + `## Boundary\n\${TMPDIR} の一時ファイル以外は一切変更しない（read-only probe）。\n`
-  + `## Token cap\n220 語以内で完結すること。`
+  + `## Boundary\nファイルは一切変更しない（read-only probe）。\n`
+  + `## Token cap\n200 語以内で完結すること。`
 
 // ============================================================
 // Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）

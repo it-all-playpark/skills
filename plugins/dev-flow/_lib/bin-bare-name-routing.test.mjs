@@ -107,7 +107,7 @@ const PASS_EVAL_TEST_AC = {
 const DEV_FLOW_CALL_SITES = [
   ['diff-hash-eval', 'worktree-diff-hash /tmp/wt origin/main', {}],
   ['danger-grep', 'secfloor-classify /tmp/wt origin/main', {}],
-  ['contract-probe#', '`analyze-issue 1 --issue-json <ISSUE_JSON> --contract', {}],
+  ['contract-probe#', '`analyze-issue 1 --contract', {}],
   ['merge-tier-facts', '`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data ', {}],
   ['redgreen:AC-1', 'redgreen-verify /tmp/wt ', { 'eval#1': PASS_EVAL_TEST_AC, 'redgreen:AC-1': { verdict: null, ok: true } }],
   ['ui-verify-server', 'ui-verify-server start ', {

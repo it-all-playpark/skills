@@ -16,7 +16,7 @@
 // （挙動は変えず可視化のみの分岐であり、削除しても T1-T6 のカバレッジに欠落は生じない）。
 //
 // テストケース:
-//   contract-probe#1 prompt に gh --json comments フィールドが含まれる
+//   analyze-issue.sh の gh --json フィールド列に comments が含まれ、contract-probe#1 は script の 1 単文のみを指示する
 //   analyze#1 prompt に comment_overrides / comment_conflicts フィールドへの言及がある
 //   issue-meta prompt に comment_count フィールドへの言及がある
 //   T1: comment_conflicts 非空 → needs_clarification かつ implementer 0 件
@@ -44,14 +44,21 @@ const src = readFileSync(devFlowPath, 'utf8');
 // prompt token pin（VM run）
 // ============================================================
 
-test('[analyze-comments-routing] contract-probe#1 prompt の gh --json に comments フィールドが含まれる', async () => {
+// issue 取得（gh --json のフィールド列）は analyze-issue.sh が内蔵する。contract-probe#1 prompt は
+// `analyze-issue N --contract` の 1 単文のみを指示するため、comments フィールドの pin は script の
+// GH_JSON_FIELDS に対して行う（gh 呼び出しへの実引数は analyze-issue.bats の gh stub が pin）。
+test('[analyze-comments-routing] analyze-issue.sh の gh --json フィールド列に comments が含まれ、contract-probe#1 は script の 1 単文のみを指示する', async () => {
+  const scriptSrc = readFileSync(join(repoRoot, 'dev-issue-analyze', 'scripts', 'analyze-issue.sh'), 'utf8');
+  const fieldsLine = scriptSrc.split('\n').find((l) => l.startsWith('GH_JSON_FIELDS='));
+  assert.ok(fieldsLine, 'analyze-issue.sh に GH_JSON_FIELDS= 定義が無い');
+  assert.ok(/state,comments/.test(fieldsLine), `analyze-issue.sh の gh --json フィールド列に comments が含まれていない: ${fieldsLine}`);
   const { ctx, calls } = makeSandbox({ req: FULL_REQ });
   const { error } = await run(ctx);
   assertNoCrash(error, 'contract-probe-comments-field');
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
   const call = calls.find((c) => c.label === 'contract-probe#1');
   assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
-  assert.ok(call.prompt.includes('state,comments'), `contract-probe#1 prompt の gh --json に comments が含まれていない: ${call.prompt}`);
+  assert.ok(call.prompt.includes('`analyze-issue 1 --contract`'), `contract-probe#1 prompt に analyze-issue の単文指示が無い: ${call.prompt}`);
 });
 
 test('[analyze-comments-routing] analyze#1 prompt に comment_overrides / comment_conflicts フィールドへの言及がある', async () => {

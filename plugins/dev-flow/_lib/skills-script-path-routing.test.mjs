@@ -14,7 +14,7 @@
 //       — success run 1 本の prompt 観測だけでは未到達分岐（abort / empty-diff 等）への
 //       再混入を検出できないため、VM 観測とは独立に全文走査で pin する
 //   (a-vm) success run で実際に agent() へ渡った prompt にも同パターンが現れない
-//   (b) contract-probe の prompt に bare 名 `analyze-issue <ISSUE> --issue-json <ISSUE_JSON> --contract`
+//   (b) contract-probe の prompt に bare 名 `analyze-issue <ISSUE> --contract`
 //       が現れる。journal handoff payload の journal_sh は 3 call site（Merge tier success handoff /
 //       writeFailureTelemetry / top-level abort handoff、issue #607）すべてで bare 名 'journal'
 //   (c) 負の対照: 対象 repo 自身のテストランナー `/tmp/wt/tests/run-tests.sh` は WT 相対のまま
@@ -75,7 +75,7 @@ test('[skills-script-path-routing] (b) contract-probe は bare 名 analyze-issue
   const calls = await run('success');
   const probes = calls.filter((c) => c.label.startsWith('contract-probe'));
   assert.equal(probes.length, 1, `contract-probe は 1 回のはずだが ${probes.length} 回`);
-  const needle = 'analyze-issue 1 --issue-json <ISSUE_JSON> --contract';
+  const needle = 'analyze-issue 1 --contract';
   assert.ok(probes[0].prompt.includes(needle), `contract-probe prompt に bare 名呼び出し '${needle}' が無い`);
 });
 
