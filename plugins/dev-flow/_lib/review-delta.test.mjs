@@ -243,6 +243,20 @@ test('[review-delta][AC-6] iterate_history の各 round に scope / delta_lines 
     `round 2 の scope:'delta' / delta_lines:10 が payload に無い:\n${journal.prompt.slice(0, 1500)}`);
 });
 
+test('[review-delta] delta round（review#2）の prompt は AC の新規未達探索を指示せず、full round（review#1）は指示する', async () => {
+  const AC = ['AC_SENTINEL_A'];
+  const { calls } = await runTwoRounds({
+    args: { pr: '5', acceptance_criteria: AC },
+    overrides: { 'pr-meta': PR_META_WITH_SHA, 'commit-ensure#1': ENSURE_WITH_SHA(SHA_B) },
+  });
+  const r1 = calls.find((c) => c.label === 'review#1');
+  const r2 = calls.find((c) => c.label === 'review#2');
+  assert.ok(r1 && r2, 'review#1 / review#2 が dispatch されていない');
+  assert.ok(r1.prompt.includes('未達があれば issue として報告せよ'), `review#1（full）prompt に AC 新規未達探索の指示が無い:\n${r1.prompt.slice(-600)}`);
+  assert.ok(!r2.prompt.includes('未達があれば issue として報告せよ'), `review#2（delta）prompt に delta 外の AC 未達探索を誘発する文言が残っている:\n${r2.prompt.slice(-600)}`);
+  assert.ok(r2.prompt.includes('delta 外の AC 未達を新規 finding として報告するな'), `review#2（delta）prompt に delta 限定の AC 文言が無い:\n${r2.prompt.slice(-600)}`);
+});
+
 test('[review-delta][AC-6] full フォールバック round は scope:full / delta_lines:null で記録される', async () => {
   const { calls } = await runTwoRounds({ overrides: { 'commit-ensure#1': ENSURE_WITH_SHA(SHA_B) } });
   const journal = calls.find((c) => c.label === 'journal-save');

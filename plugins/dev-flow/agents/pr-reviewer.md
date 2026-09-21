@@ -50,7 +50,8 @@ git diff <sha_prev>..<sha_now>        # delta review（delta_range が渡され�
 
 PR の宣言意図（title/body）と実 diff を突き合わせる。stack を検出し、関連する best-practice 観点を
 ロードする（言語・framework 固有のルール）。`git diff` が sha を解決できなければ
-`git fetch origin <head_ref>` を 1 回だけ実行してから再試行する。
+`gh pr view <pr> --json headRefName -q .headRefName` で head branch 名を取り、
+`git fetch origin <その値>` を 1 回だけ実行してから再試行する。
 
 ### 読まないもの（生成物 — CI が一致を保証している）
 
