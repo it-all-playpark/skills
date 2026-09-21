@@ -80,25 +80,15 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   CI-failed 分岐に入った時点で `ci` へ上書きするため、**最終 iteration が CI-failed 分岐に入ったか**を表す。
   CI-failed のまま MAX に達した run は `max_reached` でも `ci` になる。`ci_error` / `ci_pending` は
   CI-failed 分岐より前で break するため CI 起因でも `review`）。
-  `quality_model_config`（dev-flow / pr-iterate 両 entry、成功・失敗とも記録。`_lib/quality-model.mjs`
-  の `QUALITY_MODEL` **設定値**で、**evaluator 系 3 call site**（`eval#i` / `final-ac-reconcile` /
-  `security-clearance-final`）だけに渡す model。agent() は agentType しか観測できず frontmatter 由来の
-  実モデルは workflow から取得できないため、キー名で設定値であることを明示する。pr-iterate entry にも
-  載るが値は evaluator の設定値であり pr-reviewer の model ではない）。
+  `eval_model_config`（dev-flow entry のみ、成功・失敗・abort とも。evaluator の 3 call site（`eval#i` /
+  `final-ac-reconcile` / `security-clearance-final`）に渡す model。override を渡さないため値は
+  `agents/evaluator.md` frontmatter の `model`（`opus`）。agent() は agentType しか観測できず frontmatter 由来の
+  実モデルは workflow から取得できないため、workflow 側のリテラルと frontmatter の一致を
+  `_lib/review-model-frontmatter.test.mjs` が pin する。evaluator を spawn しない pr-iterate entry には載せない）。
   `review_model_config`（dev-flow / pr-iterate 両 entry、成功・失敗・abort とも。pr-reviewer の 3 call site
   （`review#i` / `${label}-schema-retry` / `pr-review-lite`）に渡す model。override を渡さないため値は
-  `agents/pr-reviewer.md` frontmatter の `model`（`opus`）で、workflow 側のリテラルと frontmatter の一致は
-  `_lib/review-model-frontmatter.test.mjs` が pin する。evaluator と pr-reviewer を gate 別に区別して
-  集計するためのキーで、`quality_model_config` と混ぜて読まない）。
-  `quality_model_fallback_label`（dev-flow / pr-iterate 両 entry、成功・失敗・abort とも。`opts.model`
-  付き call — evaluator 系 3 call site のみ — が null を返して model 指定を外した再試行へ切り替えた
-  **最初の call の label**（例 `eval#1` / `final-ac-reconcile`）。pr-reviewer は `opts.model` を持たないため
-  発火しない。未発生時はキー自体を省く — null 値は passthrough で落ちる
-  ため「無し」はキー欠落で表す。`quality_model_config` と組み合わせて、run の evaluator が
-  純 `quality_model_config` / 途中から frontmatter 既定へ混在（どの label から）/ 純 frontmatter 既定
-  （`quality_model_config` が既定と同値）のどれかを導出する。nested pr-iterate は sticky を
-  `args.nested.quality_fallback` で継承するだけで自 run では発火しないためキーを持たない — 混在の
-  導出は親 dev-flow entry で行う（`subagent_invocations` と同じく集計は dev-flow entry のみを使う）。
+  `agents/pr-reviewer.md` frontmatter の `model`（`opus`）で、一致は同テストが pin する。evaluator と
+  pr-reviewer を gate 別に区別して集計するためのキー）。
   `plugin_version`（同上両 entry。`_lib/plugin-version.mjs` の `PLUGIN_VERSION` 定数。workflow では
   plugin root 変数が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
   が `plugins/dev-flow/.claude-plugin/plugin.json` の version と一致することを pin する。plugin.json

@@ -1,5 +1,5 @@
-// F3: pr-iterate.js の新規 telemetry キー 5 種（terminal_path / fix_terminal_reason /
-// quality_model_config / plugin_version / iterate_history）を journal-save payload へ配線する
+// F3: pr-iterate.js の telemetry キー（terminal_path / fix_terminal_reason /
+// review_model_config / plugin_version / iterate_history）を journal-save payload へ配線する
 // 検証テスト（TDD）。issue #601。
 // telemetryHandoff（journal-save prompt に verbatim 転写される payload）から
 // <<<JOURNAL_HANDOFF_BODY_BEGIN>>> / <<<JOURNAL_HANDOFF_BODY_END>>> の間を JSON.parse して
@@ -11,7 +11,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { QUALITY_MODEL } from './quality-model.mjs';
 import { PLUGIN_VERSION } from './plugin-version.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -203,7 +202,7 @@ test('[terminal-telemetry] review 経路 commit_unensured: fix_terminal_reason=c
   assert.equal(payload.telemetry.terminal_path, 'review');
 });
 
-test('[terminal-telemetry] 即 lgtm: fix_terminal_reason キー欠落 / terminal_path=review / quality_model_config / plugin_version / iterate_history', async () => {
+test('[terminal-telemetry] 即 lgtm: fix_terminal_reason キー欠落 / terminal_path=review / review_model_config / plugin_version / iterate_history', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     reviewerStub: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
     ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
@@ -221,8 +220,9 @@ test('[terminal-telemetry] 即 lgtm: fix_terminal_reason キー欠落 / terminal
 
   assert.equal(Object.hasOwn(telemetry, 'fix_terminal_reason'), false, 'lgtm 終端では fix_terminal_reason キーが欠落するべき');
   assert.equal(telemetry.terminal_path, 'review');
-  assert.equal(telemetry.quality_model_config, QUALITY_MODEL);
   assert.equal(telemetry.review_model_config, 'opus', 'pr-reviewer は override 無し → frontmatter の opus');
+  assert.equal(Object.hasOwn(telemetry, 'quality_model_config'), false, 'quality_model_config は撤去済み（evaluator も frontmatter 既定で spawn）');
+  assert.equal(Object.hasOwn(telemetry, 'quality_model_fallback_label'), false, 'quality_model_fallback_label は撤去済み');
 
   const pluginJson = JSON.parse(readFileSync(join(repoRoot, '.claude-plugin/plugin.json'), 'utf8'));
   assert.equal(telemetry.plugin_version, PLUGIN_VERSION);

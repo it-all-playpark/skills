@@ -76,7 +76,7 @@ W7 の distrust 機構と同様「将来の技術的負債」**（モデルが�
 **capability-bound の sunset path（必須）**: capability-bound に分類した指示には sunset path を必ず
 併記する。既存 gate_policy sunset path と同基準で、以下 2 項目を書く。
 - 表現: どの指示ブロック（ファイル・セクション）を削減・パラメータ化するか。
-- 再評価トリガ: **major モデルリリース毎**（`QUALITY_MODEL` の世代交代時）に当該指示を外した
+- 再評価トリガ: **major モデルリリース毎**（品質ゲート agent の frontmatter model の世代交代時）に当該指示を外した
   dry-run / 実測で品質劣化が無いことを確認してから削減する。
 
 新しく指示・guardrail を足すときは必ずクラスを宣言し、capability-bound なら sunset path
