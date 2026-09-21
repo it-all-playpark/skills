@@ -84,7 +84,8 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   model は frontmatter を既定としつつ `agent()` の `opts.model` で per-call override できる —
   evaluator（frontmatter 既定 opus）の 3 call site（`eval#i` / `final-ac-reconcile` /
   `security-clearance-final`）だけが `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で override する
-  （tools/sync-inlines.mjs で dev-flow.js / pr-iterate.js へ inline 生成。戻すときは
+  （dev-flow / pr-iterate の範囲。dev-improve.js の `rank-judge`（improve-miner）も同じ定数を渡すので、
+  定数を変えるとそちらにも効く。tools/sync-inlines.mjs で dev-flow.js / pr-iterate.js へ inline 生成。戻すときは
   `_lib/quality-model.mjs` の 1 行を `'opus'` に変更し `tools/sync-inlines.mjs --write` を実行 —
   先頭トークン=スクリプトパスの bare 形。shebang + 実行bit 付与済みで、sandbox excludedCommands は
   先頭トークンでマッチするため node/cd/bash 前置は付けない）。pr-reviewer（`review#i` /

@@ -7,9 +7,11 @@ export const meta = {
 }
 
 // ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// evaluator 専用の model override（eval#i / final-ac-reconcile / security-clearance-final の 3 call site）。
-// pr-reviewer には渡さない — pr-reviewer は agents/pr-reviewer.md の frontmatter（opus / high）で spawn し、
-// この定数を変えても影響しない（telemetry は quality_model_config = 本定数 / review_model_config = frontmatter 値で区別）。
+// model override を渡す call site は evaluator の 3 箇所（dev-flow.js の eval#i / final-ac-reconcile /
+// security-clearance-final）と dev-improve.js の rank-judge（improve-miner）。この 1 行を変えると
+// その 4 call site 全てに効く。pr-reviewer には渡さない — pr-reviewer は agents/pr-reviewer.md の
+// frontmatter（opus / high）で spawn し、この定数を変えても影響しない（telemetry は
+// quality_model_config = 本定数 / review_model_config = frontmatter 値で区別）。
 // frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
 // effort は agent() opts に記載されているが、本 harness での適用可否は未検証（受理と適用は別）。
 // dev-flow-canary の opts 受理 probe（capability id: agent_opts_effort_accepted）で再判定する。
@@ -555,9 +557,10 @@ const ABORT_CTX = { phase: 'Iterate', label: null, iterate_rounds: 0 }
 // quality model fallback（dev-flow.js と同型）: `opts.model` 付き呼び出しが null を返したら、model 指定を
 // 外して agent frontmatter の既定 model で同一 prompt・同一 label を 1 回だけ再試行し、以後この run は
 // 既定 model に sticky で切り替える。pr-reviewer は `model` を渡さず frontmatter 既定（opus）で spawn する
-// ため pr-iterate 内にこの fallback が発火する call site は無い — 機構を残すのは、nested 起動で dev-flow
-// 側（evaluator の QUALITY_MODEL 呼び出し）が発火した sticky を args.nested.quality_fallback で継承し
-// telemetry（quality_model_fallback）を親子で一貫させるため。harness の agent() は usage 上限
+// ため pr-iterate 内にこの fallback が発火する call site は無い — 機構を残すのは、dev-flow.js と同型の
+// trackedAgent を保ち、nested 起動の args.nested.quality_fallback（dev-flow 側で evaluator の
+// QUALITY_MODEL 呼び出しが発火した sticky）の受理契約を変えないため。継承した sticky は pr-iterate の
+// telemetry には載らない（quality_model_fallback_label は自 run で発火した場合のみ set）。harness の agent() は usage 上限
 // （credit 切れ）・terminal API error・user skip のいずれでも throw せず null を返し、原因は script から
 // 読めないため null だけを観測点にする。callReviewAgent の schema-retry（別 label・null 原因の切り分け
 // なし）が pr-reviewer の null に対する唯一の再試行。
