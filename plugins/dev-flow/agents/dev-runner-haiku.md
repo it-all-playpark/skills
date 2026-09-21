@@ -70,7 +70,7 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 | フェーズ | 操作 | 返す schema |
 |---------|------|------------|
 | Validate | テストスイート実行・green 判定 | `{tests, green, summary}` |
-| Evaluate | redgreen 検証（AC ごとの再実行） | 各 schema |
+| Evaluate | redgreen 検証（`redgreen-verify <WT> <T1> <I1> [<T2> <I2> …]` — 対象 AC の全ペアを 1 spawn で判定。出力 `{results:[{index,…}]}` を verbatim で返す） | `{results:[…]}` |
 | Final reconcile | reconcile-sync（worktree を PR 最終 HEAD へ同期）・test 再実行 | `{...}` / `{tests, green, summary}` |
 | Validate / Evaluate | ui-verify server 起動・teardown（Skill 呼び出し） | `{...}` |
 | Evaluate / Merge tier | journal 書き込み等その他決定論スクリプト | 各 schema |

@@ -109,7 +109,7 @@ const DEV_FLOW_CALL_SITES = [
   ['danger-grep', 'secfloor-classify /tmp/wt origin/main', {}],
   ['contract-probe#', '`analyze-issue 1 --contract', {}],
   ['merge-tier-facts', '`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data ', {}],
-  ['redgreen:AC-1', 'redgreen-verify /tmp/wt ', { 'eval#1': PASS_EVAL_TEST_AC, 'redgreen:AC-1': { verdict: null, ok: true } }],
+  ['redgreen', "redgreen-verify /tmp/wt 't.test.mjs' 'src/x.ts'", { 'eval#1': PASS_EVAL_TEST_AC, redgreen: { results: [{ index: 0, red: true, green: true }] } }],
   ['ui-verify-server', 'ui-verify-server start ', {
     'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/components/Foo.tsx'], struct: null, diffhash: { hash: 'AAA', empty: false } },
     'ui-verify-config': { found: true, config: UI_CFG },

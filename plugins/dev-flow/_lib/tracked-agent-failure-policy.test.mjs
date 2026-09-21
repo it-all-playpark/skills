@@ -215,7 +215,7 @@ const EXPECTED_DEV_FLOW = {
   'ui-verify-server-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
   'ui-verify-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
   'ui-verify-teardown-final': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる（Final reconcile）' },
-  'redgreen:AC-1': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
+  'redgreen': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
   'reimpl#1:serial:issue-1': { config: DF_COMPLEX_FIX, policy: 'continue', reason: 'failOpenAgent経由。evaluator差し戻しのdev-implement-fable失敗はnullとしてdropし継続する' },
   'eval#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。2周目の評価取得不能のままPRへ進めない致命契約' },
   'green-fix#1': { config: DF_GREEN_FIX, policy: 'abort', reason: 'bare据え置き。green-fix実装呼び出しはtry/catchで吸収されずrunを中断させる' },

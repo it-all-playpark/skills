@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { isRedgreenCall, redgreenBatchResponse } from './test-helpers/redgreen-batch.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -27,8 +28,9 @@ const src = readFileSync(devFlowPath, 'utf8');
 
 /**
  * redgreen-skip 専用の VM sandbox を組む。
- * evaluator 応答を呼び出し回数の index で切り替え、redgreen-verify.sh 呼び出し（label が
- * 'redgreen:AC-' で始まる）を ac_index・当該 AC の呼び出し回数（1始まり）別に記録・応答を切り替える。
+ * evaluator 応答を呼び出し回数の index で切り替え、redgreen-verify.sh バッチ呼び出し（label 'redgreen'、
+ * 1 spawn に全 AC ペア）の prompt に載った AC ごとに、ac_index・当該 AC の呼び出し回数（1始まり）別に
+ * 記録・応答を切り替える。
  *
  * @param {object} analyzeReq
  * @param {object[]} evaluatorResponses - evaluator stub が呼び出し回数 index に応じて順に返す応答配列
@@ -66,13 +68,16 @@ function makeSandbox(analyzeReq, evaluatorResponses, redgreenResponseFor) {
       const idx = Math.min(evalCalls.length - 1, evaluatorResponses.length - 1);
       return evaluatorResponses[idx];
     }
-    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen:AC-')) {
-      const m = label.match(/^redgreen:AC-(\d+)$/);
-      const acIndex = m ? Number(m[1]) - 1 : 0;
-      acCallCounts[acIndex] = (acCallCounts[acIndex] ?? 0) + 1;
-      const callNumber = acCallCounts[acIndex];
-      redgreenCalls.push({ acIndex, callNumber });
-      return redgreenResponseFor(acIndex, callNumber);
+    if (isRedgreenCall(agentType, label)) {
+      // バッチ呼び出しの prompt に載った AC ペアごとに「当該 AC の呼び出し回数」を数える
+      // （skip された AC は prompt に載らないので数えない）。
+      const idx = Math.min(evalCalls.length - 1, evaluatorResponses.length - 1);
+      return redgreenBatchResponse(prompt, evaluatorResponses[idx].ac_results, (acIndex) => {
+        acCallCounts[acIndex] = (acCallCounts[acIndex] ?? 0) + 1;
+        const callNumber = acCallCounts[acIndex];
+        redgreenCalls.push({ acIndex, callNumber });
+        return redgreenResponseFor(acIndex, callNumber);
+      });
     }
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['_lib/foo.test.mjs'] };

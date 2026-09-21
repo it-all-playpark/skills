@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
 import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { isRedgreenCall, redgreenBatchResponse } from './test-helpers/redgreen-batch.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -19,8 +20,8 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 /**
  * redgreen/vdelta 専用の VM sandbox を組む。
- * evaluator の ac_results に対応する redgreen-verify.sh 呼び出し（label が 'redgreen:AC-' で
- * 始まる）の応答を acIndex 別に切り替え可能にし、log() 出力・journal-log prompt を捕捉する。
+ * evaluator の ac_results に対応する redgreen-verify.sh バッチ呼び出し（label 'redgreen'、1 spawn に
+ * 全 AC ペア）の応答を acIndex 別に切り替え可能にし、log() 出力・journal-log prompt を捕捉する。
  *
  * @param {object} analyzeReq
  * @param {object} evaluatorResponse
@@ -54,10 +55,8 @@ function makeSandbox(analyzeReq, evaluatorResponse, redgreenResponseFor) {
       evalCalls.push({ label, agentType });
       return evaluatorResponse;
     }
-    if (agentType === 'dev-flow:dev-runner-haiku' && label.startsWith('redgreen:AC-')) {
-      const m = label.match(/^redgreen:AC-(\d+)$/);
-      const acIndex = m ? Number(m[1]) - 1 : 0;
-      return redgreenResponseFor(acIndex);
+    if (isRedgreenCall(agentType, label)) {
+      return redgreenBatchResponse(prompt, evaluatorResponse.ac_results, (acIndex) => redgreenResponseFor(acIndex));
     }
     if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
       return { files: ['_lib/foo.test.mjs'] };

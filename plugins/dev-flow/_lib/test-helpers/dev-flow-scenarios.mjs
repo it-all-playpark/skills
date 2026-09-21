@@ -78,7 +78,7 @@ export const DEV_FLOW_SCENARIOS = {
     },
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
   },
-  // evaluator が test 実証 AC を返す → redgreen:AC-1
+  // evaluator が test 実証 AC を返す → redgreen（1 spawn バッチ。results[k].index は prompt のペア順）
   redgreen: {
     overrides: {
       'eval#1': {
@@ -89,7 +89,7 @@ export const DEV_FLOW_SCENARIOS = {
         ],
         security_clearance: [], concern_resolutions: [],
       },
-      'redgreen:AC-1': { verdict: null, ok: true },
+      redgreen: { results: [{ index: 0, red: true, green: true, reason: 'ok', testcmd_ran: true }] },
     },
   },
   // dev-implement-fable が CI で検証可能な環境事象を concern に返す → ENV item → merge-tier-facts の checks で CI 委譲

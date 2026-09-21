@@ -699,3 +699,146 @@ make_feature_bats() {
   [[ "$output" == *'"reason":"no impl changed vs HEAD'* ]]
   [[ "$output" != *'"testcmd_ran"'* ]]
 }
+
+# -----------------------------------------------------------------------
+# J: 複数ペア一括判定(issue #683)
+# <WT> <T1> <I1> [<T2> <I2> ...] を 1 呼び出しで受け、ペアごとの結果を
+# 引数順の JSON 配列(各要素に index)で返す。ペアの入力エラーは当該要素の
+# reason に載せて続行し、exit 2 は全ペアが入力エラーのときだけ。
+# -----------------------------------------------------------------------
+
+# impl1 / impl2 が worktree 版の内容(a = 1 / b = 2)で存在するかを呼び出しごとに記録する mock runner
+# (ペア間の退避分離を検証する。tracked-modified の base 化はファイルが残るので内容で判定する)
+make_mock_runner_pairs() {
+  cat > "$REPO/mock-runner.sh" <<EOF
+#!/usr/bin/env bash
+s1=absent; s2=absent
+grep -q "a = 1" "$REPO/impl1.mjs" 2>/dev/null && s1=present
+grep -q "b = 2" "$REPO/impl2.mjs" 2>/dev/null && s2=present
+echo "\$1 impl1=\$s1 impl2=\$s2" >> "$REPO/calls.log"
+case "\$1" in
+  t1.test.mjs) [ "\$s1" = present ] ;;
+  t2.test.mjs) [ "\$s2" = present ] ;;
+  *) exit 99 ;;
+esac
+EOF
+  chmod +x "$REPO/mock-runner.sh"
+}
+
+@test "J1: 2 ペアを 1 呼び出しで判定し index 付き配列で両方 red→green が返る" {
+  echo "export const a = 1;" > "$REPO/impl1.mjs"
+  echo "export const b = 2;" > "$REPO/impl2.mjs"
+  echo "// t1" > "$REPO/t1.test.mjs"
+  echo "// t2" > "$REPO/t2.test.mjs"
+  make_mock_runner_pairs
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results | length')" -eq 2 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].index')" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[1].index')" -eq 1 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[1].red and .results[1].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].testcmd_ran')" = "true" ]
+  [ -f "$REPO/impl1.mjs" ] && [ -f "$REPO/impl2.mjs" ]
+}
+
+@test "J2: ペアごとの red は当該ペアの impl だけを外して測る(他ペアの impl は残る)" {
+  echo "export const a = 1;" > "$REPO/impl1.mjs"
+  echo "export const b = 2;" > "$REPO/impl2.mjs"
+  echo "// t1" > "$REPO/t1.test.mjs"
+  echo "// t2" > "$REPO/t2.test.mjs"
+  make_mock_runner_pairs
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  run bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  [ "$status" -eq 0 ]
+  # 呼び出し順: pair0 red / pair0 green / pair1 red / pair1 green
+  [ "$(sed -n 1p "$REPO/calls.log")" = "t1.test.mjs impl1=absent impl2=present" ]
+  [ "$(sed -n 2p "$REPO/calls.log")" = "t1.test.mjs impl1=present impl2=present" ]
+  [ "$(sed -n 3p "$REPO/calls.log")" = "t2.test.mjs impl1=present impl2=absent" ]
+  [ "$(sed -n 4p "$REPO/calls.log")" = "t2.test.mjs impl1=present impl2=present" ]
+  [ "$(wc -l < "$REPO/calls.log" | tr -d ' ')" -eq 4 ]
+}
+
+@test "J3: 1 ペアが入力エラーでも他ペアは判定完了し exit 0(当該要素だけ red:false green:false + reason)" {
+  echo "export const a = 1;" > "$REPO/impl1.mjs"
+  echo "export const b = 2;" > "$REPO/impl2.mjs"
+  echo "// t2" > "$REPO/t2.test.mjs"
+  make_mock_runner_pairs
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+
+  # pair0 は non-test glob(impl1.mjs を test として申告)、pair1 は正常
+  run bash "$SCRIPT" "$REPO" "impl1.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results | length')" -eq 2 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red or .results[0].green')" = "false" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].reason')" = "non-test file declared: impl1.mjs" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0] | has("testcmd_ran")')" = "false" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[1].red and .results[1].green')" = "true" ]
+  # pair0 の入力エラーで pair1 の判定が走っている(退避・復元も完了)
+  [ "$(grep -c 't2.test.mjs' "$REPO/calls.log")" -eq 2 ]
+  [ -f "$REPO/impl1.mjs" ] && [ -f "$REPO/impl2.mjs" ]
+}
+
+@test "J4: 全ペアが入力エラーなら exit 2 で配列は全要素 reason 付き" {
+  echo "export const a = 1;" > "$REPO/impl1.mjs"
+  echo "// t2" > "$REPO/t2.test.mjs"
+
+  run bash "$SCRIPT" "$REPO" "impl1.mjs" "impl1.mjs" "t2.test.mjs" "nonexistent.mjs"
+  [ "$status" -eq 2 ]
+  [ "$(printf '%s' "$output" | jq -r '.results | length')" -eq 2 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].reason')" = "non-test file declared: impl1.mjs" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[1].reason')" = "impl file not found: nonexistent.mjs" ]
+}
+
+@test "J5: ペア引数が奇数(test_csv だけ余る)なら exit 2 で stdout は空配列" {
+  echo "export const a = 1;" > "$REPO/impl1.mjs"
+  echo "// t1" > "$REPO/t1.test.mjs"
+
+  run bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs"
+  [ "$status" -eq 2 ]
+  # usage は stderr(run は stdout/stderr を混ぜる)。stdout 側の最終行が空配列であること
+  [ "${lines[${#lines[@]}-1]}" = '{"results":[]}' ]
+  [[ "$output" == *'usage: redgreen-verify.sh'* ]]
+}
+
+@test "J6: 1 ペア呼び出しも配列で返り exit 意味論は従来通り(判定完了 0 / 入力エラー 2)" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results | type')" = "array" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].index')" -eq 0 ]
+
+  run bash "$SCRIPT" "$REPO" "feature.test.mjs" "feature.test.mjs"
+  [ "$status" -eq 2 ]
+  [ "$(printf '%s' "$output" | jq -r '.results | type')" = "array" ]
+}
+
+@test "J7: tracked-modified と untracked のペアが混在しても各ペアが判定され tree(status)は不変" {
+  echo "export const a = 0;" > "$REPO/impl1.mjs"
+  git -C "$REPO" add impl1.mjs && git -C "$REPO" commit -q -m "add impl1"
+  echo "export const a = 1;" > "$REPO/impl1.mjs"
+  echo "export const b = 2;" > "$REPO/impl2.mjs"
+  echo "// t1" > "$REPO/t1.test.mjs"
+  echo "// t2" > "$REPO/t2.test.mjs"
+  make_mock_runner_pairs
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+  # mock runner が calls.log を作るので比較は calls.log を除いた status で行う
+  before_status="$(git -C "$REPO" status --porcelain | grep -v calls.log)"
+
+  run bash "$SCRIPT" "$REPO" "t1.test.mjs" "impl1.mjs" "t2.test.mjs" "impl2.mjs"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[1].red and .results[1].green')" = "true" ]
+  [ "$(git -C "$REPO" status --porcelain | grep -v calls.log)" = "$before_status" ]
+  grep -q "a = 1" "$REPO/impl1.mjs"
+  grep -q "b = 2" "$REPO/impl2.mjs"
+}
