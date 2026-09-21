@@ -13,9 +13,13 @@
 //   /abs/path/tools/jev-backtest.mjs [--journal DIR] [--out DIR] [--no-jev] [--limit N]
 //                                    [--repo OWNER/NAME] [--concurrency N]
 //
-// API key: env TYPESAFE_API_KEY か ~/.config/typesafe/api_key（`VAR=x script` 前置形は
-//          excludedCommands から外れるのでファイル経由を用意している）。key が無ければ
-//          Jev 部分をスキップし、収集・照合・ベースラインだけ出す。
+// Jev 経路: 既定は Vercel AI Gateway の TypeSafe 互換 endpoint（dotfiles の jev-classify.sh と同じ規約）。
+//   JEV_API_URL   既定 https://ai-gateway.vercel.sh/typesafe/v1/systemone
+//   JEV_MODEL     既定 typesafe-ai/jev
+//   key: $AI_GATEWAY_API_KEY → macOS Keychain `security find-generic-password -s $JEV_KEYCHAIN_SERVICE -w`
+//        （既定 service: vercel-ai-gateway）。TYPESAFE_API_KEY があれば直叩き
+//        （https://api.typesafe.ai/v1/systemone、model jev-latest）にフォールバック。
+//   key が無ければ Jev 部分をスキップし、収集・照合・ベースラインだけ出す。
 //
 // 既知の限界: diff は `gh pr diff` の最終状態。round 1 の finding は fix 前 tree の行番号なので
 // 行ズレが起きる。±TOL 行で hunk に当たらなければ file 一致に落として評価する（file 一致の
@@ -28,8 +32,11 @@ import { homedir } from 'node:os';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const JEV_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
-export const JEV_MODEL = 'jev-latest';
+export const GATEWAY_ENDPOINT = 'https://ai-gateway.vercel.sh/typesafe/v1/systemone';
+export const GATEWAY_MODEL = 'typesafe-ai/jev';
+export const DIRECT_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
+export const DIRECT_MODEL = 'jev-latest';
+export const KEYCHAIN_SERVICE = 'vercel-ai-gateway';
 export const LINE_TOL = 3;
 // state 上限 32k tokens。コードは ~3.5 chars/token 程度なので余裕を見て文字数で切る。
 export const MAX_STATE_CHARS = 90_000;
@@ -247,20 +254,46 @@ export function buildJevState(repo, path, hunk) {
   return { repository: repo, file: path, hunk_header: hunk.header, added_lines: hunk.added, removed_lines: hunk.removed, diff: text };
 }
 
-export function loadApiKey() {
-  if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY.trim();
-  const f = join(homedir(), '.config', 'typesafe', 'api_key');
-  if (existsSync(f)) return readFileSync(f, 'utf8').trim();
+/**
+ * Jev の接続先と key を解決する。優先順は dotfiles の jev-classify.sh と同じ。
+ * @param {NodeJS.ProcessEnv} env
+ * @param {(service:string)=>string|null} keychain
+ * @returns {{url:string, model:string, apiKey:string, source:string}|null}
+ */
+export function resolveJev(env = process.env, keychain = readKeychain) {
+  const url = env.JEV_API_URL || null;
+  const model = env.JEV_MODEL || null;
+  if (env.AI_GATEWAY_API_KEY) {
+    return { url: url ?? GATEWAY_ENDPOINT, model: model ?? GATEWAY_MODEL, apiKey: env.AI_GATEWAY_API_KEY.trim(), source: 'env:AI_GATEWAY_API_KEY' };
+  }
+  const service = env.JEV_KEYCHAIN_SERVICE || KEYCHAIN_SERVICE;
+  const kc = keychain(service);
+  if (kc) return { url: url ?? GATEWAY_ENDPOINT, model: model ?? GATEWAY_MODEL, apiKey: kc, source: `keychain:${service}` };
+  if (env.TYPESAFE_API_KEY) {
+    return { url: url ?? DIRECT_ENDPOINT, model: model ?? DIRECT_MODEL, apiKey: env.TYPESAFE_API_KEY.trim(), source: 'env:TYPESAFE_API_KEY' };
+  }
   return null;
 }
 
-export async function jevScore(state, apiKey, fetchImpl = fetch) {
-  const res = await fetchImpl(JEV_ENDPOINT, {
+function readKeychain(service) {
+  if (process.platform !== 'darwin') return null;
+  const r = spawnSync('security', ['find-generic-password', '-s', service, '-w'], { encoding: 'utf8' });
+  if (r.status !== 0) return null;
+  const v = (r.stdout || '').trim();
+  return v || null;
+}
+
+export async function jevScore(state, conn, fetchImpl = fetch) {
+  const res = await fetchImpl(conn.url, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: JEV_MODEL, state, questions: JEV_QUESTIONS }),
+    headers: { Authorization: `Bearer ${conn.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: conn.model, state, questions: JEV_QUESTIONS }),
   });
-  if (!res.ok) throw new Error(`jev ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) {
+    const err = new Error(`jev ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
+  }
   const j = await res.json();
   const a = j.answers ?? {};
   return {
@@ -271,6 +304,25 @@ export async function jevScore(state, apiKey, fetchImpl = fetch) {
     kind_probabilities: a.kind?.probabilities ?? null,
     input_tokens: j.usage?.input_tokens ?? null,
   };
+}
+
+export const RETRY_MAX = 7;
+export const RETRY_BASE_MS = 1000;
+
+/** 429 / 5xx / network エラーを指数バックオフ（1s, 2s, … ≤64s、jitter 付き）で再試行する。 */
+export async function jevScoreWithRetry(state, conn, fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), rand = Math.random) {
+  let lastErr;
+  for (let attempt = 0; attempt <= RETRY_MAX; attempt++) {
+    try {
+      return await jevScore(state, conn, fetchImpl);
+    } catch (e) {
+      lastErr = e;
+      const retriable = e.status == null || e.status === 429 || e.status >= 500;
+      if (!retriable || attempt === RETRY_MAX) throw e;
+      await sleep(RETRY_BASE_MS * 2 ** attempt * (0.5 + rand()));
+    }
+  }
+  throw lastErr;
 }
 
 export function loadJevCache(file) {
@@ -357,7 +409,7 @@ export function renderReport(summary) {
   L.push(`- PRs: ${summary.prs_total}（diff 取得成功 ${summary.prs_with_diff} / 失敗 ${summary.prs_failed.length}）`);
   L.push(`- hunks: ${summary.hunks_total}（${summary.lines_total} 変更行）`);
   L.push(`- findings: blocking ${summary.findings.blocking.total}（hunk 一致 ${summary.findings.blocking.hunk} / file 一致 ${summary.findings.blocking.file} / diff 外 ${summary.findings.blocking.outside}）、minor ${summary.findings.minor.total}（${summary.findings.minor.hunk} / ${summary.findings.minor.file} / ${summary.findings.minor.outside}）`);
-  L.push(`- Jev: ${summary.jev.enabled ? `scored ${summary.jev.scored} hunks（cache hit ${summary.jev.cache_hits}、error ${summary.jev.errors}、input ${summary.jev.input_tokens} tokens ≈ $${summary.jev.cost_usd}）` : `skipped（API key 無し）— 全 hunk を流した場合の推定 input ≈ ${summary.jev.est_input_tokens} tokens ≈ $${summary.jev.est_cost_usd}`}`);
+  L.push(`- Jev: ${summary.jev.enabled ? `${summary.jev.model} via ${summary.jev.endpoint} — scored ${summary.jev.scored} hunks（cache hit ${summary.jev.cache_hits}、error ${summary.jev.errors}、input ${summary.jev.input_tokens} tokens ≈ $${summary.jev.cost_usd}）` : `skipped（API key 無し）— 全 hunk を流した場合の推定 input ≈ ${summary.jev.est_input_tokens} tokens ≈ $${summary.jev.est_cost_usd}`}`);
   L.push('');
   L.push('## ポリシー別（除外した hunk が reviewer から隠れると仮定）');
   L.push('');
@@ -403,7 +455,7 @@ function fmt(x) { return x == null ? '-' : x.toFixed(3); }
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const a = { journal: join(homedir(), '.claude', 'journal'), out: null, jev: true, limit: Infinity, repo: null, concurrency: 8 };
+  const a = { journal: join(homedir(), '.claude', 'journal'), out: null, jev: true, limit: Infinity, repo: null, concurrency: 4 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const v = () => argv[++i];
@@ -456,10 +508,14 @@ export async function main(argv = process.argv.slice(2)) {
   const jevInfo = { enabled: false, scored: 0, cache_hits: 0, errors: 0, input_tokens: 0, cost_usd: 0,
     est_input_tokens: estTokens, est_cost_usd: (estTokens * 0.042 / 1e6).toFixed(4) };
 
-  const apiKey = args.jev ? loadApiKey() : null;
-  if (args.jev && !apiKey) console.error('TYPESAFE_API_KEY / ~/.config/typesafe/api_key が無いので Jev scoring をスキップ');
-  if (apiKey) {
+  const conn = args.jev ? resolveJev() : null;
+  if (args.jev && !conn) console.error('Jev の key が無い（AI_GATEWAY_API_KEY / Keychain vercel-ai-gateway / TYPESAFE_API_KEY）ので scoring をスキップ');
+  if (conn) {
     jevInfo.enabled = true;
+    jevInfo.endpoint = conn.url;
+    jevInfo.model = conn.model;
+    jevInfo.key_source = conn.source;
+    console.error(`jev: ${conn.model} via ${conn.url} (key: ${conn.source})`);
     const cacheFile = join(args.out, 'jev-cache.jsonl');
     const cache = loadJevCache(cacheFile);
     let done = 0;
@@ -468,14 +524,15 @@ export async function main(argv = process.argv.slice(2)) {
       const hit = cache.get(key);
       if (hit && hit.answer) { h.jev = hit.answer; jevInfo.cache_hits++; return; }
       try {
-        const answer = await jevScore(buildJevState(h.repo, h.path, h.hunk), apiKey);
+        const answer = await jevScoreWithRetry(buildJevState(h.repo, h.path, h.hunk), conn);
         h.jev = answer;
         jevInfo.scored++;
         jevInfo.input_tokens += answer.input_tokens ?? 0;
         appendFileSync(cacheFile, JSON.stringify({ key, id: h.id, path: h.path, baseKind: h.baseKind, answer }) + '\n');
       } catch (e) {
         jevInfo.errors++;
-        console.error(`jev error ${h.id}: ${e.message}`);
+        if (jevInfo.errors <= 5) console.error(`jev error ${h.id}: ${e.message.slice(0, 160)}`);
+        else if (jevInfo.errors === 6) console.error('jev error: 以降は省略（件数は report に出る）');
       }
       if (++done % 50 === 0) console.error(`jev: ${done}/${hunks.length}`);
     });

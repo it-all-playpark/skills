@@ -10,7 +10,39 @@ import os from 'node:os';
 import {
   parseUnifiedDiff, matchFinding, baselineKind, evaluatePolicy, buildPolicies,
   jevScore, buildJevState, loadJournal, loadJevCache, hunkId, hunkDigest, MAX_STATE_CHARS,
+  resolveJev, GATEWAY_ENDPOINT, GATEWAY_MODEL, DIRECT_ENDPOINT, DIRECT_MODEL,
+  jevScoreWithRetry, RETRY_MAX,
 } from './jev-backtest.mjs';
+
+const CONN = { url: GATEWAY_ENDPOINT, model: GATEWAY_MODEL, apiKey: 'K' };
+const okResponse = () => ({ ok: true, status: 200, json: async () => ({ model: 'm', answers: { needs_review: { noul: 0.5 }, kind: { choice: 'logic', confidence: 0.9, probabilities: {} } }, usage: { input_tokens: 1 } }) });
+
+test('jevScoreWithRetry: retries 429 / 5xx / network with backoff, gives up after RETRY_MAX, no retry on 4xx', async () => {
+  const sleeps = [];
+  const sleep = async (ms) => { sleeps.push(ms); };
+  const rand = () => 0.5; // jitter 係数 = 1.0
+  // 429 → 503 → network → ok
+  let seq = [
+    () => ({ ok: false, status: 429, text: async () => 'busy' }),
+    () => ({ ok: false, status: 503, text: async () => 'down' }),
+    () => { throw new TypeError('fetch failed'); },
+    okResponse,
+  ];
+  const fetchSeq = async () => seq.shift()();
+  const a = await jevScoreWithRetry({ diff: 'x' }, CONN, fetchSeq, sleep, rand);
+  assert.equal(a.needs_review, 0.5);
+  assert.deepEqual(sleeps, [1000, 2000, 4000]);
+  // 常に 429 → RETRY_MAX 回待ってから throw
+  sleeps.length = 0;
+  const always429 = async () => ({ ok: false, status: 429, text: async () => 'busy' });
+  await assert.rejects(() => jevScoreWithRetry({ diff: 'x' }, CONN, always429, sleep, rand), /jev 429/);
+  assert.equal(sleeps.length, RETRY_MAX);
+  // 400 は即 throw（retry なし）
+  sleeps.length = 0;
+  const bad = async () => ({ ok: false, status: 400, text: async () => 'invalid' });
+  await assert.rejects(() => jevScoreWithRetry({ diff: 'x' }, CONN, bad, sleep, rand), /jev 400/);
+  assert.equal(sleeps.length, 0);
+});
 
 const DIFF = [
   'diff --git a/src/a.js b/src/a.js',
@@ -145,11 +177,11 @@ test('jevScore: request shape and answer extraction (mock fetch)', async () => {
     return { ok: true, status: 200, json: async () => ({ model: 'jev-1.13.0', answers: { needs_review: { type: 'noul', noul: 0.12 }, kind: { type: 'choice', choice: 'docs', confidence: 0.81, probabilities: { docs: 0.81, logic: 0.1 } } }, usage: { input_tokens: 321, output_tokens: 20 } }) };
   };
   const state = buildJevState('o/r', 'docs/x.md', { header: '@@ -1 +1 @@', text: '@@ -1 +1 @@\n-a\n+b\n', added: 1, removed: 1 });
-  const a = await jevScore(state, 'KEY', fetchImpl);
-  assert.equal(captured.url, 'https://api.typesafe.ai/v1/systemone');
+  const a = await jevScore(state, { url: GATEWAY_ENDPOINT, model: GATEWAY_MODEL, apiKey: 'KEY' }, fetchImpl);
+  assert.equal(captured.url, 'https://ai-gateway.vercel.sh/typesafe/v1/systemone');
   assert.equal(captured.init.headers.Authorization, 'Bearer KEY');
   const body = JSON.parse(captured.init.body);
-  assert.equal(body.model, 'jev-latest');
+  assert.equal(body.model, 'typesafe-ai/jev');
   assert.deepEqual(Object.keys(body.questions).sort(), ['kind', 'needs_review']);
   assert.equal(body.questions.needs_review.type, 'noul');
   assert.equal(body.questions.kind.type, 'choice');
@@ -159,7 +191,26 @@ test('jevScore: request shape and answer extraction (mock fetch)', async () => {
 
 test('jevScore: non-2xx throws with status', async () => {
   const fetchImpl = async () => ({ ok: false, status: 429, text: async () => 'rate limited' });
-  await assert.rejects(() => jevScore({ diff: 'x' }, 'K', fetchImpl), /jev 429: rate limited/);
+  await assert.rejects(() => jevScore({ diff: 'x' }, { url: GATEWAY_ENDPOINT, model: GATEWAY_MODEL, apiKey: 'K' }, fetchImpl), /jev 429: rate limited/);
+});
+
+test('resolveJev: gateway env → keychain → direct fallback, JEV_API_URL/JEV_MODEL override', () => {
+  const noKc = () => null;
+  assert.equal(resolveJev({}, noKc), null);
+  assert.deepEqual(resolveJev({ AI_GATEWAY_API_KEY: ' g ' }, noKc), { url: GATEWAY_ENDPOINT, model: GATEWAY_MODEL, apiKey: 'g', source: 'env:AI_GATEWAY_API_KEY' });
+  // keychain は env key が無い時だけ、service 名は JEV_KEYCHAIN_SERVICE で差し替え可
+  const calls = [];
+  const kc = (s) => { calls.push(s); return 'kc-key'; };
+  assert.deepEqual(resolveJev({ JEV_KEYCHAIN_SERVICE: 'svc' }, kc), { url: GATEWAY_ENDPOINT, model: GATEWAY_MODEL, apiKey: 'kc-key', source: 'keychain:svc' });
+  assert.deepEqual(calls, ['svc']);
+  assert.equal(resolveJev({ AI_GATEWAY_API_KEY: 'g' }, kc).source, 'env:AI_GATEWAY_API_KEY');
+  assert.deepEqual(calls, ['svc']);   // env があれば keychain は叩かない
+  // direct は最後のフォールバック。endpoint / model も直叩き用に切り替わる
+  assert.deepEqual(resolveJev({ TYPESAFE_API_KEY: 'd' }, noKc), { url: DIRECT_ENDPOINT, model: DIRECT_MODEL, apiKey: 'd', source: 'env:TYPESAFE_API_KEY' });
+  // 明示 override はどの経路でも勝つ
+  const o = resolveJev({ AI_GATEWAY_API_KEY: 'g', JEV_API_URL: 'https://x/v1/systemone', JEV_MODEL: 'm' }, noKc);
+  assert.equal(o.url, 'https://x/v1/systemone');
+  assert.equal(o.model, 'm');
 });
 
 test('buildJevState: truncates oversized hunk under state budget', () => {
