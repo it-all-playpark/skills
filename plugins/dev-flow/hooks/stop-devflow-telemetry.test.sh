@@ -2608,7 +2608,7 @@ make_full_telemetry_handoff() {
 
 # --------------------------------------------------------------------------
 # Test P-F (AC1 回帰): hook が明示列挙しない新規 telemetry キー（fix_terminal_reason /
-#           terminal_path / quality_model_config / plugin_version / iterate_history）が
+#           terminal_path / eval_model_config / plugin_version / iterate_history）が
 #           passthrough 経由で journal entry へ到達する（skills#601）
 # --------------------------------------------------------------------------
 {
@@ -2633,7 +2633,7 @@ make_full_telemetry_handoff() {
     '.telemetry += {
       fix_terminal_reason: "applied_false",
       terminal_path: "ci",
-      quality_model_config: "fable",
+      eval_model_config: "opus",
       review_model_config: "opus",
       plugin_version: "0.3.0",
       iterate_history: [{iteration: 1, decision: "request-changes", summary: "ng", blocking: [{severity: "major", topic: "t1"}], minor: []}]
@@ -2652,7 +2652,7 @@ make_full_telemetry_handoff() {
   if echo "$passthrough_json" | jq -e '
       .fix_terminal_reason == "applied_false" and
       .terminal_path == "ci" and
-      .quality_model_config == "fable" and
+      .eval_model_config == "opus" and
       .review_model_config == "opus" and
       .plugin_version == "0.3.0" and
       .iterate_history[0].decision == "request-changes" and
@@ -2897,7 +2897,7 @@ make_full_telemetry_handoff() {
 # --------------------------------------------------------------------------
 # Test P-K (integration): 実 journal.sh が --telemetry-json を受理する環境で、
 #          fix_terminal_reason / terminal_path / plugin_version /
-#          quality_model_config / iterate_history が journal entry へ到達し、
+#          eval_model_config / iterate_history が journal entry へ到達し、
 #          per-key で drop された trust_evalseal_missing_reason は到達しない
 #          ことを確認する。未配置 / 未対応の環境では skip。
 # --------------------------------------------------------------------------
@@ -2916,7 +2916,7 @@ make_full_telemetry_handoff() {
         fix_terminal_reason: "commit_unensured",
         terminal_path: "review",
         plugin_version: "0.3.0",
-        quality_model_config: "fable",
+        eval_model_config: "opus",
         review_model_config: "opus",
         iterate_history: [{iteration: 1, decision: "request-changes", summary: "ng", blocking: [{severity: "major", topic: "t1"}], minor: []}],
         trust_evalseal_missing_reason: "bogus"
@@ -2932,7 +2932,7 @@ make_full_telemetry_handoff() {
       if [[ $(jq -r '.telemetry.fix_terminal_reason' "$entry") == "commit_unensured" ]] &&
         [[ $(jq -r '.telemetry.terminal_path' "$entry") == "review" ]] &&
         [[ $(jq -r '.telemetry.plugin_version' "$entry") == "0.3.0" ]] &&
-        [[ $(jq -r '.telemetry.quality_model_config' "$entry") == "fable" ]] &&
+        [[ $(jq -r '.telemetry.eval_model_config' "$entry") == "opus" ]] &&
         [[ $(jq -r '.telemetry.review_model_config' "$entry") == "opus" ]] &&
         [[ $(jq -r '.telemetry.iterate_history[0].decision' "$entry") == "request-changes" ]] &&
         [[ $(jq -r '.telemetry.iterate_history[0].blocking[0].topic' "$entry") == "t1" ]] &&

@@ -101,7 +101,7 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     const label = opts?.label ?? '';
     const agentType = opts?.agentType ?? '';
     const p = prompt ?? '';
-    // model: opts.model（QUALITY_MODEL 付き call site の識別。fallback 後の再試行は model 欠落で記録される）
+    // model: opts.model（dev-flow / pr-iterate の call site は override を渡さないので常に null。残存検知用）
     calls.push({ label, agentType, prompt: p, opts: opts ?? {}, schema: opts?.schema ?? null, model: opts?.model ?? null });
     const result = responder({ label, agentType, prompt: p, opts: opts ?? {} });
     if (result === undefined && label === 'issue-meta') {

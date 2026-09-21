@@ -81,25 +81,14 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
 - **判断系 leaf は subagent** (`.claude/agents/{dev-implement-fable,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
   workflow の `agent()` opts には effort が記載されているが、本 harness での適用可否は未検証（dev-flow-canary の opts 受理 probe — capability id `agent_opts_effort_accepted` — で再判定する。probe は受理されたことしか判定できない）。それまで effort は subagent frontmatter で固定する。
-  model は frontmatter を既定としつつ `agent()` の `opts.model` で per-call override できる —
-  evaluator（frontmatter 既定 opus）の 3 call site（`eval#i` / `final-ac-reconcile` /
-  `security-clearance-final`）だけが `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で override する
-  （dev-flow / pr-iterate の範囲。dev-improve.js の `rank-judge`（improve-miner）も同じ定数を渡すので、
-  定数を変えるとそちらにも効く。tools/sync-inlines.mjs で dev-flow.js / pr-iterate.js へ inline 生成。戻すときは
-  `_lib/quality-model.mjs` の 1 行を `'opus'` に変更し `tools/sync-inlines.mjs --write` を実行 —
-  先頭トークン=スクリプトパスの bare 形。shebang + 実行bit 付与済みで、sandbox excludedCommands は
-  先頭トークンでマッチするため node/cd/bash 前置は付けない）。pr-reviewer（`review#i` /
-  schema-retry / `pr-review-lite`）は `opts.model` を渡さず frontmatter（opus / high）で spawn する —
-  `QUALITY_MODEL` を変えても pr-reviewer には効かない。同一 reviewPrompt での比較で opus-high が
-  major 検出最多かつ 1 review コストが fable-high の 2/3 だったため、review 側だけ override を外している
-  （`_lib/review-model-frontmatter.test.mjs` が call site と telemetry の分離を pin）。
-  `opts.model` 付き call が null を返したら（harness の `agent()` は usage 上限・terminal API error・
-  user skip のいずれでも throw せず null を返し、原因は script から読めない）、workflow の
-  `trackedAgent` が model 指定を外して同一 prompt・同一 label で 1 回だけ再試行し、以後その run は
-  frontmatter 既定に sticky で切り替わる（fallback 先を定数で持たず frontmatter を唯一の既定にする。
-  `opts.model` 無しの call site は対象外）。nested `workflow('pr-iterate')` へは
-  `args.nested.quality_fallback`（boolean）で sticky を引き渡し、pr-iterate 側は初期値として読む。
-  発火の有無は telemetry `quality_model_fallback_label` で残す（telemetry.md）。
+  model は subagent frontmatter で決める。dev-flow.js / pr-iterate.js の call site は `opts.model` を渡さない —
+  evaluator（`eval#i` / `final-ac-reconcile` / `security-clearance-final`）と pr-reviewer（`review#i` /
+  schema-retry / `pr-review-lite`）はともに frontmatter（opus / high）で spawn し、workflow 側に model 定数・
+  null 時の model fallback 機構は持たない（`_lib/review-model-frontmatter.test.mjs` が call site と telemetry
+  `eval_model_config` / `review_model_config` = frontmatter 値の一致を pin）。同一入力での paired 比較で
+  opus-high は fable-high と verdict・major 検出が同等以上かつコストが 2/3 だったため、両 gate とも override を外している。
+  `opts.model` を渡す call site は dev-improve.js の `rank-judge`（improve-miner）のみで、
+  `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を dev-improve.js へ inline 生成して渡す。
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。

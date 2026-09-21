@@ -421,16 +421,17 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | agent | 役割 | model / effort |
 | --- | --- | --- |
 | `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | fable / high |
-| `evaluator` | 実装品質ゲート | `QUALITY_MODEL` / high |
-| `pr-reviewer` | PR レビュー | `QUALITY_MODEL` / high |
+| `evaluator` | 実装品質ゲート | opus / high |
+| `pr-reviewer` | PR レビュー | opus / high |
 | `dev-runner` | Skill 呼び出し（analyze / commit / PR） | frontmatter / high |
 | `dev-runner-haiku` | 書き込み・Skill 呼び出しを伴う exec-proxy | haiku / low |
 | `dev-runner-haiku-ro` | read-only exec-proxy | haiku / low |
 | `dev-runner-haiku-wo` | isolation probe 専任（Write のみ） | haiku / low |
 
-model は subagent の frontmatter を既定としつつ `agent()` の `opts.model` で per-call override する。
-品質ゲート系 4 agent の model だけは `plugins/dev-flow/_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で一括指定し、
-`tools/sync-inlines.mjs` が workflow へ inline 生成する。
+model は subagent の frontmatter で決める。dev-flow / pr-iterate の call site は `opts.model` を渡さない
+（evaluator / pr-reviewer の model を変えるなら `agents/*.md` の frontmatter を変える）。`opts.model` を渡すのは
+dev-improve の `rank-judge` のみで、`plugins/dev-flow/_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を
+`tools/sync-inlines.mjs` が dev-improve.js へ inline 生成する。
 
 effort は subagent の frontmatter で固定している。harness 同梱の `workflow-authoring` リファレンスは
 `agent()` の opts に `effort` を記載しているが、**本 harness で実際に適用されるかは未検証**である
