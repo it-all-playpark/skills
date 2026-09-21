@@ -2354,8 +2354,8 @@ function uiVerifyPort(basePort, issue) {
 }
 // ==== END inline: _lib/ui-verify.mjs ====
 // ==== BEGIN inline: _lib/parallel-disjoint.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// enforceDisjointParallel: parallel task の file_changes 衝突を検出し、衝突 task を serial に降格する純粋関数。
-// dev-flow の parallel fan-out 前に呼び出し、file-disjoint 制約を保証する。
+// parallel-disjoint: plan の file_changes と realized diff を突合する純粋関数群（normalizePath /
+// diffDeclaredPaths / isEphemeralPath / filterEphemeralPaths）。宣言外変更の検出と ephemeral path の除外に使う。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -2371,77 +2371,6 @@ function uiVerifyPort(basePort, issue) {
 function normalizePath(s) {
   const base = s.split(':')[0].trim();
   return base.startsWith('./') ? base.slice(2) : base;
-}
-
-/**
- * enforceDisjointParallel: parallel task 群の file_changes が互いに disjoint であることを保証する。
- * 衝突する task を serial 末尾に降格（demote）して返す。
- *
- * @param {Object} plan - { summary, serial: Task[], parallel: Task[] }
- *   Task = { id, desc?, file_changes?: string[], test_plan?, depends_on? }
- * @returns {{ plan: Object, demoted: Array<{id, conflictsWith, paths}> }}
- *   plan: 元 plan を mutate せず浅いコピーしたもの（parallel = accepted のみ、serial = 元 serial + demoted）
- *   demoted: 降格した task の { id, conflictsWith: 先に accept された衝突相手の id, paths: 交差パス配列 } の配列
- */
-function enforceDisjointParallel(plan) {
-  const parallelTasks = plan.parallel;
-
-  // parallel が無い/空の場合はコピーして即返す
-  if (!parallelTasks || parallelTasks.length === 0) {
-    return {
-      plan: { ...plan, parallel: parallelTasks ? [] : plan.parallel },
-      demoted: [],
-    };
-  }
-
-  // accepted task 群の正規化パス和集合（パス → 最初に accept した task id のマップ）
-  const acceptedPaths = new Map(); // normalizedPath → task id
-  const accepted = [];
-  const demotedTasks = [];
-  const demoted = [];
-
-  for (const task of parallelTasks) {
-    const taskPaths = new Set(
-      (task.file_changes ?? []).map(normalizePath)
-    );
-
-    // 先行 accepted task 群との交差を検出
-    const intersectingPaths = [];
-    let firstConflictId = null;
-
-    for (const p of taskPaths) {
-      if (acceptedPaths.has(p)) {
-        intersectingPaths.push(p);
-        if (firstConflictId === null) {
-          firstConflictId = acceptedPaths.get(p);
-        }
-      }
-    }
-
-    if (intersectingPaths.length > 0) {
-      // 衝突あり → demote
-      demotedTasks.push(task);
-      demoted.push({
-        id: task.id,
-        conflictsWith: firstConflictId,
-        paths: intersectingPaths,
-      });
-    } else {
-      // 衝突なし → accept し、パスを登録
-      accepted.push(task);
-      for (const p of taskPaths) {
-        acceptedPaths.set(p, task.id);
-      }
-    }
-  }
-
-  const newPlan = {
-    ...plan,
-    parallel: accepted,
-    serial: [...(plan.serial ?? []), ...demotedTasks],
-  };
-
-  return { plan: newPlan, demoted };
 }
 
 /**
@@ -5460,7 +5389,7 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `sandbox 環境依存の既知事象の可能性が高い。git stash 等の対照実験を再発明せず、`
   + `\`next build --webpack\` 等の非 Turbopack fallback で build 検証してよい。`
   + `fallback で build が成功した場合は「sandbox 環境依存の Turbopack 失敗の可能性（環境要因と断定しない）。実 CI での Turbopack build 確認を推奨」`
-  + `の旨を自分の出力（implementer は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
+  + `の旨を自分の出力（実装 agent は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
 // ---- Implement 経路（全 shape で dev-implement-fable 一本）----
@@ -6059,8 +5988,9 @@ async function execValidatePhase(state) {
         + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
         + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
         + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
-        + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}`
-        + '\n' + STAGING_CONVENTION
+        + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}\n`
+        + `task_id: issue-${ISSUE}（返却 JSON の task_id にそのまま echo せよ）\n`
+        + STAGING_CONVENTION
         + TURBOPACK_NOTE,
         { agentType: FABLE_IMPL_AGENT, schema: IMPL, label: isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`, phase: phaseName },
       )

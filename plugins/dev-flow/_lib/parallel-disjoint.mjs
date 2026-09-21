@@ -1,5 +1,5 @@
-// enforceDisjointParallel: parallel task の file_changes 衝突を検出し、衝突 task を serial に降格する純粋関数。
-// dev-flow の parallel fan-out 前に呼び出し、file-disjoint 制約を保証する。
+// parallel-disjoint: plan の file_changes と realized diff を突合する純粋関数群（normalizePath /
+// diffDeclaredPaths / isEphemeralPath / filterEphemeralPaths）。宣言外変更の検出と ephemeral path の除外に使う。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -15,77 +15,6 @@
 export function normalizePath(s) {
   const base = s.split(':')[0].trim();
   return base.startsWith('./') ? base.slice(2) : base;
-}
-
-/**
- * enforceDisjointParallel: parallel task 群の file_changes が互いに disjoint であることを保証する。
- * 衝突する task を serial 末尾に降格（demote）して返す。
- *
- * @param {Object} plan - { summary, serial: Task[], parallel: Task[] }
- *   Task = { id, desc?, file_changes?: string[], test_plan?, depends_on? }
- * @returns {{ plan: Object, demoted: Array<{id, conflictsWith, paths}> }}
- *   plan: 元 plan を mutate せず浅いコピーしたもの（parallel = accepted のみ、serial = 元 serial + demoted）
- *   demoted: 降格した task の { id, conflictsWith: 先に accept された衝突相手の id, paths: 交差パス配列 } の配列
- */
-export function enforceDisjointParallel(plan) {
-  const parallelTasks = plan.parallel;
-
-  // parallel が無い/空の場合はコピーして即返す
-  if (!parallelTasks || parallelTasks.length === 0) {
-    return {
-      plan: { ...plan, parallel: parallelTasks ? [] : plan.parallel },
-      demoted: [],
-    };
-  }
-
-  // accepted task 群の正規化パス和集合（パス → 最初に accept した task id のマップ）
-  const acceptedPaths = new Map(); // normalizedPath → task id
-  const accepted = [];
-  const demotedTasks = [];
-  const demoted = [];
-
-  for (const task of parallelTasks) {
-    const taskPaths = new Set(
-      (task.file_changes ?? []).map(normalizePath)
-    );
-
-    // 先行 accepted task 群との交差を検出
-    const intersectingPaths = [];
-    let firstConflictId = null;
-
-    for (const p of taskPaths) {
-      if (acceptedPaths.has(p)) {
-        intersectingPaths.push(p);
-        if (firstConflictId === null) {
-          firstConflictId = acceptedPaths.get(p);
-        }
-      }
-    }
-
-    if (intersectingPaths.length > 0) {
-      // 衝突あり → demote
-      demotedTasks.push(task);
-      demoted.push({
-        id: task.id,
-        conflictsWith: firstConflictId,
-        paths: intersectingPaths,
-      });
-    } else {
-      // 衝突なし → accept し、パスを登録
-      accepted.push(task);
-      for (const p of taskPaths) {
-        acceptedPaths.set(p, task.id);
-      }
-    }
-  }
-
-  const newPlan = {
-    ...plan,
-    parallel: accepted,
-    serial: [...(plan.serial ?? []), ...demotedTasks],
-  };
-
-  return { plan: newPlan, demoted };
 }
 
 /**

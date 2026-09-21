@@ -65,7 +65,7 @@ Security floor 時点（PR 前）の working tree から ephemeral・宣言外�
 不発を数える。danger-grep hit があれば micro でも Evaluate を強制実行（security path）。
 
 **micro lite route**: `TRIVIAL && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
-contract 準拠かつ danger clean）を満たす run は、PR phase で plan 1 発 → implementer → targeted test →
+contract 準拠かつ danger clean）を満たす run は、PR phase で dev-implement-fable 1 spawn → targeted test →
 PR → pr-reviewer 1-pass の縮約経路（lite route、判断系 agent 呼び出し ≤10）を通る。lite の pr-reviewer
 1-pass が `review==null || blocking.length>0`（critical/major finding あり）を検出した場合のみ
 `workflow('pr-iterate')` フル loop へ自動昇格し、以降は通常の review⇄fix 経路で処理する。danger-grep
