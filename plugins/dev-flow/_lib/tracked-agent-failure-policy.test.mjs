@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 /**
@@ -31,9 +31,7 @@ import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEV_FLOW_PATH = join(HERE, '..', '.claude', 'workflows', 'dev-flow.js');
 const PR_ITERATE_PATH = join(HERE, '..', '.claude', 'workflows', 'pr-iterate.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(DEV_FLOW_PATH, 'utf8'), 'planner');
+const devFlowSrc = readFileSync(DEV_FLOW_PATH, 'utf8');
 const prIterateSrc = readFileSync(PR_ITERATE_PATH, 'utf8');
 
 const THROW = () => { throw new Error('injected'); };
@@ -91,7 +89,7 @@ const DF_CROSS_REPO = DEV_FLOW_SCENARIOS['cross-repo'];
 // トリガ throw message が THROW 定数と同じ 'injected' のため使うと自身の throw が吸収されたのか
 // 元の abort が伝播したのか区別できない。message を変えた専用 base で「元の error message が
 // そのまま残る（＝journal-log-abort 自身の throw は吸収された）」ことを検証する。
-const DF_JOURNAL_ABORT_BASE = { overrides: { 'plan#standard': () => { throw new Error('outer-trigger') } } };
+const DF_JOURNAL_ABORT_BASE = { overrides: { 'eval#1': () => { throw new Error('outer-trigger') } } };
 
 async function runDevFlowBaseline(config) {
   const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides: config.overrides, workflow: config.workflow });
@@ -118,8 +116,7 @@ const EXPECTED_DEV_FLOW = {
     policy: 'needs_clarification',
     reason: 'try/catchで吸収するがprovenance突合が不合格になりneeds_clarificationで中断する',
   },
-  'plan#standard': { config: DF_B1, policy: 'abort', reason: 'need()包み。計画取得不能のまま実装を進めない致命契約' },
-  'impl:serial:t1': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。implementer失敗はnullとしてdropし継続する' },
+  'impl:serial:issue-1': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。dev-implement-fable失敗はnullとしてdropし継続する' },
   'test#1': {
     config: DF_B1,
     policy: 'continue',
@@ -202,7 +199,7 @@ const EXPECTED_DEV_FLOW = {
 
   // ── 以下は issue #605 review（PR #645）: DEV_FLOW_SCENARIOS 経由で新規到達する 30 label ──
   'issue-labels': { config: DF_DIFF_GATE_RETRY, policy: 'abort', reason: 'bare据え置き。cross-repoラベル取得不能のままempty-diff判定を進めない' },
-  'reimpl-empty-diff:serial:t1': { config: DF_DIFF_GATE_RETRY, policy: 'continue', reason: 'failOpenAgent経由。empty-diff差し戻しのserial実装失敗はnullとしてdropし継続する' },
+  'reimpl-empty-diff:serial:issue-1': { config: DF_DIFF_GATE_RETRY, policy: 'continue', reason: 'failOpenAgent経由。empty-diff差し戻しのserial実装失敗はnullとしてdropし継続する' },
   'diff-gate-retry': { config: DF_DIFF_GATE_RETRY, policy: 'abort', reason: 'need()包み。差し戻し後のdiff再取得不能のまま先へ進めない致命契約' },
   'test#retry-1': {
     config: DF_DIFF_GATE_RETRY,
@@ -219,11 +216,7 @@ const EXPECTED_DEV_FLOW = {
   'ui-verify-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },
   'ui-verify-teardown-final': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる（Final reconcile）' },
   'redgreen:AC-1': { config: DF_REDGREEN, policy: 'abort', reason: 'bare据え置き。red→green実証呼び出し自体の例外は吸収されずrunを中断させる' },
-  'plan#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回計画取得不能のまま進めない致命契約' },
-  'review#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ初回レビュー取得不能のまま進めない致命契約' },
-  'plan#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ2周目計画取得不能のまま進めない致命契約' },
-  'review#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。complex plan-reviewループ2周目レビュー取得不能のまま進めない致命契約' },
-  'fix#1': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'bare据え置き。evaluator実装レベル指摘への修正呼び出しは吸収機構がない' },
+  'reimpl#1:serial:issue-1': { config: DF_COMPLEX_FIX, policy: 'continue', reason: 'failOpenAgent経由。evaluator差し戻しのdev-implement-fable失敗はnullとしてdropし継続する' },
   'eval#2': { config: DF_COMPLEX_FIX, policy: 'abort', reason: 'need()包み。2周目の評価取得不能のままPRへ進めない致命契約' },
   'green-fix#1': { config: DF_GREEN_FIX, policy: 'abort', reason: 'bare据え置き。green-fix実装呼び出しはtry/catchで吸収されずrunを中断させる' },
   'test#2': {
@@ -231,7 +224,6 @@ const EXPECTED_DEV_FLOW = {
     policy: 'continue',
     reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路',
   },
-  'plan#trivial': { config: DF_LITE, policy: 'abort', reason: 'need()包み。micro shapeのplan取得不能のまま実装を進めない致命契約' },
   'pr-review-lite': { config: DF_LITE, policy: 'abort', reason: 'bare据え置き。lite経路のレビュー呼び出し失敗は吸収機構がない' },
   'ci-check-lite': { config: DF_LITE, policy: 'continue', reason: 'failOpenAgent経由。lite経路のCI状態取得失敗はフルpr-iterateへ委譲するのみ' },
   'cross-repo-artifacts': { config: DF_CROSS_REPO, policy: 'abort', reason: 'bare据え置き。cross-repo成果物検証失敗のfail-open化は別issueの検討対象' },
@@ -313,13 +305,12 @@ test('dev-flow.js: 本ファイルの baseline + DEV_FLOW_SCENARIOS 全 scenario
 });
 
 // ── 参照 sanity（走査ズレ検出）────────────────────────────────────
-test("dev-flow.js baseline（B1）に 'isolation-probe' / 'plan#standard' / 'post-summary' が含まれる（走査ズレ検出）", async () => {
+test("dev-flow.js baseline（B1）に 'isolation-probe' / 'impl:serial:issue-1' / 'post-summary' が含まれる（走査ズレ検出）", async () => {
   const { calls } = await runDevFlowBaseline(DF_B1);
   const labels = calls.map((c) => c.label);
   assert.ok(labels.includes('isolation-probe'), "baseline に 'isolation-probe' が無い");
-  // shape='standard' の既定 baseline では PLAN_SOLO 経路のため label は 'plan#standard'
-  // （'plan#${i}' ループ形は complex shape でのみ到達し本 baseline では観測されない）。
-  assert.ok(labels.includes('plan#standard'), "baseline に 'plan#standard' が無い");
+  // Plan phase は合成 plan のみ（issue #673）— Implement の spawn label 'impl:serial:issue-1' で走査ズレを検出する。
+  assert.ok(labels.includes('impl:serial:issue-1'), "baseline に 'impl:serial:issue-1' が無い");
   assert.ok(labels.includes('post-summary'), "baseline に 'post-summary' が無い");
 });
 

@@ -51,12 +51,6 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は riskResponse を risk
     // フィールドに包んで返す。label 'merge-tier-facts'（Merge tier 統合呼び出し）は
     // riskResponse を risk サブ結果に包んで返す。
@@ -91,7 +85,7 @@ function makeSandbox(analyzeReq, riskResponse, evaluatorResponse) {
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };

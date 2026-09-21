@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -42,8 +42,6 @@ function makeCountingSandbox(analyzeReq, config) {
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -56,7 +54,7 @@ function makeCountingSandbox(analyzeReq, config) {
     if (label === 'journal-log-failure') return null;
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { logged: true, summary: 'ok' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 'T1', files: implementerFiles, summary: '', concerns: [], blocking_reason: null, missing_context: null };
     }
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
@@ -103,9 +101,7 @@ const STANDARD_REQ = {
   issue_title: 'stub-issue-title',
 };
 
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 // (1) diff-gate empty=true + cross-repo ラベル + found=1 → throw なし・reimpl-empty-diff 無し・
 //     status==='cross_repo_artifact'・journal-log-failure prompt に 'cross_repo' を含み 'empty_diff' を含まない

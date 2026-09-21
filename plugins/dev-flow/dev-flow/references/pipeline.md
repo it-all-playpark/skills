@@ -40,21 +40,21 @@ pin した CI check の決定論判定で代替し、成立しなければ HOLD 
 
 shape ごとの経路（3 tier）:
 
-| shape | Plan 経路 | Evaluate 経路 | merge tier |
+| shape | Plan / Implement 経路 | Evaluate 経路 | merge tier |
 |-------|-----------|---------------|------------|
-| **micro** | `IMPLEMENT_MODE='fable'`（既定）: dev-planner 0 回・issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn。`'planner'`: plan 1 発・plan-reviewer 0 回（triviality gate で review loop skip） | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
-| **standard** | `IMPLEMENT_MODE='fable'`（既定）: dev-planner 0 回・issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn。`'planner'`: plan 1 発・plan-reviewer 0 回 → implementer | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。refloor で complex 化した run の差し戻し（`reimpl#i`）は fable 経路では dev-planner を起動せず同じ `dev-implement-fable` へ `fix_feedback` 付きで流す | REVIEW |
-| **complex** | `IMPLEMENT_MODE='fable'`（既定）: 同上（dev-planner ⇄ plan-reviewer は起動しない）。`'planner'`: dev-planner ⇄ plan-reviewer の review loop（上限 PLAN_MAX=8、topic-stuck 検出で early-cutoff あり） | 差し戻し loop（上限 EVAL_MAX=10） | REVIEW、danger・breaking で HOLD |
+| **micro** | issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
+| **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。refloor で complex 化した run の差し戻し（`reimpl#i`）は同じ `dev-implement-fable` へ `fix_feedback` 付きで流す | REVIEW |
+| **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | REVIEW、danger・breaking で HOLD |
 
-Implement 経路は shape に関わらず `_lib/implement-mode.mjs` の `IMPLEMENT_MODE`（`'fable' | 'planner'`）で切り替える
-（`QUALITY_MODEL` と同じ 1 行定数・inline 生成方式。`'planner'` は上表の各 shape の従来経路へ戻るロールバック値）。
-`dev-implement-fable` は issue 本文（`req.issue_body`、analyze-issue.sh が 4000 字で切詰め）+ AC + `fix_feedback` を
-受け取り、`AC_TEST_CONTRACT`（red→green 自己実証）や手順書型 task は受け取らない — テスト全件・red 証明・AC 判定は
-Validate / redgreen-verify / evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL 返却の `files` を
-宣言として取り込む（宣言外監査・refloor count・PR body の材料は implementer 経路と同じ）。
-**ロールバック**: `_lib/implement-mode.mjs` の 1 行を `'planner'` に戻し `tools/sync-inlines.mjs --write`
-（bare 形）を実行するだけ。観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数・
-`dev-planner` 0）と既存の `plan_iter`（fable 経路は 0）で行い、新キーは足さない。
+Implement 経路は shape に関わらず `dev-implement-fable` 一本（planner ⇄ reviewer ループ・parallel fan-out・
+`pipeline()` は持たない。切替定数は置かず、経路を戻すときは git revert）。`dev-implement-fable` は issue 本文
+（`req.issue_body`、analyze-issue.sh が 4000 字で切詰め）+ AC + `fix_feedback` を受け取り、AC テスト契約
+（red→green 自己実証）や手順書型 task は受け取らない — テスト全件・red 証明・AC 判定は Validate / redgreen-verify /
+evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL 返却の `files` を宣言として取り込む
+（宣言外監査・refloor count・PR body の材料になる）。BLOCKED（`approach_mismatch`）は planner を起動せず、
+blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止）と DONE 成果を prompt に付けて同じ agent を
+`reimpl-blocked#b` で再 spawn する（上限 `BLOCK_MAX`）。Validate の green-fix（`green-fix#i` / `green-fix#retry-i`）も
+同じ agent。観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）と `plan_iter`（常に 0）。
 
 shape は Analyze phase で `classifyShape` が判定し、安全 floor を適用する（`estimated_change_file_count`
 欠落・`acceptance_criteria` 欠落・out-of-enum `issue_type`・breaking 検出 → complex floor）。実装後は
@@ -79,10 +79,10 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   namespace は `agent()` を呼ぶ直前の `nsAgentOpts()` (canonical `_lib/agent-namespace.mjs`。dev-flow.js /
   pr-iterate.js / dev-improve.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
-- **判断系 leaf は subagent** (`.claude/agents/{dev-planner,plan-reviewer,implementer,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
+- **判断系 leaf は subagent** (`.claude/agents/{dev-implement-fable,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
   workflow の `agent()` opts には effort が記載されているが、本 harness での適用可否は未検証（dev-flow-canary の opts 受理 probe — capability id `agent_opts_effort_accepted` — で再判定する。probe は受理されたことしか判定できない）。それまで effort は subagent frontmatter で固定する。
   model は frontmatter を既定としつつ `agent()` の `opts.model` で per-call override できる —
-  品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer、frontmatter 既定 opus）は
+  品質ゲート系 2 agent（evaluator / pr-reviewer、frontmatter 既定 opus）は
   `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数で一括指定する（tools/sync-inlines.mjs で
   dev-flow.js / pr-iterate.js へ inline 生成。戻すときは `_lib/quality-model.mjs` の 1 行を
   `'opus'` に変更し `tools/sync-inlines.mjs --write` を実行 — 先頭トークン=スクリプトパスの bare 形。
@@ -98,10 +98,10 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。
-  品質ゲート系 4 agent は `effort: high`（max と精度同等で高速）、implementer / dev-runner は
+  品質ゲート系 2 agent は `effort: high`（max と精度同等で高速）、dev-implement-fable / dev-runner は
   `effort: high`、dev-runner-haiku / dev-runner-haiku-ro は `effort: low`（mechanical exec-proxy は
   low が high に schema 成功率で劣後しない）。
-- **1 issue = 1 PR**。並列実装は単一 worktree 内で file-disjoint な task を `pipeline()` で fan-out する。
+- **1 issue = 1 PR**。Implement は全 shape で `dev-implement-fable` を単一 worktree に 1 spawn する（parallel fan-out / `pipeline()` は持たない）。
 - **merge は手動** (LGTM 後にユーザーが merge)。
 - worktree の後片付けは `_shared/scripts/worktree-teardown.sh <worktree-path>` を使う
   (`git worktree remove` 直打ちは `.veridelta/runs/*.json` の red→green 検証証跡を失う)。
@@ -164,11 +164,11 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   **軸A invariant 不変** — deterministic oracle / seed / critical アイテムは全 policy で blocking のまま（security floor / 決定論ゲートは policy で緩めない）。
   **既定同一挙動** — 既定 `llm-major-advisory` は軸A invariant（critical / deterministic / seed = blocking）+ LLM major/minor = advisory の既定 lane 分類と全アイテムで一致し、非 default policy のみ gating が変わる（enum で境界を滑らせる設計）。
   out-of-enum 値は明示 error（legacy fallback / version 分岐なし）。canonical は `_lib/gate-policy.mjs`、dev-flow.js への inline は tools/sync-inlines.mjs で生成・`_lib/workflow-inlines.sync.test.mjs` が全文一致保証。
-- **block_class**: implementer 返り値 `status:'BLOCKED'` の `blocking_reason` は閉じた 2 値 enum
+- **block_class**: dev-implement-fable 返り値 `status:'BLOCKED'` の `blocking_reason` は閉じた 2 値 enum
   `approach_mismatch` / `guard_blocked` を持つ構造化 object（`{block_class, detail, guard_id}`）で、
   string（free text）は受理せず schema error になる。`guard_blocked` は guard/hook 由来の BLOCKED
   （inline-edit-guard deny / sandbox EPERM / safety classifier block / bg-isolation 等）を指し、
-  Implement phase の replan ループ（blockSeen 登録・`approach_mismatch` findings 化・dev-planner
-  再呼出し）から除外され、blockedConcerns 経由で evaluator focus へ直行する。out-of-enum の
+  Implement phase の再実装ループ（blockSeen 登録・`approach_mismatch` findings 化・dev-implement-fable
+  再 spawn）から除外され、blockedConcerns 経由で evaluator focus へ直行する。out-of-enum の
   `block_class` は明示 error（legacy fallback / version 分岐なし）。canonical は
   `_lib/block-routing.mjs`、dev-flow.js への inline は tools/sync-inlines.mjs で生成する。

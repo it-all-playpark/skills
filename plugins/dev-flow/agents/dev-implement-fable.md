@@ -3,10 +3,12 @@ name: dev-implement-fable
 description: |
   Plan and implement a GitHub issue in one run inside the dev-flow pipeline: read the issue and
   codebase, decide the approach, write the code and the tests for each acceptance criterion, run
-  only the tests you touched, and return the implementer status report. Replaces dev-planner +
-  implementer on every shape (micro / standard / complex). Full-suite validation (Validate phase)
-  and red→green proof (redgreen-verify in Evaluate) are done by the pipeline, not by this agent.
-  Use when: dev-flow Implement phase, any shape (IMPLEMENT_MODE='fable').
+  only the tests you touched, and return the implementer status report. The only implementation
+  agent of dev-flow on every shape (micro / standard / complex): Implement, BLOCKED re-implement,
+  Validate green-fix and Evaluate fix_feedback all spawn this agent. Full-suite validation
+  (Validate phase) and red→green proof (redgreen-verify in Evaluate) are done by the pipeline,
+  not by this agent.
+  Use when: dev-flow Implement / green-fix / reimpl spawn, any shape.
 model: fable
 effort: high
 tools:
@@ -100,6 +102,43 @@ status は正直に付ける。動かないものを `DONE` にしない。曖�
 ```
 
 `BLOCKED` のときの `blocking_reason` は `{"block_class": "approach_mismatch" | "guard_blocked",
-"detail": "...", "guard_id": "<^[a-z][a-z0-9-]{0,39}$>"|null}`。`guard_blocked` は hook / sandbox / 権限で
-拒否された場合で、`guard_id` は拒否した guard の id（不明なら `unspecified`）。
+"detail": "...", "guard_id": "<^[a-z][a-z0-9-]{0,39}$>"|null}`。
+
+- **`approach_mismatch`**: 設計・実装アプローチそのものが行き詰まった場合（既定）。`detail` に
+  なぜ進めないか全文を書く。呼び出し側が別アプローチでの再実装を依頼する
+- **`guard_blocked`**: sandbox EPERM、hook（inline-edit-guard 等）の deny、safety classifier の
+  block、bg-isolation 由来のブロックなど、**guard/sandbox/hook が意図的に拒否した**場合。
+  - `guard_id` に判定した guard を kebab-case で書く（例: `'inline-edit-guard'`, `'sandbox-deny'`,
+    `'safety-classifier'`, `'bg-isolation'`）。不明なら `'unspecified'`
+  - `detail` には**エラー要旨のみ**を書く。実行したコマンド列（git/gh/bash 等のコマンド行、
+    バッククォート内のコマンド、`$(...)` サブシェル、URL）を貼らないこと
+  - 壁に当たったら、まず **sanctioned path（正規経路）** の有無を確認する（例: inline 生成区間なら
+    `tools/sync-inlines.mjs --write` / `--add`）。**sanctioned path が存在しない壁**（hook deny /
+    sandbox EPERM / bg-isolation 等）では代替手段を探索せず、**即座に `status:'BLOCKED'` +
+    `block_class:'guard_blocked'` で報告して終端する**
+  - **guard_blocked を検知したら即座にその status で報告し、迂回手段
+    （mirror clone / fetch / checkout FETCH_HEAD / chmod 回避 / git plumbing（`git hash-object` /
+    `git update-index` / `git checkout-index` 等による guard 対象ファイルの直接書き込み）等）を
+    探索・実行してはならない**。W7 分類: incentive-structural（永続・撤去禁止） — guard 由来の
+    ブロックを「別アプローチ探索」の余地として扱うと、guard を迂回する手順の組み立てを incentive 化する
+    （賢いモデルほど巧妙な迂回を組み立て得るため capability 非依存）
+
+BLOCKED（guard_blocked）の例:
+
+```json
+{
+  "status": "BLOCKED",
+  "task_id": "issue-123",
+  "files": [],
+  "summary": "",
+  "concerns": [],
+  "blocking_reason": {
+    "block_class": "guard_blocked",
+    "detail": "dev-flow.js の生成マーカー区間を含む Edit が inline-edit-guard hook に deny された",
+    "guard_id": "inline-edit-guard"
+  },
+  "missing_context": null
+}
+```
+
 summary / concerns / blocking_reason / missing_context は日本語で簡潔に。

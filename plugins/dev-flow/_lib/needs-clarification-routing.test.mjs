@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -60,15 +60,8 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    // Plan: dev-planner（plan#trivial / plan#standard / plan#N / replan 系）
+    // Plan: dev-implement-fable（plan#trivial / plan#standard / plan#N / replan 系）
     // implementer を起動させるため serial 1 件を必ず返す
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [{ id: 'T1', desc: 'task' }], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     if (label.startsWith('danger-grep')) {
       return { ok: true, hits: [] };
@@ -98,7 +91,7 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
       return { files: [] };
     }
     // Implementer: 注入した implementerFn(callIndex) を使う
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       const result = implementerFn(implementerCallIndex);
       implementerCallIndex++;
       return result;
@@ -209,14 +202,12 @@ const standardReq = {
 // T1 は TDD red: 現行 dev-flow.js は needs_clarification を返さないため fail。
 // ============================================================
 test('[needs-clarification] T1: 常に NEEDS_CONTEXT → 再分析+needs_clarification を返し PR を起動しない', async () => {
-  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     standardReq,
     () => ({
       status: 'NEEDS_CONTEXT',
-      task_id: 'T1',
+      task_id: 'issue-1',
       files: [],
       summary: '',
       concerns: [],
@@ -293,12 +284,12 @@ test('[needs-clarification] T1: 常に NEEDS_CONTEXT → 再分析+needs_clarifi
 
 // ============================================================
 // T2: analyzeReq を micro 形状にする
-// → dev-planner 0 回・result.status === 'needs_clarification'
+// → dev-implement-fable 0 回・result.status === 'needs_clarification'
 // → missing_context 非空・pr 系 0 回
 //
 // T2 は TDD red: 現行 dev-flow.js は needs_clarification を返さないため fail。
 // ============================================================
-test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-planner 0 回・needs_clarification', async () => {
+test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-implement-fable 0 回・needs_clarification', async () => {
   const microReq = {
     summary: 's',
     acceptance_criteria: [],
@@ -309,12 +300,12 @@ test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-planner 0 �
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(
     microReq,
     () => ({
       status: 'NEEDS_CONTEXT',
-      task_id: 'T1',
+      task_id: 'issue-1',
       files: [],
       summary: '',
       concerns: [],
@@ -329,12 +320,12 @@ test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-planner 0 �
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
 
-  // agentType==='dev-planner' の呼び出し 0 回
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
+  // agentType==='dev-implement-fable' の呼び出し 0 回
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(
     plannerCalls.length,
     0,
-    `T2: dev-planner 呼び出しは 0 回のはずだが ${plannerCalls.length} 回だった`,
+    `T2: dev-implement-fable 呼び出しは 0 回のはずだが ${plannerCalls.length} 回だった`,
   );
 
   // result.status === 'needs_clarification'
@@ -366,18 +357,18 @@ test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-planner 0 �
 
 // ============================================================
 // T3: 正常 path 制御群（implementer が常に DONE）
-// → analyze 系ちょうど 1 回・dev-planner 1 回・evaluator 1 回・pr 1 回
+// → analyze 系ちょうど 1 回・dev-implement-fable 1 回・evaluator 1 回・pr 1 回
 // → workflow() 呼び出し済み・result.pr_url 存在・result.status undefined
 //
 // T3 は現行挙動の pin（pass）。
 // ============================================================
 test('[needs-clarification] T3: 正常 path（DONE）→ analyze/planner/evaluator/pr 各 1 回・PR 完走', async () => {
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     standardReq,
     () => ({
       status: 'DONE',
-      task_id: 'T1',
+      task_id: 'issue-1',
       files: [],
       summary: '',
       concerns: [],
@@ -400,12 +391,12 @@ test('[needs-clarification] T3: 正常 path（DONE）→ analyze/planner/evaluat
     `T3: analyze 系呼び出しは 1 回のはずだが ${analyzeCalls.length} 回だった`,
   );
 
-  // dev-planner ちょうど 1 回（standard 経路なので plan#standard の 1 回のみ）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
+  // dev-implement-fable ちょうど 1 回（standard 経路なので plan#standard の 1 回のみ）
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(
     plannerCalls.length,
     1,
-    `T3: dev-planner 呼び出しは 1 回のはずだが ${plannerCalls.length} 回だった`,
+    `T3: dev-implement-fable 呼び出しは 1 回のはずだが ${plannerCalls.length} 回だった`,
   );
 
   // evaluator ちょうど 1 回
@@ -448,18 +439,18 @@ test('[needs-clarification] T3: 正常 path（DONE）→ analyze/planner/evaluat
 // ============================================================
 // T4: BLOCKED path 不変（implementer が常に BLOCKED）
 // → analyze 系 1 回（NEEDS_CONTEXT 用再分析が走らない）
-// → dev-planner 呼び出し 1+BLOCK_MAX(=2)=3 回（初回 plan + replan-blocked 2 回）
+// → dev-implement-fable 呼び出し 1+BLOCK_MAX(=2)=3 回（初回 plan + replan-blocked 2 回）
 // → label 'pr' 始まり 1 回（BLOCKED は従来通り PR まで進む）
 //
 // T4 は現行挙動の pin（pass）。
 // ============================================================
-test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-planner 3 回・pr 1 回', async () => {
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-implement-fable 3 回・pr 1 回', async () => {
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(
     standardReq,
     () => ({
       status: 'BLOCKED',
-      task_id: 'T1',
+      task_id: 'issue-1',
       blocking_reason: { block_class: 'approach_mismatch', detail: 'no way' },
       files: [],
       summary: '',
@@ -482,12 +473,12 @@ test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-plan
     `T4: analyze 系は NEEDS_CONTEXT 再分析なしで 1 回のはずだが ${analyzeCalls.length} 回だった`,
   );
 
-  // dev-planner 3 回（初回 plan#standard + replan-blocked#1 + replan-blocked#2）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
+  // dev-implement-fable 3 回（初回 plan#standard + replan-blocked#1 + replan-blocked#2）
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(
     plannerCalls.length,
     3,
-    `T4: dev-planner は 1+BLOCK_MAX=3 回のはずだが ${plannerCalls.length} 回だった (labels: ${plannerCalls.map((c) => c.label).join(', ')})`,
+    `T4: dev-implement-fable は 1+BLOCK_MAX=3 回のはずだが ${plannerCalls.length} 回だった (labels: ${plannerCalls.map((c) => c.label).join(', ')})`,
   );
 
   // label 'pr' 始まり 1 回（BLOCKED でも PR まで進む）
@@ -507,14 +498,14 @@ test('[needs-clarification] T4: BLOCKED path 不変 → analyze 1 回・dev-plan
 // T5 は TDD red: 現行 dev-flow.js は needs_clarification ルーティングを持たないため fail。
 // ============================================================
 test('[needs-clarification] T5: 回復 path（1 回目 NEEDS_CONTEXT → 2 回目 DONE）→ analyze 2 回・PR 完走', async () => {
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     standardReq,
     (callIndex) => {
       if (callIndex === 0) {
         return {
           status: 'NEEDS_CONTEXT',
-          task_id: 'T1',
+          task_id: 'issue-1',
           files: [],
           summary: '',
           concerns: [],
@@ -524,7 +515,7 @@ test('[needs-clarification] T5: 回復 path（1 回目 NEEDS_CONTEXT → 2 回�
       }
       return {
         status: 'DONE',
-        task_id: 'T1',
+        task_id: 'issue-1',
         files: [],
         summary: '',
         concerns: [],
@@ -567,12 +558,12 @@ test('[needs-clarification] T5: 回復 path（1 回目 NEEDS_CONTEXT → 2 回�
 // missing_context===ambiguities を VM 挙動で検証するため削除した（issue #636）。
 
 // ============================================================
-// T7: ambiguities 3 件 + AC 非空 → needs_clarification + missing_context が ambiguities と一致 + dev-planner 0 回
+// T7: ambiguities 3 件 + AC 非空 → needs_clarification + missing_context が ambiguities と一致 + dev-implement-fable 0 回
 //
 // レビュー指摘 (a) のケース: ambiguities.length > AMBIGUITY_MAX (3 > 2) かつ AC 非空
 // → missing_context 選択 ternary の ambiguities 側（row 900 の else 分岐）が通ることを確認
 // ============================================================
-test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarification + missing_context===ambiguities + dev-planner 0回', async () => {
+test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarification + missing_context===ambiguities + dev-implement-fable 0回', async () => {
   const reqWithAmbiguities = {
     summary: 's',
     acceptance_criteria: ['ac1'],
@@ -584,12 +575,12 @@ test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarifica
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeCountingSandbox(
     reqWithAmbiguities,
     () => ({
       status: 'DONE',
-      task_id: 'T1',
+      task_id: 'issue-1',
       files: [],
       summary: '',
       concerns: [],
@@ -618,12 +609,12 @@ test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarifica
     `T7: result.missing_context は ambiguities ['a','b','c'] のはずだが ${JSON.stringify(result?.missing_context)} だった`,
   );
 
-  // dev-planner 0 回（曖昧ゲートで Plan 前に return）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
+  // dev-implement-fable 0 回（曖昧ゲートで Plan 前に return）
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(
     plannerCalls.length,
     0,
-    `T7: dev-planner 呼び出しは 0 回のはずだが ${plannerCalls.length} 回だった`,
+    `T7: dev-implement-fable 呼び出しは 0 回のはずだが ${plannerCalls.length} 回だった`,
   );
 
   // label 'pr' 始まり 0 回
@@ -653,12 +644,12 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls, workflowCalledRef } = makeCountingSandbox(
     reqWithBoundaryAmbiguities,
     () => ({
       status: 'DONE',
-      task_id: 'T1',
+      task_id: 'issue-1',
       files: [],
       summary: '',
       concerns: [],
@@ -686,12 +677,12 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
     `T8: result.pr_url が存在するはずだが ${JSON.stringify(result?.pr_url)} だった`,
   );
 
-  // dev-planner 1 回（standard 経路で Plan まで進んだ）
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
+  // dev-implement-fable 1 回（standard 経路で Plan まで進んだ）
+  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(
     plannerCalls.length,
     1,
-    `T8: dev-planner 呼び出しは 1 回のはずだが ${plannerCalls.length} 回だった`,
+    `T8: dev-implement-fable 呼び出しは 1 回のはずだが ${plannerCalls.length} 回だった`,
   );
 
   // workflow() 呼び出し済み（pr-iterate が起動された）
@@ -709,7 +700,7 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
 //   (c) 1 件目は '--depth comprehensive' を含まず、2 件目のみ含む
 // ============================================================
 test('[needs-clarification] T9: analyzePrompt(depth) 関数化 — 2 経路の prompt が depth のみ異なる', async () => {
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
 
   // (a) の 'analyzePrompt' 文字列 pin は削除（issue #636）— (b)(c) の「depth 置換後に完全一致」が関数化の挙動証拠
 
@@ -718,7 +709,7 @@ test('[needs-clarification] T9: analyzePrompt(depth) 関数化 — 2 経路の p
     standardReq,
     () => ({
       status: 'NEEDS_CONTEXT',
-      task_id: 'T1',
+      task_id: 'issue-1',
       files: [],
       summary: '',
       concerns: [],

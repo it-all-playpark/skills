@@ -82,8 +82,8 @@ test('静的 pin: merge-tier.mjs ソースに "planConcerns" 文字列が出現�
   assert.ok(!src.includes('planConcerns'), 'merge-tier.mjs は planConcerns を参照してはならない');
 });
 
-// ─── 3. dev-flow.js 側（planConcerns が merge tier に波及しない）は plan-iterate-wiring-routing.test.mjs (b)
-//        が VM 挙動で検証する: plan-reviewer が revise で収束し CONCERN-* が seed されても merge_tier は既定と同じ ───
+// ─── 3. dev-flow.js 側: plan review ループは issue #673 で撤去され planConcerns は常に空（merge tier の入力にもならない）。
+//        implement concerns が CONCERN-* として seed されても merge_tier が既定と同じことは routing test 群が VM 挙動で検証する ───
 
 // ─── 4. summary 表示側 pin: tier 行・marker は planConcerns の有無で不変 ────
 

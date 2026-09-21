@@ -2,7 +2,7 @@
 // `effort` value in their YAML frontmatter.
 //
 // TDD workflow:
-//   RED  — before editing the 4 agent files, dev-planner/plan-reviewer/evaluator/pr-reviewer
+//   RED  — before editing the quality-gate agent files, evaluator/pr-reviewer
 //           will have `effort: max` which differs from the expected `high`.
 //   GREEN — after the 4 files are edited, all 6 agents should assert to `high`.
 //
@@ -70,11 +70,8 @@ function frontmatterTools(src) {
 
 // Table-driven: expected effort for each of the 6 dev-flow agents
 const EXPECTED = {
-  'dev-planner': 'high',
-  'plan-reviewer': 'high',
   'evaluator': 'high',
   'pr-reviewer': 'high',
-  'implementer': 'high',
   'dev-implement-fable': 'high',
   'dev-runner': 'high',
   'dev-runner-haiku-wo': 'low',

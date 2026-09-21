@@ -3,16 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 import { EVALUATOR_OPERATIONAL_CONTRACT, CONCERN_RESOLUTIONS, normalizeConcernResolution } from './evaluator-contract.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 const prIterateSrc = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 const evaluatorMd = readFileSync(join(repoRoot, '.claude/agents/evaluator.md'), 'utf8');
 
@@ -93,7 +91,7 @@ test('[evaluator-contract] eval#1 prompt contains EVALUATOR_OPERATIONAL_CONTRACT
         struct: null,
         diffhash: { hash: 'H', empty: false },
       },
-      'impl:serial:t1': { status: 'DONE_WITH_CONCERNS', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: ['未検証の入力値がある'] },
+      'impl:serial:issue-1': { status: 'DONE_WITH_CONCERNS', task_id: 'issue-1', files: ['src/x.ts'], summary: 's', concerns: ['未検証の入力値がある'] },
     },
   });
   const { error } = await runDevFlowCapture(devFlowSrc, ctx);
@@ -265,14 +263,6 @@ test('[normalizeConcernResolution] null input throws', () => {
 
 test('[normalizeConcernResolution] array input throws', () => {
   assert.throws(() => normalizeConcernResolution(['CONCERN-1', 'resolved', 'e']));
-});
-
-test('[schema] dev-flow VERDICT.findings enforces stable stuck-detection fields', () => {
-  assert.match(
-    devFlowSrc,
-    /findings:\s*\{\s*type:\s*'array',\s*items:\s*\{\s*type:\s*'object',\s*required:\s*\['severity', 'dimension', 'topic', 'description', 'suggestion'\]/s,
-    'dev-flow VERDICT.findings は item schema と required fields を持つ必要があります',
-  );
 });
 
 test('[schema] pr-iterate REVIEW.issues enforces stable stuck-detection fields', () => {

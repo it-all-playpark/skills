@@ -5,11 +5,11 @@
 //
 // テストケース:
 //   dev-flow.js
-//     (a)  plan#standard が model 付きで null → model 無しで再試行して完走。以後の品質ゲート call は全て
-//          model 無し（sticky）。journal-save payload に quality_model_fallback_label:"plan#standard" が載り、
+//     (a)  eval#1 が model 付きで null → model 無しで再試行して完走。以後の品質ゲート call は全て
+//          model 無し（sticky）。journal-save payload に quality_model_fallback_label:"eval#1" が載り、
 //          nested pr-iterate へ nested.quality_fallback:true が渡る
 //     (a0) fallback 未発生の run は quality_model_fallback_label キーが無く nested.quality_fallback:false
-//     (b)  plan#standard が model 無しでも null → need() の throw で abort（再試行は 1 回で打ち切り）。
+//     (b)  eval#1 が model 無しでも null → need() の throw で abort（再試行は 1 回で打ち切り）。
 //          abort handoff の payload にも quality_model_fallback_label が載る
 //     (c)  model 無し call（danger-grep）の null は再試行しない・fallback log も出ない
 //   pr-iterate.js
@@ -25,21 +25,34 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture } from './test-helpers/vm-sandbox.mjs';
 import { QUALITY_MODEL } from './quality-model.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(join(repoRoot, '.claude', 'workflows', 'dev-flow.js'), 'utf8'), 'planner');
+const devFlowSrc = readFileSync(join(repoRoot, '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(repoRoot, '.claude', 'workflows', 'pr-iterate.js'), 'utf8');
 
 const FALLBACK_LOG = 'model 指定を外し frontmatter 既定で再試行';
-const PLAN_OK = {
-  summary: 'p',
-  serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp', depends_on: [] }],
-  parallel: [],
+// dev-flow.js で QUALITY_MODEL 付きの call site は evaluator（eval#i）のみ（issue #673 で planner 系を撤去）。
+// (a) は complex 経路で eval#1 fail → reimpl#1 → eval#2 pass と回し、fallback 後の品質ゲート call（eval#2）を観測する。
+const COMPLEX_REQ = {
+  summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'feat', scope: 'src',
+  estimated_change_file_count: 7, shape: 'complex', issue_number: 1, issue_title: 'stub-issue-title',
+};
+const AC2 = [
+  { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+  { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+];
+const EVAL_FAIL = {
+  verdict: 'fail', total: 5, threshold: 7,
+  feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],
+  feedback_level: 'implementation', ac_results: AC2, security_clearance: [],
+};
+const EVAL_PASS = {
+  verdict: 'pass', total: 9, threshold: 7, feedback: [], feedback_level: 'implementation',
+  ac_results: AC2, security_clearance: [],
+  critical_resolutions: [{ id: 'EVAL-1-X', resolved: true, evidence: 'src/x.ts で修正済み' }],
 };
 const APPROVE = { decision: 'approve', issues: [], summary: 'ok' };
 
@@ -65,11 +78,13 @@ function assertNoFallbackLabel(calls, contextLabel) {
 
 // ── dev-flow.js (a): primary null → model 省略で完走・sticky・telemetry・nested 引き渡し ──
 
-test('[quality-model-fallback] dev-flow (a) plan#standard が model 付きで null → model 無しで再試行して完走し、以後 sticky・label が telemetry と nested args に載る', async () => {
+test('[quality-model-fallback] dev-flow (a) eval#1 が model 付きで null → model 無しで再試行して完走し、以後 sticky・label が telemetry と nested args に載る', async () => {
   const nestedArgsSeen = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
     overrides: {
-      'plan#standard': ({ opts }) => (opts.model ? null : PLAN_OK),
+      'analyze#1': COMPLEX_REQ,
+      'eval#1': ({ opts }) => (opts.model ? null : EVAL_FAIL),
+      'eval#2': EVAL_PASS,
     },
     workflow: async (_name, args) => {
       nestedArgsSeen.push(args);
@@ -79,24 +94,24 @@ test('[quality-model-fallback] dev-flow (a) plan#standard が model 付きで nu
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
 
-  const planCalls = calls.filter((c) => c.label === 'plan#standard');
+  const eval1Calls = calls.filter((c) => c.label === 'eval#1');
   assert.deepEqual(
-    planCalls.map((c) => c.model),
+    eval1Calls.map((c) => c.model),
     [QUALITY_MODEL, null],
-    'plan#standard は model 付き 1 回 + model 無し 1 回の順で呼ばれるはず',
+    'eval#1 は model 付き 1 回 + model 無し 1 回の順で呼ばれるはず',
   );
-  assert.ok(logs.some((l) => l.includes('plan#standard') && l.includes(FALLBACK_LOG)), 'fallback log が出ていない');
+  assert.ok(logs.some((l) => l.includes('eval#1') && l.includes(FALLBACK_LOG)), 'fallback log が出ていない');
 
-  // sticky: fallback 以後の品質ゲート call（agentType が品質ゲート 4 種）は全て model 無し
-  const qualityTypes = new Set(['dev-flow:dev-planner', 'dev-flow:plan-reviewer', 'dev-flow:evaluator', 'dev-flow:pr-reviewer']);
-  const afterIdx = calls.findIndex((c) => c.label === 'plan#standard' && c.model === null);
+  // sticky: fallback 以後の品質ゲート call（agentType が品質ゲート 2 種）は全て model 無し
+  const qualityTypes = new Set(['dev-flow:evaluator', 'dev-flow:pr-reviewer']);
+  const afterIdx = calls.findIndex((c) => c.label === 'eval#1' && c.model === null);
   const laterQuality = calls.slice(afterIdx + 1).filter((c) => qualityTypes.has(c.agentType));
   assert.ok(laterQuality.length > 0, 'fallback 後に品質ゲート call が 1 件も無い（テスト前提が崩れている）');
   assert.ok(laterQuality.every((c) => c.model === null), `fallback 後の品質ゲート call に model 付きが残っている: ${JSON.stringify(laterQuality.filter((c) => c.model !== null).map((c) => c.label))}`);
-  // それ以外の call site（exec-proxy / implementer）は元々 model を渡さない
+  // それ以外の call site（exec-proxy / dev-implement-fable）は元々 model を渡さない
   assert.ok(calls.every((c) => c.model === null || qualityTypes.has(c.agentType)), '品質ゲート以外の call site に model が付いている');
 
-  assertFallbackLabel(calls, 'plan#standard', 'dev-flow (a)');
+  assertFallbackLabel(calls, 'eval#1', 'dev-flow (a)');
   assert.equal(nestedArgsSeen.length, 1, 'nested pr-iterate はちょうど 1 回起動されるはず');
   assert.equal(nestedArgsSeen[0]?.nested?.quality_fallback, true, 'nested.quality_fallback が true で渡っていない');
 });
@@ -114,22 +129,22 @@ test('[quality-model-fallback] dev-flow (a0) fallback 未発生の run は quali
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
   assert.ok(!logs.some((l) => l.includes(FALLBACK_LOG)), 'fallback 未発生なのに fallback log が出ている');
-  const planCalls = calls.filter((c) => c.label === 'plan#standard');
-  assert.deepEqual(planCalls.map((c) => c.model), [QUALITY_MODEL], 'plan#standard は model 付き 1 回だけのはず');
+  const eval1Calls = calls.filter((c) => c.label === 'eval#1');
+  assert.deepEqual(eval1Calls.map((c) => c.model), [QUALITY_MODEL], 'eval#1 は model 付き 1 回だけのはず');
   assertNoFallbackLabel(calls, 'dev-flow (a0)');
   assert.equal(nestedArgsSeen[0]?.nested?.quality_fallback, false, 'nested.quality_fallback が false で渡っていない');
 });
 
 // ── dev-flow.js (b): model 省略も null → need() throw（既存 null 経路）・abort handoff に label ──
 
-test('[quality-model-fallback] dev-flow (b) plan#standard が model 無しでも null → 再試行 1 回で打ち切り need() throw、abort handoff に label が載る', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({ overrides: { 'plan#standard': null } });
+test('[quality-model-fallback] dev-flow (b) eval#1 が model 無しでも null → 再試行 1 回で打ち切り need() throw、abort handoff に label が載る', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: { 'eval#1': null } });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
-  assert.ok(error, 'plan#standard が null のままなら need() で throw するはず');
-  assert.match(String(error?.message ?? error), /Plan\(planner#standard\) が結果を返しませんでした/);
-  const planCalls = calls.filter((c) => c.label === 'plan#standard');
-  assert.deepEqual(planCalls.map((c) => c.model), [QUALITY_MODEL, null], 'plan#standard は model 付き + model 無しの 2 回で打ち切られるはず（無限再試行しない）');
-  assertFallbackLabel(calls, 'plan#standard', 'dev-flow (b) abort');
+  assert.ok(error, 'eval#1 が null のままなら need() で throw するはず');
+  assert.match(String(error?.message ?? error), /Evaluate\(eval#1\) が結果を返しませんでした/);
+  const eval1Calls = calls.filter((c) => c.label === 'eval#1');
+  assert.deepEqual(eval1Calls.map((c) => c.model), [QUALITY_MODEL, null], 'eval#1 は model 付き + model 無しの 2 回で打ち切られるはず（無限再試行しない）');
+  assertFallbackLabel(calls, 'eval#1', 'dev-flow (b) abort');
 });
 
 // ── dev-flow.js (c): model 無し call の null は再試行しない ──

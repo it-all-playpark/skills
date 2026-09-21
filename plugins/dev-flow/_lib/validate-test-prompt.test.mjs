@@ -38,12 +38,10 @@ function responder({ label, agentType }) {
       issue_title: 'stub-issue-title',
     };
   }
-  if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [], parallel: [] };
-  if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
   if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
   if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
   if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
-  if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+  if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
   if (agentType === 'dev-flow:evaluator') {
     return {
       verdict: 'pass', total: 100, threshold: 80, feedback: [],

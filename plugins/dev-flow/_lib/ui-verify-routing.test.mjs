@@ -30,14 +30,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 // ---- VM sandbox helpers（refloor-shape-routing.test.mjs / ephemeral-paths-routing.test.mjs と同型）----
 
@@ -49,7 +47,7 @@ const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
  * @param {object} opts
  * @param {object} opts.analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {string[]} opts.realizedFiles - realized-diff stub が返すファイル一覧
- * @param {string[]} [opts.declaredFiles=realizedFiles] - dev-planner stub が file_changes として宣言するファイル一覧
+ * @param {string[]} [opts.declaredFiles=realizedFiles] - dev-implement-fable stub が files として申告するファイル一覧
  * @param {string[]} [opts.changedFiles=realizedFiles] - changed-files stub が返すファイル一覧（merge tier 判定用）
  * @param {Record<string, unknown|Function>} [opts.overrides={}] - label 単位の応答上書き
  *   （関数を渡すと `({prompt, opts}) => ...` として呼ばれる。throw もそのまま伝播する）
@@ -74,10 +72,6 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [{ id: 't1', file_changes: decl }], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す
     // （files は旧 realized-diff 相当）。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
@@ -91,7 +85,7 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: chg };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: decl, summary: '', concerns: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;

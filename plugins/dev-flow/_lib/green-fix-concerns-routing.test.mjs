@@ -43,14 +43,6 @@ function createResponder() {
         issue_title: 'stub-issue-title',
       };
     }
-    // Plan: dev-planner
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // Security floor / danger-grep 系
     if (label.startsWith('danger-grep')) {
       return { ok: true, hits: [] };
@@ -90,7 +82,7 @@ function createResponder() {
     }
     // implementer（green-fix も含む）
     // 【唯一の本質的差分】green-fix stub が concerns マーカーを返す
-    if (agentType === 'dev-flow:implementer' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:dev-implement-fable' && label.startsWith('green-fix')) {
       return {
         status: 'DONE',
         task_id: 't',
@@ -99,7 +91,7 @@ function createResponder() {
         concerns: ['GREEN_FIX_CONCERN_MARKER: retry ロジックに未検証の race が残る'],
       };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // issue-meta（issue #451）: analyze provenance 突合 probe

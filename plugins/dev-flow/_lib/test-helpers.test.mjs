@@ -152,43 +152,15 @@ test('[test-helpers] devFlowArgs: devFlowArgs("999") の args.issue が "999" �
 });
 
 // ============================================================
-// makeRecordingSandbox: pipeline() stub 契約（canary 実測準拠。
-// report: ~/.claude/logs/dev-flow-canary/canary-1788235573.json）
+// makeRecordingSandbox: parallel() / pipeline() は sandbox に置かない（issue #673）。
+// dev-flow.js の Implement は dev-implement-fable の単一 serial spawn で fan-out を持たないため、
+// stub があると「production が pipeline() を呼んでも完走する」偽陽性になる。
 // ============================================================
 
-test('[test-helpers] makeRecordingSandbox: pipeline() 結果が入力順に対応すること（results[i] ↔ items[i]）', async () => {
+test('[test-helpers] makeRecordingSandbox: parallel() / pipeline() が sandbox に注入されないこと', () => {
   const { ctx } = makeRecordingSandbox(() => null);
-  const script = new vm.Script(`pipeline(['a', 'b', 'c'], async (item, i) => item + i)`);
-  const result = await script.runInContext(ctx);
-  assert.deepEqual(result, ['a0', 'b1', 'c2']);
-});
-
-test('[test-helpers] makeRecordingSandbox: pipeline() callback が throw しても reject せず当該 item のみ null になること', async () => {
-  const { ctx } = makeRecordingSandbox(() => null);
-  const script = new vm.Script(`pipeline([1, 2, 3], async (item) => { if (item === 2) throw new Error('boom'); return item * 10; })`);
-  const result = await script.runInContext(ctx);
-  assert.deepEqual(result, [10, null, 30]);
-});
-
-test('[test-helpers] makeRecordingSandbox: pipeline() callback が null/undefined を返した item は null になること', async () => {
-  const { ctx } = makeRecordingSandbox(() => null);
-  const script = new vm.Script(`pipeline([1, 2, 3], async (item) => { if (item === 1) return null; if (item === 2) return undefined; return item; })`);
-  const result = await script.runInContext(ctx);
-  assert.deepEqual(result, [null, null, 3]);
-});
-
-test('[test-helpers] makeRecordingSandbox: pipeline() 空配列は空配列を返すこと', async () => {
-  const { ctx } = makeRecordingSandbox(() => null);
-  const script = new vm.Script(`pipeline([], async () => 1)`);
-  const result = await script.runInContext(ctx);
-  assert.deepEqual(result, []);
-});
-
-test('[test-helpers] makeRecordingSandbox: pipeline() items が undefined でも空配列を返すこと', async () => {
-  const { ctx } = makeRecordingSandbox(() => null);
-  const script = new vm.Script(`pipeline(undefined, async () => 1)`);
-  const result = await script.runInContext(ctx);
-  assert.deepEqual(result, []);
+  assert.equal(typeof ctx.parallel, 'undefined', 'parallel() stub が sandbox に残っている');
+  assert.equal(typeof ctx.pipeline, 'undefined', 'pipeline() stub が sandbox に残っている');
 });
 
 // ============================================================
@@ -237,14 +209,12 @@ test('[test-helpers] runDevFlowInSandbox: 実際の dev-flow.js ソースを Ref
   const responder = ({ label, agentType }) => {
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return { summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src', estimated_change_file_count: 1, shape: 'micro' };
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') return { files: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     return null;
   };

@@ -112,10 +112,6 @@ function createResponder(overrides = {}) {
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-320' };
     if (label.startsWith('analyze')) return STANDARD_REQ;
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/x.ts'] };
     if (agentType === 'dev-flow:evaluator') {
@@ -136,7 +132,7 @@ function createResponder(overrides = {}) {
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: SHA40 };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (label === 'issue-meta') return { ok: true, number: 320, title: 'stub-issue-title' };

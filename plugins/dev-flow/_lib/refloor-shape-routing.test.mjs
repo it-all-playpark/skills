@@ -10,7 +10,7 @@
 // issue #272 F2 実装後の新挙動: refloor の realized count は「non-ephemeral のうち plan の
 // file_changes に宣言済みのファイル数」（= filterEphemeralPaths 後の一覧から diffDeclaredPaths の
 // 宣言外を引いた数）で算出する。宣言外 non-ephemeral 変更が 1 件以上あると micro でも
-// runEval=true（Evaluate 強制）になる。そのため makeCountingSandbox は dev-planner stub の
+// runEval=true（Evaluate 強制）になる。そのため makeCountingSandbox は dev-implement-fable stub の
 // file_changes に realized ファイルを宣言させる declaredFiles 引数を持つ（省略時は realizedFiles を
 // 全件宣言 = 従来どおり宣言外なしの挙動）。
 //
@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -48,7 +48,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {string[]} realizedFiles - realized-diff stub が返すファイル一覧
  * @param {string[]} [changedFiles=['src/foo.ts']] - changed-files stub が返すファイル一覧（merge tier 判定に使用）
- * @param {string[]} [declaredFiles=realizedFiles] - dev-planner stub が file_changes として宣言するファイル一覧
+ * @param {string[]} [declaredFiles=realizedFiles] - dev-implement-fable stub が files として申告するファイル一覧
  *   （省略時は realizedFiles を全件宣言 = 宣言外なし。宣言外監査シナリオ用に部分集合/空配列を渡せる）
  * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
  */
@@ -75,15 +75,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    // declaredFiles を file_changes として宣言する（省略時は realizedFiles 全件 = 宣言外なし）。
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [{ id: 't1', file_changes: declaredFiles }], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
+    // dev-implement-fable stub は declaredFiles を files として申告する（省略時は realizedFiles 全件 = 宣言外なし）。
     // Security floor: label 'danger-grep'（issue #544 統合呼び出し）は risk/files を 1 応答で
     // 返す。files は可変ファイル数（旧 realized-diff 相当。null なら agent drop 相当）。
     if (label === 'danger-grep') {
@@ -114,8 +106,8 @@ function makeCountingSandbox(analyzeReq, realizedFiles, changedFiles = ['src/foo
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
     // implementer その他
-    if (agentType === 'dev-flow:implementer') {
-      return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') {
+      return { status: 'DONE', task_id: 'issue-1', files: declaredFiles, summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
@@ -210,9 +202,7 @@ test('[refloor] (A) micro 見積もり + realized 6 files → evaluator >= 1 回
     issue_title: 'stub-issue-title',
   };
 
-  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   // realized-diff stub は 6 ファイルを返す → refloorShape('micro', 6) → complex → runEval=true
   const { ctx, calls } = makeCountingSandbox(microReq, ['a', 'b', 'c', 'd', 'e', 'f']);
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
@@ -281,8 +271,6 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
     // (B) は「全件宣言」シナリオ（realized の 6 ファイルを file_changes に宣言）。
     // 宣言外のままだと diffDeclaredPaths が全件を宣言外扱いし declared count=0 に潰れ、
     // refloor が発火しない（EFFECTIVE_SHAPE が standard のまま止まる）ため明示的に宣言する。
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 't1', file_changes: ['a', 'b', 'c', 'd', 'e', 'f'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // (a) label 'danger-grep'（issue #544 統合呼び出し）: 6 ファイル返す
     // → standard+6件 → EFFECTIVE_SHAPE=complex → EVAL_PASSES=EVAL_MAX
     if (label === 'danger-grep') {
@@ -316,7 +304,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
         critical_resolutions: [{ id: 'EVAL-1-test-issue', resolved: true, evidence: 'test-issue fixed and verified in tests' }],
       };
     }
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: ['a', 'b', 'c', 'd', 'e', 'f'], summary: '', concerns: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
@@ -352,7 +340,7 @@ test('[refloor] (B) standard 見積もり + realized 6 files → evaluator >= 2 
   };
 
   const ctx = vm.createContext(sandbox);
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { error } = await runDevFlowInSandbox(src, ctx);
 
   // ReferenceError / SyntaxError は構造的に壊れているので即 fail させる（shape-loop-routing.test.mjs:171 と同型）
@@ -385,7 +373,7 @@ test('[refloor] (C) micro 見積もり + realized 1 file → evaluator 0 回（r
     issue_title: 'stub-issue-title',
   };
 
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   // realized-diff stub は 1 ファイルのみ → refloorShape('micro', 1) → micro（変化なし）→ runEval=false
   const { ctx, calls } = makeCountingSandbox(microReq, ['src/foo.ts']);
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
@@ -451,16 +439,6 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (label.startsWith('analyze')) {
       return microReq;
     }
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        serial: [{ task_id: 't1', title: 'task', file_changes: ['src/foo.ts'], description: 'd', acceptance: ['a'] }],
-        parallel: [],
-        summary: 's',
-      };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // (D) label 'danger-grep'（issue #544 統合呼び出し）は risk は正常のまま files を null で返す
     // （旧 realized-diff の agent drop 相当）→ ?? [] を使うと 0 に潰れ runEval=false になるバグ再現。
     // risk と files は per-field 独立のため、files 欠落が risk（fail-closed 判定）へ波及しないこと
@@ -488,7 +466,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
     if (label.startsWith('pr')) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -525,7 +503,7 @@ test('[refloor] (D) realized-diff が null を返す（agent drop）→ NaN 経�
   };
 
   const ctx = vm.createContext(sandbox);
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { error } = await runDevFlowInSandbox(src, ctx);
 
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
@@ -581,7 +559,7 @@ test('[merge-tier] (D) micro 見積もり + realized 4 docs/test-only + changed-
     issue_title: 'stub-issue-title',
   };
 
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
 
   // realized-diff: 4 件（.md / docs/ / *test* にマッチ → isDocsOrTestOnly=true）
   // ephemeral filter（.devflow-tmp / .staged. / fm_*.txt）には掛からないパス
@@ -641,7 +619,7 @@ test('[merge-tier] (E) micro 見積もり + realized 1 docs file + changed-files
     issue_title: 'stub-issue-title',
   };
 
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
 
   // realized-diff: 1 件（.md → isDocsOrTestOnly=true）
   // refloorShape('micro', 1): 1 ファイル → realizedFloor='micro' → EFFECTIVE_SHAPE='micro'（昇格なし）

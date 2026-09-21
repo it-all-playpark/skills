@@ -1,4 +1,4 @@
-// 品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）の model override。
+// 品質ゲート系 2 agent（evaluator / pr-reviewer）の model override。
 // frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
 // effort は agent() opts に記載されているが、本 harness での適用可否は未検証（受理と適用は別）。
 // dev-flow-canary の opts 受理 probe（capability id: agent_opts_effort_accepted）で再判定する。

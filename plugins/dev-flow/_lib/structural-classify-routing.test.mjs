@@ -30,14 +30,12 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { parseSecfloorFields } from './secfloor-unified.mjs';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-const devFlowSrc = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
 // ---- (1) struct フィールドの fail-open 純関数検証（parseSecfloorFields(unified).struct） ----
 
@@ -122,11 +120,7 @@ function formatOnlyOverrides(formatOnly) {
       summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src',
       estimated_change_file_count: 1, shape: 'micro', issue_number: 1, issue_title: 'stub-issue-title',
     }),
-    'plan#trivial': () => ({
-      summary: 'p',
-      serial: [{ id: 't1', desc: 'd', file_changes: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'], test_plan: 'tp', depends_on: [] }],
-      parallel: [],
-    }),
+    'impl:serial:issue-1': () => ({ status: 'DONE', task_id: 'issue-1', files: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'], summary: 's', concerns: [] }),
     'danger-grep': () => ({
       risk: { ok: true, hits: [] },
       files: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'],

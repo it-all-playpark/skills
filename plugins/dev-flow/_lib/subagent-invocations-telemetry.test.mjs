@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -52,12 +52,6 @@ function makeResponder(journalPrompts) {
     }
     if (label.startsWith('analyze')) {
       return ANALYZE_REQ;
-    }
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // label 'danger-grep'（Security floor。issue #544 統合呼び出し）は
     // {risk, files, struct, diffhash} を返す。label 'danger-grep-final'（Merge tier。統合対象外）
@@ -107,7 +101,7 @@ function makeResponder(journalPrompts) {
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // IMPLEMENT_MODE='fable' の standard 経路（issue #668）: 合成 task issue-1 を echo する
@@ -223,28 +217,19 @@ test('[subagent-invocations] nested pr-iterate の subagent_invocations（total=
   );
 });
 
-// issue #668 AC-8: IMPLEMENT_MODE='fable' の standard run では by_type に dev-implement-fable が 1 で計上され、
-// dev-planner は載らず（0 回）、plan_iter は 0 で記録される。'planner' に戻すと dev-planner が 1・plan_iter 1 に戻る
-// （ロールバックの観測経路が journal だけで閉じることを pin する）。
-test('[subagent-invocations][#668] IMPLEMENT_MODE=fable: by_type に dev-implement-fable:1・dev-planner 無し・plan_iter 0（planner に戻すと従来値）', async () => {
-  const run = async (mode) => {
-    const journalPrompts = [];
-    const { ctx } = makeRecordingSandbox(makeResponder(journalPrompts));
-    const error = await runDevFlowInSandbox(withImplementMode(src, mode), ctx);
-    if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-      assert.fail(`dev-flow.js が sandbox でクラッシュ (mode=${mode}): ${error.name}: ${error.message}`);
-    }
-    const payload = parseJournalHandoffPayload(journalPrompts[0] ?? '');
-    return payload.telemetry;
-  };
-
-  const fable = await run('fable');
-  assert.equal(fable.subagent_invocations.by_type['dev-implement-fable'], 1, `fable: by_type['dev-implement-fable'] は 1 のはず: ${JSON.stringify(fable.subagent_invocations.by_type)}`);
-  assert.equal('dev-planner' in fable.subagent_invocations.by_type, false, `fable: by_type に dev-planner が載っている: ${JSON.stringify(fable.subagent_invocations.by_type)}`);
-  assert.equal(fable.plan_iter, 0, `fable: plan_iter は 0 のはずだが ${fable.plan_iter}`);
-
-  const planner = await run('planner');
-  assert.equal('dev-implement-fable' in planner.subagent_invocations.by_type, false, `planner: by_type に dev-implement-fable が載っている: ${JSON.stringify(planner.subagent_invocations.by_type)}`);
-  assert.equal(planner.subagent_invocations.by_type['dev-planner'], 1, `planner: by_type['dev-planner'] は 1 のはず`);
-  assert.equal(planner.plan_iter, 1, `planner: plan_iter は 1 のはずだが ${planner.plan_iter}`);
+// issue #668 / #673: standard run では by_type に dev-implement-fable が 1 で計上され、
+// planner 系 agent は載らず（0 回）、plan_iter は 0 で記録される（観測経路が journal だけで閉じることを pin する）。
+test('[subagent-invocations][#673] by_type に dev-implement-fable:1・planner 系 agent 無し・plan_iter 0', async () => {
+  const journalPrompts = [];
+  const { ctx } = makeRecordingSandbox(makeResponder(journalPrompts));
+  const error = await runDevFlowInSandbox(src, ctx);
+  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
+    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
+  }
+  const { telemetry } = parseJournalHandoffPayload(journalPrompts[0] ?? '');
+  assert.equal(telemetry.subagent_invocations.by_type['dev-implement-fable'], 1, `by_type['dev-implement-fable'] は 1 のはず: ${JSON.stringify(telemetry.subagent_invocations.by_type)}`);
+  for (const gone of ['dev-planner', 'plan-reviewer', 'implementer']) {
+    assert.equal(gone in telemetry.subagent_invocations.by_type, false, `by_type に ${gone} が載っている: ${JSON.stringify(telemetry.subagent_invocations.by_type)}`);
+  }
+  assert.equal(telemetry.plan_iter, 0, `plan_iter は 0 のはずだが ${telemetry.plan_iter}`);
 });

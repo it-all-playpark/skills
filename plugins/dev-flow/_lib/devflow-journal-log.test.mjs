@@ -56,14 +56,6 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を発生させない
     if (label.startsWith('danger-grep')) {
@@ -124,7 +116,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       return journalResult;
     }
     // implementer その他
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

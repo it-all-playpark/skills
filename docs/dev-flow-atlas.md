@@ -113,34 +113,25 @@ Implement へ流さないためにある。
 
 ```mermaid
 flowchart TD
-    IN["shape 確定"] --> M0{"IMPLEMENT_MODE"}
-    M0 -->|fable（既定）| PF["全 shape: dev-planner 0 回<br/>issue から単一 task の plan を合成（plan#fable-skip）"]
-    M0 -->|planner| P0{"shape"}
-    P0 -->|micro| P1["plan 1 発<br/>plan-reviewer 0 回"]
-    P0 -->|standard| P2["plan 1 発<br/>plan-reviewer 0 回"]
-    P0 -->|complex| P3["dev-planner ⇄ plan-reviewer<br/>PLAN_MAX / PLAN_STUCK"]
+    IN["shape 確定"] --> PF["全 shape: planner 0 回<br/>issue から単一 task の plan を合成（plan#fable-skip、plan_iter=0）"]
     PF --> OUT["Implement へ"]
-    P1 --> OUT
-    P2 --> OUT
-    P3 --> OUT
 ```
 
-計画は `{serial, parallel}` に分解される。`parallel` に置けるのは file_changes が互いに
-disjoint な task のみで、plan-reviewer がそれを検証する。
+Plan phase は shape に依存しない。shape 判定は Evaluate の深さ・LITE gate・refloor のために残る。
+合成 task の `file_changes` は空で始まり、Implement の返却 `files` を宣言として取り込む。
 
 ### 1.5 Implement
 
-parallel を先に fan-out してから serial を流す。並列は単一 worktree 内で行い、
-issue 分割も integration branch も使わない。
+`dev-implement-fable`（plan+impl 統合）を単一 worktree に 1 spawn する。parallel fan-out・
+issue 分割・integration branch は使わない。
 
 ```mermaid
 flowchart TD
-    IN["plan 確定"] --> I1["parallel task を fan-out<br/>file_changes は disjoint"]
-    I1 --> I2["serial task を直列実行"]
-    I2 --> I3{"status"}
+    IN["plan 確定"] --> I1["dev-implement-fable を 1 spawn<br/>impl:serial:issue-N"]
+    I1 --> I3{"status"}
     I3 -->|OK| OUT["Validate へ"]
-    I3 -->|BLOCKED| I4["別アプローチで再計画<br/>BLOCK_MAX"]
-    I4 --> I1
+    I3 -->|BLOCKED| I4["累積 findings を付けて再 spawn<br/>reimpl-blocked#b / BLOCK_MAX"]
+    I4 --> I3
     I3 -->|NEEDS_CONTEXT| I5["comprehensive 再分析"]
     I5 -->|"解消"| I1
     I5 -->|"解消不能"| NC["needs_clarification"]
@@ -187,7 +178,7 @@ fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒
 
 - `EFFECTIVE_SHAPE` が micro 以外
 - danger-grep hit / test-weakening 検出 / plan 宣言外の変更
-- green-fix が発生した / implementer が task を落とした / UI パスを touch した
+- green-fix が発生した / dev-implement-fable が null を返して task を落とした / UI パスを touch した
 
 ### 1.8 Evaluate
 
@@ -195,9 +186,9 @@ fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒
 flowchart TD
     IN["runEval=true"] --> E1["evaluator<br/>standard=1 パス / complex=EVAL_MAX"]
     E1 --> E2{"verdict"}
-    E2 -->|"fail: design"| E3["replan + reimpl<br/>DESIGN_REPLAN_MAX"]
+    E2 -->|"fail: design"| E3["dev-implement-fable へ fix_feedback 付きで再 spawn（reimpl#i）<br/>DESIGN_REPLAN_MAX で cap"]
     E3 --> E1
-    E2 -->|"fail: impl"| E4["impl fix<br/>未解消 critical を最優先"]
+    E2 -->|"fail: impl"| E4["同じく reimpl#i<br/>未解消 critical を最優先"]
     E4 --> E1
     E2 -->|pass| OUT["PR へ"]
 ```
@@ -289,9 +280,9 @@ flowchart TD
 
 | shape | Plan | Evaluate | merge tier |
 | --- | --- | --- | --- |
-| `micro` | `IMPLEMENT_MODE='fable'`（既定、`_lib/implement-mode.mjs`）: dev-planner 0 回・issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable` を 1 spawn。`'planner'`: plan 1 発・plan-reviewer 0 回（triviality gate で review loop を skip） | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
-| `standard` | `IMPLEMENT_MODE='fable'`（既定、`_lib/implement-mode.mjs`）: dev-planner 0 回・issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable` を 1 spawn。`'planner'`: plan 1 発・plan-reviewer 0 回 → implementer | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保 | `REVIEW` |
-| `complex` | `IMPLEMENT_MODE='fable'`（既定）: 同上（dev-planner ⇄ plan-reviewer は起動しない）。`'planner'`: dev-planner ⇄ plan-reviewer loop（`PLAN_MAX` 上限、topic-stuck で early-cutoff） | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
+| `micro` | issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
+| `standard` | 同上 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保 | `REVIEW` |
+| `complex` | 同上 | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
 
 micro のうち `runEval=false` かつ danger clean のものだけが PR phase で **lite route** に入り、
 pr-reviewer 1-pass と CI green だけで終端する。blocking finding か CI 非 green を検出した時点で
@@ -416,8 +407,6 @@ tier は動かない。
 
 | 定数 | 値 | 効く場所 |
 | --- | --- | --- |
-| `PLAN_MAX` | 8 | complex の plan ⇄ review ループ |
-| `PLAN_STUCK` | 2 | 同一 topic 反復での plan early-cutoff |
 | `EVAL_MAX` | 10 | complex の evaluate 差し戻しループ |
 | `EVAL_STUCK` | 2 | 同一 topic 反復での design churn 打ち切り |
 | `DESIGN_REPLAN_MAX` | 2 | design 差し戻し（replan + reimpl）の hard cap |
@@ -439,10 +428,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 
 | agent | 役割 | model / effort |
 | --- | --- | --- |
-| `dev-planner` | 実装計画の立案 | `QUALITY_MODEL` / high |
-| `plan-reviewer` | 計画の devil's-advocate レビュー | `QUALITY_MODEL` / high |
-| `implementer` | task 実装・green-fix・evaluator fix | frontmatter / high |
-| `dev-implement-fable` | plan+impl 統合実装（全 shape。`IMPLEMENT_MODE='fable'` 時に dev-planner / plan-reviewer を置き換える） | fable / high |
+| `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | fable / high |
 | `evaluator` | 実装品質ゲート | `QUALITY_MODEL` / high |
 | `pr-reviewer` | PR レビュー | `QUALITY_MODEL` / high |
 | `dev-runner` | Skill 呼び出し（analyze / commit / PR） | frontmatter / high |

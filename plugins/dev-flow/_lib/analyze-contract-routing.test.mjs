@@ -50,8 +50,6 @@ function baseResponder({ req = FULL_REQ, contractHandler } = {}) {
       return null; // fail-open（whitelist 不合格扱い）— sonnet fallback
     }
     if (label.startsWith('analyze')) return req;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -70,7 +68,7 @@ function baseResponder({ req = FULL_REQ, contractHandler } = {}) {
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
 }

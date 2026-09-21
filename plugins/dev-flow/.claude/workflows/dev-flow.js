@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-run',
-  description: 'Issue から LGTM まで: 分析(shape判定)→計画→実装(並列/直列)→test green→評価→PR→pr-iterate→merge tier。micro/standard/complex で plan-review・evaluate の深さを切替(complex: plan上限8/eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
+  description: 'Issue から LGTM まで: 分析(shape判定)→計画合成→実装(dev-implement-fable 1 spawn)→test green→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
   phases: [
     { title: 'Setup' },
     { title: 'Analyze' },
@@ -17,15 +17,8 @@ export const meta = {
   ],
 }
 
-// runImplement の parallel fan-out は pipeline に依存する。pipeline を持たない
-// runtime では fan-out が黙って壊れる（parallel() への fallback / dual-path は作らない）ため、
-// load 時に fail-fast する。
-if (typeof pipeline === 'undefined') {
-  throw new Error('dev-flow-run requires Claude Code >= 2.1.207: pipeline() is not available in this workflow runtime')
-}
-
 // ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// 品質ゲート系 4 agent（dev-planner / plan-reviewer / evaluator / pr-reviewer）の model override。
+// 品質ゲート系 2 agent（evaluator / pr-reviewer）の model override。
 // frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
 // effort は agent() opts に記載されているが、本 harness での適用可否は未検証（受理と適用は別）。
 // dev-flow-canary の opts 受理 probe（capability id: agent_opts_effort_accepted）で再判定する。
@@ -35,19 +28,6 @@ if (typeof pipeline === 'undefined') {
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const QUALITY_MODEL = 'fable'
 // ==== END inline: _lib/quality-model.mjs ====
-// ==== BEGIN inline: _lib/implement-mode.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Implement 経路切替（全 shape。issue #668 で standard、#670 で micro / complex に拡大）。
-//   'fable'   — Plan phase で dev-planner を起動せず issue から単一 task の plan を合成し、Implement で
-//               dev-implement-fable（plan+impl 統合、frontmatter: fable / high）を 1 spawn する。
-//   'planner' — 従来経路（dev-planner 1 発 → implementer を task ごとに spawn）。
-// ロールバックはこの 1 行を 'planner' にして tools/sync-inlines.mjs --write するだけ（QUALITY_MODEL と同じ運用）。
-// 'planner' 時の shape 別挙動: micro = plan#trivial 1 発、standard = plan#standard 1 発、
-// complex = dev-planner ⇄ plan-reviewer ループ（ロールバック経路として維持）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-const IMPLEMENT_MODE = 'fable'
-// ==== END inline: _lib/implement-mode.mjs ====
 // ==== BEGIN inline: _lib/plugin-version.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // dev-flow plugin の version 定数。telemetry キー plugin_version の値として journal entry に記録する
 // （issue #601）。workflow script では ${CLAUDE_PLUGIN_ROOT} が展開されず fs も使えないため、
@@ -1650,11 +1630,11 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
 // ==== BEGIN inline: _lib/block-routing.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // block-routing: BLOCKED task result の block_class 判定・決定論スクラブ・振り分けを行う純関数群。
 // guard/hook 由来の BLOCKED（block_class:'guard_blocked'）を approach_mismatch の replan ループ
-// （blockSeen 登録・findings 化・dev-planner 再呼出し）から遮断し、迂回コマンド列を prompt へ
+// （blockSeen 登録・findings 化・dev-implement-fable 再 spawn）から遮断し、迂回コマンド列を prompt へ
 // 伝播させないためのチョークポイント（issue #448）。
 //
 // W7 正当化クラス: incentive-structural（永続・撤去禁止）。
-// guard/hook 由来の BLOCKED を「別アプローチ探索」として dev-planner に渡すと、guard を迂回する
+// guard/hook 由来の BLOCKED を「別アプローチ探索」として実装 agent に渡すと、guard を迂回する
 // コマンド列の組み立てを incentive 化する（run wf_17d7a7be の実害）。この遮断は capability 非依存
 // （賢いモデルほど巧妙な迂回手順を組み立て得るため、モデル世代が進んでも撤去しない）。
 //
@@ -3530,7 +3510,7 @@ function buildResolvedEvidence({ blockingItems, advisoryItems, acResults }) {
 // ==== END inline: _lib/resolved-evidence.mjs ====
 
 // ==== BEGIN inline: _lib/stuck-detector.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow.js の planSeen/blockSeen/evalSeen と pr-iterate.js の reviewSeen が共有する
+// dev-flow.js の blockSeen/evalSeen と pr-iterate.js の reviewSeen が共有する
 // stuck 検出 canonical。incentive-structural クラス — W7、撤去禁止。issue #123/#125/#126/#208。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -4052,12 +4032,6 @@ function acceptanceCriteriaBlock(acceptanceCriteria) {
 }
 // ==== END inline: _lib/review-ac.mjs ====
 
-function applyDisjoint(p, label) {
-  const { plan: np, demoted } = enforceDisjointParallel(p);
-  if (demoted.length) log(`⚠️ ${label}: file_changes 衝突 ${demoted.length} task を parallel→serial 降格: ${demoted.map((d) => `${d.id}(vs ${d.conflictsWith})`).join(', ')}`);
-  return np;
-}
-
 // ---- args ----
 const ISSUE = resolvePositiveIntArg(args, 'issue')
 rejectLegacyBaseArg(args) // 旧形式 args.base は受理しない（base は dev-flow-prerun が解決し args.setup.base で渡る）
@@ -4065,9 +4039,6 @@ let BASE // Setup で args.setup から確定
 let REPO = null // Setup で args.setup から確定。解決不能なら telemetry の repo を省略（fail-open）
 const DEPTH = args?.depth ?? 'standard'
 const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
-const PLAN_MAX = 8         // 計画レビュー上限（収束モデルにより happy path は数回で抜ける）
-const PLAN_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（moving target 打ち切り）
-const PLAN_RELAX_FROM = 2  // この iteration 以降は critical 無しなら収束を許容
 const EVAL_MAX = 10        // 評価差し戻し上限（収束モデルにより happy path は数回で抜ける）
 const EVAL_STUCK = 2       // 同一 topic がこの回数出たら stuck と判定（design churn 打ち切り）
 const GREEN_MAX = 3   // test green までの実装差し戻し上限
@@ -4121,38 +4092,14 @@ function need(result, what) {
   return result
 }
 
-// ---- Plan 収束モデル----
-// cold start の plan-reviewer は moving target を生む（毎回 fresh context で新しい観点の major を
-// 捻り出し、major 1 件で revise 確定 → 上限まで収束しない）。orchestrator 側で収束を判断する:
-//   1. 既出 findings を planner/reviewer に渡し「対応済み・新規 critical/major のみ」を強制（蒸し返し抑制）
-//   2. 同一 topic が PLAN_STUCK 回出たら stuck と判定（fingerprint を JS 側で突合）
-//   3. iteration >= PLAN_RELAX_FROM、または stuck なら、critical が無い限り収束を許容
-//   4. critical は常にブロック（大 issue の品質ゲートは後退させない）
-//   5. 上限到達でも throw せず、未解消 findings を concerns として Evaluate phase へ委譲
-function planHasCritical(rev) {
-  return (rev.findings ?? []).some((f) => f && f.severity === 'critical')
-}
-// 収束判定。critical が残る限り収束しない。pass / relax(iteration 経過) / stuck で受理。
-function planConverged(rev, iteration, stuck) {
-  if (rev.verdict === 'pass') return true
-  if (planHasCritical(rev)) return false
-  return stuck || iteration >= PLAN_RELAX_FROM
-}
-// 未解消 findings を Evaluate 用 concerns 文字列に整形する。
-function findingsToConcerns(rev) {
-  return (rev.findings ?? []).map(
-    (f) => `[plan:${f?.severity ?? '?'}] ${f?.topic ?? ''}: ${f?.description ?? ''}`)
-}
-
 // ---- Evaluate 収束モデル----
-// Evaluate ループは Plan ループと同型の cold start moving target を抱える。evaluator は毎回 fresh
-// context で full diff を再評価するため、別観点を上乗せし続けて収束しない。さらに design 差し戻しは
-// replan + 全 task 再実装を走らせるため、1 反復のコストが Plan/Review より桁違いに高い。
-// Plan と同じ部品を Evaluate に適用する:
+// evaluator は毎回 fresh context で full diff を再評価するため、cold start の moving target
+// （別観点を上乗せし続けて収束しない）を抱える。さらに design 差し戻しは再実装を走らせるため、
+// 1 反復のコストが高い。orchestrator 側で収束を判断する:
 //   1. 既出 feedback を evaluator に渡し「対応済み・新規 critical/major のみ」を強制（蒸し返し抑制）
 //   2. 同一 topic が EVAL_STUCK 回出たら stuck と判定（fingerprint を JS 側で突合）
-//   3. stuck かつ design パスが反復するなら replan+reimpl を繰り返さず早期打ち切り（コスト保護）
-//   4. critical は常にブロック（品質ゲートは後退させない、Plan 収束モデルと同一原則）
+//   3. stuck かつ design パスが反復するなら reimpl を繰り返さず早期打ち切り（コスト保護）
+//   4. critical は常にブロック（品質ゲートは後退させない）
 //   5. stuck/上限到達でも throw せず現状で PR へ進む（後段は review のみ、merge は手動 = human review 委譲）
 // feedback に critical が含まれるか。critical は常にブロック（収束を許さない）。
 function evalHasCritical(ev) {
@@ -4212,49 +4159,6 @@ const ISSUE_META = {
     title: { type: 'string' },
     comment_count: { type: 'number' },
     error: { type: 'string' },
-    epoch: { type: 'number' },
-  },
-}
-const TASK = {
-  type: 'object', required: ['id', 'desc'],
-  properties: {
-    id: { type: 'string' }, desc: { type: 'string' },
-    file_changes: { type: 'array', items: { type: 'string' } },
-    test_plan: { type: 'string' },
-    depends_on: { type: 'array', items: { type: 'string' } },
-  },
-}
-const PLAN = {
-  type: 'object', required: ['summary', 'serial', 'parallel'],
-  properties: {
-    summary: { type: 'string' },
-    architecture_decisions: { type: 'array' },
-    serial: { type: 'array', items: TASK },
-    parallel: { type: 'array', items: TASK },
-    edge_cases: { type: 'array' },
-    notes_for_retry: { type: 'string' },
-    epoch: { type: 'number' },
-  },
-}
-const VERDICT = {
-  type: 'object', required: ['verdict', 'findings', 'summary'],
-  properties: {
-    verdict: { type: 'string', enum: ['pass', 'revise', 'block'] },
-    findings: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['severity', 'dimension', 'topic', 'description', 'suggestion'],
-        properties: {
-          severity: { type: 'string', enum: ['critical', 'major', 'minor'] },
-          dimension: { type: 'string' },
-          topic: { type: 'string' },
-          description: { type: 'string' },
-          suggestion: { type: 'string' },
-        },
-      },
-    },
-    summary: { type: 'string' },
     epoch: { type: 'number' },
   },
 }
@@ -5532,10 +5436,10 @@ let TURBOPACK_NOTE = '' // Setup(stack) で確定。対象 repo が Next.js の�
 // 本来の判断・schema required には一切影響しない）。
 const EPOCH_INSTRUCTION = '作業完了後、最後に Bash で `date +%s` を 1 回実行し、出力の整数を epoch フィールドとして返せ。取得に失敗した場合は epoch を省略してよい（本来の作業・判定には一切影響させるな）。\n'
 
-// implementer への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を残すと
-// `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、refloor 誤発火・
-// 宣言外変更 concern の原因になる。agent 定義ファイル（.claude/agents/implementer.md）は
-// sandbox write-deny のため、workflow が全 implementer spawn prompt に決定論的に注入する。
+// 実装 agent（dev-implement-fable）への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を
+// 残すと `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、refloor 誤発火・
+// 宣言外変更 concern の原因になる。agent 定義ファイル（.claude/agents/dev-implement-fable.md）は
+// sandbox write-deny のため、workflow が全実装 spawn prompt（Implement / green-fix / reimpl）に決定論的に注入する。
 // .devflow-tmp/ 配下は isEphemeralPath が realized-diff から除外するため後始末は不要で、削除を
 // 指示すると agent が一時 dir の削除コマンドを組み立てて実行制御に弾かれる分だけ turn を失う。
 const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
@@ -5546,22 +5450,8 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
   + `（git status に混入し realized-diff の refloor 誤発火・宣言外変更 concern の原因になる）。\n`
   + EPOCH_INSTRUCTION
 
-// dev-planner への handoff 配置規約。plan が一時/handoff ファイルの残置を明示指示すると
-// 実装後の realized diff に残り、refloor 誤発火・宣言外変更 concern の原因になる。
-// agent 定義ファイル（.claude/agents/dev-planner.md）は sandbox write-deny のため、
-// 上記 implementer 向け規約と同型で workflow が全 dev-planner spawn prompt に決定論的に注入する。
-const PLANNER_HANDOFF_RULE = '計画規約: task が一時/handoff ファイルの残置を指示する場合は .devflow-tmp/ 配下のパスを指定せよ（realized diff から ephemeral として除外される）。恒久成果物でないファイルを file_changes に含めるな。\n'
-  + EPOCH_INSTRUCTION
-
-// AC テスト契約（contract クラス）。merge tier の deterministic 昇格は evaluator の ac_results
-// {test_files, impl_files} を redgreen-verify が「impl を退避して red、戻して green」で事後判定する。
-// 判定は最終ツリーの性質のみで、テストと実装を書いた順序は見ない。よって planner / implementer に
-// 課すのは順序（tdd/bdd）ではなく「AC ごとに red→green で実証できるテストが残っていること」。
-const AC_TEST_CONTRACT = 'AC テスト契約: 自分の task が満たす受入条件（AC）ごとに、base では失敗し自分の実装で通るテストを残せ。テストと実装を書く順序は問わない。docs / 設定のみで AC に紐づくテストが成立しない task は、その旨を summary に書け。\n'
-const PLANNER_TEST_PLAN_RULE = 'test_plan 規約: 各 task の test_plan には、その task が満たす AC を「base では失敗し実装で通る」形で実証するテストの所在（test file と対象 impl file）を書け。AC を実証する test ファイルは file_changes に含めよ。書く順序は指示しない。\n'
-
 // Next.js/Turbopack 固有の build 検証規約。sandbox 内では `next build`（Turbopack）が process 生成・
-// ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する。implementer が対照実験を
+// ポートバインド制限により TurbopackInternalError (os error 1) で決定的に失敗する。実装 agent が対照実験を
 // 毎回再発明しないよう、非 Turbopack fallback（`next build --webpack`）で build 検証してよい旨を規約化する。
 // agent 定義ファイル（.claude/agents/*.md）は sandbox write-deny のため workflow が prompt に注入する。
 // 注入可否は Setup が args.setup.stack.frameworks（prerun の detect-stack）で決定論的に決める — 本定数を prompt に直接連結しない。
@@ -5573,34 +5463,10 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `の旨を自分の出力（implementer は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
-function implPrompt(t, { req, plan, fixFeedback, extraContext }) {
-  // AC・plan contract（summary / architecture_decisions / edge_cases）を全 implementer spawn prompt に注入する。
-  // evaluator が AC ベースで採点するため implementer と採点軸を共有する。
-  // 注入は contract 粒度に留め line-level 詳細は含めない。req / plan は明示 param で受け取る
-  // （呼び出し元 runImplement が呼び出し時点の req/plan を渡す。replan 時は最新 plan が注入される）。
-  const archDecisions = plan?.architecture_decisions ?? []
-  const edgeCases = plan?.edge_cases ?? []
-  return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
-    + `次の task を実装せよ。共有 worktree のため自分の task の file_changes 以外は触るな。`
-    + `git add / commit はするな。\n`
-    + AC_TEST_CONTRACT
-    + `task: ${JSON.stringify(t)}\n`
-    + `requirements（issue 受入条件。evaluator はこの AC を採点軸にする — 自 task に関係する AC を満たすこと）:\n${JSON.stringify(req?.acceptance_criteria ?? [])}\n`
-    + `plan summary: ${JSON.stringify(plan?.summary ?? '')}\n`
-    + (archDecisions.length ? `architecture_decisions（計画の設計判断。この方針に従うこと）:\n${JSON.stringify(archDecisions)}\n` : '')
-    + (edgeCases.length ? `edge_cases（計画が想定する edge case。実装時に考慮すること）:\n${JSON.stringify(edgeCases)}\n` : '')
-    + (fixFeedback ? `修正指摘（各項目を解消）:\n${JSON.stringify(fixFeedback)}\n` : '')
-    + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
-    + STAGING_CONVENTION
-    + DEPS_NOTE
-    + TURBOPACK_NOTE
-}
-
-// ---- IMPLEMENT_MODE='fable' の経路（全 shape）----
-// Plan phase が dev-planner を起動せず issue から単一 task の plan を合成し、runImplement が
-// task.agent で dev-implement-fable（plan+impl 統合）へ切り替える。合成 plan だけが agent を持つ
-// （dev-planner の PLAN は agent キーを出さない）ため、replan で dev-planner が plan を作り直した時点で
-// implementer 経路（dev-planner → implementer）へ戻る。
+// ---- Implement 経路（全 shape で dev-implement-fable 一本）----
+// Plan phase は issue から単一 task の plan を合成し、runImplement が dev-implement-fable
+// （plan+impl 統合）を 1 spawn する。合成 plan の task は agent キーを持つ（isFablePlan）—
+// 合成 plan 以外は Implement / Evaluate で受理しない（明示 error）。
 const FABLE_IMPL_AGENT = 'dev-implement-fable'
 function synthesizeFablePlan(req, issue) {
   const title = String(req?.issue_title ?? `Issue #${issue}`)
@@ -5613,8 +5479,8 @@ function synthesizeFablePlan(req, issue) {
 function isFableTask(t) { return t != null && t.agent === FABLE_IMPL_AGENT }
 function isFablePlan(p) { return [...(p?.serial ?? []), ...(p?.parallel ?? [])].some(isFableTask) }
 // 合成 task の file_changes は空で始まる（Fable が決める）。Implement / reimpl の返却 files を宣言として
-// 取り込むことで、宣言外監査（diffDeclaredPaths）・refloor count・PR body の「変更」節が implementer 経路と
-// 同じ材料で動く（宣言外 = Fable が files に申告しなかった変更、として evaluator の focus に載る）。
+// 取り込むことで、宣言外監査（diffDeclaredPaths）・refloor count・PR body の「変更」節が同じ材料で動く
+// （宣言外 = Fable が files に申告しなかった変更、として evaluator の focus に載る）。
 function adoptReportedFiles(plan, results) {
   if (!isFablePlan(plan)) return plan
   const filesOf = (id) => {
@@ -5629,9 +5495,11 @@ function adoptReportedFiles(plan, results) {
   return { ...plan, serial: (plan.serial ?? []).map(adopt), parallel: (plan.parallel ?? []).map(adopt) }
 }
 // dev-implement-fable への spawn prompt。issue 本文と AC を直接渡し、手順書型 task・plan contract・
-// AC_TEST_CONTRACT（red→green 自己実証）は渡さない — 全件テスト・red 証明・AC 判定は Validate /
-// redgreen-verify / evaluator が行う（stage2 定義: agent 定義 agents/dev-implement-fable.md）。
-function fableImplPrompt(t, { req, fixFeedback, extraContext }) {
+// AC テスト契約（red→green 自己実証）は渡さない — 全件テスト・red 証明・AC 判定は Validate /
+// redgreen-verify / evaluator が行う（agent 定義 agents/dev-implement-fable.md）。
+// blocked（BLOCKED 再計画時のみ）: blockSeen 累積の approach_mismatch findings（過去に BLOCKED になった
+// 全アプローチへの回帰禁止）と DONE 成果（再実装させない）を同じ prompt に付けて再 spawn する。
+function fableImplPrompt(t, { req, fixFeedback, extraContext, blocked }) {
   const body = typeof req?.issue_body === 'string' && req.issue_body.length > 0 ? req.issue_body : null
   return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
     + `issue #${ISSUE} を計画から実装まで仕上げよ。git add / commit はするな。\n`
@@ -5643,64 +5511,45 @@ function fableImplPrompt(t, { req, fixFeedback, extraContext }) {
     + `acceptance_criteria（evaluator はこの AC を採点軸にする。全 AC を満たし、各 AC を守るテストを残せ）:\n${JSON.stringify(req?.acceptance_criteria ?? [])}\n`
     + (fixFeedback ? `fix_feedback（Evaluate 差し戻し。各項目を解消）:\n${JSON.stringify(fixFeedback)}\n` : '')
     + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
+    + (blocked
+        ? `前回実装が BLOCKED になった。別アプローチで計画を立て直して実装せよ。\n`
+          + (blocked.done.length
+              ? `適用済み成果（worktree に既に存在する。再実装するな。残作業のみ実装せよ）:\n${JSON.stringify(blocked.done)}\n`
+              : '')
+          + `approach_mismatch findings（過去 iteration 全件の累積。**過去に BLOCKED になったいずれのアプローチへの回帰も禁止** — 全件と異なる代替設計を採れ）:\n${JSON.stringify(blocked.findings)}\n`
+        : '')
     + STAGING_CONVENTION
     + DEPS_NOTE
     + TURBOPACK_NOTE
 }
 
-// 計画の parallel → pipeline で先行 fan-out、serial → その後に配列順で順次実行（serial は
-// parallel の成果物に依存し得るため parallel-first。逆方向 — parallel が serial 成果へ依存 — は
-// plan-reviewer が critical で reject する。この順序は不変）。
-// parallel 側は pipeline()、serial 側は failOpenAgent 経由。両者とも callback の throw / null return は
-// reject にならず per-item null に落ちる — pipeline() は canary 実測契約（Claude Code 2.1.252 で実測、
-// canary）による harness-native の fail-open、failOpenAgent は明示 try/catch による
-// fail-open。drop は可視化して返す。
-// 最小バージョン: Claude Code >= 2.1.207（pipeline() 提供。canary 実測 pass は 2.1.252）。
-async function runImplement(req, plan, fixFeedback, tag, extraContext) {
+// runImplement: 合成 plan の serial task（常に 1 件）を dev-implement-fable で順に spawn する。
+// failOpenAgent 経由（throw / null は per-task null に落ち、drop として可視化する）。
+// parallel fan-out / pipeline() は持たない（plan+impl 統合 agent が 1 spawn で全体を持つ）。
+// 返り値は結果配列（null は含めない）— drop 件数は呼び出し側が implementDrops で数える。
+async function runImplement(req, plan, fixFeedback, tag, extraContext, blocked) {
+  if (!isFablePlan(plan)) throw new Error(`dev-flow: ${tag}: plan に dev-implement-fable task が無い（合成 plan 以外は受理しない）`)
   const results = []
-  // task.agent が dev-implement-fable の task（IMPLEMENT_MODE='fable' の合成 plan）のみ agentType と
-  // prompt を切り替える。それ以外は implementer（返却 schema IMPL は両者共通）。
-  const spawnOf = (t) => isFableTask(t)
-    ? { prompt: fableImplPrompt(t, { req, fixFeedback, extraContext }), agentType: FABLE_IMPL_AGENT }
-    : { prompt: implPrompt(t, { req, plan, fixFeedback, extraContext }), agentType: 'implementer' }
-  const parTasks = plan.parallel ?? []
-  const parResults = await pipeline(parTasks, (t) => {
-    const s = spawnOf(t)
-    return trackedAgent(s.prompt,
-      { agentType: s.agentType, schema: IMPL, label: `${tag}:par:${t.id}`, phase: 'Implement' })
-  })
-  const ok = parResults.filter(Boolean)
-  const dropped = parResults.length - ok.length
-  if (dropped) {
-    const droppedIds = parTasks.filter((_, i) => !parResults[i]).map((t) => t.id)
-    log(`⚠️ ${tag}: parallel implementer ${dropped} 件が失敗(null) — 要確認 (dropped: ${droppedIds.join(', ')})`)
-  }
-  results.push(...ok)
-  let serialDropped = 0
+  let dropped = 0
   for (const t of (plan.serial ?? [])) {
-    const s = spawnOf(t)
-    const r = await failOpenAgent(s.prompt,
-      { agentType: s.agentType, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
+    const r = await failOpenAgent(fableImplPrompt(t, { req, fixFeedback, extraContext, blocked }),
+      { agentType: FABLE_IMPL_AGENT, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
     if (r) results.push(r)
-    else serialDropped++
+    else dropped++
   }
-  if (serialDropped) log(`⚠️ ${tag}: serial implementer ${serialDropped} 件が失敗(null) — 要確認`)
+  if (dropped) log(`⚠️ ${tag}: dev-implement-fable ${dropped} 件が失敗(null) — 要確認`)
   return results
 }
 
-// countPlanDrops(plan, results): runImplement が落とした task 数（計画 task 数 − 返却結果数）。
-// runImplement 自身に数えさせず呼び出し側で算出するのは、runImplement が
-// _lib/implement-order-failopen.test.mjs で関数単体として VM に切り出され評価されるため
-// （module スコープの変数を関数内から参照すると当該テストで ReferenceError になる）。
-function countPlanDrops(plan, results) {
-  const planned = (plan.serial ?? []).length + (plan.parallel ?? []).length
-  return Math.max(0, planned - results.length)
+// implementDrops(plan, results): runImplement が落とした task 数（計画 task 数 − 返却結果数）。
+// 合成 plan は task 1 件なので、返却 null は 1 として implDroppedCount に計上される。
+function implementDrops(plan, results) {
+  return Math.max(0, (plan.serial ?? []).length - results.length)
 }
 
 // ============================================================
 // Phase Setup: 単一 worktree + branch を作る。全 agent が同じパスで作業し成果を集約する。
-// （isolation:'worktree' は使わない — 各 agent が別 worktree になり並列実装の成果が分散するため。
-//  並列は同一 worktree 内で「file_changes が disjoint な」task のみ。plan-reviewer が検証する。）
+// （isolation:'worktree' は使わない — 各 agent が別 worktree になり成果が分散するため。）
 // ============================================================
 const clockMarks = {}
 // 専用 clock probe の呼び出しは 0 回になった。全 11 mark（start/end 含む）は feedClockMark が
@@ -5973,108 +5822,23 @@ const SHAPE = triage.shape
 ABORT_CTX.shape = SHAPE
 const TRIVIAL = SHAPE === 'micro'
 log(`shape: ${SHAPE} — ${triage.reason}`)
-const PLAN_SOLO = !TRIVIAL && SHAPE === 'standard'   // planner モード時の standard: plan 1発・reviewer 0回（fable モードでは未使用）
 
 // ============================================================
-// Phase Plan: dev-planner ⇄ plan-reviewer ループ。
-// 収束は planConverged が判断する（基準は同関数上のコメント参照）:
-//   既出 findings 累積で cold start を補償 / 同一 topic 反復で stuck 打ち切り /
-//   iteration 経過で relax / critical は常にブロック / 上限到達でも throw せず Evaluate へ委譲。
+// Phase Plan: shape に関わらず planner agent を起動せず、issue から単一 task の plan を合成する
+// （plan#fable-skip）。Fable に「手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、
+// issue 仕様を Implement で直接 dev-implement-fable に渡す。plan_iter は常に 0 で telemetry に載る。
+// shape 判定は Evaluate の深さ・LITE gate・refloor のために残す（Plan phase としては shape 非依存）。
 // ============================================================
 // contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電するため、
 // 以降の shape 判定の時間が plan 区間へ付け替わる（相対比較・分布用途のため許容）。
 feedClockMark('analyze_end', maxEpochRes([contractRes, issueMetaRes]))
 phase('Plan')
-let plan = null
-let planVerdict = null
-const planSeen = makeSeenTracker(PLAN_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
-let planConcerns = []      // 収束時に残った未解消 findings（Evaluate の focus_areas へ）
-let planIters = 0            // plan iteration カウンタ（telemetry 用）
-function soloPlanPrompt() {
-  return `cd ${WT} で作業。issue 要件に基づき実装計画を立てよ。\n`
-    + `requirements: ${JSON.stringify(req)}\n`
-    + PLANNER_TEST_PLAN_RULE
-    + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`
-    + PLANNER_HANDOFF_RULE
-}
-// IMPLEMENT_MODE='planner' のとき micro（triviality gate）と standard は Plan phase では同一経路 —
-// plan 1 発・plan-reviewer 0 回。label と log 文言のみ shape 別に分ける（label は routing test 群が
-// `label === 'plan#standard'` 等で参照しており、telemetry 上も経路の識別子として機能するため両方を
-// 厳密に維持する）。
-if (IMPLEMENT_MODE === 'fable') {
-  // fable: shape に関わらず dev-planner を起動せず issue から単一 task の plan を合成する（plan#fable-skip）。
-  // Fable に「sonnet 向けの手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、
-  // issue 仕様を直接 dev-implement-fable に渡す。plan_iter は 0 で telemetry に載る。
-  plan = synthesizeFablePlan(req, ISSUE)
-  planIters = 0
-  ABORT_CTX.plan_iter = 0
-  log(`plan#fable-skip: ${SHAPE} 経路(IMPLEMENT_MODE=fable) — dev-planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）`)
-} else if (TRIVIAL || PLAN_SOLO) {
-  const soloLabel = TRIVIAL ? 'plan#trivial' : 'plan#standard'
-  plan = need(await trackedAgent(
-    soloPlanPrompt(),
-    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: soloLabel, phase: 'Plan' },
-  ), TRIVIAL ? 'Plan(planner#trivial)' : 'Plan(planner#standard)')
-  plan = applyDisjoint(plan, soloLabel)
-  planIters = 1
-  ABORT_CTX.plan_iter = 1
-  log(TRIVIAL
-    ? 'triviality gate: plan-review ループを skip(reviewer 0 回起動)'
-    : 'standard 経路: plan 1発（plan-reviewer 0 回起動）')
-} else {
-for (let i = 1; i <= PLAN_MAX; i++) {
-  planIters = i
-  ABORT_CTX.plan_iter = i
-  const prior = planSeen.prior()   // 前 iteration までの累積 findings
-  plan = need(await trackedAgent(
-    `cd ${WT} で作業。issue 要件と${prior.length ? 'レビュー指摘' : '初回計画'}に基づき実装計画を立てよ。\n`
-    + `requirements: ${JSON.stringify(req)}\n`
-    + PLANNER_TEST_PLAN_RULE
-    + (prior.length
-        ? `これまでの plan-reviewer findings（過去 iteration 全件の累積。既に解消した項目は再対応不要。`
-          + `同じ topic が繰り返し残るなら同じ直し方をやめてアプローチを変えよ）:\n${JSON.stringify(prior)}\n`
-        : '')
-    + `serial（依存あり）と parallel（独立かつ file_changes が disjoint）に分解し、各 task は self-contained に書け。`
-    + PLANNER_HANDOFF_RULE,
-    { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `plan#${i}`, phase: 'Plan' },
-  ), `Plan(planner#${i})`)
-  plan = applyDisjoint(plan, `plan#${i}`)
-  const rev = need(await trackedAgent(
-    `cd ${WT} で作業。次の実装計画を批判的にレビューせよ（実コードベースに照合）。\n`
-    + `requirements: ${JSON.stringify(req)}\n`
-    + `plan: ${JSON.stringify(plan)}\n`
-    + (prior.length
-        ? `既出 findings（前 iteration までに指摘済み。planner は対応済みのはず）:\n${JSON.stringify(prior)}\n`
-          + `**新規の critical/major のみ報告**せよ。既出論点の蒸し返し・別観点の上乗せ（moving target）は禁止。`
-          + `同一問題には既出と同じ topic 文字列を再利用せよ。`
-        : '')
-    + EPOCH_INSTRUCTION,
-    { agentType: 'plan-reviewer', model: QUALITY_MODEL, schema: VERDICT, label: `review#${i}`, phase: 'Plan' },
-  ), `Plan(reviewer#${i})`)
-  planVerdict = rev
-
-  // findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
-  for (const f of (rev.findings ?? [])) { if (!f) continue; planSeen.register(f) }
-  const stuckTopics = planSeen.stuckTopics()
-  const stuck = stuckTopics.length > 0
-  log(`plan iteration ${i}: ${rev.verdict}${stuck ? ` [stuck: ${stuckTopics.join(' / ')}]` : ''}`)
-
-  if (planConverged(rev, i, stuck)) {
-    if (rev.verdict !== 'pass') {
-      planConcerns = findingsToConcerns(rev)
-      log(`plan 収束（verdict=${rev.verdict}, iter ${i}${stuck ? ', stuck' : ', relaxed'}）— `
-        + `未解消 ${planConcerns.length} 件を Evaluate へ委譲`)
-    }
-    break
-  }
-  if (i === PLAN_MAX) {
-    planConcerns = findingsToConcerns(rev)
-    log(`⚠️ plan は ${PLAN_MAX} iteration で収束せず（verdict=${rev.verdict}）— `
-      + `throw せず未解消 ${planConcerns.length} 件を Evaluate/human review へ委譲`)
-  }
-}
-
-}
+const planVerdict = null   // plan review は行わない（telemetry / summary の plan_verdict は null）
+const planConcerns = []    // plan review 由来の未解消 findings は無い（Evaluate の focus_areas には implement concerns のみ）
+const planIters = 0        // plan iteration カウンタ（telemetry 用。合成 plan は常に 0）
+let plan = synthesizeFablePlan(req, ISSUE)
+ABORT_CTX.plan_iter = 0
+log(`plan#fable-skip: ${SHAPE} 経路 — planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）`)
 
 // ============================================================
 // state: Implement 以降の phase 間で共有する単一 state オブジェクト。
@@ -6115,19 +5879,21 @@ function extractGuardBlocked(results) {
 }
 
 // ============================================================
-// Phase Implement: 実装 → BLOCKED があれば別アプローチで再計画して再実装（上限 BLOCK_MAX）
-// guard_blocked（hook deny / classifier block 等）は replan ループから遮断し blockedConcerns へ
-// 直行させる（extractGuardBlocked、W7 incentive-structural）。
+// Phase Implement: 実装 → BLOCKED があれば別アプローチで再実装（上限 BLOCK_MAX）。
+// 再計画は planner agent を起動せず、blockSeen 累積の approach_mismatch findings（過去 BLOCKED
+// アプローチへの回帰禁止）と DONE 成果を prompt に付けて dev-implement-fable を再 spawn する
+// （reimpl-blocked#b）。guard_blocked（hook deny / classifier block 等）は replan ループから遮断し
+// blockedConcerns へ直行させる（extractGuardBlocked、W7 incentive-structural）。
 // ============================================================
 async function execImplementPhase(state) {
   const { req } = state
   let plan = state.plan
   let implResults = await runImplement(req, plan, null, 'impl')
-  // drop 件数を Evaluate 強制条件へ積む。task が落ちた run は「計画した実装範囲」が
-  // 実際には欠けているが、残った task の diff が非空なら empty-diff gate も refloor も素通りするため、
+  // drop 件数を Evaluate 強制条件へ積む。spawn が null で落ちた run は「計画した実装範囲」が
+  // 実際には欠けているが、diff が非空なら empty-diff gate も refloor も素通りするため、
   // micro では evaluator 0 回のまま AC 未検証で PR に到達しうる。greenFixCount と同型で state に載せる。
   // extractGuardBlocked より前に数える（filter 後だと BLOCKED 除去分を drop と誤認する）。
-  state.implDroppedCount += countPlanDrops(plan, implResults)
+  state.implDroppedCount += implementDrops(plan, implResults)
   let blockedConcerns = []
   {
     const gb = extractGuardBlocked(implResults)
@@ -6135,40 +5901,31 @@ async function execImplementPhase(state) {
     blockedConcerns.push(...gb.concerns)
     state.guardBlockedResults.push(...gb.digests)
   }
-  // blockFindings 累積 & アプローチ回帰禁止。planSeen と同型の frozen target
+  // blockFindings 累積 & アプローチ回帰禁止。累積 findings の frozen target
   // （incentive-structural — W7 分類。capability 非依存・撤去禁止）
   const blockSeen = makeSeenTracker(Infinity)  // stuck 検出は使わず累積のみ（hard cap は BLOCK_MAX）
   for (let b = 1; b <= BLOCK_MAX; b++) {
     const blocked = implResults.filter((r) => r && r.status === 'BLOCKED')
     if (!blocked.length) break
-    log(`implement: ${blocked.length} task が BLOCKED — 別アプローチで再計画 (${b}/${BLOCK_MAX})`)
+    log(`implement: ${blocked.length} task が BLOCKED — 別アプローチで再実装 (${b}/${BLOCK_MAX})`)
     const blockFindings = blocked.map((r) => buildApproachBlockFinding({
       task_id: r.task_id,
       detail: normalizeBlockingReason(r.blocking_reason ?? null).detail,
     }))
-    // planSeen と同型のパターンで blockSeen に累積（当該 iteration 分も含む）
+    // blockSeen に累積（当該 iteration 分も含む）— 再 spawn prompt には累積全件を渡す
     for (const f of blockFindings) blockSeen.register(f)
     const priorBlock = blockSeen.prior()  // 当該 iteration 分も含む累積全件
-    // DONE 成果の抽出（適用済み task を replan prompt へ注入して重複実装・矛盾設計を防ぐ）
+    // DONE 成果の抽出（適用済み成果を再 spawn prompt へ注入して重複実装・矛盾設計を防ぐ）
     const doneSoFar = implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS'))
-    plan = need(await trackedAgent(
-      `cd ${WT} で作業。前回実装が BLOCKED になった。別アプローチで計画を立て直せ。\n`
-      + `requirements: ${JSON.stringify(req)}\n`
-      + `現計画: ${JSON.stringify(plan)}\n`
-      + (doneSoFar.length
-          ? `適用済み task（成果は worktree に既に存在する。再実装の計画を立てるな。残作業のみ計画せよ）:\n${JSON.stringify(doneSoFar.map((r) => ({ id: r.task_id, files: r.files, summary: r.summary })))}\n`
-          : '')
-      + `approach_mismatch findings（過去 iteration 全件の累積。**過去に BLOCKED になったいずれのアプローチへの回帰も禁止** — 全件と異なる代替設計を立案せよ）:\n${JSON.stringify(priorBlock)}`
-      + PLANNER_HANDOFF_RULE,
-      { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan-blocked#${b}`, phase: 'Implement' },
-    ), `Implement(replan#${b})`)
-    plan = applyDisjoint(plan, `replan-blocked#${b}`)
     // 再実装結果と直前の DONE のマージ保持:
     //   直前の DONE/DONE_WITH_CONCERNS は保持（concerns の Evaluate 伝搬維持）、
     //   同 task_id の新結果は新結果優先、
     //   直前の BLOCKED/NEEDS_CONTEXT は保持しない（stale BLOCKED で b+1 の再発火を防ぐ）
-    const retryResults = await runImplement(req, plan, null, `reimpl-blocked#${b}`)
-    state.implDroppedCount += countPlanDrops(plan, retryResults)
+    const retryResults = await runImplement(req, plan, null, `reimpl-blocked#${b}`, null, {
+      findings: priorBlock,
+      done: doneSoFar.map((r) => ({ id: r.task_id, files: r.files, summary: r.summary })),
+    })
+    state.implDroppedCount += implementDrops(plan, retryResults)
     const retryIds = new Set(retryResults.map((r) => r && r.task_id).filter(Boolean))
     implResults = [...implResults.filter((r) => r && (r.status === 'DONE' || r.status === 'DONE_WITH_CONCERNS') && !retryIds.has(r.task_id)), ...retryResults]
     {
@@ -6181,7 +5938,7 @@ async function execImplementPhase(state) {
       const stillBlocked = implResults.filter((r) => r && r.status === 'BLOCKED')
       if (stillBlocked.length) {
         blockedConcerns.push(...stillBlocked.map((r) => `approach_mismatch(${r.task_id}): ${scrubBlockingDetail(normalizeBlockingReason(r.blocking_reason ?? null).detail)}`))
-        log(`⚠️ ${BLOCK_MAX} 回再計画しても ${stillBlocked.length} task が BLOCKED — Evaluate/human review へ`)
+        log(`⚠️ ${BLOCK_MAX} 回再実装しても ${stillBlocked.length} task が BLOCKED — Evaluate/human review へ`)
       }
     }
   }
@@ -6196,20 +5953,16 @@ async function execImplementPhase(state) {
     if (!req2) {
       log(`⚠️ implement: comprehensive 再分析が null を返した — needs_clarification で中断`)
     } else {
+      // 合成 plan は task 1 件なので plan をそのまま再 spawn する（NEEDS_CONTEXT の結果は差し替える）
       const ids = new Set(needsCtx.map((r) => r.task_id))
-      const retryPlan = {
-        ...plan,
-        serial: (plan.serial ?? []).filter((t) => ids.has(t.id)),
-        parallel: (plan.parallel ?? []).filter((t) => ids.has(t.id)),
-      }
       const retryResults = await runImplement(
         req,
-        retryPlan,
+        plan,
         needsCtx.map((r) => ({ type: 'missing_context', detail: r.missing_context })),
         'reimpl-context',
         req2,
       )
-      state.implDroppedCount += countPlanDrops(retryPlan, retryResults)
+      state.implDroppedCount += implementDrops(plan, retryResults)
       implResults = [...implResults.filter((r) => !ids.has(r.task_id)), ...retryResults]
     }
     const stillNeeds = (implResults).filter((r) => r && r.status === 'NEEDS_CONTEXT')
@@ -6245,7 +5998,7 @@ async function execImplementPhase(state) {
 }
 
 // ============================================================
-// Phase Validate: test green を確認し、green でなければ implementer に差し戻し（上限 GREEN_MAX）。
+// Phase Validate: test green を確認し、green でなければ dev-implement-fable に差し戻し（上限 GREEN_MAX）。
 // tests:'error'（起動失敗）は差し戻さず即 break
 // （format/lint は hook 責務でここでは扱わない）
 // ============================================================
@@ -6287,7 +6040,7 @@ async function execValidatePhase(state) {
       if (v.green || v.tests === 'no_tests') break
       if (v.tests === 'error') {
         // 起動失敗（テストが 1 件も実行されていない）。環境失敗はコード修正で解消しないため
-        // green-fix（implementer）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
+        // green-fix（dev-implement-fable）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
         // まま返し、Evaluate → Final reconcile の error → unavailable → ci-final（CI 委譲）経路に委ねる。
         // tests:'failed'（実行された上での red）はそのまま green-fix を回す。
         log(`⚠️ ${phaseName}: tests=error（起動失敗: ${String(v.summary ?? '').slice(0, 200)}）— green-fix をスキップ（環境失敗はコード修正で解消しない。Final reconcile の CI 委譲へ）`)
@@ -6309,7 +6062,7 @@ async function execValidatePhase(state) {
         + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}`
         + '\n' + STAGING_CONVENTION
         + TURBOPACK_NOTE,
-        { agentType: 'implementer', schema: IMPL, label: isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`, phase: phaseName },
+        { agentType: FABLE_IMPL_AGENT, schema: IMPL, label: isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`, phase: phaseName },
       )
       // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一）
       if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)
@@ -6563,7 +6316,7 @@ async function execSecurityFloorPhase(state) {
     log(`⚠️ micro だが green-fix ${state.greenFixCount} 回 → Evaluate を実行（テスト弱体化監査 強制）`)
   }
   if (TRIVIAL && state.implDroppedCount > 0) {
-    log(`⚠️ micro だが implementer drop ${state.implDroppedCount} 件 → Evaluate を実行（未実装範囲の AC 検証 強制）`)
+    log(`⚠️ micro だが implement drop ${state.implDroppedCount} 件 → Evaluate を実行（未実装範囲の AC 検証 強制）`)
   }
   if (EFFECTIVE_SHAPE === 'micro' && undeclared.length > 0) {
     log(`⚠️ micro だが宣言外変更 ${undeclared.length} 件 → Evaluate を実行（宣言外監査 強制）`)
@@ -6713,7 +6466,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
 }
 
 // ============================================================
-// Phase Evaluate: evaluator → fail なら design=再計画+再実装 / implementation=implementer 修正。
+// Phase Evaluate: evaluator → fail なら dev-implement-fable へ fix_feedback 付きで差し戻し（design は DESIGN_REPLAN_MAX で cap）。
 // 収束は evalConverged 相当のロジックがインライン判断する（基準は EVAL 収束モデルの
 // コメント参照）: 既出 feedback 累積で cold start を補償 / 同一 topic 反復で stuck 検出 /
 // stuck かつ design 反復なら早期打ち切り（コスト保護）/ critical は常にブロック /
@@ -6820,7 +6573,7 @@ async function execEvaluatePhase(state) {
             + `${EVALUATOR_OPERATIONAL_CONTRACT.testsurf_clearance}\n`
           : '')
       + (priorFeedback.length
-          ? `既出 feedback（前 iteration までに指摘済み。implementer/planner は対応済みのはず）:\n${JSON.stringify(priorFeedback)}\n`
+          ? `既出 feedback（前 iteration までに指摘済み。implementer は対応済みのはず）:\n${JSON.stringify(priorFeedback)}\n`
             + `**新規の critical/major のみ報告**せよ。対応済み論点の蒸し返し・別観点の上乗せ（moving target）は禁止。\n`
             + `${EVALUATOR_OPERATIONAL_CONTRACT.critical_resolutions}\n`
             + `同一問題には既出と同じ topic 文字列を再利用せよ（orchestrator が topic で stuck を突合する）。\n`
@@ -6998,47 +6751,18 @@ async function execEvaluatePhase(state) {
     // iteration i+1 に渡すために open な EVAL-* critical を再取得する（critical_resolutions で
     // 解消済みのものは checked になっているため、ここで取得するのは真に未解消のもののみ）。
     const nextOpenCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
-    if (isFablePlan(plan)) {
-      // fable 経路: plan と実装を同じ agent が持つため design / implementation を区別せず、合成 plan の
-      // まま fix_feedback 付きで dev-implement-fable へ差し戻す（reimpl#i）。dev-planner の replan は
-      // agent キーを落とし implementer 経路へ黙って切り替わるため起動しない。design 差し戻しの
-      // 総回数 cap（DESIGN_REPLAN_MAX）は implementer 経路と同じく数える。
-      if (ev.feedback_level === 'design') {
-        if (designReplanCount >= DESIGN_REPLAN_MAX) { log(`⚠️ design replan 上限到達 — human review へ委譲（DESIGN_REPLAN_MAX=${DESIGN_REPLAN_MAX}, iter ${i}。topic paraphrase 等で stuck 検出を経ずに総回数 cap に到達）`); break }
-        designReplanCount++
-      }
-      log(`replan#${i}: fable 経路 — dev-planner を起動せず合成 plan のまま dev-implement-fable へ差し戻し（feedback_level=${ev.feedback_level}）`)
-      const fableFeedback = nextOpenCriticals.length ? [...(ev.feedback ?? []), { unresolved_critical: nextOpenCriticals }] : ev.feedback
-      const reimplResults = await runImplement(req, plan, fableFeedback, `reimpl#${i}`)
-      plan = adoptReportedFiles(plan, reimplResults)
-    } else if (ev.feedback_level === 'design') {
+    if (!isFablePlan(plan)) throw new Error(`dev-flow: replan#${i}: plan に dev-implement-fable task が無い（合成 plan 以外は受理しない）`)
+    // plan と実装を同じ agent が持つため design / implementation を区別せず、合成 plan のまま
+    // fix_feedback 付きで dev-implement-fable へ差し戻す（reimpl#i）。design 差し戻しの総回数 cap
+    // （DESIGN_REPLAN_MAX、incentive-structural）はそのまま数える。
+    if (ev.feedback_level === 'design') {
       if (designReplanCount >= DESIGN_REPLAN_MAX) { log(`⚠️ design replan 上限到達 — human review へ委譲（DESIGN_REPLAN_MAX=${DESIGN_REPLAN_MAX}, iter ${i}。topic paraphrase 等で stuck 検出を経ずに総回数 cap に到達）`); break }
       designReplanCount++
-      plan = need(await trackedAgent(
-        `cd ${WT} で作業。evaluator が設計レベルの問題を指摘した。計画を revise せよ。\n`
-        + `requirements: ${JSON.stringify(req)}\n`
-        + `現計画: ${JSON.stringify(plan)}\n`
-        + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
-        + (nextOpenCriticals.length
-            ? `未解消 critical（最優先で解消せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
-            : '')
-        + PLANNER_HANDOFF_RULE,
-        { agentType: 'dev-planner', model: QUALITY_MODEL, schema: PLAN, label: `replan#${i}`, phase: 'Evaluate' },
-      ), `Evaluate(replan#${i})`)
-      plan = applyDisjoint(plan, `replan#${i}`)
-      await runImplement(req, plan, ev.feedback, `reimpl#${i}`)
-    } else {
-      await trackedAgent(
-        `cd ${WT} で作業（Bash ごとに先頭で cd すること）。evaluator が実装レベルの問題を指摘した。`
-        + `既存計画のまま修正せよ。無関係ファイルは触るな。git add / commit はするな。\n`
-        + `evaluator feedback: ${JSON.stringify(ev.feedback)}\n`
-        + (nextOpenCriticals.length
-            ? `未解消 critical（最優先で修正せよ。critical_resolutions で全件解消されるまで収束しない）:\n${JSON.stringify(nextOpenCriticals)}\n`
-            : '')
-        + STAGING_CONVENTION
-        + TURBOPACK_NOTE,
-        { agentType: 'implementer', schema: IMPL, label: `fix#${i}`, phase: 'Evaluate' })
     }
+    log(`replan#${i}: fable 経路 — 合成 plan のまま dev-implement-fable へ差し戻し（feedback_level=${ev.feedback_level}）`)
+    const fableFeedback = nextOpenCriticals.length ? [...(ev.feedback ?? []), { unresolved_critical: nextOpenCriticals }] : ev.feedback
+    const reimplResults = await runImplement(req, plan, fableFeedback, `reimpl#${i}`)
+    plan = adoptReportedFiles(plan, reimplResults)
   }
 
   state.plan = plan

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripComments } from '../../../tools/sync-inlines.mjs';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 import { neutralizeRegexLiterals } from './test-helpers/source-scan.mjs';
 
@@ -27,9 +27,7 @@ import { neutralizeRegexLiterals } from './test-helpers/source-scan.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEV_FLOW_PATH = join(HERE, '..', '.claude', 'workflows', 'dev-flow.js');
 const PR_ITERATE_PATH = join(HERE, '..', '.claude', 'workflows', 'pr-iterate.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(DEV_FLOW_PATH, 'utf8'), 'planner');
+const devFlowSrc = readFileSync(DEV_FLOW_PATH, 'utf8');
 const prIterateSrc = readFileSync(PR_ITERATE_PATH, 'utf8');
 
 // journal-save prompt に埋め込まれる telemetry JSON 断片を抜き出す（JSON.stringify 出力は

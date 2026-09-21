@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -37,10 +37,6 @@ function makeSandbox({
 
     if (label === 'issue-meta') return { ok: true, number: 1, title: analyzeReq?.issue_title ?? 'stub-issue-title' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['src/foo.ts'], test_plan: '' }], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -67,7 +63,7 @@ function makeSandbox({
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       const fn = implementerFn ?? (() => ({
         status: 'DONE', task_id: 'T1', files: [], summary: '', concerns: [],
         blocking_reason: null, missing_context: null,
@@ -116,9 +112,7 @@ async function runDevFlowInSandbox(src, ctx) {
   return { error: caughtError, result };
 }
 
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 const COMPLEX_ANALYZE_REQ = {
   summary: 's',
@@ -143,18 +137,18 @@ const STANDARD_ANALYZE_REQ = {
 };
 
 // ============================================================
-// (1) Plan ループ経路で planner が throw
+// (1) Validate（need() で包まれた diff-gate proxy）で throw
 // ============================================================
-test('[abort-telemetry] (1) Plan ループで planner が throw → abort entry 1 件（plan#1 / shape:complex / plan_iter:1 / eval_iter:0）', async () => {
+test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort entry 1 件（diff-gate / shape:complex / plan_iter:0 / eval_iter:0）', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: COMPLEX_ANALYZE_REQ,
-    throwAt: { label: 'plan#1', error: new Error('planner boom') },
+    throwAt: { label: 'diff-gate', error: new Error('proxy boom') },
   });
   const { error } = await runDevFlowInSandbox(src, ctx);
 
-  assert.ok(error !== null, '(1) planner throw で workflow が abort すべきだが error が null だった');
-  assert.ok(String(error?.message ?? '').includes('planner boom'),
-    `(1) error.message に 'planner boom' を含むべきだが: ${error?.message}`);
+  assert.ok(error !== null, '(1) diff-gate throw で workflow が abort すべきだが error が null だった');
+  assert.ok(String(error?.message ?? '').includes('proxy boom'),
+    `(1) error.message に 'proxy boom' を含むべきだが: ${error?.message}`);
 
   const saveCalls = calls.filter((c) => c.label === 'journal-save' && c.agentType === 'dev-flow:dev-runner-haiku');
   assert.equal(saveCalls.length, 1, `(1) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
@@ -162,9 +156,9 @@ test('[abort-telemetry] (1) Plan ループで planner が throw → abort entry 
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
     '"skill":"dev-flow"', '"outcome":"failure"', '"error_category":"abort"',
-    '"error_msg":"abort@Plan/plan#1: planner boom"', '"error_phase":"Plan"',
-    '"abort_phase":"Plan"', '"abort_label":"plan#1"', '"shape":"complex"',
-    '"plan_iter":1', '"eval_iter":0', '"subagent_invocations"', '"gate_policy"',
+    '"error_msg":"abort@Validate/diff-gate: proxy boom"', '"error_phase":"Validate"',
+    '"abort_phase":"Validate"', '"abort_label":"diff-gate"', '"shape":"complex"',
+    '"plan_iter":0', '"eval_iter":0', '"subagent_invocations"', '"gate_policy"',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
@@ -187,7 +181,7 @@ test('[abort-telemetry] (1) Plan ループで planner が throw → abort entry 
 // ============================================================
 // (2) Evaluate で evaluator が throw
 // ============================================================
-test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard / plan_iter:1 / eval_iter:1）', async () => {
+test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard / plan_iter:0 / eval_iter:1）', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: STANDARD_ANALYZE_REQ,
     throwAt: { label: 'eval#1', error: new Error('evaluator boom') },
@@ -204,7 +198,7 @@ test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 �
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
     '"error_msg":"abort@Evaluate/eval#1: evaluator boom"', '"error_phase":"Evaluate"',
-    '"shape":"standard"', '"plan_iter":1', '"eval_iter":1',
+    '"shape":"standard"', '"plan_iter":0', '"eval_iter":1',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(2) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
@@ -240,16 +234,16 @@ test('[abort-telemetry] (3) Setup で args.setup.ok が false → WT 未確定�
 // ============================================================
 // (4) fail-open: journal-save 自体が throw しても元の例外は変わらない
 // ============================================================
-test('[abort-telemetry] (4) fail-open: journal-save stub が throw しても元の例外(planner boom)を rethrow し journal-log-abort は 0 回', async () => {
+test('[abort-telemetry] (4) fail-open: journal-save stub が throw しても元の例外(proxy boom)を rethrow し journal-log-abort は 0 回', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: COMPLEX_ANALYZE_REQ,
-    throwAt: { label: 'plan#1', error: new Error('planner boom') },
+    throwAt: { label: 'diff-gate', error: new Error('proxy boom') },
     journalSaveThrows: true,
   });
   const { error } = await runDevFlowInSandbox(src, ctx);
 
   assert.ok(error !== null, '(4) error が null だった');
-  assert.ok(String(error?.message ?? '').includes('planner boom'),
+  assert.ok(String(error?.message ?? '').includes('proxy boom'),
     `(4) handoff 自体の失敗で元の例外が置き換わってはならないが: ${error?.message}`);
 
   const logCalls = calls.filter((c) => c.label === 'journal-log-abort');

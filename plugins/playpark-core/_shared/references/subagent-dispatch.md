@@ -61,11 +61,12 @@ Subagent に渡したい task / context は **prompt 内に verbatim paste** す
 
 ### 規約
 
-1. **呼び出し元 (dev-flow workflow) は implementer spawn 時に `task_body` を prompt 内に verbatim paste する**。
-   implementer は `impl-plan.md` 全体を Read しない（boundary 違反）。
-2. **dev-planner は各 task を self-contained に書く**。「Task N と同様」「上述の通り」「前述」等の
-   曖昧参照は禁止。plan-reviewer はこのパターンを `findings` (severity: major) として flag する。
-3. **implementer は `task_body` paste がある場合はそれを真実の source とし、`impl-plan.md` を Read しない**。
+1. **呼び出し元 (workflow) は worker spawn 時に `task_body` を prompt 内に verbatim paste する**。
+   worker は `impl-plan.md` 全体を Read しない（boundary 違反）。dev-flow では issue 本文と AC を
+   `dev-implement-fable` の prompt に直接 paste する（計画書ファイルを介さない）。
+2. **計画を書く側は各 task を self-contained に書く**。「Task N と同様」「上述の通り」「前述」等の
+   曖昧参照は禁止。レビュー側はこのパターンを `findings` (severity: major) として flag する。
+3. **worker は `task_body` paste がある場合はそれを真実の source とし、`impl-plan.md` を Read しない**。
    `task_body` が無い standalone 実行の場合のみ `impl-plan.md` fallback を使用。
 
 ### 推奨 paste フォーマット
@@ -93,14 +94,14 @@ Generator-Verifier ループ（implementer → evaluator）で worker が返す 
 |---|---|---|
 | `DONE` | (なし) | Evaluate phase へ進む |
 | `DONE_WITH_CONCERNS` | `concerns: string[]` (>= 1 要素) | 結果を保持し `concerns[]` を Evaluate へ伝搬して重点監査 |
-| `BLOCKED` | `blocking_reason: string` (なぜ進めないか全文) | **同アプローチ retry 禁止**。`blocking_reason` を `approach_mismatch` findings として累積し、別アプローチで再計画→再実装（上限 `BLOCK_MAX`）。過去に BLOCKED になったいずれのアプローチへの回帰も禁止 |
+| `BLOCKED` | `blocking_reason: {block_class, detail, guard_id}` (なぜ進めないか) | **同アプローチ retry 禁止**。`approach_mismatch` は findings として累積し、累積全件を prompt に付けて同じ worker を別アプローチで再 spawn（上限 `BLOCK_MAX`）。過去に BLOCKED になったいずれのアプローチへの回帰も禁止。`guard_blocked` は再 spawn せず evaluator focus へ直行 |
 | `NEEDS_CONTEXT` | `missing_context: string` (何が分かれば進めるか) | comprehensive で再分析して再試行。それでも解消しなければ `needs_clarification` で早期 return し、呼び出し元セッションが人間に確認する |
 
 必須フィールド: `status`, `task_id`。任意: `files`, `summary`, `concerns`,
 `blocking_reason`, `missing_context`。
 
 正典は `plugins/dev-flow/.claude/workflows/dev-flow.js` の `IMPL` schema と
-[`plugins/dev-flow/agents/implementer.md`](../../../dev-flow/agents/implementer.md)。
+[`plugins/dev-flow/agents/dev-implement-fable.md`](../../../dev-flow/agents/dev-implement-fable.md)。
 
 ## Subagent Routing Rules
 
