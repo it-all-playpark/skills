@@ -222,6 +222,7 @@ test('[terminal-telemetry] 即 lgtm: fix_terminal_reason キー欠落 / terminal
   assert.equal(Object.hasOwn(telemetry, 'fix_terminal_reason'), false, 'lgtm 終端では fix_terminal_reason キーが欠落するべき');
   assert.equal(telemetry.terminal_path, 'review');
   assert.equal(telemetry.quality_model_config, QUALITY_MODEL);
+  assert.equal(telemetry.review_model_config, 'opus', 'pr-reviewer は override 無し → frontmatter の opus');
 
   const pluginJson = JSON.parse(readFileSync(join(repoRoot, '.claude-plugin/plugin.json'), 'utf8'));
   assert.equal(telemetry.plugin_version, PLUGIN_VERSION);

@@ -7,7 +7,11 @@ export const meta = {
 }
 
 // ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// 品質ゲート系 2 agent（evaluator / pr-reviewer）の model override。
+// model override を渡す call site は evaluator の 3 箇所（dev-flow.js の eval#i / final-ac-reconcile /
+// security-clearance-final）と dev-improve.js の rank-judge（improve-miner）。この 1 行を変えると
+// その 4 call site 全てに効く。pr-reviewer には渡さない — pr-reviewer は agents/pr-reviewer.md の
+// frontmatter（opus / high）で spawn し、この定数を変えても影響しない（telemetry は
+// quality_model_config = 本定数 / review_model_config = frontmatter 値で区別）。
 // frontmatter 既定は opus。Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
 // effort は agent() opts に記載されているが、本 harness での適用可否は未検証（受理と適用は別）。
 // dev-flow-canary の opts 受理 probe（capability id: agent_opts_effort_accepted）で再判定する。
@@ -550,14 +554,16 @@ const SUBAGENT_COUNTS = {};
 // 更新する（dev-flow.js の ABORT_CTX と同趣旨。型注記と同じく try 内 const/let は catch から
 // 見えないため、try 外のこの object へ写す）。
 const ABORT_CTX = { phase: 'Iterate', label: null, iterate_rounds: 0 }
-// quality model fallback（dev-flow.js と同型）: `opts.model`（QUALITY_MODEL を渡す pr-reviewer
-// call site のみ）付き呼び出しが null を返したら、model 指定を外して agent frontmatter の既定 model で
-// 同一 prompt・同一 label を 1 回だけ再試行し、以後この run は既定 model に sticky で切り替える。
-// harness の agent() は usage 上限（credit 切れ）・terminal API error・user skip のいずれでも throw せず
-// null を返し、原因は script から読めないため null だけを観測点にする。nested 起動時は dev-flow 側で
-// 既に発火した sticky を args.nested.quality_fallback で初期値として継承する（親 run で fable が
-// 空振り済みなら pr-iterate 側でもう一度空振りさせない）。callReviewAgent の schema-retry
-// （別 label・null 原因の切り分けなし）はこの fallback の後段にそのまま残す。
+// quality model fallback（dev-flow.js と同型）: `opts.model` 付き呼び出しが null を返したら、model 指定を
+// 外して agent frontmatter の既定 model で同一 prompt・同一 label を 1 回だけ再試行し、以後この run は
+// 既定 model に sticky で切り替える。pr-reviewer は `model` を渡さず frontmatter 既定（opus）で spawn する
+// ため pr-iterate 内にこの fallback が発火する call site は無い — 機構を残すのは、dev-flow.js と同型の
+// trackedAgent を保ち、nested 起動の args.nested.quality_fallback（dev-flow 側で evaluator の
+// QUALITY_MODEL 呼び出しが発火した sticky）の受理契約を変えないため。継承した sticky は pr-iterate の
+// telemetry には載らない（quality_model_fallback_label は自 run で発火した場合のみ set）。harness の agent() は usage 上限
+// （credit 切れ）・terminal API error・user skip のいずれでも throw せず null を返し、原因は script から
+// 読めないため null だけを観測点にする。callReviewAgent の schema-retry（別 label・null 原因の切り分け
+// なし）が pr-reviewer の null に対する唯一の再試行。
 let QUALITY_FALLBACK = NESTED?.quality_fallback === true
 let QUALITY_FALLBACK_LABEL = null
 const omitModel = ({ model, ...rest }) => rest
@@ -1570,7 +1576,7 @@ async function callFixAgent(prompt, i) {
 async function callReviewAgent(prompt, label) {
   let review = null
   try {
-    review = await trackedAgent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label, phase: 'Iterate' })
+    review = await trackedAgent(prompt, { agentType: 'pr-reviewer', schema: REVIEW, label, phase: 'Iterate' })
   } catch (e) {
     log(`⚠️ ${label} が例外を投げた（StructuredOutput 契約違反等）: ${e?.message ?? e}`)
   }
@@ -1578,7 +1584,7 @@ async function callReviewAgent(prompt, label) {
     reviewNullRetries++
     log(`⚠️ ${label} が結果を返さず — 同一 prompt で 1 回だけ再試行する（schema-retry）`)
     try {
-      review = await trackedAgent(prompt, { agentType: 'pr-reviewer', model: QUALITY_MODEL, schema: REVIEW, label: `${label}-schema-retry`, phase: 'Iterate' })
+      review = await trackedAgent(prompt, { agentType: 'pr-reviewer', schema: REVIEW, label: `${label}-schema-retry`, phase: 'Iterate' })
     } catch (e) {
       log(`⚠️ ${label}-schema-retry も例外: ${e?.message ?? e}`)
     }
@@ -1962,7 +1968,8 @@ const telemetryHandoff = buildJournalHandoffPayload({
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     terminal_path: terminalPath,
     ...(fixTerminalReason ? { fix_terminal_reason: fixTerminalReason } : {}),
-    quality_model_config: QUALITY_MODEL,  // 実行時モデルではなく _lib/quality-model.mjs の設定値
+    quality_model_config: QUALITY_MODEL,  // evaluator 系 call site（dev-flow 側）の設定値。実行時モデルではなく _lib/quality-model.mjs の値
+    review_model_config: 'opus',  // pr-reviewer の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     // quality_model_fallback_label: 最初に model 指定を外して再試行した call の label。未発生時はキー省略
     ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs の定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
@@ -2018,6 +2025,7 @@ return {
         iterate_rounds: ABORT_CTX.iterate_rounds,
         subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
         quality_model_config: QUALITY_MODEL,
+        review_model_config: 'opus',
         ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
         plugin_version: PLUGIN_VERSION,
       },

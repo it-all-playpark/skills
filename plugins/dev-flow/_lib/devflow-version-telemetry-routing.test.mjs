@@ -31,6 +31,14 @@ function assertJournalSaveHasKeys(calls, contextLabel) {
     qualityMatched,
     `${contextLabel}: journal-save prompt に "quality_model_config":"${QUALITY_MODEL}" を含む call が見つからない`,
   );
+  // review_model_config: pr-reviewer は override を渡さないので frontmatter の 'opus'（値の一致は review-model-frontmatter.test.mjs が pin）
+  const reviewMatched = journalSaveCalls.some(
+    (c) => c.prompt.includes('"review_model_config":"opus"'),
+  );
+  assert.ok(
+    reviewMatched,
+    `${contextLabel}: journal-save prompt に "review_model_config":"opus" を含む call が見つからない`,
+  );
   const versionMatched = journalSaveCalls.some(
     (c) => c.prompt.includes(`"plugin_version":"${PLUGIN_VERSION}"`),
   );
@@ -40,14 +48,14 @@ function assertJournalSaveHasKeys(calls, contextLabel) {
   );
 }
 
-test('dev-flow.js 成功 run の journal-save prompt が quality_model_config / plugin_version を含む', async () => {
+test('dev-flow.js 成功 run の journal-save prompt が quality_model_config / review_model_config / plugin_version を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(devFlowSrc, ctx, '.claude/workflows/dev-flow.js');
   assert.equal(error, null, `成功 run はエラーなく完走するべき: ${error?.message}`);
   assertJournalSaveHasKeys(calls, 'dev-flow success');
 });
 
-test('dev-flow.js empty-diff 失敗 run の journal-save prompt が quality_model_config / plugin_version を含む', async () => {
+test('dev-flow.js empty-diff 失敗 run の journal-save prompt が quality_model_config / review_model_config / plugin_version を含む', async () => {
   const { ctx, calls } = makeDevFlowSandbox({
     overrides: {
       'diff-gate': { hash: 'H', empty: true },
@@ -60,7 +68,7 @@ test('dev-flow.js empty-diff 失敗 run の journal-save prompt が quality_mode
   assertJournalSaveHasKeys(calls, 'dev-flow empty-diff failure');
 });
 
-test('pr-iterate.js 単体起動 run の journal-save prompt が quality_model_config / plugin_version を含む', async () => {
+test('pr-iterate.js 単体起動 run の journal-save prompt が quality_model_config / review_model_config / plugin_version を含む', async () => {
   const { ctx, calls } = makePrIterateSandbox();
   const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
   assert.equal(error, null, `pr-iterate 単体起動はエラーなく完走するべき: ${error?.message}`);
