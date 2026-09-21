@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# analyze-issue.sh - Parse a pre-fetched GitHub issue JSON file
+# analyze-issue.sh - Fetch a GitHub issue via `gh` and emit the analysis JSON
 #
-# Pure transform: takes the file path passed via --issue-json (verbatim stdout
-# of `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state,comments`,
-# fetched by the caller) and emits the analysis JSON. Performs no GitHub CLI or
-# network I/O itself.
+# The fetch lives INSIDE this script (bare `gh issue view <n> [--repo R] --json ...`,
+# stdout captured in-process, no file relay). The caller passes only the issue
+# number (+ optional --repo); it must NOT be asked to run `gh issue view ... > file`
+# itself: a redirect appended to `gh` changes the command's shape so the caller's
+# environment no longer recognises it as the registered bare `gh` form, and the
+# fetch then fails on `~/.config/gh` access. This script's own bare name is what
+# the caller's environment recognises, so the in-process `gh` inherits that.
 
 set -euo pipefail
 
@@ -25,15 +28,17 @@ FILE_EXT_PATTERN='ts|tsx|js|jsx|mjs|cjs|py|go|rs|md|sh|bash|bats|json|yml|yaml|t
 ISSUE_NUMBER=""
 DEPTH="standard"
 CONTRACT_MODE=false
-ISSUE_JSON_FILE=""
+REPO=""
+DUMP_BODY_PATH=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --depth) DEPTH="$2"; shift 2 ;;
         --contract) CONTRACT_MODE=true; shift ;;
-        --issue-json) ISSUE_JSON_FILE="$2"; shift 2 ;;
+        --repo) REPO="$2"; shift 2 ;;
+        --dump-body) DUMP_BODY_PATH="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: analyze-issue.sh <issue-number> --issue-json <file> [--depth minimal|standard|comprehensive] [--contract]"
+            echo "Usage: analyze-issue.sh <issue-number> [--repo <owner/repo>] [--depth minimal|standard|comprehensive] [--contract] [--dump-body <file>]"
             exit 0
             ;;
         -*)
@@ -47,12 +52,24 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$ISSUE_NUMBER" ]] && die_json "Issue number required"
-[[ -z "$ISSUE_JSON_FILE" ]] && die_json "--issue-json is required"
-[[ -r "$ISSUE_JSON_FILE" ]] || die_json "--issue-json file not found or unreadable: $ISSUE_JSON_FILE"
 
-# Load pre-fetched issue JSON (verbatim stdout of
-# `gh`'s `issue view <n> --json body,title,labels,assignees,milestone,state,comments,author`).
-ISSUE_JSON=$(cat "$ISSUE_JSON_FILE")
+# Fetch the issue JSON in-process. The --json field list is a contract with the
+# `comments` guard below (a missing "comments" key is treated as a fetch-contract
+# violation, not as "no comments"), so keep `comments` and `author` in it.
+require_cmd "gh" "GitHub CLI (gh) not installed. Install: brew install gh"
+GH_JSON_FIELDS="body,title,labels,assignees,milestone,state,comments,author"
+GH_ARGS=(issue view "$ISSUE_NUMBER")
+[[ -n "$REPO" ]] && GH_ARGS+=(--repo "$REPO")
+GH_ARGS+=(--json "$GH_JSON_FIELDS")
+# stderr is captured separately (not merged into stdout) so a gh warning printed
+# alongside a successful fetch cannot corrupt the JSON, while a failed fetch still
+# surfaces gh's own error text in the die_json message.
+GH_STDERR_FILE=$(mktemp "${TMPDIR:-/tmp}/analyze-issue-gh-XXXXXX")
+trap 'rm -f "$GH_STDERR_FILE"' EXIT
+if ! ISSUE_JSON=$(gh "${GH_ARGS[@]}" 2>"$GH_STDERR_FILE"); then
+    GH_STDERR=$(tr '\n' ' ' <"$GH_STDERR_FILE")
+    die_json "gh issue view ${ISSUE_NUMBER}${REPO:+ (--repo $REPO)} failed: ${GH_STDERR:-exit non-zero}"
+fi
 
 # Extract fields
 TITLE=$(echo "$ISSUE_JSON" | jq -r '.title // ""')
@@ -74,13 +91,13 @@ ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.author.login // ""')
 # Fail closed when the fetched issue JSON has no well-typed "comments" array. This is
 # NOT the same case as "issue has zero comments" — gh's `--json ...,comments` always
 # emits `"comments":[]` for a comment-free issue, so a missing/wrong-typed key means the
-# caller's `gh issue view --json ...` fetch omitted the `comments` field (or produced a
+# in-process `gh issue view --json ...` fetch omitted the `comments` field (or produced a
 # malformed shape), not that there genuinely are none. Previously `(.comments // [])`
 # treated that ambiguous case as comment_count=0 and let the --contract fast path stay
 # eligible:true with nothing to reconcile against the body — silently reproducing the
 # exact failure mode issue #573 fixed (missed comment-based corrections), because a
 # probe agent that drops `comments` from its `--json` field list would never be caught
-# (PR #578 review). Fail closed instead: die_json (exit non-zero) so the caller's fetch
+# (PR #578 review). Fail closed instead: die_json (exit non-zero) so the fetch
 # contract violation surfaces immediately rather than degrading silently.
 echo "$ISSUE_JSON" | jq -e 'has("comments") and (.comments | type == "array")' >/dev/null \
     || die_json "issue JSON missing required \"comments\" array field (fetch must include --json ...,comments)"
@@ -439,7 +456,7 @@ BODY_PREVIEW_MAX_CHARS=500
 # to keep the marker itself out of that count either way.
 truncation_marker() {
     # truncation_marker <label> <shown> <total> <suffix-after-chars>
-    printf '\n[TRUNCATED: %s shows the first %s of %s chars%s; the remainder was NOT included. Do not treat anything absent from this excerpt as unspecified — read the full body from the fetched issue JSON before raising ambiguities]' "$1" "$2" "$3" "$4"
+    printf '\n[TRUNCATED: %s shows the first %s of %s chars%s; the remainder was NOT included. Do not treat anything absent from this excerpt as unspecified — read the full body from the body_dump_path file (--dump-body) before raising ambiguities]' "$1" "$2" "$3" "$4"
 }
 SCOPE=""; SCOPE_TRUNCATED=false; SCOPE_TOTAL_CHARS=0; SCOPE_FILES_COUNT=0
 if [[ "$CONTRACT_MODE" == true || "$DEPTH" != minimal ]]; then
@@ -477,6 +494,19 @@ ISSUE_BODY_TRUNCATED=false
 if (( BODY_TOTAL_CHARS > SCOPE_MAX_CHARS )); then
     ISSUE_BODY_TRUNCATED=true
     ISSUE_BODY+="$(truncation_marker issue_body "$SCOPE_MAX_CHARS" "$BODY_TOTAL_CHARS" " of the issue body (AC section included)")"
+fi
+
+# --dump-body <file> (standard / comprehensive depth only): when any excerpt above was
+# truncated, write the raw body verbatim to <file> and report its absolute path as
+# body_dump_path so the consumer can Read the full text without re-fetching the issue.
+# Nothing is written (body_dump_path: null) when no excerpt was cut — the excerpts already
+# carry the whole body, and a stray file per run would only accumulate.
+BODY_DUMP_PATH_JSON=null
+if [[ -n "$DUMP_BODY_PATH" && "$CONTRACT_MODE" != true && "$DEPTH" != minimal ]] \
+    && [[ "$SCOPE_TRUNCATED" == true || "$BODY_PREVIEW_TRUNCATED" == true || "$ISSUE_BODY_TRUNCATED" == true ]]; then
+    printf '%s' "$BODY" > "$DUMP_BODY_PATH" || die_json "--dump-body: cannot write $DUMP_BODY_PATH"
+    BODY_DUMP_ABS="$(cd "$(dirname "$DUMP_BODY_PATH")" && pwd)/$(basename "$DUMP_BODY_PATH")"
+    BODY_DUMP_PATH_JSON=$(json_escape "$BODY_DUMP_ABS")
 fi
 
 if [[ "$CONTRACT_MODE" == true ]]; then
@@ -517,10 +547,10 @@ if [[ "$AC" == "[]" ]]; then
     WARNINGS_LIST+="acceptance_criteria is empty (no checkbox/numbered items found in body)"$'\n'
 fi
 if [[ "$SCOPE_TRUNCATED" == true ]]; then
-    WARNINGS_LIST+="scope truncated: showing first ${SCOPE_MAX_CHARS} of ${SCOPE_TOTAL_CHARS} chars (AC section excluded) — read the full body from the fetched issue JSON"$'\n'
+    WARNINGS_LIST+="scope truncated: showing first ${SCOPE_MAX_CHARS} of ${SCOPE_TOTAL_CHARS} chars (AC section excluded) — read the full body from the body_dump_path file"$'\n'
 fi
 if [[ "$BODY_PREVIEW_TRUNCATED" == true ]]; then
-    WARNINGS_LIST+="body_preview truncated: showing first ${BODY_PREVIEW_MAX_CHARS} of ${BODY_TOTAL_CHARS} chars — read the full body from the fetched issue JSON"$'\n'
+    WARNINGS_LIST+="body_preview truncated: showing first ${BODY_PREVIEW_MAX_CHARS} of ${BODY_TOTAL_CHARS} chars — read the full body from the body_dump_path file"$'\n'
 fi
 NEAR_MISS_LINES_RAW=$(echo "$NEAR_MISS_JSON" | jq -r '.[]' 2>/dev/null || true)
 while IFS= read -r nm_line || [[ -n "$nm_line" ]]; do
@@ -555,7 +585,8 @@ if [[ "$DEPTH" == "standard" ]]; then
   "scope_truncated": $SCOPE_TRUNCATED,
   "scope_total_chars": $SCOPE_TOTAL_CHARS,
   "issue_body": $(printf '%s' "$ISSUE_BODY" | jq -Rs .),
-  "issue_body_truncated": $ISSUE_BODY_TRUNCATED
+  "issue_body_truncated": $ISSUE_BODY_TRUNCATED,
+  "body_dump_path": $BODY_DUMP_PATH_JSON
 }
 JSONEOF
     exit 0
@@ -591,6 +622,7 @@ cat <<JSONEOF
   "scope_truncated": $SCOPE_TRUNCATED,
   "scope_total_chars": $SCOPE_TOTAL_CHARS,
   "issue_body": $(printf '%s' "$ISSUE_BODY" | jq -Rs .),
-  "issue_body_truncated": $ISSUE_BODY_TRUNCATED
+  "issue_body_truncated": $ISSUE_BODY_TRUNCATED,
+  "body_dump_path": $BODY_DUMP_PATH_JSON
 }
 JSONEOF

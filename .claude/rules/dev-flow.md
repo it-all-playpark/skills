@@ -60,7 +60,10 @@ paths:
 - script は plugin `bin/` の bare 名を**先頭トークン**にする。絶対パス・`bash`/`cd`/env 前置は書かない（sandbox excludedCommands は先頭トークン一致。dotfiles 側と対で運用、片側だけ変えると止まる）
 - plugin の `bin/` PATH はセッション起動時に version 込みで焼かれる — update 後は新セッションで `command -v` 確認。素のシェルでは常に失敗（欠陥ではない）
 
-> exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない。GitHub I/O は
+> exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない（唯一の例外:
+> `analyze-issue` は issue 取得の bare `gh issue view` を内蔵し stdout を in-process で受ける。subagent 側で
+> gh の stdout を file へリダイレクトすると bare `gh` 単文の形を外れて取得が失敗し、Analyze の両経路が
+> needs_clarification に終端するため。`_lib/analyze-fetch-no-redirect.test.mjs` が pin）。GitHub I/O は
 > subagent の Bash で「先頭トークンが gh または git の bare 単文」（--repo/-C で cwd 非依存化、
 > cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落とすか、呼び出し側 agent が
 > stdout/stderr を argv でスクリプトへ verbatim 転写して、スクリプトは file または argv 入力の

@@ -162,9 +162,9 @@ test("[analyze-contract-routing] (d) DEPTH !== 'standard' のとき contract-pro
 });
 
 // ---- (e) script 呼び出しが plugin bin/ の bare 名先頭トークン形（cd 前置・bash 前置なし）である ----
-// issue #466: analyze-issue.sh は --issue-json ファイル入力の純変換へ改修されたため、
-// contract probe は事前に bare `gh issue view` で issue JSON を $TMPDIR file へ取得してから
-// script を --issue-json 付きで呼ぶ 2 段階 choreography になった。
+// analyze-issue は issue 取得（bare `gh issue view`）を内蔵するため、contract probe は
+// `analyze-issue N [--repo R] --contract` の 1 単文のみを指示する（subagent 側の事前 gh 取得は無い。
+// リダイレクト付き gh の禁止は _lib/analyze-fetch-no-redirect.test.mjs が pin）。
 test('[analyze-contract-routing] (e) contract-probe#1 prompt が bare 名先頭トークン形の analyze-issue 呼び出しを含む', async () => {
   const { ctx, calls } = makeSandbox();
   const { error } = await run(ctx);
@@ -173,7 +173,7 @@ test('[analyze-contract-routing] (e) contract-probe#1 prompt が bare 名先頭�
   const call = calls.find((c) => c.label === 'contract-probe#1');
   assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
   assert.ok(
-    call.prompt.includes('analyze-issue 1 --issue-json <ISSUE_JSON> --contract'),
+    call.prompt.includes('analyze-issue 1 --contract'),
     `bare 名先頭トークン形の analyze-issue 呼び出しが見つからない: ${call.prompt}`,
   );
   assert.ok(!/\bbash analyze-issue/.test(call.prompt), "'bash analyze-issue' 前置形が含まれてはならない");
@@ -183,14 +183,16 @@ test('[analyze-contract-routing] (e) contract-probe#1 prompt が bare 名先頭�
   assert.ok(!/^cd /m.test(call.prompt), '実行コマンド行が cd で始まってはならない（各行頭が cd で始まらないことを確認）');
 });
 
-test('[analyze-contract-routing] (e) contract-probe#1 prompt が bare `gh issue view` で issue JSON を先行取得する', async () => {
+test('[analyze-contract-routing] (e) contract-probe#1 prompt は subagent に gh 取得段を指示しない（取得は analyze-issue 内蔵）', async () => {
   const { ctx, calls } = makeSandbox();
   const { error } = await run(ctx);
   assertNoCrash(error, 'e-2');
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
   const call = calls.find((c) => c.label === 'contract-probe#1');
   assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
-  assert.ok(call.prompt.includes('gh issue view 1'), `bare 'gh issue view 1' 実行指示が見つからない: ${call.prompt}`);
+  assert.ok(!call.prompt.includes('gh issue view'), `contract-probe prompt に subagent 側の 'gh issue view' 取得指示が残っている: ${call.prompt}`);
+  assert.ok(!call.prompt.includes('--issue-json'), `contract-probe prompt に '--issue-json' が残っている: ${call.prompt}`);
+  assert.ok(!call.prompt.includes('mktemp'), `contract-probe prompt に一時ファイル生成（mktemp）が残っている: ${call.prompt}`);
 });
 
 // ---- (f) 分類器 trigger 文言（sandbox/excludedCommands 起動理由の説明）を含まない ----
