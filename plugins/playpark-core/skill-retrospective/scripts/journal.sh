@@ -66,7 +66,7 @@ cmd_log() {
     local issue="" duration_turns="" context_extra=""
     local project="" worktree="" mode=""
     local merge_tier="" gate_policy="" danger_hits=""
-    local shape="" shape_refloored="" eval_verdict="" iterate_status="" plan_iter="" eval_iter=""
+    local shape="" shape_refloored="" eval_verdict="" iterate_status="" eval_iter=""
     local eval_staleness=""
     local repo="" pr_number=""
     local ci_wait_seconds="" ci_poll_attempts=""
@@ -119,7 +119,6 @@ cmd_log() {
             --eval-verdict) eval_verdict="$2"; shift 2 ;;
             --iterate-status) iterate_status="$2"; shift 2 ;;
             --eval-staleness) eval_staleness="$2"; shift 2 ;;
-            --plan-iter) plan_iter="$2"; shift 2 ;;
             --eval-iter) eval_iter="$2"; shift 2 ;;
             --repo) repo="$2"; shift 2 ;;
             --pr-number) pr_number="$2"; shift 2 ;;
@@ -177,11 +176,6 @@ cmd_log() {
             true|false) ;;
             *) die_json "Invalid --shape-refloored: $shape_refloored. Must be true|false" 1 ;;
         esac
-    fi
-    if [[ -n "$plan_iter" ]]; then
-        if ! [[ "$plan_iter" =~ ^[0-9]+$ ]]; then
-            die_json "Invalid --plan-iter: $plan_iter. Must be a non-negative integer" 1
-        fi
     fi
     if [[ -n "$eval_iter" ]]; then
         if ! [[ "$eval_iter" =~ ^[0-9]+$ ]]; then
@@ -459,10 +453,6 @@ cmd_log() {
     fi
     if [[ -n "$iterate_status" ]]; then
         telemetry=$(echo "$telemetry" | jq --arg v "$iterate_status" '. + {iterate_status: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$plan_iter" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$plan_iter" '. + {plan_iter: $v}')
         has_telemetry=true
     fi
     if [[ -n "$eval_iter" ]]; then
@@ -922,7 +912,7 @@ Subcommands:
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
-  journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --plan-iter 2 --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
+  journal.sh log dev-flow success --merge-tier REVIEW --shape standard --shape-refloored false --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
   journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
   journal.sh log dev-flow success --trust-run-id run-abc123 --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}]' --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
   journal.sh log dev-flow success --trust-evalseal-missing-reason agent_throw  # receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)

@@ -3,7 +3,7 @@
 #
 # Reads ~/.claude/journal/*.json (or $CLAUDE_JOURNAL_DIR) via the ARG_MAX-safe
 # journal loader below, filters to the lookback window, and produces:
-#   - distributions : shape / merge_tier / eval_iter / plan_iter / gate_policy
+#   - distributions : shape / merge_tier / eval_iter / gate_policy
 #                      (denominator = .skill == "dev-flow" entries)
 #                     iterate_status (7-value enum: lgtm / stuck / fix_failed /
 #                       max_reached / ci_error / ci_pending / review_contract_error,
@@ -96,7 +96,6 @@ done
 
 DEFAULT_WINDOW="30d"
 DEFAULT_EVAL_ITER_CAP="10"
-DEFAULT_PLAN_ITER_CAP="8"
 DEFAULT_ITERATE_UNHEALTHY_RATE="0.30"
 DEFAULT_ITERATE_MIN_RUNS="3"
 DEFAULT_MICRO_MIN_RUNS="10"
@@ -139,7 +138,6 @@ if [[ -z "$WINDOW" ]]; then
   WINDOW=$(load_config_field ".window_default" "\"$DEFAULT_WINDOW\"" | jq -r '.')
 fi
 EVAL_ITER_CAP=$(load_config_field ".thresholds.eval_iter_cap" "$DEFAULT_EVAL_ITER_CAP" | jq -r '.')
-PLAN_ITER_CAP=$(load_config_field ".thresholds.plan_iter_cap" "$DEFAULT_PLAN_ITER_CAP" | jq -r '.')
 ITERATE_UNHEALTHY_RATE=$(load_config_field ".thresholds.iterate_unhealthy_rate" "$DEFAULT_ITERATE_UNHEALTHY_RATE" | jq -r '.')
 ITERATE_MIN_RUNS=$(load_config_field ".thresholds.iterate_min_runs" "$DEFAULT_ITERATE_MIN_RUNS" | jq -r '.')
 MICRO_MIN_RUNS=$(load_config_field ".thresholds.micro_min_runs" "$DEFAULT_MICRO_MIN_RUNS" | jq -r '.')
@@ -224,7 +222,7 @@ WINDOW_ENTRIES=$(echo "$ALL_ENTRIES" | jq -c \
   '[.[] | select(.timestamp >= $since)]')
 
 # dev-flow-only entries: denominator for shape / merge_tier / eval_iter /
-# plan_iter / gate_policy distributions. pr-iterate standalone entries
+# gate_policy distributions. pr-iterate standalone entries
 # (skill=="pr-iterate", telemetry.merge_tier=="PR_ITERATE") are excluded here
 # by construction -- they never have skill=="dev-flow".
 # source: skill のみ（hook 由来の failure capture エントリは telemetry を持たず
@@ -281,15 +279,6 @@ EVAL_ITER_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson cap "$EVAL_ITER_CAP" 
     max: ($vals | if length > 0 then max else null end),
     cap: $cap,
     at_cap_count: ([.[] | select(.telemetry.eval_iter != null and .telemetry.eval_iter >= $cap)] | length)
-  }
-')
-
-PLAN_ITER_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c --argjson cap "$PLAN_ITER_CAP" '
-  ([.[] | .telemetry.plan_iter | select(. != null)]) as $vals |
-  {
-    max: ($vals | if length > 0 then max else null end),
-    cap: $cap,
-    at_cap_count: ([.[] | select(.telemetry.plan_iter != null and .telemetry.plan_iter >= $cap)] | length)
   }
 ')
 
@@ -668,7 +657,6 @@ DISTRIBUTIONS=$(jq -n \
   --argjson shape "$SHAPE_DIST" \
   --argjson merge_tier "$MERGE_TIER_DIST" \
   --argjson eval_iter "$EVAL_ITER_DIST" \
-  --argjson plan_iter "$PLAN_ITER_DIST" \
   --argjson gate_policy "$GATE_POLICY_DIST" \
   --argjson iterate_status "$ITERATE_STATUS_DIST" \
   --argjson duration_seconds_by_shape "$DURATION_BY_SHAPE" \
@@ -681,7 +669,6 @@ DISTRIBUTIONS=$(jq -n \
     shape: $shape,
     merge_tier: $merge_tier,
     eval_iter: $eval_iter,
-    plan_iter: $plan_iter,
     gate_policy: $gate_policy,
     iterate_status: $iterate_status,
     duration_seconds_by_shape: $duration_seconds_by_shape,
@@ -696,14 +683,12 @@ DISTRIBUTIONS=$(jq -n \
 # Anomalies
 # ----------------------------------------------------------------------------
 
-# (1) cap_pinned: dev-flow entries pinned at eval_iter_cap or plan_iter_cap.
+# (1) cap_pinned: dev-flow entries pinned at eval_iter_cap.
 CAP_PINNED=$(echo "$DEVFLOW_ENTRIES" | jq -c \
   --argjson eval_cap "$EVAL_ITER_CAP" \
-  --argjson plan_cap "$PLAN_ITER_CAP" \
   '
   [.[] | select(
-    (.telemetry.eval_iter != null and .telemetry.eval_iter >= $eval_cap) or
-    (.telemetry.plan_iter != null and .telemetry.plan_iter >= $plan_cap)
+    (.telemetry.eval_iter != null and .telemetry.eval_iter >= $eval_cap)
   )] as $hits |
   if ($hits | length) > 0 then
     [{
@@ -712,8 +697,7 @@ CAP_PINNED=$(echo "$DEVFLOW_ENTRIES" | jq -c \
       count: ($hits | length),
       detail: {
         eval_iter_cap: $eval_cap,
-        plan_iter_cap: $plan_cap,
-        entries: ($hits | map({id: .id, issue: (.issue // null), eval_iter: .telemetry.eval_iter, plan_iter: .telemetry.plan_iter}))
+        entries: ($hits | map({id: .id, issue: (.issue // null), eval_iter: .telemetry.eval_iter}))
       }
     }]
   else [] end

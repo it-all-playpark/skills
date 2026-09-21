@@ -18,14 +18,13 @@ score = max(0, score)
 ## dev-flow telemetry anomaly penalty (Check 8)
 
 Check 8 は `analyze-dev-flow-telemetry.sh` が集計した dev-flow / pr-iterate journal telemetry
-（shape / merge_tier / eval_iter / plan_iter / gate_policy / iterate_status の分布）から検出した
+（shape / merge_tier / eval_iter / gate_policy / iterate_status の分布）から検出した
 anomaly に応じて、最大 `-15` のペナルティを加算する。`run-diagnostics.sh --scope full` および
 `--scope telemetry` で `run_telemetry_checks` 関数が計算する。
 
 anomaly は次の 3 種類で、それぞれ `severity: "warn"` のとき `-5`:
 
-- `cap_pinned`: dev-flow entry が `eval_iter_cap`（既定 10）または `plan_iter_cap`（既定 8）に
-  張り付いている件数が 1 件以上
+- `cap_pinned`: dev-flow entry が `eval_iter_cap`（既定 10）に張り付いている件数が 1 件以上
 - `iterate_unhealthy`: `iterate_status`（lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending /
   review_contract_error）を持つ全 run（dev-flow + pr-iterate）のうち非 lgtm（stuck / fix_failed /
   max_reached / ci_error / review_contract_error）で終了した割合（ci_pending は分母から除外）が

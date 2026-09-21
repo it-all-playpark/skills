@@ -257,7 +257,6 @@ test('[journal-log] AC#1 (issue #494): Merge tier phase 後に journal-save→jo
     '"danger_fail_closed"',
     '"shape"',
     '"shape_refloored"',
-    '"plan_iter"',
     '"eval_iter"',
     '"skill":"dev-flow"',
     '"outcome":"success"',

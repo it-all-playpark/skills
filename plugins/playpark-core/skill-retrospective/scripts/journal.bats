@@ -80,16 +80,15 @@ latest_entry() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 4: All 6 new telemetry fields recorded with correct types
+# Test 4: All 5 new telemetry fields recorded with correct types
 # ---------------------------------------------------------------------------
-@test "all 6 new telemetry fields recorded with correct types" {
+@test "all 5 new telemetry fields recorded with correct types" {
     run "$SCRIPT" log dev-flow success \
         --merge-tier REVIEW \
         --shape standard \
         --shape-refloored false \
         --eval-verdict pass \
         --iterate-status lgtm \
-        --plan-iter 2 \
         --eval-iter 1
     [ "$status" -eq 0 ]
 
@@ -111,15 +110,9 @@ latest_entry() {
     shape_refloored_val=$(jq '.telemetry.shape_refloored' "$entry_file")
     [ "$shape_refloored_val" = "false" ]
 
-    # plan_iter and eval_iter must be numbers
-    plan_iter_type=$(jq '.telemetry.plan_iter | type' "$entry_file")
-    [ "$plan_iter_type" = '"number"' ]
-
+    # eval_iter must be a number
     eval_iter_type=$(jq '.telemetry.eval_iter | type' "$entry_file")
     [ "$eval_iter_type" = '"number"' ]
-
-    plan_iter_val=$(jq '.telemetry.plan_iter' "$entry_file")
-    [ "$plan_iter_val" = "2" ]
 
     eval_iter_val=$(jq '.telemetry.eval_iter' "$entry_file")
     [ "$eval_iter_val" = "1" ]
@@ -151,17 +144,9 @@ latest_entry() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 7: --plan-iter with non-numeric value exits non-zero
-# ---------------------------------------------------------------------------
-@test "--plan-iter abc exits non-zero" {
-    run "$SCRIPT" log dev-flow success --plan-iter abc
-    [ "$status" -ne 0 ]
-}
-
-# ---------------------------------------------------------------------------
 # Test 8: Partial new flags - only specified keys present, others absent
 # ---------------------------------------------------------------------------
-@test "only --iterate-status specified -> only that key present among new 6" {
+@test "only --iterate-status specified -> only that key present among new 5" {
     run "$SCRIPT" log dev-flow success --iterate-status lgtm
     [ "$status" -eq 0 ]
 
@@ -171,24 +156,22 @@ latest_entry() {
     iterate_status=$(jq -r '.telemetry.iterate_status' "$entry_file")
     [ "$iterate_status" = "lgtm" ]
 
-    # The other 5 new keys must be absent
+    # The other 4 new keys must be absent
     has_shape=$(jq '.telemetry | has("shape")' "$entry_file")
     has_shape_refloored=$(jq '.telemetry | has("shape_refloored")' "$entry_file")
     has_eval_verdict=$(jq '.telemetry | has("eval_verdict")' "$entry_file")
-    has_plan_iter=$(jq '.telemetry | has("plan_iter")' "$entry_file")
     has_eval_iter=$(jq '.telemetry | has("eval_iter")' "$entry_file")
 
     [ "$has_shape" = "false" ]
     [ "$has_shape_refloored" = "false" ]
     [ "$has_eval_verdict" = "false" ]
-    [ "$has_plan_iter" = "false" ]
     [ "$has_eval_iter" = "false" ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 9: Existing 3 flags only -> new 6 keys absent
+# Test 9: Existing 3 flags only -> new 5 keys absent
 # ---------------------------------------------------------------------------
-@test "existing 3 telemetry flags only -> new 6 keys absent" {
+@test "existing 3 telemetry flags only -> new 5 keys absent" {
     run "$SCRIPT" log dev-flow success \
         --merge-tier REVIEW \
         --gate-policy llm-major-advisory \
@@ -202,14 +185,12 @@ latest_entry() {
     has_shape_refloored=$(jq '.telemetry | has("shape_refloored")' "$entry_file")
     has_eval_verdict=$(jq '.telemetry | has("eval_verdict")' "$entry_file")
     has_iterate_status=$(jq '.telemetry | has("iterate_status")' "$entry_file")
-    has_plan_iter=$(jq '.telemetry | has("plan_iter")' "$entry_file")
     has_eval_iter=$(jq '.telemetry | has("eval_iter")' "$entry_file")
 
     [ "$has_shape" = "false" ]
     [ "$has_shape_refloored" = "false" ]
     [ "$has_eval_verdict" = "false" ]
     [ "$has_iterate_status" = "false" ]
-    [ "$has_plan_iter" = "false" ]
     [ "$has_eval_iter" = "false" ]
 }
 
@@ -624,7 +605,6 @@ JSON
         --error-category needs_clarification \
         --error-msg 'user clarification needed' \
         --gate-policy llm-major-advisory \
-        --plan-iter 1 \
         --eval-iter 0
     [ "$status" -eq 0 ]
 
@@ -650,7 +630,6 @@ JSON
         --error-category empty_diff \
         --error-msg 'no changes produced' \
         --gate-policy llm-major-advisory \
-        --plan-iter 0 \
         --eval-iter 0
     [ "$status" -eq 0 ]
 

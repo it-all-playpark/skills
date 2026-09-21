@@ -39,9 +39,6 @@ const POST_MERGE_CHECK = {
  *   `final_evidence`: string|null|undefined — final_resolution の根拠
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
- * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns。blockingItems/advisoryItems 内の
- *   dimension:'concern' かつ checked:true な item と text 完全一致するものは解消済みとして表示から
- *   除外する（issue #611）
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
  * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
@@ -85,7 +82,6 @@ export function buildDevflowSummaryBody({
   advisoryItems,
   ledgerConverged,
   acResults,
-  planConcerns,
   dangerHits,
   testsurfHits,
   shape,
@@ -201,24 +197,12 @@ export function buildDevflowSummaryBody({
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
 
-  // Plan 未解消 concerns は Plan phase 収束時のスナップショット（更新されない）だが、CONCERN-*
-  // ledger item（dimension:'concern'）は evaluator の concern_resolutions で checked/evidence
-  // 更新される。dev-flow.js は planConcerns の文字列を無加工で CONCERN-* の text に seed するため、
-  // text 完全一致で「ledger 上 checked 済み」を判定できる（issue #611）。同一 text が checked と
-  // unchecked の両方にある場合は unchecked を優先し表示を残す（fail-safe。見落とし防止）。
-  // triaged は要対応直後の <details> に全文で残るため箇条書きから除外する（issue #614, #626）。
-  const concernLedgerItems = [...blockArr, ...advArr].filter(it => it.dimension === 'concern');
-  const settledConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true || isTriaged(it)).map(it => it.text));
-  const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true && !isTriaged(it)).map(it => it.text));
-  const concerns = (planConcerns || []).filter(c => !(settledConcernTexts.has(c) && !unresolvedConcernTexts.has(c)));
-
   // hasActionItems: 見出し（⚠️ 要対応 / ✅ 要対応事項なし）の判定にのみ使う。解消済みは数えない。
   const hasActionItems = uncheckedBlocking.length > 0
     || unresolvedEscalate.length > 0
     || unresolvedAdvisory.length > 0
     || unsatisfiedAC.length > 0
-    || uncleared.length > 0
-    || concerns.length > 0;
+    || uncleared.length > 0;
 
   // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
   // 要判断・助言は含めない — 人間の判断のみで済む項目は「修正」ではない）。
@@ -233,7 +217,6 @@ export function buildDevflowSummaryBody({
     || testsurfClearance.some(tc => !tc.cleared)
     || finalTestGreen === false
     || (iterateStatus != null && iterateStatus !== 'lgtm')
-    || concerns.length > 0
     || (Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code)));
 
   const lines = [];
@@ -559,15 +542,6 @@ export function buildDevflowSummaryBody({
       for (const sc of uncleared) {
         const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
         lines.push(`| ❌ 未確認 | ${sc.danger_class} | ${evidenceCell} |`);
-      }
-    }
-
-    // Plan concerns（(vi)）
-    if (concerns.length > 0) {
-      lines.push('');
-      lines.push('**Plan 未解消 concerns**:');
-      for (const concern of concerns) {
-        lines.push(`- ${concern}`);
       }
     }
   }

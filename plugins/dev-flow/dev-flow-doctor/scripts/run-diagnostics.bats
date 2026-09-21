@@ -173,7 +173,7 @@ EOF
 @test "(4) telemetry corpus: --scope full で dev_flow_telemetry が実集計されること" {
     local i
     for i in $(seq 1 4); do
-        write_devflow_entry "e${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "$i"
+        write_devflow_entry "e${i}.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' "$i"
     done
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope full --window 30d"
@@ -222,7 +222,7 @@ EOF
 # (6) AC2: eval_iter=10 (cap) corpus -> issues[] に cap張り付き warn が出る
 # ---------------------------------------------------------------------------
 @test "(6) AC2: eval_iter=10 corpus -> issues に cap張り付き warn" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"REVIEW","plan_iter":2,"eval_iter":10}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"REVIEW","eval_iter":10}' 1
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
@@ -244,10 +244,10 @@ EOF
 @test "(7) AC3: micro 0件・run>=10 corpus -> issues に micro不発火 warn" {
     local i
     for i in $(seq 1 6); do
-        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "s${i}"
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
     for i in $(seq 1 5); do
-        write_devflow_entry "complex-${i}.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":2,"eval_iter":2}' "c${i}"
+        write_devflow_entry "complex-${i}.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":2}' "c${i}"
     done
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
@@ -265,7 +265,7 @@ EOF
 @test "(8) AC3: run<10 corpus -> micro不発火 skipped（判定skipが明示される）" {
     local i
     for i in $(seq 1 5); do
-        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "s${i}"
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
@@ -286,7 +286,7 @@ EOF
 #     checks から消えていること
 # ---------------------------------------------------------------------------
 @test "(9) checks から termination_loops / mode_distribution キーが消えている" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 1
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope full --window 30d"
     [ "$status" -eq 0 ]
@@ -458,8 +458,8 @@ EOF
     # state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })）。
     # analyze-dev-flow-telemetry.sh は .status を transcribe するだけで raw verdict を
     # 再導出しない（同スクリプトの vdelta_verdict distribution テストで既に検証済み）。
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"deny","comparability":"exact","verification_surface":"intact","repaired_with_test_change":1}]}' 2
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"deny","comparability":"exact","verification_surface":"intact","repaired_with_test_change":1}]}' 2
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
@@ -478,11 +478,11 @@ EOF
 
 @test "(18) AC-3: abstain+fail_open 率が閾値超・total>=vdelta_min_runs -> issues に vdelta warn + anomaly type vdelta_unhealthy severity warn" {
     # issue #433 (commit 670133d) 以降の実 producer digest 形（テスト17と同じ根拠）。
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 2
-    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 3
-    write_devflow_entry "e4.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"fail_open","comparability":null,"verification_surface":null,"repaired_with_test_change":0}]}' 4
-    write_devflow_entry "e5.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 5
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":"intact","repaired_with_test_change":0}]}' 3
+    write_devflow_entry "e4.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"fail_open","comparability":null,"verification_surface":null,"repaired_with_test_change":0}]}' 4
+    write_devflow_entry "e5.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 5
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
@@ -503,7 +503,7 @@ EOF
 }
 
 @test "(19) AC-4 回帰: vdelta データ無し corpus -> vdelta_unhealthy は skipped で warn を出さずスコアに影響しない（既存 cap_pinned/micro_nonfiring 系と同型）" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"REVIEW","plan_iter":2,"eval_iter":10}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"REVIEW","eval_iter":10}' 1
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
@@ -671,10 +671,10 @@ EOF
 #      journal.sh 解決状態に依存しないため無条件で assert する。
 # ---------------------------------------------------------------------------
 @test "(26) abort entry: checks.journal.failure に計上され failure_distribution が error.phase で集計される" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 2
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 2
     write_abort_entry "e3-abort.json" "Evaluate" "eval#1" \
-        '{"shape":"standard","plan_iter":1,"eval_iter":1,"abort_phase":"Evaluate","abort_label":"eval#1"}' 3
+        '{"shape":"standard","eval_iter":1,"abort_phase":"Evaluate","abort_label":"eval#1"}' 3
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope full --window 30d"
     [ "$status" -eq 0 ]
@@ -705,9 +705,9 @@ EOF
 # （score 非影響）。micro_nonfiring の warn メッセージには根拠が併記される。
 # ---------------------------------------------------------------------------
 @test "(27) shape 較正: checks.shape_calibration が出力され、取りこぼし / 過大判定は info issue で score 非影響" {
-    write_devflow_entry "s1.json" '{"shape":"standard","shape_refloored":false,"shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","realized_file_count":4,"realized_file_count_raw":7,"analyze_path":"contract","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' s1
-    write_devflow_entry "c1.json" '{"shape":"complex","shape_refloored":false,"shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","realized_file_count":2,"realized_file_count_raw":2,"analyze_path":"sonnet","analyze_ineligible_reason":"AC heading not found","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' c1
-    write_devflow_entry "m1.json" '{"shape":"micro","shape_refloored":false,"realized_file_count":1,"realized_file_count_raw":1,"merge_tier":"AUTO","plan_iter":1,"eval_iter":0}' m1
+    write_devflow_entry "s1.json" '{"shape":"standard","shape_refloored":false,"shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","realized_file_count":4,"realized_file_count_raw":7,"analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' s1
+    write_devflow_entry "c1.json" '{"shape":"complex","shape_refloored":false,"shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","realized_file_count":2,"realized_file_count_raw":2,"analyze_path":"sonnet","analyze_ineligible_reason":"AC heading not found","merge_tier":"REVIEW","eval_iter":1}' c1
+    write_devflow_entry "m1.json" '{"shape":"micro","shape_refloored":false,"realized_file_count":1,"realized_file_count_raw":1,"merge_tier":"AUTO","eval_iter":0}' m1
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
@@ -735,10 +735,10 @@ EOF
 @test "(28) micro不発火 warn メッセージに shape_reason 種別 / analyze 経路の根拠が併記される" {
     local i
     for i in $(seq 1 6); do
-        write_devflow_entry "standard-${i}.json" '{"shape":"standard","shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","analyze_path":"contract","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "s${i}"
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
     for i in $(seq 1 5); do
-        write_devflow_entry "complex-${i}.json" '{"shape":"complex","shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","analyze_path":"sonnet","merge_tier":"HOLD","plan_iter":2,"eval_iter":2}' "c${i}"
+        write_devflow_entry "complex-${i}.json" '{"shape":"complex","shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","analyze_path":"sonnet","merge_tier":"HOLD","eval_iter":2}' "c${i}"
     done
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"

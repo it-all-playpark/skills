@@ -155,10 +155,10 @@ EOF
 # Test 2: shape distribution counts
 # ---------------------------------------------------------------------------
 @test "shape distribution: micro/standard/complex mix counted correctly" {
-    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 2
-    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 3
-    write_devflow_entry "e4.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":3,"eval_iter":2}' 4
+    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 3
+    write_devflow_entry "e4.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":2}' 4
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -179,7 +179,7 @@ EOF
 # Test 3: cap張り付き (eval_iter at cap) -> anomaly cap_pinned warn
 # ---------------------------------------------------------------------------
 @test "cap-pinned: eval_iter==eval_iter_cap(10) -> anomaly cap_pinned warn" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"REVIEW","plan_iter":2,"eval_iter":10}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"REVIEW","eval_iter":10}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -195,10 +195,10 @@ EOF
 @test "micro-nonfiring: 11 dev-flow runs with 0 micro -> anomaly warn" {
     local i
     for i in $(seq 1 6); do
-        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "s${i}"
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
     for i in $(seq 1 5); do
-        write_devflow_entry "complex-${i}.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":2,"eval_iter":2}' "c${i}"
+        write_devflow_entry "complex-${i}.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":2}' "c${i}"
     done
 
     run "$SCRIPT" --window 30d
@@ -218,7 +218,7 @@ EOF
 @test "micro-nonfiring judgement skip: 5 dev-flow runs with 0 micro -> severity skipped" {
     local i
     for i in $(seq 1 5); do
-        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "s${i}"
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
 
     run "$SCRIPT" --window 30d
@@ -238,13 +238,13 @@ EOF
 @test "iterate-unhealthy: 4/7 non-lgtm (~57%) -> anomaly iterate_unhealthy warn" {
     local i
     for i in 1 2 3; do
-        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
+        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
     done
     for i in 1 2; do
-        write_devflow_entry "stuck-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"stuck\"}" "st${i}"
+        write_devflow_entry "stuck-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"stuck\"}" "st${i}"
     done
     for i in 1 2; do
-        write_devflow_entry "fixfail-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"fix_failed\"}" "ff${i}"
+        write_devflow_entry "fixfail-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"fix_failed\"}" "ff${i}"
     done
 
     run "$SCRIPT" --window 30d
@@ -261,9 +261,9 @@ EOF
 @test "iterate-healthy: 1/10 non-lgtm (10%) -> no iterate_unhealthy anomaly" {
     local i
     for i in $(seq 1 9); do
-        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
+        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
     done
-    write_devflow_entry "stuck-1.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"stuck\"}" "st1"
+    write_devflow_entry "stuck-1.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"stuck\"}" "st1"
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -279,7 +279,7 @@ EOF
 #          計上される。
 # ---------------------------------------------------------------------------
 @test "PR_ITERATE entries excluded from merge_tier distribution but counted in iterate_status" {
-    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' 1
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' 1
     write_priterate_entry "pri1.json" "lgtm" 1
 
     run "$SCRIPT" --window 30d
@@ -316,7 +316,7 @@ EOF
 }
 EOF
 
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":6}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":6}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -330,9 +330,9 @@ EOF
 # Test 9a: malformed-file tolerance -- 3 valid + 1 broken -> exit 0, total==3
 # ---------------------------------------------------------------------------
 @test "malformed-file tolerance: 3 valid + 1 broken -> exit 0, total_dev_flow_runs==3" {
-    write_devflow_entry "valid-1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0}' 1
-    write_devflow_entry "valid-2.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0}' 2
-    write_devflow_entry "valid-3.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0}' 3
+    write_devflow_entry "valid-1.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0}' 1
+    write_devflow_entry "valid-2.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0}' 2
+    write_devflow_entry "valid-3.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0}' 3
     printf '{"broken":' > "${CLAUDE_JOURNAL_DIR}/broken.json"
 
     run "$SCRIPT" --window 30d
@@ -355,7 +355,7 @@ EOF
     local i
     for i in $(seq 1 8000); do
         local fname="${pad}-${i}.json"
-        printf '{"id":"t-%d","timestamp":"%s","skill":"dev-flow","outcome":"success","source":"skill","telemetry":{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0}}\n' \
+        printf '{"id":"t-%d","timestamp":"%s","skill":"dev-flow","outcome":"success","source":"skill","telemetry":{"shape":"micro","merge_tier":"AUTO","eval_iter":0}}\n' \
             "$i" "$TS" > "${corpus}/${fname}"
     done
 
@@ -389,8 +389,8 @@ EOF
 # Test 11: hook entries excluded from total and unknown buckets
 # ---------------------------------------------------------------------------
 @test "hook entries excluded from total and unknown buckets" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"gate_policy":"llm-major-advisory"}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"gate_policy":"llm-major-advisory"}' 2
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"gate_policy":"llm-major-advisory"}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"gate_policy":"llm-major-advisory"}' 2
     write_hook_entry "hook-1.json" "h1"
     write_hook_entry "hook-2.json" "h2"
     write_hook_entry "hook-3.json" "h3"
@@ -431,7 +431,7 @@ EOF
 @test "micro_nonfiring denominator uses skill-source only" {
     local i
     for i in $(seq 1 9); do
-        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' "s${i}"
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
     for i in $(seq 1 5); do
         write_hook_entry "hook-${i}.json" "h${i}"
@@ -452,7 +452,7 @@ EOF
 # Test 13: iterate_status distribution unaffected by hook entries
 # ---------------------------------------------------------------------------
 @test "iterate_status distribution unaffected by hook entries" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' 1
     write_hook_entry "hook-1.json" "h1"
     write_hook_entry "hook-2.json" "h2"
 
@@ -469,10 +469,10 @@ EOF
 # ---------------------------------------------------------------------------
 @test "ci_error/ci_pending counted in iterate_status distribution" {
     for i in 1 2; do
-        write_devflow_entry "ci-error-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"ci_error\"}" "ce${i}"
+        write_devflow_entry "ci-error-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"ci_error\"}" "ce${i}"
     done
-    write_devflow_entry "ci-pending-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"ci_pending"}' "cp1"
-    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "l1"
+    write_devflow_entry "ci-pending-1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"ci_pending"}' "cp1"
+    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "l1"
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -495,10 +495,10 @@ EOF
 # ---------------------------------------------------------------------------
 @test "ci_error counts toward iterate_unhealthy numerator" {
     for i in 1 2; do
-        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
+        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
     done
     for i in 1 2; do
-        write_devflow_entry "ci-error-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"ci_error\"}" "ce${i}"
+        write_devflow_entry "ci-error-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"ci_error\"}" "ce${i}"
     done
 
     run "$SCRIPT" --window 30d
@@ -517,11 +517,11 @@ EOF
 # ---------------------------------------------------------------------------
 @test "ci_pending excluded from iterate_unhealthy denominator" {
     for i in 1 2; do
-        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
+        write_devflow_entry "lgtm-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"lgtm\"}" "l${i}"
     done
-    write_devflow_entry "stuck-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"stuck"}' "st1"
+    write_devflow_entry "stuck-1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"stuck"}' "st1"
     for i in $(seq 1 7); do
-        write_devflow_entry "ci-pending-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"ci_pending\"}" "cp${i}"
+        write_devflow_entry "ci-pending-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"ci_pending\"}" "cp${i}"
     done
 
     run "$SCRIPT" --window 30d
@@ -542,7 +542,7 @@ EOF
 # Test 17: out-of-enum iterate_status still lands in unknown
 # ---------------------------------------------------------------------------
 @test "out-of-enum iterate_status still lands in unknown" {
-    write_devflow_entry "bogus-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"bogus"}' "b1"
+    write_devflow_entry "bogus-1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"bogus"}' "b1"
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -560,9 +560,9 @@ EOF
 # ---------------------------------------------------------------------------
 @test "review_contract_error counted in iterate_status distribution and not unknown" {
     for i in 1 2; do
-        write_devflow_entry "rce-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"review_contract_error\"}" "rce${i}"
+        write_devflow_entry "rce-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"review_contract_error\"}" "rce${i}"
     done
-    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "l1"
+    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "l1"
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -578,9 +578,9 @@ EOF
 }
 
 @test "review_contract_error triggers iterate_unhealthy anomaly" {
-    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "l1"
+    write_devflow_entry "lgtm-1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "l1"
     for i in 1 2 3; do
-        write_devflow_entry "rce-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"plan_iter\":1,\"eval_iter\":1,\"iterate_status\":\"review_contract_error\"}" "rce${i}"
+        write_devflow_entry "rce-${i}.json" "{\"shape\":\"standard\",\"merge_tier\":\"REVIEW\",\"eval_iter\":1,\"iterate_status\":\"review_contract_error\"}" "rce${i}"
     done
 
     run "$SCRIPT" --window 30d
@@ -599,7 +599,7 @@ EOF
 @test "nested join: dev-flow + pr-iterate same repo/pr within window -> 1 normalized run" {
     local ts2
     ts2=$(iso_offset "$TS" 30)
-    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "10" "$TS"
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "10" "$TS"
     write_priterate_entry "pi1.json" "lgtm" "1" "acme/skills" "10" "$ts2"
 
     run "$SCRIPT" --window 30d
@@ -648,7 +648,7 @@ EOF
     local ts_near ts_far
     ts_near=$(iso_offset "$TS" 20)
     ts_far=$(iso_offset "$TS" 120)
-    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "30" "$TS"
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "30" "$TS"
     write_priterate_entry "pi-near.json" "lgtm" "near" "acme/skills" "30" "$ts_near"
     write_priterate_entry "pi-far.json" "lgtm" "far" "acme/skills" "30" "$ts_far"
 
@@ -668,7 +668,7 @@ EOF
 #          collision guard).
 # ---------------------------------------------------------------------------
 @test "cross-repo entries with the same pr_number are not joined" {
-    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "10" "$TS"
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "10" "$TS"
     write_priterate_entry "pi1.json" "lgtm" "1" "other/repo" "10" "$TS"
 
     run "$SCRIPT" --window 30d
@@ -687,7 +687,7 @@ EOF
 #          implicitly deduped -- they are counted individually as unjoinable.
 # ---------------------------------------------------------------------------
 @test "legacy entries without context are unjoinable and counted individually" {
-    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1"
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "1"
     write_priterate_entry "pi1.json" "lgtm" "1"
 
     run "$SCRIPT" --window 30d
@@ -711,7 +711,7 @@ EOF
 @test "conflicting parent/child iterate_status counted once with status_conflicts" {
     local ts2
     ts2=$(iso_offset "$TS" 30)
-    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "40" "$TS"
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "40" "$TS"
     write_priterate_entry "pi1.json" "stuck" "1" "acme/skills" "40" "$ts2"
 
     run "$SCRIPT" --window 30d
@@ -746,7 +746,7 @@ EOF
 
     local ts2
     ts2=$(iso_offset "$TS" 7200)
-    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "50" "$TS"
+    write_devflow_entry "df1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "1" "acme/skills" "50" "$TS"
     write_priterate_entry "pi1.json" "lgtm" "1" "acme/skills" "50" "$ts2"
 
     run "$SCRIPT" --window 30d
@@ -774,7 +774,7 @@ EOF
         local pr_num=$((100 + i))
         local ts2
         ts2=$(iso_offset "$TS" 30)
-        write_devflow_entry "df${i}.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "p${i}" "acme/skills" "$pr_num" "$TS"
+        write_devflow_entry "df${i}.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "p${i}" "acme/skills" "$pr_num" "$TS"
         write_priterate_entry "pi${i}.json" "lgtm" "c${i}" "acme/skills" "$pr_num" "$ts2"
     done
     write_priterate_entry "stuck1.json" "stuck" "s1"
@@ -806,9 +806,9 @@ EOF
 #          stats == 300. complex: no entries -> all-null zero record.
 # ---------------------------------------------------------------------------
 @test "duration_seconds_by_shape: computes count/min/p50/mean/max per shape" {
-    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":100}' 1
-    write_devflow_entry "e2.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":200}' 2
-    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"duration_seconds":300}' 3
+    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0,"duration_seconds":100}' 1
+    write_devflow_entry "e2.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0,"duration_seconds":200}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"duration_seconds":300}' 3
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -855,8 +855,8 @@ EOF
 #          distributions.
 # ---------------------------------------------------------------------------
 @test "duration_seconds_by_shape: legacy entries without duration_seconds -> all shapes count 0" {
-    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 2
+    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 2
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -881,8 +881,8 @@ EOF
 #          the same shape is still counted correctly.
 # ---------------------------------------------------------------------------
 @test "duration_seconds_by_shape: string-typed duration_seconds is ignored" {
-    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":"120"}' 1
-    write_devflow_entry "e2.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"duration_seconds":180}' 2
+    write_devflow_entry "e1.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0,"duration_seconds":"120"}' 1
+    write_devflow_entry "e2.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0,"duration_seconds":180}' 2
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -907,7 +907,7 @@ EOF
 #          re-derive it from comparability/transitions.
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: counts clean/deny from real producer-shaped vdelta_verdicts[]" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"deny","comparability":"exact","verification_surface":"intact","repaired_with_test_change":1}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"deny","comparability":"exact","verification_surface":"intact","repaired_with_test_change":1}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -928,7 +928,7 @@ EOF
 #          JSON), and the anomaly is severity=="skipped".
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: no vdelta_verdicts payload -> total 0, anomaly skipped" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -960,7 +960,7 @@ EOF
 #          scoped parsing, not raw-text substring matching.
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: non-dev-flow skill entries with matching substrings are not counted" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
 
     cat > "${CLAUDE_JOURNAL_DIR}/bughunt-1.json" <<EOF
 {
@@ -993,7 +993,7 @@ EOF
 #          severity warn.
 # ---------------------------------------------------------------------------
 @test "vdelta_unhealthy: 3/5 abstain (60%) with total>=min_runs -> anomaly warn" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-3","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-4","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-5","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-3","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-4","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-5","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1009,7 +1009,7 @@ EOF
 #          (minimum sample guard).
 # ---------------------------------------------------------------------------
 @test "vdelta_unhealthy: total below min_runs -> severity skipped, no warn" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-3","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-2","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0},{"ac":"AC-3","status":"abstain","comparability":"partial","verification_surface":null,"repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1031,7 +1031,7 @@ EOF
 #          verification_surface} shape.
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: missing-status items (incl. legacy .verdict shape) both fail_open" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":"not-json-and-not-an-enum"},{"ac":"AC-2","verdict":{"comparability":"exact"}}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","verdict":"not-json-and-not-an-enum"},{"ac":"AC-2","verdict":{"comparability":"exact"}}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1051,7 +1051,7 @@ EOF
 #          does not re-derive deny/clean from comparability/transitions).
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: status deny transcribed, null status is fail_open" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"deny","comparability":"exact","verification_surface":"changed","repaired_with_test_change":0},{"ac":"AC-2","status":null,"comparability":null,"verification_surface":null,"repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"deny","comparability":"exact","verification_surface":"changed","repaired_with_test_change":0},{"ac":"AC-2","status":null,"comparability":null,"verification_surface":null,"repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1073,7 +1073,7 @@ EOF
 #          4-value enum, no silent pass-through of unrecognized values).
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict distribution: out-of-enum status value is fail_open" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"improved","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"improved","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1095,8 +1095,8 @@ EOF
 #          verdict のみが total の分母)。
 # ---------------------------------------------------------------------------
 @test "vdelta_verdict.not_started: vdelta_not_started は合計され total には入らない" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_not_started":2,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_not_started":3}' 2
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_not_started":2,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_not_started":3}' 2
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1119,7 +1119,7 @@ EOF
 #          severity skipped の detail にも not_started が載る。
 # ---------------------------------------------------------------------------
 @test "vdelta_unhealthy: not_started は分母に入らず detail に載る" {
-    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","plan_iter":1,"eval_iter":1,"vdelta_not_started":10,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-3","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-4","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-5","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"complex","merge_tier":"HOLD","eval_iter":1,"vdelta_not_started":10,"vdelta_verdicts":[{"ac":"AC-1","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-2","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-3","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-4","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0},{"ac":"AC-5","status":"clean","comparability":"exact","verification_surface":"intact","repaired_with_test_change":0}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1132,7 +1132,7 @@ EOF
     [ "$empty_count" -eq 0 ]
 
     rm -f "${CLAUDE_JOURNAL_DIR}"/*.json
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"vdelta_not_started":4}' 2
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"vdelta_not_started":4}' 2
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1151,7 +1151,7 @@ EOF
 #          (clean/test_modified/enum-外はfail_open) and counted.
 # ---------------------------------------------------------------------------
 @test "redgreen_headdiff distribution: clean / test_modified / enum 外 を数える" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"redgreen_headdiff":[{"ac":"AC-1","status":"clean","new":1,"modified":0,"unchanged":0,"total":1},{"ac":"AC-2","status":"test_modified","new":0,"modified":1,"unchanged":0,"total":1},{"ac":"AC-3","status":"bogus","new":0,"modified":0,"unchanged":0,"total":0},{"ac":"AC-4","new":0,"modified":0,"unchanged":1,"total":1}]}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"redgreen_headdiff":[{"ac":"AC-1","status":"clean","new":1,"modified":0,"unchanged":0,"total":1},{"ac":"AC-2","status":"test_modified","new":0,"modified":1,"unchanged":0,"total":1},{"ac":"AC-3","status":"bogus","new":0,"modified":0,"unchanged":0,"total":0},{"ac":"AC-4","new":0,"modified":0,"unchanged":1,"total":1}]}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1173,7 +1173,7 @@ EOF
 #          entry -> all counts 0 (safe "no data").
 # ---------------------------------------------------------------------------
 @test "redgreen_headdiff distribution: キー無し -> 全 0" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1196,9 +1196,9 @@ EOF
 #          mean_by_verdict.fail==0.5.
 # ---------------------------------------------------------------------------
 @test "confidence.eval: records rate and mean_by_verdict from eval_confidence/eval_verdict" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":0.9,"eval_verdict":"pass"}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":0.5,"eval_verdict":"fail"}' 2
-    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":null,"eval_verdict":"pass"}' 3
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"eval_confidence":0.9,"eval_verdict":"pass"}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"eval_confidence":0.5,"eval_verdict":"fail"}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"eval_confidence":null,"eval_verdict":"pass"}' 3
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1225,10 +1225,10 @@ EOF
 # ---------------------------------------------------------------------------
 @test "confidence.review: full-route dev-flow entry (no review_confidence key) excluded from denominator" {
     # full-route dev-flow entry: has iterate_status, no review_confidence key.
-    write_devflow_entry "df-full.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' "full1"
+    write_devflow_entry "df-full.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' "full1"
 
     # lite-route dev-flow entry: has review_confidence, no iterate_status key.
-    write_devflow_entry "df-lite.json" '{"shape":"micro","merge_tier":"AUTO","plan_iter":1,"eval_iter":0,"review_confidence":0.8,"review_decision":"approve"}' "lite1"
+    write_devflow_entry "df-lite.json" '{"shape":"micro","merge_tier":"AUTO","eval_iter":0,"review_confidence":0.8,"review_decision":"approve"}' "lite1"
 
     # pr-iterate entry carrying both iterate_status and review_confidence.
     cat > "${CLAUDE_JOURNAL_DIR}/pi-conf.json" <<EOF
@@ -1263,7 +1263,7 @@ EOF
 #          JSON (AC-7: safe reporting with 0 matching runs).
 # ---------------------------------------------------------------------------
 @test "confidence: no confidence-bearing entries -> total/recorded 0, rate null, mean_by_* empty" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1296,7 +1296,7 @@ EOF
 #          absent).
 # ---------------------------------------------------------------------------
 @test "confidence: boundary value 0 is counted into recorded, not treated as falsy" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"eval_confidence":0,"eval_verdict":"pass"}' 1
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"eval_confidence":0,"eval_verdict":"pass"}' 1
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1318,10 +1318,10 @@ EOF
 #          outcome (issue #607 abort handoff entries must be aggregated).
 # ---------------------------------------------------------------------------
 @test "abort entry (outcome=failure, error.category=abort) is counted as a dev-flow run and its shape is aggregated" {
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1}' 2
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1}' 2
     write_abort_entry "e3-abort.json" "Evaluate" "eval#1" \
-        '{"shape":"standard","plan_iter":1,"eval_iter":1,"abort_phase":"Evaluate","abort_label":"eval#1"}' 3
+        '{"shape":"standard","eval_iter":1,"abort_phase":"Evaluate","abort_label":"eval#1"}' 3
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1466,7 +1466,7 @@ EOF
     # run 2: 2 round。round 2 は sha 取得失敗の full フォールバックで blocking 1 件
     write_priterate_history_entry "p2.json" '[{"iteration":1,"decision":"request-changes","summary":"s","blocking":[{"severity":"major","topic":"d"}],"minor":[],"scope":"full","delta_lines":null},{"iteration":2,"decision":"request-changes","summary":"s","blocking":[{"severity":"major","topic":"e"}],"minor":[],"scope":"full","delta_lines":null}]' 2
     # dev-flow entry は iterate_history を持たない（0 件寄与）
-    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' 3
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","eval_iter":1,"iterate_status":"lgtm"}' 3
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]

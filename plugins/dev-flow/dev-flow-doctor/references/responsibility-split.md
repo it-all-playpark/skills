@@ -12,7 +12,7 @@ dev-flow-doctor は skill-retrospective の内部実装に依存せず **最小�
 |------|---------------------|------------------|
 | **対象** | 全 skill（journal 全体） | `dev-flow` / `pr-iterate` の telemetry を持つ entry に限定 |
 | **目的** | 汎用的な失敗パターン検出と自己改善 proposal | dev-flow pipeline の **telemetry 健全性**（分布 + anomaly 検出） |
-| **主な検出** | failure category 集計、再発パターン、proposal 生成 | shape / merge_tier / eval_iter / plan_iter / gate_policy / iterate_status の分布と anomaly 3 種 |
+| **主な検出** | failure category 集計、再発パターン、proposal 生成 | shape / merge_tier / eval_iter / gate_policy / iterate_status の分布と anomaly 3 種 |
 | **入力** | `~/.claude/journal/*.json` 全体 | journal を `skill == "dev-flow"`（分布系）/ `telemetry.iterate_status != null`（iterate_status のみ dev-flow + pr-iterate）でフィルタ |
 | **出力** | proposal JSON / patch | `claudedocs/dev-flow-health-*.md` + 構造化 JSON |
 | **実行トリガ** | failure 発生時 / セッション終了 / meta-retrospective | 定期（weekly / on-demand） |
@@ -23,7 +23,7 @@ dev-flow-doctor は skill-retrospective の内部実装に依存せず **最小�
 dev-flow-doctor の Check 8 は固定 skill リストによるフィルタではなく、journal entry の
 `skill` フィールドと `telemetry` の有無で対象を決める:
 
-- **分布集計**（`shape` / `merge_tier` / `eval_iter` / `plan_iter` / `gate_policy`）:
+- **分布集計**（`shape` / `merge_tier` / `eval_iter` / `gate_policy`）:
   `skill == "dev-flow"` の entry のみを分母にする。
 - **`iterate_status` 分布**: `telemetry.iterate_status != null` を持つ全 entry（`dev-flow` と
   `pr-iterate` standalone entry の両方）を分母にする。
@@ -35,7 +35,7 @@ dev-flow-doctor の対象外である。それらの健全性は `skill-retrospe
 
 | anomaly | 定義 | 既定閾値 |
 |---------|------|----------|
-| **cap_pinned** | dev-flow entry の `eval_iter` または `plan_iter` が cap に張り付いている件数が 1 件以上 | `eval_iter_cap=10` / `plan_iter_cap=8` |
+| **cap_pinned** | dev-flow entry の `eval_iter` が cap に張り付いている件数が 1 件以上 | `eval_iter_cap=10` |
 | **iterate_unhealthy** | `iterate_status` を持つ全 run のうち非 lgtm（stuck / fix_failed / max_reached）の割合が閾値超 | `iterate_unhealthy_rate=0.30`、`iterate_min_runs=3` |
 | **micro_nonfiring** | dev-flow の総 run 数が十分あるにもかかわらず `shape: micro` の run が 0 件（run 数不足時は `severity: "skipped"` で判定 skip） | `micro_min_runs=10` |
 

@@ -16,7 +16,6 @@ const src = readFileSync(devFlowPath, 'utf8');
 const EXPECTED_PHASES = [
   'Setup',
   'Analyze',
-  'Plan',
   'Implement',
   'Validate',
   'Security floor',
@@ -26,7 +25,7 @@ const EXPECTED_PHASES = [
   'Merge tier',
 ];
 
-test('phase() 呼び出し順が既定 run（fixes_applied:0）で期待する 10 phase と完全一致する', async () => {
+test('phase() 呼び出し順が既定 run（fixes_applied:0）で期待する 9 phase と完全一致する（issue #678 で Plan phase 撤去）', async () => {
   const { ctx, phases } = makeDevFlowSandbox();
   const error = await runDevFlowInSandbox(src, ctx);
   assert.equal(error, null, `既定 run はエラーなく完走するべき: ${error?.message}`);

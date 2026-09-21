@@ -19,7 +19,7 @@ workflow script が JS で保持し、中間 state は script 変数に
 handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件、静的テストで pin 済み）。
 
 ```
-/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定) → Plan(合成のみ)
+/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定)
                       → Implement(dev-implement-fable 1 spawn) → Validate(test green)
                       → Evaluate → PR → workflow('pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
@@ -40,9 +40,9 @@ pin した CI check の決定論判定で代替し、成立しなければ HOLD 
 
 shape ごとの経路（3 tier）:
 
-| shape | Plan / Implement 経路 | Evaluate 経路 | merge tier |
+| shape | Implement 経路 | Evaluate 経路 | merge tier |
 |-------|-----------|---------------|------------|
-| **micro** | issue から単一 task の plan を合成（`plan#fable-skip`、`plan_iter=0`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
+| **micro** | Analyze 直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
 | **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。refloor で complex 化した run の差し戻し（`reimpl#i`）は同じ `dev-implement-fable` へ `fix_feedback` 付きで流す | REVIEW |
 | **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | REVIEW、danger・breaking で HOLD |
 
@@ -54,7 +54,7 @@ evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL �
 （宣言外監査・refloor count・PR body の材料になる）。BLOCKED（`approach_mismatch`）は planner を起動せず、
 blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止）と DONE 成果を prompt に付けて同じ agent を
 `reimpl-blocked#b` で再 spawn する（上限 `BLOCK_MAX`）。Validate の green-fix（`green-fix#i` / `green-fix#retry-i`）も
-同じ agent。観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）と `plan_iter`（常に 0）。
+同じ agent。観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）。
 
 shape は Analyze phase で `classifyShape` が判定し、安全 floor を適用する（`estimated_change_file_count`
 欠落・`acceptance_criteria` 欠落・out-of-enum `issue_type`・breaking 検出 → complex floor）。実装後は

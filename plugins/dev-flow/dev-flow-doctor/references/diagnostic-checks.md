@@ -13,7 +13,7 @@ journal query --skill dev-flow --limit 200 | \
     sort_by(-.count)'
 ```
 
-`error.phase` は dev-flow workflow の phase 名（`Setup` / `Analyze` / `Plan` / `Implement` /
+`error.phase` は dev-flow workflow の phase 名（`Setup` / `Analyze` / `Implement` /
 `Validate` / `Security floor` / `Evaluate` / `PR` / `Merge tier`）を取る。
 
 | Pattern | Recommendation |
@@ -21,7 +21,7 @@ journal query --skill dev-flow --limit 200 | \
 | `Implement` phase > 30% | dev-implement-fable の再 spawn 回数（reimpl-blocked#b / reimpl#i）と issue の AC 粒度を見直す |
 | `Validate` phase > 40% | test green 化のリトライ設計を見直す、静的解析を implement 前段に前倒し |
 | `Setup` phase > 10% | worktree isolation / env bootstrap（`_shared/scripts/ensure-worktree-deps.sh`）を確認 |
-| `Analyze` / `Plan` phase issues | shape classification（`classifyShape`）と要件抽出の精度を確認 |
+| `Analyze` phase issues | shape classification（`classifyShape`）と要件抽出の精度を確認 |
 
 ## Check 3: Error Category Distribution
 
@@ -120,7 +120,7 @@ journal query --skill dev-flow --limit 200 | \
 ## Check 8: Dev-Flow Telemetry Distribution & Anomaly Detection (Journal-Driven)
 
 dev-flow / pr-iterate が journal に書き出す telemetry（`shape` / `merge_tier` /
-`eval_iter` / `plan_iter` / `gate_policy` / `iterate_status`）を集計し、分布と
+`eval_iter` / `gate_policy` / `iterate_status`）を集計し、分布と
 4 種の anomaly を検出する。旧 v1 の family skill 集計（8 skill 固定リスト前提の
 dead phase / stuck skill / bottleneck / disconnected skill）は廃止され、
 workflow 化された dev-flow が実際に記録する telemetry 値のみを対象にする。
@@ -139,7 +139,7 @@ run-diagnostics --scope telemetry --window 7d
 |------|------|------|
 | `shape` | `skill == "dev-flow"` の entry | micro / standard / complex / unknown |
 | `merge_tier` | `skill == "dev-flow"` の entry | AUTO / REVIEW / HOLD / unknown（pr-iterate standalone entry は `merge_tier == "PR_ITERATE"` かつ `skill == "pr-iterate"` のため自然に対象外） |
-| `eval_iter` / `plan_iter` | `skill == "dev-flow"` の entry | max 値・cap（`eval_iter_cap` / `plan_iter_cap`）・cap 到達件数 |
+| `eval_iter` | `skill == "dev-flow"` の entry | max 値・cap（`eval_iter_cap`）・cap 到達件数 |
 | `gate_policy` | `skill == "dev-flow"` の entry | deterministic-only / llm-major-advisory / llm-major-blocking / llm-autonomous / unknown |
 | `iterate_status` | `.telemetry.iterate_status != null` の全 entry を正規化した normalized run（nested 実行の dev-flow×pr-iterate 親子ペアを 1 run に統合。raw_entries / unjoinable / status_conflicts を併記） | lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / review_contract_error / unknown |
 | `vdelta_verdict` | dev-flow telemetry の per-AC 配列 `vdelta_verdicts[].verdict`（veridelta フックの生 JSON: `{comparability, transitions, verification_surface}`） | `_lib/vdelta-transitions.mjs` の `vdeltaDenies()` と同一ロジックで clean / deny / abstain / fail_open に分類（`improved`/`unchanged`/`regressed`/`inconclusive` という schema は実 producer に存在しない）。0 件でも全キー 0 で安全に出力。集計は `skill == "dev-flow"` の構造化キーのみを対象とし、他 skill（調査系 journal 等）の文字列部分一致で誤カウントしない。`not_started`（`vdelta_not_started` の合計。test_cmd 経路未起動で verdict を持たない invocation。total には含めない） |
@@ -203,7 +203,7 @@ join_window_seconds}`。既知の限界: handoff flush が遅延して window �
 
 | anomaly | severity | 条件 | 推奨アクション |
 |---------|----------|------|---------------|
-| **cap_pinned** | `warn` | dev-flow entry の `eval_iter >= eval_iter_cap`（既定 10）または `plan_iter >= plan_iter_cap`（既定 8）が 1 件以上 | 収束しない run が cap で打ち切られている。該当 issue の plan/evaluate の差し戻し内容（frozen target・topic-stuck 判定）を確認 |
+| **cap_pinned** | `warn` | dev-flow entry の `eval_iter >= eval_iter_cap`（既定 10）が 1 件以上 | 収束しない run が cap で打ち切られている。該当 issue の evaluate の差し戻し内容（frozen target・topic-stuck 判定）を確認 |
 | **iterate_unhealthy** | `warn` | 非 lgtm（stuck / fix_failed / max_reached / ci_error / review_contract_error）の割合が `iterate_unhealthy_rate`（既定 0.30）を超え（分母は normalized run（nested 親子統合後）から ci_pending を除外した effective_total）、かつ effective_total が `iterate_min_runs`（既定 3）以上。detail に正規化前の `raw_entries` も併記される | pr-iterate の review ⇄ fix ループが健全に収束していない。pr-reviewer の finding 傾向・critical/major-always-blocks の影響、review decision と blocking findings の矛盾再発によるエスカレーション、または CI 未設定/pending が多い場合は CI 整備状況を確認 |
 | **micro_nonfiring** | `warn`（`skipped` は insufficient_data） | dev-flow の総 run 数が `micro_min_runs`（既定 10）以上あるにもかかわらず `shape: micro` の run が 0 件。run 数が `micro_min_runs` 未満のときは `severity: "skipped"`, `reason: "insufficient_data"` を明示出力し判定しない | classifyShape の micro floor 判定が過剰に安全側へ寄っていないか確認（`estimated_change_file_count` / `acceptance_criteria` 欠落・breaking 検出の誤爆有無） |
 | **vdelta_unhealthy** | `warn`（`skipped` は insufficient_data） | dev-flow の vdelta_verdicts 全要素における abstain+fail_open（比較不能・シグナルなし）の割合が `vdelta_unhealthy_rate`（既定 0.50、**placeholder — 実データ蓄積後にキャリブレーション予定**）を超え、かつ総 verdict 数が `vdelta_min_runs`（既定 5、placeholder）以上。総数が min 未満のときは `severity:"skipped", reason:"insufficient_data"` を明示出力し判定しない。分母は test_cmd 経路が起動した verdict のみ。未起動（`vdelta_not_started`）は分母外で detail.not_started に別計上 | veridelta 検証が abstain（comparability 不一致）・fail_open（未取得/不正 JSON）に偏っている。redgreen verdict フック（.claude/redgreen.conf）の設定状況・veridelta 実行環境を確認。report-only（blocking gate 化しない — INV-10 advisory） |
@@ -218,7 +218,7 @@ join_window_seconds}`。既知の限界: handoff flush が遅延して window �
 ### 閾値の設定
 
 すべての閾値は `skill-config.json` の `dev-flow-doctor.thresholds` から読み込む
-（`eval_iter_cap` / `plan_iter_cap` / `iterate_unhealthy_rate` / `iterate_min_runs` /
+（`eval_iter_cap` / `iterate_unhealthy_rate` / `iterate_min_runs` /
 `micro_min_runs` / `nested_join_window_seconds`、既定 600 / `vdelta_unhealthy_rate`、
 既定 0.50、placeholder / `vdelta_min_runs`、既定 5、placeholder）。`vdelta_unhealthy_rate`
 と `vdelta_min_runs` は実データ未蓄積の暫定値であり、実データ蓄積後にキャリブレーション

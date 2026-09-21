@@ -57,11 +57,11 @@ LOG_FILE="${HOME}/.claude/logs/stop-devflow-telemetry.log"
 # per-key flag（型/enum 検証つき）で journal.sh へ転送する telemetry キー。ここに無いキーは全て
 # --telemetry-json で丸ごと passthrough する（skills#601）。新規 telemetry キーを足すときに本 hook の
 # 変更は不要。per-key flag を新設するときは必ずこの配列にも足すこと — journal.sh のマージ順は flag ごとに
-# 前後が混在し（merge_tier〜ci_poll_attempts の 12 flag は --telemetry-json より前、trust_* 以降は後）、
+# 前後が混在し（merge_tier〜ci_poll_attempts の 11 flag は --telemetry-json より前、trust_* 以降は後）、
 # 前にマージされる側では per-key で drop した契約違反値を passthrough が上書き復活させ fail-closed が
 # 迂回される。除外が唯一の一貫した防御（test.sh の静的検証が jq projection 内の参照との一致を pin する）。
 PER_KEY_TELEMETRY_KEYS=(
-  merge_tier gate_policy danger_hits shape shape_refloored plan_iter eval_iter
+  merge_tier gate_policy danger_hits shape shape_refloored eval_iter
   eval_verdict iterate_status eval_staleness ci_wait_seconds ci_poll_attempts
   trust_run_id trust_receipts trust_surfaceproof_shadow trust_evalseal_missing_reason
   trust_effectdelta_pr_missing_reason
@@ -93,7 +93,6 @@ for f in "${PENDING_DIR}"/*.json; do
   danger_hits_json=""
   shape=""
   shape_refloored=""
-  plan_iter=""
   eval_iter=""
   eval_verdict=""
   iterate_status=""
@@ -139,7 +138,6 @@ for f in "${PENDING_DIR}"/*.json; do
     danger_hits: (.telemetry.danger_hits // []),
     shape: .telemetry.shape,
     shape_refloored: .telemetry.shape_refloored,
-    plan_iter: .telemetry.plan_iter,
     eval_iter: .telemetry.eval_iter,
     eval_verdict: .telemetry.eval_verdict,
     iterate_status: .telemetry.iterate_status,
@@ -194,7 +192,6 @@ for f in "${PENDING_DIR}"/*.json; do
   danger_hits_json=$(echo "$parsed" | jq -c '.danger_hits // []')
   shape=$(echo "$parsed" | jq -r '.shape // empty')
   shape_refloored=$(echo "$parsed" | jq -r 'if .shape_refloored == null then "" else (.shape_refloored | tostring) end')
-  plan_iter=$(echo "$parsed" | jq -r '.plan_iter // empty')
   eval_iter=$(echo "$parsed" | jq -r '.eval_iter // empty')
   eval_verdict=$(echo "$parsed" | jq -r '.eval_verdict // empty')
   iterate_status=$(echo "$parsed" | jq -r '.iterate_status // empty')
@@ -265,7 +262,6 @@ for f in "${PENDING_DIR}"/*.json; do
     --danger-hits "$danger_hits_json"
     --shape "$shape"
     --shape-refloored "$shape_refloored"
-    --plan-iter "$plan_iter"
     --eval-iter "$eval_iter"
   )
 

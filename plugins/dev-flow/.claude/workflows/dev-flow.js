@@ -1,10 +1,9 @@
 export const meta = {
   name: 'dev-flow-run',
-  description: 'Issue から LGTM まで: 分析(shape判定)→計画合成→実装(dev-implement-fable 1 spawn)→test green→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
+  description: 'Issue から LGTM まで: 分析(shape判定)→実装(dev-implement-fable 1 spawn)→test green→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
   phases: [
     { title: 'Setup' },
     { title: 'Analyze' },
-    { title: 'Plan' },
     { title: 'Implement' },
     { title: 'Validate' },
     { title: 'Security floor' },
@@ -730,7 +729,7 @@ function mergeSubagentCounts(counts, byType) {
 // start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s、deps install 前）、
 // analyze_start は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack 完了後、
 // prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の optional
-// epoch から給電し、残り 9 mark（analyze_end/plan_end/implement_end/validate_end/evaluate_end/
+// epoch から給電し、残り 8 mark（analyze_end/implement_end/validate_end/evaluate_end/
 // pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
@@ -738,7 +737,7 @@ function mergeSubagentCounts(counts, byType) {
 // 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
 // 残差（duration_seconds − Σphase_durations）に留める。
 // contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため shape 判定の時間が plan 区間へ付け替わる — phase_durations は
+// 使うため shape 判定の時間が implement 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -749,7 +748,6 @@ const CLOCK_MARK_ORDER = [
   'start',
   'analyze_start',
   'analyze_end',
-  'plan_end',
   'implement_end',
   'validate_end',
   'evaluate_end',
@@ -762,7 +760,6 @@ const CLOCK_MARK_ORDER = [
 // phase キー → 終端 mark 名。
 const CLOCK_PHASE_ENDS = [
   ['analyze', 'analyze_end'],
-  ['plan', 'plan_end'],
   ['implement', 'implement_end'],
   ['validate', 'validate_end'],
   ['evaluate', 'evaluate_end'],
@@ -834,7 +831,7 @@ function maxEpochRes(list) {
 }
 
 /**
- * marks から duration_seconds（run 全体）と phase_durations（8 phase）を算出する。
+ * marks から duration_seconds（run 全体）と phase_durations（7 phase）を算出する。
  * @param {object} marks - CLOCK_MARK_ORDER の各 mark 名をキーに持つ object（値は epoch 秒 or null）
  * @returns {{duration_seconds: number|null, phase_durations: object}}
  */
@@ -2558,9 +2555,6 @@ const POST_MERGE_CHECK = {
  *   `final_evidence`: string|null|undefined — final_resolution の根拠
  * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
  * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
- * @param {string[]} opts.planConcerns - Plan phase 未解消 concerns。blockingItems/advisoryItems 内の
- *   dimension:'concern' かつ checked:true な item と text 完全一致するものは解消済みとして表示から
- *   除外する（issue #611）
  * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
  * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
@@ -2604,7 +2598,6 @@ function buildDevflowSummaryBody({
   advisoryItems,
   ledgerConverged,
   acResults,
-  planConcerns,
   dangerHits,
   testsurfHits,
   shape,
@@ -2720,24 +2713,12 @@ function buildDevflowSummaryBody({
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
 
-  // Plan 未解消 concerns は Plan phase 収束時のスナップショット（更新されない）だが、CONCERN-*
-  // ledger item（dimension:'concern'）は evaluator の concern_resolutions で checked/evidence
-  // 更新される。dev-flow.js は planConcerns の文字列を無加工で CONCERN-* の text に seed するため、
-  // text 完全一致で「ledger 上 checked 済み」を判定できる（issue #611）。同一 text が checked と
-  // unchecked の両方にある場合は unchecked を優先し表示を残す（fail-safe。見落とし防止）。
-  // triaged は要対応直後の <details> に全文で残るため箇条書きから除外する（issue #614, #626）。
-  const concernLedgerItems = [...blockArr, ...advArr].filter(it => it.dimension === 'concern');
-  const settledConcernTexts = new Set(concernLedgerItems.filter(it => it.checked === true || isTriaged(it)).map(it => it.text));
-  const unresolvedConcernTexts = new Set(concernLedgerItems.filter(it => it.checked !== true && !isTriaged(it)).map(it => it.text));
-  const concerns = (planConcerns || []).filter(c => !(settledConcernTexts.has(c) && !unresolvedConcernTexts.has(c)));
-
   // hasActionItems: 見出し（⚠️ 要対応 / ✅ 要対応事項なし）の判定にのみ使う。解消済みは数えない。
   const hasActionItems = uncheckedBlocking.length > 0
     || unresolvedEscalate.length > 0
     || unresolvedAdvisory.length > 0
     || unsatisfiedAC.length > 0
-    || uncleared.length > 0
-    || concerns.length > 0;
+    || uncleared.length > 0;
 
   // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
   // 要判断・助言は含めない — 人間の判断のみで済む項目は「修正」ではない）。
@@ -2752,7 +2733,6 @@ function buildDevflowSummaryBody({
     || testsurfClearance.some(tc => !tc.cleared)
     || finalTestGreen === false
     || (iterateStatus != null && iterateStatus !== 'lgtm')
-    || concerns.length > 0
     || (Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code)));
 
   const lines = [];
@@ -3078,15 +3058,6 @@ function buildDevflowSummaryBody({
       for (const sc of uncleared) {
         const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
         lines.push(`| ❌ 未確認 | ${sc.danger_class} | ${evidenceCell} |`);
-      }
-    }
-
-    // Plan concerns（(vi)）
-    if (concerns.length > 0) {
-      lines.push('');
-      lines.push('**Plan 未解消 concerns**:');
-      for (const concern of concerns) {
-        lines.push(`- ${concern}`);
       }
     }
   }
@@ -5335,10 +5306,10 @@ function secfloorTopLevelKeys(unified) {
 const SUBAGENT_COUNTS = {};
 // abort telemetry context: run が throw で abort したとき top-level catch が journal handoff に載せる
 // 「どこで落ちたか」を trackedAgent が毎回記録する（need() の throw は直前 agent の null 返却が原因なので同じ
-// label を指す）。shape/plan_iter/eval_iter は確定時点で代入する — try ブロック内の const/let は catch から
+// label を指す）。shape/eval_iter は確定時点で代入する — try ブロック内の const/let は catch から
 // 見えないため、この可変 context に写す。failure_recorded は writeFailureTelemetry 後の throw（empty_diff）で
 // abort entry を二重記録しないためのフラグ。
-const ABORT_CTX = { phase: null, label: null, shape: null, plan_iter: 0, eval_iter: 0, failure_recorded: false }
+const ABORT_CTX = { phase: null, label: null, shape: null, eval_iter: 0, failure_recorded: false }
 // quality model fallback: `opts.model`（QUALITY_MODEL を渡す evaluator 系 3 call site — eval#i /
 // final-ac-reconcile / security-clearance-final — のみ。pr-reviewer は model を渡さず frontmatter 既定で
 // spawn する）付き呼び出しが null を返したら、model 指定を外して agent frontmatter の既定 model で同一 prompt・
@@ -5394,7 +5365,7 @@ let TURBOPACK_NOTE = '' // Setup(stack) で確定。対象 repo が Next.js の�
 
 // clock 給電: 専用 clock probe を start/end の 2 回のみに削減し、残り 9 mark は
 // 隣接する既存 exec-proxy/agent 応答の optional epoch から給電する。決定論 proxy が隣接しない
-// 境界（plan_end/implement_end/evaluate_end/pr_end 等）は、対象 prompt 末尾へこの 1 文を注入し
+// 境界（implement_end/evaluate_end/pr_end 等）は、対象 prompt 末尾へこの 1 文を注入し
 // date +%s の実測値を返させる（fail-open — 取得失敗は epoch 省略、mark null に落ちるのみで
 // 本来の判断・schema required には一切影響しない）。
 const EPOCH_INSTRUCTION = '作業完了後、最後に Bash で `date +%s` を 1 回実行し、出力の整数を epoch フィールドとして返せ。取得に失敗した場合は epoch を省略してよい（本来の作業・判定には一切影響させるな）。\n'
@@ -5427,7 +5398,7 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
 // ---- Implement 経路（全 shape で dev-implement-fable 一本）----
-// Plan phase は issue から単一 task の plan を合成し、runImplement が dev-implement-fable
+// Analyze 直後（shape 確定後）に issue から単一 task の plan を合成し、runImplement が dev-implement-fable
 // （plan+impl 統合）を 1 spawn する。合成 plan の task は agent キーを持つ（isFablePlan）—
 // 合成 plan 以外は Implement / Evaluate で受理しない（明示 error）。
 const FABLE_IMPL_AGENT = 'dev-implement-fable'
@@ -5696,7 +5667,7 @@ if (!req) {
   const prov = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
   if (prov.ok !== true) {
     log(`⚠️ analyze: 取得検証不合格（${prov.reason}）— REQ を採用せず needs_clarification で中断（issue #451）`)
-    const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 取得検証不合格（${prov.reason}）で中断（source=analyze_provenance）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+    const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 取得検証不合格（${prov.reason}）で中断（source=analyze_provenance）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
     return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（${prov.reason}）: ${prov.detail}`], journal_log_status: journalLogStatus, note: 'analyze 結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
   }
 }
@@ -5712,7 +5683,7 @@ const commentConflicts = strList(req.comment_conflicts)
 if (commentOverrides.length) log(`analyze: comment による body 訂正を採用（${commentOverrides.length} 件）: ${commentOverrides.join(' | ')}`)
 if (commentConflicts.length) {
   log(`⚠️ analyze: issue body と comment が矛盾（${commentConflicts.length} 件）— needs_clarification で中断（issue #573）`)
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: body/comment 矛盾 ${commentConflicts.length} 件で中断（source=analyze_comment_conflict）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: body/comment 矛盾 ${commentConflicts.length} 件で中断（source=analyze_comment_conflict）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
   return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: commentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573）。worktree は保持済みで再利用される' }
 }
 
@@ -5746,20 +5717,20 @@ if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
     const provRetry = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
     if (provRetry.ok !== true) {
       log(`⚠️ analyze: 再実行後の取得検証不合格（${provRetry.reason}）— REQ を採用せず needs_clarification で中断（issue #451 / #598）`)
-      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の取得検証不合格（${provRetry.reason}）で中断（source=analyze_provenance_retry）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の取得検証不合格（${provRetry.reason}）で中断（source=analyze_provenance_retry）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
       return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（scope 切断対応の再実行後、${provRetry.reason}）: ${provRetry.detail}`], journal_log_status: journalLogStatus, note: 'analyze 再実行（scope 切断対応）の結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451 / #598）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
     }
     const retryCommentConflicts = strList(req.comment_conflicts)
     if (retryCommentConflicts.length) {
       log(`⚠️ analyze: 再実行後も issue body と comment が矛盾（${retryCommentConflicts.length} 件）— needs_clarification で中断（issue #573 / #598）`)
-      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の body/comment 矛盾 ${retryCommentConflicts.length} 件で中断（source=analyze_comment_conflict_retry）`, telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の body/comment 矛盾 ${retryCommentConflicts.length} 件で中断（source=analyze_comment_conflict_retry）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
       return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: retryCommentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない（scope 切断対応の再実行後）。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573 / #598）。worktree は保持済みで再利用される' }
     }
   }
 }
 if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUITY_MAX) {
   log(`⚠️ analyze: 要件が曖昧（AC 空=${(req.acceptance_criteria ?? []).length === 0} / ambiguities=${ambiguities.length} > AMBIGUITY_MAX=${AMBIGUITY_MAX}）— needs_clarification で中断`)
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: 'analyze: 要件が曖昧（AC 空 or ambiguities 超過）で中断（source=analyze）', telemetry: { gate_policy: GATE_POLICY, plan_iter: 0, eval_iter: 0 }, phase: 'Analyze' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: 'analyze: 要件が曖昧（AC 空 or ambiguities 超過）で中断（source=analyze）', telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
   const scopeTruncHint = req.scope_truncated === true
     ? [`issue body（AC 節除く）が 4000 字を超え scope が切断されている（全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）。切断位置以降に書かれた回答・仕様は analyze に届いていない可能性がある — 回答は body 冒頭に置くか body を短くしてから /dev-flow を再起動すること（issue #596）`]
     : []
@@ -5785,29 +5756,24 @@ const TRIVIAL = SHAPE === 'micro'
 log(`shape: ${SHAPE} — ${triage.reason}`)
 
 // ============================================================
-// Phase Plan: shape に関わらず planner agent を起動せず、issue から単一 task の plan を合成する
-// （plan#fable-skip）。Fable に「手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、
-// issue 仕様を Implement で直接 dev-implement-fable に渡す。plan_iter は常に 0 で telemetry に載る。
-// shape 判定は Evaluate の深さ・LITE gate・refloor のために残す（Plan phase としては shape 非依存）。
+// 合成 plan: shape に関わらず planner agent を起動せず、issue から単一 task の plan を合成する
+// （Implement の spawn 単位）。Fable に「手順書型 task」を書かせる prescriptive な使い方は品質を
+// 落とすため、issue 仕様を Implement で直接 dev-implement-fable に渡す。
+// shape 判定は Evaluate の深さ・LITE gate・refloor のために残す（合成 plan は shape 非依存）。
 // ============================================================
 // contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電するため、
-// 以降の shape 判定の時間が plan 区間へ付け替わる（相対比較・分布用途のため許容）。
+// 以降の shape 判定の時間が implement 区間へ付け替わる（相対比較・分布用途のため許容）。
 feedClockMark('analyze_end', maxEpochRes([contractRes, issueMetaRes]))
-phase('Plan')
-const planVerdict = null   // plan review は行わない（telemetry / summary の plan_verdict は null）
-const planConcerns = []    // plan review 由来の未解消 findings は無い（Evaluate の focus_areas には implement concerns のみ）
-const planIters = 0        // plan iteration カウンタ（telemetry 用。合成 plan は常に 0）
 let plan = synthesizeFablePlan(req, ISSUE)
-ABORT_CTX.plan_iter = 0
-log(`plan#fable-skip: ${SHAPE} 経路 — planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）`)
+log(`implement#synth-plan: ${SHAPE} 経路 — planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）`)
 
 // ============================================================
 // state: Implement 以降の phase 間で共有する単一 state オブジェクト。
-// Setup/Analyze/Plan の産出物をここで seed し、以降の exec*Phase(state) は
+// Setup/Analyze の産出物（合成 plan を含む）をここで seed し、以降の exec*Phase(state) は
 // state を引数/返り値として明示的に受け渡す（implPrompt の req/plan 前方参照解消と対）。
 // ============================================================
 let state = {
-  req, plan, setup, planVerdict, planConcerns, planIters,
+  req, plan, setup,
   implResults: null, concerns: [], blockedConcerns: [], guardBlockedResults: [],
   implDroppedCount: 0,
   val: null, greenFixCount: 0, greenFixIterations: [],
@@ -5929,7 +5895,7 @@ async function execImplementPhase(state) {
     const stillNeeds = (implResults).filter((r) => r && r.status === 'NEEDS_CONTEXT')
     if (stillNeeds.length) {
       log(`implement: ${stillNeeds.length} task が依然 NEEDS_CONTEXT — needs_clarification で中断`)
-      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 }, phase: 'Implement' })
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, eval_iter: 0 }, phase: 'Implement' })
       state.__earlyReturn = {
         status: 'needs_clarification',
         source: 'implement',
@@ -5946,7 +5912,6 @@ async function execImplementPhase(state) {
 
   // DONE_WITH_CONCERNS / 未解消 BLOCKED を evaluator の focus_areas に渡す材料にする
   const concerns = [
-    ...state.planConcerns,
     ...implResults.flatMap((r) => (r && Array.isArray(r.concerns)) ? r.concerns : []),
     ...blockedConcerns,
   ]
@@ -6106,7 +6071,7 @@ async function execValidatePhase(state) {
               outcome: 'partial',
               error_category: 'cross_repo',
               error_msg: 'empty-diff gate: cross-repo issue — 成果物は対象 repo の working tree に存在（issue #432）',
-              telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 },
+              telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, eval_iter: 0 },
               phase: 'Validate',
             })
             state.__earlyReturn = {
@@ -6139,7 +6104,7 @@ async function execValidatePhase(state) {
       ), 'Validate(diff-gate-retry)')
       validateEpochCandidates.push(dhRetry)
       if (dhRetry.empty === true) {
-        await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, plan_iter: state.planIters, eval_iter: 0 }, phase: 'Validate' })
+        await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, eval_iter: 0 }, phase: 'Validate' })
         throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）。'
           + '修正対象が別リポジトリにある cross-repo issue の場合は issue に cross-repo ラベルを付けて /dev-flow を再実行せよ（issue #432）')
       }
@@ -6755,7 +6720,6 @@ async function execEvaluatePhase(state) {
   return state
 }
 
-feedClockMark('plan_end', maxEpochRes([plan, planVerdict]))
 phase('Implement')
 state = await execImplementPhase(state)
 if (state.__earlyReturn) return state.__earlyReturn
@@ -7378,7 +7342,6 @@ const summaryBody = buildDevflowSummaryBody({
   advisoryItems: policyAdvisoryItems(state.ledger, GATE_POLICY),
   ledgerConverged: isConvergedUnderPolicy(state.ledger, GATE_POLICY),
   acResults: summaryAcResults,
-  planConcerns: state.planConcerns ?? [],
   dangerHits: dangerHitsFinal,
   testsurfHits: testsurfPatternsFinal,
   shape: state.EFFECTIVE_SHAPE,
@@ -7468,7 +7431,6 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ac_count: Array.isArray(state.req.acceptance_criteria) ? state.req.acceptance_criteria.length : 0,
     analyze_path: ANALYZE_PATH,
     ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}),
-    plan_iter: state.planIters,
     eval_iter: state.evalIters,
     eval_staleness: evalStaleness,
     ...(state.evalResult?.verdict ? { eval_verdict: state.evalResult.verdict } : {}),
@@ -7544,7 +7506,6 @@ return {
   branch: state.setup.branch,
   pr_url: pr.pr_url,
   pr_number: pr.pr_number,
-  plan_verdict: state.planVerdict?.verdict ?? null,
   eval_verdict: state.evalResult?.verdict ?? null,
   design_replan_count: state.designReplanCount,
   test_green: state.val?.green ?? null,
@@ -7603,7 +7564,6 @@ return {
         telemetry: {
           gate_policy: GATE_POLICY,
           ...(ABORT_CTX.shape ? { shape: ABORT_CTX.shape } : {}),
-          plan_iter: ABORT_CTX.plan_iter,
           eval_iter: ABORT_CTX.eval_iter,
           subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
           quality_model_config: QUALITY_MODEL,

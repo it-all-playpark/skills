@@ -35,7 +35,6 @@
     "window_default": "30d",
     "thresholds": {
       "eval_iter_cap": 10,
-      "plan_iter_cap": 8,
       "iterate_unhealthy_rate": 0.30,
       "iterate_min_runs": 3,
       "micro_min_runs": 10,

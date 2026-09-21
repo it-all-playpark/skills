@@ -5,7 +5,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
 `plugins/dev-flow/` を root とする plugin 相対パス。
 
 - **telemetry**: dev-flow 完走時に workflow が telemetry handoff JSON（merge_tier / gate_policy / danger_hits / shape /
-  shape_refloored / plan_iter / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
+  shape_refloored / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
   vdelta_fail_open / vdelta_verdicts / vdelta_not_started / redgreen_headdiff / duration_seconds / phase_durations /
   merge_tier_reasons / route / subagent_invocations / resolved_evidence /
@@ -36,7 +36,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   top-level try/catch が `outcome:'failure'` + `error_category:'abort'` +
   `error_msg:'abort@<phase>/<label>: <message>'`（500 字まで）+ `error_phase`（journal の
   `.error.phase`。run-diagnostics の failure_distribution に乗る）+ telemetry `abort_phase` /
-  `abort_label`（passthrough 経路）と、その時点で確定していた telemetry（shape / plan_iter /
+  `abort_label`（passthrough 経路）と、その時点で確定していた telemetry（shape /
   eval_iter / gate_policy / subagent_invocations 等）を記録し、元の例外を rethrow する
   （fail-open: handoff 失敗は run 終了を妨げない。終端サマリ・Merge tier は実行しない —
   判定前提が揃わないため）。abort entry の組み立て口は `_lib/journal-handoff.mjs` の
