@@ -10,6 +10,9 @@
 //   AC-5: Evaluate 差し戻し（reimpl#i、fix_feedback 付き）が dev-implement-fable に渡る
 //   AC-6: Validate green-fix（green-fix#i / green-fix#retry-i）が dev-implement-fable で spawn され、
 //         テスト弱体化禁止・失敗内容・STAGING_CONVENTION が prompt に残る
+//   AC-7: PR phase の pr.head_sha が workflow('dev-flow:pr-iterate') の nested.head_sha へ渡る
+//         （review#2 以降の fix delta 起点。nested 起動のみが本番経路で pr-meta probe を通らないため）。
+//         pr.head_sha が空文字・欠落のときは nested に head_sha キー自体を含めない
 //   prompt: issue_body + acceptance_criteria + task_id + 配置規約を含み、AC テスト契約は含まない
 //
 // 責務外: telemetry の by_type / plan_iter は subagent-invocations-telemetry.test.mjs が pin する。
@@ -290,4 +293,40 @@ test('[implement-fable] AC-6: empty-diff retry 後の test#retry-1 red → green
   assert.equal(error, null, `run が throw した: ${error?.message}`);
   assert.equal(calls.find((c) => c.label === 'reimpl-empty-diff:serial:issue-1')?.agentType, FABLE, 'empty-diff の差し戻しが dev-implement-fable に渡っていない');
   assertGreenFixPrompt(calls.find((c) => c.label === 'green-fix#retry-1'), 'green-fix#retry-1');
+});
+
+// ============================================================
+// AC-7: PR phase の pr.head_sha → workflow('dev-flow:pr-iterate') の nested.head_sha 受け渡し
+// （nested 起動は pr-meta probe を通らない本番経路。ここが切れると review#2 以降が黙って
+//   全件 full review にフォールバックする — fail-open のため run 結果には出ない）
+// ============================================================
+async function runStandardWithWorkflowCapture(overrides = {}) {
+  const workflowCalls = [];
+  const { ctx, calls, logs } = makeDevFlowSandbox({
+    overrides: { 'analyze#1': reqOf('standard'), ...overrides },
+    workflow: async (name, opts) => { workflowCalls.push({ name, opts }); return { status: 'lgtm', iterations: 1, fixes_applied: 0 }; },
+  });
+  const { result, error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'standard-workflow-capture');
+  return { calls, logs, result, error, workflowCalls };
+}
+
+test('[implement-fable] AC-7: pr.head_sha が workflow(pr-iterate) の nested.head_sha に渡る', async () => {
+  const HEAD_SHA = 'a'.repeat(40);
+  const { workflowCalls, error } = await runStandardWithWorkflowCapture({
+    'pr#1': { pr_url: 'http://x', pr_number: 1, committed: true, head_sha: HEAD_SHA },
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
+  assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate');
+  assert.equal(workflowCalls[0].opts?.nested?.head_sha, HEAD_SHA, `nested.head_sha が pr.head_sha と一致しない: ${JSON.stringify(workflowCalls[0].opts?.nested)}`);
+});
+
+test('[implement-fable] AC-7: pr.head_sha が空文字のとき nested に head_sha キーが含まれない', async () => {
+  const { workflowCalls, error } = await runStandardWithWorkflowCapture({
+    'pr#1': { pr_url: 'http://x', pr_number: 1, committed: true, head_sha: '' },
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
+  assert.ok(!Object.prototype.hasOwnProperty.call(workflowCalls[0].opts?.nested ?? {}, 'head_sha'), `head_sha が空文字でも nested にキーが残っている: ${JSON.stringify(workflowCalls[0].opts?.nested)}`);
 });

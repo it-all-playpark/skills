@@ -87,6 +87,41 @@ test('[review-ac] AC 未達を理由に critical へ引き上げないことを 
 });
 
 // ============================================================
+// scope='delta': fix delta round は AC の新規未達探しを指示しない
+// ============================================================
+
+test("[review-ac] scope 省略時は既定 'full' と同一出力（後方互換）", () => {
+  assert.equal(acceptanceCriteriaBlock(['a']), acceptanceCriteriaBlock(['a'], { scope: 'full' }));
+});
+
+test("[review-ac] scope='full' は「未達があれば issue として報告せよ」を含む", () => {
+  const block = acceptanceCriteriaBlock(['a'], { scope: 'full' });
+  assert.ok(block.includes('未達があれば issue として報告せよ'), block);
+});
+
+test("[review-ac] scope='delta' は「未達があれば issue として報告せよ」を含まない（delta 外の AC 未達探索を誘発しない）", () => {
+  const block = acceptanceCriteriaBlock(['a'], { scope: 'delta' });
+  assert.ok(!block.includes('未達があれば issue として報告せよ'), `delta round の prompt に新規 AC 未達探索の指示が残っている: ${block}`);
+});
+
+test("[review-ac] scope='delta' は既出 findings 中の AC 未達解消確認にだけ限定する文言を含む", () => {
+  const block = acceptanceCriteriaBlock(['a'], { scope: 'delta' });
+  assert.ok(block.includes('既出 findings'), block);
+  assert.ok(block.includes('delta で解消されたか'), block);
+  assert.ok(block.includes('delta 外の AC 未達を新規 finding として報告するな'), block);
+});
+
+test("[review-ac] scope='delta' でも severity 引き上げ禁止の文言は残す（ゲート境界を変えない）", () => {
+  const block = acceptanceCriteriaBlock(['a'], { scope: 'delta' });
+  assert.ok(block.includes('critical へ引き上げない'), block);
+});
+
+test('[review-ac] AC が空のときは scope に関わらず空文字（fail-open）', () => {
+  assert.equal(acceptanceCriteriaBlock([], { scope: 'delta' }), '');
+  assert.equal(acceptanceCriteriaBlock(undefined, { scope: 'delta' }), '');
+});
+
+// ============================================================
 // 配線: 両経路が注入している（VM 挙動で観測。issue #636 でソース regex から置換）
 // ============================================================
 

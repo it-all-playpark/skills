@@ -43,6 +43,12 @@
 #                     redgreen_headdiff (clean/test_modified/fail_open counts --
 #                       test_cmd 未起動 invocation の test_files を HEAD 基準で
 #                       三分類した per-AC digest。report-only)
+#                     review_delta (pr-iterate の iterate_history[] を round 単位で
+#                       集計: round ≥ 2 の件数 / そのうち scope=="delta" の round 数 /
+#                       round ≥ 2 で blocking を持つ round 数と blocking findings 件数
+#                       (= late catch)。delta 化後に late catch がゼロになり lgtm 率だけ
+#                       上がっていないかを追う指標。閾値判定なし・件数表示のみ。
+#                       denominator = .telemetry.iterate_history を持つ entry の round)
 #   - anomalies     : cap_pinned / iterate_unhealthy / micro_nonfiring /
 #                      vdelta_unhealthy
 #
@@ -370,6 +376,34 @@ REDGREEN_HEADDIFF_DIST=$(echo "$DEVFLOW_ENTRIES" | jq -c '
   }
 ')
 
+# review_delta: pr-iterate entry の .telemetry.iterate_history[] を round 単位で集計する。
+# review#i（i ≥ 2）は fix delta（sha_prev..sha_now）に絞ってレビューするため、delta 化後に
+# 「round ≥ 2 で拾える blocking（late catch）」がゼロになり lgtm 率だけ上がっていないかを
+# 追う。閾値判定は入れず件数のみ出す（report-only。gate には使わない）。
+#   rounds_ge2            : iteration ≥ 2 の round 数
+#   delta_rounds          : そのうち scope == "delta" の round 数
+#   full_rounds_ge2       : そのうち scope != "delta" の round 数（scope 欠落 = full 扱い）
+#   late_blocking_rounds  : iteration ≥ 2 で blocking を 1 件以上持つ round 数
+#   late_blocking_findings: iteration ≥ 2 の blocking findings 合計件数
+#   late_blocking_delta_rounds: late_blocking_rounds のうち scope == "delta" の round 数
+#   delta_lines           : delta round の delta_lines 数値の合計 / 数値を持つ round 数
+# 分母は ITERATE_ENTRIES（iterate_status を持つ entry）。iterate_history を持たない entry は 0 件寄与。
+REVIEW_DELTA_DIST=$(echo "$ITERATE_ENTRIES" | jq -c '
+  ([.[] | .telemetry.iterate_history[]? | select((.iteration // 0) >= 2)]) as $ge2 |
+  ([$ge2[] | select(.scope == "delta")]) as $delta |
+  ([$ge2[] | select(((.blocking // []) | length) > 0)]) as $late |
+  ([$delta[] | .delta_lines | select(type == "number")]) as $dl |
+  {
+    rounds_ge2: ($ge2 | length),
+    delta_rounds: ($delta | length),
+    full_rounds_ge2: (($ge2 | length) - ($delta | length)),
+    late_blocking_rounds: ($late | length),
+    late_blocking_findings: ([$ge2[] | ((.blocking // []) | length)] | add // 0),
+    late_blocking_delta_rounds: ([$late[] | select(.scope == "delta")] | length),
+    delta_lines: { sum: ($dl | add // 0), measured: ($dl | length) }
+  }
+')
+
 # ----------------------------------------------------------------------------
 # confidence: eval_confidence / review_confidence 記録率 + verdict/decision 別平均
 #
@@ -640,6 +674,7 @@ DISTRIBUTIONS=$(jq -n \
   --argjson duration_seconds_by_shape "$DURATION_BY_SHAPE" \
   --argjson vdelta_verdict "$VDELTA_VERDICT_DIST" \
   --argjson redgreen_headdiff "$REDGREEN_HEADDIFF_DIST" \
+  --argjson review_delta "$REVIEW_DELTA_DIST" \
   --argjson confidence "$CONFIDENCE_DIST" \
   --argjson shape_calibration "$SHAPE_CALIBRATION" \
   '{
@@ -652,6 +687,7 @@ DISTRIBUTIONS=$(jq -n \
     duration_seconds_by_shape: $duration_seconds_by_shape,
     vdelta_verdict: $vdelta_verdict,
     redgreen_headdiff: $redgreen_headdiff,
+    review_delta: $review_delta,
     confidence: $confidence,
     shape_calibration: $shape_calibration
   }')

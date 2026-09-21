@@ -522,6 +522,11 @@ const NESTED = args?.nested == null
       if (n.quality_fallback !== undefined && typeof n.quality_fallback !== 'boolean') {
         throw new Error(`pr-iterate: args.nested.quality_fallback は boolean（受信: ${JSON.stringify(n.quality_fallback)}）`)
       }
+      // head_sha（optional）: dev-flow の PR phase が push 直後に取った PR head の commit sha。
+      // nested 起動では pr-meta probe を起動しないため、review#1 時点の sha_prev はここから受ける。
+      if (n.head_sha !== undefined && typeof n.head_sha !== 'string') {
+        throw new Error(`pr-iterate: args.nested.head_sha は string（受信: ${JSON.stringify(n.head_sha)}）`)
+      }
       return n
     })()
 const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション
@@ -788,15 +793,23 @@ function buildFixIssuesText(blocking) {
 //
 // dev-flow lite route（pr-review-lite）と pr-iterate（review#i）の双方が同一文言を使うため
 // canonical 化する（片側だけ直すと 2 経路で reviewer の見るものが食い違う）。
+//
+// scope='delta'（pr-iterate review#i, i≥2 の fix delta round）は文言を変える: delta round は
+// diff を fix delta にしか渡さないため「AC 未達を新規 finding として探せ」という指示のままだと、
+// delta 外（review scope 外）の AC 未達まで reviewer に判定させてしまい、本来 delta に絞りたい
+// churn を AC 経由で復活させる。delta round では「既出 findings 中の AC 未達が今回の delta で
+// 解消されたか」の確認にだけ AC を使わせ、新規の AC 未達探索はさせない。
 
 /**
  * acceptance criteria ブロックを組み立てる純粋関数。
  *
  * @param {unknown} acceptanceCriteria - issue の AC 配列。未指定 / 非配列 / 空配列 / 全要素が
  *   空文字のときは空文字を返す（fail-open — 単体起動の /pr-iterate は issue context を持たない）。
+ * @param {{scope?: 'full'|'delta'}} [opts] - scope='delta' は fix delta round 用の文言に切り替える
+ *   （既定 'full'。review#1 や dev-flow lite route など PR 全体を読む経路はこちら）。
  * @returns {string} prompt へ連結するブロック（末尾改行つき）。注入しない場合は空文字。
  */
-function acceptanceCriteriaBlock(acceptanceCriteria) {
+function acceptanceCriteriaBlock(acceptanceCriteria, { scope = 'full' } = {}) {
   if (!Array.isArray(acceptanceCriteria)) return '';
   const items = acceptanceCriteria
     .filter((a) => typeof a === 'string')
@@ -804,11 +817,93 @@ function acceptanceCriteriaBlock(acceptanceCriteria) {
     .filter((a) => a.length > 0);
   if (items.length === 0) return '';
   const numbered = items.map((a, idx) => `${idx + 1}. ${a}`).join('\n');
-  return `issue の受入条件（acceptance criteria）:\n${numbered}\n`
-    + `diff がこれらを満たしているかも判定に含めよ。未達があれば issue として報告せよ`
-    + `（severity は他の finding と同じ基準で付ける。AC 未達であることだけを理由に critical へ引き上げない）。\n`;
+  const instruction = scope === 'delta'
+    ? `このラウンドは fix delta（前回 review 以降の差分）のみを読む。AC は delta 外まで含めた`
+      + `新規の未達探しには使わず、既出 findings の中に AC 未達があれば今回の delta で解消されたか`
+      + `だけを確認せよ。delta 外の AC 未達を新規 finding として報告するな`
+      + `（severity は他の finding と同じ基準で付ける。AC 未達であることだけを理由に critical へ引き上げない）。\n`
+    : `diff がこれらを満たしているかも判定に含めよ。未達があれば issue として報告せよ`
+      + `（severity は他の finding と同じ基準で付ける。AC 未達であることだけを理由に critical へ引き上げない）。\n`;
+  return `issue の受入条件（acceptance criteria）:\n${numbered}\n` + instruction;
 }
 // ==== END inline: _lib/review-ac.mjs ====
+// ==== BEGIN inline: _lib/review-delta.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// review-delta: pr-iterate の review#i（i ≥ 2）を fix delta（前 round の head sha .. 現在 HEAD）に絞る
+// ための純粋関数群。I/O なし、gh なし、Date.now() 非決定性なし。
+//
+// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
+// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証する。
+//
+// なぜ必要か: review#i（i ≥ 2）が毎 round 全 PR diff を cold で読み直すと、安定したコードに
+// 新しい主観的 major を捻り出す churn（moving target）が生まれる。「既出は対応済み前提で読め」
+// という指示だけでは抑止が指示ベースに留まるため、delta を sha 範囲で機械的に確定し
+// 「読んでいないコードには新しい major を出せない」構造にする。
+//
+// 不変条件:
+//   - delta の範囲は sha で機械的に決める。reviewer に「必要なら全体も読め」の裁量は渡さない
+//     （裁量を残すと指示ベースに戻り churn が復活する）。
+//   - sha が確定できない round は **full にフォールバック**する（fail-open）。delta を空扱いにして
+//     「新規なし → approve」へ倒さない。sha_prev === sha_now（fix が commit を積まなかった）も
+//     同じ理由で full に倒す（空 delta を approve の根拠にしない）。
+//   - delta 外の regression は CI / Final reconcile の test 再実行が担当（ゲート境界は不変）。
+
+const SHA_RE = /^[0-9a-f]{7,40}$/i;
+
+/**
+ * delta 範囲に使える sha か（7〜40 桁 hex）。exec-proxy が空文字 / エラー文を返した場合を弾く。
+ * @param {unknown} s
+ * @returns {boolean}
+ */
+function isDeltaSha(s) {
+  return typeof s === 'string' && SHA_RE.test(s.trim());
+}
+
+/**
+ * review#iteration の diff 範囲を決める。
+ *
+ * @param {{iteration: number, shaPrev: unknown, shaNow: unknown}} p
+ *   shaPrev: 前 round の review 時点の head sha / shaNow: 現在の head sha（fix 後の ensure-committed が返す）
+ * @returns {{scope: 'full'|'delta', range: string|null, reason: string|null}}
+ *   reason は full にフォールバックした理由（iteration 1 は null）。呼び出し側が log に出す。
+ */
+function resolveReviewScope({ iteration, shaPrev, shaNow }) {
+  if (!(Number(iteration) >= 2)) return { scope: 'full', range: null, reason: null };
+  if (!isDeltaSha(shaPrev)) return { scope: 'full', range: null, reason: 'sha_prev_unavailable' };
+  if (!isDeltaSha(shaNow)) return { scope: 'full', range: null, reason: 'sha_now_unavailable' };
+  const prev = shaPrev.trim();
+  const now = shaNow.trim();
+  if (prev.toLowerCase() === now.toLowerCase()) return { scope: 'full', range: null, reason: 'sha_unchanged' };
+  return { scope: 'delta', range: `${prev}..${now}`, reason: null };
+}
+
+/**
+ * review#i（i ≥ 2、delta 確定時）の prompt へ連結する delta ブロック。
+ * @param {{shaPrev: string, shaNow: string}} p
+ * @returns {string} 末尾改行つき
+ */
+function reviewDeltaBlock({ shaPrev, shaNow }) {
+  const range = `${shaPrev.trim()}..${shaNow.trim()}`;
+  return `delta_range: ${range}\n`
+    + `\`git diff ${range}\` が fix delta。既出 findings が delta で解消されたかの確認と、`
+    + `delta 内の新規 critical/major のみ報告せよ。PR 全 diff の再読は不要。\n`;
+}
+
+/**
+ * `git diff --shortstat A..B` の stdout（1 行）から変更行数（insertions + deletions）を取り出す。
+ * 空文字は差分なし = 0。非文字列 / 数値を含まない文字列は null（不明）。
+ * @param {unknown} text
+ * @returns {number|null}
+ */
+function parseShortstatLines(text) {
+  if (typeof text !== 'string') return null;
+  const t = text.trim();
+  if (t === '') return 0;
+  const ins = /(\d+) insertions?\(\+\)/.exec(t);
+  const del = /(\d+) deletions?\(-\)/.exec(t);
+  if (!ins && !del) return /\d+ files? changed/.test(t) ? 0 : null;
+  return (ins ? Number.parseInt(ins[1], 10) : 0) + (del ? Number.parseInt(del[1], 10) : 0);
+}
+// ==== END inline: _lib/review-delta.mjs ====
 
 // ==== BEGIN inline: _lib/md-cell.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // mdCell: Markdown テーブルセルの値をエスケープする純粋関数。
@@ -1204,16 +1299,26 @@ const FIX = {
 
 // 終端 dirty 検出と fix 適用後 commit 保証の exec-proxy スキーマ。
 const DIRTY_STATUS = { type: 'object', required: ['dirty'], properties: { dirty: { type: 'boolean' }, files: { type: 'number' } } }
-const COMMIT_ENSURE = { type: 'object', required: ['dirty'], properties: { dirty: { type: 'boolean' }, committed: { type: 'boolean' }, pushed: { type: 'boolean' } } }
+// head_sha / delta_shortstat は次 round の review を fix delta に絞るための材料（optional。欠落は
+// resolveReviewScope が full review にフォールバックする — 新規 agent spawn を増やさず既存 probe の出力を拡張する）。
+const COMMIT_ENSURE = {
+  type: 'object', required: ['dirty'],
+  properties: {
+    dirty: { type: 'boolean' }, committed: { type: 'boolean' }, pushed: { type: 'boolean' },
+    head_sha: { type: 'string' }, delta_shortstat: { type: 'string' },
+  },
+}
 
 phase('Iterate')
 
 // repo (owner/name) probe: PR の base repo URL から owner/name を導出する（telemetry の repo 解決用）。
 // fail-open — probe 失敗/null でも repo を省略するだけで workflow は継続する。
 // head_ref/base_ref/cwd は isolation probe の失敗メッセージ・probe 対象パス解決にも使う。
+// head_sha は review#1 時点の PR head commit sha（review#2 の fix delta の起点）。取得失敗は
+// 空文字 → resolveReviewScope が full review にフォールバックする（fail-open）。
 const PR_META = {
   type: 'object', required: ['url'],
-  properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' }, epoch: { type: 'number' } },
+  properties: { url: { type: 'string' }, head_ref: { type: 'string' }, base_ref: { type: 'string' }, cwd: { type: 'string' }, head_sha: { type: 'string' }, epoch: { type: 'number' } },
 }
 // nested 起動（dev-flow → workflow('pr-iterate')）では pr-meta probe を起動しない。
 // 根拠: cwd/head_ref/repo/epoch は dev-flow が Setup/PR phase で既に確定済みの値として
@@ -1223,13 +1328,14 @@ let REPO
 if (NESTED) {
   prMeta = {
     url: '', head_ref: NESTED.head_ref, base_ref: '', cwd: NESTED.cwd,
+    ...(typeof NESTED.head_sha === 'string' ? { head_sha: NESTED.head_sha } : {}),
     ...(Number.isFinite(NESTED.epoch) ? { epoch: NESTED.epoch } : {}),
   }
   REPO = NESTED.repo ?? null
   log('nested 起動 — pr-meta / isolation-cleanup を skip（dev-flow Setup 側の .devflow-tmp cleanup が run 間衛生を担保）')
 } else {
   prMeta = await failOpenAgent(
-    `## Objective\nPR #${PR} の URL・head/base branch 名・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe 用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと。epoch のみコマンド失敗時は省略可）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n- \`date +%s\` → epoch(現在時刻の epoch 秒整数。isolation probe 対象パスの run 毎一意化用)\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "cwd": string, "epoch": number }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n80 語以内で完結すること。`,
+    `## Objective\nPR #${PR} の URL・head/base branch 名・head commit sha・現在の作業ディレクトリ絶対パスを取得する（telemetry の repo 解決 / isolation probe / review#2 以降の fix delta 起点用）。\n\n## Instructions\n次のコマンドをそのまま実行し、出力を対応するキーへ格納せよ（各コマンド失敗時は throw せず該当キーを空文字で返すこと。epoch のみコマンド失敗時は省略可）:\n- \`gh pr view ${PR} --json url -q .url\` → url\n- \`gh pr view ${PR} --json headRefName -q .headRefName\` → head_ref\n- \`gh pr view ${PR} --json baseRefName -q .baseRefName\` → base_ref\n- \`gh pr view ${PR} --json headRefOid -q .headRefOid\` → head_sha（40 桁 hex をそのまま）\n- \`pwd\` → cwd（現在の作業ディレクトリの絶対パス）\n- \`date +%s\` → epoch(現在時刻の epoch 秒整数。isolation probe 対象パスの run 毎一意化用)\n\n## Output format\n{ "url": string, "head_ref": string, "base_ref": string, "head_sha": string, "cwd": string, "epoch": number }\n\n## Tools\n使用可: Bash のみ\n\n## Boundary\nファイル変更・git 操作禁止。\n\n## Token cap\n100 語以内で完結すること。`,
     { agentType: 'dev-runner-haiku-ro', schema: PR_META, label: 'pr-meta', phase: 'Iterate' },
   )
   REPO = repoFromGithubUrl(prMeta?.url)
@@ -1422,7 +1528,15 @@ let totalCiPollAttempts = 0  // 同上の累積ポーリング（ci-check spawn�
 // end_epoch に載せる。応答が epoch を欠く/非数値なら更新せず、直前の値（または null）を保持する（fail-open）。
 let lastCiEpoch = null
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
-const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
+const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor, scope, delta_lines}]
+// review#i（i ≥ 2）を fix delta に絞るための sha 追跡（canonical は _lib/review-delta.mjs）。
+// shaNow: 現在の PR head（review#1 は pr-meta / nested args の head_sha、以降は ensure-committed の head_sha）。
+// shaPrev: 直前 round の review 時点の head。delta = shaPrev..shaNow。どちらかが欠ければ full にフォールバック。
+// pendingDeltaLines: ensure-committed が shortstat から出した delta の変更行数（次 round の telemetry 用）。
+let shaNow = isDeltaSha(prMeta?.head_sha) ? prMeta.head_sha.trim() : null
+let shaPrev = null
+let pendingDeltaLines = null
+if (shaNow == null) log('⚠️ review#1 時点の head sha を取得できず — review#2 は full review にフォールバックする（fail-open）')
 
 // fix agent が throw（StructuredOutput 契約違反等の harness 例外）または null（schema 不一致/技術的
 // 失敗）の場合のみ、同一 findings で 1 回だけ再試行する（callReviewAgent と同一契約）。
@@ -1477,33 +1591,49 @@ async function callReviewAgent(prompt, label) {
 // 失敗ポリシー: fail-safe — null/schema 不一致/回収失敗（dirty なのに committed&&pushed でない）は
 // false を返し、呼び出し側が terminal='fix_failed' で人間へエスカレーションする
 // （未コミットのまま次 iteration へ進むと再 review が stale な PR diff を見るため、状態不明を green と同一視しない）。
-async function ensureFixCommitted(i) {
+// 併せて次 round の review を fix delta に絞る材料（head_sha / delta_shortstat）を同じ spawn で取る
+// （新規 agent spawn を増やさない）。shaPrev（この round の review 時点の head sha）が確定している
+// ときだけ shortstat 手順を含める。返り値 { ensured, headSha, deltaLines } の headSha / deltaLines は
+// 取得失敗で null（次 round は resolveReviewScope が full にフォールバックする）。
+async function ensureFixCommitted(i, shaPrev) {
+  const withDelta = isDeltaSha(shaPrev)
   let ensured = null
   try {
     ensured = await trackedAgent(
-      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証する（残っていれば commit + push で回収する）。\n\n## Steps\n以下を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ:\n1. \`git -C ${isoWt} status --porcelain\` を実行する。出力が空なら { "dirty": false, "committed": false, "pushed": false } を返して終了。\n2. 出力が空でなければ順に実行: \`git -C ${isoWt} add -A\` → \`git -C ${isoWt} commit -m "fix(pr-${PR}): commit leftover review fixes (iteration ${i})"\` → \`git -C ${isoWt} push\`（push が失敗した場合のみ \`git -C ${isoWt} push -u origin HEAD\` を実行）。\n3. \`git -C ${isoWt} status --porcelain\` を再実行する。出力が空なら committed:true、空でなければ committed:false。\n4. \`git -C ${isoWt} rev-list "@{u}"..HEAD --count\` を実行する。出力が 0 なら pushed:true。コマンド失敗または非数値出力なら pushed:false。\n5. { "dirty": true, "committed": <3の結果>, "pushed": <4の結果> } を返す。\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n上記 git コマンド以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証し（残っていれば commit + push で回収する）、commit 後の head sha${withDelta ? ' と fix delta の行数' : ''}を返す。\n\n## Steps\n以下を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ:\n1. \`git -C ${isoWt} status --porcelain\` を実行する。出力が空なら dirty:false, committed:false, pushed:false として手順 5 へ進む。\n2. 出力が空でなければ順に実行: \`git -C ${isoWt} add -A\` → \`git -C ${isoWt} commit -m "fix(pr-${PR}): commit leftover review fixes (iteration ${i})"\` → \`git -C ${isoWt} push\`（push が失敗した場合のみ \`git -C ${isoWt} push -u origin HEAD\` を実行）。\n3. \`git -C ${isoWt} status --porcelain\` を再実行する。出力が空なら committed:true、空でなければ committed:false。\n4. \`git -C ${isoWt} rev-list "@{u}"..HEAD --count\` を実行する。出力が 0 なら pushed:true。コマンド失敗または非数値出力なら pushed:false。dirty:true とする。\n5. \`git -C ${isoWt} rev-parse HEAD\` を実行し、stdout の 40 桁 hex をそのまま head_sha とする（失敗時は空文字）。\n${withDelta ? `6. \`git -C ${isoWt} diff --shortstat ${shaPrev.trim()}..HEAD\` を実行し、stdout の 1 行を一字一句そのまま delta_shortstat とする（stdout が空なら空文字。失敗時はキーを省略）。\n7. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果>, "delta_shortstat": <6の結果> } を返す。` : `6. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果> } を返す。`}\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean, "head_sha": string${withDelta ? ', "delta_shortstat": string' : ''} }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n上記 git コマンド以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
       { agentType: 'dev-runner-haiku', schema: COMMIT_ENSURE, label: `commit-ensure#${i}`, phase: 'Iterate' },
     )
   } catch (e) {
     log(`⚠️ commit-ensure#${i} が例外: ${e?.message ?? e}`)
   }
-  if (ensured == null) return false
-  if (ensured.dirty === false) return true
+  const headSha = isDeltaSha(ensured?.head_sha) ? ensured.head_sha.trim() : null
+  const deltaLines = withDelta ? parseShortstatLines(ensured?.delta_shortstat) : null
+  if (ensured == null) return { ensured: false, headSha, deltaLines }
+  if (ensured.dirty === false) return { ensured: true, headSha, deltaLines }
   if (ensured.committed === true && ensured.pushed === true) {
     fixUncommittedRecovered++
     log(`⚠️ fix#${i} は applied:true だが未コミット変更が残っていた — ensure-committed が commit+push で回収した`)
-    return true
+    return { ensured: true, headSha, deltaLines }
   }
-  return false
+  return { ensured: false, headSha, deltaLines }
 }
 
 for (i = 1; i <= MAX; i++) {
   terminalPath = 'review'
   ABORT_CTX.iterate_rounds = i
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
-  const reviewPrompt = `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`
+  // review scope: i ≥ 2 で sha_prev..sha_now が確定していれば delta、確定できなければ full（fail-open。
+  // delta を空扱いにして approve へ倒さない）。scope / delta_lines は round の history に載せる。
+  const reviewScope = resolveReviewScope({ iteration: i, shaPrev, shaNow })
+  const roundScope = reviewScope.scope
+  const roundDeltaLines = roundScope === 'delta' ? pendingDeltaLines : null
+  if (reviewScope.reason) log(`⚠️ review#${i}: ${reviewScope.reason} — fix delta を確定できず full review にフォールバック（fail-open）`)
+  const reviewPrompt = (roundScope === 'delta'
+      ? `PR #${PR} の fix delta を批判的にレビューせよ。gh pr view で宣言意図を確認し、読む diff は下記 delta_range に限定する。\n`
+        + reviewDeltaBlock({ shaPrev, shaNow })
+      : `PR #${PR} を批判的にレビューせよ。gh pr view / gh pr diff で実 diff を確認し、宣言意図に照合する。\n`)
     + `summary は結論 1-2 文に留めよ。検証した根拠（テスト実行・diff 照合・edge case 確認等）は verification_evidence に 1 項目 1 文の配列で列挙せよ。\n`
-    + acceptanceCriteriaBlock(ACCEPTANCE_CRITERIA)
+    + acceptanceCriteriaBlock(ACCEPTANCE_CRITERIA, { scope: roundScope })
     + (prior.length
         ? `既出 findings（前ラウンドまでに指摘済み。author は対応済みのはず）:\n${JSON.stringify(prior)}\n`
           + `**新規の critical/major のみ報告**せよ。前ラウンドで対応済み・却下済みの論点の蒸し返し、`
@@ -1511,6 +1641,9 @@ for (i = 1; i <= MAX; i++) {
           + `必ず再利用せよ（orchestrator が topic で stuck を突合する）。`
         : '')
   const review = await callReviewAgent(reviewPrompt, `review#${i}`)
+  // この round の review が見た head を次 round の delta 起点にする（review が失敗しても更新して構わない —
+  // 失敗時は直後に break する）。
+  shaPrev = shaNow
   if (review == null) {
     terminal = 'review_contract_error'
     log(`⚠️ iteration ${i}: review#${i} が schema-retry 後も結果を返さず（StructuredOutput 契約違反）。人間へエスカレーション`)
@@ -1536,7 +1669,7 @@ for (i = 1; i <= MAX; i++) {
     if (rereview == null) {
       terminal = 'review_contract_error'
       log(`⚠️ iteration ${i}: review#${i}-contract-retry が schema-retry 後も結果を返さず（StructuredOutput 契約違反）。人間へエスカレーション`)
-      history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: outcome.blocking, minor: outcome.minor })
+      history.push({ iteration: i, decision: review.decision, summary: review.summary, blocking: outcome.blocking, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines })
       break
     }
     effReview = rereview
@@ -1550,7 +1683,7 @@ for (i = 1; i <= MAX; i++) {
       terminal = 'review_contract_error'
       log(`⚠️ iteration ${i}: review contract mismatch が再 review 後も再発（decision=approve、blocking ${outcome.blocking.length} 件）。人間へエスカレーション`)
 
-      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor })
+      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: outcome.blocking, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines })
 
       break
     }
@@ -1612,7 +1745,7 @@ for (i = 1; i <= MAX; i++) {
       log(`iteration ${i}: LGTM（CI status=${ciEff.status}）`)
 
       // lgtm 確定ラウンドの history を記録（blocking なし、minor は保持）
-      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor })
+      history.push({ iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: [], minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines })
 
       break
     } else if (ciEff.status === 'error') {
@@ -1654,7 +1787,7 @@ for (i = 1; i <= MAX; i++) {
         + `${ciStuckTopics.length ? ` [REVIEW_STUCK: ${ciStuckTopics.join(' / ')}]` : ''}`)
 
       // CI-failed ラウンドの history 記録（blocking は synthetic CI findings、minor は保持）
-      const ciRound = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor }
+      const ciRound = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking: ciFindings, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines }
       history.push(ciRound)
 
       if (ciStuckTopics.length) {
@@ -1682,12 +1815,15 @@ for (i = 1; i <= MAX; i++) {
         break
       }
 
-      if (!(await ensureFixCommitted(i))) {
+      const ciEnsure = await ensureFixCommitted(i, shaPrev)
+      if (!ciEnsure.ensured) {
         fixTerminalReason = 'commit_unensured'
         terminal = 'fix_failed'
         log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
         break
       }
+      shaNow = ciEnsure.headSha
+      pendingDeltaLines = ciEnsure.deltaLines
 
       // CI fix applied — continue to next iteration for re-review + re-CI-check
       fixesApplied++
@@ -1704,7 +1840,7 @@ for (i = 1; i <= MAX; i++) {
       + `${stuckTopics.length ? ` [REVIEW_STUCK: ${stuckTopics.join(' / ')}]` : ''}`)
 
     // history に記録（blocking findings と minor を含む）
-    const round = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor }
+    const round = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines }
     history.push(round)
 
     // stuck: 同一 topic が REVIEW_STUCK 回繰り返した = fix が刺さっていない。relax せず人間へエスカレーション。
@@ -1736,12 +1872,15 @@ for (i = 1; i <= MAX; i++) {
       break
     }
 
-    if (!(await ensureFixCommitted(i))) {
+    const fixEnsure = await ensureFixCommitted(i, shaPrev)
+    if (!fixEnsure.ensured) {
       fixTerminalReason = 'commit_unensured'
       terminal = 'fix_failed'
       log(`⚠️ fix#${i} 適用後の commit 保証に失敗（未コミット変更の残存 또는 commit/push 失敗/状態不明）— 未コミットのまま次 iteration へ進まず人間へエスカレーション`)
       break
     }
+    shaNow = fixEnsure.headSha
+    pendingDeltaLines = fixEnsure.deltaLines
     fixesApplied++
   }
 }
@@ -1827,7 +1966,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // quality_model_fallback_label: 最初に model 指定を外して再試行した call の label。未発生時はキー省略
     ...(QUALITY_FALLBACK_LABEL ? { quality_model_fallback_label: QUALITY_FALLBACK_LABEL } : {}),
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs の定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
-    iterate_history: history,  // round ごとの {iteration, decision, summary, blocking, minor}
+    iterate_history: history,  // round ごとの {iteration, decision, summary, blocking, minor, scope('full'|'delta'), delta_lines(full は null)}
   },
 })
 // journal handoff: choreography 本体は canonical _lib/journal-handoff.mjs の

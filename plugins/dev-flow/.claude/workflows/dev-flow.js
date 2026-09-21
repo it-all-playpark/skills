@@ -3939,15 +3939,23 @@ function ciWaitPrompt({ seconds }) {
 //
 // dev-flow lite route（pr-review-lite）と pr-iterate（review#i）の双方が同一文言を使うため
 // canonical 化する（片側だけ直すと 2 経路で reviewer の見るものが食い違う）。
+//
+// scope='delta'（pr-iterate review#i, i≥2 の fix delta round）は文言を変える: delta round は
+// diff を fix delta にしか渡さないため「AC 未達を新規 finding として探せ」という指示のままだと、
+// delta 外（review scope 外）の AC 未達まで reviewer に判定させてしまい、本来 delta に絞りたい
+// churn を AC 経由で復活させる。delta round では「既出 findings 中の AC 未達が今回の delta で
+// 解消されたか」の確認にだけ AC を使わせ、新規の AC 未達探索はさせない。
 
 /**
  * acceptance criteria ブロックを組み立てる純粋関数。
  *
  * @param {unknown} acceptanceCriteria - issue の AC 配列。未指定 / 非配列 / 空配列 / 全要素が
  *   空文字のときは空文字を返す（fail-open — 単体起動の /pr-iterate は issue context を持たない）。
+ * @param {{scope?: 'full'|'delta'}} [opts] - scope='delta' は fix delta round 用の文言に切り替える
+ *   （既定 'full'。review#1 や dev-flow lite route など PR 全体を読む経路はこちら）。
  * @returns {string} prompt へ連結するブロック（末尾改行つき）。注入しない場合は空文字。
  */
-function acceptanceCriteriaBlock(acceptanceCriteria) {
+function acceptanceCriteriaBlock(acceptanceCriteria, { scope = 'full' } = {}) {
   if (!Array.isArray(acceptanceCriteria)) return '';
   const items = acceptanceCriteria
     .filter((a) => typeof a === 'string')
@@ -3955,9 +3963,14 @@ function acceptanceCriteriaBlock(acceptanceCriteria) {
     .filter((a) => a.length > 0);
   if (items.length === 0) return '';
   const numbered = items.map((a, idx) => `${idx + 1}. ${a}`).join('\n');
-  return `issue の受入条件（acceptance criteria）:\n${numbered}\n`
-    + `diff がこれらを満たしているかも判定に含めよ。未達があれば issue として報告せよ`
-    + `（severity は他の finding と同じ基準で付ける。AC 未達であることだけを理由に critical へ引き上げない）。\n`;
+  const instruction = scope === 'delta'
+    ? `このラウンドは fix delta（前回 review 以降の差分）のみを読む。AC は delta 外まで含めた`
+      + `新規の未達探しには使わず、既出 findings の中に AC 未達があれば今回の delta で解消されたか`
+      + `だけを確認せよ。delta 外の AC 未達を新規 finding として報告するな`
+      + `（severity は他の finding と同じ基準で付ける。AC 未達であることだけを理由に critical へ引き上げない）。\n`
+    : `diff がこれらを満たしているかも判定に含めよ。未達があれば issue として報告せよ`
+      + `（severity は他の finding と同じ基準で付ける。AC 未達であることだけを理由に critical へ引き上げない）。\n`;
+  return `issue の受入条件（acceptance criteria）:\n${numbered}\n` + instruction;
 }
 // ==== END inline: _lib/review-ac.mjs ====
 
@@ -4263,6 +4276,9 @@ const PRURL = {
   properties: {
     pr_url: { type: 'string' }, pr_number: { type: ['string', 'number'] },
     committed: { type: 'boolean' },
+    // head_sha: push 直後の PR head commit sha。nested pr-iterate へ渡し review#2 の fix delta 起点にする
+    // （pr-iterate は nested 起動で pr-meta probe を起動しないため、ここで取らないと review#2 は full に倒れる）。
+    head_sha: { type: 'string' },
     epoch: { type: 'number' },
   },
 }
@@ -4954,8 +4970,9 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody })
     + `2. \`git -C ${wt} commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は中断して committed:false で返す）\n`
     + `3. \`git -C ${wt} push -u origin HEAD\`\n`
     + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`\n`
-    + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n\n`
-    + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "epoch": number }\nprose 禁止。JSON のみ返せ。\n\n`
+    + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n`
+    + `6. \`git -C ${wt} rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
+    + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "head_sha": string, "epoch": number }\nprose 禁止。JSON のみ返せ。\n\n`
     + `## Tools\n使用可: Bash, Write\n\n`
     + `## Boundary\n上記 2 ファイル以外を書かない。上記以外の git / gh 操作禁止。本文の要約・判断・書き換え禁止。\n\n`
     + `## Token cap\nJSON のみ。1 行以内。`;
@@ -6820,6 +6837,7 @@ const prIterateArgs = () => ({
   nested: {
     cwd: WT, head_ref: state.setup.branch,
     ...(REPO ? { repo: REPO } : {}),
+    ...(typeof pr?.head_sha === 'string' && pr.head_sha.trim() !== '' ? { head_sha: pr.head_sha.trim() } : {}),
     ...(Number.isFinite(pr?.epoch) ? { epoch: pr.epoch } : {}),
     quality_fallback: QUALITY_FALLBACK,
   },
