@@ -95,8 +95,13 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   plugin root 変数が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
   が `plugins/dev-flow/.claude-plugin/plugin.json` の version と一致することを pin する。plugin.json
   を上げるときは canonical も上げて `tools/sync-inlines.mjs --write` を実行する）。
-  `iterate_history`（pr-iterate entry のみ。round ごとの `{iteration, decision, summary, blocking, minor}`
-  配列。CI-failed round の blocking は synthetic な `ci::<check>` topic の finding）。
+  `iterate_history`（pr-iterate entry のみ。round ごとの `{iteration, decision, summary, blocking, minor,
+  scope, delta_lines}` 配列。CI-failed round の blocking は synthetic な `ci::<check>` topic の finding。
+  `scope` は `'full' | 'delta'` — review#i（i ≥ 2）が fix delta（前 round の review 時点の head sha ..
+  現在 HEAD、`_lib/review-delta.mjs`）に絞れたか。sha が取得できない round は `'full'` にフォールバック
+  する。`delta_lines` は delta の変更行数（`git diff --shortstat` の insertions + deletions。full は
+  null）。非 trust キーで enum 検証は無し。dev-flow-doctor の `distributions.review_delta` が round ≥ 2
+  の blocking 件数 / delta round 数を集計する）。
   run 返り値（telemetry ではない）には加えて `merge_tier_hold_reasons`（`[{reason, kind}]`。
   `kind` は `deterministic_recheck`（決定論再チェックで解消しうる HOLD。Final reconcile
   unavailable の CI 不成立理由のうち pending / fetch-failed / invalid）と `human_judgment`

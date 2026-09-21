@@ -31,6 +31,10 @@ LGTM 判定（approve で終了）が決まる。**レビューコメント・su
 - `worktree`（任意）: 作業ディレクトリ
 - `既出 findings`（iteration 2 以降のみ）: 前ラウンドまでに指摘した findings の累積（cold start 補償。
   issue #126）。下記「反復レビュー」のスタンスで扱う
+- `delta_range: <sha_prev>..<sha_now>`（iteration 2 以降で sha が確定したときのみ）: 前ラウンドの
+  review 時点の head から現在 HEAD までの fix delta。これが渡された round は**読む diff を
+  `git diff <sha_prev>..<sha_now>` に限定する**（下記「反復レビュー」）。渡されない round は
+  full review（PR 全 diff）
 
 ## ワークフロー
 
@@ -40,11 +44,22 @@ LGTM 判定（approve で終了）が決まる。**レビューコメント・su
 
 ```bash
 gh pr view <pr> --json title,body,files,additions,deletions
-gh pr diff <pr>
+gh pr diff <pr>                       # full review（iteration 1 / delta_range 無し）
+git diff <sha_prev>..<sha_now>        # delta review（delta_range が渡された round はこちらのみ）
 ```
 
 PR の宣言意図（title/body）と実 diff を突き合わせる。stack を検出し、関連する best-practice 観点を
-ロードする（言語・framework 固有のルール）。
+ロードする（言語・framework 固有のルール）。`git diff` が sha を解決できなければ
+`git fetch origin <head_ref>` を 1 回だけ実行してから再試行する。
+
+### 読まないもの（生成物 — CI が一致を保証している）
+
+以下は diff に含まれていても**読まない**。読んでも finding にならず、読む量だけ増える:
+
+- lockfile: `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `skills-lock.json` / `flake.lock` 等
+- `// ==== BEGIN inline:` 〜 `// ==== END inline:` の生成区間（`_lib` canonical から
+  `tools/sync-inlines.mjs` が生成し、`workflow-inlines.sync.test.mjs` が CI で byte 一致を保証する。
+  レビュー対象は canonical 側の `_lib/*.mjs` の hunk）
 
 ## Step 3: 系統的レビュー（dimension）
 
@@ -62,21 +77,32 @@ PR の宣言意図（title/body）と実 diff を突き合わせる。stack を�
 
 各 finding は `file:line` を引用し、具体的・実行可能に書く。
 
-## 反復レビュー（iteration 2 以降・cold start 補償。issue #126）
+## 反復レビュー（iteration 2 以降・fix delta に限定。issue #126 / #680）
 
-2 回目以降は prompt に**既出 findings**（前ラウンドまでの指摘の累積）が渡される。毎回 cold start で
-全 PR diff を再レビューするため、放置すると安定したコードに新しい主観的 major を捻り出して
-moving target（蒸し返し）を生む。これを避ける:
+2 回目以降は prompt に**既出 findings**（前ラウンドまでの指摘の累積）と **`delta_range:
+<sha_prev>..<sha_now>`**（前ラウンドの review 時点の head から現在 HEAD までの fix delta）が渡される。
+読む diff は delta に限定する — 読んでいないコードには新しい major を出せない構造にすることで、
+安定したコードに主観的 major を捻り出す moving target（蒸し返し）を殺す。
 
-- 既出 findings は author が**対応済みの前提**で読む。解消されていれば蒸し返さない。
-- **新規の critical/major のみ報告**する。前ラウンドで対応済み・却下済みの論点の再提起、
-  別観点の上乗せ（言い換え major の捻り出し）は禁止。
-- 同一問題を再提起する場合は**既出と同じ `topic` 文字列を再利用**する
-  （orchestrator が `topic` で stuck を突合し、反復したら人間にエスカレーションする）。
-  topic 命名は共有辞書（`${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md`）に従う。
-- 既出指摘に対応済みで新規の重大問題が無ければ、迷わず `approve` を出す。
+手順:
 
-これは**ゲートの緩和ではない**: 本物の新規 critical/major は依然として必ず報告する。
+1. `git diff <sha_prev>..<sha_now>` で fix delta を取得する（`gh pr diff` による PR 全 diff の再読は
+   しない。delta 外のファイルは開かない）。
+2. 既出 findings が delta で**解消されたか**を 1 件ずつ確認する。解消されていれば蒸し返さない。
+   解消されていなければ**既出と同じ `topic` 文字列を再利用**して再提起する（orchestrator が `topic`
+   で stuck を突合し、反復したら人間にエスカレーションする）。topic 命名は共有辞書
+   （`${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md`）に従う。
+3. delta 内の **新規 critical/major（fix が持ち込んだ regression・誤修正・混入ファイル）のみ報告**する。
+   delta 外のコードに対する新規指摘、前ラウンドで対応済み・却下済みの論点の再提起、
+   別観点の上乗せ（言い換え major の捻り出し）は禁止。
+4. 既出指摘が解消済みで delta 内に新規の重大問題が無ければ、迷わず `approve` を出す。
+
+delta 外の regression は CI と dev-flow の Final reconcile（test 再実行）が担当する。reviewer の
+判断で範囲を広げない（範囲は sha で機械的に決まる — 裁量を残すと指示ベースの churn 対策に戻る）。
+`delta_range` が渡されない round は orchestrator が full にフォールバックさせた round であり、
+iteration 1 と同じ full review を行う。
+
+これは**ゲートの緩和ではない**: delta 内の本物の新規 critical/major は依然として必ず報告する。
 殺すのは「同じコードを別の切り口で蒸し返す churn」だけ。
 
 ## Step 5: 出力 JSON（schema 強制）
@@ -142,8 +168,9 @@ decision 判定:
 `confidence`: この decision 自体がどの程度確かかの自己申告 `[0,1]`（0=当てずっぽう、1=決定論的証拠で
 確実）。
 
-- **根拠**: `verification_evidence` の実測度合い（テスト実行・diff 照合を実際に行えたか）、PR diff
-  全体を読めた範囲、CI 結果を確認できたかどうかを根拠に付ける。
+- **根拠**: `verification_evidence` の実測度合い（テスト実行・diff 照合を実際に行えたか）、レビュー
+  対象 diff（full なら PR 全 diff、delta なら `delta_range`）を読めた範囲、CI 結果を確認できたか
+  どうかを根拠に付ける。
 - **decision と独立に付ける**: `approve` でも証拠が弱ければ低 confidence はあり得るし、
   `request-changes` でも高 confidence はあり得る。decision の強気/弱気の調整に confidence を使わない。
 - **乱発しない**: 根拠なき 1.0 や一律固定値を禁止。迷うなら省略してよい（省略時は `null` として

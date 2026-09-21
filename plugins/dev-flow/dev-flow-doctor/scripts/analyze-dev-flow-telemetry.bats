@@ -1437,3 +1437,73 @@ EOF
     [ "$(echo "$cal" | jq '.realized_mismatch.measured')" -eq 0 ]
     [ "$(echo "$cal" | jq '.analyze_ineligible_reason | length')" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# distributions.review_delta -- pr-iterate entry の iterate_history[] を round 単位で
+# 集計する（round ≥ 2 の blocking 件数 / delta round 数）。閾値判定なし・件数のみ。
+# ---------------------------------------------------------------------------
+
+# Write one pr-iterate journal entry whose telemetry carries iterate_history.
+# $1 = filename, $2 = iterate_history JSON array (compact), $3 = optional id override
+write_priterate_history_entry() {
+    local fname="$1" history="$2" id="${3:-$RANDOM}"
+    cat > "${CLAUDE_JOURNAL_DIR}/${fname}" <<EOF
+{
+  "version": "1.0.0",
+  "id": "priterate-${id}",
+  "timestamp": "${TS}",
+  "skill": "pr-iterate",
+  "outcome": "success",
+  "source": "skill",
+  "telemetry": { "merge_tier": "PR_ITERATE", "iterate_status": "lgtm", "iterate_rounds": 3, "iterate_history": ${history} }
+}
+EOF
+}
+
+@test "review_delta distribution: round ≥ 2 の blocking 件数と delta round 数を数える（閾値判定なし）" {
+    # run 1: 3 round。round 2 は delta で blocking 2 件（late catch）、round 3 は delta で approve
+    write_priterate_history_entry "p1.json" '[{"iteration":1,"decision":"request-changes","summary":"s","blocking":[{"severity":"major","topic":"a"}],"minor":[],"scope":"full","delta_lines":null},{"iteration":2,"decision":"request-changes","summary":"s","blocking":[{"severity":"major","topic":"b"},{"severity":"critical","topic":"c"}],"minor":[],"scope":"delta","delta_lines":12},{"iteration":3,"decision":"approve","summary":"s","blocking":[],"minor":[],"scope":"delta","delta_lines":4}]' 1
+    # run 2: 2 round。round 2 は sha 取得失敗の full フォールバックで blocking 1 件
+    write_priterate_history_entry "p2.json" '[{"iteration":1,"decision":"request-changes","summary":"s","blocking":[{"severity":"major","topic":"d"}],"minor":[],"scope":"full","delta_lines":null},{"iteration":2,"decision":"request-changes","summary":"s","blocking":[{"severity":"major","topic":"e"}],"minor":[],"scope":"full","delta_lines":null}]' 2
+    # dev-flow entry は iterate_history を持たない（0 件寄与）
+    write_devflow_entry "e1.json" '{"shape":"standard","merge_tier":"REVIEW","plan_iter":1,"eval_iter":1,"iterate_status":"lgtm"}' 3
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq empty
+
+    rd=$(printf '%s\n' "$output" | jq -c '.distributions.review_delta')
+    [ "$(echo "$rd" | jq '.rounds_ge2')" -eq 3 ]
+    [ "$(echo "$rd" | jq '.delta_rounds')" -eq 2 ]
+    [ "$(echo "$rd" | jq '.full_rounds_ge2')" -eq 1 ]
+    [ "$(echo "$rd" | jq '.late_blocking_rounds')" -eq 2 ]
+    [ "$(echo "$rd" | jq '.late_blocking_findings')" -eq 3 ]
+    [ "$(echo "$rd" | jq '.late_blocking_delta_rounds')" -eq 1 ]
+    [ "$(echo "$rd" | jq '.delta_lines.sum')" -eq 16 ]
+    [ "$(echo "$rd" | jq '.delta_lines.measured')" -eq 2 ]
+    # 閾値判定は入れない: review_delta 由来の anomaly は出ない（vdelta_unhealthy とは別物）
+    [ "$(printf '%s\n' "$output" | jq '[.anomalies[] | select(.type | test("review_delta"))] | length')" -eq 0 ]
+}
+
+@test "review_delta distribution: iterate_history 無し / scope 欠落は full 扱い、キー無しは全 0" {
+    # scope キーを持たない round は full 扱い（delta にはならない）
+    write_priterate_history_entry "p1.json" '[{"iteration":1,"decision":"request-changes","summary":"s","blocking":[{"severity":"major","topic":"a"}],"minor":[]},{"iteration":2,"decision":"approve","summary":"s","blocking":[],"minor":[]}]' 1
+    write_priterate_entry "p2.json" "lgtm" 2
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    rd=$(printf '%s\n' "$output" | jq -c '.distributions.review_delta')
+    [ "$(echo "$rd" | jq '.rounds_ge2')" -eq 1 ]
+    [ "$(echo "$rd" | jq '.delta_rounds')" -eq 0 ]
+    [ "$(echo "$rd" | jq '.full_rounds_ge2')" -eq 1 ]
+    [ "$(echo "$rd" | jq '.late_blocking_rounds')" -eq 0 ]
+    [ "$(echo "$rd" | jq '.late_blocking_findings')" -eq 0 ]
+    [ "$(echo "$rd" | jq '.delta_lines.measured')" -eq 0 ]
+}
+
+@test "review_delta distribution: entry ゼロ -> 全 0 で出力（die しない）" {
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    rd=$(printf '%s\n' "$output" | jq -c '.distributions.review_delta')
+    [ "$(echo "$rd" | jq '.rounds_ge2 + .delta_rounds + .late_blocking_rounds + .late_blocking_findings + .delta_lines.sum')" -eq 0 ]
+}

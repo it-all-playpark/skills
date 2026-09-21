@@ -4263,6 +4263,9 @@ const PRURL = {
   properties: {
     pr_url: { type: 'string' }, pr_number: { type: ['string', 'number'] },
     committed: { type: 'boolean' },
+    // head_sha: push 直後の PR head commit sha。nested pr-iterate へ渡し review#2 の fix delta 起点にする
+    // （pr-iterate は nested 起動で pr-meta probe を起動しないため、ここで取らないと review#2 は full に倒れる）。
+    head_sha: { type: 'string' },
     epoch: { type: 'number' },
   },
 }
@@ -4954,8 +4957,9 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody })
     + `2. \`git -C ${wt} commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は中断して committed:false で返す）\n`
     + `3. \`git -C ${wt} push -u origin HEAD\`\n`
     + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`\n`
-    + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n\n`
-    + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "epoch": number }\nprose 禁止。JSON のみ返せ。\n\n`
+    + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n`
+    + `6. \`git -C ${wt} rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
+    + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "head_sha": string, "epoch": number }\nprose 禁止。JSON のみ返せ。\n\n`
     + `## Tools\n使用可: Bash, Write\n\n`
     + `## Boundary\n上記 2 ファイル以外を書かない。上記以外の git / gh 操作禁止。本文の要約・判断・書き換え禁止。\n\n`
     + `## Token cap\nJSON のみ。1 行以内。`;
@@ -6820,6 +6824,7 @@ const prIterateArgs = () => ({
   nested: {
     cwd: WT, head_ref: state.setup.branch,
     ...(REPO ? { repo: REPO } : {}),
+    ...(typeof pr?.head_sha === 'string' && pr.head_sha.trim() !== '' ? { head_sha: pr.head_sha.trim() } : {}),
     ...(Number.isFinite(pr?.epoch) ? { epoch: pr.epoch } : {}),
     quality_fallback: QUALITY_FALLBACK,
   },
