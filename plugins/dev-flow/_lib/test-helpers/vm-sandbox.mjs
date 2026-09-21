@@ -110,22 +110,8 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     return result === undefined ? null : result;
   };
 
-  // parallel() stub: runImplement が parallel(par) を呼ぶため（par が空なら []）
-  const parallel = async (fns) => Promise.all((fns || []).map((f) => f()));
-
-  // pipeline() stub: canary 実測契約（Claude Code 2.1.252、
-  // report ~/.claude/logs/dev-flow-canary/canary-1788235573.json）準拠。
-  // (1) 結果配列は入力順に対応（results[i] ↔ items[i]）
-  // (2) callback が throw しても pipeline 全体は reject せず当該 item の結果を null にする
-  // (3) callback が null/undefined を返した item は null になる
-  const pipeline = async (items, cb) => Promise.all((items || []).map(async (item, i) => {
-    try {
-      const r = await cb(item, i);
-      return r === undefined ? null : r;
-    } catch {
-      return null;
-    }
-  }));
+  // parallel() / pipeline() は sandbox に置かない — dev-flow.js の Implement は
+  // dev-implement-fable の単一 serial spawn で fan-out を持たない（issue #673）。
 
   const sandbox = {
     // control fns（既定で呼び出しを logs/phases に記録する。extraSandbox で上書き可）
@@ -135,8 +121,6 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     args: devFlowArgs(1),
     // agent stub
     agent,
-    parallel,
-    pipeline,
     // JS 組み込み
     ...JS_GLOBALS,
     // caller の上書き（args 等）
@@ -177,28 +161,6 @@ export async function runDevFlowInSandbox(src, ctx) {
     caughtError = e;
   }
   return caughtError;
-}
-
-// ============================================================
-// withImplementMode: dev-flow.js の IMPLEMENT_MODE（_lib/implement-mode.mjs の inline 定数）を
-// テスト側で切り替える。inline 生成された定数行を書き換えるため、行が 1 箇所に見つからなければ
-// throw する（生成区間の形が変わったときに黙って既定値で走らないため）。
-// ============================================================
-
-/**
- * dev-flow.js ソースの `const IMPLEMENT_MODE = '<x>'` を mode に書き換えた新しいソースを返す。
- * Implement 経路（'fable' | 'planner'、全 shape）を両値で routing test するために使う。
- *
- * @param {string} src - dev-flow.js の raw ソース
- * @param {'fable'|'planner'} mode
- * @returns {string}
- */
-export function withImplementMode(src, mode) {
-  if (mode !== 'fable' && mode !== 'planner') throw new Error(`withImplementMode: unknown mode ${JSON.stringify(mode)}`);
-  const re = /^const IMPLEMENT_MODE = '(fable|planner)'$/gm;
-  const matches = src.match(re) ?? [];
-  if (matches.length !== 1) throw new Error(`withImplementMode: IMPLEMENT_MODE 定数行が ${matches.length} 箇所（1 箇所のはず）`);
-  return src.replace(re, `const IMPLEMENT_MODE = '${mode}'`);
 }
 
 // ============================================================
@@ -317,18 +279,8 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
       };
     }
     if (label === 'issue-meta') return { ok: true, number: issue, title: 'stub-issue-title' };
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        summary: 'p',
-        serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp', depends_on: [] }],
-        parallel: [],
-      };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') {
-      return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
-    }
-    // IMPLEMENT_MODE='fable' の経路（全 shape。issue #668 / #670）: 合成 task `issue-<N>` を echo する
+    // Implement / green-fix / reimpl は全 shape で dev-implement-fable 一本（issue #673）。
+    // 合成 task `issue-<N>` を echo する（adoptReportedFiles の task_id 突合に必要）。
     if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: `issue-${issue}`, files: ['src/x.ts'], summary: 's', concerns: [] };
     }

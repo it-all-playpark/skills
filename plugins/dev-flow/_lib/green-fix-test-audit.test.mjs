@@ -44,14 +44,6 @@ function createResponder() {
         issue_title: 'stub-issue-title',
       };
     }
-    // Plan: dev-planner
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // Security floor / danger-grep 系
     if (label.startsWith('danger-grep')) {
       return { ok: true, hits: [] };
@@ -87,10 +79,10 @@ function createResponder() {
     }
     // implementer（green-fix も含む）
     // green-fix 経路の実装: files / summary を返す（issue #179 変更内容 2 の検証用）
-    if (agentType === 'dev-flow:implementer' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:dev-implement-fable' && label.startsWith('green-fix')) {
       return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'typo修正: 期待値が古いAPIを参照していた', concerns: [] };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

@@ -1,82 +1,70 @@
-// implementer.md は sandbox write-deny（issue #216 リトライで実証）のため、規約は dev-flow.js が
-// 全 implementer spawn prompt に注入する。本テストはその注入を VM 挙動で pin する
-// （issue #636: 「含まれる」側の自然言語文言 pin と定義ソースの否定 pin をともに VM 挙動へ置換済み）。
+// dev-implement-fable.md は sandbox write-deny（issue #216 リトライで実証）のため、配置規約は dev-flow.js が
+// 全実装 spawn prompt（Implement / green-fix / Evaluate 差し戻し）に注入する。本テストはその注入を VM 挙動で
+// pin する（issue #636 で自然言語文言 pin を VM 挙動へ置換、issue #673 で dev-implement-fable 一本に追随）。
 //
-// 問題: implementer が evaluator.staged.md / fm_*.txt 等の一時ファイルを worktree 直下に残すと
+// 問題: 実装 agent が evaluator.staged.md / fm_*.txt 等の一時ファイルを worktree 直下に残すと
 //       `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、
 //       micro→standard の refloor 誤発火や 30 件超の CONCERN スパムが起きる（issue #216）。
 //
 // このテストは:
-//   (2b) implementer prompt が一時ファイルの削除を指示しない（否定側 pin。AC-3 許可）
-//   (3) routing: 標準経路 implementer 呼び出し全件の prompt に規約トークンが含まれる
+//   (2b) 実装 prompt が一時ファイルの削除を指示しない（否定側 pin。AC-3 許可）
+//   (3) routing: 標準経路の dev-implement-fable 呼び出し全件の prompt に規約トークンが含まれる
 //   (4) routing: green-fix#1（Validate red→green-fix 経路）の prompt にも規約トークンが含まれる
-//   (5) routing: fix#1（Evaluate implementation-level 差し戻し経路）の prompt にも規約トークンが含まれる
-// を assert する。
-// implementer.md は一切読まない（旧テストの readFileSync(implementerMdPath) は完全に廃止）。
+//   (5) routing: reimpl#1（Evaluate 差し戻し経路）の prompt にも規約トークンが含まれる
+// を assert する。agent 定義ファイルは一切読まない。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
+const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const FABLE = 'dev-flow:dev-implement-fable';
 
 // ============================================================
 // Part 1: 否定側 pin（VM 挙動）
 // ============================================================
 
 // (2b) .devflow-tmp/ の後始末を指示しない（isEphemeralPath が realized-diff から除外するため不要）。
-// 削除を指示すると implementer が一時 dir の削除コマンドを組み立て、実行制御に弾かれて turn を失う。
-// 実際に implementer へ渡る prompt 全件に削除指示が現れないことで観測する（issue #636 でソース pin から置換）。
-test('[staging-convention] implementer prompt が一時ファイルの削除を指示しない', async () => {
+// 削除を指示すると agent が一時 dir の削除コマンドを組み立て、実行制御に弾かれて turn を失う。
+test('[staging-convention] 実装 prompt が一時ファイルの削除を指示しない', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, '2b');
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
-  assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
+  const implCalls = calls.filter((c) => c.agentType === FABLE);
+  assert.ok(implCalls.length >= 1, 'dev-implement-fable が呼ばれていない');
   for (const c of implCalls) {
     for (const forbidden of ['削除せよ', '削除する', '完了前に削除']) {
-      assert.ok(!c.prompt.includes(forbidden), `implementer prompt (label=${c.label}) に削除指示 "${forbidden}" が含まれている（.devflow-tmp/ は realized-diff から除外済みで後始末は不要）`);
+      assert.ok(!c.prompt.includes(forbidden), `prompt (label=${c.label}) に削除指示 "${forbidden}" が含まれている（.devflow-tmp/ は realized-diff から除外済みで後始末は不要）`);
     }
   }
 });
 
 // ============================================================
 // Part 2: behavioral routing pin（VM sandbox、共有 helper 使用）
-// _lib/test-helpers/vm-sandbox.mjs の makeDevFlowSandbox / runWorkflowCapture を使う。
 // 規約トークン（'.devflow-tmp' / 'TMPDIR' / 'staged'）が実際に injected な prompt へ
-// verbatim 到達することを、標準経路・green-fix 経路・Evaluate fix 経路の 3 通りで検証する
-// （旧 (1) の「usage 3 箇所」source pin を挙動証拠で代替する）。
+// verbatim 到達することを、標準経路・green-fix 経路・Evaluate 差し戻し経路の 3 通りで検証する。
 // ============================================================
 
 function assertTokens(call, label) {
   assert.ok(call != null, `label === '${label}' の call が見つからない`);
+  assert.equal(call.agentType, FABLE, `${label} の agentType が ${call.agentType}（dev-implement-fable のはず）`);
   for (const token of ['.devflow-tmp', 'TMPDIR', 'staged']) {
-    assert.ok(
-      call.prompt.includes(token),
-      `${label} prompt に '${token}' が含まれない。STAGING_CONVENTION が注入されていない`,
-    );
+    assert.ok(call.prompt.includes(token), `${label} prompt に '${token}' が含まれない。STAGING_CONVENTION が注入されていない`);
   }
 }
 
-// (3) routing: 標準経路の implementer 呼び出し全件に規約トークンが含まれる
-test('[staging-convention] routing: 標準経路の implementer prompt 全件に規約トークンが含まれる', async () => {
+// (3) routing: 標準経路の dev-implement-fable 呼び出し全件に規約トークンが含まれる
+test('[staging-convention] routing: 標準経路の dev-implement-fable prompt 全件に規約トークンが含まれる', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'staging-convention-standard');
-
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
-  assert.ok(
-    implCalls.length >= 1,
-    `implementer が呼ばれていない（0 件）。standard 経路で serial task が実行されるはず`,
-  );
+  const implCalls = calls.filter((c) => c.agentType === FABLE);
+  assert.ok(implCalls.length >= 1, 'dev-implement-fable が呼ばれていない（0 件）');
   for (const c of implCalls) assertTokens(c, c.label);
 });
 
@@ -87,15 +75,13 @@ test('[staging-convention] routing: green-fix#1 prompt に規約トークンが�
   });
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'staging-convention-greenfix');
-
-  const gf1 = calls.find((c) => c.label === 'green-fix#1');
-  assertTokens(gf1, 'green-fix#1');
+  assertTokens(calls.find((c) => c.label === 'green-fix#1'), 'green-fix#1');
 });
 
-// (5) routing: Evaluate implementation-level 差し戻し経路（fix#1）の prompt にも規約トークンが含まれる
-// complex 経路（EVAL_PASSES=EVAL_MAX）に乗せ、eval#1 で critical 差し戻し→fix#1→eval#2 で収束させる
+// (5) routing: Evaluate 差し戻し経路（reimpl#1）の prompt にも規約トークンが含まれる
+// complex 経路（EVAL_PASSES=EVAL_MAX）に乗せ、eval#1 で critical 差し戻し→reimpl#1→eval#2 で収束させる
 // （eval-convergence.test.mjs AC#3 と同型のフィクスチャ）。
-test('[staging-convention] routing: fix#1（Evaluate implementation 差し戻し）prompt に規約トークンが含まれる', async () => {
+test('[staging-convention] routing: reimpl#1（Evaluate 差し戻し）prompt に規約トークンが含まれる', async () => {
   const ac4 = [
     { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
     { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
@@ -120,8 +106,7 @@ test('[staging-convention] routing: fix#1（Evaluate implementation 差し戻し
     },
   });
   const { error } = await runWorkflowCapture(src, ctx);
-  assertNoCrash(error, 'staging-convention-fix');
-
-  const fix1 = calls.find((c) => c.label === 'fix#1');
-  assertTokens(fix1, 'fix#1');
+  assertNoCrash(error, 'staging-convention-reimpl');
+  assertTokens(calls.find((c) => c.label === 'reimpl#1:serial:issue-1'), 'reimpl#1:serial:issue-1');
+  assert.equal(calls.filter((c) => c.label === 'fix#1').length, 0, 'implementer 向け fix#1 が起動した（reimpl#1 に統合済みのはず）');
 });

@@ -15,14 +15,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 // micro shape 用の analyzeReq（acceptance_criteria あり・estimated_change_file_count: 1）
 const MICRO_REQ = {
@@ -70,8 +68,6 @@ function makeSandbox(analyzeReq, opts) {
     if (label.startsWith('analyze')) return analyzeReq;
     // file_changes は既定 realizedFiles（docs/a.md）と一致させ、宣言外扱いによる
     // micro Evaluate 強制（issue #272 F2）が誤発火しないようにする。
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't', file_changes: ['docs/a.md'], test_plan: '' }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す
     // （files は旧 realized-diff 相当）。
     if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: realizedFiles, struct: null, diffhash: null };
@@ -85,7 +81,7 @@ function makeSandbox(analyzeReq, opts) {
       ac_results: [], security_clearance: [],
     };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: realizedFiles, summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };

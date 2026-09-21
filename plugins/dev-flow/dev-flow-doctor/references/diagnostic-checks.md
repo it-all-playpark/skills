@@ -18,7 +18,7 @@ journal query --skill dev-flow --limit 200 | \
 
 | Pattern | Recommendation |
 |---------|----------------|
-| `Implement` phase > 30% | Plan の粒度・自明性判定を見直す（plan-reviewer loop の収束状況を確認） |
+| `Implement` phase > 30% | dev-implement-fable の再 spawn 回数（reimpl-blocked#b / reimpl#i）と issue の AC 粒度を見直す |
 | `Validate` phase > 40% | test green 化のリトライ設計を見直す、静的解析を implement 前段に前倒し |
 | `Setup` phase > 10% | worktree isolation / env bootstrap（`_shared/scripts/ensure-worktree-deps.sh`）を確認 |
 | `Analyze` / `Plan` phase issues | shape classification（`classifyShape`）と要件抽出の精度を確認 |

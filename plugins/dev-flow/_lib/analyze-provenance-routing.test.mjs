@@ -14,14 +14,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 const FULL_REQ = {
   summary: 's',
@@ -45,8 +43,6 @@ function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1,
     if (label === 'issue-meta') return issueMetaRes;
     if (label.startsWith('contract-probe')) return null; // fail-open (whitelist 検証不合格扱い) — 既定は sonnet fallback
     if (label.startsWith('analyze')) return req;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -65,7 +61,7 @@ function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1,
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
 }
@@ -112,7 +108,7 @@ test('[analyze-provenance-routing] T1: issue-meta probe が ok:false → needs_c
   assert.equal(error, null, `T1: run が throw してはならないが: ${error?.message}`);
   assert.equal(result?.status, 'needs_clarification', `T1: status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
   assert.equal(result?.source, 'analyze', `T1: source は analyze のはずだが ${JSON.stringify(result?.source)}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(implCalls.length, 0, `T1: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });
 
@@ -141,7 +137,7 @@ test('[analyze-provenance-routing] T2: req.issue_title が probe.title と不一
   assert.equal(error, null, `T2: run が throw してはならないが: ${error?.message}`);
   assert.equal(result?.status, 'needs_clarification', `T2: status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
   assert.equal(result?.source, 'analyze', `T2: source は analyze のはずだが ${JSON.stringify(result?.source)}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(implCalls.length, 0, `T2: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });
 
@@ -153,7 +149,7 @@ test('[analyze-provenance-routing] T3: issue_title と probe.title が一致 →
   const { error } = await run(ctx);
   assertNoCrash(error, 'T3');
   assert.equal(error, null, `T3: run が throw してはならないが: ${error?.message}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.ok(implCalls.length >= 1, `T3: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
 });
 
@@ -186,6 +182,6 @@ test('[analyze-provenance-routing] T4: contract-probe が {ok:false} でも labe
   assert.ok(analyzeCalls.length >= 1, `T4: label が 'analyze' で始まる dev-runner (sonnet) 呼び出しが 1 回以上あるはずだが ${analyzeCalls.length} 件`);
 
   assert.equal(result?.status, 'needs_clarification', `T4: sonnet fallback 後も provenance 検証が適用され needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(implCalls.length, 0, `T4: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });

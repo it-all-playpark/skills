@@ -21,16 +21,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const workflowDir = join(repoRoot, '.claude/workflows');
 
 const devFlowPath = join(workflowDir, 'dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
 // (a) 新 meta 名: `export const meta = {...}` の pure literal をハーネスと同様に評価して観測する
 function loadWorkflowMeta(src) {
@@ -94,13 +92,12 @@ test('[workflow-name] VM: empty-diff 失敗 run の journal-save 系 prompt JSON
 });
 
 test('[workflow-name] VM: abort run の journal-save 系 prompt JSON が "skill":"dev-flow" かつ "error_category":"abort" を含む', async () => {
-  // 標準経路（devFlowResponder 既定 shape:'standard'）は plan-reviewer loop を通らず単発 pass
-  // ラベル 'plan#standard' を使う（review loop の 'plan#1' は complex 経路のみ）。
+  // need() で包まれた evaluator（'eval#1'）の throw は top-level catch で abort handoff 後に rethrow される。
   const { ctx, calls } = makeDevFlowSandbox({
-    overrides: { 'plan#standard': () => { throw new Error('injected') } },
+    overrides: { 'eval#1': () => { throw new Error('injected') } },
   });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
-  assert.ok(error !== null, 'plan#standard の throw は top-level catch で abort handoff 後に rethrow されるはずだが error が null だった');
+  assert.ok(error !== null, 'eval#1 の throw は top-level catch で abort handoff 後に rethrow されるはずだが error が null だった');
 
   const journalSave = calls.find((c) => c.label === 'journal-save');
   assert.ok(journalSave != null, 'abort run に journal-save の call が見つからない');

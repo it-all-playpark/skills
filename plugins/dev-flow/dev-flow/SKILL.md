@@ -65,14 +65,13 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    `args.base` は渡さない（base は `dev-flow-prerun` が解決済みで、渡すと `dev-flow-run` が
    即 throw する）。
 
-## Implement 経路（IMPLEMENT_MODE、全 shape）
+## Implement 経路（全 shape で dev-implement-fable 一本）
 
-全 shape（micro / standard / complex）は既定で `dev-implement-fable`（plan+impl 統合、fable / high）を
-Implement で 1 spawn し、dev-planner / plan-reviewer を起動しない（`plan_iter=0`）。切替は
-`plugins/dev-flow/_lib/implement-mode.mjs` の `IMPLEMENT_MODE`（`'fable' | 'planner'`）。ロールバックは
-この 1 行を `'planner'` に戻して `tools/sync-inlines.mjs --write`（先頭トークン=スクリプトパスの bare
-形）を実行するだけで、`'planner'` に戻すと micro: plan 1 発、standard: plan 1 発、complex: dev-planner
-⇄ plan-reviewer ループ → implementer の従来経路に戻る。詳細は `references/pipeline.md` の shape 3 tier 表。
+全 shape（micro / standard / complex）は Plan phase で issue から単一 task の plan を合成するだけ
+（planner 系 agent は起動しない、`plan_iter=0`）で、Implement で `dev-implement-fable`（plan+impl 統合、
+fable / high）を 1 spawn する。BLOCKED 再実装（`reimpl-blocked#b`）・Validate の green-fix・Evaluate の
+差し戻し（`reimpl#i`）も同じ agent への再 spawn。shape 判定は Evaluate の深さ・LITE gate・refloor の
+ために残る。詳細は `references/pipeline.md` の shape 3 tier 表。
 
 ## 直列複数 issue 実行時の worktree 切替
 

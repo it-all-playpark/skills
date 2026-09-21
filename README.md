@@ -74,7 +74,7 @@ Use skills in Claude Code:
 5. **即時反映の確認**: link mode では repo のファイル編集が再 install なしに反映されます。
    任意の SKILL.md を 1 語変更 → `/reload-plugins` → 反映を確認してください。
 
-`dev-flow` plugin では skills（フラット構造）と `agents/` 配下の 12 agent が plugin として
+`dev-flow` plugin では skills（フラット構造）と `agents/` 配下の 9 agent が plugin として
 認識されます。plugin の subagent は plugin root の `agents/` からのみ読み込まれるため、
 agent 定義の実体は `plugins/dev-flow/agents/` に置き、`plugins/dev-flow/.claude/agents` は
 そこへの symlink にしてあります（定義は 1 箇所だけで、コピーの同期は不要）。
@@ -509,7 +509,7 @@ skills/
 │   │   │   └── references/subagent-dispatch.md  # Subagent dispatch 必須5要素
 │   │   ├── bin/journal                   # core bare 名 wrapper（1本）
 │   │   └── skill-retrospective/          # 唯一の skill
-│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 12 agents）
+│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 9 agents）
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）
 │   │   │   └── agents -> ../agents       # symlink（plugin subagent 読み込み用）

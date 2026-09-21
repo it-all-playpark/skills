@@ -17,14 +17,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 // ---- VM sandbox helpers（merge-tier-unsatisfied-ac.test.mjs / eval-convergence.test.mjs をベースに拡張）----
 
@@ -60,14 +58,6 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
     // Analyze: label が 'analyze' で始まる
     if (label.startsWith('analyze')) {
       return analyzeReq;
-    }
-    // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor: label 'danger-grep' は issue #544 で統合呼び出しへ変わった
     // （secfloor-classify.sh 経由の {risk, files, struct, diffhash} 応答）。dangerGrepResponse
@@ -113,7 +103,7 @@ function makeSandbox(analyzeReq, dangerGrepResponse, evaluatorResponse) {
       return { logged: true, summary: 'ok' };
     }
     // implementer その他
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

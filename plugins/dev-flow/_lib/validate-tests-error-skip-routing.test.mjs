@@ -89,8 +89,6 @@ function createResponder({ mode, gateEmpty }) {
         issue_title: 'stub-issue-title',
       };
     }
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: !!gateEmpty };
     if (label === 'diff-gate-retry') return { hash: 'H', empty: false };
@@ -122,10 +120,10 @@ function createResponder({ mode, gateEmpty }) {
       }
       return { tests: 'passed', green: true, summary: '' };
     }
-    if (agentType === 'dev-flow:implementer' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:dev-implement-fable' && label.startsWith('green-fix')) {
       return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'fix', concerns: [] };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: ['src/foo.ts'], summary: '', concerns: [] };
     }
     if (agentType === 'dev-flow:evaluator') {

@@ -59,8 +59,8 @@ test('[fail-closed] isolation-probe が written:false を返すと throw し、m
   assert.match(error.message, /dev-flow-prerun --issue 1/);
   assert.match(error.message, /EnterWorktree/);
   assert.ok(
-    !calls.some((c) => c.label === 'plan#1' || c.agentType === 'dev-flow:dev-planner'),
-    'Setup phase で throw した時点で Plan phase（dev-planner 呼び出し）に到達してはならない',
+    !calls.some((c) => c.label === 'impl:serial:issue-1' || c.agentType === 'dev-flow:dev-implement-fable'),
+    'Setup phase で throw した時点で Implement phase（dev-implement-fable 呼び出し）に到達してはならない',
   );
 });
 

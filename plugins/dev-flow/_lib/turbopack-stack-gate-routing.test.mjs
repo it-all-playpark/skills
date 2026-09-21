@@ -9,15 +9,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 function createResponder() {
   return function ({ label, agentType }) {
@@ -32,16 +30,6 @@ function createResponder() {
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
-    }
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        summary: 'p',
-        serial: [{ id: 'T1', desc: 'impl', file_changes: ['src/a.ts'], test_plan: 'none', depends_on: [] }],
-        parallel: [],
-      };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     if (label.startsWith('danger-grep')) {
       return { ok: true, hits: [] };
@@ -69,7 +57,7 @@ function createResponder() {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'done', concerns: [] };
     }
     // 未処理の label（issue-meta 等）は undefined を返し、makeRecordingSandbox の既定応答へ委譲する。
@@ -90,11 +78,10 @@ function assertNoCrash(error) {
 }
 
 function groupPrompts(calls) {
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   const evalCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   const testCalls = calls.filter((c) => c.label.startsWith('test'));
-  const plannerCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-planner');
-  return { implCalls, evalCalls, testCalls, plannerCalls };
+  return { implCalls, evalCalls, testCalls };
 }
 
 // (a) frameworks: ['next'] → 注入あり
@@ -151,19 +138,3 @@ test('[turbopack-stack-gate] (c) frameworks:[] → 注入されない', async ()
   }
 });
 
-// (d) 全 case で dev-planner prompt にも Turbopack / context7 が含まれない
-for (const [name, frameworks] of [
-  ['next', ['next']],
-  ['react', ['react']],
-  ['empty', []],
-]) {
-  test(`[turbopack-stack-gate] (d) frameworks=${name} → dev-planner prompt に Turbopack/context7 が含まれない`, async () => {
-    const { error, calls } = await run(frameworks);
-    assertNoCrash(error);
-    const { plannerCalls } = groupPrompts(calls);
-    for (const c of plannerCalls) {
-      assert.ok(!c.prompt.includes('Turbopack'), `dev-planner prompt (label=${c.label}) に 'Turbopack' が含まれてはいけない`);
-      assert.ok(!/context7/i.test(c.prompt), `dev-planner prompt (label=${c.label}) に 'context7' が含まれてはいけない`);
-    }
-  });
-}

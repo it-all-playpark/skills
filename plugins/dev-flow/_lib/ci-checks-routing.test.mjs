@@ -15,16 +15,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 import { gateLane, isConvergedUnderPolicy, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem, checkItem } from './goal-ledger.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const devFlowSrc = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
 // responder factory: concerns と ci-checks 応答だけをシナリオ別に差し替える
@@ -53,19 +51,6 @@ function createResponder({ concerns, ciChecksResponse }) {
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
-    }
-    // Plan: dev-planner（1 task を serial に置く — task 0 件だと implementer が呼ばれず
-    // concerns が classifyConcerns に到達しない）
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        summary: 'p',
-        serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }],
-        parallel: [],
-      };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / danger-grep 系
     if (label === 'danger-grep') {
@@ -112,7 +97,7 @@ function createResponder({ concerns, ciChecksResponse }) {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // implementer（本経路の main call。concerns はシナリオ別）
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',

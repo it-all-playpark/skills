@@ -43,14 +43,6 @@ function responder({ label, agentType }) {
       issue_title: 'stub-issue-title',
     };
   }
-  // Plan: dev-planner
-  if (agentType === 'dev-flow:dev-planner') {
-    return { summary: 'p', serial: [], parallel: [] };
-  }
-  // Plan reviewer
-  if (agentType === 'dev-flow:plan-reviewer') {
-    return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-  }
   // Security floor / danger-grep 系
   if (label.startsWith('danger-grep')) {
     return { ok: true, hits: [] };
@@ -81,7 +73,7 @@ function responder({ label, agentType }) {
     return { pr_url: 'http://x', pr_number: 1, committed: true };
   }
   // implementer
-  if (agentType === 'dev-flow:implementer') {
+  if (agentType === 'dev-flow:dev-implement-fable') {
     return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
   }
   // diff-gate / diff-hash（issue #215）: need() による throw の回避

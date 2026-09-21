@@ -112,7 +112,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   呼び出し自体が無いため合算 0。単体起動の pr-iterate は自身の handoff に同キーを記録）。
   nested 起動時は同じ counts が pr-iterate 側 journal entry にも記録されるため、journal を skill 横断で
   単純合計すると二重計上になる（集計時は dev-flow entry のみを使う）。by_type は agentType 別の
-  起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-planner / plan-reviewer / implementer /
+  起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-implement-fable /
   evaluator / pr-reviewer / dev-runner / dev-runner-haiku / dev-runner-haiku-ro / dev-runner-haiku-wo /
   ui-verifier の 10 種、agentType 欠落は 'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで

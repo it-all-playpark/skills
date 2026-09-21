@@ -1,315 +1,63 @@
-// blocked-done-preservation.test.mjs
-// AC#2: DONE×2+BLOCKED×1 → replan-blocked#1 プロンプトへの DONE 成果（task id・files のデータ echo）注入と
-//       最終 implResults への DONE 結果（concerns 含む）マージ保持を VM sandbox で検証。
+// blocked-done-preservation.test.mjs — BLOCKED 再実装後の結果マージ保持を VM sandbox で検証する
+// （issue #673 で dev-implement-fable 一本の経路に追随）。
 //
-// このテストファイルは TDD red として作成された。
-// 実装（F3）完了後に (a)(b)(c) が green になる。(d) は現行でも green（回帰ガード）。
+//   (a) reimpl-blocked#1 が DONE_WITH_CONCERNS を返したら b=2 は発火しない
+//       （stale な BLOCKED を implResults に残さない）
+//   (b) 再実装の concerns が evaluator の focus_areas へ伝搬する（DONE 結果のマージ保持）
+//   (c) 再実装の返却 files が宣言として取り込まれ、宣言外変更 concern が出ない
+//   (d) 単一 task の合成 plan では再 spawn 時点で DONE 成果は存在しない — prompt に「適用済み成果」節が
+//       付かない（付くのは DONE を持つ task が別にある場合のみ）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
+const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-// ---- VM sandbox helpers（design-replan-cap.test.mjs の makeSandbox / runDevFlowCapture をベースに改変）----
-// harness は各テストファイルが自前で持つ（import 共有しない）。
+const STANDARD_REQ = {
+  summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'fix', scope: 'src',
+  estimated_change_file_count: 4, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
+};
 
-function makeSandbox(analyzeReq) {
-  const plannerCalls = [];
-  const evalPrompts = [];
-  const logMessages = [];
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-
-    // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #550 案1）
-    if (label === 'setup-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    }
-    if (label === 'worktree') {
-      return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    }
-    if (label.startsWith('analyze')) {
-      return analyzeReq;
-    }
-    if (agentType === 'dev-flow:dev-planner') {
-      plannerCalls.push({ label, prompt });
-      if (label === 'plan#standard') {
-        return {
-          summary: 'p',
-          serial: [
-            { id: 'T1', desc: 't1', file_changes: ['src/a.ts'] },
-            { id: 'T2', desc: 't2', file_changes: ['src/b.ts'] },
-            { id: 'T3', desc: 't3', file_changes: ['src/c.ts'] },
-          ],
-          parallel: [],
-        };
-      }
-      if (label === 'replan-blocked#1') {
-        return {
-          summary: 'p2',
-          serial: [{ id: 'T4', desc: 't4', file_changes: ['src/d.ts'] }],
-          parallel: [],
-        };
-      }
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
-    if (agentType === 'dev-flow:implementer') {
-      if (label === 'impl:serial:T1') {
-        return {
-          status: 'DONE',
-          task_id: 'T1',
-          files: ['src/a.ts'],
-          summary: 'implemented A',
-          concerns: ['T1-concern: null handling unverified'],
-        };
-      }
-      if (label === 'impl:serial:T2') {
-        return {
-          status: 'DONE',
-          task_id: 'T2',
-          files: ['src/b.ts'],
-          summary: 'implemented B',
-          concerns: [],
-        };
-      }
-      if (label === 'impl:serial:T3') {
-        return {
-          status: 'BLOCKED',
-          task_id: 'T3',
-          files: [],
-          summary: '',
-          concerns: [],
-          blocking_reason: { block_class: 'approach_mismatch', detail: 'RZ: lib-z api missing' },
-        };
-      }
-      if (label === 'reimpl-blocked#1:serial:T4') {
-        return {
-          status: 'DONE',
-          task_id: 'T4',
-          files: ['src/d.ts'],
-          summary: 'implemented D',
-          concerns: [],
-        };
-      }
-      return { status: 'DONE', task_id: 'T?', files: [], summary: '', concerns: [] };
-    }
-    if (label.startsWith('danger-grep')) {
-      return { ok: true, hits: [] };
-    }
-    if (label.startsWith('test')) {
-      return { tests: 'no_tests', green: true, summary: '' };
-    }
-    if (agentType === 'dev-flow:evaluator') {
-      evalPrompts.push(prompt);
-      return {
-        verdict: 'pass',
-        total: 9,
-        threshold: 7,
-        feedback: [],
-        feedback_level: 'implementation',
-        ac_results: [
-          { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-          { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-          { ac_index: 2, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-          { ac_index: 3, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-        ],
-        security_clearance: [],
-        critical_resolutions: [],
-      };
-    }
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && label === 'realized-diff') {
-      return { files: ['src/a.ts'] };
-    }
-    if (agentType === 'dev-flow:dev-runner-haiku' && label === 'declared-path-check') {
-      return { files: ['src/a.ts'] };
-    }
-    if (label.startsWith('redgreen')) {
-      return { red: false, green: false, reason: 'stub' };
-    }
-    if (label.startsWith('pr')) {
-      return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    if (label === 'changed-files') {
-      return { files: ['src/a.ts'] };
-    }
-    // diff-gate / diff-hash（issue #215）: need() による throw の回避
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
-    // issue-meta（issue #451）: analyze provenance 突合 probe
-    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    return null;
-  };
-
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
-
-  const sandbox = {
-    phase: () => {},
-    log: (msg) => logMessages.push(String(msg)),
-    agent: agentStub,
-    parallel: parallelStub,
-    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: workflowStub,
-    args: devFlowArgs('1'),
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return {
-    ctx,
-    captures: {
-      plannerCalls: () => plannerCalls,
-      evalPrompts: () => evalPrompts,
-      logs: () => logMessages,
+test('[blocked-done-preservation] BLOCKED → reimpl-blocked#1 DONE_WITH_CONCERNS: b=2 は発火せず、concerns と files が保持される', async () => {
+  const { ctx, calls, logs } = makeDevFlowSandbox({
+    overrides: {
+      'analyze#1': STANDARD_REQ,
+      'impl:serial:issue-1': {
+        status: 'BLOCKED', task_id: 'issue-1', files: [], summary: '', concerns: [],
+        blocking_reason: { block_class: 'approach_mismatch', detail: 'RZ: lib-z api missing' },
+      },
+      'reimpl-blocked#1:serial:issue-1': {
+        status: 'DONE_WITH_CONCERNS', task_id: 'issue-1', files: ['src/x.ts'],
+        summary: 'implemented via lib-y', concerns: ['issue-1-concern: null handling unverified'],
+      },
     },
-  };
-}
+  });
+  const { result, error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'blocked-done-preservation');
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
 
-async function runDevFlowCapture(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
+  const rb = calls.filter((c) => c.label.startsWith('reimpl-blocked#'));
+  // (a) b=2 は発火しない
+  assert.deepEqual(rb.map((c) => c.label), ['reimpl-blocked#1:serial:issue-1'], `reimpl-blocked#1 の DONE 後に b=2 が発火した: ${rb.map((c) => c.label).join(', ')}`);
+  assert.ok(!logs.some((m) => m.includes('回再実装しても')), 'DONE で解消したのに BLOCK_MAX 到達 log が出た');
 
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => {
-        caughtError = e;
-        return null;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
+  // (b) concerns の Evaluate 伝搬
+  const ev = calls.find((c) => c.agentType === 'dev-flow:evaluator');
+  assert.ok(ev, 'evaluator が起動していない');
+  assert.ok(ev.prompt.includes('issue-1-concern: null handling unverified'), `再実装の concerns が evaluator prompt に伝搬していない。prompt[:800]: ${ev.prompt.slice(0, 800)}`);
+  assert.ok(!ev.prompt.includes('approach_mismatch(issue-1)'), '解消済み BLOCKED が approach_mismatch concern として残っている');
 
-// ============================================================
-// テストケース（単一実行で全 assert）
-// ============================================================
+  // (c) 返却 files の宣言取り込み
+  assert.ok(logs.some((l) => l.includes('宣言外変更なし')), `再実装の返却 files が宣言として取り込まれていない: ${logs.filter((l) => l.includes('宣言外')).join(' | ')}`);
 
-test('[blocked-done-preservation] AC#2: DONE成果の replan プロンプト注入と implResults マージ保持', async () => {
-  // standard shape: count=4, AC=4, issue_type=fix
-  const analyzeReq = {
-    summary: 's',
-    acceptance_criteria: ['a', 'b', 'c', 'd'],
-    issue_type: 'fix',
-    scope: 'src',
-    estimated_change_file_count: 4,
-    shape: 'standard',
-    issue_number: 1,
-    issue_title: 'stub-issue-title',
-  };
+  // (d) 単一 task では DONE 成果節は付かない（findings 節は付く）
+  assert.ok(rb[0].prompt.includes('approach_mismatch findings'), 'reimpl-blocked#1 prompt に findings 節が無い');
+  assert.ok(!rb[0].prompt.includes('適用済み成果'), '単一 task の再 spawn prompt に「適用済み成果」節が付いている（DONE 成果は存在しないはず）');
 
-  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
-  const { ctx, captures } = makeSandbox(analyzeReq);
-  const { error } = await runDevFlowCapture(src, ctx);
-
-  // ReferenceError / SyntaxError は構造的に壊れているので即 fail
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
-  }
-
-  const plannerCallsList = captures.plannerCalls();
-  const evalPromptsList = captures.evalPrompts();
-
-  // ---- replan-blocked#1 の prompt を取得（前提確認）----
-  const replanBlocked1Call = plannerCallsList.find((c) => c.label === 'replan-blocked#1');
-  assert.ok(
-    replanBlocked1Call !== null && replanBlocked1Call !== undefined,
-    'plannerCalls に label===replan-blocked#1 が存在しない。labels: '
-      + plannerCallsList.map((c) => c.label).join(', '),
-  );
-
-  // (d) replan-blocked#2 が存在しない（T4 が DONE → blocked が空 → ループ脱出）
-  // マージ実装が stale な T3 の BLOCKED を保持しすぎると b=2 で誤発火する回帰も検出する。
-  // 注: (d) を先に assert することで「workflow が eval まで完走した」前提を兼ねて確認する。
-  const replanBlocked2Call = plannerCallsList.find((c) => c.label === 'replan-blocked#2');
-  assert.ok(
-    replanBlocked2Call === null || replanBlocked2Call === undefined,
-    '(d) T4 が DONE になった時点でループを脱出するため replan-blocked#2 は呼ばれてはいけない。\n'
-      + 'stale な T3 BLOCKED が implResults に残ったままだと誤発火する。\n'
-      + 'labels: ' + plannerCallsList.map((c) => c.label).join(', '),
-  );
-
-  const replanPrompt = replanBlocked1Call.prompt;
-
-  // (a) replan-blocked#1 prompt に DONE task（T2）の id・files がデータ echo として含まれる
-  // （T1 は (b) が担当。ここでは T2 側の id/files を確認し DONE 成果全体が注入されていることを補完する）
-  assert.ok(
-    replanPrompt.includes('T2'),
-    '(a-id-T2) replan-blocked#1 prompt に DONE task id T2 が含まれるべき。\n'
-      + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
-  );
-  assert.ok(
-    replanPrompt.includes('src/b.ts'),
-    '(a-files) replan-blocked#1 prompt に DONE task files src/b.ts が含まれるべき。\n'
-      + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
-  );
-
-  // (b) replan-blocked#1 prompt に T1/T2 の id・files・summary が含まれる
-  // DONE task の成果（実装済みファイル・サマリ）が planner に伝わることで
-  // 重複実装や矛盾設計を防ぐ。現行は渡していない → red
-  assert.ok(
-    replanPrompt.includes('T1'),
-    '(b-id-T1) replan-blocked#1 prompt に DONE task id T1 が含まれるべき。\n'
-      + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
-  );
-  assert.ok(
-    replanPrompt.includes('T2'),
-    '(b-id-T2) replan-blocked#1 prompt に DONE task id T2 が含まれるべき。\n'
-      + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
-  );
-  assert.ok(
-    replanPrompt.includes('src/a.ts'),
-    '(b-files) replan-blocked#1 prompt に DONE task files src/a.ts が含まれるべき。\n'
-      + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
-  );
-  assert.ok(
-    replanPrompt.includes('implemented A'),
-    '(b-summary) replan-blocked#1 prompt に DONE task summary "implemented A" が含まれるべき。\n'
-      + `prompt[:600]: ${replanPrompt.slice(0, 600)}`,
-  );
-
-  // (c) evalPrompts[0]（eval#1）に T1 の concern が含まれる
-  // 最終 implResults に DONE 結果（concerns 含む）がマージ保持され focus_areas へ伝搬するはず。
-  // 現行は implResults が reimpl-blocked#1 の結果（T4 のみ）で上書きされ T1 concern が消失 → red
-  assert.ok(
-    evalPromptsList.length >= 1,
-    `(c-前提) evalPrompts に 1 件以上あるべきだが ${evalPromptsList.length} 件`,
-  );
-  assert.ok(
-    evalPromptsList[0].includes('T1-concern: null handling unverified'),
-    '(c) evalPrompts[0] に "T1-concern: null handling unverified" が含まれるべき。\n'
-      + '現行実装では implResults が reimpl-blocked#1 の結果（T4 のみ）で上書きされ T1 concern が消失する。\n'
-      + `evalPrompts[0][:800]: ${evalPromptsList[0].slice(0, 800)}`,
-  );
+  assert.ok(result?.pr_url != null, `完走経路では result.pr_url が存在するべきだが ${JSON.stringify(result?.pr_url)}`);
 });

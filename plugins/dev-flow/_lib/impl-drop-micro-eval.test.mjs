@@ -20,7 +20,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -53,19 +53,6 @@ function createResponder(dropLabels) {
     }
     // Plan: parallel 2 task + serial 1 task。file_changes は realized-diff stub と一致させ
     // 宣言外検出（issue #272 F2）を発火させない（runEval の要因を drop だけに絞るため）。
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        summary: 'p',
-        serial: [{ id: 'T3', desc: 't3', file_changes: ['src/foo.ts'], test_plan: '' }],
-        parallel: [
-          { id: 'T1', desc: 't1', file_changes: ['src/foo.ts'], test_plan: '' },
-          { id: 'T2', desc: 't2', file_changes: ['src/foo.ts'], test_plan: '' },
-        ],
-      };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // label 'danger-grep'（issue #544 統合呼び出し）: clean（security path ではないことを保証）+
     // files 1 件（旧 realized-diff 相当 → refloor で micro 維持）。
     if (label === 'danger-grep') {
@@ -96,9 +83,9 @@ function createResponder(dropLabels) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
     // implementer: dropLabels に一致するものだけ null（= drop）を返す
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       if (dropLabels.includes(label)) return null;
-      return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+      return { status: 'DONE', task_id: 'issue-1', files: ['src/foo.ts'], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
@@ -109,16 +96,14 @@ function createResponder(dropLabels) {
 }
 
 async function runScenario(dropLabels) {
-  // IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-  // 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeRecordingSandbox(createResponder(dropLabels));
   const err = await runDevFlowInSandbox(src, ctx);
   return { calls, err };
 }
 
 // drop あり: parallel T1 と serial T3 が null（dropped=1 + serialDropped=1）
-const DROP_LABELS = ['impl:par:T1', 'impl:serial:T3'];
+const DROP_LABELS = ['impl:serial:issue-1'];
 
 let dropRun = null;
 let cleanRun = null;

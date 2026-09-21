@@ -52,14 +52,6 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を escalate のみに絞る
     if (label.startsWith('danger-grep')) {
@@ -92,7 +84,7 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
       return { posted: true, method: 'gh pr comment', url: 'http://x/1' };
     }
     // implementer その他
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -368,12 +360,6 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       if (label.startsWith('analyze')) {
         return complexAnalyzeReq;
       }
-      if (agentType === 'dev-flow:dev-planner') {
-        return { summary: 'p', serial: [], parallel: [] };
-      }
-      if (agentType === 'dev-flow:plan-reviewer') {
-        return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-      }
       if (label.startsWith('danger-grep')) {
         return { ok: true, hits: [] };
       }
@@ -440,7 +426,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       if (label === 'post-summary') {
         return { posted: true, method: 'gh pr comment', url: 'http://x/1' };
       }
-      if (agentType === 'dev-flow:implementer') {
+      if (agentType === 'dev-flow:dev-implement-fable') {
         return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
       }
       // diff-gate / diff-hash（issue #215）: need() による throw の回避

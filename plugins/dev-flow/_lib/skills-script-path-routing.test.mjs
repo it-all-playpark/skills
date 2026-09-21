@@ -23,13 +23,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workflowDir = join(here, '..', '.claude', 'workflows');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8'), 'planner');
+const devFlowSrc = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(workflowDir, 'pr-iterate.js'), 'utf8');
 
 // 3 call site に対応する run: success / empty-diff failure（writeFailureTelemetry）/ abort
@@ -39,7 +37,7 @@ const RUNS = {
     overrides: { 'diff-gate': { hash: 'H', empty: true }, 'diff-gate-retry': { hash: 'H', empty: true }, 'issue-labels': null },
     expectError: true,
   },
-  abort: { overrides: { 'plan#standard': () => { throw new Error('injected'); } }, expectError: true },
+  abort: { overrides: { 'eval#1': () => { throw new Error('injected'); } }, expectError: true },
 };
 
 async function run(name) {

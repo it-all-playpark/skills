@@ -1,249 +1,102 @@
-// blocked-replan-history.test.mjs
-// TDD red: case1 fails (R1 missing from replan-blocked#2 prompt), case2 passes.
+// blocked-replan-history.test.mjs — BLOCKED 再実装（reimpl-blocked#b）の findings 累積と BLOCK_MAX を
+// dev-flow.js 全体の VM 実行で pin する（issue #673 AC-4）。
+//
+// planner agent を起動せず、blockSeen 累積の approach_mismatch findings（過去に BLOCKED になった
+// 全アプローチへの回帰禁止）を prompt に付けて dev-implement-fable を `reimpl-blocked#b` で再 spawn する:
+//   case1: BLOCKED ×2 → 3 回目 DONE — reimpl-blocked#2 prompt に R1 と R2 の両方（累積）が載り、
+//          BLOCK_MAX 到達 log は出ず、evaluator prompt に approach_mismatch concern は残らない
+//   case2: BLOCKED ×3（BLOCK_MAX=2 到達）— human review へ委譲（BLOCK_MAX log）し、未解消 BLOCKED は
+//          approach_mismatch concern として evaluator の focus_areas に渡る
+//   case3: all DONE — reimpl-blocked は 0 回
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
+const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-function makeSandbox(analyzeReq, implementerStub) {
-  const plannerCalls = [];
-  const evalPromptsList = [];
-  const logMessages = [];
-  const allCapturedCalls = [];
-
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    allCapturedCalls.push({ label, agentType, prompt });
-    // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #550 案1）
-    if (label === 'setup-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    }
-    if (label === 'worktree') {
-      return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    }
-    if (label.startsWith('analyze')) {
-      return analyzeReq;
-    }
-    if (agentType === 'dev-flow:dev-planner') {
-      plannerCalls.push({ label, prompt });
-      if (label === 'plan#standard') {
-        return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-      }
-      if (label === 'replan-blocked#1') {
-        return { summary: 'p', serial: [{ id: 'T2', desc: 't2', file_changes: ['src/b.ts'] }], parallel: [] };
-      }
-      if (label === 'replan-blocked#2') {
-        return { summary: 'p', serial: [{ id: 'T3', desc: 't3', file_changes: ['src/c.ts'] }], parallel: [] };
-      }
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
-    if (agentType === 'dev-flow:implementer') {
-      return implementerStub(prompt, opts);
-    }
-    if (label.startsWith('danger-grep')) {
-      return { ok: true, hits: [] };
-    }
-    if (label.startsWith('test')) {
-      return { tests: 'no_tests', green: true, summary: '' };
-    }
-    if (agentType === 'dev-flow:evaluator') {
-      evalPromptsList.push(prompt);
-      return {
-        verdict: 'pass', total: 9, threshold: 7, feedback: [],
-        feedback_level: 'implementation',
-        ac_results: [
-          { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-          { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-          { ac_index: 2, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-          { ac_index: 3, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
-        ],
-        security_clearance: [], critical_resolutions: [],
-      };
-    }
-    if (agentType === 'dev-flow:dev-runner-haiku-ro' && (label === 'realized-diff' || label === 'declared-path-check')) {
-      return { files: ['src/a.ts'] };
-    }
-    if (label.startsWith('redgreen')) {
-      return { red: false, green: false, reason: 'stub' };
-    }
-    if (label.startsWith('pr')) {
-      return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    if (label === 'changed-files') {
-      return { files: ['src/a.ts'] };
-    }
-    // diff-gate / diff-hash（issue #215）: need() による throw の回避
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
-    // issue-meta（issue #451）: analyze provenance 突合 probe
-    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    return null;
-  };
-
-  const parallelStub = (fns) => Promise.all((fns || []).map((f) => f()));
-  const workflowStub = async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 });
-
-  const sandbox = {
-    phase: () => {},
-    log: (msg) => logMessages.push(String(msg)),
-    agent: agentStub,
-    parallel: parallelStub,
-    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: workflowStub,
-    args: devFlowArgs('1'),
-    console, JSON, Math, String, Number, Boolean, Array, Object,
-    Error, RegExp, Promise, Symbol, Map, Set, Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return {
-    ctx,
-    captures: {
-      plannerCalls: () => plannerCalls,
-      evalPrompts: () => evalPromptsList,
-      logs: () => logMessages,
-      capturedCalls: () => allCapturedCalls,
-    },
-  };
-}
-
-async function runDevFlowCapture(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const resultPromise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (resultPromise && typeof resultPromise.then === 'function') {
-      resolvedResult = await resultPromise.catch((e) => { caughtError = e; return null; });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return { result: resolvedResult, error: caughtError };
-}
+const FABLE = 'dev-flow:dev-implement-fable';
+const GONE_AGENTS = ['dev-flow:dev-planner', 'dev-flow:plan-reviewer', 'dev-flow:implementer'];
 
 // standard shape: count=4 (3-5), AC<=6, issue_type=fix, no breaking keywords
-const STANDARD_ANALYZE_REQ = {
-  summary: 's',
-  acceptance_criteria: ['a', 'b', 'c', 'd'],
-  issue_type: 'fix',
-  scope: 'src',
-  estimated_change_file_count: 4,
-  shape: 'standard',
-  issue_number: 1,
-  issue_title: 'stub-issue-title',
+const STANDARD_REQ = {
+  summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'fix', scope: 'src',
+  estimated_change_file_count: 4, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
 };
 
-// case1: BLOCKED x2 -> replan-blocked#2 prompt must include R1 AND R2
-// current impl only passes current-iteration blockFindings -> R1 missing -> red
-test('[blocked-replan-history] case1: cumulative blockSeen', async () => {
-  const implementerStubBlocked = (prompt, opts) => {
-    const label = opts?.label ?? '';
-    if (label === 'impl:serial:T1') {
-      return { status: 'BLOCKED', task_id: 'T1', files: [], summary: '', concerns: [],
-               blocking_reason: { block_class: 'approach_mismatch', detail: 'R1: patch-api approach failed' } };
-    }
-    if (label === 'reimpl-blocked#1:serial:T2') {
-      return { status: 'BLOCKED', task_id: 'T2', files: [], summary: '', concerns: [],
-               blocking_reason: { block_class: 'approach_mismatch', detail: 'R2: hook approach failed' } };
-    }
-    if (label === 'reimpl-blocked#2:serial:T3') {
-      return { status: 'BLOCKED', task_id: 'T3', files: [], summary: '', concerns: [],
-               blocking_reason: { block_class: 'approach_mismatch', detail: 'R3: rewrite approach failed' } };
-    }
-    const m = label.match(/:([^:]+)$/);
-    return { status: 'DONE', task_id: m ? m[1] : 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
-  };
+const blocked = (detail) => ({
+  status: 'BLOCKED', task_id: 'issue-1', files: [], summary: '', concerns: [],
+  blocking_reason: { block_class: 'approach_mismatch', detail },
+});
+const done = { status: 'DONE', task_id: 'issue-1', files: ['src/x.ts'], summary: 'ok', concerns: [] };
 
-  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
-  const { ctx, captures } = makeSandbox(STANDARD_ANALYZE_REQ, implementerStubBlocked);
-  const { error } = await runDevFlowCapture(src, ctx);
+async function run(overrides) {
+  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { 'analyze#1': STANDARD_REQ, ...overrides } });
+  const { result, error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'blocked-replan-history');
+  return { calls, logs, result, error };
+}
 
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail('dev-flow.js crashed in sandbox: ' + error.name + ': ' + error.message);
-  }
+const reimplBlocked = (calls) => calls.filter((c) => c.label.startsWith('reimpl-blocked#'));
+const evalPrompt = (calls) => calls.find((c) => c.agentType === 'dev-flow:evaluator')?.prompt ?? '';
 
-  const plannerCalls = captures.plannerCalls();
-  const logs = captures.logs();
-  const evalPrompts = captures.evalPrompts();
+test('[blocked-replan-history] case1: BLOCKED ×2 → 3 回目 DONE — reimpl-blocked#2 prompt に R1+R2 が累積し、BLOCK_MAX 到達せず完走', async () => {
+  const { calls, logs, result, error } = await run({
+    'impl:serial:issue-1': blocked('R1: patch-api approach failed'),
+    'reimpl-blocked#1:serial:issue-1': blocked('R2: hook approach failed'),
+    'reimpl-blocked#2:serial:issue-1': done,
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
 
-  // (a) replan-blocked#2 call must exist
-  const replanBlocked2Call = plannerCalls.find((c) => c.label === 'replan-blocked#2');
-  assert.ok(
-    replanBlocked2Call !== null && replanBlocked2Call !== undefined,
-    'plannerCalls must contain label===replan-blocked#2. labels: ' + plannerCalls.map((c) => c.label).join(', '),
-  );
+  const rb = reimplBlocked(calls);
+  assert.deepEqual(rb.map((c) => c.label), ['reimpl-blocked#1:serial:issue-1', 'reimpl-blocked#2:serial:issue-1'], `reimpl-blocked は 2 回のはず: ${rb.map((c) => c.label).join(', ')}`);
+  for (const c of rb) assert.equal(c.agentType, FABLE, `${c.label} の agentType が ${c.agentType}（dev-implement-fable のはず）`);
+  assert.equal(calls.filter((c) => GONE_AGENTS.includes(c.agentType)).length, 0, 'planner 系 agent が起動した');
+  assert.equal(calls.filter((c) => c.label.startsWith('replan-blocked#')).length, 0, 'dev-planner 向け replan-blocked#b が起動した');
 
-  // (b) replan-blocked#2 prompt must contain R1 (from iteration#1) AND R2
-  // Current impl only passes current iteration blocked => R1 missing => RED
-  const prompt2 = replanBlocked2Call.prompt;
-  assert.ok(
-    prompt2.includes('R1: patch-api approach failed'),
-    'replan-blocked#2 prompt must contain R1: patch-api approach failed (cumulative blockFindings not injected). prompt[:500]: ' + prompt2.slice(0, 500),
-  );
-  assert.ok(
-    prompt2.includes('R2: hook approach failed'),
-    'replan-blocked#2 prompt must contain R2: hook approach failed. prompt[:500]: ' + prompt2.slice(0, 500),
-  );
+  // (a) reimpl-blocked#1 prompt: R1 のみ + 回帰禁止の指示
+  const p1 = rb[0].prompt;
+  assert.ok(p1.includes('前回実装が BLOCKED になった'), 'reimpl-blocked#1 prompt に BLOCKED 再実装の指示が無い');
+  assert.ok(p1.includes('R1: patch-api approach failed'), 'reimpl-blocked#1 prompt に R1 が無い');
+  assert.ok(p1.includes('回帰も禁止'), 'reimpl-blocked#1 prompt にアプローチ回帰禁止の指示が無い');
+  assert.equal((p1.match(/"dimension":"approach_mismatch"/g) ?? []).length, 1, 'reimpl-blocked#1 prompt の approach_mismatch findings は 1 件のはず');
 
-  // (c) logs must contain BLOCK_MAX reached message
-  assert.ok(
-    logs.some((m) => m.includes('2 回再計画しても')),
-    'logs must contain BLOCK_MAX reached log. logs: ' + logs.join(' | '),
-  );
+  // (b) reimpl-blocked#2 prompt: R1 と R2 の両方（blockSeen 累積）
+  const p2 = rb[1].prompt;
+  assert.ok(p2.includes('R1: patch-api approach failed'), `reimpl-blocked#2 prompt に R1（累積分）が無い。prompt[:600]: ${p2.slice(0, 600)}`);
+  assert.ok(p2.includes('R2: hook approach failed'), `reimpl-blocked#2 prompt に R2 が無い。prompt[:600]: ${p2.slice(0, 600)}`);
+  assert.equal((p2.match(/"dimension":"approach_mismatch"/g) ?? []).length, 2, 'reimpl-blocked#2 prompt の approach_mismatch findings は累積 2 件のはず');
 
-  // (d) evalPrompts[0] must contain R3 (blockedConcerns -> concerns -> focus_areas)
-  assert.ok(evalPrompts.length >= 1, 'evalPrompts must have >= 1 entry, got ' + evalPrompts.length);
-  assert.ok(
-    evalPrompts[0].includes('R3: rewrite approach failed'),
-    'evalPrompts[0] must contain R3: rewrite approach failed. evalPrompts[0][:800]: ' + evalPrompts[0].slice(0, 800),
-  );
+  // (c) 3 回目 DONE → BLOCK_MAX 到達 log 無し・evaluator に approach_mismatch concern 無し・PR まで完走
+  assert.ok(!logs.some((m) => m.includes('回再実装しても')), `BLOCK_MAX 到達 log が出ている: ${logs.filter((m) => m.includes('BLOCKED')).join(' | ')}`);
+  assert.ok(!evalPrompt(calls).includes('approach_mismatch(issue-1)'), 'DONE で解消したのに evaluator prompt に approach_mismatch concern が残っている');
+  assert.ok(result?.pr_url != null, `完走経路では result.pr_url が存在するべきだが ${JSON.stringify(result?.pr_url)}`);
 });
 
-// case2: all DONE -> no replan-blocked calls (regression guard - must pass with current impl)
-test('[blocked-replan-history] case2: all tasks DONE - no replan', async () => {
-  const implementerStubDone = (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const m = label.match(/:([^:]+)$/);
-    return { status: 'DONE', task_id: m ? m[1] : 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
-  };
+test('[blocked-replan-history] case2: BLOCKED ×3 → BLOCK_MAX=2 到達で human review へ委譲、未解消 BLOCKED が evaluator focus_areas に渡る', async () => {
+  const { calls, logs, error } = await run({
+    'impl:serial:issue-1': blocked('R1: patch-api approach failed'),
+    'reimpl-blocked#1:serial:issue-1': blocked('R2: hook approach failed'),
+    'reimpl-blocked#2:serial:issue-1': blocked('R3: rewrite approach failed'),
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
 
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
-  const { ctx, captures } = makeSandbox(STANDARD_ANALYZE_REQ, implementerStubDone);
-  const { error } = await runDevFlowCapture(src, ctx);
+  const rb = reimplBlocked(calls);
+  assert.equal(rb.length, 2, `BLOCK_MAX=2 で reimpl-blocked は 2 回のはず: ${rb.map((c) => c.label).join(', ')}`);
+  assert.ok(logs.some((m) => m.includes('2 回再実装しても')), `BLOCK_MAX 到達 log が無い: ${logs.join(' | ')}`);
+  const ev = evalPrompt(calls);
+  assert.ok(ev.length > 0, 'evaluator が起動していない');
+  assert.ok(ev.includes('R3: rewrite approach failed'), `evaluator prompt に未解消 BLOCKED（R3）が focus_areas として渡っていない。prompt[:800]: ${ev.slice(0, 800)}`);
+  assert.ok(ev.includes('approach_mismatch(issue-1)'), 'evaluator prompt に approach_mismatch concern の接頭辞が無い');
+});
 
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail('dev-flow.js crashed in sandbox: ' + error.name + ': ' + error.message);
-  }
-
-  const plannerCalls = captures.plannerCalls();
-  const logs = captures.logs();
-
-  const replanBlockedCalls = plannerCalls.filter((c) => c.label.startsWith('replan-blocked'));
-  assert.equal(
-    replanBlockedCalls.length, 0,
-    'When all DONE, replan-blocked calls must be 0 but got ' + replanBlockedCalls.length
-    + ': ' + replanBlockedCalls.map((c) => c.label).join(', '),
-  );
-
-  const blockedLogs = logs.filter((m) => m.includes('BLOCKED'));
-  assert.equal(
-    blockedLogs.length, 0,
-    'When all DONE, no BLOCKED logs expected but got ' + blockedLogs.length + ': ' + blockedLogs.join('; '),
-  );
+test('[blocked-replan-history] case3: all DONE → reimpl-blocked 0 回・BLOCKED log 無し', async () => {
+  const { calls, logs, error } = await run({});
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.equal(reimplBlocked(calls).length, 0, `all DONE で reimpl-blocked が起動した: ${reimplBlocked(calls).map((c) => c.label).join(', ')}`);
+  assert.equal(logs.filter((m) => m.includes('BLOCKED')).length, 0, `all DONE で BLOCKED log が出た: ${logs.filter((m) => m.includes('BLOCKED')).join('; ')}`);
 });

@@ -68,7 +68,7 @@ user-invocable: true                # false でメニュー非表示（backgroun
 |---|------|-----|
 | `low` | 決定論的処理・CLI wrapper・フォーマット変換 | `image-convert`, `repo-export` |
 | `medium` | 軽度の判断を伴う処理 | `blog-schedule-overview` |
-| `high` | 標準的なコード生成・通常ワークフロー / 計画・レビュー・批判的分析（A/B 実測で max と精度同等） | デフォルト推奨。dev-flow 品質ゲート系 4 agent（dev-planner, plan-reviewer, evaluator, pr-reviewer）はこれ |
+| `high` | 標準的なコード生成・通常ワークフロー / 計画・レビュー・批判的分析（A/B 実測で max と精度同等） | デフォルト推奨。dev-flow 品質ゲート系 2 agent（evaluator, pr-reviewer）と dev-implement-fable はこれ |
 | `xhigh` | 長時間 agentic / 大規模コーディング（Opus 4.7 限定） | 複雑な実装タスク |
 | `max` | 熟考・長大推論が必要な処理（quality-gate agent の effort 固定には通常 high を推奨） | `bug-hunt`, `code-audit-team`, `seo-strategy`, `incident-response` |
 

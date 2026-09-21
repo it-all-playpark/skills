@@ -1,25 +1,23 @@
 // _lib/analyze-prompt-calibration.test.mjs
-// issue #636 P3a: analyzePrompt / PLANNER_HANDOFF_RULE の配線検証を、dev-flow.js ソース文字列への
+// issue #636 P3a: analyzePrompt / STAGING_CONVENTION の配線検証を、dev-flow.js ソース文字列への
 // readFileSync + includes pin（旧版）から、VM sandbox で agent() を mock し実際に渡された
-// analyze#1 / plan#1 prompt に対するトークン pin・否定側 pin へ書き換えたもの
+// analyze#1 / impl:serial:issue-1 prompt に対するトークン pin・否定側 pin へ書き換えたもの
 // （issue #272 / #278 の意図はそのまま維持: bias 撤去・shape 境界一致・breaking 構造化判定の配線）。
 //
-// shape=complex（Plan phase が review loop に入り 1 回目の dev-planner 呼び出しが label 'plan#1' に
-// なる経路）に乗せるため、estimated_change_file_count を 5 超にして floor=complex を強制する
+// shape=complex に乗せるため estimated_change_file_count を 5 超にして floor=complex を強制する
 // （classifyShape は req.shape を raise-only にしか使わないため floor=complex は req.shape に依存しない）。
+// Plan phase は全 shape で合成 plan のみ（issue #673）— 実装 prompt は impl:serial:issue-1 で観測する。
 import { test, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runDevFlowInSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-// 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 const REQ = {
   summary: 's',
@@ -43,8 +41,6 @@ function createResponder() {
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     if (label.startsWith('contract-probe')) return null; // fail-open → sonnet fallback（analyze#1）
     if (label.startsWith('analyze')) return REQ;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -63,7 +59,7 @@ function createResponder() {
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
 }
@@ -71,23 +67,23 @@ function createResponder() {
 let calls;
 let runError;
 let analyzeCall;
-let planCall;
+let implCall;
 
 beforeAll(async () => {
   const sandbox = makeRecordingSandbox(createResponder(), { args: devFlowArgs('1') });
   runError = await runDevFlowInSandbox(src, sandbox.ctx);
   calls = sandbox.calls;
   analyzeCall = calls.find((c) => c.label === 'analyze#1');
-  planCall = calls.find((c) => c.label === 'plan#1');
+  implCall = calls.find((c) => c.label === 'impl:serial:issue-1');
 });
 
 test('run: dev-flow.js が sandbox で throw しない', () => {
   assert.equal(runError, null, `run が throw してはならないが: ${runError?.message}`);
 });
 
-test("run: analyze#1 と plan#1 の呼び出しが両方観測できる（shape=complex 経路の前提）", () => {
+test("run: analyze#1 と impl:serial:issue-1 の呼び出しが両方観測できる（shape=complex 経路の前提）", () => {
   assert.ok(analyzeCall, 'analyze#1 呼び出しが見つからない');
-  assert.ok(planCall, "plan#1 呼び出しが見つからない（shape=complex の review loop 1 回目）");
+  assert.ok(implCall, "impl:serial:issue-1 呼び出しが見つからない（合成 plan の dev-implement-fable spawn）");
 });
 
 // (a) 旧 bias 文言が analyze#1 prompt に含まれない（否定側 pin。issue #272）
@@ -109,17 +105,17 @@ test('analyze#1 prompt: breaking_evidence フィールドへの言及がある',
   assert.ok(analyzeCall.prompt.includes('breaking_evidence'));
 });
 
-// (c) PLANNER_HANDOFF_RULE が planner spawn prompt へ注入されている（一時ファイル配置規約のパス token）
-test("plan#1 prompt: PLANNER_HANDOFF_RULE 注入（'.devflow-tmp/' パス token）が含まれる", () => {
-  assert.ok(planCall.prompt.includes('.devflow-tmp/'));
+// (c) STAGING_CONVENTION が実装 spawn prompt へ注入されている（一時ファイル配置規約のパス token）
+test("impl:serial:issue-1 prompt: STAGING_CONVENTION 注入（'.devflow-tmp/' パス token）が含まれる", () => {
+  assert.ok(implCall.prompt.includes('.devflow-tmp/'));
 });
 
-// (d) isBreakingText（旧 LLM 自由文 regex 実装）への参照が analyze#1 / plan#1 のいずれの prompt にも
+// (d) isBreakingText（旧 LLM 自由文 regex 実装）への参照が analyze#1 / impl:serial:issue-1 のいずれの prompt にも
 // 残っていない（issue #278 の置換が完了していることの確認）
 test('analyze#1 prompt: isBreakingText への参照が無い', () => {
   assert.ok(!analyzeCall.prompt.includes('isBreakingText'));
 });
 
-test('plan#1 prompt: isBreakingText への参照が無い', () => {
-  assert.ok(!planCall.prompt.includes('isBreakingText'));
+test('impl:serial:issue-1 prompt: isBreakingText への参照が無い', () => {
+  assert.ok(!implCall.prompt.includes('isBreakingText'));
 });

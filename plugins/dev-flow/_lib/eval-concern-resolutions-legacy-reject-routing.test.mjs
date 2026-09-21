@@ -35,16 +35,6 @@ function baseResponder(concernResolutions) {
         issue_title: 'stub-issue-title',
       };
     }
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        summary: 'p',
-        serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }],
-        parallel: [],
-      };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     if (label.startsWith('danger-grep')) {
       return { ok: true, hits: [] };
     }
@@ -78,7 +68,7 @@ function baseResponder(concernResolutions) {
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',

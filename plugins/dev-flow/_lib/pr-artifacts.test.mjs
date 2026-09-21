@@ -341,12 +341,10 @@ test('[pr-artifacts] verifyPrBody / closesVerdict / hasClosesLine: null / undefi
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8'), 'planner');
+const devFlowSrc = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 
 test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing され、prompt に commit message / PR body 本文が verbatim で含まれる', async () => {
   const analyze = {
@@ -355,14 +353,15 @@ test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing �
     // issue-meta stub（vm-sandbox 既定）の title と一致させる（analyze provenance 突合を通すため）
     issue_title: 'stub-issue-title',
   };
+  // 合成 plan（issue #673）: summary = issue title、単一 task issue-1。file_changes は dev-implement-fable の
+  // 返却 files（既定 responder: src/x.ts）を adoptReportedFiles が取り込んだ後の形で pr-artifacts に渡る。
   const planStub = {
-    summary: 'plan summary for pr-artifacts',
-    architecture_decisions: [{ decision: 'D1', rationale: 'R1' }],
-    serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp', depends_on: [] }],
+    summary: 'stub-issue-title',
+    serial: [{ id: 'issue-1', desc: 'stub-issue-title', file_changes: ['src/x.ts'], test_plan: '', depends_on: [], agent: 'dev-implement-fable' }],
     parallel: [],
   };
   const { ctx, calls } = makeDevFlowSandbox({
-    overrides: { 'analyze#1': analyze, 'plan#standard': planStub },
+    overrides: { 'analyze#1': analyze },
   });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'pr-artifacts routing');
@@ -374,7 +373,7 @@ test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing �
 
   const commitMessage = buildCommitMessage({ issue: 1, req: analyze, plan: planStub });
   assert.ok(pr.prompt.includes(`<<<COMMIT_MSG_BEGIN>>>\n${commitMessage}<<<COMMIT_MSG_END>>>`), `commit message 本文が verbatim で含まれない:\n${pr.prompt}`);
-  assert.ok(pr.prompt.includes('<<<PR_BODY_BEGIN>>>\n**plan summary for pr-artifacts**\n'), 'PR body 本文（結論1行）が verbatim で含まれない');
+  assert.ok(pr.prompt.includes('<<<PR_BODY_BEGIN>>>\n**stub-issue-title**\n'), 'PR body 本文（結論1行）が verbatim で含まれない');
   assert.ok(pr.prompt.includes('- [ ] AC one\n- [ ] AC two') || pr.prompt.includes('- [x] AC one\n- [x] AC two'), 'PR body の受入条件 checkbox が含まれない');
   assert.ok(pr.prompt.includes('Closes #1\n<<<PR_BODY_END>>>'), 'PR body が Closes #1 で終わらない');
   assert.ok(pr.prompt.includes('`git -C /tmp/wt commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), 'commit -F 指示が無い');

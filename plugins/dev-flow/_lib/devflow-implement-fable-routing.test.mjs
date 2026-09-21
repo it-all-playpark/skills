@@ -1,33 +1,34 @@
-// IMPLEMENT_MODE（_lib/implement-mode.mjs）による Implement 経路切替（全 shape）を
-// dev-flow.js 全体の VM 実行で pin する（issue #668 / #670）。shape × IMPLEMENT_MODE の組合せと
-// Evaluate 差し戻し（reimpl#i）経路を agent stub の呼び出し列・prompt 文字列で検証する。
+// Implement 経路が全 shape で dev-implement-fable 一本であることを dev-flow.js 全体の VM 実行で
+// pin する（issue #668 / #670 / #673）。planner 経路（dev-planner ⇄ plan-reviewer → implementer）と
+// IMPLEMENT_MODE は #673 で削除済み — ロールバックは git revert（定数切替の scaffolding は残さない）。
 //
-//   AC-1: IMPLEMENT_MODE=fable の complex run が dev-planner 0 回・plan-reviewer 0 回・
-//         dev-implement-fable 1 回（impl:serial:issue-<N>）を spawn し、plan_iter が 0 で
-//         telemetry に載る
-//   AC-2: 同条件で shape=micro も同じ経路（dev-planner 0 回・dev-implement-fable 1 回）。
-//         Evaluate skip（TRIVIAL/LITE gate）は変えない
-//   AC-3: IMPLEMENT_MODE=planner のとき micro/standard/complex の挙動が現行と完全一致する
-//   AC-4: Evaluate 差し戻し（reimpl#i、fix_feedback 付き）が complex でも dev-implement-fable に
-//         渡る。design 差し戻しは isFablePlan(plan) 分岐で dev-planner を起動しない
-//   AC-5: prompt に issue_body + acceptance_criteria が含まれ、AC_TEST_CONTRACT は含まれない
+//   AC-1: dev-flow.js に planner 経路のシンボル・PLAN/VERDICT schema・dev-planner / plan-reviewer /
+//         implementer の agentType 文字列が残っていない（静的 pin）
+//   AC-3: Plan phase は全 shape で合成 plan のみ（plan#fable-skip log・plan_iter 0）。Implement は
+//         dev-implement-fable の単一 serial spawn（impl:serial:issue-<N>）で、parallel / pipeline を
+//         sandbox に置かなくても完走する。返却 null は implDroppedCount に 1 として計上される
+//   AC-5: Evaluate 差し戻し（reimpl#i、fix_feedback 付き）が dev-implement-fable に渡る
+//   AC-6: Validate green-fix（green-fix#i / green-fix#retry-i）が dev-implement-fable で spawn され、
+//         テスト弱体化禁止・失敗内容・STAGING_CONVENTION が prompt に残る
+//   prompt: issue_body + acceptance_criteria + task_id + 配置規約を含み、AC テスト契約は含まない
 //
-// 責務外: telemetry の by_type / plan_iter（standard 分）は subagent-invocations-telemetry.test.mjs
-// （#668 ケース）が pin する。本ファイルは AC-1 の complex 分の telemetry のみ追加で pin する。
+// 責務外: telemetry の by_type / plan_iter は subagent-invocations-telemetry.test.mjs が pin する。
+// BLOCKED 再実装（reimpl-blocked#b）は blocked-replan-history.test.mjs / guard-blocked-routing.test.mjs。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { stripComments } from '../../../tools/sync-inlines.mjs';
+import { neutralizeRegexLiterals } from './test-helpers/source-scan.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 
 const FABLE = 'dev-flow:dev-implement-fable';
-const PLANNER = 'dev-flow:dev-planner';
-const IMPLEMENTER = 'dev-flow:implementer';
+const GONE_AGENTS = ['dev-planner', 'plan-reviewer', 'implementer'];
 
 const ISSUE_BODY = '## 背景\n本文の一段落。\n\n## 受け入れ基準\n- [ ] a\n- [ ] b';
 const AC = ['ac-one', 'ac-two', 'ac-three', 'ac-four'];
@@ -41,18 +42,17 @@ function reqOf(shape) {
   return { ...base, acceptance_criteria: AC, issue_type: 'feat', estimated_change_file_count: 3, shape: 'standard' };
 }
 
-async function runFlow(mode, shape, overrides = {}) {
-  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { 'analyze#1': reqOf(shape), ...overrides } });
-  const { result, error } = await runWorkflowCapture(withImplementMode(src, mode), ctx);
-  assertNoCrash(error, `${shape}/${mode}`);
-  return { calls, logs, result, error };
+async function runFlow(shape, overrides = {}, extra = {}) {
+  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { 'analyze#1': reqOf(shape), ...overrides }, extra });
+  const { result, error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, shape);
+  return { calls, logs, result, error, ctx };
 }
 
 const byType = (calls, t) => calls.filter((c) => c.agentType === t);
-const implCalls = (calls, t) => calls.filter((c) => c.agentType === t && /^(impl|reimpl)/.test(c.label));
+const goneCalls = (calls) => calls.filter((c) => GONE_AGENTS.some((g) => c.agentType === `dev-flow:${g}`));
 
 // journal-save (stage1) prompt から JOURNAL_HANDOFF_BODY 区間の JSON を抽出する
-// （subagent-invocations-telemetry.test.mjs の parseJournalHandoffPayload と同形の複製）。
 function parseJournalHandoffPayload(prompt) {
   const match = prompt.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
   assert.ok(match, `journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない。prompt:\n${prompt}`);
@@ -60,119 +60,123 @@ function parseJournalHandoffPayload(prompt) {
 }
 
 // ============================================================
-// AC-1 / AC-5: standard × fable
+// AC-1: 静的 pin — planner 経路のシンボルと agentType 文字列が 0 件
 // ============================================================
-test('[implement-fable] standard × fable: dev-planner 0 回・dev-implement-fable 1 回（impl:serial:issue-1）・implementer 0 回', async () => {
-  const { calls, logs, error } = await runFlow('fable', 'standard');
-  assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.equal(byType(calls, PLANNER).length, 0, `dev-planner は 0 回のはず: ${byType(calls, PLANNER).map((c) => c.label).join(', ')}`);
-  const fable = byType(calls, FABLE);
-  assert.deepEqual(fable.map((c) => c.label), ['impl:serial:issue-1'], `dev-implement-fable は Implement で 1 回のはず: ${fable.map((c) => c.label).join(', ')}`);
-  assert.equal(implCalls(calls, IMPLEMENTER).length, 0, 'Implement で implementer は起動しないはず');
-  assert.ok(logs.some((l) => l.includes('plan#fable-skip')), 'plan#fable-skip の log が無い');
-  // 返却 files（src/x.ts）が宣言として取り込まれるため、realized（danger-grep の src/x.ts）は宣言外にならない
-  assert.ok(logs.some((l) => l.includes('宣言外変更なし')), `declared-path-check が宣言外なしにならない: ${logs.filter((l) => l.includes('宣言外')).join(' | ')}`);
-  assert.ok(!logs.some((l) => l.includes('件が plan の file_changes に無い')), '宣言外変更 concern が注入された（返却 files が宣言として取り込まれていない）');
-});
-
-test('[implement-fable] AC-5: dev-implement-fable の prompt に issue_body・acceptance_criteria・task_id・配置規約が含まれ、AC テスト契約は含まれない', async () => {
-  const { calls } = await runFlow('fable', 'standard');
-  const [call] = byType(calls, FABLE);
-  assert.ok(call, 'dev-implement-fable の call が無い');
-  assert.ok(call.prompt.includes(ISSUE_BODY), 'prompt に issue_body（req.issue_body）が含まれない');
-  assert.ok(call.prompt.includes(JSON.stringify(AC)), 'prompt に acceptance_criteria が含まれない');
-  assert.ok(call.prompt.includes('task_id: issue-1'), 'prompt に合成 task の task_id が含まれない');
-  assert.ok(call.prompt.includes('一時/handoff ファイルの配置規約'), 'prompt に STAGING_CONVENTION が含まれない');
-  assert.ok(!call.prompt.includes('AC テスト契約'), 'prompt に AC_TEST_CONTRACT（red→green 自己実証）が含まれている');
-  assert.ok(!call.prompt.includes('次の task を実装せよ'), 'prompt が implementer 向け手順書型になっている');
-});
-
-test('[implement-fable] issue_body_truncated:true → prompt に切詰め注記が付く / issue_body 欠落 → 本文なし注記', async () => {
-  const truncated = await runFlow('fable', 'standard', { 'analyze#1': { ...reqOf('standard'), issue_body_truncated: true } });
-  const [t] = byType(truncated.calls, FABLE);
-  assert.ok(t.prompt.includes('切詰め済み'), 'issue_body_truncated:true の注記が無い');
-  const missing = await runFlow('fable', 'standard', { 'analyze#1': (() => { const r = reqOf('standard'); delete r.issue_body; delete r.issue_body_truncated; return r; })() });
-  const [m] = byType(missing.calls, FABLE);
-  assert.ok(m.prompt.includes('issue 本文: analyze 出力に含まれていない'), 'issue_body 欠落時の注記が無い');
+test('[implement-fable] AC-1 静的 pin: dev-flow.js に planner 経路のシンボル・schema・agentType 文字列が残っていない', () => {
+  const code = stripComments(neutralizeRegexLiterals(src));
+  // 識別子は語境界で照合する（DESIGN_REPLAN_MAX が PLAN_MAX の部分文字列として誤検知されないように）
+  const forbiddenSymbols = [
+    'IMPLEMENT_MODE', 'PLAN_SOLO', 'soloPlanPrompt', 'planConverged', 'findingsToConcerns',
+    'PLAN_MAX', 'PLAN_STUCK', 'planSeen', 'PLANNER_TEST_PLAN_RULE', 'PLANNER_HANDOFF_RULE',
+    'implPrompt', 'AC_TEST_CONTRACT', 'applyDisjoint', 'countPlanDrops', 'pipeline',
+  ];
+  for (const sym of forbiddenSymbols) {
+    assert.ok(!new RegExp(`\\b${sym}\\b`).test(code), `dev-flow.js に planner 経路のシンボル '${sym}' が残っている`);
+  }
+  for (const schema of ['PLAN', 'VERDICT']) {
+    assert.ok(!new RegExp(`\\bconst ${schema}\\b`).test(code), `dev-flow.js に ${schema} schema 定義が残っている`);
+    assert.ok(!new RegExp(`schema: ${schema}\\b`).test(code), `dev-flow.js に schema: ${schema} の call site が残っている`);
+  }
+  for (const agent of GONE_AGENTS) {
+    const hits = code.match(new RegExp(`'${agent}'`, 'g')) ?? [];
+    assert.equal(hits.length, 0, `dev-flow.js に agentType 文字列 '${agent}' が ${hits.length} 件残っている`);
+  }
+  assert.ok(!/typeof pipeline/.test(code), 'dev-flow.js に pipeline() の存在チェック（fail-fast）が残っている');
 });
 
 // ============================================================
-// AC-2 / AC-7: standard × planner（ロールバック値）
+// AC-3: 全 shape で合成 plan → dev-implement-fable 1 spawn（parallel / pipeline なし）
 // ============================================================
-test('[implement-fable] standard × planner: plan#standard 1 発（dev-planner）→ implementer、dev-implement-fable 0 回', async () => {
-  const { calls, logs, error } = await runFlow('planner', 'standard');
-  assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.deepEqual(byType(calls, PLANNER).map((c) => c.label), ['plan#standard'], 'dev-planner は plan#standard の 1 回のはず');
-  assert.ok(implCalls(calls, IMPLEMENTER).length >= 1, 'implementer が Implement で起動していない');
-  assert.equal(byType(calls, FABLE).length, 0, 'planner 値で dev-implement-fable が起動した');
-  assert.ok(!logs.some((l) => l.includes('plan#fable-skip')), 'planner 値で plan#fable-skip が log された');
-});
+for (const shape of ['micro', 'standard', 'complex']) {
+  test(`[implement-fable] AC-3 ${shape}: planner 系 agent 0 回・dev-implement-fable 1 回（impl:serial:issue-1）・plan#fable-skip・sandbox に parallel/pipeline 不在で完走`, async () => {
+    const { calls, logs, error, ctx } = await runFlow(shape);
+    assert.equal(error, null, `run が throw した: ${error?.message}`);
+    assert.equal(typeof ctx.pipeline, 'undefined', 'sandbox に pipeline() が注入されている（削除済みのはず）');
+    assert.equal(typeof ctx.parallel, 'undefined', 'sandbox に parallel() が注入されている（削除済みのはず）');
+    assert.equal(goneCalls(calls).length, 0, `planner 系 agent が起動した: ${goneCalls(calls).map((c) => `${c.agentType}:${c.label}`).join(', ')}`);
+    const fable = byType(calls, FABLE);
+    assert.deepEqual(fable.map((c) => c.label), ['impl:serial:issue-1'], `dev-implement-fable は Implement で 1 回のはず: ${fable.map((c) => c.label).join(', ')}`);
+    assert.equal(calls.filter((c) => c.label.includes(':par:')).length, 0, 'parallel fan-out の label（:par:）が観測された');
+    assert.ok(logs.some((l) => l.includes('plan#fable-skip')), 'plan#fable-skip の log が無い');
+  });
+}
 
-// ============================================================
-// AC-1: complex × fable
-// ============================================================
-test('[implement-fable] complex × fable: dev-planner 0 回・plan-reviewer 0 回・dev-implement-fable 1 回（impl:serial:issue-1）・implementer 0 回', async () => {
-  const { calls, logs, error } = await runFlow('fable', 'complex');
-  assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.equal(byType(calls, PLANNER).length, 0, `dev-planner は 0 回のはず: ${byType(calls, PLANNER).map((c) => c.label).join(', ')}`);
-  assert.equal(byType(calls, 'dev-flow:plan-reviewer').length, 0, `plan-reviewer は 0 回のはず: ${byType(calls, 'dev-flow:plan-reviewer').map((c) => c.label).join(', ')}`);
-  const fable = byType(calls, FABLE);
-  assert.deepEqual(fable.map((c) => c.label), ['impl:serial:issue-1'], `dev-implement-fable は Implement で 1 回のはず: ${fable.map((c) => c.label).join(', ')}`);
-  assert.equal(implCalls(calls, IMPLEMENTER).length, 0, 'Implement で implementer は起動しないはず');
-  assert.ok(logs.some((l) => l.includes('plan#fable-skip')), 'plan#fable-skip の log が無い');
-});
-
-test('[implement-fable] complex × fable: journal handoff telemetry — plan_iter 0 / by_type.dev-implement-fable 1 / dev-planner 無し', async () => {
+test('[implement-fable] AC-3: journal handoff telemetry — plan_iter 0 / by_type.dev-implement-fable 1 / planner 系 agent 無し（complex）', async () => {
   const journalPrompts = [];
-  const { error } = await runFlow('fable', 'complex', {
+  const { error } = await runFlow('complex', {
     'journal-save': ({ prompt }) => { journalPrompts.push(prompt); return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' }; },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
   const payload = parseJournalHandoffPayload(journalPrompts[0] ?? '');
   assert.equal(payload.telemetry.plan_iter, 0, `plan_iter は 0 のはず: ${payload.telemetry.plan_iter}`);
   assert.equal(payload.telemetry.subagent_invocations.by_type['dev-implement-fable'], 1, `by_type['dev-implement-fable'] は 1 のはず: ${JSON.stringify(payload.telemetry.subagent_invocations.by_type)}`);
-  assert.equal('dev-planner' in payload.telemetry.subagent_invocations.by_type, false, `by_type に dev-planner が載っている: ${JSON.stringify(payload.telemetry.subagent_invocations.by_type)}`);
+  for (const g of GONE_AGENTS) {
+    assert.equal(g in payload.telemetry.subagent_invocations.by_type, false, `by_type に ${g} が載っている: ${JSON.stringify(payload.telemetry.subagent_invocations.by_type)}`);
+  }
 });
 
-// ============================================================
-// AC-2: micro × fable
-// ============================================================
-test('[implement-fable] micro × fable: dev-planner 0 回・dev-implement-fable 1 回（impl:serial:issue-1）・evaluator 0 回（TRIVIAL/LITE gate 維持）', async () => {
-  const { calls, logs, error } = await runFlow('fable', 'micro');
+test('[implement-fable] AC-3: dev-implement-fable が null を返すと drop 1 として log され、micro でも evaluator が強制される', async () => {
+  const { calls, logs, error } = await runFlow('micro', { 'impl:serial:issue-1': null });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.equal(byType(calls, PLANNER).length, 0, `dev-planner は 0 回のはず: ${byType(calls, PLANNER).map((c) => c.label).join(', ')}`);
-  const fable = byType(calls, FABLE);
-  assert.deepEqual(fable.map((c) => c.label), ['impl:serial:issue-1'], `dev-implement-fable は Implement で 1 回のはず: ${fable.map((c) => c.label).join(', ')}`);
-  assert.equal(byType(calls, 'dev-flow:evaluator').length, 0, 'micro は evaluator 0 回のはず（TRIVIAL/LITE gate 維持）');
-  assert.ok(logs.some((l) => l.includes('plan#fable-skip')), 'plan#fable-skip の log が無い');
+  assert.ok(logs.some((l) => l.includes('impl: dev-implement-fable 1 件が失敗(null)')), `drop の log が無い: ${logs.filter((l) => l.includes('失敗')).join(' | ')}`);
+  assert.ok(logs.some((l) => l.includes('implement drop 1 件')), `implDroppedCount=1 で Evaluate 強制の log が無い: ${logs.filter((l) => l.includes('drop')).join(' | ')}`);
+  assert.ok(byType(calls, 'dev-flow:evaluator').length >= 1, 'drop 発生時は micro でも evaluator が起動するはず');
 });
 
 // ============================================================
-// AC-2 本番経路: micro × fable の LITE（clean）と refloor（realized 6 files）。
-// 既存の lite-route / refloor-shape routing test は planner 注入でロールバック経路のみを検証する
-// ため、fable 既定で micro が辿る LITE gate（pr-review-lite 1 回・workflow('pr-iterate') 0 回・
-// AUTO tier の AC 未検証開示）と adoptReportedFiles 由来の refloor はここで pin する。
+// prompt: issue_body / acceptance_criteria / task_id / 配置規約を含み、AC テスト契約は含まない
 // ============================================================
-async function runMicroFable(overrides = {}) {
+test('[implement-fable] dev-implement-fable の prompt に issue_body・acceptance_criteria・task_id・配置規約が含まれ、AC テスト契約は含まれない', async () => {
+  const { calls } = await runFlow('standard');
+  const [call] = byType(calls, FABLE);
+  assert.ok(call, 'dev-implement-fable の call が無い');
+  assert.ok(call.prompt.includes(ISSUE_BODY), 'prompt に issue_body（req.issue_body）が含まれない');
+  assert.ok(call.prompt.includes(JSON.stringify(AC)), 'prompt に acceptance_criteria が含まれない');
+  assert.ok(call.prompt.includes('task_id: issue-1'), 'prompt に合成 task の task_id が含まれない');
+  assert.ok(call.prompt.includes('一時/handoff ファイルの配置規約'), 'prompt に STAGING_CONVENTION が含まれない');
+  assert.ok(!call.prompt.includes('AC テスト契約'), 'prompt に AC テスト契約（red→green 自己実証）が含まれている');
+  assert.ok(!call.prompt.includes('次の task を実装せよ'), 'prompt が手順書型になっている');
+  assert.ok(!call.prompt.includes('前回実装が BLOCKED になった'), '初回 Implement の prompt に BLOCKED 再実装の文言が含まれている');
+});
+
+test('[implement-fable] issue_body_truncated:true → prompt に切詰め注記が付く / issue_body 欠落 → 本文なし注記', async () => {
+  const truncated = await runFlow('standard', { 'analyze#1': { ...reqOf('standard'), issue_body_truncated: true } });
+  const [t] = byType(truncated.calls, FABLE);
+  assert.ok(t.prompt.includes('切詰め済み'), 'issue_body_truncated:true の注記が無い');
+  const missing = await runFlow('standard', { 'analyze#1': (() => { const r = reqOf('standard'); delete r.issue_body; delete r.issue_body_truncated; return r; })() });
+  const [m] = byType(missing.calls, FABLE);
+  assert.ok(m.prompt.includes('issue 本文: analyze 出力に含まれていない'), 'issue_body 欠落時の注記が無い');
+});
+
+test('[implement-fable] 返却 files（src/x.ts）が宣言として取り込まれ、宣言外変更 concern が出ない', async () => {
+  const { logs } = await runFlow('standard');
+  assert.ok(logs.some((l) => l.includes('宣言外変更なし')), `declared-path-check が宣言外なしにならない: ${logs.filter((l) => l.includes('宣言外')).join(' | ')}`);
+  assert.ok(!logs.some((l) => l.includes('件が plan の file_changes に無い')), '宣言外変更 concern が注入された（返却 files が宣言として取り込まれていない）');
+});
+
+// ============================================================
+// micro の LITE（clean）と refloor（realized 6 files）
+// ============================================================
+async function runMicro(overrides = {}) {
   const workflowCalls = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
     overrides: { 'analyze#1': reqOf('micro'), ...overrides },
     workflow: async (name, opts) => { workflowCalls.push({ name, opts }); return { status: 'lgtm', iterations: 1, fixes_applied: 0 }; },
   });
-  const { result, error } = await runWorkflowCapture(withImplementMode(src, 'fable'), ctx);
-  assertNoCrash(error, 'micro/fable');
+  const { result, error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'micro');
   return { calls, logs, result, error, workflowCalls };
 }
 
-test('[implement-fable] micro × fable（clean, docs-only）: LITE 経路 — pr-review-lite 1 回・workflow(pr-iterate) 0 回・merge_tier AUTO に AC 未検証開示', async () => {
-  // AUTO は micro + docs/test-only + danger clean が条件（classifyMergeTier）。realized を docs のみにする
+const fableStubWith = (files) => ({ prompt }) => {
+  const m = prompt.match(/task_id: (\S+?)（/);
+  return { status: 'DONE', task_id: m ? m[1] : 'unknown', files, summary: 's', concerns: [] };
+};
+
+test('[implement-fable] micro（clean, docs-only）: LITE 経路 — pr-review-lite 1 回・workflow(pr-iterate) 0 回・merge_tier AUTO に AC 未検証開示', async () => {
   const DOCS = ['docs/x.md'];
-  const fableStub = ({ prompt }) => {
-    const m = prompt.match(/task_id: (\S+?)（/);
-    return { status: 'DONE', task_id: m ? m[1] : 'unknown', files: DOCS, summary: 's', concerns: [] };
-  };
-  const { calls, result, error, workflowCalls } = await runMicroFable({
-    'impl:serial:issue-1': fableStub,
+  const { calls, result, error, workflowCalls } = await runMicro({
+    'impl:serial:issue-1': fableStubWith(DOCS),
     'pr-review-lite': { decision: 'approve', issues: [], summary: 'ok' },
     'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     'danger-grep': { risk: { ok: true, hits: [] }, files: DOCS, struct: null, diffhash: { hash: 'AAA', empty: false } },
@@ -189,96 +193,101 @@ test('[implement-fable] micro × fable（clean, docs-only）: LITE 経路 — pr
   assert.equal(result?.shape_refloored, false, 'clean micro で refloor が発火した');
 });
 
-test('[implement-fable] micro × fable（realized 6 files）: adoptReportedFiles 由来の refloor が発火し evaluator が起動する（LITE を通らない）', async () => {
+test('[implement-fable] micro（realized 6 files）: adoptReportedFiles 由来の refloor が発火し evaluator が起動する（LITE を通らない）', async () => {
   const SIX = ['a', 'b', 'c', 'd', 'e', 'f'];
-  const fableStub = ({ prompt }) => {
-    const m = prompt.match(/task_id: (\S+?)（/);
-    return { status: 'DONE', task_id: m ? m[1] : 'unknown', files: SIX, summary: 's', concerns: [] };
-  };
-  const { calls, result, error } = await runMicroFable({
-    'impl:serial:issue-1': fableStub,
+  const { calls, result, error } = await runMicro({
+    'impl:serial:issue-1': fableStubWith(SIX),
     'danger-grep': { risk: { ok: true, hits: [] }, files: SIX, struct: null, diffhash: { hash: 'AAA', empty: false } },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
   assert.equal(result?.shape_refloored, true, `realized 6 files で refloor が発火していない: ${JSON.stringify({ shape: result?.shape, refloored: result?.shape_refloored })}`);
   assert.ok(byType(calls, 'dev-flow:evaluator').length >= 1, 'refloor 後は evaluator が起動するはず');
   assert.equal(byType(calls, 'dev-flow:pr-reviewer').filter((c) => /lite/i.test(c.label)).length, 0, 'refloor 後に lite review が走った');
-  assert.equal(byType(calls, PLANNER).length, 0, 'refloor 後も dev-planner は起動しないはず');
+  assert.equal(goneCalls(calls).length, 0, 'refloor 後も planner 系 agent は起動しないはず');
 });
 
 // ============================================================
-// AC-3: IMPLEMENT_MODE=planner のロールバック経路（micro/complex 不変）
+// AC-5: Evaluate 差し戻し（reimpl#i）— design / implementation どちらも dev-implement-fable へ
 // ============================================================
-test('[implement-fable] complex × planner: dev-planner ⇄ plan-reviewer loop 起動・dev-implement-fable 0 回', async () => {
-  const { calls } = await runFlow('planner', 'complex');
-  assert.equal(byType(calls, FABLE).length, 0, 'complex/planner: dev-implement-fable が起動した');
-  assert.ok(byType(calls, PLANNER).length >= 1, 'complex/planner: dev-planner が起動していない');
-  assert.ok(byType(calls, 'dev-flow:plan-reviewer').length >= 1, 'complex/planner: plan-reviewer が起動していない');
-});
+const CRITICAL = (dimension) => [{ topic: 'arch-split', severity: 'critical', dimension, description: 'split the module boundary', suggestion: 'move x to y' }];
+const EVAL_FAIL = (level) => ({ verdict: 'fail', total: 50, threshold: 80, feedback: CRITICAL(level), feedback_level: level, ac_results: [], security_clearance: [], concern_resolutions: [] });
+const EVAL_PASS = { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [], concern_resolutions: [], critical_resolutions: [{ id: 'EVAL-1-arch-split', resolved: true, evidence: 'boundary split and verified' }] };
 
-test('[implement-fable] micro × planner: plan#trivial 1 発・dev-implement-fable 0 回', async () => {
-  const { calls } = await runFlow('planner', 'micro');
-  assert.deepEqual(byType(calls, PLANNER).map((c) => c.label), ['plan#trivial'], 'micro/planner: dev-planner は plan#trivial の 1 回のはず');
-  assert.equal(byType(calls, FABLE).length, 0, 'micro/planner: dev-implement-fable が起動した');
-});
+for (const level of ['design', 'implementation']) {
+  test(`[implement-fable] AC-5 complex / feedback_level=${level}: reimpl#1 が fix_feedback 付きで dev-implement-fable に渡り、planner 系 agent は起動しない`, async () => {
+    const echoed = [];
+    const stub = ({ prompt }) => {
+      const m = prompt.match(/task_id: (\S+?)（/);
+      echoed.push(m ? m[1] : null);
+      return { status: 'DONE', task_id: m ? m[1] : 'unknown', files: ['src/x.ts'], summary: 's', concerns: [] };
+    };
+    const { calls, logs, error } = await runFlow('complex', {
+      'impl:serial:issue-1': stub,
+      'reimpl#1:serial:issue-1': stub,
+      'eval#1': EVAL_FAIL(level),
+      'eval#2': EVAL_PASS,
+    });
+    assert.equal(error, null, `run が throw した: ${error?.message}`);
+    const reimpl = calls.filter((c) => c.label === 'reimpl#1:serial:issue-1');
+    assert.equal(reimpl.length, 1, `reimpl#1:serial:issue-1 は 1 回のはず: ${calls.filter((c) => c.label.startsWith('reimpl')).map((c) => c.label).join(', ')}`);
+    assert.equal(reimpl[0].agentType, FABLE, `reimpl#1 の agentType が ${reimpl[0].agentType}`);
+    assert.ok(reimpl[0].prompt.includes('fix_feedback'), 'reimpl#1 prompt に fix_feedback が無い');
+    assert.ok(reimpl[0].prompt.includes('split the module boundary'), 'reimpl#1 prompt に evaluator feedback の本文が無い');
+    assert.equal(calls.filter((c) => /^fix#\d+$/.test(c.label)).length, 0, 'implementer 向け fix#i が起動した');
+    assert.equal(calls.filter((c) => /^replan#\d+$/.test(c.label)).length, 0, 'dev-planner 向け replan#i が起動した');
+    assert.equal(goneCalls(calls).length, 0, `差し戻しで planner 系 agent が起動した: ${goneCalls(calls).map((c) => c.label).join(', ')}`);
+    assert.deepEqual(echoed, ['issue-1', 'issue-1'], `Implement / reimpl の両 prompt が合成 task id を渡すはず: ${JSON.stringify(echoed)}`);
+    assert.ok(logs.some((l) => l.includes('replan#1: fable 経路')), 'replan#1: fable 経路 の log が無い');
+  });
+}
 
-// ============================================================
-// AC-4: Evaluate 差し戻し（reimpl#i）
-// standard の EVAL_PASSES は 1 のため、realized 6 files で complex へ refloor させて差し戻し loop に入れる
-// （refloor-shape-routing (B) と同じ機構）。evaluator は 1 回目 fail（design）/ 2 回目 pass。
-// ============================================================
-test('[implement-fable] AC-4: reimpl#1 が fix_feedback 付きで dev-implement-fable に渡り、dev-planner の replan は起動せず、返却 task_id が合成 task id と一致する', async () => {
+test('[implement-fable] AC-5 standard（refloor で complex 化）: reimpl#1 が dev-implement-fable に渡る', async () => {
   const SIX = ['a', 'b', 'c', 'd', 'e', 'f'];
-  // critical で ledger に EVAL-1-arch-split が立ち、eval#2 の critical_resolutions で解消されるまで収束しない
-  // （major のみだと blocking item が無く iter 1 で収束し差し戻しに入らない）
-  const FEEDBACK = [{ topic: 'arch-split', severity: 'critical', dimension: 'design', description: 'split the module boundary', suggestion: 'move x to y' }];
-  const echoed = [];
-  const fableStub = ({ prompt }) => {
-    const m = prompt.match(/task_id: (\S+?)（/);
-    echoed.push(m ? m[1] : null);
-    return { status: 'DONE', task_id: m ? m[1] : 'unknown', files: SIX, summary: 's', concerns: [] };
-  };
-  const { calls, error } = await runFlow('fable', 'standard', {
-    'impl:serial:issue-1': fableStub,
-    'reimpl#1:serial:issue-1': fableStub,
+  const { calls, error } = await runFlow('standard', {
+    'impl:serial:issue-1': fableStubWith(SIX),
+    'reimpl#1:serial:issue-1': fableStubWith(SIX),
     'danger-grep': { risk: { ok: true, hits: [] }, files: SIX, struct: null, diffhash: { hash: 'AAA', empty: false } },
-    'eval#1': { verdict: 'fail', total: 50, threshold: 80, feedback: FEEDBACK, feedback_level: 'design', ac_results: [], security_clearance: [], concern_resolutions: [] },
-    'eval#2': { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [], concern_resolutions: [], critical_resolutions: [{ id: 'EVAL-1-arch-split', resolved: true, evidence: 'boundary split and verified' }] },
+    'eval#1': EVAL_FAIL('design'),
+    'eval#2': EVAL_PASS,
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
   const reimpl = calls.filter((c) => c.label === 'reimpl#1:serial:issue-1');
   assert.equal(reimpl.length, 1, `reimpl#1:serial:issue-1 は 1 回のはず: ${calls.filter((c) => c.label.startsWith('reimpl')).map((c) => c.label).join(', ')}`);
-  assert.equal(reimpl[0].agentType, FABLE, `reimpl#1 の agentType が ${reimpl[0].agentType}`);
-  assert.ok(reimpl[0].prompt.includes('fix_feedback'), 'reimpl#1 prompt に fix_feedback が無い');
-  assert.ok(reimpl[0].prompt.includes('split the module boundary'), 'reimpl#1 prompt に evaluator feedback の本文が無い');
-  assert.equal(byType(calls, PLANNER).length, 0, `fable 経路の差し戻しで dev-planner が起動した: ${byType(calls, PLANNER).map((c) => c.label).join(', ')}`);
-  assert.equal(implCalls(calls, IMPLEMENTER).length, 0, '差し戻しで implementer が起動した');
-  assert.deepEqual(echoed, ['issue-1', 'issue-1'], `Implement / reimpl の両 prompt が合成 task id を渡すはず: ${JSON.stringify(echoed)}`);
+  assert.equal(reimpl[0].agentType, FABLE);
+  assert.equal(goneCalls(calls).length, 0, 'planner 系 agent が起動した');
 });
 
 // ============================================================
-// AC-4 complex 版: shape=complex は refloor 無しで EVAL_PASSES=EVAL_MAX のため、
-// danger-grep は既定のまま差し戻し loop に入れる。
+// AC-6: Validate green-fix（green-fix#i / green-fix#retry-i）を dev-implement-fable で spawn する
 // ============================================================
-test('[implement-fable] AC-4 complex: shape=complex のまま reimpl#1 が fix_feedback 付きで dev-implement-fable に渡り、dev-planner の replan は起動しない', async () => {
-  const FEEDBACK = [{ topic: 'arch-split', severity: 'critical', dimension: 'design', description: 'split the module boundary', suggestion: 'move x to y' }];
-  const fableStub = ({ prompt }) => {
-    const m = prompt.match(/task_id: (\S+?)（/);
-    return { status: 'DONE', task_id: m ? m[1] : 'unknown', files: ['src/x.ts'], summary: 's', concerns: [] };
-  };
-  const { calls, logs, error } = await runFlow('fable', 'complex', {
-    'impl:serial:issue-1': fableStub,
-    'reimpl#1:serial:issue-1': fableStub,
-    'eval#1': { verdict: 'fail', total: 50, threshold: 80, feedback: FEEDBACK, feedback_level: 'design', ac_results: [], security_clearance: [], concern_resolutions: [] },
-    'eval#2': { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [], concern_resolutions: [], critical_resolutions: [{ id: 'EVAL-1-arch-split', resolved: true, evidence: 'boundary split and verified' }] },
+function assertGreenFixPrompt(call, label) {
+  assert.ok(call, `${label} の call が無い`);
+  assert.equal(call.agentType, FABLE, `${label} の agentType が ${call.agentType}（dev-implement-fable のはず）`);
+  assert.ok(call.prompt.includes('テストの期待値・assert を弱めて green にすることは禁止'), `${label} prompt にテスト弱体化禁止の指示が無い`);
+  assert.ok(call.prompt.includes('失敗内容: assert mismatch'), `${label} prompt に失敗内容が無い`);
+  assert.ok(call.prompt.includes('一時/handoff ファイルの配置規約'), `${label} prompt に STAGING_CONVENTION が無い`);
+  assert.ok(call.prompt.includes('git add / commit はするな'), `${label} prompt に commit 禁止が無い`);
+}
+
+test('[implement-fable] AC-6: test#1 red → green-fix#1 が dev-implement-fable で spawn され、prompt 文言は現行のまま', async () => {
+  const { calls, error } = await runFlow('standard', {
+    'test#1': { tests: 'failed', green: false, summary: 'assert mismatch' },
+    'green-fix#1': { status: 'DONE', task_id: 'issue-1', files: ['src/x.ts'], summary: 'fixed', concerns: ['gf-concern'] },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
-  const reimpl = calls.filter((c) => c.label === 'reimpl#1:serial:issue-1');
-  assert.equal(reimpl.length, 1, `reimpl#1:serial:issue-1 は 1 回のはず: ${calls.filter((c) => c.label.startsWith('reimpl')).map((c) => c.label).join(', ')}`);
-  assert.equal(reimpl[0].agentType, FABLE, `reimpl#1 の agentType が ${reimpl[0].agentType}`);
-  assert.ok(reimpl[0].prompt.includes('fix_feedback'), 'reimpl#1 prompt に fix_feedback が無い');
-  assert.ok(reimpl[0].prompt.includes('split the module boundary'), 'reimpl#1 prompt に evaluator feedback の本文が無い');
-  assert.equal(byType(calls, PLANNER).length, 0, `design 差し戻しでも dev-planner が起動した: ${byType(calls, PLANNER).map((c) => c.label).join(', ')}`);
-  assert.equal(implCalls(calls, IMPLEMENTER).length, 0, '差し戻しで implementer が起動した');
-  assert.ok(logs.some((l) => l.includes('replan#1: fable 経路')), 'replan#1: fable 経路 の log が無い');
+  assertGreenFixPrompt(calls.find((c) => c.label === 'green-fix#1'), 'green-fix#1');
+  assert.equal(goneCalls(calls).length, 0, 'green-fix で planner 系 agent が起動した');
+  const ev = calls.find((c) => c.agentType === 'dev-flow:evaluator');
+  assert.ok(ev && ev.prompt.includes('gf-concern'), 'green-fix の concerns が evaluator prompt に伝搬していない');
+});
+
+test('[implement-fable] AC-6: empty-diff retry 後の test#retry-1 red → green-fix#retry-1 が dev-implement-fable で spawn される', async () => {
+  const { calls, error } = await runFlow('standard', {
+    'diff-gate': { hash: 'H', empty: true },
+    'diff-gate-retry': { hash: 'H2', empty: false },
+    'test#retry-1': { tests: 'failed', green: false, summary: 'assert mismatch' },
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.equal(calls.find((c) => c.label === 'reimpl-empty-diff:serial:issue-1')?.agentType, FABLE, 'empty-diff の差し戻しが dev-implement-fable に渡っていない');
+  assertGreenFixPrompt(calls.find((c) => c.label === 'green-fix#retry-1'), 'green-fix#retry-1');
 });

@@ -23,7 +23,7 @@ topic は `<problem-class>` 単独、または `<problem-class>::<詳細>` 形�
 
 ## 網羅基準
 
-3 agent（plan-reviewer / evaluator / pr-reviewer）の checklist dimension で発生しうる
+2 agent（evaluator / pr-reviewer）の checklist dimension で発生しうる
 問題クラスを各 1 つ以上カバーする。新クラス遭遇時は新語使用 + 本辞書への追記を提案する（append-only）。
 
 ## Fallback
@@ -34,11 +34,11 @@ topic は `<problem-class>` 単独、または `<problem-class>::<詳細>` 形�
 
 | problem-class | 意味 | 主な検出元 | 例 |
 |---|---|---|---|
-| `scope-mismatch` | 要件の過不足・スコープ逸脱（実装が AC を超える / 足りない） | plan-reviewer / evaluator | `scope-mismatch::AC-3` |
-| `yagni-violation` | 投機的機能・過剰実装（YAGNI 違反） | plan-reviewer / evaluator | `yagni-violation::_lib/foo.mjs` |
+| `scope-mismatch` | 要件の過不足・スコープ逸脱（実装が AC を超える / 足りない） | evaluator | `scope-mismatch::AC-3` |
+| `yagni-violation` | 投機的機能・過剰実装（YAGNI 違反） | evaluator | `yagni-violation::_lib/foo.mjs` |
 | `untestable-ac` | 受入条件が測定不能・検証困難（テスト不能な AC） | plan-reviewer | `untestable-ac::AC-2` |
 | `missing-file-reference` | 計画参照ファイルが実在しない | plan-reviewer | `missing-file-reference::src/bar.ts` |
-| `wrong-file-target` | 変更対象ファイルの取り違え（誤ったファイルを変更） | plan-reviewer / evaluator | `wrong-file-target::dev-flow.js` |
+| `wrong-file-target` | 変更対象ファイルの取り違え（誤ったファイルを変更） | evaluator | `wrong-file-target::dev-flow.js` |
 | `file-conflict-in-parallel` | parallel task 間で file_changes が重複している | plan-reviewer | `file-conflict-in-parallel::_lib/goal-ledger.mjs` |
 | `dependency-contradiction` | 依存関係の矛盾・serial / parallel 分解の不整合 | plan-reviewer | `dependency-contradiction::F2->F1` |
 | `self-containment-violation` | task 記述の曖昧参照（「上述の通り」等、self-contained でない） | plan-reviewer | `self-containment-violation::F3` |

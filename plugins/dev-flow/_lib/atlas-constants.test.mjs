@@ -26,8 +26,6 @@ const END = '<!-- atlas:loop-constants:end -->';
 // ここに列挙した集合と表の行集合が完全一致することを検証するため、
 // 片方だけに定数を足しても落ちる（新規定数の記載漏れ・表の余剰行の両方を検出する）。
 const EXPECTED_SOURCE = {
-  PLAN_MAX: devFlowPath,
-  PLAN_STUCK: devFlowPath,
   EVAL_MAX: devFlowPath,
   EVAL_STUCK: devFlowPath,
   DESIGN_REPLAN_MAX: devFlowPath,

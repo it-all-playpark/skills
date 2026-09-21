@@ -22,13 +22,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const devFlowPath = join(here, '..', '.claude/workflows/dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 const DEAD_LABELS = ['setup-base', 'worktree', 'isolation-cleanup', 'worktree-deps'];
 
@@ -113,7 +111,7 @@ test('[prerun-setup-routing] (g) args.setup.deps.ok:false → implementer prompt
   assertNoCrash(error, 'g');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
 
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(c.prompt.includes('依存インストール警告'), `implementer prompt (label=${c.label}) に '依存インストール警告' が含まれない`);
@@ -127,7 +125,7 @@ test('[prerun-setup-routing] (h) 既定（deps ok）→ implementer prompt に�
   assertNoCrash(error, 'h');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
 
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(!c.prompt.includes('依存インストール警告'), `implementer prompt (label=${c.label}) に依存インストール警告が含まれてはいけない`);

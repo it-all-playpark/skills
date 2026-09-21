@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, runWorkflowCapture, mergeTierFacts, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, runWorkflowCapture, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 import { gateLane, isConvergedUnderPolicy, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
 
@@ -54,18 +54,6 @@ function createResponder() {
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
-    }
-    // Plan: dev-planner（1 task を serial に置く）
-    if (agentType === 'dev-flow:dev-planner') {
-      return {
-        summary: 'p',
-        serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }],
-        parallel: [],
-      };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     }
     // Security floor / danger-grep 系
     if (label.startsWith('danger-grep')) {
@@ -116,7 +104,7 @@ function createResponder() {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // implementer（本経路の main call。concerns に既知 4 パターン系 ×3 + 非該当 ×1）
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',
@@ -148,9 +136,7 @@ let sharedResult = null;
 
 async function ensureSharedRun() {
   if (sharedCalls !== null) return;
-  // IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-  // 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, calls } = makeRecordingSandbox(createResponder());
   const { result, error } = await runWorkflowCapture(src, ctx);
   sharedCalls = calls;
@@ -339,10 +325,6 @@ function createSingleConcernResponder(concernResolutions) {
         estimated_change_file_count: 3, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
       };
     }
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [{ id: 't1', desc: 'd', file_changes: ['src/x.ts'], test_plan: 'tp' }], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (agentType === 'dev-flow:evaluator') {
@@ -358,7 +340,7 @@ function createSingleConcernResponder(concernResolutions) {
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return {
         status: 'DONE_WITH_CONCERNS', task_id: 't1', files: ['src/x.ts'], summary: 's',
         concerns: ['CONCERN マーカー: 単一の未分類 concern'],
@@ -370,7 +352,7 @@ function createSingleConcernResponder(concernResolutions) {
 }
 
 async function runSingleConcernScenario(concernResolutions) {
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+  const src = readFileSync(devFlowPath, 'utf8');
   const { ctx } = makeRecordingSandbox(createSingleConcernResponder(concernResolutions));
   return runWorkflowCapture(src, ctx);
 }

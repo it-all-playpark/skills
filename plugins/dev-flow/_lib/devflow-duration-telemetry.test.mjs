@@ -25,7 +25,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -99,15 +99,8 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'issue-meta') {
       return withEpoch({ ok: true, number: 1, title: 'stub-issue-title' });
     }
-    // Plan: dev-planner（plan_end の給電元）。serial に 1 task 持たせ Implement phase を発火させる
-    // （implement_end の給電元となる implementer 呼び出しを発生させるため）。
-    if (agentType === 'dev-flow:dev-planner') {
-      return withEpoch({ summary: 'p', serial: [{ id: 'F1', desc: 'd', file_changes: ['a.ts'] }], parallel: [] });
-    }
-    // Plan reviewer（standard 経路では呼ばれない想定だが、呼ばれた場合に備え epoch を給電）
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return withEpoch({ verdict: 'pass', findings: [], summary: 'ok' });
-    }
+    // Plan phase は合成 plan のみ（agent 起動なし。plan_end は給電元が無く null）。implement_end は
+    // dev-implement-fable 呼び出しの epoch から給電される。
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を発生させない（給電対象ではない）
     if (label.startsWith('danger-grep')) {
@@ -164,7 +157,7 @@ function makeSandbox(analyzeReq, epochMode) {
       return { logged: true, summary: 'ok' };
     }
     // implementer（implement_end の給電元）
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return withEpoch({ status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] });
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避（validate_end の給電元候補）
@@ -272,9 +265,7 @@ const ANALYZE_REQ = {
   issue_title: 'stub-issue-title',
 };
 
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、journal-log prompt に duration_seconds/phase_durations が含まれる（final キーは fixes_applied=0 の Final reconcile skip で欠落する）', async () => {
   const { ctx, getJournalPrompts, getClockCalls, getLogLines } = makeSandbox(ANALYZE_REQ, 'ok');

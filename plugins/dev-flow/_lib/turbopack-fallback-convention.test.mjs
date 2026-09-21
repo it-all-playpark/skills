@@ -1,4 +1,4 @@
-// implementer.md / evaluator.md / dev-runner*.md は sandbox write-deny のため、Turbopack fallback
+// dev-implement-fable.md / evaluator.md / dev-runner*.md は sandbox write-deny のため、Turbopack fallback
 // 規約は dev-flow.js が全 implementer/evaluator/dev-runner spawn prompt に注入する（issue #292）。
 //
 // 注入可否は Setup が args.setup.stack.frameworks（prerun の detect-stack）で決定論的に決め、
@@ -10,7 +10,7 @@
 // implementation 差し戻し fix#i）でも規約の識別トークン（error 名 `TurbopackInternalError` と fallback
 // コマンド `next build --webpack`）が verbatim 到達し、Next.js 非検出時はどの経路にも現れないことで観測する
 // （issue #636: 識別子出現回数・区間切り出し・定義文字列のキーワード pin を VM 挙動へ置換）。
-//   (1) Next.js 検出: impl:serial:t1 / test#1 / eval#1 の prompt にトークンが含まれる
+//   (1) Next.js 検出: impl:serial:issue-1 / test#1 / eval#1 の prompt にトークンが含まれる
 //   (2) Next.js 検出: green-fix#1 の prompt にトークンが含まれる
 //   (3) Next.js 検出: fix#1 の prompt にトークンが含まれる
 //   (2')(3') Next.js 非検出: green-fix#1 / fix#1 の prompt にトークンが含まれない
@@ -21,12 +21,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8'), 'planner');
+const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
 const TOKENS = ['TurbopackInternalError', 'next build --webpack'];
 const NEXT_FRAMEWORKS = ['next'];
@@ -76,13 +74,13 @@ async function run(overrides, frameworks, name) {
 // (1) Next.js 検出・標準経路
 test('[turbopack-fallback] Next.js 検出: implementer / test#1 / eval#1 の prompt に規約トークンが含まれる', async () => {
   const calls = await run({}, NEXT_FRAMEWORKS, 'next-standard');
-  for (const label of ['impl:serial:t1', 'test#1', 'eval#1']) {
+  for (const label of ['impl:serial:issue-1', 'test#1', 'eval#1']) {
     assertTokens(calls.find((c) => c.label === label), label, true);
   }
 });
 
 // (2)(2') Validate red→green-fix 経路
-test('[turbopack-fallback] green-fix#1 prompt: Next.js 検出時は規約トークンが含まれ、非検出時は含まれない', async () => {
+test('[turbopack-fallback] green-reimpl#1 prompt: Next.js 検出時は規約トークンが含まれ、非検出時は含まれない', async () => {
   const next = await run(GREEN_FIX, NEXT_FRAMEWORKS, 'next-greenfix');
   assertTokens(next.find((c) => c.label === 'green-fix#1'), 'green-fix#1', true);
   const react = await run(GREEN_FIX, REACT_FRAMEWORKS, 'react-greenfix');
@@ -90,11 +88,11 @@ test('[turbopack-fallback] green-fix#1 prompt: Next.js 検出時は規約トー�
 });
 
 // (3)(3') Evaluate implementation 差し戻し経路
-test('[turbopack-fallback] fix#1 prompt: Next.js 検出時は規約トークンが含まれ、非検出時は含まれない', async () => {
+test('[turbopack-fallback] reimpl#1 prompt: Next.js 検出時は規約トークンが含まれ、非検出時は含まれない', async () => {
   const next = await run(EVAL_FIX, NEXT_FRAMEWORKS, 'next-fix');
-  assertTokens(next.find((c) => c.label === 'fix#1'), 'fix#1', true);
+  assertTokens(next.find((c) => c.label === 'reimpl#1:serial:issue-1'), 'reimpl#1:serial:issue-1', true);
   const react = await run(EVAL_FIX, REACT_FRAMEWORKS, 'react-fix');
-  assertTokens(react.find((c) => c.label === 'fix#1'), 'fix#1', false);
+  assertTokens(react.find((c) => c.label === 'reimpl#1:serial:issue-1'), 'reimpl#1:serial:issue-1', false);
 });
 
 // (4) 定義が inline 生成区間外にあること（inline 生成区間の整合 — sync-inlines が上書きする区間に

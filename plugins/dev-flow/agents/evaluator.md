@@ -36,11 +36,11 @@ implementer が `DONE_WITH_CONCERNS` を返した場合、その `concerns[]` �
 ## 入力
 
 - `requirements`: issue 受入条件
-- `plan`: dev-planner の計画。`IMPLEMENT_MODE='fable'` 経路（全 shape）では issue から合成した
-  単一 task（`agent: dev-implement-fable`、`desc` = issue title、`test_plan` 空）で、参照すべき
-  計画本文は無い — requirements（AC）と diff を直接突合する
+- `plan`: issue から合成した単一 task（`agent: dev-implement-fable`、`desc` = issue title、
+  `test_plan` 空、`file_changes` は実装 agent の返却 files）。参照すべき計画本文は無い —
+  requirements（AC）と diff を直接突合する
 - `worktree`: diff/コード/テスト確認用パス
-- `focus_areas`（任意）: implementer の concerns[]
+- `focus_areas`（任意）: 実装 agent（dev-implement-fable）の concerns[]
 - `既出 feedback`（iteration 2 以降のみ）: 前 iteration までに自分が出した feedback の累積
   （topic 単位で最新版）。cold start 補償。issue #125
 - `security_focus`（danger-grep hit 時のみ）: realized diff で検出された危険クラス一覧
@@ -75,13 +75,11 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 
 - 受入条件を満たし critical/major 相当の重大な欠陥が無ければ **`pass`**。重大な欠陥があれば
   **`fail`** とし、`feedback_level` を判定する:
-  - **`design`**: 計画レベルの欠陥（設計方針が誤り / スコープ漏れ / アーキ不整合）→ workflow は
-    dev-planner に差し戻す
+  - **`design`**: 計画レベルの欠陥（設計方針が誤り / スコープ漏れ / アーキ不整合）
   - **`implementation`**: 実装レベルの欠陥（計画は正しいがコードが追従していない / バグ / テスト不足）
-    → workflow は implementer に差し戻す
-  - 合成 plan（`agent: dev-implement-fable`）の run では、workflow はどちらの level でも dev-planner を
-    起動せず同じ `dev-implement-fable` へ `fix_feedback` 付きで差し戻す。判定基準は変えない
-    （`design` の総回数 cap `DESIGN_REPLAN_MAX` はそのまま数える）
+  - workflow はどちらの level でも同じ `dev-implement-fable` へ `fix_feedback` 付きで差し戻す（`reimpl#i`）。
+    level は差し戻し先を変えないが、`design` は総回数 cap `DESIGN_REPLAN_MAX` で打ち切られ human review へ
+    委譲される — 判定基準は変えない
 
 ### feedback_level 判定フロー
 
@@ -104,7 +102,7 @@ type に応じた追加観点を持つ（例: api なら入力検証・エラー
 
 2 回目以降は prompt に**既出 feedback**（前 iteration までに自分が出した指摘の累積）が渡される。
 
-- 既出 feedback は implementer/planner が**対応済みの前提**で読む。解消されていれば蒸し返さない。
+- 既出 feedback は実装 agent が**対応済みの前提**で読む。解消されていれば蒸し返さない。
 - **新規の critical/major のみ報告**する。対応済み論点の言い換え・新観点の上乗せ（moving target）は禁止。
 - 同一問題には**既出と同じ `topic` 文字列**を再利用する（orchestrator が topic で stuck を突合する）。topic 命名は共有辞書（`${CLAUDE_PLUGIN_ROOT}/_shared/references/stuck-topic-dictionary.md`）に従う。
 - 既出指摘に対応済みで新規の重大問題が無ければ、迷わず `pass` を出す。

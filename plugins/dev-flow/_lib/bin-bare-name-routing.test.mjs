@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -89,9 +89,7 @@ test('[bin-bare-name-routing][AC1] _lib/*.mjs に skills 絶対パスが 0 箇�
 // （WT='/tmp/wt'・BASE='dev' で展開済み）が現れることを label ごとに確認する。到達させるための
 // scenario は label 単位の override で最小に絞る。
 
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const devFlowSrc = withImplementMode(readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8'), 'planner');
+const devFlowSrc = readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
 const devImproveSrc = readFileSync(join(workflowsDir, 'dev-improve.js'), 'utf8');
 
@@ -123,7 +121,7 @@ const DEV_FLOW_CALL_SITES = [
   ['cross-repo-artifacts', 'cross-repo-artifacts /tmp/wt ', {
     'diff-gate': { hash: 'EMPTY', empty: true },
     'issue-labels': { ok: true, labels: ['cross-repo'] },
-    'impl:serial:t1': { status: 'DONE', task_id: 't1', files: ['/tmp/other-repo/bar.ts'], summary: 's', concerns: [] },
+    'impl:serial:issue-1': { status: 'DONE', task_id: 'issue-1', files: ['/tmp/other-repo/bar.ts'], summary: 's', concerns: [] },
     'cross-repo-artifacts': { ok: true, found: 1, artifacts: [{ path: '/tmp/other-repo/bar.ts', exists: true, repo_root: '/tmp/other-repo', dirty: true }] },
   }],
 ];
@@ -157,7 +155,7 @@ test("[bin-bare-name-routing][AC2] dev-flow.js の journal handoff payload は j
   const runs = {
     success: {},
     failure: { 'diff-gate': { hash: 'H', empty: true }, 'diff-gate-retry': { hash: 'H', empty: true }, 'issue-labels': null },
-    abort: { 'plan#standard': () => { throw new Error('injected'); } },
+    abort: { 'eval#1': () => { throw new Error('injected'); } },
   };
   for (const [name, overrides] of Object.entries(runs)) {
     const { ctx, calls } = makeDevFlowSandbox({ overrides });

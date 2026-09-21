@@ -1,250 +1,57 @@
-// AC#7 は plan-reviewer 呼び出し0回・evaluator 呼び出し1回の実カウントで検証する（string-pattern ではなく挙動を pin）
-//
-// このテストファイルは TDD red として作成された。
-// F1 時点では dev-flow.js に PLAN_SOLO / plan#standard / EVAL_PASSES が未実装のため、
-// (A) のカウント assert（plan-reviewer=0 / evaluator=1）および (B) の構造 assert が fail する（= 赤）。
+// shape 別の Evaluate 深さを VM 実行の呼び出しカウントで pin する（string-pattern ではなく挙動）。
+// Plan phase は全 shape で合成 plan のみ（issue #673）— plan review ループは存在しない。
+//   (A) standard: evaluator ちょうど 1 回（EVAL_PASSES=1）。evaluator が fail を返しても差し戻さない
+//   (B) complex: evaluator が fail → reimpl#1（dev-implement-fable）→ 2 回目 pass で収束（差し戻し loop）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import vm from 'node:vm';
-import { devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, '..');
-const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
+const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-// ---- VM sandbox helpers（workflow-load-smoke.test.mjs の makeWorkflowSandbox / runWorkflowInSandbox と同型）----
+const AC4 = ['a', 'b', 'c', 'd'];
+const ACR = AC4.map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' }));
+const EVAL_FAIL = {
+  verdict: 'fail', total: 5, threshold: 7,
+  feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],
+  feedback_level: 'implementation', ac_results: ACR, security_clearance: [],
+};
+const EVAL_PASS = {
+  verdict: 'pass', total: 9, threshold: 7, feedback: [], feedback_level: 'implementation',
+  ac_results: ACR, security_clearance: [],
+  critical_resolutions: [{ id: 'EVAL-1-X', resolved: true, evidence: 'src/x.ts で修正済み' }],
+};
 
-/**
- * shape-loop-routing 専用の VM sandbox を組む。
- * agent() を呼び出しカウンタ stub にし、calls 配列を expose する。
- * analyzeReq を注入して classify 結果を制御する（shape 別ルーティング検証用）。
- *
- * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
- * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string}> }}
- */
-function makeCountingSandbox(analyzeReq) {
-  const calls = [];
+// standard に落ちる req（count=3 ≤ 5, ac.length=4 ≤ 6, type=feat → floor='standard'）
+const STANDARD_REQ = { summary: 's', acceptance_criteria: AC4, issue_type: 'feat', scope: 'src', estimated_change_file_count: 3, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title' };
+// complex に落ちる req（count=8 > 5 → floor='complex'）
+const COMPLEX_REQ = { summary: 's', acceptance_criteria: AC4, issue_type: 'feat', scope: 'src', estimated_change_file_count: 8, shape: 'complex', issue_number: 1, issue_title: 'stub-issue-title' };
 
-  // agent() stub: opts.label / opts.agentType を見て phase 別に最小スキーマを返す
-  const agentStub = async (prompt, opts) => {
-    const label = opts?.label ?? '';
-    const agentType = opts?.agentType ?? '';
-    calls.push({ label, agentType });
-
-    // Setup(worktree)
-    // Setup(setup-base): base 解決 + 既存 worktree 起点検証 統合 probe（issue #550 案1）
-    if (label === 'setup-base') {
-      return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    }
-    if (label === 'worktree') {
-      return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    }
-    // Analyze: label が 'analyze' で始まる
-    if (label.startsWith('analyze')) {
-      return analyzeReq;
-    }
-    // Plan: dev-planner (plan#trivial / plan#standard / plan#N / replan 系)
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    // Plan reviewer
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
-    // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
-    if (label.startsWith('danger-grep')) {
-      return { ok: true, hits: [] };
-    }
-    // Validate: test runner（label が 'test' で始まる）
-    if (label.startsWith('test')) {
-      return { tests: 'no_tests', green: true, summary: '' };
-    }
-    // Evaluate: evaluator
-    if (agentType === 'dev-flow:evaluator') {
-      return {
-        verdict: 'pass',
-        total: 100,
-        threshold: 80,
-        feedback: [],
-        feedback_level: 'implementation',
-        ac_results: [],
-        security_clearance: [],
-      };
-    }
-    // PR: label が 'pr' で始まる
-    if (label.startsWith('pr')) {
-      return { pr_url: 'http://x', pr_number: 1, committed: true };
-    }
-    // Merge tier: changed-files
-    if (label === 'changed-files') {
-      return { files: ['src/foo.ts'] };
-    }
-    // implementer その他
-    if (agentType === 'dev-flow:implementer') {
-      return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
-    }
-    // diff-gate / diff-hash（issue #215）: need() による throw の回避
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
-    // issue-meta（issue #451）: analyze provenance 突合 probe
-    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
-    // デフォルト
-    return null;
-  };
-
-  // parallel() stub: runImplement が parallel(par) を呼ぶため（par が空なら []）
-  const parallelStub = async (fns) => Promise.all((fns || []).map((f) => f()));
-
-  const sandbox = {
-    // workflow 制御関数
-    phase: () => {},
-    log: () => {},
-    agent: agentStub,
-    parallel: parallelStub,
-    pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: async () => ({ status: 'lgtm', iterations: 1, fixes_applied: 0 }),
-    // 引数（ISSUE 解決用）
-    args: devFlowArgs('1'),
-    // JS 組み込み（makeWorkflowSandbox と同一セット）
-    console,
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Error,
-    RegExp,
-    Promise,
-    Symbol,
-    Map,
-    Set,
-    Date,
-  };
-
-  const ctx = vm.createContext(sandbox);
-  return { ctx, calls };
+async function run(overrides) {
+  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+  const { error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'shape-loop');
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  return calls;
 }
 
-/**
- * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * workflow-load-smoke.test.mjs の runWorkflowInSandbox と同型。
- *
- * @param {string} src - dev-flow.js の raw ソース
- * @param {vm.Context} ctx - vm コンテキスト
- * @returns {Promise<Error|null>} エラーがあれば Error、無ければ null
- */
-async function runDevFlowInSandbox(src, ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-
-  let caughtError = null;
-  try {
-    const result = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (result && typeof result.then === 'function') {
-      await result.catch((e) => {
-        caughtError = e;
-      });
-    }
-  } catch (e) {
-    caughtError = e;
-  }
-  return caughtError;
-}
-
-// ============================================================
-// A. 振る舞いカウント検証（AC#7 主検証）
-// ============================================================
-
-test('[shape-loop] SHAPE=standard: plan-reviewer 呼び出し 0 回・evaluator 呼び出し 1 回', async () => {
-  // standard に落ちる req（count=3 ≤ 5, ac.length=4 ≤ 6, type=feat → floor='standard'）
-  const standardReq = {
-    summary: 's',
-    acceptance_criteria: ['a', 'b', 'c', 'd'],
-    issue_type: 'feat',
-    scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
-    issue_number: 1,
-    issue_title: 'stub-issue-title',
-  };
-
-  // IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-  // 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
-  const { ctx, calls } = makeCountingSandbox(standardReq);
-  const err = await runDevFlowInSandbox(src, ctx);
-
-  // ReferenceError / SyntaxError は構造的に壊れているので即 fail させる
-  if (err && (err.name === 'ReferenceError' || err.name === 'SyntaxError')) {
-    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${err.name}: ${err.message}`);
-  }
-
-  const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:plan-reviewer');
+test('[shape-loop] SHAPE=standard: evaluator 呼び出し 1 回（fail でも差し戻さない）・plan review 系 agent 0 回', async () => {
+  const calls = await run({ 'analyze#1': STANDARD_REQ, 'eval#1': EVAL_FAIL, 'eval#2': EVAL_PASS });
   const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
-
-  // AC#7 主検証: standard では plan-reviewer を呼ばない（PLAN_SOLO 経路）
-  assert.equal(
-    reviewerCalls.length,
-    0,
-    `SHAPE=standard: plan-reviewer は 0 回呼ばれるべきだが ${reviewerCalls.length} 回呼ばれた`
-      + ` (labels: ${reviewerCalls.map((c) => c.label).join(', ')})`,
-  );
-
-  // AC#7 主検証: standard では evaluator を 1 回だけ呼ぶ（EVAL_PASSES=1）
-  assert.equal(
-    evaluatorCalls.length,
-    1,
-    `SHAPE=standard: evaluator は 1 回呼ばれるべきだが ${evaluatorCalls.length} 回呼ばれた`,
-  );
+  assert.equal(evaluatorCalls.length, 1, `SHAPE=standard: evaluator は 1 回呼ばれるべきだが ${evaluatorCalls.length} 回呼ばれた`);
+  assert.equal(calls.filter((c) => c.label.startsWith('reimpl#')).length, 0, 'standard で Evaluate 差し戻し（reimpl#i）が発火した');
+  assert.equal(calls.filter((c) => c.agentType === 'dev-flow:plan-reviewer' || c.agentType === 'dev-flow:dev-planner').length, 0, 'plan review 系 agent が起動した');
 });
 
-test('[shape-loop] SHAPE=complex: plan-reviewer 呼び出し >= 1（制御群）', async () => {
-  // complex に落ちる req（count=8 > 5 → floor='complex', ac=7件）
-  const complexReq = {
-    summary: 's',
-    acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
-    issue_type: 'feat',
-    scope: 'src',
-    estimated_change_file_count: 8,
-    shape: 'complex',
-    issue_number: 1,
-    issue_title: 'stub-issue-title',
-  };
-
-  // IMPLEMENT_MODE を 'planner' に固定（従来経路 dev-planner ⇄ plan-reviewer → implementer を pin する。
-  // 全 shape の 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する。issue #670）
-  const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
-  const { ctx, calls } = makeCountingSandbox(complexReq);
-  const err = await runDevFlowInSandbox(src, ctx);
-
-  if (err && (err.name === 'ReferenceError' || err.name === 'SyntaxError')) {
-    assert.fail(`dev-flow.js が sandbox でクラッシュ: ${err.name}: ${err.message}`);
-  }
-
-  const reviewerCalls = calls.filter((c) => c.agentType === 'dev-flow:plan-reviewer');
-
-  // 制御群: complex では plan-reviewer が起動する経路（>= 1）
-  // standard の 0 と対比し「standard のみ reviewer をスキップする」経路を pin する
-  assert.ok(
-    reviewerCalls.length >= 1,
-    `SHAPE=complex: plan-reviewer は >= 1 回呼ばれるべきだが ${reviewerCalls.length} 回だった`,
-  );
+test('[shape-loop] SHAPE=complex: evaluator fail → reimpl#1（dev-implement-fable）→ pass で evaluator 2 回（制御群）', async () => {
+  const calls = await run({ 'analyze#1': COMPLEX_REQ, 'eval#1': EVAL_FAIL, 'eval#2': EVAL_PASS });
+  const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
+  assert.equal(evaluatorCalls.length, 2, `SHAPE=complex: evaluator は 2 回（fail → 差し戻し → pass）のはずだが ${evaluatorCalls.length} 回だった`);
+  const reimpl = calls.filter((c) => c.label === 'reimpl#1:serial:issue-1');
+  assert.equal(reimpl.length, 1, `complex の差し戻しは reimpl#1:serial:issue-1 の 1 回のはず: ${calls.filter((c) => c.label.startsWith('reimpl')).map((c) => c.label).join(', ')}`);
+  assert.equal(reimpl[0].agentType, 'dev-flow:dev-implement-fable', `reimpl#1 の agentType が ${reimpl[0].agentType}`);
 });
-
-// PLAN_SOLO / plan#standard / plan#trivial / EVAL_PASSES 定数の存在および EVAL ループが
-// EVAL_MAX 直書きでなく EVAL_PASSES 変数経由であることを個別に静的 pin していた section B/C
-// （旧: 構造テスト・F1 cap-check テスト）は削除する（issue #636）。これらが検証したかった
-// 実体（standard は plan-reviewer 0 回・evaluator ちょうど 1 回で止まる／complex は
-// plan-reviewer が起動する）は、上の A. 振る舞いカウント検証で VM 実行により既に挙動として
-// 保証済み（EVAL_PASSES が EVAL_MAX に固定されたままだったり cap-check が機能しなければ、
-// standard の evaluatorCalls.length は 1 ではなく複数になり A のアサートが落ちる）。
-// EVAL_PASSES を動的に EVAL_MAX まで引き上げる re-floor 経路の挙動は
-// `_lib/refloor-shape-routing.test.mjs` の (B) が standard + realized 6 files で
-// evaluator >= 2 回（full loop 化）を VM 実行で検証済み。

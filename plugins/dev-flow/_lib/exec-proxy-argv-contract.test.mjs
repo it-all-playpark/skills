@@ -9,9 +9,9 @@
 //   書き換えを行う誘因になっていた（cwd 依存の回避は呼び出し側が argv に worktree 絶対パスを引数として
 //   含めることで既に成立しているため、agent 側で cwd を作る必要はない）。
 //
-//   implementer.md の「毎回コマンド先頭で `cd <worktree>` する」指示は exec-proxy ではなく
+//   dev-implement-fable.md の「Bash は毎回この cwd から始める」指示は exec-proxy ではなく
 //   implementer（判断系 leaf、Read/Edit/Write で直接コードを書く）に対するものであり、本 issue の
-//   スコープ外。誤ってスコープを implementer.md まで拡大していないことを負の対照で pin する。
+//   スコープ外。誤ってスコープを dev-implement-fable.md まで拡大していないことを負の対照で pin する。
 //
 // Run: npx vitest run _lib/exec-proxy-argv-contract.test.mjs
 // Full CI: bash tests/run-node-tests.sh --strict
@@ -126,14 +126,14 @@ test('[exec-proxy-argv-contract] dev-runner-haiku-ro.md replaces the shared-rule
   );
 });
 
-// Negative control (scope pin): implementer.md is NOT an exec-proxy and is out of scope for this
-// issue. Its 'cd <worktree>' instruction must remain untouched — if this assertion goes red, scope
-// was accidentally expanded to implementer.md.
-test('[exec-proxy-argv-contract] implementer.md (non exec-proxy, out of scope) still contains cd <worktree>', () => {
-  const path = join(agentsDir, 'implementer.md');
+// Negative control (scope pin): dev-implement-fable.md is NOT an exec-proxy and is out of scope for this
+// issue. Its per-call cwd reset instruction must remain untouched — if this assertion goes red, scope
+// was accidentally expanded to dev-implement-fable.md.
+test('[exec-proxy-argv-contract] dev-implement-fable.md (non exec-proxy, out of scope) still contains the cwd reset instruction', () => {
+  const path = join(agentsDir, 'dev-implement-fable.md');
   const source = readFileSync(path, 'utf8');
   assert.ok(
-    source.includes('cd <worktree>'),
-    `${path} is out of scope for issue #606 (not an exec-proxy) and must still contain 'cd <worktree>'`,
+    source.includes('Bash は毎回この cwd から始める'),
+    `${path} is out of scope for issue #606 (not an exec-proxy) and must still contain the cwd reset instruction`,
   );
 });

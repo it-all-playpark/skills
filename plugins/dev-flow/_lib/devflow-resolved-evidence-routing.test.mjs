@@ -55,12 +55,6 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     if (label.startsWith('analyze')) {
       return analyzeReq;
     }
-    if (agentType === 'dev-flow:dev-planner') {
-      return { summary: 'p', serial: [], parallel: [] };
-    }
-    if (agentType === 'dev-flow:plan-reviewer') {
-      return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
-    }
     // 'danger-grep'（Security floor 統合 exec-proxy。SECFLOOR unified schema {risk,files,struct,diffhash}
     // を要求）と 'danger-grep-final'（Merge tier。単純 {ok,hits} schema）は別スキーマ。ここでは意図的に
     // 両方とも fail-closed に倒す（SEC seed 7 件を常に unchecked のまま保つ）ことで、
@@ -116,7 +110,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       if (journalResult instanceof Error) throw journalResult;
       return journalResult;
     }
-    if (agentType === 'dev-flow:implementer') {
+    if (agentType === 'dev-flow:dev-implement-fable') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }

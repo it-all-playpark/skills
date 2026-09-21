@@ -40,14 +40,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, devFlowArgs, withImplementMode } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-// IMPLEMENT_MODE を 'planner' に固定（standard shape の従来経路 dev-planner → implementer を pin する。
-// 'fable' 経路は devflow-implement-fable-routing.test.mjs が検証する）
-const src = withImplementMode(readFileSync(devFlowPath, 'utf8'), 'planner');
+const src = readFileSync(devFlowPath, 'utf8');
 
 // ============================================================
 // prompt token pin（VM run）
@@ -90,8 +88,6 @@ function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1,
     if (label === 'issue-meta') return issueMetaRes;
     if (label.startsWith('contract-probe')) return contractProbeRes === null ? null : { ok: true, result: contractProbeRes };
     if (label.startsWith('analyze')) return req;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -110,7 +106,7 @@ function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1,
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
 }
@@ -160,7 +156,7 @@ test('[analyze-scope-truncation-routing] T1: scope_truncated:true + ambiguities 
   // ため assert.deepEqual の prototype 比較で誤って不一致になる（値は一致）。プリミティブ値の
   // 構造比較に限定するため一度 JSON を経由する。
   assert.deepEqual(JSON.parse(JSON.stringify(result.missing_context.slice(1))), ['a', 'b', 'c'], `T1: missing_context の残りが ambiguities と一致しない: ${JSON.stringify(result.missing_context)}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(implCalls.length, 0, `T1: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });
 
@@ -180,7 +176,7 @@ test('[analyze-scope-truncation-routing] T3: scope_truncated:true + ambiguities 
   const { error } = await run(ctx);
   assertNoCrash(error, 'T3');
   assert.equal(error, null, `T3: run が throw してはならないが: ${error?.message}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.ok(implCalls.length >= 1, `T3: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
 });
 
@@ -232,8 +228,6 @@ test('[analyze-scope-truncation-routing] T6: scope_truncated:true + 1回目 ambi
     if (label.startsWith('contract-probe')) return null;  // sonnet fallback（DEPTH===standard の contract probe を非採用にする）
     if (label.startsWith('analyze-retrunc')) return secondReq;
     if (label.startsWith('analyze')) return firstReq;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -252,7 +246,7 @@ test('[analyze-scope-truncation-routing] T6: scope_truncated:true + 1回目 ambi
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
   const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
@@ -264,7 +258,7 @@ test('[analyze-scope-truncation-routing] T6: scope_truncated:true + 1回目 ambi
   assert.ok(firstAnalyzeCalls.length >= 1, `T6: 1 回目の analyze# label 呼び出しは 1 件以上のはずだが ${firstAnalyzeCalls.length} 件`);
   const retryCalls = calls.filter((c) => c.label.startsWith('analyze-retrunc#'));
   assert.equal(retryCalls.length, 1, `T6: depth comprehensive 再実行（analyze-retrunc# label）は 1 件のはずだが ${retryCalls.length} 件`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.ok(implCalls.length >= 1, `T6: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
 });
 
@@ -278,8 +272,6 @@ test('[analyze-scope-truncation-routing] T7: 再実行後（analyze-retrunc#）�
     if (label.startsWith('contract-probe')) return null;
     if (label.startsWith('analyze-retrunc')) return secondReq;
     if (label.startsWith('analyze')) return firstReq;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -298,7 +290,7 @@ test('[analyze-scope-truncation-routing] T7: 再実行後（analyze-retrunc#）�
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
   const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
@@ -309,7 +301,7 @@ test('[analyze-scope-truncation-routing] T7: 再実行後（analyze-retrunc#）�
   assert.equal(result?.source, 'analyze', `T7: source は analyze のはずだが ${JSON.stringify(result?.source)}`);
   const retryCalls = calls.filter((c) => c.label.startsWith('analyze-retrunc#'));
   assert.equal(retryCalls.length, 1, `T7: depth comprehensive 再実行（analyze-retrunc# label）は 1 件のはずだが ${retryCalls.length} 件`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(implCalls.length, 0, `T7: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });
 
@@ -323,8 +315,6 @@ test('[analyze-scope-truncation-routing] T8: 再実行後（analyze-retrunc#）�
     if (label.startsWith('contract-probe')) return null;
     if (label.startsWith('analyze-retrunc')) return secondReq;
     if (label.startsWith('analyze')) return firstReq;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -343,7 +333,7 @@ test('[analyze-scope-truncation-routing] T8: 再実行後（analyze-retrunc#）�
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
   const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
@@ -355,7 +345,7 @@ test('[analyze-scope-truncation-routing] T8: 再実行後（analyze-retrunc#）�
   assert.deepEqual(JSON.parse(JSON.stringify(result?.missing_context)), secondReq.comment_conflicts, `T8: missing_context が comment_conflicts と一致しない: ${JSON.stringify(result?.missing_context)}`);
   const retryCalls = calls.filter((c) => c.label.startsWith('analyze-retrunc#'));
   assert.equal(retryCalls.length, 1, `T8: depth comprehensive 再実行（analyze-retrunc# label）は 1 件のはずだが ${retryCalls.length} 件`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(implCalls.length, 0, `T8: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });
 
@@ -368,8 +358,6 @@ test('[analyze-scope-truncation-routing] T9: 再実行（analyze-retrunc#）の 
     if (label.startsWith('contract-probe')) return null;
     if (label.startsWith('analyze-retrunc')) throw new Error('agent finished without calling StructuredOutput');
     if (label.startsWith('analyze')) return firstReq;
-    if (agentType === 'dev-flow:dev-planner') return { summary: 'p', serial: [{ id: 'T1', desc: 't1', file_changes: ['src/a.ts'] }], parallel: [] };
-    if (agentType === 'dev-flow:plan-reviewer') return { score: 100, verdict: 'pass', findings: [], summary: 'ok' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/a.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -388,7 +376,7 @@ test('[analyze-scope-truncation-routing] T9: 再実行（analyze-retrunc#）の 
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
     if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:implementer') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
     return null;
   };
   const { ctx, calls } = makeRecordingSandbox(responder, { args: devFlowArgs('1') });
@@ -401,6 +389,6 @@ test('[analyze-scope-truncation-routing] T9: 再実行（analyze-retrunc#）の 
   assert.ok(result.missing_context[0].includes('scope が切断'), `T9: missing_context[0] に "scope が切断" が含まれない: ${result.missing_context[0]}`);
   const retryCalls = calls.filter((c) => c.label.startsWith('analyze-retrunc#'));
   assert.equal(retryCalls.length, 1, `T9: depth comprehensive 再実行（analyze-retrunc# label）は 1 件のはずだが ${retryCalls.length} 件`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:implementer');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
   assert.equal(implCalls.length, 0, `T9: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
 });

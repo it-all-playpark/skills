@@ -1,9 +1,9 @@
 // implementer-guard-blocked-contract.test.mjs
-// `.claude/agents/implementer.md` の guard_blocked 契約（issue #448 由来）を issue #451 の AC-3
-// に合わせて差分拡張し、その契約を source-pin するテスト（tdd: テスト先行）。
+// `.claude/agents/dev-implement-fable.md` の guard_blocked 契約（issue #448 / #451 由来。#673 で
+// implementer.md から dev-implement-fable.md へ移設）を source-pin するテスト。
 //
 // implementer-staging-convention.test.mjs の Part 1（source pin）形式を踏襲するが、対象は
-// dev-flow.js ではなく `.claude/agents/implementer.md` 本体（agent spawn prompt の一次情報源）。
+// dev-flow.js ではなく `.claude/agents/dev-implement-fable.md` 本体（agent spawn prompt の一次情報源）。
 //
 // このテストは以下を assert する:
 //   (a) 'guard_blocked' と 'block_class' が存在する
@@ -22,16 +22,16 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const implementerMdPath = join(here, '..', '.claude/agents/implementer.md');
+const agentMdPath = join(here, '..', '.claude/agents/dev-implement-fable.md');
 
-const src = readFileSync(implementerMdPath, 'utf8');
+const src = readFileSync(agentMdPath, 'utf8');
 
 // guard_blocked の定義文脈を切り出す（bullet 見出しから次の見出しまで）。
 function extractGuardBlockedSection(text) {
   const startIdx = text.indexOf('**`guard_blocked`**');
-  assert.ok(startIdx >= 0, 'implementer.md に guard_blocked bullet の見出しが見つからない');
+  assert.ok(startIdx >= 0, 'dev-implement-fable.md に guard_blocked bullet の見出しが見つからない');
   const rest = text.slice(startIdx);
-  const nextHeadingIdx = rest.indexOf('\n### ', 1);
+  const nextHeadingIdx = rest.search(/\n##+ /);
   return nextHeadingIdx >= 0 ? rest.slice(0, nextHeadingIdx) : rest;
 }
 
@@ -40,37 +40,22 @@ const guardSection = extractGuardBlockedSection(src);
 // ============================================================
 // (a) 'guard_blocked' と 'block_class' が存在する
 // ============================================================
-test('[guard-blocked-contract] implementer.md に "guard_blocked" が含まれる', () => {
-  assert.ok(src.includes('guard_blocked'), 'implementer.md に "guard_blocked" が存在しない');
+test('[guard-blocked-contract] dev-implement-fable.md に "guard_blocked" が含まれる', () => {
+  assert.ok(src.includes('guard_blocked'), 'dev-implement-fable.md に "guard_blocked" が存在しない');
 });
 
-test('[guard-blocked-contract] implementer.md に "block_class" が含まれる', () => {
-  assert.ok(src.includes('block_class'), 'implementer.md に "block_class" が存在しない');
+test('[guard-blocked-contract] dev-implement-fable.md に "block_class" が含まれる', () => {
+  assert.ok(src.includes('block_class'), 'dev-implement-fable.md に "block_class" が存在しない');
 });
 
 // ============================================================
 // (b) 'sandbox EPERM' / 'bg-isolation' / 'hook' が guard_blocked 定義文脈に存在する
 // ============================================================
-test('[guard-blocked-contract] guard_blocked 定義文脈に "sandbox EPERM" が含まれる', () => {
-  assert.ok(
-    guardSection.includes('sandbox EPERM'),
-    `guard_blocked 定義文脈に "sandbox EPERM" が存在しない:\n${guardSection.slice(0, 500)}`,
-  );
-});
-
-test('[guard-blocked-contract] guard_blocked 定義文脈に "bg-isolation" が含まれる', () => {
-  assert.ok(
-    guardSection.includes('bg-isolation'),
-    `guard_blocked 定義文脈に "bg-isolation" が存在しない:\n${guardSection.slice(0, 500)}`,
-  );
-});
-
-test('[guard-blocked-contract] guard_blocked 定義文脈に "hook" が含まれる', () => {
-  assert.ok(
-    guardSection.includes('hook'),
-    `guard_blocked 定義文脈に "hook" が存在しない:\n${guardSection.slice(0, 500)}`,
-  );
-});
+for (const token of ['sandbox EPERM', 'bg-isolation', 'hook']) {
+  test(`[guard-blocked-contract] guard_blocked 定義文脈に "${token}" が含まれる`, () => {
+    assert.ok(guardSection.includes(token), `guard_blocked 定義文脈に "${token}" が存在しない:\n${guardSection.slice(0, 500)}`);
+  });
+}
 
 // ============================================================
 // (c) sanctioned path（正規経路）が存在しない壁では迂回せず guard_blocked で終端する契約
@@ -85,26 +70,11 @@ test('[guard-blocked-contract] guard_blocked 定義文脈に "sanctioned path" �
 // ============================================================
 // (d) git plumbing 迂回の明示禁止（PR #452 実測）
 // ============================================================
-test('[guard-blocked-contract] guard_blocked 定義文脈に "hash-object" が含まれる', () => {
-  assert.ok(
-    guardSection.includes('hash-object'),
-    `guard_blocked 定義文脈に "hash-object" が存在しない:\n${guardSection.slice(0, 800)}`,
-  );
-});
-
-test('[guard-blocked-contract] guard_blocked 定義文脈に "update-index" が含まれる', () => {
-  assert.ok(
-    guardSection.includes('update-index'),
-    `guard_blocked 定義文脈に "update-index" が存在しない:\n${guardSection.slice(0, 800)}`,
-  );
-});
-
-test('[guard-blocked-contract] guard_blocked 定義文脈に "checkout-index" が含まれる', () => {
-  assert.ok(
-    guardSection.includes('checkout-index'),
-    `guard_blocked 定義文脈に "checkout-index" が存在しない:\n${guardSection.slice(0, 800)}`,
-  );
-});
+for (const token of ['hash-object', 'update-index', 'checkout-index']) {
+  test(`[guard-blocked-contract] guard_blocked 定義文脈に "${token}" が含まれる`, () => {
+    assert.ok(guardSection.includes(token), `guard_blocked 定義文脈に "${token}" が存在しない:\n${guardSection.slice(0, 800)}`);
+  });
+}
 
 // ============================================================
 // (e) '迂回' + '禁止'（または 'してはならない'）
@@ -120,9 +90,9 @@ test('[guard-blocked-contract] guard_blocked 定義文脈に "迂回" と "禁�
 // ============================================================
 // (f) JSON 例に '"block_class": "guard_blocked"' が存在する
 // ============================================================
-test('[guard-blocked-contract] implementer.md の JSON 例に \'"block_class": "guard_blocked"\' が含まれる', () => {
+test('[guard-blocked-contract] dev-implement-fable.md の JSON 例に \'"block_class": "guard_blocked"\' が含まれる', () => {
   assert.ok(
     src.includes('"block_class": "guard_blocked"'),
-    'implementer.md の JSON 例に \'"block_class": "guard_blocked"\' が存在しない',
+    'dev-implement-fable.md の JSON 例に \'"block_class": "guard_blocked"\' が存在しない',
   );
 });
