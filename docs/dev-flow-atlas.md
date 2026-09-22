@@ -119,8 +119,10 @@ Analyze 直後に issue から単一 task の plan を合成する（planner 0 �
 shape はこの時点では決まっていない — Security floor で realized diff から決める）。
 合成 task の `file_changes` は空で始まり、Implement の返却 `files` を宣言として取り込む。
 
-`dev-implement-fable`（plan+impl 統合）を単一 worktree に 1 spawn する。parallel fan-out・
-issue 分割・integration branch は使わない。
+`dev-implement-fable`（plan+impl 統合、frontmatter fable）を単一 worktree に 1 spawn する。parallel fan-out・
+issue 分割・integration branch は使わない。fable の usage 上限で `agent()` が null を返したら同一 prompt・同一
+label を `model: 'opus'` で 1 回再試行し、以後その run の Implement 系 spawn は opus（telemetry
+`impl_model_fallback_label`）。
 
 ```mermaid
 flowchart TD
@@ -138,7 +140,7 @@ flowchart TD
 flowchart TD
     IN["実装完了"] --> V1["test 実行"]
     V1 --> V2{"green ?"}
-    V2 -->|no| V3["green-fix<br/>テスト弱体化は禁止"]
+    V2 -->|no| V3["green-fix（sonnet）<br/>テスト弱体化は禁止"]
     V3 --> V1
     V2 -->|"yes / no_tests<br/>GREEN_MAX 到達"| V4{"empty-diff gate<br/>origin/BASE と一致 ?"}
     V4 -->|"差分あり"| OUT["Security floor へ"]

@@ -91,6 +91,14 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   （`review#i` / `${label}-schema-retry` / `pr-review-lite`）に渡す model。override を渡さないため値は
   `agents/pr-reviewer.md` frontmatter の `model`（`opus`）で、一致は同テストが pin する。evaluator と
   pr-reviewer を gate 別に区別して集計するためのキー）。
+  `impl_model_config`（dev-flow entry のみ、成功・失敗・abort とも。`dev-implement-fable` の既定 model =
+  `agents/dev-implement-fable.md` frontmatter の `model`（`fable`）で、一致は同テストが pin する。green-fix の
+  `sonnet` override は固定値なのでキーを持たない — 世代は `plugin_version` で分かる）。
+  `impl_model_fallback_label`（dev-flow entry のみ。`runImplement` の call が既定 model で null を返し
+  `fallbackModel`（opus）へ落ちたとき、最初に落ちた call の label（`impl:serial:issue-N` / `reimpl#i:serial:…` /
+  `reimpl-blocked#b:serial:…`）。未発火はキー省略（null は passthrough で落ちるため）。`impl_model_config` と
+  合わせて「純 fable / 途中から opus（どの label から）」を導出する。fable と opus の implementer 品質比較や
+  上限到達頻度の分母はこのキーで切る）。
   `plugin_version`（同上両 entry。`_lib/plugin-version.mjs` の `PLUGIN_VERSION` 定数。workflow では
   plugin root 変数が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
   が `plugins/dev-flow/.claude-plugin/plugin.json` の version と一致することを pin する。plugin.json
