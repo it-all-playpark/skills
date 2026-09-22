@@ -160,6 +160,17 @@ test('[D1][AC-3] fix applied:true + commit-ensure dirty:false -> commit-ensure#1
       `commit-ensure#1 の prompt は '${forbidden}' を含んではならない。先頭400文字: ${commitEnsurePrompt.slice(0, 400)}`,
     );
   }
+  // .git へ書く add / commit と network を伴う push は bare 形（issue #700: `git -C` 形は sandbox 除外に当たらず、
+  // push は credential helper、add / commit は write deny 下の .git で index.lock 作成が失敗する）
+  assert.ok(
+    commitEnsurePrompt.includes('`git add -A`') && commitEnsurePrompt.includes('`git commit -m "fix(pr-5)')
+      && commitEnsurePrompt.includes('`git push`') && commitEnsurePrompt.includes('`git push -u origin HEAD`'),
+    `commit-ensure#1 の prompt は bare \`git add -A\` / \`git commit\` / \`git push\` / \`git push -u origin HEAD\` を含むべき: ${commitEnsurePrompt.match(/`git [^`]*`/g)?.join(' | ')}`,
+  );
+  assert.ok(
+    !/git -C \S+ (add|commit|push)\b/.test(commitEnsurePrompt),
+    `commit-ensure#1 の prompt に -C 付き add / commit / push が含まれてはならない: ${commitEnsurePrompt.match(/git -C \S+ (add|commit|push)[^`]*/)?.[0]}`,
+  );
 
   assert.equal(result?.status, 'lgtm', `result.status は lgtm であるべきだが '${result?.status}' だった`);
   assert.equal(result?.fix_uncommitted_recovered, 0, `fix_uncommitted_recovered は 0 であるべきだが ${result?.fix_uncommitted_recovered} だった`);

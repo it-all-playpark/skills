@@ -178,15 +178,24 @@ test('[final-reconcile] (a) fixes_applied=0 → 新規 agent 呼び出しゼロ 
 // ============================================================
 
 test('[final-reconcile] (b) fixes=1 + test green → reverified + final_test_green:true + merge_tier REVIEW', async () => {
+  let syncPrompt = null;
   const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
-    overrides: { 'test#final': { tests: 'passed', green: true, summary: '' } },
+    overrides: {
+      'test#final': { tests: 'passed', green: true, summary: '' },
+      'reconcile-sync': ({ prompt }) => { syncPrompt = prompt; return { ok: true, head: 'deadbeef' }; },
+    },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'b');
   assert.ok(result !== null, '(b) workflow は return object を返すべきだが null だった');
 
   assert.ok(calls.some((c) => c.label === 'reconcile-sync'), "(b) 'reconcile-sync' が呼ばれるはず");
+  // issue #700: fetch / merge は `git -C` 形だと sandbox 除外に当たらず、fetch は credential helper、
+  // merge は write deny 下の .git で失敗する。cwd は WT なので bare 形で指示する
+  assert.ok(syncPrompt?.includes('git fetch origin ') && syncPrompt?.includes('git merge --ff-only FETCH_HEAD'),
+    `(b) reconcile-sync の prompt は bare の git fetch / git merge を含むべき: ${syncPrompt}`);
+  assert.ok(!/git -C /.test(syncPrompt ?? ''), `(b) reconcile-sync の prompt に git -C 形が含まれてはならない: ${syncPrompt?.match(/git -C [^\n]*/)?.[0]}`);
   assert.ok(calls.some((c) => c.label === 'test#final'), "(b) 'test#final' が呼ばれるはず");
   assert.equal(result?.final_reconcile, 'reverified', `(b) final_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
   assert.equal(result?.final_test_green, true, `(b) final_test_green は true のはずだが ${JSON.stringify(result?.final_test_green)}`);

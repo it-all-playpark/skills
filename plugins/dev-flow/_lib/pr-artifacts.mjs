@@ -328,12 +328,16 @@ export function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
 // 手順 1〜4 のどれかが失敗したらそこで中断し、`failed_step`（commit / push / pr-create）と
 // `failure_reason`（失敗コマンドの stderr 末尾 1〜3 行 verbatim）を埋めて返す — どこで何に失敗したかは
 // proxy しか観測できず、workflow 側はこの 2 値を abort のエラー文に載せて人間に見せる（prPhaseFailure）。
+// git は `-C <wt>` を付けない bare 形にする（issue #700）: `git -C` 形は sandbox の excludedCommands に
+// 当たらず sandbox 内で走り、push は credential helper が `~/.config/gh` / keychain を読めずに、
+// add / commit は `.git` が sandbox の write deny 下にある repo（skills 等）で index.lock を作れずに失敗する。
+// subagent の cwd は worktree（EnterWorktree 済み）なので -C を外しても対象 worktree は変わらない。
 export function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody }) {
   const msgFile = `${wt}/.devflow-tmp/commit-msg.txt`;
   const bodyFile = `${wt}/.devflow-tmp/pr-body.md`;
   const title = str(commitMessage).split('\n')[0].replace(/"/g, '\\"');
   const repoArg = repo ? ` --repo ${repo}` : '';
-  const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。-C で worktree を渡しているため cd は不要）';
+  const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない）';
   return `## Objective\nissue #${issue} の変更を commit + push し draft PR を作成して、PR URL と番号を返す。\n\n`
     + `## 本文の保存\n`
     + `**Write tool** を使い、下記 2 つの delimiter 内の本文を **一字一句そのまま**（要約・整形・追記・改変・shell 経由の書き出し禁止）保存せよ。\n`
@@ -342,12 +346,12 @@ export function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, pr
     + `<<<COMMIT_MSG_BEGIN>>>\n${commitMessage}<<<COMMIT_MSG_END>>>\n`
     + `<<<PR_BODY_BEGIN>>>\n${prBody}<<<PR_BODY_END>>>\n\n`
     + `## Steps\n以下を順に bare 単文で実行せよ${bare}。手順 1〜4 のいずれかが失敗（exit 非0）したら**そこで中断**し、後続の手順を実行せず、failed_step にその手順名（1〜2 → "commit"、3 → "push"、4 → "pr-create"）、failure_reason に失敗したコマンドの stderr 末尾 1〜3 行を**一字一句そのまま**（要約・言い換え禁止）入れて返す。中断時は pr_url は空文字、pr_number は 0、committed は手順 2 が成功済みなら true・それ以外は false、head_sha は空文字:\n`
-    + `1. \`git -C ${wt} add -A\`（失敗は failed_step:"commit" で中断）\n`
-    + `2. \`git -C ${wt} commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は failed_step:"commit" で中断）\n`
-    + `3. \`git -C ${wt} push -u origin HEAD\`（失敗は failed_step:"push" で中断）\n`
+    + `1. \`git add -A\`（失敗は failed_step:"commit" で中断）\n`
+    + `2. \`git commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は failed_step:"commit" で中断）\n`
+    + `3. \`git push -u origin HEAD\`（失敗は failed_step:"push" で中断）\n`
     + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`（失敗は failed_step:"pr-create" で中断）\n`
     + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n`
-    + `6. \`git -C ${wt} rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
+    + `6. \`git rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
     + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "head_sha": string, "failed_step": "" | "commit" | "push" | "pr-create", "failure_reason": string, "epoch": number }\n`
     + `failed_step / failure_reason は成功時は空文字。failure_reason は失敗コマンドの stderr 末尾 1〜3 行 verbatim。prose 禁止。JSON のみ返せ。\n\n`
     + `## Tools\n使用可: Bash, Write\n\n`

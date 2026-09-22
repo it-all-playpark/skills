@@ -65,7 +65,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 > `analyze-issue` は issue 取得の bare `gh issue view` を内蔵し stdout を in-process で受ける。呼び出し元は
 > subagent ではなく prerun（`dev-flow-prerun` → `prerun-analyze.sh`）で、Jev もそこから呼ぶ —
 > subagent の sandbox 内では資格情報に届かない）。GitHub I/O は
-> subagent の Bash で「先頭トークンが gh または git の bare 単文」（--repo/-C で cwd 非依存化、
+> subagent の Bash で「先頭トークンが gh または git の bare 単文」（--repo で cwd 非依存化、git は -C 不可、
 > cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落とすか、呼び出し側 agent が
 > stdout/stderr を argv でスクリプトへ verbatim 転写して、スクリプトは file または argv 入力の
 > 純変換とする。prompt に sandbox / excludedCommands / 特定パス起動の理由を書いてはならない —

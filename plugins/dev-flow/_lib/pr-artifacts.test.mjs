@@ -281,9 +281,15 @@ test('[pr-artifacts] prompt: 本文を verbatim 転写させ bare 単文の git 
   assert.ok(p.includes('<<<COMMIT_MSG_BEGIN>>>') && p.includes('<<<COMMIT_MSG_END>>>'));
   assert.ok(p.includes('<<<PR_BODY_BEGIN>>>') && p.includes('<<<PR_BODY_END>>>'));
   assert.ok(p.includes('/tmp/wt/.devflow-tmp/commit-msg.txt') && p.includes('/tmp/wt/.devflow-tmp/pr-body.md'));
-  assert.ok(p.includes('`git -C /tmp/wt add -A`'));
-  assert.ok(p.includes('`git -C /tmp/wt commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'));
-  assert.ok(p.includes('`git -C /tmp/wt push -u origin HEAD`'));
+  // git は全て -C なしの bare 形（issue #700: `git -C` 形は sandbox 除外に当たらず、push は credential helper、
+  // add / commit は write deny 下の .git で index.lock 作成が失敗する）
+  assert.ok(p.includes('`git add -A`'), '手順 1 の add が bare 形でない');
+  assert.ok(p.includes('`git commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), '手順 2 の commit が bare 形でない');
+  assert.ok(p.includes('`git push -u origin HEAD`'), '手順 3 の push が bare 形でない');
+  assert.ok(p.includes('`git rev-parse HEAD`'), '手順 6 の rev-parse が bare 形でない');
+  assert.ok(!/git -C /.test(p), `prompt に git -C 形が含まれてはならない: ${p.match(/git -C [^\n]*/)?.[0]}`);
+  assert.ok(p.includes('cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない'), 'bare 注記が cwd=worktree 前提の文言になっていない');
+  assert.ok(!p.includes('-C で worktree を渡しているため cd は不要'), '旧 bare 注記（-C 前提）が残っている');
   assert.ok(p.includes('`gh pr create --repo o/r --draft --base main --head feature/issue-642 --title "refactor(dev-flow): PR phase を純関数で生成する (#642)" --body-file /tmp/wt/.devflow-tmp/pr-body.md`'));
   assert.ok(p.includes('pr_url') && p.includes('pr_number') && p.includes('committed'));
 });
@@ -414,7 +420,7 @@ test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing �
   assert.ok(pr.prompt.includes('<<<PR_BODY_BEGIN>>>\n**stub-issue-title**\n'), 'PR body 本文（結論1行）が verbatim で含まれない');
   assert.ok(pr.prompt.includes('- [ ] AC one\n- [ ] AC two') || pr.prompt.includes('- [x] AC one\n- [x] AC two'), 'PR body の受入条件 checkbox が含まれない');
   assert.ok(pr.prompt.includes('Closes #1\n<<<PR_BODY_END>>>'), 'PR body が Closes #1 で終わらない');
-  assert.ok(pr.prompt.includes('`git -C /tmp/wt commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), 'commit -F 指示が無い');
+  assert.ok(pr.prompt.includes('`git commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), 'commit -F 指示が無い');
   assert.ok(pr.prompt.includes('gh pr create') && pr.prompt.includes('--draft --base main --head feature/issue-1'), 'gh pr create の draft/base/head 指示が無い');
   assert.ok(!pr.prompt.includes('Skill: git-commit') && !pr.prompt.includes('Skill: git-pr'), 'git-commit / git-pr skill を呼んではならない');
 });
