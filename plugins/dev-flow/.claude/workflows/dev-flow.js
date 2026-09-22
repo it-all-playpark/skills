@@ -4100,6 +4100,10 @@ const PRURL = {
     // head_sha: push 直後の PR head commit sha。nested pr-iterate へ渡し review#2 の fix delta 起点にする
     // （pr-iterate は nested 起動で pr-meta probe を起動しないため、ここで取らないと review#2 は full に倒れる）。
     head_sha: { type: 'string' },
+    // failed_step / failure_reason: proxy が手順 1〜4 のどこで中断したかと失敗コマンドの stderr 末尾
+    // （成功時は空文字）。prPhaseFailure が abort のエラー文に載せる（fail-closed。need() は null 判定のみ）。
+    failed_step: { type: 'string', enum: ['', 'commit', 'push', 'pr-create'] },
+    failure_reason: { type: 'string' },
     epoch: { type: 'number' },
   },
 }
@@ -4773,6 +4777,9 @@ function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
 // 埋め込み、Write で `.devflow-tmp/` に保存させた後、bare 単文（cd 前置・bash 前置・env 代入前置・
 // && 連結禁止）で git add / commit -F / push / gh pr create を順に実行させる。gh は subagent の
 // bare 単文で実行する（script 内に認証付き I/O を持たない exec-proxy 規範）。
+// 手順 1〜4 のどれかが失敗したらそこで中断し、`failed_step`（commit / push / pr-create）と
+// `failure_reason`（失敗コマンドの stderr 末尾 1〜3 行 verbatim）を埋めて返す — どこで何に失敗したかは
+// proxy しか観測できず、workflow 側はこの 2 値を abort のエラー文に載せて人間に見せる（prPhaseFailure）。
 function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody }) {
   const msgFile = `${wt}/.devflow-tmp/commit-msg.txt`;
   const bodyFile = `${wt}/.devflow-tmp/pr-body.md`;
@@ -4786,17 +4793,39 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody })
     + `2. <<<PR_BODY_BEGIN>>> 〜 <<<PR_BODY_END>>> の本文 → \`${bodyFile}\`\n`
     + `<<<COMMIT_MSG_BEGIN>>>\n${commitMessage}<<<COMMIT_MSG_END>>>\n`
     + `<<<PR_BODY_BEGIN>>>\n${prBody}<<<PR_BODY_END>>>\n\n`
-    + `## Steps\n以下を順に bare 単文で実行せよ${bare}:\n`
-    + `1. \`git -C ${wt} add -A\`\n`
-    + `2. \`git -C ${wt} commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は中断して committed:false で返す）\n`
-    + `3. \`git -C ${wt} push -u origin HEAD\`\n`
-    + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`\n`
+    + `## Steps\n以下を順に bare 単文で実行せよ${bare}。手順 1〜4 のいずれかが失敗（exit 非0）したら**そこで中断**し、後続の手順を実行せず、failed_step にその手順名（1〜2 → "commit"、3 → "push"、4 → "pr-create"）、failure_reason に失敗したコマンドの stderr 末尾 1〜3 行を**一字一句そのまま**（要約・言い換え禁止）入れて返す。中断時は pr_url は空文字、pr_number は 0、committed は手順 2 が成功済みなら true・それ以外は false、head_sha は空文字:\n`
+    + `1. \`git -C ${wt} add -A\`（失敗は failed_step:"commit" で中断）\n`
+    + `2. \`git -C ${wt} commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は failed_step:"commit" で中断）\n`
+    + `3. \`git -C ${wt} push -u origin HEAD\`（失敗は failed_step:"push" で中断）\n`
+    + `4. \`gh pr create${repoArg} --draft --base ${base} --head ${branch} --title "${title}" --body-file ${bodyFile}\`（失敗は failed_step:"pr-create" で中断）\n`
     + `5. 手順 4 の stdout の PR URL を pr_url、その末尾の数字を pr_number として返す。\n`
     + `6. \`git -C ${wt} rev-parse HEAD\` の stdout（40 桁 hex）をそのまま head_sha として返す（失敗時は空文字）。\n\n`
-    + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "head_sha": string, "epoch": number }\nprose 禁止。JSON のみ返せ。\n\n`
+    + `## Output format\n{ "pr_url": string, "pr_number": number, "committed": boolean, "head_sha": string, "failed_step": "" | "commit" | "push" | "pr-create", "failure_reason": string, "epoch": number }\n`
+    + `failed_step / failure_reason は成功時は空文字。failure_reason は失敗コマンドの stderr 末尾 1〜3 行 verbatim。prose 禁止。JSON のみ返せ。\n\n`
     + `## Tools\n使用可: Bash, Write\n\n`
     + `## Boundary\n上記 2 ファイル以外を書かない。上記以外の git / gh 操作禁止。本文の要約・判断・書き換え禁止。\n\n`
     + `## Token cap\nJSON のみ。1 行以内。`;
+}
+
+// PR phase exec-proxy（`pr#<issue>`）の失敗判定。proxy の中断契約（prPhasePrompt の Steps）は
+// `committed:false` / `pr_url:""` / `pr_number:0` のいずれかで現れる。null 判定だけの `need()` は
+// この形を通してしまい、pr_number:0 が nested pr-iterate の引数検証で throw して abort の場所と原因
+// （proxy が踏んだ git / gh の stderr）が消える。ここで proxy が返した failed_step / failure_reason と
+// 生の 3 値を 1 文に載せて返し、workflow はそれを throw する（fail-closed。リトライ・fallback は持たない —
+// 失敗理由を人間に見せて止めるだけ）。成功なら null。
+const PR_FAILED_STEP_VALUES = ['commit', 'push', 'pr-create'];
+
+function prPhaseFailure(pr) {
+  const prUrl = str(pr?.pr_url).trim();
+  const prNumber = Number(pr?.pr_number);
+  const committed = pr?.committed;
+  const failed = committed === false || prUrl === '' || !(Number.isInteger(prNumber) && prNumber > 0);
+  if (!failed) return null;
+  const failedStep = str(pr?.failed_step).trim();
+  const step = PR_FAILED_STEP_VALUES.includes(failedStep) ? failedStep : 'unknown';
+  const reason = str(pr?.failure_reason).trim() || '（proxy が failure_reason を返さず）';
+  const raw = `pr_url=${JSON.stringify(pr?.pr_url ?? null)} pr_number=${JSON.stringify(pr?.pr_number ?? null)} committed=${JSON.stringify(committed ?? null)}`;
+  return `dev-flow: PR phase 失敗（step: ${step}、reason: ${reason}）— proxy 応答 ${raw}。closes-check / nested pr-iterate へは進まない`;
 }
 // ==== END inline: _lib/pr-artifacts.mjs ====
 
@@ -6492,6 +6521,14 @@ const pr = need(await trackedAgent(
   + '\n' + EPOCH_INSTRUCTION,
   { agentType: 'dev-runner-haiku', schema: PRURL, label: `pr#${ISSUE}`, phase: 'PR' },
 ), 'PR')
+// proxy の中断応答（committed:false / pr_url 空 / pr_number 非正）はここで fail-closed に throw する。
+// need() は null 判定のみで PR 固有の形は見ない — 通すと closes-check（fail-open で 1 spawn 無駄）→
+// nested pr-iterate が `pr: 0` の引数検証で abort し、abort_label が pr-iterate を指して proxy の
+// 失敗 step / stderr（index.lock EPERM・push 403・gh pr create 失敗）が transcript の外へ出ない。
+// 直前の trackedAgent が `pr#<issue>` なので ABORT_CTX.label はその label のまま handoff に載る。
+// リトライ・fallback（別 worktree 退避 / force push）は持たない — 失敗理由を人間に見せて止めるだけ。
+const prFailure = prPhaseFailure(pr)
+if (prFailure) throw new Error(prFailure)
 log(`PR created: ${pr.pr_url}`)
 
 feedClockMark('pr_end', epochResOf(pr))

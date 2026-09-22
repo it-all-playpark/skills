@@ -13,6 +13,9 @@
 //   AC-7: PR phase の pr.head_sha が workflow('dev-flow:pr-iterate') の nested.head_sha へ渡る
 //         （review#2 以降の fix delta 起点。nested 起動のみが本番経路で pr-meta probe を通らないため）。
 //         pr.head_sha が空文字・欠落のときは nested に head_sha キー自体を含めない
+//   PR fail-closed (#682): pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）は
+//         closes-check・nested pr-iterate へ流さず failed_step / failure_reason を載せて throw し、
+//         abort handoff の abort_label は pr#<issue> を指す。正常系は従来どおり nested pr-iterate まで進む
 //   prompt: issue_body + acceptance_criteria + task_id + 配置規約を含み、AC テスト契約は含まない
 //
 // 責務外: telemetry の by_type は subagent-invocations-telemetry.test.mjs が pin する。
@@ -346,4 +349,50 @@ test('[implement-fable] AC-7: pr.head_sha が空文字のとき nested に head_
   assert.equal(error, null, `run が throw した: ${error?.message}`);
   assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
   assert.ok(!Object.prototype.hasOwnProperty.call(workflowCalls[0].opts?.nested ?? {}, 'head_sha'), `head_sha が空文字でも nested にキーが残っている: ${JSON.stringify(workflowCalls[0].opts?.nested)}`);
+});
+
+// ============================================================
+// PR phase fail-closed（issue #682）: pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）
+// は closes-check・nested pr-iterate へ流さず、その場で failed_step / failure_reason を載せて throw する。
+// abort handoff の abort_label は pr#<issue>（pr-iterate の引数検証で落ちる従来経路では pr-iterate を指し、
+// proxy が踏んだ git / gh の stderr が transcript の外へ出なかった）
+// ============================================================
+const PR_FAILURE_REASON = "fatal: Unable to create '.git/index.lock': Operation not permitted";
+const PR_FAILED_RESPONSE = { pr_url: '', pr_number: 0, committed: false, failed_step: 'commit', failure_reason: PR_FAILURE_REASON };
+
+test('[implement-fable] PR fail-closed (#682): pr#1 が committed:false / pr_number:0 を返すと run が throw し、エラー文に failed_step と failure_reason が含まれ、closes-check と workflow(pr-iterate) は呼ばれない', async () => {
+  const { calls, workflowCalls, error } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
+  assert.ok(error, 'pr#1 の中断応答で run が throw していない');
+  assert.ok(error.message.includes('dev-flow: PR phase 失敗（step: commit、reason: ' + PR_FAILURE_REASON + '）'), `エラー文に failed_step / failure_reason が無い: ${error.message}`);
+  assert.ok(error.message.includes('pr_url=""') && error.message.includes('pr_number=0') && error.message.includes('committed=false'), `エラー文に proxy の生の値が無い: ${error.message}`);
+  assert.ok(!error.message.includes('正の整数が必要です'), `pr-iterate の引数検証文で落ちている（従来経路）: ${error.message}`);
+  assert.equal(workflowCalls.length, 0, `workflow('dev-flow:pr-iterate') が呼ばれた: ${workflowCalls.map((w) => `${w.name}(pr=${w.opts?.pr})`).join(', ')}`);
+  const closes = calls.filter((c) => c.label === 'closes-check' || c.label === 'closes-reinject' || c.label === 'closes-recheck');
+  assert.equal(closes.length, 0, `closes-check 系が呼ばれた: ${closes.map((c) => c.label).join(', ')}`);
+  assert.ok(calls.some((c) => c.label === 'pr#1'), 'pr#1 自体は呼ばれているはず');
+});
+
+test('[implement-fable] PR fail-closed (#682): abort handoff の abort_label が pr#1・abort_phase が PR で、error_msg に PR phase 失敗文が載る', async () => {
+  const { calls, error } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
+  assert.ok(error, 'pr#1 の中断応答で run が throw していない');
+  const save = calls.find((c) => c.label === 'journal-save');
+  assert.ok(save, 'abort handoff の journal-save が呼ばれていない');
+  const payload = parseJournalHandoffPayload(save.prompt);
+  assert.equal(payload.outcome, 'failure');
+  assert.equal(payload.error_category, 'abort');
+  assert.equal(payload.error_phase, 'PR');
+  assert.equal(payload.telemetry?.abort_phase, 'PR');
+  assert.equal(payload.telemetry?.abort_label, 'pr#1', `abort_label が pr#1 でない: ${payload.telemetry?.abort_label}`);
+  assert.ok(payload.error_msg.startsWith('abort@PR/pr#1: dev-flow: PR phase 失敗（step: commit、reason: ' + PR_FAILURE_REASON + '）'), `error_msg に PR phase 失敗文が無い: ${payload.error_msg}`);
+});
+
+test('[implement-fable] PR fail-closed (#682): 正常系（committed:true, pr_number:1）は従来どおり closes-check → nested pr-iterate まで進む', async () => {
+  const { calls, workflowCalls, error } = await runStandardWithWorkflowCapture({
+    'pr#1': { pr_url: 'http://x', pr_number: 1, committed: true, failed_step: '', failure_reason: '' },
+  });
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  assert.ok(calls.some((c) => c.label === 'closes-check'), 'closes-check が呼ばれていない');
+  assert.equal(workflowCalls.length, 1, `workflow('dev-flow:pr-iterate') は 1 回のはず: ${workflowCalls.map((w) => w.name).join(', ')}`);
+  assert.equal(workflowCalls[0].name, 'dev-flow:pr-iterate');
+  assert.equal(workflowCalls[0].opts?.pr, 1);
 });
