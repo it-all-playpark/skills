@@ -59,7 +59,7 @@ blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止�
 shape は Analyze では決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount)` が
 realized diff の file 数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）だけで
 1 回で決め、その返り値が `EFFECTIVE_SHAPE`（Evaluate 深さ・LITE gate・merge tier の入力）になる。安全 floor は
-realized count 欠損（changed-files 取得不能 → NaN）・`acceptance_criteria` 欠落・out-of-enum `issue_type`・
+realized count 欠損（secfloor-unified（danger-grep）の files 欠落 → NaN）・`acceptance_criteria` 欠落・out-of-enum `issue_type`・
 `breaking_change === true` → complex（軸A: 緩めない）。LLM の事前見積もり（shape / 見込み file 数）は REQ に
 持たず decision に使わない — micro の LITE 経路に対する意味的リスクの安全網は runEval 強制条件
 （danger-grep / testsurf / green-fix / dropped task / 宣言外変更 / UI 接触）が担う。

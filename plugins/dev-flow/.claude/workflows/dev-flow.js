@@ -6079,7 +6079,7 @@ async function execSecurityFloorPhase(state) {
   log(`danger-grep: ${risk.ok !== true ? 'UNAVAILABLE (fail-closed) ' + (risk.error ?? 'unknown') : dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
     + `SEC blocking 未 checked ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件`)
   log(`testsurf: ${testsurfPatterns.length ? 'HIT ' + testsurfPatterns.join(',') : 'clean'}`)
-  // Step F2: realized diff のファイル数を取得して re-floor を算出する
+  // Step F2: realized diff のファイル数を取得して実効 shape（classifyShape）の入力にする
   // files が null（統合 proxy の files フィールド欠落／型不正）のときは NaN を classifyShape へ渡し
   // complex 安全弁へ流す。files:[] は取得成功かつ正常な 0 ファイルとして null と区別する（fail-safe。
   // parseSecfloorFields が既に検証済みのため ?? [] で潰さない）。
@@ -6154,10 +6154,10 @@ async function execSecurityFloorPhase(state) {
   if (TRIVIAL && state.implDroppedCount > 0) {
     log(`⚠️ micro だが implement drop ${state.implDroppedCount} 件 → Evaluate を実行（未実装範囲の AC 検証 強制）`)
   }
-  if (EFFECTIVE_SHAPE === 'micro' && undeclared.length > 0) {
+  if (TRIVIAL && undeclared.length > 0) {
     log(`⚠️ micro だが宣言外変更 ${undeclared.length} 件 → Evaluate を実行（宣言外監査 強制）`)
   }
-  if (EFFECTIVE_SHAPE === 'micro' && uiTouched) {
+  if (TRIVIAL && uiTouched) {
     log('⚠️ micro だが UI touch + ui_verify config あり → Evaluate を実行（ui-verify 強制。検証は smoke-only 固定）')
   }
   // ============================================================
