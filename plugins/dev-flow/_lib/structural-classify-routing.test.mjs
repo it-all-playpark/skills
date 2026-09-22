@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { parseSecfloorFields } from './secfloor-unified.mjs';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -70,10 +70,6 @@ test('[structural-classify-routing] parseSecfloorFields(unified).struct is null 
 
 test('[structural-classify-routing] diff_classification prompt injection is gated by i === 1 (present in eval#1, absent in eval#2)', async () => {
   const overrides = {
-    'analyze#1': () => ({
-      summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], issue_type: 'feat', scope: 'src',
-      issue_number: 1, issue_title: 'stub-issue-title',
-    }),
     'danger-grep': () => ({
       risk: { ok: true, hits: [] },
       files: ['src/x.ts', 'src/y.ts'],
@@ -94,7 +90,7 @@ test('[structural-classify-routing] diff_classification prompt injection is gate
       critical_resolutions: [{ id: 'EVAL-1-t1', resolved: true, evidence: 'fixed' }],
     }),
   };
-  const { ctx, calls } = makeDevFlowSandbox({ overrides });
+  const { ctx, calls } = makeDevFlowSandbox({ overrides, extra: { args: analyzeArgs(1, { acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], issue_type: 'feat' }) } });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'diff-classification-gating');
   assert.equal(error, null);
@@ -114,12 +110,9 @@ test('[structural-classify-routing] diff_classification prompt injection is gate
 // count<=5 standard。_lib/triviality.mjs 準拠）。plan の file_changes に全 4 ファイルを宣言し、
 // 宣言外除外の影響を排除する。
 
+const ONE_AC_ARGS = { args: analyzeArgs(1, { acceptance_criteria: ['a'], issue_type: 'fix' }) };
 function formatOnlyOverrides(formatOnly) {
   return {
-    'analyze#1': () => ({
-      summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src',
-      issue_number: 1, issue_title: 'stub-issue-title',
-    }),
     'impl:serial:issue-1': () => ({ status: 'DONE', task_id: 'issue-1', files: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'], summary: 's', concerns: [] }),
     'danger-grep': () => ({
       risk: { ok: true, hits: [] },
@@ -131,7 +124,7 @@ function formatOnlyOverrides(formatOnly) {
 }
 
 test('[structural-classify-routing] formatOnlySet excludes format-only files from realizedCount: 3-of-4 excluded → realizedCount 1 → shape micro', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({ overrides: formatOnlyOverrides(['src/b.ts', 'src/c.ts', 'src/d.ts']) });
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: formatOnlyOverrides(['src/b.ts', 'src/c.ts', 'src/d.ts']), extra: ONE_AC_ARGS });
   const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'formatOnlySet-3-of-4');
   assert.equal(error, null);
@@ -144,7 +137,7 @@ test('[structural-classify-routing] formatOnlySet excludes format-only files fro
 });
 
 test('[structural-classify-routing] formatOnlySet excludes format-only files from realizedCount: empty format_only counts all 4 files → shape standard', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({ overrides: formatOnlyOverrides([]) });
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: formatOnlyOverrides([]), extra: ONE_AC_ARGS });
   const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'formatOnlySet-empty');
   assert.equal(error, null);

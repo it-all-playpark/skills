@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-run',
-  description: 'Issue から LGTM まで: 分析→実装(dev-implement-fable 1 spawn)→test green→security floor(realized diff から shape 判定)→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
+  description: 'Issue から LGTM まで: 分析(prerun の決定論 analyze を検証・ゲート判定のみ、spawn 0)→実装(dev-implement-fable 1 spawn)→test green→security floor(realized diff から shape 判定)→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
   phases: [
     { title: 'Setup' },
     { title: 'Analyze' },
@@ -180,8 +180,8 @@ function resolvePositiveIntArg(args, name) {
 // fail-closed に検証・要約するための純関数群。
 //
 // dev-flow-prerun（wrapper preflight の bare 名 launcher）が base 解決・worktree 作成/再利用・
-// .devflow-tmp の clean・deps install・framework 検出を行い、その結果を stdout JSON 1 行として
-// 返す。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
+// .devflow-tmp の clean・deps install・framework 検出・issue analyze（analyze-issue --contract +
+// Jev 有界判定。deps install と並列）を行い、その結果を stdout JSON 1 行として返す。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
 // dev-flow.js 側はこれを唯一の入力源として検証する（workflow 内 fallback は持たない）。
 // validatePrerunSetup: args.setup を検証し、Setup phase が使う正規化済み値を返す純関数。
 //   raw が欠落/非 object/配列、raw.ok !== true、必須キー欠落/型不正のいずれも即 throw する
@@ -191,12 +191,15 @@ function resolvePositiveIntArg(args, name) {
 // summarizePrerunDeps: prerun の deps 結果（advisory）を implementer prompt 注入用の警告文と
 //   ログ行に要約する純関数。deps.ok:false でも top-level ok には影響しない（fail-open）。
 // hasNextJs: stack.frameworks に 'next' が含まれるかを判定する純関数。Turbopack 規約注入の判定に使う。
+// analyze: prerun の analyze 段の結果（{ok, ...}）。ok:true の中身の whitelist 検証は
+//   buildReqFromContract（_lib/analyze-contract.mjs）が担い、ここでは object / ok boolean /
+//   ok:false のときの reason string だけを fail-closed に検証して verbatim で返す。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch', 'epoch_end'];
+const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'analyze', 'epoch', 'epoch_end'];
 
 const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
@@ -255,6 +258,11 @@ function validatePrerunSetup(raw, issue) {
   if (typeof raw.deps.note !== 'string') fail('deps.note', raw.deps.note);
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
+  // analyze（issue #690）: prerun の analyze 段（analyze-issue --contract + Jev）の結果。ok:false は
+  // Analyze phase が needs_clarification（source=analyze_prerun）に倒すため throw しない（reason 必須）。
+  if (!isPlainObject(raw.analyze)) fail('analyze', raw.analyze);
+  if (typeof raw.analyze.ok !== 'boolean') fail('analyze.ok', raw.analyze.ok);
+  if (raw.analyze.ok === false && !isNonEmptyString(raw.analyze.reason)) fail('analyze.reason', raw.analyze.reason);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
   // epoch_end は deps install / detect-stack 完了後（prerun.sh 末尾）で採る第2の時刻。
   // analyze_start はここから給電する（epoch から給電すると deps install 等の Setup 決定論処理
@@ -273,6 +281,7 @@ function validatePrerunSetup(raw, issue) {
     repo,
     deps: { ok: raw.deps.ok, note: raw.deps.note },
     frameworks,
+    analyze: raw.analyze,
     epoch: raw.epoch,
     epoch_end: raw.epoch_end,
   };
@@ -718,12 +727,13 @@ function mergeSubagentCounts(counts, byType) {
 // pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
-// 数分かかりうる）を analyze の phase_durations に付け替えないため — start〜analyze_start の
-// 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
-// 残差（duration_seconds − Σphase_durations）に留める。
-// contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため plan 合成までの時間が implement 区間へ付け替わる — phase_durations は
-// 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
+// 数分かかりうる）と prerun の analyze 段（issue 取得 + Jev 判定。deps と並列）を analyze の
+// phase_durations に付け替えないため — start〜analyze_start の区間（deps/stack/analyze の決定論処理 +
+// wrapper turn）はどの phase にも属さない残差（duration_seconds − Σphase_durations）に留め、
+// analyze 段の所要だけは telemetry の prerun_durations.analyze に別途載せる（issue #690）。
+// Analyze phase は Workflow 内では args.setup.analyze の whitelist 検証とゲート判定だけで agent を
+// spawn しないため、analyze_end も epoch_end から給電し phase_durations.analyze は常に 0 になる
+// （ゲート判定時間のみ。isolation-probe / plan 合成の時間は implement 区間に入る）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -2017,174 +2027,102 @@ function classifyShape(req, realizedCount) {
 // ==== END inline: _lib/triviality.mjs ====
 // ==== BEGIN inline: _lib/analyze-contract.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // _lib/analyze-contract.mjs
-// buildReqFromContract: dev-issue-analyze の `--contract` モード出力 (F1) から REQ 互換オブジェクトを
-// 決定論構成する純粋関数。dev-flow の Analyze phase が DEPTH==='standard' のときのみ試行する
-// 決定論 parse 降格経路 (issue #374) が使用する。whitelist 検証に 1 つでも不合格なら null を返し、
-// 呼び出し元は現行の sonnet(dev-runner) analyze へ fail-open fallback する。
+// buildReqFromContract: dev-flow-prerun の analyze 段（prerun-analyze.sh = `analyze-issue --contract` の
+// 決定論 parse + Jev 有界判定）の出力 `args.setup.analyze` から REQ を決定論構成する純粋関数。
+// dev-flow の Analyze phase はこの whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 /
+// uncertain 非空）だけを行い、通常経路では agent を 1 つも spawn しない（issue #690）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 //
-// whitelist 検証項目（全て合格して初めて採用）:
-//   - contract が object（配列・null 除く）
-//   - contract.eligible === true
-//   - contract.contract が 't1' か 't2' のいずれか
-//   - contract.title が非空 string
-//   - contract.issue_type が feat/fix/docs/refactor/chore/test/perf/ci のいずれか
-//   - contract.acceptance_criteria が長さ1以上の配列で全要素が非空 string
-//   - contract.breaking_keyword_scan === false（boolean 厳格。true は defense-in-depth で reject）
-//   - contract.scope が string
-//   - contract.scope_truncated が boolean（issue #596: 切断事実を REQ へ運ぶ。旧形式は fail-open で sonnet へ）
-//   - contract.comment_count === 0（整数厳格。comments がある issue は body/comment 突合のため sonnet analyze へ回す。issue #573）
+// whitelist 検証項目（1 つでも不合格なら null。呼び出し元は prerun 出力の契約違反として throw する —
+// LLM 転写経路は存在しないので fallback 先は無い）:
+//   - analyze が object（配列・null 除く）で analyze.ok === true
+//   - analyze.analyze_path が 'contract' か 'jev'（'sonnet' はゲート後に Workflow 側が付ける値で入力には現れない）
+//   - analyze.issue_title が非空 string
+//   - analyze.issue_type が非空 string（enum 外は classifyShape が floor=complex に倒すので here では弾かない）
+//   - analyze.acceptance_criteria が配列で全要素が非空 string（空配列は許容 — AC 空ゲートは Workflow 側）
+//   - analyze.breaking_change / breaking_keyword_scan が boolean
+//   - analyze.comment_overrides / comment_conflicts / uncertain / jev_reasons が string 配列
+//   - analyze.scope が string、analyze.scope_truncated が boolean
 //
-// 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
-// 事前 shape 見積もり（LLM の shape / 見込み file 数）は REQ に載せない — 実効 shape は
-// realized diff の file 数から classifyShape が決める（issue #676）。
-function buildReqFromContract(contract, issueNumber) {
-  if (contract === null || typeof contract !== 'object' || Array.isArray(contract)) return null
-  if (contract.eligible !== true) return null
-  if (contract.contract !== 't1' && contract.contract !== 't2') return null
-  if (typeof contract.title !== 'string' || contract.title.length === 0) return null
+// 合格時、REQ をキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
+// 事前 shape 見積もりは REQ に載せない — 実効 shape は realized diff の file 数から classifyShape が決める（issue #676）。
+const ANALYZE_PATH_INPUT = ['contract', 'jev']
 
-  const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci']
-  if (!validTypes.includes(contract.issue_type)) return null
+function isStringArray(v) {
+  return Array.isArray(v) && v.every((s) => typeof s === 'string')
+}
 
-  if (!Array.isArray(contract.acceptance_criteria) || contract.acceptance_criteria.length === 0) return null
-  if (!contract.acceptance_criteria.every((ac) => typeof ac === 'string' && ac.length > 0)) return null
+function buildReqFromContract(analyze, issueNumber) {
+  if (analyze === null || typeof analyze !== 'object' || Array.isArray(analyze)) return null
+  if (analyze.ok !== true) return null
+  if (!ANALYZE_PATH_INPUT.includes(analyze.analyze_path)) return null
+  if (typeof analyze.issue_title !== 'string' || analyze.issue_title.length === 0) return null
+  if (typeof analyze.issue_type !== 'string' || analyze.issue_type.length === 0) return null
 
-  if (contract.breaking_keyword_scan !== false) return null
-  if (contract.comment_count !== 0) return null
-  if (typeof contract.scope !== 'string') return null
-  if (typeof contract.scope_truncated !== 'boolean') return null
+  if (!Array.isArray(analyze.acceptance_criteria)) return null
+  if (!analyze.acceptance_criteria.every((ac) => typeof ac === 'string' && ac.length > 0)) return null
+
+  if (typeof analyze.breaking_change !== 'boolean') return null
+  if (typeof analyze.breaking_keyword_scan !== 'boolean') return null
+  if (!isStringArray(analyze.comment_overrides)) return null
+  if (!isStringArray(analyze.comment_conflicts)) return null
+  if (!isStringArray(analyze.uncertain)) return null
+  if (!isStringArray(analyze.jev_reasons)) return null
+  if (typeof analyze.scope !== 'string') return null
+  if (typeof analyze.scope_truncated !== 'boolean') return null
 
   const req = {
-    summary: `Issue #${issueNumber}: ${contract.title}`,
-    issue_type: contract.issue_type,
-    acceptance_criteria: contract.acceptance_criteria.slice(0, 20),
-    scope: contract.scope,
-    scope_truncated: contract.scope_truncated,
-    breaking_change: false,
-    breaking_keyword_scan: false,
-    breaking_evidence: '',
-    ambiguities: [],
+    summary: `Issue #${issueNumber}: ${analyze.issue_title}`,
+    issue_number: Number(issueNumber),
+    issue_title: analyze.issue_title,
+    issue_type: analyze.issue_type,
+    acceptance_criteria: analyze.acceptance_criteria.slice(0, 20),
+    scope: analyze.scope,
+    scope_truncated: analyze.scope_truncated,
+    breaking_change: analyze.breaking_change,
+    breaking_keyword_scan: analyze.breaking_keyword_scan,
+    breaking_evidence: typeof analyze.breaking_evidence === 'string' ? analyze.breaking_evidence : '',
+    comment_overrides: analyze.comment_overrides.slice(),
+    comment_conflicts: analyze.comment_conflicts.slice(),
+    uncertain: analyze.uncertain.slice(),
+    analyze_path: analyze.analyze_path,
+    jev_reasons: analyze.jev_reasons.slice(),
   }
-  if (Number.isInteger(contract.scope_total_chars) && contract.scope_total_chars >= 0) {
-    req.scope_total_chars = contract.scope_total_chars
+  if (Number.isInteger(analyze.scope_total_chars) && analyze.scope_total_chars >= 0) {
+    req.scope_total_chars = analyze.scope_total_chars
+  }
+  if (Number.isInteger(analyze.comment_count) && analyze.comment_count >= 0) {
+    req.comment_count = analyze.comment_count
   }
   // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implement-fable へ issue 本文として
-  // 渡す。scope_total_chars と同じ optional copy（型が合うときだけキーを立てる。欠落は Fable prompt 側で
-  // 「本文なし・AC を正とする」に倒れる）。
-  if (typeof contract.issue_body === 'string') {
-    req.issue_body = contract.issue_body
+  // 渡す。型が合うときだけキーを立てる（欠落は Fable prompt 側で「本文なし・AC を正とする」に倒れる）。
+  if (typeof analyze.issue_body === 'string') {
+    req.issue_body = analyze.issue_body
   }
-  if (typeof contract.issue_body_truncated === 'boolean') {
-    req.issue_body_truncated = contract.issue_body_truncated
+  if (typeof analyze.issue_body_truncated === 'boolean') {
+    req.issue_body_truncated = analyze.issue_body_truncated
   }
   return req
 }
-// ==== END inline: _lib/analyze-contract.mjs ====
-// ==== BEGIN inline: _lib/analyze-provenance.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// _lib/analyze-provenance.mjs
-// verifyAnalyzeProvenance: dev-flow の Analyze phase (sonnet analyze 経路) が返す REQ の issue 取得
-// 実在性を、ground-truth probe（gh issue view --json number,title の exec-proxy 結果）との決定論突合
-// で検証する純粋関数（issue #451）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-//
-// fail-closed の理由（W7 分類: incentive-structural）: probe（issue-meta exec-proxy）に到達できない、
-// または probe 自体が要求 issue と不一致という状況は、analyze agent 自身も issue 本文を取得できて
-// いない状況と等価であり、捏造 REQ のまま Implement phase へ進行させるより中断（needs_clarification）
-// の方がコストが低い。analyze agent に「取得成功」を self-report させる incentive を与えないため、
-// 判定は本関数のような決定論突合のみに委ねる。
-//
-// comment_count 突合（PR #578）: probe（`gh issue view --json number,title,comments`）が
-// comments 配列の要素数を comment_count として報告している場合のみ、REQ 側の comment_count
-// （dev-issue-analyze skill 出力を sonnet analyze agent が verbatim 転写した値）と突合する。
-// probe が comment_count を報告していない（ISSUE_META.comment_count は非 required — number/title と
-// 同じ precedent）場合は判定不能のため skip する（既存 fixture・呼び出し側との後方互換）。これは
-// issue #573 が直した「sonnet analyze 経路が comments を読まないまま Implement へ進み、comment に
-// よる訂正が黙って落ちる」バグの再発防止で、agent に「comments を読んだ」ことを self-report させず
-// probe の機械的カウントと突合する（W7 分類: incentive-structural、既存の analyze provenance 突合と
-// 同じ設計）。
-//
-// 判定順（最初に落ちた項目の reason を返す）:
-//   1. probe が null/非object または probe.ok !== true            → 'probe_failed'
-//   2. Number(probe.number) !== Number(issueNumber)                 → 'probe_issue_mismatch'
-//   3. probe.title が非空 string でない（trim 後空含む）           → 'probe_title_empty'
-//   4. Number(req?.issue_number) !== Number(issueNumber)             → 'req_issue_mismatch'
-//   5. norm(req?.issue_title) !== norm(probe.title)                  → 'title_mismatch'
-//   6. probe.comment_count が有限数値のとき、req?.comment_count が
-//      有限数値でない                                                → 'req_comment_count_invalid'
-//   7. probe.comment_count が有限数値のとき、
-//      Number(req.comment_count) !== Number(probe.comment_count)     → 'comment_count_mismatch'
-//   8. 全合格                                                        → ok:true
-//
-// norm は trim + 連続空白の単一空白畳み込みのみ（case・記号は保持 — 過剰正規化は反証力を落とす）。
-function verifyAnalyzeProvenance(req, probe, issueNumber) {
-  const norm = (s) => String(s ?? '').trim().replace(/\s+/g, ' ')
 
-  if (probe === null || typeof probe !== 'object' || Array.isArray(probe) || probe.ok !== true) {
-    return {
-      ok: false,
-      reason: 'probe_failed',
-      detail: 'issue metadata の決定論取得に失敗（gh 到達不能の可能性）— 取得検証不能のため fail-closed',
-    }
+// analyzeGateReasons: Analyze phase の 3 条件ゲート。非空なら needs_clarification（source=analyze）で終端し、
+// ゲート後にだけ sonnet を 1 spawn して人間向け missing_context を生成する。
+//   - AC 空: 決定論 parse が AC 見出し / 項目を見つけられなかった
+//   - comment_conflicts 非空: body と comment の矛盾、または権限なし / 低確信の上書き（fail-closed）
+//   - uncertain 非空: Jev の低確信 / 応答なし / 無効（fail-closed）
+// 返り値は人間向けの理由行（missing_context の決定論部分）。
+function analyzeGateReasons(req) {
+  const reasons = []
+  if (!Array.isArray(req?.acceptance_criteria) || req.acceptance_criteria.length === 0) {
+    reasons.push('acceptance_criteria が空 — issue に受け入れ基準（`## 受け入れ基準` / `## Acceptance Criteria` 見出し + checkbox / 箇条書き）を書いてから再起動せよ')
   }
-
-  if (Number(probe.number) !== Number(issueNumber)) {
-    return {
-      ok: false,
-      reason: 'probe_issue_mismatch',
-      detail: `probe.number(${probe.number}) と issueNumber(${issueNumber}) が不一致`,
-    }
-  }
-
-  if (typeof probe.title !== 'string' || probe.title.trim().length === 0) {
-    return {
-      ok: false,
-      reason: 'probe_title_empty',
-      detail: 'probe.title が非空文字列でない',
-    }
-  }
-
-  if (Number(req?.issue_number) !== Number(issueNumber)) {
-    return {
-      ok: false,
-      reason: 'req_issue_mismatch',
-      detail: `req.issue_number(${req?.issue_number}) と issueNumber(${issueNumber}) が不一致`,
-    }
-  }
-
-  if (norm(req?.issue_title) !== norm(probe.title)) {
-    return {
-      ok: false,
-      reason: 'title_mismatch',
-      detail: `req.issue_title(${JSON.stringify(req?.issue_title)}) が probe.title(${JSON.stringify(probe.title)}) と不一致`,
-    }
-  }
-
-  if (typeof probe.comment_count === 'number' && Number.isFinite(probe.comment_count)) {
-    if (typeof req?.comment_count !== 'number' || !Number.isFinite(req.comment_count)) {
-      return {
-        ok: false,
-        reason: 'req_comment_count_invalid',
-        detail: `req.comment_count(${JSON.stringify(req?.comment_count)}) が数値でない（probe.comment_count=${probe.comment_count}）`,
-      }
-    }
-
-    if (Number(req.comment_count) !== Number(probe.comment_count)) {
-      return {
-        ok: false,
-        reason: 'comment_count_mismatch',
-        detail: `req.comment_count(${req.comment_count}) が probe.comment_count(${probe.comment_count}) と不一致 — comments 取得漏れの疑い（PR #578）`,
-      }
-    }
-  }
-
-  return { ok: true, reason: null, detail: null }
+  for (const c of (req?.comment_conflicts ?? [])) reasons.push(`issue body と comment の矛盾（どちらが有効か確定できない）: ${c}`)
+  for (const u of (req?.uncertain ?? [])) reasons.push(`決定論 / Jev で確定できない判定: ${u}`)
+  return reasons
 }
-// ==== END inline: _lib/analyze-provenance.mjs ====
+// ==== END inline: _lib/analyze-contract.mjs ====
 // ==== BEGIN inline: _lib/ui-verify.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // UI Verify: dev-flow の Evaluate phase に付随する agent-browser ベースの UI 検証ゲート向け純関数群。
 // isUiPath: 変更ファイルが UI 検証対象かを判定する。
@@ -3897,11 +3835,10 @@ const EVAL_STUCK = 2       // 同一 topic がこの回数出たら stuck と判
 const GREEN_MAX = 3   // test green までの実装差し戻し上限
 const BLOCK_MAX = 2   // BLOCKED 由来の再計画上限
 const DESIGN_REPLAN_MAX = 2  // design 差し戻し(replan+reimpl)の決定論上限。topic fingerprint 非依存の last-resort hard cap（incentive-structural。paraphrase で stuck 検出が漏れても総回数で打ち切る。BLOCK_MAX と同思想）
-const AMBIGUITY_MAX = 2  // ambiguities がこの件数を超えたら needs_clarification で人間へ
 if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue）')
 
 // ---- failure telemetry helper（2-stage handoff）----
-// 4 つの経路（needs_clarification×3・cross-repo graceful 終了。empty-diff throw 直前でも呼ぶが
+// 4 つの経路（needs_clarification×3（analyze_prerun / analyze / implement）・cross-repo graceful 終了。empty-diff throw 直前でも呼ぶが
 // throw のため呼び出し元へ status を戻さない）で呼ばれる。choreography 本体は canonical
 // _lib/journal-handoff.mjs の runJournalHandoff。
 // outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す。
@@ -3964,52 +3901,14 @@ const ISOLATION_PROBE = {
   type: 'object', required: ['written'],
   properties: { written: { type: 'boolean' }, error: { type: 'string' } },
 }
-const REQ = {
+// Analyze のゲート後（AC 空 / comment_conflicts / uncertain）にだけ sonnet を 1 spawn し、人間向けの
+// missing_context を生成させる用のスキーマ。REQ は agent が返すものではなく args.setup.analyze から
+// buildReqFromContract が決定論構成する。
+const CLARIFY = {
   type: 'object',
-  required: ['summary', 'acceptance_criteria', 'breaking_change', 'breaking_keyword_scan', 'issue_number', 'issue_title'],
+  required: ['missing_context'],
   properties: {
-    summary: { type: 'string' },
-    issue_type: { type: 'string' },
-    acceptance_criteria: { type: 'array', items: { type: 'string' } },
-    scope: { type: 'string' },
-    scope_truncated: { type: 'boolean' },
-    scope_total_chars: { type: 'number' },
-    issue_body: { type: 'string' },
-    issue_body_truncated: { type: 'boolean' },
-    ambiguities: { type: 'array', items: { type: 'string' } },
-    comment_overrides: { type: 'array', items: { type: 'string' } },
-    comment_conflicts: { type: 'array', items: { type: 'string' } },
-    comment_count: { type: 'number' },
-    breaking_change: { type: 'boolean' },
-    breaking_keyword_scan: { type: 'boolean' },
-    breaking_evidence: { type: 'string' },
-    issue_number: { type: 'number' },
-    issue_title: { type: 'string' },
-  },
-}
-const CONTRACT = {
-  type: 'object',
-  required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    result: { type: 'object' },
-    error: { type: 'string' },
-    epoch: { type: 'number' },
-  },
-}
-// analyze 結果の決定論 provenance 突合（gh issue view の exec-proxy）用スキーマ。
-// comment_count は PR review で追加: sonnet analyze 経路が comments を落とした状態で
-// REQ を返しても検知できなかったため、probe 側の実測 comment 数として持たせ
-// verifyAnalyzeProvenance で REQ.comment_count（skill 出力 verbatim）と突合する。
-const ISSUE_META = {
-  type: 'object',
-  required: ['ok'],
-  properties: {
-    ok: { type: 'boolean' },
-    number: { type: 'number' },
-    title: { type: 'string' },
-    comment_count: { type: 'number' },
-    error: { type: 'string' },
+    missing_context: { type: 'array', items: { type: 'string' } },
     epoch: { type: 'number' },
   },
 }
@@ -5346,7 +5245,7 @@ function adoptReportedFiles(plan, results) {
 // redgreen-verify / evaluator が行う（agent 定義 agents/dev-implement-fable.md）。
 // blocked（BLOCKED 再計画時のみ）: blockSeen 累積の approach_mismatch findings（過去に BLOCKED になった
 // 全アプローチへの回帰禁止）と DONE 成果（再実装させない）を同じ prompt に付けて再 spawn する。
-function fableImplPrompt(t, { req, fixFeedback, extraContext, blocked }) {
+function fableImplPrompt(t, { req, fixFeedback, blocked }) {
   const body = typeof req?.issue_body === 'string' && req.issue_body.length > 0 ? req.issue_body : null
   return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
     + `issue #${ISSUE} を計画から実装まで仕上げよ。git add / commit はするな。\n`
@@ -5357,7 +5256,6 @@ function fableImplPrompt(t, { req, fixFeedback, extraContext, blocked }) {
         : 'issue 本文: analyze 出力に含まれていない — acceptance_criteria を正として実装せよ\n')
     + `acceptance_criteria（evaluator はこの AC を採点軸にする。全 AC を満たし、各 AC を守るテストを残せ）:\n${JSON.stringify(req?.acceptance_criteria ?? [])}\n`
     + (fixFeedback ? `fix_feedback（Evaluate 差し戻し。各項目を解消）:\n${JSON.stringify(fixFeedback)}\n` : '')
-    + (extraContext ? `補足コンテキスト（comprehensive 再分析の結果。これで情報不足を解消して実装せよ）:\n${JSON.stringify(extraContext)}\n` : '')
     + (blocked
         ? `前回実装が BLOCKED になった。別アプローチで計画を立て直して実装せよ。\n`
           + (blocked.done.length
@@ -5374,12 +5272,12 @@ function fableImplPrompt(t, { req, fixFeedback, extraContext, blocked }) {
 // failOpenAgent 経由（throw / null は per-task null に落ち、drop として可視化する）。
 // parallel fan-out / pipeline() は持たない（plan+impl 統合 agent が 1 spawn で全体を持つ）。
 // 返り値は結果配列（null は含めない）— drop 件数は呼び出し側が implementDrops で数える。
-async function runImplement(req, plan, fixFeedback, tag, extraContext, blocked) {
+async function runImplement(req, plan, fixFeedback, tag, blocked) {
   if (!isFablePlan(plan)) throw new Error(`dev-flow: ${tag}: plan に dev-implement-fable task が無い（合成 plan 以外は受理しない）`)
   const results = []
   let dropped = 0
   for (const t of (plan.serial ?? [])) {
-    const r = await failOpenAgent(fableImplPrompt(t, { req, fixFeedback, extraContext, blocked }),
+    const r = await failOpenAgent(fableImplPrompt(t, { req, fixFeedback, blocked }),
       { agentType: FABLE_IMPL_AGENT, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
     if (r) results.push(r)
     else dropped++
@@ -5434,13 +5332,8 @@ log(hasNextJs(PRERUN.frameworks)
   : `Setup(stack): Next.js 非検出（frameworks=${JSON.stringify(PRERUN.frameworks)}）— Turbopack fallback 規約は注入しない`)
 const branch = PRERUN.branch
 const setup = PRERUN
-// isolation probe（維持）: implementer と同じ Write tool 経路で書けるかを subagent で検証する。wrapper の Bash では意味が変わるため代替しない。
-const isoToken = String(PRERUN.epoch)
-const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
-if (isoProbe && isoProbe.written === false) {
-  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: `{ issue: ${ISSUE}, setup: <dev-flow-prerun --issue ${ISSUE} --worktree ${WT} の stdout JSON> }`, targetPath: WT, error: isoProbe.error }))
-}
-if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
+// isolation probe は Analyze のゲート判定の後（Implement 直前）で spawn する — needs_clarification は
+// probe / fable より前に確定させ、人間へ返す run に spawn を 1 つも使わない。
 
 // Validate / Final reconcile 共有の test 実行 prompt。WT 確定後（Setup 完了後）に
 // 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
@@ -5468,196 +5361,87 @@ const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json �
   + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
   + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`
 
-const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --depth ${depth}\` を実行し、`
-  + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
-  + `受入条件（acceptance_criteria）は独立に検証可能な最小単位へ統合して列挙せよ（同義の言い換え・手段の重複で個数を水増ししない。1〜2 ファイルの軽微変更なら通常 4 個以内に収まる）。`
-  + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`
-  + `issue の comments（取得 JSON の comments 配列 / skill 出力の comments）を created_at 順に body と同じ要件入力として読め。comment が body の記述を明示的に訂正・上書きしている（例: 『訂正』『前倒し』『X ではなく Y』）場合でも、その comment の author が issue 報告者本人（skill 出力の issue_author と一致）または author_association が OWNER/MEMBER/COLLABORATOR のいずれかである場合に限り（author / issue_author / author_association のいずれかが空文字列・不明のときは一致とみなすな）comment_overrides:string[] に『body: <旧記述> → comment: <新記述>（<author>, <created_at>）』の形で列挙して採用せよ（本 repo は public であり、任意の外部コメント者に要件上書きを許すと comment_overrides が信頼できない経路になる、issue #573 review on PR #578）。上記条件を満たさない訂正、または body と comment が食い違うがどちらが有効か comment から確定できない場合は、黙ってどちらも採用せず comment_conflicts:string[] に同形式で列挙せよ（body 側の記述はそのまま要件入力として残す）。comments が無ければ両方とも空配列。`
-  + `受入条件の見出しは \`受け入れ基準\` / \`受け入れ条件\` / \`受入基準\` / \`受入条件\` / \`Acceptance Criteria\` 等の表記ゆれを全て AC として扱え。AC 相当の見出し・項目が issue に 1 つも無い場合は acceptance_criteria を推測で埋めず、ambiguities にその旨を入れて返せ。`
-  + `さらに、skill の JSON 出力に含まれる breaking_keyword_scan (boolean) をそのまま verbatim で breaking_keyword_scan として返せ（全 depth の出力に含まれる。自分で再判定・変更するな）。`
-  + `さらに、skill の JSON 出力に含まれる issue_body (string) と issue_body_truncated (boolean) をそのまま verbatim で返せ（要約・整形禁止。Implement phase が issue 本文として implementer に渡す）。`
-  + `さらに、skill の JSON 出力に含まれる comment_count (number) をそのまま verbatim で comment_count として返せ（全 depth の出力に含まれる。自分で数え直す・変更するな。PR #578: 実際に取得した comments 件数の決定論突合に使う）。`
-  + `さらに、この issue の実装が既存 API/schema/データ形式の非互換変更や migration を必要とするかを issue 内容から判定し breaking_change: boolean として返せ。『breaking を避ける・breaking floor を変更しない』等の不変条件・回避への言及だけでは true にするな。true の場合は根拠を issue から短く引用して breaking_evidence: string に、false なら空文字を返せ。`
-  + `さらに、取得した issue の番号を issue_number、title を一字一句 verbatim で issue_title として返せ（要約・翻訳・整形禁止）。issue 本文の取得（gh）に失敗した場合は要件を推測・捏造せず、summary に取得失敗の旨を書き acceptance_criteria は空配列、ambiguities に失敗理由を入れて返せ。`
-  // skill 出力の scope / body_preview は上限付き抜粋。切断は末尾マーカー + boolean で非 silent 化されており、
-  // ここで「抜粋に無い = issue に無い」の推論を禁じる。規範性クラス: contract（scope_truncated / body_preview_truncated /
-  // [TRUNCATED: ...] マーカーの意味定義 = analyze-issue.sh 出力との入出力契約）+ incentive-structural（抜粋のみが context に
-  // ある構造分断で欠落判定に傾く傾向を 3 run 空振りで実測済み）。sunset 対象ではない。
-  + `さらに、skill の JSON 出力の scope / body_preview は上限付きの抜粋である。scope_truncated または body_preview_truncated が true（抜粋末尾に [TRUNCATED: ...] マーカーがある）の場合は、skill 出力の body_dump_path が指すファイル（skill が \`--dump-body\` で書き出した body 全文）を Read してから要件抽出せよ（issue の再取得はするな）。抜粋に無いことを根拠に ambiguities を立ててはならない（全文を読んだ上で本当に未記載の点のみ挙げよ）。scope は skill 出力の scope をマーカー含め verbatim で、scope_truncated は skill 出力の boolean を verbatim で返せ（自分で再判定・除去するな）。`
-
-// contract probe prompt:
-// DEPTH==='standard' のときのみ決定論 parse 降格経路が使用する。analyze-issue が issue 本体の取得
-// （bare `gh issue view`）を内蔵しているため、probe は `analyze-issue N [--repo R] --contract` の
-// 1 単文を実行し stdout JSON を verbatim 転写するだけの read-only exec-proxy（結果の判断は
-// buildReqFromContract 側の whitelist 検証が担う）。subagent 側に「gh の stdout を file へ落として
-// script に渡す」取得段を置いてはならない（file へ落とす形の gh は bare 単文ではなく、取得が失敗する。
-// _lib/analyze-fetch-no-redirect.test.mjs が pin）。
-// script は plugin bin/ の bare 名で呼ぶ（WT は対象 repo の worktree であり skills 内部 script は存在しないため）。
-const contractProbePrompt = `## Objective\n`
-  + `issue #${ISSUE} の contract 決定論 parse を実行し、stdout の JSON を result へ verbatim 転写せよ。\n`
-  + `## Steps\n`
-  + `1. \`analyze-issue ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --contract\` を**bare 名を先頭トークンとする単文**で 1 回だけ実行し、stdout の JSON をそのまま result へ verbatim 転写せよ。`
-  + `issue の取得は script が内部で行う — 事前に gh を実行するな。`
-  + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）・リダイレクト・\`&&\` 連結は禁止。\n`
-  + `exit 0 かつ stdout が JSON として parse できれば ok:true・result にその JSON を設定し、`
-  + `それ以外（exit 非0・stdout 空・JSON 不正）は ok:false・error に理由を短く入れて返せ。原因調査はするな。1 回失敗したら即座に ok:false で報告せよ（再試行禁止）。\n`
-  + `2. ` + EPOCH_INSTRUCTION
-  + `## Output format\n{ "ok": boolean, "result": object, "error": string, "epoch": number(optional) }\n`
-  + `## Tools\n使用可: Bash, Read のみ。Write/Edit/git 操作は禁止。\n`
-  + `## Boundary\nファイルは一切変更しない（read-only probe）。\n`
-  + `## Token cap\n200 語以内で完結すること。`
+// clarifyPrompt: Analyze のゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）が引いたときにだけ
+// sonnet（dev-runner）を 1 spawn し、決定論のゲート理由を人間が答えられる質問文（missing_context）へ
+// 書き起こさせる。要件抽出・AC 抽出・issue 転写はさせない（REQ は args.setup.analyze から決定論構成済み。
+// ここで LLM に issue を読み直させて要件を再構成すると、転写事故（title / AC / comment の読み落とし・捏造）に
+// 対する provenance 突合が再び要る）。失敗（null / throw）は fail-open でゲート理由をそのまま missing_context にする。
+const clarifyPrompt = (gateReasons) => `cd ${WT} で作業。issue #${ISSUE} は決定論の analyze（analyze-issue --contract + Jev 有界判定）で次の理由により実装に進めないと判定された。\n`
+  + `\`Skill: dev-issue-analyze ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --depth comprehensive\` を実行して issue の本文・comments を読み、`
+  + `各理由について**人間（issue 作成者）が issue body を直せば解消する具体的な質問文**を missing_context:string[] として返せ（理由 1 件につき 1〜2 文、日本語）。`
+  + `質問には「body のどの記述と comment のどの記述が食い違うか」「非互換変更 / migration の有無をどこに明記すべきか」「受け入れ基準をどの見出し形式で書くか」を含めよ。`
+  + `要件・受け入れ基準を自分で推測して埋めるな。issue の再取得は Skill 経由の 1 回のみ。\n`
+  + `ゲート理由（決定論。verbatim で参照し、削除・要約するな）:\n${JSON.stringify(gateReasons)}\n`
+  + EPOCH_INSTRUCTION
 
 // ============================================================
-// Phase Analyze: issue 分析（dev-issue-analyze skill を dev-runner 経由で呼ぶ）
+// Phase Analyze: args.setup.analyze（dev-flow-prerun の analyze 段 = analyze-issue --contract + Jev 有界判定、
+// deps install と並列）を whitelist 検証して REQ を組み、3 条件ゲートだけを判定する。通常経路の agent
+// spawn は 0。LLM が issue を転写する工程が無いので provenance 突合 / comment_count 突合 / scope 切断時の
+// 再実行は置かない。
 // ============================================================
 phase('Analyze')
-// analyze_start は prerun の epoch_end（deps install / detect-stack 完了後、prerun.sh 末尾で採る）
-// から給電する。epoch（deps install 前）を使うと deps install の数分が analyze の phase_durations に
-// 付け替わるため区別する。isolation-probe の spawn 1 回分のみが analyze 区間に計上される
-// （devflow-durations.mjs 参照）。
+// analyze_start / analyze_end は共に prerun の epoch_end（deps install / analyze 段完了後）から給電する。
+// Analyze phase は純関数の検証とゲート判定だけで agent 応答（epoch）が無い — phase_durations.analyze は
+// ゲート判定時間（≒0）のみ、prerun の analyze 段の所要は prerun_durations.analyze に分けて載せる。
 feedClockMark('analyze_start', { ok: true, epoch: PRERUN.epoch_end })
-// 決定論 parse 降格経路: DEPTH==='standard' のときのみ、dev-runner-haiku exec-proxy で
-// analyze-issue --contract を叩き、純関数 buildReqFromContract で whitelist 検証する。
-// fail-open: throw / null / ok!==true / whitelist 不合格は全て現行の sonnet(dev-runner) analyze へ
-// フォールバックする（analyzePrompt・REQ・need()・needs_clarification 判定・classifyShape 呼び出しは不変）。
-let req = null
-// analyze_end の clock 給電用に hoist。contract 経路採用時は contractRes、
-// sonnet 経路採用時は issueMetaRes の epoch から給電する（maxEpochRes が両者から最大を採る）。
-let contractRes = null
-let issueMetaRes = null
-// analyze 経路の telemetry: ANALYZE_PATH は 'contract' | 'sonnet' の 2 値。
-// ANALYZE_INELIGIBLE_REASON は light path 不採用の理由文字列（採用時は null のままキー欠落）。
-// analyze-issue.sh が返す ineligible_reason をそのまま載せ、probe 自体が失敗した／DEPTH 外で
-// 試行しなかった場合は workflow 側の理由を載せる（light path 拡大の AC を書くために、
-// どの不採用理由が支配的かを journal だけで数えられる必要がある）。
-let ANALYZE_PATH = 'sonnet'
-let ANALYZE_INELIGIBLE_REASON = `contract not attempted (depth=${DEPTH})`
-if (DEPTH === 'standard') {
-  ANALYZE_INELIGIBLE_REASON = 'contract probe exception'
-  try {
-    contractRes = await trackedAgent(
-      contractProbePrompt,
-      { agentType: 'dev-runner-haiku-ro', schema: CONTRACT, label: 'contract-probe#' + ISSUE, phase: 'Analyze' },
-    )
-    ANALYZE_INELIGIBLE_REASON = 'contract probe failed'
-  } catch (e) { log(`⚠️ analyze-contract 呼び出しが例外 — sonnet fallback（fail-open）`) }
-  if (contractRes?.ok === true && contractRes.result) {
-    const c = contractRes.result
-    req = buildReqFromContract(c, ISSUE)
-    if (req) {
-      ANALYZE_PATH = 'contract'
-      ANALYZE_INELIGIBLE_REASON = null
-      log('analyze: 決定論 parse 採用（contract=' + c.contract + '）— sonnet analyze skip')
-    } else {
-      ANALYZE_INELIGIBLE_REASON = (typeof c?.ineligible_reason === 'string' && c.ineligible_reason) ? c.ineligible_reason : 'whitelist rejected'
-      if (Array.isArray(c?.ac_heading_near_miss) && c.ac_heading_near_miss.length) log('⚠️ analyze: AC 見出しの表記ゆれ候補が許容表記に一致しない（' + c.ac_heading_near_miss.join(' / ') + '）— sonnet analyze で拾えなければ needs_clarification になる（issue #573）')
-      log('analyze: contract 非準拠（' + (c?.ineligible_reason || 'whitelist 検証不合格') + '）— sonnet fallback')
-    }
-  } else if (contractRes != null) {
-    log('⚠️ analyze-contract: probe ok!==true — sonnet fallback（fail-open）')
-  }
+ABORT_CTX.phase = 'Analyze'; ABORT_CTX.label = 'analyze-gate'
+const ANALYZE = PRERUN.analyze
+if (ANALYZE.ok !== true) {
+  // prerun の analyze 段が失敗（GitHub 到達不能 / JSON 不正）。捏造経路が無いので REQ を推測で組まず、
+  // 人間へ返す（source=analyze_prerun）。isolation-probe / fable より前なので spawn は 0。
+  log(`⚠️ analyze: prerun の analyze 段が失敗（${ANALYZE.reason}）— needs_clarification で中断（source=analyze_prerun）`)
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: prerun analyze 段の失敗で中断（source=analyze_prerun: ${ANALYZE.reason}）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: typeof ANALYZE.analyze_path === 'string' ? ANALYZE.analyze_path : 'contract' }, phase: 'Analyze' })
+  return { status: 'needs_clarification', source: 'analyze_prerun', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の取得・決定論 parse が prerun で失敗した: ${ANALYZE.reason}`], journal_log_status: journalLogStatus, note: 'dev-flow-prerun の analyze 段（analyze-issue --contract）が失敗したため中断。GitHub CLI の到達性・認証と issue 番号を確認し /dev-flow を再起動すること（prerun は再実行される）。worktree は保持済みで再利用される' }
 }
+const req = buildReqFromContract(ANALYZE, ISSUE)
 if (!req) {
-  req = need(await trackedAgent(
-    analyzePrompt(DEPTH),
-    { agentType: 'dev-runner', schema: REQ, label: `analyze#${ISSUE}`, phase: 'Analyze' },
-  ), 'Analyze')
-
-  // analyze 結果の決定論 provenance 突合（fail-closed — 取得成功を self-report させない）
-  try {
-    issueMetaRes = await trackedAgent(
-      `cd ${WT} で作業。次を実行し stdout の JSON を {"ok": true, "number": <number 値>, "title": <title 値>, "comment_count": <comments 配列の要素数>, "epoch": <date +%s の出力(optional)>} の形で返せ`
-      + `（exit 非0・stdout 空・JSON 不正・コマンド実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。title は一字一句 verbatim で転写せよ。`
-      + `comment_count は取得した comments 配列の長さを \`jq '.comments | length'\` 等で機械的に算出した値のみを返せ — 自己申告・推測は禁止。PR #578: sonnet analyze 経路が comments を読み落としたまま進む再発防止の決定論突合に使う）:\n`
-      + `gh issue view ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --json number,title,comments\n`
-      + EPOCH_INSTRUCTION,
-      { agentType: 'dev-runner-haiku-ro', schema: ISSUE_META, label: 'issue-meta', phase: 'Analyze' },
-    )
-  } catch (e) { log('⚠️ issue-meta probe が例外 — fail-closed（取得検証不能として扱う）') }
-  const prov = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
-  if (prov.ok !== true) {
-    log(`⚠️ analyze: 取得検証不合格（${prov.reason}）— REQ を採用せず needs_clarification で中断（issue #451）`)
-    const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 取得検証不合格（${prov.reason}）で中断（source=analyze_provenance）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
-    return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（${prov.reason}）: ${prov.detail}`], journal_log_status: journalLogStatus, note: 'analyze 結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
-  }
+  throw new Error(`dev-flow: args.setup.analyze が whitelist 検証に不合格（dev-flow-prerun の analyze 段の出力契約違反。受信: ${JSON.stringify(ANALYZE).slice(0, 400)}）— prerun-analyze.sh と buildReqFromContract の契約を揃えてから再実行せよ`)
 }
-
-// scope 切断は経路（contract / sonnet）を問わず log に出す — journal だけでは切断が見えず人間が切り分けられなかった。
-if (req.scope_truncated === true) log(`⚠️ analyze: scope が 4000 字で切断（AC 節除く全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）— 切断位置以降の記述は analyze に届かない可能性がある（issue #596）`)
-
-// issue body と comment の矛盾は黙って片方を採用せず人間へ返す（fail-closed）。
+// analyze 経路の telemetry: ANALYZE_PATH は 'contract' | 'jev' | 'sonnet'（sonnet はゲート後の spawn 時のみ）。
+// ANALYZE_INELIGIBLE_REASON は Jev に回した理由（prerun の jev_reasons を '; ' 結合。contract 経路は null でキー欠落）。
+let ANALYZE_PATH = req.analyze_path
+let ANALYZE_INELIGIBLE_REASON = req.jev_reasons.length ? req.jev_reasons.join('; ') : null
+log(`analyze: prerun 決定論 parse を採用（path=${ANALYZE_PATH}${ANALYZE_INELIGIBLE_REASON ? ' / jev: ' + ANALYZE_INELIGIBLE_REASON : ''} / AC ${req.acceptance_criteria.length} 件 / prerun analyze ${Number.isFinite(ANALYZE.duration_seconds) ? ANALYZE.duration_seconds : '?'}s）— Analyze phase の spawn 0`)
+if (req.breaking_change === true) log(`analyze: breaking_change=true（${req.breaking_evidence || '根拠なし'}）`)
+if (req.scope_truncated === true) log(`⚠️ analyze: scope が 4000 字で切断（AC 節除く全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）— 切断域の記述は implementer に届かない（acceptance_criteria は全件届く。issue #596）`)
+if (Array.isArray(ANALYZE.ac_heading_near_miss) && ANALYZE.ac_heading_near_miss.length) log(`⚠️ analyze: AC 見出しの表記ゆれ候補が許容表記に一致しない（${ANALYZE.ac_heading_near_miss.join(' / ')}）— AC 空なら needs_clarification になる（issue #573）`)
 // comment が body を明示訂正した override は採用済みとして log で可視化のみ（REQ にも残る）。
-const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
-const commentOverrides = strList(req.comment_overrides)
-const commentConflicts = strList(req.comment_conflicts)
-if (commentOverrides.length) log(`analyze: comment による body 訂正を採用（${commentOverrides.length} 件）: ${commentOverrides.join(' | ')}`)
-if (commentConflicts.length) {
-  log(`⚠️ analyze: issue body と comment が矛盾（${commentConflicts.length} 件）— needs_clarification で中断（issue #573）`)
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: body/comment 矛盾 ${commentConflicts.length} 件で中断（source=analyze_comment_conflict）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
-  return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: commentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573）。worktree は保持済みで再利用される' }
-}
+if (req.comment_overrides.length) log(`analyze: comment による body 訂正を採用（${req.comment_overrides.length} 件）: ${req.comment_overrides.join(' | ')}`)
 
-let ambiguities = req.ambiguities ?? []
-// PR レビュー指摘: scope 切断域を根拠に sonnet が ambiguities を生成する実際の失敗経路は
-// analyzePrompt の文言のみに依存し決定論の防御が無かった。scope_truncated===true かつ ambiguities が
-// 閾値超過のときのみ、depth comprehensive（body_full 付き — 切断されない全文が skill 出力に直接含まれる）
-// で analyze を 1 回だけ再実行し、切断域を実際に読んだ上での再判定を試みる（無限ループ防止のため 1 回のみ。
-// 再実行後もなお曖昧なら下の needs_clarification へ進む）。
-if (req.scope_truncated === true && ambiguities.length > AMBIGUITY_MAX) {
-  log(`⚠️ analyze: scope 切断 + ambiguities 超過（${ambiguities.length} > ${AMBIGUITY_MAX}）— depth comprehensive で analyze を再実行し切断域を含む全文を確認する（issue #598 review on PR #598）`)
-  // PR レビュー指摘（major）: 補助的な 1 回再実行の失敗（agent throw / StructuredOutput
-  // 未返却等）で run 全体を落とさない — need() ではなく failOpenAgent で null に落とし、null なら
-  // 警告 log のみで初回 req/ambiguities を保持したまま下の needs_clarification 判定へ進む
-  // （本 PR 以前の graceful 挙動を維持。切断ヒントは req.scope_truncated が不変のため下流で維持される）。
-  const retryReq = await failOpenAgent(
-    analyzePrompt('comprehensive'),
-    { agentType: 'dev-runner', schema: REQ, label: `analyze-retrunc#${ISSUE}`, phase: 'Analyze' },
-  )
-  if (retryReq == null) {
-    log(`⚠️ analyze: scope 切断再実行が失敗（agent throw/null）— 初回 req/ambiguities を保持して needs_clarification 判定へ進む（issue #598 review on PR #598）`)
-  } else {
-    req = retryReq
-    ambiguities = req.ambiguities ?? []
-
-    // PR レビュー指摘: 再実行で差し替えた req は取得検証・comment 矛盾判定を
-    // 再適用していないと、2 回目の sonnet 出力が取得検証なしで Implement へ流れてしまう（fail-closed の抜け穴）。
-    // 初回 analyze で ambiguities>AMBIGUITY_MAX まで到達している時点で issueMetaRes probe は既に成功済み
-    // （probe 失敗なら初回 verifyAnalyzeProvenance で既に needs_clarification 終端している）ため、
-    // 同一 probe（issue metadata は run 内で不変）で再検証する。
-    const provRetry = verifyAnalyzeProvenance(req, issueMetaRes, ISSUE)
-    if (provRetry.ok !== true) {
-      log(`⚠️ analyze: 再実行後の取得検証不合格（${provRetry.reason}）— REQ を採用せず needs_clarification で中断（issue #451 / #598）`)
-      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の取得検証不合格（${provRetry.reason}）で中断（source=analyze_provenance_retry）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
-      return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の本文取得を決定論検証できなかった（scope 切断対応の再実行後、${provRetry.reason}）: ${provRetry.detail}`], journal_log_status: journalLogStatus, note: 'analyze 再実行（scope 切断対応）の結果が実際の issue 取得に基づくことを検証できないため中断（捏造防止の fail-closed。issue #451 / #598）。gh の到達性と issue 番号を確認し /dev-flow を再起動すること。worktree は保持済みで再利用される' }
-    }
-    const retryCommentConflicts = strList(req.comment_conflicts)
-    if (retryCommentConflicts.length) {
-      log(`⚠️ analyze: 再実行後も issue body と comment が矛盾（${retryCommentConflicts.length} 件）— needs_clarification で中断（issue #573 / #598）`)
-      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: 再実行後の body/comment 矛盾 ${retryCommentConflicts.length} 件で中断（source=analyze_comment_conflict_retry）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
-      return { status: 'needs_clarification', source: 'analyze', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: retryCommentConflicts, journal_log_status: journalLogStatus, note: 'issue body と comment の記述が矛盾しており、どちらが有効か comment から確定できない（scope 切断対応の再実行後）。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（黙って片方を採用しない。issue #573 / #598）。worktree は保持済みで再利用される' }
-    }
-  }
-}
-if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUITY_MAX) {
-  log(`⚠️ analyze: 要件が曖昧（AC 空=${(req.acceptance_criteria ?? []).length === 0} / ambiguities=${ambiguities.length} > AMBIGUITY_MAX=${AMBIGUITY_MAX}）— needs_clarification で中断`)
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: 'analyze: 要件が曖昧（AC 空 or ambiguities 超過）で中断（source=analyze）', telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Analyze' })
-  const scopeTruncHint = req.scope_truncated === true
-    ? [`issue body（AC 節除く）が 4000 字を超え scope が切断されている（全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）。切断位置以降に書かれた回答・仕様は analyze に届いていない可能性がある — 回答は body 冒頭に置くか body を短くしてから /dev-flow を再起動すること（issue #596）`]
-    : []
-  const baseMissingContext = (req.acceptance_criteria ?? []).length === 0
-    ? (ambiguities.length ? ambiguities : ['acceptance_criteria が空 — issue から受入条件を抽出できなかった'])
-    : ambiguities
+// 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）。引いたときだけ sonnet を 1 spawn して
+// 人間向け missing_context を生成し、needs_clarification で終端する（isolation-probe / fable の spawn 0）。
+const gateReasons = analyzeGateReasons(req)
+if (gateReasons.length) {
+  log(`⚠️ analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）— sonnet で missing_context を生成して needs_clarification で中断`)
+  ANALYZE_PATH = 'sonnet'
+  const clarify = await failOpenAgent(clarifyPrompt(gateReasons), { agentType: 'dev-runner', schema: CLARIFY, label: `analyze-clarify#${ISSUE}`, phase: 'Analyze' })
+  const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
+  const clarified = strList(clarify?.missing_context)
+  if (!clarified.length) log('⚠️ analyze: missing_context 生成が null / 空 — ゲート理由をそのまま人間へ返す（fail-open）')
+  const missingContext = clarified.length ? clarified.concat(gateReasons) : gateReasons
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）で中断（source=analyze）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: ANALYZE_PATH, ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}) }, phase: 'Analyze' })
   return {
     status: 'needs_clarification',
     source: 'analyze',
     issue: ISSUE,
     worktree: WT,
     branch: setup.branch,
-    missing_context: scopeTruncHint.length ? scopeTruncHint.concat(baseMissingContext) : baseMissingContext,
+    missing_context: missingContext,
     journal_log_status: journalLogStatus,
-    note: '要件が曖昧なため中断。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue を更新して /dev-flow を再起動すること。worktree は保持済みで再利用される',
+    note: '要件を決定論で確定できないため中断。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（comment の訂正は body に反映する。黙って片方を採用しない。issue #573 / #690）。worktree は保持済みで再利用される',
   }
 }
+feedClockMark('analyze_end', { ok: true, epoch: PRERUN.epoch_end })
+
+// isolation probe: implementer と同じ Write tool 経路で書けるかを subagent で検証する（wrapper の Bash では
+// 意味が変わるため代替しない）。ゲート通過後に置くことで needs_clarification 経路の spawn を 0 に保つ。
+const isoToken = String(PRERUN.epoch)
+const isoProbe = await trackedAgent(isolationProbePrompt(WT, isoToken), { agentType: 'dev-runner-haiku-wo', schema: ISOLATION_PROBE, label: 'isolation-probe', phase: 'Setup' })
+if (isoProbe && isoProbe.written === false) {
+  throw new Error(isolationFailureMessage({ worktree: WT, branch, startRef: `origin/${BASE}`, workflowName: 'dev-flow-run', workflowArgs: `{ issue: ${ISSUE}, setup: <dev-flow-prerun --issue ${ISSUE} --worktree ${WT} の stdout JSON> }`, targetPath: WT, error: isoProbe.error }))
+}
+if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可否を診断できず（fail-open で続行）')
 
 // ============================================================
 // 合成 plan: planner agent を起動せず、issue から単一 task の plan を合成する（Implement の spawn 単位）。
@@ -5667,8 +5451,6 @@ if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUI
 // classifyShape が 1 回で決める（EFFECTIVE_SHAPE / TRIVIAL）。実効 shape 確定前の失敗 telemetry
 // （needs_clarification / cross_repo / empty_diff）は shape キーを載せない（null は enum 検証で落ちる）。
 // ============================================================
-// contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電する。
-feedClockMark('analyze_end', maxEpochRes([contractRes, issueMetaRes]))
 let plan = synthesizeFablePlan(req, ISSUE)
 log('implement#synth-plan: planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）')
 
@@ -5753,7 +5535,7 @@ async function execImplementPhase(state) {
     //   直前の DONE/DONE_WITH_CONCERNS は保持（concerns の Evaluate 伝搬維持）、
     //   同 task_id の新結果は新結果優先、
     //   直前の BLOCKED/NEEDS_CONTEXT は保持しない（stale BLOCKED で b+1 の再発火を防ぐ）
-    const retryResults = await runImplement(req, plan, null, `reimpl-blocked#${b}`, null, {
+    const retryResults = await runImplement(req, plan, null, `reimpl-blocked#${b}`, {
       findings: priorBlock,
       done: doneSoFar.map((r) => ({ id: r.task_id, files: r.files, summary: r.summary })),
     })
@@ -5774,32 +5556,13 @@ async function execImplementPhase(state) {
       }
     }
   }
-  // NEEDS_CONTEXT 処理: 情報不足 task を再分析+再試行。解消不能なら needs_clarification で早期 return
-  let needsCtx = implResults.filter((r) => r && r.status === 'NEEDS_CONTEXT')
-  if (needsCtx.length) {
-    log(`implement: ${needsCtx.length} task が NEEDS_CONTEXT — comprehensive 再分析して再試行`)
-    const req2 = await trackedAgent(
-      analyzePrompt('comprehensive'),
-      { agentType: 'dev-runner', schema: REQ, label: `analyze-retry#${ISSUE}`, phase: 'Implement' },
-    )
-    if (!req2) {
-      log(`⚠️ implement: comprehensive 再分析が null を返した — needs_clarification で中断`)
-    } else {
-      // 合成 plan は task 1 件なので plan をそのまま再 spawn する（NEEDS_CONTEXT の結果は差し替える）
-      const ids = new Set(needsCtx.map((r) => r.task_id))
-      const retryResults = await runImplement(
-        req,
-        plan,
-        needsCtx.map((r) => ({ type: 'missing_context', detail: r.missing_context })),
-        'reimpl-context',
-        req2,
-      )
-      state.implDroppedCount += implementDrops(plan, retryResults)
-      implResults = [...implResults.filter((r) => !ids.has(r.task_id)), ...retryResults]
-    }
-    const stillNeeds = (implResults).filter((r) => r && r.status === 'NEEDS_CONTEXT')
+  // NEEDS_CONTEXT 処理: 情報不足は人間へ返す（needs_clarification で早期 return）。sonnet による
+  // comprehensive 再分析 + 再試行は持たない — fable は issue 本文 + AC を直接受け取っており、LLM が issue を
+  // 転写し直す工程は持たない（転写経路を残すと provenance 突合が要る）。
+  {
+    const stillNeeds = implResults.filter((r) => r && r.status === 'NEEDS_CONTEXT')
     if (stillNeeds.length) {
-      log(`implement: ${stillNeeds.length} task が依然 NEEDS_CONTEXT — needs_clarification で中断`)
+      log(`implement: ${stillNeeds.length} task が NEEDS_CONTEXT — needs_clarification で中断`)
       const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Implement' })
       state.__earlyReturn = {
         status: 'needs_clarification',
@@ -7326,7 +7089,10 @@ const telemetryHandoff = buildJournalHandoffPayload({
     //   NaN = realized diff 取得不能 → null）
     // - realized_file_count_raw: ephemeral 除外のみの realized diff 総数。除外で shape が下がった run
     //   （raw は閾値超・count は閾値内）を doctor が見分けるために両方載せる
-    // - analyze_ineligible_reason: contract 経路採用時はキー欠落
+    // - analyze_path: 'contract' | 'jev'（成功 run。'sonnet' はゲート後の needs_clarification 経路のみ）
+    // - analyze_ineligible_reason: Jev に回した理由（prerun の jev_reasons）。contract 経路はキー欠落
+    // - prerun_durations.analyze: prerun の analyze 段（issue 取得 + Jev。deps install と並列）の秒数。
+    //   phase_durations.analyze（Workflow 側のゲート判定時間のみ）とは別に載せる
     shape: state.EFFECTIVE_SHAPE,
     shape_reason: state.triage.reason,
     realized_file_count: Number.isFinite(state.realizedCount) ? state.realizedCount : null,
@@ -7334,6 +7100,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ac_count: Array.isArray(state.req.acceptance_criteria) ? state.req.acceptance_criteria.length : 0,
     analyze_path: ANALYZE_PATH,
     ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}),
+    ...(Number.isFinite(ANALYZE.duration_seconds) ? { prerun_durations: { analyze: ANALYZE.duration_seconds } } : {}),
     eval_iter: state.evalIters,
     eval_staleness: evalStaleness,
     ...(state.evalResult?.verdict ? { eval_verdict: state.evalResult.verdict } : {}),

@@ -2,8 +2,8 @@
 // fail-closed に検証・要約するための純関数群。
 //
 // dev-flow-prerun（wrapper preflight の bare 名 launcher）が base 解決・worktree 作成/再利用・
-// .devflow-tmp の clean・deps install・framework 検出を行い、その結果を stdout JSON 1 行として
-// 返す。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
+// .devflow-tmp の clean・deps install・framework 検出・issue analyze（analyze-issue --contract +
+// Jev 有界判定。deps install と並列）を行い、その結果を stdout JSON 1 行として返す。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
 // dev-flow.js 側はこれを唯一の入力源として検証する（workflow 内 fallback は持たない）。
 // validatePrerunSetup: args.setup を検証し、Setup phase が使う正規化済み値を返す純関数。
 //   raw が欠落/非 object/配列、raw.ok !== true、必須キー欠落/型不正のいずれも即 throw する
@@ -13,12 +13,15 @@
 // summarizePrerunDeps: prerun の deps 結果（advisory）を implementer prompt 注入用の警告文と
 //   ログ行に要約する純関数。deps.ok:false でも top-level ok には影響しない（fail-open）。
 // hasNextJs: stack.frameworks に 'next' が含まれるかを判定する純関数。Turbopack 規約注入の判定に使う。
+// analyze: prerun の analyze 段の結果（{ok, ...}）。ok:true の中身の whitelist 検証は
+//   buildReqFromContract（_lib/analyze-contract.mjs）が担い、ここでは object / ok boolean /
+//   ok:false のときの reason string だけを fail-closed に検証して verbatim で返す。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 // 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
-export const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch', 'epoch_end'];
+export const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'analyze', 'epoch', 'epoch_end'];
 
 export const PRERUN_MISSING_MSG = 'dev-flow: args.setup が無い — /dev-flow wrapper（dev-flow/SKILL.md の preflight）で `dev-flow-prerun --issue <N> --worktree <path>` を実行し、その stdout JSON を Workflow の args.setup に渡せ（workflow 内 fallback は無い）';
 
@@ -77,6 +80,11 @@ export function validatePrerunSetup(raw, issue) {
   if (typeof raw.deps.note !== 'string') fail('deps.note', raw.deps.note);
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
+  // analyze（issue #690）: prerun の analyze 段（analyze-issue --contract + Jev）の結果。ok:false は
+  // Analyze phase が needs_clarification（source=analyze_prerun）に倒すため throw しない（reason 必須）。
+  if (!isPlainObject(raw.analyze)) fail('analyze', raw.analyze);
+  if (typeof raw.analyze.ok !== 'boolean') fail('analyze.ok', raw.analyze.ok);
+  if (raw.analyze.ok === false && !isNonEmptyString(raw.analyze.reason)) fail('analyze.reason', raw.analyze.reason);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
   // epoch_end は deps install / detect-stack 完了後（prerun.sh 末尾）で採る第2の時刻。
   // analyze_start はここから給電する（epoch から給電すると deps install 等の Setup 決定論処理
@@ -95,6 +103,7 @@ export function validatePrerunSetup(raw, issue) {
     repo,
     deps: { ok: raw.deps.ok, note: raw.deps.note },
     frameworks,
+    analyze: raw.analyze,
     epoch: raw.epoch,
     epoch_end: raw.epoch_end,
   };

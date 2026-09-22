@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, mergeTierFacts, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 import { DEV_FLOW_SCENARIOS } from './test-helpers/dev-flow-scenarios.mjs';
 
 /**
@@ -43,6 +43,8 @@ const THROW = () => { throw new Error('injected'); };
 
 // B1: 既定 run（fixes_applied:0、shape=standard）。最も多くの label がここで到達する。
 const DF_B1 = { overrides: {} };
+// ANALYZE_GATE: Analyze の 3 条件ゲートを引く（AC 空）— analyze-clarify#1（ゲート後の sonnet 1 spawn）へ到達させる
+const DF_ANALYZE_GATE = { overrides: {}, extra: { args: analyzeArgs(1, { acceptance_criteria: [] }) } };
 // B2: pr-iterate fix 適用後の Final reconcile 系（reconcile-sync 成功・test#final 既定 pass）。
 const DF_B2 = {
   workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
@@ -92,14 +94,14 @@ const DF_CROSS_REPO = DEV_FLOW_SCENARIOS['cross-repo'];
 const DF_JOURNAL_ABORT_BASE = { overrides: { 'eval#1': () => { throw new Error('outer-trigger') } } };
 
 async function runDevFlowBaseline(config) {
-  const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides: config.overrides, workflow: config.workflow });
+  const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides: config.overrides, workflow: config.workflow, extra: config.extra ?? {} });
   const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
   return { result, error, calls };
 }
 
 async function runDevFlowThrow(config, label) {
   const overrides = { ...(config.overrides ?? {}), [label]: THROW };
-  const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides, workflow: config.workflow });
+  const { ctx, calls } = makeDevFlowSandbox({ issue: 1, overrides, workflow: config.workflow, extra: config.extra ?? {} });
   const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
   return { result, error, calls };
 }
@@ -109,12 +111,10 @@ async function runDevFlowThrow(config, label) {
 // ============================================================
 const EXPECTED_DEV_FLOW = {
   'isolation-probe': { config: DF_B1, policy: 'abort', reason: 'bare据え置き。bg-isolation検知はfail-closed設計で回避手順を提示するthrowを伝播させる' },
-  "contract-probe#1": { config: DF_B1, policy: 'continue', reason: 'try/catchでthrowを吸収しsonnet analyzeへfallbackする既存のfail-open経路' },
-  'analyze#1': { config: DF_B1, policy: 'abort', reason: 'need()包み。REQ取得不能のまま実装を進めない致命契約' },
-  'issue-meta': {
-    config: DF_B1,
+  'analyze-clarify#1': {
+    config: DF_ANALYZE_GATE,
     policy: 'needs_clarification',
-    reason: 'try/catchで吸収するがprovenance突合が不合格になりneeds_clarificationで中断する',
+    reason: 'failOpenAgent経由。ゲート後のmissing_context生成が失敗しても決定論のゲート理由でneeds_clarificationに終端する',
   },
   'impl:serial:issue-1': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。dev-implement-fable失敗はnullとしてdropし継続する' },
   'test#1': {

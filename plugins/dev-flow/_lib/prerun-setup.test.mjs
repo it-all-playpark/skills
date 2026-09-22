@@ -25,8 +25,23 @@ function validRaw(overrides = {}) {
     clean: { ok: true },
     deps: { ok: true, note: 'npm:installed' },
     stack: { frameworks: ['next', 'react'] },
+    analyze: validAnalyze(),
     epoch: 1787000000,
     epoch_end: 1787000060,
+    ...overrides,
+  };
+}
+
+// prerun の analyze 段（prerun-analyze.sh）の ok:true 出力と同形
+function validAnalyze(overrides = {}) {
+  return {
+    ok: true, analyze_path: 'contract', jev_reasons: [],
+    issue_title: 'feat: add thing', issue_type: 'feat', acceptance_criteria: ['a', 'b'],
+    scope: 'src', scope_truncated: false, scope_total_chars: 3,
+    issue_body: 'body', issue_body_truncated: false,
+    breaking_keyword_scan: false, breaking_change: false, breaking_evidence: '',
+    comment_count: 0, comment_overrides: [], comment_conflicts: [], uncertain: [],
+    contract: 't1', ac_heading_near_miss: [], duration_seconds: 3,
     ...overrides,
   };
 }
@@ -45,6 +60,35 @@ test('validatePrerunSetup: 正常な setup は各値をそのまま返し framew
   assert.deepEqual(result.frameworks, ['next', 'react']);
   assert.equal(result.epoch, 1787000000);
   assert.equal(result.epoch_end, 1787000060);
+  assert.deepEqual(result.analyze, validAnalyze());
+});
+
+// ── validatePrerunSetup: analyze（issue #690）────────────────────────────────
+
+test('validatePrerunSetup: analyze 欠落は「必須キーが欠落/型不正: analyze」で throw する', () => {
+  const raw = validRaw();
+  delete raw.analyze;
+  assert.throws(() => validatePrerunSetup(raw, 641), /必須キーが欠落\/型不正: analyze（/);
+});
+
+test('validatePrerunSetup: analyze が配列 / 非 object は throw する', () => {
+  assert.throws(() => validatePrerunSetup(validRaw({ analyze: [] }), 641), /必須キーが欠落\/型不正: analyze（/);
+  assert.throws(() => validatePrerunSetup(validRaw({ analyze: 'x' }), 641), /必須キーが欠落\/型不正: analyze（/);
+});
+
+test('validatePrerunSetup: analyze.ok が非 boolean は「必須キーが欠落/型不正: analyze.ok」で throw する', () => {
+  assert.throws(() => validatePrerunSetup(validRaw({ analyze: { ok: 'true' } }), 641), /必須キーが欠落\/型不正: analyze\.ok（/);
+});
+
+test('validatePrerunSetup: analyze.ok:false は reason が非空 string なら throw せず verbatim で返す（Analyze phase が needs_clarification に倒す）', () => {
+  const analyze = { ok: false, reason: 'analyze-issue --contract failed: gh: not found', analyze_path: 'contract', duration_seconds: 1 };
+  const result = validatePrerunSetup(validRaw({ analyze }), 641);
+  assert.deepEqual(result.analyze, analyze);
+});
+
+test('validatePrerunSetup: analyze.ok:false で reason 欠落 / 空文字は「必須キーが欠落/型不正: analyze.reason」で throw する', () => {
+  assert.throws(() => validatePrerunSetup(validRaw({ analyze: { ok: false } }), 641), /必須キーが欠落\/型不正: analyze\.reason（/);
+  assert.throws(() => validatePrerunSetup(validRaw({ analyze: { ok: false, reason: '  ' } }), 641), /必須キーが欠落\/型不正: analyze\.reason（/);
 });
 
 // ── validatePrerunSetup: raw 自体が欠落/非object/配列 ───────────────────────
@@ -188,7 +232,7 @@ test('validatePrerunSetup: 未知キーがあっても throw しない', () => {
 // ── PRERUN_SETUP_REQUIRED ───────────────────────────────────────────────────
 
 test('PRERUN_SETUP_REQUIRED: 必須キー一覧を定義する', () => {
-  assert.deepEqual(PRERUN_SETUP_REQUIRED, ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'epoch', 'epoch_end']);
+  assert.deepEqual(PRERUN_SETUP_REQUIRED, ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'analyze', 'epoch', 'epoch_end']);
 });
 
 // ── rejectLegacyBaseArg ──────────────────────────────────────────────────────

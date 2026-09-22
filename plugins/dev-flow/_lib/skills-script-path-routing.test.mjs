@@ -71,12 +71,12 @@ test('[skills-script-path-routing] (a-vm) どの agent() prompt にも `${WT}/de
 
 // ---- (b) bare 名で呼ぶ ----
 
-test('[skills-script-path-routing] (b) contract-probe は bare 名 analyze-issue を 1 回だけ指示する', async () => {
+test('[skills-script-path-routing] (b) analyze-issue --contract は prerun（prerun-analyze.sh）が呼び、Workflow の prompt には現れない', async () => {
   const calls = await run('success');
-  const probes = calls.filter((c) => c.label.startsWith('contract-probe'));
-  assert.equal(probes.length, 1, `contract-probe は 1 回のはずだが ${probes.length} 回`);
-  const needle = 'analyze-issue 1 --contract';
-  assert.ok(probes[0].prompt.includes(needle), `contract-probe prompt に bare 名呼び出し '${needle}' が無い`);
+  assert.equal(calls.filter((c) => c.label.startsWith('contract-probe')).length, 0, 'contract-probe が spawn されている（Analyze は prerun の script 段へ移動済み）');
+  assert.ok(!calls.some((c) => c.prompt.includes('analyze-issue 1 --contract')), 'Workflow の prompt に analyze-issue --contract の実行指示が残っている');
+  const prerunAnalyzeSrc = readFileSync(join(here, '..', 'dev-flow', 'scripts', 'prerun-analyze.sh'), 'utf8');
+  assert.ok(prerunAnalyzeSrc.includes('dev-issue-analyze/scripts/analyze-issue.sh'), 'prerun-analyze.sh が analyze-issue.sh を plugin 内パスで呼んでいない');
 });
 
 for (const name of Object.keys(RUNS)) {

@@ -4,12 +4,12 @@
 //
 // issue #641: Setup phase の 4 spawn（setup-base 含む）が撤去されたため、opt-in call site の
 // 駆動を残存する 'danger-grep'（Security floor、retryOnContractViolation:true・try/catch で
-// throw を吸収し run は継続する）に置換した。未 opt-in の対照は 'analyze#1'（need() 包み、throw は
-// そのまま伝播する）で取る。
+// throw を吸収し run は継続する）に置換した。未 opt-in の対照は 'diff-gate'（need() 包み、throw は
+// そのまま伝播する。issue #690 で Analyze の spawn が 0 になり analyze#1 は存在しない）で取る。
 //
 // テストケース:
 //   (a) リトライ成功 — danger-grep 1 回目 StructuredOutput 契約違反 throw、2 回目正常応答 → 後続へ進む
-//   (a2) 未 opt-in call site（analyze#1）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する
+//   (a2) 未 opt-in call site（diff-gate）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する
 //   (b) 契約違反以外は即 throw（リトライしない）が、danger-grep 自体は try/catch で吸収し run は継続する
 //   (c) リトライ 1 回で打ち切り（2 回目も契約違反なら rethrow、danger-grep の try/catch で吸収され run は継続）
 //   (d) null 応答はリトライ対象外（契約外形状として risk fail-closed へ倒れる）
@@ -59,13 +59,13 @@ test('[tracked-agent-so-retry] (a) danger-grep が 1 回目 StructuredOutput 契
 });
 
 // ── (a2) 未 opt-in call site は StructuredOutput 契約違反でもリトライしない ──
-// analyze#1 は opts.retryOnContractViolation を opt-in していない need() 包みの call site。
+// diff-gate は opts.retryOnContractViolation を opt-in していない need() 包みの call site。
 // 同じ契約違反メッセージでも即座に throw を伝播すること（issue #533 review）を検証する。
 
-test('[tracked-agent-so-retry] (a2) 未 opt-in call site（analyze#1）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する', async () => {
+test('[tracked-agent-so-retry] (a2) 未 opt-in call site（diff-gate）は StructuredOutput 契約違反 throw でも呼び出し1回で即伝播する', async () => {
   const { ctx, calls } = makeDevFlowSandbox({
     overrides: {
-      'analyze#1': () => { throw new Error(CONTRACT_VIOLATION_MSG); },
+      'diff-gate': () => { throw new Error(CONTRACT_VIOLATION_MSG); },
     },
   });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
@@ -73,11 +73,11 @@ test('[tracked-agent-so-retry] (a2) 未 opt-in call site（analyze#1）は Struc
   assert.ok(error, '未 opt-in call site の契約違反 throw で run がエラーなく完走した');
   assert.match(String(error?.message ?? error), /without calling StructuredOutput/);
 
-  const analyzeCalls = calls.filter((c) => c.label === 'analyze#1');
+  const gateCalls = calls.filter((c) => c.label === 'diff-gate');
   assert.equal(
-    analyzeCalls.length,
+    gateCalls.length,
     1,
-    `analyze#1 の呼び出し回数が 1 件ではない（未 opt-in call site なのにリトライされた）`,
+    `diff-gate の呼び出し回数が 1 件ではない（未 opt-in call site なのにリトライされた）`,
   );
 });
 

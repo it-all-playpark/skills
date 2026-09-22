@@ -497,7 +497,7 @@ run_telemetry_checks() {
         # 旧 entry のみの corpus では全て unknown になり、それ自体が「根拠キー未記録」の情報になる。
         local reason_kinds analyze_paths floor_above_raw
         reason_kinds=$(echo "$anomaly" | jq -r '.detail.shape_reason_kind // {} | "safe floor \(.safe_floor // 0) / realized 閾値 \(.threshold // 0) / 根拠未記録 \(.unknown // 0)"')
-        analyze_paths=$(echo "$anomaly" | jq -r '.detail.analyze_path // {} | "contract \(.contract // 0) / sonnet \(.sonnet // 0)"')
+        analyze_paths=$(echo "$anomaly" | jq -r '.detail.analyze_path // {} | "contract \(.contract // 0) / jev \(.jev // 0) / sonnet \(.sonnet // 0)"')
         floor_above_raw=$(echo "$anomaly" | jq -r '.detail.floor_above_raw // 0')
         msg="micro shape不発火 (${WINDOW}): run数は十分だが micro が0件 — shape_reason 種別: ${reason_kinds}; analyze 経路: ${analyze_paths}; realized raw が下位 tier 相当なのに floor で上がった ${floor_above_raw} 件"
         ;;

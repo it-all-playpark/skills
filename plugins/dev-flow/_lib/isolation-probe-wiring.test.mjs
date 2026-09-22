@@ -3,7 +3,8 @@
 // setup-base/worktree/isolation-cleanup/worktree-deps の 4 spawn が撤去されたため、isolation-probe
 // 単独の配線検証へ縮小した）。純関数（isolationProbePrompt/isolationFailureMessage）自体は
 // _lib/isolation-probe.test.mjs で直接 import してテストする。本ファイルは dev-flow.js の Setup
-// phase がそれらを正しく呼び出し・分岐しているかの配線のみを検証する。
+// phase がそれらを正しく呼び出し・分岐しているかの配線のみを検証する。issue #690: probe は Analyze の
+// ゲート判定後（Implement 直前）に spawn する（needs_clarification 経路では 0 件）。opts.phase は 'Setup' のまま。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -20,17 +21,17 @@ function schemaOf(calls, label) {
   return JSON.parse(JSON.stringify(call.opts.schema));
 }
 
-test('Setup phase（analyze 系 label より前）の call は isolation-probe 1 件のみ', async () => {
+test('Implement（dev-implement-fable）より前の call は isolation-probe 1 件のみ（Setup / Analyze は spawn しない）', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   await runDevFlowInSandbox(src, ctx);
 
-  const analyzeIdx = calls.findIndex((c) => c.label.startsWith('analyze') || c.label.startsWith('contract-probe'));
-  assert.notStrictEqual(analyzeIdx, -1, 'analyze 系 call が見つからない');
-  const beforeAnalyze = calls.slice(0, analyzeIdx);
+  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implement-fable');
+  assert.notStrictEqual(implIdx, -1, 'dev-implement-fable の call が見つからない');
+  const beforeImpl = calls.slice(0, implIdx);
   assert.deepEqual(
-    beforeAnalyze.map((c) => c.label),
+    beforeImpl.map((c) => c.label),
     ['isolation-probe'],
-    `Setup phase の call は isolation-probe 1 件のみのはずだが: ${JSON.stringify(beforeAnalyze.map((c) => c.label))}`,
+    `Implement より前の call は isolation-probe 1 件のみのはずだが: ${JSON.stringify(beforeImpl.map((c) => c.label))}`,
   );
 });
 

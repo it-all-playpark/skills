@@ -30,7 +30,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeRecordingSandbox, devFlowArgs, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
+import { makeRecordingSandbox, devFlowArgs, mergeTierFacts, prerunAnalyze } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -92,7 +92,6 @@ function createResponder(overrides = {}) {
     }
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-331' };
-    if (label.startsWith('analyze')) return STANDARD_REQ;
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/x.ts'] };
     if (label === 'final-ac-reconcile') {
@@ -125,15 +124,15 @@ function createResponder(overrides = {}) {
     if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
-    if (label === 'issue-meta') return { ok: true, number: 331, title: 'stub-issue-title' };
     return null;
   };
 }
 
-function makeSandbox({ overrides = {}, fixesApplied = 0 } = {}) {
+function makeSandbox({ overrides = {}, fixesApplied = 0, analyze = {} } = {}) {
   return makeRecordingSandbox(createResponder(overrides), {
     workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: fixesApplied }),
-    args: devFlowArgs('331'),
+    // REQ は args.setup.analyze から組まれる（Analyze phase は spawn しない）。STANDARD_REQ と同じ AC / type
+    args: devFlowArgs('331', { analyze: prerunAnalyze({ acceptance_criteria: STANDARD_REQ.acceptance_criteria, issue_type: STANDARD_REQ.issue_type, ...analyze }) }),
   });
 }
 
@@ -301,7 +300,7 @@ test("[final-ac-reconcile] (r6) fixes=1 + test#final red → final-ac-reconcile 
 test("[final-ac-reconcile] (r7) acceptance_criteria:[] → Analyze needs_clarification で早期終了 → final-ac-reconcile 不発", async () => {
   const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
-    overrides: { 'analyze#331': { ...STANDARD_REQ, acceptance_criteria: [] } },
+    analyze: { acceptance_criteria: [] },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'r7');

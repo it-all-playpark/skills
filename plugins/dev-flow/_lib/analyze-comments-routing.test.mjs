@@ -1,227 +1,99 @@
 // _lib/analyze-comments-routing.test.mjs
-// issue #573: dev-flow.js の Analyze phase が issue の comments を要件入力に含め、
-// body/comment の矛盾（comment_conflicts）を fail-closed で needs_clarification に
-// 落とす配線を VM sandbox で検証する。
-// PR #578: sonnet analyze 経路が comments 取得を落としても検知できない問題を、
-// issue-meta probe の comment_count 実測と REQ.comment_count（skill 出力 verbatim）の
-// 決定論突合で塞ぐ配線を routing T5-T6 で検証する。
+// Guard test: issue comments の要件反映（issue #573 → #690 で prerun の Jev 判定へ移動）の配線 pin。
 //
-// issue #636 P3a: 旧 (a)-(g) は dev-flow.js ソース文字列（readFileSync + block 抽出）に対する
-// JSON キー名 pin だった。本版は VM run で実際に agent() へ渡る contract-probe#1 / analyze#1 /
-// issue-meta の prompt に対するトークン pin へ書き換える。REQ / ISSUE_META schema の required
-// フィールド自体は calls[] からは観測できない（opts 記録は本 task では未使用）ため、
-// schema 存在 pin は T1-T6 の挙動テスト（comment_overrides/comment_conflicts/comment_count が
-// 実際に routing を左右すること）で代替する。旧 (d) の ac_heading_near_miss は log() 専用の
-// 可視化分岐で prompt にも result にも現れず、VM harness からは観測不能なため削除する
-// （挙動は変えず可視化のみの分岐であり、削除しても T1-T6 のカバレッジに欠落は生じない）。
+// comment の override / conflict 判定は prerun（prerun-analyze.sh: comment ごとに Jev choice、権限は
+// gh JSON から決定論判定）で行われ、Workflow には args.setup.analyze.comment_overrides /
+// comment_conflicts として届く。Workflow 側の責務は「conflicts 非空なら needs_clarification で終端し、
+// overrides は採用として log に残す」だけ（LLM に黙って片方を採らせない）。
 //
-// テストケース:
-//   analyze-issue.sh の gh --json フィールド列に comments が含まれ、contract-probe#1 は script の 1 単文のみを指示する
-//   analyze#1 prompt に comment_overrides / comment_conflicts フィールドへの言及がある
-//   issue-meta prompt に comment_count フィールドへの言及がある
-//   T1: comment_conflicts 非空 → needs_clarification かつ implementer 0 件
-//   T2: comment_overrides のみ非空（comment_conflicts 空） → implementer 呼び出し >= 1
-//   T3: 両キーとも無い（既存 FULL_REQ 相当） → implementer 呼び出し >= 1（既存挙動不変）
-//   T4: comment_conflicts が空白のみの要素 → implementer 呼び出し >= 1（空文字は矛盾扱いしない）
-//   T5: issueMetaRes.comment_count と req.comment_count が不一致 → needs_clarification
-//       かつ implementer 0 件（comments 取得漏れの検出。PR #578）
-//   T6: issueMetaRes.comment_count と req.comment_count が一致 → implementer 呼び出し >= 1
-//       （既存挙動不変）
-
+//   静的 pin:
+//     analyze-issue.sh の gh --json フィールド列に comments / author が含まれる（contract 出力の comments[] /
+//     issue_author の給電元）
+//     prerun-analyze.sh は権限判定（issue 報告者本人 or OWNER/MEMBER/COLLABORATOR）を持ち、Jev を --redact 付きで呼ぶ
+//   T1: comment_conflicts 非空 → needs_clarification かつ implementer 0 件・isolation-probe 0 件
+//   T2: comment_overrides のみ非空（comment_conflicts 空） → implementer 呼び出し >= 1、採用 log あり
+//   T3: 両方空 → implementer 呼び出し >= 1
+//   T4: comment_conflicts の文言が needs_clarification の missing_context に verbatim で残る
+//
+// Run: npx vitest run _lib/analyze-comments-routing.test.mjs
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeRecordingSandbox, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
-const devFlowPath = join(repoRoot, '.claude', 'workflows', 'dev-flow.js');
-const src = readFileSync(devFlowPath, 'utf8');
+const src = readFileSync(join(repoRoot, '.claude', 'workflows', 'dev-flow.js'), 'utf8');
+
+async function run(analyze) {
+  const { ctx, calls, logs } = makeDevFlowSandbox({ extra: { args: analyzeArgs(1, analyze) } });
+  const { result, error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'analyze-comments-routing');
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  return { calls, logs, result };
+}
+const implCount = (calls) => calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable').length;
 
 // ============================================================
-// prompt token pin（VM run）
+// 静的 pin
 // ============================================================
 
-// issue 取得（gh --json のフィールド列）は analyze-issue.sh が内蔵する。contract-probe#1 prompt は
-// `analyze-issue N --contract` の 1 単文のみを指示するため、comments フィールドの pin は script の
-// GH_JSON_FIELDS に対して行う（gh 呼び出しへの実引数は analyze-issue.bats の gh stub が pin）。
-test('[analyze-comments-routing] analyze-issue.sh の gh --json フィールド列に comments が含まれ、contract-probe#1 は script の 1 単文のみを指示する', async () => {
+test('[analyze-comments-routing] analyze-issue.sh の gh --json フィールド列に comments / author が含まれる', () => {
   const scriptSrc = readFileSync(join(repoRoot, 'dev-issue-analyze', 'scripts', 'analyze-issue.sh'), 'utf8');
   const fieldsLine = scriptSrc.split('\n').find((l) => l.startsWith('GH_JSON_FIELDS='));
   assert.ok(fieldsLine, 'analyze-issue.sh に GH_JSON_FIELDS= 定義が無い');
-  assert.ok(/state,comments/.test(fieldsLine), `analyze-issue.sh の gh --json フィールド列に comments が含まれていない: ${fieldsLine}`);
-  const { ctx, calls } = makeSandbox({ req: FULL_REQ });
-  const { error } = await run(ctx);
-  assertNoCrash(error, 'contract-probe-comments-field');
-  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
-  const call = calls.find((c) => c.label === 'contract-probe#1');
-  assert.ok(call, 'contract-probe#1 呼び出しが見つからない');
-  assert.ok(call.prompt.includes('`analyze-issue 1 --contract`'), `contract-probe#1 prompt に analyze-issue の単文指示が無い: ${call.prompt}`);
+  assert.ok(/state,comments/.test(fieldsLine), `gh --json フィールド列に comments が含まれていない: ${fieldsLine}`);
+  assert.ok(/author/.test(fieldsLine), `gh --json フィールド列に author が含まれていない: ${fieldsLine}`);
+  // contract 出力に comments[] / issue_author / title_breaking_marker が載る（prerun-analyze.sh の入力）
+  for (const key of ['comments: $comments', 'issue_author: $issue_author', 'title_breaking_marker: $title_breaking_marker']) {
+    assert.ok(scriptSrc.includes(key), `analyze-issue.sh の contract 出力に ${key} が無い`);
+  }
 });
 
-test('[analyze-comments-routing] analyze#1 prompt に comment_overrides / comment_conflicts フィールドへの言及がある', async () => {
-  const { ctx, calls } = makeSandbox({ req: FULL_REQ });
-  const { error } = await run(ctx);
-  assertNoCrash(error, 'analyze-comment-fields');
-  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
-  const call = calls.find((c) => c.label === 'analyze#1');
-  assert.ok(call, 'analyze#1 呼び出しが見つからない');
-  assert.ok(call.prompt.includes('comment_overrides'), 'analyze#1 prompt に comment_overrides への言及がない');
-  assert.ok(call.prompt.includes('comment_conflicts'), 'analyze#1 prompt に comment_conflicts への言及がない');
-});
-
-test('[analyze-comments-routing] issue-meta probe prompt に comment_count フィールドへの言及がある', async () => {
-  const { ctx, calls } = makeSandbox({ req: FULL_REQ });
-  const { error } = await run(ctx);
-  assertNoCrash(error, 'issue-meta-comment-count-field');
-  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
-  const call = calls.find((c) => c.label === 'issue-meta');
-  assert.ok(call, 'issue-meta 呼び出しが見つからない');
-  assert.ok(call.prompt.includes('comment_count'), 'issue-meta prompt に comment_count への言及がない');
+test('[analyze-comments-routing] prerun-analyze.sh は権限判定（報告者本人 / OWNER・MEMBER・COLLABORATOR）を持ち、Jev を --redact 付きで呼ぶ', () => {
+  const scriptSrc = readFileSync(join(repoRoot, 'dev-flow', 'scripts', 'prerun-analyze.sh'), 'utf8');
+  assert.ok(scriptSrc.includes('"$C_AUTHOR" == "$ISSUE_AUTHOR"'), '報告者本人の判定が無い');
+  assert.ok(/"OWNER" \|\| .*"MEMBER" \|\| .*"COLLABORATOR"/.test(scriptSrc), 'OWNER/MEMBER/COLLABORATOR の判定が無い');
+  assert.ok(scriptSrc.includes('"$JEV_CLASSIFY" --redact --questions'), 'Jev 呼び出しに --redact が無い');
+  assert.ok(scriptSrc.includes('_shared/scripts/jev-classify.sh'), 'jev-classify.sh の参照が skills 側の正本でない');
+  assert.ok(scriptSrc.includes('DEVFLOW_JEV_DISABLE'), 'DEVFLOW_JEV_DISABLE の opt-out が無い');
 });
 
 // ============================================================
-// routing T1-T4（VM sandbox）
+// routing
 // ============================================================
 
-const FULL_REQ = {
-  summary: 's',
-  acceptance_criteria: ['a', 'b'],
-  issue_type: 'fix',
-  scope: 'src',
-  breaking_change: false,
-  breaking_keyword_scan: false,
-  ambiguities: [],
-  issue_number: 1,
-  issue_title: 'stub-issue-title',
-};
+test('[analyze-comments-routing] T1: comment_conflicts 非空 → needs_clarification かつ implementer 0 件・isolation-probe 0 件', async () => {
+  const { calls, result } = await run({ analyze_path: 'jev', jev_reasons: ['comments present (1)'], comment_count: 1, comment_conflicts: ['conflict: comment #1 by alice（OWNER, 2026-01-01T00:00:00Z）: 30 箇所ではなく 20 箇所'] });
+  assert.equal(result?.status, 'needs_clarification');
+  assert.equal(result?.source, 'analyze');
+  assert.equal(implCount(calls), 0, 'comment_conflicts 非空で implementer が呼ばれた');
+  assert.equal(calls.filter((c) => c.label === 'isolation-probe').length, 0);
+});
 
-function createResponder({ req = FULL_REQ, issueMetaRes = { ok: true, number: 1, title: 'stub-issue-title' } } = {}) {
-  return function ({ label, agentType }) {
-    if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
-    if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
-    if (label === 'issue-meta') return issueMetaRes;
-    if (label.startsWith('contract-probe')) return null; // fail-open（whitelist 不合格扱い）— sonnet fallback
-    if (label.startsWith('analyze')) return req;
-    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
-    if (label === 'realized-diff') return { files: ['src/a.ts'] };
-    if (label === 'declared-path-check') return { files: [] };
-    if (label === 'changed-files') return { files: ['src/a.ts'] };
-    if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
-    if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
-    if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (agentType === 'dev-flow:evaluator') {
-      return {
-        verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
-        ac_results: (req.acceptance_criteria ?? []).map((_, i) => ({ ac_index: i, satisfied: true, verified_by: 'inspection', evidence: 'ok' })),
-        security_clearance: [],
-      };
-    }
-    if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (label === 'journal-log-failure') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'ok', concerns: [] };
-    return null;
-  };
-}
+test('[analyze-comments-routing] T2: comment_overrides のみ非空 → implementer 呼び出し >= 1（run は進む）、採用 log あり', async () => {
+  const { calls, result, logs } = await run({ analyze_path: 'jev', jev_reasons: ['comments present (1)'], comment_count: 1, comment_overrides: ['override: comment #1 by reporter（NONE, 2026-01-01T00:00:00Z）: 訂正: 30 箇所'] });
+  assert.notEqual(result?.status, 'needs_clarification');
+  assert.ok(implCount(calls) >= 1, 'comment_overrides のみで implementer が呼ばれていない');
+  assert.ok(logs.some((l) => l.includes('comment による body 訂正を採用（1 件）') && l.includes('訂正: 30 箇所')), `採用 log が無い: ${logs.filter((l) => l.includes('analyze')).join(' | ')}`);
+});
 
-function makeSandbox(opts) {
-  const { ctx, calls } = makeRecordingSandbox(createResponder(opts), { args: devFlowArgs('1') });
-  return { ctx, calls };
-}
+test('[analyze-comments-routing] T3: 両方空 → implementer 呼び出し >= 1', async () => {
+  const { calls, result } = await run({});
+  assert.notEqual(result?.status, 'needs_clarification');
+  assert.ok(implCount(calls) >= 1);
+});
 
-async function run(ctx) {
-  const stripped = src
-    .replace(/^export\s+const\s+/gm, 'const ')
-    .replace(/^export\s+function\s+/gm, 'function ');
-  const wrapped = `(async () => {\n${stripped}\n})();`;
-  const vm = await import('node:vm');
-  let caughtError = null;
-  let resolvedResult = null;
-  try {
-    const promise = vm.runInContext(wrapped, ctx, { filename: '.claude/workflows/dev-flow.js' });
-    if (promise && typeof promise.then === 'function') {
-      resolvedResult = await promise.catch((e) => { caughtError = e; return null; });
-    }
-  } catch (e) {
-    caughtError = e;
+test('[analyze-comments-routing] T4: comment_conflicts の文言（権限なし override / 低確信）が missing_context に verbatim で残る', async () => {
+  const conflicts = [
+    'override（権限なし: author_association=NONE）: comment #1 by mallory（NONE, t）: X ではなく Y',
+    'low-confidence（unrelated p=0.6）: comment #2 by alice（OWNER, t）: たぶん',
+  ];
+  const { result } = await run({ analyze_path: 'jev', jev_reasons: ['comments present (2)'], comment_count: 2, comment_conflicts: conflicts });
+  assert.equal(result?.status, 'needs_clarification');
+  for (const c of conflicts) {
+    assert.ok(result.missing_context.some((m) => m.includes(c)), `missing_context に conflict が verbatim で無い: ${c}`);
   }
-  return { result: resolvedResult, error: caughtError };
-}
-
-function assertNoCrash(error, name) {
-  if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
-    assert.fail(`[${name}] dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
-  }
-}
-
-test('[analyze-comments-routing] T1: comment_conflicts 非空 → needs_clarification かつ implementer 0 件', async () => {
-  const conflicts = ['body: 絶対パス 15 箇所 → comment: 30 箇所（alice, 2026-01-01）'];
-  const req = { ...FULL_REQ, comment_conflicts: conflicts };
-  const { ctx, calls } = makeSandbox({ req });
-  const { result, error } = await run(ctx);
-  assertNoCrash(error, 'T1');
-  assert.equal(error, null, `T1: run が throw してはならないが: ${error?.message}`);
-  assert.equal(result?.status, 'needs_clarification', `T1: status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
-  assert.equal(result?.source, 'analyze', `T1: source は analyze のはずだが ${JSON.stringify(result?.source)}`);
-  assert.deepEqual(result?.missing_context, conflicts, `T1: missing_context が comment_conflicts と一致しない: ${JSON.stringify(result?.missing_context)}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.equal(implCalls.length, 0, `T1: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
-  assert.equal(error, null);
-});
-
-test('[analyze-comments-routing] T2: comment_overrides のみ非空 → implementer 呼び出し >= 1（run は進む）', async () => {
-  const req = { ...FULL_REQ, comment_overrides: ['body: 1 plugin → comment: 3 plugin（alice, 2026-01-01）'], comment_conflicts: [] };
-  const { ctx, calls } = makeSandbox({ req });
-  const { error } = await run(ctx);
-  assertNoCrash(error, 'T2');
-  assert.equal(error, null, `T2: run が throw してはならないが: ${error?.message}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.ok(implCalls.length >= 1, `T2: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
-});
-
-test('[analyze-comments-routing] T3: 両キーとも無い（既存 FULL_REQ 相当）→ implementer 呼び出し >= 1（既存挙動不変）', async () => {
-  const { ctx, calls } = makeSandbox({ req: FULL_REQ });
-  const { error } = await run(ctx);
-  assertNoCrash(error, 'T3');
-  assert.equal(error, null, `T3: run が throw してはならないが: ${error?.message}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.ok(implCalls.length >= 1, `T3: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
-});
-
-test('[analyze-comments-routing] T4: comment_conflicts が空白のみの要素 → implementer 呼び出し >= 1（空文字は矛盾として扱わない）', async () => {
-  const req = { ...FULL_REQ, comment_conflicts: ['', '   '] };
-  const { ctx, calls } = makeSandbox({ req });
-  const { error } = await run(ctx);
-  assertNoCrash(error, 'T4');
-  assert.equal(error, null, `T4: run が throw してはならないが: ${error?.message}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.ok(implCalls.length >= 1, `T4: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
-});
-
-test('[analyze-comments-routing] T5: req.comment_count と issueMetaRes.comment_count が不一致 → needs_clarification かつ implementer 0 件（PR #578: comments 取得漏れの検出）', async () => {
-  const req = { ...FULL_REQ, comment_count: 0 };
-  const issueMetaRes = { ok: true, number: 1, title: 'stub-issue-title', comment_count: 3 };
-  const { ctx, calls } = makeSandbox({ req, issueMetaRes });
-  const { result, error } = await run(ctx);
-  assertNoCrash(error, 'T5');
-  assert.equal(error, null, `T5: run が throw してはならないが: ${error?.message}`);
-  assert.equal(result?.status, 'needs_clarification', `T5: status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
-  assert.equal(result?.source, 'analyze', `T5: source は analyze のはずだが ${JSON.stringify(result?.source)}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.equal(implCalls.length, 0, `T5: implementer 呼び出しは 0 件のはずだが ${implCalls.length} 件`);
-});
-
-test('[analyze-comments-routing] T6: req.comment_count と issueMetaRes.comment_count が一致 → implementer 呼び出し >= 1（既存挙動不変）', async () => {
-  const req = { ...FULL_REQ, comment_count: 2 };
-  const issueMetaRes = { ok: true, number: 1, title: 'stub-issue-title', comment_count: 2 };
-  const { ctx, calls } = makeSandbox({ req, issueMetaRes });
-  const { error } = await run(ctx);
-  assertNoCrash(error, 'T6');
-  assert.equal(error, null, `T6: run が throw してはならないが: ${error?.message}`);
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.ok(implCalls.length >= 1, `T6: implementer 呼び出しは 1 件以上のはずだが ${implCalls.length} 件`);
 });

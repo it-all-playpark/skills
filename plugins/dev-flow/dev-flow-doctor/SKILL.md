@@ -153,8 +153,8 @@ raw > 5 — 宣言外 / format-only 除外で classifyShape 入力が閾値内�
 `*_samples` の issue / PR を列挙する。shape は Security floor 時点の realized diff（宣言外・format-only 除外後）を
 見るため、pr-iterate fix で後から膨らんだ PR は不一致に現れない。
 
-analyze 経路: contract 12 / sonnet 30。sonnet の不採用理由: comments_present 18 / ac_heading_not_found 9 /
-scope_truncated 3（light path 拡大の候補は最多バケット）。
+analyze 経路: contract 12 / jev 30 / sonnet 0（sonnet は Analyze ゲート後の needs_clarification 経路のみ）。
+Jev に回した理由: comments_present 18 / breaking 12。prerun の analyze 段所要: median 6s / max 31s（measured 42）。
 
 ### Other Findings
 
@@ -276,7 +276,7 @@ Output JSON schema:
     "eval_iter": {"max": 10, "cap": 10, "at_cap_count": 3},
     "gate_policy": {"deterministic-only": 0, "llm-major-advisory": 40, "llm-major-blocking": 2, "llm-autonomous": 0, "unknown": 0},
     "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "ci_error": 2, "ci_pending": 1, "review_contract_error": 0, "unknown": 0, "total": 41, "raw_entries": 45, "normalization": {"joined_pairs": 4, "unjoinable": 6, "status_conflicts": 0, "join_window_seconds": 600}},
-    "shape_calibration": {"by_shape": {"...": "..."}, "shape_reason_kind": {"safe_floor": 20, "threshold": 22, "unknown": 0}, "shape_reason_kind_by_shape": {"...": "..."}, "realized_mismatch": {"thresholds": {"micro_max_files": 2, "standard_max_files": 5}, "measured": 42, "unmeasured": 0, "excluded_below_raw": 1, "excluded_below_raw_samples": [], "floor_above_raw": 4, "floor_above_raw_samples": []}, "analyze_path": {"contract": 12, "sonnet": 30, "unknown": 0}, "analyze_ineligible_reason": {"comments_present": 18, "ac_heading_not_found": 9, "scope_truncated": 3}}
+    "shape_calibration": {"by_shape": {"...": "..."}, "shape_reason_kind": {"safe_floor": 20, "threshold": 22, "unknown": 0}, "shape_reason_kind_by_shape": {"...": "..."}, "realized_mismatch": {"thresholds": {"micro_max_files": 2, "standard_max_files": 5}, "measured": 42, "unmeasured": 0, "excluded_below_raw": 1, "excluded_below_raw_samples": [], "floor_above_raw": 4, "floor_above_raw_samples": []}, "analyze_path": {"contract": 12, "jev": 30, "sonnet": 0, "unknown": 0}, "analyze_ineligible_reason": {"comments_present": 18, "breaking": 12}, "prerun_analyze_seconds": {"measured": 42, "median": 6, "max": 31}}
   },
   "anomalies": [
     {"type": "cap_pinned", "severity": "warn", "count": 3, "detail": {"...": "..."}},

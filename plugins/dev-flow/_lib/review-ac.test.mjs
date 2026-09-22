@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { acceptanceCriteriaBlock } from './review-ac.mjs';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -126,16 +126,9 @@ test('[review-ac] AC が空のときは scope に関わらず空文字（fail-op
 // ============================================================
 
 const AC = ['AC_SENTINEL_A', 'AC_SENTINEL_B'];
-const STANDARD_REQ = {
-  summary: 's', acceptance_criteria: AC, issue_type: 'fix', scope: 'src',
-  issue_number: 1, issue_title: 'stub-issue-title',
-};
-// clean-micro-lite が成立する req（lite-route-routing.test.mjs と同型）
-const LITE_REQ = {
-  summary: 'clean micro fix', acceptance_criteria: AC, issue_type: 'fix', scope: 'src',
-  breaking_change: false, breaking_keyword_scan: false,
-  issue_number: 1, issue_title: 'stub-issue-title',
-};
+// REQ は args.setup.analyze（prerun の analyze 段）から組まれる — AC を sentinel に差し替える
+const AC_ARGS = { args: analyzeArgs(1, { acceptance_criteria: AC }) };
+// clean-micro-lite が成立する override（lite-route-routing.test.mjs と同型。realized 0 files → micro）
 const LITE_OVERRIDES = {
   'plan#micro': { summary: 'p', serial: [], parallel: [] },
   'danger-grep': { risk: { ok: true, hits: [] }, files: [], struct: null, diffhash: null },
@@ -170,7 +163,7 @@ test('[review-ac] pr-iterate 単体起動（AC なし）: review prompt に AC �
 });
 
 test('[review-ac] dev-flow lite route: pr-review-lite prompt に analyze の AC を注入する', async () => {
-  const { ctx, calls } = makeDevFlowSandbox({ overrides: { 'analyze#1': LITE_REQ, ...LITE_OVERRIDES } });
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: { ...LITE_OVERRIDES }, extra: AC_ARGS });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'lite-ac');
   const lite = calls.find((c) => c.label === 'pr-review-lite');
@@ -181,15 +174,15 @@ test('[review-ac] dev-flow lite route: pr-review-lite prompt に analyze の AC 
 // nested pr-iterate 起動は 3 経路（full route / lite の review escalate / lite の CI 非 green）あり、
 // いずれも同一の args（acceptance_criteria を含む）で起動する（issue #550 案3: 1 本の変数組み立てへ統合）。
 const NESTED_LAUNCH_SCENARIOS = {
-  'full route': { 'analyze#1': STANDARD_REQ },
-  'lite review escalate': { 'analyze#1': LITE_REQ, ...LITE_OVERRIDES, 'pr-review-lite': BLOCKING_REVIEW },
-  'lite CI 非 green': { 'analyze#1': LITE_REQ, ...LITE_OVERRIDES, 'ci-check-lite': { status: 'failed', failed_checks: ['build'], waited_seconds: 0, poll_attempts: 1 } },
+  'full route': {},
+  'lite review escalate': { ...LITE_OVERRIDES, 'pr-review-lite': BLOCKING_REVIEW },
+  'lite CI 非 green': { ...LITE_OVERRIDES, 'ci-check-lite': { status: 'failed', failed_checks: ['build'], waited_seconds: 0, poll_attempts: 1 } },
 };
 
 for (const [name, overrides] of Object.entries(NESTED_LAUNCH_SCENARIOS)) {
   test(`[review-ac] dev-flow nested pr-iterate 起動（${name}）が acceptance_criteria を args で渡す`, async () => {
     const { workflow, launches } = makeWorkflowRecorder();
-    const { ctx, calls } = makeDevFlowSandbox({ overrides, workflow });
+    const { ctx, calls } = makeDevFlowSandbox({ overrides, workflow, extra: AC_ARGS });
     const { error } = await runWorkflowCapture(devFlowSrc, ctx);
     assertNoCrash(error, name);
     const wentLite = calls.some((c) => c.label === 'pr-review-lite');

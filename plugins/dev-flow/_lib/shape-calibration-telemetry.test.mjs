@@ -1,25 +1,26 @@
-// issue #640 / #676: 実効 shape の判定根拠と analyze 経路が journal telemetry（journal-save prompt の handoff JSON）
+// issue #640 / #676 / #690: 実効 shape の判定根拠と analyze 経路が journal telemetry（journal-save prompt の handoff JSON）
 // に載ることを VM sandbox で固定する。shape は realized diff の file 数から classifyShape が決めた実効値、
 // shape_reason はその realized ベースの根拠（事前見積もり由来の estimated_file_count / shape_refloored は無い）。
+// analyze 経路は args.setup.analyze（prerun の analyze 段）から決まり、Workflow 側の Analyze phase は spawn しない。
 //
-//   (a) sonnet 経路（contract-probe が null）: analyze_path='sonnet'、analyze_ineligible_reason が
-//       workflow 側の理由（contract probe failed）、shape_reason が realized 閾値判定文、
-//       ac_count / realized_file_count / realized_file_count_raw が数値で載る
-//   (b) contract 経路採用: analyze_path='contract'、analyze_ineligible_reason はキー欠落
-//   (c) contract 不採用（analyze-issue.sh の ineligible_reason あり）: その文字列が verbatim で載る
+//   (a) contract 経路（既定）: analyze_path='contract'、analyze_ineligible_reason はキー欠落、
+//       shape_reason が realized 閾値判定文、ac_count / realized_file_count / realized_file_count_raw が数値で載る、
+//       prerun_durations.analyze が prerun の analyze.duration_seconds、phase_durations.analyze は 0（ゲート判定のみ）
+//   (b) jev 経路: analyze_path='jev'、analyze_ineligible_reason が prerun の jev_reasons を '; ' 結合した文字列
+//   (c) prerun の analyze.duration_seconds 欠落: prerun_durations キーを出さない（fail-open）
 //   (d) realized count 欠損（danger-grep の files が null）: shape=complex、shape_reason が safe floor 文、
 //       realized_file_count=null
 //   (e) 宣言外パスの除外: realized_file_count は classifyShape 入力（除外後）、realized_file_count_raw は
 //       ephemeral 除外のみの総数で、両者が乖離する
-//   (f) DEPTH !== 'standard': contract 未試行の理由が載る
-//   (g) telemetry キーは gate / merge tier の入力にならない（merge_tier が (a) と同一）
+//   (f) ゲート後の needs_clarification: failure telemetry の analyze_path='sonnet'
+//   (g) telemetry キーは gate / merge tier の入力にならない（merge_tier が contract / jev で同一）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -39,60 +40,47 @@ function extractTelemetry(calls) {
 
 async function runScenario({ overrides = {}, extra = {} } = {}) {
   const { ctx, calls } = makeDevFlowSandbox({ overrides, extra });
-  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'shape-calibration-telemetry');
   assert.equal(error, null, `run が throw で終端した: ${error?.message}`);
-  return { calls, telemetry: extractTelemetry(calls) };
+  return { calls, result, telemetry: extractTelemetry(calls) };
 }
 
-const CONTRACT_OK = {
-  ok: true,
-  result: {
-    eligible: true, contract: 't1', title: 'stub-issue-title', issue_type: 'fix',
-    acceptance_criteria: ['a', 'b'], breaking_keyword_scan: false, comment_count: 0,
-    scope: 'src', scope_truncated: false,
-  },
-};
-
-test('[shape-calibration] (a) sonnet 経路: shape（実効）/ shape_reason（realized ベース）/ 数値キーが型どおり載る', async () => {
-  const { telemetry } = await runScenario();
-  assert.equal(telemetry.analyze_path, 'sonnet');
-  assert.equal(telemetry.analyze_ineligible_reason, 'contract probe failed');
+test('[shape-calibration] (a) contract 経路（既定）: analyze_path=contract、analyze_ineligible_reason はキー欠落、shape / 数値キー / prerun_durations が型どおり載る', async () => {
+  const { telemetry, calls } = await runScenario();
+  assert.equal(calls.filter((c) => c.opts?.phase === 'Analyze').length, 0, '通常経路の Analyze phase で agent が spawn されている');
+  assert.equal(telemetry.analyze_path, 'contract');
+  assert.equal(Object.prototype.hasOwnProperty.call(telemetry, 'analyze_ineligible_reason'), false, 'contract 経路では analyze_ineligible_reason キーを出さない');
   assert.equal(telemetry.shape_reason, 'realized 3 file(s), 2 AC, type=fix → shape=standard');
   assert.equal(telemetry.ac_count, 2);
   assert.equal(telemetry.realized_file_count, 3);
   assert.equal(telemetry.realized_file_count_raw, 3);
   assert.equal(telemetry.shape, 'standard');
+  // prerun の analyze 段の所要は prerun_durations.analyze、Workflow 側の Analyze はゲート判定のみで 0 秒
+  assert.deepEqual(telemetry.prerun_durations, { analyze: 5 });
+  assert.equal(telemetry.phase_durations?.analyze, 0);
   // 事前見積もり由来のキーは載せない（issue #676）
   for (const k of ['estimated_file_count', 'shape_refloored', 'effective_shape', 'triviality', 'triviality_reason']) {
     assert.equal(Object.prototype.hasOwnProperty.call(telemetry, k), false, `${k} は telemetry に載せない`);
   }
 });
 
-test('[shape-calibration] (b) contract 経路採用: analyze_path=contract、analyze_ineligible_reason はキー欠落', async () => {
-  const { telemetry, calls } = await runScenario({ overrides: { 'contract-probe#1': CONTRACT_OK } });
-  assert.equal(calls.filter((c) => c.label === 'analyze#1').length, 0, 'contract 採用時に sonnet analyze が呼ばれている');
+test('[shape-calibration] (b) jev 経路: analyze_path=jev、analyze_ineligible_reason は prerun の jev_reasons を結合した文字列', async () => {
+  const { telemetry, calls } = await runScenario({
+    extra: { args: analyzeArgs(1, { analyze_path: 'jev', jev_reasons: ['breaking_keyword_scan true', 'comments present (2)'], comment_count: 2, comment_overrides: ['override: comment #1 by reporter（NONE, t）: 訂正'], duration_seconds: 42 }) },
+  });
+  assert.equal(calls.filter((c) => c.opts?.phase === 'Analyze').length, 0, 'jev 経路でも Analyze phase の spawn は 0');
+  assert.equal(telemetry.analyze_path, 'jev');
+  assert.equal(telemetry.analyze_ineligible_reason, 'breaking_keyword_scan true; comments present (2)');
+  assert.deepEqual(telemetry.prerun_durations, { analyze: 42 });
+});
+
+test('[shape-calibration] (c) prerun の analyze.duration_seconds 欠落: prerun_durations キーを出さない（fail-open）', async () => {
+  const analyze = analyzeArgs(1);
+  delete analyze.setup.analyze.duration_seconds;
+  const { telemetry } = await runScenario({ extra: { args: analyze } });
   assert.equal(telemetry.analyze_path, 'contract');
-  assert.equal(Object.prototype.hasOwnProperty.call(telemetry, 'analyze_ineligible_reason'), false, '採用時は analyze_ineligible_reason キーを出さない');
-  assert.equal(telemetry.ac_count, 2);
-  assert.equal(telemetry.shape, 'standard');
-  assert.equal(telemetry.shape_reason, 'realized 3 file(s), 2 AC, type=fix → shape=standard');
-});
-
-test('[shape-calibration] (c) contract 不採用: analyze-issue.sh の ineligible_reason が verbatim で載る', async () => {
-  const { telemetry } = await runScenario({
-    overrides: { 'contract-probe#1': { ok: true, result: { eligible: false, ineligible_reason: 'comments present (2) — body/comment reconciliation requires sonnet analyze' } } },
-  });
-  assert.equal(telemetry.analyze_path, 'sonnet');
-  assert.equal(telemetry.analyze_ineligible_reason, 'comments present (2) — body/comment reconciliation requires sonnet analyze');
-});
-
-test('[shape-calibration] (c2) contract eligible だが whitelist 不合格（reason 無し）: whitelist rejected', async () => {
-  const { telemetry } = await runScenario({
-    overrides: { 'contract-probe#1': { ok: true, result: { ...CONTRACT_OK.result, comment_count: 1 } } },
-  });
-  assert.equal(telemetry.analyze_path, 'sonnet');
-  assert.equal(telemetry.analyze_ineligible_reason, 'whitelist rejected');
+  assert.equal(Object.prototype.hasOwnProperty.call(telemetry, 'prerun_durations'), false);
 });
 
 test('[shape-calibration] (d) realized count 欠損（files=null）: shape=complex、shape_reason は safe floor 文、realized_file_count=null', async () => {
@@ -121,16 +109,23 @@ test('[shape-calibration] (e) 宣言外パス除外: realized_file_count は cla
   assert.equal(telemetry.shape_reason, 'realized 3 file(s), 2 AC, type=fix → shape=standard');
 });
 
-test('[shape-calibration] (f) DEPTH !== standard: contract 未試行の理由が載る', async () => {
-  const { telemetry, calls } = await runScenario({ extra: { args: { ...devFlowArgs('1'), depth: 'comprehensive' } } });
-  assert.equal(calls.filter((c) => c.label.startsWith('contract-probe')).length, 0);
+test('[shape-calibration] (f) ゲート後の needs_clarification: failure telemetry の analyze_path は sonnet、jev 理由は analyze_ineligible_reason に残る', async () => {
+  const { ctx, calls } = makeDevFlowSandbox({
+    extra: { args: analyzeArgs(1, { analyze_path: 'jev', jev_reasons: ['comments present (1)'], comment_count: 1, comment_conflicts: ['conflict: comment #1 by alice（OWNER, t）: hmm'] }) },
+  });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'shape-calibration-telemetry-f');
+  assert.equal(error, null, `run が throw で終端した: ${error?.message}`);
+  assert.equal(result?.status, 'needs_clarification');
+  const telemetry = extractTelemetry(calls);
   assert.equal(telemetry.analyze_path, 'sonnet');
-  assert.equal(telemetry.analyze_ineligible_reason, 'contract not attempted (depth=comprehensive)');
+  assert.equal(telemetry.analyze_ineligible_reason, 'comments present (1)');
+  assert.equal(calls.filter((c) => c.label === 'analyze-clarify#1' && c.agentType === 'dev-flow:dev-runner').length, 1, 'ゲート後の sonnet spawn は 1 回');
 });
 
-test('[shape-calibration] (g) telemetry キーは merge tier の入力にならない（contract / sonnet で tier 同一）', async () => {
+test('[shape-calibration] (g) telemetry キーは merge tier の入力にならない（contract / jev で tier 同一）', async () => {
   const a = await runScenario();
-  const b = await runScenario({ overrides: { 'contract-probe#1': CONTRACT_OK } });
+  const b = await runScenario({ extra: { args: analyzeArgs(1, { analyze_path: 'jev', jev_reasons: ['breaking_keyword_scan true'] }) } });
   assert.equal(a.telemetry.merge_tier, b.telemetry.merge_tier);
   assert.deepEqual(a.telemetry.merge_tier_reasons, b.telemetry.merge_tier_reasons);
 });

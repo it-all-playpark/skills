@@ -7,12 +7,13 @@
 // pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
 // フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
 // 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
-// 数分かかりうる）を analyze の phase_durations に付け替えないため — start〜analyze_start の
-// 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
-// 残差（duration_seconds − Σphase_durations）に留める。
-// contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため plan 合成までの時間が implement 区間へ付け替わる — phase_durations は
-// 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
+// 数分かかりうる）と prerun の analyze 段（issue 取得 + Jev 判定。deps と並列）を analyze の
+// phase_durations に付け替えないため — start〜analyze_start の区間（deps/stack/analyze の決定論処理 +
+// wrapper turn）はどの phase にも属さない残差（duration_seconds − Σphase_durations）に留め、
+// analyze 段の所要だけは telemetry の prerun_durations.analyze に別途載せる（issue #690）。
+// Analyze phase は Workflow 内では args.setup.analyze の whitelist 検証とゲート判定だけで agent を
+// spawn しないため、analyze_end も epoch_end から給電し phase_durations.analyze は常に 0 になる
+// （ゲート判定時間のみ。isolation-probe / plan 合成の時間は implement 区間に入る）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。

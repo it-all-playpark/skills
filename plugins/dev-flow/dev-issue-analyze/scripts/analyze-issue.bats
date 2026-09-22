@@ -631,6 +631,30 @@ some code
 }
 
 # ---------------------------------------------------------------------------
+# (aa1b) contract mode always carries the raw signals prerun-analyze.sh routes to Jev
+#        (issue #690): comments[] (author / author_association / created_at / body),
+#        issue_author, title_breaking_marker — independent of `eligible`.
+# ---------------------------------------------------------------------------
+@test "contract mode: comments[] / issue_author / title_breaking_marker are emitted (issue #690)" {
+    FIXTURE="$FIXTURE_DIR/contract-jev-signals.json"
+    make_fixture "$FIXTURE" "feat!: add button" "## Acceptance Criteria
+
+- [ ] item one" '[]' '[{"author":{"login":"alice"},"authorAssociation":"OWNER","createdAt":"2026-01-01T00:00:00Z","body":"訂正: 30 箇所"}]' "reporter"
+    run analyze "$FIXTURE" 35 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.title_breaking_marker == true and .issue_author == "reporter"'
+    echo "$output" | jq -e '.comments == [{"author":"alice","author_association":"OWNER","created_at":"2026-01-01T00:00:00Z","body":"訂正: 30 箇所"}]'
+    # no bang / no comments / no author -> false / [] / ""
+    FIXTURE2="$FIXTURE_DIR/contract-jev-signals-empty.json"
+    make_fixture "$FIXTURE2" "feat: add button" "## Acceptance Criteria
+
+- [ ] item one"
+    run analyze "$FIXTURE2" 36 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.title_breaking_marker == false and .issue_author == "" and .comments == []'
+}
+
+# ---------------------------------------------------------------------------
 # (aa2) contract mode: 受け入れ条件 heading + checkbox + fix: prefix, no comments
 #       -> eligible, comment_count 0, ac_heading_near_miss empty
 # ---------------------------------------------------------------------------
