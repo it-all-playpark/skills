@@ -2,13 +2,16 @@
 // dev-flow / pr-iterate の品質ゲート agent（pr-reviewer / evaluator）は model override を渡さず
 // agents/*.md の frontmatter 既定（opus / high）で spawn する — これを VM 挙動と静的検査で pin する。
 // model を変える正規経路は frontmatter であり、workflow 側に定数・fallback 機構を持たない。
+// 例外は dev-implement-fable（Implement）だけ: fable の usage 上限で null が返ったとき opus へ落とす
+// `fallbackModel` opt-in と、green-fix の `model: 'sonnet'` 明示 override を持つ（挙動は
+// impl-model-fallback.test.mjs が pin）。本ファイルの静的検査は品質ゲート agent の call 行に限定する。
 //
 //   (a) DEV_FLOW_SCENARIOS 全 scenario + baseline で観測される pr-reviewer call は opts に `model` キーを持たない
 //   (b) 同じ観測範囲で evaluator call（eval#i / final-ac-reconcile / security-clearance-final）も `model` キーを持たない
 //   (c) pr-iterate.js の pr-reviewer call（review#i / schema-retry）も `model` キーを持たない
-//   (d) telemetry の review_model_config / eval_model_config リテラルは各 agent の frontmatter の model と一致し、
-//       journal 経路（dev-flow: 失敗 / 成功 / abort、pr-iterate: 終端 / abort）全てに載る
-//   (e) 両 workflow のどの agent call site にも `model:` が残っていない（静的）
+//   (d) telemetry の review_model_config / eval_model_config / impl_model_config リテラルは各 agent の frontmatter の
+//       model と一致し、journal 経路（dev-flow: 失敗 / 成功 / abort、pr-iterate: 終端 / abort）全てに載る
+//   (e) 両 workflow の evaluator / pr-reviewer の call site に `model:` / `fallbackModel:` が無い（静的）
 //   (f) 両 workflow に quality model 定数 / fallback 機構の残骸（QUALITY_MODEL / QUALITY_FALLBACK /
 //       nested.quality_fallback / quality_model_config / quality_model_fallback_label）が無い（静的）
 
@@ -26,6 +29,7 @@ const devFlowSrc = readFileSync(join(repoRoot, '.claude', 'workflows', 'dev-flow
 const prIterateSrc = readFileSync(join(repoRoot, '.claude', 'workflows', 'pr-iterate.js'), 'utf8');
 const prReviewerMd = readFileSync(join(repoRoot, 'agents', 'pr-reviewer.md'), 'utf8');
 const evaluatorMd = readFileSync(join(repoRoot, 'agents', 'evaluator.md'), 'utf8');
+const implementFableMd = readFileSync(join(repoRoot, 'agents', 'dev-implement-fable.md'), 'utf8');
 
 const REVIEWER = 'dev-flow:pr-reviewer';
 const EVALUATOR = 'dev-flow:evaluator';
@@ -91,14 +95,16 @@ test('[review-model] (c) pr-iterate.js: review#i / schema-retry の pr-reviewer 
   assert.ok(reviewer.every((c) => !('model' in (c.opts ?? {}))), 'pr-iterate の pr-reviewer call に model キーが残っている');
 });
 
-test('[review-model] (d) review_model_config / eval_model_config は frontmatter の model と一致し、journal 経路全てに載る', () => {
+test('[review-model] (d) review_model_config / eval_model_config / impl_model_config は frontmatter の model と一致し、journal 経路全てに載る', () => {
   const reviewerFm = frontmatterModel(prReviewerMd, 'pr-reviewer.md');
   const evaluatorFm = frontmatterModel(evaluatorMd, 'evaluator.md');
+  const implFm = frontmatterModel(implementFableMd, 'dev-implement-fable.md');
   assert.equal(reviewerFm, 'opus', 'pr-reviewer.md frontmatter の model は opus のはず');
   assert.equal(evaluatorFm, 'opus', 'evaluator.md frontmatter の model は opus のはず');
+  assert.equal(implFm, 'fable', 'dev-implement-fable.md frontmatter の model は fable のはず（opus は fallback 先であって既定ではない）');
   const lines = (src, key) => src.split('\n').filter((l) => l.includes(`${key}:`));
   // dev-flow.js: 失敗 handoff（journalLogFailure）/ 成功 payload / abort handoff の 3 経路
-  for (const [key, fm] of [['review_model_config', reviewerFm], ['eval_model_config', evaluatorFm]]) {
+  for (const [key, fm] of [['review_model_config', reviewerFm], ['eval_model_config', evaluatorFm], ['impl_model_config', implFm]]) {
     const hits = lines(devFlowSrc, key);
     assert.equal(hits.length, 3, `dev-flow.js の ${key} は 3 経路（失敗 / 成功 / abort）に載るはず: ${JSON.stringify(hits)}`);
     for (const l of hits) assert.ok(l.includes(`${key}: '${fm}'`), `${key} の値が frontmatter(${fm}) と一致しない: ${l.trim()}`);
@@ -108,15 +114,20 @@ test('[review-model] (d) review_model_config / eval_model_config は frontmatter
   assert.equal(prHits.length, 2, `pr-iterate.js の review_model_config は 2 経路（終端 / abort）に載るはず: ${JSON.stringify(prHits)}`);
   for (const l of prHits) assert.ok(l.includes(`review_model_config: '${reviewerFm}'`), `review_model_config の値が frontmatter(${reviewerFm}) と一致しない: ${l.trim()}`);
   assert.deepEqual(lines(prIterateSrc, 'eval_model_config'), [], 'pr-iterate.js に eval_model_config は載せない');
+  assert.deepEqual(lines(prIterateSrc, 'impl_model_config'), [], 'pr-iterate.js に impl_model_config は載せない（implementer は dev-flow 側の agent）');
 });
 
-test('[review-model] (e) 両 workflow のどの agent call site にも model を渡す行が残っていない（静的）', () => {
+test('[review-model] (e) 両 workflow の evaluator / pr-reviewer の call site に model / fallbackModel を渡す行が無い（静的）', () => {
+  const gate = /\bagentType:\s*'(evaluator|pr-reviewer)'/;
   for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
-    const hits = src.split('\n').filter((l) => /\bagentType:\s*'/.test(l) && /\bmodel:/.test(l));
-    assert.deepEqual(hits, [], `${name}: agent call に model が残っている`);
+    const hits = src.split('\n').filter((l) => gate.test(l) && (/\bmodel:/.test(l) || /\bfallbackModel:/.test(l)));
+    assert.deepEqual(hits, [], `${name}: 品質ゲート agent の call に model / fallbackModel が残っている`);
   }
   const evaluatorHits = devFlowSrc.split('\n').filter((l) => l.includes("agentType: 'evaluator'"));
   assert.equal(evaluatorHits.length, 3, 'evaluator call site は 3 箇所のはず');
+  // model override を持つ call は dev-implement-fable（FABLE_IMPL_AGENT）の call 行だけ
+  const modelHits = devFlowSrc.split('\n').filter((l) => /\bagentType:\s*'/.test(l) && /\bmodel:/.test(l));
+  assert.deepEqual(modelHits, [], 'dev-flow.js: 文字列 agentType の call 行に model が残っている（model override は FABLE_IMPL_AGENT の call 行に限る）');
 });
 
 test('[review-model] (f) 両 workflow に quality model 定数 / fallback 機構の残骸が無い（静的）', () => {

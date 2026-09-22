@@ -59,7 +59,17 @@ evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL �
 （宣言外監査・実効 shape の realized count・PR body の材料になる）。BLOCKED（`approach_mismatch`）は planner を起動せず、
 blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止）と DONE 成果を prompt に付けて同じ agent を
 `reimpl-blocked#b` で再 spawn する（上限 `BLOCK_MAX`）。Validate の green-fix（`green-fix#i` / `green-fix#retry-i`）も
-同じ agent。観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）。
+同じ agent 定義だが `model: 'sonnet'` を明示 override する（green-fix の実態は環境起因の blocker 報告か小さな
+test script 修正で fable 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
+観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）。
+
+**fable → opus fallback**（`runImplement` の call site のみ）: harness の `agent()` は fable の usage 上限・
+terminal API error・user skip のいずれでも throw せず null を返し、原因は script から読めない（null が唯一の
+観測点）。call site は `fallbackModel: 'opus'` を opt-in し、`trackedAgent` は null を受けたら同一 prompt・同一
+label に `model: 'opus'` を付けて 1 回だけ再試行し、以後その run の `fallbackModel` 付き call は最初から opus で
+spawn する（run 単位 sticky。resume は失敗 call 以降が live 再実行されるので永続化しない）。再試行も null なら
+従来どおり drop（`implDroppedCount`）。`fallbackModel` を持たない call の null 挙動は不変。観測は
+`impl_model_fallback_label`（telemetry.md）。
 
 shape は Analyze では決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount)` が
 realized diff の file 数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）だけで
@@ -91,13 +101,15 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
 - **判断系 leaf は subagent** (`.claude/agents/{dev-implement-fable,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
   workflow の `agent()` opts には effort が記載されているが、本 harness での適用可否は未検証（dev-flow-canary の opts 受理 probe — capability id `agent_opts_effort_accepted` — で再判定する。probe は受理されたことしか判定できない）。それまで effort は subagent frontmatter で固定する。
-  model は subagent frontmatter で決める。dev-flow.js / pr-iterate.js の call site は `opts.model` を渡さない —
+  model は subagent frontmatter で決める。品質ゲート agent の call site は `opts.model` を渡さない —
   evaluator（`eval#i` / `final-ac-reconcile` / `security-clearance-final`）と pr-reviewer（`review#i` /
   schema-retry / `pr-review-lite`）はともに frontmatter（opus / high）で spawn し、workflow 側に model 定数・
   null 時の model fallback 機構は持たない（`_lib/review-model-frontmatter.test.mjs` が call site と telemetry
-  `eval_model_config` / `review_model_config` = frontmatter 値の一致を pin）。同一入力での paired 比較で
+  `eval_model_config` / `review_model_config` / `impl_model_config` = frontmatter 値の一致を pin）。同一入力での paired 比較で
   opus-high は fable-high と verdict・major 検出が同等以上かつコストが 2/3 だったため、両 gate とも override を外している。
-  `opts.model` を渡す call site は dev-improve.js の `rank-judge`（improve-miner）のみで、
+  例外は `dev-implement-fable`（frontmatter fable）: `runImplement` は `fallbackModel: 'opus'`（null 時の
+  fallback、上記 Implement 節）、green-fix は `model: 'sonnet'` を渡す（挙動は `_lib/impl-model-fallback.test.mjs` が pin）。
+  ほかに `opts.model` を渡す call site は dev-improve.js の `rank-judge`（improve-miner）のみで、
   `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を dev-improve.js へ inline 生成して渡す。
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
