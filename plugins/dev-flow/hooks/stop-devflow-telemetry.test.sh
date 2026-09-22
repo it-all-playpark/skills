@@ -1202,7 +1202,7 @@ make_full_telemetry_handoff() {
       redgreen_deny: [{"ac":2,"reasons":["no red"]}],
       testsurf_hits: ["test/foo.test.js"],
       duration_seconds: 840,
-      phase_durations: {"analyze":120,"plan":95},
+      phase_durations: {"implement":120,"validate":95},
       merge_tier_reasons: ["danger hit"],
       route: "lite"
     }
@@ -1259,7 +1259,7 @@ make_full_telemetry_handoff() {
     else
       fail "full_telemetry_duration_seconds" "--duration-seconds 840 not found. got: ${captured}"
     fi
-    if echo "$captured" | grep -q -- '--phase-durations {"analyze":120,"plan":95}'; then
+    if echo "$captured" | grep -q -- '--phase-durations {"implement":120,"validate":95}'; then
       pass "full_telemetry_phase_durations"
     else
       fail "full_telemetry_phase_durations" "--phase-durations not found/compact. got: ${captured}"
@@ -1582,7 +1582,7 @@ make_full_telemetry_handoff() {
   make_stub_journal "$stub" "$capture" 0
 
   make_full_telemetry_handoff "${tmpd}/journal/pending/bad.json" "$stub" \
-    '.telemetry.phase_durations = {"analyze":"fast"}'
+    '.telemetry.phase_durations = {"implement":"fast"}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
   captured=$(cat "$capture" 2>/dev/null || echo "")
@@ -1722,7 +1722,7 @@ make_full_telemetry_handoff() {
       if [[ $(jq -r '.telemetry.vdelta_verdicts[0].ac' "$entry") == "1" ]] &&
         [[ $(jq -r '.telemetry.route' "$entry") == "lite" ]] &&
         [[ $(jq -r '.telemetry.duration_seconds' "$entry") == "840" ]] &&
-        [[ $(jq -r '.telemetry.phase_durations.analyze' "$entry") == "120" ]]; then
+        [[ $(jq -r '.telemetry.phase_durations.implement' "$entry") == "120" ]]; then
         pass "integration_8key_telemetry_persisted"
       else
         fail "integration_8key_telemetry_persisted" "8-key telemetry missing in entry: $(jq -c '.telemetry' "$entry")"

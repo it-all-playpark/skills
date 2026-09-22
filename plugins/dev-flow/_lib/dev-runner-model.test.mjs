@@ -1,5 +1,5 @@
 // Guard test: assert that Setup/Validate phases use dev-runner-haiku (model:haiku in frontmatter)
-// and the Analyze phase uses dev-runner (model:sonnet in frontmatter).
+// and the analyze gate (end of Setup, issue #695) uses dev-runner (model:sonnet in frontmatter).
 //
 // Background:
 //   .claude/workflows/dev-flow.js uses runtime-injected globals and cannot be imported
@@ -15,7 +15,7 @@
 //
 // Design:
 //   Setup    → agentType: 'dev-runner-haiku'  (model:haiku in .claude/agents/dev-runner-haiku.md)
-//   Analyze  → agentType: 'dev-runner'         (model:sonnet in .claude/agents/dev-runner.md)
+//   Setup 末尾の analyze ゲート後（analyze-clarify#N のみ）→ agentType: 'dev-runner' (model:sonnet in .claude/agents/dev-runner.md)
 //   Validate → agentType: 'dev-runner-haiku'  (model:haiku in .claude/agents/dev-runner-haiku.md)
 //   PR       → agentType: 'dev-runner-haiku'  (model:haiku in .claude/agents/dev-runner-haiku.md, issue #642)
 //
@@ -79,9 +79,9 @@ test("[dev-runner-model] Validate (label:'test#1') dispatches agentType:'dev-run
   assert.equal(c.agentType, 'dev-flow:dev-runner-haiku', `Validate phase should use dev-runner-haiku, but found: ${c.agentType}`);
 });
 
-// (3) Analyze: 通常経路は spawn 0（args.setup.analyze から REQ を組む）。ゲート後の analyze-clarify#N のみ
-//     dev-runner（sonnet）を使う（issue #690）
-test("[dev-runner-model] Analyze: 既定 run では analyze 系 spawn 0、ゲート後の analyze-clarify#… は agentType:'dev-runner'", async () => {
+// (3) analyze ゲート（Setup 末尾）: 通常経路は spawn 0（args.setup.analyze から REQ を組む）。ゲート後の
+//     analyze-clarify#N のみ dev-runner（sonnet）を使う（issue #690 / #695）
+test("[dev-runner-model] analyze ゲート: 既定 run では analyze 系 spawn 0、ゲート後の analyze-clarify#… は agentType:'dev-runner'", async () => {
   assert.equal(findCall(await calls(), /^analyze/), null, '既定 run で analyze 系の agent() 呼び出しがある');
   const { ctx, calls: c } = makeDevFlowSandbox({ extra: { args: analyzeArgs(1, { acceptance_criteria: [] }) } });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);

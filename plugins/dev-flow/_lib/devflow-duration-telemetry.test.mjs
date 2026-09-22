@@ -4,9 +4,9 @@
 // 給電（feedClockMark）対象 label への optional epoch 付与を追加する。
 //
 // issue #443: 専用 clock probe は当初 clockProbe('start') / clockProbe('end') の 2 回のみに削減され、
-// 残り 8 mark（analyze_start/analyze_end/implement_end/validate_end/evaluate_end/pr_end/
-// iterate_end/final_end）は隣接する既存 exec-proxy / agent 応答の optional `epoch` フィールドから
-// feedClockMark() 経由で給電される（recordClockMark の fail-open 契約は不変）。
+// 残りの mark（setup_end/implement_end/validate_end/evaluate_end/pr_end/iterate_end/final_end）は
+// prerun 応答（setup_end = args.setup.epoch_end）と隣接する既存 exec-proxy / agent 応答の optional `epoch`
+// フィールドから feedClockMark() 経由で給電される（recordClockMark の fail-open 契約は不変）。
 //
 // issue #550 F1/F3（2 段更新の最終段）: clockProbe('start') は F1 で、clockProbe('end') は F3 で
 // それぞれ廃止された。専用 clock probe は 0 回になり、start mark は Setup 冒頭の setup-base probe
@@ -45,9 +45,10 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 function makeSandbox(analyzeReq, epochMode) {
   const journalPrompts = [];
   const clockCalls = []; // clock# probe の起動 label を発火順に記録（AC-1 の決定論検証用）
+  const implEpochs = []; // implementer 応答に付与した epoch（implement_end の給電値）
   // devFlowArgs（vm-sandbox.mjs）の args.setup.epoch_end=1050 より後から単調増加させる
-  // （analyze_start は PRERUN.epoch_end から給電されるため、それ以降の給電値が analyze_start
-  // より小さいと phase_durations.analyze が負の diff で欠落する）。
+  // （setup_end は PRERUN.epoch_end から給電されるため、それ以降の給電値が setup_end
+  // より小さいと phase_durations.implement が負の diff で欠落する）。
   let epoch = 1050;
 
   // 給電対象 stub 応答へ epoch を単調増加で付与する（fail モードでは何もしない = epoch 省略）。
@@ -83,12 +84,12 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
     }
-    // worktree-deps: analyze_start の給電元（issue #443）
+    // worktree-deps: 旧 analyze 開始 mark の給電元（issue #443。issue #641 で撤去済み、防御的に残す）
     if (label === 'worktree-deps') {
       return withEpoch({ status: 'no_dependencies' });
     }
-    // Analyze は args.setup.analyze から REQ を組み spawn しない（issue #690）。analyze_start / analyze_end は
-    // 共に args.setup.epoch_end から給電され、phase_durations.analyze はゲート判定のみの 0 になる。
+    // Setup 末尾の analyze ゲートは args.setup.analyze から REQ を組み spawn しない（issue #690）。
+    // setup_end は args.setup.epoch_end から給電され implement 区間の起点になる（issue #695）。
     // implement_end は dev-implement-fable 呼び出しの epoch から給電される。
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を発生させない（給電対象ではない）
@@ -145,9 +146,12 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    // implementer（implement_end の給電元）
+    // implementer（implement_end の給電元）。給電した epoch を記録し、phase_durations.implement の
+    // 起点が setup_end（args.setup.epoch_end）であることを検証する（issue #695）。
     if (agentType === 'dev-flow:dev-implement-fable') {
-      return withEpoch({ status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] });
+      const res = withEpoch({ status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] });
+      if (typeof res.epoch === 'number') implEpochs.push(res.epoch);
+      return res;
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避（validate_end の給電元候補）
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -204,7 +208,14 @@ function makeSandbox(analyzeReq, epochMode) {
     getJournalPrompts: () => journalPrompts,
     getClockCalls: () => clockCalls,
     getLogLines: () => logLines,
+    getImplEpochs: () => implEpochs,
   };
+}
+
+// journal-save prompt（handoff JSON を含む）から phase_durations object を取り出す（無ければ null）。
+function extractPhaseDurations(prompt) {
+  const m = /"phase_durations":(\{[^}]*\})/.exec(prompt);
+  return m ? JSON.parse(m[1]) : null;
 }
 
 /**
@@ -255,7 +266,7 @@ const ANALYZE_REQ = {
 const src = readFileSync(devFlowPath, 'utf8');
 
 test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、journal-log prompt に duration_seconds/phase_durations が含まれる（final キーは fixes_applied=0 の Final reconcile skip で欠落する）', async () => {
-  const { ctx, getJournalPrompts, getClockCalls, getLogLines } = makeSandbox(ANALYZE_REQ, 'ok');
+  const { ctx, getJournalPrompts, getClockCalls, getLogLines, getImplEpochs } = makeSandbox(ANALYZE_REQ, 'ok');
 
   const { result, error } = await runDevFlowCapture(src, ctx);
 
@@ -264,15 +275,15 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、j
   }
   assert.ok(result !== null && result !== undefined, `workflow は正常 return するべきだが null/undefined だった（error: ${error?.name}: ${error?.message}）`);
 
-  // start は args.setup.epoch、analyze_start は args.setup.epoch_end（いずれも dev-flow-prerun 応答）
+  // start は args.setup.epoch、setup_end は args.setup.epoch_end（いずれも dev-flow-prerun 応答）
   // から給電されるので、epoch 給電が成立するモードでは fail-open 警告が出てはならない。
   // isolation-probe（Write-only agent、epoch なし）から給電すると毎 run 警告 + null になる
   // regression を pin する。
-  const clockWarnings = getLogLines().filter((l) => /clock#(start|analyze_start)/.test(l));
+  const clockWarnings = getLogLines().filter((l) => /clock#(start|setup_end)/.test(l));
   assert.deepEqual(
     clockWarnings,
     [],
-    `start / analyze_start の clock mark は prerun epoch から給電されるべきだが警告が出た: ${JSON.stringify(clockWarnings)}`,
+    `start / setup_end の clock mark は prerun epoch から給電されるべきだが警告が出た: ${JSON.stringify(clockWarnings)}`,
   );
 
   // AC-1（issue #550 F1+F3 最終更新）: 専用 clock probe（label が 'clock#' で始まる subagent 起動）は
@@ -294,13 +305,23 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、j
     capturedPrompt.includes('"phase_durations"'),
     `journal-log prompt に "phase_durations" が含まれるべきだが含まれていなかった。prompt:\n${capturedPrompt}`,
   );
+  const phaseDurations = extractPhaseDurations(capturedPrompt);
+  assert.ok(phaseDurations, `journal-log prompt から phase_durations を抽出できなかった。prompt:\n${capturedPrompt}`);
+  // issue #695: Analyze phase 撤去後、phase_durations に analyze / plan キーは出ない
+  for (const key of ['analyze', 'plan']) {
+    assert.ok(!(key in phaseDurations), `phase_durations に撤去済みの "${key}" キーが含まれている: ${JSON.stringify(phaseDurations)}`);
+  }
   assert.ok(
-    /"analyze":\d+/.test(capturedPrompt),
-    `journal-log prompt の phase_durations に "analyze":<number> が含まれるべきだが含まれていなかった（analyze_start / analyze_end は共に args.setup.epoch_end から給電される）。prompt:\n${capturedPrompt}`,
-  );
-  assert.ok(
-    /"implement":\d+/.test(capturedPrompt),
+    Number.isInteger(phaseDurations.implement),
     `journal-log prompt の phase_durations に "implement":<number> が含まれるべきだが含まれていなかった（implement_end は implementer 応答から給電される）。prompt:\n${capturedPrompt}`,
+  );
+  // issue #695: implement の起点は setup_end = args.setup.epoch_end（devFlowArgs の 1050）。
+  // start（args.setup.epoch = 1000）起点だと deps install 相当の 50 秒が implement に混入する。
+  const implEnd = Math.max(...getImplEpochs());
+  assert.equal(
+    phaseDurations.implement,
+    implEnd - 1050,
+    `phase_durations.implement は implement_end(${implEnd}) − epoch_end(1050) であるべき（start=1000 起点で deps install 時間が混入していないか）: ${JSON.stringify(phaseDurations)}`,
   );
   // Final reconcile は fixes_applied=0（本テストの workflowStub）で skip されるため final_end は
   // 給電されず、phase_durations に 'final' キー自体が欠落する（issue #443 の edge case）。
@@ -342,9 +363,10 @@ test('[duration-telemetry] epochMode=fail: clock# 専用 probe は null を返�
     !capturedPrompt.includes('"duration_seconds"'),
     `clock probe / 給電元 stub 全滅時は journal-log prompt に "duration_seconds" が含まれないべきだが含まれていた。prompt:\n${capturedPrompt}`,
   );
-  // analyze だけは args.setup.epoch_end（必須キー）から給電されるため常に 0 秒で載る。それ以外の phase キーは欠落する
+  // start / setup_end は args.setup（必須キー）から給電されるが、どちらも phase の終端 mark ではないため
+  // phase_durations は空 object になり handoff からキー自体が欠落する（issue #695 で常時 0 の analyze キーを撤去）
   assert.ok(
-    capturedPrompt.includes('"phase_durations":{"analyze":0}'),
-    `clock probe / 給電元 stub 全滅時の phase_durations は {"analyze":0} のみのはずだが違った。prompt:\n${capturedPrompt}`,
+    !capturedPrompt.includes('"phase_durations"'),
+    `clock probe / 給電元 stub 全滅時は journal-log prompt に "phase_durations" が含まれないべきだが含まれていた。prompt:\n${capturedPrompt}`,
   );
 });

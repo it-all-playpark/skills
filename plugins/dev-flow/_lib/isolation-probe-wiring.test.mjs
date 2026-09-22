@@ -3,8 +3,8 @@
 // setup-base/worktree/isolation-cleanup/worktree-deps の 4 spawn が撤去されたため、isolation-probe
 // 単独の配線検証へ縮小した）。純関数（isolationProbePrompt/isolationFailureMessage）自体は
 // _lib/isolation-probe.test.mjs で直接 import してテストする。本ファイルは dev-flow.js の Setup
-// phase がそれらを正しく呼び出し・分岐しているかの配線のみを検証する。issue #690: probe は Analyze の
-// ゲート判定後（Implement 直前）に spawn する（needs_clarification 経路では 0 件）。opts.phase は 'Setup' のまま。
+// phase がそれらを正しく呼び出し・分岐しているかの配線のみを検証する。issue #690 / #695: probe は Setup 末尾の
+// analyze ゲート判定後（Implement 直前）に spawn する（needs_clarification 経路では 0 件）。opts.phase は 'Setup'。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ function schemaOf(calls, label) {
   return JSON.parse(JSON.stringify(call.opts.schema));
 }
 
-test('Implement（dev-implement-fable）より前の call は isolation-probe 1 件のみ（Setup / Analyze は spawn しない）', async () => {
+test('Implement（dev-implement-fable）より前の call は isolation-probe 1 件のみ（Setup と末尾の analyze ゲートは spawn しない）', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   await runDevFlowInSandbox(src, ctx);
 
