@@ -6684,10 +6684,10 @@ let finalSyncHead = null   // reconcile-sync 成功時の HEAD sha（40hex）。
 let finalCi = null   // finalCiVerdict の結果。finalReconcile が unavailable/ci_verified のときのみ non-null
 if ((iterate?.fixes_applied ?? 0) > 0) {
   // Step1 sync（fail-safe）
-  // fetch / merge は `git -C` を付けない bare 形（cwd は WT）。`git -C` 形は sandbox の excludedCommands に
-  // 当たらず、fetch は credential helper、merge は write deny 下の `.git` で失敗する
+  // fetch / merge は `git -C` も `cd` 前置も付けない bare 単文（cwd は WT）。どちらの形も sandbox の
+  // excludedCommands に当たらず、fetch は credential helper、merge は write deny 下の `.git` で失敗する
   const sync = await trackedAgent(
-    `cd ${WT} で作業。次を順に実行し **JSON object のみ** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+    `次を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は ${WT}）で実行し **JSON object のみ** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
     + `1. git fetch origin ${state.setup.branch}\n`
     + `2. git merge --ff-only FETCH_HEAD\n`
     + `両方 exit 0 なら {"ok":true,"head":"<git rev-parse HEAD の出力>","epoch":<date +%s の出力(optional)>}、いずれかが失敗（非 fast-forward・fetch 失敗等）なら {"ok":false,"error":"<stderr の要約>","epoch":<date +%s の出力(optional)>} を返せ。\n`
@@ -6725,11 +6725,9 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     // へ昇格する run でも、その CI 委譲は test gate の代替であって宣言外監査・UI 再検証の代替ではない
     // ため、test#final が null/red でも sync 成功時は必ず実行する。
     // Step3 最終 changed-files（fail-open）
-    // git は `-C` を付けない bare 形（cwd は WT）。reconcile-sync の fetch/merge と同じ理由
-    // （`git -C` 形は sandbox の excludedCommands に当たらず失敗する）。
     const changedFinal = await trackedAgent(
       `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
-      + `git diff --name-only origin/${BASE}...HEAD`,
+      + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
       { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files-final', phase: 'Final reconcile' })
     if (!changedFinal?.files) {
       log('⚠️ Final reconcile: changed-files-final 取得失敗 — UI 再判定・宣言外再監査を skip（fail-open。test gate は維持）')

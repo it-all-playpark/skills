@@ -196,6 +196,9 @@ test('[final-reconcile] (b) fixes=1 + test green → reverified + final_test_gre
   assert.ok(syncPrompt?.includes('git fetch origin ') && syncPrompt?.includes('git merge --ff-only FETCH_HEAD'),
     `(b) reconcile-sync の prompt は bare の git fetch / git merge を含むべき: ${syncPrompt}`);
   assert.ok(!/git -C /.test(syncPrompt ?? ''), `(b) reconcile-sync の prompt に git -C 形が含まれてはならない: ${syncPrompt?.match(/git -C [^\n]*/)?.[0]}`);
+  // cd 前置の複合形（`cd <WT> && git fetch …`）へ誘導しない: 「cd <WT> で作業」を置かず bare 単文と cd 前置禁止を明示する
+  assert.ok(!/cd \S+ で作業/.test(syncPrompt ?? ''), `(b) reconcile-sync の prompt は「cd <WT> で作業」を含んではならない: ${syncPrompt?.slice(0, 200)}`);
+  assert.ok(syncPrompt?.includes('bare 単文') && syncPrompt?.includes('cd 前置'), `(b) reconcile-sync の prompt は bare 単文・cd 前置禁止を指示すべき: ${syncPrompt?.slice(0, 200)}`);
   assert.ok(calls.some((c) => c.label === 'test#final'), "(b) 'test#final' が呼ばれるはず");
   assert.equal(result?.final_reconcile, 'reverified', `(b) final_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
   assert.equal(result?.final_test_green, true, `(b) final_test_green は true のはずだが ${JSON.stringify(result?.final_test_green)}`);
