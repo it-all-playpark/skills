@@ -50,7 +50,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   同種の穴があった（handoff は終端 1 箇所のみで isolation probe の fail-closed throw 等で全損）
   ため同機構で塞いだ。
   `final_reconcile` は `skipped`/`reverified`/`unavailable`/`ci_verified` の 4 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致・test#final `tests:'error'`（テストが 1 件も実行されなかった起動失敗 — 本物の red `tests:'failed'` とは区別し `finalTestGreen` は null 据え置き）は `unavailable`、`unavailable` のうちローカル再検証は不能だが PR head sha に pin した CI check 全 success を決定論確認できた場合のみ `ci_verified`）。
-  `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
+  `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して analyze ゲートで確定した既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `pr_closes_status` は `verified`/`reinjected`/`missing`/`unverified` の 4 値（passthrough 経路。常時出力。PR 作成直後の `gh pr view --json body` による Closes 行決定論検証結果。`missing` は再投入も失敗し `classifyMergeTier` の HOLD 理由 `pr_closes_missing` に載る）。
   `pr_body_synced`（passthrough 経路。boolean。pr-iterate が fix を適用し lgtm 終端し Final AC reconcile が `reverified` のときのみ AC checkbox 同期を実施し出力。未実施はキー自体を省く）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ。`ci_verified` はローカル test を再実行していないため出力されない）。
@@ -136,7 +136,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   **実効 shape の判定根拠 / analyze 経路の根拠（成功 handoff のみ・passthrough 経路・gate / merge tier / ledger の
   入力にはしない。dev-flow-doctor の「shape 較正」が読む）**:
   `shape` は Security floor で `classifyShape(req, realizedCount)` が realized diff の file 数 + AC 数 /
-  `issue_type` / 構造化 `breaking_change` だけで決めた実効 shape（Analyze の事前見積もりは持たない）。
+  `issue_type` / 構造化 `breaking_change` だけで決めた実効 shape（事前見積もりは持たない）。
   `shape_reason` は `classifyShape` が返す `reason` 文字列（`realized N file(s), M AC, type=… → shape=…` の
   閾値判定 / それ以外は safe floor（count 欠損・AC 欠落・issue_type 外・breaking）の種別 — doctor はこの
   prefix で 2 分類する）。`ac_count` は `acceptance_criteria.length`。
