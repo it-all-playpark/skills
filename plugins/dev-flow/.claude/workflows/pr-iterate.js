@@ -943,6 +943,34 @@ const STATUS_HEADLINE = {
   'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision/blocking 矛盾の再発、または reviewer が StructuredOutput 契約違反で結果を返さず。人間へエスカレーション',
 };
 
+// 最終 CI 状態行のラベル。null（未観測）は「CI を判定していない」ことを明示する —
+// stuck / fix_failed 終端で CI が赤のまま気づかれない事故を、終端サマリで必ず可視化するため
+// 全終端で出す（CI を見ていない run と green の run を読み手が区別できるようにする）。
+const CI_LAST_STATUS_LABEL = {
+  'passed': '✅ passed',
+  'failed': '🔴 failed',
+  'pending': '⏳ pending（未完了）',
+  'no_checks': 'no_checks（CI 未設定）',
+  'error': '⚠️ error（ステータス取得失敗 — `gh pr checks <PR>` で実状態を確認すること）',
+};
+
+/**
+ * 最終 CI 状態行を組み立てる。
+ * @param {string|null} ciLastStatus - 'passed' | 'failed' | 'pending' | 'no_checks' | 'error' | null（未観測）
+ * @param {string[]} ciLastFailedChecks - failed のとき列挙する check 名
+ * @param {number|string} pr - PR 番号（error ラベルの <PR> 置換用）
+ * @returns {string}
+ */
+function formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr) {
+  if (ciLastStatus == null) return '**最終 CI 状態**: 未観測（この run では CI を判定していない — `gh pr checks <PR>` で確認すること）'.replace('<PR>', String(pr));
+  const label = (CI_LAST_STATUS_LABEL[ciLastStatus] ?? ciLastStatus).replace('<PR>', String(pr));
+  if (ciLastStatus === 'failed') {
+    const names = (ciLastFailedChecks || []).map((n) => `\`${mdCell(n)}\``);
+    return `**最終 CI 状態**: ${label} — ${names.length ? names.join(', ') : '（check 名不明）'}`;
+  }
+  return `**最終 CI 状態**: ${label}`;
+}
+
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
@@ -955,9 +983,11 @@ const STATUS_HEADLINE = {
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
  * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。pr-iterate.js の script 側 ci-wait ループの積算）
  * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
+ * @param {string|null} [opts.ciLastStatus] - 最後に観測した CI 状態 'passed' | 'failed' | 'pending' | 'no_checks' | 'error' | null（未観測）
+ * @param {string[]} [opts.ciLastFailedChecks] - ciLastStatus が failed のとき列挙する check 名
  * @returns {string}
  */
-function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts }) {
+function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [] }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
 
@@ -974,6 +1004,10 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
 
   lines.push('');
   lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  // 全終端で必ず出す（lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / review_contract_error）
+  lines.push('');
+  lines.push(formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr));
 
   if (ciWaitSeconds != null || ciPollAttempts != null) {
     lines.push('');
@@ -1494,6 +1528,55 @@ let totalCiPollAttempts = 0  // 同上の累積ポーリング（ci-check spawn�
 // 直近の ci-check#i 応答が返した epoch。dev-flow の iterate_end 給電元として返り値
 // end_epoch に載せる。応答が epoch を欠く/非数値なら更新せず、直前の値（または null）を保持する（fail-open）。
 let lastCiEpoch = null
+// 最後に観測した CI 状態。CI gate（blocking 0 件 round）と blocking round の 1 回判定の両方で
+// 上書きし、全終端の返り値 ci_last_status / ci_last_failed_checks と終端サマリの「最終 CI 状態」行に載せる。
+// null は「この run で一度も CI を判定していない」（review_contract_error 等の早期終端）。
+let ciLastStatus = null        // 'passed' | 'failed' | 'pending' | 'no_checks' | 'error' | null
+let ciLastFailedChecks = []    // ciLastStatus==='failed' のときの check 名配列
+function observeCi(ciEff) {
+  ciLastStatus = ciEff.status
+  ciLastFailedChecks = ciEff.status === 'failed'
+    ? (ciEff.failed_checks ?? []).map((c) => String(c?.name ?? 'unknown'))
+    : []
+}
+// ci-check の failed_checks を fix loop へ流す synthetic blocking finding に変換する（CI gate と blocking round で共用）。
+// topic `ci::<name>` は reviewSeen の stuck 検出キー — 同一 check が REVIEW_STUCK 回失敗し続ければ stuck 終端になる。
+// failed_checks items are {name, bucket, state} per check-ci.sh output (no conclusion field).
+function ciFailedFindings(ciEff) {
+  return (ciEff.failed_checks && ciEff.failed_checks.length > 0)
+    ? ciEff.failed_checks.map((c) => ({
+        severity: 'critical',
+        topic: `ci::${c.name}`,
+        description: `CI check failed: ${c.name} (${c.state ?? c.bucket})`,
+        suggestion: 'CI を green にする',
+      }))
+    : [{
+        severity: 'critical',
+        topic: 'ci::unknown',
+        description: 'CI failed (no specific check details available)',
+        suggestion: 'CI を green にする',
+      }]
+}
+// CI finding を fix prompt の箇条書きにする。topic（ci::<name>）を明示して、review 指摘と合流させたときに
+// fix agent が「どの check が赤か」を取り違えないようにする。
+function buildCiIssuesText(ciFindings) {
+  return ciFindings
+    .map((x) => `- [${x.severity}] ${x.topic}: ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
+    .join('\n')
+}
+// CI failure を含む fix prompt に必ず添える手順。
+// (a) 失敗ログを見ずに推測で直すと、check 名だけでは原因（例: rules ファイルの byte 上限超過）に届かない。
+// (b) CI は PR head ではなく base とのマージ結果（merge ref）を検証する — base に先に入った変更と合わさって
+//     初めて赤になるケースは PR ブランチ単体の再現で見えない（base 側の先行変更が原因のとき）。
+function ciFixGuidance({ pr, base }) {
+  const baseRef = base ? `origin/${base}` : 'origin/<base branch>'
+  return `CI 失敗の修正手順（必須）:\n`
+    + `(a) 修正の前に bare 単文 \`gh pr checks ${pr}\` で失敗している check と link（run URL の \`/runs/<run-id>/\` が run-id）を確認し、`
+    + `\`gh run view <run-id> --log-failed\` で失敗ログを取得して原因を特定してから修正すること（check 名だけから推測で直さない）。\n`
+    + `(b) CI は PR ブランチ単体ではなく base branch とのマージ結果を検証している。PR ブランチ単体で失敗が再現しない場合は、`
+    + `\`git fetch origin\` の後 \`git merge ${baseRef}\` で base をマージした状態を作って再現を確認し、その状態で修正すること`
+    + `${base ? '' : '（base branch 名は `gh pr view ' + pr + ' --json baseRefName` で確認）'}。\n`
+}
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor, scope, delta_lines}]
 // review#i（i ≥ 2）を fix delta に絞るための sha 追跡（canonical は _lib/review-delta.mjs）。
@@ -1710,6 +1793,7 @@ for (i = 1; i <= MAX; i++) {
     // waited/poll は route（passed/pending/failed/error）に関わらず常に加算する（script 側積算）。
     totalCiWaitSeconds += gateWaited
     totalCiPollAttempts += gatePolls
+    observeCi(ciEff)
     log(`iteration ${i}: ci-check waited_seconds=${gateWaited} poll_attempts=${gatePolls}（累積 waited=${totalCiWaitSeconds}s poll=${totalCiPollAttempts}）`)
 
     if (ciEff.status === 'passed' || ciEff.status === 'no_checks') {
@@ -1734,20 +1818,7 @@ for (i = 1; i <= MAX; i++) {
       // ciEff.status === 'failed': convert failed_checks into synthetic blocking findings and route
       // through the existing fix path. Repeated identical ci::<name> topics hit REVIEW_STUCK
       // automatically via the existing stuckTopics computation below.
-      // failed_checks items are {name, bucket, state} per check-ci.sh output (no conclusion field).
-      const ciFindings = (ciEff.failed_checks && ciEff.failed_checks.length > 0)
-        ? ciEff.failed_checks.map((c) => ({
-            severity: 'critical',
-            topic: `ci::${c.name}`,
-            description: `CI check failed: ${c.name} (${c.state ?? c.bucket})`,
-            suggestion: 'CI を green にする',
-          }))
-        : [{
-            severity: 'critical',
-            topic: 'ci::unknown',
-            description: 'CI failed (no specific check details available)',
-            suggestion: 'CI を green にする',
-          }]
+      const ciFindings = ciFailedFindings(ciEff)
 
       terminalPath = 'ci'
 
@@ -1769,13 +1840,12 @@ for (i = 1; i <= MAX; i++) {
         break
       }
 
-      const issuesText = ciFindings
-        .map((x) => `- [${x.severity}] ${x.description}${x.suggestion ? ' → ' + x.suggestion : ''}`)
-        .join('\n')
+      const issuesText = buildCiIssuesText(ciFindings)
 
       const ciFixPrompt = `PR #${PR} の CI 失敗を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
         + `(2) 下記の CI 失敗を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
-        + `解消すべき CI 失敗:\n${issuesText}`
+        + `解消すべき CI 失敗:\n${issuesText}\n\n`
+        + ciFixGuidance({ pr: PR, base: prMeta?.base_ref })
       const { fix, retried } = await callFixAgent(ciFixPrompt, i)
       if (retried) ciRound.fix_retried = true
 
@@ -1803,15 +1873,39 @@ for (i = 1; i <= MAX; i++) {
     }
   } else {
     // outcome.route === 'fix_loop'（blocking あり、decision は request-changes/comment。approve はここへ来ない）
-    const blocking = outcome.blocking
+    const reviewBlocking = outcome.blocking
+
+    // blocking round でも CI を 1 回だけ判定する。review が毎 round blocking を出す PR では
+    // ci_gate に一度も到達せず、CI が赤のまま stuck / fix_failed で終端して誰にも見えなかった。
+    // ここでは待機しない（pending は finding にせず観測のみ — review ⇄ fix の各 round に CI_WAIT_CEILING_SECONDS
+    // を足さない）。failed のときだけ ci::<name> を review の blocking と同じ fix prompt に合流させ、
+    // reviewSeen にも register して同一 check の反復失敗を REVIEW_STUCK に乗せる。
+    // null / error は fail-open（finding を足さず fix へ進む。CI 状態は ci_last_status で人間に見せる）。
+    // terminalPath は 'review' のまま（telemetry の 'ci' は「CI-failed 分岐（ci_gate）に入った」の意味を保つ）。
+    const ciProbe = await failOpenAgent(
+      ciCheckPrompt({ pr: PR, repo: REPO }),
+      { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
+    )
+    if (ciProbe == null) log(`⚠️ ci-check#${i} が結果を返さず — blocking round では finding を足さず status=error として記録のみ（fail-open）`)
+    const ciProbeEff = ciProbe ?? { status: 'error', failed_checks: [] }
+    if (Number.isFinite(ciProbe?.epoch)) lastCiEpoch = ciProbe.epoch
+    totalCiPollAttempts += 1
+    observeCi(ciProbeEff)
+    const ciFindings = ciProbeEff.status === 'failed' ? ciFailedFindings(ciProbeEff) : []
+    if (ciFindings.length) {
+      log(`iteration ${i}: CI failed（${ciFindings.map((x) => x.topic).join(' / ')}）— review の blocking と合流させて fix へ渡す`)
+    } else {
+      log(`iteration ${i}: ci-check status=${ciProbeEff.status} — blocking round では待機せず review 指摘の fix へ進む`)
+    }
+    const blocking = [...reviewBlocking, ...ciFindings]
 
     // blocking findings を topic 単位で累積し出現回数を数える（stuck 検出 fingerprint）
     for (const x of blocking) reviewSeen.register(x)
     const stuckTopics = reviewSeen.stuckTopics()
-    log(`iteration ${i}: ${effReview.decision} — blocking ${blocking.length} 件`
+    log(`iteration ${i}: ${effReview.decision} — blocking ${reviewBlocking.length} 件${ciFindings.length ? ` + CI ${ciFindings.length} 件` : ''}`
       + `${stuckTopics.length ? ` [REVIEW_STUCK: ${stuckTopics.join(' / ')}]` : ''}`)
 
-    // history に記録（blocking findings と minor を含む）
+    // history に記録（blocking findings と minor を含む。CI finding は blocking に合流済み）
     const round = { iteration: i, decision: effReview.decision, summary: effReview.summary, blocking, minor: outcome.minor, scope: roundScope, delta_lines: roundDeltaLines }
     history.push(round)
 
@@ -1826,12 +1920,18 @@ for (i = 1; i <= MAX; i++) {
     // minor は fix loop の対象外 — issuesText / fix agent プロンプトに一切含めない。
     // description/suggestion はメタ指示・迂回手順の verbatim 伝播遮断のため buildFixIssuesText で
     // スクラブしてから埋め込む（canonical は _lib/review-finding-scrub.mjs）。
-    const issuesText = buildFixIssuesText(blocking)
+    // CI finding（ci::<name>）は synthetic な決定論テキストなのでスクラブ対象外 — review 指摘の後ろに合流させる。
+    const issuesText = buildFixIssuesText(reviewBlocking)
+      + (ciFindings.length ? `\n${buildCiIssuesText(ciFindings)}` : '')
 
     // fix は dev-runner agent に直接指示する（専用の pr-fix skill は持たない）。
     const fixPrompt = `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
       + `(2) 下記の指摘を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
       + `解消すべき指摘:\n${issuesText}`
+      + (ciFindings.length
+          ? `\n\n上記のうち \`ci::<name>\` は CI の失敗 check である（review 指摘と併せて同じ commit で解消してよい）。\n`
+            + ciFixGuidance({ pr: PR, base: prMeta?.base_ref })
+          : '')
     const { fix, retried } = await callFixAgent(fixPrompt, i)
     if (retried) round.fix_retried = true
 
@@ -1884,7 +1984,10 @@ const summaryBody = buildTerminalSummaryBody({
   history,
   ciWaitSeconds: totalCiWaitSeconds,
   ciPollAttempts: totalCiPollAttempts,
+  ciLastStatus,
+  ciLastFailedChecks,
 })
+log(`終端 CI 状態: ${ciLastStatus ?? '未観測'}${ciLastStatus === 'failed' ? `（${ciLastFailedChecks.join(', ')}）` : ''}`)
 log('終端サマリーは comment として投稿する（formal review は投稿しない — issue #524）')
 
 if (POST_TERMINAL_SUMMARY) {
@@ -1965,6 +2068,8 @@ return {
   last_summary: lastReview?.summary ?? null,
   ci_wait_seconds: totalCiWaitSeconds,
   ci_poll_attempts: totalCiPollAttempts,
+  ci_last_status: ciLastStatus,  // 最後に観測した CI 状態（null は未観測）。stuck / fix_failed 終端でも CI 赤を呼び出し側に見せる
+  ci_last_failed_checks: ciLastFailedChecks,
   fix_null_retries: fixNullRetries,
   review_null_retries: reviewNullRetries,
   worktree_dirty: worktreeDirty,
