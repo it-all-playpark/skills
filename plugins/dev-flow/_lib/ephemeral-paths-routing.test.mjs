@@ -1,29 +1,29 @@
 // ephemeral-paths-routing: VM sandbox routing test for ephemeral path filter behavior.
 //
-// 新挙動（F2 実装済み）: refloor count は filterEphemeralPaths 後の一覧のうち
+// realized count（実効 shape の入力。issue #676）は filterEphemeralPaths 後の一覧のうち
 // plan file_changes に宣言済みの件数のみで数える（diffDeclaredPaths で宣言外を除外）。
-// 宣言外の non-ephemeral 変更は refloor（size 信号）には混ぜず、
+// 宣言外の non-ephemeral 変更は shape（size 信号）には混ぜず、
 // 「micro でも Evaluate 強制 + 宣言外 concern を evaluator prompt へ注入」という
 // 監査経路で扱う（宣言外は size 信号ではなく監査信号）。
 //
 // Tests:
-//   (A) micro 見積もり + realized-diff が ephemeral 込みファイル一覧を返す → shape_refloored===false かつ evaluator 0 回
+//   (A) realized-diff が ephemeral 込みファイル一覧を返す → shape===micro かつ evaluator 0 回
 //       (ephemeral を除外した non-ephemeral 2 件を dev-implement-fable stub の files に申告させ、宣言外 0 件にする
-//        → refloorShape('micro', 2) → micro → refloor 誤発火なし・undeclared=0 で Evaluate 強制もかからない)
-//   (B) micro 見積もり + realized-diff が ephemeral 込み 8 件（non-ephemeral 6 件）→ shape_refloored===true かつ effective_shape==='complex'
+//        → classifyShape(req, 2) → micro → ephemeral による誤判定なし・undeclared=0 で Evaluate 強制もかからない)
+//   (B) realized-diff が ephemeral 込み 8 件（non-ephemeral 6 件）→ shape==='complex'
 //       (non-ephemeral 6 件を dev-implement-fable stub の files に申告させ、宣言外 0 件にする
-//        → declared count=6 → refloorShape('micro', 6) → complex → 正しく refloor する側の pin)
-//   (C) standard 見積もり + realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
+//        → declared count=6 → classifyShape(req, 6) → complex)
+//   (C) AC 5 件（standard）+ realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
 //       → evaluator#1 の prompt に集約パス列が 2 回出現（focus_areas + CONCERN-1）かつ u1.ts/u2.ts/u3.ts が全部その item 内に含まれる
 //       (porcelain 統合後: realized-diff スナップショットが declared-path-check と同一参照。
-//        standard は refloor に関わらず常に Evaluate を実行するため、宣言外監査の挙動は F2 前後で不変。
+//        AC 5 件は realized count に関わらず standard 以上で常に Evaluate を実行する。
 //        issue #296 (F4) 以降: focus_areas の raw dump に加え、CONCERN-* item は未解消 concern 一覧
 //        （concern_resolutions による resolve-with-evidence 経路）にも eval#1 から載るため、
 //        同一 item のテキストが focus_areas / 未解消 concern 一覧の 2 箇所に出現し出現回数は 1→2 になる)
 //   (D) realized-diff stub が ephemeral のみ ['evaluator.staged.md'] を返す
 //       → filter 後 0 件 → 宣言外なし → '宣言外変更' が evaluator prompt に出現しない
 //   (E) porcelain 取得 1 回ピン: realized-diff が 1 回 / declared-path-check が 0 回
-//   (F) micro 見積もり + non-ephemeral 宣言外 1 件のみ → shape_refloored===false（declared count=0 で refloor 不発）
+//   (F) non-ephemeral 宣言外 1 件のみ → shape===micro（declared count=0）
 //       だが evaluator >= 1 回・evaluator prompt に宣言外 concern が含まれる
 //       (宣言外は size 信号ではなく監査信号であることの pin)
 
@@ -44,7 +44,7 @@ const src = readFileSync(devFlowPath, 'utf8');
 
 /**
  * ephemeral-paths-routing 専用の VM sandbox を組む。
- * refloor-shape-routing.test.mjs の makeCountingSandbox と同型。
+ * realized-shape-routing.test.mjs と同じく realized files / 申告 files を分けて渡す。
  * 相違点: calls 配列に { label, agentType, prompt } を記録する（prompt も記録するよう拡張）。
  *
  * porcelain 統合（F3, issue #219）後、さらに issue #544 (S1) で danger-grep(risk) /
@@ -52,8 +52,8 @@ const src = readFileSync(devFlowPath, 'utf8');
  * secfloor-classify.sh 経由の単一呼び出し（label 'danger-grep' 据え置き）へ統合された。
  * files（旧 realized-diff・declared-path-check スナップショット）はその応答の files フィールドで得る。
  *
- * F2 新挙動対応: dev-implement-fable stub の files を declaredFiles で差し替え可能にする。
- * refloor count は宣言済み変更のみで数えるため、refloor を発火させたいシナリオ（A/B）では
+ * dev-implement-fable stub の files を declaredFiles で差し替え可能にする。
+ * realized count は宣言済み変更のみで数えるため、shape を realized 件数で動かしたいシナリオ（A/B）では
  * realizedFiles の non-ephemeral 分をそのまま declaredFiles に渡す必要がある。
  * 省略時（デフォルト []）は従来どおり全て宣言外になる（C/D/E の宣言外監査シナリオ用）。
  *
@@ -151,7 +151,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
 
 /**
  * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * refloor-shape-routing.test.mjs の runDevFlowInSandbox と同型: return object を解決して返す。
+ * return object を解決して返す。
  */
 async function runDevFlowInSandbox(src, ctx) {
   const stripped = src
@@ -176,18 +176,16 @@ async function runDevFlowInSandbox(src, ctx) {
 }
 
 // ============================================================
-// (A) micro 見積もり + realized-diff が ephemeral 込みファイル一覧を返す
-//     → shape_refloored===false かつ evaluator 0 回（refloor 誤発火が再現しない — AC 2）
+// (A) realized-diff が ephemeral 込みファイル一覧を返す
+//     → shape===micro かつ evaluator 0 回（ephemeral による shape 誤判定が再現しない — AC 2）
 // ============================================================
 
-test('[ephemeral-paths-routing] (A) micro + realized ephemeral 3 件 non-ephemeral 2 件 → shape_refloored===false evaluator 0 回', async () => {
+test('[ephemeral-paths-routing] (A) realized ephemeral 3 件 non-ephemeral 2 件 → shape===micro evaluator 0 回', async () => {
   const microReq = {
     summary: 's',
     acceptance_criteria: ['a', 'b'],
     issue_type: 'fix',
     scope: 'src',
-    estimated_change_file_count: 1,
-    shape: 'micro',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -201,7 +199,7 @@ test('[ephemeral-paths-routing] (A) micro + realized ephemeral 3 件 non-ephemer
   ];
 
   // non-ephemeral 2 件（a.md, b.md）を plan file_changes に宣言する。
-  // 宣言しないと新挙動（宣言外は refloor ではなく Evaluate 強制）で undeclared.length>0 になり
+  // 宣言しないと宣言外（size 信号ではなく Evaluate 強制）で undeclared.length>0 になり
   // evaluator 0 回の assert が壊れる。
   const declaredFiles = ['a.md', 'b.md'];
 
@@ -217,30 +215,28 @@ test('[ephemeral-paths-routing] (A) micro + realized ephemeral 3 件 non-ephemer
     evaluatorCalls.length,
     0,
     '(A) micro + ephemeral 3 件 + 宣言済み non-ephemeral 2 件: evaluator は 0 回のはずだが ' + evaluatorCalls.length + ' 回'
-      + ' (ephemeral filter 後 non-ephemeral=2・宣言済みで undeclared=0 → refloorShape(micro,2) → micro → runEval=false)',
+      + ' (ephemeral filter 後 non-ephemeral=2・宣言済みで undeclared=0 → classifyShape(req,2) → micro → runEval=false)',
   );
 
   assert.ok(returned !== null, '(A) workflow は return object を返すべきだが null だった');
   assert.strictEqual(
-    returned && returned.shape_refloored,
-    false,
-    '(A) returned.shape_refloored は false のはずだが ' + JSON.stringify(returned && returned.shape_refloored) + ' だった',
+    returned && returned.shape,
+    'micro',
+    "(A) returned.shape は 'micro' のはずだが " + JSON.stringify(returned && returned.shape) + ' だった',
   );
+  assert.strictEqual(returned && returned.realized_file_count, 2, '(A) ephemeral 3 件は realized count から除外される');
 });
 
 // ============================================================
-// (B) micro 見積もり + realized-diff が ephemeral 込み 8 件（non-ephemeral 6 件）
-//     → shape_refloored===true / effective_shape==='complex'
+// (B) realized-diff が ephemeral 込み 8 件（non-ephemeral 6 件）→ shape==='complex'
 // ============================================================
 
-test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemeral 6 件 → shape_refloored===true effective_shape===complex', async () => {
+test('[ephemeral-paths-routing] (B) realized ephemeral 2 件 non-ephemeral 6 件 → shape===complex', async () => {
   const microReq = {
     summary: 's',
     acceptance_criteria: ['a', 'b'],
     issue_type: 'fix',
     scope: 'src',
-    estimated_change_file_count: 1,
-    shape: 'micro',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -257,8 +253,8 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
   ];
 
   // non-ephemeral 6 件を全て plan file_changes に宣言する。
-  // 宣言しないと新挙動では declared count=0 になり refloorShape(micro,0)→micro のままで
-  // refloor が発火しない（この test の pin が壊れる）。
+  // 宣言しないと declared count=0 になり classifyShape(req,0)→micro のままで
+  // complex にならない（この test の pin が壊れる）。
   const declaredFiles = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts'];
 
   const { ctx, calls } = makeCountingSandbox(microReq, realizedFiles, declaredFiles);
@@ -272,24 +268,20 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
   assert.ok(
     evaluatorCalls.length >= 1,
     '(B) micro + 宣言済み non-ephemeral 6 件: evaluator は >= 1 回のはずだが ' + evaluatorCalls.length + ' 回'
-      + ' (ephemeral filter 後・宣言済みで undeclared=0 → declared count=6 → refloorShape(micro,6) → complex → runEval=true)',
+      + ' (ephemeral filter 後・宣言済みで undeclared=0 → declared count=6 → classifyShape(req,6) → complex → runEval=true)',
   );
 
   assert.ok(returned !== null, '(B) workflow は return object を返すべきだが null だった');
   assert.strictEqual(
-    returned && returned.shape_refloored,
-    true,
-    '(B) returned.shape_refloored は true のはずだが ' + JSON.stringify(returned && returned.shape_refloored) + ' だった',
-  );
-  assert.strictEqual(
-    returned && returned.effective_shape,
+    returned && returned.shape,
     'complex',
-    "(B) returned.effective_shape は 'complex' のはずだが " + JSON.stringify(returned && returned.effective_shape) + ' だった',
+    "(B) returned.shape は 'complex' のはずだが " + JSON.stringify(returned && returned.shape) + ' だった',
   );
+  assert.strictEqual(returned && returned.realized_file_count, 6, '(B) ephemeral 2 件は realized count から除外される');
 });
 
 // ============================================================
-// (C) standard 見積もり + realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
+// (C) AC 5 件（standard）+ realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
 //     → eval#1 の prompt に集約パス列が 2 回（focus_areas + CONCERN-1）/ u1.ts/u2.ts/u3.ts が全部含まれる
 //     (porcelain 統合後: realized-diff スナップショットが declared-path-check と同一参照)
 // ============================================================
@@ -297,18 +289,16 @@ test('[ephemeral-paths-routing] (B) micro + realized ephemeral 2 件 non-ephemer
 test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 → evaluator prompt に集約パス列が 2 回（focus_areas + 未解消 concern 一覧 CONCERN-1） + 全パス含む', async () => {
   const standardReq = {
     summary: 's',
-    acceptance_criteria: ['a', 'b', 'c', 'd'],
+    acceptance_criteria: ['a', 'b', 'c', 'd', 'e'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
 
   // realized-diff が宣言外 3 件を返す（declaredFiles を省略 → dev-implement-fable stub の files は
-  // 空のまま → diffDeclaredPaths で全て宣言外判定になる）。standard は refloor に関わらず常に
-  // Evaluate を実行するため、宣言外監査の挙動は F2（refloor の declared-only 化）前後で不変。
+  // 空のまま → diffDeclaredPaths で全て宣言外判定になる）。AC 5 件は realized count に関わらず
+  // standard 以上で常に Evaluate を実行する。
   const realizedFiles = ['u1.ts', 'u2.ts', 'u3.ts'];
 
   const { ctx, calls } = makeCountingSandbox(standardReq, realizedFiles);
@@ -346,18 +336,16 @@ test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 →
 
 // ============================================================
 // (D) realized-diff stub が ephemeral のみ ['evaluator.staged.md'] を返す
-//     → filter 後 0 件 → refloor count 0 で standard 維持 → 宣言外なし
+//     → filter 後 0 件 → realized count 0 だが AC 5 件で standard → Evaluate 実行・宣言外なし
 //     → '宣言外変更' が evaluator prompt に出現しない
 // ============================================================
 
 test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣言外変更" が evaluator prompt に出現しない', async () => {
   const standardReq = {
     summary: 's',
-    acceptance_criteria: ['a', 'b', 'c', 'd'],
+    acceptance_criteria: ['a', 'b', 'c', 'd', 'e'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -373,6 +361,7 @@ test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣�
   }
 
   const evalCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
+  assert.ok(evalCalls.length >= 1, '(D) AC 5 件は standard なので evaluator が >= 1 回呼ばれるはず（0 回だと以下の検証が空振りする）');
   for (const c of evalCalls) {
     assert.ok(
       !c.prompt.includes('宣言外変更'),
@@ -385,19 +374,17 @@ test('[ephemeral-paths-routing] (D) realized-diff が ephemeral のみ → "宣�
 // ============================================================
 // (E) porcelain 取得 1 回ピン:
 //     - label 'danger-grep'（issue #544 統合呼び出し）が 1 回だけ呼ばれる
-//       （refloor + declared-path 監査の両方が同一応答の files フィールドを参照）
+//       （shape 判定 + declared-path 監査の両方が同一応答の files フィールドを参照）
 //     - danger-grep が宣言外ファイルを返すと evaluator prompt に '宣言外変更' が出現する
-//       （= refloor と宣言外監査が同一スナップショットを参照している実証）
+//       （= shape 判定と宣言外監査が同一スナップショットを参照している実証）
 // ============================================================
 
 test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 / 宣言外ファイル→evaluator prompt に出現', async () => {
   const standardReq = {
     summary: 's',
-    acceptance_criteria: ['a', 'b', 'c', 'd'],
+    acceptance_criteria: ['a', 'b', 'c', 'd', 'e'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -422,7 +409,7 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 
   );
 
   // danger-grep が宣言外ファイルを返すと evaluator prompt に宣言外ファイル名が出現する
-  // （データ echo: refloor と宣言外監査が同一スナップショットを参照している実証。
+  // （データ echo: shape 判定と宣言外監査が同一スナップショットを参照している実証。
   // 「宣言外変更」という日本語文言そのものの pin は言い回し変更で落ちるため撤去した — issue #636 AC-1）
   const eval1Call = calls.find((c) => c.label === 'eval#1');
   assert.ok(eval1Call != null, '(E) evaluator eval#1 が呼ばれていない');
@@ -433,26 +420,24 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 
 });
 
 // ============================================================
-// (F) micro 見積もり + non-ephemeral 宣言外 1 件のみ
-//     → shape_refloored===false（declared count=0 で refloor 不発）だが
+// (F) non-ephemeral 宣言外 1 件のみ
+//     → shape===micro（declared count=0）だが
 //       evaluator >= 1 回・evaluator prompt に宣言外 concern が含まれる
 //     (宣言外は size 信号ではなく監査信号であることの pin — 原因(3) の中核)
 // ============================================================
 
-test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → shape_refloored===false だが evaluator >= 1 回 + 宣言外 concern を注入', async () => {
+test('[ephemeral-paths-routing] (F) non-ephemeral 宣言外 1 件 → shape===micro だが evaluator >= 1 回 + 宣言外 concern を注入', async () => {
   const microReq = {
     summary: 's',
     acceptance_criteria: ['a', 'b'],
     issue_type: 'fix',
     scope: 'src',
-    estimated_change_file_count: 1,
-    shape: 'micro',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
 
   // non-ephemeral 宣言外 1 件のみ（declaredFiles を省略 → dev-implement-fable stub の files は
-  // 空のまま → diffDeclaredPaths で全て宣言外判定になる → declared count=0 で refloor は不発だが、
+  // 空のまま → diffDeclaredPaths で全て宣言外判定になる → declared count=0 で micro だが、
   // undeclared.length>0 により micro でも Evaluate を強制する）
   const realizedFiles = ['leftover-handoff.md'];
 
@@ -465,10 +450,10 @@ test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → sh
 
   assert.ok(returned !== null, '(F) workflow は return object を返すべきだが null だった');
   assert.strictEqual(
-    returned && returned.shape_refloored,
-    false,
-    '(F) returned.shape_refloored は false のはずだが ' + JSON.stringify(returned && returned.shape_refloored) + ' だった'
-      + ' (declared count=0 → refloorShape(micro,0) → micro のまま、refloor は不発)',
+    returned && returned.shape,
+    'micro',
+    "(F) returned.shape は 'micro' のはずだが " + JSON.stringify(returned && returned.shape) + ' だった'
+      + ' (declared count=0 → classifyShape(req,0) → micro。宣言外は size 信号にしない)',
   );
 
   const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
@@ -478,7 +463,7 @@ test('[ephemeral-paths-routing] (F) micro + non-ephemeral 宣言外 1 件 → sh
       + ' (undeclared.length>0 → runEval=true で micro でも Evaluate を強制)',
   );
 
-  // 宣言外は size 信号ではなく監査信号 — refloor には混ぜず Evaluate 強制 + concern 注入で扱う
+  // 宣言外は size 信号ではなく監査信号 — shape には混ぜず Evaluate 強制 + concern 注入で扱う
   // （データ echo で確認。「宣言外変更」という日本語文言そのものの pin は言い回し変更で落ちるため
   // 撤去した — issue #636 AC-1）
   const eval1Call = calls.find((c) => c.label === 'eval#1');

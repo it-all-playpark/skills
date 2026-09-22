@@ -31,8 +31,6 @@ const FULL_REQ = {
   issue_type: 'fix',
   scope: 'src',
   scope_truncated: false,
-  estimated_change_file_count: 3,
-  shape: 'standard',
   breaking_change: false,
   breaking_keyword_scan: false,
   ambiguities: [],

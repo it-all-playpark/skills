@@ -174,8 +174,6 @@ const standardAnalyzeReq = {
   acceptance_criteria: ['API naming convention is enforced'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -325,14 +323,12 @@ test('[escalate-producer] テスト3: escalate:true の major → post-summary p
 // canAppend の escalate bypass により、round>0 の新規 topic でも ledger に積まれ
 // merge_tier === 'HOLD' になることを assert する。
 test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escalate:true → ledger に積まれ merge_tier === HOLD', async () => {
-  // complex shape: estimated_change_file_count >= 10 → classifyShape が complex に floor
+  // complex shape: danger-grep stub が旧形（files 無し）→ realized count 欠損 → classifyShape が complex に floor
   const complexAnalyzeReq = {
     summary: 'refactor auth module with new permission model',
     acceptance_criteria: ['Auth permission model enforced'],
     issue_type: 'feat',
     scope: 'src/auth',
-    estimated_change_file_count: 12,
-    shape: 'complex',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };

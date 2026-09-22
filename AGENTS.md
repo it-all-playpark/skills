@@ -94,9 +94,9 @@ bats が見つからない環境でも `tests/run-all-bats.sh` は exit 0 を返
 JS で保持し、中間 state は script 変数に持つ (外部 state JSON は持たない)。
 
 ```
-/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定)
+/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze
                       → Implement(dev-implement-fable 1 spawn) → Validate(test green)
-                      → Evaluate → PR → workflow('dev-flow:pr-iterate')
+                      → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('dev-flow:pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → Workflow('dev-flow:pr-iterate') で review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
 /dev-flow-improve   → Reconcile → Mine → Rank → File → 起票 issue ごとに dev-flow 直列実行

@@ -18,11 +18,10 @@ source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 
 require_cmd "jq" "jq is required for JSON parsing. Install: brew install jq"
 
-# Shared file-extension whitelist for affected-file scanning (contract-mode scope scan
-# and comprehensive-mode AFFECTED_FILES). Includes scripting/config extensions common in
-# this repo (sh/bats/mjs/json/...) in addition to general source extensions, so issues that
-# only mention shell/workflow/config files still yield a non-empty estimated_change_file_count
-# instead of spuriously triggering classifyShape's complex floor (issue #388 review).
+# File-extension whitelist for comprehensive-mode AFFECTED_FILES scanning. Includes
+# scripting/config extensions common in this repo (sh/bats/mjs/json/...) in addition to
+# general source extensions. The contract mode does not derive any file-count estimate from
+# the body: dev-flow decides the effective shape from the realized diff after implementation.
 FILE_EXT_PATTERN='ts|tsx|js|jsx|mjs|cjs|py|go|rs|md|sh|bash|bats|json|yml|yaml|toml'
 
 ISSUE_NUMBER=""
@@ -401,8 +400,6 @@ run_contract_mode() {
         --arg issue_body "$ISSUE_BODY" \
         --argjson issue_body_truncated "$ISSUE_BODY_TRUNCATED" \
         --argjson breaking_keyword_scan "$BREAKING_KEYWORD_SCAN" \
-        --argjson has_file_count "$([[ "$SCOPE_FILES_COUNT" -gt 0 ]] && echo true || echo false)" \
-        --argjson file_count "$SCOPE_FILES_COUNT" \
         --argjson comment_count "$COMMENT_COUNT" \
         --argjson ac_heading_near_miss "$NEAR_MISS_JSON" \
         '
@@ -423,7 +420,6 @@ run_contract_mode() {
           ac_heading_near_miss: $ac_heading_near_miss
         }
         + (if $eligible then {} else {ineligible_reason: $ineligible_reason} end)
-        + (if $has_file_count then {estimated_change_file_count: $file_count} else {} end)
         '
 }
 
@@ -450,15 +446,13 @@ NEAR_MISS_JSON=$(collect_ac_near_miss "$BODY" | head -10 | json_array || true)
 SCOPE_MAX_CHARS=4000
 BODY_PREVIEW_MAX_CHARS=500
 # NOTE: the marker text must never contain a token matching FILE_EXT_PATTERN
-# (e.g. no bare ".sh"/".ts" mentions) — it is appended to $SCOPE before that
-# string is re-scanned by classifyShape-adjacent logic downstream, and
-# scope_files_count below is computed from the pre-marker excerpt specifically
-# to keep the marker itself out of that count either way.
+# (e.g. no bare ".sh"/".ts" mentions) — it is appended to $SCOPE, which
+# downstream analyze subagents read as an excerpt of the issue body.
 truncation_marker() {
     # truncation_marker <label> <shown> <total> <suffix-after-chars>
     printf '\n[TRUNCATED: %s shows the first %s of %s chars%s; the remainder was NOT included. Do not treat anything absent from this excerpt as unspecified — read the full body from the body_dump_path file (--dump-body) before raising ambiguities]' "$1" "$2" "$3" "$4"
 }
-SCOPE=""; SCOPE_TRUNCATED=false; SCOPE_TOTAL_CHARS=0; SCOPE_FILES_COUNT=0
+SCOPE=""; SCOPE_TRUNCATED=false; SCOPE_TOTAL_CHARS=0
 if [[ "$CONTRACT_MODE" == true || "$DEPTH" != minimal ]]; then
     # NOTE: no pipe into `head -c` here — for multi-line non-AC bodies over
     # 4000 bytes, `head -c` early-exits after reading its byte quota and
@@ -468,7 +462,6 @@ if [[ "$CONTRACT_MODE" == true || "$DEPTH" != minimal ]]; then
     SCOPE_FULL="$(extract_non_ac_body "$BODY")"
     SCOPE_TOTAL_CHARS=${#SCOPE_FULL}
     SCOPE="${SCOPE_FULL:0:$SCOPE_MAX_CHARS}"
-    SCOPE_FILES_COUNT=$({ grep -oE "[a-zA-Z0-9_/-]+\\.($FILE_EXT_PATTERN)" <<<"$SCOPE" || true; } | sort -u | grep -c '^.' || true)
     if (( SCOPE_TOTAL_CHARS > SCOPE_MAX_CHARS )); then
         SCOPE_TRUNCATED=true
         SCOPE+="$(truncation_marker scope "$SCOPE_MAX_CHARS" "$SCOPE_TOTAL_CHARS" " of the issue body (AC section excluded)")"

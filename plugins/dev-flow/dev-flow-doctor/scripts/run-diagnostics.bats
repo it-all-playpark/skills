@@ -704,10 +704,10 @@ EOF
 # distributions.shape_calibration から昇格され、不一致件数は info issue のみ
 # （score 非影響）。micro_nonfiring の warn メッセージには根拠が併記される。
 # ---------------------------------------------------------------------------
-@test "(27) shape 較正: checks.shape_calibration が出力され、取りこぼし / 過大判定は info issue で score 非影響" {
-    write_devflow_entry "s1.json" '{"shape":"standard","shape_refloored":false,"shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","realized_file_count":4,"realized_file_count_raw":7,"analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' s1
-    write_devflow_entry "c1.json" '{"shape":"complex","shape_refloored":false,"shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","realized_file_count":2,"realized_file_count_raw":2,"analyze_path":"sonnet","analyze_ineligible_reason":"AC heading not found","merge_tier":"REVIEW","eval_iter":1}' c1
-    write_devflow_entry "m1.json" '{"shape":"micro","shape_refloored":false,"realized_file_count":1,"realized_file_count_raw":1,"merge_tier":"AUTO","eval_iter":0}' m1
+@test "(27) shape 較正: checks.shape_calibration が出力され、除外による下位 tier / floor による上位 tier は info issue で score 非影響" {
+    write_devflow_entry "s1.json" '{"shape":"standard","shape_reason":"realized 4 file(s), 2 AC, type=fix → shape=standard","realized_file_count":4,"realized_file_count_raw":7,"analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' s1
+    write_devflow_entry "c1.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex","realized_file_count":2,"realized_file_count_raw":2,"analyze_path":"sonnet","analyze_ineligible_reason":"AC heading not found","merge_tier":"REVIEW","eval_iter":1}' c1
+    write_devflow_entry "m1.json" '{"shape":"micro","shape_reason":"realized 1 file(s), 2 AC, type=fix → shape=micro","realized_file_count":1,"realized_file_count_raw":1,"merge_tier":"AUTO","eval_iter":0}' m1
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
     [ "$status" -eq 0 ]
@@ -716,16 +716,16 @@ EOF
     [ "$(printf '%s\n' "$output" | jq -r '.checks.shape_calibration.status')" = "ok" ]
     [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.by_shape.complex')" -eq 1 ]
     [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.shape_reason_kind.safe_floor')" -eq 1 ]
-    [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.realized_mismatch.missed_refloor')" -eq 1 ]
-    [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.realized_mismatch.overestimated')" -eq 1 ]
+    [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.realized_mismatch.excluded_below_raw')" -eq 1 ]
+    [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.realized_mismatch.floor_above_raw')" -eq 1 ]
     [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.analyze_path.contract')" -eq 1 ]
     [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.analyze_ineligible_reason.ac_heading_not_found')" -eq 1 ]
 
-    local missed_issue over_issue warn_issue
-    missed_issue=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("取りこぼし 1 件")))] | length')
-    [ "$missed_issue" -eq 1 ]
-    over_issue=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("過大判定 1 件")))] | length')
-    [ "$over_issue" -eq 1 ]
+    local excluded_issue floored_issue warn_issue
+    excluded_issue=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("除外で下位 tier に決まった run 1 件")))] | length')
+    [ "$excluded_issue" -eq 1 ]
+    floored_issue=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("floor で上位 tier に決まった run 1 件")))] | length')
+    [ "$floored_issue" -eq 1 ]
     warn_issue=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="warn" and (.message | test("shape 較正")))] | length')
     [ "$warn_issue" -eq 0 ]
     # info のみ → score は 100 のまま（telemetry scope で他の減点要因なし）
@@ -735,10 +735,10 @@ EOF
 @test "(28) micro不発火 warn メッセージに shape_reason 種別 / analyze 経路の根拠が併記される" {
     local i
     for i in $(seq 1 6); do
-        write_devflow_entry "standard-${i}.json" '{"shape":"standard","shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
+        write_devflow_entry "standard-${i}.json" '{"shape":"standard","shape_reason":"realized 3 file(s), 2 AC, type=fix → shape=standard","analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
     for i in $(seq 1 5); do
-        write_devflow_entry "complex-${i}.json" '{"shape":"complex","shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","analyze_path":"sonnet","merge_tier":"HOLD","eval_iter":2}' "c${i}"
+        write_devflow_entry "complex-${i}.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex","analyze_path":"sonnet","merge_tier":"HOLD","eval_iter":2}' "c${i}"
     done
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
@@ -747,6 +747,7 @@ EOF
     local msg
     msg=$(printf '%s\n' "$output" | jq -r '[.issues[] | select(.severity=="warn" and (.message | test("micro")))][0].message')
     [[ "$msg" == *"safe floor 5"* ]]
-    [[ "$msg" == *"閾値 6"* ]]
+    [[ "$msg" == *"realized 閾値 6"* ]]
+    [[ "$msg" != *"LLM raise"* ]]
     [[ "$msg" == *"contract 6 / sonnet 5"* ]]
 }

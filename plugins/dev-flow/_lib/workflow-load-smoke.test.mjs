@@ -246,7 +246,7 @@ const x = await Promise.resolve('test');
 
 // ---- 4/5/6 (旧): REQ schema shape / triage consume(classifyShape) / W5 danger-grep 配線 は
 // source-regex 走査だった（issue #636 で削除）。同じ挙動は shape-loop-routing.test.mjs /
-// refloor-shape-routing.test.mjs（shape enum の判定・EFFECTIVE_SHAPE の raise-only）と
+// realized-shape-routing.test.mjs（realized diff からの EFFECTIVE_SHAPE 判定）と
 // secfloor-unified-routing.test.mjs / merge-tier 系ルーティングテスト（danger-grep 配線・
 // merge tier 算出）が VM 挙動として担う。
 
@@ -264,7 +264,7 @@ test('[epoch-instruction] 既定 run: 給電対象 call の prompt が date +%s 
     overrides: {
       'analyze#1': {
         summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
-        estimated_change_file_count: 3, shape: 'complex', issue_number: 1,
+        issue_number: 1,
         issue_title: 'stub-issue-title',
       },
     },

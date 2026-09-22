@@ -82,35 +82,16 @@ test('[analyze-contract] (12d) scope_total_chars 負値はキー省略', () => {
   assert.ok(!('scope_total_chars' in req));
 });
 
-// (2) estimated_change_file_count: 存在時は転写、欠落/0/非整数/負値はキー省略
-test('[analyze-contract] (2a) estimated_change_file_count 正の整数は転写される', () => {
+// (2)(3) 事前 shape 見積もり（shape / estimated_change_file_count）は REQ に載せない（issue #676）。
+// contract 出力に estimated_change_file_count が混入していてもキーを立てない。
+test('[analyze-contract] (2) contract に estimated_change_file_count があってもキー省略', () => {
   const req = buildReqFromContract(baseContract({ estimated_change_file_count: 3 }), 374);
-  assert.equal(req.estimated_change_file_count, 3);
-});
-
-test('[analyze-contract] (2b) estimated_change_file_count 欠落はキー省略', () => {
-  const req = buildReqFromContract(baseContract(), 374);
+  assert.ok(req !== null);
   assert.ok(!('estimated_change_file_count' in req));
 });
 
-test('[analyze-contract] (2c) estimated_change_file_count === 0 はキー省略', () => {
-  const req = buildReqFromContract(baseContract({ estimated_change_file_count: 0 }), 374);
-  assert.ok(!('estimated_change_file_count' in req));
-});
-
-test('[analyze-contract] (2d) estimated_change_file_count 非整数はキー省略', () => {
-  const req = buildReqFromContract(baseContract({ estimated_change_file_count: 2.5 }), 374);
-  assert.ok(!('estimated_change_file_count' in req));
-});
-
-test('[analyze-contract] (2e) estimated_change_file_count 負値はキー省略', () => {
-  const req = buildReqFromContract(baseContract({ estimated_change_file_count: -1 }), 374);
-  assert.ok(!('estimated_change_file_count' in req));
-});
-
-// (3) shape キーが出力に無い
 test('[analyze-contract] (3) shape キーが出力に無い', () => {
-  const req = buildReqFromContract(baseContract({ estimated_change_file_count: 2 }), 374);
+  const req = buildReqFromContract(baseContract({ shape: 'micro' }), 374);
   assert.ok(!('shape' in req));
 });
 
@@ -217,17 +198,16 @@ test('[analyze-contract] comment_count: 0 → 採用（req !== null）', () => {
 
 // ---- classifyShape 結合検証（dev-flow.js と同一の _lib/triviality.mjs を import）----
 
-// count 省略出力を classifyShape に通すと shape:'complex'（floor 安全則）
-test('[analyze-contract][classifyShape統合] estimated_change_file_count 省略 → shape:\'complex\'（AC-4 安全則）', () => {
-  const req = buildReqFromContract(baseContract(), 374); // 欠落
-  const { shape } = classifyShape(req);
+// contract 経路の REQ は realized file 数と組み合わせて初めて shape が決まる（issue #676）
+test('[analyze-contract][classifyShape統合] realized 欠損（NaN）→ shape:\'complex\'（安全則）', () => {
+  const req = buildReqFromContract(baseContract(), 374);
+  const { shape } = classifyShape(req, NaN);
   assert.equal(shape, 'complex');
 });
 
-// count:2 + AC<=4 なら 'micro'
-test('[analyze-contract][classifyShape統合] count:2 + AC<=4 → shape:\'micro\'', () => {
-  const req = buildReqFromContract(baseContract({ estimated_change_file_count: 2 }), 374);
-  const { shape } = classifyShape(req);
+test('[analyze-contract][classifyShape統合] realized:2 + AC<=4 → shape:\'micro\'', () => {
+  const req = buildReqFromContract(baseContract(), 374);
+  const { shape } = classifyShape(req, 2);
   assert.equal(shape, 'micro');
 });
 

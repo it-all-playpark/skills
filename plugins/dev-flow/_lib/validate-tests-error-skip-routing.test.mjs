@@ -83,8 +83,6 @@ function createResponder({ mode, gateEmpty }) {
         acceptance_criteria: ['a', 'b', 'c', 'd'],
         issue_type: 'fix',
         scope: 'src',
-        estimated_change_file_count: 3,
-        shape: 'standard',
         issue_number: 627,
         issue_title: 'stub-issue-title',
       };

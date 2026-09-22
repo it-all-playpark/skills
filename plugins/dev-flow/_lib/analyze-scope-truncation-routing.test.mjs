@@ -72,8 +72,6 @@ const FULL_REQ = {
   issue_type: 'fix',
   scope: 'src',
   scope_truncated: false,
-  estimated_change_file_count: 3,
-  shape: 'standard',
   breaking_change: false,
   breaking_keyword_scan: false,
   ambiguities: [],
@@ -190,7 +188,6 @@ test('[analyze-scope-truncation-routing] T4: contract 経路で scope_truncated:
     breaking_keyword_scan: false,
     comment_count: 0,
     ac_heading_near_miss: [],
-    estimated_change_file_count: 3,
   };
   const { ctx, calls } = makeSandbox({ contractProbeRes });
   const { error } = await run(ctx);
@@ -208,7 +205,6 @@ test('[analyze-scope-truncation-routing] T5: contract 経路で scope_truncated 
     breaking_keyword_scan: false,
     comment_count: 0,
     ac_heading_near_miss: [],
-    estimated_change_file_count: 3,
   };
   const { ctx, calls } = makeSandbox({ contractProbeRes });
   const { error } = await run(ctx);

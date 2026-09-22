@@ -184,8 +184,6 @@ test('[eval-convergence] AC#1: complex 経路・minor のみ feedback・AC 全 s
     acceptance_criteria: ['a', 'b', 'c', 'd'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 7,
-    shape: 'complex',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -249,8 +247,6 @@ test('[eval-convergence] AC#2: 沈黙 critical → EVAL_MAX(10 回)まで差し�
     acceptance_criteria: ['a', 'b', 'c', 'd'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 7,
-    shape: 'complex',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -320,8 +316,6 @@ test('[eval-convergence] AC#3: critical_resolutions {resolved:true, evidence} �
     acceptance_criteria: ['a', 'b', 'c', 'd'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 7,
-    shape: 'complex',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -400,8 +394,6 @@ test('[eval-convergence] contract: eval#2 prompt に EVALUATOR_OPERATIONAL_CONTR
     acceptance_criteria: ['a', 'b', 'c', 'd'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 7,
-    shape: 'complex',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };

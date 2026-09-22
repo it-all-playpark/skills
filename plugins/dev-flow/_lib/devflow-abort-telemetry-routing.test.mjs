@@ -20,6 +20,8 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 // ---- VM sandbox helpers ----
 
+const REALIZED_FILES = ['src/a.ts', 'src/b.ts', 'src/c.ts'];
+
 function makeSandbox({
   analyzeReq, implementerFn, diffGateConfig, throwAt, journalSaveThrows, journalLogAbortResult,
   workflowThrows, args,
@@ -37,9 +39,9 @@ function makeSandbox({
 
     if (label === 'issue-meta') return { ok: true, number: 1, title: analyzeReq?.issue_title ?? 'stub-issue-title' };
     if (label.startsWith('analyze')) return analyzeReq;
-    if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
-    if (label === 'realized-diff') return { files: ['src/foo.ts'] };
-    if (label === 'declared-path-check') return { files: [] };
+    // Security floor 統合 exec-proxy: realized 3 件（dev-implement-fable の申告と一致 → 宣言外 0 件）。
+    // 実効 shape は realized 3 件 + AC 数で決まる（issue #676）: AC 2 → standard、AC 7 → complex。
+    if (label.startsWith('danger-grep')) return { risk: { ok: true, hits: [] }, files: [...REALIZED_FILES], struct: null, diffhash: null };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
@@ -65,7 +67,7 @@ function makeSandbox({
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (agentType === 'dev-flow:dev-implement-fable') {
       const fn = implementerFn ?? (() => ({
-        status: 'DONE', task_id: 'T1', files: [], summary: '', concerns: [],
+        status: 'DONE', task_id: 'issue-1', files: [...REALIZED_FILES], summary: '', concerns: [],
         blocking_reason: null, missing_context: null,
       }));
       const result = fn(implementerCallIndex);
@@ -114,24 +116,22 @@ async function runDevFlowInSandbox(src, ctx) {
 
 const src = readFileSync(devFlowPath, 'utf8');
 
+// AC 7 件 → realized 数に関わらず complex
 const COMPLEX_ANALYZE_REQ = {
   summary: 's',
-  acceptance_criteria: ['a', 'b', 'c', 'd', 'e'],
+  acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 12,
-  shape: 'complex',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
 
+// AC 2 件 + realized 3 件（REALIZED_FILES）→ standard
 const STANDARD_ANALYZE_REQ = {
   summary: 's',
   acceptance_criteria: ['ac1', 'ac2'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -139,7 +139,7 @@ const STANDARD_ANALYZE_REQ = {
 // ============================================================
 // (1) Validate（need() で包まれた diff-gate proxy）で throw
 // ============================================================
-test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort entry 1 件（diff-gate / shape:complex / eval_iter:0）', async () => {
+test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort entry 1 件（diff-gate / shape キー欠落（実効 shape 確定前）/ eval_iter:0）', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: COMPLEX_ANALYZE_REQ,
     throwAt: { label: 'diff-gate', error: new Error('proxy boom') },
@@ -157,12 +157,16 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
   for (const key of [
     '"skill":"dev-flow"', '"outcome":"failure"', '"error_category":"abort"',
     '"error_msg":"abort@Validate/diff-gate: proxy boom"', '"error_phase":"Validate"',
-    '"abort_phase":"Validate"', '"abort_label":"diff-gate"', '"shape":"complex"',
+    '"abort_phase":"Validate"', '"abort_label":"diff-gate"',
     '"eval_iter":0', '"subagent_invocations"', '"gate_policy"',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   }
+  // 実効 shape は Security floor（realized diff 取得後）で確定する（issue #676）。Validate の abort は確定前なので
+  // shape キーを載せない（null を載せると Stop hook の enum 検証で落ちる）。
+  assert.ok(!savePrompt.includes('"shape"'),
+    `(1) 実効 shape 確定前の abort では journal-save prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(savePrompt.includes('/tmp/wt/.devflow-tmp/payload-devflow-1-abort.json'),
     `(1) journal-save prompt に savePath が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
 
@@ -181,7 +185,7 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
 // ============================================================
 // (2) Evaluate で evaluator が throw
 // ============================================================
-test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard / eval_iter:1）', async () => {
+test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard（実効）/ eval_iter:1）', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: STANDARD_ANALYZE_REQ,
     throwAt: { label: 'eval#1', error: new Error('evaluator boom') },

@@ -200,8 +200,6 @@ const ANALYZE_REQ_COMPLEX = {
   acceptance_criteria: ['a', 'b'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 7,
-  shape: 'complex',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };

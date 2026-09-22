@@ -11,7 +11,7 @@
 // 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
 // 残差（duration_seconds − Σphase_durations）に留める。
 // contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため shape 判定の時間が implement 区間へ付け替わる — phase_durations は
+// 使うため plan 合成までの時間が implement 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。

@@ -9,16 +9,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, shapeOverrides } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-// complex に落ちる req（count=7 → floor=complex → EVAL_PASSES=EVAL_MAX=10 のループ経路）
+// complex に落とす: realized 7 件（shapeOverrides('complex')）→ EVAL_PASSES=EVAL_MAX=10 のループ経路
 const COMPLEX_REQ = {
   summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'feat', scope: 'src',
-  estimated_change_file_count: 7, shape: 'complex', issue_number: 1, issue_title: 'stub-issue-title',
+  issue_number: 1, issue_title: 'stub-issue-title',
 };
+const COMPLEX_OVERRIDES = { 'analyze#1': COMPLEX_REQ, ...shapeOverrides('complex') };
 
 // 毎回異なる topic を生成（paraphrase 模倣 = evalSeen の stuck 検出が発火しない）
 function designCritical(callIndex) {
@@ -35,7 +36,7 @@ test('[design-replan-cap] paraphrase design critical 連発 → DESIGN_REPLAN_MA
   const evalCalls = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
     overrides: {
-      'analyze#1': COMPLEX_REQ,
+      ...COMPLEX_OVERRIDES,
       // evaluator は label 'eval#i'。呼び出し順に異なる topic の design critical を返す
       ...Object.fromEntries([1, 2, 3, 4, 5].map((i) => [`eval#${i}`, () => { evalCalls.push(i); return designCritical(i); }])),
     },

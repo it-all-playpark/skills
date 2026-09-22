@@ -4,7 +4,7 @@
 //
 // 問題: 実装 agent が evaluator.staged.md / fm_*.txt 等の一時ファイルを worktree 直下に残すと
 //       `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、
-//       micro→standard の refloor 誤発火や 30 件超の CONCERN スパムが起きる（issue #216）。
+//       realized count の膨張による shape 誤判定や 30 件超の CONCERN スパムが起きる（issue #216）。
 //
 // このテストは:
 //   (2b) 実装 prompt が一時ファイルの削除を指示しない（否定側 pin。AC-3 許可）
@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, shapeOverrides } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
@@ -90,9 +90,9 @@ test('[staging-convention] routing: reimpl#1（Evaluate 差し戻し）prompt �
     overrides: {
       'analyze#1': {
         summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'feat', scope: 'src',
-        estimated_change_file_count: 7, shape: 'complex', issue_number: 1,
-        issue_title: 'stub-issue-title',
+        issue_number: 1, issue_title: 'stub-issue-title',
       },
+      ...shapeOverrides('complex'),
       'eval#1': {
         verdict: 'fail', total: 5, threshold: 7,
         feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],

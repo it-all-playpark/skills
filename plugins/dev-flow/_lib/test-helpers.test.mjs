@@ -17,7 +17,7 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 import {
   makeRecordingSandbox, runDevFlowInSandbox, JS_GLOBALS,
   runWorkflowCapture, devFlowResponder, makeDevFlowSandbox, makePrIterateSandbox,
-  devFlowArgs,
+  devFlowArgs, STANDARD_FILES,
 } from './test-helpers/vm-sandbox.mjs';
 import { greenFixAuditEcho } from './test-helpers/dev-flow-markers.mjs';
 
@@ -208,7 +208,7 @@ test('[test-helpers] runDevFlowInSandbox: 実際の dev-flow.js ソースを Ref
   // 最小限のレスポンダー（全 label に対して適切な応答）
   const responder = ({ label, agentType }) => {
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
-    if (label.startsWith('analyze')) return { summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src', estimated_change_file_count: 1, shape: 'micro' };
+    if (label.startsWith('analyze')) return { summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src' };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
@@ -335,15 +335,19 @@ test('[test-helpers] (d) devFlowResponder: overrides が null の場合 null が
   assert.equal(result, null);
 });
 
-test('[test-helpers] (d) devFlowResponder: 既定の "danger-grep" 応答が仕様どおりの形状であること', () => {
+test('[test-helpers] (d) devFlowResponder: 既定の "danger-grep" 応答が仕様どおりの形状であること（files は STANDARD_FILES 3 件 → 実効 shape standard）', () => {
   const responder = devFlowResponder();
   const result = responder({ label: 'danger-grep', agentType: 'dev-runner-haiku-ro', prompt: 'p' });
   assert.deepEqual(result, {
     risk: { ok: true, hits: [] },
-    files: ['src/x.ts'],
+    files: ['src/x.ts', 'src/y.ts', 'src/z.ts'],
     struct: null,
     diffhash: { hash: 'AAA', empty: false },
   });
+  assert.deepEqual(STANDARD_FILES, ['src/x.ts', 'src/y.ts', 'src/z.ts']);
+  // dev-implement-fable 既定応答も同じ 3 件を申告する（宣言外 0 件で shape だけが standard になる）
+  const impl = responder({ label: 'impl:serial:issue-1', agentType: 'dev-flow:dev-implement-fable', prompt: 'p' });
+  assert.deepEqual(impl.files, STANDARD_FILES);
 });
 
 // ============================================================

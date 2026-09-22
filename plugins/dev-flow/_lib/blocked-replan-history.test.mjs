@@ -25,7 +25,7 @@ const GONE_AGENTS = ['dev-flow:dev-planner', 'dev-flow:plan-reviewer', 'dev-flow
 // standard shape: count=4 (3-5), AC<=6, issue_type=fix, no breaking keywords
 const STANDARD_REQ = {
   summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'fix', scope: 'src',
-  estimated_change_file_count: 4, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
+  issue_number: 1, issue_title: 'stub-issue-title',
 };
 
 const blocked = (detail) => ({

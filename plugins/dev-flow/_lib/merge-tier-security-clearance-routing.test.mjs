@@ -182,8 +182,6 @@ const ANALYZE_REQ = {
   acceptance_criteria: ['a'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 7,
-  shape: 'complex',
   issue_number: 16,
   issue_title: 'stub-issue-title',
 };

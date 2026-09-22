@@ -3,7 +3,7 @@
 //
 // 守っている不変条件:
 //   implementer が null を返して task が落ちた run は「計画した実装範囲」が実際には欠けている。
-//   残った task の diff が非空なら empty-diff gate も refloor も素通りするため、この分岐が無いと
+//   残った task の diff が非空なら empty-diff gate も shape 判定も素通りするため、この分岐が無いと
 //   micro では evaluator 0 回のまま AC 未検証で PR に到達する。
 //
 // テスト構成（2 シナリオを別 sandbox で実行）:
@@ -45,8 +45,6 @@ function createResponder(dropLabels) {
         acceptance_criteria: ['a'],
         issue_type: 'fix',
         scope: 'src',
-        estimated_change_file_count: 1,
-        shape: 'micro',
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
@@ -54,7 +52,7 @@ function createResponder(dropLabels) {
     // Plan: parallel 2 task + serial 1 task。file_changes は realized-diff stub と一致させ
     // 宣言外検出（issue #272 F2）を発火させない（runEval の要因を drop だけに絞るため）。
     // label 'danger-grep'（issue #544 統合呼び出し）: clean（security path ではないことを保証）+
-    // files 1 件（旧 realized-diff 相当 → refloor で micro 維持）。
+    // files 1 件（旧 realized-diff 相当 → 実効 shape micro）。
     if (label === 'danger-grep') {
       return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
     }

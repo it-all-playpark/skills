@@ -1,11 +1,11 @@
 // empty-diff gate と diff-hash 乖離検出の VM sandbox routing テスト（issue #215）。
-// _lib/refloor-shape-routing.test.mjs の makeCountingSandbox / runDevFlowInSandbox パターンを踏襲。
+// _lib/realized-shape-routing.test.mjs と同型の makeCountingSandbox / runDevFlowInSandbox パターン。
 //
 // stub に label==='diff-gate' / 'diff-gate-retry' / 'diff-hash-eval' / 'diff-hash-pr' の分岐を追加し
 // テストごとに可変の {hash, empty} を返す。
 //
-// analyzeReq は standard shape（estimated_change_file_count:3, acceptance_criteria あり, issue_type:'fix'）で
-// runEval を成立させる。
+// 実効 shape は realized diff の file 数で決まる（issue #676）: 既定の realized 3 件（REALIZED_FILES）+
+// AC 2 件 + issue_type:'fix' で standard になり runEval が成立する。micro ケースは realizedFiles を 1 件にする。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -20,6 +20,8 @@ const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
+const REALIZED_FILES = ['src/foo.ts', 'src/bar.ts', 'src/baz.ts'];
+
 function makeCountingSandbox(analyzeReq, diffHashConfig) {
   const calls = [];
   const {
@@ -28,6 +30,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     evalHash = 'H',
     prHash = 'H',
     iterateResult = { status: 'lgtm', iterations: 1, fixes_applied: 0 },
+    realizedFiles = REALIZED_FILES,
   } = diffHashConfig || {};
 
   const agentStub = async (prompt, opts) => {
@@ -43,13 +46,13 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
     if (label.startsWith('analyze')) return analyzeReq;
     // label 'danger-grep'（issue #544 統合呼び出し）: risk/files を 1 応答で返す。
-    if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: ['src/foo.ts'], struct: null, diffhash: null };
+    if (label === 'danger-grep') return { risk: { ok: true, hits: [] }, files: [...realizedFiles], struct: null, diffhash: null };
     if (label.startsWith('test')) return { tests: 'no_tests', green: true, summary: '' };
     if (label.startsWith('redgreen')) return { red: false, green: false, reason: 'stub' };
     if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'merge-tier-facts') return mergeTierFacts({ files: ['src/foo.ts'] });
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: ['src/foo.ts'], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: [...realizedFiles], summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
     // 返して journal-log (stage2) へ進めさせる。
@@ -92,8 +95,6 @@ const STANDARD_REQ = {
   acceptance_criteria: ['ac1', 'ac2'],
   issue_type: 'fix',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -295,16 +296,16 @@ test('[empty-diff] (M) micro path（runEval=false）+ iterate fix あり → eva
     acceptance_criteria: ['ac1'],
     issue_type: 'docs',
     scope: 'docs',
-    estimated_change_file_count: 1,
-    shape: 'micro',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
+  // realized 1 件 + AC 1 → micro（runEval=false）
   const { ctx } = makeCountingSandbox(MICRO_REQ, {
     gateEmpty: false,
     evalHash: 'AAA',
     prHash: 'AAA',
     iterateResult: { status: 'lgtm', iterations: 2, fixes_applied: 2 },
+    realizedFiles: ['docs/a.md'],
   });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) assert.fail(`dev-flow.js crash: ${error.name}: ${error.message}`);

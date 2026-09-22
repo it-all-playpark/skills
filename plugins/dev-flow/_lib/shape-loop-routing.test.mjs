@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, shapeOverrides } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
@@ -26,10 +26,12 @@ const EVAL_PASS = {
   critical_resolutions: [{ id: 'EVAL-1-X', resolved: true, evidence: 'src/x.ts で修正済み' }],
 };
 
-// standard に落ちる req（count=3 ≤ 5, ac.length=4 ≤ 6, type=feat → floor='standard'）
-const STANDARD_REQ = { summary: 's', acceptance_criteria: AC4, issue_type: 'feat', scope: 'src', estimated_change_file_count: 3, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title' };
-// complex に落ちる req（count=8 > 5 → floor='complex'）
-const COMPLEX_REQ = { summary: 's', acceptance_criteria: AC4, issue_type: 'feat', scope: 'src', estimated_change_file_count: 8, shape: 'complex', issue_number: 1, issue_title: 'stub-issue-title' };
+// 実効 shape は realized diff の file 数で決まる（issue #676）。req 側は AC 4 件 / type=feat で共通。
+const REQ4 = { summary: 's', acceptance_criteria: AC4, issue_type: 'feat', scope: 'src', issue_number: 1, issue_title: 'stub-issue-title' };
+// standard: 既定 responder の realized 3 件（STANDARD_FILES）+ AC 4 → 'standard'
+const STANDARD_OVERRIDES = { 'analyze#1': REQ4 };
+// complex: realized 7 件（shapeOverrides — dev-implement-fable も同じ 7 件を申告 → 宣言外 0 件）→ 'complex'
+const COMPLEX_OVERRIDES = { 'analyze#1': REQ4, ...shapeOverrides('complex') };
 
 async function run(overrides) {
   const { ctx, calls } = makeDevFlowSandbox({ overrides });
@@ -40,7 +42,7 @@ async function run(overrides) {
 }
 
 test('[shape-loop] SHAPE=standard: evaluator 呼び出し 1 回（fail でも差し戻さない）・plan review 系 agent 0 回', async () => {
-  const calls = await run({ 'analyze#1': STANDARD_REQ, 'eval#1': EVAL_FAIL, 'eval#2': EVAL_PASS });
+  const calls = await run({ ...STANDARD_OVERRIDES, 'eval#1': EVAL_FAIL, 'eval#2': EVAL_PASS });
   const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(evaluatorCalls.length, 1, `SHAPE=standard: evaluator は 1 回呼ばれるべきだが ${evaluatorCalls.length} 回呼ばれた`);
   assert.equal(calls.filter((c) => c.label.startsWith('reimpl#')).length, 0, 'standard で Evaluate 差し戻し（reimpl#i）が発火した');
@@ -48,7 +50,7 @@ test('[shape-loop] SHAPE=standard: evaluator 呼び出し 1 回（fail でも差
 });
 
 test('[shape-loop] SHAPE=complex: evaluator fail → reimpl#1（dev-implement-fable）→ pass で evaluator 2 回（制御群）', async () => {
-  const calls = await run({ 'analyze#1': COMPLEX_REQ, 'eval#1': EVAL_FAIL, 'eval#2': EVAL_PASS });
+  const calls = await run({ ...COMPLEX_OVERRIDES, 'eval#1': EVAL_FAIL, 'eval#2': EVAL_PASS });
   const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(evaluatorCalls.length, 2, `SHAPE=complex: evaluator は 2 回（fail → 差し戻し → pass）のはずだが ${evaluatorCalls.length} 回だった`);
   const reimpl = calls.filter((c) => c.label === 'reimpl#1:serial:issue-1');

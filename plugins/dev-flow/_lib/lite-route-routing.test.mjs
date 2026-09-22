@@ -51,7 +51,6 @@ function makeCleanMicroReq() {
     acceptance_criteria: ['a', 'b'],
     issue_type: 'fix',
     scope: 'src',
-    estimated_change_file_count: 1,
     breaking_change: false,
     breaking_keyword_scan: false,
     issue_number: 376,
@@ -111,7 +110,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
     }
     // Security floor: label 'danger-grep'（issue #544 統合呼び出し）。risk.hits は dangerHits で
     // 可変。files（旧 realized-diff。issue #376 F3 fix — 未stub だと realizedCount が NaN になり
-    // refloorShape が fail-safe で complex へ raise、EFFECTIVE_SHAPE!=='micro' となって
+    // classifyShape が fail-safe で complex に倒し、EFFECTIVE_SHAPE!=='micro' となって
     // state.runEval が強制 true になり LITE ゲートを常に無効化してしまうため、clean シナリオでは
     // realized 変更なしを明示的に返す）は [] 固定。
     if (label === 'danger-grep') {

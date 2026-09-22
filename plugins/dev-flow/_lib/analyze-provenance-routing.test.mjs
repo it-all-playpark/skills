@@ -26,8 +26,6 @@ const FULL_REQ = {
   acceptance_criteria: ['a', 'b'],
   issue_type: 'fix',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   breaking_change: false,
   breaking_keyword_scan: false,
   ambiguities: [],
@@ -123,8 +121,6 @@ test('[analyze-provenance-routing] T2: req.issue_title が probe.title と不一
     issue_title: 'test',
     breaking_change: false,
     breaking_keyword_scan: true,
-    estimated_change_file_count: 1,
-    shape: 'micro',
     issue_type: 'fix',
     ambiguities: [],
   };
@@ -164,8 +160,6 @@ test('[analyze-provenance-routing] T4: contract-probe が {ok:false} でも labe
     issue_title: 'test',
     breaking_change: false,
     breaking_keyword_scan: false,
-    estimated_change_file_count: 1,
-    shape: 'micro',
     issue_type: 'fix',
     ambiguities: [],
   };

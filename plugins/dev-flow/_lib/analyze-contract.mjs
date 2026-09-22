@@ -20,9 +20,8 @@
 //   - contract.comment_count === 0（整数厳格。comments がある issue は body/comment 突合のため sonnet analyze へ回す。issue #573）
 //
 // 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
-// `shape` キーは出力しない（classifyShape の複数 floor 安全則をそのまま働かせるため）。
-// estimated_change_file_count は正の整数として導出できたときのみキーを立てる（欠落時は
-// classifyShape の complex floor 安全則がそのまま働く）。
+// 事前 shape 見積もり（LLM の shape / 見込み file 数）は REQ に載せない — 実効 shape は
+// realized diff の file 数から classifyShape が決める（issue #676）。
 export function buildReqFromContract(contract, issueNumber) {
   if (contract === null || typeof contract !== 'object' || Array.isArray(contract)) return null
   if (contract.eligible !== true) return null
@@ -50,9 +49,6 @@ export function buildReqFromContract(contract, issueNumber) {
     breaking_keyword_scan: false,
     breaking_evidence: '',
     ambiguities: [],
-  }
-  if (Number.isInteger(contract.estimated_change_file_count) && contract.estimated_change_file_count > 0) {
-    req.estimated_change_file_count = contract.estimated_change_file_count
   }
   if (Number.isInteger(contract.scope_total_chars) && contract.scope_total_chars >= 0) {
     req.scope_total_chars = contract.scope_total_chars

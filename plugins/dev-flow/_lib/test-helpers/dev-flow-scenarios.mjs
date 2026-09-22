@@ -12,7 +12,7 @@
  *   expectError — run が throw で終端することを期待する scenario（abort / empty-diff）
  */
 
-import { mergeTierFacts } from './vm-sandbox.mjs';
+import { mergeTierFacts, STANDARD_FILES, shapeOverrides } from './vm-sandbox.mjs';
 
 const UI_FILE = 'src/components/Foo.tsx';
 const VALID_UI_CFG = { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}', base_port: 4100, ready_path: '/', env_files: [] };
@@ -29,13 +29,11 @@ const UI_OVERRIDES = {
   'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
 };
 
-const COMPLEX_REQ = {
-  summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'feat', scope: 'src',
-  estimated_change_file_count: 7, shape: 'complex', issue_number: 1, issue_title: 'stub-issue-title',
-};
+// 実効 shape は realized diff の file 数で決まる（issue #676）: complex は shapeOverrides('complex')（realized 7 件）、
+// micro（lite）は danger-grep の files を空にする。
 const LITE_REQ = {
   summary: 'clean micro fix', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
-  estimated_change_file_count: 1, breaking_change: false, breaking_keyword_scan: false,
+  breaking_change: false, breaking_keyword_scan: false,
   issue_number: 1, issue_title: 'stub-issue-title',
 };
 const AC2 = [
@@ -96,16 +94,16 @@ export const DEV_FLOW_SCENARIOS = {
   'ci-checks': {
     overrides: {
       'impl:serial:issue-1': {
-        status: 'DONE', task_id: 'issue-1', files: ['src/x.ts'], summary: 's',
+        status: 'DONE', task_id: 'issue-1', files: [...STANDARD_FILES], summary: 's',
         concerns: ['sandbox 内で next build が TurbopackInternalError で失敗した'],
       },
       'merge-tier-facts': mergeTierFacts({ checks: [{ name: 'build', bucket: 'pass' }] }),
     },
   },
-  // complex: eval#1 critical → reimpl#1（dev-implement-fable へ fix_feedback 付き差し戻し）→ eval#2 pass
+  // complex（realized 7 files）: eval#1 critical → reimpl#1（dev-implement-fable へ fix_feedback 付き差し戻し）→ eval#2 pass
   'complex-fix': {
     overrides: {
-      'analyze#1': COMPLEX_REQ,
+      ...shapeOverrides('complex'),
       'eval#1': {
         verdict: 'fail', total: 5, threshold: 7,
         feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],
@@ -124,7 +122,7 @@ export const DEV_FLOW_SCENARIOS = {
   'closes-reinject': {
     overrides: { 'closes-check': { ok: true, body: '**x**\n\n## 変更\n（なし）\n' } },
   },
-  // clean micro lite route（pr-review-lite + ci-check-lite で lgtm 終端、nested pr-iterate 起動なし）
+  // clean micro lite route（realized 0 files → micro。pr-review-lite + ci-check-lite で lgtm 終端、nested pr-iterate 起動なし）
   lite: {
     overrides: {
       'analyze#1': LITE_REQ,

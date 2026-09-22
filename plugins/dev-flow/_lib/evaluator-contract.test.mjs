@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, shapeOverrides } from './test-helpers/vm-sandbox.mjs';
 
 import { EVALUATOR_OPERATIONAL_CONTRACT, CONCERN_RESOLUTIONS, normalizeConcernResolution } from './evaluator-contract.mjs';
 
@@ -118,8 +118,6 @@ test('[evaluator-contract] eval#2 prompt contains EVALUATOR_OPERATIONAL_CONTRACT
     acceptance_criteria: ['a', 'b', 'c', 'd'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 7,
-    shape: 'complex',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -132,6 +130,7 @@ test('[evaluator-contract] eval#2 prompt contains EVALUATOR_OPERATIONAL_CONTRACT
   const { ctx, calls } = makeSandbox({
     overrides: {
       'analyze#1': COMPLEX_REQ,
+      ...shapeOverrides('complex'),
       'eval#1': {
         verdict: 'fail', total: 5, threshold: 7,
         feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],

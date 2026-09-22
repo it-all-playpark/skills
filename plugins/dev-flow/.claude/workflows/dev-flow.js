@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-run',
-  description: 'Issue から LGTM まで: 分析(shape判定)→実装(dev-implement-fable 1 spawn)→test green→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
+  description: 'Issue から LGTM まで: 分析→実装(dev-implement-fable 1 spawn)→test green→security floor(realized diff から shape 判定)→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
   phases: [
     { title: 'Setup' },
     { title: 'Analyze' },
@@ -722,7 +722,7 @@ function mergeSubagentCounts(counts, byType) {
 // 区間（deps/stack 決定論処理 + wrapper turn + isolation-probe spawn）はどの phase にも属さない
 // 残差（duration_seconds − Σphase_durations）に留める。
 // contract 経路の analyze_end は Analyze 冒頭の contract-probe epoch を
-// 使うため shape 判定の時間が implement 区間へ付け替わる — phase_durations は
+// 使うため plan 合成までの時間が implement 区間へ付け替わる — phase_durations は
 // 相対比較・分布用途のため許容する（計測意味は経路間で非対称）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -1947,8 +1947,14 @@ function reconcileTestsurf(ledger, risk) {
 // ==== END inline: _lib/testsurf.mjs ====
 
 // ==== BEGIN inline: _lib/triviality.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// classifyShape: REQ オブジェクトから shape 判定を行う純粋関数。
-// dev-flow の shape check に使用する。
+// classifyShape: realized diff の file 数と REQ 由来の決定論特徴量（AC 数 / issue_type / 構造化
+// breaking_change）から実効 shape を決める純粋関数。dev-flow の Security floor（realized diff 取得後）
+// で 1 回だけ呼ばれ、返り値が EFFECTIVE_SHAPE（Evaluate 深さ・LITE gate・merge tier の入力）になる。
+//
+// 入力は実装後の realized diff のみ。Analyze で LLM が出す事前見積もり（shape / 見込み file 数）は
+// decision に使わない（issue #676）— 実装前の予測は log と失敗 telemetry にしか効かず、決定論なのは
+// 写像と「欠損 → complex」の既定則だけだったため。micro の LITE 経路に対する意味的リスクの安全網は
+// runEval 強制条件（danger-grep / testsurf / greenFix / dropped task / undeclared file / UI 接触）が担う。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -1959,38 +1965,27 @@ function reconcileTestsurf(ledger, risk) {
 // complex floor に採用しない (低 precision ヒューリスティック、実測 FP: #359/#361)。
 // 構造化判定 breaking_change===true との corroboration があるときのみ floor へ採用する。
 // issue #442: issue_type enum ドリフト修正 — AGENTS.md の正規 Conventional Commits 型 (chore/test/perf/ci) を validTypes に追加。
-const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
-function mergeShape(floor, llmShape) {
-  if (!(llmShape in SHAPE_RANK)) {
-    return floor;
-  }
-  return SHAPE_RANK[llmShape] > SHAPE_RANK[floor] ? llmShape : floor;
-}
-
-function classifyShape(req) {
-  const count = req.estimated_change_file_count;
-  if (typeof count !== 'number' || count < 0) {
-    const floor = 'complex';
-    const reason = `estimated_change_file_count missing or invalid → safe floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+/**
+ * @param {object} req - analyze REQ（acceptance_criteria / issue_type / breaking_change / breaking_keyword_scan を読む）
+ * @param {number} realizedCount - realized diff の file 数（宣言外・format-only・ephemeral 除外後の整数。
+ *   取得不能は NaN）
+ * @returns {{ shape: 'micro'|'standard'|'complex', reason: string }}
+ */
+function classifyShape(req, realizedCount) {
+  const count = realizedCount;
+  if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) {
+    return { shape: 'complex', reason: `realized file count missing or invalid → safe floor=complex` };
   }
 
   const ac = req.acceptance_criteria;
   if (!Array.isArray(ac)) {
-    const floor = 'complex';
-    const reason = `acceptance_criteria missing or not array → safe floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+    return { shape: 'complex', reason: `acceptance_criteria missing or not array → safe floor=complex` };
   }
 
   const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci'];
   if (!validTypes.includes(req.issue_type)) {
-    const floor = 'complex';
-    const reason = `issue_type '${req.issue_type}' not in allowed set → floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+    return { shape: 'complex', reason: `issue_type '${req.issue_type}' not in allowed set → floor=complex` };
   }
 
   // keyword-alone (breaking_keyword_scan=true かつ breaking_change!==true) は complex floor に
@@ -1998,66 +1993,26 @@ function classifyShape(req) {
   const keywordAlone = req.breaking_keyword_scan === true && req.breaking_change !== true;
 
   if (req.breaking_change === true) {
-    const floor = 'complex';
     const reason = `breaking change detected (analyze structured breaking_change=true`
       + (req.breaking_keyword_scan === true ? ' + issue title/body keyword scan hit' : '')
       + `) → floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+    return { shape: 'complex', reason };
   }
 
-  let floor;
+  let shape;
   if (count <= 2 && ac.length <= 4) {
-    floor = 'micro';
+    shape = 'micro';
   } else if (count <= 5 && ac.length <= 6) {
-    floor = 'standard';
+    shape = 'standard';
   } else {
-    floor = 'complex';
+    shape = 'complex';
   }
 
-  const shape = mergeShape(floor, req.shape);
-  let reason;
-  if (shape !== floor) {
-    reason = `LLM raised ${floor}→${shape}`;
-  } else {
-    reason = `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type} → floor=${floor}`;
-  }
+  let reason = `realized ${count} file(s), ${ac.length} AC, type=${req.issue_type} → shape=${shape}`;
   if (keywordAlone) {
     reason += `（breaking keyword hit は構造化判定 breaking_change=false のため floor 不採用 — 可視化のみ。issue #364）`;
   }
   return { shape, reason };
-}
-
-/**
- * refloorShape: realized diff のファイル数から shape を raise-only で調整する純粋関数。
- *
- * realized diff には AC 情報が無いため、file count のみで floor を引く
- * (classifyShape と同じ境界値 count<=2/count<=5 を使用)。
- * estimatedShape より大きい floor が得られた場合のみ上書きする (raise-only)。
- *
- * @param {string} estimatedShape - 計画時に決定した shape ('micro'|'standard'|'complex')
- * @param {number} realizedCount - realized diff の実ファイル数 (整数)
- * @returns {{ shape: string, refloored: boolean, realizedFloor: string, realizedCount: number }}
- */
-function refloorShape(estimatedShape, realizedCount) {
-  let realizedFloor;
-  if (typeof realizedCount !== 'number' || realizedCount < 0 || !Number.isFinite(realizedCount)) {
-    realizedFloor = 'complex';
-  } else if (realizedCount <= 2) {
-    realizedFloor = 'micro';
-  } else if (realizedCount <= 5) {
-    realizedFloor = 'standard';
-  } else {
-    realizedFloor = 'complex';
-  }
-
-  const effective = SHAPE_RANK[realizedFloor] > SHAPE_RANK[estimatedShape] ? realizedFloor : estimatedShape;
-  return {
-    shape: effective,
-    refloored: effective !== estimatedShape,
-    realizedFloor,
-    realizedCount,
-  };
 }
 // ==== END inline: _lib/triviality.mjs ====
 // ==== BEGIN inline: _lib/analyze-contract.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -2083,9 +2038,8 @@ function refloorShape(estimatedShape, realizedCount) {
 //   - contract.comment_count === 0（整数厳格。comments がある issue は body/comment 突合のため sonnet analyze へ回す。issue #573）
 //
 // 合格時、REQ 互換オブジェクトをキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
-// `shape` キーは出力しない（classifyShape の複数 floor 安全則をそのまま働かせるため）。
-// estimated_change_file_count は正の整数として導出できたときのみキーを立てる（欠落時は
-// classifyShape の complex floor 安全則がそのまま働く）。
+// 事前 shape 見積もり（LLM の shape / 見込み file 数）は REQ に載せない — 実効 shape は
+// realized diff の file 数から classifyShape が決める（issue #676）。
 function buildReqFromContract(contract, issueNumber) {
   if (contract === null || typeof contract !== 'object' || Array.isArray(contract)) return null
   if (contract.eligible !== true) return null
@@ -2113,9 +2067,6 @@ function buildReqFromContract(contract, issueNumber) {
     breaking_keyword_scan: false,
     breaking_evidence: '',
     ambiguities: [],
-  }
-  if (Number.isInteger(contract.estimated_change_file_count) && contract.estimated_change_file_count > 0) {
-    req.estimated_change_file_count = contract.estimated_change_file_count
   }
   if (Number.isInteger(contract.scope_total_chars) && contract.scope_total_chars >= 0) {
     req.scope_total_chars = contract.scope_total_chars
@@ -4025,8 +3976,6 @@ const REQ = {
     scope_total_chars: { type: 'number' },
     issue_body: { type: 'string' },
     issue_body_truncated: { type: 'boolean' },
-    estimated_change_file_count: { type: 'number' },
-    shape: { type: 'string', enum: ['micro', 'standard', 'complex'] },
     ambiguities: { type: 'array', items: { type: 'string' } },
     comment_overrides: { type: 'array', items: { type: 'string' } },
     comment_conflicts: { type: 'array', items: { type: 'string' } },
@@ -5335,7 +5284,7 @@ let TURBOPACK_NOTE = '' // Setup(stack) で確定。対象 repo が Next.js の�
 const EPOCH_INSTRUCTION = '作業完了後、最後に Bash で `date +%s` を 1 回実行し、出力の整数を epoch フィールドとして返せ。取得に失敗した場合は epoch を省略してよい（本来の作業・判定には一切影響させるな）。\n'
 
 // 実装 agent（dev-implement-fable）への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を
-// 残すと `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、refloor 誤発火・
+// 残すと `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、実効 shape の誤判定・
 // 宣言外変更 concern の原因になる。agent 定義ファイル（.claude/agents/dev-implement-fable.md）は
 // sandbox write-deny のため、workflow が全実装 spawn prompt（Implement / green-fix / reimpl）に決定論的に注入する。
 // .devflow-tmp/ 配下は isEphemeralPath が realized-diff から除外するため後始末は不要で、削除を
@@ -5345,7 +5294,7 @@ const STAGING_CONVENTION = `一時/handoff ファイルの配置規約: `
   + `mktemp "\${TMPDIR:-/tmp}/implementer-XXXXXX" で worktree 外の $TMPDIR に置くのが原則。`
   + `worktree 内が不可避な場合は .devflow-tmp/ 配下のみに置け（ephemeral として realized-diff から除外されるため、後始末は不要）。`
   + `worktree 直下に *.staged.* / fm_*.txt のような一時ファイルを残すことは禁止`
-  + `（git status に混入し realized-diff の refloor 誤発火・宣言外変更 concern の原因になる）。\n`
+  + `（git status に混入し realized-diff の実効 shape 誤判定・宣言外変更 concern の原因になる）。\n`
   + EPOCH_INSTRUCTION
 
 // Next.js/Turbopack 固有の build 検証規約。sandbox 内では `next build`（Turbopack）が process 生成・
@@ -5362,7 +5311,7 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
 // ---- Implement 経路（全 shape で dev-implement-fable 一本）----
-// Analyze 直後（shape 確定後）に issue から単一 task の plan を合成し、runImplement が dev-implement-fable
+// Analyze 直後に issue から単一 task の plan を合成し、runImplement が dev-implement-fable
 // （plan+impl 統合）を 1 spawn する。合成 plan の task は agent キーを持つ（isFablePlan）—
 // 合成 plan 以外は Implement / Evaluate で受理しない（明示 error）。
 const FABLE_IMPL_AGENT = 'dev-implement-fable'
@@ -5377,7 +5326,7 @@ function synthesizeFablePlan(req, issue) {
 function isFableTask(t) { return t != null && t.agent === FABLE_IMPL_AGENT }
 function isFablePlan(p) { return [...(p?.serial ?? []), ...(p?.parallel ?? [])].some(isFableTask) }
 // 合成 task の file_changes は空で始まる（Fable が決める）。Implement / reimpl の返却 files を宣言として
-// 取り込むことで、宣言外監査（diffDeclaredPaths）・refloor count・PR body の「変更」節が同じ材料で動く
+// 取り込むことで、宣言外監査（diffDeclaredPaths）・実効 shape の realized count・PR body の「変更」節が同じ材料で動く
 // （宣言外 = Fable が files に申告しなかった変更、として evaluator の focus に載る）。
 function adoptReportedFiles(plan, results) {
   if (!isFablePlan(plan)) return plan
@@ -5521,9 +5470,6 @@ const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json �
 
 const analyzePrompt = (depth) => `cd ${WT} で作業。\`Skill: dev-issue-analyze ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --depth ${depth}\` を実行し、`
   + `issue #${ISSUE} の要件・受入条件・issue type を抽出して返せ。`
-  + `さらに、この issue を実装する際に新規作成/変更すると見込まれるファイル数を整数で見積もり estimated_change_file_count として返せ。`
-  + `issue 本文に列挙されたパス数ではなく、実装に実際に必要なファイル数の見積りであること。過大にも過小にも倒さず実数を見積もれ。`
-  + `さらに、この issue の実装規模を micro / standard / complex のいずれかで評価し shape として返せ。micro=1〜2 ファイルの軽微変更（AC 4 個以内）、standard=3〜5 ファイル程度の通常実装、complex=6 ファイル以上・破壊的変更・設計判断を要する。定義に最も合致する shape をそのまま返せ（安全側の floor は決定論ロジックが別途担保するため、迷っても大きめに倒すな）。`
   + `受入条件（acceptance_criteria）は独立に検証可能な最小単位へ統合して列挙せよ（同義の言い換え・手段の重複で個数を水増ししない。1〜2 ファイルの軽微変更なら通常 4 個以内に収まる）。`
   + `さらに、issue から確信を持って受入条件化できなかった重要な曖昧点があれば ambiguities:string[] として返せ（軽微な好み・推測で安全に埋められる点は含めない。なければ空配列）。`
   + `issue の comments（取得 JSON の comments 配列 / skill 出力の comments）を created_at 順に body と同じ要件入力として読め。comment が body の記述を明示的に訂正・上書きしている（例: 『訂正』『前倒し』『X ではなく Y』）場合でも、その comment の author が issue 報告者本人（skill 出力の issue_author と一致）または author_association が OWNER/MEMBER/COLLABORATOR のいずれかである場合に限り（author / issue_author / author_association のいずれかが空文字列・不明のときは一致とみなすな）comment_overrides:string[] に『body: <旧記述> → comment: <新記述>（<author>, <created_at>）』の形で列挙して採用せよ（本 repo は public であり、任意の外部コメント者に要件上書きを許すと comment_overrides が信頼できない経路になる、issue #573 review on PR #578）。上記条件を満たさない訂正、または body と comment が食い違うがどちらが有効か comment から確定できない場合は、黙ってどちらも採用せず comment_conflicts:string[] に同形式で列挙せよ（body 側の記述はそのまま要件入力として残す）。comments が無ければ両方とも空配列。`
@@ -5713,23 +5659,18 @@ if ((req.acceptance_criteria ?? []).length === 0 || ambiguities.length > AMBIGUI
   }
 }
 
-const triage = classifyShape(req)
-const SHAPE = triage.shape
-ABORT_CTX.shape = SHAPE
-const TRIVIAL = SHAPE === 'micro'
-log(`shape: ${SHAPE} — ${triage.reason}`)
-
 // ============================================================
-// 合成 plan: shape に関わらず planner agent を起動せず、issue から単一 task の plan を合成する
-// （Implement の spawn 単位）。Fable に「手順書型 task」を書かせる prescriptive な使い方は品質を
-// 落とすため、issue 仕様を Implement で直接 dev-implement-fable に渡す。
-// shape 判定は Evaluate の深さ・LITE gate・refloor のために残す（合成 plan は shape 非依存）。
+// 合成 plan: planner agent を起動せず、issue から単一 task の plan を合成する（Implement の spawn 単位）。
+// Fable に「手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、issue 仕様を Implement で
+// 直接 dev-implement-fable に渡す。
+// shape はここでは決めない: 実効 shape は Security floor で realized diff の file 数から
+// classifyShape が 1 回で決める（EFFECTIVE_SHAPE / TRIVIAL）。実効 shape 確定前の失敗 telemetry
+// （needs_clarification / cross_repo / empty_diff）は shape キーを載せない（null は enum 検証で落ちる）。
 // ============================================================
-// contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電するため、
-// 以降の shape 判定の時間が implement 区間へ付け替わる（相対比較・分布用途のため許容）。
+// contract 経路採用時（sonnet analyze skip）は contract-probe の epoch で給電する。
 feedClockMark('analyze_end', maxEpochRes([contractRes, issueMetaRes]))
 let plan = synthesizeFablePlan(req, ISSUE)
-log(`implement#synth-plan: ${SHAPE} 経路 — planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）`)
+log('implement#synth-plan: planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）')
 
 // ============================================================
 // state: Implement 以降の phase 間で共有する単一 state オブジェクト。
@@ -5742,7 +5683,7 @@ let state = {
   implDroppedCount: 0,
   val: null, greenFixCount: 0, greenFixIterations: [],
   ledger: null, risk: null, dangerHits: [], realized: null,
-  realizedNonEphemeral: null, realizedCount: NaN, refloor: null,
+  realizedNonEphemeral: null, realizedCount: NaN, triage: null,
   EFFECTIVE_SHAPE: null, EVAL_PASSES: null, runEval: null,
   dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0,
   unsatisfiedAc: false, evalDiffHash: null, secDiffHash: null,
@@ -5781,7 +5722,7 @@ async function execImplementPhase(state) {
   let plan = state.plan
   let implResults = await runImplement(req, plan, null, 'impl')
   // drop 件数を Evaluate 強制条件へ積む。spawn が null で落ちた run は「計画した実装範囲」が
-  // 実際には欠けているが、diff が非空なら empty-diff gate も refloor も素通りするため、
+  // 実際には欠けているが、diff が非空なら empty-diff gate も shape 判定も素通りするため、
   // micro では evaluator 0 回のまま AC 未検証で PR に到達しうる。greenFixCount と同型で state に載せる。
   // extractGuardBlocked より前に数える（filter 後だと BLOCKED 除去分を drop と誤認する）。
   state.implDroppedCount += implementDrops(plan, implResults)
@@ -5859,7 +5800,7 @@ async function execImplementPhase(state) {
     const stillNeeds = (implResults).filter((r) => r && r.status === 'NEEDS_CONTEXT')
     if (stillNeeds.length) {
       log(`implement: ${stillNeeds.length} task が依然 NEEDS_CONTEXT — needs_clarification で中断`)
-      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, eval_iter: 0 }, phase: 'Implement' })
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Implement' })
       state.__earlyReturn = {
         status: 'needs_clarification',
         source: 'implement',
@@ -5984,7 +5925,7 @@ async function execValidatePhase(state) {
   // Security floor より前に定義し state.dhPrompt に保持: PR/Evaluate phase でも参照するため
   // （evalDiffHash != null ガードで micro は skip）。
   // Security floor 直前に置くことで、empty-diff gate の retry 後の tree に対して danger-grep /
-  // realized-diff / refloorShape / declared-path-check が自然に実行される。
+  // realized-diff / classifyShape / declared-path-check が自然に実行される。
   const dhPrompt = `次のコマンドを **先頭トークンが worktree-diff-hash の bare 単文** で 1 回だけ実行し、**stdout の JSON 1 行をそのまま** verbatim で返せ（判定や脚色をしない）。`
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
     + `（exec-proxy は決定論スクリプトへの verbatim 転写契約であり、argv の書き換えは転写の破壊にあたる。第 1 引数で worktree 絶対パスを渡しているため cd は不要）:\n`
@@ -5994,7 +5935,7 @@ async function execValidatePhase(state) {
   // ============================================================
   // empty-diff gate: Security floor phase の直前。
   // Security floor より前に置くことで retry 後の実体に対して danger-grep / realized-diff /
-  // refloorShape / declared-path-check が正しく実行される。
+  // classifyShape / declared-path-check が正しく実行される。
   // 判定は tree OID 一致の 0/非0 二値・差し戻しはループ無しの 1 回のみ・needs_clarification 不使用。
   // ============================================================
   {
@@ -6035,7 +5976,7 @@ async function execValidatePhase(state) {
               outcome: 'partial',
               error_category: 'cross_repo',
               error_msg: 'empty-diff gate: cross-repo issue — 成果物は対象 repo の working tree に存在（issue #432）',
-              telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, eval_iter: 0 },
+              telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 },
               phase: 'Validate',
             })
             state.__earlyReturn = {
@@ -6068,7 +6009,7 @@ async function execValidatePhase(state) {
       ), 'Validate(diff-gate-retry)')
       validateEpochCandidates.push(dhRetry)
       if (dhRetry.empty === true) {
-        await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, shape: SHAPE, eval_iter: 0 }, phase: 'Validate' })
+        await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Validate' })
         throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）。'
           + '修正対象が別リポジトリにある cross-repo issue の場合は issue に cross-repo ラベルを付けて /dev-flow を再実行せよ（issue #432）')
       }
@@ -6138,8 +6079,8 @@ async function execSecurityFloorPhase(state) {
   log(`danger-grep: ${risk.ok !== true ? 'UNAVAILABLE (fail-closed) ' + (risk.error ?? 'unknown') : dangerHits.length ? 'HIT ' + dangerHits.join(',') : 'clean'} — `
     + `SEC blocking 未 checked ${policyBlockingItems(ledger, GATE_POLICY).filter((it) => !it.checked).length} 件`)
   log(`testsurf: ${testsurfPatterns.length ? 'HIT ' + testsurfPatterns.join(',') : 'clean'}`)
-  // Step F2: realized diff のファイル数を取得して re-floor を算出する
-  // files が null（統合 proxy の files フィールド欠落／型不正）のときは NaN を refloorShape へ渡し
+  // Step F2: realized diff のファイル数を取得して実効 shape（classifyShape）の入力にする
+  // files が null（統合 proxy の files フィールド欠落／型不正）のときは NaN を classifyShape へ渡し
   // complex 安全弁へ流す。files:[] は取得成功かつ正常な 0 ファイルとして null と区別する（fail-safe。
   // parseSecfloorFields が既に検証済みのため ?? [] で潰さない）。
   // 注: この時点で implementer はコミットしていない（git add / commit 禁止）ため、
@@ -6156,20 +6097,24 @@ async function execSecurityFloorPhase(state) {
   // ephemeral ファイルを除外してから count する（evaluator.staged.md / fm_*.txt / .devflow-tmp/ を除く）
   const realizedNonEphemeral = realized?.files ? filterEphemeralPaths(realized.files) : null
   if (realized?.files && realizedNonEphemeral && realizedNonEphemeral.length !== realized.files.length) log(`realized-diff: ephemeral ${realized.files.length - realizedNonEphemeral.length} 件を file count から除外`)
-  // 宣言外 non-ephemeral 変更は refloor の size 信号にせず、Evaluate 強制 + concern 監査で扱う
+  // 宣言外 non-ephemeral 変更は shape の size 信号にせず、Evaluate 強制 + concern 監査で扱う
   const planAllTasks = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
   const undeclared = realizedNonEphemeral ? diffDeclaredPaths(planAllTasks, realizedNonEphemeral) : []
   // declaredFiles = realized 変更のうち宣言済みのもの（undeclared を filter で除外。二重減算を避ける）。
-  // その中で format_only（difftastic 分類）なファイルはさらに refloor count から除外する。
+  // その中で format_only（difftastic 分類）なファイルはさらに realized count から除外する。
   const declaredFiles = realizedNonEphemeral ? realizedNonEphemeral.filter((f) => !undeclared.includes(f)) : null
   const formatOnlyExcluded = declaredFiles ? declaredFiles.filter((f) => formatOnlySet.has(f)).length : 0
   const realizedCount = declaredFiles ? declaredFiles.length - formatOnlyExcluded : NaN
-  if (undeclared.length > 0) log(`realized-diff: 宣言外 ${undeclared.length} 件は refloor count から除外（declared ${declaredFiles ? declaredFiles.length : NaN} 件で判定）`)
-  if (formatOnlyExcluded > 0) log(`realized-diff: フォーマットのみ ${formatOnlyExcluded} 件を refloor count から除外（difftastic 分類）`)
-  const refloor = refloorShape(SHAPE, realizedCount)
-  const EFFECTIVE_SHAPE = refloor.shape
+  if (undeclared.length > 0) log(`realized-diff: 宣言外 ${undeclared.length} 件は realized count から除外（declared ${declaredFiles ? declaredFiles.length : NaN} 件で判定）`)
+  if (formatOnlyExcluded > 0) log(`realized-diff: フォーマットのみ ${formatOnlyExcluded} 件を realized count から除外（difftastic 分類）`)
+  // 実効 shape: realized file 数 + issue 由来の決定論特徴量（AC 数 / issue_type / 構造化 breaking_change）
+  // だけで 1 回で決める。count 欠損（NaN）と breaking_change===true は complex（軸A: 安全側 floor）。
+  const triage = classifyShape(req, realizedCount)
+  const EFFECTIVE_SHAPE = triage.shape
+  const TRIVIAL = EFFECTIVE_SHAPE === 'micro'
+  ABORT_CTX.shape = EFFECTIVE_SHAPE
   const EVAL_PASSES = EFFECTIVE_SHAPE === 'standard' ? 1 : EVAL_MAX
-  if (refloor.refloored) log(`⚠️ re-floor: 見積もり ${SHAPE} → realized ${realizedCount} file(s) で ${EFFECTIVE_SHAPE} へ昇格 (raise-only)`)
+  log(`shape: ${EFFECTIVE_SHAPE} — ${triage.reason}`)
   // ui-verify: UI パス touch 時のみ opt-in で ui_verify config を確認する（0 オーバーヘッド原則）。
   // config 読み取りは workflow に fs が無いため dev-runner-haiku-ro exec-proxy に委譲する。
   // null / found:false / schema invalid は全て uiTouched=false へ倒す fail-open 設計。need() で包まない。
@@ -6209,10 +6154,10 @@ async function execSecurityFloorPhase(state) {
   if (TRIVIAL && state.implDroppedCount > 0) {
     log(`⚠️ micro だが implement drop ${state.implDroppedCount} 件 → Evaluate を実行（未実装範囲の AC 検証 強制）`)
   }
-  if (EFFECTIVE_SHAPE === 'micro' && undeclared.length > 0) {
+  if (TRIVIAL && undeclared.length > 0) {
     log(`⚠️ micro だが宣言外変更 ${undeclared.length} 件 → Evaluate を実行（宣言外監査 強制）`)
   }
-  if (EFFECTIVE_SHAPE === 'micro' && uiTouched) {
+  if (TRIVIAL && uiTouched) {
     log('⚠️ micro だが UI touch + ui_verify config あり → Evaluate を実行（ui-verify 強制。検証は smoke-only 固定）')
   }
   // ============================================================
@@ -6242,7 +6187,7 @@ async function execSecurityFloorPhase(state) {
   state.realized = realized
   state.realizedNonEphemeral = realizedNonEphemeral
   state.realizedCount = realizedCount
-  state.refloor = refloor
+  state.triage = triage
   state.EFFECTIVE_SHAPE = EFFECTIVE_SHAPE
   state.EVAL_PASSES = EVAL_PASSES
   state.runEval = runEval
@@ -6702,7 +6647,7 @@ phase('Evaluate')
 state = await execEvaluatePhase(state)
 feedClockMark('evaluate_end', epochResOf(state.evalResult))
 } else {
-  log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + triage.reason + ')')
+  log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + state.triage.reason + ')')
 }
 
 // ============================================================
@@ -6806,7 +6751,7 @@ const prIterateArgs = () => ({
 // ============================================================
 // PR phase 経路分岐: clean-micro（LITE）は pr-reviewer 1-pass レビュー +
 // CI gate のみで完結させ、フル pr-iterate（review ⇄ fix loop, 上限10）を起動しない。
-// LITE ゲート条件は「lite に入れない全条件」を集約する: TRIVIAL（micro shape）
+// LITE ゲート条件は「lite に入れない全条件」を集約する: 実効 shape が micro
 // かつ !state.runEval（Evaluate が強制実行されていない）かつ state.dangerHits が空
 // （danger-grep hit なし）。runEval を forced にする条件（danger hit / testsurf / 宣言外 /
 // green-fix / UI touch。いずれも軸A invariant 由来）が 1 つでも成立していれば lite から
@@ -6814,7 +6759,7 @@ const prIterateArgs = () => ({
 // 注: workflow('pr-iterate') は「親 workflow の中の workflow()」= ネスト1段で合法。
 //     pr-iterate.js 内に workflow() を足すと2段になり throw するので入れないこと。
 // ============================================================
-const LITE = TRIVIAL && !state.runEval && state.dangerHits.length === 0
+const LITE = state.EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0
 let iterate
 // route: telemetry 用の経路識別子（'lite'|'full'）。journal.sh の --route フラグに
 // 到達済み（lite|full 以外は当該キーのみ drop の fail-open）。dotfiles Stop hook の
@@ -7374,19 +7319,16 @@ const telemetryHandoff = buildJournalHandoffPayload({
     gate_policy: GATE_POLICY,
     danger_hits: dangerHitsFinal,
     danger_fail_closed: dangerFailClosedFinal,
-    shape: state.EFFECTIVE_SHAPE,
-    shape_refloored: state.refloor.refloored,
-    // shape 判定 / analyze 経路の根拠。passthrough 経路で journal へ到達し、
-    // gate / merge tier / ledger の判定入力にはならない。doctor の「shape 較正」が読む。
-    // - realized_file_count: refloorShape に渡した数（宣言外パス・format-only を除外した後。
+    // shape: 実効 shape（realized diff の file 数から classifyShape が決めた値）。
+    // shape_reason: その判定根拠（realized ベース）。passthrough 経路で journal へ到達し、
+    // gate / merge tier / ledger の判定入力にはならない。doctor の「shape 分布 / micro 不発火検知」が読む。
+    // - realized_file_count: classifyShape に渡した数（宣言外パス・format-only を除外した後。
     //   NaN = realized diff 取得不能 → null）
-    // - realized_file_count_raw: ephemeral 除外のみの realized diff 総数。refloor が除外で不発に
-    //   なった run（raw は閾値超・count は閾値内）を doctor が見分けるために両方載せる
-    // - estimated_file_count: 欠落時 null（Stop hook の passthrough は null を落とすので journal では
-    //   キー欠落として現れる。doctor は欠落と null を同一に扱う）
+    // - realized_file_count_raw: ephemeral 除外のみの realized diff 総数。除外で shape が下がった run
+    //   （raw は閾値超・count は閾値内）を doctor が見分けるために両方載せる
     // - analyze_ineligible_reason: contract 経路採用時はキー欠落
-    shape_reason: triage.reason,
-    estimated_file_count: typeof state.req.estimated_change_file_count === 'number' ? state.req.estimated_change_file_count : null,
+    shape: state.EFFECTIVE_SHAPE,
+    shape_reason: state.triage.reason,
     realized_file_count: Number.isFinite(state.realizedCount) ? state.realizedCount : null,
     realized_file_count_raw: Array.isArray(state.realizedNonEphemeral) ? state.realizedNonEphemeral.length : null,
     ac_count: Array.isArray(state.req.acceptance_criteria) ? state.req.acceptance_criteria.length : 0,
@@ -7468,13 +7410,10 @@ return {
   test_green: state.val?.green ?? null,
   iterate_status: iterate?.status ?? null,
   route,
-  shape: SHAPE,
-  effective_shape: state.EFFECTIVE_SHAPE,
-  shape_refloored: state.refloor.refloored,
+  shape: state.EFFECTIVE_SHAPE,
+  shape_reason: state.triage.reason,
   eval_staleness: evalStaleness,
   realized_file_count: state.realizedCount,
-  triviality: TRIVIAL,
-  triviality_reason: triage.reason,
   gate_policy: GATE_POLICY,
   ledger_blocking: policyBlockingItems(state.ledger, GATE_POLICY).length,
   ledger_advisory: policyAdvisoryItems(state.ledger, GATE_POLICY).length,

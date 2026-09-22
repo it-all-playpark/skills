@@ -128,12 +128,12 @@ test('[review-ac] AC が空のときは scope に関わらず空文字（fail-op
 const AC = ['AC_SENTINEL_A', 'AC_SENTINEL_B'];
 const STANDARD_REQ = {
   summary: 's', acceptance_criteria: AC, issue_type: 'fix', scope: 'src',
-  estimated_change_file_count: 3, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
+  issue_number: 1, issue_title: 'stub-issue-title',
 };
 // clean-micro-lite が成立する req（lite-route-routing.test.mjs と同型）
 const LITE_REQ = {
   summary: 'clean micro fix', acceptance_criteria: AC, issue_type: 'fix', scope: 'src',
-  estimated_change_file_count: 1, breaking_change: false, breaking_keyword_scan: false,
+  breaking_change: false, breaking_keyword_scan: false,
   issue_number: 1, issue_title: 'stub-issue-title',
 };
 const LITE_OVERRIDES = {

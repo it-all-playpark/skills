@@ -110,7 +110,7 @@ detect_node_pm() {
         # detected here. Installing without a lockfile (npm install) would
         # generate a new package-lock.json and mutate the worktree tree
         # non-deterministically, which pollutes the realized diff used for
-        # shape refloor (issue #291).
+        # the effective shape decision (issue #291).
         echo ""
     elif [[ -f "$TARGET_PATH/package.json" ]]; then
         echo "npm-no-lock"

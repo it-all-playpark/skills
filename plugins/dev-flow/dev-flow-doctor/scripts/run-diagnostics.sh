@@ -495,11 +495,11 @@ run_telemetry_checks() {
       micro_nonfiring)
         # 根拠を併記する（shape 較正セクションの数値）: 非 micro run の判定種別と analyze 経路。
         # 旧 entry のみの corpus では全て unknown になり、それ自体が「根拠キー未記録」の情報になる。
-        local reason_kinds analyze_paths overestimated
-        reason_kinds=$(echo "$anomaly" | jq -r '.detail.shape_reason_kind // {} | "safe floor \(.safe_floor // 0) / LLM raise \(.llm_raise // 0) / 閾値 \(.threshold // 0) / 根拠未記録 \(.unknown // 0)"')
+        local reason_kinds analyze_paths floor_above_raw
+        reason_kinds=$(echo "$anomaly" | jq -r '.detail.shape_reason_kind // {} | "safe floor \(.safe_floor // 0) / realized 閾値 \(.threshold // 0) / 根拠未記録 \(.unknown // 0)"')
         analyze_paths=$(echo "$anomaly" | jq -r '.detail.analyze_path // {} | "contract \(.contract // 0) / sonnet \(.sonnet // 0)"')
-        overestimated=$(echo "$anomaly" | jq -r '.detail.overestimated // 0')
-        msg="micro shape不発火 (${WINDOW}): run数は十分だが micro が0件 — shape_reason 種別: ${reason_kinds}; analyze 経路: ${analyze_paths}; realized が下位 tier 相当の過大判定 ${overestimated} 件"
+        floor_above_raw=$(echo "$anomaly" | jq -r '.detail.floor_above_raw // 0')
+        msg="micro shape不発火 (${WINDOW}): run数は十分だが micro が0件 — shape_reason 種別: ${reason_kinds}; analyze 経路: ${analyze_paths}; realized raw が下位 tier 相当なのに floor で上がった ${floor_above_raw} 件"
         ;;
       vdelta_unhealthy)
         local rate_pct not_started
@@ -537,15 +537,15 @@ run_telemetry_checks() {
   cal=$(echo "$telemetry_data" | jq -c '.distributions.shape_calibration // empty')
   if [[ -n $cal ]]; then
     CHECKS=$(echo "$CHECKS" | jq --argjson c "$cal" '.shape_calibration = ($c + {status: "ok"})')
-    local missed over unmeasured
-    missed=$(echo "$cal" | jq '.realized_mismatch.missed_refloor // 0')
-    over=$(echo "$cal" | jq '.realized_mismatch.overestimated // 0')
+    local excluded floored unmeasured
+    excluded=$(echo "$cal" | jq '.realized_mismatch.excluded_below_raw // 0')
+    floored=$(echo "$cal" | jq '.realized_mismatch.floor_above_raw // 0')
     unmeasured=$(echo "$cal" | jq '.realized_mismatch.unmeasured // 0')
-    if [[ $missed -gt 0 ]]; then
-      add_issue "info" "shape 較正 (${WINDOW}): refloor 取りこぼし ${missed} 件（Security floor 時点の realized diff が shape の file 上限を超えるのに shape_refloored=false — 宣言外パス / format-only 除外で refloor 入力が閾値内に収まった run。pr-iterate fix や merge で後から膨らんだ PR はここには現れない）"
+    if [[ $excluded -gt 0 ]]; then
+      add_issue "info" "shape 較正 (${WINDOW}): 除外で下位 tier に決まった run ${excluded} 件（Security floor 時点の realized diff 総数が shape の file 上限を超える — 宣言外パス / format-only 除外で classifyShape 入力が閾値内に収まった run。pr-iterate fix や merge で後から膨らんだ PR はここには現れない）"
     fi
-    if [[ $over -gt 0 ]]; then
-      add_issue "info" "shape 較正 (${WINDOW}): 過大判定 ${over} 件（realized diff が下位 tier の file 上限以下 — AC 数超過または safe floor / LLM raise による昇格。shape_reason 種別で切り分ける）"
+    if [[ $floored -gt 0 ]]; then
+      add_issue "info" "shape 較正 (${WINDOW}): floor で上位 tier に決まった run ${floored} 件（realized diff が下位 tier の file 上限以下 — AC 数超過 / issue_type / breaking / count 欠損の safe floor による昇格。shape_reason 種別で切り分ける）"
     fi
     if [[ $unmeasured -gt 0 ]]; then
       add_issue "info" "shape 較正 (${WINDOW}): realized_file_count_raw 未記録 ${unmeasured} 件は不一致判定の対象外"

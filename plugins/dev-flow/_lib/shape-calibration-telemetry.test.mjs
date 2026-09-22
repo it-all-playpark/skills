@@ -1,13 +1,15 @@
-// issue #640: shape 判定と analyze 経路の根拠が journal telemetry（journal-save prompt の handoff JSON）
-// に載ることを VM sandbox で固定する。
+// issue #640 / #676: 実効 shape の判定根拠と analyze 経路が journal telemetry（journal-save prompt の handoff JSON）
+// に載ることを VM sandbox で固定する。shape は realized diff の file 数から classifyShape が決めた実効値、
+// shape_reason はその realized ベースの根拠（事前見積もり由来の estimated_file_count / shape_refloored は無い）。
 //
 //   (a) sonnet 経路（contract-probe が null）: analyze_path='sonnet'、analyze_ineligible_reason が
-//       workflow 側の理由（contract probe failed）、shape_reason が閾値判定文、estimated_file_count /
+//       workflow 側の理由（contract probe failed）、shape_reason が realized 閾値判定文、
 //       ac_count / realized_file_count / realized_file_count_raw が数値で載る
 //   (b) contract 経路採用: analyze_path='contract'、analyze_ineligible_reason はキー欠落
 //   (c) contract 不採用（analyze-issue.sh の ineligible_reason あり）: その文字列が verbatim で載る
-//   (d) estimated_change_file_count 欠落: estimated_file_count=null、shape_reason が safe floor 文
-//   (e) 宣言外パスの除外: realized_file_count は refloor 入力（除外後）、realized_file_count_raw は
+//   (d) realized count 欠損（danger-grep の files が null）: shape=complex、shape_reason が safe floor 文、
+//       realized_file_count=null
+//   (e) 宣言外パスの除外: realized_file_count は classifyShape 入力（除外後）、realized_file_count_raw は
 //       ephemeral 除外のみの総数で、両者が乖離する
 //   (f) DEPTH !== 'standard': contract 未試行の理由が載る
 //   (g) telemetry キーは gate / merge tier の入力にならない（merge_tier が (a) と同一）
@@ -48,21 +50,23 @@ const CONTRACT_OK = {
   result: {
     eligible: true, contract: 't1', title: 'stub-issue-title', issue_type: 'fix',
     acceptance_criteria: ['a', 'b'], breaking_keyword_scan: false, comment_count: 0,
-    scope: 'src', scope_truncated: false, estimated_change_file_count: 3,
+    scope: 'src', scope_truncated: false,
   },
 };
 
-test('[shape-calibration] (a) sonnet 経路: 7 キーが型どおり載り、閾値判定の shape_reason が verbatim', async () => {
+test('[shape-calibration] (a) sonnet 経路: shape（実効）/ shape_reason（realized ベース）/ 数値キーが型どおり載る', async () => {
   const { telemetry } = await runScenario();
   assert.equal(telemetry.analyze_path, 'sonnet');
   assert.equal(telemetry.analyze_ineligible_reason, 'contract probe failed');
-  assert.equal(telemetry.shape_reason, 'estimated 3 file(s), 2 AC, type=fix → floor=standard');
-  assert.equal(telemetry.estimated_file_count, 3);
+  assert.equal(telemetry.shape_reason, 'realized 3 file(s), 2 AC, type=fix → shape=standard');
   assert.equal(telemetry.ac_count, 2);
-  assert.equal(telemetry.realized_file_count, 1);
-  assert.equal(telemetry.realized_file_count_raw, 1);
+  assert.equal(telemetry.realized_file_count, 3);
+  assert.equal(telemetry.realized_file_count_raw, 3);
   assert.equal(telemetry.shape, 'standard');
-  assert.equal(telemetry.shape_refloored, false);
+  // 事前見積もり由来のキーは載せない（issue #676）
+  for (const k of ['estimated_file_count', 'shape_refloored', 'effective_shape', 'triviality', 'triviality_reason']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(telemetry, k), false, `${k} は telemetry に載せない`);
+  }
 });
 
 test('[shape-calibration] (b) contract 経路採用: analyze_path=contract、analyze_ineligible_reason はキー欠落', async () => {
@@ -70,8 +74,9 @@ test('[shape-calibration] (b) contract 経路採用: analyze_path=contract、ana
   assert.equal(calls.filter((c) => c.label === 'analyze#1').length, 0, 'contract 採用時に sonnet analyze が呼ばれている');
   assert.equal(telemetry.analyze_path, 'contract');
   assert.equal(Object.prototype.hasOwnProperty.call(telemetry, 'analyze_ineligible_reason'), false, '採用時は analyze_ineligible_reason キーを出さない');
-  assert.equal(telemetry.estimated_file_count, 3);
   assert.equal(telemetry.ac_count, 2);
+  assert.equal(telemetry.shape, 'standard');
+  assert.equal(telemetry.shape_reason, 'realized 3 file(s), 2 AC, type=fix → shape=standard');
 });
 
 test('[shape-calibration] (c) contract 不採用: analyze-issue.sh の ineligible_reason が verbatim で載る', async () => {
@@ -90,29 +95,30 @@ test('[shape-calibration] (c2) contract eligible だが whitelist 不合格（re
   assert.equal(telemetry.analyze_ineligible_reason, 'whitelist rejected');
 });
 
-test('[shape-calibration] (d) estimated_change_file_count 欠落: estimated_file_count=null、shape_reason は safe floor 文', async () => {
+test('[shape-calibration] (d) realized count 欠損（files=null）: shape=complex、shape_reason は safe floor 文、realized_file_count=null', async () => {
   const { telemetry } = await runScenario({
     overrides: {
-      'analyze#1': { summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src', issue_number: 1, issue_title: 'stub-issue-title' },
+      'danger-grep': { risk: { ok: true, hits: [] }, files: null, struct: null, diffhash: { hash: 'AAA', empty: false } },
     },
   });
-  assert.equal(telemetry.estimated_file_count, null);
   assert.equal(telemetry.shape, 'complex');
   assert.match(telemetry.shape_reason, /safe floor=complex/);
+  assert.equal(telemetry.realized_file_count, null);
+  assert.equal(telemetry.realized_file_count_raw, null);
 });
 
-test('[shape-calibration] (e) 宣言外パス除外: realized_file_count は refloor 入力、realized_file_count_raw は除外前の総数', async () => {
-  const files = ['src/x.ts', 'src/u1.ts', 'src/u2.ts', 'src/u3.ts', 'src/u4.ts', 'src/u5.ts'];
+test('[shape-calibration] (e) 宣言外パス除外: realized_file_count は classifyShape 入力（除外後）、realized_file_count_raw は除外前の総数', async () => {
+  const files = ['src/x.ts', 'src/y.ts', 'src/z.ts', 'src/u1.ts', 'src/u2.ts', 'src/u3.ts'];
   const { telemetry } = await runScenario({
     overrides: {
       'danger-grep': { risk: { ok: true, hits: [] }, files, struct: null, diffhash: { hash: 'AAA', empty: false } },
     },
   });
-  // plan は src/x.ts のみ宣言 → 5 件が宣言外で refloor count から除外され、refloor は不発（standard 据え置き）
-  assert.equal(telemetry.realized_file_count, 1);
+  // plan は STANDARD_FILES 3 件のみ宣言 → 3 件が宣言外で realized count から除外され、shape は standard（raw 6 なら complex）
+  assert.equal(telemetry.realized_file_count, 3);
   assert.equal(telemetry.realized_file_count_raw, 6);
-  assert.equal(telemetry.shape_refloored, false);
   assert.equal(telemetry.shape, 'standard');
+  assert.equal(telemetry.shape_reason, 'realized 3 file(s), 2 AC, type=fix → shape=standard');
 });
 
 test('[shape-calibration] (f) DEPTH !== standard: contract 未試行の理由が載る', async () => {

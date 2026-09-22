@@ -51,7 +51,6 @@ make_handoff() {
       gate_policy: "llm-major-advisory",
       danger_hits: [],
       shape: "standard",
-      shape_refloored: false,
       eval_iter: 1
     }
   }')
@@ -174,7 +173,6 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -199,7 +197,6 @@ STUB_EOF
       echo "$captured" | grep -q -- "--gate-policy llm-major-advisory" &&
       echo "$captured" | grep -q -- "--danger-hits" &&
       echo "$captured" | grep -q -- "--shape standard" &&
-      echo "$captured" | grep -q -- "--shape-refloored false" &&
       echo "$captured" | grep -q -- "--eval-iter 1"; then
       pass "happy_path_stub_called_with_correct_args"
     else
@@ -252,7 +249,6 @@ STUB_EOF
         gate_policy: "llm-autonomous",
         danger_hits: ["sql-injection"],
         shape: "micro",
-        shape_refloored: true,
         eval_iter: 3,
         eval_verdict: "PASS",
         iterate_status: "converged",
@@ -281,11 +277,6 @@ STUB_EOF
       pass "optional_iterate_status_present"
     else
       fail "optional_iterate_status_present" "--iterate-status converged not found. got: ${captured}"
-    fi
-    if echo "$captured" | grep -q -- "--shape-refloored true"; then
-      pass "optional_shape_refloored_true"
-    else
-      fail "optional_shape_refloored_true" "--shape-refloored true not found. got: ${captured}"
     fi
     if echo "$captured" | grep -q -- "--eval-staleness iterate_fixed"; then
       pass "optional_eval_staleness_present"
@@ -341,7 +332,6 @@ STUB_EOF
         gate_policy: "deterministic-only",
         danger_hits: [],
         shape: "complex",
-        shape_refloored: false,
         eval_iter: 4
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -414,7 +404,6 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -828,14 +817,13 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/regression.json"
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
-  expected='log dev-flow success --issue 203 --merge-tier REVIEW --gate-policy llm-major-advisory --danger-hits [] --shape standard --shape-refloored false --eval-iter 1'
+  expected='log dev-flow success --issue 203 --merge-tier REVIEW --gate-policy llm-major-advisory --danger-hits [] --shape standard --eval-iter 1'
 
   if [[ -f $capture ]]; then
     captured=$(cat "$capture")
@@ -957,7 +945,6 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -989,7 +976,6 @@ make_trust_handoff() {
       gate_policy: "llm-major-advisory",
       danger_hits: [],
       shape: "standard",
-      shape_refloored: false,
       eval_iter: 1
     }
   }' | jq "$trust_filter" >"$outfile"
@@ -1210,7 +1196,6 @@ make_full_telemetry_handoff() {
       gate_policy: "llm-major-advisory",
       danger_hits: [],
       shape: "standard",
-      shape_refloored: false,
       eval_iter: 1,
       vdelta_verdicts: [{"ac":1,"status":"promoted"}],
       vdelta_fail_open: 1,
@@ -1334,7 +1319,6 @@ make_full_telemetry_handoff() {
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/legacy.json"
@@ -3103,12 +3087,11 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
 
 
 # --------------------------------------------------------------------------
-# Test S-A (integration, issue #640): shape 判定 / analyze 経路の根拠 7 キー
-#          （shape_reason / estimated_file_count / realized_file_count /
-#          realized_file_count_raw / ac_count / analyze_path /
-#          analyze_ineligible_reason）は per-key 配線無しで passthrough
-#          （--telemetry-json）により実 journal entry の telemetry へ到達する。
-#          null 値（estimated_file_count 欠落）は passthrough が落とすので
+# Test S-A (integration, issue #640 / #676): 実効 shape の根拠 / analyze 経路の 6 キー
+#          （shape_reason / realized_file_count / realized_file_count_raw /
+#          ac_count / analyze_path / analyze_ineligible_reason）は per-key 配線無しで
+#          passthrough（--telemetry-json）により実 journal entry の telemetry へ到達する。
+#          null 値（realized_file_count 取得不能）は passthrough が落とすので
 #          entry ではキー欠落になる（doctor は欠落と null を同一に扱う契約）。
 # --------------------------------------------------------------------------
 {
@@ -3120,7 +3103,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
     mkdir -p "${tmpd}/journal/pending"
 
     make_trust_handoff "${tmpd}/journal/pending/shapecal.json" "$REAL_JOURNAL" \
-      '.telemetry += {shape_reason: "estimated 3 file(s), 2 AC, type=fix → floor=standard", estimated_file_count: 3, realized_file_count: 1, realized_file_count_raw: 6, ac_count: 2, analyze_path: "sonnet", analyze_ineligible_reason: "comments present (2) — body/comment reconciliation requires sonnet analyze"}'
+      '.telemetry += {shape_reason: "realized 3 file(s), 2 AC, type=fix → shape=standard", realized_file_count: 3, realized_file_count_raw: 6, ac_count: 2, analyze_path: "sonnet", analyze_ineligible_reason: "comments present (2) — body/comment reconciliation requires sonnet analyze"}'
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
@@ -3129,9 +3112,8 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
       fail "integration_shape_calibration_entry_written" "no journal entry created. hook output: ${RUN_OUT}"
     else
       pass "integration_shape_calibration_entry_written"
-      if jq -e '.telemetry.shape_reason == "estimated 3 file(s), 2 AC, type=fix → floor=standard"
-                and .telemetry.estimated_file_count == 3
-                and .telemetry.realized_file_count == 1
+      if jq -e '.telemetry.shape_reason == "realized 3 file(s), 2 AC, type=fix → shape=standard"
+                and .telemetry.realized_file_count == 3
                 and .telemetry.realized_file_count_raw == 6
                 and .telemetry.ac_count == 2
                 and .telemetry.analyze_path == "sonnet"
@@ -3145,19 +3127,21 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
 
     rm -rf "$tmpd"
 
-    # null の estimated_file_count はキー欠落として到達する（passthrough の null 除外）
+    # null の realized_file_count（取得不能）はキー欠落として到達する（passthrough の null 除外）
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
     make_trust_handoff "${tmpd}/journal/pending/shapenull.json" "$REAL_JOURNAL" \
-      '.telemetry += {shape_reason: "estimated_change_file_count missing or invalid → safe floor=complex", estimated_file_count: null, ac_count: 2, analyze_path: "contract"}'
+      '.telemetry += {shape_reason: "realized file count missing or invalid → safe floor=complex", realized_file_count: null, realized_file_count_raw: null, ac_count: 2, analyze_path: "contract"}'
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
     entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
-    if [[ -n $entry ]] && jq -e '(.telemetry | has("estimated_file_count") | not)
+    if [[ -n $entry ]] && jq -e '(.telemetry | has("realized_file_count") | not)
+                                 and (.telemetry | has("realized_file_count_raw") | not)
+                                 and .telemetry.shape_reason == "realized file count missing or invalid → safe floor=complex"
                                  and .telemetry.analyze_path == "contract"
                                  and (.telemetry | has("analyze_ineligible_reason") | not)' "$entry" >/dev/null 2>&1; then
       pass "integration_shape_calibration_null_dropped"
     else
-      fail "integration_shape_calibration_null_dropped" "expected estimated_file_count absent / analyze_path=contract. entry: $(jq -c '.telemetry' "$entry" 2>/dev/null)"
+      fail "integration_shape_calibration_null_dropped" "expected realized_file_count absent / analyze_path=contract. entry: $(jq -c '.telemetry' "$entry" 2>/dev/null)"
     fi
     rm -rf "$tmpd"
   fi

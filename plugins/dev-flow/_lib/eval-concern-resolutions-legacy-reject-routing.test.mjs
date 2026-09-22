@@ -29,8 +29,6 @@ function baseResponder(concernResolutions) {
         acceptance_criteria: ['a', 'b'],
         issue_type: 'fix',
         scope: 'src',
-        estimated_change_file_count: 3,
-        shape: 'standard',
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
