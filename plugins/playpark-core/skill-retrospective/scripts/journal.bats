@@ -80,13 +80,12 @@ latest_entry() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 4: All 5 new telemetry fields recorded with correct types
+# Test 4: All 4 new telemetry fields recorded with correct types
 # ---------------------------------------------------------------------------
-@test "all 5 new telemetry fields recorded with correct types" {
+@test "all 4 new telemetry fields recorded with correct types" {
     run "$SCRIPT" log dev-flow success \
         --merge-tier REVIEW \
         --shape standard \
-        --shape-refloored false \
         --eval-verdict pass \
         --iterate-status lgtm \
         --eval-iter 1
@@ -103,13 +102,6 @@ latest_entry() {
     [ "$eval_verdict" = "pass" ]
     [ "$iterate_status" = "lgtm" ]
 
-    # shape_refloored must be boolean false (not string "false")
-    shape_refloored_type=$(jq '.telemetry.shape_refloored | type' "$entry_file")
-    [ "$shape_refloored_type" = '"boolean"' ]
-
-    shape_refloored_val=$(jq '.telemetry.shape_refloored' "$entry_file")
-    [ "$shape_refloored_val" = "false" ]
-
     # eval_iter must be a number
     eval_iter_type=$(jq '.telemetry.eval_iter | type' "$entry_file")
     [ "$eval_iter_type" = '"number"' ]
@@ -119,34 +111,9 @@ latest_entry() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 5: --shape-refloored false is recorded as boolean false, not string
-# ---------------------------------------------------------------------------
-@test "--shape-refloored false is boolean false not string" {
-    run "$SCRIPT" log dev-flow success --shape-refloored false
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    shape_refloored_type=$(jq '.telemetry.shape_refloored | type' "$entry_file")
-    [ "$shape_refloored_type" = '"boolean"' ]
-
-    shape_refloored_val=$(jq '.telemetry.shape_refloored' "$entry_file")
-    [ "$shape_refloored_val" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# Test 6: --shape-refloored with invalid value exits non-zero
-# ---------------------------------------------------------------------------
-@test "--shape-refloored yes exits non-zero" {
-    run "$SCRIPT" log dev-flow success --shape-refloored yes
-    [ "$status" -ne 0 ]
-}
-
-# ---------------------------------------------------------------------------
 # Test 8: Partial new flags - only specified keys present, others absent
 # ---------------------------------------------------------------------------
-@test "only --iterate-status specified -> only that key present among new 5" {
+@test "only --iterate-status specified -> only that key present among new 4" {
     run "$SCRIPT" log dev-flow success --iterate-status lgtm
     [ "$status" -eq 0 ]
 
@@ -156,22 +123,20 @@ latest_entry() {
     iterate_status=$(jq -r '.telemetry.iterate_status' "$entry_file")
     [ "$iterate_status" = "lgtm" ]
 
-    # The other 4 new keys must be absent
+    # The other 3 new keys must be absent
     has_shape=$(jq '.telemetry | has("shape")' "$entry_file")
-    has_shape_refloored=$(jq '.telemetry | has("shape_refloored")' "$entry_file")
     has_eval_verdict=$(jq '.telemetry | has("eval_verdict")' "$entry_file")
     has_eval_iter=$(jq '.telemetry | has("eval_iter")' "$entry_file")
 
     [ "$has_shape" = "false" ]
-    [ "$has_shape_refloored" = "false" ]
     [ "$has_eval_verdict" = "false" ]
     [ "$has_eval_iter" = "false" ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 9: Existing 3 flags only -> new 5 keys absent
+# Test 9: Existing 3 flags only -> new 4 keys absent
 # ---------------------------------------------------------------------------
-@test "existing 3 telemetry flags only -> new 5 keys absent" {
+@test "existing 3 telemetry flags only -> new 4 keys absent" {
     run "$SCRIPT" log dev-flow success \
         --merge-tier REVIEW \
         --gate-policy llm-major-advisory \
@@ -182,13 +147,11 @@ latest_entry() {
     [ -n "$entry_file" ]
 
     has_shape=$(jq '.telemetry | has("shape")' "$entry_file")
-    has_shape_refloored=$(jq '.telemetry | has("shape_refloored")' "$entry_file")
     has_eval_verdict=$(jq '.telemetry | has("eval_verdict")' "$entry_file")
     has_iterate_status=$(jq '.telemetry | has("iterate_status")' "$entry_file")
     has_eval_iter=$(jq '.telemetry | has("eval_iter")' "$entry_file")
 
     [ "$has_shape" = "false" ]
-    [ "$has_shape_refloored" = "false" ]
     [ "$has_eval_verdict" = "false" ]
     [ "$has_iterate_status" = "false" ]
     [ "$has_eval_iter" = "false" ]

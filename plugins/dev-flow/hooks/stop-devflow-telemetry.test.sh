@@ -51,7 +51,6 @@ make_handoff() {
       gate_policy: "llm-major-advisory",
       danger_hits: [],
       shape: "standard",
-      shape_refloored: false,
       eval_iter: 1
     }
   }')
@@ -174,7 +173,6 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -199,7 +197,6 @@ STUB_EOF
       echo "$captured" | grep -q -- "--gate-policy llm-major-advisory" &&
       echo "$captured" | grep -q -- "--danger-hits" &&
       echo "$captured" | grep -q -- "--shape standard" &&
-      echo "$captured" | grep -q -- "--shape-refloored false" &&
       echo "$captured" | grep -q -- "--eval-iter 1"; then
       pass "happy_path_stub_called_with_correct_args"
     else
@@ -252,7 +249,6 @@ STUB_EOF
         gate_policy: "llm-autonomous",
         danger_hits: ["sql-injection"],
         shape: "micro",
-        shape_refloored: true,
         eval_iter: 3,
         eval_verdict: "PASS",
         iterate_status: "converged",
@@ -281,11 +277,6 @@ STUB_EOF
       pass "optional_iterate_status_present"
     else
       fail "optional_iterate_status_present" "--iterate-status converged not found. got: ${captured}"
-    fi
-    if echo "$captured" | grep -q -- "--shape-refloored true"; then
-      pass "optional_shape_refloored_true"
-    else
-      fail "optional_shape_refloored_true" "--shape-refloored true not found. got: ${captured}"
     fi
     if echo "$captured" | grep -q -- "--eval-staleness iterate_fixed"; then
       pass "optional_eval_staleness_present"
@@ -341,7 +332,6 @@ STUB_EOF
         gate_policy: "deterministic-only",
         danger_hits: [],
         shape: "complex",
-        shape_refloored: false,
         eval_iter: 4
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -414,7 +404,6 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -828,14 +817,13 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/regression.json"
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
-  expected='log dev-flow success --issue 203 --merge-tier REVIEW --gate-policy llm-major-advisory --danger-hits [] --shape standard --shape-refloored false --eval-iter 1'
+  expected='log dev-flow success --issue 203 --merge-tier REVIEW --gate-policy llm-major-advisory --danger-hits [] --shape standard --eval-iter 1'
 
   if [[ -f $capture ]]; then
     captured=$(cat "$capture")
@@ -957,7 +945,6 @@ STUB_EOF
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/handoff.json"
@@ -989,7 +976,6 @@ make_trust_handoff() {
       gate_policy: "llm-major-advisory",
       danger_hits: [],
       shape: "standard",
-      shape_refloored: false,
       eval_iter: 1
     }
   }' | jq "$trust_filter" >"$outfile"
@@ -1210,7 +1196,6 @@ make_full_telemetry_handoff() {
       gate_policy: "llm-major-advisory",
       danger_hits: [],
       shape: "standard",
-      shape_refloored: false,
       eval_iter: 1,
       vdelta_verdicts: [{"ac":1,"status":"promoted"}],
       vdelta_fail_open: 1,
@@ -1334,7 +1319,6 @@ make_full_telemetry_handoff() {
         gate_policy: "llm-major-advisory",
         danger_hits: [],
         shape: "standard",
-        shape_refloored: false,
         eval_iter: 1
       }
     }' >"${tmpd}/journal/pending/legacy.json"

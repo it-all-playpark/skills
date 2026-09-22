@@ -1347,6 +1347,9 @@ EOF
     write_devflow_entry "e3.json" '{"shape":"standard","shape_reason":"realized 3 file(s), 2 AC, type=fix → shape=standard"}' 3
     write_devflow_entry "e4.json" '{"shape":"complex","shape_reason":"breaking change detected (analyze structured breaking_change=true) → floor=complex"}' 4
     write_devflow_entry "e5.json" '{"shape":"standard"}' 5
+    # 事前見積もり時代の旧 entry（"estimated ..." / "LLM raised ..."）は safe_floor に倒さず unknown
+    write_devflow_entry "e6.json" '{"shape":"complex","shape_reason":"estimated 7 file(s), 2 AC, type=feat → floor=complex"}' 6
+    write_devflow_entry "e7.json" '{"shape":"complex","shape_reason":"LLM raised standard→complex"}' 7
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1354,11 +1357,12 @@ EOF
     [ "$(echo "$cal" | jq '.shape_reason_kind.safe_floor')" -eq 2 ]
     [ "$(echo "$cal" | jq '.shape_reason_kind | has("llm_raise")')" = "false" ]
     [ "$(echo "$cal" | jq '.shape_reason_kind.threshold')" -eq 2 ]
-    [ "$(echo "$cal" | jq '.shape_reason_kind.unknown')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind.unknown')" -eq 3 ]
     [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.complex.safe_floor')" -eq 2 ]
     [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.complex.threshold')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.complex.unknown')" -eq 2 ]
     [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.standard.threshold')" -eq 1 ]
-    [ "$(echo "$cal" | jq '.by_shape.complex')" -eq 3 ]
+    [ "$(echo "$cal" | jq '.by_shape.complex')" -eq 5 ]
     [ "$(echo "$cal" | jq '.by_shape.standard')" -eq 2 ]
 }
 

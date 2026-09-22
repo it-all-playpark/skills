@@ -587,11 +587,17 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
   --argjson micro_max "$SHAPE_FILE_MAX_MICRO" \
   --argjson standard_max "$SHAPE_FILE_MAX_STANDARD" \
   '
+  # safe_floor は classifyShape（_lib/triviality.mjs）が返す floor 文言に限定する。else を
+  # safe_floor に倒すと、window 内に残る旧 entry（"estimated ..." / "LLM raised ..." 始まりの
+  # 事前見積もり時代の shape_reason）が safe_floor に計上され micro_nonfiring の根拠が膨らむ。
   def reason_kind:
     (.telemetry.shape_reason) as $r
     | if ($r | type) != "string" or $r == "" then "unknown"
       elif ($r | startswith("realized ") and ($r | contains("safe floor") | not)) then "threshold"
-      else "safe_floor" end;
+      elif ($r | contains("safe floor=complex"))
+        or ($r | startswith("issue_type "))
+        or ($r | startswith("breaking change detected")) then "safe_floor"
+      else "unknown" end;
   # analyze-issue.sh / dev-flow.js が返す自由文字列を prefix で閉じたバケットへ正規化する
   def ineligible_bucket:
     (.telemetry.analyze_ineligible_reason) as $r
