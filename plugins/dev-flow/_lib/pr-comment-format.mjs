@@ -49,6 +49,34 @@ const STATUS_HEADLINE = {
   'review_contract_error': '⚠️ REVIEW CONTRACT ERROR — reviewer の decision/blocking 矛盾の再発、または reviewer が StructuredOutput 契約違反で結果を返さず。人間へエスカレーション',
 };
 
+// 最終 CI 状態行のラベル。null（未観測）は「CI を判定していない」ことを明示する —
+// stuck / fix_failed 終端で CI が赤のまま気づかれない事故を、終端サマリで必ず可視化するため
+// 全終端で出す（CI を見ていない run と green の run を読み手が区別できるようにする）。
+const CI_LAST_STATUS_LABEL = {
+  'passed': '✅ passed',
+  'failed': '🔴 failed',
+  'pending': '⏳ pending（未完了）',
+  'no_checks': 'no_checks（CI 未設定）',
+  'error': '⚠️ error（ステータス取得失敗 — `gh pr checks <PR>` で実状態を確認すること）',
+};
+
+/**
+ * 最終 CI 状態行を組み立てる。
+ * @param {string|null} ciLastStatus - 'passed' | 'failed' | 'pending' | 'no_checks' | 'error' | null（未観測）
+ * @param {string[]} ciLastFailedChecks - failed のとき列挙する check 名
+ * @param {number|string} pr - PR 番号（error ラベルの <PR> 置換用）
+ * @returns {string}
+ */
+function formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr) {
+  if (ciLastStatus == null) return '**最終 CI 状態**: 未観測（この run では CI を判定していない — `gh pr checks <PR>` で確認すること）'.replace('<PR>', String(pr));
+  const label = (CI_LAST_STATUS_LABEL[ciLastStatus] ?? ciLastStatus).replace('<PR>', String(pr));
+  if (ciLastStatus === 'failed') {
+    const names = (ciLastFailedChecks || []).map((n) => `\`${mdCell(n)}\``);
+    return `**最終 CI 状態**: ${label} — ${names.length ? names.join(', ') : '（check 名不明）'}`;
+  }
+  return `**最終 CI 状態**: ${label}`;
+}
+
 /**
  * 終端サマリー markdown を生成する。
  * @param {object} opts
@@ -61,9 +89,11 @@ const STATUS_HEADLINE = {
  * @param {Array} opts.history - ラウンド履歴 [{iteration, decision, summary, blocking, minor}]
  * @param {number} [opts.ciWaitSeconds] - CI pending 待機の累積秒数（任意。pr-iterate.js の script 側 ci-wait ループの積算）
  * @param {number} [opts.ciPollAttempts] - CI ステータス取得の累積ポーリング回数（任意）
+ * @param {string|null} [opts.ciLastStatus] - 最後に観測した CI 状態 'passed' | 'failed' | 'pending' | 'no_checks' | 'error' | null（未観測）
+ * @param {string[]} [opts.ciLastFailedChecks] - ciLastStatus が failed のとき列挙する check 名
  * @returns {string}
  */
-export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts }) {
+export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [] }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
 
@@ -80,6 +110,10 @@ export function buildTerminalSummaryBody({ pr, status, iterations, lastDecision,
 
   lines.push('');
   lines.push(`**最終判定理由**: ${lastSummary}`);
+
+  // 全終端で必ず出す（lgtm / stuck / fix_failed / max_reached / ci_error / ci_pending / review_contract_error）
+  lines.push('');
+  lines.push(formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr));
 
   if (ciWaitSeconds != null || ciPollAttempts != null) {
     lines.push('');

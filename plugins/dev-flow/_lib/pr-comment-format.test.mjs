@@ -85,6 +85,75 @@ test('buildTerminalSummaryBody: ci_pending -> ⏳ CI 未完了 見出しが出�
   assert.ok(body.includes('⏳ CI 未完了'), 'ci_pending 見出しを含む');
 });
 
+// --- 最終 CI 状態行（issue #703: 全終端で必ず出す） ------------------------------
+
+const ALL_TERMINALS = ['lgtm', 'stuck', 'fix_failed', 'max_reached', 'ci_error', 'ci_pending', 'review_contract_error'];
+
+test('buildTerminalSummaryBody: 全終端で **最終 CI 状態** 行が出る（ciLastStatus 未指定 = 未観測）', () => {
+  for (const status of ALL_TERMINALS) {
+    const body = buildTerminalSummaryBody({
+      pr: 703,
+      status,
+      iterations: 1,
+      lastDecision: 'request-changes',
+      lastSummary: 'summary',
+      history: [],
+    });
+    assert.ok(body.includes('**最終 CI 状態**: 未観測'), status + ': 未観測の最終 CI 状態行を含む');
+    assert.ok(body.includes('gh pr checks 703'), status + ': 未観測のとき実 PR 番号入りの確認手順を含む');
+  }
+});
+
+test('buildTerminalSummaryBody: ciLastStatus=failed のとき最終 CI 状態行に check 名を列挙する（全終端）', () => {
+  for (const status of ALL_TERMINALS) {
+    const body = buildTerminalSummaryBody({
+      pr: 703,
+      status,
+      iterations: 2,
+      lastDecision: 'request-changes',
+      lastSummary: 'summary',
+      history: [],
+      ciLastStatus: 'failed',
+      ciLastFailedChecks: ['bats', 'node-tests'],
+    });
+    const line = body.split('\n').find((l) => l.startsWith('**最終 CI 状態**'));
+    assert.ok(line, status + ': 最終 CI 状態行を含む');
+    assert.ok(line.includes('failed'), status + ': failed を含む');
+    assert.ok(line.includes('`bats`') && line.includes('`node-tests`'), status + ': check 名を列挙する: ' + line);
+  }
+});
+
+test('buildTerminalSummaryBody: ciLastStatus=failed で check 名が空なら「check 名不明」', () => {
+  const body = buildTerminalSummaryBody({
+    pr: 1, status: 'stuck', iterations: 1, lastDecision: 'request-changes', lastSummary: 's', history: [],
+    ciLastStatus: 'failed', ciLastFailedChecks: [],
+  });
+  assert.ok(body.includes('**最終 CI 状態**: 🔴 failed — （check 名不明）'), 'check 名不明を明示する');
+});
+
+test('buildTerminalSummaryBody: ciLastStatus passed / pending / no_checks / error はそれぞれのラベルで出て check 名を列挙しない', () => {
+  const expected = {
+    passed: '✅ passed',
+    pending: '⏳ pending',
+    no_checks: 'no_checks（CI 未設定）',
+    error: '⚠️ error',
+  };
+  for (const [ciLastStatus, label] of Object.entries(expected)) {
+    const body = buildTerminalSummaryBody({
+      pr: 9, status: 'lgtm', iterations: 1, lastDecision: 'approve', lastSummary: 'ok', history: [],
+      ciLastStatus, ciLastFailedChecks: ['should-not-appear'],
+    });
+    const line = body.split('\n').find((l) => l.startsWith('**最終 CI 状態**'));
+    assert.ok(line && line.includes(label), ciLastStatus + ': ラベルを含む: ' + line);
+    assert.ok(!line.includes('should-not-appear'), ciLastStatus + ': failed 以外は check 名を列挙しない');
+    assert.ok(!line.includes('未観測'), ciLastStatus + ': 観測済みなので未観測と言わない');
+  }
+  const errBody = buildTerminalSummaryBody({
+    pr: 9, status: 'ci_error', iterations: 1, lastDecision: 'approve', lastSummary: 'ok', history: [], ciLastStatus: 'error',
+  });
+  assert.ok(errBody.includes('**最終 CI 状態**: ⚠️ error（ステータス取得失敗 — `gh pr checks 9`'), 'error は実 PR 番号入りの確認手順を含む');
+});
+
 test('buildTerminalSummaryBody: 末尾マーカーが /<!-- pr-iterate:(lgtm|stuck|fix_failed|max_reached|ci_error|ci_pending):\\d+ -->$/ で末尾一致・完全一致で含まれる (AC-3)', () => {
   for (const status of ['lgtm', 'stuck', 'fix_failed', 'max_reached', 'ci_error', 'ci_pending']) {
     const body = buildTerminalSummaryBody({
@@ -308,6 +377,8 @@ test('buildTerminalSummaryBody: lastVerificationEvidence を渡すと **検証�
     '| lgtm | 2 | ✅ 承認 (LGTM) |',
     '',
     '**最終判定理由**: 問題なし',
+    '',
+    '**最終 CI 状態**: 未観測（この run では CI を判定していない — `gh pr checks 10` で確認すること）',
     '',
     '**検証根拠**:',
     '- 根拠A',
