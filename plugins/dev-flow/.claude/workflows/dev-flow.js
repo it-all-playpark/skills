@@ -5432,7 +5432,7 @@ const clarifyPrompt = (gateReasons) => `cd ${WT} で作業。issue #${ISSUE} は
 // Jev 有界判定、deps install と並列）を whitelist 検証して REQ を組み、3 条件ゲートだけを判定する。
 // 通常経路の agent spawn は 0。LLM が issue を転写する工程が無いので provenance 突合 / comment_count 突合 /
 // scope 切断時の再実行は置かない。固有の phase は持たない（純関数の検証とゲート判定だけで agent 応答（epoch）が
-// 無く、所要は常に ≒0 — issue #695）。prerun の analyze 段の所要は prerun_durations.analyze に載せる。
+// 無く、所要は常に ≒0）。prerun の analyze 段の所要は prerun_durations.analyze に載せる。
 // ------------------------------------------------------------
 // setup_end は prerun の epoch_end（deps install / detect-stack / analyze 段完了後）から給電する。
 // implement 区間の起点になり、deps install 等の決定論処理時間はどの phase にも属さない残差に留まる。
@@ -7151,7 +7151,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // - analyze_path: 'contract' | 'jev'（成功 run。'sonnet' はゲート後の needs_clarification 経路のみ）
     // - analyze_ineligible_reason: Jev に回した理由（prerun の jev_reasons）。contract 経路はキー欠落
     // - prerun_durations.analyze: prerun の analyze 段（issue 取得 + Jev。deps install と並列）の秒数。
-    //   Workflow 側の analyze ゲート（Setup 末尾の純関数）は phase_durations に区間を持たない（issue #695）
+    //   Workflow 側の analyze ゲート（Setup 末尾の純関数）は phase_durations に区間を持たない
     shape: state.EFFECTIVE_SHAPE,
     shape_reason: state.triage.reason,
     realized_file_count: Number.isFinite(state.realizedCount) ? state.realizedCount : null,
