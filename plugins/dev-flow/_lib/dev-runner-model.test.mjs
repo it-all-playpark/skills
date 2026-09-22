@@ -36,7 +36,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -79,11 +79,16 @@ test("[dev-runner-model] Validate (label:'test#1') dispatches agentType:'dev-run
   assert.equal(c.agentType, 'dev-flow:dev-runner-haiku', `Validate phase should use dev-runner-haiku, but found: ${c.agentType}`);
 });
 
-// (3) Analyze uses dev-runner (not dev-runner-haiku)
-test("[dev-runner-model] Analyze (label:'analyze#…') dispatches agentType:'dev-runner'", async () => {
-  const c = findCall(await calls(), /^analyze#/);
-  assert.ok(c, "Analyze の agent() 呼び出し（label:'analyze#…'）が観測されない");
-  assert.equal(c.agentType, 'dev-flow:dev-runner', `Analyze phase should use dev-runner (not haiku), but found: ${c.agentType}`);
+// (3) Analyze: 通常経路は spawn 0（args.setup.analyze から REQ を組む）。ゲート後の analyze-clarify#N のみ
+//     dev-runner（sonnet）を使う（issue #690）
+test("[dev-runner-model] Analyze: 既定 run では analyze 系 spawn 0、ゲート後の analyze-clarify#… は agentType:'dev-runner'", async () => {
+  assert.equal(findCall(await calls(), /^analyze/), null, '既定 run で analyze 系の agent() 呼び出しがある');
+  const { ctx, calls: c } = makeDevFlowSandbox({ extra: { args: analyzeArgs(1, { acceptance_criteria: [] }) } });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'dev-runner-model-clarify');
+  const clarify = findCall(c, /^analyze-clarify#/);
+  assert.ok(clarify, "ゲート後の agent() 呼び出し（label:'analyze-clarify#…'）が観測されない");
+  assert.equal(clarify.agentType, 'dev-flow:dev-runner', `analyze-clarify should use dev-runner (not haiku), but found: ${clarify.agentType}`);
 });
 
 // (4) PR uses dev-runner-haiku (issue #642: commit message / PR body は workflow 側の純関数で確定し、

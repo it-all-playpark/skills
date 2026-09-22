@@ -42,7 +42,7 @@ paths:
 - 軸A invariant: deterministic oracle / seed / critical は全 gate_policy で blocking。security floor と決定論ゲートを policy で緩めない。記録専用 telemetry は gate 入力にしない
 - Merge tier は pr-iterate の後（fix 後の最終 tree で danger 再 reconcile）。fixes_applied>0 は Final reconcile で test 再実行、red / 再検証不能は HOLD（PR head sha に pin した CI 決定論判定でのみ代替）
 - danger-grep 失敗は fail-closed（全 SEC seed unchecked → HOLD）。realized-diff / redgreen / final-reconcile / final-ac-reconcile / issue-labels の失敗は fail-safe（安全側 floor・HOLD）。advisory 信号（ui-verify / ci-checks / structural / vdelta / post-comment / clock / pr-meta 等）は fail-open。理由: 決定論 gate の入力不明を通過と同一視しない
-- analyze の comment_conflicts 非空は needs_clarification で終端（決定論スクリプトは意味的矛盾を判定できず、LLM に黙って片方を採らせると訂正が実装に反映されない）
+- Analyze は prerun の決定論 analyze（`analyze-issue --contract` + Jev 有界判定）の検証とゲートのみで通常経路の spawn は 0。LLM に issue を転写させる経路を戻さない（転写者がいれば provenance 突合が要る）。AC 空 / comment_conflicts 非空 / uncertain 非空（Jev 低確信・応答なし・無効）は needs_clarification で終端（決定論は意味的矛盾・非互換の要否を判定できず、LLM に黙って片方を採らせると訂正が実装に反映されない）
 - empty-diff gate は fail-closed（cross-repo は人間ラベル opt-in + 決定論 dirty 検証が揃った場合のみ graceful 終端）
 - block_class は `approach_mismatch` / `guard_blocked` の閉じた enum。guard_blocked は replan ループから除外し evaluator focus へ直行
 - isolation probe: `written:false` は fail-closed（throw + 回避手順: 別 worktree を add → EnterWorktree → 再実行）。probe 自体の失敗は fail-open。`bgIsolation:"none"` による guard 無効化は採らない（共有 checkout 汚染は blast-radius。設定緩和で sunset しない）
@@ -61,9 +61,9 @@ paths:
 - plugin の `bin/` PATH はセッション起動時に version 込みで焼かれる — update 後は新セッションで `command -v` 確認。素のシェルでは常に失敗（欠陥ではない）
 
 > exec-proxy スクリプトは認証付き network I/O（gh・git push）を内部に持ってはならない（唯一の例外:
-> `analyze-issue` は issue 取得の bare `gh issue view` を内蔵し stdout を in-process で受ける。subagent 側で
-> gh の stdout を file へリダイレクトすると bare `gh` 単文の形を外れて取得が失敗し、Analyze の両経路が
-> needs_clarification に終端するため。`_lib/analyze-fetch-no-redirect.test.mjs` が pin）。GitHub I/O は
+> `analyze-issue` は issue 取得の bare `gh issue view` を内蔵し stdout を in-process で受ける。呼び出し元は
+> subagent ではなく prerun（`dev-flow-prerun` → `prerun-analyze.sh`）で、Jev（`_shared/scripts/jev-classify.sh`）
+> もそこから呼ぶ — subagent の sandbox 内では資格情報に届かない）。GitHub I/O は
 > subagent の Bash で「先頭トークンが gh または git の bare 単文」（--repo/-C で cwd 非依存化、
 > cd &&・bash・env 前置禁止）として実行し、出力を $TMPDIR の file に落とすか、呼び出し側 agent が
 > stdout/stderr を argv でスクリプトへ verbatim 転写して、スクリプトは file または argv 入力の

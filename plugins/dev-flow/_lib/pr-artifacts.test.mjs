@@ -341,18 +341,17 @@ test('[pr-artifacts] verifyPrBody / closesVerdict / hasClosesLine: null / undefi
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, analyzeArgs, prerunAnalyze } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const devFlowSrc = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 
 test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing され、prompt に commit message / PR body 本文が verbatim で含まれる', async () => {
-  const analyze = {
-    summary: 's', acceptance_criteria: ['AC one', 'AC two'], issue_type: 'refactor', scope: 'src',
-    issue_number: 1,
-    // issue-meta stub（vm-sandbox 既定）の title と一致させる（analyze provenance 突合を通すため）
-    issue_title: 'stub-issue-title',
-  };
+  // REQ は args.setup.analyze（prerun の analyze 段）から buildReqFromContract が組む。pr-artifacts が読む
+  // キー（issue_type / acceptance_criteria / issue_title）を同じ値で持つ REQ 相当を期待値の組み立てに使う。
+  const analyzeOverrides = { acceptance_criteria: ['AC one', 'AC two'], issue_type: 'refactor' };
+  const a = prerunAnalyze(analyzeOverrides);
+  const analyze = { summary: `Issue #1: ${a.issue_title}`, acceptance_criteria: a.acceptance_criteria, issue_type: a.issue_type, scope: a.scope, issue_number: 1, issue_title: a.issue_title };
   // 合成 plan（issue #673）: summary = issue title、単一 task issue-1。file_changes は dev-implement-fable の
   // 返却 files（既定 responder: src/x.ts）を adoptReportedFiles が取り込んだ後の形で pr-artifacts に渡る。
   const planStub = {
@@ -360,9 +359,7 @@ test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing �
     serial: [{ id: 'issue-1', desc: 'stub-issue-title', file_changes: ['src/x.ts'], test_plan: '', depends_on: [], agent: 'dev-implement-fable' }],
     parallel: [],
   };
-  const { ctx, calls } = makeDevFlowSandbox({
-    overrides: { 'analyze#1': analyze },
-  });
+  const { ctx, calls } = makeDevFlowSandbox({ extra: { args: analyzeArgs(1, analyzeOverrides) } });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'pr-artifacts routing');
   assert.equal(error, null, `dev-flow run が throw した: ${error?.message}`);

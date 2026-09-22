@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, prerunAnalyze } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -35,7 +35,6 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFail
 
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
-    if (label.startsWith('analyze')) return analyzeReq;
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/foo.ts'] };
     if (label === 'declared-path-check') return { files: [] };
@@ -60,7 +59,6 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFail
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     if (agentType === 'dev-flow:dev-implement-fable') {
       const fn = implementerFn ?? (() => ({
         status: 'DONE', task_id: 'T1', files: [], summary: '', concerns: [],
@@ -79,7 +77,8 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFail
   const sandbox = {
     phase: () => {}, log: () => {}, agent: agentStub, parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
-    workflow: workflowStub, args: devFlowArgs('1', { repo: 'acme/skills' }),
+    // REQ は args.setup.analyze から組まれる（Analyze phase は spawn しない）
+    workflow: workflowStub, args: devFlowArgs('1', { repo: 'acme/skills', analyze: prerunAnalyze({ acceptance_criteria: analyzeReq.acceptance_criteria, issue_type: analyzeReq.issue_type }) }),
     console, JSON, Math, String, Number, Boolean, Array, Object, Error,
     RegExp, Promise, Symbol, Map, Set, Date,
   };

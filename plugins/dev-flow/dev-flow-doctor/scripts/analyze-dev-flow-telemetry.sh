@@ -566,8 +566,12 @@ ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c --argjson window "$NESTED_
 
 # shape_calibration: 実効 shape の判定根拠と analyze 経路の根拠キー（shape_reason /
 # realized_file_count / realized_file_count_raw / ac_count / analyze_path /
-# analyze_ineligible_reason — dev-flow.js の成功 handoff が passthrough で記録する）から、
-# 判定根拠の分布と raw realized との不一致を出す。shape は realized diff の file 数
+# analyze_ineligible_reason / prerun_durations.analyze — dev-flow.js の handoff が passthrough で
+# 記録する）から、判定根拠の分布と raw realized との不一致を出す。
+# analyze_path は contract（prerun の決定論 parse のみ）/ jev（prerun が Jev 有界判定に回した）/
+# sonnet（Analyze ゲート後の needs_clarification 経路のみ。成功 handoff には現れない）の 3 値。
+# analyze_ineligible_reason は Jev に回した理由（jev_reasons を '; ' 結合。'breaking_keyword_scan true' /
+# 'comments present (N)'。両方なら 2 バケットに計上）。shape は realized diff の file 数
 # （宣言外パス・format-only 除外後の realized_file_count）+ AC 数 / issue_type / breaking の
 # 決定論 floor だけで決まる（classifyShape、_lib/triviality.mjs。file 境界 micro <=2 / standard <=5）。
 # 較正判断のための report-only — gate / merge tier / score には影響しない。
@@ -598,20 +602,15 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
         or ($r | startswith("issue_type "))
         or ($r | startswith("breaking change detected")) then "safe_floor"
       else "unknown" end;
-  # analyze-issue.sh / dev-flow.js が返す自由文字列を prefix で閉じたバケットへ正規化する
-  def ineligible_bucket:
+  # prerun-analyze.sh が Jev に回した理由（セミコロン結合）を閉じたバケットへ正規化する（1 entry が複数バケットに入りうる）
+  def ineligible_buckets:
     (.telemetry.analyze_ineligible_reason) as $r
-    | if ($r | type) != "string" or $r == "" then "unknown"
-      elif ($r | startswith("AC heading not found")) then "ac_heading_not_found"
-      elif ($r | startswith("AC heading found but no items")) then "ac_no_items"
-      elif ($r | startswith("comments present")) then "comments_present"
-      elif ($r | startswith("scope truncated")) then "scope_truncated"
-      elif ($r | startswith("issue_type")) then "issue_type"
-      elif ($r | startswith("breaking")) then "breaking"
-      elif ($r | startswith("contract not attempted")) then "depth_not_standard"
-      elif ($r | startswith("contract probe")) then "probe_failed"
-      elif ($r | startswith("whitelist rejected")) then "whitelist_rejected"
-      else "other" end;
+    | if ($r | type) != "string" or $r == "" then ["unknown"]
+      else [ ($r | split("; ")[]) as $part
+             | if ($part | startswith("comments present")) then "comments_present"
+               elif ($part | startswith("breaking")) then "breaking"
+               else "other" end ]
+      end;
   def upper($s): if $s == "micro" then $micro_max elif $s == "standard" then $standard_max else null end;
   def lower_tier_max($s): if $s == "standard" then $micro_max elif $s == "complex" then $standard_max else null end;
   def raw: .telemetry.realized_file_count_raw;
@@ -648,12 +647,19 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
     },
     analyze_path: {
       contract: ([.[] | select(.telemetry.analyze_path == "contract")] | length),
+      jev: ([.[] | select(.telemetry.analyze_path == "jev")] | length),
       sonnet: ([.[] | select(.telemetry.analyze_path == "sonnet")] | length),
-      unknown: ([.[] | select((.telemetry.analyze_path // "unknown") as $v | ($v != "contract" and $v != "sonnet"))] | length)
+      unknown: ([.[] | select((.telemetry.analyze_path // "unknown") as $v | ($v != "contract" and $v != "jev" and $v != "sonnet"))] | length)
     },
     analyze_ineligible_reason: (
-      reduce (.[] | select(.telemetry.analyze_path == "sonnet") | ineligible_bucket) as $b ({};
+      reduce (.[] | select(.telemetry.analyze_path == "jev" or .telemetry.analyze_path == "sonnet") | ineligible_buckets[]) as $b ({};
         .[$b] = ((.[$b] // 0) + 1))
+    ),
+    prerun_analyze_seconds: (
+      [ .[] | .telemetry.prerun_durations.analyze? | select(type == "number") ] as $d
+      | { measured: ($d | length),
+          median: (if ($d | length) == 0 then null else ($d | sort | .[(length / 2 | floor)]) end),
+          max: (if ($d | length) == 0 then null else ($d | max) end) }
     )
   }
 ')

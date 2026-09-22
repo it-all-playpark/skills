@@ -34,7 +34,7 @@ script 変数に持つ。
 
 ```mermaid
 flowchart TD
-    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>dev-flow-prerun（base → worktree → clean → deps → stack）<br/>→ EnterWorktree"]
+    U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>dev-flow-prerun（base → worktree → clean → deps ‖ analyze → stack）<br/>→ EnterWorktree"]
     PF --> W["Workflow: dev-flow-run<br/>args.setup = prerun の JSON"]
     W --> S["1. Setup"]
     S --> A["2. Analyze"]
@@ -49,8 +49,8 @@ flowchart TD
 
     S -.->|"fail-closed"| AB["throw / workflow abort"]
     V -.->|"空 diff が 2 回連続"| AB
-    A -.->|"AC 空 / 曖昧 / provenance 不合格"| NC["needs_clarification<br/>worktree は保持"]
-    I -.->|"NEEDS_CONTEXT 解消不能"| NC
+    A -.->|"prerun analyze 失敗 / AC 空 /<br/>comment 矛盾 / Jev 未確定"| NC["needs_clarification<br/>worktree は保持"]
+    I -.->|"NEEDS_CONTEXT"| NC
     SF -.->|"risk 欠落・実行不能"| FC["fail-closed<br/>merge tier HOLD 強制"]
 ```
 
@@ -61,20 +61,19 @@ flowchart TD
 ### 1.2 Setup
 
 決定論処理（base 解決・worktree 作成/再利用と起点検証・`.devflow-tmp` clean・deps install・
-stack 検出）は run 前に wrapper skill が top-level の Bash 1 コマンド `dev-flow-prerun` で済ませ、
-その stdout JSON を `args.setup` として渡す。Setup phase で subagent を spawn するのは
-isolation probe の 1 回だけ。
+issue analyze・stack 検出）は run 前に wrapper skill が top-level の Bash 1 コマンド
+`dev-flow-prerun` で済ませ、その stdout JSON を `args.setup` として渡す。analyze 段
+（`prerun-analyze.sh`: `analyze-issue --contract` の決定論 parse + Jev 有界判定）は deps install と
+並列に走る。Setup phase は subagent を spawn しない（isolation probe は Analyze のゲート判定後）。
 
 ```mermaid
 flowchart TD
-    PR["wrapper: dev-flow-prerun<br/>base → worktree → clean → deps → stack<br/>JSON 1 行を args.setup へ"] --> IN["Workflow 起動"]
+    PR["wrapper: dev-flow-prerun<br/>base → worktree → clean → deps ‖ analyze → stack<br/>JSON 1 行を args.setup へ"] --> IN["Workflow 起動"]
     IN --> S1["validatePrerunSetup(args.setup)<br/>純関数・spawn なし"]
-    S1 --> S5["isolation probe<br/>Write tool で書けるか<br/>token = setup.epoch"]
-    S5 --> OUT["Analyze へ"]
+    S1 --> OUT["Analyze へ"]
 
     PR -.->|"ok:false"| STOP["wrapper が停止し人間へ報告"]
     S1 -.->|"setup 欠落 / ok:false<br/>必須キー欠落"| AB["throw / abort"]
-    S5 -.->|"written:false"| AB
 ```
 
 `dev-flow-prerun` の各段は独立に `ok:false` を報告し後続段を巻き込まない。base は明示指定なら
@@ -90,23 +89,29 @@ top-level の Bash では意味が変わる。
 
 ```mermaid
 flowchart TD
-    IN["Setup 完了"] --> A0{"DEPTH が standard ?"}
-    A0 -->|yes| A1["contract probe<br/>決定論 parse"]
-    A0 -->|no| A2["analyze<br/>dev-runner"]
-    A1 -->|"ok かつ whitelist 合格"| A3
-    A1 -->|"失敗（fail-open）"| A2
-    A2 --> A3{"provenance 検証 OK ?"}
-    A3 -->|no| NC["needs_clarification<br/>worktree は保持"]
-    A3 -->|yes| A4{"AC 空 or<br/>ambiguities が 2 超 ?"}
-    A4 -->|yes| NC
-    A4 -->|no| A5["classifyShape"]
-    A5 --> OUT["Implement へ"]
+    PA["prerun（deps と並列）: prerun-analyze.sh<br/>analyze-issue --contract → 決定論 parse<br/>breaking keyword hit → Jev noul<br/>comments present → comment ごとに Jev choice"] --> IN["args.setup.analyze"]
+    IN --> A0{"analyze.ok ?"}
+    A0 -->|no| NC["needs_clarification<br/>source=analyze_prerun<br/>spawn 0"]
+    A0 -->|yes| A1["buildReqFromContract<br/>whitelist 検証 → REQ"]
+    A1 -->|"不合格"| AB["throw（prerun 出力の契約違反）"]
+    A1 --> A2{"AC 空 / comment_conflicts 非空 /<br/>uncertain 非空 ?"}
+    A2 -->|yes| A3["analyze-clarify（dev-runner）1 spawn<br/>人間向け missing_context を生成"]
+    A3 --> NC2["needs_clarification<br/>source=analyze<br/>isolation-probe / fable は spawn しない"]
+    A2 -->|no| A4["isolation probe<br/>Write tool で書けるか<br/>token = setup.epoch"]
+    A4 -->|"written:false"| AB
+    A4 --> OUT["Implement へ"]
 ```
 
-contract 経路は `analyze-issue.sh --contract` の出力を決定論 parse する高速経路で、
-失敗しても sonnet の analyze へ fail-open で落ちる。provenance 検証は analyze 結果が
-実際の issue 取得に基づくことを突き合わせる fail-closed のゲートで、捏造した要件を
-Implement へ流さないためにある。
+Analyze phase は Workflow 内では純関数の検証と 3 条件ゲートだけで、通常経路の spawn は 0。
+issue を LLM が転写する工程が無いので provenance 突合・comment_count 突合・scope 切断時の
+再実行も無い。決定論で解けない 2 理由だけを prerun が Jev（有界判定モデル、`_shared/scripts/jev-classify.sh`）に回す:
+breaking keyword hit は noul（p ≥ 0.9 で `breaking_change=true`、p ≤ 0.1 で false、それ以外は
+`uncertain`）、comments present は comment ごとに choice `{override, conflict, unrelated}`
+（override かつ権限あり = issue 報告者本人 or OWNER/MEMBER/COLLABORATOR → `comment_overrides`、
+override だが権限なし / conflict / 低確信 → `comment_conflicts`）。Jev の応答なし・
+`DEVFLOW_JEV_DISABLE=1` は `uncertain` に倒す（fail-closed）。ゲートが引いたときだけ sonnet を
+1 spawn して人間向けの質問文を作る。telemetry の `analyze_path` は `contract` / `jev` /
+`sonnet`（ゲート後のみ）の 3 値。
 
 ### 1.4 Implement
 
@@ -124,9 +129,7 @@ flowchart TD
     I3 -->|OK| OUT["Validate へ"]
     I3 -->|BLOCKED| I4["累積 findings を付けて再 spawn<br/>reimpl-blocked#b / BLOCK_MAX"]
     I4 --> I3
-    I3 -->|NEEDS_CONTEXT| I5["comprehensive 再分析"]
-    I5 -->|"解消"| I1
-    I5 -->|"解消不能"| NC["needs_clarification"]
+    I3 -->|NEEDS_CONTEXT| NC["needs_clarification<br/>source=implement（再分析はしない）"]
 ```
 
 ### 1.5 Validate
@@ -402,7 +405,6 @@ tier は動かない。
 | `DESIGN_REPLAN_MAX` | 2 | design 差し戻し（replan + reimpl）の hard cap |
 | `GREEN_MAX` | 3 | Validate の test green 差し戻し |
 | `BLOCK_MAX` | 2 | BLOCKED 由来の再計画 |
-| `AMBIGUITY_MAX` | 2 | 超過で needs_clarification |
 | `REVIEW_STUCK` | 2 | pr-iterate の同一 topic 反復での stuck 判定 |
 | `CI_WAIT_CEILING_SECONDS` | 300 | pr-iterate の CI pending 待ち（script 側 ci-wait ループ）の nominal 総待機上限（秒） |
 
@@ -421,7 +423,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | fable / high |
 | `evaluator` | 実装品質ゲート | opus / high |
 | `pr-reviewer` | PR レビュー | opus / high |
-| `dev-runner` | Skill 呼び出し（analyze / commit / PR） | frontmatter / high |
+| `dev-runner` | Skill 呼び出し（Analyze ゲート後の missing_context 生成のみ。通常経路では起動しない） | frontmatter / high |
 | `dev-runner-haiku` | 書き込み・Skill 呼び出しを伴う exec-proxy | haiku / low |
 | `dev-runner-haiku-ro` | read-only exec-proxy | haiku / low |
 | `dev-runner-haiku-wo` | isolation probe 専任（Write のみ） | haiku / low |

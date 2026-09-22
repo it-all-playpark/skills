@@ -39,8 +39,6 @@ const RUNNER = 'dev-flow:dev-runner';
 // label が固定文字列のものは完全一致、`#${i}` / suffix 付きのものは prefix 一致（末尾 '*'）
 const EXPECTED_DEV_FLOW = {
   // read-only tier
-  'contract-probe#*': RO,
-  'issue-meta': RO,
   'diff-gate': RO,
   'diff-gate-retry': RO,
   'danger-grep': RO,
@@ -76,8 +74,8 @@ const EXPECTED_DEV_FLOW = {
   'closes-recheck': RO,
   'closes-reinject': RW,
   'ac-checkbox-sync': RW,
-  // 判断寄り
-  'analyze#*': RUNNER,
+  // 判断寄り（Analyze のゲート後にだけ 1 spawn。通常経路の Analyze spawn は 0。issue #690）
+  'analyze-clarify#*': RUNNER,
 };
 
 const EXPECTED_PR_ITERATE = {
@@ -107,7 +105,7 @@ function expectedFor(table, label) {
 
 async function runDevFlowScenario(name) {
   const sc = DEV_FLOW_SCENARIOS[name];
-  const { ctx, calls } = makeDevFlowSandbox({ overrides: sc.overrides ?? {}, workflow: sc.workflow });
+  const { ctx, calls } = makeDevFlowSandbox({ overrides: sc.overrides ?? {}, workflow: sc.workflow, extra: sc.extra ?? {} });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, name);
   assert.equal(error !== null, sc.expectError === true, `scenario ${name}: throw の有無が想定と異なる: ${error?.message}`);

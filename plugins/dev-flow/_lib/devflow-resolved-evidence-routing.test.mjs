@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { devFlowArgs, prerunAnalyze } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -51,9 +51,6 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     }
     if (label === 'worktree') {
       return { worktree: '/tmp/wt', branch: 'feature/issue-1', repo: 'acme/skills' };
-    }
-    if (label.startsWith('analyze')) {
-      return analyzeReq;
     }
     // 'danger-grep'（Security floor 統合 exec-proxy。SECFLOOR unified schema {risk,files,struct,diffhash}
     // を要求）と 'danger-grep-final'（Merge tier。単純 {ok,hits} schema）は別スキーマ。ここでは意図的に
@@ -114,7 +111,6 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }
-    if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };
 
@@ -128,7 +124,8 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
     parallel: parallelStub,
     pipeline: async (items, cb) => Promise.all((items || []).map(async (item, i) => { try { const r = await cb(item, i); return r === undefined ? null : r; } catch { return null; } })),
     workflow: workflowStub,
-    args: devFlowArgs('1'),
+    // REQ は args.setup.analyze から組まれる（Analyze phase は spawn しない）
+    args: devFlowArgs('1', { analyze: prerunAnalyze({ acceptance_criteria: analyzeReq.acceptance_criteria, issue_type: analyzeReq.issue_type }) }),
     console,
     JSON,
     Math,

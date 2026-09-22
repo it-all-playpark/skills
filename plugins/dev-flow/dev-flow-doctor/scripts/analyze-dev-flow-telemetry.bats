@@ -1397,30 +1397,34 @@ EOF
     [ "$(echo "$rm_json" | jq 'has("missed_refloor") or has("overestimated")')" = "false" ]
 }
 
-@test "shape_calibration: analyze_path ratio and analyze_ineligible_reason buckets (sonnet entries only)" {
-    write_devflow_entry "e1.json" '{"shape":"standard","analyze_path":"contract"}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"AC heading not found"}' 2
-    write_devflow_entry "e3.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"comments present (3) — body/comment reconciliation requires sonnet analyze"}' 3
-    write_devflow_entry "e4.json" "{\"shape\":\"standard\",\"analyze_path\":\"sonnet\",\"analyze_ineligible_reason\":\"issue_type 'question' not in {feat,fix,docs,refactor,chore,test,perf,ci}\"}" 4
-    write_devflow_entry "e5.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"contract not attempted (depth=comprehensive)"}' 5
-    write_devflow_entry "e6.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"something new"}' 6
-    write_devflow_entry "e7.json" '{"shape":"standard","analyze_path":"sonnet"}' 7
+@test "shape_calibration: analyze_path 3 値（contract / jev / sonnet）と analyze_ineligible_reason バケット（jev / sonnet entries のみ）、prerun_analyze_seconds" {
+    write_devflow_entry "e1.json" '{"shape":"standard","analyze_path":"contract","prerun_durations":{"analyze":4}}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","analyze_path":"jev","analyze_ineligible_reason":"breaking_keyword_scan true","prerun_durations":{"analyze":12}}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","analyze_path":"jev","analyze_ineligible_reason":"comments present (3)","prerun_durations":{"analyze":30}}' 3
+    write_devflow_entry "e4.json" '{"shape":"standard","analyze_path":"jev","analyze_ineligible_reason":"breaking_keyword_scan true; comments present (1)"}' 4
+    write_devflow_entry "e5.json" '{"shape":"standard","analyze_path":"sonnet","analyze_ineligible_reason":"comments present (2)"}' 5
+    write_devflow_entry "e6.json" '{"shape":"standard","analyze_path":"jev","analyze_ineligible_reason":"something new"}' 6
+    write_devflow_entry "e7.json" '{"shape":"standard","analyze_path":"jev"}' 7
     write_devflow_entry "e8.json" '{"shape":"standard"}' 8
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
     cal=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration')
     [ "$(echo "$cal" | jq '.analyze_path.contract')" -eq 1 ]
-    [ "$(echo "$cal" | jq '.analyze_path.sonnet')" -eq 6 ]
+    [ "$(echo "$cal" | jq '.analyze_path.jev')" -eq 5 ]
+    [ "$(echo "$cal" | jq '.analyze_path.sonnet')" -eq 1 ]
     [ "$(echo "$cal" | jq '.analyze_path.unknown')" -eq 1 ]
-    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.ac_heading_not_found')" -eq 1 ]
-    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.comments_present')" -eq 1 ]
-    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.issue_type')" -eq 1 ]
-    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.depth_not_standard')" -eq 1 ]
+    # 結合理由（e4）は breaking / comments_present の両バケットに計上される
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.breaking')" -eq 2 ]
+    [ "$(echo "$cal" | jq '.analyze_ineligible_reason.comments_present')" -eq 3 ]
     [ "$(echo "$cal" | jq '.analyze_ineligible_reason.other')" -eq 1 ]
     [ "$(echo "$cal" | jq '.analyze_ineligible_reason.unknown')" -eq 1 ]
-    # contract 採用 entry と analyze_path 欠落 entry は ineligible 分布の分母に入らない
-    [ "$(echo "$cal" | jq '[.analyze_ineligible_reason[]] | add')" -eq 6 ]
+    # contract 採用 entry と analyze_path 欠落 entry は ineligible 分布の分母に入らない（6 entry、e4 は 2 バケット → 7）
+    [ "$(echo "$cal" | jq '[.analyze_ineligible_reason[]] | add')" -eq 7 ]
+    # prerun の analyze 段所要（prerun_durations.analyze）は measured / median / max
+    [ "$(echo "$cal" | jq '.prerun_analyze_seconds.measured')" -eq 3 ]
+    [ "$(echo "$cal" | jq '.prerun_analyze_seconds.median')" -eq 12 ]
+    [ "$(echo "$cal" | jq '.prerun_analyze_seconds.max')" -eq 30 ]
 }
 
 @test "micro_nonfiring: warn detail carries shape_reason_kind / analyze_path / floor_above_raw from shape_calibration" {

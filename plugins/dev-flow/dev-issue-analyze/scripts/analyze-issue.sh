@@ -77,7 +77,7 @@ BODY=$(echo "$ISSUE_JSON" | jq -r '.body // ""')
 LABELS=$(echo "$ISSUE_JSON" | jq -c '[.labels[].name] // []')
 MILESTONE=$(echo "$ISSUE_JSON" | jq -r '.milestone.title // null')
 # Issue reporter login (fixture / gh output missing "author" -> "" 扱い, plain jq
-# null-safety, not a legacy fallback branch). Used downstream (dev-flow.js analyzePrompt)
+# null-safety, not a legacy fallback branch). Used downstream (dev-flow prerun-analyze.sh)
 # as one of the trust signals for comment_overrides adoption alongside author_association
 # (issue #573 review on PR #578): an issue's own reporter may correct their own request
 # in a follow-up comment even without elevated repo permissions.
@@ -102,10 +102,10 @@ echo "$ISSUE_JSON" | jq -e 'has("comments") and (.comments | type == "array")' >
     || die_json "issue JSON missing required \"comments\" array field (fetch must include --json ...,comments)"
 
 # issue comments. Comments are part of the requirement-extraction input alongside body
-# (issue #573); capped at 50 items, body kept in full for downstream (sonnet)
-# reconciliation. author_association is passed through verbatim (gh's authorAssociation,
-# e.g. OWNER/MEMBER/COLLABORATOR/NONE) so the consuming LLM (dev-flow.js analyzePrompt)
-# can restrict comment_overrides adoption to trusted posters instead of any commenter
+# (issue #573); capped at 50 items, body kept in full for downstream (Jev per-comment
+# choice in dev-flow's prerun-analyze.sh). author_association is passed through verbatim
+# (gh's authorAssociation, e.g. OWNER/MEMBER/COLLABORATOR/NONE) so the consumer can
+# restrict comment_overrides adoption to trusted posters instead of any commenter
 # (issue #573 review on PR #578: without this, an arbitrary external comment on this
 # PUBLIC repo could silently override requirements extracted from the issue body).
 # `.comments` (not `.comments // []`) is safe here: the guard above already proved the
@@ -140,8 +140,12 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # Eligible only when contract in {t1,t2}, issue_type (title prefix -> label fallback) is in
 # {feat,fix,docs,refactor,chore,test,perf,ci}, no `!` breaking marker in title, and
 # breaking_keyword_scan==false.
-# Ineligible/unparseable => eligible:false + ineligible_reason (exit 0; caller falls back to
-# the existing sonnet(dev-runner) analyze path — this is a fail-open speed optimization only).
+# Ineligible/unparseable => eligible:false + ineligible_reason (exit 0). `eligible` is the
+# single first-failing verdict; the raw signals behind it (acceptance_criteria /
+# breaking_keyword_scan / title_breaking_marker / comment_count / comments / issue_author) are
+# always emitted so dev-flow's prerun (prerun-analyze.sh) can route the two non-deterministic
+# reasons (breaking keyword hit / comments present) to a bounded Jev judgement instead of an
+# LLM transcription pass (issue #690).
 
 # Line-anchored regex matching a markdown heading whose text CONTAINS one of the
 # accepted AC-heading forms (case-insensitive), mirroring _lib/scripts/ac-lint.sh's
@@ -329,20 +333,18 @@ run_contract_mode() {
     fi
 
     # Comments present -> the decision-tree light path cannot judge body/comment
-    # semantic reconciliation, so fall back to the sonnet(dev-runner) analyze path
-    # rather than silently building the REQ from body alone (issue #573).
+    # semantic reconciliation on its own (issue #573). dev-flow's prerun routes each
+    # comment to a bounded Jev choice instead of an LLM transcription pass.
     if [[ "$eligible" == true && "$COMMENT_COUNT" -gt 0 ]]; then
         eligible=false
-        ineligible_reason="comments present ($COMMENT_COUNT) — body/comment reconciliation requires sonnet analyze"
+        ineligible_reason="comments present ($COMMENT_COUNT) — body/comment reconciliation is not decidable by the light path"
     fi
 
     # scope truncated -> a spec written past the 4000-char cap can be silently
     # cut out of the contract-mode `scope` excerpt. The light path has no way
-    # to notice this (it never reads the full body), so fall back to sonnet
-    # analyze, which reads the full body when scope_truncated is set
-    # (analyzePrompt) instead of building a REQ from a possibly-incomplete
-    # excerpt (issue #598 review on PR #598, reverses issue #596's original
-    # contract-eligible-with-truncation-marker approach).
+    # to notice this (it never reads the full body); the fact is surfaced via
+    # scope_truncated / issue_body_truncated so the consumer (dev-flow's implementer
+    # prompt) treats acceptance_criteria as authoritative for the cut region.
     if [[ "$eligible" == true && "$SCOPE_TRUNCATED" == true ]]; then
         eligible=false
         ineligible_reason="scope truncated"
@@ -402,6 +404,9 @@ run_contract_mode() {
         --argjson breaking_keyword_scan "$BREAKING_KEYWORD_SCAN" \
         --argjson comment_count "$COMMENT_COUNT" \
         --argjson ac_heading_near_miss "$NEAR_MISS_JSON" \
+        --argjson title_breaking_marker "$title_bang" \
+        --arg issue_author "$ISSUE_AUTHOR" \
+        --argjson comments "$COMMENTS_JSON" \
         '
         {
           contract: $contract,
@@ -416,7 +421,10 @@ run_contract_mode() {
           issue_body: $issue_body,
           issue_body_truncated: $issue_body_truncated,
           breaking_keyword_scan: $breaking_keyword_scan,
+          title_breaking_marker: $title_breaking_marker,
           comment_count: $comment_count,
+          issue_author: $issue_author,
+          comments: $comments,
           ac_heading_near_miss: $ac_heading_near_miss
         }
         + (if $eligible then {} else {ineligible_reason: $ineligible_reason} end)

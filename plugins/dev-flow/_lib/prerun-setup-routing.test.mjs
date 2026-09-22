@@ -38,13 +38,14 @@ test('[prerun-setup-routing] (a) 既定 args → Setup の spawn は isolation-p
   assertNoCrash(error, 'a');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
 
-  const analyzeIdx = calls.findIndex((c) => c.label.startsWith('analyze') || c.label.startsWith('contract-probe'));
-  assert.notStrictEqual(analyzeIdx, -1, 'analyze 系 call が見つからない');
-  const beforeAnalyze = calls.slice(0, analyzeIdx);
+  // Setup / Analyze は args.setup 駆動で spawn せず、最初の spawn は isolation-probe（Analyze ゲート後・Implement 前）
+  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implement-fable');
+  assert.notStrictEqual(implIdx, -1, 'dev-implement-fable の call が見つからない');
+  const beforeImpl = calls.slice(0, implIdx);
   assert.deepEqual(
-    beforeAnalyze.map((c) => ({ label: c.label, agentType: c.agentType })),
+    beforeImpl.map((c) => ({ label: c.label, agentType: c.agentType })),
     [{ label: 'isolation-probe', agentType: 'dev-flow:dev-runner-haiku-wo' }],
-    `Setup phase の call は isolation-probe 1 件のみのはずだが: ${JSON.stringify(beforeAnalyze.map((c) => c.label))}`,
+    `Implement より前の call は isolation-probe 1 件のみのはずだが: ${JSON.stringify(beforeImpl.map((c) => c.label))}`,
   );
 
   for (const label of DEAD_LABELS) {

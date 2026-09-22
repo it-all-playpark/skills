@@ -79,12 +79,12 @@ for (const [name, rawSrc] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prI
 // ============================================================
 // writeFailureTelemetry 経由の failure / partial handoff（empty-diff の fail-fast、cross-repo の graceful
 // 終了）は telemetry に subagent_invocations を載せない現行仕様のため突合対象外（abort handoff は載せる）。
-const FAILURE_HANDOFF_SCENARIOS = new Set(['empty-diff', 'cross-repo']);
+const FAILURE_HANDOFF_SCENARIOS = new Set(['empty-diff', 'cross-repo', 'analyze-clarify']);
 
 for (const [name, sc] of Object.entries(DEV_FLOW_SCENARIOS)) {
   if (FAILURE_HANDOFF_SCENARIOS.has(name)) continue;
   test(`dev-flow.js[${name}]: journal-save payload の subagent_invocations.total が payload 生成時点の calls 件数と一致する`, async () => {
-    const { ctx, calls } = makeDevFlowSandbox({ overrides: sc.overrides ?? {}, workflow: sc.workflow });
+    const { ctx, calls } = makeDevFlowSandbox({ overrides: sc.overrides ?? {}, workflow: sc.workflow, extra: sc.extra ?? {} });
     const { error } = await runWorkflowCapture(devFlowSrc, ctx);
     assertNoCrash(error, name);
     assert.equal(error !== null, sc.expectError === true, `scenario ${name}: throw の有無が想定と異なる: ${error?.message}`);

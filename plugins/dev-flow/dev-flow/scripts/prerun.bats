@@ -34,6 +34,31 @@ setup() {
     git -C "$ROOT" config user.email "test@example.com"
 
     WT="$BATS_TEST_TMPDIR/wt/df-1"
+
+    # analyze 段（Segment 6）が内蔵する gh を stub する。GH_STUB_FIXTURE 未設定なら失敗
+    # （analyze.ok:false 経路）。Jev は鍵無しで呼ばれない（Keychain も存在しない service 名にする）。
+    STUB_DIR="$BATS_TEST_TMPDIR/stub-bin"
+    mkdir -p "$STUB_DIR"
+    cat >"$STUB_DIR/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ -z "${GH_STUB_FIXTURE:-}" ]]; then
+    echo "gh stub: no fixture (GH_STUB_FIXTURE unset)" >&2
+    exit 1
+fi
+cat "$GH_STUB_FIXTURE"
+STUB
+    chmod +x "$STUB_DIR/gh"
+    export PATH="$STUB_DIR:$PATH"
+    export AI_GATEWAY_API_KEY=""
+    export JEV_KEYCHAIN_SERVICE="prerun-bats-nonexistent"
+    unset GH_STUB_FIXTURE
+}
+
+# issue fixture（AC あり・comment 無し・breaking 無し → Jev 不要の contract 経路）
+make_issue_fixture() {
+    jq -n '{title: "feat: add thing", state: "open", body: "## 受け入れ基準\n\n- [ ] AC one\n- [ ] AC two", labels: [], assignees: [], milestone: null, comments: [], author: {login: "reporter"}}' \
+        >"$BATS_TEST_TMPDIR/issue.json"
+    export GH_STUB_FIXTURE="$BATS_TEST_TMPDIR/issue.json"
 }
 
 # ---- (1) base 未指定 + origin/dev あり ----
@@ -353,4 +378,56 @@ JSON
 @test "(15b) 静的pin: git push を呼ばない" {
     run grep -E 'git (-C [^ ]+ )?push' "$SCRIPT"
     [ "$status" -ne 0 ]
+}
+
+# ---- (16) Segment 6: analyze（issue #690）----
+
+@test "(16a) analyze 段: issue 取得成功 -> analyze キーに contract 経路の結果が載る" {
+    make_issue_fixture
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e '.analyze.ok == true and .analyze.analyze_path == "contract"'
+    echo "$output" | jq -e '.analyze.acceptance_criteria == ["AC one", "AC two"] and .analyze.issue_type == "feat" and .analyze.issue_title == "feat: add thing"'
+    echo "$output" | jq -e '(.analyze.issue_body | type) == "string" and .analyze.breaking_change == false and .analyze.comment_overrides == [] and .analyze.comment_conflicts == [] and .analyze.uncertain == []'
+    echo "$output" | jq -e '(.analyze.duration_seconds | type) == "number" and .analyze.duration_seconds >= 0'
+}
+
+@test "(16b) analyze 段: issue 取得失敗 -> analyze.ok:false + reason、他段は影響を受けない" {
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .worktree_status == "created" and .deps.ok == true'
+    echo "$output" | jq -e '.analyze.ok == false and (.analyze.reason | test("gh stub: no fixture")) and .analyze.analyze_path == "contract"'
+    echo "$output" | jq -e '(.analyze.duration_seconds | type) == "number"'
+}
+
+@test "(16c) analyze 段は base 未解決（ok:false）でも走る" {
+    make_issue_fixture
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT" --base release
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false and .analyze.ok == true'
+}
+
+@test "(16d) epoch_end は deps / analyze 両段の完了後に採る（静的 pin: 起動 & → wait → epoch_end の順）" {
+    make_issue_fixture
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.epoch_end >= .epoch and .epoch_end >= (.epoch + .analyze.duration_seconds)'
+    analyze_launch_line="$(grep -n 'prerun-analyze.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
+    analyze_bg_line="$(grep -n '^) >"\$ANALYZE_OUT" 2>/dev/null &$' "$SCRIPT" | head -1 | cut -d: -f1)"
+    deps_line="$(grep -n 'ensure-worktree-deps.sh' "$SCRIPT" | head -1 | cut -d: -f1)"
+    deps_wait_line="$(grep -n '^    wait "\$DEPS_PID"' "$SCRIPT" | head -1 | cut -d: -f1)"
+    analyze_wait_line="$(grep -n '^wait "\$ANALYZE_PID"' "$SCRIPT" | head -1 | cut -d: -f1)"
+    epoch_end_line="$(grep -n '^epoch_end="\$(date +%s)"' "$SCRIPT" | head -1 | cut -d: -f1)"
+    [ -n "$analyze_launch_line" ] && [ -n "$analyze_bg_line" ] && [ -n "$deps_line" ] && [ -n "$deps_wait_line" ] && [ -n "$analyze_wait_line" ] && [ -n "$epoch_end_line" ]
+    # analyze はバックグラウンド起動（&）され、deps install の起動より前に始まる
+    [ "$analyze_launch_line" -lt "$analyze_bg_line" ]
+    [ "$analyze_bg_line" -lt "$deps_line" ]
+    # deps の wait の後で analyze を join し、その後に epoch_end を採る
+    [ "$deps_wait_line" -lt "$analyze_wait_line" ]
+    [ "$analyze_wait_line" -lt "$epoch_end_line" ]
 }

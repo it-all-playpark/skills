@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripComments } from '../../../tools/sync-inlines.mjs';
 import { neutralizeRegexLiterals } from './test-helpers/source-scan.mjs';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, MICRO_FILES } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, MICRO_FILES, analyzeArgs } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
@@ -36,15 +36,19 @@ const GONE_AGENTS = ['dev-planner', 'plan-reviewer', 'implementer'];
 const ISSUE_BODY = '## 背景\n本文の一段落。\n\n## 受け入れ基準\n- [ ] a\n- [ ] b';
 const AC = ['ac-one', 'ac-two', 'ac-three', 'ac-four'];
 
-// contract-probe は既定 responder が null を返す（sonnet fallback）ため、req は 'analyze#1' override で注入する。
-// issue_title は既定 issue-meta の title と一致させる（provenance 突合）。
+// REQ は args.setup.analyze（prerun の analyze 段）から組まれるため、shape 別の analyze を setup に注入する。
 // 実効 shape は realized diff の file 数 + AC 数で決まる（issue #676）: micro は realized 1 件 / AC 2、
 // standard は既定の 3 件 / AC 4、complex は AC 7 件（realized 数に関わらず complex）。
-function reqOf(shape) {
-  const base = { summary: 's', scope: 'src', issue_number: 1, issue_title: 'stub-issue-title', issue_body: ISSUE_BODY, issue_body_truncated: false, ambiguities: [] };
-  if (shape === 'micro') return { ...base, acceptance_criteria: ['a', 'b'], issue_type: 'fix' };
-  if (shape === 'complex') return { ...base, acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], issue_type: 'feat' };
-  return { ...base, acceptance_criteria: AC, issue_type: 'feat' };
+function analyzeOf(shape, overrides = {}) {
+  const base = { issue_body: ISSUE_BODY, issue_body_truncated: false };
+  if (shape === 'micro') return { ...base, acceptance_criteria: ['a', 'b'], issue_type: 'fix', ...overrides };
+  if (shape === 'complex') return { ...base, acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], issue_type: 'feat', ...overrides };
+  return { ...base, acceptance_criteria: AC, issue_type: 'feat', ...overrides };
+}
+function argsOf(shape, overrides = {}) {
+  const args = analyzeArgs(1, analyzeOf(shape, overrides));
+  for (const k of Object.keys(overrides)) if (overrides[k] === undefined) delete args.setup.analyze[k];
+  return args;
 }
 function filesOf(shape) {
   if (shape === 'micro') {
@@ -57,8 +61,8 @@ function filesOf(shape) {
   return {};
 }
 
-async function runFlow(shape, overrides = {}, extra = {}) {
-  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { 'analyze#1': reqOf(shape), ...filesOf(shape), ...overrides }, extra });
+async function runFlow(shape, overrides = {}, extra = {}, analyzeOverrides = {}) {
+  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { ...filesOf(shape), ...overrides }, extra: { args: argsOf(shape, analyzeOverrides), ...extra } });
   const { result, error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, shape);
   return { calls, logs, result, error, ctx };
@@ -154,10 +158,10 @@ test('[implement-fable] dev-implement-fable の prompt に issue_body・acceptan
 });
 
 test('[implement-fable] issue_body_truncated:true → prompt に切詰め注記が付く / issue_body 欠落 → 本文なし注記', async () => {
-  const truncated = await runFlow('standard', { 'analyze#1': { ...reqOf('standard'), issue_body_truncated: true } });
+  const truncated = await runFlow('standard', {}, {}, { issue_body_truncated: true });
   const [t] = byType(truncated.calls, FABLE);
   assert.ok(t.prompt.includes('切詰め済み'), 'issue_body_truncated:true の注記が無い');
-  const missing = await runFlow('standard', { 'analyze#1': (() => { const r = reqOf('standard'); delete r.issue_body; delete r.issue_body_truncated; return r; })() });
+  const missing = await runFlow('standard', {}, {}, { issue_body: undefined, issue_body_truncated: undefined });
   const [m] = byType(missing.calls, FABLE);
   assert.ok(m.prompt.includes('issue 本文: analyze 出力に含まれていない'), 'issue_body 欠落時の注記が無い');
 });
@@ -174,8 +178,9 @@ test('[implement-fable] 返却 files（src/x.ts）が宣言として取り込ま
 async function runMicro(overrides = {}) {
   const workflowCalls = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
-    overrides: { 'analyze#1': reqOf('micro'), ...filesOf('micro'), ...overrides },
+    overrides: { ...filesOf('micro'), ...overrides },
     workflow: async (name, opts) => { workflowCalls.push({ name, opts }); return { status: 'lgtm', iterations: 1, fixes_applied: 0 }; },
+    extra: { args: argsOf('micro') },
   });
   const { result, error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'micro');
@@ -314,8 +319,9 @@ test('[implement-fable] AC-6: empty-diff retry 後の test#retry-1 red → green
 async function runStandardWithWorkflowCapture(overrides = {}) {
   const workflowCalls = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
-    overrides: { 'analyze#1': reqOf('standard'), ...overrides },
+    overrides: { ...overrides },
     workflow: async (name, opts) => { workflowCalls.push({ name, opts }); return { status: 'lgtm', iterations: 1, fixes_applied: 0 }; },
+    extra: { args: argsOf('standard') },
   });
   const { result, error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'standard-workflow-capture');

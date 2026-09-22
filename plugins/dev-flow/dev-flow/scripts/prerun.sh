@@ -5,11 +5,12 @@
 # stdout の JSON 1行を `Workflow({ args: { issue, setup: <JSON> } })` の args.setup へそのまま渡す。
 #
 # 行う処理: base 解決 (origin/dev → origin/HEAD フォールバック) → worktree 作成/再利用 +
-# 起点(base)一致検証 + 書き込み probe → .devflow-tmp の git clean -fdx → deps install →
+# 起点(base)一致検証 + 書き込み probe → .devflow-tmp の git clean -fdx → deps install ‖ analyze
+# （issue 取得 + contract parse + Jev 有界判定。prerun-analyze.sh。deps install と並列）→
 # detect-stack。各段は独立に ok/error を報告し、後続段を巻き込まない。
 #
-# 禁止: GitHub CLI 経由の呼び出しやリモート更新系の書き込みコマンド（資格情報不要な
-# 読み取り専用 git 操作のみで完結させる契約。.claude/rules/dev-flow.md 参照）。
+# GitHub I/O は analyze 段の `analyze-issue`（GitHub CLI の issue 取得を内蔵）の読み取りのみ。
+# リモート更新系の書き込みコマンドは持たない（.claude/rules/dev-flow.md 参照）。
 
 set -euo pipefail
 
@@ -349,8 +350,38 @@ summarize_deps() {
     '
 }
 
+# ============================================================================
+# Segment 6: analyze (Segment 4 と並列に走らせる。段2 の成否に依存しない)
+# ============================================================================
+
+# analyze-issue --contract + Jev 有界判定（prerun-analyze.sh）を deps install と同時に始める。
+# 数分かかりうる deps install の裏で issue 取得と Jev 判定を終えるため、Workflow 側の Analyze phase は
+# args.setup.analyze の whitelist 検証とゲート判定だけになる（通常経路の Analyze spawn 0）。
+# 失敗（GitHub 到達不能 / JSON 不正）は analyze.ok:false + reason で報告し、Workflow が
+# needs_clarification（source=analyze_prerun）に倒す。所要は duration_seconds に載せ、Workflow の
+# telemetry では prerun_durations.analyze として phase_durations.analyze と分けて記録する。
+ANALYZE_OUT="$(mktemp "${TMPDIR:-/tmp}/dev-flow-prerun-analyze-out.XXXXXX")"
+ANALYZE_ARGS=(--issue "$ISSUE")
+[[ -n "$repo" ]] && ANALYZE_ARGS+=(--repo "$repo")
+(
+    a_start="$(date +%s)"
+    if ANALYZE_RAW="$("$PLUGIN_ROOT/dev-flow/scripts/prerun-analyze.sh" "${ANALYZE_ARGS[@]}" 2>/dev/null)" \
+        && printf '%s' "$ANALYZE_RAW" | jq -e 'type == "object" and (.ok | type == "boolean")' >/dev/null 2>&1; then
+        printf '%s' "$ANALYZE_RAW" | jq -c --argjson d "$(( $(date +%s) - a_start ))" '. + {duration_seconds: $d}'
+    else
+        jq -nc --argjson d "$(( $(date +%s) - a_start ))" \
+            '{ok: false, reason: "prerun-analyze.sh failed or returned malformed JSON", analyze_path: "contract", duration_seconds: $d}'
+    fi
+) >"$ANALYZE_OUT" 2>/dev/null &
+ANALYZE_PID=$!
+
 if [[ "$SEG2_OK" == true ]]; then
-    DEPS_RAW="$("$PLUGIN_ROOT/_shared/scripts/ensure-worktree-deps.sh" --path "$WT" --lockfile-only --skip-custom 2>/dev/null)" || DEPS_RAW=""
+    DEPS_OUT="$(mktemp "${TMPDIR:-/tmp}/dev-flow-prerun-deps-out.XXXXXX")"
+    "$PLUGIN_ROOT/_shared/scripts/ensure-worktree-deps.sh" --path "$WT" --lockfile-only --skip-custom >"$DEPS_OUT" 2>/dev/null &
+    DEPS_PID=$!
+    wait "$DEPS_PID" || true
+    DEPS_RAW="$(cat "$DEPS_OUT" 2>/dev/null || true)"
+    rm -f "$DEPS_OUT"
     # jq フィルタ自体が応答不正で落ちても段4 だけ ok:false に留める（set -e で script 全体を巻き込まない）
     deps_json="$(summarize_deps "$DEPS_RAW")" \
         || deps_json='{"ok":false,"note":"依存インストール結果を確認できなかった（ensure-worktree-deps 応答不正）"}'
@@ -378,13 +409,25 @@ else
 fi
 
 # ============================================================================
-# epoch_end: deps install / detect-stack 完了後の時刻 (Analyze 開始マークの給電元)
+# Segment 6 (join): analyze 段の完了を待つ
 # ============================================================================
 
-# analyze_start は「isolation-probe 直前」の時刻であるべきで、epoch（deps install 前）を
-# 使うと deps install + wrapper turn + probe spawn が丸ごと analyze の phase_durations に
-# 付け替わる。epoch_end はここ（deps/stack 完了後）で採り、Setup の決定論処理時間は
-# どの phase にも属さない残差（duration_seconds − Σphase_durations）に留める。
+wait "$ANALYZE_PID" || true
+analyze_json="$(cat "$ANALYZE_OUT" 2>/dev/null || true)"
+rm -f "$ANALYZE_OUT"
+if [[ -z "$analyze_json" ]] || ! printf '%s' "$analyze_json" | jq -e 'type == "object" and (.ok | type == "boolean")' >/dev/null 2>&1; then
+    analyze_json='{"ok":false,"reason":"prerun-analyze.sh produced no output","analyze_path":"contract","duration_seconds":0}'
+fi
+
+# ============================================================================
+# epoch_end: deps install / detect-stack / analyze 完了後の時刻 (Analyze 開始マークの給電元)
+# ============================================================================
+
+# analyze_start は Workflow の Analyze phase（ゲート判定）直前の時刻であるべきで、epoch
+# （deps install 前）を使うと deps install + analyze 段 + wrapper turn が丸ごと analyze の
+# phase_durations に付け替わる。epoch_end はここ（deps/stack/analyze の両段完了後）で採り、
+# Setup の決定論処理時間はどの phase にも属さない残差（duration_seconds − Σphase_durations）に
+# 留める（analyze 段の所要だけは analyze.duration_seconds → prerun_durations.analyze で別途持つ）。
 epoch_end="$(date +%s)"
 
 # ============================================================================
@@ -426,6 +469,7 @@ jq -n \
     --argjson clean "$clean_json" \
     --argjson deps "$deps_json" \
     --argjson stack "$stack_json" \
+    --argjson analyze "$analyze_json" \
     --argjson epoch "$epoch" \
     --argjson epoch_end "$epoch_end" \
     '
@@ -436,7 +480,7 @@ jq -n \
     + (if $have_head then {head: $head} else {} end)
     + (if $have_worktree_error then {worktree_error: $worktree_error} else {} end)
     + {worktree_status: $worktree_status, worktree_removed: $worktree_removed}
-    + {clean: $clean, deps: $deps, stack: $stack, epoch: $epoch, epoch_end: $epoch_end}
+    + {clean: $clean, deps: $deps, stack: $stack, analyze: $analyze, epoch: $epoch, epoch_end: $epoch_end}
     '
 
 exit 0

@@ -87,18 +87,8 @@ function makeSandbox(analyzeReq, epochMode) {
     if (label === 'worktree-deps') {
       return withEpoch({ status: 'no_dependencies' });
     }
-    // contract-probe: 明示的に null を返し sonnet analyze + issue-meta 経路へ fallback させる
-    if (label.startsWith('contract-probe')) {
-      return null;
-    }
-    // Analyze(sonnet): REQ schema は epoch を持たない（analyze_end は issue-meta 側の epoch から給電）
-    if (label.startsWith('analyze')) {
-      return analyzeReq;
-    }
-    // issue-meta: analyze_end の給電元（issue #451 provenance probe を issue #443 で epoch 給電にも転用）
-    if (label === 'issue-meta') {
-      return withEpoch({ ok: true, number: 1, title: 'stub-issue-title' });
-    }
+    // Analyze は args.setup.analyze から REQ を組み spawn しない（issue #690）。analyze_start / analyze_end は
+    // 共に args.setup.epoch_end から給電され、phase_durations.analyze はゲート判定のみの 0 になる。
     // implement_end は dev-implement-fable 呼び出しの epoch から給電される。
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を発生させない（給電対象ではない）
@@ -306,7 +296,7 @@ test('[duration-telemetry] epochMode=ok: clock# 専用 probe は 0 件起動、j
   );
   assert.ok(
     /"analyze":\d+/.test(capturedPrompt),
-    `journal-log prompt の phase_durations に "analyze":<number> が含まれるべきだが含まれていなかった（analyze_start は args.setup.epoch_end、analyze_end は issue-meta から給電される）。prompt:\n${capturedPrompt}`,
+    `journal-log prompt の phase_durations に "analyze":<number> が含まれるべきだが含まれていなかった（analyze_start / analyze_end は共に args.setup.epoch_end から給電される）。prompt:\n${capturedPrompt}`,
   );
   assert.ok(
     /"implement":\d+/.test(capturedPrompt),
@@ -352,8 +342,9 @@ test('[duration-telemetry] epochMode=fail: clock# 専用 probe は null を返�
     !capturedPrompt.includes('"duration_seconds"'),
     `clock probe / 給電元 stub 全滅時は journal-log prompt に "duration_seconds" が含まれないべきだが含まれていた。prompt:\n${capturedPrompt}`,
   );
+  // analyze だけは args.setup.epoch_end（必須キー）から給電されるため常に 0 秒で載る。それ以外の phase キーは欠落する
   assert.ok(
-    !capturedPrompt.includes('"phase_durations"'),
-    `clock probe / 給電元 stub 全滅時は journal-log prompt に "phase_durations" が含まれないべきだが含まれていた。prompt:\n${capturedPrompt}`,
+    capturedPrompt.includes('"phase_durations":{"analyze":0}'),
+    `clock probe / 給電元 stub 全滅時の phase_durations は {"analyze":0} のみのはずだが違った。prompt:\n${capturedPrompt}`,
   );
 });

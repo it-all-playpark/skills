@@ -260,19 +260,11 @@ const x = await Promise.resolve('test');
 
 test('[epoch-instruction] 既定 run: 給電対象 call の prompt が date +%s 取得指示を含み、label が clock で始まる call は 0 件', async () => {
   const src = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
-  const { ctx, calls } = makeDevFlowSandbox({
-    overrides: {
-      'analyze#1': {
-        summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
-        issue_number: 1,
-        issue_title: 'stub-issue-title',
-      },
-    },
-  });
+  const { ctx, calls } = makeDevFlowSandbox();
   const error = await runDevFlowInSandbox(src, ctx);
   assert.equal(error, null, `既定 run はエラーなく完走するべき: ${error?.message}`);
 
-  const epochFedLabels = ['test#1', 'impl:serial:issue-1', 'contract-probe#1', 'post-summary'];
+  const epochFedLabels = ['test#1', 'impl:serial:issue-1', 'post-summary'];
   for (const label of epochFedLabels) {
     const call = calls.find((c) => c.label === label);
     assert.ok(call, `label '${label}' の call が見つからない`);

@@ -9,11 +9,16 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 
 `/dev-flow <issue>` は skill wrapper (`dev-flow/SKILL.md`) が `dev-flow-prerun --issue <N>
 --worktree <path>`（top-level Bash、bare 形）で base 解決・worktree 作成/再利用・起点検証・
-書き込み probe・`.devflow-tmp` clean・deps install・framework 検出を 1 コマンドで行い、
+書き込み probe・`.devflow-tmp` clean・deps install・issue analyze（`prerun-analyze.sh`:
+`analyze-issue --contract` の決定論 parse + Jev 有界判定。deps install と並列）・framework 検出を
+1 コマンドで行い、
 `EnterWorktree({ path })` で worktree に入ってから stdout JSON を `Workflow({ args: { issue, setup } })`
 の `args.setup` に渡す（順序は EnterWorktree → Workflow。逆だと isolation probe が fail-closed abort する）。
-dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、subagent 起動は
-isolation-probe の 1 回のみ。orchestration (phase 遷移 / evaluate・pr-iterate の各ループ) は
+dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、Analyze phase は
+`args.setup.analyze` の whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）
+のみで通常経路の subagent 起動は 0（ゲートが引いたときだけ sonnet を 1 spawn して人間向け
+missing_context を生成し needs_clarification で終端する）。isolation-probe はゲート通過後・Implement 前の
+1 回。orchestration (phase 遷移 / evaluate・pr-iterate の各ループ) は
 workflow script が JS で保持し、中間 state は script 変数に
 持つ (外部 state JSON は持たない)。workflow の `meta.name` は `dev-flow-run` だが、telemetry
 handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件、静的テストで pin 済み）。
@@ -108,8 +113,8 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   `_shared/scripts/veridelta-archive.sh` のヘッダコメントが正典。
 - **bg-isolation guard と isolation probe**: bg 起動セッションが呼び出し元 cwd を worktree へ
   isolate しないまま dev-flow / pr-iterate を起動すると、harness の bg-isolation guard が
-  subagent の Write/Edit を共有 checkout への書き込みとして拒否する。dev-flow は Setup phase
-  （issue #641 以降、Setup の唯一の agent 呼び出し）、pr-iterate は review loop 進入前（fix stage
+  subagent の Write/Edit を共有 checkout への書き込みとして拒否する。dev-flow は Analyze の
+  ゲート通過後・Implement 直前（needs_clarification 経路では spawn しない）、pr-iterate は review loop 進入前（fix stage
   不到達の保証）に probe を配置する。probe は worktree 直下 `.devflow-tmp/.isolation-probe-<token>`
   （token は run 毎に一意 — dev-flow は wrapper（dev-flow-prerun、top-level Bash）が渡す
   `args.setup.epoch`（`date +%s`、必須キーのため fallback 経路は無い）、pr-iterate は

@@ -10,7 +10,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   vdelta_fail_open / vdelta_verdicts / vdelta_not_started / redgreen_headdiff / duration_seconds / phase_durations /
   merge_tier_reasons / route / subagent_invocations / resolved_evidence /
   shape_reason / realized_file_count / realized_file_count_raw / ac_count /
-  analyze_path / analyze_ineligible_reason）を
+  analyze_path / analyze_ineligible_reason / prerun_durations）を
   `~/.claude/journal/pending/` へ書き出し、
   dev-flow plugin の Stop hook `plugins/dev-flow/hooks/stop-devflow-telemetry.sh`
   （`hooks/hooks.json` から plugin root 変数経由で発火）が
@@ -67,8 +67,9 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   Bash）が渡す `args.setup.epoch`（`date +%s`。必須キーのため fallback 経路は無い）、end は Merge tier 末尾の
   post-summary 応答の optional epoch から給電し、残り 8 mark は phase 境界に隣接する既存 exec-proxy / agent
   応答の optional epoch フィールドから給電する（fail-open 不変）。
-  **給電元応答の完了タイミング依存の skew（contract 経路の analyze_end は plan 合成までの
-  時間が implement 区間へ付け替わる等）を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
+  **給電元応答の完了タイミング依存の skew を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
+  `analyze` は Workflow 側のゲート判定時間のみ（analyze_start / analyze_end とも `args.setup.epoch_end` から
+  給電されるため常に 0）で、prerun の analyze 段の所要は別キー `prerun_durations.analyze` に載る。
   Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。probe 失敗は fail-open（当該 mark null →
   対応する duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
   `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
@@ -137,11 +138,13 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   count だけでは shape と count の不一致は構造上 0 件になり除外規則の効きが見えない。
   shape は Security floor 時点の working tree を見るので、pr-iterate fix / base merge / 手動 commit で
   後から膨らんだ PR の changedFiles とは一致しない（journal から PR の最終規模は復元できない）。
-  `analyze_path` は `contract`（`analyze-issue.sh --contract` の決定論 parse 採用）/ `sonnet` の 2 値。
-  `analyze_ineligible_reason` は light path 不採用のときのみ出力（採用時はキー欠落）。`analyze-issue.sh` が
-  返した `ineligible_reason` を verbatim で載せ、probe が例外 / 失敗 / eligible だが whitelist 不合格 /
-  DEPTH が standard 以外で未試行、の workflow 側理由はそれぞれ `contract probe exception` /
-  `contract probe failed` / `whitelist rejected` / `contract not attempted (depth=<DEPTH>)` の固定文字列。
+  `analyze_path` は `contract`（prerun の `analyze-issue --contract` 決定論 parse のみで REQ が組めた）/
+  `jev`（prerun が breaking keyword hit / comments present を Jev 有界判定に回した）/ `sonnet`（Analyze の
+  3 条件ゲート（AC 空 / comment_conflicts / uncertain）が引き、sonnet で missing_context を生成して
+  needs_clarification に終端した — failure handoff のみ）の 3 値。`analyze_ineligible_reason` は Jev に
+  回した理由（prerun の `jev_reasons`: `breaking_keyword_scan true` / `comments present (N)` を `; ` 結合）で、
+  contract 経路ではキー欠落。`prerun_durations` は `{ analyze: <秒> }`（prerun の analyze 段 = issue 取得 +
+  contract parse + Jev 判定。deps install と並列に走る。prerun が duration を返さなければキー欠落）。
 
 ## Stop hook の二経路転送
 

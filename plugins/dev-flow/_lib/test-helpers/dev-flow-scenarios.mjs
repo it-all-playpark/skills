@@ -6,13 +6,14 @@
  * 使う。新しい exec-proxy label / 経路を dev-flow.js に足したら、ここに到達 scenario を足す
  * （exec-proxy-routing の「EXPECTED 全 label 到達」assert が未登録を検出する）。
  *
- * 各 scenario: { overrides, workflow?, expectError? }
+ * 各 scenario: { overrides, workflow?, extra?, expectError? }
  *   overrides   — makeDevFlowSandbox の label 単位 override
  *   workflow    — nested workflow() stub（省略時は lgtm / fixes_applied:0）
+ *   extra       — makeDevFlowSandbox の extra（args.setup.analyze を差し替える scenario が使う）
  *   expectError — run が throw で終端することを期待する scenario（abort / empty-diff）
  */
 
-import { mergeTierFacts, STANDARD_FILES, shapeOverrides } from './vm-sandbox.mjs';
+import { mergeTierFacts, STANDARD_FILES, shapeOverrides, analyzeArgs } from './vm-sandbox.mjs';
 
 const UI_FILE = 'src/components/Foo.tsx';
 const VALID_UI_CFG = { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}', base_port: 4100, ready_path: '/', env_files: [] };
@@ -31,11 +32,6 @@ const UI_OVERRIDES = {
 
 // 実効 shape は realized diff の file 数で決まる（issue #676）: complex は shapeOverrides('complex')（realized 7 件）、
 // micro（lite）は danger-grep の files を空にする。
-const LITE_REQ = {
-  summary: 'clean micro fix', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
-  breaking_change: false, breaking_keyword_scan: false,
-  issue_number: 1, issue_title: 'stub-issue-title',
-};
 const AC2 = [
   { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
   { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
@@ -125,10 +121,14 @@ export const DEV_FLOW_SCENARIOS = {
   // clean micro lite route（realized 0 files → micro。pr-review-lite + ci-check-lite で lgtm 終端、nested pr-iterate 起動なし）
   lite: {
     overrides: {
-      'analyze#1': LITE_REQ,
       'danger-grep': { risk: { ok: true, hits: [] }, files: [], struct: null, diffhash: null },
       'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     },
+  },
+  // Analyze のゲート（comment_conflicts 非空）→ analyze-clarify#1（dev-runner）1 spawn → needs_clarification
+  // （isolation-probe / fable / PR は 0 件。writeFailureTelemetry 経由の failure handoff。issue #690）
+  'analyze-clarify': {
+    extra: { args: analyzeArgs(1, { analyze_path: 'jev', jev_reasons: ['comments present (1)'], comment_count: 1, comment_conflicts: ['conflict: comment #1 by alice（OWNER, 2026-01-01T00:00:00Z）: hmm'] }) },
   },
   // cross-repo ラベル + 外部 repo の dirty 成果物 → graceful 終了（issue-labels / cross-repo-artifacts）
   'cross-repo': {

@@ -706,7 +706,7 @@ EOF
 # ---------------------------------------------------------------------------
 @test "(27) shape 較正: checks.shape_calibration が出力され、除外による下位 tier / floor による上位 tier は info issue で score 非影響" {
     write_devflow_entry "s1.json" '{"shape":"standard","shape_reason":"realized 4 file(s), 2 AC, type=fix → shape=standard","realized_file_count":4,"realized_file_count_raw":7,"analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' s1
-    write_devflow_entry "c1.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex","realized_file_count":2,"realized_file_count_raw":2,"analyze_path":"sonnet","analyze_ineligible_reason":"AC heading not found","merge_tier":"REVIEW","eval_iter":1}' c1
+    write_devflow_entry "c1.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex","realized_file_count":2,"realized_file_count_raw":2,"analyze_path":"jev","analyze_ineligible_reason":"breaking_keyword_scan true","merge_tier":"REVIEW","eval_iter":1}' c1
     write_devflow_entry "m1.json" '{"shape":"micro","shape_reason":"realized 1 file(s), 2 AC, type=fix → shape=micro","realized_file_count":1,"realized_file_count_raw":1,"merge_tier":"AUTO","eval_iter":0}' m1
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
@@ -719,7 +719,8 @@ EOF
     [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.realized_mismatch.excluded_below_raw')" -eq 1 ]
     [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.realized_mismatch.floor_above_raw')" -eq 1 ]
     [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.analyze_path.contract')" -eq 1 ]
-    [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.analyze_ineligible_reason.ac_heading_not_found')" -eq 1 ]
+    [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.analyze_path.jev')" -eq 1 ]
+    [ "$(printf '%s\n' "$output" | jq '.checks.shape_calibration.analyze_ineligible_reason.breaking')" -eq 1 ]
 
     local excluded_issue floored_issue warn_issue
     excluded_issue=$(printf '%s\n' "$output" | jq '[.issues[] | select(.severity=="info" and (.message | test("除外で下位 tier に決まった run 1 件")))] | length')
@@ -738,7 +739,7 @@ EOF
         write_devflow_entry "standard-${i}.json" '{"shape":"standard","shape_reason":"realized 3 file(s), 2 AC, type=fix → shape=standard","analyze_path":"contract","merge_tier":"REVIEW","eval_iter":1}' "s${i}"
     done
     for i in $(seq 1 5); do
-        write_devflow_entry "complex-${i}.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex","analyze_path":"sonnet","merge_tier":"HOLD","eval_iter":2}' "c${i}"
+        write_devflow_entry "complex-${i}.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex","analyze_path":"jev","analyze_ineligible_reason":"breaking_keyword_scan true","merge_tier":"HOLD","eval_iter":2}' "c${i}"
     done
 
     run bash -c "cd '${REPO}' && CLAUDE_JOURNAL_DIR='${CLAUDE_JOURNAL_DIR}' SKILL_CONFIG_PATH='${SKILL_CONFIG_PATH}' '${SCRIPT}' --scope telemetry --window 30d"
@@ -749,5 +750,6 @@ EOF
     [[ "$msg" == *"safe floor 5"* ]]
     [[ "$msg" == *"realized 閾値 6"* ]]
     [[ "$msg" != *"LLM raise"* ]]
-    [[ "$msg" == *"contract 6 / sonnet 5"* ]]
+    # analyze 経路は contract / jev / sonnet の 3 値で併記される（sonnet は needs_clarification 経路のみなので成功 handoff では 0）
+    [[ "$msg" == *"contract 6 / jev 5 / sonnet 0"* ]]
 }

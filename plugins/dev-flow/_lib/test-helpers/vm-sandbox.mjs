@@ -10,7 +10,11 @@
  *     （calls の各要素は {label, agentType, prompt, opts, schema}。opts は agent() に渡された
  *     opts をそのまま、schema は opts?.schema ?? null）
  *   - devFlowArgs(issue?, setupOverrides?): dev-flow.js 用 args の既定形（{issue, setup}）を返す
- *     （setup は dev-flow-prerun の stdout JSON と同形）
+ *     （setup は dev-flow-prerun の stdout JSON と同形。setup.analyze は prerunAnalyze() の既定）
+ *   - prerunAnalyze(overrides?): dev-flow-prerun の analyze 段（prerun-analyze.sh）の ok:true 出力を組み立てる
+ *     （AC 2 件 / type fix / breaking なし / comment なし → Analyze phase は spawn 0 で通過）。
+ *     REQ を変えたい test は devFlowArgs(issue, { analyze: prerunAnalyze({...}) }) を extra.args に渡す
+ *   - analyzeArgs(issue?, analyzeOverrides?): 上記の薄い wrapper（args 全体を返す）
  *   - runDevFlowInSandbox(src, ctx): dev-flow.js ソースを strip して sandbox 実行する
  *   - runWorkflowCapture(src, ctx, filename?): strip + wrap + vm 実行し {result, error} を返す
  *     （dev-flow.js / pr-iterate.js 共用。filename 既定は '.claude/workflows/dev-flow.js'）
@@ -54,6 +58,30 @@ export const JS_GLOBALS = {
 };
 
 // ============================================================
+// prerunAnalyze: dev-flow-prerun の analyze 段（prerun-analyze.sh）の ok:true 出力
+// ============================================================
+
+/**
+ * dev-flow-prerun の analyze 段の出力（args.setup.analyze）を返す。
+ * 既定は contract 経路（AC ['a','b'] / issue_type 'fix' / breaking なし / comment なし / uncertain 空）で、
+ * dev-flow.js の Analyze phase は agent を spawn せずゲートを通過する。
+ *
+ * @param {Record<string, unknown>} [overrides={}]
+ */
+export function prerunAnalyze(overrides = {}) {
+  return {
+    ok: true, analyze_path: 'contract', jev_reasons: [],
+    issue_title: 'stub-issue-title', issue_type: 'fix', acceptance_criteria: ['a', 'b'],
+    scope: 'src', scope_truncated: false, scope_total_chars: 3,
+    issue_body: 'stub-issue-body', issue_body_truncated: false,
+    breaking_keyword_scan: false, breaking_change: false, breaking_evidence: '',
+    comment_count: 0, comment_overrides: [], comment_conflicts: [], uncertain: [],
+    contract: 't1', ac_heading_near_miss: [], duration_seconds: 5,
+    ...overrides,
+  };
+}
+
+// ============================================================
 // devFlowArgs: dev-flow.js 用 args の既定形（{issue, setup}）
 // ============================================================
 
@@ -72,10 +100,21 @@ export function devFlowArgs(issue = 1, setupOverrides = {}) {
       ok: true, issue: Number(n), base: 'main', base_source: 'origin/HEAD',
       worktree: '/tmp/wt', branch: `feature/issue-${n}`, head: 'a'.repeat(40),
       worktree_status: 'created', clean: { ok: true },
-      deps: { ok: true, note: '' }, stack: { frameworks: [] }, epoch: 1000, epoch_end: 1050,
+      deps: { ok: true, note: '' }, stack: { frameworks: [] }, analyze: prerunAnalyze(),
+      epoch: 1000, epoch_end: 1050,
       ...setupOverrides,
     },
   };
+}
+
+/**
+ * setup.analyze だけを差し替えた args を返す（REQ の AC / issue_type / breaking / comment を変える test 用）。
+ *
+ * @param {number|string} [issue=1]
+ * @param {Record<string, unknown>} [analyzeOverrides={}]
+ */
+export function analyzeArgs(issue = 1, analyzeOverrides = {}) {
+  return devFlowArgs(issue, { analyze: prerunAnalyze(analyzeOverrides) });
 }
 
 // ============================================================
@@ -108,9 +147,6 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
     // model: opts.model（dev-flow / pr-iterate の call site は override を渡さないので常に null。残存検知用）
     calls.push({ label, agentType, prompt: p, opts: opts ?? {}, schema: opts?.schema ?? null, model: opts?.model ?? null });
     const result = responder({ label, agentType, prompt: p, opts: opts ?? {} });
-    if (result === undefined && label === 'issue-meta') {
-      return { ok: true, number: 1, title: 'stub-issue-title' };
-    }
     return result === undefined ? null : result;
   };
 
@@ -305,13 +341,10 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     // Setup phase の subagent は isolation-probe のみ（base / worktree / deps / cleanup は
     // dev-flow-prerun が run 前に済ませ args.setup で渡る — devFlowArgs 参照）
     if (label === 'isolation-probe') return { written: true };
-    if (label.startsWith('analyze')) {
-      return {
-        summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
-        issue_number: issue, issue_title: 'stub-issue-title',
-      };
-    }
-    if (label === 'issue-meta') return { ok: true, number: issue, title: 'stub-issue-title' };
+    // Analyze phase は args.setup.analyze（prerunAnalyze）から REQ を組み、通常経路では spawn しない。
+    // ゲート（AC 空 / comment_conflicts / uncertain）が引いたときだけ analyze-clarify#N（dev-runner）が
+    // 人間向け missing_context を返す（issue #690）。
+    if (label.startsWith('analyze-clarify')) return { missing_context: ['stub-clarify-question'] };
     // Implement / green-fix / reimpl は全 shape で dev-implement-fable 一本（issue #673）。
     // 合成 task `issue-<N>` を echo する（adoptReportedFiles の task_id 突合に必要）。
     // 既定は STANDARD_FILES（3 件）を申告し、danger-grep の realized files と一致させる（宣言外 0 件）。
