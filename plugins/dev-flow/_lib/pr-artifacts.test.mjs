@@ -281,9 +281,15 @@ test('[pr-artifacts] prompt: 本文を verbatim 転写させ bare 単文の git 
   assert.ok(p.includes('<<<COMMIT_MSG_BEGIN>>>') && p.includes('<<<COMMIT_MSG_END>>>'));
   assert.ok(p.includes('<<<PR_BODY_BEGIN>>>') && p.includes('<<<PR_BODY_END>>>'));
   assert.ok(p.includes('/tmp/wt/.devflow-tmp/commit-msg.txt') && p.includes('/tmp/wt/.devflow-tmp/pr-body.md'));
-  assert.ok(p.includes('`git -C /tmp/wt add -A`'));
-  assert.ok(p.includes('`git -C /tmp/wt commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'));
-  assert.ok(p.includes('`git -C /tmp/wt push -u origin HEAD`'));
+  // git は全て -C なしの bare 形（issue #700: `git -C` 形は sandbox 除外に当たらず、push は credential helper、
+  // add / commit は write deny 下の .git で index.lock 作成が失敗する）
+  assert.ok(p.includes('`git add -A`'), '手順 1 の add が bare 形でない');
+  assert.ok(p.includes('`git commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), '手順 2 の commit が bare 形でない');
+  assert.ok(p.includes('`git push -u origin HEAD`'), '手順 3 の push が bare 形でない');
+  assert.ok(p.includes('`git rev-parse HEAD`'), '手順 6 の rev-parse が bare 形でない');
+  assert.ok(!/git -C /.test(p), `prompt に git -C 形が含まれてはならない: ${p.match(/git -C [^\n]*/)?.[0]}`);
+  assert.ok(p.includes('cwd は worktree（EnterWorktree 済み）なので git には -C も cd も付けない'), 'bare 注記が cwd=worktree 前提の文言になっていない');
+  assert.ok(!p.includes('-C で worktree を渡しているため cd は不要'), '旧 bare 注記（-C 前提）が残っている');
   assert.ok(p.includes('`gh pr create --repo o/r --draft --base main --head feature/issue-642 --title "refactor(dev-flow): PR phase を純関数で生成する (#642)" --body-file /tmp/wt/.devflow-tmp/pr-body.md`'));
   assert.ok(p.includes('pr_url') && p.includes('pr_number') && p.includes('committed'));
 });
@@ -310,6 +316,20 @@ test('[pr-artifacts] prompt: 手順 2〜4 の失敗で failed_step / failure_rea
   assert.ok(p.includes('failed_step:"push" で中断'), '手順 3（push）の中断指示が無い');
   assert.ok(p.includes('failed_step:"pr-create" で中断'), '手順 4（pr-create）の中断指示が無い');
   assert.ok(p.includes('成功時は空文字'), '成功時に failed_step / failure_reason を空文字にする指示が無い');
+});
+
+// ---- prPhasePrompt の cwd branch 照合（issue #700） ----
+
+test('[pr-artifacts] prompt: 手順 0 で git rev-parse --abbrev-ref HEAD を branch と照合し、不一致なら git add 等を実行せず failed_step:"commit" で中断する', () => {
+  const p = prPhasePrompt({ wt: '/w', base: 'main', branch: 'feature/issue-642', repo: 'o/r', issue: 642, commitMessage: 'x (#642)\n', prBody: 'y' });
+  assert.ok(p.includes('`git rev-parse --abbrev-ref HEAD`'), '手順 0 の branch 確認コマンドが無い');
+  assert.ok(p.includes('手順 0'), '手順 0 として明示されていない');
+  assert.ok(p.includes('が `feature/issue-642` と一致するか確認する'), 'branch と照合する指示が無い');
+  assert.ok(p.includes('git add 等の後続手順を一切実行せず、failed_step:"commit"'), '不一致時に後続手順を実行せず中断する指示が無い');
+  assert.ok(p.includes('cwd branch mismatch: expected feature/issue-642'), 'failure_reason に cwd branch mismatch の内容が無い');
+  assert.ok(p.includes('（pr_url は空文字、pr_number は 0、committed は false、head_sha は空文字）'), '不一致中断時の戻り値が明示されていない');
+  // 手順 0 の branch 確認は手順 1（git add）より前に置かれる
+  assert.ok(p.indexOf('git rev-parse --abbrev-ref HEAD') < p.indexOf('`git add -A`'), '手順 0 は手順 1（git add）より前に無ければならない');
 });
 
 test('[pr-artifacts] prPhaseFailure: 成功応答（committed:true・pr_url 非空・pr_number 正）は null', () => {
@@ -414,7 +434,7 @@ test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing �
   assert.ok(pr.prompt.includes('<<<PR_BODY_BEGIN>>>\n**stub-issue-title**\n'), 'PR body 本文（結論1行）が verbatim で含まれない');
   assert.ok(pr.prompt.includes('- [ ] AC one\n- [ ] AC two') || pr.prompt.includes('- [x] AC one\n- [x] AC two'), 'PR body の受入条件 checkbox が含まれない');
   assert.ok(pr.prompt.includes('Closes #1\n<<<PR_BODY_END>>>'), 'PR body が Closes #1 で終わらない');
-  assert.ok(pr.prompt.includes('`git -C /tmp/wt commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), 'commit -F 指示が無い');
+  assert.ok(pr.prompt.includes('`git commit -F /tmp/wt/.devflow-tmp/commit-msg.txt`'), 'commit -F 指示が無い');
   assert.ok(pr.prompt.includes('gh pr create') && pr.prompt.includes('--draft --base main --head feature/issue-1'), 'gh pr create の draft/base/head 指示が無い');
   assert.ok(!pr.prompt.includes('Skill: git-commit') && !pr.prompt.includes('Skill: git-pr'), 'git-commit / git-pr skill を呼んではならない');
 });

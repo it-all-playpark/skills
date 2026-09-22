@@ -178,15 +178,33 @@ test('[final-reconcile] (a) fixes_applied=0 → 新規 agent 呼び出しゼロ 
 // ============================================================
 
 test('[final-reconcile] (b) fixes=1 + test green → reverified + final_test_green:true + merge_tier REVIEW', async () => {
+  let syncPrompt = null;
   const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
-    overrides: { 'test#final': { tests: 'passed', green: true, summary: '' } },
+    overrides: {
+      'test#final': { tests: 'passed', green: true, summary: '' },
+      'reconcile-sync': ({ prompt }) => { syncPrompt = prompt; return { ok: true, head: 'deadbeef' }; },
+    },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'b');
   assert.ok(result !== null, '(b) workflow は return object を返すべきだが null だった');
 
   assert.ok(calls.some((c) => c.label === 'reconcile-sync'), "(b) 'reconcile-sync' が呼ばれるはず");
+  // issue #700: fetch / merge は `git -C` 形だと sandbox 除外に当たらず、fetch は credential helper、
+  // merge は write deny 下の .git で失敗する。cwd は WT なので bare 形で指示する
+  assert.ok(syncPrompt?.includes('git fetch origin ') && syncPrompt?.includes('git merge --ff-only FETCH_HEAD'),
+    `(b) reconcile-sync の prompt は bare の git fetch / git merge を含むべき: ${syncPrompt}`);
+  assert.ok(!/git -C /.test(syncPrompt ?? ''), `(b) reconcile-sync の prompt に git -C 形が含まれてはならない: ${syncPrompt?.match(/git -C [^\n]*/)?.[0]}`);
+  // cd 前置の複合形（`cd <WT> && git fetch …`）へ誘導しない: 「cd <WT> で作業」を置かず bare 単文と cd 前置禁止を明示する
+  assert.ok(!/cd \S+ で作業/.test(syncPrompt ?? ''), `(b) reconcile-sync の prompt は「cd <WT> で作業」を含んではならない: ${syncPrompt?.slice(0, 200)}`);
+  assert.ok(syncPrompt?.includes('bare 単文') && syncPrompt?.includes('cd 前置'), `(b) reconcile-sync の prompt は bare 単文・cd 前置禁止を指示すべき: ${syncPrompt?.slice(0, 200)}`);
+  // issue #700: -C を外した fetch/merge は cwd のみで対象が決まる。手順 0 で cwd の branch を
+  // 照合し、不一致なら fetch/merge を実行せず ok:false で中断する指示を持つべき
+  assert.ok(syncPrompt?.includes('git rev-parse --abbrev-ref HEAD'), `(b) reconcile-sync の prompt は手順 0 の branch 確認コマンドを含むべき: ${syncPrompt}`);
+  assert.ok(syncPrompt?.includes('cwd branch mismatch'), `(b) reconcile-sync の prompt は cwd branch mismatch での中断を指示すべき: ${syncPrompt}`);
+  assert.ok(syncPrompt?.indexOf('git rev-parse --abbrev-ref HEAD') < syncPrompt?.indexOf('git fetch origin'),
+    `(b) branch 確認（手順 0）は git fetch（手順 1）より前に置かれるべき: ${syncPrompt}`);
   assert.ok(calls.some((c) => c.label === 'test#final'), "(b) 'test#final' が呼ばれるはず");
   assert.equal(result?.final_reconcile, 'reverified', `(b) final_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
   assert.equal(result?.final_test_green, true, `(b) final_test_green は true のはずだが ${JSON.stringify(result?.final_test_green)}`);
@@ -254,6 +272,24 @@ test("[final-reconcile] (e) fixes=1 + reconcile-sync 失敗(non-ff) → unavaila
   assert.equal(result?.final_reconcile, 'unavailable', `(e) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
   assert.equal(result?.merge_tier, 'HOLD', `(e) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
   assert.ok(!calls.some((c) => c.label === 'test#final'), "(e) sync 失敗時は 'test#final' が呼ばれないはず");
+});
+
+// ============================================================
+// (e2) fixes=1 + reconcile-sync が cwd branch mismatch を返す → unavailable + HOLD + 'test#final' 不発（issue #700）
+// ============================================================
+
+test("[final-reconcile] (e2) fixes=1 + reconcile-sync が cwd branch mismatch を返す → unavailable + HOLD + test#final 不発", async () => {
+  const { ctx, calls } = makeSandbox({
+    fixesApplied: 1,
+    overrides: { 'reconcile-sync': { ok: false, error: 'cwd branch mismatch: expected feature/issue-700, got main' } },
+  });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'e2');
+  assert.ok(result !== null, '(e2) workflow は return object を返すべきだが null だった');
+
+  assert.equal(result?.final_reconcile, 'unavailable', `(e2) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
+  assert.equal(result?.merge_tier, 'HOLD', `(e2) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
+  assert.ok(!calls.some((c) => c.label === 'test#final'), "(e2) sync が cwd branch mismatch を返したときは 'test#final' が呼ばれないはず");
 });
 
 // ============================================================
