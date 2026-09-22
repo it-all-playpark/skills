@@ -355,11 +355,11 @@ summarize_deps() {
 # ============================================================================
 
 # analyze-issue --contract + Jev 有界判定（prerun-analyze.sh）を deps install と同時に始める。
-# 数分かかりうる deps install の裏で issue 取得と Jev 判定を終えるため、Workflow 側の Analyze phase は
-# args.setup.analyze の whitelist 検証とゲート判定だけになる（通常経路の Analyze spawn 0）。
+# 数分かかりうる deps install の裏で issue 取得と Jev 判定を終えるため、Workflow 側（Setup 末尾の
+# analyze ゲート）は args.setup.analyze の whitelist 検証とゲート判定だけになる（通常経路の analyze spawn 0）。
 # 失敗（GitHub 到達不能 / JSON 不正）は analyze.ok:false + reason で報告し、Workflow が
 # needs_clarification（source=analyze_prerun）に倒す。所要は duration_seconds に載せ、Workflow の
-# telemetry では prerun_durations.analyze として phase_durations.analyze と分けて記録する。
+# telemetry では prerun_durations.analyze として記録する（Workflow 側のゲートは phase_durations に区間を持たない）。
 ANALYZE_OUT="$(mktemp "${TMPDIR:-/tmp}/dev-flow-prerun-analyze-out.XXXXXX")"
 ANALYZE_ARGS=(--issue "$ISSUE")
 [[ -n "$repo" ]] && ANALYZE_ARGS+=(--repo "$repo")
@@ -420,11 +420,11 @@ if [[ -z "$analyze_json" ]] || ! printf '%s' "$analyze_json" | jq -e 'type == "o
 fi
 
 # ============================================================================
-# epoch_end: deps install / detect-stack / analyze 完了後の時刻 (Analyze 開始マークの給電元)
+# epoch_end: deps install / detect-stack / analyze 完了後の時刻 (setup_end マーク = implement 区間の起点の給電元)
 # ============================================================================
 
-# analyze_start は Workflow の Analyze phase（ゲート判定）直前の時刻であるべきで、epoch
-# （deps install 前）を使うと deps install + analyze 段 + wrapper turn が丸ごと analyze の
+# setup_end は Workflow の Setup 末尾（analyze ゲート判定）直前の時刻であるべきで、epoch
+# （deps install 前）を使うと deps install + analyze 段 + wrapper turn が丸ごと implement の
 # phase_durations に付け替わる。epoch_end はここ（deps/stack/analyze の両段完了後）で採り、
 # Setup の決定論処理時間はどの phase にも属さない残差（duration_seconds − Σphase_durations）に
 # 留める（analyze 段の所要だけは analyze.duration_seconds → prerun_durations.analyze で別途持つ）。

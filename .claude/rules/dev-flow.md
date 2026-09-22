@@ -43,7 +43,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 - 軸A invariant: deterministic oracle / seed / critical は全 gate_policy で blocking。security floor と決定論ゲートを policy で緩めない。記録専用 telemetry は gate 入力にしない
 - Merge tier は pr-iterate の後（fix 後の最終 tree で danger 再 reconcile）。fixes_applied>0 は Final reconcile で test 再実行、red / 再検証不能は HOLD（PR head sha に pin した CI 決定論判定でのみ代替）
 - danger-grep 失敗は fail-closed（全 SEC seed unchecked → HOLD）。realized-diff / redgreen / final-reconcile / final-ac-reconcile / issue-labels の失敗は fail-safe（安全側 floor・HOLD）。advisory 信号（ui-verify / ci-checks / structural / vdelta / post-comment / clock / pr-meta）は fail-open。理由: 決定論 gate の入力不明を通過と同一視しない
-- Analyze は prerun の決定論 analyze（`analyze-issue --contract` + Jev 有界判定）の検証とゲートのみで通常経路の spawn は 0。LLM に issue を転写させる経路を戻さない（転写者がいれば provenance 突合が要る）。AC 空 / comment_conflicts 非空 / uncertain 非空は needs_clarification で終端（決定論は意味的矛盾の要否を判定できず、LLM に黙って片方を採らせると訂正が実装に反映されない）
+- analyze ゲート（Setup 末尾）は prerun の決定論 analyze（`analyze-issue --contract` + Jev）の検証とゲートのみで通常経路の spawn は 0。LLM に issue を転写させる経路を戻さない（転写者がいれば provenance 突合が要る）。AC 空 / comment_conflicts 非空 / uncertain 非空は needs_clarification で終端（決定論は意味的矛盾の要否を判定できず、LLM に黙って片方を採らせると訂正が実装に反映されない）
 - empty-diff gate は fail-closed（cross-repo は人間ラベル opt-in + 決定論 dirty 検証が揃った場合のみ graceful 終端）
 - block_class は `approach_mismatch` / `guard_blocked` の閉じた enum。guard_blocked は replan ループから除外し evaluator focus へ直行
 - isolation probe: `written:false` は fail-closed（throw + 回避手順: 別 worktree を add → EnterWorktree → 再実行）。probe 自体の失敗は fail-open。`bgIsolation:"none"` による guard 無効化は採らない（共有 checkout 汚染は blast-radius。設定緩和で sunset しない）

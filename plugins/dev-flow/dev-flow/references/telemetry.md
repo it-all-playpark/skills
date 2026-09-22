@@ -50,7 +50,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   同種の穴があった（handoff は終端 1 箇所のみで isolation probe の fail-closed throw 等で全損）
   ため同機構で塞いだ。
   `final_reconcile` は `skipped`/`reverified`/`unavailable`/`ci_verified` の 4 値（fixes_applied=0 は `skipped`、worktree 同期・test 再実行に成功したら `reverified`、同期失敗・schema 不一致・test#final `tests:'error'`（テストが 1 件も実行されなかった起動失敗 — 本物の red `tests:'failed'` とは区別し `finalTestGreen` は null 据え置き）は `unavailable`、`unavailable` のうちローカル再検証は不能だが PR head sha に pin した CI check 全 success を決定論確認できた場合のみ `ci_verified`）。
-  `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して Analyze 時点の既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
+  `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して analyze ゲートで確定した既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `pr_closes_status` は `verified`/`reinjected`/`missing`/`unverified` の 4 値（passthrough 経路。常時出力。PR 作成直後の `gh pr view --json body` による Closes 行決定論検証結果。`missing` は再投入も失敗し `classifyMergeTier` の HOLD 理由 `pr_closes_missing` に載る）。
   `pr_body_synced`（passthrough 経路。boolean。pr-iterate が fix を適用し lgtm 終端し Final AC reconcile が `reverified` のときのみ AC checkbox 同期を実施し出力。未実施はキー自体を省く）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ。`ci_verified` はローカル test を再実行していないため出力されない）。
@@ -60,16 +60,18 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `vdelta_fail_open` は test_cmd（vdelta run）経路が起動した redgreen AC ペアのうち verdict が欠落/不正だった件数（>0 時のみ出力）。`vdelta_not_started` は test_cmd 経路が起動しなかった redgreen AC ペア数（spawn 数ではない — 全ペアを 1 spawn で判定する）（>0 時のみ出力。bats 等 `redgreen.conf` の test_cmd に乗らない runner のみの AC で発生する。RunStore に run pair が無く verdict 不在が期待値なので `vdelta_fail_open` には数えない）。`redgreen_headdiff` は未起動ペアの per-AC digest 配列（`{ac, status, new, modified, unchanged, total, red, green}` のみ。status は `clean`/`test_modified`/`fail_open` の閉じた enum。test_files のうち HEAD に存在し worktree と差分があるものが 1 件以上で `test_modified`、HEAD に無い新規 test は `new` に数え clean 扱い。redgreen-verify.sh が git 差分から決定論で算出し、runner の種類・拡張子に依存しない。`red`/`green` は同一 invocation の impl_files red→green 実証結果（rg.red/rg.green）をそのまま複合させたもの — status（test_files の HEAD 差分）だけでは red=false（昇格せず）の AC も status=test_modified の他 AC と区別できないため、「test 改変を伴う red→green」を telemetry 単体（`status === 'test_modified' && red === true && green === true`）で識別できるようにする。記録専用 — deterministic 昇格・redgreen deny・merge tier の入力にはしない）。
   `vdelta_verdicts` は per-AC digest 配列（`{ac, status, comparability, verification_surface, repaired_with_test_change}` のみ。raw verdict・anchors・テスト名は redaction 原則で保存しない。単一キーへの上書き出力・dual-key 併記はしない）。
   `duration_seconds` は run 全体の wall-clock 秒（clock#start 〜 clock#end）。
-  `phase_durations` は analyze / implement / validate / evaluate / pr / iterate / final の 7 phase の秒数 object。
+  `phase_durations` は implement / validate / evaluate / pr / iterate / final の 6 phase の秒数 object。
   各 phase は開始〜終了の全体時間（plan-review loop / evaluate 差し戻し loop 等の内部反復を含む）。evaluate 区間は
   Security floor を含む。micro path（Evaluate skip）では evaluate キー自体が欠落し pr は直近 mark（validate_end）
   起点で計算される。時刻は専用 clock probe を起動せず、start は wrapper（dev-flow-prerun、top-level
   Bash）が渡す `args.setup.epoch`（`date +%s`。必須キーのため fallback 経路は無い）、end は Merge tier 末尾の
-  post-summary 応答の optional epoch から給電し、残り 8 mark は phase 境界に隣接する既存 exec-proxy / agent
-  応答の optional epoch フィールドから給電する（fail-open 不変）。
+  post-summary 応答の optional epoch から給電し、implement 区間の起点 `setup_end` は prerun 応答の
+  `args.setup.epoch_end`（deps install / detect-stack / analyze 段完了後）から、残り 6 mark は phase 境界に
+  隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから給電する（fail-open 不変）。
   **給電元応答の完了タイミング依存の skew を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
-  `analyze` は Workflow 側のゲート判定時間のみ（analyze_start / analyze_end とも `args.setup.epoch_end` から
-  給電されるため常に 0）で、prerun の analyze 段の所要は別キー `prerun_durations.analyze` に載る。
+  start〜setup_end（deps install 等の prerun 決定論処理 + wrapper turn）はどの phase にも属さない残差
+  （duration_seconds − Σphase_durations）で、Setup 末尾の analyze ゲートは所要 ≒0 のため区間を持たない。
+  prerun の analyze 段の所要は別キー `prerun_durations.analyze` に載る。
   Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。probe 失敗は fail-open（当該 mark null →
   対応する duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
   `merge_tier_reasons` は merge tier 判定理由の文字列配列。`route` は PR phase の経路識別子
@@ -134,7 +136,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   **実効 shape の判定根拠 / analyze 経路の根拠（成功 handoff のみ・passthrough 経路・gate / merge tier / ledger の
   入力にはしない。dev-flow-doctor の「shape 較正」が読む）**:
   `shape` は Security floor で `classifyShape(req, realizedCount)` が realized diff の file 数 + AC 数 /
-  `issue_type` / 構造化 `breaking_change` だけで決めた実効 shape（Analyze の事前見積もりは持たない）。
+  `issue_type` / 構造化 `breaking_change` だけで決めた実効 shape（事前見積もりは持たない）。
   `shape_reason` は `classifyShape` が返す `reason` 文字列（`realized N file(s), M AC, type=… → shape=…` の
   閾値判定 / それ以外は safe floor（count 欠損・AC 欠落・issue_type 外・breaking）の種別 — doctor はこの
   prefix で 2 分類する）。`ac_count` は `acceptance_criteria.length`。
@@ -147,8 +149,8 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   shape は Security floor 時点の working tree を見るので、pr-iterate fix / base merge / 手動 commit で
   後から膨らんだ PR の changedFiles とは一致しない（journal から PR の最終規模は復元できない）。
   `analyze_path` は `contract`（prerun の `analyze-issue --contract` 決定論 parse のみで REQ が組めた）/
-  `jev`（prerun が breaking keyword hit / comments present を Jev 有界判定に回した）/ `sonnet`（Analyze の
-  3 条件ゲート（AC 空 / comment_conflicts / uncertain）が引き、sonnet で missing_context を生成して
+  `jev`（prerun が breaking keyword hit / comments present を Jev 有界判定に回した）/ `sonnet`（Setup 末尾の
+  analyze 3 条件ゲート（AC 空 / comment_conflicts / uncertain）が引き、sonnet で missing_context を生成して
   needs_clarification に終端した — failure handoff のみ）の 3 値。`analyze_ineligible_reason` は Jev に
   回した理由（prerun の `jev_reasons`: `breaking_keyword_scan true` / `comments present (N)` を `; ` 結合）で、
   contract 経路ではキー欠落。`prerun_durations` は `{ analyze: <秒> }`（prerun の analyze 段 = issue 取得 +

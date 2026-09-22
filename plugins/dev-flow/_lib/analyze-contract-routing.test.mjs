@@ -1,8 +1,9 @@
 // _lib/analyze-contract-routing.test.mjs
-// Guard test: Analyze phase の配線 pin（issue #690）。Analyze は prerun の script 段（analyze-issue --contract +
-// Jev 有界判定）の結果 args.setup.analyze を whitelist 検証して REQ を組み、3 条件ゲートだけを判定する。
+// Guard test: Setup 末尾の analyze ゲートの配線 pin（issue #690 / #695）。ゲートは prerun の script 段
+// （analyze-issue --contract + Jev 有界判定）の結果 args.setup.analyze を whitelist 検証して REQ を組み、
+// 3 条件ゲートだけを判定する（固有の phase は持たない）。
 //
-//   (a) 通常経路（AC 抽出成功・conflict 無し・uncertain 空）: Analyze phase の agent spawn が 0 件、
+//   (a) 通常経路（AC 抽出成功・conflict 無し・uncertain 空）: analyze ゲートの agent spawn が 0 件、
 //       旧 label（contract-probe# / analyze# / issue-meta / analyze-retrunc# / analyze-retry#）が 0 件、run は完走
 //   (b) ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）: needs_clarification が isolation-probe より前に
 //       確定し、isolation-probe / dev-implement-fable / pr の spawn が 0 件、ゲート後の sonnet spawn
@@ -36,8 +37,9 @@ async function run({ overrides = {}, analyze = {}, args } = {}) {
   return { calls, logs, result, error };
 }
 
-function analyzePhaseCalls(calls) {
-  return calls.filter((c) => c.opts?.phase === 'Analyze');
+// analyze ゲート由来の spawn（label が 'analyze' で始まる。通常経路では 0 件、ゲート後の analyze-clarify#N のみ）
+function analyzeGateCalls(calls) {
+  return calls.filter((c) => c.label.startsWith('analyze'));
 }
 function legacyCalls(calls) {
   return calls.filter((c) => LEGACY_ANALYZE_LABELS.some((p) => c.label === p || c.label.startsWith(p)));
@@ -53,23 +55,23 @@ function assertClarificationBeforeSpawn(calls, result, name) {
   assert.equal(legacyCalls(calls).length, 0, `[${name}] 旧 analyze 系 label が spawn されている: ${legacyCalls(calls).map((c) => c.label).join(', ')}`);
 }
 
-// ---- (a) 通常経路: Analyze phase の spawn 0 ----
-test('[analyze-routing] (a) 通常経路: Analyze phase の agent spawn は 0 件、旧 analyze 系 label も 0 件で run が完走する', async () => {
+// ---- (a) 通常経路: analyze ゲートの spawn 0 ----
+test('[analyze-routing] (a) 通常経路: analyze ゲートの agent spawn は 0 件、旧 analyze 系 label も 0 件で run が完走する', async () => {
   const { calls, result, error, logs } = await run();
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
-  assert.equal(analyzePhaseCalls(calls).length, 0, `Analyze phase の spawn: ${analyzePhaseCalls(calls).map((c) => c.label).join(', ')}`);
+  assert.equal(analyzeGateCalls(calls).length, 0, `analyze ゲートの spawn: ${analyzeGateCalls(calls).map((c) => c.label).join(', ')}`);
   assert.equal(legacyCalls(calls).length, 0, `旧 analyze 系 label: ${legacyCalls(calls).map((c) => c.label).join(', ')}`);
   assert.equal(calls.filter((c) => c.agentType === 'dev-flow:dev-runner').length, 0, '通常経路で dev-runner（sonnet）が spawn されている');
   assert.ok(result && typeof result === 'object' && result.status !== 'needs_clarification', `run は完走するはず: ${JSON.stringify(result?.status)}`);
-  assert.ok(logs.some((l) => l.includes('Analyze phase の spawn 0')), 'Analyze phase の spawn 0 の log が無い');
+  assert.ok(logs.some((l) => l.includes('analyze ゲートの spawn 0')), 'analyze ゲートの spawn 0 の log が無い');
 });
 
-test('[analyze-routing] (a2) jev 経路（comment_overrides のみ / breaking_change=true）も Analyze phase の spawn は 0 で run が進む', async () => {
+test('[analyze-routing] (a2) jev 経路（comment_overrides のみ / breaking_change=true）も analyze ゲートの spawn は 0 で run が進む', async () => {
   const { calls, result, error, logs } = await run({
     analyze: { analyze_path: 'jev', jev_reasons: ['breaking_keyword_scan true', 'comments present (1)'], comment_count: 1, comment_overrides: ['override: comment #1 by reporter（NONE, t）: 訂正: 30 箇所'], breaking_change: true, breaking_evidence: 'Jev noul p=0.95' },
   });
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
-  assert.equal(analyzePhaseCalls(calls).length, 0);
+  assert.equal(analyzeGateCalls(calls).length, 0);
   assert.ok(result?.status !== 'needs_clarification');
   assert.ok(logs.some((l) => l.includes('comment による body 訂正を採用（1 件）')), 'override 採用の log が無い');
   assert.ok(logs.some((l) => l.includes('breaking_change=true')), 'breaking_change の log が無い');
@@ -89,7 +91,7 @@ for (const [name, analyze] of [
     const clarify = calls.filter((c) => c.label === 'analyze-clarify#1');
     assert.equal(clarify.length, 1, `analyze-clarify#1 は 1 回のはずだが ${clarify.length} 回`);
     assert.equal(clarify[0].agentType, 'dev-flow:dev-runner');
-    assert.equal(clarify[0].opts.phase, 'Analyze');
+    assert.equal(clarify[0].opts.phase, 'Setup', 'analyze-clarify の phase 帰属は Setup（Analyze phase は issue #695 で撤去）');
     assert.equal(calls.filter((c) => c.agentType === 'dev-flow:dev-runner').length, 1, 'sonnet の spawn は analyze-clarify#1 の 1 回のみ');
     // missing_context は sonnet の質問文 + 決定論のゲート理由
     assert.ok(Array.isArray(result.missing_context) && result.missing_context.includes('stub-clarify-question'), `missing_context に sonnet の質問文が無い: ${JSON.stringify(result.missing_context)}`);

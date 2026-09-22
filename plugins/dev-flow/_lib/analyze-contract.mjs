@@ -1,8 +1,8 @@
 // _lib/analyze-contract.mjs
 // buildReqFromContract: dev-flow-prerun の analyze 段（prerun-analyze.sh = `analyze-issue --contract` の
 // 決定論 parse + Jev 有界判定）の出力 `args.setup.analyze` から REQ を決定論構成する純粋関数。
-// dev-flow の Analyze phase はこの whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 /
-// uncertain 非空）だけを行い、通常経路では agent を 1 つも spawn しない（issue #690）。
+// dev-flow の Setup 末尾の analyze ゲートはこの whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 /
+// uncertain 非空）だけを行い、通常経路では agent を 1 つも spawn しない（issue #690 / #695）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -79,7 +79,7 @@ export function buildReqFromContract(analyze, issueNumber) {
   return req
 }
 
-// analyzeGateReasons: Analyze phase の 3 条件ゲート。非空なら needs_clarification（source=analyze）で終端し、
+// analyzeGateReasons: Setup 末尾の analyze ゲート（3 条件）。非空なら needs_clarification（source=analyze）で終端し、
 // ゲート後にだけ sonnet を 1 spawn して人間向け missing_context を生成する。
 //   - AC 空: 決定論 parse が AC 見出し / 項目を見つけられなかった
 //   - comment_conflicts 非空: body と comment の矛盾、または権限なし / 低確信の上書き（fail-closed）

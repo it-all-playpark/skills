@@ -81,14 +81,14 @@ export function validatePrerunSetup(raw, issue) {
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
   // analyze（issue #690）: prerun の analyze 段（analyze-issue --contract + Jev）の結果。ok:false は
-  // Analyze phase が needs_clarification（source=analyze_prerun）に倒すため throw しない（reason 必須）。
+  // Setup 末尾の analyze ゲートが needs_clarification（source=analyze_prerun）に倒すため throw しない（reason 必須）。
   if (!isPlainObject(raw.analyze)) fail('analyze', raw.analyze);
   if (typeof raw.analyze.ok !== 'boolean') fail('analyze.ok', raw.analyze.ok);
   if (raw.analyze.ok === false && !isNonEmptyString(raw.analyze.reason)) fail('analyze.reason', raw.analyze.reason);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
-  // epoch_end は deps install / detect-stack 完了後（prerun.sh 末尾）で採る第2の時刻。
-  // analyze_start はここから給電する（epoch から給電すると deps install 等の Setup 決定論処理
-  // 時間が丸ごと analyze の phase_durations に付け替わるため）。
+  // epoch_end は deps install / detect-stack / analyze 段 完了後（prerun.sh 末尾）で採る第2の時刻。
+  // setup_end mark（implement 区間の起点）はここから給電する（epoch から給電すると deps install 等の
+  // Setup 決定論処理時間が丸ごと implement の phase_durations に付け替わるため）。
   if (!(Number.isInteger(raw.epoch_end) && raw.epoch_end > 0)) fail('epoch_end', raw.epoch_end);
 
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;

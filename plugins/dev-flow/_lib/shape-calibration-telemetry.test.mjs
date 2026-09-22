@@ -1,11 +1,11 @@
 // issue #640 / #676 / #690: 実効 shape の判定根拠と analyze 経路が journal telemetry（journal-save prompt の handoff JSON）
 // に載ることを VM sandbox で固定する。shape は realized diff の file 数から classifyShape が決めた実効値、
 // shape_reason はその realized ベースの根拠（事前見積もり由来の estimated_file_count / shape_refloored は無い）。
-// analyze 経路は args.setup.analyze（prerun の analyze 段）から決まり、Workflow 側の Analyze phase は spawn しない。
+// analyze 経路は args.setup.analyze（prerun の analyze 段）から決まり、Workflow 側（Setup 末尾の analyze ゲート）は spawn しない。
 //
 //   (a) contract 経路（既定）: analyze_path='contract'、analyze_ineligible_reason はキー欠落、
 //       shape_reason が realized 閾値判定文、ac_count / realized_file_count / realized_file_count_raw が数値で載る、
-//       prerun_durations.analyze が prerun の analyze.duration_seconds、phase_durations.analyze は 0（ゲート判定のみ）
+//       prerun_durations.analyze が prerun の analyze.duration_seconds、phase_durations に analyze キーは無い（issue #695）
 //   (b) jev 経路: analyze_path='jev'、analyze_ineligible_reason が prerun の jev_reasons を '; ' 結合した文字列
 //   (c) prerun の analyze.duration_seconds 欠落: prerun_durations キーを出さない（fail-open）
 //   (d) realized count 欠損（danger-grep の files が null）: shape=complex、shape_reason が safe floor 文、
@@ -48,7 +48,7 @@ async function runScenario({ overrides = {}, extra = {} } = {}) {
 
 test('[shape-calibration] (a) contract 経路（既定）: analyze_path=contract、analyze_ineligible_reason はキー欠落、shape / 数値キー / prerun_durations が型どおり載る', async () => {
   const { telemetry, calls } = await runScenario();
-  assert.equal(calls.filter((c) => c.opts?.phase === 'Analyze').length, 0, '通常経路の Analyze phase で agent が spawn されている');
+  assert.equal(calls.filter((c) => c.label.startsWith('analyze')).length, 0, '通常経路の analyze ゲートで agent が spawn されている');
   assert.equal(telemetry.analyze_path, 'contract');
   assert.equal(Object.prototype.hasOwnProperty.call(telemetry, 'analyze_ineligible_reason'), false, 'contract 経路では analyze_ineligible_reason キーを出さない');
   assert.equal(telemetry.shape_reason, 'realized 3 file(s), 2 AC, type=fix → shape=standard');
@@ -56,9 +56,9 @@ test('[shape-calibration] (a) contract 経路（既定）: analyze_path=contract
   assert.equal(telemetry.realized_file_count, 3);
   assert.equal(telemetry.realized_file_count_raw, 3);
   assert.equal(telemetry.shape, 'standard');
-  // prerun の analyze 段の所要は prerun_durations.analyze、Workflow 側の Analyze はゲート判定のみで 0 秒
+  // prerun の analyze 段の所要は prerun_durations.analyze。Workflow 側の analyze ゲートは phase_durations に区間を持たない（issue #695）
   assert.deepEqual(telemetry.prerun_durations, { analyze: 5 });
-  assert.equal(telemetry.phase_durations?.analyze, 0);
+  assert.ok(!telemetry.phase_durations || !('analyze' in telemetry.phase_durations), `phase_durations に analyze キーが残っている: ${JSON.stringify(telemetry.phase_durations)}`);
   // 事前見積もり由来のキーは載せない（issue #676）
   for (const k of ['estimated_file_count', 'shape_refloored', 'effective_shape', 'triviality', 'triviality_reason']) {
     assert.equal(Object.prototype.hasOwnProperty.call(telemetry, k), false, `${k} は telemetry に載せない`);
@@ -69,7 +69,7 @@ test('[shape-calibration] (b) jev 経路: analyze_path=jev、analyze_ineligible_
   const { telemetry, calls } = await runScenario({
     extra: { args: analyzeArgs(1, { analyze_path: 'jev', jev_reasons: ['breaking_keyword_scan true', 'comments present (2)'], comment_count: 2, comment_overrides: ['override: comment #1 by reporter（NONE, t）: 訂正'], duration_seconds: 42 }) },
   });
-  assert.equal(calls.filter((c) => c.opts?.phase === 'Analyze').length, 0, 'jev 経路でも Analyze phase の spawn は 0');
+  assert.equal(calls.filter((c) => c.label.startsWith('analyze')).length, 0, 'jev 経路でも analyze ゲートの spawn は 0');
   assert.equal(telemetry.analyze_path, 'jev');
   assert.equal(telemetry.analyze_ineligible_reason, 'breaking_keyword_scan true; comments present (2)');
   assert.deepEqual(telemetry.prerun_durations, { analyze: 42 });

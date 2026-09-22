@@ -7,8 +7,6 @@
   "source": "skill",
   "telemetry": {
     "phase_durations": {
-      "analyze": 200,
-      "plan": 200,
       "implement": 200,
       "validate": 200,
       "evaluate": 200,
