@@ -349,7 +349,7 @@ const devFlowSrc = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-fl
 test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing され、prompt に commit message / PR body 本文が verbatim で含まれる', async () => {
   const analyze = {
     summary: 's', acceptance_criteria: ['AC one', 'AC two'], issue_type: 'refactor', scope: 'src',
-    estimated_change_file_count: 3, shape: 'standard', issue_number: 1,
+    issue_number: 1,
     // issue-meta stub（vm-sandbox 既定）の title と一致させる（analyze provenance 突合を通すため）
     issue_title: 'stub-issue-title',
   };

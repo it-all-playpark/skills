@@ -4,8 +4,9 @@
 // analyze#1 / impl:serial:issue-1 prompt に対するトークン pin・否定側 pin へ書き換えたもの
 // （issue #272 / #278 の意図はそのまま維持: bias 撤去・shape 境界一致・breaking 構造化判定の配線）。
 //
-// shape=complex に乗せるため estimated_change_file_count を 5 超にして floor=complex を強制する
-// （classifyShape は req.shape を raise-only にしか使わないため floor=complex は req.shape に依存しない）。
+// analyze stub は事前 shape 見積もりを返さない（issue #676: analyzePrompt から shape / estimated_change_file_count の
+// 指示を撤去し、実効 shape は Security floor で realized diff から決める）。danger-grep stub が旧形（files 無し）を
+// 返すため realized count 欠損 → complex（Evaluate まで到達する経路の前提）。
 // Plan phase は無く、全 shape で合成 plan のみ（issue #673 / #678）— 実装 prompt は impl:serial:issue-1 で観測する。
 import { test, beforeAll } from 'vitest';
 import assert from 'node:assert/strict';
@@ -25,7 +26,6 @@ const REQ = {
   issue_type: 'feat',
   scope: 'src',
   scope_truncated: false,
-  estimated_change_file_count: 8, // count > 5 → classifyShape floor = complex
   breaking_change: false,
   breaking_keyword_scan: false,
   breaking_evidence: '',
@@ -93,6 +93,14 @@ test('analyze#1 prompt: 「安全側=complex 寄り」を含まない', () => {
 
 test('analyze#1 prompt: 「単一ファイル軽微変更」を含まない', () => {
   assert.ok(!analyzeCall.prompt.includes('単一ファイル軽微変更'));
+});
+
+// (a2) 事前 shape 見積もりの指示が analyze#1 prompt に無い（issue #676: 実効 shape は realized diff から決める。
+// LLM に shape / 見込み file 数を返させない）。identifier token pin。
+test('analyze#1 prompt: estimated_change_file_count / shape 見積もりの指示を含まない', () => {
+  assert.ok(!analyzeCall.prompt.includes('estimated_change_file_count'));
+  assert.ok(!analyzeCall.prompt.includes('shape として返せ'));
+  assert.ok(!/micro \/ standard \/ complex のいずれかで評価/.test(analyzeCall.prompt));
 });
 
 // (b) breaking 判定は構造化フィールド（breaking_keyword_scan / breaking_evidence）を通す配線に

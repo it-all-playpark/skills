@@ -4,8 +4,8 @@ description: |
   Runs the issue-to-LGTM dev-flow pipeline for a GitHub issue: performs isolation
   preflight (dev-flow-prerun: base resolution, worktree creation, deps install;
   then EnterWorktree) then launches the dev-flow-run dynamic workflow
-  (analyze → plan → implement → validate → evaluate → PR → pr-iterate → merge
-  tier). Merge is always human.
+  (analyze → implement → validate → security floor (effective shape from the
+  realized diff) → evaluate → PR → pr-iterate → merge tier). Merge is always human.
   Use when: (1) user asks to implement a GitHub issue end-to-end,
   (2) /dev-flow <issue>, (3) keywords: dev-flow, issue実装, issue→PR, 自動実装.
 ---
@@ -67,11 +67,12 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
 
 ## Implement 経路（全 shape で dev-implement-fable 一本）
 
-全 shape（micro / standard / complex）は Analyze 直後に issue から単一 task の plan を合成するだけ
-（Plan phase は持たず、planner 系 agent は起動しない）で、Implement で `dev-implement-fable`（plan+impl 統合、
-fable / high）を 1 spawn する。BLOCKED 再実装（`reimpl-blocked#b`）・Validate の green-fix・Evaluate の
-差し戻し（`reimpl#i`）も同じ agent への再 spawn。shape 判定は Evaluate の深さ・LITE gate・refloor の
-ために残る。詳細は `references/pipeline.md` の shape 3 tier 表。
+Analyze 直後に issue から単一 task の plan を合成するだけ（Plan phase は持たず、planner 系 agent は
+起動しない）で、Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn する。
+BLOCKED 再実装（`reimpl-blocked#b`）・Validate の green-fix・Evaluate の差し戻し（`reimpl#i`）も同じ
+agent への再 spawn。shape（micro / standard / complex）は Analyze では決めず、Security floor で
+realized diff の file 数 + AC 数 / issue_type / 構造化 breaking_change から決定論に決める
+（Evaluate の深さ・LITE gate・merge tier の入力）。詳細は `references/pipeline.md` の shape 3 tier 表。
 
 ## 直列複数 issue 実行時の worktree 切替
 

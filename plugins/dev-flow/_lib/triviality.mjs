@@ -1,5 +1,11 @@
-// classifyShape: REQ オブジェクトから shape 判定を行う純粋関数。
-// dev-flow の shape check に使用する。
+// classifyShape: realized diff の file 数と REQ 由来の決定論特徴量（AC 数 / issue_type / 構造化
+// breaking_change）から実効 shape を決める純粋関数。dev-flow の Security floor（realized diff 取得後）
+// で 1 回だけ呼ばれ、返り値が EFFECTIVE_SHAPE（Evaluate 深さ・LITE gate・merge tier の入力）になる。
+//
+// 入力は実装後の realized diff のみ。Analyze で LLM が出す事前見積もり（shape / 見込み file 数）は
+// decision に使わない（issue #676）— 実装前の予測は log と失敗 telemetry にしか効かず、決定論なのは
+// 写像と「欠損 → complex」の既定則だけだったため。micro の LITE 経路に対する意味的リスクの安全網は
+// runEval 強制条件（danger-grep / testsurf / greenFix / dropped task / undeclared file / UI 接触）が担う。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -10,38 +16,27 @@
 // complex floor に採用しない (低 precision ヒューリスティック、実測 FP: #359/#361)。
 // 構造化判定 breaking_change===true との corroboration があるときのみ floor へ採用する。
 // issue #442: issue_type enum ドリフト修正 — AGENTS.md の正規 Conventional Commits 型 (chore/test/perf/ci) を validTypes に追加。
-export const SHAPE_RANK = { micro: 0, standard: 1, complex: 2 };
 
-function mergeShape(floor, llmShape) {
-  if (!(llmShape in SHAPE_RANK)) {
-    return floor;
-  }
-  return SHAPE_RANK[llmShape] > SHAPE_RANK[floor] ? llmShape : floor;
-}
-
-export function classifyShape(req) {
-  const count = req.estimated_change_file_count;
-  if (typeof count !== 'number' || count < 0) {
-    const floor = 'complex';
-    const reason = `estimated_change_file_count missing or invalid → safe floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+/**
+ * @param {object} req - analyze REQ（acceptance_criteria / issue_type / breaking_change / breaking_keyword_scan を読む）
+ * @param {number} realizedCount - realized diff の file 数（宣言外・format-only・ephemeral 除外後の整数。
+ *   取得不能は NaN）
+ * @returns {{ shape: 'micro'|'standard'|'complex', reason: string }}
+ */
+export function classifyShape(req, realizedCount) {
+  const count = realizedCount;
+  if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) {
+    return { shape: 'complex', reason: `realized file count missing or invalid → safe floor=complex` };
   }
 
   const ac = req.acceptance_criteria;
   if (!Array.isArray(ac)) {
-    const floor = 'complex';
-    const reason = `acceptance_criteria missing or not array → safe floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+    return { shape: 'complex', reason: `acceptance_criteria missing or not array → safe floor=complex` };
   }
 
   const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci'];
   if (!validTypes.includes(req.issue_type)) {
-    const floor = 'complex';
-    const reason = `issue_type '${req.issue_type}' not in allowed set → floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+    return { shape: 'complex', reason: `issue_type '${req.issue_type}' not in allowed set → floor=complex` };
   }
 
   // keyword-alone (breaking_keyword_scan=true かつ breaking_change!==true) は complex floor に
@@ -49,64 +44,24 @@ export function classifyShape(req) {
   const keywordAlone = req.breaking_keyword_scan === true && req.breaking_change !== true;
 
   if (req.breaking_change === true) {
-    const floor = 'complex';
     const reason = `breaking change detected (analyze structured breaking_change=true`
       + (req.breaking_keyword_scan === true ? ' + issue title/body keyword scan hit' : '')
       + `) → floor=complex`;
-    const shape = mergeShape(floor, req.shape);
-    return { shape, reason: shape !== floor ? `LLM raised ${floor}→${shape}` : reason };
+    return { shape: 'complex', reason };
   }
 
-  let floor;
+  let shape;
   if (count <= 2 && ac.length <= 4) {
-    floor = 'micro';
+    shape = 'micro';
   } else if (count <= 5 && ac.length <= 6) {
-    floor = 'standard';
+    shape = 'standard';
   } else {
-    floor = 'complex';
+    shape = 'complex';
   }
 
-  const shape = mergeShape(floor, req.shape);
-  let reason;
-  if (shape !== floor) {
-    reason = `LLM raised ${floor}→${shape}`;
-  } else {
-    reason = `estimated ${count} file(s), ${ac.length} AC, type=${req.issue_type} → floor=${floor}`;
-  }
+  let reason = `realized ${count} file(s), ${ac.length} AC, type=${req.issue_type} → shape=${shape}`;
   if (keywordAlone) {
     reason += `（breaking keyword hit は構造化判定 breaking_change=false のため floor 不採用 — 可視化のみ。issue #364）`;
   }
   return { shape, reason };
-}
-
-/**
- * refloorShape: realized diff のファイル数から shape を raise-only で調整する純粋関数。
- *
- * realized diff には AC 情報が無いため、file count のみで floor を引く
- * (classifyShape と同じ境界値 count<=2/count<=5 を使用)。
- * estimatedShape より大きい floor が得られた場合のみ上書きする (raise-only)。
- *
- * @param {string} estimatedShape - 計画時に決定した shape ('micro'|'standard'|'complex')
- * @param {number} realizedCount - realized diff の実ファイル数 (整数)
- * @returns {{ shape: string, refloored: boolean, realizedFloor: string, realizedCount: number }}
- */
-export function refloorShape(estimatedShape, realizedCount) {
-  let realizedFloor;
-  if (typeof realizedCount !== 'number' || realizedCount < 0 || !Number.isFinite(realizedCount)) {
-    realizedFloor = 'complex';
-  } else if (realizedCount <= 2) {
-    realizedFloor = 'micro';
-  } else if (realizedCount <= 5) {
-    realizedFloor = 'standard';
-  } else {
-    realizedFloor = 'complex';
-  }
-
-  const effective = SHAPE_RANK[realizedFloor] > SHAPE_RANK[estimatedShape] ? realizedFloor : estimatedShape;
-  return {
-    shape: effective,
-    refloored: effective !== estimatedShape,
-    realizedFloor,
-    realizedCount,
-  };
 }

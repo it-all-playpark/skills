@@ -172,8 +172,6 @@ const ANALYZE_REQ_1AC = {
   acceptance_criteria: ['a'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -183,8 +181,6 @@ const ANALYZE_REQ_2AC = {
   acceptance_criteria: ['a', 'b'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };

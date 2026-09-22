@@ -70,15 +70,13 @@ function makeCountingSandbox(opts) {
     if (label === 'setup-base') return { ok: true, default_branch: 'main', dev_exists: true, requested_exists: false, worktree_exists: false, upstream_remote: '', upstream_merge: '' };
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-1' };
 
-    // Analyze（shape:'standard', acceptance_criteria 4 件, estimated_change_file_count:3）
+    // Analyze（acceptance_criteria 4 件。実効 shape は realized diff から決まる）
     if (label.startsWith('analyze')) {
       return {
         summary: 's',
         acceptance_criteria: ['ac1', 'ac2', 'ac3', 'ac4'],
         issue_type: 'fix',
         scope: 'src',
-        estimated_change_file_count: 3,
-        shape: 'standard',
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };

@@ -2,8 +2,8 @@
 // commit d380d9f で追加した `|| greenFixCount > 0` 分岐（runEval フラグ）の regression guard。
 //
 // テスト構成:
-//   - analyze stub が shape: 'micro' / estimated_change_file_count: 1 を返す
-//   - realized-diff stub が files: ['src/foo.ts']（1 ファイル）を返す → refloor で micro 維持
+//   - analyze stub が AC 2 件 / issue_type:'fix' を返す
+//   - realized-diff stub が files: ['src/foo.ts']（1 ファイル）を返す → 実効 shape micro
 //   - test stub は 1 回目 fail → green-fix#1 発生 → 2 回目 pass
 //   - dangerHits は空（danger path ではなく green-fix path で Evaluate が強制されることを確認）
 //
@@ -25,8 +25,8 @@ const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 
 // ============================================================
 // responder: micro shape + green-fix あり経路専用の agent 応答
-// - analyze: shape: 'micro', estimated_change_file_count: 1
-// - realized-diff: files: ['src/foo.ts']（1 ファイル → refloor で micro 維持）
+// - analyze: AC 2 件 / issue_type:'fix'
+// - realized-diff: files: ['src/foo.ts']（1 ファイル → 実効 shape micro）
 // - test runner: 1 回目 fail、2 回目 pass（testCallCount クロージャ状態を内包）
 // - green-fix implementer: files / summary を返す
 // ============================================================
@@ -49,8 +49,6 @@ function createResponder() {
         acceptance_criteria: ['a'],
         issue_type: 'fix',
         scope: 'src',
-        estimated_change_file_count: 1,
-        shape: 'micro',
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
@@ -62,7 +60,7 @@ function createResponder() {
     if (label.startsWith('danger-grep')) {
       return { ok: true, hits: [] };
     }
-    // realized-diff: 1 ファイル → refloor で micro 維持
+    // realized-diff: 1 ファイル → 実効 shape micro
     if (label === 'realized-diff') {
       return { files: ['src/foo.ts'] };
     }

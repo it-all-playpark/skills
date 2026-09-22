@@ -42,7 +42,7 @@ function assertConfidenceOptional(schema, where) {
 // clean-micro-lite が成立する analyzeReq（lite-route-routing.test.mjs と同型）
 const CLEAN_MICRO_REQ = {
   summary: 'clean micro fix', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
-  estimated_change_file_count: 1, breaking_change: false, breaking_keyword_scan: false,
+  breaking_change: false, breaking_keyword_scan: false,
   issue_number: 1, issue_title: 'stub-issue-title',
 };
 

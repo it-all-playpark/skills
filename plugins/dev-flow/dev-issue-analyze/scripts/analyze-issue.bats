@@ -306,9 +306,11 @@ Some prose but no bullet points here.
 }
 
 # ---------------------------------------------------------------------------
-# (p) file paths outside AC section -> estimated_change_file_count present
+# (p) contract mode never emits a file-count estimate, even when the scope
+#     lists file paths: dev-flow decides the effective shape from the realized
+#     diff after implementation (issue #676), not from the issue body.
 # ---------------------------------------------------------------------------
-@test "contract mode: file paths in scope -> estimated_change_file_count present" {
+@test "contract mode: file paths in scope -> no estimated_change_file_count / shape key" {
     FIXTURE="$FIXTURE_DIR/contract-file-count.json"
     make_fixture "$FIXTURE" "feat: touch files" "## Acceptance Criteria
 
@@ -318,23 +320,7 @@ Some prose but no bullet points here.
 Update src/foo.ts and src/bar.ts."
     run analyze "$FIXTURE" 18 --contract
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.estimated_change_file_count == 2'
-}
-
-# ---------------------------------------------------------------------------
-# (q) file path mentioned only inside the AC section (excluded from scope)
-#     -> estimated_change_file_count key absent (scope-boundary mismatch guard)
-# ---------------------------------------------------------------------------
-@test "contract mode: file path only inside AC section -> estimated_change_file_count absent" {
-    FIXTURE="$FIXTURE_DIR/contract-file-in-ac-only.json"
-    make_fixture "$FIXTURE" "feat: touch files" "## Acceptance Criteria
-
-- [ ] update src/only-in-ac.ts
-
-Just prose, no other files mentioned."
-    run analyze "$FIXTURE" 19 --contract
-    [ "$status" -eq 0 ]
-    echo "$output" | jq -e '(has("estimated_change_file_count") | not)'
+    echo "$output" | jq -e '.eligible == true and (has("estimated_change_file_count") | not) and (has("shape") | not)'
 }
 
 # ---------------------------------------------------------------------------
@@ -424,13 +410,10 @@ Just prose, no other files mentioned."
 }
 
 # ---------------------------------------------------------------------------
-# (w) File-extension whitelist must include shell/config extensions common in
-#     this repo (sh/bats/mjs/...), not just general source extensions, so a
-#     scope mentioning only .sh/.bats files still yields
-#     estimated_change_file_count instead of spuriously falling into
-#     classifyShape's complex floor (PR #388 review finding, major #2).
+# (w) A scope mentioning only .sh/.bats files is still eligible and, like any
+#     other scope, carries no file-count estimate (issue #676).
 # ---------------------------------------------------------------------------
-@test "contract mode: sh/bats-only scope -> estimated_change_file_count present" {
+@test "contract mode: sh/bats-only scope -> eligible, no estimated_change_file_count" {
     FIXTURE="$FIXTURE_DIR/contract-sh-scope.json"
     make_fixture "$FIXTURE" "feat: touch shell files" "## Acceptance Criteria
 
@@ -440,7 +423,7 @@ Just prose, no other files mentioned."
 Update dev-issue-analyze/scripts/analyze-issue.sh and dev-issue-analyze/scripts/analyze-issue.bats."
     run analyze "$FIXTURE" 26 --contract
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.estimated_change_file_count == 2'
+    echo "$output" | jq -e '.eligible == true and (has("estimated_change_file_count") | not)'
 }
 
 # ---------------------------------------------------------------------------
@@ -1024,12 +1007,10 @@ ${PAD}"
 }
 
 # ---------------------------------------------------------------------------
-# (ae4) contract mode: the appended truncation marker itself must not inflate
-#       estimated_change_file_count (marker text must contain no `.ext`
-#       tokens, and scope_files_count must be counted on the pre-marker
-#       excerpt).
+# (ae4) contract mode: a truncated scope still yields an eligible contract with
+#       scope_truncated=true and no file-count estimate (issue #676).
 # ---------------------------------------------------------------------------
-@test "contract mode: marker does not inflate estimated_change_file_count" {
+@test "contract mode: truncated scope -> scope_truncated true, no estimated_change_file_count" {
     PAD="$(printf '%*s' 4500 '')"
     PAD="${PAD// /q}"
     BODY="## Acceptance Criteria
@@ -1043,7 +1024,7 @@ ${PAD}"
     make_fixture "$FIXTURE" "feat: touch two files" "$BODY"
     run analyze "$FIXTURE" 56 --contract
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.scope_truncated == true and .estimated_change_file_count == 2'
+    echo "$output" | jq -e '.scope_truncated == true and (has("estimated_change_file_count") | not)'
 }
 
 # ---------------------------------------------------------------------------

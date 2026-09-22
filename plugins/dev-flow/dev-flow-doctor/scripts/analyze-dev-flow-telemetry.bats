@@ -1341,10 +1341,10 @@ EOF
 # shape_calibration (issue #640): shape 判定 / analyze 経路の根拠キーの分布と
 # realized 不一致。旧 entry（キー欠落）は unknown / unmeasured に落ち、die しない。
 # ---------------------------------------------------------------------------
-@test "shape_calibration: shape_reason_kind classifies safe_floor / llm_raise / threshold / unknown" {
-    write_devflow_entry "e1.json" '{"shape":"complex","shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex"}' 1
-    write_devflow_entry "e2.json" '{"shape":"complex","shape_reason":"LLM raised standard→complex"}' 2
-    write_devflow_entry "e3.json" '{"shape":"standard","shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard"}' 3
+@test "shape_calibration: shape_reason_kind classifies safe_floor / threshold / unknown (realized ベースの reason)" {
+    write_devflow_entry "e1.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex"}' 1
+    write_devflow_entry "e2.json" '{"shape":"complex","shape_reason":"realized 7 file(s), 2 AC, type=feat → shape=complex"}' 2
+    write_devflow_entry "e3.json" '{"shape":"standard","shape_reason":"realized 3 file(s), 2 AC, type=fix → shape=standard"}' 3
     write_devflow_entry "e4.json" '{"shape":"complex","shape_reason":"breaking change detected (analyze structured breaking_change=true) → floor=complex"}' 4
     write_devflow_entry "e5.json" '{"shape":"standard"}' 5
 
@@ -1352,39 +1352,45 @@ EOF
     [ "$status" -eq 0 ]
     cal=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration')
     [ "$(echo "$cal" | jq '.shape_reason_kind.safe_floor')" -eq 2 ]
-    [ "$(echo "$cal" | jq '.shape_reason_kind.llm_raise')" -eq 1 ]
-    [ "$(echo "$cal" | jq '.shape_reason_kind.threshold')" -eq 1 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind | has("llm_raise")')" = "false" ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind.threshold')" -eq 2 ]
     [ "$(echo "$cal" | jq '.shape_reason_kind.unknown')" -eq 1 ]
     [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.complex.safe_floor')" -eq 2 ]
+    [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.complex.threshold')" -eq 1 ]
     [ "$(echo "$cal" | jq '.shape_reason_kind_by_shape.standard.threshold')" -eq 1 ]
     [ "$(echo "$cal" | jq '.by_shape.complex')" -eq 3 ]
     [ "$(echo "$cal" | jq '.by_shape.standard')" -eq 2 ]
 }
 
-@test "shape_calibration: realized_mismatch uses realized_file_count_raw (missed_refloor / overestimated / unmeasured)" {
-    # standard のまま raw 6 で refloor 不発 → missed_refloor（除外後 count は閾値内）
-    write_devflow_entry "e1.json" '{"shape":"standard","shape_refloored":false,"realized_file_count":5,"realized_file_count_raw":6}' 1 "acme/skills" 11
-    # complex へ refloor 済みで raw 6 → 不一致ではない
-    write_devflow_entry "e2.json" '{"shape":"complex","shape_refloored":true,"realized_file_count":6,"realized_file_count_raw":6}' 2
-    # complex で raw 3 → overestimated
-    write_devflow_entry "e3.json" '{"shape":"complex","shape_refloored":false,"realized_file_count":3,"realized_file_count_raw":3}' 3 "acme/skills" 13
-    # standard で raw 2 → overestimated（micro 相当）
-    write_devflow_entry "e4.json" '{"shape":"standard","shape_refloored":false,"realized_file_count":2,"realized_file_count_raw":2}' 4
+@test "shape_calibration: realized_mismatch uses realized_file_count_raw (excluded_below_raw / floor_above_raw / unmeasured)" {
+    # standard で raw 6（除外後 count 5）→ excluded_below_raw（宣言外 / format-only 除外で下位 tier に決まった）
+    write_devflow_entry "e1.json" '{"shape":"standard","shape_reason":"realized 5 file(s), 2 AC, type=fix → shape=standard","realized_file_count":5,"realized_file_count_raw":6}' 1 "acme/skills" 11
+    # complex で raw 6 → 一致
+    write_devflow_entry "e2.json" '{"shape":"complex","realized_file_count":6,"realized_file_count_raw":6}' 2
+    # complex で raw 3 → floor_above_raw（AC 数 / breaking 等の floor で昇格）
+    write_devflow_entry "e3.json" '{"shape":"complex","realized_file_count":3,"realized_file_count_raw":3}' 3 "acme/skills" 13
+    # standard で raw 2 → floor_above_raw（micro 相当。AC 5 件以上の floor）
+    write_devflow_entry "e4.json" '{"shape":"standard","realized_file_count":2,"realized_file_count_raw":2}' 4
     # 旧 entry（raw 欠落）→ unmeasured
-    write_devflow_entry "e5.json" '{"shape":"standard","shape_refloored":false}' 5
+    write_devflow_entry "e5.json" '{"shape":"standard"}' 5
     # micro で raw 2 → 一致
-    write_devflow_entry "e6.json" '{"shape":"micro","shape_refloored":false,"realized_file_count":2,"realized_file_count_raw":2}' 6
+    write_devflow_entry "e6.json" '{"shape":"micro","realized_file_count":2,"realized_file_count_raw":2}' 6
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
     rm_json=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration.realized_mismatch')
     [ "$(echo "$rm_json" | jq '.measured')" -eq 5 ]
     [ "$(echo "$rm_json" | jq '.unmeasured')" -eq 1 ]
-    [ "$(echo "$rm_json" | jq '.missed_refloor')" -eq 1 ]
-    [ "$(echo "$rm_json" | jq -r '.missed_refloor_samples[0].pr_number')" = "11" ]
-    [ "$(echo "$rm_json" | jq -r '.missed_refloor_samples[0].realized_file_count_raw')" = "6" ]
-    [ "$(echo "$rm_json" | jq '.overestimated')" -eq 2 ]
+    [ "$(echo "$rm_json" | jq '.excluded_below_raw')" -eq 1 ]
+    [ "$(echo "$rm_json" | jq -r '.excluded_below_raw_samples[0].pr_number')" = "11" ]
+    [ "$(echo "$rm_json" | jq -r '.excluded_below_raw_samples[0].realized_file_count_raw')" = "6" ]
+    [ "$(echo "$rm_json" | jq -r '.excluded_below_raw_samples[0].shape_reason')" = "realized 5 file(s), 2 AC, type=fix → shape=standard" ]
+    [ "$(echo "$rm_json" | jq '.excluded_below_raw_samples[0] | has("shape_refloored")')" = "false" ]
+    [ "$(echo "$rm_json" | jq '.excluded_below_raw_samples[0] | has("estimated_file_count")')" = "false" ]
+    [ "$(echo "$rm_json" | jq '.floor_above_raw')" -eq 2 ]
+    [ "$(echo "$rm_json" | jq '.floor_above_raw_samples | length')" -eq 2 ]
     [ "$(echo "$rm_json" | jq '.thresholds.standard_max_files')" -eq 5 ]
+    [ "$(echo "$rm_json" | jq 'has("missed_refloor") or has("overestimated")')" = "false" ]
 }
 
 @test "shape_calibration: analyze_path ratio and analyze_ineligible_reason buckets (sonnet entries only)" {
@@ -1413,10 +1419,10 @@ EOF
     [ "$(echo "$cal" | jq '[.analyze_ineligible_reason[]] | add')" -eq 6 ]
 }
 
-@test "micro_nonfiring: warn detail carries shape_reason_kind / analyze_path / overestimated from shape_calibration" {
+@test "micro_nonfiring: warn detail carries shape_reason_kind / analyze_path / floor_above_raw from shape_calibration" {
     echo '{"dev-flow-doctor":{"thresholds":{"micro_min_runs":2}}}' > "$SKILL_CONFIG_PATH"
-    write_devflow_entry "e1.json" '{"shape":"complex","shape_reason":"estimated_change_file_count missing or invalid → safe floor=complex","analyze_path":"sonnet","realized_file_count_raw":2,"shape_refloored":false}' 1
-    write_devflow_entry "e2.json" '{"shape":"standard","shape_reason":"estimated 3 file(s), 2 AC, type=fix → floor=standard","analyze_path":"contract","realized_file_count_raw":3,"shape_refloored":false}' 2
+    write_devflow_entry "e1.json" '{"shape":"complex","shape_reason":"realized file count missing or invalid → safe floor=complex","analyze_path":"sonnet","realized_file_count_raw":2}' 1
+    write_devflow_entry "e2.json" '{"shape":"standard","shape_reason":"realized 3 file(s), 2 AC, type=fix → shape=standard","analyze_path":"contract","realized_file_count_raw":3}' 2
 
     run "$SCRIPT" --window 30d
     [ "$status" -eq 0 ]
@@ -1426,7 +1432,7 @@ EOF
     [ "$(echo "$anomaly" | jq '.detail.shape_reason_kind.threshold')" -eq 1 ]
     [ "$(echo "$anomaly" | jq '.detail.analyze_path.contract')" -eq 1 ]
     [ "$(echo "$anomaly" | jq '.detail.analyze_path.sonnet')" -eq 1 ]
-    [ "$(echo "$anomaly" | jq '.detail.overestimated')" -eq 1 ]
+    [ "$(echo "$anomaly" | jq '.detail.floor_above_raw')" -eq 1 ]
 }
 
 @test "shape_calibration: zero dev-flow entries -> all-zero block, no error" {

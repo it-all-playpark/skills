@@ -110,8 +110,8 @@ Implement へ流さないためにある。
 
 ### 1.4 Implement
 
-Analyze 直後（shape 確定後）に issue から単一 task の plan を合成する（planner 0 回、
-`implement#synth-plan`。shape に依存しない — shape 判定は Evaluate の深さ・LITE gate・refloor のために残る）。
+Analyze 直後に issue から単一 task の plan を合成する（planner 0 回、`implement#synth-plan`。
+shape はこの時点では決まっていない — Security floor で realized diff から決める）。
 合成 task の `file_changes` は空で始まり、Implement の返却 `files` を宣言として取り込む。
 
 `dev-implement-fable`（plan+impl 統合）を単一 worktree に 1 spawn する。parallel fan-out・
@@ -152,8 +152,8 @@ format / lint はこの phase の責務外で、test の結果だけを見る。
 ```mermaid
 flowchart TD
     IN["test green"] --> C1["secfloor-classify.sh<br/>統合 exec-proxy・1 呼び出し"]
-    C1 --> C2["refloorShape<br/>EFFECTIVE_SHAPE 確定"]
-    C2 --> C3["format_only を count から除外"]
+    C1 --> C2["ephemeral・宣言外・format_only を count から除外"]
+    C2 --> C3["classifyShape(req, realizedCount)<br/>EFFECTIVE_SHAPE 確定"]
     C3 --> C4["ui-verify config<br/>UI touch 時のみ"]
     C4 --> C5{"runEval ?"}
     C5 -->|true| OUT["Evaluate へ"]
@@ -239,33 +239,31 @@ flowchart TD
 
 ## 2. shape 判定
 
-shape は Analyze で `classifyShape` が決め、Implement 後に `refloorShape` が実 diff のファイル数で
-再判定する。どちらも **raise-only** で、下げる経路は存在しない。入力が欠けていたり enum 外だったり
-した場合は例外なく complex へ落ちる安全弁が効く。
+shape は Analyze では決めない。Implement 後の Security floor で `classifyShape(req, realizedCount)` が
+realized diff のファイル数（ephemeral・宣言外・format_only を除外した数）と issue 由来の決定論特徴量
+（AC 数 / `issue_type` / 構造化 `breaking_change`）だけで **1 回で** 決め、その返り値が `EFFECTIVE_SHAPE`
+になる。LLM の事前見積もりは入力にならない。入力が欠けていたり（realized count 取得不能）enum 外だったり
+した場合は例外なく complex へ落ちる安全弁が効く。micro の LITE 経路に対する意味的リスクの安全網は
+runEval 強制条件（danger-grep / testsurf / green-fix / dropped task / 宣言外変更 / UI 接触）が担う。
 
 ```mermaid
 flowchart TD
-    START["analyze 結果 req"] --> F1{"estimated_change_file_count<br/>が数値 ?"}
-    F1 -->|no| CX["floor = complex"]
+    START["Security floor: req + realized diff"] --> F1{"realized file count<br/>が有限の数値 ?"}
+    F1 -->|"no（取得不能 NaN）"| CX["shape = complex"]
     F1 -->|yes| F2{"acceptance_criteria<br/>が配列 ?"}
     F2 -->|no| CX
     F2 -->|yes| F3{"issue_type が<br/>feat/fix/docs/refactor/chore/test/perf/ci ?"}
     F3 -->|no| CX
     F3 -->|yes| F4{"breaking_change が true ?"}
     F4 -->|yes| CX
-    F4 -->|no| F5{"count と AC 数"}
-    F5 -->|"count ≤ 2 かつ AC ≤ 4"| MI["floor = micro"]
-    F5 -->|"count ≤ 5 かつ AC ≤ 6"| ST["floor = standard"]
+    F4 -->|no| F5{"realized count と AC 数"}
+    F5 -->|"count ≤ 2 かつ AC ≤ 4"| MI["shape = micro"]
+    F5 -->|"count ≤ 5 かつ AC ≤ 6"| ST["shape = standard"]
     F5 -->|"それ以外"| CX
 
-    MI --> MG["mergeShape<br/>LLM 申告と floor の大きい方（raise-only）"]
-    ST --> MG
-    CX --> MG
-    MG --> SHAPE["SHAPE 確定"]
-
-    SHAPE --> IMPL["Implement 完了"]
-    IMPL --> RF["refloorShape<br/>realized diff のファイル数で再判定<br/>宣言外・ephemeral・format_only は除外<br/>取得不能は complex 安全弁"]
-    RF --> ES["EFFECTIVE_SHAPE（raise-only）"]
+    MI --> ES["EFFECTIVE_SHAPE 確定"]
+    ST --> ES
+    CX --> ES
 ```
 
 ### 3 tier の経路差

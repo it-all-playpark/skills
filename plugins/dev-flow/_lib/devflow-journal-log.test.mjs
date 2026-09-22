@@ -207,15 +207,12 @@ async function runDevFlowCapture(src, ctx) {
 // テストケース
 // ============================================================
 
-// standard 経路に落ちる req（count=3, ac=4件, type='feat' → floor='standard'）
-// Merge tier phase まで到達させる
+// Merge tier phase まで到達させる req（実効 shape は realized diff から決まる。issue #676）
 const ANALYZE_REQ = {
   summary: 's',
   acceptance_criteria: ['a', 'b', 'c', 'd'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -256,7 +253,7 @@ test('[journal-log] AC#1 (issue #494): Merge tier phase 後に journal-save→jo
     '"danger_hits"',
     '"danger_fail_closed"',
     '"shape"',
-    '"shape_refloored"',
+    '"shape_reason"',
     '"eval_iter"',
     '"skill":"dev-flow"',
     '"outcome":"success"',

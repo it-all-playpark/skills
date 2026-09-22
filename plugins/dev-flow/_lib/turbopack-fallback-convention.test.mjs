@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, devFlowArgs, shapeOverrides } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
@@ -46,12 +46,13 @@ const AC2 = [
   { ac_index: 0, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
   { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
 ];
-// complex 経路で eval#1 critical → fix#1 → eval#2 収束
+// complex 経路（realized 7 件）で eval#1 critical → reimpl#1 → eval#2 収束
 const EVAL_FIX = {
   'analyze#1': {
     summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'feat', scope: 'src',
-    estimated_change_file_count: 7, shape: 'complex', issue_number: 1, issue_title: 'stub-issue-title',
+    issue_number: 1, issue_title: 'stub-issue-title',
   },
+  ...shapeOverrides('complex'),
   'eval#1': {
     verdict: 'fail', total: 5, threshold: 7,
     feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],

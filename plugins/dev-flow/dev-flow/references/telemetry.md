@@ -5,11 +5,11 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
 `plugins/dev-flow/` を root とする plugin 相対パス。
 
 - **telemetry**: dev-flow 完走時に workflow が telemetry handoff JSON（merge_tier / gate_policy / danger_hits / shape /
-  shape_refloored / eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
+  eval_iter / eval_staleness / eval_verdict / iterate_status / ui_verify / ui_verify_mode /
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
   vdelta_fail_open / vdelta_verdicts / vdelta_not_started / redgreen_headdiff / duration_seconds / phase_durations /
   merge_tier_reasons / route / subagent_invocations / resolved_evidence /
-  shape_reason / estimated_file_count / realized_file_count / realized_file_count_raw / ac_count /
+  shape_reason / realized_file_count / realized_file_count_raw / ac_count /
   analyze_path / analyze_ineligible_reason）を
   `~/.claude/journal/pending/` へ書き出し、
   dev-flow plugin の Stop hook `plugins/dev-flow/hooks/stop-devflow-telemetry.sh`
@@ -36,7 +36,8 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   top-level try/catch が `outcome:'failure'` + `error_category:'abort'` +
   `error_msg:'abort@<phase>/<label>: <message>'`（500 字まで）+ `error_phase`（journal の
   `.error.phase`。run-diagnostics の failure_distribution に乗る）+ telemetry `abort_phase` /
-  `abort_label`（passthrough 経路）と、その時点で確定していた telemetry（shape /
+  `abort_label`（passthrough 経路）と、その時点で確定していた telemetry（shape は Security floor で
+  実効 shape が確定した後の abort のみ載せる。確定前の abort / failure telemetry は shape キー欠落 /
   eval_iter / gate_policy / subagent_invocations 等）を記録し、元の例外を rethrow する
   （fail-open: handoff 失敗は run 終了を妨げない。終端サマリ・Merge tier は実行しない —
   判定前提が揃わないため）。abort entry の組み立て口は `_lib/journal-handoff.mjs` の
@@ -66,7 +67,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   Bash）が渡す `args.setup.epoch`（`date +%s`。必須キーのため fallback 経路は無い）、end は Merge tier 末尾の
   post-summary 応答の optional epoch から給電し、残り 8 mark は phase 境界に隣接する既存 exec-proxy / agent
   応答の optional epoch フィールドから給電する（fail-open 不変）。
-  **給電元応答の完了タイミング依存の skew（contract 経路の analyze_end は shape 判定の
+  **給電元応答の完了タイミング依存の skew（contract 経路の analyze_end は plan 合成までの
   時間が implement 区間へ付け替わる等）を含むため、絶対値ではなく相対比較・分布用途で解釈すること。
   Final reconcile skip 時（fixes_applied=0）は final キー自体が欠落する**。probe 失敗は fail-open（当該 mark null →
   対応する duration キーが欠落。全滅時は両キーとも handoff JSON に現れない）。
@@ -121,19 +122,20 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで
   usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric。
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
-  **shape 判定 / analyze 経路の根拠（成功 handoff のみ・passthrough 経路・gate / merge tier / ledger の
+  **実効 shape の判定根拠 / analyze 経路の根拠（成功 handoff のみ・passthrough 経路・gate / merge tier / ledger の
   入力にはしない。dev-flow-doctor の「shape 較正」が読む）**:
-  `shape_reason` は `classifyShape` が返す `reason` 文字列（`estimated N file(s), M AC, type=… → floor=…` の
-  閾値判定 / `LLM raised A→B` / それ以外は safe floor の種別 — doctor はこの prefix で 3 分類する）。
-  `estimated_file_count` は analyze の `estimated_change_file_count`（欠落時 `null`。Stop hook の passthrough は
-  null 値を落とすため journal ではキー欠落として現れる — doctor は欠落と null を同一に扱う）。
-  `ac_count` は `acceptance_criteria.length`。
-  `realized_file_count` は Security floor で `refloorShape` に渡した数 — **ephemeral / 宣言外パス / format-only
-  を除外した後**の realized diff（取得不能 NaN は `null`）。`realized_file_count_raw` は ephemeral 除外のみの
-  realized diff 総数。両方載せるのは、宣言外・format-only の除外で refloor 入力が閾値内に収まり raise が
-  不発になった run（raw は閾値超・count は閾値内）を doctor が「取りこぼし」として数えるため —
-  count だけでは閾値超かつ `shape_refloored=false` は構造上 0 件になり見えない。
-  refloor は Security floor 時点の working tree を見るので、pr-iterate fix / base merge / 手動 commit で
+  `shape` は Security floor で `classifyShape(req, realizedCount)` が realized diff の file 数 + AC 数 /
+  `issue_type` / 構造化 `breaking_change` だけで決めた実効 shape（Analyze の事前見積もりは持たない）。
+  `shape_reason` は `classifyShape` が返す `reason` 文字列（`realized N file(s), M AC, type=… → shape=…` の
+  閾値判定 / それ以外は safe floor（count 欠損・AC 欠落・issue_type 外・breaking）の種別 — doctor はこの
+  prefix で 2 分類する）。`ac_count` は `acceptance_criteria.length`。
+  `realized_file_count` は `classifyShape` に渡した数 — **ephemeral / 宣言外パス / format-only
+  を除外した後**の realized diff（取得不能 NaN は `null`。Stop hook の passthrough は null 値を落とすため journal
+  ではキー欠落として現れる — doctor は欠落と null を同一に扱う）。`realized_file_count_raw` は ephemeral 除外のみの
+  realized diff 総数。両方載せるのは、宣言外・format-only の除外で classifyShape 入力が raw より小さくなり
+  下位 tier に決まった run（raw は閾値超・count は閾値内）を doctor が数えるため —
+  count だけでは shape と count の不一致は構造上 0 件になり除外規則の効きが見えない。
+  shape は Security floor 時点の working tree を見るので、pr-iterate fix / base merge / 手動 commit で
   後から膨らんだ PR の changedFiles とは一致しない（journal から PR の最終規模は復元できない）。
   `analyze_path` は `contract`（`analyze-issue.sh --contract` の決定論 parse 採用）/ `sonnet` の 2 値。
   `analyze_ineligible_reason` は light path 不採用のときのみ出力（採用時はキー欠落）。`analyze-issue.sh` が

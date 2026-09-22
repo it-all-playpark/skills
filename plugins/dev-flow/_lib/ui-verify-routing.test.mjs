@@ -1,5 +1,5 @@
 // ui-verify-routing: VM sandbox routing test for dev-flow の ui-verify 統合（issue #285 F3）。
-// refloor-shape-routing.test.mjs / ephemeral-paths-routing.test.mjs のパターンを踏襲する。
+// realized-shape-routing.test.mjs / ephemeral-paths-routing.test.mjs のパターンを踏襲する。
 //
 // 責務: ui-verify の opt-in 分岐（AC-2 の 0 オーバーヘッド）・fail-open 経路（AC-3）・
 // try/finally teardown 保証（AC-4）・micro 強制 Evaluate + smoke-only 固定（AC-5）を
@@ -37,7 +37,7 @@ const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
-// ---- VM sandbox helpers（refloor-shape-routing.test.mjs / ephemeral-paths-routing.test.mjs と同型）----
+// ---- VM sandbox helpers（realized-shape-routing.test.mjs / ephemeral-paths-routing.test.mjs と同型）----
 
 /**
  * ui-verify-routing 専用の VM sandbox を組む。
@@ -124,7 +124,7 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
 
 /**
  * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * refloor-shape-routing.test.mjs の runDevFlowInSandbox と同型: return object を解決して返す。
+ * return object を解決して返す。
  *
  * @param {string} src - dev-flow.js の raw ソース
  * @param {vm.Context} ctx - vm コンテキスト
@@ -158,8 +158,6 @@ const microReq = {
   acceptance_criteria: ['a', 'b'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 1,
-  shape: 'micro',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -395,8 +393,6 @@ const standardReq = {
   acceptance_criteria: ['a', 'b', 'c', 'd'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };

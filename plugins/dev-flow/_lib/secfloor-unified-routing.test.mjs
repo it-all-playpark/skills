@@ -22,7 +22,7 @@
 //       再現する薄い harness で、例外が伝播せず（run abort しない）(a) と同一の
 //       fail-closed HOLD へ到達する
 //   (c) risk 正常 + files 欠落 → dangerHits は正常算出されつつ realizedCount 相当が NaN →
-//       refloorShape が complex へ raise
+//       classifyShape が complex（安全弁）
 //   (d) risk 欠落 + files 正常 → SEC fail-closed だが files は正常配列のまま（独立性）
 //   (e) 全フィールド正常 + hits 空 → SEC seed が 'danger-grep clean' で自動 check され
 //       blocking 未 checked 0 件（現行 blocking 判定と一致 — 軸A 非抵触 pin）
@@ -43,7 +43,7 @@ import { reconcileDanger, seedSecurityLedger, classifyMergeTier } from './merge-
 import { policyBlockingItems, DEFAULT_GATE_POLICY } from './gate-policy.mjs';
 import { makeLedger, appendItem } from './goal-ledger.mjs';
 import { secHitsOf, reconcileTestsurf } from './testsurf.mjs';
-import { refloorShape } from './triviality.mjs';
+import { classifyShape } from './triviality.mjs';
 import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, mergeTierFacts } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -179,7 +179,7 @@ test('[secfloor-unified-routing][B-b] 統合呼び出しが throw（StructuredOu
   assert.equal(tier, 'HOLD', `throw 経路も fail-closed HOLD へ到達すべきだが '${tier}'`);
 });
 
-test('[secfloor-unified-routing][B-c] risk 正常 + files 欠落 → dangerHits は正常算出されつつ realizedCount 相当は NaN → refloorShape が complex へ raise', () => {
+test('[secfloor-unified-routing][B-c] risk 正常 + files 欠落 → dangerHits は正常算出されつつ realizedCount 相当は NaN → classifyShape が complex', () => {
   const unified = {
     risk: { ok: true, hits: [{ file: 'src/auth.ts', class: 'auth', severity: 'critical' }] },
     files: 'not-an-array',
@@ -197,9 +197,9 @@ test('[secfloor-unified-routing][B-c] risk 正常 + files 欠落 → dangerHits 
   const realizedCount = realized?.files ? realized.files.length : NaN;
   assert.ok(Number.isNaN(realizedCount), 'files 欠落時の realizedCount は NaN であるべき（?? [] で 0 に潰さない）');
 
-  const refloor = refloorShape('micro', realizedCount);
-  assert.equal(refloor.shape, 'complex', `files 欠落（NaN）は complex 安全弁へ raise されるべきだが '${refloor.shape}'`);
-  assert.equal(refloor.refloored, true);
+  const triage = classifyShape({ acceptance_criteria: ['a'], issue_type: 'fix' }, realizedCount);
+  assert.equal(triage.shape, 'complex', `files 欠落（NaN）は complex 安全弁へ倒れるべきだが '${triage.shape}'`);
+  assert.match(triage.reason, /safe floor=complex/);
 });
 
 test('[secfloor-unified-routing][B-d] risk 欠落 + files 正常 → SEC fail-closed だが files は正常配列のまま（独立性）', () => {

@@ -122,8 +122,6 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-save→journal-
     acceptance_criteria: [],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -169,7 +167,7 @@ test('[failure-telemetry] (1) analyze 経路: AC 空 → journal-save→journal-
 
 // ============================================================
 // ケース (2): implement 経路（NEEDS_CONTEXT 解消不能 → needs_clarification）
-// - journal-save（stage1）が 1 回発生し prompt に shape/eval_iter を含む
+// - journal-save（stage1）が 1 回発生し prompt に eval_iter を含む（shape は実効 shape 確定前なのでキー欠落。issue #676）
 // - journal-log-failure（stage2）が logged:true を返すとき result.journal_log_status === 'logged'
 // - result.source === 'implement'
 // ============================================================
@@ -179,8 +177,6 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
     acceptance_criteria: ['ac1', 'ac2'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -202,10 +198,14 @@ test('[failure-telemetry] (2) implement 経路: NEEDS_CONTEXT 解消不能 → j
     `(2) journal-save は 1 回のはずだが ${saveCalls.length} 回だった`);
 
   const savePrompt = saveCalls[0]?.prompt ?? '';
-  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '"shape"', '"eval_iter"', '"repo":"acme/skills"']) {
+  for (const key of ['"outcome":"failure"', '"error_category":"needs_clarification"', '"eval_iter"', '"repo":"acme/skills"']) {
     assert.ok(savePrompt.includes(key),
       `(2) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 500)}`);
   }
+  // 実効 shape は Security floor（realized diff 取得後）で確定する（issue #676）。Implement の失敗 telemetry は
+  // 確定前なので shape キーを載せない（null を載せると Stop hook の enum 検証で落ちる）。
+  assert.ok(!savePrompt.includes('"shape"'),
+    `(2) 実効 shape 確定前の failure telemetry に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 500)}`);
   assert.ok(!savePrompt.includes('"pr_number"'),
     `(2) failure 経路は PR 作成前のため journal-save prompt に '"pr_number"' を含むべきではない。prompt:\n${savePrompt.slice(0, 500)}`);
 
@@ -235,8 +235,6 @@ test('[failure-telemetry] (3) empty-diff 経路: 両方 empty:true → throw 前
     acceptance_criteria: ['ac1', 'ac2'],
     issue_type: 'fix',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -281,8 +279,6 @@ test('[failure-telemetry] (4) 完走経路: journal-log-failure が 0 回・jour
     acceptance_criteria: ['ac1', 'ac2', 'ac3'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };

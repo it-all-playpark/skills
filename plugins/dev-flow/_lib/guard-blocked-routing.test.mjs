@@ -36,7 +36,7 @@ const EVASION_VOCAB_RE = /fetch|FETCH_HEAD|mirror|checkout/i;
 
 const STANDARD_REQ = {
   summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'fix', scope: 'src',
-  estimated_change_file_count: 4, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
+  issue_number: 1, issue_title: 'stub-issue-title',
 };
 
 const guardBlocked = {

@@ -49,8 +49,6 @@ function createResponder() {
         acceptance_criteria: ['a', 'b', 'c', 'd'],
         issue_type: 'fix',
         scope: 'src',
-        estimated_change_file_count: 3,
-        shape: 'standard',
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
@@ -322,7 +320,7 @@ function createSingleConcernResponder(concernResolutions) {
     if (label.startsWith('analyze')) {
       return {
         summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src',
-        estimated_change_file_count: 3, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
+        issue_number: 1, issue_title: 'stub-issue-title',
       };
     }
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };

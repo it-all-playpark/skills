@@ -150,33 +150,34 @@ run-diagnostics --scope telemetry --window 7d
 
 ### shape 較正（`distributions.shape_calibration` → `checks.shape_calibration`）
 
-dev-flow の成功 handoff が記録する根拠キー（`shape_reason` / `estimated_file_count` /
-`realized_file_count` / `realized_file_count_raw` / `ac_count` / `analyze_path` /
-`analyze_ineligible_reason`。語彙は `dev-flow/references/telemetry.md`）から、shape 判定の
-根拠と realized との不一致を出す。report-only — score / warn には影響しない（閾値の較正は
+dev-flow の成功 handoff が記録する根拠キー（`shape_reason` / `realized_file_count` /
+`realized_file_count_raw` / `ac_count` / `analyze_path` / `analyze_ineligible_reason`。語彙は
+`dev-flow/references/telemetry.md`）から、実効 shape の判定根拠と raw realized との不一致を出す。
+shape は realized diff の file 数（宣言外・format-only 除外後）+ AC 数 / issue_type / breaking の決定論
+floor だけで決まる（`classifyShape`）。report-only — score / warn には影響しない（閾値の較正は
 telemetry が溜まってから hypothesis 付きで別途判断する。閾値 micro ≤2 files / standard ≤5 files は
 `_lib/triviality.mjs` と同値をスクリプト内定数で持つ）。
 
 | 項目 | 内容 |
 |------|------|
 | `by_shape` | shape 別件数（`distributions.shape` と同値。較正セクション単体で読めるよう再掲） |
-| `shape_reason_kind` | `shape_reason` の prefix で `safe_floor`（count / AC 欠落・issue_type 外・breaking）/ `llm_raise`（`LLM raised`）/ `threshold`（`estimated N file(s)`）/ `unknown`（キー欠落 = 根拠未記録の旧 entry）に分類。`shape_reason_kind_by_shape` は shape × 種別の交差表 |
-| `realized_mismatch` | `realized_file_count_raw` で判定する。`missed_refloor` = raw が shape の file 上限を超えるのに `shape_refloored=false`（宣言外パス / format-only の除外で refloor 入力が閾値内に収まった run）。`overestimated` = raw が下位 tier の上限以下（standard で ≤2 / complex で ≤5 — AC 数超過・safe floor・LLM raise のいずれかで昇格した run。`shape_reason_kind` で切り分ける）。`unmeasured` = raw 未記録（旧 entry）。各 10 件まで `*_samples` に issue / repo / pr_number / 件数を併記 |
+| `shape_reason_kind` | `shape_reason` の prefix で `safe_floor`（realized count 欠損 / AC 欠落・issue_type 外・breaking）/ `threshold`（`realized N file(s)`）/ `unknown`（キー欠落 = 根拠未記録の旧 entry）に分類。`shape_reason_kind_by_shape` は shape × 種別の交差表 |
+| `realized_mismatch` | `realized_file_count_raw` で判定する。`excluded_below_raw` = raw が shape の file 上限を超える（宣言外パス / format-only の除外で classifyShape 入力が閾値内に収まり、raw より下の tier に決まった run）。`floor_above_raw` = raw が下位 tier の上限以下（standard で ≤2 / complex で ≤5 — AC 数超過・issue_type・breaking・count 欠損の safe floor で raw より上の tier に決まった run。`shape_reason_kind` で切り分ける）。`unmeasured` = raw 未記録（旧 entry）。各 10 件まで `*_samples` に issue / repo / pr_number / shape_reason / 件数を併記 |
 | `analyze_path` | contract / sonnet / unknown の件数 |
 | `analyze_ineligible_reason` | sonnet 経路の entry のみを分母に、`analyze_ineligible_reason` を prefix で `ac_heading_not_found` / `ac_no_items` / `comments_present` / `scope_truncated` / `issue_type` / `breaking` / `depth_not_standard` / `probe_failed` / `whitelist_rejected` / `other` / `unknown`（キー欠落）に正規化した件数 |
 
-**refloor の計測点**: refloor は Security floor 時点の working tree（implementer 完了直後、PR 前）を
-`refloorShape` に掛ける raise-only 判定で、そこで見る数は宣言外パスと format-only を除外した後の
-ものである。したがって (1) 除外で閾値内に収まった run は `missed_refloor` に現れるが、(2) pr-iterate
+**shape の計測点**: shape は Security floor 時点の working tree（implementer 完了直後、PR 前）を
+`classifyShape` に掛ける判定で、そこで見る数は宣言外パスと format-only を除外した後のものである。
+したがって (1) 除外で閾値内に収まった run は `excluded_below_raw` に現れるが、(2) pr-iterate
 fix / base merge / 手動 commit で後から膨らんだ PR は journal のどのキーからも見えない（PR の
 `changedFiles` と `realized_file_count_raw` の差がそれで、数えたい場合は PR の changedFiles を別途
 突合する）。「standard 判定のまま PR が閾値を超えた」run の大半は (2) で仕様どおり、(1) は
-少数だが存在する — `missed_refloor > 0` を見たら shape ロジックではなく除外規則（宣言外 →
+少数だが存在する — `excluded_below_raw > 0` を見たら shape ロジックではなく除外規則（宣言外 →
 Evaluate 強制で扱う設計）が size 信号を隠していないかを疑う。
 
-`run-diagnostics` は `missed_refloor` / `overestimated` / `unmeasured` が 1 件以上のとき、それぞれ
+`run-diagnostics` は `excluded_below_raw` / `floor_above_raw` / `unmeasured` が 1 件以上のとき、それぞれ
 severity `info` の issue を 1 行出す（warn にはしない）。`micro_nonfiring` の warn メッセージには
-本セクションの `shape_reason_kind` / `analyze_path` / `overestimated` を根拠として併記する。
+本セクションの `shape_reason_kind` / `analyze_path` / `floor_above_raw` を根拠として併記する。
 
 ### Nested run normalization（iterate_status のみ）
 

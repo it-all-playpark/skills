@@ -564,20 +564,22 @@ ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c --argjson window "$NESTED_
   }
 ')
 
-# shape_calibration: shape 判定と analyze 経路の根拠キー（shape_reason /
-# estimated_file_count / realized_file_count / realized_file_count_raw / ac_count /
-# analyze_path / analyze_ineligible_reason — dev-flow.js の成功 handoff が passthrough で
-# 記録する）から、判定根拠の分布と realized との不一致を出す。閾値は classifyShape /
-# refloorShape（_lib/triviality.mjs）と同じ file 境界（micro <=2 / standard <=5）。
+# shape_calibration: 実効 shape の判定根拠と analyze 経路の根拠キー（shape_reason /
+# realized_file_count / realized_file_count_raw / ac_count / analyze_path /
+# analyze_ineligible_reason — dev-flow.js の成功 handoff が passthrough で記録する）から、
+# 判定根拠の分布と raw realized との不一致を出す。shape は realized diff の file 数
+# （宣言外パス・format-only 除外後の realized_file_count）+ AC 数 / issue_type / breaking の
+# 決定論 floor だけで決まる（classifyShape、_lib/triviality.mjs。file 境界 micro <=2 / standard <=5）。
 # 較正判断のための report-only — gate / merge tier / score には影響しない。
 #
 # realized_mismatch の判定は realized_file_count_raw（ephemeral 除外のみの realized diff
-# 総数）を使う。refloorShape に渡る realized_file_count は宣言外パスと format-only を除外した
-# 後の数なので、それで比較すると「閾値超なのに shape_refloored=false」は構造上 0 件になり
-# 取りこぼしが見えない。raw が無い旧 entry（キー欠落）は unmeasured に数える。
-#   missed_refloor : raw が shape の上限を超えるのに shape_refloored=false（除外で refloor 不発）
-#   overestimated  : raw が shape の下位 tier の上限以下（standard で <=2、complex で <=5）
-#   注: refloor は Security floor 時点の working tree を見る。pr-iterate fix / merge で後から
+# 総数）を使う。classifyShape に渡る realized_file_count は宣言外パスと format-only を除外した
+# 後の数なので、それで比較すると不一致は構造上 0 件になり除外規則の効きが見えない。
+# raw が無い旧 entry（キー欠落）は unmeasured に数える。
+#   excluded_below_raw : raw が shape の file 上限を超える（宣言外 / format-only 除外で raw より下の tier に決まった run）
+#   floor_above_raw    : raw が shape の下位 tier の上限以下（standard で <=2、complex で <=5 — AC 数 /
+#                        issue_type / breaking / count 欠損の floor で raw より上の tier に決まった run）
+#   注: shape は Security floor 時点の working tree を見る。pr-iterate fix / merge で後から
 #   膨らんだ PR はここには現れない（journal の realized は PR の最終 changedFiles ではない）。
 SHAPE_FILE_MAX_MICRO=2
 SHAPE_FILE_MAX_STANDARD=5
@@ -588,8 +590,7 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
   def reason_kind:
     (.telemetry.shape_reason) as $r
     | if ($r | type) != "string" or $r == "" then "unknown"
-      elif ($r | startswith("LLM raised")) then "llm_raise"
-      elif ($r | startswith("estimated ")) then "threshold"
+      elif ($r | startswith("realized ") and ($r | contains("safe floor") | not)) then "threshold"
       else "safe_floor" end;
   # analyze-issue.sh / dev-flow.js が返す自由文字列を prefix で閉じたバケットへ正規化する
   def ineligible_bucket:
@@ -610,11 +611,10 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
   def raw: .telemetry.realized_file_count_raw;
   def has_raw: (raw | type) == "number";
   def sample: { issue: (.context.issue // null), repo: (.context.repo // null), pr_number: (.context.pr_number // null),
-                shape: .telemetry.shape, shape_refloored: (.telemetry.shape_refloored // null),
-                realized_file_count_raw: raw, realized_file_count: (.telemetry.realized_file_count // null),
-                estimated_file_count: (.telemetry.estimated_file_count // null) };
-  ([.[] | select(has_raw and (upper(.telemetry.shape) != null) and (raw > upper(.telemetry.shape)) and (.telemetry.shape_refloored != true))]) as $missed |
-  ([.[] | select(has_raw and (lower_tier_max(.telemetry.shape) != null) and (raw <= lower_tier_max(.telemetry.shape)))]) as $over |
+                shape: .telemetry.shape, shape_reason: (.telemetry.shape_reason // null),
+                realized_file_count_raw: raw, realized_file_count: (.telemetry.realized_file_count // null) };
+  ([.[] | select(has_raw and (upper(.telemetry.shape) != null) and (raw > upper(.telemetry.shape)))]) as $excluded |
+  ([.[] | select(has_raw and (lower_tier_max(.telemetry.shape) != null) and (raw <= lower_tier_max(.telemetry.shape)))]) as $floored |
   {
     by_shape: {
       micro: ([.[] | select(.telemetry.shape == "micro")] | length),
@@ -624,7 +624,6 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
     },
     shape_reason_kind: {
       safe_floor: ([.[] | select(reason_kind == "safe_floor")] | length),
-      llm_raise: ([.[] | select(reason_kind == "llm_raise")] | length),
       threshold: ([.[] | select(reason_kind == "threshold")] | length),
       unknown: ([.[] | select(reason_kind == "unknown")] | length)
     },
@@ -636,10 +635,10 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
       thresholds: { micro_max_files: $micro_max, standard_max_files: $standard_max },
       measured: ([.[] | select(has_raw)] | length),
       unmeasured: ([.[] | select(has_raw | not)] | length),
-      missed_refloor: ($missed | length),
-      missed_refloor_samples: ($missed | map(sample) | .[0:10]),
-      overestimated: ($over | length),
-      overestimated_samples: ($over | map(sample) | .[0:10])
+      excluded_below_raw: ($excluded | length),
+      excluded_below_raw_samples: ($excluded | map(sample) | .[0:10]),
+      floor_above_raw: ($floored | length),
+      floor_above_raw_samples: ($floored | map(sample) | .[0:10])
     },
     analyze_path: {
       contract: ([.[] | select(.telemetry.analyze_path == "contract")] | length),
@@ -751,8 +750,8 @@ if [[ "$TOTAL_DEV_FLOW_RUNS" -lt "$MICRO_MIN_RUNS" ]]; then
 else
   MICRO_COUNT=$(echo "$SHAPE_DIST" | jq '.micro')
   if [[ "$MICRO_COUNT" -eq 0 ]]; then
-    # 根拠を shape_calibration から併記する: 非 micro の run が safe floor / LLM raise / 閾値の
-    # どれで micro を外れたか（reason_kind）と analyze 経路の比率。切り分け無しの
+    # 根拠を shape_calibration から併記する: 非 micro の run が safe floor / realized 閾値の
+    # どちらで micro を外れたか（reason_kind）と analyze 経路の比率。切り分け無しの
     # 「micro 0 件」だけでは判定ロジックの見直し先が決まらない。
     MICRO_NONFIRING=$(jq -n --argjson min_runs "$MICRO_MIN_RUNS" --argjson total "$TOTAL_DEV_FLOW_RUNS" \
       --argjson cal "$SHAPE_CALIBRATION" \
@@ -763,7 +762,7 @@ else
           total_dev_flow_runs: $total, micro_min_runs: $min_runs, micro_count: 0,
           shape_reason_kind: $cal.shape_reason_kind,
           analyze_path: $cal.analyze_path,
-          overestimated: $cal.realized_mismatch.overestimated
+          floor_above_raw: $cal.realized_mismatch.floor_above_raw
         }
       }]')
   else

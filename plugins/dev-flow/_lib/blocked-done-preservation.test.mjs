@@ -13,14 +13,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, STANDARD_FILES } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
+// 実効 shape は既定 responder の realized 3 件（STANDARD_FILES）+ AC 4 で standard（issue #676）
 const STANDARD_REQ = {
   summary: 's', acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'fix', scope: 'src',
-  estimated_change_file_count: 4, shape: 'standard', issue_number: 1, issue_title: 'stub-issue-title',
+  issue_number: 1, issue_title: 'stub-issue-title',
 };
 
 test('[blocked-done-preservation] BLOCKED → reimpl-blocked#1 DONE_WITH_CONCERNS: b=2 は発火せず、concerns と files が保持される', async () => {
@@ -32,7 +33,7 @@ test('[blocked-done-preservation] BLOCKED → reimpl-blocked#1 DONE_WITH_CONCERN
         blocking_reason: { block_class: 'approach_mismatch', detail: 'RZ: lib-z api missing' },
       },
       'reimpl-blocked#1:serial:issue-1': {
-        status: 'DONE_WITH_CONCERNS', task_id: 'issue-1', files: ['src/x.ts'],
+        status: 'DONE_WITH_CONCERNS', task_id: 'issue-1', files: [...STANDARD_FILES],
         summary: 'implemented via lib-y', concerns: ['issue-1-concern: null handling unverified'],
       },
     },

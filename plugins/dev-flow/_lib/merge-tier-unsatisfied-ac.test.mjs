@@ -164,8 +164,6 @@ test('[unsatisfied-ac] standard 経路: evaluator が satisfied:false → merge_
     acceptance_criteria: ['a', 'b', 'c', 'd'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -215,8 +213,6 @@ test('[unsatisfied-ac] standard 経路: 全 AC satisfied:true → merge_tier \!=
     acceptance_criteria: ['a', 'b', 'c', 'd'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };

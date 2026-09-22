@@ -134,24 +134,24 @@ eval_iter: max 10, cap 10, at_cap_count 3
 - `cap_pinned` → 該当 issue の evaluate loop が収束していない。issue サイズ見直しを検討
 - `iterate_unhealthy` (rate > 閾値 かつ run数 >= min_runs) → pr-reviewer feedback の質、または PR スコープの見直しが必要
 - `micro_nonfiring` (severity: warn, run数 >= min_runs だが micro 0件) → shape 判定ロジックの見直し。
-  message に shape 較正の根拠（shape_reason 種別 / analyze 経路 / 過大判定件数）が併記されるので、
-  safe floor 偏重（analyze の count / AC 欠落）か閾値そのものかを先に切り分ける。
+  message に shape 較正の根拠（shape_reason 種別 / analyze 経路 / floor で上位 tier に決まった件数）が併記されるので、
+  safe floor 偏重（realized count 欠損 / AC 欠落）か realized 閾値そのものかを先に切り分ける。
   `severity: skipped` は run 数不足を意味し、閾値未達の間は判定を保留する
 
 ### Shape 較正 (shape_calibration)
 
 `checks.shape_calibration` を表にする（report-only、score 非影響）:
 
-| shape | count | safe floor | LLM raise | 閾値 | 根拠未記録 |
-|---|---:|---:|---:|---:|---:|
-| micro | 6 | 0 | 0 | 6 | 0 |
-| standard | 27 | 2 | 1 | 24 | 0 |
-| complex | 95 | 40 | 12 | 43 | 0 |
+| shape | count | safe floor | realized 閾値 | 根拠未記録 |
+|---|---:|---:|---:|---:|
+| micro | 6 | 0 | 6 | 0 |
+| standard | 27 | 2 | 25 | 0 |
+| complex | 95 | 40 | 55 | 0 |
 
-realized 不一致（`realized_file_count_raw` 基準、measured 128 / unmeasured 13）: 取りこぼし 1（standard のまま raw > 5 で
-`shape_refloored=false`）/ 過大判定 4（complex で raw ≤ 5 等）。`*_samples` の issue / PR を列挙する。
-refloor は Security floor 時点の realized diff（宣言外・format-only 除外後）を見るため、pr-iterate fix で
-後から膨らんだ PR は不一致に現れない。
+realized 不一致（`realized_file_count_raw` 基準、measured 128 / unmeasured 13）: 除外で下位 tier 1（standard なのに
+raw > 5 — 宣言外 / format-only 除外で classifyShape 入力が閾値内）/ floor で上位 tier 4（complex で raw ≤ 5 等）。
+`*_samples` の issue / PR を列挙する。shape は Security floor 時点の realized diff（宣言外・format-only 除外後）を
+見るため、pr-iterate fix で後から膨らんだ PR は不一致に現れない。
 
 analyze 経路: contract 12 / sonnet 30。sonnet の不採用理由: comments_present 18 / ac_heading_not_found 9 /
 scope_truncated 3（light path 拡大の候補は最多バケット）。
@@ -276,7 +276,7 @@ Output JSON schema:
     "eval_iter": {"max": 10, "cap": 10, "at_cap_count": 3},
     "gate_policy": {"deterministic-only": 0, "llm-major-advisory": 40, "llm-major-blocking": 2, "llm-autonomous": 0, "unknown": 0},
     "iterate_status": {"lgtm": 30, "stuck": 4, "fix_failed": 3, "max_reached": 1, "ci_error": 2, "ci_pending": 1, "review_contract_error": 0, "unknown": 0, "total": 41, "raw_entries": 45, "normalization": {"joined_pairs": 4, "unjoinable": 6, "status_conflicts": 0, "join_window_seconds": 600}},
-    "shape_calibration": {"by_shape": {"...": "..."}, "shape_reason_kind": {"safe_floor": 20, "llm_raise": 3, "threshold": 19, "unknown": 0}, "shape_reason_kind_by_shape": {"...": "..."}, "realized_mismatch": {"thresholds": {"micro_max_files": 2, "standard_max_files": 5}, "measured": 42, "unmeasured": 0, "missed_refloor": 1, "missed_refloor_samples": [], "overestimated": 4, "overestimated_samples": []}, "analyze_path": {"contract": 12, "sonnet": 30, "unknown": 0}, "analyze_ineligible_reason": {"comments_present": 18, "ac_heading_not_found": 9, "scope_truncated": 3}}
+    "shape_calibration": {"by_shape": {"...": "..."}, "shape_reason_kind": {"safe_floor": 20, "threshold": 22, "unknown": 0}, "shape_reason_kind_by_shape": {"...": "..."}, "realized_mismatch": {"thresholds": {"micro_max_files": 2, "standard_max_files": 5}, "measured": 42, "unmeasured": 0, "excluded_below_raw": 1, "excluded_below_raw_samples": [], "floor_above_raw": 4, "floor_above_raw_samples": []}, "analyze_path": {"contract": 12, "sonnet": 30, "unknown": 0}, "analyze_ineligible_reason": {"comments_present": 18, "ac_heading_not_found": 9, "scope_truncated": 3}}
   },
   "anomalies": [
     {"type": "cap_pinned", "severity": "warn", "count": 3, "detail": {"...": "..."}},

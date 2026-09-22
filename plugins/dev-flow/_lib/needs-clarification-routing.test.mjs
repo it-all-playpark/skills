@@ -147,7 +147,7 @@ function makeCountingSandbox(analyzeReq, implementerFn) {
 
 /**
  * dev-flow.js ソースを strip して async IIFE でラップし vm sandbox で実行する。
- * refloor-shape-routing.test.mjs の runDevFlowInSandbox と同型:
+ * return object を解決して返す版の runDevFlowInSandbox:
  *   vm.runInContext の戻り値（workflow の return object）を解決して {error, result} で返す。
  *
  * @param {string} src - dev-flow.js の raw ソース
@@ -184,8 +184,6 @@ const standardReq = {
   acceptance_criteria: ['a', 'b', 'c'],
   issue_type: 'feat',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -295,8 +293,6 @@ test('[needs-clarification] T2: micro 形状 + NEEDS_CONTEXT → dev-implement-f
     acceptance_criteria: [],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 1,
-    shape: 'micro',
     issue_number: 1,
     issue_title: 'stub-issue-title',
   };
@@ -569,8 +565,6 @@ test('[needs-clarification] T7: ambiguities 3件 + AC 非空 → needs_clarifica
     acceptance_criteria: ['ac1'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     ambiguities: ['a', 'b', 'c'],
     issue_number: 1,
     issue_title: 'stub-issue-title',
@@ -638,8 +632,6 @@ test('[needs-clarification] T8: ambiguities ちょうど 2件 → ゲート通�
     acceptance_criteria: ['ac1', 'ac2'],
     issue_type: 'feat',
     scope: 'src',
-    estimated_change_file_count: 3,
-    shape: 'standard',
     ambiguities: ['a', 'b'],
     issue_number: 1,
     issue_title: 'stub-issue-title',

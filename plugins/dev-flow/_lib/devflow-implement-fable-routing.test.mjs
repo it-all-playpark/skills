@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripComments } from '../../../tools/sync-inlines.mjs';
 import { neutralizeRegexLiterals } from './test-helpers/source-scan.mjs';
-import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, MICRO_FILES } from './test-helpers/vm-sandbox.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
@@ -38,15 +38,27 @@ const AC = ['ac-one', 'ac-two', 'ac-three', 'ac-four'];
 
 // contract-probe は既定 responder が null を返す（sonnet fallback）ため、req は 'analyze#1' override で注入する。
 // issue_title は既定 issue-meta の title と一致させる（provenance 突合）。
+// 実効 shape は realized diff の file 数 + AC 数で決まる（issue #676）: micro は realized 1 件 / AC 2、
+// standard は既定の 3 件 / AC 4、complex は AC 7 件（realized 数に関わらず complex）。
 function reqOf(shape) {
   const base = { summary: 's', scope: 'src', issue_number: 1, issue_title: 'stub-issue-title', issue_body: ISSUE_BODY, issue_body_truncated: false, ambiguities: [] };
-  if (shape === 'micro') return { ...base, acceptance_criteria: ['a', 'b'], issue_type: 'fix', estimated_change_file_count: 1, shape: 'micro' };
-  if (shape === 'complex') return { ...base, acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], issue_type: 'feat', estimated_change_file_count: 8, shape: 'complex' };
-  return { ...base, acceptance_criteria: AC, issue_type: 'feat', estimated_change_file_count: 3, shape: 'standard' };
+  if (shape === 'micro') return { ...base, acceptance_criteria: ['a', 'b'], issue_type: 'fix' };
+  if (shape === 'complex') return { ...base, acceptance_criteria: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], issue_type: 'feat' };
+  return { ...base, acceptance_criteria: AC, issue_type: 'feat' };
+}
+function filesOf(shape) {
+  if (shape === 'micro') {
+    return {
+      'impl:serial:issue-1': { status: 'DONE', task_id: 'issue-1', files: [...MICRO_FILES], summary: 's', concerns: [] },
+      'danger-grep': { risk: { ok: true, hits: [] }, files: [...MICRO_FILES], struct: null, diffhash: { hash: 'AAA', empty: false } },
+      'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
+    };
+  }
+  return {};
 }
 
 async function runFlow(shape, overrides = {}, extra = {}) {
-  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { 'analyze#1': reqOf(shape), ...overrides }, extra });
+  const { ctx, calls, logs } = makeDevFlowSandbox({ overrides: { 'analyze#1': reqOf(shape), ...filesOf(shape), ...overrides }, extra });
   const { result, error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, shape);
   return { calls, logs, result, error, ctx };
@@ -157,12 +169,12 @@ test('[implement-fable] 返却 files（src/x.ts）が宣言として取り込ま
 });
 
 // ============================================================
-// micro の LITE（clean）と refloor（realized 6 files）
+// micro の LITE（clean）と realized 6 files（complex）
 // ============================================================
 async function runMicro(overrides = {}) {
   const workflowCalls = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
-    overrides: { 'analyze#1': reqOf('micro'), ...overrides },
+    overrides: { 'analyze#1': reqOf('micro'), ...filesOf('micro'), ...overrides },
     workflow: async (name, opts) => { workflowCalls.push({ name, opts }); return { status: 'lgtm', iterations: 1, fixes_applied: 0 }; },
   });
   const { result, error } = await runWorkflowCapture(src, ctx);
@@ -192,20 +204,20 @@ test('[implement-fable] micro（clean, docs-only）: LITE 経路 — pr-review-l
   assert.equal(workflowCalls.length, 0, `clean micro で workflow('pr-iterate') が呼ばれた: ${workflowCalls.map((w) => w.name).join(', ')}`);
   assert.equal(result?.merge_tier, 'AUTO', `merge_tier は AUTO のはず: ${result?.merge_tier} (${JSON.stringify(result?.merge_tier_reasons)})`);
   assert.ok((result?.merge_tier_reasons ?? []).some((r) => r.includes('AC は未検証')), `AUTO の理由に AC 未検証開示が無い: ${JSON.stringify(result?.merge_tier_reasons)}`);
-  assert.equal(result?.shape_refloored, false, 'clean micro で refloor が発火した');
+  assert.equal(result?.shape, 'micro', `clean micro の実効 shape が micro でない: ${result?.shape}`);
 });
 
-test('[implement-fable] micro（realized 6 files）: adoptReportedFiles 由来の refloor が発火し evaluator が起動する（LITE を通らない）', async () => {
+test('[implement-fable] AC 2 件 + realized 6 files（adoptReportedFiles 由来の宣言 6 件）: 実効 shape complex で evaluator が起動する（LITE を通らない）', async () => {
   const SIX = ['a', 'b', 'c', 'd', 'e', 'f'];
   const { calls, result, error } = await runMicro({
     'impl:serial:issue-1': fableStubWith(SIX),
     'danger-grep': { risk: { ok: true, hits: [] }, files: SIX, struct: null, diffhash: { hash: 'AAA', empty: false } },
   });
   assert.equal(error, null, `run が throw した: ${error?.message}`);
-  assert.equal(result?.shape_refloored, true, `realized 6 files で refloor が発火していない: ${JSON.stringify({ shape: result?.shape, refloored: result?.shape_refloored })}`);
-  assert.ok(byType(calls, 'dev-flow:evaluator').length >= 1, 'refloor 後は evaluator が起動するはず');
-  assert.equal(byType(calls, 'dev-flow:pr-reviewer').filter((c) => /lite/i.test(c.label)).length, 0, 'refloor 後に lite review が走った');
-  assert.equal(goneCalls(calls).length, 0, 'refloor 後も planner 系 agent は起動しないはず');
+  assert.equal(result?.shape, 'complex', `realized 6 files で complex になっていない: ${JSON.stringify({ shape: result?.shape, reason: result?.shape_reason })}`);
+  assert.ok(byType(calls, 'dev-flow:evaluator').length >= 1, 'complex は evaluator が起動するはず');
+  assert.equal(byType(calls, 'dev-flow:pr-reviewer').filter((c) => /lite/i.test(c.label)).length, 0, 'complex で lite review が走った');
+  assert.equal(goneCalls(calls).length, 0, 'complex でも planner 系 agent は起動しないはず');
 });
 
 // ============================================================
@@ -243,7 +255,7 @@ for (const level of ['design', 'implementation']) {
   });
 }
 
-test('[implement-fable] AC-5 standard（refloor で complex 化）: reimpl#1 が dev-implement-fable に渡る', async () => {
+test('[implement-fable] AC-5 AC 4 件 + realized 6 files（complex）: reimpl#1 が dev-implement-fable に渡る', async () => {
   const SIX = ['a', 'b', 'c', 'd', 'e', 'f'];
   const { calls, error } = await runFlow('standard', {
     'impl:serial:issue-1': fableStubWith(SIX),

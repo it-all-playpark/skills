@@ -19,9 +19,9 @@ workflow script が JS で保持し、中間 state は script 変数に
 handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件、静的テストで pin 済み）。
 
 ```
-/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze(shape 判定)
+/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze
                       → Implement(dev-implement-fable 1 spawn) → Validate(test green)
-                      → Evaluate → PR → workflow('pr-iterate')
+                      → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
 ```
@@ -43,7 +43,7 @@ shape ごとの経路（3 tier）:
 | shape | Implement 経路 | Evaluate 経路 | merge tier |
 |-------|-----------|---------------|------------|
 | **micro** | Analyze 直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
-| **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。refloor で complex 化した run の差し戻し（`reimpl#i`）は同じ `dev-implement-fable` へ `fix_feedback` 付きで流す | REVIEW |
+| **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保） | REVIEW |
 | **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | REVIEW、danger・breaking で HOLD |
 
 Implement 経路は shape に関わらず `dev-implement-fable` 一本（planner ⇄ reviewer ループ・parallel fan-out・
@@ -51,20 +51,25 @@ Implement 経路は shape に関わらず `dev-implement-fable` 一本（planner
 （`req.issue_body`、analyze-issue.sh が 4000 字で切詰め）+ AC + `fix_feedback` を受け取り、AC テスト契約
 （red→green 自己実証）や手順書型 task は受け取らない — テスト全件・red 証明・AC 判定は Validate / redgreen-verify /
 evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL 返却の `files` を宣言として取り込む
-（宣言外監査・refloor count・PR body の材料になる）。BLOCKED（`approach_mismatch`）は planner を起動せず、
+（宣言外監査・実効 shape の realized count・PR body の材料になる）。BLOCKED（`approach_mismatch`）は planner を起動せず、
 blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止）と DONE 成果を prompt に付けて同じ agent を
 `reimpl-blocked#b` で再 spawn する（上限 `BLOCK_MAX`）。Validate の green-fix（`green-fix#i` / `green-fix#retry-i`）も
 同じ agent。観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）。
 
-shape は Analyze phase で `classifyShape` が判定し、安全 floor を適用する（`estimated_change_file_count`
-欠落・`acceptance_criteria` 欠落・out-of-enum `issue_type`・breaking 検出 → complex floor）。実装後は
-realized diff のファイル数で `refloorShape` が再判定（EFFECTIVE_SHAPE、raise-only）。refloor に渡す数は
-Security floor 時点（PR 前）の working tree から ephemeral・宣言外パス・format-only を除外したもの
-（宣言外は size 信号にせず Evaluate 強制 + concern 監査で扱う）。除外前後の数は telemetry
-`realized_file_count_raw` / `realized_file_count` に記録され、doctor の shape 較正が除外による refloor
-不発を数える。danger-grep hit があれば micro でも Evaluate を強制実行（security path）。
+shape は Analyze では決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount)` が
+realized diff の file 数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）だけで
+1 回で決め、その返り値が `EFFECTIVE_SHAPE`（Evaluate 深さ・LITE gate・merge tier の入力）になる。安全 floor は
+realized count 欠損（changed-files 取得不能 → NaN）・`acceptance_criteria` 欠落・out-of-enum `issue_type`・
+`breaking_change === true` → complex（軸A: 緩めない）。LLM の事前見積もり（shape / 見込み file 数）は REQ に
+持たず decision に使わない — micro の LITE 経路に対する意味的リスクの安全網は runEval 強制条件
+（danger-grep / testsurf / green-fix / dropped task / 宣言外変更 / UI 接触）が担う。
+`classifyShape` に渡す数は Security floor 時点の working tree から ephemeral・宣言外パス・format-only を
+除外したもの（宣言外は size 信号にせず Evaluate 強制 + concern 監査で扱う）。除外前後の数は telemetry
+`realized_file_count_raw` / `realized_file_count` に、判定根拠は `shape_reason` に記録され、doctor の
+shape 較正が除外で下位 tier に決まった run / floor で上位 tier に決まった run を数える。danger-grep hit が
+あれば micro でも Evaluate を強制実行（security path）。
 
-**micro lite route**: `TRIVIAL && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
+**micro lite route**: `EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
 contract 準拠かつ danger clean）を満たす run は、PR phase で dev-implement-fable 1 spawn → targeted test →
 PR → pr-reviewer 1-pass の縮約経路（lite route、判断系 agent 呼び出し ≤10）を通る。lite の pr-reviewer
 1-pass が `review==null || blocking.length>0`（critical/major finding あり）を検出した場合のみ

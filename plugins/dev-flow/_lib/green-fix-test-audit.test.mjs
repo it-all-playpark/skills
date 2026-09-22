@@ -38,8 +38,6 @@ function createResponder() {
         acceptance_criteria: ['a', 'b', 'c', 'd'],
         issue_type: 'fix',
         scope: 'src',
-        estimated_change_file_count: 3,
-        shape: 'standard',
         issue_number: 1,
         issue_title: 'stub-issue-title',
       };
@@ -69,7 +67,7 @@ function createResponder() {
         security_clearance: [],
       };
     }
-    // realized-diff / declared-path-check / changed-files → files: [] で refloor を standard 維持
+    // realized-diff / declared-path-check / changed-files → files: []
     if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') {
       return { files: [] };
     }

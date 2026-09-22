@@ -18,7 +18,7 @@ import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-he
 const here = dirname(fileURLToPath(import.meta.url));
 const devFlowSrc = readFileSync(join(here, '..', '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 
-const MICRO_REQ = { summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src', estimated_change_file_count: 1, shape: 'micro', issue_number: 1, issue_title: 'stub-issue-title' };
+const MICRO_REQ = { summary: 's', acceptance_criteria: ['a'], issue_type: 'fix', scope: 'src', issue_number: 1, issue_title: 'stub-issue-title' };
 
 test('[implement-order-failopen] (a) Implement の spawn は impl:serial:issue-1 の 1 回のみ（parallel fan-out なし）', async () => {
   const { ctx, calls } = makeDevFlowSandbox();

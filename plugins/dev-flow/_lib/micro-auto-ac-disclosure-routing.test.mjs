@@ -22,14 +22,12 @@ const repoRoot = join(here, '..');
 const devFlowPath = join(repoRoot, '.claude/workflows/dev-flow.js');
 const src = readFileSync(devFlowPath, 'utf8');
 
-// micro shape 用の analyzeReq（acceptance_criteria あり・estimated_change_file_count: 1）
+// micro shape 用の analyzeReq（acceptance_criteria 2 件。realized 1 件で micro）
 const MICRO_REQ = {
   summary: 's',
   acceptance_criteria: ['ac1'],
   issue_type: 'fix',
   scope: 'docs',
-  estimated_change_file_count: 1,
-  shape: 'micro',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };
@@ -40,8 +38,6 @@ const STANDARD_REQ = {
   acceptance_criteria: ['ac1', 'ac2'],
   issue_type: 'fix',
   scope: 'src',
-  estimated_change_file_count: 3,
-  shape: 'standard',
   issue_number: 1,
   issue_title: 'stub-issue-title',
 };

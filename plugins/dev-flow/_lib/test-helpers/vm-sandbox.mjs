@@ -17,6 +17,10 @@
  *   - assertNoCrash(error, name): error が ReferenceError/SyntaxError なら assert.fail する
  *   - mergeTierFacts(overrides?): Merge tier 統合 exec-proxy（label 'merge-tier-facts'）の応答を組み立てる
  *   - devFlowResponder(overrides?, {issue?}?): dev-flow.js 標準経路（shape 'standard'）の既定 responder
+ *   - STANDARD_FILES / COMPLEX_FILES / MICRO_FILES: 実効 shape を realized file 数で倒すための files 一覧
+ *     （danger-grep と dev-implement-fable の両 stub に同じ一覧を渡すと宣言外 0 件で shape だけが変わる）
+ *   - shapeOverrides('micro'|'complex'): 上記を impl / reimpl#1..2 / danger-grep（+ micro は ci-check-lite）の
+ *     override にまとめたもの。既定（override なし）は standard
  *   - prIterateResponder(overrides?): pr-iterate.js 単体起動の既定 responder
  *   - makeDevFlowSandbox({overrides?, issue?, workflow?, extra?}?): devFlowResponder を使った
  *     makeRecordingSandbox の薄い wrapper
@@ -253,6 +257,36 @@ export function mergeTierFacts(o = {}) {
 // ============================================================
 
 /**
+ * 既定 run の realized / 申告ファイル（3 件 → 実効 shape 'standard'）。
+ * dev-implement-fable stub の files と danger-grep stub の files の両方に使う（宣言外 0 件）。
+ */
+export const STANDARD_FILES = ['src/x.ts', 'src/y.ts', 'src/z.ts'];
+/** complex（realized 6 件超）に倒す test 用のファイル一覧。danger-grep / dev-implement-fable の両 override に使う。 */
+export const COMPLEX_FILES = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts', 'src/g.ts'];
+/** micro（realized 2 件以下）に倒す test 用のファイル一覧。 */
+export const MICRO_FILES = ['src/x.ts'];
+
+/**
+ * 実効 shape を realized file 数で倒す override 集合を返す。
+ * dev-implement-fable（impl / reimpl#1 / reimpl#2）の申告 files と danger-grep の files を同じ一覧にし、
+ * 宣言外 0 件のまま shape だけを変える。micro は lite route の ci-check-lite 応答も含む。
+ *
+ * @param {'micro'|'complex'} shape
+ * @param {{issue?: number}} [opts]
+ */
+export function shapeOverrides(shape, { issue = 1 } = {}) {
+  const files = shape === 'micro' ? MICRO_FILES : shape === 'complex' ? COMPLEX_FILES : STANDARD_FILES;
+  const impl = { status: 'DONE', task_id: `issue-${issue}`, files: [...files], summary: 's', concerns: [] };
+  return {
+    [`impl:serial:issue-${issue}`]: impl,
+    [`reimpl#1:serial:issue-${issue}`]: impl,
+    [`reimpl#2:serial:issue-${issue}`]: impl,
+    'danger-grep': { risk: { ok: true, hits: [] }, files: [...files], struct: null, diffhash: { hash: 'AAA', empty: false } },
+    ...(shape === 'micro' ? { 'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 } } : {}),
+  };
+}
+
+/**
  * dev-flow.js 標準経路（shape 'standard'）の既定応答を返す responder を生成する。
  * overrides[label] があればそれを優先する（関数なら {label, agentType, prompt, opts} で呼ぶ、
  * 値ならそのまま、null なら null）。
@@ -274,19 +308,21 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     if (label.startsWith('analyze')) {
       return {
         summary: 's', acceptance_criteria: ['a', 'b'], issue_type: 'fix', scope: 'src',
-        estimated_change_file_count: 3, shape: 'standard', issue_number: issue,
-        issue_title: 'stub-issue-title',
+        issue_number: issue, issue_title: 'stub-issue-title',
       };
     }
     if (label === 'issue-meta') return { ok: true, number: issue, title: 'stub-issue-title' };
     // Implement / green-fix / reimpl は全 shape で dev-implement-fable 一本（issue #673）。
     // 合成 task `issue-<N>` を echo する（adoptReportedFiles の task_id 突合に必要）。
+    // 既定は STANDARD_FILES（3 件）を申告し、danger-grep の realized files と一致させる（宣言外 0 件）。
     if (agentType === 'dev-flow:dev-implement-fable') {
-      return { status: 'DONE', task_id: `issue-${issue}`, files: ['src/x.ts'], summary: 's', concerns: [] };
+      return { status: 'DONE', task_id: `issue-${issue}`, files: [...STANDARD_FILES], summary: 's', concerns: [] };
     }
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
+    // 実効 shape は realized diff の file 数だけで決まる（issue #676）。既定の 3 件 + AC 2 件 + type=fix →
+    // 'standard'（Evaluate 1 pass・full route）。micro / complex に倒したい test は files を override する。
     if (label === 'danger-grep') {
-      return { risk: { ok: true, hits: [] }, files: ['src/x.ts'], struct: null, diffhash: { hash: 'AAA', empty: false } };
+      return { risk: { ok: true, hits: [] }, files: [...STANDARD_FILES], struct: null, diffhash: { hash: 'AAA', empty: false } };
     }
     // label 'merge-tier-facts'（Merge tier。issue #637 統合呼び出し）は 6 サブ結果を {ok,value,error} で返す。
     // diffhash は既定で danger-grep（Security floor）と同一ハッシュ 'AAA'（Security floor 結果の再利用が発火）。
