@@ -10,6 +10,8 @@ import {
   closesVerdict,
   prBodyViewPrompt,
   prBodyEditPrompt,
+  prPhaseFailure,
+  PR_FAILED_STEP_VALUES,
   PR_BODY_MAX_CHARS,
   PR_BODY_HEADINGS,
   PR_CLOSES_STATUS_VALUES,
@@ -295,6 +297,45 @@ test('[pr-artifacts] prompt: repo 未解決なら --repo を省略し、title �
 test('[pr-artifacts] prompt: 同一入力 → 同一出力（決定論）', () => {
   const a = { wt: '/w', base: 'main', branch: 'b', repo: 'o/r', issue: 1, commitMessage: 'x (#1)\n', prBody: 'y' };
   assert.equal(prPhasePrompt(a), prPhasePrompt({ ...a }));
+});
+
+// ---- prPhasePrompt の中断契約 / prPhaseFailure (issue #682) ----
+
+test('[pr-artifacts] prompt: 手順 2〜4 の失敗で failed_step / failure_reason を埋めて中断する契約と Output format を持つ', () => {
+  const p = prPhasePrompt({ wt: '/w', base: 'main', branch: 'b', repo: 'o/r', issue: 1, commitMessage: 'x (#1)\n', prBody: 'y' });
+  assert.ok(p.includes('"failed_step": "" | "commit" | "push" | "pr-create"'), 'Output format に failed_step の閉じた enum が無い');
+  assert.ok(p.includes('"failure_reason": string'), 'Output format に failure_reason が無い');
+  assert.ok(p.includes('stderr 末尾 1〜3 行'), 'failure_reason の内容（stderr 末尾 1〜3 行）が指示されていない');
+  assert.ok(p.includes('failed_step:"commit" で中断'), '手順 2（commit）の中断指示が無い');
+  assert.ok(p.includes('failed_step:"push" で中断'), '手順 3（push）の中断指示が無い');
+  assert.ok(p.includes('failed_step:"pr-create" で中断'), '手順 4（pr-create）の中断指示が無い');
+  assert.ok(p.includes('成功時は空文字'), '成功時に failed_step / failure_reason を空文字にする指示が無い');
+});
+
+test('[pr-artifacts] prPhaseFailure: 成功応答（committed:true・pr_url 非空・pr_number 正）は null', () => {
+  assert.equal(prPhaseFailure({ pr_url: 'http://x/pull/1', pr_number: 1, committed: true }), null);
+  assert.equal(prPhaseFailure({ pr_url: 'http://x/pull/7', pr_number: '7', committed: true, failed_step: '', failure_reason: '' }), null);
+});
+
+test('[pr-artifacts] prPhaseFailure: committed:false / pr_url 空 / pr_number 非正のいずれかで失敗文を返し step・reason・生の 3 値を含む', () => {
+  const reason = "fatal: Unable to create '.git/index.lock': Operation not permitted";
+  const msg = prPhaseFailure({ pr_url: '', pr_number: 0, committed: false, failed_step: 'commit', failure_reason: reason });
+  assert.ok(msg.startsWith('dev-flow: PR phase 失敗（step: commit、reason: ' + reason + '）'), msg);
+  assert.ok(msg.includes('pr_url=""') && msg.includes('pr_number=0') && msg.includes('committed=false'), msg);
+  // 個別条件: どれか 1 つでも fail-closed
+  assert.ok(prPhaseFailure({ pr_url: 'http://x/pull/1', pr_number: 1, committed: false, failed_step: 'push', failure_reason: 'remote: 403' }).includes('step: push、reason: remote: 403'));
+  assert.ok(prPhaseFailure({ pr_url: '', pr_number: 1, committed: true, failed_step: 'pr-create', failure_reason: 'GraphQL: base branch not found' }).includes('step: pr-create、reason: GraphQL: base branch not found'));
+  assert.ok(prPhaseFailure({ pr_url: 'http://x/pull/1', pr_number: 0, committed: true }) !== null);
+  assert.ok(prPhaseFailure({ pr_url: 'http://x/pull/1', pr_number: 'abc', committed: true }) !== null);
+  assert.ok(prPhaseFailure({ pr_url: 'http://x/pull/1', pr_number: 1.5, committed: true }) !== null);
+});
+
+test('[pr-artifacts] prPhaseFailure: failed_step 欠落 / enum 外は step: unknown、failure_reason 欠落は未報告と明記する', () => {
+  const msg = prPhaseFailure({ pr_url: '', pr_number: 0, committed: false });
+  assert.ok(msg.includes('step: unknown'), msg);
+  assert.ok(msg.includes('reason: （proxy が failure_reason を返さず）'), msg);
+  assert.ok(prPhaseFailure({ pr_url: '', pr_number: 0, committed: false, failed_step: 'add', failure_reason: 'x' }).includes('step: unknown、reason: x'));
+  assert.deepEqual(PR_FAILED_STEP_VALUES, ['commit', 'push', 'pr-create']);
 });
 
 // ---- (g) prBodyViewPrompt / prBodyEditPrompt ----
