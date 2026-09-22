@@ -6725,9 +6725,11 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
     // へ昇格する run でも、その CI 委譲は test gate の代替であって宣言外監査・UI 再検証の代替ではない
     // ため、test#final が null/red でも sync 成功時は必ず実行する。
     // Step3 最終 changed-files（fail-open）
+    // git は `-C` を付けない bare 形（cwd は WT）。reconcile-sync の fetch/merge と同じ理由
+    // （`git -C` 形は sandbox の excludedCommands に当たらず失敗する）。
     const changedFinal = await trackedAgent(
       `cd ${WT} で作業。次を実行し **stdout の各行(ファイルパス)を** \`{"files": [...]}\` に包んで返せ:\n`
-      + `git -C ${WT} diff --name-only origin/${BASE}...HEAD`,
+      + `git diff --name-only origin/${BASE}...HEAD`,
       { agentType: 'dev-runner-haiku-ro', schema: CHANGED, label: 'changed-files-final', phase: 'Final reconcile' })
     if (!changedFinal?.files) {
       log('⚠️ Final reconcile: changed-files-final 取得失敗 — UI 再判定・宣言外再監査を skip（fail-open。test gate は維持）')
