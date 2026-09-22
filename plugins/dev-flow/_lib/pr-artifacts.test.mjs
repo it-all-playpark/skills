@@ -318,6 +318,20 @@ test('[pr-artifacts] prompt: 手順 2〜4 の失敗で failed_step / failure_rea
   assert.ok(p.includes('成功時は空文字'), '成功時に failed_step / failure_reason を空文字にする指示が無い');
 });
 
+// ---- prPhasePrompt の cwd branch 照合（issue #700） ----
+
+test('[pr-artifacts] prompt: 手順 0 で git rev-parse --abbrev-ref HEAD を branch と照合し、不一致なら git add 等を実行せず failed_step:"commit" で中断する', () => {
+  const p = prPhasePrompt({ wt: '/w', base: 'main', branch: 'feature/issue-642', repo: 'o/r', issue: 642, commitMessage: 'x (#642)\n', prBody: 'y' });
+  assert.ok(p.includes('`git rev-parse --abbrev-ref HEAD`'), '手順 0 の branch 確認コマンドが無い');
+  assert.ok(p.includes('手順 0'), '手順 0 として明示されていない');
+  assert.ok(p.includes('が `feature/issue-642` と一致するか確認する'), 'branch と照合する指示が無い');
+  assert.ok(p.includes('git add 等の後続手順を一切実行せず、failed_step:"commit"'), '不一致時に後続手順を実行せず中断する指示が無い');
+  assert.ok(p.includes('cwd branch mismatch: expected feature/issue-642'), 'failure_reason に cwd branch mismatch の内容が無い');
+  assert.ok(p.includes('（pr_url は空文字、pr_number は 0、committed は false、head_sha は空文字）'), '不一致中断時の戻り値が明示されていない');
+  // 手順 0 の branch 確認は手順 1（git add）より前に置かれる
+  assert.ok(p.indexOf('git rev-parse --abbrev-ref HEAD') < p.indexOf('`git add -A`'), '手順 0 は手順 1（git add）より前に無ければならない');
+});
+
 test('[pr-artifacts] prPhaseFailure: 成功応答（committed:true・pr_url 非空・pr_number 正）は null', () => {
   assert.equal(prPhaseFailure({ pr_url: 'http://x/pull/1', pr_number: 1, committed: true }), null);
   assert.equal(prPhaseFailure({ pr_url: 'http://x/pull/7', pr_number: '7', committed: true, failed_step: '', failure_reason: '' }), null);

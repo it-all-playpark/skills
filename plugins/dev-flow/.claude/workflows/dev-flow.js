@@ -4784,6 +4784,11 @@ function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
 // 当たらず sandbox 内で走り、push は credential helper が `~/.config/gh` / keychain を読めずに、
 // add / commit は `.git` が sandbox の write deny 下にある repo（skills 等）で index.lock を作れずに失敗する。
 // subagent の cwd は worktree（EnterWorktree 済み）なので -C を外しても対象 worktree は変わらない。
+// -C を外した以上、add -A / commit / push の対象は subagent の cwd のみで決まる。dev-flow-run は
+// cwd がその worktree であることを検証しない（isolation probe は worktree 絶対パスへの Write 可否
+// しか見ない）ため、resume や直接起動で cwd が共有 checkout のまま渡ってくると無関係な変更を
+// commit・push しうる（issue #700）。よって手順 0 として `git rev-parse --abbrev-ref HEAD` を
+// branch と照合し、不一致なら git add 等を実行せず failed_step:"commit" で中断する。
 function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody }) {
   const msgFile = `${wt}/.devflow-tmp/commit-msg.txt`;
   const bodyFile = `${wt}/.devflow-tmp/pr-body.md`;
@@ -4797,7 +4802,11 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody })
     + `2. <<<PR_BODY_BEGIN>>> 〜 <<<PR_BODY_END>>> の本文 → \`${bodyFile}\`\n`
     + `<<<COMMIT_MSG_BEGIN>>>\n${commitMessage}<<<COMMIT_MSG_END>>>\n`
     + `<<<PR_BODY_BEGIN>>>\n${prBody}<<<PR_BODY_END>>>\n\n`
-    + `## Steps\n以下を順に bare 単文で実行せよ${bare}。手順 1〜4 のいずれかが失敗（exit 非0）したら**そこで中断**し、後続の手順を実行せず、failed_step にその手順名（1〜2 → "commit"、3 → "push"、4 → "pr-create"）、failure_reason に失敗したコマンドの stderr 末尾 1〜3 行を**一字一句そのまま**（要約・言い換え禁止）入れて返す。中断時は pr_url は空文字、pr_number は 0、committed は手順 2 が成功済みなら true・それ以外は false、head_sha は空文字:\n`
+    + `## Steps\n**手順 0（branch 確認・中断判定）**を bare 単文で実行せよ${bare}: \`git rev-parse --abbrev-ref HEAD\` の stdout（末尾改行を除く）が \`${branch}\` と一致するか確認する。`
+    + `一致しなければ cwd が対象 worktree でない（resume・直接起動等で共有 checkout のまま実行している）ため、`
+    + `git add 等の後続手順を一切実行せず、failed_step:"commit"、failure_reason に \`"cwd branch mismatch: expected ${branch}, got <rev-parse の実際の出力>"\` を入れて中断する`
+    + `（pr_url は空文字、pr_number は 0、committed は false、head_sha は空文字）。\n`
+    + `一致したら以下を順に bare 単文で実行せよ${bare}。手順 1〜4 のいずれかが失敗（exit 非0）したら**そこで中断**し、後続の手順を実行せず、failed_step にその手順名（1〜2 → "commit"、3 → "push"、4 → "pr-create"）、failure_reason に失敗したコマンドの stderr 末尾 1〜3 行を**一字一句そのまま**（要約・言い換え禁止）入れて返す。中断時は pr_url は空文字、pr_number は 0、committed は手順 2 が成功済みなら true・それ以外は false、head_sha は空文字:\n`
     + `1. \`git add -A\`（失敗は failed_step:"commit" で中断）\n`
     + `2. \`git commit -F ${msgFile}\`（exit 非0 かつ stdout/stderr に "nothing to commit" があれば commit 済みとして続行。それ以外の失敗は failed_step:"commit" で中断）\n`
     + `3. \`git push -u origin HEAD\`（失敗は failed_step:"push" で中断）\n`
@@ -6685,9 +6694,15 @@ let finalCi = null   // finalCiVerdict の結果。finalReconcile が unavailabl
 if ((iterate?.fixes_applied ?? 0) > 0) {
   // Step1 sync（fail-safe）
   // fetch / merge は `git -C` も `cd` 前置も付けない bare 単文（cwd は WT）。どちらの形も sandbox の
-  // excludedCommands に当たらず、fetch は credential helper、merge は write deny 下の `.git` で失敗する
+  // excludedCommands に当たらず、fetch は credential helper、merge は write deny 下の `.git` で失敗する。
+  // -C を外した以上 fetch/merge の対象は subagent の cwd のみで決まる。resume・直接起動等で cwd が
+  // 共有 checkout のままだと無関係な worktree を書き換えるため、手順 0 で `git rev-parse --abbrev-ref
+  // HEAD` を branch と照合し、不一致なら fetch/merge を実行せず ok:false で中断する
   const sync = await trackedAgent(
     `次を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結・パイプ・リダイレクト禁止。cwd は ${WT}）で実行し **JSON object のみ** 返せ（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n`
+    + `0. git rev-parse --abbrev-ref HEAD を実行し、stdout（末尾改行を除く）が ${state.setup.branch} と一致するか確認する。`
+    + `一致しなければ cwd が対象 worktree でないため、以降の fetch/merge を一切実行せず `
+    + `{"ok":false,"error":"cwd branch mismatch: expected ${state.setup.branch}, got <rev-parse の実際の出力>"} を返せ。\n`
     + `1. git fetch origin ${state.setup.branch}\n`
     + `2. git merge --ff-only FETCH_HEAD\n`
     + `両方 exit 0 なら {"ok":true,"head":"<git rev-parse HEAD の出力>","epoch":<date +%s の出力(optional)>}、いずれかが失敗（非 fast-forward・fetch 失敗等）なら {"ok":false,"error":"<stderr の要約>","epoch":<date +%s の出力(optional)>} を返せ。\n`
