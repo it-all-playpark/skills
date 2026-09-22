@@ -539,7 +539,7 @@ FALSE_COMPLETION=$(echo "$ENRICHED" | jq -c --argjson active "$TRUST_ACTIVE_RUNS
 # (6) latency (trust_active vs trust_inactive)
 # ----------------------------------------------------------------------------
 
-PHASE_NAMES='["analyze","plan","implement","validate","evaluate","pr","iterate","final"]'
+PHASE_NAMES='["implement","validate","evaluate","pr","iterate","final"]'
 
 LATENCY=$(echo "$ENRICHED" | jq -c --argjson phases "$PHASE_NAMES" "
   $JQ_STATS_LIB

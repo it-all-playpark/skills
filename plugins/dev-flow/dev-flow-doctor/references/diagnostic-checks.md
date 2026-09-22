@@ -13,15 +13,15 @@ journal query --skill dev-flow --limit 200 | \
     sort_by(-.count)'
 ```
 
-`error.phase` は dev-flow workflow の phase 名（`Setup` / `Analyze` / `Implement` /
-`Validate` / `Security floor` / `Evaluate` / `PR` / `Merge tier`）を取る。
+`error.phase` は dev-flow workflow の phase 名（`Setup` / `Implement` /
+`Validate` / `Security floor` / `Evaluate` / `PR` / `Merge tier`）を取る。Setup 末尾の
+analyze ゲート（needs_clarification / analyze-clarify）の失敗は `Setup` に帰属する。
 
 | Pattern | Recommendation |
 |---------|----------------|
 | `Implement` phase > 30% | dev-implement-fable の再 spawn 回数（reimpl-blocked#b / reimpl#i）と issue の AC 粒度を見直す |
 | `Validate` phase > 40% | test green 化のリトライ設計を見直す、静的解析を implement 前段に前倒し |
-| `Setup` phase > 10% | worktree isolation / env bootstrap（`_shared/scripts/ensure-worktree-deps.sh`）を確認 |
-| `Analyze` phase issues | shape classification（`classifyShape`）と要件抽出の精度を確認 |
+| `Setup` phase > 10% | worktree isolation / env bootstrap（`_shared/scripts/ensure-worktree-deps.sh`）と、末尾の analyze ゲート（`analyze_path` / `needs_clarification` の分布）を確認 |
 
 ## Check 3: Error Category Distribution
 
@@ -163,9 +163,9 @@ telemetry が溜まってから hypothesis 付きで別途判断する。閾値 
 | `by_shape` | shape 別件数（`distributions.shape` と同値。較正セクション単体で読めるよう再掲） |
 | `shape_reason_kind` | `shape_reason` の prefix で `safe_floor`（realized count 欠損 / AC 欠落・issue_type 外・breaking）/ `threshold`（`realized N file(s)`）/ `unknown`（キー欠落 = 根拠未記録の旧 entry、または `estimated …` / `LLM raised …` 始まりの事前見積もり時代の文言）に分類。`shape_reason_kind_by_shape` は shape × 種別の交差表 |
 | `realized_mismatch` | `realized_file_count_raw` で判定する。`excluded_below_raw` = raw が shape の file 上限を超える（宣言外パス / format-only の除外で classifyShape 入力が閾値内に収まり、raw より下の tier に決まった run）。`floor_above_raw` = raw が下位 tier の上限以下（standard で ≤2 / complex で ≤5 — AC 数超過・issue_type・breaking・count 欠損の safe floor で raw より上の tier に決まった run。`shape_reason_kind` で切り分ける）。`unmeasured` = raw 未記録（旧 entry）。各 10 件まで `*_samples` に issue / repo / pr_number / shape_reason / 件数を併記 |
-| `analyze_path` | contract（prerun の決定論 parse のみ）/ jev（prerun が Jev 有界判定に回した）/ sonnet（Analyze ゲート後の needs_clarification 経路のみ。成功 handoff には現れない）/ unknown の件数 |
+| `analyze_path` | contract（prerun の決定論 parse のみ）/ jev（prerun が Jev 有界判定に回した）/ sonnet（Setup 末尾の analyze ゲート後の needs_clarification 経路のみ。成功 handoff には現れない）/ unknown の件数 |
 | `analyze_ineligible_reason` | jev / sonnet 経路の entry のみを分母に、`analyze_ineligible_reason`（prerun の `jev_reasons` を `; ` 結合）を要素ごとに prefix で `comments_present` / `breaking` / `other` / `unknown`（キー欠落）に正規化した件数（1 entry が両方に計上されうる） |
-| `prerun_analyze_seconds` | `prerun_durations.analyze`（prerun の analyze 段 = issue 取得 + contract parse + Jev 判定の秒数。deps install と並列）の measured / median / max。Workflow 側の `phase_durations.analyze` はゲート判定のみで常に 0 |
+| `prerun_analyze_seconds` | `prerun_durations.analyze`（prerun の analyze 段 = issue 取得 + contract parse + Jev 判定の秒数。deps install と並列）の measured / median / max。Workflow 側の analyze ゲート（Setup 末尾）は所要 ≒0 のため `phase_durations` に区間を持たない |
 
 **shape の計測点**: shape は Security floor 時点の working tree（implementer 完了直後、PR 前）を
 `classifyShape` に掛ける判定で、そこで見る数は宣言外パスと format-only を除外した後のものである。

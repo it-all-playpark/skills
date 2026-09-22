@@ -80,7 +80,7 @@ test('validatePrerunSetup: analyze.ok が非 boolean は「必須キーが欠落
   assert.throws(() => validatePrerunSetup(validRaw({ analyze: { ok: 'true' } }), 641), /必須キーが欠落\/型不正: analyze\.ok（/);
 });
 
-test('validatePrerunSetup: analyze.ok:false は reason が非空 string なら throw せず verbatim で返す（Analyze phase が needs_clarification に倒す）', () => {
+test('validatePrerunSetup: analyze.ok:false は reason が非空 string なら throw せず verbatim で返す（Setup 末尾の analyze ゲートが needs_clarification に倒す）', () => {
   const analyze = { ok: false, reason: 'analyze-issue --contract failed: gh: not found', analyze_path: 'contract', duration_seconds: 1 };
   const result = validatePrerunSetup(validRaw({ analyze }), 641);
   assert.deepEqual(result.analyze, analyze);

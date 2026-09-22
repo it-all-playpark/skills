@@ -35,8 +35,8 @@
 #      rate the moment CI delegation kicks in. checks.final_reconcile_unavailable
 #      is kept as strict "unavailable"-only for continuity with pre-issue-599
 #      snapshots.
-#   3. phase_latency - per-phase (analyze/plan/implement/validate/evaluate/
-#      pr/iterate/final) count/p50/p95 over .telemetry.phase_durations.<phase>,
+#   3. phase_latency - per-phase (implement/validate/evaluate/pr/iterate/final)
+#      count/p50/p95 over .telemetry.phase_durations.<phase>,
 #      plus overall count/p50/p95 over .telemetry.duration_seconds. Only
 #      numeric values contribute (missing/non-numeric excluded from that
 #      phase's population, mirroring analyze-dev-flow-telemetry.sh's
@@ -381,8 +381,6 @@ PHASE_LATENCY=$(echo "$DEVFLOW_ENTRIES" | jq -c '
       p95: (if $n == 0 then null else percentile(0.95; $v) end)
     };
   {
-    analyze: ([.[] | .telemetry.phase_durations.analyze] | stats_from(.)),
-    plan: ([.[] | .telemetry.phase_durations.plan] | stats_from(.)),
     implement: ([.[] | .telemetry.phase_durations.implement] | stats_from(.)),
     validate: ([.[] | .telemetry.phase_durations.validate] | stats_from(.)),
     evaluate: ([.[] | .telemetry.phase_durations.evaluate] | stats_from(.)),

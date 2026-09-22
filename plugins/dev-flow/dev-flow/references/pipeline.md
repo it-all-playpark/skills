@@ -14,17 +14,18 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 1 コマンドで行い、
 `EnterWorktree({ path })` で worktree に入ってから stdout JSON を `Workflow({ args: { issue, setup } })`
 の `args.setup` に渡す（順序は EnterWorktree → Workflow。逆だと isolation probe が fail-closed abort する）。
-dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、Analyze phase は
+dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、その末尾の analyze ゲート（固有の
+phase は持たない — 純関数の検証とゲート判定だけで所要 ≒0 のため phase_durations に区間を持たない）は
 `args.setup.analyze` の whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）
 のみで通常経路の subagent 起動は 0（ゲートが引いたときだけ sonnet を 1 spawn して人間向け
-missing_context を生成し needs_clarification で終端する）。isolation-probe はゲート通過後・Implement 前の
-1 回。orchestration (phase 遷移 / evaluate・pr-iterate の各ループ) は
+missing_context を生成し needs_clarification で終端する。失敗 telemetry の phase 帰属は `Setup`）。
+isolation-probe はゲート通過後・Implement 前の 1 回。orchestration (phase 遷移 / evaluate・pr-iterate の各ループ) は
 workflow script が JS で保持し、中間 state は script 変数に
 持つ (外部 state JSON は持たない)。workflow の `meta.name` は `dev-flow-run` だが、telemetry
 handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続性の不変条件、静的テストで pin 済み）。
 
 ```
-/dev-flow <issue>   → [wrapper preflight] → Setup → Analyze
+/dev-flow <issue>   → [wrapper preflight] → Setup(末尾で決定論 analyze ゲート)
                       → Implement(dev-implement-fable 1 spawn) → Validate(test green)
                       → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
@@ -71,7 +72,7 @@ spawn する（run 単位 sticky。resume は失敗 call 以降が live 再実�
 従来どおり drop（`implDroppedCount`）。`fallbackModel` を持たない call の null 挙動は不変。観測は
 `impl_model_fallback_label`（telemetry.md）。
 
-shape は Analyze では決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount)` が
+shape は analyze ゲートでは決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount)` が
 realized diff の file 数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）だけで
 1 回で決め、その返り値が `EFFECTIVE_SHAPE`（Evaluate 深さ・LITE gate・merge tier の入力）になる。安全 floor は
 realized count 欠損（secfloor-unified（danger-grep）の files 欠落 → NaN）・`acceptance_criteria` 欠落・out-of-enum `issue_type`・
@@ -125,7 +126,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   `_shared/scripts/veridelta-archive.sh` のヘッダコメントが正典。
 - **bg-isolation guard と isolation probe**: bg 起動セッションが呼び出し元 cwd を worktree へ
   isolate しないまま dev-flow / pr-iterate を起動すると、harness の bg-isolation guard が
-  subagent の Write/Edit を共有 checkout への書き込みとして拒否する。dev-flow は Analyze の
+  subagent の Write/Edit を共有 checkout への書き込みとして拒否する。dev-flow は Setup 末尾の analyze
   ゲート通過後・Implement 直前（needs_clarification 経路では spawn しない）、pr-iterate は review loop 進入前（fix stage
   不到達の保証）に probe を配置する。probe は worktree 直下 `.devflow-tmp/.isolation-probe-<token>`
   （token は run 毎に一意 — dev-flow は wrapper（dev-flow-prerun、top-level Bash）が渡す

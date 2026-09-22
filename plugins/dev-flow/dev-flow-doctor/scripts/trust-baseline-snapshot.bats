@@ -7,7 +7,7 @@
 #      testsurf_hits / redgreen_deny が完了を疑わせる run
 #   2. inconclusive_events     - eval_staleness / final_reconcile / vdelta_fail_open /
 #      ui_verify が inconclusive を示す run
-#   3. phase_latency           - phase_durations(8 phase) + duration_seconds の
+#   3. phase_latency           - phase_durations(6 phase) + duration_seconds の
 #      count/p50/p95
 #   4. effect_failure_rate     - iterate_status が fix_failed|stuck の割合
 #
@@ -165,7 +165,7 @@ teardown() {
     run env CLAUDE_JOURNAL_DIR="$FIXTURES" "$SCRIPT" --window 30d --until "$UNTIL"
     [ "$status" -eq 0 ]
 
-    for phase in analyze plan implement validate evaluate pr iterate final; do
+    for phase in implement validate evaluate pr iterate final; do
         cnt=$(printf '%s\n' "$output" | jq --arg p "$phase" '.phase_latency[$p].count')
         [ "$cnt" -eq 2 ]
         p50=$(printf '%s\n' "$output" | jq --arg p "$phase" '.phase_latency[$p].p50')
@@ -207,7 +207,7 @@ teardown() {
     efr_rate=$(printf '%s\n' "$output" | jq '.effect_failure_rate.rate')
     [ "$efr_rate" = "null" ]
 
-    p50=$(printf '%s\n' "$output" | jq '.phase_latency.analyze.p50')
+    p50=$(printf '%s\n' "$output" | jq '.phase_latency.implement.p50')
     [ "$p50" = "null" ]
     dur_p95=$(printf '%s\n' "$output" | jq '.phase_latency.duration_seconds.p95')
     [ "$dur_p95" = "null" ]

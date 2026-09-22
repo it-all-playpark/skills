@@ -75,13 +75,13 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
 
 ## Implement 経路（全 shape で dev-implement-fable 一本）
 
-Analyze は `args.setup.analyze`（prerun の決定論 analyze）を whitelist 検証して 3 条件ゲート
-（AC 空 / comment_conflicts 非空 / uncertain 非空）を判定するだけで、通常経路では agent を起動しない
-（ゲートが引いたときだけ sonnet を 1 spawn し、人間向けの missing_context を作って needs_clarification
-で終端する）。Analyze 直後に issue から単一 task の plan を合成するだけ（Plan phase は持たず、planner 系
-agent は起動しない）で、Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn する。
-BLOCKED 再実装（`reimpl-blocked#b`）・Validate の green-fix・Evaluate の差し戻し（`reimpl#i`）も同じ
-agent への再 spawn。shape（micro / standard / complex）は Analyze では決めず、Security floor で
+Setup 末尾の analyze ゲート（固有の phase は持たない）は `args.setup.analyze`（prerun の決定論 analyze）を
+whitelist 検証して 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）を判定するだけで、
+通常経路では agent を起動しない（ゲートが引いたときだけ sonnet を 1 spawn し、人間向けの missing_context を
+作って needs_clarification で終端する）。ゲート直後に issue から単一 task の plan を合成するだけ（Plan phase は
+持たず、planner 系 agent は起動しない）で、Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を
+1 spawn する。BLOCKED 再実装（`reimpl-blocked#b`）・Validate の green-fix・Evaluate の差し戻し（`reimpl#i`）も
+同じ agent への再 spawn。shape（micro / standard / complex）は analyze ゲートでは決めず、Security floor で
 realized diff の file 数 + AC 数 / issue_type / 構造化 breaking_change から決定論に決める
 （Evaluate の深さ・LITE gate・merge tier の入力）。詳細は `references/pipeline.md` の shape 3 tier 表。
 

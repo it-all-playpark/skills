@@ -1,19 +1,18 @@
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
 // I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
 // start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s、deps install 前）、
-// analyze_start は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack 完了後、
-// prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の optional
-// epoch から給電し、残り 8 mark（analyze_end/implement_end/validate_end/evaluate_end/
-// pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
-// フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
-// 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
-// 数分かかりうる）と prerun の analyze 段（issue 取得 + Jev 判定。deps と並列）を analyze の
-// phase_durations に付け替えないため — start〜analyze_start の区間（deps/stack/analyze の決定論処理 +
-// wrapper turn）はどの phase にも属さない残差（duration_seconds − Σphase_durations）に留め、
-// analyze 段の所要だけは telemetry の prerun_durations.analyze に別途載せる（issue #690）。
-// Analyze phase は Workflow 内では args.setup.analyze の whitelist 検証とゲート判定だけで agent を
-// spawn しないため、analyze_end も epoch_end から給電し phase_durations.analyze は常に 0 になる
-// （ゲート判定時間のみ。isolation-probe / plan 合成の時間は implement 区間に入る）。
+// setup_end は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack / analyze 段
+// 完了後、prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の
+// optional epoch から給電し、残り 6 mark（implement_end/validate_end/evaluate_end/pr_end/
+// iterate_end/final_end）は隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから
+// recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null → 対応 duration キー欠落）。
+// epoch と epoch_end を分けているのは、deps install（npm ci 等で数分かかりうる）と prerun の
+// analyze 段（issue 取得 + Jev 判定。deps と並列）を implement の phase_durations に付け替えないため —
+// start〜setup_end の区間（deps/stack/analyze の決定論処理 + wrapper turn）はどの phase にも属さない
+// 残差（duration_seconds − Σphase_durations）に留め、analyze 段の所要だけは telemetry の
+// prerun_durations.analyze に別途載せる（issue #690）。Setup 末尾の analyze ゲート（args.setup.analyze の
+// whitelist 検証と 3 条件ゲート判定）は agent を spawn しない純関数なので固有の mark を持たない —
+// implement 区間は setup_end 起点で、isolation-probe / plan 合成の時間を含む（issue #695）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -21,8 +20,7 @@
 // dev-flow.js の probe 発火順と一致する序列。
 export const CLOCK_MARK_ORDER = [
   'start',
-  'analyze_start',
-  'analyze_end',
+  'setup_end',
   'implement_end',
   'validate_end',
   'evaluate_end',
@@ -32,9 +30,9 @@ export const CLOCK_MARK_ORDER = [
   'end',
 ];
 
-// phase キー → 終端 mark 名。
+// phase キー → 終端 mark 名。setup_end は implement 区間の起点としてだけ使い、setup 自体の
+// duration は出さない（deps install 等の決定論処理は残差に留める）。
 export const CLOCK_PHASE_ENDS = [
-  ['analyze', 'analyze_end'],
   ['implement', 'implement_end'],
   ['validate', 'validate_end'],
   ['evaluate', 'evaluate_end'],
@@ -106,7 +104,7 @@ export function maxEpochRes(list) {
 }
 
 /**
- * marks から duration_seconds（run 全体）と phase_durations（7 phase）を算出する。
+ * marks から duration_seconds（run 全体）と phase_durations（6 phase）を算出する。
  * @param {object} marks - CLOCK_MARK_ORDER の各 mark 名をキーに持つ object（値は epoch 秒 or null）
  * @returns {{duration_seconds: number|null, phase_durations: object}}
  */

@@ -1,9 +1,8 @@
 export const meta = {
   name: 'dev-flow-run',
-  description: 'Issue から LGTM まで: 分析(prerun の決定論 analyze を検証・ゲート判定のみ、spawn 0)→実装(dev-implement-fable 1 spawn)→test green→security floor(realized diff から shape 判定)→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
+  description: 'Issue から LGTM まで: Setup(prerun 結果の検証 + 末尾で決定論 analyze のゲート判定、spawn 0)→実装(dev-implement-fable 1 spawn)→test green→security floor(realized diff から shape 判定)→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
   phases: [
     { title: 'Setup' },
-    { title: 'Analyze' },
     { title: 'Implement' },
     { title: 'Validate' },
     { title: 'Security floor' },
@@ -259,14 +258,14 @@ function validatePrerunSetup(raw, issue) {
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
   // analyze（issue #690）: prerun の analyze 段（analyze-issue --contract + Jev）の結果。ok:false は
-  // Analyze phase が needs_clarification（source=analyze_prerun）に倒すため throw しない（reason 必須）。
+  // Setup 末尾の analyze ゲートが needs_clarification（source=analyze_prerun）に倒すため throw しない（reason 必須）。
   if (!isPlainObject(raw.analyze)) fail('analyze', raw.analyze);
   if (typeof raw.analyze.ok !== 'boolean') fail('analyze.ok', raw.analyze.ok);
   if (raw.analyze.ok === false && !isNonEmptyString(raw.analyze.reason)) fail('analyze.reason', raw.analyze.reason);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
-  // epoch_end は deps install / detect-stack 完了後（prerun.sh 末尾）で採る第2の時刻。
-  // analyze_start はここから給電する（epoch から給電すると deps install 等の Setup 決定論処理
-  // 時間が丸ごと analyze の phase_durations に付け替わるため）。
+  // epoch_end は deps install / detect-stack / analyze 段 完了後（prerun.sh 末尾）で採る第2の時刻。
+  // setup_end mark（implement 区間の起点）はここから給電する（epoch から給電すると deps install 等の
+  // Setup 決定論処理時間が丸ごと implement の phase_durations に付け替わるため）。
   if (!(Number.isInteger(raw.epoch_end) && raw.epoch_end > 0)) fail('epoch_end', raw.epoch_end);
 
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
@@ -721,19 +720,18 @@ function mergeSubagentCounts(counts, byType) {
 // devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
 // I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
 // start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s、deps install 前）、
-// analyze_start は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack 完了後、
-// prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の optional
-// epoch から給電し、残り 8 mark（analyze_end/implement_end/validate_end/evaluate_end/
-// pr_end/iterate_end/final_end/end）は隣接する既存 exec-proxy / agent 応答の optional epoch
-// フィールドから recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null →
-// 対応 duration キー欠落）。epoch と epoch_end を分けているのは、deps install（npm ci 等で
-// 数分かかりうる）と prerun の analyze 段（issue 取得 + Jev 判定。deps と並列）を analyze の
-// phase_durations に付け替えないため — start〜analyze_start の区間（deps/stack/analyze の決定論処理 +
-// wrapper turn）はどの phase にも属さない残差（duration_seconds − Σphase_durations）に留め、
-// analyze 段の所要だけは telemetry の prerun_durations.analyze に別途載せる（issue #690）。
-// Analyze phase は Workflow 内では args.setup.analyze の whitelist 検証とゲート判定だけで agent を
-// spawn しないため、analyze_end も epoch_end から給電し phase_durations.analyze は常に 0 になる
-// （ゲート判定時間のみ。isolation-probe / plan 合成の時間は implement 区間に入る）。
+// setup_end は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack / analyze 段
+// 完了後、prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の
+// optional epoch から給電し、残り 6 mark（implement_end/validate_end/evaluate_end/pr_end/
+// iterate_end/final_end）は隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから
+// recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null → 対応 duration キー欠落）。
+// epoch と epoch_end を分けているのは、deps install（npm ci 等で数分かかりうる）と prerun の
+// analyze 段（issue 取得 + Jev 判定。deps と並列）を implement の phase_durations に付け替えないため —
+// start〜setup_end の区間（deps/stack/analyze の決定論処理 + wrapper turn）はどの phase にも属さない
+// 残差（duration_seconds − Σphase_durations）に留め、analyze 段の所要だけは telemetry の
+// prerun_durations.analyze に別途載せる（issue #690）。Setup 末尾の analyze ゲート（args.setup.analyze の
+// whitelist 検証と 3 条件ゲート判定）は agent を spawn しない純関数なので固有の mark を持たない —
+// implement 区間は setup_end 起点で、isolation-probe / plan 合成の時間を含む（issue #695）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -741,8 +739,7 @@ function mergeSubagentCounts(counts, byType) {
 // dev-flow.js の probe 発火順と一致する序列。
 const CLOCK_MARK_ORDER = [
   'start',
-  'analyze_start',
-  'analyze_end',
+  'setup_end',
   'implement_end',
   'validate_end',
   'evaluate_end',
@@ -752,9 +749,9 @@ const CLOCK_MARK_ORDER = [
   'end',
 ];
 
-// phase キー → 終端 mark 名。
+// phase キー → 終端 mark 名。setup_end は implement 区間の起点としてだけ使い、setup 自体の
+// duration は出さない（deps install 等の決定論処理は残差に留める）。
 const CLOCK_PHASE_ENDS = [
-  ['analyze', 'analyze_end'],
   ['implement', 'implement_end'],
   ['validate', 'validate_end'],
   ['evaluate', 'evaluate_end'],
@@ -826,7 +823,7 @@ function maxEpochRes(list) {
 }
 
 /**
- * marks から duration_seconds（run 全体）と phase_durations（7 phase）を算出する。
+ * marks から duration_seconds（run 全体）と phase_durations（6 phase）を算出する。
  * @param {object} marks - CLOCK_MARK_ORDER の各 mark 名をキーに持つ object（値は epoch 秒 or null）
  * @returns {{duration_seconds: number|null, phase_durations: object}}
  */
@@ -2029,8 +2026,8 @@ function classifyShape(req, realizedCount) {
 // _lib/analyze-contract.mjs
 // buildReqFromContract: dev-flow-prerun の analyze 段（prerun-analyze.sh = `analyze-issue --contract` の
 // 決定論 parse + Jev 有界判定）の出力 `args.setup.analyze` から REQ を決定論構成する純粋関数。
-// dev-flow の Analyze phase はこの whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 /
-// uncertain 非空）だけを行い、通常経路では agent を 1 つも spawn しない（issue #690）。
+// dev-flow の Setup 末尾の analyze ゲートはこの whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 /
+// uncertain 非空）だけを行い、通常経路では agent を 1 つも spawn しない（issue #690 / #695）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -2107,7 +2104,7 @@ function buildReqFromContract(analyze, issueNumber) {
   return req
 }
 
-// analyzeGateReasons: Analyze phase の 3 条件ゲート。非空なら needs_clarification（source=analyze）で終端し、
+// analyzeGateReasons: Setup 末尾の analyze ゲート（3 条件）。非空なら needs_clarification（source=analyze）で終端し、
 // ゲート後にだけ sonnet を 1 spawn して人間向け missing_context を生成する。
 //   - AC 空: 決定論 parse が AC 見出し / 項目を見つけられなかった
 //   - comment_conflicts 非空: body と comment の矛盾、または権限なし / 低確信の上書き（fail-closed）
@@ -3903,7 +3900,7 @@ const ISOLATION_PROBE = {
   type: 'object', required: ['written'],
   properties: { written: { type: 'boolean' }, error: { type: 'string' } },
 }
-// Analyze のゲート後（AC 空 / comment_conflicts / uncertain）にだけ sonnet を 1 spawn し、人間向けの
+// Setup 末尾の analyze ゲート後（AC 空 / comment_conflicts / uncertain）にだけ sonnet を 1 spawn し、人間向けの
 // missing_context を生成させる用のスキーマ。REQ は agent が返すものではなく args.setup.analyze から
 // buildReqFromContract が決定論構成する。
 const CLARIFY = {
@@ -5260,7 +5257,7 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
 // ---- Implement 経路（全 shape で dev-implement-fable 一本）----
-// Analyze 直後に issue から単一 task の plan を合成し、runImplement が dev-implement-fable
+// Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成し、runImplement が dev-implement-fable
 // （plan+impl 統合）を 1 spawn する。合成 plan の task は agent キーを持つ（isFablePlan）—
 // 合成 plan 以外は Implement / Evaluate で受理しない（明示 error）。
 const FABLE_IMPL_AGENT = 'dev-implement-fable'
@@ -5353,8 +5350,8 @@ function implementDrops(plan, results) {
 // （isolation:'worktree' は使わない — 各 agent が別 worktree になり成果が分散するため。）
 // ============================================================
 const clockMarks = {}
-// 専用 clock probe の呼び出しは 0 回になった。全 11 mark（start/end 含む）は feedClockMark が
-// 隣接 proxy/agent 応答の optional epoch から給電する（fail-open 不変）。
+// 専用 clock probe の呼び出しは 0 回になった。全 9 mark（start/end 含む）は feedClockMark が
+// prerun 応答（start / setup_end）と隣接 proxy/agent 応答の optional epoch から給電する（fail-open 不変）。
 
 // feedClockMark: 専用 clock probe を経由せず、隣接する既存 exec-proxy/agent 応答の
 // optional epoch から mark を給電する。epochResOf/maxEpochRes は _lib/devflow-durations.mjs の
@@ -5388,7 +5385,7 @@ log(hasNextJs(PRERUN.frameworks)
   : `Setup(stack): Next.js 非検出（frameworks=${JSON.stringify(PRERUN.frameworks)}）— Turbopack fallback 規約は注入しない`)
 const branch = PRERUN.branch
 const setup = PRERUN
-// isolation probe は Analyze のゲート判定の後（Implement 直前）で spawn する — needs_clarification は
+// isolation probe は Setup 末尾の analyze ゲート判定の後（Implement 直前）で spawn する — needs_clarification は
 // probe / fable より前に確定させ、人間へ返す run に spawn を 1 つも使わない。
 
 // Validate / Final reconcile 共有の test 実行 prompt。WT 確定後（Setup 完了後）に
@@ -5417,7 +5414,7 @@ const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json �
   + `"dev-flow" キー配下の "ui_verify" object を探せ。見つかれば {"found":true,"config":<その object を verbatim>}、`
   + `どちらにも無ければ {"found":false,"config":null} を返せ。値の解釈・補完・生成はするな。`
 
-// clarifyPrompt: Analyze のゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）が引いたときにだけ
+// clarifyPrompt: Setup 末尾の analyze ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）が引いたときにだけ
 // sonnet（dev-runner）を 1 spawn し、決定論のゲート理由を人間が答えられる質問文（missing_context）へ
 // 書き起こさせる。要件抽出・AC 抽出・issue 転写はさせない（REQ は args.setup.analyze から決定論構成済み。
 // ここで LLM に issue を読み直させて要件を再構成すると、転写事故（title / AC / comment の読み落とし・捏造）に
@@ -5430,24 +5427,23 @@ const clarifyPrompt = (gateReasons) => `cd ${WT} で作業。issue #${ISSUE} は
   + `ゲート理由（決定論。verbatim で参照し、削除・要約するな）:\n${JSON.stringify(gateReasons)}\n`
   + EPOCH_INSTRUCTION
 
-// ============================================================
-// Phase Analyze: args.setup.analyze（dev-flow-prerun の analyze 段 = analyze-issue --contract + Jev 有界判定、
-// deps install と並列）を whitelist 検証して REQ を組み、3 条件ゲートだけを判定する。通常経路の agent
-// spawn は 0。LLM が issue を転写する工程が無いので provenance 突合 / comment_count 突合 / scope 切断時の
-// 再実行は置かない。
-// ============================================================
-phase('Analyze')
-// analyze_start / analyze_end は共に prerun の epoch_end（deps install / analyze 段完了後）から給電する。
-// Analyze phase は純関数の検証とゲート判定だけで agent 応答（epoch）が無い — phase_durations.analyze は
-// ゲート判定時間（≒0）のみ、prerun の analyze 段の所要は prerun_durations.analyze に分けて載せる。
-feedClockMark('analyze_start', { ok: true, epoch: PRERUN.epoch_end })
-ABORT_CTX.phase = 'Analyze'; ABORT_CTX.label = 'analyze-gate'
+// ------------------------------------------------------------
+// Setup 末尾: analyze ゲート。args.setup.analyze（dev-flow-prerun の analyze 段 = analyze-issue --contract +
+// Jev 有界判定、deps install と並列）を whitelist 検証して REQ を組み、3 条件ゲートだけを判定する。
+// 通常経路の agent spawn は 0。LLM が issue を転写する工程が無いので provenance 突合 / comment_count 突合 /
+// scope 切断時の再実行は置かない。固有の phase は持たない（純関数の検証とゲート判定だけで agent 応答（epoch）が
+// 無く、所要は常に ≒0 — issue #695）。prerun の analyze 段の所要は prerun_durations.analyze に載せる。
+// ------------------------------------------------------------
+// setup_end は prerun の epoch_end（deps install / detect-stack / analyze 段完了後）から給電する。
+// implement 区間の起点になり、deps install 等の決定論処理時間はどの phase にも属さない残差に留まる。
+feedClockMark('setup_end', { ok: true, epoch: PRERUN.epoch_end })
+ABORT_CTX.label = 'analyze-gate'
 const ANALYZE = PRERUN.analyze
 if (ANALYZE.ok !== true) {
   // prerun の analyze 段が失敗（GitHub 到達不能 / JSON 不正）。捏造経路が無いので REQ を推測で組まず、
   // 人間へ返す（source=analyze_prerun）。isolation-probe / fable より前なので spawn は 0。
   log(`⚠️ analyze: prerun の analyze 段が失敗（${ANALYZE.reason}）— needs_clarification で中断（source=analyze_prerun）`)
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: prerun analyze 段の失敗で中断（source=analyze_prerun: ${ANALYZE.reason}）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: typeof ANALYZE.analyze_path === 'string' ? ANALYZE.analyze_path : 'contract' }, phase: 'Analyze' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: prerun analyze 段の失敗で中断（source=analyze_prerun: ${ANALYZE.reason}）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: typeof ANALYZE.analyze_path === 'string' ? ANALYZE.analyze_path : 'contract' }, phase: 'Setup' })
   return { status: 'needs_clarification', source: 'analyze_prerun', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の取得・決定論 parse が prerun で失敗した: ${ANALYZE.reason}`], journal_log_status: journalLogStatus, note: 'dev-flow-prerun の analyze 段（analyze-issue --contract）が失敗したため中断。GitHub CLI の到達性・認証と issue 番号を確認し /dev-flow を再起動すること（prerun は再実行される）。worktree は保持済みで再利用される' }
 }
 const req = buildReqFromContract(ANALYZE, ISSUE)
@@ -5458,7 +5454,7 @@ if (!req) {
 // ANALYZE_INELIGIBLE_REASON は Jev に回した理由（prerun の jev_reasons を '; ' 結合。contract 経路は null でキー欠落）。
 let ANALYZE_PATH = req.analyze_path
 let ANALYZE_INELIGIBLE_REASON = req.jev_reasons.length ? req.jev_reasons.join('; ') : null
-log(`analyze: prerun 決定論 parse を採用（path=${ANALYZE_PATH}${ANALYZE_INELIGIBLE_REASON ? ' / jev: ' + ANALYZE_INELIGIBLE_REASON : ''} / AC ${req.acceptance_criteria.length} 件 / prerun analyze ${Number.isFinite(ANALYZE.duration_seconds) ? ANALYZE.duration_seconds : '?'}s）— Analyze phase の spawn 0`)
+log(`analyze: prerun 決定論 parse を採用（path=${ANALYZE_PATH}${ANALYZE_INELIGIBLE_REASON ? ' / jev: ' + ANALYZE_INELIGIBLE_REASON : ''} / AC ${req.acceptance_criteria.length} 件 / prerun analyze ${Number.isFinite(ANALYZE.duration_seconds) ? ANALYZE.duration_seconds : '?'}s）— analyze ゲートの spawn 0`)
 if (req.breaking_change === true) log(`analyze: breaking_change=true（${req.breaking_evidence || '根拠なし'}）`)
 if (req.scope_truncated === true) log(`⚠️ analyze: scope が 4000 字で切断（AC 節除く全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）— 切断域の記述は implementer に届かない（acceptance_criteria は全件届く。issue #596）`)
 if (Array.isArray(ANALYZE.ac_heading_near_miss) && ANALYZE.ac_heading_near_miss.length) log(`⚠️ analyze: AC 見出しの表記ゆれ候補が許容表記に一致しない（${ANALYZE.ac_heading_near_miss.join(' / ')}）— AC 空なら needs_clarification になる（issue #573）`)
@@ -5471,12 +5467,12 @@ const gateReasons = analyzeGateReasons(req)
 if (gateReasons.length) {
   log(`⚠️ analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）— sonnet で missing_context を生成して needs_clarification で中断`)
   ANALYZE_PATH = 'sonnet'
-  const clarify = await failOpenAgent(clarifyPrompt(gateReasons), { agentType: 'dev-runner', schema: CLARIFY, label: `analyze-clarify#${ISSUE}`, phase: 'Analyze' })
+  const clarify = await failOpenAgent(clarifyPrompt(gateReasons), { agentType: 'dev-runner', schema: CLARIFY, label: `analyze-clarify#${ISSUE}`, phase: 'Setup' })
   const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
   const clarified = strList(clarify?.missing_context)
   if (!clarified.length) log('⚠️ analyze: missing_context 生成が null / 空 — ゲート理由をそのまま人間へ返す（fail-open）')
   const missingContext = clarified.length ? clarified.concat(gateReasons) : gateReasons
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）で中断（source=analyze）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: ANALYZE_PATH, ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}) }, phase: 'Analyze' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）で中断（source=analyze）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: ANALYZE_PATH, ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}) }, phase: 'Setup' })
   return {
     status: 'needs_clarification',
     source: 'analyze',
@@ -5488,7 +5484,6 @@ if (gateReasons.length) {
     note: '要件を決定論で確定できないため中断。呼び出し元セッションが missing_context を AskUserQuestion で人間に確認し、issue body を更新してから /dev-flow を再起動すること（comment の訂正は body に反映する。黙って片方を採用しない。issue #573 / #690）。worktree は保持済みで再利用される',
   }
 }
-feedClockMark('analyze_end', { ok: true, epoch: PRERUN.epoch_end })
 
 // isolation probe: implementer と同じ Write tool 経路で書けるかを subagent で検証する（wrapper の Bash では
 // 意味が変わるため代替しない）。ゲート通過後に置くことで needs_clarification 経路の spawn を 0 に保つ。
@@ -5512,7 +5507,7 @@ log('implement#synth-plan: planner 0 回、issue から単一 task の plan を�
 
 // ============================================================
 // state: Implement 以降の phase 間で共有する単一 state オブジェクト。
-// Setup/Analyze の産出物（合成 plan を含む）をここで seed し、以降の exec*Phase(state) は
+// Setup の産出物（analyze ゲート後の req・合成 plan を含む）をここで seed し、以降の exec*Phase(state) は
 // state を引数/返り値として明示的に受け渡す（implPrompt の req/plan 前方参照解消と対）。
 // ============================================================
 let state = {
@@ -6795,7 +6790,7 @@ if (finalReconcile === 'unavailable') {
 
 // ============================================================
 // Step6: targeted Final AC reconcile。fix 適用 run で final test が green/no_tests の場合のみ、
-// Analyze で freeze した既存 AC を最終 PR tree に対し one-shot で再検証する。契約（EVALUATOR_OPERATIONAL_CONTRACT.
+// Setup 末尾の analyze ゲートで freeze した既存 AC を最終 PR tree に対し one-shot で再検証する。契約（EVALUATOR_OPERATIONAL_CONTRACT.
 // final_ac_reconcile）は evaluator.md へ mirror せず本 prompt 注入が唯一の配送経路（.claude/agents/ は書き込み禁止領域）。
 // ============================================================
 let finalAcReconcile = 'skipped'
@@ -7156,7 +7151,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // - analyze_path: 'contract' | 'jev'（成功 run。'sonnet' はゲート後の needs_clarification 経路のみ）
     // - analyze_ineligible_reason: Jev に回した理由（prerun の jev_reasons）。contract 経路はキー欠落
     // - prerun_durations.analyze: prerun の analyze 段（issue 取得 + Jev。deps install と並列）の秒数。
-    //   phase_durations.analyze（Workflow 側のゲート判定時間のみ）とは別に載せる
+    //   Workflow 側の analyze ゲート（Setup 末尾の純関数）は phase_durations に区間を持たない（issue #695）
     shape: state.EFFECTIVE_SHAPE,
     shape_reason: state.triage.reason,
     realized_file_count: Number.isFinite(state.realizedCount) ? state.realizedCount : null,
