@@ -7,7 +7,7 @@
 # Exit code: 0 = t1/t2 (pass), 3 = non_compliant, 1 = usage/IO error
 #
 # AC heading detection (extended regex, first match wins):
-#   ^#{2,6}[[:space:]]+(受け入れ基準|受け入れ条件|Acceptance Criteria|完了条件)
+#   ^#{2,6}[[:space:]]+(受け入れ基準|受け入れ条件|受入基準|受入条件|Acceptance Criteria|完了条件)
 #   English alternative matched case-insensitively; heading text after the
 #   match is not required to end the line (e.g. trailing "（Acceptance
 #   Criteria）" annotations are allowed).
@@ -49,7 +49,7 @@ BODY_FILE="${1:-}"
 # Strip trailing CR (CRLF -> LF) into a working copy of lines.
 mapfile -t LINES < <(sed 's/\r$//' "$BODY_FILE")
 
-HEADING_RE='^#{2,6}[[:space:]]+(受け入れ基準|受け入れ条件|Acceptance Criteria|完了条件)'
+HEADING_RE='^#{2,6}[[:space:]]+(受け入れ基準|受け入れ条件|受入基準|受入条件|Acceptance Criteria|完了条件)'
 ANY_HEADING_RE='^#{1,6}[[:space:]]'
 CHECKBOX_RE='^[[:space:]]*[-*][[:space:]]+\[[ xX]\]'
 BULLET_RE='^[[:space:]]*([-*][[:space:]]+|[0-9]+\.[[:space:]]+)'

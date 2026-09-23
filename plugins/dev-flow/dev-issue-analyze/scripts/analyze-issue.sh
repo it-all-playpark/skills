@@ -149,9 +149,8 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 
 # Line-anchored regex matching a markdown heading whose text CONTAINS one of the
 # accepted AC-heading forms (case-insensitive), mirroring _lib/scripts/ac-lint.sh's
-# HEADING_RE exactly: same alternation set (受け入れ基準|受け入れ条件|Acceptance
-# Criteria|完了条件, "受入基準"/"受入条件" without け/え are deliberately NOT accepted
-# — ac-lint.sh rejects them) and the same "trailing text after the match is not
+# HEADING_RE exactly: same alternation set (受け入れ基準|受け入れ条件|受入基準|
+# 受入条件|Acceptance Criteria|完了条件) and the same "trailing text after the match is not
 # required to end the line" tolerance (e.g. "受け入れ基準（Acceptance Criteria）"
 # annotations match, and so does a substring like "受け入れ基準外" — same as
 # ac-lint.sh), and the same heading-level range `#{2,6}` — an h1 `# 受け入れ基準`
@@ -159,18 +158,16 @@ grep -qiE 'breaking|incompatible|migration|破壊的|非互換' <<<"${TITLE}"$'\
 # it either; such a heading is surfaced via ac_heading_near_miss and handled by the
 # sonnet fallback rather than silently dropped.
 # This fast-path eligibility check MUST agree with ac-lint.sh's real
-# contract gate, or the two silently diverge: before this alignment, "## 完了条件"
-# was silently non-eligible here while ac-lint.sh accepted it as t1, and conversely
-# "受入基準"/"受入条件" were accepted here while ac-lint.sh rejects them (issue #573
-# review). The PR #388 rationale of excluding substring matches like "受け入れ基準外"
-# no longer applies — ac-lint.sh never made that distinction either; see
+# contract gate, or the two silently diverge (an AC heading that one accepts and the
+# other rejects makes the issue eligible on one path and AC-empty on the other).
+# Substring matches like "受け入れ基準外" are accepted as ac-lint.sh does; see
 # extract_ac_section below for how the *section body* is still correctly bounded at
 # the *next heading of any kind* regardless of this looser heading match.
 # NOTE: implemented with grep -E (not awk ==) — macOS's bundled awk (one true awk
 # 20200816) has a confirmed locale-dependent bug where `==` between two non-identical
 # multibyte Japanese strings (e.g. "受け入れ基準外" vs "受け入れ基準") spuriously
 # returns true, so awk string-equality cannot be trusted for this comparison here.
-AC_HEADING_LINE_RE='^#{2,6}[[:space:]]+(acceptance criteria|受け入れ基準|受け入れ条件|完了条件)'
+AC_HEADING_LINE_RE='^#{2,6}[[:space:]]+(acceptance criteria|受け入れ基準|受け入れ条件|受入基準|受入条件|完了条件)'
 HEADING_LINE_RE='^#{1,6}[[:space:]]+'
 # Near-miss detector: any fence-external heading line that CONTAINS one of these
 # fragments but does not match AC_HEADING_LINE_RE (e.g. "受入れ要件", "完了基準")
