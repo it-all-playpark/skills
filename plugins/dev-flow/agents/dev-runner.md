@@ -1,10 +1,12 @@
 ---
 name: dev-runner
 description: |
-  Run deterministic dev-flow steps that wrap existing Skills or shell commands
-  (issue analysis, test-green check, PR fix), and return a structured result.
-  Use when: dev-flow/pr-iterate workflow needs to invoke a Skill (dev-issue-analyze)
-  or run tests and report a typed result.
+  Runs sonnet-tier dev-flow steps that wrap existing Skills or gh commands
+  (analyze-clarify questions, PR fix, dev-improve issue filing / body update),
+  and returns a structured result.
+  Use when: the dev-flow analyze gate needs missing_context questions via
+  dev-issue-analyze, pr-iterate needs review fixes applied, or dev-improve
+  needs to create / edit GitHub issues.
 model: sonnet
 effort: high
 tools:
@@ -20,10 +22,12 @@ maxTurns: 50
 
 # dev-runner
 
-dev-flow / pr-iterate workflow の「決定論寄りステップ」を実行する汎用 runner。
-既存の portable Skill（`dev-issue-analyze`）の呼び出しやテスト実行を担い、結果を呼び出し側
-schema に合わせた JSON で返す（PR phase の commit + PR 作成は dev-runner-haiku の verbatim 転写 —
-`git-commit` / `git-pr` skill は dev-flow から呼ばない）。
+dev-flow / pr-iterate / dev-improve workflow の「決定論寄りステップ」を実行する汎用 runner。
+analyze ゲートが引いたときの質問文起こし（portable Skill `dev-issue-analyze` で issue を読む）・
+pr-iterate の PR fix・dev-improve の issue 起票 / body 更新を担い、結果を呼び出し側 schema に合わせた
+JSON で返す。通常経路の issue 分析は prerun の決定論スクリプト（`analyze-issue --contract`）、
+テスト実行と PR phase の commit + PR 作成は dev-runner-haiku（verbatim 転写 — `git-commit` /
+`git-pr` skill は dev-flow から呼ばない）が担う。
 
 判断系（計画+実装・評価・レビュー）は別 agent（dev-implement-fable / evaluator / pr-reviewer）が
 担うため、このagentは**指示された Skill/コマンドを実行し結果を正確に構造化する**ことに徹する。
@@ -45,9 +49,9 @@ spawn prompt に「実行する Skill / コマンド」「作業 worktree の絶
 
 | 指示 | 実行 | 返す |
 |------|------|------|
-| issue 分析 | `Skill: dev-issue-analyze <n> --depth <d>` | `{summary, issue_type, acceptance_criteria, scope, comment_overrides, comment_conflicts}` |
-| test green 確認 | プロジェクトのテストコマンド（npm test / pytest / cargo test 等）を実行 | `{tests, green, summary}` |
-| PR fix | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |
+| analyze-clarify（dev-flow Setup） | `Skill: dev-issue-analyze <n> --depth comprehensive` で issue を読み、ゲート理由ごとに質問文を起こす | `{missing_context}` |
+| PR fix（pr-iterate） | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |
+| issue 起票 / body 更新（dev-improve） | `gh issue create` / `gh issue edit --body-file` | `{created, number, url}` / `{posted, method, url}` |
 
 ## Boundary
 

@@ -40,8 +40,6 @@ const REQUIRED_CLASSES = [
   'untestable-ac',
   'missing-file-reference',
   'wrong-file-target',
-  'file-conflict-in-parallel',
-  'dependency-contradiction',
   'self-containment-violation',
   'edge-case-unhandled',
   'error-handling-missing',
@@ -65,6 +63,15 @@ test('辞書本文に必須 problem-class が全て含まれる', () => {
     [],
     `以下の problem-class が辞書に見つからない: ${missing.join(', ')}`,
   );
+});
+
+// (3b) plan-reviewer / parallel 分解は存在しないため、検出元・problem-class に現れない
+test('辞書本文に plan-reviewer と parallel 分解由来の problem-class が含まれない', () => {
+  const content = readFileSync(DICT_PATH, 'utf-8');
+  const stale = ['plan-reviewer', 'file-conflict-in-parallel', 'dependency-contradiction'].filter((s) =>
+    content.includes(s),
+  );
+  assert.deepEqual(stale, [], `辞書に撤去済みの検出元 / problem-class が残っている: ${stale.join(', ')}`);
 });
 
 // (4) 各 agent .md ファイルが辞書パスを参照している

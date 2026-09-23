@@ -23,7 +23,7 @@ export function normalizePath(s) {
  *
  * normalizePath を共用して表記ゆれ（'path: 説明' / './' プレフィックス / 空白）を正規化する。
  *
- * @param {Array<{id: string, file_changes?: string[]}>} planTasks - serial + parallel の全 task 配列
+ * @param {Array<{id: string, file_changes?: string[]}>} planTasks - plan.serial の全 task 配列
  * @param {string[]} changedFiles - `git status --porcelain` の変更ファイル一覧（正規化済みパスを期待する）
  * @returns {string[]} 宣言外変更ファイルパスの配列（changedFiles の正規化値が基準）
  */

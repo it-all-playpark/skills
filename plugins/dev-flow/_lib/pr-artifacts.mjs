@@ -45,7 +45,7 @@ function collapseWhitespace(s) {
 // plan の file_changes（`path: 説明` 形も許容）から path 部分を取り出す。
 function planPaths(plan) {
   const out = [];
-  for (const t of [...arr(plan?.serial), ...arr(plan?.parallel)]) {
+  for (const t of arr(plan?.serial)) {
     for (const fc of arr(t?.file_changes)) {
       const p = str(fc).split(':')[0].trim();
       if (p) out.push(p);
@@ -115,7 +115,7 @@ export const PR_BODY_AC_MIN = 40;
 export const PR_BODY_AC_SHRINK_STEP = 20;
 export const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
 
-// plan.serial + plan.parallel の file_changes を component（path の dirname。無ければ '(root)'）ごとに
+// plan.serial の file_changes を component（path の dirname。無ければ '(root)'）ごとに
 // 初出順でグループ化し、[{ component, files }] を返す（files は basename を初出順・重複排除）。
 function changeGroups(plan) {
   const order = [];

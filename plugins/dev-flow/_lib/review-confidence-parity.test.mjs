@@ -59,7 +59,7 @@ test('[review-confidence-parity] AC-2/AC-3: dev-flow.js（pr-review-lite）と p
   const df = makeDevFlowSandbox({
     overrides: {
       'analyze#1': CLEAN_MICRO_REQ,
-      'plan#micro': { summary: 'p', serial: [], parallel: [] },
+      'plan#micro': { summary: 'p', serial: [] },
       'danger-grep': { risk: { ok: true, hits: [] }, files: [], struct: null, diffhash: null },
       'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
     },

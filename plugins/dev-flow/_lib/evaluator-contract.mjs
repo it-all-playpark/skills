@@ -24,7 +24,7 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
     'concern_resolutions 契約:',
     '- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolution, evidence}] で全件判定して返す。',
     '- id は渡された item の id をそのまま返す。',
-    '- resolution は resolved / triaged / unresolved の 3 値 enum（必須）。旧 resolved:true/false（boolean キー）は受理されず error になる。',
+    '- resolution は resolved / triaged / unresolved の 3 値 enum（必須）。boolean キーは受理しない（error）。',
     '- resolved = 実コードで解消を確認。具体的 evidence 必須（file:line / テスト名 / diff 内容）。',
     '- triaged = 再検証済みだが対応不要と判断（advisory かつ実害なし等）。判断根拠の evidence 必須。evidence の無い triaged は unresolved と同一に扱われる。',
     '- 人間の作業（apply 前の手動検証・オペレータ確認依頼等）を含むものは triaged にしない。unresolved にするか、環境事象なら ENV note に載せる（triaged は「人間の対応不要」を意味し、要対応から外れる）。',
