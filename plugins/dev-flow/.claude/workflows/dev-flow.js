@@ -6856,7 +6856,7 @@ if (finalReconcile === 'unavailable') {
 }
 
 // ============================================================
-// 表示専用の CI 確認（issue #707）: Final reconcile が skipped（fixes_applied=0）で Validate が
+// 表示専用の CI 確認: Final reconcile が skipped（fixes_applied=0）で Validate が
 // tests:'error'（起動失敗 = テスト未実行）の run だけ、PR phase の head sha に pin した CI check を
 // ci-final と同じ finalCiPrompt + finalCiVerdict で 1 回読み、終端サマリーのテスト欄にだけ渡す。
 // finalReconcile / finalCi / classifyMergeTier には渡さない（表示のみ。merge tier 判定は不変）。
