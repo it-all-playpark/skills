@@ -1364,8 +1364,8 @@ function classifyMergeTier(s) {
 // ==== END inline: _lib/merge-tier.mjs ====
 
 // ==== BEGIN inline: _lib/final-ac-reconcile.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow Final AC reconcile phase: fix 適用後の最終 PR tree に対して Analyze で freeze
-// した既存 AC を one-shot で再検証するための決定論 helper 群（skip/run 判定 + ac_results
+// dev-flow Final AC reconcile phase: fix 適用後の最終 PR tree に対して Setup 末尾の analyze
+// ゲートで freeze した既存 AC を one-shot で再検証するための決定論 helper 群（skip/run 判定 + ac_results
 // 完全性検証）。判断（targeted evaluator の起動・prompt 構築・agent 呼び出し）は workflow
 // 側が担い、本ファイルは pure 関数のみを提供する。
 //
@@ -1942,7 +1942,7 @@ function reconcileTestsurf(ledger, risk) {
 // breaking_change）から実効 shape を決める純粋関数。dev-flow の Security floor（realized diff 取得後）
 // で 1 回だけ呼ばれ、返り値が EFFECTIVE_SHAPE（Evaluate 深さ・LITE gate・merge tier の入力）になる。
 //
-// 入力は実装後の realized diff のみ。Analyze で LLM が出す事前見積もり（shape / 見込み file 数）は
+// 入力は実装後の realized diff のみ。Setup 末尾の analyze ゲートまでに得られる LLM の事前見積もり（shape / 見込み file 数）は
 // decision に使わない（issue #676）— 実装前の予測は log と失敗 telemetry にしか効かず、決定論なのは
 // 写像と「欠損 → complex」の既定則だけだったため。micro の LITE 経路に対する意味的リスクの安全網は
 // runEval 強制条件（danger-grep / testsurf / greenFix / dropped task / undeclared file / UI 接触）が担う。

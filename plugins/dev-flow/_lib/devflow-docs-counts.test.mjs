@@ -24,6 +24,32 @@ test('README: Atlas 紹介の phase 数が dev-flow.js の meta.phases と一致
   assert.equal(Number(m[1]), count);
 });
 
+test('atlas: 概観図の phase ノード番号・1.x 節見出し・phase 数が dev-flow.js の meta.phases と一致し、Analyze ノード / 節が無い', () => {
+  const atlas = readFileSync(join(repoRoot, 'docs/dev-flow-atlas.md'), 'utf8');
+  const start = devFlowSrc.indexOf('phases: [');
+  const titles = [...devFlowSrc.slice(start, devFlowSrc.indexOf('],', start)).matchAll(/\{ title: '([^']+)' \}/g)].map((m) => m[1]);
+  assert.ok(titles.length > 0, 'meta.phases が読めない');
+
+  // 1.1 概観の mermaid ノード `X["<n>. <title>"]` が meta.phases の順・番号と完全一致する
+  const overview = atlas.slice(atlas.indexOf('### 1.1 '), atlas.indexOf('### 1.2 '));
+  const nodes = [...overview.matchAll(/\["(\d+)\. ([^"]+)"\]/g)].map((m) => [Number(m[1]), m[2]]);
+  assert.deepEqual(nodes, titles.map((t, i) => [i + 1, t]), '概観図の phase ノードが meta.phases とずれている');
+
+  // 1.2 以降の節見出しが 1 phase 1 節で meta.phases の順に並ぶ
+  const headings = [...atlas.matchAll(/^### 1\.(\d+) (.+)$/gm)]
+    .map((m) => [Number(m[1]), m[2].trim()])
+    .filter(([n]) => n >= 2);
+  assert.deepEqual(headings, titles.map((t, i) => [i + 2, t]), '1.x 節見出しが meta.phases とずれている');
+
+  for (const re of [/(\d+) phase で駆動する/, /続いて (\d+) phase を/]) {
+    const m = atlas.match(re);
+    assert.ok(m, `atlas に phase 数の記述が無い: ${re}`);
+    assert.equal(Number(m[1]), titles.length);
+  }
+
+  assert.ok(!/\bAnalyze\b/.test(atlas), 'atlas に撤去済み Analyze phase の表記が残っている（Setup 末尾の analyze ゲートと書く）');
+});
+
 test('README: dev-flow plugin の agent 数（plugin 行・agents/ 行）が agents/ の実体数と一致する', () => {
   const actual = readdirSync(join(pluginRoot, 'agents')).filter((n) => n.endsWith('.md')).length;
   const pluginLine = readme.match(/dev-flow\/\s+# issue-to-LGTM ワークフロー plugin（\d+ skills, (\d+) agents）/);

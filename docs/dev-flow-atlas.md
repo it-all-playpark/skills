@@ -1,6 +1,6 @@
 # i dev-flow Pipeline Atlas
 
-GitHub issue から LGTM までを 9 phase で駆動する `dev-flow` の実処理を図で示す。
+GitHub issue から LGTM までを 8 phase で駆動する `dev-flow` の実処理を図で示す。
 すべて実装ソース（`plugins/dev-flow/.claude/workflows/dev-flow.js` /
 `plugins/dev-flow/.claude/workflows/pr-iterate.js` /
 `.claude/rules/dev-flow.md`）から起こしたもので、要約や理想形ではない。
@@ -28,7 +28,7 @@ wrapper skill が worktree を用意して `EnterWorktree` した上で、dynami
 起動する。phase 遷移とループは workflow script が JS で保持し、中間 state は外部 JSON ではなく
 script 変数に持つ。
 
-まず概観を示し、続いて 9 phase を 1 phase 1 図で展開する。
+まず概観を示し、続いて 8 phase を 1 phase 1 節で展開する。
 
 ### 1.1 概観
 
@@ -37,19 +37,18 @@ flowchart TD
     U["/dev-flow ISSUE"] --> PF["wrapper preflight<br/>dev-flow-prerun（base → worktree → clean → deps ‖ analyze → stack）<br/>→ EnterWorktree"]
     PF --> W["Workflow: dev-flow-run<br/>args.setup = prerun の JSON"]
     W --> S["1. Setup"]
-    S --> A["2. Analyze"]
-    A --> I["3. Implement"]
-    I --> V["4. Validate"]
-    V --> SF["5. Security floor"]
-    SF --> E["6. Evaluate"]
-    E --> R["7. PR"]
-    R --> FR["8. Final reconcile"]
-    FR --> MT["9. Merge tier"]
+    S --> I["2. Implement"]
+    I --> V["3. Validate"]
+    V --> SF["4. Security floor"]
+    SF --> E["5. Evaluate"]
+    E --> R["6. PR"]
+    R --> FR["7. Final reconcile"]
+    FR --> MT["8. Merge tier"]
     MT --> HU["merge は常に人間"]
 
     S -.->|"fail-closed"| AB["throw / workflow abort"]
     V -.->|"空 diff が 2 回連続"| AB
-    A -.->|"prerun analyze 失敗 / AC 空 /<br/>comment 矛盾 / Jev 未確定"| NC["needs_clarification<br/>worktree は保持"]
+    S -.->|"analyze ゲート（Setup 末尾）:<br/>prerun analyze 失敗 / AC 空 /<br/>comment 矛盾 / Jev 未確定"| NC["needs_clarification<br/>worktree は保持"]
     I -.->|"NEEDS_CONTEXT"| NC
     SF -.->|"risk 欠落・実行不能"| FC["fail-closed<br/>merge tier HOLD 強制"]
 ```
@@ -64,13 +63,14 @@ flowchart TD
 issue analyze・stack 検出）は run 前に wrapper skill が top-level の Bash 1 コマンド
 `dev-flow-prerun` で済ませ、その stdout JSON を `args.setup` として渡す。analyze 段
 （`prerun-analyze.sh`: `analyze-issue --contract` の決定論 parse + Jev 有界判定）は deps install と
-並列に走る。Setup phase は subagent を spawn しない（isolation probe は Analyze のゲート判定後）。
+並列に走る。Setup phase の spawn は末尾の analyze ゲート判定後の 1 本だけ（通常経路は isolation probe、
+ゲートが引いたときは analyze-clarify）。
 
 ```mermaid
 flowchart TD
     PR["wrapper: dev-flow-prerun<br/>base → worktree → clean → deps ‖ analyze → stack<br/>JSON 1 行を args.setup へ"] --> IN["Workflow 起動"]
     IN --> S1["validatePrerunSetup(args.setup)<br/>純関数・spawn なし"]
-    S1 --> OUT["Analyze へ"]
+    S1 --> OUT["Setup 末尾の analyze ゲートへ（下図）"]
 
     PR -.->|"ok:false"| STOP["wrapper が停止し人間へ報告"]
     S1 -.->|"setup 欠落 / ok:false<br/>必須キー欠落"| AB["throw / abort"]
@@ -85,7 +85,7 @@ worktree は repo 内 `.claude/worktrees/df-N` を優先し、書き込めない
 isolation probe は wrapper で代替しない — subagent の Write 経路が通ることの検証であり、
 top-level の Bash では意味が変わる。
 
-### 1.3 Analyze
+**Setup 末尾: analyze ゲート**
 
 ```mermaid
 flowchart TD
@@ -102,7 +102,7 @@ flowchart TD
     A4 --> OUT["Implement へ"]
 ```
 
-Analyze phase は Workflow 内では純関数の検証と 3 条件ゲートだけで、通常経路の spawn は 0。
+analyze ゲートは Workflow 内では純関数の検証と 3 条件ゲートだけで、ゲート自体の spawn は 0。
 issue を LLM が転写する工程が無いので provenance 突合・comment_count 突合・scope 切断時の
 再実行も無い。決定論で解けない 2 理由だけを prerun が Jev（有界判定モデル、`_shared/scripts/jev-classify.sh`）に回す:
 breaking keyword hit は noul（p ≥ 0.9 で `breaking_change=true`、p ≤ 0.1 で false、それ以外は
@@ -113,9 +113,9 @@ override だが権限なし / conflict / 低確信 → `comment_conflicts`）。
 1 spawn して人間向けの質問文を作る。telemetry の `analyze_path` は `contract` / `jev` /
 `sonnet`（ゲート後のみ）の 3 値。
 
-### 1.4 Implement
+### 1.3 Implement
 
-Analyze 直後に issue から単一 task の plan を合成する（planner 0 回、`implement#synth-plan`。
+Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成する（planner 0 回、`implement#synth-plan`。
 shape はこの時点では決まっていない — Security floor で realized diff から決める）。
 合成 task の `file_changes` は空で始まり、Implement の返却 `files` を宣言として取り込む。
 
@@ -132,7 +132,7 @@ flowchart TD
     I3 -->|NEEDS_CONTEXT| NC["needs_clarification<br/>source=implement（再分析はしない）"]
 ```
 
-### 1.5 Validate
+### 1.4 Validate
 
 ```mermaid
 flowchart TD
@@ -150,7 +150,7 @@ flowchart TD
 format / lint はこの phase の責務外で、test の結果だけを見る。
 `GREEN_MAX` 到達時は red のまま次へ進むが、未解消の状態は merge tier が HOLD で受け止める。
 
-### 1.6 Security floor
+### 1.5 Security floor
 
 ```mermaid
 flowchart TD
@@ -175,7 +175,7 @@ fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒
 - danger-grep hit / test-weakening 検出 / plan 宣言外の変更
 - green-fix が発生した / dev-implement-fable が null を返して task を落とした / UI パスを touch した
 
-### 1.7 Evaluate
+### 1.6 Evaluate
 
 ```mermaid
 flowchart TD
@@ -190,7 +190,7 @@ flowchart TD
 
 standard は 1 パスのみで差し戻さない。未解消の critical は merge tier の HOLD が担保する。
 
-### 1.8 PR
+### 1.7 PR
 
 ```mermaid
 flowchart TD
@@ -207,7 +207,7 @@ flowchart TD
 nested 起動する `pr-iterate` には issue の acceptance criteria と
 nested context（cwd / head_ref / repo / epoch）を渡す。
 
-### 1.9 Final reconcile
+### 1.8 Final reconcile
 
 ```mermaid
 flowchart TD
@@ -223,7 +223,7 @@ flowchart TD
 
 `changed-files-final` の結果は Merge tier へ持ち越され、同一 tree に対する再実行を skip する。
 
-### 1.10 Merge tier
+### 1.9 Merge tier
 
 ```mermaid
 flowchart TD
@@ -242,7 +242,7 @@ flowchart TD
 
 ## 2. shape 判定
 
-shape は Analyze では決めない。Implement 後の Security floor で `classifyShape(req, realizedCount)` が
+shape は Setup 末尾の analyze ゲートでは決めない。Implement 後の Security floor で `classifyShape(req, realizedCount)` が
 realized diff のファイル数（ephemeral・宣言外・format_only を除外した数）と issue 由来の決定論特徴量
 （AC 数 / `issue_type` / 構造化 `breaking_change`）だけで **1 回で** 決め、その返り値が `EFFECTIVE_SHAPE`
 になる。LLM の事前見積もりは入力にならない。入力が欠けていたり（realized count 取得不能）enum 外だったり
@@ -273,7 +273,7 @@ flowchart TD
 
 | shape | Implement | Evaluate | merge tier |
 | --- | --- | --- | --- |
-| `micro` | Analyze 直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
+| `micro` | Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
 | `standard` | 同上 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保 | `REVIEW` |
 | `complex` | 同上 | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
 
@@ -423,7 +423,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | opus / high |
 | `evaluator` | 実装品質ゲート | opus / high |
 | `pr-reviewer` | PR レビュー | opus / high |
-| `dev-runner` | Skill 呼び出し（Analyze ゲート後の missing_context 生成のみ。通常経路では起動しない） | frontmatter / high |
+| `dev-runner` | Skill 呼び出し（analyze ゲート（Setup 末尾）後の missing_context 生成のみ。通常経路では起動しない） | frontmatter / high |
 | `dev-runner-haiku` | 書き込み・Skill 呼び出しを伴う exec-proxy | haiku / low |
 | `dev-runner-haiku-ro` | read-only exec-proxy | haiku / low |
 | `dev-runner-haiku-wo` | isolation probe 専任（Write のみ） | haiku / low |

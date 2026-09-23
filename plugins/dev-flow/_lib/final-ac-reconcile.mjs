@@ -1,5 +1,5 @@
-// dev-flow Final AC reconcile phase: fix 適用後の最終 PR tree に対して Analyze で freeze
-// した既存 AC を one-shot で再検証するための決定論 helper 群（skip/run 判定 + ac_results
+// dev-flow Final AC reconcile phase: fix 適用後の最終 PR tree に対して Setup 末尾の analyze
+// ゲートで freeze した既存 AC を one-shot で再検証するための決定論 helper 群（skip/run 判定 + ac_results
 // 完全性検証）。判断（targeted evaluator の起動・prompt 構築・agent 呼び出し）は workflow
 // 側が担い、本ファイルは pure 関数のみを提供する。
 //
