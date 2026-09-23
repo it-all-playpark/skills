@@ -214,6 +214,11 @@ const EXPECTED_DEV_FLOW = {
     policy: 'continue',
     reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路（retry経路）',
   },
+  'test#post-eval-1': {
+    config: DF_COMPLEX_FIX,
+    policy: 'continue',
+    reason: 'try/catchで合成redへ変換しgreen-fixループへ継続するfail-safe経路（post-eval経路）',
+  },
   'tree-diff-numstat': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。hash_mismatch時の差分一覧取得失敗はHOLD理由の可読性補助を欠くのみ' },
   'ui-verify-config': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（advisoryなUI検証）' },
   'ui-verify-server': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
