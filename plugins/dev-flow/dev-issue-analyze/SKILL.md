@@ -58,10 +58,9 @@ breaking 判定入力の一つ（`req.breaking_change`（LLM 構造化判定）�
 ## Contract Mode (`--contract`)
 
 T1/T2 契約準拠 issue の決定論 parse。T1 = AC 見出し（`## 受け入れ基準` / `受け入れ条件` /
-`Acceptance Criteria` / `完了条件`、h2〜h6）+ checkbox 項目 1 件以上。T2 = 同見出し + 素の箇条書き
-（`- `/`* `/番号付き）1 件以上。`受入基準` / `受入条件`（「け」「え」を欠く表記）は AC_HEADING_LINE_RE の
-許容表記に含まれない。h1（`# 受け入れ基準`）も `ac-lint.sh` の HEADING_RE が h2〜h6 のみを
-受理するため AC 見出しとして扱わない（いずれも `ac-lint.sh` との整合、issue #573 review on PR #578） —
+`受入基準` / `受入条件` / `Acceptance Criteria` / `完了条件`、h2〜h6）+ checkbox 項目 1 件以上。
+T2 = 同見出し + 素の箇条書き（`- `/`* `/番号付き）1 件以上。h1（`# 受け入れ基準`）は `ac-lint.sh` の
+HEADING_RE が h2〜h6 のみを受理するため AC 見出しとして扱わない（許容表記は `ac-lint.sh` と一致させる） —
 一致しない場合は `ac_heading_near_miss` として near-miss 報告され、`acceptance_criteria` は空のまま
 dev-flow の Analyze ゲート（AC 空）が needs_clarification に倒す。
 

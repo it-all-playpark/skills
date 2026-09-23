@@ -182,15 +182,17 @@ write_body() {
     echo "$output" | jq -e '.ok == false' >/dev/null
 }
 
-@test "(12) '## 受入条件'（enum 外表記）-> non_compliant" {
+@test "(12) '## 受入条件' / '## 受入基準'（け・え省略表記）-> t1" {
     BODY="$BATS_TEST_TMPDIR/body.md"
-    write_body "$BODY" \
-        "## 受入条件" \
-        "- [ ] AC-1"
+    for heading in "## 受入条件" "## 受入基準"; do
+        write_body "$BODY" \
+            "$heading" \
+            "- [ ] AC-1"
 
-    run "$SCRIPT" "$BODY"
+        run "$SCRIPT" "$BODY"
 
-    [ "$status" -eq 3 ]
-    echo "$output" | jq -e '.verdict == "non_compliant"' >/dev/null
-    echo "$output" | jq -e '.heading_found == false' >/dev/null
+        [ "$status" -eq 0 ]
+        echo "$output" | jq -e '.verdict == "t1"' >/dev/null
+        echo "$output" | jq -e '.heading_found == true' >/dev/null
+    done
 }

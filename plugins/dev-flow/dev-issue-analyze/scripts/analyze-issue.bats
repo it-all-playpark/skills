@@ -669,20 +669,17 @@ some code
 }
 
 # ---------------------------------------------------------------------------
-# (aa3) contract mode: 受入条件 heading (without け/え — NOT an accepted form,
-#       same as ac-lint.sh which also rejects it; verified empirically: ac-lint.sh
-#       returns heading_found=false/non_compliant for this exact fixture) + plain
-#       bullets -> ineligible, reported as near-miss (issue #573 review: this used
-#       to be silently accepted here while ac-lint.sh disagreed)
+# (aa3) contract mode: 受入条件 heading (け/え omitted — accepted, same as
+#       ac-lint.sh) + plain bullets -> t2, eligible, not a near-miss
 # ---------------------------------------------------------------------------
-@test "contract mode: 受入条件 heading (no け/え, out of accepted forms) -> near-miss reported" {
+@test "contract mode: 受入条件 heading (け/え omitted) -> t2 eligible, AC extracted" {
     FIXTURE="$FIXTURE_DIR/contract-ukeire-jouken2.json"
     make_fixture "$FIXTURE" "feat: something" "## 受入条件
 
 - plain item"
     run analyze "$FIXTURE" 35 --contract
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '.contract == "none" and .eligible == false and .ineligible_reason == "AC heading not found" and .ac_heading_near_miss == ["## 受入条件"]'
+    echo "$output" | jq -e '.contract == "t2" and .eligible == true and .acceptance_criteria == ["plain item"] and .ac_heading_near_miss == []'
 }
 
 # ---------------------------------------------------------------------------
