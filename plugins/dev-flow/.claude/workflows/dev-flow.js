@@ -4950,7 +4950,7 @@ const POST_RESULT_END = {
 }
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // workflow-post-helpers: PR/Issue コメント投稿・ジャーナル記録用の共通スキーマ・ヘルパー。
-// I/O なし。bodySaveInstr は agent 向け instruction 文字列を生成する純粋関数。
+// I/O なし。bodySaveInstr / ghBareStepInstr は agent 向け instruction 文字列を生成する純粋関数。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -4976,19 +4976,39 @@ const JOURNAL_RESULT = {
 
 /**
  * PR/Issue コメント本文保存の agent 向け instruction を生成する。
- * Write tool 経由で一時ファイルに保存させる手順を返す。
+ * 本文は事前に作られていない固定パスへ Write tool で新規作成させる。一時ファイルを shell で先に
+ * 作らせると、その既存ファイルへの Write が「未 Read」として Write tool に拒否され、agent が
+ * shell 書き出し（heredoc 等）へ逸れる。固定パスは前回の残りがありうるので、既存時のみ Read → Write。
  * @param {string} body - 保存する本文
- * @param {string} tmpPrefix - mktemp の prefix（例: 'dev-flow', 'pr-iterate'）
+ * @param {{bodyFile?: string, saveDir?: string, fileName?: string}} target
+ *   bodyFile: 保存先の絶対パス（worktree の `.devflow-tmp/<prefix>-<用途>.md`）。
+ *   saveDir + fileName: worktree を持たない呼び出し元（dev-improve）用。saveDir は shell 展開で
+ *   解決する（例: `${TMPDIR:-/tmp}/dev-improve`）。
  * @param {string} delimName - delimiter 名（例: 'DEV_FLOW', 'PR_ITERATE'）
  */
-function bodySaveInstr(body, tmpPrefix, delimName) {
+function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) {
+  const resolve = bodyFile
+    ? `保存先は固定パス \`${bodyFile}\` とし、以降 <BODY_FILE> はこのパスを指す。\n`
+    : `まず Bash で \`printf '%s\\n' "${saveDir}/${fileName}"\` を 1 回だけ実行し、出力された絶対パスを <BODY_FILE> とする。\n`
   return `## 本文の保存\n`
-    + `まず Bash で \`mktemp "\${TMPDIR:-/tmp}/${tmpPrefix}-XXXXXX.md"\` を実行して一時ファイルを作成し、\n`
-    + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
+    + resolve
+    + `<BODY_FILE> は Bash で事前に作らない（空ファイルの作成も禁止）。**Write tool** で新規作成する。\n`
+    + `<BODY_FILE> が既に存在する場合（前回の残り）のみ、先に **Read tool** で読んでから Write tool で上書きせよ。\n`
+    + `**Write tool** を使い、下記 delimiter 内の本文を\n`
     + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
     + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
     + `エスケープ・改変しないこと。以降のコマンドの \`--body-file\` には <BODY_FILE> を指定する。\n`
     + `<<<${delimName}_BODY_BEGIN>>>\n${body}\n<<<${delimName}_BODY_END>>>\n\n`
+}
+
+/**
+ * gh の投稿コマンドを bare 単文で 1 回だけ実行させる instruction 行を生成する
+ * （起動形の文言は dev-flow.js の prBodyViewPrompt と同一）。
+ * @param {string} cmd - 先頭トークンが gh のコマンド全文（`--repo <REPO>` 付き）
+ */
+function ghBareStepInstr(cmd) {
+  return `\`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
 }
 // ==== END inline: _lib/workflow-post-helpers.mjs ====
 
@@ -7205,23 +7225,27 @@ const summaryBody = buildDevflowSummaryBody({
   disclosures: mergeTier.disclosures ?? [],
   changedFiles: changed?.files ?? [],
 })
-// 終端サマリーコメント投稿: bodySaveInstr で body を一時ファイルへ保存し
-// gh pr comment --body-file で投稿する。投稿失敗は posted:false で fail-open。
+// 終端サマリーコメント投稿: bodySaveInstr で body を worktree の .devflow-tmp/ 固定パスへ保存し
+// gh pr comment --body-file を bare 単文で投稿する。投稿失敗は posted:false で fail-open だが、
+// summary_posted として返り値・telemetry・終端 note に出す（log 1 行だけでは人間が気づけない）。
+const summaryBodyFile = `${WT}/.devflow-tmp/dev-flow-summary.md`
+const summaryRepo = repoFromGithubUrl(pr.pr_url) ?? REPO
 const summaryPost = await trackedAgent(
   `## Objective\nPR #${pr.pr_number} に dev-flow の終端サマリーコメントを投稿する（merge tier: ${mergeTier.tier}）。\n\n`
-  + bodySaveInstr(summaryBody, 'dev-flow', 'DEV_FLOW')
+  + bodySaveInstr(summaryBody, { bodyFile: summaryBodyFile }, 'DEV_FLOW')
   + `## Instructions\n`
-  + `保存した <BODY_FILE> を使い、以下のコマンドをそのまま実行せよ: \`gh pr comment ${pr.pr_number} --body-file <BODY_FILE>\`\n`
+  + ghBareStepInstr(`gh pr comment ${pr.pr_number}${summaryRepo ? ` --repo ${summaryRepo}` : ''} --body-file ${summaryBodyFile}`)
   + `投稿成功時: posted:true、使用したコマンドを method に、URL があれば url に返す。\n`
-  + `投稿失敗時でも posted:false を返し throw しないこと。\n`
+  + `投稿失敗時でも posted:false を返し throw しないこと。原因調査・再試行・別の起動形での実行はしない。\n`
   + `\n## Output format\n{ "posted": boolean, "method": string, "url": string, "epoch": number }\n`
-  + `\n## Tools\n使用可: Bash, Write\n`
-  + `\n## Boundary\n<BODY_FILE>（一時ファイル）以外のファイルを変更しない。git commit 禁止。\n`
+  + `\n## Tools\n使用可: Bash, Read, Write\n`
+  + `\n## Boundary\n<BODY_FILE> 以外のファイルを変更しない。git commit 禁止。\n`
   + EPOCH_INSTRUCTION
   + `\n## Token cap\n200 語以内で完結すること。`,
   { agentType: 'dev-runner-haiku', schema: POST_RESULT_END, label: 'post-summary', phase: 'Merge tier' },
 )
-if (!summaryPost?.posted) {
+const summaryPosted = summaryPost?.posted === true
+if (!summaryPosted) {
   log(`⚠️ post-summary の投稿に失敗しました（posted=${summaryPost?.posted ?? 'null'}）。ワークフローは継続します。`)
 }
 
@@ -7283,6 +7307,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     final_ac_reconcile: finalAcReconcile,
     pr_closes_status: prClosesStatus,
     ...(prBodySynced != null ? { pr_body_synced: prBodySynced } : {}),
+    summary_posted: summaryPosted,  // 終端サマリの PR コメント投稿成否（post-summary の posted===true）。記録専用
     testsurf_hits: testsurfPatternsFinal,
     ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
     ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
@@ -7370,12 +7395,14 @@ return {
   final_unsatisfied_ac: state.finalUnsatisfiedAc,
   pr_closes_status: prClosesStatus,
   pr_body_synced: prBodySynced,
+  summary_posted: summaryPosted,
   journal_log_status: journalLogStatus,
-  note: mergeTier.tier === 'HOLD'
+  note: (mergeTier.tier === 'HOLD'
     ? `HOLD（${mergeTier.holdKind === 'deterministic_recheck' ? '決定論再チェックで解消しうる — CI 完了 / 再取得後に再確認' : '人間判断必須'}）: 人間 review 必須。merge 前に reasons を確認してください（${mergeTier.reasons.join(' / ')}）`
     : mergeTier.tier === 'AUTO'
     ? 'AUTO 推奨（低リスク）。最終判断と merge は人間が行ってください'
-    : 'REVIEW: 人間が LGTM を確認して merge してください',
+    : 'REVIEW: 人間が LGTM を確認して merge してください')
+    + (summaryPosted ? '' : `。⚠️ 終端サマリ未投稿: PR #${pr.pr_number} に dev-flow の終端サマリコメントが無い（post-summary 失敗）`),
 }
 } catch (e) {
   // top-level abort handoff: handoff 到達前の throw（need fail-closed / isolation probe /
