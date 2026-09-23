@@ -4525,7 +4525,7 @@ function parseMergeTierFacts(facts) {
 //
 // PR body は「結論1行 → 変更(component別) → 受入条件 checkbox → 設計判断(≤5件) → 検証 → Closes」の
 // 6 セクション固定構成で、各セクションを PR_BODY_* 定数で決定論 clip する（issue #661）。
-// Closes 行の存在検証（hasClosesLine / verifyPrBody / closesVerdict）と、`gh pr view --json body` /
+// Closes 行の存在検証（hasClosesLine / verifyPrBody / extractPrBody / closesVerdict）と、`gh pr view --json body` /
 // `gh pr edit --body-file` の exec-proxy prompt（prBodyViewPrompt / prBodyEditPrompt）もここに置き、
 // 判定は本ファイルの純関数のみが行う（agent は verbatim 転写・bare 単文実行のみ）。
 //
@@ -4755,11 +4755,29 @@ function verifyPrBody(body, issue) {
   return { ok: missing.length === 0, missing, closes, length: Array.from(s).length };
 }
 
-// gh pr view --json body の exec-proxy 応答から Closes 行の有無を判定する。取得失敗・body 非 string は
-// 'unknown'（fail-open。再投入しない）。
+// `gh pr view --json body` の stdout 全文（exec-proxy が無加工で返す raw）から body を取り出す。
+// JSON として不正・object でない・.body が string でない場合は null。body の取り出しを agent に
+// 任せると haiku が自前の `{"ok":true,"body":...}` を body に詰めて二重 JSON 化し、改行がエスケープ
+// されたまま Closes 行を見落とす（issue #713）ため、取り出しは本関数だけが行う。
+function extractPrBody(raw) {
+  if (typeof raw !== 'string') return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed == null || typeof parsed !== 'object' || typeof parsed.body !== 'string') return null;
+  return parsed.body;
+}
+
+// gh pr view --json body の exec-proxy 応答（{ok, raw}）から Closes 行の有無を判定する。取得失敗・
+// raw が不正 JSON・body 非 string は 'unknown'（fail-open。再投入しない）。
 function closesVerdict({ view, issue }) {
-  if (view == null || view.ok !== true || typeof view.body !== 'string') return 'unknown';
-  return hasClosesLine(view.body, issue) ? 'present' : 'missing';
+  if (view == null || view.ok !== true) return 'unknown';
+  const body = extractPrBody(view.raw);
+  if (body == null) return 'unknown';
+  return hasClosesLine(body, issue) ? 'present' : 'missing';
 }
 
 // PR phase / Final reconcile 後の Closes 検証・再投入で dev-flow.js が持つ状態の closed enum。
@@ -4771,7 +4789,7 @@ const PR_BODY_VIEW = {
   required: ['ok'],
   properties: {
     ok: { type: 'boolean' },
-    body: { type: ['string', 'null'] },
+    raw: { type: ['string', 'null'] },
     error: { type: 'string' },
     epoch: { type: 'number' },
   },
@@ -4793,7 +4811,7 @@ const PR_BODY_EDIT = {
 function prBodyViewPrompt({ pr, repo }) {
   const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json body`;
   return `## Objective\n`
-    + `PR #${pr} の本文 (body) を取得し、JSON をそのまま返せ。\n\n`
+    + `PR #${pr} の本文 (body) を取得し、コマンドの stdout を加工せずそのまま返せ。\n\n`
     + `## Tools\n`
     + `- 使用可: Bash のみ\n`
     + `- 禁止: Write, Edit, git commit, git push\n\n`
@@ -4805,13 +4823,14 @@ function prBodyViewPrompt({ pr, repo }) {
     + `2. stdout が空、JSON として不正、またはコマンドが実行できなかった場合は `
     + `\`{"ok": false, "error": "<stderr の要約>"}\` を返せ。失敗時に ok:true を生成してはならない。`
     + `原因調査はするな。再試行禁止。\n`
-    + `3. それ以外は stdout の JSON object から body を取り出し、`
-    + `\`{"ok": true, "body": <string を一字一句そのまま>}\` に包んで返せ。要約・整形・省略禁止。\n\n`
+    + `3. それ以外は stdout の全文を 1 つの文字列として \`raw\` に入れ、\`{"ok": true, "raw": <stdout 全文>}\` を返せ。`
+    + `stdout を JSON として解釈して body を取り出す・別の object に包み直す・要約・整形・省略はすべて禁止`
+    + `（body の取り出しは呼び出し側が行う）。\n\n`
     + `## Output format\n`
-    + `{"ok": true, "body": string} または {"ok": false, "error": string}\n`
+    + `{"ok": true, "raw": string} または {"ok": false, "error": string}\n`
     + `prose 禁止。JSON のみ返せ。\n\n`
     + `## Token cap\n`
-    + `JSON のみ。1 行以内（body を除く）。`;
+    + `JSON のみ。1 行以内（raw を除く）。`;
 }
 
 // PR #<pr> の本文を prBody の内容で上書きする exec-proxy 向け prompt（closes-reinject / ac-checkbox-sync

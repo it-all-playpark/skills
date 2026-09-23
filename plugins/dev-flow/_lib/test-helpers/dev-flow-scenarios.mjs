@@ -125,7 +125,7 @@ export const DEV_FLOW_SCENARIOS = {
   'green-fix': { overrides: { 'test#1': { tests: 'failed', green: false, summary: 'assert mismatch' } } },
   // PR body に Closes 行が無い → closes-reinject → closes-recheck（既定 responder で Closes 付き body。issue #661）
   'closes-reinject': {
-    overrides: { 'closes-check': { ok: true, body: '**x**\n\n## 変更\n（なし）\n' } },
+    overrides: { 'closes-check': { ok: true, raw: JSON.stringify({ body: '**x**\n\n## 変更\n（なし）\n' }) } },
   },
   // clean micro lite route（realized 0 files → micro。pr-review-lite + ci-check-lite で lgtm 終端、nested pr-iterate 起動なし）
   lite: {
