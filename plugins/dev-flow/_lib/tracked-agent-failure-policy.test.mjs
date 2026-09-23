@@ -74,7 +74,7 @@ const DF_B5 = {
 // （fail-closed が Security floor と Merge tier の両方で持続する現実的なシナリオとして構成する）。
 const DF_DANGER = { overrides: { 'merge-tier-facts': mergeTierFacts({ risk: { ok: false, hits: [], error: 'still down' } }) } };
 // CLOSES: closes-check が Closes 行の無い body を返し closes-reinject へ到達させる。
-const DF_CLOSES = { overrides: { 'closes-check': { ok: true, body: 'no closes' } } };
+const DF_CLOSES = { overrides: { 'closes-check': { ok: true, raw: JSON.stringify({ body: 'no closes' }) } } };
 
 // ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing /
 // subagent-invocations-routing と同じ scenario 集合を参照し、到達する label の分類を強制する）──

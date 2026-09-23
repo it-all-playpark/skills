@@ -8,6 +8,7 @@ import {
   hasClosesLine,
   verifyPrBody,
   closesVerdict,
+  extractPrBody,
   prBodyViewPrompt,
   prBodyEditPrompt,
   prPhaseFailure,
@@ -15,6 +16,7 @@ import {
   PR_BODY_MAX_CHARS,
   PR_BODY_HEADINGS,
   PR_CLOSES_STATUS_VALUES,
+  PR_BODY_VIEW,
 } from './pr-artifacts.mjs';
 
 function req(o = {}) {
@@ -223,12 +225,68 @@ test('[pr-artifacts] verifyPrBody: ## 設計判断 以降が欠落した本文�
 
 // ---- (e) closesVerdict の 3 値 ----
 
+// gh pr view --json body の stdout を exec-proxy が無加工で raw に入れた応答を作る。
+function rawView(body) {
+  return { ok: true, raw: JSON.stringify({ body }) + '\n' };
+}
+
 test('[pr-artifacts] closesVerdict: 取得失敗/不正は unknown、有れば present、無ければ missing', () => {
   assert.equal(closesVerdict({ view: null, issue: 642 }), 'unknown');
   assert.equal(closesVerdict({ view: { ok: false }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true, body: 123 }, issue: 642 }), 'unknown');
-  assert.equal(closesVerdict({ view: { ok: true, body: 'x\nCloses #642\n' }, issue: 642 }), 'present');
-  assert.equal(closesVerdict({ view: { ok: true, body: 'x\ny\n' }, issue: 642 }), 'missing');
+  assert.equal(closesVerdict({ view: { ok: true, raw: null }, issue: 642 }), 'unknown');
+  assert.equal(closesVerdict({ view: rawView('x\nCloses #642\n'), issue: 642 }), 'present');
+  assert.equal(closesVerdict({ view: rawView('x\ny\n'), issue: 642 }), 'missing');
+});
+
+// ---- (e2) extractPrBody: body の取り出しは workflow 側の純関数だけが行う（issue #713） ----
+
+test('[pr-artifacts] extractPrBody: gh pr view --json body の stdout から body を一字一句取り出す', () => {
+  assert.equal(extractPrBody('{"body":"a\\n\\nCloses #1\\n"}\n'), 'a\n\nCloses #1\n');
+  assert.equal(extractPrBody('{"body":""}'), '');
+});
+
+test('[pr-artifacts] extractPrBody: 不正 JSON / body 欠落 / body 非 string / raw 非 string は null', () => {
+  assert.equal(extractPrBody('{"body": "unterminated'), null);
+  assert.equal(extractPrBody(''), null);
+  assert.equal(extractPrBody('{}'), null);
+  assert.equal(extractPrBody('{"title":"x"}'), null);
+  assert.equal(extractPrBody('{"body":123}'), null);
+  assert.equal(extractPrBody('{"body":null}'), null);
+  assert.equal(extractPrBody('null'), null);
+  assert.equal(extractPrBody('"Closes #1"'), null);
+  assert.equal(extractPrBody(null), null);
+  assert.equal(extractPrBody(undefined), null);
+});
+
+test('[pr-artifacts] closesVerdict: raw が不正 JSON / body 欠落 / body 非 string なら missing ではなく unknown（fail-open）', () => {
+  assert.equal(closesVerdict({ view: { ok: true, raw: '{"body": "Closes #642' }, issue: 642 }), 'unknown');
+  assert.equal(closesVerdict({ view: { ok: true, raw: 'Closes #642\n' }, issue: 642 }), 'unknown');
+  assert.equal(closesVerdict({ view: { ok: true, raw: '{}' }, issue: 642 }), 'unknown');
+  assert.equal(closesVerdict({ view: { ok: true, raw: '{"body":123}' }, issue: 642 }), 'unknown');
+  assert.equal(closesVerdict({ view: { ok: true }, issue: 642 }), 'unknown');
+  assert.equal(closesVerdict({ view: { ok: true, body: 'x\nCloses #642\n' }, issue: 642 }), 'unknown');
+});
+
+// PR #711（issue #697）の closes-check 実応答。agent が stdout から body を取り出す際に自前の
+// {"ok": true, "body": ...} を body に詰め、改行がエスケープされたままの二重 JSON を返した
+// （Closes 行があるのに pr_closes_missing で HOLD になった誤検出、issue #713）。
+const PR711_BODY = '**refactor(dev-flow): 参照ゼロの schema 2 本と常に空の plan.parallel を削除し、docs の数・記述を実装に合わせる**\n\n'
+  + '## 変更\n- plugins/dev-flow: 参照ゼロの schema 2 本と常に空の plan.parallel を削除\n\n'
+  + '## 受入条件\n- [x] AC-1: 参照ゼロの schema を削除する\n\n'
+  + '## 設計判断\n（なし）\n\n'
+  + '## 検証\n- テスト: ✅ green\n\n'
+  + 'Closes #697\n';
+const PR711_AGENT_BODY = JSON.stringify({ ok: true, body: PR711_BODY });
+const PR711_STDOUT = JSON.stringify({ body: PR711_BODY }) + '\n';
+
+test('[pr-artifacts] PR #711 fixture: 実応答の二重 JSON は body 直読みでは Closes を見落とすが、raw 経由の取り出しで present', () => {
+  // 旧契約（agent が組み立てた body をそのまま hasClosesLine に渡す）では改行がエスケープされたまま一致しない
+  assert.equal(hasClosesLine(PR711_AGENT_BODY, 697), false);
+  // 新契約: exec-proxy は stdout 全文を raw に入れ、workflow 側が JSON.parse(raw).body で取り出す
+  assert.equal(extractPrBody(PR711_STDOUT), PR711_BODY);
+  assert.equal(closesVerdict({ view: { ok: true, raw: PR711_STDOUT }, issue: 697 }), 'present');
+  // agent が raw に同じ二重 JSON を詰めても、.body の取り出しは本文そのものになり present
+  assert.equal(closesVerdict({ view: { ok: true, raw: PR711_AGENT_BODY }, issue: 697 }), 'present');
 });
 
 test('[pr-artifacts] PR_CLOSES_STATUS_VALUES は 4 値の closed enum', () => {
@@ -368,6 +426,19 @@ test('[pr-artifacts] prBodyViewPrompt: gh pr view --json body を bare 単文で
   const withoutRepo = prBodyViewPrompt({ pr: 5, repo: null });
   assert.ok(!withoutRepo.includes('--repo'), withoutRepo);
   assert.ok(withoutRepo.includes('gh pr view 5 --json body'), withoutRepo);
+});
+
+test('[pr-artifacts] prBodyViewPrompt: stdout 全文を raw で返させ、agent に body を取り出させない（issue #713）', () => {
+  const p = prBodyViewPrompt({ pr: 5, repo: 'o/r' });
+  assert.ok(p.includes('{"ok": true, "raw": string}'), p);
+  assert.ok(!p.includes('"body": string'), p);
+  assert.ok(!/body を取り出し、/.test(p), p);
+});
+
+test('[pr-artifacts] PR_BODY_VIEW schema: 成功応答は raw（body ではない）', () => {
+  assert.deepEqual(PR_BODY_VIEW.required, ['ok']);
+  assert.ok('raw' in PR_BODY_VIEW.properties);
+  assert.ok(!('body' in PR_BODY_VIEW.properties));
 });
 
 test('[pr-artifacts] prBodyEditPrompt: gh pr edit --body-file を指示し、本文を delimiter で verbatim 転写させる', () => {

@@ -22,6 +22,11 @@ async function run(overrides = {}, workflow) {
   return { result, calls };
 }
 
+// closes-check / closes-recheck の exec-proxy 応答（gh pr view --json body の stdout 全文を raw で返す。issue #713）。
+function view(body) {
+  return { ok: true, raw: JSON.stringify({ body }) };
+}
+
 // ---- 1. 既定 run: Closes 行あり → 'verified'、再投入なし ----
 
 test('[pr-body-sync-routing] 既定 run: closes-check のみ 1 回、prompt に gh pr view --json body、pr_closes_status=verified', async () => {
@@ -43,7 +48,7 @@ test('[pr-body-sync-routing] 既定 run: closes-check のみ 1 回、prompt に 
 // ---- 2. Closes 欠落 → closes-reinject → closes-recheck（既定 responder で Closes 付き）→ 'reinjected' ----
 
 test('[pr-body-sync-routing] Closes 欠落 → closes-reinject で再投入 → closes-recheck で確認 → pr_closes_status=reinjected', async () => {
-  const { result, calls } = await run({ 'closes-check': { ok: true, body: '**x**\n' } });
+  const { result, calls } = await run({ 'closes-check': view('**x**\n') });
 
   const reinject = calls.filter((c) => c.label === 'closes-reinject');
   assert.equal(reinject.length, 1, `closes-reinject は 1 回のはずだが ${reinject.length} 回`);
@@ -64,7 +69,7 @@ test('[pr-body-sync-routing] Closes 欠落 → closes-reinject で再投入 → 
 
 test('[pr-body-sync-routing] Closes 欠落 + 再投入失敗 → closes-recheck 未呼出、pr_closes_status=missing、merge_tier=HOLD', async () => {
   const { result, calls } = await run({
-    'closes-check': { ok: true, body: '**x**\n' },
+    'closes-check': view('**x**\n'),
     'closes-reinject': { edited: false },
   });
 
@@ -81,8 +86,8 @@ test('[pr-body-sync-routing] Closes 欠落 + 再投入失敗 → closes-recheck 
 
 test('[pr-body-sync-routing] 再投入後も Closes 欠落のまま → pr_closes_status=missing、merge_tier=HOLD', async () => {
   const { result } = await run({
-    'closes-check': { ok: true, body: '**x**\n' },
-    'closes-recheck': { ok: true, body: 'still none' },
+    'closes-check': view('**x**\n'),
+    'closes-recheck': view('still none'),
   });
 
   assert.equal(result?.pr_closes_status, 'missing');
@@ -96,6 +101,30 @@ test('[pr-body-sync-routing] closes-check probe 失敗（null）→ closes-reinj
 
   assert.equal(calls.filter((c) => c.label === 'closes-reinject').length, 0, 'closes-reinject は呼ばれないはず');
   assert.equal(result?.pr_closes_status, 'unverified');
+  assert.notEqual(result?.merge_tier, 'HOLD');
+});
+
+// ---- 5b. closes-check の raw が不正 JSON / body 欠落 → 再投入せず 'unverified'（missing にしない。issue #713） ----
+
+test('[pr-body-sync-routing] closes-check の raw が不正 JSON / body 欠落 → closes-reinject 未呼出、pr_closes_status=unverified、HOLD にならない', async () => {
+  for (const raw of ['{"body": "Closes #1', '{"title":"x"}']) {
+    const { result, calls } = await run({ 'closes-check': { ok: true, raw } });
+    assert.equal(calls.filter((c) => c.label === 'closes-reinject').length, 0, `closes-reinject は呼ばれないはず (raw=${raw})`);
+    assert.equal(result?.pr_closes_status, 'unverified', `raw=${raw}`);
+    assert.notEqual(result?.merge_tier, 'HOLD', `raw=${raw}`);
+  }
+});
+
+// ---- 5c. PR #711 型: stdout を raw で受ければ Closes 行ありの本文は verified（issue #713 の誤 HOLD 回帰） ----
+
+test('[pr-body-sync-routing] closes-check prompt は raw 返却を指示し、stdout 全文の raw から Closes #1 を検出して verified', async () => {
+  const body = '**refactor(dev-flow): x**\n\n## 変更\n- a\n\n## 受入条件\n- [x] AC-1\n\n## 設計判断\n（なし）\n\n## 検証\n- ok\n\nCloses #1\n';
+  const { result, calls } = await run({ 'closes-check': { ok: true, raw: JSON.stringify({ body }) + '\n' } });
+
+  const closesCheck = calls.find((c) => c.label === 'closes-check');
+  assert.ok(closesCheck.prompt.includes('{"ok": true, "raw": string}'), 'closes-check prompt が raw 返却を指示していない');
+  assert.equal(calls.filter((c) => c.label === 'closes-reinject').length, 0, 'closes-reinject は呼ばれないはず');
+  assert.equal(result?.pr_closes_status, 'verified');
   assert.notEqual(result?.merge_tier, 'HOLD');
 });
 
