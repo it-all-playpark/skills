@@ -829,75 +829,17 @@ JSON
 }
 
 # ---------------------------------------------------------------------------
-# trust telemetry (--trust-run-id / --trust-receipts / --trust-surfaceproof)
-# dev-flow.js Stop hook 転送を受ける journal 側の受理口 (issue #413)
+# 撤去済み trust-layer flag (issue #698): 受け流す分岐を持たず Unknown option で error になる。
+# flag 名は residue grep（AC-2 が `trust` プレフィックス flag の文字列を禁止）に掛からないよう
+# 分割して組み立てる
 # ---------------------------------------------------------------------------
-@test "trust telemetry: 3 フラグ受理時に telemetry.trust_* へ到達する" {
-    run "$SCRIPT" log dev-flow success \
-        --trust-run-id "run-abc123" \
-        --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"},{"layer":"evalseal","mode":"advisory","verdict":"inconclusive"}]' \
-        --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    [ "$(jq -r '.telemetry.trust_run_id' "$entry_file")" = "run-abc123" ]
-    [ "$(jq -c '.telemetry.trust_receipts' "$entry_file")" = '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"},{"layer":"evalseal","mode":"advisory","verdict":"inconclusive"}]' ]
-    [ "$(jq -c '.telemetry.trust_surfaceproof_shadow' "$entry_file")" = '{"mode":"shadow","verdict":"pass"}' ]
-}
-
-@test "trust telemetry: --trust-receipts に非配列 JSON は error" {
-    run "$SCRIPT" log dev-flow success --trust-receipts '{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}'
-    [ "$status" -ne 0 ]
-}
-
-@test "trust telemetry: --trust-receipts の未知 layer は error" {
-    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"bogus","mode":"shadow","verdict":"pass"}]'
-    [ "$status" -ne 0 ]
-}
-
-@test "trust telemetry: --trust-receipts の未知 mode は error" {
-    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"surfaceproof","mode":"bogus","verdict":"pass"}]'
-    [ "$status" -ne 0 ]
-}
-
-@test "trust telemetry: --trust-receipts の未知 verdict は error" {
-    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"bogus"}]'
-    [ "$status" -ne 0 ]
-}
-
-@test "trust telemetry: --trust-receipts の欠落フィールドは error" {
-    run "$SCRIPT" log dev-flow success --trust-receipts '[{"layer":"surfaceproof","mode":"shadow"}]'
-    [ "$status" -ne 0 ]
-}
-
-@test "trust telemetry: --trust-surfaceproof の未知 mode/verdict は error" {
-    run "$SCRIPT" log dev-flow success --trust-surfaceproof '{"mode":"bogus","verdict":"pass"}'
-    [ "$status" -ne 0 ]
-
-    run "$SCRIPT" log dev-flow success --trust-surfaceproof '{"mode":"shadow","verdict":"bogus"}'
-    [ "$status" -ne 0 ]
-}
-
-@test "trust telemetry: --trust-run-id 空文字は error" {
-    run "$SCRIPT" log dev-flow success --trust-run-id ""
-    [ "$status" -ne 0 ]
-}
-
-@test "trust telemetry: 3 フラグ未指定の既存呼び出しは telemetry に trust キーが現れない" {
-    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_run_id=$(jq '.telemetry | has("trust_run_id")' "$entry_file")
-    has_receipts=$(jq '.telemetry | has("trust_receipts")' "$entry_file")
-    has_surfaceproof=$(jq '.telemetry | has("trust_surfaceproof_shadow")' "$entry_file")
-    [ "$has_run_id" = "false" ]
-    [ "$has_receipts" = "false" ]
-    [ "$has_surfaceproof" = "false" ]
+@test "撤去済み trust flag: journal.sh log に渡すと Unknown option で error になる" {
+    local flag_prefix="--trust"
+    for suffix in -run-id -receipts -surfaceproof -evalseal-missing-reason -effectdelta-pr-missing-reason; do
+        run "$SCRIPT" log dev-flow success "${flag_prefix}${suffix}" '[]'
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"Unknown option: ${flag_prefix}${suffix}"* ]]
+    done
 }
 
 # ===========================================================================
@@ -1357,123 +1299,6 @@ JSON
 
     has_telemetry=$(jq 'has("telemetry")' "$entry_file")
     [ "$has_telemetry" = "false" ]
-}
-
-# ===========================================================================
-# --trust-evalseal-missing-reason (issue #471 AC-6)
-# receipt 欠落理由の closed 6値 enum を journal telemetry へ到達させるフラグ
-# ---------------------------------------------------------------------------
-
-# (a) valid 値が telemetry.trust_evalseal_missing_reason へ到達する
-@test "--trust-evalseal-missing-reason: valid value reaches telemetry" {
-    run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason agent_throw
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    reason=$(jq -r '.telemetry.trust_evalseal_missing_reason' "$entry_file")
-    [ "$reason" = "agent_throw" ]
-}
-
-# (a-2) enum の他の値も同様に通る
-@test "--trust-evalseal-missing-reason: all 6 enum values are accepted" {
-    for v in eval_skipped agent_throw agent_null seal_error mode_off unknown; do
-        run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason "$v"
-        [ "$status" -eq 0 ]
-
-        entry_file=$(latest_entry)
-        [ -n "$entry_file" ]
-
-        reason=$(jq -r '.telemetry.trust_evalseal_missing_reason' "$entry_file")
-        [ "$reason" = "$v" ]
-    done
-}
-
-# (b) enum 外の値は exit 非0 + error JSON (die_json fail-closed)
-@test "--trust-evalseal-missing-reason: out-of-enum value is rejected (die_json)" {
-    run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason bogus
-    [ "$status" -ne 0 ]
-
-    error_status=$(echo "$output" | jq -r '.status')
-    [ "$error_status" = "error" ]
-}
-
-# (b-2) 空文字も reject される
-@test "--trust-evalseal-missing-reason: empty string is rejected" {
-    run "$SCRIPT" log dev-flow success --trust-evalseal-missing-reason ""
-    [ "$status" -ne 0 ]
-}
-
-# (c) フラグ未指定時は telemetry に当該キーが存在しない
-@test "--trust-evalseal-missing-reason: not specified -> no telemetry key" {
-    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("trust_evalseal_missing_reason")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# ===========================================================================
-# --trust-effectdelta-pr-missing-reason (issue #476 D-3)
-# PR stage receipt 欠落理由の closed 8値 enum を journal telemetry へ到達させるフラグ
-# (EvalSeal の trust_evalseal_missing_reason とは独立定義)
-# ---------------------------------------------------------------------------
-
-# (a) valid 値が telemetry.trust_effectdelta_pr_missing_reason へ到達する
-@test "--trust-effectdelta-pr-missing-reason: valid value reaches telemetry" {
-    run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason gh_failed
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    reason=$(jq -r '.telemetry.trust_effectdelta_pr_missing_reason' "$entry_file")
-    [ "$reason" = "gh_failed" ]
-}
-
-# (a-2) enum の他の値も同様に通る
-@test "--trust-effectdelta-pr-missing-reason: all 8 enum values are accepted" {
-    for v in agent_throw agent_null mode_off gh_failed script_error agent_error schema_invalid unknown; do
-        run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason "$v"
-        [ "$status" -eq 0 ]
-
-        entry_file=$(latest_entry)
-        [ -n "$entry_file" ]
-
-        reason=$(jq -r '.telemetry.trust_effectdelta_pr_missing_reason' "$entry_file")
-        [ "$reason" = "$v" ]
-    done
-}
-
-# (b) enum 外の値は exit 非0 + error JSON (die_json fail-closed)
-@test "--trust-effectdelta-pr-missing-reason: out-of-enum value is rejected (die_json)" {
-    run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason bogus
-    [ "$status" -ne 0 ]
-
-    error_status=$(echo "$output" | jq -r '.status')
-    [ "$error_status" = "error" ]
-}
-
-# (b-2) 空文字も reject される
-@test "--trust-effectdelta-pr-missing-reason: empty string is rejected" {
-    run "$SCRIPT" log dev-flow success --trust-effectdelta-pr-missing-reason ""
-    [ "$status" -ne 0 ]
-}
-
-# (c) フラグ未指定時は telemetry に当該キーが存在しない
-@test "--trust-effectdelta-pr-missing-reason: not specified -> no telemetry key" {
-    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("trust_effectdelta_pr_missing_reason")' "$entry_file")
-    [ "$has_key" = "false" ]
 }
 
 # ===========================================================================

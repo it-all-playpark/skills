@@ -50,7 +50,6 @@ const BARE = [
   'baseline-snapshot',
   'compare-baseline',
   'validate-canary-report',
-  'trust-receipts-report',
   'dev-flow-prerun',
   'merge-tier-facts',
   'ci-wait',

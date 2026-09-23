@@ -38,24 +38,9 @@ redgreen vdelta deny の sunset path —
 - 表現: 昇格条件の deny `&&` 節（deny-only）。
 - 再評価トリガ: veridelta が record_integrity を advisory から昇格（INV-10 解消）し W6b calibration が vdelta verdict の precision を実証した時点で blocking gate 化を再評価する。
 
-trust-layer（SurfaceProof / EvalSeal / EffectDelta）call site 撤去後の sunset path —
-- **現状**: call site・exec-proxy（evalseal-seal.mjs / evalseal-verify.mjs / effectdelta-github.sh /
-  surfaceproof-snapshot.sh）は撤去済みで call site は 0 件。残置するのは kernel 純関数
-  `_lib/trust-{schema,digest,mode,telemetry}.mjs`（各 `.test.mjs` 込み）と、`classifyMergeTier`
-  （`_lib/merge-tier.mjs`）の trustGate 経路のみ。trustGate は未指定時 `null` を返し既存挙動と
-  完全一致する。
-- **復帰には call site の再設計・再実装が必要**（撤去済みの旧 call site は流用不可）。再実装 issue の
-  受入条件として以下 3 条件を維持する（1 つでも欠けたら復帰しない）:
-  (1) 監査証跡の破壊的上書き・自己封緘を行わない構造で再設計されている、
-  (2) trust 由来の safety classifier ブロックが run abort / journal-log 連鎖ブロックへ波及しないことが
-  実測で確認できている、
-  (3) call site 撤去期間の完走率を分母として、復帰後の完走率が有意に劣後しない。
-- **昇格（shadow → advisory/blocking）トリガ**: 復帰後に receipt 取得成功率・inconclusive 率が SLO
-  （`dev-flow-doctor/scripts/trust-receipts-report.sh --slo`）を満たし、かつ **3 層の守備範囲が実失敗
-  モードと突合できている**こと（SurfaceProof が検証するのは issue unit の「提示の完全性」であって
-  「指示への遵守」ではない等、検出対象と実際の失敗のズレを突合しないまま昇格させない）。blocking
-  昇格時に `classifyMergeTier` の trustGate を活性化する。pinned verifier（agent write 圏外）実装までは
-  'trusted-environment' を主張しない。
+trust-layer（SurfaceProof / EvalSeal / EffectDelta）の sunset path —
+- call site・exec-proxy・kernel・doctor レポート・telemetry 転送は全て撤去済み（接続点は残さない）。復帰は
+  `.claude/rules/dev-flow.md` の sunset トリガ「trust-layer 復帰 → 3 条件を満たす再設計のみ」に従う。
 
 逆に incentive-structural / blast-radius はモデル更新で撤去してはならない（軸A 保持）。
 

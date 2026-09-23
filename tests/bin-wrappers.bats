@@ -51,7 +51,6 @@ redgreen-verify
 run-diagnostics
 secfloor-classify
 structural-classify
-trust-receipts-report
 ui-verify-server
 validate-canary-report
 veridelta-archive
@@ -115,7 +114,6 @@ target_for() {
         baseline-snapshot) echo "dev-flow-doctor/scripts/baseline-snapshot.sh" ;;
         compare-baseline) echo "dev-flow-doctor/scripts/compare-baseline.sh" ;;
         validate-canary-report) echo "dev-flow-doctor/scripts/validate-canary-report.sh" ;;
-        trust-receipts-report) echo "dev-flow-doctor/scripts/trust-receipts-report.sh" ;;
         detect-stack) echo "_lib/scripts/detect-stack.sh" ;;
         dev-flow-prerun) echo "dev-flow/scripts/prerun.sh" ;;
         ac-lint) echo "_lib/scripts/ac-lint.sh" ;;
@@ -355,13 +353,6 @@ skills_target_for() {
     run bash "$REPO_ROOT/plugins/dev-flow/bin/compare-baseline"
     [ "$status" -eq 2 ]
     echo "$output" | jq -e '.error | test("--baseline is required")'
-}
-
-@test "trust-receipts-reportがbin経由bare名でエラー経路を透過する(不明引数)" {
-    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
-    run bash "$REPO_ROOT/plugins/dev-flow/bin/trust-receipts-report" --bogus
-    [ "$status" -eq 1 ]
-    echo "$output" | jq -e '.status == "error"'
 }
 
 @test "baseline-snapshotがbin経由bare名で引数を透過する(--help)" {
