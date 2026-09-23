@@ -10,8 +10,14 @@
 #       - Default mode: prints a warning and exits 0 (graceful skip in
 #         environments that don't have bats yet).
 #       - `--strict` mode: exits 1 (use this in CI to require bats).
-#   - If `bats` is installed: runs each .bats file and aggregates results.
-#     Exit 0 only if all files pass; exit 1 if any test fails.
+#   - If `bats` is installed: runs the .bats files in parallel (one bats
+#     process per file) and aggregates results. Each file's output is
+#     buffered and printed in discovery order once all files finish, so logs
+#     never interleave. Exit 0 only if all files pass; exit 1 if any test fails.
+#   - Parallelism: `RUN_ALL_BATS_JOBS` (positive integer) overrides the
+#     default of the online CPU count; set it to 1 to run serially. Files are
+#     independent (each test uses mktemp / $BATS_TEST_TMPDIR), and serial
+#     execution made dev-flow Validate spend ~7 min per full-suite pass.
 #
 # Designed to be called from CI (GitHub Actions) after `brew install bats-core`
 # (macOS) or `apt install bats` (ubuntu).
@@ -27,6 +33,17 @@ export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bi
 STRICT=false
 if [[ "${1:-}" == "--strict" ]]; then
     STRICT=true
+fi
+
+if [[ -n "${RUN_ALL_BATS_JOBS:-}" ]]; then
+    if [[ ! "$RUN_ALL_BATS_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+        echo "[run-all-bats] RUN_ALL_BATS_JOBS must be a positive integer (got: '$RUN_ALL_BATS_JOBS')." >&2
+        exit 2
+    fi
+    JOBS="$RUN_ALL_BATS_JOBS"
+else
+    JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+    [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || JOBS=4
 fi
 
 if ! command -v bats >/dev/null 2>&1; then
@@ -58,13 +75,35 @@ echo "[run-all-bats] Discovered ${#BATS_FILES[@]} .bats file(s):"
 for f in "${BATS_FILES[@]}"; do
     echo "  - ${f#$REPO_ROOT/}"
 done
+echo "[run-all-bats] Running with ${JOBS} parallel job(s)."
 echo ""
+
+RESULT_DIR="$(mktemp -d)"
+trap 'rm -rf "$RESULT_DIR"' EXIT
+
+# One bats process per file. Output goes to <index>.log and the exit code to
+# <index>.rc so the report below can replay them in discovery order.
+# xargs appends each (index, file) pair after the fixed "$RESULT_DIR" arg, so
+# inside `bash -c` $1 is the result dir and $2/$3 are index/file.
+run_one() {
+    local idx="$1" file="$2" dir="$3"
+    bats "$file" > "$dir/$idx.log" 2>&1
+    echo "$?" > "$dir/$idx.rc"
+}
+export -f run_one
+
+for i in "${!BATS_FILES[@]}"; do
+    printf '%s\0%s\0' "$i" "${BATS_FILES[$i]}"
+done | xargs -0 -n 2 -P "$JOBS" bash -c 'run_one "$2" "$3" "$1"' _ "$RESULT_DIR"
 
 FAILED=()
 PASSED=()
-for f in "${BATS_FILES[@]}"; do
+for i in "${!BATS_FILES[@]}"; do
+    f="${BATS_FILES[$i]}"
     echo "=== Running: ${f#$REPO_ROOT/} ==="
-    if bats "$f"; then
+    cat "$RESULT_DIR/$i.log" 2>/dev/null
+    # A missing .rc (worker killed before recording) counts as a failure.
+    if [[ "$(cat "$RESULT_DIR/$i.rc" 2>/dev/null)" == "0" ]]; then
         PASSED+=("$f")
     else
         FAILED+=("$f")
