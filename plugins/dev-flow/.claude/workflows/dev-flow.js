@@ -2389,6 +2389,21 @@ const POST_MERGE_CHECK = {
   'test-weakening': 'テスト弱体化の疑いを含む — マージ後の CI で当該テストが実行されていること（skip / only が残っていないこと）を確認する',
 };
 
+// 解消済み証跡の折りたたみ表の上限（issue #707）。GitHub のコメント本文上限（65536 文字）を
+// 解消済み項目の件数・evidence 長で超えないよう、行数とセル長の両方を決定論で切る。
+// セルは空白・改行を 1 空白に畳んでから code point 単位で切るので、1 セルは escape 後も
+// 高々 2 × RESOLVED_CELL_MAX 文字（'|' → '\|'）、表全体は 30 行 × 2 セルで約 25,000 文字に収まる。
+// 切った残りの全文は journal telemetry `resolved_evidence` に残る。
+const RESOLVED_ROWS_MAX = 30;
+const RESOLVED_CELL_MAX = 200;
+
+function resolvedCell(v) {
+  if (v == null) return '';
+  const chars = Array.from(String(v).replace(/\s+/g, ' ').trim());
+  const s = chars.length > RESOLVED_CELL_MAX ? chars.slice(0, RESOLVED_CELL_MAX - 1).join('') + '…' : chars.join('');
+  return mdCell(s);
+}
+
 /**
  * dev-flow 終端サマリー markdown を生成する。
  * @param {object} opts
@@ -2414,6 +2429,11 @@ const POST_MERGE_CHECK = {
  * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
  * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
  * @param {boolean|null|undefined} opts.testGreen - test green フラグ（at-a-glance 表では finalReconcile が 'ci_verified'/'reverified' のとき最終状態を優先。issue #625）
+ * @param {'passed'|'failed'|'no_tests'|'error'|null|undefined} [opts.validateTests] - Validate 時点の GREEN.tests。
+ *   'error' は起動失敗（テストが 1 件も実行されていない）で、at-a-glance 表では ❌ red と区別する（issue #707）
+ * @param {boolean|null|undefined} [opts.ciTestVerified] - 表示専用。finalReconcile が再検証していない run で、
+ *   PR head sha に pin した CI check が finalCiVerdict で verified になったか（issue #707）。
+ *   validateTests==='error' のときだけテスト欄を '✅ green (CI)' にする。merge tier の入力にはしない
  * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）（at-a-glance 表では iterate_fixed+lgtm+finalAcReconcile=reverified の fail を '✅ pass (fix 後 LGTM)' と表示。issue #625）
  * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'hash_reconverged'|'iterate_incomplete'|'iterate_fixed'（issue #288, #631）
  * @param {string|null|undefined} [opts.evalDiffHash] - Evaluate 時点の tree diff hash（issue #631）
@@ -2457,6 +2477,8 @@ function buildDevflowSummaryBody({
   testsurfHits,
   shape,
   testGreen,
+  validateTests,
+  ciTestVerified,
   evalVerdict,
   evalStaleness,
   evalDiffHash,
@@ -2492,6 +2514,11 @@ function buildDevflowSummaryBody({
   const FINAL_AC_RECONCILE_VALUES_LOCAL = ['skipped', 'reverified', 'unavailable'];
   if (finalAcReconcile != null && !FINAL_AC_RECONCILE_VALUES_LOCAL.includes(finalAcReconcile)) {
     throw new Error('buildDevflowSummaryBody: invalid finalAcReconcile: ' + finalAcReconcile);
+  }
+
+  const VALIDATE_TESTS_VALUES = ['passed', 'failed', 'no_tests', 'error'];
+  if (validateTests != null && !VALIDATE_TESTS_VALUES.includes(validateTests)) {
+    throw new Error('buildDevflowSummaryBody: invalid validateTests: ' + validateTests);
   }
 
   // 非空文字列判定（final_evidence / escalate_description の妥当性チェックに使う。issue #658）。
@@ -2568,13 +2595,6 @@ function buildDevflowSummaryBody({
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
 
-  // hasActionItems: 見出し（⚠️ 要対応 / ✅ 要対応事項なし）の判定にのみ使う。解消済みは数えない。
-  const hasActionItems = uncheckedBlocking.length > 0
-    || unresolvedEscalate.length > 0
-    || unresolvedAdvisory.length > 0
-    || unsatisfiedAC.length > 0
-    || uncleared.length > 0;
-
   // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
   // 要判断・助言は含めない — 人間の判断のみで済む項目は「修正」ではない）。
   // holdReasons に conflict/final_test_red/iterate_non_lgtm/pr_closes_missing の code があれば、
@@ -2582,13 +2602,25 @@ function buildDevflowSummaryBody({
   // 結論行「修正作業は不要です」と HOLD 理由テーブルの対応列「conflict を解消して push する」が
   // 自己矛盾していた。pr_closes_missing も同型 — issue #661）。
   const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing'];
+  const testsurfUncleared = testsurfClearance.some(tc => !tc.cleared);
+  const fixRequiredHold = Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code));
   const fixRequired = uncheckedBlocking.length > 0
     || unsatisfiedAC.length > 0
     || uncleared.length > 0
-    || testsurfClearance.some(tc => !tc.cleared)
+    || testsurfUncleared
     || finalTestGreen === false
     || (iterateStatus != null && iterateStatus !== 'lgtm')
-    || (Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code)));
+    || fixRequiredHold;
+
+  // hasRequiredItems: 見出し「⚠️ 要対応」の判定。必須項目（unchecked blocking / 未解消 escalate /
+  // AC 未達 / 未クリアの security・testsurf / 修正必須の HOLD reason）だけで決める。advisory（任意）
+  // だけのときは「ℹ️ 任意の確認事項」にして、結論行の「助言 N 件は任意」と矛盾させない（issue #707）。
+  const hasRequiredItems = uncheckedBlocking.length > 0
+    || unresolvedEscalate.length > 0
+    || unsatisfiedAC.length > 0
+    || uncleared.length > 0
+    || testsurfUncleared
+    || fixRequiredHold;
 
   const lines = [];
 
@@ -2620,20 +2652,22 @@ function buildDevflowSummaryBody({
     actionPhrase = '人が diff を一読してマージしてください';
   }
 
-  lines.push(`**結論: ${tierPhrase}。${fixPhrase}。${actionPhrase}**`);
-  lines.push('');
-
-  // 3. at-a-glance テーブル
-  const tierCell = `${TIER_EMOJI[mergeTier] ?? ''} **${mergeTier}**`;
-  const shapeCell = shape != null ? shape : '不明';
   // at-a-glance は最終状態を出す（issue #625）。Final reconcile が最終 tree の test 状態を確定させた
   // 場合はそれを優先し、Validate 時点の testGreen は finalReconcile が 'skipped'/'unavailable'/null
   // （= 最終 tree の再検証が行われていない）のときだけ使う。経過は参考セクションの Final reconcile 行に残る。
+  // Validate の tests:'error' はテストが 1 件も実行されていない起動失敗で red ではない（issue #707）。
+  // PR head sha に pin した CI が green なら '✅ green (CI)'、そうでなければ未検証として結論行で CI 確認を促す。
   let testCell;
+  let testUnverified = false;
   if (finalReconcile === 'ci_verified') {
     testCell = '✅ green (CI)';
   } else if (finalReconcile === 'reverified') {
     testCell = finalTestGreen === true ? '✅ green' : finalTestGreen === false ? '❌ red' : '不明';
+  } else if (validateTests === 'error' && ciTestVerified === true) {
+    testCell = '✅ green (CI)';
+  } else if (validateTests === 'error') {
+    testCell = '⚠️ 未実行（環境）・未検証';
+    testUnverified = true;
   } else if (testGreen == null) {
     testCell = '不明';
   } else if (testGreen === true) {
@@ -2641,6 +2675,14 @@ function buildDevflowSummaryBody({
   } else {
     testCell = '❌ red';
   }
+
+  const testPhrase = testUnverified ? 'テストはローカル未実行・CI 未確認のため、CI の test 結果を確認してからマージ。' : '';
+  lines.push(`**結論: ${tierPhrase}。${fixPhrase}。${testPhrase}${actionPhrase}**`);
+  lines.push('');
+
+  // 3. at-a-glance テーブル
+  const tierCell = `${TIER_EMOJI[mergeTier] ?? ''} **${mergeTier}**`;
+  const shapeCell = shape != null ? shape : '不明';
   // evaluator verdict=fail でも、pr-iterate が fix を適用して LGTM 終端し（iterate_fixed + lgtm）、
   // AC が最終 tree で再検証済み（finalAcReconcile=reverified）なら最終状態は pass。4 条件 AND。
   // 表示のみ — merge tier / HOLD reasons / telemetry の eval_verdict は fix 前 verdict のまま不変。
@@ -2834,10 +2876,12 @@ function buildDevflowSummaryBody({
 
   // 6. 要対応セクション（常時可視。issue #658 AC-2）
   lines.push('');
-  if (!hasActionItems) {
-    lines.push(triagedAdvisory.length > 0 ? `### ✅ 要対応事項なし（トリアージ済み ${triagedAdvisory.length} 件）` : '### ✅ 要対応事項なし');
-  } else {
+  if (hasRequiredItems) {
     lines.push('### ⚠️ 要対応');
+  } else if (unresolvedAdvisory.length > 0) {
+    lines.push('### ℹ️ 任意の確認事項');
+  } else {
+    lines.push(triagedAdvisory.length > 0 ? `### ✅ 要対応事項なし（トリアージ済み ${triagedAdvisory.length} 件）` : '### ✅ 要対応事項なし');
   }
 
   // ledger 未解消テーブル（(i)(ii)(iii)）。見出しに関わらず、blocking + 全 escalate + 非 escalate
@@ -2892,7 +2936,13 @@ function buildDevflowSummaryBody({
     }
   }
 
-  if (hasActionItems) {
+  // 必須項目が TESTSURF / 修正必須の HOLD reason だけのときは直下に表が出ないため、参照先を 1 行で示す。
+  if (hasRequiredItems && ledgerActionItems.length === 0 && unsatisfiedAC.length === 0 && uncleared.length === 0) {
+    lines.push('');
+    lines.push('- Goal Ledger / AC / security clearance の未解消はなし — 「HOLD になった理由と現状」・TESTSURF・pr-iterate 未解消の指摘 の未解消行を対応する');
+  }
+
+  if (hasRequiredItems) {
     // 未達 AC テーブル（(iv)）
     if (unsatisfiedAC.length > 0) {
       lines.push('');
@@ -2986,12 +3036,12 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 7. 解消済み証跡の件数行（issue #603）。全文 evidence は journal telemetry `resolved_evidence`
-  // （canonical _lib/resolved-evidence.mjs、同一の選別述語）へ移した。ここでは件数だけを常時可視で出す。
-  // 未解消・未 clear の item は上記「要対応」セクションに従来どおり全文で出る（AC2 / AC5）。
+  // 7. 解消済み証跡（issue #603, #707）。件数行を <details> のサマリ行にし、折りたたみの中に
+  // Goal Ledger の解消済み項目を 1 行ずつ 区分 / 内容 / 解消根拠 で出す（PR 上で何が指摘され何が
+  // 直ったかを追えるようにする）。未解消・未 clear の item は上記「要対応」セクションに全文で出る。
   const resolvedItems = [
-    ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: '必須（blocking）' })),
-    ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: '助言（advisory）' })),
+    ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: 'blocking' })),
+    ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: 'advisory' })),
   ];
   const countLines = [];
   if (resolvedItems.length > 0) countLines.push(`- ✅ Goal Ledger 解消済み ${resolvedItems.length} 件`);
@@ -3009,9 +3059,44 @@ function buildDevflowSummaryBody({
   // セクションの末尾に置く（解消済み証跡セクション自体の位置は不変 — 要対応表より下のまま）。
   if (resolvedAdvisory.length > 0) countLines.push(`- ✅ fix 後 tree で解消確認 ${resolvedAdvisory.length} 件（advisory / ESCALATE — checked は不変）`);
   if (countLines.length > 0) {
+    // 行の対象: checked の ledger item（上記件数と同じ選別）+ fix 後 tree で解消確認された advisory / ESCALATE。
+    const resolvedRows = [
+      ...resolvedItems,
+      ...resolvedAdvisory.filter(it => !(it.checked === true && it.escalate !== true)).map(it => ({ ...it, _lane: 'advisory' })),
+    ];
     lines.push('');
-    lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
-    for (const l of countLines) lines.push(l);
+    if (resolvedRows.length === 0) {
+      // 折りたたむ項目が無い（環境ノート / AC / clearance の件数だけ）ときは件数行をそのまま出す。
+      lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
+      for (const l of countLines) lines.push(l);
+    } else {
+      // <summary> 直後と </details> 直前の空行は GFM が details 内の table をレンダリングするために必須。
+      lines.push('**解消済み証跡**:');
+      lines.push('');
+      lines.push(`<details><summary>${countLines.map(l => l.replace(/^- /, '')).join(' / ')}</summary>`);
+      lines.push('');
+      lines.push('| 区分 | 内容 | 解消根拠 |');
+      lines.push('|---|---|---|');
+      for (const item of resolvedRows.slice(0, RESOLVED_ROWS_MAX)) {
+        let kind;
+        if (item.source === 'seed' && item.dimension === 'security') kind = 'security';
+        else if (item.source === 'ac') kind = 'AC';
+        else kind = item._lane;
+        let how;
+        if (item._lane === 'advisory' && isResolved(item)) {
+          how = (item.final_resolution === 'ci_delegated' ? 'CI 委譲: ' : 'fix 後 tree で確認: ') + resolvedCell(item.final_evidence);
+        } else {
+          how = nonEmpty(item.evidence) ? resolvedCell(item.evidence) : '—';
+        }
+        lines.push(`| ${kind} | ${resolvedCell(item.text)} | ${how} |`);
+      }
+      if (resolvedRows.length > RESOLVED_ROWS_MAX) {
+        lines.push('');
+        lines.push(`他 ${resolvedRows.length - RESOLVED_ROWS_MAX} 件は journal telemetry \`resolved_evidence\` を参照`);
+      }
+      lines.push('');
+      lines.push('</details>');
+    }
   }
 
   // 参考（可視化のみ — merge tier 判定に不使用）。disclosures・UI 検証・Final reconcile 行を
@@ -6771,6 +6856,29 @@ if (finalReconcile === 'unavailable') {
 }
 
 // ============================================================
+// 表示専用の CI 確認（issue #707）: Final reconcile が skipped（fixes_applied=0）で Validate が
+// tests:'error'（起動失敗 = テスト未実行）の run だけ、PR phase の head sha に pin した CI check を
+// ci-final と同じ finalCiPrompt + finalCiVerdict で 1 回読み、終端サマリーのテスト欄にだけ渡す。
+// finalReconcile / finalCi / classifyMergeTier には渡さない（表示のみ。merge tier 判定は不変）。
+// 取得失敗・sha 不一致・pending は verified:false で「未検証」表示に倒れる（fail-open）。
+// ============================================================
+let summaryCiTestVerified = null
+const prHeadShaForDisplay = typeof pr?.head_sha === 'string' ? pr.head_sha.trim() : ''
+if (finalReconcile === 'skipped' && state.val?.tests === 'error' && /^[0-9a-f]{40}$/i.test(prHeadShaForDisplay)) {
+  let displayCiMeta = null
+  try {
+    displayCiMeta = await trackedAgent(
+      finalCiPrompt({ pr: pr.pr_number, repo: REPO }),
+      { agentType: 'dev-runner-haiku-ro', schema: FINAL_CI_META, label: 'ci-test-display', phase: 'Final reconcile' })
+  } catch (e) {
+    log(`⚠️ ci-test-display: 取得が throw（${e && e.message ? e.message : e}）— テスト欄は未検証表示（表示のみ・fail-open）`)
+  }
+  const displayCi = finalCiVerdict({ expectedSha: prHeadShaForDisplay, meta: displayCiMeta })
+  summaryCiTestVerified = displayCi.verified
+  log(`ci-test-display: Validate tests=error — PR head sha の CI ${displayCi.verified ? '全 success（テスト欄 ✅ green (CI)）' : `未確認（reason=${displayCi.reason}）— テスト欄は未検証`}（表示のみ。merge tier 不変）`)
+}
+
+// ============================================================
 // Step6: targeted Final AC reconcile。fix 適用 run で final test が green/no_tests の場合のみ、
 // Setup 末尾の analyze ゲートで freeze した既存 AC を最終 PR tree に対し one-shot で再検証する。契約（EVALUATOR_OPERATIONAL_CONTRACT.
 // final_ac_reconcile）は evaluator.md へ mirror せず本 prompt 注入が唯一の配送経路（.claude/agents/ は書き込み禁止領域）。
@@ -7055,6 +7163,8 @@ const summaryBody = buildDevflowSummaryBody({
   testsurfHits: testsurfPatternsFinal,
   shape: state.EFFECTIVE_SHAPE,
   testGreen: state.val?.green ?? null,
+  validateTests: state.val?.tests ?? null,
+  ciTestVerified: summaryCiTestVerified,
   evalVerdict: state.evalResult?.verdict ?? null,
   evalStaleness,
   evalDiffHash: state.evalDiffHash,

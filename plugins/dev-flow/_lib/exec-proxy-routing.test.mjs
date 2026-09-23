@@ -49,6 +49,7 @@ const EXPECTED_DEV_FLOW = {
   'merge-tier-facts': RO,
   'changed-files-final': RO,
   'ci-final': RO,
+  'ci-test-display': RO,
   'tree-diff-numstat': RO,
   'issue-labels': RO,
   'cross-repo-artifacts': RO,
