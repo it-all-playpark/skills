@@ -21,7 +21,7 @@ const repoRoot = join(here, '..');
 const devFlowSrc = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 
-// evaluator / pr-reviewer は override を渡さないので frontmatter の 'opus'（値の一致は review-model-frontmatter.test.mjs が pin）。
+// evaluator / pr-reviewer / dev-implement-fable は override を渡さないので frontmatter の 'opus'（値の一致は review-model-frontmatter.test.mjs が pin）。
 // eval_model_config / impl_model_config は evaluator / dev-implement-fable を spawn する dev-flow 側の entry にのみ載る。
 function assertJournalSaveHasKeys(calls, contextLabel, { evalModel }) {
   const journalSaveCalls = calls.filter((c) => c.label?.startsWith('journal-save'));
@@ -29,7 +29,7 @@ function assertJournalSaveHasKeys(calls, contextLabel, { evalModel }) {
   const has = (needle) => journalSaveCalls.some((c) => c.prompt.includes(needle));
   if (evalModel) {
     assert.ok(has('"eval_model_config":"opus"'), `${contextLabel}: journal-save prompt に "eval_model_config":"opus" を含む call が見つからない`);
-    assert.ok(has('"impl_model_config":"fable"'), `${contextLabel}: journal-save prompt に "impl_model_config":"fable" を含む call が見つからない`);
+    assert.ok(has('"impl_model_config":"opus"'), `${contextLabel}: journal-save prompt に "impl_model_config":"opus" を含む call が見つからない`);
   } else {
     assert.ok(!has('"eval_model_config"'), `${contextLabel}: journal-save prompt に eval_model_config が載っている（evaluator を spawn しない workflow）`);
     assert.ok(!has('"impl_model_config"'), `${contextLabel}: journal-save prompt に impl_model_config が載っている（implementer を spawn しない workflow）`);

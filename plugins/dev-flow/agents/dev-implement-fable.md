@@ -9,7 +9,7 @@ description: |
   (Validate phase) and red→green proof (redgreen-verify in Evaluate) are done by the pipeline,
   not by this agent.
   Use when: dev-flow Implement / green-fix / reimpl spawn, any shape.
-model: fable
+model: opus
 effort: high
 tools:
   - Read
