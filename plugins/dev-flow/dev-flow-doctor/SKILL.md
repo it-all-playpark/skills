@@ -151,7 +151,7 @@ raw > 5 — 宣言外 / format-only 除外で classifyShape 入力が閾値内�
 `*_samples` の issue / PR を列挙する。shape は Security floor 時点の realized diff（宣言外・format-only 除外後）を
 見るため、pr-iterate fix で後から膨らんだ PR は不一致に現れない。
 
-analyze 経路: contract 12 / jev 30 / sonnet 0（sonnet は Analyze ゲート後の needs_clarification 経路のみ）。
+analyze 経路: contract 12 / jev 30 / sonnet 0（sonnet は analyze ゲート（Setup 末尾）後の needs_clarification 経路のみ）。
 Jev に回した理由: comments_present 18 / breaking 12。prerun の analyze 段所要: median 6s / max 31s（measured 42）。
 
 ### Other Findings

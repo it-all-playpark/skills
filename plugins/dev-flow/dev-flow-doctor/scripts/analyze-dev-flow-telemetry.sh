@@ -569,7 +569,7 @@ ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c --argjson window "$NESTED_
 # analyze_ineligible_reason / prerun_durations.analyze — dev-flow.js の handoff が passthrough で
 # 記録する）から、判定根拠の分布と raw realized との不一致を出す。
 # analyze_path は contract（prerun の決定論 parse のみ）/ jev（prerun が Jev 有界判定に回した）/
-# sonnet（Analyze ゲート後の needs_clarification 経路のみ。成功 handoff には現れない）の 3 値。
+# sonnet（analyze ゲート（Setup 末尾）後の needs_clarification 経路のみ。成功 handoff には現れない）の 3 値。
 # analyze_ineligible_reason は Jev に回した理由（jev_reasons を '; ' 結合。'breaking_keyword_scan true' /
 # 'comments present (N)'。両方なら 2 バケットに計上）。shape は realized diff の file 数
 # （宣言外パス・format-only 除外後の realized_file_count）+ AC 数 / issue_type / breaking の
