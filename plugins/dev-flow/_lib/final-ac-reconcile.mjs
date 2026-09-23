@@ -150,3 +150,41 @@ export function validateFinalItemResolutions(resolutions, targetIds) {
 
   return { accepted, rejected };
 }
+
+// fix 後の最終 tree に対する決定論の検証が成立した run で、未 checked の EVAL-* blocking item を
+// 解消する id と evidence を返す純粋関数（issue #720）。入力を mutate しない。
+//
+// standard は Evaluate 1 パスで、EVAL-* を checked にできる evaluator（critical_resolutions）は
+// pr-iterate の fix 後に再実行されない。fix で直った critical が ledger 未収束の HOLD に残り続けるため、
+// fix 後 tree の test#final green（head sha に pin）または CI 委譲（ci_verified）を決定論の根拠に解消する。
+// LLM 判断（final_resolution）は根拠にしない（blocking を LLM 判断で解消しない規則は不変）。
+//
+// 判定順（最初に該当した reason を返す。ok 以外は ids 空）:
+//   1. fixesApplied が数値でない/<=0                                    → no_fixes
+//   2. finalReconcile==='reverified' かつ finalTestGreen===true かつ headSha 非空
+//      → ok（evidence `test#final green @ <headSha>`）
+//   3. finalReconcile==='ci_verified' かつ finalCi.verified===true
+//      → ok（evidence `ci_verified: <check 名, ...>`）
+//   4. それ以外（red / no_tests / unavailable / skipped / head sha 不明） → not_verified
+//
+// 対象は blockingItems のうち id が 'EVAL-' で始まり source==='evaluator' の未 checked item のみ。
+// escalate item は当事者性で人間判断を要求する機構で test green では解消しないため除外する。
+// SEC / TESTSURF（source:'seed'）・AC-FINAL-*（id 接頭辞が異なる）はこの経路で解消しない。
+export function finalEvalBlockingResolutions({ fixesApplied, finalReconcile, finalTestGreen, headSha, finalCi, blockingItems }) {
+  if (typeof fixesApplied !== 'number' || !Number.isFinite(fixesApplied) || fixesApplied <= 0) {
+    return { reason: 'no_fixes', evidence: null, ids: [] };
+  }
+  let evidence = null;
+  if (finalReconcile === 'reverified' && finalTestGreen === true && typeof headSha === 'string' && headSha.length > 0) {
+    evidence = `test#final green @ ${headSha}`;
+  } else if (finalReconcile === 'ci_verified' && finalCi && finalCi.verified === true) {
+    evidence = `ci_verified: ${(Array.isArray(finalCi.checkNames) ? finalCi.checkNames : []).join(', ')}`;
+  } else {
+    return { reason: 'not_verified', evidence: null, ids: [] };
+  }
+  const ids = (Array.isArray(blockingItems) ? blockingItems : [])
+    .filter((it) => it && typeof it.id === 'string' && it.id.startsWith('EVAL-')
+      && it.source === 'evaluator' && it.checked !== true && it.escalate !== true)
+    .map((it) => it.id);
+  return { reason: 'ok', evidence, ids };
+}

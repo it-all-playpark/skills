@@ -1516,6 +1516,44 @@ function validateFinalItemResolutions(resolutions, targetIds) {
 
   return { accepted, rejected };
 }
+
+// fix 後の最終 tree に対する決定論の検証が成立した run で、未 checked の EVAL-* blocking item を
+// 解消する id と evidence を返す純粋関数（issue #720）。入力を mutate しない。
+//
+// standard は Evaluate 1 パスで、EVAL-* を checked にできる evaluator（critical_resolutions）は
+// pr-iterate の fix 後に再実行されない。fix で直った critical が ledger 未収束の HOLD に残り続けるため、
+// fix 後 tree の test#final green（head sha に pin）または CI 委譲（ci_verified）を決定論の根拠に解消する。
+// LLM 判断（final_resolution）は根拠にしない（blocking を LLM 判断で解消しない規則は不変）。
+//
+// 判定順（最初に該当した reason を返す。ok 以外は ids 空）:
+//   1. fixesApplied が数値でない/<=0                                    → no_fixes
+//   2. finalReconcile==='reverified' かつ finalTestGreen===true かつ headSha 非空
+//      → ok（evidence `test#final green @ <headSha>`）
+//   3. finalReconcile==='ci_verified' かつ finalCi.verified===true
+//      → ok（evidence `ci_verified: <check 名, ...>`）
+//   4. それ以外（red / no_tests / unavailable / skipped / head sha 不明） → not_verified
+//
+// 対象は blockingItems のうち id が 'EVAL-' で始まり source==='evaluator' の未 checked item のみ。
+// escalate item は当事者性で人間判断を要求する機構で test green では解消しないため除外する。
+// SEC / TESTSURF（source:'seed'）・AC-FINAL-*（id 接頭辞が異なる）はこの経路で解消しない。
+function finalEvalBlockingResolutions({ fixesApplied, finalReconcile, finalTestGreen, headSha, finalCi, blockingItems }) {
+  if (typeof fixesApplied !== 'number' || !Number.isFinite(fixesApplied) || fixesApplied <= 0) {
+    return { reason: 'no_fixes', evidence: null, ids: [] };
+  }
+  let evidence = null;
+  if (finalReconcile === 'reverified' && finalTestGreen === true && typeof headSha === 'string' && headSha.length > 0) {
+    evidence = `test#final green @ ${headSha}`;
+  } else if (finalReconcile === 'ci_verified' && finalCi && finalCi.verified === true) {
+    evidence = `ci_verified: ${(Array.isArray(finalCi.checkNames) ? finalCi.checkNames : []).join(', ')}`;
+  } else {
+    return { reason: 'not_verified', evidence: null, ids: [] };
+  }
+  const ids = (Array.isArray(blockingItems) ? blockingItems : [])
+    .filter((it) => it && typeof it.id === 'string' && it.id.startsWith('EVAL-')
+      && it.source === 'evaluator' && it.checked !== true && it.escalate !== true)
+    .map((it) => it.id);
+  return { reason: 'ok', evidence, ids };
+}
 // ==== END inline: _lib/final-ac-reconcile.mjs ====
 
 // ==== BEGIN inline: _lib/gate-policy.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -5490,16 +5528,21 @@ const setup = PRERUN
 // sandbox 除外は先頭トークン一致のため、bare 形（絶対パス先頭トークン・前置禁止）優先実行 +
 // EPERM 起動失敗時は原因調査せず即時報告する文言へ更新。
 // 起動失敗（1 件も実行されず）は tests:"error"、実行された上での失敗は tests:"failed" に分離する（Final reconcile で error → unavailable → CI 委譲）。
+// tests/run-*.sh が複数あるときは全本を実行させ、全本 green のときだけ green:true にする。1 本だけ選ばせると
+// 残りのランナー（例: bats だけ走って vitest が走らない）の回帰が CI まで検出されないため。
 const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し green かどうか判定せよ。\n`
-  + `test 実行コマンドの規約: repo に実行可能な test スクリプト（tests/run-*.sh 等）があればそれを優先し、`
-  + `\`${WT}/tests/run-tests.sh\` のように**絶対パスを先頭トークンとする bare 形**で実行せよ。`
+  + `test 実行コマンドの規約: repo に実行可能な test スクリプト（tests/run-*.sh 等）があればそれを優先する。`
+  + `\`ls -l ${WT}/tests\` を bare 単文で実行して一覧を取り、ファイル名が tests/run-*.sh に一致し実行ビットを持つものを**すべて**対象とせよ。`
+  + `対象が複数あれば 1 本ずつ**すべて**実行せよ（1 本だけ選んで残りを省略してはならない）。`
+  + `各スクリプトは \`${WT}/tests/run-tests.sh\` のように**絶対パスを先頭トークンとする bare 形**で実行せよ。`
   + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止`
   + `（理由: 先頭トークン一致で sandbox 除外が外れるため）。`
   + `実行可能な test スクリプトが repo に無い場合のみ npm test / pytest / cargo test 等へフォールバックせよ。\n`
-  + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな: bare 形の実行経路を 1 回だけ試し、`
-  + `それでも失敗するなら即座に StructuredOutput で報告せよ。報告時の tests の値は次の 2 分岐で決める:\n`
-  + `- テストスイートが 1 件も実行されなかった起動失敗（EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、失敗要約を summary に入れる\n`
-  + `- テストが実行された上で 1 件以上失敗 → tests:"failed"、green:false、失敗要約を summary に入れる\n`
+  + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな: そのスクリプトは bare 形の実行経路を 1 回だけ試し、`
+  + `それでも失敗するなら起動失敗として記録して残りのスクリプトへ進め。全対象を実行し終えたら StructuredOutput で報告せよ。報告時の tests / green の値は次の 3 分岐で決める:\n`
+  + `- 実行したすべてのスクリプトが green → tests:"passed"、green:true（green:true はこの分岐でのみ返せ）\n`
+  + `- すべてのスクリプトが起動失敗でテストスイートが 1 件も実行されなかった（EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、失敗要約を summary に入れる\n`
+  + `- それ以外（1 本でもテストが失敗、または一部のスクリプトだけ起動失敗）→ tests:"failed"、green:false、失敗したスクリプトごとの要約を summary に入れる\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_NOTE
   + EPOCH_INSTRUCTION
@@ -6377,7 +6420,8 @@ async function execEvaluatePhase(state) {
     }
     const escalateAppended = (ev.feedback ?? []).filter((f) => f && f.escalate === true).length
     if (escalateAppended > 0) log(`ESCALATE-TO-HUMAN feedback ${escalateAppended} 件を検出(issue #177。乱発ガードは W6b)`)
-    // 未解消 EVAL-* critical は evaluator の critical_resolutions（resolve-with-evidence）でのみ解消する。
+    // Evaluate 内の未解消 EVAL-* critical は evaluator の critical_resolutions（resolve-with-evidence）でのみ解消する
+    // （pr-iterate の fix 後は Final reconcile の決定論検証でも解消しうる。finalEvalBlockingResolutions）。
     // 沈黙＝解消として自動で checkItem してはならない（「新規のみ報告」指示と矛盾し偽解消を生むため）。
     for (const cr of (ev.critical_resolutions ?? [])) {
       if (!cr || typeof cr.id !== 'string') continue
@@ -6931,6 +6975,24 @@ if (finalReconcile === 'unavailable') {
   } else {
     log(`⚠️ ci-final: CI 委譲不成立（reason=${finalCi.reason}${finalCi.checkNames.length ? ': ' + finalCi.checkNames.join(', ') : ''}）— unavailable 維持（fail-closed → merge tier HOLD）`)
   }
+}
+
+// ============================================================
+// EVAL-* blocking の決定論解消: fix 後の最終 tree で test#final green（head sha pin）または
+// ci_verified が成立した run に限り、未 checked の EVAL-* blocking item を決定論 evidence で checked にする。
+// 判定は finalEvalBlockingResolutions（決定論）のみ — LLM 判断（final_resolution）では解消しない。
+// SEC / TESTSURF / AC-FINAL-* / escalate は対象外。fixes_applied=0・red・unavailable は据え置き（HOLD）。
+// ============================================================
+{
+  const evr = finalEvalBlockingResolutions({
+    fixesApplied: iterate?.fixes_applied ?? 0, finalReconcile, finalTestGreen,
+    headSha: finalSyncHead, finalCi, blockingItems: policyBlockingItems(state.ledger, GATE_POLICY),
+  })
+  for (const id of evr.ids) {
+    state.ledger = checkItem(state.ledger, id, `critical resolved (final reconcile): ${evr.evidence}`)
+    log(`${id}: fix 後の最終 tree で ${evr.evidence} — checked（issue #720）`)
+  }
+  if (evr.reason === 'not_verified') log(`Final reconcile: 最終 tree の決定論検証が不成立（final_reconcile=${finalReconcile}, final_test_green=${finalTestGreen}）— 未 checked の EVAL-* は据え置き`)
 }
 
 // ============================================================

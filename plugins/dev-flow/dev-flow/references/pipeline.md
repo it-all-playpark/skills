@@ -39,7 +39,12 @@ Merge tier を pr-iterate の後に置くのは、fix 適用後の最終 tree �
 reconcile を行い、merge 判定を最新の PR 内容に基づかせるため。pr-iterate が fix を適用した run では
 Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite を一発再実行する（red / 再検証
 不能は merge tier HOLD。fixes_applied=0 は agent 呼び出しゼロで skip）。再検証不能時は PR head sha に
-pin した CI check の決定論判定で代替し、成立しなければ HOLD を維持する。final test が green/ci_verified
+pin した CI check の決定論判定で代替し、成立しなければ HOLD を維持する。test suite の実行は Validate と
+同じ prompt で、実行可能な `tests/run-*.sh` が複数あれば全本を実行し全本 green のときだけ green とする。
+test#final green（head sha pin）または ci_verified が成立した run では、未 checked の `EVAL-*` blocking
+item（evaluator 由来。escalate は除く）をその決定論 evidence で checked にする（evaluator は fix 後に再実行
+されないため）。SEC seed / TESTSURF / AC-FINAL-* はこの経路で解消せず、LLM 判断（final_resolution）でも
+blocking は解消しない。final test が green/ci_verified
 のときは同じ targeted evaluator 呼び出し（Final AC reconcile）が既存 AC の最終 tree 再検証に加え、
 未解消 advisory / ESCALATE item の fix 後 tree 再評価（item_resolutions。表示専用・checked 不変）も
 回収し、終端サマリーの「現状 / 対応」列に反映する。
