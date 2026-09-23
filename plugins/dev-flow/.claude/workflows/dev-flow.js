@@ -5576,7 +5576,8 @@ let state = {
   ledger: null, risk: null, dangerHits: [], realized: null,
   realizedNonEphemeral: null, realizedCount: NaN, triage: null,
   EFFECTIVE_SHAPE: null, EVAL_PASSES: null, runEval: null,
-  dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0,
+  dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0, reimplCount: 0,
+  postEvalVal: null,
   unsatisfiedAc: false, evalDiffHash: null, secDiffHash: null,
   prDiffHash: null, staleDiffFiles: null, prHeadTreeOid: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
@@ -5701,6 +5702,73 @@ async function execImplementPhase(state) {
 }
 
 // ============================================================
+// test ⇄ green-fix ループ（上限 GREEN_MAX）。Validate 本経路（kind=''）・empty-diff retry 経路（kind='retry'）・
+// Evaluate 差し戻し後の PR 前再テスト（kind='post-eval'）が同じ prompt・break 条件・green-fix 計上を共有する
+// （経路ごとの複製はプロンプト空白 drift を生むため 1 箇所で管理する）。
+// green-fix は greenFixIterations に積み（件数が greenFixCount）、concerns は呼び出し側の配列へ伝搬する。
+// tests:'error'（起動失敗）は green-fix せず即 break。GREEN_MAX 到達は red のまま返して先へ進む（human review 想定）。
+// ============================================================
+async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName }) {
+  let v = null
+  for (let i = 1; i <= GREEN_MAX; i++) {
+    const iterLabel = kind ? `${kind}-${i}` : `${i}`
+    const testLabel = `test#${iterLabel}`
+    let raw
+    try {
+      raw = await trackedAgent(
+        VALIDATE_TEST_PROMPT,
+        { agentType: 'dev-runner-haiku', schema: GREEN, label: testLabel, phase: phaseName },
+      )
+    } catch (e) {
+      log(`⚠️ ${phaseName}(${testLabel}): test proxy が throw（${e && e.message ? e.message : e}）— red 扱いで継続（fail-safe。issue #359）`)
+      raw = { tests: 'failed', green: false, summary: `test proxy 実行失敗（throw）: ${String(e && e.message ? e.message : e)}` }
+    }
+    v = need(raw, `${phaseName}(${testLabel})`)
+    if (kind === 'retry') {
+      log(`validate(after empty-diff retry) iteration ${i}: tests=${v.tests} green=${v.green}`)
+    } else if (kind === 'post-eval') {
+      log(`validate(after Evaluate reimpl) iteration ${i}: tests=${v.tests} green=${v.green}`)
+    } else {
+      log(`validate iteration ${i}: tests=${v.tests} green=${v.green}`)
+    }
+    if (v.green || v.tests === 'no_tests') break
+    if (v.tests === 'error') {
+      // 起動失敗（テストが 1 件も実行されていない）。環境失敗はコード修正で解消しないため
+      // green-fix（dev-implement-fable）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
+      // まま返し、Final reconcile の error → unavailable → ci-final（CI 委譲）経路に委ねる。
+      // tests:'failed'（実行された上での red）はそのまま green-fix を回す。
+      log(`⚠️ ${phaseName}: tests=error（起動失敗: ${String(v.summary ?? '').slice(0, 200)}）— green-fix をスキップ（環境失敗はコード修正で解消しない。Final reconcile の CI 委譲へ）`)
+      break
+    }
+    if (i === GREEN_MAX) {
+      if (kind === 'retry') {
+        log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
+      } else if (kind === 'post-eval') {
+        log(`⚠️ Evaluate 差し戻し後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — PR へ（human review 想定）`)
+      } else {
+        log(`⚠️ ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
+      }
+      break
+    }
+    const gfResult = await trackedAgent(
+      `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
+      + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
+      + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
+      + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
+      + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}\n`
+      + `task_id: issue-${ISSUE}（返却 JSON の task_id にそのまま echo せよ）\n`
+      + STAGING_CONVENTION
+      + TURBOPACK_NOTE,
+      { agentType: FABLE_IMPL_AGENT, model: GREEN_FIX_MODEL, schema: IMPL, label: `green-fix#${iterLabel}`, phase: phaseName },
+    )
+    // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一）
+    if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)
+    greenFixIterations.push({ files: gfResult?.files ?? [], summary: gfResult?.summary ?? '' })
+  }
+  return v
+}
+
+// ============================================================
 // Phase Validate: test green を確認し、green でなければ dev-implement-fable に差し戻し（上限 GREEN_MAX）。
 // tests:'error'（起動失敗）は差し戻さず即 break
 // （format/lint は hook 責務でここでは扱わない）
@@ -5710,73 +5778,14 @@ async function execValidatePhase(state) {
   const plan = state.plan
   const concerns = state.concerns
   let val = null
-  let greenFixCount = 0
   /** @type {Array<{files: string[], summary: string}>} */
   const greenFixIterations = []
+  const loopCtx = { concerns, greenFixIterations, phaseName: 'Validate' }
   // validate_end の clock 給電候補。test#i/diff-gate/diff-gate-retry/test#retry-i の
   // 応答（いずれも Validate 内で境界に隣接する）を集め、maxEpochRes で最後に完了したものを採る。
   const validateEpochCandidates = []
-  // 本経路（label=''）と empty-diff retry 経路（label='retry'）を統合した Validate ループ。
-  // 2 複製のプロンプト空白 drift を根治し、両経路の挙動を 1 箇所で管理する。
-  async function runValidateLoop(label) {
-    const isRetry = label === 'retry'
-    const phaseName = 'Validate'
-    let v = null
-    for (let i = 1; i <= GREEN_MAX; i++) {
-      const testLabel = isRetry ? `test#retry-${i}` : `test#${i}`
-      let raw
-      try {
-        raw = await trackedAgent(
-          VALIDATE_TEST_PROMPT,
-          { agentType: 'dev-runner-haiku', schema: GREEN, label: isRetry ? `test#retry-${i}` : `test#${i}`, phase: phaseName },
-        )
-      } catch (e) {
-        log(`⚠️ ${phaseName}(${testLabel}): test proxy が throw（${e && e.message ? e.message : e}）— red 扱いで継続（fail-safe。issue #359）`)
-        raw = { tests: 'failed', green: false, summary: `test proxy 実行失敗（throw）: ${String(e && e.message ? e.message : e)}` }
-      }
-      v = need(raw, `${phaseName}(${testLabel})`)
-      if (isRetry) {
-        log(`validate(after empty-diff retry) iteration ${i}: tests=${v.tests} green=${v.green}`)
-      } else {
-        log(`validate iteration ${i}: tests=${v.tests} green=${v.green}`)
-      }
-      if (v.green || v.tests === 'no_tests') break
-      if (v.tests === 'error') {
-        // 起動失敗（テストが 1 件も実行されていない）。環境失敗はコード修正で解消しないため
-        // green-fix（dev-implement-fable）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
-        // まま返し、Evaluate → Final reconcile の error → unavailable → ci-final（CI 委譲）経路に委ねる。
-        // tests:'failed'（実行された上での red）はそのまま green-fix を回す。
-        log(`⚠️ ${phaseName}: tests=error（起動失敗: ${String(v.summary ?? '').slice(0, 200)}）— green-fix をスキップ（環境失敗はコード修正で解消しない。Final reconcile の CI 委譲へ）`)
-        break
-      }
-      if (i === GREEN_MAX) {
-        if (isRetry) {
-          log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
-        } else {
-          log(`⚠️ ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
-        }
-        break
-      }
-      const gfResult = await trackedAgent(
-        `cd ${WT} で作業（Bash ごとに先頭で cd すること）。テストが失敗している。原因を分析して実装/テストを修正し`
-        + `green を目指せ。共有 worktree のため無関係ファイルは触るな。git add / commit はするな。\n`
-        + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
-        + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
-        + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}\n`
-        + `task_id: issue-${ISSUE}（返却 JSON の task_id にそのまま echo せよ）\n`
-        + STAGING_CONVENTION
-        + TURBOPACK_NOTE,
-        { agentType: FABLE_IMPL_AGENT, model: GREEN_FIX_MODEL, schema: IMPL, label: isRetry ? `green-fix#retry-${i}` : `green-fix#${i}`, phase: phaseName },
-      )
-      // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一）
-      if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)
-      greenFixCount += 1
-      greenFixIterations.push({ files: gfResult?.files ?? [], summary: gfResult?.summary ?? '' })
-    }
-    return v
-  }
   // 本経路: Validate phase で test green を確認
-  val = await runValidateLoop('')
+  val = await runValidateLoop('', loopCtx)
   validateEpochCandidates.push(val)
   // green-fix 発生分を evaluator focus_areas へ注入する（テスト弱体化監査）。
   // empty-diff gate の retry 経路（Evaluate phase 内、eval#1 より前）でも同じ注入を行うため関数化。
@@ -5892,7 +5901,7 @@ async function execValidatePhase(state) {
       // retry 中の green-fix は loop 終了後に pushGreenFixAudit で focus_areas へ注入する（eval#1 より前）。
       // runValidateLoop('retry') が GREEN_MAX ループ・テスト弱体化監査注入・concerns 伝搬を担う。
       const gfIterCountBeforeRetry = greenFixIterations.length
-      val = await runValidateLoop('retry')
+      val = await runValidateLoop('retry', loopCtx)
       validateEpochCandidates.push(val)
       pushGreenFixAudit(greenFixIterations.slice(gfIterCountBeforeRetry))
     }
@@ -5900,7 +5909,7 @@ async function execValidatePhase(state) {
 
   state.validateEndEpochRes = maxEpochRes(validateEpochCandidates)
   state.val = val
-  state.greenFixCount = greenFixCount
+  state.greenFixCount = greenFixIterations.length
   state.greenFixIterations = greenFixIterations
   return state
 }
@@ -6194,6 +6203,7 @@ async function execEvaluatePhase(state) {
   let evalResult = null
   let evalIters = 0            // eval iteration カウンタ（telemetry 用）
   let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
+  let reimplCount = 0          // reimpl#i（fix_feedback 付き差し戻し）の実行回数。>0 なら PR 前にフルテストを再実行する
   let unsatisfiedAc = false
   let evalDiffHash = null  // 最後の evaluator 呼び出し直前の diff hash（PR 直前と突合し乖離で summary 警告）
   // Security floor で build 済みの ledger(SEC seed + danger 反映済)に AC + concerns を足す。
@@ -6487,6 +6497,7 @@ async function execEvaluatePhase(state) {
     }
     log(`replan#${i}: fable 経路 — 合成 plan のまま dev-implement-fable へ差し戻し（feedback_level=${ev.feedback_level}）`)
     const fableFeedback = nextOpenCriticals.length ? [...(ev.feedback ?? []), { unresolved_critical: nextOpenCriticals }] : ev.feedback
+    reimplCount++
     const reimplResults = await runImplement(req, plan, fableFeedback, `reimpl#${i}`)
     plan = adoptReportedFiles(plan, reimplResults)
   }
@@ -6496,8 +6507,36 @@ async function execEvaluatePhase(state) {
   state.evalResult = evalResult
   state.evalIters = evalIters
   state.designReplanCount = designReplanCount
+  state.reimplCount = reimplCount
   state.unsatisfiedAc = unsatisfiedAc
   state.evalDiffHash = evalDiffHash
+  return state
+}
+
+// ============================================================
+// Evaluate 差し戻し後の PR 前再テスト: reimpl#i が 1 回以上走った run に限り、PR 前にフルテストを 1 回再実行する。
+// Evaluate 内で走るのは AC ごとの redgreen-verify だけで、reimpl が AC 対象外のテストを壊しても Validate
+// （Implement 直後の 1 回きり）では捕まらず、PR 後の CI / pr-iterate まで気づけないため。
+// red は Validate と同じ runValidateLoop で green-fix に差し戻し（上限 GREEN_MAX、到達時は red のまま PR へ）、
+// tests:'error' は green-fix せず先へ進む。reimpl 0 回の run は spawn 0（通常経路のテスト回数は変えない）。
+// ここでの green-fix は greenFixCount / greenFixIterations に計上する。evaluator は再評価しない（ledger も
+// Evaluate の round 以降は非 critical item を受け付けない）ため、テスト弱体化の監査は tree 変化が起こす
+// eval_staleness=hash_mismatch（merge tier HOLD。差分ファイル一覧つき）で人間に委ねる。
+// state.val は最新の test 結果（終端サマリー・telemetry の test_green）へ差し替える。
+// ============================================================
+async function execPostEvalValidate(state) {
+  if (!(state.reimplCount > 0)) return state
+  log(`post-eval validate: Evaluate で reimpl ${state.reimplCount} 回 — PR 前にフルテストを再実行`)
+  const gfIterCountBefore = state.greenFixIterations.length
+  const v = await runValidateLoop('post-eval', { concerns: state.concerns, greenFixIterations: state.greenFixIterations, phaseName: 'Evaluate' })
+  state.val = v
+  state.postEvalVal = v
+  state.greenFixCount = state.greenFixIterations.length
+  const newIters = state.greenFixIterations.slice(gfIterCountBefore)
+  if (newIters.length > 0) {
+    const gfFiles = [...new Set(newIters.flatMap((it) => it.files))]
+    log(`⚠️ post-eval validate: green-fix ${newIters.length} 回（evaluator 未再評価）— テスト弱体化の監査は hash_mismatch の HOLD で人間へ（files: ${gfFiles.join(', ') || 'none'}）`)
+  }
   return state
 }
 
@@ -6517,7 +6556,8 @@ state = await execSecurityFloorPhase(state)
 if (state.runEval) {
 phase('Evaluate')
 state = await execEvaluatePhase(state)
-feedClockMark('evaluate_end', epochResOf(state.evalResult))
+state = await execPostEvalValidate(state)
+feedClockMark('evaluate_end', maxEpochRes([state.evalResult, state.postEvalVal]))
 } else {
   log('micro path: Evaluate phase を skip(evaluator 0 回起動。danger-grep clean。reason: ' + state.triage.reason + ')')
 }

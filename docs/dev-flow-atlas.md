@@ -185,10 +185,18 @@ flowchart TD
     E3 --> E1
     E2 -->|"fail: impl"| E4["同じく reimpl#i<br/>未解消 critical を最優先"]
     E4 --> E1
-    E2 -->|pass| OUT["PR へ"]
+    E2 -->|pass| P0{"reimpl#i が 1 回以上 ?"}
+    P0 -->|no| OUT["PR へ"]
+    P0 -->|yes| P1["test#post-eval-i（フルテスト 1 回）<br/>red → green-fix#post-eval-i / GREEN_MAX"]
+    P1 --> OUT
 ```
 
 standard は 1 パスのみで差し戻さない。未解消の critical は merge tier の HOLD が担保する。
+reimpl が 1 回以上走った run だけ、PR 前にフルテストを再実行する（Evaluate 内は AC ごとの redgreen-verify しか
+走らず、reimpl が AC 対象外のテストを壊しても Validate では捕まらないため）。red は Validate と同じ green-fix
+ループ（`tests:'error'` は green-fix しない）。ここでの green-fix は evaluator が再評価しないので、
+Evaluate 時点から tree が変わったことによる `eval_staleness=hash_mismatch` の HOLD（差分ファイル一覧つき）で
+テスト弱体化の監査を人間に委ねる。reimpl 0 回の run は spawn しない。
 
 ### 1.8 PR
 
@@ -403,7 +411,7 @@ tier は動かない。
 | `EVAL_MAX` | 10 | complex の evaluate 差し戻しループ |
 | `EVAL_STUCK` | 2 | 同一 topic 反復での design churn 打ち切り |
 | `DESIGN_REPLAN_MAX` | 2 | design 差し戻し（replan + reimpl）の hard cap |
-| `GREEN_MAX` | 3 | Validate の test green 差し戻し |
+| `GREEN_MAX` | 3 | Validate と Evaluate 差し戻し後の PR 前再テストの test green 差し戻し |
 | `BLOCK_MAX` | 2 | BLOCKED 由来の再計画 |
 | `REVIEW_STUCK` | 2 | pr-iterate の同一 topic 反復での stuck 判定 |
 | `CI_WAIT_CEILING_SECONDS` | 300 | pr-iterate の CI pending 待ち（script 側 ci-wait ループ）の nominal 総待機上限（秒） |
