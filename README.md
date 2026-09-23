@@ -335,7 +335,7 @@ config = load_skill_config("ga-analyzer")
 > `dev-flow` の判断系 leaf (計画/レビュー/実装/評価) は subagent (`plugins/dev-flow/agents/`) として実装。
 > 最終 PR レビューは `dev-flow:pr-iterate` workflow (`/pr-iterate <pr>` で単体起動も可)。
 
-📊 **[dev-flow Pipeline Atlas](docs/dev-flow-atlas.md)** — 10 phase のパイプライン・shape 判定・
+📊 **[dev-flow Pipeline Atlas](docs/dev-flow-atlas.md)** — 8 phase のパイプライン・shape 判定・
 `pr-iterate` ループ・merge tier 判定を mermaid 図で示した実装ベースの索引。
 規約の正典は [`.claude/rules/dev-flow.md`](.claude/rules/dev-flow.md)。
 
@@ -513,7 +513,7 @@ skills/
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）
 │   │   │   └── agents -> ../agents       # symlink（plugin subagent 読み込み用）
-│   │   ├── agents/                       # 12 dev-flow agent 実体
+│   │   ├── agents/                       # 9 dev-flow agent 実体
 │   │   ├── _lib/                         # workflow のロジック本体・test
 │   │   ├── _shared/scripts/              # dev-flow 共通スクリプト
 │   │   ├── bin/                          # dev-flow bare 名 wrapper（22本）

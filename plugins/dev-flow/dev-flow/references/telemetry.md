@@ -124,7 +124,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   単純合計すると二重計上になる（集計時は dev-flow entry のみを使う）。by_type は agentType 別の
   起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-implement-fable /
   evaluator / pr-reviewer / dev-runner / dev-runner-haiku / dev-runner-haiku-ro / dev-runner-haiku-wo /
-  ui-verifier の 10 種、agentType 欠落は 'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
+  ui-verifier の 8 種、agentType 欠落は 'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで
   usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric。
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。

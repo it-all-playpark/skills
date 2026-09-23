@@ -92,7 +92,7 @@ const EVALUATOR_OPERATIONAL_CONTRACT = {
     'concern_resolutions 契約:',
     '- prompt に「未解消 concern 一覧」が渡された場合、各 item を実コードで再検証し、concern_resolutions:[{id, resolution, evidence}] で全件判定して返す。',
     '- id は渡された item の id をそのまま返す。',
-    '- resolution は resolved / triaged / unresolved の 3 値 enum（必須）。旧 resolved:true/false（boolean キー）は受理されず error になる。',
+    '- resolution は resolved / triaged / unresolved の 3 値 enum（必須）。boolean キーは受理しない（error）。',
     '- resolved = 実コードで解消を確認。具体的 evidence 必須（file:line / テスト名 / diff 内容）。',
     '- triaged = 再検証済みだが対応不要と判断（advisory かつ実害なし等）。判断根拠の evidence 必須。evidence の無い triaged は unresolved と同一に扱われる。',
     '- 人間の作業（apply 前の手動検証・オペレータ確認依頼等）を含むものは triaged にしない。unresolved にするか、環境事象なら ENV note に載せる（triaged は「人間の対応不要」を意味し、要対応から外れる）。',
@@ -2235,7 +2235,7 @@ function normalizePath(s) {
  *
  * normalizePath を共用して表記ゆれ（'path: 説明' / './' プレフィックス / 空白）を正規化する。
  *
- * @param {Array<{id: string, file_changes?: string[]}>} planTasks - serial + parallel の全 task 配列
+ * @param {Array<{id: string, file_changes?: string[]}>} planTasks - plan.serial の全 task 配列
  * @param {string[]} changedFiles - `git status --porcelain` の変更ファイル一覧（正規化済みパスを期待する）
  * @returns {string[]} 宣言外変更ファイルパスの配列（changedFiles の正規化値が基準）
  */
@@ -4560,7 +4560,7 @@ function collapseWhitespace(s) {
 // plan の file_changes（`path: 説明` 形も許容）から path 部分を取り出す。
 function planPaths(plan) {
   const out = [];
-  for (const t of [...arr(plan?.serial), ...arr(plan?.parallel)]) {
+  for (const t of arr(plan?.serial)) {
     for (const fc of arr(t?.file_changes)) {
       const p = str(fc).split(':')[0].trim();
       if (p) out.push(p);
@@ -4630,7 +4630,7 @@ const PR_BODY_AC_MIN = 40;
 const PR_BODY_AC_SHRINK_STEP = 20;
 const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
 
-// plan.serial + plan.parallel の file_changes を component（path の dirname。無ければ '(root)'）ごとに
+// plan.serial の file_changes を component（path の dirname。無ければ '(root)'）ごとに
 // 初出順でグループ化し、[{ component, files }] を返す（files は basename を初出順・重複排除）。
 function changeGroups(plan) {
   const order = [];
@@ -5331,11 +5331,10 @@ function synthesizeFablePlan(req, issue) {
   return {
     summary: title,
     serial: [{ id: `issue-${issue}`, desc: title, file_changes: [], test_plan: '', depends_on: [], agent: FABLE_IMPL_AGENT }],
-    parallel: [],
   }
 }
 function isFableTask(t) { return t != null && t.agent === FABLE_IMPL_AGENT }
-function isFablePlan(p) { return [...(p?.serial ?? []), ...(p?.parallel ?? [])].some(isFableTask) }
+function isFablePlan(p) { return (p?.serial ?? []).some(isFableTask) }
 // 合成 task の file_changes は空で始まる（Fable が決める）。Implement / reimpl の返却 files を宣言として
 // 取り込むことで、宣言外監査（diffDeclaredPaths）・実効 shape の realized count・PR body の「変更」節が同じ材料で動く
 // （宣言外 = Fable が files に申告しなかった変更、として evaluator の focus に載る）。
@@ -5350,7 +5349,7 @@ function adoptReportedFiles(plan, results) {
     return out
   }
   const adopt = (t) => isFableTask(t) ? { ...t, file_changes: [...new Set([...(t.file_changes ?? []), ...filesOf(t.id)])] } : t
-  return { ...plan, serial: (plan.serial ?? []).map(adopt), parallel: (plan.parallel ?? []).map(adopt) }
+  return { ...plan, serial: (plan.serial ?? []).map(adopt) }
 }
 // dev-implement-fable への spawn prompt。issue 本文と AC を直接渡し、手順書型 task・plan contract・
 // AC テスト契約（red→green 自己実証）は渡さない — 全件テスト・red 証明・AC 判定は Validate /
@@ -5971,7 +5970,7 @@ async function execSecurityFloorPhase(state) {
   const realizedNonEphemeral = realized?.files ? filterEphemeralPaths(realized.files) : null
   if (realized?.files && realizedNonEphemeral && realizedNonEphemeral.length !== realized.files.length) log(`realized-diff: ephemeral ${realized.files.length - realizedNonEphemeral.length} 件を file count から除外`)
   // 宣言外 non-ephemeral 変更は shape の size 信号にせず、Evaluate 強制 + concern 監査で扱う
-  const planAllTasks = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
+  const planAllTasks = state.plan.serial ?? []
   const undeclared = realizedNonEphemeral ? diffDeclaredPaths(planAllTasks, realizedNonEphemeral) : []
   // declaredFiles = realized 変更のうち宣言済みのもの（undeclared を filter で除外。二重減算を避ける）。
   // その中で format_only（difftastic 分類）なファイルはさらに realized count から除外する。
@@ -6793,7 +6792,7 @@ if ((iterate?.fixes_applied ?? 0) > 0) {
       changedFilesFinal = changedFinal.files
       const filesFinal = filterEphemeralPaths(changedFinal.files)
       // Step4 宣言外パス再監査（advisory）: Security floor 時点の undeclared に無い新規分のみ集約 1 item
-      const planAllTasksF = [...(state.plan.serial ?? []), ...(state.plan.parallel ?? [])]
+      const planAllTasksF = state.plan.serial ?? []
       const undeclaredFinal = diffDeclaredPaths(planAllTasksF, filesFinal)
       const newUndeclared = undeclaredFinal.filter((p) => !(state.undeclared ?? []).includes(p))
       if (newUndeclared.length > 0) {

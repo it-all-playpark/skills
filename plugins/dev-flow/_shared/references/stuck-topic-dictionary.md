@@ -36,12 +36,10 @@ topic は `<problem-class>` 単独、または `<problem-class>::<詳細>` 形�
 |---|---|---|---|
 | `scope-mismatch` | 要件の過不足・スコープ逸脱（実装が AC を超える / 足りない） | evaluator | `scope-mismatch::AC-3` |
 | `yagni-violation` | 投機的機能・過剰実装（YAGNI 違反） | evaluator | `yagni-violation::_lib/foo.mjs` |
-| `untestable-ac` | 受入条件が測定不能・検証困難（テスト不能な AC） | plan-reviewer | `untestable-ac::AC-2` |
-| `missing-file-reference` | 計画参照ファイルが実在しない | plan-reviewer | `missing-file-reference::src/bar.ts` |
+| `untestable-ac` | 受入条件が測定不能・検証困難（テスト不能な AC） | evaluator | `untestable-ac::AC-2` |
+| `missing-file-reference` | 計画参照ファイルが実在しない | evaluator | `missing-file-reference::src/bar.ts` |
 | `wrong-file-target` | 変更対象ファイルの取り違え（誤ったファイルを変更） | evaluator | `wrong-file-target::dev-flow.js` |
-| `file-conflict-in-parallel` | parallel task 間で file_changes が重複している | plan-reviewer | `file-conflict-in-parallel::_lib/goal-ledger.mjs` |
-| `dependency-contradiction` | 依存関係の矛盾・serial / parallel 分解の不整合 | plan-reviewer | `dependency-contradiction::F2->F1` |
-| `self-containment-violation` | task 記述の曖昧参照（「上述の通り」等、self-contained でない） | plan-reviewer | `self-containment-violation::F3` |
+| `self-containment-violation` | task 記述の曖昧参照（「上述の通り」等、self-contained でない） | evaluator | `self-containment-violation::F3` |
 | `edge-case-unhandled` | edge case の handling 未定義 / 未実装 | evaluator / pr-reviewer | `edge-case-unhandled::empty-input` |
 | `error-handling-missing` | 異常系処理の欠落（エラー時のハンドリングなし） | evaluator / pr-reviewer | `error-handling-missing::read-file` |
 | `input-validation-missing` | 入力検証漏れ（null / 型 / 範囲チェック欠如） | evaluator / pr-reviewer | `input-validation-missing::create-user` |
@@ -53,4 +51,4 @@ topic は `<problem-class>` 単独、または `<problem-class>::<詳細>` 形�
 | `test-weakening` | テスト弱体化（assert 削除・skip 追加・条件緩和） | evaluator / pr-reviewer | `test-weakening::gate-policy.test.mjs` |
 | `test-not-asserting` | テストが非自明な assert をしていない（常に pass する等） | evaluator / pr-reviewer | `test-not-asserting::topic-dictionary-refs.test.mjs` |
 | `performance-issue` | N+1・不要ループ・計算量超過等のパフォーマンス問題 | pr-reviewer | `performance-issue::find-all-files` |
-| `naming-convention` | 命名・規約違反（kebab-case 違反・接頭辞漏れ等） | pr-reviewer / plan-reviewer | `naming-convention::topic-key` |
+| `naming-convention` | 命名・規約違反（kebab-case 違反・接頭辞漏れ等） | pr-reviewer | `naming-convention::topic-key` |

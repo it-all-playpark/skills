@@ -35,8 +35,10 @@ function plan(o = {}) {
       { decision: 'commit message は純関数で組み立てる', rationale: 'diff 再読不要' },
       'PR body に LLM 生成文を足さない',
     ],
-    serial: [{ id: 'F1', desc: 'pr-artifacts.mjs を追加', file_changes: ['plugins/dev-flow/_lib/pr-artifacts.mjs: 新規'], test_plan: 'tp', depends_on: [] }],
-    parallel: [{ id: 'F2', desc: 'dev-flow.js の PR phase を切替', file_changes: ['plugins/dev-flow/.claude/workflows/dev-flow.js'], test_plan: 'tp', depends_on: [] }],
+    serial: [
+      { id: 'F1', desc: 'pr-artifacts.mjs を追加', file_changes: ['plugins/dev-flow/_lib/pr-artifacts.mjs: 新規'], test_plan: 'tp', depends_on: [] },
+      { id: 'F2', desc: 'dev-flow.js の PR phase を切替', file_changes: ['plugins/dev-flow/.claude/workflows/dev-flow.js'], test_plan: 'tp', depends_on: [] },
+    ],
     ...o,
   };
 }
@@ -64,7 +66,7 @@ test('[pr-artifacts] commit message: issue title に Conventional prefix が無�
 });
 
 test('[pr-artifacts] commit message: 共通 dir が無ければ scope 無し、issue_type 欠落は title の type、両方無ければ chore', () => {
-  const p = plan({ serial: [{ id: 'a', desc: 'd', file_changes: ['src/a.ts'] }], parallel: [{ id: 'b', desc: 'd', file_changes: ['tests/b.ts'] }] });
+  const p = plan({ serial: [{ id: 'a', desc: 'd', file_changes: ['src/a.ts'] }, { id: 'b', desc: 'd', file_changes: ['tests/b.ts'] }] });
   assert.equal(buildCommitMessage({ issue: 1, req: req({ issue_type: 'feat', issue_title: 'add x' }), plan: p }).split('\n')[0], 'feat: add x (#1)');
   assert.equal(buildCommitMessage({ issue: 2, req: req({ issue_type: undefined, issue_title: 'docs(readme): fix typo' }), plan: p }).split('\n')[0], 'docs(readme): fix typo (#2)');
   assert.equal(buildCommitMessage({ issue: 3, req: req({ issue_type: undefined, issue_title: 'tidy' }), plan: p }).split('\n')[0], 'chore: tidy (#3)');
@@ -113,7 +115,7 @@ test('[pr-artifacts] PR body: ledger の AC-n が checked なら [x]、danger / 
 });
 
 test('[pr-artifacts] PR body: hit なしは「なし」、AC / decisions / 変更 空でもセクションは残る', () => {
-  const body = buildPrBody({ issue: 5, req: req({ acceptance_criteria: [] }), plan: plan({ architecture_decisions: [], serial: [], parallel: [] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  const body = buildPrBody({ issue: 5, req: req({ acceptance_criteria: [] }), plan: plan({ architecture_decisions: [], serial: [] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
   assert.ok(body.includes('## 変更\n（なし）'), body);
   assert.ok(body.includes('## 受入条件\n（なし）'), body);
   assert.ok(body.includes('## 設計判断\n（なし）'), body);
@@ -164,7 +166,7 @@ test('[pr-artifacts] PR body: 巨大 planner 出力でも PR_BODY_MAX_CHARS 以�
   const body = buildPrBody({
     issue: 642,
     req: req({ acceptance_criteria: acs }),
-    plan: plan({ summary: bigSummary, architecture_decisions: decisions, serial: tasks, parallel: [] }),
+    plan: plan({ summary: bigSummary, architecture_decisions: decisions, serial: tasks }),
     ledger: ledger(),
     testsurfHits,
     dangerHits,
@@ -418,7 +420,6 @@ test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing �
   const planStub = {
     summary: 'stub-issue-title',
     serial: [{ id: 'issue-1', desc: 'stub-issue-title', file_changes: ['src/x.ts'], test_plan: '', depends_on: [], agent: 'dev-implement-fable' }],
-    parallel: [],
   };
   const { ctx, calls } = makeDevFlowSandbox({ extra: { args: analyzeArgs(1, analyzeOverrides) } });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);
