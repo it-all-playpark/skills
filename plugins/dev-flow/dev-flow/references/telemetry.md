@@ -98,9 +98,10 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `agents/dev-implement-fable.md` frontmatter の `model`（`opus`）で、一致は同テストが pin する。green-fix の
   `sonnet` override は固定値なのでキーを持たない — 世代は `plugin_version` で分かる）。
   `plugin_version`（同上両 entry。`_lib/plugin-version.mjs` の `PLUGIN_VERSION` 定数。workflow では
-  plugin root 変数が展開されず fs も使えないため定数で持ち、`_lib/plugin-version.sync.test.mjs`
-  が `plugins/dev-flow/.claude-plugin/plugin.json` の version と一致することを pin する。plugin.json
-  を上げるときは canonical も上げて `tools/sync-inlines.mjs --write` を実行する）。
+  plugin root 変数が展開されず fs も使えないため定数で持つ。plugin.json は version を持たない
+  （marketplace install を git commit SHA で main に追随させるため）ので、manifest から独立した
+  集計用の世代ラベルとして扱い、集計上区別したい挙動変更を入れるときに canonical を上げて
+  `tools/sync-inlines.mjs --write` を実行する）。
   `iterate_history`（pr-iterate entry のみ。round ごとの `{iteration, decision, summary, blocking, minor,
   scope, delta_lines}` 配列。CI-failed round の blocking は synthetic な `ci::<check>` topic の finding。
   `scope` は `'full' | 'delta'` — review#i（i ≥ 2）が fix delta（前 round の review 時点の head sha ..

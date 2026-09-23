@@ -7,11 +7,11 @@ export const meta = {
 }
 
 // ==== BEGIN inline: _lib/plugin-version.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow plugin の version 定数。telemetry キー plugin_version の値として journal entry に記録する
-// （issue #601）。workflow script では ${CLAUDE_PLUGIN_ROOT} が展開されず fs も使えないため、
-// plugin.json を読む代わりに定数で持つ。plugin.json の version と一致することは
-// _lib/plugin-version.sync.test.mjs が CI で pin する — plugin.json を上げるときは本ファイルも上げて
-// tools/sync-inlines.mjs --write を実行する。
+// dev-flow の telemetry 世代ラベル。telemetry キー plugin_version の値として journal entry に記録する
+// （issue #601）。plugin.json は version を持たない（marketplace install を git commit SHA で main に
+// 追随させるため。tests/plugin-manifest.bats が pin）ので、本定数は manifest から独立した集計用ラベル
+// として管理する — 集計上区別したい挙動変更を入れるときに上げて tools/sync-inlines.mjs --write を
+// 実行する。workflow script では ${CLAUDE_PLUGIN_ROOT} が展開されず fs も使えないため定数で持つ。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。

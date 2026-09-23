@@ -14,7 +14,10 @@ Built and maintained by [playpark LLC](https://www.playpark.co.jp/) — an AI de
 ### 配布側インストール（copy mode）
 
 他リポジトリで dev-flow だけ、あるいは全スキルを使いたい場合はこちら。marketplace 経由で
-version 固定の copy が install されます。
+copy が install されます。各 plugin は `version` を持たないため git commit SHA が version になり、
+main への commit がそのまま更新として配布されます（自動で追随させるには `/plugin` の
+Marketplaces で auto-update を有効化。`DISABLE_AUTOUPDATER=1` 環境では `FORCE_AUTOUPDATE_PLUGINS=1`
+も必要）。
 
 ```
 /plugin marketplace add it-all-playpark/skills
