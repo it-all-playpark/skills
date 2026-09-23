@@ -224,9 +224,7 @@ test('[terminal-telemetry] 即 lgtm: fix_terminal_reason キー欠落 / terminal
   assert.equal(Object.hasOwn(telemetry, 'quality_model_config'), false, 'quality_model_config は撤去済み（evaluator も frontmatter 既定で spawn）');
   assert.equal(Object.hasOwn(telemetry, 'quality_model_fallback_label'), false, 'quality_model_fallback_label は撤去済み');
 
-  const pluginJson = JSON.parse(readFileSync(join(repoRoot, '.claude-plugin/plugin.json'), 'utf8'));
   assert.equal(telemetry.plugin_version, PLUGIN_VERSION);
-  assert.equal(telemetry.plugin_version, pluginJson.version);
 
   assert.ok(Array.isArray(telemetry.iterate_history) && telemetry.iterate_history.length === 1, 'iterate_history は length 1 の配列であるべき');
   assert.equal(telemetry.iterate_history[0].decision, 'approve');

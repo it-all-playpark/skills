@@ -1,9 +1,10 @@
 // _lib/plugin-version.sync.test.mjs
 // TDD pin test: ensures _lib/plugin-version.mjs inline markers exist in both workflow files,
-// and that the canonical PLUGIN_VERSION matches plugin.json's version (semver format).
+// and that the canonical PLUGIN_VERSION is a semver-formatted telemetry generation label.
+// plugin.json carries no version (tests/plugin-manifest.bats pins that), so PLUGIN_VERSION is
+// not compared against the manifest.
 //
 // This test guards against:
-//   - plugin.json version bump without updating _lib/plugin-version.mjs
 //   - someone deleting the plugin-version marker zone and hand-writing const PLUGIN_VERSION again
 //   - canonical drift (caught by workflow-inlines.sync.test.mjs per-zone tests once markers exist)
 import { test } from 'vitest';
@@ -21,16 +22,6 @@ const wfDir = join(repoRoot, '.claude', 'workflows');
 const CANONICAL_SOURCE = '_lib/plugin-version.mjs';
 
 // ── Canonical sanity ─────────────────────────────────────────────────────────
-test('PLUGIN_VERSION matches plugin.json version', () => {
-  const pluginJson = JSON.parse(readFileSync(join(repoRoot, '.claude-plugin', 'plugin.json'), 'utf8'));
-  assert.strictEqual(
-    PLUGIN_VERSION,
-    pluginJson.version,
-    `PLUGIN_VERSION ('${PLUGIN_VERSION}') が plugin.json の version ('${pluginJson.version}') と一致しません。` +
-    `plugin.json を上げたら _lib/plugin-version.mjs も上げて tools/sync-inlines.mjs --write を実行してください。`,
-  );
-});
-
 test('PLUGIN_VERSION is semver-formatted', () => {
   assert.ok(
     /^\d+\.\d+\.\d+$/.test(PLUGIN_VERSION),

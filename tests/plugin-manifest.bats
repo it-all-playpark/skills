@@ -5,9 +5,8 @@
 # Invariants pinned here:
 #   - marketplace.json lists exactly the 3 plugins, each sourced from
 #     ./plugins/<name>, so they can be installed independently.
-#   - Each plugin.json is valid, its name matches its directory, its
-#     version matches the marketplace entry, skills is ["./"], and there
-#     is no "agents" key (plugin subagents are only ever loaded from
+#   - Each plugin.json is valid, its name matches its directory, skills
+#     is ["./"], and there is no "agents" key (plugin subagents are only ever loaded from
 #     plugin-root agents/, never from a plugin.json "agents" key -
 #     measured: Agents (0)).
 #   - dev-flow is the only plugin that ships workflows (the 5 dynamic
@@ -21,6 +20,10 @@
 #     silently degrade to Agents (0) while skills still load - measured,
 #     not theoretical. dev-flow/.claude/agents stays the symlink (only
 #     affects developing this repo, never consuming it).
+#   - neither plugin.json nor the marketplace entries carry a "version"
+#     key: with an explicit version, installs only update on a bump;
+#     without it the git commit SHA is the version, so every commit on
+#     main reaches marketplace installs.
 #   - the old single-plugin root manifest (.claude-plugin/plugin.json) is
 #     gone; the repo is no longer a plugin itself.
 
@@ -103,24 +106,19 @@ plugin_json_path() {
     done
 }
 
-@test "各 plugin.json の version が marketplace.json の対応 plugins[].version と一致する" {
+@test "各 plugin.json に version キーが存在しない（git commit SHA で main 追随させる）" {
     for name in "${PLUGIN_NAMES[@]}"; do
         pj="$(plugin_json_path "$name")"
-        plugin_version="$(jq -r '.version' "$pj")"
-        marketplace_version="$(jq -r --arg n "$name" '.plugins[] | select(.name == $n) | .version' "$MARKETPLACE_JSON")"
-        [ -n "$plugin_version" ]
-        [ "$plugin_version" = "$marketplace_version" ]
+        run jq -r 'has("version")' "$pj"
+        [ "$status" -eq 0 ]
+        [ "$output" = "false" ]
     done
 }
 
-@test "各 plugin.json の version は 0.2.0 より上の semver である" {
-    for name in "${PLUGIN_NAMES[@]}"; do
-        pj="$(plugin_json_path "$name")"
-        run jq -r '.version' "$pj"
-        [ "$status" -eq 0 ]
-        [ "$output" != "0.2.0" ]
-        [[ "$output" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-    done
+@test "marketplace.json の各 plugins[] に version キーが存在しない（git commit SHA で main 追随させる）" {
+    run jq -r '[.plugins[] | has("version")] | any' "$MARKETPLACE_JSON"
+    [ "$status" -eq 0 ]
+    [ "$output" = "false" ]
 }
 
 @test "dev-flow の plugin.json の workflows は [\"./.claude/workflows\"] に完全一致する" {
