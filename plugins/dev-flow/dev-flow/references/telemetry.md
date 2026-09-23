@@ -170,7 +170,7 @@ merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab
 する fail-open）に到達済み。
 `vdelta_not_started` / `redgreen_headdiff` は passthrough 経路（専用フラグ無し。doctor 側が enum 外
 status を fail_open に畳むため送り側検証を持たない）。
-`resolved_evidence` は終端サマリーが件数のみ表示する解消済み証跡の全文
+`resolved_evidence` は終端サマリーが折りたたみ内に 1 セル 200 字・30 行で切って表示する解消済み証跡の全文
 `{cap_chars, truncated, ledger_resolved[], env_notes[], ac_satisfied[], security_cleared[]}`（4 配列
 すべて空ならキー欠落）。text/evidence は 1 フィールド 1000 字 cap、総量が 16000 字以下になるまで
 cap を半減する決定論 cap — journal-save stage1 は payload を prompt 経由で LLM が転記する経路であり、

@@ -466,7 +466,7 @@ test('evidence に \\n を含む item でセルが <br> に変換される', () 
 
 // ─── 30 item + 件数縮約 (AC-3, issue #603) ───────────────────────────────────
 
-test('checked item 30件 + unchecked 1件 -> 解消済みは件数のみ・unchecked は全文で常時可視', () => {
+test('checked item 30件 + unchecked 1件 -> 解消済みは折りたたみ内に 1 行ずつ・unchecked は全文で常時可視', () => {
   const blockingItems = [];
   for (let i = 0; i < 30; i++) {
     blockingItems.push({
@@ -491,10 +491,8 @@ test('checked item 30件 + unchecked 1件 -> 解消済みは件数のみ・unche
     blockingItems,
   });
 
-  assert.ok(!body.includes('<details>'), '<details> を含まない');
-
-  // 件数見出しに 30件表示
-  assert.ok(body.includes('✅ Goal Ledger 解消済み 30 件'), '件数行に 30 件を含む');
+  // 件数行は折りたたみのサマリ行（issue #707）
+  assert.ok(body.includes('<details><summary>✅ Goal Ledger 解消済み 30 件</summary>'), 'サマリ行に 30 件を含む');
   const countHeadingIdx = body.indexOf('**解消済み証跡');
   assert.ok(countHeadingIdx >= 0, '件数見出しを含む');
 
@@ -503,10 +501,10 @@ test('checked item 30件 + unchecked 1件 -> 解消済みは件数のみ・unche
   assert.ok(uncheckedIdx >= 0, 'unchecked item を含む');
   assert.ok(uncheckedIdx < countHeadingIdx, 'unchecked item が件数見出しより前');
 
-  // checked item の全文（テーブル行・evidence）はどこにも出ない
+  // checked item は折りたたみ内に 区分 / 内容 / 解消根拠 で 1 行ずつ出る（issue #707）
+  const detailsRegion = body.slice(body.indexOf('<details>'), body.indexOf('</details>'));
   for (let i = 0; i < 30; i++) {
-    assert.ok(!body.includes(`| checked item ${i + 1} |`), `checked item ${i + 1} の全文行を含まない`);
-    assert.ok(!body.includes(`evidence ${i + 1}`), `evidence ${i + 1} を含まない`);
+    assert.ok(detailsRegion.includes(`| blocking | checked item ${i + 1} | evidence ${i + 1} |`), `checked item ${i + 1} の行を含む`);
   }
 });
 
@@ -533,7 +531,7 @@ test('acResults 6件全 satisfied -> 「受け入れ基準 (AC) 6/6 達成」件
 
 // ─── securityClearance 件数行 (AC-3, issue #603) ─────────────────────────────
 
-test('securityClearance 未確認 1件 + cleared 6件 -> 未確認は全文で常時可視・cleared は件数のみ', () => {
+test('securityClearance 未確認 1件 + cleared 6件 -> 未確認は全文で常時可視・cleared は折りたたみ内に security 区分で出る', () => {
   const blockingItems = [];
   for (let i = 0; i < 6; i++) {
     blockingItems.push(secLedgerItem(`SAFE_CLASS_${i}`, { checked: true, evidence: `evidence ${i}` }));
@@ -552,8 +550,10 @@ test('securityClearance 未確認 1件 + cleared 6件 -> 未確認は全文で�
   assert.ok(unclearedIdx >= 0, '未確認クラスの全文行を含む');
   assert.ok(unclearedIdx < countHeadingIdx, '未確認が件数見出しより前');
   assert.ok(body.includes('セキュリティ確認 (Security clearance) 6/7 済'), 'clearance 件数行を含む');
+  const detailsStart = body.indexOf('<details>');
+  assert.ok(detailsStart > unclearedIdx, '折りたたみは未確認行より後');
   for (let i = 0; i < 6; i++) {
-    assert.ok(!body.includes(`evidence ${i}`), `evidence ${i} の全文を含まない`);
+    assert.ok(body.indexOf(`| security | danger-grep detected SAFE_CLASS_${i} | evidence ${i} |`) > detailsStart, `cleared ${i} は折りたたみ内の security 行`);
   }
 });
 
@@ -575,7 +575,7 @@ test('PR#16 再現: dangerHits あり + SEC seed item unchecked -> 検出クラ�
   assert.ok(!body.includes('✅ セキュリティ確認 (Security clearance)'), 'cleared details は出ない');
 });
 
-test('one-shot clearance 後: SEC seed item checked -> 「✅ セキュリティ確認 (Security clearance) 1/1 済」件数行のみで全文 evidence・未確認テーブルは出ない', () => {
+test('one-shot clearance 後: SEC seed item checked -> 「✅ セキュリティ確認 (Security clearance) 1/1 済」件数行と折りたたみ内の evidence のみで未確認テーブルは出ない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     mergeTier: 'REVIEW',
@@ -585,7 +585,7 @@ test('one-shot clearance 後: SEC seed item checked -> 「✅ セキュリティ
     ],
   });
   assert.ok(body.includes('✅ セキュリティ確認 (Security clearance) 1/1 済'), 'cleared 件数行を含む');
-  assert.ok(!body.includes('security cleared (merge-tier one-shot)'), '全文 evidence 文言を含まない');
+  assert.ok(body.indexOf('security cleared (merge-tier one-shot)') > body.indexOf('<details>'), 'evidence は折りたたみ内にのみ出る');
   assert.ok(!body.includes('| 状態 | danger class | 根拠 |'), '未確認 clearance テーブルは出ない');
 });
 
@@ -600,9 +600,9 @@ test('fail_closed:true の SEC item のみ -> 「Security clearance: danger-grep
   assert.ok(!body.includes('Security clearance: danger-grep clean（clearance 不要）'), 'clean 表示は出ない');
 });
 
-// ─── details 廃止 (AC-3, issue #603) ─────────────────────────────────────────
+// ─── 解消済み証跡の折りたたみ (issue #707) ──────────────────────────────────
 
-test('解消済み 4 種すべて非空の入力でも <details> / <summary> / </details> を一切含まない', () => {
+test('issue #707: 解消済み 4 種すべて非空の入力では件数行がサマリ行になった <details> がちょうど 1 回出る', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     blockingItems: [
@@ -616,9 +616,63 @@ test('解消済み 4 種すべて非空の入力でも <details> / <summary> / <
       { ac_index: 0, satisfied: true, evidence: 'ok', verified_by: 'evaluator' },
     ],
   });
-  assert.ok(!body.includes('<details>'), '<details> を含まない');
-  assert.ok(!body.includes('<summary>'), '<summary> を含まない');
-  assert.ok(!body.includes('</details>'), '</details> を含まない');
+  assert.equal((body.match(/<details>/g) || []).length, 1, '<details> はちょうど 1 回');
+  assert.equal((body.match(/<\/details>/g) || []).length, 1, '</details> はちょうど 1 回');
+  assert.ok(
+    body.includes('<details><summary>✅ Goal Ledger 解消済み 2 件 / 🏗 環境ノート 1 件（sandbox 環境事象 — 人間の対応は通常不要） / ✅ 受け入れ基準 (AC) 1/1 達成 / ✅ セキュリティ確認 (Security clearance) 1/1 済</summary>'),
+    '件数行が / 区切りのサマリ行になる',
+  );
+});
+
+test('issue #707 AC6: 解消済み項目は折りたたみ内に 区分（blocking/advisory/AC/security）・内容・解消根拠で 1 行ずつ出る', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    blockingItems: [
+      { id: 'B1', text: 'null guard missing', severity: 'major', checked: true, dimension: 'correctness', source: 'evaluator', evidence: 'src/a.ts:10 に guard 追加（fix commit abc1234）' },
+      { id: 'AC-1', text: 'AC-1: CLI が --json を受け付ける', severity: 'critical', checked: true, dimension: 'ac', source: 'ac', evidence: 'cli.test.mjs で検証' },
+      secLedgerItem('config', { checked: true, evidence: 'secret 代入なし' }),
+    ],
+    advisoryItems: [
+      { id: 'A1', text: 'naming nit', severity: 'minor', checked: true, dimension: 'style', escalate: false, evidence: 'rename 済み' },
+      { id: 'A2', text: 'retry が無い', severity: 'major', checked: false, dimension: 'robustness', final_resolution: 'resolved', final_evidence: 'pr-iterate fix で retry 追加' },
+    ],
+  });
+  const detailsStart = body.indexOf('<details><summary>✅ Goal Ledger 解消済み 4 件');
+  const detailsEnd = body.indexOf('</details>', detailsStart);
+  assert.ok(detailsStart >= 0 && detailsEnd > detailsStart, '解消済み証跡の <details> を含む');
+  const region = body.slice(detailsStart, detailsEnd);
+  const rows = region.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| 区分'));
+  assert.deepEqual(rows, [
+    '| blocking | null guard missing | src/a.ts:10 に guard 追加（fix commit abc1234） |',
+    '| AC | AC-1: CLI が --json を受け付ける | cli.test.mjs で検証 |',
+    '| security | danger-grep detected config | secret 代入なし |',
+    '| advisory | naming nit | rename 済み |',
+    '| advisory | retry が無い | fix 後 tree で確認: pr-iterate fix で retry 追加 |',
+  ]);
+  assert.ok(region.includes('| 区分 | 内容 | 解消根拠 |'), '表ヘッダを含む');
+  // <summary> 直後と </details> 直前の空行（GFM が details 内の table をレンダリングする条件）
+  assert.ok(region.includes('</summary>\n\n| 区分'), 'summary 直後に空行');
+  assert.ok(body.slice(0, detailsEnd).endsWith('\n\n'), '</details> 直前に空行');
+});
+
+test('issue #707: 解消済み行のセルは空白を畳んで 200 文字で切り、行数は 30 で打ち切ってコメント上限を超えない', () => {
+  const long = 'x'.repeat(5000);
+  const blockingItems = [];
+  for (let i = 0; i < 200; i++) {
+    blockingItems.push({ id: `B${i}`, text: `item ${i}\n${long}`, severity: 'major', checked: true, dimension: 'quality', evidence: `a|b\n${long}` });
+  }
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, blockingItems });
+  const region = body.slice(body.indexOf('<details>'), body.indexOf('</details>'));
+  const rows = region.split('\n').filter((l) => l.startsWith('| blocking |'));
+  assert.equal(rows.length, 30, '行は 30 件で打ち切る');
+  assert.ok(region.includes('他 170 件は journal telemetry `resolved_evidence` を参照'), '打ち切り件数を示す');
+  const firstCells = rows[0].split(' | ');
+  assert.ok(firstCells[1].startsWith('item 0 xxx'), '改行は空白に畳まれる');
+  assert.equal(Array.from(firstCells[1]).length, 200, '内容セルは 200 文字');
+  assert.ok(firstCells[1].endsWith('…'), '切り詰めは … で示す');
+  assert.ok(rows[0].includes('a\\|b xxx'), '| は escape される');
+  assert.ok(!rows[0].includes('<br>'), '行内に改行を持ち込まない');
+  assert.ok(body.length < 65536, `本文長 ${body.length} は GitHub コメント上限未満`);
 });
 
 // ─── 空状態の常時可視行 ────────────────────────────────────────────────────────
@@ -765,7 +819,7 @@ test('checked:true の CONCERN-* item は「解消済み証跡」件数行（✅
       concernItem('[plan:major] topicA: descA', { checked: true, evidence: 'concern resolved: verified' }),
     ],
   });
-  assert.ok(body.includes('- ✅ Goal Ledger 解消済み 1 件'), '解消済み件数行を含む');
+  assert.ok(body.includes('<summary>✅ Goal Ledger 解消済み 1 件</summary>'), '解消済み件数行（折りたたみのサマリ行）を含む');
   assert.ok(body.includes('### ✅ 要対応事項なし'), '要対応事項なしを含む');
 });
 
@@ -1201,7 +1255,8 @@ test('非 environment の advisory concern item は従来どおり要対応テ�
       },
     ],
   });
-  assert.ok(body.includes('### ⚠️ 要対応'), '要対応セクションを含む');
+  // advisory のみなので見出しは「任意の確認事項」（issue #707）
+  assert.ok(body.includes('### ℹ️ 任意の確認事項'), '任意の確認事項セクションを含む');
   const lines = body.split('\n');
   const concernLine = lines.find(l => l.includes('本物のコード欠陥concern'));
   assert.ok(concernLine, 'concern 行が要対応テーブルに存在する');
@@ -1909,7 +1964,7 @@ test('AC2 golden pin: 要対応セクション全文は件数縮約後も pre-ch
   assert.equal(body.slice(start, end), expected, '要対応セクション全文が pre-change 出力と byte 一致');
 });
 
-test('AC5 pin: unchecked SEC seed 混在時、未確認行が全文で常時可視・cleared は件数のみで clean 表示は出ない', () => {
+test('AC5 pin: unchecked SEC seed 混在時、未確認行が全文で常時可視・cleared は折りたたみ内のみで clean 表示は出ない', () => {
   const body = buildDevflowSummaryBody({
     ...BASE_INPUT,
     blockingItems: [
@@ -1926,8 +1981,8 @@ test('AC5 pin: unchecked SEC seed 混在時、未確認行が全文で常時可�
   assert.ok(countHeadingIdx >= 0, '件数見出しを含む');
   assert.ok(unclearedIdx < countHeadingIdx, '未確認行が件数見出しより前（常時可視）');
   assert.ok(body.includes('セキュリティ確認 (Security clearance) 2/3 済'), 'cleared 件数行を含む');
-  assert.ok(!body.includes('safe a'), 'cleared item A の全文 evidence を含まない');
-  assert.ok(!body.includes('safe b'), 'cleared item B の全文 evidence を含まない');
+  assert.ok(body.indexOf('safe a') > body.indexOf('<details>'), 'cleared item A の evidence は折りたたみ内のみ');
+  assert.ok(body.indexOf('safe b') > body.indexOf('<details>'), 'cleared item B の evidence は折りたたみ内のみ');
 });
 
 test('AC4 不変性 pin: 再帰 freeze した入力で throw せず、各 tier で末尾マーカー・at-a-glance・入力不変を保つ', () => {
@@ -2039,8 +2094,9 @@ test('issue #626 AC3: triaged advisory と本物の未解消 advisory が混在�
       concernItem('[plan:major] B: b', { id: 'CONCERN-2' }),
     ],
   });
-  assert.ok(body.includes('### ⚠️ 要対応'), '要対応見出しを含む');
-  const tableStart = body.indexOf('### ⚠️ 要対応');
+  // 残る未解消は advisory のみなので見出しは「任意の確認事項」（issue #707）
+  assert.ok(body.includes('### ℹ️ 任意の確認事項'), '任意の確認事項見出しを含む');
+  const tableStart = body.indexOf('### ℹ️ 任意の確認事項');
   const detailsStart = body.indexOf('<details>');
   const actionTable = body.slice(tableStart, detailsStart);
   assert.ok(actionTable.includes('| ❌ 未解消 | 助言（advisory） | concern | [plan:major] B: b |'), '未解消行を含む');
@@ -2674,7 +2730,7 @@ test('issue #658 AC-5: 解消済み証跡セクションが要対応セクショ
   const headingIdx = actionIdx >= 0 ? actionIdx : noneIdx;
   const resolvedIdx = body.indexOf('**解消済み証跡');
   assert.ok(headingIdx >= 0 && resolvedIdx > headingIdx, '解消済み証跡セクションは要対応セクションより下にある');
-  assert.ok(body.includes('- ✅ fix 後 tree で解消確認 1 件（advisory / ESCALATE — checked は不変）'), 'fix 後解消確認の件数行を含む');
+  assert.ok(body.includes(' / ✅ fix 後 tree で解消確認 1 件（advisory / ESCALATE — checked は不変）</summary>'), 'fix 後解消確認の件数行をサマリ行の末尾に含む');
 });
 
 test('決定性: issue #658 の新フィールド込み入力でも 2回呼んで byte 完全一致', () => {
@@ -2694,4 +2750,83 @@ test('決定性: issue #658 の新フィールド込み入力でも 2回呼ん�
   const body1 = buildDevflowSummaryBody(input);
   const body2 = buildDevflowSummaryBody(input);
   assert.equal(body1, body2);
+});
+
+// ─── issue #707: テスト欄の未実行/未検証・見出しの必須/任意の分離 ─────────────
+
+function conclusionLine(body) {
+  return body.split('\n').find((l) => l.startsWith('**結論: '));
+}
+
+test("issue #707 AC1: Validate tests:'error' + CI 未確認 → テスト欄は ❌ red ではなく未実行/未検証、結論行で CI 確認を促す", () => {
+  for (const finalReconcile of ['skipped', 'unavailable', undefined]) {
+    for (const ciTestVerified of [false, null, undefined]) {
+      const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false, validateTests: 'error', finalReconcile, ciTestVerified });
+      const cell = glanceCells(body)[2];
+      assert.equal(cell, '⚠️ 未実行（環境）・未検証', `finalReconcile=${finalReconcile} ciTestVerified=${ciTestVerified}`);
+      assert.ok(!cell.includes('❌'), 'テスト欄に ❌ を含まない');
+      assert.ok(conclusionLine(body).includes('CI の test 結果を確認してからマージ'), '結論行に CI 確認を含む');
+    }
+  }
+});
+
+test("issue #707 AC2: Validate tests:'error' でも同一 sha の CI test success 確認済みなら Final reconcile skipped で ✅ green (CI)", () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false, validateTests: 'error', finalReconcile: 'skipped', ciTestVerified: true });
+  assert.equal(glanceCells(body)[2], '✅ green (CI)');
+  assert.ok(!conclusionLine(body).includes('CI の test 結果を確認してから'), '確認済みなら結論行に CI 確認を出さない');
+});
+
+test("issue #707 AC3: 実際にテストが失敗した場合（tests:'failed'）は CI 確認の有無に関わらず従来どおり ❌ red", () => {
+  for (const ciTestVerified of [true, false, null]) {
+    const body = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false, validateTests: 'failed', finalReconcile: 'skipped', ciTestVerified });
+    assert.equal(glanceCells(body)[2], '❌ red', `ciTestVerified=${ciTestVerified}`);
+    assert.ok(!conclusionLine(body).includes('CI の test 結果を確認してから'), 'red は未検証扱いしない');
+  }
+  // Final reconcile の reverified red は Validate の tests:'error' より優先（最終状態）
+  const bodyFinalRed = buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false, validateTests: 'error', finalReconcile: 'reverified', finalTestGreen: false, ciTestVerified: true });
+  assert.equal(glanceCells(bodyFinalRed)[2], '❌ red');
+  // validateTests 未指定の既定出力は tests:'failed' 指定時と同じ（❌ red）
+  assert.equal(glanceCells(buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: false }))[2], '❌ red');
+  assert.equal(glanceCells(buildDevflowSummaryBody({ ...BASE_INPUT, testGreen: true, validateTests: 'passed', ciTestVerified: true }))[2], '✅ green');
+});
+
+test('issue #707: validateTests の enum 外は明示 error', () => {
+  assert.throws(() => buildDevflowSummaryBody({ ...BASE_INPUT, validateTests: 'fail' }), /invalid validateTests/);
+});
+
+test('issue #707 AC4: advisory のみのとき見出しは「ℹ️ 任意の確認事項」で「⚠️ 要対応」にならず、結論行の「助言 N 件は任意」と一致する', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'REVIEW',
+    advisoryItems: [
+      { id: 'A1', text: 'naming nit', severity: 'minor', checked: false, dimension: 'style', escalate: false, evidence: null },
+    ],
+  });
+  assert.ok(!body.includes('⚠️ 要対応'), '⚠️ 要対応を含まない');
+  assert.ok(body.includes('### ℹ️ 任意の確認事項'), '任意の確認事項見出しを含む');
+  assert.ok(!body.includes('### ✅ 要対応事項なし'), '要対応事項なし見出しとも重ならない');
+  assert.ok(conclusionLine(body).includes('必須の修正作業はありません（助言 1 件は任意）'), '結論行は助言 1 件は任意');
+  const headingIdx = body.indexOf('### ℹ️ 任意の確認事項');
+  assert.ok(body.indexOf('| ❌ 未解消 | 助言（advisory） | style | naming nit |') > headingIdx, '助言行は任意の確認事項の下に出る');
+  assert.ok(body.includes('| 任意（助言） |'), '対応列は任意（助言）');
+});
+
+test('issue #707 AC5: 必須項目があれば advisory が混在していても従来どおり「⚠️ 要対応」', () => {
+  const advisory = { id: 'A1', text: 'naming nit', severity: 'minor', checked: false, dimension: 'style', escalate: false };
+  const cases = {
+    'unchecked blocking': { blockingItems: [{ id: 'B1', text: 'bug', severity: 'critical', checked: false, dimension: 'correctness' }] },
+    'escalate 未解消': { advisoryItems: [advisory, { id: 'E1', text: 'needs human', severity: 'major', checked: false, dimension: 'design', escalate: true }] },
+    'AC 未達': { acResults: [{ ac_index: 0, satisfied: false, evidence: 'ng', verified_by: 'evaluator' }] },
+    'security 未クリア': { blockingItems: [secLedgerItem('config', { checked: false })] },
+    'testsurf 未クリア': { blockingItems: [testsurfLedgerItem('SKIP_ADDED', { checked: false })], testsurfHits: ['SKIP_ADDED'] },
+    'fixRequired な HOLD reason': { mergeTier: 'HOLD', holdReasons: [{ code: 'mergeable_conflicting', reason: 'base と conflict', kind: 'human_judgment' }] },
+  };
+  for (const [name, extra] of Object.entries(cases)) {
+    const body = buildDevflowSummaryBody({ ...BASE_INPUT, advisoryItems: [advisory], ...extra });
+    assert.ok(body.includes('### ⚠️ 要対応'), `${name}: ⚠️ 要対応を含む`);
+    assert.ok(!body.includes('### ℹ️ 任意の確認事項'), `${name}: 任意の確認事項見出しは出ない`);
+  }
+  // 表が直下に出ない必須項目（HOLD reason のみ）は参照先を示す
+  const bodyHoldOnly = buildDevflowSummaryBody({ ...BASE_INPUT, ...cases['fixRequired な HOLD reason'] });
+  assert.ok(bodyHoldOnly.includes('「HOLD になった理由と現状」・TESTSURF・pr-iterate 未解消の指摘 の未解消行を対応する'), '参照先行を含む');
 });

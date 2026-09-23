@@ -169,6 +169,14 @@ const EXPECTED_DEV_FLOW = {
   'changed-files-final': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。最終changed-files取得失敗のfail-open化は別issueの検討対象' },
   'final-ac-reconcile': { config: DF_B2, policy: 'abort', reason: 'bare据え置き。最終AC再検証不能のままmerge tierを確定しない契約' },
   'ci-final': { config: DF_B4, policy: 'continue', reason: 'try/catchで吸収しunavailable維持（fail-closed）へ倒す既存経路' },
+  'ci-test-display': {
+    config: DEV_FLOW_SCENARIOS['ci-test-display'],
+    policy: 'continue',
+    reason: 'try/catchで吸収しテスト欄を未検証表示へ倒す表示専用経路（merge tier 不変）',
+    extra: async ({ result }) => {
+      assert.equal(result?.final_reconcile, 'skipped', 'ci-test-display throw でも final_reconcile は skipped のまま（表示専用）');
+    },
+  },
   'security-clearance-final': { config: DF_B5, policy: 'abort', reason: 'bare据え置き。security clearance不能をclearと同一視しない契約' },
   'closes-check': { config: DF_B1, policy: 'continue', reason: 'failOpenAgent経由。Closes行probeの失敗はunverified（警告のみ）へ倒し再投入も行わない' },
   'closes-reinject': {

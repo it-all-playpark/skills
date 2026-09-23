@@ -332,19 +332,35 @@ test('[resolved-evidence-routing] (c) VM: ledger 21 件 critical resolved + AC 4
   assert.equal(payload.telemetry.merge_tier, result.merge_tier, 'telemetry.merge_tier が result.merge_tier と一致しない');
 
   // 件数（21 件）そのものは上の re.ledger_resolved.length===21 assertion が担う（journal telemetry
-  // 側の routing）。post-summary prompt 側は marker と否定側 pin のみを検証する（issue #636 AC-1）。
+  // 側の routing）。post-summary prompt 側は marker と、解消済み証跡が <details> に折りたたまれ
+  // evidence が 1 行 200 字 cap で切られていることを検証する。
   const postSummaryPrompt = getPostSummaryPrompts()[0] ?? '';
   assert.ok(
     postSummaryPrompt.includes(`<!-- dev-flow:${result.merge_tier} -->`),
     `post-summary prompt に '<!-- dev-flow:${result.merge_tier} -->' が含まれるべきだが含まれていなかった`,
   );
+  const detailsCount = (postSummaryPrompt.match(/<details>/g) ?? []).length;
+  assert.equal(detailsCount, 1, `post-summary prompt の '<details>' は 1 回のはずだが ${detailsCount} 回だった（解消済み証跡セクションが折りたたまれていない、または他セクションの <details> が混入している）`);
+
+  const evidenceLines = postSummaryPrompt.split('\n').filter((l) => l.includes('SENTINEL-EVIDENCE-7'));
+  assert.equal(evidenceLines.length, 1, `SENTINEL-EVIDENCE-7 を含む行は 1 行のはずだが ${evidenceLines.length} 行だった`);
+  const [evidenceLine] = evidenceLines;
   assert.ok(
-    !postSummaryPrompt.includes('SENTINEL-EVIDENCE-7'),
-    `post-summary prompt に 'SENTINEL-EVIDENCE-7'（全文 evidence）が含まれるべきではないが含まれていた`,
+    !evidenceLine.includes('<br>'),
+    `post-summary prompt の evidence 行に '<br>'（生の改行の変換痕跡）が含まれるべきではない: ${evidenceLine}`,
   );
+  // 行全体は "| 区分 | 内容 | 解消根拠 |" の 1 行 markdown テーブル行。evidence セルは 200 字 cap
+  // （resolvedCell）+ markdown エスケープ + 区分/内容セル分の余白を許容し、raw の全文（改行含む
+  // 200 字 + それ以上の連結）がそのまま流れ込んでいないことを確認する。
   assert.ok(
-    !postSummaryPrompt.includes('<details>'),
-    `post-summary prompt に '<details>' が含まれるべきではないが含まれていた`,
+    evidenceLine.length <= 260,
+    `SENTINEL-EVIDENCE-7 を含む行は 200 字 cap で切られているはずだが ${evidenceLine.length} 字だった: ${evidenceLine}`,
+  );
+  // 全文 evidence（改行・200 字超の raw text）は journal telemetry resolved_evidence 側にのみ残る
+  // （上の ev7 assertion 群 — re.ledger_resolved[7].evidence が改行・'|'・バッククォートを保持）。
+  assert.ok(
+    !postSummaryPrompt.includes(ev7),
+    'post-summary prompt に raw の全文 evidence（改行含む）がそのまま含まれてはならない（journal 側にのみ残す）',
   );
 });
 
