@@ -731,8 +731,6 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: 'test-weakening 未クリア', action: '該当テスト変更の正当性を確認する' };
     case 'mergeable_conflicting':
       return { current: 'base branch と conflict', action: 'conflict を解消して push する' };
-    case 'trust_gate':
-      return { current: 'EvalSeal receipt 非 pass', action: '人が確認する' };
     case 'pr_closes_missing':
       return {
         current: 'PR body に Closes 行が無い（merge しても issue が自動 close されない）',

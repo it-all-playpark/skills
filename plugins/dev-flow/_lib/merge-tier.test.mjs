@@ -821,65 +821,19 @@ test('classifyMergeTier: mergeableState:"bogus"(out-of-enum) → throw', () => {
   }), /invalid mergeableState/);
 });
 
-// ---- issue #411 (epic #390 Phase 3): trustGate ----
+// ---- issue #698: trust-layer kernel 撤去 — merge tier は trust 由来の入力を持たない ----
 
-test('classifyMergeTier: trustGate 未指定 → 既存挙動不変(AUTO/REVIEW/HOLD とも trustGate 由来 reason なし)', () => {
-  const rAuto = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
-  assert.equal(rAuto.tier, 'AUTO');
-  assert.ok(!rAuto.reasons.some((x) => /EvalSeal/.test(x)));
-
-  const rReview = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
-  assert.equal(rReview.tier, 'REVIEW');
-  assert.ok(!rReview.reasons.some((x) => /EvalSeal/.test(x)));
-
-  const rHold = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAc: true });
-  assert.equal(rHold.tier, 'HOLD');
-  assert.ok(!rHold.reasons.some((x) => /EvalSeal/.test(x)));
-});
-
-test('classifyMergeTier: trustGate:null → 既存挙動不変', () => {
-  const r = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none', trustGate: null });
-  assert.equal(r.tier, 'AUTO');
-  assert.ok(!r.reasons.some((x) => /EvalSeal/.test(x)));
-});
-
-test('classifyMergeTier: trustGate={blocking:true,verdict:"inconclusive"} → HOLD + EvalSeal receipt 非 pass reason（inconclusive は成功扱いしない）', () => {
-  const r = classifyMergeTier({
-    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
-    trustGate: { blocking: true, verdict: 'inconclusive' },
-  });
-  assert.equal(r.tier, 'HOLD');
-  const reason = r.reasons.find((x) => x.includes('EvalSeal receipt 非 pass'));
-  assert.ok(reason, `reasons に EvalSeal receipt 非 pass 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
-  assert.ok(reason.includes('verdict=inconclusive'), `reasons に verdict=inconclusive を含むべきだが: ${reason}`);
-  assert.ok(reason.includes('inconclusive は成功扱いしない'), `reasons に "inconclusive は成功扱いしない" を含むべきだが: ${reason}`);
-});
-
-test('classifyMergeTier: trustGate={blocking:true,verdict:"fail"} → HOLD + EvalSeal receipt 非 pass reason', () => {
-  const r = classifyMergeTier({
-    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
-    trustGate: { blocking: true, verdict: 'fail' },
-  });
-  assert.equal(r.tier, 'HOLD');
-  const reason = r.reasons.find((x) => x.includes('EvalSeal receipt 非 pass'));
-  assert.ok(reason, `reasons に EvalSeal receipt 非 pass 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
-  assert.ok(reason.includes('verdict=fail'));
-});
-
-test('classifyMergeTier: trustGate={blocking:true,verdict:"pass"} → trustGate 由来 reason なし(AUTO 適格なら AUTO のまま)', () => {
-  const r = classifyMergeTier({
+test('classifyMergeTier: trust 由来の gate 入力は存在しない（未知キーとして無視され tier / reasons / holdReasons に影響しない）', () => {
+  const base = classifyMergeTier({ ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
+  assert.equal(base.tier, 'AUTO');
+  // 撤去前の HOLD 入力形 { blocking: true, verdict: 'fail' } を渡しても tier は変わらず、throw もしない
+  const withStale = classifyMergeTier({
     ...autoBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
-    trustGate: { blocking: true, verdict: 'pass' },
+    ['trust' + 'Gate']: { blocking: true, verdict: 'fail' },
   });
-  assert.equal(r.tier, 'AUTO');
-  assert.ok(!r.reasons.some((x) => /EvalSeal/.test(x)));
-});
-
-test('classifyMergeTier: trustGate.verdict が out-of-enum → throw', () => {
-  assert.throws(() => classifyMergeTier({
-    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none',
-    trustGate: { blocking: true, verdict: 'bogus' },
-  }), /invalid trustGate/);
+  assert.deepEqual(withStale, base);
+  assert.ok(!HOLD_REASON_CODES.some((c) => /trust/.test(c)), `HOLD_REASON_CODES に trust 由来 code が残っている: ${HOLD_REASON_CODES}`);
+  assert.ok(!classifyMergeTier.toString().includes('trust'), 'classifyMergeTier 本体に trust 参照が残っている');
 });
 
 // ---- issue #536: evalVerdictFail 開示専用 reason（keywordAloneDisclosure 同型）----
@@ -1243,12 +1197,12 @@ test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来
 
 // ---- issue #658: HOLD_REASON_CODES + holdReasons[].code + disclosures ----
 
-test('HOLD_REASON_CODES は 15 の閉じた enum と一致', () => {
+test('HOLD_REASON_CODES は 14 の閉じた enum と一致', () => {
   assert.deepEqual(HOLD_REASON_CODES, [
     'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
     'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
     'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-    'mergeable_conflicting', 'trust_gate', 'pr_closes_missing',
+    'mergeable_conflicting', 'pr_closes_missing',
   ]);
 });
 

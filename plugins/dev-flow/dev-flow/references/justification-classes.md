@@ -16,7 +16,7 @@ dev-flow の各「distrust 機構」（LLM/自動化の判定を信用しきら�
 |--------|-----------|---------|---------|
 | **incentive-structural**（永続・撤去禁止） | 敵対ループの勝利宣言を当事者に self-judge させない incentive 設計 + cold-context moving-target の抑制 | **非依存**（賢いモデルほどシャープな non-convergent nitpick を出すため逆に悪化） | frozen target（planSeen/evalSeen/blockSeen 累積）・既出 findings/feedback 累積・topic-stuck 検出 + relax + early-cutoff・critical-always-blocks + severity floor + append 単調性・hard cap（PLAN/EVAL/GREEN/BLOCK_MAX, last-resort safety net）・dev-improve IMPROVE_MAX + backpressure（ループが自分の提案量を自己増幅させない）・guard_blocked の replan 除外（guard/hook 由来 BLOCKED を「別アプローチ探索」ループに入れず blockedConcerns→evaluator focus へ直行 — guard 迂回手順の探索 incentive を絶つ）・blocking_reason 決定論スクラバー（迂回コマンド列の replan/evaluator prompt への verbatim 伝播遮断）・review-finding 決定論スクラバー（pr-iterate の blocking finding description/suggestion の fix prompt への verbatim 伝播遮断 — メタ指示が実行指示へ変換される経路を断つ）・analyze provenance 突合（取得 issue 番号/title の決定論突合で REQ 捏造を反証可能化 — 取得成功の self-judge をさせない fail-closed） |
 | **blast-radius**（永続） | 不可逆性 / accountability / liability / blast-radius。正確性ではなく当事者性で正当化するため frontier が人間を超えても残る | **非依存** | human merge（accountability/不可逆/values/novelty）・danger-grep on realized diff → security path 強制・seeded SEC + merge tiering HOLD（danger/breaking/不可逆）・pr-iterate critical/major-always-blocks（merge 直前の最終ゲート: この先は human merge のみで、ここで relax すると既知の critical/major が出荷される。修正コストは PR スコープに bounded）・Final reconcile（pr-iterate fix 適用後の最終 tree に対する決定論 test 再実行 + 既存 AC の one-shot 再検証（fail は critical AC-FINAL append・既存 checked は不変の append 単調） → red/unavailable で HOLD。merge 直前の最終ゲート）・dev-improve 自動 revert 禁止・sunset 昇格の issue→人間 merge 経由・仮説突合の決定論 oracle（hypothesis-check.sh — LLM に効果の self-judge をさせない）・TESTSURF seeding（test-weakening 決定論検出 + evaluator clearance、merge tier HOLD）・lite route の pr-reviewer 1-pass → critical/major findings 検出で `workflow('pr-iterate')` フル fix loop へ自動昇格（critical/major-always-blocks 不変。縮約経路でも merge 直前のゲートを維持） |
-| **capability-bound**（**sunset 対象**） | 現行 LLM judge の信頼性不足（ECE≈39% / FPR≈35%）。モデルが賢くなるほど縮む | **依存** | `gate_policy = llm-major-advisory`（LLM major を blocking にしない distrust）・ui-verify advisory 固定（UI 判定を blocking にしない distrust）・trust-layer 3 層（SurfaceProof / EvalSeal / EffectDelta。call site・exec-proxy は撤去済み — kernel 純関数 `_lib/trust-{schema,digest,mode,telemetry}.mjs` と `classifyMergeTier` の trustGate 経路のみ存置） |
+| **capability-bound**（**sunset 対象**） | 現行 LLM judge の信頼性不足（ECE≈39% / FPR≈35%）。モデルが賢くなるほど縮む | **依存** | `gate_policy = llm-major-advisory`（LLM major を blocking にしない distrust）・ui-verify advisory 固定（UI 判定を blocking にしない distrust）・trust-layer 3 層（SurfaceProof / EvalSeal / EffectDelta。call site・exec-proxy・kernel・doctor レポート・telemetry 転送は全て撤去済み。復帰は下記 sunset path に従う） |
 
 **capability-bound の sunset path（必須）**: パラメータ値で表現し再評価トリガを持たせる。
 `gate_policy` の sunset path —
@@ -38,24 +38,9 @@ redgreen vdelta deny の sunset path —
 - 表現: 昇格条件の deny `&&` 節（deny-only）。
 - 再評価トリガ: veridelta が record_integrity を advisory から昇格（INV-10 解消）し W6b calibration が vdelta verdict の precision を実証した時点で blocking gate 化を再評価する。
 
-trust-layer（SurfaceProof / EvalSeal / EffectDelta）call site 撤去後の sunset path —
-- **現状**: call site・exec-proxy（evalseal-seal.mjs / evalseal-verify.mjs / effectdelta-github.sh /
-  surfaceproof-snapshot.sh）は撤去済みで call site は 0 件。残置するのは kernel 純関数
-  `_lib/trust-{schema,digest,mode,telemetry}.mjs`（各 `.test.mjs` 込み）と、`classifyMergeTier`
-  （`_lib/merge-tier.mjs`）の trustGate 経路のみ。trustGate は未指定時 `null` を返し既存挙動と
-  完全一致する。
-- **復帰には call site の再設計・再実装が必要**（撤去済みの旧 call site は流用不可）。再実装 issue の
-  受入条件として以下 3 条件を維持する（1 つでも欠けたら復帰しない）:
-  (1) 監査証跡の破壊的上書き・自己封緘を行わない構造で再設計されている、
-  (2) trust 由来の safety classifier ブロックが run abort / journal-log 連鎖ブロックへ波及しないことが
-  実測で確認できている、
-  (3) call site 撤去期間の完走率を分母として、復帰後の完走率が有意に劣後しない。
-- **昇格（shadow → advisory/blocking）トリガ**: 復帰後に receipt 取得成功率・inconclusive 率が SLO
-  （`dev-flow-doctor/scripts/trust-receipts-report.sh --slo`）を満たし、かつ **3 層の守備範囲が実失敗
-  モードと突合できている**こと（SurfaceProof が検証するのは issue unit の「提示の完全性」であって
-  「指示への遵守」ではない等、検出対象と実際の失敗のズレを突合しないまま昇格させない）。blocking
-  昇格時に `classifyMergeTier` の trustGate を活性化する。pinned verifier（agent write 圏外）実装までは
-  'trusted-environment' を主張しない。
+trust-layer（SurfaceProof / EvalSeal / EffectDelta）の sunset path —
+- call site・exec-proxy・kernel・doctor レポート・telemetry 転送は全て撤去済み（接続点は残さない）。復帰は
+  `.claude/rules/dev-flow.md` の sunset トリガ「trust-layer 復帰 → 3 条件を満たす再設計のみ」に従う。
 
 逆に incentive-structural / blast-radius はモデル更新で撤去してはならない（軸A 保持）。
 

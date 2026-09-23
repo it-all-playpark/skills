@@ -110,7 +110,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `scope` は `'full' | 'delta'` — review#i（i ≥ 2）が fix delta（前 round の review 時点の head sha ..
   現在 HEAD、`_lib/review-delta.mjs`）に絞れたか。sha が取得できない round は `'full'` にフォールバック
   する。`delta_lines` は delta の変更行数（`git diff --shortstat` の insertions + deletions。full は
-  null）。非 trust キーで enum 検証は無し。dev-flow-doctor の `distributions.review_delta` が round ≥ 2
+  null）。enum 検証は無し。dev-flow-doctor の `distributions.review_delta` が round ≥ 2
   の blocking 件数 / delta round 数を集計する）。
   run 返り値（telemetry ではない）には加えて `merge_tier_hold_reasons`（`[{reason, kind}]`。
   `kind` は `deterministic_recheck`（決定論再チェックで解消しうる HOLD。Final reconcile
@@ -159,13 +159,13 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
 ## Stop hook の二経路転送
 
 `plugins/dev-flow/hooks/stop-devflow-telemetry.sh` は telemetry を二経路で転送する。enum/型検証が
-必要なキー（hook 内 `PER_KEY_TELEMETRY_KEYS` に列挙。trust 系・route・review_decision 等）は
-per-key flag で fail-closed（契約違反は drop + `trust-key-dropped` / `telemetry-key-dropped`
+必要なキー（hook 内 `PER_KEY_TELEMETRY_KEYS` に列挙。route・review_decision 等）は
+per-key flag で fail-closed（契約違反は drop + `telemetry-key-dropped`
 ログ）、それ以外は `.telemetry` から同配列のキーを除いた残りを `--telemetry-json` で丸ごと
 journal.sh へ渡す。**新規 telemetry キーは workflow の handoff に載せるだけで journal に到達し、
 hook の変更は不要**。per-key flag を新設するときは `PER_KEY_TELEMETRY_KEYS` にも必ず足す
 （journal.sh のマージ順は flag ごとに前後が混在し — `merge_tier`〜`ci_poll_attempts` の 12 flag は
-`--telemetry-json` より前、`trust_*` 以降は後 — 前にマージされる側では drop 済みの契約違反値を
+`--telemetry-json` より前、`vdelta_*` 以降は後 — 前にマージされる側では drop 済みの契約違反値を
 passthrough が上書き復活させ fail-closed が迂回される。除外が唯一の一貫した防御。test.sh は
 jq projection ブロック内の `.telemetry.<key>` / `has("<key>")` 参照と配列の一致を静的に pin する
 — hook 全文を grep するとコメント文字列だけで pass するため対象を projection に限定している）。gate・merge tier・ledger・shape 判定には

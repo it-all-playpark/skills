@@ -139,7 +139,7 @@ export const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'trust_gate', 'pr_closes_missing',
+  'mergeable_conflicting', 'pr_closes_missing',
 ];
 
 // PR body の Closes 行決定論検証（issue #661）の状態 enum。'verified': gh pr view --json body に
@@ -249,16 +249,6 @@ export function classifyMergeableState(meta) {
 //   'clean'/'unknown'/未指定は reason 追加なし（fail-open no-op、regression なし）。'unknown' は
 //   proxy 失敗や GitHub 側 mergeability 未計算を含むため conflict と決めつけない。out-of-enum は
 //   明示 error（後方互換 scaffolding 禁止規約）。
-// s.trustGate (optional { blocking: true, verdict: 'pass'|'fail'|'inconclusive' }): EvalSeal
-//   receipt の trust-layer blocking 昇格経路（epic #390 Phase 3, issue #411）。現行 config は
-//   shadow 固定のため live 呼び出しは常に null（isGatingMode(mode) が true のときのみ workflow
-//   が non-null を渡す設計）— 未指定/null = 挙動完全不変（regression なし）。non-null かつ
-//   blocking===true かつ verdict!=='pass' のとき HOLD reason を追記する（inconclusive も成功
-//   扱いしない）。verdict が closed enum 外は throw（後方互換 scaffolding 禁止規約）。
-//   issue #507 で trust-layer 生産側（call site / exec-proxy）は撤去済みのため、live 呼び出しは
-//   常に null を給電し、この HOLD 分岐は現在到達不能。blocking 昇格（rules/dev-flow.md の
-//   sunset path）時の将来接続点として意図的に存置する。経路の存続は
-//   _lib/trust-kernel-invariant.test.mjs が pin する。
 // s.evalVerdictFail (optional boolean): true の場合、evaluate phase が verdict=fail のまま PR へ
 //   進んだ事実を開示する専用 reason を HOLD/AUTO/REVIEW 全分岐の reasons に追記する
 //   （keywordAloneDisclosure と同型 — issue #536）。未解消 findings は ledger/HOLD 条件が別途
@@ -302,9 +292,6 @@ export function classifyMergeTier(s) {
   }
   if (s.mergeableState != null && !['clean', 'conflicting', 'unknown'].includes(s.mergeableState)) {
     throw new Error('classifyMergeTier: invalid mergeableState: ' + s.mergeableState);
-  }
-  if (s.trustGate != null && !['pass', 'fail', 'inconclusive'].includes(s.trustGate.verdict)) {
-    throw new Error('classifyMergeTier: invalid trustGate: ' + s.trustGate.verdict);
   }
   if (s.evalVerdictFail != null && typeof s.evalVerdictFail !== 'boolean') {
     throw new Error('classifyMergeTier: invalid evalVerdictFail: ' + s.evalVerdictFail);
@@ -388,9 +375,6 @@ export function classifyMergeTier(s) {
   }
   if (s.mergeableState === 'conflicting') pushBlocking('mergeable_conflicting', 'base branch と conflict（mergeStateStatus=DIRTY / mergeable=CONFLICTING）— merge 前に conflict 解消が必要（人間確認必須。gate_policy に依らず不変）', 'human_judgment');
   if (s.prClosesStatus === 'missing') pushBlocking('pr_closes_missing', 'PR body に `Closes #<issue>` 行が無い（PR 作成後の決定論検証で欠落を検出し、本文の再投入も失敗）— merge しても issue が自動 close されないため本文の再投入が必要（決定論再チェックで解消しうる）', 'deterministic_recheck');
-  if (s.trustGate != null && s.trustGate.blocking === true && s.trustGate.verdict !== 'pass') {
-    pushBlocking('trust_gate', `EvalSeal receipt 非 pass（verdict=${s.trustGate.verdict}）— trust-layer blocking 昇格後の HOLD route（epic #390 Phase 3。inconclusive は成功扱いしない）`, 'human_judgment');
-  }
   const disclosures = [keywordAloneDisclosure, evalFailDisclosure, ciVerifiedDisclosure].filter(Boolean);
   if (blockingReasons.length) {
     const reasons = blockingReasons.map((r) => r.reason);

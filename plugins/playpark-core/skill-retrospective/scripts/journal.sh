@@ -71,12 +71,6 @@ cmd_log() {
     local repo="" pr_number=""
     local ci_wait_seconds="" ci_poll_attempts=""
     local telemetry_json=""
-    local trust_run_id="" trust_receipts="" trust_surfaceproof=""
-    local trust_evalseal_missing_reason=""
-    local trust_effectdelta_pr_missing_reason=""
-    local trust_run_id_set=false
-    local trust_evalseal_missing_reason_set=false
-    local trust_effectdelta_pr_missing_reason_set=false
     local vdelta_verdicts="" vdelta_fail_open="" redgreen_deny="" testsurf_hits=""
     local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
     local subagent_invocations=""
@@ -124,11 +118,6 @@ cmd_log() {
             --ci-wait-seconds) ci_wait_seconds="$2"; shift 2 ;;
             --ci-poll-attempts) ci_poll_attempts="$2"; shift 2 ;;
             --telemetry-json) telemetry_json="$2"; shift 2 ;;
-            --trust-run-id) trust_run_id="$2"; trust_run_id_set=true; shift 2 ;;
-            --trust-receipts) trust_receipts="$2"; shift 2 ;;
-            --trust-surfaceproof) trust_surfaceproof="$2"; shift 2 ;;
-            --trust-evalseal-missing-reason) trust_evalseal_missing_reason="$2"; trust_evalseal_missing_reason_set=true; shift 2 ;;
-            --trust-effectdelta-pr-missing-reason) trust_effectdelta_pr_missing_reason="$2"; trust_effectdelta_pr_missing_reason_set=true; shift 2 ;;
             --vdelta-verdicts) vdelta_verdicts="$2"; shift 2 ;;
             --vdelta-fail-open) vdelta_fail_open="$2"; shift 2 ;;
             --redgreen-deny) redgreen_deny="$2"; shift 2 ;;
@@ -196,67 +185,6 @@ cmd_log() {
         if ! [[ "$ci_poll_attempts" =~ ^[0-9]+$ ]]; then
             die_json "Invalid --ci-poll-attempts: $ci_poll_attempts. Must be a non-negative integer" 1
         fi
-    fi
-
-    # Validate --trust-run-id (non-empty string only)
-    if [[ "$trust_run_id_set" == true && -z "$trust_run_id" ]]; then
-        die_json "Invalid --trust-run-id: must be a non-empty string" 1
-    fi
-
-    # Validate --trust-receipts (JSON array of {layer, mode, verdict} closed-enum objects)
-    if [[ -n "$trust_receipts" ]]; then
-        if ! echo "$trust_receipts" | jq -e 'type == "array"' >/dev/null 2>&1; then
-            die_json "Invalid --trust-receipts: must be a JSON array" 1
-        fi
-        if ! echo "$trust_receipts" | jq -e '
-            all(.[];
-                (.layer // "") as $l |
-                (.mode // "") as $m |
-                (.verdict // "") as $v |
-                (["surfaceproof","evalseal","effectdelta"] | index($l)) != null and
-                (["off","shadow","advisory","blocking"] | index($m)) != null and
-                (["pass","fail","inconclusive"] | index($v)) != null
-            )' >/dev/null 2>&1; then
-            die_json "Invalid --trust-receipts: each element must have layer in surfaceproof|evalseal|effectdelta, mode in off|shadow|advisory|blocking, verdict in pass|fail|inconclusive" 1
-        fi
-    fi
-
-    # Validate --trust-surfaceproof (JSON object with {mode, verdict} closed-enum)
-    if [[ -n "$trust_surfaceproof" ]]; then
-        if ! echo "$trust_surfaceproof" | jq -e 'type == "object"' >/dev/null 2>&1; then
-            die_json "Invalid --trust-surfaceproof: must be a JSON object" 1
-        fi
-        if ! echo "$trust_surfaceproof" | jq -e '
-            (.mode // "") as $m |
-            (.verdict // "") as $v |
-            (["off","shadow","advisory","blocking"] | index($m)) != null and
-            (["pass","fail","inconclusive"] | index($v)) != null
-            ' >/dev/null 2>&1; then
-            die_json "Invalid --trust-surfaceproof: mode must be off|shadow|advisory|blocking and verdict must be pass|fail|inconclusive" 1
-        fi
-    fi
-
-    # Validate --trust-evalseal-missing-reason (closed 6-value enum; receipt-missing
-    # reason distribution for issue #471. fail-closed like --trust-receipts: out-of-enum
-    # and empty string both die_json since a bad reason must surface as a bug, not silently
-    # drop (unlike the fail-open 8-key telemetry flags below).
-    if [[ "$trust_evalseal_missing_reason_set" == true ]]; then
-        case "$trust_evalseal_missing_reason" in
-            eval_skipped|agent_throw|agent_null|seal_error|mode_off|unknown) ;;
-            *) die_json "Invalid --trust-evalseal-missing-reason: $trust_evalseal_missing_reason. Must be eval_skipped|agent_throw|agent_null|seal_error|mode_off|unknown" 1 ;;
-        esac
-    fi
-
-    # Validate --trust-effectdelta-pr-missing-reason (closed 8-value enum; PR stage
-    # receipt-missing reason distribution for issue #476. Independently defined from
-    # --trust-evalseal-missing-reason (D-3). fail-closed like --trust-evalseal-missing-reason:
-    # out-of-enum and empty string both die_json since a bad reason must surface as a bug,
-    # not silently drop (unlike the fail-open 8-key telemetry flags below).
-    if [[ "$trust_effectdelta_pr_missing_reason_set" == true ]]; then
-        case "$trust_effectdelta_pr_missing_reason" in
-            agent_throw|agent_null|mode_off|gh_failed|script_error|agent_error|schema_invalid|unknown) ;;
-            *) die_json "Invalid --trust-effectdelta-pr-missing-reason: $trust_effectdelta_pr_missing_reason. Must be agent_throw|agent_null|mode_off|gh_failed|script_error|agent_error|schema_invalid|unknown" 1 ;;
-        esac
     fi
 
     # Validate the 8 telemetry flags added for issue #430 (fail-open: drop-and-warn,
@@ -462,26 +390,6 @@ cmd_log() {
     fi
     if [[ -n "$telemetry_json" ]]; then
         telemetry=$(echo "$telemetry" | jq --argjson extra "$telemetry_json" '. + $extra')
-        has_telemetry=true
-    fi
-    if [[ "$trust_run_id_set" == true ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$trust_run_id" '. + {trust_run_id: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$trust_receipts" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$trust_receipts" '. + {trust_receipts: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$trust_surfaceproof" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$trust_surfaceproof" '. + {trust_surfaceproof_shadow: $v}')
-        has_telemetry=true
-    fi
-    if [[ "$trust_evalseal_missing_reason_set" == true ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$trust_evalseal_missing_reason" '. + {trust_evalseal_missing_reason: $v}')
-        has_telemetry=true
-    fi
-    if [[ "$trust_effectdelta_pr_missing_reason_set" == true ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$trust_effectdelta_pr_missing_reason" '. + {trust_effectdelta_pr_missing_reason: $v}')
         has_telemetry=true
     fi
     if [[ -n "$vdelta_verdicts" ]]; then
@@ -903,9 +811,6 @@ Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
   journal.sh log dev-flow success --merge-tier REVIEW --shape standard --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
   journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
-  journal.sh log dev-flow success --trust-run-id run-abc123 --trust-receipts '[{"layer":"surfaceproof","mode":"shadow","verdict":"pass"}]' --trust-surfaceproof '{"mode":"shadow","verdict":"pass"}'
-  journal.sh log dev-flow success --trust-evalseal-missing-reason agent_throw  # receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
-  journal.sh log dev-flow success --trust-effectdelta-pr-missing-reason gh_failed  # PR stage receipt欠落理由の分布記録 (closed enum; dotfiles Stop hook 転送配線は別issue)
   journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
   journal.sh log dev-flow success --error-category guard_blocked --guard-id sandbox-deny  # guard/hook 由来 BLOCKED の telemetry (guard_id は fail-open; dotfiles Stop hook 転送配線は dotfiles 側 PR)
   journal.sh log dev-flow failure --error-category abort --error-msg "abort@Evaluate/eval#1: ..." --error-phase Evaluate  # run abort telemetry (issue #607)

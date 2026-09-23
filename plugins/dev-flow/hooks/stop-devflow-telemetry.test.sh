@@ -961,11 +961,11 @@ STUB_EOF
 }
 
 # --------------------------------------------------------------------------
-# Helper: build a handoff whose telemetry carries trust keys
-# Usage: make_trust_handoff <outfile> <stub_path> <trust_json_filter>
+# Helper: build a handoff with base telemetry, then apply a jq filter to add keys
+# Usage: make_base_handoff <outfile> <stub_path> <jq_filter>
 # --------------------------------------------------------------------------
-make_trust_handoff() {
-  local outfile="$1" stub="$2" trust_filter="$3"
+make_base_handoff() {
+  local outfile="$1" stub="$2" extra_filter="$3"
   jq -n --arg js "$stub" '{
     skill: "dev-flow",
     outcome: "success",
@@ -978,203 +978,7 @@ make_trust_handoff() {
       shape: "standard",
       eval_iter: 1
     }
-  }' | jq "$trust_filter" >"$outfile"
-}
-
-# --------------------------------------------------------------------------
-# Test 11: valid trust telemetry → --trust-run-id / --trust-receipts /
-#          --trust-surfaceproof are forwarded to journal.sh
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/trust.json" "$stub" \
-    '.telemetry += {
-      trust_run_id: "run-390-abc",
-      trust_receipts: [{layer:"surfaceproof",mode:"shadow",verdict:"pass",stage:"analyze"},
-                       {layer:"evalseal",mode:"shadow",verdict:"inconclusive",stage:"evaluate"}],
-      trust_surfaceproof_shadow: {mode:"shadow",verdict:"pass",reason_code:null,receipt_id:"sha256:deadbeef"}
-    }'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-run-id run-390-abc"; then
-    pass "trust_run_id_forwarded"
-  else
-    fail "trust_run_id_forwarded" "expected --trust-run-id. got: ${captured}"
-  fi
-  if echo "$captured" | grep -q -- '--trust-receipts \[{"layer":"surfaceproof"'; then
-    pass "trust_receipts_forwarded"
-  else
-    fail "trust_receipts_forwarded" "expected --trust-receipts with compact JSON. got: ${captured}"
-  fi
-  if echo "$captured" | grep -q -- '--trust-surfaceproof {"mode":"shadow"'; then
-    pass "trust_surfaceproof_forwarded"
-  else
-    fail "trust_surfaceproof_forwarded" "expected --trust-surfaceproof with compact JSON. got: ${captured}"
-  fi
-  if [[ ! -f "${tmpd}/journal/pending/trust.json" ]]; then
-    pass "trust_pending_file_removed"
-  else
-    fail "trust_pending_file_removed" "pending file should be removed after success"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test 12: trust keys absent (trust-inactive run) → no trust flags at all
-#          (既存呼び出しと byte 互換。AC-11: shadow/off で挙動不変)
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/notrust.json" "$stub" '.'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-"; then
-    fail "trust_absent_no_flags" "no --trust-* flag expected. got: ${captured}"
-  else
-    pass "trust_absent_no_flags"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test 13: trust_surfaceproof_shadow が closed-enum 契約違反 (verdict:null —
-#          advisory/blocking 昇格 run の形) → 当該フラグのみ drop し、base entry は記録される
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/badsp.json" "$stub" \
-    '.telemetry += {
-      trust_run_id: "run-390-xyz",
-      trust_surfaceproof_shadow: {mode:"advisory",verdict:null,reason_code:null,receipt_id:null}
-    }'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-surfaceproof"; then
-    fail "bad_surfaceproof_dropped" "invalid --trust-surfaceproof must not be forwarded. got: ${captured}"
-  else
-    pass "bad_surfaceproof_dropped"
-  fi
-  # base entry (と有効な trust_run_id) は失われない
-  if echo "$captured" | grep -q -- "--merge-tier REVIEW" &&
-    echo "$captured" | grep -q -- "--trust-run-id run-390-xyz"; then
-    pass "bad_surfaceproof_base_entry_preserved"
-  else
-    fail "bad_surfaceproof_base_entry_preserved" "base telemetry must still be logged. got: ${captured}"
-  fi
-  if [[ ! -f "${tmpd}/journal/pending/badsp.json" ]]; then
-    pass "bad_surfaceproof_pending_removed"
-  else
-    fail "bad_surfaceproof_pending_removed" "pending file must not be stuck on trust-key drop"
-  fi
-  if grep -q "trust-key-dropped: trust_surfaceproof_shadow" \
-    "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null; then
-    pass "bad_surfaceproof_logged"
-  else
-    fail "bad_surfaceproof_logged" "drop must be recorded in the log (silent drop 禁止)"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test 14: trust_receipts に未知 layer → 当該フラグのみ drop、base entry は記録される
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/badrcpt.json" "$stub" \
-    '.telemetry += {
-      trust_receipts: [{layer:"unknownlayer",mode:"shadow",verdict:"pass"}]
-    }'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-receipts"; then
-    fail "bad_receipts_dropped" "invalid --trust-receipts must not be forwarded. got: ${captured}"
-  else
-    pass "bad_receipts_dropped"
-  fi
-  if echo "$captured" | grep -q -- "--merge-tier REVIEW"; then
-    pass "bad_receipts_base_entry_preserved"
-  else
-    fail "bad_receipts_base_entry_preserved" "base telemetry must still be logged. got: ${captured}"
-  fi
-  if grep -q "trust-key-dropped: trust_receipts" \
-    "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null; then
-    pass "bad_receipts_logged"
-  else
-    fail "bad_receipts_logged" "drop must be recorded in the log (silent drop 禁止)"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test 15 (integration): 実 journal.sh が存在する環境では、trust キーが実際に
-#          journal entry の telemetry へ到達することを確認する（skills repo 側の
-#          --trust-* 受理契約との結合テスト）。未配置環境では skip。
-# --------------------------------------------------------------------------
-{
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
-  if [[ ! -x $REAL_JOURNAL ]]; then
-    echo "  (skip: real journal.sh not found — integration test skipped)"
-  else
-    tmpd=$(make_tmpdir)
-    mkdir -p "${tmpd}/journal/pending"
-
-    make_trust_handoff "${tmpd}/journal/pending/e2e.json" "$REAL_JOURNAL" \
-      '.telemetry += {
-        trust_run_id: "run-e2e-001",
-        trust_receipts: [{layer:"evalseal",mode:"shadow",verdict:"pass",stage:"evaluate"}],
-        trust_surfaceproof_shadow: {mode:"shadow",verdict:"inconclusive"}
-      }'
-
-    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
-    if [[ -z $entry ]]; then
-      fail "integration_entry_written" "no journal entry created. hook output: ${RUN_OUT}"
-    else
-      pass "integration_entry_written"
-      if [[ $(jq -r '.telemetry.trust_run_id' "$entry") == "run-e2e-001" ]] &&
-        [[ $(jq -r '.telemetry.trust_receipts[0].layer' "$entry") == "evalseal" ]] &&
-        [[ $(jq -r '.telemetry.trust_surfaceproof_shadow.verdict' "$entry") == "inconclusive" ]]; then
-        pass "integration_trust_keys_persisted"
-      else
-        fail "integration_trust_keys_persisted" "trust keys missing in entry: $(jq -c '.telemetry' "$entry")"
-      fi
-    fi
-
-    rm -rf "$tmpd"
-  fi
+  }' | jq "$extra_filter" >"$outfile"
 }
 
 # --------------------------------------------------------------------------
@@ -1374,8 +1178,7 @@ make_full_telemetry_handoff() {
 #          value must be dropped (flag absent from journal.sh call), while
 #          the base entry (--merge-tier etc.) is still recorded, pending is
 #          still removed, and the drop is logged as
-#          "telemetry-key-dropped: <key>" (fail-open, same design as trust
-#          keys in Test 13/14).
+#          "telemetry-key-dropped: <key>" (fail-open).
 # --------------------------------------------------------------------------
 
 # Test 18a: vdelta_verdicts with a non-object array element
@@ -1734,306 +1537,6 @@ make_full_telemetry_handoff() {
 }
 
 # --------------------------------------------------------------------------
-# Test T-A: valid trust_evalseal_missing_reason → --trust-evalseal-missing-reason
-#           is forwarded to journal.sh
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/evalseal.json" "$stub" \
-    '.telemetry += {trust_evalseal_missing_reason: "agent_throw"}'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-evalseal-missing-reason agent_throw"; then
-    pass "trust_evalseal_missing_reason_forwarded"
-  else
-    fail "trust_evalseal_missing_reason_forwarded" "expected --trust-evalseal-missing-reason agent_throw. got: ${captured}"
-  fi
-  if [[ ! -f "${tmpd}/journal/pending/evalseal.json" ]]; then
-    pass "trust_evalseal_missing_reason_pending_removed"
-  else
-    fail "trust_evalseal_missing_reason_pending_removed" "pending file should be removed after success"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test T-B: trust_evalseal_missing_reason with a closed-enum 契約違反の値
-#           → 当該フラグのみ drop、base entry は記録される、drop はログされる
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/badreason.json" "$stub" \
-    '.telemetry += {trust_evalseal_missing_reason: "totally_bogus"}'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-evalseal-missing-reason"; then
-    fail "bad_evalseal_missing_reason_dropped" "invalid --trust-evalseal-missing-reason must not be forwarded. got: ${captured}"
-  else
-    pass "bad_evalseal_missing_reason_dropped"
-  fi
-  if echo "$captured" | grep -q -- "--merge-tier REVIEW"; then
-    pass "bad_evalseal_missing_reason_base_entry_preserved"
-  else
-    fail "bad_evalseal_missing_reason_base_entry_preserved" "base telemetry must still be logged. got: ${captured}"
-  fi
-  if grep -q "trust-key-dropped: trust_evalseal_missing_reason" \
-    "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null; then
-    pass "bad_evalseal_missing_reason_logged"
-  else
-    fail "bad_evalseal_missing_reason_logged" "drop must be recorded in the log (silent drop 禁止)"
-  fi
-  if [[ ! -f "${tmpd}/journal/pending/badreason.json" ]]; then
-    pass "bad_evalseal_missing_reason_pending_removed"
-  else
-    fail "bad_evalseal_missing_reason_pending_removed" "pending file must not be stuck on trust-key drop"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test T-C: trust_evalseal_missing_reason absent → no such flag at all
-#           (空値を渡さない)
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/noreason.json" "$stub" '.'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-evalseal-missing-reason"; then
-    fail "trust_evalseal_missing_reason_absent_no_flag" "no --trust-evalseal-missing-reason flag expected. got: ${captured}"
-  else
-    pass "trust_evalseal_missing_reason_absent_no_flag"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test T-D (integration): 実 journal.sh が存在する環境では、
-#          trust_evalseal_missing_reason が実際に journal entry の
-#          telemetry へ到達することを確認する。未配置環境では skip。
-# --------------------------------------------------------------------------
-{
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
-  if [[ ! -x $REAL_JOURNAL ]]; then
-    echo "  (skip: real journal.sh not found — integration test skipped)"
-  else
-    tmpd=$(make_tmpdir)
-    mkdir -p "${tmpd}/journal/pending"
-
-    make_trust_handoff "${tmpd}/journal/pending/e2ereason.json" "$REAL_JOURNAL" \
-      '.telemetry += {trust_evalseal_missing_reason: "seal_error"}'
-
-    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
-    if [[ -z $entry ]]; then
-      fail "integration_evalseal_missing_reason_entry_written" "no journal entry created. hook output: ${RUN_OUT}"
-    else
-      pass "integration_evalseal_missing_reason_entry_written"
-      if [[ $(jq -r '.telemetry.trust_evalseal_missing_reason' "$entry") == "seal_error" ]] &&
-        [[ $(jq -r '.telemetry.merge_tier' "$entry") == "REVIEW" ]]; then
-        pass "integration_evalseal_missing_reason_persisted"
-      else
-        fail "integration_evalseal_missing_reason_persisted" "trust_evalseal_missing_reason missing/altered in entry: $(jq -c '.telemetry' "$entry")"
-      fi
-    fi
-
-    rm -rf "$tmpd"
-  fi
-}
-
-# --------------------------------------------------------------------------
-# Test T-E: valid trust_effectdelta_pr_missing_reason
-#           → --trust-effectdelta-pr-missing-reason is forwarded to journal.sh
-#           (issue #156 AC-1 / skills#476 Phase 1 送り側)
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/effectdelta.json" "$stub" \
-    '.telemetry += {trust_effectdelta_pr_missing_reason: "gh_failed"}'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-effectdelta-pr-missing-reason gh_failed"; then
-    pass "trust_effectdelta_pr_missing_reason_forwarded"
-  else
-    fail "trust_effectdelta_pr_missing_reason_forwarded" "expected --trust-effectdelta-pr-missing-reason gh_failed. got: ${captured}"
-  fi
-  if [[ ! -f "${tmpd}/journal/pending/effectdelta.json" ]]; then
-    pass "trust_effectdelta_pr_missing_reason_pending_removed"
-  else
-    fail "trust_effectdelta_pr_missing_reason_pending_removed" "pending file should be removed after success"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test T-E2: closed enum の全 8 値が転送される（EvalSeal と値集合が違うので
-#            取り違えると silent に落ちる。全値を固定する — issue #156 AC-1）
-# --------------------------------------------------------------------------
-{
-  for reason in agent_throw agent_null mode_off gh_failed script_error agent_error schema_invalid unknown; do
-    tmpd=$(make_tmpdir)
-    mkdir -p "${tmpd}/journal/pending"
-    capture="${tmpd}/capture.txt"
-    stub="${tmpd}/journal.sh"
-    make_stub_journal "$stub" "$capture" 0
-
-    make_trust_handoff "${tmpd}/journal/pending/ed-${reason}.json" "$stub" \
-      ".telemetry += {trust_effectdelta_pr_missing_reason: \"${reason}\"}"
-
-    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-    captured=$(cat "$capture" 2>/dev/null || echo "")
-    if echo "$captured" | grep -q -- "--trust-effectdelta-pr-missing-reason ${reason}"; then
-      pass "trust_effectdelta_pr_missing_reason_enum_${reason}"
-    else
-      fail "trust_effectdelta_pr_missing_reason_enum_${reason}" "enum value ${reason} must be forwarded. got: ${captured}"
-    fi
-
-    rm -rf "$tmpd"
-  done
-}
-
-# --------------------------------------------------------------------------
-# Test T-F: trust_effectdelta_pr_missing_reason に closed-enum 契約違反の値
-#           → 当該フラグのみ drop、base entry は記録される、drop はログされる
-#           (issue #156 AC-2 / AC-3)
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  # seal_error は EvalSeal 側 enum の値であり EffectDelta 側には無い。
-  # case を共有すると誤って通るので、この値で分離を固定する。
-  make_trust_handoff "${tmpd}/journal/pending/badeffectdelta.json" "$stub" \
-    '.telemetry += {trust_effectdelta_pr_missing_reason: "seal_error"}'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-effectdelta-pr-missing-reason"; then
-    fail "bad_effectdelta_pr_missing_reason_dropped" "invalid --trust-effectdelta-pr-missing-reason must not be forwarded. got: ${captured}"
-  else
-    pass "bad_effectdelta_pr_missing_reason_dropped"
-  fi
-  if echo "$captured" | grep -q -- "--merge-tier REVIEW"; then
-    pass "bad_effectdelta_pr_missing_reason_base_entry_preserved"
-  else
-    fail "bad_effectdelta_pr_missing_reason_base_entry_preserved" "base telemetry must still be logged. got: ${captured}"
-  fi
-  if grep -q "trust-key-dropped: trust_effectdelta_pr_missing_reason" \
-    "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null; then
-    pass "bad_effectdelta_pr_missing_reason_logged"
-  else
-    fail "bad_effectdelta_pr_missing_reason_logged" "drop must be recorded in the log (silent drop 禁止)"
-  fi
-  if [[ ! -f "${tmpd}/journal/pending/badeffectdelta.json" ]]; then
-    pass "bad_effectdelta_pr_missing_reason_pending_removed"
-  else
-    fail "bad_effectdelta_pr_missing_reason_pending_removed" "pending file must not be stuck on trust-key drop"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test T-G: trust_effectdelta_pr_missing_reason absent → no such flag at all
-#           (空値を渡さない。journal.sh は空文字でも die_json するため
-#            entry ごと失う — issue #156 AC-4)
-# --------------------------------------------------------------------------
-{
-  tmpd=$(make_tmpdir)
-  mkdir -p "${tmpd}/journal/pending"
-  capture="${tmpd}/capture.txt"
-  stub="${tmpd}/journal.sh"
-  make_stub_journal "$stub" "$capture" 0
-
-  make_trust_handoff "${tmpd}/journal/pending/noeffectdelta.json" "$stub" '.'
-
-  run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-  captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-effectdelta-pr-missing-reason"; then
-    fail "trust_effectdelta_pr_missing_reason_absent_no_flag" "no --trust-effectdelta-pr-missing-reason flag expected. got: ${captured}"
-  else
-    pass "trust_effectdelta_pr_missing_reason_absent_no_flag"
-  fi
-
-  rm -rf "$tmpd"
-}
-
-# --------------------------------------------------------------------------
-# Test T-H (integration): 実 journal.sh が存在する環境では、
-#          trust_effectdelta_pr_missing_reason が実際に journal entry の
-#          telemetry へ到達することを確認する。未配置環境では skip。
-#          (issue #156 AC-5)
-# --------------------------------------------------------------------------
-{
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
-  if [[ ! -x $REAL_JOURNAL ]]; then
-    echo "  (skip: real journal.sh not found — integration test skipped)"
-  else
-    tmpd=$(make_tmpdir)
-    mkdir -p "${tmpd}/journal/pending"
-
-    make_trust_handoff "${tmpd}/journal/pending/e2eeffectdelta.json" "$REAL_JOURNAL" \
-      '.telemetry += {trust_effectdelta_pr_missing_reason: "gh_failed"}'
-
-    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
-
-    entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
-    if [[ -z $entry ]]; then
-      fail "integration_effectdelta_pr_missing_reason_entry_written" "no journal entry created. hook output: ${RUN_OUT}"
-    else
-      pass "integration_effectdelta_pr_missing_reason_entry_written"
-      if [[ $(jq -r '.telemetry.trust_effectdelta_pr_missing_reason' "$entry") == "gh_failed" ]] &&
-        [[ $(jq -r '.telemetry.merge_tier' "$entry") == "REVIEW" ]]; then
-        pass "integration_effectdelta_pr_missing_reason_persisted"
-      else
-        fail "integration_effectdelta_pr_missing_reason_persisted" "trust_effectdelta_pr_missing_reason missing/altered in entry: $(jq -c '.telemetry' "$entry")"
-      fi
-    fi
-
-    rm -rf "$tmpd"
-  fi
-}
-
-# --------------------------------------------------------------------------
 # Test G-A: valid guard_id → --guard-id が journal.sh へ転送される
 # --------------------------------------------------------------------------
 {
@@ -2043,7 +1546,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/guardid.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/guardid.json" "$stub" \
     '.telemetry += {guard_id: "sandbox-deny"}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2079,7 +1582,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/multiguard.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/multiguard.json" "$stub" \
     '.telemetry += {guard_id: "sandbox-deny,inline-edit-guard"}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2104,7 +1607,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/noguard.json" "$stub" '.'
+  make_base_handoff "${tmpd}/journal/pending/noguard.json" "$stub" '.'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
@@ -2129,7 +1632,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/nullguard.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/nullguard.json" "$stub" \
     '.telemetry += {guard_id: null}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2164,7 +1667,7 @@ make_full_telemetry_handoff() {
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
 
-    make_trust_handoff "${tmpd}/journal/pending/e2eguard.json" "$REAL_JOURNAL" \
+    make_base_handoff "${tmpd}/journal/pending/e2eguard.json" "$REAL_JOURNAL" \
       '.telemetry += {guard_id: "sandbox-deny"}'
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2197,7 +1700,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/iterate.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/iterate.json" "$stub" \
     '.telemetry += {iterate_rounds: 3, fixes_applied: 2}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2244,7 +1747,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/dropped.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/dropped.json" "$stub" \
     '.telemetry += {fix_null_retries: 1, review_null_retries: 2, fix_uncommitted_recovered: 3, subagent_invocations: {"pr-reviewer": 4}}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2285,7 +1788,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/nopass.json" "$stub" '.'
+  make_base_handoff "${tmpd}/journal/pending/nopass.json" "$stub" '.'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
@@ -2315,7 +1818,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/nullmix.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/nullmix.json" "$stub" \
     '.telemetry += {iterate_rounds: 0, fixes_applied: null}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2351,7 +1854,7 @@ make_full_telemetry_handoff() {
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
 
-    make_trust_handoff "${tmpd}/journal/pending/e2epass.json" "$REAL_JOURNAL" \
+    make_base_handoff "${tmpd}/journal/pending/e2epass.json" "$REAL_JOURNAL" \
       '.telemetry += {iterate_rounds: 3, fixes_applied: 2}'
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2386,7 +1889,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/conf-a.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/conf-a.json" "$stub" \
     '.telemetry += {eval_confidence: 0.85}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2412,7 +1915,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/conf-b.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/conf-b.json" "$stub" \
     '.telemetry += {eval_confidence: null}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2437,7 +1940,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/conf-c.json" "$stub" '.'
+  make_base_handoff "${tmpd}/journal/pending/conf-c.json" "$stub" '.'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
@@ -2467,7 +1970,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/conf-d.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/conf-d.json" "$stub" \
     '.telemetry += {eval_confidence: 0}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2494,7 +1997,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/conf-e.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/conf-e.json" "$stub" \
     '.telemetry += {review_confidence: 0.42, review_decision: "approve"}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2525,7 +2028,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/conf-f.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/conf-f.json" "$stub" \
     '.telemetry += {review_decision: "bikeshed"}'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2567,7 +2070,7 @@ make_full_telemetry_handoff() {
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
 
-    make_trust_handoff "${tmpd}/journal/pending/e2econf.json" "$REAL_JOURNAL" \
+    make_base_handoff "${tmpd}/journal/pending/e2econf.json" "$REAL_JOURNAL" \
       '.telemetry += {eval_confidence: 0.9, review_confidence: null, review_decision: "comment"}'
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2613,7 +2116,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/pf.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/pf.json" "$stub" \
     '.telemetry += {
       fix_terminal_reason: "applied_false",
       terminal_path: "ci",
@@ -2724,7 +2227,21 @@ make_full_telemetry_handoff() {
 }
 
 # --------------------------------------------------------------------------
-# Test P-H (除外の動作): per-key キー（trust_run_id / route / eval_confidence /
+# Test R-A (静的検証): trust-layer の telemetry 転送（issue #698 で撤去）が hook 本文に
+#           残っていない。生産側は撤去済みで、per-key 抽出・enum 検証・flag 転送のどれが
+#           残っても到達不能コードになるため、識別子の残骸そのものを pin する
+# --------------------------------------------------------------------------
+{
+  residue=$(grep -n 'trust' "$HOOK" || true)
+  if [[ -z $residue ]]; then
+    pass "ra_no_trust_residue_in_hook"
+  else
+    fail "ra_no_trust_residue_in_hook" "trust-layer residue found in hook: ${residue}"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Test P-H (除外の動作): per-key キー（route / eval_confidence /
 #           review_decision / guard_id）は passthrough から除外され、per-key flag
 #           側にのみ現れる。per-key でないキー（subagent_invocations / terminal_path）
 #           は passthrough に残る
@@ -2736,9 +2253,8 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/ph.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/ph.json" "$stub" \
     '.telemetry += {
-      trust_run_id: "r1",
       route: "lite",
       eval_confidence: 0.5,
       review_decision: "approve",
@@ -2754,7 +2270,6 @@ make_full_telemetry_handoff() {
 
   if echo "$passthrough_json" | jq -e '
       (has("merge_tier") | not) and
-      (has("trust_run_id") | not) and
       (has("route") | not) and
       (has("eval_confidence") | not) and
       (has("review_decision") | not) and
@@ -2767,8 +2282,7 @@ make_full_telemetry_handoff() {
     fail "ph_perkey_keys_excluded_others_kept" "expected per-key keys excluded, others kept. got: ${passthrough_json}"
   fi
 
-  if echo "$captured" | grep -q -- "--trust-run-id r1" &&
-    echo "$captured" | grep -q -- "--route lite" &&
+  if echo "$captured" | grep -q -- "--route lite" &&
     echo "$captured" | grep -q -- "--guard-id g"; then
     pass "ph_perkey_flags_still_forwarded"
   else
@@ -2791,7 +2305,7 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/pi.json" "$stub" '.telemetry = "oops"'
+  make_base_handoff "${tmpd}/journal/pending/pi.json" "$stub" '.telemetry = "oops"'
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
@@ -2820,7 +2334,7 @@ make_full_telemetry_handoff() {
 }
 
 # --------------------------------------------------------------------------
-# Test P-J (AC6 fail-closed 不変): out-of-enum / 空文字の trust・enum キーは
+# Test P-J (AC6 fail-closed 不変): out-of-enum の enum キーは
 #           passthrough 経由でも journal に到達しない（per-key で drop されたキーが
 #           passthrough から漏れて fail-closed を迂回することを禁止する）
 # --------------------------------------------------------------------------
@@ -2831,10 +2345,9 @@ make_full_telemetry_handoff() {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/pj.json" "$stub" \
+  make_base_handoff "${tmpd}/journal/pending/pj.json" "$stub" \
     '.telemetry += {
-      trust_evalseal_missing_reason: "bogus",
-      trust_effectdelta_pr_missing_reason: "",
+      review_decision: "bogus",
       route: "bogus",
       terminal_path: "ci"
     }'
@@ -2842,25 +2355,23 @@ make_full_telemetry_handoff() {
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
   captured=$(cat "$capture" 2>/dev/null || echo "")
-  if echo "$captured" | grep -q -- "--trust-evalseal-missing-reason" ||
-    echo "$captured" | grep -q -- "--trust-effectdelta-pr-missing-reason" ||
+  if echo "$captured" | grep -q -- "--review-decision" ||
     echo "$captured" | grep -q -- "--route"; then
     fail "pj_perkey_flags_not_forwarded" "out-of-enum values must not be forwarded via per-key flags. got: ${captured}"
   else
     pass "pj_perkey_flags_not_forwarded"
   fi
 
-  if grep -q "trust-key-dropped: trust_evalseal_missing_reason" "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null &&
+  if grep -q "telemetry-key-dropped: review_decision" "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null &&
     grep -q "telemetry-key-dropped: route" "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null; then
     pass "pj_drops_logged"
   else
-    fail "pj_drops_logged" "expected trust-key-dropped/telemetry-key-dropped log lines"
+    fail "pj_drops_logged" "expected telemetry-key-dropped log lines"
   fi
 
   passthrough_json=$(printf '%s' "$captured" | sed -n 's/.*--telemetry-json //p')
   if echo "$passthrough_json" | jq -e '
-      (has("trust_evalseal_missing_reason") | not) and
-      (has("trust_effectdelta_pr_missing_reason") | not) and
+      (has("review_decision") | not) and
       (has("route") | not) and
       (.terminal_path == "ci")
     ' >/dev/null 2>&1; then
@@ -2882,7 +2393,7 @@ make_full_telemetry_handoff() {
 # Test P-K (integration): 実 journal.sh が --telemetry-json を受理する環境で、
 #          fix_terminal_reason / terminal_path / plugin_version /
 #          eval_model_config / iterate_history が journal entry へ到達し、
-#          per-key で drop された trust_evalseal_missing_reason は到達しない
+#          per-key で drop された route（out-of-enum）は到達しない
 #          ことを確認する。未配置 / 未対応の環境では skip。
 # --------------------------------------------------------------------------
 {
@@ -2895,7 +2406,7 @@ make_full_telemetry_handoff() {
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
 
-    make_trust_handoff "${tmpd}/journal/pending/pk.json" "$REAL_JOURNAL" \
+    make_base_handoff "${tmpd}/journal/pending/pk.json" "$REAL_JOURNAL" \
       '.telemetry += {
         fix_terminal_reason: "commit_unensured",
         terminal_path: "review",
@@ -2903,7 +2414,7 @@ make_full_telemetry_handoff() {
         eval_model_config: "opus",
         review_model_config: "opus",
         iterate_history: [{iteration: 1, decision: "request-changes", summary: "ng", blocking: [{severity: "major", topic: "t1"}], minor: []}],
-        trust_evalseal_missing_reason: "bogus"
+        route: "bogus"
       }'
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -2920,7 +2431,7 @@ make_full_telemetry_handoff() {
         [[ $(jq -r '.telemetry.review_model_config' "$entry") == "opus" ]] &&
         [[ $(jq -r '.telemetry.iterate_history[0].decision' "$entry") == "request-changes" ]] &&
         [[ $(jq -r '.telemetry.iterate_history[0].blocking[0].topic' "$entry") == "t1" ]] &&
-        [[ $(jq -r '.telemetry | has("trust_evalseal_missing_reason")' "$entry") == "false" ]] &&
+        [[ $(jq -r '.telemetry | has("route")' "$entry") == "false" ]] &&
         [[ $(jq -r '.telemetry.merge_tier' "$entry") == "REVIEW" ]]; then
         pass "pk_persisted_correctly"
       else
@@ -2962,7 +2473,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
   stub="${tmpd}/journal.sh"
   make_stub_journal "$stub" "$capture" 0
 
-  make_trust_handoff "${tmpd}/journal/pending/pl.json" "$stub" "$RESOLVED_EVIDENCE_FILTER"
+  make_base_handoff "${tmpd}/journal/pending/pl.json" "$stub" "$RESOLVED_EVIDENCE_FILTER"
 
   run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
@@ -3004,7 +2515,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
 # --------------------------------------------------------------------------
 # Test P-M (integration): 実 journal.sh が --telemetry-json を受理する環境で、
 #          resolved_evidence が journal entry へ欠損なく永続化され、per-key で
-#          drop される trust_evalseal_missing_reason は不変で到達しないことを
+#          drop される route（out-of-enum）は不変で到達しないことを
 #          確認する。未配置 / 未対応の環境では skip。
 # --------------------------------------------------------------------------
 {
@@ -3017,8 +2528,8 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
 
-    make_trust_handoff "${tmpd}/journal/pending/pm.json" "$REAL_JOURNAL" \
-      "${RESOLVED_EVIDENCE_FILTER} | .telemetry += {trust_evalseal_missing_reason: \"bogus\"}"
+    make_base_handoff "${tmpd}/journal/pending/pm.json" "$REAL_JOURNAL" \
+      "${RESOLVED_EVIDENCE_FILTER} | .telemetry += {route: \"bogus\"}"
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
 
@@ -3030,7 +2541,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
       if [[ $(jq -r '.telemetry.resolved_evidence.ledger_resolved | length' "$entry") == "21" ]] &&
         [[ $(jq -r '.telemetry.resolved_evidence.security_cleared[0].danger_class' "$entry") == "config" ]] &&
         [[ $(jq -r '.telemetry.resolved_evidence.ledger_resolved[0].evidence | startswith("e|`\n")' "$entry") == "true" ]] &&
-        [[ $(jq -r '.telemetry | has("trust_evalseal_missing_reason")' "$entry") == "false" ]] &&
+        [[ $(jq -r '.telemetry | has("route")' "$entry") == "false" ]] &&
         [[ $(jq -r '.telemetry.merge_tier' "$entry") == "REVIEW" ]]; then
         pass "integration_resolved_evidence_persisted"
       else
@@ -3061,7 +2572,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
 
-    make_trust_handoff "${tmpd}/journal/pending/pn.json" "$REAL_JOURNAL" \
+    make_base_handoff "${tmpd}/journal/pending/pn.json" "$REAL_JOURNAL" \
       '.telemetry += {vdelta_not_started: 2, vdelta_fail_open: 1, redgreen_headdiff: [{ac:"AC-1",status:"clean",new:1,modified:0,unchanged:0,total:1},{ac:"AC-2",status:"test_modified",new:0,modified:1,unchanged:0,total:1}]}'
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -3102,7 +2613,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
 
-    make_trust_handoff "${tmpd}/journal/pending/shapecal.json" "$REAL_JOURNAL" \
+    make_base_handoff "${tmpd}/journal/pending/shapecal.json" "$REAL_JOURNAL" \
       '.telemetry += {shape_reason: "realized 3 file(s), 2 AC, type=fix → shape=standard", realized_file_count: 3, realized_file_count_raw: 6, ac_count: 2, analyze_path: "sonnet", analyze_ineligible_reason: "comments present (2) — body/comment reconciliation requires sonnet analyze"}'
 
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
@@ -3130,7 +2641,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
     # null の realized_file_count（取得不能）はキー欠落として到達する（passthrough の null 除外）
     tmpd=$(make_tmpdir)
     mkdir -p "${tmpd}/journal/pending"
-    make_trust_handoff "${tmpd}/journal/pending/shapenull.json" "$REAL_JOURNAL" \
+    make_base_handoff "${tmpd}/journal/pending/shapenull.json" "$REAL_JOURNAL" \
       '.telemetry += {shape_reason: "realized file count missing or invalid → safe floor=complex", realized_file_count: null, realized_file_count_raw: null, ac_count: 2, analyze_path: "contract"}'
     run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
     entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)

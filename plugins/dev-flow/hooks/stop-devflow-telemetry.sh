@@ -57,14 +57,12 @@ LOG_FILE="${HOME}/.claude/logs/stop-devflow-telemetry.log"
 # per-key flag（型/enum 検証つき）で journal.sh へ転送する telemetry キー。ここに無いキーは全て
 # --telemetry-json で丸ごと passthrough する（skills#601）。新規 telemetry キーを足すときに本 hook の
 # 変更は不要。per-key flag を新設するときは必ずこの配列にも足すこと — journal.sh のマージ順は flag ごとに
-# 前後が混在し（merge_tier〜ci_poll_attempts の 11 flag は --telemetry-json より前、trust_* 以降は後）、
+# 前後が混在し（merge_tier〜ci_poll_attempts の 11 flag は --telemetry-json より前、vdelta_* 以降は後）、
 # 前にマージされる側では per-key で drop した契約違反値を passthrough が上書き復活させ fail-closed が
 # 迂回される。除外が唯一の一貫した防御（test.sh の静的検証が jq projection 内の参照との一致を pin する）。
 PER_KEY_TELEMETRY_KEYS=(
   merge_tier gate_policy danger_hits shape eval_iter
   eval_verdict iterate_status eval_staleness ci_wait_seconds ci_poll_attempts
-  trust_run_id trust_receipts trust_surfaceproof_shadow trust_evalseal_missing_reason
-  trust_effectdelta_pr_missing_reason
   vdelta_verdicts vdelta_fail_open redgreen_deny testsurf_hits duration_seconds
   phase_durations merge_tier_reasons route guard_id
   eval_confidence review_confidence review_decision
@@ -100,11 +98,6 @@ for f in "${PENDING_DIR}"/*.json; do
   pr_number=""
   ci_wait_seconds=""
   ci_poll_attempts=""
-  trust_run_id=""
-  trust_receipts_json=""
-  trust_surfaceproof_json=""
-  trust_evalseal_missing_reason=""
-  trust_effectdelta_pr_missing_reason=""
   error_category=""
   error_msg=""
   error_phase=""
@@ -142,11 +135,6 @@ for f in "${PENDING_DIR}"/*.json; do
     eval_staleness: .telemetry.eval_staleness,
     ci_wait_seconds: .telemetry.ci_wait_seconds,
     ci_poll_attempts: .telemetry.ci_poll_attempts,
-    trust_run_id: .telemetry.trust_run_id,
-    trust_receipts: .telemetry.trust_receipts,
-    trust_surfaceproof: .telemetry.trust_surfaceproof_shadow,
-    trust_evalseal_missing_reason: .telemetry.trust_evalseal_missing_reason,
-    trust_effectdelta_pr_missing_reason: .telemetry.trust_effectdelta_pr_missing_reason,
     vdelta_verdicts: .telemetry.vdelta_verdicts,
     vdelta_fail_open: .telemetry.vdelta_fail_open,
     redgreen_deny: .telemetry.redgreen_deny,
@@ -200,11 +188,6 @@ for f in "${PENDING_DIR}"/*.json; do
   error_phase=$(echo "$parsed" | jq -r '.error_phase // empty')
   ci_wait_seconds=$(echo "$parsed" | jq -r '.ci_wait_seconds // empty')
   ci_poll_attempts=$(echo "$parsed" | jq -r '.ci_poll_attempts // empty')
-  trust_run_id=$(echo "$parsed" | jq -r '.trust_run_id // empty')
-  trust_receipts_json=$(echo "$parsed" | jq -c '.trust_receipts // empty')
-  trust_surfaceproof_json=$(echo "$parsed" | jq -c '.trust_surfaceproof // empty')
-  trust_evalseal_missing_reason=$(echo "$parsed" | jq -r '.trust_evalseal_missing_reason // empty')
-  trust_effectdelta_pr_missing_reason=$(echo "$parsed" | jq -r '.trust_effectdelta_pr_missing_reason // empty')
   vdelta_verdicts_json=$(echo "$parsed" | jq -c '.vdelta_verdicts // empty')
   vdelta_fail_open=$(echo "$parsed" | jq -r '.vdelta_fail_open // empty')
   redgreen_deny_json=$(echo "$parsed" | jq -c '.redgreen_deny // empty')
@@ -295,80 +278,12 @@ for f in "${PENDING_DIR}"/*.json; do
     cmd_args+=(--error-phase "$error_phase")
   fi
 
-  # --- trust telemetry (epic #390 Phase 5 / issue #413) ---
-  # journal.sh は --trust-receipts / --trust-surfaceproof を closed enum で検証し、契約違反時は
-  # exit 1 する。無検査で転送すると entry 全体が pending へ差し戻され、merge_tier 等の基本
-  # telemetry ごと恒久的に失われる。trust キーは optional な付加情報なので、契約を満たす値だけを
-  # 転送し、満たさない値は drop してログに残す（fail-open — base entry の記録を最優先する）。
-  # 例: SurfaceProof が advisory/blocking へ昇格した run は verdict:null を出すため drop される
-  #     （journal.sh 側 enum の拡張は昇格 PR の責務であり本 hook の責務ではない）。
-  if [[ -n $trust_run_id && $trust_run_id != "null" ]]; then
-    cmd_args+=(--trust-run-id "$trust_run_id")
-  fi
-  if [[ -n $trust_receipts_json && $trust_receipts_json != "null" ]]; then
-    if echo "$trust_receipts_json" | jq -e '
-      type == "array" and length > 0 and all(.[];
-        (.layer // "") as $l | (.mode // "") as $m | (.verdict // "") as $v |
-        (["surfaceproof","evalseal","effectdelta"] | index($l)) != null and
-        (["off","shadow","advisory","blocking"] | index($m)) != null and
-        (["pass","fail","inconclusive"] | index($v)) != null)' >/dev/null 2>&1; then
-      cmd_args+=(--trust-receipts "$trust_receipts_json")
-    else
-      mkdir -p "$(dirname "$LOG_FILE")"
-      printf '%s %s trust-key-dropped: trust_receipts (journal.sh closed-enum 契約を満たさない)\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$f")" >>"$LOG_FILE"
-    fi
-  fi
-  if [[ -n $trust_surfaceproof_json && $trust_surfaceproof_json != "null" ]]; then
-    if echo "$trust_surfaceproof_json" | jq -e '
-      type == "object" and
-      ((.mode // "") as $m | (.verdict // "") as $v |
-       (["off","shadow","advisory","blocking"] | index($m)) != null and
-       (["pass","fail","inconclusive"] | index($v)) != null)' >/dev/null 2>&1; then
-      cmd_args+=(--trust-surfaceproof "$trust_surfaceproof_json")
-    else
-      mkdir -p "$(dirname "$LOG_FILE")"
-      printf '%s %s trust-key-dropped: trust_surfaceproof_shadow (journal.sh closed-enum 契約を満たさない)\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$f")" >>"$LOG_FILE"
-    fi
-  fi
-  if [[ -n $trust_evalseal_missing_reason && $trust_evalseal_missing_reason != "null" ]]; then
-    case "$trust_evalseal_missing_reason" in
-    eval_skipped | agent_throw | agent_null | seal_error | mode_off | unknown)
-      cmd_args+=(--trust-evalseal-missing-reason "$trust_evalseal_missing_reason")
-      ;;
-    *)
-      mkdir -p "$(dirname "$LOG_FILE")"
-      printf '%s %s trust-key-dropped: trust_evalseal_missing_reason (journal.sh closed-enum 契約を満たさない)\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$f")" >>"$LOG_FILE"
-      ;;
-    esac
-  fi
-  # EffectDelta PR stage receipt の欠落理由（skills#476 Phase 1 の送り側）。enum は
-  # journal.sh の --trust-effectdelta-pr-missing-reason と一致させること。EvalSeal 側とは
-  # 独立定義であり（skills#476 D-3）、値集合が違うので case を共有しない。
-  # journal.sh は out-of-enum・空文字の両方で die_json する（fail-closed）ため、
-  # 契約を満たさない値は必ず送り側で drop する（entry ごと失わないため）。
-  if [[ -n $trust_effectdelta_pr_missing_reason && $trust_effectdelta_pr_missing_reason != "null" ]]; then
-    case "$trust_effectdelta_pr_missing_reason" in
-    agent_throw | agent_null | mode_off | gh_failed | script_error | agent_error | schema_invalid | unknown)
-      cmd_args+=(--trust-effectdelta-pr-missing-reason "$trust_effectdelta_pr_missing_reason")
-      ;;
-    *)
-      mkdir -p "$(dirname "$LOG_FILE")"
-      printf '%s %s trust-key-dropped: trust_effectdelta_pr_missing_reason (journal.sh closed-enum 契約を満たさない)\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$f")" >>"$LOG_FILE"
-      ;;
-    esac
-  fi
-
   # --- telemetry 8-key forwarding (issue #143 / #430) ---
   # vdelta_verdicts / vdelta_fail_open / redgreen_deny / testsurf_hits /
   # duration_seconds / phase_durations / merge_tier_reasons / route を journal.sh
   # へ転送する。journal.sh（skill-retrospective/scripts/journal.sh）は受け側でも
   # 同一の型/enum 検証で契約違反を drop するが、drop の観測点を hook ログに残す
-  # ため送り側でも同じ検証を行う（trust telemetry と同じ fail-open 方式。
-  # base entry の記録は必ず成功させる）。
+  # ため送り側でも同じ検証を行う（fail-open 方式。base entry の記録は必ず成功させる）。
   if [[ -n $vdelta_verdicts_json && $vdelta_verdicts_json != "null" ]]; then
     if echo "$vdelta_verdicts_json" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then
       cmd_args+=(--vdelta-verdicts "$vdelta_verdicts_json")
@@ -476,7 +391,7 @@ for f in "${PENDING_DIR}"/*.json; do
   # --- passthrough telemetry (skills#535 / skills#601) ---
   # journal.sh の汎用 --telemetry-json 口（任意 JSON object を telemetry へマージ）へ載せる。
   # telemetry キーは二経路: (a) enum/型検証が要るキーは per-key flag（fail-closed: 契約違反は
-  # drop + trust-key-dropped / telemetry-key-dropped ログ）、(b) それ以外は `.telemetry` から
+  # drop + telemetry-key-dropped ログ）、(b) それ以外は `.telemetry` から
   # PER_KEY_TELEMETRY_KEYS を除いた残り（null 値除外）をここで --telemetry-json により丸ごと渡す。
   # 新規 telemetry キーは (b) 経路で自動的に到達するため本 hook の変更は不要（実測: 過去
   # fix_null_retries / review_null_retries / fix_uncommitted_recovered / subagent_invocations が
