@@ -6,6 +6,7 @@ import {
   validateFinalAcResults,
   FINAL_ITEM_RESOLUTIONS,
   validateFinalItemResolutions,
+  finalEvalBlockingResolutions,
 } from './final-ac-reconcile.mjs';
 
 // ---- (1) FINAL_AC_RECONCILE_VALUES ----
@@ -505,4 +506,79 @@ test('validateFinalItemResolutions: 入力配列を mutate しない', () => {
   const inputCopy = JSON.parse(JSON.stringify(input));
   validateFinalItemResolutions(input, ['A']);
   assert.deepEqual(input, inputCopy);
+});
+
+// ---- (5) finalEvalBlockingResolutions (issue #720) ----
+
+const SHA = 'f'.repeat(40);
+const EVAL_OPEN = { id: 'EVAL-1-vitest-regression', source: 'evaluator', severity: 'critical', checked: false };
+const MIXED_BLOCKING = [
+  EVAL_OPEN,
+  { id: 'EVAL-1-already-done', source: 'evaluator', severity: 'critical', checked: true },
+  { id: 'EVAL-1-escalated', source: 'evaluator', severity: 'critical', checked: false, escalate: true },
+  { id: 'SEC-SECRETS', source: 'seed', dimension: 'security', severity: 'critical', checked: false },
+  { id: 'TESTSURF-SKIP', source: 'seed', dimension: 'test-integrity', severity: 'critical', checked: false },
+  { id: 'AC-FINAL-1', source: 'evaluator', dimension: 'ac', severity: 'critical', checked: false },
+  { id: 'AC-1', source: 'ac', dimension: 'ac', severity: 'critical', checked: false },
+];
+const GREEN_RUN = { fixesApplied: 1, finalReconcile: 'reverified', finalTestGreen: true, headSha: SHA, finalCi: null };
+const CI_OK = { verified: true, reason: 'ok', kind: null, checkNames: ['bats', 'vitest'], headRefOid: SHA };
+
+test('finalEvalBlockingResolutions: reverified + test#final green → 未 checked EVAL-* のみ test#final green @ sha で解消', () => {
+  const r = finalEvalBlockingResolutions({ ...GREEN_RUN, blockingItems: MIXED_BLOCKING });
+  assert.deepEqual(r, { reason: 'ok', evidence: `test#final green @ ${SHA}`, ids: ['EVAL-1-vitest-regression'] });
+});
+test('finalEvalBlockingResolutions: ci_verified → ci_verified: <check 名> で解消', () => {
+  const r = finalEvalBlockingResolutions({
+    fixesApplied: 2, finalReconcile: 'ci_verified', finalTestGreen: null, headSha: SHA, finalCi: CI_OK, blockingItems: MIXED_BLOCKING,
+  });
+  assert.deepEqual(r, { reason: 'ok', evidence: 'ci_verified: bats, vitest', ids: ['EVAL-1-vitest-regression'] });
+});
+test('finalEvalBlockingResolutions: SEC seed / TESTSURF / AC-FINAL-* / AC-* / escalate / checked 済みは対象外', () => {
+  const r = finalEvalBlockingResolutions({ ...GREEN_RUN, blockingItems: MIXED_BLOCKING });
+  for (const id of ['SEC-SECRETS', 'TESTSURF-SKIP', 'AC-FINAL-1', 'AC-1', 'EVAL-1-escalated', 'EVAL-1-already-done']) {
+    assert.ok(!r.ids.includes(id), `${id} は解消対象になってはならない`);
+  }
+});
+test('finalEvalBlockingResolutions: EVAL- 接頭辞でも source が evaluator 以外なら対象外', () => {
+  const r = finalEvalBlockingResolutions({ ...GREEN_RUN, blockingItems: [{ id: 'EVAL-X', source: 'seed', checked: false }] });
+  assert.deepEqual(r.ids, []);
+});
+test('finalEvalBlockingResolutions: fixesApplied=0 / 非数値 → no_fixes（green でも解消しない）', () => {
+  for (const fixesApplied of [0, -1, null, undefined, '1', Number.NaN]) {
+    const r = finalEvalBlockingResolutions({ ...GREEN_RUN, fixesApplied, blockingItems: [EVAL_OPEN] });
+    assert.deepEqual(r, { reason: 'no_fixes', evidence: null, ids: [] }, `fixesApplied=${String(fixesApplied)}`);
+  }
+});
+test('finalEvalBlockingResolutions: reverified + test#final red → not_verified', () => {
+  const r = finalEvalBlockingResolutions({ ...GREEN_RUN, finalTestGreen: false, blockingItems: [EVAL_OPEN] });
+  assert.deepEqual(r, { reason: 'not_verified', evidence: null, ids: [] });
+});
+test('finalEvalBlockingResolutions: reverified + no_tests（finalTestGreen=null）→ not_verified', () => {
+  const r = finalEvalBlockingResolutions({ ...GREEN_RUN, finalTestGreen: null, blockingItems: [EVAL_OPEN] });
+  assert.equal(r.reason, 'not_verified');
+});
+test('finalEvalBlockingResolutions: reverified + green でも head sha 不明 → not_verified', () => {
+  for (const headSha of [null, undefined, '']) {
+    const r = finalEvalBlockingResolutions({ ...GREEN_RUN, headSha, blockingItems: [EVAL_OPEN] });
+    assert.equal(r.reason, 'not_verified', `headSha=${JSON.stringify(headSha)}`);
+  }
+});
+test('finalEvalBlockingResolutions: unavailable / skipped → not_verified', () => {
+  for (const finalReconcile of ['unavailable', 'skipped']) {
+    const r = finalEvalBlockingResolutions({ ...GREEN_RUN, finalReconcile, finalCi: CI_OK, blockingItems: [EVAL_OPEN] });
+    assert.equal(r.reason, 'not_verified', `finalReconcile=${finalReconcile}`);
+  }
+});
+test('finalEvalBlockingResolutions: ci_verified でも finalCi.verified!==true → not_verified', () => {
+  for (const finalCi of [null, { verified: false, checkNames: [] }]) {
+    const r = finalEvalBlockingResolutions({ ...GREEN_RUN, finalReconcile: 'ci_verified', finalCi, blockingItems: [EVAL_OPEN] });
+    assert.equal(r.reason, 'not_verified');
+  }
+});
+test('finalEvalBlockingResolutions: 入力 item を mutate しない', () => {
+  const input = MIXED_BLOCKING.map((it) => ({ ...it }));
+  const copy = JSON.parse(JSON.stringify(input));
+  finalEvalBlockingResolutions({ ...GREEN_RUN, blockingItems: input });
+  assert.deepEqual(input, copy);
 });

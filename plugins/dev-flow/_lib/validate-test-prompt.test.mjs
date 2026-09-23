@@ -105,6 +105,45 @@ test('[validate-test-prompt] test#1 prompt は tests:"error" / tests:"failed" �
   assert.ok(prompt.includes('tests:"failed"'), 'test#1 prompt に tests:"failed" キーが含まれていない');
 });
 
+test('[validate-test-prompt] test#1 prompt は tests/run-*.sh を列挙して全本実行させ、全本 green のときだけ green:true を返させる（issue #720）', async () => {
+  await ensureSharedRun();
+  const prompt = test1Prompt();
+  // 列挙コマンド（bare 単文）と対象 glob。1 本だけ選ばせる旧文言「それを優先し、」の残存も否定側で見る
+  assert.ok(prompt.includes('ls -l /tmp/wt/tests'), 'test#1 prompt に tests ディレクトリの列挙コマンド（ls -l <WT>/tests）が無い');
+  assert.ok(prompt.includes('tests/run-*.sh'), 'test#1 prompt に tests/run-*.sh が無い');
+  assert.ok(!prompt.includes('あればそれを優先し、'), 'test#1 prompt に 1 本だけ選ばせる旧文言が残っている');
+  // green:true は tests:"passed"（全本 green）分岐の行にだけ現れ、failed / error 分岐は green:false
+  const lines = prompt.split('\n');
+  const greenTrueLines = lines.filter((l) => l.includes('green:true'));
+  assert.equal(greenTrueLines.length, 1, `green:true を含む行は全本 green の分岐 1 行だけのはず: ${JSON.stringify(greenTrueLines)}`);
+  assert.ok(greenTrueLines[0].includes('tests:"passed"'), `green:true が tests:"passed" 分岐以外に現れる: ${greenTrueLines[0]}`);
+  for (const key of ['tests:"failed"', 'tests:"error"']) {
+    const line = lines.find((l) => l.includes(key));
+    assert.ok(line && line.includes('green:false') && !line.includes('green:true'), `${key} 分岐が green:false を返させていない: ${line}`);
+  }
+});
+
+test('[validate-test-prompt] 一部のスクリプトだけ起動失敗した場合は tests:"error" 側、tests:"failed" は実行されたテストの失敗だけ（issue #720）', async () => {
+  await ensureSharedRun();
+  const lines = test1Prompt().split('\n');
+  const errorLine = lines.find((l) => l.includes('tests:"error"'));
+  const failedLine = lines.find((l) => l.includes('tests:"failed"'));
+  assert.ok(errorLine && errorLine.includes('一部だけ起動失敗'), `一部起動失敗が tests:"error" 分岐に書かれていない: ${errorLine}`);
+  assert.ok(failedLine && !failedLine.includes('起動失敗'), `tests:"failed" 分岐に起動失敗が混入している（green-fix が空回りし CI 委譲に入らない）: ${failedLine}`);
+});
+
+test('[validate-test-prompt] Final reconcile の test#final は Validate の test#1 と同一 prompt（issue #720）', async () => {
+  const { ctx, calls } = makeRecordingSandbox(
+    (c) => (c.label === 'reconcile-sync' ? { ok: true, head: 'a'.repeat(40) } : responder(c)),
+    { args: devFlowArgs('553'), workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }) },
+  );
+  await runDevFlowInSandbox(devFlowSrc, ctx);
+  const t1 = calls.find((x) => x.label === 'test#1');
+  const tf = calls.find((x) => x.label === 'test#final');
+  assert.ok(t1 && tf, `test#1 / test#final の call が揃っていない (labels: ${calls.map((x) => x.label).join(', ')})`);
+  assert.equal(tf.prompt, t1.prompt, 'test#final の prompt が test#1 と一致しない（全 tests/run-*.sh 実行指示が Final reconcile に届かない）');
+});
+
 test('[validate-test-prompt] test#1 prompt は起動失敗を tests:"failed" に潰す旧文言を含まない（issue #619）', async () => {
   await ensureSharedRun();
   const prompt = test1Prompt();
