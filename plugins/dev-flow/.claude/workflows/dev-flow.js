@@ -3834,8 +3834,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
     telemetry: {
       eval_model_config: 'opus',
       review_model_config: 'opus',
-      impl_model_config: 'fable',
-      ...(IMPL_FALLBACK_LABEL ? { impl_model_fallback_label: IMPL_FALLBACK_LABEL } : {}),
+      impl_model_config: 'opus',
       plugin_version: PLUGIN_VERSION,
       ...telemetry,
     },
@@ -5165,40 +5164,22 @@ const SUBAGENT_COUNTS = {};
 // 見えないため、この可変 context に写す。failure_recorded は writeFailureTelemetry 後の throw（empty_diff）で
 // abort entry を二重記録しないためのフラグ。
 const ABORT_CTX = { phase: null, label: null, shape: null, eval_iter: 0, failure_recorded: false }
-// 品質ゲート agent（evaluator / pr-reviewer）の call site は `opts.model` を渡さず agent frontmatter の既定 model
-// （opus-high）で spawn する。model を変えるなら agents/*.md の frontmatter を変える。
+// dev-flow の call site は `opts.model` を渡さず agent frontmatter の既定 model で spawn する
+// （evaluator / pr-reviewer / dev-implement-fable は opus-high。model を変えるなら agents/*.md の frontmatter を変える）。
+// 例外は Validate green-fix の `model: 'sonnet'`（GREEN_FIX_MODEL）だけ。
 // null 返却（credit 切れ / terminal API error / user skip）は既存の fail-open / need() 経路で扱う。
-//
-// 例外は dev-implement-fable（frontmatter fable）だけ。harness の agent() は fable の usage 上限でも throw せず
-// null を返し、原因は script から読めない（null が唯一の観測点）。runImplement の call site は
-// `fallbackModel: 'opus'` を opt-in し、null なら同一 prompt・同一 label に model を付けて 1 回だけ再試行、
-// 以後その run の fallbackModel 付き call は最初から fallback model で spawn する（run 単位 sticky。resume は
-// 失敗 call 以降が live 再実行されるので永続化しない）。fallbackModel は agent() に渡さない。
-// green-fix は `model: 'sonnet'` の明示 override で fallback を持たない（sonnet は fable 上限と無関係）。
-// IMPL_FALLBACK_LABEL: 最初に fallback した call の label（null = 未発火）。telemetry impl_model_fallback_label。
-let IMPL_FALLBACK_LABEL = null
 async function trackedAgent(prompt, opts) {
-  // call: 実 agent() 起動 1 回分（計上 + StructuredOutput 契約違反の opt-in リトライ）。bare agent( は本関数内のみ
-  const call = async (o) => {
-    ABORT_CTX.phase = o?.phase ?? ABORT_CTX.phase; ABORT_CTX.label = o?.label ?? null;
-    recordSubagentInvocation(SUBAGENT_COUNTS, o?.agentType);
-    try {
-      return await agent(prompt, nsAgentOpts(o));
-    } catch (e) {
-      if (!o?.retryOnContractViolation) throw e;
-      if (!String(e?.message ?? e).includes('without calling StructuredOutput')) throw e;
-      log(`⚠️ ${o?.label ?? 'agent'} が StructuredOutput 契約違反で失敗 — 同一 prompt で 1 回だけリトライ（issue #527）`);
-      recordSubagentInvocation(SUBAGENT_COUNTS, o?.agentType);
-      return agent(prompt, nsAgentOpts(o));
-    }
-  };
-  const { fallbackModel, ...rest } = opts ?? {}
-  const o = (fallbackModel && IMPL_FALLBACK_LABEL) ? { ...rest, model: fallbackModel } : rest
-  const r = await call(o)
-  if (r != null || !fallbackModel || IMPL_FALLBACK_LABEL) return r
-  log(`⚠️ ${o.label ?? 'agent'} が既定 model で null（credit 切れ / terminal API error / skip）— model: ${fallbackModel} で同一 prompt を再試行。以後この run は ${fallbackModel}。skip したなら再度 skip せよ`)
-  IMPL_FALLBACK_LABEL = o.label ?? null
-  return call({ ...rest, model: fallbackModel })
+  ABORT_CTX.phase = opts?.phase ?? ABORT_CTX.phase; ABORT_CTX.label = opts?.label ?? null;
+  recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
+  try {
+    return await agent(prompt, nsAgentOpts(opts));
+  } catch (e) {
+    if (!opts?.retryOnContractViolation) throw e;
+    if (!String(e?.message ?? e).includes('without calling StructuredOutput')) throw e;
+    log(`⚠️ ${opts?.label ?? 'agent'} が StructuredOutput 契約違反で失敗 — 同一 prompt で 1 回だけリトライ（issue #527）`);
+    recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
+    return agent(prompt, nsAgentOpts(opts));
+  }
 }
 
 // fail-open 規定の exec-proxy 呼び出し用ラッパ（pr-iterate.js と同型）。trackedAgent が
@@ -5256,11 +5237,9 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
 // （plan+impl 統合）を 1 spawn する。合成 plan の task は agent キーを持つ（isFablePlan）—
 // 合成 plan 以外は Implement / Evaluate で受理しない（明示 error）。
 const FABLE_IMPL_AGENT = 'dev-implement-fable'
-// 既定 model は agents/dev-implement-fable.md の frontmatter（fable。telemetry impl_model_config はそのリテラル、
-// 一致は review-model-frontmatter.test.mjs が pin）。IMPL_FALLBACK_MODEL: fable が null を返したとき runImplement が
-// 落とす先。GREEN_FIX_MODEL: Validate green-fix の明示 override（fable 級の推論を要さず、green-fix > 0 の run は
-// Evaluate のテスト弱体化監査が強制されるため）。fallback 機構は trackedAgent を参照。
-const IMPL_FALLBACK_MODEL = 'opus'
+// 既定 model は agents/dev-implement-fable.md の frontmatter（opus。telemetry impl_model_config はそのリテラル、
+// 一致は review-model-frontmatter.test.mjs が pin）。GREEN_FIX_MODEL: Validate green-fix の明示 override
+// （opus 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
 const GREEN_FIX_MODEL = 'sonnet'
 function synthesizeFablePlan(req, issue) {
   const title = String(req?.issue_title ?? `Issue #${issue}`)
@@ -5326,7 +5305,7 @@ async function runImplement(req, plan, fixFeedback, tag, blocked) {
   let dropped = 0
   for (const t of (plan.serial ?? [])) {
     const r = await failOpenAgent(fableImplPrompt(t, { req, fixFeedback, blocked }),
-      { agentType: FABLE_IMPL_AGENT, fallbackModel: IMPL_FALLBACK_MODEL, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
+      { agentType: FABLE_IMPL_AGENT, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
     if (r) results.push(r)
     else dropped++
   }
@@ -7197,9 +7176,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     eval_model_config: 'opus',  // evaluator 系 3 call site（eval#i / final-ac-reconcile / security-clearance-final）の model。override を渡さないので agents/evaluator.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     review_model_config: 'opus',  // pr-reviewer（pr-review-lite / nested pr-iterate の review#i）の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
-    impl_model_config: 'fable',  // dev-implement-fable の既定 model（agents/dev-implement-fable.md frontmatter の値、一致は review-model-frontmatter.test.mjs が pin）。green-fix の sonnet override は固定値なのでキーを持たない（世代は plugin_version）
-    // impl_model_fallback_label: 最初に fallback model へ落ちた implementer call の label。未発火はキー省略（null は passthrough で落ちる）。
-    ...(IMPL_FALLBACK_LABEL ? { impl_model_fallback_label: IMPL_FALLBACK_LABEL } : {}),
+    impl_model_config: 'opus',  // dev-implement-fable の既定 model（agents/dev-implement-fable.md frontmatter の値、一致は review-model-frontmatter.test.mjs が pin）。green-fix の sonnet override は固定値なのでキーを持たない（世代は plugin_version）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs 定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
     // resolved_evidence: 終端サマリーから外した解消済み証跡の全文。4 配列すべて空なら省く。
     // passthrough 経路で journal に到達（hook 変更不要）。gate / merge tier / ledger の入力にはならない。
@@ -7295,8 +7272,7 @@ return {
           subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
           eval_model_config: 'opus',
           review_model_config: 'opus',
-          impl_model_config: 'fable',
-          ...(IMPL_FALLBACK_LABEL ? { impl_model_fallback_label: IMPL_FALLBACK_LABEL } : {}),
+          impl_model_config: 'opus',
           plugin_version: PLUGIN_VERSION,
         },
       })

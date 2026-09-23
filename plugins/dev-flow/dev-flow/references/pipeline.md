@@ -48,7 +48,7 @@ shape ごとの経路（3 tier）:
 
 | shape | Implement 経路 | Evaluate 経路 | merge tier |
 |-------|-----------|---------------|------------|
-| **micro** | Setup 末尾の analyze ゲート通過後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable`（plan+impl 統合、fable / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
+| **micro** | Setup 末尾の analyze ゲート通過後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable`（plan+impl 統合、opus / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
 | **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保） | REVIEW |
 | **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | REVIEW、danger・breaking で HOLD |
 
@@ -61,16 +61,10 @@ evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL �
 blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止）と DONE 成果を prompt に付けて同じ agent を
 `reimpl-blocked#b` で再 spawn する（上限 `BLOCK_MAX`）。Validate の green-fix（`green-fix#i` / `green-fix#retry-i`）も
 同じ agent 定義だが `model: 'sonnet'` を明示 override する（green-fix の実態は環境起因の blocker 報告か小さな
-test script 修正で fable 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
+test script 修正で opus 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
+Implement / BLOCKED 再実装 / Evaluate 差し戻しは `opts.model` を渡さず frontmatter の既定（opus / high）で spawn し、
+null 返却は再試行せず drop（`implDroppedCount`）に計上する。
 観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）。
-
-**fable → opus fallback**（`runImplement` の call site のみ）: harness の `agent()` は fable の usage 上限・
-terminal API error・user skip のいずれでも throw せず null を返し、原因は script から読めない（null が唯一の
-観測点）。call site は `fallbackModel: 'opus'` を opt-in し、`trackedAgent` は null を受けたら同一 prompt・同一
-label に `model: 'opus'` を付けて 1 回だけ再試行し、以後その run の `fallbackModel` 付き call は最初から opus で
-spawn する（run 単位 sticky。resume は失敗 call 以降が live 再実行されるので永続化しない）。再試行も null なら
-従来どおり drop（`implDroppedCount`）。`fallbackModel` を持たない call の null 挙動は不変。観測は
-`impl_model_fallback_label`（telemetry.md）。
 
 shape は analyze ゲートでは決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount)` が
 realized diff の file 数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）だけで
@@ -108,8 +102,9 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   null 時の model fallback 機構は持たない（`_lib/review-model-frontmatter.test.mjs` が call site と telemetry
   `eval_model_config` / `review_model_config` / `impl_model_config` = frontmatter 値の一致を pin）。同一入力での paired 比較で
   opus-high は fable-high と verdict・major 検出が同等以上かつコストが 2/3 だったため、両 gate とも override を外している。
-  例外は `dev-implement-fable`（frontmatter fable）: `runImplement` は `fallbackModel: 'opus'`（null 時の
-  fallback、上記 Implement 節）、green-fix は `model: 'sonnet'` を渡す（挙動は `_lib/impl-model-fallback.test.mjs` が pin）。
+  `dev-implement-fable` も frontmatter（opus / high）で spawn する（complex の盲検 replay で fable-high と品質同等・
+  所要時間とコストが約 −45% だったため）。override は green-fix の `model: 'sonnet'` だけ
+  （call site 別の挙動は `_lib/impl-model-opus.test.mjs` が pin）。
   ほかに `opts.model` を渡す call site は dev-improve.js の `rank-judge`（improve-miner）のみで、
   `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を dev-improve.js へ inline 生成して渡す。
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。

@@ -119,10 +119,8 @@ Analyze 直後に issue から単一 task の plan を合成する（planner 0 �
 shape はこの時点では決まっていない — Security floor で realized diff から決める）。
 合成 task の `file_changes` は空で始まり、Implement の返却 `files` を宣言として取り込む。
 
-`dev-implement-fable`（plan+impl 統合、frontmatter fable）を単一 worktree に 1 spawn する。parallel fan-out・
-issue 分割・integration branch は使わない。fable の usage 上限で `agent()` が null を返したら同一 prompt・同一
-label を `model: 'opus'` で 1 回再試行し、以後その run の Implement 系 spawn は opus（telemetry
-`impl_model_fallback_label`）。
+`dev-implement-fable`（plan+impl 統合、frontmatter opus）を単一 worktree に 1 spawn する。parallel fan-out・
+issue 分割・integration branch は使わない。
 
 ```mermaid
 flowchart TD
@@ -422,7 +420,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 
 | agent | 役割 | model / effort |
 | --- | --- | --- |
-| `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | fable / high |
+| `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | opus / high |
 | `evaluator` | 実装品質ゲート | opus / high |
 | `pr-reviewer` | PR レビュー | opus / high |
 | `dev-runner` | Skill 呼び出し（Analyze ゲート後の missing_context 生成のみ。通常経路では起動しない） | frontmatter / high |
