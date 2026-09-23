@@ -123,6 +123,15 @@ test('[validate-test-prompt] test#1 prompt は tests/run-*.sh を列挙して全
   }
 });
 
+test('[validate-test-prompt] 一部のスクリプトだけ起動失敗した場合は tests:"error" 側、tests:"failed" は実行されたテストの失敗だけ（issue #720）', async () => {
+  await ensureSharedRun();
+  const lines = test1Prompt().split('\n');
+  const errorLine = lines.find((l) => l.includes('tests:"error"'));
+  const failedLine = lines.find((l) => l.includes('tests:"failed"'));
+  assert.ok(errorLine && errorLine.includes('一部だけ起動失敗'), `一部起動失敗が tests:"error" 分岐に書かれていない: ${errorLine}`);
+  assert.ok(failedLine && !failedLine.includes('起動失敗'), `tests:"failed" 分岐に起動失敗が混入している（green-fix が空回りし CI 委譲に入らない）: ${failedLine}`);
+});
+
 test('[validate-test-prompt] Final reconcile の test#final は Validate の test#1 と同一 prompt（issue #720）', async () => {
   const { ctx, calls } = makeRecordingSandbox(
     (c) => (c.label === 'reconcile-sync' ? { ok: true, head: 'a'.repeat(40) } : responder(c)),

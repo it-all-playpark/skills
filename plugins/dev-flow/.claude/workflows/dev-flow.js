@@ -5527,7 +5527,9 @@ const setup = PRERUN
 // 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
 // sandbox 除外は先頭トークン一致のため、bare 形（絶対パス先頭トークン・前置禁止）優先実行 +
 // EPERM 起動失敗時は原因調査せず即時報告する文言へ更新。
-// 起動失敗（1 件も実行されず）は tests:"error"、実行された上での失敗は tests:"failed" に分離する（Final reconcile で error → unavailable → CI 委譲）。
+// 実行されたテストの失敗は tests:"failed"、テスト失敗が無く起動失敗だけがある（一部のスクリプトだけでも）は
+// tests:"error" に分離する（Final reconcile で error → unavailable → CI 委譲）。起動失敗は環境要因でコード修正では
+// 直らないため、一部起動失敗を failed に入れると green-fix が空回りし CI 委譲にも入らない。
 // tests/run-*.sh が複数あるときは全本を実行させ、全本 green のときだけ green:true にする。1 本だけ選ばせると
 // 残りのランナー（例: bats だけ走って vitest が走らない）の回帰が CI まで検出されないため。
 const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し green かどうか判定せよ。\n`
@@ -5541,8 +5543,8 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな: そのスクリプトは bare 形の実行経路を 1 回だけ試し、`
   + `それでも失敗するなら起動失敗として記録して残りのスクリプトへ進め。全対象を実行し終えたら StructuredOutput で報告せよ。報告時の tests / green の値は次の 3 分岐で決める:\n`
   + `- 実行したすべてのスクリプトが green → tests:"passed"、green:true（green:true はこの分岐でのみ返せ）\n`
-  + `- すべてのスクリプトが起動失敗でテストスイートが 1 件も実行されなかった（EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、失敗要約を summary に入れる\n`
-  + `- それ以外（1 本でもテストが失敗、または一部のスクリプトだけ起動失敗）→ tests:"failed"、green:false、失敗したスクリプトごとの要約を summary に入れる\n`
+  + `- 実行されたテストが 1 件以上失敗したスクリプトが 1 本でもある → tests:"failed"、green:false、失敗したスクリプトごとの要約を summary に入れる\n`
+  + `- 失敗したテストは無いが、1 本以上のスクリプトが起動失敗した（全本起動失敗も一部だけ起動失敗も含む。EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、起動失敗したスクリプト名と失敗要約を summary に入れる\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_NOTE
   + EPOCH_INSTRUCTION
