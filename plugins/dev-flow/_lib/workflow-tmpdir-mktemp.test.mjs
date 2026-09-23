@@ -1,36 +1,45 @@
-// Regression test: mktemp が TMPDIR フォールバック形式を使うことを VM 挙動で保証する。
+// Regression test (issue #712): コメント投稿 prompt が mktemp を指示せず、固定パスへの Write と
+// gh の bare 単文 1 回実行（--repo 付き）を指示することを VM 挙動で保証する。
 //
-// 問題: `mktemp /tmp/...` はサンドボックス環境（macOS の Claude Code sandbox 等）では
-//       /tmp への書き込みが拒否されて失敗する。$TMPDIR 環境変数を参照する形式
-//       `mktemp "${TMPDIR:-/tmp}/..."` を使えばサンドボックスが許可した一時ディレクトリを使える。
+// 問題: bodySaveInstr が `mktemp` → Write tool を指示していたため、mktemp が作った既存ファイルへの
+//       Write が「未 Read」で必ず拒否され、agent が heredoc へ逸れた上に `gh pr comment ... && echo`
+//       と連結して投稿に失敗した（PR #711）。posted:false は fail-open の log 1 行だけで人間が気づけない。
 //
-// 検証は (a) の一部を dev-flow.js / pr-iterate.js 全文に対する静的否定 assert で、
-// 残りを両 workflow を VM で実行し agent() に実際に渡った prompt を観測することで行う:
-//   (a-static) devFlowSrc / prIterateSrc 全文のどこにも `mktemp /tmp/` という古い形式が現れない
-//       — success run 1 本の prompt 観測だけでは未到達分岐への再混入を検出できないため、
-//       VM 観測とは独立に全文走査で pin する
-//   (a-vm) success run で実際に agent() へ渡った prompt にも `mktemp /tmp/` が現れない
-//   (b) dev-flow.js の post-summary prompt に mktemp "${TMPDIR:-/tmp}/dev-flow-XXXXXX.md" が現れる
-//   (c) pr-iterate.js の post-summary prompt に mktemp "${TMPDIR:-/tmp}/pr-iterate-XXXXXX.md" が現れる
+// 検証:
+//   (a-static) bodySaveInstr の canonical に `mktemp` が現れない（3 workflow の全呼び出し元をまとめて pin）。
+//       3 workflow 全文に旧形式 `mktemp /tmp/` も現れない
+//   (b) 投稿 prompt 3 箇所（dev-flow post-summary / pr-iterate post-summary / dev-improve hyp-note）が
+//       mktemp を含まず、bare 単文の禁止句と `--repo <REPO>` 付きの gh コマンドを渡す
+//   (c) dev-flow / pr-iterate は worktree の `.devflow-tmp/` 固定パスへ保存させる
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeDevFlowSandbox, makePrIterateSandbox, runWorkflowCapture, assertNoCrash } from './test-helpers/vm-sandbox.mjs';
+import {
+  makeDevFlowSandbox, makePrIterateSandbox, makeRecordingSandbox, runWorkflowCapture, assertNoCrash,
+} from './test-helpers/vm-sandbox.mjs';
+import { buildHypothesisBlock } from './improve-hypothesis.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workflowDir = join(here, '..', '.claude/workflows');
 const devFlowSrc = readFileSync(join(workflowDir, 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(workflowDir, 'pr-iterate.js'), 'utf8');
+const devImproveSrc = readFileSync(join(workflowDir, 'dev-improve.js'), 'utf8');
+const postHelpersSrc = readFileSync(join(here, 'workflow-post-helpers.mjs'), 'utf8');
 
-async function runDevFlow() {
-  const { ctx, calls } = makeDevFlowSandbox();
-  const { error } = await runWorkflowCapture(devFlowSrc, ctx);
+const BARE_RULE = '先頭トークンが gh の bare 単文で 1 回だけ実行せよ（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）';
+
+async function runDevFlow(overrides = {}) {
+  const { ctx, calls } = makeDevFlowSandbox({
+    // pr_url を github URL にして --repo の解決元を pr_url に固定する
+    overrides: { 'pr#1': { pr_url: 'https://github.com/acme/skills/pull/1', pr_number: 1, committed: true }, ...overrides },
+  });
+  const { result, error } = await runWorkflowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'dev-flow');
   assert.equal(error, null, `dev-flow run が throw した: ${error?.message}`);
-  return calls;
+  return { calls, result };
 }
 
 async function runPrIterate() {
@@ -41,36 +50,87 @@ async function runPrIterate() {
   return calls;
 }
 
-// (a-static) 旧形式 `mktemp /tmp/` が devFlowSrc / prIterateSrc 全文のどこにも現れない
-// — success run 1 本の prompt 観測だけでは未到達分岐（abort 等）への再混入を検出できないため、
-// VM 観測とは独立に全文走査で pin する。
-test('[tmpdir] (a-static) devFlowSrc / prIterateSrc 全文に `mktemp /tmp/` という旧形式が無い', () => {
-  for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
-    assert.ok(!src.includes('mktemp /tmp/'), `${name} に \`mktemp /tmp/\` という旧形式が静的に残存している（TMPDIR フォールバック形式へ移行すること）`);
+// dev-improve: pending 仮説 1 件の closed issue を突合させ、hyp-note（gh issue comment）まで到達させる。
+// それ以外の agent は null（各 phase は fail-open で継続する）。
+async function runDevImprove() {
+  const body = `impl\n\n${buildHypothesisBlock({ metric: 'micro_share', current: 0.1, target: 0.3, min_runs: 3 })}`;
+  const { ctx, calls } = makeRecordingSandbox(({ label }) => {
+    if (label === 'list-closed') {
+      return {
+        ok: true,
+        issues: [{
+          number: 42, title: 't', body, closedAt: '2026-09-01T00:00:00Z', stateReason: 'COMPLETED',
+          url: 'https://github.com/acme/skills/issues/42',
+        }],
+      };
+    }
+    if (label === 'hyp-check#42') return { ok: true, metric: 'micro_share', value: 0.4, runs: 5, verdict: 'confirmed' };
+    if (label.startsWith('hyp-')) return { posted: true };
+    return null;
+  }, {
+    args: { today: '2026-09-23T00:00:00Z' },
+    parallel: async (fns) => Promise.all((fns || []).map((f) => f())),
+  });
+  const { error } = await runWorkflowCapture(devImproveSrc, ctx, '.claude/workflows/dev-improve.js');
+  assertNoCrash(error, 'dev-improve');
+  assert.equal(error, null, `dev-improve run が throw した: ${error?.message}`);
+  return calls;
+}
+
+// (a-static) bodySaveInstr の canonical（3 workflow へ全文 inline される）に mktemp が無い。
+// 未到達分岐の prompt も canonical 経由なので、ここで全呼び出し元をまとめて pin できる。
+test('[comment-post] (a-static) _lib/workflow-post-helpers.mjs（3 workflow の inline 元）に mktemp が無い', () => {
+  assert.ok(!postHelpersSrc.includes('mktemp'), 'workflow-post-helpers.mjs に mktemp が残存している（固定パスへの Write tool 新規作成に置き換えること）');
+});
+
+// (a-static) 旧形式 `mktemp /tmp/`（sandbox で /tmp 直書きが拒否される）が 3 workflow 全文に無い
+test('[comment-post] (a-static) dev-flow.js / pr-iterate.js / dev-improve.js 全文に `mktemp /tmp/` という旧形式が無い', () => {
+  for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc], ['dev-improve.js', devImproveSrc]]) {
+    assert.ok(!src.includes('mktemp /tmp/'), `${name} に \`mktemp /tmp/\` という旧形式が静的に残存している`);
   }
 });
 
-// (a-vm) 旧形式 `mktemp /tmp/` がどの prompt にも現れない
-test('[tmpdir] (a-vm) dev-flow.js: agent() prompt に `mktemp /tmp/` という旧形式が含まれない', async () => {
-  const hit = (await runDevFlow()).find((c) => c.prompt.includes('mktemp /tmp/'));
-  assert.ok(!hit, `${hit?.label} の prompt に \`mktemp /tmp/\` が残存している（TMPDIR フォールバック形式へ移行すること）`);
-});
-
-test('[tmpdir] (a-vm) pr-iterate.js: agent() prompt に `mktemp /tmp/` という旧形式が含まれない', async () => {
-  const hit = (await runPrIterate()).find((c) => c.prompt.includes('mktemp /tmp/'));
-  assert.ok(!hit, `${hit?.label} の prompt に \`mktemp /tmp/\` が残存している（TMPDIR フォールバック形式へ移行すること）`);
-});
-
-// (b) dev-flow.js の post-summary が TMPDIR フォールバック形式 + 'dev-flow' prefix で mktemp を指示する
-test('[tmpdir] dev-flow.js: post-summary prompt が mktemp "${TMPDIR:-/tmp}/dev-flow-XXXXXX.md" を指示する', async () => {
-  const post = (await runDevFlow()).find((c) => c.label === 'post-summary');
+// (b)(c) dev-flow post-summary
+test('[comment-post] dev-flow.js post-summary: mktemp 不在・.devflow-tmp 固定パス・bare 単文・--repo 付き gh pr comment', async () => {
+  const { calls } = await runDevFlow();
+  const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post, 'post-summary が呼ばれていない');
-  assert.ok(post.prompt.includes('mktemp "${TMPDIR:-/tmp}/dev-flow-XXXXXX.md"'), `post-summary prompt に TMPDIR フォールバック形式の mktemp が無い:\n${post.prompt.slice(0, 400)}`);
+  assert.doesNotMatch(post.prompt, /mktemp/);
+  assert.ok(post.prompt.includes('保存先は固定パス `/tmp/wt/.devflow-tmp/dev-flow-summary.md`'), `固定パス指示が無い:\n${post.prompt.slice(0, 400)}`);
+  assert.ok(
+    post.prompt.includes(`\`gh pr comment 1 --repo acme/skills --body-file /tmp/wt/.devflow-tmp/dev-flow-summary.md\` を${BARE_RULE}`),
+    `--repo 付き bare 単文の gh pr comment 指示が無い:\n${post.prompt}`,
+  );
 });
 
-// (c) pr-iterate.js の post-summary が TMPDIR フォールバック形式 + 'pr-iterate' prefix で mktemp を指示する
-test('[tmpdir] pr-iterate.js: post-summary prompt が mktemp "${TMPDIR:-/tmp}/pr-iterate-XXXXXX.md" を指示する', async () => {
+// (b)(c) pr-iterate post-summary
+test('[comment-post] pr-iterate.js post-summary: mktemp 不在・.devflow-tmp 固定パス・bare 単文・--repo 付き gh pr comment', async () => {
   const post = (await runPrIterate()).find((c) => c.label === 'post-summary');
   assert.ok(post, 'post-summary が呼ばれていない');
-  assert.ok(post.prompt.includes('mktemp "${TMPDIR:-/tmp}/pr-iterate-XXXXXX.md"'), `post-summary prompt に TMPDIR フォールバック形式の mktemp が無い:\n${post.prompt.slice(0, 400)}`);
+  assert.doesNotMatch(post.prompt, /mktemp/);
+  assert.ok(post.prompt.includes('保存先は固定パス `/tmp/wt/.devflow-tmp/pr-iterate-summary-5.md`'), `固定パス指示が無い:\n${post.prompt.slice(0, 400)}`);
+  assert.ok(
+    post.prompt.includes(`\`gh pr comment 5 --repo acme/skills --body-file /tmp/wt/.devflow-tmp/pr-iterate-summary-5.md\` を${BARE_RULE}`),
+    `--repo 付き bare 単文の gh pr comment 指示が無い:\n${post.prompt}`,
+  );
+});
+
+// (b) dev-improve hyp-note（gh issue comment）
+test('[comment-post] dev-improve.js hyp-note: mktemp 不在・固定ファイル名・bare 単文・--repo 付き gh issue comment', async () => {
+  const note = (await runDevImprove()).find((c) => c.label === 'hyp-note#42');
+  assert.ok(note, 'hyp-note#42 が呼ばれていない');
+  assert.doesNotMatch(note.prompt, /mktemp/);
+  assert.ok(note.prompt.includes('"${TMPDIR:-/tmp}/dev-improve/dev-improve-note-42.md"'), `固定ファイル名の解決指示が無い:\n${note.prompt.slice(0, 400)}`);
+  assert.ok(
+    note.prompt.includes(`\`gh issue comment 42 --repo acme/skills --body-file <BODY_FILE>\` を${BARE_RULE}`),
+    `--repo 付き bare 単文の gh issue comment 指示が無い:\n${note.prompt}`,
+  );
+});
+
+// dev-improve の他の本文保存 prompt（issue edit）も mktemp を含まない
+test('[comment-post] dev-improve.js hyp-update: bodySaveInstr が mktemp を指示しない', async () => {
+  const upd = (await runDevImprove()).find((c) => c.label === 'hyp-update#42');
+  assert.ok(upd, 'hyp-update#42 が呼ばれていない');
+  assert.doesNotMatch(upd.prompt, /mktemp/);
+  assert.ok(upd.prompt.includes('"${TMPDIR:-/tmp}/dev-improve/dev-improve-body-42.md"'));
 });

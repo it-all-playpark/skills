@@ -187,15 +187,15 @@ test("[exec-proxy-routing] pr-iterate.js emits zero 'post-review#' calls across 
 //
 // post-comment exec-proxy の prompt は workflow 側で確定した本文を bodySaveInstr の delimiter で
 // verbatim 転写させる（agent 側の要約・判断を挟まない）。両 workflow の post-summary prompt に
-// delimiter ペアと `--body-file <BODY_FILE>` 指示があることで観測する。
+// delimiter ペアと、保存先（.devflow-tmp 固定パス）を指す `--body-file` 指示があることで観測する。
 test('[exec-proxy-routing] dev-flow.js / pr-iterate.js の post-summary prompt は bodySaveInstr の delimiter で本文を verbatim 転写させる', async () => {
   const df = (await runDevFlowScenario('baseline')).find((c) => c.label === 'post-summary');
   assert.ok(df, 'dev-flow.js: post-summary が無い');
   assert.ok(df.prompt.includes('<<<DEV_FLOW_BODY_BEGIN>>>') && df.prompt.includes('<<<DEV_FLOW_BODY_END>>>'), 'dev-flow.js: post-summary prompt に DEV_FLOW_BODY delimiter が無い');
-  assert.ok(df.prompt.includes('--body-file <BODY_FILE>'), 'dev-flow.js: post-summary prompt が <BODY_FILE> 経由の投稿を指示していない');
+  assert.match(df.prompt, /--body-file \/\S*\/\.devflow-tmp\/dev-flow-summary\.md/, 'dev-flow.js: post-summary prompt が保存先経由の投稿を指示していない');
 
   const pi = (await runPrIterate()).find((c) => c.label === 'post-summary');
   assert.ok(pi, 'pr-iterate.js: post-summary が無い');
   assert.ok(pi.prompt.includes('<<<PR_ITERATE_BODY_BEGIN>>>') && pi.prompt.includes('<<<PR_ITERATE_BODY_END>>>'), 'pr-iterate.js: post-summary prompt に PR_ITERATE_BODY delimiter が無い');
-  assert.ok(pi.prompt.includes('--body-file <BODY_FILE>'), 'pr-iterate.js: post-summary prompt が <BODY_FILE> 経由の投稿を指示していない');
+  assert.match(pi.prompt, /--body-file \/\S*\/\.devflow-tmp\/pr-iterate-summary-\d+\.md/, 'pr-iterate.js: post-summary prompt が保存先経由の投稿を指示していない');
 });

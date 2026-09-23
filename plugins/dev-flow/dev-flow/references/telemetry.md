@@ -53,6 +53,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `final_ac_reconcile` は `skipped`/`reverified`/`unavailable` の 3 値（fix 適用 run で final test が green/no_tests かつ AC が 1 件以上のときのみ targeted evaluator を one-shot 起動して analyze ゲートで確定した既存 AC を最終 PR tree に対し再検証する。index 完全性・evidence 非空の決定論検証に合格すれば `reverified`、agent null・schema/index/evidence 検証不合格は `unavailable` → merge tier HOLD。未実行は `skipped`）。
   `pr_closes_status` は `verified`/`reinjected`/`missing`/`unverified` の 4 値（passthrough 経路。常時出力。PR 作成直後の `gh pr view --json body` による Closes 行決定論検証結果。`missing` は再投入も失敗し `classifyMergeTier` の HOLD 理由 `pr_closes_missing` に載る）。
   `pr_body_synced`（passthrough 経路。boolean。pr-iterate が fix を適用し lgtm 終端し Final AC reconcile が `reverified` のときのみ AC checkbox 同期を実施し出力。未実施はキー自体を省く）。
+  `summary_posted`（passthrough 経路。boolean。常時出力。Merge tier 末尾の post-summary が `posted:true` を返したときのみ true。返り値にも同名キーで載り、false のとき終端 `note` に「終端サマリ未投稿」が付く。記録専用 — merge tier の入力にはしない）。
   `final_test_green` は final test 実行時のみ出力（Final reconcile が `reverified` の場合のみ。`ci_verified` はローカル test を再実行していないため出力されない）。
   `final_ui_verify` は final UI 再検証実行時のみ出力（`ui_verify` と同語彙: `skipped`/`passed`/`findings`/`failed_open`/`setup_failed`）。
   `testsurf_hits` は test-weakening pattern 名の配列（常時出力、hit 無しは空配列）。

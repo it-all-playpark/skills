@@ -295,7 +295,7 @@ function buildBacklogSection({ today, losers }) {
 
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // workflow-post-helpers: PR/Issue コメント投稿・ジャーナル記録用の共通スキーマ・ヘルパー。
-// I/O なし。bodySaveInstr は agent 向け instruction 文字列を生成する純粋関数。
+// I/O なし。bodySaveInstr / ghBareStepInstr は agent 向け instruction 文字列を生成する純粋関数。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -321,19 +321,39 @@ const JOURNAL_RESULT = {
 
 /**
  * PR/Issue コメント本文保存の agent 向け instruction を生成する。
- * Write tool 経由で一時ファイルに保存させる手順を返す。
+ * 本文は事前に作られていない固定パスへ Write tool で新規作成させる。一時ファイルを shell で先に
+ * 作らせると、その既存ファイルへの Write が「未 Read」として Write tool に拒否され、agent が
+ * shell 書き出し（heredoc 等）へ逸れる。固定パスは前回の残りがありうるので、既存時のみ Read → Write。
  * @param {string} body - 保存する本文
- * @param {string} tmpPrefix - mktemp の prefix（例: 'dev-flow', 'pr-iterate'）
+ * @param {{bodyFile?: string, saveDir?: string, fileName?: string}} target
+ *   bodyFile: 保存先の絶対パス（worktree の `.devflow-tmp/<prefix>-<用途>.md`）。
+ *   saveDir + fileName: worktree を持たない呼び出し元（dev-improve）用。saveDir は shell 展開で
+ *   解決する（例: `${TMPDIR:-/tmp}/dev-improve`）。
  * @param {string} delimName - delimiter 名（例: 'DEV_FLOW', 'PR_ITERATE'）
  */
-function bodySaveInstr(body, tmpPrefix, delimName) {
+function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) {
+  const resolve = bodyFile
+    ? `保存先は固定パス \`${bodyFile}\` とし、以降 <BODY_FILE> はこのパスを指す。\n`
+    : `まず Bash で \`printf '%s\\n' "${saveDir}/${fileName}"\` を 1 回だけ実行し、出力された絶対パスを <BODY_FILE> とする。\n`
   return `## 本文の保存\n`
-    + `まず Bash で \`mktemp "\${TMPDIR:-/tmp}/${tmpPrefix}-XXXXXX.md"\` を実行して一時ファイルを作成し、\n`
-    + `そのパスを <BODY_FILE> とする。次に **Write tool** を使い、下記 delimiter 内の本文を\n`
+    + resolve
+    + `<BODY_FILE> は Bash で事前に作らない（空ファイルの作成も禁止）。**Write tool** で新規作成する。\n`
+    + `<BODY_FILE> が既に存在する場合（前回の残り）のみ、先に **Read tool** で読んでから Write tool で上書きせよ。\n`
+    + `**Write tool** を使い、下記 delimiter 内の本文を\n`
     + `**一字一句そのまま** <BODY_FILE> へ書き出せ。本文は絶対に shell（echo/printf/heredoc 等）へ\n`
     + `渡さず、必ず Write tool の content 引数として渡すこと。backtick やコードフェンスを\n`
     + `エスケープ・改変しないこと。以降のコマンドの \`--body-file\` には <BODY_FILE> を指定する。\n`
     + `<<<${delimName}_BODY_BEGIN>>>\n${body}\n<<<${delimName}_BODY_END>>>\n\n`
+}
+
+/**
+ * gh の投稿コマンドを bare 単文で 1 回だけ実行させる instruction 行を生成する
+ * （起動形の文言は dev-flow.js の prBodyViewPrompt と同一）。
+ * @param {string} cmd - 先頭トークンが gh のコマンド全文（`--repo <REPO>` 付き）
+ */
+function ghBareStepInstr(cmd) {
+  return `\`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
+    + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
 }
 // ==== END inline: _lib/workflow-post-helpers.mjs ====
 // ==== BEGIN inline: _lib/journal-handoff.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -713,6 +733,7 @@ const ISSUE_LIST = {
           body: { type: 'string' },
           closedAt: { type: 'string' },
           stateReason: { type: 'string' },
+          url: { type: 'string' },
         },
       },
     },
@@ -794,6 +815,10 @@ const ISSUE_CREATED = {
   },
 }
 
+// issue body / comment 本文の保存先ディレクトリ（bodySaveInstr の saveDir モード）。dev-improve は
+// run 専用 worktree を持たないため `.devflow-tmp` ではなく journal-save と同じ TMPDIR 配下に置く。
+const IMPROVE_BODY_DIR = '${TMPDIR:-/tmp}/dev-improve'
+
 // journal-save（stage1）の返り値 schema。JOURNAL_RESULT（journal-log/stage2）と対で使う。
 const JOURNAL_SAVE_RESULT = {
   type: 'object',
@@ -815,9 +840,9 @@ const revertCandidates = []
 const closedList = await agent(
   `## Objective\nlabel self-improve の closed issue 一覧を取得する（dev-improve Reconcile 用）。\n\n`
   + `## Instructions\n次のコマンドをそのまま実行し、stdout の JSON 配列を issues に入れて返せ:\n`
-  + `\`gh issue list --label self-improve --state closed --limit 20 --json number,title,body,closedAt,stateReason\`\n`
+  + `\`gh issue list --label self-improve --state closed --limit 20 --json number,title,body,closedAt,stateReason,url\`\n`
   + `コマンド失敗時（label 不存在含む）は throw せず ok:false, issues:[] を返すこと。\n`
-  + `\n## Output format\n{ "ok": boolean, "issues": [{number, title, body, closedAt, stateReason}] }\n`
+  + `\n## Output format\n{ "ok": boolean, "issues": [{number, title, body, closedAt, stateReason, url}] }\n`
   + `\n## Tools\n使用可: Bash のみ\n\n## Boundary\n読み取り専用。ファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ返す。`,
   nsAgentOpts({ agentType: 'dev-runner-haiku-ro', schema: ISSUE_LIST, label: 'list-closed', phase: 'Reconcile' }),
 )
@@ -880,11 +905,11 @@ for (const it of pendingIssues) {
 
   const editRes = await agent(
     `## Objective\nissue #${it.number} の body を hypothesis status=${newStatus} に更新する。\n\n`
-    + bodySaveInstr(newBody, 'dev-improve-body', 'DEV_IMPROVE')
+    + bodySaveInstr(newBody, { saveDir: IMPROVE_BODY_DIR, fileName: `dev-improve-body-${it.number}.md` }, 'DEV_IMPROVE')
     + `## Instructions\n保存した <BODY_FILE> で次を実行: \`gh issue edit ${it.number} --body-file <BODY_FILE>\`\n`
     + `成功時 posted:true。失敗時も throw せず posted:false。\n`
     + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-    + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
+    + `\n## Tools\n使用可: Bash, Read, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
     nsAgentOpts({ agentType: 'dev-runner', schema: POST_RESULT, label: `hyp-update#${it.number}`, phase: 'Reconcile' }),
   )
   if (!editRes?.posted) log(`⚠️ Reconcile: #${it.number} body 更新の投稿に失敗（fail-open）`)
@@ -898,13 +923,16 @@ for (const it of pendingIssues) {
       ? '- 効果未確認のため revert / 再設計候補として次サイクルの候補プールに登録（自動 revert はしない — 判断は人間）'
       : '- 期待どおりの telemetry 変化を確認',
   ].join('\n')
+  // --repo は list-closed が返した issue URL から解決する（dev-improve は repo を args で受け取らない）
+  const noteRepo = repoFromGithubUrl(it.url)
   const noteRes = await agent(
     `## Objective\nissue #${it.number} に仮説突合結果コメントを投稿する。\n\n`
-    + bodySaveInstr(resultNote, 'dev-improve-note', 'DEV_IMPROVE')
-    + `## Instructions\n保存した <BODY_FILE> で次を実行: \`gh issue comment ${it.number} --body-file <BODY_FILE>\`\n`
-    + `成功時 posted:true。失敗時も throw せず posted:false。\n`
+    + bodySaveInstr(resultNote, { saveDir: IMPROVE_BODY_DIR, fileName: `dev-improve-note-${it.number}.md` }, 'DEV_IMPROVE')
+    + `## Instructions\n`
+    + ghBareStepInstr(`gh issue comment ${it.number}${noteRepo ? ` --repo ${noteRepo}` : ''} --body-file <BODY_FILE>`)
+    + `成功時 posted:true。失敗時も throw せず posted:false。原因調査・再試行・別の起動形での実行はしない。\n`
     + `\n## Output format\n{ "posted": boolean, "method": string, "url": string }\n`
-    + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
+    + `\n## Tools\n使用可: Bash, Read, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
     nsAgentOpts({ agentType: 'dev-runner', schema: POST_RESULT, label: `hyp-note#${it.number}`, phase: 'Reconcile' }),
   )
   if (!noteRes?.posted) log(`⚠️ Reconcile: #${it.number} 突合コメントの投稿に失敗（fail-open）`)
@@ -1070,7 +1098,7 @@ for (const c of winners) {
   const body = buildImproveIssueBody(c, { hypothesisBlock: hypBlock })
   const created = await agent(
     `## Objective\ndev-improve の自己改善 issue を 1 件作成する。\n\n`
-    + bodySaveInstr(body, 'dev-improve-issue', 'DEV_IMPROVE')
+    + bodySaveInstr(body, { saveDir: IMPROVE_BODY_DIR, fileName: `dev-improve-issue-${filed.length + 1}.md` }, 'DEV_IMPROVE')
     + `## Instructions\n`
     + `1. \`gh label create self-improve --color 1D76DB --description "dev-improve self-improvement" --force\` を実行（既存でも成功する）。\n`
     + `2. 保存した <BODY_FILE> に対し次を実行: \`ac-lint <BODY_FILE>\`（bare 名を先頭トークンとする単文）。\n`
@@ -1080,7 +1108,7 @@ for (const c of winners) {
     + `   <TITLE> は次のタイトルを一字一句そのまま、shell 安全にクォートして渡す: ${JSON.stringify(c.title)}\n`
     + `4. 出力 URL 末尾の issue 番号を number に入れ created:true を返す。失敗時は throw せず created:false。\n`
     + `\n## Output format\n{ "created": boolean, "number": number, "url": string }\n`
-    + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。issue 作成は 1 件のみ。\n\n## Token cap\n100 語以内。`,
+    + `\n## Tools\n使用可: Bash, Read, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。issue 作成は 1 件のみ。\n\n## Token cap\n100 語以内。`,
     nsAgentOpts({ agentType: 'dev-runner', schema: ISSUE_CREATED, label: `file-issue#${filed.length + 1}`, phase: 'File' }),
   )
   if (created?.created && Number.isInteger(created.number)) {
@@ -1103,7 +1131,7 @@ if (losers.length > 0) {
       : `dev-improve の落選候補 backlog。再浮上は telemetry シグナル駆動（miner が再発見する）。\n\n${section}`
     const res = await agent(
       `## Objective\ndev-improve backlog issue を更新（なければ作成）する。\n\n`
-      + bodySaveInstr(newBody, 'dev-improve-backlog', 'DEV_IMPROVE')
+      + bodySaveInstr(newBody, { saveDir: IMPROVE_BODY_DIR, fileName: 'dev-improve-backlog.md' }, 'DEV_IMPROVE')
       + `## Instructions\n`
       + (backlogIssue
         ? `保存した <BODY_FILE> で次を実行: \`gh issue edit ${backlogIssue.number} --body-file <BODY_FILE>\`\n`
@@ -1111,7 +1139,7 @@ if (losers.length > 0) {
           + `2. \`gh issue create --title "dev-improve backlog" --label self-improve-backlog --body-file <BODY_FILE>\`\n`)
       + `成功時 created:true と issue 番号を返す。失敗時は throw せず created:false。\n`
       + `\n## Output format\n{ "created": boolean, "number": number, "url": string }\n`
-      + `\n## Tools\n使用可: Bash, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
+      + `\n## Tools\n使用可: Bash, Read, Write\n\n## Boundary\n<BODY_FILE> 以外のファイル変更禁止。git commit 禁止。\n\n## Token cap\n100 語以内。`,
       nsAgentOpts({ agentType: 'dev-runner', schema: ISSUE_CREATED, label: 'backlog-append', phase: 'File' }),
     )
     if (res?.created) backlogAdded = newLosers.length
