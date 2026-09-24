@@ -110,6 +110,10 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   `dev-implement-fable` も frontmatter（opus / high）で spawn する（complex の盲検 replay で fable-high と品質同等・
   所要時間とコストが約 −45% だったため）。override は green-fix の `model: 'sonnet'` だけ
   （call site 別の挙動は `_lib/impl-model-opus.test.mjs` が pin）。
+  pr-iterate の fix（`fix#i` / `fix#i-retry`）は `dev-runner`（frontmatter sonnet）に `model: 'opus'` を渡す
+  （reviewer 指摘は設計判断を伴う修正が中心で、sonnet は maxTurns 50 内に終わらず fix_failed になりやすい。
+  失敗 6 ケースの盲検 replay で opus は完走 5/6 対 3/6・品質同等以上だった。frontmatter は analyze-clarify /
+  dev-improve と共用なので変えない。`_lib/priterate-fix-null-retry.test.mjs` が pin）。
   ほかに `opts.model` を渡す call site は dev-improve.js の `rank-judge`（improve-miner）のみで、
   `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を dev-improve.js へ inline 生成して渡す。
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。

@@ -30,6 +30,7 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
   let ciRound = 0; // CI チェック呼び出し回数
   let fixCallIndex = 0; // fix agent 呼び出し回数（retry を含む）
   const fixCalls = []; // fix agent 呼び出しの label を記録（例: ['fix#1', 'fix#1-retry']）
+  const fixOpts = []; // fix agent 呼び出しの opts（label / agentType / model）を呼び出し順に記録
 
   const agentStub = async (prompt, opts) => {
     const label = opts?.label ?? '';
@@ -51,6 +52,7 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
     // fix stub: label が 'fix#' で始まる（初回呼び出しも retry 呼び出しも同じ接頭辞にマッチする）
     if (label.startsWith('fix#')) {
       fixCalls.push(label);
+      fixOpts.push({ label, agentType, model: opts?.model });
       const idx = fixCallIndex;
       fixCallIndex += 1;
       if (idx < fixSequence.length) return fixSequence[idx];
@@ -100,7 +102,7 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
     Date,
   };
 
-  return { ctx: vm.createContext(sandbox), fixCalls };
+  return { ctx: vm.createContext(sandbox), fixCalls, fixOpts };
 }
 
 /**
@@ -227,4 +229,31 @@ test('[fix-null-retry] (4) CI-failed分岐: fix null → retry成功 → lgtm, f
   assert.equal(result?.status, 'lgtm', `status は lgtm であるべきだが '${result?.status}' だった`);
   assert.deepEqual(fixCalls, ['fix#1', 'fix#1-retry'], `fix agent は 2 回（初回+retry）呼ばれるべきだが ${JSON.stringify(fixCalls)} だった`);
   assert.equal(result?.fix_null_retries, 1, `fix_null_retries は 1 であるべきだが ${result?.fix_null_retries} だった`);
+});
+
+// (model) fix#i と fix#i-retry は dev-runner frontmatter（sonnet）を上書きして model:'opus' で起動する。
+// frontmatter は analyze-clarify / dev-improve と共用なので sonnet のまま据え置く。
+test('[fix-null-retry] (model) fix#1 / fix#1-retry は model:opus を明示し、dev-runner frontmatter は sonnet のまま', async () => {
+  const { ctx, fixOpts } = makeSandbox({
+    reviewerStub: (round) =>
+      round === 1
+        ? { decision: 'request-changes', issues: [{ severity: 'major', topic: 't1', description: 'd', suggestion: 's' }], summary: 'ng' }
+        : { decision: 'approve', issues: [], summary: 'ok' },
+    fixSequence: [null, { applied: true, summary: 'fixed' }],
+  });
+
+  const { result, error } = await runPrIterate(src, ctx);
+  assertNoCrash(error);
+  assert.equal(result?.status, 'lgtm', `status は lgtm であるべきだが '${result?.status}' だった`);
+  assert.deepEqual(
+    fixOpts,
+    [
+      { label: 'fix#1', agentType: 'dev-flow:dev-runner', model: 'opus' },
+      { label: 'fix#1-retry', agentType: 'dev-flow:dev-runner', model: 'opus' },
+    ],
+    `fix agent の opts が想定と違う: ${JSON.stringify(fixOpts)}`,
+  );
+
+  const frontmatter = readFileSync(join(repoRoot, 'agents/dev-runner.md'), 'utf8').split('\n---')[0];
+  assert.match(frontmatter, /^model: sonnet$/m, 'dev-runner の frontmatter 既定 model は sonnet のまま据え置く');
 });
