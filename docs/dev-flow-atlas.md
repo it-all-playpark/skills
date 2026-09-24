@@ -429,7 +429,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | agent | 役割 | model / effort |
 | --- | --- | --- |
 | `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | opus / high |
-| `evaluator` | 実装品質ゲート | opus / high |
+| `evaluator` | 実装品質ゲート | opus / medium |
 | `pr-reviewer` | PR レビュー | opus / high |
 | `dev-runner` | Skill 呼び出し（analyze ゲート（Setup 末尾）後の missing_context 生成のみ。通常経路では起動しない） | frontmatter / high |
 | `dev-runner-haiku` | 書き込み・Skill 呼び出しを伴う exec-proxy | haiku / low |
@@ -441,10 +441,10 @@ model は subagent の frontmatter で決める。dev-flow / pr-iterate の call
 dev-improve の `rank-judge` のみで、`plugins/dev-flow/_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を
 `tools/sync-inlines.mjs` が dev-improve.js へ inline 生成する。
 
-effort は subagent の frontmatter で固定している。harness 同梱の `workflow-authoring` リファレンスは
-`agent()` の opts に `effort` を記載しているが、**本 harness で実際に適用されるかは未検証**である
-（受理と適用は別物で、effort は subagent 側から観測できない）。`dev-flow-canary` の
-`agent_opts_effort_accepted` probe で受理可否だけを測り、その結果を根拠に再判定する。
+effort は原則 subagent の frontmatter で決める。`agent()` の `opts.effort` は frontmatter より優先して
+実効値に反映される（transcript で確認済み。`dev-flow-canary` の `agent_opts_effort_accepted` probe は
+受理可否だけを測る）。opts で effort を渡すのは pr-iterate の fix（`fix#i` / `fix#i-retry`）のみで、
+`dev-runner`（frontmatter high）を `FIX_EFFORT = 'medium'` で起動する。
 
 ---
 

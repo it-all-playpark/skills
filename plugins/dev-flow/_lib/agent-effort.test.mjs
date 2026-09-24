@@ -70,7 +70,7 @@ function frontmatterTools(src) {
 
 // Table-driven: expected effort for each of the 6 dev-flow agents
 const EXPECTED = {
-  'evaluator': 'high',
+  'evaluator': 'medium',
   'pr-reviewer': 'high',
   'dev-implement-fable': 'high',
   'dev-runner': 'high',
@@ -88,6 +88,26 @@ for (const [name, want] of Object.entries(EXPECTED)) {
     );
   });
 }
+
+// Static pin (issue #725): the only agent() call sites that override effort via opts are pr-iterate's
+// fix#i / fix#i-retry (FIX_EFFORT = 'medium'). Every other agent keeps its frontmatter effort, so no
+// other non-comment line in dev-flow.js / pr-iterate.js / dev-improve.js may pass `effort:`.
+test('[agent-effort][opts-pin] only pr-iterate fix#i / fix#i-retry pass effort (FIX_EFFORT = medium) via agent opts', () => {
+  const workflowsDir = join(repoRoot, '.claude', 'workflows');
+  const effortLines = (file) =>
+    readFileSync(join(workflowsDir, file), 'utf8')
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && /\beffort:/.test(l));
+  assert.deepEqual(effortLines('dev-flow.js'), [], 'dev-flow.js の agent() call site は effort を渡さない');
+  assert.deepEqual(effortLines('dev-improve.js'), [], 'dev-improve.js の agent() call site は effort を渡さない');
+
+  const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
+  assert.match(prIterateSrc, /^const FIX_EFFORT = 'medium'$/m, "pr-iterate.js の FIX_EFFORT は 'medium'");
+  const prLines = effortLines('pr-iterate.js');
+  assert.equal(prLines.length, 2, `pr-iterate.js で effort を渡すのは fix#i / fix#i-retry の 2 箇所のみ: ${JSON.stringify(prLines)}`);
+  assert.ok(prLines[0].includes('label: `fix#${i}`,') && prLines[0].includes('effort: FIX_EFFORT'), `fix#i が FIX_EFFORT を渡していない: ${prLines[0]}`);
+  assert.ok(prLines[1].includes('label: `fix#${i}-retry`') && prLines[1].includes('effort: FIX_EFFORT'), `fix#i-retry が FIX_EFFORT を渡していない: ${prLines[1]}`);
+});
 
 // Negative / self-validation test: ensure frontmatterEffort() is not inert.
 // A synthetic source with `effort: max` must return 'max', not null or something else.
