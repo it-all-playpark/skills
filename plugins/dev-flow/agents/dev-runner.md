@@ -1,9 +1,10 @@
 ---
 name: dev-runner
 description: |
-  Runs sonnet-tier dev-flow steps that wrap existing Skills or gh commands
+  Runs dev-flow steps that wrap existing Skills or gh commands
   (analyze-clarify questions, PR fix, dev-improve issue filing / body update),
-  and returns a structured result.
+  and returns a structured result. Default model is sonnet; pr-iterate spawns
+  PR fix with model opus.
   Use when: the dev-flow analyze gate needs missing_context questions via
   dev-issue-analyze, pr-iterate needs review fixes applied, or dev-improve
   needs to create / edit GitHub issues.
@@ -50,7 +51,7 @@ spawn prompt に「実行する Skill / コマンド」「作業 worktree の絶
 | 指示 | 実行 | 返す |
 |------|------|------|
 | analyze-clarify（dev-flow Setup） | `Skill: dev-issue-analyze <n> --depth comprehensive` で issue を読み、ゲート理由ごとに質問文を起こす | `{missing_context}` |
-| PR fix（pr-iterate） | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |
+| PR fix（pr-iterate、call site が `model: 'opus'` を渡す） | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |
 | issue 起票 / body 更新（dev-improve） | `gh issue create` / `gh issue edit --body-file` | `{created, number, url}` / `{posted, method, url}` |
 
 ## Boundary
