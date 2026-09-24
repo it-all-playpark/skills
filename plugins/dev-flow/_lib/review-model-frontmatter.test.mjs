@@ -1,6 +1,6 @@
 // _lib/review-model-frontmatter.test.mjs
 // dev-flow / pr-iterate の品質ゲート agent（pr-reviewer / evaluator）は model override を渡さず
-// agents/*.md の frontmatter 既定（opus / high）で spawn する — これを VM 挙動と静的検査で pin する。
+// agents/*.md の frontmatter 既定（evaluator は opus / medium、pr-reviewer は opus / high）で spawn する — これを VM 挙動と静的検査で pin する。
 // model を変える正規経路は frontmatter であり、workflow 側に定数・fallback 機構を持たない。
 // dev-implement-fable も frontmatter 既定（opus / high）で spawn し、override は green-fix の `model: 'sonnet'`
 // だけ（call site 別の挙動は impl-model-opus.test.mjs が pin）。本ファイルの静的検査は品質ゲート agent の call 行に限定する。
@@ -10,7 +10,7 @@
 //   (c) pr-iterate.js の pr-reviewer call（review#i / schema-retry）も `model` キーを持たない
 //   (d) telemetry の review_model_config / eval_model_config / impl_model_config リテラルは各 agent の frontmatter の
 //       model と一致し、journal 経路（dev-flow: 失敗 / 成功 / abort、pr-iterate: 終端 / abort）全てに載る。
-//       3 agent とも frontmatter は `model: opus` / `effort: high`
+//       3 agent とも frontmatter は `model: opus`。effort は evaluator のみ `medium`、pr-reviewer / dev-implement-fable は `high`
 //   (e) 両 workflow の evaluator / pr-reviewer の call site に `model:` が無い（静的）
 //   (f) 両 workflow に quality model 定数 / fallback 機構の残骸（QUALITY_MODEL / QUALITY_FALLBACK /
 //       nested.quality_fallback / quality_model_config / quality_model_fallback_label）が無い（静的）
@@ -104,8 +104,8 @@ test('[review-model] (d) review_model_config / eval_model_config / impl_model_co
   assert.equal(reviewerFm, 'opus', 'pr-reviewer.md frontmatter の model は opus のはず');
   assert.equal(evaluatorFm, 'opus', 'evaluator.md frontmatter の model は opus のはず');
   assert.equal(implFm, 'opus', 'dev-implement-fable.md frontmatter の model は opus のはず');
-  for (const [md, name] of [[prReviewerMd, 'pr-reviewer.md'], [evaluatorMd, 'evaluator.md'], [implementFableMd, 'dev-implement-fable.md']]) {
-    assert.equal(frontmatterField(md, name, 'effort'), 'high', `${name} frontmatter の effort は high のはず`);
+  for (const [md, name, effort] of [[prReviewerMd, 'pr-reviewer.md', 'high'], [evaluatorMd, 'evaluator.md', 'medium'], [implementFableMd, 'dev-implement-fable.md', 'high']]) {
+    assert.equal(frontmatterField(md, name, 'effort'), effort, `${name} frontmatter の effort は ${effort} のはず`);
   }
   const lines = (src, key) => src.split('\n').filter((l) => l.includes(`${key}:`));
   // dev-flow.js: 失敗 handoff（journalLogFailure）/ 成功 payload / abort handoff の 3 経路

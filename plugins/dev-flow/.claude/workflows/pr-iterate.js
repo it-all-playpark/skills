@@ -1617,10 +1617,13 @@ if (shaNow == null) log('⚠️ review#1 時点の head sha を取得できず �
 // 伴う修正が中心で、sonnet は maxTurns 50 内に終わらず null（fix_failed）になりやすい。frontmatter は
 // analyze-clarify / dev-improve と共用なので変えず、この call site だけで渡す。
 const FIX_MODEL = 'opus'
+// effort も frontmatter の high を call site で medium に下げる。opts.effort は frontmatter より優先され、
+// paired replay で medium は high と完走率・品質同等のまま所要・コストが下がった（frontmatter は共用なので変えない）。
+const FIX_EFFORT = 'medium'
 async function callFixAgent(prompt, i) {
   let fix = null
   try {
-    fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate', model: FIX_MODEL })
+    fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}`, phase: 'Iterate', model: FIX_MODEL, effort: FIX_EFFORT })
   } catch (e) {
     log(`⚠️ fix#${i} が例外を投げた（StructuredOutput 契約違反等）: ${e?.message ?? e}`)
   }
@@ -1630,7 +1633,7 @@ async function callFixAgent(prompt, i) {
     fixNullRetries++
     log(`⚠️ fix#${i} が null（schema 不一致/技術的失敗）— 同一 findings で 1 回だけ再試行する（fix-null-retry）`)
     try {
-      fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}-retry`, phase: 'Iterate', model: FIX_MODEL })
+      fix = await trackedAgent(prompt, { agentType: 'dev-runner', schema: FIX, label: `fix#${i}-retry`, phase: 'Iterate', model: FIX_MODEL, effort: FIX_EFFORT })
     } catch (e) {
       log(`⚠️ fix#${i}-retry も例外: ${e?.message ?? e}`)
     }

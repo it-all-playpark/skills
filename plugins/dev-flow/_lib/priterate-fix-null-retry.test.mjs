@@ -23,6 +23,7 @@ const prIteratePath = join(repoRoot, '.claude/workflows/pr-iterate.js');
  *                                        （省略時は常に { status: 'passed', failed_checks: [] }）
  * @param {Array}    [opts.fixSequence] - fix agent（'fix#' で始まる label）呼び出し順の返り値配列。
  *                                        呼び出し回数が配列長を超えたら { applied: true, summary: 'fixed' } を返す。
+ *                                        要素が Error なら返さずに throw する（StructuredOutput 契約違反の模擬）。
  * @returns {{ ctx: vm.Context, fixCalls: string[] }} fixCalls は fix agent 呼び出しの label を呼び出し順に記録した配列
  */
 function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
@@ -30,7 +31,7 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
   let ciRound = 0; // CI チェック呼び出し回数
   let fixCallIndex = 0; // fix agent 呼び出し回数（retry を含む）
   const fixCalls = []; // fix agent 呼び出しの label を記録（例: ['fix#1', 'fix#1-retry']）
-  const fixOpts = []; // fix agent 呼び出しの opts（label / agentType / model）を呼び出し順に記録
+  const fixOpts = []; // fix agent 呼び出しの opts（label / agentType / model / effort）を呼び出し順に記録
 
   const agentStub = async (prompt, opts) => {
     const label = opts?.label ?? '';
@@ -52,9 +53,10 @@ function makeSandbox({ reviewerStub, ciStub, fixSequence = [] }) {
     // fix stub: label が 'fix#' で始まる（初回呼び出しも retry 呼び出しも同じ接頭辞にマッチする）
     if (label.startsWith('fix#')) {
       fixCalls.push(label);
-      fixOpts.push({ label, agentType, model: opts?.model });
+      fixOpts.push({ label, agentType, model: opts?.model, effort: opts?.effort });
       const idx = fixCallIndex;
       fixCallIndex += 1;
+      if (idx < fixSequence.length && fixSequence[idx] instanceof Error) throw fixSequence[idx];
       if (idx < fixSequence.length) return fixSequence[idx];
       return { applied: true, summary: 'fixed' };
     }
@@ -231,29 +233,42 @@ test('[fix-null-retry] (4) CI-failed分岐: fix null → retry成功 → lgtm, f
   assert.equal(result?.fix_null_retries, 1, `fix_null_retries は 1 であるべきだが ${result?.fix_null_retries} だった`);
 });
 
-// (model) fix#i と fix#i-retry は dev-runner frontmatter（sonnet）を上書きして model:'opus' で起動する。
-// frontmatter は analyze-clarify / dev-improve と共用なので sonnet のまま据え置く。
-test('[fix-null-retry] (model) fix#1 / fix#1-retry は model:opus を明示し、dev-runner frontmatter は sonnet のまま', async () => {
+// (model) fix#i と fix#i-retry は dev-runner frontmatter（sonnet / high）を上書きして model:'opus' / effort:'medium' で起動する。
+// frontmatter は analyze-clarify / dev-improve と共用なので sonnet / high のまま据え置く。
+const FIX_REVIEWER_STUB = (round) =>
+  round === 1
+    ? { decision: 'request-changes', issues: [{ severity: 'major', topic: 't1', description: 'd', suggestion: 's' }], summary: 'ng' }
+    : { decision: 'approve', issues: [], summary: 'ok' };
+const EXPECTED_FIX_OPTS = [
+  { label: 'fix#1', agentType: 'dev-flow:dev-runner', model: 'opus', effort: 'medium' },
+  { label: 'fix#1-retry', agentType: 'dev-flow:dev-runner', model: 'opus', effort: 'medium' },
+];
+
+test('[fix-null-retry] (model) fix#1 / fix#1-retry は model:opus / effort:medium を明示し、dev-runner frontmatter は sonnet / high のまま', async () => {
   const { ctx, fixOpts } = makeSandbox({
-    reviewerStub: (round) =>
-      round === 1
-        ? { decision: 'request-changes', issues: [{ severity: 'major', topic: 't1', description: 'd', suggestion: 's' }], summary: 'ng' }
-        : { decision: 'approve', issues: [], summary: 'ok' },
+    reviewerStub: FIX_REVIEWER_STUB,
     fixSequence: [null, { applied: true, summary: 'fixed' }],
   });
 
   const { result, error } = await runPrIterate(src, ctx);
   assertNoCrash(error);
   assert.equal(result?.status, 'lgtm', `status は lgtm であるべきだが '${result?.status}' だった`);
-  assert.deepEqual(
-    fixOpts,
-    [
-      { label: 'fix#1', agentType: 'dev-flow:dev-runner', model: 'opus' },
-      { label: 'fix#1-retry', agentType: 'dev-flow:dev-runner', model: 'opus' },
-    ],
-    `fix agent の opts が想定と違う: ${JSON.stringify(fixOpts)}`,
-  );
+  assert.deepEqual(fixOpts, EXPECTED_FIX_OPTS, `fix agent の opts が想定と違う: ${JSON.stringify(fixOpts)}`);
 
   const frontmatter = readFileSync(join(repoRoot, 'agents/dev-runner.md'), 'utf8').split('\n---')[0];
   assert.match(frontmatter, /^model: sonnet$/m, 'dev-runner の frontmatter 既定 model は sonnet のまま据え置く');
+  assert.match(frontmatter, /^effort: high$/m, 'dev-runner の frontmatter 既定 effort は high のまま据え置く');
+});
+
+// (model) fix#1 が StructuredOutput 契約違反で throw した場合の fix#1-retry も model:opus / effort:medium で起動する。
+test('[fix-null-retry] (model) 契約違反 throw 時の fix#1-retry も model:opus / effort:medium を明示する', async () => {
+  const { ctx, fixOpts } = makeSandbox({
+    reviewerStub: FIX_REVIEWER_STUB,
+    fixSequence: [new Error('agent finished without calling StructuredOutput'), { applied: true, summary: 'fixed' }],
+  });
+
+  const { result, error } = await runPrIterate(src, ctx);
+  assertNoCrash(error);
+  assert.equal(result?.status, 'lgtm', `status は lgtm であるべきだが '${result?.status}' だった`);
+  assert.deepEqual(fixOpts, EXPECTED_FIX_OPTS, `fix agent の opts が想定と違う: ${JSON.stringify(fixOpts)}`);
 });

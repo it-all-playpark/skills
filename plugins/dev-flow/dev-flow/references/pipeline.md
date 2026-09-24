@@ -100,26 +100,33 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   pr-iterate.js / dev-improve.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
 - **判断系 leaf は subagent** (`.claude/agents/{dev-implement-fable,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
-  workflow の `agent()` opts には effort が記載されているが、本 harness での適用可否は未検証（dev-flow-canary の opts 受理 probe — capability id `agent_opts_effort_accepted` — で再判定する。probe は受理されたことしか判定できない）。それまで effort は subagent frontmatter で固定する。
+  effort は原則 subagent frontmatter で決める。`agent()` の `opts.effort` は frontmatter より優先して実効値に反映される
+  （transcript で確認済み。dev-flow-canary の `agent_opts_effort_accepted` probe は受理の有無だけを見る）が、
+  opts で effort を渡すのは pr-iterate の fix（`fix#i` / `fix#i-retry`、`FIX_EFFORT = 'medium'`）のみ
+  （`_lib/agent-effort.test.mjs` が pin）。
   model は subagent frontmatter で決める。品質ゲート agent の call site は `opts.model` を渡さない —
   evaluator（`eval#i` / `final-ac-reconcile` / `security-clearance-final`）と pr-reviewer（`review#i` /
-  schema-retry / `pr-review-lite`）はともに frontmatter（opus / high）で spawn し、workflow 側に model 定数・
+  schema-retry / `pr-review-lite`）はともに frontmatter（evaluator は opus / medium、pr-reviewer は opus / high）で spawn し、workflow 側に model 定数・
   null 時の model fallback 機構は持たない（`_lib/review-model-frontmatter.test.mjs` が call site と telemetry
   `eval_model_config` / `review_model_config` / `impl_model_config` = frontmatter 値の一致を pin）。同一入力での paired 比較で
   opus-high は fable-high と verdict・major 検出が同等以上かつコストが 2/3 だったため、両 gate とも override を外している。
   `dev-implement-fable` も frontmatter（opus / high）で spawn する（complex の盲検 replay で fable-high と品質同等・
   所要時間とコストが約 −45% だったため）。override は green-fix の `model: 'sonnet'` だけ
   （call site 別の挙動は `_lib/impl-model-opus.test.mjs` が pin）。
-  pr-iterate の fix（`fix#i` / `fix#i-retry`）は `dev-runner`（frontmatter sonnet）に `model: 'opus'` を渡す
+  pr-iterate の fix（`fix#i` / `fix#i-retry`）は `dev-runner`（frontmatter sonnet / high）に `model: 'opus'` と
+  `effort: 'medium'` を渡す
   （reviewer 指摘は設計判断を伴う修正が中心で、sonnet は maxTurns 50 内に終わらず fix_failed になりやすい。
-  失敗 6 ケースの盲検 replay で opus は完走 5/6 対 3/6・品質同等以上だった。frontmatter は analyze-clarify /
+  失敗 6 ケースの盲検 replay で opus は完走 5/6 対 3/6・品質同等以上だった。effort は paired replay で high と
+  完走率・品質同等のまま所要・コストが下がった。frontmatter は analyze-clarify /
   dev-improve と共用なので変えない。`_lib/priterate-fix-null-retry.test.mjs` が pin）。
   ほかに `opts.model` を渡す call site は dev-improve.js の `rank-judge`（improve-miner）のみで、
   `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を dev-improve.js へ inline 生成して渡す。
   `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。
-  品質ゲート系 2 agent は `effort: high`（max と精度同等で高速）、dev-implement-fable / dev-runner は
+  pr-reviewer は `effort: high`（max と精度同等で高速。medium は major を minor に下げ decision が甘くなる）、
+  evaluator は `effort: medium`（paired replay で high と verdict・major/critical 検出が同等のまま所要・コストが下がる）、
+  dev-implement-fable / dev-runner は
   `effort: high`、dev-runner-haiku / dev-runner-haiku-ro は `effort: low`（mechanical exec-proxy は
   low が high に schema 成功率で劣後しない）。
 - **1 issue = 1 PR**。Implement は全 shape で `dev-implement-fable` を単一 worktree に 1 spawn する（parallel fan-out / `pipeline()` は持たない）。
