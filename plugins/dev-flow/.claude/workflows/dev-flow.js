@@ -5540,8 +5540,12 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `cd 前置（\`cd X && script\`）・\`bash script\` 前置・環境変数代入（\`VAR=x script\`）等の前置は禁止`
   + `（理由: 先頭トークン一致で sandbox 除外が外れるため）。`
   + `実行可能な test スクリプトが repo に無い場合のみ npm test / pytest / cargo test 等へフォールバックせよ。\n`
-  + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな: そのスクリプトは bare 形の実行経路を 1 回だけ試し、`
-  + `それでも失敗するなら起動失敗として記録して残りのスクリプトへ進め。全対象を実行し終えたら StructuredOutput で報告せよ。報告時の tests / green の値は次の 3 分岐で決める:\n`
+  + `EPERM / permission denied 等の起動失敗が出た場合は原因調査をするな。この起動失敗ルールは tests/run-*.sh とフォールバック（npm test / pnpm test / pytest / cargo test 等）の両経路に適用する: `
+  + `tests/run-*.sh は bare 形の実行経路を 1 回だけ試し、それでも失敗するなら起動失敗として記録して残りのスクリプトへ進め。`
+  + `フォールバックの test コマンドも 1 回だけ実行し、起動失敗ならそれ以上試さず起動失敗として記録せよ（下記の起動失敗の分岐で即報告する）。`
+  + `起動失敗時は次をすべて禁止する: 環境変数前置（PNPM_HOME=... 等）での実行・別のパッケージマネージャ / test runner への切替（pnpm → npm 等）・`
+  + `ロック / キャッシュ / store の削除や移動・同一コマンドの再試行`
+  + `（理由: 起動失敗は環境要因でこれらでは直らず、共有の store / ロックを壊すため）。全対象を実行し終えたら StructuredOutput で報告せよ。報告時の tests / green の値は次の 3 分岐で決める:\n`
   + `- 実行したすべてのスクリプトが green → tests:"passed"、green:true（green:true はこの分岐でのみ返せ）\n`
   + `- 実行されたテストが 1 件以上失敗したスクリプトが 1 本でもある → tests:"failed"、green:false、失敗したスクリプトごとの要約を summary に入れる\n`
   + `- 失敗したテストは無いが、1 本以上のスクリプトが起動失敗した（全本起動失敗も一部だけ起動失敗も含む。EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、起動失敗したスクリプト名と失敗要約を summary に入れる\n`
