@@ -105,11 +105,14 @@ flowchart TD
 analyze ゲートは Workflow 内では純関数の検証と 3 条件ゲートだけで、ゲート自体の spawn は 0。
 issue を LLM が転写する工程が無いので provenance 突合・comment_count 突合・scope 切断時の
 再実行も無い。決定論で解けない 2 理由だけを prerun が Jev（有界判定モデル、`_shared/scripts/jev-classify.sh`）に回す:
-breaking keyword hit は noul（p ≥ 0.9 で `breaking_change=true`、p ≤ 0.1 で false、それ以外は
-`uncertain`）、comments present は comment ごとに choice `{override, conflict, unrelated}`
-（override かつ権限あり = issue 報告者本人 or OWNER/MEMBER/COLLABORATOR → `comment_overrides`、
-override だが権限なし / conflict / 低確信 → `comment_conflicts`）。Jev の応答なし・
-`DEVFLOW_JEV_DISABLE=1` は `uncertain` に倒す（fail-closed）。ゲートが引いたときだけ sonnet を
+breaking keyword hit は noul 2 問（後方互換を保たない API / 形式の変更か・既存データの変換を要するか。
+古い値を読み込み時に捨てるだけなら両方 no。どちらかが p ≥ 0.9 で `breaking_change=true`、両方 p ≤ 0.1 で
+false、それ以外は `uncertain`）、comments present は comment ごとに choice
+`{override, conflict, resolved, unrelated}`（state に issue の updated_at と最新 comment の created_at を載せる。
+override かつ権限あり = issue 報告者本人 or OWNER/MEMBER/COLLABORATOR → `comment_overrides`、
+override だが権限なし / conflict / 低確信 → `comment_conflicts`、本文で決着済みの resolved は無視）。Jev の応答なし・
+`DEVFLOW_JEV_DISABLE=1` は `uncertain` に倒す（fail-closed。応答なしは jev-classify の `--reason-file` が返す
+原因 — 鍵なし / Keychain ロック / Keychain 読み取り失敗 / タイムアウト / 通信失敗 / 応答不正 — を文言に載せる）。ゲートが引いたときだけ sonnet を
 1 spawn して人間向けの質問文を作る。telemetry の `analyze_path` は `contract` / `jev` /
 `sonnet`（ゲート後のみ）の 3 値。
 

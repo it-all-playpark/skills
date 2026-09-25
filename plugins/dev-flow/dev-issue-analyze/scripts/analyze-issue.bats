@@ -500,8 +500,8 @@ some code
 
 # ---------------------------------------------------------------------------
 # (z2) the script calls gh itself with the issue number, --repo and the full
-#      --json field list (comments + author included: the comments guard and
-#      issue_author depend on them)
+#      --json field list (comments + author + updatedAt included: the comments
+#      guard, issue_author and issue_updated_at depend on them)
 # ---------------------------------------------------------------------------
 @test "gh stub receives issue number, --repo and the --json field list" {
     FIXTURE="$FIXTURE_DIR/z2.json"
@@ -510,7 +510,7 @@ some code
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.issue_number == 32 and .title == "Add a button"'
     GH_LINE=$(grep "issue view" "$GH_LOG" || true)
-    [ "$GH_LINE" = "issue view 32 --repo acme/skills --json body,title,labels,assignees,milestone,state,comments,author" ]
+    [ "$GH_LINE" = "issue view 32 --repo acme/skills --json body,title,labels,assignees,milestone,state,comments,author,updatedAt" ]
     # exactly one fetch per run
     [ "$(wc -l < "$GH_LOG" | tr -d ' ')" -eq 1 ]
 }
@@ -524,7 +524,7 @@ some code
     run analyze "$FIXTURE" 33 --depth minimal
     [ "$status" -eq 0 ]
     GH_LINE=$(grep "issue view" "$GH_LOG" || true)
-    [ "$GH_LINE" = "issue view 33 --json body,title,labels,assignees,milestone,state,comments,author" ]
+    [ "$GH_LINE" = "issue view 33 --json body,title,labels,assignees,milestone,state,comments,author,updatedAt" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -652,6 +652,29 @@ some code
     run analyze "$FIXTURE2" 36 --contract
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.title_breaking_marker == false and .issue_author == "" and .comments == []'
+}
+
+# ---------------------------------------------------------------------------
+# (aa1c) contract mode carries the issue updatedAt as issue_updated_at (issue #728):
+#        prerun-analyze.sh compares it with the latest comment createdAt so Jev can
+#        tell "issue was updated after the comment". Missing key -> "".
+# ---------------------------------------------------------------------------
+@test "contract mode: issue_updated_at mirrors gh updatedAt (missing -> \"\") (issue #728)" {
+    FIXTURE="$FIXTURE_DIR/contract-updated-at.json"
+    make_fixture "$FIXTURE" "feat: add button" "## Acceptance Criteria
+
+- [ ] item one"
+    jq '. + {updatedAt: "2026-09-25T01:02:03Z"}' "$FIXTURE" >"$FIXTURE.tmp" && mv "$FIXTURE.tmp" "$FIXTURE"
+    run analyze "$FIXTURE" 37 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.issue_updated_at == "2026-09-25T01:02:03Z"'
+    FIXTURE2="$FIXTURE_DIR/contract-updated-at-missing.json"
+    make_fixture "$FIXTURE2" "feat: add button" "## Acceptance Criteria
+
+- [ ] item one"
+    run analyze "$FIXTURE2" 38 --contract
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.issue_updated_at == ""'
 }
 
 # ---------------------------------------------------------------------------

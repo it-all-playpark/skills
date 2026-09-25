@@ -56,7 +56,7 @@ done
 # `comments` guard below (a missing "comments" key is treated as a fetch-contract
 # violation, not as "no comments"), so keep `comments` and `author` in it.
 require_cmd "gh" "GitHub CLI (gh) not installed. Install: brew install gh"
-GH_JSON_FIELDS="body,title,labels,assignees,milestone,state,comments,author"
+GH_JSON_FIELDS="body,title,labels,assignees,milestone,state,comments,author,updatedAt"
 GH_ARGS=(issue view "$ISSUE_NUMBER")
 [[ -n "$REPO" ]] && GH_ARGS+=(--repo "$REPO")
 GH_ARGS+=(--json "$GH_JSON_FIELDS")
@@ -86,6 +86,11 @@ MILESTONE=$(echo "$ISSUE_JSON" | jq -r '.milestone.title // null')
 # must stay a string so the consumer compares login-to-login and never conflates
 # "unknown reporter" with a JSON null of some other origin.
 ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.author.login // ""')
+# Issue updatedAt (body edit / comment / label change のいずれかの最終時刻。gh の issue
+# JSON に本文だけの編集時刻は無い)。prerun-analyze.sh が comment 判定の state に
+# 最新 comment の createdAt と並べて載せ、「comment の後に issue が更新された」前後関係を
+# Jev に渡す (issue #728)。
+ISSUE_UPDATED_AT=$(echo "$ISSUE_JSON" | jq -r '.updatedAt // ""')
 
 # Fail closed when the fetched issue JSON has no well-typed "comments" array. This is
 # NOT the same case as "issue has zero comments" — gh's `--json ...,comments` always
@@ -403,6 +408,7 @@ run_contract_mode() {
         --argjson ac_heading_near_miss "$NEAR_MISS_JSON" \
         --argjson title_breaking_marker "$title_bang" \
         --arg issue_author "$ISSUE_AUTHOR" \
+        --arg issue_updated_at "$ISSUE_UPDATED_AT" \
         --argjson comments "$COMMENTS_JSON" \
         '
         {
@@ -421,6 +427,7 @@ run_contract_mode() {
           title_breaking_marker: $title_breaking_marker,
           comment_count: $comment_count,
           issue_author: $issue_author,
+          issue_updated_at: $issue_updated_at,
           comments: $comments,
           ac_heading_near_miss: $ac_heading_near_miss
         }

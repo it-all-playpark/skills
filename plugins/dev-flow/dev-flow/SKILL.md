@@ -45,7 +45,11 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    `analyze.ok:false` + `reason` を返し、`dev-flow-run` が needs_clarification（source=analyze_prerun）で
    人間へ返す。private repo 等で issue 本文を Jev（外部 API）に送りたくない場合は
    `DEVFLOW_JEV_DISABLE=1` を prerun の環境に置く（Jev 判定が要る issue は uncertain として
-   needs_clarification に倒れる）。
+   needs_clarification に倒れる）。Jev の API 鍵は macOS Keychain から読むため、Keychain に届かない
+   実行環境（Claude の Bash など）やロック中の Keychain では Jev 判定が行われず、該当判定は uncertain に
+   なる。その文言には原因（Keychain から API 鍵を読めない / Keychain がロック中 / API 鍵が無い /
+   タイムアウト / 通信失敗 / 応答不正）と exit code が載る。wrapper は鍵の取得経路を探さず、
+   needs_clarification をそのまま人間へ返す（Keychain のロック解除や実行環境の調整は人間が判断する）。
 
    結果に応じて分岐する:
 

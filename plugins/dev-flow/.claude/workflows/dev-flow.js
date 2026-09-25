@@ -5564,7 +5564,8 @@ const UI_VERIFY_CONFIG_PROMPT = `cd ${WT} で作業。${WT}/skill-config.json �
 const clarifyPrompt = (gateReasons) => `cd ${WT} で作業。issue #${ISSUE} は決定論の analyze（analyze-issue --contract + Jev 有界判定）で次の理由により実装に進めないと判定された。\n`
   + `\`Skill: dev-issue-analyze ${ISSUE}${REPO ? ' --repo ' + REPO : ''} --depth comprehensive\` を実行して issue の本文・comments を読み、`
   + `各理由について**人間（issue 作成者）が issue body を直せば解消する具体的な質問文**を missing_context:string[] として返せ（理由 1 件につき 1〜2 文、日本語）。`
-  + `質問には「body のどの記述と comment のどの記述が食い違うか」「非互換変更 / migration の有無をどこに明記すべきか」「受け入れ基準をどの見出し形式で書くか」を含めよ。`
+  + `質問には「body のどの記述と comment のどの記述が食い違うか」「後方互換を保たない API / 形式の変更の有無と既存データの変換の要否をどこに明記すべきか」「受け入れ基準をどの見出し形式で書くか」を含めよ。`
+  + `質問文にも記入例にも breaking / incompatible / migration / 破壊的 / 非互換 の語を使うな（人間が body にその語を書くと analyze-issue のキーワード判定が再び Jev 判定を要求する）。`
   + `要件・受け入れ基準を自分で推測して埋めるな。issue の再取得は Skill 経由の 1 回のみ。\n`
   + `ゲート理由（決定論。verbatim で参照し、削除・要約するな）:\n${JSON.stringify(gateReasons)}\n`
   + EPOCH_INSTRUCTION

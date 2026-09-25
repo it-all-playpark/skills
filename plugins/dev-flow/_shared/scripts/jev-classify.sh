@@ -10,7 +10,8 @@
 #   Jev は文章を生成せず、各選択肢の較正済み確率を返す。呼び出し側は確率を閾値で
 #   切って決定論に落とし、低確信は fail-closed（uncertain）側へ倒す。
 #   dev-flow では prerun（dev-flow-prerun → prerun-analyze.sh）が issue の breaking 判定と
-#   comment の override/conflict 判定に使う。呼び出しは常に `--redact` 付き。
+#   comment の override/conflict/resolved 判定に使う。呼び出しは常に `--redact` と
+#   `--reason-file` 付き。
 #
 # 経路:
 #   Vercel AI Gateway の TypeSafe 互換エンドポイントを curl で直叩きする。
@@ -29,6 +30,10 @@
 #     --redact     送信前に state から token / password / api-key 系の値、
 #                  URL 埋め込み credential（://user:pass@）、既知の鍵プレフィックス
 #                  （vck_ ghp_ sk- AKIA 等）を伏せる
+#     --reason-file <path>
+#                  失敗時にその理由を 1 行で書き出す（成功時は書かない）。呼び出し側が
+#                  「応答なし」を原因別（no API key / keychain locked / keychain read failed /
+#                  timeout / request failed / bad response 等）に人間へ示すためのもの
 #   stdout: API レスポンス JSON（.answers.<id> に結果）。失敗時は空
 #   exit:   常に 0（fail-open。hook の本処理を止めない）
 #
@@ -38,6 +43,9 @@
 #      登録: security add-generic-password -s vercel-ai-gateway -a claude-hooks -w 'vck_…'
 #   Claude の Bash ツール環境に鍵を露出させないため、env ではなく Keychain を主とする
 #   （hook は sandbox / permissions の外で走るので security コマンドが使える）。
+#   Claude の Bash（sandbox 内）から呼ぶと Keychain に届かず鍵が取れないことがある。
+#   security の失敗は exit code ごとに --reason-file へ載せる（36 = errSecInteractionNotAllowed:
+#   keychain がロック中、44 = item が無い、それ以外 = 読み取り失敗）。
 #
 # 環境変数:
 #   JEV_DISABLE=1            何もせず exit 0（kill switch）
@@ -62,14 +70,24 @@ debug() {
   fi
 }
 
-if [[ ${JEV_DISABLE:-0} == "1" ]]; then
-  debug "disabled via JEV_DISABLE"
-  exit 0
-fi
-
 QUESTIONS=""
 MAX_TIME="${JEV_MAX_TIME:-2}"
 REDACT=0
+REASON_FILE=""
+
+# fail <reason>: 理由を debug と --reason-file に出して fail-open で終わる
+fail() {
+  debug "$1"
+  if [[ -n $REASON_FILE ]]; then
+    printf '%s\n' "$1" >"$REASON_FILE" 2>/dev/null || true
+  fi
+  exit 0
+}
+
+# 1 行に畳んで先頭 200 文字だけ残す（reason に応答本文の断片を載せる）
+oneline() {
+  printf '%s' "$1" | tr '\n\r' '  ' | cut -c1-200
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -85,33 +103,48 @@ while [[ $# -gt 0 ]]; do
     REDACT=1
     shift
     ;;
+  --reason-file)
+    REASON_FILE="$2"
+    shift 2
+    ;;
   *)
-    debug "unknown option: $1"
-    exit 0
+    fail "unknown option: $1"
     ;;
   esac
 done
 
+if [[ ${JEV_DISABLE:-0} == "1" ]]; then
+  fail "disabled via JEV_DISABLE"
+fi
+
 if [[ -z $QUESTIONS ]] || ! echo "$QUESTIONS" | jq -e 'type == "object" and length > 0' >/dev/null 2>&1; then
-  debug "--questions must be a non-empty JSON object"
-  exit 0
+  fail "--questions must be a non-empty JSON object"
 fi
 
 for dep in curl jq; do
   if ! command -v "$dep" >/dev/null 2>&1; then
-    debug "missing dependency: $dep"
-    exit 0
+    fail "missing dependency: $dep"
   fi
 done
 
 # --- 鍵 ---
+KEYCHAIN_SERVICE="${JEV_KEYCHAIN_SERVICE:-vercel-ai-gateway}"
 API_KEY="${AI_GATEWAY_API_KEY:-}"
-if [[ -z $API_KEY ]] && command -v security >/dev/null 2>&1; then
-  API_KEY=$(security find-generic-password -s "${JEV_KEYCHAIN_SERVICE:-vercel-ai-gateway}" -w 2>/dev/null || true)
+if [[ -z $API_KEY ]]; then
+  if ! command -v security >/dev/null 2>&1; then
+    fail "no API key (AI_GATEWAY_API_KEY unset, security command not found)"
+  fi
+  SECURITY_RC=0
+  API_KEY=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null) || SECURITY_RC=$?
+  case "$SECURITY_RC" in
+  0) ;;
+  36) fail "keychain locked (security exit 36: errSecInteractionNotAllowed)" ;;
+  44) fail "no API key (keychain item '$KEYCHAIN_SERVICE' not found: security exit 44)" ;;
+  *) fail "keychain read failed (security exit $SECURITY_RC)" ;;
+  esac
 fi
 if [[ -z $API_KEY ]]; then
-  debug "no API key (AI_GATEWAY_API_KEY or keychain '${JEV_KEYCHAIN_SERVICE:-vercel-ai-gateway}')"
-  exit 0
+  fail "no API key (AI_GATEWAY_API_KEY unset, keychain item '$KEYCHAIN_SERVICE' is empty)"
 fi
 
 # --- state ---
@@ -135,8 +168,7 @@ else
   STATE=$(head -c "${JEV_STATE_MAX_BYTES:-24000}" | jq -Rs '.' 2>/dev/null || echo '""')
 fi
 if [[ $STATE == '""' ]]; then
-  debug "empty state"
-  exit 0
+  fail "empty state"
 fi
 
 BODY=$(jq -n \
@@ -147,6 +179,7 @@ BODY=$(jq -n \
 
 # --- 呼び出し ---
 # 鍵は argv に載せず、curl の -K/--config 経由で stdin から渡す（ps で見えない）。
+CURL_RC=0
 RESPONSE=$(
   printf 'header = "Authorization: Bearer %s"\n' "$API_KEY" |
     curl -sS --fail-with-body \
@@ -155,14 +188,15 @@ RESPONSE=$(
       -H "Content-Type: application/json" \
       -d "$BODY" \
       "${JEV_API_URL:-https://ai-gateway.vercel.sh/typesafe/v1/systemone}" 2>&1
-) || {
-  debug "request failed: ${RESPONSE:0:300}"
-  exit 0
-}
+) || CURL_RC=$?
+if [[ $CURL_RC -eq 28 ]]; then
+  fail "timeout (curl exit 28, --max-time ${MAX_TIME}s)"
+elif [[ $CURL_RC -ne 0 ]]; then
+  fail "request failed (curl exit $CURL_RC): $(oneline "$RESPONSE")"
+fi
 
 if ! echo "$RESPONSE" | jq -e '.answers | type == "object"' >/dev/null 2>&1; then
-  debug "unexpected response: ${RESPONSE:0:300}"
-  exit 0
+  fail "bad response (no .answers object): $(oneline "$RESPONSE")"
 fi
 
 echo "$RESPONSE"
