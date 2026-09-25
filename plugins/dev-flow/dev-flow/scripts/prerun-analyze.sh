@@ -127,7 +127,9 @@ jev_unavailable_reason() {
     reason="$(head -n 1 "$JEV_REASON_FILE" 2>/dev/null || true)"
     case "$reason" in
         "") printf 'Jev 応答なし（応答に判定値が無い）'; return ;;
-        "keychain locked"*) label="Keychain がロック中で API 鍵を取得できない" ;;
+        "broker unreachable"*) label="jev-broker に接続できない" ;;
+        "broker request failed"*) label="jev-broker 経由の呼び出し失敗" ;;
+        "keychain unreachable"*) label="Keychain に届かない（ロック中・sandbox 内・bg job など別セッション）" ;;
         "keychain read failed"*) label="Keychain から API 鍵を読めない" ;;
         "no API key"*) label="API 鍵が無い" ;;
         "timeout"*) label="タイムアウト（DEVFLOW_JEV_MAX_TIME）" ;;

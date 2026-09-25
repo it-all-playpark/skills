@@ -36,7 +36,8 @@ setup() {
     WT="$BATS_TEST_TMPDIR/wt/df-1"
 
     # analyze 段（Segment 6）が内蔵する gh を stub する。GH_STUB_FIXTURE 未設定なら失敗
-    # （analyze.ok:false 経路）。Jev は鍵無しで呼ばれない（Keychain も存在しない service 名にする）。
+    # （analyze.ok:false 経路）。Jev は鍵無しで呼ばれない（Keychain も存在しない service 名にし、
+    # 実機の jev-broker ソケットも拾わない）。
     STUB_DIR="$BATS_TEST_TMPDIR/stub-bin"
     mkdir -p "$STUB_DIR"
     cat >"$STUB_DIR/gh" <<'STUB'
@@ -51,6 +52,7 @@ STUB
     export PATH="$STUB_DIR:$PATH"
     export AI_GATEWAY_API_KEY=""
     export JEV_KEYCHAIN_SERVICE="prerun-bats-nonexistent"
+    export JEV_BROKER_SOCKET="$BATS_TEST_TMPDIR/no-broker.sock"
     unset GH_STUB_FIXTURE
 }
 

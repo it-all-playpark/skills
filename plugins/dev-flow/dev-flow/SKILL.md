@@ -45,11 +45,14 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    `analyze.ok:false` + `reason` を返し、`dev-flow-run` が needs_clarification（source=analyze_prerun）で
    人間へ返す。private repo 等で issue 本文を Jev（外部 API）に送りたくない場合は
    `DEVFLOW_JEV_DISABLE=1` を prerun の環境に置く（Jev 判定が要る issue は uncertain として
-   needs_clarification に倒れる）。Jev の API 鍵は macOS Keychain から読むため、Keychain に届かない
-   実行環境（Claude の Bash など）やロック中の Keychain では Jev 判定が行われず、該当判定は uncertain に
-   なる。その文言には原因（Keychain から API 鍵を読めない / Keychain がロック中 / API 鍵が無い /
+   needs_clarification に倒れる）。Jev は jev-broker（dotfiles の gui ドメイン LaunchAgent。
+   `~/.local/state/jev-broker/jev.sock`）経由で呼ぶ。broker が無い環境では macOS Keychain から鍵を読むが、
+   Keychain の解除は監査セッションごとに効くので、sandbox 内の Bash と bg job からは解除済みでも届かない。
+   Jev 判定が行われないと該当判定は uncertain になり、その文言には原因（jev-broker に接続できない /
+   jev-broker 経由の失敗 / Keychain に届かない / Keychain から API 鍵を読めない / API 鍵が無い /
    タイムアウト / 通信失敗 / 応答不正）と exit code が載る。wrapper は鍵の取得経路を探さず、
-   needs_clarification をそのまま人間へ返す（Keychain のロック解除や実行環境の調整は人間が判断する）。
+   needs_clarification をそのまま人間へ返す（broker の起動や実行環境の調整は人間が判断する。
+   「Keychain に届かない」を見て Keychain のロック解除を試しても直らない）。
 
    結果に応じて分岐する:
 
