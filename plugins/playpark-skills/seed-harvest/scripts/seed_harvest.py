@@ -32,13 +32,17 @@ TOPICS_DIR = "_topics"
 STATE_FILE = ".seed-harvest-state.json"
 DEFAULT_LOOKBACK_DAYS = 30
 SEARCH_LIMIT = 1000
+# search API は 1 クエリにつき先頭 1000 件までしか返さない
+COMMIT_SEARCH_CAP = 1000
+COMMIT_PAGE_SIZE = 100
 HARD_LIMIT_BYTES = 102400  # pretool-context-guard の plain-file read 上限。slice はこれ未満に収める
 DEFAULT_MAX_KB = 80
 MAX_METRICS = 20
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 CONVENTIONAL_RE = re.compile(r"^(?P<type>[a-zA-Z]+)(?:\((?P<scope>[^)]*)\))?!?:\s*(?P<rest>.*)$")
-# ブログ記事・SNS 告知の PR（docs(blog) / assets(blog) / fix(blog) / chore(sns) 等）は scope で判定する
+# ブログ記事・SNS 告知の PR。docs(blog) / assets(blog) / chore(sns) の scope 形式と、
+# corporate-site の `blog: ...` 形式（type=blog、scope なし）の両方を除外する
 EXCLUDED_SCOPES = {"blog", "sns"}
 DEPS_SCOPES = {"deps", "deps-dev"}
 DEPS_TITLE_RE = re.compile(r"^(?:update dependency|update module|bump\s)", re.IGNORECASE)
@@ -152,7 +156,7 @@ def exclusion_reason(title: str, author: str | None) -> str | None:
     if (author or "").lower() in BOT_AUTHORS:
         return "dependency_update"
     ctype, scope, rest = split_title(stripped)
-    if scope in EXCLUDED_SCOPES:
+    if scope in EXCLUDED_SCOPES or ctype in EXCLUDED_SCOPES:
         return "blog_or_sns"
     if scope in DEPS_SCOPES or DEPS_TITLE_RE.match(rest) or DEPS_TITLE_RE.match(stripped):
         return "dependency_update"
@@ -233,17 +237,49 @@ def search_merged_prs(owners: list[str], since: str) -> list[dict[str, Any]]:
     return items
 
 
-def search_direct_commits(owners: list[str], since: str) -> list[dict[str, Any]]:
-    items = []
-    for owner in owners:
+def fetch_commit_search(owner: str, since: str) -> list[dict[str, Any]]:
+    """All commits of `owner` committed since `since`, newest first.
+
+    Pages until total_count is reached. Anything short of the full set is an error: the caller
+    then keeps lastRunAt, because a missed direct-push commit would never be picked up again.
+    """
+    items: list[dict[str, Any]] = []
+    page = 1
+    while True:
         res = run([
             "gh", "api", "-X", "GET", "search/commits",
             "-f", f"q=org:{owner} committer-date:>={since}",
-            "-f", "per_page=100",
+            "-f", "sort=committer-date",
+            "-f", "order=desc",
+            "-f", f"per_page={COMMIT_PAGE_SIZE}",
+            "-f", f"page={page}",
         ])
         if res.returncode != 0:
             raise RuntimeError(f"gh api search/commits failed: {res.stderr.strip() or 'command_failed'}")
-        for c in (json.loads(res.stdout or "{}").get("items") or []):
+        data = json.loads(res.stdout or "{}")
+        total = data.get("total_count")
+        if not isinstance(total, int):
+            raise RuntimeError(f"gh api search/commits: total_count missing (owner={owner})")
+        if total > COMMIT_SEARCH_CAP:
+            raise RuntimeError(
+                f"search/commits for {owner} since {since} has {total} commits, over the "
+                f"{COMMIT_SEARCH_CAP}-result search cap; rerun with a later --since"
+            )
+        if data.get("incomplete_results"):
+            raise RuntimeError(f"search/commits for {owner} returned incomplete_results (page {page})")
+        page_items = data.get("items") or []
+        items.extend(page_items)
+        if len(items) >= total:
+            return items
+        if not page_items:
+            raise RuntimeError(f"search/commits for {owner}: got {len(items)} of {total} commits")
+        page += 1
+
+
+def search_direct_commits(owners: list[str], since: str) -> list[dict[str, Any]]:
+    items = []
+    for owner in owners:
+        for c in fetch_commit_search(owner, since):
             message = ((c.get("commit") or {}).get("message") or "").strip()
             subject, _, body = message.partition("\n")
             ctype, _, _ = split_title(subject)
