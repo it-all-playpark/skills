@@ -77,6 +77,20 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    `args.base` は渡さない（base は `dev-flow-prerun` が解決済みで、渡すと `dev-flow-run` が
    即 throw する）。
 
+## 完了後の返り値の読み方
+
+`test_green` は Validate の最終 test 結果の `green` そのもので、テストが起動できず 0 件実行
+（`tests:'error'`）の run でも `false` になる。本物の red と区別するには次の 2 キーを併せて読む:
+
+- `validate_tests`: Validate の最終 test 状態（`'passed' | 'failed' | 'no_tests' | 'error' | null`）
+- `ci_test_verified`: 終端サマリーのテスト欄に使った CI 照合結果（`true | false | null`）。
+  Validate が `'error'` かつ Final reconcile が skipped の run だけ、PR head sha に pin した CI check を読んで決まる
+
+`validate_tests === 'error' && ci_test_verified === true` は「ローカルではテスト未実行、同じ head sha の
+CI test は green」を意味する。呼び出し元は journal・`gh pr checks`・`gh run view` で再検証せず、
+その旨をそのまま報告する。`validate_tests === 'error'` で `ci_test_verified` が `true` でなければ
+テストは未検証なので、その旨を報告して CI の確認を人間に委ねる。`validate_tests === 'failed'` は本物の red。
+
 ## Implement 経路（全 shape で dev-implement-fable 一本）
 
 Setup 末尾の analyze ゲート（固有の phase は持たない）は `args.setup.analyze`（prerun の決定論 analyze）を
