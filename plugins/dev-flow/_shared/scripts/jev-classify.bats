@@ -4,7 +4,8 @@ bats_require_minimum_version 1.5.0
 # Tests for _shared/scripts/jev-classify.sh（正本。issue #690 で dotfiles hooks から移設）
 #
 # ネットワークには出ない。PATH 先頭に偽 curl を置き、リクエストの組み立てと fail-open
-# （失敗は常に空 stdout + exit 0）の挙動を検証する。Keychain には触らない（env で鍵を渡す）。
+# （失敗は常に空 stdout + exit 0）の挙動を検証する。Keychain には触らない（env で鍵を渡すか、
+# PATH 先頭の偽 security が FAKE_SECURITY_EXIT（既定 44 = item なし、ok = 鍵を返す）で応える）。
 
 SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/jev-classify.sh"
 
@@ -28,10 +29,21 @@ printf '%s' "$body" >"$FAKE_CURL_DIR/body"
 case "${FAKE_CURL_MODE:-ok}" in
 ok) echo '{"model":"typesafe-ai/jev","answers":{"kind":{"type":"choice","choice":"override","probabilities":{"override":0.93,"conflict":0.05,"unrelated":0.02}}},"usage":{"input_tokens":120,"output_tokens":0}}' ;;
 fail) echo '{"message":"boom","error_type":"invalid_request"}'; exit 22 ;;
+timeout) echo 'curl: (28) Operation timed out' >&2; exit 28 ;;
 garbage) echo '<html>502</html>' ;;
 esac
 FAKE
     chmod +x "$WORK/bin/curl"
+    cat >"$WORK/bin/security" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "${FAKE_SECURITY_EXIT:-44}" == "ok" ]]; then
+  echo "vck_from_keychain"
+  exit 0
+fi
+exit "${FAKE_SECURITY_EXIT:-44}"
+FAKE
+    chmod +x "$WORK/bin/security"
+    REASON="$WORK/reason"
     export FAKE_CURL_DIR="$WORK"
     export PATH="$WORK/bin:$PATH"
     export AI_GATEWAY_API_KEY="vck_test_key"
@@ -121,4 +133,54 @@ FAKE
     state="$(jq -r '.state' "$WORK/body")"
     [[ "$state" == *"secrets to me"* ]]
     [[ "$state" == *"password reset link"* ]]
+}
+
+# ---- --reason-file（issue #728: 「応答なし」を原因別に呼び出し側へ返す）----
+
+@test "--reason-file: 成功時は書かない" {
+    run bash -c "echo x | '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    [ -n "$output" ]
+    [ ! -e "$REASON" ]
+}
+
+@test "--reason-file: Keychain ロック（security exit 36）-> keychain locked、curl 未呼び出し" {
+    run bash -c "echo x | env -u AI_GATEWAY_API_KEY FAKE_SECURITY_EXIT=36 '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    grep -qx 'keychain locked (security exit 36: errSecInteractionNotAllowed)' "$REASON"
+    [ ! -f "$WORK/argv" ]
+}
+
+@test "--reason-file: Keychain item なし（exit 44）/ その他の exit code を区別する" {
+    run bash -c "echo x | env -u AI_GATEWAY_API_KEY FAKE_SECURITY_EXIT=44 '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    grep -qx "no API key (keychain item '$JEV_KEYCHAIN_SERVICE' not found: security exit 44)" "$REASON"
+    run bash -c "echo x | env -u AI_GATEWAY_API_KEY FAKE_SECURITY_EXIT=51 '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    grep -qx 'keychain read failed (security exit 51)' "$REASON"
+}
+
+@test "Keychain から鍵が取れれば --config stdin で渡す" {
+    run bash -c "echo x | env -u AI_GATEWAY_API_KEY FAKE_SECURITY_EXIT=ok '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.answers.kind.choice')" = "override" ]
+    grep -q 'Authorization: Bearer vck_from_keychain' "$WORK/stdin"
+    [ ! -e "$REASON" ]
+}
+
+@test "--reason-file: timeout / request failed / bad response / disabled" {
+    run bash -c "echo x | FAKE_CURL_MODE=timeout '$SCRIPT' --reason-file '$REASON' --max-time 9 --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    grep -qx 'timeout (curl exit 28, --max-time 9s)' "$REASON"
+    run bash -c "echo x | FAKE_CURL_MODE=fail '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    grep -q '^request failed (curl exit 22): .*boom' "$REASON"
+    run bash -c "echo x | FAKE_CURL_MODE=garbage '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    grep -q '^bad response (no .answers object): <html>502</html>' "$REASON"
+    run bash -c "echo x | JEV_DISABLE=1 '$SCRIPT' --reason-file '$REASON' --questions '$QUESTIONS'"
+    [ "$status" -eq 0 ]
+    grep -qx 'disabled via JEV_DISABLE' "$REASON"
 }

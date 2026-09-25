@@ -181,6 +181,16 @@ test('[analyze-routing] (g) analyze-clarify#1 prompt はゲート理由を verba
   assert.equal(JSON.stringify(call.schema?.required), JSON.stringify(['missing_context']));
 });
 
+// (g2) issue #728: 明記を求める語が analyze-issue の breaking キーワード判定に掛かると、指示に従うほどゲートが増える
+test('[analyze-routing] (g2) analyze-clarify#1 prompt は互換性の明記を breaking キーワード抜きで求め、その語の使用を禁じる', async () => {
+  const { calls } = await run({ analyze: { analyze_path: 'jev', jev_reasons: ['breaking_keyword_scan true'], uncertain: ['breaking_keyword_scan: Jev が低確信で判定できない'] } });
+  const call = calls.find((c) => c.label === 'analyze-clarify#1');
+  assert.ok(call);
+  assert.ok(call.prompt.includes('後方互換を保たない API / 形式の変更の有無と既存データの変換の要否'), '互換性の明記の問い方が無い');
+  assert.ok(!call.prompt.includes('非互換変更 / migration の有無'), 'キーワード判定に掛かる語で明記を求めてはならない');
+  assert.ok(call.prompt.includes('breaking / incompatible / migration / 破壊的 / 非互換 の語を使うな'), 'キーワードの使用禁止が無い');
+});
+
 // ---- (h) REQ は prerun の analyze から組まれる ----
 test('[analyze-routing] (h) prerun の analyze の issue_body / AC / issue_title が fable prompt に届き、breaking_change=true は shape=complex に倒す', async () => {
   const analyze = prerunAnalyze({ issue_title: 'feat: prerun analyze', issue_body: 'PRERUN-BODY-MARKER', acceptance_criteria: ['AC-ONE', 'AC-TWO'], breaking_change: true, breaking_evidence: 'title の breaking marker (!)' });
