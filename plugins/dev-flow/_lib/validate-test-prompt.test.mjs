@@ -152,3 +152,55 @@ test('[validate-test-prompt] test#1 prompt は起動失敗を tests:"failed" に
     '起動失敗を tests:"failed" に潰す旧文言が test#1 prompt に残っている',
   );
 });
+
+// 起動失敗ルールの行（EPERM と原因調査禁止を含む行）。3 分岐の行（tests:"..." を含む行）とは別行
+function startFailureRuleLine(prompt) {
+  const line = prompt.split('\n').find((l) => l.includes('EPERM') && l.includes('原因調査をするな'));
+  assert.ok(line, `test#1 prompt に起動失敗ルールの行（EPERM / 原因調査をするな）が無い:\n${prompt}`);
+  return line;
+}
+
+test('[validate-test-prompt] 起動失敗ルールは tests/run-*.sh とフォールバック（npm test / pnpm test 等）の両経路に適用される（issue #732）', async () => {
+  await ensureSharedRun();
+  const rule = startFailureRuleLine(test1Prompt());
+  assert.ok(rule.includes('tests/run-*.sh'), `起動失敗ルールが tests/run-*.sh 経路に言及していない: ${rule}`);
+  assert.ok(rule.includes('フォールバック'), `起動失敗ルールがフォールバック経路に言及していない: ${rule}`);
+  for (const cmd of ['npm test', 'pnpm test']) {
+    assert.ok(rule.includes(cmd), `起動失敗ルールがフォールバックの ${cmd} を対象に含めていない: ${rule}`);
+  }
+  // フォールバックの test コマンドも 1 回だけ実行させ、起動失敗で打ち切らせる
+  const fallbackSentence = rule.split('。').find((s) => s.includes('フォールバックの test コマンド'));
+  assert.ok(
+    fallbackSentence && fallbackSentence.includes('1 回だけ') && fallbackSentence.includes('起動失敗'),
+    `フォールバックの test コマンドを 1 回だけ実行し起動失敗で打ち切る文が無い: ${fallbackSentence}`,
+  );
+});
+
+test('[validate-test-prompt] 起動失敗時の 4 種の回避策（環境変数前置・runner 切替・ロック/キャッシュ/store 削除・再試行）を禁止する（issue #732）', async () => {
+  await ensureSharedRun();
+  const rule = startFailureRuleLine(test1Prompt());
+  const prohibition = rule.split('。').find((s) => s.includes('起動失敗時は') && s.includes('禁止'));
+  assert.ok(prohibition, `起動失敗時の禁止事項の文が無い: ${rule}`);
+  assert.ok(
+    prohibition.includes('環境変数前置') && prohibition.includes('PNPM_HOME'),
+    `環境変数前置（PNPM_HOME 等）の禁止が無い: ${prohibition}`,
+  );
+  assert.ok(
+    prohibition.includes('パッケージマネージャ') && prohibition.includes('test runner') && prohibition.includes('pnpm → npm'),
+    `別のパッケージマネージャ / runner への切替禁止が無い: ${prohibition}`,
+  );
+  for (const w of ['ロック', 'キャッシュ', 'store', '削除', '移動']) {
+    assert.ok(prohibition.includes(w), `ロック / キャッシュ / store の削除・移動の禁止に「${w}」が無い: ${prohibition}`);
+  }
+  assert.ok(prohibition.includes('同一コマンドの再試行'), `同一コマンドの再試行の禁止が無い: ${prohibition}`);
+});
+
+test('[validate-test-prompt] tests:"passed" / "failed" / "error" の 3 分岐の判定文言は変わらない（issue #732）', async () => {
+  await ensureSharedRun();
+  const branches = test1Prompt().split('\n').filter((l) => /tests:"(passed|failed|error)"/.test(l));
+  assert.deepEqual(branches, [
+    '- 実行したすべてのスクリプトが green → tests:"passed"、green:true（green:true はこの分岐でのみ返せ）',
+    '- 実行されたテストが 1 件以上失敗したスクリプトが 1 本でもある → tests:"failed"、green:false、失敗したスクリプトごとの要約を summary に入れる',
+    '- 失敗したテストは無いが、1 本以上のスクリプトが起動失敗した（全本起動失敗も一部だけ起動失敗も含む。EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、起動失敗したスクリプト名と失敗要約を summary に入れる',
+  ]);
+});
