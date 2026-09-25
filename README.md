@@ -433,7 +433,7 @@ config = load_skill_config("ga-analyzer")
 | `blog-fact-check` | 記事内の統計データ・バージョン・料金のファクトチェック |
 | `blog-internal-links` | クラスタ内記事間の内部リンク分析・挿入 |
 | `blog-seo-improve` | GSC/GAデータに基づく既存記事のSEO改善 |
-| `seed-refresh` | seedキャッシュファイルの一括更新 |
+| `seed-harvest` | マージ済み PR からネタ帳（`seed/_topics`）を収穫・需要センサーで優先度付け・選んだネタの slice 作成 |
 
 ### SNS・投稿スケジュール
 
