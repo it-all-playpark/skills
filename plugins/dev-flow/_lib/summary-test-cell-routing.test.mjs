@@ -14,6 +14,7 @@
 //   (e) fixes_applied>0（Final reconcile 実行）→ ci-test-display 不発
 //   (f) PR head sha が取れていない → ci-test-display 不発 + 未検証表示
 //   (g) merge-tier.mjs は表示用入力（validateTests / ciTestVerified / ci-test-display）を参照しない
+//   (h) 返り値 validate_tests / ci_test_verified がテスト欄と同じ入力を返し、test_green / final_test_green は不変（issue #731）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -76,9 +77,11 @@ const UNVERIFIED = {
 
 test('[summary-test-cell] (b) CI 未確認（sha 不一致 / failure / 取得失敗 / throw）→ テスト欄は ❌ red ではなく未実行・未検証 + 結論行で CI 確認', async () => {
   for (const [name, resp] of Object.entries(UNVERIFIED)) {
-    const { testCell, conclusion } = await run({ 'ci-test-display': resp });
+    const { result, testCell, conclusion } = await run({ 'ci-test-display': resp });
     assert.equal(testCell, '⚠️ 未実行（環境）・未検証', `${name}: テスト欄`);
     assert.ok(conclusion.includes('CI の test 結果を確認してからマージ'), `${name}: 結論行に CI 確認`);
+    assert.equal(result?.validate_tests, 'error', `${name}: 返り値 validate_tests`);
+    assert.equal(result?.ci_test_verified, false, `${name}: 返り値 ci_test_verified は未検証`);
   }
 });
 
@@ -97,9 +100,12 @@ test('[summary-test-cell] (c) 表示のみ: ci-test-display の応答で merge t
 test("[summary-test-cell] (d) Validate tests:'failed'（本物の red）→ ci-test-display 不発 + テスト欄 ❌ red", async () => {
   // green-fix 後も red のまま（GREEN_MAX 到達）にする
   const red = { tests: 'failed', green: false, summary: 'assert mismatch' };
-  const { calls, testCell } = await run({ 'test#1': red, 'test#2': red, 'test#3': red });
+  const { result, calls, testCell } = await run({ 'test#1': red, 'test#2': red, 'test#3': red });
   assert.ok(!calls.some((c) => c.label === 'ci-test-display'), '本物の red では CI 表示確認を起動しない');
   assert.equal(testCell, '❌ red');
+  assert.equal(result?.validate_tests, 'failed');
+  assert.equal(result?.ci_test_verified, null, 'CI 表示確認を起動しない run は null');
+  assert.equal(result?.test_green, false);
 });
 
 test('[summary-test-cell] (e) fixes_applied>0（Final reconcile 実行）→ ci-test-display 不発', async () => {
@@ -117,11 +123,39 @@ test('[summary-test-cell] (g) merge-tier.mjs は表示用入力を参照しな�
   for (const token of ['validateTests', 'ciTestVerified', 'ci-test-display', 'summaryCiTestVerified']) {
     assert.ok(!mergeTierSrc.includes(token), `merge-tier.mjs に ${token} を含まない`);
   }
-  // dev-flow.js 側でも表示確認の結果は終端サマリーの引数にだけ渡る
+  // dev-flow.js 側でも表示確認の結果は終端サマリーの引数と run 返り値にだけ渡る（telemetry / merge tier には渡らない）
   const uses = devFlowSrc.split('\n').filter((l) => l.includes('summaryCiTestVerified') && !l.trim().startsWith('//'));
   assert.deepEqual(uses.map((l) => l.trim()), [
     'let summaryCiTestVerified = null',
     'summaryCiTestVerified = displayCi.verified',
     'ciTestVerified: summaryCiTestVerified,',
+    'ci_test_verified: summaryCiTestVerified,',
   ]);
+});
+
+test("[summary-test-cell] (h) 返り値: Validate tests:'error' + CI 照合成功 → validate_tests:'error' + ci_test_verified:true、test_green / final_test_green は不変", async () => {
+  const { result } = await run();
+  assert.equal(result?.validate_tests, 'error');
+  assert.equal(result?.ci_test_verified, true);
+  assert.equal(result?.test_green, false, 'test_green は Validate の green のまま（CI 照合で true にしない）');
+  assert.equal(result?.final_test_green, null, 'Final reconcile skipped の run は final_test_green null のまま');
+});
+
+test("[summary-test-cell] (h) 返り値: Validate tests:'passed' → validate_tests:'passed' + ci_test_verified null + test_green true", async () => {
+  const { result, calls } = await run({ 'test#1': { tests: 'passed', green: true, summary: '' } });
+  assert.ok(!calls.some((c) => c.label === 'ci-test-display'), 'passed の run では CI 表示確認を起動しない');
+  assert.equal(result?.validate_tests, 'passed');
+  assert.equal(result?.ci_test_verified, null);
+  assert.equal(result?.test_green, true);
+  assert.equal(result?.final_test_green, null);
+});
+
+test('[summary-test-cell] (h) dev-flow SKILL.md に返り値 validate_tests / ci_test_verified の読み方が載っている', () => {
+  const skillMd = readFileSync(join(here, '..', 'dev-flow', 'SKILL.md'), 'utf8');
+  const section = skillMd.slice(skillMd.indexOf('## 完了後の返り値の読み方'));
+  assert.ok(skillMd.includes('## 完了後の返り値の読み方'), '「完了後の返り値の読み方」節がある');
+  assert.ok(skillMd.indexOf('## 完了後の返り値の読み方') > skillMd.indexOf('4. **Workflow 起動**'), '手順 4 の後に置く');
+  for (const token of ['`validate_tests`', '`ci_test_verified`', "`validate_tests === 'error' && ci_test_verified === true`", '再検証せず']) {
+    assert.ok(section.includes(token), `節に ${token} を含む`);
+  }
 });

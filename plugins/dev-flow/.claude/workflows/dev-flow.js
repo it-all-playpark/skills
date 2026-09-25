@@ -7478,6 +7478,10 @@ return {
   eval_verdict: state.evalResult?.verdict ?? null,
   design_replan_count: state.designReplanCount,
   test_green: state.val?.green ?? null,
+  // test_green:false だけでは起動失敗（tests:'error'）と本物の red を区別できないため、終端サマリーの
+  // テスト欄と同じ入力を返す。呼び出し元の読み方は dev-flow/SKILL.md「完了後の返り値の読み方」
+  validate_tests: state.val?.tests ?? null,
+  ci_test_verified: summaryCiTestVerified,
   iterate_status: iterate?.status ?? null,
   route,
   shape: state.EFFECTIVE_SHAPE,
