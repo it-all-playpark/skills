@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # jev-classify.sh: Jev（TypeSafe の判定専用モデル）に有界な質問を投げる共通スクリプト
 #
-# 正本はこのファイル（plugins/dev-flow/_shared/scripts/）。dotfiles の hook 群も同じ
-# スクリプトを参照する（dotfiles 側の切り替えは別 PR）。
+# 正本はこのファイル（plugins/dev-flow/_shared/scripts/）。dotfiles の
+# claude-code/hooks/jev-classify.sh は hook 用の複製で、変更は両方に同じ内容で入れる。
 #
 # 目的:
 #   「read_only か / どの失敗種別か / この comment は body を上書きしているか」のような、
@@ -32,25 +32,32 @@
 #                  （vck_ ghp_ sk- AKIA 等）を伏せる
 #     --reason-file <path>
 #                  失敗時にその理由を 1 行で書き出す（成功時は書かない）。呼び出し側が
-#                  「応答なし」を原因別（no API key / keychain locked / keychain read failed /
-#                  timeout / request failed / bad response 等）に人間へ示すためのもの
+#                  「応答なし」を原因別（no API key / keychain unreachable / keychain read failed /
+#                  broker unreachable / broker request failed / timeout / request failed /
+#                  bad response 等）に人間へ示すためのもの
 #   stdout: API レスポンス JSON（.answers.<id> に結果）。失敗時は空
 #   exit:   常に 0（fail-open。hook の本処理を止めない）
 #
-# 鍵の解決順:
-#   1. $AI_GATEWAY_API_KEY（テスト・一時上書き用）
-#   2. macOS Keychain: security find-generic-password -s $JEV_KEYCHAIN_SERVICE -w
+# 経路の選択順:
+#   1. $AI_GATEWAY_API_KEY があれば直接呼ぶ（テスト・一時上書き用）
+#   2. jev-broker のソケット（$JEV_BROKER_SOCKET）があれば broker 経由。鍵はこのプロセスに来ない
+#   3. どちらも無ければ macOS Keychain から鍵を読んで直接呼ぶ:
+#      security find-generic-password -s $JEV_KEYCHAIN_SERVICE -w
 #      登録: security add-generic-password -s vercel-ai-gateway -a claude-hooks -w 'vck_…'
-#   Claude の Bash ツール環境に鍵を露出させないため、env ではなく Keychain を主とする
-#   （hook は sandbox / permissions の外で走るので security コマンドが使える）。
-#   Claude の Bash（sandbox 内）から呼ぶと Keychain に届かず鍵が取れないことがある。
+#   Claude の Bash ツール環境に鍵を露出させないため、env ではなく Keychain を主とする。
+#   Keychain の解除は監査セッションごとに効くので、sandbox 内の Bash と Claude Code の bg job
+#   からは解除済みでも security が exit 36 になる。jev-broker（dotfiles の gui ドメイン
+#   LaunchAgent）が Aqua セッションで鍵を読んで中継するのはこのため。broker に接続できない
+#   （curl exit 7）ときは 3 に落ち、理由の先頭に broker unreachable を付ける。
 #   security の失敗は exit code ごとに --reason-file へ載せる（36 = errSecInteractionNotAllowed:
-#   keychain がロック中、44 = item が無い、それ以外 = 読み取り失敗）。
+#   Keychain に届かない（ロック中・sandbox 内・別セッション）、44 = item が無い、
+#   それ以外 = 読み取り失敗）。
 #
 # 環境変数:
 #   JEV_DISABLE=1            何もせず exit 0（kill switch）
-#   JEV_API_URL              既定 https://ai-gateway.vercel.sh/typesafe/v1/systemone
-#   JEV_MODEL                既定 typesafe-ai/jev
+#   JEV_API_URL              既定 https://ai-gateway.vercel.sh/typesafe/v1/systemone（直接呼ぶ経路のみ）
+#   JEV_MODEL                既定 typesafe-ai/jev（broker 経由では broker が固定値で上書きする）
+#   JEV_BROKER_SOCKET        既定 $HOME/.local/state/jev-broker/jev.sock
 #   JEV_KEYCHAIN_SERVICE     既定 vercel-ai-gateway
 #   JEV_MAX_TIME             既定 2（秒）。hook 側 timeout より短く保つ
 #   JEV_STATE_MAX_BYTES      既定 24000。state をこのバイト数で切る（上限 32k tokens）
@@ -74,12 +81,15 @@ QUESTIONS=""
 MAX_TIME="${JEV_MAX_TIME:-2}"
 REDACT=0
 REASON_FILE=""
+# broker に接続できず Keychain 経路に落ちたとき、最終的な失敗理由の先頭に付ける
+REASON_PREFIX=""
 
 # fail <reason>: 理由を debug と --reason-file に出して fail-open で終わる
 fail() {
-  debug "$1"
+  local reason="${REASON_PREFIX}$1"
+  debug "$reason"
   if [[ -n $REASON_FILE ]]; then
-    printf '%s\n' "$1" >"$REASON_FILE" 2>/dev/null || true
+    printf '%s\n' "$reason" >"$REASON_FILE" 2>/dev/null || true
   fi
   exit 0
 }
@@ -127,24 +137,37 @@ for dep in curl jq; do
   fi
 done
 
-# --- 鍵 ---
+# --- 経路と鍵 ---
 KEYCHAIN_SERVICE="${JEV_KEYCHAIN_SERVICE:-vercel-ai-gateway}"
 API_KEY="${AI_GATEWAY_API_KEY:-}"
-if [[ -z $API_KEY ]]; then
+BROKER_SOCKET="${JEV_BROKER_SOCKET:-$HOME/.local/state/jev-broker/jev.sock}"
+
+# resolve_key: $API_KEY が空なら Keychain から読む。読めなければ fail
+resolve_key() {
+  if [[ -n $API_KEY ]]; then
+    return
+  fi
   if ! command -v security >/dev/null 2>&1; then
     fail "no API key (AI_GATEWAY_API_KEY unset, security command not found)"
   fi
-  SECURITY_RC=0
-  API_KEY=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null) || SECURITY_RC=$?
-  case "$SECURITY_RC" in
+  local rc=0
+  API_KEY=$(security find-generic-password -s "$KEYCHAIN_SERVICE" -w 2>/dev/null) || rc=$?
+  case "$rc" in
   0) ;;
-  36) fail "keychain locked (security exit 36: errSecInteractionNotAllowed)" ;;
+  36) fail "keychain unreachable (security exit 36: errSecInteractionNotAllowed; locked, sandboxed, or another login session such as a bg job)" ;;
   44) fail "no API key (keychain item '$KEYCHAIN_SERVICE' not found: security exit 44)" ;;
-  *) fail "keychain read failed (security exit $SECURITY_RC)" ;;
+  *) fail "keychain read failed (security exit $rc)" ;;
   esac
-fi
-if [[ -z $API_KEY ]]; then
-  fail "no API key (AI_GATEWAY_API_KEY unset, keychain item '$KEYCHAIN_SERVICE' is empty)"
+  if [[ -z $API_KEY ]]; then
+    fail "no API key (AI_GATEWAY_API_KEY unset, keychain item '$KEYCHAIN_SERVICE' is empty)"
+  fi
+}
+
+USE_BROKER=false
+if [[ -z $API_KEY && -S $BROKER_SOCKET ]]; then
+  USE_BROKER=true
+else
+  resolve_key
 fi
 
 # --- state ---
@@ -178,21 +201,46 @@ BODY=$(jq -n \
   '{model: $model, state: $state, questions: $questions}')
 
 # --- 呼び出し ---
-# 鍵は argv に載せず、curl の -K/--config 経由で stdin から渡す（ps で見えない）。
 CURL_RC=0
-RESPONSE=$(
-  printf 'header = "Authorization: Bearer %s"\n' "$API_KEY" |
+if [[ $USE_BROKER == true ]]; then
+  # broker が鍵を付け、model と転送先を固定して Jev に中継する。URL のホスト名は使われない
+  RESPONSE=$(
     curl -sS --fail-with-body \
       --max-time "$MAX_TIME" \
-      --config - \
+      --unix-socket "$BROKER_SOCKET" \
       -H "Content-Type: application/json" \
       -d "$BODY" \
-      "${JEV_API_URL:-https://ai-gateway.vercel.sh/typesafe/v1/systemone}" 2>&1
-) || CURL_RC=$?
-if [[ $CURL_RC -eq 28 ]]; then
-  fail "timeout (curl exit 28, --max-time ${MAX_TIME}s)"
-elif [[ $CURL_RC -ne 0 ]]; then
-  fail "request failed (curl exit $CURL_RC): $(oneline "$RESPONSE")"
+      "http://jev-broker/typesafe/v1/systemone" 2>&1
+  ) || CURL_RC=$?
+  case "$CURL_RC" in
+  0) ;;
+  7)
+    # ソケットはあるが接続できない（broker 停止後に残ったソケット、sandbox の許可外など）
+    REASON_PREFIX="broker unreachable (curl exit 7 on $BROKER_SOCKET); "
+    USE_BROKER=false
+    resolve_key
+    ;;
+  28) fail "timeout (curl exit 28 via broker, --max-time ${MAX_TIME}s)" ;;
+  *) fail "broker request failed (curl exit $CURL_RC): $(oneline "$RESPONSE")" ;;
+  esac
+fi
+if [[ $USE_BROKER == false ]]; then
+  # 鍵は argv に載せず、curl の -K/--config 経由で stdin から渡す（ps で見えない）。
+  CURL_RC=0
+  RESPONSE=$(
+    printf 'header = "Authorization: Bearer %s"\n' "$API_KEY" |
+      curl -sS --fail-with-body \
+        --max-time "$MAX_TIME" \
+        --config - \
+        -H "Content-Type: application/json" \
+        -d "$BODY" \
+        "${JEV_API_URL:-https://ai-gateway.vercel.sh/typesafe/v1/systemone}" 2>&1
+  ) || CURL_RC=$?
+  if [[ $CURL_RC -eq 28 ]]; then
+    fail "timeout (curl exit 28, --max-time ${MAX_TIME}s)"
+  elif [[ $CURL_RC -ne 0 ]]; then
+    fail "request failed (curl exit $CURL_RC): $(oneline "$RESPONSE")"
+  fi
 fi
 
 if ! echo "$RESPONSE" | jq -e '.answers | type == "object"' >/dev/null 2>&1; then

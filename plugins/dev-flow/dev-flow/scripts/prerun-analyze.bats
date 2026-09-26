@@ -86,6 +86,8 @@ FAKE
 
     export GH_LOG CURL_LOG
     export PATH="$WORK/bin:$PATH"
+    # 実機の jev-broker ソケットを拾わない（Keychain 経路の理由文言を検証するため）
+    export JEV_BROKER_SOCKET="$WORK/no-broker.sock"
     export AI_GATEWAY_API_KEY="vck_test_key"
     export JEV_KEYCHAIN_SERVICE="prerun-analyze-bats-nonexistent"
     unset DEVFLOW_JEV_DISABLE
@@ -259,14 +261,14 @@ breaking を避ける。[[jev:noul:0.04]]"
 
 # ---- Jev が判定を返さない理由（issue #728）----
 
-@test "Keychain ロック（security exit 36）-> uncertain に Keychain ロックと exit code が出る、curl 未呼び出し" {
+@test "Keychain に届かない（security exit 36）-> uncertain に原因と exit code が出る、curl 未呼び出し" {
     fixture "$WORK/i.json" "feat: migration" "$AC_BODY
 
 [[jev:noul:0.95]]"
     unset AI_GATEWAY_API_KEY
     FAKE_SECURITY_EXIT=36 run_analyze "$WORK/i.json"
     [ "$status" -eq 0 ]
-    echo "$output" | jq -e '(.uncertain | length) == 1 and (.uncertain[0] | test("Keychain がロック中") and test("security exit 36"))'
+    echo "$output" | jq -e '(.uncertain | length) == 1 and (.uncertain[0] | test("Keychain に届かない（ロック中・sandbox 内・bg job など別セッション）") and test("security exit 36"))'
     [ "$(curl_calls)" -eq 0 ]
 }
 
@@ -468,4 +470,34 @@ FAKE
     [ "$status" -eq 2 ]
     run "$SCRIPT" --issue abc
     [ "$status" -eq 2 ]
+}
+
+# ---- jev-broker 経由の失敗理由 ----
+
+# use_socket: JEV_BROKER_SOCKET を実在する Unix ソケットに向ける（偽 curl は接続しない）。
+# sandbox 内では bind が拒否されるため、そのときは OS が既に持つソケットを借りる
+use_socket() {
+    local path="$WORK/broker.sock" existing
+    if python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$path" 2>/dev/null; then
+        export JEV_BROKER_SOCKET="$path"
+        return
+    fi
+    for existing in /var/run/mDNSResponder /nix/var/nix/daemon-socket/socket /var/run/docker.sock; do
+        if [[ -S $existing ]]; then
+            export JEV_BROKER_SOCKET="$existing"
+            return
+        fi
+    done
+    skip "Unix ソケットを用意できない（bind 拒否かつ既存ソケットなし）"
+}
+
+@test "jev-broker に接続できず Keychain にも届かない -> uncertain に broker の見出しと両方の理由" {
+    fixture "$WORK/i.json" "feat: migration" "$AC_BODY
+
+[[jev:noul:0.95]]"
+    unset AI_GATEWAY_API_KEY
+    use_socket
+    FAKE_CURL_EXIT=7 FAKE_SECURITY_EXIT=36 run_analyze "$WORK/i.json"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '(.uncertain | length) == 1 and (.uncertain[0] | test("jev-broker に接続できない") and test("curl exit 7") and test("security exit 36"))'
 }

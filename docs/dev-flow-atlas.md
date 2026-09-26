@@ -112,7 +112,8 @@ false、それ以外は `uncertain`）、comments present は comment ごとに 
 override かつ権限あり = issue 報告者本人 or OWNER/MEMBER/COLLABORATOR → `comment_overrides`、
 override だが権限なし / conflict / 低確信 → `comment_conflicts`、本文で決着済みの resolved は無視）。Jev の応答なし・
 `DEVFLOW_JEV_DISABLE=1` は `uncertain` に倒す（fail-closed。応答なしは jev-classify の `--reason-file` が返す
-原因 — 鍵なし / Keychain ロック / Keychain 読み取り失敗 / タイムアウト / 通信失敗 / 応答不正 — を文言に載せる）。ゲートが引いたときだけ sonnet を
+原因 — jev-broker に接続できない / jev-broker 経由の失敗 / 鍵なし / Keychain に届かない / Keychain 読み取り失敗 /
+タイムアウト / 通信失敗 / 応答不正 — を文言に載せる）。ゲートが引いたときだけ sonnet を
 1 spawn して人間向けの質問文を作る。telemetry の `analyze_path` は `contract` / `jev` /
 `sonnet`（ゲート後のみ）の 3 値。
 
