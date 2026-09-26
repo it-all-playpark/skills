@@ -32,8 +32,10 @@
 #                                 conflict / 低確信 → comment_conflicts（fail-closed）、resolved / unrelated
 #                                 （高確信）→ 無視（要件は body どおり）
 #   Jev が空 stdout（失敗）      → 該当判定は uncertain。jev-classify.sh の --reason-file が返す失敗理由
-#                                 （鍵なし / Keychain ロック / Keychain 読み取り失敗 / タイムアウト / 通信失敗 /
-#                                 応答不正）を文言に載せる（「応答なし」だけでは人間が切り分けられない）
+#                                 （jev-broker に接続できない / jev-broker 経由の失敗 / 鍵なし / Keychain に
+#                                 届かない / Keychain 読み取り失敗 / タイムアウト / 通信失敗 / 応答不正）を
+#                                 文言に載せる（「応答なし」だけでは人間が切り分けられない）。「Keychain に
+#                                 届かない」は sandbox 内・bg job でも出るので、ロック中とは限らない
 #   DEVFLOW_JEV_DISABLE=1       → Jev を呼ばず該当判定は uncertain（private repo 向け opt-out）
 #
 # uncertain の「明記せよ」文言は analyze-issue.sh の breaking キーワード（breaking / incompatible /
