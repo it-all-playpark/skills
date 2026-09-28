@@ -210,9 +210,21 @@ export function buildDevflowSummaryBody({
   // 解消状態は行の状態/現状/対応列に反映するが、行自体は隠さない — HOLD の ESCALATE は
   // human required-block のままであることを可視化する。
   const escalateAll = advArr.filter(it => it.escalate === true && it.dimension !== 'environment');
-  // 非 escalate advisory の要対応表候補は checked（solved 状態）基準のみで選ぶ（従来と同一の選別）。
+
+  const acArr = acResults && acResults.length > 0 ? acResults : null;
+  const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
+  // 観点 ac の ledger item（id: AC-<n> / AC-FINAL-<n>）が未達 AC を指すなら、未達 AC 表（必須）と重なるので
+  // 助言の行には出さない — 同じ AC を「任意」と「必須」の両方で出さないため（issue #738）。
+  const unsatisfiedAcIndexes = new Set(unsatisfiedAC.map(a => a.ac_index));
+  const isUnsatisfiedAcItem = (it) => {
+    if (it.dimension !== 'ac' || typeof it.id !== 'string') return false;
+    const m = /^AC-(?:FINAL-)?(\d+)$/.exec(it.id);
+    return m != null && unsatisfiedAcIndexes.has(Number(m[1]) - 1);
+  };
+  // 非 escalate advisory の表示候補は checked（solved 状態）基準のみで選ぶ（従来と同一の選別）。
   const nonEscalateUnchecked = advArr.filter(
     it => it.checked !== true && it.dimension !== 'environment' && it.escalate !== true && !isTriagedAdvisory(it)
+      && !isUnsatisfiedAcItem(it)
   );
   // hasActionItems（見出し判定）には isResolved で解消済みのものを含めない。
   const unresolvedEscalate = escalateAll.filter(it => !isResolved(it));
@@ -220,8 +232,6 @@ export function buildDevflowSummaryBody({
   // 解消済み advisory（escalate 含む・environment/triaged 除く）の件数のみ表示用（issue #658）。
   const resolvedAdvisory = advArr.filter(it => it.dimension !== 'environment' && !isTriagedAdvisory(it) && isResolved(it));
 
-  const acArr = acResults && acResults.length > 0 ? acResults : null;
-  const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
 
   // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
@@ -266,7 +276,8 @@ export function buildDevflowSummaryBody({
   else tierPhrase = '低リスク・AUTO 推奨（merge は人間）';
 
   let fixPhrase;
-  if (fixRequired) fixPhrase = '修正作業が必要です';
+  // 修正が要るときも助言の件数を「任意」と添え、「要対応」の ❌ と「任意の確認事項」の分け方に揃える（issue #738）。
+  if (fixRequired) fixPhrase = unresolvedAdvisory.length > 0 ? `修正作業が必要です（助言 ${unresolvedAdvisory.length} 件は任意）` : '修正作業が必要です';
   else if (unresolvedAdvisory.length > 0) fixPhrase = `必須の修正作業はありません（助言 ${unresolvedAdvisory.length} 件は任意）`;
   else fixPhrase = '修正作業は不要です';
 
@@ -513,20 +524,22 @@ export function buildDevflowSummaryBody({
     lines.push(triagedAdvisory.length > 0 ? `### ✅ 要対応事項なし（トリアージ済み ${triagedAdvisory.length} 件）` : '### ✅ 要対応事項なし');
   }
 
-  // ledger 未解消テーブル（(i)(ii)(iii)）。見出しに関わらず、blocking + 全 escalate + 非 escalate
-  // unchecked advisory が 1 件以上あれば表を出す（escalate は解消済みでも常時表示。issue #658）。
-  const ledgerActionItems = [
+  // ledger 表（(i)(ii)(iii)）。escalate は解消済みでも常時表示する（issue #658）。
+  // 必須があるときは助言を「⚠️ 要対応」の表に混ぜず、後段の「ℹ️ 任意の確認事項」節に分ける（issue #738）。
+  // 必須が無いときは見出しが既に任意 / 要対応なしなので、従来どおり 1 表にまとめる（issue #707）。
+  const requiredRows = [
     ...uncheckedBlocking.map(it => ({ ...it, _lane: '必須（blocking）', _kind: 'blocking' })),
     ...escalateAll.map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _kind: 'escalate' })),
-    ...nonEscalateUnchecked.map(it => ({ ...it, _lane: '助言（advisory）', _kind: 'advisory' })),
   ];
+  const advisoryRows = nonEscalateUnchecked.map(it => ({ ...it, _lane: '助言（advisory）', _kind: 'advisory' }));
 
-  if (ledgerActionItems.length > 0) {
+  const pushLedgerTable = (rows) => {
+    if (rows.length === 0) return;
     lines.push('');
     // id 列は出さない（ledger 内部識別子はレビュアーにはノイズ。機構側は ledger データを直接参照する）
     lines.push('| 状態 | 区分 | 観点 | 内容 | 現状 | 対応 |');
     lines.push('|---|---|---|---|---|---|');
-    for (const item of ledgerActionItems) {
+    for (const item of rows) {
       const resolved = item._kind !== 'blocking' && isResolved(item);
       let status;
       if (item._kind === 'blocking') {
@@ -534,7 +547,8 @@ export function buildDevflowSummaryBody({
       } else if (item._kind === 'escalate') {
         status = resolved ? '✅ 解消済み' : '⚠️ 要判断';
       } else {
-        status = resolved ? '✅ 解消済み' : '❌ 未解消';
+        // 助言の未解消に ❌ を使わない — ❌ は結論行・「あなたがやること」が指す修正対象に限る（issue #738）。
+        status = resolved ? '✅ 解消済み' : 'ℹ️ 未確認';
       }
       const dimension = item.dimension != null ? item.dimension : '—';
       let content = mdCell(item.text);
@@ -563,10 +577,12 @@ export function buildDevflowSummaryBody({
       }
       lines.push(`| ${status} | ${item._lane} | ${dimension} | ${content} | ${current} | ${action} |`);
     }
-  }
+  };
+
+  pushLedgerTable(hasRequiredItems ? requiredRows : [...requiredRows, ...advisoryRows]);
 
   // 必須項目が TESTSURF / 修正必須の HOLD reason だけのときは直下に表が出ないため、参照先を 1 行で示す。
-  if (hasRequiredItems && ledgerActionItems.length === 0 && unsatisfiedAC.length === 0 && uncleared.length === 0) {
+  if (hasRequiredItems && requiredRows.length === 0 && unsatisfiedAC.length === 0 && uncleared.length === 0) {
     lines.push('');
     lines.push('- Goal Ledger / AC / security clearance の未解消はなし — 「HOLD になった理由と現状」・TESTSURF・pr-iterate 未解消の指摘 の未解消行を対応する');
   }
@@ -593,6 +609,13 @@ export function buildDevflowSummaryBody({
         const evidenceCell = sc.evidence ? mdCell(sc.evidence) : '—';
         lines.push(`| ❌ 未確認 | ${sc.danger_class} | ${evidenceCell} |`);
       }
+    }
+
+    // 必須と並ぶ助言は別節に分ける（issue #738）。
+    if (advisoryRows.length > 0) {
+      lines.push('');
+      lines.push('### ℹ️ 任意の確認事項');
+      pushLedgerTable(advisoryRows);
     }
   }
 
