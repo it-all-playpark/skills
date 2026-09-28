@@ -2099,7 +2099,7 @@ test('issue #626 AC3: triaged advisory と本物の未解消 advisory が混在�
   const tableStart = body.indexOf('### ℹ️ 任意の確認事項');
   const detailsStart = body.indexOf('<details>');
   const actionTable = body.slice(tableStart, detailsStart);
-  assert.ok(actionTable.includes('| ❌ 未解消 | 助言（advisory） | concern | [plan:major] B: b |'), '未解消行を含む');
+  assert.ok(actionTable.includes('| ℹ️ 未確認 | 助言（advisory） | concern | [plan:major] B: b |'), '未解消行を含む');
   assert.ok(!actionTable.includes('[plan:major] A: a'), '要対応表に triaged text を含まない');
   const detailsEnd = body.indexOf('</details>') + '</details>'.length;
   const detailsRegion = body.slice(detailsStart, detailsEnd);
@@ -2148,7 +2148,7 @@ test('issue #626: triaged advisory 2 件 -> 見出し・summary・details テー
   assert.equal(rowCount, 2, 'details テーブルの行数が2件');
 });
 
-test('issue #614 AC2: triaged_evidence が空文字/null/未定義の advisory item は ❌ 未解消 のままで 🔹・<details> を含まない', () => {
+test('issue #614 AC2: triaged_evidence が空文字/null/未定義の advisory item は ℹ️ 未確認 のままで 🔹・<details> を含まない', () => {
   for (const [label, triaged_evidence] of [['空文字', ''], ['null', null], ['未定義', undefined]]) {
     const item = {
       ...concernItem(`[plan:major] evidence-${label}: x`, { id: `CONCERN-${label}` }),
@@ -2159,7 +2159,7 @@ test('issue #614 AC2: triaged_evidence が空文字/null/未定義の advisory i
       ...BASE_INPUT,
       advisoryItems: [item],
     });
-    assert.ok(body.includes('❌ 未解消'), `${label}: ❌ 未解消 のまま`);
+    assert.ok(body.includes('| ℹ️ 未確認 | 助言（advisory） |'), `${label}: ℹ️ 未確認 のまま`);
     assert.ok(!body.includes('🔹'), `${label}: 🔹 を含まない`);
     assert.ok(!body.includes('<details>'), `${label}: <details> を含まない`);
   }
@@ -2807,7 +2807,7 @@ test('issue #707 AC4: advisory のみのとき見出しは「ℹ️ 任意の確
   assert.ok(!body.includes('### ✅ 要対応事項なし'), '要対応事項なし見出しとも重ならない');
   assert.ok(conclusionLine(body).includes('必須の修正作業はありません（助言 1 件は任意）'), '結論行は助言 1 件は任意');
   const headingIdx = body.indexOf('### ℹ️ 任意の確認事項');
-  assert.ok(body.indexOf('| ❌ 未解消 | 助言（advisory） | style | naming nit |') > headingIdx, '助言行は任意の確認事項の下に出る');
+  assert.ok(body.indexOf('| ℹ️ 未確認 | 助言（advisory） | style | naming nit |') > headingIdx, '助言行は任意の確認事項の下に出る');
   assert.ok(body.includes('| 任意（助言） |'), '対応列は任意（助言）');
 });
 
@@ -2824,9 +2824,110 @@ test('issue #707 AC5: 必須項目があれば advisory が混在していても
   for (const [name, extra] of Object.entries(cases)) {
     const body = buildDevflowSummaryBody({ ...BASE_INPUT, advisoryItems: [advisory], ...extra });
     assert.ok(body.includes('### ⚠️ 要対応'), `${name}: ⚠️ 要対応を含む`);
-    assert.ok(!body.includes('### ℹ️ 任意の確認事項'), `${name}: 任意の確認事項見出しは出ない`);
+    // 混在する助言は「⚠️ 要対応」の後ろの別節に出る（issue #738）
+    assert.ok(body.indexOf('### ℹ️ 任意の確認事項') > body.indexOf('### ⚠️ 要対応'), `${name}: 助言は要対応の後ろの任意の確認事項に出る`);
   }
   // 表が直下に出ない必須項目（HOLD reason のみ）は参照先を示す
   const bodyHoldOnly = buildDevflowSummaryBody({ ...BASE_INPUT, ...cases['fixRequired な HOLD reason'] });
   assert.ok(bodyHoldOnly.includes('「HOLD になった理由と現状」・TESTSURF・pr-iterate 未解消の指摘 の未解消行を対応する'), '参照先行を含む');
+});
+
+// ─── issue #738: 必須と助言の分離・助言の状態表示・観点 ac の二重表示 ─────────────
+
+// heading から次の見出し / <details> までの本文を返す（heading が無ければ null）
+function sectionOf(body, heading) {
+  const start = body.indexOf(heading);
+  if (start < 0) return null;
+  const rest = body.slice(start + heading.length);
+  const ends = ['\n### ', '\n<details>', '\n---'].map((m) => rest.indexOf(m)).filter((i) => i >= 0);
+  return rest.slice(0, ends.length > 0 ? Math.min(...ends) : rest.length);
+}
+
+// PR #1510 型: blocking 未解消 + 未達 AC#4/#5 + 同じ AC を指す観点 ac の advisory + 通常の助言
+const MIXED_738 = {
+  ...BASE_INPUT,
+  mergeTier: 'HOLD',
+  holdReasons: [{ code: 'ac_unsatisfied', reason: 'AC 未達 2 件', kind: 'human_judgment' }],
+  blockingItems: [{ id: 'B1', text: 'null deref', severity: 'critical', checked: false, dimension: 'correctness', evidence: 'src/a.ts:10' }],
+  advisoryItems: [
+    { id: 'A1', text: 'naming nit', severity: 'minor', checked: false, dimension: 'style', escalate: false },
+    { id: 'AC-4', text: 'staging で実測する（人手）', severity: 'major', checked: false, dimension: 'ac', escalate: false },
+    { id: 'AC-FINAL-5', text: '[final-reconcile 不成立] pnpm precheck が green', severity: 'critical', checked: false, dimension: 'ac', escalate: false },
+  ],
+  ledgerConverged: false,
+  acResults: [0, 1, 2, 3, 4].map((i) => ({ ac_index: i, satisfied: i < 3, evidence: `ev${i}`, verified_by: 'evaluator' })),
+  evalVerdict: 'fail',
+};
+
+test('issue #738 AC1: 必須と未解消の助言が両方あるとき、助言は「⚠️ 要対応」の表に入らず「ℹ️ 任意の確認事項」の節に出る', () => {
+  const body = buildDevflowSummaryBody(MIXED_738);
+  const required = sectionOf(body, '### ⚠️ 要対応');
+  const optional = sectionOf(body, '### ℹ️ 任意の確認事項');
+  assert.ok(required != null, '⚠️ 要対応 を含む');
+  assert.ok(optional != null, 'ℹ️ 任意の確認事項 を含む');
+  assert.ok(body.indexOf('### ℹ️ 任意の確認事項') > body.indexOf('### ⚠️ 要対応'), '任意の確認事項は要対応の後ろ');
+  assert.ok(required.includes('| ❌ 未解消 | 必須（blocking） | correctness | null deref |'), '要対応に blocking 行');
+  assert.ok(required.includes('| ❌ 未達 | AC#4 |') && required.includes('| ❌ 未達 | AC#5 |'), '要対応に未達 AC 表');
+  assert.ok(!required.includes('助言（advisory）'), '要対応に助言の行を含まない');
+  assert.ok(!required.includes('任意（助言）'), '要対応に「任意（助言）」を含まない');
+  assert.ok(optional.includes('| ℹ️ 未確認 | 助言（advisory） | style | naming nit |'), '助言は任意の確認事項に出る');
+  assert.ok(!optional.includes('必須（blocking）'), '任意の確認事項に blocking 行を含まない');
+});
+
+test('issue #738 AC2: 助言の行の状態に ❌ を使わない（必須と混在 / 助言のみ の両方）', () => {
+  const bodies = {
+    mixed: buildDevflowSummaryBody(MIXED_738),
+    advisoryOnly: buildDevflowSummaryBody({
+      ...BASE_INPUT,
+      advisoryItems: [{ id: 'A1', text: 'naming nit', severity: 'minor', checked: false, dimension: 'style', escalate: false }],
+    }),
+  };
+  for (const [name, body] of Object.entries(bodies)) {
+    const advisoryLines = body.split('\n').filter((l) => l.includes('| 助言（advisory） |'));
+    assert.ok(advisoryLines.length > 0, `${name}: 助言の行がある`);
+    for (const l of advisoryLines) {
+      assert.ok(!l.includes('❌'), `${name}: 助言の行に ❌ を含まない: ${l}`);
+      assert.ok(l.startsWith('| ℹ️ 未確認 |'), `${name}: 助言の未解消は ℹ️ 未確認: ${l}`);
+    }
+  }
+});
+
+test('issue #738 AC3: 未達 AC と同じ AC を指す観点 ac の未解消 advisory は「任意（助言）」として出ず、未達 AC 表にだけ出る', () => {
+  const body = buildDevflowSummaryBody(MIXED_738);
+  for (const text of ['staging で実測する（人手）', 'pnpm precheck が green']) {
+    assert.ok(!body.includes(text), `${text}: 助言の行として出ない`);
+  }
+  assert.ok(!body.split('\n').some((l) => l.includes('| ac |') && l.includes('任意（助言）')), '観点 ac の行が任意（助言）で出ない');
+  const acRows = body.split('\n').filter((l) => l.startsWith('| ❌ 未達 | AC#'));
+  assert.deepEqual(acRows.map((l) => l.split('|')[2].trim()), ['AC#4', 'AC#5'], '未達 AC 表には AC#4 / AC#5 が 1 回ずつ');
+  // 助言の件数からも外れる（結論行の件数と任意の確認事項の行数が一致）
+  assert.ok(conclusionLine(body).includes('（助言 1 件は任意）'), '結論行の助言件数は ac 重複を除いた 1 件');
+
+  // 達成済み AC を指す観点 ac の advisory は重ならないので、従来どおり助言として残る
+  const bodySatisfied = buildDevflowSummaryBody({
+    ...MIXED_738,
+    advisoryItems: [{ id: 'AC-1', text: 'AC one', severity: 'major', checked: false, dimension: 'ac', escalate: false }],
+  });
+  assert.ok(sectionOf(bodySatisfied, '### ℹ️ 任意の確認事項').includes('| ℹ️ 未確認 | 助言（advisory） | ac | AC one |'), '達成済み AC の advisory は任意の確認事項に残る');
+});
+
+test('issue #738 AC5: 結論行・「あなたがやること」が指す「要対応」の ❌ は必須の項目だけで、任意の確認事項には ❌ が無い', () => {
+  const body = buildDevflowSummaryBody(MIXED_738);
+  assert.ok(
+    conclusionLine(body) === '**結論: 自動マージ対象外（HOLD）。修正作業が必要です（助言 1 件は任意）。「要対応」の ❌ 項目を修正してから再 review してください**',
+    `結論行: ${conclusionLine(body)}`,
+  );
+  assert.ok(body.includes('1. 下記「要対応」の ❌ 項目を修正して push する'), 'あなたがやることは要対応の ❌ を指す');
+  assert.ok(!sectionOf(body, '### ℹ️ 任意の確認事項').includes('❌'), '任意の確認事項に ❌ を含まない');
+  // 必須が escalate だけ（修正不要）のときは「必須の修正作業はありません（助言 N 件は任意）」のまま
+  const bodyEscalate = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    advisoryItems: [
+      { id: 'A1', text: 'naming nit', severity: 'minor', checked: false, dimension: 'style', escalate: false },
+      { id: 'E1', text: 'needs human', severity: 'major', checked: false, dimension: 'design', escalate: true },
+    ],
+  });
+  assert.ok(conclusionLine(bodyEscalate).includes('必須の修正作業はありません（助言 1 件は任意）'), 'escalate のみなら修正不要');
+  assert.ok(!sectionOf(bodyEscalate, '### ⚠️ 要対応').includes('助言（advisory）'), 'escalate と並ぶ助言も要対応に入らない');
+  assert.ok(sectionOf(bodyEscalate, '### ℹ️ 任意の確認事項').includes('| ℹ️ 未確認 | 助言（advisory） | style | naming nit |'), '助言は任意の確認事項に出る');
 });
