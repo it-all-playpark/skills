@@ -1450,6 +1450,35 @@ EOF
     [ "$(echo "$cal" | jq '.by_shape.micro + .by_shape.standard + .by_shape.complex + .by_shape.unknown')" -eq 0 ]
     [ "$(echo "$cal" | jq '.realized_mismatch.measured')" -eq 0 ]
     [ "$(echo "$cal" | jq '.analyze_ineligible_reason | length')" -eq 0 ]
+    [ "$(echo "$cal" | jq '.shape_correction.measured + .shape_correction.unmeasured + .shape_correction.downshifted')" -eq 0 ]
+}
+
+# issue #740: 重み・行数補正の前後（shape_uncorrected → shape）を数える
+@test "shape_calibration: shape_correction counts downshifted runs by transition (shape_uncorrected vs shape)" {
+    write_devflow_entry "e1.json" '{"shape":"micro","shape_uncorrected":"complex","shape_reason":"realized 6 file(s) → weighted 3（docs 2 / 対応本番ありの test 1 を除外）, +10/-60 lines, 3 AC, type=chore → file 数判定 complex, 重み・行数判定 standard, 削除主体（追加 < 削除×0.3）で 1 段下げ → shape=micro","realized_file_count":6,"realized_file_count_raw":6}' 1 "playpark-llc/shift-bud" 1515
+    write_devflow_entry "e2.json" '{"shape":"standard","shape_uncorrected":"complex","realized_file_count":8,"realized_file_count_raw":8}' 2
+    write_devflow_entry "e3.json" '{"shape":"micro","shape_uncorrected":"standard","realized_file_count":3,"realized_file_count_raw":3}' 3
+    write_devflow_entry "e4.json" '{"shape":"standard","shape_uncorrected":"complex","realized_file_count":7,"realized_file_count_raw":7}' 4
+    # 補正なし（shape と同じ）
+    write_devflow_entry "e5.json" '{"shape":"standard","shape_uncorrected":"standard","realized_file_count":3,"realized_file_count_raw":3}' 5
+    # 旧 entry（shape_uncorrected 欠落）→ unmeasured
+    write_devflow_entry "e6.json" '{"shape":"complex","realized_file_count":6,"realized_file_count_raw":6}' 6
+
+    run "$SCRIPT" --window 30d
+    [ "$status" -eq 0 ]
+    sc=$(printf '%s\n' "$output" | jq -c '.distributions.shape_calibration.shape_correction')
+    [ "$(echo "$sc" | jq '.measured')" -eq 5 ]
+    [ "$(echo "$sc" | jq '.unmeasured')" -eq 1 ]
+    [ "$(echo "$sc" | jq '.downshifted')" -eq 4 ]
+    [ "$(echo "$sc" | jq '.transitions.complex_to_standard')" -eq 2 ]
+    [ "$(echo "$sc" | jq '.transitions.complex_to_micro')" -eq 1 ]
+    [ "$(echo "$sc" | jq '.transitions.standard_to_micro')" -eq 1 ]
+    [ "$(echo "$sc" | jq '.downshifted_samples | length')" -eq 4 ]
+    [ "$(echo "$sc" | jq -r '.downshifted_samples | map(select(.pr_number == 1515)) | .[0] | "\(.shape_uncorrected)->\(.shape)"')" = "complex->micro" ]
+    # realized_mismatch は file 数判定の shape（shape_uncorrected）と比べる — 補正で下がった run を
+    # 除外規則の効き（excluded_below_raw）に混ぜない
+    [ "$(printf '%s\n' "$output" | jq '.distributions.shape_calibration.realized_mismatch.excluded_below_raw')" -eq 0 ]
+    [ "$(printf '%s\n' "$output" | jq '.distributions.shape_calibration.realized_mismatch.floor_above_raw')" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------

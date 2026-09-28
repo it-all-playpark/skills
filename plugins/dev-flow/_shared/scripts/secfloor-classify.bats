@@ -94,6 +94,78 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
+# (c2) lines: tracked の追加/削除行数 + untracked file の行数 (issue #740)
+# ---------------------------------------------------------------------------
+@test "lines: tracked 変更は numstat の追加/削除、untracked file は wc -l を追加行として返す" {
+    printf 'a\nb\nc\nd\n' > "$REPO/gone.txt"
+    printf 'k1\nk2\n' > "$REPO/keep.txt"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m setup-lines
+
+    git -C "$REPO" rm -q gone.txt
+    printf 'k1\nk2x\nk3\n' > "$REPO/keep.txt"
+    mkdir -p "$REPO/sub"
+    printf 'n1\nn2\nn3\n' > "$REPO/sub/new.txt"
+
+    run bash "$SCRIPT" "$REPO" "$BASE_REF"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        (.lines | map({key: .path, value: [.added, .deleted]}) | from_entries) as $m
+        | $m["gone.txt"] == [0, 4]
+        and $m["keep.txt"] == [2, 1]
+        and $m["sub/new.txt"] == [3, 0]
+        and (.lines | length) == 3
+        and (.files | index("sub/new.txt")) != null
+    '
+}
+
+@test "lines: クリーンな worktree -> lines==[]" {
+    run bash "$SCRIPT" "$REPO" "$BASE_REF"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.lines == []'
+}
+
+@test "lines: tracked binary の変更は要素を出さない (行数が無い file は呼び出し側で file 数判定に戻す)" {
+    printf '\000\001\002' > "$REPO/blob.bin"
+    git -C "$REPO" add -A
+    git -C "$REPO" commit -q -m setup-bin
+    printf '\000\003\004\005' > "$REPO/blob.bin"
+    printf 'x\n' >> "$REPO/base.txt"
+
+    run bash "$SCRIPT" "$REPO" "$BASE_REF"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        (.files | index("blob.bin")) != null
+        and (.lines | map(.path)) == ["base.txt"]
+    '
+}
+
+@test "lines: numstat 失敗 -> lines==null だが files/risk は正常のまま" {
+    REAL_GIT="$(command -v git)"
+    GIT_STUB_BIN="$(mktemp -d)"
+    cat > "$GIT_STUB_BIN/git" <<STUB
+#!/usr/bin/env bash
+for arg in "\$@"; do
+    if [[ "\$arg" == "--numstat" ]]; then
+        exit 1
+    fi
+done
+exec "$REAL_GIT" "\$@"
+STUB
+    chmod +x "$GIT_STUB_BIN/git"
+    printf 'x\n' >> "$REPO/base.txt"
+
+    run bash -c "PATH='$GIT_STUB_BIN:$ORIG_PATH' bash '$SCRIPT' '$REPO' '$BASE_REF'"
+    rm -rf "$GIT_STUB_BIN"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        .lines == null and
+        .files == ["base.txt"] and
+        .risk.ok == true
+    '
+}
+
+# ---------------------------------------------------------------------------
 # (d) base-ref 不正 -> risk.ok==false (fail-closed) かつ exit 0
 # ---------------------------------------------------------------------------
 @test "base-ref 不正 -> risk.ok==false (fail-closed) かつ exit 0" {
@@ -152,7 +224,7 @@ STUB
 @test "引数不足(0引数) -> usage error で exit 非0" {
     run bash "$SCRIPT"
     [ "$status" -ne 0 ]
-    printf '%s\n' "$output" | jq -e '.risk.ok == false and .files == null and .struct == null and .diffhash == null'
+    printf '%s\n' "$output" | jq -e '.risk.ok == false and .files == null and .struct == null and .diffhash == null and .lines == null'
 }
 
 @test "引数不足(worktree-pathのみ) -> usage error で exit 非0" {

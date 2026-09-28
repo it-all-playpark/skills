@@ -585,6 +585,12 @@ ITERATE_STATUS_DIST=$(echo "$ITERATE_ENTRIES" | jq -c --argjson window "$NESTED_
 #                        issue_type / breaking / count 欠損の floor で raw より上の tier に決まった run）
 #   注: shape は Security floor 時点の working tree を見る。pr-iterate fix / merge で後から
 #   膨らんだ PR はここには現れない（journal の realized は PR の最終 changedFiles ではない）。
+#   realized_mismatch は file 数判定の shape（shape_uncorrected、無い entry は shape）と比べる —
+#   重み・行数の補正で下がった分を除外規則の効きと混ぜないため。補正の効きは shape_correction が数える。
+#
+# shape_correction（issue #740）: classifyShape の重み・行数補正の前後。shape_uncorrected（file 数だけで
+# 決めた補正前の shape）が記録された entry を measured、無い旧 entry を unmeasured に数え、
+# shape と違う run を downshifted（補正で下がった run）として遷移別（"complex_to_standard" 等）に数える。
 SHAPE_FILE_MAX_MICRO=2
 SHAPE_FILE_MAX_STANDARD=5
 SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
@@ -615,11 +621,14 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
   def lower_tier_max($s): if $s == "standard" then $micro_max elif $s == "complex" then $standard_max else null end;
   def raw: .telemetry.realized_file_count_raw;
   def has_raw: (raw | type) == "number";
+  def has_uncorrected: (.telemetry.shape_uncorrected | type) == "string";
+  def file_shape: (if has_uncorrected then .telemetry.shape_uncorrected else .telemetry.shape end);
   def sample: { issue: (.context.issue // null), repo: (.context.repo // null), pr_number: (.context.pr_number // null),
                 shape: .telemetry.shape, shape_reason: (.telemetry.shape_reason // null),
                 realized_file_count_raw: raw, realized_file_count: (.telemetry.realized_file_count // null) };
-  ([.[] | select(has_raw and (upper(.telemetry.shape) != null) and (raw > upper(.telemetry.shape)))]) as $excluded |
-  ([.[] | select(has_raw and (lower_tier_max(.telemetry.shape) != null) and (raw <= lower_tier_max(.telemetry.shape)))]) as $floored |
+  ([.[] | select(has_raw and (upper(file_shape) != null) and (raw > upper(file_shape)))]) as $excluded |
+  ([.[] | select(has_raw and (lower_tier_max(file_shape) != null) and (raw <= lower_tier_max(file_shape)))]) as $floored |
+  ([.[] | select(has_uncorrected and .telemetry.shape_uncorrected != .telemetry.shape)]) as $downshifted |
   {
     by_shape: {
       micro: ([.[] | select(.telemetry.shape == "micro")] | length),
@@ -644,6 +653,16 @@ SHAPE_CALIBRATION=$(echo "$DEVFLOW_ENTRIES" | jq -c \
       excluded_below_raw_samples: ($excluded | map(sample) | .[0:10]),
       floor_above_raw: ($floored | length),
       floor_above_raw_samples: ($floored | map(sample) | .[0:10])
+    },
+    shape_correction: {
+      measured: ([.[] | select(has_uncorrected)] | length),
+      unmeasured: ([.[] | select(has_uncorrected | not)] | length),
+      downshifted: ($downshifted | length),
+      transitions: (
+        reduce ($downshifted[] | "\(.telemetry.shape_uncorrected)_to_\(.telemetry.shape)") as $k ({};
+          .[$k] = ((.[$k] // 0) + 1))
+      ),
+      downshifted_samples: ($downshifted | map(sample + {shape_uncorrected: .telemetry.shape_uncorrected}) | .[0:10])
     },
     analyze_path: {
       contract: ([.[] | select(.telemetry.analyze_path == "contract")] | length),

@@ -1,6 +1,6 @@
 // 実効 shape が realized diff の file 数だけで決まることを VM sandbox で pin する（issue #676）。
 // Analyze 由来の事前見積もり（req.shape / req.estimated_change_file_count）は decision に効かず、
-// EFFECTIVE_SHAPE は Security floor で classifyShape(req, realizedCount) が 1 回で決める。
+// EFFECTIVE_SHAPE は Security floor で classifyShape(req, realizedCount, lineStats) が 1 回で決める。
 //
 // テストケース:
 //   (A) realized 6 件（全件宣言）→ shape=complex + evaluator >= 1 回 + shape_reason が realized ベース
@@ -15,6 +15,10 @@
 //       triviality / estimated_file_count）が無い
 //   (J) 3 shape の spawn 構造（dev-implement-fable 回数 / evaluator 回数 / route）が shape 別経路の期待と一致する
 //   (K) 静的 pin: dev-flow.js（inline 生成区間含む）に refloorShape / mergeShape / 事前見積もりキーが無い
+//   (L) shift-bud#1513 相当 + secfloor の lines → 重み・削除主体の補正で micro、telemetry に補正前の shape（issue #740）
+//   (M) 同じ files で lines 無し → file 数判定の complex（補正なし）
+//   (N) counted file の 1 件に行数が無い → 補正なし
+//   (O) 宣言外 file の行数は補正に使わない
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -30,12 +34,15 @@ const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf
 // REQ を変える test は run(overrides, analyzeOverrides) の第 2 引数で setup.analyze を差し替える。
 
 // realized files と dev-implement-fable の申告 files を揃える override（宣言外 0 件で shape だけを動かす）
-function filesOverrides(files, { declared = files, changed = files } = {}) {
+function filesOverrides(files, { declared = files, changed = files, lines = undefined } = {}) {
   const impl = { status: 'DONE', task_id: 'issue-1', files: [...declared], summary: 's', concerns: [] };
   return {
     'impl:serial:issue-1': impl,
     'reimpl#1:serial:issue-1': impl,
-    'danger-grep': { risk: { ok: true, hits: [] }, files: files === null ? null : [...files], struct: null, diffhash: { hash: 'AAA', empty: false } },
+    'danger-grep': {
+      risk: { ok: true, hits: [] }, files: files === null ? null : [...files], struct: null, diffhash: { hash: 'AAA', empty: false },
+      ...(lines !== undefined ? { lines } : {}),
+    },
     'merge-tier-facts': mergeTierFacts({ files: changed === null ? ['src/x.ts'] : [...changed] }),
     'ci-check-lite': { status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 0 },
   };
@@ -179,7 +186,63 @@ test('[realized-shape] (K) 静的 pin: dev-flow.js（inline 生成区間含む�
   for (const token of ['refloorShape', 'mergeShape', 'SHAPE_RANK', 'estimated_change_file_count', 'shape_refloored', 'effective_shape', 'triviality_reason', 'estimated_file_count']) {
     assert.ok(!src.includes(token), `dev-flow.js に '${token}' が残っている`);
   }
-  // 実効 shape は classifyShape(req, realizedCount) の 1 呼び出しで決まる
-  assert.match(src, /const triage = classifyShape\(req, realizedCount\)\n\s*const EFFECTIVE_SHAPE = triage\.shape/);
+  // 実効 shape は classifyShape(req, realizedCount, lineStats) の 1 呼び出しで決まる
+  assert.match(src, /const triage = classifyShape\(req, realizedCount, lineStats\)\n\s*const EFFECTIVE_SHAPE = triage\.shape/);
   assert.equal((src.match(/classifyShape\(/g) ?? []).length - 1, 1, 'classifyShape の呼び出しは Security floor の 1 箇所のみ（-1 は関数定義）');
+});
+
+// ---- 差分の中身による補正（issue #740）: secfloor の lines が classifyShape に届く ----
+
+// shift-bud#1513 相当: docs 2 + 本番 2（うち削除だけ 1）+ テスト 2、+24/-128
+const SHIFT_BUD_LINES = [
+  { path: 'docs/DOMAIN_PATTERNS_GUIDE.md', added: 4, deleted: 14 },
+  { path: 'docs/UBIQUITOUS_LANGUAGE.md', added: 4, deleted: 14 },
+  { path: 'src/domain/planning-constraints.ts', added: 0, deleted: 36 },
+  { path: 'src/domain/constraint-violation.service.ts', added: 2, deleted: 1 },
+  { path: 'src/domain/planning-constraints.test.ts', added: 6, deleted: 40 },
+  { path: 'src/solver/solve-month.objectives.test.ts', added: 8, deleted: 23 },
+];
+const SHIFT_BUD_FILES = SHIFT_BUD_LINES.map((l) => l.path);
+const SHIFT_BUD_REQ = { issue_type: 'chore', acceptance_criteria: ['a', 'b', 'c'] };
+
+test('[realized-shape] (L) shift-bud#1513 相当（6 files, +24/-128, AC 3, chore）+ lines → micro、telemetry に補正前 complex と根拠が載る', async () => {
+  const { calls, returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES, { lines: SHIFT_BUD_LINES }) }, SHIFT_BUD_REQ);
+  assert.ok(['micro', 'standard'].includes(returned.shape), `micro か standard のはずだが ${returned.shape}`);
+  assert.equal(returned.shape, 'micro');
+  assert.equal(returned.realized_file_count, 6);
+  assert.match(returned.shape_reason, /realized 6 file\(s\) → weighted 3（docs 2 \/ 対応本番ありの test 1 を除外）, \+10\/-60 lines, 3 AC, type=chore/);
+  assert.match(returned.shape_reason, /1 段下げ → shape=micro$/);
+  const telemetry = journalTelemetry(calls);
+  assert.equal(telemetry.shape, 'micro');
+  assert.equal(telemetry.shape_uncorrected, 'complex');
+  assert.equal(telemetry.shape_reason, returned.shape_reason);
+});
+
+test('[realized-shape] (M) 同じ 6 files で lines が無い（secfloor が lines を返さない）→ file 数判定の complex、shape_uncorrected も complex', async () => {
+  const { calls, returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES) }, SHIFT_BUD_REQ);
+  assert.equal(returned.shape, 'complex');
+  assert.equal(returned.shape_reason, 'realized 6 file(s), 3 AC, type=chore → shape=complex');
+  const telemetry = journalTelemetry(calls);
+  assert.equal(telemetry.shape_uncorrected, 'complex');
+});
+
+test('[realized-shape] (N) counted file の 1 件に行数が無い（binary 等）→ 補正なしの file 数判定', async () => {
+  const lines = SHIFT_BUD_LINES.filter((l) => l.path !== 'src/domain/planning-constraints.ts');
+  const { returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES, { lines }) }, SHIFT_BUD_REQ);
+  assert.equal(returned.shape, 'complex');
+  assert.equal(returned.shape_reason, 'realized 6 file(s), 3 AC, type=chore → shape=complex');
+});
+
+test('[realized-shape] (O) 宣言外 file の行数は補正に使わない（lineStats は realized count に数えた file だけ）', async () => {
+  // 宣言外 3 件は大量追加だが realized count から除外されるので、宣言済み 3 件（削除主体）だけで判定する
+  const declared = ['src/a.ts', 'src/b.ts', 'src/c.ts'];
+  const undeclared = ['src/u1.ts', 'src/u2.ts', 'src/u3.ts'];
+  const lines = [
+    ...declared.map((path) => ({ path, added: 1, deleted: 30 })),
+    ...undeclared.map((path) => ({ path, added: 500, deleted: 0 })),
+  ];
+  const { returned } = await run({ ...filesOverrides([...declared, ...undeclared], { declared, lines }) });
+  assert.equal(returned.realized_file_count, 3);
+  assert.match(returned.shape_reason, /weighted 3（docs 0 \/ 対応本番ありの test 0 を除外）, \+3\/-90 lines/);
+  assert.equal(returned.shape, 'micro');
 });

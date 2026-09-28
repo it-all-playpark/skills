@@ -1,7 +1,7 @@
 // parseSecfloorFields: dev-flow Security floor が使う統合 exec-proxy
 // (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #544, S1)。
 //
-// 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":...} の 1 JSON object を返すが、
+// 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":..., "lines":...} の 1 JSON object を返すが、
 // 各フィールドはそれぞれ別のフィールド別失敗ポリシーを持つ (下記)。本関数は「1 フィールドの不正が
 // 他フィールドの判定に影響しない」ことを保証するため、各フィールドを完全に独立して検証する。
 //
@@ -20,6 +20,9 @@
 //            省略可、省略時は [] 扱い) が配列のときのみ採用。それ以外は null。
 //   hash   - fail-open。typeof unified?.diffhash?.hash==='string' のときのみその文字列を採用。
 //            それ以外は null。
+//   lines  - fail-safe。Array.isArray(unified?.lines) かつ全要素が {path:string, added/deleted: 0 以上の
+//            整数} のときのみ採用。それ以外は null（classifyShape が行数補正をせず file 数判定に戻る。
+//            取れない行数を 0 と読んで shape を下げない）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -68,11 +71,38 @@ function parseHashField(unified) {
   return typeof hash === 'string' ? hash : null;
 }
 
+function parseLinesField(unified) {
+  const lines = unified?.lines;
+  if (
+    Array.isArray(lines)
+    && lines.every((l) => l != null && typeof l === 'object' && typeof l.path === 'string'
+      && Number.isInteger(l.added) && l.added >= 0 && Number.isInteger(l.deleted) && l.deleted >= 0)
+  ) {
+    return lines;
+  }
+  return null;
+}
+
 export function parseSecfloorFields(unified) {
   return {
     risk: parseRiskField(unified),
     files: parseFilesField(unified),
     struct: parseStructField(unified),
     hash: parseHashField(unified),
+    lines: parseLinesField(unified),
   };
+}
+
+// lineStatsFor: classifyShape に渡す file ごとの行数を、realized count に数えた files の順で組む。
+// 1 件でも lines に行数が無い file（binary・取得失敗）があれば null を返し、file 数判定に戻す。
+export function lineStatsFor(files, lines) {
+  if (!Array.isArray(files) || !Array.isArray(lines)) return null;
+  const byPath = new Map(lines.map((l) => [l.path, l]));
+  const stats = [];
+  for (const path of files) {
+    const l = byPath.get(path);
+    if (!l) return null;
+    stats.push({ path, added: l.added, deleted: l.deleted });
+  }
+  return stats;
 }
