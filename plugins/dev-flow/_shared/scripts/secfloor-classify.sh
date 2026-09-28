@@ -14,7 +14,8 @@
 #   {"risk":<diff-risk-classify.sh の出力 object>,
 #    "files":["path1",...]|null,
 #    "struct":<structural-classify.sh の出力 object>|null,
-#    "diffhash":<worktree-diff-hash.sh の出力 object>|null}
+#    "diffhash":<worktree-diff-hash.sh の出力 object>|null,
+#    "lines":[{"path":"path1","added":N,"deleted":M},...]|null}
 #
 # フィールド別失敗セマンティクス (各フィールドの失敗は他フィールドへ絶対に波及しない):
 #   risk     - fail-closed 用。diff-risk-classify.sh が非0 exit でも stdout に
@@ -30,6 +31,12 @@
 #              緩めない。difft 未インストール時の available:false は正常応答として扱う)。
 #   diffhash - fail-open 用。worktree-diff-hash.sh の失敗 (このスクリプトはエラー時に
 #              JSON を出さず exit 1 するだけの契約) は null (stale 検出の補助信号のため)。
+#   lines    - fail-safe 用 (classifyShape の行数補正の入力、issue #740)。tracked 変更は
+#              `git diff --numstat --no-renames HEAD` (implementer は未コミットなので HEAD との差分が
+#              realized diff)、untracked file は `wc -l` を追加行として数える (`git add -N` で index を
+#              触らない)。binary (numstat が "-") と読めない untracked file は要素を出さない
+#              -- その file の行数が欠けると呼び出し側が補正を諦めて file 数判定に戻る。numstat 自体の
+#              失敗は null。
 #
 # Exit: 0 が既定。usage error (引数不足・worktree パス不在) のみ非0 exit 可
 # (この場合も stdout には risk:{"ok":false,...}, files/struct/diffhash:null の
@@ -45,9 +52,9 @@ _CORE_BIN="$(command -v journal)" || { echo "playpark-core plugin (bin/journal) 
 source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 
 emit_degrade() {
-    # $1: risk JSON object (raw, already-complete JSON text). files/struct/diffhash
+    # $1: risk JSON object (raw, already-complete JSON text). files/struct/diffhash/lines
     # は常に null (usage error / jq 不在は risk 以外の全フィールドが取得不能なため)。
-    printf '{"risk":%s,"files":null,"struct":null,"diffhash":null}\n' "$1"
+    printf '{"risk":%s,"files":null,"struct":null,"diffhash":null,"lines":null}\n' "$1"
 }
 
 usage_error() {
@@ -132,6 +139,38 @@ else
 fi
 
 # ============================================================================
+# 2b. lines = file ごとの追加・削除行数 (tracked: numstat / untracked: wc -l)
+# ============================================================================
+
+lines_json="null"
+if [[ $files_rc -eq 0 ]]; then
+    set +e
+    numstat_raw="$(git -C "$wt" diff --numstat --no-renames HEAD 2>/dev/null)"
+    numstat_rc=$?
+    set -e
+    if [[ $numstat_rc -eq 0 ]]; then
+        lines_tsv=""
+        while IFS=$'\t' read -r added deleted path; do
+            [[ -z "$path" ]] && continue
+            # binary は "-<TAB>-" -- 行数が無いので要素を出さない
+            [[ "$added" =~ ^[0-9]+$ && "$deleted" =~ ^[0-9]+$ ]] || continue
+            lines_tsv+="${path}"$'\t'"${added}"$'\t'"${deleted}"$'\n'
+        done <<< "$numstat_raw"
+        while IFS= read -r line; do
+            [[ "$line" == '?? '* ]] || continue
+            path="${line:3}"
+            [[ -f "$wt/$path" ]] || continue
+            n="$(wc -l < "$wt/$path" 2>/dev/null | tr -d ' ')" || continue
+            [[ "$n" =~ ^[0-9]+$ ]] || continue
+            lines_tsv+="${path}"$'\t'"${n}"$'\t'"0"$'\n'
+        done <<< "$files_raw"
+        lines_json="$(printf '%s' "$lines_tsv" | jq -R -s -c '
+            split("\n") | map(select(length > 0) | split("\t")
+              | {path: .[0], added: (.[1] | tonumber), deleted: (.[2] | tonumber)})')"
+    fi
+fi
+
+# ============================================================================
 # 3. struct = structural-classify.sh <worktree-path> <base-ref>
 # ============================================================================
 
@@ -174,6 +213,7 @@ jq -nc \
     --argjson files "$files_json" \
     --argjson struct "$struct_json" \
     --argjson diffhash "$diffhash_json" \
-    '{risk: $risk, files: $files, struct: $struct, diffhash: $diffhash}'
+    --argjson lines "$lines_json" \
+    '{risk: $risk, files: $files, struct: $struct, diffhash: $diffhash, lines: $lines}'
 
 exit 0

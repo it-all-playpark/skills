@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { parseSecfloorFields } from './secfloor-unified.mjs';
+import { parseSecfloorFields, lineStatsFor } from './secfloor-unified.mjs';
 
 // (1) null 入力 → risk.ok===false かつ hits===[]、files/struct/hash は null。hits フィールド欠落を
 // clean と同一視しない fail-closed が要件。
@@ -175,4 +175,50 @@ test('unified が undefined → risk fail-closed、files/struct/hash=null', () =
   assert.equal(result.files, null);
   assert.equal(result.struct, null);
   assert.equal(result.hash, null);
+  assert.equal(result.lines, null);
+});
+
+// ---- lines（file ごとの追加・削除行数、issue #740）: fail-safe = 不正なら null（shape は file 数判定に戻る）----
+
+test('lines 正常 → 素通し、他フィールドは無傷', () => {
+  const lines = [{ path: 'a.js', added: 3, deleted: 0 }, { path: 'b.md', added: 0, deleted: 12 }];
+  const result = parseSecfloorFields({ risk: { ok: true, hits: [] }, files: ['a.js', 'b.md'], struct: null, diffhash: null, lines });
+  assert.deepEqual(result.lines, lines);
+  assert.deepEqual(result.files, ['a.js', 'b.md']);
+  assert.equal(result.risk.ok, true);
+});
+
+for (const [label, lines] of [
+  ['欠落', undefined],
+  ['非配列', { path: 'a.js', added: 1, deleted: 0 }],
+  ['added が文字列', [{ path: 'a.js', added: '1', deleted: 0 }]],
+  ['deleted が負', [{ path: 'a.js', added: 1, deleted: -1 }]],
+  ['path 欠落', [{ added: 1, deleted: 0 }]],
+  ['null 要素', [null]],
+]) {
+  test(`lines ${label} → lines=null だが risk/files は無傷`, () => {
+    const result = parseSecfloorFields({ risk: { ok: true, hits: [] }, files: ['a.js'], struct: null, diffhash: { hash: 'h' }, lines });
+    assert.equal(result.lines, null);
+    assert.deepEqual(result.risk, { ok: true, hits: [] });
+    assert.deepEqual(result.files, ['a.js']);
+    assert.equal(result.hash, 'h');
+  });
+}
+
+test('lineStatsFor: files の順で行数を組み、files に無い lines の要素は使わない', () => {
+  const lines = [{ path: 'old.txt', added: 0, deleted: 9 }, { path: 'b.ts', added: 2, deleted: 1 }, { path: 'a.ts', added: 5, deleted: 0 }];
+  assert.deepEqual(lineStatsFor(['a.ts', 'b.ts'], lines), [
+    { path: 'a.ts', added: 5, deleted: 0 },
+    { path: 'b.ts', added: 2, deleted: 1 },
+  ]);
+  assert.deepEqual(lineStatsFor([], lines), []);
+});
+
+test('lineStatsFor: 行数の無い file（binary 等）が 1 件でもあれば null', () => {
+  assert.equal(lineStatsFor(['a.ts', 'blob.bin'], [{ path: 'a.ts', added: 1, deleted: 0 }]), null);
+});
+
+test('lineStatsFor: files / lines のどちらかが null なら null', () => {
+  assert.equal(lineStatsFor(null, []), null);
+  assert.equal(lineStatsFor(['a.ts'], null), null);
 });

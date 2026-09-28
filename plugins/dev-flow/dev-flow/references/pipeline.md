@@ -71,11 +71,16 @@ Implement / BLOCKED 再実装 / Evaluate 差し戻しは `opts.model` を渡さ�
 null 返却は再試行せず drop（`implDroppedCount`）に計上する。
 観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）。
 
-shape は analyze ゲートでは決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount)` が
-realized diff の file 数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）だけで
+shape は analyze ゲートでは決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount, lineStats)` が
+realized diff の file 数・file ごとの追加/削除行数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）で
 1 回で決め、その返り値が `EFFECTIVE_SHAPE`（Evaluate 深さ・LITE gate・merge tier の入力）になる。安全 floor は
 realized count 欠損（secfloor-unified（danger-grep）の files 欠落 → NaN）・`acceptance_criteria` 欠落・out-of-enum `issue_type`・
-`breaking_change === true` → complex（軸A: 緩めない）。LLM の事前見積もり（shape / 見込み file 数）は REQ に
+`breaking_change === true` → complex（軸A: 緩めない）。floor を通過した run だけ、secfloor の `lines`
+（tracked は numstat、untracked は `wc -l`）から差分の中身で下げ方向に補正する: docs（`docs/**` / `*.md`）と
+対応する本番ファイルも変えたテストは数えない、重み付け後の追加行 < 削除行×0.3 なら 1 段下げる、complex は
+重み付け後 file 数 > 5 かつ追加 > 100 行のときだけ。file 数判定より上には上げない。行数が 1 file でも欠けた run と
+変更がテストだけの run は補正しない（file 数判定のまま）。補正前の shape は telemetry `shape_uncorrected`。
+LLM の事前見積もり（shape / 見込み file 数）は REQ に
 持たず decision に使わない — micro の LITE 経路に対する意味的リスクの安全網は runEval 強制条件
 （danger-grep / testsurf / green-fix / dropped task / 宣言外変更 / UI 接触）が担う。
 `classifyShape` に渡す数は Security floor 時点の working tree から ephemeral・宣言外パス・format-only を

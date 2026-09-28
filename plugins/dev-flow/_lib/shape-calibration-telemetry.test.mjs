@@ -5,6 +5,7 @@
 //
 //   (a) contract 経路（既定）: analyze_path='contract'、analyze_ineligible_reason はキー欠落、
 //       shape_reason が realized 閾値判定文、ac_count / realized_file_count / realized_file_count_raw が数値で載る、
+//       shape_uncorrected（補正前の shape。issue #740）が載る、
 //       prerun_durations.analyze が prerun の analyze.duration_seconds、phase_durations に analyze キーは無い（issue #695）
 //   (b) jev 経路: analyze_path='jev'、analyze_ineligible_reason が prerun の jev_reasons を '; ' 結合した文字列
 //   (c) prerun の analyze.duration_seconds 欠落: prerun_durations キーを出さない（fail-open）
@@ -56,6 +57,8 @@ test('[shape-calibration] (a) contract 経路（既定）: analyze_path=contract
   assert.equal(telemetry.realized_file_count, 3);
   assert.equal(telemetry.realized_file_count_raw, 3);
   assert.equal(telemetry.shape, 'standard');
+  // secfloor が lines を返さない run は補正なし: 補正前（file 数判定）も同じ standard（issue #740）
+  assert.equal(telemetry.shape_uncorrected, 'standard');
   // prerun の analyze 段の所要は prerun_durations.analyze。Workflow 側の analyze ゲートは phase_durations に区間を持たない（issue #695）
   assert.deepEqual(telemetry.prerun_durations, { analyze: 5 });
   assert.ok(!telemetry.phase_durations || !('analyze' in telemetry.phase_durations), `phase_durations に analyze キーが残っている: ${JSON.stringify(telemetry.phase_durations)}`);
@@ -90,6 +93,7 @@ test('[shape-calibration] (d) realized count 欠損（files=null）: shape=compl
     },
   });
   assert.equal(telemetry.shape, 'complex');
+  assert.equal(telemetry.shape_uncorrected, 'complex');
   assert.match(telemetry.shape_reason, /safe floor=complex/);
   assert.equal(telemetry.realized_file_count, null);
   assert.equal(telemetry.realized_file_count_raw, null);

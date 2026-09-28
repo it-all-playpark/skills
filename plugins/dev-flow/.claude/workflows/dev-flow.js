@@ -1976,8 +1976,8 @@ function reconcileTestsurf(ledger, risk) {
 // ==== END inline: _lib/testsurf.mjs ====
 
 // ==== BEGIN inline: _lib/triviality.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// classifyShape: realized diff の file 数と REQ 由来の決定論特徴量（AC 数 / issue_type / 構造化
-// breaking_change）から実効 shape を決める純粋関数。dev-flow の Security floor（realized diff 取得後）
+// classifyShape: realized diff の file 数・file ごとの追加/削除行数と REQ 由来の決定論特徴量（AC 数 /
+// issue_type / 構造化 breaking_change）から実効 shape を決める純粋関数。dev-flow の Security floor（realized diff 取得後）
 // で 1 回だけ呼ばれ、返り値が EFFECTIVE_SHAPE（Evaluate 深さ・LITE gate・merge tier の入力）になる。
 //
 // 入力は実装後の realized diff のみ。Setup 末尾の analyze ゲートまでに得られる LLM の事前見積もり（shape / 見込み file 数）は
@@ -1994,27 +1994,68 @@ function reconcileTestsurf(ledger, risk) {
 // complex floor に採用しない (低 precision ヒューリスティック、実測 FP: #359/#361)。
 // 構造化判定 breaking_change===true との corroboration があるときのみ floor へ採用する。
 // issue #442: issue_type enum ドリフト修正 — AGENTS.md の正規 Conventional Commits 型 (chore/test/perf/ci) を validTypes に追加。
+//
+// 差分の中身による補正（issue #740）: file 数だけだと docs / テスト / 削除だけの掃除 run が complex に上がるため、
+// file ごとの追加・削除行数（lineStats）が取れた run に限り、floor を通過した後で次の 3 つを適用する。
+// どれも file 数判定（uncorrected_shape）より上には上げない — 下げ方向の補正だけ。
+//   1. 重み: docs（docs/** と *.md）と、同じ run で対応する本番ファイルも変えたテスト（stem 一致）は数えない
+//   2. 削除主体: 重み付け後の 追加行 < 削除行 × SHAPE_DELETION_DOWNSHIFT_RATIO なら 1 段下げる
+//   3. 追加行数: complex は「重み付け後の file 数 > 5」かつ「重み付け後の追加行 > SHAPE_COMPLEX_MIN_ADDED_LINES」
+//      のときだけ（広く浅い変更を complex に上げない）
+// lineStats が無い / 不正 / 件数が realizedCount と合わないときは補正せず file 数判定のまま（取れない行数を
+// 0 と読んで下げない）。変更がテストだけの run も補正しない（testsurf / test-only 経路の扱いを変えない）。
+// 下げた先で意味的リスクを拾うのは Validate（typecheck / test）と runEval 強制条件で、ここでは見ない。
+const SHAPE_DELETION_DOWNSHIFT_RATIO = 0.3;
+// main の直近 150 commit で「重み付け後 file 数 > 5 かつ追加 ≤ 100 行」は、path 移行・manifest 整理等の
+// 機械的な広く浅い変更だけだった（ロジック変更を含む run は 134 行以上）。
+const SHAPE_COMPLEX_MIN_ADDED_LINES = 100;
+const SHAPE_TIERS = ['micro', 'standard', 'complex'];
+
+function isShapeDocPath(path) {
+  return /(^|\/)docs\//.test(path) || /\.md$/i.test(path);
+}
+
+function isShapeTestPath(path) {
+  return /\.(test|spec)\.[^/]+$/.test(path) || /(^|\/)__tests__\//.test(path) || /\.bats$/.test(path);
+}
+
+// テストと本番ファイルの対応付けに使う basename の stem（foo.test.ts / __tests__/foo.ts / foo.bats / foo.ts → foo）
+function shapeStem(path) {
+  const base = path.split('/').pop();
+  if (/\.(test|spec)\.[^.]+$/.test(base)) return base.replace(/\.(test|spec)\.[^.]+$/, '');
+  return base.replace(/\.[^.]+$/, '');
+}
+
+function isValidLineStats(lineStats, count) {
+  return Array.isArray(lineStats)
+    && lineStats.length === count
+    && lineStats.every((s) => s != null && typeof s === 'object' && typeof s.path === 'string'
+      && Number.isInteger(s.added) && s.added >= 0 && Number.isInteger(s.deleted) && s.deleted >= 0);
+}
 
 /**
  * @param {object} req - analyze REQ（acceptance_criteria / issue_type / breaking_change / breaking_keyword_scan を読む）
  * @param {number} realizedCount - realized diff の file 数（宣言外・format-only・ephemeral 除外後の整数。
  *   取得不能は NaN）
- * @returns {{ shape: 'micro'|'standard'|'complex', reason: string }}
+ * @param {Array<{path: string, added: number, deleted: number}>|null} [lineStats] - realizedCount に数えた
+ *   file ごとの追加・削除行数（同じ file 集合）。取得不能は null（補正なし = file 数判定）
+ * @returns {{ shape: 'micro'|'standard'|'complex', reason: string, uncorrected_shape: 'micro'|'standard'|'complex' }}
+ *   uncorrected_shape は file 数だけで決めた補正前の shape（floor で決まったときは shape と同じ complex）
  */
-function classifyShape(req, realizedCount) {
+function classifyShape(req, realizedCount, lineStats = null) {
   const count = realizedCount;
   if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) {
-    return { shape: 'complex', reason: `realized file count missing or invalid → safe floor=complex` };
+    return { shape: 'complex', reason: `realized file count missing or invalid → safe floor=complex`, uncorrected_shape: 'complex' };
   }
 
   const ac = req.acceptance_criteria;
   if (!Array.isArray(ac)) {
-    return { shape: 'complex', reason: `acceptance_criteria missing or not array → safe floor=complex` };
+    return { shape: 'complex', reason: `acceptance_criteria missing or not array → safe floor=complex`, uncorrected_shape: 'complex' };
   }
 
   const validTypes = ['feat', 'fix', 'docs', 'refactor', 'chore', 'test', 'perf', 'ci'];
   if (!validTypes.includes(req.issue_type)) {
-    return { shape: 'complex', reason: `issue_type '${req.issue_type}' not in allowed set → floor=complex` };
+    return { shape: 'complex', reason: `issue_type '${req.issue_type}' not in allowed set → floor=complex`, uncorrected_shape: 'complex' };
   }
 
   // keyword-alone (breaking_keyword_scan=true かつ breaking_change!==true) は complex floor に
@@ -2025,23 +2066,63 @@ function classifyShape(req, realizedCount) {
     const reason = `breaking change detected (analyze structured breaking_change=true`
       + (req.breaking_keyword_scan === true ? ' + issue title/body keyword scan hit' : '')
       + `) → floor=complex`;
-    return { shape: 'complex', reason };
+    return { shape: 'complex', reason, uncorrected_shape: 'complex' };
   }
 
-  let shape;
+  let uncorrected;
   if (count <= 2 && ac.length <= 4) {
-    shape = 'micro';
+    uncorrected = 'micro';
   } else if (count <= 5 && ac.length <= 6) {
-    shape = 'standard';
+    uncorrected = 'standard';
   } else {
-    shape = 'complex';
+    uncorrected = 'complex';
   }
 
-  let reason = `realized ${count} file(s), ${ac.length} AC, type=${req.issue_type} → shape=${shape}`;
-  if (keywordAlone) {
-    reason += `（breaking keyword hit は構造化判定 breaking_change=false のため floor 不採用 — 可視化のみ。issue #364）`;
+  const keywordNote = keywordAlone
+    ? `（breaking keyword hit は構造化判定 breaking_change=false のため floor 不採用 — 可視化のみ。issue #364）`
+    : '';
+  const head = `realized ${count} file(s)`;
+  const tail = `${ac.length} AC, type=${req.issue_type}`;
+
+  if (!isValidLineStats(lineStats, count)) {
+    return { shape: uncorrected, reason: `${head}, ${tail} → shape=${uncorrected}${keywordNote}`, uncorrected_shape: uncorrected };
   }
-  return { shape, reason };
+  if (lineStats.length > 0 && lineStats.every((s) => isShapeTestPath(s.path))) {
+    return {
+      shape: uncorrected,
+      reason: `${head}, ${tail} → shape=${uncorrected}（test-only のため補正なし）${keywordNote}`,
+      uncorrected_shape: uncorrected,
+    };
+  }
+
+  const prodStems = new Set(lineStats
+    .filter((s) => !isShapeDocPath(s.path) && !isShapeTestPath(s.path))
+    .map((s) => shapeStem(s.path)));
+  const docs = lineStats.filter((s) => isShapeDocPath(s.path));
+  const pairedTests = lineStats.filter((s) => !isShapeDocPath(s.path) && isShapeTestPath(s.path) && prodStems.has(shapeStem(s.path)));
+  const weighted = lineStats.filter((s) => !docs.includes(s) && !pairedTests.includes(s));
+  const added = weighted.reduce((n, s) => n + s.added, 0);
+  const deleted = weighted.reduce((n, s) => n + s.deleted, 0);
+
+  let tier;
+  if (weighted.length <= 2 && ac.length <= 4) {
+    tier = 'micro';
+  } else if ((weighted.length <= 5 || added <= SHAPE_COMPLEX_MIN_ADDED_LINES) && ac.length <= 6) {
+    tier = 'standard';
+  } else {
+    tier = 'complex';
+  }
+  const tierRank = SHAPE_TIERS.indexOf(tier);
+  const downshift = tierRank > 0 && deleted > 0 && added < deleted * SHAPE_DELETION_DOWNSHIFT_RATIO;
+  const shape = SHAPE_TIERS[Math.min(downshift ? tierRank - 1 : tierRank, SHAPE_TIERS.indexOf(uncorrected))];
+
+  const reason = `${head} → weighted ${weighted.length}（docs ${docs.length} / 対応本番ありの test ${pairedTests.length} を除外）, `
+    + `+${added}/-${deleted} lines, ${tail} → file 数判定 ${uncorrected}, 重み・行数判定 ${tier}`
+    + (downshift
+      ?`, 削除主体（追加 < 削除×${SHAPE_DELETION_DOWNSHIFT_RATIO}）で 1 段下げ`
+      : ', 1 段下げなし')
+    + ` → shape=${shape}${keywordNote}`;
+  return { shape, reason, uncorrected_shape: uncorrected };
 }
 // ==== END inline: _lib/triviality.mjs ====
 // ==== BEGIN inline: _lib/analyze-contract.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
@@ -4289,7 +4370,7 @@ const TREE_DIFF_LINES = {
 // `risk` のみ required（ok:boolean / hits:array 必須）— risk は
 // fail-closed フィールドなので、proxy が payload をネストする等の形状不一致を schema 契約違反として
 // 検知し retryOnContractViolation の再試行機会を与える（required:[] だと契約違反にならず一発で
-// fail-closed に倒れ、診断もできない）。files / struct / diffhash は required にしない（fail-safe /
+// fail-closed に倒れ、診断もできない）。files / struct / diffhash / lines は required にしない（fail-safe /
 // fail-open のまま per-field 検証 parseSecfloorFields へ流す）。
 const SECFLOOR = {
   type: 'object',
@@ -4303,6 +4384,7 @@ const SECFLOOR = {
     files: { type: ['array', 'null'] },
     struct: { type: ['object', 'null'] },
     diffhash: { type: ['object', 'null'] },
+    lines: { type: ['array', 'null'] },
   },
 }
 // secfloor-unified-schema-end: SECFLOOR 直後に parseSecfloorFields の inline 区間を続ける（anchor 用の一意行）。
@@ -4310,7 +4392,7 @@ const SECFLOOR = {
 // parseSecfloorFields: dev-flow Security floor が使う統合 exec-proxy
 // (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #544, S1)。
 //
-// 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":...} の 1 JSON object を返すが、
+// 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":..., "lines":...} の 1 JSON object を返すが、
 // 各フィールドはそれぞれ別のフィールド別失敗ポリシーを持つ (下記)。本関数は「1 フィールドの不正が
 // 他フィールドの判定に影響しない」ことを保証するため、各フィールドを完全に独立して検証する。
 //
@@ -4329,6 +4411,9 @@ const SECFLOOR = {
 //            省略可、省略時は [] 扱い) が配列のときのみ採用。それ以外は null。
 //   hash   - fail-open。typeof unified?.diffhash?.hash==='string' のときのみその文字列を採用。
 //            それ以外は null。
+//   lines  - fail-safe。Array.isArray(unified?.lines) かつ全要素が {path:string, added/deleted: 0 以上の
+//            整数} のときのみ採用。それ以外は null（classifyShape が行数補正をせず file 数判定に戻る。
+//            取れない行数を 0 と読んで shape を下げない）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -4377,13 +4462,40 @@ function parseHashField(unified) {
   return typeof hash === 'string' ? hash : null;
 }
 
+function parseLinesField(unified) {
+  const lines = unified?.lines;
+  if (
+    Array.isArray(lines)
+    && lines.every((l) => l != null && typeof l === 'object' && typeof l.path === 'string'
+      && Number.isInteger(l.added) && l.added >= 0 && Number.isInteger(l.deleted) && l.deleted >= 0)
+  ) {
+    return lines;
+  }
+  return null;
+}
+
 function parseSecfloorFields(unified) {
   return {
     risk: parseRiskField(unified),
     files: parseFilesField(unified),
     struct: parseStructField(unified),
     hash: parseHashField(unified),
+    lines: parseLinesField(unified),
   };
+}
+
+// lineStatsFor: classifyShape に渡す file ごとの行数を、realized count に数えた files の順で組む。
+// 1 件でも lines に行数が無い file（binary・取得失敗）があれば null を返し、file 数判定に戻す。
+function lineStatsFor(files, lines) {
+  if (!Array.isArray(files) || !Array.isArray(lines)) return null;
+  const byPath = new Map(lines.map((l) => [l.path, l]));
+  const stats = [];
+  for (const path of files) {
+    const l = byPath.get(path);
+    if (!l) return null;
+    stats.push({ path, added: l.added, deleted: l.deleted });
+  }
+  return stats;
 }
 // ==== END inline: _lib/secfloor-unified.mjs ====
 // ISSUE_LABELS: `gh issue view --json labels` の read-only exec-proxy 結果（empty-diff gate の
@@ -6051,13 +6163,13 @@ async function execSecurityFloorPhase(state) {
     unified = await trackedAgent(
       `cd ${WT} で作業。次を実行し **stdout の JSON object をそのまま** 返せ`
       + `（判定や脚色をしない。exit 非0・stdout 空・JSON 不正なら `
-      + `{"risk":{"ok":false,"hits":[],"error":"..."},"files":null,"struct":null,"diffhash":null} で返せ。`
+      + `{"risk":{"ok":false,"hits":[],"error":"..."},"files":null,"struct":null,"diffhash":null,"lines":null} で返せ。`
       + `失敗時に risk.ok:true を生成してはならない）:\n`
       + `secfloor-classify ${WT} origin/${BASE}`,
       { agentType: 'dev-runner-haiku-ro', schema: SECFLOOR, label: 'danger-grep', phase: 'Security floor', retryOnContractViolation: true },
     )
   } catch (e) { log(`⚠️ secfloor-classify 呼び出しが例外 — unified=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
-  const { risk, files, struct, hash } = parseSecfloorFields(unified)
+  const { risk, files, struct, hash, lines } = parseSecfloorFields(unified)
   // fail-closed の 2 原因を出し分ける。形状不一致は top-level キー一覧が、
   // proxy 自身の失敗報告（形状は契約通り）は risk.error が診断値になる。
   if (risk.ok !== true) {
@@ -6100,9 +6212,15 @@ async function execSecurityFloorPhase(state) {
   const realizedCount = declaredFiles ? declaredFiles.length - formatOnlyExcluded : NaN
   if (undeclared.length > 0) log(`realized-diff: 宣言外 ${undeclared.length} 件は realized count から除外（declared ${declaredFiles ? declaredFiles.length : NaN} 件で判定）`)
   if (formatOnlyExcluded > 0) log(`realized-diff: フォーマットのみ ${formatOnlyExcluded} 件を realized count から除外（difftastic 分類）`)
-  // 実効 shape: realized file 数 + issue 由来の決定論特徴量（AC 数 / issue_type / 構造化 breaking_change）
-  // だけで 1 回で決める。count 欠損（NaN）と breaking_change===true は complex（軸A: 安全側 floor）。
-  const triage = classifyShape(req, realizedCount)
+  // 行数補正の入力: realized count に数えた file（宣言済み・format-only 以外）ごとの追加/削除行数。
+  // 1 件でも行数が欠けると null → classifyShape は補正せず file 数判定のまま。
+  const countedFiles = declaredFiles ? declaredFiles.filter((f) => !formatOnlySet.has(f)) : null
+  const lineStats = lineStatsFor(countedFiles, lines)
+  if (countedFiles && lineStats == null) log('realized-diff: file ごとの行数を取得できない — 重み・行数の補正なしで file 数だけで shape を判定')
+  // 実効 shape: realized file 数・行数 + issue 由来の決定論特徴量（AC 数 / issue_type / 構造化 breaking_change）
+  // で 1 回で決める。count 欠損（NaN）と breaking_change===true は complex（軸A: 安全側 floor）。
+  // 重み・行数の補正は floor 通過後にだけ効き、file 数判定より上には上げない。
+  const triage = classifyShape(req, realizedCount, lineStats)
   const EFFECTIVE_SHAPE = triage.shape
   const TRIVIAL = EFFECTIVE_SHAPE === 'micro'
   ABORT_CTX.shape = EFFECTIVE_SHAPE
@@ -7406,7 +7524,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     gate_policy: GATE_POLICY,
     danger_hits: dangerHitsFinal,
     danger_fail_closed: dangerFailClosedFinal,
-    // shape: 実効 shape（realized diff の file 数から classifyShape が決めた値）。
+    // shape: 実効 shape（realized diff の file 数・行数から classifyShape が決めた値）。
     // shape_reason: その判定根拠（realized ベース）。passthrough 経路で journal へ到達し、
     // gate / merge tier / ledger の判定入力にはならない。doctor の「shape 分布 / micro 不発火検知」が読む。
     // - realized_file_count: classifyShape に渡した数（宣言外パス・format-only を除外した後。
@@ -7417,7 +7535,10 @@ const telemetryHandoff = buildJournalHandoffPayload({
     // - analyze_ineligible_reason: Jev に回した理由（prerun の jev_reasons）。contract 経路はキー欠落
     // - prerun_durations.analyze: prerun の analyze 段（issue 取得 + Jev。deps install と並列）の秒数。
     //   Workflow 側の analyze ゲート（Setup 末尾の純関数）は phase_durations に区間を持たない
+    // - shape_uncorrected: file 数だけで決めた補正前の shape（重み・行数の補正を掛けない値。floor 時と
+    //   行数を取れない run は shape と同じ）。shape との差を doctor の shape 較正が数える
     shape: state.EFFECTIVE_SHAPE,
+    shape_uncorrected: state.triage.uncorrected_shape,
     shape_reason: state.triage.reason,
     realized_file_count: Number.isFinite(state.realizedCount) ? state.realizedCount : null,
     realized_file_count_raw: Array.isArray(state.realizedNonEphemeral) ? state.realizedNonEphemeral.length : null,

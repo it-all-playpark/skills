@@ -9,7 +9,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   final_reconcile / final_test_green / final_ui_verify / final_ac_reconcile / testsurf_hits / redgreen_deny /
   vdelta_fail_open / vdelta_verdicts / vdelta_not_started / redgreen_headdiff / duration_seconds / phase_durations /
   merge_tier_reasons / route / subagent_invocations / resolved_evidence /
-  shape_reason / realized_file_count / realized_file_count_raw / ac_count /
+  shape_reason / shape_uncorrected / realized_file_count / realized_file_count_raw / ac_count /
   analyze_path / analyze_ineligible_reason / prerun_durations）を
   `~/.claude/journal/pending/` へ書き出し、
   dev-flow plugin の Stop hook `plugins/dev-flow/hooks/stop-devflow-telemetry.sh`
@@ -132,11 +132,15 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
   **実効 shape の判定根拠 / analyze 経路の根拠（成功 handoff のみ・passthrough 経路・gate / merge tier / ledger の
   入力にはしない。dev-flow-doctor の「shape 較正」が読む）**:
-  `shape` は Security floor で `classifyShape(req, realizedCount)` が realized diff の file 数 + AC 数 /
-  `issue_type` / 構造化 `breaking_change` だけで決めた実効 shape（事前見積もりは持たない）。
-  `shape_reason` は `classifyShape` が返す `reason` 文字列（`realized N file(s), M AC, type=… → shape=…` の
-  閾値判定 / それ以外は safe floor（count 欠損・AC 欠落・issue_type 外・breaking）の種別 — doctor はこの
-  prefix で 2 分類する）。`ac_count` は `acceptance_criteria.length`。
+  `shape` は Security floor で `classifyShape(req, realizedCount, lineStats)` が realized diff の file 数・
+  file ごとの追加/削除行数 + AC 数 / `issue_type` / 構造化 `breaking_change` で決めた実効 shape（事前見積もりは持たない）。
+  `shape_uncorrected` は同じ呼び出しが file 数だけで決めた補正前の shape（重み・行数の補正を掛けない値。
+  floor で決まった run と行数を取れない run は `shape` と同じ）— doctor の shape 較正が補正で下がった run を数える。
+  `shape_reason` は `classifyShape` が返す `reason` 文字列（`realized N file(s)…` で始まる閾値判定 — 行数が取れた run は
+  `realized N file(s) → weighted W（docs D / 対応本番ありの test T を除外）, +A/-R lines, M AC, type=… → file 数判定 X,
+  重み・行数判定 Y, 削除主体…で 1 段下げ | 1 段下げなし → shape=…`、取れない run は従来どおり
+  `realized N file(s), M AC, type=… → shape=…` / それ以外は safe floor（count 欠損・AC 欠落・issue_type 外・breaking）の
+  種別 — doctor はこの prefix で 2 分類する）。`ac_count` は `acceptance_criteria.length`。
   `realized_file_count` は `classifyShape` に渡した数 — **ephemeral / 宣言外パス / format-only
   を除外した後**の realized diff（取得不能 NaN は `null`。Stop hook の passthrough は null 値を落とすため journal
   ではキー欠落として現れる — doctor は欠落と null を同一に扱う）。`realized_file_count_raw` は ephemeral 除外のみの

@@ -150,11 +150,12 @@ run-diagnostics --scope telemetry --window 7d
 
 ### shape 較正（`distributions.shape_calibration` → `checks.shape_calibration`）
 
-dev-flow の成功 handoff が記録する根拠キー（`shape_reason` / `realized_file_count` /
+dev-flow の成功 handoff が記録する根拠キー（`shape_reason` / `shape_uncorrected` / `realized_file_count` /
 `realized_file_count_raw` / `ac_count` / `analyze_path` / `analyze_ineligible_reason` / `prerun_durations`。語彙は
 `dev-flow/references/telemetry.md`）から、実効 shape の判定根拠と raw realized との不一致を出す。
 shape は realized diff の file 数（宣言外・format-only 除外後）+ AC 数 / issue_type / breaking の決定論
-floor だけで決まる（`classifyShape`）。report-only — score / warn には影響しない（閾値の較正は
+floor で決まり、行数が取れた run は差分の中身（docs・対応本番ありのテストを数えない / 削除主体で 1 段下げ /
+complex は追加 100 行超のときだけ）で下げ方向に補正される（`classifyShape`）。report-only — score / warn には影響しない（閾値の較正は
 telemetry が溜まってから hypothesis 付きで別途判断する。閾値 micro ≤2 files / standard ≤5 files は
 `_lib/triviality.mjs` と同値をスクリプト内定数で持つ）。
 
@@ -162,7 +163,8 @@ telemetry が溜まってから hypothesis 付きで別途判断する。閾値 
 |------|------|
 | `by_shape` | shape 別件数（`distributions.shape` と同値。較正セクション単体で読めるよう再掲） |
 | `shape_reason_kind` | `shape_reason` の prefix で `safe_floor`（realized count 欠損 / AC 欠落・issue_type 外・breaking）/ `threshold`（`realized N file(s)`）/ `unknown`（キー欠落 = 根拠未記録の旧 entry、または `estimated …` / `LLM raised …` 始まりの事前見積もり時代の文言）に分類。`shape_reason_kind_by_shape` は shape × 種別の交差表 |
-| `realized_mismatch` | `realized_file_count_raw` で判定する。`excluded_below_raw` = raw が shape の file 上限を超える（宣言外パス / format-only の除外で classifyShape 入力が閾値内に収まり、raw より下の tier に決まった run）。`floor_above_raw` = raw が下位 tier の上限以下（standard で ≤2 / complex で ≤5 — AC 数超過・issue_type・breaking・count 欠損の safe floor で raw より上の tier に決まった run。`shape_reason_kind` で切り分ける）。`unmeasured` = raw 未記録（旧 entry）。各 10 件まで `*_samples` に issue / repo / pr_number / shape_reason / 件数を併記 |
+| `shape_correction` | 重み・行数補正の前後。`shape_uncorrected`（file 数だけで決めた補正前の shape）がある entry を `measured`、無い旧 entry を `unmeasured`、`shape` と違う run を `downshifted` に数え、`transitions` に遷移別件数（`complex_to_standard` / `complex_to_micro` / `standard_to_micro`）、`downshifted_samples` に 10 件まで issue / PR / shape_reason / `shape_uncorrected` を併記 |
+| `realized_mismatch` | `realized_file_count_raw` で判定し、比べる shape は file 数判定の `shape_uncorrected`（無い entry は `shape`）— 補正で下がった run は `shape_correction` 側に数え、ここには混ぜない。`excluded_below_raw` = raw が shape の file 上限を超える（宣言外パス / format-only の除外で classifyShape 入力が閾値内に収まり、raw より下の tier に決まった run）。`floor_above_raw` = raw が下位 tier の上限以下（standard で ≤2 / complex で ≤5 — AC 数超過・issue_type・breaking・count 欠損の safe floor で raw より上の tier に決まった run。`shape_reason_kind` で切り分ける）。`unmeasured` = raw 未記録（旧 entry）。各 10 件まで `*_samples` に issue / repo / pr_number / shape_reason / 件数を併記 |
 | `analyze_path` | contract（prerun の決定論 parse のみ）/ jev（prerun が Jev 有界判定に回した）/ sonnet（Setup 末尾の analyze ゲート後の needs_clarification 経路のみ。成功 handoff には現れない）/ unknown の件数 |
 | `analyze_ineligible_reason` | jev / sonnet 経路の entry のみを分母に、`analyze_ineligible_reason`（prerun の `jev_reasons` を `; ` 結合）を要素ごとに prefix で `comments_present` / `breaking` / `other` / `unknown`（キー欠落）に正規化した件数（1 entry が両方に計上されうる） |
 | `prerun_analyze_seconds` | `prerun_durations.analyze`（prerun の analyze 段 = issue 取得 + contract parse + Jev 判定の秒数。deps install と並列）の measured / median / max。Workflow 側の analyze ゲート（Setup 末尾）は所要 ≒0 のため `phase_durations` に区間を持たない |
