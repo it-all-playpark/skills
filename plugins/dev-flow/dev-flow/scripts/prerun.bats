@@ -284,6 +284,33 @@ JSON
     echo "$output" | jq -e '.deps.ok == true'
 }
 
+# ---- (10b) pnpm workspace で package の node_modules が欠ける -> deps.ok=false (issue #748) ----
+
+@test "(10b) pnpm workspace で依存を宣言した package に node_modules が無い -> deps.ok=false、note に欠けた package" {
+    git -C "$SEED" checkout -q dev
+    mkdir -p "$SEED/packages/backend"
+    echo '{"name":"root","private":true}' > "$SEED/package.json"
+    printf 'lockfileVersion: 9.0\n' > "$SEED/pnpm-lock.yaml"
+    printf "packages:\n  - 'packages/*'\n" > "$SEED/pnpm-workspace.yaml"
+    echo '{"name":"backend","devDependencies":{"vitest":"^3.0.0"}}' > "$SEED/packages/backend/package.json"
+    git -C "$SEED" add package.json pnpm-lock.yaml pnpm-workspace.yaml packages/backend/package.json
+    git -C "$SEED" commit -q -m "add pnpm workspace"
+    git -C "$SEED" push -q origin dev
+    # root の node_modules だけを作る pnpm（workspace package の node_modules を作らない）
+    cat >"$STUB_DIR/pnpm" <<'STUB'
+#!/usr/bin/env bash
+mkdir -p "$PWD/node_modules/.pnpm"
+STUB
+    chmod +x "$STUB_DIR/pnpm"
+    export DEVFLOW_DEPS_CACHE_DIR="$BATS_TEST_TMPDIR/deps-cache"
+
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.deps.ok == false'
+    echo "$output" | jq -e '.deps.note | test("packages/backend")'
+}
+
 # ---- (11) 引数エラー ----
 
 @test "(11a) --issue 欠落 -> exit 2, stdout空" {

@@ -49,6 +49,19 @@
 # shared-cache read/write/copy/mkdir/mktemp/mv failure fails open into the
 # normal install path — a broken or inaccessible shared cache never changes
 # install correctness or the script's exit code.
+#
+# Workspaces (issue #748): a cache entry holds the root node_modules *and*
+# every workspace package's node_modules (pnpm-workspace.yaml `packages:` /
+# package.json `workspaces`), mirrored as <entry>/<rel>/node_modules, plus a
+# manifest listing the saved <rel> dirs. Only entries with a manifest are
+# restored — an entry holding just the root node_modules restores a tree in
+# which workspace packages cannot resolve vitest / tsc, yet reports success.
+# For pnpm (isolated linker: each workspace package with dependencies gets
+# its own node_modules), a workspace package that declares dependencies but
+# has no node_modules after restore / install / cache_hit is reported as
+# status "failed" with `missing_node_modules`, so deps never reads ok:true
+# over a tree the tests cannot run in. npm / yarn / bun hoist into the root
+# and are not checked per package.
 
 set -euo pipefail
 
@@ -91,6 +104,10 @@ TARGET_PATH=$(cd "$TARGET_PATH" && pwd) || die_json "Path does not exist: $TARGE
 # empty, the shared cache is treated as disabled (fail-open — every
 # consumer below gates on `-n "$SHARED_CACHE_ROOT"`).
 SHARED_CACHE_ROOT="${DEVFLOW_DEPS_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME:-}/.cache}/devflow-deps}"
+# Per-entry list of saved node_modules dirs relative to the project root
+# ("." = root). Written last into the staging dir, so its presence marks a
+# complete entry.
+CACHE_MANIFEST="node_modules.list"
 
 # ============================================================================
 # Detection
@@ -247,47 +264,157 @@ copy_tree() {
     return 1
 }
 
+# Workspace package globs for $pm, one per line (issue #748). pnpm reads the
+# `packages:` block list of pnpm-workspace.yaml; npm / yarn / bun read
+# package.json `workspaces` (array, or the `{packages: [...]}` object form).
+# Leading "./" and trailing "/" are stripped; "!" exclusions are kept.
+workspace_patterns() {
+    local pm="$1"
+    if [[ "$pm" == "pnpm" ]]; then
+        [[ -f "$TARGET_PATH/pnpm-workspace.yaml" ]] || return 0
+        awk '
+            /^packages:[[:space:]]*$/ { inpk = 1; next }
+            inpk && /^[^[:space:]#]/ { inpk = 0 }
+            inpk && /^[[:space:]]*-[[:space:]]*/ {
+                sub(/^[[:space:]]*-[[:space:]]*/, "")
+                sub(/[[:space:]]+#.*$/, "")
+                gsub(/["\047]/, "")
+                sub(/[[:space:]]+$/, "")
+                if ($0 != "") print
+            }
+        ' "$TARGET_PATH/pnpm-workspace.yaml" 2>/dev/null || true
+    else
+        [[ -f "$TARGET_PATH/package.json" ]] || return 0
+        jq -r '(.workspaces // []) | (if type == "object" then (.packages // []) else . end) | .[]? | strings' \
+            "$TARGET_PATH/package.json" 2>/dev/null || true
+    fi | sed -e 's#^\(!\{0,1\}\)\./#\1#' -e 's#/$##'
+}
+
+# Whether workspace-relative dir $1 matches glob $2. `*` stays within one
+# path segment and `**` spans any depth: bash [[ == ]] lets `*` cross "/",
+# so a pattern without `**` must also have the same segment count.
+workspace_glob_match() {
+    local rel="$1" pat="$2"
+    # shellcheck disable=SC2053
+    [[ "$rel" == $pat ]] || return 1
+    [[ "$pat" == *"**"* ]] && return 0
+    local rel_slashes="${rel//[^\/]/}" pat_slashes="${pat//[^\/]/}"
+    [[ ${#rel_slashes} -eq ${#pat_slashes} ]]
+}
+
+# Workspace package dirs of this project relative to $TARGET_PATH (one per
+# line, root excluded): dirs holding a package.json that match a workspace
+# glob and no "!" exclusion. node_modules and .git are never descended.
+workspace_pkg_dirs() {
+    local pm="$1"
+    local patterns
+    patterns=$(workspace_patterns "$pm")
+    [[ -n "$patterns" ]] || return 0
+    local candidates
+    candidates=$(cd "$TARGET_PATH" && find . \( -name node_modules -o -name .git \) -prune -o -type f -name package.json -print 2>/dev/null \
+        | sed -e 's#^\./##' -e 's#/\{0,1\}package\.json$##') || return 0
+    local rel pat included
+    while IFS= read -r rel; do
+        [[ -n "$rel" ]] || continue
+        included=false
+        while IFS= read -r pat; do
+            [[ -n "$pat" ]] || continue
+            if [[ "$pat" == '!'* ]]; then
+                workspace_glob_match "$rel" "${pat#!}" && { included=false; break; }
+            elif workspace_glob_match "$rel" "$pat"; then
+                included=true
+            fi
+        done <<< "$patterns"
+        [[ "$included" == true ]] && printf '%s\n' "$rel"
+    done <<< "$candidates"
+    return 0
+}
+
+# pnpm workspace packages (relative dirs, one per line) that declare
+# dependencies but have no node_modules in this worktree (issue #748).
+# Empty for npm / yarn / bun, which hoist into the root node_modules.
+missing_workspace_node_modules() {
+    local pm="$1"
+    [[ "$pm" == "pnpm" ]] || return 0
+    local rel
+    while IFS= read -r rel; do
+        [[ -n "$rel" ]] || continue
+        jq -e '[.dependencies, .devDependencies, .optionalDependencies] | map(. // {} | length) | add > 0' \
+            "$TARGET_PATH/$rel/package.json" >/dev/null 2>&1 || continue
+        [[ -d "$TARGET_PATH/$rel/node_modules" ]] || printf '%s\n' "$rel"
+    done <<< "$(workspace_pkg_dirs "$pm")"
+    return 0
+}
+
+# Emit the node result for a pnpm tree whose workspace packages lack
+# node_modules: status "failed" plus the missing dirs.
+node_missing_result() {
+    local pm="$1" cmd="$2" missing="$3"
+    jq -nc --arg pm "$pm" --arg cmd "$cmd" --arg m "$missing" \
+        '{ecosystem: "node", pm: $pm, status: "failed", command: $cmd, missing_node_modules: ($m | split("\n") | map(select(. != "")))}'
+}
+
 # Restore node_modules for ($pm, $hash) from the cross-worktree shared
-# cache into this worktree (issue #387). On success, also writes the
-# in-worktree cache file so a subsequent run in the same worktree hits the
-# existing (issue #375) in-worktree cache_hit path. Returns 1 (no
-# filesystem changes beyond a possibly-partial copy_tree attempt) when the
-# shared cache entry is missing or the copy fails, so the caller falls
-# open into the normal install path.
+# cache into this worktree (issue #387): every dir listed in the entry's
+# manifest — the root and each workspace package (issue #748). On success,
+# also writes the in-worktree cache file so a subsequent run in the same
+# worktree hits the existing (issue #375) in-worktree cache_hit path.
+# Returns 1 when the entry has no manifest, a listed dir is absent on
+# either side, a copy fails, or pnpm workspace packages still lack
+# node_modules afterwards, so the caller falls open into the normal install
+# path (which repairs the partially restored tree).
 restore_from_shared_cache() {
     local pm="$1"
     local hash="$2"
-    local src="$SHARED_CACHE_ROOT/${pm}-${hash}/node_modules"
-    [[ -d "$src" ]] || return 1
-    if copy_tree "$src" "$TARGET_PATH/node_modules"; then
-        { mkdir -p "$TARGET_PATH/.devflow-tmp" && printf '%s\n' "${pm}:${hash}" > "$TARGET_PATH/.devflow-tmp/deps-lockfile-hash"; } 2>/dev/null || true
-        return 0
-    fi
-    return 1
+    local entry="$SHARED_CACHE_ROOT/${pm}-${hash}"
+    [[ -f "$entry/$CACHE_MANIFEST" ]] || return 1
+    local rel
+    while IFS= read -r rel; do
+        [[ -n "$rel" ]] || continue
+        [[ -d "$entry/$rel/node_modules" && -d "$TARGET_PATH/$rel" ]] || return 1
+        copy_tree "$entry/$rel/node_modules" "$TARGET_PATH/$rel/node_modules" || return 1
+    done < "$entry/$CACHE_MANIFEST"
+    [[ -z "$(missing_workspace_node_modules "$pm")" ]] || return 1
+    { mkdir -p "$TARGET_PATH/.devflow-tmp" && printf '%s\n' "${pm}:${hash}" > "$TARGET_PATH/.devflow-tmp/deps-lockfile-hash"; } 2>/dev/null || true
+    return 0
 }
 
-# Publish this worktree's freshly-installed node_modules into the
+# Publish this worktree's freshly-installed node_modules — the root and
+# every workspace package that has one (issue #748) — into the
 # cross-worktree shared cache for ($pm, $hash) (issue #387), so later
 # fresh worktrees with the same lockfile hash can restore instead of
-# installing. Copies into a staging dir first and renames it into place
-# atomically, so a concurrent dev-flow run populating the same hash can
-# never observe a partially-written cache entry (first writer to complete
-# the rename wins; the loser's staging dir is discarded). No-ops if the
-# entry already exists. Every failure (mkdir/mktemp/copy/mv) is swallowed
-# — populate is best-effort and never affects the caller's install result.
+# installing. Copies into a staging dir first (manifest written last) and
+# renames it into place atomically, so a concurrent dev-flow run populating
+# the same hash can never observe a partially-written cache entry (first
+# writer to complete the rename wins; the loser's staging dir is
+# discarded). No-ops if a manifest-bearing entry already exists; an entry
+# without a manifest is never restored, so it is removed to make room.
+# Every failure (mkdir/mktemp/copy/mv/rm) is swallowed — populate is
+# best-effort and never affects the caller's install result.
 populate_shared_cache() {
     local pm="$1"
     local hash="$2"
     local final="$SHARED_CACHE_ROOT/${pm}-${hash}"
-    [[ -d "$final/node_modules" ]] && return 0
+    [[ -f "$final/$CACHE_MANIFEST" ]] && return 0
     mkdir -p "$SHARED_CACHE_ROOT" 2>/dev/null || return 0
     local staging
     staging=$(mktemp -d "$SHARED_CACHE_ROOT/.staging.XXXXXX" 2>/dev/null) || return 0
-    if copy_tree "$TARGET_PATH/node_modules" "$staging/node_modules"; then
-        mv "$staging" "$final" 2>/dev/null || rm -rf "$staging" 2>/dev/null || true
-    else
+    local rels="." rel
+    while IFS= read -r rel; do
+        [[ -n "$rel" && -d "$TARGET_PATH/$rel/node_modules" ]] && rels+=$'\n'"$rel"
+    done <<< "$(workspace_pkg_dirs "$pm")"
+    while IFS= read -r rel; do
+        if ! { mkdir -p "$staging/$rel" && copy_tree "$TARGET_PATH/$rel/node_modules" "$staging/$rel/node_modules"; } 2>/dev/null; then
+            rm -rf "$staging" 2>/dev/null || true
+            return 0
+        fi
+    done <<< "$rels"
+    if ! printf '%s\n' "$rels" > "$staging/$CACHE_MANIFEST" 2>/dev/null; then
         rm -rf "$staging" 2>/dev/null || true
+        return 0
     fi
+    [[ -e "$final" && ! -f "$final/$CACHE_MANIFEST" ]] && { rm -rf "$final" 2>/dev/null || true; }
+    mv "$staging" "$final" 2>/dev/null || rm -rf "$staging" 2>/dev/null || true
     return 0
 }
 
@@ -331,7 +458,9 @@ install_node() {
         if [[ -d "$TARGET_PATH/node_modules" && -n "$current_hash" && -f "$cache_file" ]]; then
             local cached
             cached=$(cat "$cache_file" 2>/dev/null || true)
-            if [[ "$cached" == "${pm}:${current_hash}" ]]; then
+            # A hash match over a tree whose pnpm workspace packages lack
+            # node_modules is not a hit — fall through and install (issue #748).
+            if [[ "$cached" == "${pm}:${current_hash}" && -z "$(missing_workspace_node_modules "$pm")" ]]; then
                 echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"cache_hit\",\"command\":\"$cmd\"}"
                 return 0
             fi
@@ -349,7 +478,7 @@ install_node() {
     # above, which both require node_modules to already exist), and only
     # under the --lockfile-only dev-flow Setup contract (so direct/manual
     # invocations without the flag never touch the shared cache).
-    if [[ "$LOCKFILE_ONLY" == true && -n "$lockfile" && -n "$current_hash" && ! -d "$TARGET_PATH/node_modules" && -n "$SHARED_CACHE_ROOT" && -d "$SHARED_CACHE_ROOT/${pm}-${current_hash}/node_modules" ]]; then
+    if [[ "$LOCKFILE_ONLY" == true && -n "$lockfile" && -n "$current_hash" && ! -d "$TARGET_PATH/node_modules" && -n "$SHARED_CACHE_ROOT" && -f "$SHARED_CACHE_ROOT/${pm}-${current_hash}/$CACHE_MANIFEST" ]]; then
         if [[ "$DRY_RUN" == true ]]; then
             echo "{\"ecosystem\":\"node\",\"pm\":\"$pm\",\"status\":\"cross_worktree_restore\",\"command\":\"$cmd\"}"
             return 0
@@ -375,6 +504,12 @@ install_node() {
     fi
 
     if run_install_cmd "$cmd"; then
+        local missing
+        missing=$(missing_workspace_node_modules "$pm")
+        if [[ -n "$missing" ]]; then
+            node_missing_result "$pm" "$cmd" "$missing"
+            return 1
+        fi
         if [[ -n "$lockfile" && -n "$current_hash" ]]; then
             { mkdir -p "$TARGET_PATH/.devflow-tmp" && printf '%s\n' "${pm}:${current_hash}" > "$cache_file"; } 2>/dev/null || true
         fi
