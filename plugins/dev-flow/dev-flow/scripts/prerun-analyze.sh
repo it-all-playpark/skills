@@ -15,8 +15,12 @@
 #     issue_title, issue_type, acceptance_criteria: [..], scope, scope_truncated, scope_total_chars,
 #     issue_body, issue_body_truncated, breaking_keyword_scan, breaking_change, breaking_evidence,
 #     comment_count, comment_overrides: [..], comment_conflicts: [..], uncertain: [..],
+#     blockers: [{repo, number, state: "OPEN"|"CLOSED", source: "api"|"body", url}],
 #     contract, ac_heading_near_miss: [..] }
 #   { ok: false, reason: "...", analyze_path: "contract" }
+#
+# blockers（issue #744）は GitHub issue dependencies API（blocked_by）と本文の `Blocked by #N` /
+# `Blocked by owner/repo#N` 行の和集合。取得・状態読み取りの失敗は ok:false（fail-closed）。
 #
 # Jev 判定の規則（閾値 JEV_CONF_MIN=0.9。低確信は常に安全側）:
 #   breaking_keyword_scan true  → 1 request で noul を 2 問に分けて聞く: breaking「後方互換を保たない API / 形式の
@@ -93,6 +97,65 @@ fi
 if ! printf '%s' "$CONTRACT" | jq -e 'type == "object" and (.acceptance_criteria | type == "array") and (.title | type == "string")' >/dev/null 2>&1; then
     fail_json "analyze-issue --contract returned non-object / malformed JSON"
 fi
+
+# ============================================================================
+# 1b. blocker（issue #744）: GitHub issue dependencies API と本文の `Blocked by` 行の和集合
+# ============================================================================
+# API だけだと本文で依存を書いた issue を、本文だけだと API で依存を張った issue を取りこぼすので両方読む。
+# 本文は contract の issue_body（4000 字で切断）ではなく全文を読み直す（末尾の Blocked by 行を落とさない）。
+# 状態は API 応答 / gh issue view の読み取りで判定し、取得失敗は全て ok:false（fail-closed — 黙って素通り
+# させると未準備のまま実装が走る）。Workflow 側は state == "OPEN" が 1 つでもあれば実装前に止める。
+# 読み取りのみ（リモート更新系の書き込みはしない）。
+
+API_REPO="${REPO:-}"
+# gh api は {owner}/{repo} をカレント repo に展開する（--repo 省略時）
+[[ -n "$API_REPO" ]] || API_REPO='{owner}/{repo}'
+if ! DEPS_RAW="$(gh api "repos/${API_REPO}/issues/${ISSUE}/dependencies/blocked_by?per_page=100" 2>"$ERR_FILE")"; then
+    fail_json "blocked_by: dependencies API の取得に失敗: $(tr '\n' ' ' <"$ERR_FILE")"
+fi
+API_BLOCKERS="$(printf '%s' "$DEPS_RAW" | jq -c '
+    if type == "array" and all(.[]; (.number | type) == "number" and (.state | type) == "string" and (.html_url | type) == "string")
+    then [.[] | {repo: (.html_url | capture("^https://[^/]+/(?<r>[^/]+/[^/]+)/issues/").r // ""), number, state: (.state | ascii_upcase), source: "api", url: .html_url}]
+    else error("malformed") end' 2>/dev/null)" \
+    || fail_json "blocked_by: dependencies API の応答が不正（issue の配列でない）"
+
+ISSUE_VIEW_ARGS=(issue view "$ISSUE")
+[[ -n "$REPO" ]] && ISSUE_VIEW_ARGS+=(--repo "$REPO")
+if ! BODY_RAW="$(gh "${ISSUE_VIEW_ARGS[@]}" --json body 2>"$ERR_FILE")"; then
+    fail_json "blocked_by: issue 本文の取得に失敗: $(tr '\n' ' ' <"$ERR_FILE")"
+fi
+FULL_BODY="$(printf '%s' "$BODY_RAW" | jq -r '.body // ""' 2>/dev/null)" \
+    || fail_json "blocked_by: issue 本文の応答が不正"
+
+# 行頭（箇条書き可）の `Blocked by` 行から `#N` / `owner/repo#N` を拾う（大文字小文字は問わない）
+BODY_REFS="$(printf '%s\n' "$FULL_BODY" \
+    | { grep -iE '^[[:space:]]*([-*][[:space:]]+)?blocked by([[:space:]]|:)' || true; } \
+    | { grep -oE '([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' || true; } \
+    | awk '!seen[$0]++')"
+BODY_BLOCKERS='[]'
+while IFS= read -r REF; do
+    [[ -z "$REF" ]] && continue
+    REF_REPO="${REF%#*}"
+    REF_NUM="${REF##*#}"
+    VIEW_ARGS=(issue view "$REF_NUM")
+    if [[ -n "$REF_REPO" ]]; then
+        VIEW_ARGS+=(--repo "$REF_REPO")
+    elif [[ -n "$REPO" ]]; then
+        VIEW_ARGS+=(--repo "$REPO")
+    fi
+    if ! REF_RAW="$(gh "${VIEW_ARGS[@]}" --json number,state,url 2>"$ERR_FILE")"; then
+        fail_json "blocked_by: 本文の Blocked by ${REF} の状態を取得できない: $(tr '\n' ' ' <"$ERR_FILE")"
+    fi
+    BODY_BLOCKERS="$(printf '%s' "$REF_RAW" | jq -c --argjson acc "$BODY_BLOCKERS" --argjson n "$REF_NUM" '
+        if (.state | type) == "string" and (.url | type) == "string"
+        then $acc + [{repo: (.url | capture("^https://[^/]+/(?<r>[^/]+/[^/]+)/issues/").r // ""), number: $n, state: (.state | ascii_upcase), source: "body", url: .url}]
+        else error("malformed") end' 2>/dev/null)" \
+        || fail_json "blocked_by: 本文の Blocked by ${REF} の応答が不正"
+done <<<"$BODY_REFS"
+
+# 和集合（同じ repo#number は API 由来を残す）
+BLOCKERS_JSON="$(jq -cn --argjson a "$API_BLOCKERS" --argjson b "$BODY_BLOCKERS" '
+    reduce ($a + $b)[] as $x ([]; if any(.[]; .repo == $x.repo and .number == $x.number) then . else . + [$x] end)')"
 
 TITLE="$(printf '%s' "$CONTRACT" | jq -r '.title')"
 ISSUE_BODY="$(printf '%s' "$CONTRACT" | jq -r '.issue_body // ""')"
@@ -270,6 +333,7 @@ printf '%s' "$CONTRACT" | jq -c \
     --argjson comment_overrides "$OVERRIDES_JSON" \
     --argjson comment_conflicts "$CONFLICTS_JSON" \
     --argjson uncertain "$UNCERTAIN_JSON" \
+    --argjson blockers "$BLOCKERS_JSON" \
     '{
       ok: true,
       analyze_path: $analyze_path,
@@ -289,6 +353,7 @@ printf '%s' "$CONTRACT" | jq -c \
       comment_overrides: $comment_overrides,
       comment_conflicts: $comment_conflicts,
       uncertain: $uncertain,
+      blockers: $blockers,
       contract: (.contract // "none"),
       ac_heading_near_miss: (.ac_heading_near_miss // [])
     }'

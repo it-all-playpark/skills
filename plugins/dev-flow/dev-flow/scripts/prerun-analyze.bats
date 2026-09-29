@@ -19,11 +19,31 @@ setup() {
     # ---- gh stub ----
     GH_LOG="$WORK/gh.log"
     : >"$GH_LOG"
+    # dependencies API（blocked_by）は GH_STUB_DEPS_FIXTURE（未設定なら []）、GH_STUB_DEPS_FAIL で失敗。
+    # 対象 issue（#7）以外の `issue view N` は $GH_STUB_ISSUES_DIR/N.json（無ければ not found で失敗）
+    GH_STUB_ISSUES_DIR="$WORK/issues"
+    mkdir -p "$GH_STUB_ISSUES_DIR"
     cat >"$WORK/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_LOG"
 if [[ -n "${GH_STUB_FAIL:-}" ]]; then
     echo "$GH_STUB_FAIL" >&2
+    exit 1
+fi
+if [[ "$1" == "api" && "$2" == */dependencies/blocked_by* ]]; then
+    if [[ -n "${GH_STUB_DEPS_FAIL:-}" ]]; then
+        echo "$GH_STUB_DEPS_FAIL" >&2
+        exit 1
+    fi
+    if [[ -n "${GH_STUB_DEPS_FIXTURE:-}" ]]; then cat "$GH_STUB_DEPS_FIXTURE"; else echo '[]'; fi
+    exit 0
+fi
+if [[ "$1 $2" == "issue view" && "$3" != "7" ]]; then
+    if [[ -f "$GH_STUB_ISSUES_DIR/$3.json" ]]; then
+        cat "$GH_STUB_ISSUES_DIR/$3.json"
+        exit 0
+    fi
+    echo "GraphQL: Could not resolve to an issue with the number of $3." >&2
     exit 1
 fi
 cat "$GH_STUB_FIXTURE"
@@ -84,7 +104,8 @@ exit "${FAKE_SECURITY_EXIT:-44}"
 FAKE
     chmod +x "$WORK/bin/security"
 
-    export GH_LOG CURL_LOG
+    export GH_LOG CURL_LOG GH_STUB_ISSUES_DIR
+    unset GH_STUB_DEPS_FIXTURE GH_STUB_DEPS_FAIL
     export PATH="$WORK/bin:$PATH"
     # 実機の jev-broker ソケットを拾わない（Keychain 経路の理由文言を検証するため）
     export JEV_BROKER_SOCKET="$WORK/no-broker.sock"
@@ -163,6 +184,117 @@ curl_calls() { grep -c '^call$' "$CURL_LOG" || true; }
     run_analyze "$WORK/i.json"
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.ok == false and (.reason | length) > 0'
+}
+
+# ---- blockers（issue #744）----
+
+# deps_fixture <number> <state>...: dependencies API（blocked_by）の応答を組む（acme/skills の issue）
+deps_fixture() {
+    local items='[]'
+    while [[ $# -ge 2 ]]; do
+        items="$(jq -c --argjson n "$1" --arg s "$2" '. + [{id: (9000 + $n), number: $n, state: $s, html_url: "https://github.com/acme/skills/issues/\($n)", repository_url: "https://api.github.com/repos/acme/skills"}]' <<<"$items")"
+        shift 2
+    done
+    printf '%s' "$items" >"$WORK/deps.json"
+    export GH_STUB_DEPS_FIXTURE="$WORK/deps.json"
+}
+
+# issue_fixture <repo> <number> <STATE>: 本文の Blocked by で参照される issue の `gh issue view` 応答
+issue_fixture() {
+    jq -n --arg r "$1" --argjson n "$2" --arg s "$3" '{number: $n, state: $s, url: "https://github.com/\($r)/issues/\($n)"}' \
+        >"$GH_STUB_ISSUES_DIR/$2.json"
+}
+
+@test "blockers: 依存なし -> blockers は空配列、dependencies API を読み取る" {
+    fixture "$WORK/i.json" "feat: x" "$AC_BODY"
+    run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .blockers == []'
+    grep -qx 'api repos/acme/skills/issues/7/dependencies/blocked_by?per_page=100' "$GH_LOG"
+}
+
+@test "blockers: --repo 省略時は gh api の {owner}/{repo} で dependencies API を読む" {
+    fixture "$WORK/i.json" "feat: x" "$AC_BODY"
+    run_analyze "$WORK/i.json"
+    [ "$status" -eq 0 ]
+    grep -qx 'api repos/{owner}/{repo}/issues/7/dependencies/blocked_by?per_page=100' "$GH_LOG"
+}
+
+@test "blockers: API 由来の open / closed -> source=api で state を大文字に正規化して出力" {
+    fixture "$WORK/i.json" "feat: x" "$AC_BODY"
+    deps_fixture 12 open 13 closed
+    run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .blockers == [
+        {repo: "acme/skills", number: 12, state: "OPEN", source: "api", url: "https://github.com/acme/skills/issues/12"},
+        {repo: "acme/skills", number: 13, state: "CLOSED", source: "api", url: "https://github.com/acme/skills/issues/13"}]'
+}
+
+@test "blockers: 本文の Blocked by #N / owner/repo#N（4000 字より後ろでも）-> source=body で状態を読み取る" {
+    local filler
+    filler="$(printf 'x%.0s' $(seq 1 4500))"
+    fixture "$WORK/i.json" "feat: x" "$AC_BODY
+
+${filler}
+
+Blocked by #13
+- blocked by: other/lib#5, #13"
+    issue_fixture acme/skills 13 OPEN
+    issue_fixture other/lib 5 CLOSED
+    run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .blockers == [
+        {repo: "acme/skills", number: 13, state: "OPEN", source: "body", url: "https://github.com/acme/skills/issues/13"},
+        {repo: "other/lib", number: 5, state: "CLOSED", source: "body", url: "https://github.com/other/lib/issues/5"}]'
+    grep -qx 'issue view 13 --repo acme/skills --json number,state,url' "$GH_LOG"
+    grep -qx 'issue view 5 --repo other/lib --json number,state,url' "$GH_LOG"
+    # 同じ参照（#13）は 1 回だけ読む
+    [ "$(grep -c '^issue view 13 ' "$GH_LOG")" -eq 1 ]
+}
+
+@test "blockers: 行頭でない Blocked by の言及は拾わない" {
+    fixture "$WORK/i.json" "feat: x" "$AC_BODY
+
+本文の \`Blocked by #99\` 行を読む"
+    run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .blockers == []'
+    ! grep -q '^issue view 99' "$GH_LOG"
+}
+
+@test "blockers: API と本文の両方にある issue は 1 件（source=api）にまとめる" {
+    fixture "$WORK/i.json" "feat: x" "Blocked by #12
+
+$AC_BODY"
+    deps_fixture 12 open
+    issue_fixture acme/skills 12 OPEN
+    run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.blockers == [{repo: "acme/skills", number: 12, state: "OPEN", source: "api", url: "https://github.com/acme/skills/issues/12"}]'
+}
+
+@test "blockers: dependencies API の取得失敗 -> ok:false（fail-closed）" {
+    fixture "$WORK/i.json" "feat: x" "$AC_BODY"
+    GH_STUB_DEPS_FAIL="HTTP 404: Not Found (dependencies)" run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false and (.reason | test("dependencies API") and test("HTTP 404")) and .analyze_path == "contract"'
+}
+
+@test "blockers: dependencies API の応答が配列でない -> ok:false（fail-closed）" {
+    fixture "$WORK/i.json" "feat: x" "$AC_BODY"
+    printf '{"message":"Not Found"}' >"$WORK/deps.json"
+    GH_STUB_DEPS_FIXTURE="$WORK/deps.json" run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false and (.reason | test("dependencies API の応答が不正"))'
+}
+
+@test "blockers: 本文の Blocked by 先の状態を取得できない -> ok:false（fail-closed）" {
+    fixture "$WORK/i.json" "feat: x" "Blocked by #404
+
+$AC_BODY"
+    run_analyze "$WORK/i.json" --repo acme/skills
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == false and (.reason | test("Blocked by #404") and test("Could not resolve"))'
 }
 
 # ---- breaking noul ----

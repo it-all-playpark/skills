@@ -5,7 +5,7 @@
 // （issue #678 の plan-phase-removed-invariant と同型）。(d) はコメント・doctor 文書の phase 名表記を pin する。
 //
 // ゲート本体（buildReqFromContract / analyzeGateReasons / clarifyPrompt / analyze-clarify spawn /
-// needs_clarification の source: 'analyze' | 'analyze_prerun'）と telemetry の analyze_path /
+// needs_clarification の source: 'analyze' | 'analyze_prerun' | 'blocked_by'）と telemetry の analyze_path /
 // analyze_ineligible_reason / prerun_durations.analyze は生きているため対象外。
 //
 // 禁止トークンは join で組み立てる — 本ファイル自身が plugins/dev-flow 配下の *.mjs であり、
@@ -62,6 +62,7 @@ test("[analyze-phase-removed] (b) dev-flow.js のゲート本体（buildReqFromC
     'const gateReasons = analyzeGateReasons(req)',
     'label: `analyze-clarify#${ISSUE}`',
     "source: 'analyze_prerun'",
+    "source: 'blocked_by'",
     "source: 'analyze'",
     "feedClockMark('setup_end', { ok: true, epoch: PRERUN.epoch_end })",
   ]) {
@@ -72,7 +73,7 @@ test("[analyze-phase-removed] (b) dev-flow.js のゲート本体（buildReqFromC
   // ゲート経路の失敗 telemetry / clarify spawn の phase 帰属は 'Setup'
   const gateSlice = src.slice(setup, impl);
   assert.ok(gateSlice.includes("label: `analyze-clarify#${ISSUE}`, phase: 'Setup'"), 'analyze-clarify spawn の phase 帰属が Setup になっていない');
-  assert.equal((gateSlice.match(/error_category: 'needs_clarification'[^\n]*phase: 'Setup'/g) || []).length, 2, 'needs_clarification の writeFailureTelemetry 2 経路の phase 帰属が Setup になっていない');
+  assert.equal((gateSlice.match(/error_category: 'needs_clarification'[^\n]*phase: 'Setup'/g) || []).length, 3, 'needs_clarification の writeFailureTelemetry 3 経路（analyze_prerun / blocked_by / analyze）の phase 帰属が Setup になっていない');
 });
 
 // ---- (c) telemetry 経路: plugins/dev-flow 配下の *.sh / *.mjs / *.json / *.bats に phase_durations の analyze / plan 列と doctor の analyze/plan 列が無い ----

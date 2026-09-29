@@ -19,6 +19,11 @@ phase は持たない — 純関数の検証とゲート判定だけで所要 �
 `args.setup.analyze` の whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）
 のみで通常経路の subagent 起動は 0（ゲートが引いたときだけ sonnet を 1 spawn して人間向け
 missing_context を生成し needs_clarification で終端する。失敗 telemetry の phase 帰属は `Setup`）。
+analyze ゲートより前に blocked_by ゲートを置く: `args.setup.analyze.blockers`（prerun-analyze.sh が
+GitHub の issue dependencies API と本文の `Blocked by #N` / `owner/repo#N` 行の和集合から読み取る）に
+`state: "OPEN"` が 1 つでもあれば、sonnet も isolation-probe も起動せず needs_clarification
+（source=`blocked_by`、missing_context は未完了 issue の番号と URL）で終端する。blocker の取得失敗は
+`analyze.ok:false`（source=`analyze_prerun`）で止まる。
 isolation-probe はゲート通過後・Implement 前の 1 回。orchestration (phase 遷移 / evaluate・pr-iterate の各ループ) は
 workflow script が JS で保持し、中間 state は script 変数に
 持つ (外部 state JSON は持たない)。workflow の `meta.name` は `dev-flow-run` だが、telemetry

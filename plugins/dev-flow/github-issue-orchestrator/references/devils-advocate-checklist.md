@@ -11,6 +11,9 @@ Treat findings as `blocking` if any item below is true:
 - Migration/data-change plan is missing where required
 - Dependency order is impossible or contradictory
 - Ownership is unclear for critical tasks
+- agent issue に `executor: human` タスクが残存している（agent 実行の計画・実装 issue に人手作業が混入。
+  human 判定基準は SKILL.md の Executor Classification。human issue に切り出し、実装 issue は Blocked by で紐付ける）
+- human タスクに完了確認方法が無い（human issue の `## 完了条件` が checkbox の観察可能な状態で書かれていない）
 
 ## Review Dimensions
 

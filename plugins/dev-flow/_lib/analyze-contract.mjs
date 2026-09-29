@@ -17,13 +17,25 @@
 //   - analyze.breaking_change / breaking_keyword_scan が boolean
 //   - analyze.comment_overrides / comment_conflicts / uncertain / jev_reasons が string 配列
 //   - analyze.scope が string、analyze.scope_truncated が boolean
+//   - analyze.blockers が配列で、全要素が {repo: string, number: 正整数, state: 非空 string,
+//     source: 'api'|'body', url: string}（issue #744。依存なしは空配列）
 //
 // 合格時、REQ をキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
 // 事前 shape 見積もりは REQ に載せない — 実効 shape は realized diff の file 数から classifyShape が決める（issue #676）。
 export const ANALYZE_PATH_INPUT = ['contract', 'jev']
+export const BLOCKER_SOURCES = ['api', 'body']
 
 function isStringArray(v) {
   return Array.isArray(v) && v.every((s) => typeof s === 'string')
+}
+
+function isBlocker(b) {
+  return b !== null && typeof b === 'object' && !Array.isArray(b)
+    && typeof b.repo === 'string'
+    && Number.isInteger(b.number) && b.number > 0
+    && typeof b.state === 'string' && b.state.length > 0
+    && BLOCKER_SOURCES.includes(b.source)
+    && typeof b.url === 'string'
 }
 
 export function buildReqFromContract(analyze, issueNumber) {
@@ -44,6 +56,7 @@ export function buildReqFromContract(analyze, issueNumber) {
   if (!isStringArray(analyze.jev_reasons)) return null
   if (typeof analyze.scope !== 'string') return null
   if (typeof analyze.scope_truncated !== 'boolean') return null
+  if (!Array.isArray(analyze.blockers) || !analyze.blockers.every(isBlocker)) return null
 
   const req = {
     summary: `Issue #${issueNumber}: ${analyze.issue_title}`,
@@ -61,6 +74,7 @@ export function buildReqFromContract(analyze, issueNumber) {
     uncertain: analyze.uncertain.slice(),
     analyze_path: analyze.analyze_path,
     jev_reasons: analyze.jev_reasons.slice(),
+    blockers: analyze.blockers.map((b) => ({ repo: b.repo, number: b.number, state: b.state, source: b.source, url: b.url })),
   }
   if (Number.isInteger(analyze.scope_total_chars) && analyze.scope_total_chars >= 0) {
     req.scope_total_chars = analyze.scope_total_chars
@@ -93,4 +107,14 @@ export function analyzeGateReasons(req) {
   for (const c of (req?.comment_conflicts ?? [])) reasons.push(`issue body と comment の矛盾（どちらが有効か確定できない）: ${c}`)
   for (const u of (req?.uncertain ?? [])) reasons.push(`決定論 / Jev で確定できない判定: ${u}`)
   return reasons
+}
+
+// blockedByReasons: Setup 末尾の blocked_by ゲート（issue #744）。state が OPEN の blocker（dependencies API /
+// 本文の Blocked by）ごとに人間向けの 1 行を返す。非空なら needs_clarification（source=blocked_by）で終端する。
+// 前提 issue（人手作業など）が未完了のまま実装を走らせると、途中で詰まる・mock で逃げる・未完了の PR が出るため、
+// analyze ゲートより前で止めて sonnet も spawn しない（未完了 issue の列挙は決定論で足りる）。
+export function blockedByReasons(req) {
+  return (req?.blockers ?? [])
+    .filter((b) => b.state === 'OPEN')
+    .map((b) => `未完了の blocker ${b.repo}#${b.number}（${b.url}、source=${b.source}）— この issue を完了・close してから /dev-flow を再起動せよ`)
 }

@@ -3,7 +3,7 @@
 // の pin テスト（issue #690: Analyze を prerun の script 段へ移し、Workflow 側は検証とゲートだけ）。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { buildReqFromContract, analyzeGateReasons, ANALYZE_PATH_INPUT } from './analyze-contract.mjs';
+import { buildReqFromContract, analyzeGateReasons, blockedByReasons, ANALYZE_PATH_INPUT, BLOCKER_SOURCES } from './analyze-contract.mjs';
 import { classifyShape } from './triviality.mjs';
 
 // prerun-analyze.sh の ok:true 出力と同形
@@ -27,6 +27,7 @@ function baseAnalyze(overrides = {}) {
     comment_overrides: [],
     comment_conflicts: [],
     uncertain: [],
+    blockers: [],
     contract: 't1',
     ac_heading_near_miss: [],
     duration_seconds: 4,
@@ -241,4 +242,48 @@ test('[analyze-gate] (6e) 3 条件が同時 → 全部積まれる（AC 空が�
 test('[analyze-gate] (6f) null / undefined 入力でも throw せず AC 空として扱う', () => {
   assert.equal(analyzeGateReasons(null).length, 1);
   assert.equal(analyzeGateReasons(undefined).length, 1);
+});
+
+// (7) blockers（issue #744）: whitelist と blocked_by ゲート
+const OPEN_API = { repo: 'acme/skills', number: 12, state: 'OPEN', source: 'api', url: 'https://github.com/acme/skills/issues/12' };
+const CLOSED_BODY = { repo: 'other/lib', number: 5, state: 'CLOSED', source: 'body', url: 'https://github.com/other/lib/issues/5' };
+
+test('[analyze-contract] (7a) blockers は各キーを copy して REQ に載る（未知キーは落ちる・別インスタンス）', () => {
+  const analyze = baseAnalyze({ blockers: [{ ...OPEN_API, extra: 'x' }, CLOSED_BODY] });
+  const req = buildReqFromContract(analyze, 744);
+  assert.ok(req !== null);
+  assert.deepEqual(req.blockers, [OPEN_API, CLOSED_BODY]);
+  req.blockers.push(OPEN_API);
+  assert.equal(analyze.blockers.length, 2);
+});
+
+test('[analyze-contract] (7b) blockers が欠落 / 非配列 / 要素不正 → null', () => {
+  assert.deepEqual(BLOCKER_SOURCES, ['api', 'body']);
+  const missing = baseAnalyze(); delete missing.blockers;
+  assert.equal(buildReqFromContract(missing, 744), null, '欠落で null になっていない');
+  for (const bad of [
+    'x',
+    [null],
+    [{ ...OPEN_API, repo: null }],
+    [{ ...OPEN_API, number: 0 }],
+    [{ ...OPEN_API, number: '12' }],
+    [{ ...OPEN_API, state: '' }],
+    [{ ...OPEN_API, source: 'comment' }],
+    [{ ...OPEN_API, url: undefined }],
+  ]) {
+    assert.equal(buildReqFromContract(baseAnalyze({ blockers: bad }), 744), null, `blockers=${JSON.stringify(bad)} で null になっていない`);
+  }
+});
+
+test('[analyze-gate] (7c) blockedByReasons は state=OPEN の blocker だけを repo#number と URL 付きで 1 行ずつ返す', () => {
+  const req = buildReqFromContract(baseAnalyze({ blockers: [OPEN_API, CLOSED_BODY, { ...CLOSED_BODY, number: 6, state: 'OPEN', url: 'https://github.com/other/lib/issues/6' }] }), 744);
+  const reasons = blockedByReasons(req);
+  assert.equal(reasons.length, 2);
+  assert.ok(reasons[0].includes('acme/skills#12') && reasons[0].includes('https://github.com/acme/skills/issues/12') && reasons[0].includes('source=api'));
+  assert.ok(reasons[1].includes('other/lib#6') && reasons[1].includes('https://github.com/other/lib/issues/6') && reasons[1].includes('source=body'));
+});
+
+test('[analyze-gate] (7d) blocker なし / closed のみ → blockedByReasons は空（ゲートは引かない）', () => {
+  assert.deepEqual(blockedByReasons(buildReqFromContract(baseAnalyze(), 744)), []);
+  assert.deepEqual(blockedByReasons(buildReqFromContract(baseAnalyze({ blockers: [CLOSED_BODY] }), 744)), []);
 });

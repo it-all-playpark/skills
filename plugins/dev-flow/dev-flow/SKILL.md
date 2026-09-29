@@ -116,7 +116,14 @@ isolation probe が fail-closed abort する。
 
 ## needs_clarification の扱い
 
-`dev-flow-run` が `needs_clarification` を返した場合、AskUserQuestion で人間に確認したうえで、
+`source: "blocked_by"` は open な blocker（GitHub の issue dependencies と本文の `Blocked by #N` 行。
+人手作業の human-task issue など）が残っているための停止で、`missing_context` に未完了 issue の
+番号と URL が並ぶ。AskUserQuestion で要件を聞き直さず、その未完了 issue をそのまま人間に提示し、
+「完了・close した後に `/dev-flow` を再起動する」よう案内して終える（worktree は保持したまま。
+再起動時は下記と同じく手順2 からやり直す）。blocker の読み取りに失敗した場合は
+`source: "analyze_prerun"` で止まる（fail-closed）。
+
+それ以外の `needs_clarification` は、AskUserQuestion で人間に確認したうえで、
 **同じ worktree を保持したまま手順2 から**やり直す（`dev-flow-prerun` を同じ `--worktree` で
 再実行 → 新しい stdout JSON を `setup` として手順4 を起動。手順3 は既に入っているので不要）。
 前回の `setup` object を使い回してはならない: isolation probe の token は `setup.epoch` 固定で、
