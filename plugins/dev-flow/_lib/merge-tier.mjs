@@ -139,7 +139,7 @@ export const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'pr_closes_missing',
+  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
 ];
 
 // PR body の Closes 行決定論検証（issue #661）の状態 enum。'verified': gh pr view --json body に
@@ -196,6 +196,11 @@ export function classifyMergeableState(meta) {
 //   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
 //   security 不明という意味論で明示するための defense-in-depth（danger_hits の実 hit とは別軸）。
 //   未指定 = falsy = reason 追加なし、tier 判定値も従来と完全同一（regression なし）。
+// s.riskValueDropped (optional boolean): true かつ dangerFailClosed のとき、fail-closed の原因が
+//   danger-grep 実行不能ではなく merge-tier-facts の subagent 転記で risk.value が落ちたこと（issue #746。
+//   isRiskValueDropped）を示す。reason を 'danger_fail_closed' ではなく 'merge_facts_dropped' で積む
+//   （人間に「danger-grep が走らなかった」と誤読させない。security 未検証なのは同じなので HOLD は維持）。
+//   boolean 以外は明示 error（後方互換 scaffolding 禁止規約）。
 // s.finalReconcile (optional 'skipped'|'reverified'|'unavailable'): Final reconcile phase の実行結果
 //   （issue #320）。'unavailable' は fail-safe HOLD reason を追記する。out-of-enum は明示 error
 //   （後方互換 scaffolding 禁止規約）。未指定(undefined/null) = reason 追加なし。
@@ -296,6 +301,9 @@ export function classifyMergeTier(s) {
   if (s.evalVerdictFail != null && typeof s.evalVerdictFail !== 'boolean') {
     throw new Error('classifyMergeTier: invalid evalVerdictFail: ' + s.evalVerdictFail);
   }
+  if (s.riskValueDropped != null && typeof s.riskValueDropped !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid riskValueDropped: ' + s.riskValueDropped);
+  }
   if (s.finalCi != null && typeof s.finalCi.verified !== 'boolean') {
     throw new Error('classifyMergeTier: invalid finalCi');
   }
@@ -333,7 +341,10 @@ export function classifyMergeTier(s) {
     : null;
   if (s.escalateCount > 0) pushBlocking('escalate', `ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`, 'human_judgment');
   if (s.unsatisfiedAc) pushBlocking('ac_unsatisfied', 'AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）', 'human_judgment');
-  if (s.dangerFailClosed === true) pushBlocking('danger_fail_closed', 'danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');
+  if (s.dangerFailClosed === true) {
+    if (s.riskValueDropped === true) pushBlocking('merge_facts_dropped', 'merge-tier-facts の転記欠落（subagent 応答から danger-grep 結果 risk.value が落ちた。danger-grep 自体は実行済みの可能性あり）— security 未検証のため人間確認必須', 'human_judgment');
+    else pushBlocking('danger_fail_closed', 'danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');
+  }
   if (s.finalReconcile === 'unavailable') {
     if (s.finalCi == null) {
       pushBlocking('final_reconcile_unavailable', 'Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須', 'human_judgment');

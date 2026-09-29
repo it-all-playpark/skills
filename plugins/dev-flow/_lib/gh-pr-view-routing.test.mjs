@@ -9,7 +9,7 @@
 // label/agentType で stub）で以下を pin する:
 //
 //   (1) dispatch pin: label==='merge-tier-facts' の呼び出しが agentType:'dev-runner-haiku-ro'・
-//       phase:'Merge tier'・schema（MERGE_FACTS: required ['risk'], properties.pr）・prompt に
+//       phase:'Merge tier'・schema（MERGE_FACTS: required ['risk'], properties.pr は required [ok, value]）・prompt に
 //       `gh pr view <pr番号> --json mergeable,mergeStateStatus,headRefOid` を含むことを検証する
 //       （headRefOid は hash_reconverged 判定の証人、issue #631）。
 //   (2) conflicting(mergeable=CONFLICTING) → merge_tier HOLD、reasons に conflict 文言。
@@ -162,7 +162,8 @@ test('[gh-pr-view][1] dispatch: merge-tier-facts が agentType=dev-runner-haiku-
     'pr' in c.schema.properties && 'risk' in c.schema.properties && 'head_tree' in c.schema.properties,
     `MERGE_FACTS.properties に pr/risk/head_tree が揃っていない: ${JSON.stringify(Object.keys(c.schema.properties ?? {}))}`,
   );
-  assert.equal(JSON.stringify(c.schema.properties.pr.required), JSON.stringify(['ok']), 'pr サブ結果 schema の required は [ok]');
+  // value 欠落を契約違反にする（issue #746）。
+  assert.equal(JSON.stringify(c.schema.properties.pr.required), JSON.stringify(['ok', 'value']), 'pr サブ結果 schema の required は [ok, value]');
   assert.ok(
     c.prompt.includes('gh pr view 405 --json mergeable,mergeStateStatus,headRefOid'),
     `merge-tier-facts の prompt に headRefOid を含む gh pr view コマンドが含まれていない（issue #631）:\n${c.prompt}`,

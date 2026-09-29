@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { parseMergeTierFacts, isWellFormedRiskFact, mergeTierFactsTopLevelKeys, mergeTierFactsPrompt } from './merge-tier-facts.mjs';
+import { parseMergeTierFacts, isWellFormedRiskFact, isRiskValueDropped, MERGE_FACTS_RISK_DROPPED_ERROR, mergeTierFactsTopLevelKeys, mergeTierFactsPrompt } from './merge-tier-facts.mjs';
 
 const SHA = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
@@ -131,6 +131,30 @@ test('ok:false かつ error 欠落 → fallback の error 文字列', () => {
   assert.match(r.checks.error, /unavailable/);
 });
 
+// (10b) issue #746: haiku 転記で value が落ちた応答（実測形）→ risk は fail-closed のまま、error は
+// 「転記欠落」と識別でき、danger-grep 実行不能（スクリプト側の ok:false / 応答欠落）とは区別される
+test('risk.ok:true で value 欠落 → isRiskValueDropped=true、error は転記欠落専用文言', () => {
+  const dropped = { changed: { ok: true }, checks: { ok: true }, diffhash: { ok: true }, head_tree: { ok: true }, pr: { ok: true }, risk: { ok: true }, epoch: 1 };
+  assert.equal(isRiskValueDropped(dropped), true);
+  const r = parseMergeTierFacts(dropped);
+  assert.deepEqual(r.risk, { ok: false, hits: [], error: MERGE_FACTS_RISK_DROPPED_ERROR });
+  assert.match(MERGE_FACTS_RISK_DROPPED_ERROR, /transcription dropped/);
+  for (const value of [null, {}, { ok: true }]) {
+    assert.equal(isRiskValueDropped({ risk: { ok: true, value } }), true, `value=${JSON.stringify(value)}`);
+    assert.equal(parseMergeTierFacts({ risk: { ok: true, value } }).risk.error, MERGE_FACTS_RISK_DROPPED_ERROR);
+  }
+});
+
+test('isRiskValueDropped は転記欠落以外（正常 / スクリプトの ok:false / 応答欠落）では false', () => {
+  assert.equal(isRiskValueDropped(fullFacts()), false);
+  assert.equal(isRiskValueDropped({ risk: { ok: true, value: { ok: false, hits: [], error: 'git failed' } } }), false);
+  assert.equal(isRiskValueDropped({ risk: { ok: false, value: null, error: 'no valid JSON' } }), false);
+  assert.equal(isRiskValueDropped(null), false);
+  assert.equal(isRiskValueDropped({}), false);
+  assert.notEqual(parseMergeTierFacts({ risk: { ok: false, value: null, error: 'no valid JSON' } }).risk.error, MERGE_FACTS_RISK_DROPPED_ERROR);
+  assert.notEqual(parseMergeTierFacts(null).risk.error, MERGE_FACTS_RISK_DROPPED_ERROR);
+});
+
 // (11) top-level 契約外形状の診断文字列
 test('mergeTierFactsTopLevelKeys は診断用にキー一覧 / 型名を返す', () => {
   assert.equal(mergeTierFactsTopLevelKeys({ foo: 1, bar: 2 }), 'foo,bar');
@@ -147,6 +171,7 @@ test('mergeTierFactsPrompt: gh 2 コマンド + merge-tier-facts bare 名の 3 �
   assert.ok(p.includes('`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data \''));
   assert.ok(p.includes('--checks-data \''));
   assert.ok(p.includes('当該オプション自体を省略せよ'));
+  assert.ok(p.includes('`value`') && p.includes('省略・空 object 化してはならない'), 'value の転記欠落を禁じる指示が無い（issue #746）');
   assert.ok(!/sandbox|excludedCommands/i.test(p), 'prompt に起動形の理由を書かない');
   assert.ok(!p.includes('bash merge-tier-facts'), 'bash 前置しない');
   assert.ok(!p.includes('.sh '), '拡張子付き呼び出しをしない');

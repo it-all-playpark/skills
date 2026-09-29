@@ -1100,7 +1100,7 @@ const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-  'mergeable_conflicting', 'pr_closes_missing',
+  'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
 ];
 
 // PR body の Closes 行決定論検証（issue #661）の状態 enum。'verified': gh pr view --json body に
@@ -1157,6 +1157,11 @@ function classifyMergeableState(meta) {
 //   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
 //   security 不明という意味論で明示するための defense-in-depth（danger_hits の実 hit とは別軸）。
 //   未指定 = falsy = reason 追加なし、tier 判定値も従来と完全同一（regression なし）。
+// s.riskValueDropped (optional boolean): true かつ dangerFailClosed のとき、fail-closed の原因が
+//   danger-grep 実行不能ではなく merge-tier-facts の subagent 転記で risk.value が落ちたこと（issue #746。
+//   isRiskValueDropped）を示す。reason を 'danger_fail_closed' ではなく 'merge_facts_dropped' で積む
+//   （人間に「danger-grep が走らなかった」と誤読させない。security 未検証なのは同じなので HOLD は維持）。
+//   boolean 以外は明示 error（後方互換 scaffolding 禁止規約）。
 // s.finalReconcile (optional 'skipped'|'reverified'|'unavailable'): Final reconcile phase の実行結果
 //   （issue #320）。'unavailable' は fail-safe HOLD reason を追記する。out-of-enum は明示 error
 //   （後方互換 scaffolding 禁止規約）。未指定(undefined/null) = reason 追加なし。
@@ -1257,6 +1262,9 @@ function classifyMergeTier(s) {
   if (s.evalVerdictFail != null && typeof s.evalVerdictFail !== 'boolean') {
     throw new Error('classifyMergeTier: invalid evalVerdictFail: ' + s.evalVerdictFail);
   }
+  if (s.riskValueDropped != null && typeof s.riskValueDropped !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid riskValueDropped: ' + s.riskValueDropped);
+  }
   if (s.finalCi != null && typeof s.finalCi.verified !== 'boolean') {
     throw new Error('classifyMergeTier: invalid finalCi');
   }
@@ -1294,7 +1302,10 @@ function classifyMergeTier(s) {
     : null;
   if (s.escalateCount > 0) pushBlocking('escalate', `ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`, 'human_judgment');
   if (s.unsatisfiedAc) pushBlocking('ac_unsatisfied', 'AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）', 'human_judgment');
-  if (s.dangerFailClosed === true) pushBlocking('danger_fail_closed', 'danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');
+  if (s.dangerFailClosed === true) {
+    if (s.riskValueDropped === true) pushBlocking('merge_facts_dropped', 'merge-tier-facts の転記欠落（subagent 応答から danger-grep 結果 risk.value が落ちた。danger-grep 自体は実行済みの可能性あり）— security 未検証のため人間確認必須', 'human_judgment');
+    else pushBlocking('danger_fail_closed', 'danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');
+  }
   if (s.finalReconcile === 'unavailable') {
     if (s.finalCi == null) {
       pushBlocking('final_reconcile_unavailable', 'Final reconcile 再検証不能（pr-iterate fix 適用後の最終 tree の test 状態を確認できず）— 人間確認必須', 'human_judgment');
@@ -3195,7 +3206,9 @@ function buildDevflowSummaryBody({
     lines.push('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）');
   }
   if (securityClearance.length === 0) {
-    if (secFailClosed) {
+    if (secFailClosed && (holdReasons || []).some((r) => r?.code === 'merge_facts_dropped')) {
+      lines.push('Security clearance: merge-tier-facts の転記欠落（fail-closed — danger-grep 結果を受け取れず security 未検証）');
+    } else if (secFailClosed) {
       lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
     } else {
       lines.push('Security clearance: danger-grep clean（clearance 不要）');
@@ -3335,6 +3348,8 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: `security clearance 未確認 ${ctx.unclearedCount} 件`, action: '人が該当 diff を確認する' };
     case 'danger_fail_closed':
       return { current: 'danger-grep 実行不能（security 未検証）', action: 'danger-grep を手動実行して確認する' };
+    case 'merge_facts_dropped':
+      return { current: 'merge-tier-facts の転記欠落（danger-grep 結果を受け取れず security 未検証）', action: 'danger-grep を手動実行して確認する' };
     case 'breaking_structured':
       return { current: 'analyze が breaking_change=true と判定', action: '互換性影響と告知要否を判断する' };
     case 'final_reconcile_unavailable':
@@ -4545,20 +4560,30 @@ const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'b
 // payload をネストする等の形状不一致を schema 契約違反として検知し retryOnContractViolation の再試行機会を
 // 与える（required:[] だと契約違反にならず一発で fail-closed に倒れ、診断もできない）。
 // 他サブ結果は required にしない（fail-open のまま per-field 検証 parseMergeTierFacts へ流す）。
-const MERGE_FACT_SUB = {
-  type: 'object', required: ['ok'],
-  properties: { ok: { type: 'boolean' }, value: { type: ['object', 'null'] }, error: { type: 'string' } },
+// サブ結果の中では value を required にし、value の中身もサブ結果ごとに required を与える。
+// スクリプトは ok:true なら検証済みの value、ok:false なら value:null を必ず出すため、value 欠落は
+// haiku の StructuredOutput 転記で落ちたことを意味する。required にしないと欠落が契約違反にならず、
+// 再提出・retryOnContractViolation の機会なく risk fail-closed（偽の danger_fail_closed HOLD）へ倒れる。
+// value の required は object のときだけ効く（ok:false の value:null は通る）。
+function mergeFactSubSchema(value) {
+  return {
+    type: 'object', required: ['ok', 'value'],
+    properties: { ok: { type: 'boolean' }, value: { type: ['object', 'null'], ...value }, error: { type: 'string' } },
+  }
 }
 const MERGE_FACTS = {
   type: 'object',
   required: ['risk'],
   properties: {
-    diffhash: MERGE_FACT_SUB,
-    risk: MERGE_FACT_SUB,
-    changed: MERGE_FACT_SUB,
-    pr: MERGE_FACT_SUB,
-    head_tree: MERGE_FACT_SUB,
-    checks: MERGE_FACT_SUB,
+    diffhash: mergeFactSubSchema({ required: ['hash'], properties: { hash: { type: 'string' } } }),
+    risk: mergeFactSubSchema({ required: ['ok', 'hits'], properties: { ok: { type: 'boolean' }, hits: { type: 'array' } } }),
+    changed: mergeFactSubSchema({ required: ['files'], properties: { files: { type: 'array', items: { type: 'string' } } } }),
+    pr: mergeFactSubSchema({
+      required: ['mergeable', 'mergeStateStatus', 'headRefOid'],
+      properties: { mergeable: { type: ['string', 'null'] }, mergeStateStatus: { type: ['string', 'null'] }, headRefOid: { type: ['string', 'null'] } },
+    }),
+    head_tree: mergeFactSubSchema({ required: ['tree'], properties: { tree: { type: 'string' } } }),
+    checks: mergeFactSubSchema({ required: ['checks'], properties: { checks: { type: 'array' } } }),
     epoch: { type: ['number', 'null'] },
   },
 }
@@ -4581,6 +4606,10 @@ const MERGE_FACTS = {
 //   risk          - fail-closed。risk.ok===true かつ value が {ok:boolean, hits:array} のときのみ採用。
 //                   それ以外は {ok:false, hits:[], error} を合成（null は返さない — hits 欠落を clean と
 //                   同一視しない。呼び出し側は risk.ok!==true を dangerFailClosed として HOLD 強制）。
+//                   risk.ok===true なのに value が欠落 / 契約外形状の応答は、スクリプトが検証済みの value と
+//                   組でしか ok:true を出さない以上 subagent の StructuredOutput 転記で落ちたもの（issue #746）。
+//                   danger-grep 実行不能と区別するため error を MERGE_FACTS_RISK_DROPPED_ERROR にし、
+//                   isRiskValueDropped で判別させる。
 //   changedFiles  - fail-safe。changed.ok===true かつ value.files が string[] のときのみ採用、それ以外 null
 //                   （null は isDocsOrTestOnly が false を返し AUTO 昇格しない安全側）。
 //   prMeta        - fail-open。pr.ok===true かつ value が object のときのみ {ok:true, mergeable,
@@ -4618,6 +4647,7 @@ function mergeTierFactsPrompt({ wt, base, pr, repo }) {
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
     + `（--worktree で worktree 絶対パスを渡しているため cd は不要）。\n`
     + `4. 手順 3 の stdout の JSON 1 行を **そのまま** 返せ（判定・要約・整形・省略禁止）。`
+    + `各サブ結果の \`value\`（中身の object を含む。ok:false のときは null）を省略・空 object 化してはならない。`
     + `手順 3 自体が実行できなかった、または stdout が JSON でない場合のみ \`{"risk":{"ok":false,"value":null,"error":"<stderr の要約>"}}\` を返せ。`
     + `失敗時に ok:true を生成してはならない。原因調査はするな。再試行禁止。\n\n`
     + `## Output format\n`
@@ -4652,8 +4682,17 @@ function isWellFormedRiskFact(facts) {
   return v != null && typeof v === 'object' && typeof v.ok === 'boolean' && Array.isArray(v.hits);
 }
 
+// risk.ok===true なのに value が欠落 / 契約外形状（subagent の転記欠落。スクリプトは value が
+// {ok:boolean, hits:array} のときだけ ok:true を出すため、ここに来るのは転記で落ちた場合のみ）。
+const MERGE_FACTS_RISK_DROPPED_ERROR = 'merge-tier-facts transcription dropped risk.value (fail-closed)';
+
+function isRiskValueDropped(facts) {
+  return subOk(facts?.risk) && !isWellFormedRiskFact(facts);
+}
+
 function parseRiskFact(facts) {
   if (isWellFormedRiskFact(facts)) return facts.risk.value;
+  if (isRiskValueDropped(facts)) return { ok: false, hits: [], error: MERGE_FACTS_RISK_DROPPED_ERROR };
   return { ok: false, hits: [], error: subError(facts?.risk, 'merge-tier-facts risk unavailable (fail-closed)') };
 }
 
@@ -4885,10 +4924,21 @@ function decisionsSection(plan) {
 // 1 種別（danger-grep / test-surface）分の hit 行。総数は維持しつつ列挙 item を
 // PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。file path は pathMax で clip する
 // （PR_BODY_MAX_CHARS 超過時の詰め処理で有限値に絞られる。既定は無制限）。
+// 文字列要素はクラス名 / pattern 名そのものとして扱う。key・file の片方が欠けた hit は取れた側だけを出し、
+// 両方欠けた hit は「詳細不明」とする（`unknown: \`?\`` のような穴埋め表記を出さない。issue #746）。
+function hitItem(h, keyOf, pathMax) {
+  const key = cell(typeof h === 'string' ? h : keyOf(h));
+  const file = typeof h === 'string' ? '' : cell(h?.file);
+  if (key && file) return `${key}: \`${clip(file, pathMax)}\``;
+  if (key) return key;
+  if (file) return `\`${clip(file, pathMax)}\``;
+  return '詳細不明';
+}
+
 function hitLine(label, hits, keyOf, pathMax = Infinity) {
   const list = arr(hits);
   if (list.length === 0) return `- ${label}: なし`;
-  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => `${str(keyOf(h)) || 'unknown'}: \`${clip(cell(h?.file) || '?', pathMax)}\``);
+  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => hitItem(h, keyOf, pathMax));
   const excess = list.length - shown.length;
   const items = excess > 0 ? [...shown, `他 ${excess} 件`] : shown;
   return `- ${label}: ${list.length} 件（${items.join('、')}）`;
@@ -6880,9 +6930,11 @@ phase('PR')
 // gh pr create の転写のみを担う。材料は全て state にあり、LLM に diff を読み直させて本文を再生成させる
 // 理由がない（agent 側の要約・判断を挟まない転写契約）。
 const prCommitMessage = buildCommitMessage({ issue: ISSUE, req, plan: state.plan })
+// PR body の danger-grep 行は {class, file} の hit 単位で出す。state.dangerHits はクラス名 string[]
+// （security_focus / telemetry 用）なので渡さない。
 const prBody = buildPrBody({
   issue: ISSUE, req, plan: state.plan, ledger: state.ledger,
-  testsurfHits: state.testsurfHits, dangerHits: state.dangerHits,
+  testsurfHits: state.testsurfHits, dangerHits: secHitsOf(state.risk),
 })
 const pr = need(await trackedAgent(
   prPhasePrompt({ wt: WT, base: BASE, branch: state.setup.branch, repo: REPO, issue: ISSUE, commitMessage: prCommitMessage, prBody })
@@ -7267,7 +7319,7 @@ if (_facDecision.run) {
 // ときのみ、最終 AC 結果で PR body を再生成して gh pr edit。表示専用のため失敗は fail-open。
 let prBodySynced = null
 if (iterate?.status === 'lgtm' && (iterate?.fixes_applied ?? 0) > 0 && finalAcReconcile === 'reverified') {
-  const prBodyFinal = buildPrBody({ issue: ISSUE, req, plan: state.plan, ledger: state.ledger, testsurfHits: state.testsurfHits, dangerHits: state.dangerHits, acResults: state.finalAcResults })
+  const prBodyFinal = buildPrBody({ issue: ISSUE, req, plan: state.plan, ledger: state.ledger, testsurfHits: state.testsurfHits, dangerHits: secHitsOf(state.risk), acResults: state.finalAcResults })
   const sync = await failOpenAgent(prBodyEditPrompt({ wt: WT, pr: pr.pr_number, repo: REPO, prBody: prBodyFinal, fileName: 'pr-body-final.md' }), { agentType: 'dev-runner-haiku', schema: PR_BODY_EDIT, label: 'ac-checkbox-sync', phase: 'Final reconcile' })
   prBodySynced = sync?.edited === true
   log(prBodySynced ? 'ac-checkbox-sync: PR body の AC checkbox を Final AC reconcile 結果へ更新' : '⚠️ ac-checkbox-sync: PR body 更新に失敗（fail-open。checkbox は fix 前のまま）')
@@ -7291,12 +7343,24 @@ phase('Merge tier')
 // HOLD 強制、他は fail-open）で続行し、run を abort しない（abort は終端サマリと journal entry を失う）。
 // 6 サブ結果は常に取得する（head_tree / checks を使うかどうかは spawn 費用が無いため JS の分岐が決める）。
 let mergeFacts = null
+// StructuredOutput 契約違反（MERGE_FACTS は各サブ結果の value を required にしているため、value 欠落は
+// schema 違反 → StructuredOutput 未返却の throw になる）が再試行後も続いたか。true のとき fail-closed の原因は
+// danger-grep 実行不能ではなく merge-tier-facts の転記欠落なので、HOLD reason を merge_facts_dropped で出す。
+let mergeFactsContractViolation = false
 try {
   mergeFacts = await trackedAgent(
     mergeTierFactsPrompt({ wt: WT, base: BASE, pr: pr.pr_number, repo: REPO }),
     { agentType: 'dev-runner-haiku-ro', schema: MERGE_FACTS, label: 'merge-tier-facts', phase: 'Merge tier', retryOnContractViolation: true },
   )
-} catch (e) { log(`⚠️ merge-tier-facts 呼び出しが例外 — facts=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
+} catch (e) {
+  const msg = e && e.message ? e.message : String(e)
+  if (msg.includes('without calling StructuredOutput')) {
+    mergeFactsContractViolation = true
+    log(`⚠️ merge-tier-facts が再試行後も StructuredOutput 契約違反（value 欠落等の転記欠落）— facts=null として per-field フォールバック（risk fail-closed、HOLD reason は merge_facts_dropped）で続行: ${msg}`)
+  } else {
+    log(`⚠️ merge-tier-facts 呼び出しが例外 — facts=null として per-field フォールバック（risk fail-closed）で続行: ${msg}`)
+  }
+}
 const facts = parseMergeTierFacts(mergeFacts)
 // diff-hash reuse: Security floor 時点の tree OID（state.secDiffHash）と Merge tier
 // 冒頭の tree OID が完全一致するときのみ danger-grep-final/changed-files の再判定を skip し、
@@ -7322,7 +7386,9 @@ if (reuseSecFloor) {
   if (riskFinal.ok !== true) {
     log(isWellFormedRiskFact(mergeFacts)
       ? `⚠️ danger-grep-final: merge-tier-facts が失敗を報告した（error: ${riskFinal.error ?? 'unknown'}）— risk fail-closed へ倒す`
-      : `⚠️ danger-grep-final: merge-tier-facts が契約外形状を返した（top-level keys: ${mergeTierFactsTopLevelKeys(mergeFacts)}）— risk fail-closed へ倒す`)
+      : isRiskValueDropped(mergeFacts) || mergeFactsContractViolation
+        ? '⚠️ danger-grep-final: merge-tier-facts の応答から risk.value が欠落（subagent の転記欠落）— risk fail-closed へ倒す'
+        : `⚠️ danger-grep-final: merge-tier-facts が契約外形状を返した（top-level keys: ${mergeTierFactsTopLevelKeys(mergeFacts)}）— risk fail-closed へ倒す`)
   }
   // changed-files 再利用: Final reconcile が同一 worktree・同一 tree に対して
   // 完全に同じコマンド（`git diff --name-only origin/BASE...HEAD`）を既に実行している。
@@ -7339,6 +7405,10 @@ if (reuseSecFloor) {
 const dangerHitsFinal = riskFinal.ok === true ? [...new Set(secHitsOf(riskFinal).map((h) => h.class))] : []
 const testsurfPatternsFinal = testsurfPatternsOf(riskFinal)
 const dangerFailClosedFinal = riskFinal.ok !== true
+// fail-closed の原因が merge-tier-facts の転記欠落か（HOLD reason を danger_fail_closed と出し分ける）。
+// Security floor 結果を再利用した場合は facts の risk を見ていないので常に false。
+// 再試行後も StructuredOutput 契約違反で終わった場合（mergeFacts=null）も転記欠落として扱う。
+const riskValueDroppedFinal = dangerFailClosedFinal && !reuseSecFloor && (isRiskValueDropped(mergeFacts) || mergeFactsContractViolation)
 if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${riskFinal.error ?? 'unknown'}) — merge tier を HOLD 強制`)
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。
@@ -7423,6 +7493,7 @@ const mergeTier = classifyMergeTier({
   unsatisfiedAc: state.finalUnsatisfiedAc ?? state.unsatisfiedAc,
   evalSkipped: !state.runEval,
   dangerFailClosed: dangerFailClosedFinal,
+  riskValueDropped: riskValueDroppedFinal,
   finalReconcile,
   finalTestGreen,
   iterateStatus: iterate?.status ?? null,

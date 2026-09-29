@@ -600,6 +600,22 @@ test('fail_closed:true の SEC item のみ -> 「Security clearance: danger-grep
   assert.ok(!body.includes('Security clearance: danger-grep clean（clearance 不要）'), 'clean 表示は出ない');
 });
 
+test('issue #746: merge_facts_dropped HOLD では「danger-grep 実行不能」ではなく転記欠落として表示する', () => {
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: 'HOLD',
+    mergeTierReasons: ['merge-tier-facts の転記欠落'],
+    holdReasons: [{ code: 'merge_facts_dropped', reason: 'merge-tier-facts の転記欠落', kind: 'human_judgment' }],
+    holdKind: 'human_judgment',
+    blockingItems: [
+      secLedgerItem('config', { checked: false, evidence: null, floor: false, failClosed: true }),
+    ],
+  });
+  assert.ok(body.includes('merge-tier-facts の転記欠落（danger-grep 結果を受け取れず security 未検証）'), 'HOLD 理由テーブルの現状列');
+  assert.ok(body.includes('Security clearance: merge-tier-facts の転記欠落（fail-closed — danger-grep 結果を受け取れず security 未検証）'), 'fail-closed 空状態行');
+  assert.ok(!body.includes('danger-grep 実行不能'), `danger-grep 実行不能 が出ている: ${body}`);
+});
+
 // ─── 解消済み証跡の折りたたみ (issue #707) ──────────────────────────────────
 
 test('issue #707: 解消済み 4 種すべて非空の入力では件数行がサマリ行になった <details> がちょうど 1 回出る', () => {
