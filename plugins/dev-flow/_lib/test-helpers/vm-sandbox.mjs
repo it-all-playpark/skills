@@ -75,7 +75,7 @@ export function prerunAnalyze(overrides = {}) {
     scope: 'src', scope_truncated: false, scope_total_chars: 3,
     issue_body: 'stub-issue-body', issue_body_truncated: false,
     breaking_keyword_scan: false, breaking_change: false, breaking_evidence: '',
-    comment_count: 0, comment_overrides: [], comment_conflicts: [], uncertain: [],
+    comment_count: 0, comment_overrides: [], comment_conflicts: [], uncertain: [], blockers: [],
     contract: 't1', ac_heading_near_miss: [], duration_seconds: 5,
     ...overrides,
   };

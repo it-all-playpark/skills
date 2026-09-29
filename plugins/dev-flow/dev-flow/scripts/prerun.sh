@@ -9,7 +9,8 @@
 # （issue 取得 + contract parse + Jev 有界判定。prerun-analyze.sh。deps install と並列）→
 # detect-stack。各段は独立に ok/error を報告し、後続段を巻き込まない。
 #
-# GitHub I/O は analyze 段の `analyze-issue`（GitHub CLI の issue 取得を内蔵）の読み取りのみ。
+# GitHub I/O は analyze 段の `analyze-issue`（GitHub CLI の issue 取得を内蔵）と blocker 判定
+# （prerun-analyze.sh の dependencies API / Blocked by 先の issue 状態）の読み取りのみ。
 # リモート更新系の書き込みコマンドは持たない（.claude/rules/dev-flow.md 参照）。
 
 set -euo pipefail

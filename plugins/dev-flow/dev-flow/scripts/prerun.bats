@@ -36,8 +36,8 @@ setup() {
     WT="$BATS_TEST_TMPDIR/wt/df-1"
 
     # analyze 段（Segment 6）が内蔵する gh を stub する。GH_STUB_FIXTURE 未設定なら失敗
-    # （analyze.ok:false 経路）。Jev は鍵無しで呼ばれない（Keychain も存在しない service 名にし、
-    # 実機の jev-broker ソケットも拾わない）。
+    # （analyze.ok:false 経路）。dependencies API（blocked_by）は依存なし（[]）を返す。
+    # Jev は鍵無しで呼ばれない（Keychain も存在しない service 名にし、実機の jev-broker ソケットも拾わない）。
     STUB_DIR="$BATS_TEST_TMPDIR/stub-bin"
     mkdir -p "$STUB_DIR"
     cat >"$STUB_DIR/gh" <<'STUB'
@@ -45,6 +45,10 @@ setup() {
 if [[ -z "${GH_STUB_FIXTURE:-}" ]]; then
     echo "gh stub: no fixture (GH_STUB_FIXTURE unset)" >&2
     exit 1
+fi
+if [[ "$1" == "api" && "$2" == */dependencies/blocked_by* ]]; then
+    echo '[]'
+    exit 0
 fi
 cat "$GH_STUB_FIXTURE"
 STUB
@@ -393,6 +397,7 @@ JSON
     echo "$output" | jq -e '.analyze.ok == true and .analyze.analyze_path == "contract"'
     echo "$output" | jq -e '.analyze.acceptance_criteria == ["AC one", "AC two"] and .analyze.issue_type == "feat" and .analyze.issue_title == "feat: add thing"'
     echo "$output" | jq -e '(.analyze.issue_body | type) == "string" and .analyze.breaking_change == false and .analyze.comment_overrides == [] and .analyze.comment_conflicts == [] and .analyze.uncertain == []'
+    echo "$output" | jq -e '.analyze.blockers == []'
     echo "$output" | jq -e '(.analyze.duration_seconds | type) == "number" and .analyze.duration_seconds >= 0'
 }
 

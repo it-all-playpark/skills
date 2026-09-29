@@ -15,6 +15,8 @@
 //   (f) args.setup.analyze が ok:true だが whitelist 不合格 → fail-closed throw（推測で REQ を組まない）
 //   (g) clarify prompt はゲート理由を verbatim で含み、issue 転写（gh の直接実行 / sandbox 語）を指示しない
 //   (h) REQ が prerun の analyze から組まれる: breaking_change / issue_body / AC が fable prompt と shape に届く
+//   (i) open な blocker（issue #744）: needs_clarification（source=blocked_by）で journal handoff 以外の spawn 0、
+//       missing_context に未完了 issue を列挙。analyze ゲートより先に判定する。closed のみなら通常経路
 //
 // Run: npx vitest run _lib/analyze-contract-routing.test.mjs
 import { test } from 'vitest';
@@ -202,4 +204,51 @@ test('[analyze-routing] (h) prerun の analyze の issue_body / AC / issue_title
   assert.ok(impl.prompt.includes('AC-ONE') && impl.prompt.includes('AC-TWO'), 'AC が fable prompt に無い');
   assert.ok(impl.prompt.includes('feat: prerun analyze'), 'issue_title が fable prompt に無い');
   assert.ok(logs.some((l) => /shape=complex|floor=complex|breaking change detected/.test(l)), `breaking_change=true が shape に反映されていない: ${logs.filter((l) => l.includes('shape')).join(' | ')}`);
+});
+
+// ---- (i) blocked_by ゲート（issue #744）----
+const OPEN_BLOCKER = { repo: 'acme/skills', number: 12, state: 'OPEN', source: 'api', url: 'https://github.com/acme/skills/issues/12' };
+const OPEN_BODY_BLOCKER = { repo: 'other/lib', number: 5, state: 'OPEN', source: 'body', url: 'https://github.com/other/lib/issues/5' };
+const CLOSED_BLOCKER = { repo: 'acme/skills', number: 13, state: 'CLOSED', source: 'body', url: 'https://github.com/acme/skills/issues/13' };
+
+test('[analyze-routing] (i) open な blocker → needs_clarification（source=blocked_by）で sonnet / isolation-probe / fable を spawn せず、missing_context に未完了 issue を列挙', async () => {
+  const { calls, result, error, logs } = await run({ analyze: { blockers: [OPEN_BLOCKER, CLOSED_BLOCKER, OPEN_BODY_BLOCKER] } });
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  assertClarificationBeforeSpawn(calls, result, 'blocked_by');
+  assert.equal(result.source, 'blocked_by');
+  const nonJournal = calls.filter((c) => !c.label.startsWith('journal'));
+  assert.deepEqual(nonJournal.map((c) => c.label), [], `blocked_by 経路の spawn は journal handoff のみのはず: ${calls.map((c) => c.label).join(', ')}`);
+  assert.equal(result.missing_context.length, 2, `open の 2 件だけを列挙するはず: ${JSON.stringify(result.missing_context)}`);
+  assert.ok(result.missing_context[0].includes('acme/skills#12') && result.missing_context[0].includes(OPEN_BLOCKER.url));
+  assert.ok(result.missing_context[1].includes('other/lib#5') && result.missing_context[1].includes(OPEN_BODY_BLOCKER.url));
+  assert.ok(!result.missing_context.some((m) => m.includes('#13')), 'closed の blocker を列挙してはならない');
+  assert.equal(result.worktree, '/tmp/wt');
+  assert.equal(result.journal_log_status, 'logged');
+  assert.ok(logs.some((l) => l.includes('source=blocked_by')));
+});
+
+test('[analyze-routing] (i2) open な blocker と uncertain が同時 → blocked_by が先に終端し sonnet（analyze-clarify）は spawn しない', async () => {
+  const { calls, result, error } = await run({ analyze: { analyze_path: 'jev', jev_reasons: ['breaking_keyword_scan true'], uncertain: ['breaking_keyword_scan: Jev 応答なし'], blockers: [OPEN_BLOCKER] } });
+  assert.equal(error, null);
+  assertClarificationBeforeSpawn(calls, result, 'blocked_by+uncertain');
+  assert.equal(result.source, 'blocked_by');
+  assert.equal(calls.filter((c) => c.label.startsWith('analyze-clarify')).length, 0);
+});
+
+test('[analyze-routing] (i3) closed の blocker のみ → 従来どおり isolation-probe → dev-implement-fable へ進む', async () => {
+  const { calls, result, error, logs } = await run({ analyze: { blockers: [CLOSED_BLOCKER] } });
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  assert.ok(result?.status !== 'needs_clarification', `closed のみで止まってはならない: ${JSON.stringify(result?.status)}`);
+  assert.equal(calls.filter((c) => c.label === 'isolation-probe').length, 1);
+  assert.ok(fableCalls(calls).length >= 1, 'dev-implement-fable が spawn されていない');
+  assert.ok(logs.some((l) => l.includes('acme/skills#13=CLOSED(body)')), 'closed blocker の log が無い');
+});
+
+test('[analyze-routing] (i4) blockers が whitelist 不合格（欠落）→ throw（推測で素通りさせない）', async () => {
+  const analyze = prerunAnalyze();
+  delete analyze.blockers;
+  const { calls, error } = await run({ args: devFlowArgs(1, { analyze }) });
+  assert.ok(error, 'blockers 欠落で throw するはず');
+  assert.match(error.message, /whitelist 検証に不合格/);
+  assert.equal(calls.filter((c) => !c.label.startsWith('journal')).length, 0);
 });

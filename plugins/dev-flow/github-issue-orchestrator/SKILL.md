@@ -56,10 +56,10 @@ Turn brainstorming output into an implementation-ready GitHub issue through:
 |-------|--------|---------------|
 | 1 | Normalize input context | Problem statement, goals, constraints are explicit |
 | 2 | Specialist investigation | Frontend/backend/infra findings are documented |
-| 3 | Draft implementation plan | Plan includes phases, dependencies, AC, risks |
+| 3 | Draft implementation plan | Plan includes phases, executors, dependencies, AC, risks |
 | 4 | Devil's-advocate review loop | No blocking gaps remain |
-| 5 | Compose final issue body | Template is fully filled |
-| 6 | Create issue | `gh issue create` returns issue URL |
+| 5 | Compose final issue body | Template is fully filled (human issue bodies too, if any) |
+| 6 | Create issue | human issues (if any) → implementation issue (`--blocked-by`) return URLs |
 
 ### Phase 1: Normalize Input
 
@@ -87,6 +87,7 @@ If subagents are available, run analyses in parallel; otherwise run the same len
 
 Generate an actionable plan containing:
 - phased tasks with ownership (`frontend` / `backend` / `infra`)
+- executor per task (`executor: agent | human`) — required on every task (see below)
 - dependency order
 - acceptance criteria (testable)
 - risk register
@@ -94,6 +95,26 @@ Generate an actionable plan containing:
 - open questions requiring user decision
 
 Use `references/issue-template.md` as the output structure.
+
+#### Executor Classification
+
+Every task gets exactly one executor line: `executor: agent` or `executor: human`.
+The human marker is the fixed string `executor: human` (same string as `references/issue-template.md`);
+`create_issue.py` rejects any agent issue body that still contains it, so do not paraphrase it.
+
+A task is `executor: human` when it needs any of the following (human 判定基準):
+
+1. 外部サービスの管理画面操作・アカウント作成
+2. secret・API キーの発行と登録
+3. DNS・課金・契約
+4. 顧客への確認・承認
+5. 本番データの手作業操作
+6. 実機での手動確認
+
+Anything outside this list is `executor: agent` (default). Do not mark work human just because it is
+tedious — over-splitting adds human toil. Human tasks are cut out of the implementation issue in
+Phase 6 and filed as separate `human-task` issues; the implementation issue keeps only agent tasks and
+references the human issue via `Blocked by`.
 
 ### Phase 4: Devil's-Advocate Review Loop
 
@@ -149,12 +170,46 @@ error). Apply this policy based on `verdict`:
 通過する（advisory）。Phase 5 の AC Lint Self-Check を通していれば、この Phase 6 で
 abort することはない。
 
-Run:
+加えて `--kind` で本文を検査する（`--dry-run` を含む）:
+
+- `--kind agent`（既定）: 本文に `executor: human` が 1 つでもあれば exit 1 で起票を拒否する
+- `--kind human`: `## 手順` 見出しと checkbox（`- [ ]`）付きの `## 完了条件` が無ければ exit 1。
+  `human-task` ラベルを付けて起票し、ラベルが無ければ作成する
+
+起票順序:
+
+1. **human タスクがある場合、human issue を先に起票する**。human タスクごとに
+   `references/issue-template.md` の human issue テンプレートで本文を作り、`--kind human` で起票して
+   issue 番号を控える（`--dry-run` なら起票予定として扱う）
+2. **実装 issue を `--blocked-by <human issue 番号[,…]>` 付きで起票する**。本文から human タスクを
+   除き（`executor: human` を残さない）、`--kind agent` で起票する。`--blocked-by` は本文先頭に
+   `Blocked by #N` 行を保証し、起票後に GitHub の issue dependencies API で依存を登録する。
+   登録に失敗すると非 0 終了し、issue URL と手動登録コマンドを stderr に出すので、それを
+   ユーザーに報告する（本文の `Blocked by` 行は残るので dev-flow のゲートは効く）
+3. human タスクが無ければ従来どおり実装 issue 1 本だけを起票する
+
+dev-flow は open な blocker を持つ issue を実装前に停止する（needs_clarification、source: `blocked_by`）ので、
+human issue を close してから実装 issue に `/dev-flow` を流す。
+
+Run（human issue。human タスクの数だけ繰り返す）:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/github-issue-orchestrator/scripts/create_issue.py \
+  --kind human \
+  --title "$HUMAN_TITLE" \
+  --body-file /tmp/github-issue-orchestrator-human-1.md \
+  [--repo owner/repo] \
+  [--assignees a,b] \
+  [--dry-run]
+```
+
+Run（実装 issue）:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/github-issue-orchestrator/scripts/create_issue.py \
   --title "$TITLE" \
   --body-file /tmp/github-issue-orchestrator-body.md \
+  [--blocked-by N[,M]] \
   [--repo owner/repo] \
   [--labels a,b] \
   [--assignees a,b] \
@@ -162,9 +217,14 @@ python3 ${CLAUDE_PLUGIN_ROOT}/github-issue-orchestrator/scripts/create_issue.py 
   [--dry-run]
 ```
 
+`--dry-run` では human issue の番号が確定しないので、実装 issue の起票コマンドは
+`--blocked-by` を付けずに組み立て、起票予定の全 issue（human issue → 実装 issue）と依存関係を
+Output Contract に並べて表示する。
+
 Capture and return:
 - final issue title
 - issue URL (or dry-run notice)
+- human issue の番号 / URL と Blocked by 関係（human タスクがある場合）
 - unresolved non-blocking concerns (if any)
 
 ## Output Contract
@@ -177,6 +237,11 @@ Always return this summary after execution:
 - タイトル: ...
 - リポジトリ: ...
 - URL: ... (or Dry-run)
+
+## Human Tasks
+- human issue: #N タイトル — URL (or Dry-run: 起票予定)
+- 依存関係: 実装 issue #M は Blocked by #N（dependencies API 登録: ok / 失敗 → 手動登録コマンド）
+- (human タスクが無い場合は `- なし`)
 
 ## Plan Quality Gate
 - Devil's-advocate review rounds: N
