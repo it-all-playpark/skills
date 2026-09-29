@@ -63,6 +63,43 @@ test('[agent-ac-reimpl] (A) 計測して PR 本文に書く AC が未達 → sta
   assert.equal(result?.merge_tier, 'REVIEW', `AC を満たしたので HOLD しない: ${JSON.stringify(result?.merge_tier_reasons)}`);
 });
 
+test('[agent-ac-reimpl] (A-final) fixes_applied>0 の Final AC reconcile にも pr_notes / 設計判断が渡り、PR 本文に書く AC が反転しない', async () => {
+  const MEASURE_NOTE = '512Mi で worker 4 本: app 全体の RSS 合計 380Mi（ローカル計測）';
+  const DECISION = 'worker 上限は 4';
+  const { ctx, calls } = makeDevFlowSandbox({
+    workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
+    overrides: {
+      'eval#1': evalWith([false, true]),
+      'reimpl#1:serial:issue-1': impl({
+        design_decisions: [{ title: DECISION, rationale: '512Mi に収まる最大数' }],
+        pr_notes: [{ section: 'measurement', text: MEASURE_NOTE }],
+      }),
+      'eval#2': evalWith([true, true]),
+      'reconcile-sync': { ok: true, head: 'a'.repeat(40) },
+      'test#final': { tests: 'passed', green: true, summary: '' },
+      // evaluator の判定を模す: prompt に計測値（pr_notes）と設計判断が無ければ PR 本文に書く AC は未達
+      'final-ac-reconcile': (c) => {
+        const seen = c.prompt.includes(MEASURE_NOTE) && c.prompt.includes(DECISION);
+        return { ac_results: [
+          { ac_index: 0, satisfied: seen, verified_by: 'inspection', evidence: seen ? 'pr_notes に計測値' : '計測値が見当たらない' },
+          { ac_index: 1, satisfied: true, verified_by: 'inspection', evidence: 'ok' },
+        ] };
+      },
+    },
+    extra: { args: devFlowArgs(1, { analyze: prerunAnalyze({ acceptance_criteria: [MEASURE_AC, CODE_AC] }) }) },
+  });
+  const { result, error } = await runWorkflowCapture(src, ctx);
+  assertNoCrash(error, 'agent-ac-reimpl A-final');
+  assert.equal(error, null, `run が throw した: ${error?.message}`);
+  const fac = calls.filter((c) => c.label === 'final-ac-reconcile');
+  assert.equal(fac.length, 1, `fixes_applied>0 で final-ac-reconcile が 1 回走る: ${calls.map((c) => c.label).join(', ')}`);
+  assert.ok(fac[0].prompt.includes(MEASURE_NOTE), `final-ac-reconcile prompt に pr_notes: ${fac[0].prompt}`);
+  assert.ok(fac[0].prompt.includes(DECISION), `final-ac-reconcile prompt に architecture_decisions: ${fac[0].prompt}`);
+  assert.equal(result?.final_ac_reconcile, 'reverified');
+  assert.equal(result?.merge_tier, 'REVIEW', `reverified で AC を満たすので HOLD しない: ${JSON.stringify(result?.merge_tier_reasons)}`);
+  assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [], human: [] });
+});
+
 test('[agent-ac-reimpl] (A-ctrl) 全 AC 満たせば standard は evaluator 1 回・差し戻しなし', async () => {
   const { calls } = await run([MEASURE_AC, CODE_AC], { 'eval#1': evalWith([true, true]) });
   assert.equal(reimplCalls(calls).length, 0);
