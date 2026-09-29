@@ -6071,16 +6071,20 @@ let state = {
 // ============================================================
 // extractGuardBlocked: implResults から guard_blocked task を partitionBlocked で抽出し、
 // implResults から除去（stale BLOCKED の再発火防止・replan 対象にしない・blockSeen 非登録）。
-// concerns はスクラブ済み文字列、digests は task_id/guard_id/block_class のみの薄い記録
-// （state.guardBlockedResults 用 — 終端サマリーからの task 欠落補償）
+// concerns はスクラブ済み文字列、digests は task_id/guard_id/block_class/files のみの薄い記録
+// （state.guardBlockedResults 用 — 終端サマリーからの task 欠落補償）。
+// files は guard に止められる前に worktree へ書いた変更の申告。除去した結果の files を捨てると
+// adoptReportedFiles の宣言が空になり、実 diff が全件宣言外として realized count から落ちて shape が micro に誤判定される
 // ============================================================
 function extractGuardBlocked(results) {
   const { guardBlocked } = partitionBlocked(results)
   if (!guardBlocked.length) return { filtered: results, concerns: [], digests: [] }
   const guardTaskIds = new Set(guardBlocked.map((g) => g.task_id))
-  const filtered = results.filter((r) => !(r && r.status === 'BLOCKED' && guardTaskIds.has(r.task_id)))
+  const isGuardBlocked = (r) => r && r.status === 'BLOCKED' && guardTaskIds.has(r.task_id)
+  const filtered = results.filter((r) => !isGuardBlocked(r))
   const concerns = guardBlocked.map((g) => buildGuardBlockedConcern(g))
-  const digests = guardBlocked.map((g) => ({ task_id: g.task_id, guard_id: g.guard_id, block_class: 'guard_blocked' }))
+  const filesOf = (id) => results.filter((r) => isGuardBlocked(r) && r.task_id === id).flatMap((r) => Array.isArray(r.files) ? r.files : [])
+  const digests = guardBlocked.map((g) => ({ task_id: g.task_id, guard_id: g.guard_id, block_class: 'guard_blocked', files: filesOf(g.task_id) }))
   return { filtered, concerns, digests }
 }
 
@@ -6176,7 +6180,8 @@ async function execImplementPhase(state) {
     ...blockedConcerns,
   ]
 
-  state.plan = adoptImplPrNotes(adoptReportedFiles(plan, implResults), implResults)
+  // guard_blocked で implResults から除いた結果の files も宣言に取り込む（replan・blockSeen の遮断とは独立）
+  state.plan = adoptImplPrNotes(adoptReportedFiles(plan, [...implResults, ...state.guardBlockedResults]), implResults)
   state.implResults = implResults
   state.blockedConcerns = blockedConcerns
   state.concerns = concerns
