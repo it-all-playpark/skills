@@ -329,6 +329,8 @@ summarize_deps() {
     fi
     printf '%s' "$raw" | jq -c '
         def failing: [ (.results // [])[] | select(.status == "failed" or .status == "pm_not_found") ];
+        def describe: .ecosystem + "/" + .pm + " (" + .command + "): " + .status
+            + (if (.missing_node_modules // []) | length > 0 then " — node_modules 欠落: " + (.missing_node_modules | join(", ")) else "" end);
         if .status == "no_dependencies" then
             {ok: true, note: ""}
         elif .status == "success" then
@@ -336,12 +338,12 @@ summarize_deps() {
             | if ($f | length) == 0 then
                 {ok: true, note: ([ (.results // [])[] | (.pm + ":" + .status) ] | join(", "))}
               else
-                {ok: false, note: ("依存インストールに失敗した項目あり — " + ([ $f[] | (.ecosystem + "/" + .pm + " (" + .command + "): " + .status) ] | join(", ")))}
+                {ok: false, note: ("依存インストールに失敗した項目あり — " + ([ $f[] | describe ] | join(", ")))}
               end
         elif (.status == "partial" or .status == "failed") then
             (failing) as $f
             | if ($f | length) > 0 then
-                {ok: false, note: ("依存インストールが " + .status + " で終了 — " + ([ $f[] | (.ecosystem + "/" + .pm + " (" + .command + "): " + .status) ] | join(", ")))}
+                {ok: false, note: ("依存インストールが " + .status + " で終了 — " + ([ $f[] | describe ] | join(", ")))}
               else
                 {ok: false, note: ("依存インストールが " + .status + " で終了 — " + (.error // "詳細不明"))}
               end
