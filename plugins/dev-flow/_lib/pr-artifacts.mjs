@@ -105,6 +105,8 @@ export const PR_BODY_AC_MAX = 300;
 export const PR_BODY_DECISIONS_MAX = 5;
 export const PR_BODY_DECISION_MAX = 120;
 export const PR_BODY_HIT_ITEMS_MAX = 5;
+export const PR_BODY_NOTES_MAX = 5;
+export const PR_BODY_NOTE_MAX = 240;
 export const PR_BODY_MAX_CHARS = 3500;
 // PR_BODY_MAX_CHARS 超過時に buildPrBody が決定論的に詰める順序と刻み（issue #665）:
 // 1. hit item の file path を PR_BODY_HIT_PATH_MAX まで clip
@@ -170,6 +172,45 @@ function decisionsSection(plan) {
   return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件は plan 参照）` : shown.join('\n');
 }
 
+// 実装エージェント（dev-implement-fable）が返した PR 本文向けの記録（issue #747）。section は閉じた enum で、
+// PR body の `## 検証` に `- <label>: <text>` で載る。
+export const PR_NOTE_SECTIONS = ['verification', 'measurement'];
+const PR_NOTE_LABELS = { verification: '検証', measurement: '計測' };
+
+// IMPL 結果の design_decisions（[{title, rationale}]）と pr_notes（[{section, text}]）を plan へ取り込む。
+// plan.architecture_decisions は `## 設計判断`、plan.pr_notes は `## 検証` の材料になる（evaluator も plan 経由で読む）。
+// 1 回の Implement / reimpl の結果内では連結し、非空なら前回分を置き換える（差し戻し後の報告を最新とする）。
+// 空なら前回分を保持する — 差し戻しが別の指摘だけを直した場合に、先に返した計測値を本文から落とさないため。
+// title / text が空の項目と section が enum 外の項目は捨てる。
+export function adoptImplPrNotes(plan, results) {
+  const decisions = [];
+  const notes = [];
+  for (const r of arr(results)) {
+    for (const d of arr(r?.design_decisions)) {
+      const title = collapseWhitespace(d?.title);
+      if (title) decisions.push({ decision: title, rationale: collapseWhitespace(d?.rationale) });
+    }
+    for (const n of arr(r?.pr_notes)) {
+      const text = collapseWhitespace(n?.text);
+      if (text && PR_NOTE_SECTIONS.includes(n?.section)) notes.push({ section: n.section, text });
+    }
+  }
+  return {
+    ...plan,
+    ...(decisions.length ? { architecture_decisions: decisions } : {}),
+    ...(notes.length ? { pr_notes: notes } : {}),
+  };
+}
+
+// `## 検証` に足す pr_notes 行: 先頭 PR_BODY_NOTES_MAX 件を `- 計測: ...` / `- 検証: ...` で clip、超過分は
+// `（他 N 件）` 1 行。
+function noteLines(plan) {
+  const all = arr(plan?.pr_notes).filter((n) => PR_NOTE_SECTIONS.includes(n?.section) && collapseWhitespace(n?.text));
+  const shown = all.slice(0, PR_BODY_NOTES_MAX).map((n) => clip(`- ${PR_NOTE_LABELS[n.section]}: ${collapseWhitespace(n.text)}`, PR_BODY_NOTE_MAX));
+  const excess = all.length - shown.length;
+  return excess > 0 ? [...shown, `（他 ${excess} 件）`] : shown;
+}
+
 // 1 種別（danger-grep / test-surface）分の hit 行。総数は維持しつつ列挙 item を
 // PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。file path は pathMax で clip する
 // （PR_BODY_MAX_CHARS 超過時の詰め処理で有限値に絞られる。既定は無制限）。
@@ -193,7 +234,7 @@ function hitLine(label, hits, keyOf, pathMax = Infinity) {
   return `- ${label}: ${list.length} 件（${items.join('、')}）`;
 }
 
-// PR body: 結論1行 / 変更(component別) / 受入条件(checkbox) / 設計判断(≤5件) / 検証(hit) /
+// PR body: 結論1行 / 変更(component別) / 受入条件(checkbox) / 設計判断(≤5件) / 検証(hit + pr_notes ≤5件) /
 // Closes #<issue> の 6 セクション固定構成。各セクションは PR_BODY_* 定数で決定論 clip する
 // （issue #661。旧 `## 要約` 無制限 verbatim + `## 変更 task` table 構成を置き換え）。
 // acResults（[{ac_index, satisfied}]）が指定されればチェック判定に優先利用する。
@@ -207,7 +248,11 @@ export function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits
   const conclusionLine = `**${clip(conclusionText, PR_BODY_SUMMARY_MAX)}**`;
 
   const assemble = (hitPathMax, acMax) => {
-    const verify = `${hitLine('danger-grep', arr(dangerHits), (h) => h?.class, hitPathMax)}\n${hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern, hitPathMax)}`;
+    const verify = [
+      hitLine('danger-grep', arr(dangerHits), (h) => h?.class, hitPathMax),
+      hitLine('test-surface', arr(testsurfHits), (h) => h?.pattern, hitPathMax),
+      ...noteLines(plan),
+    ].join('\n');
     const sections = [
       conclusionLine,
       `## 変更\n${changeSection(plan)}`,

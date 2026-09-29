@@ -2863,7 +2863,7 @@ function sectionOf(body, heading) {
 const MIXED_738 = {
   ...BASE_INPUT,
   mergeTier: 'HOLD',
-  holdReasons: [{ code: 'ac_unsatisfied', reason: 'AC 未達 2 件', kind: 'human_judgment' }],
+  holdReasons: [{ code: 'ac_agent_unsatisfied', reason: 'AC 未達 2 件', kind: 'human_judgment' }],
   blockingItems: [{ id: 'B1', text: 'null deref', severity: 'critical', checked: false, dimension: 'correctness', evidence: 'src/a.ts:10' }],
   advisoryItems: [
     { id: 'A1', text: 'naming nit', severity: 'minor', checked: false, dimension: 'style', escalate: false },
@@ -2946,4 +2946,24 @@ test('issue #738 AC5: 結論行・「あなたがやること」が指す「要�
   assert.ok(conclusionLine(bodyEscalate).includes('必須の修正作業はありません（助言 1 件は任意）'), 'escalate のみなら修正不要');
   assert.ok(!sectionOf(bodyEscalate, '### ⚠️ 要対応').includes('助言（advisory）'), 'escalate と並ぶ助言も要対応に入らない');
   assert.ok(sectionOf(bodyEscalate, '### ℹ️ 任意の確認事項').includes('| ℹ️ 未確認 | 助言（advisory） | style | naming nit |'), '助言は任意の確認事項に出る');
+});
+
+test('issue #747 AC4: HOLD 理由の表でエージェント AC 未達（取りこぼし）と人手 AC 待ちが別の現状・対応で出る', () => {
+  const mt = classifyMergeTier({
+    iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false,
+    breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, evalStaleness: 'none',
+    unsatisfiedAgentAc: true, unsatisfiedHumanAc: true,
+  });
+  const body = buildDevflowSummaryBody({
+    ...BASE_INPUT,
+    mergeTier: mt.tier,
+    mergeTierReasons: mt.reasons,
+    holdReasons: mt.holdReasons,
+    holdKind: mt.holdKind,
+    acResults: [{ ac_index: 0, satisfied: false, evidence: 'コメントのみ', verified_by: 'inspection' }, { ac_index: 1, satisfied: false, evidence: 'staging 未実施', verified_by: 'inspection' }],
+  });
+  const hold = sectionOf(body, '### HOLD になった理由と現状');
+  assert.ok(hold != null, 'HOLD 理由テーブルを含む');
+  assert.ok(hold.includes('エージェントで満たせる AC が差し戻し後も未達（ループの取りこぼし） | 修正が必要'), `取りこぼし行: ${hold}`);
+  assert.ok(hold.includes('人手作業を要する AC が未達（人手 AC 待ち） | 人手で実施して AC を確認する'), `人手待ち行: ${hold}`);
 });

@@ -17,6 +17,9 @@ import {
   PR_BODY_HEADINGS,
   PR_CLOSES_STATUS_VALUES,
   PR_BODY_VIEW,
+  PR_BODY_NOTES_MAX,
+  PR_NOTE_SECTIONS,
+  adoptImplPrNotes,
 } from './pr-artifacts.mjs';
 
 function req(o = {}) {
@@ -126,6 +129,47 @@ test('[pr-artifacts] PR body: class 名 string の hit / file・class 欠落の 
   assert.ok(!body.includes('`?`'), `\`?\` が出ている: ${body}`);
   assert.ok(body.includes('danger-grep: 5 件（auth、public-api、exec-sink、`src/a.ts`、詳細不明）'), `danger 列挙: ${body}`);
   assert.ok(body.includes('test-surface: 1 件（詳細不明）'), `testsurf 列挙: ${body}`);
+});
+
+// issue #747: 実装エージェントが返した設計判断・計測値を PR 本文の「設計判断」「検証」に載せる
+test('[pr-artifacts] adoptImplPrNotes: IMPL の design_decisions / pr_notes が PR 本文の「設計判断」「検証」に載る', () => {
+  const synth = { summary: 's', serial: [{ id: 'issue-1', file_changes: ['src/a.ts'] }] };
+  const adopted = adoptImplPrNotes(synth, [{
+    status: 'DONE', task_id: 'issue-1',
+    design_decisions: [{ title: 'worker 上限は 4', rationale: '512Mi で RSS 合計 380Mi に収まる' }],
+    pr_notes: [
+      { section: 'measurement', text: '512Mi で worker 4 本: app 全体の RSS 合計 380Mi（ローカル docker stats）' },
+      { section: 'verification', text: 'pnpm vitest run src/worker.test.ts: 12 passed' },
+    ],
+  }]);
+  const body = buildPrBody({ issue: 1, req: req(), plan: adopted, ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  const decisions = body.slice(body.indexOf('## 設計判断'), body.indexOf('## 検証'));
+  const verify = body.slice(body.indexOf('## 検証'), body.indexOf('Closes #1'));
+  assert.ok(decisions.includes('- worker 上限は 4 — 512Mi で RSS 合計 380Mi に収まる'), `設計判断: ${decisions}`);
+  assert.ok(verify.includes('- 計測: 512Mi で worker 4 本: app 全体の RSS 合計 380Mi（ローカル docker stats）'), `検証: ${verify}`);
+  assert.ok(verify.includes('- 検証: pnpm vitest run src/worker.test.ts: 12 passed'), `検証: ${verify}`);
+  assert.ok(verify.includes('danger-grep: なし'), 'hit 行は残る');
+  assert.deepEqual(adopted.serial, synth.serial, 'serial は変えない');
+  assert.deepEqual(PR_NOTE_SECTIONS, ['verification', 'measurement']);
+});
+
+test('[pr-artifacts] adoptImplPrNotes: 空の報告は前回分を保持し、非空の報告は置き換える・不正項目は捨てる', () => {
+  const first = adoptImplPrNotes({ serial: [] }, [{ task_id: 't', design_decisions: [{ title: 'A', rationale: 'r' }], pr_notes: [{ section: 'measurement', text: 'm1' }] }]);
+  const kept = adoptImplPrNotes(first, [{ task_id: 't', design_decisions: [], pr_notes: [] }]);
+  assert.deepEqual(kept.architecture_decisions, [{ decision: 'A', rationale: 'r' }]);
+  assert.deepEqual(kept.pr_notes, [{ section: 'measurement', text: 'm1' }]);
+  const replaced = adoptImplPrNotes(kept, [{ task_id: 't', pr_notes: [{ section: 'measurement', text: 'm2' }, { section: 'other', text: 'x' }, { section: 'verification', text: '  ' }] }]);
+  assert.deepEqual(replaced.pr_notes, [{ section: 'measurement', text: 'm2' }]);
+  assert.deepEqual(replaced.architecture_decisions, [{ decision: 'A', rationale: 'r' }]);
+  assert.deepEqual(adoptImplPrNotes({ serial: [] }, [{ design_decisions: [{ title: '', rationale: 'r' }] }]), { serial: [] });
+});
+
+test('[pr-artifacts] PR body: pr_notes は PR_BODY_NOTES_MAX 件まで、超過分は件数だけ出す', () => {
+  const notes = Array.from({ length: PR_BODY_NOTES_MAX + 2 }, (_, i) => ({ section: 'verification', text: `note-${i}` }));
+  const body = buildPrBody({ issue: 1, req: req(), plan: plan({ pr_notes: notes }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
+  assert.ok(body.includes(`- 検証: note-${PR_BODY_NOTES_MAX - 1}`));
+  assert.ok(!body.includes(`- 検証: note-${PR_BODY_NOTES_MAX}`));
+  assert.ok(body.includes('（他 2 件）'), body);
 });
 
 test('[pr-artifacts] PR body: hit なしは「なし」、AC / decisions / 変更 空でもセクションは残る', () => {

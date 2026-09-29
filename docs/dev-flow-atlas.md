@@ -189,13 +189,20 @@ flowchart TD
     E3 --> E1
     E2 -->|"fail: impl"| E4["同じく reimpl#i<br/>未解消 critical を最優先"]
     E4 --> E1
-    E2 -->|pass| P0{"reimpl#i が 1 回以上 ?"}
+    E2 -->|pass| A0{"agent AC が satisfied:false ?"}
+    A0 -->|"yes（AGENT_AC_REIMPL_MAX まで。standard も延長）"| E5["reimpl#i（fix_feedback に AC-n 未達）"]
+    E5 --> E1
+    A0 -->|"no / 上限到達"| P0{"reimpl#i が 1 回以上 ?"}
     P0 -->|no| OUT["PR へ"]
     P0 -->|yes| P1["test#post-eval-i（フルテスト 1 回）<br/>red → green-fix#post-eval-i / GREEN_MAX"]
     P1 --> OUT
 ```
 
 standard は 1 パスのみで差し戻さない。未解消の critical は merge tier の HOLD が担保する。
+例外は agent AC（`_lib/ac-actor.mjs` が `（人手）`・staging・本番・外部サービス・issue へのコメント以外と分類した AC）の
+未達で、AC の ledger item は既定 gate_policy では advisory のため ledger 収束では拾えない。shape と gate_policy に依らず
+`AGENT_AC_REIMPL_MAX` 回まで差し戻して再評価し、それでも未達なら merge tier の `ac_agent_unsatisfied`（取りこぼし）で
+HOLD にする。human AC の未達は差し戻さず `ac_human_pending`（人手 AC 待ち）で HOLD にする。
 reimpl が 1 回以上走った run だけ、PR 前にフルテストを再実行する（Evaluate 内は AC ごとの redgreen-verify しか
 走らず、reimpl が AC 対象外のテストを壊しても Validate では捕まらないため）。red は Validate と同じ green-fix
 ループ（`tests:'error'` は green-fix しない）。ここでの green-fix は evaluator が再評価しないので、
@@ -292,7 +299,7 @@ flowchart TD
 | shape | Implement | Evaluate | merge tier |
 | --- | --- | --- | --- |
 | `micro` | Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
-| `standard` | 同上 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保 | `REVIEW` |
+| `standard` | 同上 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保。agent AC の未達だけは `AGENT_AC_REIMPL_MAX` 回まで延長して差し戻す | `REVIEW` |
 | `complex` | 同上 | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
 
 micro のうち `runEval=false` かつ danger clean のものだけが PR phase で **lite route** に入り、
@@ -382,7 +389,7 @@ flowchart TD
 | 2 | danger-grep hit 未解消 / 実行不能 | 実行不能は fail-closed |
 | 3 | `breaking_change=true`（構造化判定） | keyword 単独 hit は不採用 |
 | 4 | ESCALATE-TO-HUMAN 項目あり | |
-| 5 | AC 未達 / Final AC reconcile 判定不能 | |
+| 5 | AC 未達 / Final AC reconcile 判定不能 | AC 未達は `ac_agent_unsatisfied`（差し戻し後も残った取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける |
 | 6 | Final reconcile 再検証不能 / final test red | |
 | 7 | pr-iterate が `lgtm` 以外で終端 | |
 | 8 | `eval_staleness = hash_mismatch` | 評価済み tree と merge 対象 tree の乖離 |
@@ -423,6 +430,7 @@ tier は動かない。
 | `DESIGN_REPLAN_MAX` | 2 | design 差し戻し（replan + reimpl）の hard cap |
 | `GREEN_MAX` | 3 | Validate と Evaluate 差し戻し後の PR 前再テストの test green 差し戻し |
 | `BLOCK_MAX` | 2 | BLOCKED 由来の再計画 |
+| `AGENT_AC_REIMPL_MAX` | 2 | agent AC の未達を理由にした evaluate 差し戻し（standard も延長） |
 | `REVIEW_STUCK` | 2 | pr-iterate の同一 topic 反復での stuck 判定 |
 | `CI_WAIT_CEILING_SECONDS` | 300 | pr-iterate の CI pending 待ち（script 側 ci-wait ループ）の nominal 総待機上限（秒） |
 

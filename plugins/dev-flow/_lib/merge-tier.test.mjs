@@ -275,24 +275,57 @@ test('classifyMergeTier: micro だが docs/test-only でない → REVIEW', () =
 });
 
 
-test('classifyMergeTier: AC 未達(unsatisfiedAc:true) → HOLD', () => {
-  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: true });
+test('classifyMergeTier: AC 未達(unsatisfiedAgentAc:true) → HOLD', () => {
+  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAgentAc: true });
   assert.equal(r.tier, 'HOLD');
   assert.ok(r.reasons.some((x) => /AC 未達/.test(x)));
 });
 
-test('classifyMergeTier: unsatisfiedAc:false は既存 REVIEW 挙動不変', () => {
-  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAc: false });
+test('classifyMergeTier: unsatisfiedAgentAc:false は既存 REVIEW 挙動不変', () => {
+  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, unsatisfiedAgentAc: false });
   assert.equal(r.tier, 'REVIEW');
 });
 
-test('classifyMergeTier: unsatisfiedAc 未指定でも REVIEW(後方互換 — フラグ省略時は false 扱い)', () => {
+test('classifyMergeTier: unsatisfiedAgentAc / unsatisfiedHumanAc 未指定なら REVIEW（フラグ省略時は false 扱い）', () => {
   const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(r.tier, 'REVIEW');
 });
 
-test('classifyMergeTier: unsatisfiedAc:true は AUTO 条件(micro+docs/test-only)でも HOLD に勝つ', () => {
-  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAc: true });
+// ---- issue #747: AC 未達の HOLD 理由を actor で分ける ----
+
+test('classifyMergeTier: 人手 AC だけが未達 → HOLD 理由は ac_human_pending（人手 AC 待ち）のみ', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedHumanAc: true, unsatisfiedAgentAc: false });
+  assert.equal(r.tier, 'HOLD');
+  assert.deepEqual(r.holdReasons.map((x) => x.code), ['ac_human_pending']);
+  assert.match(r.holdReasons[0].reason, /人手 AC 待ち/);
+  assert.equal(r.holdKind, 'human_judgment');
+});
+
+test('classifyMergeTier: エージェント AC が未達 → HOLD 理由は ac_agent_unsatisfied（取りこぼし）で、人手 AC 待ちとは別 code', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAgentAc: true });
+  assert.equal(r.tier, 'HOLD');
+  assert.deepEqual(r.holdReasons.map((x) => x.code), ['ac_agent_unsatisfied']);
+  assert.match(r.holdReasons[0].reason, /エージェント AC 未達/);
+  assert.ok(!r.reasons.some((x) => /人手 AC 待ち/.test(x)), `人手 AC 待ちの文言が混ざった: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: 両方未達 → ac_agent_unsatisfied と ac_human_pending を 1 件ずつ積む', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAgentAc: true, unsatisfiedHumanAc: true });
+  assert.equal(r.tier, 'HOLD');
+  assert.deepEqual(r.holdReasons.map((x) => x.code), ['ac_agent_unsatisfied', 'ac_human_pending']);
+});
+
+test('classifyMergeTier: 旧キー unsatisfiedAc は actor を区別できないので明示 error', () => {
+  assert.throws(() => classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', unsatisfiedAc: true }), /unsatisfiedAc は廃止/);
+});
+
+test('classifyMergeTier: unsatisfiedAgentAc / unsatisfiedHumanAc が boolean 以外なら明示 error', () => {
+  assert.throws(() => classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', unsatisfiedAgentAc: 1 }), /invalid unsatisfiedAgentAc/);
+  assert.throws(() => classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', unsatisfiedHumanAc: 'yes' }), /invalid unsatisfiedHumanAc/);
+});
+
+test('classifyMergeTier: unsatisfiedAgentAc:true は AUTO 条件(micro+docs/test-only)でも HOLD に勝つ', () => {
+  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAgentAc: true });
   assert.equal(r.tier, 'HOLD');
 });
 
@@ -323,8 +356,8 @@ test('classifyMergeTier: evalSkipped:true + standard → REVIEW かつ AC未検�
   assert.ok(!r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), `REVIEW tier では AC未検証文言なし: ${JSON.stringify(r.reasons)}`);
 });
 
-test('classifyMergeTier: evalSkipped:true + HOLD 条件(unsatisfiedAc:true) → HOLD かつ AC未検証文言なし（非AUTO ゲート境界不変）', () => {
-  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAc: true, evalSkipped: true });
+test('classifyMergeTier: evalSkipped:true + HOLD 条件(unsatisfiedAgentAc:true) → HOLD かつ AC未検証文言なし（非AUTO ゲート境界不変）', () => {
+  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'micro', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: true, escalateCount: 0, unsatisfiedAgentAc: true, evalSkipped: true });
   assert.equal(r.tier, 'HOLD');
   assert.ok(!r.reasons.some((x) => x.includes('AC は未検証（micro eval skip）')), `HOLD tier では AC未検証文言なし: ${JSON.stringify(r.reasons)}`);
 });
@@ -713,8 +746,8 @@ test('classifyMergeTier: iterateStatus:lgtm + evalStaleness:none → 既存 AUTO
   const rReview = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none' });
   assert.equal(rReview.tier, 'REVIEW');
 
-  // (e-3) standard + unsatisfiedAc:true
-  const rHold = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAc: true });
+  // (e-3) standard + unsatisfiedAgentAc:true
+  const rHold = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAgentAc: true });
   assert.equal(rHold.tier, 'HOLD');
   assert.ok(rHold.reasons.some((x) => /AC 未達/.test(x)), `reasons に既存の AC 未達文言を含むべきだが: ${JSON.stringify(rHold.reasons)}`);
 });
@@ -910,11 +943,11 @@ test('classifyMergeTier: evalVerdictFail に非 boolean(\'fail\'/1/{}) → throw
   }
 });
 
-test('classifyMergeTier: evalVerdictFail:true + HOLD 条件(unsatisfiedAc:true) → HOLD のまま開示 reason が追記される', () => {
+test('classifyMergeTier: evalVerdictFail:true + HOLD 条件(unsatisfiedAgentAc:true) → HOLD のまま開示 reason が追記される', () => {
   const r = classifyMergeTier({
     iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false,
     breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0,
-    unsatisfiedAc: true, evalVerdictFail: true,
+    unsatisfiedAgentAc: true, evalVerdictFail: true,
   });
   assert.equal(r.tier, 'HOLD');
   assert.ok(r.reasons.some((x) => x.includes('evaluator verdict=fail')), `HOLD reasons に開示文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
@@ -1081,8 +1114,8 @@ test('classifyMergeTier: finalCi.verified が非 boolean → throw', () => {
 });
 
 test('classifyMergeTier: finalCi 未指定の既存 HOLD/AUTO/REVIEW ケースで holdReasons/holdKind が期待どおり', () => {
-  // HOLD（unsatisfiedAc）
-  const hold = classifyMergeTier(baseCleanInput({ unsatisfiedAc: true }));
+  // HOLD（unsatisfiedAgentAc）
+  const hold = classifyMergeTier(baseCleanInput({ unsatisfiedAgentAc: true }));
   assert.equal(hold.tier, 'HOLD');
   assert.equal(hold.holdReasons.length, hold.reasons.length);
   assert.equal(hold.holdKind, 'human_judgment');
@@ -1205,9 +1238,9 @@ test('classifyMergeTier: evalStaleness:"hash_reconverged" → 他入力が同じ
   assert.equal(reconvergedResult.tier, 'REVIEW');
 });
 
-test('classifyMergeTier: evalStaleness:"hash_reconverged" + unsatisfiedAc:true → HOLD だが reasons に hash 由来文言なし', () => {
+test('classifyMergeTier: evalStaleness:"hash_reconverged" + unsatisfiedAgentAc:true → HOLD だが reasons に hash 由来文言なし', () => {
   const r = classifyMergeTier({
-    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'hash_reconverged', unsatisfiedAc: true,
+    ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'hash_reconverged', unsatisfiedAgentAc: true,
   });
   assert.equal(r.tier, 'HOLD');
   assert.ok(!r.reasons.some((x) => /hash/i.test(x)), `hash 由来 reason を含むべきでないが: ${JSON.stringify(r.reasons)}`);
@@ -1228,10 +1261,10 @@ test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来
 
 // ---- issue #658: HOLD_REASON_CODES + holdReasons[].code + disclosures ----
 
-test('HOLD_REASON_CODES は 15 の閉じた enum と一致', () => {
+test('HOLD_REASON_CODES は 16 の閉じた enum と一致', () => {
   assert.deepEqual(HOLD_REASON_CODES, [
     'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
-    'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
+    'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
     'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
     'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
   ]);
@@ -1255,12 +1288,21 @@ test('classifyMergeTier: holdReasons[].code — ledger_unconverged', () => {
   assert.ok(HOLD_REASON_CODES.includes(item.code));
 });
 
-test('classifyMergeTier: holdReasons[].code — ac_unsatisfied', () => {
-  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAc: true });
+test('classifyMergeTier: holdReasons[].code — ac_agent_unsatisfied', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAgentAc: true });
   assert.equal(r.tier, 'HOLD');
   const item = r.holdReasons.find((x) => x.reason.includes('AC 未達'));
   assert.ok(item);
-  assert.equal(item.code, 'ac_unsatisfied');
+  assert.equal(item.code, 'ac_agent_unsatisfied');
+  assert.ok(HOLD_REASON_CODES.includes(item.code));
+});
+
+test('classifyMergeTier: holdReasons[].code — ac_human_pending', () => {
+  const r = classifyMergeTier({ ...standardBase(), iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedHumanAc: true });
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.reason.includes('AC 未達'));
+  assert.ok(item);
+  assert.equal(item.code, 'ac_human_pending');
   assert.ok(HOLD_REASON_CODES.includes(item.code));
 });
 
@@ -1351,7 +1393,7 @@ test('classifyMergeTier: prClosesStatus が out-of-enum → throw', () => {
 
 test('classifyMergeTier: holdReasons の全要素は {code, reason, kind} のちょうど3キー', () => {
   const r = classifyMergeTier({
-    ...standardBase(), converged: false, iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAc: true,
+    ...standardBase(), converged: false, iterateStatus: 'lgtm', evalStaleness: 'none', unsatisfiedAgentAc: true,
   });
   assert.equal(r.tier, 'HOLD');
   assert.ok(r.holdReasons.length >= 2);
@@ -1389,7 +1431,7 @@ test('disclosures: breakingKeyword のみ(keyword-alone) → HOLD/AUTO/REVIEW �
 
 test('disclosures: evalVerdictFail:true → HOLD/AUTO/REVIEW いずれも disclosures に開示 1 件、reasons 末尾にも同文が残る', () => {
   const hold = classifyMergeTier({
-    ...standardBase(), unsatisfiedAc: true, evalVerdictFail: true, iterateStatus: 'lgtm', evalStaleness: 'none',
+    ...standardBase(), unsatisfiedAgentAc: true, evalVerdictFail: true, iterateStatus: 'lgtm', evalStaleness: 'none',
   });
   assert.equal(hold.tier, 'HOLD');
   assert.equal(hold.disclosures.length, 1);
@@ -1412,7 +1454,7 @@ test('disclosures: evalVerdictFail:true → HOLD/AUTO/REVIEW いずれも disclo
 test('disclosures: finalReconcile:"ci_verified" → HOLD/AUTO/REVIEW いずれも disclosures に開示 1 件、reasons 末尾にも同文が残る', () => {
   const finalCi = { verified: true, reason: 'ok', kind: null, checkNames: ['Bats', 'Node'], headRefOid: 'a'.repeat(40) };
 
-  const hold = classifyMergeTier(baseCleanInput({ unsatisfiedAc: true, finalReconcile: 'ci_verified', finalCi }));
+  const hold = classifyMergeTier(baseCleanInput({ unsatisfiedAgentAc: true, finalReconcile: 'ci_verified', finalCi }));
   assert.equal(hold.tier, 'HOLD');
   assert.equal(hold.disclosures.length, 1);
   assert.ok(hold.disclosures[0].includes('ci_verified'));
@@ -1434,7 +1476,7 @@ test('disclosures: finalReconcile:"ci_verified" → HOLD/AUTO/REVIEW いずれ�
 });
 
 test('disclosures: 開示ゼロなら disclosures は []（HOLD/AUTO/REVIEW とも）', () => {
-  const hold = classifyMergeTier({ ...standardBase(), unsatisfiedAc: true, iterateStatus: 'lgtm', evalStaleness: 'none' });
+  const hold = classifyMergeTier({ ...standardBase(), unsatisfiedAgentAc: true, iterateStatus: 'lgtm', evalStaleness: 'none' });
   assert.equal(hold.tier, 'HOLD');
   assert.deepEqual(hold.disclosures, []);
 

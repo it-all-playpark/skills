@@ -31,6 +31,7 @@ const EXPECTED_SOURCE = {
   DESIGN_REPLAN_MAX: devFlowPath,
   GREEN_MAX: devFlowPath,
   BLOCK_MAX: devFlowPath,
+  AGENT_AC_REIMPL_MAX: devFlowPath,
   REVIEW_STUCK: prIteratePath,
   CI_WAIT_CEILING_SECONDS: prIteratePath,
 };
