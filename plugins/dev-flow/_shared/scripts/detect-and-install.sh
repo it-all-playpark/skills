@@ -305,6 +305,8 @@ workspace_glob_match() {
 # Workspace package dirs of this project relative to $TARGET_PATH (one per
 # line, root excluded): dirs holding a package.json that match a workspace
 # glob and no "!" exclusion. node_modules and .git are never descended.
+# Sorted (C locale) because find's order is filesystem-dependent (ext4 on CI
+# returns hash order) and missing_node_modules must be reproducible.
 workspace_pkg_dirs() {
     local pm="$1"
     local patterns
@@ -312,7 +314,7 @@ workspace_pkg_dirs() {
     [[ -n "$patterns" ]] || return 0
     local candidates
     candidates=$(cd "$TARGET_PATH" && find . \( -name node_modules -o -name .git \) -prune -o -type f -name package.json -print 2>/dev/null \
-        | sed -e 's#^\./##' -e 's#/\{0,1\}package\.json$##') || return 0
+        | sed -e 's#^\./##' -e 's#/\{0,1\}package\.json$##' | LC_ALL=C sort) || return 0
     local rel pat included
     while IFS= read -r rel; do
         [[ -n "$rel" ]] || continue
