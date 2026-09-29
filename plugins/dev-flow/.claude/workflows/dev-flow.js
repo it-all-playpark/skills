@@ -7343,12 +7343,24 @@ phase('Merge tier')
 // HOLD 強制、他は fail-open）で続行し、run を abort しない（abort は終端サマリと journal entry を失う）。
 // 6 サブ結果は常に取得する（head_tree / checks を使うかどうかは spawn 費用が無いため JS の分岐が決める）。
 let mergeFacts = null
+// StructuredOutput 契約違反（MERGE_FACTS は各サブ結果の value を required にしているため、value 欠落は
+// schema 違反 → StructuredOutput 未返却の throw になる）が再試行後も続いたか。true のとき fail-closed の原因は
+// danger-grep 実行不能ではなく merge-tier-facts の転記欠落なので、HOLD reason を merge_facts_dropped で出す。
+let mergeFactsContractViolation = false
 try {
   mergeFacts = await trackedAgent(
     mergeTierFactsPrompt({ wt: WT, base: BASE, pr: pr.pr_number, repo: REPO }),
     { agentType: 'dev-runner-haiku-ro', schema: MERGE_FACTS, label: 'merge-tier-facts', phase: 'Merge tier', retryOnContractViolation: true },
   )
-} catch (e) { log(`⚠️ merge-tier-facts 呼び出しが例外 — facts=null として per-field フォールバック（risk fail-closed）で続行: ${e && e.message ? e.message : e}`) }
+} catch (e) {
+  const msg = e && e.message ? e.message : String(e)
+  if (msg.includes('without calling StructuredOutput')) {
+    mergeFactsContractViolation = true
+    log(`⚠️ merge-tier-facts が再試行後も StructuredOutput 契約違反（value 欠落等の転記欠落）— facts=null として per-field フォールバック（risk fail-closed、HOLD reason は merge_facts_dropped）で続行: ${msg}`)
+  } else {
+    log(`⚠️ merge-tier-facts 呼び出しが例外 — facts=null として per-field フォールバック（risk fail-closed）で続行: ${msg}`)
+  }
+}
 const facts = parseMergeTierFacts(mergeFacts)
 // diff-hash reuse: Security floor 時点の tree OID（state.secDiffHash）と Merge tier
 // 冒頭の tree OID が完全一致するときのみ danger-grep-final/changed-files の再判定を skip し、
@@ -7374,8 +7386,8 @@ if (reuseSecFloor) {
   if (riskFinal.ok !== true) {
     log(isWellFormedRiskFact(mergeFacts)
       ? `⚠️ danger-grep-final: merge-tier-facts が失敗を報告した（error: ${riskFinal.error ?? 'unknown'}）— risk fail-closed へ倒す`
-      : isRiskValueDropped(mergeFacts)
-        ? '⚠️ danger-grep-final: merge-tier-facts の応答で risk.ok:true なのに value が欠落（subagent の転記欠落）— risk fail-closed へ倒す'
+      : isRiskValueDropped(mergeFacts) || mergeFactsContractViolation
+        ? '⚠️ danger-grep-final: merge-tier-facts の応答から risk.value が欠落（subagent の転記欠落）— risk fail-closed へ倒す'
         : `⚠️ danger-grep-final: merge-tier-facts が契約外形状を返した（top-level keys: ${mergeTierFactsTopLevelKeys(mergeFacts)}）— risk fail-closed へ倒す`)
   }
   // changed-files 再利用: Final reconcile が同一 worktree・同一 tree に対して
@@ -7395,7 +7407,8 @@ const testsurfPatternsFinal = testsurfPatternsOf(riskFinal)
 const dangerFailClosedFinal = riskFinal.ok !== true
 // fail-closed の原因が merge-tier-facts の転記欠落か（HOLD reason を danger_fail_closed と出し分ける）。
 // Security floor 結果を再利用した場合は facts の risk を見ていないので常に false。
-const riskValueDroppedFinal = dangerFailClosedFinal && !reuseSecFloor && isRiskValueDropped(mergeFacts)
+// 再試行後も StructuredOutput 契約違反で終わった場合（mergeFacts=null）も転記欠落として扱う。
+const riskValueDroppedFinal = dangerFailClosedFinal && !reuseSecFloor && (isRiskValueDropped(mergeFacts) || mergeFactsContractViolation)
 if (dangerFailClosedFinal) log(`⚠️ danger-grep-final が fail-closed (${riskFinal.error ?? 'unknown'}) — merge tier を HOLD 強制`)
 
 // 最終 danger を ledger に再反映(PR 中の修正で hit が消えた/増えた場合に追従)。

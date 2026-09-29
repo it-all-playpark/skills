@@ -152,6 +152,37 @@ test('[merge-facts-value][AC-2] value 欠落応答のまま → HOLD reason は 
   assert.ok(logs.some((l) => l.includes('転記欠落')), 'log に転記欠落の診断が出ない');
 });
 
+// 実行時の経路: value 欠落は schema 違反 → StructuredOutput 未返却の throw になり、再試行後も続くと
+// trackedAgent が throw を伝播して mergeFacts=null になる。この場合も転記欠落として区別する。
+test('[merge-facts-value][AC-2] StructuredOutput 契約違反が再試行後も続く → HOLD reason は merge_facts_dropped', async () => {
+  let n = 0;
+  const { result, calls, logs } = await run({
+    'merge-tier-facts': () => {
+      n += 1;
+      throw new Error('Agent completed without calling StructuredOutput');
+    },
+  });
+  assert.equal(calls.filter((c) => c.label === 'merge-tier-facts').length, 2, '契約違反時は 1 回だけ再試行する');
+  assert.equal(n, 2);
+  assert.equal(result.merge_tier, 'HOLD');
+  assert.equal(result.danger_fail_closed, true, 'security 未検証なので fail-closed（HOLD）は維持する');
+  const codes = (result.merge_tier_hold_reasons ?? []).map((r) => r.code);
+  assert.ok(codes.includes('merge_facts_dropped'), `merge_facts_dropped が無い: ${JSON.stringify(codes)}`);
+  assert.ok(!codes.includes('danger_fail_closed'), `danger_fail_closed が残っている: ${JSON.stringify(codes)}`);
+  assert.ok(!(result.merge_tier_reasons ?? []).some((r) => r.includes('danger-grep 実行不能')), `merge_tier_reasons: ${JSON.stringify(result.merge_tier_reasons)}`);
+  assert.ok(logs.some((l) => l.includes('再試行後も StructuredOutput 契約違反')), 'log に契約違反の診断が出ない');
+});
+
+test('[merge-facts-value][AC-2] 契約違反以外の例外で facts=null → 従来どおり danger_fail_closed', async () => {
+  const { result } = await run({
+    'merge-tier-facts': () => { throw new Error('isolation guard denied'); },
+  });
+  assert.equal(result.merge_tier, 'HOLD');
+  const codes = (result.merge_tier_hold_reasons ?? []).map((r) => r.code);
+  assert.ok(codes.includes('danger_fail_closed'), `danger_fail_closed が無い: ${JSON.stringify(codes)}`);
+  assert.ok(!codes.includes('merge_facts_dropped'));
+});
+
 test('[merge-facts-value][AC-2] スクリプト自身が risk ok:false を報告した場合は従来どおり danger_fail_closed', async () => {
   const { result } = await run({ 'merge-tier-facts': () => mergeTierFacts({ hash: null, risk: null }) });
   assert.equal(result.merge_tier, 'HOLD');
