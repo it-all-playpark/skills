@@ -462,7 +462,6 @@ export function buildDevflowSummaryBody({
         escalateTotal,
         escalateResolved,
         uncheckedBlockingCount: uncheckedBlocking.length,
-        unsatisfiedACCount: unsatisfiedAC.length,
         unclearedCount: uncleared.length,
         iterateStatus,
         pr,
@@ -817,8 +816,10 @@ function holdReasonDisplay(code, kind, ctx) {
     }
     case 'ledger_unconverged':
       return { current: `未 checked blocking ${ctx.uncheckedBlockingCount} 件`, action: '修正が必要（下表 ❌ 行）' };
-    case 'ac_unsatisfied':
-      return { current: `AC 未達 ${ctx.unsatisfiedACCount} 件`, action: '修正が必要（下表 ❌ 未達 行）' };
+    case 'ac_agent_unsatisfied':
+      return { current: 'エージェントで満たせる AC が差し戻し後も未達（ループの取りこぼし）', action: '修正が必要（下表 ❌ 未達 行）' };
+    case 'ac_human_pending':
+      return { current: '人手作業を要する AC が未達（人手 AC 待ち）', action: '人手で実施して AC を確認する（下表 ❌ 未達 行）' };
     case 'danger_unresolved':
       return { current: `security clearance 未確認 ${ctx.unclearedCount} 件`, action: '人が該当 diff を確認する' };
     case 'danger_fail_closed':

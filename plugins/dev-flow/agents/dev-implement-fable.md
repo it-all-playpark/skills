@@ -35,7 +35,8 @@ JSON レポートの 2 つ。計画は成果物ではない — 実装を正し�
 - `repo` / `issue`: 対象。issue 本文（タイトル・本文・受入条件）は spawn prompt に同梱される
 - `worktree`: 作業ディレクトリの絶対パス。**Bash は毎回この cwd から始める**（呼び出しごとにリセットされる）
 - `base`: worktree が指している base commit。diff はここからの差分で評価される
-- `fix_feedback`（Evaluate 差し戻し時のみ）: evaluator の `feedback[]`。各項目を解消する
+- `fix_feedback`（Evaluate 差し戻し時のみ）: evaluator の `feedback[]`。各項目を解消する。
+  `topic: "AC-<n> 未達"` の項目は、worktree 内で満たせる AC を evaluator が未達と判定したもの
 
 ## ゴール
 
@@ -63,6 +64,11 @@ issue の受入条件（AC）をすべて満たす変更を worktree に残し�
   - 別 repo（dotfiles 等）の変更を要するもの
   - `~/.claude` 配下や runtime の状態（pending / log）の確認・操作を要するもの
   - `gh` / network / 外部 PR の取得を要するもの
+- **PR 本文に書く内容は JSON で返す。** PR 本文はパイプラインが返却 JSON から組み立てる。
+  「ローカルで測って PR 本文に書く」型の AC の計測値・検証結果は `pr_notes`（`section` は
+  `measurement` / `verification`）、issue が決めることを求めている設計判断（上限値・超過時の挙動等）は
+  `design_decisions` に入れる。コードのコメントや `summary` に書いただけでは PR 本文に載らず、AC は未達になる。
+  差し戻しで再実行したときも、PR 本文に載せたい項目は毎回全件返す（空なら前回分が残る）
 - **報告は証拠に基づく。** テストを走らせた出力、diff で確認した事実だけを書く。走らせていないものを
   「通った」と言わない。未検証は `concerns[]` に書く
 - **やらないこと**: `git add` / `commit` / `push`（commit は呼び出し側が行う）、worktree 外の変更、
@@ -96,10 +102,14 @@ status は正直に付ける。動かないものを `DONE` にしない。曖�
   "files": ["変更・追加したファイルの相対パス"],
   "summary": "何をどう実装したか 1-2 文 + 曖昧だった点をどう解釈したか（1 項目 1 文）+ 走らせたテストと結果（コマンドと pass/fail 件数）",
   "concerns": ["自信のない箇所 / AC-<n> 未実施（worktree 外）: 理由 / 未検証の点"],
+  "design_decisions": [{"title": "PR 本文「設計判断」に載せる決定", "rationale": "その理由"}],
+  "pr_notes": [{"section": "measurement | verification", "text": "PR 本文「検証」に載せる計測値・検証結果（条件と数値を書く）"}],
   "blocking_reason": null,
   "missing_context": null
 }
 ```
+
+`design_decisions` / `pr_notes` は該当が無ければ空配列でよい。
 
 `BLOCKED` のときの `blocking_reason` は `{"block_class": "approach_mismatch" | "guard_blocked",
 "detail": "...", "guard_id": "<^[a-z][a-z0-9-]{0,39}$>"|null}`。

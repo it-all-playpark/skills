@@ -137,7 +137,7 @@ export const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
 // fail-safe（'—' / '人が確認する'）に落とすだけで throw しない（表示専用フィールドのため）。
 export const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
-  'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
+  'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
   'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
   'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
 ];
@@ -191,6 +191,11 @@ export function classifyMergeableState(meta) {
 // s.evalSkipped (optional boolean): true の場合、AUTO branch で AC 未検証開示 reason を追記する。
 //   micro path は evaluator 0 回で AC を判定していないため、AUTO 推奨でもその事実を開示する（issue #233）。
 //   danger-grep hit / green-fix で security path により eval が強制実行された場合は false にして虚偽開示を避ける。
+// s.unsatisfiedAgentAc / s.unsatisfiedHumanAc (optional boolean): 最終の AC 判定で satisfied:false の AC が
+//   actor（_lib/ac-actor.mjs）別に 1 件以上あるか（issue #747）。どちらも gate_policy に依らず HOLD だが、
+//   code を分ける — 'ac_agent_unsatisfied' は worktree 内で満たせる AC を Evaluate 差し戻しで拾えなかった
+//   取りこぼし（telemetry で異常として数える）、'ac_human_pending' は人手作業待ちの想定内の HOLD。
+//   boolean 以外は明示 error。旧キー unsatisfiedAc は actor を区別できないので受理しない（明示 error）。
 // s.dangerFailClosed (optional boolean): true の場合、danger-grep が実行不能（fail-closed）だったことを
 //   示す専用 HOLD reason を追記する（issue #271）。fail-closed 時は SEC seed item が unchecked のまま
 //   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
@@ -239,8 +244,8 @@ export function classifyMergeableState(meta) {
 // s.finalAcReconcile (optional 'skipped'|'reverified'|'unavailable'): Final AC reconcile phase
 //   （issue #331）の実行結果。fix 適用 run での既存 AC の最終 PR tree に対する再検証結果。
 //   'unavailable' のみ専用 HOLD reason を追記する（軸A 決定論ゲート、gate_policy に依らず不変）。
-//   'skipped'/'reverified'/未指定は tier 判定不変（fail/pass の gating は unsatisfiedAc と
-//   ledger 未収束が担う）。未指定 = 従来と完全同一挙動（regression なし）。out-of-enum は明示 error
+//   'skipped'/'reverified'/未指定は tier 判定不変（fail/pass の gating は unsatisfiedAgentAc /
+//   unsatisfiedHumanAc と ledger 未収束が担う）。未指定 = 従来と完全同一挙動（regression なし）。out-of-enum は明示 error
 //   （後方互換 scaffolding 禁止規約）。
 // s.testsurfUncleared (optional string[]): 未 checked の TESTSURF-* seed item id 一覧（issue #362）。
 //   非空時に専用 HOLD reason を defense-in-depth として追記する（dangerFailClosed reason と同型の
@@ -301,6 +306,15 @@ export function classifyMergeTier(s) {
   if (s.evalVerdictFail != null && typeof s.evalVerdictFail !== 'boolean') {
     throw new Error('classifyMergeTier: invalid evalVerdictFail: ' + s.evalVerdictFail);
   }
+  if (Object.prototype.hasOwnProperty.call(s, 'unsatisfiedAc')) {
+    throw new Error('classifyMergeTier: unsatisfiedAc は廃止 — unsatisfiedAgentAc / unsatisfiedHumanAc を渡す');
+  }
+  if (s.unsatisfiedAgentAc != null && typeof s.unsatisfiedAgentAc !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid unsatisfiedAgentAc: ' + s.unsatisfiedAgentAc);
+  }
+  if (s.unsatisfiedHumanAc != null && typeof s.unsatisfiedHumanAc !== 'boolean') {
+    throw new Error('classifyMergeTier: invalid unsatisfiedHumanAc: ' + s.unsatisfiedHumanAc);
+  }
   if (s.riskValueDropped != null && typeof s.riskValueDropped !== 'boolean') {
     throw new Error('classifyMergeTier: invalid riskValueDropped: ' + s.riskValueDropped);
   }
@@ -340,7 +354,8 @@ export function classifyMergeTier(s) {
       + '）— test gate は CI 委譲で充足（issue #599）'
     : null;
   if (s.escalateCount > 0) pushBlocking('escalate', `ESCALATE-TO-HUMAN 項目 ${s.escalateCount} 件`, 'human_judgment');
-  if (s.unsatisfiedAc) pushBlocking('ac_unsatisfied', 'AC 未達（acceptance_criteria が satisfied:false — gate_policy に依らず人間確認必須）', 'human_judgment');
+  if (s.unsatisfiedAgentAc === true) pushBlocking('ac_agent_unsatisfied', 'AC 未達（エージェント AC 未達 — worktree 内で満たせる AC が差し戻し上限後も satisfied:false。ループの取りこぼし。gate_policy に依らず人間確認必須）', 'human_judgment');
+  if (s.unsatisfiedHumanAc === true) pushBlocking('ac_human_pending', 'AC 未達（人手 AC 待ち — （人手）/ staging / 本番等の worktree 外作業を要する AC が satisfied:false。人間が実施して確認する）', 'human_judgment');
   if (s.dangerFailClosed === true) {
     if (s.riskValueDropped === true) pushBlocking('merge_facts_dropped', 'merge-tier-facts の転記欠落（subagent 応答から danger-grep 結果 risk.value が落ちた。danger-grep 自体は実行済みの可能性あり）— security 未検証のため人間確認必須', 'human_judgment');
     else pushBlocking('danger_fail_closed', 'danger-grep 実行不能（fail-closed）— security 未検証のため人間確認必須', 'human_judgment');

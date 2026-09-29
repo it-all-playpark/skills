@@ -59,8 +59,17 @@ shape ごとの経路（3 tier）:
 | shape | Implement 経路 | Evaluate 経路 | merge tier |
 |-------|-----------|---------------|------------|
 | **micro** | Setup 末尾の analyze ゲート通過後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable`（plan+impl 統合、opus / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
-| **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保） | REVIEW |
+| **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。例外は agent AC の未達で、`AGENT_AC_REIMPL_MAX` 回まで延長して差し戻す | REVIEW |
 | **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | REVIEW、danger・breaking で HOLD |
+
+AC は analyze ゲートで actor（`_lib/ac-actor.mjs`: `（人手）` 表記・staging・本番・外部サービス・issue へのコメントは
+`human`、それ以外は `agent`）に分類する。AC の ledger item は LLM major で既定 `gate_policy` では advisory のため、
+ledger 収束だけでは未達 AC がループを回さない。そこで agent AC の `satisfied:false` は gate_policy に依らず
+`fix_feedback`（`topic: "AC-<n> 未達"`）付きで `dev-implement-fable` へ差し戻す（agent AC を理由にした差し戻しは全 shape で
+`AGENT_AC_REIMPL_MAX` 回まで）。human AC は worktree 外の作業なので差し戻さない。Merge tier の HOLD 理由は
+`ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける。
+`dev-implement-fable` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
+PR body の「設計判断」「検証」に載せる（evaluator も plan 経由で読み、「PR 本文に書く」型の AC を判定する）。
 
 Implement 経路は shape に関わらず `dev-implement-fable` 一本（planner ⇄ reviewer ループ・parallel fan-out・
 `pipeline()` は持たない。切替定数は置かず、経路を戻すときは git revert）。`dev-implement-fable` は issue 本文
