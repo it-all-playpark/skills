@@ -1663,6 +1663,15 @@ async function callReviewAgent(prompt, label) {
   return review
 }
 
+// `git status --porcelain` の dirty 判定基準（commit-ensure と終端の worktree-dirty-check で共有）。
+// 「出力が空か」では判定しない: agent の Bash 出力は stdout と stderr が混ざり、読めないファイル
+// （.env.example 等）について git が出す `<path>: Operation not permitted` 警告だけで clean な worktree を
+// dirty と読み、commit-ensure が fix_failed で終端する。exit 非0 は判定不能として dirty 側に
+// 倒す（clean 側に倒すと未コミット変更を見逃して次 iteration へ進み、fail-safe が崩れる）。
+const PORCELAIN_DIRTY_RULE = '【dirty 判定基準】出力のうち porcelain 行（先頭 2 文字が状態コード（空白・M・T・A・D・R・C・U・?・! のいずれか）で、3 文字目が空白の行。例: ` M a.ts` / `?? b.ts`）だけを数える。'
+  + '`<path>: Operation not permitted` のような警告行や `warning:` で始まる行など、porcelain 形式でない行は数えない（警告行だけが出ていて porcelain 行が 0 行なら変更なし＝clean）。'
+  + 'porcelain 行が 1 行以上あれば変更あり＝dirty。コマンドが exit 非0 で失敗した場合は判定不能として変更あり＝dirty とみなす。'
+
 // fix 適用直後の commit 保証。fix agent の self-report（applied:true）を信用せず
 // 決定論スクリプトで worktree の未コミット変更を検証し、dirty なら commit+push で回収する。
 // 失敗ポリシー: fail-safe — null/schema 不一致/回収失敗（dirty なのに committed&&pushed でない）は
@@ -1677,12 +1686,13 @@ async function callReviewAgent(prompt, label) {
 // credential helper が、add / commit は `.git` が write deny 下の repo で index.lock 作成が失敗する。
 // subagent の cwd は isoWt（agent 自身の pwd / nested は NESTED.cwd）なので -C を外しても対象は
 // 変わらない。読み取りのみの status / rev-list / rev-parse / diff は -C のまま。
+// status の dirty 判定は PORCELAIN_DIRTY_RULE に従う。
 async function ensureFixCommitted(i, shaPrev) {
   const withDelta = isDeltaSha(shaPrev)
   let ensured = null
   try {
     ensured = await trackedAgent(
-      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証し（残っていれば commit + push で回収する）、commit 後の head sha${withDelta ? ' と fix delta の行数' : ''}を返す。\n\n## Steps\n以下を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ:\n1. \`git -C ${isoWt} status --porcelain\` を実行する。出力が空なら dirty:false, committed:false, pushed:false として手順 5 へ進む。\n2. 出力が空でなければ順に実行: \`git add -A\` → \`git commit -m "fix(pr-${PR}): commit leftover review fixes (iteration ${i})"\` → \`git push\`（push が失敗した場合のみ \`git push -u origin HEAD\` を実行）。\n3. \`git -C ${isoWt} status --porcelain\` を再実行する。出力が空なら committed:true、空でなければ committed:false。\n4. \`git -C ${isoWt} rev-list "@{u}"..HEAD --count\` を実行する。出力が 0 なら pushed:true。コマンド失敗または非数値出力なら pushed:false。dirty:true とする。\n5. \`git -C ${isoWt} rev-parse HEAD\` を実行し、stdout の 40 桁 hex をそのまま head_sha とする（失敗時は空文字）。\n${withDelta ? `6. \`git -C ${isoWt} diff --shortstat ${shaPrev.trim()}..HEAD\` を実行し、stdout の 1 行を一字一句そのまま delta_shortstat とする（stdout が空なら空文字。失敗時はキーを省略）。\n7. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果>, "delta_shortstat": <6の結果> } を返す。` : `6. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果> } を返す。`}\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean, "head_sha": string${withDelta ? ', "delta_shortstat": string' : ''} }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n上記 git コマンド以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+      `## Objective\nfix#${i} 適用後の作業ツリーに未コミット変更が残っていないことを保証し（残っていれば commit + push で回収する）、commit 後の head sha${withDelta ? ' と fix delta の行数' : ''}を返す。\n\n## Steps\n以下を順に bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ:\n${PORCELAIN_DIRTY_RULE}\n1. \`git -C ${isoWt} status --porcelain\` を実行する。判定基準で clean（porcelain 行が 0 行）なら dirty:false, committed:false, pushed:false として手順 5 へ進む。\n2. 判定基準で dirty（porcelain 行が 1 行以上、または exit 非0）なら dirty:true とし、順に実行: \`git add -A\` → \`git commit -m "fix(pr-${PR}): commit leftover review fixes (iteration ${i})"\` → \`git push\`（push が失敗した場合のみ \`git push -u origin HEAD\` を実行）。\n3. \`git -C ${isoWt} status --porcelain\` を再実行し、手順 1 と同じ判定基準で判定する。clean（porcelain 行が 0 行）なら committed:true、dirty なら committed:false。\n4. \`git -C ${isoWt} rev-list "@{u}"..HEAD --count\` を実行する。警告行を除いた出力が 0 なら pushed:true。コマンド失敗または非数値出力なら pushed:false。dirty:true とする。\n5. \`git -C ${isoWt} rev-parse HEAD\` を実行し、stdout の 40 桁 hex をそのまま head_sha とする（失敗時は空文字）。\n${withDelta ? `6. \`git -C ${isoWt} diff --shortstat ${shaPrev.trim()}..HEAD\` を実行し、stdout の 1 行を一字一句そのまま delta_shortstat とする（stdout が空なら空文字。失敗時はキーを省略）。\n7. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果>, "delta_shortstat": <6の結果> } を返す。` : `6. { "dirty": <1の結果>, "committed": <3の結果>, "pushed": <4の結果>, "head_sha": <5の結果> } を返す。`}\n\n## Output format\n{ "dirty": boolean, "committed": boolean, "pushed": boolean, "head_sha": string${withDelta ? ', "delta_shortstat": string' : ''} }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n上記 git コマンド以外のファイル変更・git 操作禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
       { agentType: 'dev-runner-haiku', schema: COMMIT_ENSURE, label: `commit-ensure#${i}`, phase: 'Iterate' },
     )
   } catch (e) {
@@ -1992,7 +2002,7 @@ log(`pr-iterate 終端: status=${status}（iterations=${Math.min(i, MAX)}）`)
 let worktreeDirty = null  // 'dirty' | 'clean' | 'unknown' | null(=lgtm で未実施)
 if (status !== 'lgtm') {
   const probe = await failOpenAgent(
-    `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\n\`git -C ${isoWt} status --porcelain\` を bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ。出力が空なら { "dirty": false, "files": 0 }。出力が非空なら { "dirty": true, "files": <出力の非空行数> }。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
+    `## Objective\npr-iterate 異常終端（status=${status}）時点の作業ツリーが dirty（未コミット変更あり）かを検出する。\n\n## Steps\n\`git -C ${isoWt} status --porcelain\` を bare 単文（先頭トークンが git。cd 前置・bash 前置・env 代入前置・&& 連結禁止）で実行せよ。${PORCELAIN_DIRTY_RULE}clean（porcelain 行が 0 行）なら { "dirty": false, "files": 0 }。dirty なら { "dirty": true, "files": <porcelain 行の行数> }。\n\n## Output format\n{ "dirty": boolean, "files": number }\nprose 禁止。JSON のみ返せ。\n\n## Tools\n使用可: Bash, Read\n\n## Boundary\n読み取り専用。ファイル変更・git mutation 禁止。\n\n## Token cap\nJSON のみ。1 行以内。`,
     { agentType: 'dev-runner-haiku-ro', schema: DIRTY_STATUS, label: 'worktree-dirty-check', phase: 'Iterate' },
   )
   worktreeDirty = probe == null ? 'unknown' : (probe.dirty === true ? 'dirty' : 'clean')

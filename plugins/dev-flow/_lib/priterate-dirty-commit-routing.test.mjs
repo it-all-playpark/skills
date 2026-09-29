@@ -299,3 +299,132 @@ test('[D7][AC-2 lgtm 非実施] 正常 lgtm 経路 -> worktree-dirty-check 呼�
     `journal-log の prompt に 'worktree_dirty' を含めてはならない（lgtm 終端は probe しない）。先頭800文字: ${journalCall.prompt.slice(0, 800)}`,
   );
 });
+
+// ---- D8〜D11 (issue #742): git status --porcelain の dirty 判定は porcelain 行の有無で行う ----
+// sandbox 内では読めないファイル（.env.example 等）について git が `<path>: Operation not permitted` を
+// stderr に出し、agent の Bash 出力では stdout と混ざる。「出力が空か」で判定すると警告行だけの clean な
+// worktree を dirty と読み、commit-ensure が fix_failed で終端する。
+
+function stepLine(prompt, n) {
+  const m = prompt.match(new RegExp(`(?:^|\\n)${n}\\. ([^\\n]*)`));
+  return m ? m[1] : '';
+}
+
+function assertPorcelainRule(prompt, where) {
+  assert.ok(prompt.includes('porcelain 行'), `${where} の prompt は porcelain 行で判定すべき: ${prompt.slice(0, 600)}`);
+  assert.ok(
+    prompt.includes('先頭 2 文字が状態コード') && prompt.includes('3 文字目が空白'),
+    `${where} の prompt は porcelain 行の形（先頭 2 文字が状態コード＋空白）を明記すべき: ${prompt.slice(0, 600)}`,
+  );
+  assert.ok(
+    prompt.includes('Operation not permitted') && prompt.includes('数えない'),
+    `${where} の prompt は \`: Operation not permitted\` 等の警告行を数えないと明記すべき: ${prompt.slice(0, 600)}`,
+  );
+  assert.ok(
+    /警告行だけが出ていて porcelain 行が 0 行なら[^。]*clean/.test(prompt),
+    `${where} の prompt は警告行だけのとき clean と明記すべき: ${prompt.slice(0, 600)}`,
+  );
+  assert.ok(
+    /porcelain 行が 1 行以上あれば[^。]*dirty/.test(prompt),
+    `${where} の prompt は porcelain 行が 1 行以上なら dirty と明記すべき: ${prompt.slice(0, 600)}`,
+  );
+  assert.ok(
+    /exit 非0[^。]*dirty/.test(prompt),
+    `${where} の prompt は exit 非0 を dirty 側に倒すべき（fail-safe）: ${prompt.slice(0, 600)}`,
+  );
+  for (const forbidden of ['出力が空なら', '出力が空でなければ', '出力が非空なら', '非空行数']) {
+    assert.ok(!prompt.includes(forbidden), `${where} の prompt に「${forbidden}」基準が残っている: ${prompt.slice(0, 600)}`);
+  }
+}
+
+test('[D8][#742 AC-3] commit-ensure prompt: 手順 1 / 3 の dirty 判定が porcelain 行の有無で、警告行は数えない', async () => {
+  const agentCalls = [];
+  const majorIssue = { severity: 'major', topic: 't1', file: 'a.ts', description: 'd1', suggestion: 's1' };
+  let round = 0;
+  const reviewerStub = () => {
+    round += 1;
+    if (round === 1) return { decision: 'request-changes', issues: [majorIssue], summary: 'ng' };
+    return { decision: 'approve', issues: [], summary: 'ok' };
+  };
+  const agentStub = buildAgentStub({ reviewerStub, agentCalls });
+  const { error } = await runPrIterate(makeSandbox(agentStub));
+  assertNoSandboxCrash(error);
+  if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
+
+  const prompt = agentCalls.find((c) => c.label === 'commit-ensure#1')?.prompt ?? '';
+  assertPorcelainRule(prompt, 'commit-ensure#1');
+  const s1 = stepLine(prompt, 1);
+  const s2 = stepLine(prompt, 2);
+  const s3 = stepLine(prompt, 3);
+  assert.ok(
+    s1.includes('status --porcelain') && /porcelain 行が 0 行[^。]*dirty:false/.test(s1),
+    `手順 1 は porcelain 行 0 行で dirty:false とすべき: ${s1}`,
+  );
+  assert.ok(
+    /porcelain 行が 1 行以上/.test(s2) && s2.includes('dirty:true') && s2.includes('`git add -A`'),
+    `手順 2 は porcelain 行 1 行以上で dirty:true とし commit/push で回収すべき: ${s2}`,
+  );
+  assert.ok(
+    s3.includes('status --porcelain') && s3.includes('手順 1 と同じ判定基準')
+      && /porcelain 行が 0 行[^。]*committed:true/.test(s3) && /dirty なら committed:false/.test(s3),
+    `手順 3 は手順 1 と同じ基準で committed を判定すべき: ${s3}`,
+  );
+  // commit-ensure の prompt は sandbox 回避の指示と読まれないよう 'sandbox' を含めない（D1 と同じ制約）
+  assert.ok(!prompt.includes('sandbox'), 'commit-ensure#1 の prompt は sandbox を含んではならない');
+});
+
+test('[D9][#742 AC-1] 警告行だけの clean worktree（commit-ensure dirty:false）-> review#2 に進み lgtm、fix_failed にしない', async () => {
+  const agentCalls = [];
+  const majorIssue = { severity: 'major', topic: 't1', file: 'a.ts', description: 'd1', suggestion: 's1' };
+  const reviewerStub = (label) => {
+    if (label === 'review#1') return { decision: 'request-changes', issues: [majorIssue], summary: 'ng' };
+    return { decision: 'approve', issues: [], summary: 'ok' };
+  };
+  const commitEnsureStub = () => ({ dirty: false, committed: false, pushed: false });
+  const fixStub = () => ({ applied: true, summary: 'PR 本文を追記', files: [] });
+  const agentStub = buildAgentStub({ reviewerStub, fixStub, commitEnsureStub, agentCalls });
+  const { result, error } = await runPrIterate(makeSandbox(agentStub));
+  assertNoSandboxCrash(error);
+  if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
+
+  const reviewLabels = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer').map((c) => c.label);
+  assert.ok(reviewLabels.includes('review#2'), `review#2 に進むべきだが review 呼び出しは ${JSON.stringify(reviewLabels)}`);
+  assert.equal(result?.status, 'lgtm', `result.status は lgtm であるべきだが '${result?.status}' だった`);
+  assert.equal(result?.fix_uncommitted_recovered, 0);
+});
+
+test('[D10][#742 AC-2 fail-safe] porcelain 行が残り回収できない（dirty:true+committed:false）-> fix_failed、review#2 は呼ばれない', async () => {
+  const agentCalls = [];
+  const majorIssue = { severity: 'major', topic: 't1', file: 'a.ts', description: 'd1', suggestion: 's1' };
+  const reviewerStub = (label) => {
+    if (label === 'review#1') return { decision: 'request-changes', issues: [majorIssue], summary: 'ng' };
+    throw new Error(`unexpected pr-reviewer label (review#2 should not run): ${label}`);
+  };
+  const commitEnsureStub = () => ({ dirty: true, committed: false, pushed: true });
+  const agentStub = buildAgentStub({ reviewerStub, commitEnsureStub, agentCalls });
+  const { result, error } = await runPrIterate(makeSandbox(agentStub));
+  assertNoSandboxCrash(error);
+  if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
+
+  const reviewerCalls = agentCalls.filter((c) => c.agentType === 'dev-flow:pr-reviewer');
+  assert.equal(reviewerCalls.length, 1, `pr-reviewer 呼び出しは 1 回であるべきだが ${reviewerCalls.length} 回だった`);
+  assert.equal(result?.status, 'fix_failed', `result.status は fix_failed であるべきだが '${result?.status}' だった`);
+  assert.equal(result?.fix_uncommitted_recovered, 0);
+});
+
+test('[D11][#742 AC-3] 終端の worktree-dirty-check prompt も porcelain 行の有無で判定し、files は porcelain 行数', async () => {
+  const agentCalls = [];
+  const majorIssue = { severity: 'major', topic: 't1', file: 'a.ts', description: 'd1', suggestion: 's1' };
+  const reviewerStub = () => ({ decision: 'request-changes', issues: [majorIssue], summary: 'still-ng' });
+  const dirtyCheckStub = () => ({ dirty: false, files: 0 });
+  const agentStub = buildAgentStub({ reviewerStub, dirtyCheckStub, agentCalls });
+  const { result, error } = await runPrIterate(makeSandbox(agentStub));
+  assertNoSandboxCrash(error);
+  if (error) assert.fail(`予期しない error: ${error.name}: ${error.message}`);
+
+  assert.equal(result?.status, 'stuck', `result.status は stuck であるべきだが '${result?.status}' だった`);
+  assert.equal(result?.worktree_dirty, 'clean');
+  const prompt = agentCalls.find((c) => c.label === 'worktree-dirty-check')?.prompt ?? '';
+  assertPorcelainRule(prompt, 'worktree-dirty-check');
+  assert.ok(prompt.includes('<porcelain 行の行数>'), `files は porcelain 行の行数を返すべき: ${prompt.slice(0, 600)}`);
+});
