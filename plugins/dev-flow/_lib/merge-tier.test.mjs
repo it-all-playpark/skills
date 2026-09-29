@@ -370,6 +370,37 @@ test('classifyMergeTier: dangerFailClosed:true → tier===HOLD かつ reasons �
   assert.ok(r.reasons.some((x) => /fail-closed/.test(x)), `reasons に fail-closed 文言を含むべきだが: ${JSON.stringify(r.reasons)}`);
 });
 
+// ---- issue #746: merge-tier-facts の転記欠落は danger_fail_closed と別 code で出す ----
+
+test('classifyMergeTier: dangerFailClosed:true + riskValueDropped:true → HOLD、code は merge_facts_dropped（danger-grep 実行不能 と書かない）', () => {
+  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: false, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, dangerFailClosed: true, riskValueDropped: true });
+  assert.equal(r.tier, 'HOLD');
+  const item = r.holdReasons.find((x) => x.code === 'merge_facts_dropped');
+  assert.ok(item, `holdReasons に merge_facts_dropped を含むべきだが: ${JSON.stringify(r.holdReasons)}`);
+  assert.match(item.reason, /merge-tier-facts の転記欠落/);
+  assert.equal(item.kind, 'human_judgment');
+  assert.ok(!r.holdReasons.some((x) => x.code === 'danger_fail_closed'), 'danger_fail_closed と二重に積まない');
+  assert.ok(!r.reasons.some((x) => x.includes('danger-grep 実行不能')), `reasons に danger-grep 実行不能 が残っている: ${JSON.stringify(r.reasons)}`);
+});
+
+test('classifyMergeTier: riskValueDropped:false / 未指定 → 従来どおり danger_fail_closed', () => {
+  for (const riskValueDropped of [false, undefined]) {
+    const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: false, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, dangerFailClosed: true, riskValueDropped });
+    assert.ok(r.holdReasons.some((x) => x.code === 'danger_fail_closed'));
+    assert.ok(!r.holdReasons.some((x) => x.code === 'merge_facts_dropped'));
+  }
+});
+
+test('classifyMergeTier: riskValueDropped:true でも dangerFailClosed でなければ reason を積まない', () => {
+  const r = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: true, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0, riskValueDropped: true });
+  assert.equal(r.tier, 'REVIEW');
+  assert.deepEqual(r.holdReasons, []);
+});
+
+test('classifyMergeTier: riskValueDropped が boolean 以外なら throw', () => {
+  assert.throws(() => classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: true, dangerFailClosed: true, riskValueDropped: 'yes' }), /invalid riskValueDropped/);
+});
+
 test('classifyMergeTier: dangerFailClosed 未指定 → 従来通り(regression なし)', () => {
   const rNotConverged = classifyMergeTier({ iterateStatus: 'lgtm', shape: 'standard', converged: false, unresolvedDanger: false, breakingStructured: false, breakingKeyword: false, docsOrTestOnly: false, escalateCount: 0 });
   assert.equal(rNotConverged.tier, 'HOLD');
@@ -1197,12 +1228,12 @@ test('classifyMergeTier: evalStaleness:undefined/null → throw しない(従来
 
 // ---- issue #658: HOLD_REASON_CODES + holdReasons[].code + disclosures ----
 
-test('HOLD_REASON_CODES は 14 の閉じた enum と一致', () => {
+test('HOLD_REASON_CODES は 15 の閉じた enum と一致', () => {
   assert.deepEqual(HOLD_REASON_CODES, [
     'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
     'ac_unsatisfied', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
     'final_ac_unavailable', 'iterate_non_lgtm', 'hash_mismatch', 'testsurf_uncleared',
-    'mergeable_conflicting', 'pr_closes_missing',
+    'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
   ]);
 });
 

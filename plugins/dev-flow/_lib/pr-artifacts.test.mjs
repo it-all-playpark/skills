@@ -116,6 +116,18 @@ test('[pr-artifacts] PR body: ledger の AC-n が checked なら [x]、danger / 
   assert.ok(body.includes('test-surface: 1 件（skip: `tests/a.test.mjs`）'), `testsurf 列挙: ${body}`);
 });
 
+// issue #746: hit の class / file を取得できないとき `unknown: \`?\`` の穴埋め表記を出さない
+test('[pr-artifacts] PR body: class 名 string の hit / file・class 欠落の hit でも `unknown: `?`` を出さない', () => {
+  const body = buildPrBody({
+    ...INPUT, ledger: ledger(), testsurfHits: [{ class: 'test-weakening' }],
+    dangerHits: ['auth', 'public-api', { class: 'exec-sink' }, { file: 'src/a.ts' }, {}],
+  });
+  assert.ok(!body.includes('unknown'), `unknown が出ている: ${body}`);
+  assert.ok(!body.includes('`?`'), `\`?\` が出ている: ${body}`);
+  assert.ok(body.includes('danger-grep: 5 件（auth、public-api、exec-sink、`src/a.ts`、詳細不明）'), `danger 列挙: ${body}`);
+  assert.ok(body.includes('test-surface: 1 件（詳細不明）'), `testsurf 列挙: ${body}`);
+});
+
 test('[pr-artifacts] PR body: hit なしは「なし」、AC / decisions / 変更 空でもセクションは残る', () => {
   const body = buildPrBody({ issue: 5, req: req({ acceptance_criteria: [] }), plan: plan({ architecture_decisions: [], serial: [] }), ledger: ledger(), testsurfHits: [], dangerHits: [] });
   assert.ok(body.includes('## 変更\n（なし）'), body);

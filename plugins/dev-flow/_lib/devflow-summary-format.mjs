@@ -681,7 +681,9 @@ export function buildDevflowSummaryBody({
     lines.push('Acceptance Criteria: AC 判定なし（evaluator 未実行 or AC 欠落）');
   }
   if (securityClearance.length === 0) {
-    if (secFailClosed) {
+    if (secFailClosed && (holdReasons || []).some((r) => r?.code === 'merge_facts_dropped')) {
+      lines.push('Security clearance: merge-tier-facts の転記欠落（fail-closed — danger-grep 結果を受け取れず security 未検証）');
+    } else if (secFailClosed) {
       lines.push('Security clearance: danger-grep 実行不能（fail-closed — security 未検証）');
     } else {
       lines.push('Security clearance: danger-grep clean（clearance 不要）');
@@ -821,6 +823,8 @@ function holdReasonDisplay(code, kind, ctx) {
       return { current: `security clearance 未確認 ${ctx.unclearedCount} 件`, action: '人が該当 diff を確認する' };
     case 'danger_fail_closed':
       return { current: 'danger-grep 実行不能（security 未検証）', action: 'danger-grep を手動実行して確認する' };
+    case 'merge_facts_dropped':
+      return { current: 'merge-tier-facts の転記欠落（danger-grep 結果を受け取れず security 未検証）', action: 'danger-grep を手動実行して確認する' };
     case 'breaking_structured':
       return { current: 'analyze が breaking_change=true と判定', action: '互換性影響と告知要否を判断する' };
     case 'final_reconcile_unavailable':

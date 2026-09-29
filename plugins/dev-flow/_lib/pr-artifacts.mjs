@@ -173,10 +173,21 @@ function decisionsSection(plan) {
 // 1 種別（danger-grep / test-surface）分の hit 行。総数は維持しつつ列挙 item を
 // PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。file path は pathMax で clip する
 // （PR_BODY_MAX_CHARS 超過時の詰め処理で有限値に絞られる。既定は無制限）。
+// 文字列要素はクラス名 / pattern 名そのものとして扱う。key・file の片方が欠けた hit は取れた側だけを出し、
+// 両方欠けた hit は「詳細不明」とする（`unknown: \`?\`` のような穴埋め表記を出さない。issue #746）。
+function hitItem(h, keyOf, pathMax) {
+  const key = cell(typeof h === 'string' ? h : keyOf(h));
+  const file = typeof h === 'string' ? '' : cell(h?.file);
+  if (key && file) return `${key}: \`${clip(file, pathMax)}\``;
+  if (key) return key;
+  if (file) return `\`${clip(file, pathMax)}\``;
+  return '詳細不明';
+}
+
 function hitLine(label, hits, keyOf, pathMax = Infinity) {
   const list = arr(hits);
   if (list.length === 0) return `- ${label}: なし`;
-  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => `${str(keyOf(h)) || 'unknown'}: \`${clip(cell(h?.file) || '?', pathMax)}\``);
+  const shown = list.slice(0, PR_BODY_HIT_ITEMS_MAX).map((h) => hitItem(h, keyOf, pathMax));
   const excess = list.length - shown.length;
   const items = excess > 0 ? [...shown, `他 ${excess} 件`] : shown;
   return `- ${label}: ${list.length} 件（${items.join('、')}）`;

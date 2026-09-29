@@ -15,6 +15,10 @@
 //   risk          - fail-closed。risk.ok===true かつ value が {ok:boolean, hits:array} のときのみ採用。
 //                   それ以外は {ok:false, hits:[], error} を合成（null は返さない — hits 欠落を clean と
 //                   同一視しない。呼び出し側は risk.ok!==true を dangerFailClosed として HOLD 強制）。
+//                   risk.ok===true なのに value が欠落 / 契約外形状の応答は、スクリプトが検証済みの value と
+//                   組でしか ok:true を出さない以上 subagent の StructuredOutput 転記で落ちたもの（issue #746）。
+//                   danger-grep 実行不能と区別するため error を MERGE_FACTS_RISK_DROPPED_ERROR にし、
+//                   isRiskValueDropped で判別させる。
 //   changedFiles  - fail-safe。changed.ok===true かつ value.files が string[] のときのみ採用、それ以外 null
 //                   （null は isDocsOrTestOnly が false を返し AUTO 昇格しない安全側）。
 //   prMeta        - fail-open。pr.ok===true かつ value が object のときのみ {ok:true, mergeable,
@@ -52,6 +56,7 @@ export function mergeTierFactsPrompt({ wt, base, pr, repo }) {
     + `argv は一字一句そのまま実行する — which による絶対パス解決・絶対パスへの書き換え・cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結は禁止`
     + `（--worktree で worktree 絶対パスを渡しているため cd は不要）。\n`
     + `4. 手順 3 の stdout の JSON 1 行を **そのまま** 返せ（判定・要約・整形・省略禁止）。`
+    + `各サブ結果の \`value\`（中身の object を含む。ok:false のときは null）を省略・空 object 化してはならない。`
     + `手順 3 自体が実行できなかった、または stdout が JSON でない場合のみ \`{"risk":{"ok":false,"value":null,"error":"<stderr の要約>"}}\` を返せ。`
     + `失敗時に ok:true を生成してはならない。原因調査はするな。再試行禁止。\n\n`
     + `## Output format\n`
@@ -86,8 +91,17 @@ export function isWellFormedRiskFact(facts) {
   return v != null && typeof v === 'object' && typeof v.ok === 'boolean' && Array.isArray(v.hits);
 }
 
+// risk.ok===true なのに value が欠落 / 契約外形状（subagent の転記欠落。スクリプトは value が
+// {ok:boolean, hits:array} のときだけ ok:true を出すため、ここに来るのは転記で落ちた場合のみ）。
+export const MERGE_FACTS_RISK_DROPPED_ERROR = 'merge-tier-facts transcription dropped risk.value (fail-closed)';
+
+export function isRiskValueDropped(facts) {
+  return subOk(facts?.risk) && !isWellFormedRiskFact(facts);
+}
+
 export function parseRiskFact(facts) {
   if (isWellFormedRiskFact(facts)) return facts.risk.value;
+  if (isRiskValueDropped(facts)) return { ok: false, hits: [], error: MERGE_FACTS_RISK_DROPPED_ERROR };
   return { ok: false, hits: [], error: subError(facts?.risk, 'merge-tier-facts risk unavailable (fail-closed)') };
 }
 
