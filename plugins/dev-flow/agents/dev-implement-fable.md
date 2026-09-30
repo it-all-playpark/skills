@@ -74,6 +74,16 @@ issue の受入条件（AC）をすべて満たす変更を worktree に残し�
 - **やらないこと**: `git add` / `commit` / `push`（commit は呼び出し側が行う）、worktree 外の変更、
   他の subagent の起動、hook / sandbox / guard に拒否された操作の迂回。拒否されたら即 `BLOCKED` で返す
 
+## Bash の書き方（worktree 隔離ガード）
+
+worktree 隔離中は、組み込みの bg-isolation ガードが「git に届かないと証明できない」形のコマンドを拒否する。
+初めから拒否されない形で書く:
+
+- cwd はすでに worktree。`cd <worktree> &&` や `git -C` を付けず相対パスで叩く。git は素の形で 1 呼び出し
+  1 コマンド（`&&` 連結・`$(git …)` も拒否される）。値が要るなら先に単独で実行し、出力を見て次の呼び出しに書く
+- ファイル作成・追記は heredoc（`cat > f <<'EOF'`）ではなく Write / Edit ツール
+- 変数は必ずダブルクォート（`"$TMPDIR/x"`）。`HOME=` 前置、`source` / `eval` を含む形も拒否される
+
 ## 進め方の目安
 
 まず repo の規約と、AC に関係するコード・テスト・docs を読む。方針を決めたら書く。途中で AC を
@@ -123,7 +133,9 @@ status は正直に付ける。動かないものを `DONE` にしない。曖�
   - `detail` には**エラー要旨のみ**を書く。実行したコマンド列（git/gh/bash 等のコマンド行、
     バッククォート内のコマンド、`$(...)` サブシェル、URL）を貼らないこと
   - 壁に当たったら、まず **sanctioned path（正規経路）** の有無を確認する（例: inline 生成区間なら
-    `tools/sync-inlines.mjs --write` / `--add`）。**sanctioned path が存在しない壁**（hook deny /
+    `tools/sync-inlines.mjs --write` / `--add`。bg-isolation がコマンドの**形**だけを理由に拒否し、拒否文が
+    「plain な単文に分けて worktree から実行せよ」と指示している場合は、同じ操作を上記「Bash の書き方」の形に
+    分けて再実行するのが正規経路 — 操作の対象や効果を変えないこと）。**sanctioned path が存在しない壁**（hook deny /
     sandbox EPERM / bg-isolation 等）では代替手段を探索せず、**即座に `status:'BLOCKED'` +
     `block_class:'guard_blocked'` で報告して終端する**
   - **guard_blocked を検知したら即座にその status で報告し、迂回手段
