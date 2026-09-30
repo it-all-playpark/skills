@@ -144,6 +144,23 @@ test('[validate-test-prompt] Final reconcile の test#final は Validate の tes
   assert.equal(tf.prompt, t1.prompt, 'test#final の prompt が test#1 と一致しない（全 tests/run-*.sh 実行指示が Final reconcile に届かない）');
 });
 
+test('[validate-test-prompt] テストの前に workspace-prebuild を実行させ、ビルド失敗ではテストを実行せず red + 理由を summary に残させる（issue #754）', async () => {
+  await ensureSharedRun();
+  const prompt = test1Prompt();
+  const call = '`workspace-prebuild /tmp/wt`';
+  const at = prompt.indexOf(call);
+  assert.ok(at >= 0, `test#1 prompt に ${call} の bare 単文が無い:\n${prompt}`);
+  // テスト実行（tests/run-*.sh の列挙）より前に置く
+  assert.ok(at < prompt.indexOf('ls -l /tmp/wt/tests'), 'workspace-prebuild がテストスクリプトの列挙より後に書かれている');
+  const failedSentence = prompt.split('。').find((s) => s.includes('status が "failed"'));
+  assert.ok(failedSentence, `ビルド失敗（status "failed"）の分岐文が無い:\n${prompt}`);
+  assert.ok(failedSentence.includes('テストを 1 本も実行せず'), `ビルド失敗時にテストを実行させない指示が無い: ${failedSentence}`);
+  assert.ok(failedSentence.includes('green は false'), `ビルド失敗時に green を false にさせる指示が無い: ${failedSentence}`);
+  assert.ok(failedSentence.includes('tests は "failed"'), `ビルド失敗を起動失敗（error）ではなく failed 側に入れる指示が無い: ${failedSentence}`);
+  assert.ok(failedSentence.includes('reason') && failedSentence.includes('対象パッケージ名') && failedSentence.includes('summary'),
+    `ビルド失敗の reason（対象パッケージ名）を summary に残させる指示が無い: ${failedSentence}`);
+});
+
 test('[validate-test-prompt] test#1 prompt は起動失敗を tests:"failed" に潰す旧文言を含まない（issue #619）', async () => {
   await ensureSharedRun();
   const prompt = test1Prompt();

@@ -10,6 +10,10 @@
 # root object を要求するため — haiku proxy に配列を包み直させず verbatim 転写で済ませる):
 #   {"results":[{"index":N,"red":bool,"green":bool,"reason":"...","testcmd_ran":bool[,"headdiff":{new,modified,unchanged,total}][,"verdict":{...}]}, ...]}
 # 入力・分離エラーのペアは {"index":N,"red":false,"green":false,"reason":"..."} で続行する(testcmd_ran なし)。
+# red / green どちらの test 実行の前にも workspace-prebuild.sh で pnpm ワークスペースのビルド成果物を
+# その時点のソースから作り直す(issue #754。red は impl 退避後・green は復元後でソースが違うため両方で呼ぶ)。
+# ビルドが失敗した phase ではテストを実行せず、当該ペアを reason "workspace build failed: <pkgs> (red|green)"
+# の入力・分離エラーと同じ形で返す(テスト未実行を red / green と判定しない)。
 # headdiff は test_cmd 経路が走らなかったペア(testcmd_ran=false)でのみ付く。
 # test_files を HEAD 基準で new(HEAD に無い)/modified(HEAD にあり差分あり)/unchanged(HEAD と同一)
 # に三分類した件数で、runner の種類・拡張子に依存しない fallback 信号。red/green の判定には影響しない。
@@ -23,6 +27,8 @@ if [ "$#" -lt 2 ] || [ $(( $# % 2 )) -ne 0 ]; then
   echo "usage: redgreen-verify.sh <worktree> <test_files_csv> <impl_files_csv> [<test_files_csv> <impl_files_csv> ...]" >&2
   echo '{"results":[]}'; exit 2
 fi
+
+PREBUILD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workspace-prebuild.sh"
 
 cd "$WT" 2>/dev/null || { echo "cd failed: $WT" >&2; echo '{"results":[]}'; exit 2; }
 
@@ -57,9 +63,17 @@ UNCHANGED_IMPLS=()
 UNTRACKED_SAVED=false
 TRACKED_SAVED=false
 PAIR_JSON=""
+# 直近の run_tests で workspace-prebuild が失敗したときの理由(成功・対象なしは空)
+BUILD_FAILURE=""
 
 run_tests() {
-  local rc=0 node_tests=() vitest_tests=() bats_tests=() cmd_tests=()
+  local rc=0 node_tests=() vitest_tests=() bats_tests=() cmd_tests=() pb_out
+  BUILD_FAILURE=""
+  if ! pb_out="$(bash "$PREBUILD" "$PWD" 2>/dev/null)"; then
+    BUILD_FAILURE="$(jq -r '.reason // empty' <<< "$pb_out" 2>/dev/null)"
+    [ -n "$BUILD_FAILURE" ] || BUILD_FAILURE="workspace build failed"
+    return 1
+  fi
   for t in "${TESTS[@]}"; do
     case "$t" in
       *.test.mjs) node_tests+=("$t"); cmd_tests+=("$t") ;;
@@ -192,16 +206,23 @@ verify_pair() {
   fi
 
   # red 判定(impl 退避中: test は落ちるべき)
-  local red green
+  local red green build_failure=""
   if run_tests; then red=false; else red=true; fi
+  [ -n "$BUILD_FAILURE" ] && build_failure="$BUILD_FAILURE (red)"
 
   # 復元(本文側。EXIT trap / restore_impl も呼ばれるがフラグを落として二重復元を防ぐ)
   restore_saved
   UNTRACKED_SAVED=false
   TRACKED_SAVED=false
 
-  # green 判定(復元後: test は通るべき)
+  # green 判定(復元後: test は通るべき)。red でビルドが失敗していても、成果物を復元後のソースで
+  # 作り直すため green 側の run_tests は必ず実行する
   if run_tests; then green=true; else green=false; fi
+  [ -z "$build_failure" ] && [ -n "$BUILD_FAILURE" ] && build_failure="$BUILD_FAILURE (green)"
+
+  if [ -n "$build_failure" ]; then
+    PAIR_JSON="\"red\":false,\"green\":false,\"reason\":\"$build_failure\""; return 2
+  fi
 
   # headdiff: test_cmd 経路が走らなかったペア(VDELTA_TESTCMD_RAN=false)でのみ、
   # test_files を HEAD 基準で三分類する(拡張子非依存の fallback 信号。判定には使わない)。

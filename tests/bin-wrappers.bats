@@ -54,6 +54,7 @@ structural-classify
 ui-verify-server
 validate-canary-report
 veridelta-archive
+workspace-prebuild
 worktree-diff-hash
 worktree-teardown
 EOF
@@ -105,6 +106,7 @@ target_for() {
         veridelta-archive) echo "_shared/scripts/veridelta-archive.sh" ;;
         worktree-diff-hash) echo "_shared/scripts/worktree-diff-hash.sh" ;;
         worktree-teardown) echo "_shared/scripts/worktree-teardown.sh" ;;
+        workspace-prebuild) echo "_shared/scripts/workspace-prebuild.sh" ;;
         check-ci) echo "pr-iterate/scripts/check-ci.sh" ;;
         ci-wait) echo "pr-iterate/scripts/ci-wait.sh" ;;
         analyze-issue) echo "dev-issue-analyze/scripts/analyze-issue.sh" ;;

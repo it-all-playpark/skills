@@ -842,3 +842,87 @@ EOF
   grep -q "a = 1" "$REPO/impl1.mjs"
   grep -q "b = 2" "$REPO/impl2.mjs"
 }
+
+# -----------------------------------------------------------------------
+# K: pnpm ワークスペースのビルド成果物(issue #754)
+# packages/shared の exports は git 管理外の ./dist を指し、packages/backend が workspace:* で依存する。
+# impl は shared のソース(base: v1 → worktree: v2)。mock runner(test_cmd)は dist の中身を calls.log に
+# 残し、dist が v2 のときだけ pass する。pnpm は stub(scripts.build を実行し呼び出し時点のソースを記録)。
+# -----------------------------------------------------------------------
+make_pnpm_workspace_pair() {
+  mkdir -p "$REPO/packages/shared/src" "$REPO/packages/backend"
+  echo '{"name":"root","private":true}' > "$REPO/package.json"
+  printf 'packages:\n  - packages/*\n' > "$REPO/pnpm-workspace.yaml"
+  printf 'dist/\n' > "$REPO/.gitignore"
+  cat > "$REPO/packages/shared/package.json" <<'JSON'
+{"name":"@fx/shared","exports":{"./greet":{"import":"./dist/greet.js"}},"scripts":{"build":"mkdir -p dist && cp src/greet.js dist/greet.js"}}
+JSON
+  echo '{"name":"backend","dependencies":{"@fx/shared":"workspace:*"}}' > "$REPO/packages/backend/package.json"
+  echo "export const greet = () => 'hello v1';" > "$REPO/packages/shared/src/greet.js"
+  git -C "$REPO" add -A && git -C "$REPO" commit -q -m "add workspace base"
+  echo "export const greet = () => 'hello v2';" > "$REPO/packages/shared/src/greet.js"
+  echo "// greet test" > "$REPO/packages/backend/greet.test.mjs"
+
+  STUB_DIR="$REPO/.stubbin"
+  mkdir -p "$STUB_DIR"
+  cat > "$STUB_DIR/pnpm" <<EOF
+#!/usr/bin/env bash
+echo "pnpm \$* src=\$(grep -o 'hello v[0-9]' "$REPO/packages/shared/src/greet.js")" >> "$REPO/calls.log"
+cd "$REPO/packages/shared" && sh -c "\$(jq -r '.scripts.build' package.json)"
+EOF
+  chmod +x "$STUB_DIR/pnpm"
+
+  cat > "$REPO/mock-runner.sh" <<EOF
+#!/usr/bin/env bash
+echo "test \$1 dist=\$(grep -o 'hello v[0-9]' "$REPO/packages/shared/dist/greet.js" 2>/dev/null || echo absent)" >> "$REPO/calls.log"
+grep -q 'hello v2' "$REPO/packages/shared/dist/greet.js" 2>/dev/null
+EOF
+  chmod +x "$REPO/mock-runner.sh"
+  mkdir -p "$REPO/.claude"
+  echo "test_cmd=bash ./mock-runner.sh" > "$REPO/.claude/redgreen.conf"
+}
+
+@test "K1: red / green の両方で test_cmd の前にその時点のソースからビルドが走り red→green が成立する(AC-3)" {
+  make_pnpm_workspace_pair
+  [ ! -e "$REPO/packages/shared/dist" ]
+
+  PATH="$STUB_DIR:$PATH" run bash "$SCRIPT" "$REPO" "packages/backend/greet.test.mjs" "packages/shared/src/greet.js"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].green')" = "true" ]
+  # red: impl 退避後(v1)をビルド → test / green: 復元後(v2)をビルド → test の順
+  [ "$(sed -n 1p "$REPO/calls.log")" = "pnpm --filter @fx/shared... run build src=hello v1" ]
+  [ "$(sed -n 2p "$REPO/calls.log")" = "test packages/backend/greet.test.mjs dist=hello v1" ]
+  [ "$(sed -n 3p "$REPO/calls.log")" = "pnpm --filter @fx/shared... run build src=hello v2" ]
+  [ "$(sed -n 4p "$REPO/calls.log")" = "test packages/backend/greet.test.mjs dist=hello v2" ]
+  [ "$(wc -l < "$REPO/calls.log" | tr -d ' ')" -eq 4 ]
+}
+
+@test "K2: ビルドが失敗したら test_cmd を実行せず、reason にビルド失敗と対象パッケージ名が残る(AC-4)" {
+  make_pnpm_workspace_pair
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_DIR/pnpm"
+
+  PATH="$STUB_DIR:$PATH" run bash "$SCRIPT" "$REPO" "packages/backend/greet.test.mjs" "packages/shared/src/greet.js"
+  [ "$status" -eq 2 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red')" = "false" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].green')" = "false" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].reason')" = "workspace build failed: @fx/shared (red)" ]
+  ! grep -q '^test ' "$REPO/calls.log" 2>/dev/null
+  # 判定後も impl は worktree に復元されている
+  grep -q 'hello v2' "$REPO/packages/shared/src/greet.js"
+}
+
+@test "K3: ビルド対象の無い repo ではビルドせず判定も変わらない(AC-5)" {
+  echo "export const ok = true;" > "$REPO/impl.mjs"
+  make_test
+  STUB_DIR="$REPO/.stubbin"
+  mkdir -p "$STUB_DIR"
+  printf '#!/usr/bin/env bash\necho called >> "%s/pnpm.log"\n' "$REPO" > "$STUB_DIR/pnpm"
+  chmod +x "$STUB_DIR/pnpm"
+
+  PATH="$STUB_DIR:$PATH" run bash "$SCRIPT" "$REPO" "feature.test.mjs" "impl.mjs"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].red and .results[0].green')" = "true" ]
+  [ "$(printf '%s' "$output" | jq -r '.results[0].reason')" = "ok" ]
+  [ ! -e "$REPO/pnpm.log" ]
+}
