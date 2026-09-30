@@ -5900,7 +5900,14 @@ const setup = PRERUN
 // 直らないため、一部起動失敗を failed に入れると green-fix が空回りし CI 委譲にも入らない。
 // tests/run-*.sh が複数あるときは全本を実行させ、全本 green のときだけ green:true にする。1 本だけ選ばせると
 // 残りのランナー（例: bats だけ走って vitest が走らない）の回帰が CI まで検出されないため。
+// テストの直前に workspace-prebuild で pnpm ワークスペースのビルド成果物（git 管理外）を作り直す。
+// Setup で 1 回ビルドするだけでは Implement / green-fix / pr-iterate の fix が依存先のソースを変えた時点で成果物が
+// 古くなるため、テストを実行するたびに呼ぶ。ビルド失敗は起動失敗（環境要因）ではなくソース起因でありうるので
+// tests:'failed' 側に入れて green-fix に回し、summary に対象パッケージ名を残す。
 const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実行し green かどうか判定せよ。\n`
+  + `テストを実行する前に \`workspace-prebuild ${WT}\` を bare 単文で 1 回だけ実行せよ（pnpm ワークスペースで、ほかのパッケージが import するビルド成果物を現在のソースからビルドする。対象が無い repo では何もしない）。`
+  + `出力 JSON の status が "failed" のときはテストを 1 本も実行せず、tests は "failed"、green は false とし、出力の reason（ビルド失敗と対象パッケージ名）を summary の先頭に verbatim で入れて報告せよ。`
+  + `status がそれ以外（"built" / "skipped"）のとき、および出力が JSON でないときは、ビルドを再試行せず下記のテスト実行へ進め。\n`
   + `test 実行コマンドの規約: repo に実行可能な test スクリプト（tests/run-*.sh 等）があればそれを優先する。`
   + `\`ls -l ${WT}/tests\` を bare 単文で実行して一覧を取り、ファイル名が tests/run-*.sh に一致し実行ビットを持つものを**すべて**対象とせよ。`
   + `対象が複数あれば 1 本ずつ**すべて**実行せよ（1 本だけ選んで残りを省略してはならない）。`

@@ -53,6 +53,7 @@ const BARE = [
   'dev-flow-prerun',
   'merge-tier-facts',
   'ci-wait',
+  'workspace-prebuild',
 ];
 
 function listFiles(dir, ext) {
@@ -107,6 +108,7 @@ const DEV_FLOW_CALL_SITES = [
   ['diff-hash-eval', 'worktree-diff-hash /tmp/wt origin/main', {}],
   ['danger-grep', 'secfloor-classify /tmp/wt origin/main', {}],
   ['merge-tier-facts', '`merge-tier-facts --worktree /tmp/wt --base origin/main --pr-view-data ', {}],
+  ['test#1', '`workspace-prebuild /tmp/wt`', {}],
   ['redgreen', "redgreen-verify /tmp/wt 't.test.mjs' 'src/x.ts'", { 'eval#1': PASS_EVAL_TEST_AC, redgreen: { results: [{ index: 0, red: true, green: true }] } }],
   ['ui-verify-server', 'ui-verify-server start ', {
     'danger-grep': { risk: { ok: true, hits: [] }, files: ['src/components/Foo.tsx'], struct: null, diffhash: { hash: 'AAA', empty: false } },

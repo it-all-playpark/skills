@@ -46,6 +46,13 @@ Final reconcile phase が worktree を PR 最終 HEAD へ同期し test suite �
 不能は merge tier HOLD。fixes_applied=0 は agent 呼び出しゼロで skip）。再検証不能時は PR head sha に
 pin した CI check の決定論判定で代替し、成立しなければ HOLD を維持する。test suite の実行は Validate と
 同じ prompt で、実行可能な `tests/run-*.sh` が複数あれば全本を実行し全本 green のときだけ green とする。
+この prompt と redgreen-verify（red・green の各 test 実行）は、テストの直前に `workspace-prebuild <WT>` で
+pnpm ワークスペースのビルド成果物（ほかの package が `workspace:` で依存し、`scripts.build` を持ち、
+`main` / `module` / `exports` が git 管理外を指す package）を `pnpm --filter <pkg>... run build` の 1 コマンドで
+作り直す。Setup で 1 回だけビルドすると Implement / fix が依存先のソースを変えた時点で成果物が古くなり、
+テストが変更前のコードを読むため、テストのたびに呼ぶ。ビルド失敗ではテストを実行せず red（Validate /
+test#final は `tests:'failed'` + summary に対象パッケージ名、redgreen は当該ペアの `reason`）にする。
+pnpm-workspace.yaml の無い repo と対象の無い repo では何もしない。
 test#final green（head sha pin）または ci_verified が成立した run では、未 checked の `EVAL-*` blocking
 item（evaluator 由来。escalate は除く）をその決定論 evidence で checked にする（evaluator は fix 後に再実行
 されないため）。SEC seed / TESTSURF / AC-FINAL-* はこの経路で解消せず、LLM 判断（final_resolution）でも
