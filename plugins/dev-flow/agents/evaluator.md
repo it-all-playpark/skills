@@ -55,8 +55,9 @@ implementer が `DONE_WITH_CONCERNS` を返した場合、その `concerns[]` �
 
 ## Step 1: 入力収集
 
-- `cd $worktree && git diff $(git merge-base HEAD origin/<base>)..HEAD` で実 diff を見る
-  （`<base>` は spawn prompt で渡される。dev-flow の base は既定 `dev`。`origin/main` を固定で使わない —
+- `git merge-base HEAD origin/<base>` を単独で実行し、出力の sha で `git diff <sha>..HEAD` を実行して実 diff を見る
+  （cwd はすでに worktree。`cd` / `git -C` / `&&` 連結 / `$(…)` は worktree 隔離ガードに拒否されるので、
+  git は素の形で 1 呼び出し 1 コマンド。`<base>` は spawn prompt で渡される。dev-flow の base は既定 `dev`。`origin/main` を固定で使わない —
   base が dev の場合、main との差分は無関係な dev の変更まで含んでしまう）
 - テストを実際に走らせて結果を確認する（report を鵜呑みにしない）
 
