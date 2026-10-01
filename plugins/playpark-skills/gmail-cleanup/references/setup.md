@@ -1,23 +1,25 @@
 # gmail-cleanup セットアップ
 
-`create` / `deploy` は Apps Script API を gws 経由で叩く。アカウントごとに次の3つが揃っている必要がある。
+`create` / `deploy` / `logs` は Apps Script API を gws 経由で叩く。アカウントごとに次の3つが揃っている必要がある。
 どれも人間がブラウザで行う作業なので、足りないときはユーザーに手順を伝える。
 
 ## 1. gws のトークンに Apps Script のスコープがある
 
-`script.projects` スコープが無いと push / create が `insufficient authentication scopes` で落ちる。
-`--services gmail,drive,script` はスコープ選択画面の候補を絞るだけで、`script.projects` は付かない。
-`--scopes` で明示する。既存の権限を落とさないよう、`gws auth status` の `scopes` に
-`https://www.googleapis.com/auth/script.projects` を足したものを渡す
-（`deploy` / `create` が exit 4 で落ちたときの message に、組み立て済みのコマンドが出る）:
+- `script.projects` が無いと push / create が `insufficient authentication scopes` で落ちる
+- `script.processes` が無いと `logs`（実行履歴）が同じエラーで落ちる
+
+`--services gmail,drive,script` はスコープ選択画面の候補を絞るだけで、`script.*` は付かない。
+`--scopes` で明示する。既存の権限を落とさないよう、`gws auth status` の `scopes` に2つを足したものを渡す
+（`deploy` / `create` / `logs` が exit 4 で落ちたときの message に、組み立て済みのコマンドが出る）:
 
 ```bash
 GOOGLE_WORKSPACE_CLI_CONFIG_DIR=<gwsConfigDir> gws auth logout
-GOOGLE_WORKSPACE_CLI_CONFIG_DIR=<gwsConfigDir> gws auth login --scopes '<今のスコープ>,https://www.googleapis.com/auth/script.projects'
+GOOGLE_WORKSPACE_CLI_CONFIG_DIR=<gwsConfigDir> gws auth login --scopes '<今のスコープ>,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.processes'
 ```
 
 - `gwsConfigDir` を使わない target は環境変数なしで同じコマンドを実行する
 - スコープ文字列は長いので、コピー時に折り返しの改行が混ざると `Error 400: invalid_scope` になる
+
 ## 2. OAuth クライアントの GCP プロジェクトで Apps Script API が有効
 
 `<gwsConfigDir>/client_secret.json` の `project_id` のプロジェクトで、
@@ -35,7 +37,14 @@ OFF のままだと push / create が `User has not enabled the Apps Script API`
 1. https://script.google.com/d/<scriptId>/edit を開き、関数 `dryRun` を実行 → 権限を承認 →
    実行ログで対象件数と件名サンプルを確認（削除はしない）
 2. 問題なければ関数 `setup` を実行 → 毎日4時台に `cleanup` が走るトリガーが作られる
-3. 初回の溜まり分は1回の実行（約5分で打ち切り）で終わらないことがある。残りは翌日以降に処理される。
-   すぐ片付けたい場合は `cleanup` を手で数回実行する
+3. 溜まり分が極端に多いと1回の実行（約4分で打ち切り）で終わらないことがある。打ち切りは正常終了で、
+   残りは翌日以降に処理される。すぐ片付けたい場合は `cleanup` を手で数回実行する
 
-`gas/appsscript.json` の `oauthScopes` を変えたときは、deploy 後にエディタで一度手動実行して再承認する。
+`gas/appsscript.json` の `oauthScopes` や `enabledAdvancedServices` を変えたときは、
+deploy 後にエディタで `dryRun` を一度手動実行して再承認する（承認が要らなければそのまま完了する）。
+
+## 実行結果の確認
+
+`gmail-cleanup logs <config> <id|all> [件数]` で直近の実行の状態（`COMPLETED` / `FAILED` / `TIMED_OUT`）と
+所要時間が見られる。件数やエラー本文（`console.log`）は API から取れないので、
+`FAILED` / `TIMED_OUT` のときはエディタ左の「実行数」でその回のログを開く。

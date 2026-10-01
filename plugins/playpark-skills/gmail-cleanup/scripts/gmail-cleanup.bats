@@ -26,6 +26,10 @@ if [ "$2" = "+push" ]; then
 fi
 if [ "${GWS_FAIL:-}" = "1" ]; then echo "insufficient authentication scopes" >&2; exit 1; fi
 if [ "$2" = "projects" ]; then echo "Using keyring backend: file"; echo '{"scriptId":"NEWID","title":"x"}'; fi
+if [ "$2" = "processes" ]; then
+  echo "Using keyring backend: file"
+  echo '{"processes":[{"projectName":"p","functionName":"cleanup","processType":"TIME_DRIVEN","processStatus":"TIMED_OUT","startTime":"2026-10-01T19:00:03Z","duration":"360.1s"}]}'
+fi
 EOF
   chmod +x "$WORK/bin/gws"
   export PATH="$WORK/bin:$PATH"
@@ -98,12 +102,27 @@ write_config() { printf '%s\n' "$1" > "$WORK/bad.json"; }
   [[ "$output" == *"script.projects"* ]]
 }
 
-@test "deploy: 失敗時は今のスコープに script.projects を足した --scopes を案内する" {
-  GWS_FAIL=1 GWS_SCOPES='["openid","https://www.googleapis.com/auth/gmail.modify"]' \
+@test "deploy: 失敗時は今のスコープに script.projects / script.processes を足した --scopes を案内する" {
+  GWS_FAIL=1 GWS_SCOPES='["openid","https://www.googleapis.com/auth/gmail.modify","https://www.googleapis.com/auth/script.projects"]' \
     run bash "$SCRIPT" deploy "$WORK/config.json" ny
   [ "$status" -eq 4 ]
-  [[ "$output" == *"GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/gws/ny gws auth login --scopes 'https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/script.projects,openid'"* ]]
+  [[ "$output" == *"GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/gws/ny gws auth login --scopes 'https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/script.processes,https://www.googleapis.com/auth/script.projects,openid'"* ]]
   [[ "$output" != *"--services"* ]]
+}
+
+@test "logs: target ごとに実行履歴を1行1件で返す" {
+  run bash "$SCRIPT" logs "$WORK/config.json" all 5
+  [ "$status" -eq 0 ]
+  grep -q "args=script processes listScriptProcesses --params {\"scriptId\":\"SID-NY\",\"pageSize\":5} cfg=$HOME/gws/ny$" "$GWS_LOG"
+  [ "$(printf '%s\n' "$output" | jq -c '[.target, .function, .status, .duration]' | paste -sd ' ' -)" = '["ny","cleanup","TIMED_OUT","360.1s"] ["company","cleanup","TIMED_OUT","360.1s"]' ]
+}
+
+@test "logs: 取得に失敗したら exit 4 と script.processes を含む再ログイン方法を返す" {
+  GWS_FAIL=1 run bash "$SCRIPT" logs "$WORK/config.json" ny
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"実行履歴の取得に失敗"*"script.processes"* ]]
+  run bash "$SCRIPT" logs "$WORK/config.json" ny 0
+  [ "$status" -eq 1 ]
 }
 
 @test "deploy: 未知の target は候補を出して失敗する" {
@@ -164,34 +183,59 @@ write_config() { printf '%s\n' "$1" > "$WORK/bad.json"; }
 
 simulate() {
   bash "$SCRIPT" render "$WORK/config.json" company "$WORK/out" > /dev/null
-  cat > "$WORK/threads.json" <<'EOF'
+  # 1行 = 1メール。threadId が同じものは同じスレッド
+  cat > "$WORK/messages.json" <<'EOF'
 [
-  { "id": "old-promo",      "query": "category:promotions", "ageDays": 40 },
-  { "id": "old-blocked",    "query": "label:Blocked",       "ageDays": 90 },
-  { "id": "recent-reply",   "query": "category:promotions", "ageDays": 5 },
-  { "id": "starred",        "query": "category:promotions", "ageDays": 40, "starred": true },
-  { "id": "receipt-child",  "query": "category:promotions", "ageDays": 40, "labels": ["領収書/2026"] },
-  { "id": "keep-exact",     "query": "label:Blocked",       "ageDays": 40, "labels": ["永久保存メール"] },
-  { "id": "prefix-lookalike","query": "category:promotions", "ageDays": 40, "labels": ["領収書以外"] }
+  { "id": "old-promo",        "query": "category:promotions", "ageDays": 40 },
+  { "id": "old-blocked",      "query": "label:Blocked",       "ageDays": 90 },
+  { "id": "reply-old",        "threadId": "t-reply",   "query": "category:promotions", "ageDays": 40 },
+  { "id": "reply-new",        "threadId": "t-reply",   "query": "other",               "ageDays": 5 },
+  { "id": "star-old",         "threadId": "t-star",    "query": "category:promotions", "ageDays": 40 },
+  { "id": "star-other",       "threadId": "t-star",    "query": "other",               "ageDays": 40, "starred": true },
+  { "id": "trash-reply-old",  "threadId": "t-trashed", "query": "category:promotions", "ageDays": 40 },
+  { "id": "trash-reply-new",  "threadId": "t-trashed", "query": "other",               "ageDays": 3, "trashed": true },
+  { "id": "receipt-child",    "query": "category:promotions", "ageDays": 40, "labels": ["領収書/2026"] },
+  { "id": "keep-exact",       "query": "label:Blocked",       "ageDays": 40, "labels": ["永久保存メール"] },
+  { "id": "prefix-lookalike", "query": "category:promotions", "ageDays": 40, "labels": ["領収書以外"] }
 ]
 EOF
-  node "$BATS_TEST_DIRNAME/gas-sim.js" "$WORK/out" "$1" "$WORK/threads.json"
+  node "$BATS_TEST_DIRNAME/gas-sim.js" "$WORK/out" "$1" "$WORK/messages.json"
 }
 
 @test "Code.gs: 各クエリに older_than と -is:starred を付けて検索する" {
   run simulate cleanup
   [ "$status" -eq 0 ]
-  [ "$(printf '%s' "$output" | jq -c .searched)" = '["category:promotions older_than:30d -is:starred","label:Blocked older_than:30d -is:starred"]' ]
+  [ "$(printf '%s' "$output" | jq -c '[.searched[] | select(test("older_than"))]')" = '["category:promotions older_than:30d -is:starred","label:Blocked older_than:30d -is:starred"]' ]
 }
 
-@test "Code.gs: スター・保護ラベル(配下含む)・最近の返信を残し、それ以外をゴミ箱へ移す" {
+@test "Code.gs: スター・保護ラベル(配下含む)・新しい返信(ゴミ箱内も)を含むスレッドを残し、それ以外をゴミ箱へ移す" {
   run simulate cleanup
   [ "$status" -eq 0 ]
-  [ "$(printf '%s' "$output" | jq -c .trashed)" = '["old-blocked","old-promo","prefix-lookalike"]' ]
+  [ "$(printf '%s' "$output" | jq -c '.trashed - ["trash-reply-new"]')" = '["old-blocked","old-promo","prefix-lookalike"]' ]
 }
 
 @test "Code.gs: dryRun は何もゴミ箱へ移さない" {
   run simulate dryRun
   [ "$status" -eq 0 ]
-  [ "$(printf '%s' "$output" | jq -c .trashed)" = '[]' ]
+  [ "$(printf '%s' "$output" | jq -c .trashed)" = '["trash-reply-new"]' ]
+  [ "$(printf '%s' "$output" | jq .modifyCalls)" = 0 ]
+}
+
+@test "Code.gs: 大量のメールを 500件ずつ列挙し 1000件ずつまとめてゴミ箱へ移す" {
+  bash "$SCRIPT" render "$WORK/config.json" ny "$WORK/out" > /dev/null
+  jq -n '[range(2500) | {id: "m\(.)", query: "category:promotions", ageDays: 40}]' > "$WORK/many.json"
+  run node "$BATS_TEST_DIRNAME/gas-sim.js" "$WORK/out" cleanup "$WORK/many.json"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq '.trashed | length')" = 2500 ]
+  [ "$(printf '%s' "$output" | jq .modifyCalls)" = 3 ]
+  # is:starred + newer_than (各1ページ) + 候補 5ページ
+  [ "$(printf '%s' "$output" | jq .listCalls)" = 7 ]
+}
+
+@test "Code.gs: 残すスレッドを集めきる前に時間切れになったら何も消さない" {
+  # Date.now() のたびに 1.5分進む → 3つ目の残す対象(保護ラベル)の列挙前に 4分の予算を超える
+  SIM_TICK_MS=90000 run simulate cleanup
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | jq .modifyCalls)" = 0 ]
+  [ "$(printf '%s' "$output" | jq -c '.trashed - ["trash-reply-new"]')" = '[]' ]
 }
