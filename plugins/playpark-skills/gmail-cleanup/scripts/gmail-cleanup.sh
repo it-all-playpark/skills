@@ -7,6 +7,7 @@
 #   gmail-cleanup.sh render <config.json> <target-id> <out-dir>
 #   gmail-cleanup.sh deploy <config.json> <target-id|all>
 #   gmail-cleanup.sh create <config.json> <target-id>
+#   gmail-cleanup.sh logs   <config.json> <target-id|all> [件数]
 #
 # 設定 JSON:
 #   {
@@ -99,13 +100,22 @@ gws_for() {
   fi
 }
 
+# この skill が使う Apps Script API のスコープ(push / create と、実行履歴の取得)
+SCRIPT_SCOPES='["https://www.googleapis.com/auth/script.projects","https://www.googleapis.com/auth/script.processes"]'
+
+# 再ログインのコマンドを返す。`--services script` では script.* スコープが付かないので、
+# 今のトークンのスコープに SCRIPT_SCOPES を足した --scopes を組み立てる(他の用途の権限を落とさない)。
 gws_hint() {
-  local target="$1" dir
+  local target="$1" dir prefix="" scopes
   dir="$(printf '%s' "$target" | jq -r '.gwsConfigDir // empty')"
-  if [ -n "$dir" ]; then
-    printf 'GOOGLE_WORKSPACE_CLI_CONFIG_DIR=%s gws auth login --services gmail,drive,script' "$dir"
+  [ -n "$dir" ] && prefix="GOOGLE_WORKSPACE_CLI_CONFIG_DIR=$dir "
+  scopes="$(gws_for "$target" auth status 2> /dev/null \
+    | jq -r --argjson add "$SCRIPT_SCOPES" '(.scopes // []) | select(length > 0) | . + $add | unique | join(",")' 2> /dev/null || true)"
+  if [ -n "$scopes" ]; then
+    printf "%sgws auth logout の後、%sgws auth login --scopes '%s'" "$prefix" "$prefix" "$scopes"
   else
-    printf 'gws auth login --services gmail,drive,script'
+    printf '%sgws auth login で再ログイン。scope 不足なら今のスコープ(gws auth status の scopes)に %s を足して --scopes で指定する(--services script では付かない)' \
+      "$prefix" "$(printf '%s' "$SCRIPT_SCOPES" | jq -r 'join(" と ")')"
   fi
 }
 
@@ -138,7 +148,8 @@ cmd_deploy() {
     out="$(mktemp -d "${TMPDIR:-/tmp}/gmail-cleanup.XXXXXX")"
     render_target "$target" "$out"
     rc=0
-    gws_for "$target" script +push --script "$script_id" --dir "$out" > "$out.log" 2>&1 || rc=$?
+    # gws の --dir は相対パスしか受け付けないので、out に入ってカレントを push させる
+    (cd "$out" && gws_for "$target" script +push --script "$script_id") > "$out.log" 2>&1 || rc=$?
     if [ "$rc" != "0" ]; then
       die "$id: push に失敗しました: $(tr '\n' ' ' < "$out.log")。認証やスコープ不足なら: $(gws_hint "$target")" 4
     fi
@@ -169,6 +180,31 @@ cmd_create() {
     '{status:"ok", target:$id, scriptId:$s, action:"created", next:"設定 JSON の scriptId に書いてから deploy する"}'
 }
 
+# 直近の実行履歴(関数名・状態・開始時刻・所要時間)を1行1件で返す。
+# 状態が FAILED / TIMED_OUT なら、エディタの「実行数」でそのログを見る。
+cmd_logs() {
+  local targets list target id script_id log rc limit="${3:-10}"
+  [[ "$limit" =~ ^[1-9][0-9]*$ ]] || die "件数は正の整数で指定してください: $limit"
+  targets="$(load_targets "$1")"
+  list="$(select_targets "$targets" "$2")"
+
+  while IFS= read -r target; do
+    id="$(printf '%s' "$target" | jq -r .id)"
+    script_id="$(printf '%s' "$target" | jq -r '.scriptId // empty')"
+    [ -n "$script_id" ] || die "$id: scriptId が未設定です"
+    log="$(mktemp "${TMPDIR:-/tmp}/gmail-cleanup.XXXXXX")"
+    rc=0
+    gws_for "$target" script processes listScriptProcesses \
+      --params "$(jq -nc --arg s "$script_id" --argjson n "$limit" '{scriptId:$s, pageSize:$n}')" > "$log" 2>&1 || rc=$?
+    if [ "$rc" != "0" ]; then
+      die "$id: 実行履歴の取得に失敗しました: $(tr '\n' ' ' < "$log")。認証やスコープ不足なら: $(gws_hint "$target")" 4
+    fi
+    awk 'f || /^[[{]/ { f=1; print }' "$log" | jq -c --arg id "$id" \
+      '(.processes // [])[] | {target:$id, function:.functionName, type:.processType, status:.processStatus, startTime, duration}'
+    rm -f "$log"
+  done <<< "$list"
+}
+
 main() {
   local cmd="${1:-}"
   shift || true
@@ -177,7 +213,8 @@ main() {
     render) [ $# -eq 3 ] || die "Usage: gmail-cleanup.sh render <config.json> <target-id> <out-dir>"; cmd_render "$@" ;;
     deploy) [ $# -eq 2 ] || die "Usage: gmail-cleanup.sh deploy <config.json> <target-id|all>"; cmd_deploy "$@" ;;
     create) [ $# -eq 2 ] || die "Usage: gmail-cleanup.sh create <config.json> <target-id>"; cmd_create "$@" ;;
-    *) die "Usage: gmail-cleanup.sh {list|render|deploy|create} ..." ;;
+    logs)   [ $# -eq 2 ] || [ $# -eq 3 ] || die "Usage: gmail-cleanup.sh logs <config.json> <target-id|all> [件数]"; cmd_logs "$@" ;;
+    *) die "Usage: gmail-cleanup.sh {list|render|deploy|create|logs} ..." ;;
   esac
 }
 
