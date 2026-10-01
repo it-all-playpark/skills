@@ -99,13 +99,18 @@ gws_for() {
   fi
 }
 
+# 再ログインのコマンドを返す。`--services script` では script.projects スコープが付かないので、
+# 今のトークンのスコープに script.projects を足した --scopes を組み立てる(他の用途の権限を落とさない)。
 gws_hint() {
-  local target="$1" dir
+  local target="$1" dir prefix="" scopes
   dir="$(printf '%s' "$target" | jq -r '.gwsConfigDir // empty')"
-  if [ -n "$dir" ]; then
-    printf 'GOOGLE_WORKSPACE_CLI_CONFIG_DIR=%s gws auth login --services gmail,drive,script' "$dir"
+  [ -n "$dir" ] && prefix="GOOGLE_WORKSPACE_CLI_CONFIG_DIR=$dir "
+  scopes="$(gws_for "$target" auth status 2> /dev/null \
+    | jq -r '(.scopes // []) | select(length > 0) | . + ["https://www.googleapis.com/auth/script.projects"] | unique | join(",")' 2> /dev/null || true)"
+  if [ -n "$scopes" ]; then
+    printf "%sgws auth logout の後、%sgws auth login --scopes '%s'" "$prefix" "$prefix" "$scopes"
   else
-    printf 'gws auth login --services gmail,drive,script'
+    printf '%sgws auth login で再ログイン。scope 不足なら今のスコープ(gws auth status の scopes)に https://www.googleapis.com/auth/script.projects を足して --scopes で指定する(--services script では付かない)' "$prefix"
   fi
 }
 
@@ -138,7 +143,8 @@ cmd_deploy() {
     out="$(mktemp -d "${TMPDIR:-/tmp}/gmail-cleanup.XXXXXX")"
     render_target "$target" "$out"
     rc=0
-    gws_for "$target" script +push --script "$script_id" --dir "$out" > "$out.log" 2>&1 || rc=$?
+    # gws の --dir は相対パスしか受け付けないので、out に入ってカレントを push させる
+    (cd "$out" && gws_for "$target" script +push --script "$script_id") > "$out.log" 2>&1 || rc=$?
     if [ "$rc" != "0" ]; then
       die "$id: push に失敗しました: $(tr '\n' ' ' < "$out.log")。認証やスコープ不足なら: $(gws_hint "$target")" 4
     fi

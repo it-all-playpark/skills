@@ -9,11 +9,18 @@ setup() {
   mkdir -p "$TMPDIR" "$WORK/bin"
 
   # 偽 gws: 引数・設定ディレクトリ・push された config.gs を記録する
+  # 本物の +push は --dir に絶対パスを渡すと validationError で落ち、省略時はカレントを使う
   cat > "$WORK/bin/gws" <<'EOF'
 #!/usr/bin/env bash
+if [ "$1 $2" = "auth status" ]; then
+  [ -n "${GWS_SCOPES:-}" ] || exit 1
+  echo "{\"scopes\":$GWS_SCOPES}"; exit 0
+fi
 echo "args=$* cfg=${GOOGLE_WORKSPACE_CLI_CONFIG_DIR:-}" >> "$GWS_LOG"
 if [ "$2" = "+push" ]; then
-  dir="${6}"
+  dir="."
+  [ "${5:-}" = "--dir" ] && dir="$6"
+  case "$dir" in /*) echo "--dir must be a relative path, got absolute path '$dir'" >&2; exit 3 ;; esac
   cp "$dir/config.gs" "$GWS_LOG.$4.config.gs"
   [ -f "$dir/Code.gs" ] && [ -f "$dir/appsscript.json" ] || exit 9
 fi
@@ -67,8 +74,8 @@ write_config() { printf '%s\n' "$1" > "$WORK/bad.json"; }
 @test "deploy all: target ごとに scriptId と gws 設定ディレクトリを切り替えて push する" {
   run bash "$SCRIPT" deploy "$WORK/config.json" all
   [ "$status" -eq 0 ]
-  grep -q "args=script +push --script SID-NY --dir .* cfg=$HOME/gws/ny$" "$GWS_LOG"
-  grep -q "args=script +push --script SID-CO --dir .* cfg=$" "$GWS_LOG"
+  grep -q "args=script +push --script SID-NY cfg=$HOME/gws/ny$" "$GWS_LOG"
+  grep -q "args=script +push --script SID-CO cfg=$" "$GWS_LOG"
   grep -q 'label:Blocked' "$GWS_LOG.SID-CO.config.gs"
   ! grep -q 'label:Blocked' "$GWS_LOG.SID-NY.config.gs"
   [ "$(printf '%s\n' "$output" | jq -r .action | sort -u)" = "deployed" ]
@@ -87,7 +94,16 @@ write_config() { printf '%s\n' "$1" > "$WORK/bad.json"; }
   GWS_FAIL=1 run bash "$SCRIPT" deploy "$WORK/config.json" ny
   [ "$status" -eq 4 ]
   [[ "$output" == *"insufficient authentication scopes"* ]]
-  [[ "$output" == *"GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/gws/ny gws auth login --services gmail,drive,script"* ]]
+  [[ "$output" == *"GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/gws/ny gws auth login で再ログイン"* ]]
+  [[ "$output" == *"script.projects"* ]]
+}
+
+@test "deploy: 失敗時は今のスコープに script.projects を足した --scopes を案内する" {
+  GWS_FAIL=1 GWS_SCOPES='["openid","https://www.googleapis.com/auth/gmail.modify"]' \
+    run bash "$SCRIPT" deploy "$WORK/config.json" ny
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/gws/ny gws auth login --scopes 'https://www.googleapis.com/auth/gmail.modify,https://www.googleapis.com/auth/script.projects,openid'"* ]]
+  [[ "$output" != *"--services"* ]]
 }
 
 @test "deploy: 未知の target は候補を出して失敗する" {
