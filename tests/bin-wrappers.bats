@@ -74,6 +74,7 @@ dep-guardian-classify-pr
 dep-guardian-discover-prs
 dep-guardian-merge-prs
 dep-guardian-test-pr
+gmail-cleanup
 incident-response-state
 qiita-publish
 repo-commit
@@ -138,6 +139,7 @@ skills_target_for() {
         dep-guardian-classify-pr) echo "bash dep-guardian/scripts/classify-pr.sh" ;;
         dep-guardian-test-pr) echo "bash dep-guardian/scripts/test-pr.sh" ;;
         dep-guardian-merge-prs) echo "bash dep-guardian/scripts/merge-prs.sh" ;;
+        gmail-cleanup) echo "bash gmail-cleanup/scripts/gmail-cleanup.sh" ;;
         qiita-publish) echo "bash qiita-publish/scripts/publish.sh" ;;
         zenn-publish) echo "bash zenn-publish/scripts/publish.sh" ;;
         repo-commit) echo "python3 repo-commit/scripts/export_commit.py" ;;
@@ -261,7 +263,7 @@ skills_target_for() {
     done <<< "$(skills_expected_names)"
 }
 
-@test "plugins/playpark-skills/bin の entry は対象26本と完全一致する" {
+@test "plugins/playpark-skills/bin の entry は対象27本と完全一致する" {
     expected="$(skills_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/playpark-skills/bin" | sort)"
     [ "$actual" = "$expected" ]
