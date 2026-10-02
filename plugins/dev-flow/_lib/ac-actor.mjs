@@ -4,10 +4,10 @@
 //
 // actor の意味:
 //   - 'agent': 実装エージェントが worktree 内で満たせる AC（ローカル計測して PR 本文に書く、を含む）。
-//     evaluator が satisfied:false を返したら gate_policy に依らず dev-implement-fable へ差し戻す。
+//     evaluator が satisfied:false を返したら gate_policy に依らず dev-implementer へ差し戻す。
 //     差し戻し上限を使い切っても未達なら Merge tier は 'ac_agent_unsatisfied'（ループの取りこぼし）で HOLD。
 //   - 'human': `（人手）` 表記・staging / 本番環境・外部サービスの操作・issue へのコメントを要する AC。
-//     エージェントは worktree の外に出ない（agents/dev-implement-fable.md）ので差し戻しても満たせない。
+//     エージェントは worktree の外に出ない（agents/dev-implementer.md）ので差し戻しても満たせない。
 //     未達は差し戻さず Merge tier の 'ac_human_pending'（人手 AC 待ち）へ回す。
 // 判定できない AC は 'agent' に倒す。human への誤分類は差し戻しを失い未達のまま人間へ流れるが、agent への誤分類は
 // 差し戻しの上限（AGENT_AC_REIMPL_MAX）で止まり、HOLD 理由に取りこぼしとして残るため。
@@ -60,7 +60,7 @@ export function unsatisfiedAcByActor(acResults, actors) {
   return out
 }
 
-// agent AC の未達を dev-implement-fable へ渡す fix_feedback 項目にする（evaluator feedback と同じ形）。
+// agent AC の未達を dev-implementer へ渡す fix_feedback 項目にする（evaluator feedback と同じ形）。
 // 「計測して PR 本文に書く」型の AC は、コードのコメントでは PR 本文に届かないので pr_notes / design_decisions で
 // 返すよう suggestion に明記する。
 export function agentAcFeedback(indexes, acceptanceCriteria, acResults) {

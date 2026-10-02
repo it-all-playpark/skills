@@ -1,4 +1,4 @@
-// dev-implement-fable.md / evaluator.md / dev-runner*.md は sandbox write-deny のため、Turbopack fallback
+// dev-implementer.md / evaluator.md / dev-runner*.md は sandbox write-deny のため、Turbopack fallback
 // 規約は dev-flow.js が全 implementer/evaluator/dev-runner spawn prompt に注入する（issue #292）。
 //
 // 注入可否は Setup が args.setup.stack.frameworks（prerun の detect-stack）で決定論的に決め、

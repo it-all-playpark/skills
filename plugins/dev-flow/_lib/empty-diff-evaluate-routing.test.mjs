@@ -52,7 +52,7 @@ function makeCountingSandbox(analyzeReq, diffHashConfig) {
     if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'merge-tier-facts') return mergeTierFacts({ files: ['src/foo.ts'] });
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: [...realizedFiles], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 'issue-1', files: [...realizedFiles], summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る。saved:true を
     // 返して journal-log (stage2) へ進めさせる。

@@ -2,7 +2,7 @@
 // dev-flow.js 全体の VM 実行で pin する（issue #673 AC-4）。
 //
 // planner agent を起動せず、blockSeen 累積の approach_mismatch findings（過去に BLOCKED になった
-// 全アプローチへの回帰禁止）を prompt に付けて dev-implement-fable を `reimpl-blocked#b` で再 spawn する:
+// 全アプローチへの回帰禁止）を prompt に付けて dev-implementer を `reimpl-blocked#b` で再 spawn する:
 //   case1: BLOCKED ×2 → 3 回目 DONE — reimpl-blocked#2 prompt に R1 と R2 の両方（累積）が載り、
 //          BLOCK_MAX 到達 log は出ず、evaluator prompt に approach_mismatch concern は残らない
 //   case2: BLOCKED ×3（BLOCK_MAX=2 到達）— human review へ委譲（BLOCK_MAX log）し、未解消 BLOCKED は
@@ -19,7 +19,7 @@ import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash } from './test-he
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-const FABLE = 'dev-flow:dev-implement-fable';
+const IMPLEMENTER = 'dev-flow:dev-implementer';
 const GONE_AGENTS = ['dev-flow:dev-planner', 'dev-flow:plan-reviewer', 'dev-flow:implementer'];
 
 // standard shape: count=4 (3-5), AC<=6, issue_type=fix, no breaking keywords
@@ -54,7 +54,7 @@ test('[blocked-replan-history] case1: BLOCKED ×2 → 3 回目 DONE — reimpl-b
 
   const rb = reimplBlocked(calls);
   assert.deepEqual(rb.map((c) => c.label), ['reimpl-blocked#1:serial:issue-1', 'reimpl-blocked#2:serial:issue-1'], `reimpl-blocked は 2 回のはず: ${rb.map((c) => c.label).join(', ')}`);
-  for (const c of rb) assert.equal(c.agentType, FABLE, `${c.label} の agentType が ${c.agentType}（dev-implement-fable のはず）`);
+  for (const c of rb) assert.equal(c.agentType, IMPLEMENTER, `${c.label} の agentType が ${c.agentType}（dev-implementer のはず）`);
   assert.equal(calls.filter((c) => GONE_AGENTS.includes(c.agentType)).length, 0, 'planner 系 agent が起動した');
   assert.equal(calls.filter((c) => c.label.startsWith('replan-blocked#')).length, 0, 'dev-planner 向け replan-blocked#b が起動した');
 

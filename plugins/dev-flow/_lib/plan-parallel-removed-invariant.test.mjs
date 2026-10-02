@@ -1,7 +1,7 @@
 // _lib/plan-parallel-removed-invariant.test.mjs
 // issue #697: parallel fan-out 撤去後に残った「常に空の plan.parallel」と参照ゼロの schema を削除した後、
 // それらが dev-flow.js / _lib canonical に再登場しないことを静的に pin する。
-// plan は serial のみを持つ（synthesizeFablePlan の出力。値を積む経路は serial だけ）。
+// plan は serial のみを持つ（synthesizeImplPlan の出力。値を積む経路は serial だけ）。
 //
 // Run: npx vitest run _lib/plan-parallel-removed-invariant.test.mjs
 import { test } from 'vitest';
@@ -49,14 +49,14 @@ for (const rel of targets) {
 
 // ---- (c) 合成 plan と plan を読む側は serial のみを扱う ----
 
-test('[plan-parallel-removed] (c) synthesizeFablePlan は serial のみを返し、isFablePlan / adoptReportedFiles / planPaths は serial だけを読む', () => {
+test('[plan-parallel-removed] (c) synthesizeImplPlan は serial のみを返し、isImplPlan / adoptReportedFiles / planPaths は serial だけを読む', () => {
   const src = readFileSync(join(pluginRoot, '.claude/workflows/dev-flow.js'), 'utf8');
-  const synthStart = src.indexOf('function synthesizeFablePlan(req, issue)');
-  assert.ok(synthStart >= 0, 'synthesizeFablePlan が無い');
+  const synthStart = src.indexOf('function synthesizeImplPlan(req, issue)');
+  assert.ok(synthStart >= 0, 'synthesizeImplPlan が無い');
   const synthBody = src.slice(synthStart, src.indexOf('\n}\n', synthStart));
   assert.ok(synthBody.includes('serial: ['), synthBody);
-  assert.ok(!synthBody.includes('parallel'), `synthesizeFablePlan に parallel が残っている:\n${synthBody}`);
-  assert.ok(src.includes('function isFablePlan(p) { return (p?.serial ?? []).some(isFableTask) }'));
+  assert.ok(!synthBody.includes('parallel'), `synthesizeImplPlan に parallel が残っている:\n${synthBody}`);
+  assert.ok(src.includes('function isImplPlan(p) { return (p?.serial ?? []).some(isImplTask) }'));
   assert.ok(src.includes('return { ...plan, serial: (plan.serial ?? []).map(adopt) }'));
   const prArtifacts = readFileSync(join(here, 'pr-artifacts.mjs'), 'utf8');
   assert.ok(prArtifacts.includes('for (const t of arr(plan?.serial)) {'), 'planPaths は plan.serial だけを走査する');

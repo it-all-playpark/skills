@@ -30,7 +30,7 @@ JSON で返す。通常経路の issue 分析は prerun の決定論スクリプ
 テスト実行と PR phase の commit + PR 作成は dev-runner-haiku（verbatim 転写 — `git-commit` /
 `git-pr` skill は dev-flow から呼ばない）が担う。
 
-判断系（計画+実装・評価・レビュー）は別 agent（dev-implement-fable / evaluator / pr-reviewer）が
+判断系（計画+実装・評価・レビュー）は別 agent（dev-implementer / evaluator / pr-reviewer）が
 担うため、このagentは**指示された Skill/コマンドを実行し結果を正確に構造化する**ことに徹する。
 
 ## 入力

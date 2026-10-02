@@ -78,7 +78,7 @@ dev-flow の Analyze ゲート（AC 空）が needs_clarification に倒す。
 | `scope` | AC 節を除く body の先頭 4000 字。超過時は末尾に `[TRUNCATED: scope shows the first 4000 of N chars ...]` マーカーを付加（silent に切らない。issue #596） |
 | `scope_truncated` | boolean、常時出力。`scope` がマーカー付きで切断されたか |
 | `scope_total_chars` | 整数、常時出力。AC 節を除く body の総文字数（切断前の実サイズ） |
-| `issue_body` | body 全文（AC 節を含む）の先頭 4000 字。超過時は `scope` と同じ `[TRUNCATED: issue_body ...]` マーカーを付加。dev-flow の Implement phase が plan+impl 統合 implementer（dev-implement-fable）へ issue 本文として渡す（issue #668） |
+| `issue_body` | body 全文（AC 節を含む）の先頭 4000 字。超過時は `scope` と同じ `[TRUNCATED: issue_body ...]` マーカーを付加。dev-flow の Implement phase が plan+impl 統合 implementer（dev-implementer）へ issue 本文として渡す（issue #668） |
 | `issue_body_truncated` | boolean、常時出力。`issue_body` がマーカー付きで切断されたか |
 | `breaking_keyword_scan` | 決定論 keyword scan の結果 |
 | `title_breaking_marker` | boolean、常時出力。title の conventional prefix に `!`（`feat!:` 等）があるか |

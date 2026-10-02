@@ -90,7 +90,7 @@ function makeSandbox(analyzeReq, epochMode) {
     }
     // Setup 末尾の analyze ゲートは args.setup.analyze から REQ を組み spawn しない（issue #690）。
     // setup_end は args.setup.epoch_end から給電され implement 区間の起点になる（issue #695）。
-    // implement_end は dev-implement-fable 呼び出しの epoch から給電される。
+    // implement_end は dev-implementer 呼び出しの epoch から給電される。
     // Security floor / Merge tier: danger-grep 系（label が 'danger-grep' で始まる）
     // → danger clean にして HOLD 要因を発生させない（給電対象ではない）
     if (label.startsWith('danger-grep')) {
@@ -148,7 +148,7 @@ function makeSandbox(analyzeReq, epochMode) {
     }
     // implementer（implement_end の給電元）。給電した epoch を記録し、phase_durations.implement の
     // 起点が setup_end（args.setup.epoch_end）であることを検証する（issue #695）。
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       const res = withEpoch({ status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] });
       if (typeof res.epoch === 'number') implEpochs.push(res.epoch);
       return res;

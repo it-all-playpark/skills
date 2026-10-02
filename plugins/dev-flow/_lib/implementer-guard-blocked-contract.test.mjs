@@ -1,9 +1,9 @@
 // implementer-guard-blocked-contract.test.mjs
-// `.claude/agents/dev-implement-fable.md` の guard_blocked 契約（issue #448 / #451 由来。#673 で
-// implementer.md から dev-implement-fable.md へ移設）を source-pin するテスト。
+// `.claude/agents/dev-implementer.md` の guard_blocked 契約（issue #448 / #451 由来。#673 で
+// implementer.md から dev-implementer.md へ移設）を source-pin するテスト。
 //
 // implementer-staging-convention.test.mjs の Part 1（source pin）形式を踏襲するが、対象は
-// dev-flow.js ではなく `.claude/agents/dev-implement-fable.md` 本体（agent spawn prompt の一次情報源）。
+// dev-flow.js ではなく `.claude/agents/dev-implementer.md` 本体（agent spawn prompt の一次情報源）。
 //
 // このテストは以下を assert する:
 //   (a) 'guard_blocked' と 'block_class' が存在する
@@ -22,14 +22,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const agentMdPath = join(here, '..', '.claude/agents/dev-implement-fable.md');
+const agentMdPath = join(here, '..', '.claude/agents/dev-implementer.md');
 
 const src = readFileSync(agentMdPath, 'utf8');
 
 // guard_blocked の定義文脈を切り出す（bullet 見出しから次の見出しまで）。
 function extractGuardBlockedSection(text) {
   const startIdx = text.indexOf('**`guard_blocked`**');
-  assert.ok(startIdx >= 0, 'dev-implement-fable.md に guard_blocked bullet の見出しが見つからない');
+  assert.ok(startIdx >= 0, 'dev-implementer.md に guard_blocked bullet の見出しが見つからない');
   const rest = text.slice(startIdx);
   const nextHeadingIdx = rest.search(/\n##+ /);
   return nextHeadingIdx >= 0 ? rest.slice(0, nextHeadingIdx) : rest;
@@ -40,12 +40,12 @@ const guardSection = extractGuardBlockedSection(src);
 // ============================================================
 // (a) 'guard_blocked' と 'block_class' が存在する
 // ============================================================
-test('[guard-blocked-contract] dev-implement-fable.md に "guard_blocked" が含まれる', () => {
-  assert.ok(src.includes('guard_blocked'), 'dev-implement-fable.md に "guard_blocked" が存在しない');
+test('[guard-blocked-contract] dev-implementer.md に "guard_blocked" が含まれる', () => {
+  assert.ok(src.includes('guard_blocked'), 'dev-implementer.md に "guard_blocked" が存在しない');
 });
 
-test('[guard-blocked-contract] dev-implement-fable.md に "block_class" が含まれる', () => {
-  assert.ok(src.includes('block_class'), 'dev-implement-fable.md に "block_class" が存在しない');
+test('[guard-blocked-contract] dev-implementer.md に "block_class" が含まれる', () => {
+  assert.ok(src.includes('block_class'), 'dev-implementer.md に "block_class" が存在しない');
 });
 
 // ============================================================
@@ -90,9 +90,9 @@ test('[guard-blocked-contract] guard_blocked 定義文脈に "迂回" と "禁�
 // ============================================================
 // (f) JSON 例に '"block_class": "guard_blocked"' が存在する
 // ============================================================
-test('[guard-blocked-contract] dev-implement-fable.md の JSON 例に \'"block_class": "guard_blocked"\' が含まれる', () => {
+test('[guard-blocked-contract] dev-implementer.md の JSON 例に \'"block_class": "guard_blocked"\' が含まれる', () => {
   assert.ok(
     src.includes('"block_class": "guard_blocked"'),
-    'dev-implement-fable.md の JSON 例に \'"block_class": "guard_blocked"\' が存在しない',
+    'dev-implementer.md の JSON 例に \'"block_class": "guard_blocked"\' が存在しない',
   );
 });

@@ -2,7 +2,7 @@
 // dev-flow / pr-iterate の品質ゲート agent（pr-reviewer / evaluator）は model override を渡さず
 // agents/*.md の frontmatter 既定（evaluator は opus / medium、pr-reviewer は opus / high）で spawn する — これを VM 挙動と静的検査で pin する。
 // model を変える正規経路は frontmatter であり、workflow 側に定数・fallback 機構を持たない。
-// dev-implement-fable も frontmatter 既定（opus / high）で spawn し、override は green-fix の `model: 'sonnet'`
+// dev-implementer も frontmatter 既定（opus / high）で spawn し、override は green-fix の `model: 'sonnet'`
 // だけ（call site 別の挙動は impl-model-opus.test.mjs が pin）。本ファイルの静的検査は品質ゲート agent の call 行に限定する。
 //
 //   (a) DEV_FLOW_SCENARIOS 全 scenario + baseline で観測される pr-reviewer call は opts に `model` キーを持たない
@@ -10,7 +10,7 @@
 //   (c) pr-iterate.js の pr-reviewer call（review#i / schema-retry）も `model` キーを持たない
 //   (d) telemetry の review_model_config / eval_model_config / impl_model_config リテラルは各 agent の frontmatter の
 //       model と一致し、journal 経路（dev-flow: 失敗 / 成功 / abort、pr-iterate: 終端 / abort）全てに載る。
-//       3 agent とも frontmatter は `model: opus`。effort は evaluator のみ `medium`、pr-reviewer / dev-implement-fable は `high`
+//       3 agent とも frontmatter は `model: opus`。effort は evaluator のみ `medium`、pr-reviewer / dev-implementer は `high`
 //   (e) 両 workflow の evaluator / pr-reviewer の call site に `model:` が無い（静的）
 //   (f) 両 workflow に quality model 定数 / fallback 機構の残骸（QUALITY_MODEL / QUALITY_FALLBACK /
 //       nested.quality_fallback / quality_model_config / quality_model_fallback_label）が無い（静的）
@@ -29,7 +29,7 @@ const devFlowSrc = readFileSync(join(repoRoot, '.claude', 'workflows', 'dev-flow
 const prIterateSrc = readFileSync(join(repoRoot, '.claude', 'workflows', 'pr-iterate.js'), 'utf8');
 const prReviewerMd = readFileSync(join(repoRoot, 'agents', 'pr-reviewer.md'), 'utf8');
 const evaluatorMd = readFileSync(join(repoRoot, 'agents', 'evaluator.md'), 'utf8');
-const implementFableMd = readFileSync(join(repoRoot, 'agents', 'dev-implement-fable.md'), 'utf8');
+const implementerMd = readFileSync(join(repoRoot, 'agents', 'dev-implementer.md'), 'utf8');
 
 const REVIEWER = 'dev-flow:pr-reviewer';
 const EVALUATOR = 'dev-flow:evaluator';
@@ -100,11 +100,11 @@ test('[review-model] (c) pr-iterate.js: review#i / schema-retry の pr-reviewer 
 test('[review-model] (d) review_model_config / eval_model_config / impl_model_config は frontmatter の model と一致し、journal 経路全てに載る', () => {
   const reviewerFm = frontmatterModel(prReviewerMd, 'pr-reviewer.md');
   const evaluatorFm = frontmatterModel(evaluatorMd, 'evaluator.md');
-  const implFm = frontmatterModel(implementFableMd, 'dev-implement-fable.md');
+  const implFm = frontmatterModel(implementerMd, 'dev-implementer.md');
   assert.equal(reviewerFm, 'opus', 'pr-reviewer.md frontmatter の model は opus のはず');
   assert.equal(evaluatorFm, 'opus', 'evaluator.md frontmatter の model は opus のはず');
-  assert.equal(implFm, 'opus', 'dev-implement-fable.md frontmatter の model は opus のはず');
-  for (const [md, name, effort] of [[prReviewerMd, 'pr-reviewer.md', 'high'], [evaluatorMd, 'evaluator.md', 'medium'], [implementFableMd, 'dev-implement-fable.md', 'high']]) {
+  assert.equal(implFm, 'opus', 'dev-implementer.md frontmatter の model は opus のはず');
+  for (const [md, name, effort] of [[prReviewerMd, 'pr-reviewer.md', 'high'], [evaluatorMd, 'evaluator.md', 'medium'], [implementerMd, 'dev-implementer.md', 'high']]) {
     assert.equal(frontmatterField(md, name, 'effort'), effort, `${name} frontmatter の effort は ${effort} のはず`);
   }
   const lines = (src, key) => src.split('\n').filter((l) => l.includes(`${key}:`));
@@ -130,9 +130,9 @@ test('[review-model] (e) 両 workflow の evaluator / pr-reviewer の call site 
   }
   const evaluatorHits = devFlowSrc.split('\n').filter((l) => l.includes("agentType: 'evaluator'"));
   assert.equal(evaluatorHits.length, 3, 'evaluator call site は 3 箇所のはず');
-  // model override を持つ call は dev-implement-fable（FABLE_IMPL_AGENT）の call 行だけ
+  // model override を持つ call は dev-implementer（IMPL_AGENT）の call 行だけ
   const modelHits = devFlowSrc.split('\n').filter((l) => /\bagentType:\s*'/.test(l) && /\bmodel:/.test(l));
-  assert.deepEqual(modelHits, [], 'dev-flow.js: 文字列 agentType の call 行に model が残っている（model override は FABLE_IMPL_AGENT の call 行に限る）');
+  assert.deepEqual(modelHits, [], 'dev-flow.js: 文字列 agentType の call 行に model が残っている（model override は IMPL_AGENT の call 行に限る）');
 });
 
 test('[review-model] (f) 両 workflow に quality model 定数 / fallback 機構の残骸が無い（静的）', () => {

@@ -119,7 +119,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult) {
       return journalResult;
     }
     // implementer その他
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

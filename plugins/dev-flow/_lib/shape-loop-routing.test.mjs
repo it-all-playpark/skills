@@ -1,7 +1,7 @@
 // shape 別の Evaluate 深さを VM 実行の呼び出しカウントで pin する（string-pattern ではなく挙動）。
 // Plan phase は無く、全 shape で合成 plan のみ（issue #673 / #678）— plan review ループは存在しない。
 //   (A) standard: evaluator ちょうど 1 回（EVAL_PASSES=1）。evaluator が fail を返しても差し戻さない
-//   (B) complex: evaluator が fail → reimpl#1（dev-implement-fable）→ 2 回目 pass で収束（差し戻し loop）
+//   (B) complex: evaluator が fail → reimpl#1（dev-implementer）→ 2 回目 pass で収束（差し戻し loop）
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -30,7 +30,7 @@ const EVAL_PASS = {
 const REQ4 = { summary: 's', acceptance_criteria: AC4, issue_type: 'feat', scope: 'src', issue_number: 1, issue_title: 'stub-issue-title' };
 // standard: 既定 responder の realized 3 件（STANDARD_FILES）+ AC 4 → 'standard'
 const STANDARD_OVERRIDES = { 'analyze#1': REQ4 };
-// complex: realized 7 件（shapeOverrides — dev-implement-fable も同じ 7 件を申告 → 宣言外 0 件）→ 'complex'
+// complex: realized 7 件（shapeOverrides — dev-implementer も同じ 7 件を申告 → 宣言外 0 件）→ 'complex'
 const COMPLEX_OVERRIDES = { 'analyze#1': REQ4, ...shapeOverrides('complex') };
 
 async function run(overrides) {
@@ -49,11 +49,11 @@ test('[shape-loop] SHAPE=standard: evaluator 呼び出し 1 回（fail でも差
   assert.equal(calls.filter((c) => c.agentType === 'dev-flow:plan-reviewer' || c.agentType === 'dev-flow:dev-planner').length, 0, 'plan review 系 agent が起動した');
 });
 
-test('[shape-loop] SHAPE=complex: evaluator fail → reimpl#1（dev-implement-fable）→ pass で evaluator 2 回（制御群）', async () => {
+test('[shape-loop] SHAPE=complex: evaluator fail → reimpl#1（dev-implementer）→ pass で evaluator 2 回（制御群）', async () => {
   const calls = await run({ ...COMPLEX_OVERRIDES, 'eval#1': EVAL_FAIL, 'eval#2': EVAL_PASS });
   const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(evaluatorCalls.length, 2, `SHAPE=complex: evaluator は 2 回（fail → 差し戻し → pass）のはずだが ${evaluatorCalls.length} 回だった`);
   const reimpl = calls.filter((c) => c.label === 'reimpl#1:serial:issue-1');
   assert.equal(reimpl.length, 1, `complex の差し戻しは reimpl#1:serial:issue-1 の 1 回のはず: ${calls.filter((c) => c.label.startsWith('reimpl')).map((c) => c.label).join(', ')}`);
-  assert.equal(reimpl[0].agentType, 'dev-flow:dev-implement-fable', `reimpl#1 の agentType が ${reimpl[0].agentType}`);
+  assert.equal(reimpl[0].agentType, 'dev-flow:dev-implementer', `reimpl#1 の agentType が ${reimpl[0].agentType}`);
 });

@@ -53,7 +53,7 @@ function createResponder() {
         issue_title: 'stub-issue-title',
       };
     }
-    // dev-implement-fable stub の files は realized-diff stub（['src/foo.ts']）と一致させて宣言済みにする。
+    // dev-implementer stub の files は realized-diff stub（['src/foo.ts']）と一致させて宣言済みにする。
     // 宣言外扱いで micro Evaluate 強制（issue #272 F2）が誤発火すると、このテストが
     // 検証したい「green-fix 経由の Evaluate 強制」の pin が意味を失うため。
     // danger-grep: 空（danger path ではない）
@@ -93,10 +93,10 @@ function createResponder() {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
     // implementer（green-fix も含む）
-    if (agentType === 'dev-flow:dev-implement-fable' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:dev-implementer' && label.startsWith('green-fix')) {
       return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'typo修正', concerns: [] };
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

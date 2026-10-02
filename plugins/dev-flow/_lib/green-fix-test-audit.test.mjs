@@ -77,10 +77,10 @@ function createResponder() {
     }
     // implementer（green-fix も含む）
     // green-fix 経路の実装: files / summary を返す（issue #179 変更内容 2 の検証用）
-    if (agentType === 'dev-flow:dev-implement-fable' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:dev-implementer' && label.startsWith('green-fix')) {
       return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'typo修正: 期待値が古いAPIを参照していた', concerns: [] };
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避

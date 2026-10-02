@@ -6,7 +6,7 @@
 //   (a) 通常経路（AC 抽出成功・conflict 無し・uncertain 空）: analyze ゲートの agent spawn が 0 件、
 //       旧 label（contract-probe# / analyze# / issue-meta / analyze-retrunc# / analyze-retry#）が 0 件、run は完走
 //   (b) ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）: needs_clarification が isolation-probe より前に
-//       確定し、isolation-probe / dev-implement-fable / pr の spawn が 0 件、ゲート後の sonnet spawn
+//       確定し、isolation-probe / dev-implementer / pr の spawn が 0 件、ゲート後の sonnet spawn
 //       （analyze-clarify#1, dev-runner）はちょうど 1 回
 //   (c) analyze.ok:false（gh 到達不能 / JSON 不正）: needs_clarification（source=analyze_prerun）で sonnet も
 //       isolation-probe も spawn しない
@@ -14,7 +14,7 @@
 //   (e) 通常経路の isolation-probe は Analyze ゲート後・Implement 前に 1 回（needs_clarification 経路では 0 回）
 //   (f) args.setup.analyze が ok:true だが whitelist 不合格 → fail-closed throw（推測で REQ を組まない）
 //   (g) clarify prompt はゲート理由を verbatim で含み、issue 転写（gh の直接実行 / sandbox 語）を指示しない
-//   (h) REQ が prerun の analyze から組まれる: breaking_change / issue_body / AC が fable prompt と shape に届く
+//   (h) REQ が prerun の analyze から組まれる: breaking_change / issue_body / AC が dev-implementer prompt と shape に届く
 //   (i) open な blocker（issue #744）: needs_clarification（source=blocked_by）で journal handoff 以外の spawn 0、
 //       missing_context に未完了 issue を列挙。analyze ゲートより先に判定する。closed のみなら通常経路
 //
@@ -46,13 +46,13 @@ function analyzeGateCalls(calls) {
 function legacyCalls(calls) {
   return calls.filter((c) => LEGACY_ANALYZE_LABELS.some((p) => c.label === p || c.label.startsWith(p)));
 }
-function fableCalls(calls) {
-  return calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
+function implementerCalls(calls) {
+  return calls.filter((c) => c.agentType === 'dev-flow:dev-implementer');
 }
 function assertClarificationBeforeSpawn(calls, result, name) {
   assert.equal(result?.status, 'needs_clarification', `[${name}] status は needs_clarification のはずだが ${JSON.stringify(result?.status)}`);
   assert.equal(calls.filter((c) => c.label === 'isolation-probe').length, 0, `[${name}] needs_clarification 経路で isolation-probe が spawn されている`);
-  assert.equal(fableCalls(calls).length, 0, `[${name}] needs_clarification 経路で dev-implement-fable が spawn されている`);
+  assert.equal(implementerCalls(calls).length, 0, `[${name}] needs_clarification 経路で dev-implementer が spawn されている`);
   assert.equal(calls.filter((c) => c.label.startsWith('pr')).length, 0, `[${name}] needs_clarification 経路で pr 系が spawn されている`);
   assert.equal(legacyCalls(calls).length, 0, `[${name}] 旧 analyze 系 label が spawn されている: ${legacyCalls(calls).map((c) => c.label).join(', ')}`);
 }
@@ -79,13 +79,13 @@ test('[analyze-routing] (a2) jev 経路（comment_overrides のみ / breaking_ch
   assert.ok(logs.some((l) => l.includes('breaking_change=true')), 'breaking_change の log が無い');
 });
 
-// ---- (b) ゲート 3 条件 → needs_clarification（probe / fable より前・sonnet 1 回）----
+// ---- (b) ゲート 3 条件 → needs_clarification（probe / dev-implementer より前・sonnet 1 回）----
 for (const [name, analyze] of [
   ['AC 空', { acceptance_criteria: [] }],
   ['comment_conflicts 非空', { analyze_path: 'jev', jev_reasons: ['comments present (1)'], comment_count: 1, comment_conflicts: ['conflict: comment #1 by alice（OWNER, t）: hmm'] }],
   ['uncertain 非空', { analyze_path: 'jev', jev_reasons: ['breaking_keyword_scan true'], uncertain: ['breaking_keyword_scan: Jev 応答なし'] }],
 ]) {
-  test(`[analyze-routing] (b) ${name} → needs_clarification が isolation-probe / fable より前に確定し、sonnet（analyze-clarify#1）はちょうど 1 回`, async () => {
+  test(`[analyze-routing] (b) ${name} → needs_clarification が isolation-probe / dev-implementer より前に確定し、sonnet（analyze-clarify#1）はちょうど 1 回`, async () => {
     const { calls, result, error } = await run({ analyze });
     assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
     assertClarificationBeforeSpawn(calls, result, name);
@@ -140,13 +140,13 @@ test('[analyze-routing] (d) analyze-clarify#1 が null / throw でもゲート�
 });
 
 // ---- (e) isolation-probe の位置: ゲート後・Implement 前 ----
-test('[analyze-routing] (e) 通常経路の isolation-probe は Analyze ゲート後・dev-implement-fable 前に 1 回', async () => {
+test('[analyze-routing] (e) 通常経路の isolation-probe は Analyze ゲート後・dev-implementer 前に 1 回', async () => {
   const { calls, error } = await run();
   assert.equal(error, null);
   const probeIdx = calls.findIndex((c) => c.label === 'isolation-probe');
-  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implement-fable');
+  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implementer');
   assert.equal(calls.filter((c) => c.label === 'isolation-probe').length, 1);
-  assert.ok(probeIdx >= 0 && implIdx > probeIdx, `isolation-probe(${probeIdx}) は dev-implement-fable(${implIdx}) より前のはず`);
+  assert.ok(probeIdx >= 0 && implIdx > probeIdx, `isolation-probe(${probeIdx}) は dev-implementer(${implIdx}) より前のはず`);
   // probe より前の spawn は 0（Setup / Analyze は decision-only）
   assert.equal(probeIdx, 0, `isolation-probe より前に spawn がある: ${calls.slice(0, probeIdx).map((c) => c.label).join(', ')}`);
   assert.equal(calls[probeIdx].agentType, 'dev-flow:dev-runner-haiku-wo');
@@ -194,15 +194,15 @@ test('[analyze-routing] (g2) analyze-clarify#1 prompt は互換性の明記を b
 });
 
 // ---- (h) REQ は prerun の analyze から組まれる ----
-test('[analyze-routing] (h) prerun の analyze の issue_body / AC / issue_title が fable prompt に届き、breaking_change=true は shape=complex に倒す', async () => {
+test('[analyze-routing] (h) prerun の analyze の issue_body / AC / issue_title が dev-implementer prompt に届き、breaking_change=true は shape=complex に倒す', async () => {
   const analyze = prerunAnalyze({ issue_title: 'feat: prerun analyze', issue_body: 'PRERUN-BODY-MARKER', acceptance_criteria: ['AC-ONE', 'AC-TWO'], breaking_change: true, breaking_evidence: 'title の breaking marker (!)' });
   const { calls, logs, error } = await run({ args: devFlowArgs(1, { analyze }) });
   assert.equal(error, null);
-  const impl = calls.find((c) => c.agentType === 'dev-flow:dev-implement-fable');
+  const impl = calls.find((c) => c.agentType === 'dev-flow:dev-implementer');
   assert.ok(impl);
-  assert.ok(impl.prompt.includes('PRERUN-BODY-MARKER'), 'issue_body が fable prompt に無い');
-  assert.ok(impl.prompt.includes('AC-ONE') && impl.prompt.includes('AC-TWO'), 'AC が fable prompt に無い');
-  assert.ok(impl.prompt.includes('feat: prerun analyze'), 'issue_title が fable prompt に無い');
+  assert.ok(impl.prompt.includes('PRERUN-BODY-MARKER'), 'issue_body が dev-implementer prompt に無い');
+  assert.ok(impl.prompt.includes('AC-ONE') && impl.prompt.includes('AC-TWO'), 'AC が dev-implementer prompt に無い');
+  assert.ok(impl.prompt.includes('feat: prerun analyze'), 'issue_title が dev-implementer prompt に無い');
   assert.ok(logs.some((l) => /shape=complex|floor=complex|breaking change detected/.test(l)), `breaking_change=true が shape に反映されていない: ${logs.filter((l) => l.includes('shape')).join(' | ')}`);
 });
 
@@ -211,7 +211,7 @@ const OPEN_BLOCKER = { repo: 'acme/skills', number: 12, state: 'OPEN', source: '
 const OPEN_BODY_BLOCKER = { repo: 'other/lib', number: 5, state: 'OPEN', source: 'body', url: 'https://github.com/other/lib/issues/5' };
 const CLOSED_BLOCKER = { repo: 'acme/skills', number: 13, state: 'CLOSED', source: 'body', url: 'https://github.com/acme/skills/issues/13' };
 
-test('[analyze-routing] (i) open な blocker → needs_clarification（source=blocked_by）で sonnet / isolation-probe / fable を spawn せず、missing_context に未完了 issue を列挙', async () => {
+test('[analyze-routing] (i) open な blocker → needs_clarification（source=blocked_by）で sonnet / isolation-probe / dev-implementer を spawn せず、missing_context に未完了 issue を列挙', async () => {
   const { calls, result, error, logs } = await run({ analyze: { blockers: [OPEN_BLOCKER, CLOSED_BLOCKER, OPEN_BODY_BLOCKER] } });
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
   assertClarificationBeforeSpawn(calls, result, 'blocked_by');
@@ -235,12 +235,12 @@ test('[analyze-routing] (i2) open な blocker と uncertain が同時 → blocke
   assert.equal(calls.filter((c) => c.label.startsWith('analyze-clarify')).length, 0);
 });
 
-test('[analyze-routing] (i3) closed の blocker のみ → 従来どおり isolation-probe → dev-implement-fable へ進む', async () => {
+test('[analyze-routing] (i3) closed の blocker のみ → 従来どおり isolation-probe → dev-implementer へ進む', async () => {
   const { calls, result, error, logs } = await run({ analyze: { blockers: [CLOSED_BLOCKER] } });
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
   assert.ok(result?.status !== 'needs_clarification', `closed のみで止まってはならない: ${JSON.stringify(result?.status)}`);
   assert.equal(calls.filter((c) => c.label === 'isolation-probe').length, 1);
-  assert.ok(fableCalls(calls).length >= 1, 'dev-implement-fable が spawn されていない');
+  assert.ok(implementerCalls(calls).length >= 1, 'dev-implementer が spawn されていない');
   assert.ok(logs.some((l) => l.includes('acme/skills#13=CLOSED(body)')), 'closed blocker の log が無い');
 });
 

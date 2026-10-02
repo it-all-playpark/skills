@@ -66,7 +66,7 @@ function baseResponder(concernResolutions) {
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',

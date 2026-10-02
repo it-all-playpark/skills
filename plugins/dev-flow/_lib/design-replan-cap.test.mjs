@@ -1,7 +1,7 @@
-// design-replan-cap.test.mjs — DESIGN_REPLAN_MAX cap テスト（issue #673 AC-5: fable 経路で書き直し）
+// design-replan-cap.test.mjs — DESIGN_REPLAN_MAX cap テスト（issue #673 AC-5: 実装 agent 経路で書き直し）
 // complex 経路で evaluator が毎回異なる topic の design critical を返し続けるとき
 // (evalSeen の stuck 検出が発火しない = paraphrase 模倣)、DESIGN_REPLAN_MAX=2 で差し戻しが打ち切られ
-// evaluator 呼び出しが 3 回で停止することを検証する。差し戻し先は dev-implement-fable（reimpl#i）で、
+// evaluator 呼び出しが 3 回で停止することを検証する。差し戻し先は dev-implementer（reimpl#i）で、
 // planner agent は起動しない。
 
 import { test } from 'vitest';
@@ -32,7 +32,7 @@ function designCritical(callIndex) {
   };
 }
 
-test('[design-replan-cap] paraphrase design critical 連発 → DESIGN_REPLAN_MAX=2 で cap（reimpl#i は dev-implement-fable、planner 0 回）', async () => {
+test('[design-replan-cap] paraphrase design critical 連発 → DESIGN_REPLAN_MAX=2 で cap（reimpl#i は dev-implementer、planner 0 回）', async () => {
   const evalCalls = [];
   const { ctx, calls, logs } = makeDevFlowSandbox({
     overrides: {
@@ -49,7 +49,7 @@ test('[design-replan-cap] paraphrase design critical 連発 → DESIGN_REPLAN_MA
   const reimplCalls = calls.filter((c) => /^reimpl#\d+:serial:issue-1$/.test(c.label));
   assert.deepEqual(reimplCalls.map((c) => c.label), ['reimpl#1:serial:issue-1', 'reimpl#2:serial:issue-1'],
     `差し戻しは DESIGN_REPLAN_MAX=2 回で停止すべきだが: ${reimplCalls.map((c) => c.label).join(', ')}`);
-  for (const c of reimplCalls) assert.equal(c.agentType, 'dev-flow:dev-implement-fable', `${c.label} の agentType が ${c.agentType}`);
+  for (const c of reimplCalls) assert.equal(c.agentType, 'dev-flow:dev-implementer', `${c.label} の agentType が ${c.agentType}`);
   assert.equal(calls.filter((c) => c.agentType === 'dev-flow:dev-planner' || /^replan#\d+$/.test(c.label)).length, 0, 'design 差し戻しで dev-planner の replan が起動した');
 
   // eval#1→reimpl#1→eval#2→reimpl#2→eval#3 で cap break（DESIGN_REPLAN_MAX + 1 回）。EVAL_MAX=10 まで回らない

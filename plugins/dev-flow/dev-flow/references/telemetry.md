@@ -95,8 +95,8 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   （`review#i` / `${label}-schema-retry` / `pr-review-lite`）に渡す model。override を渡さないため値は
   `agents/pr-reviewer.md` frontmatter の `model`（`opus`）で、一致は同テストが pin する。evaluator と
   pr-reviewer を gate 別に区別して集計するためのキー）。
-  `impl_model_config`（dev-flow entry のみ、成功・失敗・abort とも。`dev-implement-fable` の既定 model =
-  `agents/dev-implement-fable.md` frontmatter の `model`（`opus`）で、一致は同テストが pin する。green-fix の
+  `impl_model_config`（dev-flow entry のみ、成功・失敗・abort とも。`dev-implementer` の既定 model =
+  `agents/dev-implementer.md` frontmatter の `model`（`opus`）で、一致は同テストが pin する。green-fix の
   `sonnet` override は固定値なのでキーを持たない — 世代は `plugin_version` で分かる）。
   `plugin_version`（同上両 entry。`_lib/plugin-version.mjs` の `PLUGIN_VERSION` 定数。workflow では
   plugin root 変数が展開されず fs も使えないため定数で持つ。plugin.json は version を持たない
@@ -125,7 +125,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   呼び出し自体が無いため合算 0。単体起動の pr-iterate は自身の handoff に同キーを記録）。
   nested 起動時は同じ counts が pr-iterate 側 journal entry にも記録されるため、journal を skill 横断で
   単純合計すると二重計上になる（集計時は dev-flow entry のみを使う）。by_type は agentType 別の
-  起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-implement-fable /
+  起動数（動的キー — enum 強制なし。dev-flow.js の実測 agentType は dev-implementer /
   evaluator / pr-reviewer / dev-runner / dev-runner-haiku / dev-runner-haiku-ro / dev-runner-haiku-wo /
   ui-verifier の 8 種、agentType 欠落は 'unknown'）。canonical は `_lib/subagent-invocations.mjs`、dev-flow.js / pr-iterate.js への inline は
   tools/sync-inlines.mjs で生成する。実 token 消費は workflow runtime（agent() 返り値は schema 準拠 JSON のみで

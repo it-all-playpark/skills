@@ -118,10 +118,10 @@ function createResponder({ mode, gateEmpty }) {
       }
       return { tests: 'passed', green: true, summary: '' };
     }
-    if (agentType === 'dev-flow:dev-implement-fable' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:dev-implementer' && label.startsWith('green-fix')) {
       return { status: 'DONE', task_id: 't', files: ['src/foo.test.ts'], summary: 'fix', concerns: [] };
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: ['src/foo.ts'], summary: '', concerns: [] };
     }
     if (agentType === 'dev-flow:evaluator') {

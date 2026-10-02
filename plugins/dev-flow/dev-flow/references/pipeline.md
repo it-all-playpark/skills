@@ -31,7 +31,7 @@ handoff の `skill` キーは `'dev-flow'` のまま据え置く（集計連続�
 
 ```
 /dev-flow <issue>   → [wrapper preflight] → Setup(末尾で決定論 analyze ゲート)
-                      → Implement(dev-implement-fable 1 spawn) → Validate(test green)
+                      → Implement(dev-implementer 1 spawn) → Validate(test green)
                       → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
@@ -65,21 +65,21 @@ shape ごとの経路（3 tier）:
 
 | shape | Implement 経路 | Evaluate 経路 | merge tier |
 |-------|-----------|---------------|------------|
-| **micro** | Setup 末尾の analyze ゲート通過後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable`（plan+impl 統合、opus / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
+| **micro** | Setup 末尾の analyze ゲート通過後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implementer`（plan+impl 統合、opus / high）を 1 spawn | skip（evaluator 0 回）。ただし danger-grep hit 時は security path で強制実行 | docs・test-only + danger clean + 収束なら AUTO 推奨ラベル（merge は人間） |
 | **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。例外は agent AC の未達で、`AGENT_AC_REIMPL_MAX` 回まで延長して差し戻す | REVIEW |
-| **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | REVIEW、danger・breaking で HOLD |
+| **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implementer`） | REVIEW、danger・breaking で HOLD |
 
 AC は analyze ゲートで actor（`_lib/ac-actor.mjs`: `（人手）` 表記・staging・本番・外部サービス・issue へのコメントは
 `human`、それ以外は `agent`）に分類する。AC の ledger item は LLM major で既定 `gate_policy` では advisory のため、
 ledger 収束だけでは未達 AC がループを回さない。そこで agent AC の `satisfied:false` は gate_policy に依らず
-`fix_feedback`（`topic: "AC-<n> 未達"`）付きで `dev-implement-fable` へ差し戻す（agent AC を理由にした差し戻しは全 shape で
+`fix_feedback`（`topic: "AC-<n> 未達"`）付きで `dev-implementer` へ差し戻す（agent AC を理由にした差し戻しは全 shape で
 `AGENT_AC_REIMPL_MAX` 回まで）。human AC は worktree 外の作業なので差し戻さない。Merge tier の HOLD 理由は
 `ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける。
-`dev-implement-fable` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
+`dev-implementer` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
 PR body の「設計判断」「検証」に載せる（evaluator も plan 経由で読み、「PR 本文に書く」型の AC を判定する）。
 
-Implement 経路は shape に関わらず `dev-implement-fable` 一本（planner ⇄ reviewer ループ・parallel fan-out・
-`pipeline()` は持たない。切替定数は置かず、経路を戻すときは git revert）。`dev-implement-fable` は issue 本文
+Implement 経路は shape に関わらず `dev-implementer` 一本（planner ⇄ reviewer ループ・parallel fan-out・
+`pipeline()` は持たない。切替定数は置かず、経路を戻すときは git revert）。`dev-implementer` は issue 本文
 （`req.issue_body`、analyze-issue.sh が 4000 字で切詰め）+ AC + `fix_feedback` を受け取り、AC テスト契約
 （red→green 自己実証）や手順書型 task は受け取らない — テスト全件・red 証明・AC 判定は Validate / redgreen-verify /
 evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL 返却の `files` を宣言として取り込む
@@ -90,7 +90,7 @@ blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止�
 test script 修正で opus 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
 Implement / BLOCKED 再実装 / Evaluate 差し戻しは `opts.model` を渡さず frontmatter の既定（opus / high）で spawn し、
 null 返却は再試行せず drop（`implDroppedCount`）に計上する。
-観測は journal の `subagent_invocations.by_type`（`dev-implement-fable` 件数）。
+観測は journal の `subagent_invocations.by_type`（`dev-implementer` 件数）。
 
 shape は analyze ゲートでは決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount, lineStats)` が
 realized diff の file 数・file ごとの追加/削除行数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）で
@@ -111,7 +111,7 @@ shape 較正が除外で下位 tier に決まった run / floor で上位 tier �
 あれば micro でも Evaluate を強制実行（security path）。
 
 **micro lite route**: `EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
-contract 準拠かつ danger clean）を満たす run は、PR phase で dev-implement-fable 1 spawn → targeted test →
+contract 準拠かつ danger clean）を満たす run は、PR phase で dev-implementer 1 spawn → targeted test →
 PR → pr-reviewer 1-pass の縮約経路（lite route、判断系 agent 呼び出し ≤10）を通る。lite の pr-reviewer
 1-pass が `review==null || blocking.length>0`（critical/major finding あり）を検出した場合のみ
 `workflow('pr-iterate')` フル loop へ自動昇格し、以降は通常の review⇄fix 経路で処理する。danger-grep
@@ -125,7 +125,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   namespace は `agent()` を呼ぶ直前の `nsAgentOpts()` (canonical `_lib/agent-namespace.mjs`。dev-flow.js /
   pr-iterate.js / dev-improve.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
-- **判断系 leaf は subagent** (`.claude/agents/{dev-implement-fable,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
+- **判断系 leaf は subagent** (`.claude/agents/{dev-implementer,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
   effort は原則 subagent frontmatter で決める。`agent()` の `opts.effort` は frontmatter より優先して実効値に反映される
   （transcript で確認済み。dev-flow-canary の `agent_opts_effort_accepted` probe は受理の有無だけを見る）が、
   opts で effort を渡すのは pr-iterate の fix（`fix#i` / `fix#i-retry`、`FIX_EFFORT = 'medium'`）のみ
@@ -136,7 +136,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   null 時の model fallback 機構は持たない（`_lib/review-model-frontmatter.test.mjs` が call site と telemetry
   `eval_model_config` / `review_model_config` / `impl_model_config` = frontmatter 値の一致を pin）。同一入力での paired 比較で
   opus-high は fable-high と verdict・major 検出が同等以上かつコストが 2/3 だったため、両 gate とも override を外している。
-  `dev-implement-fable` も frontmatter（opus / high）で spawn する（complex の盲検 replay で fable-high と品質同等・
+  `dev-implementer` も frontmatter（opus / high）で spawn する（complex の盲検 replay で fable-high と品質同等・
   所要時間とコストが約 −45% だったため）。override は green-fix の `model: 'sonnet'` だけ
   （call site 別の挙動は `_lib/impl-model-opus.test.mjs` が pin）。
   pr-iterate の fix（`fix#i` / `fix#i-retry`）は `dev-runner`（frontmatter sonnet / high）に `model: 'opus'` と
@@ -152,10 +152,10 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。
   pr-reviewer は `effort: high`（max と精度同等で高速。medium は major を minor に下げ decision が甘くなる）、
   evaluator は `effort: medium`（paired replay で high と verdict・major/critical 検出が同等のまま所要・コストが下がる）、
-  dev-implement-fable / dev-runner は
+  dev-implementer / dev-runner は
   `effort: high`、dev-runner-haiku / dev-runner-haiku-ro は `effort: low`（mechanical exec-proxy は
   low が high に schema 成功率で劣後しない）。
-- **1 issue = 1 PR**。Implement は全 shape で `dev-implement-fable` を単一 worktree に 1 spawn する（parallel fan-out / `pipeline()` は持たない）。
+- **1 issue = 1 PR**。Implement は全 shape で `dev-implementer` を単一 worktree に 1 spawn する（parallel fan-out / `pipeline()` は持たない）。
 - **merge は手動** (LGTM 後にユーザーが merge)。
 - worktree の後片付けは `_shared/scripts/worktree-teardown.sh <worktree-path>` を使う
   (`git worktree remove` 直打ちは `.veridelta/runs/*.json` の red→green 検証証跡を失う)。
@@ -218,11 +218,11 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   **軸A invariant 不変** — deterministic oracle / seed / critical アイテムは全 policy で blocking のまま（security floor / 決定論ゲートは policy で緩めない）。
   **既定同一挙動** — 既定 `llm-major-advisory` は軸A invariant（critical / deterministic / seed = blocking）+ LLM major/minor = advisory の既定 lane 分類と全アイテムで一致し、非 default policy のみ gating が変わる（enum で境界を滑らせる設計）。
   out-of-enum 値は明示 error（legacy fallback / version 分岐なし）。canonical は `_lib/gate-policy.mjs`、dev-flow.js への inline は tools/sync-inlines.mjs で生成・`_lib/workflow-inlines.sync.test.mjs` が全文一致保証。
-- **block_class**: dev-implement-fable 返り値 `status:'BLOCKED'` の `blocking_reason` は閉じた 2 値 enum
+- **block_class**: dev-implementer 返り値 `status:'BLOCKED'` の `blocking_reason` は閉じた 2 値 enum
   `approach_mismatch` / `guard_blocked` を持つ構造化 object（`{block_class, detail, guard_id}`）で、
   string（free text）は受理せず schema error になる。`guard_blocked` は guard/hook 由来の BLOCKED
   （inline-edit-guard deny / sandbox EPERM / safety classifier block / bg-isolation 等）を指し、
-  Implement phase の再実装ループ（blockSeen 登録・`approach_mismatch` findings 化・dev-implement-fable
+  Implement phase の再実装ループ（blockSeen 登録・`approach_mismatch` findings 化・dev-implementer
   再 spawn）から除外され、blockedConcerns 経由で evaluator focus へ直行する。out-of-enum の
   `block_class` は明示 error（legacy fallback / version 分岐なし）。canonical は
   `_lib/block-routing.mjs`、dev-flow.js への inline は tools/sync-inlines.mjs で生成する。

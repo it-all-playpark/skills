@@ -22,7 +22,7 @@
  *   - mergeTierFacts(overrides?): Merge tier 統合 exec-proxy（label 'merge-tier-facts'）の応答を組み立てる
  *   - devFlowResponder(overrides?, {issue?}?): dev-flow.js 標準経路（shape 'standard'）の既定 responder
  *   - STANDARD_FILES / COMPLEX_FILES / MICRO_FILES: 実効 shape を realized file 数で倒すための files 一覧
- *     （danger-grep と dev-implement-fable の両 stub に同じ一覧を渡すと宣言外 0 件で shape だけが変わる）
+ *     （danger-grep と dev-implementer の両 stub に同じ一覧を渡すと宣言外 0 件で shape だけが変わる）
  *   - shapeOverrides('micro'|'complex'): 上記を impl / reimpl#1..2 / danger-grep（+ micro は ci-check-lite）の
  *     override にまとめたもの。既定（override なし）は standard
  *   - prIterateResponder(overrides?): pr-iterate.js 単体起動の既定 responder
@@ -151,7 +151,7 @@ export function makeRecordingSandbox(responder, extraSandbox = {}) {
   };
 
   // parallel() / pipeline() は sandbox に置かない — dev-flow.js の Implement は
-  // dev-implement-fable の単一 serial spawn で fan-out を持たない（issue #673）。
+  // dev-implementer の単一 serial spawn で fan-out を持たない（issue #673）。
 
   const sandbox = {
     // control fns（既定で呼び出しを logs/phases に記録する。extraSandbox で上書き可）
@@ -294,17 +294,17 @@ export function mergeTierFacts(o = {}) {
 
 /**
  * 既定 run の realized / 申告ファイル（3 件 → 実効 shape 'standard'）。
- * dev-implement-fable stub の files と danger-grep stub の files の両方に使う（宣言外 0 件）。
+ * dev-implementer stub の files と danger-grep stub の files の両方に使う（宣言外 0 件）。
  */
 export const STANDARD_FILES = ['src/x.ts', 'src/y.ts', 'src/z.ts'];
-/** complex（realized 6 件超）に倒す test 用のファイル一覧。danger-grep / dev-implement-fable の両 override に使う。 */
+/** complex（realized 6 件超）に倒す test 用のファイル一覧。danger-grep / dev-implementer の両 override に使う。 */
 export const COMPLEX_FILES = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts', 'src/f.ts', 'src/g.ts'];
 /** micro（realized 2 件以下）に倒す test 用のファイル一覧。 */
 export const MICRO_FILES = ['src/x.ts'];
 
 /**
  * 実効 shape を realized file 数で倒す override 集合を返す。
- * dev-implement-fable（impl / reimpl#1 / reimpl#2）の申告 files と danger-grep の files を同じ一覧にし、
+ * dev-implementer（impl / reimpl#1 / reimpl#2）の申告 files と danger-grep の files を同じ一覧にし、
  * 宣言外 0 件のまま shape だけを変える。micro は lite route の ci-check-lite 応答も含む。
  *
  * @param {'micro'|'complex'} shape
@@ -345,10 +345,10 @@ export function devFlowResponder(overrides = {}, { issue = 1 } = {}) {
     // ゲート（AC 空 / comment_conflicts / uncertain）が引いたときだけ analyze-clarify#N（dev-runner）が
     // 人間向け missing_context を返す（issue #690）。
     if (label.startsWith('analyze-clarify')) return { missing_context: ['stub-clarify-question'] };
-    // Implement / green-fix / reimpl は全 shape で dev-implement-fable 一本（issue #673）。
+    // Implement / green-fix / reimpl は全 shape で dev-implementer 一本（issue #673）。
     // 合成 task `issue-<N>` を echo する（adoptReportedFiles の task_id 突合に必要）。
     // 既定は STANDARD_FILES（3 件）を申告し、danger-grep の realized files と一致させる（宣言外 0 件）。
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: `issue-${issue}`, files: [...STANDARD_FILES], summary: 's', concerns: [] };
     }
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };

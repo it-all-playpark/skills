@@ -39,7 +39,7 @@ function responder({ label, agentType }) {
   if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
   if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
   if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
-  if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+  if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
   if (agentType === 'dev-flow:evaluator') {
     return {
       verdict: 'pass', total: 100, threshold: 80, feedback: [],

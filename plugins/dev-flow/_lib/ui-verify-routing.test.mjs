@@ -47,7 +47,7 @@ const src = readFileSync(devFlowPath, 'utf8');
  * @param {object} opts
  * @param {object} opts.analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {string[]} opts.realizedFiles - realized-diff stub が返すファイル一覧
- * @param {string[]} [opts.declaredFiles=realizedFiles] - dev-implement-fable stub が files として申告するファイル一覧
+ * @param {string[]} [opts.declaredFiles=realizedFiles] - dev-implementer stub が files として申告するファイル一覧
  * @param {string[]} [opts.changedFiles=realizedFiles] - changed-files stub が返すファイル一覧（merge tier 判定用）
  * @param {Record<string, unknown|Function>} [opts.overrides={}] - label 単位の応答上書き
  *   （関数を渡すと `({prompt, opts}) => ...` として呼ばれる。throw もそのまま伝播する）
@@ -85,7 +85,7 @@ function makeUiVerifySandbox({ analyzeReq, realizedFiles, declaredFiles, changed
     }
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: chg };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: decl, summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 'issue-1', files: decl, summary: '', concerns: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;

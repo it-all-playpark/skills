@@ -2,7 +2,7 @@
 // スコープを再ピンする routing test。
 //
 // AC-1 再ピン定義（plan-reviewer critical finding ac-target-infeasible::AC-1 への対応）:
-//   AC-1 の計数対象は「判断系 agent」— agentType ∈ {dev-implement-fable, dev-runner,
+//   AC-1 の計数対象は「判断系 agent」— agentType ∈ {dev-implementer, dev-runner,
 //   pr-reviewer} — の呼び出しのみとする。dev-runner-haiku / dev-runner-haiku-ro
 //   （exec-proxy: Setup base/worktree/deps・danger-grep・realized-diff・structural-classify・
 //   diff-hash・ci-check・post-comment・journal。専用 clock probe は issue #550 F1+F3 で撤去済み）
@@ -40,7 +40,7 @@ const src = readFileSync(devFlowPath, 'utf8');
 
 // AC-1 判断系スコープ（再ピン定義）。dev-runner-haiku / dev-runner-haiku-ro は含めない。
 const JUDGEMENT_AGENT_TYPES = new Set([
-  'dev-flow:dev-implement-fable', 'dev-flow:dev-runner', 'dev-flow:pr-reviewer',
+  'dev-flow:dev-implementer', 'dev-flow:dev-runner', 'dev-flow:pr-reviewer',
 ]);
 
 // clean-micro-lite が成立する analyzeReq: shape='micro' floor（count<=2, ac<=4）・
@@ -144,7 +144,7 @@ function makeLiteRouteSandbox(analyzeReq, opts = {}) {
       return { files: ['src/foo.ts'] };
     }
     // implementer
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）
@@ -220,13 +220,13 @@ function failOnStructuralCrash(err) {
 // (A) AC-1: 判断系 agent 呼び出し数 <= 10（clean-micro-lite 経路）
 // ============================================================
 
-test('[lite-route][A] clean-micro-lite: 判断系 agent（dev-implement-fable/dev-runner/pr-reviewer）呼び出しが 10 以下', async () => {
+test('[lite-route][A] clean-micro-lite: 判断系 agent（dev-implementer/dev-runner/pr-reviewer）呼び出しが 10 以下', async () => {
   const { ctx, calls } = makeLiteRouteSandbox(makeCleanMicroReq());
   const err = await runDevFlowInSandbox(src, ctx);
   failOnStructuralCrash(err);
 
   const judgementCalls = calls.filter((c) => JUDGEMENT_AGENT_TYPES.has(c.agentType));
-  // 実測 pin: F2 時点（lite 未実装）では analyze#(dev-runner) + impl:serial:issue-1(dev-implement-fable) +
+  // 実測 pin: F2 時点（lite 未実装）では analyze#(dev-runner) + impl:serial:issue-1(dev-implementer) +
   // pr#(dev-runner) の 3 回。F3 で pr-review-lite（pr-reviewer）が追加されても 4 回で、
   // いずれも AC-1 の 10 以下を満たす。exact 値ではなく上限のみを pin する
   // （F3 が呼び出し数を増減させても他の struct test で検出できるため、ここでは AC-1 の

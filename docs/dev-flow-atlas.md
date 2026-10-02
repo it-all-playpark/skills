@@ -14,7 +14,7 @@ GitHub issue から LGTM までを 8 phase で駆動する `dev-flow` の実処�
 
 - **merge は常に人間。** LGTM 後にユーザーが merge する。AUTO tier も「推奨ラベル」であって
   自動 merge ではない。全 tier で例外なし
-- **1 issue = 1 PR。** Implement は全 shape で `dev-implement-fable` を単一 worktree に 1 spawn する
+- **1 issue = 1 PR。** Implement は全 shape で `dev-implementer` を単一 worktree に 1 spawn する
   （parallel fan-out は持たない）。issue 分割も integration branch も使わない
 - **軸A invariant。** 決定論オラクル・security floor・critical アイテムはどの `gate_policy` でも
   blocking。policy で緩めない
@@ -96,7 +96,7 @@ flowchart TD
     A1 -->|"不合格"| AB["throw（prerun 出力の契約違反）"]
     A1 --> A2{"AC 空 / comment_conflicts 非空 /<br/>uncertain 非空 ?"}
     A2 -->|yes| A3["analyze-clarify（dev-runner）1 spawn<br/>人間向け missing_context を生成"]
-    A3 --> NC2["needs_clarification<br/>source=analyze<br/>isolation-probe / fable は spawn しない"]
+    A3 --> NC2["needs_clarification<br/>source=analyze<br/>isolation-probe / 実装 agent は spawn しない"]
     A2 -->|no| A4["isolation probe<br/>Write tool で書けるか<br/>token = setup.epoch"]
     A4 -->|"written:false"| AB
     A4 --> OUT["Implement へ"]
@@ -123,12 +123,12 @@ Setup 末尾の analyze ゲート直後に issue から単一 task の plan を�
 shape はこの時点では決まっていない — Security floor で realized diff から決める）。
 合成 task の `file_changes` は空で始まり、Implement の返却 `files` を宣言として取り込む。
 
-`dev-implement-fable`（plan+impl 統合、frontmatter opus）を単一 worktree に 1 spawn する。parallel fan-out・
+`dev-implementer`（plan+impl 統合、frontmatter opus）を単一 worktree に 1 spawn する。parallel fan-out・
 issue 分割・integration branch は使わない。
 
 ```mermaid
 flowchart TD
-    IN["plan 確定"] --> I1["dev-implement-fable を 1 spawn<br/>impl:serial:issue-N"]
+    IN["plan 確定"] --> I1["dev-implementer を 1 spawn<br/>impl:serial:issue-N"]
     I1 --> I3{"status"}
     I3 -->|OK| OUT["Validate へ"]
     I3 -->|BLOCKED| I4["累積 findings を付けて再 spawn<br/>reimpl-blocked#b / BLOCK_MAX"]
@@ -177,7 +177,7 @@ fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒
 
 - `EFFECTIVE_SHAPE` が micro 以外
 - danger-grep hit / test-weakening 検出 / plan 宣言外の変更
-- green-fix が発生した / dev-implement-fable が null を返して task を落とした / UI パスを touch した
+- green-fix が発生した / dev-implementer が null を返して task を落とした / UI パスを touch した
 
 ### 1.6 Evaluate
 
@@ -185,7 +185,7 @@ fail-closed** で SEC seed を全 unchecked にして merge tier を HOLD へ倒
 flowchart TD
     IN["runEval=true"] --> E1["evaluator<br/>standard=1 パス / complex=EVAL_MAX"]
     E1 --> E2{"verdict"}
-    E2 -->|"fail: design"| E3["dev-implement-fable へ fix_feedback 付きで再 spawn（reimpl#i）<br/>DESIGN_REPLAN_MAX で cap"]
+    E2 -->|"fail: design"| E3["dev-implementer へ fix_feedback 付きで再 spawn（reimpl#i）<br/>DESIGN_REPLAN_MAX で cap"]
     E3 --> E1
     E2 -->|"fail: impl"| E4["同じく reimpl#i<br/>未解消 critical を最優先"]
     E4 --> E1
@@ -298,9 +298,9 @@ flowchart TD
 
 | shape | Implement | Evaluate | merge tier |
 | --- | --- | --- | --- |
-| `micro` | Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implement-fable` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
+| `micro` | Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成（`implement#synth-plan`）→ Implement で `dev-implementer` を 1 spawn | skip（evaluator 0 回）。danger-grep hit 時は security path で強制実行 | `AUTO`（docs・test-only + danger clean + 収束時のみ） |
 | `standard` | 同上 | 1 パスのみ。差し戻しなし。未解消 critical は merge tier HOLD で担保。agent AC の未達だけは `AGENT_AC_REIMPL_MAX` 回まで延長して差し戻す | `REVIEW` |
-| `complex` | 同上 | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implement-fable`） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
+| `complex` | 同上 | 差し戻し loop（`EVAL_MAX` 上限、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implementer`） | `REVIEW` / `HOLD`（danger・breaking 検出時） |
 
 micro のうち `runEval=false` かつ danger clean のものだけが PR phase で **lite route** に入り、
 pr-reviewer 1-pass と CI green だけで終端する。blocking finding か CI 非 green を検出した時点で
@@ -446,7 +446,7 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 
 | agent | 役割 | model / effort |
 | --- | --- | --- |
-| `dev-implement-fable` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | opus / high |
+| `dev-implementer` | plan+impl 統合実装（全 shape の唯一の実装 agent。Implement・BLOCKED 再実装・green-fix・evaluator 差し戻しを担う） | opus / high |
 | `evaluator` | 実装品質ゲート | opus / medium |
 | `pr-reviewer` | PR レビュー | opus / high |
 | `dev-runner` | Skill 呼び出し（analyze ゲート（Setup 末尾）後の missing_context 生成のみ。通常経路では起動しない） | frontmatter / high |

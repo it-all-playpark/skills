@@ -21,8 +21,8 @@ const repoRoot = join(here, '..');
 const devFlowSrc = readFileSync(join(repoRoot, '.claude/workflows/dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(repoRoot, '.claude/workflows/pr-iterate.js'), 'utf8');
 
-// evaluator / pr-reviewer / dev-implement-fable は override を渡さないので frontmatter の 'opus'（値の一致は review-model-frontmatter.test.mjs が pin）。
-// eval_model_config / impl_model_config は evaluator / dev-implement-fable を spawn する dev-flow 側の entry にのみ載る。
+// evaluator / pr-reviewer / dev-implementer は override を渡さないので frontmatter の 'opus'（値の一致は review-model-frontmatter.test.mjs が pin）。
+// eval_model_config / impl_model_config は evaluator / dev-implementer を spawn する dev-flow 側の entry にのみ載る。
 function assertJournalSaveHasKeys(calls, contextLabel, { evalModel }) {
   const journalSaveCalls = calls.filter((c) => c.label?.startsWith('journal-save'));
   assert.ok(journalSaveCalls.length > 0, `${contextLabel}: label 'journal-save*' の call が見つからない`);

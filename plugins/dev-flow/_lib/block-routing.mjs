@@ -1,6 +1,6 @@
 // block-routing: BLOCKED task result の block_class 判定・決定論スクラブ・振り分けを行う純関数群。
 // guard/hook 由来の BLOCKED（block_class:'guard_blocked'）を approach_mismatch の replan ループ
-// （blockSeen 登録・findings 化・dev-implement-fable 再 spawn）から遮断し、迂回コマンド列を prompt へ
+// （blockSeen 登録・findings 化・dev-implementer 再 spawn）から遮断し、迂回コマンド列を prompt へ
 // 伝播させないためのチョークポイント（issue #448）。
 //
 // W7 正当化クラス: incentive-structural（永続・撤去禁止）。

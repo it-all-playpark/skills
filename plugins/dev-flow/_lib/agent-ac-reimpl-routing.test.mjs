@@ -52,7 +52,7 @@ test('[agent-ac-reimpl] (A) 計測して PR 本文に書く AC が未達 → sta
   });
   const reimpl = reimplCalls(calls);
   assert.equal(reimpl.length, 1, `差し戻しは reimpl#1 の 1 回のはず: ${calls.map((c) => c.label).join(', ')}`);
-  assert.equal(reimpl[0].agentType, 'dev-flow:dev-implement-fable');
+  assert.equal(reimpl[0].agentType, 'dev-flow:dev-implementer');
   assert.match(reimpl[0].prompt, /fix_feedback/);
   assert.match(reimpl[0].prompt, /AC-1 未達/);
   assert.equal(evalCalls(calls).length, 2, 'standard でも差し戻し後に再評価する');

@@ -84,7 +84,7 @@ function makeSandbox(analyzeReq, evaluatorResponse) {
       return { posted: true, method: 'gh pr comment', url: 'http://x/1' };
     }
     // implementer その他
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     // diff-gate / diff-hash（issue #215）: need() による throw の回避
@@ -422,7 +422,7 @@ test('[escalate-producer] テスト4: complex shape iteration 2 に初出 escala
       if (label === 'post-summary') {
         return { posted: true, method: 'gh pr comment', url: 'http://x/1' };
       }
-      if (agentType === 'dev-flow:dev-implement-fable') {
+      if (agentType === 'dev-flow:dev-implementer') {
         return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
       }
       // diff-gate / diff-hash（issue #215）: need() による throw の回避

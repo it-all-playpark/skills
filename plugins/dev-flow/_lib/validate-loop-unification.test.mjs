@@ -123,7 +123,7 @@ function makeCountingSandbox(opts) {
 
     // Validate: green-fix（implementer + green-fix label prefix）
     // GF_CONCERN_MARKER を concerns に含め、テスト 4・5 の pin を支える
-    if (agentType === 'dev-flow:dev-implement-fable' && label.startsWith('green-fix')) {
+    if (agentType === 'dev-flow:dev-implementer' && label.startsWith('green-fix')) {
       return {
         status: 'DONE',
         task_id: 't',
@@ -134,7 +134,7 @@ function makeCountingSandbox(opts) {
     }
 
     // implementer（通常）
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
 

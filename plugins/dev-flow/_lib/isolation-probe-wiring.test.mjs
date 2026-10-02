@@ -21,12 +21,12 @@ function schemaOf(calls, label) {
   return JSON.parse(JSON.stringify(call.opts.schema));
 }
 
-test('Implement（dev-implement-fable）より前の call は isolation-probe 1 件のみ（Setup と末尾の analyze ゲートは spawn しない）', async () => {
+test('Implement（dev-implementer）より前の call は isolation-probe 1 件のみ（Setup と末尾の analyze ゲートは spawn しない）', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   await runDevFlowInSandbox(src, ctx);
 
-  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.notStrictEqual(implIdx, -1, 'dev-implement-fable の call が見つからない');
+  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implementer');
+  assert.notStrictEqual(implIdx, -1, 'dev-implementer の call が見つからない');
   const beforeImpl = calls.slice(0, implIdx);
   assert.deepEqual(
     beforeImpl.map((c) => c.label),
@@ -60,8 +60,8 @@ test('[fail-closed] isolation-probe が written:false を返すと throw し、m
   assert.match(error.message, /dev-flow-prerun --issue 1/);
   assert.match(error.message, /EnterWorktree/);
   assert.ok(
-    !calls.some((c) => c.label === 'impl:serial:issue-1' || c.agentType === 'dev-flow:dev-implement-fable'),
-    'Setup phase で throw した時点で Implement phase（dev-implement-fable 呼び出し）に到達してはならない',
+    !calls.some((c) => c.label === 'impl:serial:issue-1' || c.agentType === 'dev-flow:dev-implementer'),
+    'Setup phase で throw した時点で Implement phase（dev-implementer 呼び出し）に到達してはならない',
   );
 });
 

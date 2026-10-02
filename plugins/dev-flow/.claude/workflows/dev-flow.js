@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-run',
-  description: 'Issue から LGTM まで: Setup(prerun 結果の検証 + 末尾で決定論 analyze のゲート判定、spawn 0)→実装(dev-implement-fable 1 spawn)→test green→security floor(realized diff から shape 判定)→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
+  description: 'Issue から LGTM まで: Setup(prerun 結果の検証 + 末尾で決定論 analyze のゲート判定、spawn 0)→実装(dev-implementer 1 spawn)→test green→security floor(realized diff から shape 判定)→評価→PR→pr-iterate→merge tier。micro/standard/complex で evaluate の深さを切替(complex: eval上限10)。merge は手動。needs_clarification が返ったら呼び出し元が AskUserQuestion で人間に確認し再起動（worktree は保持）',
   phases: [
     { title: 'Setup' },
     { title: 'Implement' },
@@ -1395,10 +1395,10 @@ function classifyMergeTier(s) {
 //
 // actor の意味:
 //   - 'agent': 実装エージェントが worktree 内で満たせる AC（ローカル計測して PR 本文に書く、を含む）。
-//     evaluator が satisfied:false を返したら gate_policy に依らず dev-implement-fable へ差し戻す。
+//     evaluator が satisfied:false を返したら gate_policy に依らず dev-implementer へ差し戻す。
 //     差し戻し上限を使い切っても未達なら Merge tier は 'ac_agent_unsatisfied'（ループの取りこぼし）で HOLD。
 //   - 'human': `（人手）` 表記・staging / 本番環境・外部サービスの操作・issue へのコメントを要する AC。
-//     エージェントは worktree の外に出ない（agents/dev-implement-fable.md）ので差し戻しても満たせない。
+//     エージェントは worktree の外に出ない（agents/dev-implementer.md）ので差し戻しても満たせない。
 //     未達は差し戻さず Merge tier の 'ac_human_pending'（人手 AC 待ち）へ回す。
 // 判定できない AC は 'agent' に倒す。human への誤分類は差し戻しを失い未達のまま人間へ流れるが、agent への誤分類は
 // 差し戻しの上限（AGENT_AC_REIMPL_MAX）で止まり、HOLD 理由に取りこぼしとして残るため。
@@ -1451,7 +1451,7 @@ function unsatisfiedAcByActor(acResults, actors) {
   return out
 }
 
-// agent AC の未達を dev-implement-fable へ渡す fix_feedback 項目にする（evaluator feedback と同じ形）。
+// agent AC の未達を dev-implementer へ渡す fix_feedback 項目にする（evaluator feedback と同じ形）。
 // 「計測して PR 本文に書く」型の AC は、コードのコメントでは PR 本文に届かないので pr_notes / design_decisions で
 // 返すよう suggestion に明記する。
 function agentAcFeedback(indexes, acceptanceCriteria, acResults) {
@@ -1752,7 +1752,7 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
 // ==== BEGIN inline: _lib/block-routing.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // block-routing: BLOCKED task result の block_class 判定・決定論スクラブ・振り分けを行う純関数群。
 // guard/hook 由来の BLOCKED（block_class:'guard_blocked'）を approach_mismatch の replan ループ
-// （blockSeen 登録・findings 化・dev-implement-fable 再 spawn）から遮断し、迂回コマンド列を prompt へ
+// （blockSeen 登録・findings 化・dev-implementer 再 spawn）から遮断し、迂回コマンド列を prompt へ
 // 伝播させないためのチョークポイント（issue #448）。
 //
 // W7 正当化クラス: incentive-structural（永続・撤去禁止）。
@@ -2317,8 +2317,8 @@ function buildReqFromContract(analyze, issueNumber) {
   if (Number.isInteger(analyze.comment_count) && analyze.comment_count >= 0) {
     req.comment_count = analyze.comment_count
   }
-  // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implement-fable へ issue 本文として
-  // 渡す。型が合うときだけキーを立てる（欠落は Fable prompt 側で「本文なし・AC を正とする」に倒れる）。
+  // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implementer へ issue 本文として
+  // 渡す。型が合うときだけキーを立てる（欠落は実装 agent の prompt 側で「本文なし・AC を正とする」に倒れる）。
   if (typeof analyze.issue_body === 'string') {
     req.issue_body = analyze.issue_body
   }
@@ -2459,8 +2459,8 @@ function uiVerifyPort(basePort, issue) {
   return basePort + (n % 1000);
 }
 // ==== END inline: _lib/ui-verify.mjs ====
-// ==== BEGIN inline: _lib/parallel-disjoint.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// parallel-disjoint: plan の file_changes と realized diff を突合する純粋関数群（normalizePath /
+// ==== BEGIN inline: _lib/declared-paths.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+// declared-paths: plan の file_changes と realized diff を突合する純粋関数群（normalizePath /
 // diffDeclaredPaths / isEphemeralPath / filterEphemeralPaths）。宣言外変更の検出と ephemeral path の除外に使う。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
@@ -2549,7 +2549,7 @@ function isEphemeralPath(p) {
 function filterEphemeralPaths(files) {
   return (files ?? []).filter((f) => !isEphemeralPath(f));
 }
-// ==== END inline: _lib/parallel-disjoint.mjs ====
+// ==== END inline: _lib/declared-paths.mjs ====
 
 // ==== BEGIN inline: _lib/md-cell.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // mdCell: Markdown テーブルセルの値をエスケープする純粋関数。
@@ -5037,7 +5037,7 @@ function decisionsSection(plan) {
   return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件は plan 参照）` : shown.join('\n');
 }
 
-// 実装エージェント（dev-implement-fable）が返した PR 本文向けの記録（issue #747）。section は閉じた enum で、
+// 実装エージェント（dev-implementer）が返した PR 本文向けの記録（issue #747）。section は閉じた enum で、
 // PR body の `## 検証` に `- <label>: <text>` で載る。
 const PR_NOTE_SECTIONS = ['verification', 'measurement'];
 const PR_NOTE_LABELS = { verification: '検証', measurement: '計測' };
@@ -5695,7 +5695,7 @@ const SUBAGENT_COUNTS = {};
 // abort entry を二重記録しないためのフラグ。
 const ABORT_CTX = { phase: null, label: null, shape: null, eval_iter: 0, failure_recorded: false }
 // dev-flow の call site は `opts.model` を渡さず agent frontmatter の既定 model で spawn する
-// （evaluator / pr-reviewer / dev-implement-fable は opus-high。model を変えるなら agents/*.md の frontmatter を変える）。
+// （evaluator は opus / medium、pr-reviewer / dev-implementer は opus / high。model を変えるなら agents/*.md の frontmatter を変える）。
 // 例外は Validate green-fix の `model: 'sonnet'`（GREEN_FIX_MODEL）だけ。
 // null 返却（credit 切れ / terminal API error / user skip）は既存の fail-open / need() 経路で扱う。
 async function trackedAgent(prompt, opts) {
@@ -5735,9 +5735,9 @@ let TURBOPACK_NOTE = '' // Setup(stack) で確定。対象 repo が Next.js の�
 // 本来の判断・schema required には一切影響しない）。
 const EPOCH_INSTRUCTION = '作業完了後、最後に Bash で `date +%s` を 1 回実行し、出力の整数を epoch フィールドとして返せ。取得に失敗した場合は epoch を省略してよい（本来の作業・判定には一切影響させるな）。\n'
 
-// 実装 agent（dev-implement-fable）への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を
+// 実装 agent（dev-implementer）への一時/handoff ファイル配置規約。worktree 内に *.staged.* / fm_*.txt 等を
 // 残すと `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、実効 shape の誤判定・
-// 宣言外変更 concern の原因になる。agent 定義ファイル（.claude/agents/dev-implement-fable.md）は
+// 宣言外変更 concern の原因になる。agent 定義ファイル（.claude/agents/dev-implementer.md）は
 // sandbox write-deny のため、workflow が全実装 spawn prompt（Implement / green-fix / reimpl）に決定論的に注入する。
 // .devflow-tmp/ 配下は isEphemeralPath が realized-diff から除外するため後始末は不要で、削除を
 // 指示すると agent が一時 dir の削除コマンドを組み立てて実行制御に弾かれる分だけ turn を失う。
@@ -5762,29 +5762,29 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `の旨を自分の出力（実装 agent は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
 
-// ---- Implement 経路（全 shape で dev-implement-fable 一本）----
-// Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成し、runImplement が dev-implement-fable
-// （plan+impl 統合）を 1 spawn する。合成 plan の task は agent キーを持つ（isFablePlan）—
+// ---- Implement 経路（全 shape で dev-implementer 一本）----
+// Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成し、runImplement が dev-implementer
+// （plan+impl 統合）を 1 spawn する。合成 plan の task は agent キーを持つ（isImplPlan）—
 // 合成 plan 以外は Implement / Evaluate で受理しない（明示 error）。
-const FABLE_IMPL_AGENT = 'dev-implement-fable'
-// 既定 model は agents/dev-implement-fable.md の frontmatter（opus。telemetry impl_model_config はそのリテラル、
+const IMPL_AGENT = 'dev-implementer'
+// 既定 model は agents/dev-implementer.md の frontmatter（opus。telemetry impl_model_config はそのリテラル、
 // 一致は review-model-frontmatter.test.mjs が pin）。GREEN_FIX_MODEL: Validate green-fix の明示 override
 // （opus 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
 const GREEN_FIX_MODEL = 'sonnet'
-function synthesizeFablePlan(req, issue) {
+function synthesizeImplPlan(req, issue) {
   const title = String(req?.issue_title ?? `Issue #${issue}`)
   return {
     summary: title,
-    serial: [{ id: `issue-${issue}`, desc: title, file_changes: [], test_plan: '', depends_on: [], agent: FABLE_IMPL_AGENT }],
+    serial: [{ id: `issue-${issue}`, desc: title, file_changes: [], test_plan: '', depends_on: [], agent: IMPL_AGENT }],
   }
 }
-function isFableTask(t) { return t != null && t.agent === FABLE_IMPL_AGENT }
-function isFablePlan(p) { return (p?.serial ?? []).some(isFableTask) }
-// 合成 task の file_changes は空で始まる（Fable が決める）。Implement / reimpl の返却 files を宣言として
+function isImplTask(t) { return t != null && t.agent === IMPL_AGENT }
+function isImplPlan(p) { return (p?.serial ?? []).some(isImplTask) }
+// 合成 task の file_changes は空で始まる（実装 agent が決める）。Implement / reimpl の返却 files を宣言として
 // 取り込むことで、宣言外監査（diffDeclaredPaths）・実効 shape の realized count・PR body の「変更」節が同じ材料で動く
-// （宣言外 = Fable が files に申告しなかった変更、として evaluator の focus に載る）。
+// （宣言外 = 実装 agent が files に申告しなかった変更、として evaluator の focus に載る）。
 function adoptReportedFiles(plan, results) {
-  if (!isFablePlan(plan)) return plan
+  if (!isImplPlan(plan)) return plan
   const filesOf = (id) => {
     const out = []
     for (const r of (results ?? [])) {
@@ -5793,15 +5793,15 @@ function adoptReportedFiles(plan, results) {
     }
     return out
   }
-  const adopt = (t) => isFableTask(t) ? { ...t, file_changes: [...new Set([...(t.file_changes ?? []), ...filesOf(t.id)])] } : t
+  const adopt = (t) => isImplTask(t) ? { ...t, file_changes: [...new Set([...(t.file_changes ?? []), ...filesOf(t.id)])] } : t
   return { ...plan, serial: (plan.serial ?? []).map(adopt) }
 }
-// dev-implement-fable への spawn prompt。issue 本文と AC を直接渡し、手順書型 task・plan contract・
+// dev-implementer への spawn prompt。issue 本文と AC を直接渡し、手順書型 task・plan contract・
 // AC テスト契約（red→green 自己実証）は渡さない — 全件テスト・red 証明・AC 判定は Validate /
-// redgreen-verify / evaluator が行う（agent 定義 agents/dev-implement-fable.md）。
+// redgreen-verify / evaluator が行う（agent 定義 agents/dev-implementer.md）。
 // blocked（BLOCKED 再計画時のみ）: blockSeen 累積の approach_mismatch findings（過去に BLOCKED になった
 // 全アプローチへの回帰禁止）と DONE 成果（再実装させない）を同じ prompt に付けて再 spawn する。
-function fableImplPrompt(t, { req, fixFeedback, blocked }) {
+function implPrompt(t, { req, fixFeedback, blocked }) {
   const body = typeof req?.issue_body === 'string' && req.issue_body.length > 0 ? req.issue_body : null
   return `cd ${WT} で作業（Bash 呼び出しごとに必ず先頭で cd ${WT} すること。agent の cwd は毎回リセットされる）。`
     + `issue #${ISSUE} を計画から実装まで仕上げよ。git add / commit はするな。\n`
@@ -5824,21 +5824,21 @@ function fableImplPrompt(t, { req, fixFeedback, blocked }) {
     + TURBOPACK_NOTE
 }
 
-// runImplement: 合成 plan の serial task（常に 1 件）を dev-implement-fable で順に spawn する。
+// runImplement: 合成 plan の serial task（常に 1 件）を dev-implementer で順に spawn する。
 // failOpenAgent 経由（throw / null は per-task null に落ち、drop として可視化する）。
 // parallel fan-out / pipeline() は持たない（plan+impl 統合 agent が 1 spawn で全体を持つ）。
 // 返り値は結果配列（null は含めない）— drop 件数は呼び出し側が implementDrops で数える。
 async function runImplement(req, plan, fixFeedback, tag, blocked) {
-  if (!isFablePlan(plan)) throw new Error(`dev-flow: ${tag}: plan に dev-implement-fable task が無い（合成 plan 以外は受理しない）`)
+  if (!isImplPlan(plan)) throw new Error(`dev-flow: ${tag}: plan に dev-implementer task が無い（合成 plan 以外は受理しない）`)
   const results = []
   let dropped = 0
   for (const t of (plan.serial ?? [])) {
-    const r = await failOpenAgent(fableImplPrompt(t, { req, fixFeedback, blocked }),
-      { agentType: FABLE_IMPL_AGENT, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
+    const r = await failOpenAgent(implPrompt(t, { req, fixFeedback, blocked }),
+      { agentType: IMPL_AGENT, schema: IMPL, label: `${tag}:serial:${t.id}`, phase: 'Implement' })
     if (r) results.push(r)
     else dropped++
   }
-  if (dropped) log(`⚠️ ${tag}: dev-implement-fable ${dropped} 件が失敗(null) — 要確認`)
+  if (dropped) log(`⚠️ ${tag}: dev-implementer ${dropped} 件が失敗(null) — 要確認`)
   return results
 }
 
@@ -5889,7 +5889,7 @@ log(hasNextJs(PRERUN.frameworks)
 const branch = PRERUN.branch
 const setup = PRERUN
 // isolation probe は Setup 末尾の analyze ゲート判定の後（Implement 直前）で spawn する — needs_clarification は
-// probe / fable より前に確定させ、人間へ返す run に spawn を 1 つも使わない。
+// probe / 実装 agent より前に確定させ、人間へ返す run に spawn を 1 つも使わない。
 
 // Validate / Final reconcile 共有の test 実行 prompt。WT 確定後（Setup 完了後）に
 // 配置し、runValidateLoop・Final reconcile の test#final が同一 byte 列を共有する（drift 防止）。
@@ -5963,7 +5963,7 @@ ABORT_CTX.label = 'analyze-gate'
 const ANALYZE = PRERUN.analyze
 if (ANALYZE.ok !== true) {
   // prerun の analyze 段が失敗（GitHub 到達不能 / JSON 不正）。捏造経路が無いので REQ を推測で組まず、
-  // 人間へ返す（source=analyze_prerun）。isolation-probe / fable より前なので spawn は 0。
+  // 人間へ返す（source=analyze_prerun）。isolation-probe / 実装 agent より前なので spawn は 0。
   log(`⚠️ analyze: prerun の analyze 段が失敗（${ANALYZE.reason}）— needs_clarification で中断（source=analyze_prerun）`)
   const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: prerun analyze 段の失敗で中断（source=analyze_prerun: ${ANALYZE.reason}）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: typeof ANALYZE.analyze_path === 'string' ? ANALYZE.analyze_path : 'contract' }, phase: 'Setup' })
   return { status: 'needs_clarification', source: 'analyze_prerun', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の取得・決定論 parse が prerun で失敗した: ${ANALYZE.reason}`], journal_log_status: journalLogStatus, note: 'dev-flow-prerun の analyze 段（analyze-issue --contract）が失敗したため中断。GitHub CLI の到達性・認証と issue 番号を確認し /dev-flow を再起動すること（prerun は再実行される）。worktree は保持済みで再利用される' }
@@ -5989,7 +5989,7 @@ if (req.comment_overrides.length) log(`analyze: comment による body 訂正を
 
 // blocked_by ゲート: open な blocker（dependencies API / 本文の Blocked by）が 1 つでもあれば
 // needs_clarification（source=blocked_by）で終端する。未完了 issue の列挙は決定論で足りるので sonnet も
-// isolation-probe / fable も spawn しない。closed のみなら log だけで通常経路へ進む。
+// isolation-probe / 実装 agent も spawn しない。closed のみなら log だけで通常経路へ進む。
 const blockedReasons = blockedByReasons(req)
 if (req.blockers.length) log(`analyze: blocker ${req.blockers.length} 件（open ${blockedReasons.length}）: ${req.blockers.map((b) => `${b.repo}#${b.number}=${b.state}(${b.source})`).join(' / ')}`)
 if (blockedReasons.length) {
@@ -6008,7 +6008,7 @@ if (blockedReasons.length) {
 }
 
 // 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）。引いたときだけ sonnet を 1 spawn して
-// 人間向け missing_context を生成し、needs_clarification で終端する（isolation-probe / fable の spawn 0）。
+// 人間向け missing_context を生成し、needs_clarification で終端する（isolation-probe / 実装 agent の spawn 0）。
 const gateReasons = analyzeGateReasons(req)
 if (gateReasons.length) {
   log(`⚠️ analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）— sonnet で missing_context を生成して needs_clarification で中断`)
@@ -6042,14 +6042,14 @@ if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可�
 
 // ============================================================
 // 合成 plan: planner agent を起動せず、issue から単一 task の plan を合成する（Implement の spawn 単位）。
-// Fable に「手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、issue 仕様を Implement で
-// 直接 dev-implement-fable に渡す。
+// 実装 agent に「手順書型 task」を書かせる prescriptive な使い方は品質を落とすため、issue 仕様を Implement で
+// 直接 dev-implementer に渡す。
 // shape はここでは決めない: 実効 shape は Security floor で realized diff の file 数から
 // classifyShape が 1 回で決める（EFFECTIVE_SHAPE / TRIVIAL）。実効 shape 確定前の失敗 telemetry
 // （needs_clarification / cross_repo / empty_diff）は shape キーを載せない（null は enum 検証で落ちる）。
 // ============================================================
-let plan = synthesizeFablePlan(req, ISSUE)
-log('implement#synth-plan: planner 0 回、issue から単一 task の plan を合成（Implement で dev-implement-fable を 1 spawn）')
+let plan = synthesizeImplPlan(req, ISSUE)
+log('implement#synth-plan: planner 0 回、issue から単一 task の plan を合成（Implement で dev-implementer を 1 spawn）')
 
 // ============================================================
 // state: Implement 以降の phase 間で共有する単一 state オブジェクト。
@@ -6098,7 +6098,7 @@ function extractGuardBlocked(results) {
 // ============================================================
 // Phase Implement: 実装 → BLOCKED があれば別アプローチで再実装（上限 BLOCK_MAX）。
 // 再計画は planner agent を起動せず、blockSeen 累積の approach_mismatch findings（過去 BLOCKED
-// アプローチへの回帰禁止）と DONE 成果を prompt に付けて dev-implement-fable を再 spawn する
+// アプローチへの回帰禁止）と DONE 成果を prompt に付けて dev-implementer を再 spawn する
 // （reimpl-blocked#b）。guard_blocked（hook deny / classifier block 等）は replan ループから遮断し
 // blockedConcerns へ直行させる（extractGuardBlocked、W7 incentive-structural）。
 // ============================================================
@@ -6160,7 +6160,7 @@ async function execImplementPhase(state) {
     }
   }
   // NEEDS_CONTEXT 処理: 情報不足は人間へ返す（needs_clarification で早期 return）。sonnet による
-  // comprehensive 再分析 + 再試行は持たない — fable は issue 本文 + AC を直接受け取っており、LLM が issue を
+  // comprehensive 再分析 + 再試行は持たない — 実装 agent は issue 本文 + AC を直接受け取っており、LLM が issue を
   // 転写し直す工程は持たない（転写経路を残すと provenance 突合が要る）。
   {
     const stillNeeds = implResults.filter((r) => r && r.status === 'NEEDS_CONTEXT')
@@ -6228,7 +6228,7 @@ async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName }
     if (v.green || v.tests === 'no_tests') break
     if (v.tests === 'error') {
       // 起動失敗（テストが 1 件も実行されていない）。環境失敗はコード修正で解消しないため
-      // green-fix（dev-implement-fable）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
+      // green-fix（dev-implementer）を起動せず即 break する（no_tests と同じ扱い）。v は green:false / tests:'error' の
       // まま返し、Final reconcile の error → unavailable → ci-final（CI 委譲）経路に委ねる。
       // tests:'failed'（実行された上での red）はそのまま green-fix を回す。
       log(`⚠️ ${phaseName}: tests=error（起動失敗: ${String(v.summary ?? '').slice(0, 200)}）— green-fix をスキップ（環境失敗はコード修正で解消しない。Final reconcile の CI 委譲へ）`)
@@ -6253,7 +6253,7 @@ async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName }
       + `task_id: issue-${ISSUE}（返却 JSON の task_id にそのまま echo せよ）\n`
       + STAGING_CONVENTION
       + TURBOPACK_NOTE,
-      { agentType: FABLE_IMPL_AGENT, model: GREEN_FIX_MODEL, schema: IMPL, label: `green-fix#${iterLabel}`, phase: phaseName },
+      { agentType: IMPL_AGENT, model: GREEN_FIX_MODEL, schema: IMPL, label: `green-fix#${iterLabel}`, phase: phaseName },
     )
     // green-fix の concerns を evaluator focus_areas へ伝搬（retry 経路も同一）
     if (gfResult && Array.isArray(gfResult.concerns)) concerns.push(...gfResult.concerns)
@@ -6263,7 +6263,7 @@ async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName }
 }
 
 // ============================================================
-// Phase Validate: test green を確認し、green でなければ dev-implement-fable に差し戻し（上限 GREEN_MAX）。
+// Phase Validate: test green を確認し、green でなければ dev-implementer に差し戻し（上限 GREEN_MAX）。
 // tests:'error'（起動失敗）は差し戻さず即 break
 // （format/lint は hook 責務でここでは扱わない）
 // ============================================================
@@ -6683,7 +6683,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
 }
 
 // ============================================================
-// Phase Evaluate: evaluator → fail なら dev-implement-fable へ fix_feedback 付きで差し戻し（design は DESIGN_REPLAN_MAX で cap）。
+// Phase Evaluate: evaluator → fail なら dev-implementer へ fix_feedback 付きで差し戻し（design は DESIGN_REPLAN_MAX で cap）。
 // 収束は evalConverged 相当のロジックがインライン判断する（基準は EVAL 収束モデルの
 // コメント参照）: 既出 feedback 累積で cold start を補償 / 同一 topic 反復で stuck 検出 /
 // stuck かつ design 反復なら早期打ち切り（コスト保護）/ critical は常にブロック /
@@ -7007,23 +7007,23 @@ async function execEvaluatePhase(state) {
     // iteration i+1 に渡すために open な EVAL-* critical を再取得する（critical_resolutions で
     // 解消済みのものは checked になっているため、ここで取得するのは真に未解消のもののみ）。
     const nextOpenCriticals = ledger.items.filter((it) => it.source === 'evaluator' && it.severity === 'critical' && !it.checked).map((it) => ({ id: it.id, text: it.text }))
-    if (!isFablePlan(plan)) throw new Error(`dev-flow: replan#${i}: plan に dev-implement-fable task が無い（合成 plan 以外は受理しない）`)
+    if (!isImplPlan(plan)) throw new Error(`dev-flow: replan#${i}: plan に dev-implementer task が無い（合成 plan 以外は受理しない）`)
     // plan と実装を同じ agent が持つため design / implementation を区別せず、合成 plan のまま
-    // fix_feedback 付きで dev-implement-fable へ差し戻す（reimpl#i）。design 差し戻しの総回数 cap
+    // fix_feedback 付きで dev-implementer へ差し戻す（reimpl#i）。design 差し戻しの総回数 cap
     // （DESIGN_REPLAN_MAX、incentive-structural）はそのまま数える。
     if (ev.feedback_level === 'design') {
       if (designReplanCount >= DESIGN_REPLAN_MAX) { log(`⚠️ design replan 上限到達 — human review へ委譲（DESIGN_REPLAN_MAX=${DESIGN_REPLAN_MAX}, iter ${i}。topic paraphrase 等で stuck 検出を経ずに総回数 cap に到達）`); break }
       designReplanCount++
     }
-    log(`replan#${i}: fable 経路 — 合成 plan のまま dev-implement-fable へ差し戻し（feedback_level=${ev.feedback_level}）`)
+    log(`replan#${i}: 実装 agent 経路 — 合成 plan のまま dev-implementer へ差し戻し（feedback_level=${ev.feedback_level}）`)
     const extraFeedback = [
       ...(agentAcReimpl ? agentAcFeedback(agentAcGaps, req.acceptance_criteria, ev.ac_results) : []),
       ...(nextOpenCriticals.length ? [{ unresolved_critical: nextOpenCriticals }] : []),
     ]
-    const fableFeedback = extraFeedback.length ? [...(ev.feedback ?? []), ...extraFeedback] : ev.feedback
+    const implFeedback = extraFeedback.length ? [...(ev.feedback ?? []), ...extraFeedback] : ev.feedback
     reimplCount++
     if (agentAcReimpl) agentAcReimplCount++
-    const reimplResults = await runImplement(req, plan, fableFeedback, `reimpl#${i}`)
+    const reimplResults = await runImplement(req, plan, implFeedback, `reimpl#${i}`)
     plan = adoptImplPrNotes(adoptReportedFiles(plan, reimplResults), reimplResults)
   }
 
@@ -7915,7 +7915,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
     eval_model_config: 'opus',  // evaluator 系 3 call site（eval#i / final-ac-reconcile / security-clearance-final）の model。override を渡さないので agents/evaluator.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     review_model_config: 'opus',  // pr-reviewer（pr-review-lite / nested pr-iterate の review#i）の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
-    impl_model_config: 'opus',  // dev-implement-fable の既定 model（agents/dev-implement-fable.md frontmatter の値、一致は review-model-frontmatter.test.mjs が pin）。green-fix の sonnet override は固定値なのでキーを持たない（世代は plugin_version）
+    impl_model_config: 'opus',  // dev-implementer の既定 model（agents/dev-implementer.md frontmatter の値、一致は review-model-frontmatter.test.mjs が pin）。green-fix の sonnet override は固定値なのでキーを持たない（世代は plugin_version）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs 定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
     // resolved_evidence: 終端サマリーから外した解消済み証跡の全文。4 配列すべて空なら省く。
     // passthrough 経路で journal に到達（hook 変更不要）。gate / merge tier / ledger の入力にはならない。

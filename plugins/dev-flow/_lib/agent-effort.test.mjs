@@ -72,7 +72,7 @@ function frontmatterTools(src) {
 const EXPECTED = {
   'evaluator': 'medium',
   'pr-reviewer': 'high',
-  'dev-implement-fable': 'high',
+  'dev-implementer': 'high',
   'dev-runner': 'high',
   'dev-runner-haiku-wo': 'low',
 };

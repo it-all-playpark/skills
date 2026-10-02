@@ -102,7 +102,7 @@ function createResponder() {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // implementer（本経路の main call。concerns に既知 4 パターン系 ×3 + 非該当 ×1）
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',
@@ -338,7 +338,7 @@ function createSingleConcernResponder(concernResolutions) {
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'post-summary' && agentType === 'dev-flow:dev-runner-haiku') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return {
         status: 'DONE_WITH_CONCERNS', task_id: 't1', files: ['src/x.ts'], summary: 's',
         concerns: ['CONCERN マーカー: 単一の未分類 concern'],
