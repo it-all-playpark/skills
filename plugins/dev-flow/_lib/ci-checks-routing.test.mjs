@@ -95,7 +95,7 @@ function createResponder({ concerns, ciChecksResponse }) {
       return { posted: true, method: 'gh pr comment', url: 'http://x' };
     }
     // implementer（本経路の main call。concerns はシナリオ別）
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return {
         status: 'DONE_WITH_CONCERNS',
         task_id: 't1',

@@ -77,7 +77,7 @@ function makeSandbox(analyzeReq, opts) {
       ac_results: [], security_clearance: [],
     };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 'issue-1', files: realizedFiles, summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 'issue-1', files: realizedFiles, summary: '', concerns: [] };
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };
     return null;
   };

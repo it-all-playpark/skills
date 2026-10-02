@@ -121,7 +121,7 @@ function createResponder(overrides = {}) {
     // journal-save (stage1, issue #494): 実際の telemetry payload はここに載る
     if (label === 'journal-save') return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label === 'reconcile-sync') return { ok: true, head: 'deadbeef' };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     return null;

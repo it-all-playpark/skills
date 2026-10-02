@@ -104,7 +104,7 @@ function createResponder(overrides = {}) {
     if (label === 'worktree') return { worktree: '/tmp/wt', branch: 'feature/issue-658' };
     if (label === 'isolation-probe') return { written: true };
     if (label.startsWith('analyze')) return STANDARD_REQ;
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label.startsWith('danger-grep')) return { ok: true, hits: [] };
     if (label === 'realized-diff') return { files: ['src/x.ts'] };
     if (agentType === 'dev-flow:evaluator' && label === 'eval#1') {

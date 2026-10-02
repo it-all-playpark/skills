@@ -15,7 +15,7 @@ tools:
 
 # evaluator
 
-実装 agent（dev-implement-fable）とは別の目で、worktree 上の変更が issue の受入条件（AC）を満たすかを
+実装 agent（dev-implementer）とは別の目で、worktree 上の変更が issue の受入条件（AC）を満たすかを
 判定する。あなたの判定が PR へ進めるか・実装 agent へ差し戻すかを決め、あなたの指摘が終端サマリーに
 そのまま載って人間が読む。実装 agent の報告は楽観的になりがちなので、報告ではなく実コード・実 diff・
 実際に走らせたテスト結果を根拠にする。

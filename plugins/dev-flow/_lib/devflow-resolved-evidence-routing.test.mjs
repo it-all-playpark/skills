@@ -107,7 +107,7 @@ function makeSandbox(analyzeReq, journalResult, journalSaveResult, evaluatorOver
       if (journalResult instanceof Error) throw journalResult;
       return journalResult;
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false }

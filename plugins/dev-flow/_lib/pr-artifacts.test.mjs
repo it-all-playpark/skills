@@ -542,11 +542,11 @@ test('[pr-artifacts] dev-flow.js: pr#<issue> は dev-runner-haiku へ routing �
   const analyzeOverrides = { acceptance_criteria: ['AC one', 'AC two'], issue_type: 'refactor' };
   const a = prerunAnalyze(analyzeOverrides);
   const analyze = { summary: `Issue #1: ${a.issue_title}`, acceptance_criteria: a.acceptance_criteria, issue_type: a.issue_type, scope: a.scope, issue_number: 1, issue_title: a.issue_title };
-  // 合成 plan（issue #673）: summary = issue title、単一 task issue-1。file_changes は dev-implement-fable の
+  // 合成 plan（issue #673）: summary = issue title、単一 task issue-1。file_changes は dev-implementer の
   // 返却 files（既定 responder: src/x.ts）を adoptReportedFiles が取り込んだ後の形で pr-artifacts に渡る。
   const planStub = {
     summary: 'stub-issue-title',
-    serial: [{ id: 'issue-1', desc: 'stub-issue-title', file_changes: ['src/x.ts'], test_plan: '', depends_on: [], agent: 'dev-implement-fable' }],
+    serial: [{ id: 'issue-1', desc: 'stub-issue-title', file_changes: ['src/x.ts'], test_plan: '', depends_on: [], agent: 'dev-implementer' }],
   };
   const { ctx, calls } = makeDevFlowSandbox({ extra: { args: analyzeArgs(1, analyzeOverrides) } });
   const { error } = await runWorkflowCapture(devFlowSrc, ctx);

@@ -82,8 +82,8 @@ export function buildReqFromContract(analyze, issueNumber) {
   if (Number.isInteger(analyze.comment_count) && analyze.comment_count >= 0) {
     req.comment_count = analyze.comment_count
   }
-  // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implement-fable へ issue 本文として
-  // 渡す。型が合うときだけキーを立てる（欠落は Fable prompt 側で「本文なし・AC を正とする」に倒れる）。
+  // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implementer へ issue 本文として
+  // 渡す。型が合うときだけキーを立てる（欠落は実装 agent の prompt 側で「本文なし・AC を正とする」に倒れる）。
   if (typeof analyze.issue_body === 'string') {
     req.issue_body = analyze.issue_body
   }

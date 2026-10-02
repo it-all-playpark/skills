@@ -39,7 +39,7 @@ function makeSandbox({
 
     if (label === 'issue-meta') return { ok: true, number: 1, title: analyzeReq?.issue_title ?? 'stub-issue-title' };
     if (label.startsWith('analyze')) return analyzeReq;
-    // Security floor 統合 exec-proxy: realized 3 件（dev-implement-fable の申告と一致 → 宣言外 0 件）。
+    // Security floor 統合 exec-proxy: realized 3 件（dev-implementer の申告と一致 → 宣言外 0 件）。
     // 実効 shape は realized 3 件 + AC 数で決まる（issue #676）: AC 2 → standard、AC 7 → complex。
     if (label.startsWith('danger-grep')) return { risk: { ok: true, hits: [] }, files: [...REALIZED_FILES], struct: null, diffhash: null };
     if (label === 'changed-files') return { files: ['src/foo.ts'] };
@@ -65,7 +65,7 @@ function makeSandbox({
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       const fn = implementerFn ?? (() => ({
         status: 'DONE', task_id: 'issue-1', files: [...REALIZED_FILES], summary: '', concerns: [],
         blocking_reason: null, missing_context: null,

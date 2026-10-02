@@ -63,7 +63,7 @@ Subagent に渡したい task / context は **prompt 内に verbatim paste** す
 
 1. **呼び出し元 (workflow) は worker spawn 時に `task_body` を prompt 内に verbatim paste する**。
    worker は `impl-plan.md` 全体を Read しない（boundary 違反）。dev-flow では issue 本文と AC を
-   `dev-implement-fable` の prompt に直接 paste する（計画書ファイルを介さない）。
+   `dev-implementer` の prompt に直接 paste する（計画書ファイルを介さない）。
 2. **計画を書く側は各 task を self-contained に書く**。「Task N と同様」「上述の通り」「前述」等の
    曖昧参照は禁止。レビュー側はこのパターンを `findings` (severity: major) として flag する。
 3. **worker は `task_body` paste がある場合はそれを真実の source とし、`impl-plan.md` を Read しない**。
@@ -101,7 +101,7 @@ Generator-Verifier ループ（implementer → evaluator）で worker が返す 
 `blocking_reason`, `missing_context`。
 
 正典は `plugins/dev-flow/.claude/workflows/dev-flow.js` の `IMPL` schema と
-[`plugins/dev-flow/agents/dev-implement-fable.md`](../../../dev-flow/agents/dev-implement-fable.md)。
+[`plugins/dev-flow/agents/dev-implementer.md`](../../../dev-flow/agents/dev-implementer.md)。
 
 ## Subagent Routing Rules
 

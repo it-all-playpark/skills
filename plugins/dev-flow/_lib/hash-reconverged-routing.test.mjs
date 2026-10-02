@@ -119,7 +119,7 @@ function createResponder(overrides = {}) {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (label === 'issue-meta') return { ok: true, number: 631, title: 'stub-issue-title' };
     return null;

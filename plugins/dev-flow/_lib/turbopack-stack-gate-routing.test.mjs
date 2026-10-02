@@ -55,7 +55,7 @@ function createResponder() {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
       return { hash: 'H', empty: false };
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 'T1', files: ['src/a.ts'], summary: 'done', concerns: [] };
     }
     // 未処理の label（issue-meta 等）は undefined を返し、makeRecordingSandbox の既定応答へ委譲する。
@@ -76,7 +76,7 @@ function assertNoCrash(error) {
 }
 
 function groupPrompts(calls) {
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implementer');
   const evalCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   const testCalls = calls.filter((c) => c.label.startsWith('test'));
   return { implCalls, evalCalls, testCalls };

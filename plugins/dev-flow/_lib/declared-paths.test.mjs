@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { diffDeclaredPaths, isEphemeralPath, filterEphemeralPaths } from './parallel-disjoint.mjs';
+import { diffDeclaredPaths, isEphemeralPath, filterEphemeralPaths } from './declared-paths.mjs';
 
 // ============================================================
 // diffDeclaredPaths のテスト

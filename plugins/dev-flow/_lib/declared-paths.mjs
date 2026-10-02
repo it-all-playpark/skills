@@ -1,4 +1,4 @@
-// parallel-disjoint: plan の file_changes と realized diff を突合する純粋関数群（normalizePath /
+// declared-paths: plan の file_changes と realized diff を突合する純粋関数群（normalizePath /
 // diffDeclaredPaths / isEphemeralPath / filterEphemeralPaths）。宣言外変更の検出と ephemeral path の除外に使う。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。

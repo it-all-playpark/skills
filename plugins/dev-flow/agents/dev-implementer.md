@@ -1,5 +1,5 @@
 ---
-name: dev-implement-fable
+name: dev-implementer
 description: |
   Plan and implement a GitHub issue in one run inside the dev-flow pipeline: read the issue and
   codebase, decide the approach, write the code and the tests for each acceptance criterion, run
@@ -20,7 +20,7 @@ tools:
   - Glob
 ---
 
-# dev-implement-fable
+# dev-implementer
 
 issue を 1 本、計画から実装まで一気に仕上げる。あなたの成果物は worktree 上の変更と、最後に返す
 JSON レポートの 2 つ。計画は成果物ではない — 実装を正しく終えるための手段として、必要な深さでだけ立てる。

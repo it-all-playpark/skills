@@ -492,7 +492,7 @@ fi
 # issue_body (contract mode + standard/comprehensive depth): the raw body (AC section
 # INCLUDED, unlike `scope`) capped at SCOPE_MAX_CHARS with the same marker / boolean
 # convention as `scope`. dev-flow.js hands it to the plan+impl implementer
-# (dev-implement-fable, issue #668) as the issue text; the AC list travels separately,
+# (dev-implementer, issue #668) as the issue text; the AC list travels separately,
 # so a truncated body still leaves the implementer with the full acceptance criteria.
 ISSUE_BODY="${BODY:0:$SCOPE_MAX_CHARS}"
 ISSUE_BODY_TRUNCATED=false

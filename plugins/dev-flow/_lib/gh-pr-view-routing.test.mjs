@@ -70,7 +70,7 @@ function createResponder(prMetaResponse) {
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't1', files: ['src/x.ts'], summary: 's', concerns: [] };
     // merge-tier-facts の pr サブ結果 (issue #405): シナリオ別の応答。
     // prMetaResponse は {ok, mergeable?, mergeStateStatus?, headRefOid?} 形（ok:false / null は取得失敗）を
     // pr サブ結果へ写す。

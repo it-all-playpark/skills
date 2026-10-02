@@ -91,7 +91,7 @@ function createResponder() {
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
     if (label === 'changed-files') return { files: ['src/x.ts'] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't', files: ['src/x.ts'], summary: 's', concerns: [] };
     if (label.startsWith('test')) return { tests: 'passed', green: true, summary: '' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
     if (label === 'journal-log') return { logged: true, summary: 'ok' };

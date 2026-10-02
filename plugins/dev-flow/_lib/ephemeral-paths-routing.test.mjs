@@ -8,10 +8,10 @@
 //
 // Tests:
 //   (A) realized-diff が ephemeral 込みファイル一覧を返す → shape===micro かつ evaluator 0 回
-//       (ephemeral を除外した non-ephemeral 2 件を dev-implement-fable stub の files に申告させ、宣言外 0 件にする
+//       (ephemeral を除外した non-ephemeral 2 件を dev-implementer stub の files に申告させ、宣言外 0 件にする
 //        → classifyShape(req, 2) → micro → ephemeral による誤判定なし・undeclared=0 で Evaluate 強制もかからない)
 //   (B) realized-diff が ephemeral 込み 8 件（non-ephemeral 6 件）→ shape==='complex'
-//       (non-ephemeral 6 件を dev-implement-fable stub の files に申告させ、宣言外 0 件にする
+//       (non-ephemeral 6 件を dev-implementer stub の files に申告させ、宣言外 0 件にする
 //        → declared count=6 → classifyShape(req, 6) → complex)
 //   (C) AC 5 件（standard）+ realized-diff stub が宣言外 ['u1.ts','u2.ts','u3.ts'] を返す
 //       → evaluator#1 の prompt に集約パス列が 2 回出現（focus_areas + CONCERN-1）かつ u1.ts/u2.ts/u3.ts が全部その item 内に含まれる
@@ -52,14 +52,14 @@ const src = readFileSync(devFlowPath, 'utf8');
  * secfloor-classify.sh 経由の単一呼び出し（label 'danger-grep' 据え置き）へ統合された。
  * files（旧 realized-diff・declared-path-check スナップショット）はその応答の files フィールドで得る。
  *
- * dev-implement-fable stub の files を declaredFiles で差し替え可能にする。
+ * dev-implementer stub の files を declaredFiles で差し替え可能にする。
  * realized count は宣言済み変更のみで数えるため、shape を realized 件数で動かしたいシナリオ（A/B）では
  * realizedFiles の non-ephemeral 分をそのまま declaredFiles に渡す必要がある。
  * 省略時（デフォルト []）は従来どおり全て宣言外になる（C/D/E の宣言外監査シナリオ用）。
  *
  * @param {object} analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
  * @param {string[]} realizedFiles - label 'danger-grep' stub が files フィールドとして返すファイル一覧
- * @param {string[]} [declaredFiles] - dev-implement-fable stub が files として申告するファイル一覧
+ * @param {string[]} [declaredFiles] - dev-implementer stub が files として申告するファイル一覧
  * @returns {{ ctx: vm.Context, calls: Array<{label: string, agentType: string, prompt: string}> }}
  */
 function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
@@ -105,7 +105,7 @@ function makeCountingSandbox(analyzeReq, realizedFiles, declaredFiles = []) {
     if (label === 'changed-files') {
       return { files: ['src/foo.ts'] };
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 'issue-1', files: declaredFiles, summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -293,7 +293,7 @@ test('[ephemeral-paths-routing] (C) standard + realized-diff 宣言外 3 件 →
     issue_title: 'stub-issue-title',
   };
 
-  // realized-diff が宣言外 3 件を返す（declaredFiles を省略 → dev-implement-fable stub の files は
+  // realized-diff が宣言外 3 件を返す（declaredFiles を省略 → dev-implementer stub の files は
   // 空のまま → diffDeclaredPaths で全て宣言外判定になる）。AC 5 件は realized count に関わらず
   // standard 以上で常に Evaluate を実行する。
   const realizedFiles = ['u1.ts', 'u2.ts', 'u3.ts'];
@@ -386,7 +386,7 @@ test('[ephemeral-paths-routing] (E) porcelain 取得 1 回ピン: danger-grep=1 
     issue_title: 'stub-issue-title',
   };
 
-  // realized-diff が宣言外 1 件を返す（declaredFiles を省略 → dev-implement-fable stub の files は
+  // realized-diff が宣言外 1 件を返す（declaredFiles を省略 → dev-implementer stub の files は
   // 空のまま → diffDeclaredPaths で全て宣言外判定になる）
   const realizedFiles = ['undeclared-file.ts'];
 
@@ -433,7 +433,7 @@ test('[ephemeral-paths-routing] (F) non-ephemeral 宣言外 1 件 → shape===mi
     issue_title: 'stub-issue-title',
   };
 
-  // non-ephemeral 宣言外 1 件のみ（declaredFiles を省略 → dev-implement-fable stub の files は
+  // non-ephemeral 宣言外 1 件のみ（declaredFiles を省略 → dev-implementer stub の files は
   // 空のまま → diffDeclaredPaths で全て宣言外判定になる → declared count=0 で micro だが、
   // undeclared.length>0 により micro でも Evaluate を強制する）
   const realizedFiles = ['leftover-handoff.md'];

@@ -99,11 +99,11 @@ function makeResponder(journalPrompts) {
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') {
       return { logged: true, summary: 'ok' };
     }
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     }
-    // IMPLEMENT_MODE='fable' の standard 経路（issue #668）: 合成 task issue-1 を echo する
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    // standard 経路（issue #668）: 合成 task issue-1 を echo する
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 'issue-1', files: ['src/foo.ts'], summary: '', concerns: [] };
     }
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) {
@@ -215,9 +215,9 @@ test('[subagent-invocations] nested pr-iterate の subagent_invocations（total=
   );
 });
 
-// issue #668 / #673: standard run では by_type に dev-implement-fable が 1 で計上され、
+// issue #668 / #673: standard run では by_type に dev-implementer が 1 で計上され、
 // planner 系 agent は載らない（0 回。観測経路が journal だけで閉じることを pin する）。
-test('[subagent-invocations][#673] by_type に dev-implement-fable:1・planner 系 agent 無し', async () => {
+test('[subagent-invocations][#673] by_type に dev-implementer:1・planner 系 agent 無し', async () => {
   const journalPrompts = [];
   const { ctx } = makeRecordingSandbox(makeResponder(journalPrompts));
   const error = await runDevFlowInSandbox(src, ctx);
@@ -225,7 +225,7 @@ test('[subagent-invocations][#673] by_type に dev-implement-fable:1・planner �
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
   const { telemetry } = parseJournalHandoffPayload(journalPrompts[0] ?? '');
-  assert.equal(telemetry.subagent_invocations.by_type['dev-implement-fable'], 1, `by_type['dev-implement-fable'] は 1 のはず: ${JSON.stringify(telemetry.subagent_invocations.by_type)}`);
+  assert.equal(telemetry.subagent_invocations.by_type['dev-implementer'], 1, `by_type['dev-implementer'] は 1 のはず: ${JSON.stringify(telemetry.subagent_invocations.by_type)}`);
   for (const gone of ['dev-planner', 'plan-reviewer', 'implementer']) {
     assert.equal(gone in telemetry.subagent_invocations.by_type, false, `by_type に ${gone} が載っている: ${JSON.stringify(telemetry.subagent_invocations.by_type)}`);
   }

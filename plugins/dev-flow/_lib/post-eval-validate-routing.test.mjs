@@ -84,7 +84,7 @@ test('[post-eval-validate] PR 前のテストが red なら green-fix に差し�
   assert.deepEqual(postEvalGreenFix(labels), ['green-fix#post-eval-1'], `green 化後の green-fix は 1 回のみ (labels: ${s})`);
   // green-fix は Validate と同じ agent・model・禁止文付き prompt
   const gf = calls.find((c) => c.label === 'green-fix#post-eval-1');
-  assert.equal(gf.agentType, 'dev-flow:dev-implement-fable');
+  assert.equal(gf.agentType, 'dev-flow:dev-implementer');
   assert.equal(gf.model, 'sonnet');
   assert.ok(gf.prompt.includes(RED.summary), 'green-fix prompt に失敗内容が渡っていない');
   assert.ok(logs.some((l) => l.includes('post-eval validate: green-fix 1 回') && l.includes('src/post-eval-fix.ts')), `green-fix 計上 log が無い (logs: ${JSON.stringify(logs)})`);

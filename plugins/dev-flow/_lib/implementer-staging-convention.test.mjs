@@ -1,6 +1,6 @@
-// dev-implement-fable.md は sandbox write-deny（issue #216 リトライで実証）のため、配置規約は dev-flow.js が
+// dev-implementer.md は sandbox write-deny（issue #216 リトライで実証）のため、配置規約は dev-flow.js が
 // 全実装 spawn prompt（Implement / green-fix / Evaluate 差し戻し）に注入する。本テストはその注入を VM 挙動で
-// pin する（issue #636 で自然言語文言 pin を VM 挙動へ置換、issue #673 で dev-implement-fable 一本に追随）。
+// pin する（issue #636 で自然言語文言 pin を VM 挙動へ置換、issue #673 で dev-implementer 一本に追随）。
 //
 // 問題: 実装 agent が evaluator.staged.md / fm_*.txt 等の一時ファイルを worktree 直下に残すと
 //       `git status --porcelain --untracked-files=all` ベースの realized-diff が膨張し、
@@ -8,7 +8,7 @@
 //
 // このテストは:
 //   (2b) 実装 prompt が一時ファイルの削除を指示しない（否定側 pin。AC-3 許可）
-//   (3) routing: 標準経路の dev-implement-fable 呼び出し全件の prompt に規約トークンが含まれる
+//   (3) routing: 標準経路の dev-implementer 呼び出し全件の prompt に規約トークンが含まれる
 //   (4) routing: green-fix#1（Validate red→green-fix 経路）の prompt にも規約トークンが含まれる
 //   (5) routing: reimpl#1（Evaluate 差し戻し経路）の prompt にも規約トークンが含まれる
 // を assert する。agent 定義ファイルは一切読まない。
@@ -23,7 +23,7 @@ import { makeDevFlowSandbox, runWorkflowCapture, assertNoCrash, shapeOverrides }
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf8');
 
-const FABLE = 'dev-flow:dev-implement-fable';
+const IMPLEMENTER = 'dev-flow:dev-implementer';
 
 // ============================================================
 // Part 1: 否定側 pin（VM 挙動）
@@ -35,8 +35,8 @@ test('[staging-convention] 実装 prompt が一時ファイルの削除を指示
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, '2b');
-  const implCalls = calls.filter((c) => c.agentType === FABLE);
-  assert.ok(implCalls.length >= 1, 'dev-implement-fable が呼ばれていない');
+  const implCalls = calls.filter((c) => c.agentType === IMPLEMENTER);
+  assert.ok(implCalls.length >= 1, 'dev-implementer が呼ばれていない');
   for (const c of implCalls) {
     for (const forbidden of ['削除せよ', '削除する', '完了前に削除']) {
       assert.ok(!c.prompt.includes(forbidden), `prompt (label=${c.label}) に削除指示 "${forbidden}" が含まれている（.devflow-tmp/ は realized-diff から除外済みで後始末は不要）`);
@@ -52,19 +52,19 @@ test('[staging-convention] 実装 prompt が一時ファイルの削除を指示
 
 function assertTokens(call, label) {
   assert.ok(call != null, `label === '${label}' の call が見つからない`);
-  assert.equal(call.agentType, FABLE, `${label} の agentType が ${call.agentType}（dev-implement-fable のはず）`);
+  assert.equal(call.agentType, IMPLEMENTER, `${label} の agentType が ${call.agentType}（dev-implementer のはず）`);
   for (const token of ['.devflow-tmp', 'TMPDIR', 'staged']) {
     assert.ok(call.prompt.includes(token), `${label} prompt に '${token}' が含まれない。STAGING_CONVENTION が注入されていない`);
   }
 }
 
-// (3) routing: 標準経路の dev-implement-fable 呼び出し全件に規約トークンが含まれる
-test('[staging-convention] routing: 標準経路の dev-implement-fable prompt 全件に規約トークンが含まれる', async () => {
+// (3) routing: 標準経路の dev-implementer 呼び出し全件に規約トークンが含まれる
+test('[staging-convention] routing: 標準経路の dev-implementer prompt 全件に規約トークンが含まれる', async () => {
   const { ctx, calls } = makeDevFlowSandbox();
   const { error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'staging-convention-standard');
-  const implCalls = calls.filter((c) => c.agentType === FABLE);
-  assert.ok(implCalls.length >= 1, 'dev-implement-fable が呼ばれていない（0 件）');
+  const implCalls = calls.filter((c) => c.agentType === IMPLEMENTER);
+  assert.ok(implCalls.length >= 1, 'dev-implementer が呼ばれていない（0 件）');
   for (const c of implCalls) assertTokens(c, c.label);
 });
 

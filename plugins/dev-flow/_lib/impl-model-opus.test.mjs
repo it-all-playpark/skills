@@ -1,10 +1,10 @@
-// dev-implement-fable の既定 model が frontmatter の opus で、fable→opus fallback 機構が撤去されていることを
+// dev-implementer の既定 model が frontmatter の opus で、fable→opus fallback 機構が撤去されていることを
 // 静的検査と dev-flow.js 全体の VM 実行で pin する（issue #705）。
 //
 //   (a) 静的: dev-flow.js と _lib 配下（本ファイルを除く）に fallback 機構のシンボルが無い。
 //       references/telemetry.md / pipeline.md に fable→opus fallback と「既定 model fable」の記述が無い
 //   (b) call site: Implement（impl）・BLOCKED 再実装（reimpl-blocked#b）・Evaluate 差し戻し（reimpl#i）・
-//       empty-diff 差し戻し（reimpl-empty-diff）の dev-implement-fable call は opts に model キーを持たない
+//       empty-diff 差し戻し（reimpl-empty-diff）の dev-implementer call は opts に model キーを持たない
 //       （frontmatter 既定で起動）。model を渡すのは green-fix#i / green-fix#retry-i の 'sonnet' だけ
 //   (c) implementer の null は再試行されず 1 回で drop に計上される
 //   (d) micro / standard / complex の spawn 数・Evaluate 回数が fallback 撤去前と一致する
@@ -24,7 +24,7 @@ const pluginRoot = join(here, '..');
 const src = readFileSync(join(pluginRoot, '.claude', 'workflows', 'dev-flow.js'), 'utf8');
 const SELF = basename(fileURLToPath(import.meta.url));
 
-const FABLE = 'dev-flow:dev-implement-fable';
+const IMPLEMENTER = 'dev-flow:dev-implementer';
 const FORBIDDEN = ['fallbackModel', 'IMPL_FALLBACK_MODEL', 'IMPL_FALLBACK_LABEL', 'impl_model_fallback_label'];
 
 function listFiles(dir) {
@@ -90,7 +90,7 @@ async function runFlow(overrides = {}, extra = {}) {
 }
 
 const byLabel = (calls, label) => calls.filter((c) => c.label === label);
-const implCalls = (calls) => calls.filter((c) => c.agentType === FABLE);
+const implCalls = (calls) => calls.filter((c) => c.agentType === IMPLEMENTER);
 const hasModelKey = (c) => 'model' in (c.opts ?? {});
 
 // 各経路の implementer call を 1 run ずつ起こす（label → 起動条件）
@@ -111,12 +111,12 @@ const IMPL_ROUTES = {
 };
 
 for (const [label, route] of Object.entries(IMPL_ROUTES)) {
-  test(`[impl-model-opus] (b) ${label} は dev-implement-fable を model 指定なし（frontmatter 既定 opus）で spawn する`, async () => {
+  test(`[impl-model-opus] (b) ${label} は dev-implementer を model 指定なし（frontmatter 既定 opus）で spawn する`, async () => {
     const { calls, error } = await runFlow(route.overrides, route.extra ?? {});
     assert.equal(error, null, `run が throw した: ${error?.message}`);
     const hit = byLabel(calls, label);
     assert.equal(hit.length, 1, `${label} は 1 回のはず: ${implCalls(calls).map((c) => c.label).join(', ')}`);
-    assert.equal(hit[0].agentType, FABLE);
+    assert.equal(hit[0].agentType, IMPLEMENTER);
     assert.equal(hasModelKey(hit[0]), false, `${label} の opts に model キーがある: ${hit[0].model}`);
     const withModel = implCalls(calls).filter(hasModelKey);
     assert.deepEqual(withModel.map((c) => c.label), [], 'green-fix 以外の implementer call に model キーがある');
@@ -132,7 +132,7 @@ test('[impl-model-opus] (b) green-fix#1 / green-fix#retry-1 だけが model:sonn
   for (const [calls, label] of [[first.calls, 'green-fix#1'], [retry.calls, 'green-fix#retry-1']]) {
     const gf = byLabel(calls, label);
     assert.equal(gf.length, 1, `${label} は 1 回のはず`);
-    assert.equal(gf[0].agentType, FABLE, `${label} の agent 定義は dev-implement-fable のはず`);
+    assert.equal(gf[0].agentType, IMPLEMENTER, `${label} の agent 定義は dev-implementer のはず`);
     assert.equal(gf[0].model, 'sonnet', `${label} は model:sonnet のはず`);
     const others = implCalls(calls).filter((c) => !c.label.startsWith('green-fix'));
     assert.ok(others.length >= 1, 'Implement の call が観測されない');
@@ -146,7 +146,7 @@ test('[impl-model-opus] (c) impl:serial:issue-1 の null は再試行されず 1
   const impl = byLabel(calls, 'impl:serial:issue-1');
   assert.equal(impl.length, 1, `impl:serial:issue-1 は 1 回のはず（fallback 再試行なし）: ${impl.length}`);
   assert.equal(hasModelKey(impl[0]), false);
-  assert.ok(logs.some((l) => l.includes('impl: dev-implement-fable 1 件が失敗(null)')), 'drop の log が無い');
+  assert.ok(logs.some((l) => l.includes('impl: dev-implementer 1 件が失敗(null)')), 'drop の log が無い');
   assert.ok(logs.some((l) => l.includes('implement drop 1 件')), 'implDroppedCount=1 の log が無い');
 });
 
@@ -164,21 +164,21 @@ const SHAPES = {
     },
     total: 13,
     evals: 0,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implement-fable': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 5, 'dev-flow:pr-reviewer': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 5, 'dev-flow:pr-reviewer': 1 },
   },
   standard: {
     args: analyzeArgs(1, { acceptance_criteria: ['a', 'b', 'c', 'd'], issue_type: 'feat' }),
     overrides: {},
     total: 14,
     evals: 1,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implement-fable': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
   },
   complex: {
     args: COMPLEX_ARGS,
     overrides: {},
     total: 14,
     evals: 1,
-    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implement-fable': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
+    byType: { 'dev-flow:dev-runner-haiku-wo': 1, 'dev-flow:dev-implementer': 1, 'dev-flow:dev-runner-haiku': 5, 'dev-flow:dev-runner-haiku-ro': 6, 'dev-flow:evaluator': 1 },
   },
 };
 

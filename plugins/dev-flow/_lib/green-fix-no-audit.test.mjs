@@ -71,7 +71,7 @@ function responder({ label, agentType }) {
     return { pr_url: 'http://x', pr_number: 1, committed: true };
   }
   // implementer
-  if (agentType === 'dev-flow:dev-implement-fable') {
+  if (agentType === 'dev-flow:dev-implementer') {
     return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
   }
   // diff-gate / diff-hash（issue #215）: need() による throw の回避

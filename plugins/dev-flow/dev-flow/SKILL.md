@@ -94,13 +94,13 @@ CI test は green」を意味する。呼び出し元は journal・`gh pr checks
 その旨をそのまま報告する。`validate_tests === 'error'` で `ci_test_verified` が `true` でなければ
 テストは未検証なので、その旨を報告して CI の確認を人間に委ねる。`validate_tests === 'failed'` は本物の red。
 
-## Implement 経路（全 shape で dev-implement-fable 一本）
+## Implement 経路（全 shape で dev-implementer 一本）
 
 Setup 末尾の analyze ゲート（固有の phase は持たない）は `args.setup.analyze`（prerun の決定論 analyze）を
 whitelist 検証して 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）を判定するだけで、
 通常経路では agent を起動しない（ゲートが引いたときだけ sonnet を 1 spawn し、人間向けの missing_context を
 作って needs_clarification で終端する）。ゲート直後に issue から単一 task の plan を合成するだけ（Plan phase は
-持たず、planner 系 agent は起動しない）で、Implement で `dev-implement-fable`（plan+impl 統合、opus / high）を
+持たず、planner 系 agent は起動しない）で、Implement で `dev-implementer`（plan+impl 統合、opus / high）を
 1 spawn する。BLOCKED 再実装（`reimpl-blocked#b`）・Validate の green-fix・Evaluate の差し戻し（`reimpl#i`）も
 同じ agent への再 spawn。shape（micro / standard / complex）は analyze ゲートでは決めず、Security floor で
 realized diff の file 数 + AC 数 / issue_type / 構造化 breaking_change から決定論に決める

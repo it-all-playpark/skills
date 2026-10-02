@@ -95,7 +95,7 @@ export const DEV_FLOW_SCENARIOS = {
       redgreen: { results: [{ index: 0, red: true, green: true, reason: 'ok', testcmd_ran: true }] },
     },
   },
-  // dev-implement-fable が CI で検証可能な環境事象を concern に返す → ENV item → merge-tier-facts の checks で CI 委譲
+  // dev-implementer が CI で検証可能な環境事象を concern に返す → ENV item → merge-tier-facts の checks で CI 委譲
   'ci-checks': {
     overrides: {
       'impl:serial:issue-1': {
@@ -105,7 +105,7 @@ export const DEV_FLOW_SCENARIOS = {
       'merge-tier-facts': mergeTierFacts({ checks: [{ name: 'build', bucket: 'pass' }] }),
     },
   },
-  // complex（realized 7 files）: eval#1 critical → reimpl#1（dev-implement-fable へ fix_feedback 付き差し戻し）→ eval#2 pass
+  // complex（realized 7 files）: eval#1 critical → reimpl#1（dev-implementer へ fix_feedback 付き差し戻し）→ eval#2 pass
   'complex-fix': {
     overrides: {
       ...shapeOverrides('complex'),
@@ -135,7 +135,7 @@ export const DEV_FLOW_SCENARIOS = {
     },
   },
   // Analyze のゲート（comment_conflicts 非空）→ analyze-clarify#1（dev-runner）1 spawn → needs_clarification
-  // （isolation-probe / fable / PR は 0 件。writeFailureTelemetry 経由の failure handoff。issue #690）
+  // （isolation-probe / dev-implementer / PR は 0 件。writeFailureTelemetry 経由の failure handoff。issue #690）
   'analyze-clarify': {
     extra: { args: analyzeArgs(1, { analyze_path: 'jev', jev_reasons: ['comments present (1)'], comment_count: 1, comment_conflicts: ['conflict: comment #1 by alice（OWNER, 2026-01-01T00:00:00Z）: hmm'] }) },
   },

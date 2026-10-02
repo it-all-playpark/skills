@@ -34,7 +34,7 @@ async function run(analyze) {
   assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
   return { calls, logs, result };
 }
-const implCount = (calls) => calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable').length;
+const implCount = (calls) => calls.filter((c) => c.agentType === 'dev-flow:dev-implementer').length;
 
 // ============================================================
 // 静的 pin

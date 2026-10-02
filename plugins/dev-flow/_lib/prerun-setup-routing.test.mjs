@@ -39,8 +39,8 @@ test('[prerun-setup-routing] (a) 既定 args → Setup の spawn は isolation-p
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
 
   // Setup / Analyze は args.setup 駆動で spawn せず、最初の spawn は isolation-probe（Analyze ゲート後・Implement 前）
-  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implement-fable');
-  assert.notStrictEqual(implIdx, -1, 'dev-implement-fable の call が見つからない');
+  const implIdx = calls.findIndex((c) => c.agentType === 'dev-flow:dev-implementer');
+  assert.notStrictEqual(implIdx, -1, 'dev-implementer の call が見つからない');
   const beforeImpl = calls.slice(0, implIdx);
   assert.deepEqual(
     beforeImpl.map((c) => ({ label: c.label, agentType: c.agentType })),
@@ -112,7 +112,7 @@ test('[prerun-setup-routing] (g) args.setup.deps.ok:false → implementer prompt
   assertNoCrash(error, 'g');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
 
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implementer');
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(c.prompt.includes('依存インストール警告'), `implementer prompt (label=${c.label}) に '依存インストール警告' が含まれない`);
@@ -126,7 +126,7 @@ test('[prerun-setup-routing] (h) 既定（deps ok）→ implementer prompt に�
   assertNoCrash(error, 'h');
   assert.equal(error, null, `run は完走するはずだが throw した: ${error?.message}`);
 
-  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable');
+  const implCalls = calls.filter((c) => c.agentType === 'dev-flow:dev-implementer');
   assert.ok(implCalls.length >= 1, 'implementer が呼ばれていない');
   for (const c of implCalls) {
     assert.ok(!c.prompt.includes('依存インストール警告'), `implementer prompt (label=${c.label}) に依存インストール警告が含まれてはいけない`);

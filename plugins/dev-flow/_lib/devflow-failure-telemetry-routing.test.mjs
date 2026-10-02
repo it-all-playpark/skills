@@ -59,7 +59,7 @@ function makeSandbox({ analyzeReq, implementerFn, diffGateConfig, journalLogFail
     if (label === 'diff-gate') return { hash: gateEmpty ? 'EMPTY' : 'H', empty: gateEmpty };
     if (label === 'diff-gate-retry') return { hash: retryEmpty ? 'EMPTY' : 'H', empty: retryEmpty };
     if (label.startsWith('diff-hash')) return { hash: 'H', empty: false };
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       const fn = implementerFn ?? (() => ({
         status: 'DONE', task_id: 'T1', files: [], summary: '', concerns: [],
         blocking_reason: null, missing_context: null,

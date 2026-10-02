@@ -54,7 +54,7 @@ function makeCountingSandbox(analyzeReq, config) {
     if (label === 'journal-log-failure') return null;
     if (label === 'journal-log' && agentType === 'dev-flow:dev-runner-haiku') return { logged: true, summary: 'ok' };
     if (label === 'post-summary') return { posted: true, method: 'gh pr comment', url: 'http://x' };
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       return { status: 'DONE', task_id: 'T1', files: implementerFiles, summary: '', concerns: [], blocking_reason: null, missing_context: null };
     }
     if (label === 'issue-meta') return { ok: true, number: 1, title: 'stub-issue-title' };

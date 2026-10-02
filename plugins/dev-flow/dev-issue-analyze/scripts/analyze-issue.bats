@@ -1150,7 +1150,7 @@ ${PAD}"
 # ---------------------------------------------------------------------------
 # issue_body (issue #668): raw body (AC section included) capped at the scope
 # limit (4000 chars), same marker / boolean convention as scope. dev-flow.js
-# hands it to dev-implement-fable as the issue text.
+# hands it to dev-implementer as the issue text.
 # ---------------------------------------------------------------------------
 @test "contract mode: issue_body is the raw body verbatim (AC section included) when under 4000 chars" {
     FIXTURE="$FIXTURE_DIR/issue-body-short.json"

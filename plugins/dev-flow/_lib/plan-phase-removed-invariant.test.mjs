@@ -3,7 +3,7 @@
 // plan 終端の clock mark・summary の plan concerns 配線）を撤去した後、旧シンボルが dev-flow.js と
 // _lib/devflow-durations.mjs に再登場しないことを静的に pin する。
 //
-// `plan` オブジェクト（synthesizeFablePlan の出力）は Implement の spawn 単位・報告キャリア
+// `plan` オブジェクト（synthesizeImplPlan の出力）は Implement の spawn 単位・報告キャリア
 // （adoptReportedFiles / diffDeclaredPaths / buildCommitMessage / buildPrBody）として生きているため対象外。
 //
 // 禁止トークンは join で組み立てる — 本ファイル自身が plugins/dev-flow 配下の *.mjs であり、
@@ -51,17 +51,17 @@ for (const rel of TARGETS) {
 
 // ---- (b) 構造 pin: meta.phases に Plan が無く、合成 plan は Analyze 直後（Implement phase より前）に作られる ----
 
-test('[plan-phase-removed] (b) dev-flow.js の meta.phases に Plan が無く、synthesizeFablePlan は phase(\'Implement\') より前で呼ばれる', () => {
+test('[plan-phase-removed] (b) dev-flow.js の meta.phases に Plan が無く、synthesizeImplPlan は phase(\'Implement\') より前で呼ばれる', () => {
   const src = readFileSync(join(pluginRoot, '.claude/workflows/dev-flow.js'), 'utf8');
   assert.ok(!src.includes("{ title: 'Plan' }"), 'meta.phases に Plan が残っている');
-  const synth = src.indexOf('let plan = synthesizeFablePlan(req, ISSUE)');
+  const synth = src.indexOf('let plan = synthesizeImplPlan(req, ISSUE)');
   const impl = src.indexOf("phase('Implement')");
-  assert.ok(synth >= 0, 'synthesizeFablePlan(req, ISSUE) の呼び出しが無い（plan オブジェクトは削除対象外）');
+  assert.ok(synth >= 0, 'synthesizeImplPlan(req, ISSUE) の呼び出しが無い（plan オブジェクトは削除対象外）');
   assert.ok(impl >= 0, "phase('Implement') が無い");
   assert.ok(synth < impl, '合成 plan は Implement phase より前に作られるべき');
   for (const fn of [
-    'function synthesizeFablePlan(req, issue)',
-    'function isFablePlan(p)',
+    'function synthesizeImplPlan(req, issue)',
+    'function isImplPlan(p)',
     'function adoptReportedFiles(plan, results)',
     'function diffDeclaredPaths(planTasks, changedFiles)',
     'function buildCommitMessage({ issue, req, plan })',

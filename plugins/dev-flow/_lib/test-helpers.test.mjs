@@ -153,7 +153,7 @@ test('[test-helpers] devFlowArgs: devFlowArgs("999") の args.issue が "999" �
 
 // ============================================================
 // makeRecordingSandbox: parallel() / pipeline() は sandbox に置かない（issue #673）。
-// dev-flow.js の Implement は dev-implement-fable の単一 serial spawn で fan-out を持たないため、
+// dev-flow.js の Implement は dev-implementer の単一 serial spawn で fan-out を持たないため、
 // stub があると「production が pipeline() を呼んでも完走する」偽陽性になる。
 // ============================================================
 
@@ -214,7 +214,7 @@ test('[test-helpers] runDevFlowInSandbox: 実際の dev-flow.js ソースを Ref
     if (agentType === 'dev-flow:evaluator') return { verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation', ac_results: [], security_clearance: [] };
     if (label === 'realized-diff' || label === 'declared-path-check' || label === 'changed-files') return { files: [] };
     if (label.startsWith('pr')) return { pr_url: 'http://x', pr_number: 1, committed: true };
-    if (agentType === 'dev-flow:dev-implement-fable') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
+    if (agentType === 'dev-flow:dev-implementer') return { status: 'DONE', task_id: 't', files: [], summary: '', concerns: [] };
     if (label.startsWith('diff-gate') || label.startsWith('diff-hash')) return { hash: 'H', empty: false };
     return null;
   };
@@ -345,8 +345,8 @@ test('[test-helpers] (d) devFlowResponder: 既定の "danger-grep" 応答が仕�
     diffhash: { hash: 'AAA', empty: false },
   });
   assert.deepEqual(STANDARD_FILES, ['src/x.ts', 'src/y.ts', 'src/z.ts']);
-  // dev-implement-fable 既定応答も同じ 3 件を申告する（宣言外 0 件で shape だけが standard になる）
-  const impl = responder({ label: 'impl:serial:issue-1', agentType: 'dev-flow:dev-implement-fable', prompt: 'p' });
+  // dev-implementer 既定応答も同じ 3 件を申告する（宣言外 0 件で shape だけが standard になる）
+  const impl = responder({ label: 'impl:serial:issue-1', agentType: 'dev-flow:dev-implementer', prompt: 'p' });
   assert.deepEqual(impl.files, STANDARD_FILES);
 });
 

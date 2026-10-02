@@ -19,7 +19,7 @@ analyze ゲート（needs_clarification / analyze-clarify）の失敗は `Setup`
 
 | Pattern | Recommendation |
 |---------|----------------|
-| `Implement` phase > 30% | dev-implement-fable の再 spawn 回数（reimpl-blocked#b / reimpl#i）と issue の AC 粒度を見直す |
+| `Implement` phase > 30% | dev-implementer の再 spawn 回数（reimpl-blocked#b / reimpl#i）と issue の AC 粒度を見直す |
 | `Validate` phase > 40% | test green 化のリトライ設計を見直す、静的解析を implement 前段に前倒し |
 | `Setup` phase > 10% | worktree isolation / env bootstrap（`_shared/scripts/ensure-worktree-deps.sh`）と、末尾の analyze ゲート（`analyze_path` / `needs_clarification` の分布）を確認 |
 

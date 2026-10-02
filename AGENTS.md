@@ -95,7 +95,7 @@ JS で保持し、中間 state は script 変数に持つ (外部 state JSON は
 
 ```
 /dev-flow <issue>   → [wrapper preflight] → Setup(末尾で決定論 analyze ゲート)
-                      → Implement(dev-implement-fable 1 spawn) → Validate(test green)
+                      → Implement(dev-implementer 1 spawn) → Validate(test green)
                       → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('dev-flow:pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → Workflow('dev-flow:pr-iterate') で review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
@@ -107,7 +107,7 @@ JS で保持し、中間 state は script 変数に持つ (外部 state JSON は
 - **merge は常に人間** (LGTM 後にユーザーが merge)。全 tier で例外なし。
 - **軸A invariant** — deterministic oracle / seed / critical アイテムは全 `gate_policy` で blocking。
   security floor・決定論ゲートを policy で緩めない。
-- **1 issue = 1 PR**。Implement は全 shape で `dev-implement-fable`（plan+impl 統合）を単一 worktree に 1 spawn する（planner ⇄ reviewer ループ・parallel fan-out は持たない）。
+- **1 issue = 1 PR**。Implement は全 shape で `dev-implementer`（plan+impl 統合）を単一 worktree に 1 spawn する（planner ⇄ reviewer ループ・parallel fan-out は持たない）。
 - **後方互換 scaffolding を作らない** — out-of-enum 値は明示 error (legacy fallback / version 分岐なし)。
 - `plugins/dev-flow/.claude/workflows/*.js` の `// ==== BEGIN inline: <path> ====` 〜
   `// ==== END inline: <path> ====` 区間は**生成物であり直接編集禁止**。編集は `_lib` の
@@ -137,7 +137,7 @@ inline 生成・dev-improve の詳細は `plugins/dev-flow/dev-flow/references/`
 ### 実装は 1 issue = 1 agent spawn (issue 分割しない)
 
 Plan phase は持たず、Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成するだけで、planner / plan-reviewer は起動しない。
-Implement は `dev-implement-fable` が issue 本文と AC を受け取り、計画から実装まで 1 spawn で仕上げる。
+Implement は `dev-implementer` が issue 本文と AC を受け取り、計画から実装まで 1 spawn で仕上げる。
 BLOCKED 再実装・Validate green-fix・Evaluate 差し戻しも同じ agent への再 spawn。複数 issue 分割は使わない。
 
 ### Subagent dispatch — 必須 5 要素

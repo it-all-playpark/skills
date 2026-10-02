@@ -1,5 +1,5 @@
 // blocked-done-preservation.test.mjs — BLOCKED 再実装後の結果マージ保持を VM sandbox で検証する
-// （issue #673 で dev-implement-fable 一本の経路に追随）。
+// （issue #673 で dev-implementer 一本の経路に追随）。
 //
 //   (a) reimpl-blocked#1 が DONE_WITH_CONCERNS を返したら b=2 は発火しない
 //       （stale な BLOCKED を implResults に残さない）

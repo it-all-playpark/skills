@@ -13,7 +13,7 @@
 //   (H) req.shape='complex' + estimated 7 でも realized 1 件なら micro（LLM raise は無い）
 //   (I) return object / journal telemetry に事前見積もり由来のキー（effective_shape / shape_refloored /
 //       triviality / estimated_file_count）が無い
-//   (J) 3 shape の spawn 構造（dev-implement-fable 回数 / evaluator 回数 / route）が shape 別経路の期待と一致する
+//   (J) 3 shape の spawn 構造（dev-implementer 回数 / evaluator 回数 / route）が shape 別経路の期待と一致する
 //   (K) 静的 pin: dev-flow.js（inline 生成区間含む）に refloorShape / mergeShape / 事前見積もりキーが無い
 //   (L) shift-bud#1513 相当 + secfloor の lines → 重み・削除主体の補正で micro、telemetry に補正前の shape（issue #740）
 //   (M) 同じ files で lines 無し → file 数判定の complex（補正なし）
@@ -33,7 +33,7 @@ const src = readFileSync(join(here, '..', '.claude/workflows/dev-flow.js'), 'utf
 // REQ は args.setup.analyze（prerun の analyze 段）から組まれる。既定（prerunAnalyze）は AC 2 件 / type fix / breaking なし。
 // REQ を変える test は run(overrides, analyzeOverrides) の第 2 引数で setup.analyze を差し替える。
 
-// realized files と dev-implement-fable の申告 files を揃える override（宣言外 0 件で shape だけを動かす）
+// realized files と dev-implementer の申告 files を揃える override（宣言外 0 件で shape だけを動かす）
 function filesOverrides(files, { declared = files, changed = files, lines = undefined } = {}) {
   const impl = { status: 'DONE', task_id: 'issue-1', files: [...declared], summary: 's', concerns: [] };
   return {
@@ -156,7 +156,7 @@ test('[realized-shape] (I) return object / journal telemetry に事前見積も�
 });
 
 test('[realized-shape] (J) micro / standard / complex の spawn 構造: implement 1/1/2・evaluator 0/1/2・route lite/full/full', async () => {
-  const implCount = (calls) => calls.filter((c) => c.agentType === 'dev-flow:dev-implement-fable').length;
+  const implCount = (calls) => calls.filter((c) => c.agentType === 'dev-flow:dev-implementer').length;
   const micro = await run({ ...filesOverrides(MICRO_FILES) });
   assert.equal(micro.returned.shape, 'micro');
   assert.deepEqual([implCount(micro.calls), evaluatorCalls(micro.calls).length, micro.returned.route], [1, 0, 'lite']);

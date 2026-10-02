@@ -178,7 +178,7 @@ test('[analyze-contract] (4a) scope_total_chars / comment_count は非負整数�
   assert.equal(Object.prototype.hasOwnProperty.call(req, 'comment_count'), false);
 });
 
-test('[analyze-contract] (4b) issue_body / issue_body_truncated は型が合うときだけ REQ に載る（欠落は Fable prompt が AC を正とする）', () => {
+test('[analyze-contract] (4b) issue_body / issue_body_truncated は型が合うときだけ REQ に載る（欠落は実装 agent の prompt が AC を正とする）', () => {
   const a = baseAnalyze(); delete a.issue_body; delete a.issue_body_truncated;
   const req = buildReqFromContract(a, 690);
   assert.equal(Object.prototype.hasOwnProperty.call(req, 'issue_body'), false);

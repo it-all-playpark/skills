@@ -172,7 +172,7 @@ function decisionsSection(plan) {
   return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件は plan 参照）` : shown.join('\n');
 }
 
-// 実装エージェント（dev-implement-fable）が返した PR 本文向けの記録（issue #747）。section は閉じた enum で、
+// 実装エージェント（dev-implementer）が返した PR 本文向けの記録（issue #747）。section は閉じた enum で、
 // PR body の `## 検証` に `- <label>: <text>` で載る。
 export const PR_NOTE_SECTIONS = ['verification', 'measurement'];
 const PR_NOTE_LABELS = { verification: '検証', measurement: '計測' };

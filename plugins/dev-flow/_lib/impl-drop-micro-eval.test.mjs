@@ -81,7 +81,7 @@ function createResponder(dropLabels) {
       return { pr_url: 'http://x', pr_number: 1, committed: true };
     }
     // implementer: dropLabels に一致するものだけ null（= drop）を返す
-    if (agentType === 'dev-flow:dev-implement-fable') {
+    if (agentType === 'dev-flow:dev-implementer') {
       if (dropLabels.includes(label)) return null;
       return { status: 'DONE', task_id: 'issue-1', files: ['src/foo.ts'], summary: '', concerns: [] };
     }
