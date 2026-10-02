@@ -75,6 +75,7 @@ dep-guardian-discover-prs
 dep-guardian-merge-prs
 dep-guardian-test-pr
 gmail-cleanup
+gmail-receipts
 incident-response-state
 qiita-publish
 repo-commit
@@ -140,6 +141,7 @@ skills_target_for() {
         dep-guardian-test-pr) echo "bash dep-guardian/scripts/test-pr.sh" ;;
         dep-guardian-merge-prs) echo "bash dep-guardian/scripts/merge-prs.sh" ;;
         gmail-cleanup) echo "bash gmail-cleanup/scripts/gmail-cleanup.sh" ;;
+        gmail-receipts) echo "bash gmail-receipts/scripts/gmail-receipts.sh" ;;
         qiita-publish) echo "bash qiita-publish/scripts/publish.sh" ;;
         zenn-publish) echo "bash zenn-publish/scripts/publish.sh" ;;
         repo-commit) echo "python3 repo-commit/scripts/export_commit.py" ;;

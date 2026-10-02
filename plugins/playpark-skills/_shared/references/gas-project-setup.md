@@ -1,7 +1,8 @@
-# gmail-cleanup セットアップ
+# GAS プロジェクトのセットアップ（gmail-cleanup / gmail-receipts 共通）
 
-`create` / `deploy` / `logs` は Apps Script API を gws 経由で叩く。アカウントごとに次の3つが揃っている必要がある。
-どれも人間がブラウザで行う作業なので、足りないときはユーザーに手順を伝える。
+`create` / `deploy` / `logs` は Apps Script API を gws 経由で叩く（`_shared/scripts/gas-project.sh`）。
+アカウントごとに次の3つが揃っている必要がある。どれも人間がブラウザで行う作業なので、
+足りないときはユーザーに手順を伝える。
 
 ## 1. gws のトークンに Apps Script のスコープがある
 
@@ -35,16 +36,16 @@ OFF のままだと push / create が `User has not enabled the Apps Script API`
 権限承認とトリガー作成は Google の仕様上エディタでしかできない。`deploy` 後に:
 
 1. https://script.google.com/d/<scriptId>/edit を開き、関数 `dryRun` を実行 → 権限を承認 →
-   実行ログで対象件数と件名サンプルを確認（削除はしない）
-2. 問題なければ関数 `setup` を実行 → 毎日4時台に `cleanup` が走るトリガーが作られる
-3. 溜まり分が極端に多いと1回の実行（約4分で打ち切り）で終わらないことがある。打ち切りは正常終了で、
-   残りは翌日以降に処理される。すぐ片付けたい場合は `cleanup` を手で数回実行する
+   実行ログで対象を確認（何も変更しない）
+2. 問題なければ関数 `setup` を実行 → 日次トリガーが作られる
+3. 溜まり分が多いと1回の実行（約4分で打ち切り）で終わらないことがある。打ち切りは正常終了で、
+   残りは翌日以降に処理される。すぐ片付けたい場合は本処理の関数を手で数回実行する
 
 `gas/appsscript.json` の `oauthScopes` や `enabledAdvancedServices` を変えたときは、
 deploy 後にエディタで `dryRun` を一度手動実行して再承認する（承認が要らなければそのまま完了する）。
 
 ## 実行結果の確認
 
-`gmail-cleanup logs <config> <id|all> [件数]` で直近の実行の状態（`COMPLETED` / `FAILED` / `TIMED_OUT`）と
+`<skill> logs <config> <id|all> [件数]` で直近の実行の状態（`COMPLETED` / `FAILED` / `TIMED_OUT`）と
 所要時間が見られる。件数やエラー本文（`console.log`）は API から取れないので、
 `FAILED` / `TIMED_OUT` のときはエディタ左の「実行数」でその回のログを開く。

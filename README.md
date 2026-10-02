@@ -457,6 +457,7 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `gws-calendar-agenda` | Google Calendar全カレンダーの予定一覧表示 🔗 |
 | `gmail-cleanup` | 古いプロモーション等を毎日ゴミ箱へ移す GAS を、repo の設定 JSON から各アカウントへデプロイ |
+| `gmail-receipts` | 領収書ラベルのメールを毎日 Drive の YYYY/MM へ保存してアーカイブする GAS を、repo の設定 JSON から各アカウントへデプロイ |
 
 ### ビジネス・戦略
 

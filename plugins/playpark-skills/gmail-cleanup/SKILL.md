@@ -61,7 +61,7 @@ GAS は Gmail API の Advanced Service で ID だけを扱う（1ページ500件
 
 `create` → `deploy` の後、権限承認とトリガー作成は Google の仕様でエディタでしかできない。
 ユーザーに https://script.google.com/d/<scriptId>/edit で `dryRun` → ログ確認 → `setup` を1回ずつ実行してもらう。
-前提条件（Apps Script API の有効化・gws のスコープ）は [references/setup.md](references/setup.md)。
+前提条件（Apps Script API の有効化・gws のスコープ）は [_shared/references/gas-project-setup.md](../_shared/references/gas-project-setup.md)。
 
 ## 止めるとき
 
