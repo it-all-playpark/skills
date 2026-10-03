@@ -314,7 +314,39 @@ restore_from_shared_cache() {
         copy_tree "$entry/$rel/node_modules" "$TARGET_PATH/$rel/node_modules" || return 1
     done < "$entry/$CACHE_MANIFEST"
     [[ -z "$(missing_workspace_node_modules "$pm")" ]] || return 1
+    if [[ "$pm" == "pnpm" ]]; then rebase_pnpm_workspace_state; fi
     { mkdir -p "$TARGET_PATH/.devflow-tmp" && printf '%s\n' "${pm}:${hash}" > "$TARGET_PATH/.devflow-tmp/deps-lockfile-hash"; } 2>/dev/null || true
+    return 0
+}
+
+# pnpm records the absolute path of every workspace project as the keys of
+# .projects in node_modules/.pnpm-workspace-state*.json. A restored tree
+# carries the paths of the worktree that populated the cache entry, so pnpm
+# (verifyDepsBeforeRun) treats the deps as out of date and installs before
+# `pnpm run` / `pnpm test`. That install runs inside the Bash sandbox for the
+# Validate test agent and workspace-prebuild, where pnpm 12 cannot reach the
+# registry (TLS fails), so the run fails. Rebase the keys from the source
+# root (the shortest key; every other project lives under it) onto this
+# worktree. Fail-open: an unreadable state is left as is, and pnpm falls back
+# to installing before the run as it did before this rebase existed.
+rebase_pnpm_workspace_state() {
+    local state tmp
+    for state in "$TARGET_PATH"/node_modules/.pnpm-workspace-state*.json; do
+        [[ -f "$state" ]] || continue
+        tmp="$state.devflow-rebase.$$"
+        if jq -c --arg dst "$TARGET_PATH" '
+            if (.projects | type) == "object" and (.projects | length) > 0 then
+              (.projects | keys | min_by(length)) as $src
+              | .projects |= with_entries(
+                  if .key == $src then .key = $dst
+                  elif (.key | startswith($src + "/")) then .key = $dst + (.key | ltrimstr($src))
+                  else . end)
+            else . end' "$state" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$state" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+        else
+            rm -f "$tmp" 2>/dev/null || true
+        fi
+    done
     return 0
 }
 
