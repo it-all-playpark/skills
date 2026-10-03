@@ -390,6 +390,13 @@ make_stub_pnpm() {
 echo "\$@" >> "$STUB_LOG"
 mkdir -p "\$PWD/node_modules/.pnpm/vitest@3.0.0/node_modules/vitest"
 echo '{"name":"vitest"}' > "\$PWD/node_modules/.pnpm/vitest@3.0.0/node_modules/vitest/package.json"
+# pnpm 本体と同じく、install した worktree の絶対パスを projects のキーに持つ workspace state を書く
+projects='{}'
+for p in . \${STUB_PNPM_PKGS:-}; do
+    key="\$PWD"; [ "\$p" = . ] || key="\$PWD/\$p"
+    projects=\$(jq -c --arg k "\$key" --arg n "\$p" '. + {(\$k): {name: \$n}}' <<< "\$projects")
+done
+jq -nc --argjson p "\$projects" '{lastValidatedTimestamp: 1, projects: \$p, settings: {}}' > "\$PWD/node_modules/.pnpm-workspace-state-v1.json"
 for p in \${STUB_PNPM_PKGS:-}; do
     mkdir -p "\$PWD/\$p/node_modules"
     ln -s ../../../node_modules/.pnpm/vitest@3.0.0/node_modules/vitest "\$PWD/\$p/node_modules/vitest"
@@ -442,6 +449,47 @@ STUBEOF
     # 相対 symlink が WT_B 自身の root node_modules/.pnpm を指す
     [ -f "$WT_B/packages/backend/node_modules/vitest/package.json" ]
     [[ "$(cd "$WT_B/packages/backend/node_modules/vitest" && pwd -P)" == "$(cd "$WT_B" && pwd -P)/"* ]]
+}
+
+@test "(v-2) pnpm workspace: 復元した workspace state の projects を復元先 worktree のパスに付け替える" {
+    WT_A="$TMP_DIR/wt-a"
+    WT_B="$TMP_DIR/wt-b"
+    make_pnpm_workspace "$WT_A"
+    make_pnpm_workspace "$WT_B"
+    make_stub_pnpm
+    export DEVFLOW_DEPS_CACHE_DIR="$TMP_DIR/shared-cache"
+
+    STUB_PNPM_PKGS="packages/backend packages/shared" PATH="$STUB_DIR:$PATH" run "$SCRIPT" --path "$WT_A" --lockfile-only
+    [ "$status" -eq 0 ]
+
+    PATH="$STUB_DIR:$PATH" run "$SCRIPT" --path "$WT_B" --lockfile-only
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.results | any(.ecosystem == "node" and .status == "cross_worktree_restore")'
+    state="$WT_B/node_modules/.pnpm-workspace-state-v1.json"
+    # 復元元（wt-a）のパスが残っていると、pnpm は run の前に install を始める
+    jq -e --arg b "$(cd "$WT_B" && pwd)" '.projects | keys == [$b, $b + "/packages/backend", $b + "/packages/shared"]' "$state"
+    jq -e '.projects | to_entries | map(.value.name) == [".", "packages/backend", "packages/shared"]' "$state"
+    # キャッシュ entry 側は書き換えない
+    jq -e --arg a "$(cd "$WT_A" && pwd)" '.projects | has($a)' "$TMP_DIR/shared-cache/"pnpm-*/node_modules/.pnpm-workspace-state-v1.json
+}
+
+@test "(v-3) pnpm workspace: workspace state が JSON として読めなくても復元は成功し、ファイルはそのまま残る" {
+    WT_A="$TMP_DIR/wt-a"
+    WT_B="$TMP_DIR/wt-b"
+    make_pnpm_workspace "$WT_A"
+    make_pnpm_workspace "$WT_B"
+    make_stub_pnpm
+    export DEVFLOW_DEPS_CACHE_DIR="$TMP_DIR/shared-cache"
+
+    STUB_PNPM_PKGS="packages/backend packages/shared" PATH="$STUB_DIR:$PATH" run "$SCRIPT" --path "$WT_A" --lockfile-only
+    [ "$status" -eq 0 ]
+    echo 'not json' > "$TMP_DIR/shared-cache/"pnpm-*/node_modules/.pnpm-workspace-state-v1.json
+
+    PATH="$STUB_DIR:$PATH" run "$SCRIPT" --path "$WT_B" --lockfile-only
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.results | any(.ecosystem == "node" and .status == "cross_worktree_restore")'
+    [ "$(cat "$WT_B/node_modules/.pnpm-workspace-state-v1.json")" = "not json" ]
+    [ -z "$(ls "$WT_B/node_modules" | grep -F devflow-tmp)" ]
 }
 
 @test "(w) manifest の無い共有キャッシュ entry（root の node_modules のみ）からは復元せず install し、entry を置き換える" {
