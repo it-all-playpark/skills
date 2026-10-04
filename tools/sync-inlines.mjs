@@ -11,7 +11,8 @@
 // Named exports (pure functions):
 //   stripComments(src)              - remove JS comments for forbidden-token scanning
 //   checkForbiddenTokens(src, lbl)  - error if import/require/Date.now/Math.random in code
-//   transformCanonical(src, lbl)    - strip 'export ' prefix, normalize trailing newline
+//   dropComments(src)               - remove comments from generated code, literals intact
+//   transformCanonical(src, lbl)    - strip 'export ' prefix, drop comments, normalize trailing newline
 //   scanMarkers(wfSrc, wfLabel)     - parse BEGIN/END markers, return [{source, beginLine, endLine}]
 //   insertMarkerPair(wfSrc, source, anchor, wfLabel)
 //                                   - insert a new BEGIN/END marker pair after a unique
@@ -121,9 +122,168 @@ export function checkForbiddenTokens(src, label) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// transformCanonical(src, label): apply the single transformation rule:
+// dropComments(src): remove JS comments from generated inline code.
+//
+// Why: the Workflow tool rejects scripts over 524288 bytes, and canonical comments
+// (kept in _lib/, the only place humans edit) were most of the inline bytes. The inline
+// copy is never read for intent, so it carries code only.
+//
+// Unlike stripComments (a forbidden-token pre-filter that may over-strip), this output is
+// executed, so it must never touch string / template / regex literal content:
+//   - ', " strings and ` templates (with nested ${ } expressions) are copied verbatim.
+//   - `/` starts a regex literal when the previous significant token cannot end an
+//     expression (punctuator other than ) ] }, start of input, or a keyword like `return`).
+//   - A line comment is removed together with the whitespace before it on its line.
+//   - A block comment becomes a single space, keeping its newlines (ASI relies on them).
+//   - A line that was non-blank and becomes whitespace-only is dropped; originally blank
+//     lines are kept. At least one newline always remains between two code lines.
+// ─────────────────────────────────────────────────────────────────────────────
+const REGEX_AFTER_KEYWORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw',
+  'case', 'do', 'else', 'yield', 'await',
+]);
+
+export function dropComments(src) {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  // Last significant token: '' (start), 'word' (identifier/number/keyword in prevWord),
+  // 'literal' (string/template/regex), or the punctuator character itself.
+  let prev = '';
+  let prevWord = '';
+  // One entry per open template `${`: the `{` nesting depth inside that expression.
+  const braceStack = [];
+  let inTemplate = false;
+
+  const regexAllowed = () => {
+    if (prev === '') return true;
+    if (prev === 'word') return REGEX_AFTER_KEYWORDS.has(prevWord);
+    if (prev === 'literal') return false;
+    return prev !== ')' && prev !== ']' && prev !== '}';
+  };
+
+  while (i < n) {
+    if (inTemplate) {
+      const c = src[i];
+      if (c === '\\') {
+        out += src.slice(i, i + 2);
+        i += 2;
+      } else if (c === '`') {
+        out += c;
+        i++;
+        inTemplate = false;
+        prev = 'literal';
+      } else if (c === '$' && src[i + 1] === '{') {
+        out += '${';
+        i += 2;
+        braceStack.push(0);
+        inTemplate = false;
+        prev = '{';
+      } else {
+        out += c;
+        i++;
+      }
+      continue;
+    }
+
+    const ch = src[i];
+    if (ch === '/' && src[i + 1] === '/') {
+      while (i < n && src[i] !== '\n') i++;
+      out = out.replace(/[ \t]+$/, '');
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '*') {
+      const end = src.indexOf('*/', i + 2);
+      if (end === -1) throw new Error('dropComments: unterminated block comment');
+      const newlines = src.slice(i, end).split('\n').length - 1;
+      out += newlines > 0 ? '\n'.repeat(newlines) : ' ';
+      i = end + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1;
+      while (j < n && src[j] !== ch) {
+        if (src[j] === '\\') j++;
+        else if (src[j] === '\n') throw new Error('dropComments: unterminated string literal');
+        j++;
+      }
+      out += src.slice(i, j + 1);
+      i = j + 1;
+      prev = 'literal';
+      continue;
+    }
+    if (ch === '`') {
+      out += ch;
+      i++;
+      inTemplate = true;
+      continue;
+    }
+    if (ch === '/' && regexAllowed()) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < n) {
+        const c = src[j];
+        if (c === '\\') { j += 2; continue; }
+        if (c === '\n') throw new Error('dropComments: unterminated regex literal');
+        if (inClass) { if (c === ']') inClass = false; }
+        else if (c === '[') inClass = true;
+        else if (c === '/') break;
+        j++;
+      }
+      j++;
+      while (j < n && /[A-Za-z]/.test(src[j])) j++;
+      out += src.slice(i, j);
+      i = j;
+      prev = 'literal';
+      continue;
+    }
+    if (/[A-Za-z0-9_$\u0080-￿]/.test(ch)) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_$\u0080-￿]/.test(src[j])) j++;
+      prevWord = src.slice(i, j);
+      prev = 'word';
+      out += prevWord;
+      i = j;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      out += ch;
+      i++;
+      continue;
+    }
+    if (ch === '{' && braceStack.length > 0) {
+      braceStack[braceStack.length - 1]++;
+    } else if (ch === '}' && braceStack.length > 0) {
+      if (braceStack[braceStack.length - 1] === 0) {
+        braceStack.pop();
+        out += ch;
+        i++;
+        inTemplate = true;
+        continue;
+      }
+      braceStack[braceStack.length - 1]--;
+    }
+    out += ch;
+    i++;
+    prev = ch;
+  }
+  if (inTemplate || braceStack.length > 0) {
+    throw new Error('dropComments: unterminated template literal');
+  }
+
+  // out keeps every source newline, so output line k corresponds to source line k.
+  const srcLines = src.split('\n');
+  return out
+    .split('\n')
+    .filter((line, k) => line.trim() !== '' || srcLines[k].trim() === '')
+    .join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// transformCanonical(src, label): apply the transformation rules:
 //   Strip leading 'export ' from function/const/let/var/class/async function declarations.
 //   After stripping, any remaining /^export\b/m triggers an error (export default, export {}).
+//   Drop comments (dropComments).
 //   Normalize trailing whitespace to exactly one newline.
 // ─────────────────────────────────────────────────────────────────────────────
 export function transformCanonical(src, label) {
@@ -139,7 +299,7 @@ export function transformCanonical(src, label) {
     );
   }
   // Normalize trailing newline: trim trailing whitespace/newlines, then add exactly one \n
-  return transformed.trimEnd() + '\n';
+  return dropComments(transformed).trimEnd() + '\n';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

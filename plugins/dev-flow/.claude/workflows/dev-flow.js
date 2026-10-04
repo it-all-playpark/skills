@@ -16,40 +16,11 @@ export const meta = {
 }
 
 // ==== BEGIN inline: _lib/plugin-version.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow の telemetry 世代ラベル。telemetry キー plugin_version の値として journal entry に記録する
-// （issue #601）。plugin.json は version を持たない（marketplace install を git commit SHA で main に
-// 追随させるため。tests/plugin-manifest.bats が pin）ので、本定数は manifest から独立した集計用ラベル
-// として管理する — 集計上区別したい挙動変更を入れるときに上げて tools/sync-inlines.mjs --write を
-// 実行する。workflow script では ${CLAUDE_PLUGIN_ROOT} が展開されず fs も使えないため定数で持つ。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const PLUGIN_VERSION = '0.3.0'
 // ==== END inline: _lib/plugin-version.mjs ====
 // ==== BEGIN inline: _lib/agent-namespace.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow の subagent 実体は plugin 配下（plugins/dev-flow/agents/）にあり、harness からは
-// `dev-flow:<name>` の namespaced id でしか解決できない。bare 名を agent() へ渡すと
-// `agent type '<name>' not found` で throw し run 全体が abort する。
-//
-// workflow 本体・telemetry・routing test は agent の論理名（bare）を保持し、namespace は
-// agent() を呼ぶ直前のこの 1 箇所でのみ付与する。namespace は harness 境界の事情であって
-// dev-flow のドメイン語彙ではないため、論理名側へ染み出させない（subagent_invocations の
-// 集計キーと、agent 名を静的検査する routing test 群が論理名を前提にしている）。
-//
-// fail-closed: agentType 欠落・非文字列・既に ':' を含む入力はいずれも throw する。
-// 二重付与（`dev-flow:dev-flow:x`）を実行時まで持ち越すと agent not found と同じ症状を
-// 別の原因で再発させるため、呼び出し側の誤用をここで止める。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const AGENT_NAMESPACE = 'dev-flow:'
 
-/**
- * agent() へ渡す opts の agentType へ plugin namespace を付与した新しい opts を返す。
- *
- * @param {{agentType: string} & Record<string, unknown>} opts - agentType が bare 論理名の opts
- * @returns {Record<string, unknown>} agentType を namespaced id へ置換した複製
- */
 function nsAgentOpts(opts) {
   const bare = opts == null ? undefined : opts.agentType
   if (typeof bare !== 'string' || bare.trim() === '') {
@@ -66,10 +37,6 @@ function nsAgentOpts(opts) {
 // ==== END inline: _lib/agent-namespace.mjs ====
 
 // ==== BEGIN inline: _lib/evaluator-contract.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Evaluator operational contract shared by dev-flow.js and evaluator.md.
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const EVALUATOR_OPERATIONAL_CONTRACT = {
   critical_resolutions: [
@@ -100,10 +67,6 @@ const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- 対象は CONCERN-* のみ。ENV-* / SEC-* / AC-* は concern_resolutions の対象外（他経路で扱われる）。',
     '- concern は advisory であり収束を block しない。resolved は終端サマリーの要対応から除外され、triaged も要対応から除外されて要対応直後の折りたたみ「🔹 トリアージ済み N 件」に判断根拠を全文で残す（人間が誤トリアージを検算する。ゲート・merge tier・収束判定には影響しない）。',
   ].join('\n'),
-  // testsurf_clearance は final_ac_reconcile と同様 prompt 注入のみで配送する（evaluator.md へ
-  // mirror しない）。.claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification
-  // 防止）であり、dev-flow の testsurf_focus 注入が本契約全文を毎回 prompt へ verbatim 注入するため
-  // 機能上も mirror は不要。既存 3 キーの evaluator.md verbatim mirror 規約の対象外（issue #362）。
   testsurf_clearance: [
     'testsurf_clearance 契約:',
     '- testsurf_focus が渡された場合、各 pattern の test 変更が正当（refactor で網羅性維持 / 一時 skip でない 等）かを判定し、testsurf_clearance:[{pattern, cleared, evidence}] で返す。',
@@ -112,10 +75,6 @@ const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- cleared:true は具体的 evidence 必須（どのテストがどこで同等以上に担保されるか）。evidence のない cleared:true は無視され、TESTSURF item は blocking のまま残る。',
     '- cleared:false の TESTSURF item は blocking のまま merge tier HOLD に反映される。',
   ].join('\n'),
-  // final_ac_reconcile は prompt 注入のみで配送する（evaluator.md へ mirror しない）。
-  // .claude/agents/ は sandbox の書き込み禁止領域（agent 定義の self-modification 防止）であり、
-  // dev-flow の final-ac-reconcile 呼び出しが本契約全文を毎回 prompt へ verbatim 注入するため
-  // 機能上も mirror は不要。既存 3 キーの evaluator.md verbatim mirror 規約の対象外。
   final_ac_reconcile: [
     'final_ac_reconcile 契約:',
     '- prompt で「final AC 再検証」が指示された場合、渡された既存 acceptance_criteria のみを最終 PR tree に対して one-shot で再検証し、ac_results:[{ac_index, satisfied, evidence, verified_by}] を全 AC 分ちょうど 1 回ずつ返す。',
@@ -130,12 +89,8 @@ const EVALUATOR_OPERATIONAL_CONTRACT = {
   ].join('\n'),
 }
 
-// concern_resolutions[].resolution の closed enum（issue #614）。out-of-enum / 旧 boolean キー resolved は
-// 明示 error（legacy fallback / dual-path なし）。triaged は表示専用で ledger の checked を変えない。
 const CONCERN_RESOLUTIONS = ['resolved', 'triaged', 'unresolved']
 
-// evaluator が返した concern_resolutions[] の 1 要素を検証し {id, resolution, evidence} に正規化する純関数。
-// evidence は string 以外なら null（有無の判定は呼び出し側）。不正形は throw（silent 無視しない）。
 function normalizeConcernResolution(cr) {
   if (!cr || typeof cr !== 'object' || Array.isArray(cr)) {
     throw new Error('normalizeConcernResolution: concern_resolutions[] の要素は object 必須')
@@ -154,15 +109,6 @@ function normalizeConcernResolution(cr) {
 // ==== END inline: _lib/evaluator-contract.mjs ====
 
 // ==== BEGIN inline: _lib/resolve-arg.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// 正の整数 arg を正規化する。dev-flow / pr-iterate の entrypoint 共通。
-// 受理: bare string '120' / number 120 / array ['120'] / object {issue:'120'} | {pr:'120'}
-// 拒否(throw): 空 / 未展開テンプレート '{' / '0' / 負数 / 小数 / 非数字混入
-// NOTE: name に対応するキー（args[name]）と bare/array 形式のみを解決する。
-//       cross-name fallback（例: name='pr' のときに args.issue を採用する）は
-//       型安全性を損なう footgun のため意図的に除外している。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 function resolvePositiveIntArg(args, name) {
   const raw = (typeof args === 'string' || typeof args === 'number')
     ? args
@@ -175,28 +121,6 @@ function resolvePositiveIntArg(args, name) {
 }
 // ==== END inline: _lib/resolve-arg.mjs ====
 // ==== BEGIN inline: _lib/prerun-setup.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// prerun setup: dev-flow.js の Setup phase が args.setup（dev-flow-prerun の stdout JSON）を
-// fail-closed に検証・要約するための純関数群。
-//
-// dev-flow-prerun（wrapper preflight の bare 名 launcher）が base 解決・worktree 作成/再利用・
-// .devflow-tmp の clean・deps install・framework 検出・issue analyze（analyze-issue --contract +
-// Jev 有界判定。deps install と並列）を行い、その結果を stdout JSON 1 行として返す。wrapper がそれを Workflow({ args: { issue, setup } }) の args.setup として渡すため、
-// dev-flow.js 側はこれを唯一の入力源として検証する（workflow 内 fallback は持たない）。
-// validatePrerunSetup: args.setup を検証し、Setup phase が使う正規化済み値を返す純関数。
-//   raw が欠落/非 object/配列、raw.ok !== true、必須キー欠落/型不正のいずれも即 throw する
-//   （fallback を作らない — 後方互換 scaffolding 禁止）。
-// rejectLegacyBaseArg: 旧形式 args.base（base は dev-flow-prerun が解決し args.setup.base で渡る）
-//   を検出し即 throw する純関数。Setup phase の try 節に入る前（args 節）で呼ぶことを想定する。
-// summarizePrerunDeps: prerun の deps 結果（advisory）を implementer prompt 注入用の警告文と
-//   ログ行に要約する純関数。deps.ok:false でも top-level ok には影響しない（fail-open）。
-// hasNextJs: stack.frameworks に 'next' が含まれるかを判定する純関数。Turbopack 規約注入の判定に使う。
-// analyze: prerun の analyze 段の結果（{ok, ...}）。ok:true の中身の whitelist 検証は
-//   buildReqFromContract（_lib/analyze-contract.mjs）が担い、ここでは object / ok boolean /
-//   ok:false のときの reason string だけを fail-closed に検証して verbatim で返す。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
 const PRERUN_SETUP_REQUIRED = ['ok', 'issue', 'base', 'worktree', 'head', 'deps', 'stack', 'analyze', 'epoch', 'epoch_end'];
 
@@ -243,8 +167,6 @@ function validatePrerunSetup(raw, issue) {
     throw new Error(`dev-flow: args.setup の必須キーが欠落/型不正: ${key}（受信: ${stringifyForError(value)}）`);
   };
 
-  // wrapper は issue ごと・needs_clarification 再起動ごとに prerun を再実行する契約。別 issue の
-  // stale な setup を渡されると別 worktree / base で黙って走るので、issue 一致を fail-closed で検証する
   if (!(Number.isInteger(raw.issue) && raw.issue > 0)) fail('issue', raw.issue);
   if (raw.issue !== Number(issue)) {
     throw new Error(`dev-flow: args.setup.issue (${raw.issue}) が起動 issue (${issue}) と一致しない — この issue 用に dev-flow-prerun を実行し直し、その stdout JSON を渡せ`);
@@ -257,15 +179,10 @@ function validatePrerunSetup(raw, issue) {
   if (typeof raw.deps.note !== 'string') fail('deps.note', raw.deps.note);
   if (!isPlainObject(raw.stack)) fail('stack', raw.stack);
   if (!Array.isArray(raw.stack.frameworks)) fail('stack.frameworks', raw.stack.frameworks);
-  // analyze（issue #690）: prerun の analyze 段（analyze-issue --contract + Jev）の結果。ok:false は
-  // Setup 末尾の analyze ゲートが needs_clarification（source=analyze_prerun）に倒すため throw しない（reason 必須）。
   if (!isPlainObject(raw.analyze)) fail('analyze', raw.analyze);
   if (typeof raw.analyze.ok !== 'boolean') fail('analyze.ok', raw.analyze.ok);
   if (raw.analyze.ok === false && !isNonEmptyString(raw.analyze.reason)) fail('analyze.reason', raw.analyze.reason);
   if (!(Number.isInteger(raw.epoch) && raw.epoch > 0)) fail('epoch', raw.epoch);
-  // epoch_end は deps install / detect-stack / analyze 段 完了後（prerun.sh 末尾）で採る第2の時刻。
-  // setup_end mark（implement 区間の起点）はここから給電する（epoch から給電すると deps install 等の
-  // Setup 決定論処理時間が丸ごと implement の phase_durations に付け替わるため）。
   if (!(Number.isInteger(raw.epoch_end) && raw.epoch_end > 0)) fail('epoch_end', raw.epoch_end);
 
   const repo = isNonEmptyString(raw.repo) ? raw.repo : null;
@@ -310,18 +227,7 @@ function hasNextJs(frameworks) {
 
 
 // ==== BEGIN inline: _lib/journal-handoff.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Journal telemetry handoff helpers for workflow runtime.
-// Workflow loader cannot import ESM, so tools/sync-inlines.mjs injects this file
-// into .claude/workflows/*.js. Keep this file import-free and deterministic.
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// stage2 が Write tool へ渡す最終書き込み先。shell 展開ではなく Write tool 側の `~` 展開に
-// 依存する（stage2 は shell を一切使わない — buildJournalLogInstr のコメント参照）。
-// 副作用として CLAUDE_JOURNAL_DIR による書き込み先の差し替えは効かない。同 env を読むのは
-// dev-flow-doctor / dev-improve の解析スクリプトとその test harness だけで、書き込み側の
-// production 経路では設定されないため、読み手（Stop hook）との不一致は生じない。
 const JOURNAL_PENDING_DIR = '~/.claude/journal/pending';
 
 function buildJournalHandoffPayload({
@@ -353,21 +259,10 @@ function buildJournalHandoffPayload({
   return JSON.stringify(payload);
 }
 
-// journalEffectId(payload): stable 16-hex effect ID derived from the payload string in pure JS.
-// 以前は stage2 の shell が `shasum -a 256 | cut -c1-16` で算出していたが、その算出には変数代入と
-// コマンド置換が必要で、それが worktree 分離ガードの拒否要因だった（issue #526）。JS 側で先に
-// 確定させることで stage2 の書き込み先が prompt 構築時点で定まり、stage2 から shell を完全に外せる。
-//
-// 幅は従来と同じ 64bit（16 hex）で、衝突時の影響も従来と同じ「別 payload の entry を上書きする」
-// クラスに留まる。暗号学的強度は不要 — 用途は同一 payload の再実行で同一ファイル名を再現する
-// 冪等命名だけで、内容の真正性検証には使わない。BigInt を避けて 32bit 2 本（seed 違いの FNV-1a）に
-// 分けているのは、workflow runtime が制限付き JS sandbox であり、inline 生成先とテストで同一挙動を
-// 保証する必要があるため。
 function fnv1a32(str, seed) {
   let h = seed >>> 0;
   for (let i = 0; i < str.length; i++) {
     const c = str.charCodeAt(i);
-    // 上位バイトも混ぜる: payload は日本語を含みうるので下位バイトだけでは区別が落ちる。
     h = Math.imul(h ^ (c & 0xff), 0x01000193) >>> 0;
     h = Math.imul(h ^ (c >>> 8), 0x01000193) >>> 0;
   }
@@ -381,9 +276,6 @@ function journalEffectId(payload) {
   return hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0');
 }
 
-// buildJournalPendingPath({ prefix, id, effectId }): stage2 が Write tool へ渡す最終パス。
-// prefix / id は Write tool のパスへ splice されるので、shell へ渡していた頃と同じ決定論検証を
-// 残す（パス要素の混入は書き込み先の乗っ取りに直結するため、経路が shell でなくなっても緩めない）。
 function buildJournalPendingPath({ prefix, id, effectId }) {
   const safePrefix = String(prefix ?? '').trim();
   const safeId = String(id ?? '').trim();
@@ -401,44 +293,14 @@ function buildJournalPendingPath({ prefix, id, effectId }) {
 
 const JOURNAL_LOG_STATUSES = ['logged', 'save_failed', 'log_failed'];
 
-// classifyJournalLogStatus({ saved, logged }): reduces the 2-stage handoff outcome to the
-// 3-value closed enum reported on the caller's return object. saved!==true means stage1
-// (journal-save) never produced a validated payload file, so stage2 could not even be
-// attempted. logged===true means stage2 (journal-log) ran the finalize command successfully.
 function classifyJournalLogStatus({ saved, logged }) {
   if (saved !== true) return 'save_failed';
   if (logged === true) return 'logged';
   return 'log_failed';
 }
 
-// stage1 が作る payload ファイルの basename 契約。validateJournalSavedPath の basename 検証と
-// 同一パターンで、fileName モードの呼び出し側が渡す名前もこれに従う。
 const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
 
-// buildJournalSaveInstr({ payload, savePath | saveDir }): stage1 instruction string. Persists the
-// journal handoff payload verbatim to a file so that stage2 (buildJournalLogInstr) can be driven
-// by a path alone — the payload body has no reason to be re-stated in the prompt that writes
-// under pending/, and keeping it out means a long telemetry blob is carried as data on disk
-// rather than as prompt text. Either way the agent must write `payload` via the **Write tool**
-// content argument only, never through shell/echo/printf/heredoc, and never re-escape or
-// pretty-print it (same pattern as _lib/workflow-post-helpers.mjs bodySaveInstr).
-//
-// 2 つのモードがあるのは、保存先が JS 側で確定しているかどうかで実行可能な手段が変わるため:
-//
-// - `savePath`（dev-flow / pr-iterate — worktree パスが JS 側で確定している）: 保存先の絶対パスが
-//   prompt 構築時点で決まるので **shell を一切使わない**。これは必須の性質で、repo 配下を Bash から
-//   書けない環境（skills repo の自己改変ガードは worktree 配下も含めて deny する）では
-//   `mktemp "<worktree>/…"` が EPERM になり、agent が別ディレクトリへ退避して保存先固定の検証に
-//   落ちる。Write tool は同じ場所へ書けるので（isolation probe が同経路）、パスを固定して渡す。
-//   呼び出し側は agent 申告の path を使わず、この `savePath` をそのまま stage2 へ渡す（確定値が
-//   あるのに申告値を信用する理由がない）。agent が別の場所へ書いていた場合は stage2 の jq 検証が
-//   落ちて log_failed になり、欠落は観測可能なまま。
-// - `saveDir` + `fileName`（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
-//   shell 展開に依存し JS 側で解決できないため、shell に絶対パスを組み立てさせてから Write する。
-//   ファイル名は固定で、mktemp は使わない — テンプレート `payload-XXXXXX.json` は X 列が suffix の
-//   前にあるため BSD mktemp では展開されず、リテラル名のファイルを exit 0 で作る（一意性が silent に
-//   失われる）。呼び出し側は申告パスを requiredDirSuffix で pin する（絶対パスが JS 側で確定しない
-//   ため完全一致はできない）。
 function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
   if (savePath != null && saveDir != null) {
@@ -448,18 +310,11 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
   const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
     + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
-  // 冪等化: Write tool は同一セッション内で
-  // 未 Read の既存ファイルを上書きできない。savePath / saveDir とも保存先ファイル名は run を
-  // またいで固定（worktree 再利用・TMPDIR 永続時は前 run の payload が残り得る）なので、
-  // 上書き前に Read を試みる一手順を必須にする。Read の成否は saved の判定に混ぜない
-  // （Read 失敗＝新規ファイルの可能性が高いだけで、それ自体は保存失敗ではない）。
   const idempotentReadRule = (target) => `${target} が既に存在する場合は、先に **Read tool** で同ファイルを`
     + `読んでから **Write tool** で上書きせよ（Write tool は既存ファイルを未 Read のまま上書きできない）。`
     + `Read が失敗しても Write は必ず試み、Read の成否を saved の判定に混ぜないこと。\n`;
 
   if (savePath != null) {
-    // stage2 の Read tool パスへそのまま splice されるので、申告値に対するのと同じ決定論検証を
-    // 構築時点でも通す（絶対パス / 限定 charset / '..' 不可 / basename 契約）。
     if (!validateJournalSavedPath(savePath)) {
       throw new Error(`journal-handoff: invalid savePath: ${JSON.stringify(savePath)}`);
     }
@@ -490,21 +345,8 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
-// tilde は dev-flow の WT 未確定 abort 経路（Setup の args.setup 検証（prerun-setup）で throw し、
-// worktree パスがまだ確定していない）専用。prefix を `~/.claude/journal/` に固定するのは、
-// validateJournalSavedPath が dev-improve の saveDir モードで agent 申告値の検証にも使われるため
-// — `~/` 全般を通すと、その injection guard まで一緒に広がってしまう。
 const JOURNAL_TILDE_PREFIX = '~/.claude/journal/';
 
-// validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard for any
-// path that gets spliced into the stage2 instruction (buildJournalLogInstr) — both the
-// JS-constructed `savePath` (checked at build time) and the path an agent claims to have saved
-// to in `saveDir` mode. Rejects anything that is not a plain absolute path built from a
-// restricted charset, contains '..', or whose basename violates the payload basename contract
-// (JOURNAL_PAYLOAD_BASENAME_RE). requiredDirSuffix optionally pins the containing directory
-// (e.g. '/.devflow-tmp'). A path rooted at the fixed JOURNAL_TILDE_PREFIX is also accepted (see
-// comment above) and is checked against the same charset/'..'/basename/requiredDirSuffix rules
-// after stripping the leading `~`.
 function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   if (typeof path !== 'string' || path === '') return false;
   const abs = path.startsWith(JOURNAL_TILDE_PREFIX) ? path.slice(1) : path;
@@ -521,26 +363,6 @@ function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   return true;
 }
 
-// buildJournalLogInstr({ prefix, id, payloadPath, payload }): stage2 instruction string.
-// prompt には payload 本文を載せない — 載るのは 2 つのファイルパスだけで、結論値は構造的に
-// この prompt へ現れない（payload は書き込み先ファイル名の effect ID 算出にのみ使う）。
-//
-// stage2 が shell を一切使わないのは必須の性質で、緩めると issue #526 が再発する: 従来の
-// 単行 finalize コマンドは redirect・変数代入・コマンド置換・パイプを含み、EnterWorktree 済み
-// セッションの worktree 分離ガードに `too complex to verify that it stays inside the worktree`
-// で拒否されていた。dev-flow / pr-iterate は常にその分離セッションから走るため、stage2 が
-// shell に依存する限りテレメトリは記録されない。Write tool は同じセッションから pending/ へ
-// 書けることが実測で確認されており（stage1 と isolation probe が同経路）、`~` も Write tool
-// 側で展開される。
-//
-// 代償: `jq -e` による事前検証と mktemp→mv の atomic 公開が無くなる。壊れた JSON や
-// （他セッションの Stop hook と競合した場合の）部分書き込みは pending/ に現れうるが、Stop hook
-// 側が malformed/ へ隔離し replay runbook で回収できるため、silent loss ではなく観測可能な
-// 劣化に留まる。shell を残して「ガードに拒否され 8 日間 1 件も記録されない」状態に戻すより、
-// この劣化を受け入れる方が telemetry の可用性は高い。
-//
-// payloadPath は呼び出し側の検証を信用せずここでも再検証する（Write tool のパスへ splice される
-// 値なので、将来の呼び出し側が検証を忘れても崩れないようにする）。
 function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
   if (!validateJournalSavedPath(payloadPath)) {
     throw new Error(`journal-handoff: invalid payloadPath: ${JSON.stringify(payloadPath ?? null)}`);
@@ -559,24 +381,6 @@ function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
     + `3. 書き込みに成功したら {logged:true} を返せ。どの手順で失敗しても throw せず {logged:false} を返せ。\n`;
 }
 
-// journal handoff choreography（issue #494/#499/#556/#607）: journal-save（stage1）→ journal-log（stage2）の
-// 2 段 agent 呼び出しと journal_log_status の帰属を canonical 化する。dev-flow.js の
-// writeFailureTelemetry / Merge tier 成功 path / top-level abort catch、pr-iterate.js の
-// 終端 / top-level abort catch の 5 call site が使う。
-// 順序不変条件: stage2 呼び出しの直前に journalLogStatus を log_failed へ倒す — stage2 が throw
-// すると catch へ抜けて再代入が走らないため、preset が無いと stage2 の失敗が save_failed として
-// 誤帰属される（issue #499）。fail-open: 例外は内部で吸収し、3 値 closed enum
-// （logged / save_failed / log_failed）のいずれかを必ず返す。gate・merge tier には影響しない。
-// deps 注入: agent は呼び出し側の trackedAgent（subagent_invocations 計上のため）、
-// saveSchema/logSchema は workflow 側定義の JOURNAL_SAVE_RESULT / JOURNAL_RESULT を渡す。
-// savePath は呼び出し側 JS が絶対パスで確定して渡す（agent 申告の path は使わない — 申告値を
-// 信用すると別ディレクトリの同名ファイルが stage2 へ渡りうる）。dev-improve の saveDir+fileName
-// モードは対象外（本関数は savePath モード専用）。
-// agent は destructure 時に `runAgent` へ alias する（`agent(` という bare 呼び出しリテラルを
-// 本体コードへ残さないため）。dev-flow.js / pr-iterate.js の静的検証
-// _lib/subagent-invocations-routing.test.mjs は「bare agent( 呼び出しは trackedAgent wrapper
-// 内の 2 箇所のみ」を pin しており、本関数が inline 生成される両ワークフローで `agent(` リテラルが
-// 増えると誤検出する。呼び出し側の deps 注入契約（キー名 `agent`）は変えない。
 async function runJournalHandoff({ agent: runAgent, log, saveSchema, logSchema, payload, savePath, prefix, id, subject, logLabel, phase }) {
   let journalLogStatus = 'save_failed'
   try {
@@ -619,19 +423,12 @@ async function runJournalHandoff({ agent: runAgent, log, saveSchema, logSchema, 
 const ABORT_ERROR_CATEGORY = 'abort';
 const ABORT_ERROR_MSG_MAX = 500;
 
-// buildAbortErrorMsg({ phase, label, error }): abort entry の error_msg 単一形
-// `abort@<phase>/<label>: <message>`。phase/label 欠落は '?'。message は改行・連続空白を
-// 1 個の半角スペースへ正規化し、500 字（全体）で切る。
 function buildAbortErrorMsg({ phase, label, error }) {
   const raw = error && typeof error === 'object' && 'message' in error ? error.message : error;
   const msg = String(raw ?? 'unknown error').replace(/\s+/g, ' ').trim() || 'unknown error';
   return `abort@${phase || '?'}/${label || '?'}: ${msg}`.slice(0, ABORT_ERROR_MSG_MAX);
 }
 
-// buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label,
-// error, telemetry }): abort entry の唯一の組み立て口（dev-flow.js / pr-iterate.js の
-// top-level catch が使う）。outcome:'failure' + error_category:'abort' + error_phase +
-// telemetry.abort_phase/abort_label に固定する（legacy fallback / version 分岐なし）。
 function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label, error, telemetry }) {
   return buildJournalHandoffPayload({
     skill,
@@ -657,31 +454,13 @@ function repoFromGithubUrl(url) {
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
 // ==== BEGIN inline: _lib/subagent-invocations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// subagent-invocations: run あたりの subagent (agent-invoke) 起動数カウント用の純関数群。
-// I/O なし・Date.now/Math.random 不使用。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-/**
- * counts（plain object）の counts[key] を +1 する。
- * agentType が非空文字列の string でなければ 'unknown' へ計上する（fail-safe）。
- * @param {object} counts - mutate 対象のカウント集計 object
- * @param {string|undefined} agentType - subagent の agentType
- * @returns {object} counts（同一 object）
- */
 function recordSubagentInvocation(counts, agentType) {
   const key = typeof agentType === 'string' && agentType.trim() !== '' ? agentType : 'unknown';
   counts[key] = (counts[key] || 0) + 1;
   return counts;
 }
 
-/**
- * counts から telemetry 用の { total, by_type } を組み立てる。
- * by_type はキーを sort した新 object（counts を mutate しない）。
- * @param {object} counts - recordSubagentInvocation の集計 object
- * @returns {{total: number, by_type: object}}
- */
 function buildSubagentInvocations(counts) {
   const keys = Object.keys(counts).sort();
   let total = 0;
@@ -694,13 +473,6 @@ function buildSubagentInvocations(counts) {
   return { total, by_type };
 }
 
-/**
- * byType（{agentType: number} 形式）を counts へ加算 merge する。
- * byType が null/undefined/非 object なら no-op。数値でない値は skip する。
- * @param {object} counts - mutate 対象のカウント集計 object
- * @param {object|null|undefined} byType - merge 元
- * @returns {object} counts（同一 object）
- */
 function mergeSubagentCounts(counts, byType) {
   if (byType == null || typeof byType !== 'object') {
     return counts;
@@ -717,26 +489,7 @@ function mergeSubagentCounts(counts, byType) {
 // ==== END inline: _lib/subagent-invocations.mjs ====
 
 // ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// devflow-durations: dev-flow run の duration_seconds / phase_durations 算出用の純関数群。
-// I/O なし・Date.now/Math.random 不使用。専用 clock probe は 0 回 —
-// start は wrapper が渡す args.setup.epoch（dev-flow-prerun の date +%s、deps install 前）、
-// setup_end は同じ prerun 応答の args.setup.epoch_end（deps install / detect-stack / analyze 段
-// 完了後、prerun.sh 末尾で採る）から給電する。end は Merge tier 末尾の post-summary 応答の
-// optional epoch から給電し、残り 6 mark（implement_end/validate_end/evaluate_end/pr_end/
-// iterate_end/final_end）は隣接する既存 exec-proxy / agent 応答の optional epoch フィールドから
-// recordClockMark へ給電される（fail-open — 給電元失敗は当該 mark null → 対応 duration キー欠落）。
-// epoch と epoch_end を分けているのは、deps install（npm ci 等で数分かかりうる）と prerun の
-// analyze 段（issue 取得 + Jev 判定。deps と並列）を implement の phase_durations に付け替えないため —
-// start〜setup_end の区間（deps/stack/analyze の決定論処理 + wrapper turn）はどの phase にも属さない
-// 残差（duration_seconds − Σphase_durations）に留め、analyze 段の所要だけは telemetry の
-// prerun_durations.analyze に別途載せる（issue #690）。Setup 末尾の analyze ゲート（args.setup.analyze の
-// whitelist 検証と 3 条件ゲート判定）は agent を spawn しない純関数なので固有の mark を持たない —
-// implement 区間は setup_end 起点で、isolation-probe / plan 合成の時間を含む（issue #695）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// dev-flow.js の probe 発火順と一致する序列。
 const CLOCK_MARK_ORDER = [
   'start',
   'setup_end',
@@ -749,8 +502,6 @@ const CLOCK_MARK_ORDER = [
   'end',
 ];
 
-// phase キー → 終端 mark 名。setup_end は implement 区間の起点としてだけ使い、setup 自体の
-// duration は出さない（deps install 等の決定論処理は残差に留める）。
 const CLOCK_PHASE_ENDS = [
   ['implement', 'implement_end'],
   ['validate', 'validate_end'],
@@ -760,21 +511,11 @@ const CLOCK_PHASE_ENDS = [
   ['final', 'final_end'],
 ];
 
-// marks から number 値のみを取り出す内部ヘルパー（null/undefined/非数値/NaN は null 扱い）。
 function readMark(marks, name) {
   const v = marks ? marks[name] : undefined;
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-/**
- * exec-proxy の応答 res を marks[name] へ記録する。
- * 成功（ok:true かつ epoch が有限数値）なら marks[name]=epoch を設定し null を返す。
- * 失敗（null / ok:false / schema 不一致）は marks[name]=null を設定し警告文字列を返す（fail-open）。
- * @param {object} marks - mutate 対象の mark 集計 object
- * @param {string} name - CLOCK_MARK_ORDER 上の mark 名
- * @param {{ok?: boolean, epoch?: number}|null} res - exec-proxy 応答
- * @returns {string|null} 警告文字列、または成功時 null
- */
 function recordClockMark(marks, name, res) {
   const ok = res && res.ok === true && typeof res.epoch === 'number' && Number.isFinite(res.epoch);
   if (ok) {
@@ -785,12 +526,6 @@ function recordClockMark(marks, name, res) {
   return `⚠️ clock#${name} の取得に失敗 — duration telemetry は当該区間を欠落させる（fail-open）`;
 }
 
-/**
- * 隣接する既存 exec-proxy / agent 応答から recordClockMark 給電用の {ok:true, epoch} を抽出する。
- * ok フラグの有無は見ない（LLM agent 応答には ok が無いため）。epoch が有限数値でなければ null。
- * @param {{epoch?: unknown}|null|undefined} res - 給電元の応答 object
- * @returns {{ok: true, epoch: number}|null}
- */
 function epochResOf(res) {
   if (!res || typeof res !== 'object') {
     return null;
@@ -802,12 +537,6 @@ function epochResOf(res) {
   return null;
 }
 
-/**
- * epochResOf 由来の候補配列（null 混在可）から最大 epoch の給電結果を選ぶ。
- * 並列 implementer など完了順が不定な複数給電元から「最後に完了したもの」を採用するために使う。
- * @param {Array<{ok: true, epoch: number}|null>|null|undefined} list - epochResOf の適用結果配列
- * @returns {{ok: true, epoch: number}|null}
- */
 function maxEpochRes(list) {
   if (!Array.isArray(list)) {
     return null;
@@ -822,11 +551,6 @@ function maxEpochRes(list) {
   return best;
 }
 
-/**
- * marks から duration_seconds（run 全体）と phase_durations（6 phase）を算出する。
- * @param {object} marks - CLOCK_MARK_ORDER の各 mark 名をキーに持つ object（値は epoch 秒 or null）
- * @returns {{duration_seconds: number|null, phase_durations: object}}
- */
 function computeDurations(marks) {
   const start = readMark(marks, 'start');
   const end = readMark(marks, 'end');
@@ -868,24 +592,6 @@ function computeDurations(marks) {
 // ==== END inline: _lib/devflow-durations.mjs ====
 
 // ==== BEGIN inline: _lib/goal-ledger.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Goal Ledger: dev-flow の収束エンジン。収束 = BLOCKING lane の全項目 checked。
-// item = { id, text, dimension, severity, source, checked, evidence, check, floor, triaged, triaged_evidence,
-//          final_resolution, final_evidence }
-//   severity: 'critical' | 'major' | 'minor'
-//   source:   'ac' | 'seed' | 'reviewer' | 'evaluator' | 'danger-grep' | 'concern' | 'analyze' | 'implement'
-//   check:    { kind: 'deterministic' | 'inspection', ref?: string } | null
-//   floor:    boolean  (true = 決定論 floor が注入。LLM は severity を lower できない)
-//   triaged:  boolean | undefined  (表示専用。checked とは独立。gate/収束/merge tier には不使用)
-//   triaged_evidence: string | null | undefined  (triaged:true のときの根拠)
-//   final_resolution: 'resolved'|'ci_delegated'|'unresolved'|undefined（表示専用。Final AC reconcile
-//     時の fix 後 tree 再評価結果。checked とは独立で gate/収束/merge tier には不使用）
-//   final_evidence: string|null|undefined
-//
-// lane 分類（blocking/advisory）は _lib/gate-policy.mjs の gateLane(item, policy) に一本化。
-// 全関数は純粋(ledger を mutate せず新オブジェクトを返す)。state は呼び出し側の JS 変数に持つ。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 function makeLedger() {
   return { items: [], round: 0 };
@@ -922,8 +628,6 @@ function checkItem(ledger, id, evidence) {
   return { ...ledger, items };
 }
 
-// triaged: evaluator が「再検証済み・対応不要」と判断した item に付ける表示専用フラグ（issue #614）。
-// checked / evidence は変えない（ゲート・収束・merge tier・lane 分類の入力にならない）。
 function triageItem(ledger, id, evidence) {
   const idx = ledger.items.findIndex((it) => it.id === id);
   if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
@@ -932,11 +636,7 @@ function triageItem(ledger, id, evidence) {
   return { ...ledger, items };
 }
 
-// final_resolution: Final AC reconcile evaluator が「fix 後の最終 tree で再検証した結果」を付ける
-// 表示専用フィールド（issue #658）。FINAL_ITEM_RESOLUTIONS は _lib/final-ac-reconcile.mjs
-// （canonical は import 不可のため重複定義）。checked / evidence / triaged は変えない（純粋関数）。
 function setFinalResolution(ledger, id, resolution, evidence) {
-  // FINAL_ITEM_RESOLUTIONS は _lib/final-ac-reconcile.mjs（canonical は import 不可のため重複定義）
   if (!['resolved', 'ci_delegated', 'unresolved'].includes(resolution)) throw new Error(`goal-ledger: 不正な final_resolution "${resolution}"`);
   const idx = ledger.items.findIndex((it) => it.id === id);
   if (idx < 0) throw new Error(`goal-ledger: 未知の item id "${id}"`);
@@ -959,12 +659,7 @@ function nextRound(ledger) {
 // ==== END inline: _lib/goal-ledger.mjs ====
 
 // ==== BEGIN inline: _lib/merge-tier.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow W5: merge tiering + 決定論 danger floor の純粋関数群。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// diff-risk-classify.sh が出力する 7 danger クラス（固定順）。
 const DANGER_CLASSES = [
   'auth', 'crypto', 'config', 'data-migration', 'public-api', 'exec-sink', 'dependency',
 ];
@@ -979,8 +674,6 @@ const SEC_TEXT = {
   'dependency': '依存追加が安全か（既知脆弱性・supply chain リスクなし）',
 };
 
-// 7 danger クラスを常時 blocking seed する。danger-grep clean なら reconcileDanger が
-// 自動 check し、hit したクラスは critical へ raise して block 据え置きにする。
 function seedSecurityLedger() {
   return DANGER_CLASSES.map((cls) => ({
     id: `SEC-${cls.toUpperCase()}`,
@@ -993,28 +686,8 @@ function seedSecurityLedger() {
   }));
 }
 
-// danger-grep の結果で SEC seed item を解決する。
-// risk.ok !== true は danger-grep 実行失敗/転写失敗/空出力を表し、fail-closed として
-// 全 SEC seed を unchecked に戻す（clean と区別する）。この際 fail_closed:true を付与する
-// （danger_hits とは別軸の機械可読フラグ。Evaluate ループ収束判定からのみ除外するために使う。
-// merge tier 側は unchecked のまま含めて HOLD を強制し続ける — security floor は緩めない）。
-// clean/hit の成功分岐では fail_closed:false を明示セットして stale フラグを解消する。
-// clean クラス → checked(evidence='danger-grep clean')。
-// hit クラス → critical へ raise(floor=true)。
-//   - floor=true かつ checked=true(evaluator が evidence で clearance 済み) → checked を維持する(HOLD に巻き戻さない)。
-//   - floor=false かつ checked=true(前回 "danger-grep clean" 自動解決済み) → 今回 hit に転じたので unchecked 復活。
-//   - checked=false → checked=false 据え置き(evaluator が次ラウンドで解消するまで block)。
-// SEC 以外の item は touch しない。
-//
-// 再 reconcile ポリシー(pr-iterate 後の Merge tier phase での呼び出しを含む):
-//   danger が増えた(新クラスが hit に転じた)場合 → floor=false なので unchecked 復活 = HOLD。
-//   danger が減った(以前 hit だったクラスが clean に転じた)場合 → checked=true に解放(自動解消)。
-//   danger が同じ hit クラスで残る かつ evaluator clearance 済み(floor=true, checked=true) → checked 維持(温存)。
 function reconcileDanger(ledger, risk) {
   if (!risk || risk.ok !== true) {
-    // ツール欠落/スクリプト実行不能/JSON 不正などによる fail-closed。
-    // 実際の danger 検出（risk.ok:true + hits）とは語彙を分け、
-    // operator が log と HOLD reason から「danger を検出したのか」「ツールが走らなかったのか」を判別できるようにする。
     const errDetail = risk?.error ? `: ${risk.error}` : '';
     const evidence = `danger-grep unavailable (fail-closed)${errDetail}`;
     const items = ledger.items.map((it) => {
@@ -1028,13 +701,7 @@ function reconcileDanger(ledger, risk) {
   const items = ledger.items.map((it) => {
     if (it.source !== 'seed' || it.dimension !== 'security') return it;
     if (hits.has(it.danger_class)) {
-      // floor=true かつ checked=true → evaluator が danger floor を evidence 付きで clearance 済み。
-      // 同クラスが依然 hit でも checked を維持して HOLD に巻き戻さない。
-      // floor=false かつ checked=true → 前回 reconcile で "danger-grep clean" 自動解決されたが
-      // 今回 hit に転じた(pr-iterate で増えた) → 再度 unchecked にして block を復活させる。
       if (it.checked && it.floor) return it;
-      // evidence を null クリアする。前回 reconcile が "danger-grep clean" 等で自動 check した
-      // stale evidence を残すと、unchecked/critical に戻った item に矛盾した evidence 表示が残る。
       return { ...it, severity: 'critical', floor: true, checked: false, fail_closed: false, evidence: null };
     }
     return { ...it, checked: true, fail_closed: false, evidence: 'danger-grep clean' };
@@ -1042,13 +709,6 @@ function reconcileDanger(ledger, risk) {
   return { ...ledger, items };
 }
 
-// Merge tier phase で reconcileDanger 前後の SEC ledger を比較し、one-shot security
-// clearance の対象候補を決定論的に算出する純関数。
-// 「before で checked（Evaluate 時点等で解消済み）だったが after で unchecked に転じた」
-// SEC seed item の danger_class のみを返す（Evaluate 時点から未解消のまま残る SEC は
-// merge tier で clear させない = security floor 不変）。
-// after 側で fail_closed:true の item は defense-in-depth として除外する（fail-closed 時は
-// clearance 対象にしない）。before に同 id が無い item も対象外。ledger は mutate しない。
 function newlyUncheckedSecClasses(before, after) {
   const beforeById = new Map(
     (before?.items ?? [])
@@ -1068,7 +728,6 @@ function newlyUncheckedSecClasses(before, after) {
   return result;
 }
 
-// 変更ファイルが docs(.md/.mdx/.txt, docs/) か test(*test*, *spec*, .bats) のみか。
 function isDocsOrTestOnly(files) {
   if (!Array.isArray(files) || files.length === 0) return false;
   return files.every((f) =>
@@ -1076,26 +735,10 @@ function isDocsOrTestOnly(files) {
     || /(^|\/|\.)(test|spec)([./]|$)/i.test(f) || /\.bats$/i.test(f));
 }
 
-// Final reconcile（pr-iterate fix 適用後の最終 tree 再検証、issue #320）の finalReconcile enum。
-// 'skipped': fixes_applied=0 で Final reconcile 自体を実行しなかった（zero-overhead routing）。
-// 'reverified': 最終 tree に対して sync + test 再実行を行った。
-// 'unavailable': worktree sync 失敗 / test agent null・schema 不一致等で再検証結果を取得できなかった
-//   （fail-safe。HOLD へ倒す）。
-// 'ci_verified': ローカル再検証は不能だったが、PR head sha に pin した CI check（finalCiVerdict、
-//   _lib/final-ci.mjs）が sha 一致かつ全 success で最終 tree の test 状態を検証済みとして扱う
-//   （issue #599）。
 const FINAL_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable', 'ci_verified'];
 
-// merge tier HOLD 理由の分類（issue #599）。'deterministic_recheck': 決定論的な再チェック
-// （CI 完了待ち・再取得等）で解消しうる。'human_judgment': 決定論的手段では解消できず人間確認が
-// 必須。_lib/final-ci.mjs の FINAL_CI_KIND_* と同値。canonical は import 不可のため重複定義し、
-// 同値性は _lib/final-ci-routing.test.mjs が pin する。
 const HOLD_REASON_KINDS = ['deterministic_recheck', 'human_judgment'];
 
-// HOLD 理由の閉じた code enum（issue #658、issue #661 で pr_closes_missing 追加）。summary 側
-// （devflow-summary-format.mjs）の「現状/対応」写像キー。reason は自由文で将来変わりうるため、summary は
-// reason の prefix 一致ではなくこの安定 code で文言を写像する。out-of-enum/欠落時は summary が
-// fail-safe（'—' / '人が確認する'）に落とすだけで throw しない（表示専用フィールドのため）。
 const HOLD_REASON_CODES = [
   'ledger_unconverged', 'danger_unresolved', 'breaking_structured', 'escalate',
   'ac_agent_unsatisfied', 'ac_human_pending', 'danger_fail_closed', 'final_reconcile_unavailable', 'final_test_red',
@@ -1103,37 +746,18 @@ const HOLD_REASON_CODES = [
   'mergeable_conflicting', 'pr_closes_missing', 'merge_facts_dropped',
 ];
 
-// PR body の Closes 行決定論検証（issue #661）の状態 enum。'verified': gh pr view --json body に
-// Closes #<issue> 行を確認済み。'reinjected': 欠落を検出し gh pr edit --body-file で再投入し確認済み。
-// 'missing': 欠落を検出し再投入も失敗（または再投入後も欠落）— fail-closed で HOLD 理由に載せる。
-// 'unverified': gh pr view 自体が失敗（fail-open、警告のみ）。canonical は `_lib/pr-artifacts.mjs`
-// の PR_CLOSES_STATUS_VALUES（同値性は merge-tier.test.mjs が pin する）。本ファイルでは top-level
-// named export を持たない — pr-artifacts.mjs と本ファイルは両方とも dev-flow.js へ inline されるため、
-// 同名 export const を重複宣言すると tools/sync-inlines.mjs の top-level declaration collision 検知に
-// 抵触する（validateInlineDeclCollisions は export 有無に関わらず column-0 の const/let/var/function/class
-// 宣言名を対象にする）。値は下記バリデーションに直接 literal で埋め込む（関数スコープ内 local const
-// なら column-0 top-level 宣言に該当しないため collision 対象外）。
 function isValidPrClosesStatus(v) {
   return ['verified', 'reinjected', 'missing', 'unverified'].includes(v);
 }
 
-// eval_staleness の閉じた enum（issue #288 の 4 値 + issue #631 の hash_reconverged）。
 const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
 
-// HOLD 理由配列（[{ reason, kind }]）から代表 kind を集約する純関数。
-// いずれかが 'human_judgment' なら 'human_judgment'（human 判断が 1 件でもあれば全体を human 扱いにする
-// fail-closed 側の集約）。全件 'deterministic_recheck' ならそのまま。空/非配列は null（HOLD 以外）。
 function aggregateHoldKind(holdReasons) {
   if (!Array.isArray(holdReasons) || holdReasons.length === 0) return null;
   if (holdReasons.some((r) => r.kind === 'human_judgment')) return 'human_judgment';
   return 'deterministic_recheck';
 }
 
-// gh pr view --json mergeable,mergeStateStatus の生出力を 3 値 enum に写像する pure 関数。
-// 'conflicting': base branch と conflict（mergeable=CONFLICTING もしくは mergeStateStatus=DIRTY）。
-// 'clean': mergeable=MERGEABLE かつ conflict なし。
-// 'unknown': proxy 失敗（ok!==true / null）または GitHub が mergeability 未計算（UNKNOWN 等）。
-//   fail-open — conflict gate を適用しない（後述 classifyMergeTier で reason 追加なし）。
 function classifyMergeableState(meta) {
   if (!meta || meta.ok !== true) return 'unknown';
   const ms = String(meta.mergeStateStatus ?? '').toUpperCase();
@@ -1143,117 +767,6 @@ function classifyMergeableState(meta) {
   return 'unknown';
 }
 
-// merge tier を算出する。merge は全 tier 人間(AUTO も推奨ラベルのみ。真 auto-merge は W6)。
-// HOLD: 未収束 / 未解消 danger / breaking / ESCALATE 項目あり（人間 required-block）。
-// breaking は analyze 構造化判定 (breakingStructured) と issue title/body keyword scan
-// (breakingKeyword) の 2 入力で、reason で由来を区別する（issue #278）。
-// AUTO: micro かつ docs/test-only かつ danger clean かつ収束（推奨ラベル）。
-// REVIEW: それ以外（標準。人間が LGTM して merge）。
-// s.evalSkipped (optional boolean): true の場合、AUTO branch で AC 未検証開示 reason を追記する。
-//   micro path は evaluator 0 回で AC を判定していないため、AUTO 推奨でもその事実を開示する（issue #233）。
-//   danger-grep hit / green-fix で security path により eval が強制実行された場合は false にして虚偽開示を避ける。
-// s.unsatisfiedAgentAc / s.unsatisfiedHumanAc (optional boolean): 最終の AC 判定で satisfied:false の AC が
-//   actor（_lib/ac-actor.mjs）別に 1 件以上あるか（issue #747）。どちらも gate_policy に依らず HOLD だが、
-//   code を分ける — 'ac_agent_unsatisfied' は worktree 内で満たせる AC を Evaluate 差し戻しで拾えなかった
-//   取りこぼし（telemetry で異常として数える）、'ac_human_pending' は人手作業待ちの想定内の HOLD。
-//   boolean 以外は明示 error。旧キー unsatisfiedAc は actor を区別できないので受理しない（明示 error）。
-// s.dangerFailClosed (optional boolean): true の場合、danger-grep が実行不能（fail-closed）だったことを
-//   示す専用 HOLD reason を追記する（issue #271）。fail-closed 時は SEC seed item が unchecked のまま
-//   残るため s.converged が既に false になり HOLD へ落ちるが、この reason は「なぜ未収束か」を
-//   security 不明という意味論で明示するための defense-in-depth（danger_hits の実 hit とは別軸）。
-//   未指定 = falsy = reason 追加なし、tier 判定値も従来と完全同一（regression なし）。
-// s.riskValueDropped (optional boolean): true かつ dangerFailClosed のとき、fail-closed の原因が
-//   danger-grep 実行不能ではなく merge-tier-facts の subagent 転記で risk.value が落ちたこと（issue #746。
-//   isRiskValueDropped）を示す。reason を 'danger_fail_closed' ではなく 'merge_facts_dropped' で積む
-//   （人間に「danger-grep が走らなかった」と誤読させない。security 未検証なのは同じなので HOLD は維持）。
-//   boolean 以外は明示 error（後方互換 scaffolding 禁止規約）。
-// s.finalReconcile (optional 'skipped'|'reverified'|'unavailable'): Final reconcile phase の実行結果
-//   （issue #320）。'unavailable' は fail-safe HOLD reason を追記する。out-of-enum は明示 error
-//   （後方互換 scaffolding 禁止規約）。未指定(undefined/null) = reason 追加なし。
-// s.finalTestGreen (optional true|false|null): Final reconcile での最終 tree test 再実行結果。
-//   false のとき専用 HOLD reason を追記する。true/null(未実行 or no_tests)は reason 追加なし。
-// s.breakingStructured / s.breakingKeyword: breaking 検出は analyze 構造化判定
-//   (breakingStructured = breaking_change===true) と issue title/body keyword scan
-//   (breakingKeyword) の 2 入力を持つ（issue #278）。ただし breakingKeyword は単独では
-//   HOLD にしない（issue #364 precision fix）。issue 本文への keyword grep は変更の
-//   破壊性を担保する oracle ではなく低 precision ヒューリスティック（実測 FP: #359/#361）
-//   であり、構造化判定との corroboration があるときのみ blocking 理由に採用する。
-//   keyword-alone（breakingKeyword && !breakingStructured）のときは tier/shape を
-//   変えない可視化 reason を末尾に追記するのみ。コード実体に対する決定論 breaking 検出は
-//   danger-grep 'public-api' クラス（realized diff 上、blast-radius floor）が別途担保する。
-// s.iterateStatus (string|null): pr-iterate の終端 status（'lgtm'|'stuck'|'fix_failed'|
-//   'max_reached'|'ci_error'|'ci_pending'|null）。'lgtm' 以外（未知値・null 含む）は
-//   決定論的 HOLD（fail-safe、allowlist しない厳格判定）。blast-radius クラス（issue #319）—
-//   merge 直前の最終ゲートが LGTM 未到達のまま AUTO/REVIEW を出すと既知の指摘が未解消のまま
-//   出荷されるため、gate_policy で緩和しない（軸A 不変）。
-// s.evalStaleness (string): 'none'|'hash_mismatch'|'hash_reconverged'|'iterate_incomplete'|
-//   'iterate_fixed'（issue #288 の 4 値 + issue #631 の hash_reconverged。EVAL_STALENESS_VALUES）。
-//   'hash_mismatch' のみ HOLD 追加（Evaluate 対象 tree と PR tree の乖離）。'hash_reconverged' は
-//   PR 直前に一時乖離したが PR head tree === 評価済み tree === merge 対象 tree を決定論確認済み
-//   （issue #631）— HOLD しない。gate が守る性質「merge 対象 tree = 評価済み tree」を merge 対象
-//   そのもので確認しているため gate_policy に依らない（'none' と reasons/holdReasons/holdKind が
-//   完全一致する no-op）。'iterate_incomplete' は iterateStatus !== 'lgtm' と必ず同時発生するため
-//   個別条件にしない。'none'/'iterate_fixed'/'hash_reconverged' は tier に影響しない。
-//   'hash_mismatch' は iterate_* より優先（'none' からのみ昇格、#288 AC-2）。
-// s.evalDiffHash / s.prDiffHash (string|null): 'hash_mismatch' HOLD reason に載せる評価済み tree /
-//   PR 直前 tree の hash（short 8 桁で表示。null は「不明」表記）。
-// s.staleDiffFiles (Array<{path,insertions,deletions}>|null|undefined): 'hash_mismatch' HOLD reason
-//   に載せる差分ファイル一覧（tree-diff-stat.mjs の解析結果）。配列なら先頭 10 件 + 件数 + 「他 N 件」
-//   （0 件時は「numstat 空」注記）、null/undefined は取得失敗として両 hash 全文 + 手動確認コマンドを出す。
-// s.prHeadTreeOid (string|null|undefined): 与えられれば 'hash_mismatch' HOLD reason に PR head tree
-//   の short hash を追記する（issue #631）。
-// s.finalAcReconcile (optional 'skipped'|'reverified'|'unavailable'): Final AC reconcile phase
-//   （issue #331）の実行結果。fix 適用 run での既存 AC の最終 PR tree に対する再検証結果。
-//   'unavailable' のみ専用 HOLD reason を追記する（軸A 決定論ゲート、gate_policy に依らず不変）。
-//   'skipped'/'reverified'/未指定は tier 判定不変（fail/pass の gating は unsatisfiedAgentAc /
-//   unsatisfiedHumanAc と ledger 未収束が担う）。未指定 = 従来と完全同一挙動（regression なし）。out-of-enum は明示 error
-//   （後方互換 scaffolding 禁止規約）。
-// s.testsurfUncleared (optional string[]): 未 checked の TESTSURF-* seed item id 一覧（issue #362）。
-//   非空時に専用 HOLD reason を defense-in-depth として追記する（dangerFailClosed reason と同型の
-//   可視化）。TESTSURF item は source:'seed' の unchecked のまま converged=false → HOLD は既に成立
-//   しているため、この reason は tier 判定値そのものは変えない。未指定/空 = reason 追加なし
-//   （regression なし）。
-// s.mergeableState (optional 'clean'|'conflicting'|'unknown'): classifyMergeableState() が
-//   gh pr view --json mergeable,mergeStateStatus を写像した結果（issue #405）。'conflicting' は
-//   他条件によらず無条件 HOLD reason を追記する（blast-radius クラス、gate_policy に依らず不変 —
-//   base branch と conflict した状態で AUTO/REVIEW を出すと merge 不能な PR を出荷することになる）。
-//   'clean'/'unknown'/未指定は reason 追加なし（fail-open no-op、regression なし）。'unknown' は
-//   proxy 失敗や GitHub 側 mergeability 未計算を含むため conflict と決めつけない。out-of-enum は
-//   明示 error（後方互換 scaffolding 禁止規約）。
-// s.evalVerdictFail (optional boolean): true の場合、evaluate phase が verdict=fail のまま PR へ
-//   進んだ事実を開示する専用 reason を HOLD/AUTO/REVIEW 全分岐の reasons に追記する
-//   （keywordAloneDisclosure と同型 — issue #536）。未解消 findings は ledger/HOLD 条件が別途
-//   担保するため tier 判定値は変えない（可視化のみ）。未指定/null/false = reason 追加なし、
-//   tier 判定値も従来と完全同一（regression なし）。boolean 以外は明示 error
-//   （後方互換 scaffolding 禁止規約）。
-// s.finalCi (optional { verified: boolean, reason: string, kind: string|null, checkNames: string[],
-//   headRefOid: string|null }): finalCiVerdict（_lib/final-ci.mjs）の返り値そのもの（issue #599）。
-//   s.finalReconcile === 'unavailable' のとき、ローカル再検証は不能だったが PR head sha に pin した
-//   CI check で代替検証できたかを表す。finalCi が無ければ従来どおりの「人間確認必須」文言のまま
-//   HOLD reason を追記する。finalCi があれば reason に CI 委譲の不成立理由（reason/checkNames）を
-//   追記し、kind（finalCi.kind ?? 'human_judgment'）に応じて「決定論再チェックで解消しうる」か
-//   「人間確認必須」かを文言で区別する。s.finalReconcile === 'ci_verified' のときは HOLD reason を
-//   一切積まず、代わりに ciVerifiedDisclosure（HOLD/AUTO/REVIEW 全分岐共通の可視化行）のみ追記する
-//   （tier 判定値は変えない）。検証: finalCi.verified が boolean でなければ throw。finalCi.kind が
-//   HOLD_REASON_KINDS 外なら throw。finalReconcile==='ci_verified' なのに finalCi.verified!==true
-//   なら throw（証拠なしに ci_verified を名乗らせない fail-closed）。未指定(undefined/null) = 従来と
-//   完全同一挙動（regression なし）。
-// s.prClosesStatus (optional 'verified'|'reinjected'|'missing'|'unverified'): PR body の
-//   `Closes #<issue>` 行の決定論検証結果（issue #661、PR_CLOSES_STATUS_VALUES）。'missing'
-//   （欠落を検出し再投入も失敗）のときのみ専用 HOLD reason（deterministic_recheck）を追記する
-//   （gh pr edit --body-file の再投入で解消しうるため human_judgment ではない）。
-//   'verified'/'reinjected'/'unverified'/未指定は reason 追加なし（fail-open no-op、regression なし）。
-//   out-of-enum は明示 error（後方互換 scaffolding 禁止規約）。
-// 返り値: { tier, reasons, holdReasons, holdKind, disclosures }（issue #599 で holdReasons/holdKind、
-//   issue #658 で disclosures を追加）。
-//   reasons は従来どおり string[]（HOLD 時は blocking 文言 + 可視化行、AUTO/REVIEW 時は従来文言 +
-//   可視化行）。holdReasons は HOLD 時のみ blocking 文言の [{ code, reason, kind }]（可視化行は
-//   含めない）、AUTO/REVIEW 時は []。code は HOLD_REASON_CODES の閉じた enum（summary 側の
-//   現状/対応写像キー）。holdKind は aggregateHoldKind(holdReasons)（HOLD 以外は null）。
-//   disclosures は HOLD/AUTO/REVIEW 全 3 分岐共通で、可視化のみ（tier 判定に寄与しない）の開示
-//   文言 string[]（keywordAloneDisclosure / evalFailDisclosure / ciVerifiedDisclosure のうち
-//   非 null のもの）。reasons の内容・順序（可視化行を末尾に含む従来形）は不変 — disclosures は
-//   reasons の部分集合を別途複製したものであり、reasons から可視化行を除去するものではない。
 function classifyMergeTier(s) {
   if (s.finalReconcile != null && !FINAL_RECONCILE_VALUES.includes(s.finalReconcile)) {
     throw new Error('classifyMergeTier: invalid finalReconcile: ' + s.finalReconcile);
@@ -1294,7 +807,6 @@ function classifyMergeTier(s) {
   if (s.prClosesStatus != null && !isValidPrClosesStatus(s.prClosesStatus)) {
     throw new Error('classifyMergeTier: invalid prClosesStatus: ' + s.prClosesStatus);
   }
-  // blocking 文言のみ（可視化行は含めない）。HOLD 判定・holdReasons/holdKind の入力に使う。
   const blockingReasons = [];
   const pushBlocking = (code, reason, kind) => blockingReasons.push({ code, reason, kind });
   if (!s.converged) pushBlocking('ledger_unconverged', 'ledger 未収束（未 checked blocking 残）', 'human_judgment');
@@ -1372,9 +884,6 @@ function classifyMergeTier(s) {
   }
   if (s.shape === 'micro' && s.docsOrTestOnly) {
     const autoReasons = ['micro + docs/test-only + danger clean + 収束済 — 推奨ラベル（merge は人間）'];
-    // micro path は evaluator 0 回で AC を判定していない — AUTO 推奨でもその事実を開示する（issue #233）。
-    // evalSkipped は optional（未指定 = falsy = 開示なし）。tier 判定値は変更しない（ゲート境界不変）。
-    // 注: evalSkipped 開示行は disclosures には含めない（tier 判断（micro eval skip）に関わる情報のため）。
     if (s.evalSkipped === true) autoReasons.push('AC は未検証（micro eval skip）— evaluator 0 回のため acceptance_criteria の充足は判定していない');
     if (keywordAloneDisclosure) autoReasons.push(keywordAloneDisclosure);
     if (evalFailDisclosure) autoReasons.push(evalFailDisclosure);
@@ -1389,30 +898,9 @@ function classifyMergeTier(s) {
 }
 // ==== END inline: _lib/merge-tier.mjs ====
 // ==== BEGIN inline: _lib/ac-actor.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// _lib/ac-actor.mjs
-// AC を actor（'agent' | 'human'）に決定論分類し、Evaluate の差し戻しと Merge tier の HOLD 理由を actor で
-// 分ける純関数群（issue #747）。
-//
-// actor の意味:
-//   - 'agent': 実装エージェントが worktree 内で満たせる AC（ローカル計測して PR 本文に書く、を含む）。
-//     evaluator が satisfied:false を返したら gate_policy に依らず dev-implementer へ差し戻す。
-//     差し戻し上限を使い切っても未達なら Merge tier は 'ac_agent_unsatisfied'（ループの取りこぼし）で HOLD。
-//   - 'human': `（人手）` 表記・staging / 本番環境・外部サービスの操作・issue へのコメントを要する AC。
-//     エージェントは worktree の外に出ない（agents/dev-implementer.md）ので差し戻しても満たせない。
-//     未達は差し戻さず Merge tier の 'ac_human_pending'（人手 AC 待ち）へ回す。
-// 判定できない AC は 'agent' に倒す。human への誤分類は差し戻しを失い未達のまま人間へ流れるが、agent への誤分類は
-// 差し戻しの上限（AGENT_AC_REIMPL_MAX）で止まり、HOLD 理由に取りこぼしとして残るため。
-//
-// inline code（`...`）は判定前に除く。AC 本文が `（人手）` 等の語を識別子として引用しているだけのものを
-// human にしないため。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const AC_ACTORS = ['agent', 'human']
 
-// agent AC の未達だけを理由にした差し戻しの上限。standard shape（EVAL_PASSES=1）でもこの回数までは
-// evaluate を延長して差し戻す。incentive-structural — 満たせない AC で差し戻しが続くのを総回数で止める。
 const AGENT_AC_REIMPL_MAX = 2
 
 const HUMAN_AC_PATTERNS = [
@@ -1424,8 +912,6 @@ const HUMAN_AC_PATTERNS = [
   /issue\s*(に|へ)(の)?\s*コメント/i,
 ]
 
-// inline code の区切り（バッククォート）は \x60 で書く（sync-inlines の stripComments は regex literal を
-// 解釈せず、生のバッククォートを template literal の開始と読むため）。
 const INLINE_CODE_RE = /\x60[^\x60]*\x60/g
 
 function classifyAcActor(ac) {
@@ -1437,8 +923,6 @@ function acActorsOf(acceptanceCriteria) {
   return (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []).map(classifyAcActor)
 }
 
-// evaluator / final-ac-reconcile の ac_results から satisfied:false の ac_index を actor 別に返す。
-// actors の範囲外の ac_index（evaluator の誤応答）は数えない。同じ index の重複は 1 件にする。
 function unsatisfiedAcByActor(acResults, actors) {
   const out = { agent: [], human: [] }
   const list = Array.isArray(actors) ? actors : []
@@ -1451,9 +935,6 @@ function unsatisfiedAcByActor(acResults, actors) {
   return out
 }
 
-// agent AC の未達を dev-implementer へ渡す fix_feedback 項目にする（evaluator feedback と同じ形）。
-// 「計測して PR 本文に書く」型の AC は、コードのコメントでは PR 本文に届かないので pr_notes / design_decisions で
-// 返すよう suggestion に明記する。
 function agentAcFeedback(indexes, acceptanceCriteria, acResults) {
   const acs = Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []
   const results = Array.isArray(acResults) ? acResults : []
@@ -1471,28 +952,9 @@ function agentAcFeedback(indexes, acceptanceCriteria, acResults) {
 // ==== END inline: _lib/ac-actor.mjs ====
 
 // ==== BEGIN inline: _lib/final-ac-reconcile.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow Final AC reconcile phase: fix 適用後の最終 PR tree に対して Setup 末尾の analyze
-// ゲートで freeze した既存 AC を one-shot で再検証するための決定論 helper 群（skip/run 判定 + ac_results
-// 完全性検証）。判断（targeted evaluator の起動・prompt 構築・agent 呼び出し）は workflow
-// 側が担い、本ファイルは pure 関数のみを提供する。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// telemetry final_ac_reconcile の 3 値。
 const FINAL_AC_RECONCILE_VALUES = ['skipped', 'reverified', 'unavailable'];
 
-// Final AC reconcile を実行すべきかを判定する純粋関数。
-//
-// 判定順（最初に該当した reason を返す）:
-//   1. fixesApplied が数値でない/<=0        → no_fixes
-//   2. runEval !== true                      → eval_skipped（micro path は Evaluate 0 回）
-//   3. acCount が正整数でない                → no_ac（AC 0 件で agent を起動しない）
-//   4. finalReconcile が 'reverified' でも 'ci_verified' でもない
-//      → final_test_unavailable（ci_verified は sync 成功 = worktree が PR 最終 HEAD、かつ
-//        CI で test 状態検証済みのため reverified と同様に AC 再検証へ進む。issue #599）
-//   5. finalTestGreen === false              → final_test_red
-//   6. それ以外（true または null=no_tests） → run:true
 function shouldRunFinalAcReconcile({ fixesApplied, finalReconcile, finalTestGreen, runEval, acCount }) {
   if (typeof fixesApplied !== 'number' || !Number.isFinite(fixesApplied) || fixesApplied <= 0) {
     return { run: false, reason: 'no_fixes' };
@@ -1512,21 +974,6 @@ function shouldRunFinalAcReconcile({ fixesApplied, finalReconcile, finalTestGree
   return { run: true, reason: 'ok' };
 }
 
-// Final AC reconcile agent の出力（ac_results 配列）を fail-closed で検証する純粋関数。
-// 入力を mutate しない。
-//
-// 検証規則（最初に落ちた規則の reason を返す）:
-//   (a) acCount が 1 以上の整数でない       → invalid_ac_count
-//   (b) acResults が配列でない              → not_array
-//   (c) acResults.length !== acCount        → count_mismatch
-//   (d) 各要素が object でない/null         → invalid_item
-//   (e) ac_index が非整数/範囲外            → index_out_of_range
-//   (f) ac_index 重複                       → index_duplicate
-//   (g) satisfied が boolean でない         → invalid_satisfied
-//   (h) evidence が非空文字列でない         → empty_evidence
-//
-// 成功時は ac_index 昇順に sort した shallow copy 配列と、satisfied!==true の
-// ac_index 昇順配列（unsatisfiedIndexes）を返す。
 function validateFinalAcResults(acResults, acCount) {
   if (!(Number.isInteger(acCount) && acCount >= 1)) {
     return { ok: false, reason: 'invalid_ac_count' };
@@ -1569,19 +1016,8 @@ function validateFinalAcResults(acResults, acCount) {
   return { ok: true, results, unsatisfiedIndexes };
 }
 
-// goal-ledger item の final_resolution の 3 値 enum（issue #658）。
 const FINAL_ITEM_RESOLUTIONS = ['resolved', 'ci_delegated', 'unresolved'];
 
-// Final AC reconcile evaluator が返す item_resolutions[]（ESCALATE / advisory item の「fix 後 tree
-// での再評価結果」）を fail-open で要素ごとに検証する純粋関数。入力を mutate しない。
-//
-// ac_results（validateFinalAcResults）は fail-closed（1 件でも不正なら全体 unavailable）だが、
-// item_resolutions は表示専用（ledger の checked / merge tier / HOLD 判定を変えない）のため、
-// 不正な要素だけを reject して有効な要素は採用する fail-open にする。表示のための任意情報が
-// 1 件不正なだけで再評価結果全体を捨てる理由がない。
-//
-// 返り値 { accepted: Array<{id, resolution, evidence}>, rejected: Array<{index, reason}> }
-// accepted は入力順。
 function validateFinalItemResolutions(resolutions, targetIds) {
   if (resolutions === null || resolutions === undefined) {
     return { accepted: [], rejected: [] };
@@ -1624,25 +1060,6 @@ function validateFinalItemResolutions(resolutions, targetIds) {
   return { accepted, rejected };
 }
 
-// fix 後の最終 tree に対する決定論の検証が成立した run で、未 checked の EVAL-* blocking item を
-// 解消する id と evidence を返す純粋関数（issue #720）。入力を mutate しない。
-//
-// standard は Evaluate 1 パスで、EVAL-* を checked にできる evaluator（critical_resolutions）は
-// pr-iterate の fix 後に再実行されない。fix で直った critical が ledger 未収束の HOLD に残り続けるため、
-// fix 後 tree の test#final green（head sha に pin）または CI 委譲（ci_verified）を決定論の根拠に解消する。
-// LLM 判断（final_resolution）は根拠にしない（blocking を LLM 判断で解消しない規則は不変）。
-//
-// 判定順（最初に該当した reason を返す。ok 以外は ids 空）:
-//   1. fixesApplied が数値でない/<=0                                    → no_fixes
-//   2. finalReconcile==='reverified' かつ finalTestGreen===true かつ headSha 非空
-//      → ok（evidence `test#final green @ <headSha>`）
-//   3. finalReconcile==='ci_verified' かつ finalCi.verified===true
-//      → ok（evidence `ci_verified: <check 名, ...>`）
-//   4. それ以外（red / no_tests / unavailable / skipped / head sha 不明） → not_verified
-//
-// 対象は blockingItems のうち id が 'EVAL-' で始まり source==='evaluator' の未 checked item のみ。
-// escalate item は当事者性で人間判断を要求する機構で test green では解消しないため除外する。
-// SEC / TESTSURF（source:'seed'）・AC-FINAL-*（id 接頭辞が異なる）はこの経路で解消しない。
 function finalEvalBlockingResolutions({ fixesApplied, finalReconcile, finalTestGreen, headSha, finalCi, blockingItems }) {
   if (typeof fixesApplied !== 'number' || !Number.isFinite(fixesApplied) || fixesApplied <= 0) {
     return { reason: 'no_fixes', evidence: null, ids: [] };
@@ -1664,12 +1081,7 @@ function finalEvalBlockingResolutions({ fixesApplied, finalReconcile, finalTestG
 // ==== END inline: _lib/final-ac-reconcile.mjs ====
 
 // ==== BEGIN inline: _lib/gate-policy.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow W5: gate_policy による lane 分類の純粋関数群。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// gate_policy の trust 昇順 4 値。
 const GATE_POLICIES = [
   'deterministic-only',
   'llm-major-advisory',
@@ -1677,11 +1089,8 @@ const GATE_POLICIES = [
   'llm-autonomous',
 ];
 
-// デフォルト gate_policy。
 const DEFAULT_GATE_POLICY = 'llm-major-advisory';
 
-// gate_policy 値を解決する。null/undefined/空文字は DEFAULT_GATE_POLICY を返す。
-// 有効値はそのまま返す。未知の値は Error を throw する。
 function resolveGatePolicy(value) {
   if (value == null || value === '') return DEFAULT_GATE_POLICY;
   if (GATE_POLICIES.includes(value)) return value;
@@ -1690,58 +1099,28 @@ function resolveGatePolicy(value) {
   );
 }
 
-// item を 'blocking' | 'advisory' に分類する純粋関数。
-//
-// 軸A invariant（policy によらず常に blocking）:
-//   - item.severity === 'critical'
-//   - item.check && item.check.kind === 'deterministic'
-//   - item.source === 'seed'
-//
-// LLM major（critical でなく deterministic でなく seed でない major）の写像:
-//   deterministic-only  → advisory
-//   llm-major-advisory  → advisory
-//   llm-major-blocking  → blocking
-//   llm-autonomous      → advisory
-//
-// LLM minor は全 policy で advisory。
 function gateLane(item, policy) {
-  // 軸A invariant: 決定論 oracle / critical / seed は policy に依らず blocking
   if (item.severity === 'critical') return 'blocking';
   if (item.check && item.check.kind === 'deterministic') return 'blocking';
   if (item.source === 'seed') return 'blocking';
-  // LLM major の写像
   if (item.severity === 'major') {
     return policy === 'llm-major-blocking' ? 'blocking' : 'advisory';
   }
-  // LLM minor（および未知 severity）は advisory
   return 'advisory';
 }
 
-// ledger.items のうち blocking に分類される item を返す純粋関数。
 function policyBlockingItems(ledger, policy) {
   return ledger.items.filter((it) => gateLane(it, policy) === 'blocking');
 }
 
-// ledger.items のうち advisory に分類される item を返す純粋関数。
 function policyAdvisoryItems(ledger, policy) {
   return ledger.items.filter((it) => gateLane(it, policy) === 'advisory');
 }
 
-// 全 blocking item が checked かどうかを判定する純粋関数（空は true）。
 function isConvergedUnderPolicy(ledger, policy) {
   return policyBlockingItems(ledger, policy).every((it) => it.checked);
 }
 
-// Evaluate ループ収束専用の純粋関数（issue #271）。
-//
-// danger-grep fail-closed(risk.ok!==true) でマークした SEC seed（source==='seed' &&
-// dimension==='security' && fail_closed===true）を Evaluate ループの収束対象からのみ
-// 除外する。merge tier 側は isConvergedUnderPolicy を使い fail_closed item を含めたまま
-// HOLD を強制する（分離。issue #271）。
-//
-// fail_closed でない SEC item（実際に danger を検出した hit item を含む）は除外されず、
-// 従来通り checked になるまでループを blocking し続ける。非 SEC dimension の blocking item
-// の収束ロジックは isConvergedUnderPolicy と同一。
 function isLoopConvergedUnderPolicy(ledger, policy) {
   return policyBlockingItems(ledger, policy)
     .filter((it) => !(it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true))
@@ -1750,18 +1129,6 @@ function isLoopConvergedUnderPolicy(ledger, policy) {
 // ==== END inline: _lib/gate-policy.mjs ====
 
 // ==== BEGIN inline: _lib/block-routing.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// block-routing: BLOCKED task result の block_class 判定・決定論スクラブ・振り分けを行う純関数群。
-// guard/hook 由来の BLOCKED（block_class:'guard_blocked'）を approach_mismatch の replan ループ
-// （blockSeen 登録・findings 化・dev-implementer 再 spawn）から遮断し、迂回コマンド列を prompt へ
-// 伝播させないためのチョークポイント（issue #448）。
-//
-// W7 正当化クラス: incentive-structural（永続・撤去禁止）。
-// guard/hook 由来の BLOCKED を「別アプローチ探索」として実装 agent に渡すと、guard を迂回する
-// コマンド列の組み立てを incentive 化する（run wf_17d7a7be の実害）。この遮断は capability 非依存
-// （賢いモデルほど巧妙な迂回手順を組み立て得るため、モデル世代が進んでも撤去しない）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const BLOCK_CLASSES = ['approach_mismatch', 'guard_blocked']
 
@@ -1845,13 +1212,6 @@ function buildApproachBlockFinding({ task_id, detail }) {
 // ==== END inline: _lib/block-routing.mjs ====
 
 // ==== BEGIN inline: _lib/vdelta-transitions.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// vdelta-transitions: redgreen R1↔R2 の veridelta verdict から deny-only チェックを判定する。
-// 用途: red&&green の決定論昇格を維持したまま、test 変更込みの「勝利宣言」を deny する
-// advisory シグナル（INV-10: record_integrity=advisory 恒久、blocking gate 化はしない）。
-// test_cmd 経路が走らなかった invocation 向けの redgreen headdiff digest も本ファイルで持つ。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 function vdeltaDenies(verdict) {
   if (verdict === null || verdict === undefined) {
@@ -1899,9 +1259,6 @@ function vdeltaDenies(verdict) {
   return { deny: false, reasons: [], status: 'clean' };
 }
 
-// vdeltaVerdictDigest: raw verdict（テスト名・anchors・run_id・transitions 配列本体等を含み得る）を
-// telemetry に安全に載せられる閉じた 4 キー scalar digest へ還元する（issue #433 方式 B）。
-// redaction 原則: 生の verdict フィールドは一切保持しない。
 function vdeltaVerdictDigest(verdict) {
   const status = vdeltaDenies(verdict).status;
 
@@ -1929,11 +1286,6 @@ function vdeltaVerdictDigest(verdict) {
   return { status, comparability, verification_surface, repaired_with_test_change };
 }
 
-// redgreenHeaddiffDigest: redgreen-verify.sh が test_cmd 経路の走らなかった invocation で返す
-// headdiff {new, modified, unchanged, total}（test_files の HEAD 基準三分類件数）を、telemetry に載せる
-// 閉じた digest へ還元する。status は clean / test_modified / fail_open の 3 値。
-// HEAD に存在する test を書き換えた（modified>0）場合だけ test_modified — 新規 test（new）は
-// 実装と同時に書かれるのが期待値なので改変扱いにしない。記録専用で deny / 昇格の入力にはしない。
 function redgreenHeaddiffDigest(headdiff) {
   const zero = { new: 0, modified: 0, unchanged: 0, total: 0 };
   if (typeof headdiff !== 'object' || headdiff === null || Array.isArray(headdiff)) {
@@ -1949,38 +1301,19 @@ function redgreenHeaddiffDigest(headdiff) {
 // ==== END inline: _lib/vdelta-transitions.mjs ====
 
 // ==== BEGIN inline: _lib/testsurf.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow issue #362: TESTSURF ledger seeding/reconcile の pure 関数群（test-weakening 第8
-// danger クラス）。SEC の seedSecurityLedger/reconcileDanger（_lib/merge-tier.mjs L340-399 相当）と
-// 同型だが別 dimension（test-integrity）— dangerHits / security_focus / danger_hits telemetry /
-// reconcileDanger の意味論を一切変えない別系統の seed family。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// diff-risk-classify.sh が test-weakening クラスの hit に付与する content pattern（固定順）。
-// file-deletion 系と assert/expect 純減は spike #361 の FP 実測により不採用（follow-up）。
 const TESTSURF_PATTERNS = ['skip', 'only', 'todo', 'xfail', 'tautology', 'exclude-cfg'];
 
-// risk.hits のうち class==='test-weakening'（test-surface 縮小系）の hit のみを返す。
-// risk が null または risk.ok!==true（danger-grep 実行失敗/転写失敗/空出力）は空配列を返す。
-// fail-closed（全 TESTSURF item を unchecked に戻す等）は同一スクリプトの SEC 側 reconcileDanger
-// が担保する invariant に相乗りするため、ここでは単に「hit なし」として扱う。
 function testsurfHitsOf(risk) {
   if (!risk || risk.ok !== true) return [];
   return (risk.hits ?? []).filter((h) => h.class === 'test-weakening');
 }
 
-// risk.hits のうち class!=='test-weakening'（従来の 7 danger クラス）の hit のみを返す。
-// 呼び出し側の dangerHits（SEC reconcile 用の入力）算出用の分離ヘルパー。test-weakening hit が
-// dangerHits に混入すると security_focus / danger_hits telemetry / SEC reconcile の意味論が壊れる
-// ため、workflow 側はこの関数で必ず分離してから reconcileDanger に渡す。
 function secHitsOf(risk) {
   if (!risk || risk.ok !== true) return [];
   return (risk.hits ?? []).filter((h) => h.class !== 'test-weakening');
 }
 
-// testsurfHitsOf の pattern を dedup した配列を返す。pattern 欠落/未知は 'unknown' にバケットする
-// （out-of-enum を握りつぶさない repo 規約）。
 function testsurfPatternsOf(risk) {
   const hits = testsurfHitsOf(risk);
   const seen = new Set();
@@ -1998,8 +1331,6 @@ function testsurfId(pattern) {
   return `TESTSURF-${pattern.toUpperCase()}`;
 }
 
-// TESTSURF-<PATTERN> の id から pattern を逆算する（testsurfId の逆写像）。TESTSURF- 接頭辞が
-// 無ければ null。
 function patternFromId(id) {
   if (typeof id !== 'string' || !id.startsWith('TESTSURF-')) return null;
   return id.slice('TESTSURF-'.length).toLowerCase();
@@ -2010,26 +1341,6 @@ function isTestsurfSeedItem(it) {
     && it.source === 'seed' && it.dimension === 'test-integrity';
 }
 
-// TESTSURF seed item を test-weakening hit で reconcile する。SEC の reconcileDanger と同型だが
-// dimension は 'test-integrity'、severity は常に 'critical'（実効 blocking は source:'seed' の
-// gateLane が担保 — 軸A invariant で policy に依らず blocking）。
-//
-// risk が null または risk.ok!==true のときは ledger をそのまま返す（一切 touch しない）。同一
-// スクリプト（diff-risk-classify.sh）の SEC 側 fail-closed（reconcileDanger）が全 SEC unchecked →
-// merge tier HOLD を既に担保しているため、fail と clean を同一視しないという invariant は SEC 側の
-// safety net に委ねてよい（TESTSURF 側での二重実装を避ける）。
-//
-// risk.ok===true のとき、hit を pattern ごとに group する（pattern 欠落は 'unknown' バケット）:
-//   - hit がある pattern:
-//       item 未存在 → append（id 重複時は追加しない = append 単調性）。
-//       既存 item が checked&&floor（evaluator clearance 済み）→ そのまま維持（HOLD に巻き戻さない）。
-//       既存 item が checked&&!floor（前回 "testsurf clean" で自動解決済み）→ 今回 hit に転じたので
-//         unchecked 復活（floor=true, evidence=null）。
-//       既存 item が unchecked → 据え置き。
-//   - hit が無い pattern の既存 TESTSURF item → checked=true + evidence 付与で自動解消（floor は
-//     touch しない — reconcileDanger clean 分岐と同型）。
-// TESTSURF 以外（id が TESTSURF- で始まらない / source!=='seed' / dimension!=='test-integrity'）の
-// item は一切 touch しない。ledger は mutate しない。
 function reconcileTestsurf(ledger, risk) {
   if (!risk || risk.ok !== true) return ledger;
 
@@ -2046,15 +1357,10 @@ function reconcileTestsurf(ledger, risk) {
     const pattern = patternFromId(it.id);
     const hasHit = pattern != null && hitsByPattern.has(pattern);
     if (hasHit) {
-      // floor=true かつ checked=true → evaluator が clearance 済み。同 pattern が依然 hit でも
-      // checked を維持して HOLD に巻き戻さない。
       if (it.checked && it.floor) return it;
-      // floor=false かつ checked=true → 前回 reconcile で "testsurf clean" 自動解決されたが
-      // 今回 hit に転じた → unchecked にして block を復活させる。
       if (it.checked && !it.floor) {
         return { ...it, checked: false, floor: true, evidence: null };
       }
-      // unchecked → 据え置き。
       return it;
     }
     return { ...it, checked: true, evidence: 'testsurf clean (pattern no longer detected)' };
@@ -2083,38 +1389,7 @@ function reconcileTestsurf(ledger, risk) {
 // ==== END inline: _lib/testsurf.mjs ====
 
 // ==== BEGIN inline: _lib/triviality.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// classifyShape: realized diff の file 数・file ごとの追加/削除行数と REQ 由来の決定論特徴量（AC 数 /
-// issue_type / 構造化 breaking_change）から実効 shape を決める純粋関数。dev-flow の Security floor（realized diff 取得後）
-// で 1 回だけ呼ばれ、返り値が EFFECTIVE_SHAPE（Evaluate 深さ・LITE gate・merge tier の入力）になる。
-//
-// 入力は実装後の realized diff のみ。Setup 末尾の analyze ゲートまでに得られる LLM の事前見積もり（shape / 見込み file 数）は
-// decision に使わない（issue #676）— 実装前の予測は log と失敗 telemetry にしか効かず、決定論なのは
-// 写像と「欠損 → complex」の既定則だけだったため。micro の LITE 経路に対する意味的リスクの安全網は
-// runEval 強制条件（danger-grep / testsurf / greenFix / dropped task / undeclared file / UI 接触）が担う。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-// issue #272: AC 粒度と floor の較正 — micro floor の AC 境界を 3→4 に緩和。
-// issue #278: breaking 判定を LLM 自由文 (scope/summary への regex) から、analyze REQ の
-// 構造化 breaking_change フィールド + issue 本文への決定論 keyword scan の OR に変更。
-// issue #364: keyword scan 単独 (breaking_keyword_scan=true && breaking_change!==true) は
-// complex floor に採用しない (低 precision ヒューリスティック、実測 FP: #359/#361)。
-// 構造化判定 breaking_change===true との corroboration があるときのみ floor へ採用する。
-// issue #442: issue_type enum ドリフト修正 — AGENTS.md の正規 Conventional Commits 型 (chore/test/perf/ci) を validTypes に追加。
-//
-// 差分の中身による補正（issue #740）: file 数だけだと docs / テスト / 削除だけの掃除 run が complex に上がるため、
-// file ごとの追加・削除行数（lineStats）が取れた run に限り、floor を通過した後で次の 3 つを適用する。
-// どれも file 数判定（uncorrected_shape）より上には上げない — 下げ方向の補正だけ。
-//   1. 重み: docs（docs/** と *.md）と、同じ run で対応する本番ファイルも変えたテスト（stem 一致）は数えない
-//   2. 削除主体: 重み付け後の 追加行 < 削除行 × SHAPE_DELETION_DOWNSHIFT_RATIO なら 1 段下げる
-//   3. 追加行数: complex は「重み付け後の file 数 > 5」かつ「重み付け後の追加行 > SHAPE_COMPLEX_MIN_ADDED_LINES」
-//      のときだけ（広く浅い変更を complex に上げない）
-// lineStats が無い / 不正 / 件数が realizedCount と合わないときは補正せず file 数判定のまま（取れない行数を
-// 0 と読んで下げない）。変更がテストだけの run も補正しない（testsurf / test-only 経路の扱いを変えない）。
-// 下げた先で意味的リスクを拾うのは Validate（typecheck / test）と runEval 強制条件で、ここでは見ない。
 const SHAPE_DELETION_DOWNSHIFT_RATIO = 0.3;
-// main の直近 150 commit で「重み付け後 file 数 > 5 かつ追加 ≤ 100 行」は、path 移行・manifest 整理等の
-// 機械的な広く浅い変更だけだった（ロジック変更を含む run は 134 行以上）。
 const SHAPE_COMPLEX_MIN_ADDED_LINES = 100;
 const SHAPE_TIERS = ['micro', 'standard', 'complex'];
 
@@ -2126,7 +1401,6 @@ function isShapeTestPath(path) {
   return /\.(test|spec)\.[^/]+$/.test(path) || /(^|\/)__tests__\//.test(path) || /\.bats$/.test(path);
 }
 
-// テストと本番ファイルの対応付けに使う basename の stem（foo.test.ts / __tests__/foo.ts / foo.bats / foo.ts → foo）
 function shapeStem(path) {
   const base = path.split('/').pop();
   if (/\.(test|spec)\.[^.]+$/.test(base)) return base.replace(/\.(test|spec)\.[^.]+$/, '');
@@ -2140,15 +1414,6 @@ function isValidLineStats(lineStats, count) {
       && Number.isInteger(s.added) && s.added >= 0 && Number.isInteger(s.deleted) && s.deleted >= 0);
 }
 
-/**
- * @param {object} req - analyze REQ（acceptance_criteria / issue_type / breaking_change / breaking_keyword_scan を読む）
- * @param {number} realizedCount - realized diff の file 数（宣言外・format-only・ephemeral 除外後の整数。
- *   取得不能は NaN）
- * @param {Array<{path: string, added: number, deleted: number}>|null} [lineStats] - realizedCount に数えた
- *   file ごとの追加・削除行数（同じ file 集合）。取得不能は null（補正なし = file 数判定）
- * @returns {{ shape: 'micro'|'standard'|'complex', reason: string, uncorrected_shape: 'micro'|'standard'|'complex' }}
- *   uncorrected_shape は file 数だけで決めた補正前の shape（floor で決まったときは shape と同じ complex）
- */
 function classifyShape(req, realizedCount, lineStats = null) {
   const count = realizedCount;
   if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) {
@@ -2165,8 +1430,6 @@ function classifyShape(req, realizedCount, lineStats = null) {
     return { shape: 'complex', reason: `issue_type '${req.issue_type}' not in allowed set → floor=complex`, uncorrected_shape: 'complex' };
   }
 
-  // keyword-alone (breaking_keyword_scan=true かつ breaking_change!==true) は complex floor に
-  // 採用しない (issue #364)。構造化判定とのみ組合せたときに blocking へ採用する。
   const keywordAlone = req.breaking_keyword_scan === true && req.breaking_change !== true;
 
   if (req.breaking_change === true) {
@@ -2233,30 +1496,6 @@ function classifyShape(req, realizedCount, lineStats = null) {
 }
 // ==== END inline: _lib/triviality.mjs ====
 // ==== BEGIN inline: _lib/analyze-contract.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// _lib/analyze-contract.mjs
-// buildReqFromContract: dev-flow-prerun の analyze 段（prerun-analyze.sh = `analyze-issue --contract` の
-// 決定論 parse + Jev 有界判定）の出力 `args.setup.analyze` から REQ を決定論構成する純粋関数。
-// dev-flow の Setup 末尾の analyze ゲートはこの whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 /
-// uncertain 非空）だけを行い、通常経路では agent を 1 つも spawn しない（issue #690 / #695）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-//
-// whitelist 検証項目（1 つでも不合格なら null。呼び出し元は prerun 出力の契約違反として throw する —
-// LLM 転写経路は存在しないので fallback 先は無い）:
-//   - analyze が object（配列・null 除く）で analyze.ok === true
-//   - analyze.analyze_path が 'contract' か 'jev'（'sonnet' はゲート後に Workflow 側が付ける値で入力には現れない）
-//   - analyze.issue_title が非空 string
-//   - analyze.issue_type が非空 string（enum 外は classifyShape が floor=complex に倒すので here では弾かない）
-//   - analyze.acceptance_criteria が配列で全要素が非空 string（空配列は許容 — AC 空ゲートは Workflow 側）
-//   - analyze.breaking_change / breaking_keyword_scan が boolean
-//   - analyze.comment_overrides / comment_conflicts / uncertain / jev_reasons が string 配列
-//   - analyze.scope が string、analyze.scope_truncated が boolean
-//   - analyze.blockers が配列で、全要素が {repo: string, number: 正整数, state: 非空 string,
-//     source: 'api'|'body', url: string}（issue #744。依存なしは空配列）
-//
-// 合格時、REQ をキー個別 copy で構成する（spread しない — 未知キーの混入防止）。
-// 事前 shape 見積もりは REQ に載せない — 実効 shape は realized diff の file 数から classifyShape が決める（issue #676）。
 const ANALYZE_PATH_INPUT = ['contract', 'jev']
 const BLOCKER_SOURCES = ['api', 'body']
 
@@ -2317,8 +1556,6 @@ function buildReqFromContract(analyze, issueNumber) {
   if (Number.isInteger(analyze.comment_count) && analyze.comment_count >= 0) {
     req.comment_count = analyze.comment_count
   }
-  // issue_body / issue_body_truncated（issue #668）: Implement phase が dev-implementer へ issue 本文として
-  // 渡す。型が合うときだけキーを立てる（欠落は実装 agent の prompt 側で「本文なし・AC を正とする」に倒れる）。
   if (typeof analyze.issue_body === 'string') {
     req.issue_body = analyze.issue_body
   }
@@ -2328,12 +1565,6 @@ function buildReqFromContract(analyze, issueNumber) {
   return req
 }
 
-// analyzeGateReasons: Setup 末尾の analyze ゲート（3 条件）。非空なら needs_clarification（source=analyze）で終端し、
-// ゲート後にだけ sonnet を 1 spawn して人間向け missing_context を生成する。
-//   - AC 空: 決定論 parse が AC 見出し / 項目を見つけられなかった
-//   - comment_conflicts 非空: body と comment の矛盾、または権限なし / 低確信の上書き（fail-closed）
-//   - uncertain 非空: Jev の低確信 / 応答なし / 無効（fail-closed）
-// 返り値は人間向けの理由行（missing_context の決定論部分）。
 function analyzeGateReasons(req) {
   const reasons = []
   if (!Array.isArray(req?.acceptance_criteria) || req.acceptance_criteria.length === 0) {
@@ -2344,10 +1575,6 @@ function analyzeGateReasons(req) {
   return reasons
 }
 
-// blockedByReasons: Setup 末尾の blocked_by ゲート（issue #744）。state が OPEN の blocker（dependencies API /
-// 本文の Blocked by）ごとに人間向けの 1 行を返す。非空なら needs_clarification（source=blocked_by）で終端する。
-// 前提 issue（人手作業など）が未完了のまま実装を走らせると、途中で詰まる・mock で逃げる・未完了の PR が出るため、
-// analyze ゲートより前で止めて sonnet も spawn しない（未完了 issue の列挙は決定論で足りる）。
 function blockedByReasons(req) {
   return (req?.blockers ?? [])
     .filter((b) => b.state === 'OPEN')
@@ -2355,18 +1582,6 @@ function blockedByReasons(req) {
 }
 // ==== END inline: _lib/analyze-contract.mjs ====
 // ==== BEGIN inline: _lib/ui-verify.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// UI Verify: dev-flow の Evaluate phase に付随する agent-browser ベースの UI 検証ゲート向け純関数群。
-// isUiPath: 変更ファイルが UI 検証対象かを判定する。
-// validateUiVerifyConfig: リポジトリの ui-verify 設定（up / down 形式）を正規化・検証する。旧形式のキーは移行先付きで error。
-// uiVerifyPort / uiVerifyPorts: issue 番号から衝突しにくい port（群）を導出する。
-// expandUiVerifyPlaceholders: コマンド・env・URL 中の {port.<name>} 等を実値へ置換する。
-//
-// dev-flow はツールを知らない。project が宣言した up（一回限りの run と常駐する serve を宣言順に）
-// を起動・待機し、検証後に down で片付けるだけ。DB・backend・frontend をどう起動するかは宣言側の責務。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
 const UI_FILE_EXTS = new Set(['tsx', 'jsx', 'vue', 'svelte', 'css', 'scss', 'sass', 'less', 'html']);
 const UI_CODE_EXTS = new Set(['ts', 'js', 'mjs', 'cjs']);
@@ -2378,16 +1593,13 @@ const UI_VERIFY_PORT_REF_RE = /\{port\.([A-Za-z][A-Za-z0-9_-]*)\}/g;
 const UI_VERIFY_RUN_TIMEOUT_SEC = 600;
 const UI_VERIFY_SERVE_TIMEOUT_SEC = 180;
 const UI_VERIFY_TTL_SEC = 1800;
-// login に書ける agent-browser の subcommand（ページ操作と待機のみ。eval / close / 設定変更は不可）
 const UI_VERIFY_LOGIN_SUBCOMMANDS = new Set([
   'open', 'click', 'dblclick', 'fill', 'type', 'press', 'keyboard', 'select', 'check', 'uncheck',
   'hover', 'focus', 'scroll', 'scrollintoview', 'wait', 'find', 'back', 'forward', 'reload',
 ]);
-// smoke の console error から機械的に除外する既定パターン（dev モードの既知ノイズ）
 const UI_VERIFY_CONSOLE_IGNORE_DEFAULT = [
   '\\[HMR\\]', '\\[Fast Refresh\\]', '\\bwebpack\\b', 'favicon\\.ico', 'React DevTools',
 ];
-// 1 本目の port は旧 uiVerifyPort と同値。2 本目以降は 1000 刻み（issue % 1000 の帯を名前ごとに分ける）。
 const UI_VERIFY_PORT_STRIDE = 1000;
 
 function isUiPath(file) {
@@ -2519,8 +1731,6 @@ function uivCollectPortRefs(text, into) {
   for (const m of text.matchAll(UI_VERIFY_PORT_REF_RE)) into.add(m[1]);
 }
 
-// 旧形式（install_command + dev_command + {port} の 1 プロセス前提）のキー。変換して受理はせず、
-// 移行先を示して config error にする（後方互換 scaffolding を持たない）。
 const UI_VERIFY_LEGACY_KEYS = ['install_command', 'dev_command', 'ready_path', 'cwd'];
 
 function validateUiVerifyConfig(cfg) {
@@ -2602,7 +1812,6 @@ function validateUiVerifyConfig(cfg) {
     smoke_path = src.smoke_path;
   }
 
-  // login は agent-browser の argv 列。ui-verify-stack がシェルを通さず順に実行する（LLM を挟まない）。
   let login = null;
   if (src.login !== undefined && src.login !== null) {
     const cmds = uivIsPlainObject(src.login) ? src.login.commands : undefined;
@@ -2639,7 +1848,6 @@ function validateUiVerifyConfig(cfg) {
   const sc = uivValidateScenarios(src.scenarios);
   if (!sc.ok) return sc;
 
-  // 未宣言の {port.<name>} 参照は実行時に置換されず残るので、宣言時点で弾く。
   const refs = new Set();
   for (const s of [...up, ...down]) {
     uivCollectPortRefs(s.command, refs);
@@ -2684,8 +1892,6 @@ function uiVerifyPorts(basePort, issue, names) {
   return out;
 }
 
-// {port.<name>} / {port}（ports の先頭）/ {state_dir} / {worktree} / {base_url} を置換する。
-// それ以外の {..}（シェルの ${VAR} 等）には触らない。
 function expandUiVerifyPlaceholders(text, vars) {
   if (typeof text !== 'string') return text;
   const ports = vars.ports ?? {};
@@ -2699,37 +1905,13 @@ function expandUiVerifyPlaceholders(text, vars) {
 }
 // ==== END inline: _lib/ui-verify.mjs ====
 // ==== BEGIN inline: _lib/declared-paths.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// declared-paths: plan の file_changes と realized diff を突合する純粋関数群（normalizePath /
-// diffDeclaredPaths / isEphemeralPath / filterEphemeralPaths）。宣言外変更の検出と ephemeral path の除外に使う。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-/**
- * normalizePath: file_changes エントリを正規化したパス文字列に変換する。
- * - ':' で分割した先頭要素を取る（'src/foo.ts: 新規作成' → 'src/foo.ts'）
- * - trim して先頭の './' を1回除去する（'./src/foo.ts' → 'src/foo.ts'、'  src/bar.ts  ' → 'src/bar.ts'）
- *
- * @param {string} s - file_changes の1エントリ
- * @returns {string} 正規化されたパス文字列
- */
 function normalizePath(s) {
   const base = s.split(':')[0].trim();
   return base.startsWith('./') ? base.slice(2) : base;
 }
 
-/**
- * diffDeclaredPaths: plan の全 task の file_changes と git status の変更ファイルを突合し、
- * 宣言外の変更ファイルパスの配列を返す純粋関数。
- *
- * normalizePath を共用して表記ゆれ（'path: 説明' / './' プレフィックス / 空白）を正規化する。
- *
- * @param {Array<{id: string, file_changes?: string[]}>} planTasks - plan.serial の全 task 配列
- * @param {string[]} changedFiles - `git status --porcelain` の変更ファイル一覧（正規化済みパスを期待する）
- * @returns {string[]} 宣言外変更ファイルパスの配列（changedFiles の正規化値が基準）
- */
 function diffDeclaredPaths(planTasks, changedFiles) {
-  // plan の全 task の file_changes を正規化した宣言パス集合を構築
   const declaredSet = new Set();
   for (const task of planTasks) {
     for (const fc of (task.file_changes ?? [])) {
@@ -2737,7 +1919,6 @@ function diffDeclaredPaths(planTasks, changedFiles) {
     }
   }
 
-  // changedFiles のうち宣言集合に含まれないものを宣言外として抽出
   const undeclared = [];
   for (const f of changedFiles) {
     const normalized = normalizePath(f);
@@ -2748,82 +1929,39 @@ function diffDeclaredPaths(planTasks, changedFiles) {
   return undeclared;
 }
 
-/**
- * isEphemeralPath: git status --porcelain 由来の raw パス文字列が ephemeral（一時）ファイルか判定する。
- * - '.devflow-tmp' ディレクトリまたはその配下のファイル
- * - basename に '.staged.' を含むファイル（例: evaluator.staged.md, plan.staged.json）
- * - basename が /^fm_.*\.txt$/ に一致するファイル（例: fm_3821.txt）
- *
- * @param {string} p - git status --porcelain 由来の raw パス文字列
- * @returns {boolean} ephemeral なら true、それ以外 false
- */
 function isEphemeralPath(p) {
   const trimmed = p.trim();
   const base = trimmed.startsWith('./') ? trimmed.slice(2) : trimmed;
-  // (b) .devflow-tmp ディレクトリまたはその配下
   if (base === '.devflow-tmp' || base.startsWith('.devflow-tmp/')) {
     return true;
   }
-  // basename（最後の '/' 以降）を取得
   const slashIdx = base.lastIndexOf('/');
   const basename = slashIdx === -1 ? base : base.slice(slashIdx + 1);
-  // (c) basename に '.staged.' を含む
   if (basename.includes('.staged.')) {
     return true;
   }
-  // (d) basename が /^fm_.*\.txt$/ に一致
   if (/^fm_.*\.txt$/.test(basename)) {
     return true;
   }
   return false;
 }
 
-/**
- * filterEphemeralPaths: ファイルパス配列から ephemeral ファイルを除いた配列を返す。
- * isEphemeralPath を使って各エントリをフィルタする。
- *
- * @param {string[]|null|undefined} files - フィルタ対象のファイルパス配列
- * @returns {string[]} ephemeral でないパスのみを順序維持で返す配列
- */
 function filterEphemeralPaths(files) {
   return (files ?? []).filter((f) => !isEphemeralPath(f));
 }
 // ==== END inline: _lib/declared-paths.mjs ====
 
 // ==== BEGIN inline: _lib/md-cell.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// mdCell: Markdown テーブルセルの値をエスケープする純粋関数。
-// I/O なし、非決定性なし。同入力 -> byte 一致。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-/**
- * Markdown テーブルセルの値をエスケープする。
- * パイプ文字を \| に、改行を <br> に変換する。
- * @param {*} v
- * @returns {string}
- */
 function mdCell(v) {
   if (v == null) return '';
   return String(v).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 }
 // ==== END inline: _lib/md-cell.mjs ====
 // ==== BEGIN inline: _lib/tree-diff-stat.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// tree-diff-stat: `git diff --numstat A B` の stdout 行配列を解析する純粋関数。
-// I/O なし、非決定性なし。同入力 -> byte 一致。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const TREE_DIFF_STAT_MAX_FILES = 50;
 
-/**
- * `git diff --numstat A B` の stdout 各行を解析する。
- * 各行は `<insertions>\t<deletions>\t<path>` 形式。binary 差分は insertions/deletions が
- * `-` になり 0 として扱う。50 件で打ち切り、超過分は truncated: true で示す。
- * @param {string[]} lines
- * @returns {{ files: Array<{path: string, insertions: number, deletions: number}>, truncated: boolean }}
- */
 function parseTreeDiffStat(lines) {
   if (!Array.isArray(lines)) return { files: [], truncated: false };
 
@@ -2858,15 +1996,7 @@ function parseTreeDiffStat(lines) {
 // ==== END inline: _lib/tree-diff-stat.mjs ====
 
 // ==== BEGIN inline: _lib/devflow-summary-format.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// buildDevflowSummaryBody: dev-flow の終端サマリー markdown を生成する純粋関数。
-// I/O なし、gh なし、Date.now() 等の非決定性なし。同入力 -> byte 一致。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// マージ後確認の定型文（danger class → 文言）の閉じたテーブル（issue #658）。danger-grep の
-// 8 クラス全件を網羅する。未知 class は buildDevflowSummaryBody 側で汎用文にフォールバックする
-// （fail-safe。throw しない）。
 const POST_MERGE_CHECK = {
   'config': 'CI/CD・環境設定の変更を含む — PR CI で通らない経路（push トリガの deploy workflow 等）があれば対象 workflow の初回実行を確認する',
   'data-migration': 'migration を含む — マージ後に migration が実行される経路（migrate workflow / deploy hook）の初回実行結果を確認し、ロールバック手順を手元に置く',
@@ -2878,11 +2008,6 @@ const POST_MERGE_CHECK = {
   'test-weakening': 'テスト弱体化の疑いを含む — マージ後の CI で当該テストが実行されていること（skip / only が残っていないこと）を確認する',
 };
 
-// 解消済み証跡の折りたたみ表の上限（issue #707）。GitHub のコメント本文上限（65536 文字）を
-// 解消済み項目の件数・evidence 長で超えないよう、行数とセル長の両方を決定論で切る。
-// セルは空白・改行を 1 空白に畳んでから code point 単位で切るので、1 セルは escape 後も
-// 高々 2 × RESOLVED_CELL_MAX 文字（'|' → '\|'）、表全体は 30 行 × 2 セルで約 25,000 文字に収まる。
-// 切った残りの全文は journal telemetry `resolved_evidence` に残る。
 const RESOLVED_ROWS_MAX = 30;
 const RESOLVED_CELL_MAX = 200;
 
@@ -2893,66 +2018,6 @@ function resolvedCell(v) {
   return mdCell(s);
 }
 
-/**
- * dev-flow 終端サマリー markdown を生成する。
- * @param {object} opts
- * @param {number|string} opts.pr - PR 番号
- * @param {string} opts.mergeTier - 'HOLD'|'REVIEW'|'AUTO'
- * @param {string[]} opts.mergeTierReasons - 理由文字列の配列
- * @param {string} opts.gatePolicy - gate policy 文字列（例 'llm-major-advisory'）
- * @param {Array<{id,text,severity,checked,dimension,evidence,source,floor,danger_class,fail_closed}>} opts.blockingItems - blocking items。
- *   SEC seed item（source:'seed' && dimension:'security'）は danger-grep 由来の決定論 floor item で、
- *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
- *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す。
- *   blocking lane では item.final_resolution / item.final_evidence を無視する（軸A invariant。issue #658）
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,escalate_description,env_key,env_count,triaged,triaged_evidence,final_resolution,final_evidence}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））。
- *   advisory lane かつ `triaged:true` かつ `triaged_evidence` 非空（escalate でない）の item は要対応表・要対応判定から除外し、
- *   要対応セクション直後の `<details>`（🔹 トリアージ済み N 件）に 観点/内容/triaged_evidence を全文で出す（表示のみ。checked/ゲート不変。blocking lane では無視。issue #614, #626）。
- *   `escalate_description`: escalate item の詳細説明（要対応テーブルの内容列に要約として連結。issue #658）。
- *   `final_resolution`: 'resolved'|'ci_delegated'|'unresolved'|undefined — Final AC reconcile が
- *   fix 後の最終 tree で item を再評価した結果（表示専用。checked/ゲート/escalateCount には影響しない。issue #658）。
- *   `final_evidence`: string|null|undefined — final_resolution の根拠
- * @param {boolean} opts.ledgerConverged - ledger 収束フラグ
- * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
- * @param {string[]} opts.dangerHits - danger-grep で検出したクラス名
- * @param {string[]} [opts.testsurfHits] - danger-grep（test-weakening クラス）で検出した TESTSURF pattern 名の配列（issue #362）
- * @param {string|null|undefined} opts.shape - 実効 shape（'micro'|'standard'|'complex'）
- * @param {boolean|null|undefined} opts.testGreen - test green フラグ（at-a-glance 表では finalReconcile が 'ci_verified'/'reverified' のとき最終状態を優先。issue #625）
- * @param {'passed'|'failed'|'no_tests'|'error'|null|undefined} [opts.validateTests] - Validate 時点の GREEN.tests。
- *   'error' は起動失敗（テストが 1 件も実行されていない）で、at-a-glance 表では ❌ red と区別する（issue #707）
- * @param {boolean|null|undefined} [opts.ciTestVerified] - 表示専用。finalReconcile が再検証していない run で、
- *   PR head sha に pin した CI check が finalCiVerdict で verified になったか（issue #707）。
- *   validateTests==='error' のときだけテスト欄を '✅ green (CI)' にする。merge tier の入力にはしない
- * @param {string|null|undefined} opts.evalVerdict - evaluator verdict（'pass'|'fail' 等）（at-a-glance 表では iterate_fixed+lgtm+finalAcReconcile=reverified の fail を '✅ pass (fix 後 LGTM)' と表示。issue #625）
- * @param {string|null|undefined} opts.evalStaleness - 'none'|'hash_mismatch'|'hash_reconverged'|'iterate_incomplete'|'iterate_fixed'（issue #288, #631）
- * @param {string|null|undefined} [opts.evalDiffHash] - Evaluate 時点の tree diff hash（issue #631）
- * @param {string|null|undefined} [opts.prDiffHash] - PR phase 直前の tree diff hash（issue #631）
- * @param {Array<{path:string,insertions:number,deletions:number}>|null|undefined} [opts.staleDiffFiles] - hash_mismatch/hash_reconverged 時の eval→PR 直前の差分ファイル一覧。null は取得失敗（issue #631）
- * @param {string|null|undefined} [opts.prHeadTreeOid] - PR head commit の tree OID（issue #631）
- * @param {number|null|undefined} opts.iterateFixesApplied - pr-iterate の適用 fix 件数（iterate_fixed 表示用）
- * @param {string|null|undefined} opts.uiVerify - ui-verify 結果（'skipped'|'passed'|'findings'|'failed_open'|'setup_failed'。issue #285）
- * @param {string|null|undefined} opts.uiVerifyMode - ui-verify モード（'scenario'|'smoke'。issue #285）
- * @param {string|null|undefined} opts.finalReconcile - Final reconcile 結果（'skipped'|'reverified'|'unavailable'|'ci_verified'。issue #320, #599）
- * @param {boolean|null|undefined} opts.finalTestGreen - Final reconcile 時の test green フラグ（issue #320）
- * @param {string|null|undefined} opts.finalUiVerify - Final reconcile 時の ui-verify 結果（'passed'|'findings'|'failed_open'|'setup_failed'。issue #320）
- * @param {string|null|undefined} opts.finalAcReconcile - Final AC reconcile 結果（'skipped'|'reverified'|'unavailable'。issue #331）
- * @param {{decision:string|null, ci:string, summary:string|null}|null|undefined} [opts.liteReview] - dev-flow lite 経路の pr-review-lite 結果。非 null の場合のみ「lite レビュー」セクションを描画する（issue #392 AC-6）
- * @param {string|null|undefined} [opts.iterateStatus] - pr-iterate 終端 status（'lgtm'|'stuck'|'fix_failed'|'max_reached'|'ci_error'|'ci_pending'|'review_contract_error'。非 'lgtm' のときのみ未解消指摘セクションを描画する。issue #602）
- * @param {Array<{iteration:number,decision:string,summary:string,blocking:Array<{severity,topic,file,line,description,suggestion}>,minor:Array}>|null|undefined} [opts.iterateHistory] - pr-iterate の round 履歴（issue #602）
- * @param {number|null|undefined} [opts.iterateIterations] - pr-iterate 返り値 iterations。history 末尾 round の iteration と一致するときのみその round を終端 round とみなす（ci_error/ci_pending/review_contract_error は終端 round を history に push しないため）。null なら末尾 round を採用（issue #602）
- * @param {Array<{code:string, reason:string, kind:'deterministic_recheck'|'human_judgment'}>|null|undefined} [opts.holdReasons] - HOLD 判定に寄与した理由（HOLD 時のみ非空。merge-tier.mjs の
- *   閉じた code enum（HOLD_REASON_CODES）を持つ）。summary は code から「現状/対応」列を fail-safe に
- *   写像する（out-of-enum/欠落は '—' / '人が確認する'。throw しない。表示専用。issue #658）
- * @param {'deterministic_recheck'|'human_judgment'|null|undefined} [opts.holdKind] - HOLD 理由の代表 kind（merge-tier.mjs の aggregateHoldKind の返り値。issue #658）
- * @param {string[]|null|undefined} [opts.disclosures] - 可視化のみで HOLD 判定に寄与しない理由行（breaking keyword hit 等）。
- *   非 HOLD tier では Merge tier 理由の箇条書きから除外し「参考」セクションへ回す（HOLD tier は従来どおり
- *   mergeTierReasons を無加工で列挙する。issue #658）
- * @param {string[]|null|undefined} [opts.changedFiles] - 変更ファイルパス一覧。`.github/workflows/` 配下の変更が
- *   含まれる場合、あなたがやること に「マージ後: 対象 workflow の初回実行を確認する」を追加する
- *   （config danger class は .env / config/*.yml / secret 代入のみを判定し .github/workflows/*.yml に
- *   一致しないため、workflow 変更は別途 changedFiles から直接検出する。issue #662）
- * @returns {string}
- */
 function buildDevflowSummaryBody({
   pr,
   mergeTier,
@@ -3010,23 +2075,14 @@ function buildDevflowSummaryBody({
     throw new Error('buildDevflowSummaryBody: invalid validateTests: ' + validateTests);
   }
 
-  // 非空文字列判定（final_evidence / escalate_description の妥当性チェックに使う。issue #658）。
   const nonEmpty = (s) => typeof s === 'string' && s.length > 0;
 
-  // advisory item の「fix 後 tree での再評価」解消判定。blocking lane では呼ばない（軸A invariant）。
-  // 'resolved': fix 後の最終 tree で直接再検証済み。'ci_delegated': ローカル再検証不能だったが
-  // finalReconcile==='ci_verified'（PR head sha 一致・CI check 全 success）のときのみ解消扱い
-  // （それ以外の finalReconcile では「CI が実際に success した」決定論事実がないため未解消のまま）。
   const isResolved = (it) => {
     if (it.final_resolution === 'resolved' && nonEmpty(it.final_evidence)) return true;
     if (it.final_resolution === 'ci_delegated' && nonEmpty(it.final_evidence) && finalReconcile === 'ci_verified') return true;
     return false;
   };
 
-  // Security clearance は最終 ledger の SEC seed item（source:'seed' && dimension:'security' && floor:true）
-  // から導出する（evalResult.security_clearance は使わない — PR #16 型の表示矛盾を防ぐため）。
-  // SEC seed item は check.kind:'deterministic' のため全 gate_policy で blocking lane（軸A invariant）
-  // であり、blockingItems からの導出は gate_policy に依存せず成立する。
   const secLedgerItems = (blockingItems || []).filter(
     (it) => it.source === 'seed' && it.dimension === 'security' && it.floor === true
   );
@@ -3035,14 +2091,10 @@ function buildDevflowSummaryBody({
     cleared: it.checked === true,
     evidence: it.evidence,
   }));
-  // fail_closed:true の SEC seed item がある場合、danger-grep-final が実行不能だったことを示す。
-  // この場合は「clean（clearance 不要）」と混同せず、専用の fail-closed 空状態行を出す。
   const secFailClosed = (blockingItems || []).some(
     (it) => it.source === 'seed' && it.dimension === 'security' && it.fail_closed === true
   );
 
-  // TESTSURF clearance は最終 ledger の TESTSURF seed item（source:'seed' && id が 'TESTSURF-' 始まり）
-  // から導出する（SEC seed item と同型。issue #362）。id 形式は `TESTSURF-<PATTERN>` 固定。
   const testsurfLedgerItems = (blockingItems || []).filter(
     (it) => it.source === 'seed' && typeof it.id === 'string' && it.id.startsWith('TESTSURF-')
   );
@@ -3052,54 +2104,35 @@ function buildDevflowSummaryBody({
     evidence: it.evidence,
   }));
 
-  // ─── 要対応判定に使う派生集合（結論行・あなたがやること・要対応表で共有する。issue #658） ───
   const blockArr = blockingItems || [];
   const advArr = advisoryItems || [];
   const envItems = advArr.filter(it => it.dimension === 'environment');
   const uncheckedBlocking = blockArr.filter(it => it.checked !== true);
 
-  // triaged: evaluator が「再検証済み・対応不要」と判断した advisory item の表示専用フラグ
-  // （checked は false のまま・ゲート不変。issue #614）。evidence 非空文字列のときのみ有効。
   const isTriaged = (it) => it.triaged === true && typeof it.triaged_evidence === 'string' && it.triaged_evidence.length > 0;
-  // triaged advisory: 要対応表・hasActionItems から除外し、要対応セクション直後の <details> に全文で残す（issue #626）。
-  // escalate:true は要判断として要対応に残す（escalate 優先）。environment は環境ノート経路（除外）。blocking lane では triaged を無視する（#614 仕様 4 項）。
   const isTriagedAdvisory = (it) => it.checked !== true && it.dimension !== 'environment' && it.escalate !== true && isTriaged(it);
   const triagedAdvisory = advArr.filter(isTriagedAdvisory);
 
-  // escalate 行は「全 escalate」（checked / 解消済みを問わず）を要対応表に常時表示する（issue #658）。
-  // 解消状態は行の状態/現状/対応列に反映するが、行自体は隠さない — HOLD の ESCALATE は
-  // human required-block のままであることを可視化する。
   const escalateAll = advArr.filter(it => it.escalate === true && it.dimension !== 'environment');
 
   const acArr = acResults && acResults.length > 0 ? acResults : null;
   const unsatisfiedAC = acArr ? acArr.filter(a => a.satisfied !== true) : [];
-  // 観点 ac の ledger item（id: AC-<n> / AC-FINAL-<n>）が未達 AC を指すなら、未達 AC 表（必須）と重なるので
-  // 助言の行には出さない — 同じ AC を「任意」と「必須」の両方で出さないため（issue #738）。
   const unsatisfiedAcIndexes = new Set(unsatisfiedAC.map(a => a.ac_index));
   const isUnsatisfiedAcItem = (it) => {
     if (it.dimension !== 'ac' || typeof it.id !== 'string') return false;
     const m = /^AC-(?:FINAL-)?(\d+)$/.exec(it.id);
     return m != null && unsatisfiedAcIndexes.has(Number(m[1]) - 1);
   };
-  // 非 escalate advisory の表示候補は checked（solved 状態）基準のみで選ぶ（従来と同一の選別）。
   const nonEscalateUnchecked = advArr.filter(
     it => it.checked !== true && it.dimension !== 'environment' && it.escalate !== true && !isTriagedAdvisory(it)
       && !isUnsatisfiedAcItem(it)
   );
-  // hasActionItems（見出し判定）には isResolved で解消済みのものを含めない。
   const unresolvedEscalate = escalateAll.filter(it => !isResolved(it));
   const unresolvedAdvisory = nonEscalateUnchecked.filter(it => !isResolved(it));
-  // 解消済み advisory（escalate 含む・environment/triaged 除く）の件数のみ表示用（issue #658）。
   const resolvedAdvisory = advArr.filter(it => it.dimension !== 'environment' && !isTriagedAdvisory(it) && isResolved(it));
 
   const uncleared = securityClearance.filter(sc => sc.cleared !== true);
 
-  // fixRequired: 結論行・あなたがやること の分岐に使う「修正作業」の要否（escalate/advisory の
-  // 要判断・助言は含めない — 人間の判断のみで済む項目は「修正」ではない）。
-  // holdReasons に conflict/final_test_red/iterate_non_lgtm/pr_closes_missing の code があれば、
-  // 他の指標が空でも修正必須と判定する（PR #662 レビュー: mergeable_conflicting 単独 HOLD で
-  // 結論行「修正作業は不要です」と HOLD 理由テーブルの対応列「conflict を解消して push する」が
-  // 自己矛盾していた。pr_closes_missing も同型 — issue #661）。
   const FIX_REQUIRED_HOLD_CODES = ['mergeable_conflicting', 'final_test_red', 'iterate_non_lgtm', 'pr_closes_missing'];
   const testsurfUncleared = testsurfClearance.some(tc => !tc.cleared);
   const fixRequiredHold = Array.isArray(holdReasons) && holdReasons.some(hr => FIX_REQUIRED_HOLD_CODES.includes(hr && hr.code));
@@ -3111,9 +2144,6 @@ function buildDevflowSummaryBody({
     || (iterateStatus != null && iterateStatus !== 'lgtm')
     || fixRequiredHold;
 
-  // hasRequiredItems: 見出し「⚠️ 要対応」の判定。必須項目（unchecked blocking / 未解消 escalate /
-  // AC 未達 / 未クリアの security・testsurf / 修正必須の HOLD reason）だけで決める。advisory（任意）
-  // だけのときは「ℹ️ 任意の確認事項」にして、結論行の「助言 N 件は任意」と矛盾させない（issue #707）。
   const hasRequiredItems = uncheckedBlocking.length > 0
     || unresolvedEscalate.length > 0
     || unsatisfiedAC.length > 0
@@ -3125,18 +2155,15 @@ function buildDevflowSummaryBody({
 
   const TIER_EMOJI = { 'HOLD': '🔶', 'REVIEW': '🔷', 'AUTO': '✅' };
 
-  // 1. 見出し
   lines.push(`## dev-flow 終端サマリー — PR #${pr}`);
   lines.push('');
 
-  // 2. 結論行（issue #658 AC-1）。要対応テーブルより前・at-a-glance 表より前に置く。
   let tierPhrase;
   if (mergeTier === 'HOLD') tierPhrase = '自動マージ対象外（HOLD）';
   else if (mergeTier === 'REVIEW') tierPhrase = '人間レビュー後にマージ（REVIEW）';
   else tierPhrase = '低リスク・AUTO 推奨（merge は人間）';
 
   let fixPhrase;
-  // 修正が要るときも助言の件数を「任意」と添え、「要対応」の ❌ と「任意の確認事項」の分け方に揃える（issue #738）。
   if (fixRequired) fixPhrase = unresolvedAdvisory.length > 0 ? `修正作業が必要です（助言 ${unresolvedAdvisory.length} 件は任意）` : '修正作業が必要です';
   else if (unresolvedAdvisory.length > 0) fixPhrase = `必須の修正作業はありません（助言 ${unresolvedAdvisory.length} 件は任意）`;
   else fixPhrase = '修正作業は不要です';
@@ -3152,11 +2179,6 @@ function buildDevflowSummaryBody({
     actionPhrase = '人が diff を一読してマージしてください';
   }
 
-  // at-a-glance は最終状態を出す（issue #625）。Final reconcile が最終 tree の test 状態を確定させた
-  // 場合はそれを優先し、Validate 時点の testGreen は finalReconcile が 'skipped'/'unavailable'/null
-  // （= 最終 tree の再検証が行われていない）のときだけ使う。経過は参考セクションの Final reconcile 行に残る。
-  // Validate の tests:'error' はテストが 1 件も実行されていない起動失敗で red ではない（issue #707）。
-  // PR head sha に pin した CI が green なら '✅ green (CI)'、そうでなければ未検証として結論行で CI 確認を促す。
   let testCell;
   let testUnverified = false;
   if (finalReconcile === 'ci_verified') {
@@ -3180,12 +2202,8 @@ function buildDevflowSummaryBody({
   lines.push(`**結論: ${tierPhrase}。${fixPhrase}。${testPhrase}${actionPhrase}**`);
   lines.push('');
 
-  // 3. at-a-glance テーブル
   const tierCell = `${TIER_EMOJI[mergeTier] ?? ''} **${mergeTier}**`;
   const shapeCell = shape != null ? shape : '不明';
-  // evaluator verdict=fail でも、pr-iterate が fix を適用して LGTM 終端し（iterate_fixed + lgtm）、
-  // AC が最終 tree で再検証済み（finalAcReconcile=reverified）なら最終状態は pass。4 条件 AND。
-  // 表示のみ — merge tier / HOLD reasons / telemetry の eval_verdict は fix 前 verdict のまま不変。
   let evalCell;
   if (evalVerdict == null) {
     evalCell = '不明';
@@ -3218,7 +2236,6 @@ function buildDevflowSummaryBody({
   lines.push(`| ${tierCell} | ${shapeCell} | ${testCell} | ${evalCell} | ${ledgerCell} | ${acCell} | ${dangerCell} |`);
   lines.push('');
 
-  // 2b. eval_staleness 警告（at-a-glance テーブル直後・gate_policy 行前。issue #288, #631）
   const short8 = (h) => (typeof h === 'string' && h.length > 0) ? h.slice(0, 8) : '不明';
   const renderDiffFiles = (files) => {
     if (files.length === 0) return '（numstat 空 — mode/permission のみの変更等）';
@@ -3251,20 +2268,16 @@ function buildDevflowSummaryBody({
     lines.push('');
   }
 
-  // 3. gate_policy 行
   lines.push(`gate_policy: \`${gatePolicy}\``);
 
-  // 4. dangerHits 検出クラス行（1件以上のとき）
   if (dangerArr) {
     lines.push(`検出クラス: ${dangerArr.join(', ')}`);
   }
 
-  // 4b. testsurfHits 検出パターン行（1件以上のとき。issue #362）
   if (testsurfArr) {
     lines.push(`検出パターン (test-weakening): ${testsurfArr.join(', ')}`);
   }
 
-  // 4c. あなたがやること（issue #658 AC-4）。全 tier で出す。
   lines.push('');
   lines.push('### あなたがやること');
   lines.push('');
@@ -3293,9 +2306,6 @@ function buildDevflowSummaryBody({
     youDoLines.push(`${youDoN}. マージ後: ${msg}`);
     youDoN++;
   }
-  // 4d. workflow ファイル変更検知（issue #662 レビュー: config danger class は .github/workflows/*.yml
-  // に一致しないため、finalReconcile==='ci_verified' 以外の経路では workflow 変更を含んでいても
-  // 「対象 workflow の初回実行確認」が出なかった）。changedFiles から直接判定する。
   const changedFilesArr = Array.isArray(changedFiles) ? changedFiles : [];
   const hasWorkflowChange = changedFilesArr.some((f) => /^\.github\/workflows\//.test(f));
   if (hasWorkflowChange) {
@@ -3308,7 +2318,6 @@ function buildDevflowSummaryBody({
   }
   for (const l of youDoLines) lines.push(l);
 
-  // 5. HOLD になった理由と現状 / Merge tier 理由（常時可視。issue #658 AC-3）
   lines.push('');
   if (mergeTier === 'HOLD' && Array.isArray(holdReasons) && holdReasons.length > 0) {
     lines.push('### HOLD になった理由と現状');
@@ -3329,7 +2338,6 @@ function buildDevflowSummaryBody({
       lines.push(`| ${mdCell(hr && hr.reason)} | ${current} | ${action} |`);
     }
   } else if (mergeTier === 'HOLD') {
-    // fail-safe フォールバック: holdReasons が null/空でも従来どおり mergeTierReasons を列挙する。
     lines.push('**Merge tier 理由**:');
     if (!mergeTierReasons || mergeTierReasons.length === 0) {
       lines.push('- 理由記載なし');
@@ -3339,7 +2347,6 @@ function buildDevflowSummaryBody({
       }
     }
   } else {
-    // HOLD 以外: 可視化のみの理由（disclosures）は箇条書きから除外し「参考」セクションへ回す。
     const disclosureSet = new Set(Array.isArray(disclosures) ? disclosures : []);
     const filteredReasons = (mergeTierReasons || []).filter((r) => !disclosureSet.has(r));
     lines.push('**Merge tier 理由**:');
@@ -3352,9 +2359,6 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 5d. TESTSURF セクション（committed test の skip/削除/tautology 化 疑いを検出したときのみ表示。issue #362）
-  // dangerHits/Security clearance と別系統（dimension:'test-integrity'）。hit ゼロ（testsurfHits 空 かつ
-  // ledger に TESTSURF item なし）では一切出力しない（既存サマリーとの byte 同一を保つ regression 要件）。
   if (hasTestsurf) {
     lines.push('');
     lines.push('### 🧪 TESTSURF（test-weakening 検出）');
@@ -3373,7 +2377,6 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 6. 要対応セクション（常時可視。issue #658 AC-2）
   lines.push('');
   if (hasRequiredItems) {
     lines.push('### ⚠️ 要対応');
@@ -3383,9 +2386,6 @@ function buildDevflowSummaryBody({
     lines.push(triagedAdvisory.length > 0 ? `### ✅ 要対応事項なし（トリアージ済み ${triagedAdvisory.length} 件）` : '### ✅ 要対応事項なし');
   }
 
-  // ledger 表（(i)(ii)(iii)）。escalate は解消済みでも常時表示する（issue #658）。
-  // 必須があるときは助言を「⚠️ 要対応」の表に混ぜず、後段の「ℹ️ 任意の確認事項」節に分ける（issue #738）。
-  // 必須が無いときは見出しが既に任意 / 要対応なしなので、従来どおり 1 表にまとめる（issue #707）。
   const requiredRows = [
     ...uncheckedBlocking.map(it => ({ ...it, _lane: '必須（blocking）', _kind: 'blocking' })),
     ...escalateAll.map(it => ({ ...it, _lane: '要判断（advisory ESCALATE）', _kind: 'escalate' })),
@@ -3395,7 +2395,6 @@ function buildDevflowSummaryBody({
   const pushLedgerTable = (rows) => {
     if (rows.length === 0) return;
     lines.push('');
-    // id 列は出さない（ledger 内部識別子はレビュアーにはノイズ。機構側は ledger データを直接参照する）
     lines.push('| 状態 | 区分 | 観点 | 内容 | 現状 | 対応 |');
     lines.push('|---|---|---|---|---|---|');
     for (const item of rows) {
@@ -3406,7 +2405,6 @@ function buildDevflowSummaryBody({
       } else if (item._kind === 'escalate') {
         status = resolved ? '✅ 解消済み' : '⚠️ 要判断';
       } else {
-        // 助言の未解消に ❌ を使わない — ❌ は結論行・「あなたがやること」が指す修正対象に限る（issue #738）。
         status = resolved ? '✅ 解消済み' : 'ℹ️ 未確認';
       }
       const dimension = item.dimension != null ? item.dimension : '—';
@@ -3440,14 +2438,12 @@ function buildDevflowSummaryBody({
 
   pushLedgerTable(hasRequiredItems ? requiredRows : [...requiredRows, ...advisoryRows]);
 
-  // 必須項目が TESTSURF / 修正必須の HOLD reason だけのときは直下に表が出ないため、参照先を 1 行で示す。
   if (hasRequiredItems && requiredRows.length === 0 && unsatisfiedAC.length === 0 && uncleared.length === 0) {
     lines.push('');
     lines.push('- Goal Ledger / AC / security clearance の未解消はなし — 「HOLD になった理由と現状」・TESTSURF・pr-iterate 未解消の指摘 の未解消行を対応する');
   }
 
   if (hasRequiredItems) {
-    // 未達 AC テーブル（(iv)）
     if (unsatisfiedAC.length > 0) {
       lines.push('');
       lines.push('| 状態 | AC | 検証 | 根拠 |');
@@ -3459,7 +2455,6 @@ function buildDevflowSummaryBody({
       }
     }
 
-    // 未確認 clearance テーブル（(v)）
     if (uncleared.length > 0) {
       lines.push('');
       lines.push('| 状態 | danger class | 根拠 |');
@@ -3470,7 +2465,6 @@ function buildDevflowSummaryBody({
       }
     }
 
-    // 必須と並ぶ助言は別節に分ける（issue #738）。
     if (advisoryRows.length > 0) {
       lines.push('');
       lines.push('### ℹ️ 任意の確認事項');
@@ -3478,9 +2472,6 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 6a. トリアージ済み advisory の折りたたみ（issue #626）。要対応からは外すが、evaluator（LLM）判断の
-  // 誤トリアージ検算のため 観点 / 内容 / triaged_evidence を全文で残す（件数のみに落とさない）。
-  // <summary> 直後と </details> 直前の空行は GFM が details 内の table をレンダリングするために必須。
   if (triagedAdvisory.length > 0) {
     lines.push('');
     lines.push(`<details><summary>🔹 トリアージ済み ${triagedAdvisory.length} 件（evaluator 判断 — 誤トリアージ検算用）</summary>`);
@@ -3495,12 +2486,6 @@ function buildDevflowSummaryBody({
     lines.push('</details>');
   }
 
-  // 6b. pr-iterate 未解消の指摘（issue #602）。iterateStatus が非 'lgtm' のときのみ描画する。
-  // 出すのは終端 round（history 末尾かつ iteration === iterateIterations）の blocking findings のみ。
-  // ci_error / ci_pending / review_contract_error は終端 round を history に push しないため、
-  // 末尾 round の iteration が iterateIterations と一致しなければ「未解消なし」として省略する
-  // （末尾 round の findings は fix → 再 review 済み）。lgtm / history 空 / findings 空では 1 行も
-  // 追加しない（LGTM 終端との byte 一致を保つ regression 要件）。
   if (iterateStatus != null && iterateStatus !== 'lgtm') {
     const hist = Array.isArray(iterateHistory) ? iterateHistory : [];
     const lastRound = hist.length > 0 ? hist[hist.length - 1] : null;
@@ -3528,10 +2513,6 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 8. 空状態の常時可視行
-  // 直前コンテンツ（テーブル行 / bullet）との間に必ず空行を挿入する。
-  // GFM はテーブル終端行を空行で判定し、bullet も lazy continuation で吸収するため
-  // 空行なしで push するとテーブル壊れ・bullet 併合が起きる（AC-2 実効性を損なう）。
   if (lines[lines.length - 1] !== '') lines.push('');
   if (blockArr.length === 0 && advArr.length === 0) {
     lines.push('Goal Ledger: item なし');
@@ -3549,9 +2530,6 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 7. 解消済み証跡（issue #603, #707）。件数行を <details> のサマリ行にし、折りたたみの中に
-  // Goal Ledger の解消済み項目を 1 行ずつ 区分 / 内容 / 解消根拠 で出す（PR 上で何が指摘され何が
-  // 直ったかを追えるようにする）。未解消・未 clear の item は上記「要対応」セクションに全文で出る。
   const resolvedItems = [
     ...blockArr.filter(it => it.checked === true).map(it => ({ ...it, _lane: 'blocking' })),
     ...advArr.filter(it => it.checked === true && it.escalate !== true && it.dimension !== 'environment').map(it => ({ ...it, _lane: 'advisory' })),
@@ -3568,22 +2546,17 @@ function buildDevflowSummaryBody({
     const c = securityClearance.filter(sc => sc.cleared === true).length;
     if (c > 0) countLines.push(`- ✅ セキュリティ確認 (Security clearance) ${c}/${securityClearance.length} 済`);
   }
-  // fix 後 tree での解消確認（advisory / ESCALATE。issue #658 AC-5）。要対応表より下、この件数
-  // セクションの末尾に置く（解消済み証跡セクション自体の位置は不変 — 要対応表より下のまま）。
   if (resolvedAdvisory.length > 0) countLines.push(`- ✅ fix 後 tree で解消確認 ${resolvedAdvisory.length} 件（advisory / ESCALATE — checked は不変）`);
   if (countLines.length > 0) {
-    // 行の対象: checked の ledger item（上記件数と同じ選別）+ fix 後 tree で解消確認された advisory / ESCALATE。
     const resolvedRows = [
       ...resolvedItems,
       ...resolvedAdvisory.filter(it => !(it.checked === true && it.escalate !== true)).map(it => ({ ...it, _lane: 'advisory' })),
     ];
     lines.push('');
     if (resolvedRows.length === 0) {
-      // 折りたたむ項目が無い（環境ノート / AC / clearance の件数だけ）ときは件数行をそのまま出す。
       lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
       for (const l of countLines) lines.push(l);
     } else {
-      // <summary> 直後と </details> 直前の空行は GFM が details 内の table をレンダリングするために必須。
       lines.push('**解消済み証跡**:');
       lines.push('');
       lines.push(`<details><summary>${countLines.map(l => l.replace(/^- /, '')).join(' / ')}</summary>`);
@@ -3612,8 +2585,6 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 参考（可視化のみ — merge tier 判定に不使用）。disclosures・UI 検証・Final reconcile 行を
-  // ここに集約する（issue #658 AC-3）。1 行もなければセクション自体を出さない。
   const referenceLines = [];
   if (Array.isArray(disclosures)) {
     for (const line of disclosures) referenceLines.push(`- ${line}`);
@@ -3637,10 +2608,6 @@ function buildDevflowSummaryBody({
     for (const l of referenceLines) lines.push(l);
   }
 
-  // 8b. lite レビュー統合セクション（issue #392 AC-6）
-  // liteReview が非 null の場合のみ描画する。既存の post-review-lite が独立コメントで
-  // 出していた decision / CI status / summary を dev-flow 終端サマリーへ統合する。
-  // null/undefined 時は 1 行も追加せず既存出力と byte 一致を維持する（回帰保証）。
   if (liteReview != null) {
     lines.push('');
     lines.push('### lite レビュー（pr-iterate 起動なし）');
@@ -3652,7 +2619,6 @@ function buildDevflowSummaryBody({
     }
   }
 
-  // 9. 末尾
   lines.push('');
   lines.push('---');
   lines.push('*このコメントは dev-flow により自動生成されました。*');
@@ -3661,10 +2627,6 @@ function buildDevflowSummaryBody({
   return lines.join('\n');
 }
 
-// HOLD 理由 code -> {現状, 対応} の fail-safe 写像（issue #658）。merge-tier.mjs の
-// HOLD_REASON_CODES を canonical とする（import 不可のため重複定義。同値性は
-// _lib/final-ci-routing.test.mjs 系と同じ規約で運用側が pin する）。out-of-enum / 欠落は
-// throw せず '—' / '人が確認する' に落とす（表示専用フィールドのため）。
 function holdReasonDisplay(code, kind, ctx) {
   switch (code) {
     case 'escalate': {
@@ -3715,24 +2677,10 @@ function holdReasonDisplay(code, kind, ctx) {
 }
 // ==== END inline: _lib/devflow-summary-format.mjs ====
 // ==== BEGIN inline: _lib/resolved-evidence.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// buildResolvedEvidence: 終端サマリーから件数表示に縮約される「解消済み証跡」の
-// journal telemetry payload を組み立てる純関数。I/O なし、非決定性なし。
-// 入力を mutate しない。同入力 -> 同出力。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// 1 フィールド（text / evidence）の初期上限文字数
 const RESOLVED_EVIDENCE_FIELD_CAP = 1000;
-// JSON.stringify(result).length の上限
 const RESOLVED_EVIDENCE_MAX_CHARS = 16000;
 
-/**
- * 値を文字列化し、上限 n 文字で切り詰める。null/undefined はそのまま null を返す。
- * @param {*} v
- * @param {number} n
- * @returns {{value: string|null, truncated: boolean}}
- */
 function capText(v, n) {
   if (v == null) return { value: null, truncated: false };
   const s = String(v);
@@ -3742,15 +2690,6 @@ function capText(v, n) {
   return { value: s, truncated: false };
 }
 
-/**
- * 4 配列（ledger_resolved / env_notes / ac_satisfied / security_cleared）を
- * cap 文字数 n で構築する。
- * @param {Array} blockArr
- * @param {Array} advArr
- * @param {Array} acArr
- * @param {number} n
- * @returns {{cap_chars: number, truncated: boolean, ledger_resolved: Array, env_notes: Array, ac_satisfied: Array, security_cleared: Array}}
- */
 function buildAtCap(blockArr, advArr, acArr, n) {
   let truncated = false;
 
@@ -3833,15 +2772,6 @@ function buildAtCap(blockArr, advArr, acArr, n) {
   };
 }
 
-/**
- * 終端サマリーの「解消済み証跡」journal telemetry payload を組み立てる。
- * 4 配列すべて空なら null を返す（呼び出し側はキー自体を省く）。
- * @param {object} opts
- * @param {Array} opts.blockingItems - ledger item 配列（{id,text,severity,checked,dimension,evidence,source,floor,danger_class,escalate,env_key,env_count}）
- * @param {Array} opts.advisoryItems - 同上
- * @param {Array<{ac_index,satisfied,evidence,verified_by}>|null|undefined} opts.acResults - AC 判定結果
- * @returns {object|null}
- */
 function buildResolvedEvidence({ blockingItems, advisoryItems, acResults }) {
   const blockArr = blockingItems || [];
   const advArr = advisoryItems || [];
@@ -3869,22 +2799,7 @@ function buildResolvedEvidence({ blockingItems, advisoryItems, acResults }) {
 // ==== END inline: _lib/resolved-evidence.mjs ====
 
 // ==== BEGIN inline: _lib/stuck-detector.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow.js の blockSeen/evalSeen と pr-iterate.js の reviewSeen が共有する
-// stuck 検出 canonical。incentive-structural クラス — W7、撤去禁止。issue #123/#125/#126/#208。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-//
-// 命名注記: goal-ledger.mjs の topicKey と同一ファイル dev-flow.js に inline されるため
-// 識別子衝突を避けて stuckTopicKey と命名。
 
-// topic fingerprint を導出する。
-// (a) x == null → ''
-// (b) typeof x === 'string' → x をそのまま返す
-// (c) typeof x.topic === 'string' かつ x.topic.trim() が非空 → x.topic.trim()
-// (d) x.file != null → `${String(x.file)}::${x.description != null ? String(x.description) : JSON.stringify(x)}`
-// (e) x.description != null かつ String(x.description) が非空 → String(x.description)
-// (f) それ以外 → JSON.stringify(x)
 function stuckTopicKey(x) {
   if (x == null) return '';
   if (typeof x === 'string') return x;
@@ -3896,11 +2811,6 @@ function stuckTopicKey(x) {
   return JSON.stringify(x);
 }
 
-// stuck 検出 closure tracker を返す。
-// 内部 state は plain object（Map 禁止 — Object.values/entries の列挙順序まで現行と一致させるため）。
-// register(item): topic → { item, count } に累積。同一 topic の再登録は item を最新版で上書き + count 加算。
-// prior(): Object.values(seen).map((s) => s.item) を返す。
-// stuckTopics(): count >= threshold の topic キー配列を返す。
 function makeSeenTracker(threshold) {
   const seen = {};
   return {
@@ -3920,13 +2830,6 @@ function makeSeenTracker(threshold) {
 // ==== END inline: _lib/stuck-detector.mjs ====
 
 // ==== BEGIN inline: _lib/concern-classify.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// concern-classify: implementer/evaluator が積む concern 文字列を、既知の sandbox 環境要因
-// パターン（environment）と、それ以外のコード欠陥系（concern）に分類する純関数群。
-// 分類結果は gating に影響しない — dev-flow 側で ENV-* item（minor/inspection）として
-// 折りたたみ「環境ノート」へ運ぶための表示振り分けにのみ使う。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const CONCERN_ENV_PATTERNS = [
   { key: 'turbopack-sandbox', re: /TurbopackInternalError|next build.*(os error 1|Operation not permitted)/is },
@@ -3967,24 +2870,14 @@ function classifyConcerns(list) {
 // ==== END inline: _lib/concern-classify.mjs ====
 
 // ==== BEGIN inline: _lib/ci-checks.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow Merge tier phase: gh pr checks の結果から env_key ごとの CI check が全 green かを
-// 判定する純関数群。CI green を根拠に auto-close してよい ENV item を allowlist で限定する
-// （AC-3。npm-cache-eperm 等 CI で検証できない ENV key は含めない）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// env_key ごとの CI check 名判定 regex。CI green で auto-close してよい ENV key の allowlist を兼ねる
-// （npm-cache-eperm 等 CI で検証できない ENV key は含めない）。
 const ENV_CHECK_RES = {
   'turbopack-sandbox': /build|vercel|ci/i,
   'bats-sandbox': /bats/i,
 };
 
-// CI green で auto-close してよい ENV key の allowlist（ENV_CHECK_RES の key 集合）。
 const CI_VERIFIABLE_ENV_KEYS = Object.keys(ENV_CHECK_RES);
 
-// gh pr checks exec-proxy の agent() schema。
 const CHECKS = {
   type: 'object',
   required: ['ok'],
@@ -4005,7 +2898,6 @@ const CHECKS = {
   },
 };
 
-// gh pr checks --json name,bucket の出力から、指定 env_key に対応する CI check が全 pass かを判定する純関数。
 function envChecksGreen(checks, envKey) {
   const re = ENV_CHECK_RES[envKey];
   if (!re) {
@@ -4029,20 +2921,10 @@ function envChecksGreen(checks, envKey) {
 }
 // ==== END inline: _lib/ci-checks.mjs ====
 // ==== BEGIN inline: _lib/final-ci.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow Final reconcile phase: `finalReconcile === 'unavailable'` になったとき、PR head sha に
-// pin した CI check を決定論的に判定する純関数群。判断は一切 LLM に委ねない
-// （agent は verbatim 転写のみで、pass/fail の分岐は本ファイルの finalCiVerdict が行う）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証する。
 
-// HOLD 理由の分類（呼び出し元が「決定論チェックで解消しうる」か「人間判断が必須」かを区別するために使う）。
-// merge-tier.mjs 側にも同値の HOLD_REASON_KINDS を独立定義する（canonical は ESM import 禁止のため
-// module 間で定数を共有できない）。同値性は serial task の routing test が両方 import して pin する。
 const FINAL_CI_KIND_DETERMINISTIC = 'deterministic_recheck';
 const FINAL_CI_KIND_HUMAN = 'human_judgment';
 
-// finalCiVerdict が返す reason の closed enum。
 const FINAL_CI_REASONS = [
   'ok',
   'no-expected-sha',
@@ -4054,7 +2936,6 @@ const FINAL_CI_REASONS = [
   'failure',
 ];
 
-// gh pr view --json headRefOid,statusCheckRollup の exec-proxy 応答の agent() schema。
 const FINAL_CI_META = {
   type: 'object',
   required: ['ok'],
@@ -4073,14 +2954,6 @@ function isSha40(value) {
   return typeof value === 'string' && SHA40_RE.test(value);
 }
 
-// statusCheckRollup の 1 要素を { name, state } に正規化する。
-// 不正な形（object でない / __typename 不明 / name 欠落）は null を返し呼び出し側で 'invalid' に倒す。
-//
-// state は 'success'（真の SUCCESS）/ 'skipped'（SKIPPED・NEUTRAL — pr-iterate/scripts/check-ci.sh の
-// is_passed（pass|skipping）と同様に blocking 扱いはしないが、真の SUCCESS とは区別する）/ 'pending' /
-// 'failure' の4値。finalCiVerdict は 'success' が 1 件も無い rollup（全 'skipped'）を「test が1件も
-// 実行されていない」と見なし 'no-checks' へ倒す（全 SKIPPED/NEUTRAL の draft PR skip 等が ci_verified
-// へ誤昇格しないようにするため）。未知 conclusion / state は failure に倒す（fail-closed）。
 function normalizeCheck(item) {
   if (!item || typeof item !== 'object') return null;
   const typename = item.__typename;
@@ -4111,16 +2984,6 @@ function normalizeCheck(item) {
   return null;
 }
 
-/**
- * ci-final exec-proxy へ渡す prompt を組み立てる純粋関数。
- * gh pr view を bare 単文で 1 回実行し、headRefOid と statusCheckRollup を verbatim で
- * 包んで返させるだけ（判定はさせない）。
- *
- * @param {object} opts
- * @param {number|string} opts.pr - 対象 PR 番号
- * @param {string|null} opts.repo - owner/name。null / 空なら --repo を付けない
- * @returns {string}
- */
 function finalCiPrompt({ pr, repo }) {
   const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json headRefOid,statusCheckRollup`;
   return `## Objective\n`
@@ -4146,15 +3009,6 @@ function finalCiPrompt({ pr, repo }) {
     + `JSON のみ。1 行以内（statusCheckRollup を除く）。`;
 }
 
-/**
- * PR head sha に pin した CI check の決定論判定。LLM 判定を一切含まない純関数。
- * 入力 meta を mutate しない。
- *
- * @param {object} opts
- * @param {string} opts.expectedSha - reconcile-sync 成功時の head sha（40hex 必須）
- * @param {object|null} opts.meta - ci-final exec-proxy の応答（FINAL_CI_META 形）
- * @returns {{verified: boolean, reason: string, kind: string|null, checkNames: string[], headRefOid: string|null}}
- */
 function finalCiVerdict({ expectedSha, meta }) {
   if (!isSha40(expectedSha)) {
     return { verified: false, reason: 'no-expected-sha', kind: FINAL_CI_KIND_HUMAN, checkNames: [], headRefOid: null };
@@ -4199,9 +3053,6 @@ function finalCiVerdict({ expectedSha, meta }) {
     return { verified: false, reason: 'pending', kind: FINAL_CI_KIND_DETERMINISTIC, checkNames: pendings, headRefOid: meta.headRefOid };
   }
 
-  // ここまでで failure/pending は無い（success と skipped のみ）。real SUCCESS が 1 件も無い
-  // （全 SKIPPED/NEUTRAL）rollup は「test が1件も実行されていない」ことを意味するため、
-  // 昇格させず 'no-checks' へ倒す（例: draft PR で test job が条件付き skip される場合）。
   const hasRealSuccess = normalized.some((c) => c.state === 'success');
   if (!hasRealSuccess) {
     return { verified: false, reason: 'no-checks', kind: FINAL_CI_KIND_HUMAN, checkNames: normalized.map((c) => c.name), headRefOid: meta.headRefOid };
@@ -4217,46 +3068,12 @@ function finalCiVerdict({ expectedSha, meta }) {
 }
 // ==== END inline: _lib/final-ci.mjs ====
 // ==== BEGIN inline: _lib/ci-check.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// ci-check: pr-iterate の CI gate（`ci-check#i`）と dev-flow lite route の `ci-check-lite` が
-// 共有する CI ステータス取得の契約 — 定数 / StructuredOutput schema / prompt 本文。
-// I/O なし、gh なし、Date.now() 非決定性なし。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証する。
-//
-// なぜ canonical 化するか: 以前は同じ prompt 本文・schema・定数が dev-flow.js と pr-iterate.js に
-// 手で複製されており（inline 生成区間の外）、CI polling の仕様を変えると 2 箇所を手で同期する
-// 必要があった。片側だけ直すと lite route と pr-iterate で CI 判定が食い違う。
-//
-// REVIEW schema をここに含めないのは、両者が実際に異なるため（dev-flow 側のみ clock telemetry の
-// 給電元として optional `epoch` を持つ）。統合すると pr-iterate の受理 schema が変わる。
 
-// ci-check は 1 spawn = 1 判定。必要 turn = 2（gh fetch + check-ci）+ 1（StructuredOutput）
-// + CI_TURN_MARGIN = 6。ci-wait は 1（ci-wait script 実行）+ 1（StructuredOutput）+ CI_TURN_MARGIN = 5。
-// どちらも dev-runner-haiku-ro の maxTurns を超えないこと（_lib/ci-check.test.mjs が agent md を
-// 実読して pin）。CI 待ちのループは workflow script 側（pr-iterate.js）が持ち、CI 所要時間は
-// turn 会計に影響しない（issue #663。旧: agent 内 attempt ループで ceiling 90 秒、attempt 増で
-// StructuredOutput 未達 → ci_error に化けた issue #621）。
-// ci-wait は bare `sleep <秒>` を直接呼ばない: Bash tool は「呼び出し全体が sleep <N>」の
-// 単文を N が数秒を超えると拒否するため、待たずに失敗して ci-wait は null を返し、待機会計が
-// 実時間から乖離する。`ci-wait <秒>`（pr-iterate/scripts/ci-wait.sh）は内部で短い sleep を
-// チェーンして同じ総待機時間を作る 1 本のスクリプトで、Bash 呼び出し全体は非 sleep 先頭トークンの
-// bare 単文になる。実待機が成立した証拠は stdout の `slept:true` のみで、pr-iterate.js は
-// それ以外（null / throw / slept:false）を積算せず即 ci_pending 終端にする。
-const CI_POLL_SECONDS = 45; // script 側 ci-wait ループの poll 間隔（秒）
-const CI_WAIT_CEILING_SECONDS = 300; // script 側ループの nominal 総待機上限（秒）
-const CI_MAX_POLLS = Math.floor(CI_WAIT_CEILING_SECONDS / CI_POLL_SECONDS) + 1; // ci-check spawn 回数の上限
-// 実測マージン。文書化 worst case 8 tool call に対し実測 10 で StructuredOutput 未達だった差分に基づく。
+const CI_POLL_SECONDS = 45;
+const CI_WAIT_CEILING_SECONDS = 300;
+const CI_MAX_POLLS = Math.floor(CI_WAIT_CEILING_SECONDS / CI_POLL_SECONDS) + 1;
 const CI_TURN_MARGIN = 3;
 
-// CI gate schema — the gate lost in eb8aa7e (issue #133) を復元したもの。
-// dev-runner-haiku-ro が bare `gh pr checks` で CI snapshot を取得し、
-// pr-iterate/scripts/check-ci.sh（snapshot に対する純変換）で分類して stdout JSON を verbatim で返す。
-// fetch を script でなく agent 側に置くのは、exec-proxy script が認証付き network I/O を
-// 持ってはならないため（issue #488）。
-// failed_checks の要素は script 出力と一致する {name, bucket, state}
-// （conclusion は bucket-field migration で削除。issue #133 / ci::bats-fabricated-schema）。
-// status:'error' は check-ci が gh fetch 失敗を分類した値。workflow 側は proxy の空応答（turn 上限到達等）も fail-open で同じ 'error' に合成するため、受け手は原因を 1 つに断定できない（issue #621）。即座に人間へエスカレーションする。
 const CI_STATUS = {
   type: 'object',
   required: ['status'],
@@ -4273,24 +3090,12 @@ const CI_STATUS = {
         },
       },
     },
-    // check-ci.sh が常に出す accounting キー（1 spawn = 1 判定では常に 0 / 1）。
-    // workflow は読まず script 側で積算する（issue #663）。
     waited_seconds: { type: 'number' },
     poll_attempts: { type: 'number' },
-    // dev-flow の clock telemetry（issue #443）が iterate_end の給電元として読む optional epoch。
-    // 旧版 check-ci.sh（epoch 非対応）や失敗時は省略され、返り値の end_epoch も省略される（fail-open）。
     epoch: { type: 'number' },
   },
 };
 
-/**
- * ci-check exec-proxy の prompt を組み立てる純粋関数。
- *
- * @param {object} opts
- * @param {number|string} opts.pr - 対象 PR 番号
- * @param {string|null} opts.repo - owner/name。null / 空なら --repo を付けない（cwd の repo を使う）
- * @returns {string} dev-runner-haiku-ro へ渡す prompt
- */
 function ciCheckPrompt({ pr, repo }) {
   return `## Objective\nPR #${pr} の CI ステータスを取得し、JSON をそのまま返せ。\n\n`
     + `## Tools\n`
@@ -4316,7 +3121,6 @@ function ciCheckPrompt({ pr, repo }) {
     + `JSON のみ。1 行以内。`;
 }
 
-// ci-wait exec-proxy の応答 schema — script 側 ci-wait ループの 1 poll 分の sleep 完了報告。
 const CI_WAIT = {
   type: 'object',
   required: ['slept'],
@@ -4326,13 +3130,6 @@ const CI_WAIT = {
   },
 };
 
-/**
- * ci-wait exec-proxy の prompt を組み立てる純粋関数。
- *
- * @param {object} opts
- * @param {number} opts.seconds - 待機秒数
- * @returns {string} dev-runner-haiku-ro へ渡す prompt
- */
 function ciWaitPrompt({ seconds }) {
   return `## Objective\nCI 完了待ちのため ${seconds} 秒待機し、結果 JSON を返せ。\n\n`
     + `## Tools\n`
@@ -4351,40 +3148,7 @@ function ciWaitPrompt({ seconds }) {
 }
 // ==== END inline: _lib/ci-check.mjs ====
 // ==== BEGIN inline: _lib/review-ac.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// review-ac: pr-reviewer の prompt へ issue の acceptance criteria を注入するブロックを組み立てる。
-// I/O なし、gh なし、Date.now() 非決定性なし。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証する。
-//
-// なぜ必要か: pr-reviewer は「PR の title/body（buildPrBody が AC / plan から確定した宣言意図）と実 diff の照合」しか
-// しておらず、issue の AC を渡されていなかった。evaluator（requirements/AC 忠実性）と
-// pr-reviewer（commit 後 PR の品質 + CI）は評価軸が直交しており統合すべきではないが、
-// pr-reviewer が AC を「見ないまま approve する」状態は縮められる。
-// 実測（journal 145 run）で lgtm 後の merge tier HOLD 理由の最頻値は「AC 未達」8 件 —
-// pr-reviewer が approve したものを evaluator 系ゲートが止めている。
-//
-// ゲート境界は変えない（本ブロックは pr-reviewer への **入力の追加のみ**）。AC 未達を blocking に
-// する判定は既存の merge tier HOLD が引き続き担う。
-//
-// dev-flow lite route（pr-review-lite）と pr-iterate（review#i）の双方が同一文言を使うため
-// canonical 化する（片側だけ直すと 2 経路で reviewer の見るものが食い違う）。
-//
-// scope='delta'（pr-iterate review#i, i≥2 の fix delta round）は文言を変える: delta round は
-// diff を fix delta にしか渡さないため「AC 未達を新規 finding として探せ」という指示のままだと、
-// delta 外（review scope 外）の AC 未達まで reviewer に判定させてしまい、本来 delta に絞りたい
-// churn を AC 経由で復活させる。delta round では「既出 findings 中の AC 未達が今回の delta で
-// 解消されたか」の確認にだけ AC を使わせ、新規の AC 未達探索はさせない。
 
-/**
- * acceptance criteria ブロックを組み立てる純粋関数。
- *
- * @param {unknown} acceptanceCriteria - issue の AC 配列。未指定 / 非配列 / 空配列 / 全要素が
- *   空文字のときは空文字を返す（fail-open — 単体起動の /pr-iterate は issue context を持たない）。
- * @param {{scope?: 'full'|'delta'}} [opts] - scope='delta' は fix delta round 用の文言に切り替える
- *   （既定 'full'。review#1 や dev-flow lite route など PR 全体を読む経路はこちら）。
- * @returns {string} prompt へ連結するブロック（末尾改行つき）。注入しない場合は空文字。
- */
 function acceptanceCriteriaBlock(acceptanceCriteria, { scope = 'full' } = {}) {
   if (!Array.isArray(acceptanceCriteria)) return '';
   const items = acceptanceCriteria
@@ -4781,39 +3545,7 @@ const SECFLOOR = {
 }
 // secfloor-unified-schema-end: SECFLOOR 直後に parseSecfloorFields の inline 区間を続ける（anchor 用の一意行）。
 // ==== BEGIN inline: _lib/secfloor-unified.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// parseSecfloorFields: dev-flow Security floor が使う統合 exec-proxy
-// (`_shared/scripts/secfloor-classify.sh`) の応答を per-field 独立に検証する純関数 (issue #544, S1)。
-//
-// 統合スクリプトは {"risk":..., "files":..., "struct":..., "diffhash":..., "lines":...} の 1 JSON object を返すが、
-// 各フィールドはそれぞれ別のフィールド別失敗ポリシーを持つ (下記)。本関数は「1 フィールドの不正が
-// 他フィールドの判定に影響しない」ことを保証するため、各フィールドを完全に独立して検証する。
-//
-// フィールド別失敗ポリシー:
-//   risk   - fail-closed。unified?.risk が object かつ typeof ok==='boolean' かつ
-//            Array.isArray(hits) のときのみそのまま採用。それ以外は
-//            {ok:false, hits:[], error:'secfloor unified proxy unavailable (fail-closed)'} を合成
-//            (null は返さない -- hits フィールド欠落を clean と同一視しない fail-closed が要件。
-//            security floor の reconcileDanger/reconcileTestsurf は risk.ok!==true を fail-closed
-//            として扱い、全 SEC/TESTSURF seed を unchecked に倒す)。
-//   files  - fail-safe。Array.isArray(unified?.files) かつ全要素が string のときのみ採用。
-//            それ以外は null (呼び出し側の realizedCount が NaN になり complex floor 安全弁へ
-//            流れる。空配列 [] は正常な 0 件の realized diff として null と区別して維持する)。
-//   struct - fail-open。unified?.struct が object かつ struct.ok===true かつ
-//            typeof struct.available==='boolean' かつ format_only/structural (structural は
-//            省略可、省略時は [] 扱い) が配列のときのみ採用。それ以外は null。
-//   hash   - fail-open。typeof unified?.diffhash?.hash==='string' のときのみその文字列を採用。
-//            それ以外は null。
-//   lines  - fail-safe。Array.isArray(unified?.lines) かつ全要素が {path:string, added/deleted: 0 以上の
-//            整数} のときのみ採用。それ以外は null（classifyShape が行数補正をせず file 数判定に戻る。
-//            取れない行数を 0 と読んで shape を下げない）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// risk フィールドが契約通りの形か (issue #617)。fail-closed に倒れた 2 原因
-// ---- (a) proxy が契約外形状を返した (top-level risk 欠落) / (b) proxy が契約通りの形で
-// ok:false を報告した (secfloor-classify.sh 自体の失敗) ---- を呼び出し側が区別するための述語。
-// parseRiskField の採用条件そのもので、両者が drift しないよう単一定義を共有する。
 function isWellFormedRiskField(unified) {
   const risk = unified?.risk;
   return risk != null && typeof risk === 'object' && typeof risk.ok === 'boolean' && Array.isArray(risk.hits);
@@ -4876,8 +3608,6 @@ function parseSecfloorFields(unified) {
   };
 }
 
-// lineStatsFor: classifyShape に渡す file ごとの行数を、realized count に数えた files の順で組む。
-// 1 件でも lines に行数が無い file（binary・取得失敗）があれば null を返し、file 数判定に戻す。
 function lineStatsFor(files, lines) {
   if (!Array.isArray(files) || !Array.isArray(lines)) return null;
   const byPath = new Map(lines.map((l) => [l.path, l]));
@@ -4943,45 +3673,7 @@ const MERGE_FACTS = {
 }
 // merge-tier-facts-schema-end: MERGE_FACTS 直後に parseMergeTierFacts の inline 区間を続ける（anchor 用の一意行）。
 // ==== BEGIN inline: _lib/merge-tier-facts.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// parseMergeTierFacts: dev-flow Merge tier が使う統合 exec-proxy
-// (`_shared/scripts/merge-tier-facts.sh`) の応答をサブ結果ごとに独立に検証する純関数 (issue #637)。
-//
-// 統合スクリプトは {diffhash, risk, changed, pr, head_tree, checks, epoch} の 1 JSON object を返し、
-// サブ結果は全て {ok, value, error?} 形。本関数は「1 サブ結果の不正が他サブ結果の判定に影響しない」
-// ことを保証するため、各サブ結果を完全に独立して検証し、旧 6 spawn（diff-hash-merge /
-// danger-grep-final / changed-files / gh-pr-view / head-tree-oid / ci-checks）が個別に返していた
-// 形へ写す。呼び出し側の判定ロジック（reuseSecFloor / reconcileDanger / classifyMergeableState /
-// hash_reconverged / envChecksGreen）はこの写像の上で不変。
-//
-// サブ結果別失敗ポリシー（旧 spawn の fail-closed / fail-open 区別と同一）:
-//   mergeDiffHash - fail-open。diffhash.ok===true かつ value.hash が string のときのみ採用、それ以外 null
-//                   （null は「Security floor 結果の再利用不可 → danger-grep 再判定」と
-//                   「hash_reconverged 判定不能 → hash_mismatch 維持」に倒れる）。
-//   risk          - fail-closed。risk.ok===true かつ value が {ok:boolean, hits:array} のときのみ採用。
-//                   それ以外は {ok:false, hits:[], error} を合成（null は返さない — hits 欠落を clean と
-//                   同一視しない。呼び出し側は risk.ok!==true を dangerFailClosed として HOLD 強制）。
-//                   risk.ok===true なのに value が欠落 / 契約外形状の応答は、スクリプトが検証済みの value と
-//                   組でしか ok:true を出さない以上 subagent の StructuredOutput 転記で落ちたもの（issue #746）。
-//                   danger-grep 実行不能と区別するため error を MERGE_FACTS_RISK_DROPPED_ERROR にし、
-//                   isRiskValueDropped で判別させる。
-//   changedFiles  - fail-safe。changed.ok===true かつ value.files が string[] のときのみ採用、それ以外 null
-//                   （null は isDocsOrTestOnly が false を返し AUTO 昇格しない安全側）。
-//   prMeta        - fail-open。pr.ok===true かつ value が object のときのみ {ok:true, mergeable,
-//                   mergeStateStatus, headRefOid}、それ以外 {ok:false, error}
-//                   （classifyMergeableState が 'unknown' → conflict gate は HOLD しない）。
-//   headTreeOid   - fail-open。head_tree.ok===true かつ value.tree が非空 string のときのみ trim して採用
-//                   （旧 head-tree-oid spawn と同じ受理条件。40hex 検証は script 側）、それ以外 null
-//                   （hash_mismatch 維持 = HOLD）。
-//   checks        - fail-open。checks.ok===true かつ value.checks が array のときのみ {ok:true, checks}、
-//                   それ以外 {ok:false, error}（ENV item 据え置き + 警告 log）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// mergeTierFactsPrompt({ wt, base, pr, repo }): 統合 exec-proxy の prompt。
-// gh の 2 コマンドは subagent が bare 単文で実行し、stdout を argv で merge-tier-facts へ verbatim 転写する
-// （exec-proxy スクリプトは認証付き network I/O を内部に持たない契約。check-ci / finalCiPrompt と同型）。
-// base は origin/ 無しの branch 名を受け、prompt 側で origin/ を付ける（既存 call site と同じ）。
 function mergeTierFactsPrompt({ wt, base, pr, repo }) {
   const repoArg = repo ? ' --repo ' + repo : '';
   const bare = '（cd 前置・`bash` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクトは禁止）';
@@ -5011,7 +3703,6 @@ function mergeTierFactsPrompt({ wt, base, pr, repo }) {
     + `JSON のみ。1 行以内。`;
 }
 
-// サブ結果が契約通りの形か（{ok:boolean} を持つ object）。error は ok:false 時の診断値。
 function subOk(sub) {
   return sub != null && typeof sub === 'object' && sub.ok === true;
 }
@@ -5027,8 +3718,6 @@ function parseMergeDiffHash(facts) {
   return typeof hash === 'string' && hash !== '' ? hash : null;
 }
 
-// risk サブ結果が契約通りの形か。fail-closed に倒れた 2 原因 — proxy が契約外形状を返した /
-// スクリプトが契約通りの形で ok:false を報告した — を呼び出し側が区別するための述語。
 function isWellFormedRiskFact(facts) {
   const sub = facts?.risk;
   if (!subOk(sub)) return false;
@@ -5036,8 +3725,6 @@ function isWellFormedRiskFact(facts) {
   return v != null && typeof v === 'object' && typeof v.ok === 'boolean' && Array.isArray(v.hits);
 }
 
-// risk.ok===true なのに value が欠落 / 契約外形状（subagent の転記欠落。スクリプトは value が
-// {ok:boolean, hits:array} のときだけ ok:true を出すため、ここに来るのは転記で落ちた場合のみ）。
 const MERGE_FACTS_RISK_DROPPED_ERROR = 'merge-tier-facts transcription dropped risk.value (fail-closed)';
 
 function isRiskValueDropped(facts) {
@@ -5083,7 +3770,6 @@ function parseChecks(facts) {
   return { ok: false, error: subError(sub, 'merge-tier-facts checks unavailable') };
 }
 
-// 診断用: facts の top-level キー一覧（契約外形状のとき log に出す）
 function mergeTierFactsTopLevelKeys(facts) {
   if (facts == null) return 'null';
   if (typeof facts !== 'object') return typeof facts;
@@ -5103,27 +3789,7 @@ function parseMergeTierFacts(facts) {
 }
 // ==== END inline: _lib/merge-tier-facts.mjs ====
 // ==== BEGIN inline: _lib/pr-artifacts.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// pr-artifacts: dev-flow PR phase の commit message / PR body / spawn prompt を state（issue / req /
-// plan / ledger / risk hits）から組み立てる純関数群 (issue #642)。
-//
-// PR phase 時点で必要な材料（issue title / type / AC / plan.summary / architecture_decisions /
-// task 一覧 / ledger の AC checked 状態 / danger・testsurf hit）は workflow が全て state に持っている。
-// LLM に diff を読み直させて文章を再生成させる代わりに、ここで決定論的に組み立てた本文を
-// dev-runner-haiku が verbatim で `.devflow-tmp/` へ保存し、bare 単文の git / gh を順に実行する
-// （agent 側の要約・判断を挟まない転写契約。pr-iterate の commit-ensure と同型）。
-// 同一入力 → 同一出力（決定論）。I/O なし。
-//
-// PR body は「結論1行 → 変更(component別) → 受入条件 checkbox → 設計判断(≤5件) → 検証 → Closes」の
-// 6 セクション固定構成で、各セクションを PR_BODY_* 定数で決定論 clip する（issue #661）。
-// Closes 行の存在検証（hasClosesLine / verifyPrBody / extractPrBody / closesVerdict）と、`gh pr view --json body` /
-// `gh pr edit --body-file` の exec-proxy prompt（prBodyViewPrompt / prBodyEditPrompt）もここに置き、
-// 判定は本ファイルの純関数のみが行う（agent は verbatim 転写・bare 単文実行のみ）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// Conventional Commits の type/scope prefix（`type(scope)!: rest`）。issue title が既に prefix 付きの
-// 場合に type/scope を再利用し、`refactor(x): refactor(x): ...` の二重 prefix を避ける。
 const CONVENTIONAL_PREFIX_RE = /^([a-z]+)(?:\(([^)]*)\))?!?:\s*(.+)$/;
 
 function str(v) {
@@ -5134,7 +3800,6 @@ function arr(v) {
   return Array.isArray(v) ? v : [];
 }
 
-// code point 単位で数え、超過時は先頭 max-1 文字 + '…' に切り詰める決定論 truncation。
 function clip(s, max) {
   const text = str(s);
   const chars = Array.from(text);
@@ -5142,12 +3807,10 @@ function clip(s, max) {
   return chars.slice(0, Math.max(0, max - 1)).join('') + '…';
 }
 
-// 改行・連続空白（タブ含む）を 1 空白に畳んで trim する。
 function collapseWhitespace(s) {
   return str(s).replace(/\s+/g, ' ').trim();
 }
 
-// plan の file_changes（`path: 説明` 形も許容）から path 部分を取り出す。
 function planPaths(plan) {
   const out = [];
   for (const t of arr(plan?.serial)) {
@@ -5159,8 +3822,6 @@ function planPaths(plan) {
   return out;
 }
 
-// 全 path に共通する先頭ディレクトリの末尾セグメントを scope とする（`plugins/dev-flow/_lib/a.mjs` +
-// `plugins/dev-flow/.claude/workflows/dev-flow.js` → `dev-flow`）。共通 dir が無ければ null。
 function scopeFromPaths(paths) {
   if (paths.length === 0) return null;
   let common = paths[0].split('/').slice(0, -1);
@@ -5174,9 +3835,6 @@ function scopeFromPaths(paths) {
   return common.length ? common[common.length - 1] : null;
 }
 
-// commit message: `<type>(<scope>): <title> (#<issue>)` + 空行 + plan.summary。末尾改行付き
-// （`git commit -F` 用）。type は req.issue_type > title の prefix > 'chore'、scope は title の
-// prefix > plan.file_changes の共通 dir > 無し。
 function buildCommitMessage({ issue, req, plan }) {
   const rawTitle = str(req?.issue_title).trim();
   const m = CONVENTIONAL_PREFIX_RE.exec(rawTitle);
@@ -5202,7 +3860,6 @@ function cell(v) {
   return str(v).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
-// PR body の上限定数（issue #661: planner 出力は無制限 verbatim ではなく決定論 clip で埋め込む）。
 const PR_BODY_SUMMARY_MAX = 120;
 const PR_BODY_CHANGE_BULLET_MAX = 140;
 const PR_BODY_CHANGE_BULLETS_MAX = 6;
@@ -5213,17 +3870,11 @@ const PR_BODY_HIT_ITEMS_MAX = 5;
 const PR_BODY_NOTES_MAX = 5;
 const PR_BODY_NOTE_MAX = 240;
 const PR_BODY_MAX_CHARS = 3500;
-// PR_BODY_MAX_CHARS 超過時に buildPrBody が決定論的に詰める順序と刻み（issue #665）:
-// 1. hit item の file path を PR_BODY_HIT_PATH_MAX まで clip
-// 2. それでも超過なら受入条件の clip 幅を PR_BODY_AC_MAX から PR_BODY_AC_SHRINK_STEP 刻みで
-//    PR_BODY_AC_MIN まで縮小
 const PR_BODY_HIT_PATH_MAX = 80;
 const PR_BODY_AC_MIN = 40;
 const PR_BODY_AC_SHRINK_STEP = 20;
 const PR_BODY_HEADINGS = ['## 変更', '## 受入条件', '## 設計判断', '## 検証'];
 
-// plan.serial の file_changes を component（path の dirname。無ければ '(root)'）ごとに
-// 初出順でグループ化し、[{ component, files }] を返す（files は basename を初出順・重複排除）。
 function changeGroups(plan) {
   const order = [];
   const byComponent = new Map();
@@ -5241,8 +3892,6 @@ function changeGroups(plan) {
   return order.map((component) => ({ component, files: byComponent.get(component) }));
 }
 
-// `## 変更` セクション本文: component 別 bullet を PR_BODY_CHANGE_BULLETS_MAX 件まで、超過分は
-// `（他 N component）` 1 行で畳む。
 function changeSection(plan) {
   const groups = changeGroups(plan);
   if (groups.length === 0) return '（なし）';
@@ -5252,8 +3901,6 @@ function changeSection(plan) {
   return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} component）` : shown.join('\n');
 }
 
-// `## 受入条件` セクション本文: index 順に `- [x]`/`- [ ]` + clip(ac, acMax)。checked 判定は acResults
-// 優先、無ければ ledger.items の `AC-<i+1>`。acMax は PR_BODY_MAX_CHARS 超過時の詰め処理で縮小される。
 function acceptanceSection(req, ledger, acResults, acMax = PR_BODY_AC_MAX) {
   const acs = arr(req?.acceptance_criteria);
   if (acs.length === 0) return '（なし）';
@@ -5267,8 +3914,6 @@ function acceptanceSection(req, ledger, acResults, acMax = PR_BODY_AC_MAX) {
   return lines.join('\n');
 }
 
-// `## 設計判断` セクション本文: 先頭 PR_BODY_DECISIONS_MAX 件を `- <decisionLine>` で clip、超過分は
-// `（他 N 件は plan 参照）` 1 行。
 function decisionsSection(plan) {
   const all = arr(plan?.architecture_decisions).map(decisionLine).filter(Boolean);
   if (all.length === 0) return '（なし）';
@@ -5277,16 +3922,9 @@ function decisionsSection(plan) {
   return excess > 0 ? `${shown.join('\n')}\n（他 ${excess} 件は plan 参照）` : shown.join('\n');
 }
 
-// 実装エージェント（dev-implementer）が返した PR 本文向けの記録（issue #747）。section は閉じた enum で、
-// PR body の `## 検証` に `- <label>: <text>` で載る。
 const PR_NOTE_SECTIONS = ['verification', 'measurement'];
 const PR_NOTE_LABELS = { verification: '検証', measurement: '計測' };
 
-// IMPL 結果の design_decisions（[{title, rationale}]）と pr_notes（[{section, text}]）を plan へ取り込む。
-// plan.architecture_decisions は `## 設計判断`、plan.pr_notes は `## 検証` の材料になる（evaluator も plan 経由で読む）。
-// 1 回の Implement / reimpl の結果内では連結し、非空なら前回分を置き換える（差し戻し後の報告を最新とする）。
-// 空なら前回分を保持する — 差し戻しが別の指摘だけを直した場合に、先に返した計測値を本文から落とさないため。
-// title / text が空の項目と section が enum 外の項目は捨てる。
 function adoptImplPrNotes(plan, results) {
   const decisions = [];
   const notes = [];
@@ -5307,8 +3945,6 @@ function adoptImplPrNotes(plan, results) {
   };
 }
 
-// `## 検証` に足す pr_notes 行: 先頭 PR_BODY_NOTES_MAX 件を `- 計測: ...` / `- 検証: ...` で clip、超過分は
-// `（他 N 件）` 1 行。
 function noteLines(plan) {
   const all = arr(plan?.pr_notes).filter((n) => PR_NOTE_SECTIONS.includes(n?.section) && collapseWhitespace(n?.text));
   const shown = all.slice(0, PR_BODY_NOTES_MAX).map((n) => clip(`- ${PR_NOTE_LABELS[n.section]}: ${collapseWhitespace(n.text)}`, PR_BODY_NOTE_MAX));
@@ -5316,11 +3952,6 @@ function noteLines(plan) {
   return excess > 0 ? [...shown, `（他 ${excess} 件）`] : shown;
 }
 
-// 1 種別（danger-grep / test-surface）分の hit 行。総数は維持しつつ列挙 item を
-// PR_BODY_HIT_ITEMS_MAX 件で打ち切り「他 N 件」を付す。file path は pathMax で clip する
-// （PR_BODY_MAX_CHARS 超過時の詰め処理で有限値に絞られる。既定は無制限）。
-// 文字列要素はクラス名 / pattern 名そのものとして扱う。key・file の片方が欠けた hit は取れた側だけを出し、
-// 両方欠けた hit は「詳細不明」とする（`unknown: \`?\`` のような穴埋め表記を出さない。issue #746）。
 function hitItem(h, keyOf, pathMax) {
   const key = cell(typeof h === 'string' ? h : keyOf(h));
   const file = typeof h === 'string' ? '' : cell(h?.file);
@@ -5339,13 +3970,6 @@ function hitLine(label, hits, keyOf, pathMax = Infinity) {
   return `- ${label}: ${list.length} 件（${items.join('、')}）`;
 }
 
-// PR body: 結論1行 / 変更(component別) / 受入条件(checkbox) / 設計判断(≤5件) / 検証(hit + pr_notes ≤5件) /
-// Closes #<issue> の 6 セクション固定構成。各セクションは PR_BODY_* 定数で決定論 clip する
-// （issue #661。旧 `## 要約` 無制限 verbatim + `## 変更 task` table 構成を置き換え）。
-// acResults（[{ac_index, satisfied}]）が指定されればチェック判定に優先利用する。
-// 組み立て後の総長が PR_BODY_MAX_CHARS を超えたら (1) hit item の file path を
-// PR_BODY_HIT_PATH_MAX まで clip → (2) それでも超過なら受入条件 clip 幅を PR_BODY_AC_SHRINK_STEP
-// 刻みで PR_BODY_AC_MIN まで縮小、の順に決定論的に詰める（issue #665）。
 function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits, acResults }) {
   let conclusionText = collapseWhitespace(plan?.summary);
   if (!conclusionText) conclusionText = collapseWhitespace(req?.issue_title);
@@ -5379,13 +4003,11 @@ function buildPrBody({ issue, req, plan, ledger, testsurfHits, dangerHits, acRes
   return body;
 }
 
-// body 内に `Closes #<issue>` 行（行全体一致）が存在するか。
 function hasClosesLine(body, issue) {
   const re = new RegExp(`^Closes #${Number(issue)}\\s*$`, 'm');
   return re.test(str(body));
 }
 
-// PR body の構造検証: 結論行 / PR_BODY_HEADINGS の各見出し / Closes 行の存在を決定論的に判定する。
 function verifyPrBody(body, issue) {
   const s = str(body);
   const missing = [];
@@ -5401,10 +4023,6 @@ function verifyPrBody(body, issue) {
   return { ok: missing.length === 0, missing, closes, length: Array.from(s).length };
 }
 
-// `gh pr view --json body` の stdout 全文（exec-proxy が無加工で返す raw）から body を取り出す。
-// JSON として不正・object でない・.body が string でない場合は null。body の取り出しを agent に
-// 任せると haiku が自前の `{"ok":true,"body":...}` を body に詰めて二重 JSON 化し、改行がエスケープ
-// されたまま Closes 行を見落とす（issue #713）ため、取り出しは本関数だけが行う。
 function extractPrBody(raw) {
   if (typeof raw !== 'string') return null;
   let parsed;
@@ -5417,8 +4035,6 @@ function extractPrBody(raw) {
   return parsed.body;
 }
 
-// gh pr view --json body の exec-proxy 応答（{ok, raw}）から Closes 行の有無を判定する。取得失敗・
-// raw が不正 JSON・body 非 string は 'unknown'（fail-open。再投入しない）。
 function closesVerdict({ view, issue }) {
   if (view == null || view.ok !== true) return 'unknown';
   const body = extractPrBody(view.raw);
@@ -5426,10 +4042,8 @@ function closesVerdict({ view, issue }) {
   return hasClosesLine(body, issue) ? 'present' : 'missing';
 }
 
-// PR phase / Final reconcile 後の Closes 検証・再投入で dev-flow.js が持つ状態の closed enum。
 const PR_CLOSES_STATUS_VALUES = ['verified', 'reinjected', 'missing', 'unverified'];
 
-// gh pr view --json body の exec-proxy 応答の agent() schema。
 const PR_BODY_VIEW = {
   type: 'object',
   required: ['ok'],
@@ -5441,7 +4055,6 @@ const PR_BODY_VIEW = {
   },
 };
 
-// gh pr edit --body-file の exec-proxy 応答の agent() schema。
 const PR_BODY_EDIT = {
   type: 'object',
   required: ['edited'],
@@ -5452,8 +4065,6 @@ const PR_BODY_EDIT = {
   },
 };
 
-// PR #<pr> の本文 (body) を読み取り専用で取得する exec-proxy 向け prompt（closes-check / closes-recheck
-// label で使う。final-ci.mjs の finalCiPrompt と同型）。
 function prBodyViewPrompt({ pr, repo }) {
   const cmd = `gh pr view ${pr}${repo ? ' --repo ' + repo : ''} --json body`;
   return `## Objective\n`
@@ -5479,8 +4090,6 @@ function prBodyViewPrompt({ pr, repo }) {
     + `JSON のみ。1 行以内（raw を除く）。`;
 }
 
-// PR #<pr> の本文を prBody の内容で上書きする exec-proxy 向け prompt（closes-reinject / ac-checkbox-sync
-// label で使う）。Write で bodyFile へ verbatim 保存させた後、bare 単文で gh pr edit する。
 function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
   const bodyFile = `${wt}/.devflow-tmp/${fileName}`;
   const repoArg = repo ? ` --repo ${repo}` : '';
@@ -5501,22 +4110,6 @@ function prBodyEditPrompt({ wt, pr, repo, prBody, fileName }) {
     + `## Token cap\nJSON のみ。1 行以内。`;
 }
 
-// PR phase の dev-runner-haiku 向け prompt。commit message / PR body を delimiter 内に verbatim で
-// 埋め込み、Write で `.devflow-tmp/` に保存させた後、bare 単文（cd 前置・bash 前置・env 代入前置・
-// && 連結禁止）で git add / commit -F / push / gh pr create を順に実行させる。gh は subagent の
-// bare 単文で実行する（script 内に認証付き I/O を持たない exec-proxy 規範）。
-// 手順 1〜4 のどれかが失敗したらそこで中断し、`failed_step`（commit / push / pr-create）と
-// `failure_reason`（失敗コマンドの stderr 末尾 1〜3 行 verbatim）を埋めて返す — どこで何に失敗したかは
-// proxy しか観測できず、workflow 側はこの 2 値を abort のエラー文に載せて人間に見せる（prPhaseFailure）。
-// git は `-C <wt>` を付けない bare 形にする（issue #700）: `git -C` 形は sandbox の excludedCommands に
-// 当たらず sandbox 内で走り、push は credential helper が `~/.config/gh` / keychain を読めずに、
-// add / commit は `.git` が sandbox の write deny 下にある repo（skills 等）で index.lock を作れずに失敗する。
-// subagent の cwd は worktree（EnterWorktree 済み）なので -C を外しても対象 worktree は変わらない。
-// -C を外した以上、add -A / commit / push の対象は subagent の cwd のみで決まる。dev-flow-run は
-// cwd がその worktree であることを検証しない（isolation probe は worktree 絶対パスへの Write 可否
-// しか見ない）ため、resume や直接起動で cwd が共有 checkout のまま渡ってくると無関係な変更を
-// commit・push しうる（issue #700）。よって手順 0 として `git rev-parse --abbrev-ref HEAD` を
-// branch と照合し、不一致なら git add 等を実行せず failed_step:"commit" で中断する。
 function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody }) {
   const msgFile = `${wt}/.devflow-tmp/commit-msg.txt`;
   const bodyFile = `${wt}/.devflow-tmp/pr-body.md`;
@@ -5548,12 +4141,6 @@ function prPhasePrompt({ wt, base, branch, repo, issue, commitMessage, prBody })
     + `## Token cap\nJSON のみ。1 行以内。`;
 }
 
-// PR phase exec-proxy（`pr#<issue>`）の失敗判定。proxy の中断契約（prPhasePrompt の Steps）は
-// `committed:false` / `pr_url:""` / `pr_number:0` のいずれかで現れる。null 判定だけの `need()` は
-// この形を通してしまい、pr_number:0 が nested pr-iterate の引数検証で throw して abort の場所と原因
-// （proxy が踏んだ git / gh の stderr）が消える。ここで proxy が返した failed_step / failure_reason と
-// 生の 3 値を 1 文に載せて返し、workflow はそれを throw する（fail-closed。リトライ・fallback は持たない —
-// 失敗理由を人間に見せて止めるだけ）。成功なら null。
 const PR_FAILED_STEP_VALUES = ['commit', 'push', 'pr-create'];
 
 function prPhaseFailure(pr) {
@@ -5595,11 +4182,6 @@ const POST_RESULT_END = {
   },
 }
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// workflow-post-helpers: PR/Issue コメント投稿・ジャーナル記録用の共通スキーマ・ヘルパー。
-// I/O なし。bodySaveInstr / ghBareStepInstr は agent 向け instruction 文字列を生成する純粋関数。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const POST_RESULT = {
   type: 'object',
@@ -5620,18 +4202,6 @@ const JOURNAL_RESULT = {
   },
 }
 
-/**
- * PR/Issue コメント本文保存の agent 向け instruction を生成する。
- * 本文は事前に作られていない固定パスへ Write tool で新規作成させる。一時ファイルを shell で先に
- * 作らせると、その既存ファイルへの Write が「未 Read」として Write tool に拒否され、agent が
- * shell 書き出し（heredoc 等）へ逸れる。固定パスは前回の残りがありうるので、既存時のみ Read → Write。
- * @param {string} body - 保存する本文
- * @param {{bodyFile?: string, saveDir?: string, fileName?: string}} target
- *   bodyFile: 保存先の絶対パス（worktree の `.devflow-tmp/<prefix>-<用途>.md`）。
- *   saveDir + fileName: worktree を持たない呼び出し元（dev-improve）用。saveDir は shell 展開で
- *   解決する（例: `${TMPDIR:-/tmp}/dev-improve`）。
- * @param {string} delimName - delimiter 名（例: 'DEV_FLOW', 'PR_ITERATE'）
- */
 function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) {
   const resolve = bodyFile
     ? `保存先は固定パス \`${bodyFile}\` とし、以降 <BODY_FILE> はこのパスを指す。\n`
@@ -5647,11 +4217,6 @@ function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) {
     + `<<<${delimName}_BODY_BEGIN>>>\n${body}\n<<<${delimName}_BODY_END>>>\n\n`
 }
 
-/**
- * gh の投稿コマンドを bare 単文で 1 回だけ実行させる instruction 行を生成する
- * （起動形の文言は dev-flow.js の prBodyViewPrompt と同一）。
- * @param {string} cmd - 先頭トークンが gh のコマンド全文（`--repo <REPO>` 付き）
- */
 function ghBareStepInstr(cmd) {
   return `\`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
     + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
@@ -5660,37 +4225,7 @@ function ghBareStepInstr(cmd) {
 
 
 // ==== BEGIN inline: _lib/lite-route.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow micro lite 経路の escalation 判定を行う canonical。issue #376。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-/**
- * lite pr-reviewer pass の review 結果から、full pr-iterate（fix loop）への
- * escalation 要否を判定する純粋関数。
- *
- * escalate 条件は `review == null || blocking.length > 0` に限定する。
- * review.decision には一切依存しない（comment / request-changes でも blocking が
- * 空なら escalate=false）。これは `_lib/review-normalize.mjs` の
- * classifyReviewRoute（blocking 空を decision 非依存で CI_GATE=続行扱いにする）との
- * parity を意味する。blocking フィルタ述語（severity === 'critical' || 'major'）は
- * classifyReviewRoute と同一だが、sync-inlines generator が canonical 内の
- * import/require/Date.now/Math.random を検出して error にするため、review-normalize
- * を import せず本ファイルに inline 再実装する。
- *
- * 真理値表:
- *   | review                                             | escalate | 備考 |
- *   |-----------------------------------------------------|----------|------|
- *   | null / undefined                                     | true     | safety fail（agent skip/drop 相当） |
- *   | { decision: 'approve', issues: undefined }           | false    | Array.isArray ガードで issues を [] 扱い |
- *   | { decision: 'comment', issues: [] }                  | false    | blocking 0 |
- *   | { decision: 'request-changes', issues: [minor] }     | false    | minor のみは blocking 対象外 |
- *   | { decision: 'comment', issues: [major] }             | true     | decision 非依存で blocking>0 は escalate |
- *   | { decision: 'approve', issues: [critical] }          | true     | contract mismatch も blocking>0 で escalate |
- *
- * @param {{ decision?: string, issues?: Array<{ severity: string }> } | null | undefined} review
- * @returns {{ escalate: boolean, blocking: Array<{ severity: string }>, minor: Array<{ severity: string }> }}
- */
 function classifyLiteReview(review) {
   const issues = Array.isArray(review?.issues) ? review.issues : [];
   const blocking = issues.filter((x) => x.severity === 'critical' || x.severity === 'major');
@@ -5702,65 +4237,7 @@ function classifyLiteReview(review) {
 // ==== END inline: _lib/lite-route.mjs ====
 
 // ==== BEGIN inline: _lib/isolation-probe.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Isolation probe: dev-flow の Setup phase 完了直後に bg-isolation guard を早期検知する純関数群
-// （bg job から dev-flow を起動する際、呼び出し元セッションが自身の cwd を worktree へ isolate
-// していないと、harness の bg-isolation guard により implementer の Write/Edit tool 呼び出しが
-// 共有チェックアウトへの書き込みとして拒否される。放置すると Implement/Evaluate まで数十 agent
-// 分の呼び出しを浪費した後に empty-diff として発覚するため、Setup 完了直後に probe で早期検知する）。
-//
-// isolationCleanupPrompt: probe の直前に gitignored な作業用パスを除去させる prompt を組み立てる
-//   純関数（前 run の probe artifact（.isolation-probe-<token>）や run 専用 scratch を持ち越さない
-//   衛生目的）。除去範囲 target は呼び出し元が明示的に渡す
-//   必須引数: dev-flow Setup は run 開始時点なので `.devflow-tmp` 全体を消せるが、pr-iterate は
-//   dev-flow から nested 起動されると isoWt が実行中 run の worktree 自身になるため、
-//   `ISOLATION_PROBE_CLEANUP_GLOB`（`.devflow-tmp/.isolation-probe*`）だけに絞る（当該 run が既に
-//   書いた run 専用 scratch（journal payload payload-devflow-*.json / ui-verify state 等の
-//   .devflow-tmp 配下生成物）を run 途中で消さない）。デフォルト値を持たせると、呼び出し元が範囲を意識しないまま広い方を選ぶ。
-//   probe の成立自体はもう本 prompt の実行成否に依存しない（下記 isolationProbePrompt 参照）。
-//   probe ファイル名（token 付き `.isolation-probe-<token>`）と `ISOLATION_PROBE_CLEANUP_GLOB` は
-//   対応させて保つこと（git pathspec の前方一致は自動で辿らないため、drift すると cleanup が
-//   0 件しか消せなくなる — issue #555）。
-// isolationProbePrompt: probe 専用 agent（Write tool のみ）へ渡す prompt を組み立てる純関数
-//   （worktree 直下の run 毎に一意なパスへ Write tool で実際に書き込ませ、成否を {written, error} で
-//   verbatim 報告させる）。token は呼び出し元が渡す必須引数: probe 対象パスに run 毎の一意な token
-//   を含めることで、cleanup が blocked/skip されて前 run の残置物が残っていても probe が成立する
-//   （成立が cleanup の成功に依存しない — issue #521）。cleanup は前 run 残置物の持ち越し防止
-//   （run 間衛生）の目的で独立に残る。
-// isolationErrorKind: probe の error 文字列を既知シグネチャで分類する純関数。written:false の原因が
-//   「isolation 不成立」なのか「その他の書き込み失敗（上書き拒否等）」なのかを isolationFailureMessage
-//   が出し分けるための判別根拠にする。
-//   「File has not been read yet. Read it first before writing to it.」は Write tool の
-//   「既存ファイルは同一セッション内で Read 済みでないと上書き拒否」エラー文言そのもの（issue #482
-//   で実測）。token による一意化後もこのシグネチャが出る場合は同一 run 内の再実行など probe パス
-//   自体が既存ファイルだったケースであり、isolation 不成立とは別原因として区別する。
-// isolationFailureMessage: probe が written:false を返した場合の throw メッセージを組み立てる純関数
-//   （branch/起点 ref/workflow 名・args を含む復旧手順 — worktree 作成/EnterWorktree/Workflow 再実行 — を返す）。
-//   呼び出し元（dev-flow.js / pr-iterate.js）ごとに workflow 名・再実行 args・回避手順で提示する
-//   worktree 先（targetPath）・新規 worktree の起点 ref（startRef）が異なるため、いずれも呼び出し元が
-//   明示的に渡す必須引数にする（デフォルト値による暗黙の workflow 名混同を避ける — issue #455 レビュー指摘）。
-//   startRef は `origin/<ref>` 等の完全な ref 式を受け取る（関数側で origin/ を補わない）。
-//   dev-flow は未実装 issue の作業を base から始めるため `origin/<base>`、pr-iterate は既存 PR の
-//   head を再現する必要があるため `origin/<head_ref>` を渡す（base 起点だと PR の変更を含まない
-//   worktree を提示してしまう — issue #455 レビュー指摘）。
-//   EnterWorktree へ提示する worktree 先は 2 レイアウトをサポートする: repo 内 `.claude/worktrees/df-<N>`
-//   は `.claude/worktrees/` 以降の相対パスへ変換して提示し、それ以外（repo 外 `<repo>-wt/df-<N>`。
-//   issue #528）は絶対パスのまま pass-through する。後者は偶発的 fallback ではなく正規経路 —
-//   EnterWorktree は絶対パスでも成立する（issue #449 実測）。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
-//
-// 不変条件: 本ファイルが生成する prompt / メッセージは、実行制御の名称（sandbox・permission・
-// excludedCommands・guard 等）を「だからこの経路を使え」という形の理由として述べない。
-// 転写契約に判断余地を持ち込ませないための規範であり、`.claude/rules/dev-flow.md` の exec-proxy 節が
-// 正典。canonical と 2 つの inline 生成区間の双方を _lib/isolation-control-reason.test.mjs が pin する。
 
-// probe が実際に書くパスは token 付き `.devflow-tmp/.isolation-probe-<token>`（isolationProbePrompt
-// 参照）。前方一致 + `*` にするのは、token 形に加え issue #521 以前の legacy 無 token 残置物
-// `.devflow-tmp/.isolation-probe` も cleanup の衛生対象にするため（`-` を含まない
-// `.isolation-probe*` にすることで両方にマッチする。`.isolation-probe-*` にすると legacy 形を
-// 取りこぼす）。
 const ISOLATION_PROBE_CLEANUP_GLOB = '.devflow-tmp/.isolation-probe*';
 
 function isolationCleanupPrompt(worktree, target) {
@@ -5818,27 +4295,6 @@ function isolationFailureMessage({ worktree, branch, startRef, workflowName, wor
 // ==== END inline: _lib/isolation-probe.mjs ====
 
 // ==== BEGIN inline: _lib/cross-repo-gate.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// cross-repo-gate: empty-diff gate に cross-repo issue の graceful 終了経路を追加するための純関数群
-// （implementer の成果が本 repo の worktree ではなく別リポジトリの working tree にある場合、
-// 空 diff を fail-closed で throw する既存 gate は実装完了済みの run を誤って中断させてしまう。
-// 人間が明示的に付与した `cross-repo` ラベルと、implementer 申告ファイルのうち worktree 外の
-// working tree が実際に dirty である決定論的証拠が揃った場合のみ graceful 終了へ倒す — cross-repo と判定
-// されたケースでも成果物の所在を人間に報告し、黙って破棄しない）。
-//
-// hasCrossRepoLabel: `gh issue view --json labels` の生形式（文字列配列 or {name} オブジェクト配列）を
-//   受け取り、'cross-repo' ラベルの厳密一致有無を判定する純関数。
-// crossRepoCandidatePaths: implementer 結果配列から、worktree 外の絶対パス候補を抽出する純関数
-//   （BLOCKED/NEEDS_CONTEXT の files は対象外、worktree 配下・.devflow-tmp/ は除外、重複排除、最大50件）。
-//   後続の cross-repo-artifacts.sh 呼び出しは各パスを単一引用符で囲んで bash コマンド行に埋め込むため
-//   （dev-runner-haiku-ro が exec-proxy として実行）、単一引用符 (') と改行/制御文字を含むパスは
-//   shell quoting を突破しコマンド注入に使われ得る。files は implementer（LLM）申告値であり issue 本文
-//   経由の間接汚染経路もあるため、当該文字を含む候補はここで除外する（PR #434 review）。
-// summarizeCrossRepoArtifacts: cross-repo-artifacts.sh exec-proxy の結果を fail-safe に正規化する純関数。
-// crossRepoReturnNote: 成果物の所在を人間に報告する定型文を組み立てる純関数。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
-// 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。
 
 function hasCrossRepoLabel(labels) {
   if (!Array.isArray(labels)) return false;
@@ -5862,8 +4318,6 @@ function crossRepoCandidatePaths(implResults, worktree) {
       if (!(file.startsWith('/') || file.startsWith('~/'))) continue;
       if (file === normalizedWorktree || file.startsWith(`${normalizedWorktree}/`)) continue;
       if (file.includes('.devflow-tmp/')) continue;
-      // shell quoting breakout guard: 単一引用符・改行・制御文字を含む候補は、後段で単一引用符
-      // 囲みのまま bash コマンド行へ埋め込まれる際に quoting を突破し得るため除外する。
       if (/['\n\r\x00-\x1f]/.test(file)) continue;
       if (seen.has(file)) continue;
       seen.add(file);

@@ -11,45 +11,11 @@ export const meta = {
 }
 
 // ==== BEGIN inline: _lib/quality-model.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// model override を渡す call site は dev-improve.js の rank-judge（improve-miner）のみ。この 1 行は
-// その 1 call site にだけ効く。dev-flow.js / pr-iterate.js の品質ゲート agent（evaluator / pr-reviewer）は
-// agents/*.md の frontmatter（evaluator は opus / medium、pr-reviewer は opus / high）で spawn し、本定数を inline せず、model fallback 機構も持たない
-// （telemetry は eval_model_config / review_model_config = frontmatter 値。一致は
-// review-model-frontmatter.test.mjs が pin）。evaluator / pr-reviewer の model を変えるなら frontmatter を変える。
-// rank-judge が使う improve-miner の frontmatter 既定は sonnet で、rank-judge だけ本定数で override する。
-// Fable 5 試験運用中は 'fable'、戻すときはこの 1 行を 'opus' にする。
-// effort は agent() opts に記載されているが、本 harness での適用可否は未検証（受理と適用は別）。
-// dev-flow-canary の opts 受理 probe（capability id: agent_opts_effort_accepted）で再判定する。
-// それまで effort は frontmatter（high）固定のまま。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で dev-improve.js へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const QUALITY_MODEL = 'fable'
 // ==== END inline: _lib/quality-model.mjs ====
 // ==== BEGIN inline: _lib/agent-namespace.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// dev-flow の subagent 実体は plugin 配下（plugins/dev-flow/agents/）にあり、harness からは
-// `dev-flow:<name>` の namespaced id でしか解決できない。bare 名を agent() へ渡すと
-// `agent type '<name>' not found` で throw し run 全体が abort する。
-//
-// workflow 本体・telemetry・routing test は agent の論理名（bare）を保持し、namespace は
-// agent() を呼ぶ直前のこの 1 箇所でのみ付与する。namespace は harness 境界の事情であって
-// dev-flow のドメイン語彙ではないため、論理名側へ染み出させない（subagent_invocations の
-// 集計キーと、agent 名を静的検査する routing test 群が論理名を前提にしている）。
-//
-// fail-closed: agentType 欠落・非文字列・既に ':' を含む入力はいずれも throw する。
-// 二重付与（`dev-flow:dev-flow:x`）を実行時まで持ち越すと agent not found と同じ症状を
-// 別の原因で再発させるため、呼び出し側の誤用をここで止める。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 const AGENT_NAMESPACE = 'dev-flow:'
 
-/**
- * agent() へ渡す opts の agentType へ plugin namespace を付与した新しい opts を返す。
- *
- * @param {{agentType: string} & Record<string, unknown>} opts - agentType が bare 論理名の opts
- * @returns {Record<string, unknown>} agentType を namespaced id へ置換した複製
- */
 function nsAgentOpts(opts) {
   const bare = opts == null ? undefined : opts.agentType
   if (typeof bare !== 'string' || bare.trim() === '') {
@@ -66,17 +32,7 @@ function nsAgentOpts(opts) {
 // ==== END inline: _lib/agent-namespace.mjs ====
 
 // ==== BEGIN inline: _lib/improve-hypothesis.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// _lib/improve-hypothesis.mjs
-// dev-improve の hypothesis ブロック（issue body 埋め込み）の build / parse / status 更新と
-// metric enum。I/O なし・非決定性なし。verdict（confirmed/not_confirmed/insufficient_data）の
-// 判定は dev-flow-improve/scripts/hypothesis-check.sh（決定論 oracle）が単一実装 —
-// 本ファイルでは重複実装しない（軸A: LLM/orchestrator 側に効果判定を持たせない）。
-// metric enum は hypothesis-check.sh の case 分岐と 1:1 対応を保つこと。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// 仮説 metric の閉じた enum。direction: 'lte' = target 以下で confirmed / 'gte' = target 以上で confirmed。
 const IMPROVE_METRIC_DIRECTIONS = Object.freeze({
   iterate_unhealthy_rate: 'lte',
   micro_share: 'gte',
@@ -91,8 +47,6 @@ function improveMetricNames() {
   return Object.keys(IMPROVE_METRIC_DIRECTIONS);
 }
 
-// buildHypothesisBlock({metric, current, target, min_runs}) → markdown 文字列（status は常に pending）。
-// out-of-enum metric / 非数値 / min_runs 非正整数は throw。
 function buildHypothesisBlock({ metric, current, target, min_runs }) {
   if (!IMPROVE_METRIC_DIRECTIONS[metric]) {
     throw new Error(`improve-hypothesis: out-of-enum metric: ${JSON.stringify(metric ?? null)}`);
@@ -118,9 +72,6 @@ function buildHypothesisBlock({ metric, current, target, min_runs }) {
   ].join('\n');
 }
 
-// parseHypothesisBlock(body) → {metric, current, target, min_runs, status} | null。
-// マーカー不在は null（hypothesis 無し issue）。マーカーはあるが中身が不正なら throw
-//（呼び出し側が per-issue try/catch で fail-open する）。
 function parseHypothesisBlock(body) {
   const src = String(body ?? '');
   const beginIdx = src.indexOf(HYPOTHESIS_BEGIN);
@@ -152,8 +103,6 @@ function parseHypothesisBlock(body) {
   return { metric, current, target, min_runs, status: fields.status };
 }
 
-// setHypothesisStatus(body, newStatus) → block 内の status 行のみ置換した body を返す。
-// out-of-enum status / block 不在・不正 body は throw。
 function setHypothesisStatus(body, newStatus) {
   if (!HYPOTHESIS_STATUSES.includes(newStatus)) {
     throw new Error(`improve-hypothesis: out-of-enum status: ${JSON.stringify(newStatus)}`);
@@ -172,15 +121,6 @@ function setHypothesisStatus(body, newStatus) {
 // ==== END inline: _lib/improve-hypothesis.mjs ====
 
 // ==== BEGIN inline: _lib/improve-rank.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// _lib/improve-rank.mjs
-// dev-improve の候補 validate / dedup fingerprint / 決定論 rank / throughput cap +
-// backpressure / issue body 生成。I/O なし・非決定性なし。
-// LLM judge はスコア付けのみ — 最終順位・cut・棄却は本ファイルの決定論で行う
-//（W7: cap は incentive-structural — ループに自分の提案量を自己増幅させない）。
-// cross-canonical import 禁止のため metric enum は validateCandidate の引数で受ける。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const IMPROVE_MAX = 2;
 const IMPROVE_BACKPRESSURE_OPEN = 2;
@@ -188,20 +128,15 @@ const IMPROVE_SOURCES = Object.freeze([
   'doctor-anomaly', 'failure-rca', 'sunset', 'pr-signal', 'reconcile-revert',
 ]);
 const IMPROVE_RISKS = Object.freeze(['low', 'medium', 'high']);
-// dev-flow 本体（plugins/dev-flow 配下の workflows / _lib / agents と repo root の tools/）に
-// 該当する path prefix。触れる候補は canary AC を自動追記する。
 const IMPROVE_CORE_PREFIXES = Object.freeze([
   'plugins/dev-flow/.claude/workflows/', 'plugins/dev-flow/_lib/',
   'plugins/dev-flow/agents/', 'plugins/dev-flow/.claude/agents/', 'tools/',
 ]);
 
-// candidateKey(c): dedup 用の正規化 fingerprint。unicode 文字・数字以外を除去し lowercase。
 function candidateKey(c) {
   return String(c?.title ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
-// validateCandidate(c, metricNames): 共通 candidate schema の決定論バリデーション。
-// evidence 空・AC 空・out-of-enum source/risk/metric・数値不正は false（棄却）。
 function validateCandidate(c, metricNames) {
   if (c == null || typeof c !== 'object') return false;
   if (!IMPROVE_SOURCES.includes(c.source)) return false;
@@ -220,8 +155,6 @@ function validateCandidate(c, metricNames) {
   return true;
 }
 
-// rankCandidates(cands, scores): judge の {index, score} を突合し決定論順に整列した新配列を返す。
-// score 降順 → risk 昇順（low < medium < high）→ candidateKey 昇順。score 不在 index は 0 扱い。
 function rankCandidates(cands, scores) {
   const scoreByIndex = {};
   for (const s of Array.isArray(scores) ? scores : []) {
@@ -238,8 +171,6 @@ function rankCandidates(cands, scores) {
     .map((x) => x.c);
 }
 
-// selectTop(ranked, openImproveCount): backpressure + IMPROVE_MAX cut。
-// openImproveCount が取得不能な場合は Infinity を渡す（fail-closed = backpressure 扱い）。
 function selectTop(ranked, openImproveCount) {
   if (Number(openImproveCount) >= IMPROVE_BACKPRESSURE_OPEN) {
     return { file: [], backlog: ranked.slice(), backpressure: true };
@@ -247,8 +178,6 @@ function selectTop(ranked, openImproveCount) {
   return { file: ranked.slice(0, IMPROVE_MAX), backlog: ranked.slice(IMPROVE_MAX), backpressure: false };
 }
 
-// buildImproveIssueBody(c, {hypothesisBlock}): 起票 issue body markdown を生成する。
-// c.target_paths が IMPROVE_CORE_PREFIXES に触れる場合は canary AC（自己改変 floor）を自動追記。
 function buildImproveIssueBody(c, { hypothesisBlock }) {
   const lines = [];
   lines.push('## 背景');
@@ -282,7 +211,6 @@ function buildImproveIssueBody(c, { hypothesisBlock }) {
   return lines.join('\n');
 }
 
-// buildBacklogSection({today, losers}): backlog issue へ追記する markdown セクション。
 function buildBacklogSection({ today, losers }) {
   const lines = [];
   lines.push(`### cycle ${today}`);
@@ -295,11 +223,6 @@ function buildBacklogSection({ today, losers }) {
 // ==== END inline: _lib/improve-rank.mjs ====
 
 // ==== BEGIN inline: _lib/workflow-post-helpers.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// workflow-post-helpers: PR/Issue コメント投稿・ジャーナル記録用の共通スキーマ・ヘルパー。
-// I/O なし。bodySaveInstr / ghBareStepInstr は agent 向け instruction 文字列を生成する純粋関数。
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
 const POST_RESULT = {
   type: 'object',
@@ -320,18 +243,6 @@ const JOURNAL_RESULT = {
   },
 }
 
-/**
- * PR/Issue コメント本文保存の agent 向け instruction を生成する。
- * 本文は事前に作られていない固定パスへ Write tool で新規作成させる。一時ファイルを shell で先に
- * 作らせると、その既存ファイルへの Write が「未 Read」として Write tool に拒否され、agent が
- * shell 書き出し（heredoc 等）へ逸れる。固定パスは前回の残りがありうるので、既存時のみ Read → Write。
- * @param {string} body - 保存する本文
- * @param {{bodyFile?: string, saveDir?: string, fileName?: string}} target
- *   bodyFile: 保存先の絶対パス（worktree の `.devflow-tmp/<prefix>-<用途>.md`）。
- *   saveDir + fileName: worktree を持たない呼び出し元（dev-improve）用。saveDir は shell 展開で
- *   解決する（例: `${TMPDIR:-/tmp}/dev-improve`）。
- * @param {string} delimName - delimiter 名（例: 'DEV_FLOW', 'PR_ITERATE'）
- */
 function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) {
   const resolve = bodyFile
     ? `保存先は固定パス \`${bodyFile}\` とし、以降 <BODY_FILE> はこのパスを指す。\n`
@@ -347,29 +258,13 @@ function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) {
     + `<<<${delimName}_BODY_BEGIN>>>\n${body}\n<<<${delimName}_BODY_END>>>\n\n`
 }
 
-/**
- * gh の投稿コマンドを bare 単文で 1 回だけ実行させる instruction 行を生成する
- * （起動形の文言は dev-flow.js の prBodyViewPrompt と同一）。
- * @param {string} cmd - 先頭トークンが gh のコマンド全文（`--repo <REPO>` 付き）
- */
 function ghBareStepInstr(cmd) {
   return `\`${cmd}\` を先頭トークンが gh の bare 単文で 1 回だけ実行せよ`
     + `（cd 前置・bash 前置・環境変数代入前置・&& 連結・パイプ・リダイレクト禁止）。\n`
 }
 // ==== END inline: _lib/workflow-post-helpers.mjs ====
 // ==== BEGIN inline: _lib/journal-handoff.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-// Journal telemetry handoff helpers for workflow runtime.
-// Workflow loader cannot import ESM, so tools/sync-inlines.mjs injects this file
-// into .claude/workflows/*.js. Keep this file import-free and deterministic.
-//
-// INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
-// 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
 
-// stage2 が Write tool へ渡す最終書き込み先。shell 展開ではなく Write tool 側の `~` 展開に
-// 依存する（stage2 は shell を一切使わない — buildJournalLogInstr のコメント参照）。
-// 副作用として CLAUDE_JOURNAL_DIR による書き込み先の差し替えは効かない。同 env を読むのは
-// dev-flow-doctor / dev-improve の解析スクリプトとその test harness だけで、書き込み側の
-// production 経路では設定されないため、読み手（Stop hook）との不一致は生じない。
 const JOURNAL_PENDING_DIR = '~/.claude/journal/pending';
 
 function buildJournalHandoffPayload({
@@ -401,21 +296,10 @@ function buildJournalHandoffPayload({
   return JSON.stringify(payload);
 }
 
-// journalEffectId(payload): stable 16-hex effect ID derived from the payload string in pure JS.
-// 以前は stage2 の shell が `shasum -a 256 | cut -c1-16` で算出していたが、その算出には変数代入と
-// コマンド置換が必要で、それが worktree 分離ガードの拒否要因だった（issue #526）。JS 側で先に
-// 確定させることで stage2 の書き込み先が prompt 構築時点で定まり、stage2 から shell を完全に外せる。
-//
-// 幅は従来と同じ 64bit（16 hex）で、衝突時の影響も従来と同じ「別 payload の entry を上書きする」
-// クラスに留まる。暗号学的強度は不要 — 用途は同一 payload の再実行で同一ファイル名を再現する
-// 冪等命名だけで、内容の真正性検証には使わない。BigInt を避けて 32bit 2 本（seed 違いの FNV-1a）に
-// 分けているのは、workflow runtime が制限付き JS sandbox であり、inline 生成先とテストで同一挙動を
-// 保証する必要があるため。
 function fnv1a32(str, seed) {
   let h = seed >>> 0;
   for (let i = 0; i < str.length; i++) {
     const c = str.charCodeAt(i);
-    // 上位バイトも混ぜる: payload は日本語を含みうるので下位バイトだけでは区別が落ちる。
     h = Math.imul(h ^ (c & 0xff), 0x01000193) >>> 0;
     h = Math.imul(h ^ (c >>> 8), 0x01000193) >>> 0;
   }
@@ -429,9 +313,6 @@ function journalEffectId(payload) {
   return hi.toString(16).padStart(8, '0') + lo.toString(16).padStart(8, '0');
 }
 
-// buildJournalPendingPath({ prefix, id, effectId }): stage2 が Write tool へ渡す最終パス。
-// prefix / id は Write tool のパスへ splice されるので、shell へ渡していた頃と同じ決定論検証を
-// 残す（パス要素の混入は書き込み先の乗っ取りに直結するため、経路が shell でなくなっても緩めない）。
 function buildJournalPendingPath({ prefix, id, effectId }) {
   const safePrefix = String(prefix ?? '').trim();
   const safeId = String(id ?? '').trim();
@@ -449,44 +330,14 @@ function buildJournalPendingPath({ prefix, id, effectId }) {
 
 const JOURNAL_LOG_STATUSES = ['logged', 'save_failed', 'log_failed'];
 
-// classifyJournalLogStatus({ saved, logged }): reduces the 2-stage handoff outcome to the
-// 3-value closed enum reported on the caller's return object. saved!==true means stage1
-// (journal-save) never produced a validated payload file, so stage2 could not even be
-// attempted. logged===true means stage2 (journal-log) ran the finalize command successfully.
 function classifyJournalLogStatus({ saved, logged }) {
   if (saved !== true) return 'save_failed';
   if (logged === true) return 'logged';
   return 'log_failed';
 }
 
-// stage1 が作る payload ファイルの basename 契約。validateJournalSavedPath の basename 検証と
-// 同一パターンで、fileName モードの呼び出し側が渡す名前もこれに従う。
 const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
 
-// buildJournalSaveInstr({ payload, savePath | saveDir }): stage1 instruction string. Persists the
-// journal handoff payload verbatim to a file so that stage2 (buildJournalLogInstr) can be driven
-// by a path alone — the payload body has no reason to be re-stated in the prompt that writes
-// under pending/, and keeping it out means a long telemetry blob is carried as data on disk
-// rather than as prompt text. Either way the agent must write `payload` via the **Write tool**
-// content argument only, never through shell/echo/printf/heredoc, and never re-escape or
-// pretty-print it (same pattern as _lib/workflow-post-helpers.mjs bodySaveInstr).
-//
-// 2 つのモードがあるのは、保存先が JS 側で確定しているかどうかで実行可能な手段が変わるため:
-//
-// - `savePath`（dev-flow / pr-iterate — worktree パスが JS 側で確定している）: 保存先の絶対パスが
-//   prompt 構築時点で決まるので **shell を一切使わない**。これは必須の性質で、repo 配下を Bash から
-//   書けない環境（skills repo の自己改変ガードは worktree 配下も含めて deny する）では
-//   `mktemp "<worktree>/…"` が EPERM になり、agent が別ディレクトリへ退避して保存先固定の検証に
-//   落ちる。Write tool は同じ場所へ書けるので（isolation probe が同経路）、パスを固定して渡す。
-//   呼び出し側は agent 申告の path を使わず、この `savePath` をそのまま stage2 へ渡す（確定値が
-//   あるのに申告値を信用する理由がない）。agent が別の場所へ書いていた場合は stage2 の jq 検証が
-//   落ちて log_failed になり、欠落は観測可能なまま。
-// - `saveDir` + `fileName`（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
-//   shell 展開に依存し JS 側で解決できないため、shell に絶対パスを組み立てさせてから Write する。
-//   ファイル名は固定で、mktemp は使わない — テンプレート `payload-XXXXXX.json` は X 列が suffix の
-//   前にあるため BSD mktemp では展開されず、リテラル名のファイルを exit 0 で作る（一意性が silent に
-//   失われる）。呼び出し側は申告パスを requiredDirSuffix で pin する（絶対パスが JS 側で確定しない
-//   ため完全一致はできない）。
 function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   if (payload == null) throw new Error('journal-handoff: payload is required');
   if (savePath != null && saveDir != null) {
@@ -496,18 +347,11 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
   const bodyBlock = `<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n${payload}\n<<<JOURNAL_HANDOFF_BODY_END>>>\n\n`;
   const verbatimRule = `本文は絶対に shell（echo/printf/heredoc 等）へ渡さず、必ず Write tool の\n`
     + `content 引数として渡すこと。エスケープ・改変・pretty-print も禁止する。\n`;
-  // 冪等化: Write tool は同一セッション内で
-  // 未 Read の既存ファイルを上書きできない。savePath / saveDir とも保存先ファイル名は run を
-  // またいで固定（worktree 再利用・TMPDIR 永続時は前 run の payload が残り得る）なので、
-  // 上書き前に Read を試みる一手順を必須にする。Read の成否は saved の判定に混ぜない
-  // （Read 失敗＝新規ファイルの可能性が高いだけで、それ自体は保存失敗ではない）。
   const idempotentReadRule = (target) => `${target} が既に存在する場合は、先に **Read tool** で同ファイルを`
     + `読んでから **Write tool** で上書きせよ（Write tool は既存ファイルを未 Read のまま上書きできない）。`
     + `Read が失敗しても Write は必ず試み、Read の成否を saved の判定に混ぜないこと。\n`;
 
   if (savePath != null) {
-    // stage2 の Read tool パスへそのまま splice されるので、申告値に対するのと同じ決定論検証を
-    // 構築時点でも通す（絶対パス / 限定 charset / '..' 不可 / basename 契約）。
     if (!validateJournalSavedPath(savePath)) {
       throw new Error(`journal-handoff: invalid savePath: ${JSON.stringify(savePath)}`);
     }
@@ -538,21 +382,8 @@ function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) {
     + `失敗した場合は throw せず {saved:false} を返せ。\n`;
 }
 
-// tilde は dev-flow の WT 未確定 abort 経路（Setup の args.setup 検証（prerun-setup）で throw し、
-// worktree パスがまだ確定していない）専用。prefix を `~/.claude/journal/` に固定するのは、
-// validateJournalSavedPath が dev-improve の saveDir モードで agent 申告値の検証にも使われるため
-// — `~/` 全般を通すと、その injection guard まで一緒に広がってしまう。
 const JOURNAL_TILDE_PREFIX = '~/.claude/journal/';
 
-// validateJournalSavedPath(path, { requiredDirSuffix }): deterministic injection guard for any
-// path that gets spliced into the stage2 instruction (buildJournalLogInstr) — both the
-// JS-constructed `savePath` (checked at build time) and the path an agent claims to have saved
-// to in `saveDir` mode. Rejects anything that is not a plain absolute path built from a
-// restricted charset, contains '..', or whose basename violates the payload basename contract
-// (JOURNAL_PAYLOAD_BASENAME_RE). requiredDirSuffix optionally pins the containing directory
-// (e.g. '/.devflow-tmp'). A path rooted at the fixed JOURNAL_TILDE_PREFIX is also accepted (see
-// comment above) and is checked against the same charset/'..'/basename/requiredDirSuffix rules
-// after stripping the leading `~`.
 function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   if (typeof path !== 'string' || path === '') return false;
   const abs = path.startsWith(JOURNAL_TILDE_PREFIX) ? path.slice(1) : path;
@@ -569,26 +400,6 @@ function validateJournalSavedPath(path, { requiredDirSuffix } = {}) {
   return true;
 }
 
-// buildJournalLogInstr({ prefix, id, payloadPath, payload }): stage2 instruction string.
-// prompt には payload 本文を載せない — 載るのは 2 つのファイルパスだけで、結論値は構造的に
-// この prompt へ現れない（payload は書き込み先ファイル名の effect ID 算出にのみ使う）。
-//
-// stage2 が shell を一切使わないのは必須の性質で、緩めると issue #526 が再発する: 従来の
-// 単行 finalize コマンドは redirect・変数代入・コマンド置換・パイプを含み、EnterWorktree 済み
-// セッションの worktree 分離ガードに `too complex to verify that it stays inside the worktree`
-// で拒否されていた。dev-flow / pr-iterate は常にその分離セッションから走るため、stage2 が
-// shell に依存する限りテレメトリは記録されない。Write tool は同じセッションから pending/ へ
-// 書けることが実測で確認されており（stage1 と isolation probe が同経路）、`~` も Write tool
-// 側で展開される。
-//
-// 代償: `jq -e` による事前検証と mktemp→mv の atomic 公開が無くなる。壊れた JSON や
-// （他セッションの Stop hook と競合した場合の）部分書き込みは pending/ に現れうるが、Stop hook
-// 側が malformed/ へ隔離し replay runbook で回収できるため、silent loss ではなく観測可能な
-// 劣化に留まる。shell を残して「ガードに拒否され 8 日間 1 件も記録されない」状態に戻すより、
-// この劣化を受け入れる方が telemetry の可用性は高い。
-//
-// payloadPath は呼び出し側の検証を信用せずここでも再検証する（Write tool のパスへ splice される
-// 値なので、将来の呼び出し側が検証を忘れても崩れないようにする）。
 function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
   if (!validateJournalSavedPath(payloadPath)) {
     throw new Error(`journal-handoff: invalid payloadPath: ${JSON.stringify(payloadPath ?? null)}`);
@@ -607,24 +418,6 @@ function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
     + `3. 書き込みに成功したら {logged:true} を返せ。どの手順で失敗しても throw せず {logged:false} を返せ。\n`;
 }
 
-// journal handoff choreography（issue #494/#499/#556/#607）: journal-save（stage1）→ journal-log（stage2）の
-// 2 段 agent 呼び出しと journal_log_status の帰属を canonical 化する。dev-flow.js の
-// writeFailureTelemetry / Merge tier 成功 path / top-level abort catch、pr-iterate.js の
-// 終端 / top-level abort catch の 5 call site が使う。
-// 順序不変条件: stage2 呼び出しの直前に journalLogStatus を log_failed へ倒す — stage2 が throw
-// すると catch へ抜けて再代入が走らないため、preset が無いと stage2 の失敗が save_failed として
-// 誤帰属される（issue #499）。fail-open: 例外は内部で吸収し、3 値 closed enum
-// （logged / save_failed / log_failed）のいずれかを必ず返す。gate・merge tier には影響しない。
-// deps 注入: agent は呼び出し側の trackedAgent（subagent_invocations 計上のため）、
-// saveSchema/logSchema は workflow 側定義の JOURNAL_SAVE_RESULT / JOURNAL_RESULT を渡す。
-// savePath は呼び出し側 JS が絶対パスで確定して渡す（agent 申告の path は使わない — 申告値を
-// 信用すると別ディレクトリの同名ファイルが stage2 へ渡りうる）。dev-improve の saveDir+fileName
-// モードは対象外（本関数は savePath モード専用）。
-// agent は destructure 時に `runAgent` へ alias する（`agent(` という bare 呼び出しリテラルを
-// 本体コードへ残さないため）。dev-flow.js / pr-iterate.js の静的検証
-// _lib/subagent-invocations-routing.test.mjs は「bare agent( 呼び出しは trackedAgent wrapper
-// 内の 2 箇所のみ」を pin しており、本関数が inline 生成される両ワークフローで `agent(` リテラルが
-// 増えると誤検出する。呼び出し側の deps 注入契約（キー名 `agent`）は変えない。
 async function runJournalHandoff({ agent: runAgent, log, saveSchema, logSchema, payload, savePath, prefix, id, subject, logLabel, phase }) {
   let journalLogStatus = 'save_failed'
   try {
@@ -667,19 +460,12 @@ async function runJournalHandoff({ agent: runAgent, log, saveSchema, logSchema, 
 const ABORT_ERROR_CATEGORY = 'abort';
 const ABORT_ERROR_MSG_MAX = 500;
 
-// buildAbortErrorMsg({ phase, label, error }): abort entry の error_msg 単一形
-// `abort@<phase>/<label>: <message>`。phase/label 欠落は '?'。message は改行・連続空白を
-// 1 個の半角スペースへ正規化し、500 字（全体）で切る。
 function buildAbortErrorMsg({ phase, label, error }) {
   const raw = error && typeof error === 'object' && 'message' in error ? error.message : error;
   const msg = String(raw ?? 'unknown error').replace(/\s+/g, ' ').trim() || 'unknown error';
   return `abort@${phase || '?'}/${label || '?'}: ${msg}`.slice(0, ABORT_ERROR_MSG_MAX);
 }
 
-// buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label,
-// error, telemetry }): abort entry の唯一の組み立て口（dev-flow.js / pr-iterate.js の
-// top-level catch が使う）。outcome:'failure' + error_category:'abort' + error_phase +
-// telemetry.abort_phase/abort_label に固定する（legacy fallback / version 分岐なし）。
 function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label, error, telemetry }) {
   return buildJournalHandoffPayload({
     skill,

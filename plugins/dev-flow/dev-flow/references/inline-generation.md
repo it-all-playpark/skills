@@ -26,7 +26,12 @@ sync-inlines の既定 root は `plugins/dev-flow`（`--root` で上書き可）
 
 **canonical の構造制約**: ESM import / require / Date.now / Math.random を含めない（generator が
 コメント除去後のコードを走査して error）。**ファイル全体が inline 可能**であること（export は行頭
-接頭辞除去のみで verbatim 注入。export default / export { } は不可）。
+接頭辞除去のみで注入。export default / export { } は不可）。
+
+**inline 区間にコメントは入らない**: generator はコメントを落として注入する（`dropComments`。
+string / template / regex literal の中身は byte 単位で保つ）。Workflow tool は 524288 bytes 以上の
+script を登録せず起動不能にするため（`_lib/workflow-inlines.sync.test.mjs` が各 workflow の上限未満を
+検証）。意図・理由のコメントは canonical 側に書く。
 
 **上記以外に canonical のコーディングスタイル制約はない**: 区間全文一致方式のため、template literal
 の書き方・const の配置等は自由。
