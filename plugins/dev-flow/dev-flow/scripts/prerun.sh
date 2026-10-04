@@ -5,7 +5,7 @@
 # stdout の JSON 1行を `Workflow({ args: { issue, setup: <JSON> } })` の args.setup へそのまま渡す。
 #
 # 行う処理: base 解決 (origin/dev → origin/HEAD フォールバック) → worktree 作成/再利用 +
-# 起点(base)一致検証 + 書き込み probe → .devflow-tmp の git clean -fdx → deps install ‖ analyze
+# 起点(base)一致検証 + 独自コミット無しの再利用 worktree を base へ fast-forward + 書き込み probe →.devflow-tmp の git clean -fdx → deps install ‖ analyze
 # （issue 取得 + contract parse + Jev 有界判定。prerun-analyze.sh。deps install と並列）→
 # detect-stack。各段は独立に ok/error を報告し、後続段を巻き込まない。
 #
@@ -198,6 +198,33 @@ validate_upstream() {
     return 1
 }
 
+fast_forward_reused() {
+    # 独自コミット 0 件・未コミット変更なしの再利用 worktree を origin/<base>（冒頭の fetch で更新済み）へ
+    # 進める。古い起点のまま run を始めると、その間に base へ入った変更と conflict した PR を作るため。
+    # 独自コミット / 未コミット変更があれば作業中とみなし触らない。ff 失敗は fail-closed（worktree_error）。
+    local ahead dirty behind ff_out
+    ahead="$(git -C "$WT" rev-list --count "origin/${base}..HEAD" 2>&1)" || {
+        worktree_error="再利用 worktree の独自コミット数を判定できなかった: ${ahead}"
+        return 1
+    }
+    [[ "$ahead" == "0" ]] || return 0
+    dirty="$(git -C "$WT" status --porcelain --untracked-files=all -- . ':(exclude).devflow-tmp' 2>&1)" || {
+        worktree_error="再利用 worktree の未コミット変更を判定できなかった: ${dirty}"
+        return 1
+    }
+    [[ -z "$dirty" ]] || return 0
+    behind="$(git -C "$WT" rev-list --count "HEAD..origin/${base}" 2>&1)" || {
+        worktree_error="再利用 worktree の遅れを判定できなかった: ${behind}"
+        return 1
+    }
+    [[ "$behind" == "0" ]] && return 0
+    if ! ff_out="$(git -C "$WT" merge --ff-only --quiet "origin/${base}" 2>&1)"; then
+        worktree_error="再利用 worktree を origin/${base} へ fast-forward できなかった: ${ff_out}"
+        return 1
+    fi
+    return 0
+}
+
 if [[ "$BASE_OK" == true ]]; then
     WTLIST2="$(git -C "$ROOT" worktree list --porcelain 2>&1)" || WTLIST2=""
     CANON_WT="$(canon_path "$WT")"
@@ -244,7 +271,7 @@ if [[ "$BASE_OK" == true ]]; then
             # 別 branch を checkout した worktree を ok:true で返すと存在しない branch を指すので fail-closed
             worktree_error="既存 worktree の checkout branch が ${BRANCH} でない（実際: ${BRANCH_FOUND}）。$(RECOVERY_STEPS_FOR "$WT" "$base")"
         else
-            if validate_upstream "$BRANCH_FOUND"; then
+            if validate_upstream "$BRANCH_FOUND" && fast_forward_reused; then
                 SEG2_CORE_OK=true
             fi
         fi

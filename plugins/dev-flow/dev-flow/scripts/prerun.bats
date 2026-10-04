@@ -262,6 +262,76 @@ make_issue_fixture() {
     echo "$output" | jq -e '.worktree_status == "created"'
 }
 
+# ---- (9b-d) 再利用 worktree が origin/<base> より遅れている（issue #776）----
+
+# origin/dev に 1 コミット進める（prerun 冒頭の git fetch origin で ROOT の origin/dev に反映される）
+advance_origin_dev() {
+    echo "later" >> "$SEED/README.md"
+    git -C "$SEED" add README.md
+    git -C "$SEED" commit -q -m "later dev commit"
+    git -C "$SEED" push -q origin dev
+}
+
+@test "(9b) 独自コミット0件・未コミット変更なしで遅れた再利用worktree -> origin/devへfast-forward、headも進めた後の値" {
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    old_head="$(echo "$output" | jq -r '.head')"
+
+    advance_origin_dev
+    # .devflow-tmp 配下の残骸は未コミット変更とみなさない
+    mkdir -p "$WT/.devflow-tmp"
+    echo "stale" > "$WT/.devflow-tmp/stale.txt"
+
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e '.worktree_status == "reused"'
+    new_base="$(git -C "$ROOT" rev-parse origin/dev)"
+    [ "$new_base" != "$old_head" ]
+    [ "$(git -C "$WT" rev-parse HEAD)" = "$new_base" ]
+    echo "$output" | jq -e --arg h "$new_base" '.head == $h'
+}
+
+@test "(9c) 独自コミットがある再利用worktree -> origin/devが進んでもHEADは変わらない" {
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+
+    git -C "$WT" config user.name "Test"
+    git -C "$WT" config user.email "test@example.com"
+    echo "work" > "$WT/work.txt"
+    git -C "$WT" add work.txt
+    git -C "$WT" commit -q -m "own commit"
+    own_head="$(git -C "$WT" rev-parse HEAD)"
+
+    advance_origin_dev
+
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true'
+    [ "$(git -C "$WT" rev-parse HEAD)" = "$own_head" ]
+    echo "$output" | jq -e --arg h "$own_head" '.head == $h'
+}
+
+@test "(9d) 未コミット変更がある再利用worktree -> origin/devが進んでもHEADは変わらない" {
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    old_head="$(echo "$output" | jq -r '.head')"
+
+    echo "uncommitted" > "$WT/wip.txt"
+
+    advance_origin_dev
+
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true'
+    [ "$(git -C "$WT" rev-parse HEAD)" = "$old_head" ]
+    echo "$output" | jq -e --arg h "$old_head" '.head == $h'
+    [ -f "$WT/wip.txt" ]
+}
+
 # ---- (10) package.json (next, lockfile無し) -> stack検出 + deps no_dependencies ----
 
 @test "(10) next依存のpackage.json(lockfile無し) -> stack.frameworksにnext、deps.ok=true" {

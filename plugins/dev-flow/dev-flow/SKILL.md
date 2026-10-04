@@ -38,7 +38,7 @@ worktree を作り `EnterWorktree` しておくことで probe が成立する�
    明示する場合のみ `--base <ref>` を付ける）。前置形（`cd X && ...` / `VAR=x ...` /
    `bash <path>` 等）は使わず、bare 名を先頭トークンにする。stdout の JSON 1 行をそのまま
    保持する（`{ok, issue, base, worktree, worktree_status, deps, stack, analyze, epoch, ...}`）。
-   `dev-flow-prerun` は base 解決・worktree 作成/再利用・起点一致検証・worktree 直下への
+   `dev-flow-prerun` は base 解決・worktree 作成/再利用・起点一致検証（独自コミット・未コミット変更の無い再利用 worktree は base へ fast-forward）・worktree 直下への
    書き込み probe・`.devflow-tmp` の clean・deps install・issue analyze（`analyze-issue --contract` の
    決定論 parse + Jev 有界判定。deps install と並列）・framework 検出を 1 コマンドで行う。
    `analyze` 段が失敗（GitHub 到達不能 / JSON 不正）しても prerun は `ok:true` のまま
