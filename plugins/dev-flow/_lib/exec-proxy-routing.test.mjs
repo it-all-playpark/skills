@@ -59,6 +59,7 @@ const EXPECTED_DEV_FLOW = {
   'test#final': RW,
   'ui-verify-server*': RW,
   'ui-verify-teardown*': RW,
+  'ui-verify-login*': RW,
   'redgreen': RW,
   'reconcile-sync': RW,
   'journal-save': RW,

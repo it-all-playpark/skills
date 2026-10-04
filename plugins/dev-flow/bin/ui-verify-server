@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-exec bash "$(dirname "$0")/../_shared/scripts/ui-verify-server.sh" "$@"

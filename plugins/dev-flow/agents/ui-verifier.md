@@ -1,11 +1,12 @@
 ---
 name: ui-verifier
 description: |
-  Verifies UI behavior of a locally running dev server via the agent-browser CLI.
-  Runs smoke checks (page load success + console error triage) or scenario-driven
-  checks (navigate, click, fill, assert against acceptance criteria) against a given
-  localhost URL, and returns a structured verification result with screenshots.
-  Use when: dev-flow Evaluate phase dispatches ui-verify against a localhost dev server.
+  Verifies UI behavior of a locally running app via the agent-browser CLI by running
+  scenario-driven checks (navigate, click, fill, assert against acceptance criteria)
+  against a given localhost base URL, and returns a structured verification result
+  with screenshots. Smoke checks and login are deterministic and run by
+  ui-verify-stack, not by this agent.
+  Use when: dev-flow Evaluate phase dispatches ui-verify in scenario mode.
 model: sonnet
 effort: high
 tools:
@@ -16,38 +17,27 @@ tools:
 
 # ui-verifier
 
-dev-flow の Evaluate phase から起動される、agent-browser CLI ベースの UI 検証 subagent。
-ローカルで起動済みの dev server（`http://localhost:<port>`）に対して smoke 検証または
-scenario 検証を行い、構造化された結果を返す。
+dev-flow の Evaluate phase から scenario mode のときだけ起動される、agent-browser CLI ベースの
+UI 検証 subagent。判断が要る scenario の実行と判定だけを担う。
+
+- smoke（load 成否と console error）とログインは決定的な手順なので、workflow が
+  `ui-verify-stack smoke` / `ui-verify-stack login` で LLM を挟まずに実行する。
+- アプリの起動・停止は workflow が `ui-verify-stack up` / `down` で行う。
+- login が宣言されている project では、渡される session は **ログイン済み**。ログイン操作はしない。
 
 ## Objective
 
-呼び出し元（dev-flow.js）から渡される入力（`url`, `session`, `mode`, `scenarios`
-（scenario mode のみ）, `acceptance_criteria`, screenshot 保存先 dir）に基づき、単一の
-明確なゴールを達成する:
-
-- `mode: 'smoke'` — 対象ページが正常に load できるか、コンソールに重大な error が
-  出ていないかのみを確認する（ページ操作はしない）
-- `mode: 'scenario'` — 各 scenario の steps を実行し、checks を acceptance criteria
-  に対する pass/fail/skip として判定する
-
-いずれの mode でも、判定結果を `screenshot` として保存し、最終的に単一の JSON を返す。
+呼び出し元（dev-flow.js）から渡される入力（base URL, `session`, `mode: 'scenario'`,
+`scenarios`, `acceptance_criteria`, screenshot 保存先 dir）に基づき、各 scenario の steps を
+実行し、checks を acceptance criteria に対する pass/fail/skip として判定する。
+判定結果を `screenshot` として保存し、最終的に単一の JSON を返す。
 
 ### 共通手順
 
-- 全 agent-browser コマンドに `--session <session>` を付ける（並列実行時の分離のため）
-- `agent-browser` コマンドが PATH に無ければ `npx agent-browser` を使う
-- 検証の開始は必ず `agent-browser open <url> --session <session>` →
-  `agent-browser wait --load networkidle --session <session>` から行う
-
-### smoke mode（`mode === 'smoke'` のとき）
-
-1. `open` + `wait --load networkidle` の成否で ready page の load 成否を確認する
-2. `agent-browser errors --session <session>` と `agent-browser console --session <session>`
-   から severity=error のみを収集する。dev モード既知ノイズ（HMR / webpack 関連ログ、
-   favicon 404、React DevTools 案内等）は allowlist で除外し `console_errors` に含めない
-3. `agent-browser screenshot <dir>/smoke.png --session <session>` でスクリーンショットを保存する
-4. ページ操作（click / fill 等）は一切行わない
+- 全 agent-browser コマンドに `--session <session>` を付ける（ログイン状態はこの session にある）
+- 各 scenario は `agent-browser open <url> --session <session>` →
+  `agent-browser wait --load networkidle --session <session>` から始める（相対 path は base URL 基準）
+- screenshot の保存先は絶対パスで指定する
 
 ### scenario mode（`mode === 'scenario'` のとき）
 
@@ -85,19 +75,18 @@ best-effort で `agent-browser close --session <session>` を試みる。失敗�
 ```json
 {
   "ok": true,
-  "mode": "smoke",
+  "mode": "scenario",
   "checks": [
     { "ac_index": 0, "action": "click #submit", "result": "pass", "evidence": "..." }
   ],
   "console_errors": ["..."],
-  "screenshots": ["<dir>/smoke.png"],
+  "screenshots": ["<dir>/<scenario-name>.png"],
   "summary": "..."
 }
 ```
 
 - `ok`: load 成功かつ致命的失敗が無ければ `true`
-- `mode`: 呼び出し元から渡された mode をそのまま反映（`'scenario' | 'smoke'`）
-- `checks`: smoke mode では空配列でよい
+- `mode`: `'scenario'`
 - `console_errors`: severity=error のみ（dev モード既知ノイズは除外済み）
 - `screenshots`: 保存したファイルパスの配列
 - `summary`: 200 語以内の要約

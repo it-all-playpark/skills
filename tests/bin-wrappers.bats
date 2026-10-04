@@ -51,7 +51,7 @@ redgreen-verify
 run-diagnostics
 secfloor-classify
 structural-classify
-ui-verify-server
+ui-verify-stack
 validate-canary-report
 veridelta-archive
 workspace-prebuild
@@ -104,7 +104,7 @@ target_for() {
         merge-tier-facts) echo "_shared/scripts/merge-tier-facts.sh" ;;
         secfloor-classify) echo "_shared/scripts/secfloor-classify.sh" ;;
         structural-classify) echo "_shared/scripts/structural-classify.sh" ;;
-        ui-verify-server) echo "_shared/scripts/ui-verify-server.sh" ;;
+        ui-verify-stack) echo "_shared/scripts/ui-verify-stack.mjs" ;;
         veridelta-archive) echo "_shared/scripts/veridelta-archive.sh" ;;
         worktree-diff-hash) echo "_shared/scripts/worktree-diff-hash.sh" ;;
         worktree-teardown) echo "_shared/scripts/worktree-teardown.sh" ;;
@@ -122,6 +122,14 @@ target_for() {
         dev-flow-prerun) echo "dev-flow/scripts/prerun.sh" ;;
         ac-lint) echo "_lib/scripts/ac-lint.sh" ;;
         *) echo "" ;;
+    esac
+}
+
+# dev-flow wrapper の interpreter。既定は bash、node 製の target だけ node。
+devflow_interp_for() {
+    case "$1" in
+        ui-verify-stack) echo "node" ;;
+        *) echo "bash" ;;
     esac
 }
 
@@ -230,7 +238,7 @@ skills_target_for() {
         [ "$line1" = "#!/usr/bin/env bash" ]
 
         line3=$(sed -n '3p' "$file")
-        expected_line3="exec bash \"\$(dirname \"\$0\")/../$target\" \"\$@\""
+        expected_line3="exec $(devflow_interp_for "$name") \"\$(dirname \"\$0\")/../$target\" \"\$@\""
         [ "$line3" = "$expected_line3" ]
 
         [ -f "$plugin_root/$target" ]
