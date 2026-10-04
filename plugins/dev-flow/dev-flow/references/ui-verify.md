@@ -53,10 +53,14 @@ sandbox 外で動く脱出口になる）。
 - placeholder: `{port.<name>}`、`{port}`（ports の先頭）、`{state_dir}`、`{worktree}`、`{base_url}`。
   コマンド・env・ready・base_url で使える。シェルの `${VAR}` には触らない。未宣言の `{port.<name>}` は config 不正。
 - 各 step には env `UI_VERIFY_STATE_DIR` / `UI_VERIFY_BASE_URL` / `UI_VERIFY_PORT_<NAME>` も渡る。
-- `login.commands` は agent-browser の argv 配列の列（`--session` は dev-flow が付けるので書かない）。
-  シェルを通さず宣言順に実行し、1 つでも失敗したらそこで止める。先頭に書ける subcommand はページ操作と待機だけ
-  （open / click / dblclick / fill / type / press / keyboard / select / check / uncheck / hover / focus / scroll /
-  scrollintoview / wait / find / back / forward / reload）。placeholder は各要素で使える。
+- `login.commands` は agent-browser の argv 配列の列。シェルを通さず宣言順に実行し、1 つでも失敗したらそこで止める。
+  placeholder は各要素で使える。subcommand は絞らず、書き間違いになる次の 2 つだけを config 不正にする。
+  - `--session`（どの位置でも）: dev-flow が付ける session 名と衝突する
+  - 先頭の `close`: ログインの途中で session を閉じ、後段の smoke / scenario が別のブラウザで動く
+
+  絞らない理由: `login` を書く repo は `up` に任意のコマンドを書いて sandbox 内で実行できるので、subcommand を
+  許可リストで絞っても防げるものが無い。agent-browser のデーモンを sandbox の外で動かす構成に変えるときは、
+  repo の宣言が sandbox 外の権限を持つことになるので、その時点で検査を設計し直す。
 - `console_ignore` は smoke で拾った console error / page error から除外する正規表現。
   省略時は dev モードの既知ノイズ（`[HMR]` / `[Fast Refresh]` / webpack / favicon.ico / React DevTools）。
 

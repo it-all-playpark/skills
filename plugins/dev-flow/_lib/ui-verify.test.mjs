@@ -202,6 +202,19 @@ test('validateUiVerifyConfig: 新形式は宣言順の up と既定値を正規�
   assert.equal(c.ttl_sec, 900);
 });
 
+test('validateUiVerifyConfig: login.commands の subcommand は --session と close 以外を拒否しない', () => {
+  const commands = [
+    ['eval', 'localStorage.setItem("seen", "1")'],
+    ['cookies', 'set', 'token', 'x'],
+    ['set', 'viewport', '1280', '800'],
+    ['snapshot', '-i'],
+    ['open', '{base_url}/login'],
+  ];
+  const res = validateUiVerifyConfig({ login: { commands }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] });
+  assert.equal(res.ok, true, res.error);
+  assert.deepEqual(res.config.login, { commands });
+});
+
 test('validateUiVerifyConfig: 新形式の既定 base_url は ports 先頭の {port}', () => {
   const res = validateUiVerifyConfig({ up: [{ name: 'app', serve: 'x {port}', ready: { tcp: '{port}' } }] });
   assert.equal(res.ok, true, res.error);
@@ -240,8 +253,9 @@ for (const [label, cfg, re] of [
   ['login.commands が空', { login: { commands: [] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /login/],
   ['login が自然文（旧 steps）', { login: { steps: ['ログインする'] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /login/],
   ['login.commands の要素が argv 配列でない', { login: { commands: ['open /login'] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /argv/],
-  ['login.commands に許可外の subcommand', { login: { commands: [['eval', 'document.cookie']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /eval/],
+  ['login.commands に close', { login: { commands: [['open', '/login'], ['close']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /close/],
   ['login.commands に --session', { login: { commands: [['open', '/login', '--session', 'x']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /--session/],
+  ['login.commands に --session=', { login: { commands: [['--session=x', 'open', '/login']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /--session/],
   ['login.commands が未宣言の port を参照', { login: { commands: [['open', 'http://127.0.0.1:{port.api}/']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /api/],
   ['console_ignore が不正な正規表現', { console_ignore: ['('], up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /console_ignore/],
   ['console_ignore が string[] でない', { console_ignore: 'x', up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /console_ignore/],
