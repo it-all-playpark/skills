@@ -21,11 +21,6 @@ const UI_VERIFY_PORT_REF_RE = /\{port\.([A-Za-z][A-Za-z0-9_-]*)\}/g;
 const UI_VERIFY_RUN_TIMEOUT_SEC = 600;
 const UI_VERIFY_SERVE_TIMEOUT_SEC = 180;
 const UI_VERIFY_TTL_SEC = 1800;
-// login に書ける agent-browser の subcommand（ページ操作と待機のみ。eval / close / 設定変更は不可）
-const UI_VERIFY_LOGIN_SUBCOMMANDS = new Set([
-  'open', 'click', 'dblclick', 'fill', 'type', 'press', 'keyboard', 'select', 'check', 'uncheck',
-  'hover', 'focus', 'scroll', 'scrollintoview', 'wait', 'find', 'back', 'forward', 'reload',
-]);
 // smoke の console error から機械的に除外する既定パターン（dev モードの既知ノイズ）
 const UI_VERIFY_CONSOLE_IGNORE_DEFAULT = [
   '\\[HMR\\]', '\\[Fast Refresh\\]', '\\bwebpack\\b', 'favicon\\.ico', 'React DevTools',
@@ -246,6 +241,8 @@ export function validateUiVerifyConfig(cfg) {
   }
 
   // login は agent-browser の argv 列。ui-verify-stack がシェルを通さず順に実行する（LLM を挟まない）。
+  // subcommand は絞らない: login を書く repo は up で任意のコマンドを sandbox 内で実行できるので、絞っても防げるものが無い。
+  // 拒否するのは書き間違いだけ — --session は dev-flow が付ける名前と衝突し、close は後段の smoke / scenario を別ブラウザにする。
   let login = null;
   if (src.login !== undefined && src.login !== null) {
     const cmds = uivIsPlainObject(src.login) ? src.login.commands : undefined;
@@ -253,9 +250,8 @@ export function validateUiVerifyConfig(cfg) {
       || cmds.some((c) => !Array.isArray(c) || c.length === 0 || c.some((a) => typeof a !== 'string'))) {
       return { ok: false, error: 'login は { commands: string[][]（agent-browser の argv 配列の非空 array） } である必要がある' };
     }
-    const bad = cmds.find((c) => !UI_VERIFY_LOGIN_SUBCOMMANDS.has(c[0]));
-    if (bad) {
-      return { ok: false, error: `login.commands の "${bad[0]}" は使えない（可: ${[...UI_VERIFY_LOGIN_SUBCOMMANDS].join(', ')}）` };
+    if (cmds.some((c) => c[0] === 'close')) {
+      return { ok: false, error: 'login.commands に close は書けない（後段の smoke / scenario が同じ session を使う）' };
     }
     if (cmds.some((c) => c.some((a) => a === '--session' || a.startsWith('--session=')))) {
       return { ok: false, error: 'login.commands に --session は書けない（session は dev-flow が付ける）' };
