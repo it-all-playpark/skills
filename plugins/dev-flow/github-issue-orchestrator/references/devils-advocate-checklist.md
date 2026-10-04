@@ -14,6 +14,12 @@ Treat findings as `blocking` if any item below is true:
 - agent issue に `executor: human` タスクが残存している（agent 実行の計画・実装 issue に人手作業が混入。
   human 判定基準は SKILL.md の Executor Classification。human issue に切り出し、実装 issue は Blocked by で紐付ける）
 - human タスクに完了確認方法が無い（human issue の `## 完了条件` が checkbox の観察可能な状態で書かれていない）
+- 1 本の agent issue が単独で merge できる成果物を 2 つ以上含む（dev-flow は 1 issue = 1 PR。SKILL.md Phase 3
+  の Issue Splitting の分割基準で分ける）
+- agent issue に `## 変更対象パス` が無い（後続の並列起動判定の入力になる。書式は 1 行 1 エントリ
+  `- <repo 相対パスまたは glob>`）
+- agent issue 間の依存が循環している / 先行 issue の成果物を使うのに Blocked by が無い（起票はトポロジカル順で、
+  先行 issue の番号を `--blocked-by` に渡す）
 
 ## Review Dimensions
 

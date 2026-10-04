@@ -22,6 +22,11 @@ HUMAN_TASK_LABEL_COLOR = "FBCA04"
 HUMAN_TASK_LABEL_DESCRIPTION = "人手作業（executor: human）。完了後に Blocked by の実装 issue を進める"
 STEPS_HEADING_RE = re.compile(r"^##[ \t]+手順[ \t]*$", re.MULTILINE)
 DONE_HEADING_RE = re.compile(r"^##[ \t]+完了条件[ \t]*$", re.MULTILINE)
+# agent issue の `## 変更対象パス` 欄（1 行 1 エントリ `- <repo 相対パスまたは glob>`）。
+# 後続の並列起動判定が「触る範囲の申告」として読むので、repo の外を指すエントリは受理しない。
+PATHS_HEADING_RE = re.compile(r"^##[ \t]+変更対象パス[ \t]*$", re.MULTILINE)
+NEXT_SECTION_RE = re.compile(r"^#{1,2}[ \t]", re.MULTILINE)
+PATH_ENTRY_RE = re.compile(r"^-[ \t]+(\S.*?)[ \t]*$", re.MULTILINE)
 ISSUE_URL_RE = re.compile(r"/issues/(\d+)$")
 
 
@@ -121,11 +126,33 @@ def check_kind(kind: str, body: str) -> None:
                 "人手作業は --kind human で別 issue に切り出して先に起票し、"
                 "この issue は --blocked-by <human issue 番号> 付きで起票せよ"
             )
+        check_target_paths(body)
         return
     if not STEPS_HEADING_RE.search(body):
         raise ValueError("human issue の本文に `## 手順` 見出しが無い")
     if not DONE_HEADING_RE.search(body):
         raise ValueError("human issue の本文に `## 完了条件` 見出しが無い（完了確認は `- [ ]` checkbox で書く）")
+
+
+def check_target_paths(body: str) -> None:
+    heading = PATHS_HEADING_RE.search(body)
+    if not heading:
+        raise ValueError(
+            "agent issue の本文に `## 変更対象パス` 見出しが無い"
+            "（1 行 1 エントリ `- <repo 相対パスまたは glob>` で触るパスを書く）"
+        )
+    section = body[heading.end():]
+    next_section = NEXT_SECTION_RE.search(section)
+    if next_section:
+        section = section[: next_section.start()]
+    entries = PATH_ENTRY_RE.findall(section)
+    if not entries:
+        raise ValueError("`## 変更対象パス` にエントリが無い（1 行 1 エントリ `- <repo 相対パスまたは glob>`）")
+    for entry in entries:
+        if entry.startswith("/"):
+            raise ValueError(f"`## 変更対象パス` のエントリが `/` 始まり（repo 相対パスで書く）: {entry}")
+        if ".." in entry.split("/"):
+            raise ValueError(f"`## 変更対象パス` のエントリが `..` セグメントを含む（repo の外を指せない）: {entry}")
 
 
 def has_blocked_by_line(body: str, number: int) -> bool:
@@ -330,7 +357,7 @@ def parse_args() -> argparse.Namespace:
         "--kind",
         choices=["agent", "human"],
         default="agent",
-        help="agent: implementation issue (rejects `executor: human`) / human: human-task issue",
+        help="agent: implementation issue (rejects `executor: human`, requires `## 変更対象パス`) / human: human-task issue",
     )
     parser.add_argument("--blocked-by", help="Comma-separated issue numbers this issue is blocked by")
     parser.add_argument("--dry-run", action="store_true", help="Preview only")

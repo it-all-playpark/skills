@@ -18,6 +18,8 @@ effort: max
 
 Turn brainstorming output into an implementation-ready GitHub issue through:
 1) domain specialist investigation, 2) plan synthesis, 3) devil's-advocate review loop, and 4) final issue creation.
+Agent work is filed as one or more issues, each sized for one dev-flow run (= 1 PR), with target paths and
+`Blocked by` dependencies between them.
 
 ## Usage
 
@@ -56,10 +58,10 @@ Turn brainstorming output into an implementation-ready GitHub issue through:
 |-------|--------|---------------|
 | 1 | Normalize input context | Problem statement, goals, constraints are explicit |
 | 2 | Specialist investigation | Frontend/backend/infra findings are documented |
-| 3 | Draft implementation plan | Plan includes phases, executors, dependencies, AC, risks |
+| 3 | Draft implementation plan | Plan includes phases, executors, agent issue split, target paths, dependencies, AC, risks |
 | 4 | Devil's-advocate review loop | No blocking gaps remain |
-| 5 | Compose final issue body | Template is fully filled (human issue bodies too, if any) |
-| 6 | Create issue | human issues (if any) → implementation issue (`--blocked-by`) return URLs |
+| 5 | Compose final issue body | Template is fully filled for every agent issue (human issue bodies too, if any) |
+| 6 | Create issue | human issues (if any) → agent issues in topological order (`--blocked-by`) return URLs |
 
 ### Phase 1: Normalize Input
 
@@ -88,7 +90,8 @@ If subagents are available, run analyses in parallel; otherwise run the same len
 Generate an actionable plan containing:
 - phased tasks with ownership (`frontend` / `backend` / `infra`)
 - executor per task (`executor: agent | human`) — required on every task (see below)
-- dependency order
+- agent issue split (see Issue Splitting) and `## 変更対象パス` per agent issue
+- dependency order (between agent issues, and on human issues)
 - acceptance criteria (testable)
 - risk register
 - rollout and rollback strategy
@@ -116,6 +119,35 @@ tedious — over-splitting adds human toil. Human tasks are cut out of the imple
 Phase 6 and filed as separate `human-task` issues; the implementation issue keeps only agent tasks and
 references the human issue via `Blocked by`.
 
+#### Issue Splitting
+
+agent issue 1 本 = dev-flow 1 run = 1 PR。dev-flow は 1 issue を implementer 1 spawn で 1 PR に仕上げるので、
+大きい計画を 1 本に詰めると走りきれないかレビュー不能な PR になる。agent タスクは次のいずれかに当たるとき
+別の agent issue に分ける（分割基準）:
+
+1. 単独で merge しても main のテストが green のまま価値を持つ成果物が 2 つ以上ある
+2. AC の中に、別の成果物のコードが無いと検証できない組がある（先行成果物を別 issue にし Blocked by で繋ぐ）
+3. 変更対象パスが互いに独立した 2 群に分かれ、どちらか片方だけで価値がある
+
+分けない: 片方だけではテストが書けない・main を壊す（例: 呼び出し側の無い内部 API だけ）分割。
+分けすぎは人手 merge 回数を増やす。
+
+分けた agent issue はそれぞれ AC・テスト戦略・`## 変更対象パス` を持つ完結した issue にし、どの issue の成果物を
+使うか（依存）を記録する。依存は循環させない（Phase 6 でトポロジカル順に起票する）。
+
+#### 変更対象パス
+
+agent issue の本文には `## 変更対象パス` が必須。書式は 1 行 1 エントリ `- <repo 相対パスまたは glob>`:
+
+```markdown
+## 変更対象パス
+- <repo 相対パスまたは glob>
+```
+
+`/` 始まりのエントリと `..` セグメントを含むエントリは書かない（`create_issue.py --kind agent` は、欄が無い・
+エントリ 0 件・`/` 始まり・`..` セグメントのいずれかで起票を拒否する）。計画時点の見積もりであり、後続の
+並列起動判定はこの欄を「触る範囲の申告」として保守的に扱う。
+
 ### Phase 4: Devil's-Advocate Review Loop
 
 Apply the checklist in `references/devils-advocate-checklist.md`.
@@ -138,10 +170,14 @@ cat > /tmp/github-issue-orchestrator-body.md <<'MD'
 MD
 ```
 
+agent issue を分けた場合は 1 本ごとに本文ファイルを分ける（例: `/tmp/github-issue-orchestrator-body-1.md`,
+`-body-2.md`）。以降の AC Lint Self-Check と Phase 6 の起票は本文ファイルごとに行う。
+
 Ensure the body includes:
 - specialist summaries (frontend/backend/infra)
 - devil's-advocate history (resolved concerns)
 - final implementation plan and acceptance criteria
+- `## 変更対象パス` (agent issue only)
 
 When `--lang` is omitted, write this body in Japanese.
 
@@ -172,7 +208,8 @@ abort することはない。
 
 加えて `--kind` で本文を検査する（`--dry-run` を含む）:
 
-- `--kind agent`（既定）: 本文に `executor: human` が 1 つでもあれば exit 1 で起票を拒否する
+- `--kind agent`（既定）: 本文に `executor: human` が 1 つでもあれば exit 1 で起票を拒否する。
+  `## 変更対象パス` が無い・エントリ 0 件・エントリが `/` 始まり・`..` セグメントを含む場合も exit 1
 - `--kind human`: `## 手順` 見出しと checkbox（`- [ ]`）付きの `## 完了条件` が無ければ exit 1。
   `human-task` ラベルを付けて起票し、ラベルが無ければ作成する
 
@@ -181,15 +218,17 @@ abort することはない。
 1. **human タスクがある場合、human issue を先に起票する**。human タスクごとに
    `references/issue-template.md` の human issue テンプレートで本文を作り、`--kind human` で起票して
    issue 番号を控える（`--dry-run` なら起票予定として扱う）
-2. **実装 issue を `--blocked-by <human issue 番号[,…]>` 付きで起票する**。本文から human タスクを
-   除き（`executor: human` を残さない）、`--kind agent` で起票する。`--blocked-by` は本文先頭に
-   `Blocked by #N` 行を保証し、起票後に GitHub の issue dependencies API で依存を登録する。
-   登録に失敗すると非 0 終了し、issue URL と手動登録コマンドを stderr に出すので、それを
-   ユーザーに報告する（本文の `Blocked by` 行は残るので dev-flow のゲートは効く）
-3. human タスクが無ければ従来どおり実装 issue 1 本だけを起票する
+2. **agent issue を依存のトポロジカル順に起票する**（先行 issue が先、それを使う issue が後）。各 agent issue は
+   `--kind agent` で起票し、先行 issue（その issue が待つ human issue と、先に起票した agent issue）の番号を
+   `--blocked-by <番号[,…]>` に渡して、起票した番号を控えて後続の `--blocked-by` に使う。本文から human タスクを
+   除く（`executor: human` を残さない）。`--blocked-by` は本文先頭に `Blocked by #N` 行を保証し、起票後に
+   GitHub の issue dependencies API で依存を登録する。登録に失敗すると非 0 終了し、issue URL と手動登録
+   コマンドを stderr に出すので、それをユーザーに報告する（本文の `Blocked by` 行は残るので dev-flow のゲートは効く）
+3. 依存が循環していたら起票せず Phase 3 に戻って分割をやり直す（トポロジカル順が存在しない）
+4. human タスクが無く agent issue が 1 本なら、その 1 本だけを `--blocked-by` なしで起票する
 
 dev-flow は open な blocker を持つ issue を実装前に停止する（needs_clarification、source: `blocked_by`）ので、
-human issue を close してから実装 issue に `/dev-flow` を流す。
+先行 issue（human issue は close、agent issue は PR を merge）が片付いてから後続 issue に `/dev-flow` を流す。
 
 Run（human issue。human タスクの数だけ繰り返す）:
 
@@ -203,12 +242,12 @@ python3 ${CLAUDE_PLUGIN_ROOT}/github-issue-orchestrator/scripts/create_issue.py 
   [--dry-run]
 ```
 
-Run（実装 issue）:
+Run（agent issue。トポロジカル順に agent issue の数だけ繰り返す）:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/github-issue-orchestrator/scripts/create_issue.py \
   --title "$TITLE" \
-  --body-file /tmp/github-issue-orchestrator-body.md \
+  --body-file /tmp/github-issue-orchestrator-body-1.md \
   [--blocked-by N[,M]] \
   [--repo owner/repo] \
   [--labels a,b] \
@@ -217,14 +256,16 @@ python3 ${CLAUDE_PLUGIN_ROOT}/github-issue-orchestrator/scripts/create_issue.py 
   [--dry-run]
 ```
 
-`--dry-run` では human issue の番号が確定しないので、実装 issue の起票コマンドは
-`--blocked-by` を付けずに組み立て、起票予定の全 issue（human issue → 実装 issue）と依存関係を
-Output Contract に並べて表示する。
+`--dry-run` では issue 番号が確定しないので、agent issue の起票コマンドは `--blocked-by` を付けずに
+組み立てる（`--kind agent` の本文検査は `--dry-run` でも走る）。起票予定の全 issue に仮番号（human issue は
+`H1`…、agent issue はトポロジカル順に `A1`…）を振り、全 issue（human issue → agent issue）と依存グラフ
+（`A2 は Blocked by A1, H1` の形）を Output Contract に並べて表示する。
 
 Capture and return:
-- final issue title
+- final issue title(s)
 - issue URL (or dry-run notice)
 - human issue の番号 / URL と Blocked by 関係（human タスクがある場合）
+- agent issue の番号 / URL・変更対象パス・依存関係（起票順）
 - unresolved non-blocking concerns (if any)
 
 ## Output Contract
@@ -242,6 +283,14 @@ Always return this summary after execution:
 - human issue: #N タイトル — URL (or Dry-run: 起票予定)
 - 依存関係: 実装 issue #M は Blocked by #N（dependencies API 登録: ok / 失敗 → 手動登録コマンド）
 - (human タスクが無い場合は `- なし`)
+
+## Agent Issues
+- agent issue（起票順 = トポロジカル順）:
+  - #M1 タイトル — URL (or Dry-run: A1 起票予定) — 変更対象パス: path/a, path/b/*
+  - #M2 タイトル — URL (or Dry-run: A2 起票予定) — 変更対象パス: ...
+- 依存関係:
+  - #M2 は Blocked by #M1, #N（dependencies API 登録: ok / 失敗 → 手動登録コマンド）
+  - (依存が無い場合は `- なし`)
 
 ## Plan Quality Gate
 - Devil's-advocate review rounds: N
