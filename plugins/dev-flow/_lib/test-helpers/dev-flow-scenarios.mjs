@@ -16,7 +16,7 @@
 import { mergeTierFacts, STANDARD_FILES, shapeOverrides, analyzeArgs } from './vm-sandbox.mjs';
 
 const UI_FILE = 'src/components/Foo.tsx';
-const VALID_UI_CFG = { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}', base_port: 4100, ready_path: '/', env_files: [] };
+const VALID_UI_CFG = { base_port: 4100, up: [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }], env_files: [] };
 const UI_OVERRIDES = {
   'danger-grep': { risk: { ok: true, hits: [] }, files: [UI_FILE], struct: null, diffhash: { hash: 'AAA', empty: false } },
   'merge-tier-facts': mergeTierFacts({ files: [UI_FILE] }),

@@ -2357,7 +2357,7 @@ function blockedByReasons(req) {
 // ==== BEGIN inline: _lib/ui-verify.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 // UI Verify: dev-flow の Evaluate phase に付随する agent-browser ベースの UI 検証ゲート向け純関数群。
 // isUiPath: 変更ファイルが UI 検証対象かを判定する。
-// validateUiVerifyConfig: リポジトリの ui-verify 設定を正規化・検証する（旧 dev_command 形式は up/down 形式へ変換）。
+// validateUiVerifyConfig: リポジトリの ui-verify 設定（up / down 形式）を正規化・検証する。旧形式のキーは移行先付きで error。
 // uiVerifyPort / uiVerifyPorts: issue 番号から衝突しにくい port（群）を導出する。
 // expandUiVerifyPlaceholders: コマンド・env・URL 中の {port.<name>} 等を実値へ置換する。
 //
@@ -2519,55 +2519,25 @@ function uivCollectPortRefs(text, into) {
   for (const m of text.matchAll(UI_VERIFY_PORT_REF_RE)) into.add(m[1]);
 }
 
-// 旧形式（install_command + dev_command + {port}）を up/down 形式へ変換する。
-// 実行のされ方は新形式と同一（sandbox 内、宣言コマンドとして）。旧 ready_path は app の ready 判定に使い、
-// smoke はこれまでどおりトップページ（/）を開く。
-function uivLegacyToGeneric(cfg) {
-  if (!uivIsNonEmptyString(cfg.install_command)) return { ok: false, error: 'install_command は非空 string 必須' };
-  if (!uivIsNonEmptyString(cfg.dev_command)) return { ok: false, error: 'dev_command は非空 string 必須' };
-  if (!cfg.dev_command.includes('{port}')) return { ok: false, error: 'dev_command は部分文字列 "{port}" を含む必要がある' };
-  if (cfg.cwd !== undefined && typeof cfg.cwd !== 'string') return { ok: false, error: 'cwd は string 必須' };
-  let readyPath = '/';
-  if (cfg.ready_path !== undefined) {
-    if (typeof cfg.ready_path !== 'string' || !cfg.ready_path.startsWith('/')) {
-      return { ok: false, error: 'ready_path は "/" で始まる string である必要がある' };
-    }
-    readyPath = cfg.ready_path;
-  }
-  const cwd = cfg.cwd ? { cwd: cfg.cwd } : {};
-  return {
-    ok: true,
-    generic: {
-      base_port: cfg.base_port,
-      ports: ['app'],
-      env_files: cfg.env_files,
-      up: [
-        { name: 'install', run: cfg.install_command, ...cwd },
-        { name: 'app', serve: cfg.dev_command.split('{port}').join('{port.app}'), ...cwd, ready: { http: `http://127.0.0.1:{port.app}${readyPath}` } },
-      ],
-      base_url: 'http://127.0.0.1:{port.app}',
-      scenarios: cfg.scenarios,
-    },
-  };
-}
+// 旧形式（install_command + dev_command + {port} の 1 プロセス前提）のキー。変換して受理はせず、
+// 移行先を示して config error にする（後方互換 scaffolding を持たない）。
+const UI_VERIFY_LEGACY_KEYS = ['install_command', 'dev_command', 'ready_path', 'cwd'];
 
 function validateUiVerifyConfig(cfg) {
   if (!uivIsPlainObject(cfg)) {
     return { ok: false, error: 'ui-verify config は object である必要がある' };
   }
-  let legacy = false;
-  let src = cfg;
-  if (cfg.up === undefined) {
-    if (cfg.dev_command === undefined && cfg.install_command === undefined) {
-      return { ok: false, error: 'up（新形式）か install_command + dev_command（旧形式）のどちらかが必須' };
-    }
-    const conv = uivLegacyToGeneric(cfg);
-    if (!conv.ok) return conv;
-    src = conv.generic;
-    legacy = true;
-  } else if (cfg.dev_command !== undefined || cfg.install_command !== undefined) {
-    return { ok: false, error: 'up（新形式）と install_command / dev_command（旧形式）は併記できない' };
+  const legacyKeys = UI_VERIFY_LEGACY_KEYS.filter((k) => cfg[k] !== undefined);
+  if (legacyKeys.length) {
+    return {
+      ok: false,
+      error: `旧形式のキー ${legacyKeys.join(' / ')} は受理しない。up へ移行する: `
+        + 'install_command → up[] の { "name": "install", "run": <command> }、'
+        + 'dev_command → up[] の { "name": "app", "serve": <command（{port} は {port.app}）>, "ready": { "http": "http://127.0.0.1:{port.app}<ready_path>" } }、'
+        + 'cwd → 各 step の cwd',
+    };
   }
+  const src = cfg;
 
   let base_port = 4000;
   if (src.base_port !== undefined) {
@@ -2685,7 +2655,6 @@ function validateUiVerifyConfig(cfg) {
   return {
     ok: true,
     config: {
-      legacy,
       base_port,
       ports,
       env: env.env,
@@ -4934,7 +4903,7 @@ const CROSSREPO_ARTIFACTS = {
   properties: { ok: { type: 'boolean' }, found: { type: 'number' }, artifacts: { type: 'array' }, error: { type: 'string' } },
 }
 const UICFG = { type: 'object', required: ['found'], properties: { found: { type: 'boolean' }, config: { type: ['object', 'null'] } } }
-const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { type: 'boolean' }, phase: { type: 'string', enum: ['config', 'setup', 'install', 'start', 'ready', 'timeout'] }, base_url: { type: 'string' }, smoke_url: { type: 'string' }, port: { type: ['number', 'string'] }, ports: { type: 'object' }, step: { type: 'string' }, error: { type: 'string' }, log: { type: 'string' } } }
+const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { type: 'boolean' }, phase: { type: 'string', enum: ['config', 'setup', 'install', 'start', 'starting', 'ready', 'timeout'] }, base_url: { type: 'string' }, smoke_url: { type: 'string' }, port: { type: ['number', 'string'] }, ports: { type: 'object' }, step: { type: 'string' }, error: { type: 'string' }, log: { type: 'string' }, wait_ceiling_sec: { type: 'number' } } }
 const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
 const UILOGIN = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, skipped: { type: 'boolean' }, ran: { type: 'number' }, total: { type: 'number' }, failed: { type: 'object' }, error: { type: 'string' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
@@ -6862,10 +6831,19 @@ async function execSecurityFloorPhase(state) {
   return state
 }
 
+// up / wait 1 回あたりの待機秒数（ui-verify-stack の DEFAULT_WAIT_SEC と同値。Bash timeout 600000 に収める）。
+const UI_VERIFY_WAIT_SEC = 480
+// wait の最大回数。wait_ceiling_sec（up の timeout_sec 合計 + 余裕）を 1 回の待機秒数で割った回数 + 1。
+// stack 側も総上限で timeout を返すので、これは workflow 側の安全上限（応答が欠けたときの既定は 2 回）。
+function uiVerifyWaitPolls(ceilingSec) {
+  if (typeof ceilingSec !== 'number' || !Number.isFinite(ceilingSec) || ceilingSec <= 0) return 2
+  return Math.ceil(ceilingSec / UI_VERIFY_WAIT_SEC) + 1
+}
+
 // ============================================================
 // ui-verify: agent-browser による実ブラウザ UI 検証（opt-in, fail-open）。
 // 呼び出し元で uiTouched が確定している場合のみ呼ばれる。
-// stack 起動（ui-verify-stack up）→ 検証（smoke: ui-verify-stack smoke / scenario: ui-verify-stack login → ui-verifier）
+// stack 起動（ui-verify-stack up → 起動中なら wait を繰り返す）→ 検証（smoke: ui-verify-stack smoke / scenario: ui-verify-stack login → ui-verifier）
 // → teardown（try/finally で常に実行）の順。LLM（ui-verifier）は判断が要る scenario だけに使う。
 // dev-flow はツールを知らない: project が ui_verify.up に宣言した run / serve を ui-verify-stack が
 // 宣言順に sandbox 内で実行するだけ（DB・backend・frontend の起動手順は宣言側の責務）。
@@ -6886,12 +6864,23 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
   const stateDir = `${WT}/.devflow-tmp/ui-verify${labelSuffix}`
   const session = `devflow-${ISSUE}${labelSuffix}`
   try {
-    const srv = await trackedAgent(
-      `cd ${WT} で作業。次を Bash で **timeout 600000** を指定して 1 回だけ実行し、**stdout の JSON object をそのまま** 返せ`
-      + `（判定や脚色をしない。失敗時に ok:true を生成してはならない。& や nohup を足さない — 常駐化はコマンド自身が行う）:\n`
-      + `ui-verify-stack up --worktree '${WT}' --state-dir '${stateDir}' --issue ${ISSUE}`,
+    const stackProxy = (cmd) => `cd ${WT} で作業。次を Bash で **timeout 600000** を指定して 1 回だけ実行し、**stdout の JSON object をそのまま** 返せ`
+      + `（判定や脚色をしない。失敗時に ok:true を生成してはならない。& や nohup を足さない — 常駐化はコマンド自身が行う）:\n${cmd}`
+    let srv = await trackedAgent(
+      stackProxy(`ui-verify-stack up --worktree '${WT}' --state-dir '${stateDir}' --issue ${ISSUE} --wait-sec ${UI_VERIFY_WAIT_SEC}`),
       { agentType: 'dev-runner-haiku', schema: UISRV, label: 'ui-verify-server' + labelSuffix, phase: phaseName },
     )
+    // up は 1 回の Bash（上限 600 秒）に収まる秒数だけ待ち、まだ起動中なら phase:'starting' を返す。
+    // 重い install 等で up 全体が長い宣言は、ここで wait を繰り返して待つ（総上限 wait_ceiling_sec は
+    // up の timeout_sec 合計から ui-verify-stack が導出し、超えたら stack 側が stop を要求して timeout を返す）。
+    const waitPolls = uiVerifyWaitPolls(srv?.wait_ceiling_sec)
+    for (let i = 1; srv && srv.phase === 'starting' && i <= waitPolls; i++) {
+      srv = await trackedAgent(
+        stackProxy(`ui-verify-stack wait --state-dir '${stateDir}' --wait-sec ${UI_VERIFY_WAIT_SEC}`),
+        { agentType: 'dev-runner-haiku', schema: UISRV, label: `ui-verify-wait${labelSuffix}#${i}`, phase: phaseName },
+      )
+    }
+    if (srv && srv.phase === 'starting') log(`⚠️ ui-verify: wait を ${waitPolls} 回繰り返しても ready にならない — failed_open（teardown で停止）`)
     if (!srv || srv.ok !== true) {
       status = (srv && ['config', 'setup', 'install'].includes(srv.phase)) ? 'setup_failed' : 'failed_open'
       log(`⚠️ ui-verify: stack ${srv ? srv.phase + (srv.step ? '/' + srv.step : '') + ' 失敗 (' + (srv.error ?? 'unknown') + ')' : '起動結果 null'} — ${status} で skip（fail-open）`)

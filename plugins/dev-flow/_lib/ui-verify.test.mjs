@@ -56,24 +56,21 @@ test('isUiPath: 無関係な拡張子は false', () => {
 
 // ── validateUiVerifyConfig ──────────────────────────────────────────────────
 
-test('validateUiVerifyConfig: 旧形式の最小 config は up/down 形式へ変換される', () => {
-  const res = validateUiVerifyConfig({
-    install_command: 'npm ci',
-    dev_command: 'npm run dev -- --port {port}',
-  });
-  assert.equal(res.ok, true);
+const MIN_UP = [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }];
+
+test('validateUiVerifyConfig: 最小 config（serve 1 つ）は既定値で正規化される', () => {
+  const res = validateUiVerifyConfig({ up: MIN_UP });
+  assert.equal(res.ok, true, res.error);
   assert.deepEqual(res.config, {
-    legacy: true,
     base_port: 4000,
     ports: ['app'],
     env: {},
     env_files: [],
     up: [
-      { name: 'install', kind: 'run', command: 'npm ci', cwd: null, env: {}, timeout_sec: 600 },
-      { name: 'app', kind: 'serve', command: 'npm run dev -- --port {port.app}', cwd: null, env: {}, timeout_sec: 180, ready: { http: 'http://127.0.0.1:{port.app}/' } },
+      { name: 'app', kind: 'serve', command: 'npm run dev -- --port {port}', cwd: null, env: {}, timeout_sec: 180, ready: { http: 'http://127.0.0.1:{port}/' } },
     ],
     down: [],
-    base_url: 'http://127.0.0.1:{port.app}',
+    base_url: 'http://127.0.0.1:{port}',
     smoke_path: '/',
     login: null,
     console_ignore: ['\\[HMR\\]', '\\[Fast Refresh\\]', '\\bwebpack\\b', 'favicon\\.ico', 'React DevTools'],
@@ -82,84 +79,43 @@ test('validateUiVerifyConfig: 旧形式の最小 config は up/down 形式へ変
   });
 });
 
-test('validateUiVerifyConfig: 旧形式の full config は cwd / ready_path / env_files / scenarios を引き継ぐ', () => {
-  const res = validateUiVerifyConfig({
-    install_command: 'pnpm install',
-    dev_command: 'pnpm dev --port {port}',
-    cwd: 'apps/web',
-    base_port: 5000,
-    ready_path: '/health',
-    env_files: ['.env.local'],
-    scenarios: [
-      { name: 'home', steps: ['open /'], checks: ['no console errors'], ac_index: 1 },
-    ],
+for (const [label, cfg, keys] of [
+  ['install_command + dev_command', { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}' }, /install_command \/ dev_command/],
+  ['dev_command のみ', { dev_command: 'x {port}' }, /dev_command/],
+  ['up と旧形式の併記', { up: MIN_UP, install_command: 'npm ci' }, /install_command/],
+  ['ready_path', { up: MIN_UP, ready_path: '/health' }, /ready_path/],
+  ['top-level cwd', { up: MIN_UP, cwd: 'apps/web' }, /cwd/],
+]) {
+  test(`validateUiVerifyConfig: 旧形式のキー（${label}）は変換せず移行先を示して ok:false`, () => {
+    const res = validateUiVerifyConfig(cfg);
+    assert.equal(res.ok, false);
+    assert.match(res.error, /旧形式のキー/);
+    assert.match(res.error, keys);
+    assert.match(res.error, /up へ移行/);
+    assert.match(res.error, /serve/);
   });
-  assert.equal(res.ok, true);
-  assert.equal(res.config.legacy, true);
-  assert.equal(res.config.base_port, 5000);
-  assert.deepEqual(res.config.env_files, ['.env.local']);
-  assert.deepEqual(res.config.up.map((s) => [s.name, s.kind, s.cwd]), [['install', 'run', 'apps/web'], ['app', 'serve', 'apps/web']]);
-  assert.deepEqual(res.config.up[1].ready, { http: 'http://127.0.0.1:{port.app}/health' });
-  // smoke は旧仕様どおりトップページ
-  assert.equal(res.config.smoke_path, '/');
-  assert.deepEqual(res.config.scenarios, [
-    { name: 'home', steps: ['open /'], checks: ['no console errors'], ac_index: 1 },
-  ]);
-});
-
-test('validateUiVerifyConfig: install_command 欠落は ok:false', () => {
-  const res = validateUiVerifyConfig({ dev_command: 'npm run dev -- --port {port}' });
-  assert.equal(res.ok, false);
-  assert.match(res.error, /install_command/);
-});
-
-test('validateUiVerifyConfig: install_command が空文字/非stringは ok:false', () => {
-  assert.equal(validateUiVerifyConfig({ install_command: '', dev_command: 'x {port}' }).ok, false);
-  assert.equal(validateUiVerifyConfig({ install_command: 1, dev_command: 'x {port}' }).ok, false);
-});
-
-test('validateUiVerifyConfig: dev_command 欠落は ok:false', () => {
-  const res = validateUiVerifyConfig({ install_command: 'npm ci' });
-  assert.equal(res.ok, false);
-  assert.match(res.error, /dev_command/);
-});
-
-test('validateUiVerifyConfig: dev_command に {port} が無ければ ok:false', () => {
-  const res = validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'npm run dev' });
-  assert.equal(res.ok, false);
-  assert.match(res.error, /\{port\}/);
-});
+}
 
 test('validateUiVerifyConfig: base_port が範囲外なら ok:false', () => {
-  assert.equal(validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', base_port: 1023 }).ok, false);
-  assert.equal(validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', base_port: 65536 }).ok, false);
-  assert.equal(validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', base_port: 4000.5 }).ok, false);
-  assert.equal(validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', base_port: 'abc' }).ok, false);
-});
-
-test('validateUiVerifyConfig: ready_path が /始まりでないなら ok:false', () => {
-  const res = validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', ready_path: 'health' });
-  assert.equal(res.ok, false);
-  assert.match(res.error, /ready_path/);
+  assert.equal(validateUiVerifyConfig({ up: MIN_UP, base_port: 1023 }).ok, false);
+  assert.equal(validateUiVerifyConfig({ up: MIN_UP, base_port: 65536 }).ok, false);
+  assert.equal(validateUiVerifyConfig({ up: MIN_UP, base_port: 4000.5 }).ok, false);
+  assert.equal(validateUiVerifyConfig({ up: MIN_UP, base_port: 'abc' }).ok, false);
 });
 
 test('validateUiVerifyConfig: env_files が非配列/非string要素なら ok:false', () => {
-  assert.equal(validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', env_files: '.env' }).ok, false);
-  assert.equal(validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', env_files: [1] }).ok, false);
+  assert.equal(validateUiVerifyConfig({ up: MIN_UP, env_files: '.env' }).ok, false);
+  assert.equal(validateUiVerifyConfig({ up: MIN_UP, env_files: [1] }).ok, false);
 });
 
 test('validateUiVerifyConfig: scenarios 要素の name 欠落は ok:false', () => {
-  const res = validateUiVerifyConfig({
-    install_command: 'npm ci',
-    dev_command: 'x {port}',
-    scenarios: [{ steps: ['a'] }],
-  });
+  const res = validateUiVerifyConfig({ up: MIN_UP, scenarios: [{ steps: ['a'] }] });
   assert.equal(res.ok, false);
   assert.match(res.error, /name/);
 });
 
 test('validateUiVerifyConfig: scenarios が非配列なら ok:false', () => {
-  const res = validateUiVerifyConfig({ install_command: 'npm ci', dev_command: 'x {port}', scenarios: 'foo' });
+  const res = validateUiVerifyConfig({ up: MIN_UP, scenarios: 'foo' });
   assert.equal(res.ok, false);
 });
 
@@ -231,7 +187,6 @@ test('validateUiVerifyConfig: 新形式は宣言順の up と既定値を正規�
   const res = validateUiVerifyConfig(STACK_CFG);
   assert.equal(res.ok, true, res.error);
   const c = res.config;
-  assert.equal(c.legacy, false);
   assert.deepEqual(c.ports, ['web', 'api', 'db']);
   assert.deepEqual(c.up.map((s) => `${s.kind}:${s.name}`), ['run:install', 'serve:db', 'run:migrate', 'serve:api', 'serve:web']);
   assert.equal(c.up[0].timeout_sec, 600);
@@ -256,8 +211,7 @@ test('validateUiVerifyConfig: 新形式の既定 base_url は ports 先頭の {p
 });
 
 for (const [label, cfg, re] of [
-  ['up と旧形式の併記', { ...STACK_CFG, dev_command: 'x {port}' }, /併記/],
-  ['up も旧形式も無い', { base_port: 5000 }, /up/],
+  ['up が無い', { base_port: 5000 }, /up は非空 array/],
   ['up が空', { up: [] }, /up/],
   ['serve が 1 つも無い', { up: [{ name: 'a', run: 'x' }] }, /serve/],
   ['run と serve の両方', { up: [{ name: 'a', run: 'x', serve: 'y', ready: { tcp: 1 } }] }, /どちらか一方/],

@@ -60,17 +60,14 @@ sandbox 外で動く脱出口になる）。
 - `console_ignore` は smoke で拾った console error / page error から除外する正規表現。
   省略時は dev モードの既知ノイズ（`[HMR]` / `[Fast Refresh]` / webpack / favicon.ico / React DevTools）。
 
-### 旧形式（後方互換）
-
-`install_command` / `dev_command`（`{port}` 必須）/ `cwd` / `base_port` / `ready_path` / `env_files` / `scenarios` の
-旧形式はそのまま使える。`up: [{run: install_command}, {serve: dev_command, ready: {http: ready_path}}]`、
-`ports: ["app"]` に変換して新形式と同じ経路（sandbox 内）で実行する。smoke は従来どおり `/` を開く。
-`up` と旧形式のキーの併記は config 不正。
+- top-level の `install_command` / `dev_command` / `ready_path` / `cwd` は受理しない（変換もしない）。
+  検出したら移行先（`run` / `serve` + `ready` / step の `cwd`）を示して config 不正（`phase:"config"`）にする。
 
 ## 実行モデル
 
 ```
-ui-verify-stack up --worktree <WT> --state-dir <WT>/.devflow-tmp/ui-verify --issue <N>
+ui-verify-stack up --worktree <WT> --state-dir <WT>/.devflow-tmp/ui-verify --issue <N> --wait-sec 480
+ui-verify-stack wait --state-dir <WT>/.devflow-tmp/ui-verify --wait-sec 480
 ui-verify-stack down --state-dir <WT>/.devflow-tmp/ui-verify
 ui-verify-stack status --state-dir <...>
 ui-verify-stack login --state-dir <...> --session devflow-<issue>[-final]
@@ -87,9 +84,14 @@ ui-verify-stack smoke --state-dir <...> --session devflow-<issue>[-final]
 - workflow の実行環境は Node API もシェルも持たないため、up / down / login / smoke の実行は exec-proxy
   （dev-runner-haiku。stdout をそのまま返すだけで判断はしない）経由になる。
 
-- `up` は detached な supervisor を 1 本起こし、ready（全 step 完了）か失敗まで待って JSON を返す。
-  返り値: `{ok, phase, base_url, smoke_url, ports, port, step?, error?, log?}`。
-  `phase` は `config`（宣言不正）/ `setup`（run の失敗）/ `start`（serve が ready 前に終了）/ `ready` / `timeout`。
+- `up` は detached な supervisor を 1 本起こし、ready（全 step 完了）か失敗まで、最長 `--wait-sec` 秒待って JSON を返す。
+  1 回の Bash 呼び出し（上限 600 秒）に収めるため、まだ起動中なら停止を要求せず `phase:"starting"` を返す。
+  workflow は `starting` の間 `wait` を短い exec-proxy で繰り返す。総上限 `wait_ceiling_sec` は
+  up の `timeout_sec` 合計 + 60 秒で、超えたら `wait` が stop を要求して `phase:"timeout"` を返す。
+  返り値: `{ok, phase, base_url, smoke_url, ports, port, wait_ceiling_sec, step?, error?, log?}`。
+  `phase` は `config`（宣言不正）/ `setup`（run の失敗）/ `start`（serve が ready 前に終了）/ `starting` / `ready` / `timeout`。
+- supervisor は up の途中（run の実行中・serve の ready 待ち）でも stop file と `ttl_sec` を見る。
+  up timeout 直後の `down` で止まり、停止要求の後に残りの step は起動しない。
   dev-flow は `config` / `setup` を `setup_failed`、それ以外の失敗を `failed_open` として扱う（どちらも fail-open）。
 - service は supervisor の子として各自の process group で動き、Bash 呼び出しや起動した agent が終わっても残る。
 - sandbox では **別の Bash 呼び出しから kill できない**（Seatbelt が別 sandbox 実体への signal を拒否し、

@@ -184,17 +184,117 @@ test('up: 割当候補の port が使用中なら次の空きへずらす', asyn
   }
 }, TIMEOUT);
 
-test('up: 旧形式（install_command + dev_command）も同じ経路で起動できる', async () => {
+test('up: 旧形式（install_command + dev_command）は移行先を示す phase:config', () => {
   const res = up(writeConfig({
     install_command: 'echo installed > installed.txt',
     dev_command: `node ${join(root, 'srv.mjs')} {port}`,
     base_port: basePort,
   }));
-  assert.equal(res.ok, true, JSON.stringify(res));
-  assert.equal(res.legacy, true);
-  assert.equal(res.port, basePort + 7);
-  assert.ok(existsSync(join(wt, 'installed.txt')), 'install は worktree を cwd に走る');
+  assert.equal(res.ok, false);
+  assert.equal(res.phase, 'config');
+  assert.match(res.error, /旧形式/);
+  assert.match(res.error, /serve/);
+  assert.ok(!existsSync(join(wt, 'installed.txt')), '旧形式のコマンドは実行しない');
+});
+
+// up の途中（run の実行中 / serve の ready 待ち）に停止要求が来たケース
+function slowCfg(overrides = {}) {
+  const cfg = stackCfg(overrides);
+  cfg.up = [{ name: 'slow', run: 'sleep 20' }, cfg.up[2]];
+  return cfg;
+}
+
+async function waitStatus(pred, ms = 20_000) {
+  const until = Date.now() + ms;
+  let st;
+  while (Date.now() < until) {
+    st = cli(['status', '--state-dir', stateDir]);
+    if (pred(st)) return st;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return st;
+}
+
+test('up: --wait-sec を超えても停止は要求せず phase:starting を返し、wait で ready まで待てる', async () => {
+  const cfg = stackCfg();
+  cfg.up = [{ name: 'slow', run: 'sleep 3' }, cfg.up[2]];
+  const res = up(writeConfig(cfg), ['--wait-sec', '1']);
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.equal(res.phase, 'starting');
+  assert.equal(res.wait_ceiling_sec, 600 + 180 + 60, '総上限は up の timeout_sec 合計 + 余裕');
+  assert.ok(!existsSync(join(stateDir, 'stop')), 'starting では停止を要求しない');
+
+  const w = cli(['wait', '--state-dir', stateDir, '--wait-sec', '30']);
+  assert.equal(w.ok, true, JSON.stringify(w));
+  assert.equal(w.phase, 'ready');
+  assert.equal(w.base_url, res.base_url);
+  assert.equal(await get(w.base_url), `web|http://127.0.0.1:${basePort + 7 + 1000}`);
 }, TIMEOUT);
+
+test('up: run の実行中に down されたら即座に止まり、後続の serve は起動しない', async () => {
+  const res = up(writeConfig(slowCfg()), ['--wait-sec', '2']);
+  assert.equal(res.phase, 'starting', JSON.stringify(res));
+
+  const d = cli(['down', '--state-dir', stateDir, '--timeout-sec', '5']);
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.equal(d.stopped, true);
+  assert.equal(d.stop_reason, 'requested');
+  const st = cli(['status', '--state-dir', stateDir]);
+  assert.equal(st.phase, 'stopped');
+  const step = (n) => st.steps.find((s) => s.name === n);
+  assert.equal(step('slow').status, 'failed');
+  assert.match(step('slow').error, /stopped \(requested\)/);
+  assert.equal(step('web').status, 'pending', '停止要求後に serve を起動しない');
+  assert.equal(readFileSync(join(wt, 'down.txt'), 'utf8').trim(), 'down-ran', 'down steps は走る');
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(await listening(basePort + 7), false);
+}, TIMEOUT);
+
+test('up: serve の ready 待ち中に down されたら止まる', async () => {
+  const cfg = stackCfg();
+  cfg.up = [{ name: 'web', serve: 'sleep 30', ready: { tcp: '{port.web}' } }];
+  const res = up(writeConfig(cfg), ['--wait-sec', '1']);
+  assert.equal(res.phase, 'starting', JSON.stringify(res));
+  const d = cli(['down', '--state-dir', stateDir, '--timeout-sec', '5']);
+  assert.equal(d.ok, true, JSON.stringify(d));
+  const st = cli(['status', '--state-dir', stateDir]);
+  assert.match(st.steps.find((s) => s.name === 'web').error, /stopped before ready \(requested\)/);
+}, TIMEOUT);
+
+test('ttl: up の途中でも ttl_sec で止まり、後続の serve は起動しない', async () => {
+  const res = up(writeConfig(slowCfg({ ttl_sec: 2 })), ['--wait-sec', '1']);
+  assert.equal(res.phase, 'starting', JSON.stringify(res));
+  const st = await waitStatus((s) => s.phase === 'stopped');
+  assert.equal(st.phase, 'stopped');
+  assert.equal(st.stop_reason, 'ttl');
+  assert.equal(st.steps.find((s) => s.name === 'web').status, 'pending');
+  const w = cli(['wait', '--state-dir', stateDir, '--wait-sec', '5']);
+  assert.equal(w.ok, false);
+  assert.equal(w.phase, 'timeout');
+  assert.match(w.error, /ttl/);
+}, TIMEOUT);
+
+test('wait: 総上限（wait_ceiling_sec）を超えたら stop を要求して phase:timeout、続く down で止まる', async () => {
+  const res = up(writeConfig(slowCfg()), ['--wait-sec', '1']);
+  assert.equal(res.phase, 'starting', JSON.stringify(res));
+  const specPath = join(stateDir, 'spec.json');
+  const spec = JSON.parse(readFileSync(specPath, 'utf8'));
+  writeFileSync(specPath, JSON.stringify({ ...spec, up_ceiling_sec: 1 }));
+
+  const w = cli(['wait', '--state-dir', stateDir, '--wait-sec', '10']);
+  assert.equal(w.ok, false, JSON.stringify(w));
+  assert.equal(w.phase, 'timeout');
+  assert.match(w.error, /総上限 1s/);
+  const d = cli(['down', '--state-dir', stateDir, '--timeout-sec', '5']);
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.equal(cli(['status', '--state-dir', stateDir]).steps.find((s) => s.name === 'web').status, 'pending');
+}, TIMEOUT);
+
+test('wait: stack が無ければ ok:false', () => {
+  const w = cli(['wait', '--state-dir', stateDir, '--wait-sec', '1']);
+  assert.equal(w.ok, false);
+  assert.match(w.error, /stack が無い/);
+});
 
 test('up: config 不正 / state dir が worktree 自身 → phase:config', () => {
   const bad = up(writeConfig({ up: [{ name: 'a', serve: 'x' }] }));

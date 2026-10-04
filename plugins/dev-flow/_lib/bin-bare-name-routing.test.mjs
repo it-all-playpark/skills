@@ -93,7 +93,7 @@ const devFlowSrc = readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
 const devImproveSrc = readFileSync(join(workflowsDir, 'dev-improve.js'), 'utf8');
 
-const UI_CFG = { install_command: 'npm ci', dev_command: 'npm run dev -- --port {port}', base_port: 4100, ready_path: '/', env_files: [] };
+const UI_CFG = { base_port: 4100, up: [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }], env_files: [] };
 const PASS_EVAL_TEST_AC = {
   verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
   ac_results: [

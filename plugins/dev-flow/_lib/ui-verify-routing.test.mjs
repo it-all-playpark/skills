@@ -163,10 +163,8 @@ const microReq = {
 };
 
 const VALID_CFG = {
-  install_command: 'npm ci',
-  dev_command: 'npm run dev -- --port {port}',
   base_port: 4100,
-  ready_path: '/',
+  up: [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }],
   env_files: [],
   // scenarios を定義していても micro では smoke-only 固定であることを (c) で pin する
   scenarios: [{ name: 's1', steps: ['click #btn'], checks: ['#result visible'], ac_index: 0 }],

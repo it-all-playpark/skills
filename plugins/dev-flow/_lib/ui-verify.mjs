@@ -1,6 +1,6 @@
 // UI Verify: dev-flow の Evaluate phase に付随する agent-browser ベースの UI 検証ゲート向け純関数群。
 // isUiPath: 変更ファイルが UI 検証対象かを判定する。
-// validateUiVerifyConfig: リポジトリの ui-verify 設定を正規化・検証する（旧 dev_command 形式は up/down 形式へ変換）。
+// validateUiVerifyConfig: リポジトリの ui-verify 設定（up / down 形式）を正規化・検証する。旧形式のキーは移行先付きで error。
 // uiVerifyPort / uiVerifyPorts: issue 番号から衝突しにくい port（群）を導出する。
 // expandUiVerifyPlaceholders: コマンド・env・URL 中の {port.<name>} 等を実値へ置換する。
 //
@@ -162,55 +162,25 @@ function uivCollectPortRefs(text, into) {
   for (const m of text.matchAll(UI_VERIFY_PORT_REF_RE)) into.add(m[1]);
 }
 
-// 旧形式（install_command + dev_command + {port}）を up/down 形式へ変換する。
-// 実行のされ方は新形式と同一（sandbox 内、宣言コマンドとして）。旧 ready_path は app の ready 判定に使い、
-// smoke はこれまでどおりトップページ（/）を開く。
-function uivLegacyToGeneric(cfg) {
-  if (!uivIsNonEmptyString(cfg.install_command)) return { ok: false, error: 'install_command は非空 string 必須' };
-  if (!uivIsNonEmptyString(cfg.dev_command)) return { ok: false, error: 'dev_command は非空 string 必須' };
-  if (!cfg.dev_command.includes('{port}')) return { ok: false, error: 'dev_command は部分文字列 "{port}" を含む必要がある' };
-  if (cfg.cwd !== undefined && typeof cfg.cwd !== 'string') return { ok: false, error: 'cwd は string 必須' };
-  let readyPath = '/';
-  if (cfg.ready_path !== undefined) {
-    if (typeof cfg.ready_path !== 'string' || !cfg.ready_path.startsWith('/')) {
-      return { ok: false, error: 'ready_path は "/" で始まる string である必要がある' };
-    }
-    readyPath = cfg.ready_path;
-  }
-  const cwd = cfg.cwd ? { cwd: cfg.cwd } : {};
-  return {
-    ok: true,
-    generic: {
-      base_port: cfg.base_port,
-      ports: ['app'],
-      env_files: cfg.env_files,
-      up: [
-        { name: 'install', run: cfg.install_command, ...cwd },
-        { name: 'app', serve: cfg.dev_command.split('{port}').join('{port.app}'), ...cwd, ready: { http: `http://127.0.0.1:{port.app}${readyPath}` } },
-      ],
-      base_url: 'http://127.0.0.1:{port.app}',
-      scenarios: cfg.scenarios,
-    },
-  };
-}
+// 旧形式（install_command + dev_command + {port} の 1 プロセス前提）のキー。変換して受理はせず、
+// 移行先を示して config error にする（後方互換 scaffolding を持たない）。
+const UI_VERIFY_LEGACY_KEYS = ['install_command', 'dev_command', 'ready_path', 'cwd'];
 
 export function validateUiVerifyConfig(cfg) {
   if (!uivIsPlainObject(cfg)) {
     return { ok: false, error: 'ui-verify config は object である必要がある' };
   }
-  let legacy = false;
-  let src = cfg;
-  if (cfg.up === undefined) {
-    if (cfg.dev_command === undefined && cfg.install_command === undefined) {
-      return { ok: false, error: 'up（新形式）か install_command + dev_command（旧形式）のどちらかが必須' };
-    }
-    const conv = uivLegacyToGeneric(cfg);
-    if (!conv.ok) return conv;
-    src = conv.generic;
-    legacy = true;
-  } else if (cfg.dev_command !== undefined || cfg.install_command !== undefined) {
-    return { ok: false, error: 'up（新形式）と install_command / dev_command（旧形式）は併記できない' };
+  const legacyKeys = UI_VERIFY_LEGACY_KEYS.filter((k) => cfg[k] !== undefined);
+  if (legacyKeys.length) {
+    return {
+      ok: false,
+      error: `旧形式のキー ${legacyKeys.join(' / ')} は受理しない。up へ移行する: `
+        + 'install_command → up[] の { "name": "install", "run": <command> }、'
+        + 'dev_command → up[] の { "name": "app", "serve": <command（{port} は {port.app}）>, "ready": { "http": "http://127.0.0.1:{port.app}<ready_path>" } }、'
+        + 'cwd → 各 step の cwd',
+    };
   }
+  const src = cfg;
 
   let base_port = 4000;
   if (src.base_port !== undefined) {
@@ -328,7 +298,6 @@ export function validateUiVerifyConfig(cfg) {
   return {
     ok: true,
     config: {
-      legacy,
       base_port,
       ports,
       env: env.env,

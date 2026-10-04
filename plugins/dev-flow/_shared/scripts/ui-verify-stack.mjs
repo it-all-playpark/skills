@@ -14,11 +14,14 @@
 //     teardown が呼ばれなくても ttl_sec で supervisor が自ら片付ける。
 //
 // non-blocking / fail-open contract（旧 ui-verify-server と同じ）:
-//   - up / down / status は常に exit 0 + stdout に JSON 1 行。usage error のみ exit 2。
+//   - up / wait / down / status は常に exit 0 + stdout に JSON 1 行。usage error のみ exit 2。
 //   - down は冪等（state が無ければ no-op）。
+//   - up / wait は 1 回の Bash 呼び出しに収まる --wait-sec だけ待ち、まだ起動中なら phase:"starting" を返す。
+//     呼び出し側は wait_ceiling_sec（up の timeout_sec 合計 + 余裕）まで wait を繰り返す。
 //
 // Usage:
-//   ui-verify-stack up --worktree <abs> --state-dir <abs> [--issue <n>] [--config <json>] [--wait-sec <n=540>]
+//   ui-verify-stack up --worktree <abs> --state-dir <abs> [--issue <n>] [--config <json>] [--wait-sec <n=480>]
+//   ui-verify-stack wait --state-dir <abs> [--wait-sec <n=480>]
 //   ui-verify-stack down --state-dir <abs> [--timeout-sec <n=60>]
 //   ui-verify-stack status --state-dir <abs>
 //   ui-verify-stack login --state-dir <abs> --session <name>
@@ -45,6 +48,11 @@ const SELF = fileURLToPath(import.meta.url);
 const STOP_GRACE_MS = 10_000;
 const POLL_MS = 500;
 const PORT_PROBE_LIMIT = 50;
+// up / wait が 1 回で待つ秒数。workflow の 1 回の Bash 呼び出し（上限 600 秒）に、前回 stack の停止
+// （最大 30 秒）や port 割り当てを足しても収まる値にする。
+export const DEFAULT_WAIT_SEC = 480;
+// up 全体の総上限 = up の timeout_sec 合計 + この余裕（step 間の起動・停止のオーバーヘッド分）。
+export const UP_CEILING_MARGIN_SEC = 60;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -162,6 +170,7 @@ export function resolveSpec(cfg, { worktree, stateDir, ports }) {
     login: cfg.login ? cfg.login.commands.map((c) => c.map(x)) : null,
     console_ignore: cfg.console_ignore,
     ttl_sec: cfg.ttl_sec,
+    up_ceiling_sec: cfg.up.reduce((sum, s) => sum + s.timeout_sec, 0) + UP_CEILING_MARGIN_SEC,
     env_files: cfg.env_files,
     up: cfg.up.map(step),
     down: cfg.down.map(step),
@@ -265,6 +274,28 @@ export async function supervise(stateDir) {
   const children = new Map(); // name -> { child, exited: Promise<number|null> }
   let shuttingDown = null;
 
+  // 停止要求（stop file）と ttl は up の途中でも見る。見ないと up timeout 直後の down が止められず、
+  // 停止要求の後に残りの step が起動してしまう。
+  const deadline = startedAt + spec.ttl_sec * 1000;
+  const stopRequested = () => {
+    if (existsSync(paths.stop)) return 'requested';
+    if (Date.now() >= deadline) return 'ttl';
+    return null;
+  };
+  const watchStop = () => {
+    let timer = null;
+    let cancelled = false;
+    const promise = new Promise((res) => {
+      const tick = () => {
+        if (cancelled) return;
+        const r = stopRequested();
+        if (r) res(r); else timer = setTimeout(tick, POLL_MS);
+      };
+      tick();
+    });
+    return { promise, cancel: () => { cancelled = true; clearTimeout(timer); } };
+  };
+
   const launch = (s) => {
     const st = stepState(s.name);
     const fd = openSync(st.log, 'a');
@@ -292,11 +323,29 @@ export async function supervise(stateDir) {
     killGroup(c.child.pid, 'SIGKILL');
   };
 
-  const runOnce = async (s) => {
+  // interruptible（up の step）は停止要求 / ttl で打ち切る。down の step は stop file がある状態で
+  // 走るので打ち切らない。戻り値: { ok, stop? }（stop は打ち切り理由）。
+  const runOnce = async (s, { interruptible = false } = {}) => {
     const st = stepState(s.name);
     const c = launch(s);
     children.set(s.name, c);
-    const code = await Promise.race([c.exited, sleep(s.timeout_sec * 1000).then(() => 'timeout')]);
+    const watch = interruptible ? watchStop() : null;
+    let timeoutTimer = null;
+    const code = await Promise.race([
+      c.exited,
+      new Promise((res) => { timeoutTimer = setTimeout(() => res('timeout'), s.timeout_sec * 1000); }),
+      ...(watch ? [watch.promise.then((reason) => ({ stop: reason }))] : []),
+    ]);
+    clearTimeout(timeoutTimer);
+    if (watch) watch.cancel();
+    if (code && typeof code === 'object') {
+      await stopChild(s.name);
+      st.status = 'failed';
+      st.error = `stopped (${code.stop})`;
+      children.delete(s.name);
+      save();
+      return { ok: false, stop: code.stop };
+    }
     if (code === 'timeout') {
       await stopChild(s.name);
       st.status = 'failed';
@@ -309,7 +358,7 @@ export async function supervise(stateDir) {
     }
     children.delete(s.name);
     save();
-    return st.status === 'done';
+    return { ok: st.status === 'done' };
   };
 
   const serve = async (s) => {
@@ -323,6 +372,12 @@ export async function supervise(stateDir) {
     });
     const until = Date.now() + s.timeout_sec * 1000;
     while (Date.now() < until && !shuttingDown) {
+      const stop = stopRequested();
+      if (stop) {
+        st.status = 'failed'; st.error = `stopped before ready (${stop})`;
+        save();
+        return { ok: false, stop };
+      }
       if (exitCode !== undefined) {
         st.status = 'failed'; st.exit_code = exitCode; st.error = `exited before ready (exit ${exitCode})`;
         save();
@@ -364,8 +419,11 @@ export async function supervise(stateDir) {
     copyEnvFiles(spec, paths, log);
     for (const s of spec.up) {
       if (shuttingDown) break;
-      const ok = s.kind === 'run' ? await runOnce(s) : (await serve(s)).ok;
-      if (!ok) {
+      const pending = stopRequested();
+      if (pending) { await shutdown(pending); return; }
+      const r = s.kind === 'run' ? await runOnce(s, { interruptible: true }) : await serve(s);
+      if (r.stop) { await shutdown(r.stop); return; }
+      if (!r.ok) {
         const st = stepState(s.name);
         state.phase = 'failed';
         state.failed_step = s.name;
@@ -385,10 +443,9 @@ export async function supervise(stateDir) {
     return;
   }
 
-  const deadline = startedAt + spec.ttl_sec * 1000;
   while (!shuttingDown) {
-    if (existsSync(paths.stop)) { await shutdown('requested'); break; }
-    if (Date.now() >= deadline) { await shutdown('ttl'); break; }
+    const stop = stopRequested();
+    if (stop) { await shutdown(stop); break; }
     await sleep(POLL_MS);
   }
   await shuttingDown;
@@ -440,7 +497,7 @@ export async function down(stateDir, { timeoutSec = 60 } = {}) {
   };
 }
 
-export async function up({ worktree, stateDir, issue, configPath, waitSec = 540 }) {
+export async function up({ worktree, stateDir, issue, configPath, waitSec = DEFAULT_WAIT_SEC }) {
   const paths = statePaths(stateDir);
   const fail = (phase, error, extra = {}) => ({ ok: false, phase, error, state_dir: stateDir, ...extra });
 
@@ -473,16 +530,33 @@ export async function up({ worktree, stateDir, issue, configPath, waitSec = 540 
   closeSync(fd);
   sup.unref();
 
+  return awaitStack(stateDir, spec, { waitSec, supervisorPid: sup.pid, upStartedAt: Date.now() });
+}
+
+// up の続きを待つ。1 回の Bash 呼び出し（上限 600 秒）に収まるよう waitSec で区切り、まだ起動中なら
+// phase:"starting" を返す（停止は要求しない）。呼び出し側（workflow）は wait_ceiling_sec に達するまで
+// wait を繰り返す。総上限は up の timeout_sec 合計 + 余裕で、超えたら stop を要求して phase:"timeout"。
+export async function wait(stateDir, { waitSec = DEFAULT_WAIT_SEC } = {}) {
+  const paths = statePaths(stateDir);
+  const spec = readJson(paths.spec);
+  if (!spec) return { ok: false, phase: 'start', error: 'stack が無い（先に up する）', state_dir: stateDir };
+  return awaitStack(stateDir, spec, { waitSec });
+}
+
+async function awaitStack(stateDir, spec, { waitSec, supervisorPid = null, upStartedAt = null }) {
+  const paths = statePaths(stateDir);
   const until = Date.now() + waitSec * 1000;
+  const ceiling = spec.up_ceiling_sec;
   const summary = (stack) => ({
     state_dir: stateDir,
     base_url: spec.base_url,
     smoke_url: spec.smoke_url,
     ports: spec.ports,
     port: Object.values(spec.ports)[0],
-    legacy: v.config.legacy,
+    wait_ceiling_sec: ceiling,
     ...(stack && stack.failed_step ? { step: stack.failed_step } : {}),
   });
+  const fail = (phase, error, extra = {}) => ({ ok: false, phase, error, ...summary(null), ...extra });
   for (;;) {
     const stack = readJson(paths.stack);
     if (stack && stack.phase === 'ready') return { ok: true, phase: 'ready', ...summary(stack) };
@@ -490,13 +564,19 @@ export async function up({ worktree, stateDir, issue, configPath, waitSec = 540 
       const st = stack.steps.find((s) => s.name === stack.failed_step);
       return fail(stack.failed_phase ?? 'start', stack.error ?? 'unknown', { ...summary(stack), log: st ? st.log : paths.supervisorLog });
     }
-    if (!isAlive(sup.pid) && (!stack || !['ready', 'failed'].includes(stack.phase))) {
-      return fail('start', 'supervisor が起動直後に終了した', { ...summary(stack), log: paths.supervisorLog });
+    if (stack && ['stopping', 'stopped'].includes(stack.phase)) {
+      return fail('timeout', `ready 前に停止した（${stack.stop_reason ?? 'unknown'}）`, summary(stack));
     }
-    if (Date.now() >= until) {
+    const pid = supervisorPid ?? (stack ? stack.supervisor_pid : null);
+    if (pid != null && !isAlive(pid)) {
+      return fail('start', 'supervisor が ready 前に終了した', { ...summary(stack), log: paths.supervisorLog });
+    }
+    const startedAt = stack ? Date.parse(stack.started_at) : upStartedAt;
+    if (Number.isFinite(startedAt) && Date.now() - startedAt >= ceiling * 1000) {
       writeFileSync(paths.stop, new Date().toISOString());
-      return fail('timeout', `ready まで ${waitSec}s を超えた（stop を要求済み）`, summary(stack));
+      return fail('timeout', `ready まで総上限 ${ceiling}s を超えた（stop を要求済み）`, summary(stack));
     }
+    if (Date.now() >= until) return { ok: false, phase: 'starting', ...summary(stack) };
     await sleep(POLL_MS);
   }
 }
@@ -645,7 +725,7 @@ function parseArgs(argv) {
 async function main() {
   const [sub, ...rest] = process.argv.slice(2);
   const usage = (msg) => { process.stderr.write(`${msg}\n`); process.exit(2); };
-  if (!['up', 'down', 'status', 'login', 'smoke', 'supervise'].includes(sub)) usage('subcommand (up|down|status|login|smoke) required');
+  if (!['up', 'wait', 'down', 'status', 'login', 'smoke', 'supervise'].includes(sub)) usage('subcommand (up|wait|down|status|login|smoke) required');
   const { opts, error } = parseArgs(rest);
   if (error) usage(error);
   if (!opts.stateDir) usage('--state-dir is required');
@@ -659,6 +739,10 @@ async function main() {
     print(sub === 'login' ? login(stateDir, opts.session) : smoke(stateDir, opts.session));
     return;
   }
+  if (sub === 'wait') {
+    print(await wait(stateDir, { waitSec: opts.waitSec ? Number(opts.waitSec) : DEFAULT_WAIT_SEC }));
+    process.exit(0);
+  }
   if (sub === 'down') {
     print(await down(stateDir, { timeoutSec: opts.timeoutSec ? Number(opts.timeoutSec) : 60 }));
     return;
@@ -669,7 +753,7 @@ async function main() {
     stateDir,
     issue: opts.issue ?? 0,
     configPath: opts.configPath ? resolve(opts.configPath) : null,
-    waitSec: opts.waitSec ? Number(opts.waitSec) : 540,
+    waitSec: opts.waitSec ? Number(opts.waitSec) : DEFAULT_WAIT_SEC,
   }));
   process.exit(0);
 }
