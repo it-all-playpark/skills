@@ -31,6 +31,9 @@
 // 実行し、smoke は open → wait networkidle → errors / console（level=error、console_ignore で除外）
 // → screenshot の結果を ui-verifier と同じ UIVERIFY 形で返す。LLM の ui-verifier は scenario だけに使う。
 // agent-browser のセッション（daemon）は Bash 呼び出しをまたいで残る（--session で分離）。
+// login / smoke の失敗のうち、アプリの変更と無関係な環境起因のもの（stack が使えない・agent-browser が
+// 無い・URL に接続できない）は出力に env_failure:true を付ける。workflow はこれを findings ではなく
+// failed_open（fail-open で skip）に振り分ける。ページに届いた後の失敗はアプリ起因として従来どおり返す。
 //   （内部）ui-verify-stack supervise --state-dir <abs>
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -587,6 +590,10 @@ async function awaitStack(stateDir, spec, { waitSec, supervisorPid = null, upSta
 
 const BROWSER_TIMEOUT_MS = 90_000;
 
+// 接続そのものができない（宛先に届かない）ことを示す Chromium の net error。届いた後の失敗
+// （ERR_EMPTY_RESPONSE / ERR_CONNECTION_RESET / timeout 等）はアプリが応答を壊した可能性があるので含めない。
+const UNREACHABLE_RE = /net::ERR_(CONNECTION_REFUSED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE|ADDRESS_INVALID|UNSAFE_PORT|INTERNET_DISCONNECTED)\b/;
+
 function browser(session, argv, { json = false } = {}) {
   const bin = process.env.UI_VERIFY_AGENT_BROWSER || 'agent-browser';
   const args = ['--session', session, ...(json ? ['--json'] : []), ...argv];
@@ -594,8 +601,11 @@ function browser(session, argv, { json = false } = {}) {
     const stdout = execFileSync(bin, args, { encoding: 'utf8', timeout: BROWSER_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
     return { ok: true, stdout };
   } catch (e) {
+    if (e.code === 'ENOENT' || e.code === 'EACCES') {
+      return { ok: false, stdout: '', error: `agent-browser を実行できない（${bin}: ${e.code}）`, env: true };
+    }
     const detail = `${e.stderr ?? ''}${e.stdout ?? ''}`.trim() || (e.message ?? String(e));
-    return { ok: false, stdout: e.stdout ?? '', error: detail.slice(0, 500) };
+    return { ok: false, stdout: e.stdout ?? '', error: detail.slice(0, 500), ...(UNREACHABLE_RE.test(detail) ? { env: true } : {}) };
   }
 }
 
@@ -630,38 +640,44 @@ function readyStack(stateDir) {
   const paths = statePaths(stateDir);
   const spec = readJson(paths.spec);
   const stack = readJson(paths.stack);
+  // stack が使えないのは環境起因（ttl 切れ・down 済み・supervisor 不在）
   if (!spec || !stack) return { ok: false, error: 'stack が無い（先に up する）' };
   if (stack.phase !== 'ready') return { ok: false, error: `stack が ready でない（phase=${stack.phase}）` };
+  if (!isAlive(stack.supervisor_pid)) return { ok: false, error: `stack の supervisor (pid ${stack.supervisor_pid}) が居ない` };
   return { ok: true, spec };
 }
 
+const ENV_FAILURE = { env_failure: true };
+
 export function login(stateDir, session) {
   const st = readyStack(stateDir);
-  if (!st.ok) return { ok: false, error: st.error };
+  if (!st.ok) return { ok: false, error: st.error, ...ENV_FAILURE };
   const cmds = st.spec.login;
   if (!cmds) return { ok: true, skipped: true, ran: 0, total: 0 };
   for (const [i, argv] of cmds.entries()) {
     const r = browser(session, argv);
     if (!r.ok) {
-      return { ok: false, ran: i, total: cmds.length, failed: { index: i, command: argv.join(' ') }, error: r.error };
+      return { ok: false, ran: i, total: cmds.length, failed: { index: i, command: argv.join(' ') }, error: r.error, ...(r.env ? ENV_FAILURE : {}) };
     }
   }
   return { ok: true, ran: cmds.length, total: cmds.length };
 }
 
 export function smoke(stateDir, session) {
-  const result = (ok, checks, consoleErrors, screenshots, summary) => ({
-    ok, mode: 'smoke', checks, console_errors: consoleErrors.slice(0, 20), screenshots, summary,
+  const result = (ok, checks, consoleErrors, screenshots, summary, extra = {}) => ({
+    ok, mode: 'smoke', checks, console_errors: consoleErrors.slice(0, 20), screenshots, summary, ...extra,
   });
   const st = readyStack(stateDir);
-  if (!st.ok) return result(false, [], [], [], st.error);
+  if (!st.ok) return result(false, [], [], [], st.error, ENV_FAILURE);
   const { spec } = st;
   const checks = [];
 
   if (spec.login) {
     const l = login(stateDir, session);
     checks.push({ action: 'login', result: l.ok ? 'pass' : 'fail', evidence: l.ok ? `${l.ran} commands` : `${l.failed ? l.failed.command : ''}: ${l.error}` });
-    if (!l.ok) return result(false, checks, [], [], `login 失敗: ${l.failed ? l.failed.command : ''}`);
+    if (!l.ok) {
+      return result(false, checks, [], [], `login 失敗: ${l.failed ? `${l.failed.command}: ` : ''}${l.error}`, l.env_failure ? ENV_FAILURE : {});
+    }
   }
   // login 中の出力は smoke の判定に混ぜない
   browser(session, ['console', '--clear']);
@@ -669,9 +685,11 @@ export function smoke(stateDir, session) {
 
   const open = browser(session, ['open', spec.smoke_url]);
   checks.push({ action: `open ${spec.smoke_url}`, result: open.ok ? 'pass' : 'fail', ...(open.ok ? {} : { evidence: open.error }) });
-  if (!open.ok) return result(false, checks, [], [], `load 失敗: ${spec.smoke_url}`);
+  if (!open.ok) return result(false, checks, [], [], `load 失敗: ${spec.smoke_url}（${open.error}）`, open.env ? ENV_FAILURE : {});
+  // load（open）は済んでいるので networkidle 待ちの失敗は非致命（常時 polling するページは idle にならない）。
+  // fail にすると workflow が major finding にするため skip にし、理由を evidence に残す。
   const wait = browser(session, ['wait', '--load', 'networkidle']);
-  checks.push({ action: 'wait --load networkidle', result: wait.ok ? 'pass' : 'fail', ...(wait.ok ? {} : { evidence: wait.error }) });
+  checks.push({ action: 'wait --load networkidle', result: wait.ok ? 'pass' : 'skip', ...(wait.ok ? {} : { evidence: `networkidle 待ちは失敗（非致命。load は成功）: ${wait.error}` }) });
 
   const ignore = (spec.console_ignore ?? []).map((re) => new RegExp(re));
   const keep = (m) => !ignore.some((re) => re.test(m));

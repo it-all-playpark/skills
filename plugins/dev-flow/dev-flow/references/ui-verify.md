@@ -78,9 +78,20 @@ ui-verify-stack smoke --state-dir <...> --session devflow-<issue>[-final]
   `ui-verify-stack` が agent-browser を直接呼び、LLM の ui-verifier は判断が要る scenario だけに使う。
   - `smoke`: login（宣言があれば）→ console / errors を clear → `open <smoke_url>` → `wait --load networkidle` →
     `errors` / `console`（level=error のみ、`console_ignore` で除外）→ `screenshot <state_dir>/smoke.png` を行い、
-    ui-verifier と同じ `{ok, mode:"smoke", checks, console_errors, screenshots, summary}` を返す。
-  - `login`: scenario の前段。同じ session でログインを済ませてから ui-verifier に渡す。失敗したら ui-verifier は
-    呼ばず UI 検証 NG（findings）。agent-browser の session は Bash 呼び出しをまたいで残る。
+    ui-verifier と同じ `{ok, mode:"smoke", checks, console_errors, screenshots, summary, env_failure?}` を返す。
+    `open` が通れば load は成功なので、`wait --load networkidle` の失敗（常時 polling するページ等）は非致命として
+    check を `skip` にし、理由を `evidence` に残す（`ok:true`、summary は「load ok（networkidle 待ちは失敗）」）。
+  - `login`: scenario の前段。同じ session でログインを済ませてから ui-verifier に渡す。操作の失敗（セレクタが
+    見つからない等）なら ui-verifier は呼ばず UI 検証 NG（findings）。agent-browser の session は Bash 呼び出しをまたいで残る。
+  - 環境起因の失敗には `env_failure: true` が付き、dev-flow は findings ではなく `failed_open`（fail-open で skip）にする。
+    検証できていないので raw result は evaluator に渡さない。線引きは次のとおり。
+
+    | 区分 | 例 | 扱い |
+    |------|----|------|
+    | 環境起因（`env_failure: true`） | stack が無い / ready でない（ttl 切れ・down 済み）/ supervisor が居ない、agent-browser を実行できない（ENOENT / EACCES）、URL に接続できない（`net::ERR_CONNECTION_REFUSED` / `ERR_NAME_NOT_RESOLVED` / `ERR_ADDRESS_UNREACHABLE` / `ERR_ADDRESS_INVALID` / `ERR_UNSAFE_PORT` / `ERR_INTERNET_DISCONNECTED`） | `failed_open` |
+    | アプリ起因 | 接続後の失敗（`ERR_EMPTY_RESPONSE` / `ERR_CONNECTION_RESET` / timeout 等）、login の操作失敗、console / page error | findings |
+
+    接続後の失敗や timeout は変更でサーバーが応答を壊した可能性があるため、環境起因に含めない。
 - workflow の実行環境は Node API もシェルも持たないため、up / down / login / smoke の実行は exec-proxy
   （dev-runner-haiku。stdout をそのまま返すだけで判断はしない）経由になる。
 

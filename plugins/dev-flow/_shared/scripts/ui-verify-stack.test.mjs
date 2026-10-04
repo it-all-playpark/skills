@@ -332,6 +332,8 @@ const argv = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_AB_LOG, JSON.stringify(argv) + '\\n');
 const sub = argv.filter((a, i) => !(a.startsWith('--') || argv[i - 1] === '--session'))[0];
 if (argv.some((a) => a.includes('FAIL'))) { process.stderr.write('element not found'); process.exit(1); }
+// FAKE_AB_FAIL_SUB に一致する subcommand を FAKE_AB_FAIL_MSG（実物の文言）で失敗させる
+if (process.env.FAKE_AB_FAIL_SUB === sub) { process.stderr.write(process.env.FAKE_AB_FAIL_MSG || 'failed'); process.exit(1); }
 if (sub === 'console' && !argv.includes('--clear')) {
   process.stdout.write(JSON.stringify({ success: true, data: { messages: [
     { type: 'error', text: 'Boom from page' },
@@ -408,17 +410,99 @@ test('smoke: login が失敗したら open せず ok:false と失敗したコマ
   assert.equal(r.ok, false);
   assert.deepEqual(r.checks.map((c) => [c.action, c.result]), [['login', 'fail']]);
   assert.match(r.checks[0].evidence, /click #FAIL: element not found/);
+  assert.equal(r.env_failure, undefined);
   assert.equal(fake.calls().length, 2, 'login の失敗で打ち切る');
 }, TIMEOUT);
 
-test('smoke: smoke_url の open 失敗は ok:false', () => {
+test('smoke: smoke_url の open 失敗（接続はできた）は ok:false のアプリ起因（env_failure なし）', () => {
   const fake = setupFakeBrowser();
   const res = up(writeConfig(stackCfg({ smoke_path: '/FAIL' })));
   assert.equal(res.ok, true, JSON.stringify(res));
   const r = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], fake.env);
   assert.equal(r.ok, false);
+  assert.equal(r.env_failure, undefined);
   assert.equal(r.checks.at(-1).result, 'fail');
   assert.match(r.summary, /load 失敗/);
+}, TIMEOUT);
+
+test('smoke: networkidle 待ちの失敗は非致命 — check は skip で理由を evidence に残し、ok:true と summary が一致する', () => {
+  const fake = setupFakeBrowser();
+  const res = up(writeConfig(stackCfg()));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const env = { ...fake.env, FAKE_AB_FAIL_SUB: 'wait', FAKE_AB_FAIL_MSG: 'Timeout 25000ms exceeded' };
+  const r = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], env);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.env_failure, undefined);
+  const w = r.checks.find((c) => c.action === 'wait --load networkidle');
+  assert.equal(w.result, 'skip');
+  assert.match(w.evidence, /networkidle/);
+  assert.match(w.evidence, /Timeout 25000ms exceeded/);
+  assert.ok(!r.checks.some((c) => c.result === 'fail'), 'fail の check を残さない（workflow が major finding にする）');
+  assert.match(r.summary, /load ok（networkidle 待ちは失敗）/);
+}, TIMEOUT);
+
+test('smoke: smoke_url に接続できない（net::ERR_CONNECTION_REFUSED）は env_failure', () => {
+  const fake = setupFakeBrowser();
+  const res = up(writeConfig(stackCfg()));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const env = { ...fake.env, FAKE_AB_FAIL_SUB: 'open', FAKE_AB_FAIL_MSG: '✗ Navigation failed: net::ERR_CONNECTION_REFUSED' };
+  const r = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], env);
+  assert.equal(r.ok, false);
+  assert.equal(r.env_failure, true);
+  assert.match(r.summary, /ERR_CONNECTION_REFUSED/);
+}, TIMEOUT);
+
+test('smoke / login: agent-browser が無いのは env_failure', () => {
+  const res = up(writeConfig(stackCfg({ login: { commands: LOGIN } })));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const env = { ...process.env, UI_VERIFY_AGENT_BROWSER: join(root, 'no-such-agent-browser') };
+  const s = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], env);
+  assert.equal(s.ok, false);
+  assert.equal(s.env_failure, true, JSON.stringify(s));
+  assert.match(s.summary, /agent-browser/);
+  const l = cliWithEnv(['login', '--state-dir', stateDir, '--session', 's'], env);
+  assert.equal(l.ok, false);
+  assert.equal(l.env_failure, true, JSON.stringify(l));
+}, TIMEOUT);
+
+test('smoke / login: stack が無い・止まった（ttl / down）・supervisor が居ないのは env_failure', () => {
+  const fake = setupFakeBrowser();
+  const none = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.equal(none.ok, false);
+  assert.equal(none.env_failure, true);
+  assert.match(none.summary, /stack が無い/);
+
+  const res = up(writeConfig(stackCfg({ login: { commands: LOGIN } })));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const stackPath = join(stateDir, 'stack.json');
+  const stack = JSON.parse(readFileSync(stackPath, 'utf8'));
+  // supervisor が消えたのに phase が ready のまま残っている
+  writeFileSync(stackPath, JSON.stringify({ ...stack, supervisor_pid: 2 ** 22 + 12345 }));
+  const dead = cliWithEnv(['login', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.equal(dead.ok, false);
+  assert.equal(dead.env_failure, true);
+  assert.match(dead.error, /supervisor/);
+  writeFileSync(stackPath, JSON.stringify(stack));
+
+  assert.equal(down().ok, true);
+  const stopped = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.equal(stopped.ok, false);
+  assert.equal(stopped.env_failure, true);
+  assert.match(stopped.summary, /ready でない/);
+  assert.equal(fake.calls().length, 0, 'stack が使えないなら agent-browser を呼ばない');
+}, TIMEOUT);
+
+test('login: 接続できない（net::ERR_CONNECTION_REFUSED）は env_failure、操作の失敗はアプリ起因', () => {
+  const fake = setupFakeBrowser();
+  const res = up(writeConfig(stackCfg({ login: { commands: LOGIN } })));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const env = { ...fake.env, FAKE_AB_FAIL_SUB: 'open', FAKE_AB_FAIL_MSG: '✗ Navigation failed: net::ERR_CONNECTION_REFUSED' };
+  const l = cliWithEnv(['login', '--state-dir', stateDir, '--session', 's'], env);
+  assert.equal(l.ok, false);
+  assert.equal(l.env_failure, true);
+  const s = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], env);
+  assert.equal(s.ok, false);
+  assert.equal(s.env_failure, true, 'smoke 内の login が環境起因で落ちたら smoke も env_failure');
 }, TIMEOUT);
 
 test('login: 宣言が無ければ skipped、stack が ready でなければ ok:false', () => {
@@ -444,6 +528,7 @@ test('login: 宣言どおり順に実行し、失敗位置を返す', () => {
   assert.equal(r.ran, 1);
   assert.equal(r.total, 3);
   assert.deepEqual(r.failed, { index: 1, command: 'fill #FAIL x' });
+  assert.equal(r.env_failure, undefined, 'セレクタが見つからない等の操作の失敗はアプリ起因');
 }, TIMEOUT);
 
 test('extractErrorMessages: JSON の形に依存しすぎず error だけ拾う / テキスト出力にも対応', async () => {
@@ -451,4 +536,26 @@ test('extractErrorMessages: JSON の形に依存しすぎず error だけ拾う 
   assert.deepEqual(extractErrorMessages(JSON.stringify([{ level: 'ERROR', message: 'a' }, { level: 'warning', message: 'b' }])), ['a']);
   assert.deepEqual(extractErrorMessages('[error] boom\n[log] fine\n[pageerror] bad'), ['boom', 'bad']);
   assert.deepEqual(extractErrorMessages(JSON.stringify({ data: { errors: [{ message: 'x' }] } }), { allErrors: true }), ['x']);
+});
+
+// agent-browser 0.38.1 の実出力（--json）をそのまま fixture にする
+const REAL_LIFECYCLE = { effectiveLaunch: { browserLaunched: true, engine: 'chrome', launchHash: 1 }, launched: false, relaunchedBrowser: false, restartedBackground: false, restoreStatus: 'not_configured', reused: true, saveStatus: 'not_attempted' };
+const REAL_CONSOLE_JSON = JSON.stringify({ success: true, data: { lifecycle: REAL_LIFECYCLE, messages: [
+  { args: [{ type: 'string', value: 'boom-console' }], text: 'boom-console', type: 'error' },
+  { args: [{ type: 'string', value: 'plain-log' }], text: 'plain-log', type: 'log' },
+] }, error: null });
+const REAL_ERRORS_JSON = JSON.stringify({ success: true, data: { errors: [
+  { column: 85, line: 0, text: 'Error: boom-uncaught\n    at http://127.0.0.1:6100/app.js:1:85', url: null },
+], lifecycle: REAL_LIFECYCLE }, error: null });
+
+test('extractErrorMessages: agent-browser 0.38.1 実出力の console --json から error レベルだけ拾う', async () => {
+  const { extractErrorMessages } = await import('./ui-verify-stack.mjs');
+  assert.deepEqual(extractErrorMessages(REAL_CONSOLE_JSON), ['boom-console']);
+});
+
+test('extractErrorMessages: agent-browser 0.38.1 実出力の errors --json は level を問わず全件（lifecycle は拾わない）', async () => {
+  const { extractErrorMessages } = await import('./ui-verify-stack.mjs');
+  const got = extractErrorMessages(REAL_ERRORS_JSON, { allErrors: true });
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.match(got[0], /^Error: boom-uncaught/);
 });

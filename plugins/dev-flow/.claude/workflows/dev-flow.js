@@ -4904,8 +4904,8 @@ const CROSSREPO_ARTIFACTS = {
 }
 const UICFG = { type: 'object', required: ['found'], properties: { found: { type: 'boolean' }, config: { type: ['object', 'null'] } } }
 const UISRV = { type: 'object', required: ['ok', 'phase'], properties: { ok: { type: 'boolean' }, phase: { type: 'string', enum: ['config', 'setup', 'install', 'start', 'starting', 'ready', 'timeout'] }, base_url: { type: 'string' }, smoke_url: { type: 'string' }, port: { type: ['number', 'string'] }, ports: { type: 'object' }, step: { type: 'string' }, error: { type: 'string' }, log: { type: 'string' }, wait_ceiling_sec: { type: 'number' } } }
-const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' } } }
-const UILOGIN = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, skipped: { type: 'boolean' }, ran: { type: 'number' }, total: { type: 'number' }, failed: { type: 'object' }, error: { type: 'string' } } }
+const UIVERIFY = { type: 'object', required: ['ok', 'mode'], properties: { ok: { type: 'boolean' }, mode: { type: 'string', enum: ['scenario', 'smoke'] }, checks: { type: 'array', items: { type: 'object', required: ['action', 'result'], properties: { ac_index: { type: 'number' }, action: { type: 'string' }, result: { type: 'string', enum: ['pass', 'fail', 'skip'] }, evidence: { type: 'string' } } } }, console_errors: { type: 'array', items: { type: 'string' } }, screenshots: { type: 'array', items: { type: 'string' } }, summary: { type: 'string' }, env_failure: { type: 'boolean' } } }
+const UILOGIN = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, skipped: { type: 'boolean' }, ran: { type: 'number' }, total: { type: 'number' }, failed: { type: 'object' }, error: { type: 'string' }, env_failure: { type: 'boolean' } } }
 const UISTOP = { type: 'object', required: ['server_stopped', 'session_closed'], properties: { server_stopped: { type: 'boolean' }, session_closed: { type: 'boolean' }, leftover: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } } }
 const SYNCRES = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, head: { type: 'string' }, error: { type: 'string' }, epoch: { type: 'number' } } }
 // MERGE_FACTS: Merge tier 統合 exec-proxy (`_shared/scripts/merge-tier-facts.sh`) の応答 schema。
@@ -6855,12 +6855,15 @@ function uiVerifyWaitPolls(ceilingSec) {
 //   status: 'passed'|'findings'|'failed_open'|'setup_failed'（uiTouched=false で呼ばない前提のため null は返らない）
 //   mode: 'smoke'|'scenario'|null（stack 起動失敗時は null のまま）
 //   ledger: UI item append 済みの新 ledger
-//   result: ui-verifier の raw UIVERIFY object（未実行/null応答/例外時は null）
+//   result: ui-verifier の raw UIVERIFY object（未実行/null応答/例外/環境起因の失敗時は null）
+// smoke / login が env_failure:true（stack が使えない・agent-browser が無い・URL に接続できない）を
+// 返した失敗は変更と無関係な環境起因なので findings にせず failed_open（fail-open で skip）にする。
 // ============================================================
 async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, effectiveShape, acceptanceCriteria }) {
   let status = null
   let mode = null
   let result = null
+  let envFailure = null
   const stateDir = `${WT}/.devflow-tmp/ui-verify${labelSuffix}`
   const session = `devflow-${ISSUE}${labelSuffix}`
   try {
@@ -6898,14 +6901,17 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
         )
       } else {
         // scenario の前段ログインも決定的に済ませてから、同じ session を ui-verifier に渡す。
-        // login の proxy 応答が null なら result=null → failed_open。login 自体の失敗は UI 検証 NG（findings）。
+        // login の proxy 応答が null なら result=null → failed_open。環境起因（env_failure）も failed_open。
+        // 操作の失敗（セレクタが見つからない等）は UI 検証 NG（findings）。
         const loginRes = cfg.login
           ? await trackedAgent(
               execProxy(`ui-verify-stack login --state-dir '${stateDir}' --session '${session}'`),
               { agentType: 'dev-runner-haiku', schema: UILOGIN, label: 'ui-verify-login' + labelSuffix, phase: phaseName },
             )
           : { ok: true }
-        if (loginRes && loginRes.ok !== true) {
+        if (loginRes && loginRes.ok !== true && loginRes.env_failure === true) {
+          envFailure = `login: ${loginRes.error ?? 'unknown'}`
+        } else if (loginRes && loginRes.ok !== true) {
           result = { ok: false, mode, checks: [], console_errors: [], screenshots: [], summary: `login 失敗: ${loginRes.failed?.command ?? ''} ${loginRes.error ?? ''}`.trim() }
         } else if (loginRes) {
           result = await trackedAgent(
@@ -6924,7 +6930,13 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
           )
         }
       }
-      if (!result) {
+      if (envFailure == null && result && result.ok !== true && result.env_failure === true) envFailure = result.summary ?? 'unknown'
+      if (envFailure != null) {
+        // 検証できていないので raw result は evaluator に渡さない（未実行と同じ扱い）
+        result = null
+        status = 'failed_open'
+        log(`⚠️ ui-verify: ${mode} が環境起因で失敗 (${envFailure}) — findings にせず failed_open で skip（fail-open）`)
+      } else if (!result) {
         status = 'failed_open'
         log(`⚠️ ui-verify: ${mode} の結果が null — failed_open（fail-open）`)
       } else {

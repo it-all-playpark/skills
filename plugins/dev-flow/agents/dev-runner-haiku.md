@@ -4,7 +4,7 @@ description: |
   Write/Skill-capable exec-proxy for dev-flow deterministic operations that
   require filesystem mutation or Skill invocation: test execution,
   redgreen verification, reconcile-sync,
-  ui-verify server start/teardown,
+  ui-verify-stack up / wait / down / login / smoke,
   journal writes, PR creation (commit message / PR body verbatim save +
   bare git add / commit -F / push / gh pr create), and PR comment posting
   (post-review / post-summary). Returns verbatim stdout of the delegated
@@ -15,7 +15,8 @@ description: |
   Glob/Grep.
   Use when: dev-flow workflow dispatches a deterministic exec-proxy call
   that mutates the worktree or invokes a Skill — test execution (Validate),
-  redgreen, reconcile-sync, ui-verify server/teardown, journal writes,
+  redgreen, reconcile-sync, ui-verify-stack (up / wait / down / login /
+  smoke) and ui-verify teardown, journal writes,
   PR creation (pr#<issue>), or PR comment posting. Setup-time work (base / worktree / deps / cleanup)
   is done by dev-flow-prerun before the run, not by this agent.
 model: haiku
@@ -39,8 +40,8 @@ maxTurns: 25
 （tools: `[Bash, Read]` のみ）へ分離済み。Setup 前の決定論処理（base 解決・
 worktree 作成・deps install・`.devflow-tmp` cleanup）は wrapper skill が run 前に
 `dev-flow-prerun` で済ませるため、このagentは担当しない。このagentは
-test 実行・redgreen 検証・reconcile-sync・ui-verify server の
-起動/teardown・journal 書き込み・PR 作成（pr#<issue>）・PR コメント投稿
+test 実行・redgreen 検証・reconcile-sync・ui-verify-stack の
+up / wait / down / login / smoke・journal 書き込み・PR 作成（pr#<issue>）・PR コメント投稿
 （post-review#i / post-summary）など、**ファイル変更または Skill 呼び出しを伴う**決定論操作を
 専任する。`tools` は `Bash` / `Read` / `Write` / `Skill` のみ（Edit/Glob/
 Grep/TodoWrite は持たない — journal 書き込みは buildJournalHandoffCommand
@@ -72,7 +73,9 @@ Claude Code runtime によって frontmatter レベルで適用されるため�
 | Validate | テストスイート実行・green 判定 | `{tests, green, summary}` |
 | Evaluate | redgreen 検証（`redgreen-verify <WT> <T1> <I1> [<T2> <I2> …]` — 対象 AC の全ペアを 1 spawn で判定。出力 `{results:[{index,…}]}` を verbatim で返す） | `{results:[…]}` |
 | Final reconcile | reconcile-sync（worktree を PR 最終 HEAD へ同期）・test 再実行 | `{...}` / `{tests, green, summary}` |
-| Validate / Evaluate | ui-verify server 起動・teardown（Skill 呼び出し） | `{...}` |
+| Evaluate / Final reconcile | `ui-verify-stack up` / `wait`（stack 起動と ready 待ちの繰り返し） | `UISRV` |
+| Evaluate / Final reconcile | `ui-verify-stack smoke`（smoke の決定的検証）/ `ui-verify-stack login`（scenario 前段のログイン） | `UIVERIFY` / `UILOGIN` |
+| Evaluate / Final reconcile | ui-verify teardown（`ui-verify-stack down` + `agent-browser close`） | `UISTOP` |
 | Evaluate / Merge tier | journal 書き込み等その他決定論スクリプト | 各 schema |
 | PR | PR 作成（pr#<issue> — 確定済み commit message / PR body の verbatim 保存 + bare 単文 `git add -A` / `git commit -F` / `git push -u origin HEAD` / `gh pr create --draft --body-file`） | `{pr_url, pr_number, committed}` |
 | Iterate / Merge tier | PR コメント投稿（post-review#i / post-summary — 確定済み本文の verbatim 転写 + gh pr comment/review 実行） | `{posted, method, url}` |
