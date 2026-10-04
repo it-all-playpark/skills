@@ -15,6 +15,7 @@ import { dirname } from 'node:path';
 
 import {
   stripComments,
+  dropComments,
   checkForbiddenTokens,
   transformCanonical,
   scanMarkers,
@@ -78,9 +79,44 @@ test('transformCanonical strips export async function', () => {
   assert.equal(transformCanonical(src, 'test'), `async function doThing() {}\n`);
 });
 
-test('transformCanonical preserves comments verbatim', () => {
-  const src = `// This exports something\nexport const X = 1;\n// end\n`;
-  assert.equal(transformCanonical(src, 'test'), `// This exports something\nconst X = 1;\n// end\n`);
+test('transformCanonical drops comments', () => {
+  const src = `// This exports something\nexport const X = 1; // why\n\n/**\n * doc\n */\nexport function f() {}\n// end\n`;
+  assert.equal(transformCanonical(src, 'test'), `const X = 1;\n\nfunction f() {}\n`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// dropComments: literal content must survive byte-for-byte (the output is executed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('dropComments keeps comment-like text inside string literals', () => {
+  const src = `const a = 'http://x'; // c\nconst b = "/* not */";\n`;
+  assert.equal(dropComments(src), `const a = 'http://x';\nconst b = "/* not */";\n`);
+});
+
+test('dropComments keeps template literal lines that look like comments, including nested ${ }', () => {
+  const src = 'const t = `\n// kept\n${ x ? `/* in */` : { a: 1 }.a } // also kept\n`; // dropped\n';
+  assert.equal(dropComments(src), 'const t = `\n// kept\n${ x ? `/* in */` : { a: 1 }.a } // also kept\n`;\n');
+});
+
+test('dropComments keeps regex literals containing slashes and quotes', () => {
+  const src = `const r = /^\\/\\/ ['"]/g; // c\nconst s = x.replace(/[/*]/, '');\nreturn /\\/\\//.test(y);\n`;
+  assert.equal(dropComments(src), `const r = /^\\/\\/ ['"]/g;\nconst s = x.replace(/[/*]/, '');\nreturn /\\/\\//.test(y);\n`);
+});
+
+test('dropComments treats / after an expression as division', () => {
+  const src = `const q = (a) / b / c; // half\nconst w = arr[0] / 2;\n`;
+  assert.equal(dropComments(src), `const q = (a) / b / c;\nconst w = arr[0] / 2;\n`);
+});
+
+test('dropComments turns an inline block comment into a space and keeps block-comment newlines', () => {
+  assert.equal(dropComments(`a/**/b\n`), `a b\n`);
+  // The newline inside the comment is a line terminator for ASI: `x = 1 \n y()` must stay 2 statements.
+  assert.equal(dropComments(`x = 1 /* a\n b */ y()\n`), `x = 1 \n y()\n`);
+});
+
+test('dropComments drops comment-only lines but keeps originally blank lines', () => {
+  const src = `a();\n\n  // gone\n/*\n * gone\n */\nb();\n`;
+  assert.equal(dropComments(src), `a();\n\nb();\n`);
 });
 
 test('transformCanonical normalizes trailing newline to exactly one', () => {
