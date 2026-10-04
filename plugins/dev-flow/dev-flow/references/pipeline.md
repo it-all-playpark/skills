@@ -8,7 +8,7 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 ## dev-flow (dynamic workflow)
 
 `/dev-flow <issue>` は skill wrapper (`dev-flow/SKILL.md`) が `dev-flow-prerun --issue <N>
---worktree <path>`（top-level Bash、bare 形）で base 解決・worktree 作成/再利用・起点検証・
+--worktree <path>`（top-level Bash、bare 形）で base 解決・worktree 作成/再利用・起点検証（独自コミット・未コミット変更の無い再利用 worktree は base へ fast-forward）・
 書き込み probe・`.devflow-tmp` clean・deps install・issue analyze（`prerun-analyze.sh`:
 `analyze-issue --contract` の決定論 parse + Jev 有界判定。deps install と並列）・framework 検出を
 1 コマンドで行い、
