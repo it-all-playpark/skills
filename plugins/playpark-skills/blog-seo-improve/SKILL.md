@@ -2,8 +2,8 @@
 name: blog-seo-improve
 description: |
   GSC/GAデータに基づき、既存記事のtitle/description/冒頭セクションを改善するSEOスキル。
-  Use when: 既存記事のSEO改善、CTR改善、bounce率改善、title/meta最適化が必要な時。
-  Accepts args: [file-path] [--type ctr|bounce] [--dry-run]
+  Use when: 既存記事のSEO改善、CTR改善、title/meta最適化が必要な時。
+  Accepts args: [file-path]
 context: fork
 model: sonnet
 ---
@@ -17,16 +17,11 @@ GSC/GAデータに基づき、既存記事のSEOを改善する。
 ```
 /blog-seo-improve
 /blog-seo-improve content/blog/2026-03-04-*.mdx
-/blog-seo-improve --type ctr
-/blog-seo-improve --type bounce
-/blog-seo-improve --dry-run
 ```
 
 | Arg | Description |
 |-----|-------------|
 | file-path | 改善対象のMDXファイルパス（省略時は自動検出） |
-| --type | 改善タイプ: ctr（CTR改善）, bounce（bounce率改善） |
-| --dry-run | 変更せず提案のみ |
 
 ## Config
 
@@ -38,7 +33,6 @@ skill-config.json の `blog-seo-improve` セクションから設定を読み込
 | gsc_site | "" | GSCサイト識別子（必須） |
 | ga_property_id | "" | GA4プロパティID（必須） |
 | thresholds.low_ctr | 0.02 | CTR改善対象の閾値 |
-| thresholds.high_bounce | 0.75 | bounce率改善対象の閾値 |
 | thresholds.min_impressions | 50 | 分析対象の最小impression数 |
 | output_dir | claudedocs | レポート出力先 |
 
@@ -67,10 +61,7 @@ skill-config.json から設定を取得。`gsc_site` と `ga_property_id` が未
 
 閾値に基づき改善対象記事を特定:
 
-| Type | 条件 | 改善内容 |
-|------|------|---------|
-| ctr | CTR < `low_ctr` かつ impressions >= `min_impressions` | title, meta description 改善 |
-| bounce | bounceRate > `high_bounce` | 冒頭セクション、見出し構成 改善 |
+CTR < `low_ctr` かつ impressions >= `min_impressions` の記事を対象に、title / meta description を改善する。
 
 ### Step 4: 改善実行
 
@@ -92,13 +83,6 @@ skill-config.json から設定を取得。`gsc_site` と `ga_property_id` が未
 2. 超過していたら、キーワードと訴求ポイントを維持したまま1回だけ短縮を試みる（末尾の装飾表現や重複表現を削る。キーワード自体は削らない）
 3. 再チェックしてまだ超過している場合は書き込みを中止せず、Step 5 のレポートに `⚠️ 文字数超過` として超過分（何文字オーバーか）を明示する。超過を黙って完了報告しない
 
-**Bounce率改善**:
-- 冒頭セクション: 結論先出し、読者の課題に即座に応答
-- 見出し構成: スキャナビリティ向上、H2/H3の最適化
-- 内部リンク: 関連記事への導線追加
-
-**--dry-run モード**: ファイル変更せず、提案をレポートのみ出力。
-
 ### Step 5: レポート
 
 ```markdown
@@ -107,7 +91,7 @@ Date: {date}
 
 ## Summary
 - Analyzed: {n} articles
-- Improved: {n} articles (CTR: {n}, Bounce: {n})
+- Improved: {n} articles
 
 ## Changes
 

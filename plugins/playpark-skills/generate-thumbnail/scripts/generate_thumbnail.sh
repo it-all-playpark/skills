@@ -26,39 +26,9 @@ BRAND_PROMPT_PATH=$(echo "$CONFIG" | jq -r '.brand_prompt_path // ""')
 CODEX_MODEL=$(echo "$CONFIG" | jq -r '.codex_model // "gpt-5.5"')
 CODEX_EFFORT=$(echo "$CONFIG" | jq -r '.codex_reasoning_effort // "low"')
 
-# ----------------------------------------------------------------------------
-# Detect the flags this codex build accepts (binary resolved above via THUMBNAIL_CODEX_BIN).
-#
-# Two upstream changes matter here:
-#   1. built-in image_gen was broken in 0.140.0–0.144.3 (#28422): codex reported
-#      success but never wrote the file. Fixed in 0.144.4, so we no longer pin to
-#      an old 0.139.x — we just warn if the running build is inside that window.
-#   2. 0.147.0 renamed --full-auto to --approve-for-me. Both mean "auto-approve
-#      while KEEPING the workspace-write sandbox", so we detect which one this
-#      build accepts. Never use --dangerously-bypass-approvals-and-sandbox here:
-#      thumbnail generation has no need to escape the sandbox.
-# ----------------------------------------------------------------------------
-CODEX_IMAGE_GEN_FIXED="0.144.4"
-
-# ver_lt A B -> true when A is strictly older than B
-ver_lt() {
-    [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]
-}
-
-CODEX_VERSION="$("$CODEX_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-
-if [[ -n "$CODEX_VERSION" ]] \
-   && ! ver_lt "$CODEX_VERSION" "0.140.0" \
-   && ver_lt "$CODEX_VERSION" "$CODEX_IMAGE_GEN_FIXED"; then
-    warn "codex $CODEX_VERSION has broken built-in image_gen (#28422, fixed in $CODEX_IMAGE_GEN_FIXED); the thumbnail may not be written"
-fi
-
-# --full-auto (<= 0.146.x) vs --approve-for-me (>= 0.147.0)
-if "$CODEX_BIN" exec --help 2>/dev/null | grep -q -- '--approve-for-me'; then
-    CODEX_APPROVAL_FLAG="--approve-for-me"
-else
-    CODEX_APPROVAL_FLAG="--full-auto"
-fi
+# NOTE: requires codex >= 0.147.0 (--approve-for-me = auto-approve while KEEPING the
+# workspace-write sandbox). Never use --dangerously-bypass-approvals-and-sandbox here:
+# thumbnail generation has no need to escape the sandbox.
 
 PROJECT_ROOT="$(git_root)"
 [[ -n "$PROJECT_ROOT" ]] || die_json "Not in a git repository" 128
@@ -206,7 +176,7 @@ trap 'rm -f "$LOG_FILE"' EXIT
 CODEX_EXIT=0
 "$CODEX_BIN" exec \
     --skip-git-repo-check \
-    "$CODEX_APPROVAL_FLAG" \
+    --approve-for-me \
     -m "$CODEX_MODEL" \
     -c "model_reasoning_effort=$CODEX_EFFORT" \
     --json \

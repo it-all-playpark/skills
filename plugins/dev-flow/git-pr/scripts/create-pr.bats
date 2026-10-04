@@ -58,26 +58,21 @@ EOF
     git -c user.email=t@t.t -c user.name=test commit -q -m "init"
 }
 
-@test "creates non-draft PR by default" {
+@test "creates non-draft PR" {
     cd "$BATS_TEST_TMPDIR/test-repo"
     run "$SCRIPT" 99 --base dev --worktree "$BATS_TEST_TMPDIR/test-repo"
     [ "$status" -eq 0 ]
-    [[ "$output" == *'"draft": false'* ]]
     # gh pr create should NOT have --draft
     GH_PR_LINE=$(grep "pr create" "$GH_LOG" || true)
     [[ -n "$GH_PR_LINE" ]]
     [[ "$GH_PR_LINE" != *"--draft"* ]]
 }
 
-@test "creates draft PR with --draft flag" {
+@test "rejects removed options (--draft / --title / --lang)" {
     cd "$BATS_TEST_TMPDIR/test-repo"
-    run "$SCRIPT" 99 --base dev --draft --worktree "$BATS_TEST_TMPDIR/test-repo"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *'"draft": true'* ]]
-    # gh pr create should have --draft
-    GH_PR_LINE=$(grep "pr create" "$GH_LOG" || true)
-    [[ -n "$GH_PR_LINE" ]]
-    [[ "$GH_PR_LINE" == *"--draft"* ]]
+    run "$SCRIPT" 99 --draft --worktree "$BATS_TEST_TMPDIR/test-repo"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Unknown option"* ]]
 }
 
 @test "errors when issue number missing" {
@@ -93,11 +88,4 @@ EOF
     [ "$status" -eq 0 ]
     GH_PR_LINE=$(grep "pr create" "$GH_LOG" || true)
     [[ "$GH_PR_LINE" == *"feat:"* ]]
-}
-
-@test "custom --title overrides auto title" {
-    cd "$BATS_TEST_TMPDIR/test-repo"
-    run "$SCRIPT" 99 --base dev --title "My custom title" --worktree "$BATS_TEST_TMPDIR/test-repo"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"My custom title"* ]]
 }

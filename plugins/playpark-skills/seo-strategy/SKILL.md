@@ -7,7 +7,7 @@ description: |
   Use when: (1) SEO全体戦略の策定・更新,
   (2) keywords: SEO戦略, サイト改善, CTR改善, 内部リンク, コンテンツ戦略,
   (3) blog-publish の --skip-seo なしフローの上流ステップとして。
-  Accepts args: [--refresh] [--ga-report PATH] [--gsc-report PATH] [--trends-report PATH] [--config PATH]
+  Accepts args: [--refresh]
 model: fable
 effort: max
 ---
@@ -19,20 +19,18 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
 ## Usage
 
 ```
-/seo-strategy [--refresh] [--ga-report PATH] [--gsc-report PATH] [--trends-report PATH] [--config PATH]
+/seo-strategy [--refresh]
 ```
 
 | Option           | Default                              | Description                     |
 | ---------------- | ------------------------------------ | ------------------------------- |
 | `--refresh`      | false                                | GA4/GSC/Trends を再取得してから戦略生成 |
-| `--ga-report`    | `claudedocs/ga4-report-*.json` (最新) | GA4 レポートパス               |
-| `--gsc-report`   | `claudedocs/gsc-report-*.json` (最新) | GSC レポートパス               |
-| `--trends-report`| `claudedocs/trends-report-*.json` (最新) | Trends レポートパス          |
-| `--config`       | なし（デフォルト値で動作）            | `seo-config.json` パス          |
+
+入力レポートは `claudedocs/` の最新の `ga4-report-*.json` / `gsc-report-*.json` / `trends-report-*.json` を自動で使う。
 
 ## Config
 
-プロジェクト固有の設定を `.claude/seo-config.json` で外部化。`--config` 未指定時はデフォルト値で動作（後方互換）。
+プロジェクト固有の設定は skill-config.json の `seo-strategy` セクションで外部化。未設定時はデフォルト値で動作。
 
 ```json
 {
@@ -130,7 +128,7 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
    python scripts/strategy_analyzer.py \
      --ga-report <GA_PATH> --gsc-report <GSC_COMBINED_PATH> --trends-report <TRENDS_PATH> \
      --ga-prev-report <PREV_GA_PATH> \
-     --config .claude/seo-config.json --blog-dir content/blog \
+     --blog-dir content/blog \
      --project-dir . --output claudedocs/seo-strategy-analysis.json
    ```
 

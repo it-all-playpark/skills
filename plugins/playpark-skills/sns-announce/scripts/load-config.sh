@@ -2,7 +2,7 @@
 # load-config.sh - Load sns-announce configuration
 # Usage: load-config.sh [project-root]
 #
-# Searches for .claude/sns-announce.json in project root
+# Searches skill-config.json (sns-announce section) in project root
 # Output: JSON config or default config if not found
 
 set -euo pipefail
@@ -30,7 +30,7 @@ DEFAULT_CONFIG='{
   "templates_dir": null
 }'
 
-# Load config: skill-config.json > legacy sns-announce.json > defaults
+# Load config: skill-config.json > defaults
 SKILL_CONFIG=$(load_skill_config "sns-announce")
 
 if [[ "$SKILL_CONFIG" != "{}" ]]; then

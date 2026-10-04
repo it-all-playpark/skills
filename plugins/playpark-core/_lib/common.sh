@@ -115,20 +115,11 @@ git_root() {
     git rev-parse --show-toplevel 2>/dev/null | tr -d '\n'
 }
 
-git_branch_exists() {
-    git show-ref --verify --quiet "refs/heads/$1" 2>/dev/null
-}
-
-git_is_clean() {
-    [[ -z "$(git status --porcelain 2>/dev/null)" ]]
-}
-
 # ============================================================================
 # Timing
 # ============================================================================
 
 now_sec() { date +%s; }
-duration_since() { echo $(($(now_sec) - $1)); }
 
 # ============================================================================
 # Config Loading
@@ -152,7 +143,7 @@ _load_global_skill_config() {
   echo "{}"
 }
 
-# Load skill config: global → project merge (with legacy fallback)
+# Load skill config: global → project merge
 load_skill_config() {
   local skill_name="$1"
 
@@ -160,7 +151,7 @@ load_skill_config() {
   local global_cfg
   global_cfg="$(_load_global_skill_config "$skill_name")"
 
-  # Layer 2: Project (+ legacy fallback)
+  # Layer 2: Project
   local project_cfg="{}"
   local git_root
   git_root="$(git rev-parse --show-toplevel 2>/dev/null)" || true
@@ -178,16 +169,6 @@ load_skill_config() {
         [[ -n "$section" ]] && { project_cfg="$section"; break; }
       fi
     done
-    # 2b. Legacy fallback
-    if [[ "$project_cfg" == "{}" ]]; then
-      local legacy_path="${git_root}/.claude/${skill_name}.json"
-      if [[ -f "$legacy_path" ]]; then
-        project_cfg="$(cat "$legacy_path")"
-      elif [[ "$skill_name" == "seo-strategy" ]]; then
-        local seo_legacy="${git_root}/.claude/seo-config.json"
-        [[ -f "$seo_legacy" ]] && project_cfg="$(cat "$seo_legacy")"
-      fi
-    fi
   fi
 
   # Merge: global * project (project wins)

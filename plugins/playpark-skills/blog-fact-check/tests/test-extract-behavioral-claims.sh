@@ -103,14 +103,13 @@ else
     "Default 表 (review_only_categories 行) に behavioral_claims が見つからない"
 fi
 
-# AC1.3: frontmatter description の --category 引数列挙に behavioral_claims が含まれる
-# frontmatter から最初の category 列挙を取得
+# AC1.3: frontmatter description が挙動・因果主張のチェックに言及している
 DESCRIPTION_BLOCK="$(awk '/^---$/{c++; next} c==1 && /description:/{flag=1} c==1 && flag {print; if (/Accepts args/) exit}' "$SKILL_MD" 2>/dev/null || true)"
-if echo "$DESCRIPTION_BLOCK" | grep -E -- '--category[^|]*\|[^|]*behavioral_claims' > /dev/null \
+if echo "$DESCRIPTION_BLOCK" | grep -F '挙動' > /dev/null \
    || echo "$DESCRIPTION_BLOCK" | grep -F 'behavioral_claims' > /dev/null; then
-  pass "AC1.3: frontmatter description の --category に behavioral_claims が含まれる"
+  pass "AC1.3: frontmatter description に挙動・因果主張が含まれる"
 else
-  fail "AC1.3: frontmatter description の --category に behavioral_claims が含まれる" \
+  fail "AC1.3: frontmatter description に挙動・因果主張が含まれる" \
     "description block: $DESCRIPTION_BLOCK"
 fi
 
