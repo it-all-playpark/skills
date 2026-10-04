@@ -333,6 +333,16 @@ test('up: config 不正 / state dir が worktree 自身 → phase:config', () =>
   assert.ok(existsSync(wt), 'worktree は消さない');
 });
 
+test('up: ready.log の未宣言 {port.<name>} は ready 待ちに入らず phase:config', () => {
+  const cfg = stackCfg();
+  cfg.up = [{ ...cfg.up[2], ready: { log: 'listening on {port.apl}' } }];
+  const res = up(writeConfig(cfg));
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.equal(res.phase, 'config');
+  assert.match(res.error, /apl/);
+  assert.ok(!existsSync(join(stateDir, 'spec.json')), 'stack を起動しない');
+});
+
 test('up: --config 無しなら worktree の skill-config.json の "dev-flow".ui_verify を読む', () => {
   writeFileSync(join(wt, 'skill-config.json'), JSON.stringify({ 'dev-flow': { ui_verify: { up: [] } } }));
   const res = cli(['up', '--worktree', wt, '--state-dir', stateDir]);

@@ -210,6 +210,12 @@ test('validateUiVerifyConfig: 新形式の既定 base_url は ports 先頭の {p
   assert.equal(res.config.ttl_sec, 1800);
 });
 
+test('validateUiVerifyConfig: ready.log が宣言済みの port 名を参照するなら受理する', () => {
+  const res = validateUiVerifyConfig({ ports: ['web', 'api'], up: [{ name: 'a', serve: 'x --port {port.api}', ready: { log: 'listening on {port.api}' } }] });
+  assert.equal(res.ok, true, res.error);
+  assert.deepEqual(res.config.up[0].ready, { log: 'listening on {port.api}' });
+});
+
 for (const [label, cfg, re] of [
   ['up が無い', { base_port: 5000 }, /up は非空 array/],
   ['up が空', { up: [] }, /up/],
@@ -228,6 +234,7 @@ for (const [label, cfg, re] of [
   ['env が string 以外', { env: { A: 1 }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /env/],
   ['timeout_sec が 0', { up: [{ name: 'a', serve: 'x', timeout_sec: 0, ready: { tcp: 1 } }] }, /timeout_sec/],
   ['未宣言の port 名を参照', { ports: ['web'], up: [{ name: 'a', serve: 'x --port {port.api}', ready: { tcp: '{port.web}' } }] }, /api/],
+  ['ready.log が未宣言の port 名を参照', { ports: ['web'], up: [{ name: 'a', serve: 'x --port {port.web}', ready: { log: 'listening on {port.apl}' } }] }, /未宣言の port 名を参照している: apl/],
   ['ports の重複', { ports: ['a', 'a'], up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /重複/],
   ['ports 帯が 65535 を超える', { base_port: 64000, ports: ['a', 'b', 'c'], up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /65535/],
   ['login.commands が空', { login: { commands: [] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /login/],

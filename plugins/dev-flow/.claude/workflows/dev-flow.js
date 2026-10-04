@@ -1852,7 +1852,7 @@ function validateUiVerifyConfig(cfg) {
   for (const s of [...up, ...down]) {
     uivCollectPortRefs(s.command, refs);
     for (const v of Object.values(s.env)) uivCollectPortRefs(v, refs);
-    if (s.ready) uivCollectPortRefs(s.ready.http ?? s.ready.tcp, refs);
+    if (s.ready) uivCollectPortRefs(s.ready.http ?? s.ready.tcp ?? s.ready.log, refs);
   }
   for (const v of Object.values(env.env)) uivCollectPortRefs(v, refs);
   uivCollectPortRefs(base_url, refs);
