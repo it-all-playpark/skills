@@ -3,7 +3,6 @@ name: trends-analyzer
 description: |
   Google Trendsのデータを取得・分析し、キーワードのトレンドスコアを算出する。
   ga-analyzerの出力JSONからキーワードを自動抽出するか、手動でキーワードを指定可能。
-  seo-content-plannerと連携してSEO記事ネタ提案パイプラインの中間ステップとして機能する。
   Use when: (1) Google Trendsでキーワードのトレンドを調べたい,
   (2) GA4データから関連トレンドキーワードを発見したい,
   (3) keywords: Google Trends, トレンド分析, キーワード調査, SEOキーワード, トレンドスコア,
@@ -18,7 +17,7 @@ pytrends で Google Trends データを取得し、キーワードごとのト�
 ## Pipeline Position
 
 ```
-ga-analyzer → [trends-analyzer] → seo-content-planner
+ga-analyzer → [trends-analyzer]
               ^^^^^^^^^^^^^^^^
               GA JSONからKW抽出 → Trends取得 → スコアリング → JSON出力
 ```

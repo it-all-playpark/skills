@@ -66,11 +66,11 @@ user-invocable: true                # false でメニュー非表示（backgroun
 
 | 値 | 用途 | 例 |
 |---|------|-----|
-| `low` | 決定論的処理・CLI wrapper・フォーマット変換 | `image-convert`, `repo-export` |
-| `medium` | 軽度の判断を伴う処理 | `blog-schedule-overview` |
+| `low` | 決定論的処理・CLI wrapper・フォーマット変換 | `repo-export` |
+| `medium` | 軽度の判断を伴う処理 | `blog-fact-check` |
 | `high` | 標準的なコード生成・通常ワークフロー / 計画・レビュー・批判的分析（A/B 実測で max と精度同等） | デフォルト推奨。dev-flow の pr-reviewer と dev-implementer はこれ（evaluator は medium） |
 | `xhigh` | 長時間 agentic / 大規模コーディング（Opus 4.7 限定） | 複雑な実装タスク |
-| `max` | 熟考・長大推論が必要な処理（quality-gate agent の effort 固定には通常 high を推奨） | `bug-hunt`, `code-audit-team`, `seo-strategy`, `incident-response` |
+| `max` | 熟考・長大推論が必要な処理（quality-gate agent の effort 固定には通常 high を推奨） | `seo-strategy` |
 
 **判断基準**: 推論の質が出力品質を決定する skill（planning, review, critique, strategy）は `high` が品質標準ライン（A/B 実測で max と精度同等・より高速）。
 決定論的 tool wrapper は `low`。迷ったら省略して session 設定に委ねる。
@@ -275,8 +275,7 @@ User triggers /command
 6. **破壊的・大量変更系は `disable-model-invocation: true` を検討**:
    ファイル大量移動・worktree 大量生成・外部公開を伴う skill は LLM の自動起動を禁じ、
    ユーザー明示起動（`/skill-name`）のみに限定する。
-   候補例: `blog-mv-date`, `blog-swap-dates`, `cross-post-publish`,
-   `qiita-publish`, `zenn-publish`
+   候補例: `cross-post-publish`, `qiita-publish`, `zenn-publish`
 7. **「毎回確定実行」したい挙動は skill ではなく hook で実装**:
    format / test / secret 検査のように LLM の判断を介さず必ず走らせたい処理は、
    skill 化すると呼び出し漏れが起きる。hook での実装を検討すること。

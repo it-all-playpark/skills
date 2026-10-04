@@ -3,7 +3,7 @@ name: seo-strategy
 description: |
   Agent Team による多角的 SEO 戦略生成。GA4 + GSC + Trends データを統合分析し、
   コンテンツ戦略・技術SEO・チャネル分析の3専門家が並列分析 → 悪魔の代弁者レビューを経て
-  構造化 JSON + MD で出力。seo-content-planner の上流に位置する。
+  構造化 JSON + MD で出力。
   Use when: (1) SEO全体戦略の策定・更新,
   (2) keywords: SEO戦略, サイト改善, CTR改善, 内部リンク, コンテンツ戦略,
   (3) blog-publish の --skip-seo なしフローの上流ステップとして。
@@ -253,17 +253,9 @@ GA4 + GSC + Trends を統合分析し、**3専門家の並列分析 + 悪魔の�
 | 専門家が応答しない            | 2回リトライ → seo-lead が該当セクションを自力生成 |
 | 悪魔の代弁者 blocking 未解消  | 2ラウンド後、blocking 理由を MD に記載して出力 |
 
-## Integration: seo-content-planner
-
-seo-content-planner は `seo-strategy.json` を参照して記事テーマ選定を強化:
-- `new_article_directions` の KW 領域を優先スコアリング
-- `existing_article_optimizations` のリライト対象を新規提案から除外
-- `roadmap` のフェーズに沿った記事計画
-
 ## Integration: blog-publish
 
 orchestrate.sh のフロー:
 ```
 strategy.needs_generation → /seo-strategy
-seo.needs_generation → /seo-content-planner (seo-strategy.json を参照)
 ```

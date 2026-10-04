@@ -63,21 +63,13 @@ EOF
 
 skills_expected_names() {
     cat <<'EOF'
-bgm-normalize-audio
-bgm-process
 blog-cross-post-resolve-source
-blog-find-articles
-blog-mv-date
-blog-swap-dates
-bug-hunt-state
-code-audit-team-state
 dep-guardian-classify-pr
 dep-guardian-discover-prs
 dep-guardian-merge-prs
 dep-guardian-test-pr
 gmail-cleanup
 gmail-receipts
-incident-response-state
 qiita-publish
 repo-commit
 repo-export
@@ -88,8 +80,6 @@ sns-announce-check-length
 sns-announce-extract-metadata
 sns-announce-get-posting-time
 sns-announce-load-config
-video-announce-extract-thumbnail
-yt-chorus-extract
 zenn-publish
 EOF
 }
@@ -137,15 +127,7 @@ devflow_interp_for() {
 
 skills_target_for() {
     case "$1" in
-        bgm-process) echo "bash bgm/scripts/process-bgm.sh" ;;
-        bgm-normalize-audio) echo "bash bgm/scripts/normalize-audio.sh" ;;
         blog-cross-post-resolve-source) echo "bash blog-cross-post/scripts/resolve-source.sh" ;;
-        blog-find-articles) echo "bash _shared/scripts/find-articles.sh" ;;
-        blog-mv-date) echo "bash blog-mv-date/scripts/move-date.sh" ;;
-        blog-swap-dates) echo "bash blog-swap-dates/scripts/swap-dates.sh" ;;
-        bug-hunt-state) echo "bash bug-hunt/scripts/hunt-state.sh" ;;
-        code-audit-team-state) echo "bash code-audit-team/scripts/audit-state.sh" ;;
-        incident-response-state) echo "bash incident-response/scripts/incident-state.sh" ;;
         dep-guardian-discover-prs) echo "bash dep-guardian/scripts/discover-prs.sh" ;;
         dep-guardian-classify-pr) echo "bash dep-guardian/scripts/classify-pr.sh" ;;
         dep-guardian-test-pr) echo "bash dep-guardian/scripts/test-pr.sh" ;;
@@ -163,8 +145,6 @@ skills_target_for() {
         sns-announce-load-config) echo "bash sns-announce/scripts/load-config.sh" ;;
         sns-announce-extract-metadata) echo "bash sns-announce/scripts/extract-metadata.sh" ;;
         sns-announce-get-posting-time) echo "bash sns-announce/scripts/get-posting-time.sh" ;;
-        video-announce-extract-thumbnail) echo "bash video-announce/scripts/extract-thumbnail.sh" ;;
-        yt-chorus-extract) echo "bash yt-chorus-extract/scripts/extract.sh" ;;
         *) echo "" ;;
     esac
 }
@@ -317,18 +297,6 @@ skills_target_for() {
         run bash -n "$file"
         [ "$status" -eq 0 ]
     done <<< "$(skills_expected_names)"
-}
-
-@test "blog-find-articlesがbin経由bare名で機能透過する(引数なしはusageエラー)" {
-    run bash "$REPO_ROOT/plugins/playpark-skills/bin/blog-find-articles"
-    [ "$status" -ne 0 ]
-}
-
-@test "incident-response-stateがbin経由bare名で機能透過する(引数なしはusageエラー)" {
-    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$PATH"
-    run bash "$REPO_ROOT/plugins/playpark-skills/bin/incident-response-state"
-    [ "$status" -eq 1 ]
-    echo "$output" | grep -q 'Usage:'
 }
 
 @test "detect-stackがbin経由bare名で機能透過する" {
