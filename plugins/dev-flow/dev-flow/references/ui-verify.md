@@ -94,6 +94,10 @@ ui-verify-stack smoke --state-dir <...> --session devflow-<issue>[-final]
     接続後の失敗や timeout は変更でサーバーが応答を壊した可能性があるため、環境起因に含めない。
 - workflow の実行環境は Node API もシェルも持たないため、up / down / login / smoke の実行は exec-proxy
   （dev-runner-haiku。stdout をそのまま返すだけで判断はしない）経由になる。
+- agent 呼び出しの label（Final reconcile では `-final` が付く。wait は `ui-verify-wait-final#<n>`）: `ui-verify-stack`（up）/
+  `ui-verify-wait#<n>`（wait）/ `ui-verify-smoke`（smoke）/ `ui-verify-login`（login）/ `ui-verify`（ui-verifier の scenario）/
+  `ui-verify-teardown`（down）。telemetry は label で回数・失敗率・コストを数えるので、決定的な smoke と
+  LLM を使う scenario に同じ label を付けない。
 
 - `up` は detached な supervisor を 1 本起こし、ready（全 step 完了）か失敗まで、最長 `--wait-sec` 秒待って JSON を返す。
   1 回の Bash 呼び出し（上限 600 秒）に収めるため、まだ起動中なら停止を要求せず `phase:"starting"` を返す。

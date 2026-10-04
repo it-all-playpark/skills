@@ -9,16 +9,19 @@
 // responder は label で分岐し、未知 label には null を返す（既存 vm-sandbox routing test と
 // 同じ fail-open 設計。新規 agent 呼び出しを need() で包まない実装であることの間接検証）。
 //
+// label: stack 起動は 'ui-verify-stack'、決定的な smoke（exec-proxy）は 'ui-verify-smoke'、
+// LLM の scenario（ui-verifier）は 'ui-verify'（telemetry で smoke と scenario を区別するため。issue #768）。
+//
 // テストケース（issue 本文のシーケンスどおり）:
 //   (a) realized-diff が UI ファイルを返すが 'ui-verify-config' が {found:false,config:null}
-//       → 'ui-verify-server' は呼ばれず、micro なら evaluator 0 回（AC-2）
+//       → 'ui-verify-stack' は呼ばれず、micro なら evaluator 0 回（AC-2）
 //   (b) 非 UI ファイルのみ → 'ui-verify-config' 自体が呼ばれない（0 オーバーヘッド、AC-2）
 //   (c) micro + UI touch + 有効 config（scenarios 定義済みでも） → evaluator >= 1 回（AC-5）
-//       + 'ui-verify' prompt に smoke 指定 + 'ui-verify-teardown' が呼ばれる
-//   (d) 'ui-verify-server' が {ok:false,phase:'ready',error:'timeout'}
-//       → 'ui-verify' 不発 + teardown 発火 + return.ui_verify==='failed_open'（AC-3）
+//       + 'ui-verify-smoke' prompt に smoke 指定 + 'ui-verify-teardown' が呼ばれる
+//   (d) 'ui-verify-stack' が {ok:false,phase:'ready',error:'timeout'}
+//       → 検証（smoke / scenario）不発 + teardown 発火 + return.ui_verify==='failed_open'（AC-3）
 //   (e) phase:'install' 失敗 → return.ui_verify==='setup_failed'（AC-3）
-//   (f) 'ui-verify' responder が throw → 'ui-verify-teardown' は呼ばれる（AC-4）
+//   (f) 'ui-verify-smoke' responder が throw → 'ui-verify-teardown' は呼ばれる（AC-4）
 //   (g) [struct] runEval 行に `|| uiTouched` が含まれる
 //
 // TDD red: F3 実装前は 'ui-verify-config' 等の新規 label 呼び出しが存在せず、
@@ -41,8 +44,8 @@ const src = readFileSync(devFlowPath, 'utf8');
 
 /**
  * ui-verify-routing 専用の VM sandbox を組む。
- * label 単位の overrides を渡せる点が主眼（ui-verify-config / ui-verify-server / ui-verify /
- * ui-verify-teardown の各分岐をテストケースごとに差し替える）。
+ * label 単位の overrides を渡せる点が主眼（ui-verify-config / ui-verify-stack / ui-verify-smoke /
+ * ui-verify / ui-verify-teardown の各分岐をテストケースごとに差し替える）。
  *
  * @param {object} opts
  * @param {object} opts.analyzeReq - analyze フェーズの agent が返す req オブジェクト（SHAPE を決定する）
@@ -152,6 +155,9 @@ async function runDevFlowInSandbox(src, ctx) {
   return { error: caughtError, returned };
 }
 
+// 検証の呼び出し（smoke / scenario のどちらか）。stack 起動失敗時などに「検証していない」ことを見る
+const isVerifyCall = (c) => c.label === 'ui-verify-smoke' || c.label === 'ui-verify';
+
 // micro に落ちる req（count=1 ≤ 2, ac.length=2 ≤ 3, type=feat → floor='micro'）
 const microReq = {
   summary: 's',
@@ -172,10 +178,10 @@ const VALID_CFG = {
 
 // ============================================================
 // (a) realized-diff が UI ファイルを返すが 'ui-verify-config' が {found:false,config:null}
-//     → 'ui-verify-server' は呼ばれず、micro なら evaluator 0 回（AC-2）
+//     → 'ui-verify-stack' は呼ばれず、micro なら evaluator 0 回（AC-2）
 // ============================================================
 
-test('[ui-verify] (a) UI touch だが config 無し → ui-verify-server 不発 + evaluator 0 回', async () => {
+test('[ui-verify] (a) UI touch だが config 無し → ui-verify-stack 不発 + evaluator 0 回', async () => {
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
@@ -194,8 +200,8 @@ test('[ui-verify] (a) UI touch だが config 無し → ui-verify-server 不発 
     '(a) UI パス touch なら ui-verify-config は呼ばれるはず',
   );
   assert.ok(
-    !calls.some((c) => c.label === 'ui-verify-server'),
-    '(a) config found:false なら ui-verify-server は呼ばれないはず',
+    !calls.some((c) => c.label === 'ui-verify-stack'),
+    '(a) config found:false なら ui-verify-stack は呼ばれないはず',
   );
   const evaluatorCalls = calls.filter((c) => c.agentType === 'dev-flow:evaluator');
   assert.equal(
@@ -235,7 +241,7 @@ test('[ui-verify] (b) 非 UI ファイルのみ → ui-verify-config が一切�
 
 // ============================================================
 // (c) micro + UI touch + 有効 config（scenarios 定義済みでも）
-//     → evaluator >= 1 回（AC-5）+ 'ui-verify' prompt に smoke 指定 + 'ui-verify-teardown' が呼ばれる
+//     → evaluator >= 1 回（AC-5）+ 'ui-verify-smoke' prompt に smoke 指定 + 'ui-verify-teardown' が呼ばれる
 // ============================================================
 
 test('[ui-verify] (c) micro + UI touch + 有効 config → Evaluate 強制 + smoke-only 固定 + teardown 実行', async () => {
@@ -244,8 +250,8 @@ test('[ui-verify] (c) micro + UI touch + 有効 config → Evaluate 強制 + smo
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: VALID_CFG },
-      'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
-      'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'load ok' },
+      'ui-verify-stack': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'load ok' },
       'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
   });
@@ -261,11 +267,11 @@ test('[ui-verify] (c) micro + UI touch + 有効 config → Evaluate 強制 + smo
     `(c) micro + UI touch + config あり: evaluator は >= 1 回のはずだが ${evaluatorCalls.length} 回 (AC-5)`,
   );
 
-  const uiVerifyCall = calls.find((c) => c.label === 'ui-verify');
-  assert.ok(uiVerifyCall, "(c) 'ui-verify' label の呼び出しが存在すること");
+  const uiVerifyCall = calls.find((c) => c.label === 'ui-verify-smoke');
+  assert.ok(uiVerifyCall, "(c) 'ui-verify-smoke' label の呼び出しが存在すること");
   assert.ok(
     uiVerifyCall.prompt.includes('smoke'),
-    "(c) 'ui-verify' prompt に smoke 指定が含まれること（micro は scenarios 定義済みでも smoke-only 固定）",
+    "(c) 'ui-verify-smoke' prompt に smoke 指定が含まれること（micro は scenarios 定義済みでも smoke-only 固定）",
   );
 
   assert.ok(
@@ -279,17 +285,17 @@ test('[ui-verify] (c) micro + UI touch + 有効 config → Evaluate 強制 + smo
 });
 
 // ============================================================
-// (d) 'ui-verify-server' が {ok:false,phase:'ready',error:'timeout'}
-//     → 'ui-verify' 不発 + teardown 発火 + return.ui_verify==='failed_open'（AC-3）
+// (d) 'ui-verify-stack' が {ok:false,phase:'ready',error:'timeout'}
+//     → 検証（smoke / scenario）不発 + teardown 発火 + return.ui_verify==='failed_open'（AC-3）
 // ============================================================
 
-test('[ui-verify] (d) dev サーバー ready timeout → ui-verify 不発 + teardown 発火 + failed_open', async () => {
+test('[ui-verify] (d) dev サーバー ready timeout → 検証不発 + teardown 発火 + failed_open', async () => {
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: VALID_CFG },
-      'ui-verify-server': { ok: false, phase: 'ready', error: 'timeout' },
+      'ui-verify-stack': { ok: false, phase: 'ready', error: 'timeout' },
     },
   });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
@@ -299,8 +305,8 @@ test('[ui-verify] (d) dev サーバー ready timeout → ui-verify 不発 + tear
   }
 
   assert.ok(
-    !calls.some((c) => c.label === 'ui-verify'),
-    "(d) dev サーバー起動失敗時は 'ui-verify' label が呼ばれないはず",
+    !calls.some(isVerifyCall),
+    "(d) dev サーバー起動失敗時は 'ui-verify-smoke' / 'ui-verify' label が呼ばれないはず",
   );
   assert.ok(
     calls.some((c) => c.label === 'ui-verify-teardown'),
@@ -324,7 +330,7 @@ test("[ui-verify] (e) install phase 失敗 → return.ui_verify==='setup_failed'
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: VALID_CFG },
-      'ui-verify-server': { ok: false, phase: 'install', error: 'npm ci failed' },
+      'ui-verify-stack': { ok: false, phase: 'install', error: 'npm ci failed' },
     },
   });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
@@ -334,8 +340,8 @@ test("[ui-verify] (e) install phase 失敗 → return.ui_verify==='setup_failed'
   }
 
   assert.ok(
-    !calls.some((c) => c.label === 'ui-verify'),
-    "(e) install 失敗時は 'ui-verify' label が呼ばれないはず",
+    !calls.some(isVerifyCall),
+    "(e) install 失敗時は 'ui-verify-smoke' / 'ui-verify' label が呼ばれないはず",
   );
   assert.ok(returned !== null, '(e) workflow は return object を返すべきだが null だった');
   assert.equal(
@@ -346,37 +352,37 @@ test("[ui-verify] (e) install phase 失敗 → return.ui_verify==='setup_failed'
 });
 
 // ============================================================
-// (f) 'ui-verify' responder が throw → 'ui-verify-teardown' は呼ばれる（AC-4 の workflow 側保証）
+// (f) 'ui-verify-smoke' responder が throw → 'ui-verify-teardown' は呼ばれる（AC-4 の workflow 側保証）
 // ============================================================
 
-test("[ui-verify] (f) ui-verifier が throw しても ui-verify-teardown は必ず呼ばれ、run 全体は続行する（try/catch/finally 保証）", async () => {
+test("[ui-verify] (f) smoke が throw しても ui-verify-teardown は必ず呼ばれ、run 全体は続行する（try/catch/finally 保証）", async () => {
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: VALID_CFG },
-      'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
-      'ui-verify': () => {
-        throw new Error('ui-verifier crashed (forced failure test)');
+      'ui-verify-stack': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify-smoke': () => {
+        throw new Error('smoke exec-proxy crashed (forced failure test)');
       },
     },
   });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
 
-  // ui-verify 呼び出し自体は発生している（throw は agent() 呼び出しの結果として発生）
-  assert.ok(calls.some((c) => c.label === 'ui-verify'), "(f) 'ui-verify' 呼び出しは発生しているはず");
+  // smoke 呼び出し自体は発生している（throw は agent() 呼び出しの結果として発生）
+  assert.ok(calls.some((c) => c.label === 'ui-verify-smoke'), "(f) 'ui-verify-smoke' 呼び出しは発生しているはず");
   // throw しても finally は必ず実行される（workflow 側の保証）
   assert.ok(
     calls.some((c) => c.label === 'ui-verify-teardown'),
-    "(f) 'ui-verify' が throw しても 'ui-verify-teardown' は try/finally により必ず呼ばれるはず",
+    "(f) 'ui-verify-smoke' が throw しても 'ui-verify-teardown' は try/finally により必ず呼ばれるはず",
   );
   // advisory な補助 gate の失敗が run 全体を落としてはならない（fail-open 契約。PR #286 review）
-  assert.equal(error, null, `(f) 'ui-verify' throw で run 全体が abort してはならないが error が発生: ${error?.message}`);
-  assert.ok(returned !== null, "(f) 'ui-verify' throw 時も workflow は return object を返すべきだが null だった（run 全体が死んだことを示す）");
+  assert.equal(error, null, `(f) 'ui-verify-smoke' throw で run 全体が abort してはならないが error が発生: ${error?.message}`);
+  assert.ok(returned !== null, "(f) 'ui-verify-smoke' throw 時も workflow は return object を返すべきだが null だった（run 全体が死んだことを示す）");
   assert.equal(
     returned?.ui_verify,
     'failed_open',
-    `(f) 'ui-verify' throw 時は returned.ui_verify が 'failed_open' のはずだが ${JSON.stringify(returned?.ui_verify)}`,
+    `(f) 'ui-verify-smoke' throw 時は returned.ui_verify が 'failed_open' のはずだが ${JSON.stringify(returned?.ui_verify)}`,
   );
 });
 
@@ -401,8 +407,8 @@ test('[ui-verify] (g) eval#1 prompt に ui_verification（ui-verifier raw result
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: VALID_CFG },
-      'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
-      'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'SENTINEL-UI-OK' },
+      'ui-verify-stack': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'SENTINEL-UI-OK' },
       'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
   });
@@ -446,22 +452,24 @@ test('[ui-verify] (h) stack 形式: up は worktree / state-dir / issue だけ�
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: STACK_CFG },
-      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', smoke_url: 'http://127.0.0.1:6596/select-tenant', port: 6596 },
-      'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+      'ui-verify-stack': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', smoke_url: 'http://127.0.0.1:6596/select-tenant', port: 6596 },
+      'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
       'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
   });
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   assert.equal(error, null, error?.message);
 
-  const up = calls.find((c) => c.label === 'ui-verify-server');
-  assert.ok(up, "(h) 'ui-verify-server' が呼ばれること");
+  const up = calls.find((c) => c.label === 'ui-verify-stack');
+  assert.ok(up, "(h) 'ui-verify-stack' が呼ばれること");
+  assert.ok(!calls.some((c) => c.label.startsWith('ui-verify-server')), "(h) stack 起動の label に旧名 'ui-verify-server' を使わない（issue #768）");
   assert.match(up.prompt, /ui-verify-stack up --worktree '\/tmp\/wt' --state-dir '\/tmp\/wt\/\.devflow-tmp\/ui-verify' --issue 1/);
   assert.ok(!/SENTINEL-(DB|SEED|WEB)-CMD/.test(up.prompt), '(h) 宣言コマンドは prompt に埋め込まない（ui-verify-stack が config を読む）');
 
   // smoke は LLM を挟まない: exec-proxy が ui-verify-stack smoke を叩くだけ（login もその中で決定的に実行）
-  const verify = calls.find((c) => c.label === 'ui-verify');
+  const verify = calls.find((c) => c.label === 'ui-verify-smoke');
   assert.equal(verify.agentType, 'dev-flow:dev-runner-haiku', '(h) smoke は ui-verifier（LLM）ではなく exec-proxy');
+  assert.ok(!calls.some((c) => c.label === 'ui-verify'), "(h) smoke は scenario 用の label 'ui-verify' で記録しない（issue #768）");
   assert.ok(verify.prompt.includes("ui-verify-stack smoke --state-dir '/tmp/wt/.devflow-tmp/ui-verify' --session 'devflow-1'"));
   assert.ok(!verify.prompt.includes('SENTINEL-LOGIN-STEP'), '(h) login の中身は prompt に載せない（スクリプトが spec から読む）');
   assert.ok(!calls.some((c) => c.agentType === 'dev-flow:ui-verifier'), '(h) smoke では ui-verifier を spawn しない');
@@ -480,17 +488,17 @@ for (const [phase, expected] of [['config', 'setup_failed'], ['setup', 'setup_fa
       realizedFiles: ['src/components/Foo.tsx'],
       overrides: {
         'ui-verify-config': { found: true, config: STACK_CFG },
-        'ui-verify-server': { ok: false, phase, step: 'seed', error: 'exit 1' },
+        'ui-verify-stack': { ok: false, phase, step: 'seed', error: 'exit 1' },
       },
     });
     const { returned } = await runDevFlowInSandbox(src, ctx);
-    assert.ok(!calls.some((c) => c.label === 'ui-verify'), `(i) ${phase} 失敗時は ui-verifier を呼ばない`);
+    assert.ok(!calls.some(isVerifyCall), `(i) ${phase} 失敗時は検証（smoke / scenario）を呼ばない`);
     assert.ok(calls.some((c) => c.label === 'ui-verify-teardown'), `(i) ${phase} 失敗時も teardown は呼ぶ`);
     assert.equal(returned?.ui_verify, expected);
   });
 }
 
-test('[ui-verify] (j) stack 形式の config が不正 → ui-verify-server を呼ばず setup_failed', async () => {
+test('[ui-verify] (j) stack 形式の config が不正 → ui-verify-stack を呼ばず setup_failed', async () => {
   const { ctx, calls } = makeUiVerifySandbox({
     analyzeReq: microReq,
     realizedFiles: ['src/components/Foo.tsx'],
@@ -499,7 +507,7 @@ test('[ui-verify] (j) stack 形式の config が不正 → ui-verify-server を�
     },
   });
   const { returned } = await runDevFlowInSandbox(src, ctx);
-  assert.ok(!calls.some((c) => c.label === 'ui-verify-server'));
+  assert.ok(!calls.some((c) => c.label === 'ui-verify-stack'));
   assert.equal(returned?.ui_verify, 'setup_failed');
 });
 
@@ -515,7 +523,7 @@ test('[ui-verify] (k) scenario + login → ui-verify-login（exec-proxy）→ ui
     realizedFiles: ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: SCENARIO_CFG },
-      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
+      'ui-verify-stack': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
       'ui-verify-login': { ok: true, ran: 2, total: 2 },
       'ui-verify': { ok: true, mode: 'scenario', checks: [{ ac_index: 0, action: 'open /shifts', result: 'pass' }], console_errors: [], screenshots: [], summary: 'ok' },
       'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
@@ -529,6 +537,7 @@ test('[ui-verify] (k) scenario + login → ui-verify-login（exec-proxy）→ ui
   assert.equal(calls[li].agentType, 'dev-flow:dev-runner-haiku');
   assert.ok(calls[li].prompt.includes("ui-verify-stack login --state-dir '/tmp/wt/.devflow-tmp/ui-verify' --session 'devflow-1'"));
   assert.equal(calls[vi].agentType, 'dev-flow:ui-verifier');
+  assert.ok(!calls.some((c) => c.label === 'ui-verify-smoke'), "(k) scenario は smoke 用の label 'ui-verify-smoke' で記録しない（issue #768）");
   assert.ok(calls[vi].prompt.includes('ログイン済み'));
   assert.ok(!calls[vi].prompt.includes('SENTINEL-LOGIN-STEP'), '(k) ui-verifier に login 手順を渡さない');
   assert.equal(returned?.ui_verify, 'passed');
@@ -541,7 +550,7 @@ test('[ui-verify] (k) scenario で login が失敗 → ui-verifier を呼ばず 
     realizedFiles: ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: SCENARIO_CFG },
-      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
+      'ui-verify-stack': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
       'ui-verify-login': { ok: false, ran: 1, total: 2, failed: { index: 1, command: 'click SENTINEL-LOGIN-STEP' }, error: 'element not found' },
       'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
@@ -559,7 +568,7 @@ test('[ui-verify] (k) scenario で login の exec-proxy が null → failed_open
     realizedFiles: ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: SCENARIO_CFG },
-      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
+      'ui-verify-stack': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
       'ui-verify-login': null,
       'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
@@ -583,8 +592,8 @@ test('[ui-verify] (l) smoke が env_failure（stack 不在・agent-browser 不�
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: STACK_CFG },
-      'ui-verify-server': READY_SRV,
-      'ui-verify': { ok: false, mode: 'smoke', checks: [{ action: 'open http://127.0.0.1:6596/select-tenant', result: 'fail', evidence: 'net::ERR_CONNECTION_REFUSED' }], console_errors: [], screenshots: [], summary: 'load 失敗', env_failure: true },
+      'ui-verify-stack': READY_SRV,
+      'ui-verify-smoke': { ok: false, mode: 'smoke', checks: [{ action: 'open http://127.0.0.1:6596/select-tenant', result: 'fail', evidence: 'net::ERR_CONNECTION_REFUSED' }], console_errors: [], screenshots: [], summary: 'load 失敗', env_failure: true },
       'ui-verify-teardown': TEARDOWN_OK,
     },
   });
@@ -602,8 +611,8 @@ test('[ui-verify] (l) smoke がページに届いた後の失敗（env_failure �
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: STACK_CFG },
-      'ui-verify-server': READY_SRV,
-      'ui-verify': { ok: false, mode: 'smoke', checks: [{ action: 'open http://127.0.0.1:6596/select-tenant', result: 'fail', evidence: 'net::ERR_EMPTY_RESPONSE' }], console_errors: [], screenshots: [], summary: 'load 失敗' },
+      'ui-verify-stack': READY_SRV,
+      'ui-verify-smoke': { ok: false, mode: 'smoke', checks: [{ action: 'open http://127.0.0.1:6596/select-tenant', result: 'fail', evidence: 'net::ERR_EMPTY_RESPONSE' }], console_errors: [], screenshots: [], summary: 'load 失敗' },
       'ui-verify-teardown': TEARDOWN_OK,
     },
   });
@@ -618,8 +627,8 @@ test('[ui-verify] (l) smoke の networkidle 待ちが skip（非致命）なら 
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: STACK_CFG },
-      'ui-verify-server': READY_SRV,
-      'ui-verify': { ok: true, mode: 'smoke', checks: [{ action: 'open x', result: 'pass' }, { action: 'wait --load networkidle', result: 'skip', evidence: 'networkidle 待ちは失敗（非致命）' }], console_errors: [], screenshots: [], summary: 'load ok（networkidle 待ちは失敗）' },
+      'ui-verify-stack': READY_SRV,
+      'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [{ action: 'open x', result: 'pass' }, { action: 'wait --load networkidle', result: 'skip', evidence: 'networkidle 待ちは失敗（非致命）' }], console_errors: [], screenshots: [], summary: 'load ok（networkidle 待ちは失敗）' },
       'ui-verify-teardown': TEARDOWN_OK,
     },
   });
@@ -633,7 +642,7 @@ test('[ui-verify] (l) scenario で login が env_failure（agent-browser 不在�
     realizedFiles: ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: SCENARIO_CFG },
-      'ui-verify-server': READY_SRV,
+      'ui-verify-stack': READY_SRV,
       'ui-verify-login': { ok: false, error: 'agent-browser を実行できない（agent-browser: ENOENT）', env_failure: true },
       'ui-verify-teardown': TEARDOWN_OK,
     },
@@ -659,10 +668,10 @@ test('[ui-verify] (m) up が starting → wait#1 が starting → wait#2 で rea
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: STACK_CFG },
-      'ui-verify-server': STARTING(),
+      'ui-verify-stack': STARTING(),
       'ui-verify-wait#1': STARTING(),
       'ui-verify-wait#2': READY_SRV,
-      'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+      'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
       'ui-verify-teardown': TEARDOWN_OK,
     },
   });
@@ -674,7 +683,7 @@ test('[ui-verify] (m) up が starting → wait#1 が starting → wait#2 で rea
   assert.ok(w.prompt.includes("ui-verify-stack wait --state-dir '/tmp/wt/.devflow-tmp/ui-verify' --wait-sec 480"));
   assert.ok(w.prompt.includes('timeout 600000'));
   const wi = calls.findIndex((c) => c.label === 'ui-verify-wait#2');
-  const vi = calls.findIndex((c) => c.label === 'ui-verify');
+  const vi = calls.findIndex((c) => c.label === 'ui-verify-smoke');
   assert.ok(vi > wi, '(m) ready の後に smoke');
   assert.equal(returned?.ui_verify, 'passed');
 });
@@ -683,7 +692,7 @@ test('[ui-verify] (m) starting のまま wait_ceiling_sec から決まる回数�
   // ceil(1000 / 480) + 1 = 4 回
   const overrides = {
     'ui-verify-config': { found: true, config: STACK_CFG },
-    'ui-verify-server': STARTING(),
+    'ui-verify-stack': STARTING(),
     'ui-verify-teardown': TEARDOWN_OK,
   };
   for (let i = 1; i <= 8; i++) overrides[`ui-verify-wait#${i}`] = STARTING();
@@ -691,7 +700,7 @@ test('[ui-verify] (m) starting のまま wait_ceiling_sec から決まる回数�
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   assert.equal(error, null, error?.message);
   assert.deepEqual(waitLabels(calls), ['ui-verify-wait#1', 'ui-verify-wait#2', 'ui-verify-wait#3', 'ui-verify-wait#4']);
-  assert.ok(!calls.some((c) => c.label === 'ui-verify'), '(m) ready にならなければ検証しない');
+  assert.ok(!calls.some(isVerifyCall), '(m) ready にならなければ検証しない');
   assert.ok(calls.some((c) => c.label === 'ui-verify-teardown'), '(m) teardown で stack を止める');
   assert.equal(returned?.ui_verify, 'failed_open');
 });
@@ -699,7 +708,7 @@ test('[ui-verify] (m) starting のまま wait_ceiling_sec から決まる回数�
 test('[ui-verify] (m) up の応答に wait_ceiling_sec が無ければ wait は既定 2 回で打ち切る', async () => {
   const overrides = {
     'ui-verify-config': { found: true, config: STACK_CFG },
-    'ui-verify-server': STARTING({ wait_ceiling_sec: undefined }),
+    'ui-verify-stack': STARTING({ wait_ceiling_sec: undefined }),
     'ui-verify-teardown': TEARDOWN_OK,
   };
   for (let i = 1; i <= 8; i++) overrides[`ui-verify-wait#${i}`] = STARTING({ wait_ceiling_sec: undefined });
@@ -715,7 +724,7 @@ test('[ui-verify] (m) wait の応答が null → 繰り返さず failed_open + t
     realizedFiles: ['src/components/Foo.tsx'],
     overrides: {
       'ui-verify-config': { found: true, config: STACK_CFG },
-      'ui-verify-server': STARTING(),
+      'ui-verify-stack': STARTING(),
       'ui-verify-wait#1': null,
       'ui-verify-wait#2': READY_SRV,
       'ui-verify-teardown': TEARDOWN_OK,
@@ -724,7 +733,44 @@ test('[ui-verify] (m) wait の応答が null → 繰り返さず failed_open + t
   const { error, returned } = await runDevFlowInSandbox(src, ctx);
   assert.equal(error, null, error?.message);
   assert.deepEqual(waitLabels(calls), ['ui-verify-wait#1']);
-  assert.ok(!calls.some((c) => c.label === 'ui-verify'));
+  assert.ok(!calls.some(isVerifyCall));
   assert.ok(calls.some((c) => c.label === 'ui-verify-teardown'));
   assert.equal(returned?.ui_verify, 'failed_open');
+});
+
+// ============================================================
+// (n) label が実態どおり（issue #768）: stack 起動は 'ui-verify-stack'（旧名 ui-verify-server を使わない）、
+//     smoke（exec-proxy）と scenario（ui-verifier）は別の label で記録される
+// ============================================================
+
+test('[ui-verify] (n) smoke と scenario は別の label（ui-verify-smoke / ui-verify）、stack 起動は ui-verify-stack で記録される', async () => {
+  const run = async (analyzeReq, realizedFiles, config, verifyLabel, mode) => {
+    const { ctx, calls } = makeUiVerifySandbox({
+      analyzeReq,
+      realizedFiles,
+      overrides: {
+        'ui-verify-config': { found: true, config },
+        'ui-verify-stack': READY_SRV,
+        'ui-verify-login': { ok: true, ran: 2, total: 2 },
+        [verifyLabel]: { ok: true, mode, checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+        'ui-verify-teardown': TEARDOWN_OK,
+      },
+    });
+    const { error, returned } = await runDevFlowInSandbox(src, ctx);
+    assert.equal(error, null, error?.message);
+    assert.equal(returned?.ui_verify_mode, mode);
+    return calls;
+  };
+  const smokeCalls = await run(microReq, ['src/components/Foo.tsx'], STACK_CFG, 'ui-verify-smoke', 'smoke');
+  const scenarioCalls = await run(standardReq, ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'], SCENARIO_CFG, 'ui-verify', 'scenario');
+
+  const verifyCalls = (calls) => calls.filter(isVerifyCall).map((c) => ({ label: c.label, agentType: c.agentType }));
+  assert.deepEqual(verifyCalls(smokeCalls), [{ label: 'ui-verify-smoke', agentType: 'dev-flow:dev-runner-haiku' }]);
+  assert.deepEqual(verifyCalls(scenarioCalls), [{ label: 'ui-verify', agentType: 'dev-flow:ui-verifier' }]);
+
+  for (const calls of [smokeCalls, scenarioCalls]) {
+    const up = calls.filter((c) => c.prompt.includes('ui-verify-stack up '));
+    assert.deepEqual(up.map((c) => c.label), ['ui-verify-stack'], 'stack 起動（ui-verify-stack up）は label ui-verify-stack で 1 回');
+    assert.ok(!calls.some((c) => c.label.startsWith('ui-verify-server')), "旧名 'ui-verify-server' の label を使わない");
+  }
 });

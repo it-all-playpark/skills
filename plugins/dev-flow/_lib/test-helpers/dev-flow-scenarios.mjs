@@ -22,15 +22,15 @@ const UI_OVERRIDES = {
   'merge-tier-facts': mergeTierFacts({ files: [UI_FILE] }),
   'ui-verify-config': { found: true, config: VALID_UI_CFG },
   'ui-verify-config-final': { found: true, config: VALID_UI_CFG },
-  'ui-verify-server': { ok: true, phase: 'ready', port: 4100, pid: 1 },
-  'ui-verify-server-final': { ok: true, phase: 'ready', port: 4100, pid: 1 },
-  'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
-  'ui-verify-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+  'ui-verify-stack': { ok: true, phase: 'ready', port: 4100, pid: 1 },
+  'ui-verify-stack-final': { ok: true, phase: 'ready', port: 4100, pid: 1 },
+  'ui-verify-smoke': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+  'ui-verify-smoke-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
   'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
   'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
 };
 
-// scenario mode（standard 以上 + scenarios 宣言）+ login 宣言 → ui-verify-login（exec-proxy）→ ui-verifier
+// scenario mode（standard 以上 + scenarios 宣言）+ login 宣言 → ui-verify-login（exec-proxy）→ ui-verifier（label 'ui-verify'）
 const UI_FILES3 = ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'];
 const SCENARIO_UI_CFG = {
   ports: ['web'],

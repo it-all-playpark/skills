@@ -5325,7 +5325,7 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
       + `（判定や脚色をしない。失敗時に ok:true を生成してはならない。& や nohup を足さない — 常駐化はコマンド自身が行う）:\n${cmd}`
     let srv = await trackedAgent(
       stackProxy(`ui-verify-stack up --worktree '${WT}' --state-dir '${stateDir}' --issue ${ISSUE} --wait-sec ${UI_VERIFY_WAIT_SEC}`),
-      { agentType: 'dev-runner-haiku', schema: UISRV, label: 'ui-verify-server' + labelSuffix, phase: phaseName },
+      { agentType: 'dev-runner-haiku', schema: UISRV, label: 'ui-verify-stack' + labelSuffix, phase: phaseName },
     )
     // up は 1 回の Bash（上限 600 秒）に収まる秒数だけ待ち、まだ起動中なら phase:'starting' を返す。
     // 重い install 等で up 全体が長い宣言は、ここで wait を繰り返して待つ（総上限 wait_ceiling_sec は
@@ -5346,12 +5346,14 @@ async function runUiVerifyFlow({ cfg, ledger, phaseName, labelSuffix, idPrefix, 
       const baseUrl = srv.base_url ?? `http://127.0.0.1:${srv.port}`
       // smoke と login は決定的な手順なので LLM を挟まず ui-verify-stack が agent-browser を直接叩く。
       // workflow 実行環境は Node API もシェルも持たないため、実行自体は exec-proxy（出力をそのまま返すだけ）経由。
+      // label は smoke（決定的・exec-proxy）を 'ui-verify-smoke'、scenario（LLM の ui-verifier）を 'ui-verify' に分ける
+      // — telemetry が label で集計するため、共有すると LLM を使う scenario の失敗率・コストを切り出せない。
       const execProxy = (cmd) => `cd ${WT} で作業。次を Bash で **timeout 300000** を指定して 1 回だけ実行し、**stdout の JSON object をそのまま** 返せ`
         + `（判定や脚色をしない。失敗時に ok:true を生成してはならない）:\n${cmd}`
       if (mode === 'smoke') {
         result = await trackedAgent(
           execProxy(`ui-verify-stack smoke --state-dir '${stateDir}' --session '${session}'`),
-          { agentType: 'dev-runner-haiku', schema: UIVERIFY, label: 'ui-verify' + labelSuffix, phase: phaseName },
+          { agentType: 'dev-runner-haiku', schema: UIVERIFY, label: 'ui-verify-smoke' + labelSuffix, phase: phaseName },
         )
       } else {
         // scenario の前段ログインも決定的に済ませてから、同じ session を ui-verifier に渡す。

@@ -20,9 +20,9 @@
 //       'Final reconcile 再検証不能'（AC-3）
 //   (e) fixes=1 + reconcile-sync 失敗 → unavailable + HOLD + calls に 'test#final' が現れない
 //   (f) fixes=1 + changed-files-final が UI ファイルを返し ui-verify-config-final が有効 config
-//       → ui-verify-server-final/ui-verify-final/ui-verify-teardown-final が呼ばれ
+//       → ui-verify-stack-final/ui-verify-smoke-final/ui-verify-teardown-final が呼ばれ
 //       final_ui_verify が設定される（AC-4）+ journal-log prompt に 'final_reconcile'（AC-6）
-//   (g) fixes=1 + 'ui-verify-final' が throw → teardown は呼ばれ workflow は完走、
+//   (g) fixes=1 + 'ui-verify-smoke-final' が throw → teardown は呼ばれ workflow は完走、
 //       final_ui_verify==='failed_open'（AC-7 fail-open + teardown 保証）
 //   (h) calls 配列で 'merge-tier-facts'（Merge tier）が 'reconcile-sync' より後（AC-5）
 //   (i) fixes=1 + changed-files-final null → final_reconcile==='reverified' のまま（fail-open）
@@ -163,7 +163,7 @@ test('[final-reconcile] (a) fixes_applied=0 → 新規 agent 呼び出しゼロ 
   assertNoCrash(error, 'a');
   assert.ok(result !== null, '(a) workflow は return object を返すべきだが null だった');
 
-  const finalLabels = ['reconcile-sync', 'test#final', 'changed-files-final', 'ui-verify-config-final', 'ui-verify-server-final', 'ui-verify-final', 'ui-verify-teardown-final', 'ci-final'];
+  const finalLabels = ['reconcile-sync', 'test#final', 'changed-files-final', 'ui-verify-config-final', 'ui-verify-stack-final', 'ui-verify-smoke-final', 'ui-verify-teardown-final', 'ci-final'];
   for (const l of finalLabels) {
     assert.ok(!calls.some((c) => c.label === l), `(a) fixes_applied=0 では label==='${l}' の呼び出しが存在してはならない`);
   }
@@ -301,8 +301,8 @@ test('[final-reconcile] (f) fixes=1 + UI touch + 有効 config → ui-verify-*-f
     overrides: {
       'changed-files-final': { files: ['src/components/A.tsx'] },
       'ui-verify-config-final': { found: true, config: VALID_CFG },
-      'ui-verify-server-final': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
-      'ui-verify-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+      'ui-verify-stack-final': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify-smoke-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
       'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
   });
@@ -310,9 +310,13 @@ test('[final-reconcile] (f) fixes=1 + UI touch + 有効 config → ui-verify-*-f
   assertNoCrash(error, 'f');
   assert.ok(result !== null, '(f) workflow は return object を返すべきだが null だった');
 
-  for (const l of ['ui-verify-config-final', 'ui-verify-server-final', 'ui-verify-final', 'ui-verify-teardown-final']) {
+  for (const l of ['ui-verify-config-final', 'ui-verify-stack-final', 'ui-verify-smoke-final', 'ui-verify-teardown-final']) {
     assert.ok(calls.some((c) => c.label === l), `(f) label==='${l}' が呼ばれるはず`);
   }
+  // issue #768: 起動は旧名 ui-verify-server-final で記録しない / smoke は scenario の label（ui-verify-final）を使わない
+  assert.ok(!calls.some((c) => c.label.startsWith('ui-verify-server')), "(f) stack 起動の label に旧名 'ui-verify-server' を使わない");
+  assert.ok(!calls.some((c) => c.label === 'ui-verify-final'), "(f) smoke を scenario 用の label 'ui-verify-final' で記録しない");
+  assert.equal(calls.find((c) => c.label === 'ui-verify-smoke-final')?.agentType, 'dev-flow:dev-runner-haiku', '(f) smoke-final は exec-proxy（dev-runner-haiku）');
   assert.equal(result?.final_ui_verify, 'passed', `(f) final_ui_verify は 'passed' のはずだが ${JSON.stringify(result?.final_ui_verify)}`);
 
   // issue #494: 実際の telemetry payload は journal-save (stage1) の prompt に載る
@@ -322,23 +326,23 @@ test('[final-reconcile] (f) fixes=1 + UI touch + 有効 config → ui-verify-*-f
 });
 
 // ============================================================
-// (g) fixes=1 + 'ui-verify-final' throw → teardown は呼ばれ workflow は完走、failed_open（AC-7）
+// (g) fixes=1 + 'ui-verify-smoke-final' throw → teardown は呼ばれ workflow は完走、failed_open（AC-7）
 // ============================================================
 
-test("[final-reconcile] (g) 'ui-verify-final' throw → teardown 実行 + workflow 完走 + final_ui_verify failed_open", async () => {
+test("[final-reconcile] (g) 'ui-verify-smoke-final' throw → teardown 実行 + workflow 完走 + final_ui_verify failed_open", async () => {
   const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
     overrides: {
       'changed-files-final': { files: ['src/components/A.tsx'] },
       'ui-verify-config-final': { found: true, config: VALID_CFG },
-      'ui-verify-server-final': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
-      'ui-verify-final': () => { throw new Error('ui-verifier crashed (forced failure test)'); },
+      'ui-verify-stack-final': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify-smoke-final': () => { throw new Error('smoke exec-proxy crashed (forced failure test)'); },
       'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
   });
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
 
-  assert.ok(calls.some((c) => c.label === 'ui-verify-final'), "(g) 'ui-verify-final' 呼び出しは発生しているはず");
+  assert.ok(calls.some((c) => c.label === 'ui-verify-smoke-final'), "(g) 'ui-verify-smoke-final' 呼び出しは発生しているはず");
   assert.ok(calls.some((c) => c.label === 'ui-verify-teardown-final'), "(g) throw しても 'ui-verify-teardown-final' は必ず呼ばれるはず（try/finally）");
   assert.equal(error, null, `(g) throw で run 全体が abort してはならないが error が発生: ${error?.message}`);
   assert.ok(result !== null, '(g) workflow は return object を返すべきだが null だった（run 全体が死んだことを示す）');
@@ -450,8 +454,8 @@ test("[final-reconcile] (k) fixes=1 + test#final null + UI touch + 有効 config
       'test#final': null,
       'changed-files-final': { files: ['src/components/A.tsx'] },
       'ui-verify-config-final': { found: true, config: VALID_CFG },
-      'ui-verify-server-final': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
-      'ui-verify-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+      'ui-verify-stack-final': { ok: true, phase: 'ready', port: 4100, pid: 1234 },
+      'ui-verify-smoke-final': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
       'ui-verify-teardown-final': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
     },
   });
@@ -460,7 +464,7 @@ test("[final-reconcile] (k) fixes=1 + test#final null + UI touch + 有効 config
   assert.ok(result !== null, '(k) workflow は return object を返すべきだが null だった');
 
   assert.equal(result?.final_reconcile, 'unavailable', `(k) final_reconcile は 'unavailable' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
-  for (const l of ['changed-files-final', 'ui-verify-config-final', 'ui-verify-server-final', 'ui-verify-final', 'ui-verify-teardown-final']) {
+  for (const l of ['changed-files-final', 'ui-verify-config-final', 'ui-verify-stack-final', 'ui-verify-smoke-final', 'ui-verify-teardown-final']) {
     assert.ok(calls.some((c) => c.label === l), `(k) test#final が null でも label==='${l}' が呼ばれるはず`);
   }
   assert.equal(result?.final_ui_verify, 'passed', `(k) final_ui_verify は 'passed' のはずだが ${JSON.stringify(result?.final_ui_verify)}`);

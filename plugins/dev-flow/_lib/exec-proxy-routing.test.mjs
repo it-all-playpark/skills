@@ -6,7 +6,7 @@
 //     - dev-runner-haiku-ro: read-only 決定論 proxy (danger-grep / diff-hash /
 //       changed-files / CI read 系など)
 //     - dev-runner-haiku: write/Skill 系 proxy 専任 (worktree 作成 / test 実行 /
-//       redgreen / journal / ui-verify-server / PR コメント投稿 (post-summary。issue #392 で
+//       redgreen / journal / ui-verify-stack / ui-verify-smoke / PR コメント投稿 (post-summary。issue #392 で
 //       per-round post-review#i 投稿は終端 post-summary へ統合済み) など)
 //     - dev-runner: 判断寄り (fix / analyze)
 //
@@ -57,7 +57,9 @@ const EXPECTED_DEV_FLOW = {
   // write/Skill tier
   'test#*': RW,
   'test#final': RW,
-  'ui-verify-server*': RW,
+  'ui-verify-stack*': RW,
+  // smoke は決定的な exec-proxy。LLM の scenario（ui-verifier）は label 'ui-verify' で別に記録される
+  'ui-verify-smoke*': RW,
   'ui-verify-teardown*': RW,
   'ui-verify-login*': RW,
   'redgreen': RW,
