@@ -27,16 +27,14 @@ Save session context and learnings.
 | Script | Purpose |
 |--------|---------|
 | `scripts/save-session.sh --title "TITLE" --content "CONTENT" [--target global\|project] [--type session\|project\|feedback] [--tags "k=v,..."]` | Save content to memvid with auto-tagging |
-| `scripts/check-failures.sh` | Check for unanalyzed journal failures (returns `{"failure_count": N}`) |
 
 ## Workflow
 
-1. **Check failures** → Run `scripts/check-failures.sh`; notify if count > 0
-2. **Gather** → Collect session state (tasks, decisions, learnings)
-3. **Compose** → Build title and content for memvid entry
-4. **Save** → Run `scripts/save-session.sh` with appropriate `--target` and `--type`
-5. **Verify** → Parse JSON result for success
-6. **Report** → Show what was saved
+1. **Gather** → Collect session state (tasks, decisions, learnings)
+2. **Compose** → Build title and content for memvid entry
+3. **Save** → Run `scripts/save-session.sh` with appropriate `--target` and `--type`
+4. **Verify** → Parse JSON result for success
+5. **Report** → Show what was saved
 
 ## Save Types
 
@@ -45,13 +43,6 @@ Save session context and learnings.
 | session | Full session state | global |
 | learnings | Key insights only | global or project |
 | checkpoint | Recovery point | project |
-
-## Failure Check
-
-| Result | Action |
-|--------|--------|
-| 0 entries | Skip (no failures to analyze) |
-| 1+ entries | Notify: "N件の新規失敗エントリあり。`/skill-retrospective` で分析できます" |
 
 ## Output
 
@@ -81,17 +72,3 @@ To resume: `/session-load --type checkpoint`
 ## Integration
 
 Pairs with `/session-load` for session lifecycle.
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log session-save success \
-  --duration-turns $TURNS
-
-# On failure
-journal log session-save failure \
-  --error-category <category> --error-msg "<message>"
-```

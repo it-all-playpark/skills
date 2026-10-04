@@ -35,17 +35,3 @@ Details: [Setup Guide](references/setup-guide.md)
 ```bash
 zenn-publish <file-path> [--slug <slug>]
 ```
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log zenn-publish success \
-  --duration-turns $TURNS
-
-# On failure
-journal log zenn-publish failure \
-  --error-category <category> --error-msg "<message>"
-```

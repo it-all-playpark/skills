@@ -13,7 +13,7 @@ _SKILL_COMMON_LOADED=1
 # SKILLS_DIR Resolution
 # ============================================================================
 # Resolve playpark-core plugin root from this file's location (_lib/common.sh → core plugin root)。
-# core plugin root（旧: skills repo root）。$SKILLS_DIR/skill-retrospective/scripts/journal.sh と
+# core plugin root（旧: skills repo root）。$SKILLS_DIR/journal/scripts/journal.sh と
 # $SKILLS_DIR/_lib/infra/* はこの root で解決する
 export SKILLS_DIR="${SKILLS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 

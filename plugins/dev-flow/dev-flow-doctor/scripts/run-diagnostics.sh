@@ -89,7 +89,7 @@ require_cmd "jq" "jq is required for diagnostics"
 # Journal script resolution
 # ============================================================================
 
-JOURNAL_SH="${SKILLS_DIR}/skill-retrospective/scripts/journal.sh"
+JOURNAL_SH="${SKILLS_DIR}/journal/scripts/journal.sh"
 HAS_JOURNAL=false
 if [[ -x "$JOURNAL_SH" ]]; then
   HAS_JOURNAL=true

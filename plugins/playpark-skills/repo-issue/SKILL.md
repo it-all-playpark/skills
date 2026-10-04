@@ -83,17 +83,3 @@ Issue body here...
 
 - `gh` CLI installed and authenticated
 - Python 3.10+
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log repo-issue success \
-  --duration-turns $TURNS
-
-# On failure
-journal log repo-issue failure \
-  --error-category <category> --error-msg "<message>"
-```

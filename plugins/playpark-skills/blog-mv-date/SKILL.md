@@ -138,17 +138,3 @@ Zernio API（旧Late）に既存スケジュールがある場合、手動変更
 # dry-run
 /blog-mv-date claude-code-skills 2026-04-01 --dry-run
 ```
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log blog-mv-date success \
-  --duration-turns $TURNS
-
-# On failure
-journal log blog-mv-date failure \
-  --error-category <category> --error-msg "<message>"
-```

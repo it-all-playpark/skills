@@ -49,10 +49,3 @@ harvest（毎日） → sense（候補の優先度付け） → slice（選ん�
 | 1 | gh 呼び出し失敗・コミット取得が不完全（harvest / slice） |
 | 2 | 引数・入力エラー（不正な slug / `--since`、トピックなし） |
 | 3 | slice が上限未満に縮まらない |
-
-## Journal Logging
-
-```bash
-journal log seed-harvest success --duration-turns $TURNS
-journal log seed-harvest failure --error-category <category> --error-msg "<message>"
-```

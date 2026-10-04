@@ -51,17 +51,3 @@ python scripts/remove_bg.py photo.jpg --model u2net_human_seg
 ## Script Location
 
 `scripts/remove_bg.py` - Main background removal script
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log image-remove-bg success \
-  --duration-turns $TURNS
-
-# On failure
-journal log image-remove-bg failure \
-  --error-category <category> --error-msg "<message>"
-```

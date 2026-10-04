@@ -31,20 +31,6 @@ memvid find ~/.claude/memory/global.mv2 \
   --mode auto --top-k 3 --json
 ```
 
-## skill-retrospective 統合
-
-振り返り結果の保存:
-
-```bash
-memvid put ~/.claude/memory/global.mv2 --input retrospective.md \
-  --embedding \
-  --title "Retrospective: dev-kickoff failures 2026-03" \
-  --tag type=retrospective \
-  --uri "retrospective/2026-03-16/dev-kickoff"
-
-memvid commit ~/.claude/memory/global.mv2
-```
-
 ## ユーザーフィードバックの保存
 
 ```bash

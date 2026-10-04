@@ -81,17 +81,3 @@ For --type inline:
 /doc-generate lib/utils.ts --type inline
 /doc-generate --type guide --style brief
 ```
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log doc-generate success \
-  --duration-turns $TURNS
-
-# On failure
-journal log doc-generate failure \
-  --error-category <category> --error-msg "<message>"
-```

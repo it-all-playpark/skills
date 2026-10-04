@@ -10,7 +10,7 @@
 // 残りを dev-flow.js を VM で実行し agent() に実際に渡った prompt を観測することで行う
 // （WT は既定 responder の '/tmp/wt'）:
 //   (a-static) devFlowSrc / prIterateSrc 全文のどこにも `${WT}/dev-issue-analyze/`
-//       `${WT}/skill-retrospective/` という禁止パターン（テンプレートリテラル埋め込み）が無い
+//       `${WT}/journal/` という禁止パターン（テンプレートリテラル埋め込み）が無い
 //       — success run 1 本の prompt 観測だけでは未到達分岐（abort / empty-diff 等）への
 //       再混入を検出できないため、VM 観測とは独立に全文走査で pin する
 //   (a-vm) success run で実際に agent() へ渡った prompt にも同パターンが現れない
@@ -53,17 +53,17 @@ async function run(name) {
 // (a-static): success run 1 本の prompt 観測だけでは未到達分岐（abort / empty-diff 等）への
 // 再混入を検出できないため、devFlowSrc / prIterateSrc 全文に対する静的否定 assert を
 // VM 観測とは独立に並置する。
-test('[skills-script-path-routing] (a-static) devFlowSrc / prIterateSrc 全文に `${WT}/dev-issue-analyze/` `${WT}/skill-retrospective/` という禁止パターンが無い', () => {
+test('[skills-script-path-routing] (a-static) devFlowSrc / prIterateSrc 全文に `${WT}/dev-issue-analyze/` `${WT}/journal/` という禁止パターンが無い', () => {
   for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
-    for (const forbidden of ['${WT}/dev-issue-analyze/', '${WT}/skill-retrospective/']) {
+    for (const forbidden of ['${WT}/dev-issue-analyze/', '${WT}/journal/']) {
       assert.ok(!src.includes(forbidden), `${name} に禁止パターン ${forbidden} が静的に含まれる（対象 repo が skills 以外だと Exit 127）`);
     }
   }
 });
 
-test('[skills-script-path-routing] (a-vm) どの agent() prompt にも `${WT}/dev-issue-analyze/` `${WT}/skill-retrospective/` が現れない', async () => {
+test('[skills-script-path-routing] (a-vm) どの agent() prompt にも `${WT}/dev-issue-analyze/` `${WT}/journal/` が現れない', async () => {
   const calls = await run('success');
-  for (const forbidden of ['/tmp/wt/dev-issue-analyze/', '/tmp/wt/skill-retrospective/']) {
+  for (const forbidden of ['/tmp/wt/dev-issue-analyze/', '/tmp/wt/journal/']) {
     const hit = calls.find((c) => c.prompt.includes(forbidden));
     assert.ok(!hit, `${hit?.label} の prompt に禁止パターン ${forbidden} が含まれる（対象 repo が skills 以外だと Exit 127）`);
   }

@@ -35,17 +35,3 @@ qiita-publish <file-path> [--public]
 
 - `.env.example` - トークン設定
 - `references/api-spec.md` - Qiita API v2 仕様
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log qiita-publish success \
-  --duration-turns $TURNS
-
-# On failure
-journal log qiita-publish failure \
-  --error-category <category> --error-msg "<message>"
-```

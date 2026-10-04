@@ -37,17 +37,6 @@ Step 1 → Step 2 → Step 3
 具体的な手順。スクリプト呼び出しは `${CLAUDE_PLUGIN_ROOT}/{{skill_name}}/scripts/` を使用
 （bin/ に bare 名がある決定論スクリプトはそちらを優先する）。
 
-## Journal Logging
-
-```bash
-# On success
-journal log {{skill_name}} success
-
-# On failure
-journal log {{skill_name}} failure \
-  --error-category <category> --error-msg "<message>"
-```
-
 ## Subagent Dispatch Rules
 
 <!--

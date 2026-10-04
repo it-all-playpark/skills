@@ -123,17 +123,3 @@ python3 scripts/suica_to_csv.py <text-file> [--start-year YYYY] [--end-year YYYY
 ```
 
 The script reads a text file with one transaction per line and outputs `suica_transactions.csv` in CWD.
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log suica-to-csv success \
-  --duration-turns $TURNS
-
-# On failure
-journal log suica-to-csv failure \
-  --error-category <category> --error-msg "<message>"
-```

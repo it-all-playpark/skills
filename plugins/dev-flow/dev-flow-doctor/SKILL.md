@@ -1,7 +1,7 @@
 ---
 name: dev-flow-doctor
 description: |
-  Diagnose dev-flow pipeline health from skill-retrospective journal telemetry.
+  Diagnose dev-flow pipeline health from journal telemetry.
   Detects anomalies in dev-flow/pr-iterate distributions: cap張り付き
   (eval_iter pinned at loop cap), iterate不調率 (pr-iterate
   stuck/fix_failed/max_reached/ci_error/review_contract_error rate on normalized
@@ -22,7 +22,7 @@ allowed-tools:
 
 # dev-flow-doctor
 
-Diagnose dev-flow pipeline health by reading `skill-retrospective` journal entries
+Diagnose dev-flow pipeline health by reading journal entries
 (`~/.claude/journal/*.json`). Surfaces `dev-flow` / `pr-iterate` telemetry
 distributions (shape, merge_tier, eval_iter, gate_policy, iterate_status)
 and anomaly detections (cap張り付き, iterate不調率, micro不発火) — then generates
@@ -31,15 +31,12 @@ actionable improvement recommendations.
 ## Key shift: journal-driven (not static scan)
 
 本 skill は **journal 駆動**である。静的な skill file scan ではなく、
-`skill-retrospective` が蓄積している `~/.claude/journal/*.json` を読み込み、
+playpark-core の journal（`journal/scripts/journal.sh`）が蓄積している `~/.claude/journal/*.json` を読み込み、
 `dev-flow` / `pr-iterate` が書き出す telemetry フィールド（`shape`, `merge_tier`,
 `eval_iter`, `gate_policy`, `danger_hits`, `iterate_status`）を
 分布集計し、**anomaly 3 種**（cap張り付き / iterate不調率 / micro不発火）を判定する。
 `iterate_status` 分布は nested 実行（同一 PR に対する `dev-flow` 親 entry と
 `pr-iterate` 子 entry）を 1 run に正規化した normalized 分母で集計する。
-
-汎用的な failure パターン検出や proposal 生成は `skill-retrospective` の責務である。
-詳しくは [responsibility-split.md](references/responsibility-split.md) を参照。
 
 ## Usage
 
@@ -332,7 +329,6 @@ info issue when `fail > 0` or `direct_fs`/`direct_shell`/`direct_import` is
   (includes Canary intake section for `/dev-flow-canary` report ingestion)
 - [Health Scoring](references/health-scoring.md) -- Scoring formula including telemetry anomaly penalty + baseline regression penalty (max -15)
 - [Baseline Comparison](references/baseline-comparison.md) -- AC4/AC5 snapshot schema, compare semantics, CI 運用パターン
-- [Responsibility Split](references/responsibility-split.md) -- Boundary vs skill-retrospective
 
 ## Examples
 
@@ -352,7 +348,7 @@ info issue when `fail > 0` or `direct_fs`/`direct_shell`/`direct_import` is
 
 ## Journal Logging
 
-On completion, log execution to skill-retrospective journal:
+On completion, log execution to journal:
 
 ```bash
 # On success

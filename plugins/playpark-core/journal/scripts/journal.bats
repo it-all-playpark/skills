@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
-# Tests for skill-retrospective/scripts/journal.sh
+# Tests for journal/scripts/journal.sh
 # Focus: telemetry fields (--merge-tier, --gate-policy, --danger-hits) in cmd_log.
 
 setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-    SCRIPT="$SKILLS_REPO/skill-retrospective/scripts/journal.sh"
+    SCRIPT="$SKILLS_REPO/journal/scripts/journal.sh"
 
     # Isolate journal output to a temp directory for each test
     export CLAUDE_JOURNAL_DIR="$BATS_TMPDIR/journal-$$"

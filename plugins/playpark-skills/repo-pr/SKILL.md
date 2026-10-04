@@ -81,17 +81,3 @@ PR description body here...
 
 - `gh` CLI installed and authenticated
 - Python 3.10+
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log repo-pr success \
-  --duration-turns $TURNS
-
-# On failure
-journal log repo-pr failure \
-  --error-category <category> --error-msg "<message>"
-```

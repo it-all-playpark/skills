@@ -65,17 +65,3 @@ python scripts/trends_fetch.py \
 
 - `scripts/trends_fetch.py`: Trends データ取得（リトライ+キャッシュ付き）
 - `references/trends_guide.md`: トレンドスコアの解釈ガイド・トラブルシューティング
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log trends-analyzer success \
-  --duration-turns $TURNS
-
-# On failure
-journal log trends-analyzer failure \
-  --error-category <category> --error-msg "<message>"
-```

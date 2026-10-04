@@ -183,17 +183,3 @@ Date: {date}
 ## Preconditions
 
 なし（独立動作）
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log blog-fact-check success \
-  --duration-turns $TURNS
-
-# On failure
-journal log blog-fact-check failure \
-  --error-category <category> --error-msg "<message>"
-```

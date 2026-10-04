@@ -129,10 +129,9 @@ inline 生成・dev-improve の詳細は `plugins/dev-flow/dev-flow/references/`
 3. **決定論的処理の分離** — LLM に任せるべきでない処理はスクリプトに抽出
 4. **Namespace 命名** — `dev-*`, `blog-*`, `git-*` 等のプレフィックスで整理
 5. **小タスクは vanilla** — 小さいタスクは素の Claude Code の方が優秀
-6. **Journal Logging** — ワークフロー完了時に skill-retrospective 経由でログ記録
-7. **破壊的・大量変更系は `disable-model-invocation: true`** を検討
-8. **「毎回確定実行」したい挙動は skill ではなく hook で実装**
-9. **後方互換 scaffolding を作らない** — 内製スキルは新形式のみ受理、out-of-enum は schema error
+6. **破壊的・大量変更系は `disable-model-invocation: true`** を検討
+7. **「毎回確定実行」したい挙動は skill ではなく hook で実装**
+8. **後方互換 scaffolding を作らない** — 内製スキルは新形式のみ受理、out-of-enum は schema error
 
 ### 実装は 1 issue = 1 agent spawn (issue 分割しない)
 
