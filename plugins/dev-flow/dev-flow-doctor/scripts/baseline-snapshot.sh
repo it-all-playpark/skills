@@ -181,7 +181,8 @@ load_journal_entries() {
     printf '[]'; return
   fi
   local slurped=""
-  if slurped=$(jq -s '.' "${files[@]}" 2>/dev/null); then
+  # ARG_MAX-safe: files を jq の引数に並べず printf（builtin）→ xargs cat → jq stdin で流す
+  if slurped=$(printf '%s\0' "${files[@]}" | xargs -0 cat -- 2>/dev/null | jq -s '.' 2>/dev/null); then
     printf '%s' "$slurped"; return
   fi
   local rescued=""

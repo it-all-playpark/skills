@@ -62,4 +62,12 @@ Each journal entry is written atomically:
 
 The PID suffix (`<pid>`) prevents filename collisions when two entries are written within the same second. Because the `*.json` glob only matches final names, partial writes are never exposed to readers.
 
+The `YYYY-MM-DD` prefix is the UTC date of `timestamp`. `query --since` and `prune` rely on it to skip files without reading them.
+
+## Retention
+
+`journal prune [--days 30] [--keep a,b] [--dry-run]` deletes entries older than `--days` unless their `skill` is in the keep list. The default keep list is the dev-flow family that dev-flow-doctor / dev-flow-improve read (`PRUNE_KEEP_DEFAULT` in `journal.sh`). Files whose name does not start with a date, or whose JSON cannot be parsed, are kept.
+
+`track-skill` (the PreToolUse `Skill` hook) runs `prune` in the background at most once a day, using `$JOURNAL_DIR/.last-prune` as the stamp. `JOURNAL_PRUNE_DAYS` sets the retention days; `JOURNAL_PRUNE_DAYS=0` disables the automatic run.
+
 Schema reference: [../schemas/journal-entry.schema.json](../schemas/journal-entry.schema.json)

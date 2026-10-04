@@ -4,11 +4,13 @@
 #   journal.sh log <skill> <outcome> [options]
 #   journal.sh query [options]
 #   journal.sh stats [options]
+#   journal.sh prune [options]
 #
 # Subcommands:
 #   log   - Record a skill execution entry
 #   query - Query journal entries with filters
 #   stats - Show summary statistics
+#   prune - Delete old entries except the dev-flow family (also run daily from track-skill)
 
 set -euo pipefail
 
@@ -515,10 +517,20 @@ cmd_query() {
         since_iso=$(parse_since "$since")
     fi
 
-    # Collect all JSON files - handle empty directory
-    local files=()
+    # Collect JSON files - handle empty directory.
+    # ファイル名の先頭は UTC の YYYY-MM-DD（cmd_log / cmd_hook_capture が iso_now から作る）なので、
+    # --since があれば中身を読む前に日付で絞る。日付で始まらない名前は判定できないので残す。
+    local since_date="${since_iso:0:10}"
+    local files=() base
     for f in "$JOURNAL_DIR"/*.json; do
-        [[ -f "$f" ]] && files+=("$f")
+        [[ -f "$f" ]] || continue
+        if [[ -n "$since_date" ]]; then
+            base="${f##*/}"
+            if [[ "$base" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}- && "${base:0:10}" < "$since_date" ]]; then
+                continue
+            fi
+        fi
+        files+=("$f")
     done
 
     if [[ ${#files[@]} -eq 0 ]]; then
@@ -544,31 +556,27 @@ cmd_query() {
         jq_filter="$jq_filter | select(.source == \"hook\")"
     fi
 
-    # Validate each file individually and skip corrupt entries with a warning.
-    # This prevents a single malformed JSON file from blanking the entire query
-    # (the analyze-dev-flow-family.sh rescue path uses the same per-file strategy).
-    local valid_files=()
-    for f in "${files[@]}"; do
-        if jq empty "$f" 2>/dev/null; then
-            valid_files+=("$f")
-        else
-            echo "journal query: skipping corrupt file: $f" >&2
-        fi
-    done
-
-    if [[ ${#valid_files[@]} -eq 0 ]]; then
-        echo "[]"
-        return 0
+    # ファイルを引数に並べると件数次第で ARG_MAX を超える（jq: Argument list too long）ので、
+    # printf（builtin）→ xargs cat → jq stdin で流す（analyze-dev-flow-telemetry.sh と同じ方式）。
+    # 不正 JSON が混ざると一括 slurp が失敗するので、そのときだけ 1 ファイルずつ検査して
+    # 壊れたものを警告付きで飛ばす。
+    local slurped
+    if ! slurped=$(printf '%s\0' "${files[@]}" | xargs -0 cat -- 2>/dev/null | jq -cs '.' 2>/dev/null); then
+        slurped=$(
+            for f in "${files[@]}"; do
+                if ! jq -c '.' "$f" 2>/dev/null; then
+                    echo "journal query: skipping corrupt file: $f" >&2
+                fi
+            done | jq -cs '.'
+        )
     fi
 
-    # Slurp all valid files and filter/sort in a single jq call
-    jq -s \
+    printf '%s' "$slurped" | jq \
         --arg skill "$skill" \
         --arg outcome "$outcome" \
         --arg since_iso "$since_iso" \
         --argjson lim "$limit" \
-        "[.[] | $jq_filter] | sort_by(.timestamp) | reverse | .[:(\$lim)]" \
-        "${valid_files[@]}"
+        "[.[] | $jq_filter] | sort_by(.timestamp) | reverse | .[:(\$lim)]"
 }
 
 # ============================================================================
@@ -774,6 +782,8 @@ cmd_track_skill() {
     local input
     input=$(cat)
 
+    maybe_auto_prune
+
     local skill_name session_id
     skill_name=$(echo "$input" | jq -r '.tool_input.skill // empty' 2>/dev/null) || return 0
     session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null) || return 0
@@ -781,6 +791,87 @@ cmd_track_skill() {
     [[ -z "$skill_name" || -z "$session_id" ]] && return 0
 
     echo "$skill_name" > "/tmp/claude-skill-ctx-${session_id}"
+}
+
+# ============================================================================
+# Prune Subcommand
+# ============================================================================
+
+# dev-flow-doctor / dev-flow-improve が読む skill。期間を問わず残す
+# （baseline-snapshot.sh の DEFAULT_FAMILY_SKILLS の旧名も含める）。
+PRUNE_KEEP_DEFAULT="dev-flow,pr-iterate,dev-issue-analyze,git-commit,git-pr,github-issue-orchestrator,dev-flow-doctor,dev-flow-improve,dev-improve,dev-kickoff,dev-implement,dev-validate,dev-integrate,dev-evaluate,night-patrol,pr-fix,pr-review"
+
+# Delete entries older than N days whose skill is not in the keep list.
+# 日付はファイル名先頭（UTC の YYYY-MM-DD）で判定する。日付で始まらない名前と、
+# 壊れていて skill を読めないファイルは判定できないので残す。
+cmd_prune() {
+    local days="30" keep="$PRUNE_KEEP_DEFAULT" dry_run=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --days) days="$2"; shift 2 ;;
+            --keep) keep="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) die_json "Unknown option: $1" 1 ;;
+        esac
+    done
+
+    [[ "$days" =~ ^[1-9][0-9]*$ ]] || die_json "Invalid --days: $days. Must be a positive integer" 1
+
+    ensure_journal_dir
+
+    local cutoff
+    cutoff=$(parse_since "${days}d")
+    cutoff="${cutoff:0:10}"
+    [[ "$cutoff" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die_json "Failed to compute cutoff date" 1
+
+    local old=() base
+    for f in "$JOURNAL_DIR"/*.json; do
+        [[ -f "$f" ]] || continue
+        base="${f##*/}"
+        if [[ "$base" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}- && "${base:0:10}" < "$cutoff" ]]; then
+            old+=("$f")
+        fi
+    done
+
+    # 1 回の jq に渡すファイル数を絞り、壊れたファイルで止まっても巻き添えを小さくする
+    local targets=()
+    if [[ ${#old[@]} -gt 0 ]]; then
+        local path skill
+        while IFS=$'\t' read -r path skill; do
+            [[ -n "$path" ]] || continue
+            [[ ",$keep," == *",$skill,"* ]] && continue
+            targets+=("$path")
+        done < <(printf '%s\0' "${old[@]}" \
+            | xargs -0 -n 100 jq -r 'select(type == "object") | [input_filename, (.skill // "")] | @tsv' 2>/dev/null || true)
+    fi
+
+    if [[ "$dry_run" == "false" && ${#targets[@]} -gt 0 ]]; then
+        printf '%s\0' "${targets[@]}" | xargs -0 rm -f --
+    fi
+
+    jq -n \
+        --arg cutoff "$cutoff" \
+        --argjson dry_run "$dry_run" \
+        --argjson scanned "${#old[@]}" \
+        --argjson pruned "${#targets[@]}" \
+        '{status: (if $dry_run then "dry-run" else "pruned" end), cutoff: $cutoff, older_than_cutoff: $scanned, pruned: $pruned, kept: ($scanned - $pruned)}'
+}
+
+# track-skill（Skill 起動ごと）から 1 日 1 回だけ prune をバックグラウンドで走らせる。
+# hook の timeout に掛からないよう待たない。JOURNAL_PRUNE_DAYS=0 で無効化。
+maybe_auto_prune() {
+    local days="${JOURNAL_PRUNE_DAYS:-30}"
+    [[ "$days" =~ ^[1-9][0-9]*$ ]] || return 0
+    [[ -d "$JOURNAL_DIR" ]] || return 0
+
+    local stamp="$JOURNAL_DIR/.last-prune"
+    if [[ -f "$stamp" && -n "$(find "$stamp" -mtime -1 2>/dev/null)" ]]; then
+        return 0
+    fi
+    touch "$stamp" 2>/dev/null || return 0
+
+    ( bash "${BASH_SOURCE[0]}" prune --days "$days" >/dev/null 2>&1 </dev/null & )
 }
 
 # ============================================================================
@@ -796,6 +887,7 @@ case "$SUBCMD" in
     track-skill) cmd_track_skill ;;
     query) cmd_query "$@" ;;
     stats) cmd_stats "$@" ;;
+    prune) cmd_prune "$@" ;;
     *)
         cat <<'USAGE'
 Usage: journal.sh <subcommand> [options]
@@ -806,6 +898,7 @@ Subcommands:
   track-skill            Track active skill from PreToolUse Skill hook (reads stdin)
   query [--since] [--skill] [--outcome] [--source <skill|hook>]  Query entries
   stats [--since] [--source <skill|hook>]  Show summary statistics (default: skill)
+  prune [--days 30] [--keep a,b] [--dry-run]  Delete old entries except dev-flow family
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
@@ -823,6 +916,7 @@ Examples:
   journal.sh query --source hook
   journal.sh stats --since 30d
   journal.sh stats --source skill
+  journal.sh prune --days 30 --dry-run
 USAGE
         exit 1
         ;;
