@@ -38,13 +38,6 @@ EOF
     STUB="$BATS_TEST_TMPDIR/codex_stub.sh"
     cat > "$STUB" << 'EOF'
 #!/usr/bin/env bash
-case "$1" in
-    --version) echo "codex-cli 0.154.0"; exit 0 ;;
-esac
-if [[ "$1" == "exec" && "$2" == "--help" ]]; then
-    echo "  --approve-for-me"
-    exit 0
-fi
 printf '%s\n' "$@" >> "$CALLS_LOG"
 prompt="${@: -1}"
 case "$CODEX_STUB_MODE" in

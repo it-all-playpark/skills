@@ -48,22 +48,24 @@ strategy_analyzer.py が使用する分析手法・閾値・判断基準。
 
 ## Query Clustering ロジック
 
-strategy_analyzer.py の keyword-based clustering は `seo-config.json` の `cluster_keywords` から読み込む。
+strategy_analyzer.py の keyword-based clustering は skill-config.json の `seo-strategy` セクションの `cluster_keywords` から読み込む。
 
-`--config` 指定時: config 内の `cluster_keywords` マッピングを使用してクエリを分類。
-`--config` 未指定時: `cluster_keywords` が空のため、全クエリが未分類扱いとなり `cluster_suggestions` のみが生成される。
+`cluster_keywords` 設定時: マッピングを使用してクエリを分類。
+`cluster_keywords` 未設定時: 全クエリが未分類扱いとなり `cluster_suggestions` のみが生成される。
 
-### 設定例（playpark.co.jp）
+### 設定例（playpark.co.jp の skill-config.json）
 
 ```json
 {
-  "cluster_keywords": {
-    "Claude Code": ["claude code", "claude-code", "claude settings", "claude md", "claude.md", "settings.json"],
-    "シフト管理": ["シフト", "shift", "勤怠"],
-    "OpenClaw": ["openclaw", "open claw"],
-    "AI開発": ["ai ", "llm", "gemini", "gpt"],
-    "Web開発": ["next.js", "react", "typescript", "tailwind", "web"],
-    "美容室・店舗": ["美容室", "美容院", "サロン", "店舗", "ホームページ"]
+  "seo-strategy": {
+    "cluster_keywords": {
+      "Claude Code": ["claude code", "claude-code", "claude settings", "claude md", "claude.md", "settings.json"],
+      "シフト管理": ["シフト", "shift", "勤怠"],
+      "OpenClaw": ["openclaw", "open claw"],
+      "AI開発": ["ai ", "llm", "gemini", "gpt"],
+      "Web開発": ["next.js", "react", "typescript", "tailwind", "web"],
+      "美容室・店舗": ["美容室", "美容院", "サロン", "店舗", "ホームページ"]
+    }
   }
 }
 ```
@@ -82,7 +84,7 @@ strategy_analyzer.py の keyword-based clustering は `seo-config.json` の `clu
 6. **重複除去**: 上位グループに含まれるクエリは下位から除外
 7. **出力**: 上位 `cluster_suggestion_top_n`（デフォルト 5）件
 
-LLM はこの提案を確認し、有用なものを `seo-config.json` の `cluster_keywords` に手動追加する。
+LLM はこの提案を確認し、有用なものを skill-config.json の `seo-strategy` セクションの `cluster_keywords` に手動追加する。
 
 ## Category Performance 分析（LLM用）
 
@@ -260,8 +262,8 @@ corporate-site (issue#419) など既知のカニバリ事例で再生成検証�
 
    ```bash
    python3 seo-strategy/scripts/strategy_analyzer.py \
-     --config seo-config.json \
      --blog-dir content/blog \
+     --project-dir . \
      --gsc-report claudedocs/gsc-report.json \
      --output claudedocs/seo-strategy-analysis.json
    ```
@@ -280,5 +282,5 @@ corporate-site (issue#419) など既知のカニバリ事例で再生成検証�
    `references/devils-advocate.md` チェック項目 6 で **Blocking** として処理する。
 
 5. 設定の調整: false negative（実際にカニバリしているのに検出されない）が多い場合は
-   `seo-config.json` の `overlap_match_threshold` を下げる（例: 0.4 → 0.3）。
+   skill-config.json の `seo-strategy` セクションの `overlap_match_threshold` を下げる（例: 0.4 → 0.3）。
    false positive が多い場合は上げる（例: 0.4 → 0.5）。

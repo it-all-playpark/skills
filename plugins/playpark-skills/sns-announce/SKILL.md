@@ -6,7 +6,7 @@ description: |
   (2) needs X, LinkedIn, Google Business, Facebook, Bluesky, Threads text,
   (3) keywords like "SNS告知", "告知文", "投稿文", "announce", "social media post",
   (4) input: MDX/Markdown files or published blog URLs.
-  Accepts args: <source> [--output FILE] [--format md|json|yaml] [--schedule "YYYY-MM-DD HH:MM"] [--dedupe] [--x] [--linkedin] [--google] [--facebook] [--bluesky] [--threads] [--platforms LIST] [--base-url URL] [--lang ja|en]
+  Accepts args: <source> [--output FILE] [--format md|json|yaml] [--schedule "YYYY-MM-DD HH:MM"] [--dedupe] [--platforms LIST]
 context: fork
 model: sonnet
 ---
@@ -29,20 +29,13 @@ Generate platform-optimized social media posts from articles or URLs.
 | `--format FORMAT` | md, json, yaml | config or md |
 | `--schedule DATETIME` | Schedule time (enables Zernio API format) | config or none |
 | `--dedupe` | Pre-check Zernio API and skip already scheduled platforms | false |
-| `--x` | X only | all enabled |
-| `--linkedin` | LinkedIn only | all enabled |
-| `--google` | Google Business only | all enabled |
-| `--facebook` | Facebook only | all enabled |
-| `--bluesky` | Bluesky only | all enabled |
-| `--threads` | Threads only | all enabled |
-| `--base-url URL` | Base URL for links | config |
-| `--lang LANG` | ja, en | config or ja |
+| `--platforms LIST` | Generate only the listed platforms (comma-separated) | all enabled |
 
 **Priority**: CLI args > config file > defaults
 
 ## Configuration
 
-Project config: `.claude/sns-announce.json` -- defines base_url, output path/format, schedule mode, and per-platform enable/disable.
+Project config: `skill-config.json` (`sns-announce` section) -- defines base_url, output path/format, schedule mode, and per-platform enable/disable.
 
 Details: [Config Schema](references/config-schema.md)
 
@@ -142,8 +135,8 @@ Details: [Output Formats](references/output-formats.md)
 # URL input
 /sns-announce https://example.com/blog/my-article
 
-# Specific platform
-/sns-announce article.mdx --x --lang en
+# Specific platforms
+/sns-announce article.mdx --platforms x,linkedin
 
 # Zernio API format with schedule
 /sns-announce article.mdx --format json --schedule "2026-03-12 09:00"

@@ -1,6 +1,6 @@
 # SNS Announce Configuration Schema
 
-Project config: `.claude/sns-announce.json`
+Project config: `skill-config.json` (`sns-announce` section)
 
 ## Full Example
 

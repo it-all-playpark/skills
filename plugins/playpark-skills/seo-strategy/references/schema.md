@@ -185,7 +185,7 @@
 }
 ```
 
-LLM はこの提案を確認し、有用なものを `seo-config.json` の `cluster_keywords` に追加する判断を行う。
+LLM はこの提案を確認し、有用なものを skill-config.json の `seo-strategy` セクションの `cluster_keywords` に追加する判断を行う。
 
 ## content_overlap_analysis
 

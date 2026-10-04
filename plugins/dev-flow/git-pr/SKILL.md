@@ -2,9 +2,8 @@
 name: git-pr
 description: |
   Create GitHub Pull Request from worktree with structured description.
-  Supports `--draft` for low-CI draft PRs.
   Use when: creating PR after implementation, pushing changes to remote.
-  Accepts args: <issue-number> [--base <branch>] [--draft] [--worktree <path>] [--lang ja|en]
+  Accepts args: <issue-number> [--base <branch>] [--worktree <path>]
 allowed-tools:
   - Bash
   - Skill
@@ -17,7 +16,7 @@ Push changes and create GitHub Pull Request from worktree.
 ## 言語ルール
 
 **PR本文（title, body）は必ず日本語で記述すること。**
-- `--lang ja`（デフォルト）の場合、PR title・bodyの全テキストを日本語で記述
+- PR title・bodyの全テキストを日本語で記述
 - Summary、Changes、Motivation等のセクション内容も日本語
 - 技術用語・コード識別子・ファイルパスはそのまま
 - `create-pr.sh` が生成するテンプレートは最低限の構造のみ。エージェントが実装内容に基づいて詳細な日本語本文を `gh pr edit --body` で上書きすること
@@ -25,7 +24,7 @@ Push changes and create GitHub Pull Request from worktree.
 ## Workflow
 
 ```
-1. Stage & commit (via commit skill) → 2. Push to remote → 3. Create PR → 4. Edit PR body (日本語) → 5. Report
+1. Stage & commit (via git-commit skill) → 2. Push to remote → 3. Create PR → 4. Edit PR body (日本語) → 5. Report
 ```
 
 ## Execution
@@ -33,7 +32,7 @@ Push changes and create GitHub Pull Request from worktree.
 ### Step 1: Commit (if needed)
 
 ```
-Skill(skill: "commit", args: "--all --worktree <path>")
+Skill(skill: "git-commit", args: "--all --worktree <path>")
 ```
 
 ### Step 2: Push
@@ -77,15 +76,7 @@ Closes #$ISSUE
 |--------|---------|-------------|
 | `<issue-number>` | required | Related GitHub issue |
 | `--base` | `dev` | Base branch for PR |
-| `--draft` | false | Create as draft PR (CI を抑制したい child PR で使用) |
-| `--title` | auto | Override PR title |
-| `--lang` | `ja` | PR body language (ja/en) |
 | `--worktree` | cwd | Worktree path |
-
-### `--draft` Usage
-
-WIP の段階で CI を抑制したい場合に `--draft` で draft PR を作成する。
-review 準備が整ったら GitHub UI / `gh pr ready` で draft を解除する。
 
 ## PR Title Prefix (Auto)
 

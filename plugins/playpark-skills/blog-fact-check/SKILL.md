@@ -3,7 +3,7 @@ name: blog-fact-check
 description: |
   MDX記事内の統計データ・バージョン情報・料金・挙動/因果主張等を抽出し、公式ソースと照合するファクトチェックスキル。
   Use when: 記事の事実確認、データ検証、料金チェック、バージョン確認、挙動・因果主張の verify が必要な時。
-  Accepts args: [file-path] [--all] [--category statistics|pricing|versions|dates|behavioral_claims] [--fix]
+  Accepts args: [file-path] [--all] [--fix]
 context: fork
 model: sonnet
 ---
@@ -17,14 +17,12 @@ MDX記事内のファクトチェックを実行する。
 ```
 /blog-fact-check <file-path>
 /blog-fact-check --all
-/blog-fact-check --category pricing
 ```
 
 | Arg | Description |
 |-----|-------------|
 | file-path | チェック対象のMDXファイルパス |
 | --all | 全記事をチェック |
-| --category | チェック対象カテゴリ (statistics, pricing, versions, dates, behavioral_claims) |
 | --fix | 不一致箇所を自動修正 |
 
 ## Config

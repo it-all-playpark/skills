@@ -1,6 +1,6 @@
 """Project config loader for Python-based skills.
 
-Loads skill configuration with global → project merge (legacy fallback supported).
+Loads skill configuration with global → project merge.
 """
 
 import json
@@ -50,13 +50,11 @@ def load_skill_config(skill_name: str) -> dict:
     Merge order (later wins):
     1. ~/.claude/skill-config.json の skill セクション (グローバル)
     2. .claude/skill-config.json の skill セクション (プロジェクト)
-    3. .claude/{skill_name}.json (旧形式フォールバック)
-    4. seo-strategy の場合は .claude/seo-config.json も探す
     """
     # Layer 1: Global
     global_cfg = _load_global_skill_config(skill_name)
 
-    # Layer 2: Project (+ legacy fallback)
+    # Layer 2: Project
     project_cfg: dict = {}
     root = _get_git_root()
 
@@ -75,24 +73,6 @@ def load_skill_config(skill_name: str) -> dict:
                         break
                 except (json.JSONDecodeError, OSError):
                     pass
-
-        # 2b. フォールバック: 旧形式
-        if not project_cfg:
-            legacy_path = root_path / ".claude" / f"{skill_name}.json"
-            if legacy_path.exists():
-                try:
-                    project_cfg = json.loads(legacy_path.read_text())
-                except (json.JSONDecodeError, OSError):
-                    pass
-
-            # seo-strategy 特殊ケース
-            if not project_cfg and skill_name == "seo-strategy":
-                seo_legacy = root_path / ".claude" / "seo-config.json"
-                if seo_legacy.exists():
-                    try:
-                        project_cfg = json.loads(seo_legacy.read_text())
-                    except (json.JSONDecodeError, OSError):
-                        pass
 
     # Merge: global + project (project wins)
     if not global_cfg:

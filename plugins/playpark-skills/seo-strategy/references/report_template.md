@@ -208,7 +208,7 @@
 | -------------- | -------- | -------- | ----------- | ---------------------- |
 | {suggested_keyword} | {query_count} | {total_impressions} | {total_clicks} | {queries[:3] のカンマ区切り} |
 
-> これらの提案が有用な場合、`seo-config.json` の `cluster_keywords` に追加してください。
+> これらの提案が有用な場合、skill-config.json の `seo-strategy` セクションの `cluster_keywords` に追加してください。
 
 ---
 
@@ -356,7 +356,7 @@ _次回更新: {generated_at + 30日}_
 
 - `cluster_suggestions` の各エントリをテーブル形式で記述
 - 提案が空の場合はセクションごと省略
-- 有用な提案を `seo-config.json` に追加するよう促す注記を含める
+- 有用な提案を skill-config.json の `seo-strategy` セクションの `cluster_keywords` に追加するよう促す注記を含める
 
 ### 12. ロードマップ
 

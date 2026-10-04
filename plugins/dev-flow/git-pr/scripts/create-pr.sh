@@ -4,9 +4,6 @@
 #
 # Options:
 #   --base <branch>     Base branch (default: dev)
-#   --draft             Create as draft PR
-#   --title <title>     Override PR title
-#   --lang ja|en        PR body language (default: ja)
 #   --worktree <path>   Worktree path
 #
 # Output: JSON with PR URL and details
@@ -16,21 +13,15 @@ set -euo pipefail
 # Defaults
 ISSUE_NUMBER=""
 BASE_BRANCH="dev"
-DRAFT=false
-TITLE=""
-LANG="ja"
 WORKTREE_PATH=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --base) BASE_BRANCH="$2"; shift 2 ;;
-        --draft) DRAFT=true; shift ;;
-        --title) TITLE="$2"; shift 2 ;;
-        --lang) LANG="$2"; shift 2 ;;
         --worktree) WORKTREE_PATH="$2"; shift 2 ;;
         -h|--help)
-            echo "Usage: create-pr.sh <issue-number> [--base <branch>] [--draft] [--title <title>] [--lang ja|en] [--worktree <path>]"
+            echo "Usage: create-pr.sh <issue-number> [--base <branch>] [--worktree <path>]"
             exit 0
             ;;
         -*)
@@ -77,29 +68,9 @@ elif echo "$LABELS" | grep -qi "docs"; then
     PREFIX="📝 docs:"
 fi
 
-# Use provided title or generate from issue
-if [[ -z "$TITLE" ]]; then
-    TITLE="$PREFIX $ISSUE_TITLE (#$ISSUE_NUMBER)"
-fi
+TITLE="$PREFIX $ISSUE_TITLE (#$ISSUE_NUMBER)"
 
-# Generate PR body based on language
-if [[ "$LANG" == "en" ]]; then
-    PR_BODY=$(cat <<EOF
-## 🎯 Related Issue
-Fixes #$ISSUE_NUMBER
-
-## 📋 Changes
-- **Branch**: $BRANCH_NAME
-
-## ✅ Checklist
-- [ ] Tests passing
-- [ ] Code quality verified
-- [ ] Documentation updated (if needed)
-- [ ] Ready for review
-EOF
-)
-else
-    PR_BODY=$(cat <<EOF
+PR_BODY=$(cat <<EOF
 ## 🎯 対応Issue
 Fixes #$ISSUE_NUMBER
 
@@ -113,7 +84,6 @@ Fixes #$ISSUE_NUMBER
 - [ ] レビュー準備完了
 EOF
 )
-fi
 
 # Create PR
 PR_URL=$(gh pr create \
@@ -122,7 +92,6 @@ PR_URL=$(gh pr create \
     --base "$BASE_BRANCH" \
     --head "$BRANCH_NAME" \
     --assignee @me \
-    $(if $DRAFT; then echo "--draft"; fi) \
     2>&1) || {
     echo "{\"error\":\"pr_creation_failed\",\"message\":\"$PR_URL\"}"
     exit 1
@@ -137,7 +106,6 @@ cat <<EOF
   "branch": "$BRANCH_NAME",
   "base": "$BASE_BRANCH",
   "issue": $ISSUE_NUMBER,
-  "worktree": "$WORK_DIR",
-  "draft": $DRAFT
+  "worktree": "$WORK_DIR"
 }
 EOF
