@@ -1,0 +1,340 @@
+#!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
+
+# Tests for dev-flow/scripts/ready-set.sh (issue #775)
+#
+# ネットワークには出ない。gh は PATH 先頭の stub:
+#   `issue view N`  → $GH_STUB_ISSUES_DIR/N.json（無い・N == GH_STUB_FAIL_ISSUE なら失敗）
+#   `issue list`    → GH_STUB_LIST_FIXTURE（GH_STUB_LIST_FAIL で失敗）
+#   `api .../issues/N/dependencies/blocked_by` → $GH_STUB_DEPS_DIR/N.json（無ければ []、GH_STUB_DEPS_FAIL で失敗）
+# 呼び出しは全て $GH_LOG に 1 行ずつ残る。local branch / worktree は cwd の使い捨て git repo で作る。
+
+SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/ready-set.sh"
+
+setup() {
+    WORK="$BATS_TEST_TMPDIR/work"
+    mkdir -p "$WORK/bin"
+    GH_LOG="$WORK/gh.log"
+    : >"$GH_LOG"
+    GH_STUB_ISSUES_DIR="$WORK/issues"
+    GH_STUB_DEPS_DIR="$WORK/deps"
+    mkdir -p "$GH_STUB_ISSUES_DIR" "$GH_STUB_DEPS_DIR"
+    cat >"$WORK/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_LOG"
+if [[ "$1" == "api" && "$2" == */dependencies/blocked_by* ]]; then
+    if [[ -n "${GH_STUB_DEPS_FAIL:-}" ]]; then
+        echo "$GH_STUB_DEPS_FAIL" >&2
+        exit 1
+    fi
+    n="${2%/dependencies/*}"
+    n="${n##*/}"
+    if [[ -f "$GH_STUB_DEPS_DIR/$n.json" ]]; then cat "$GH_STUB_DEPS_DIR/$n.json"; else echo '[]'; fi
+    exit 0
+fi
+if [[ "$1 $2" == "issue list" ]]; then
+    if [[ -n "${GH_STUB_LIST_FAIL:-}" ]]; then
+        echo "$GH_STUB_LIST_FAIL" >&2
+        exit 1
+    fi
+    cat "$GH_STUB_LIST_FIXTURE"
+    exit 0
+fi
+if [[ "$1 $2" == "issue view" && "$3" != "${GH_STUB_FAIL_ISSUE:-}" && -f "$GH_STUB_ISSUES_DIR/$3.json" ]]; then
+    cat "$GH_STUB_ISSUES_DIR/$3.json"
+    exit 0
+fi
+echo "GraphQL: Could not resolve to an issue with the number of $3." >&2
+exit 1
+STUB
+    chmod +x "$WORK/bin/gh"
+    export GH_LOG GH_STUB_ISSUES_DIR GH_STUB_DEPS_DIR
+    unset GH_STUB_FAIL_ISSUE GH_STUB_LIST_FIXTURE GH_STUB_LIST_FAIL GH_STUB_DEPS_FAIL GIT_DIR GIT_WORK_TREE
+    export PATH="$WORK/bin:$PATH"
+
+    # local branch / worktree を読む cwd の git repo
+    git init -q "$WORK/repo"
+    git -C "$WORK/repo" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
+    cd "$WORK/repo"
+}
+
+# issue <number> <paths> [state=OPEN|CLOSED] [label=<name>] [pr=OPEN|CLOSED] [pre=<本文冒頭>]
+#   <paths>: 空白区切りのパス / NONE（`## 変更対象パス` 見出しなし）/ EMPTY（見出しのみ）
+issue() {
+    local n="$1" paths="$2" state="OPEN" label="" pr="" pre="" kv p
+    shift 2
+    for kv in "$@"; do
+        case "$kv" in
+            state=*) state="${kv#state=}" ;;
+            label=*) label="${kv#label=}" ;;
+            pr=*) pr="${kv#pr=}" ;;
+            pre=*) pre="${kv#pre=}" ;;
+        esac
+    done
+    local body="${pre}
+
+## 概要
+
+説明。
+"
+    case "$paths" in
+        NONE) ;;
+        EMPTY) body+="
+## 変更対象パス
+
+" ;;
+        *)
+            body+="
+## 変更対象パス
+"
+            for p in $paths; do body+="- \`$p\`
+"; done
+            ;;
+    esac
+    # 次の見出し以降の箇条書きはパスに数えない
+    body+="
+## 専門観点での調査結果
+- not/a/declared/path
+"
+    jq -n --argjson n "$n" --arg s "$state" --arg l "$label" --arg pr "$pr" --arg b "$body" '{
+        number: $n, title: "issue \($n)", state: $s, body: $b,
+        url: "https://github.com/acme/skills/issues/\($n)",
+        labels: (if $l == "" then [] else [{name: $l}] end),
+        closedByPullRequestsReferences: (if $pr == "" then [] else [{number: (900 + $n), state: $pr}] end)}' \
+        >"$GH_STUB_ISSUES_DIR/$n.json"
+}
+
+ready_set() {
+    run --separate-stderr "$SCRIPT" --repo acme/skills "$@"
+}
+
+# ---- AC-1: 入出力 ----
+
+@test "ready-set: 重ならない 2 件 -> launch に {number,title,paths,command} を 1 行 JSON で出す" {
+    issue 3 "plugins/a/x.sh plugins/a/x.bats"
+    issue 4 "plugins/b"
+    ready_set 4 3
+    [ "$status" -eq 0 ]
+    [ "${#lines[@]}" -eq 1 ]
+    echo "$output" | jq -e '. == {ok: true,
+        launch: [
+            {number: 3, title: "issue 3", paths: ["plugins/a/x.sh", "plugins/a/x.bats"], command: "/dev-flow 3"},
+            {number: 4, title: "issue 4", paths: ["plugins/b"], command: "/dev-flow 4"}],
+        in_flight: [], waiting: []}'
+    grep -qx 'issue view 3 --repo acme/skills --json number,title,state,labels,body,url,closedByPullRequestsReferences' "$GH_LOG"
+}
+
+@test "ready-set: --label はそのラベルの open issue を候補にする（番号指定と併用可）" {
+    issue 40 "a"
+    issue 41 "b"
+    issue 42 "c"
+    printf '[{"number":41},{"number":40}]' >"$WORK/list.json"
+    GH_STUB_LIST_FIXTURE="$WORK/list.json" ready_set --label dev-ready 42
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [40, 41, 42]'
+    grep -qx 'issue list --repo acme/skills --label dev-ready --state open --limit 1000 --json number' "$GH_LOG"
+}
+
+@test "ready-set: 候補が無い引数 -> exit 2 と ok:false" {
+    run --separate-stderr "$SCRIPT"
+    [ "$status" -eq 2 ]
+    echo "$output" | jq -e '.ok == false and (.error | test("Usage"))'
+}
+
+# ---- AC-2: 分類 ----
+
+@test "ready-set: closed の issue はどこにも出力しない" {
+    issue 5 "a" state=CLOSED
+    issue 6 "b"
+    ready_set 5 6
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [6] and .in_flight == [] and .waiting == []'
+}
+
+@test "ready-set: human-task ラベル -> waiting human_task" {
+    issue 7 "a" label=human-task
+    ready_set 7
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.launch == [] and .waiting == [{number: 7, reason: "human_task", detail: "label human-task"}]'
+}
+
+@test "ready-set: 本文 Blocked by の open な blocker -> waiting blocked_by（detail に番号）、closed なら ready" {
+    issue 8 "a" pre="Blocked by #50"
+    issue 9 "b" pre="Blocked by #51"
+    issue 50 "z"
+    issue 51 "z" state=CLOSED
+    ready_set 8 9
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [9] and .waiting == [{number: 8, reason: "blocked_by", detail: "#50"}]'
+}
+
+@test "ready-set: dependencies API の open な blocker（他 repo を含む）-> waiting blocked_by" {
+    issue 10 "a"
+    printf '[{"number":60,"state":"open","html_url":"https://github.com/acme/skills/issues/60"},{"number":5,"state":"open","html_url":"https://github.com/other/lib/issues/5"}]' \
+        >"$GH_STUB_DEPS_DIR/10.json"
+    ready_set 10
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.waiting == [{number: 10, reason: "blocked_by", detail: "#60 other/lib#5"}]'
+    grep -qx 'api repos/acme/skills/issues/10/dependencies/blocked_by?per_page=100' "$GH_LOG"
+}
+
+@test "ready-set: open な linked PR -> in_flight open_pr、closed な PR だけなら ready" {
+    issue 11 "a" pr=OPEN
+    issue 12 "b" pr=CLOSED
+    ready_set 11 12
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 11, reason: "open_pr"}] and [.launch[].number] == [12]'
+}
+
+@test "ready-set: feature/issue-<N> の local branch -> in_flight local_branch" {
+    git branch feature/issue-13
+    issue 13 "a"
+    issue 14 "b"
+    ready_set 13 14
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 13, reason: "local_branch"}] and [.launch[].number] == [14]'
+}
+
+@test "ready-set: df-<N> の worktree -> in_flight worktree" {
+    git worktree add -q -b wip "$WORK/df-15"
+    issue 15 "a"
+    ready_set 15
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 15, reason: "worktree"}] and .launch == []'
+}
+
+# ---- AC-3: 貪欲選択 ----
+
+@test "ready-set: 番号の昇順に貪欲に選び、選んだ集合と重なる issue は waiting path_conflict（detail に相手）" {
+    issue 22 "pkg/a/y.sh"
+    issue 20 "pkg/a"
+    issue 21 "pkg/a/x.sh"
+    issue 23 "pkg/b"
+    ready_set 22 23 21 20
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [20, 23] and .waiting == [
+        {number: 21, reason: "path_conflict", detail: "#20"},
+        {number: 22, reason: "path_conflict", detail: "#20"}]'
+}
+
+@test "ready-set: in_flight の変更対象パスは最初から占有扱い" {
+    issue 30 "pkg/a" pr=OPEN
+    issue 31 "pkg/a/x.sh"
+    issue 32 "pkg/b"
+    ready_set 30 31 32
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 30, reason: "open_pr"}] and [.launch[].number] == [32]
+        and .waiting == [{number: 31, reason: "path_conflict", detail: "#30"}]'
+}
+
+# ---- AC-4: 重なり判定 ----
+
+@test "ready-set: glob は最初の glob 文字より前の静的 prefix に縮めて判定する" {
+    issue 40 "plugins/dev-flow/**/*.sh"
+    issue 41 "plugins/dev-flow/bin/x"
+    issue 42 "plugins/dev-*"
+    issue 43 "docs/{a,b}.md"
+    issue 44 "docs/c.md"
+    ready_set 40 41 42 43 44
+    [ "$status" -eq 0 ]
+    # 40 → plugins/dev-flow、42 → plugins（glob の掛かるセグメントは落とす）、43 → docs
+    echo "$output" | jq -e '[.launch[].number] == [40, 43] and .waiting == [
+        {number: 41, reason: "path_conflict", detail: "#40"},
+        {number: 42, reason: "path_conflict", detail: "#40"},
+        {number: 44, reason: "path_conflict", detail: "#43"}]'
+}
+
+@test "ready-set: prefix はパスセグメント単位（文字列 prefix だけでは重ならない）" {
+    issue 45 "plugins/dev-flow"
+    issue 46 "plugins/dev-flow-x/a.sh"
+    issue 47 "./plugins/dev-flow/x.sh"
+    ready_set 45 46 47
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [45, 46] and .waiting == [{number: 47, reason: "path_conflict", detail: "#45"}]'
+}
+
+@test "ready-set: lockfile は repo 内のどこにあっても互いに重なる" {
+    issue 50 "web/package-lock.json"
+    issue 51 "pnpm-lock.yaml"
+    issue 52 "nix/flake.lock"
+    issue 53 "web/src/app.ts"
+    ready_set 50 51 52 53
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [50, 53] and .waiting == [
+        {number: 51, reason: "path_conflict", detail: "#50"},
+        {number: 52, reason: "path_conflict", detail: "#50"}]'
+}
+
+# ---- AC-5: 変更対象パスの申告なし ----
+
+@test "ready-set: 変更対象パスが無い issue は launch 集合が空のときだけ単独で選ばれる" {
+    issue 60 NONE
+    issue 61 "a"
+    ready_set 60 61
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.launch == [{number: 60, title: "issue 60", paths: [], command: "/dev-flow 60"}]
+        and .waiting == [{number: 61, reason: "path_conflict", detail: "#60"}]'
+}
+
+@test "ready-set: 変更対象パスが無い・空の issue は他が選ばれていれば waiting no_declared_paths" {
+    issue 62 "a"
+    issue 63 NONE
+    issue 64 EMPTY
+    ready_set 62 63 64
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [62] and .waiting == [
+        {number: 63, reason: "no_declared_paths", detail: "#62"},
+        {number: 64, reason: "no_declared_paths", detail: "#62"}]'
+}
+
+@test "ready-set: 変更対象パスが無い issue は in_flight があれば waiting no_declared_paths" {
+    issue 65 "a" pr=OPEN
+    issue 66 NONE
+    ready_set 65 66
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.launch == [] and .waiting == [{number: 66, reason: "no_declared_paths", detail: "#65"}]'
+}
+
+# ---- AC-7: 読み取りのみ / 読み取り失敗は ok:false ----
+
+@test "ready-set: issue の取得失敗 -> ok:false と非 0 終了（失敗した issue を ready に倒さない）" {
+    issue 70 "a"
+    issue 71 "b"
+    GH_STUB_FAIL_ISSUE=71 ready_set 70 71
+    [ "$status" -ne 0 ]
+    echo "$output" | jq -e '.ok == false and (.error | test("#71")) and has("launch") == false'
+}
+
+@test "ready-set: blocker の取得失敗 -> ok:false と非 0 終了" {
+    issue 72 "a"
+    GH_STUB_DEPS_FAIL="HTTP 502" ready_set 72
+    [ "$status" -ne 0 ]
+    echo "$output" | jq -e '.ok == false and (.error | test("HTTP 502"))'
+}
+
+@test "ready-set: --label の一覧取得失敗 -> ok:false と非 0 終了" {
+    GH_STUB_LIST_FAIL="HTTP 401" ready_set --label dev-ready
+    [ "$status" -ne 0 ]
+    echo "$output" | jq -e '.ok == false and (.error | test("HTTP 401"))'
+}
+
+@test "ready-set: gh は読み取りだけ呼び、cwd の repo とファイルを変更しない" {
+    git branch feature/issue-80
+    issue 80 "a"
+    issue 81 "b" pre="Blocked by #82"
+    issue 82 "c"
+    issue 83 "d"
+    printf '[{"number":83}]' >"$WORK/list.json"
+    local before_refs before_files
+    before_refs="$(git for-each-ref)"
+    before_files="$(ls -A "$WORK/repo")"
+    GH_STUB_LIST_FIXTURE="$WORK/list.json" ready_set --label dev-ready 80 81
+    [ "$status" -eq 0 ]
+    # 呼ぶのは issue view / issue list / dependencies API（GET）だけ
+    [ -s "$GH_LOG" ]
+    [ -z "$(grep -vE '^(issue view|issue list|api repos/acme/skills/issues/[0-9]+/dependencies/blocked_by\?per_page=100$)' "$GH_LOG")" ]
+    [ -z "$(grep -E '(^| )(-X|--method|-f|--field|-F|--raw-field|--input)( |$)' "$GH_LOG")" ]
+    [ "$(git for-each-ref)" = "$before_refs" ]
+    [ "$(ls -A "$WORK/repo")" = "$before_files" ]
+    [ -z "$(git status --porcelain)" ]
+}

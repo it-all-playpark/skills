@@ -114,6 +114,42 @@ realized diff の file 数 + AC 数 / issue_type / 構造化 breaking_change か
 Workflow を起動する。前 issue の worktree に入ったまま次の issue の Workflow を起動すると、
 isolation probe が fail-closed abort する。
 
+## 並列実行（dev-flow-ready-set で波を回す）
+
+1 セッションの中では並列にできない（Workflow tool は top-level 専用、EnterWorktree はセッションに 1 つ）。
+issue ごとに別セッションで `/dev-flow <N>` を起動すれば、各 run が自分の `df-<N>` worktree と
+`feature/issue-<N>` を持つので並列になる。どれを同時に流してよいかは `dev-flow-ready-set` が決める:
+
+```
+dev-flow-ready-set [--repo owner/repo] [--label <label>] [<issue>...]
+```
+
+リポジトリルートで bare 名を先頭トークンにして実行する（read-only。issue / PR / label・push・ファイルに
+書き込まない）。stdout の 1 行 JSON `{ok, launch, in_flight, waiting}` を次の波で回す:
+
+1. `launch[]` の各 issue を **issue ごとに別セッション**で `launch[].command`（`/dev-flow <N>`）として起動する。
+   同時に何本起動するかは人間が決める（launch は「同時に流しても衝突しにくい集合」であって起動本数の指示ではない）
+2. 各 run が LGTM に達したら人間が merge する（merge は常に人間）
+3. merge 後にもう一度 `dev-flow-ready-set` を実行し、新しい `launch[]` で次の波を起こす。blocker の close や
+   in_flight の解消で `waiting[]` / `in_flight[]` にいた issue が launch に上がってくる
+
+分類は closed → 出力しない / `human-task` ラベル → waiting `human_task` / open な blocker → waiting `blocked_by`
+（判定は prerun と共有の `_lib/scripts/issue-blockers.sh`）/ open な linked PR・`feature/issue-<N>` の local branch・
+worktree → in_flight / それ以外 → ready。ready は番号の昇順に貪欲に選び、in_flight と既に選んだ issue の
+変更対象パスと重なるものは waiting `path_conflict` に回す。
+
+- **パス申告は見積もり**: 重なり判定は issue 本文の `## 変更対象パス` だけを見る。実際の diff は申告からはみ出し
+  得るので、launch に並んでも衝突しないことの保証にはならない。はみ出しによる衝突は pr-iterate の mergeable
+  確認と人間の merge 順で吸収する。判定は誤って並列にするより直列に倒す側に寄せてある（glob は静的 prefix に
+  縮めて比べ、`## 変更対象パス` が無い・空の issue は全パスと重なる扱いで、他に何も選ばれていないときだけ単独で
+  launch、それ以外は waiting `no_declared_paths`）
+- **lockfile は常に衝突扱い**: `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` / `bun.lockb` / `Cargo.lock` /
+  `go.sum` / `flake.lock` / `uv.lock` / `poetry.lock` は repo 内のどこにあっても互いに重なりとみなす（依存追加は
+  別 issue でも同じ lockfile を書き換え、merge 時に必ず衝突するため）。依存を足す issue は lockfile を申告に含める
+- **読み取り失敗は ok:false**: gh の読み取りに失敗すると `{"ok":false,"error":...}` で非 0 終了する（失敗した
+  issue を ready に倒さない）。`dev-flow-ready-set` が sandbox の `excludedCommands` に登録されていない環境では
+  gh の資格情報が読めず、常にこの経路で止まる
+
 ## needs_clarification の扱い
 
 `source: "blocked_by"` は open な blocker（GitHub の issue dependencies と本文の `Blocked by #N` 行。
