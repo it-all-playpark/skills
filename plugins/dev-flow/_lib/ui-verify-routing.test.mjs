@@ -423,3 +423,80 @@ test('[ui-verify] (g) eval#1 prompt に ui_verification（ui-verifier raw result
 
 // runEval が uiTouched で合成されること（micro でも UI touch なら Evaluate 強制）は (c) が VM 挙動で
 // 検証する。ソース文字列 `|| uiTouched` の pin は削除した（issue #636）。
+
+// ============================================================
+// (h)〜(k) 汎用 stack 形式（up / down）。dev-flow は宣言を ui-verify-stack に渡すだけで、
+// コマンドを prompt に埋め込まない（宣言コマンドは ui-verify-stack が sandbox 内で実行する）。
+// ============================================================
+
+const STACK_CFG = {
+  base_port: 6100,
+  ports: ['web', 'api', 'db'],
+  up: [
+    { name: 'db', serve: 'SENTINEL-DB-CMD --port {port.db}', ready: { tcp: '{port.db}' } },
+    { name: 'seed', run: 'SENTINEL-SEED-CMD' },
+    { name: 'web', serve: 'SENTINEL-WEB-CMD {port.web}', ready: { http: 'http://127.0.0.1:{port.web}/' } },
+  ],
+  base_url: 'http://127.0.0.1:{port.web}',
+  smoke_path: '/select-tenant',
+  login: { steps: ['SENTINEL-LOGIN-STEP'] },
+};
+
+test('[ui-verify] (h) stack 形式: up は worktree / state-dir / issue だけを渡し、宣言コマンドを prompt に埋め込まない', async () => {
+  const { ctx, calls } = makeUiVerifySandbox({
+    analyzeReq: microReq,
+    realizedFiles: ['src/components/Foo.tsx'],
+    overrides: {
+      'ui-verify-config': { found: true, config: STACK_CFG },
+      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', smoke_url: 'http://127.0.0.1:6596/select-tenant', port: 6596 },
+      'ui-verify': { ok: true, mode: 'smoke', checks: [], console_errors: [], screenshots: [], summary: 'ok' },
+      'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
+    },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  assert.equal(error, null, error?.message);
+
+  const up = calls.find((c) => c.label === 'ui-verify-server');
+  assert.ok(up, "(h) 'ui-verify-server' が呼ばれること");
+  assert.match(up.prompt, /ui-verify-stack up --worktree '\/tmp\/wt' --state-dir '\/tmp\/wt\/\.devflow-tmp\/ui-verify' --issue 1/);
+  assert.ok(!/SENTINEL-(DB|SEED|WEB)-CMD/.test(up.prompt), '(h) 宣言コマンドは prompt に埋め込まない（ui-verify-stack が config を読む）');
+
+  const verify = calls.find((c) => c.label === 'ui-verify');
+  assert.ok(verify.prompt.includes('http://127.0.0.1:6596/select-tenant'), '(h) smoke は up が返した smoke_url を開く');
+  assert.ok(verify.prompt.includes('SENTINEL-LOGIN-STEP'), '(h) login.steps は ui-verifier へ前段 steps として渡る');
+
+  const down = calls.find((c) => c.label === 'ui-verify-teardown');
+  assert.ok(down.prompt.includes("ui-verify-stack down --state-dir '/tmp/wt/.devflow-tmp/ui-verify'"), '(h) teardown は ui-verify-stack down');
+  assert.ok(!/pgrep 等で確認/.test(down.prompt), '(h) sandbox で使えない pgrep を teardown に要求しない');
+  assert.equal(returned?.ui_verify, 'passed');
+});
+
+for (const [phase, expected] of [['config', 'setup_failed'], ['setup', 'setup_failed'], ['start', 'failed_open'], ['ready', 'failed_open'], ['timeout', 'failed_open']]) {
+  test(`[ui-verify] (i) stack 形式: up が phase:'${phase}' で失敗 → ${expected} + teardown 発火`, async () => {
+    const { ctx, calls } = makeUiVerifySandbox({
+      analyzeReq: microReq,
+      realizedFiles: ['src/components/Foo.tsx'],
+      overrides: {
+        'ui-verify-config': { found: true, config: STACK_CFG },
+        'ui-verify-server': { ok: false, phase, step: 'seed', error: 'exit 1' },
+      },
+    });
+    const { returned } = await runDevFlowInSandbox(src, ctx);
+    assert.ok(!calls.some((c) => c.label === 'ui-verify'), `(i) ${phase} 失敗時は ui-verifier を呼ばない`);
+    assert.ok(calls.some((c) => c.label === 'ui-verify-teardown'), `(i) ${phase} 失敗時も teardown は呼ぶ`);
+    assert.equal(returned?.ui_verify, expected);
+  });
+}
+
+test('[ui-verify] (j) stack 形式の config が不正 → ui-verify-server を呼ばず setup_failed', async () => {
+  const { ctx, calls } = makeUiVerifySandbox({
+    analyzeReq: microReq,
+    realizedFiles: ['src/components/Foo.tsx'],
+    overrides: {
+      'ui-verify-config': { found: true, config: { ...STACK_CFG, ports: ['web'] } }, // {port.db} が未宣言
+    },
+  });
+  const { returned } = await runDevFlowInSandbox(src, ctx);
+  assert.ok(!calls.some((c) => c.label === 'ui-verify-server'));
+  assert.equal(returned?.ui_verify, 'setup_failed');
+});

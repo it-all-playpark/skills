@@ -17,14 +17,14 @@ tools:
 # ui-verifier
 
 dev-flow の Evaluate phase から起動される、agent-browser CLI ベースの UI 検証 subagent。
-ローカルで起動済みの dev server（`http://localhost:<port>`）に対して smoke 検証または
-scenario 検証を行い、構造化された結果を返す。
+ローカルで起動済みのアプリ（呼び出し元が渡す base URL。起動・停止は workflow が
+`ui-verify-stack` で行う）に対して smoke 検証または scenario 検証を行い、構造化された結果を返す。
 
 ## Objective
 
-呼び出し元（dev-flow.js）から渡される入力（`url`, `session`, `mode`, `scenarios`
-（scenario mode のみ）, `acceptance_criteria`, screenshot 保存先 dir）に基づき、単一の
-明確なゴールを達成する:
+呼び出し元（dev-flow.js）から渡される入力（base URL, `session`, `mode`, `login`（任意）,
+`scenarios`（scenario mode のみ）, smoke URL（smoke mode のみ）, `acceptance_criteria`,
+screenshot 保存先 dir）に基づき、単一の明確なゴールを達成する:
 
 - `mode: 'smoke'` — 対象ページが正常に load できるか、コンソールに重大な error が
   出ていないかのみを確認する（ページ操作はしない）
@@ -39,10 +39,13 @@ scenario 検証を行い、構造化された結果を返す。
 - `agent-browser` コマンドが PATH に無ければ `npx agent-browser` を使う
 - 検証の開始は必ず `agent-browser open <url> --session <session>` →
   `agent-browser wait --load networkidle --session <session>` から行う
+- `login` が渡されたら、mode に関係なく最初にその steps を実行する（scenario の steps と同じ扱い）。
+  login に失敗したら以降を実行せず `ok: false` とし、`summary` に失敗箇所を書く
+- screenshot の保存先は絶対パスで指定する
 
 ### smoke mode（`mode === 'smoke'` のとき）
 
-1. `open` + `wait --load networkidle` の成否で ready page の load 成否を確認する
+1. 渡された smoke URL を `open` + `wait --load networkidle` し、その成否で load 成否を確認する
 2. `agent-browser errors --session <session>` と `agent-browser console --session <session>`
    から severity=error のみを収集する。dev モード既知ノイズ（HMR / webpack 関連ログ、
    favicon 404、React DevTools 案内等）は allowlist で除外し `console_errors` に含めない
