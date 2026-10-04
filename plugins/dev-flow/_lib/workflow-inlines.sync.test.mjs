@@ -78,6 +78,22 @@ for (const wfFile of wfFiles) {
 }
 
 // -----------------------------------------------------------------------------
+// Launchability invariant: every workflow stays under the Workflow tool's script size
+// limit. Over the limit, the workflow silently disappears from the registry
+// (`Workflow "dev-flow:dev-flow-run" not found`) and scriptPath launches are refused.
+// -----------------------------------------------------------------------------
+const WORKFLOW_SCRIPT_MAX_BYTES = 524288;
+for (const wfFile of wfFiles) {
+  test(`${wfFile}: is under the Workflow script size limit (workflow stays launchable)`, () => {
+    const bytes = Buffer.byteLength(readFileSync(join(wfDir, wfFile), 'utf8'), 'utf8');
+    assert.ok(
+      bytes < WORKFLOW_SCRIPT_MAX_BYTES,
+      `${wfFile}: ${bytes} bytes — Workflow tool の上限 ${WORKFLOW_SCRIPT_MAX_BYTES} bytes 以上は登録されず起動不能になります`,
+    );
+  });
+}
+
+// -----------------------------------------------------------------------------
 // Launchability invariant: no workflow may contain a dynamic import expression.
 //
 // The harness rejects such a script at PARSE time
