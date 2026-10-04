@@ -148,17 +148,3 @@ Details: [Output Formats](references/output-formats.md)
 # Zernio API format with schedule
 /sns-announce article.mdx --format json --schedule "2026-03-12 09:00"
 ```
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log sns-announce success \
-  --duration-turns $TURNS
-
-# On failure
-journal log sns-announce failure \
-  --error-category <category> --error-msg "<message>"
-```

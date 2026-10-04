@@ -51,7 +51,7 @@ fi
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # repo checkout / link mode: dev-flow plugin root の隣に playpark-core がある
-SIBLING_JOURNAL="${HOOK_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+SIBLING_JOURNAL="${HOOK_DIR}/../../playpark-core/journal/scripts/journal.sh"
 LOG_FILE="${HOME}/.claude/logs/stop-devflow-telemetry.log"
 
 # per-key flag（型/enum 検証つき）で journal.sh へ転送する telemetry キー。ここに無いキーは全て
@@ -281,7 +281,7 @@ for f in "${PENDING_DIR}"/*.json; do
   # --- telemetry 8-key forwarding (issue #143 / #430) ---
   # vdelta_verdicts / vdelta_fail_open / redgreen_deny / testsurf_hits /
   # duration_seconds / phase_durations / merge_tier_reasons / route を journal.sh
-  # へ転送する。journal.sh（skill-retrospective/scripts/journal.sh）は受け側でも
+  # へ転送する。journal.sh（journal/scripts/journal.sh）は受け側でも
   # 同一の型/enum 検証で契約違反を drop するが、drop の観測点を hook ログに残す
   # ため送り側でも同じ検証を行う（fail-open 方式。base entry の記録は必ず成功させる）。
   if [[ -n $vdelta_verdicts_json && $vdelta_verdicts_json != "null" ]]; then

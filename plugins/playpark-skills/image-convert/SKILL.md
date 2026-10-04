@@ -64,17 +64,3 @@ scripts/convert.sh input.png -o /path/to/output.webp
 ## Requirements
 
 - libvips installed (`brew install vips` on macOS)
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log image-convert success \
-  --duration-turns $TURNS
-
-# On failure
-journal log image-convert failure \
-  --error-category <category> --error-msg "<message>"
-```

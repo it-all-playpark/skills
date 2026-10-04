@@ -76,10 +76,3 @@ npx remotion render src/index.ts VideoName out/video.gif --image-format=png # GI
 
 - [implementation-guide](references/implementation-guide.md) - Phase 4 details, presets, dependencies, rule index
 - [video-types](references/video-types.md) | [scene-patterns](references/scene-patterns.md) | [project-setup](references/project-setup.md)
-
-## Journal Logging
-
-```bash
-journal log remotion-video success --duration-turns $TURNS
-journal log remotion-video failure --error-category <cat> --error-msg "<msg>"
-```

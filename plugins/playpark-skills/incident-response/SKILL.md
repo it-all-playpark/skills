@@ -65,14 +65,9 @@ Three tiers: **Immediate** (rollback/hotfix/scale-up), **Permanent** (code fix P
 
 State persisted in `$CWD/.claude/incident-state.json`. Script commands and output report template: [Execution Detail](references/execution-detail.md)
 
-## Journal Logging
-
-`journal log incident-response {success|failure} [--context "lines=..."] [--error-category runtime --error-msg "..."]`
-
 ## References
 
 - [Execution Detail](references/execution-detail.md) - Coordination, state management, output format, error handling
 - [Team Lifecycle](references/team-lifecycle.md) - Agent Team lifecycle patterns
 - [Investigation Lines](references/investigation-lines.md) - Detailed procedures per analysis line
 - [Resolution Patterns](references/resolution-patterns.md) - Immediate/permanent/prevention pattern templates
-

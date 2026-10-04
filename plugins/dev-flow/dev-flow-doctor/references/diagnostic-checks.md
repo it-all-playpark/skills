@@ -78,7 +78,7 @@ journal stats | jq '.avg_recovery_turns'
 |-------|--------|----------------|
 | < 2.0 | Good | No action needed |
 | 2.0 - 5.0 | Fair | Review common failure patterns |
-| > 5.0 | Poor | Run /skill-retrospective for improvement proposals |
+| > 5.0 | Poor | Run /dev-flow-improve for improvement proposals |
 
 ## Check 6: Success Rate Trend
 
@@ -230,9 +230,8 @@ join_window_seconds}`。既知の限界: handoff flush が遅延して window �
 
 ### 責務分離
 
-Check 8 は **dev-flow pipeline の telemetry 健全性** に特化している。全 skill を対象にした
-汎用的な failure pattern detection や proposal 生成は `skill-retrospective` 側で
-行うこと。詳しくは [responsibility-split.md](responsibility-split.md) を参照。
+Check 8 は **dev-flow pipeline の telemetry 健全性** に特化している。改善提案の生成は
+doctor では行わず、`/dev-flow-improve`（dev-improve サイクル）が担う。
 
 ## Canary intake (issue #325)
 

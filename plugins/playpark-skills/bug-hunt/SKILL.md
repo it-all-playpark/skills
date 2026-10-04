@@ -200,18 +200,6 @@ bug-hunt-state read --repo-path <path>
 | Investigator stuck | hunt-lead redefines hypothesis, suggests different approach |
 | Team communication error | Recover via file-based state, reconstruct Team |
 
-## Journal Logging
-
-```bash
-# On success
-journal log bug-hunt success \
-  --issue $ISSUE --duration-turns $TURNS
-
-# On failure
-journal log bug-hunt failure \
-  --issue $ISSUE --error-category <category> --error-msg "<message>"
-```
-
 ## Subagent Dispatch Rules
 
 bug-hunt は `Task` tool 経由で hunt-lead / investigator subagent を呼び出すため、[Subagent Dispatch Rules](../../playpark-core/_shared/references/subagent-dispatch.md) を遵守する。investigator 呼び出し時のプロンプトには以下5要素を必ず含める：
@@ -229,4 +217,3 @@ bug-hunt は `Task` tool 経由で hunt-lead / investigator subagent を呼び�
 - [Team Lifecycle](references/team-lifecycle.md) - Agent Team lifecycle patterns
 - [Hypothesis Categories](references/hypothesis-categories.md) - Bug hypothesis categories and verification approaches
 - [Subagent Dispatch Rules](../../playpark-core/_shared/references/subagent-dispatch.md) - Subagent 呼び出し必須5要素と routing rule
-

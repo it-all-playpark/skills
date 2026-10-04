@@ -82,7 +82,7 @@ Passes context to `create-pr` skill.
 
 ## Journal Logging
 
-On completion, log execution to skill-retrospective journal:
+On completion, log execution to journal:
 
 ```bash
 # On success

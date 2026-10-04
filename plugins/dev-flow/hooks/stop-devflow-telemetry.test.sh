@@ -1506,7 +1506,7 @@ make_full_telemetry_handoff() {
 #          未配置環境では skip（Test 15 と同じ扱い）。
 # --------------------------------------------------------------------------
 {
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   else
@@ -1658,7 +1658,7 @@ make_full_telemetry_handoff() {
 #          未配置 / 未対応 (skills#530 未 merge) の環境では skip。
 # --------------------------------------------------------------------------
 {
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   elif ! grep -q -- '--guard-id' "$REAL_JOURNAL"; then
@@ -1845,7 +1845,7 @@ make_full_telemetry_handoff() {
 #          未配置 / 未対応の環境では skip。
 # --------------------------------------------------------------------------
 {
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   elif ! grep -q -- '--telemetry-json' "$REAL_JOURNAL"; then
@@ -2061,7 +2061,7 @@ make_full_telemetry_handoff() {
 #          （skills#561 F2 の受け側配線との結合テスト）。未配置 / 未対応の環境では skip。
 # --------------------------------------------------------------------------
 {
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   elif ! grep -q -- '--eval-confidence' "$REAL_JOURNAL"; then
@@ -2397,7 +2397,7 @@ make_full_telemetry_handoff() {
 #          ことを確認する。未配置 / 未対応の環境では skip。
 # --------------------------------------------------------------------------
 {
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   elif ! grep -q -- '--telemetry-json' "$REAL_JOURNAL"; then
@@ -2519,7 +2519,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
 #          確認する。未配置 / 未対応の環境では skip。
 # --------------------------------------------------------------------------
 {
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   elif ! grep -q -- '--telemetry-json' "$REAL_JOURNAL"; then
@@ -2565,7 +2565,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
     fail "passthrough_redgreen_headdiff_hook_has_no_literal" "hook should not hardcode vdelta_not_started/redgreen_headdiff — it must reach journal via passthrough only"
   fi
 
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   else
@@ -2606,7 +2606,7 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
 #          entry ではキー欠落になる（doctor は欠落と null を同一に扱う契約）。
 # --------------------------------------------------------------------------
 {
-  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/skill-retrospective/scripts/journal.sh"
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
   if [[ ! -x $REAL_JOURNAL ]]; then
     echo "  (skip: real journal.sh not found — integration test skipped)"
   else

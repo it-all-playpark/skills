@@ -133,7 +133,7 @@ PLUGIN_NAMES=(dev-flow playpark-core playpark-skills)
 # --- 5. playpark-core: 参照集合・配線 ---------------------------------------
 
 @test "playpark-core の参照 rel 集合が計画どおり 4 hook に完全一致する" {
-    expected=$'hooks/posttool-secret-mask.sh\nhooks/pretool-context-guard.sh\nhooks/validate-skill-frontmatter.sh\nskill-retrospective/scripts/journal.sh'
+    expected=$'hooks/posttool-secret-mask.sh\nhooks/pretool-context-guard.sh\nhooks/validate-skill-frontmatter.sh\njournal/scripts/journal.sh'
     actual="$(plugin_root_refs playpark-core)"
     [ "$actual" = "$expected" ]
 }

@@ -57,8 +57,8 @@ setup() {
     [ "${#wrong_form[@]}" -eq 0 ]
 }
 
-@test "playpark-core/skill-retrospective/scripts/journal.sh は同一 plugin 相対 source を使い locator を含まない" {
-    f="$REPO_ROOT/plugins/playpark-core/skill-retrospective/scripts/journal.sh"
+@test "playpark-core/journal/scripts/journal.sh は同一 plugin 相対 source を使い locator を含まない" {
+    f="$REPO_ROOT/plugins/playpark-core/journal/scripts/journal.sh"
     [ -f "$f" ]
     run grep -qF '../../_lib/common.sh' "$f"
     [ "$status" -eq 0 ]

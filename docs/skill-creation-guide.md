@@ -272,19 +272,18 @@ User triggers /command
 3. **決定論的処理の分離**: LLM に任せるべきでない処理はスクリプトに抽出
 4. **Namespace 命名**: `dev-*`, `blog-*`, `git-*` 等のプレフィックスで整理
 5. **小タスクは vanilla**: 小さいタスクは素の Claude Code の方が優秀
-6. **Journal Logging**: ワークフロー完了時に skill-retrospective 経由でログ記録
-7. **破壊的・大量変更系は `disable-model-invocation: true` を検討**:
+6. **破壊的・大量変更系は `disable-model-invocation: true` を検討**:
    ファイル大量移動・worktree 大量生成・外部公開を伴う skill は LLM の自動起動を禁じ、
    ユーザー明示起動（`/skill-name`）のみに限定する。
    候補例: `blog-mv-date`, `blog-swap-dates`, `cross-post-publish`,
    `qiita-publish`, `zenn-publish`
-8. **「毎回確定実行」したい挙動は skill ではなく hook で実装**:
+7. **「毎回確定実行」したい挙動は skill ではなく hook で実装**:
    format / test / secret 検査のように LLM の判断を介さず必ず走らせたい処理は、
    skill 化すると呼び出し漏れが起きる。hook での実装を検討すること。
    hook 実装は各 plugin の `hooks/hooks.json`（`${CLAUDE_PLUGIN_ROOT}` 経由で `hooks/*.sh` を起動。
    例: plugins/playpark-core/hooks/）を参照。マシン固有の hook（通知・ブランチ保護等）のみ
    dotfiles repo の `claude-code/hooks/`
-9. **後方互換 scaffolding を作らない**:
+8. **後方互換 scaffolding を作らない**:
    内製スキルは外部公開ライブラリではなく本 repo 内で完結するため、schema 変更や
    dispatch 仕様変更時の **legacy fallback / version enum / dual-path 実装は禁止**。
    旧形式を返す呼び出し元は merge 前に存在せず、互換マッピングの実用上の必要性がない。

@@ -17,7 +17,7 @@ workflow / subagent prompt から dev-flow 専用 script を呼ぶときは plug
 `<skill>-<action>` 命名で `tests/bin-wrappers.bats` が pin）。
 `journal_sh` payload の `'journal'`（bare 名）は Stop hook が `command -v` で PATH 上の playpark-core
 `bin/journal` に解決する。解決順は payload path → payload bare 名 → `command -v journal` → 隣接
-`plugins/playpark-core/skill-retrospective/scripts/journal.sh`（repo checkout / link mode 用）。
+`plugins/playpark-core/journal/scripts/journal.sh`（repo checkout / link mode 用）。
 いずれも無ければ `no-journal-sh` を log に残し pending を戻す（fail-open）。
 
 plugin version を上げた直後の解決確認は、**update 後に起動し直した Claude Code セッション内**で

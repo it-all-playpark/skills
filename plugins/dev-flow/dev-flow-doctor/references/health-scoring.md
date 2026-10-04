@@ -56,5 +56,5 @@ baseline 比較は pre vs post の時間軸変化を測る指標で、telemetry 
 |-------|--------|--------|
 | 80-100 | Healthy | Minor optimizations only |
 | 60-79 | Fair | Address top 2 findings |
-| 40-59 | Needs Attention | Run /skill-retrospective, fix top issues |
+| 40-59 | Needs Attention | Run /dev-flow-improve, fix top issues |
 | 0-39 | Critical | Systematic review needed |

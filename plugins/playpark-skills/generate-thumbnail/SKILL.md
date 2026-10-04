@@ -81,17 +81,3 @@ Requires: `codex` CLI（ログイン済み）, `python3`, `jq`. `--optimize` 使
 | `codex model '<name>' is not available for this account.` | ChatGPT アカウントの Codex が提供終了モデルを 400 で拒否した。`skill-config.json` の `codex_model` を利用可能なモデルにする。未設定なら script の既定値が古いので既定値を更新する。一覧は `jq -r '.. \| .slug? // empty' ~/.codex/models_cache.json \| sort -u` |
 | `Codex completed but output file not found` | codex は完走したが画像を書かなかった。codex 0.140.0–0.144.3 の image_gen 不具合（#28422）か、agent がコピーを省いた。ログ末尾 30 行を確認し、version が該当窓なら更新する |
 | `codex exec failed` + usage limit 系のメッセージ | Codex サブスクリプションの quota 切れ。時間を置いて再試行する |
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log generate-thumbnail success \
-  --duration-turns $TURNS
-
-# On failure
-journal log generate-thumbnail failure \
-  --error-category <category> --error-msg "<message>"
-```

@@ -31,17 +31,3 @@ Output: `YYYY-MM-DD`
   "content_dir": "content/blog"
 }
 ```
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log get-publish-date success \
-  --duration-turns $TURNS
-
-# On failure
-journal log get-publish-date failure \
-  --error-category <category> --error-msg "<message>"
-```

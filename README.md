@@ -479,7 +479,6 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `seed-context` | プロジェクトコンテキスト抽出・保存 |
 | `skill-creator` | 新規スキル作成ガイド（当リポジトリ規約版） |
-| `skill-retrospective` | スキル実行失敗からの自己改善 |
 | `find-skills` | スキル検索・インストール支援 🔗 |
 | `claude-zombie-kill` | ゾンビClaude Codeセッション検出・終了 |
 | `suica-to-csv` | モバイルSuica明細PDFをマネーフォワード経費CSVに変換 |
@@ -504,7 +503,7 @@ Claude Code内で `/スキル名` を実行:
 ```
 skills/
 ├── plugins/
-│   ├── playpark-core/                    # 共有基盤 plugin（skills: 1 本）
+│   ├── playpark-core/                    # 共有基盤 plugin（skill なし。hooks と journal 基盤）
 │   │   ├── _lib/
 │   │   │   ├── common.sh                 # Bash共通関数（設定読み込み等）
 │   │   │   └── infra/                    # リポジトリ基盤管理スクリプト
@@ -513,7 +512,7 @@ skills/
 │   │   ├── _shared/
 │   │   │   └── references/subagent-dispatch.md  # Subagent dispatch 必須5要素
 │   │   ├── bin/journal                   # core bare 名 wrapper（1本）
-│   │   └── skill-retrospective/          # 唯一の skill
+│   │   └── journal/                      # journal.sh（dev-flow telemetry・失敗記録）
 │   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 9 agents）
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）

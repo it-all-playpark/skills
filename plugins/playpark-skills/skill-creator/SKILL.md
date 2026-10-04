@@ -2,7 +2,7 @@
 name: skill-creator
 description: |
   Create new skills for this repository following repo conventions (namespace prefix,
-  _shared/_lib, skill-config.json, skill-retrospective integration, subagent dispatch rules).
+  _shared/_lib, skill-config.json, subagent dispatch rules).
   Use when: (1) creating a new skill from scratch, (2) keywords: new skill, skill 作成,
   skill 新規, create skill, bootstrap skill
   Accepts args: <skill-name>
@@ -83,12 +83,6 @@ tests/subagent-dispatch-lint.sh
 
 # frontmatter 構造
 head -30 <skill-name>/SKILL.md | yq -e '.name, .description'
-```
-
-## Journal Logging
-
-```bash
-journal log skill-creator success --skill <name>
 ```
 
 ## References

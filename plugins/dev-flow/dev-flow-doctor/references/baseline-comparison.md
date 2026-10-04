@@ -28,7 +28,7 @@ journal driven に検証する。本ドキュメントは snapshot schema・比�
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ ~/.claude/journal/*.json         (skill-retrospective 出力)      │
+│ ~/.claude/journal/*.json         (journal.sh 出力)               │
 └──────────────────┬──────────────────────────────────────────────┘
                    │
    ┌───────────────▼───────────────┐
@@ -281,4 +281,3 @@ health score に最大 **-15** の penalty を加算する:
 - 本 issue: #83 (baseline metrics + glue-error scanning)
 - [`health-scoring.md`](./health-scoring.md) — penalty rule
 - [`diagnostic-checks.md`](./diagnostic-checks.md) — 既存 8 checks
-- [`responsibility-split.md`](./responsibility-split.md) — connector vs doctor の責務境界

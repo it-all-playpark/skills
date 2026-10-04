@@ -131,15 +131,6 @@ Safety checks (enforced by script):
 | Build/test timeout | Skip PR, mark as timeout |
 | Merge conflict | Skip PR, report conflict |
 
-## Journal Logging
-
-On completion, log to skill-retrospective:
-
-```bash
-journal log dep-guardian success \
-  --context "analyzed=$TOTAL,merged=$MERGED,skipped=$SKIPPED"
-```
-
 ## References
 
 - [Risk Matrix](references/risk-matrix.md) - Package risk classification details

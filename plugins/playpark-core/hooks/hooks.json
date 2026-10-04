@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/journal.sh\" track-skill",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/journal/scripts/journal.sh\" track-skill",
             "timeout": 3
           }
         ]
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/skill-retrospective/scripts/journal.sh\" hook-capture",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/journal/scripts/journal.sh\" hook-capture",
             "timeout": 5
           }
         ]

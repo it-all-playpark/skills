@@ -115,17 +115,3 @@ By default nothing extra is excluded.
 - `git` (for remote clone; private repositories require git credentials to be
   configured, e.g. via `gh auth setup-git`)
 - Python 3.10+
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log repo-export success \
-  --duration-turns $TURNS
-
-# On failure
-journal log repo-export failure \
-  --error-category <category> --error-msg "<message>"
-```

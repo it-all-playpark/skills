@@ -71,17 +71,3 @@ Generated docs go to `claudedocs/` by default.
 /doc-index src/api/ --type api --format md
 /doc-index --type readme
 ```
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log doc-index success \
-  --duration-turns $TURNS
-
-# On failure
-journal log doc-index failure \
-  --error-category <category> --error-msg "<message>"
-```

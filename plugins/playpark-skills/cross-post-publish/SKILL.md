@@ -155,17 +155,3 @@ URL: https://www.playpark.co.jp/blog/<slug>
 | slug 解決で MDX が見つからない | Phase 1.5 で halt。slug を修正して再実行 |
 | slug が複数 MDX にヒット       | Phase 1.5 で halt。候補を提示し再選択させる |
 | Phase 1.5 でユーザーが「いいえ」 | 外部 API を呼ばず終了。冪等性を保つ      |
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log cross-post-publish success \
-  --duration-turns $TURNS
-
-# On failure
-journal log cross-post-publish failure \
-  --error-category <category> --error-msg "<message>"
-```

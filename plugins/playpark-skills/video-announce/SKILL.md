@@ -67,10 +67,3 @@ Scripts: `load-config.sh`, `detect-media.sh <path> [--type T]`, `extract-thumbna
 /video-announce video.mp4 --format json --schedule "2026-03-12 19:00"
 /video-announce video.mp4 --format json && zernio post --json post/*.json
 ```
-
-## Journal Logging
-
-```bash
-journal log video-announce success --duration-turns $TURNS
-journal log video-announce failure --error-category <cat> --error-msg "<msg>"
-```

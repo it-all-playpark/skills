@@ -96,7 +96,7 @@ EOF
 
 target_for() {
     case "$1" in
-        journal) echo "skill-retrospective/scripts/journal.sh" ;;
+        journal) echo "journal/scripts/journal.sh" ;;
         cross-repo-artifacts) echo "_shared/scripts/cross-repo-artifacts.sh" ;;
         detect-and-install) echo "_shared/scripts/detect-and-install.sh" ;;
         diff-risk-classify) echo "_shared/scripts/diff-risk-classify.sh" ;;

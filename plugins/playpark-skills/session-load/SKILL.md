@@ -83,17 +83,3 @@ Load project context and session state.
 ## Integration
 
 Pairs with `/session-save` for session lifecycle.
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log session-load success \
-  --duration-turns $TURNS
-
-# On failure
-journal log session-load failure \
-  --error-category <category> --error-msg "<message>"
-```

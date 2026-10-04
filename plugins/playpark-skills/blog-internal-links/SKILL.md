@@ -142,17 +142,3 @@ Articles: 5 | Links: 12 | Avg: 2.4/article
 ## Preconditions
 
 - `claudedocs/seo-strategy.json` が存在すること（クラスタ定義の参照に必要）
-
-## Journal Logging
-
-On completion, log execution to skill-retrospective journal:
-
-```bash
-# On success
-journal log blog-internal-links success \
-  --duration-turns $TURNS
-
-# On failure
-journal log blog-internal-links failure \
-  --error-category <category> --error-msg "<message>"
-```

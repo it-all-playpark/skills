@@ -308,7 +308,7 @@ Always return this summary after execution:
 
 ## Journal Logging
 
-On completion, log execution to skill-retrospective journal:
+On completion, log execution to journal:
 
 ```bash
 # On success
