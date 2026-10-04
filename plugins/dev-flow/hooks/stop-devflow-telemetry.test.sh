@@ -2658,6 +2658,40 @@ RESOLVED_EVIDENCE_FILTER='.telemetry += { resolved_evidence: {
   fi
 }
 # --------------------------------------------------------------------------
+# plugin cache mode: PATH に journal が無くても、
+# <cache>/<marketplace>/playpark-core/<version>/journal/scripts/journal.sh の最新版へ流す
+# --------------------------------------------------------------------------
+{
+  tmpd=$(make_tmpdir)
+  cache="${tmpd}/cache/playpark"
+  mkdir -p "${cache}/dev-flow/aaa111/hooks" "${tmpd}/journal/pending"
+  cp "$HOOK" "${cache}/dev-flow/aaa111/hooks/stop-devflow-telemetry.sh"
+  for v in old000 new999; do
+    mkdir -p "${cache}/playpark-core/${v}/journal/scripts"
+    make_stub_journal "${cache}/playpark-core/${v}/journal/scripts/journal.sh" "${tmpd}/capture-${v}.txt" 0
+  done
+  touch -t 202001010000 "${cache}/playpark-core/old000/journal/scripts/journal.sh"
+  make_handoff "${tmpd}/journal/pending" "cache.json" '.journal_sh = "journal"'
+
+  jq_dir="$(dirname "$(command -v jq)")"
+  RUN_EXIT=0
+  RUN_OUT=$(env "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}" "PATH=${jq_dir}:/usr/bin:/bin" \
+    bash "${cache}/dev-flow/aaa111/hooks/stop-devflow-telemetry.sh" </dev/null 2>&1) || RUN_EXIT=$?
+
+  if [[ $RUN_EXIT -eq 0 && -s "${tmpd}/capture-new999.txt" && ! -s "${tmpd}/capture-old000.txt" ]]; then
+    pass "cache_mode_resolves_newest_playpark_core_journal"
+  else
+    fail "cache_mode_resolves_newest_playpark_core_journal" "exit=${RUN_EXIT} new=$(cat "${tmpd}/capture-new999.txt" 2>/dev/null) old=$(cat "${tmpd}/capture-old000.txt" 2>/dev/null) log=$(cat "${tmpd}/.claude/logs/stop-devflow-telemetry.log" 2>/dev/null)"
+  fi
+  if [[ ! -e "${tmpd}/journal/pending/cache.json" ]]; then
+    pass "cache_mode_handoff_flushed"
+  else
+    fail "cache_mode_handoff_flushed" "pending handoff should be removed after flush"
+  fi
+  rm -rf "$tmpd"
+}
+
+# --------------------------------------------------------------------------
 # Summary
 # --------------------------------------------------------------------------
 echo ""

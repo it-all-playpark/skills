@@ -23,7 +23,7 @@
 #   - pending dir が存在しない
 #
 # journal.sh の解決順: payload path → payload bare 名(command -v) → command -v journal
-#   → 隣接 playpark-core（skills#572）
+#   → 隣接 playpark-core（link mode、skills#572）→ plugin cache の playpark-core 最新版
 #
 # telemetry キーは per-key（enum 検証）と passthrough の二経路。PER_KEY_TELEMETRY_KEYS を参照（skills#601）。
 #
@@ -52,6 +52,17 @@ fi
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # repo checkout / link mode: dev-flow plugin root の隣に playpark-core がある
 SIBLING_JOURNAL="${HOOK_DIR}/../../playpark-core/journal/scripts/journal.sh"
+# plugin cache mode: <cache>/<marketplace>/dev-flow/<version>/hooks から見て
+# <cache>/<marketplace>/playpark-core/<version>/journal/scripts/journal.sh にある。
+# Stop hook の PATH には plugin の bin/ が載らず `command -v journal` が失敗するため、
+# cache mode ではこれが唯一の解決経路になる。複数版が残っていれば最も新しいものを使う。
+CACHE_SIBLING_JOURNAL=""
+for cand in "${HOOK_DIR}"/../../../playpark-core/*/journal/scripts/journal.sh; do
+  [[ -x $cand ]] || continue
+  if [[ -z $CACHE_SIBLING_JOURNAL || $cand -nt $CACHE_SIBLING_JOURNAL ]]; then
+    CACHE_SIBLING_JOURNAL="$cand"
+  fi
+done
 LOG_FILE="${HOME}/.claude/logs/stop-devflow-telemetry.log"
 
 # per-key flag（型/enum 検証つき）で journal.sh へ転送する telemetry キー。ここに無いキーは全て
@@ -217,6 +228,8 @@ for f in "${PENDING_DIR}"/*.json; do
     journal_sh="$resolved"
   elif [[ -x $SIBLING_JOURNAL ]]; then
     journal_sh="$SIBLING_JOURNAL"
+  elif [[ -n $CACHE_SIBLING_JOURNAL ]]; then
+    journal_sh="$CACHE_SIBLING_JOURNAL"
   else
     mkdir -p "$(dirname "$LOG_FILE")"
     printf '%s no-journal-sh %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$f")" >>"$LOG_FILE"
