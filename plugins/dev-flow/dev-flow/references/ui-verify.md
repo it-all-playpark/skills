@@ -39,7 +39,7 @@ sandbox 外で動く脱出口になる）。
         ["wait", "--url", "**/dashboard"]
       ] },
       "console_ignore": ["\\[HMR\\]", "ResizeObserver loop"],  // smoke で除外する console error（正規表現。既定あり）
-      "ttl_sec": 1800,                              // teardown が来なくてもこの秒数で自ら停止（既定 1800）
+      "ttl_sec": 1800,                              // teardown が来なくても ready からこの秒数で自ら停止（既定 1800）
       "scenarios": [ { "name": "...", "steps": ["..."], "checks": ["..."], "ac_index": 0 } ]
     }
   }
@@ -101,13 +101,15 @@ ui-verify-stack smoke --state-dir <...> --session devflow-<issue>[-final]
   up の `timeout_sec` 合計 + 60 秒で、超えたら `wait` が stop を要求して `phase:"timeout"` を返す。
   返り値: `{ok, phase, base_url, smoke_url, ports, port, wait_ceiling_sec, step?, error?, log?}`。
   `phase` は `config`（宣言不正）/ `setup`（run の失敗）/ `start`（serve が ready 前に終了）/ `starting` / `ready` / `timeout`。
-- supervisor は up の途中（run の実行中・serve の ready 待ち）でも stop file と `ttl_sec` を見る。
+- supervisor は up の途中（run の実行中・serve の ready 待ち）でも stop file と期限を見る。
   up timeout 直後の `down` で止まり、停止要求の後に残りの step は起動しない。
+  期限は ready までは「起動時刻 + up_ceiling_sec + `ttl_sec`」（各 step の timeout で上限がある上の保険）、
+  ready 後は「ready の時刻 + `ttl_sec`」。起動にかかった時間で検証の時間は削られない。
   dev-flow は `config` / `setup` を `setup_failed`、それ以外の失敗を `failed_open` として扱う（どちらも fail-open）。
 - service は supervisor の子として各自の process group で動き、Bash 呼び出しや起動した agent が終わっても残る。
 - sandbox では **別の Bash 呼び出しから kill できない**（Seatbelt が別 sandbox 実体への signal を拒否し、
   ps / pgrep / pkill も使えない）。そのため `down` は state dir に stop file を置き、supervisor が自分の子を
   process group ごと止めてから `down` steps を実行する。止まらなかった port は `leftover` で返る。
-- teardown が呼ばれない場合（run の中断など）も `ttl_sec` で supervisor が自ら同じ片付けをする。
+- teardown が呼ばれない場合（run の中断など）も、上の期限で supervisor が自ら同じ片付けをする。
 - `up` は同じ state dir に前回の stack が残っていれば先に止めてから起動する。
 - log は `<state_dir>/logs/<NN>-<name>.log` と `logs/supervisor.log`、状態は `stack.json`。

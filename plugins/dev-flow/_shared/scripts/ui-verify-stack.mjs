@@ -11,7 +11,7 @@
 //     ps / pgrep / pkill も sysmond に届かず使えない）。
 //   → up は detached な supervisor を 1 本起こし、service はすべて supervisor の子（各自 process group）にする。
 //     止めるときは state dir に stop file を置き、supervisor が自分の子を process group ごと止める。
-//     teardown が呼ばれなくても ttl_sec で supervisor が自ら片付ける。
+//     teardown が呼ばれなくても ready から ttl_sec で supervisor が自ら片付ける（ready 前は up_ceiling_sec + ttl_sec）。
 //
 // non-blocking / fail-open contract（旧 ui-verify-server と同じ）:
 //   - up / wait / down / status は常に exit 0 + stdout に JSON 1 行。usage error のみ exit 2。
@@ -257,11 +257,14 @@ export async function supervise(stateDir) {
   if (!spec) { log('spec.json が無い'); return; }
 
   const startedAt = Date.now();
+  // ttl_sec は ready から数える（起動にかかった時間で検証の時間を削らない）。ready までは各 step の
+  // timeout_sec（合計 up_ceiling_sec）で上限があるので、ready 前の期限はその上に ttl_sec を足した保険。
+  let deadline = startedAt + (spec.up_ceiling_sec + spec.ttl_sec) * 1000;
   const state = {
     phase: 'starting',
     supervisor_pid: process.pid,
     started_at: new Date(startedAt).toISOString(),
-    deadline: new Date(startedAt + spec.ttl_sec * 1000).toISOString(),
+    deadline: new Date(deadline).toISOString(),
     ports: spec.ports,
     base_url: spec.base_url,
     smoke_url: spec.smoke_url,
@@ -279,7 +282,6 @@ export async function supervise(stateDir) {
 
   // 停止要求（stop file）と ttl は up の途中でも見る。見ないと up timeout 直後の down が止められず、
   // 停止要求の後に残りの step が起動してしまう。
-  const deadline = startedAt + spec.ttl_sec * 1000;
   const stopRequested = () => {
     if (existsSync(paths.stop)) return 'requested';
     if (Date.now() >= deadline) return 'ttl';
@@ -437,7 +439,14 @@ export async function supervise(stateDir) {
         return;
       }
     }
-    if (!shuttingDown) { state.phase = 'ready'; state.ready_at = new Date().toISOString(); save(); }
+    if (!shuttingDown) {
+      const readyAt = Date.now();
+      deadline = readyAt + spec.ttl_sec * 1000;
+      state.phase = 'ready';
+      state.ready_at = new Date(readyAt).toISOString();
+      state.deadline = new Date(deadline).toISOString();
+      save();
+    }
   } catch (e) {
     state.phase = 'failed';
     state.error = `supervisor error: ${e && e.message ? e.message : e}`;

@@ -162,6 +162,28 @@ test('ttl: teardown が来なくても supervisor が ttl_sec で自ら止める
   assert.equal(await listening(basePort + 7), false);
 }, TIMEOUT);
 
+test('ttl: ttl_sec は ready から数える（起動に ttl より長くかかっても検証の時間が残る）', async () => {
+  const base = stackCfg({ ttl_sec: 3 });
+  base.up[0] = { name: 'prep', run: 'sleep 4 && echo prepared > {state_dir}/prep.txt' };
+  const res = up(writeConfig(base));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(res.phase, 'ready');
+  // ready 直後はまだ動いている（起動時刻から数えると ready の時点で ttl を過ぎている）
+  let st = cli(['status', '--state-dir', stateDir]);
+  assert.equal(st.phase, 'ready', JSON.stringify(st));
+  assert.equal(await listening(basePort + 7), true);
+  assert.ok(Date.parse(st.deadline) >= Date.parse(st.ready_at) + 3000, `deadline=${st.deadline} ready_at=${st.ready_at}`);
+  // ready から ttl_sec 経つと自ら止まる
+  const until = Date.now() + 20_000;
+  while (Date.now() < until) {
+    st = cli(['status', '--state-dir', stateDir]);
+    if (st.phase === 'stopped') break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  assert.equal(st.phase, 'stopped');
+  assert.equal(st.stop_reason, 'ttl');
+}, TIMEOUT);
+
 test('up: 同じ state dir に前回の stack が残っていれば先に止めてから起動する', async () => {
   const cfgPath = writeConfig(stackCfg());
   const first = up(cfgPath);
@@ -261,17 +283,20 @@ test('up: serve の ready 待ち中に down されたら止まる', async () => 
   assert.match(st.steps.find((s) => s.name === 'web').error, /stopped before ready \(requested\)/);
 }, TIMEOUT);
 
-test('ttl: up の途中でも ttl_sec で止まり、後続の serve は起動しない', async () => {
+test('ttl: up の途中では ttl_sec で止まらず、ready 前の期限は up の総上限 + ttl_sec', async () => {
   const res = up(writeConfig(slowCfg({ ttl_sec: 2 })), ['--wait-sec', '1']);
   assert.equal(res.phase, 'starting', JSON.stringify(res));
-  const st = await waitStatus((s) => s.phase === 'stopped');
-  assert.equal(st.phase, 'stopped');
-  assert.equal(st.stop_reason, 'ttl');
-  assert.equal(st.steps.find((s) => s.name === 'web').status, 'pending');
-  const w = cli(['wait', '--state-dir', stateDir, '--wait-sec', '5']);
-  assert.equal(w.ok, false);
-  assert.equal(w.phase, 'timeout');
-  assert.match(w.error, /ttl/);
+  await new Promise((r) => setTimeout(r, 3500));
+  const st = cli(['status', '--state-dir', stateDir]);
+  assert.equal(st.phase, 'starting', `ttl_sec を過ぎても up の途中では止まらない: ${JSON.stringify(st)}`);
+  const spec = JSON.parse(readFileSync(join(stateDir, 'spec.json'), 'utf8'));
+  assert.equal(
+    Date.parse(st.deadline) - Date.parse(st.started_at),
+    (spec.up_ceiling_sec + 2) * 1000,
+    'ready 前の期限は各 step の timeout 合計（up_ceiling_sec）の上に ttl_sec を足した保険',
+  );
+  const d = cli(['down', '--state-dir', stateDir, '--timeout-sec', '5']);
+  assert.equal(d.ok, true, JSON.stringify(d));
 }, TIMEOUT);
 
 test('wait: 総上限（wait_ceiling_sec）を超えたら stop を要求して phase:timeout、続く down で止まる', async () => {
