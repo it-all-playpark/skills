@@ -180,7 +180,7 @@ test('buildImproveIssueBody: 旧 prefix（_lib/merge-tier.mjs）は canary AC �
 
 test('buildImproveIssueBody: 個人 skill パス（plugins/playpark-skills/...）は canary AC を追記しない', () => {
   const body = buildImproveIssueBody(
-    validCand({ target_paths: ['plugins/playpark-skills/blog-mv-date/SKILL.md'] }),
+    validCand({ target_paths: ['plugins/playpark-skills/blog-internal-links/SKILL.md'] }),
     { hypothesisBlock: '<HYP>' },
   );
   assert.doesNotMatch(body, /dev-flow-canary/);

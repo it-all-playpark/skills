@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-exec bash "$(dirname "$0")/../bug-hunt/scripts/hunt-state.sh" "$@"

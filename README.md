@@ -265,14 +265,6 @@ skill-config.json                              # プロジェクト設定（リ�
 | `top_n` | number | 上位N件取得 |
 | `title_strip_patterns` | string[] | タイトルから除去する正規表現 |
 
-#### seo-content-planner
-
-| キー | 型 | 説明 |
-|------|-----|------|
-| `site` | string | GSCサイトURL |
-| `top_n` | number | 上位N件取得 |
-| `output_dir` | string | 出力先ディレクトリ |
-
 #### seo-strategy
 
 | キー | 型 | 説明 |
@@ -348,7 +340,6 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `git-commit` | 変更分析・Conventional Commits生成 |
 | `git-pr` | GitHub PR作成 |
-| `sync-env` | ソースリポジトリからworktreeへ.envファイル同期 |
 
 ### PR/レビュー
 
@@ -360,9 +351,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `doc-generate` | ドキュメント生成（JSDoc/API/ガイド） |
-| `doc-index` | プロジェクトドキュメント・知識ベース生成 |
-| `idea-to-document` | アイデア・メモを構造化ドキュメントに変換 |
 | `marp-slide` | Marpプレゼンテーションスライド生成 |
 
 ### 分析・思考
@@ -370,9 +358,6 @@ config = load_skill_config("ga-analyzer")
 | スキル | 説明 |
 |--------|------|
 | `simplify` | 変更コードの品質・効率レビュー＆修正 |
-| `code-audit-team` | マルチエージェントコード監査（セキュリティ/パフォーマンス/アーキテクチャ） |
-| `bug-hunt` | マルチエージェント協調バグ調査 |
-| `incident-response` | 並列インシデント調査（コード/ログ/設定分析） |
 | `github-issue-orchestrator` | 議論からGitHub Issue作成（技術調査・レビュー付き） |
 
 ### SEO/マーケティング分析
@@ -382,15 +367,7 @@ config = load_skill_config("ga-analyzer")
 | `ga-analyzer` | GA4データ分析・サイト改善アドバイス |
 | `gsc` | Google Search Consoleクエリ・SEOデータ取得 🔗 |
 | `trends-analyzer` | Google Trendsキーワードトレンド分析 |
-| `seo-content-planner` | GA4+Trends統合分析によるSEO記事ネタ提案 |
 | `seo-strategy` | GA4+GSC+Trends統合の包括的SEO戦略 |
-
-### セッション管理
-
-| スキル | 説明 |
-|--------|------|
-| `session-load` | セッション開始・コンテキスト読み込み |
-| `session-save` | セッション終了・コンテキスト保存 |
 
 ### リポジトリ情報エクスポート
 
@@ -400,22 +377,6 @@ config = load_skill_config("ga-analyzer")
 | `repo-issue` | GitHub Issue情報エクスポート |
 | `repo-pr` | GitHub PR情報エクスポート |
 | `repo-commit` | コミット履歴エクスポート |
-
-### 画像処理
-
-| スキル | 説明 |
-|--------|------|
-| `image-convert` | 画像フォーマット変換（vips） |
-| `image-resize` | 画像リサイズ（vips） |
-| `image-remove-bg` | 背景除去（rembg） |
-
-### 動画
-
-| スキル | 説明 |
-|--------|------|
-| `remotion-video` | Remotionによる動画制作（React） |
-| `remotion-best-practices` | Remotion開発ベストプラクティス 🔗 |
-| `yt-chorus-extract` | YouTube動画からサビ音声クリップ抽出 |
 
 ### ブログ運用
 
@@ -427,9 +388,6 @@ config = load_skill_config("ga-analyzer")
 | `qiita-publish` | Qiitaへの公開 |
 | `generate-thumbnail` | Codex CLI built-in image_gen（gpt-image-2）によるブログサムネイル生成 |
 | `get-publish-date` | スケジュール設定に基づく次回公開日算出 |
-| `blog-mv-date` | 記事の公開日変更（MDX/画像/seed/SNS予約を一括更新） |
-| `blog-swap-dates` | 2記事間の公開日入れ替え（MDX/画像/seed/SNS予約を一括更新） |
-| `blog-schedule-overview` | 全記事の公開スケジュールカレンダー表示・空きスロット検出 |
 | `blog-fact-check` | 記事内の統計データ・バージョン・料金のファクトチェック |
 | `blog-internal-links` | クラスタ内記事間の内部リンク分析・挿入 |
 | `blog-seo-improve` | GSC/GAデータに基づく既存記事のSEO改善 |
@@ -440,7 +398,6 @@ config = load_skill_config("ga-analyzer")
 | スキル | 説明 |
 |--------|------|
 | `sns-announce` | SNS告知文生成（X/LinkedIn/Facebook/Bluesky/Threads等） |
-| `video-announce` | 動画/画像投稿キャプション生成（IG/YouTube Shorts/TikTok） |
 | `zernio` | Zernio CLIによるSNS投稿スケジュール・同期（post/sync） |
 
 ### 営業・セールス
@@ -477,7 +434,6 @@ config = load_skill_config("ga-analyzer")
 
 | スキル | 説明 |
 |--------|------|
-| `seed-context` | プロジェクトコンテキスト抽出・保存 |
 | `skill-creator` | 新規スキル作成ガイド（当リポジトリ規約版） |
 | `find-skills` | スキル検索・インストール支援 🔗 |
 | `claude-zombie-kill` | ゾンビClaude Codeセッション検出・終了 |
@@ -525,7 +481,7 @@ skills/
 │   │       git-commit/, git-pr/, github-issue-orchestrator/（SKILL.md 7本）,
 │   │       pr-iterate/（workflow のみ・SKILL.md 無し）
 │   └── playpark-skills/                  # 個人用スキル plugin（dependencies: playpark-core）
-│       ├── bin/                          # playpark-skills bare 名 wrapper（24本、<skill>-<action> 命名）
+│       ├── bin/                          # playpark-skills bare 名 wrapper（18本、<skill>-<action> 命名）
 │       ├── _lib/config.py                # Python共通設定ローダー
 │       ├── _shared/                      # スキル共通ユーティリティ・schemas・templates
 │       ├── <skill-name>/                 # 各スキル（自作）

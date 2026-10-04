@@ -351,7 +351,6 @@ _次回更新: {generated_at + 30日}_
 
 - `new_article_directions` の各エントリを展開
 - ファネルステージを明示（認知/興味/検討/行動）
-- 切り口案は seo-content-planner の `--strategy` 入力として活用される旨を注記
 
 ### 10. クラスタ提案
 

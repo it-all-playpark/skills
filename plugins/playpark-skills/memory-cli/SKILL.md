@@ -5,7 +5,7 @@ description: >-
   Use when: (1) saving knowledge, learnings, or context for future sessions,
   (2) searching past memories across projects,
   (3) keywords like "覚えて", "記憶", "remember", "recall", "memory", "前に話した", "以前の",
-  (4) session-load/session-save integration for automatic context persistence.
+  (4) session save/load patterns for automatic context persistence.
   Accepts args: <subcommand> [options]
 ---
 
@@ -21,7 +21,7 @@ Hybrid search (BM25 lexical + HNSW vector) with sub-millisecond retrieval.
 | 参照先 | 内容 |
 |--------|------|
 | `references/commands.md` | memvid サブコマンドリファレンス（put, find, view, timeline, stats, etc.） |
-| `references/workflows.md` | session-save/load 統合、フィードバック保存パターン |
+| `references/workflows.md` | セッション保存/読み込みパターン、フィードバック保存パターン |
 
 ## Memory File Locations
 

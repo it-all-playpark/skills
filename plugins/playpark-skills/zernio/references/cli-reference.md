@@ -9,7 +9,7 @@ zernio post --text "投稿内容" --platforms x,linkedin --schedule "2026-03-20 
 # Media post
 zernio post --media video.mp4 --caption "Caption" --platforms instagram --media-type reel
 
-# Batch from JSON (sns-announce / video-announce output)
+# Batch from JSON (sns-announce output)
 zernio post --json posts.json [--dry-run]
 
 # Immediate post (no --schedule)

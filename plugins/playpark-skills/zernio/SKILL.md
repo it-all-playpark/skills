@@ -4,7 +4,7 @@ description: |
   Zernio CLI wrapper for SNS scheduling and sync.
   Use when: (1) scheduling or posting to SNS platforms (X, LinkedIn, Facebook, Google Business, Threads, Bluesky, Instagram, YouTube, TikTok),
   (2) syncing local JSON files with Zernio API,
-  (3) after /sns-announce or /video-announce to schedule generated posts,
+  (3) after /sns-announce to schedule generated posts,
   (4) keywords: "SNS投稿", "予約投稿", "schedule post", "Zernio同期", "sync Zernio", "SNS同期".
   Accepts args: post|sync [OPTIONS]
 user-invocable: true
@@ -75,7 +75,7 @@ Then append `--profile-id $PROFILE_ID` to every `zernio` command if non-empty.
 ### post — Create or schedule SNS posts
 
 ```bash
-# Batch from JSON (most common — sns-announce / video-announce output)
+# Batch from JSON (most common — sns-announce output)
 zernio post --json posts.json [--dry-run]
 
 # Text post

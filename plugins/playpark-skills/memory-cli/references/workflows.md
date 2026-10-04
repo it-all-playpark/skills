@@ -1,6 +1,6 @@
 # Memory CLI Workflow Patterns
 
-## session-save 統合
+## セッション保存パターン
 
 セッション終了時にセッションサマリーを保存:
 
@@ -21,7 +21,7 @@ memvid commit ~/.claude/memory/global.mv2
 rip "$TMPFILE"
 ```
 
-## session-load 統合
+## セッション読み込みパターン
 
 セッション開始時に関連メモリを検索:
 
