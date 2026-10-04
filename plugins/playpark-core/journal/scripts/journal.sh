@@ -797,9 +797,9 @@ cmd_track_skill() {
 # Prune Subcommand
 # ============================================================================
 
-# dev-flow-doctor / dev-flow-improve が読む skill。期間を問わず残す
-# （baseline-snapshot.sh の DEFAULT_FAMILY_SKILLS の旧名も含める）。
-PRUNE_KEEP_DEFAULT="dev-flow,pr-iterate,dev-issue-analyze,git-commit,git-pr,github-issue-orchestrator,dev-flow-doctor,dev-flow-improve,dev-improve,dev-kickoff,dev-implement,dev-validate,dev-integrate,dev-evaluate,night-patrol,pr-fix,pr-review"
+# dev-flow-doctor / dev-flow-improve が読む skill。期間を問わず残す。
+# 廃止済みの旧 skill 名（dev-kickoff / pr-fix 等）は誰も読まないので入れない。
+PRUNE_KEEP_DEFAULT="dev-flow,pr-iterate,dev-issue-analyze,git-commit,git-pr,github-issue-orchestrator,dev-flow-doctor,dev-flow-improve,dev-improve"
 
 # Delete entries older than N days whose skill is not in the keep list.
 # 日付はファイル名先頭（UTC の YYYY-MM-DD）で判定する。日付で始まらない名前と、
