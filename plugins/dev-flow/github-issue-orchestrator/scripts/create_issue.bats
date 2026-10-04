@@ -1,10 +1,12 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 # Tests for github-issue-orchestrator/scripts/create_issue.py
 #
 # Focus: the pre-flight AC lint gate (lint_ac()) invoked at the top of run(),
 # exercised only through the --dry-run path so `gh` is never required, plus the
-# --kind agent|human gate and --blocked-by dependency wiring (tests 5+; the
-# non-dry-run ones put a recording gh stub first on PATH).
+# --kind agent|human gate (incl. the agent `## 変更対象パス` gate, tests 20+) and
+# --blocked-by dependency wiring (tests 5+; the non-dry-run ones put a recording
+# gh stub first on PATH).
 #
 # verdict handling contract:
 #   t1            -> silent pass
@@ -30,6 +32,9 @@ setup() {
     write_body "$BODY" \
         "# Title" \
         "" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
+        "" \
         "## 受け入れ基準" \
         "- [ ] AC-1 foo"
 
@@ -42,6 +47,8 @@ setup() {
 @test "(2) T2 body + --dry-run -> exit 0 かつ stderr に Warning" {
     BODY="$BATS_TEST_TMPDIR/body.md"
     write_body "$BODY" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
         "## 受け入れ基準" \
         "- foo" \
         "- bar"
@@ -56,6 +63,8 @@ setup() {
 @test "(3) 見出しなし non_compliant body + --dry-run -> exit 1 かつ是正手順を含む Error" {
     BODY="$BATS_TEST_TMPDIR/body.md"
     write_body "$BODY" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
         "## Tasks" \
         "- [ ] not an AC section"
 
@@ -133,6 +142,9 @@ write_agent_body() {
         "## 背景" \
         "- 目的: foo" \
         "" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
+        "" \
         "## 受け入れ基準" \
         "- [ ] AC-1 foo"
 }
@@ -163,6 +175,9 @@ write_human_body() {
         "- executor: human" \
         "- タスク: API キーを発行する" \
         "" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
+        "" \
         "## 受け入れ基準" \
         "- [ ] AC-1 foo"
 
@@ -178,6 +193,8 @@ write_human_body() {
     BODY="$BATS_TEST_TMPDIR/body.md"
     write_body "$BODY" \
         "- 担当: backend / executor:  human" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
         "## 受け入れ基準" \
         "- [ ] AC-1 foo"
 
@@ -193,6 +210,8 @@ write_human_body() {
     BODY="$BATS_TEST_TMPDIR/body.md"
     write_body "$BODY" \
         "- executor: agent" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
         "## 受け入れ基準" \
         "- [ ] AC-1 foo"
 
@@ -308,6 +327,8 @@ write_human_body() {
     write_body "$BODY" \
         "## 背景" \
         "- Blocked by #12" \
+        "## 変更対象パス" \
+        "- src/foo.py" \
         "## 受け入れ基準" \
         "- [ ] AC-1 foo"
 
@@ -370,4 +391,120 @@ write_human_body() {
 
     [ "$status" -eq 1 ]
     [[ "$output" == *"--blocked-by"* ]]
+}
+
+# ---- --kind agent: ## 変更対象パス の必須（--kind human は要求しない）----
+
+# write_paths_body <file> <変更対象パス節の行...>: 変更対象パス節だけを差し替えた agent 本文
+write_paths_body() {
+    local out="$1"
+    shift
+    write_body "$out" \
+        "## 背景" \
+        "- 目的: foo" \
+        "" \
+        "$@" \
+        "" \
+        "## 受け入れ基準" \
+        "- [ ] AC-1 foo"
+}
+
+@test "(20) --kind agent + ## 変更対象パス なし + --dry-run -> exit 1、理由を stderr に出す" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_body "$BODY" \
+        "## 背景" \
+        "- 目的: foo" \
+        "" \
+        "## 受け入れ基準" \
+        "- [ ] AC-1 foo"
+
+    run --separate-stderr python3 "$SCRIPT" --kind agent --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"## 変更対象パス"*"見出しが無い"* ]]
+    [[ "$output" != *"Dry run: issue will not be created."* ]]
+}
+
+@test "(21) --kind agent + ## 変更対象パス のエントリ 0 件 + --dry-run -> exit 1、理由を stderr に出す" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_paths_body "$BODY" \
+        "## 変更対象パス" \
+        "（未定）"
+
+    run --separate-stderr python3 "$SCRIPT" --kind agent --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"エントリが無い"* ]]
+    [[ "$output" != *"Dry run: issue will not be created."* ]]
+}
+
+@test "(22) --kind agent + エントリが / 始まり + --dry-run -> exit 1、理由を stderr に出す" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_paths_body "$BODY" \
+        "## 変更対象パス" \
+        "- src/ok.py" \
+        "- /etc/passwd"
+
+    run --separate-stderr python3 "$SCRIPT" --kind agent --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *'`/` 始まり'*"/etc/passwd"* ]]
+    [[ "$output" != *"Dry run: issue will not be created."* ]]
+}
+
+@test "(23) --kind agent + エントリが .. セグメントを含む + --dry-run -> exit 1、理由を stderr に出す" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_paths_body "$BODY" \
+        "## 変更対象パス" \
+        "- src/../../other-repo/x.py"
+
+    run --separate-stderr python3 "$SCRIPT" --kind agent --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *'`..` セグメント'*"src/../../other-repo/x.py"* ]]
+    [[ "$output" != *"Dry run: issue will not be created."* ]]
+}
+
+@test "(24) --kind agent + 変更対象パス欄なし（非 dry-run）-> exit 1、gh issue create を呼ばない" {
+    use_gh_stub
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_body "$BODY" \
+        "## 背景" \
+        "- 目的: foo" \
+        "## 受け入れ基準" \
+        "- [ ] AC-1 foo"
+
+    run --separate-stderr python3 "$SCRIPT" --title "Test" --body-file "$BODY"
+
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"## 変更対象パス"* ]]
+    ! grep -q '^issue create' "$GH_LOG"
+}
+
+@test "(25) --kind agent + 相対パスと glob のエントリ（.. を名前に含むだけのものも可）+ --dry-run -> exit 0" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_paths_body "$BODY" \
+        "## 変更対象パス" \
+        "- plugins/dev-flow/github-issue-orchestrator/scripts/create_issue.py" \
+        "- plugins/dev-flow/github-issue-orchestrator/references/*" \
+        "- docs/a..b.md" \
+        "" \
+        "## テスト戦略" \
+        "- /absolute/path/in/another/section"
+
+    run --separate-stderr python3 "$SCRIPT" --kind agent --title "Test" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Dry run: issue will not be created."* ]]
+}
+
+@test "(26) --kind human は ## 変更対象パス を要求しない" {
+    BODY="$BATS_TEST_TMPDIR/body.md"
+    write_human_body "$BODY"
+    ! grep -q '変更対象パス' "$BODY"
+
+    run python3 "$SCRIPT" --kind human --title "API キー発行" --body-file "$BODY" --dry-run
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Dry run: issue will not be created."* ]]
 }
