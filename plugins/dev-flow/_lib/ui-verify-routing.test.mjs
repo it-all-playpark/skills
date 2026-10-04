@@ -439,7 +439,7 @@ const STACK_CFG = {
   ],
   base_url: 'http://127.0.0.1:{port.web}',
   smoke_path: '/select-tenant',
-  login: { steps: ['SENTINEL-LOGIN-STEP'] },
+  login: { commands: [['open', '{base_url}/login'], ['click', 'SENTINEL-LOGIN-STEP']] },
 };
 
 test('[ui-verify] (h) stack 形式: up は worktree / state-dir / issue だけを渡し、宣言コマンドを prompt に埋め込まない', async () => {
@@ -461,9 +461,13 @@ test('[ui-verify] (h) stack 形式: up は worktree / state-dir / issue だけ�
   assert.match(up.prompt, /ui-verify-stack up --worktree '\/tmp\/wt' --state-dir '\/tmp\/wt\/\.devflow-tmp\/ui-verify' --issue 1/);
   assert.ok(!/SENTINEL-(DB|SEED|WEB)-CMD/.test(up.prompt), '(h) 宣言コマンドは prompt に埋め込まない（ui-verify-stack が config を読む）');
 
+  // smoke は LLM を挟まない: exec-proxy が ui-verify-stack smoke を叩くだけ（login もその中で決定的に実行）
   const verify = calls.find((c) => c.label === 'ui-verify');
-  assert.ok(verify.prompt.includes('http://127.0.0.1:6596/select-tenant'), '(h) smoke は up が返した smoke_url を開く');
-  assert.ok(verify.prompt.includes('SENTINEL-LOGIN-STEP'), '(h) login.steps は ui-verifier へ前段 steps として渡る');
+  assert.equal(verify.agentType, 'dev-flow:dev-runner-haiku', '(h) smoke は ui-verifier（LLM）ではなく exec-proxy');
+  assert.ok(verify.prompt.includes("ui-verify-stack smoke --state-dir '/tmp/wt/.devflow-tmp/ui-verify' --session 'devflow-1'"));
+  assert.ok(!verify.prompt.includes('SENTINEL-LOGIN-STEP'), '(h) login の中身は prompt に載せない（スクリプトが spec から読む）');
+  assert.ok(!calls.some((c) => c.agentType === 'dev-flow:ui-verifier'), '(h) smoke では ui-verifier を spawn しない');
+  assert.ok(!calls.some((c) => c.label === 'ui-verify-login'), '(h) smoke の login は smoke コマンドの中で済む');
 
   const down = calls.find((c) => c.label === 'ui-verify-teardown');
   assert.ok(down.prompt.includes("ui-verify-stack down --state-dir '/tmp/wt/.devflow-tmp/ui-verify'"), '(h) teardown は ui-verify-stack down');
@@ -499,4 +503,70 @@ test('[ui-verify] (j) stack 形式の config が不正 → ui-verify-server を�
   const { returned } = await runDevFlowInSandbox(src, ctx);
   assert.ok(!calls.some((c) => c.label === 'ui-verify-server'));
   assert.equal(returned?.ui_verify, 'setup_failed');
+});
+
+// ============================================================
+// (k) scenario: login は ui-verify-stack login（exec-proxy）で決定的に済ませ、ui-verifier には scenario だけを渡す
+// ============================================================
+
+const SCENARIO_CFG = { ...STACK_CFG, scenarios: [{ name: 'shift', steps: ['open /shifts'], checks: ['table visible'], ac_index: 0 }] };
+
+test('[ui-verify] (k) scenario + login → ui-verify-login（exec-proxy）→ ui-verifier の順で、ui-verifier にログイン操作をさせない', async () => {
+  const { ctx, calls } = makeUiVerifySandbox({
+    analyzeReq: standardReq,
+    realizedFiles: ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'],
+    overrides: {
+      'ui-verify-config': { found: true, config: SCENARIO_CFG },
+      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
+      'ui-verify-login': { ok: true, ran: 2, total: 2 },
+      'ui-verify': { ok: true, mode: 'scenario', checks: [{ ac_index: 0, action: 'open /shifts', result: 'pass' }], console_errors: [], screenshots: [], summary: 'ok' },
+      'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
+    },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  assert.equal(error, null, error?.message);
+  const li = calls.findIndex((c) => c.label === 'ui-verify-login');
+  const vi = calls.findIndex((c) => c.label === 'ui-verify');
+  assert.ok(li >= 0 && vi > li, '(k) login → ui-verifier の順');
+  assert.equal(calls[li].agentType, 'dev-flow:dev-runner-haiku');
+  assert.ok(calls[li].prompt.includes("ui-verify-stack login --state-dir '/tmp/wt/.devflow-tmp/ui-verify' --session 'devflow-1'"));
+  assert.equal(calls[vi].agentType, 'dev-flow:ui-verifier');
+  assert.ok(calls[vi].prompt.includes('ログイン済み'));
+  assert.ok(!calls[vi].prompt.includes('SENTINEL-LOGIN-STEP'), '(k) ui-verifier に login 手順を渡さない');
+  assert.equal(returned?.ui_verify, 'passed');
+  assert.equal(returned?.ui_verify_mode, 'scenario');
+});
+
+test('[ui-verify] (k) scenario で login が失敗 → ui-verifier を呼ばず findings（UI 検証 NG）', async () => {
+  const { ctx, calls } = makeUiVerifySandbox({
+    analyzeReq: standardReq,
+    realizedFiles: ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'],
+    overrides: {
+      'ui-verify-config': { found: true, config: SCENARIO_CFG },
+      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
+      'ui-verify-login': { ok: false, ran: 1, total: 2, failed: { index: 1, command: 'click SENTINEL-LOGIN-STEP' }, error: 'element not found' },
+      'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
+    },
+  });
+  const { error, returned } = await runDevFlowInSandbox(src, ctx);
+  assert.equal(error, null, error?.message);
+  assert.ok(!calls.some((c) => c.label === 'ui-verify'), '(k) login 失敗時は ui-verifier を呼ばない');
+  assert.ok(calls.some((c) => c.label === 'ui-verify-teardown'));
+  assert.equal(returned?.ui_verify, 'findings');
+});
+
+test('[ui-verify] (k) scenario で login の exec-proxy が null → failed_open', async () => {
+  const { ctx, calls } = makeUiVerifySandbox({
+    analyzeReq: standardReq,
+    realizedFiles: ['src/components/A.tsx', 'src/components/B.tsx', 'src/components/C.tsx'],
+    overrides: {
+      'ui-verify-config': { found: true, config: SCENARIO_CFG },
+      'ui-verify-server': { ok: true, phase: 'ready', base_url: 'http://127.0.0.1:6596', port: 6596 },
+      'ui-verify-login': null,
+      'ui-verify-teardown': { server_stopped: true, session_closed: true, leftover: [], notes: '' },
+    },
+  });
+  const { returned } = await runDevFlowInSandbox(src, ctx);
+  assert.ok(!calls.some((c) => c.label === 'ui-verify'));
+  assert.equal(returned?.ui_verify, 'failed_open');
 });

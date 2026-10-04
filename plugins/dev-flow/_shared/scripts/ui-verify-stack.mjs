@@ -21,6 +21,13 @@
 //   ui-verify-stack up --worktree <abs> --state-dir <abs> [--issue <n>] [--config <json>] [--wait-sec <n=540>]
 //   ui-verify-stack down --state-dir <abs> [--timeout-sec <n=60>]
 //   ui-verify-stack status --state-dir <abs>
+//   ui-verify-stack login --state-dir <abs> --session <name>
+//   ui-verify-stack smoke --state-dir <abs> --session <name>
+//
+// login / smoke は LLM を挟まない決定的な手順。宣言された agent-browser の argv をシェルを通さず
+// 実行し、smoke は open → wait networkidle → errors / console（level=error、console_ignore で除外）
+// → screenshot の結果を ui-verifier と同じ UIVERIFY 形で返す。LLM の ui-verifier は scenario だけに使う。
+// agent-browser のセッション（daemon）は Bash 呼び出しをまたいで残る（--session で分離）。
 //   （内部）ui-verify-stack supervise --state-dir <abs>
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -152,6 +159,8 @@ export function resolveSpec(cfg, { worktree, stateDir, ports }) {
     ports,
     base_url,
     smoke_url: base_url + cfg.smoke_path,
+    login: cfg.login ? cfg.login.commands.map((c) => c.map(x)) : null,
+    console_ignore: cfg.console_ignore,
     ttl_sec: cfg.ttl_sec,
     env_files: cfg.env_files,
     up: cfg.up.map(step),
@@ -492,6 +501,122 @@ export async function up({ worktree, stateDir, issue, configPath, waitSec = 540 
   }
 }
 
+// ---------------------------------------------------------------------------
+// login / smoke（agent-browser を argv で直接呼ぶ。シェルを経由しない）
+// ---------------------------------------------------------------------------
+
+const BROWSER_TIMEOUT_MS = 90_000;
+
+function browser(session, argv, { json = false } = {}) {
+  const bin = process.env.UI_VERIFY_AGENT_BROWSER || 'agent-browser';
+  const args = ['--session', session, ...(json ? ['--json'] : []), ...argv];
+  try {
+    const stdout = execFileSync(bin, args, { encoding: 'utf8', timeout: BROWSER_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
+    return { ok: true, stdout };
+  } catch (e) {
+    const detail = `${e.stderr ?? ''}${e.stdout ?? ''}`.trim() || (e.message ?? String(e));
+    return { ok: false, stdout: e.stdout ?? '', error: detail.slice(0, 500) };
+  }
+}
+
+// agent-browser の console / errors 出力から error レベルの文言を取り出す。
+// --json の形に依存しすぎないよう、{type|level, text|message} を持つ object を再帰的に拾う。
+// JSON でなければ "[error] ..." 形式の行を拾う。errors（page error）は level を問わず error 扱い。
+export function extractErrorMessages(raw, { allErrors = false } = {}) {
+  const out = [];
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { parsed = undefined; }
+  if (parsed !== undefined) {
+    const walk = (v) => {
+      if (Array.isArray(v)) { v.forEach(walk); return; }
+      if (!v || typeof v !== 'object') return;
+      const text = v.text ?? v.message ?? v.description;
+      const level = String(v.type ?? v.level ?? '').toLowerCase();
+      if (typeof text === 'string' && (allErrors || level === 'error')) { out.push(text); return; }
+      Object.values(v).forEach(walk);
+    };
+    walk(parsed);
+    return out;
+  }
+  for (const line of String(raw).split('\n')) {
+    const m = /^\s*\[(error|pageerror)\]\s*(.*)$/i.exec(line);
+    if (m) out.push(m[2]);
+    else if (allErrors && line.trim()) out.push(line.trim());
+  }
+  return out;
+}
+
+function readyStack(stateDir) {
+  const paths = statePaths(stateDir);
+  const spec = readJson(paths.spec);
+  const stack = readJson(paths.stack);
+  if (!spec || !stack) return { ok: false, error: 'stack が無い（先に up する）' };
+  if (stack.phase !== 'ready') return { ok: false, error: `stack が ready でない（phase=${stack.phase}）` };
+  return { ok: true, spec };
+}
+
+export function login(stateDir, session) {
+  const st = readyStack(stateDir);
+  if (!st.ok) return { ok: false, error: st.error };
+  const cmds = st.spec.login;
+  if (!cmds) return { ok: true, skipped: true, ran: 0, total: 0 };
+  for (const [i, argv] of cmds.entries()) {
+    const r = browser(session, argv);
+    if (!r.ok) {
+      return { ok: false, ran: i, total: cmds.length, failed: { index: i, command: argv.join(' ') }, error: r.error };
+    }
+  }
+  return { ok: true, ran: cmds.length, total: cmds.length };
+}
+
+export function smoke(stateDir, session) {
+  const result = (ok, checks, consoleErrors, screenshots, summary) => ({
+    ok, mode: 'smoke', checks, console_errors: consoleErrors.slice(0, 20), screenshots, summary,
+  });
+  const st = readyStack(stateDir);
+  if (!st.ok) return result(false, [], [], [], st.error);
+  const { spec } = st;
+  const checks = [];
+
+  if (spec.login) {
+    const l = login(stateDir, session);
+    checks.push({ action: 'login', result: l.ok ? 'pass' : 'fail', evidence: l.ok ? `${l.ran} commands` : `${l.failed ? l.failed.command : ''}: ${l.error}` });
+    if (!l.ok) return result(false, checks, [], [], `login 失敗: ${l.failed ? l.failed.command : ''}`);
+  }
+  // login 中の出力は smoke の判定に混ぜない
+  browser(session, ['console', '--clear']);
+  browser(session, ['errors', '--clear']);
+
+  const open = browser(session, ['open', spec.smoke_url]);
+  checks.push({ action: `open ${spec.smoke_url}`, result: open.ok ? 'pass' : 'fail', ...(open.ok ? {} : { evidence: open.error }) });
+  if (!open.ok) return result(false, checks, [], [], `load 失敗: ${spec.smoke_url}`);
+  const wait = browser(session, ['wait', '--load', 'networkidle']);
+  checks.push({ action: 'wait --load networkidle', result: wait.ok ? 'pass' : 'fail', ...(wait.ok ? {} : { evidence: wait.error }) });
+
+  const ignore = (spec.console_ignore ?? []).map((re) => new RegExp(re));
+  const keep = (m) => !ignore.some((re) => re.test(m));
+  const errs = browser(session, ['errors'], { json: true });
+  const cons = browser(session, ['console'], { json: true });
+  const collected = [
+    ...(errs.ok ? extractErrorMessages(errs.stdout, { allErrors: true }) : []),
+    ...(cons.ok ? extractErrorMessages(cons.stdout) : []),
+  ];
+  const consoleErrors = [...new Set(collected)].filter(keep);
+  const ignored = collected.length - consoleErrors.length;
+
+  const shot = join(stateDir, 'smoke.png');
+  const ss = browser(session, ['screenshot', shot]);
+  const screenshots = ss.ok ? [shot] : [];
+
+  const unread = [errs.ok ? null : 'errors', cons.ok ? null : 'console'].filter(Boolean);
+  const summary = `smoke ${spec.smoke_url}: load ${wait.ok ? 'ok' : 'ok（networkidle 待ちは失敗）'}, console error ${consoleErrors.length} 件`
+    + (ignored ? `（console_ignore で ${ignored} 件除外）` : '')
+    + (collected.length - ignored > 20 ? `（先頭 20 件のみ）` : '')
+    + (unread.length ? `, ${unread.join(' / ')} の取得失敗` : '')
+    + (ss.ok ? '' : ', screenshot 失敗');
+  return result(true, checks, consoleErrors, screenshots, summary);
+}
+
 export function status(stateDir) {
   const stack = readJson(statePaths(stateDir).stack);
   if (!stack) return { ok: true, running: false };
@@ -508,7 +633,7 @@ function parseArgs(argv) {
     const a = argv[i];
     const key = {
       '--worktree': 'worktree', '--state-dir': 'stateDir', '--issue': 'issue', '--config': 'configPath',
-      '--wait-sec': 'waitSec', '--timeout-sec': 'timeoutSec',
+      '--wait-sec': 'waitSec', '--timeout-sec': 'timeoutSec', '--session': 'session',
     }[a];
     if (!key || i + 1 >= argv.length) return { error: `Unknown or incomplete option: ${a}` };
     opts[key] = argv[i + 1];
@@ -520,7 +645,7 @@ function parseArgs(argv) {
 async function main() {
   const [sub, ...rest] = process.argv.slice(2);
   const usage = (msg) => { process.stderr.write(`${msg}\n`); process.exit(2); };
-  if (!['up', 'down', 'status', 'supervise'].includes(sub)) usage('subcommand (up|down|status) required');
+  if (!['up', 'down', 'status', 'login', 'smoke', 'supervise'].includes(sub)) usage('subcommand (up|down|status|login|smoke) required');
   const { opts, error } = parseArgs(rest);
   if (error) usage(error);
   if (!opts.stateDir) usage('--state-dir is required');
@@ -529,6 +654,11 @@ async function main() {
 
   if (sub === 'supervise') { await supervise(stateDir); process.exit(0); }
   if (sub === 'status') { print(status(stateDir)); return; }
+  if (sub === 'login' || sub === 'smoke') {
+    if (!opts.session) usage('--session is required');
+    print(sub === 'login' ? login(stateDir, opts.session) : smoke(stateDir, opts.session));
+    return;
+  }
   if (sub === 'down') {
     print(await down(stateDir, { timeoutSec: opts.timeoutSec ? Number(opts.timeoutSec) : 60 }));
     return;

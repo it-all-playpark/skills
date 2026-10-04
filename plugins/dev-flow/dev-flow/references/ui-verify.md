@@ -31,7 +31,14 @@ sandbox 外で動く脱出口になる）。
       "down": [ { "name": "note", "run": "echo stopped" } ],  // serve を止めた後に実行（best-effort）
       "base_url": "http://127.0.0.1:{port.web}",   // 既定 http://127.0.0.1:{port}（ports の先頭）
       "smoke_path": "/",                            // smoke で開く path（既定 /）
-      "login": { "steps": ["/login を開く", "email に ... を入力", "ログインを押す"] },  // smoke / scenario の前段
+      "login": { "commands": [                      // smoke / scenario の前段。agent-browser の argv 配列
+        ["open", "{base_url}/login"],
+        ["fill", "input[name=email]", "e2e@test.local"],
+        ["fill", "input[name=password]", "password123"],
+        ["click", "button[type=submit]"],
+        ["wait", "--url", "**/dashboard"]
+      ] },
+      "console_ignore": ["\\[HMR\\]", "ResizeObserver loop"],  // smoke で除外する console error（正規表現。既定あり）
       "ttl_sec": 1800,                              // teardown が来なくてもこの秒数で自ら停止（既定 1800）
       "scenarios": [ { "name": "...", "steps": ["..."], "checks": ["..."], "ac_index": 0 } ]
     }
@@ -46,6 +53,12 @@ sandbox 外で動く脱出口になる）。
 - placeholder: `{port.<name>}`、`{port}`（ports の先頭）、`{state_dir}`、`{worktree}`、`{base_url}`。
   コマンド・env・ready・base_url で使える。シェルの `${VAR}` には触らない。未宣言の `{port.<name>}` は config 不正。
 - 各 step には env `UI_VERIFY_STATE_DIR` / `UI_VERIFY_BASE_URL` / `UI_VERIFY_PORT_<NAME>` も渡る。
+- `login.commands` は agent-browser の argv 配列の列（`--session` は dev-flow が付けるので書かない）。
+  シェルを通さず宣言順に実行し、1 つでも失敗したらそこで止める。先頭に書ける subcommand はページ操作と待機だけ
+  （open / click / dblclick / fill / type / press / keyboard / select / check / uncheck / hover / focus / scroll /
+  scrollintoview / wait / find / back / forward / reload）。placeholder は各要素で使える。
+- `console_ignore` は smoke で拾った console error / page error から除外する正規表現。
+  省略時は dev モードの既知ノイズ（`[HMR]` / `[Fast Refresh]` / webpack / favicon.ico / React DevTools）。
 
 ### 旧形式（後方互換）
 
@@ -60,7 +73,19 @@ sandbox 外で動く脱出口になる）。
 ui-verify-stack up --worktree <WT> --state-dir <WT>/.devflow-tmp/ui-verify --issue <N>
 ui-verify-stack down --state-dir <WT>/.devflow-tmp/ui-verify
 ui-verify-stack status --state-dir <...>
+ui-verify-stack login --state-dir <...> --session devflow-<issue>[-final]
+ui-verify-stack smoke --state-dir <...> --session devflow-<issue>[-final]
 ```
+
+- LLM の判断が要らないところに LLM を入れない。smoke（load 成否と console error）と login は決定的な手順なので
+  `ui-verify-stack` が agent-browser を直接呼び、LLM の ui-verifier は判断が要る scenario だけに使う。
+  - `smoke`: login（宣言があれば）→ console / errors を clear → `open <smoke_url>` → `wait --load networkidle` →
+    `errors` / `console`（level=error のみ、`console_ignore` で除外）→ `screenshot <state_dir>/smoke.png` を行い、
+    ui-verifier と同じ `{ok, mode:"smoke", checks, console_errors, screenshots, summary}` を返す。
+  - `login`: scenario の前段。同じ session でログインを済ませてから ui-verifier に渡す。失敗したら ui-verifier は
+    呼ばず UI 検証 NG（findings）。agent-browser の session は Bash 呼び出しをまたいで残る。
+- workflow の実行環境は Node API もシェルも持たないため、up / down / login / smoke の実行は exec-proxy
+  （dev-runner-haiku。stdout をそのまま返すだけで判断はしない）経由になる。
 
 - `up` は detached な supervisor を 1 本起こし、ready（全 step 完了）か失敗まで待って JSON を返す。
   返り値: `{ok, phase, base_url, smoke_url, ports, port, step?, error?, log?}`。

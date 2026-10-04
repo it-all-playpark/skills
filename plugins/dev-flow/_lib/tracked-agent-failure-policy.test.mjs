@@ -81,6 +81,7 @@ const DF_CLOSES = { overrides: { 'closes-check': { ok: true, raw: JSON.stringify
 const DF_DIFF_GATE_RETRY = DEV_FLOW_SCENARIOS['diff-gate-retry'];
 const DF_HASH_MISMATCH = DEV_FLOW_SCENARIOS['hash-mismatch'];
 const DF_FINAL_RECONCILE_UI = DEV_FLOW_SCENARIOS['final-reconcile-ui'];
+const DF_UI_SCENARIO_LOGIN = DEV_FLOW_SCENARIOS['ui-scenario-login'];
 const DF_REDGREEN = DEV_FLOW_SCENARIOS['redgreen'];
 const DF_CI_CHECKS = DEV_FLOW_SCENARIOS['ci-checks'];
 const DF_COMPLEX_FIX = DEV_FLOW_SCENARIOS['complex-fix'];
@@ -223,6 +224,7 @@ const EXPECTED_DEV_FLOW = {
   'ui-verify-config': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（advisoryなUI検証）' },
   'ui-verify-server': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
   'ui-verify': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
+  'ui-verify-login': { config: DF_UI_SCENARIO_LOGIN, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（scenario前段の決定的ログイン）' },
   'ui-verify-teardown': { config: DF_FINAL_RECONCILE_UI, policy: 'abort', reason: 'finally節内のbare呼び出し。try/catchの外にあり例外はrunを中断させる' },
   'ui-verify-config-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（Final reconcile再検証）' },
   'ui-verify-server-final': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（Final reconcile再検証）' },

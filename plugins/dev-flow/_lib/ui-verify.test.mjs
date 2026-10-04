@@ -76,6 +76,7 @@ test('validateUiVerifyConfig: 旧形式の最小 config は up/down 形式へ変
     base_url: 'http://127.0.0.1:{port.app}',
     smoke_path: '/',
     login: null,
+    console_ignore: ['\\[HMR\\]', '\\[Fast Refresh\\]', '\\bwebpack\\b', 'favicon\\.ico', 'React DevTools'],
     ttl_sec: 1800,
     scenarios: null,
   });
@@ -213,7 +214,15 @@ const STACK_CFG = {
   down: [{ name: 'dump-logs', run: 'echo done' }],
   base_url: 'http://localhost:{port.web}/',
   smoke_path: '/dashboard',
-  login: { steps: ['open /login', 'fill email with e2e@test.local', 'click submit'] },
+  login: {
+    commands: [
+      ['open', '{base_url}/login'],
+      ['find', 'label', 'メールアドレス', 'fill', 'e2e@test.local'],
+      ['click', 'button[type=submit]'],
+      ['wait', '--url', '**/dashboard'],
+    ],
+  },
+  console_ignore: ['ResizeObserver loop'],
   ttl_sec: 900,
   scenarios: [{ name: 'shift', steps: ['open /shifts'], checks: ['table visible'] }],
 };
@@ -233,7 +242,8 @@ test('validateUiVerifyConfig: 新形式は宣言順の up と既定値を正規�
   assert.deepEqual(c.down.map((s) => s.name), ['dump-logs']);
   assert.equal(c.base_url, 'http://localhost:{port.web}', '末尾の / は落とす');
   assert.equal(c.smoke_path, '/dashboard');
-  assert.deepEqual(c.login, { steps: STACK_CFG.login.steps });
+  assert.deepEqual(c.login, { commands: STACK_CFG.login.commands });
+  assert.deepEqual(c.console_ignore, ['ResizeObserver loop']);
   assert.equal(c.ttl_sec, 900);
 });
 
@@ -266,7 +276,14 @@ for (const [label, cfg, re] of [
   ['未宣言の port 名を参照', { ports: ['web'], up: [{ name: 'a', serve: 'x --port {port.api}', ready: { tcp: '{port.web}' } }] }, /api/],
   ['ports の重複', { ports: ['a', 'a'], up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /重複/],
   ['ports 帯が 65535 を超える', { base_port: 64000, ports: ['a', 'b', 'c'], up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /65535/],
-  ['login.steps が空', { login: { steps: [] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /login/],
+  ['login.commands が空', { login: { commands: [] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /login/],
+  ['login が自然文（旧 steps）', { login: { steps: ['ログインする'] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /login/],
+  ['login.commands の要素が argv 配列でない', { login: { commands: ['open /login'] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /argv/],
+  ['login.commands に許可外の subcommand', { login: { commands: [['eval', 'document.cookie']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /eval/],
+  ['login.commands に --session', { login: { commands: [['open', '/login', '--session', 'x']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /--session/],
+  ['login.commands が未宣言の port を参照', { login: { commands: [['open', 'http://127.0.0.1:{port.api}/']] }, up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /api/],
+  ['console_ignore が不正な正規表現', { console_ignore: ['('], up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /console_ignore/],
+  ['console_ignore が string[] でない', { console_ignore: 'x', up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /console_ignore/],
   ['smoke_path が / 始まりでない', { smoke_path: 'x', up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /smoke_path/],
   ['base_url が URL でない', { base_url: 'localhost:3000', up: [{ name: 'a', serve: 'x', ready: { tcp: 1 } }] }, /base_url/],
 ]) {

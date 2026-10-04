@@ -21,6 +21,15 @@ const UI_VERIFY_PORT_REF_RE = /\{port\.([A-Za-z][A-Za-z0-9_-]*)\}/g;
 const UI_VERIFY_RUN_TIMEOUT_SEC = 600;
 const UI_VERIFY_SERVE_TIMEOUT_SEC = 180;
 const UI_VERIFY_TTL_SEC = 1800;
+// login に書ける agent-browser の subcommand（ページ操作と待機のみ。eval / close / 設定変更は不可）
+const UI_VERIFY_LOGIN_SUBCOMMANDS = new Set([
+  'open', 'click', 'dblclick', 'fill', 'type', 'press', 'keyboard', 'select', 'check', 'uncheck',
+  'hover', 'focus', 'scroll', 'scrollintoview', 'wait', 'find', 'back', 'forward', 'reload',
+]);
+// smoke の console error から機械的に除外する既定パターン（dev モードの既知ノイズ）
+const UI_VERIFY_CONSOLE_IGNORE_DEFAULT = [
+  '\\[HMR\\]', '\\[Fast Refresh\\]', '\\bwebpack\\b', 'favicon\\.ico', 'React DevTools',
+];
 // 1 本目の port は旧 uiVerifyPort と同値。2 本目以降は 1000 刻み（issue % 1000 の帯を名前ごとに分ける）。
 const UI_VERIFY_PORT_STRIDE = 1000;
 
@@ -266,12 +275,32 @@ export function validateUiVerifyConfig(cfg) {
     smoke_path = src.smoke_path;
   }
 
+  // login は agent-browser の argv 列。ui-verify-stack がシェルを通さず順に実行する（LLM を挟まない）。
   let login = null;
   if (src.login !== undefined && src.login !== null) {
-    if (!uivIsPlainObject(src.login) || !Array.isArray(src.login.steps) || src.login.steps.length === 0 || src.login.steps.some((x) => typeof x !== 'string')) {
-      return { ok: false, error: 'login は { steps: string[]（非空） } である必要がある' };
+    const cmds = uivIsPlainObject(src.login) ? src.login.commands : undefined;
+    if (!Array.isArray(cmds) || cmds.length === 0
+      || cmds.some((c) => !Array.isArray(c) || c.length === 0 || c.some((a) => typeof a !== 'string'))) {
+      return { ok: false, error: 'login は { commands: string[][]（agent-browser の argv 配列の非空 array） } である必要がある' };
     }
-    login = { steps: src.login.steps };
+    const bad = cmds.find((c) => !UI_VERIFY_LOGIN_SUBCOMMANDS.has(c[0]));
+    if (bad) {
+      return { ok: false, error: `login.commands の "${bad[0]}" は使えない（可: ${[...UI_VERIFY_LOGIN_SUBCOMMANDS].join(', ')}）` };
+    }
+    if (cmds.some((c) => c.some((a) => a === '--session' || a.startsWith('--session=')))) {
+      return { ok: false, error: 'login.commands に --session は書けない（session は dev-flow が付ける）' };
+    }
+    login = { commands: cmds };
+  }
+
+  let console_ignore = UI_VERIFY_CONSOLE_IGNORE_DEFAULT;
+  if (src.console_ignore !== undefined) {
+    const ci = uivValidateStringList(src.console_ignore, 'console_ignore');
+    if (!ci.ok) return ci;
+    for (const re of ci.list) {
+      try { new RegExp(re); } catch { return { ok: false, error: `console_ignore の "${re}" が正規表現として不正` }; }
+    }
+    console_ignore = ci.list;
   }
 
   let ttl_sec = UI_VERIFY_TTL_SEC;
@@ -292,6 +321,7 @@ export function validateUiVerifyConfig(cfg) {
   }
   for (const v of Object.values(env.env)) uivCollectPortRefs(v, refs);
   uivCollectPortRefs(base_url, refs);
+  for (const c of login ? login.commands : []) for (const a of c) uivCollectPortRefs(a, refs);
   const unknown = [...refs].filter((r) => !ports.includes(r));
   if (unknown.length) return { ok: false, error: `未宣言の port 名を参照している: ${unknown.join(', ')}（ports に宣言する）` };
 
@@ -308,6 +338,7 @@ export function validateUiVerifyConfig(cfg) {
       base_url,
       smoke_path,
       login,
+      console_ignore,
       ttl_sec,
       scenarios: sc.scenarios,
     },

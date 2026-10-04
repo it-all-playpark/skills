@@ -222,3 +222,133 @@ test('down: state が無ければ no-op / usage error は exit 2', () => {
   assert.throws(() => execFileSync(process.execPath, [SCRIPT, 'bogus'], { stdio: 'pipe' }), (e) => e.status === 2);
   assert.throws(() => execFileSync(process.execPath, [SCRIPT, 'down'], { stdio: 'pipe' }), (e) => e.status === 2);
 });
+
+// ── login / smoke（agent-browser は fake で置き換え、argv とシェル非経由を確かめる）──────────
+
+const FAKE_AB = `#!/usr/bin/env node
+// fake agent-browser: argv を JSON 1 行で記録し、決め打ちの応答を返す
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_AB_LOG, JSON.stringify(argv) + '\\n');
+const sub = argv.filter((a, i) => !(a.startsWith('--') || argv[i - 1] === '--session'))[0];
+if (argv.some((a) => a.includes('FAIL'))) { process.stderr.write('element not found'); process.exit(1); }
+if (sub === 'console' && !argv.includes('--clear')) {
+  process.stdout.write(JSON.stringify({ success: true, data: { messages: [
+    { type: 'error', text: 'Boom from page' },
+    { type: 'log', text: 'just a log' },
+    { type: 'error', text: '[HMR] connected' },
+    { type: 'error', text: 'ResizeObserver loop limit exceeded' },
+  ] } }));
+} else if (sub === 'errors' && !argv.includes('--clear')) {
+  process.stdout.write(JSON.stringify({ success: true, data: { errors: [{ message: 'Uncaught TypeError: x is undefined' }] } }));
+} else if (sub === 'screenshot') {
+  fs.writeFileSync(argv[argv.length - 1], 'png');
+}
+`;
+
+function setupFakeBrowser() {
+  const bin = join(root, 'fake-agent-browser');
+  writeFileSync(bin, FAKE_AB.replace(/^\n/, ''), { mode: 0o755 });
+  const log = join(root, 'ab.log');
+  writeFileSync(log, '');
+  return {
+    env: { ...process.env, UI_VERIFY_AGENT_BROWSER: bin, FAKE_AB_LOG: log },
+    calls: () => readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)),
+  };
+}
+
+function cliWithEnv(args, env) {
+  const out = execFileSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', timeout: 90_000, env });
+  return JSON.parse(out.trim().split('\n').pop());
+}
+
+const LOGIN = [
+  ['open', '{base_url}/login'],
+  ['fill', 'input[name=email]', 'e2e-owner@test.local; rm -rf /'],
+  ['click', 'button[type=submit]'],
+];
+
+test('smoke: login（argv をシェルを通さずそのまま）→ clear → open → networkidle → errors/console → screenshot を UIVERIFY 形で返す', () => {
+  const fake = setupFakeBrowser();
+  const res = up(writeConfig(stackCfg({ login: { commands: LOGIN }, console_ignore: ['\\[HMR\\]', 'ResizeObserver'] })));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const r = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 'devflow-7'], fake.env);
+
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.mode, 'smoke');
+  assert.deepEqual(r.checks.map((c) => [c.action, c.result]), [
+    ['login', 'pass'], [`open ${res.smoke_url}`, 'pass'], ['wait --load networkidle', 'pass'],
+  ]);
+  // level=error のみ。console_ignore に当たるものは機械的に除外。page error は level を問わず拾う
+  assert.deepEqual(r.console_errors, ['Uncaught TypeError: x is undefined', 'Boom from page']);
+  assert.match(r.summary, /2 件除外/);
+  assert.deepEqual(r.screenshots, [join(stateDir, 'smoke.png')]);
+  assert.ok(existsSync(join(stateDir, 'smoke.png')));
+
+  const calls = fake.calls();
+  assert.ok(calls.every((c) => c[0] === '--session' && c[1] === 'devflow-7'), '全呼び出しに --session');
+  const plain = calls.map((c) => c.slice(2).filter((a) => a !== '--json'));
+  assert.deepEqual(plain.slice(0, 3), [
+    ['open', `${res.base_url}/login`],
+    ['fill', 'input[name=email]', 'e2e-owner@test.local; rm -rf /'], // シェルを通らないので 1 引数のまま
+    ['click', 'button[type=submit]'],
+  ]);
+  assert.deepEqual(plain.slice(3), [
+    ['console', '--clear'], ['errors', '--clear'],
+    ['open', res.smoke_url], ['wait', '--load', 'networkidle'],
+    ['errors'], ['console'], ['screenshot', join(stateDir, 'smoke.png')],
+  ]);
+}, TIMEOUT);
+
+test('smoke: login が失敗したら open せず ok:false と失敗したコマンドを返す', () => {
+  const fake = setupFakeBrowser();
+  const res = up(writeConfig(stackCfg({ login: { commands: [['open', '{base_url}/login'], ['click', '#FAIL']] } })));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const r = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.checks.map((c) => [c.action, c.result]), [['login', 'fail']]);
+  assert.match(r.checks[0].evidence, /click #FAIL: element not found/);
+  assert.equal(fake.calls().length, 2, 'login の失敗で打ち切る');
+}, TIMEOUT);
+
+test('smoke: smoke_url の open 失敗は ok:false', () => {
+  const fake = setupFakeBrowser();
+  const res = up(writeConfig(stackCfg({ smoke_path: '/FAIL' })));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const r = cliWithEnv(['smoke', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.equal(r.ok, false);
+  assert.equal(r.checks.at(-1).result, 'fail');
+  assert.match(r.summary, /load 失敗/);
+}, TIMEOUT);
+
+test('login: 宣言が無ければ skipped、stack が ready でなければ ok:false', () => {
+  const fake = setupFakeBrowser();
+  const none = cliWithEnv(['login', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.equal(none.ok, false);
+  assert.match(none.error, /stack が無い/);
+
+  const res = up(writeConfig(stackCfg()));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const r = cliWithEnv(['login', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.deepEqual(r, { ok: true, skipped: true, ran: 0, total: 0 });
+  assert.equal(fake.calls().length, 0);
+  assert.throws(() => execFileSync(process.execPath, [SCRIPT, 'login', '--state-dir', stateDir], { stdio: 'pipe' }), (e) => e.status === 2);
+}, TIMEOUT);
+
+test('login: 宣言どおり順に実行し、失敗位置を返す', () => {
+  const fake = setupFakeBrowser();
+  const res = up(writeConfig(stackCfg({ login: { commands: [['open', '{base_url}/login'], ['fill', '#FAIL', 'x'], ['click', '#never']] } })));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const r = cliWithEnv(['login', '--state-dir', stateDir, '--session', 's'], fake.env);
+  assert.equal(r.ok, false);
+  assert.equal(r.ran, 1);
+  assert.equal(r.total, 3);
+  assert.deepEqual(r.failed, { index: 1, command: 'fill #FAIL x' });
+}, TIMEOUT);
+
+test('extractErrorMessages: JSON の形に依存しすぎず error だけ拾う / テキスト出力にも対応', async () => {
+  const { extractErrorMessages } = await import('./ui-verify-stack.mjs');
+  assert.deepEqual(extractErrorMessages(JSON.stringify([{ level: 'ERROR', message: 'a' }, { level: 'warning', message: 'b' }])), ['a']);
+  assert.deepEqual(extractErrorMessages('[error] boom\n[log] fine\n[pageerror] bad'), ['boom', 'bad']);
+  assert.deepEqual(extractErrorMessages(JSON.stringify({ data: { errors: [{ message: 'x' }] } }), { allErrors: true }), ['x']);
+});
