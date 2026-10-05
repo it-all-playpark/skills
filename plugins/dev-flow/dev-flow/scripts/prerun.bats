@@ -535,3 +535,42 @@ STUB
     [ "$deps_wait_line" -lt "$analyze_wait_line" ]
     [ "$analyze_wait_line" -lt "$epoch_end_line" ]
 }
+
+# ---- (17) plugin_commit（issue #785）----
+
+@test "(17a) link mode: plugin_commit は plugin root を含む checkout の HEAD 先頭 12 桁" {
+    plugin_root="$(cd "$(dirname "$SCRIPT")/../.." && pwd)"
+    expected="$(git -C "$plugin_root" rev-parse HEAD)"
+    cd "$ROOT"
+    run "$SCRIPT" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e --arg c "${expected:0:12}" '.plugin_commit == $c'
+}
+
+@test "(17b) cache mode: plugin_commit は plugin root のディレクトリ名（commit SHA 先頭 12 桁）" {
+    plugin_root="$(cd "$(dirname "$SCRIPT")/../.." && pwd)"
+    cache_root="$BATS_TEST_TMPDIR/cache/playpark/dev-flow/1ef2e0ab6254"
+    mkdir -p "$cache_root"
+    for d in dev-flow _lib _shared bin; do
+        ln -s "$plugin_root/$d" "$cache_root/$d"
+    done
+    cd "$ROOT"
+    run "$cache_root/dev-flow/scripts/prerun.sh" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true'
+    echo "$output" | jq -e '.plugin_commit == "1ef2e0ab6254"'
+}
+
+@test "(17c) plugin_commit を決められなくても prerun は止まらず plugin_commit:null を返す" {
+    plugin_root="$(cd "$(dirname "$SCRIPT")/../.." && pwd)"
+    cache_root="$BATS_TEST_TMPDIR/nogit/dev-flow/unknown"
+    mkdir -p "$cache_root"
+    for d in dev-flow _lib _shared bin; do
+        ln -s "$plugin_root/$d" "$cache_root/$d"
+    done
+    cd "$ROOT"
+    GIT_CEILING_DIRECTORIES="$BATS_TEST_TMPDIR" run "$cache_root/dev-flow/scripts/prerun.sh" --issue 1 --worktree "$WT"
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.ok == true and .worktree_status == "created"'
+    echo "$output" | jq -e 'has("plugin_commit") and .plugin_commit == null'
+}

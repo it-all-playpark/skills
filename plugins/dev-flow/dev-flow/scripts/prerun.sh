@@ -125,6 +125,10 @@ if [[ -n "$REPO_BODY" ]]; then
     fi
 fi
 
+# plugin_commit: 実行中の dev-flow plugin の commit（12 桁 hex）。telemetry 記録専用で gate の入力にしない。
+# 決められなければ null（fail-open）
+plugin_commit="$(bash "$PLUGIN_ROOT/dev-flow/scripts/plugin-commit.sh" "$PLUGIN_ROOT" 2>/dev/null)" || plugin_commit=""
+
 # ============================================================================
 # Segment 1: base resolution
 # ============================================================================
@@ -502,6 +506,7 @@ jq -n \
     --argjson analyze "$analyze_json" \
     --argjson epoch "$epoch" \
     --argjson epoch_end "$epoch_end" \
+    --arg plugin_commit "$plugin_commit" \
     '
     {ok: $ok, issue: $issue}
     + (if $have_repo then {repo: $repo} else {} end)
@@ -511,6 +516,7 @@ jq -n \
     + (if $have_worktree_error then {worktree_error: $worktree_error} else {} end)
     + {worktree_status: $worktree_status, worktree_removed: $worktree_removed}
     + {clean: $clean, deps: $deps, stack: $stack, analyze: $analyze, epoch: $epoch, epoch_end: $epoch_end}
+    + {plugin_commit: (if ($plugin_commit | test("^[0-9a-f]{12}$")) then $plugin_commit else null end)}
     '
 
 exit 0

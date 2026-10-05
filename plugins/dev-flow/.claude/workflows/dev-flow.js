@@ -17,6 +17,10 @@ export const meta = {
 
 // ==== BEGIN inline: _lib/plugin-version.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 const PLUGIN_VERSION = '0.3.0'
+
+function normalizePluginCommit(value) {
+  return typeof value === 'string' && /^[0-9a-f]{12}$/.test(value) ? value : null
+}
 // ==== END inline: _lib/plugin-version.mjs ====
 // ==== BEGIN inline: _lib/agent-namespace.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 const AGENT_NAMESPACE = 'dev-flow:'
@@ -3168,6 +3172,8 @@ const ISSUE = resolvePositiveIntArg(args, 'issue')
 rejectLegacyBaseArg(args) // 旧形式 args.base は受理しない（base は dev-flow-prerun が解決し args.setup.base で渡る）
 let BASE // Setup で args.setup から確定
 let REPO = null // Setup で args.setup から確定。解決不能なら telemetry の repo を省略（fail-open）
+// plugin_commit: telemetry 記録専用（gate の入力にしない）。args.setup の検証より前に決めて Setup abort の entry にも載せる
+const PLUGIN_COMMIT = normalizePluginCommit(args?.setup?.plugin_commit)
 const DEPTH = args?.depth ?? 'standard'
 const GATE_POLICY = resolveGatePolicy(args?.gate_policy)
 const EVAL_MAX = 10        // 評価差し戻し上限（収束モデルにより happy path は数回で抜ける）
@@ -3197,6 +3203,7 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
       review_model_config: 'opus',
       impl_model_config: 'opus',
       plugin_version: PLUGIN_VERSION,
+      plugin_commit: PLUGIN_COMMIT,
       ...telemetry,
     },
   })
@@ -5935,6 +5942,7 @@ if (closesV1 === 'present') {
 // `.devflow-tmp/.isolation-probe-<token>` が衝突しない）。
 const prIterateArgs = () => ({
   pr: pr.pr_number, post_terminal_summary: false, acceptance_criteria: req.acceptance_criteria,
+  plugin_commit: PLUGIN_COMMIT,
   nested: {
     cwd: WT, head_ref: state.setup.branch,
     ...(REPO ? { repo: REPO } : {}),
@@ -6663,6 +6671,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     review_model_config: 'opus',  // pr-reviewer（pr-review-lite / nested pr-iterate の review#i）の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     impl_model_config: 'opus',  // dev-implementer の既定 model（agents/dev-implementer.md frontmatter の値、一致は review-model-frontmatter.test.mjs が pin）。green-fix の sonnet override は固定値なのでキーを持たない（世代は plugin_version）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs 定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
+    plugin_commit: PLUGIN_COMMIT,  // dev-flow-prerun が決めた plugin の commit（12 桁 hex / null）。記録専用
     // resolved_evidence: 終端サマリーから外した解消済み証跡の全文。4 配列すべて空なら省く。
     // passthrough 経路で journal に到達（hook 変更不要）。gate / merge tier / ledger の入力にはならない。
     ...(resolvedEvidence ? { resolved_evidence: resolvedEvidence } : {}),
@@ -6766,6 +6775,7 @@ return {
           review_model_config: 'opus',
           impl_model_config: 'opus',
           plugin_version: PLUGIN_VERSION,
+          plugin_commit: PLUGIN_COMMIT,
         },
       })
       const abortLogStatus = await runJournalHandoff({

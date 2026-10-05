@@ -2165,6 +2165,62 @@ make_full_telemetry_handoff() {
 }
 
 # --------------------------------------------------------------------------
+# Test P-F2 (skills#785): plugin_commit は 12 桁 hex も null も passthrough で journal へ届く。
+#           null を落とす既定挙動は他キーでは維持される
+# --------------------------------------------------------------------------
+{
+  for pc in '"1ef2e0ab6254"' 'null'; do
+    tmpd=$(make_tmpdir)
+    mkdir -p "${tmpd}/journal/pending"
+    capture="${tmpd}/capture.txt"
+    stub="${tmpd}/journal.sh"
+    make_stub_journal "$stub" "$capture" 0
+
+    make_base_handoff "${tmpd}/journal/pending/pf2.json" "$stub" \
+      ".telemetry += {plugin_version: \"0.3.0\", plugin_commit: ${pc}, abort_label: null}"
+
+    run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+
+    captured=$(cat "$capture" 2>/dev/null || echo "")
+    passthrough_json=$(printf '%s' "$captured" | sed -n 's/.*--telemetry-json //p')
+    if echo "$passthrough_json" | jq -e --argjson pc "$pc" '
+        has("plugin_commit") and .plugin_commit == $pc and
+        .plugin_version == "0.3.0" and
+        (has("abort_label") | not)
+      ' >/dev/null 2>&1; then
+      pass "pf2_plugin_commit_${pc//\"/}_reaches_passthrough"
+    else
+      fail "pf2_plugin_commit_${pc//\"/}_reaches_passthrough" "expected plugin_commit=${pc} (and abort_label dropped). got: ${passthrough_json}"
+    fi
+
+    rm -rf "$tmpd"
+  done
+
+  # 実 journal.sh を通した entry にも telemetry.plugin_commit（hex / null）が残る
+  REAL_JOURNAL="${SCRIPT_DIR}/../../playpark-core/journal/scripts/journal.sh"
+  if [[ ! -x $REAL_JOURNAL ]]; then
+    echo "  (skip: real journal.sh not found — integration test skipped)"
+  else
+    for pc in '"1ef2e0ab6254"' 'null'; do
+      tmpd=$(make_tmpdir)
+      mkdir -p "${tmpd}/journal/pending"
+      make_base_handoff "${tmpd}/journal/pending/pf2int.json" "$REAL_JOURNAL" \
+        ".telemetry += {plugin_version: \"0.3.0\", plugin_commit: ${pc}}"
+      run_hook "CLAUDE_JOURNAL_DIR=${tmpd}/journal" "HOME=${tmpd}"
+      entry=$(ls "${tmpd}/journal"/*.json 2>/dev/null | head -1 || true)
+      if [[ -n $entry ]] && jq -e --argjson pc "$pc" '(.telemetry | has("plugin_commit"))
+                                   and .telemetry.plugin_commit == $pc
+                                   and .telemetry.plugin_version == "0.3.0"' "$entry" >/dev/null 2>&1; then
+        pass "integration_plugin_commit_${pc//\"/}_persisted"
+      else
+        fail "integration_plugin_commit_${pc//\"/}_persisted" "expected telemetry.plugin_commit=${pc}. entry: $(jq -c '.telemetry' "$entry" 2>/dev/null) hook output: ${RUN_OUT}"
+      fi
+      rm -rf "$tmpd"
+    done
+  fi
+}
+
+# --------------------------------------------------------------------------
 # Test P-G (静的検証): PER_KEY_TELEMETRY_KEYS 配列と hook 内 `.telemetry.<key>`
 #           参照が両方向で一致する（除外漏れ・配列の孤立要素を検出する）
 # --------------------------------------------------------------------------

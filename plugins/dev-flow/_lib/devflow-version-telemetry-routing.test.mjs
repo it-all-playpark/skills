@@ -10,11 +10,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
+  devFlowArgs,
   makeDevFlowSandbox,
   makePrIterateSandbox,
   runWorkflowCapture,
 } from './test-helpers/vm-sandbox.mjs';
-import { PLUGIN_VERSION } from './plugin-version.mjs';
+import { PLUGIN_VERSION, normalizePluginCommit } from './plugin-version.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -75,4 +76,110 @@ test('pr-iterate.js 単体起動 run の journal-save prompt が review_model_co
   const { error } = await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
   assert.equal(error, null, `pr-iterate 単体起動はエラーなく完走するべき: ${error?.message}`);
   assertJournalSaveHasKeys(calls, 'pr-iterate standalone', { evalModel: false });
+});
+
+// ── plugin_commit（issue #785）──────────────────────────────────────────────
+// dev-flow-prerun が args.setup.plugin_commit で渡す plugin の commit（12 桁 hex / null）を dev-flow /
+// pr-iterate の journal entry の telemetry.plugin_commit に載せる。plugin_version は集計の連続性のため併記を続ける。
+const COMMIT = '1ef2e0ab6254';
+
+function journalSavePrompts(calls) {
+  return calls.filter((c) => c.label?.startsWith('journal-save')).map((c) => c.prompt);
+}
+
+function assertPluginCommit(calls, expected, contextLabel) {
+  const prompts = journalSavePrompts(calls);
+  assert.ok(prompts.length > 0, `${contextLabel}: label 'journal-save*' の call が見つからない`);
+  const needle = `"plugin_commit":${JSON.stringify(expected)}`;
+  assert.ok(prompts.some((p) => p.includes(needle)), `${contextLabel}: journal-save prompt に ${needle} が見つからない`);
+  assert.ok(prompts.some((p) => p.includes(`"plugin_version":"${PLUGIN_VERSION}"`)), `${contextLabel}: plugin_version が消えている`);
+}
+
+function devFlowSandboxWithCommit(setupOverrides, { overrides = {} } = {}) {
+  const workflowCalls = [];
+  const sandbox = makeDevFlowSandbox({
+    overrides,
+    workflow: async (name, a) => {
+      workflowCalls.push({ name, args: a });
+      return { status: 'lgtm', iterations: 1, fixes_applied: 0 };
+    },
+    extra: { args: devFlowArgs(1, setupOverrides) },
+  });
+  return { ...sandbox, workflowCalls };
+}
+
+test('normalizePluginCommit は 12 桁 hex だけを通し、それ以外は null に倒す', () => {
+  assert.equal(normalizePluginCommit(COMMIT), COMMIT);
+  for (const bad of [null, undefined, '', '0.3.0', '1EF2E0AB6254', '1ef2e0ab625', '1ef2e0ab62545', 'a'.repeat(40), 123456789012, {}]) {
+    assert.equal(normalizePluginCommit(bad), null, `${JSON.stringify(bad)} は null になるべき`);
+  }
+});
+
+test('dev-flow.js 成功 run: args.setup.plugin_commit が journal entry と nested pr-iterate の args に載る', async () => {
+  const { ctx, calls, workflowCalls } = devFlowSandboxWithCommit({ plugin_commit: COMMIT });
+  const { error } = await runWorkflowCapture(devFlowSrc, ctx, '.claude/workflows/dev-flow.js');
+  assert.equal(error, null, `成功 run はエラーなく完走するべき: ${error?.message}`);
+  assertPluginCommit(calls, COMMIT, 'dev-flow success');
+  assert.ok(workflowCalls.length > 0, 'nested workflow(pr-iterate) が起動されていない（full route 不成立）');
+  for (const w of workflowCalls) {
+    assert.equal(w.args?.plugin_commit, COMMIT, `nested ${w.name} の args.plugin_commit に prerun の値を渡すべき`);
+  }
+});
+
+test('dev-flow.js 失敗 run（empty-diff）/ abort run（eval#1 null）の journal entry にも plugin_commit が載る', async () => {
+  const failure = devFlowSandboxWithCommit({ plugin_commit: COMMIT }, {
+    overrides: {
+      'diff-gate': { hash: 'H', empty: true },
+      'diff-gate-retry': { hash: 'H', empty: true },
+      'issue-labels': null,
+    },
+  });
+  const r1 = await runWorkflowCapture(devFlowSrc, failure.ctx, '.claude/workflows/dev-flow.js');
+  assert.ok(r1.error, 'empty-diff gate で throw するべき');
+  assertPluginCommit(failure.calls, COMMIT, 'dev-flow empty-diff failure');
+
+  const abort = devFlowSandboxWithCommit({ plugin_commit: COMMIT }, { overrides: { 'eval#1': null } });
+  const r2 = await runWorkflowCapture(devFlowSrc, abort.ctx, '.claude/workflows/dev-flow.js');
+  assert.ok(r2.error, 'eval#1 null は abort するべき');
+  assertPluginCommit(abort.calls, COMMIT, 'dev-flow abort');
+});
+
+test('dev-flow.js: plugin_commit が取得できない（null / 欠落 / 不正形）でも run は止まらず plugin_commit:null を記録する', async () => {
+  for (const setupOverrides of [{ plugin_commit: null }, {}, { plugin_commit: 'not-a-sha' }]) {
+    const { ctx, calls } = devFlowSandboxWithCommit(setupOverrides);
+    const { error } = await runWorkflowCapture(devFlowSrc, ctx, '.claude/workflows/dev-flow.js');
+    assert.equal(error, null, `${JSON.stringify(setupOverrides)}: 成功 run はエラーなく完走するべき: ${error?.message}`);
+    assertPluginCommit(calls, null, `dev-flow ${JSON.stringify(setupOverrides)}`);
+  }
+});
+
+test('dev-flow.js: plugin_commit は gate の入力にしない（値の有無で agent 起動列と merge tier が変わらない）', async () => {
+  const runOnce = async (setupOverrides) => {
+    const { ctx, calls } = devFlowSandboxWithCommit(setupOverrides);
+    const { result, error } = await runWorkflowCapture(devFlowSrc, ctx, '.claude/workflows/dev-flow.js');
+    assert.equal(error, null, `成功 run はエラーなく完走するべき: ${error?.message}`);
+    return { labels: calls.map((c) => c.label), merge_tier: result?.merge_tier, test_green: result?.test_green };
+  };
+  const withCommit = await runOnce({ plugin_commit: COMMIT });
+  const withoutCommit = await runOnce({ plugin_commit: null });
+  assert.deepEqual(withCommit, withoutCommit);
+});
+
+test('pr-iterate.js: nested 起動で受けた args.plugin_commit を journal entry に載せ、単体起動（未指定）は null', async () => {
+  const nested = makePrIterateSandbox({ args: { pr: 5, plugin_commit: COMMIT } });
+  const r1 = await runWorkflowCapture(prIterateSrc, nested.ctx, '.claude/workflows/pr-iterate.js');
+  assert.equal(r1.error, null, `pr-iterate はエラーなく完走するべき: ${r1.error?.message}`);
+  assertPluginCommit(nested.calls, COMMIT, 'pr-iterate with plugin_commit');
+
+  const standalone = makePrIterateSandbox();
+  const r2 = await runWorkflowCapture(prIterateSrc, standalone.ctx, '.claude/workflows/pr-iterate.js');
+  assert.equal(r2.error, null, `pr-iterate 単体起動はエラーなく完走するべき: ${r2.error?.message}`);
+  assertPluginCommit(standalone.calls, null, 'pr-iterate standalone');
+});
+
+test('pr-iterate.js abort run の journal entry にも plugin_commit が載る', async () => {
+  const { ctx, calls } = makePrIterateSandbox({ args: { pr: 5, plugin_commit: COMMIT }, overrides: { 'review#1': null } });
+  await runWorkflowCapture(prIterateSrc, ctx, '.claude/workflows/pr-iterate.js');
+  const prompts = journalSavePrompts(calls);
+  assert.ok(prompts.some((p) => p.includes(`"plugin_commit":"${COMMIT}"`)), `pr-iterate の journal-save prompt に plugin_commit が無い: ${prompts.length} 件`);
 });

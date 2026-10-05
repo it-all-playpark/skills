@@ -103,6 +103,14 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   （marketplace install を git commit SHA で main に追随させるため）ので、manifest から独立した
   集計用の世代ラベルとして扱い、集計上区別したい挙動変更を入れるときに canonical を上げて
   `tools/sync-inlines.mjs --write` を実行する）。
+  `plugin_commit`（同上両 entry、成功・失敗・abort とも。実行中の dev-flow plugin の skills repo commit SHA
+  先頭 12 桁、決められなければ `null`。`plugin_version` より細かく「どの commit から失敗し始めたか / 修正後に
+  再発していないか」を割り出すための記録専用の値で、gate の入力にしない。`dev-flow-prerun` が
+  `dev-flow/scripts/plugin-commit.sh` で plugin root から決め（cache mode はディレクトリ名、link mode は
+  checkout の HEAD）、`args.setup.plugin_commit` → nested pr-iterate へは `args.plugin_commit` で渡る。
+  単体起動の pr-iterate は prerun を経ないので `null`。12 桁 hex 以外は `normalizePluginCommit`
+  （`_lib/plugin-version.mjs`）が `null` に倒し run を止めない。Stop hook の passthrough は null を落とすが、
+  本キーは `PASSTHROUGH_NULLABLE_KEYS` で `null` も記録する — キー欠落は本キー導入前の entry を意味する）。
   `iterate_history`（pr-iterate entry のみ。round ごとの `{iteration, decision, summary, blocking, minor,
   scope, delta_lines}` 配列。CI-failed round の blocking は synthetic な `ci::<check>` topic の finding。
   `scope` は `'full' | 'delta'` — review#i（i ≥ 2）が fix delta（前 round の review 時点の head sha ..

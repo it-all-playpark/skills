@@ -8,6 +8,10 @@ export const meta = {
 
 // ==== BEGIN inline: _lib/plugin-version.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 const PLUGIN_VERSION = '0.3.0'
+
+function normalizePluginCommit(value) {
+  return typeof value === 'string' && /^[0-9a-f]{12}$/.test(value) ? value : null
+}
 // ==== END inline: _lib/plugin-version.mjs ====
 // ==== BEGIN inline: _lib/agent-namespace.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 const AGENT_NAMESPACE = 'dev-flow:'
@@ -309,6 +313,9 @@ const POST_TERMINAL_SUMMARY = args?.post_terminal_summary !== false
 // issue context を持たないため未指定になり、acceptanceCriteriaBlock が空文字を返して
 // AC 無しでレビューする（fail-open — AC 取得のために gh 呼び出しを増やさない）。
 const ACCEPTANCE_CRITERIA = args?.acceptance_criteria
+// plugin の commit（12 桁 hex）。dev-flow が nested 起動時に prerun の値を渡す。単体起動は prerun を
+// 経ないので未指定 → null（取得のために exec-proxy を増やさない）。telemetry 記録専用で gate の入力にしない
+const PLUGIN_COMMIT = normalizePluginCommit(args?.plugin_commit)
 const MAX = args?.max_iterations == null
   ? 10
   : Number(resolvePositiveIntArg(args.max_iterations, 'max_iterations'))
@@ -1562,6 +1569,7 @@ const telemetryHandoff = buildJournalHandoffPayload({
     ...(fixTerminalReason ? { fix_terminal_reason: fixTerminalReason } : {}),
     review_model_config: 'opus',  // pr-reviewer の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs の定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
+    plugin_commit: PLUGIN_COMMIT,  // plugin の commit（12 桁 hex / null）。記録専用
     iterate_history: history,  // round ごとの {iteration, decision, summary, blocking, minor, scope('full'|'delta'), delta_lines(full は null)}
   },
 })
@@ -1617,6 +1625,7 @@ return {
         subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
         review_model_config: 'opus',
         plugin_version: PLUGIN_VERSION,
+        plugin_commit: PLUGIN_COMMIT,
       },
     })
     const abortLogStatus = await runJournalHandoff({
