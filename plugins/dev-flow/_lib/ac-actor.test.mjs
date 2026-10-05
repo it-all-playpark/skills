@@ -97,6 +97,52 @@ test('[ac-scope] 他 repo の参照は対象 repo と違うときだけ repo 外
   assert.equal(classifyAcScope('acme/infra#206 の設定を入れる'), 'repo');
 });
 
+// 過去 issue の repo 内 AC（本文そのまま）。repo 外の語は否定・件数 0・不要・条件・理由の言及・grep 対象として
+// 出てくるだけで、作業は repo 内で完結する。skills 絶対パスは bin-bare-name-routing.test.mjs の禁止パターンに
+// かからないよう組み立てる。
+const SKILLS_ABS = ['~/.claude', 'skills/'].join('/');
+const PAST_REPO_ACS = {
+  493: 'probe prompt / throw メッセージいずれにも sandbox・permission・excludedCommands・guard 名を理由として述べる記述が無いことを静的テストで pin する（`_lib/` の canonical と `.claude/workflows/*.js` の inline 双方を対象）',
+  569: 'dev-flow の実行経路（`.claude/workflows/*.js`、`_lib/*.mjs`）に `' + SKILLS_ABS + '` 絶対パスが 0 箇所',
+  606: '契約文の理由が「verbatim 転写の破壊」として書かれており、sandbox / excludedCommands を理由にしていない（`_lib/isolation-control-reason.test.mjs` が green）',
+  637: 'wrapper script は `plugins/dev-flow/bin/` の bare 名で公開し、既存 exec-proxy と同じ起動形（先頭トークン = bare 名。cd / bash / node 前置なし）で呼ぶ。dotfiles 側 `sandbox.excludedCommands` への登録が必要なら PR 本文にその bare 名を明記する',
+  640: '`tests/run-node-tests.sh` green、`bash tests/run-all-bats.sh` green。telemetry キー追加は受け側（skills）で完結する passthrough 経路のため dotfiles 側の変更は不要 — 変更が必要になった場合は PR 本文にその理由を書く',
+  16: "`grep -r '~/.claude/skills' --include='*.md' --include='*.sh' --include='*.ts' --include='*.py'` がヒット 0件",
+  570: '非 dev-flow skill の `.md` から `' + SKILLS_ABS + '` 絶対パス記述が 0 箇所',
+  576: '`bug-hunt` / `code-audit-team` / `incident-response` の `allowed-tools` に `' + SKILLS_ABS + '` を含む行が 0 件で、`${CLAUDE_PLUGIN_ROOT}` 版のみが残っている',
+};
+
+test('[ac-scope] 過去 issue の repo 内 AC（否定・件数 0・不要・条件・理由の言及・grep 対象）は repo で、actor は agent', () => {
+  const repo = 'it-all-playpark/skills';
+  for (const [n, ac] of Object.entries(PAST_REPO_ACS)) {
+    assert.equal(classifyAcScope(ac, { repo }), 'repo', `#${n}: ${ac}`);
+    assert.equal(classifyAcActor(ac, { repo }), 'agent', `#${n}: ${ac}`);
+  }
+  assert.deepEqual(mixedScopeAcReasons(Object.values(PAST_REPO_ACS), { repo }), []);
+});
+
+test('[ac-scope] 否定の節にある目印だけを除き、同じ AC の別の節で repo 外を作業対象にしていれば数える', () => {
+  assert.equal(classifyAcScope('dotfiles の settings.json は変更しない'), 'repo');
+  assert.equal(classifyAcScope('テストを足し、dotfiles の excludedCommands は変更しない'), 'repo');
+  assert.equal(classifyAcScope('README の `' + SKILLS_ABS + '` 記述を 0 箇所にし、dotfiles の excludedCommands に bare 名を足す'), 'mixed');
+});
+
+test('[ac-scope] 対象 repo が dotfiles のときは dotfiles / excludedCommands / settings.json を repo 内として扱う', () => {
+  const repo = 'it-all-playpark/dotfiles';
+  assert.equal(classifyAcScope('claude-code/settings.json の excludedCommands に bare 名を足し、bats テストを足す', { repo }), 'repo');
+  assert.equal(classifyAcScope('dotfiles の README を更新する', { repo }), 'repo');
+  assert.equal(classifyAcScope('claude-code/settings.json の excludedCommands に bare 名を足し、bats テストを足す', { repo: 'it-all-playpark/skills' }), 'mixed');
+  assert.equal(classifyAcScope('~/.claude/settings.json の allow に bin を足す', { repo }), 'external', '~/.claude はどの repo の worktree でもない');
+});
+
+test('[ac-scope] （人手）と明記した AC は repo 内外が混ざっていても mixed にせず external（human）', () => {
+  const ac = 'vitest を green にし、dotfiles の excludedCommands に bare 名を足す（人手）';
+  assert.equal(classifyAcScope(ac), 'external');
+  assert.equal(classifyAcActor(ac), 'human');
+  assert.deepEqual(mixedScopeAcReasons([ac]), []);
+  assert.equal(classifyAcScope('vitest を green にし、dotfiles の excludedCommands に `（人手）` を足す'), 'mixed', 'inline code の（人手）は明記に数えない');
+});
+
 test('[ac-actor] repo 外の作業だけを書いた AC は human（エージェント AC 未達に数えない）', () => {
   assert.equal(classifyAcActor(EXTERNAL_AC), 'human');
   assert.equal(classifyAcActor(MIXED_AC), 'agent', 'mixed は analyze ゲートで止めるので actor は agent のまま');

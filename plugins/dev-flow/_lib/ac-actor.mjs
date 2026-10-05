@@ -23,6 +23,13 @@
 //     needs_clarification にして AC を repo 内 / repo 外に分割させる（mixedScopeAcReasons）。
 //   - 'repo': それ以外。
 // repo 外の目印は inline code の中も見る（設定名・パスは inline code で書かれるのが普通のため）。
+// ただし repo 外を「作業の対象」として指していない目印は数えない:
+//   - 目印を含む節（、。— 等で区切った単位）が否定・不在・条件・言及の形（「〜しない」「〜が無い」「0 箇所」
+//     「不要」「必要なら」「理由にしていない」「記述」「grep」等）のもの。repo 内のファイルから文字列を
+//     消す・repo 外を変えないと書いた AC を repo 外扱いにしないため
+//   - 対象 repo 自身が持つもの（対象 repo が dotfiles のときの dotfiles / excludedCommands / settings.json）
+// mixed の AC でも（人手）と明記されていれば external にする（人間が repo 外の作業として引き受けたと読む）。
+// 判定に迷う形は repo 側に倒す（agent への誤分類は AGENT_AC_REIMPL_MAX で止まる。上の actor の倒し方と同じ理由）。
 //
 // INLINE COPY POLICY: 本ファイルは tools/sync-inlines.mjs --write で workflow へ全文 inline 生成される。
 // 直接 workflow 側を編集しない。全文一致は _lib/workflow-inlines.sync.test.mjs が CI 保証。
@@ -33,8 +40,10 @@ export const AC_ACTORS = ['agent', 'human']
 // evaluate を延長して差し戻す。incentive-structural — 満たせない AC で差し戻しが続くのを総回数で止める。
 export const AGENT_AC_REIMPL_MAX = 2
 
+const EXPLICIT_HUMAN_RE = /[（(]\s*人手\s*[)）]/
+
 const HUMAN_AC_PATTERNS = [
-  /[（(]\s*人手\s*[)）]/,
+  EXPLICIT_HUMAN_RE,
   /staging|ステージング/i,
   /本番/,
   /\bprod(uction)?\s*(環境|environment)/i,
@@ -49,12 +58,29 @@ const INLINE_CODE_RE = /\x60[^\x60]*\x60/g
 export const AC_SCOPES = ['repo', 'external', 'mixed']
 
 // repo 外を指す目印。g 付きで持ち、判定にも除去にも replace / match だけを使う（test() は lastIndex を持ち越すため使わない）。
+// ownedBy: 対象 repo の名前（owner/name の name）がこれと一致するときは repo 内のものとして数えない。
 const EXTERNAL_AC_PATTERNS = [
-  /dotfiles/gi,
-  /excludedCommands/g,
-  /settings(\.local)?\.json/g,
-  /~\/\.claude\b/g,
-  /(別|他|ほか)の?\s*(repo|リポジトリ)/gi,
+  { re: /dotfiles/gi, ownedBy: 'dotfiles' },
+  { re: /excludedCommands/g, ownedBy: 'dotfiles' },
+  { re: /settings(\.local)?\.json/g, ownedBy: 'dotfiles' },
+  { re: /~\/\.claude\b/g, ownedBy: null },
+  { re: /(別|他|ほか)の?\s*(repo|リポジトリ)/gi, ownedBy: null },
+]
+
+// 節の区切り。目印が否定・言及の節にあるかは節単位で見る。
+const CLAUSE_SEP_RE = /[、，,。．；;—–\n]/g
+
+// repo 外を作業の対象として指していない節の形（否定・不在・件数 0・不要・条件・言及・grep 対象）。g なし（test() で使う）。
+const MENTION_CLAUSE_PATTERNS = [
+  /(が|は|も)\s*(無|な)い/,
+  /[てで]いない/,
+  /しない|せず/,
+  /不要/,
+  /含ま(ない|ず)|を含む行/,
+  /(^|[^\d])0\s*(箇所|件|個|行)|ヒット\s*0/,
+  /必要(なら|に?なった場合|な場合|があれば)/,
+  /記述|言及|理由(として|に)/,
+  /\bgrep\b/i,
 ]
 
 // 他 repo の参照（github.com/<owner>/<repo> と <owner>/<repo>#<n>）。repo（対象 repo の owner/name）と一致するものは repo 内。
@@ -73,29 +99,56 @@ function normalizeRepoSlug(s) {
   return String(s ?? '').trim().toLowerCase().replace(/\.git$/, '')
 }
 
-// AC 本文から repo 外の目印を取り除いた残りと、見つかった目印を返す。
-function splitExternalMarkers(ac, repo) {
-  let text = String(ac ?? '')
-  const markers = []
-  for (const re of EXTERNAL_AC_PATTERNS) {
-    text = text.replace(re, (m) => { markers.push(m); return ' ' })
+// 否定・言及の形をとる節の [start, end) 範囲を返す。
+function mentionRanges(text) {
+  const ranges = []
+  let start = 0
+  const push = (end) => {
+    const clause = text.slice(start, end)
+    if (MENTION_CLAUSE_PATTERNS.some((re) => re.test(clause))) ranges.push([start, end])
   }
+  for (const m of text.matchAll(CLAUSE_SEP_RE)) {
+    push(m.index)
+    start = m.index + m[0].length
+  }
+  push(text.length)
+  return ranges
+}
+
+// AC 本文から repo 外の目印を取り除いた残りと、作業の対象として repo 外を指す目印を返す。
+// 目印は同じ長さの空白で置き換える（節の範囲を元の offset のまま使うため）。
+function splitExternalMarkers(ac, repo) {
+  const src = String(ac ?? '')
+  const mentions = mentionRanges(src)
+  const inMention = (off) => mentions.some(([s, e]) => off >= s && off < e)
   const self = normalizeRepoSlug(repo)
-  text = text.replace(REPO_REF_RE, (m, urlSlug, refSlug) => {
+  const selfName = self.includes('/') ? self.split('/')[1] : ''
+  const markers = []
+  let text = src
+  for (const { re, ownedBy } of EXTERNAL_AC_PATTERNS) {
+    text = text.replace(re, (m, ...args) => {
+      const off = args[args.length - 2]
+      const owned = ownedBy !== null && ownedBy === selfName
+      if (!owned && !inMention(off)) markers.push(m)
+      return ' '.repeat(m.length)
+    })
+  }
+  text = text.replace(REPO_REF_RE, (m, urlSlug, refSlug, off) => {
     const slug = normalizeRepoSlug(urlSlug ?? refSlug)
     if (!self || slug === self) return m
-    markers.push(slug)
-    return ' '
+    if (!inMention(off)) markers.push(slug)
+    return ' '.repeat(m.length)
   })
   return { rest: text, markers }
 }
 
-// AC を 'repo' | 'external' | 'mixed' に分類する。opts.repo は対象 repo の owner/name（他 repo 参照の判定に使う。
-// 省略時は他 repo 参照を判定しない）。
+// AC を 'repo' | 'external' | 'mixed' に分類する。opts.repo は対象 repo の owner/name（他 repo 参照と自 repo が持つ
+// 目印の判定に使う。省略時は他 repo 参照を判定しない）。
 export function classifyAcScope(ac, opts = {}) {
   const { rest, markers } = splitExternalMarkers(ac, opts?.repo)
   if (markers.length === 0) return 'repo'
-  return REPO_AC_PATTERNS.some((re) => re.test(rest)) ? 'mixed' : 'external'
+  if (!REPO_AC_PATTERNS.some((re) => re.test(rest))) return 'external'
+  return EXPLICIT_HUMAN_RE.test(String(ac ?? '').replace(INLINE_CODE_RE, ' ')) ? 'external' : 'mixed'
 }
 
 export function classifyAcActor(ac, opts = {}) {

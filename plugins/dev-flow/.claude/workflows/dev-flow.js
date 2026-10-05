@@ -901,8 +901,10 @@ const AC_ACTORS = ['agent', 'human']
 
 const AGENT_AC_REIMPL_MAX = 2
 
+const EXPLICIT_HUMAN_RE = /[（(]\s*人手\s*[)）]/
+
 const HUMAN_AC_PATTERNS = [
-  /[（(]\s*人手\s*[)）]/,
+  EXPLICIT_HUMAN_RE,
   /staging|ステージング/i,
   /本番/,
   /\bprod(uction)?\s*(環境|environment)/i,
@@ -915,11 +917,25 @@ const INLINE_CODE_RE = /\x60[^\x60]*\x60/g
 const AC_SCOPES = ['repo', 'external', 'mixed']
 
 const EXTERNAL_AC_PATTERNS = [
-  /dotfiles/gi,
-  /excludedCommands/g,
-  /settings(\.local)?\.json/g,
-  /~\/\.claude\b/g,
-  /(別|他|ほか)の?\s*(repo|リポジトリ)/gi,
+  { re: /dotfiles/gi, ownedBy: 'dotfiles' },
+  { re: /excludedCommands/g, ownedBy: 'dotfiles' },
+  { re: /settings(\.local)?\.json/g, ownedBy: 'dotfiles' },
+  { re: /~\/\.claude\b/g, ownedBy: null },
+  { re: /(別|他|ほか)の?\s*(repo|リポジトリ)/gi, ownedBy: null },
+]
+
+const CLAUSE_SEP_RE = /[、，,。．；;—–\n]/g
+
+const MENTION_CLAUSE_PATTERNS = [
+  /(が|は|も)\s*(無|な)い/,
+  /[てで]いない/,
+  /しない|せず/,
+  /不要/,
+  /含ま(ない|ず)|を含む行/,
+  /(^|[^\d])0\s*(箇所|件|個|行)|ヒット\s*0/,
+  /必要(なら|に?なった場合|な場合|があれば)/,
+  /記述|言及|理由(として|に)/,
+  /\bgrep\b/i,
 ]
 
 const REPO_REF_RE = /github\.com\/([\w.-]+\/[\w.-]+)|(?:^|[^\w./-])([A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*)#\d+/g
@@ -936,18 +952,42 @@ function normalizeRepoSlug(s) {
   return String(s ?? '').trim().toLowerCase().replace(/\.git$/, '')
 }
 
-function splitExternalMarkers(ac, repo) {
-  let text = String(ac ?? '')
-  const markers = []
-  for (const re of EXTERNAL_AC_PATTERNS) {
-    text = text.replace(re, (m) => { markers.push(m); return ' ' })
+function mentionRanges(text) {
+  const ranges = []
+  let start = 0
+  const push = (end) => {
+    const clause = text.slice(start, end)
+    if (MENTION_CLAUSE_PATTERNS.some((re) => re.test(clause))) ranges.push([start, end])
   }
+  for (const m of text.matchAll(CLAUSE_SEP_RE)) {
+    push(m.index)
+    start = m.index + m[0].length
+  }
+  push(text.length)
+  return ranges
+}
+
+function splitExternalMarkers(ac, repo) {
+  const src = String(ac ?? '')
+  const mentions = mentionRanges(src)
+  const inMention = (off) => mentions.some(([s, e]) => off >= s && off < e)
   const self = normalizeRepoSlug(repo)
-  text = text.replace(REPO_REF_RE, (m, urlSlug, refSlug) => {
+  const selfName = self.includes('/') ? self.split('/')[1] : ''
+  const markers = []
+  let text = src
+  for (const { re, ownedBy } of EXTERNAL_AC_PATTERNS) {
+    text = text.replace(re, (m, ...args) => {
+      const off = args[args.length - 2]
+      const owned = ownedBy !== null && ownedBy === selfName
+      if (!owned && !inMention(off)) markers.push(m)
+      return ' '.repeat(m.length)
+    })
+  }
+  text = text.replace(REPO_REF_RE, (m, urlSlug, refSlug, off) => {
     const slug = normalizeRepoSlug(urlSlug ?? refSlug)
     if (!self || slug === self) return m
-    markers.push(slug)
-    return ' '
+    if (!inMention(off)) markers.push(slug)
+    return ' '.repeat(m.length)
   })
   return { rest: text, markers }
 }
@@ -955,7 +995,8 @@ function splitExternalMarkers(ac, repo) {
 function classifyAcScope(ac, opts = {}) {
   const { rest, markers } = splitExternalMarkers(ac, opts?.repo)
   if (markers.length === 0) return 'repo'
-  return REPO_AC_PATTERNS.some((re) => re.test(rest)) ? 'mixed' : 'external'
+  if (!REPO_AC_PATTERNS.some((re) => re.test(rest))) return 'external'
+  return EXPLICIT_HUMAN_RE.test(String(ac ?? '').replace(INLINE_CODE_RE, ' ')) ? 'external' : 'mixed'
 }
 
 function classifyAcActor(ac, opts = {}) {
