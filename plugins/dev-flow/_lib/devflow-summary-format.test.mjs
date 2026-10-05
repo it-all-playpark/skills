@@ -681,7 +681,7 @@ test('issue #707: 解消済み行のセルは空白を畳んで 200 文字で切
   const region = body.slice(body.indexOf('<details>'), body.indexOf('</details>'));
   const rows = region.split('\n').filter((l) => l.startsWith('| blocking |'));
   assert.equal(rows.length, 30, '行は 30 件で打ち切る');
-  assert.ok(region.includes('他 170 件は journal telemetry `resolved_evidence` を参照'), '打ち切り件数を示す');
+  assert.ok(region.includes('他 170 件は省略'), '打ち切り件数を示す');
   const firstCells = rows[0].split(' | ');
   assert.ok(firstCells[1].startsWith('item 0 xxx'), '改行は空白に畳まれる');
   assert.equal(Array.from(firstCells[1]).length, 200, '内容セルは 200 文字');

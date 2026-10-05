@@ -22,7 +22,7 @@ const POST_MERGE_CHECK = {
 // 解消済み項目の件数・evidence 長で超えないよう、行数とセル長の両方を決定論で切る。
 // セルは空白・改行を 1 空白に畳んでから code point 単位で切るので、1 セルは escape 後も
 // 高々 2 × RESOLVED_CELL_MAX 文字（'|' → '\|'）、表全体は 30 行 × 2 セルで約 25,000 文字に収まる。
-// 切った残りの全文は journal telemetry `resolved_evidence` に残る。
+// 切った残りは打ち切り件数だけを出す（全文の保存先は持たない）。
 const RESOLVED_ROWS_MAX = 30;
 const RESOLVED_CELL_MAX = 200;
 
@@ -45,7 +45,7 @@ function resolvedCell(v) {
  *   floor:true が付いた item から Security clearance セクションを導出する（checked/evidence/danger_class を使用）。
  *   fail_closed:true は danger-grep-final 実行不能を示し、専用の fail-closed 空状態行を出す。
  *   blocking lane では item.final_resolution / item.final_evidence を無視する（軸A invariant。issue #658）
- * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,escalate_description,env_key,env_count,triaged,triaged_evidence,final_resolution,final_evidence}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296。checked/unchecked を問わず全文（env_key/env_count/evidence 含む）は journal telemetry `resolved_evidence` 側に記録される（issue #297, #603））。
+ * @param {Array<{id,text,severity,checked,dimension,evidence,escalate,escalate_reason,escalate_description,env_key,env_count,triaged,triaged_evidence,final_resolution,final_evidence}>} opts.advisoryItems - advisory items（dimension:'environment' の item は「環境ノート」として件数のみ常時可視で表示される。issue #296）。
  *   advisory lane かつ `triaged:true` かつ `triaged_evidence` 非空（escalate でない）の item は要対応表・要対応判定から除外し、
  *   要対応セクション直後の `<details>`（🔹 トリアージ済み N 件）に 観点/内容/triaged_evidence を全文で出す（表示のみ。checked/ゲート不変。blocking lane では無視。issue #614, #626）。
  *   `escalate_description`: escalate item の詳細説明（要対応テーブルの内容列に要約として連結。issue #658）。
@@ -720,7 +720,7 @@ export function buildDevflowSummaryBody({
     lines.push('');
     if (resolvedRows.length === 0) {
       // 折りたたむ項目が無い（環境ノート / AC / clearance の件数だけ）ときは件数行をそのまま出す。
-      lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
+      lines.push('**解消済み証跡（件数のみ）**:');
       for (const l of countLines) lines.push(l);
     } else {
       // <summary> 直後と </details> 直前の空行は GFM が details 内の table をレンダリングするために必須。
@@ -745,7 +745,7 @@ export function buildDevflowSummaryBody({
       }
       if (resolvedRows.length > RESOLVED_ROWS_MAX) {
         lines.push('');
-        lines.push(`他 ${resolvedRows.length - RESOLVED_ROWS_MAX} 件は journal telemetry \`resolved_evidence\` を参照`);
+        lines.push(`他 ${resolvedRows.length - RESOLVED_ROWS_MAX} 件は省略`);
       }
       lines.push('');
       lines.push('</details>');

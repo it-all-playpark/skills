@@ -2479,7 +2479,7 @@ function buildDevflowSummaryBody({
     ];
     lines.push('');
     if (resolvedRows.length === 0) {
-      lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
+      lines.push('**解消済み証跡（件数のみ）**:');
       for (const l of countLines) lines.push(l);
     } else {
       lines.push('**解消済み証跡**:');
@@ -2503,7 +2503,7 @@ function buildDevflowSummaryBody({
       }
       if (resolvedRows.length > RESOLVED_ROWS_MAX) {
         lines.push('');
-        lines.push(`他 ${resolvedRows.length - RESOLVED_ROWS_MAX} 件は journal telemetry \`resolved_evidence\` を参照`);
+        lines.push(`他 ${resolvedRows.length - RESOLVED_ROWS_MAX} 件は省略`);
       }
       lines.push('');
       lines.push('</details>');
