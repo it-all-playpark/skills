@@ -161,27 +161,18 @@ test('[ci-history] CI-failed ラウンドが per-round 投稿なしで終端レ�
   );
 
   // (2) post-summary の prompt に '| 1 |' と '| 2 |'（iter 1/2 の反復履歴テーブル行 — データ echo）が含まれる。
-  // 見出し文言そのもの（旧'反復履歴'）は自然言語 pin のため削除し、代わりに journal-save prompt の
-  // telemetry JSON に history の構造 ('iterate_history' キー) とデータ echo（CI-failed round の
-  // synthetic topic 'ci::bats' — responder が返した check 名 'bats' を含む）が転記されていることを検証する
-  // （issue #636）。
+  // 見出し文言そのもの（旧'反復履歴'）は自然言語 pin のため削除し、代わりに返り値 history に
+  // CI-failed round の synthetic topic 'ci::bats'（responder が返した check 名 'bats' を含む）が
+  // 載っていることを検証する（issue #636）。
   const postSummary = agentCalls.find((c) => c.label === 'post-summary');
   assert.ok(
     postSummary != null,
     `label==='post-summary' の agent 呼び出しが存在するべきだが見つからなかった。呼び出しラベル一覧: ${agentCalls.map((c) => c.label).join(', ')}`,
   );
-  const journalSave = agentCalls.find((c) => c.label === 'journal-save');
+  const historyTopics = (result?.history ?? []).flatMap((h) => (h.blocking ?? []).map((b) => b.topic));
   assert.ok(
-    journalSave != null,
-    `label==='journal-save' の agent 呼び出しが存在するべきだが見つからなかった。呼び出しラベル一覧: ${agentCalls.map((c) => c.label).join(', ')}`,
-  );
-  assert.ok(
-    typeof journalSave.prompt === 'string' && journalSave.prompt.includes('"iterate_history"'),
-    `journal-save prompt の telemetry JSON に "iterate_history" キーが含まれるべき。\nprompt の先頭1000文字: ${String(journalSave?.prompt ?? '').slice(0, 1000)}`,
-  );
-  assert.ok(
-    typeof journalSave.prompt === 'string' && journalSave.prompt.includes('"topic":"ci::bats"'),
-    `journal-save prompt の iterate_history に CI-failed round の synthetic topic "ci::bats"（responder が返した check 名 'bats'）が含まれるべき。\nprompt の先頭1500文字: ${String(journalSave?.prompt ?? '').slice(0, 1500)}`,
+    historyTopics.includes('ci::bats'),
+    `返り値 history に CI-failed round の synthetic topic "ci::bats"（responder が返した check 名 'bats'）が含まれるべき: ${JSON.stringify(result?.history)}`,
   );
   assert.ok(
     typeof postSummary.prompt === 'string' && postSummary.prompt.includes('| 1 |'),

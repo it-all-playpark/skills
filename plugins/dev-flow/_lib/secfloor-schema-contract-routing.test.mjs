@@ -6,8 +6,8 @@
 // (2) execSecurityFloorPhase の統合呼び出しに retryOnContractViolation:true を付け、契約違反時に
 //     trackedAgent の 1 回リトライ機会を与える。
 // (3) retry 後も不正形（もしくは throw）なら risk fail-closed に維持され、fail-closed 時は
-//     danger-grep call の回数・run の継続・merge_tier HOLD・journal-save prompt への
-//     telemetry 反映という「挙動」で検証する（issue #636: ソース regex pin から VM 挙動 pin へ移行）。
+//     danger-grep call の回数・run の継続・merge_tier HOLD・返り値 danger_fail_closed
+//     という「挙動」で検証する（issue #636: ソース regex pin から VM 挙動 pin へ移行）。
 //
 // harness は共有 vm-sandbox.mjs（makeDevFlowSandbox/runWorkflowCapture）を使う。VM 内の既定値は
 // WT='/tmp/wt', BASE='dev'（devFlowResponder の setup-base 既定応答 dev_exists:true による解決）。
@@ -179,10 +179,6 @@ test('[secfloor-schema-contract][AC4] retry after two StructuredOutput throws ke
 
   assert.equal(result.merge_tier, 'HOLD');
   assert.equal(result.danger_fail_closed, true);
-
-  const js = calls.find((c) => c.label === 'journal-save');
-  assert.ok(js, "label 'journal-save' の呼び出しが見つからない");
-  assert.ok(js.prompt.includes('"danger_fail_closed":true'), 'journal-save prompt に danger_fail_closed:true telemetry が無い');
 
   // 純関数レベルでも同じ fail-closed 状態が再現できることを確認する（AC4 の意図: risk fail-closed
   // → 全 SEC seed unchecked → HOLD）

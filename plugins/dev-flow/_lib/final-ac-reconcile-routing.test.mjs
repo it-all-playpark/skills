@@ -12,14 +12,12 @@
 // テストケース:
 //   (r1) fixes=0 → 'final-ac-reconcile' 不発 + final_ac_reconcile==='skipped' + merge_tier==='REVIEW'
 //   (r2) fixes=1 + test#final green → 'final-ac-reconcile' が 1 回だけ呼ばれ reverified + REVIEW
-//        + journal-log prompt に 'final_ac_reconcile'
 //   (r3) fixes=1 + ac_results:null → unavailable + HOLD + reasons に 'Final AC reconcile 判定不能'
 //   (r4) fixes=1 + ac_results で ac_index 重複 → unavailable + HOLD
 //   (r5) fixes=1 + ac_index:1 が satisfied:false → reverified + HOLD + reasons に 'AC 未達'
 //        + result.final_unsatisfied_ac===true + critical AC-FINAL-2 append が reasons の
-//        'ledger 未収束' に反映 + journal-save prompt に final_ac_reconcile:reverified
+//        'ledger 未収束' に反映
 //   (r6) fixes=1 + test#final red → 'final-ac-reconcile' 不発 + skipped + HOLD（'final test red'）
-//        + journal-save prompt に final_ac_reconcile:skipped
 //   (r7) acceptance_criteria:[] + fixes=1 → Analyze needs_clarification で早期終了 →
 //        'final-ac-reconcile' 不発（agent 浪費ゼロの実証。acCount===0 の skip 判定自体は
 //        _lib/final-ac-reconcile.test.mjs の shouldRunFinalAcReconcile 単体テストが決定論的に担保）
@@ -153,10 +151,9 @@ test('[final-ac-reconcile] (r1) fixes_applied=0 → final-ac-reconcile 不発 + 
 
 // ============================================================
 // (r2) fixes=1 + test#final green → final-ac-reconcile が1回だけ + reverified + REVIEW
-//      + journal-log prompt に 'final_ac_reconcile'
 // ============================================================
 
-test('[final-ac-reconcile] (r2) fixes=1 + test#final green → final-ac-reconcile 1回 + reverified + merge_tier REVIEW + journal-log に final_ac_reconcile', async () => {
+test('[final-ac-reconcile] (r2) fixes=1 + test#final green → final-ac-reconcile 1回 + reverified + merge_tier REVIEW', async () => {
   const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
     overrides: { 'test#final': { tests: 'passed', green: true, summary: '' } },
@@ -169,11 +166,6 @@ test('[final-ac-reconcile] (r2) fixes=1 + test#final green → final-ac-reconcil
   assert.equal(facCalls.length, 1, `(r2) 'final-ac-reconcile' はちょうど1回呼ばれるはずだが ${facCalls.length} 回だった`);
   assert.equal(result?.final_ac_reconcile, 'reverified', `(r2) final_ac_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_ac_reconcile)}`);
   assert.equal(result?.merge_tier, 'REVIEW', `(r2) merge_tier は REVIEW のはずだが ${JSON.stringify(result?.merge_tier)}`);
-
-  // issue #494: 実際の telemetry payload は journal-save (stage1) の prompt に載る
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall, "(r2) 'journal-save' の呼び出しが存在すること");
-  assert.ok(journalCall.prompt.includes('final_ac_reconcile'), "(r2) journal-save prompt に 'final_ac_reconcile' が含まれること");
 });
 
 // ============================================================
@@ -252,14 +244,10 @@ test("[final-ac-reconcile] (r5) fixes=1 + AC-2 不成立 → reverified + HOLD +
 
   // critical append の実証: AC-FINAL-2 ledger item（critical, unchecked）が classifyMergeTier の
   // convergence 判定に反映され 'ledger 未収束（未 checked blocking 残）' reason として返り値に現れる
-  // + journal-save prompt に埋め込まれる telemetry JSON（final_ac_reconcile:reverified）で検証する
   assert.ok(
     (result?.merge_tier_reasons ?? []).some((r) => r.includes('ledger 未収束')),
     `(r5) merge_tier_reasons に 'ledger 未収束' を含む要素（critical AC-FINAL append の証拠）が含まれるはずだが ${JSON.stringify(result?.merge_tier_reasons)}`,
   );
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall, "(r5) 'journal-save' の呼び出しが存在すること");
-  assert.ok(journalCall.prompt.includes('"final_ac_reconcile":"reverified"'), '(r5) journal-save prompt に final_ac_reconcile:reverified の telemetry JSON が含まれること');
 });
 
 // ============================================================
@@ -285,11 +273,7 @@ test("[final-ac-reconcile] (r6) fixes=1 + test#final red → final-ac-reconcile 
   );
 
   // AC 判定が stale であることの証拠: final test red により final-ac-reconcile 自体が不発
-  // （skipped）のまま journal-save prompt に埋め込まれる telemetry JSON に反映される
-  // + 返り値 merge_tier===HOLD（上で確認済み）
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall, "(r6) 'journal-save' の呼び出しが存在すること");
-  assert.ok(journalCall.prompt.includes('"final_ac_reconcile":"skipped"'), '(r6) journal-save prompt に final_ac_reconcile:skipped の telemetry JSON が含まれること');
+  // （返り値 final_ac_reconcile:'skipped'）+ 返り値 merge_tier===HOLD（上で確認済み）
 });
 
 // ============================================================

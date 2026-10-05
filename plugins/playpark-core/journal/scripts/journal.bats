@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for journal/scripts/journal.sh
-# Focus: telemetry fields (--merge-tier, --gate-policy, --danger-hits) in cmd_log.
+# Focus: cmd_log の entry 組み立て（telemetry は --telemetry-json だけで受ける）と query / stats / error category。
 
 setup() {
     SKILLS_REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -21,32 +21,26 @@ latest_entry() {
     ls -t "$CLAUDE_JOURNAL_DIR"/*.json 2>/dev/null | head -n 1
 }
 
-# ---------------------------------------------------------------------------
-# Test 1: All three telemetry options are recorded
-# ---------------------------------------------------------------------------
-@test "all three telemetry options recorded correctly" {
-    run "$SCRIPT" log dev-flow success \
-        --merge-tier REVIEW \
-        --gate-policy llm-major-advisory \
-        --danger-hits '["auth","crypto"]'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
-    gate_policy=$(jq -r '.telemetry.gate_policy' "$entry_file")
-    danger_hits=$(jq -c '.telemetry.danger_hits' "$entry_file")
-
-    [ "$merge_tier" = "REVIEW" ]
-    [ "$gate_policy" = "llm-major-advisory" ]
-    [ "$danger_hits" = '["auth","crypto"]' ]
-}
+# dev-flow / pr-iterate が書く telemetry キー（dev-flow/references/telemetry.md のキー一覧と同じ 12 個）
+KEPT_TELEMETRY='{
+  "plugin_commit": "0123456789ab",
+  "plugin_version": "1.2.3",
+  "shape": "standard",
+  "route": "full",
+  "duration_seconds": 840,
+  "phase_durations": {"implement": 300, "validate": 60},
+  "merge_tier": "REVIEW",
+  "iterate_status": "lgtm",
+  "eval_verdict": "pass",
+  "eval_model_config": "opus",
+  "impl_model_config": "opus",
+  "review_model_config": "opus"
+}'
 
 # ---------------------------------------------------------------------------
-# Test 2: No telemetry options -> no .telemetry key in entry
+# telemetry 未指定 -> entry に telemetry キーが無い
 # ---------------------------------------------------------------------------
-@test "no telemetry options -> no telemetry key in entry" {
+@test "no --telemetry-json -> no telemetry key in entry" {
     run "$SCRIPT" log dev-flow success
     [ "$status" -eq 0 ]
 
@@ -58,269 +52,65 @@ latest_entry() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 3: Only --merge-tier -> .telemetry.merge_tier recorded,
-#          gate_policy and danger_hits keys absent
+# 残す 12 キーを --telemetry-json で渡すと、そのまま entry の telemetry になる
 # ---------------------------------------------------------------------------
-@test "only --merge-tier -> telemetry.merge_tier present, others absent" {
-    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
+@test "--telemetry-json: 残す 12 キーがそのまま telemetry に入る" {
+    run "$SCRIPT" log dev-flow success --telemetry-json "$KEPT_TELEMETRY"
     [ "$status" -eq 0 ]
 
     entry_file=$(latest_entry)
     [ -n "$entry_file" ]
 
-    # merge_tier must be present
-    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
-    [ "$merge_tier" = "REVIEW" ]
-
-    # gate_policy and danger_hits must be absent
-    has_gate_policy=$(jq '.telemetry | has("gate_policy")' "$entry_file")
-    has_danger_hits=$(jq '.telemetry | has("danger_hits")' "$entry_file")
-    [ "$has_gate_policy" = "false" ]
-    [ "$has_danger_hits" = "false" ]
+    same=$(jq --argjson want "$KEPT_TELEMETRY" '.telemetry == $want' "$entry_file")
+    [ "$same" = "true" ]
+    [ "$(jq '.telemetry | keys | length' "$entry_file")" = "12" ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 4: All 4 new telemetry fields recorded with correct types
+# plugin_commit が null の run も JSON null のまま記録される
 # ---------------------------------------------------------------------------
-@test "all 4 new telemetry fields recorded with correct types" {
-    run "$SCRIPT" log dev-flow success \
-        --merge-tier REVIEW \
-        --shape standard \
-        --eval-verdict pass \
-        --iterate-status lgtm \
-        --eval-iter 1
+@test "--telemetry-json: plugin_commit null は JSON null のまま記録される" {
+    tel=$(jq -c '.plugin_commit = null' <<<"$KEPT_TELEMETRY")
+    run "$SCRIPT" log pr-iterate success --telemetry-json "$tel"
     [ "$status" -eq 0 ]
 
     entry_file=$(latest_entry)
     [ -n "$entry_file" ]
 
-    shape=$(jq -r '.telemetry.shape' "$entry_file")
-    eval_verdict=$(jq -r '.telemetry.eval_verdict' "$entry_file")
-    iterate_status=$(jq -r '.telemetry.iterate_status' "$entry_file")
-
-    [ "$shape" = "standard" ]
-    [ "$eval_verdict" = "pass" ]
-    [ "$iterate_status" = "lgtm" ]
-
-    # eval_iter must be a number
-    eval_iter_type=$(jq '.telemetry.eval_iter | type' "$entry_file")
-    [ "$eval_iter_type" = '"number"' ]
-
-    eval_iter_val=$(jq '.telemetry.eval_iter' "$entry_file")
-    [ "$eval_iter_val" = "1" ]
+    [ "$(jq '.telemetry | has("plugin_commit")' "$entry_file")" = "true" ]
+    [ "$(jq '.telemetry.plugin_commit' "$entry_file")" = "null" ]
+    same=$(jq --argjson want "$tel" '.telemetry == $want' "$entry_file")
+    [ "$same" = "true" ]
 }
 
 # ---------------------------------------------------------------------------
-# Test 8: Partial new flags - only specified keys present, others absent
+# 撤去した per-key telemetry flag は受け付けない（Unknown option で error）
 # ---------------------------------------------------------------------------
-@test "only --iterate-status specified -> only that key present among new 4" {
-    run "$SCRIPT" log dev-flow success --iterate-status lgtm
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    iterate_status=$(jq -r '.telemetry.iterate_status' "$entry_file")
-    [ "$iterate_status" = "lgtm" ]
-
-    # The other 3 new keys must be absent
-    has_shape=$(jq '.telemetry | has("shape")' "$entry_file")
-    has_eval_verdict=$(jq '.telemetry | has("eval_verdict")' "$entry_file")
-    has_eval_iter=$(jq '.telemetry | has("eval_iter")' "$entry_file")
-
-    [ "$has_shape" = "false" ]
-    [ "$has_eval_verdict" = "false" ]
-    [ "$has_eval_iter" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# Test 9: Existing 3 flags only -> new 4 keys absent
-# ---------------------------------------------------------------------------
-@test "existing 3 telemetry flags only -> new 4 keys absent" {
-    run "$SCRIPT" log dev-flow success \
-        --merge-tier REVIEW \
-        --gate-policy llm-major-advisory \
-        --danger-hits '[]'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_shape=$(jq '.telemetry | has("shape")' "$entry_file")
-    has_eval_verdict=$(jq '.telemetry | has("eval_verdict")' "$entry_file")
-    has_iterate_status=$(jq '.telemetry | has("iterate_status")' "$entry_file")
-    has_eval_iter=$(jq '.telemetry | has("eval_iter")' "$entry_file")
-
-    [ "$has_shape" = "false" ]
-    [ "$has_eval_verdict" = "false" ]
-    [ "$has_iterate_status" = "false" ]
-    [ "$has_eval_iter" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# Tests for --eval-staleness (issue #288)
-# ---------------------------------------------------------------------------
-
-@test "--eval-staleness hash_mismatch recorded as string" {
-    run "$SCRIPT" log dev-flow success --eval-staleness hash_mismatch
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
-    [ "$eval_staleness" = "hash_mismatch" ]
-
-    eval_staleness_type=$(jq '.telemetry.eval_staleness | type' "$entry_file")
-    [ "$eval_staleness_type" = '"string"' ]
-}
-
-@test "--eval-staleness none recorded correctly" {
-    run "$SCRIPT" log dev-flow success --eval-staleness none
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
-    [ "$eval_staleness" = "none" ]
-}
-
-@test "--eval-staleness hash_reconverged recorded as string" {
-    run "$SCRIPT" log dev-flow success --eval-staleness hash_reconverged
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
-    [ "$eval_staleness" = "hash_reconverged" ]
-
-    eval_staleness_type=$(jq '.telemetry.eval_staleness | type' "$entry_file")
-    [ "$eval_staleness_type" = '"string"' ]
-}
-
-@test "--eval-staleness accepts all 5 enum values" {
-    for value in none hash_mismatch hash_reconverged iterate_incomplete iterate_fixed; do
-        run "$SCRIPT" log dev-flow success --eval-staleness "$value"
-        [ "$status" -eq 0 ]
-
-        entry_file=$(latest_entry)
-        [ -n "$entry_file" ]
-
-        eval_staleness=$(jq -r '.telemetry.eval_staleness' "$entry_file")
-        [ "$eval_staleness" = "$value" ]
+@test "撤去した per-key telemetry flag: journal.sh log に渡すと Unknown option で error になる" {
+    for flag in \
+        --merge-tier --gate-policy --danger-hits --shape --eval-iter --eval-verdict \
+        --iterate-status --eval-staleness --ci-wait-seconds --ci-poll-attempts \
+        --vdelta-verdicts --vdelta-fail-open --redgreen-deny --testsurf-hits \
+        --duration-seconds --phase-durations --merge-tier-reasons --route \
+        --subagent-invocations --guard-id --eval-confidence --review-confidence --review-decision; do
+        run "$SCRIPT" log dev-flow success "$flag" x
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"Unknown option: $flag"* ]]
     done
 }
 
-@test "--eval-staleness bogus exits non-zero (out-of-enum rejection)" {
-    run "$SCRIPT" log dev-flow success --eval-staleness bogus
-    [ "$status" -ne 0 ]
-}
-
-@test "--eval-staleness bogus error message includes hash_reconverged (enum list updated)" {
-    run "$SCRIPT" log dev-flow success --eval-staleness bogus
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"hash_reconverged"* ]]
-}
-
-@test "no --eval-staleness and no other telemetry -> no telemetry key" {
-    run "$SCRIPT" log dev-flow success
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
-    [ "$has_telemetry" = "false" ]
-}
-
 # ---------------------------------------------------------------------------
-# Tests for --ci-wait-seconds / --ci-poll-attempts (issue #324, AC-7 journal side)
+# journal.sh の option 分岐に telemetry キー個別の flag が残っていない（静的 pin）
+# 受け付ける option は entry の基本項目・context・error・recovery と --telemetry-json だけ
 # ---------------------------------------------------------------------------
-
-@test "--ci-wait-seconds and --ci-poll-attempts recorded as numbers" {
-    run "$SCRIPT" log pr-iterate success --ci-wait-seconds 30 --ci-poll-attempts 3
+@test "journal.sh log の option は --telemetry-json 以外に telemetry 用 flag を持たない" {
+    run bash -c "sed -n '/^cmd_log()/,/^}/p' '$SCRIPT' | grep -oE '^ +--[a-z-]+\)' | tr -d ' )' | sort"
     [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    ci_wait_ok=$(jq '.telemetry.ci_wait_seconds == 30' "$entry_file")
-    [ "$ci_wait_ok" = "true" ]
-
-    ci_poll_ok=$(jq '.telemetry.ci_poll_attempts == 3' "$entry_file")
-    [ "$ci_poll_ok" = "true" ]
-
-    ci_wait_type=$(jq '.telemetry.ci_wait_seconds | type' "$entry_file")
-    [ "$ci_wait_type" = '"number"' ]
-
-    ci_poll_type=$(jq '.telemetry.ci_poll_attempts | type' "$entry_file")
-    [ "$ci_poll_type" = '"number"' ]
-}
-
-@test "--ci-wait-seconds 0 recorded as number 0 (key present)" {
-    run "$SCRIPT" log pr-iterate success --ci-wait-seconds 0
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_ci_wait=$(jq '.telemetry | has("ci_wait_seconds")' "$entry_file")
-    [ "$has_ci_wait" = "true" ]
-
-    ci_wait_ok=$(jq '.telemetry.ci_wait_seconds == 0' "$entry_file")
-    [ "$ci_wait_ok" = "true" ]
-}
-
-@test "--ci-wait-seconds -1 exits non-zero with Invalid message" {
-    run "$SCRIPT" log pr-iterate success --ci-wait-seconds -1
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"Invalid"* ]]
-}
-
-@test "--ci-poll-attempts abc exits non-zero with Invalid message" {
-    run "$SCRIPT" log pr-iterate success --ci-poll-attempts abc
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"Invalid"* ]]
-}
-
-@test "only --ci-wait-seconds specified -> only that key present" {
-    run "$SCRIPT" log pr-iterate success --ci-wait-seconds 45
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_ci_wait=$(jq '.telemetry | has("ci_wait_seconds")' "$entry_file")
-    has_ci_poll=$(jq '.telemetry | has("ci_poll_attempts")' "$entry_file")
-    [ "$has_ci_wait" = "true" ]
-    [ "$has_ci_poll" = "false" ]
-}
-
-@test "no ci telemetry flags and no other telemetry -> no telemetry key (regression)" {
-    run "$SCRIPT" log pr-iterate success
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
-    [ "$has_telemetry" = "false" ]
-}
-
-@test "--iterate-status lgtm and --ci-wait-seconds 30 coexist in telemetry" {
-    run "$SCRIPT" log pr-iterate success --iterate-status lgtm --ci-wait-seconds 30
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    iterate_status=$(jq -r '.telemetry.iterate_status' "$entry_file")
-    [ "$iterate_status" = "lgtm" ]
-
-    ci_wait_ok=$(jq '.telemetry.ci_wait_seconds == 30' "$entry_file")
-    [ "$ci_wait_ok" = "true" ]
+    expected=$(printf '%s\n' \
+        --args --context --duration-turns --error-category --error-msg --error-phase \
+        --issue --mode --pr-number --project --recovery --recovery-turns --repo \
+        --telemetry-json --worktree | sort)
+    [ "$output" = "$expected" ]
 }
 
 # ===========================================================================
@@ -567,8 +357,7 @@ JSON
     run "$SCRIPT" log dev-flow failure \
         --error-category needs_clarification \
         --error-msg 'user clarification needed' \
-        --gate-policy llm-major-advisory \
-        --eval-iter 0
+        --telemetry-json '{"plugin_version":"1.2.3"}'
     [ "$status" -eq 0 ]
 
     entry_file=$(latest_entry)
@@ -592,8 +381,7 @@ JSON
     run "$SCRIPT" log dev-flow failure \
         --error-category empty_diff \
         --error-msg 'no changes produced' \
-        --gate-policy llm-major-advisory \
-        --eval-iter 0
+        --telemetry-json '{"plugin_version":"1.2.3"}'
     [ "$status" -eq 0 ]
 
     entry_file=$(latest_entry)
@@ -733,7 +521,7 @@ JSON
 # Test (m): --repo と --pr-number が context に記録され、telemetry と共存する
 # ---------------------------------------------------------------------------
 @test "--repo and --pr-number recorded in context and coexist with telemetry" {
-    run "$SCRIPT" log dev-flow success --merge-tier REVIEW --repo acme/skills --pr-number 123
+    run "$SCRIPT" log dev-flow success --telemetry-json '{"merge_tier":"REVIEW"}' --repo acme/skills --pr-number 123
     [ "$status" -eq 0 ]
 
     entry_file=$(latest_entry)
@@ -797,7 +585,7 @@ JSON
 # ---------------------------------------------------------------------------
 # --telemetry-json (workflow handoff の telemetry をそのまま載せる汎用 flag)
 # ---------------------------------------------------------------------------
-@test "--telemetry-json: 任意 object が telemetry にマージされる" {
+@test "--telemetry-json: 任意 object が telemetry に入る" {
     run "$SCRIPT" log dev-flow success \
         --telemetry-json '{"candidates_found":3,"issues_filed":2,"backpressure_skipped":false}'
     [ "$status" -eq 0 ]
@@ -806,16 +594,6 @@ JSON
     [ "$(jq -r '.telemetry.candidates_found' "$entry_file")" = "3" ]
     [ "$(jq -r '.telemetry.issues_filed' "$entry_file")" = "2" ]
     [ "$(jq -r '.telemetry.backpressure_skipped' "$entry_file")" = "false" ]
-}
-
-@test "--telemetry-json: 既存 telemetry flag と併用できる" {
-    run "$SCRIPT" log dev-flow success \
-        --merge-tier REVIEW \
-        --telemetry-json '{"candidates_found":1}'
-    [ "$status" -eq 0 ]
-    entry_file=$(latest_entry)
-    [ "$(jq -r '.telemetry.merge_tier' "$entry_file")" = "REVIEW" ]
-    [ "$(jq -r '.telemetry.candidates_found' "$entry_file")" = "1" ]
 }
 
 @test "--telemetry-json: JSON でない値は error" {
@@ -840,629 +618,6 @@ JSON
         [ "$status" -ne 0 ]
         [[ "$output" == *"Unknown option: ${flag_prefix}${suffix}"* ]]
     done
-}
-
-# ===========================================================================
-# telemetry 8-key flags (issue #430)
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# (a) 8 フラグ全指定 -> 全キーが正しい型で記録される
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: all specified are recorded with correct types" {
-    run "$SCRIPT" log dev-flow success \
-        --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' \
-        --vdelta-fail-open 1 \
-        --redgreen-deny '[{"ac":2,"reasons":["no red"]}]' \
-        --testsurf-hits '[]' \
-        --duration-seconds 840 \
-        --phase-durations '{"analyze":120}' \
-        --merge-tier-reasons '["danger hit"]' \
-        --route lite
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    [ "$(jq '.telemetry.vdelta_verdicts | type' "$entry_file")" = '"array"' ]
-    [ "$(jq -c '.telemetry.vdelta_verdicts' "$entry_file")" = '[{"ac":1,"status":"promoted"}]' ]
-
-    [ "$(jq '.telemetry.vdelta_fail_open | type' "$entry_file")" = '"number"' ]
-    [ "$(jq '.telemetry.vdelta_fail_open' "$entry_file")" = "1" ]
-
-    [ "$(jq '.telemetry.redgreen_deny | type' "$entry_file")" = '"array"' ]
-    [ "$(jq -c '.telemetry.redgreen_deny' "$entry_file")" = '[{"ac":2,"reasons":["no red"]}]' ]
-
-    [ "$(jq '.telemetry.testsurf_hits | type' "$entry_file")" = '"array"' ]
-    [ "$(jq -c '.telemetry.testsurf_hits' "$entry_file")" = '[]' ]
-
-    [ "$(jq '.telemetry.duration_seconds | type' "$entry_file")" = '"number"' ]
-    [ "$(jq '.telemetry.duration_seconds' "$entry_file")" = "840" ]
-
-    [ "$(jq '.telemetry.phase_durations | type' "$entry_file")" = '"object"' ]
-    [ "$(jq -c '.telemetry.phase_durations' "$entry_file")" = '{"analyze":120}' ]
-
-    [ "$(jq '.telemetry.merge_tier_reasons | type' "$entry_file")" = '"array"' ]
-    [ "$(jq -c '.telemetry.merge_tier_reasons' "$entry_file")" = '["danger hit"]' ]
-
-    [ "$(jq -r '.telemetry.route' "$entry_file")" = "lite" ]
-    [ "$(jq '.telemetry.route | type' "$entry_file")" = '"string"' ]
-}
-
-# ---------------------------------------------------------------------------
-# (b) --route full が "full" で記録される
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: --route full recorded as full" {
-    run "$SCRIPT" log dev-flow success --route full
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    [ "$(jq -r '.telemetry.route' "$entry_file")" = "full" ]
-}
-
-# ---------------------------------------------------------------------------
-# (c) --route bogus -> exit 0, base entry 正常, telemetry.route が無い
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: --route bogus is dropped, base entry still recorded" {
-    run "$SCRIPT" log dev-flow success --route bogus --merge-tier REVIEW
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    skill_val=$(jq -r '.skill' "$entry_file")
-    [ "$skill_val" = "dev-flow" ]
-    outcome_val=$(jq -r '.outcome' "$entry_file")
-    [ "$outcome_val" = "success" ]
-
-    has_route=$(jq '.telemetry | has("route")' "$entry_file")
-    [ "$has_route" = "false" ]
-
-    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
-    [ "$merge_tier" = "REVIEW" ]
-}
-
-@test "8 telemetry flags: --route bogus alone (no other telemetry) -> no telemetry key" {
-    run "$SCRIPT" log dev-flow success --route bogus
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
-    [ "$has_telemetry" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# (d) 各キーの型違反が drop される（個別検証）
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: --vdelta-verdicts with non-object element is dropped" {
-    run "$SCRIPT" log dev-flow success --vdelta-verdicts '["str"]'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("vdelta_verdicts")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "8 telemetry flags: --vdelta-fail-open abc is dropped" {
-    run "$SCRIPT" log dev-flow success --vdelta-fail-open abc
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("vdelta_fail_open")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "8 telemetry flags: --redgreen-deny non-array is dropped" {
-    run "$SCRIPT" log dev-flow success --redgreen-deny '{}'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("redgreen_deny")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "8 telemetry flags: --testsurf-hits with non-string element is dropped" {
-    run "$SCRIPT" log dev-flow success --testsurf-hits '[1]'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("testsurf_hits")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "8 telemetry flags: --duration-seconds -5 is dropped" {
-    run "$SCRIPT" log dev-flow success --duration-seconds -5
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("duration_seconds")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "8 telemetry flags: --phase-durations with non-number value is dropped" {
-    run "$SCRIPT" log dev-flow success --phase-durations '{"analyze":"x"}'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("phase_durations")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "8 telemetry flags: --merge-tier-reasons with non-string element is dropped" {
-    run "$SCRIPT" log dev-flow success --merge-tier-reasons '[{}]'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("merge_tier_reasons")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "8 telemetry flags: unparseable JSON for --phase-durations is dropped without polluting stdout" {
-    run "$SCRIPT" log dev-flow success --phase-durations '{broken'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    run jq empty "$entry_file"
-    [ "$status" -eq 0 ]
-
-    has_key=$(jq '.telemetry // {} | has("phase_durations")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# (e) drop の独立性: 1 キーの drop は他キー・base entry に影響しない
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: drop independence - route drop doesn't affect other telemetry" {
-    run "$SCRIPT" log dev-flow success --route bogus --merge-tier REVIEW --duration-seconds 840
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_route=$(jq '.telemetry | has("route")' "$entry_file")
-    [ "$has_route" = "false" ]
-
-    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
-    [ "$merge_tier" = "REVIEW" ]
-
-    duration=$(jq '.telemetry.duration_seconds' "$entry_file")
-    [ "$duration" = "840" ]
-}
-
-# ---------------------------------------------------------------------------
-# (f) --testsurf-hits '[]' -> telemetry.testsurf_hits が [] で記録される（キー存在）
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: --testsurf-hits empty array is recorded (key present)" {
-    run "$SCRIPT" log dev-flow success --testsurf-hits '[]'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("testsurf_hits")' "$entry_file")
-    [ "$has_key" = "true" ]
-
-    val=$(jq -c '.telemetry.testsurf_hits' "$entry_file")
-    [ "$val" = "[]" ]
-}
-
-# ---------------------------------------------------------------------------
-# (g) --vdelta-fail-open 0 -> number 0 で記録される（キー存在）
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: --vdelta-fail-open 0 is recorded as number 0 (key present)" {
-    run "$SCRIPT" log dev-flow success --vdelta-fail-open 0
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("vdelta_fail_open")' "$entry_file")
-    [ "$has_key" = "true" ]
-
-    val=$(jq '.telemetry.vdelta_fail_open' "$entry_file")
-    [ "$val" = "0" ]
-}
-
-# ---------------------------------------------------------------------------
-# (h) 8 フラグのうち --route lite のみ指定 -> route のみ存在し他 7 キーは欠落
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: only --route lite specified -> only route key present among the 8" {
-    run "$SCRIPT" log dev-flow success --route lite
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    [ "$(jq -r '.telemetry.route' "$entry_file")" = "lite" ]
-
-    for key in vdelta_verdicts vdelta_fail_open redgreen_deny testsurf_hits duration_seconds phase_durations merge_tier_reasons; do
-        has_key=$(jq --arg k "$key" '.telemetry | has($k)' "$entry_file")
-        [ "$has_key" = "false" ]
-    done
-}
-
-# ---------------------------------------------------------------------------
-# (i) 8 フラグ未指定・他 telemetry フラグも未指定 -> telemetry キー自体が無い
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: none specified and no other telemetry -> no telemetry key" {
-    run "$SCRIPT" log dev-flow success
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
-    [ "$has_telemetry" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# (j) 既存フラグ回帰: 8 新キーが混入しない
-# ---------------------------------------------------------------------------
-@test "8 telemetry flags: existing flags only -> new 8 keys don't leak in" {
-    run "$SCRIPT" log dev-flow success --merge-tier REVIEW --gate-policy llm-major-advisory
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
-    [ "$merge_tier" = "REVIEW" ]
-    gate_policy=$(jq -r '.telemetry.gate_policy' "$entry_file")
-    [ "$gate_policy" = "llm-major-advisory" ]
-
-    for key in vdelta_verdicts vdelta_fail_open redgreen_deny testsurf_hits duration_seconds phase_durations merge_tier_reasons route; do
-        has_key=$(jq --arg k "$key" '.telemetry | has($k)' "$entry_file")
-        [ "$has_key" = "false" ]
-    done
-}
-
-# ===========================================================================
-# --guard-id flag (issue #530)
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# (d) 正常値 -> telemetry.guard_id が文字列として記録される
-# ---------------------------------------------------------------------------
-@test "--guard-id: valid value recorded as telemetry.guard_id string" {
-    run "$SCRIPT" log dev-flow success --guard-id sandbox-deny
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    guard_id=$(jq -r '.telemetry.guard_id' "$entry_file")
-    [ "$guard_id" = "sandbox-deny" ]
-    guard_id_type=$(jq -r '.telemetry.guard_id | type' "$entry_file")
-    [ "$guard_id_type" = "string" ]
-}
-
-# ---------------------------------------------------------------------------
-# (e) 不正値（スペース混入）-> guard_id キーのみ drop、他 telemetry キーは無事
-# ---------------------------------------------------------------------------
-@test "--guard-id: value with spaces is dropped, other telemetry keys unaffected" {
-    run "$SCRIPT" log dev-flow success --guard-id 'bad value with spaces' --merge-tier REVIEW
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_guard_id=$(jq '.telemetry | has("guard_id")' "$entry_file")
-    [ "$has_guard_id" = "false" ]
-    merge_tier=$(jq -r '.telemetry.merge_tier' "$entry_file")
-    [ "$merge_tier" = "REVIEW" ]
-}
-
-# ---------------------------------------------------------------------------
-# (f) メタ文字混入 -> guard_id キーのみ drop、単独指定なら telemetry キー自体が無い
-# ---------------------------------------------------------------------------
-@test "--guard-id: shell metacharacters dropped, entry still recorded" {
-    run "$SCRIPT" log dev-flow success --guard-id '$(rm -rf x)'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
-    [ "$has_telemetry" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# (g) 滞留 payload 同形状の統合ケース: guard_blocked + guard_id + merge_tier + route が共存
-# ---------------------------------------------------------------------------
-@test "--guard-id: coexists with --error-category guard_blocked and other telemetry flags" {
-    run "$SCRIPT" log dev-flow success \
-        --error-category guard_blocked \
-        --guard-id sandbox-deny \
-        --merge-tier HOLD \
-        --route full
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    error_category=$(jq -r '.error.category' "$entry_file")
-    [ "$error_category" = "guard_blocked" ]
-    guard_id=$(jq -r '.telemetry.guard_id' "$entry_file")
-    [ "$guard_id" = "sandbox-deny" ]
-}
-
-# ---------------------------------------------------------------------------
-# (h) comma 結合値（複数 guard 発火時の送り側フォーマット） -> telemetry.guard_id にそのまま記録される
-#     (issue #532: 送り側 dev-flow.js は guard_id を unique・sort して comma 結合した文字列を渡す)
-# ---------------------------------------------------------------------------
-@test "--guard-id: comma-joined multi-guard value recorded as telemetry.guard_id string" {
-    run "$SCRIPT" log dev-flow success --guard-id 'inline-edit-guard,sandbox-deny'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    guard_id=$(jq -r '.telemetry.guard_id' "$entry_file")
-    [ "$guard_id" = "inline-edit-guard,sandbox-deny" ]
-    guard_id_type=$(jq -r '.telemetry.guard_id | type' "$entry_file")
-    [ "$guard_id_type" = "string" ]
-}
-
-# ===========================================================================
-# --subagent-invocations flag (issue #445)
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# (a) 正常値 -> telemetry.subagent_invocations が object で記録され total/by_type が一致
-# ---------------------------------------------------------------------------
-@test "--subagent-invocations: valid object recorded with total and by_type" {
-    run "$SCRIPT" log dev-flow success \
-        --subagent-invocations '{"total":59,"by_type":{"implementer":4,"dev-runner-haiku":16}}'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    [ "$(jq '.telemetry.subagent_invocations | type' "$entry_file")" = '"object"' ]
-    [ "$(jq '.telemetry.subagent_invocations.total' "$entry_file")" = "59" ]
-    [ "$(jq -c '.telemetry.subagent_invocations.by_type' "$entry_file")" = '{"implementer":4,"dev-runner-haiku":16}' ]
-}
-
-# ---------------------------------------------------------------------------
-# (b) 不正値 -> exit 0・base entry 正常・telemetry.subagent_invocations キー無し
-# ---------------------------------------------------------------------------
-@test "--subagent-invocations: total as non-number is dropped" {
-    run "$SCRIPT" log dev-flow success --subagent-invocations '{"total":"x"}'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    skill_val=$(jq -r '.skill' "$entry_file")
-    [ "$skill_val" = "dev-flow" ]
-    outcome_val=$(jq -r '.outcome' "$entry_file")
-    [ "$outcome_val" = "success" ]
-
-    has_key=$(jq '.telemetry // {} | has("subagent_invocations")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "--subagent-invocations: JSON array (non-object) is dropped" {
-    run "$SCRIPT" log dev-flow success --subagent-invocations '[1]'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry // {} | has("subagent_invocations")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-@test "--subagent-invocations: unparseable JSON is dropped without polluting stdout" {
-    run "$SCRIPT" log dev-flow success --subagent-invocations 'not-json'
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    run jq empty "$entry_file"
-    [ "$status" -eq 0 ]
-
-    has_key=$(jq '.telemetry // {} | has("subagent_invocations")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# ---------------------------------------------------------------------------
-# (c) フラグ未指定 -> telemetry にキー無し
-# ---------------------------------------------------------------------------
-@test "--subagent-invocations: not specified -> no telemetry key" {
-    run "$SCRIPT" log dev-flow success
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_telemetry=$(jq 'has("telemetry")' "$entry_file")
-    [ "$has_telemetry" = "false" ]
-}
-
-# ===========================================================================
-# --eval-confidence / --review-confidence / --review-decision (issue #561)
-# ===========================================================================
-
-# (a) --eval-confidence 0.85 -> telemetry.eval_confidence は number 0.85
-@test "--eval-confidence: valid number is recorded as telemetry.eval_confidence number" {
-    run "$SCRIPT" log dev-flow success --eval-confidence 0.85
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    value=$(jq -r '.telemetry.eval_confidence' "$entry_file")
-    type=$(jq -r '.telemetry.eval_confidence | type' "$entry_file")
-    [ "$value" = "0.85" ]
-    [ "$type" = "number" ]
-}
-
-# (b) --eval-confidence null -> telemetry.eval_confidence は JSON null（キーは存在する）
-@test "--eval-confidence: literal null is recorded as telemetry.eval_confidence null (key present)" {
-    run "$SCRIPT" log dev-flow success --eval-confidence null
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
-    [ "$has_key" = "true" ]
-    type=$(jq -r '.telemetry.eval_confidence | type' "$entry_file")
-    [ "$type" = "null" ]
-}
-
-# (c) 範囲外の値 (1.5) は drop-and-warn: stderr に警告、entry は書かれ、telemetry にキーが無い
-@test "--eval-confidence: out-of-range value is dropped with warning, entry still recorded" {
-    run "$SCRIPT" log dev-flow success --eval-confidence 1.5
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"dropping invalid --eval-confidence"* ]]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# (d) 非数の値 (abc) は drop-and-warn
-@test "--eval-confidence: non-numeric value is dropped with warning, entry still recorded" {
-    run "$SCRIPT" log dev-flow success --eval-confidence abc
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"dropping invalid --eval-confidence"* ]]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# (e) 境界値 0 は正しく受理される (falsy 事故で落ちないこと)
-@test "--eval-confidence: boundary value 0 is accepted (not dropped by falsy bug)" {
-    run "$SCRIPT" log dev-flow success --eval-confidence 0
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
-    [ "$has_key" = "true" ]
-    value=$(jq -r '.telemetry.eval_confidence' "$entry_file")
-    [ "$value" = "0" ]
-}
-
-# (e-2) 境界値 1 は正しく受理される
-@test "--eval-confidence: boundary value 1 is accepted" {
-    run "$SCRIPT" log dev-flow success --eval-confidence 1
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    value=$(jq -r '.telemetry.eval_confidence' "$entry_file")
-    [ "$value" = "1" ]
-}
-
-# (f) フラグ未指定なら telemetry に eval_confidence キーが無い
-@test "--eval-confidence: not specified -> no telemetry key" {
-    run "$SCRIPT" log dev-flow success --merge-tier REVIEW
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("eval_confidence")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# (g) --review-confidence 0.6 と --review-decision approve が telemetry に記録される
-@test "--review-confidence and --review-decision: valid values recorded" {
-    run "$SCRIPT" log dev-flow success --review-confidence 0.6 --review-decision approve
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    review_confidence=$(jq -r '.telemetry.review_confidence' "$entry_file")
-    review_decision=$(jq -r '.telemetry.review_decision' "$entry_file")
-    [ "$review_confidence" = "0.6" ]
-    [ "$review_decision" = "approve" ]
-}
-
-# (g-2) --review-confidence の範囲外・null も eval-confidence と同じ挙動をとる
-@test "--review-confidence: literal null is recorded as null (key present)" {
-    run "$SCRIPT" log dev-flow success --review-confidence null
-    [ "$status" -eq 0 ]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("review_confidence")' "$entry_file")
-    [ "$has_key" = "true" ]
-    type=$(jq -r '.telemetry.review_confidence | type' "$entry_file")
-    [ "$type" = "null" ]
-}
-
-@test "--review-confidence: out-of-range value is dropped with warning" {
-    run "$SCRIPT" log dev-flow success --review-confidence -0.1
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"dropping invalid --review-confidence"* ]]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("review_confidence")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# (h) --review-decision が enum 外 (lgtm) の場合は drop-and-warn
-@test "--review-decision: out-of-enum value is dropped with warning, entry still recorded" {
-    run "$SCRIPT" log dev-flow success --review-decision lgtm
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"dropping invalid --review-decision"* ]]
-
-    entry_file=$(latest_entry)
-    [ -n "$entry_file" ]
-
-    has_key=$(jq '.telemetry | has("review_decision")' "$entry_file")
-    [ "$has_key" = "false" ]
-}
-
-# (i) --review-decision の残り2つの enum 値 (request-changes / comment) も受理される
-@test "--review-decision: request-changes and comment are accepted" {
-    run "$SCRIPT" log dev-flow success --review-decision request-changes
-    [ "$status" -eq 0 ]
-    entry_file=$(latest_entry)
-    value=$(jq -r '.telemetry.review_decision' "$entry_file")
-    [ "$value" = "request-changes" ]
-
-    run "$SCRIPT" log dev-flow success --review-decision comment
-    [ "$status" -eq 0 ]
-    entry_file=$(latest_entry)
-    value=$(jq -r '.telemetry.review_decision' "$entry_file")
-    [ "$value" = "comment" ]
 }
 
 # ===========================================================================

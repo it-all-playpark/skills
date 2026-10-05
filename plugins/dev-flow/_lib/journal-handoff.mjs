@@ -255,7 +255,7 @@ export function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
 // すると catch へ抜けて再代入が走らないため、preset が無いと stage2 の失敗が save_failed として
 // 誤帰属される（issue #499）。fail-open: 例外は内部で吸収し、3 値 closed enum
 // （logged / save_failed / log_failed）のいずれかを必ず返す。gate・merge tier には影響しない。
-// deps 注入: agent は呼び出し側の trackedAgent（subagent_invocations 計上のため）、
+// deps 注入: agent は呼び出し側の trackedAgent（ABORT_CTX の label 更新・pr-iterate の起動数計上のため）、
 // saveSchema/logSchema は workflow 側定義の JOURNAL_SAVE_RESULT / JOURNAL_RESULT を渡す。
 // savePath は呼び出し側 JS が絶対パスで確定して渡す（agent 申告の path は使わない — 申告値を
 // 信用すると別ディレクトリの同名ファイルが stage2 へ渡りうる）。saveDir+fileName
@@ -318,8 +318,9 @@ export function buildAbortErrorMsg({ phase, label, error }) {
 
 // buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label,
 // error, telemetry }): abort entry の唯一の組み立て口（dev-flow.js / pr-iterate.js の
-// top-level catch が使う）。outcome:'failure' + error_category:'abort' + error_phase +
-// telemetry.abort_phase/abort_label に固定する（legacy fallback / version 分岐なし）。
+// top-level catch が使う）。outcome:'failure' + error_category:'abort' + error_phase に固定する
+// （legacy fallback / version 分岐なし）。phase/label は error_phase と error_msg に載せ、
+// telemetry には呼び出し側が渡したキーだけを入れる。
 export function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal_sh, phase, label, error, telemetry }) {
   return buildJournalHandoffPayload({
     skill,
@@ -332,7 +333,7 @@ export function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, 
     error_category: ABORT_ERROR_CATEGORY,
     error_msg: buildAbortErrorMsg({ phase, label, error }),
     error_phase: phase || undefined,
-    telemetry: { ...(telemetry ?? {}), abort_phase: phase ?? null, abort_label: label ?? null },
+    telemetry,
   });
 }
 

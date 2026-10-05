@@ -131,11 +131,16 @@ test("[abort-telemetry] (1) isolation probe fail-closed（written:false）→ ru
   for (const key of [
     '"skill":"pr-iterate"', '"outcome":"failure"', '"error_category":"abort"',
     '"error_msg":"abort@Iterate/isolation-probe: ', '"error_phase":"Iterate"',
-    '"abort_label":"isolation-probe"', '"merge_tier":"PR_ITERATE"', '"iterate_rounds":0',
+    '"merge_tier":"PR_ITERATE"', '"review_model_config":"opus"',
     '"pr_number":5', '"args":"pr=5"', '"repo":"acme/skills"',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 900)}`);
+  }
+  // label は error_msg に載る。telemetry には複製しない（残す 12 キー以外を書かない）
+  for (const key of ['"abort_label"', '"abort_phase"', '"iterate_rounds"', '"subagent_invocations"']) {
+    assert.ok(!savePrompt.includes(key),
+      `(1) journal-save prompt に削除済み telemetry キー '${key}' が含まれていた。prompt:\n${savePrompt.slice(0, 900)}`);
   }
   assert.ok(savePrompt.includes('/tmp/wt/.devflow-tmp/payload-priterate-5-abort.json'),
     `(1) journal-save prompt に abort savePath が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 900)}`);

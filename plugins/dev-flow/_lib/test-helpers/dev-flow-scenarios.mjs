@@ -2,7 +2,7 @@
  * dev-flow-scenarios.mjs — dev-flow.js の各経路へ到達させる最小 override の共有定義
  *
  * exec-proxy-routing.test.mjs（label→agentType の網羅観測）と
- * subagent-invocations-routing.test.mjs（全経路で agent() 起動数と telemetry の突合）が同じ scenario 集合を
+ * tracked-agent-failure-policy.test.mjs（到達 label の失敗ポリシー分類）が同じ scenario 集合を
  * 使う。新しい exec-proxy label / 経路を dev-flow.js に足したら、ここに到達 scenario を足す
  * （exec-proxy-routing の「EXPECTED 全 label 到達」assert が未登録を検出する）。
  *

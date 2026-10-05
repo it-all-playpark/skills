@@ -7,7 +7,7 @@
 //
 // テストケース:
 //   (a) pr-iterate が fix_failed で終端 → merge_tier=HOLD / eval_staleness=iterate_incomplete /
-//       journal telemetry に iterate_status・iterate_rounds / post-summary に HOLD marker と
+//       journal telemetry に iterate_status / post-summary に HOLD marker と
 //       history 末尾 round の file パス（iterateHistory・iterateIterations 配線）
 
 import { test } from 'vitest';
@@ -50,8 +50,6 @@ test('[wiring] (a) pr-iterate fix_failed → HOLD / iterate_incomplete / telemet
   const journal = calls.find((c) => c.label === 'journal-save');
   assert.ok(journal, '(a) journal-save が呼ばれていない');
   assert.ok(journal.prompt.includes('"iterate_status":"fix_failed"'), `(a) telemetry に iterate_status が無い:\n${journal.prompt.slice(0, 600)}`);
-  assert.ok(journal.prompt.includes('"iterate_rounds":3'), `(a) telemetry に iterate_rounds=3 が無い:\n${journal.prompt.slice(0, 600)}`);
-  assert.ok(journal.prompt.includes('"eval_staleness":"iterate_incomplete"'), `(a) telemetry に eval_staleness が無い:\n${journal.prompt.slice(0, 600)}`);
 
   const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(post, '(a) post-summary が呼ばれていない');

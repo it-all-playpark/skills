@@ -112,9 +112,9 @@ function createResponder({ concerns, ciChecksResponse }) {
 }
 
 async function runScenario({ concerns, ciChecksResponse }) {
-  const { ctx, calls } = makeRecordingSandbox(createResponder({ concerns, ciChecksResponse }));
+  const { ctx, calls, logs } = makeRecordingSandbox(createResponder({ concerns, ciChecksResponse }));
   const err = await runDevFlowInSandbox(devFlowSrc, ctx);
-  return { calls, err };
+  return { calls, logs, err };
 }
 
 function assertNoCrash(err, scenarioName) {
@@ -123,27 +123,20 @@ function assertNoCrash(err, scenarioName) {
   }
 }
 
-// issue #603: post-summary の環境ノートはグループ件数のみを常時可視で表示し、env_key ごとの
-// checked 状態・CI 確認済み evidence の全文は journal telemetry `resolved_evidence.env_notes[]`
-// （journal-save prompt の JOURNAL_HANDOFF_BODY payload）側に移された。ci-checks の auto-close /
-// fail-open / allowlist / per-key 独立性の検証は journal 側の env_notes を見る。
-function extractResolvedEvidence(calls) {
-  const journalSave = calls.find((c) => c.label === 'journal-save');
+// post-summary の環境ノートはグループ件数のみを表示する。env_key ごとの auto-close / 据え置きは
+// ci-checks の log 行（`ci-checks: <env_key> 系 check 全 pass（…）` / `ci-checks: <env_key> → <reason> … 据え置き`）
+// で観測する。
+function ciCheckLogs(logs) {
+  return logs.filter((l) => l.includes('ci-checks:'));
+}
+function envNoteCountLine(calls, n) {
+  const post = calls.find((c) => c.label === 'post-summary');
+  assert.ok(post != null, `label === 'post-summary' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`);
   assert.ok(
-    journalSave != null,
-    `label === 'journal-save' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
+    post.prompt.includes(`🏗 環境ノート ${n} 件`),
+    `post-summary に「🏗 環境ノート ${n} 件」が無い（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）:\n${post.prompt.slice(0, 2000)}`,
   );
-  const beginIdx = journalSave.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_BEGIN>>>');
-  const endIdx = journalSave.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>');
-  assert.ok(beginIdx >= 0 && endIdx > beginIdx, 'journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない');
-  const payloadStr = journalSave.prompt.slice(beginIdx + '<<<JOURNAL_HANDOFF_BODY_BEGIN>>>'.length, endIdx).trim();
-  let payload;
-  try {
-    payload = JSON.parse(payloadStr);
-  } catch (e) {
-    assert.fail(`journal-save payload が JSON.parse できない: ${e.message}\n${payloadStr}`);
-  }
-  return payload.telemetry?.resolved_evidence ?? null;
+  return post;
 }
 
 const TURBOPACK_CONCERNS = [
@@ -192,22 +185,14 @@ test('[ci-checks][AC-1][a] merge-tier-facts 呼び出しが 1 回発生し gh pr
   assert.equal(calls.filter((c) => c.label === 'ci-checks').length, 0, 'checks 専用の exec-proxy spawn は発行しない');
 });
 
-test('[ci-checks][AC-1][a] post-summary の環境ノートに件数行が現れ、journal telemetry resolved_evidence の turbopack-sandbox env note が checked:true・CI で確認済み（check名列挙）になる', async () => {
+test('[ci-checks][AC-1][a] post-summary の環境ノートに件数行が現れ、turbopack-sandbox ENV item が CI 確認済み（check名列挙）で auto-close される', async () => {
   await ensureGreenRun();
-  const { calls } = sharedGreen;
-  const post = calls.find((c) => c.label === 'post-summary');
-  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  const re = extractResolvedEvidence(calls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const note = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');
+  const { calls, logs } = sharedGreen;
+  envNoteCountLine(calls, 1);
+  const lines = ciCheckLogs(logs);
   assert.ok(
-    note != null,
-    `resolved_evidence.env_notes に turbopack-sandbox が無い: ${JSON.stringify(re.env_notes)}`,
-  );
-  assert.equal(note.checked, true, 'turbopack-sandbox env note は checked:true のはず');
-  assert.ok(
-    (note.evidence ?? '').includes('CI で確認済み（Vercel, build）'),
-    `turbopack-sandbox env note の evidence に「CI で確認済み（Vercel, build）」が含まれていない: ${note.evidence}`,
+    lines.some((l) => l.includes('ci-checks: turbopack-sandbox 系 check 全 pass（Vercel, build）') && l.includes('CI 委譲で解消')),
+    `turbopack-sandbox の auto-close log（check 名 Vercel, build）が無い: ${JSON.stringify(lines)}`,
   );
 });
 
@@ -241,14 +226,16 @@ test('[ci-checks][AC-2][b] ci-checks 失敗でも workflow は完走し(post-sum
     !post.prompt.includes('CI で確認済み'),
     `ci-checks 失敗時は fail-open で ENV item を据え置くはずが「CI で確認済み」が現れている:\n${post.prompt.slice(0, 2000)}`,
   );
-  const re = extractResolvedEvidence(calls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const note = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');
+  envNoteCountLine(calls, 1);
+  const lines = ciCheckLogs(sharedFailOpen.logs);
   assert.ok(
-    note != null,
-    `resolved_evidence.env_notes に turbopack-sandbox が無い: ${JSON.stringify(re.env_notes)}`,
+    lines.some((l) => l.includes('ci-checks: checks 取得失敗') && l.includes('据え置き（fail-open）')),
+    `ci-checks 失敗時の fail-open 据え置き log が無い: ${JSON.stringify(lines)}`,
   );
-  assert.equal(note.checked, false, 'ci-checks 失敗時は fail-open で turbopack-sandbox env note は checked:false のまま据え置かれるはず');
+  assert.ok(
+    !lines.some((l) => l.includes('CI 委譲で解消')),
+    `ci-checks 失敗時に ENV item が解消されている: ${JSON.stringify(lines)}`,
+  );
 });
 
 // ============================================================
@@ -269,22 +256,13 @@ test('[ci-checks][c] crash guard: allowlist 外シナリオが sandbox でクラ
   assertNoCrash(sharedAllowlist.err, 'c-allowlist');
 });
 
-test('[ci-checks][AC-3][c] ENV-NPM-CACHE-EPERM env note が resolved_evidence に存在し(positive assert)、checked:false・CI で確認済みを含まず、merge-tier-facts 以外の checks spawn は発生しない', async () => {
+test('[ci-checks][AC-3][c] ENV-NPM-CACHE-EPERM は環境ノートに現れ(positive assert)、ci-checks の判定対象にならず、merge-tier-facts 以外の checks spawn は発生しない', async () => {
   await ensureAllowlistRun();
-  const { calls } = sharedAllowlist;
-  const post = calls.find((c) => c.label === 'post-summary');
-  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  const re = extractResolvedEvidence(calls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const note = re.env_notes.find((n) => n.env_key === 'npm-cache-eperm');
-  assert.ok(
-    note != null,
-    `resolved_evidence.env_notes に npm-cache-eperm が無い（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）: ${JSON.stringify(re.env_notes)}`,
-  );
-  assert.equal(note.checked, false, 'npm-cache-eperm は allowlist 外のため checked:false のはず');
-  assert.ok(
-    !(note.evidence ?? '').includes('CI で確認済み'),
-    `npm-cache-eperm env note に「CI で確認済み」が含まれている（allowlist 外なのに解消されている）: ${note.evidence}`,
+  const { calls, logs } = sharedAllowlist;
+  envNoteCountLine(calls, 1);
+  assert.deepEqual(
+    ciCheckLogs(logs), [],
+    `npm-cache-eperm は allowlist 外のため ci-checks の判定 log は出ないはず: ${JSON.stringify(ciCheckLogs(logs))}`,
   );
   const ciCalls = calls.filter((c) => c.label === 'ci-checks');
   assert.equal(
@@ -375,24 +353,18 @@ test('[ci-checks][e] crash guard: bats green auto-close シナリオが sandbox 
 
 test('[ci-checks][AC-2][e] bats check pass で ENV-BATS-SANDBOX が auto-close される（bats 不含の Node Unit Tests は evidence に含めない）', async () => {
   await ensureBatsGreenRun();
-  const { calls } = sharedBatsGreen;
-  const post = calls.find((c) => c.label === 'post-summary');
-  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  const re = extractResolvedEvidence(calls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const note = re.env_notes.find((n) => n.env_key === 'bats-sandbox');
+  const { calls, logs } = sharedBatsGreen;
+  envNoteCountLine(calls, 1);
+  const lines = ciCheckLogs(logs);
+  const closed = lines.find((l) => l.includes('ci-checks: bats-sandbox 系 check 全 pass'));
+  assert.ok(closed != null, `bats-sandbox の auto-close log が無い: ${JSON.stringify(lines)}`);
   assert.ok(
-    note != null,
-    `resolved_evidence.env_notes に bats-sandbox が無い: ${JSON.stringify(re.env_notes)}`,
-  );
-  assert.equal(note.checked, true, 'bats check 全 pass のため bats-sandbox env note は checked:true のはず');
-  assert.ok(
-    (note.evidence ?? '').includes('CI で確認済み（Bats Tests (issue #93 helpers)）'),
-    `bats-sandbox env note の evidence に CI 確認済み文字列が含まれていない: ${note.evidence}`,
+    closed.includes('全 pass（Bats Tests (issue #93 helpers)）'),
+    `bats-sandbox の auto-close log に bats check 名が列挙されていない: ${closed}`,
   );
   assert.ok(
-    !(note.evidence ?? '').includes('Node Unit Tests (workflow arg resolver)'),
-    `bats を含まない汎用 test check（Node Unit Tests）が evidence に含まれている（regex が /bats/i に絞られていない疑い）: ${note.evidence}`,
+    !closed.includes('Node Unit Tests (workflow arg resolver)'),
+    `bats を含まない汎用 test check（Node Unit Tests）が evidence に含まれている（regex が /bats/i に絞られていない疑い）: ${closed}`,
   );
 });
 
@@ -422,20 +394,16 @@ test('[ci-checks][f] crash guard: bats pending 据え置きシナリオが sandb
 
 test('[ci-checks][AC-3][f] bats/test 系 check が pending のとき ENV-BATS-SANDBOX は据え置かれる(positive assert)', async () => {
   await ensureBatsPendingRun();
-  const { calls } = sharedBatsPending;
-  const post = calls.find((c) => c.label === 'post-summary');
-  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  const re = extractResolvedEvidence(calls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const note = re.env_notes.find((n) => n.env_key === 'bats-sandbox');
+  const { calls, logs } = sharedBatsPending;
+  envNoteCountLine(calls, 1);
+  const lines = ciCheckLogs(logs);
   assert.ok(
-    note != null,
-    `resolved_evidence.env_notes に bats-sandbox が無い（ENV item 生成の positive 確認 失敗。vacuous pass の疑い）: ${JSON.stringify(re.env_notes)}`,
+    lines.some((l) => l.includes('ci-checks: bats-sandbox → ') && l.includes('据え置き（fail-open）')),
+    `bats check が pending のときの据え置き log が無い: ${JSON.stringify(lines)}`,
   );
-  assert.equal(note.checked, false, 'bats check が pending のため bats-sandbox env note は checked:false のまま据え置かれるはず');
   assert.ok(
-    !(note.evidence ?? '').includes('CI で確認済み'),
-    `bats-sandbox env note に「CI で確認済み」が含まれている（pending なのに解消されている）: ${note.evidence}`,
+    !lines.some((l) => l.includes('CI 委譲で解消')),
+    `bats check が pending なのに ENV item が解消されている: ${JSON.stringify(lines)}`,
   );
 });
 
@@ -466,23 +434,19 @@ test('[ci-checks][g] crash guard: per-key 独立性シナリオが sandbox で�
 
 test('[ci-checks][AC-4][g] turbopack-sandbox は auto-close、bats-sandbox は据え置きの per-key 独立判定', async () => {
   await ensurePerKeyRun();
-  const { calls } = sharedPerKey;
-  const post = calls.find((c) => c.label === 'post-summary');
-  assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
-  const re = extractResolvedEvidence(calls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const turbo = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');
-  const bats = re.env_notes.find((n) => n.env_key === 'bats-sandbox');
-  assert.ok(turbo != null, `resolved_evidence.env_notes に turbopack-sandbox が無い: ${JSON.stringify(re.env_notes)}`);
-  assert.ok(bats != null, `resolved_evidence.env_notes に bats-sandbox が無い: ${JSON.stringify(re.env_notes)}`);
-  assert.equal(turbo.checked, true, 'build/Vercel が pass なので turbopack-sandbox は checked:true（auto-close）のはず');
+  const { calls, logs } = sharedPerKey;
+  envNoteCountLine(calls, 2);
+  const lines = ciCheckLogs(logs);
   assert.ok(
-    (turbo.evidence ?? '').includes('CI で確認済み'),
-    `turbopack-sandbox env note に「CI で確認済み」が含まれていない（build/Vercel が pass なのに auto-close されていない）: ${turbo.evidence}`,
+    lines.some((l) => l.includes('ci-checks: turbopack-sandbox 系 check 全 pass') && l.includes('CI 委譲で解消')),
+    `build/Vercel が pass なのに turbopack-sandbox が auto-close されていない: ${JSON.stringify(lines)}`,
   );
-  assert.equal(bats.checked, false, 'bats check が fail なので bats-sandbox は checked:false（据え置き）のはず');
   assert.ok(
-    !(bats.evidence ?? '').includes('CI で確認済み'),
-    `bats-sandbox env note に「CI で確認済み」が含まれている（bats check が fail なのに解消されている）: ${bats.evidence}`,
+    lines.some((l) => l.includes('ci-checks: bats-sandbox → ') && l.includes('据え置き（fail-open）')),
+    `bats check が fail なのに bats-sandbox が据え置かれていない: ${JSON.stringify(lines)}`,
+  );
+  assert.ok(
+    !lines.some((l) => l.includes('ci-checks: bats-sandbox 系 check 全 pass')),
+    `bats check が fail なのに bats-sandbox が解消されている: ${JSON.stringify(lines)}`,
   );
 });

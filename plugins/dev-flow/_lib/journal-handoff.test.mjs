@@ -131,7 +131,7 @@ test('buildJournalHandoffPayload omits repo/pr_number when not provided', () => 
   assert.ok(!payload.includes('"pr_number"'));
 });
 
-// issue #607: error_phase is the top-level counterpart to telemetry.abort_phase, feeding
+// issue #607: error_phase carries the abort phase at the top level, feeding
 // journal.sh's existing --error-phase flag (journal `.error.phase`) so dev-flow-health's
 // failure signature (skill | category | phase | message) can tell abort entries apart by phase.
 test('buildJournalHandoffPayload includes error_phase immediately after error_msg when provided', () => {
@@ -833,7 +833,7 @@ test('buildAbortErrorMsg truncates a 600-char message to 500 chars total', () =>
   assert.equal(result, `abort@Plan/plan#1: ${longMsg}`.slice(0, 500));
 });
 
-test('buildAbortHandoffPayload sets outcome:failure, error_category:abort, error_phase, and telemetry.abort_phase/abort_label', () => {
+test('buildAbortHandoffPayload sets outcome:failure, error_category:abort, error_phase, and passes telemetry through without abort_phase/abort_label', () => {
   const payload = JSON.parse(buildAbortHandoffPayload({
     skill: 'dev-flow',
     issue: '607',
@@ -847,9 +847,8 @@ test('buildAbortHandoffPayload sets outcome:failure, error_category:abort, error
   assert.equal(payload.error_category, 'abort');
   assert.equal(payload.error_phase, 'Evaluate');
   assert.equal(payload.error_msg, 'abort@Evaluate/eval#1: evaluator boom');
-  assert.equal(payload.telemetry.abort_phase, 'Evaluate');
-  assert.equal(payload.telemetry.abort_label, 'eval#1');
-  assert.equal(payload.telemetry.shape, 'complex');
+  // phase/label は error_phase / error_msg に載る。telemetry は呼び出し側が渡したキーだけ
+  assert.deepEqual(payload.telemetry, { shape: 'complex' });
   assert.equal(payload.issue, 607);
 });
 
@@ -867,14 +866,15 @@ test('buildAbortHandoffPayload Number-izes issue and pr_number', () => {
   assert.equal(payload.pr_number, 12);
 });
 
-test('buildAbortHandoffPayload sets telemetry.abort_phase/abort_label to null when phase/label are absent even without other telemetry', () => {
+test('buildAbortHandoffPayload omits telemetry when none is given (phase/label absent → "?" in error_msg, no error_phase)', () => {
   const payload = JSON.parse(buildAbortHandoffPayload({
     skill: 'dev-flow',
     error: new Error('boom'),
   }));
 
-  assert.equal(payload.telemetry.abort_phase, null);
-  assert.equal(payload.telemetry.abort_label, null);
+  assert.equal(Object.hasOwn(payload, 'telemetry'), false);
+  assert.equal(Object.hasOwn(payload, 'error_phase'), false);
+  assert.equal(payload.error_msg, 'abort@?/?: boom');
 });
 
 // ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----

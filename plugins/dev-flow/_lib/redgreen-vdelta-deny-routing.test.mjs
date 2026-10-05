@@ -231,7 +231,7 @@ test('[redgreen-vdelta] (b) verdict clean object → 昇格（deterministic 昇�
   );
 });
 
-test('[redgreen-vdelta] (c) verdict deny 対象（repaired_with_test_change + surface changed）→ 昇格不発 + telemetry redgreen_deny', async () => {
+test('[redgreen-vdelta] (c) verdict deny 対象（repaired_with_test_change + surface changed）→ 昇格不発 + vdelta deny ログ', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
   const denyVerdict = {
     comparability: 'exact',
@@ -251,14 +251,9 @@ test('[redgreen-vdelta] (c) verdict deny 対象（repaired_with_test_change + su
     logs.some((l) => l.includes('AC-1') && l.includes('vdelta deny')),
     `deny 対象なら vdelta deny ログが出るべきだが: ${JSON.stringify(logs.filter((l) => l.includes('AC-1')))}`,
   );
-
-  const journalPrompts = counters.journalPrompts();
-  assert.equal(journalPrompts.length, 1);
-  assert.ok(journalPrompts[0].includes('"redgreen_deny"'), `journal-log prompt に '"redgreen_deny"' が含まれるべきだが含まれていなかった`);
-  assert.ok(journalPrompts[0].includes('"ac":"AC-1"'), `journal-log prompt の redgreen_deny に ac:"AC-1" が含まれるべきだが含まれていなかった`);
 });
 
-test('[redgreen-vdelta] (d) verdict が不正 JSON 文字列 → fail-open で昇格 + telemetry vdelta_fail_open', async () => {
+test('[redgreen-vdelta] (d) verdict が不正 JSON 文字列 → fail-open で昇格', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
   const { ctx, counters } = makeSandbox(ANALYZE_REQ_1AC, evalTestVerified(1), () => ({ red: true, green: true, verdict: 'not-json{' }));
   const { error } = await runDevFlowCapture(src, ctx);
@@ -269,13 +264,9 @@ test('[redgreen-vdelta] (d) verdict が不正 JSON 文字列 → fail-open で�
     logs.some((l) => l.includes('AC-1: red→green 実証 → deterministic 昇格 + checked')),
     `verdict が不正 JSON でも fail-open で昇格するべきだが: ${JSON.stringify(logs.filter((l) => l.includes('AC-1')))}`,
   );
-
-  const journalPrompts = counters.journalPrompts();
-  assert.equal(journalPrompts.length, 1);
-  assert.ok(journalPrompts[0].includes('"vdelta_fail_open"'), `journal-log prompt に '"vdelta_fail_open"' が含まれるべきだが含まれていなかった: ${journalPrompts[0]}`);
 });
 
-test('[redgreen-vdelta] (e) AC 2 件 → telemetry vdelta_verdicts が配列 2 要素（per-AC 上書き修正の検証）', async () => {
+test('[redgreen-vdelta] (e) AC 2 件 → AC ごとの verdict で両 AC とも昇格する（per-AC 判定）', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
   const verdictFor = (i) => ({ comparability: 'exact', transitions: {}, verification_surface: { status: 'intact' }, note: `v${i}` });
   const { ctx, counters } = makeSandbox(
@@ -286,19 +277,13 @@ test('[redgreen-vdelta] (e) AC 2 件 → telemetry vdelta_verdicts が配列 2 �
   const { error } = await runDevFlowCapture(src, ctx);
   assertNoCrash(error);
 
-  const journalPrompts = counters.journalPrompts();
-  assert.equal(journalPrompts.length, 1);
-  assert.ok(journalPrompts[0].includes('"vdelta_verdicts"'), `journal-log prompt に '"vdelta_verdicts"' が含まれるべきだが含まれていなかった`);
-  const payloadMatch = journalPrompts[0].match(/\{"skill":"dev-flow".*\}/);
-  assert.ok(payloadMatch, 'journal-log prompt から telemetry handoff JSON payload を抽出できなかった');
-  const payload = JSON.parse(payloadMatch[0]);
-  assert.equal(
-    payload.telemetry.vdelta_verdicts.length,
-    2,
-    `vdelta_verdicts は AC 2 件分の要素を持つべきだが: ${JSON.stringify(payload.telemetry.vdelta_verdicts)}`,
-  );
-  const acs = payload.telemetry.vdelta_verdicts.map((v) => v.ac).sort();
-  assert.deepEqual(acs, ['AC-1', 'AC-2']);
+  const logs = counters.logs();
+  for (const ac of ['AC-1', 'AC-2']) {
+    assert.ok(
+      logs.some((l) => l.includes(`${ac}: red→green 実証 → deterministic 昇格 + checked`)),
+      `${ac} が昇格ログを出すべきだが: ${JSON.stringify(logs.filter((l) => l.includes(ac)))}`,
+    );
+  }
 });
 
 const ANALYZE_REQ_3AC = { ...ANALYZE_REQ_2AC, acceptance_criteria: ['a', 'b', 'c'] };

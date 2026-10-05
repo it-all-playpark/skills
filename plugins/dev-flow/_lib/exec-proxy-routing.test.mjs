@@ -105,7 +105,7 @@ function expectedFor(table, label) {
   return null;
 }
 
-// dev-flow.js scenarios は test-helpers/dev-flow-scenarios.mjs に共有定義（subagent-invocations-routing と共用）
+// dev-flow.js scenarios は test-helpers/dev-flow-scenarios.mjs に共有定義（tracked-agent-failure-policy と共用）
 
 async function runDevFlowScenario(name) {
   const sc = DEV_FLOW_SCENARIOS[name];

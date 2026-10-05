@@ -5,8 +5,7 @@
 //   - sha は既存 probe（pr-meta / commit-ensure）の出力拡張で取得し、新規 agent spawn を増やさない
 //   - sha_prev / sha_now が取得できない round は full にフォールバックし log に出す（fail-open。
 //     delta を空扱いにして approve へ倒さない）
-//   - iterate_history[] の各 round に scope('full'|'delta') / delta_lines（full は null）が載り
-//     journal-save の payload に届く
+//   - 返り値 history[] の各 round に scope('full'|'delta') / delta_lines（full は null）が載る
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -231,16 +230,17 @@ test('[review-delta] 3 round: review#3 の delta は review#2 時点の head .. 
   assert.ok(ensure2.prompt.includes(`diff --shortstat ${SHA_B}..HEAD`), 'commit-ensure#2 の shortstat 起点が review#2 時点の head でない');
 });
 
-test('[review-delta][AC-6] iterate_history の各 round に scope / delta_lines が載り journal-save payload に届く', async () => {
-  const { calls } = await runTwoRounds({
+// history の round ごとの scope / delta_lines（VM の realm 差を避けるため JSON で本 realm へ写して比較）
+const roundScopes = (result) => JSON.parse(JSON.stringify((result?.history ?? []).map((h) => ({ iteration: h.iteration, scope: h.scope, delta_lines: h.delta_lines }))));
+
+test('[review-delta][AC-6] 返り値 history の各 round に scope / delta_lines が載る', async () => {
+  const { result } = await runTwoRounds({
     overrides: { 'pr-meta': PR_META_WITH_SHA, 'commit-ensure#1': ENSURE_WITH_SHA(SHA_B) },
   });
-  const journal = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journal, 'journal-save が dispatch されていない');
-  assert.ok(journal.prompt.includes('"iteration":1') && journal.prompt.includes('"scope":"full"') && journal.prompt.includes('"delta_lines":null'),
-    `round 1 の scope:'full' / delta_lines:null が payload に無い:\n${journal.prompt.slice(0, 1500)}`);
-  assert.ok(journal.prompt.includes('"iteration":2') && journal.prompt.includes('"scope":"delta"') && journal.prompt.includes('"delta_lines":10'),
-    `round 2 の scope:'delta' / delta_lines:10 が payload に無い:\n${journal.prompt.slice(0, 1500)}`);
+  assert.deepEqual(roundScopes(result), [
+    { iteration: 1, scope: 'full', delta_lines: null },
+    { iteration: 2, scope: 'delta', delta_lines: 10 },
+  ]);
 });
 
 test('[review-delta] delta round（review#2）の prompt は AC の新規未達探索を指示せず、full round（review#1）は指示する', async () => {
@@ -258,9 +258,7 @@ test('[review-delta] delta round（review#2）の prompt は AC の新規未達�
 });
 
 test('[review-delta][AC-6] full フォールバック round は scope:full / delta_lines:null で記録される', async () => {
-  const { calls } = await runTwoRounds({ overrides: { 'commit-ensure#1': ENSURE_WITH_SHA(SHA_B) } });
-  const journal = calls.find((c) => c.label === 'journal-save');
-  assert.ok(!journal.prompt.includes('"scope":"delta"'), 'fallback round が delta として記録されている');
-  const m = journal.prompt.match(/"scope":"full"/g) ?? [];
-  assert.equal(m.length, 2, `2 round とも scope:full であるべきだが ${m.length} 件`);
+  const { result } = await runTwoRounds({ overrides: { 'commit-ensure#1': ENSURE_WITH_SHA(SHA_B) } });
+  assert.deepEqual(roundScopes(result).map((r) => [r.scope, r.delta_lines]), [['full', null], ['full', null]],
+    `2 round とも scope:full / delta_lines:null であるべき: ${JSON.stringify(roundScopes(result))}`);
 });

@@ -250,30 +250,6 @@ test('[redgreen-skip] T1: deterministic 昇格 + checked 済み AC は iteration
   );
 });
 
-test('[redgreen-skip] T2: telemetry 固定 — skip 分は vdelta_verdicts に追記せず vdelta_fail_open/redgreen_deny も増えない', async () => {
-  const responses = [criticalFirstIter(), resolvedSecondIter()];
-  const redgreenResponseFor = () => ({ red: true, green: true, verdict: CLEAN_VERDICT });
-
-  const { ctx, counters } = makeSandbox(ANALYZE_REQ_1AC, responses, redgreenResponseFor);
-  const { error } = await runDevFlowCapture(src, ctx);
-  assertNoCrash(error);
-
-  const journalPrompts = counters.journalPrompts();
-  assert.equal(journalPrompts.length, 1);
-  const payloadMatch = journalPrompts[0].match(/\{"skill":"dev-flow".*\}/);
-  assert.ok(payloadMatch, 'journal-log prompt から telemetry handoff JSON payload を抽出できなかった');
-  const payload = JSON.parse(payloadMatch[0]);
-
-  assert.equal(
-    payload.telemetry.vdelta_verdicts.length,
-    1,
-    `vdelta_verdicts は初回 iteration 分の 1 要素のみを保持すべきだが: ${JSON.stringify(payload.telemetry.vdelta_verdicts)}`,
-  );
-  assert.deepEqual(payload.telemetry.vdelta_verdicts.map((v) => v.ac), ['AC-1']);
-  assert.ok(!('vdelta_fail_open' in payload.telemetry), 'skip は vdelta_fail_open を増やさないべき');
-  assert.ok(!('redgreen_deny' in payload.telemetry), 'skip は redgreen_deny を増やさないべき');
-});
-
 test('[redgreen-skip] T3: inspection 据え置き AC（checked だが kind!==deterministic）は従来どおり再実行される', async () => {
   const responses = [criticalFirstIter(), resolvedSecondIter()];
   const redgreenResponseFor = (acIndex, callNumber) => (

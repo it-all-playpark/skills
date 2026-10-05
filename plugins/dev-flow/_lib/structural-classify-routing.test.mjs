@@ -132,8 +132,6 @@ test('[structural-classify-routing] formatOnlySet excludes format-only files fro
   assert.equal(result.realized_file_count, 1);
   const js = calls.find((c) => c.label === 'journal-save');
   assert.ok(js.prompt.includes('"shape":"micro"'));
-  assert.ok(js.prompt.includes('"realized_file_count":1'));
-  assert.ok(js.prompt.includes('"realized_file_count_raw":4'));
 });
 
 test('[structural-classify-routing] formatOnlySet excludes format-only files from realizedCount: empty format_only counts all 4 files → shape standard', async () => {
@@ -145,5 +143,4 @@ test('[structural-classify-routing] formatOnlySet excludes format-only files fro
   assert.equal(result.realized_file_count, 4);
   const js = calls.find((c) => c.label === 'journal-save');
   assert.ok(js.prompt.includes('"shape":"standard"'));
-  assert.ok(js.prompt.includes('"realized_file_count":4'));
 });

@@ -166,73 +166,49 @@ test('[eval-concern-resolutions] AC-1/3: eval#1 prompt の未解消 concern 一�
   );
 });
 
-// issue #603: post-summary は環境ノートの件数（グループ数）のみを常時可視で表示し、パターン別の
-// dedup 件数・checked 状態・evidence 全文は journal telemetry `resolved_evidence.env_notes[]` /
-// `resolved_evidence.ledger_resolved[]`（journal-save prompt の JOURNAL_HANDOFF_BODY payload）側に
-// 記録される。post-summary 本文の見出し・表形式は devflow-summary-format.test.mjs（純関数出力テスト）が
-// 担うため、本ファイルの routing test は journal telemetry のキー・値で検証する。
+// post-summary は環境ノートの件数（グループ数）と、解消済み ledger item の <details> 表
+// （| 区分 | 内容 | 解消根拠 |）を出す。本文の見出し・表形式は devflow-summary-format.test.mjs（純関数出力テスト）が
+// 担うため、本ファイルの routing test は concern の分類・解消が post-summary に届くことを検証する。
 
-function extractResolvedEvidence(calls) {
-  const journalSave = calls.find((c) => c.label === 'journal-save');
-  assert.ok(
-    journalSave != null,
-    `label === 'journal-save' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
-  );
-  const beginIdx = journalSave.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_BEGIN>>>');
-  const endIdx = journalSave.prompt.indexOf('<<<JOURNAL_HANDOFF_BODY_END>>>');
-  assert.ok(beginIdx >= 0 && endIdx > beginIdx, 'journal-save prompt に JOURNAL_HANDOFF_BODY delimiter が見つからない');
-  const payloadStr = journalSave.prompt.slice(beginIdx + '<<<JOURNAL_HANDOFF_BODY_BEGIN>>>'.length, endIdx).trim();
-  let payload;
-  try {
-    payload = JSON.parse(payloadStr);
-  } catch (e) {
-    assert.fail(`journal-save payload が JSON.parse できない: ${e.message}\n${payloadStr}`);
-  }
-  return payload.telemetry?.resolved_evidence ?? null;
-}
-
-test('[eval-concern-resolutions] AC-2: journal telemetry resolved_evidence.env_notes に turbopack-sandbox の dedup 件数 3 が記録される', async () => {
-  await ensureSharedRun();
-  const post = sharedCalls.find((c) => c.label === 'post-summary');
+function postSummaryPrompt(calls) {
+  const post = calls.find((c) => c.label === 'post-summary');
   assert.ok(
     post != null,
-    `label === 'post-summary' の call が見つからない (全 labels: ${sharedCalls.map((c) => c.label).join(', ')})`,
+    `label === 'post-summary' の call が見つからない (全 labels: ${calls.map((c) => c.label).join(', ')})`,
   );
+  return post.prompt;
+}
+// 解消済み証跡の <details> 表の行（区分セルが blocking / advisory / AC / security の行）
+function resolvedRows(prompt) {
+  const start = prompt.indexOf('**解消済み証跡');
+  assert.ok(start >= 0, `post-summary に解消済み証跡セクションが無い:\n${prompt.slice(0, 2000)}`);
+  const end = prompt.indexOf('</details>', start);
+  return prompt.slice(start, end < 0 ? undefined : end).split('\n').filter((l) => /^\| (blocking|advisory|AC|security) \|/.test(l));
+}
 
-  // dedup 件数 3（TURBOPACK_CONCERNS 相当 3 件の implementer concerns が同一 env_key に集約された件数）は
-  // journal telemetry resolved_evidence.env_notes[].env_count に記録される（issue #603）。
-  const re = extractResolvedEvidence(sharedCalls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const note = re.env_notes.find((n) => n.env_key === 'turbopack-sandbox');
+test('[eval-concern-resolutions] AC-2: turbopack-sandbox の concern 3 件は環境ノート 1 件に dedup され、解消済み表に ENV-* 行は出ない', async () => {
+  await ensureSharedRun();
+  const prompt = postSummaryPrompt(sharedCalls);
   assert.ok(
-    note != null,
-    `resolved_evidence.env_notes に turbopack-sandbox が無い: ${JSON.stringify(re.env_notes)}`,
+    prompt.includes('🏗 環境ノート 1 件'),
+    `post-summary に「🏗 環境ノート 1 件」（3 件の dedup 結果）が無い:\n${prompt.slice(0, 2000)}`,
   );
-  assert.equal(
-    note.env_count,
-    3,
-    `resolved_evidence.env_notes[turbopack-sandbox].env_count は 3 のはずが ${note.env_count}`,
-  );
-  // ENV item（dimension:'environment'）は buildResolvedEvidence の ledger_resolved 集計から
-  // 除外される（env_notes 経路のみに載る）ため、ledger_resolved に ENV-* id が混入しないこと。
+  // ENV item（dimension:'environment'）は環境ノート経路にのみ載り、解消済み表には入らない
   assert.ok(
-    !re.ledger_resolved.some((it) => String(it.id).startsWith('ENV-')),
-    `resolved_evidence.ledger_resolved に ENV-* id が混入している: ${JSON.stringify(re.ledger_resolved)}`,
+    !resolvedRows(prompt).some((l) => l.includes('TurbopackInternalError')),
+    `解消済み表に ENV item の行が混入している: ${JSON.stringify(resolvedRows(prompt))}`,
   );
 });
 
-test('[eval-concern-resolutions] AC-4: CONCERN-1 は evaluator の concern_resolutions で resolve され resolved_evidence.ledger_resolved に記録される', async () => {
+test('[eval-concern-resolutions] AC-4: CONCERN-1 は evaluator の concern_resolutions で resolve され、post-summary の解消済み表に evidence 付きで載る', async () => {
   await ensureSharedRun();
-  const re = extractResolvedEvidence(sharedCalls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
-  const item = re.ledger_resolved.find((it) => it.id === 'CONCERN-1');
+  const rows = resolvedRows(postSummaryPrompt(sharedCalls));
+  const row = rows.find((l) => l.includes('ORDER BY 検証が未実装'));
+  assert.ok(row != null, `解消済み表に CONCERN-1 の行が無い（resolved として checked になっていない）: ${JSON.stringify(rows)}`);
+  assert.ok(row.startsWith('| advisory |'), `CONCERN-1 は advisory lane の行のはず: ${row}`);
   assert.ok(
-    item != null,
-    `resolved_evidence.ledger_resolved に CONCERN-1 が無い（resolved:true として記録されていない）: ${JSON.stringify(re.ledger_resolved)}`,
-  );
-  assert.ok(
-    (item.evidence ?? '').includes('src/x.ts:10 で検証追加'),
-    `CONCERN-1 の evidence が evaluator の concern_resolutions で返した文字列を含まない: ${item.evidence}`,
+    row.includes('src/x.ts:10 で検証追加'),
+    `CONCERN-1 の解消根拠が evaluator の concern_resolutions で返した文字列を含まない: ${row}`,
   );
 });
 
@@ -271,7 +247,7 @@ test('[eval-concern-resolutions][AC-5] 両 item が unchecked のまま isConver
 // issue #614: triaged resolution の routing 回帰
 // ============================================================
 
-test('[eval-concern-resolutions][#626] CONCERN-2 は triaged として resolved_evidence.ledger_resolved に含まれず、post-summary prompt に merge_tier marker + triaged evidence（evaluator データの echo）が現れる', async () => {
+test('[eval-concern-resolutions][#626] CONCERN-2 は triaged として解消済み表に含まれず、post-summary prompt に merge_tier marker + triaged evidence（evaluator データの echo）が現れる', async () => {
   await ensureSharedRun();
   const post = sharedCalls.find((c) => c.label === 'post-summary');
   assert.ok(post != null, `label === 'post-summary' の call が見つからない`);
@@ -287,11 +263,10 @@ test('[eval-concern-resolutions][#626] CONCERN-2 は triaged として resolved_
     post.prompt.includes('lib/y.ts:20 の shorthand 判定は未変更。advisory で実害なし、修正不要と判断'),
     `post-summary の prompt に CONCERN-2 の triaged evidence（evaluator が concern_resolutions で返したデータの echo）が無い:\nprompt(先頭2000):\n${post.prompt.slice(0, 2000)}`,
   );
-  const re = extractResolvedEvidence(sharedCalls);
-  assert.ok(re != null, 'telemetry.resolved_evidence が無い');
+  const rows = resolvedRows(post.prompt);
   assert.ok(
-    !re.ledger_resolved.some((it) => it.id === 'CONCERN-2'),
-    `CONCERN-2 は triaged（checked のまま変わらない）のため resolved_evidence.ledger_resolved に含まれるべきでない: ${JSON.stringify(re.ledger_resolved)}`,
+    !rows.some((l) => l.includes('shorthand 判定の重複が残る')),
+    `CONCERN-2 は triaged（checked のまま変わらない）のため解消済み表に含まれるべきでない: ${JSON.stringify(rows)}`,
   );
 });
 

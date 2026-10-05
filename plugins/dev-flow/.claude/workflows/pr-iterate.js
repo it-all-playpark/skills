@@ -259,7 +259,7 @@ function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal
     error_category: ABORT_ERROR_CATEGORY,
     error_msg: buildAbortErrorMsg({ phase, label, error }),
     error_phase: phase || undefined,
-    telemetry: { ...(telemetry ?? {}), abort_phase: phase ?? null, abort_label: label ?? null },
+    telemetry,
   });
 }
 
@@ -340,8 +340,8 @@ const NESTED = args?.nested == null
     })()
 const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判定し人間へエスカレーション
 
-// run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
-// trackedAgent 経由で呼び、SUBAGENT_COUNTS へ計上する（dev-flow.js と同型）。
+// run あたりの subagent (agent()) 起動数カウント（返り値 subagent_invocations）。agent() の代わりに全 call site を
+// trackedAgent 経由で呼び、SUBAGENT_COUNTS へ計上する。
 // StructuredOutput 契約違反（subagent が StructuredOutput を呼ばず完了 — 一過性のモデル逸脱）に
 // 限定して同一 prompt で 1 回だけリトライする。それ以外の throw はそのまま
 // 伝播させる（fail-closed 維持）。retry も実 agent() 起動なので SUBAGENT_COUNTS へ再計上する。
@@ -355,10 +355,9 @@ const REVIEW_STUCK = 2   // 同一 topic がこの回数出たら stuck と判�
 const SUBAGENT_COUNTS = {};
 // ABORT_CTX: top-level abort handoff が catch から参照する「直前に何が起きていたか」の
 // 可変 state。pr-iterate は単一 phase（'Iterate'）固定のため phase は書き換えない。label は
-// trackedAgent が呼ばれるたびに最新化し、iterate_rounds は review⇄fix loop の各 iteration 冒頭で
-// 更新する（dev-flow.js の ABORT_CTX と同趣旨。型注記と同じく try 内 const/let は catch から
-// 見えないため、try 外のこの object へ写す）。
-const ABORT_CTX = { phase: 'Iterate', label: null, iterate_rounds: 0 }
+// trackedAgent が呼ばれるたびに最新化する（dev-flow.js の ABORT_CTX と同趣旨。型注記と同じく
+// try 内 const/let は catch から見えないため、try 外のこの object へ写す）。
+const ABORT_CTX = { phase: 'Iterate', label: null }
 // 全 call site は `opts.model` を渡さず agent frontmatter の既定 model で spawn する（dev-flow.js と同型）。
 // pr-reviewer の null（credit 切れ / terminal API error / user skip）に対する再試行は callReviewAgent の
 // schema-retry（別 label）のみ。
@@ -1093,7 +1092,7 @@ const history = []               // ラウンド履歴 [{iteration, decision, su
 // review#i（i ≥ 2）を fix delta に絞るための sha 追跡（canonical は _lib/review-delta.mjs）。
 // shaNow: 現在の PR head（review#1 は pr-meta / nested args の head_sha、以降は ensure-committed の head_sha）。
 // shaPrev: 直前 round の review 時点の head。delta = shaPrev..shaNow。どちらかが欠ければ full にフォールバック。
-// pendingDeltaLines: ensure-committed が shortstat から出した delta の変更行数（次 round の telemetry 用）。
+// pendingDeltaLines: ensure-committed が shortstat から出した delta の変更行数（次 round の history 用）。
 let shaNow = isDeltaSha(prMeta?.head_sha) ? prMeta.head_sha.trim() : null
 let shaPrev = null
 let pendingDeltaLines = null
@@ -1203,7 +1202,6 @@ async function ensureFixCommitted(i, shaPrev) {
 
 for (i = 1; i <= MAX; i++) {
   terminalPath = 'review'
-  ABORT_CTX.iterate_rounds = i
   const prior = reviewSeen.prior()   // 前 iteration までの累積 findings
   // review scope: i ≥ 2 で sha_prev..sha_now が確定していれば delta、確定できなければ full（fail-open。
   // delta を空扱いにして approve へ倒さない）。scope / delta_lines は round の history に載せる。
@@ -1409,7 +1407,7 @@ for (i = 1; i <= MAX; i++) {
     // を足さない）。failed のときだけ ci::<name> を review の blocking と同じ fix prompt に合流させ、
     // reviewSeen にも register して同一 check の反復失敗を REVIEW_STUCK に乗せる。
     // null / error は fail-open（finding を足さず fix へ進む。CI 状態は ci_last_status で人間に見せる）。
-    // terminalPath は 'review' のまま（telemetry の 'ci' は「CI-failed 分岐（ci_gate）に入った」の意味を保つ）。
+    // terminalPath は 'review' のまま（返り値 terminal_path の 'ci' は「CI-failed 分岐（ci_gate）に入った」の意味を保つ）。
     const ciProbe = await failOpenAgent(
       ciCheckPrompt({ pr: PR, repo: REPO }),
       { agentType: 'dev-runner-haiku-ro', schema: CI_STATUS, label: `ci-check#${i}`, phase: 'Iterate' },
@@ -1488,7 +1486,7 @@ for (i = 1; i <= MAX; i++) {
 const status = lgtm ? 'lgtm' : (terminal ?? 'max_reached')
 log(`pr-iterate 終端: status=${status}（iterations=${Math.min(i, MAX)}）`)
 
-// 異常終端時の worktree dirty 検出。advisory telemetry — 失敗は fail-open
+// 異常終端時の worktree dirty 検出（返り値 worktree_dirty）。advisory — 失敗は fail-open
 // （'unknown' + 警告のみ。gate・status には影響しない）。lgtm 終端では probe しない（agent 呼び出し追加ゼロ）。
 let worktreeDirty = null  // 'dirty' | 'clean' | 'unknown' | null(=lgtm で未実施)
 if (status !== 'lgtm') {
@@ -1551,26 +1549,14 @@ const telemetryHandoff = buildJournalHandoffPayload({
   args: `pr=${PR}`,
   repo: REPO,
   pr_number: Number(PR),
+  // telemetry キーは dev-flow/references/telemetry.md の 12 キーに限る（_lib/telemetry-keys.test.mjs が pin）。
+  // round ごとの詳細・CI 待ち・retry 回数等は返り値に載る。
   telemetry: {
     merge_tier: 'PR_ITERATE',
     iterate_status: status,
-    iterate_rounds: Math.min(i, MAX),
-    fixes_applied: fixesApplied,
-    ci_wait_seconds: totalCiWaitSeconds,
-    ci_poll_attempts: totalCiPollAttempts,
-    fix_null_retries: fixNullRetries,
-    review_null_retries: reviewNullRetries,
-    fix_uncommitted_recovered: fixUncommittedRecovered,
-    review_confidence: lastReview ? (lastReview.confidence ?? null) : null,
-    ...(lastReview?.decision ? { review_decision: lastReview.decision } : {}),
-    ...(worktreeDirty != null ? { worktree_dirty: worktreeDirty } : {}),
-    subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
-    terminal_path: terminalPath,
-    ...(fixTerminalReason ? { fix_terminal_reason: fixTerminalReason } : {}),
     review_model_config: 'opus',  // pr-reviewer の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs の定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
     plugin_commit: PLUGIN_COMMIT,  // plugin の commit（12 桁 hex / null）。記録専用
-    iterate_history: history,  // round ごとの {iteration, decision, summary, blocking, minor, scope('full'|'delta'), delta_lines(full は null)}
   },
 })
 // journal handoff: choreography 本体は canonical _lib/journal-handoff.mjs の
@@ -1621,8 +1607,6 @@ return {
       phase: ABORT_CTX.phase, label: ABORT_CTX.label, error: e,
       telemetry: {
         merge_tier: 'PR_ITERATE',
-        iterate_rounds: ABORT_CTX.iterate_rounds,
-        subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
         review_model_config: 'opus',
         plugin_version: PLUGIN_VERSION,
         plugin_commit: PLUGIN_COMMIT,

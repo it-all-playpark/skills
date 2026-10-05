@@ -76,8 +76,8 @@ const DF_DANGER = { overrides: { 'merge-tier-facts': mergeTierFacts({ risk: { ok
 // CLOSES: closes-check が Closes 行の無い body を返し closes-reinject へ到達させる。
 const DF_CLOSES = { overrides: { 'closes-check': { ok: true, raw: JSON.stringify({ body: 'no closes' }) } } };
 
-// ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing /
-// subagent-invocations-routing と同じ scenario 集合を参照し、到達する label の分類を強制する）──
+// ── DEV_FLOW_SCENARIOS 由来の baseline（issue #605 review。exec-proxy-routing と同じ
+// scenario 集合を参照し、到達する label の分類を強制する）──
 const DF_DIFF_GATE_RETRY = DEV_FLOW_SCENARIOS['diff-gate-retry'];
 const DF_HASH_MISMATCH = DEV_FLOW_SCENARIOS['hash-mismatch'];
 const DF_FINAL_RECONCILE_UI = DEV_FLOW_SCENARIOS['final-reconcile-ui'];
@@ -298,7 +298,7 @@ for (const [label, spec] of Object.entries(EXPECTED_DEV_FLOW)) {
 
 // ── 未分類 label 検出（新規 call site の分類強制。issue #605）────────────
 // configs は本ファイル固有の baseline（DF_B1〜DF_B5 / DF_DANGER）に加え、
-// DEV_FLOW_SCENARIOS（exec-proxy-routing / subagent-invocations-routing と共有する到達 scenario
+// DEV_FLOW_SCENARIOS（exec-proxy-routing と共有する到達 scenario
 // 集合）の全 scenario を含める（issue #605 review, PR #645）。観測範囲はこの configs 集合が
 // 到達する label に限られる — dev-flow.js の bare trackedAgent( 出現を静的に全走査するわけではない。
 test('dev-flow.js: 本ファイルの baseline + DEV_FLOW_SCENARIOS 全 scenario で観測される label は EXPECTED_DEV_FLOW に登録されている', async () => {
