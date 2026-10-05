@@ -173,17 +173,18 @@ extract_paths_block() {
     phase7="$(extract_section "$SKILL_MD" "### Phase 7")"
     [ -n "$phase7" ]
     # 起動形は bare 名が先頭トークン（excludedCommands の先頭トークン一致）
-    printf '%s\n' "$phase7" | grep -q '^dev-flow-ready-set \[--repo owner/repo\] <M1> <M2> \.\.\.$'
+    printf '%s\n' "$phase7" | grep -q '^dev-flow-ready-set \[--repo owner/repo\] --with-in-flight <M1> <M2> \.\.\.$'
     [[ "$phase7" == *"human issue は渡さない"* ]]
     [[ "$phase7" == *'`--dry-run` では issue 番号が無いので実行しない'* ]]
     [[ "$phase7" == *'{"ok":false,...}'*"失敗した判定を launch として見せない"* ]]
     [[ "$phase7" == *"issue ごとに別セッション"* ]]
-    # 判定範囲は渡した issue 同士だけ。他 issue の実行中 run とのパス衝突は見ないと明記する
-    [[ "$phase7" == *"渡した issue 同士のパス重なりと blocker を判定する。他 issue で実行中の run とのパス衝突は見ない"* ]]
-    [[ "$phase7" != *"とのパスの重なりもここで拾う"* ]]
+    # 他 issue の実行中 run は --with-in-flight で拾い、そのパスとの衝突も判定する
+    [[ "$phase7" == *'`--with-in-flight` で他 issue の実行中 run'*"その変更対象パスとの衝突も判定する"* ]]
+    [[ "$phase7" == *"(変更対象パスなし)"* ]]
     contract="$(extract_section "$SKILL_MD" "## Output Contract")"
     order="$(awk '/^## Launch Order/ { f = 1; next } f && /^## / { exit } f { print }' <<<"$contract")"
-    [[ "$order" == *"他 issue で実行中の run とのパス衝突は見ない"* ]]
+    [[ "$order" == *"--with-in-flight"* ]]
+    [[ "$order" == *"実行中（他 issue の run。パスを占有）"* ]]
     # Phase 6 の起票より後に置く
     p6="$(grep -n '^### Phase 6' "$SKILL_MD" | cut -d: -f1)"
     p7="$(grep -n '^### Phase 7' "$SKILL_MD" | cut -d: -f1)"

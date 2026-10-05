@@ -121,7 +121,7 @@ issue ごとに別セッションで `/dev-flow <N>` を起動すれば、各 ru
 `feature/issue-<N>` を持つので並列になる。どれを同時に流してよいかは `dev-flow-ready-set` が決める:
 
 ```
-dev-flow-ready-set [--repo owner/repo] [--label <label>] [<issue>...]
+dev-flow-ready-set [--repo owner/repo] [--label <label>] [--with-in-flight] [<issue>...]
 ```
 
 リポジトリルートで bare 名を先頭トークンにして実行する（read-only。issue / PR / label・push・ファイルに
@@ -137,6 +137,14 @@ dev-flow-ready-set [--repo owner/repo] [--label <label>] [<issue>...]
 （判定は prerun と共有の `_lib/scripts/issue-blockers.sh`）/ open な linked PR・`feature/issue-<N>` の local branch・
 worktree → in_flight / それ以外 → ready。ready は番号の昇順に貪欲に選び、in_flight と既に選んだ issue の
 変更対象パスと重なるものは waiting `path_conflict` に回す。
+
+- **`--with-in-flight`**: 渡した候補に加え、今走っている他 issue（head が `feature/issue-<N>` の open PR・
+  `feature/issue-<N>` の local branch・その branch か `df-<N>` の worktree）を自動で in_flight に入れ、その
+  変更対象パスを占有にする。無しでは渡した候補の中しか見ないので、別セッションで実行中の run とのパス衝突は
+  検出されない。自動で拾った issue は human-task / blocker を見ずに in_flight とし（実際に走っているので占有
+  から漏らさない）、closed は残骸として出力しない。`--with-in-flight` 単独なら実行中の一覧だけを返す
+- 相手が `## 変更対象パス` の無い issue で全パスと重なっただけなら、`detail` の番号に `(変更対象パスなし)` が付く。
+  その issue に申告を足せば再実行で解ける
 
 - **パス申告は見積もり**: 重なり判定は issue 本文の `## 変更対象パス` だけを見る。実際の diff は申告からはみ出し
   得るので、launch に並んでも衝突しないことの保証にはならない。はみ出しによる衝突は pr-iterate の mergeable
