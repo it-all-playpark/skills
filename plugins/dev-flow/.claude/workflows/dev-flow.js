@@ -3525,6 +3525,11 @@ function parseMergeDiffHash(facts) {
   return typeof hash === 'string' && hash !== '' ? hash : null;
 }
 
+function mergeDiffHashError(facts) {
+  if (parseMergeDiffHash(facts) != null) return null;
+  return subError(facts?.diffhash, null);
+}
+
 function isWellFormedRiskFact(facts) {
   const sub = facts?.risk;
   if (!subOk(sub)) return false;
@@ -6200,7 +6205,8 @@ if (evalStaleness === 'hash_mismatch') {
   if (headRefOid == null) {
     log('⚠️ hash_reconverged 判定: gh-pr-view から headRefOid を取得できず — hash_mismatch 維持（HOLD）')
   } else if (mergeDiffHash == null) {
-    log('⚠️ hash_reconverged 判定: merge 対象 tree の hash が未計算/取得失敗（mergeDiffHash=null）— head-tree-oid probe は発行せず hash_mismatch 維持（HOLD）')
+    const diffHashErr = mergeDiffHashError(mergeFacts)
+    log(`⚠️ hash_reconverged 判定: merge 対象 tree の hash が未計算/取得失敗（mergeDiffHash=null${diffHashErr ? `、error: ${diffHashErr}` : ''}）— head-tree-oid probe は発行せず hash_mismatch 維持（HOLD）`)
   } else {
     // PR head tree は merge-tier-facts の head_tree サブ結果（script が pr.headRefOid^{tree} を rev-parse 済み。fetch なし）
     state.prHeadTreeOid = facts.headTreeOid

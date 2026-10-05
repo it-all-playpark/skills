@@ -15,6 +15,7 @@
 //       ===evalDiffHash）→ hash_mismatch 維持・HOLD
 //   (c) facts.diffhash が取得失敗（mergeDiffHash null）→ hash_mismatch 維持・HOLD（head_tree が
 //       eval と一致していても mergeDiffHash null では再収束しない）
+//   (c-2) (c) のとき facts.diffhash.error（script が添えた stderr 先頭）が hash_mismatch 維持 log に出る
 //   (d) facts.pr に headRefOid が無い → hash_mismatch 維持・HOLD（head_tree が一致していても証人不在）
 //   (d') facts.head_tree 自体が取得失敗 → hash_mismatch 維持・HOLD
 //   (e) tree-diff-numstat が取得失敗しても hash_reconverged 判定は妨げられない。また (b) 相当の
@@ -198,6 +199,22 @@ test('[hash-reconverged] (c) facts.diffhash が取得失敗(mergeDiffHash null) 
   assert.equal(result?.eval_staleness, 'hash_mismatch', `(c) eval_staleness は hash_mismatch のままのはずだが ${JSON.stringify(result?.eval_staleness)}`);
   assert.equal(result?.merge_tier, 'HOLD', `(c) merge_tier は HOLD のはずだが ${JSON.stringify(result?.merge_tier)}`);
   assert.ok(logs.some((l) => l.includes('mergeDiffHash=null')), '(c) mergeDiffHash null で hash_mismatch 維持の log が無い');
+});
+
+test('[hash-reconverged] (c-2) facts.diffhash の error（script が添えた stderr 先頭）が mergeDiffHash=null の hash_mismatch 維持 log に出る（issue #790）', async () => {
+  const diffhashError = 'worktree-diff-hash.sh failed (exit 128): fatal: Unable to create index.lock: Operation not permitted';
+  const facts = mergeTierFacts({ hash: null, tree: 'AAA', files: ['src/x.ts'], pr: { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', headRefOid: HEAD_REF_OID } });
+  facts.diffhash = { ok: false, value: null, error: diffhashError };
+  const { ctx, logs } = makeSandbox({ overrides: { 'merge-tier-facts': facts } });
+  const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
+  assertNoCrash(error, 'c-2');
+  assert.ok(result !== null, '(c-2) workflow は return object を返すべきだが null だった');
+
+  assert.equal(result?.eval_staleness, 'hash_mismatch', `(c-2) eval_staleness は hash_mismatch のままのはずだが ${JSON.stringify(result?.eval_staleness)}`);
+  assert.ok(
+    logs.some((l) => l.includes('mergeDiffHash=null') && l.includes(diffhashError) && l.includes('hash_mismatch 維持')),
+    `(c-2) hash_mismatch 維持の log に diffhash の error 文が無い: ${JSON.stringify(logs.filter((l) => l.includes('mergeDiffHash=null')))}`,
+  );
 });
 
 // ============================================================
