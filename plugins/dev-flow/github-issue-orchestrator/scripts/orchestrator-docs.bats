@@ -178,6 +178,12 @@ extract_paths_block() {
     [[ "$phase7" == *'`--dry-run` では issue 番号が無いので実行しない'* ]]
     [[ "$phase7" == *'{"ok":false,...}'*"失敗した判定を launch として見せない"* ]]
     [[ "$phase7" == *"issue ごとに別セッション"* ]]
+    # 判定範囲は渡した issue 同士だけ。他 issue の実行中 run とのパス衝突は見ないと明記する
+    [[ "$phase7" == *"渡した issue 同士のパス重なりと blocker を判定する。他 issue で実行中の run とのパス衝突は見ない"* ]]
+    [[ "$phase7" != *"とのパスの重なりもここで拾う"* ]]
+    contract="$(extract_section "$SKILL_MD" "## Output Contract")"
+    order="$(awk '/^## Launch Order/ { f = 1; next } f && /^## / { exit } f { print }' <<<"$contract")"
+    [[ "$order" == *"他 issue で実行中の run とのパス衝突は見ない"* ]]
     # Phase 6 の起票より後に置く
     p6="$(grep -n '^### Phase 6' "$SKILL_MD" | cut -d: -f1)"
     p7="$(grep -n '^### Phase 7' "$SKILL_MD" | cut -d: -f1)"

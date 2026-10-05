@@ -273,8 +273,9 @@ Capture and return:
 
 起票した agent issue のうち、今 `/dev-flow` を流してよく互いに変更対象パスが重ならないものを
 `dev-flow-ready-set` で判定し、Output Contract の `## Launch Order` に並べる。判定は dev-flow の並列実行
-（dev-flow SKILL.md「並列実行」節）と同じ基準で、起票済みの blocker・既に実行中の run（open PR・
-`feature/issue-<N>` branch・worktree）とのパスの重なりもここで拾う。
+（dev-flow SKILL.md「並列実行」節）と同じ基準で、
+渡した issue 同士のパス重なりと blocker を判定する。他 issue で実行中の run とのパス衝突は見ない。
+他 issue の実行中 run（open PR・`feature/issue-<N>` branch・worktree）と変更対象パスが重なるかは、起動前に人間が確かめる。
 
 Run（Phase 6 で起票した agent issue の番号を起票順に全部渡す。human issue は渡さない）:
 
@@ -333,6 +334,7 @@ Always return this summary after execution:
   - #M2 — blocked_by #M1 / path_conflict #M1 / no_declared_paths / human_task
 - 実行中: #N — open_pr / local_branch / worktree（無い場合は `- なし`）
 - 後の波は先行 issue の merge（human issue は close）後に上の判定コマンドを再実行して決まる
+- 注意: 判定は渡した issue 同士のパス重なりと blocker だけ。他 issue で実行中の run とのパス衝突は見ない（起動前に人間が確かめる）
 
 ## Plan Quality Gate
 - Devil's-advocate review rounds: N
