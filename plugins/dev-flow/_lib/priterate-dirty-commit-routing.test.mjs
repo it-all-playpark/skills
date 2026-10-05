@@ -235,8 +235,8 @@ test('[D4][AC-3 fail-safe] commit-ensure dirty:true+committed:true+pushed:false 
   assert.equal(result?.status, 'fix_failed', `result.status は fix_failed であるべきだが '${result?.status}' だった`);
 });
 
-// ---- D5 [AC-2]: stuck 終端 + worktree-dirty-check dirty:true -> result.worktree_dirty='dirty'、journal-log prompt に含まれる ----
-test('[D5][AC-2] stuck 終端 + worktree-dirty-check dirty:true -> result.worktree_dirty=dirty、journal-log prompt に worktree_dirty を含む', async () => {
+// ---- D5 [AC-2]: stuck 終端 + worktree-dirty-check dirty:true -> result.worktree_dirty='dirty' ----
+test('[D5][AC-2] stuck 終端 + worktree-dirty-check dirty:true -> result.worktree_dirty=dirty', async () => {
   const agentCalls = [];
   const majorIssue = { severity: 'major', topic: 't1', file: 'a.ts', description: 'd1', suggestion: 's1' };
   const reviewerStub = () => ({ decision: 'request-changes', issues: [majorIssue], summary: 'still-ng' });
@@ -250,13 +250,7 @@ test('[D5][AC-2] stuck 終端 + worktree-dirty-check dirty:true -> result.worktr
 
   assert.equal(result?.status, 'stuck', `result.status は stuck であるべきだが '${result?.status}' だった`);
   assert.equal(result?.worktree_dirty, 'dirty', `result.worktree_dirty は dirty であるべきだが '${result?.worktree_dirty}' だった`);
-
-  const journalCall = agentCalls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'journal-log の呼び出しが存在するべき');
-  assert.ok(
-    journalCall.prompt.includes('worktree_dirty'),
-    `journal-log の prompt に 'worktree_dirty' が含まれるべき。先頭800文字: ${journalCall.prompt.slice(0, 800)}`,
-  );
+  assert.equal(agentCalls.filter((c) => c.label === 'worktree-dirty-check').length, 1, 'stuck 終端では worktree-dirty-check が 1 回呼ばれるべき');
 });
 
 // ---- D6 [AC-2 fail-open]: stuck 終端 + worktree-dirty-check probe が null -> worktree_dirty='unknown'、落ちない ----
@@ -277,7 +271,7 @@ test('[D6][AC-2 fail-open] stuck 終端 + worktree-dirty-check probe が null ->
 });
 
 // ---- D7 [AC-2 lgtm 非実施]: 正常 lgtm 経路 -> worktree-dirty-check は呼ばれず、worktree_dirty=null ----
-test('[D7][AC-2 lgtm 非実施] 正常 lgtm 経路 -> worktree-dirty-check 呼び出し0回、result.worktree_dirty=null、journal-log prompt に含まれない', async () => {
+test('[D7][AC-2 lgtm 非実施] 正常 lgtm 経路 -> worktree-dirty-check 呼び出し0回、result.worktree_dirty=null', async () => {
   const agentCalls = [];
   const reviewerStub = () => ({ decision: 'approve', issues: [], summary: 'ok' });
   const agentStub = buildAgentStub({ reviewerStub, agentCalls });
@@ -291,13 +285,6 @@ test('[D7][AC-2 lgtm 非実施] 正常 lgtm 経路 -> worktree-dirty-check 呼�
   const dirtyCheckCalls = agentCalls.filter((c) => c.label === 'worktree-dirty-check');
   assert.equal(dirtyCheckCalls.length, 0, `worktree-dirty-check の呼び出しは 0 回であるべきだが ${dirtyCheckCalls.length} 回だった`);
   assert.equal(result?.worktree_dirty, null, `result.worktree_dirty は null であるべきだが '${result?.worktree_dirty}' だった`);
-
-  const journalCall = agentCalls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'journal-log の呼び出しが存在するべき');
-  assert.ok(
-    !journalCall.prompt.includes('worktree_dirty'),
-    `journal-log の prompt に 'worktree_dirty' を含めてはならない（lgtm 終端は probe しない）。先頭800文字: ${journalCall.prompt.slice(0, 800)}`,
-  );
 });
 
 // ---- D8〜D11 (issue #742): git status --porcelain の dirty 判定は porcelain 行の有無で行う ----

@@ -1,5 +1,5 @@
 // Issue #271: danger-grep fail-closed 時に Evaluate ループが EVAL_MAX まで空回りせず
-// break すること・merge tier が HOLD になること・fail-closed が telemetry/return で
+// break すること・merge tier が HOLD になること・fail-closed が return で
 // danger_hits とは別軸で判別できることを検証する workflow レベル統合テスト。
 //
 // _lib/merge-tier-unsatisfied-ac.test.mjs / _lib/eval-convergence.test.mjs の VM sandbox
@@ -257,8 +257,8 @@ test('[danger-fail-closed] AC#2: danger-grep fail-closed 時、merge tier は HO
   );
 });
 
-test('[danger-fail-closed] AC#4: return object と telemetry で danger_fail_closed（真偽値）と danger_hits（実 hit クラス）が別軸で判別できる', async () => {
-  const { ctx, counters } = makeSandbox(ANALYZE_REQ_COMPLEX, DANGER_FAIL_CLOSED, EVAL_RESPONSE_CLEAN);
+test('[danger-fail-closed] AC#4: return object で danger_fail_closed（真偽値）と danger_hits（実 hit クラス）が別軸で判別できる', async () => {
+  const { ctx } = makeSandbox(ANALYZE_REQ_COMPLEX, DANGER_FAIL_CLOSED, EVAL_RESPONSE_CLEAN);
   const { result, error } = await runDevFlowCapture(src, ctx);
 
   if (error && (error.name === 'ReferenceError' || error.name === 'SyntaxError')) {
@@ -274,14 +274,6 @@ test('[danger-fail-closed] AC#4: return object と telemetry で danger_fail_clo
   assert.ok(
     Array.isArray(result?.danger_hits) && result.danger_hits.length === 0,
     `fail-closed 時は実 hit を検出していないため danger_hits は空配列であるべきだが ${JSON.stringify(result?.danger_hits)} だった`,
-  );
-
-  // journal-log の telemetry handoff prompt に "danger_fail_closed" が含まれる
-  const journalPrompts = counters.journalPrompts();
-  assert.equal(journalPrompts.length, 1, `journal-log は 1 回呼ばれるべきだが ${journalPrompts.length} 回だった`);
-  assert.ok(
-    journalPrompts[0].includes('"danger_fail_closed"'),
-    `journal-log prompt（telemetry handoff）に '"danger_fail_closed"' が含まれるべきだが含まれていなかった。prompt:\n${journalPrompts[0]}`,
   );
 });
 

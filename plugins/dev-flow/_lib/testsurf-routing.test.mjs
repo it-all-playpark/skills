@@ -226,9 +226,9 @@ const EVAL_MICRO_CLEARANCE = {
 // テストケース
 // ============================================================
 
-test('[testsurf] (a) TESTSURF hit + clearance 無し → merge tier HOLD、reasons に test-weakening / TESTSURF-SKIP、telemetry に skip', async () => {
+test('[testsurf] (a) TESTSURF hit + clearance 無し → merge tier HOLD、reasons に test-weakening / TESTSURF-SKIP、返り値 testsurf_hits に skip', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, counters } = makeSandbox(ANALYZE_REQ_STANDARD, RISK_TESTSURF_HIT, EVAL_NO_CLEARANCE);
+  const { ctx } = makeSandbox(ANALYZE_REQ_STANDARD, RISK_TESTSURF_HIT, EVAL_NO_CLEARANCE);
   const { result, error } = await runDevFlowCapture(src, ctx);
   assertNoCrash(error);
 
@@ -239,11 +239,6 @@ test('[testsurf] (a) TESTSURF hit + clearance 無し → merge tier HOLD、reaso
 
   assert.ok(Array.isArray(result?.testsurf_hits) && result.testsurf_hits.includes('skip'), `return object の testsurf_hits に 'skip' を含むべきだが: ${JSON.stringify(result?.testsurf_hits)}`);
   assert.ok(!(result?.danger_hits ?? []).includes('test-weakening'), `danger_hits に test-weakening が混入してはならないが: ${JSON.stringify(result?.danger_hits)}`);
-
-  const journalPrompts = counters.journalPrompts();
-  assert.equal(journalPrompts.length, 1, `journal-log は 1 回呼ばれるべきだが ${journalPrompts.length} 回だった`);
-  assert.ok(journalPrompts[0].includes('"testsurf_hits"'), `journal-log prompt に '"testsurf_hits"' が含まれるべきだが含まれていなかった`);
-  assert.ok(journalPrompts[0].includes('skip'), `journal-log prompt の testsurf_hits に 'skip' が含まれるべきだが含まれていなかった`);
 });
 
 test('[testsurf] (b) TESTSURF hit + evaluator clearance あり → item checked で HOLD にならない（他条件 clean 前提）', async () => {
@@ -266,16 +261,13 @@ test('[testsurf] (c) micro shape + testsurf hit → Evaluate が強制実行さ�
   assert.ok(counters.evaluatorCalls() >= 1, `micro shape でも testsurf hit があれば Evaluate が強制実行されるべきだが evaluator は ${counters.evaluatorCalls()} 回しか呼ばれなかった`);
 });
 
-test('[testsurf] (d) TESTSURF hit があっても danger_hits（SEC 系）には混入しない（telemetry/return 両方）', async () => {
+test('[testsurf] (d) TESTSURF hit があっても返り値の danger_hits（SEC 系）には混入しない', async () => {
   const src = readFileSync(devFlowPath, 'utf8');
-  const { ctx, counters } = makeSandbox(ANALYZE_REQ_STANDARD, RISK_TESTSURF_HIT, EVAL_NO_CLEARANCE);
+  const { ctx } = makeSandbox(ANALYZE_REQ_STANDARD, RISK_TESTSURF_HIT, EVAL_NO_CLEARANCE);
   const { result, error } = await runDevFlowCapture(src, ctx);
   assertNoCrash(error);
 
   assert.ok(Array.isArray(result?.danger_hits) && result.danger_hits.length === 0, `danger_hits は空であるべきだが: ${JSON.stringify(result?.danger_hits)}`);
-  const journalPrompts = counters.journalPrompts();
-  assert.equal(journalPrompts.length, 1);
-  assert.ok(journalPrompts[0].includes('"danger_hits":[]'), `journal-log prompt の danger_hits は空配列であるべきだが: ${journalPrompts[0]}`);
 });
 
 test('[testsurf] (e) evaluator prompt に testsurf_focus と testsurf_clearance 契約行が含まれる（AC-3 prompt 注入検証）', async () => {

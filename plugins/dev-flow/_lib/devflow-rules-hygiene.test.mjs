@@ -58,7 +58,7 @@ const INVARIANT_ANCHORS = [
   '**例外はない**',
   'tools/sync-inlines.mjs --write',
   'Date.now',
-  'PER_KEY_TELEMETRY_KEYS',
+  '--telemetry-json',
   'written:false',
 ];
 

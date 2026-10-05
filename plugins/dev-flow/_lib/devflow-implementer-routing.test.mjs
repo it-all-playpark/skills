@@ -15,10 +15,9 @@
 //         pr.head_sha が空文字・欠落のときは nested に head_sha キー自体を含めない
 //   PR fail-closed (#682): pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）は
 //         closes-check・nested pr-iterate へ流さず failed_step / failure_reason を載せて throw し、
-//         abort handoff の abort_label は pr#<issue> を指す。正常系は従来どおり nested pr-iterate まで進む
+//         abort handoff の error_msg は pr#<issue> を指す。正常系は従来どおり nested pr-iterate まで進む
 //   prompt: issue_body + acceptance_criteria + task_id + 配置規約を含み、AC テスト契約は含まない
 //
-// 責務外: telemetry の by_type は subagent-invocations-telemetry.test.mjs が pin する。
 // BLOCKED 再実装（reimpl-blocked#b）は blocked-replan-history.test.mjs / guard-blocked-routing.test.mjs。
 
 import { test } from 'vitest';
@@ -122,19 +121,6 @@ for (const shape of ['micro', 'standard', 'complex']) {
     assert.ok(logs.some((l) => l.includes('implement#synth-plan')), 'implement#synth-plan の log が無い');
   });
 }
-
-test('[implementer] AC-3: journal handoff telemetry — by_type.dev-implementer 1 / planner 系 agent 無し（complex）', async () => {
-  const journalPrompts = [];
-  const { error } = await runFlow('complex', {
-    'journal-save': ({ prompt }) => { journalPrompts.push(prompt); return { saved: true, path: '/tmp/wt/.devflow-tmp/payload-test.json' }; },
-  });
-  assert.equal(error, null, `run が throw した: ${error?.message}`);
-  const payload = parseJournalHandoffPayload(journalPrompts[0] ?? '');
-  assert.equal(payload.telemetry.subagent_invocations.by_type['dev-implementer'], 1, `by_type['dev-implementer'] は 1 のはず: ${JSON.stringify(payload.telemetry.subagent_invocations.by_type)}`);
-  for (const g of GONE_AGENTS) {
-    assert.equal(g in payload.telemetry.subagent_invocations.by_type, false, `by_type に ${g} が載っている: ${JSON.stringify(payload.telemetry.subagent_invocations.by_type)}`);
-  }
-});
 
 test('[implementer] AC-3: dev-implementer が null を返すと drop 1 として log され、micro でも evaluator が強制される', async () => {
   const { calls, logs, error } = await runFlow('micro', { 'impl:serial:issue-1': null });
@@ -354,7 +340,7 @@ test('[implementer] AC-7: pr.head_sha が空文字のとき nested に head_sha 
 // ============================================================
 // PR phase fail-closed（issue #682）: pr#<issue> の中断応答（committed:false / pr_url 空 / pr_number 非正）
 // は closes-check・nested pr-iterate へ流さず、その場で failed_step / failure_reason を載せて throw する。
-// abort handoff の abort_label は pr#<issue>（pr-iterate の引数検証で落ちる従来経路では pr-iterate を指し、
+// abort handoff の error_msg は abort@PR/pr#<issue>（pr-iterate の引数検証で落ちる従来経路では pr-iterate を指し、
 // proxy が踏んだ git / gh の stderr が transcript の外へ出なかった）
 // ============================================================
 const PR_FAILURE_REASON = "fatal: Unable to create '.git/index.lock': Operation not permitted";
@@ -372,7 +358,7 @@ test('[implementer] PR fail-closed (#682): pr#1 が committed:false / pr_number:
   assert.ok(calls.some((c) => c.label === 'pr#1'), 'pr#1 自体は呼ばれているはず');
 });
 
-test('[implementer] PR fail-closed (#682): abort handoff の abort_label が pr#1・abort_phase が PR で、error_msg に PR phase 失敗文が載る', async () => {
+test('[implementer] PR fail-closed (#682): abort handoff の error_phase が PR で、error_msg が pr#1 を指し PR phase 失敗文が載る', async () => {
   const { calls, error } = await runStandardWithWorkflowCapture({ 'pr#1': PR_FAILED_RESPONSE });
   assert.ok(error, 'pr#1 の中断応答で run が throw していない');
   const save = calls.find((c) => c.label === 'journal-save');
@@ -381,8 +367,6 @@ test('[implementer] PR fail-closed (#682): abort handoff の abort_label が pr#
   assert.equal(payload.outcome, 'failure');
   assert.equal(payload.error_category, 'abort');
   assert.equal(payload.error_phase, 'PR');
-  assert.equal(payload.telemetry?.abort_phase, 'PR');
-  assert.equal(payload.telemetry?.abort_label, 'pr#1', `abort_label が pr#1 でない: ${payload.telemetry?.abort_label}`);
   assert.ok(payload.error_msg.startsWith('abort@PR/pr#1: dev-flow: PR phase 失敗（step: commit、reason: ' + PR_FAILURE_REASON + '）'), `error_msg に PR phase 失敗文が無い: ${payload.error_msg}`);
 });
 

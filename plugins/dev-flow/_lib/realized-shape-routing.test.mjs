@@ -15,7 +15,7 @@
 //       triviality / estimated_file_count）が無い
 //   (J) 3 shape の spawn 構造（dev-implementer 回数 / evaluator 回数 / route）が shape 別経路の期待と一致する
 //   (K) 静的 pin: dev-flow.js（inline 生成区間含む）に refloorShape / mergeShape / 事前見積もりキーが無い
-//   (L) shift-bud#1513 相当 + secfloor の lines → 重み・削除主体の補正で micro、telemetry に補正前の shape（issue #740）
+//   (L) shift-bud#1513 相当 + secfloor の lines → 重み・削除主体の補正で micro、shape_reason に補正前の shape（issue #740）
 //   (M) 同じ files で lines 無し → file 数判定の complex（補正なし）
 //   (N) counted file の 1 件に行数が無い → 補正なし
 //   (O) 宣言外 file の行数は補正に使わない
@@ -152,7 +152,6 @@ test('[realized-shape] (I) return object / journal telemetry に事前見積も�
   }
   assert.equal(returned.shape, 'standard');
   assert.equal(telemetry.shape, 'standard');
-  assert.equal(telemetry.shape_reason, returned.shape_reason);
 });
 
 test('[realized-shape] (J) micro / standard / complex の spawn 構造: implement 1/1/2・evaluator 0/1/2・route lite/full/full', async () => {
@@ -205,25 +204,23 @@ const SHIFT_BUD_LINES = [
 const SHIFT_BUD_FILES = SHIFT_BUD_LINES.map((l) => l.path);
 const SHIFT_BUD_REQ = { issue_type: 'chore', acceptance_criteria: ['a', 'b', 'c'] };
 
-test('[realized-shape] (L) shift-bud#1513 相当（6 files, +24/-128, AC 3, chore）+ lines → micro、telemetry に補正前 complex と根拠が載る', async () => {
+test('[realized-shape] (L) shift-bud#1513 相当（6 files, +24/-128, AC 3, chore）+ lines → micro、shape_reason に補正前 complex と根拠が載る', async () => {
   const { calls, returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES, { lines: SHIFT_BUD_LINES }) }, SHIFT_BUD_REQ);
   assert.ok(['micro', 'standard'].includes(returned.shape), `micro か standard のはずだが ${returned.shape}`);
   assert.equal(returned.shape, 'micro');
   assert.equal(returned.realized_file_count, 6);
   assert.match(returned.shape_reason, /realized 6 file\(s\) → weighted 3（docs 2 \/ 対応本番ありの test 1 を除外）, \+10\/-60 lines, 3 AC, type=chore/);
+  assert.match(returned.shape_reason, /file 数判定 complex/);
   assert.match(returned.shape_reason, /1 段下げ → shape=micro$/);
   const telemetry = journalTelemetry(calls);
   assert.equal(telemetry.shape, 'micro');
-  assert.equal(telemetry.shape_uncorrected, 'complex');
-  assert.equal(telemetry.shape_reason, returned.shape_reason);
 });
 
-test('[realized-shape] (M) 同じ 6 files で lines が無い（secfloor が lines を返さない）→ file 数判定の complex、shape_uncorrected も complex', async () => {
+test('[realized-shape] (M) 同じ 6 files で lines が無い（secfloor が lines を返さない）→ file 数判定の complex（補正なし）', async () => {
   const { calls, returned } = await run({ ...filesOverrides(SHIFT_BUD_FILES) }, SHIFT_BUD_REQ);
   assert.equal(returned.shape, 'complex');
   assert.equal(returned.shape_reason, 'realized 6 file(s), 3 AC, type=chore → shape=complex');
-  const telemetry = journalTelemetry(calls);
-  assert.equal(telemetry.shape_uncorrected, 'complex');
+  assert.equal(journalTelemetry(calls).shape, 'complex');
 });
 
 test('[realized-shape] (N) counted file の 1 件に行数が無い（binary 等）→ 補正なしの file 数判定', async () => {

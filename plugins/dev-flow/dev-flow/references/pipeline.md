@@ -90,7 +90,6 @@ blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止�
 test script 修正で opus 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
 Implement / BLOCKED 再実装 / Evaluate 差し戻しは `opts.model` を渡さず frontmatter の既定（opus / high）で spawn し、
 null 返却は再試行せず drop（`implDroppedCount`）に計上する。
-観測は journal の `subagent_invocations.by_type`（`dev-implementer` 件数）。
 
 shape は analyze ゲートでは決めない。Security floor（実装後・PR 前）で `classifyShape(req, realizedCount, lineStats)` が
 realized diff の file 数・file ごとの追加/削除行数 + issue 由来の決定論特徴量（AC 数 / `issue_type` / 構造化 `breaking_change`）で
@@ -100,14 +99,13 @@ realized count 欠損（secfloor-unified（danger-grep）の files 欠落 → Na
 （tracked は numstat、untracked は `wc -l`）から差分の中身で下げ方向に補正する: docs（`docs/**` / `*.md`）と
 対応する本番ファイルも変えたテストは数えない、重み付け後の追加行 < 削除行×0.3 なら 1 段下げる、complex は
 重み付け後 file 数 > 5 かつ追加 > 100 行のときだけ。file 数判定より上には上げない。行数が 1 file でも欠けた run と
-変更がテストだけの run は補正しない（file 数判定のまま）。補正前の shape は telemetry `shape_uncorrected`。
+変更がテストだけの run は補正しない（file 数判定のまま）。補正前の shape は返り値 `shape_reason` の「file 数判定」に出る。
 LLM の事前見積もり（shape / 見込み file 数）は REQ に
 持たず decision に使わない — micro の LITE 経路に対する意味的リスクの安全網は runEval 強制条件
 （danger-grep / testsurf / green-fix / dropped task / 宣言外変更 / UI 接触）が担う。
 `classifyShape` に渡す数は Security floor 時点の working tree から ephemeral・宣言外パス・format-only を
-除外したもの（宣言外は size 信号にせず Evaluate 強制 + concern 監査で扱う）。除外前後の数は telemetry
-`realized_file_count_raw` / `realized_file_count` に、判定根拠は `shape_reason` に記録され、
-shape 較正で除外により下位 tier に決まった run / floor で上位 tier に決まった run を数えられる。danger-grep hit が
+除外したもの（宣言外は size 信号にせず Evaluate 強制 + concern 監査で扱う）。その数は返り値
+`realized_file_count` に、判定根拠は `shape_reason` に載る（journal telemetry には実効 `shape` だけを書く）。danger-grep hit が
 あれば micro でも Evaluate を強制実行（security path）。
 
 **micro lite route**: `EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
@@ -121,7 +119,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
 - **`agent()` へ渡す agentType は plugin namespace 必須** — subagent の実体は plugin 配下
   (`plugins/dev-flow/agents/`) にあり、harness は `dev-flow:<name>` の namespaced id でしか解決しない
   (bare 名は `agent type '<name>' not found` で run 全体が起動直後に abort する)。workflow 本体・
-  `subagent_invocations` の by_type キー・agent 名を静的検査する routing test は論理名 (bare) を保持し、
+  pr-iterate の返り値 `subagent_invocations` の by_type キー・agent 名を静的検査する routing test は論理名 (bare) を保持し、
   namespace は `agent()` を呼ぶ直前の `nsAgentOpts()` (canonical `_lib/agent-namespace.mjs`。dev-flow.js /
   pr-iterate.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。

@@ -445,7 +445,7 @@ function buildAbortHandoffPayload({ skill, args, issue, repo, pr_number, journal
     error_category: ABORT_ERROR_CATEGORY,
     error_msg: buildAbortErrorMsg({ phase, label, error }),
     error_phase: phase || undefined,
-    telemetry: { ...(telemetry ?? {}), abort_phase: phase ?? null, abort_label: label ?? null },
+    telemetry,
   });
 }
 
@@ -457,40 +457,6 @@ function repoFromGithubUrl(url) {
   return `${match[1]}/${match[2]}`;
 }
 // ==== END inline: _lib/journal-handoff.mjs ====
-// ==== BEGIN inline: _lib/subagent-invocations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-
-function recordSubagentInvocation(counts, agentType) {
-  const key = typeof agentType === 'string' && agentType.trim() !== '' ? agentType : 'unknown';
-  counts[key] = (counts[key] || 0) + 1;
-  return counts;
-}
-
-function buildSubagentInvocations(counts) {
-  const keys = Object.keys(counts).sort();
-  let total = 0;
-  const by_type = {};
-  for (const key of keys) {
-    const value = counts[key];
-    total += value;
-    by_type[key] = value;
-  }
-  return { total, by_type };
-}
-
-function mergeSubagentCounts(counts, byType) {
-  if (byType == null || typeof byType !== 'object') {
-    return counts;
-  }
-  for (const key of Object.keys(byType)) {
-    const value = byType[key];
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
-      continue;
-    }
-    counts[key] = (counts[key] || 0) + value;
-  }
-  return counts;
-}
-// ==== END inline: _lib/subagent-invocations.mjs ====
 
 // ==== BEGIN inline: _lib/devflow-durations.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
@@ -1261,46 +1227,6 @@ function vdeltaDenies(verdict) {
   }
 
   return { deny: false, reasons: [], status: 'clean' };
-}
-
-function vdeltaVerdictDigest(verdict) {
-  const status = vdeltaDenies(verdict).status;
-
-  let parsed = verdict;
-  if (typeof verdict === 'string') {
-    try {
-      parsed = JSON.parse(verdict);
-    } catch {
-      parsed = null;
-    }
-  }
-
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { status, comparability: null, verification_surface: null, repaired_with_test_change: 0 };
-  }
-
-  const comparability = typeof parsed.comparability === 'string' ? parsed.comparability.slice(0, 64) : null;
-
-  const surfaceStatus = parsed.verification_surface?.status;
-  const verification_surface = typeof surfaceStatus === 'string' ? surfaceStatus.slice(0, 64) : null;
-
-  const repaired = parsed.transitions?.repaired_with_test_change;
-  const repaired_with_test_change = Array.isArray(repaired) ? repaired.length : 0;
-
-  return { status, comparability, verification_surface, repaired_with_test_change };
-}
-
-function redgreenHeaddiffDigest(headdiff) {
-  const zero = { new: 0, modified: 0, unchanged: 0, total: 0 };
-  if (typeof headdiff !== 'object' || headdiff === null || Array.isArray(headdiff)) {
-    return { status: 'fail_open', ...zero };
-  }
-  const isCount = (v) => typeof v === 'number' && Number.isInteger(v) && v >= 0;
-  const { new: n, modified, unchanged, total } = headdiff;
-  if (!isCount(n) || !isCount(modified) || !isCount(unchanged) || !isCount(total)) {
-    return { status: 'fail_open', ...zero };
-  }
-  return { status: modified > 0 ? 'test_modified' : 'clean', new: n, modified, unchanged, total };
 }
 // ==== END inline: _lib/vdelta-transitions.mjs ====
 
@@ -2553,7 +2479,7 @@ function buildDevflowSummaryBody({
     ];
     lines.push('');
     if (resolvedRows.length === 0) {
-      lines.push('**解消済み証跡（件数のみ — 詳細は journal telemetry `resolved_evidence`）**:');
+      lines.push('**解消済み証跡（件数のみ）**:');
       for (const l of countLines) lines.push(l);
     } else {
       lines.push('**解消済み証跡**:');
@@ -2577,7 +2503,7 @@ function buildDevflowSummaryBody({
       }
       if (resolvedRows.length > RESOLVED_ROWS_MAX) {
         lines.push('');
-        lines.push(`他 ${resolvedRows.length - RESOLVED_ROWS_MAX} 件は journal telemetry \`resolved_evidence\` を参照`);
+        lines.push(`他 ${resolvedRows.length - RESOLVED_ROWS_MAX} 件は省略`);
       }
       lines.push('');
       lines.push('</details>');
@@ -2675,127 +2601,6 @@ function holdReasonDisplay(code, kind, ctx) {
   }
 }
 // ==== END inline: _lib/devflow-summary-format.mjs ====
-// ==== BEGIN inline: _lib/resolved-evidence.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
-
-const RESOLVED_EVIDENCE_FIELD_CAP = 1000;
-const RESOLVED_EVIDENCE_MAX_CHARS = 16000;
-
-function capText(v, n) {
-  if (v == null) return { value: null, truncated: false };
-  const s = String(v);
-  if (s.length > n) {
-    return { value: s.slice(0, n), truncated: true };
-  }
-  return { value: s, truncated: false };
-}
-
-function buildAtCap(blockArr, advArr, acArr, n) {
-  let truncated = false;
-
-  const ledgerResolved = [];
-  for (const it of blockArr) {
-    if (it.checked !== true) continue;
-    const text = capText(it.text, n);
-    const evidence = capText(it.evidence, n);
-    if (text.truncated || evidence.truncated) truncated = true;
-    ledgerResolved.push({
-      id: it.id,
-      lane: 'blocking',
-      dimension: it.dimension != null ? it.dimension : null,
-      text: text.value,
-      evidence: evidence.value,
-    });
-  }
-  for (const it of advArr) {
-    if (it.checked !== true) continue;
-    if (it.escalate === true) continue;
-    if (it.dimension === 'environment') continue;
-    const text = capText(it.text, n);
-    const evidence = capText(it.evidence, n);
-    if (text.truncated || evidence.truncated) truncated = true;
-    ledgerResolved.push({
-      id: it.id,
-      lane: 'advisory',
-      dimension: it.dimension != null ? it.dimension : null,
-      text: text.value,
-      evidence: evidence.value,
-    });
-  }
-
-  const envNotes = [];
-  for (const it of advArr) {
-    if (it.dimension !== 'environment') continue;
-    const text = capText(it.text, n);
-    const evidence = capText(it.evidence, n);
-    if (text.truncated || evidence.truncated) truncated = true;
-    envNotes.push({
-      id: it.id,
-      env_key: it.env_key != null ? it.env_key : null,
-      env_count: typeof it.env_count === 'number' ? it.env_count : 1,
-      checked: it.checked === true,
-      text: text.value,
-      evidence: evidence.value,
-    });
-  }
-
-  const acSatisfied = [];
-  for (const a of acArr) {
-    if (!a || a.satisfied !== true) continue;
-    const evidence = capText(a.evidence, n);
-    if (evidence.truncated) truncated = true;
-    acSatisfied.push({
-      ac_index: a.ac_index,
-      verified_by: a.verified_by != null ? a.verified_by : 'inspection',
-      evidence: evidence.value,
-    });
-  }
-
-  const securityCleared = [];
-  for (const it of blockArr) {
-    if (it.source !== 'seed' || it.dimension !== 'security' || it.floor !== true || it.checked !== true) continue;
-    const evidence = capText(it.evidence, n);
-    if (evidence.truncated) truncated = true;
-    securityCleared.push({
-      danger_class: it.danger_class,
-      evidence: evidence.value,
-    });
-  }
-
-  return {
-    cap_chars: n,
-    truncated,
-    ledger_resolved: ledgerResolved,
-    env_notes: envNotes,
-    ac_satisfied: acSatisfied,
-    security_cleared: securityCleared,
-  };
-}
-
-function buildResolvedEvidence({ blockingItems, advisoryItems, acResults }) {
-  const blockArr = blockingItems || [];
-  const advArr = advisoryItems || [];
-  const acArr = acResults || [];
-
-  let n = RESOLVED_EVIDENCE_FIELD_CAP;
-  let result = buildAtCap(blockArr, advArr, acArr, n);
-
-  while (JSON.stringify(result).length > RESOLVED_EVIDENCE_MAX_CHARS && n > 0) {
-    n = Math.floor(n / 2);
-    result = buildAtCap(blockArr, advArr, acArr, n);
-  }
-
-  if (
-    result.ledger_resolved.length === 0 &&
-    result.env_notes.length === 0 &&
-    result.ac_satisfied.length === 0 &&
-    result.security_cleared.length === 0
-  ) {
-    return null;
-  }
-
-  return result;
-}
-// ==== END inline: _lib/resolved-evidence.mjs ====
 
 // ==== BEGIN inline: _lib/stuck-detector.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
@@ -3188,7 +2993,8 @@ if (!ISSUE) throw new Error('dev-flow: issue 番号が必要です（args.issue�
 // throw のため呼び出し元へ status を戻さない）で呼ばれる。choreography 本体は canonical
 // _lib/journal-handoff.mjs の runJournalHandoff。
 // outcome は既定 'failure'。cross-repo 経路のみ 'partial'（graceful 終了で throw しないため）を渡す。
-async function writeFailureTelemetry({ error_category, error_msg, telemetry, phase, outcome = 'failure' }) {
+// telemetry は Setup で決まる世代・model のキーだけ（shape 等は失敗時点で未確定）。
+async function writeFailureTelemetry({ error_category, error_msg, phase, outcome = 'failure' }) {
   const payload = buildJournalHandoffPayload({
     skill: 'dev-flow',
     outcome,
@@ -3204,7 +3010,6 @@ async function writeFailureTelemetry({ error_category, error_msg, telemetry, pha
       impl_model_config: 'opus',
       plugin_version: PLUGIN_VERSION,
       plugin_commit: PLUGIN_COMMIT,
-      ...telemetry,
     },
   })
   ABORT_CTX.failure_recorded = true
@@ -4361,11 +4166,10 @@ function crossRepoReturnNote(artifacts) {
 
 // ---- helpers ----
 
-// run あたりの subagent (agent()) 起動数カウント。agent() の代わりに全 call site を
-// trackedAgent 経由で呼び、SUBAGENT_COUNTS へ計上する。
+// agent() の代わりに全 call site を trackedAgent 経由で呼び、ABORT_CTX に直前の phase/label を残す。
 // StructuredOutput 契約違反（subagent が StructuredOutput を呼ばず完了 — 一過性のモデル逸脱）に
 // 限定して同一 prompt で 1 回だけリトライする。それ以外の throw はそのまま
-// 伝播させる（fail-closed 維持）。retry も実 agent() 起動なので SUBAGENT_COUNTS へ再計上する。
+// 伝播させる（fail-closed 維持）。
 // review: リトライは `opts.retryOnContractViolation === true` の opt-in call site
 // 限定（既定はリトライしない）。commit・push・journal 追記・PR コメント投稿等の副作用を伴う
 // call site を無差別リトライすると、副作用完了後に StructuredOutput 未達で終わった agent を
@@ -4383,27 +4187,24 @@ function secfloorTopLevelKeys(unified) {
   return keys.length ? keys.join(',') : '(none)'
 }
 
-const SUBAGENT_COUNTS = {};
 // abort telemetry context: run が throw で abort したとき top-level catch が journal handoff に載せる
 // 「どこで落ちたか」を trackedAgent が毎回記録する（need() の throw は直前 agent の null 返却が原因なので同じ
-// label を指す）。shape/eval_iter は確定時点で代入する — try ブロック内の const/let は catch から
+// label を指す）。shape は確定時点で代入する — try ブロック内の const/let は catch から
 // 見えないため、この可変 context に写す。failure_recorded は writeFailureTelemetry 後の throw（empty_diff）で
 // abort entry を二重記録しないためのフラグ。
-const ABORT_CTX = { phase: null, label: null, shape: null, eval_iter: 0, failure_recorded: false }
+const ABORT_CTX = { phase: null, label: null, shape: null, failure_recorded: false }
 // dev-flow の call site は `opts.model` を渡さず agent frontmatter の既定 model で spawn する
 // （evaluator は opus / medium、pr-reviewer / dev-implementer は opus / high。model を変えるなら agents/*.md の frontmatter を変える）。
 // 例外は Validate green-fix の `model: 'sonnet'`（GREEN_FIX_MODEL）だけ。
 // null 返却（credit 切れ / terminal API error / user skip）は既存の fail-open / need() 経路で扱う。
 async function trackedAgent(prompt, opts) {
   ABORT_CTX.phase = opts?.phase ?? ABORT_CTX.phase; ABORT_CTX.label = opts?.label ?? null;
-  recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
   try {
     return await agent(prompt, nsAgentOpts(opts));
   } catch (e) {
     if (!opts?.retryOnContractViolation) throw e;
     if (!String(e?.message ?? e).includes('without calling StructuredOutput')) throw e;
     log(`⚠️ ${opts?.label ?? 'agent'} が StructuredOutput 契約違反で失敗 — 同一 prompt で 1 回だけリトライ（issue #527）`);
-    recordSubagentInvocation(SUBAGENT_COUNTS, opts?.agentType);
     return agent(prompt, nsAgentOpts(opts));
   }
 }
@@ -4661,7 +4462,7 @@ if (ANALYZE.ok !== true) {
   // prerun の analyze 段が失敗（GitHub 到達不能 / JSON 不正）。捏造経路が無いので REQ を推測で組まず、
   // 人間へ返す（source=analyze_prerun）。isolation-probe / 実装 agent より前なので spawn は 0。
   log(`⚠️ analyze: prerun の analyze 段が失敗（${ANALYZE.reason}）— needs_clarification で中断（source=analyze_prerun）`)
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: prerun analyze 段の失敗で中断（source=analyze_prerun: ${ANALYZE.reason}）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: typeof ANALYZE.analyze_path === 'string' ? ANALYZE.analyze_path : 'contract' }, phase: 'Setup' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: prerun analyze 段の失敗で中断（source=analyze_prerun: ${ANALYZE.reason}）`, phase: 'Setup' })
   return { status: 'needs_clarification', source: 'analyze_prerun', issue: ISSUE, worktree: WT, branch: setup.branch, missing_context: [`issue #${ISSUE} の取得・決定論 parse が prerun で失敗した: ${ANALYZE.reason}`], journal_log_status: journalLogStatus, note: 'dev-flow-prerun の analyze 段（analyze-issue --contract）が失敗したため中断。GitHub CLI の到達性・認証と issue 番号を確認し /dev-flow を再起動すること（prerun は再実行される）。worktree は保持済みで再利用される' }
 }
 const req = buildReqFromContract(ANALYZE, ISSUE)
@@ -4672,10 +4473,10 @@ if (!req) {
 // 差し戻し（agent AC の未達だけ）と Merge tier の HOLD 理由（取りこぼし / 人手待ち）を分ける。
 req.ac_actors = acActorsOf(req.acceptance_criteria)
 if (req.ac_actors.includes('human')) log(`analyze: 人手 AC ${req.ac_actors.filter((a) => a === 'human').length} 件（AC-${req.ac_actors.map((a, i) => a === 'human' ? i + 1 : null).filter((n) => n != null).join(', AC-')}）— 未達でも差し戻さず Merge tier の人手 AC 待ちへ回す`)
-// analyze 経路の telemetry: ANALYZE_PATH は 'contract' | 'jev' | 'sonnet'（sonnet はゲート後の spawn 時のみ）。
-// ANALYZE_INELIGIBLE_REASON は Jev に回した理由（prerun の jev_reasons を '; ' 結合。contract 経路は null でキー欠落）。
-let ANALYZE_PATH = req.analyze_path
-let ANALYZE_INELIGIBLE_REASON = req.jev_reasons.length ? req.jev_reasons.join('; ') : null
+// analyze 経路（log 表示用）: ANALYZE_PATH は 'contract' | 'jev'。
+// ANALYZE_INELIGIBLE_REASON は Jev に回した理由（prerun の jev_reasons を '; ' 結合。contract 経路は null）。
+const ANALYZE_PATH = req.analyze_path
+const ANALYZE_INELIGIBLE_REASON = req.jev_reasons.length ? req.jev_reasons.join('; ') : null
 log(`analyze: prerun 決定論 parse を採用（path=${ANALYZE_PATH}${ANALYZE_INELIGIBLE_REASON ? ' / jev: ' + ANALYZE_INELIGIBLE_REASON : ''} / AC ${req.acceptance_criteria.length} 件 / prerun analyze ${Number.isFinite(ANALYZE.duration_seconds) ? ANALYZE.duration_seconds : '?'}s）— analyze ゲートの spawn 0`)
 if (req.breaking_change === true) log(`analyze: breaking_change=true（${req.breaking_evidence || '根拠なし'}）`)
 if (req.scope_truncated === true) log(`⚠️ analyze: scope が 4000 字で切断（AC 節除く全 ${Number.isInteger(req.scope_total_chars) ? req.scope_total_chars : '?'} 字）— 切断域の記述は implementer に届かない（acceptance_criteria は全件届く。issue #596）`)
@@ -4690,7 +4491,7 @@ const blockedReasons = blockedByReasons(req)
 if (req.blockers.length) log(`analyze: blocker ${req.blockers.length} 件（open ${blockedReasons.length}）: ${req.blockers.map((b) => `${b.repo}#${b.number}=${b.state}(${b.source})`).join(' / ')}`)
 if (blockedReasons.length) {
   log(`⚠️ analyze: open な blocker が ${blockedReasons.length} 件 — needs_clarification で中断（source=blocked_by）`)
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: open な blocker ${blockedReasons.length} 件で中断（source=blocked_by）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: ANALYZE_PATH, ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}) }, phase: 'Setup' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: open な blocker ${blockedReasons.length} 件で中断（source=blocked_by）`, phase: 'Setup' })
   return {
     status: 'needs_clarification',
     source: 'blocked_by',
@@ -4708,13 +4509,12 @@ if (blockedReasons.length) {
 const gateReasons = analyzeGateReasons(req)
 if (gateReasons.length) {
   log(`⚠️ analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）— sonnet で missing_context を生成して needs_clarification で中断`)
-  ANALYZE_PATH = 'sonnet'
   const clarify = await failOpenAgent(clarifyPrompt(gateReasons), { agentType: 'dev-runner', schema: CLARIFY, label: `analyze-clarify#${ISSUE}`, phase: 'Setup' })
   const strList = (v) => Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim().length > 0) : []
   const clarified = strList(clarify?.missing_context)
   if (!clarified.length) log('⚠️ analyze: missing_context 生成が null / 空 — ゲート理由をそのまま人間へ返す（fail-open）')
   const missingContext = clarified.length ? clarified.concat(gateReasons) : gateReasons
-  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）で中断（source=analyze）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0, analyze_path: ANALYZE_PATH, ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}) }, phase: 'Setup' })
+  const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `analyze: ゲート（AC 空=${req.acceptance_criteria.length === 0} / comment_conflicts=${req.comment_conflicts.length} / uncertain=${req.uncertain.length}）で中断（source=analyze）`, phase: 'Setup' })
   return {
     status: 'needs_clarification',
     source: 'analyze',
@@ -4742,7 +4542,7 @@ if (!isoProbe) log('⚠️ isolation probe 自体が失敗 — 書き込み可�
 // 直接 dev-implementer に渡す。
 // shape はここでは決めない: 実効 shape は Security floor で realized diff の file 数から
 // classifyShape が 1 回で決める（EFFECTIVE_SHAPE / TRIVIAL）。実効 shape 確定前の失敗 telemetry
-// （needs_clarification / cross_repo / empty_diff）は shape キーを載せない（null は enum 検証で落ちる）。
+// （needs_clarification / cross_repo / empty_diff）は shape キーを載せない。
 // ============================================================
 let plan = synthesizeImplPlan(req, ISSUE)
 log('implement#synth-plan: planner 0 回、issue から単一 task の plan を合成（Implement で dev-implementer を 1 spawn）')
@@ -4758,17 +4558,15 @@ let state = {
   implDroppedCount: 0,
   val: null, greenFixCount: 0, greenFixIterations: [],
   ledger: null, risk: null, dangerHits: [], realized: null,
-  realizedNonEphemeral: null, realizedCount: NaN, triage: null,
+  realizedCount: NaN, triage: null,
   EFFECTIVE_SHAPE: null, EVAL_PASSES: null, runEval: null,
-  dhPrompt: null, evalResult: null, evalIters: 0, designReplanCount: 0, reimplCount: 0,
+  dhPrompt: null, evalResult: null, designReplanCount: 0, reimplCount: 0,
   postEvalVal: null,
-  unsatisfiedAc: false, unsatisfiedAcByActor: { agent: [], human: [] }, agentAcReimplCount: 0,
+  unsatisfiedAc: false, unsatisfiedAcByActor: { agent: [], human: [] },
   evalDiffHash: null, secDiffHash: null,
   prDiffHash: null, staleDiffFiles: null, prHeadTreeOid: null,
   uiVerifyConfig: null, uiTouched: false, uiVerifyStatus: 'skipped', uiVerifyMode: null,
   testsurfHits: [], testsurfPatterns: [],
-  vdeltaVerdicts: [], redgreenDenies: [], vdeltaFailOpen: 0,
-  vdeltaNotStarted: 0, redgreenHeaddiff: [],
 }
 
 // ============================================================
@@ -4862,7 +4660,7 @@ async function execImplementPhase(state) {
     const stillNeeds = implResults.filter((r) => r && r.status === 'NEEDS_CONTEXT')
     if (stillNeeds.length) {
       log(`implement: ${stillNeeds.length} task が NEEDS_CONTEXT — needs_clarification で中断`)
-      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Implement' })
+      const journalLogStatus = await writeFailureTelemetry({ error_category: 'needs_clarification', error_msg: `implement: ${stillNeeds.length} task が NEEDS_CONTEXT 解消不能で中断（source=implement）`, phase: 'Implement' })
       state.__earlyReturn = {
         status: 'needs_clarification',
         source: 'implement',
@@ -5047,7 +4845,6 @@ async function execValidatePhase(state) {
               outcome: 'partial',
               error_category: 'cross_repo',
               error_msg: 'empty-diff gate: cross-repo issue — 成果物は対象 repo の working tree に存在（issue #432）',
-              telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 },
               phase: 'Validate',
             })
             state.__earlyReturn = {
@@ -5080,7 +4877,7 @@ async function execValidatePhase(state) {
       ), 'Validate(diff-gate-retry)')
       validateEpochCandidates.push(dhRetry)
       if (dhRetry.empty === true) {
-        await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', telemetry: { gate_policy: GATE_POLICY, eval_iter: 0 }, phase: 'Validate' })
+        await writeFailureTelemetry({ error_category: 'empty_diff', error_msg: 'empty-diff gate: 1 回の差し戻し後も working tree が base と一致（issue #215）', phase: 'Validate' })
         throw new Error('dev-flow: empty-diff gate — 1 回の差し戻し後も working tree が origin/' + BASE + ' と一致（空 diff）。実装が成果を残していないため workflow を中断する（issue #215）。'
           + '修正対象が別リポジトリにある cross-repo issue の場合は issue に cross-repo ラベルを付けて /dev-flow を再実行せよ（issue #432）')
       }
@@ -5262,7 +5059,6 @@ async function execSecurityFloorPhase(state) {
   state.testsurfHits = testsurfHitsOf(risk)
   state.testsurfPatterns = testsurfPatterns
   state.realized = realized
-  state.realizedNonEphemeral = realizedNonEphemeral
   state.realizedCount = realizedCount
   state.triage = triage
   state.EFFECTIVE_SHAPE = EFFECTIVE_SHAPE
@@ -5454,7 +5250,6 @@ async function execEvaluatePhase(state) {
   const testsurfHits = state.testsurfHits
   const EVAL_PASSES = state.EVAL_PASSES
   let evalResult = null
-  let evalIters = 0            // eval iteration カウンタ（telemetry 用）
   let designReplanCount = 0    // design 差し戻し(replan+reimpl)の実行回数（DESIGN_REPLAN_MAX cap 判定 + return object 用）
   let reimplCount = 0          // reimpl#i（fix_feedback 付き差し戻し）の実行回数。>0 なら PR 前にフルテストを再実行する
   let unsatisfiedAc = false
@@ -5509,8 +5304,6 @@ async function execEvaluatePhase(state) {
   log(`ledger 初期化: blocking ${policyBlockingItems(ledger, GATE_POLICY).length} / advisory ${policyAdvisoryItems(ledger, GATE_POLICY).length} 件`)
   const evalSeen = makeSeenTracker(EVAL_STUCK)  // feedback 累積 & stuck 検出（_lib/stuck-detector.mjs）
   for (let i = 1; i <= evalLimit; i++) {
-    evalIters = i
-    ABORT_CTX.eval_iter = i
     const priorFeedback = evalSeen.prior()   // 前 iteration までの累積 feedback
     // critical_resolutions / security_clearance の操作的契約は _lib/evaluator-contract.mjs が source of truth。
     // dev-flow.js へは tools/sync-inlines.mjs で inline 生成し、evaluator.md との drift は
@@ -5645,7 +5438,7 @@ async function execEvaluatePhase(state) {
       if (!acItem) continue   // 知らない AC は無視
       // 既に deterministic 昇格 + checked 済みの AC は redgreen-verify を再実行しない。
       // checkItem/setCheck は単調不可逆（uncheck 経路なし）のため再実行はゲート上の no-op であり、
-      // skip は初回 iteration の evidence / telemetry entry をそのまま保持する（vdelta 追記もしない）。
+      // skip は初回 iteration の evidence をそのまま保持する。
       if (acItem.checked === true && acItem.check && acItem.check.kind === 'deterministic') {
         log(`AC-${r.ac_index + 1}: deterministic 昇格 + checked 済み → redgreen-verify skip（issue #444）`)
         continue
@@ -5674,22 +5467,7 @@ async function execEvaluatePhase(state) {
     for (let k = 0; k < rgTargets.length; k++) {
       const { r, acId } = rgTargets[k]
       const rg = rgResults.find((x) => x && x.index === k) ?? null
-      if (rg && rg.verdict != null) state.vdeltaVerdicts.push({ ac: acId, ...vdeltaVerdictDigest(rg.verdict) })
       const denyRes = vdeltaDenies(rg ? rg.verdict : null)
-      // test_cmd 経路が走っていない invocation（testcmd_ran:false）は RunStore に run pair が無く verdict 不在が
-      // 期待値。verdict 不正・欠落による fail_open とは分けて数え、test_files の HEAD 差分 digest を fallback
-      // 信号として記録する（記録専用 — deny・deterministic 昇格・merge tier の入力にはしない）。
-      // red/green は redgreen-verify.sh の impl_files 実証結果をそのまま複合させる — headdiff の
-      // status（test_files の HEAD 差分）だけでは「test 改変を伴う red→green」を telemetry 単体で
-      // 識別できない（status=test_modified は red=false でも同一に記録されるため）。
-      if (rg && rg.testcmd_ran === false) {
-        state.vdeltaNotStarted += 1
-        state.redgreenHeaddiff.push({
-          ac: acId, ...redgreenHeaddiffDigest(rg.headdiff), red: rg.red === true, green: rg.green === true,
-        })
-      } else if (rg && denyRes.status === 'fail_open') {
-        state.vdeltaFailOpen += 1
-      }
       if (rg && rg.red === true && rg.green === true && !denyRes.deny) {
         ledger = setCheck(ledger, acId, { kind: 'deterministic' })
         ledger = checkItem(ledger, acId, `red→green 実証: ${(r.test_files || []).join(',')}`)
@@ -5697,7 +5475,6 @@ async function execEvaluatePhase(state) {
       } else {
         if (r.satisfied) ledger = checkItem(ledger, acId, r.evidence ?? 'inspection(red→green 未成立)')
         if (rg && rg.red === true && rg.green === true && denyRes.deny) {
-          state.redgreenDenies.push({ ac: acId, reasons: denyRes.reasons })
           log(`AC-${r.ac_index + 1}: red→green 実証だが vdelta deny(${denyRes.reasons.join(', ')})→ deterministic 昇格せず inspection 据え置き`)
         } else {
           log(`AC-${r.ac_index + 1}: red→green 未成立(${rg ? rg.reason : 'null'})→ inspection 据え置き`)
@@ -5783,12 +5560,10 @@ async function execEvaluatePhase(state) {
   state.plan = plan
   state.ledger = ledger
   state.evalResult = evalResult
-  state.evalIters = evalIters
   state.designReplanCount = designReplanCount
   state.reimplCount = reimplCount
   state.unsatisfiedAc = unsatisfiedAc
   state.unsatisfiedAcByActor = unsatisfiedByActor
-  state.agentAcReimplCount = agentAcReimplCount
   state.evalDiffHash = evalDiffHash
   return state
 }
@@ -5802,7 +5577,7 @@ async function execEvaluatePhase(state) {
 // ここでの green-fix は greenFixCount / greenFixIterations に計上する。evaluator は再評価しない（ledger も
 // Evaluate の round 以降は非 critical item を受け付けない）ため、テスト弱体化の監査は tree 変化が起こす
 // eval_staleness=hash_mismatch（merge tier HOLD。差分ファイル一覧つき）で人間に委ねる。
-// state.val は最新の test 結果（終端サマリー・telemetry の test_green）へ差し替える。
+// state.val は最新の test 結果（終端サマリー・返り値の test_green）へ差し替える。
 // ============================================================
 async function execPostEvalValidate(state) {
   if (!(state.reimplCount > 0)) return state
@@ -5898,7 +5673,7 @@ const pr = need(await trackedAgent(
 ), 'PR')
 // proxy の中断応答（committed:false / pr_url 空 / pr_number 非正）はここで fail-closed に throw する。
 // need() は null 判定のみで PR 固有の形は見ない — 通すと closes-check（fail-open で 1 spawn 無駄）→
-// nested pr-iterate が `pr: 0` の引数検証で abort し、abort_label が pr-iterate を指して proxy の
+// nested pr-iterate が `pr: 0` の引数検証で abort し、abort entry の label が pr-iterate を指して proxy の
 // 失敗 step / stderr（index.lock EPERM・push 403・gh pr create 失敗）が transcript の外へ出ない。
 // 直前の trackedAgent が `pr#<issue>` なので ABORT_CTX.label はその label のまま handoff に載る。
 // リトライ・fallback（別 worktree 退避 / force push）は持たない — 失敗理由を人間に見せて止めるだけ。
@@ -5964,9 +5739,7 @@ const prIterateArgs = () => ({
 // ============================================================
 const LITE = state.EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0
 let iterate
-// route: telemetry 用の経路識別子（'lite'|'full'）。journal.sh の --route フラグに
-// 到達済み（lite|full 以外は当該キーのみ drop の fail-open）。dotfiles Stop hook の
-// jq projection（送り側配線）は it-all-playpark/dotfiles#143。
+// route: PR phase の経路識別子（'lite'|'full'）。返り値と telemetry に載る。
 let route
 // iterate_end の clock 給電候補。branch ごとに設定する — lite clean 終端は
 // reviewLite/ciLite の epoch、full・lite 昇格は workflow('pr-iterate') 返り値の end_epoch から。
@@ -5996,7 +5769,6 @@ if (LITE) {
     )
     if (ciLite != null && (ciLite.status === 'passed' || ciLite.status === 'no_checks')) {
       state.liteReview = { decision: reviewLite?.decision ?? null, ci: ciLite.status, summary: reviewLite?.summary ?? null }
-      state.liteReviewConfidence = reviewLite?.confidence ?? null
       iterate = { status: 'lgtm', fixes_applied: 0 }
       route = 'lite'
       iterateEpochRes = maxEpochRes([reviewLite, ciLite])
@@ -6015,9 +5787,6 @@ if (LITE) {
   route = 'full'
   iterateEpochRes = epochResOf({ epoch: iterate?.end_epoch })
 }
-// nested pr-iterate の subagent 起動数を run 合計へ合算する。pr-iterate が
-// subagent_invocations を返さない run（lite 経路・未実装）は optional chain で no-op。
-if (iterate?.subagent_invocations?.by_type) mergeSubagentCounts(SUBAGENT_COUNTS, iterate.subagent_invocations.by_type)
 feedClockMark('iterate_end', iterateEpochRes)
 
 // pr-iterate で fix が適用された / lgtm 以外で終端した run は、Evaluate 後に PR tree が変化した可能性がある。
@@ -6510,16 +6279,7 @@ if (ciTargets.length > 0) {
 // Post-summary: Merge tier 算出後に終端サマリーを PR にコメント投稿する。
 // 投稿失敗は log 警告のみで workflow は正常 return する。
 // ============================================================
-// 終端サマリーが件数のみ表示する解消済み証跡（Goal Ledger 解消済み / 環境ノート / 達成 AC /
-// cleared security）の全文は journal telemetry `resolved_evidence` に載せる（canonical _lib/resolved-evidence.mjs、
-// summary-format と同一の選別述語・決定論 cap）。表示・記録専用で merge tier / ledger / gate には一切影響しない
-// （classifyMergeTier の後に置く。軸A 不変）。acResults は summary と同じ snapshot を使う。
 const summaryAcResults = finalAcReconcile === 'reverified' ? state.finalAcResults : (state.evalResult?.ac_results ?? null)
-const resolvedEvidence = buildResolvedEvidence({
-  blockingItems: policyBlockingItems(state.ledger, GATE_POLICY),
-  advisoryItems: policyAdvisoryItems(state.ledger, GATE_POLICY),
-  acResults: summaryAcResults,
-})
 const summaryBody = buildDevflowSummaryBody({
   pr: pr.pr_number,
   mergeTier: mergeTier.tier,
@@ -6559,7 +6319,7 @@ const summaryBody = buildDevflowSummaryBody({
 })
 // 終端サマリーコメント投稿: bodySaveInstr で body を worktree の .devflow-tmp/ 固定パスへ保存し
 // gh pr comment --body-file を bare 単文で投稿する。投稿失敗は posted:false で fail-open だが、
-// summary_posted として返り値・telemetry・終端 note に出す（log 1 行だけでは人間が気づけない）。
+// summary_posted として返り値・終端 note に出す（log 1 行だけでは人間が気づけない）。
 const summaryBodyFile = `${WT}/.devflow-tmp/dev-flow-summary.md`
 const summaryRepo = repoFromGithubUrl(pr.pr_url) ?? REPO
 const summaryPost = await trackedAgent(
@@ -6600,86 +6360,22 @@ const telemetryHandoff = buildJournalHandoffPayload({
   // plugin bin/ の bare 名。dotfiles Stop hook の [[ -x ]] は bare 名では真にならず FALLBACK_JOURNAL で解決される（fail-open、tilde 形と同挙動）
   journal_sh: 'journal',
   ...(state.guardBlockedResults.length ? { error_category: 'guard_blocked' } : {}),
+  // telemetry キーは dev-flow/references/telemetry.md の 12 キーに限る（_lib/telemetry-keys.test.mjs が pin）。
+  // 記録専用で gate / merge tier / ledger の判定入力にはしない。
   telemetry: {
     merge_tier: mergeTier.tier,
-    merge_tier_reasons: mergeTier.reasons,
-    gate_policy: GATE_POLICY,
-    danger_hits: dangerHitsFinal,
-    danger_fail_closed: dangerFailClosedFinal,
-    // shape: 実効 shape（realized diff の file 数・行数から classifyShape が決めた値）。
-    // shape_reason: その判定根拠（realized ベース）。passthrough 経路で journal へ到達し、
-    // gate / merge tier / ledger の判定入力にはならない。doctor の「shape 分布 / micro 不発火検知」が読む。
-    // - realized_file_count: classifyShape に渡した数（宣言外パス・format-only を除外した後。
-    //   NaN = realized diff 取得不能 → null）
-    // - realized_file_count_raw: ephemeral 除外のみの realized diff 総数。除外で shape が下がった run
-    //   （raw は閾値超・count は閾値内）を doctor が見分けるために両方載せる
-    // - analyze_path: 'contract' | 'jev'（成功 run。'sonnet' はゲート後の needs_clarification 経路のみ）
-    // - analyze_ineligible_reason: Jev に回した理由（prerun の jev_reasons）。contract 経路はキー欠落
-    // - prerun_durations.analyze: prerun の analyze 段（issue 取得 + Jev。deps install と並列）の秒数。
-    //   Workflow 側の analyze ゲート（Setup 末尾の純関数）は phase_durations に区間を持たない
-    // - shape_uncorrected: file 数だけで決めた補正前の shape（重み・行数の補正を掛けない値。floor 時と
-    //   行数を取れない run は shape と同じ）。shape との差を doctor の shape 較正が数える
+    // shape: 実効 shape（realized diff の file 数・行数から classifyShape が決めた値）
     shape: state.EFFECTIVE_SHAPE,
-    shape_uncorrected: state.triage.uncorrected_shape,
-    shape_reason: state.triage.reason,
-    realized_file_count: Number.isFinite(state.realizedCount) ? state.realizedCount : null,
-    realized_file_count_raw: Array.isArray(state.realizedNonEphemeral) ? state.realizedNonEphemeral.length : null,
-    ac_count: Array.isArray(state.req.acceptance_criteria) ? state.req.acceptance_criteria.length : 0,
-    analyze_path: ANALYZE_PATH,
-    ...(ANALYZE_INELIGIBLE_REASON ? { analyze_ineligible_reason: ANALYZE_INELIGIBLE_REASON } : {}),
-    ...(Number.isFinite(ANALYZE.duration_seconds) ? { prerun_durations: { analyze: ANALYZE.duration_seconds } } : {}),
-    eval_iter: state.evalIters,
-    eval_staleness: evalStaleness,
     ...(state.evalResult?.verdict ? { eval_verdict: state.evalResult.verdict } : {}),
-    ...(state.evalResult ? { eval_confidence: state.evalResult.confidence ?? null } : {}),
     ...(iterate?.status ? { iterate_status: iterate.status } : {}),
-    ...(iterate?.fixes_applied != null ? { iterate_rounds: iterate?.iterations ?? 0, fixes_applied: iterate.fixes_applied } : {}),
-    ui_verify: state.uiVerifyStatus,
-    ...(state.uiVerifyMode ? { ui_verify_mode: state.uiVerifyMode } : {}),
-    final_reconcile: finalReconcile,
-    ...(finalTestGreen != null ? { final_test_green: finalTestGreen } : {}),
-    ...(finalUiVerifyStatus ? { final_ui_verify: finalUiVerifyStatus } : {}),
-    final_ac_reconcile: finalAcReconcile,
-    // AC 未達の actor 別件数と agent AC 差し戻し回数。ac_unsatisfied_agent > 0 は Evaluate の
-    // 差し戻しで拾えなかった取りこぼし（異常）、ac_unsatisfied_human > 0 は人手 AC 待ち（想定内）として数える。
-    ac_unsatisfied_agent: acGapsFinal.agent.length,
-    ac_unsatisfied_human: acGapsFinal.human.length,
-    agent_ac_reimpl: state.agentAcReimplCount,
-    pr_closes_status: prClosesStatus,
-    ...(prBodySynced != null ? { pr_body_synced: prBodySynced } : {}),
-    summary_posted: summaryPosted,  // 終端サマリの PR コメント投稿成否（post-summary の posted===true）。記録専用
-    testsurf_hits: testsurfPatternsFinal,
-    ...(state.redgreenDenies.length ? { redgreen_deny: state.redgreenDenies } : {}),
-    ...(state.vdeltaFailOpen > 0 ? { vdelta_fail_open: state.vdeltaFailOpen } : {}),
-    ...(state.vdeltaVerdicts.length ? { vdelta_verdicts: state.vdeltaVerdicts } : {}),
-    // vdelta_not_started: test_cmd 経路が走らなかった redgreen invocation 数（verdict 不在が期待値なので
-    // vdelta_fail_open には数えない）。redgreen_headdiff: その invocation の test_files HEAD 差分 digest
-    // （per-AC、記録専用）。どちらも passthrough 経路で journal に到達する。
-    ...(state.vdeltaNotStarted > 0 ? { vdelta_not_started: state.vdeltaNotStarted } : {}),
-    ...(state.redgreenHeaddiff.length ? { redgreen_headdiff: state.redgreenHeaddiff } : {}),
-    // route: PR phase 経路識別子（'lite'|'full'）。常時出力。journal.sh の
-    // --route フラグに到達済み。送り側の jq projection は it-all-playpark/dotfiles#143。
-    route,
-    // review_confidence/review_decision: lite route（pr-review-lite が dev-flow 内で実行された場合）
-    // のみ出力する。full route の dev-flow entry にはキー自体を出さない（実値は同 run の nested
-    // pr-iterate entry 側に記録 — 二重計上防止）。
-    ...(route === 'lite' && state.liteReview ? { review_confidence: state.liteReviewConfidence ?? null, ...(state.liteReview.decision ? { review_decision: state.liteReview.decision } : {}) } : {}),
-    // subagent_invocations: run あたりの subagent (agent()) 起動数 {total, by_type}。
-    // 常時出力。nested pr-iterate 分は上記 mergeSubagentCounts で合算済み。
-    subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
+    route,  // PR phase 経路識別子（'lite'|'full'）。常時出力
     eval_model_config: 'opus',  // evaluator 系 3 call site（eval#i / final-ac-reconcile / security-clearance-final）の model。override を渡さないので agents/evaluator.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     review_model_config: 'opus',  // pr-reviewer（pr-review-lite / nested pr-iterate の review#i）の model。override を渡さないので agents/pr-reviewer.md frontmatter の値（一致は review-model-frontmatter.test.mjs が pin）
     impl_model_config: 'opus',  // dev-implementer の既定 model（agents/dev-implementer.md frontmatter の値、一致は review-model-frontmatter.test.mjs が pin）。green-fix の sonnet override は固定値なのでキーを持たない（世代は plugin_version）
     plugin_version: PLUGIN_VERSION,  // _lib/plugin-version.mjs 定数。plugin.json との一致は plugin-version.sync.test.mjs が pin
     plugin_commit: PLUGIN_COMMIT,  // dev-flow-prerun が決めた plugin の commit（12 桁 hex / null）。記録専用
-    // resolved_evidence: 終端サマリーから外した解消済み証跡の全文。4 配列すべて空なら省く。
-    // passthrough 経路で journal に到達（hook 変更不要）。gate / merge tier / ledger の入力にはならない。
-    ...(resolvedEvidence ? { resolved_evidence: resolvedEvidence } : {}),
     ...(durations.duration_seconds != null ? { duration_seconds: durations.duration_seconds } : {}),
     ...(Object.keys(durations.phase_durations).length ? { phase_durations: durations.phase_durations } : {}),
-    // guard_id: guard_blocked task が 1 件以上ある run のみ出力する telemetry 専用キー
-    // （unique sort 済み comma 結合文字列）。journal.sh whitelist 配線は別 issue。
-    ...(state.guardBlockedResults.length ? { guard_id: [...new Set(state.guardBlockedResults.map((g) => g.guard_id))].sort().join(',') } : {}),
   },
 })
 // journal handoff: choreography 本体は canonical _lib/journal-handoff.mjs の
@@ -6767,10 +6463,7 @@ return {
         journal_sh: 'journal',
         phase: ABORT_CTX.phase, label: ABORT_CTX.label, error: e,
         telemetry: {
-          gate_policy: GATE_POLICY,
           ...(ABORT_CTX.shape ? { shape: ABORT_CTX.shape } : {}),
-          eval_iter: ABORT_CTX.eval_iter,
-          subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
           eval_model_config: 'opus',
           review_model_config: 'opus',
           impl_model_config: 'opus',

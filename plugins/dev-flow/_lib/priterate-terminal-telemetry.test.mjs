@@ -1,9 +1,8 @@
-// F3: pr-iterate.js の telemetry キー（terminal_path / fix_terminal_reason /
-// review_model_config / plugin_version / iterate_history）を journal-save payload へ配線する
-// 検証テスト（TDD）。issue #601。
-// telemetryHandoff（journal-save prompt に verbatim 転写される payload）から
-// <<<JOURNAL_HANDOFF_BODY_BEGIN>>> / <<<JOURNAL_HANDOFF_BODY_END>>> の間を JSON.parse して
-// .telemetry を検証する。
+// pr-iterate.js の終端情報（terminal_path / fix_terminal_reason / history）が返り値に載り、
+// telemetry（journal-save payload）は merge_tier / iterate_status / review_model_config /
+// plugin_version / plugin_commit だけを書くことの検証テスト。issue #601 / #789。
+// telemetryHandoff（journal-save prompt に verbatim 転写される payload）は
+// <<<JOURNAL_HANDOFF_BODY_BEGIN>>> / <<<JOURNAL_HANDOFF_BODY_END>>> の間を JSON.parse して検証する。
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -157,12 +156,8 @@ test('[terminal-telemetry] CI 経路 applied_false: fix_terminal_reason=applied_
   assertNoCrash(error);
 
   assert.equal(result?.status, 'fix_failed', `status は fix_failed であるべきだが '${result?.status}' だった`);
-
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
-  const payload = extractJournalPayload(journalCall.prompt);
-  assert.equal(payload.telemetry.fix_terminal_reason, 'applied_false');
-  assert.equal(payload.telemetry.terminal_path, 'ci');
+  assert.equal(result.fix_terminal_reason, 'applied_false');
+  assert.equal(result.terminal_path, 'ci');
 });
 
 test('[terminal-telemetry] review 経路 null_after_retry: fix_terminal_reason=null_after_retry / terminal_path=review', async () => {
@@ -175,12 +170,8 @@ test('[terminal-telemetry] review 経路 null_after_retry: fix_terminal_reason=n
   assertNoCrash(error);
 
   assert.equal(result?.status, 'fix_failed', `status は fix_failed であるべきだが '${result?.status}' だった`);
-
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
-  const payload = extractJournalPayload(journalCall.prompt);
-  assert.equal(payload.telemetry.fix_terminal_reason, 'null_after_retry');
-  assert.equal(payload.telemetry.terminal_path, 'review');
+  assert.equal(result.fix_terminal_reason, 'null_after_retry');
+  assert.equal(result.terminal_path, 'review');
 });
 
 test('[terminal-telemetry] review 経路 commit_unensured: fix_terminal_reason=commit_unensured / terminal_path=review', async () => {
@@ -194,15 +185,11 @@ test('[terminal-telemetry] review 経路 commit_unensured: fix_terminal_reason=c
   assertNoCrash(error);
 
   assert.equal(result?.status, 'fix_failed', `status は fix_failed であるべきだが '${result?.status}' だった`);
-
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
-  const payload = extractJournalPayload(journalCall.prompt);
-  assert.equal(payload.telemetry.fix_terminal_reason, 'commit_unensured');
-  assert.equal(payload.telemetry.terminal_path, 'review');
+  assert.equal(result.fix_terminal_reason, 'commit_unensured');
+  assert.equal(result.terminal_path, 'review');
 });
 
-test('[terminal-telemetry] 即 lgtm: fix_terminal_reason キー欠落 / terminal_path=review / review_model_config / plugin_version / iterate_history', async () => {
+test('[terminal-telemetry] 即 lgtm: fix_terminal_reason null / terminal_path=review / history 1 round、telemetry は merge_tier / iterate_status / review_model_config / plugin_version / plugin_commit だけ', async () => {
   const { ctx, getAgentCalls } = makeSandbox({
     reviewerStub: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
     ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
@@ -212,27 +199,29 @@ test('[terminal-telemetry] 即 lgtm: fix_terminal_reason キー欠落 / terminal
   assertNoCrash(error);
 
   assert.equal(result?.status, 'lgtm', `status は lgtm であるべきだが '${result?.status}' だった`);
+  assert.equal(result.fix_terminal_reason, null, 'lgtm 終端では fix_terminal_reason は null');
+  assert.equal(result.terminal_path, 'review');
+  assert.ok(Array.isArray(result.history) && result.history.length === 1, 'history は length 1 の配列であるべき');
+  assert.equal(result.history[0].decision, 'approve');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.history[0].blocking)), []);
 
   const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
   assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
-  const payload = extractJournalPayload(journalCall.prompt);
-  const telemetry = payload.telemetry;
-
-  assert.equal(Object.hasOwn(telemetry, 'fix_terminal_reason'), false, 'lgtm 終端では fix_terminal_reason キーが欠落するべき');
-  assert.equal(telemetry.terminal_path, 'review');
+  const telemetry = extractJournalPayload(journalCall.prompt).telemetry;
+  assert.deepEqual(
+    Object.keys(telemetry).sort(),
+    ['iterate_status', 'merge_tier', 'plugin_commit', 'plugin_version', 'review_model_config'],
+    `pr-iterate の成功 telemetry キーが想定外: ${JSON.stringify(telemetry)}`,
+  );
+  assert.equal(telemetry.merge_tier, 'PR_ITERATE');
+  assert.equal(telemetry.iterate_status, 'lgtm');
   assert.equal(telemetry.review_model_config, 'opus', 'pr-reviewer は override 無し → frontmatter の opus');
-  assert.equal(Object.hasOwn(telemetry, 'quality_model_config'), false, 'quality_model_config は撤去済み（evaluator も frontmatter 既定で spawn）');
-  assert.equal(Object.hasOwn(telemetry, 'quality_model_fallback_label'), false, 'quality_model_fallback_label は撤去済み');
-
   assert.equal(telemetry.plugin_version, PLUGIN_VERSION);
-
-  assert.ok(Array.isArray(telemetry.iterate_history) && telemetry.iterate_history.length === 1, 'iterate_history は length 1 の配列であるべき');
-  assert.equal(telemetry.iterate_history[0].decision, 'approve');
-  assert.deepEqual(telemetry.iterate_history[0].blocking, []);
+  assert.equal(telemetry.plugin_commit, null, '単体起動は prerun を経ないので plugin_commit は null');
 });
 
-test('[terminal-telemetry] CI failed→fix→passed の 2 round: iterate_history に synthetic ci:: finding / terminal_path=review', async () => {
-  const { ctx, getAgentCalls } = makeSandbox({
+test('[terminal-telemetry] CI failed→fix→passed の 2 round: history に synthetic ci:: finding / terminal_path=review', async () => {
+  const { ctx } = makeSandbox({
     reviewerStub: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
     ciResponses: [
       { status: 'failed', failed_checks: [{ name: 'bats', bucket: 'fail', state: 'FAILURE' }], waited_seconds: 0, poll_attempts: 1 },
@@ -246,31 +235,11 @@ test('[terminal-telemetry] CI failed→fix→passed の 2 round: iterate_history
 
   assert.equal(result?.status, 'lgtm', `status は lgtm であるべきだが '${result?.status}' だった`);
 
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
-  const payload = extractJournalPayload(journalCall.prompt);
-  const telemetry = payload.telemetry;
-
-  assert.equal(telemetry.iterate_history.length, 2, 'iterate_history は 2 round であるべき');
-  assert.ok(telemetry.iterate_history[0].blocking.length >= 1, '1 round 目の blocking は 1 件以上であるべき');
-  assert.ok(telemetry.iterate_history[0].blocking[0].topic.startsWith('ci::'), '1 round 目の blocking topic は ci:: で始まるべき');
-  assert.equal(telemetry.iterate_history[0].blocking[0].severity, 'critical');
-  assert.deepEqual(telemetry.iterate_history[1].blocking, []);
-  assert.equal(telemetry.terminal_path, 'review', '最終 iteration は CI passed による lgtm なので terminal_path は review であるべき');
-});
-
-test('[terminal-telemetry] result.terminal_path と telemetry.terminal_path が一致する', async () => {
-  const { ctx, getAgentCalls } = makeSandbox({
-    reviewerStub: () => ({ decision: 'approve', issues: [], summary: 'ok' }),
-    ciResponses: [{ status: 'passed', failed_checks: [], waited_seconds: 0, poll_attempts: 1 }],
-  });
-
-  const { result, error } = await runPrIterateCapture(src, ctx);
-  assertNoCrash(error);
-
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
-  const payload = extractJournalPayload(journalCall.prompt);
-
-  assert.equal(result?.terminal_path, payload.telemetry.terminal_path, '返り値と telemetry payload の terminal_path は一致するべき');
+  const history = result.history;
+  assert.equal(history.length, 2, 'history は 2 round であるべき');
+  assert.ok(history[0].blocking.length >= 1, '1 round 目の blocking は 1 件以上であるべき');
+  assert.ok(history[0].blocking[0].topic.startsWith('ci::'), '1 round 目の blocking topic は ci:: で始まるべき');
+  assert.equal(history[0].blocking[0].severity, 'critical');
+  assert.equal(history[1].blocking.length, 0);
+  assert.equal(result.terminal_path, 'review', '最終 iteration は CI passed による lgtm なので terminal_path は review であるべき');
 });

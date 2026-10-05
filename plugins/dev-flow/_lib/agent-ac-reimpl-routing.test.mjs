@@ -2,7 +2,7 @@
 //   (A) 「ローカルで測って PR 本文に書く」型の agent AC が satisfied:false → standard でも reimpl#1 が走り、
 //       fix_feedback に AC-1 未達が載る。reimpl が返した pr_notes / design_decisions が PR 本文に載り、再評価で満たせば HOLD しない
 //   (B) `（人手）` の AC だけが未達 → 差し戻さず HOLD（ac_human_pending = 人手 AC 待ち）
-//   (C) agent AC が差し戻し上限後も未達 → HOLD（ac_agent_unsatisfied = 取りこぼし）。telemetry で件数を数えられる
+//   (C) agent AC が差し戻し上限後も未達 → HOLD（ac_agent_unsatisfied = 取りこぼし）。返り値で actor 別に数えられる
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -116,20 +116,14 @@ test('[agent-ac-reimpl] (B) （人手）の AC だけが未達 → 差し戻さ�
 });
 
 test('[agent-ac-reimpl] (C) agent AC が差し戻し上限後も未達 → HOLD 理由は取りこぼし（ac_agent_unsatisfied）で人手待ちと区別できる', async () => {
-  const handoffs = [];
   const { result, calls } = await run([MEASURE_AC, HUMAN_AC], {
     'eval#1': evalWith([false, false]),
     'eval#2': evalWith([false, false]),
     'eval#3': evalWith([false, false]),
-    'journal-save': (c) => { handoffs.push(c.prompt); return { saved: true }; },
   });
   assert.equal(reimplCalls(calls).length, AGENT_AC_REIMPL_MAX, `差し戻しは上限 ${AGENT_AC_REIMPL_MAX} 回: ${calls.map((c) => c.label).join(', ')}`);
   assert.equal(evalCalls(calls).length, AGENT_AC_REIMPL_MAX + 1);
   assert.equal(result?.merge_tier, 'HOLD');
   assert.deepEqual(plain(result.merge_tier_hold_reasons.map((r) => r.code)), ['ac_agent_unsatisfied', 'ac_human_pending']);
   assert.deepEqual(plain(result.final_unsatisfied_ac_by_actor), { agent: [0], human: [1] });
-  const payload = handoffs.join('\n');
-  assert.match(payload, /"ac_unsatisfied_agent":1/, `telemetry に取りこぼし件数: ${payload.slice(0, 400)}`);
-  assert.match(payload, /"ac_unsatisfied_human":1/);
-  assert.match(payload, new RegExp(`"agent_ac_reimpl":${AGENT_AC_REIMPL_MAX}`));
 });

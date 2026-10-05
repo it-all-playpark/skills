@@ -139,7 +139,7 @@ const STANDARD_ANALYZE_REQ = {
 // ============================================================
 // (1) Validate（need() で包まれた diff-gate proxy）で throw
 // ============================================================
-test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort entry 1 件（diff-gate / shape キー欠落（実効 shape 確定前）/ eval_iter:0）', async () => {
+test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort entry 1 件（diff-gate / shape キー欠落（実効 shape 確定前））', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: COMPLEX_ANALYZE_REQ,
     throwAt: { label: 'diff-gate', error: new Error('proxy boom') },
@@ -157,14 +157,18 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
   for (const key of [
     '"skill":"dev-flow"', '"outcome":"failure"', '"error_category":"abort"',
     '"error_msg":"abort@Validate/diff-gate: proxy boom"', '"error_phase":"Validate"',
-    '"abort_phase":"Validate"', '"abort_label":"diff-gate"',
-    '"eval_iter":0', '"subagent_invocations"', '"gate_policy"',
+    '"plugin_version"', '"eval_model_config":"opus"',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(1) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   }
+  // phase/label は error_phase と error_msg に載る。telemetry には複製しない（残す 12 キー以外を書かない）。
+  for (const key of ['"abort_phase"', '"abort_label"', '"eval_iter"', '"gate_policy"', '"subagent_invocations"']) {
+    assert.ok(!savePrompt.includes(key),
+      `(1) journal-save prompt に削除済み telemetry キー '${key}' が含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
+  }
   // 実効 shape は Security floor（realized diff 取得後）で確定する（issue #676）。Validate の abort は確定前なので
-  // shape キーを載せない（null を載せると Stop hook の enum 検証で落ちる）。
+  // shape キーを載せない。
   assert.ok(!savePrompt.includes('"shape"'),
     `(1) 実効 shape 確定前の abort では journal-save prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(savePrompt.includes('/tmp/wt/.devflow-tmp/payload-devflow-1-abort.json'),
@@ -185,7 +189,7 @@ test('[abort-telemetry] (1) Validate で diff-gate proxy が throw → abort ent
 // ============================================================
 // (2) Evaluate で evaluator が throw
 // ============================================================
-test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard（実効）/ eval_iter:1）', async () => {
+test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 件（eval#1 / shape:standard（実効））', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: STANDARD_ANALYZE_REQ,
     throwAt: { label: 'eval#1', error: new Error('evaluator boom') },
@@ -202,7 +206,7 @@ test('[abort-telemetry] (2) Evaluate で evaluator が throw → abort entry 1 �
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
     '"error_msg":"abort@Evaluate/eval#1: evaluator boom"', '"error_phase":"Evaluate"',
-    '"shape":"standard"', '"eval_iter":1',
+    '"shape":"standard"',
   ]) {
     assert.ok(savePrompt.includes(key),
       `(2) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
@@ -231,8 +235,8 @@ test('[abort-telemetry] (3) Setup で args.setup.ok が false → WT 未確定�
     `(3) journal-save prompt に error_msg が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
   assert.ok(!savePrompt.includes('"shape"'),
     `(3) shape 未確定のため journal-save prompt に '"shape"' キーを含むべきではないが含まれていた。prompt:\n${savePrompt.slice(0, 800)}`);
-  assert.ok(savePrompt.includes('"eval_iter":0'),
-    `(3) journal-save prompt に '"eval_iter":0' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
+  assert.ok(savePrompt.includes('"plugin_version"'),
+    `(3) journal-save prompt に '"plugin_version"' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt.slice(0, 800)}`);
 });
 
 // ============================================================
@@ -302,7 +306,7 @@ test('[abort-telemetry] (6) 完走経路: journal-log-abort が 0 回・journal-
 // ============================================================
 // (7) nested pr-iterate（workflow('dev-flow:pr-iterate')）が throw
 // ============================================================
-test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entry の abort_label は直前 trackedAgent でなく pr-iterate を指す', async () => {
+test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entry の error_msg / error_phase は直前 trackedAgent でなく pr-iterate を指す', async () => {
   const { ctx, calls } = makeSandbox({
     analyzeReq: { ...STANDARD_ANALYZE_REQ, acceptance_criteria: ['ac1', 'ac2', 'ac3'] },
     workflowThrows: new Error('pr-iterate boom'),
@@ -318,11 +322,10 @@ test('[abort-telemetry] (7) nested workflow(pr-iterate) が throw → abort entr
 
   const savePrompt = saveCalls[0]?.prompt ?? '';
   for (const key of [
-    '"abort_phase":"PR"', '"abort_label":"pr-iterate"',
     '"error_msg":"abort@PR/pr-iterate: pr-iterate boom"', '"error_phase":"PR"',
   ]) {
     assert.ok(savePrompt.includes(key),
-      `(7) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった（直前 trackedAgent の label が abort_label に残っている可能性）。prompt:\n${savePrompt.slice(0, 800)}`);
+      `(7) journal-save prompt に '${key}' が含まれるべきだが含まれていなかった（直前 trackedAgent の label が残っている可能性）。prompt:\n${savePrompt.slice(0, 800)}`);
   }
 });
 

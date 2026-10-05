@@ -1,6 +1,6 @@
 // F2: CI ポーリング配線の検証テスト（TDD）。
 // AC-1: pending -> passed で pr-iterate が LGTM へ進む。
-// AC-7: waited_seconds/poll_attempts が journal telemetry handoff / 終端サマリー / return に反映される。
+// AC-7: waited_seconds/poll_attempts が終端サマリー / return に反映される。
 // issue #488: fetch は subagent の bare `gh pr checks`、check-ci.sh はその snapshot に対する
 // 純変換。ポーリングは pr-iterate.js の script 側 ci-wait ループが持つ（issue #663）。
 
@@ -190,18 +190,6 @@ test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_se
   assert.equal(result?.ci_wait_seconds, 0, `result.ci_wait_seconds は script 側積算で 0 であるべきだが ${result?.ci_wait_seconds} だった`);
   assert.equal(result?.ci_poll_attempts, 2, `result.ci_poll_attempts は script 側積算で 2 であるべきだが ${result?.ci_poll_attempts} だった`);
 
-  // journal-save (stage1, issue #494) の telemetry handoff prompt に累積値が反映される
-  const journalCall = getAgentCalls().find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, 'label===journal-save の agent 呼び出しが存在するべき');
-  assert.ok(
-    journalCall.prompt.includes('"ci_wait_seconds":0'),
-    `journal-log prompt に "ci_wait_seconds":0 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
-  );
-  assert.ok(
-    journalCall.prompt.includes('"ci_poll_attempts":2'),
-    `journal-log prompt に "ci_poll_attempts":2 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
-  );
-
   // 終端サマリー投稿（post-summary）自体が行われたことは維持しつつ、本文の見出し文言ではなく
   // routing（terminal_path）で CI 待機経路の反映を検証する（issue #636: 自然言語 pin の除去）。
   // このシナリオは 2 回目の CI check で passed になり、review 経路のまま終端する
@@ -210,10 +198,6 @@ test('[ci-wait-telemetry] AC-1: pending -> passed で LGTM に進み、waited_se
   const postSummary = getAgentCalls().find((c) => c.label === 'post-summary');
   assert.ok(postSummary != null, 'label===post-summary の agent 呼び出しが存在するべき');
   assert.equal(result?.terminal_path, 'review', `result.terminal_path は 'review' であるべきだが '${result?.terminal_path}' だった`);
-  assert.ok(
-    journalCall.prompt.includes('"terminal_path":"review"'),
-    `journal-save prompt の telemetry JSON に "terminal_path":"review" が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`,
-  );
 });
 
 test('[ci-wait-telemetry] CI 呼び出しが 0 回（review が blocking で fix 前に stuck 等）でも ci_wait_seconds/ci_poll_attempts は 0 で返る', async () => {

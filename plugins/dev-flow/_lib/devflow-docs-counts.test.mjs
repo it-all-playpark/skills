@@ -1,5 +1,5 @@
 // _lib/devflow-docs-counts.test.mjs
-// issue #697: README / telemetry.md / agent 定義に書かれた数・役割が実装とずれないことを pin する。
+// issue #697: README / agent 定義に書かれた数・役割が実装とずれないことを pin する。
 // 期待値は実装（dev-flow.js の meta.phases・agents/ の実体・workflow の agentType 実呼び出し）から導出する。
 //
 // Run: npx vitest run _lib/devflow-docs-counts.test.mjs
@@ -98,14 +98,6 @@ test('journal.sh: prune の既定 keep 一覧に撤去した doctor / improve �
   for (const removed of ['dev-flow-doctor', 'dev-flow-improve', 'dev-improve']) {
     assert.ok(!keep.includes(removed), `PRUNE_KEEP_DEFAULT に撤去した ${removed} が残っている: ${m[1]}`);
   }
-});
-
-test('telemetry.md: subagent_invocations の実測 agentType 列挙数と「N 種」が一致する', () => {
-  const md = readFileSync(join(pluginRoot, 'dev-flow/references/telemetry.md'), 'utf8');
-  const m = md.match(/実測 agentType は([\s\S]*?)の (\d+) 種/);
-  assert.ok(m, 'telemetry.md に実測 agentType の列挙が無い');
-  const listed = m[1].split('/').map((s) => s.trim()).filter(Boolean);
-  assert.equal(listed.length, Number(m[2]), `列挙: ${listed.join(', ')}`);
 });
 
 test("dev-runner.md: 役割記述が agentType: 'dev-runner' の実呼び出し（analyze-clarify / PR fix）に合う", () => {

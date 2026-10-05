@@ -1,8 +1,7 @@
 // F2 (issue #663): pr-iterate.js の CI gate を script 側 poll ループへ置き換えたことの検証（TDD）。
 //
 // AC-2: CI 待ちが script 側ループで、総待機の上限が定数 CI_WAIT_CEILING_SECONDS（既定 300）で決まる。
-// AC-3: telemetry ci_wait_seconds / ci_poll_attempts が script 側積算で現行と同じキー・意味で
-//   handoff（journal-save prompt / return 値）に載る。
+// AC-3: ci_wait_seconds / ci_poll_attempts が script 側積算で現行と同じキー・意味で return 値に載る。
 // AC-4: ceiling 到達時は ci_pending 終端（ci_error にならない）。CI failed は現行どおり fix loop へ。
 // AC-1: ci-check exec-proxy の prompt に attempt ループ・sleep 指示が無く、1 spawn で 1 回の判定だけを返す。
 //
@@ -45,11 +44,6 @@ test('[ci-wait-loop] pending → passed: ci-check#1 が pending、ci-wait#1-1 �
   assert.equal(wait1.agentType, 'dev-flow:dev-runner-haiku-ro', `ci-wait#1-1 の agentType が想定と異なる: ${wait1.agentType}`);
   assert.ok(wait1.prompt.includes('`ci-wait 45`'), `ci-wait#1-1 の prompt に \`ci-wait 45\` が含まれるべき。prompt: ${wait1.prompt.slice(0, 500)}`);
   assert.ok(!wait1.prompt.includes('check-ci'), `ci-wait#1-1 の prompt に check-ci が含まれるべきでない。prompt: ${wait1.prompt.slice(0, 500)}`);
-
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, "label==='journal-save' の呼び出しが存在するべき");
-  assert.ok(journalCall.prompt.includes('"ci_wait_seconds":45'), `journal-save prompt に "ci_wait_seconds":45 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`);
-  assert.ok(journalCall.prompt.includes('"ci_poll_attempts":2'), `journal-save prompt に "ci_poll_attempts":2 が含まれるべき。prompt: ${journalCall.prompt.slice(0, 1000)}`);
 });
 
 test('[ci-wait-loop] ceiling: 常に pending なら ci-wait 6 回 / ci-check 7 回で ci_pending 終端（ci_error にならない）、ci_wait_seconds=270 / ci_poll_attempts=7', async () => {

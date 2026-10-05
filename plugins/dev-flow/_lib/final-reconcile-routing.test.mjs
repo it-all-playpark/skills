@@ -21,7 +21,7 @@
 //   (e) fixes=1 + reconcile-sync 失敗 → unavailable + HOLD + calls に 'test#final' が現れない
 //   (f) fixes=1 + changed-files-final が UI ファイルを返し ui-verify-config-final が有効 config
 //       → ui-verify-stack-final/ui-verify-smoke-final/ui-verify-teardown-final が呼ばれ
-//       final_ui_verify が設定される（AC-4）+ journal-log prompt に 'final_reconcile'（AC-6）
+//       final_ui_verify が設定される（AC-4）+ final_reconcile が reverified（AC-6）
 //   (g) fixes=1 + 'ui-verify-smoke-final' が throw → teardown は呼ばれ workflow は完走、
 //       final_ui_verify==='failed_open'（AC-7 fail-open + teardown 保証）
 //   (h) calls 配列で 'merge-tier-facts'（Merge tier）が 'reconcile-sync' より後（AC-5）
@@ -292,10 +292,10 @@ test("[final-reconcile] (e2) fixes=1 + reconcile-sync が cwd branch mismatch �
 
 // ============================================================
 // (f) fixes=1 + UI ファイル変化 + 有効 ui-verify config → ui-verify-* -final 系が呼ばれる（AC-4）
-//     + journal-log prompt に 'final_reconcile' が含まれる（AC-6）
+//     + 返り値 final_reconcile が reverified（AC-6）
 // ============================================================
 
-test('[final-reconcile] (f) fixes=1 + UI touch + 有効 config → ui-verify-*-final が呼ばれ final_ui_verify 設定 + journal-log に final_reconcile', async () => {
+test('[final-reconcile] (f) fixes=1 + UI touch + 有効 config → ui-verify-*-final が呼ばれ final_ui_verify 設定 + final_reconcile reverified', async () => {
   const { ctx, calls } = makeSandbox({
     fixesApplied: 1,
     overrides: {
@@ -318,11 +318,7 @@ test('[final-reconcile] (f) fixes=1 + UI touch + 有効 config → ui-verify-*-f
   assert.ok(!calls.some((c) => c.label === 'ui-verify-final'), "(f) smoke を scenario 用の label 'ui-verify-final' で記録しない");
   assert.equal(calls.find((c) => c.label === 'ui-verify-smoke-final')?.agentType, 'dev-flow:dev-runner-haiku', '(f) smoke-final は exec-proxy（dev-runner-haiku）');
   assert.equal(result?.final_ui_verify, 'passed', `(f) final_ui_verify は 'passed' のはずだが ${JSON.stringify(result?.final_ui_verify)}`);
-
-  // issue #494: 実際の telemetry payload は journal-save (stage1) の prompt に載る
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall, "(f) 'journal-save' の呼び出しが存在すること");
-  assert.ok(journalCall.prompt.includes('final_reconcile'), "(f) journal-save prompt に 'final_reconcile' が含まれること（AC-6）");
+  assert.equal(result?.final_reconcile, 'reverified', `(f) final_reconcile は 'reverified' のはずだが ${JSON.stringify(result?.final_reconcile)}`);
 });
 
 // ============================================================

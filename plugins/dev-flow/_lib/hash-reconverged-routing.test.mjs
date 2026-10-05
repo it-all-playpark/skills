@@ -10,7 +10,7 @@
 //
 // テストケース:
 //   (a) 既定（3 条件成立）→ hash_reconverged、merge_tier=REVIEW、hash_mismatch reason なし、
-//       tree-diff-numstat / merge-tier-facts とも 1 回、journal に eval_staleness=hash_reconverged
+//       tree-diff-numstat / merge-tier-facts とも 1 回
 //   (b) facts.head_tree が evalDiffHash と不一致（prHeadTreeOid!==evalDiffHash、mergeDiffHash
 //       ===evalDiffHash）→ hash_mismatch 維持・HOLD
 //   (c) facts.diffhash が取得失敗（mergeDiffHash null）→ hash_mismatch 維持・HOLD（head_tree が
@@ -137,7 +137,7 @@ function makeSandbox({ overrides = {}, workflow } = {}) {
 // (a) 既定（3 条件成立） → hash_reconverged
 // ============================================================
 
-test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_reconverged、merge_tier=REVIEW、hash_mismatch reason なし、probe 各1回、journal に再収束', async () => {
+test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_reconverged、merge_tier=REVIEW、hash_mismatch reason なし、probe 各1回', async () => {
   const { ctx, calls } = makeSandbox();
   const { result, error } = await runDevFlowCapture(devFlowSrc, ctx);
   assertNoCrash(error, 'a');
@@ -158,16 +158,6 @@ test('[hash-reconverged] (a) 既定(3条件成立) → eval_staleness=hash_recon
 
   const postSummary = calls.find((c) => c.label === 'post-summary');
   assert.ok(postSummary != null, '(a) post-summary が呼ばれていない');
-  const journalCall = calls.find((c) => c.label === 'journal-save');
-  assert.ok(journalCall != null, '(a) journal-save が呼ばれていない');
-  assert.ok(
-    journalCall.prompt.includes('"eval_staleness":"hash_reconverged"'),
-    `(a) journal-save prompt に "eval_staleness":"hash_reconverged" を含むべきだが:\n${journalCall.prompt.slice(0, 500)}`,
-  );
-  assert.ok(
-    !journalCall.prompt.includes('"eval_staleness":"hash_mismatch"'),
-    `(a) journal-save prompt に "eval_staleness":"hash_mismatch" を含むべきでない:\n${journalCall.prompt.slice(0, 500)}`,
-  );
 });
 
 // ============================================================

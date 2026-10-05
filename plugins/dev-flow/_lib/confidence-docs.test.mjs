@@ -1,6 +1,6 @@
 // _lib/confidence-docs.test.mjs
 // evaluator.md / pr-reviewer.md / references/telemetry.md の confidence 記載を静的 pin する。
-// docs drift（判定基準の必須マーカー欠落・telemetry キー未記載）を検出する。
+// docs drift（判定基準の必須マーカー欠落・撤去した telemetry キーの残存）を検出する。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -27,7 +27,8 @@ test('pr-reviewer.md: confidence が出現し判定基準の必須マーカー�
   assert.match(prReviewerMd, /記録専用/);
 });
 
-test('references/telemetry.md: eval_confidence / review_confidence の両トークンが telemetry キー一覧に含まれる（docs drift 防止）', () => {
-  assert.match(devFlowRules, /eval_confidence/);
-  assert.match(devFlowRules, /review_confidence/);
+// confidence は agent 出力の記録専用フィールドで、journal telemetry には書かない（issue #789）
+test('references/telemetry.md: eval_confidence / review_confidence は telemetry キー一覧に無い（docs drift 防止）', () => {
+  assert.doesNotMatch(devFlowRules, /eval_confidence/);
+  assert.doesNotMatch(devFlowRules, /review_confidence/);
 });

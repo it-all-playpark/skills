@@ -248,13 +248,9 @@ test('[journal-log] AC#1 (issue #494): Merge tier phase 後に journal-save→jo
   const savePrompt = getJournalPrompts()[0] ?? '';
   const requiredKeys = [
     '"merge_tier"',
-    '"merge_tier_reasons"',
-    '"gate_policy"',
-    '"danger_hits"',
-    '"danger_fail_closed"',
     '"shape"',
-    '"shape_reason"',
-    '"eval_iter"',
+    '"route"',
+    '"plugin_version"',
     '"skill":"dev-flow"',
     '"outcome":"success"',
     '"journal_sh"',
@@ -382,9 +378,9 @@ test('[journal-log] inline 整合: dev-flow.js の inline 区間外に journal h
   assert.equal(src.indexOf("let journalLogStatus = 'save_failed'", anchor + 1), -1, 'inline 区間外に手写し choreography（journalLogStatus 初期化）が残っている');
 });
 
-// issue #561 AC-3: evaluator が confidence を返すケース/省略するケースの両方で run が abort せず、
-// journal-save (stage1) の handoff payload に eval_confidence が正しく現れること。
-test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は journal-save prompt に "eval_confidence":0.8 が現れる', async () => {
+// issue #561 AC-3: evaluator が confidence を返すケース/省略するケースの両方で run が abort しない。
+// confidence は telemetry に書かない（残す 12 キーに含まれない）。
+test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は abort せず、journal-save prompt に eval_confidence を書かない', async () => {
   const journalResult = { logged: true, summary: 'ok' };
   const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult, undefined, { confidence: 0.8 });
 
@@ -396,13 +392,14 @@ test('[journal-log] issue #561: evaluator が confidence:0.8 を返す run は j
   assert.ok(result != null, 'evaluator confidence あり run は abort してはならない');
 
   const savePrompt = getJournalPrompts()[0] ?? '';
+  assert.ok(savePrompt.includes('"merge_tier"'), `journal-save prompt に handoff payload が無い。prompt:\n${savePrompt}`);
   assert.ok(
-    savePrompt.includes('"eval_confidence":0.8'),
-    `journal-save prompt に '"eval_confidence":0.8' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt}`,
+    !savePrompt.includes('"eval_confidence"'),
+    `journal-save prompt に削除済み telemetry キー '"eval_confidence"' が含まれていた。prompt:\n${savePrompt}`,
   );
 });
 
-test('[journal-log] issue #561: evaluator が confidence を省略する run は abort せず journal-save prompt に "eval_confidence":null が現れる', async () => {
+test('[journal-log] issue #561: evaluator が confidence を省略する run は abort しない', async () => {
   const journalResult = { logged: true, summary: 'ok' };
   const { ctx, getJournalPrompts } = makeSandbox(ANALYZE_REQ, journalResult);
 
@@ -412,10 +409,5 @@ test('[journal-log] issue #561: evaluator が confidence を省略する run は
     assert.fail(`dev-flow.js が sandbox でクラッシュ: ${error.name}: ${error.message}`);
   }
   assert.ok(result != null, 'evaluator confidence 省略 run は abort してはならない（optional 契約）');
-
-  const savePrompt = getJournalPrompts()[0] ?? '';
-  assert.ok(
-    savePrompt.includes('"eval_confidence":null'),
-    `journal-save prompt に '"eval_confidence":null' が含まれるべきだが含まれていなかった。prompt:\n${savePrompt}`,
-  );
+  assert.equal(getJournalPrompts().length, 1, 'confidence 省略 run でも journal-save は 1 回呼ばれる');
 });

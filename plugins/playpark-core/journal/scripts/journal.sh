@@ -67,17 +67,8 @@ cmd_log() {
     local recovery="" recovery_turns=""
     local issue="" duration_turns="" context_extra=""
     local project="" worktree="" mode=""
-    local merge_tier="" gate_policy="" danger_hits=""
-    local shape="" eval_verdict="" iterate_status="" eval_iter=""
-    local eval_staleness=""
     local repo="" pr_number=""
-    local ci_wait_seconds="" ci_poll_attempts=""
     local telemetry_json=""
-    local vdelta_verdicts="" vdelta_fail_open="" redgreen_deny="" testsurf_hits=""
-    local duration_seconds="" phase_durations="" merge_tier_reasons="" route=""
-    local subagent_invocations=""
-    local guard_id=""
-    local eval_confidence="" review_confidence="" review_decision=""
 
     # Parse positional args
     if [[ $# -lt 2 ]]; then
@@ -107,32 +98,9 @@ cmd_log() {
             --worktree) worktree="$2"; shift 2 ;;
             --context) context_extra="$2"; shift 2 ;;
             --mode) mode="$2"; shift 2 ;;
-            --merge-tier) merge_tier="$2"; shift 2 ;;
-            --gate-policy) gate_policy="$2"; shift 2 ;;
-            --danger-hits) danger_hits="$2"; shift 2 ;;
-            --shape) shape="$2"; shift 2 ;;
-            --eval-verdict) eval_verdict="$2"; shift 2 ;;
-            --iterate-status) iterate_status="$2"; shift 2 ;;
-            --eval-staleness) eval_staleness="$2"; shift 2 ;;
-            --eval-iter) eval_iter="$2"; shift 2 ;;
             --repo) repo="$2"; shift 2 ;;
             --pr-number) pr_number="$2"; shift 2 ;;
-            --ci-wait-seconds) ci_wait_seconds="$2"; shift 2 ;;
-            --ci-poll-attempts) ci_poll_attempts="$2"; shift 2 ;;
             --telemetry-json) telemetry_json="$2"; shift 2 ;;
-            --vdelta-verdicts) vdelta_verdicts="$2"; shift 2 ;;
-            --vdelta-fail-open) vdelta_fail_open="$2"; shift 2 ;;
-            --redgreen-deny) redgreen_deny="$2"; shift 2 ;;
-            --testsurf-hits) testsurf_hits="$2"; shift 2 ;;
-            --duration-seconds) duration_seconds="$2"; shift 2 ;;
-            --phase-durations) phase_durations="$2"; shift 2 ;;
-            --merge-tier-reasons) merge_tier_reasons="$2"; shift 2 ;;
-            --route) route="$2"; shift 2 ;;
-            --subagent-invocations) subagent_invocations="$2"; shift 2 ;;
-            --guard-id) guard_id="$2"; shift 2 ;;
-            --eval-confidence) eval_confidence="$2"; shift 2 ;;
-            --review-confidence) review_confidence="$2"; shift 2 ;;
-            --review-decision) review_decision="$2"; shift 2 ;;
             *) die_json "Unknown option: $1" 1 ;;
         esac
     done
@@ -160,130 +128,11 @@ cmd_log() {
         fi
     fi
 
-    # Validate new telemetry fields
-    if [[ -n "$eval_iter" ]]; then
-        if ! [[ "$eval_iter" =~ ^[0-9]+$ ]]; then
-            die_json "Invalid --eval-iter: $eval_iter. Must be a non-negative integer" 1
-        fi
-    fi
-    if [[ -n "$eval_staleness" ]]; then
-        case "$eval_staleness" in
-            none|hash_mismatch|hash_reconverged|iterate_incomplete|iterate_fixed) ;;
-            *) die_json "Invalid --eval-staleness: $eval_staleness. Must be none|hash_mismatch|hash_reconverged|iterate_incomplete|iterate_fixed" 1 ;;
-        esac
-    fi
     if [[ -n "$repo" ]] && ! [[ "$repo" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$ ]]; then
         die_json "Invalid --repo: $repo. Must be owner/name format" 1
     fi
     if [[ -n "$pr_number" ]] && ! [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
         die_json "Invalid --pr-number: $pr_number. Must be a positive integer" 1
-    fi
-    if [[ -n "$ci_wait_seconds" ]]; then
-        if ! [[ "$ci_wait_seconds" =~ ^[0-9]+$ ]]; then
-            die_json "Invalid --ci-wait-seconds: $ci_wait_seconds. Must be a non-negative integer" 1
-        fi
-    fi
-    if [[ -n "$ci_poll_attempts" ]]; then
-        if ! [[ "$ci_poll_attempts" =~ ^[0-9]+$ ]]; then
-            die_json "Invalid --ci-poll-attempts: $ci_poll_attempts. Must be a non-negative integer" 1
-        fi
-    fi
-
-    # Validate the 8 telemetry flags added for issue #430 (fail-open: drop-and-warn,
-    # never die_json — a single bad key must not lose the whole entry since the
-    # sender is a Stop hook auto-flush with no human retry path).
-    if [[ -n "$vdelta_verdicts" ]]; then
-        if ! echo "$vdelta_verdicts" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --vdelta-verdicts: $vdelta_verdicts (must be a JSON array of objects)" >&2
-            vdelta_verdicts=""
-        fi
-    fi
-    if [[ -n "$vdelta_fail_open" ]]; then
-        if ! [[ "$vdelta_fail_open" =~ ^[0-9]+$ ]]; then
-            echo "journal log: dropping invalid --vdelta-fail-open: $vdelta_fail_open (must be a non-negative integer)" >&2
-            vdelta_fail_open=""
-        fi
-    fi
-    if [[ -n "$redgreen_deny" ]]; then
-        if ! echo "$redgreen_deny" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --redgreen-deny: $redgreen_deny (must be a JSON array of objects)" >&2
-            redgreen_deny=""
-        fi
-    fi
-    if [[ -n "$testsurf_hits" ]]; then
-        if ! echo "$testsurf_hits" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --testsurf-hits: $testsurf_hits (must be a JSON array of strings)" >&2
-            testsurf_hits=""
-        fi
-    fi
-    if [[ -n "$duration_seconds" ]]; then
-        if ! [[ "$duration_seconds" =~ ^[0-9]+$ ]]; then
-            echo "journal log: dropping invalid --duration-seconds: $duration_seconds (must be a non-negative integer)" >&2
-            duration_seconds=""
-        fi
-    fi
-    if [[ -n "$phase_durations" ]]; then
-        if ! echo "$phase_durations" | jq -e 'type == "object" and all(.[]; type == "number")' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --phase-durations: $phase_durations (must be a JSON object of numbers)" >&2
-            phase_durations=""
-        fi
-    fi
-    if [[ -n "$merge_tier_reasons" ]]; then
-        if ! echo "$merge_tier_reasons" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --merge-tier-reasons: $merge_tier_reasons (must be a JSON array of strings)" >&2
-            merge_tier_reasons=""
-        fi
-    fi
-    if [[ -n "$subagent_invocations" ]]; then
-        if ! echo "$subagent_invocations" | jq -e 'type == "object" and (.total | type == "number") and ((.by_type // {}) | type == "object") and ((.by_type // {}) | all(.[]; type == "number"))' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --subagent-invocations: $subagent_invocations (must be {total: number, by_type: object of numbers})" >&2
-            subagent_invocations=""
-        fi
-    fi
-    if [[ -n "$route" ]]; then
-        case "$route" in
-            lite|full) ;;
-            *)
-                echo "journal log: dropping invalid --route: $route (must be lite|full)" >&2
-                route=""
-                ;;
-        esac
-    fi
-    if [[ -n "$guard_id" ]]; then
-        if ! [[ "$guard_id" =~ ^[a-z][a-z0-9-]{0,39}(,[a-z][a-z0-9-]{0,39}){0,15}$ ]]; then
-            echo "journal log: dropping invalid --guard-id: $guard_id (must match ^[a-z][a-z0-9-]{0,39}(,[a-z][a-z0-9-]{0,39}){0,15}$)" >&2
-            guard_id=""
-        fi
-    fi
-
-    # Validate --eval-confidence / --review-confidence (issue #561; same fail-open
-    # drop-and-warn precedent as the 8 telemetry flags above — a single bad
-    # confidence value must not lose the whole entry). Accepts a JSON number in
-    # [0,1] or the literal string "null" (recorded as JSON null; agent ran but
-    # did not return a confidence).
-    if [[ -n "$eval_confidence" ]]; then
-        if ! echo "$eval_confidence" | jq -e '(type == "number" and . >= 0 and . <= 1) or type == "null"' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --eval-confidence: $eval_confidence (must be a number in [0,1] or null)" >&2
-            eval_confidence=""
-        fi
-    fi
-    if [[ -n "$review_confidence" ]]; then
-        if ! echo "$review_confidence" | jq -e '(type == "number" and . >= 0 and . <= 1) or type == "null"' >/dev/null 2>&1; then
-            echo "journal log: dropping invalid --review-confidence: $review_confidence (must be a number in [0,1] or null)" >&2
-            review_confidence=""
-        fi
-    fi
-
-    # Validate --review-decision (closed 3-value enum; fail-open drop-and-warn
-    # like --route above)
-    if [[ -n "$review_decision" ]]; then
-        case "$review_decision" in
-            approve|request-changes|comment) ;;
-            *)
-                echo "journal log: dropping invalid --review-decision: $review_decision (must be approve|request-changes|comment)" >&2
-                review_decision=""
-                ;;
-        esac
     fi
 
     ensure_journal_dir
@@ -347,107 +196,9 @@ cmd_log() {
         entry=$(echo "$entry" | jq --argjson ctx "$context" '. + {context: $ctx}')
     fi
 
-    # Telemetry object
-    local has_telemetry=false
-    local telemetry='{}'
-    if [[ -n "$merge_tier" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$merge_tier" '. + {merge_tier: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$gate_policy" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$gate_policy" '. + {gate_policy: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$danger_hits" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$danger_hits" '. + {danger_hits: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$shape" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$shape" '. + {shape: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$eval_verdict" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$eval_verdict" '. + {eval_verdict: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$iterate_status" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$iterate_status" '. + {iterate_status: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$eval_iter" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$eval_iter" '. + {eval_iter: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$eval_staleness" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$eval_staleness" '. + {eval_staleness: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$ci_wait_seconds" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$ci_wait_seconds" '. + {ci_wait_seconds: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$ci_poll_attempts" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$ci_poll_attempts" '. + {ci_poll_attempts: $v}')
-        has_telemetry=true
-    fi
+    # Telemetry object: --telemetry-json の object をそのまま入れる（キーごとの flag は持たない）
     if [[ -n "$telemetry_json" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson extra "$telemetry_json" '. + $extra')
-        has_telemetry=true
-    fi
-    if [[ -n "$vdelta_verdicts" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$vdelta_verdicts" '. + {vdelta_verdicts: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$vdelta_fail_open" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$vdelta_fail_open" '. + {vdelta_fail_open: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$redgreen_deny" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$redgreen_deny" '. + {redgreen_deny: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$testsurf_hits" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$testsurf_hits" '. + {testsurf_hits: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$duration_seconds" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$duration_seconds" '. + {duration_seconds: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$phase_durations" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$phase_durations" '. + {phase_durations: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$merge_tier_reasons" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$merge_tier_reasons" '. + {merge_tier_reasons: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$route" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$route" '. + {route: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$guard_id" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$guard_id" '. + {guard_id: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$subagent_invocations" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$subagent_invocations" '. + {subagent_invocations: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$eval_confidence" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$eval_confidence" '. + {eval_confidence: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$review_confidence" ]]; then
-        telemetry=$(echo "$telemetry" | jq --argjson v "$review_confidence" '. + {review_confidence: $v}')
-        has_telemetry=true
-    fi
-    if [[ -n "$review_decision" ]]; then
-        telemetry=$(echo "$telemetry" | jq --arg v "$review_decision" '. + {review_decision: $v}')
-        has_telemetry=true
-    fi
-    if [[ "$has_telemetry" == true ]]; then
-        entry=$(echo "$entry" | jq --argjson tel "$telemetry" '. + {telemetry: $tel}')
+        entry=$(echo "$entry" | jq --argjson tel "$telemetry_json" '. + {telemetry: $tel}')
     fi
 
     # Error object
@@ -903,13 +654,8 @@ Subcommands:
 
 Examples:
   journal.sh log dev-kickoff success --issue 42 --duration-turns 15
-  journal.sh log dev-flow success --merge-tier REVIEW --shape standard --eval-iter 1 --iterate-status lgtm --eval-verdict pass --repo acme/skills --pr-number 123
-  journal.sh log pr-iterate success --merge-tier PR_ITERATE --iterate-status lgtm --ci-wait-seconds 30 --ci-poll-attempts 3
-  journal.sh log dev-flow success --route lite --duration-seconds 840 --phase-durations '{"analyze":120}' --merge-tier-reasons '["danger hit"]' --testsurf-hits '[]' --vdelta-verdicts '[{"ac":1,"status":"promoted"}]' --vdelta-fail-open 1 --redgreen-deny '[{"ac":2,"reasons":["no red"]}]'
-  journal.sh log dev-flow success --error-category guard_blocked --guard-id sandbox-deny  # guard/hook 由来 BLOCKED の telemetry (guard_id は fail-open; dotfiles Stop hook 転送配線は dotfiles 側 PR)
+  journal.sh log dev-flow success --repo acme/skills --pr-number 123 --telemetry-json '{"merge_tier":"REVIEW","shape":"standard","route":"full"}'
   journal.sh log dev-flow failure --error-category abort --error-msg "abort@Evaluate/eval#1: ..." --error-phase Evaluate  # run abort telemetry (issue #607)
-  journal.sh log dev-flow success --eval-confidence 0.85  # evaluator の verdict 判定確信度 [0,1] または null (fail-open drop-and-warn)
-  journal.sh log pr-iterate success --review-confidence 0.6 --review-decision approve  # reviewer の確信度と decision (review-decision は approve|request-changes|comment の closed enum, fail-open)
   journal.sh log dev-kickoff failure --error-category env --error-msg "node_modules not found"
   journal.sh hook-capture < posttooluse.json
   journal.sh query --since 7d --skill dev-kickoff

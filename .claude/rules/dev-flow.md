@@ -18,7 +18,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 `plugins/dev-flow/dev-flow/references/`:
 
 - `pipeline.md` — phase 経路 / shape 3 tier / lite route / subagent の model・effort・fallback / isolation probe / gate_policy・block_class
-- `telemetry.md` — telemetry キー一覧と Stop hook の二経路転送
+- `telemetry.md` — telemetry キー一覧と Stop hook の転送
 - `justification-classes.md` — W7 distrust 正当化クラス・prescription 正当化クラスと sunset path
 - `exec-proxy.md` — bin/ bare 名起動形・check-ci の argv 転写・失敗ポリシー表
 - `inline-generation.md` — sync-inlines の起動形と canonical の構造制約
@@ -45,7 +45,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 - empty-diff gate は fail-closed（cross-repo は人間ラベル opt-in + 決定論 dirty 検証が揃った場合のみ graceful 終端）
 - block_class は `approach_mismatch` / `guard_blocked` の閉じた enum。guard_blocked は replan ループから除外し evaluator focus へ直行
 - isolation probe: `written:false` は fail-closed（throw + 回避手順: 別 worktree を add → EnterWorktree → 再実行）。probe 自体の失敗は fail-open。`bgIsolation:"none"` による guard 無効化は採らない（共有 checkout 汚染は blast-radius。設定緩和で sunset しない）
-- Stop hook の per-key flag を新設したら `PER_KEY_TELEMETRY_KEYS` にも足す（passthrough 側が drop 済みの契約違反値を復活させ fail-closed が迂回されるため）。新規キーは handoff に載せるだけで到達する
+- telemetry は Stop hook が `--telemetry-json` 一本で journal へ渡す（キー別 flag・検証は持たない）。workflow が書くキーは telemetry.md の一覧に限る（`_lib/telemetry-keys.test.mjs` が pin）。読み手の無いキーを足さない — 読まれない値の計算・転記コードが残るため
 
 ## distrust / prescription の正当化（sunset トリガ）
 

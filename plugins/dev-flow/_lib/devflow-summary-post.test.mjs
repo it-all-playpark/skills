@@ -242,34 +242,30 @@ test('[summary-post] post-summary stub が posted:false を返しても result.m
 
 // ============================================================
 // summary_posted（issue #712 AC-3）: 投稿失敗が fail-open の log 1 行で消えないよう、
-// 返り値・telemetry handoff・終端 note に出す。
+// 返り値・終端 note に出す。
 // ============================================================
 
 async function runWithPost(postResult) {
-  const { ctx, calls } = makeDevFlowSandbox({ overrides: { 'post-summary': postResult } });
+  const { ctx } = makeDevFlowSandbox({ overrides: { 'post-summary': postResult } });
   const { result, error } = await runWorkflowCapture(src, ctx);
   assertNoCrash(error, 'summary_posted');
   assert.equal(error, null, `dev-flow run が throw した: ${error?.message}`);
-  const save = calls.find((c) => c.label === 'journal-save');
-  assert.ok(save, 'journal-save（telemetry handoff）が呼ばれていない');
-  return { result, handoff: save.prompt };
+  return { result };
 }
 
 for (const [name, postResult] of [
   ['posted:false', { posted: false }],
   ['null（agent が結果を返さない）', null],
 ]) {
-  test(`[summary-post] post-summary が ${name} のとき summary_posted:false が返り値・telemetry に載り note に「終端サマリ未投稿」が出る`, async () => {
-    const { result, handoff } = await runWithPost(postResult);
+  test(`[summary-post] post-summary が ${name} のとき summary_posted:false が返り値に載り note に「終端サマリ未投稿」が出る`, async () => {
+    const { result } = await runWithPost(postResult);
     assert.equal(result.summary_posted, false);
-    assert.ok(handoff.includes('"summary_posted":false'), 'telemetry handoff に "summary_posted":false が無い');
     assert.ok(result.note.includes('終端サマリ未投稿'), `note に「終端サマリ未投稿」が無い: ${result.note}`);
   });
 }
 
 test('[summary-post] post-summary が posted:true のとき summary_posted:true で note に「終端サマリ未投稿」が出ない', async () => {
-  const { result, handoff } = await runWithPost({ posted: true, method: 'gh', url: 'http://x', epoch: 2000 });
+  const { result } = await runWithPost({ posted: true, method: 'gh', url: 'http://x', epoch: 2000 });
   assert.equal(result.summary_posted, true);
-  assert.ok(handoff.includes('"summary_posted":true'), 'telemetry handoff に "summary_posted":true が無い');
   assert.ok(!result.note.includes('終端サマリ未投稿'), `投稿成功なのに note に「終端サマリ未投稿」がある: ${result.note}`);
 });

@@ -9,7 +9,7 @@
 // (b) blocking_reason が注入される下流（dev-implementer の再 spawn prompt / evaluator prompt）に
 //     迂回語彙（fetch|FETCH_HEAD|mirror|checkout）が一切現れない
 //     （run wf_17d7a7be 相当の実迂回コマンド列 fixture を使用）
-// (c) journal handoff payload（journal-save prompt）に error_category:guard_blocked と guard_id が到達する
+// (c) journal handoff payload（journal-save prompt）に error_category:guard_blocked が到達する
 // (d) approach_mismatch → guard_blocked の順で返る run: approach 側のみ reimpl-blocked#1 が発火し
 //     その prompt にスクラブ済み finding が 1 件入り、guard_blocked で b=2 は発火しない
 // (e) 旧 string blocking_reason を返す stub は partition throw で明示 error になる
@@ -93,10 +93,9 @@ test('[guard-blocked-routing] guard_blocked: reimpl-blocked 0回・findings非�
     assert.equal(EVASION_VOCAB_RE.test(c.prompt), false, `prompt(label=${c.label}, agentType=${c.agentType}) に迂回語彙が混入している: ${c.prompt.slice(0, 400)}`);
   }
 
-  // (c) journal handoff payload に error_category:guard_blocked と guard_id が到達する
+  // (c) journal handoff payload に error_category:guard_blocked が到達する（guard_id は telemetry に書かない）
   assert.equal(journalPrompts.length, 1, `journal-save(success) は 1 回のはずだが ${journalPrompts.length} 回だった`);
   assert.ok(journalPrompts[0].includes('"error_category":"guard_blocked"'), `journal payload に "error_category":"guard_blocked" が含まれるべきだが:\n${journalPrompts[0].slice(0, 800)}`);
-  assert.ok(journalPrompts[0].includes('"guard_id":"inline-edit-guard"'), `journal payload に "guard_id":"inline-edit-guard" が含まれるべきだが:\n${journalPrompts[0].slice(0, 800)}`);
 
   assert.ok(result?.pr_url != null, `完走経路では result.pr_url が存在するべきだが ${JSON.stringify(result?.pr_url)} だった`);
 });

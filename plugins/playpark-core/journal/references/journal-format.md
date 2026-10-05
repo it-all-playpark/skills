@@ -17,7 +17,13 @@ journal log <skill> failure \
 journal log <skill> partial \
   --error-category <cat> --error-msg "message" \
   --recovery "workaround applied" --recovery-turns N
+
+# Telemetry (any JSON object, stored as-is under .telemetry)
+journal log <skill> success \
+  --telemetry-json '{"merge_tier":"REVIEW","shape":"standard"}'
 ```
+
+Telemetry has no per-key flags. `--telemetry-json` takes one JSON object (non-object input is an error) and becomes the entry's `telemetry` verbatim, including `null` values. The keys dev-flow writes are listed in `plugins/dev-flow/dev-flow/references/telemetry.md`.
 
 ## Error Categories
 
