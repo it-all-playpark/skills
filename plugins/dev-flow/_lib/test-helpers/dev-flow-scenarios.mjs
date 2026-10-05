@@ -141,6 +141,45 @@ export const DEV_FLOW_SCENARIOS = {
       },
     },
   },
+  // complex-fix + reimpl 後の PR 前テストが red → green-fix#post-eval-1 → test#post-eval-2 green →
+  // green-fix 差分の再評価（green-fix-classify → green-fix-numstat → eval-green-fix）。評価済み tree を BBB へ進める
+  'post-eval-green-fix': {
+    overrides: {
+      ...shapeOverrides('complex'),
+      'eval#1': {
+        verdict: 'fail', total: 5, threshold: 7,
+        feedback: [{ severity: 'critical', topic: 'X', description: '重大欠陥', suggestion: '修正せよ' }],
+        feedback_level: 'implementation', ac_results: AC2, security_clearance: [],
+      },
+      'eval#2': {
+        verdict: 'pass', total: 9, threshold: 7, feedback: [], feedback_level: 'implementation',
+        ac_results: AC2, security_clearance: [],
+        critical_resolutions: [{ id: 'EVAL-1-X', resolved: true, evidence: 'src/a.ts で修正済み' }],
+      },
+      'test#post-eval-1': { tests: 'failed', green: false, summary: 'foo.test が red' },
+      'green-fix#post-eval-1': { status: 'DONE', task_id: 'issue-1', files: ['tests/foo.test.ts'], summary: 'テストの import 漏れを直した', concerns: [] },
+      'green-fix-classify': { risk: { ok: true, hits: [] }, files: ['tests/foo.test.ts'], struct: null, diffhash: { hash: 'BBB', empty: false } },
+      'green-fix-numstat': { ok: true, lines: ['1\t0\ttests/foo.test.ts'] },
+      'eval-green-fix': { findings: [], recheck_resolutions: [] },
+      'diff-hash-pr': { hash: 'BBB', empty: false },
+      'merge-tier-facts': mergeTierFacts({ hash: 'BBB', tree: 'BBB' }),
+    },
+  },
+  // pr-iterate fix 適用 + fix が触ったファイルに言及する解消済み concern → fix-diff-numstat → Final AC reconcile で再検証
+  'final-recheck': {
+    overrides: {
+      'impl:serial:issue-1': { status: 'DONE', task_id: 'issue-1', files: [...STANDARD_FILES], summary: 's', concerns: ['src/x.ts の境界条件が未確認'] },
+      'eval#1': {
+        verdict: 'pass', total: 100, threshold: 80, feedback: [], feedback_level: 'implementation',
+        ac_results: AC2, security_clearance: [],
+        concern_resolutions: [{ id: 'CONCERN-1', resolution: 'resolved', evidence: 'src/x.ts:10 で境界条件を確認済み' }],
+      },
+      'reconcile-sync': { ok: true, head: 'a'.repeat(40) },
+      'changed-files-final': { files: [...STANDARD_FILES] },
+      'fix-diff-numstat': { ok: true, lines: ['2\t1\tsrc/x.ts'] },
+    },
+    workflow: async () => ({ status: 'lgtm', iterations: 2, fixes_applied: 1 }),
+  },
   // Validate red → green-fix#1 → test#2 green
   'green-fix': { overrides: { 'test#1': { tests: 'failed', green: false, summary: 'assert mismatch' } } },
   // PR body に Closes 行が無い → closes-reinject → closes-recheck（既定 responder で Closes 付き body。issue #661）

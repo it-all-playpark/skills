@@ -61,6 +61,28 @@ blocking は解消しない。final test が green/ci_verified
 未解消 advisory / ESCALATE item の fix 後 tree 再評価（item_resolutions。表示専用・checked 不変）も
 回収し、終端サマリーの「現状 / 対応」列に反映する。
 
+Evaluate 後に入った変更は、評価済みの台帳と tree を run 内で確かめ直す（`_lib/post-eval-recheck.mjs`）:
+
+- **post-eval green-fix の再評価**: Evaluate 差し戻し（reimpl）後の PR 前再テストで `green-fix#post-eval-i` が
+  入った run は、`green-fix-classify`（secfloor-classify）→ `green-fix-numstat`（評価済み tree → 現在の tree の
+  numstat）で green-fix の差分を決め、差分ファイルに testsurf / danger hit が 0 件かつテストファイルだけなら
+  `assert_only`（assert を弱めていないかだけ）、それ以外は `full`（差分全体・宣言外変更）で evaluator
+  （`eval-green-fix`。model は override しない）に評価させる。評価できたら評価済み tree の hash を green-fix 後の
+  tree へ進めるので、PR 直前の diff-hash と一致すれば `hash_mismatch` にならない。Evaluate round 以降の台帳は
+  critical 以外を受け付けないため、ここでやるのは確認と clear に限る — critical finding は `GF-RECHECK-*`
+  （全 gate_policy で blocking。`EVAL-*` と分けて fix 後の test green では解消しない — テスト弱体化は test
+  green では否定できない）、未 clear の TESTSURF は testsurf_clearance で clear。hash / evaluator 応答が取れなければ
+  評価済み tree を進めず `hash_mismatch`（HOLD）で人間へ回す（fail-safe）。green-fix が新たに触った plan 外の
+  ファイルは full の評価対象に渡し、Final reconcile の宣言外再監査が pr-iterate fix 由来と取り違えないよう
+  宣言外一覧に足す。
+- **解消済み item の再検証**: green-fix / pr-iterate fix が触ったファイルを本文か evidence に含む、LLM 判断で
+  解消済みの item（evaluator / concern 由来。seed・deterministic・AC・ESCALATE・環境ノートは除く）を決定論で
+  再検証対象にする。green-fix 分は `eval-green-fix`、fix 分（PR 作成時の tree → 最終 HEAD の差分。
+  `fix-diff-numstat`、取れなければ最終 diff 全体）は Final AC reconcile が `recheck_resolutions` で判定する。
+  resolved + evidence は evidence を差し替えて解消済みに残し、それ以外（unresolved・未返却・Final AC reconcile が
+  走らない run）は `reopenItem` で未解消へ戻す — 後の変更で崩れたかもしれない解消根拠を終端サマリーの
+  「解消済み」に残さない（critical は blocking に戻る。seed / deterministic item は reopen しない）。
+
 shape ごとの経路（3 tier）:
 
 | shape | Implement 経路 | Evaluate 経路 | merge tier |
@@ -129,7 +151,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   opts で effort を渡すのは pr-iterate の fix（`fix#i` / `fix#i-retry`、`FIX_EFFORT = 'medium'`）のみ
   （`_lib/agent-effort.test.mjs` が pin）。
   model は subagent frontmatter で決める。品質ゲート agent の call site は `opts.model` を渡さない —
-  evaluator（`eval#i` / `final-ac-reconcile` / `security-clearance-final`）と pr-reviewer（`review#i` /
+  evaluator（`eval#i` / `eval-green-fix` / `final-ac-reconcile` / `security-clearance-final`）と pr-reviewer（`review#i` /
   schema-retry / `pr-review-lite`）はともに frontmatter（evaluator は opus / medium、pr-reviewer は opus / high）で spawn し、workflow 側に model 定数・
   null 時の model fallback 機構は持たない（`_lib/review-model-frontmatter.test.mjs` が call site と telemetry
   `eval_model_config` / `review_model_config` / `impl_model_config` = frontmatter 値の一致を pin）。同一入力での paired 比較で

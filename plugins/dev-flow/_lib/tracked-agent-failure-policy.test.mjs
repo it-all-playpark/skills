@@ -86,6 +86,8 @@ const DF_REDGREEN = DEV_FLOW_SCENARIOS['redgreen'];
 const DF_CI_CHECKS = DEV_FLOW_SCENARIOS['ci-checks'];
 const DF_COMPLEX_FIX = DEV_FLOW_SCENARIOS['complex-fix'];
 const DF_GREEN_FIX = DEV_FLOW_SCENARIOS['green-fix'];
+const DF_POST_EVAL_GREEN_FIX = DEV_FLOW_SCENARIOS['post-eval-green-fix'];
+const DF_FINAL_RECHECK = DEV_FLOW_SCENARIOS['final-recheck'];
 const DF_LITE = DEV_FLOW_SCENARIOS['lite'];
 const DF_CROSS_REPO = DEV_FLOW_SCENARIOS['cross-repo'];
 // journal-log-abort は top-level abort catch 内でのみ呼ばれる — DEV_FLOW_SCENARIOS['abort'] の
@@ -221,6 +223,32 @@ const EXPECTED_DEV_FLOW = {
     reason: 'try/catchで合成redへ変換しgreen-fixループへ継続するfail-safe経路（post-eval経路）',
   },
   'tree-diff-numstat': { config: DF_HASH_MISMATCH, policy: 'continue', reason: 'failOpenAgent経由。hash_mismatch時の差分一覧取得失敗はHOLD理由の可読性補助を欠くのみ' },
+  'green-fix#post-eval-1': { config: DF_POST_EVAL_GREEN_FIX, policy: 'abort', reason: 'bare据え置き。green-fix実装呼び出しはtry/catchで吸収されずrunを中断させる（post-eval経路）' },
+  'test#post-eval-2': {
+    config: DF_POST_EVAL_GREEN_FIX,
+    policy: 'continue',
+    reason: 'try/catchで合成redへ変換しgreen-fixループへ継続するfail-safe経路（post-eval経路の2周目）',
+  },
+  'green-fix-classify': {
+    config: DF_POST_EVAL_GREEN_FIX,
+    policy: 'continue',
+    reason: 'try/catchで吸収しhash不明として再評価せず、評価済みtreeを進めないfail-safe経路（PR直前のhash_mismatchでHOLD）',
+    extra: async ({ result }) => {
+      assert.equal(result?.eval_staleness, 'hash_mismatch', 'green-fix-classify throw では評価済み tree を進めず hash_mismatch になるべき');
+      assert.equal(result?.merge_tier, 'HOLD', 'green-fix-classify throw では merge_tier は HOLD になるべき');
+    },
+  },
+  'green-fix-numstat': { config: DF_POST_EVAL_GREEN_FIX, policy: 'continue', reason: 'failOpenAgent経由。green-fix差分一覧の取得失敗は申告ファイルで代替しfullモードで再評価する' },
+  'eval-green-fix': {
+    config: DF_POST_EVAL_GREEN_FIX,
+    policy: 'continue',
+    reason: 'try/catchで吸収し再評価不能として評価済みtreeを進めないfail-safe経路（PR直前のhash_mismatchでHOLD）',
+    extra: async ({ result }) => {
+      assert.equal(result?.eval_staleness, 'hash_mismatch', 'eval-green-fix throw では評価済み tree を進めず hash_mismatch になるべき');
+      assert.equal(result?.merge_tier, 'HOLD', 'eval-green-fix throw では merge_tier は HOLD になるべき');
+    },
+  },
+  'fix-diff-numstat': { config: DF_FINAL_RECHECK, policy: 'continue', reason: 'failOpenAgent経由。fix差分の取得失敗は最終diff全体で再検証対象を選ぶ（多めに確かめる側）' },
   'ui-verify-config': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しsetup_failedとして扱うfail-open経路（advisoryなUI検証）' },
   'ui-verify-stack': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証）' },
   'ui-verify-smoke': { config: DF_FINAL_RECONCILE_UI, policy: 'continue', reason: 'try/catchで吸収しfailed_openへ倒すfail-open経路（advisoryなUI検証のsmoke）' },

@@ -60,6 +60,24 @@ export const EVALUATOR_OPERATIONAL_CONTRACT = {
     '- item_resolutions は表示専用で checked / merge tier / HOLD 判定は変えない（ESCALATE は解消済みでも HOLD のまま人がマージ可否を判断する）。',
     '- ac_results の契約（全 AC ちょうど 1 回・追加禁止）は item_resolutions の有無に関わらず不変。',
   ].join('\n'),
+  // resolved_recheck / green_fix_recheck も prompt 注入のみで配送する（evaluator.md へ mirror しない。
+  // 理由は final_ac_reconcile と同じ）。
+  resolved_recheck: [
+    'resolved_recheck 契約:',
+    '- prompt に「再検証対象 resolved item 一覧」が渡された場合、各 item の解消根拠（evidence）が現在の tree でも成り立つかを実コードで再検証し、recheck_resolutions:[{id, resolution, evidence}] で全件返す。',
+    '- 一覧の item は、解消と判定された後に本文か evidence に言及するファイルが変更されたもの。過去の evidence を信用せず、現在の内容で確かめる。',
+    '- id は渡された id をそのまま返す。resolution は resolved（解消根拠が現在の tree でも成立）/ unresolved（後の変更で根拠が崩れた・確認できない）の 2 値のみ。',
+    '- resolved は現在の tree に基づく具体的 evidence 必須（file:line / テスト名 / diff 内容）。unresolved も崩れた根拠を evidence に書く。',
+    '- evidence のない resolved と返さなかった item は unresolved と同じに扱われ、解消済みから外れる（critical は blocking に戻る）。',
+  ].join('\n'),
+  green_fix_recheck: [
+    'green_fix_recheck 契約:',
+    '- 「post-eval green-fix 再評価」が指示された場合、評価済み tree から green-fix が入れた差分だけを判定対象にし、findings:[{severity, topic, description}] で返す。',
+    '- mode=assert_only（変更はテストファイルだけ・決定論の test-weakening / danger 検出は 0 件）: テストの assert・期待値・検査範囲を弱めて green にしていないか（assert 削除・期待値の緩和・skip 化・検査対象の縮小・tautology 化）だけを判定する。弱体化があれば severity:critical の finding、無ければ findings:[]。',
+    '- mode=full: 差分が受け入れ条件・テストの検査力を損なっていないか、plan 宣言外の変更が妥当かを判定する。merge を止めるべき欠陥（テスト弱体化を含む）だけを severity:critical で返す。',
+    '- critical 以外の finding は返しても使われない（評価 round 以降の台帳は critical 以外を受け付けない）。差分に無い既存コードへの指摘は禁止。',
+    '- コード修正・ファイル変更は禁止。',
+  ].join('\n'),
 }
 
 // concern_resolutions[].resolution の closed enum（issue #614）。out-of-enum / 旧 boolean キー resolved は

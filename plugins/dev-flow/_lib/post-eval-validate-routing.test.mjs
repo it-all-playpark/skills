@@ -62,12 +62,15 @@ test('[post-eval-validate] reimpl 0 回の run では追加のテスト spawn �
   assert.deepEqual(testLabels(labels), ['test#1'], `test spawn は Validate の 1 回のみ (labels: ${s})`);
 });
 
-test('[post-eval-validate] PR 前のテストが red なら green-fix に差し戻し、green 化後に PR へ進む（未評価の green-fix は hash_mismatch HOLD で人間へ）', async () => {
-  // green-fix#post-eval が tree を変えたら PR 直前の diff hash が Evaluate 時点と変わる
+test('[post-eval-validate] PR 前のテストが red なら green-fix に差し戻し、green 化後に PR へ進む（green-fix 再評価が取れなければ hash_mismatch HOLD で人間へ）', async () => {
+  // green-fix#post-eval が tree を変えたら PR 直前の diff hash が Evaluate 時点と変わる。
+  // green-fix 再評価の起点（green-fix-classify）が null だと評価済み tree を進めないので hash_mismatch で HOLD になる
+  // （run 内で再評価できたときの経路は post-eval-recheck-routing.test.mjs）
   let fixed = false;
   const { labels, calls, logs, result } = await run({
     overrides: {
       'test#post-eval-1': RED,
+      'green-fix-classify': null,
       'green-fix#post-eval-1': () => { fixed = true; return GF_POST_EVAL; },
       'diff-hash-pr': () => ({ hash: fixed ? 'BBB' : 'AAA', empty: false }),
       'tree-diff-numstat': { ok: true, lines: ['3\t1\tsrc/post-eval-fix.ts'] },
@@ -88,7 +91,8 @@ test('[post-eval-validate] PR 前のテストが red なら green-fix に差し�
   assert.equal(gf.model, 'sonnet');
   assert.ok(gf.prompt.includes(RED.summary), 'green-fix prompt に失敗内容が渡っていない');
   assert.ok(logs.some((l) => l.includes('post-eval validate: green-fix 1 回') && l.includes('src/post-eval-fix.ts')), `green-fix 計上 log が無い (logs: ${JSON.stringify(logs)})`);
-  // evaluator が見ていない green-fix は hash_mismatch で HOLD になり、差分ファイルが人間に示される
+  // 再評価できなかった green-fix は hash_mismatch で HOLD になり、差分ファイルが人間に示される
+  assert.equal(labels.includes('eval-green-fix'), false, `green-fix-classify が null なら evaluator は呼ばない (labels: ${s})`);
   assert.equal(result.eval_staleness, 'hash_mismatch');
   assert.equal(result.merge_tier, 'HOLD');
   assert.ok(result.merge_tier_reasons.some((r) => r.includes('src/post-eval-fix.ts')), `HOLD 理由に green-fix の差分ファイルが無い: ${JSON.stringify(result.merge_tier_reasons)}`);
