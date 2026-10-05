@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # ready-set.sh - 今 /dev-flow を流してよく、互いに変更対象パスが重ならない issue の集合を選ぶ（dev-flow-ready-set）
 #
-# Usage: dev-flow-ready-set [--repo <owner/name>] [--label <label>] [<issue>...]
-#   <issue>...       候補の issue 番号
-#   --label <label>  そのラベルの open issue を候補に加える
+# Usage: dev-flow-ready-set [--repo <owner/name>] [--label <label>] [--with-in-flight] [<issue>...]
+#   <issue>...        候補の issue 番号
+#   --label <label>   そのラベルの open issue を候補に加える
+#   --with-in-flight  実行中の issue を自動で加え、その変更対象パスを占有に入れる。実行中 = head が
+#                     `feature/issue-<N>` の open PR、`feature/issue-<N>` の local branch、その branch か
+#                     df-<N> の worktree。自動で加えた issue は human-task / blocker を見ずに in_flight にする
+#                     （実際に走っているので占有から漏らさない）。closed の issue は残骸として出力しない
 #
 # 出力（stdout に 1 行 JSON）:
 #   { ok: true, launch: [{number, title, paths, command: "/dev-flow <N>"}],
@@ -19,6 +23,7 @@
 # 選択: ready を issue 番号の昇順に貪欲に launch へ入れる。in_flight の変更対象パスは最初から占有扱い。
 # 占有とパスが重なる issue は waiting path_conflict（detail に相手の番号）。`## 変更対象パス` が無い・空の
 # issue は全パスと重なる扱い（占有が空のときだけ単独で launch、それ以外は waiting no_declared_paths）。
+# 相手が申告なしで全パスと重なっただけなら detail の番号に `(変更対象パスなし)` を付ける（申告を足せば解ける）。
 #
 # パスの重なりは保守的に判定する（誤って並列にするより直列に倒す）: 各エントリを最初の glob 文字
 # （`*?[{`）より前の完結したパスセグメントに縮め、セグメント単位で一方が他方の prefix なら重なり。
@@ -43,19 +48,21 @@ oneline() { printf '%s' "$1" | tr '\n' ' '; }
 
 REPO=""
 LABEL=""
+WITH_IN_FLIGHT=0
 CANDIDATES=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo) [[ $# -ge 2 ]] || die 2 "--repo requires a value"; REPO="$2"; shift 2 ;;
         --label) [[ $# -ge 2 ]] || die 2 "--label requires a value"; LABEL="$2"; shift 2 ;;
+        --with-in-flight) WITH_IN_FLIGHT=1; shift ;;
         -*) die 2 "Unknown option: $1" ;;
         *)
             [[ "$1" =~ ^[1-9][0-9]*$ ]] || die 2 "issue must be a positive integer: $1"
             CANDIDATES+=("$1"); shift ;;
     esac
 done
-[[ ${#CANDIDATES[@]} -gt 0 || -n "$LABEL" ]] \
-    || die 2 "Usage: dev-flow-ready-set [--repo owner/repo] [--label <label>] [<issue>...]"
+[[ ${#CANDIDATES[@]} -gt 0 || -n "$LABEL" || "$WITH_IN_FLIGHT" == 1 ]] \
+    || die 2 "Usage: dev-flow-ready-set [--repo owner/repo] [--label <label>] [--with-in-flight] [<issue>...]"
 
 REPO_ARGS=()
 [[ -n "$REPO" ]] && REPO_ARGS=(--repo "$REPO")
@@ -84,6 +91,26 @@ WT_DIRS="$(printf '%s\n' "$WORKTREES" | awk '/^worktree /{ n = split(substr($0, 
 
 has_line() { printf '%s\n' "$2" | grep -qxF -- "$1"; }
 
+# --with-in-flight: 実行中の issue を open PR の head / local branch / worktree から拾い、候補に足す。
+# 利用者が渡した候補（USER_CANDIDATES）とは分けて持ち、拾っただけの issue は in_flight 判定だけ行う
+USER_CANDIDATES="$(printf '%s\n' "${CANDIDATES[@]+"${CANDIDATES[@]}"}" | sort -n -u)"
+PR_HEADS=""
+if [[ "$WITH_IN_FLIGHT" == 1 ]]; then
+    if ! PR_RAW="$(gh pr list "${REPO_ARGS[@]+"${REPO_ARGS[@]}"}" --state open --limit 1000 --json headRefName 2>&1)"; then
+        die 1 "open PR 一覧を取得できない: $(oneline "$PR_RAW")"
+    fi
+    PR_HEADS="$(printf '%s' "$PR_RAW" | jq -r '
+        if type == "array" and all(.[]; (.headRefName | type) == "string") then .[].headRefName else error("malformed") end' 2>/dev/null)" \
+        || die 1 "open PR 一覧の応答が不正"
+    DISCOVERED="$(
+        printf '%s\n' "$PR_HEADS" "$BRANCHES" "$WT_BRANCHES" | sed -nE 's#^feature/issue-([1-9][0-9]*)$#\1#p'
+        printf '%s\n' "$WT_DIRS" | sed -nE 's#^df-([1-9][0-9]*)$#\1#p'
+    )"
+    while IFS= read -r N; do
+        [[ -n "$N" ]] && CANDIDATES+=("$N")
+    done <<<"$DISCOVERED"
+fi
+
 # `## 変更対象パス` 見出しから次の `#` / `##` 見出しまでの `- <entry>` 行（create_issue.py の書式と同じ）
 # shellcheck disable=SC2016
 JQ_DECLARED_PATHS='def declared_paths: [ (gsub("\r"; "") | split("\n")) as $l
@@ -96,6 +123,18 @@ JQ_DECLARED_PATHS='def declared_paths: [ (gsub("\r"; "") | split("\n")) as $l
       | sub("^-[ \t]+"; "") | gsub("`"; "") | sub("[ \t]+$"; "")
       | select(. != "")
     end ];'
+
+# 実行中の理由（open_pr / local_branch / worktree）。走っていなければ空。PR_HEADS は --with-in-flight の時だけ埋まる
+flight_of() {
+    local n="$1" issue_json="$2"
+    if [[ "$(jq -r '.open_pr' <<<"$issue_json")" == "true" ]] || has_line "feature/issue-${n}" "$PR_HEADS"; then
+        echo "open_pr"
+    elif has_line "feature/issue-${n}" "$BRANCHES"; then
+        echo "local_branch"
+    elif has_line "feature/issue-${n}" "$WT_BRANCHES" || has_line "df-${n}" "$WT_DIRS"; then
+        echo "worktree"
+    fi
+}
 
 SORTED="$(printf '%s\n' "${CANDIDATES[@]+"${CANDIDATES[@]}"}" | sort -n -u)"
 READY='[]'
@@ -120,6 +159,15 @@ while IFS= read -r N; do
 
     [[ "$(jq -r '.state' <<<"$ISSUE_JSON")" == "OPEN" ]] || continue
 
+    if ! has_line "$N" "$USER_CANDIDATES"; then
+        # --with-in-flight で拾っただけの issue: 走っているなら占有に入れ、そうでなければ出力しない
+        FLIGHT="$(flight_of "$N" "$ISSUE_JSON")"
+        if [[ -n "$FLIGHT" ]]; then
+            IN_FLIGHT="$(jq -c --argjson i "$ISSUE_JSON" --arg r "$FLIGHT" '. + [$i + {reason: $r}]' <<<"$IN_FLIGHT")"
+        fi
+        continue
+    fi
+
     if [[ "$(jq -r '.human_task' <<<"$ISSUE_JSON")" == "true" ]]; then
         WAITING="$(jq -c --argjson n "$N" '. + [{number: $n, reason: "human_task", detail: "label human-task"}]' <<<"$WAITING")"
         continue
@@ -138,14 +186,7 @@ while IFS= read -r N; do
         continue
     fi
 
-    FLIGHT=""
-    if [[ "$(jq -r '.open_pr' <<<"$ISSUE_JSON")" == "true" ]]; then
-        FLIGHT="open_pr"
-    elif has_line "feature/issue-${N}" "$BRANCHES"; then
-        FLIGHT="local_branch"
-    elif has_line "feature/issue-${N}" "$WT_BRANCHES" || has_line "df-${N}" "$WT_DIRS"; then
-        FLIGHT="worktree"
-    fi
+    FLIGHT="$(flight_of "$N" "$ISSUE_JSON")"
     if [[ -n "$FLIGHT" ]]; then
         IN_FLIGHT="$(jq -c --argjson i "$ISSUE_JSON" --arg r "$FLIGHT" '. + [$i + {reason: $r}]' <<<"$IN_FLIGHT")"
         continue
@@ -168,7 +209,8 @@ jq -cn --argjson ready "$READY" --argjson in_flight "$IN_FLIGHT" --argjson waiti
         or (($x | segments) as $a | ($y | segments) as $b | seg_prefix($a; $b) or seg_prefix($b; $a));
     # 申告なし（空）の issue は全パスと重なる
     def conflicts($p; $q): ($p | length) == 0 or ($q | length) == 0 or any($p[]; . as $x | any($q[]; overlap($x; .)));
-    def refs: map("#\(.number)") | join(" ");
+    # 申告なしで全パスと重なった相手には印を付ける（申告を足せば解ける待ちだと分かるように）
+    def refs: map("#\(.number)" + (if (.paths | length) == 0 then "(変更対象パスなし)" else "" end)) | join(" ");
 
     (reduce ($ready | sort_by(.number))[] as $c (
         {launch: [], occupied: [$in_flight[] | {number, paths}], waiting: []};

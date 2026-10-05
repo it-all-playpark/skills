@@ -6,6 +6,7 @@ bats_require_minimum_version 1.5.0
 # ネットワークには出ない。gh は PATH 先頭の stub:
 #   `issue view N`  → $GH_STUB_ISSUES_DIR/N.json（無い・N == GH_STUB_FAIL_ISSUE なら失敗）
 #   `issue list`    → GH_STUB_LIST_FIXTURE（GH_STUB_LIST_FAIL で失敗）
+#   `pr list`       → GH_STUB_PR_LIST_FIXTURE（無ければ []、GH_STUB_PR_LIST_FAIL で失敗）
 #   `api .../issues/N/dependencies/blocked_by` → $GH_STUB_DEPS_DIR/N.json（無ければ []、GH_STUB_DEPS_FAIL で失敗）
 # 呼び出しは全て $GH_LOG に 1 行ずつ残る。local branch / worktree は cwd の使い捨て git repo で作る。
 
@@ -32,6 +33,14 @@ if [[ "$1" == "api" && "$2" == */dependencies/blocked_by* ]]; then
     if [[ -f "$GH_STUB_DEPS_DIR/$n.json" ]]; then cat "$GH_STUB_DEPS_DIR/$n.json"; else echo '[]'; fi
     exit 0
 fi
+if [[ "$1 $2" == "pr list" ]]; then
+    if [[ -n "${GH_STUB_PR_LIST_FAIL:-}" ]]; then
+        echo "$GH_STUB_PR_LIST_FAIL" >&2
+        exit 1
+    fi
+    if [[ -n "${GH_STUB_PR_LIST_FIXTURE:-}" ]]; then cat "$GH_STUB_PR_LIST_FIXTURE"; else echo '[]'; fi
+    exit 0
+fi
 if [[ "$1 $2" == "issue list" ]]; then
     if [[ -n "${GH_STUB_LIST_FAIL:-}" ]]; then
         echo "$GH_STUB_LIST_FAIL" >&2
@@ -49,7 +58,8 @@ exit 1
 STUB
     chmod +x "$WORK/bin/gh"
     export GH_LOG GH_STUB_ISSUES_DIR GH_STUB_DEPS_DIR
-    unset GH_STUB_FAIL_ISSUE GH_STUB_LIST_FIXTURE GH_STUB_LIST_FAIL GH_STUB_DEPS_FAIL GIT_DIR GIT_WORK_TREE
+    unset GH_STUB_FAIL_ISSUE GH_STUB_LIST_FIXTURE GH_STUB_LIST_FAIL GH_STUB_DEPS_FAIL GIT_DIR GIT_WORK_TREE \
+        GH_STUB_PR_LIST_FIXTURE GH_STUB_PR_LIST_FAIL
     export PATH="$WORK/bin:$PATH"
 
     # local branch / worktree を読む cwd の git repo
@@ -273,7 +283,7 @@ ready_set() {
     ready_set 60 61
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.launch == [{number: 60, title: "issue 60", paths: [], command: "/dev-flow 60"}]
-        and .waiting == [{number: 61, reason: "path_conflict", detail: "#60"}]'
+        and .waiting == [{number: 61, reason: "path_conflict", detail: "#60(変更対象パスなし)"}]'
 }
 
 @test "ready-set: 変更対象パスが無い・空の issue は他が選ばれていれば waiting no_declared_paths" {
@@ -337,4 +347,111 @@ ready_set() {
     [ "$(git for-each-ref)" = "$before_refs" ]
     [ "$(ls -A "$WORK/repo")" = "$before_files" ]
     [ -z "$(git status --porcelain)" ]
+}
+
+# ---- --with-in-flight: 実行中の issue を自動で占有に入れる ----
+
+pr_heads() {
+    local h json='[]'
+    for h in "$@"; do json="$(jq -c --arg h "$h" '. + [{headRefName: $h}]' <<<"$json")"; done
+    printf '%s' "$json" >"$WORK/prs.json"
+    export GH_STUB_PR_LIST_FIXTURE="$WORK/prs.json"
+}
+
+@test "ready-set: --with-in-flight 無しでは open PR 一覧を読まない（既定の挙動は変えない）" {
+    git branch feature/issue-100
+    issue 100 "pkg/a"
+    issue 101 "pkg/a/x.sh"
+    ready_set 101
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '[.launch[].number] == [101] and .in_flight == []'
+    ! grep -q '^pr list' "$GH_LOG"
+}
+
+@test "ready-set: --with-in-flight は head が feature/issue-<N> の open PR を in_flight open_pr にし、パスを占有する" {
+    pr_heads feature/issue-110 renovate/foo
+    issue 110 "pkg/a"
+    issue 111 "pkg/a/x.sh"
+    issue 112 "pkg/b"
+    ready_set --with-in-flight 111 112
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 110, reason: "open_pr"}] and [.launch[].number] == [112]
+        and .waiting == [{number: 111, reason: "path_conflict", detail: "#110"}]'
+    grep -q '^pr list --repo acme/skills --state open --limit 1000 --json headRefName$' "$GH_LOG"
+}
+
+@test "ready-set: --with-in-flight は feature/issue-<N> の local branch と df-<N> の worktree も拾う" {
+    git branch feature/issue-120
+    git worktree add -q -b wip "$WORK/df-121"
+    issue 120 "pkg/a"
+    issue 121 "pkg/b"
+    issue 122 "pkg/a/x.sh pkg/b/y.sh"
+    issue 123 "pkg/c"
+    ready_set --with-in-flight 122 123
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 120, reason: "local_branch"}, {number: 121, reason: "worktree"}]
+        and [.launch[].number] == [123]
+        and .waiting == [{number: 122, reason: "path_conflict", detail: "#120 #121"}]'
+}
+
+@test "ready-set: --with-in-flight で拾った issue に変更対象パスが無ければ全部と重なり、detail に印が付く" {
+    pr_heads feature/issue-130
+    issue 130 NONE
+    issue 131 "pkg/a"
+    ready_set --with-in-flight 131
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 130, reason: "open_pr"}] and .launch == []
+        and .waiting == [{number: 131, reason: "path_conflict", detail: "#130(変更対象パスなし)"}]'
+}
+
+@test "ready-set: --with-in-flight で拾った issue は human-task・blocker があっても in_flight、closed は出力しない" {
+    git branch feature/issue-140
+    git branch feature/issue-141
+    git branch feature/issue-142
+    issue 140 "pkg/a" label=human-task
+    issue 141 "pkg/b" pre="Blocked by #149"
+    issue 142 "pkg/c" state=CLOSED
+    issue 149 "z"
+    issue 143 "pkg/c"
+    ready_set --with-in-flight 143
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 140, reason: "local_branch"}, {number: 141, reason: "local_branch"}]
+        and [.launch[].number] == [143] and .waiting == []'
+    # 拾っただけの issue の blocker は読まない
+    ! grep -q 'issues/141/dependencies' "$GH_LOG"
+}
+
+@test "ready-set: 渡した候補が実行中でも --with-in-flight で重複しない" {
+    pr_heads feature/issue-150
+    issue 150 "pkg/a" pr=OPEN
+    ready_set --with-in-flight 150
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '.in_flight == [{number: 150, reason: "open_pr"}] and .launch == [] and .waiting == []'
+}
+
+@test "ready-set: --with-in-flight だけでも実行でき、実行中の一覧を返す" {
+    git branch feature/issue-160
+    issue 160 "pkg/a"
+    ready_set --with-in-flight
+    [ "$status" -eq 0 ]
+    echo "$output" | jq -e '. == {ok: true, launch: [], in_flight: [{number: 160, reason: "local_branch"}], waiting: []}'
+}
+
+@test "ready-set: --with-in-flight の open PR 一覧取得失敗 -> ok:false と非 0 終了" {
+    issue 170 "a"
+    GH_STUB_PR_LIST_FAIL="HTTP 403" ready_set --with-in-flight 170
+    [ "$status" -ne 0 ]
+    echo "$output" | jq -e '.ok == false and (.error | test("HTTP 403")) and has("launch") == false'
+}
+
+@test "ready-set: --with-in-flight でも gh は読み取りだけ呼ぶ" {
+    pr_heads feature/issue-180
+    git branch feature/issue-181
+    issue 180 "a"
+    issue 181 "b"
+    issue 182 "c"
+    ready_set --with-in-flight 182
+    [ "$status" -eq 0 ]
+    [ -z "$(grep -vE '^(issue view|pr list|api repos/acme/skills/issues/[0-9]+/dependencies/blocked_by\?per_page=100$)' "$GH_LOG")" ]
+    [ -z "$(grep -E '(^| )(-X|--method|-f|--field|-F|--raw-field|--input)( |$)' "$GH_LOG")" ]
 }

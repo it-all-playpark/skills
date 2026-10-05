@@ -273,14 +273,14 @@ Capture and return:
 
 起票した agent issue のうち、今 `/dev-flow` を流してよく互いに変更対象パスが重ならないものを
 `dev-flow-ready-set` で判定し、Output Contract の `## Launch Order` に並べる。判定は dev-flow の並列実行
-（dev-flow SKILL.md「並列実行」節）と同じ基準で、
-渡した issue 同士のパス重なりと blocker を判定する。他 issue で実行中の run とのパス衝突は見ない。
-他 issue の実行中 run（open PR・`feature/issue-<N>` branch・worktree）と変更対象パスが重なるかは、起動前に人間が確かめる。
+（dev-flow SKILL.md「並列実行」節）と同じ基準で、渡した issue 同士のパス重なりと blocker に加え、
+`--with-in-flight` で他 issue の実行中 run（head が `feature/issue-<N>` の open PR・local branch・
+`df-<N>` worktree）を自動で拾い、その変更対象パスとの衝突も判定する。
 
 Run（Phase 6 で起票した agent issue の番号を起票順に全部渡す。human issue は渡さない）:
 
 ```bash
-dev-flow-ready-set [--repo owner/repo] <M1> <M2> ...
+dev-flow-ready-set [--repo owner/repo] --with-in-flight <M1> <M2> ...
 ```
 
 - bare 名を先頭トークンにして実行する（`cd` / env 前置・パイプ・リダイレクトを付けない。sandbox の
@@ -296,8 +296,9 @@ stdout の 1 行 JSON を次のように `## Launch Order` へ写す:
 - `launch[]` → 「今すぐ別セッションで起動」。各要素の `command`（`/dev-flow <N>`）を **issue ごとに別セッション**で
   流す旨を添える。同時に何本起動するかは人間が決める
 - `waiting[]` → 「後の波」。`reason`（`blocked_by` / `path_conflict` / `no_declared_paths` / `human_task`）と
-  `detail`（相手の issue 番号）を併記する
-- `in_flight[]` → 起票直後の issue が入るのは同番号の branch / worktree が既にある場合だけ。`reason` を併記する
+  `detail`（相手の issue 番号）を併記する。`detail` の番号に `(変更対象パスなし)` が付いていれば、その実行中
+  issue は申告が無いので全パスと重なる扱いになっている。相手の issue に `## 変更対象パス` を足せば再判定で解ける旨を添える
+- `in_flight[]` → 「実行中」。他 issue で走っている run の番号と `reason` を並べる（これらのパスが占有されている）
 
 `launch[]` は「今の波」だけを表す。後の波の中身は、先行 issue の merge（human issue は close）の後に
 同じコマンドを再実行して決まる。その旨を `## Launch Order` の末尾に書く。
@@ -327,14 +328,13 @@ Always return this summary after execution:
   - (依存が無い場合は `- なし`)
 
 ## Launch Order
-- 判定: `dev-flow-ready-set [--repo owner/repo] <M1> <M2> ...`（ok / 失敗 → error と手動実行コマンド / Dry-run: 起票後に判定）
+- 判定: `dev-flow-ready-set [--repo owner/repo] --with-in-flight <M1> <M2> ...`（ok / 失敗 → error と手動実行コマンド / Dry-run: 起票後に判定）
 - 今すぐ別セッションで起動（issue ごとに 1 セッション。同時起動数は人間が決める）:
   - `/dev-flow <M1>` — #M1 タイトル
 - 後の波:
-  - #M2 — blocked_by #M1 / path_conflict #M1 / no_declared_paths / human_task
-- 実行中: #N — open_pr / local_branch / worktree（無い場合は `- なし`）
-- 後の波は先行 issue の merge（human issue は close）後に上の判定コマンドを再実行して決まる
-- 注意: 判定は渡した issue 同士のパス重なりと blocker だけ。他 issue で実行中の run とのパス衝突は見ない（起動前に人間が確かめる）
+  - #M2 — blocked_by #M1 / path_conflict #M1 / path_conflict #N(変更対象パスなし) / no_declared_paths / human_task
+- 実行中（他 issue の run。パスを占有）: #N — open_pr / local_branch / worktree（無い場合は `- なし`）
+- 後の波は先行 issue / 実行中 run の merge（human issue は close）後に上の判定コマンドを再実行して決まる
 
 ## Plan Quality Gate
 - Devil's-advocate review rounds: N
