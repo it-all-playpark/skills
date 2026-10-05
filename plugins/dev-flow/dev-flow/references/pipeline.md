@@ -106,8 +106,8 @@ LLM の事前見積もり（shape / 見込み file 数）は REQ に
 （danger-grep / testsurf / green-fix / dropped task / 宣言外変更 / UI 接触）が担う。
 `classifyShape` に渡す数は Security floor 時点の working tree から ephemeral・宣言外パス・format-only を
 除外したもの（宣言外は size 信号にせず Evaluate 強制 + concern 監査で扱う）。除外前後の数は telemetry
-`realized_file_count_raw` / `realized_file_count` に、判定根拠は `shape_reason` に記録され、doctor の
-shape 較正が除外で下位 tier に決まった run / floor で上位 tier に決まった run を数える。danger-grep hit が
+`realized_file_count_raw` / `realized_file_count` に、判定根拠は `shape_reason` に記録され、
+shape 較正で除外により下位 tier に決まった run / floor で上位 tier に決まった run を数えられる。danger-grep hit が
 あれば micro でも Evaluate を強制実行（security path）。
 
 **micro lite route**: `EFFECTIVE_SHAPE === 'micro' && !state.runEval && state.dangerHits.length === 0`（clean-micro かつ
@@ -123,7 +123,7 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   (bare 名は `agent type '<name>' not found` で run 全体が起動直後に abort する)。workflow 本体・
   `subagent_invocations` の by_type キー・agent 名を静的検査する routing test は論理名 (bare) を保持し、
   namespace は `agent()` を呼ぶ直前の `nsAgentOpts()` (canonical `_lib/agent-namespace.mjs`。dev-flow.js /
-  pr-iterate.js / dev-improve.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
+  pr-iterate.js へ inline 生成) でのみ付与する。dev-flow-canary.js は inline bridge 非依存
   (self-contained) を保つため例外で、namespaced id を直接書く。新しい call site はこの経路に乗せる。
 - **判断系 leaf は subagent** (`.claude/agents/{dev-implementer,evaluator,pr-reviewer,dev-runner,dev-runner-haiku,dev-runner-haiku-ro}.md`)。
   effort は原則 subagent frontmatter で決める。`agent()` の `opts.effort` は frontmatter より優先して実効値に反映される
@@ -143,11 +143,9 @@ hit で `runEval=true` になったケースは lite ゲート条件を満たさ
   `effort: 'medium'` を渡す
   （reviewer 指摘は設計判断を伴う修正が中心で、sonnet は maxTurns 50 内に終わらず fix_failed になりやすい。
   失敗 6 ケースの盲検 replay で opus は完走 5/6 対 3/6・品質同等以上だった。effort は paired replay で high と
-  完走率・品質同等のまま所要・コストが下がった。frontmatter は analyze-clarify /
-  dev-improve と共用なので変えない。`_lib/priterate-fix-null-retry.test.mjs` が pin）。
-  ほかに `opts.model` を渡す call site は dev-improve.js の `rank-judge`（improve-miner）のみで、
-  `_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を dev-improve.js へ inline 生成して渡す。
-  `_lib/plugin-version.mjs` の `PLUGIN_VERSION` も同じ inline 生成方式（dev-flow.js / pr-iterate.js）。
+  完走率・品質同等のまま所要・コストが下がった。frontmatter は analyze-clarify と共用なので変えない。
+  `_lib/priterate-fix-null-retry.test.mjs` が pin）。
+  `_lib/plugin-version.mjs` の `PLUGIN_VERSION` は inline 生成方式（dev-flow.js / pr-iterate.js）。
   model を恒久的に別系統へ固定したい leaf には専用 agent 定義
   （例: `dev-runner-haiku.md`、`model: haiku`）を用意し `agentType` を切り替える。
   pr-reviewer は `effort: high`（max と精度同等で高速。medium は major を minor に下げ decision が甘くなる）、

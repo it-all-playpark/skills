@@ -1106,7 +1106,7 @@ if (shaNow == null) log('⚠️ review#1 時点の head sha を取得できず �
 // MAX 非消費）
 // model は dev-runner frontmatter の sonnet を上書きして opus で起動する。opus reviewer の指摘は設計判断を
 // 伴う修正が中心で、sonnet は maxTurns 50 内に終わらず null（fix_failed）になりやすい。frontmatter は
-// analyze-clarify / dev-improve と共用なので変えず、この call site だけで渡す。
+// analyze-clarify と共用なので変えず、この call site だけで渡す。
 const FIX_MODEL = 'opus'
 // effort も frontmatter の high を call site で medium に下げる。opts.effort は frontmatter より優先され、
 // paired replay で medium は high と完走率・品質同等のまま所要・コストが下がった（frontmatter は共用なので変えない）。

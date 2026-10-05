@@ -17,12 +17,12 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `journal.sh log dev-flow success --merge-tier ...` へ毎回自動 flush する。flush 失敗は
   `~/.claude/logs/stop-devflow-telemetry.log` に記録され pending file が残るため記録漏れに
   気づける。journal.sh の telemetry フラグは未指定なら telemetry キー無し。calibration の原資料。
-  `ui_verify` は `skipped`/`passed`/`findings`/`failed_open`/`setup_failed` の 5 値（`setup_failed` は dev-flow-doctor の検出対象）。
+  `ui_verify` は `skipped`/`passed`/`findings`/`failed_open`/`setup_failed` の 5 値。
   `eval_staleness` は `none`/`hash_mismatch`/`hash_reconverged`/`iterate_incomplete`/`iterate_fixed` の 5 値（Evaluate 時点と PR tree の乖離原因を区別する。`hash_reconverged` は PR 直前に一時乖離したが PR head tree と merge 対象 tree が評価済み tree と一致することを決定論確認済みで HOLD しない）。
   cross-repo issue（修正対象が本 repo 外にある issue）で empty-diff gate が graceful 終了する run は
   `journal.sh` の `error_category` に `cross_repo`（`outcome:'partial'`）を記録し、dev-flow の返り値は
   `status:'cross_repo_artifact'`（`issue`/`worktree`/`branch`/`artifacts`/`note` を含む）を返す。
-  `empty_diff` failure として誤記録せず dev-flow-doctor の異常検知（iterate 不調率等）の統計を汚さない。
+  `empty_diff` failure として誤記録せず、dev-flow-health の失敗の型（`outcome == "failure"` のみ集計）に混ぜない。
   当該機構は W7 分類上 blast-radius（人間ラベル opt-in + 決定論的 dirty 検証が揃った
   場合のみ graceful 終了する仕組みで、gate の fail-closed 既定は不変）。
   guard/hook 由来 BLOCKED（block_class:'guard_blocked'。inline-edit-guard deny / sandbox EPERM /
@@ -35,7 +35,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   run が journal handoff 到達前に throw で abort した場合、dev-flow.js / pr-iterate.js の
   top-level try/catch が `outcome:'failure'` + `error_category:'abort'` +
   `error_msg:'abort@<phase>/<label>: <message>'`（500 字まで）+ `error_phase`（journal の
-  `.error.phase`。run-diagnostics の failure_distribution に乗る）+ telemetry `abort_phase` /
+  `.error.phase`。dev-flow-health の失敗 signature に入る）+ telemetry `abort_phase` /
   `abort_label`（passthrough 経路）と、その時点で確定していた telemetry（shape は Security floor で
   実効 shape が確定した後の abort のみ載せる。確定前の abort / failure telemetry は shape キー欠落 /
   eval_iter / gate_policy / subagent_invocations 等）を記録し、元の例外を rethrow する
@@ -116,8 +116,7 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   `scope` は `'full' | 'delta'` — review#i（i ≥ 2）が fix delta（前 round の review 時点の head sha ..
   現在 HEAD、`_lib/review-delta.mjs`）に絞れたか。sha が取得できない round は `'full'` にフォールバック
   する。`delta_lines` は delta の変更行数（`git diff --shortstat` の insertions + deletions。full は
-  null）。enum 検証は無し。dev-flow-doctor の `distributions.review_delta` が round ≥ 2
-  の blocking 件数 / delta round 数を集計する）。
+  null）。enum 検証は無し）。
   run 返り値（telemetry ではない）には加えて `merge_tier_hold_reasons`（`[{reason, kind}]`。
   `kind` は `deterministic_recheck`（決定論再チェックで解消しうる HOLD。Final reconcile
   unavailable の CI 不成立理由のうち pending / fetch-failed / invalid）と `human_judgment`
@@ -140,21 +139,21 @@ telemetry ハンドオフの各キーの語彙定義と Stop hook の二経路�
   usage metadata なし）から取得不可のため、起動数 × agentType がトークン効率の proxy metric。
   journal.sh の `--subagent-invocations` フラグ（object 検証違反は当該キーのみ drop する fail-open）に到達済み。
   **実効 shape の判定根拠 / analyze 経路の根拠（成功 handoff のみ・passthrough 経路・gate / merge tier / ledger の
-  入力にはしない。dev-flow-doctor の「shape 較正」が読む）**:
+  入力にはしない。shape 較正の原資料）**:
   `shape` は Security floor で `classifyShape(req, realizedCount, lineStats)` が realized diff の file 数・
   file ごとの追加/削除行数 + AC 数 / `issue_type` / 構造化 `breaking_change` で決めた実効 shape（事前見積もりは持たない）。
   `shape_uncorrected` は同じ呼び出しが file 数だけで決めた補正前の shape（重み・行数の補正を掛けない値。
-  floor で決まった run と行数を取れない run は `shape` と同じ）— doctor の shape 較正が補正で下がった run を数える。
+  floor で決まった run と行数を取れない run は `shape` と同じ）— shape 較正で補正により下がった run を数えるため。
   `shape_reason` は `classifyShape` が返す `reason` 文字列（`realized N file(s)…` で始まる閾値判定 — 行数が取れた run は
   `realized N file(s) → weighted W（docs D / 対応本番ありの test T を除外）, +A/-R lines, M AC, type=… → file 数判定 X,
   重み・行数判定 Y, 削除主体…で 1 段下げ | 1 段下げなし → shape=…`、取れない run は従来どおり
   `realized N file(s), M AC, type=… → shape=…` / それ以外は safe floor（count 欠損・AC 欠落・issue_type 外・breaking）の
-  種別 — doctor はこの prefix で 2 分類する）。`ac_count` は `acceptance_criteria.length`。
+  種別 — この prefix で 2 分類できる）。`ac_count` は `acceptance_criteria.length`。
   `realized_file_count` は `classifyShape` に渡した数 — **ephemeral / 宣言外パス / format-only
   を除外した後**の realized diff（取得不能 NaN は `null`。Stop hook の passthrough は null 値を落とすため journal
-  ではキー欠落として現れる — doctor は欠落と null を同一に扱う）。`realized_file_count_raw` は ephemeral 除外のみの
+  ではキー欠落として現れる — 集計では欠落と null を同一に扱う）。`realized_file_count_raw` は ephemeral 除外のみの
   realized diff 総数。両方載せるのは、宣言外・format-only の除外で classifyShape 入力が raw より小さくなり
-  下位 tier に決まった run（raw は閾値超・count は閾値内）を doctor が数えるため —
+  下位 tier に決まった run（raw は閾値超・count は閾値内）を数えられるようにするため —
   count だけでは shape と count の不一致は構造上 0 件になり除外規則の効きが見えない。
   shape は Security floor 時点の working tree を見るので、pr-iterate fix / base merge / 手動 commit で
   後から膨らんだ PR の changedFiles とは一致しない（journal から PR の最終規模は復元できない）。
@@ -183,8 +182,8 @@ jq projection ブロック内の `.telemetry.<key>` / `has("<key>")` 参照と�
 testsurf_hits / redgreen_deny / vdelta_fail_open / vdelta_verdicts / duration_seconds / phase_durations /
 merge_tier_reasons / route の 8 キーは journal.sh の専用フラグ（kebab-case、検証違反は当該キーのみ drop
 する fail-open）に到達済み。
-`vdelta_not_started` / `redgreen_headdiff` は passthrough 経路（専用フラグ無し。doctor 側が enum 外
-status を fail_open に畳むため送り側検証を持たない）。
+`vdelta_not_started` / `redgreen_headdiff` は passthrough 経路（専用フラグ無し。読み手が enum 外
+status を fail_open に畳む前提で送り側検証を持たない）。
 `resolved_evidence` は終端サマリーが折りたたみ内に 1 セル 200 字・30 行で切って表示する解消済み証跡の全文
 `{cap_chars, truncated, ledger_resolved[], env_notes[], ac_satisfied[], security_cleared[]}`（4 配列
 すべて空ならキー欠落）。text/evidence は 1 フィールド 1000 字 cap、総量が 16000 字以下になるまで
@@ -195,7 +194,7 @@ merge tier / ledger / gate_policy の判定入力にはならない。
 `eval_confidence` / `review_confidence` は `[0,1]` または `null`（evaluator / pr-reviewer の verdict
 自己申告 confidence）。agent が実行されたが confidence を返さない run は `null` を記録し、
 agent 自体が実行されない run（micro の Evaluate skip 等）はキー自体が handoff から欠落する
-（`null` とキー欠落を区別し、doctor 側の記録率分母は `has()` で判定する）。full route の
+（`null` とキー欠落を区別し、記録率の分母は `has()` で判定する）。full route の
 dev-flow entry は `review_confidence` キーを持たない（review は nested `workflow('pr-iterate')`
 側で行われるため）— 実値は同 run の pr-iterate entry 側に記録される（`subagent_invocations` の
 二重計上防止と同じ理由）。`review_decision`（`approve`/`request-changes`/`comment`）は

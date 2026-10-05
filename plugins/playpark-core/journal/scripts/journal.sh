@@ -557,7 +557,7 @@ cmd_query() {
     fi
 
     # ファイルを引数に並べると件数次第で ARG_MAX を超える（jq: Argument list too long）ので、
-    # printf（builtin）→ xargs cat → jq stdin で流す（analyze-dev-flow-telemetry.sh と同じ方式）。
+    # printf（builtin）→ xargs cat → jq stdin で流す。
     # 不正 JSON が混ざると一括 slurp が失敗するので、そのときだけ 1 ファイルずつ検査して
     # 壊れたものを警告付きで飛ばす。
     local slurped
@@ -797,9 +797,10 @@ cmd_track_skill() {
 # Prune Subcommand
 # ============================================================================
 
-# dev-flow-doctor / dev-flow-improve が読む skill。期間を問わず残す。
-# 廃止済みの旧 skill 名（dev-kickoff / pr-fix 等）は誰も読まないので入れない。
-PRUNE_KEEP_DEFAULT="dev-flow,pr-iterate,dev-issue-analyze,git-commit,git-pr,github-issue-orchestrator,dev-flow-doctor,dev-flow-improve,dev-improve"
+# dev-flow 系の skill。期間を問わず残す（dev-flow-health は dev-flow / pr-iterate の全履歴から
+# first_seen と resolved を判定するので、30 日で消すと解消済みの型が new に戻る）。
+# 廃止済みの旧 skill 名（dev-kickoff / pr-fix / dev-flow-doctor 等）は誰も読まないので入れない。
+PRUNE_KEEP_DEFAULT="dev-flow,pr-iterate,dev-issue-analyze,git-commit,git-pr,github-issue-orchestrator"
 
 # Delete entries older than N days whose skill is not in the keep list.
 # 日付はファイル名先頭（UTC の YYYY-MM-DD）で判定する。日付で始まらない名前と、

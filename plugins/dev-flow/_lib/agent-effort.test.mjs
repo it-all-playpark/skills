@@ -91,7 +91,7 @@ for (const [name, want] of Object.entries(EXPECTED)) {
 
 // Static pin (issue #725): the only agent() call sites that override effort via opts are pr-iterate's
 // fix#i / fix#i-retry (FIX_EFFORT = 'medium'). Every other agent keeps its frontmatter effort, so no
-// other non-comment line in dev-flow.js / pr-iterate.js / dev-improve.js may pass `effort:`.
+// other non-comment line in dev-flow.js / pr-iterate.js may pass `effort:`.
 test('[agent-effort][opts-pin] only pr-iterate fix#i / fix#i-retry pass effort (FIX_EFFORT = medium) via agent opts', () => {
   const workflowsDir = join(repoRoot, '.claude', 'workflows');
   const effortLines = (file) =>
@@ -99,7 +99,6 @@ test('[agent-effort][opts-pin] only pr-iterate fix#i / fix#i-retry pass effort (
       .split('\n')
       .filter((l) => !l.trim().startsWith('//') && /\beffort:/.test(l));
   assert.deepEqual(effortLines('dev-flow.js'), [], 'dev-flow.js の agent() call site は effort を渡さない');
-  assert.deepEqual(effortLines('dev-improve.js'), [], 'dev-improve.js の agent() call site は effort を渡さない');
 
   const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
   assert.match(prIterateSrc, /^const FIX_EFFORT = 'medium'$/m, "pr-iterate.js の FIX_EFFORT は 'medium'");

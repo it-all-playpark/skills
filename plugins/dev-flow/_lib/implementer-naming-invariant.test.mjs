@@ -96,15 +96,9 @@ test('[implementer-naming] (e) Implement 経路の routing test は devflow-impl
 
 // ---- (f) model / effort を述べるコメントが agent frontmatter と一致する ----
 
-test('[implementer-naming] (f) quality-model.mjs と dev-flow.js の model / effort コメントが frontmatter と一致する', () => {
-  const miner = frontmatter(readFileSync(join(pluginRoot, 'agents', 'improve-miner.md'), 'utf8'), 'improve-miner.md');
+test('[implementer-naming] (f) dev-flow.js の model / effort コメントが frontmatter と一致する', () => {
   const evaluator = frontmatter(readFileSync(join(pluginRoot, 'agents', 'evaluator.md'), 'utf8'), 'evaluator.md');
   const reviewer = frontmatter(readFileSync(join(pluginRoot, 'agents', 'pr-reviewer.md'), 'utf8'), 'pr-reviewer.md');
-  const qm = readFileSync(join(here, 'quality-model.mjs'), 'utf8');
-  assert.ok(qm.includes(`improve-miner の frontmatter 既定は ${miner.model}`), `quality-model.mjs が improve-miner の frontmatter 既定（${miner.model}）を述べていない`);
-  assert.ok(!qm.includes('rank-judge の frontmatter 既定は opus'), 'quality-model.mjs に実態と食い違う rank-judge の既定 model が残っている');
-  const gateDesc = `evaluator は ${evaluator.model} / ${evaluator.effort}、pr-reviewer`;
-  assert.ok(qm.includes(gateDesc), `quality-model.mjs の品質ゲート agent の記述が frontmatter と一致しない（期待: ${gateDesc}）`);
   const implDesc = `（evaluator は ${evaluator.model} / ${evaluator.effort}、pr-reviewer / dev-implementer は ${reviewer.model} / ${reviewer.effort}。`;
   assert.ok(devFlowSrc.includes(implDesc), `dev-flow.js の trackedAgent コメントが frontmatter と一致しない（期待: ${implDesc}）`);
 });

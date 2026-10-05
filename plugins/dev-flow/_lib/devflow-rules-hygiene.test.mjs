@@ -36,10 +36,9 @@ const REFERENCE_FILES = [
   'justification-classes.md',
   'exec-proxy.md',
   'inline-generation.md',
-  'dev-improve.md',
 ];
 
-test('(c) references ディレクトリへのポインタと 6 ファイル名が rules に含まれ、実在する', () => {
+test('(c) references ディレクトリへのポインタと 5 ファイル名が rules に含まれ、実在する', () => {
   assert.ok(
     rulesSrc.includes(REFERENCES_DIR),
     `rules に "${REFERENCES_DIR}" への言及が見つからない`,
@@ -75,16 +74,16 @@ const EXPECTED_PATHS = [
   'plugins/dev-flow/_lib/**',
   'plugins/dev-flow/_shared/**',
   'plugins/dev-flow/dev-flow/**',
-  'plugins/dev-flow/dev-flow-doctor/**',
-  'plugins/dev-flow/dev-flow-improve/**',
+  'plugins/dev-flow/dev-flow-health/**',
   'tools/**',
 ];
 
-test('(e) frontmatter の paths 配列が現状と同一の 9 エントリを含む', () => {
+test('(e) frontmatter の paths 配列が現状と同一の 8 エントリを含み、撤去した doctor / improve を含まない', () => {
   const frontmatterMatch = rulesSrc.match(/^---\n([\s\S]*?)\n---/);
   assert.ok(frontmatterMatch, 'frontmatter が見つからない');
   const frontmatter = frontmatterMatch[1];
   for (const p of EXPECTED_PATHS) {
     assert.ok(frontmatter.includes(`"${p}"`), `frontmatter の paths に "${p}" が含まれない`);
   }
+  assert.ok(!/dev-flow-doctor|dev-flow-improve|dev-improve/.test(rulesSrc), 'rules に撤去した doctor / improve への言及が残っている');
 });

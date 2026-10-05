@@ -454,10 +454,8 @@ pr-iterate の `MAX`（review ⇄ fix 反復、既定 10）は `args.max_iterati
 | `dev-runner-haiku-ro` | read-only exec-proxy | haiku / low |
 | `dev-runner-haiku-wo` | isolation probe 専任（Write のみ） | haiku / low |
 
-model は subagent の frontmatter で決める。dev-flow / pr-iterate の call site は `opts.model` を渡さない
-（evaluator / pr-reviewer の model を変えるなら `agents/*.md` の frontmatter を変える）。`opts.model` を渡すのは
-dev-improve の `rank-judge` のみで、`plugins/dev-flow/_lib/quality-model.mjs` の `QUALITY_MODEL` 定数を
-`tools/sync-inlines.mjs` が dev-improve.js へ inline 生成する。
+model は subagent の frontmatter で決める。品質ゲート agent の call site は `opts.model` を渡さない
+（evaluator / pr-reviewer の model を変えるなら `agents/*.md` の frontmatter を変える）。
 
 effort は原則 subagent の frontmatter で決める。`agent()` の `opts.effort` は frontmatter より優先して
 実効値に反映される（transcript で確認済み。`dev-flow-canary` の `agent_opts_effort_accepted` probe は

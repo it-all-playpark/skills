@@ -5,7 +5,7 @@
 // AC1: 絶対パス literal が 0 箇所。
 // AC2: workflow が使う call site が bare 名で配線されている。
 // [first-token]: bash 前置の bare 名呼び出しや拡張子付き呼び出しの残存が無い。
-// [bin]: workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 26 本に分割一致する。
+// [bin]: workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 20 本に分割一致する。
 //
 // AC1 の検査文字列自体が禁止パターンの literal を含むと自己矛盾するため、
 // join() で組み立てる（_lib/*.mjs は本テストファイル自身も走査対象に含むため）。
@@ -42,14 +42,8 @@ const BARE = [
   'journal',
   'check-ci',
   'analyze-issue',
-  'hypothesis-check',
-  'analyze-dev-flow-telemetry',
   'detect-stack',
   'ac-lint',
-  'run-diagnostics',
-  'baseline-snapshot',
-  'compare-baseline',
-  'validate-canary-report',
   'dev-flow-prerun',
   'dev-flow-ready-set',
   'merge-tier-facts',
@@ -92,7 +86,6 @@ test('[bin-bare-name-routing][AC1] _lib/*.mjs に skills 絶対パスが 0 箇�
 
 const devFlowSrc = readFileSync(join(workflowsDir, 'dev-flow.js'), 'utf8');
 const prIterateSrc = readFileSync(join(workflowsDir, 'pr-iterate.js'), 'utf8');
-const devImproveSrc = readFileSync(join(workflowsDir, 'dev-improve.js'), 'utf8');
 
 const UI_CFG = { base_port: 4100, up: [{ name: 'app', serve: 'npm run dev -- --port {port}', ready: { http: 'http://127.0.0.1:{port}/' } }], env_files: [] };
 const PASS_EVAL_TEST_AC = {
@@ -178,19 +171,6 @@ test("[bin-bare-name-routing][AC2] pr-iterate.js の ci-check prompt が bare �
   assert.ok(ci.prompt.includes('`check-ci --checks-data'), `ci-check prompt に bare 名 call site が無い:\n${ci.prompt.slice(0, 600)}`);
 });
 
-const DEV_IMPROVE_NEEDLES = [
-  '`hypothesis-check --metric',
-  '`analyze-dev-flow-telemetry --window 30d',
-  '`ac-lint <BODY_FILE>',
-  '`journal log dev-improve',
-];
-
-for (const needle of DEV_IMPROVE_NEEDLES) {
-  test(`[bin-bare-name-routing][AC2] dev-improve.js が '${needle}' を含む`, () => {
-    assert.ok(devImproveSrc.includes(needle), `dev-improve.js に bare 名 call site '${needle}' が見つからない`);
-  });
-}
-
 // ---- [first-token] bash 前置・.sh 拡張子残存が無い ----
 
 const bashPrefixRe = new RegExp('\\bbash (' + BARE.join('|') + ')(\\s|`)');
@@ -199,7 +179,6 @@ const dotShRe = new RegExp('(' + BARE.join('|') + ')\\.sh (\\$\\{|origin/|--|sta
 for (const [name, src] of [
   ['dev-flow.js', devFlowSrc],
   ['pr-iterate.js', prIterateSrc],
-  ['dev-improve.js', devImproveSrc],
 ]) {
   test(`[bin-bare-name-routing][first-token] ${name} に bash 前置の bare 名呼び出しが残っていない`, () => {
     assert.doesNotMatch(src, bashPrefixRe, `${name} に 'bash <bare名>' 前置が残っている`);
@@ -209,12 +188,12 @@ for (const [name, src] of [
   });
 }
 
-// ---- [bin] workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 26 本に分割一致する ----
+// ---- [bin] workflow が使う bare 名は全て bin/ に存在し、bin/ は core 1 本 + dev-flow 20 本に分割一致する ----
 
-test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 26 名に完全一致する', () => {
+test('[bin-bare-name-routing][bin] plugins/dev-flow/bin は BARE から journal を除いた 20 名に完全一致する', () => {
   const actual = readdirSync(binDir).sort();
   const expected = BARE.filter((name) => name !== 'journal').sort();
-  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 26 名と一致しない: actual=${JSON.stringify(actual)}`);
+  assert.deepEqual(actual, expected, `plugins/dev-flow/bin の内容が期待 20 名と一致しない: actual=${JSON.stringify(actual)}`);
 });
 
 test("[bin-bare-name-routing][bin] plugins/playpark-core/bin は ['journal'] に完全一致する", () => {

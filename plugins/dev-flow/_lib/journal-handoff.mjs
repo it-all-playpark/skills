@@ -8,7 +8,7 @@
 // stage2 が Write tool へ渡す最終書き込み先。shell 展開ではなく Write tool 側の `~` 展開に
 // 依存する（stage2 は shell を一切使わない — buildJournalLogInstr のコメント参照）。
 // 副作用として CLAUDE_JOURNAL_DIR による書き込み先の差し替えは効かない。同 env を読むのは
-// dev-flow-doctor / dev-improve の解析スクリプトとその test harness だけで、書き込み側の
+// dev-flow-health の集計スクリプトと各 test harness だけで、書き込み側の
 // production 経路では設定されないため、読み手（Stop hook）との不一致は生じない。
 const JOURNAL_PENDING_DIR = '~/.claude/journal/pending';
 
@@ -121,7 +121,7 @@ const JOURNAL_PAYLOAD_BASENAME_RE = /^payload-[A-Za-z0-9._-]+\.json$/;
 //   呼び出し側は agent 申告の path を使わず、この `savePath` をそのまま stage2 へ渡す（確定値が
 //   あるのに申告値を信用する理由がない）。agent が別の場所へ書いていた場合は stage2 の jq 検証が
 //   落ちて log_failed になり、欠落は観測可能なまま。
-// - `saveDir` + `fileName`（run 専用 worktree を持たない dev-improve）: 保存先が `${TMPDIR:-/tmp}` の
+// - `saveDir` + `fileName`（run 専用 worktree を持たない呼び出し元）: 保存先が `${TMPDIR:-/tmp}` の
 //   shell 展開に依存し JS 側で解決できないため、shell に絶対パスを組み立てさせてから Write する。
 //   ファイル名は固定で、mktemp は使わない — テンプレート `payload-XXXXXX.json` は X 列が suffix の
 //   前にあるため BSD mktemp では展開されず、リテラル名のファイルを exit 0 で作る（一意性が silent に
@@ -180,7 +180,7 @@ export function buildJournalSaveInstr({ payload, savePath, saveDir, fileName }) 
 
 // tilde は dev-flow の WT 未確定 abort 経路（Setup の args.setup 検証（prerun-setup）で throw し、
 // worktree パスがまだ確定していない）専用。prefix を `~/.claude/journal/` に固定するのは、
-// validateJournalSavedPath が dev-improve の saveDir モードで agent 申告値の検証にも使われるため
+// validateJournalSavedPath が saveDir モードで agent 申告値の検証にも使われるため
 // — `~/` 全般を通すと、その injection guard まで一緒に広がってしまう。
 const JOURNAL_TILDE_PREFIX = '~/.claude/journal/';
 
@@ -258,7 +258,7 @@ export function buildJournalLogInstr({ prefix, id, payloadPath, payload }) {
 // deps 注入: agent は呼び出し側の trackedAgent（subagent_invocations 計上のため）、
 // saveSchema/logSchema は workflow 側定義の JOURNAL_SAVE_RESULT / JOURNAL_RESULT を渡す。
 // savePath は呼び出し側 JS が絶対パスで確定して渡す（agent 申告の path は使わない — 申告値を
-// 信用すると別ディレクトリの同名ファイルが stage2 へ渡りうる）。dev-improve の saveDir+fileName
+// 信用すると別ディレクトリの同名ファイルが stage2 へ渡りうる）。saveDir+fileName
 // モードは対象外（本関数は savePath モード専用）。
 // agent は destructure 時に `runAgent` へ alias する（`agent(` という bare 呼び出しリテラルを
 // 本体コードへ残さないため）。dev-flow.js / pr-iterate.js の静的検証

@@ -324,7 +324,7 @@ config = load_skill_config("ga-analyzer")
 |--------|------|
 | `dev-flow` | Issue → LGTM までのE2E開発フロー (dynamic workflow: `plugins/dev-flow/.claude/workflows/dev-flow.js`) |
 | `dev-issue-analyze` | GitHub Issue分析・実装計画 |
-| `dev-flow-doctor` | dev-flowの健全性診断・改善提案 |
+| `dev-flow-health` | dev-flow の失敗を日次で型ごとに集計し、new / regressed の日だけ原因を推定して issue 化 |
 | `dep-guardian` | 依存関係更新PRのトリアージ・テスト・バッチマージ |
 
 > `dev-flow` の判断系 leaf (計画/レビュー/実装/評価) は subagent (`plugins/dev-flow/agents/`) として実装。
@@ -469,16 +469,16 @@ skills/
 │   │   │   └── references/subagent-dispatch.md  # Subagent dispatch 必須5要素
 │   │   ├── bin/journal                   # core bare 名 wrapper（1本）
 │   │   └── journal/                      # journal.sh（dev-flow telemetry・失敗記録）
-│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（7 skills, 9 agents）
+│   ├── dev-flow/                         # issue-to-LGTM ワークフロー plugin（6 skills, 8 agents）
 │   │   ├── .claude/
 │   │   │   ├── workflows/                # dynamic workflow js（dev-flow.js / pr-iterate.js 等）
 │   │   │   └── agents -> ../agents       # symlink（plugin subagent 読み込み用）
-│   │   ├── agents/                       # 9 dev-flow agent 実体
+│   │   ├── agents/                       # 8 dev-flow agent 実体
 │   │   ├── _lib/                         # workflow のロジック本体・test
 │   │   ├── _shared/scripts/              # dev-flow 共通スクリプト
-│   │   ├── bin/                          # dev-flow bare 名 wrapper（22本）
-│   │   └── dev-flow/, dev-flow-doctor/, dev-flow-improve/, dev-issue-analyze/,
-│   │       git-commit/, git-pr/, github-issue-orchestrator/（SKILL.md 7本）,
+│   │   ├── bin/                          # dev-flow bare 名 wrapper（20本）
+│   │   └── dev-flow/, dev-flow-health/, dev-issue-analyze/,
+│   │       git-commit/, git-pr/, github-issue-orchestrator/（SKILL.md 6本）,
 │   │       pr-iterate/（workflow のみ・SKILL.md 無し）
 │   └── playpark-skills/                  # 個人用スキル plugin（dependencies: playpark-core）
 │       ├── bin/                          # playpark-skills bare 名 wrapper（18本、<skill>-<action> 命名）

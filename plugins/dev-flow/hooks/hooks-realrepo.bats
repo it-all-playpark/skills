@@ -39,7 +39,7 @@ build_fixture() {
 
 @test "AC3-allow: pretool-inline-edit-guard allows Edit to a canonical _lib file" {
   cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher=="Edit|Write") | .hooks[0].command' "$HOOKS_JSON")
-  input=$(jq -n --arg fp "$PLUGIN_ROOT/_lib/quality-model.mjs" '{tool_name:"Edit",tool_input:{file_path:$fp,old_string:"x",new_string:"y"}}')
+  input=$(jq -n --arg fp "$PLUGIN_ROOT/_lib/plugin-version.mjs" '{tool_name:"Edit",tool_input:{file_path:$fp,old_string:"x",new_string:"y"}}')
 
   export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
   run bash -c "$cmd" <<<"$input"

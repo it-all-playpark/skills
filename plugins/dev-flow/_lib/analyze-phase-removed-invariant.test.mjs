@@ -2,7 +2,7 @@
 // issue #695: 空殻化した Analyze phase（phase マーカー・analyze の開始/終了 clock mark・常に 0 だった
 // phase_durations の analyze 列・doctor の analyze/plan 列）を撤去し、決定論ゲートを Setup 末尾に吸収した後、
 // 旧シンボルが dev-flow.js と _lib/devflow-durations.mjs に再登場しないことを静的に pin する
-// （issue #678 の plan-phase-removed-invariant と同型）。(d) はコメント・doctor 文書の phase 名表記を pin する。
+// （issue #678 の plan-phase-removed-invariant と同型）。(d) はコメントの phase 名表記を pin する。
 //
 // ゲート本体（buildReqFromContract / analyzeGateReasons / clarifyPrompt / analyze-clarify spawn /
 // needs_clarification の source: 'analyze' | 'analyze_prerun' | 'blocked_by'）と telemetry の analyze_path /
@@ -215,15 +215,12 @@ test('[analyze-phase-removed] (c) positive control: PHASE_NAMES 配列の先頭�
   assert.deepEqual(scanFile('x.sh', `${key}='["implement","analyze_path","validate"]'\n`), []);
 });
 
-// ---- (d) 表記: 撤去済み phase 名としての「Analyze」をコメント・doctor 文書に残さない ----
-// ゲートは「Setup 末尾の analyze ゲート」と書く。analyze-dev-flow-telemetry.sh 冒頭の
-// "Analyze dev-flow ..." は動詞なので除外する。
+// ---- (d) 表記: 撤去済み phase 名としての「Analyze」をコメントに残さない ----
+// ゲートは「Setup 末尾の analyze ゲート」と書く。"Analyze dev-flow ..." は動詞なので除外する。
 
 const PHASE_WORDING_TARGETS = [
   '_lib/final-ac-reconcile.mjs',
   '_lib/triviality.mjs',
-  'dev-flow-doctor/SKILL.md',
-  'dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh',
 ];
 
 function findAnalyzePhaseWording(src) {

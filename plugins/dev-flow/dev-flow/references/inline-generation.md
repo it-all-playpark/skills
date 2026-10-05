@@ -40,4 +40,4 @@ script を登録せず起動不能にするため（`_lib/workflow-inlines.sync.
 LLM judge 能力依存ではなく harness 機能依存）。workflow loader が ESM import 不可という harness 制約
 への対応として存在する。
 - 表現: `tools/sync-inlines.mjs` + マーカー区間そのもの
-- 再評価トリガ: Claude Code（harness）更新毎に loader の ESM import 可否を再検証し、解禁されたらマーカー区間を `import` 文に置換して generator・統合 sync test ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）→ dev-flow-doctor `run-diagnostics --canary` で行う。
+- 再評価トリガ: Claude Code（harness）更新毎に loader の ESM import 可否を再検証し、解禁されたらマーカー区間を `import` 文に置換して generator・統合 sync test ごと撤去する。再検証は `/dev-flow-canary`（read-only capability canary）の report で行う。
