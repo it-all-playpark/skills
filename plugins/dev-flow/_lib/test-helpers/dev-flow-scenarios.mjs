@@ -182,6 +182,15 @@ export const DEV_FLOW_SCENARIOS = {
   },
   // Validate red → green-fix#1 → test#2 green
   'green-fix': { overrides: { 'test#1': { tests: 'failed', green: false, summary: 'assert mismatch' } } },
+  // Validate red（diff と無関係のテストファイル）→ validate-diff#1（diff 一覧）→ base-rerun#1（base でも同じように落ちる）
+  // → ENV として green 要件から外し green-fix なしで Security floor へ
+  'base-failing': {
+    overrides: {
+      'test#1': { tests: 'failed', green: false, summary: 'plugins/x/scripts/a.bats が red', failed_files: ['plugins/x/scripts/a.bats'] },
+      'validate-diff#1': { ok: true, lines: [...STANDARD_FILES] },
+      'base-rerun#1': { results: [{ file: 'plugins/x/scripts/a.bats', ran: true, base_failed: true, same_failure: true, summary: 'same' }] },
+    },
+  },
   // PR body に Closes 行が無い → closes-reinject → closes-recheck（既定 responder で Closes 付き body。issue #661）
   'closes-reinject': {
     overrides: { 'closes-check': { ok: true, raw: JSON.stringify({ body: '**x**\n\n## 変更\n（なし）\n' }) } },

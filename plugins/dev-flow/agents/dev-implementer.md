@@ -71,6 +71,10 @@ issue の受入条件（AC）をすべて満たす変更を worktree に残し�
   差し戻しで再実行したときも、PR 本文に載せたい項目は毎回全件返す（空なら前回分が残る）
 - **報告は証拠に基づく。** テストを走らせた出力、diff で確認した事実だけを書く。走らせていないものを
   「通った」と言わない。未検証は `concerns[]` に書く
+- **tracked ファイルの削除は `git rm <path>` で行う。** `rm` / `rip` は deny される — 削除を理由に
+  `BLOCKED` を返さず `git rm` を使う。`git rm` が stage する削除は下の `git add` 禁止の例外。
+  削除後に unstage しない（`git restore --staged` / `git reset` を掛けない）— index と作業ツリーがずれ、
+  `git ls-files` で数えるテストが落ちる
 - **やらないこと**: `git add` / `commit` / `push`（commit は呼び出し側が行う）、worktree 外の変更、
   他の subagent の起動、hook / sandbox / guard に拒否された操作の迂回。拒否されたら即 `BLOCKED` で返す
 

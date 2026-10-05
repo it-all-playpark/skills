@@ -53,6 +53,18 @@ pnpm ワークスペースのビルド成果物（ほかの package が `workspa
 テストが変更前のコードを読むため、テストのたびに呼ぶ。ビルド失敗ではテストを実行せず red（Validate /
 test#final は `tests:'failed'` + summary に対象パッケージ名、redgreen は当該ペアの `reason`）にする。
 pnpm-workspace.yaml の無い repo と対象の無い repo では何もしない。
+
+Validate（`test#i` / `test#retry-i` / `test#post-eval-i`）が `tests:'failed'` を返したら、green-fix の前に失敗を
+分類する（`_lib/base-failure-triage.mjs`）。test proxy が `failed_files`（失敗したテストファイル）を返したときだけ、
+`validate-diff#<iter>`（read-only。base → working tree の tracked 差分 + untracked のファイル一覧）と突き合わせ、
+テストファイル自身もテスト対象のソース（同じディレクトリで stem が同じファイル）も diff に無いものを
+`base-rerun#<iter>` で base tree（`git archive` を worktree 外に展開）に対して同じファイルだけ再実行する。
+base でも同じテストが落ちたものは ENV 項目（`ENV-BASE-FAILING`、minor / advisory）として green 要件から外し、
+失敗がすべてそれなら green-fix を起動せずに green として先へ進む。一部だけなら残りを green-fix に回し、
+既存の失敗のファイルには触らないよう prompt で伝える。diff が触ったテストファイル・base では通る・再実行できない・
+`failed_files` が無い・diff 一覧が取れない失敗は、すべてこれまでどおり green-fix の対象（ENV 判定の材料が欠けたら
+green 要件を緩めない）。外したファイルは終端サマリーの参考セクションに「base でも失敗する既存の失敗」として載る。
+`test#final`（Final reconcile）はこの分類をしない。
 test#final green（head sha pin）または ci_verified が成立した run では、未 checked の `EVAL-*` blocking
 item（evaluator 由来。escalate は除く）をその決定論 evidence で checked にする（evaluator は fix 後に再実行
 されないため）。SEC seed / TESTSURF / AC-FINAL-* はこの経路で解消せず、LLM 判断（final_resolution）でも
@@ -107,7 +119,9 @@ Implement 経路は shape に関わらず `dev-implementer` 一本（planner ⇄
 evaluator が担う。合成 task の `file_changes` は空で始まり、IMPL 返却の `files` を宣言として取り込む
 （宣言外監査・実効 shape の realized count・PR body の材料になる）。BLOCKED（`approach_mismatch`）は planner を起動せず、
 blockSeen 累積の findings（過去 BLOCKED アプローチへの回帰禁止）と DONE 成果を prompt に付けて同じ agent を
-`reimpl-blocked#b` で再 spawn する（上限 `BLOCK_MAX`）。Validate の green-fix（`green-fix#i` / `green-fix#retry-i` / Evaluate 差し戻し後の PR 前再テストの `green-fix#post-eval-i`）も
+`reimpl-blocked#b` で再 spawn する（上限 `BLOCK_MAX`）。`guard_blocked` は再 spawn しないが、その理由がファイル削除
+（`isDeletionGuardBlock`）なら、以降の実装 spawn（`reimpl#i` / green-fix 等）の prompt に削除手段の固定文
+（tracked ファイルは `git rm`、削除後に unstage しない。agent 定義と同じ内容）を足す。Validate の green-fix（`green-fix#i` / `green-fix#retry-i` / Evaluate 差し戻し後の PR 前再テストの `green-fix#post-eval-i`）も
 同じ agent 定義だが `model: 'sonnet'` を明示 override する（green-fix の実態は環境起因の blocker 報告か小さな
 test script 修正で opus 級の推論を要さず、green-fix > 0 の run は Evaluate のテスト弱体化監査が強制されるため）。
 Implement / BLOCKED 再実装 / Evaluate 差し戻しは `opts.model` を渡さず frontmatter の既定（opus / high）で spawn し、
