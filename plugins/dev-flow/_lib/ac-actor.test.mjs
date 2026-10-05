@@ -2,7 +2,12 @@
 // AC の actor 分類（agent / human）と、ac_results の actor 別集計・差し戻し用 fix_feedback の pin（issue #747）。
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { AC_ACTORS, AGENT_AC_REIMPL_MAX, classifyAcActor, acActorsOf, unsatisfiedAcByActor, agentAcFeedback } from './ac-actor.mjs';
+import { AC_ACTORS, AC_SCOPES, AGENT_AC_REIMPL_MAX, classifyAcActor, acActorsOf, unsatisfiedAcByActor, agentAcFeedback, classifyAcScope, mixedScopeAcReasons } from './ac-actor.mjs';
+
+// repo 内外が混ざった AC（テスト・README・rules の削除と dotfiles の excludedCommands の変更を 1 つに書いたもの）
+const MIXED_AC = '古い skill を参照するテスト・README・rules を削除し、dotfiles の excludedCommands から dev-flow-doctor を外す';
+// repo 外の作業だけを書いた AC
+const EXTERNAL_AC = 'dotfiles の `claude-code/settings.json` の excludedCommands に dev-flow-health の起動形を足す';
 
 test('[ac-actor] 「ローカルで測って PR 本文に書く」型の AC は agent', () => {
   assert.equal(classifyAcActor('512Mi で、想定する同時生成数の worker を持てることをローカルで測り、PR 本文に書く'), 'agent');
@@ -65,4 +70,49 @@ test('[ac-actor] agentAcFeedback: evaluator feedback と同じ形で AC 番号�
   assert.match(fb[0].suggestion, /pr_notes/);
   assert.match(fb[0].suggestion, /design_decisions/);
   assert.match(agentAcFeedback([0], ['x'], [])[0].description, /根拠なし/);
+});
+
+test('[ac-scope] repo 外の目印と repo 内の目印が 1 つの AC にあれば mixed、repo 外だけなら external、どちらも無ければ repo', () => {
+  assert.deepEqual(AC_SCOPES, ['repo', 'external', 'mixed']);
+  assert.equal(classifyAcScope(MIXED_AC), 'mixed');
+  assert.equal(classifyAcScope(EXTERNAL_AC), 'external');
+  assert.equal(classifyAcScope('worker 数の上限を設定で変えられる'), 'repo');
+  for (const ac of [
+    'plugins/dev-flow/_lib/a.mjs を直し、~/.claude/settings.json の allow にも足す',
+    'vitest を green にし、別 repo の CI 設定も更新する',
+    'README に手順を書き、settings.local.json の deny を外す',
+  ]) assert.equal(classifyAcScope(ac), 'mixed', ac);
+  for (const ac of [
+    '`~/.claude/settings.json` の allow に bin を足す',
+    '他のリポジトリの workflow を更新する',
+    'dotfiles に worktree を作って excludedCommands を直す',
+  ]) assert.equal(classifyAcScope(ac), 'external', ac);
+});
+
+test('[ac-scope] 他 repo の参照は対象 repo と違うときだけ repo 外（repo 省略時は判定しない）', () => {
+  const repo = 'it-all-playpark/skills';
+  assert.equal(classifyAcScope('acme/infra#206 の設定を入れる', { repo }), 'external');
+  assert.equal(classifyAcScope('https://github.com/acme/infra の設定を入れ、テストを足す', { repo }), 'mixed');
+  assert.equal(classifyAcScope('It-All-Playpark/Skills#786 の再発をテストで防ぐ', { repo }), 'repo');
+  assert.equal(classifyAcScope('acme/infra#206 の設定を入れる'), 'repo');
+});
+
+test('[ac-actor] repo 外の作業だけを書いた AC は human（エージェント AC 未達に数えない）', () => {
+  assert.equal(classifyAcActor(EXTERNAL_AC), 'human');
+  assert.equal(classifyAcActor(MIXED_AC), 'agent', 'mixed は analyze ゲートで止めるので actor は agent のまま');
+  const actors = acActorsOf(['worker 数の上限を設定で変えられる', EXTERNAL_AC]);
+  assert.deepEqual(actors, ['agent', 'human']);
+  assert.deepEqual(unsatisfiedAcByActor([{ ac_index: 1, satisfied: false }], actors), { agent: [], human: [1] });
+  assert.deepEqual(acActorsOf(['acme/infra#206 の設定を入れる'], { repo: 'it-all-playpark/skills' }), ['human']);
+});
+
+test('[ac-scope] mixedScopeAcReasons: 混ざった AC だけを AC 番号・本文・repo 外の目印つきで 1 行ずつ返し、分割を求める', () => {
+  const reasons = mixedScopeAcReasons(['worker 数の上限を設定で変えられる', MIXED_AC, EXTERNAL_AC]);
+  assert.equal(reasons.length, 1);
+  assert.match(reasons[0], /^AC-2「/);
+  assert.ok(reasons[0].includes(MIXED_AC));
+  assert.match(reasons[0], /dotfiles \/ excludedCommands/);
+  assert.match(reasons[0], /repo 内の AC と repo 外の AC に分割/);
+  assert.deepEqual(mixedScopeAcReasons(['worker 数の上限を設定で変えられる', EXTERNAL_AC]), []);
+  assert.deepEqual(mixedScopeAcReasons(undefined), []);
 });

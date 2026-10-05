@@ -454,6 +454,37 @@ function classifyReviewRoute(review) {
 
   return { route, blocking, minor };
 }
+
+function isOutsideWorktree(file, worktree) {
+  const f = typeof file === 'string' ? file.trim() : '';
+  if (f === '') return false;
+  if (f.includes('://')) return true;
+  if (f === '~' || f.startsWith('~/')) return true;
+  if (f.startsWith('/')) {
+    const wt = typeof worktree === 'string' ? worktree.trim().replace(/\/+$/, '') : '';
+    if (!wt.startsWith('/')) return false;
+    return !(f === wt || f.startsWith(wt + '/'));
+  }
+  let depth = 0;
+  for (const seg of f.split('/')) {
+    if (seg === '..') depth -= 1;
+    else if (seg !== '' && seg !== '.') depth += 1;
+    if (depth < 0) return true;
+  }
+  return false;
+}
+
+function excludeOutsideWorktree(outcome, worktree) {
+  const blocking = Array.isArray(outcome?.blocking) ? outcome.blocking : [];
+  const inside = [];
+  const outside = [];
+  for (const f of blocking) (isOutsideWorktree(f?.file, worktree) ? outside : inside).push(f);
+  if (outside.length === 0) return { outcome, outside };
+  return {
+    outcome: { ...outcome, blocking: inside, route: inside.length === 0 ? REVIEW_ROUTE_CI_GATE : outcome.route },
+    outside,
+  };
+}
 // ==== END inline: _lib/review-normalize.mjs ====
 // ==== BEGIN inline: _lib/review-finding-scrub.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
@@ -612,7 +643,7 @@ function formatCiLastStatusLine(ciLastStatus, ciLastFailedChecks, pr) {
   return `**最終 CI 状態**: ${label}`;
 }
 
-function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [] }) {
+function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSummary, lastVerificationEvidence, history, ciWaitSeconds, ciPollAttempts, ciLastStatus = null, ciLastFailedChecks = [], humanFollowups = [] }) {
   const DECISION_EMOJI = { 'approve': '✅', 'request-changes': '🔴', 'comment': '💬' };
   const lines = [];
 
@@ -672,6 +703,14 @@ function buildTerminalSummaryBody({ pr, status, iterations, lastDecision, lastSu
     lines.push(...formatFindingsList(allBlocking, { withIter: true }));
     lines.push('');
     lines.push('</details>');
+  }
+
+  const followups = (humanFollowups || []).filter((f) => f != null);
+  if (followups.length > 0) {
+    lines.push('');
+    lines.push(`### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・${followups.length} 件）`);
+    lines.push('');
+    lines.push(...formatFindingsList(followups, { withIter: followups.every((f) => f.iter != null) }));
   }
 
   const allMinor = histList.flatMap((r) => (r.minor ?? []).map((f) => ({ iter: r.iteration, ...f })));
@@ -1087,8 +1126,40 @@ function ciFixGuidance({ pr, base }) {
     + `\`git fetch origin\` の後 \`git merge ${baseRef}\` で base をマージした状態を作って再現を確認し、その状態で修正すること`
     + `${base ? '' : '（base branch 名は `gh pr view ' + pr + ' --json baseRefName` で確認）'}。\n`
 }
+// fix agent の prompt（review 指摘・CI 失敗の両経路）。必須 5 要素（Objective / Output format / Tools / Boundary /
+// Token cap）を揃える。Boundary は incentive-structural — fix agent は直せない指摘を前に worktree の外や
+// GitHub 上の状態を書き換える経路を自分で組み立てるため、禁止を prompt 側で明示する。
+function fixPrompt({ objective, issuesHeading, issuesText, guidance = '' }) {
+  return `## Objective\n${objective}\n\n`
+    + `## Steps\n(1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、(2) 下記の${issuesHeading}を修正、`
+    + `(3) Conventional Commits 形式で commit、(4) \`git push\` で push。\n\n`
+    + `解消すべき${issuesHeading}:\n${issuesText}\n`
+    + (guidance ? `\n${guidance}` : '')
+    + `\n## Output format\n{ "applied": boolean, "files": string[], "summary": string }。applied は修正を commit・push まで終えたときだけ true。files は変更したファイルの repo 相対パス。JSON のみ返せ。\n`
+    + `\n## Tools\n使用可: Read, Edit, Write, Grep, Glob, Bash（git、\`gh pr checkout\` / \`gh pr checks\` / \`gh pr view\` / \`gh run view\`、テスト実行）。subagent の起動は禁止。\n`
+    + `\n## Boundary\n`
+    + `- 書き込みは worktree（${isoWt}）の中だけ。worktree の外のファイル・他 repo（別の clone や worktree を含む）を変更しない\n`
+    + `- ブランチを作らない（\`git branch\` / \`git checkout -b\` / \`git switch -c\` / \`git worktree add\` を使わない）。commit・push は PR ブランチにだけ行う\n`
+    + `- \`gh api\` で GitHub 上の状態を変更しない（ref・ブランチ・PR・issue・comment の作成・更新・削除を含む）\n`
+    + `- 直すのに worktree の外の変更が要る指摘は直さず、その旨を summary に書く\n`
+    + `\n## Token cap\nsummary は 300 字以内。指摘に関係するファイルだけを読み、無関係な探索・リファクタをしない。\n`
+}
 const reviewSeen = makeSeenTracker(REVIEW_STUCK)  // findings 累積 & stuck 検出（_lib/stuck-detector.mjs）
 const history = []               // ラウンド履歴 [{iteration, decision, summary, blocking, minor, scope, delta_lines}]
+// worktree の外を指す blocking finding（_lib/review-normalize.mjs の excludeOutsideWorktree）。fix には渡さず、
+// reviewSeen にも register しない（直さない指摘で stuck を誤発火させない）。終端サマリーの人間側 follow-up と
+// 返り値 human_followups に載せる。同じ topic + file は最初の 1 件だけ残す。
+const humanFollowups = []
+function routeInsideWorktree(outcome, iteration) {
+  const { outcome: inside, outside } = excludeOutsideWorktree(outcome, isoWt)
+  if (!outside.length) return outcome
+  for (const f of outside) {
+    if (!humanFollowups.some((h) => h.topic === f.topic && h.file === f.file)) humanFollowups.push({ iter: iteration, ...f })
+  }
+  log(`iteration ${iteration}: worktree の外を指す blocking ${outside.length} 件（${outside.map((f) => f.file).join(' / ')}）を fix から外し人間側 follow-up へ回す`
+    + `${inside.blocking.length === 0 ? ' — 残りの blocking 0 件のため CI 判定へ進む' : ''}`)
+  return inside
+}
 // review#i（i ≥ 2）を fix delta に絞るための sha 追跡（canonical は _lib/review-delta.mjs）。
 // shaNow: 現在の PR head（review#1 は pr-meta / nested args の head_sha、以降は ensure-committed の head_sha）。
 // shaPrev: 直前 round の review 時点の head。delta = shaPrev..shaNow。どちらかが欠ければ full にフォールバック。
@@ -1233,7 +1304,7 @@ for (i = 1; i <= MAX; i++) {
   lastReview = review
 
   let effReview = review
-  let outcome = classifyReviewRoute(review)
+  let outcome = routeInsideWorktree(classifyReviewRoute(review), i)
 
   // contract mismatch（approve だが blocking あり）: 同一 iteration 内で 1 回だけ再 review する。
   // MAX は消費しない — 有限性は「iteration ごと最大 1 回」で担保する。
@@ -1255,7 +1326,7 @@ for (i = 1; i <= MAX; i++) {
     }
     effReview = rereview
     lastReview = rereview
-    outcome = classifyReviewRoute(rereview)
+    outcome = routeInsideWorktree(classifyReviewRoute(rereview), i)
 
     if (outcome.route === 'contract_mismatch') {
       // 再 review 後も decision と blocking の矛盾が再発 — 無限ループせず人間へエスカレーション。
@@ -1368,10 +1439,12 @@ for (i = 1; i <= MAX; i++) {
 
       const issuesText = buildCiIssuesText(ciFindings)
 
-      const ciFixPrompt = `PR #${PR} の CI 失敗を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
-        + `(2) 下記の CI 失敗を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
-        + `解消すべき CI 失敗:\n${issuesText}\n\n`
-        + ciFixGuidance({ pr: PR, base: prMeta?.base_ref })
+      const ciFixPrompt = fixPrompt({
+        objective: `PR #${PR} の CI 失敗を修正し、PR ブランチへ commit・push する。`,
+        issuesHeading: ' CI 失敗',
+        issuesText,
+        guidance: ciFixGuidance({ pr: PR, base: prMeta?.base_ref }),
+      })
       const { fix, retried } = await callFixAgent(ciFixPrompt, i)
       if (retried) ciRound.fix_retried = true
 
@@ -1451,14 +1524,16 @@ for (i = 1; i <= MAX; i++) {
       + (ciFindings.length ? `\n${buildCiIssuesText(ciFindings)}` : '')
 
     // fix は dev-runner agent に直接指示する（専用の pr-fix skill は持たない）。
-    const fixPrompt = `PR #${PR} のレビュー指摘を修正する。手順: (1) \`gh pr checkout ${PR}\` で PR ブランチを checkout、`
-      + `(2) 下記の指摘を修正、(3) Conventional Commits 形式で commit、(4) \`git push\` で push。`
-      + `解消すべき指摘:\n${issuesText}`
-      + (ciFindings.length
-          ? `\n\n上記のうち \`ci::<name>\` は CI の失敗 check である（review 指摘と併せて同じ commit で解消してよい）。\n`
-            + ciFixGuidance({ pr: PR, base: prMeta?.base_ref })
-          : '')
-    const { fix, retried } = await callFixAgent(fixPrompt, i)
+    const reviewFixPrompt = fixPrompt({
+      objective: `PR #${PR} のレビュー指摘を修正し、PR ブランチへ commit・push する。`,
+      issuesHeading: '指摘',
+      issuesText,
+      guidance: ciFindings.length
+        ? `上記のうち \`ci::<name>\` は CI の失敗 check である（review 指摘と併せて同じ commit で解消してよい）。\n`
+          + ciFixGuidance({ pr: PR, base: prMeta?.base_ref })
+        : '',
+    })
+    const { fix, retried } = await callFixAgent(reviewFixPrompt, i)
     if (retried) round.fix_retried = true
 
     // fix の applied:false を検出して人間へエスカレーション（無言で MAX 回燃やさない）。
@@ -1512,6 +1587,7 @@ const summaryBody = buildTerminalSummaryBody({
   ciPollAttempts: totalCiPollAttempts,
   ciLastStatus,
   ciLastFailedChecks,
+  humanFollowups,
 })
 log(`終端 CI 状態: ${ciLastStatus ?? '未観測'}${ciLastStatus === 'failed' ? `（${ciLastFailedChecks.join(', ')}）` : ''}`)
 log('終端サマリーは comment として投稿する（formal review は投稿しない — issue #524）')
@@ -1594,6 +1670,7 @@ return {
   terminal_path: terminalPath,
   fix_terminal_reason: fixTerminalReason,
   history,
+  human_followups: humanFollowups,  // worktree の外を指すとして fix から外した blocking finding（nested では dev-flow の終端サマリーが表示する）
   subagent_invocations: buildSubagentInvocations(SUBAGENT_COUNTS),
   journal_log_status: journalLogStatus,
   ...(lastCiEpoch != null ? { end_epoch: lastCiEpoch } : {}),

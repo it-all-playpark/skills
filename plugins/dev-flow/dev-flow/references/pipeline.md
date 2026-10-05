@@ -16,9 +16,14 @@ plugin 相対パス。`tools/sync-inlines.mjs` のみ repo root。
 の `args.setup` に渡す（順序は EnterWorktree → Workflow。逆だと isolation probe が fail-closed abort する）。
 dev-flow-run の Setup phase は `args.setup` を fail-closed に検証し、その末尾の analyze ゲート（固有の
 phase は持たない — 純関数の検証とゲート判定だけで所要 ≒0 のため phase_durations に区間を持たない）は
-`args.setup.analyze` の whitelist 検証と 3 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空）
-のみで通常経路の subagent 起動は 0（ゲートが引いたときだけ sonnet を 1 spawn して人間向け
+`args.setup.analyze` の whitelist 検証と 4 条件ゲート（AC 空 / comment_conflicts 非空 / uncertain 非空 /
+repo 内外が混ざった AC）のみで通常経路の subagent 起動は 0（ゲートが引いたときだけ sonnet を 1 spawn して人間向け
 missing_context を生成し needs_clarification で終端する。失敗 telemetry の phase 帰属は `Setup`）。
+repo 内外の混在は `_lib/ac-actor.mjs` の `classifyAcScope` が決定論で判定する: repo 外の目印（`dotfiles` /
+`excludedCommands` / `settings.json` / `~/.claude` / 別 repo・他 repo / 対象 repo 以外の `owner/repo#N`・
+`github.com/owner/repo`）と repo 内の目印（テスト / README / rules / repo 内パス等）が 1 つの AC に両方あれば
+`mixed` で、AC を repo 内 / repo 外に分割するよう求める（1 issue = 1 PR・単一 worktree では repo 外を満たせず、
+Evaluate 後に agent AC の取りこぼしと誤分類されるため）。
 analyze ゲートより前に blocked_by ゲートを置く: `args.setup.analyze.blockers`（prerun-analyze.sh が
 GitHub の issue dependencies API と本文の `Blocked by #N` / `owner/repo#N` 行の和集合から読み取る）に
 `state: "OPEN"` が 1 つでもあれば、sonnet も isolation-probe も起動せず needs_clarification
@@ -103,14 +108,22 @@ shape ごとの経路（3 tier）:
 | **standard** | 同上 | 1 パスのみ（差し戻しなし。未解消 critical は merge tier HOLD + human review で担保）。例外は agent AC の未達で、`AGENT_AC_REIMPL_MAX` 回まで延長して差し戻す | REVIEW |
 | **complex** | 同上 | 差し戻し loop（上限 EVAL_MAX=10、design 差し戻しは `DESIGN_REPLAN_MAX` まで。差し戻し先は同じ `dev-implementer`） | REVIEW、danger・breaking で HOLD |
 
-AC は analyze ゲートで actor（`_lib/ac-actor.mjs`: `（人手）` 表記・staging・本番・外部サービス・issue へのコメントは
-`human`、それ以外は `agent`）に分類する。AC の ledger item は LLM major で既定 `gate_policy` では advisory のため、
+AC は analyze ゲートで actor（`_lib/ac-actor.mjs`: `（人手）` 表記・staging・本番・外部サービス・issue へのコメントと、
+repo 外の作業だけを書いた AC（`classifyAcScope` が `external`）は `human`、それ以外は `agent`）に分類する。AC の ledger item は LLM major で既定 `gate_policy` では advisory のため、
 ledger 収束だけでは未達 AC がループを回さない。そこで agent AC の `satisfied:false` は gate_policy に依らず
 `fix_feedback`（`topic: "AC-<n> 未達"`）付きで `dev-implementer` へ差し戻す（agent AC を理由にした差し戻しは全 shape で
 `AGENT_AC_REIMPL_MAX` 回まで）。human AC は worktree 外の作業なので差し戻さない。Merge tier の HOLD 理由は
 `ac_agent_unsatisfied`（差し戻し上限後も未達 = ループの取りこぼし）と `ac_human_pending`（人手 AC 待ち）に分ける。
 `dev-implementer` が返す `design_decisions` / `pr_notes` は plan（`architecture_decisions` / `pr_notes`）に取り込み、
 PR body の「設計判断」「検証」に載せる（evaluator も plan 経由で読み、「PR 本文に書く」型の AC を判定する）。
+`out_of_scope`（issue 本文にあるが AC 外・worktree 外として実施しなかった作業）は `plan.out_of_scope` に取り込み、
+PR body と終端サマリーの「この PR に含めなかったもの」節にそのまま転記する（空なら節ごと出さない）。
+
+pr-iterate の fix（`fix#i`）prompt は必須 5 要素を持ち、Boundary で worktree の外・他 repo への書き込み、ブランチ作成、
+`gh api` での変更を禁止する。`file` が worktree の外（URL・`~`・`..` で出る相対パス・worktree 配下でない絶対パス）を
+指す blocking finding は `excludeOutsideWorktree`（`_lib/review-normalize.mjs`）が fix の対象から外し、reviewSeen にも
+積まない。残りの blocking が 0 件ならその round は CI 判定へ進む。外した finding は返り値 `human_followups` と
+終端サマリーの「人間側 follow-up」節に載る（nested 起動では dev-flow の終端サマリーが表示する）。
 
 Implement 経路は shape に関わらず `dev-implementer` 一本（planner ⇄ reviewer ループ・parallel fan-out・
 `pipeline()` は持たない。切替定数は置かず、経路を戻すときは git revert）。`dev-implementer` は issue 本文

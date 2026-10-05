@@ -568,3 +568,13 @@ test('buildTerminalSummaryBody: ciWaitSeconds/ciPollAttempts 省略時は **CI �
   });
   assert.ok(!body.includes('**CI 待機**'), 'ciWaitSeconds/ciPollAttempts 省略時は **CI 待機** 行を含まない');
 });
+
+// issue #793: worktree の外を指すとして fix から外した指摘は「人間側 follow-up」節に出る
+test('buildTerminalSummaryBody: humanFollowups 非空なら人間側 follow-up 節（反復番号つき）を出し、空・省略なら byte 一致', () => {
+  const opts = { pr: 5, status: 'lgtm', iterations: 1, lastDecision: 'approve', lastSummary: 'ok', history: [] };
+  const body = buildTerminalSummaryBody({ ...opts, humanFollowups: [
+    { iter: 1, severity: 'major', topic: 'out', file: '~/dotfiles/settings.json', description: '許可が無い', suggestion: '人間が足す' },
+  ] });
+  assert.ok(body.includes('### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・1 件）\n\n1. 🟠 major — `~/dotfiles/settings.json`（反復 1 回目）\n   - 指摘: 許可が無い\n   - 提案: 人間が足す'), body);
+  assert.equal(buildTerminalSummaryBody({ ...opts, humanFollowups: [] }), buildTerminalSummaryBody(opts));
+});

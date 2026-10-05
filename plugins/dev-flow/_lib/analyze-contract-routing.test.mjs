@@ -17,6 +17,8 @@
 //   (h) REQ が prerun の analyze から組まれる: breaking_change / issue_body / AC が dev-implementer prompt と shape に届く
 //   (i) open な blocker（issue #744）: needs_clarification（source=blocked_by）で journal handoff 以外の spawn 0、
 //       missing_context に未完了 issue を列挙。analyze ゲートより先に判定する。closed のみなら通常経路
+//   (j) repo 内外が混ざった AC（issue #793）: needs_clarification（source=analyze）で Implement に進まず、
+//       missing_context に分割を求める決定論の理由が載る。repo 外だけの AC はゲートを通り human AC に分類される
 //
 // Run: npx vitest run _lib/analyze-contract-routing.test.mjs
 import { test } from 'vitest';
@@ -242,6 +244,44 @@ test('[analyze-routing] (i3) closed の blocker のみ → 従来どおり isola
   assert.equal(calls.filter((c) => c.label === 'isolation-probe').length, 1);
   assert.ok(implementerCalls(calls).length >= 1, 'dev-implementer が spawn されていない');
   assert.ok(logs.some((l) => l.includes('acme/skills#13=CLOSED(body)')), 'closed blocker の log が無い');
+});
+
+// ---- (j) repo 内外が混ざった AC → needs_clarification（Implement に進まない）----
+const MIXED_AC = '古い skill を参照するテスト・README・rules を削除し、dotfiles の excludedCommands から dev-flow-doctor を外す';
+const EXTERNAL_AC = 'dotfiles の excludedCommands に dev-flow-health の起動形を足す';
+
+test('[analyze-routing] (j1) repo 内外が混ざった AC を持つ issue → needs_clarification（source=analyze）で isolation-probe / dev-implementer より前に止まり、AC の分割を求める', async () => {
+  const { calls, result, error, logs } = await run({ analyze: { acceptance_criteria: ['worker 数の上限を設定で変えられる', MIXED_AC] } });
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  assertClarificationBeforeSpawn(calls, result, 'mixed-ac');
+  assert.equal(result.source, 'analyze');
+  const reason = result.missing_context.find((m) => m.startsWith('AC-2「'));
+  assert.ok(reason, `missing_context に混在 AC の理由が無い: ${JSON.stringify(result.missing_context)}`);
+  assert.ok(reason.includes(MIXED_AC));
+  assert.match(reason, /repo 内の AC と repo 外の AC に分割/);
+  const clarify = calls.filter((c) => c.label === 'analyze-clarify#1');
+  assert.equal(clarify.length, 1);
+  assert.ok(clarify[0].prompt.includes('AC-2「'), 'clarify prompt にゲート理由（混在 AC）が verbatim で無い');
+  assert.ok(logs.some((l) => l.includes('repo 内外混在 AC=1')), 'ゲート log に混在 AC の件数が無い');
+});
+
+test('[analyze-routing] (j2) repo 外の作業だけを書いた AC はゲートを通り、人手 AC として Implement に進む', async () => {
+  const { calls, result, error, logs } = await run({ analyze: { acceptance_criteria: ['worker 数の上限を設定で変えられる', EXTERNAL_AC] } });
+  assert.equal(error, null, `run が throw してはならないが: ${error?.message}`);
+  assert.ok(result?.status !== 'needs_clarification', `repo 外だけの AC で止まってはならない: ${JSON.stringify(result?.missing_context)}`);
+  assert.equal(analyzeGateCalls(calls).length, 0, 'ゲートの spawn は 0 のまま');
+  assert.ok(implementerCalls(calls).length >= 1, 'dev-implementer が spawn されていない');
+  assert.ok(logs.some((l) => l.includes('人手 AC 1 件（AC-2）')), `repo 外だけの AC が人手 AC に分類されていない: ${logs.filter((l) => l.startsWith('analyze')).join(' | ')}`);
+});
+
+test('[analyze-routing] (j3) 対象 repo 以外の owner/repo#N と repo 内の作業が混ざった AC も止まる（対象 repo の参照は止めない）', async () => {
+  const withRepo = (acs) => devFlowArgs(1, { repo: 'acme/skills', analyze: prerunAnalyze({ acceptance_criteria: acs }) });
+  const mixed = await run({ args: withRepo(['acme/infra#12 の設定を変え、テストを足す']) });
+  assert.equal(mixed.error, null);
+  assertClarificationBeforeSpawn(mixed.calls, mixed.result, 'other-repo-mixed');
+  const self = await run({ args: withRepo(['acme/skills#12 の再発をテストで防ぐ']) });
+  assert.equal(self.error, null);
+  assert.ok(self.result?.status !== 'needs_clarification', `対象 repo の参照で止まってはならない: ${JSON.stringify(self.result?.missing_context)}`);
 });
 
 test('[analyze-routing] (i4) blockers が whitelist 不合格（欠落）→ throw（推測で素通りさせない）', async () => {

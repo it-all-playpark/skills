@@ -94,6 +94,10 @@ function resolvedCell(v) {
  * @param {string[]|null|undefined} [opts.baseFailingTests] - Validate が「diff と無関係で base でも同じように落ちる」と
  *   判定し green 要件から外したテストファイル（_lib/base-failure-triage.mjs）。非空なら at-a-glance のテスト欄の
  *   green に除外件数を添え、参考セクションに「base でも失敗する既存の失敗」としてファイルを列挙する（表示専用）
+ * @param {Array<{severity,topic,file,line,description,suggestion}>|null|undefined} [opts.humanFollowups] - pr-iterate が
+ *   worktree の外を指すとして fix から外した指摘（返り値 human_followups）。非空なら「人間側 follow-up」節に出す（表示専用）
+ * @param {string[]|null|undefined} [opts.outOfScope] - dev-implementer が out_of_scope[] で申告した、issue 本文にあるが
+ *   実施しなかった作業。非空なら「この PR に含めなかったもの」節にそのまま出す（表示専用）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -133,6 +137,8 @@ export function buildDevflowSummaryBody({
   disclosures,
   changedFiles,
   baseFailingTests,
+  humanFollowups,
+  outOfScope,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -671,6 +677,37 @@ export function buildDevflowSummaryBody({
         idx++;
       }
     }
+  }
+
+  // 6c. 人間側 follow-up（issue #793）。pr-iterate が worktree の外を指すとして fix から外した指摘。
+  // 空なら 1 行も追加しない（既存サマリーとの byte 一致を保つ）。
+  const followups = Array.isArray(humanFollowups) ? humanFollowups.filter((f) => f != null) : [];
+  if (followups.length > 0) {
+    const SEV_LABEL_FOLLOWUP = { 'critical': '🔴 critical', 'major': '🟠 major', 'minor': '🟡 minor' };
+    lines.push('');
+    lines.push(`### 👤 人間側 follow-up（worktree の外を指す指摘 — 自動修正の対象外・${followups.length} 件）`);
+    lines.push('');
+    followups.forEach((f, i) => {
+      const sev = SEV_LABEL_FOLLOWUP[f.severity] ?? String(f.severity ?? '不明');
+      const loc = (f.file != null && f.file !== '')
+        ? (f.line != null ? `\`${f.file}:${f.line}\`` : `\`${f.file}\``)
+        : '場所指定なし';
+      lines.push(`${i + 1}. ${sev} — ${loc}`);
+      lines.push(`   - 指摘: ${mdCell(f.description)}`);
+      if (f.suggestion != null && f.suggestion !== '') {
+        lines.push(`   - 提案: ${mdCell(f.suggestion)}`);
+      }
+    });
+  }
+
+  // 6d. この PR に含めなかったもの（issue #793）。dev-implementer が out_of_scope[] で申告した、issue 本文にあるが
+  // 実施しなかった作業をそのまま転記する。空なら 1 行も追加しない。
+  const outOfScopeItems = Array.isArray(outOfScope) ? outOfScope.filter((s) => typeof s === 'string' && s.trim().length > 0) : [];
+  if (outOfScopeItems.length > 0) {
+    lines.push('');
+    lines.push('### この PR に含めなかったもの');
+    lines.push('');
+    for (const s of outOfScopeItems) lines.push(`- ${mdCell(s)}`);
   }
 
   // 8. 空状態の常時可視行
