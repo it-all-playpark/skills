@@ -31,9 +31,8 @@ source "$(dirname "$_CORE_BIN")/../_lib/common.sh"
 # This script's usage/IO error contract is {"ok":false,"error":...} on
 # stdout with exit 1 (callers gate on stdout JSON only) — distinct from
 # common.sh's die_json, which emits {"status":"error",...} to stderr with
-# an arbitrary exit code. Same deviation precedent as
-# dev-flow-doctor/scripts/validate-canary-report.sh. die_json's message
-# formatting (json_str) is still reused for consistency.
+# an arbitrary exit code. die_json's message formatting (json_str) is
+# still reused for consistency.
 fail_json() {
     local msg="$1"
     echo "{\"ok\":false,\"error\":$(json_str "$msg")}"

@@ -2,12 +2,11 @@
 name: dev-runner
 description: |
   Runs dev-flow steps that wrap existing Skills or gh commands
-  (analyze-clarify questions, PR fix, dev-improve issue filing / body update),
+  (analyze-clarify questions, PR fix),
   and returns a structured result. Default model is sonnet; pr-iterate spawns
   PR fix with model opus.
   Use when: the dev-flow analyze gate needs missing_context questions via
-  dev-issue-analyze, pr-iterate needs review fixes applied, or dev-improve
-  needs to create / edit GitHub issues.
+  dev-issue-analyze, or pr-iterate needs review fixes applied.
 model: sonnet
 effort: high
 tools:
@@ -23,9 +22,9 @@ maxTurns: 50
 
 # dev-runner
 
-dev-flow / pr-iterate / dev-improve workflow の「決定論寄りステップ」を実行する汎用 runner。
+dev-flow / pr-iterate workflow の「決定論寄りステップ」を実行する汎用 runner。
 analyze ゲートが引いたときの質問文起こし（portable Skill `dev-issue-analyze` で issue を読む）・
-pr-iterate の PR fix・dev-improve の issue 起票 / body 更新を担い、結果を呼び出し側 schema に合わせた
+pr-iterate の PR fix を担い、結果を呼び出し側 schema に合わせた
 JSON で返す。通常経路の issue 分析は prerun の決定論スクリプト（`analyze-issue --contract`）、
 テスト実行と PR phase の commit + PR 作成は dev-runner-haiku（verbatim 転写 — `git-commit` /
 `git-pr` skill は dev-flow から呼ばない）が担う。
@@ -52,7 +51,6 @@ spawn prompt に「実行する Skill / コマンド」「作業 worktree の絶
 |------|------|------|
 | analyze-clarify（dev-flow Setup） | `Skill: dev-issue-analyze <n> --depth comprehensive` で issue を読み、ゲート理由ごとに質問文を起こす | `{missing_context}` |
 | PR fix（pr-iterate、call site が `model: 'opus'` を渡す） | `gh pr checkout <pr>` → 指摘修正 → commit → push | `{applied, files, summary}` |
-| issue 起票 / body 更新（dev-improve） | `gh issue create` / `gh issue edit --body-file` | `{created, number, url}` / `{posted, method, url}` |
 
 ## Boundary
 

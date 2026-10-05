@@ -33,12 +33,9 @@ EOF
 devflow_expected_names() {
     cat <<'EOF'
 ac-lint
-analyze-dev-flow-telemetry
 analyze-issue
-baseline-snapshot
 check-ci
 ci-wait
-compare-baseline
 cross-repo-artifacts
 detect-and-install
 detect-stack
@@ -46,14 +43,11 @@ dev-flow-prerun
 dev-flow-ready-set
 diff-risk-classify
 ensure-worktree-deps
-hypothesis-check
 merge-tier-facts
 redgreen-verify
-run-diagnostics
 secfloor-classify
 structural-classify
 ui-verify-stack
-validate-canary-report
 veridelta-archive
 workspace-prebuild
 worktree-diff-hash
@@ -103,12 +97,6 @@ target_for() {
         check-ci) echo "pr-iterate/scripts/check-ci.sh" ;;
         ci-wait) echo "pr-iterate/scripts/ci-wait.sh" ;;
         analyze-issue) echo "dev-issue-analyze/scripts/analyze-issue.sh" ;;
-        hypothesis-check) echo "dev-flow-improve/scripts/hypothesis-check.sh" ;;
-        analyze-dev-flow-telemetry) echo "dev-flow-doctor/scripts/analyze-dev-flow-telemetry.sh" ;;
-        run-diagnostics) echo "dev-flow-doctor/scripts/run-diagnostics.sh" ;;
-        baseline-snapshot) echo "dev-flow-doctor/scripts/baseline-snapshot.sh" ;;
-        compare-baseline) echo "dev-flow-doctor/scripts/compare-baseline.sh" ;;
-        validate-canary-report) echo "dev-flow-doctor/scripts/validate-canary-report.sh" ;;
         detect-stack) echo "_lib/scripts/detect-stack.sh" ;;
         dev-flow-prerun) echo "dev-flow/scripts/prerun.sh" ;;
         dev-flow-ready-set) echo "dev-flow/scripts/ready-set.sh" ;;
@@ -155,7 +143,7 @@ skills_target_for() {
     [ "$actual" = "$expected" ]
 }
 
-@test "plugins/dev-flow/bin の entry は対象26本と完全一致する" {
+@test "plugins/dev-flow/bin の entry は対象20本と完全一致する" {
     expected="$(devflow_expected_names)"
     actual="$(/bin/ls -1 "$REPO_ROOT/plugins/dev-flow/bin" | sort)"
     [ "$actual" = "$expected" ]
@@ -325,23 +313,3 @@ skills_target_for() {
     echo "$output" | jq -e '.ok == false'
 }
 
-@test "validate-canary-reportがbin経由bare名でエラー経路を透過する(引数なし)" {
-    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
-    run bash "$REPO_ROOT/plugins/dev-flow/bin/validate-canary-report"
-    [ "$status" -eq 2 ]
-    echo "$output" | jq -e '.ok == false'
-}
-
-@test "compare-baselineがbin経由bare名でエラー経路を透過する(引数なし)" {
-    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
-    run bash "$REPO_ROOT/plugins/dev-flow/bin/compare-baseline"
-    [ "$status" -eq 2 ]
-    echo "$output" | jq -e '.error | test("--baseline is required")'
-}
-
-@test "baseline-snapshotがbin経由bare名で引数を透過する(--help)" {
-    export PATH="$REPO_ROOT/plugins/playpark-core/bin:$REPO_ROOT/plugins/dev-flow/bin:$PATH"
-    run bash "$REPO_ROOT/plugins/dev-flow/bin/baseline-snapshot" --help
-    [ "$status" -eq 0 ]
-    echo "$output" | grep -q 'Usage'
-}

@@ -234,7 +234,7 @@ test('[fix-null-retry] (4) CI-failed分岐: fix null → retry成功 → lgtm, f
 });
 
 // (model) fix#i と fix#i-retry は dev-runner frontmatter（sonnet / high）を上書きして model:'opus' / effort:'medium' で起動する。
-// frontmatter は analyze-clarify / dev-improve と共用なので sonnet / high のまま据え置く。
+// frontmatter は analyze-clarify と共用なので sonnet / high のまま据え置く。
 const FIX_REVIEWER_STUB = (round) =>
   round === 1
     ? { decision: 'request-changes', issues: [{ severity: 'major', topic: 't1', description: 'd', suggestion: 's' }], summary: 'ng' }

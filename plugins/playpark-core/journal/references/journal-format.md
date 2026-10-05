@@ -36,7 +36,7 @@ All journal entries carry a `source` field indicating how the entry was written:
 
 **Migration compatibility**: Entries that predate this field may have an absent `source` key **or** a legacy `"hook-capture"` value (written by the old `cmd_hook_capture` implementation). Both are handled by all consumers using inclusive semantics: `(.source // "skill") == "skill"` to select skill entries, and `(.source // "skill") != "skill"` to select non-skill (hook) entries. This treats absent-source as `"skill"` and correctly excludes legacy `"hook-capture"` entries from skill statistics. No backfill is required.
 
-**Aggregation default**: `dev-flow-doctor` and `journal.sh stats` exclude `source == "hook"` entries by default, to avoid inflating skill-authored failure counts with hook-captured tool failures.
+**Aggregation default**: `dev-flow-health` and `journal.sh stats` exclude `source == "hook"` entries by default, to avoid inflating skill-authored failure counts with hook-captured tool failures.
 
 ### query/stats filter examples
 
@@ -66,7 +66,7 @@ The `YYYY-MM-DD` prefix is the UTC date of `timestamp`. `query --since` and `pru
 
 ## Retention
 
-`journal prune [--days 30] [--keep a,b] [--dry-run]` deletes entries older than `--days` unless their `skill` is in the keep list. The default keep list is the dev-flow family that dev-flow-doctor / dev-flow-improve read (`PRUNE_KEEP_DEFAULT` in `journal.sh`). Files whose name does not start with a date, or whose JSON cannot be parsed, are kept.
+`journal prune [--days 30] [--keep a,b] [--dry-run]` deletes entries older than `--days` unless their `skill` is in the keep list. The default keep list is the dev-flow family (`PRUNE_KEEP_DEFAULT` in `journal.sh`); dev-flow-health judges first_seen / resolved from the full dev-flow / pr-iterate history, so those entries are never pruned by age. Files whose name does not start with a date, or whose JSON cannot be parsed, are kept.
 
 `track-skill` (the PreToolUse `Skill` hook) runs `prune` in the background at most once a day, using `$JOURNAL_DIR/.last-prune` as the stamp. `JOURNAL_PRUNE_DAYS` sets the retention days; `JOURNAL_PRUNE_DAYS=0` disables the automatic run.
 

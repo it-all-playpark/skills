@@ -31,36 +31,6 @@
     "top_n": 10,
     "title_strip_patterns": []
   },
-  "dev-flow-doctor": {
-    "window_default": "30d",
-    "thresholds": {
-      "eval_iter_cap": 10,
-      "iterate_unhealthy_rate": 0.30,
-      "iterate_min_runs": 3,
-      "micro_min_runs": 10,
-      "vdelta_unhealthy_rate": 0.5,
-      "vdelta_min_runs": 5
-    },
-    "baseline": {
-      "default_path": ".claude/dev-flow-doctor-baseline-pre-79.json",
-      "fallback_template": "dev-flow-doctor/templates/baseline-pre-79.example.json",
-      "regression_thresholds": {
-        "max_glue_error_regression": 0,
-        "max_failure_rate_regression": 0.10
-      },
-      "glue_patterns": [
-        "worktree.*not found",
-        "--worktree.*not",
-        "\\.env.*not.*copied",
-        "worktree-agent-[a-f0-9]+",
-        "phase_failed.*worktree"
-      ],
-      "rolling": {
-        "ratio_threshold": 1.5,
-        "min_entries_per_window": 5
-      }
-    }
-  },
   "memory-cli": {
     "global_memory": "~/.claude/memory/global.mv2",
     "project_memory": ".claude/memory/project.mv2",

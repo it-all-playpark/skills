@@ -132,8 +132,8 @@ test('buildJournalHandoffPayload omits repo/pr_number when not provided', () => 
 });
 
 // issue #607: error_phase is the top-level counterpart to telemetry.abort_phase, feeding
-// journal.sh's existing --error-phase flag (journal `.error.phase`) so run-diagnostics'
-// failure_distribution can group abort entries by phase.
+// journal.sh's existing --error-phase flag (journal `.error.phase`) so dev-flow-health's
+// failure signature (skill | category | phase | message) can tell abort entries apart by phase.
 test('buildJournalHandoffPayload includes error_phase immediately after error_msg when provided', () => {
   const payload = buildJournalHandoffPayload({
     skill: 'dev-flow',
@@ -175,7 +175,7 @@ test('repoFromGithubUrl returns null for non-GitHub or malformed input', () => {
 // ---- buildJournalSaveInstr (stage1) ----
 
 const SAVE_PATH = '/wt/.devflow-tmp/payload-devflow-494.json';
-const SHELL_DIR = '${TMPDIR:-/tmp}/dev-improve';
+const SHELL_DIR = '${TMPDIR:-/tmp}/no-worktree';
 
 test('buildJournalSaveInstr (savePath) embeds the payload verbatim between JOURNAL_HANDOFF_BODY delimiters, including Japanese/backtick/nested-escaped-JSON edge cases', () => {
   const instr = buildJournalSaveInstr({ payload: EDGE_CASE_PAYLOAD, savePath: SAVE_PATH });
@@ -185,7 +185,7 @@ test('buildJournalSaveInstr (savePath) embeds the payload verbatim between JOURN
 });
 
 test('buildJournalSaveInstr (saveDir) embeds the payload verbatim between JOURNAL_HANDOFF_BODY delimiters', () => {
-  const instr = buildJournalSaveInstr({ payload: EDGE_CASE_PAYLOAD, saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' });
+  const instr = buildJournalSaveInstr({ payload: EDGE_CASE_PAYLOAD, saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' });
   const match = instr.match(/<<<JOURNAL_HANDOFF_BODY_BEGIN>>>\n([\s\S]*?)\n<<<JOURNAL_HANDOFF_BODY_END>>>/);
   assert.ok(match, 'expected instr to contain the delimited payload block');
   assert.equal(match[1], EDGE_CASE_PAYLOAD);
@@ -194,7 +194,7 @@ test('buildJournalSaveInstr (saveDir) embeds the payload verbatim between JOURNA
 test('buildJournalSaveInstr instructs Write tool usage and forbids passing the payload through shell', () => {
   for (const instr of [
     buildJournalSaveInstr({ payload: '{"ok":true}', savePath: SAVE_PATH }),
-    buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' }),
+    buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' }),
   ]) {
     assert.ok(instr.includes('Write tool'));
     assert.ok(instr.includes('echo'));
@@ -213,7 +213,7 @@ test('buildJournalSaveInstr instructs a Read-before-overwrite idempotency step f
   assert.ok(savePathInstr.includes('Read tool'));
   assert.ok(/Read tool[\s\S]*Write tool/.test(savePathInstr), 'Read の指示は Write の指示より前に現れるべき');
 
-  const saveDirInstr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' });
+  const saveDirInstr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' });
   assert.ok(saveDirInstr.includes('Read tool'));
   assert.ok(/Read tool[\s\S]*Write tool/.test(saveDirInstr), 'Read の指示は Write の指示より前に現れるべき');
 });
@@ -301,7 +301,7 @@ test('buildJournalSaveInstr (savePath) still throws for a tilde savePath outside
 
 test('buildJournalSaveInstr throws when both savePath and saveDir are given', () => {
   assert.throws(
-    () => buildJournalSaveInstr({ payload: '{}', savePath: SAVE_PATH, saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' }),
+    () => buildJournalSaveInstr({ payload: '{}', savePath: SAVE_PATH, saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' }),
     /同時に指定できません/,
   );
 });
@@ -313,13 +313,13 @@ test('buildJournalSaveInstr throws when neither savePath nor saveDir is given', 
   );
 });
 
-// saveDir モード（dev-improve）: 保存先が shell 展開に依存するので絶対パスは shell に組み立てさせるが、
+// saveDir モード（worktree を持たない呼び出し元）: 保存先が shell 展開に依存するので絶対パスは shell に組み立てさせるが、
 // ファイル名は固定。mktemp テンプレート payload-XXXXXX.json は X 列が suffix の前にあるため BSD
 // mktemp では展開されずリテラル名のファイルを exit 0 で作り、一意性が silent に失われる。
 test('buildJournalSaveInstr (saveDir) resolves the path via shell with a fixed file name and never uses mktemp', () => {
-  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-dev-improve.json' });
-  assert.ok(instr.includes('mkdir -p "${TMPDIR:-/tmp}/dev-improve"'));
-  assert.ok(instr.includes('"${TMPDIR:-/tmp}/dev-improve/payload-dev-improve.json"'));
+  const instr = buildJournalSaveInstr({ payload: '{"ok":true}', saveDir: SHELL_DIR, fileName: 'payload-no-worktree.json' });
+  assert.ok(instr.includes('mkdir -p "${TMPDIR:-/tmp}/no-worktree"'));
+  assert.ok(instr.includes('"${TMPDIR:-/tmp}/no-worktree/payload-no-worktree.json"'));
   assert.ok(!instr.includes('mktemp'), 'mktemp は BSD でテンプレートを展開しないため使ってはならない');
   assert.ok(!instr.includes('XXXXXX'), 'mktemp テンプレートは残っていてはならない');
 });
@@ -392,7 +392,7 @@ test('validateJournalSavedPath rejects non-string input', () => {
 // `~/.claude/journal/abort-payload/...`. validateJournalSavedPath must accept that tilde-rooted
 // path (rebasing it onto the same absolute-path/charset/'..'/basename checks as `/`-rooted paths)
 // while continuing to reject anything outside the fixed `~/.claude/journal/` prefix — the same
-// function also guards dev-improve's saveDir-mode agent-reported path, so widening tilde
+// function also guards the saveDir-mode agent-reported path, so widening tilde
 // acceptance to `~/` in general would widen that injection guard too.
 test('validateJournalSavedPath accepts a tilde path rooted at ~/.claude/journal/', () => {
   assert.equal(
@@ -879,15 +879,14 @@ test('buildAbortHandoffPayload sets telemetry.abort_phase/abort_label to null wh
 
 // ---- conformance: call sites use the canonical Write-tool-verbatim helpers ----
 //
-// issue #494 F3 / #556 F4: all payload-carrying journal handoff call sites — the 3
-// telemetry sites (dev-flow.js Merge tier, pr-iterate.js Iterate, dev-improve.js File) and
+// issue #494 F3 / #556 F4: all payload-carrying journal handoff call sites — the 2
+// telemetry sites (dev-flow.js Merge tier, pr-iterate.js Iterate) and
 // dev-flow.js's writeFailureTelemetry (outcome:'failure'/'partial') — carry the payload body
 // as a file on disk and the finalize prompt takes only a path, regardless of outcome.
 // dev-flow.js's writeFailureTelemetry / Merge tier and pr-iterate.js's Iterate terminus
 // route through the canonical `runJournalHandoff` choreography (_lib/journal-handoff.mjs,
 // issue #556) rather than repeating the 2-stage buildJournalSaveInstr + buildJournalLogInstr
-// choreography inline; dev-improve.js (no per-run worktree) keeps the inline saveDir+fileName
-// mode this function does not support. dev-flow / pr-iterate use the `savePath` mode: the
+// choreography inline. dev-flow / pr-iterate use the `savePath` mode: the
 // payload file sits under the worktree's gitignored `.devflow-tmp/` (dev-flow: `${WT}/.devflow-tmp`,
 // pr-iterate: `${isoWt}/.devflow-tmp`) at a path the workflow fixes itself, so the
 // agent-reported path is never used. This test pins that neither workflow references the
@@ -947,18 +946,6 @@ test('workflows construct journal handoff instructions through the canonical Wri
     1,
   );
   assert.ok(prIterate.includes("logLabel: 'journal-log-abort',"));
-  // dev-improve.js: run 専用 worktree を持たないため saveDir は TMPDIR 配下の固定サブディレクトリ。
-  // 他 2 経路と同じディレクトリ固定の防御を保つため requiredDirSuffix で pin されていること。
-  const devImprove = readFileSync(join(repoRoot, '.claude/workflows/dev-improve.js'), 'utf8');
-  assert.equal(
-    (devImprove.match(/buildJournalSaveInstr\(\{ payload: improveHandoff, saveDir: '\$\{TMPDIR:-\/tmp\}\/dev-improve', fileName: 'payload-dev-improve\.json' \}\)/g) ?? []).length,
-    1,
-  );
-  assert.equal(
-    (devImprove.match(/validateJournalSavedPath\(saveRes\.path, \{ requiredDirSuffix: '\/dev-improve' \}\)/g) ?? []).length,
-    1,
-  );
-  assert.ok(!devImprove.includes('buildJournalHandoffInstr('));
   // The removed single-stage buildJournalHandoffInstr is not referenced by either workflow.
   assert.ok(!devFlow.includes('buildJournalHandoffInstr('));
   assert.ok(!prIterate.includes('buildJournalHandoffInstr('));

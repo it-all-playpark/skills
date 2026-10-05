@@ -42,6 +42,22 @@ write_entry() {
     [ -f "$CLAUDE_JOURNAL_DIR/${TODAY}-00-00-00-blog-publish-1.json" ]
 }
 
+@test "prune deletes old entries of the removed doctor / improve skills" {
+    write_entry "$OLD_DATE" dev-flow-doctor
+    write_entry "$OLD_DATE" dev-flow-improve
+    write_entry "$OLD_DATE" dev-improve
+    write_entry "$OLD_DATE" dev-flow
+
+    run "$SCRIPT" prune --days 30
+    [ "$status" -eq 0 ]
+    [ "$(echo "$output" | jq -r '.pruned')" = "3" ]
+
+    [ ! -f "$CLAUDE_JOURNAL_DIR/${OLD_DATE}-00-00-00-dev-flow-doctor-1.json" ]
+    [ ! -f "$CLAUDE_JOURNAL_DIR/${OLD_DATE}-00-00-00-dev-flow-improve-1.json" ]
+    [ ! -f "$CLAUDE_JOURNAL_DIR/${OLD_DATE}-00-00-00-dev-improve-1.json" ]
+    [ -f "$CLAUDE_JOURNAL_DIR/${OLD_DATE}-00-00-00-dev-flow-1.json" ]
+}
+
 @test "prune --dry-run reports but deletes nothing" {
     write_entry "$OLD_DATE" blog-publish
 

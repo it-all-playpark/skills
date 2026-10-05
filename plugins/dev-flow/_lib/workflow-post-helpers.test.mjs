@@ -65,18 +65,18 @@ test('bodySaveInstr(bodyFile) — "Write tool" 安全文言を含む', () => {
 });
 
 // -----------------------------------------------------------------------
-// bodySaveInstr: saveDir + fileName モード（worktree を持たない dev-improve）
+// bodySaveInstr: saveDir + fileName モード（worktree を持たない呼び出し元）
 // -----------------------------------------------------------------------
 
 test('bodySaveInstr(saveDir) — mktemp を指示せず、固定ファイル名を単文 printf で解決させる', () => {
-  const result = bodySaveInstr(SAMPLE_BODY, { saveDir: '${TMPDIR:-/tmp}/dev-improve', fileName: 'dev-improve-note-7.md' }, 'DEV_IMPROVE');
+  const result = bodySaveInstr(SAMPLE_BODY, { saveDir: '${TMPDIR:-/tmp}/no-worktree', fileName: 'note-7.md' }, 'NO_WORKTREE');
   assert.doesNotMatch(result, /mktemp/);
   assert.ok(
-    result.includes(`\`printf '%s\\n' "\${TMPDIR:-/tmp}/dev-improve/dev-improve-note-7.md"\` を 1 回だけ実行し`),
+    result.includes(`\`printf '%s\\n' "\${TMPDIR:-/tmp}/no-worktree/note-7.md"\` を 1 回だけ実行し`),
     `固定パスの解決指示が無い:\n${result.slice(0, 300)}`,
   );
   assert.ok(result.includes('**Write tool** で新規作成する'));
-  assert.ok(result.includes(`<<<DEV_IMPROVE_BODY_BEGIN>>>\n${SAMPLE_BODY}\n<<<DEV_IMPROVE_BODY_END>>>`));
+  assert.ok(result.includes(`<<<NO_WORKTREE_BODY_BEGIN>>>\n${SAMPLE_BODY}\n<<<NO_WORKTREE_BODY_END>>>`));
 });
 
 // -----------------------------------------------------------------------

@@ -86,7 +86,7 @@ bats が見つからない環境でも `tests/run-all-bats.sh` は exit 0 を返
 
 ## Architectural guardrails
 
-### dev-flow / pr-iterate / dev-improve
+### dev-flow / pr-iterate / dev-flow-health
 
 `/dev-flow` は skill wrapper (`dev-flow/SKILL.md`) が isolation preflight（worktree 作成 →
 `EnterWorktree`）を行い、orchestration 本体は dynamic workflow `dev-flow-run`
@@ -99,7 +99,8 @@ JS で保持し、中間 state は script 変数に持つ (外部 state JSON は
                       → Security floor(realized diff から shape 判定) → Evaluate → PR → workflow('dev-flow:pr-iterate')
                       → Final reconcile(fixes_applied>0 のみ) → Merge tier
 /pr-iterate <pr>    → Workflow('dev-flow:pr-iterate') で review ⇄ fix loop (LGTM まで, 上限10)。単体起動可
-/dev-flow-improve   → Reconcile → Mine → Rank → File → 起票 issue ごとに dev-flow 直列実行
+日次 launchd         → dev-flow-health/scripts/daily.sh: 失敗の型を決定論で集計（new / ongoing / resolved / regressed + 候補 commit）
+                      → new / regressed がある日だけ /dev-flow-health が原因を推定して self-improve issue を起票
 ```
 
 不変条件 (どのモデル世代でも緩めない):
@@ -120,7 +121,7 @@ JS で保持し、中間 state は script 変数に持つ (外部 state JSON は
 [`.claude/rules/dev-flow.md`](.claude/rules/dev-flow.md) を参照。dev-flow 本体
 (`plugins/dev-flow/.claude/workflows/` / `plugins/dev-flow/agents/` / `plugins/dev-flow/_lib/` /
 `tools/`) を触るときに自動で読み込まれる。経路・enum・telemetry キー一覧・W7 表・失敗ポリシー表・
-inline 生成・dev-improve の詳細は `plugins/dev-flow/dev-flow/references/` を参照。
+inline 生成の詳細は `plugins/dev-flow/dev-flow/references/` を参照。
 
 ### 設計原則 (要約)
 

@@ -31,8 +31,8 @@ export const JOURNAL_RESULT = {
  * @param {string} body - 保存する本文
  * @param {{bodyFile?: string, saveDir?: string, fileName?: string}} target
  *   bodyFile: 保存先の絶対パス（worktree の `.devflow-tmp/<prefix>-<用途>.md`）。
- *   saveDir + fileName: worktree を持たない呼び出し元（dev-improve）用。saveDir は shell 展開で
- *   解決する（例: `${TMPDIR:-/tmp}/dev-improve`）。
+ *   saveDir + fileName: worktree を持たない呼び出し元用。saveDir は shell 展開で
+ *   解決する（例: `${TMPDIR:-/tmp}/<用途>`）。
  * @param {string} delimName - delimiter 名（例: 'DEV_FLOW', 'PR_ITERATE'）
  */
 export function bodySaveInstr(body, { bodyFile, saveDir, fileName }, delimName) {

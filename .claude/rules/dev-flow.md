@@ -1,5 +1,5 @@
 ---
-description: dev-flow / pr-iterate / dev-improve の不変条件（fail-closed の理由・sunset トリガ・起動形の制約）。詳細は plugins/dev-flow/dev-flow/references/
+description: dev-flow / pr-iterate / dev-flow-health の不変条件（fail-closed の理由・sunset トリガ・起動形の制約）。詳細は plugins/dev-flow/dev-flow/references/
 paths:
   - "plugins/dev-flow/.claude/workflows/**"
   - "plugins/dev-flow/agents/**"
@@ -7,8 +7,7 @@ paths:
   - "plugins/dev-flow/_lib/**"
   - "plugins/dev-flow/_shared/**"
   - "plugins/dev-flow/dev-flow/**"
-  - "plugins/dev-flow/dev-flow-doctor/**"
-  - "plugins/dev-flow/dev-flow-improve/**"
+  - "plugins/dev-flow/dev-flow-health/**"
   - "tools/**"
 ---
 
@@ -23,7 +22,6 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 - `justification-classes.md` — W7 distrust 正当化クラス・prescription 正当化クラスと sunset path
 - `exec-proxy.md` — bin/ bare 名起動形・check-ci の argv 転写・失敗ポリシー表
 - `inline-generation.md` — sync-inlines の起動形と canonical の構造制約
-- `dev-improve.md` — 自己改善ループの設計
 
 ## 構造
 
@@ -83,7 +81,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 > `CI_WAIT_CEILING_SECONDS`（`_lib/ci-check.mjs`）で持つ。1 spawn の必要 turn（ci-check:
 > 2 + 1 + CI_TURN_MARGIN、ci-wait: 1 + 1 + CI_TURN_MARGIN）が当該 agent の `maxTurns` を超えないこと
 
-- exec-proxy と inline generator は harness-capability-bound な橋。再評価トリガ: harness が直接 exec / ESM import を解禁した時点で撤去（`/dev-flow-canary` → `run-diagnostics --canary`）
+- exec-proxy と inline generator は harness-capability-bound な橋。再評価トリガ: harness が直接 exec / ESM import を解禁した時点で撤去（`/dev-flow-canary` の report で判定）
 
 ## inline 生成区間
 
@@ -91,7 +89,7 @@ dev-flow 本体（workflow / agent 定義 / `_lib` canonical / generator）を�
 - canonical 制約: ESM import / require / Date.now / Math.random を含めない。export function / export const のみ。ファイル全体が inline 可能
 - git plumbing による guard 迂回禁止（手編集が次回 --write で黙って消える事故防止）。plugin disable で edit/commit 両 guard が同時に失われる
 
-## dev-improve
+## dev-flow-health
 
-- state は GitHub issue のみ（label self-improve / self-improve-backlog）。外部 state JSON なし
-- IMPROVE_MAX=2/サイクル。open 数取得失敗は fail-closed（skip）。not_confirmed は revert 候補、自動 revert なし
+- status・候補 commit は `health-report.sh`（決定論）だけが決める。LLM は new / regressed が 1 件以上の日だけ起動し、status を付け直さない
+- 起票は label self-improve、1 signature = 1 issue。実装・merge はしない

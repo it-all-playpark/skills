@@ -2,7 +2,7 @@
 # test-extract-behavioral-claims.sh - Unit tests for extract-behavioral-claims.sh
 # Run: ./blog-fact-check/tests/test-extract-behavioral-claims.sh
 #
-# テストフレーム: dev-flow-doctor/tests/test-analyze-dev-flow-family.sh のスタイル
+# テストフレーム:
 #   - pass / fail / assert_eq / assert_contains 関数
 #   - PASS/FAIL カウントを末尾に印字
 #   - FAIL_COUNT > 0 で exit 1

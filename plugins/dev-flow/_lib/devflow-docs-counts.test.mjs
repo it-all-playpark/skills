@@ -5,7 +5,7 @@
 // Run: npx vitest run _lib/devflow-docs-counts.test.mjs
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -59,6 +59,47 @@ test('README: dev-flow plugin の agent 数（plugin 行・agents/ 行）が age
   assert.equal(Number(agentsLine[1]), actual);
 });
 
+test('README / plugin.json / marketplace.json: dev-flow の skill 数・bin 数が実体と一致し、撤去した doctor / improve を載せない', () => {
+  const skills = readdirSync(pluginRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && existsSync(join(pluginRoot, d.name, 'SKILL.md')))
+    .map((d) => d.name);
+  assert.ok(skills.includes('dev-flow-health'), `dev-flow-health が skill として無い: ${skills.join(', ')}`);
+  for (const removed of ['dev-flow-doctor', 'dev-flow-improve']) {
+    assert.ok(!existsSync(join(pluginRoot, removed)), `${removed}/ が残っている`);
+  }
+  assert.ok(!existsSync(join(pluginRoot, '.claude/workflows/dev-improve.js')), 'dev-improve.js が残っている');
+  assert.ok(!existsSync(join(pluginRoot, 'agents/improve-miner.md')), 'improve-miner.md が残っている');
+
+  const pluginLine = readme.match(/dev-flow\/\s+# issue-to-LGTM ワークフロー plugin（(\d+) skills, \d+ agents）/);
+  const skillMdLine = readme.match(/（SKILL\.md (\d+)本）/);
+  const binLine = readme.match(/bin\/\s+# dev-flow bare 名 wrapper（(\d+)本）/);
+  assert.ok(pluginLine && skillMdLine && binLine, 'README の plugin 構成図に skill 数 / bin 数の記述が無い');
+  assert.equal(Number(pluginLine[1]), skills.length);
+  assert.equal(Number(skillMdLine[1]), skills.length);
+  assert.equal(Number(binLine[1]), readdirSync(join(pluginRoot, 'bin')).length);
+  assert.ok(!/dev-flow-doctor|dev-flow-improve/.test(readme), 'README に撤去した doctor / improve が残っている');
+
+  const manifests = [
+    JSON.parse(readFileSync(join(pluginRoot, '.claude-plugin/plugin.json'), 'utf8')).description,
+    JSON.parse(readFileSync(join(repoRoot, '.claude-plugin/marketplace.json'), 'utf8')).plugins.find((p) => p.name === 'dev-flow').description,
+  ];
+  for (const desc of manifests) {
+    assert.match(desc, new RegExp(`\\b${skills.length} skills\\b`), `description の skill 数が実体（${skills.length}）と一致しない: ${desc}`);
+    assert.ok(!/dev-improve/.test(desc), `description に撤去した dev-improve が残っている: ${desc}`);
+  }
+});
+
+test('journal.sh: prune の既定 keep 一覧に撤去した doctor / improve を含まない', () => {
+  const journalSh = readFileSync(join(repoRoot, 'plugins/playpark-core/journal/scripts/journal.sh'), 'utf8');
+  const m = journalSh.match(/^PRUNE_KEEP_DEFAULT="([^"]*)"/m);
+  assert.ok(m, 'journal.sh に PRUNE_KEEP_DEFAULT が無い');
+  const keep = m[1].split(',');
+  assert.ok(keep.includes('dev-flow') && keep.includes('pr-iterate'), `dev-flow-health が読む dev-flow / pr-iterate が keep に無い: ${m[1]}`);
+  for (const removed of ['dev-flow-doctor', 'dev-flow-improve', 'dev-improve']) {
+    assert.ok(!keep.includes(removed), `PRUNE_KEEP_DEFAULT に撤去した ${removed} が残っている: ${m[1]}`);
+  }
+});
+
 test('telemetry.md: subagent_invocations の実測 agentType 列挙数と「N 種」が一致する', () => {
   const md = readFileSync(join(pluginRoot, 'dev-flow/references/telemetry.md'), 'utf8');
   const m = md.match(/実測 agentType は([\s\S]*?)の (\d+) 種/);
@@ -67,20 +108,18 @@ test('telemetry.md: subagent_invocations の実測 agentType 列挙数と「N �
   assert.equal(listed.length, Number(m[2]), `列挙: ${listed.join(', ')}`);
 });
 
-test("dev-runner.md: 役割記述が agentType: 'dev-runner' の実呼び出し（analyze-clarify / PR fix / dev-improve の issue 操作）に合う", () => {
+test("dev-runner.md: 役割記述が agentType: 'dev-runner' の実呼び出し（analyze-clarify / PR fix）に合う", () => {
   const md = readFileSync(join(pluginRoot, 'agents/dev-runner.md'), 'utf8');
   const description = md.slice(md.indexOf('description:'), md.indexOf('model:'));
   assert.ok(!/test-green|issue analysis/.test(description), `description にテスト実行 / issue 分析が残っている:\n${description}`);
   assert.match(description, /analyze-clarify/);
   assert.match(description, /PR fix/);
-  assert.match(description, /dev-improve/);
+  assert.ok(!/dev-improve/.test(md), 'dev-runner.md に撤去した dev-improve の役割が残っている');
   assert.ok(!md.includes('| test green 確認 |'), 'テスト実行は dev-runner-haiku が担う');
   assert.ok(!md.includes('| issue 分析 |'), '通常経路の issue 分析は prerun の script が担う');
   const labels = [
     ['.claude/workflows/dev-flow.js', 'analyze-clarify#'],
     ['.claude/workflows/pr-iterate.js', 'fix#'],
-    ['.claude/workflows/dev-improve.js', 'file-issue#'],
-    ['.claude/workflows/dev-improve.js', 'hyp-update#'],
   ];
   for (const [rel, label] of labels) {
     const src = readFileSync(join(pluginRoot, rel), 'utf8');

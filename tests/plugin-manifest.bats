@@ -128,13 +128,13 @@ plugin_json_path() {
     [ "$output" = '["./.claude/workflows"]' ]
 }
 
-@test "dev-flow の workflows ディレクトリに 5 本の js が存在する" {
+@test "dev-flow の workflows ディレクトリに 4 本の js が存在し、撤去した dev-improve.js は無い" {
     dir="$REPO_ROOT/plugins/dev-flow/.claude/workflows"
     [ -f "$dir/dev-flow.js" ]
     [ -f "$dir/pr-iterate.js" ]
-    [ -f "$dir/dev-improve.js" ]
     [ -f "$dir/dev-flow-canary.js" ]
     [ -f "$dir/dev-flow-canary-child.js" ]
+    [ ! -e "$dir/dev-improve.js" ]
 }
 
 @test "dev-flow の plugin.json の dependencies は [\"playpark-core\"] に完全一致する" {
@@ -213,7 +213,8 @@ plugin_json_path() {
 
 @test "各 manifest の description が謳う skill 数は実際の SKILL.md 件数と一致する" {
     for name in "${PLUGIN_NAMES[@]}"; do
-        actual="$(git -C "$REPO_ROOT" ls-files -- "plugins/$name/*SKILL.md" | wc -l | tr -d ' ')"
+        # 作業ツリーの実体で数える: 未 commit の skill 追加（untracked）・削除（index にだけ残る）を commit 前に検証できるように
+        actual="$(git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard -- "plugins/$name/*SKILL.md" | sort -u | while IFS= read -r f; do [ -f "$REPO_ROOT/$f" ] && echo "$f"; done | wc -l | tr -d ' ')"
         pj="$(plugin_json_path "$name")"
         for desc in "$(jq -r '.description' "$pj")" \
                     "$(jq -r --arg n "$name" '.plugins[] | select(.name==$n) | .description' "$MARKETPLACE_JSON")"; do

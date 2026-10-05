@@ -116,10 +116,12 @@ model_arg() {
 @test "THUMBNAIL_CODEX_BIN satisfies the codex requirement without codex on PATH" {
     # CI runners have no codex; the requirement check must honor the override
     # (regression: require_cmds codex ran before THUMBNAIL_CODEX_BIN was read → exit 127).
-    # Drop only the PATH dir that holds codex; jq/python3/git/file must remain reachable.
-    local codex_dir newpath
-    codex_dir="$(dirname "$(command -v codex 2>/dev/null || echo /nonexistent/codex)")"
-    newpath="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$codex_dir" | paste -sd: -)"
+    # Drop every PATH dir that holds codex (mise has both installs/ and shims/); jq/python3/git/file must remain reachable.
+    local d newpath=""
+    while IFS= read -r d; do
+        [ -x "$d/codex" ] && continue
+        newpath="${newpath:+$newpath:}$d"
+    done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
     run env PATH="$newpath" bash -c 'command -v codex'
     [ "$status" -ne 0 ]
     run env PATH="$newpath" bash "$SCRIPT" "$MDX"

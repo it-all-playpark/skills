@@ -1,6 +1,6 @@
 export const meta = {
   name: 'dev-flow-canary',
-  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/pipeline/nested workflow/model・effort routing（agent() opts の effort 受理 probe を含む）/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は dev-flow-doctor run-diagnostics --canary で取り込む',
+  description: 'dev-flow harness capability の read-only canary: schema付きagent/parallel/pipeline/nested workflow/model・effort routing（agent() opts の effort 受理 probe を含む）/pause・resume/direct fs・shell・import を pass/fail/unsupported で構造化出力。repo/git/GitHub state 不変。bridge 撤去は行わない（report のみ）。結果は report_path の JSON を直近世代と比べて読む',
   phases: [
     { title: 'Probe' },
     { title: 'Agents' },
@@ -429,7 +429,7 @@ if (epochValid) {
     const suffixNote = (writeResult && typeof writeResult.path === 'string' && !writeResult.path.endsWith(expectedSuffix))
       ? `申告 path が期待 suffix (${expectedSuffix}) と不一致: ${writeResult.path}`
       : `write agent 応答: ${JSON.stringify(writeResult)}`
-    log(`⚠️ canary report の書き出しに失敗（fail-open） — report_path=null。${suffixNote}。dev-flow-doctor --canary への手動取り込みは今回不可`)
+    log(`⚠️ canary report の書き出しに失敗（fail-open） — report_path=null。${suffixNote}。今回の結果は log だけに残る`)
   }
 } else {
   report.report_path = null

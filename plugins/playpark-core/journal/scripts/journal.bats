@@ -795,10 +795,10 @@ JSON
 }
 
 # ---------------------------------------------------------------------------
-# --telemetry-json (dev-improve improve-cycle telemetry 用の汎用 flag)
+# --telemetry-json (workflow handoff の telemetry をそのまま載せる汎用 flag)
 # ---------------------------------------------------------------------------
 @test "--telemetry-json: 任意 object が telemetry にマージされる" {
-    run "$SCRIPT" log dev-improve success \
+    run "$SCRIPT" log dev-flow success \
         --telemetry-json '{"candidates_found":3,"issues_filed":2,"backpressure_skipped":false}'
     [ "$status" -eq 0 ]
     entry_file=$(latest_entry)
@@ -819,12 +819,12 @@ JSON
 }
 
 @test "--telemetry-json: JSON でない値は error" {
-    run "$SCRIPT" log dev-improve success --telemetry-json 'not-json'
+    run "$SCRIPT" log dev-flow success --telemetry-json 'not-json'
     [ "$status" -ne 0 ]
 }
 
 @test "--telemetry-json: object 以外（配列）は error" {
-    run "$SCRIPT" log dev-improve success --telemetry-json '[1,2]'
+    run "$SCRIPT" log dev-flow success --telemetry-json '[1,2]'
     [ "$status" -ne 0 ]
 }
 
@@ -1497,9 +1497,8 @@ JSON
 
 # ---------------------------------------------------------------------------
 # stats --source skill の by_category が abort entry を集計できる
-# (doctor の run-diagnostics.sh はこの集計を error_categories の入力に使う)
 # ---------------------------------------------------------------------------
-@test "stats counts abort entries under by_category (doctor aggregation input)" {
+@test "stats counts abort entries under by_category" {
     run "$SCRIPT" log dev-flow failure \
         --error-category abort \
         --error-msg "abort@Evaluate/eval#1: evaluator boom" \

@@ -139,7 +139,7 @@ test('[review-model] (f) 両 workflow に quality model 定数 / fallback 機構
   const forbidden = ['QUALITY_MODEL', 'QUALITY_FALLBACK', 'quality_fallback', 'quality_model_config', 'quality_model_fallback_label', 'omitModel', '_lib/quality-model.mjs'];
   for (const [name, src] of [['dev-flow.js', devFlowSrc], ['pr-iterate.js', prIterateSrc]]) {
     for (const tok of forbidden) {
-      assert.ok(!src.includes(tok), `${name}: '${tok}' が残っている（quality model fallback は dev-flow / pr-iterate から撤去済み。rank-judge 専用の _lib/quality-model.mjs は dev-improve.js にのみ inline する）`);
+      assert.ok(!src.includes(tok), `${name}: '${tok}' が残っている（quality model fallback は撤去済み。品質ゲート agent の model は frontmatter で決める）`);
     }
   }
 });
