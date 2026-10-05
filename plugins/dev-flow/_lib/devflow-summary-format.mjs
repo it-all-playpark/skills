@@ -91,6 +91,9 @@ function resolvedCell(v) {
  *   含まれる場合、あなたがやること に「マージ後: 対象 workflow の初回実行を確認する」を追加する
  *   （config danger class は .env / config/*.yml / secret 代入のみを判定し .github/workflows/*.yml に
  *   一致しないため、workflow 変更は別途 changedFiles から直接検出する。issue #662）
+ * @param {string[]|null|undefined} [opts.baseFailingTests] - Validate が「diff と無関係で base でも同じように落ちる」と
+ *   判定し green 要件から外したテストファイル（_lib/base-failure-triage.mjs）。非空なら at-a-glance のテスト欄の
+ *   green に除外件数を添え、参考セクションに「base でも失敗する既存の失敗」としてファイルを列挙する（表示専用）
  * @returns {string}
  */
 export function buildDevflowSummaryBody({
@@ -129,6 +132,7 @@ export function buildDevflowSummaryBody({
   holdKind,
   disclosures,
   changedFiles,
+  baseFailingTests,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -297,6 +301,7 @@ export function buildDevflowSummaryBody({
   // （= 最終 tree の再検証が行われていない）のときだけ使う。経過は参考セクションの Final reconcile 行に残る。
   // Validate の tests:'error' はテストが 1 件も実行されていない起動失敗で red ではない（issue #707）。
   // PR head sha に pin した CI が green なら '✅ green (CI)'、そうでなければ未検証として結論行で CI 確認を促す。
+  const baseFailing = Array.isArray(baseFailingTests) ? baseFailingTests.filter((f) => typeof f === 'string' && f.length > 0) : [];
   let testCell;
   let testUnverified = false;
   if (finalReconcile === 'ci_verified') {
@@ -311,7 +316,7 @@ export function buildDevflowSummaryBody({
   } else if (testGreen == null) {
     testCell = '不明';
   } else if (testGreen === true) {
-    testCell = '✅ green';
+    testCell = baseFailing.length > 0 ? `✅ green（base でも失敗する既存の失敗 ${baseFailing.length} 件を除く）` : '✅ green';
   } else {
     testCell = '❌ red';
   }
@@ -757,6 +762,9 @@ export function buildDevflowSummaryBody({
   const referenceLines = [];
   if (Array.isArray(disclosures)) {
     for (const line of disclosures) referenceLines.push(`- ${line}`);
+  }
+  if (baseFailing.length > 0) {
+    referenceLines.push(`- base でも失敗する既存の失敗 ${baseFailing.length} 件（diff と無関係のため green 要件から除外）: ${baseFailing.map((f) => '`' + f + '`').join(', ')}`);
   }
   if (uiVerify != null && uiVerify !== 'skipped') {
     const modeSuffix = uiVerifyMode ? ` (mode: ${uiVerifyMode})` : '';

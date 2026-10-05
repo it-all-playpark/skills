@@ -2967,3 +2967,18 @@ test('issue #747 AC4: HOLD 理由の表でエージェント AC 未達（取り�
   assert.ok(hold.includes('エージェントで満たせる AC が差し戻し後も未達（ループの取りこぼし） | 修正が必要'), `取りこぼし行: ${hold}`);
   assert.ok(hold.includes('人手作業を要する AC が未達（人手 AC 待ち） | 人手で実施して AC を確認する'), `人手待ち行: ${hold}`);
 });
+
+test('baseFailingTests: テスト欄の green に除外件数を添え、参考セクションに「base でも失敗する既存の失敗」としてファイルを列挙する', () => {
+  const body = buildDevflowSummaryBody({ ...BASE_INPUT, baseFailingTests: ['p/a.bats', 'p/b.bats'] });
+  assert.equal(glanceCells(body)[2], '✅ green（base でも失敗する既存の失敗 2 件を除く）');
+  const ref = sectionOf(body, '**参考（可視化のみ — merge tier 判定に不使用）**:');
+  assert.ok(ref != null && ref.includes('- base でも失敗する既存の失敗 2 件（diff と無関係のため green 要件から除外）: `p/a.bats`, `p/b.bats`'), `参考セクション: ${ref}`);
+});
+
+test('baseFailingTests: 空・未指定ならテスト欄も参考セクションも変わらない', () => {
+  for (const baseFailingTests of [undefined, null, []]) {
+    const body = buildDevflowSummaryBody({ ...BASE_INPUT, baseFailingTests });
+    assert.equal(body, buildDevflowSummaryBody(BASE_INPUT));
+    assert.ok(!body.includes('base でも失敗する既存の失敗'));
+  }
+});

@@ -77,6 +77,15 @@ export function partitionBlocked(results) {
   return { guardBlocked, approachBlocked }
 }
 
+// guard_blocked の理由がファイル削除（rm / rip の deny 等）か。該当すれば workflow は以降の実装 spawn に
+// 固定文の削除手段（git rm・unstage しない）を渡す。detail 本文は渡さない（スクラブ前の文を prompt へ
+// 伝播させない上記の遮断と両立させるため、判定結果の真偽だけを使う）。
+const DELETION_BLOCK_RE = /削除|消せ|消す|消去|\brm\b|\brip\b|delet|remov|unlink/i
+
+export function isDeletionGuardBlock(detail) {
+  return DELETION_BLOCK_RE.test(String(detail ?? ''))
+}
+
 export function buildGuardBlockedConcern({ task_id, guard_id, detail }) {
   return 'guard_blocked(' + task_id + ')[guard=' + guard_id + ']: ' + scrubBlockingDetail(detail)
 }

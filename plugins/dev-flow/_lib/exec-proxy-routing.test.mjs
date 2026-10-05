@@ -58,6 +58,9 @@ const EXPECTED_DEV_FLOW = {
   'issue-labels': RO,
   'cross-repo-artifacts': RO,
   'ci-check-lite': RO,
+  // Validate red の分類: diff のファイル一覧（read-only）と base tree での再実行（テスト実行のため write tier）
+  'validate-diff#*': RO,
+  'base-rerun#*': RW,
   // write/Skill tier
   'test#*': RW,
   'test#final': RW,

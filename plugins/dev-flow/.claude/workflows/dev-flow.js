@@ -1194,6 +1194,12 @@ function partitionBlocked(results) {
   return { guardBlocked, approachBlocked }
 }
 
+const DELETION_BLOCK_RE = /削除|消せ|消す|消去|\brm\b|\brip\b|delet|remov|unlink/i
+
+function isDeletionGuardBlock(detail) {
+  return DELETION_BLOCK_RE.test(String(detail ?? ''))
+}
+
 function buildGuardBlockedConcern({ task_id, guard_id, detail }) {
   return 'guard_blocked(' + task_id + ')[guard=' + guard_id + ']: ' + scrubBlockingDetail(detail)
 }
@@ -1947,6 +1953,85 @@ function parseTreeDiffStat(lines) {
   return { files, truncated };
 }
 // ==== END inline: _lib/tree-diff-stat.mjs ====
+// ==== BEGIN inline: _lib/base-failure-triage.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
+
+const BASE_FAILING_LABEL = 'base でも失敗する既存の失敗';
+const BASE_FAILING_ENV_KEY = 'base-failing';
+
+function normalizeTestPaths(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const raw of list) {
+    if (typeof raw !== 'string') continue;
+    const p = raw.trim().replace(/^(\.\/)+/, '');
+    if (p === '' || out.includes(p)) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+function splitDirBase(path) {
+  const i = path.lastIndexOf('/');
+  return i < 0 ? { dir: '', base: path } : { dir: path.slice(0, i), base: path.slice(i + 1) };
+}
+
+function testFileStem(testPath) {
+  const { base } = splitDirBase(testPath);
+  const patterns = [/^(.+)\.(?:test|spec)\.[^.]+$/, /^(.+)\.bats$/, /^(.+)_test\.[^.]+$/, /^test_(.+)\.py$/];
+  for (const re of patterns) {
+    const m = re.exec(base);
+    if (m) return m[1];
+  }
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+function isTestSubjectOf(testPath, changedPath) {
+  if (changedPath === testPath) return false;
+  const t = splitDirBase(testPath);
+  const c = splitDirBase(changedPath);
+  if (t.dir !== c.dir) return false;
+  const dot = c.base.indexOf('.');
+  const changedStem = dot > 0 ? c.base.slice(0, dot) : c.base;
+  return changedStem === testFileStem(testPath);
+}
+
+function planBaseRerun({ failedFiles, diffFiles, knownEnv = [], knownBaseRan = [] }) {
+  const failed = normalizeTestPaths(failedFiles);
+  const diff = normalizeTestPaths(diffFiles);
+  const touched = [];
+  const env = [];
+  const code = [];
+  const rerun = [];
+  for (const f of failed) {
+    if (diff.includes(f) || diff.some((c) => isTestSubjectOf(f, c))) touched.push(f);
+    else if (knownEnv.includes(f)) env.push(f);
+    else if (knownBaseRan.includes(f)) code.push(f);
+    else rerun.push(f);
+  }
+  return { touched, env, code, rerun };
+}
+
+function classifyBaseRerun(rerunFiles, results) {
+  const files = normalizeTestPaths(rerunFiles);
+  const byFile = new Map();
+  for (const r of (Array.isArray(results) ? results : [])) {
+    if (!r || typeof r !== 'object' || typeof r.file !== 'string') continue;
+    const key = normalizeTestPaths([r.file])[0];
+    if (key && !byFile.has(key)) byFile.set(key, r);
+  }
+  const env = [];
+  const code = [];
+  const ran = [];
+  for (const f of files) {
+    const r = byFile.get(f);
+    if (r && r.ran === true) ran.push(f);
+    if (r && r.ran === true && r.base_failed === true && r.same_failure === true) env.push(f);
+    else code.push(f);
+  }
+  return { env, code, ran };
+}
+// ==== END inline: _lib/base-failure-triage.mjs ====
 // ==== BEGIN inline: _lib/post-eval-recheck.mjs (生成区間 — 直接編集禁止。_lib を編集して tools/sync-inlines.mjs --write) ====
 
 const GREEN_FIX_RECHECK_MODES = ['assert_only', 'full'];
@@ -2103,6 +2188,7 @@ function buildDevflowSummaryBody({
   holdKind,
   disclosures,
   changedFiles,
+  baseFailingTests,
 }) {
   const EVAL_STALENESS_VALUES = ['none', 'hash_mismatch', 'hash_reconverged', 'iterate_incomplete', 'iterate_fixed'];
   if (evalStaleness != null && !EVAL_STALENESS_VALUES.includes(evalStaleness)) {
@@ -2228,6 +2314,7 @@ function buildDevflowSummaryBody({
     actionPhrase = '人が diff を一読してマージしてください';
   }
 
+  const baseFailing = Array.isArray(baseFailingTests) ? baseFailingTests.filter((f) => typeof f === 'string' && f.length > 0) : [];
   let testCell;
   let testUnverified = false;
   if (finalReconcile === 'ci_verified') {
@@ -2242,7 +2329,7 @@ function buildDevflowSummaryBody({
   } else if (testGreen == null) {
     testCell = '不明';
   } else if (testGreen === true) {
-    testCell = '✅ green';
+    testCell = baseFailing.length > 0 ? `✅ green（base でも失敗する既存の失敗 ${baseFailing.length} 件を除く）` : '✅ green';
   } else {
     testCell = '❌ red';
   }
@@ -2637,6 +2724,9 @@ function buildDevflowSummaryBody({
   const referenceLines = [];
   if (Array.isArray(disclosures)) {
     for (const line of disclosures) referenceLines.push(`- ${line}`);
+  }
+  if (baseFailing.length > 0) {
+    referenceLines.push(`- base でも失敗する既存の失敗 ${baseFailing.length} 件（diff と無関係のため green 要件から除外）: ${baseFailing.map((f) => '`' + f + '`').join(', ')}`);
   }
   if (uiVerify != null && uiVerify !== 'skipped') {
     const modeSuffix = uiVerifyMode ? ` (mode: ${uiVerifyMode})` : '';
@@ -3227,12 +3317,33 @@ const IMPL = {
     epoch: { type: 'number' },
   },
 }
+// failed_files: tests:'failed' のとき失敗したテストファイルの repo 相対パス。runValidateLoop が diff・base 再実行と
+// 突き合わせて「base でも落ちる既存の失敗」を green 要件から外す材料（_lib/base-failure-triage.mjs）。
+// 省略時はすべての失敗を green-fix の対象にする。
 const GREEN = {
   type: 'object', required: ['tests', 'green'],
   properties: {
     tests: { type: 'string', enum: ['passed', 'failed', 'no_tests', 'error'] },
     green: { type: 'boolean' },
     summary: { type: 'string' },
+    failed_files: { type: 'array', items: { type: 'string' } },
+    epoch: { type: 'number' },
+  },
+}
+// base-rerun#<iter> の出力: 失敗したテストファイルを base tree で同じように再実行した結果（ファイルごと）。
+const BASE_RERUN = {
+  type: 'object', required: ['results'],
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object', required: ['file', 'ran', 'base_failed', 'same_failure'],
+        properties: {
+          file: { type: 'string' }, ran: { type: 'boolean' }, base_failed: { type: 'boolean' },
+          same_failure: { type: 'boolean' }, summary: { type: 'string' },
+        },
+      },
+    },
     epoch: { type: 'number' },
   },
 }
@@ -4399,6 +4510,7 @@ async function failOpenAgent(prompt, opts) {
 let WT // Setup で確定
 let DEPS_NOTE = '' // Setup(deps) で確定。install 失敗/未確認時のみ非空（fail-open）
 let TURBOPACK_NOTE = '' // Setup(stack) で確定。対象 repo が Next.js のときのみ Turbopack fallback 規約の本文、それ以外は空文字
+let DELETION_HINT_NOTE = '' // Implement で確定。ファイル削除を理由に guard_blocked で止まった run のみ GIT_RM_DELETION_HINT、それ以外は空文字
 
 // clock 給電: 専用 clock probe を start/end の 2 回のみに削減し、残り 9 mark は
 // 隣接する既存 exec-proxy/agent 応答の optional epoch から給電する。決定論 proxy が隣接しない
@@ -4433,6 +4545,14 @@ const TURBOPACK_FALLBACK_CONVENTION = `Next.js/Turbopack 固有の build 検証�
   + `fallback で build が成功した場合は「sandbox 環境依存の Turbopack 失敗の可能性（環境要因と断定しない）。実 CI での Turbopack build 確認を推奨」`
   + `の旨を自分の出力（実装 agent は summary/concerns、evaluator は feedback、dev-runner は summary）に必ず記録せよ。`
   + `fallback でも build が失敗する場合は通常どおりコード欠陥として扱え。\n`
+
+// tracked ファイルの削除手段（agents/dev-implementer.md と同じ内容）。implementer がファイル削除を理由に
+// guard_blocked で止まった run では、以降の実装 spawn（Evaluate 差し戻し・green-fix 等）の prompt にこの固定文を
+// 渡す（isDeletionGuardBlock の真偽だけを使い、blocking_reason の detail は渡さない）。git rm の後に unstage すると
+// index と作業ツリーがずれ、git ls-files で数えるテストが落ちて green-fix がテスト側を書き換える。
+const GIT_RM_DELETION_HINT = `tracked ファイルの削除手段: 前回の実装はファイル削除を理由に guard_blocked で止まった。`
+  + `tracked ファイルは \`git rm <path>\` で削除せよ（\`rm\` / \`rip\` は deny される。git rm による削除の stage は git add 禁止の例外）。`
+  + `削除後に unstage（git restore --staged / git reset）するな — index と作業ツリーがずれ、git ls-files を数えるテストが落ちる。\n`
 
 // ---- Implement 経路（全 shape で dev-implementer 一本）----
 // Setup 末尾の analyze ゲート直後に issue から単一 task の plan を合成し、runImplement が dev-implementer
@@ -4491,6 +4611,7 @@ function implPrompt(t, { req, fixFeedback, blocked }) {
               : '')
           + `approach_mismatch findings（過去 iteration 全件の累積。**過去に BLOCKED になったいずれのアプローチへの回帰も禁止** — 全件と異なる代替設計を採れ）:\n${JSON.stringify(blocked.findings)}\n`
         : '')
+    + DELETION_HINT_NOTE
     + STAGING_CONVENTION
     + DEPS_NOTE
     + TURBOPACK_NOTE
@@ -4596,6 +4717,8 @@ const VALIDATE_TEST_PROMPT = `cd ${WT} で作業。テストスイートを実�
   + `- 実行したすべてのスクリプトが green → tests:"passed"、green:true（green:true はこの分岐でのみ返せ）\n`
   + `- 実行されたテストが 1 件以上失敗したスクリプトが 1 本でもある → tests:"failed"、green:false、失敗したスクリプトごとの要約を summary に入れる\n`
   + `- 失敗したテストは無いが、1 本以上のスクリプトが起動失敗した（全本起動失敗も一部だけ起動失敗も含む。EPERM / permission denied / パッケージマネージャや test runner が起動不能 / 依存未解決）→ tests:"error"、green:false、起動失敗したスクリプト名と失敗要約を summary に入れる\n`
+  + `tests が failed のときは、失敗したテストを含むテストファイルの repo 相対パス（例: plugins/foo/scripts/bar.bats）を出力から読み取り failed_files に重複なく列挙せよ。`
+  + `失敗をテストファイルに結び付けられないもの（ビルド失敗・ランナー全体の失敗等）が 1 件でもあれば failed_files は返すな。\n`
   + `format/lint はこの phase の責務外。test の結果のみ報告せよ。`
   + '\n' + TURBOPACK_NOTE
   + EPOCH_INSTRUCTION
@@ -4737,6 +4860,8 @@ let state = {
   EFFECTIVE_SHAPE: null, EVAL_PASSES: null, runEval: null,
   dhPrompt: null, evalResult: null, designReplanCount: 0, reimplCount: 0,
   postEvalVal: null, postEvalRecheck: null,
+  // Validate が green 要件から外した「base でも失敗する既存の失敗」（env）と、base 再実行済みで ENV でなかったファイル（ran）
+  baseFailing: { env: [], ran: [] },
   unsatisfiedAc: false, unsatisfiedAcByActor: { agent: [], human: [] },
   evalDiffHash: null, secDiffHash: null,
   prDiffHash: null, staleDiffFiles: null, prHeadTreeOid: null,
@@ -4754,14 +4879,21 @@ let state = {
 // ============================================================
 function extractGuardBlocked(results) {
   const { guardBlocked } = partitionBlocked(results)
-  if (!guardBlocked.length) return { filtered: results, concerns: [], digests: [] }
+  if (!guardBlocked.length) return { filtered: results, concerns: [], digests: [], deletion: false }
   const guardTaskIds = new Set(guardBlocked.map((g) => g.task_id))
   const isGuardBlocked = (r) => r && r.status === 'BLOCKED' && guardTaskIds.has(r.task_id)
   const filtered = results.filter((r) => !isGuardBlocked(r))
   const concerns = guardBlocked.map((g) => buildGuardBlockedConcern(g))
   const filesOf = (id) => results.filter((r) => isGuardBlocked(r) && r.task_id === id).flatMap((r) => Array.isArray(r.files) ? r.files : [])
   const digests = guardBlocked.map((g) => ({ task_id: g.task_id, guard_id: g.guard_id, block_class: 'guard_blocked', files: filesOf(g.task_id) }))
-  return { filtered, concerns, digests }
+  return { filtered, concerns, digests, deletion: guardBlocked.some((g) => isDeletionGuardBlock(g.detail)) }
+}
+
+// ファイル削除を理由にした guard_blocked を見たら、以降の実装 spawn prompt に削除手段の固定文を載せる。
+function noteDeletionGuardBlock(gb) {
+  if (!gb.deletion || DELETION_HINT_NOTE) return
+  DELETION_HINT_NOTE = GIT_RM_DELETION_HINT
+  log('implement: ファイル削除を理由に guard_blocked — 以降の実装 spawn prompt に削除手段（git rm・unstage しない）を渡す')
 }
 
 // ============================================================
@@ -4786,6 +4918,7 @@ async function execImplementPhase(state) {
     implResults = gb.filtered
     blockedConcerns.push(...gb.concerns)
     state.guardBlockedResults.push(...gb.digests)
+    noteDeletionGuardBlock(gb)
   }
   // blockFindings 累積 & アプローチ回帰禁止。累積 findings の frozen target
   // （incentive-structural — W7 分類。capability 非依存・撤去禁止）
@@ -4819,6 +4952,7 @@ async function execImplementPhase(state) {
       implResults = gb.filtered
       blockedConcerns.push(...gb.concerns)
       state.guardBlockedResults.push(...gb.digests)
+      noteDeletionGuardBlock(gb)
     }
     if (b === BLOCK_MAX) {
       const stillBlocked = implResults.filter((r) => r && r.status === 'BLOCKED')
@@ -4870,8 +5004,70 @@ async function execImplementPhase(state) {
 // （経路ごとの複製はプロンプト空白 drift を生むため 1 箇所で管理する）。
 // green-fix は greenFixIterations に積み（件数が greenFixCount）、concerns は呼び出し側の配列へ伝搬する。
 // tests:'error'（起動失敗）は green-fix せず即 break。GREEN_MAX 到達は red のまま返して先へ進む（human review 想定）。
+// tests:'failed' は triageBaseFailures で「diff と無関係で base でも同じように落ちる既存の失敗」を分け、
+// 失敗がすべてそれなら green 要件から外して green-fix を起動しない（v.green を true にして break）。
+// 一部だけなら残りを green-fix に回し、既存の失敗のファイルは触らないよう prompt で伝える。
 // ============================================================
-async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName }) {
+
+// diff のファイル一覧（base → working tree の tracked 差分 + untracked）を verbatim 転写させる read-only exec-proxy の prompt。
+function validateDiffFilesPrompt() {
+  return `次の 2 コマンドをそれぞれ **先頭トークンが git の bare 単文** で 1 回ずつ実行し、両方の stdout の各行（ファイルパス）を`
+    + `1 つの配列 lines に一字一句そのまま（要約・整形・並べ替え・件数制限をせず）入れて {"ok": true, "lines": [...]} で返せ`
+    + `（stdout が両方空なら {"ok": true, "lines": []}。どちらかが exit 非0・実行不能なら ok:false/error で返せ。失敗時に ok:true を生成してはならない。`
+    + `cd 前置・\`bash\` 前置・環境変数代入前置・&& 連結・パイプ・リダイレクトは禁止。-C で worktree を渡しているため cd は不要）:\n`
+    + `git -C ${WT} diff --name-only origin/${BASE}\n`
+    + `git -C ${WT} ls-files --others --exclude-standard`
+}
+
+// 失敗したテストファイルを base tree で同じように再実行させる prompt（worktree は変更させない）。
+function baseRerunPrompt(files) {
+  return `cd ${WT} で作業。Validate のテストで失敗した次のテストファイルが、base（origin/${BASE}）の tree でも同じように失敗するかを確かめよ。`
+    + `worktree のファイルは変更・stage・削除するな（修正もしない）。\n`
+    + `対象（repo 相対パス）: ${JSON.stringify(files)}\n`
+    + `手順:\n`
+    + `1. \`mktemp -d "\${TMPDIR:-/tmp}/devflow-base-XXXXXX"\` を実行し、出力パスを D とする（worktree の外に置く）。\n`
+    + `2. \`git -C ${WT} archive --format=tar -o <D>.tar origin/${BASE}\` を bare 単文で実行し、\`tar -xf <D>.tar -C <D>\` で base tree を D に展開せよ。`
+    + `${WT}/node_modules があれば \`ln -s ${WT}/node_modules <D>/node_modules\` で共有せよ。\n`
+    + `3. 対象ファイルごとに、そのファイルだけを実行するコマンド（*.bats は bats、*.test.mjs / *.test.ts は repo の test runner 等、repo のテスト規約に合わせる）を決め、`
+    + `worktree（${WT}）と D で同じコマンドを 1 回ずつ実行し、それぞれで失敗したテスト名を記録せよ。\n`
+    + `4. 対象ファイルごとに {"file": <対象のパス verbatim>, "ran": <worktree と D の両方でテストを実行できたか>, "base_failed": <D で 1 件以上失敗したか>, `
+    + `"same_failure": <worktree で失敗したテスト名がすべて D でも失敗したか>, "summary": <失敗したテスト名の要約>} を results に入れて返せ。`
+    + `起動失敗・D に当該ファイルが無い・テスト名を比べられない場合は ran:false または same_failure:false とせよ（判断に迷う場合は same_failure:false）。\n`
+    + EPOCH_INSTRUCTION
+}
+
+// tests:'failed' の失敗を diff・base 再実行と突き合わせ、既存の失敗（ENV）と green-fix の対象に分ける。
+// baseFailing は run 内で共有する { env, ran }（ENV と判定済みのファイル / base 再実行済みで ENV でなかったファイル）。
+// failed_files の欠落・diff 一覧の取得失敗・base 再実行の失敗はいずれも「ENV なし」に倒す（green 要件を緩めない）。
+async function triageBaseFailures(v, baseFailing, iterLabel, phaseName) {
+  const failed = normalizeTestPaths(v.failed_files)
+  if (!failed.length) return { env: [], code: [] }
+  const diff = await failOpenAgent(validateDiffFilesPrompt(),
+    { agentType: 'dev-runner-haiku-ro', schema: TREE_DIFF_LINES, label: `validate-diff#${iterLabel}`, phase: phaseName, retryOnContractViolation: true })
+  if (diff?.ok !== true || !Array.isArray(diff.lines)) {
+    log(`⚠️ ${phaseName}: diff のファイル一覧を取得できず（${diff?.error ?? 'null / schema 不一致'}）— base 再実行をせず失敗はすべて green-fix の対象にする`)
+    return { env: [], code: failed }
+  }
+  const plan = planBaseRerun({ failedFiles: failed, diffFiles: diff.lines, knownEnv: baseFailing.env, knownBaseRan: baseFailing.ran })
+  let env = plan.env
+  const code = [...plan.touched, ...plan.code]
+  if (plan.rerun.length) {
+    const br = await failOpenAgent(baseRerunPrompt(plan.rerun),
+      { agentType: 'dev-runner-haiku', schema: BASE_RERUN, label: `base-rerun#${iterLabel}`, phase: phaseName })
+    if (!Array.isArray(br?.results)) log(`⚠️ ${phaseName}: base 再実行の結果を取得できず — ${plan.rerun.length} 件は green-fix の対象にする`)
+    const cls = classifyBaseRerun(plan.rerun, br?.results)
+    env = [...env, ...cls.env]
+    code.push(...cls.code)
+    for (const f of cls.ran) if (!cls.env.includes(f) && !baseFailing.ran.includes(f)) baseFailing.ran.push(f)
+  }
+  // diff が触るようになったファイルは既存の失敗から外す（diff と無関係ではなくなった）
+  baseFailing.env = baseFailing.env.filter((f) => !plan.touched.includes(f))
+  for (const f of env) if (!baseFailing.env.includes(f)) baseFailing.env.push(f)
+  log(`${phaseName}: 失敗したテストファイル ${failed.length} 件 — diff が触った ${plan.touched.length} / ${BASE_FAILING_LABEL} ${env.length} / green-fix の対象 ${code.length}`)
+  return { env, code }
+}
+
+async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName, baseFailing }) {
   let v = null
   for (let i = 1; i <= GREEN_MAX; i++) {
     const iterLabel = kind ? `${kind}-${i}` : `${i}`
@@ -4903,6 +5099,18 @@ async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName }
       log(`⚠️ ${phaseName}: tests=error（起動失敗: ${String(v.summary ?? '').slice(0, 200)}）— green-fix をスキップ（環境失敗はコード修正で解消しない。Final reconcile の CI 委譲へ）`)
       break
     }
+    let envNote = ''
+    if (v.tests === 'failed') {
+      const tri = await triageBaseFailures(v, baseFailing, iterLabel, phaseName)
+      if (tri.env.length && !tri.code.length) {
+        log(`${phaseName}: 失敗はすべて diff と無関係で base でも同じように落ちる ${BASE_FAILING_LABEL}（${tri.env.join(', ')}）— ENV 項目として green 要件から外し green-fix を起動しない`)
+        v = { ...v, green: true }
+        break
+      }
+      if (tri.env.length) {
+        envNote = `次のテストファイルの失敗は diff と無関係で base でも同じように落ちる${BASE_FAILING_LABEL}で、green 要件から外した。修正対象外 — 触るな: ${JSON.stringify(tri.env)}\n`
+      }
+    }
     if (i === GREEN_MAX) {
       if (kind === 'retry') {
         log(`⚠️ empty-diff gate 後の再 validate: ${GREEN_MAX} 回試行しても test green にならず — Evaluate へ（human review 想定）`)
@@ -4919,7 +5127,9 @@ async function runValidateLoop(kind, { concerns, greenFixIterations, phaseName }
       + `**禁止**: テストの期待値・assert を弱めて green にすることは禁止（テスト弱体化）。`
       + `テスト側を修正してよいのはテスト自体の誤り（誤った期待値・環境依存・typo）に根拠を示せる場合のみで、その根拠を summary に明記せよ。\n`
       + `失敗内容: ${v.summary ?? '(詳細はテスト出力を確認)'}\n`
+      + envNote
       + `task_id: issue-${ISSUE}（返却 JSON の task_id にそのまま echo せよ）\n`
+      + DELETION_HINT_NOTE
       + STAGING_CONVENTION
       + TURBOPACK_NOTE,
       { agentType: IMPL_AGENT, model: GREEN_FIX_MODEL, schema: IMPL, label: `green-fix#${iterLabel}`, phase: phaseName },
@@ -4943,7 +5153,7 @@ async function execValidatePhase(state) {
   let val = null
   /** @type {Array<{files: string[], summary: string}>} */
   const greenFixIterations = []
-  const loopCtx = { concerns, greenFixIterations, phaseName: 'Validate' }
+  const loopCtx = { concerns, greenFixIterations, phaseName: 'Validate', baseFailing: state.baseFailing }
   // validate_end の clock 給電候補。test#i/diff-gate/diff-gate-retry/test#retry-i の
   // 応答（いずれも Validate 内で境界に隣接する）を集め、maxEpochRes で最後に完了したものを採る。
   const validateEpochCandidates = []
@@ -5240,6 +5450,18 @@ async function execSecurityFloorPhase(state) {
     } else {
       log('declared-path-check: 宣言外変更なし（全変更が plan file_changes 内）')
     }
+  }
+
+  // Validate が green 要件から外した既存の失敗は ENV 項目（minor / inspection — advisory lane）として ledger に残す。
+  // ledger の round 0（ここ）で積む — Evaluate round 以降は critical 以外を受け付けないため、
+  // post-eval 再テストで新たに分かったものは終端サマリーの baseFailingTests だけに載る。
+  if (state.baseFailing.env.length) {
+    ledger = appendItem(ledger, {
+      id: `ENV-${BASE_FAILING_ENV_KEY.toUpperCase()}`,
+      text: `${BASE_FAILING_LABEL}（diff と無関係のため green 要件から除外）: ${state.baseFailing.env.join(', ')}`.slice(0, 500),
+      dimension: 'environment', severity: 'minor', source: 'concern',
+      check: { kind: 'inspection' }, env_key: BASE_FAILING_ENV_KEY, env_count: state.baseFailing.env.length,
+    }).ledger
   }
 
   state.ledger = ledger
@@ -5771,7 +5993,7 @@ async function execPostEvalValidate(state) {
   if (!(state.reimplCount > 0)) return state
   log(`post-eval validate: Evaluate で reimpl ${state.reimplCount} 回 — PR 前にフルテストを再実行`)
   const gfIterCountBefore = state.greenFixIterations.length
-  const v = await runValidateLoop('post-eval', { concerns: state.concerns, greenFixIterations: state.greenFixIterations, phaseName: 'Evaluate' })
+  const v = await runValidateLoop('post-eval', { concerns: state.concerns, greenFixIterations: state.greenFixIterations, phaseName: 'Evaluate', baseFailing: state.baseFailing })
   state.val = v
   state.postEvalVal = v
   state.greenFixCount = state.greenFixIterations.length
@@ -6651,6 +6873,7 @@ const summaryBody = buildDevflowSummaryBody({
   holdKind: mergeTier.holdKind,
   disclosures: mergeTier.disclosures ?? [],
   changedFiles: changed?.files ?? [],
+  baseFailingTests: state.baseFailing.env,
 })
 // 終端サマリーコメント投稿: bodySaveInstr で body を worktree の .devflow-tmp/ 固定パスへ保存し
 // gh pr comment --body-file を bare 単文で投稿する。投稿失敗は posted:false で fail-open だが、

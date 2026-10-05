@@ -86,6 +86,7 @@ const DF_REDGREEN = DEV_FLOW_SCENARIOS['redgreen'];
 const DF_CI_CHECKS = DEV_FLOW_SCENARIOS['ci-checks'];
 const DF_COMPLEX_FIX = DEV_FLOW_SCENARIOS['complex-fix'];
 const DF_GREEN_FIX = DEV_FLOW_SCENARIOS['green-fix'];
+const DF_BASE_FAILING = DEV_FLOW_SCENARIOS['base-failing'];
 const DF_POST_EVAL_GREEN_FIX = DEV_FLOW_SCENARIOS['post-eval-green-fix'];
 const DF_FINAL_RECHECK = DEV_FLOW_SCENARIOS['final-recheck'];
 const DF_LITE = DEV_FLOW_SCENARIOS['lite'];
@@ -267,6 +268,23 @@ const EXPECTED_DEV_FLOW = {
     config: DF_GREEN_FIX,
     policy: 'continue',
     reason: 'try/catchで合成redへ変換しgreen-fixループへ継続する既存のfail-safe経路',
+  },
+  'validate-diff#1': {
+    config: DF_BASE_FAILING,
+    policy: 'continue',
+    reason: 'failOpenAgent経由。diff一覧が取れなければbase再実行をせず失敗をすべてgreen-fixの対象にする',
+    extra: async ({ calls }) => {
+      assert.ok(!calls.some((c) => c.label.startsWith('base-rerun#')), 'validate-diff#1 throw 後に base-rerun へ進んではならない');
+      assert.ok(calls.some((c) => c.label === 'green-fix#1'), 'validate-diff#1 throw 後は green-fix#1 へ進むべき');
+    },
+  },
+  'base-rerun#1': {
+    config: DF_BASE_FAILING,
+    policy: 'continue',
+    reason: 'failOpenAgent経由。base再実行の結果が無ければENVにせずgreen-fixの対象に残す（green要件を緩めない）',
+    extra: async ({ calls }) => {
+      assert.ok(calls.some((c) => c.label === 'green-fix#1'), 'base-rerun#1 throw 後は green-fix#1 へ進むべき');
+    },
   },
   'pr-review-lite': { config: DF_LITE, policy: 'abort', reason: 'bare据え置き。lite経路のレビュー呼び出し失敗は吸収機構がない' },
   'ci-check-lite': { config: DF_LITE, policy: 'continue', reason: 'failOpenAgent経由。lite経路のCI状態取得失敗はフルpr-iterateへ委譲するのみ' },
