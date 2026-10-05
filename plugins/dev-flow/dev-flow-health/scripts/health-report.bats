@@ -56,8 +56,17 @@ sig_field() {
     run report
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq '[.signatures[] | select(.template | test("hook-captured|not a dev-flow run"))] | length')" = "0" ]
-    [ "$(printf '%s' "$output" | jq '.runs["dev-flow"]')" = "11" ]
+    [ "$(printf '%s' "$output" | jq '.runs["dev-flow"]')" = "12" ]
     [ "$(printf '%s' "$output" | jq '.runs["pr-iterate"]')" = "1" ]
+}
+
+@test "needs_clarification（analyze ゲート等の設計どおりの停止）は窓内でも signature にしない" {
+    load_fixture lifecycle.jsonl
+    run report
+    [ "$status" -eq 0 ]
+    # fixture の 10-04T16:00 の needs_clarification 停止は窓内だが new にならない
+    [ "$(printf '%s' "$output" | jq '[.signatures[] | select(.category == "needs_clarification" or (.template | test("AC 空")))] | length')" = "0" ]
+    [ "$(printf '%s' "$output" | jq '.summary.new')" = "2" ]
 }
 
 @test "壊れた journal ファイルがあっても残りを読んで判定する" {
@@ -65,19 +74,20 @@ sig_field() {
     echo '{not valid json' > "$JOURNAL/2026-10-04-21-00-00-dev-flow-999.json"
     run report
     [ "$status" -eq 0 ]
-    [ "$(printf '%s' "$output" | jq '.runs["dev-flow"]')" = "11" ]
+    [ "$(printf '%s' "$output" | jq '.runs["dev-flow"]')" = "12" ]
 }
 
 # --- 解消済みの判定 -------------------------------------------------------------
 
-@test "last_seen と別の commit で N 回（既定 5）再発しなければ resolved" {
+@test "last_seen と別の commit で N 回（既定 5）成功し再発しなければ resolved" {
     load_fixture lifecycle.jsonl
     run report
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | jq '.resolve_after_runs')" = "5" ]
     [ "$(sig_field 'agent returned null' .status)" = "resolved" ]
     [ "$(sig_field 'agent returned null' .last_seen.plugin_commit)" = "aaaaaaaaaaa1" ]
-    [ "$(sig_field 'agent returned null' .clean_runs_since_last_seen)" = "9" ]
+    # 09-01 以後の別 commit の run は 10 件あるが、成功は 09-04..09-08 の 5 件だけ（失敗 run は数えない）
+    [ "$(sig_field 'agent returned null' .clean_runs_since_last_seen)" = "5" ]
     [ "$(sig_field 'agent returned null' .candidates)" = "null" ]
 }
 
@@ -85,9 +95,9 @@ sig_field() {
     load_fixture lifecycle.jsonl
     run report
     [ "$status" -eq 0 ]
-    # 09-12（ccccccccccc3）以後で commit が違う dev-flow run は 10-04 の ddddddddddd4 だけ
+    # 09-12（ccccccccccc3）以後で commit が違う dev-flow run は 10-04 の ddddddddddd4 の 2 件だけで、どちらも失敗
     [ "$(sig_field 'tests red' .status)" = "ongoing" ]
-    [ "$(sig_field 'tests red' .clean_runs_since_last_seen)" = "1" ]
+    [ "$(sig_field 'tests red' .clean_runs_since_last_seen)" = "0" ]
     [ "$(sig_field 'tests red' .first_seen.timestamp)" = "2026-09-10T00:00:00Z" ]
     [ "$(sig_field 'tests red' .last_seen.timestamp)" = "2026-09-12T00:00:00Z" ]
     [ "$(sig_field 'tests red' .last_seen.plugin_commit)" = "ccccccccccc3" ]
@@ -105,11 +115,29 @@ sig_field() {
     [ "$(sig_field 'tests red' .status)" = "ongoing" ]
 }
 
+@test "別 commit でも別の失敗で止まった run は resolved の根拠にしない" {
+    load_fixture lifecycle.jsonl
+    for n in 1 2 3 4 5 6; do
+        jq -n --arg ts "2026-09-13T00:00:0${n}Z" \
+            '{skill:"dev-flow", outcome:"failure", source:"skill", timestamp:$ts, telemetry:{plugin_commit:"eeeeeeeeeee5"},
+              error:{category:"abort", phase:"Implement", message:"abort@Implement/impl#1: other failure"}}' \
+            > "$JOURNAL/2026-09-13-00-00-0${n}-dev-flow-30${n}.json"
+    done
+    run report
+    [ "$status" -eq 0 ]
+    [ "$(sig_field 'tests red' .status)" = "ongoing" ]
+    [ "$(sig_field 'tests red' .clean_runs_since_last_seen)" = "0" ]
+}
+
 @test "--resolve-after で N を変えられる" {
     load_fixture lifecycle.jsonl
-    run report --resolve-after 1
+    # agent returned null は別 commit の成功 run が 5 件 — N=6 では届かない
+    run report --resolve-after 6
     [ "$status" -eq 0 ]
-    [ "$(sig_field 'tests red' .status)" = "resolved" ]
+    [ "$(sig_field 'agent returned null' .status)" = "ongoing" ]
+    run report --resolve-after 5
+    [ "$status" -eq 0 ]
+    [ "$(sig_field 'agent returned null' .status)" = "resolved" ]
 }
 
 @test "resolved の条件を満たした後に再び出た signature は regressed" {

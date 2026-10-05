@@ -71,18 +71,37 @@ daily() {
     [ "$(printf '%s' "$output" | jq '.llm_exit')" = "3" ]
 }
 
-@test "install-schedule --print: 毎日 07:00 に daily.sh を登録時の PATH で起動する plist" {
-    run bash "$INSTALL" --print
+@test "install-schedule --print: 毎日 07:00 に checkout の daily.sh を --repo 付き・登録時の PATH で起動する plist" {
+    REPO_ROOT="$(git -C "$SKILL_DIR" rev-parse --show-toplevel)"
+    run bash "$INSTALL" --print --repo "$SKILL_DIR"
     [ "$status" -eq 0 ]
     [[ "$output" == *"<string>com.playpark.dev-flow-health</string>"* ]]
-    [[ "$output" == *"<string>$SKILL_DIR/scripts/daily.sh</string>"* ]]
+    # daily.sh は --repo の checkout 内を指し、その後に --repo <checkout top-level> が続く
+    [[ "$output" == *"<string>$REPO_ROOT/plugins/dev-flow/dev-flow-health/scripts/daily.sh</string>
+    <string>--repo</string>
+    <string>$REPO_ROOT</string>"* ]]
+    [[ "$output" == *"<key>WorkingDirectory</key><string>$REPO_ROOT</string>"* ]]
     [[ "$output" == *"<key>Hour</key><integer>7</integer>"* ]]
     [[ "$output" != *"<key>Weekday</key>"* ]]
     [[ "$output" == *"<key>PATH</key><string>$STUB:"* ]]
 }
 
+@test "install-schedule: --repo が無い / git checkout でない / skills checkout でないなら error" {
+    run bash "$INSTALL" --print
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--repo"* ]]
+    mkdir -p "$BATS_TEST_TMPDIR/not-git"
+    run bash "$INSTALL" --print --repo "$BATS_TEST_TMPDIR/not-git"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"git checkout"* ]]
+    git init -q "$BATS_TEST_TMPDIR/other"
+    run bash "$INSTALL" --print --repo "$BATS_TEST_TMPDIR/other"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"daily.sh"* ]]
+}
+
 @test "install-schedule --print: claude CLI 不在なら error、不明引数は usage で exit 1" {
-    PATH="/usr/bin:/bin" run bash "$INSTALL" --print
+    PATH="/usr/bin:/bin" run bash "$INSTALL" --print --repo "$SKILL_DIR"
     [ "$status" -ne 0 ]
     run bash "$INSTALL"
     [ "$status" -eq 1 ]

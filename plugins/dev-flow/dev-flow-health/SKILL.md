@@ -25,10 +25,12 @@ launchd 07:00 → scripts/daily.sh
   → summary.new + summary.regressed > 0 の日だけ claude -p "/dev-flow:dev-flow-health <report>"
 ```
 
-登録は 1 回だけ手動で行う（`--print` で plist を確認、`--uninstall` で解除）:
+登録は 1 回だけ手動で行う（`--print` で plist を確認、`--uninstall` で解除）。`--repo` は skills repo の
+git checkout を必須で渡す — plugin cache の install は git ではなく候補 commit を列挙できないため、plist は
+checkout 内の `daily.sh` を `--repo <checkout>` 付きで起動する（版付きの cache パスには固定しない）:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/dev-flow-health/scripts/install-schedule.sh --install
+bash ${CLAUDE_PLUGIN_ROOT}/dev-flow-health/scripts/install-schedule.sh --install --repo <skills checkout>
 ```
 
 手元で今日のレポートだけ見たいときは `bash ${CLAUDE_PLUGIN_ROOT}/dev-flow-health/scripts/health-report.sh`
@@ -38,9 +40,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/dev-flow-health/scripts/install-schedule.sh --install
 
 | フィールド | 意味 |
 |------------|------|
-| `signatures[].signature` | `skill \| error.category \| error.phase \| テンプレート化した error.message`。パス・URL・hash・PR 番号・数値は `<*>` |
+| `signatures[].signature` | `skill \| error.category \| error.phase \| テンプレート化した error.message`。パス・URL・hash・PR 番号・数値は `<*>`。`error.category == needs_clarification`（人間の判断待ちで止めた設計どおりの停止）は signature にしない |
 | `signatures[].id` | signature の sha1 先頭 12 桁。issue の重複検出に使う |
-| `status` | `new`（窓内に初出）/ `regressed`（resolved の条件を満たした後に窓内で再発）/ `ongoing` / `resolved`（last_seen と別の `plugin_commit` で同じ skill が `resolve_after_runs` 回走って再発なし） |
+| `status` | `new`（窓内に初出）/ `regressed`（resolved の条件を満たした後に窓内で再発）/ `ongoing` / `resolved`（last_seen と別の `plugin_commit` で同じ skill が `resolve_after_runs` 回成功して再発なし。失敗 run は数えない） |
 | `first_seen` / `last_seen` / `regressed_at` | `{timestamp, plugin_commit, file}`。`file` は `~/.claude/journal/` 下の entry |
 | `recent_runs` | 直近 5 件の発生（issue / pr_number / 元の message 付き） |
 | `candidates` | new / regressed のみ。`last_good_commit..first_bad_commit` で `plugins/dev-flow/` を触った commit。列挙できなかったときは `error` に理由 |

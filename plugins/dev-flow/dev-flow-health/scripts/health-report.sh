@@ -6,8 +6,11 @@
 #   1. 失敗 entry（outcome == "failure" かつ error object あり）を
 #      skill | error.category | error.phase | error.message のテンプレート化で signature にまとめる。
 #      message の URL・絶対パス・hash・PR 番号・数値は <*> に置き換える（Drain 系）。
+#      error.category == "needs_clarification"（analyze ゲート等が人間の判断待ちで止めた設計どおりの停止）は
+#      dev-flow の欠陥ではないので signature にしない（1 signature = 1 issue で毎回起票されるのを防ぐ）。
 #   2. signature ごとに first_seen / last_seen（timestamp と telemetry.plugin_commit）を出し、状態を決める:
-#        resolved  : last_seen 以後に、last_seen と別の plugin_commit で同じ skill が N 回以上走り、再発していない
+#        resolved  : last_seen 以後に、last_seen と別の plugin_commit で同じ skill が N 回以上成功し、再発していない
+#                    （別の失敗で止まった run はその phase まで到達した証拠にならないので数えない）
 #        new       : resolved でなく、first_seen が窓（--since 以後）に入っている
 #        regressed : resolved でなく、一度 resolved の条件を満たした後の再発が窓に入っている
 #        ongoing   : それ以外
@@ -25,6 +28,8 @@
 #
 #   --journal-dir    既定 $CLAUDE_JOURNAL_DIR、なければ ~/.claude/journal
 #   --repo           候補 commit を引く skills repo。既定は本スクリプトを含む git checkout
+#                    （plugin cache の install は git ではないので repo_unavailable になる。日次ジョブは
+#                    install-schedule.sh --repo で登録した checkout を daily.sh 経由で渡す）
 #   --now            基準時刻（UTC, YYYY-MM-DDTHH:MM:SSZ）。既定は現在時刻
 #   --since          new / regressed とみなす窓の始点。既定は --now から --window-hours 前
 #   --window-hours   既定 24
@@ -137,9 +142,11 @@ def template:
 
 def point: {timestamp, plugin_commit: .commit, file};
 
-# run r の後（until より前）に、commit が分かっていて c と異なる run が何回あったか
+# run r の後（until より前）に、commit が分かっていて c と異なる成功 run が何回あったか。
+# 失敗 run は該当 phase まで到達した証拠にならないので数えない（last_good と同じ規則）
 def clean_runs($runs; $after; $until; $c):
   [ $runs[]
+    | select(.outcome == "success")
     | select(.timestamp > $after.timestamp)
     | select($until == null or .timestamp < $until.timestamp)
     | select(.commit != null and .commit != $c) ]
@@ -154,6 +161,7 @@ def clean_runs($runs; $after; $until; $c):
 | to_entries | map(.value + {idx: .key}) as $all
 | [ $all[]
     | select(.outcome == "failure" and (.error | type) == "object")
+    | select(.error.category != "needs_clarification")
     | . + {category: (.error.category // ""), phase: (.error.phase // ""),
            template: ((.error.message // "") | tostring | template)}
     | . + {signature: ([.skill, .category, .phase, .template] | join(" | "))}
