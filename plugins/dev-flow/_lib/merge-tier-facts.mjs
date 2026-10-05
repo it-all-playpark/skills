@@ -82,6 +82,13 @@ export function parseMergeDiffHash(facts) {
   return typeof hash === 'string' && hash !== '' ? hash : null;
 }
 
+// mergeDiffHash が null になった原因の診断値（diffhash サブ結果の error。script は子スクリプトの
+// stderr 先頭 300 byte を添える）。hash を採用できるとき・error が無いときは null。
+export function mergeDiffHashError(facts) {
+  if (parseMergeDiffHash(facts) != null) return null;
+  return subError(facts?.diffhash, null);
+}
+
 // risk サブ結果が契約通りの形か。fail-closed に倒れた 2 原因 — proxy が契約外形状を返した /
 // スクリプトが契約通りの形で ok:false を報告した — を呼び出し側が区別するための述語。
 export function isWellFormedRiskFact(facts) {

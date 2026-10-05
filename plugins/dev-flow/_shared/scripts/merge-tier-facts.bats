@@ -174,6 +174,72 @@ run_facts() {
 }
 
 # ---------------------------------------------------------------------------
+# (i') 子スクリプト失敗時は stderr の先頭 (最大 300 byte) を error に含める (issue #790)
+#      merge-tier-facts.sh は $SCRIPT_DIR の兄弟スクリプトを呼ぶので、script を stub dir へ複製して
+#      失敗する stub と差し替える
+# ---------------------------------------------------------------------------
+make_stub_scripts_dir() {
+    STUB_SCRIPTS="$(mktemp -d)"
+    cp "$SCRIPT" "$STUB_SCRIPTS/merge-tier-facts.sh"
+    cp "$(dirname "$SCRIPT")/worktree-diff-hash.sh" "$STUB_SCRIPTS/worktree-diff-hash.sh"
+    cp "$(dirname "$SCRIPT")/diff-risk-classify.sh" "$STUB_SCRIPTS/diff-risk-classify.sh"
+}
+
+@test "worktree-diff-hash.sh 失敗 -> diffhash.error に stderr の先頭が入り、他サブ結果は ok:true" {
+    make_stub_scripts_dir
+    printf '#!/usr/bin/env bash\necho "fatal: Unable to create index.lock: Operation not permitted" >&2\nexit 128\n' > "$STUB_SCRIPTS/worktree-diff-hash.sh"
+    run bash "$STUB_SCRIPTS/merge-tier-facts.sh" --worktree "$REPO" --base origin/main --pr-view-data "$PR_VIEW_JSON" --checks-data "$CHECKS_JSON"
+    rm -rf "$STUB_SCRIPTS"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        .diffhash.ok == false and .diffhash.value == null and
+        .diffhash.error == "worktree-diff-hash.sh failed (exit 128): fatal: Unable to create index.lock: Operation not permitted" and
+        .risk.ok == true and .changed.ok == true and .pr.ok == true and .head_tree.ok == true and .checks.ok == true
+    '
+}
+
+@test "worktree-diff-hash.sh の stderr が 300 byte 超 -> error には先頭 300 byte だけが入る" {
+    make_stub_scripts_dir
+    printf '#!/usr/bin/env bash\nprintf "%%0400d" 0 | tr 0 x >&2\nexit 1\n' > "$STUB_SCRIPTS/worktree-diff-hash.sh"
+    run bash "$STUB_SCRIPTS/merge-tier-facts.sh" --worktree "$REPO" --base origin/main
+    rm -rf "$STUB_SCRIPTS"
+    [ "$status" -eq 0 ]
+    expected="worktree-diff-hash.sh failed (exit 1): $(printf '%0300d' 0 | tr 0 x)"
+    printf '%s\n' "$output" | jq -e --arg e "$expected" '.diffhash.ok == false and .diffhash.error == $e'
+}
+
+@test "worktree-diff-hash.sh が stderr 無しで失敗 -> error は exit code のみ (従来どおり)" {
+    make_stub_scripts_dir
+    printf '#!/usr/bin/env bash\nexit 3\n' > "$STUB_SCRIPTS/worktree-diff-hash.sh"
+    run bash "$STUB_SCRIPTS/merge-tier-facts.sh" --worktree "$REPO" --base origin/main
+    rm -rf "$STUB_SCRIPTS"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '.diffhash.ok == false and .diffhash.error == "worktree-diff-hash.sh failed (exit 3)"'
+}
+
+@test "diff-risk-classify.sh 失敗 -> risk.error に stderr の先頭が入り、diffhash は ok:true" {
+    make_stub_scripts_dir
+    printf '#!/usr/bin/env bash\necho "fatal: bad revision" >&2\nexit 2\n' > "$STUB_SCRIPTS/diff-risk-classify.sh"
+    run bash "$STUB_SCRIPTS/merge-tier-facts.sh" --worktree "$REPO" --base origin/main
+    rm -rf "$STUB_SCRIPTS"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        .risk.ok == false and
+        .risk.error == "diff-risk-classify.sh produced no valid JSON output (exit 2): fatal: bad revision" and
+        .diffhash.ok == true
+    '
+}
+
+@test "成功時は diffhash / risk に error キーを持たない (出力 JSON は従来どおり)" {
+    run_facts
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" | jq -e '
+        (.diffhash | keys) == ["ok", "value"] and (.risk | keys) == ["ok", "value"] and
+        (.diffhash.value | keys) == ["empty", "epoch", "hash"]
+    '
+}
+
+# ---------------------------------------------------------------------------
 # (j) 未知オプション -> usage error (exit 2 + degrade JSON)
 # ---------------------------------------------------------------------------
 @test "未知オプション -> exit 2 + 全サブ結果 ok:false" {

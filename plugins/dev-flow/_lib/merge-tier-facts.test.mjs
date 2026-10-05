@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { parseMergeTierFacts, isWellFormedRiskFact, isRiskValueDropped, MERGE_FACTS_RISK_DROPPED_ERROR, mergeTierFactsTopLevelKeys, mergeTierFactsPrompt } from './merge-tier-facts.mjs';
+import { parseMergeTierFacts, isWellFormedRiskFact, isRiskValueDropped, MERGE_FACTS_RISK_DROPPED_ERROR, mergeTierFactsTopLevelKeys, mergeTierFactsPrompt, mergeDiffHashError } from './merge-tier-facts.mjs';
 
 const SHA = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
@@ -121,6 +121,15 @@ test('head_tree.value.tree が空 / 非 string → null、空白付きは trim �
 test('diffhash.value.hash が string でない / 空 → null', () => {
   assert.equal(parseMergeTierFacts({ ...fullFacts(), diffhash: { ok: true, value: { hash: 123, empty: false } } }).mergeDiffHash, null);
   assert.equal(parseMergeTierFacts({ ...fullFacts(), diffhash: { ok: true, value: { hash: '', empty: false } } }).mergeDiffHash, null);
+});
+
+// (9b) issue #790: mergeDiffHash=null の原因（diffhash.error。script が stderr 先頭を添える）を返す
+test('mergeDiffHashError: diffhash ok:false → error をそのまま、hash 採用時・error 欠落・facts null は null', () => {
+  const err = 'worktree-diff-hash.sh failed (exit 128): fatal: Unable to create index.lock';
+  assert.equal(mergeDiffHashError({ ...fullFacts(), diffhash: { ok: false, value: null, error: err } }), err);
+  assert.equal(mergeDiffHashError(fullFacts()), null);
+  assert.equal(mergeDiffHashError({ ...fullFacts(), diffhash: { ok: false, value: null } }), null);
+  assert.equal(mergeDiffHashError(null), null);
 });
 
 // (10) error 欠落の ok:false → fallback メッセージ

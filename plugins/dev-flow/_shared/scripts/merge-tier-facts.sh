@@ -24,6 +24,7 @@
 #   risk      - diff-risk-classify.sh <base> (cwd=<wt>) の出力 ({ok, hits, ...})。
 #               スクリプトが ok:false を報告した場合も value にそのまま載る (ok:true)。
 #               stdout が空 / JSON 不正のときのみ ok:false
+#               diffhash / risk の error には子スクリプトの stderr 先頭 300 byte を添える (空なら付けない)
 #   changed   - `git diff --name-only <base>...HEAD` の各行 ({files: [...]})
 #   pr        - --pr-view-data の JSON object から抽出 ({mergeable, mergeStateStatus, headRefOid})。
 #               省略 / JSON object でないときは ok:false
@@ -110,19 +111,35 @@ err_result() { jq -nc --arg e "$1" '{ok: false, value: null, error: $e}'; }
 is_json_object() { printf '%s' "$1" | jq -e 'type == "object"' >/dev/null 2>&1; }
 is_json_array()  { printf '%s' "$1" | jq -e 'type == "array"'  >/dev/null 2>&1; }
 
+# 子スクリプトの stderr は捨てずに一時ファイルへ受け、失敗時だけ先頭 300 byte を error に添える
+# (exit code だけでは git の fatal 文など原因を回収できない)。
+stderr_tmp="$(mktemp "${TMPDIR:-/tmp}/merge-tier-facts-stderr.XXXXXX")"
+trap 'rm -f "$stderr_tmp"' EXIT
+
+# with_stderr <message>: stderr_tmp が空でなければ "<message>: <stderr 先頭 300 byte>"、空なら <message>
+with_stderr() {
+    local head
+    head="$(head -c 300 "$stderr_tmp" 2>/dev/null || true)"
+    if [[ -n "$head" ]]; then
+        printf '%s: %s' "$1" "$head"
+    else
+        printf '%s' "$1"
+    fi
+}
+
 # ============================================================================
 # 1. diffhash = worktree-diff-hash.sh <wt> <base>
 # ============================================================================
 
 set +e
-diffhash_out="$(bash "$SCRIPT_DIR/worktree-diff-hash.sh" "$WT" "$BASE" 2>/dev/null)"
+diffhash_out="$(bash "$SCRIPT_DIR/worktree-diff-hash.sh" "$WT" "$BASE" 2>"$stderr_tmp")"
 diffhash_rc=$?
 set -e
 if [[ $diffhash_rc -eq 0 ]] && is_json_object "$diffhash_out" \
     && printf '%s' "$diffhash_out" | jq -e '(.hash | type) == "string"' >/dev/null 2>&1; then
     diffhash_json="$(ok_result "$diffhash_out")"
 else
-    diffhash_json="$(err_result "worktree-diff-hash.sh failed (exit ${diffhash_rc})")"
+    diffhash_json="$(err_result "$(with_stderr "worktree-diff-hash.sh failed (exit ${diffhash_rc})")")"
 fi
 
 # ============================================================================
@@ -130,14 +147,14 @@ fi
 # ============================================================================
 
 set +e
-risk_out="$(cd "$WT" && bash "$SCRIPT_DIR/diff-risk-classify.sh" "$BASE" 2>/dev/null)"
+risk_out="$(cd "$WT" && bash "$SCRIPT_DIR/diff-risk-classify.sh" "$BASE" 2>"$stderr_tmp")"
 risk_rc=$?
 set -e
 if is_json_object "$risk_out" \
     && printf '%s' "$risk_out" | jq -e '(.ok | type) == "boolean" and (.hits | type) == "array"' >/dev/null 2>&1; then
     risk_json="$(ok_result "$risk_out")"
 else
-    risk_json="$(err_result "diff-risk-classify.sh produced no valid JSON output (exit ${risk_rc})")"
+    risk_json="$(err_result "$(with_stderr "diff-risk-classify.sh produced no valid JSON output (exit ${risk_rc})")")"
 fi
 
 # ============================================================================
